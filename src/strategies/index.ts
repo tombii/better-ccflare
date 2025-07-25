@@ -1,4 +1,5 @@
 import type { LoadBalancingStrategy, Account, RequestMeta } from "../strategy";
+import { isAccountAvailable } from "../strategy";
 import type { Database } from "bun:sqlite";
 
 export class RoundRobinStrategy implements LoadBalancingStrategy {
@@ -6,9 +7,7 @@ export class RoundRobinStrategy implements LoadBalancingStrategy {
 
 	select(accounts: Account[], _meta: RequestMeta): Account[] {
 		const now = Date.now();
-		const available = accounts.filter(
-			(a) => !a.rate_limited_until || a.rate_limited_until < now,
-		);
+		const available = accounts.filter((a) => isAccountAvailable(a, now));
 
 		if (available.length === 0) return [];
 
@@ -31,9 +30,7 @@ export class RoundRobinStrategy implements LoadBalancingStrategy {
 export class LeastRequestsStrategy implements LoadBalancingStrategy {
 	select(accounts: Account[], _meta: RequestMeta): Account[] {
 		const now = Date.now();
-		const available = accounts.filter(
-			(a) => !a.rate_limited_until || a.rate_limited_until < now,
-		);
+		const available = accounts.filter((a) => isAccountAvailable(a, now));
 
 		if (available.length === 0) return [];
 
@@ -81,22 +78,45 @@ export class SessionStrategy implements LoadBalancingStrategy {
 	select(accounts: Account[], _meta: RequestMeta): Account[] {
 		const now = Date.now();
 
-		// Filter out rate-limited accounts
-		const available = accounts.filter(
-			(a) => !a.rate_limited_until || a.rate_limited_until < now,
-		);
+		// Find account with active session (most recent session_start within window)
+		let activeAccount: Account | null = null;
+		let mostRecentSessionStart = 0;
+
+		for (const account of accounts) {
+			if (
+				account.session_start &&
+				now - account.session_start < this.sessionDurationMs &&
+				account.session_start > mostRecentSessionStart
+			) {
+				activeAccount = account;
+				mostRecentSessionStart = account.session_start;
+			}
+		}
+
+		// If we have an active account and it's available, use it exclusively
+		if (activeAccount && isAccountAvailable(activeAccount, now)) {
+			// Reset session if expired (shouldn't happen but just in case)
+			this.resetSessionIfExpired(activeAccount);
+			// Return active account first, then others as fallback
+			const others = accounts.filter(
+				(a) => a.id !== activeAccount.id && isAccountAvailable(a, now),
+			);
+			return [activeAccount, ...others];
+		}
+
+		// No active session or active account is rate limited
+		// Filter available accounts
+		const available = accounts.filter((a) => isAccountAvailable(a, now));
 
 		if (available.length === 0) return [];
 
-		// Reset expired sessions
-		available.forEach((account) => this.resetSessionIfExpired(account));
+		// Pick the first available account and start a new session with it
+		const chosenAccount = available[0];
+		this.resetSessionIfExpired(chosenAccount);
 
-		// Sort by session request count (ascending)
-		return available.sort((a, b) => {
-			const aCount = a.session_request_count || 0;
-			const bCount = b.session_request_count || 0;
-			return aCount - bCount;
-		});
+		// Return chosen account first, then others as fallback
+		const others = available.filter((a) => a.id !== chosenAccount.id);
+		return [chosenAccount, ...others];
 	}
 }
 
@@ -105,9 +125,7 @@ export class WeightedStrategy implements LoadBalancingStrategy {
 		const now = Date.now();
 
 		// Filter out rate-limited accounts
-		const available = accounts.filter(
-			(a) => !a.rate_limited_until || a.rate_limited_until < now,
-		);
+		const available = accounts.filter((a) => isAccountAvailable(a, now));
 
 		if (available.length === 0) return [];
 
@@ -131,9 +149,7 @@ export class WeightedRoundRobinStrategy implements LoadBalancingStrategy {
 		const now = Date.now();
 
 		// Filter out rate-limited accounts
-		const available = accounts.filter(
-			(a) => !a.rate_limited_until || a.rate_limited_until < now,
-		);
+		const available = accounts.filter((a) => isAccountAvailable(a, now));
 
 		if (available.length === 0) return [];
 

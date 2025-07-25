@@ -12,6 +12,7 @@ import {
 	WeightedRoundRobinStrategy,
 } from "./strategies/index";
 import type { LoadBalancingStrategy } from "./strategy";
+import { DEFAULT_STRATEGY } from "./strategy";
 import { handleProxy, type ProxyContext } from "./proxy";
 
 // Initialize components
@@ -107,7 +108,9 @@ console.log(
 );
 console.log(`📊 Dashboard: http://localhost:${server.port}/dashboard`);
 console.log(`🔍 Health check: http://localhost:${server.port}/health`);
-console.log(`⚙️  Current strategy: ${config.getStrategy()}`);
+console.log(
+	`⚙️  Current strategy: ${config.getStrategy()} (default: ${DEFAULT_STRATEGY})`,
+);
 
 // Graceful shutdown
 process.on("SIGINT", () => {

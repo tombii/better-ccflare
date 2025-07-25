@@ -256,7 +256,7 @@ export function getDashboardHTML(): string {
 
 export function getDashboardScript(): string {
 	return `
-let currentStrategy = 'least-requests';
+let currentStrategy = 'session';
 let autoRefreshInterval;
 
 async function fetchStats() {
