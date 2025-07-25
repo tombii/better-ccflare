@@ -1,16 +1,19 @@
 {
-  "name": "claude-load-balancer",
-  "version": "1.0.0",
-  "description": "Load balancer proxy for multiple Claude OAuth accounts",
-  "type": "module",
-  "scripts": {
-    "start": "bun run src/server.ts",
-    "cli": "bun run src/cli.ts"
-  },
-  "dependencies": {
-    "@types/bun": "latest"
-  },
-  "devDependencies": {
-    "bun-types": "latest"
-  }
+	"name": "claude-load-balancer",
+	"version": "1.0.0",
+	"description": "Load balancer proxy for multiple Claude OAuth accounts",
+	"type": "module",
+	"scripts": {
+		"start": "bun run src/server.ts",
+		"cli": "bun run src/cli.ts",
+		"format": "bunx biome format --write .",
+		"lint": "bunx --bun biome lint --write ./src"
+	},
+	"dependencies": {
+		"@types/bun": "latest"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "2.1.2",
+		"bun-types": "latest"
+	}
 }

@@ -7,3 +7,4 @@ claude-accounts.db-shm
 dist/
 .DS_Store
 *.log
+tsconfig.tsbuildinfo
