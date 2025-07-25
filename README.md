@@ -26,10 +26,12 @@ Use the CLI to add your Claude accounts:
 
 ```bash
 # Add a console.anthropic.com account
-bun run cli.ts add personal
+bun run cli.ts add one
 
 # Add a claude.ai account
-bun run cli.ts add work --mode max
+bun run cli.ts add two --mode max
+
+# You get the idea...
 ```
 
 Follow the prompts to authorize each account.
@@ -37,9 +39,7 @@ Follow the prompts to authorize each account.
 ### 2. Start the Server
 
 ```bash
-bun run dev  # Development mode with auto-reload
-# or
-bun start    # Production mode
+bun start
 ```
 
 The server will start on port 8080 (or the PORT environment variable).
@@ -52,13 +52,10 @@ Open your browser and navigate to:
 
 ### 4. Use as Proxy
 
-Configure your Claude SDK to use the load balancer:
+Configure your Claude Code to use the load balancer:
 
-```javascript
-const anthropic = new Anthropic({
-  baseURL: 'http://localhost:8080/v1',
-  apiKey: 'dummy-key' // The proxy handles authentication
-});
+```
+export ANTHROPIC_BASE_URL=http://localhost:8080
 ```
 
 ## CLI Commands
@@ -148,13 +145,6 @@ const RETRY_BACKOFF = 2      // Exponential backoff multiplier
 ## Environment Variables
 
 - `PORT`: Server port (default: 8080)
-
-## Development
-
-```bash
-# Run in development mode with auto-reload
-bun --watch run src/server.ts
-```
 
 ## Requirements
 
