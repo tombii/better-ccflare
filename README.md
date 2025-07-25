@@ -8,6 +8,14 @@ Ever get tired of Claude's rate limiting?
 
 https://github.com/user-attachments/assets/9b45bc1c-9069-4190-99e0-bba53a0a62ee
 
+## Why Session-Based by Default?
+
+The default session-based strategy ensures you get the most out of Claude's prompt caching:
+- **Sticky Sessions**: Uses one account exclusively for 5 hours, maximizing cache hits
+- **Automatic Failover**: When that account hits rate limits, seamlessly switches to the next
+- **Cost Effective**: Better cache utilization means lower costs per request
+- **Simple**: No complex distribution logic - just use one account until you can't
+
 ## Example
 
 ![Example Dashboard](./example_dashboard.png)
@@ -16,7 +24,7 @@ https://github.com/user-attachments/assets/9b45bc1c-9069-4190-99e0-bba53a0a62ee
 
 ## Features
 
-- **Session-Based Load Balancing**: Default 5-hour session windows to optimize Claude's caching and pricing
+- **Sticky Session Load Balancing**: Default 5-hour sessions that use one account exclusively until rate limited, maximizing Claude's prompt caching
 - **Load Balancing**: Multiple strategies including tier-aware distribution
 - **Account Tiers**: Support for Pro (1x), Max 5x, and Max 20x accounts
 - **Automatic Failover**: When rate-limited, seamlessly switches to next available account
@@ -42,18 +50,18 @@ Use the CLI to add your Claude accounts:
 
 ```bash
 # Interactive mode - will prompt for account type and tier
-bun run cli.ts add myaccount
+bun run cli add myaccount
 
 # Add an API account (console.anthropic.com)
-bun run cli.ts add api-account --mode console
+bun run cli add api-account --mode console
 
 # Add a Max account with tier selection
-bun run cli.ts add max-account --mode max  # Will prompt for tier
+bun run cli add max-account --mode max  # Will prompt for tier
 
 # Add specific tier Max accounts
-bun run cli.ts add pro --mode max --tier 1      # Pro Account (1x)
-bun run cli.ts add premium --mode max --tier 5   # Max 5x Account
-bun run cli.ts add enterprise --mode max --tier 20  # Max 20x Account
+bun run cli add pro --mode max --tier 1      # Pro Account (1x)
+bun run cli add premium --mode max --tier 5   # Max 5x Account
+bun run cli add enterprise --mode max --tier 20  # Max 20x Account
 ```
 
 When prompted:
