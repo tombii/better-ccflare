@@ -2,6 +2,12 @@
 
 A load balancer proxy for multiple Claude OAuth accounts with automatic failover, request tracking, and web dashboard.
 
+## Why?
+
+Ever get tired of Claude's rate limiting?
+
+https://github.com/user-attachments/assets/9b45bc1c-9069-4190-99e0-bba53a0a62ee
+
 ## Example
 
 ![Example Dashboard](./example_dashboard.png)
