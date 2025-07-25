@@ -2,6 +2,12 @@
 
 A load balancer proxy for multiple Claude OAuth accounts with automatic failover, request tracking, and web dashboard.
 
+## Example
+
+![Example Dashboard](./example_dashboard.png)
+
+![Example Log](./example_log.png)
+
 ## Features
 
 - **Load Balancing**: Distributes requests across multiple Claude accounts
