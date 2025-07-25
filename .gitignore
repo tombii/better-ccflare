@@ -1,0 +1,9 @@
+node_modules/
+.env
+.env.local
+claude-accounts.db
+claude-accounts.db-wal
+claude-accounts.db-shm
+dist/
+.DS_Store
+*.log

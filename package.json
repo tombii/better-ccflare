@@ -1,0 +1,17 @@
+{
+  "name": "claude-load-balancer",
+  "version": "1.0.0",
+  "description": "Load balancer proxy for multiple Claude OAuth accounts",
+  "type": "module",
+  "scripts": {
+    "start": "bun run src/server.ts",
+    "dev": "bun --watch run src/server.ts",
+    "cli": "bun run src/cli.ts"
+  },
+  "dependencies": {
+    "@types/bun": "latest"
+  },
+  "devDependencies": {
+    "bun-types": "latest"
+  }
+}
