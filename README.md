@@ -16,11 +16,11 @@ https://github.com/user-attachments/assets/9b45bc1c-9069-4190-99e0-bba53a0a62ee
 
 ## Features
 
+- **Session-Based Load Balancing**: Default 5-hour session windows to optimize Claude's caching and pricing
 - **Load Balancing**: Multiple strategies including tier-aware distribution
 - **Account Tiers**: Support for Pro (1x), Max 5x, and Max 20x accounts
-- **Automatic Failover**: If a request fails with one account, automatically retries with others
+- **Automatic Failover**: When rate-limited, seamlessly switches to next available account
 - **Rate Limit Detection**: Automatically detects and respects rate limits
-- **Session Management**: 5-hour session windows for better distribution
 - **Retry Logic**: Configurable retries per account with exponential backoff (3 retries by default)
 - **Request Tracking**: Stores all requests in a database for monitoring
 - **Web Dashboard**: Real-time monitoring UI with strategy switching and tier management
@@ -126,9 +126,9 @@ bun cli.ts help
 ## How It Works
 
 1. **Load Balancing Strategies**:
-   - **Least Requests**: Routes to account with fewest total requests (default)
+   - **Session Based** (default): Sticky 5-hour sessions - uses one account exclusively until rate limited, then switches to the next. This maximizes Claude's prompt caching benefits.
+   - **Least Requests**: Routes to account with fewest total requests
    - **Round Robin**: Distributes requests evenly in circular order
-   - **Session Based**: Maintains 5-hour session windows
    - **Weighted**: Considers account tiers (1x, 5x, 20x) for fair distribution
    - **Weighted Round Robin**: Round-robin with tier-based slots
 
@@ -207,9 +207,9 @@ The codebase follows a modular architecture:
 # Server port (default: 8080)
 PORT=8080
 
-# Load balancing strategy (default: least-requests)
-# Options: least-requests, round-robin, session, weighted, weighted-round-robin
-LB_STRATEGY=weighted
+# Load balancing strategy (default: session)
+# Options: session, least-requests, round-robin, weighted, weighted-round-robin
+LB_STRATEGY=session
 
 # Log level (default: INFO)
 # Options: DEBUG, INFO, WARN, ERROR

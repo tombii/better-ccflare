@@ -1,5 +1,9 @@
 import type { Database } from "bun:sqlite";
-import { isValidStrategy, type StrategyName } from "./strategy";
+import {
+	isValidStrategy,
+	type StrategyName,
+	DEFAULT_STRATEGY,
+} from "./strategy";
 
 export interface RuntimeConfig {
 	clientId: string;
@@ -95,12 +99,12 @@ export class Config {
 		}
 
 		// Then check database config
-		const dbStrategy = this.get("lb_strategy", "least-requests");
+		const dbStrategy = this.get("lb_strategy", DEFAULT_STRATEGY);
 		if (isValidStrategy(dbStrategy)) {
 			return dbStrategy;
 		}
 
-		return "least-requests";
+		return DEFAULT_STRATEGY;
 	}
 
 	setStrategy(strategy: StrategyName): void {
