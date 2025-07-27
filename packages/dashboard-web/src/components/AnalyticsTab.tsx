@@ -1,6 +1,6 @@
 import type { AnalyticsResponse } from "@claudeflare/http-api";
 import { format } from "date-fns";
-import { CalendarDays, Download, Filter, RefreshCw } from "lucide-react";
+import { CalendarDays, Filter, RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
 	Area,
