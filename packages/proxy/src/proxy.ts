@@ -6,7 +6,7 @@ import type {
 	RequestMeta,
 } from "@claudeflare/core";
 import { estimateCostUSD, NO_ACCOUNT_ID } from "@claudeflare/core";
-import type { DatabaseOperations } from "@claudeflare/database";
+import type { AsyncDbWriter, DatabaseOperations } from "@claudeflare/database";
 import { Logger } from "@claudeflare/logger";
 import type { Provider, TokenRefreshResult } from "@claudeflare/providers";
 import { combineChunks, teeStream } from "./stream-tee";
@@ -17,6 +17,7 @@ export interface ProxyContext {
 	runtime: RuntimeConfig;
 	provider: Provider;
 	refreshInFlight: Map<string, Promise<string>>;
+	asyncWriter: AsyncDbWriter;
 }
 
 const log = new Logger("Proxy");
@@ -31,10 +32,12 @@ async function refreshAccessTokenSafe(
 		const refreshPromise = ctx.provider
 			.refreshToken(account, ctx.runtime.clientId)
 			.then((result: TokenRefreshResult) => {
-				ctx.dbOps.updateAccountTokens(
-					account.id,
-					result.accessToken,
-					result.expiresAt,
+				ctx.asyncWriter.enqueue(() =>
+					ctx.dbOps.updateAccountTokens(
+						account.id,
+						result.accessToken,
+						result.expiresAt,
+					),
 				);
 				return result.accessToken;
 			})
@@ -97,7 +100,7 @@ async function saveUsageToDb(
 	}
 
 	// Update the existing request record with usage information
-	ctx.dbOps.updateRequestUsage(requestId, usage);
+	ctx.asyncWriter.enqueue(() => ctx.dbOps.updateRequestUsage(requestId, usage));
 
 	if (accountId && accountId !== NO_ACCOUNT_ID) {
 		log.info(
@@ -153,8 +156,8 @@ export async function handleProxy(
 		log.info(`Request: ${req.method} ${url.pathname}`);
 	}
 
-	// Try to read the body once for retries
-	const requestBody = req.body ? await req.arrayBuffer() : null;
+	// Always pass request body as-is (stream or nothing)
+	const requestBody = req.body ?? undefined;
 
 	// Handle unauthenticated fallback
 	if (fallbackUnauthenticated) {
@@ -166,7 +169,7 @@ export async function handleProxy(
 			const response = await fetch(targetUrl, {
 				method: req.method,
 				headers: headers,
-				body: requestBody,
+				body: requestBody ?? undefined,
 				// @ts-ignore - Bun supports duplex
 				duplex: "half",
 			});
@@ -230,17 +233,19 @@ export async function handleProxy(
 			}
 
 			// Save request to database
-			ctx.dbOps.saveRequest(
-				requestMeta.id,
-				req.method,
-				url.pathname,
-				NO_ACCOUNT_ID,
-				response.status,
-				response.ok,
-				null,
-				responseTime,
-				0,
-				usage || undefined,
+			ctx.asyncWriter.enqueue(() =>
+				ctx.dbOps.saveRequest(
+					requestMeta.id,
+					req.method,
+					url.pathname,
+					NO_ACCOUNT_ID,
+					response.status,
+					response.ok,
+					null,
+					responseTime,
+					0,
+					usage || undefined,
+				),
 			);
 
 			// Save response payload (skip body for streaming responses)
@@ -250,9 +255,7 @@ export async function handleProxy(
 			const payload = {
 				request: {
 					headers: Object.fromEntries(req.headers.entries()),
-					body: requestBody
-						? Buffer.from(requestBody).toString("base64")
-						: null,
+					body: requestBody ? "[streamed]" : null,
 				},
 				response: {
 					status: response.status,
@@ -268,14 +271,16 @@ export async function handleProxy(
 					isStream,
 				},
 			};
-			ctx.dbOps.saveRequestPayload(requestMeta.id, payload);
+			ctx.asyncWriter.enqueue(() =>
+				ctx.dbOps.saveRequestPayload(requestMeta.id, payload),
+			);
 
 			// Process and return the response
 			if (isStream && response.body) {
 				// Use tee to capture streaming response
 				let payloadSaved = false;
 				const teedStream = teeStream(response.body, {
-					maxBytes: ctx.runtime.streamBodyMaxBytes,
+					maxBytes: Infinity, // No limit - capture everything
 					onClose: (buffered) => {
 						if (!payloadSaved) {
 							payloadSaved = true;
@@ -289,13 +294,12 @@ export async function handleProxy(
 								},
 								meta: {
 									...payload.meta,
-									bodyTruncated:
-										buffered.length > 0 &&
-										combined.length >= ctx.runtime.streamBodyMaxBytes,
 								},
 							};
 							// Update the payload with the streamed body
-							ctx.dbOps.saveRequestPayload(requestMeta.id, updatedPayload);
+							ctx.asyncWriter.enqueue(() =>
+								ctx.dbOps.saveRequestPayload(requestMeta.id, updatedPayload),
+							);
 						}
 					},
 					onError: (error) => {
@@ -319,26 +323,26 @@ export async function handleProxy(
 			log.error("Error forwarding unauthenticated request:", error);
 
 			// Save error to database
-			ctx.dbOps.saveRequest(
-				requestMeta.id,
-				req.method,
-				url.pathname,
-				NO_ACCOUNT_ID,
-				0,
-				false,
-				errorMessage,
-				Date.now() - start,
-				0,
-				undefined,
+			ctx.asyncWriter.enqueue(() =>
+				ctx.dbOps.saveRequest(
+					requestMeta.id,
+					req.method,
+					url.pathname,
+					NO_ACCOUNT_ID,
+					0,
+					false,
+					errorMessage,
+					Date.now() - start,
+					0,
+					undefined,
+				),
 			);
 
 			// Save error payload
 			const errorPayload = {
 				request: {
 					headers: Object.fromEntries(req.headers.entries()),
-					body: requestBody
-						? Buffer.from(requestBody).toString("base64")
-						: null,
+					body: requestBody ? "[streamed]" : null,
 				},
 				response: null,
 				error: errorMessage,
@@ -348,7 +352,9 @@ export async function handleProxy(
 					success: false,
 				},
 			};
-			ctx.dbOps.saveRequestPayload(requestMeta.id, errorPayload);
+			ctx.asyncWriter.enqueue(() =>
+				ctx.dbOps.saveRequestPayload(requestMeta.id, errorPayload),
+			);
 
 			// Return error response
 			return new Response(JSON.stringify({ error: errorMessage }), {
@@ -383,13 +389,13 @@ export async function handleProxy(
 				const response = await fetch(targetUrl, {
 					method: req.method,
 					headers: headers,
-					body: requestBody,
+					body: requestBody ?? undefined,
 					// @ts-ignore - Bun supports duplex
 					duplex: "half",
 				});
 
 				// Update usage tracking
-				ctx.dbOps.updateAccountUsage(account.id);
+				ctx.asyncWriter.enqueue(() => ctx.dbOps.updateAccountUsage(account.id));
 
 				const _responseTime = Date.now() - start;
 				log.info(
@@ -402,25 +408,46 @@ export async function handleProxy(
 				// Check if this is a streaming response
 				const isStream = ctx.provider.isStreamingResponse?.(response) ?? false;
 
+				// If we're streaming, we commit to this response (no retries)
+				if (isStream) {
+					log.info(
+						`Streaming response detected for ${account.name} - committing to this response`,
+					);
+					// Skip all retry logic and go straight to response processing
+					// by jumping to the successful response handling section
+				}
+
 				// Parse rate limit information from all responses
 				const rateLimitInfo = ctx.provider.parseRateLimit(response);
 
 				// Update rate limit metadata if available
-				if (rateLimitInfo.statusHeader || rateLimitInfo.resetTime) {
+				if (
+					!isStream &&
+					(rateLimitInfo.statusHeader || rateLimitInfo.resetTime)
+				) {
 					log.info(
 						`Rate limit for ${account.name}: ${rateLimitInfo.statusHeader} - Remaining: ${rateLimitInfo.remaining}`,
 					);
-					ctx.dbOps.updateAccountRateLimitMeta(
-						account.id,
-						rateLimitInfo.statusHeader || "",
-						rateLimitInfo.resetTime || null,
-						rateLimitInfo.remaining,
+					ctx.asyncWriter.enqueue(() =>
+						ctx.dbOps.updateAccountRateLimitMeta(
+							account.id,
+							rateLimitInfo.statusHeader || "",
+							rateLimitInfo.resetTime || null,
+							rateLimitInfo.remaining,
+						),
 					);
 				}
 
-				// Handle hard rate limiting (status != allowed or 429)
-				if (rateLimitInfo.isRateLimited && rateLimitInfo.resetTime) {
-					ctx.dbOps.markAccountRateLimited(account.id, rateLimitInfo.resetTime);
+				// Handle hard rate limiting (status != allowed or 429) - but not if streaming
+				if (
+					!isStream &&
+					rateLimitInfo.isRateLimited &&
+					rateLimitInfo.resetTime
+				) {
+					const resetTime = rateLimitInfo.resetTime;
+					ctx.asyncWriter.enqueue(() =>
+						ctx.dbOps.markAccountRateLimited(account.id, resetTime),
+					);
 					lastError = `Rate limited until ${new Date(rateLimitInfo.resetTime).toISOString()}`;
 					log.warn(
 						`Account ${account.name} rate limited until ${new Date(rateLimitInfo.resetTime).toISOString()}`,
@@ -433,9 +460,7 @@ export async function handleProxy(
 					const payload = {
 						request: {
 							headers: Object.fromEntries(req.headers.entries()),
-							body: requestBody
-								? Buffer.from(requestBody).toString("base64")
-								: null,
+							body: requestBody ? "[streamed]" : null,
 						},
 						response: {
 							status: response.status,
@@ -452,10 +477,18 @@ export async function handleProxy(
 							isStream,
 						},
 					};
-					ctx.dbOps.saveRequestPayload(requestMeta.id, payload);
+					ctx.asyncWriter.enqueue(() =>
+						ctx.dbOps.saveRequestPayload(requestMeta.id, payload),
+					);
 
 					// Continue to next account immediately on rate limit
 					break;
+				}
+
+				// For streaming responses, skip error checking and process immediately
+				if (!isStream && !response.ok) {
+					// Non-streaming error response - this will be retried
+					continue;
 				}
 
 				// Extract usage info if provider supports it
@@ -474,7 +507,7 @@ export async function handleProxy(
 					| null
 					| undefined;
 
-				if (ctx.provider.extractUsageInfo && response.ok) {
+				if (ctx.provider.extractUsageInfo && (response.ok || isStream)) {
 					const extractPromise = ctx.provider
 						.extractUsageInfo(responseClone as Response)
 						.catch(() => null);
@@ -511,17 +544,19 @@ export async function handleProxy(
 
 				// Log successful request
 				const responseTime = Date.now() - requestMeta.timestamp;
-				ctx.dbOps.saveRequest(
-					requestMeta.id,
-					req.method,
-					url.pathname,
-					account.id,
-					response.status,
-					response.ok,
-					null,
-					responseTime,
-					accounts.indexOf(account),
-					usage || undefined,
+				ctx.asyncWriter.enqueue(() =>
+					ctx.dbOps.saveRequest(
+						requestMeta.id,
+						req.method,
+						url.pathname,
+						account.id,
+						response.status,
+						response.ok,
+						null,
+						responseTime,
+						accounts.indexOf(account),
+						usage || undefined,
+					),
 				);
 
 				// Save successful response payload before processing (skip body for streaming responses)
@@ -531,9 +566,7 @@ export async function handleProxy(
 				const payload = {
 					request: {
 						headers: Object.fromEntries(req.headers.entries()),
-						body: requestBody
-							? Buffer.from(requestBody).toString("base64")
-							: null,
+						body: requestBody ? "[streamed]" : null,
 					},
 					response: {
 						status: response.status,
@@ -550,7 +583,9 @@ export async function handleProxy(
 						isStream,
 					},
 				};
-				ctx.dbOps.saveRequestPayload(requestMeta.id, payload);
+				ctx.asyncWriter.enqueue(() =>
+					ctx.dbOps.saveRequestPayload(requestMeta.id, payload),
+				);
 
 				// Check for tier information if provider supports it
 				if (ctx.provider.extractTierInfo) {
@@ -561,7 +596,9 @@ export async function handleProxy(
 						log.info(
 							`Updating account ${account.name} tier from ${account.account_tier} to ${tierInfo}`,
 						);
-						ctx.dbOps.updateAccountTier(account.id, tierInfo);
+						ctx.asyncWriter.enqueue(() =>
+							ctx.dbOps.updateAccountTier(account.id, tierInfo),
+						);
 					}
 				}
 
@@ -570,7 +607,7 @@ export async function handleProxy(
 					// Use tee to capture streaming response
 					let payloadSaved = false;
 					const teedStream = teeStream(response.body, {
-						maxBytes: ctx.runtime.streamBodyMaxBytes,
+						maxBytes: Infinity, // No limit - capture everything
 						onClose: (buffered) => {
 							if (!payloadSaved) {
 								payloadSaved = true;
@@ -584,13 +621,12 @@ export async function handleProxy(
 									},
 									meta: {
 										...payload.meta,
-										bodyTruncated:
-											buffered.length > 0 &&
-											combined.length >= ctx.runtime.streamBodyMaxBytes,
 									},
 								};
 								// Update the payload with the streamed body
-								ctx.dbOps.saveRequestPayload(requestMeta.id, updatedPayload);
+								ctx.asyncWriter.enqueue(() =>
+									ctx.dbOps.saveRequestPayload(requestMeta.id, updatedPayload),
+								);
 							}
 						},
 						onError: (error) => {
@@ -619,9 +655,7 @@ export async function handleProxy(
 				const errorPayload = {
 					request: {
 						headers: Object.fromEntries(req.headers.entries()),
-						body: requestBody
-							? Buffer.from(requestBody).toString("base64")
-							: null,
+						body: requestBody ? "[streamed]" : null,
 					},
 					response: null,
 					error: lastError,
@@ -632,7 +666,9 @@ export async function handleProxy(
 						success: false,
 					},
 				};
-				ctx.dbOps.saveRequestPayload(requestMeta.id, errorPayload);
+				ctx.asyncWriter.enqueue(() =>
+					ctx.dbOps.saveRequestPayload(requestMeta.id, errorPayload),
+				);
 			}
 		}
 
@@ -641,24 +677,26 @@ export async function handleProxy(
 
 	// All accounts failed
 	const responseTime = Date.now() - requestMeta.timestamp;
-	ctx.dbOps.saveRequest(
-		requestMeta.id,
-		req.method,
-		url.pathname,
-		null,
-		503,
-		false,
-		"All accounts failed",
-		responseTime,
-		accounts.length,
-		undefined,
+	ctx.asyncWriter.enqueue(() =>
+		ctx.dbOps.saveRequest(
+			requestMeta.id,
+			req.method,
+			url.pathname,
+			null,
+			503,
+			false,
+			"All accounts failed",
+			responseTime,
+			accounts.length,
+			undefined,
+		),
 	);
 
 	// Save final failure payload
 	const failurePayload = {
 		request: {
 			headers: Object.fromEntries(req.headers.entries()),
-			body: requestBody ? Buffer.from(requestBody).toString("base64") : null,
+			body: requestBody ? "[streamed]" : null,
 		},
 		response: null,
 		error: "All accounts failed",
@@ -668,7 +706,9 @@ export async function handleProxy(
 			accountsAttempted: accounts.length,
 		},
 	};
-	ctx.dbOps.saveRequestPayload(requestMeta.id, failurePayload);
+	ctx.asyncWriter.enqueue(() =>
+		ctx.dbOps.saveRequestPayload(requestMeta.id, failurePayload),
+	);
 
 	return new Response(
 		JSON.stringify({
