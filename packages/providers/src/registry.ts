@@ -13,7 +13,9 @@ class ProviderRegistry {
 		// Auto-register OAuth provider if supported
 		if (
 			"supportsOAuth" in provider &&
-			typeof provider.supportsOAuth === "function"
+			typeof provider.supportsOAuth === "function" &&
+			"getOAuthProvider" in provider &&
+			typeof provider.getOAuthProvider === "function"
 		) {
 			const supportsOAuth = provider.supportsOAuth as () => boolean;
 			if (supportsOAuth()) {

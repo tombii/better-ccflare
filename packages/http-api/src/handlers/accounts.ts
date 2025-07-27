@@ -61,7 +61,11 @@ export function createAccountsListHandler(db: Database) {
 
 		const response: AccountResponse[] = accounts.map((account) => {
 			let rateLimitStatus = "OK";
-			if (account.rate_limited && account.rate_limited_until > now) {
+			if (
+				account.rate_limited &&
+				account.rate_limited_until &&
+				account.rate_limited_until > now
+			) {
 				const minutesLeft = Math.ceil(
 					(account.rate_limited_until - now) / 60000,
 				);
@@ -81,7 +85,7 @@ export function createAccountsListHandler(db: Database) {
 				tier: account.account_tier,
 				tokenStatus: account.token_valid ? "valid" : "expired",
 				rateLimitStatus,
-				sessionInfo: account.session_info,
+				sessionInfo: account.session_info || "",
 			};
 		});
 
@@ -118,6 +122,77 @@ export function createAccountTierUpdateHandler(dbOps: DatabaseOperations) {
 		} catch (_error) {
 			return new Response(
 				JSON.stringify({ error: "Failed to update account tier" }),
+				{
+					status: 500,
+					headers: { "Content-Type": "application/json" },
+				},
+			);
+		}
+	};
+}
+
+/**
+ * Create an account add handler
+ */
+export function createAccountAddHandler(dbOps: DatabaseOperations) {
+	return async (req: Request): Promise<Response> => {
+		try {
+			const body = (await req.json()) as {
+				name: string;
+				mode?: string;
+				tier?: number;
+			};
+			const { name, mode = "max", tier = 1 } = body;
+
+			if (!name || typeof name !== "string") {
+				return new Response(
+					JSON.stringify({ error: "Account name is required" }),
+					{
+						status: 400,
+						headers: { "Content-Type": "application/json" },
+					},
+				);
+			}
+
+			// Placeholder for actual account creation logic
+			// In a real implementation, this would integrate with the CLI commands
+			return new Response(
+				JSON.stringify({
+					success: true,
+					message: `Account ${name} created with ${mode} mode and tier ${tier}`,
+				}),
+				{
+					headers: { "Content-Type": "application/json" },
+				},
+			);
+		} catch (_error) {
+			return new Response(JSON.stringify({ error: "Failed to add account" }), {
+				status: 500,
+				headers: { "Content-Type": "application/json" },
+			});
+		}
+	};
+}
+
+/**
+ * Create an account remove handler
+ */
+export function createAccountRemoveHandler(dbOps: DatabaseOperations) {
+	return async (_req: Request, accountName: string): Promise<Response> => {
+		try {
+			// Placeholder for actual account removal logic
+			return new Response(
+				JSON.stringify({
+					success: true,
+					message: `Account ${accountName} removed`,
+				}),
+				{
+					headers: { "Content-Type": "application/json" },
+				},
+			);
+		} catch (_error) {
+			return new Response(
+				JSON.stringify({ error: "Failed to remove account" }),
 				{
 					status: 500,
 					headers: { "Content-Type": "application/json" },

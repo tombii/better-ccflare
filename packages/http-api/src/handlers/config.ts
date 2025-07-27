@@ -13,9 +13,9 @@ export function createConfigHandlers(config: Config) {
 		getConfig: (): Response => {
 			const settings = config.getAllSettings();
 			const response: ConfigResponse = {
-				lb_strategy: settings.lb_strategy,
-				port: settings.port,
-				sessionDurationMs: settings.sessionDurationMs,
+				lb_strategy: (settings.lb_strategy as string) || "round_robin",
+				port: (settings.port as number) || 8080,
+				sessionDurationMs: (settings.sessionDurationMs as number) || 3600000,
 			};
 			return new Response(JSON.stringify(response), {
 				headers: { "Content-Type": "application/json" },

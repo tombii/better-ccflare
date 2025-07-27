@@ -1,0 +1,22 @@
+{
+	"name": "@claudeflare/tui-core",
+	"version": "1.0.0",
+	"description": "Core controller logic for Claudeflare TUI",
+	"type": "module",
+	"main": "./src/index.ts",
+	"exports": {
+		".": "./src/index.ts"
+	},
+	"scripts": {
+		"typecheck": "tsc --noEmit"
+	},
+	"dependencies": {
+		"@claudeflare/cli-commands": "workspace:*",
+		"@claudeflare/database": "workspace:*",
+		"@claudeflare/logger": "workspace:*",
+		"@claudeflare/core": "workspace:*"
+	},
+	"devDependencies": {
+		"@types/node": "^20.0.0"
+	}
+}

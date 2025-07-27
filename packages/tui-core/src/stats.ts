@@ -1,31 +1,42 @@
-import type { Database } from "bun:sqlite";
-import type { DatabaseOperations } from "@claudeflare/database";
-import type { StatsResponse } from "../types.js";
+import { DatabaseOperations } from "@claudeflare/database";
 
-/**
- * Create a stats handler
- */
-export function createStatsHandler(db: Database) {
-	return (): Response => {
+export interface Stats {
+	totalRequests: number;
+	successRate: number;
+	activeAccounts: number;
+	accounts: Array<{
+		name: string;
+		requestCount: number;
+		successRate: number;
+	}>;
+	recentErrors: string[];
+}
+
+export async function getStats(): Promise<Stats> {
+	const dbOps = new DatabaseOperations();
+	const db = dbOps.getDatabase();
+
+	try {
+		// Get overall statistics
 		const stats = db
 			.query(
 				`
 				SELECT 
 					COUNT(*) as totalRequests,
-					SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successfulRequests,
-					AVG(response_time_ms) as avgResponseTime
+					SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successfulRequests
 				FROM requests
 			`,
 			)
-			// biome-ignore lint/suspicious/noExplicitAny: Database query results can vary in shape
-			.get() as any;
+			.get() as
+			| { totalRequests: number; successfulRequests: number }
+			| undefined;
 
 		const accountCount = db
 			.query("SELECT COUNT(*) as count FROM accounts")
 			.get() as { count: number } | undefined;
 
 		const successRate =
-			stats?.totalRequests > 0
+			stats && stats.totalRequests > 0
 				? Math.round((stats.successfulRequests / stats.totalRequests) * 100)
 				: 0;
 
@@ -88,46 +99,39 @@ export function createStatsHandler(db: Database) {
 			)
 			.all() as Array<{ error_message: string }>;
 
-		const response = {
+		return {
 			totalRequests: stats?.totalRequests || 0,
 			successRate,
 			activeAccounts: accountCount?.count || 0,
-			avgResponseTime: Math.round(stats?.avgResponseTime || 0),
 			accounts: accountsWithStats,
 			recentErrors: recentErrors.map((e) => e.error_message),
 		};
-
-		return new Response(JSON.stringify(response), {
-			headers: { "Content-Type": "application/json" },
-		});
-	};
+	} finally {
+		dbOps.close();
+	}
 }
 
-/**
- * Create a stats reset handler
- */
-export function createStatsResetHandler(dbOps: DatabaseOperations) {
-	return async (): Promise<Response> => {
-		try {
-			// Reset statistics by clearing request history
-			// This is a placeholder - actual implementation would use database methods
-			return new Response(
-				JSON.stringify({
-					success: true,
-					message: "Statistics reset successfully",
-				}),
-				{
-					headers: { "Content-Type": "application/json" },
-				},
-			);
-		} catch (_error) {
-			return new Response(
-				JSON.stringify({ error: "Failed to reset statistics" }),
-				{
-					status: 500,
-					headers: { "Content-Type": "application/json" },
-				},
-			);
-		}
-	};
+export async function resetStats(): Promise<void> {
+	const dbOps = new DatabaseOperations();
+	const db = dbOps.getDatabase();
+
+	try {
+		// Clear request history
+		db.run("DELETE FROM requests");
+		// Reset account statistics
+		db.run("UPDATE accounts SET request_count = 0, session_request_count = 0");
+	} finally {
+		dbOps.close();
+	}
+}
+
+export async function clearHistory(): Promise<void> {
+	const dbOps = new DatabaseOperations();
+	const db = dbOps.getDatabase();
+
+	try {
+		db.run("DELETE FROM requests");
+	} finally {
+		dbOps.close();
+	}
 }
