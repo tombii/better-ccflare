@@ -228,6 +228,9 @@ export class AnthropicProvider extends BaseProvider {
 						outputTokens: accumulatedUsage.output_tokens,
 					};
 				}
+
+				// No usage data found in streaming response
+				return null;
 			} else {
 				// Handle non-streaming JSON responses
 				const json = (await clone.json()) as {

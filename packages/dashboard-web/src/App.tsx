@@ -1,215 +1,90 @@
-import { useCallback, useEffect, useState } from "react";
-import { api, type Stats } from "./api";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { useState } from "react";
 import { AccountsTab } from "./components/AccountsTab";
+import { AnalyticsTab } from "./components/AnalyticsTab";
 import { LogsTab } from "./components/LogsTab";
+import { Navigation } from "./components/navigation";
+import { OverviewTab } from "./components/OverviewTab";
 import { RequestsTab } from "./components/RequestsTab";
-import { StatsTab } from "./components/StatsTab";
-import { Button } from "./components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "./components/ui/card";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs";
+import { TooltipProvider } from "./components/ui/tooltip";
+import { ThemeProvider } from "./contexts/theme-context";
 import "./index.css";
 
+const queryClient = new QueryClient({
+	defaultOptions: {
+		queries: {
+			refetchInterval: 30000, // Refetch every 30 seconds
+			staleTime: 10000, // Consider data stale after 10 seconds
+		},
+	},
+});
+
 export function App() {
-	const [activeTab, setActiveTab] = useState("stats");
-	const [stats, setStats] = useState<Stats | null>(null);
-	const [error, setError] = useState<string | null>(null);
+	const [activeTab, setActiveTab] = useState("overview");
 
-	const loadStats = useCallback(async () => {
-		try {
-			const data = await api.getStats();
-			setStats(data);
-			setError(null);
-		} catch (err) {
-			setError(err instanceof Error ? err.message : "Failed to load stats");
+	const renderContent = () => {
+		switch (activeTab) {
+			case "overview":
+				return <OverviewTab />;
+			case "analytics":
+				return <AnalyticsTab />;
+			case "requests":
+				return <RequestsTab />;
+			case "accounts":
+				return <AccountsTab />;
+			case "logs":
+				return <LogsTab />;
+			default:
+				return <OverviewTab />;
 		}
-	}, []);
-
-	useEffect(() => {
-		loadStats();
-		const interval = setInterval(loadStats, 5000);
-		return () => clearInterval(interval);
-	}, [loadStats]);
+	};
 
 	return (
-		<div className="min-h-screen bg-background">
-			<header className="relative bg-gradient-to-r from-orange-500 to-orange-600 dark:from-orange-600 dark:to-orange-700 text-white shadow-lg">
-				<div className="absolute inset-0 bg-black/10 dark:bg-black/20"></div>
-				<div className="relative container mx-auto px-4 py-6">
-					<div className="flex items-center gap-3">
-						<div className="w-10 h-10 bg-white/20 rounded-lg flex items-center justify-center backdrop-blur-sm">
-							<span className="text-2xl">⚡</span>
-						</div>
-						<div>
-							<h1 className="text-3xl font-bold tracking-tight">Claudeflare</h1>
-							<p className="text-white/90 text-sm">
-								Powerful proxy for Claude Code
-							</p>
-						</div>
+		<QueryClientProvider client={queryClient}>
+			<ThemeProvider>
+				<TooltipProvider>
+					<div className="min-h-screen bg-background">
+						<Navigation activeTab={activeTab} onTabChange={setActiveTab} />
+
+						{/* Main Content */}
+						<main className="lg:pl-64">
+							{/* Mobile spacer */}
+							<div className="h-16 lg:hidden" />
+
+							{/* Page Content */}
+							<div className="p-4 md:p-6 lg:p-8 max-w-[1600px] mx-auto">
+								{/* Page Header */}
+								<div className="mb-8">
+									<h1 className="text-3xl font-bold gradient-text">
+										{activeTab === "overview" && "Dashboard Overview"}
+										{activeTab === "analytics" && "Analytics"}
+										{activeTab === "requests" && "Request History"}
+										{activeTab === "accounts" && "Account Management"}
+										{activeTab === "logs" && "System Logs"}
+									</h1>
+									<p className="text-muted-foreground mt-2">
+										{activeTab === "overview" &&
+											"Monitor your Claude proxy performance and usage"}
+										{activeTab === "analytics" &&
+											"Deep dive into your usage patterns and trends"}
+										{activeTab === "requests" &&
+											"View detailed request and response data"}
+										{activeTab === "accounts" &&
+											"Manage your OAuth accounts and settings"}
+										{activeTab === "logs" &&
+											"Real-time system logs and debugging information"}
+									</p>
+								</div>
+
+								{/* Tab Content */}
+								<div className="animate-in fade-in-0 duration-200">
+									{renderContent()}
+								</div>
+							</div>
+						</main>
 					</div>
-				</div>
-			</header>
-
-			<main className="container mx-auto px-4 py-8">
-				{error && (
-					<Card className="mb-6 border-destructive">
-						<CardContent className="pt-6">
-							<p className="text-destructive">Error: {error}</p>
-							<Button
-								onClick={loadStats}
-								variant="outline"
-								size="sm"
-								className="mt-2"
-							>
-								Retry
-							</Button>
-						</CardContent>
-					</Card>
-				)}
-
-				{stats && (
-					<>
-						<div className="grid gap-4 md:grid-cols-3 lg:grid-cols-6 mb-6">
-							<Card>
-								<CardHeader className="pb-2">
-									<CardTitle className="text-sm font-medium text-muted-foreground">
-										Total Requests
-									</CardTitle>
-								</CardHeader>
-								<CardContent>
-									<p className="text-2xl font-bold">
-										{stats.totalRequests || 0}
-									</p>
-								</CardContent>
-							</Card>
-
-							<Card>
-								<CardHeader className="pb-2">
-									<CardTitle className="text-sm font-medium text-muted-foreground">
-										Success Rate
-									</CardTitle>
-								</CardHeader>
-								<CardContent>
-									<p className="text-2xl font-bold text-green-600 dark:text-green-400">
-										{stats.successRate || 0}%
-									</p>
-								</CardContent>
-							</Card>
-
-							<Card>
-								<CardHeader className="pb-2">
-									<CardTitle className="text-sm font-medium text-muted-foreground">
-										Active Accounts
-									</CardTitle>
-								</CardHeader>
-								<CardContent>
-									<p className="text-2xl font-bold">
-										{stats.activeAccounts || 0}
-									</p>
-								</CardContent>
-							</Card>
-
-							<Card>
-								<CardHeader className="pb-2">
-									<CardTitle className="text-sm font-medium text-muted-foreground">
-										Total Tokens
-									</CardTitle>
-								</CardHeader>
-								<CardContent>
-									<p className="text-2xl font-bold">
-										{(stats.totalTokens || 0).toLocaleString()}
-									</p>
-								</CardContent>
-							</Card>
-
-							<Card>
-								<CardHeader className="pb-2">
-									<CardTitle className="text-sm font-medium text-muted-foreground">
-										Total Cost
-									</CardTitle>
-								</CardHeader>
-								<CardContent>
-									<p className="text-2xl font-bold text-primary">
-										${(stats.totalCostUsd || 0).toFixed(2)}
-									</p>
-								</CardContent>
-							</Card>
-
-							<Card>
-								<CardHeader className="pb-2">
-									<CardTitle className="text-sm font-medium text-muted-foreground">
-										Avg Response
-									</CardTitle>
-								</CardHeader>
-								<CardContent>
-									<p className="text-2xl font-bold">
-										{stats.avgResponseTime || 0}ms
-									</p>
-								</CardContent>
-							</Card>
-						</div>
-
-						{stats.topModels && stats.topModels.length > 0 && (
-							<Card className="mb-6">
-								<CardHeader>
-									<CardTitle>Model Usage</CardTitle>
-								</CardHeader>
-								<CardContent>
-									<div className="space-y-2">
-										{stats.topModels.map((model) => (
-											<div
-												key={model.model}
-												className="flex items-center justify-between"
-											>
-												<span className="text-sm font-medium">
-													{model.model}
-												</span>
-												<div className="flex items-center gap-2">
-													<div className="w-32 bg-secondary rounded-full h-2">
-														<div
-															className="bg-primary h-2 rounded-full transition-all"
-															style={{
-																width: `${(model.count / stats.totalRequests) * 100}%`,
-															}}
-														/>
-													</div>
-													<span className="text-sm text-muted-foreground w-12 text-right">
-														{model.count}
-													</span>
-												</div>
-											</div>
-										))}
-									</div>
-								</CardContent>
-							</Card>
-						)}
-					</>
-				)}
-
-				<Tabs value={activeTab} onValueChange={setActiveTab}>
-					<TabsList className="grid w-full grid-cols-4">
-						<TabsTrigger value="stats">Statistics</TabsTrigger>
-						<TabsTrigger value="accounts">Accounts</TabsTrigger>
-						<TabsTrigger value="requests">Requests</TabsTrigger>
-						<TabsTrigger value="logs">Logs</TabsTrigger>
-					</TabsList>
-
-					<TabsContent value="stats">
-						<StatsTab />
-					</TabsContent>
-
-					<TabsContent value="accounts">
-						<AccountsTab />
-					</TabsContent>
-
-					<TabsContent value="requests">
-						<RequestsTab />
-					</TabsContent>
-
-					<TabsContent value="logs">
-						<LogsTab />
-					</TabsContent>
-				</Tabs>
-			</main>
-		</div>
+				</TooltipProvider>
+			</ThemeProvider>
+		</QueryClientProvider>
 	);
 }
