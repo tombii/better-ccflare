@@ -67,6 +67,11 @@ export interface Provider {
 		cacheCreationInputTokens?: number;
 		outputTokens?: number;
 	} | null>;
+
+	/**
+	 * Check if the response is a streaming response
+	 */
+	isStreamingResponse?(response: Response): boolean;
 }
 
 // OAuth-specific types

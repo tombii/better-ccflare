@@ -74,10 +74,14 @@ export function createRequestsSummaryHandler(db: Database) {
  */
 export function createRequestsDetailHandler(dbOps: DatabaseOperations) {
 	return (limit = 100): Response => {
-		const rows = dbOps.listRequestPayloads(limit);
+		const rows = dbOps.listRequestPayloadsWithAccountNames(limit);
 		const parsed = rows.map((r) => {
 			try {
 				const data = JSON.parse(r.json);
+				// Add account name to the meta field if available
+				if (r.account_name && data.meta) {
+					data.meta.accountName = r.account_name;
+				}
 				return { id: r.id, ...data };
 			} catch {
 				return { id: r.id, error: "Failed to parse payload" };

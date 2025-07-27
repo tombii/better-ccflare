@@ -68,9 +68,49 @@ function getRangeConfig(range: string): {
 }
 
 export function createAnalyticsHandler(context: APIContext) {
-	return async (range: string): Promise<Response> => {
+	return async (params: URLSearchParams): Promise<Response> => {
 		const { db } = context;
+		const range = params.get("range") ?? "24h";
 		const { startMs, bucket } = getRangeConfig(range);
+
+		// Extract filters
+		const accountsFilter =
+			params.get("accounts")?.split(",").filter(Boolean) || [];
+		const modelsFilter = params.get("models")?.split(",").filter(Boolean) || [];
+		const statusFilter = params.get("status") || "all";
+
+		// Build filter conditions
+		const conditions: string[] = ["timestamp > ?"];
+		const queryParams: (string | number)[] = [startMs];
+
+		if (accountsFilter.length > 0) {
+			// Handle account filter - map account names to IDs via join
+			const placeholders = accountsFilter.map(() => "?").join(",");
+			conditions.push(`(
+				r.account_used IN (SELECT id FROM accounts WHERE name IN (${placeholders}))
+				OR (r.account_used = ? AND ? IN (${placeholders}))
+			)`);
+			queryParams.push(
+				...accountsFilter,
+				NO_ACCOUNT_ID,
+				NO_ACCOUNT_ID,
+				...accountsFilter,
+			);
+		}
+
+		if (modelsFilter.length > 0) {
+			const placeholders = modelsFilter.map(() => "?").join(",");
+			conditions.push(`model IN (${placeholders})`);
+			queryParams.push(...modelsFilter);
+		}
+
+		if (statusFilter === "success") {
+			conditions.push("success = 1");
+		} else if (statusFilter === "error") {
+			conditions.push("success = 0");
+		}
+
+		const whereClause = conditions.join(" AND ");
 
 		try {
 			// Get totals
@@ -81,20 +121,20 @@ export function createAnalyticsHandler(context: APIContext) {
 					AVG(response_time_ms) as avg_response_time,
 					SUM(COALESCE(total_tokens, 0)) as total_tokens,
 					SUM(COALESCE(cost_usd, 0)) as total_cost_usd
-				FROM requests
-				WHERE timestamp > ?
+				FROM requests r
+				WHERE ${whereClause}
 			`);
-			const totals = totalsQuery.get(startMs) as TotalsResult;
+			const totals = totalsQuery.get(...queryParams) as TotalsResult;
 
 			// Get active accounts count (including no_account for unauthenticated requests)
 			const activeAccountsQuery = db.prepare(`
 				SELECT COUNT(DISTINCT COALESCE(account_used, ?)) as active_accounts
-				FROM requests
-				WHERE timestamp > ?
+				FROM requests r
+				WHERE ${whereClause}
 			`);
 			const activeAccounts = activeAccountsQuery.get(
 				NO_ACCOUNT_ID,
-				startMs,
+				...queryParams,
 			) as ActiveAccountsResult;
 
 			// Get time series data
@@ -109,15 +149,15 @@ export function createAnalyticsHandler(context: APIContext) {
 					SUM(COALESCE(cache_read_input_tokens, 0)) * 100.0 / 
 						NULLIF(SUM(COALESCE(input_tokens, 0) + COALESCE(cache_read_input_tokens, 0) + COALESCE(cache_creation_input_tokens, 0)), 0) as cache_hit_rate,
 					AVG(response_time_ms) as avg_response_time
-				FROM requests
-				WHERE timestamp > ?
+				FROM requests r
+				WHERE ${whereClause}
 				GROUP BY ts
 				ORDER BY ts
 			`);
 			const timeSeries = timeSeriesQuery.all(
 				bucket.bucketMs,
 				bucket.bucketMs,
-				startMs,
+				...queryParams,
 			) as Array<{
 				ts: number;
 				requests: number;
@@ -136,11 +176,11 @@ export function createAnalyticsHandler(context: APIContext) {
 					SUM(COALESCE(cache_read_input_tokens, 0)) as cache_read_input_tokens,
 					SUM(COALESCE(cache_creation_input_tokens, 0)) as cache_creation_input_tokens,
 					SUM(COALESCE(output_tokens, 0)) as output_tokens
-				FROM requests
-				WHERE timestamp > ?
+				FROM requests r
+				WHERE ${whereClause}
 			`);
 			const tokenBreakdown = tokenBreakdownQuery.get(
-				startMs,
+				...queryParams,
 			) as TokenBreakdownResult;
 
 			// Get model distribution
@@ -148,13 +188,13 @@ export function createAnalyticsHandler(context: APIContext) {
 				SELECT
 					model,
 					COUNT(*) as count
-				FROM requests
-				WHERE timestamp > ? AND model IS NOT NULL
+				FROM requests r
+				WHERE ${whereClause} AND model IS NOT NULL
 				GROUP BY model
 				ORDER BY count DESC
 				LIMIT 10
 			`);
-			const modelDistribution = modelDistQuery.all(startMs) as Array<{
+			const modelDistribution = modelDistQuery.all(...queryParams) as Array<{
 				model: string;
 				count: number;
 			}>;
@@ -167,14 +207,14 @@ export function createAnalyticsHandler(context: APIContext) {
 					SUM(CASE WHEN r.success = 1 THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(r.id), 0) as success_rate
 				FROM requests r
 				LEFT JOIN accounts a ON a.id = r.account_used
-				WHERE r.timestamp > ?
+				WHERE ${whereClause}
 				GROUP BY name
 				HAVING requests > 0
 				ORDER BY requests DESC
 			`);
 			const accountPerformance = accountPerfQuery.all(
 				NO_ACCOUNT_ID,
-				startMs,
+				...queryParams,
 			) as Array<{
 				name: string;
 				requests: number;
@@ -190,13 +230,13 @@ export function createAnalyticsHandler(context: APIContext) {
 					COUNT(*) as total_requests,
 					SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) as error_count,
 					SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0) as error_rate
-				FROM requests
-				WHERE timestamp > ? AND model IS NOT NULL
+				FROM requests r
+				WHERE ${whereClause} AND model IS NOT NULL
 				GROUP BY model
 				ORDER BY total_requests DESC
 				LIMIT 10
 			`);
-			const modelPerfData = modelPerfQuery.all(startMs) as Array<{
+			const modelPerfData = modelPerfQuery.all(...queryParams) as Array<{
 				model: string;
 				avg_response_time: number;
 				max_response_time: number;
@@ -211,11 +251,13 @@ export function createAnalyticsHandler(context: APIContext) {
 				const responseTimes = db
 					.prepare(`
 					SELECT response_time_ms
-					FROM requests
-					WHERE timestamp > ? AND model = ? AND response_time_ms IS NOT NULL
+					FROM requests r
+					WHERE ${whereClause} AND model = ? AND response_time_ms IS NOT NULL
 					ORDER BY response_time_ms
 				`)
-					.all(startMs, modelData.model) as Array<{ response_time_ms: number }>;
+					.all(...queryParams, modelData.model) as Array<{
+					response_time_ms: number;
+				}>;
 
 				const p95Index = Math.ceil(responseTimes.length * 0.95) - 1;
 				const p95ResponseTime =
@@ -238,13 +280,13 @@ export function createAnalyticsHandler(context: APIContext) {
 					model,
 					SUM(COALESCE(cost_usd, 0)) as cost_usd,
 					COUNT(*) as requests
-				FROM requests
-				WHERE timestamp > ? AND COALESCE(cost_usd, 0) > 0 AND model IS NOT NULL
+				FROM requests r
+				WHERE ${whereClause} AND COALESCE(cost_usd, 0) > 0 AND model IS NOT NULL
 				GROUP BY model
 				ORDER BY cost_usd DESC
 				LIMIT 10
 			`);
-			const costByModel = costByModelQuery.all(startMs) as Array<{
+			const costByModel = costByModelQuery.all(...queryParams) as Array<{
 				model: string;
 				cost_usd: number;
 				requests: number;

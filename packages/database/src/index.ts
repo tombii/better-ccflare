@@ -271,6 +271,24 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 			.all(limit);
 	}
 
+	listRequestPayloadsWithAccountNames(
+		limit = 50,
+	): Array<{ id: string; json: string; account_name: string | null }> {
+		return this.db
+			.query<
+				{ id: string; json: string; account_name: string | null },
+				[number]
+			>(`
+				SELECT rp.id, rp.json, a.name as account_name
+				FROM request_payloads rp
+				JOIN requests r ON rp.id = r.id
+				LEFT JOIN accounts a ON r.account_used = a.id
+				ORDER BY r.timestamp DESC
+				LIMIT ?
+			`)
+			.all(limit);
+	}
+
 	pauseAccount(accountId: string): void {
 		this.db.run(`UPDATE accounts SET paused = 1 WHERE id = ?`, [accountId]);
 	}
