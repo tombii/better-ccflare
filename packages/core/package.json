@@ -8,5 +8,8 @@
 	},
 	"scripts": {
 		"typecheck": "bunx tsc --noEmit"
+	},
+	"dependencies": {
+		"@claudeflare/logger": "workspace:*"
 	}
 }

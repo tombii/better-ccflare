@@ -5,7 +5,7 @@ import type {
 	LoadBalancingStrategy,
 	RequestMeta,
 } from "@claudeflare/core";
-import { NO_ACCOUNT_ID } from "@claudeflare/core";
+import { estimateCostUSD, NO_ACCOUNT_ID } from "@claudeflare/core";
 import type { DatabaseOperations } from "@claudeflare/database";
 import { Logger } from "@claudeflare/logger";
 import type { Provider, TokenRefreshResult } from "@claudeflare/providers";
@@ -154,6 +154,16 @@ export async function handleProxy(
 				| undefined;
 			if (ctx.provider.extractUsageInfo && response.ok) {
 				usage = await ctx.provider.extractUsageInfo(responseClone);
+			}
+
+			// Calculate cost if not provided by headers
+			if (usage?.model && usage.costUsd === undefined) {
+				usage.costUsd = await estimateCostUSD(usage.model, {
+					inputTokens: usage.inputTokens,
+					outputTokens: usage.outputTokens,
+					cacheReadInputTokens: usage.cacheReadInputTokens,
+					cacheCreationInputTokens: usage.cacheCreationInputTokens,
+				});
 			}
 
 			// Save request to database
@@ -336,11 +346,25 @@ export async function handleProxy(
 							completionTokens?: number;
 							totalTokens?: number;
 							costUsd?: number;
+							inputTokens?: number;
+							cacheReadInputTokens?: number;
+							cacheCreationInputTokens?: number;
+							outputTokens?: number;
 					  }
 					| null
 					| undefined;
 				if (ctx.provider.extractUsageInfo && response.ok) {
 					usage = await ctx.provider.extractUsageInfo(responseClone);
+				}
+
+				// Calculate cost if not provided by headers
+				if (usage?.model && usage.costUsd === undefined) {
+					usage.costUsd = await estimateCostUSD(usage.model, {
+						inputTokens: usage.inputTokens,
+						outputTokens: usage.outputTokens,
+						cacheReadInputTokens: usage.cacheReadInputTokens,
+						cacheCreationInputTokens: usage.cacheCreationInputTokens,
+					});
 				}
 
 				// Log successful request
