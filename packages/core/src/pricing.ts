@@ -1,9 +1,6 @@
 import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Logger } from "@claudeflare/logger";
-
-const log = new Logger("Pricing");
 
 export interface TokenBreakdown {
 	inputTokens?: number;
@@ -81,13 +78,22 @@ const BUNDLED_PRICING: ApiResponse = {
 	},
 };
 
+interface Logger {
+	warn(message: string, ...args: unknown[]): void;
+}
+
 class PriceCatalogue {
 	private static instance: PriceCatalogue;
 	private priceData: ApiResponse | null = null;
 	private lastFetch = 0;
 	private warnedModels = new Set<string>();
+	private logger: Logger | null = null;
 
 	private constructor() {}
+
+	setLogger(logger: Logger): void {
+		this.logger = logger;
+	}
 
 	static get(): PriceCatalogue {
 		if (!PriceCatalogue.instance) {
@@ -113,7 +119,7 @@ class PriceCatalogue {
 		try {
 			await fs.mkdir(this.getCacheDir(), { recursive: true });
 		} catch (error) {
-			log.warn("Failed to create cache directory: %s", error);
+			this.logger?.warn("Failed to create cache directory: %s", error);
 		}
 	}
 
@@ -139,7 +145,7 @@ class PriceCatalogue {
 			const cachePath = this.getCachePath();
 			await fs.writeFile(cachePath, JSON.stringify(data, null, 2));
 		} catch (error) {
-			log.warn("Failed to save pricing cache: %s", error);
+			this.logger?.warn("Failed to save pricing cache: %s", error);
 		}
 	}
 
@@ -157,7 +163,7 @@ class PriceCatalogue {
 			await this.saveToCache(data);
 			return data;
 		} catch (error) {
-			log.warn("Failed to fetch pricing data: %s", error);
+			this.logger?.warn("Failed to fetch pricing data: %s", error);
 			return null;
 		}
 	}
@@ -192,9 +198,19 @@ class PriceCatalogue {
 	warnOnce(modelId: string): void {
 		if (!this.warnedModels.has(modelId)) {
 			this.warnedModels.add(modelId);
-			log.warn("Price for model %s not found - cost set to 0", modelId);
+			this.logger?.warn(
+				"Price for model %s not found - cost set to 0",
+				modelId,
+			);
 		}
 	}
+}
+
+/**
+ * Set the logger for pricing warnings
+ */
+export function setPricingLogger(logger: Logger): void {
+	PriceCatalogue.get().setLogger(logger);
 }
 
 /**

@@ -1,6 +1,7 @@
 import { Config } from "@claudeflare/config";
 import type { LoadBalancingStrategy } from "@claudeflare/core";
-import { DEFAULT_STRATEGY, StrategyName } from "@claudeflare/core";
+import { DEFAULT_STRATEGY } from "@claudeflare/core";
+import { StrategyName } from "@claudeflare/types";
 // Import React dashboard assets
 import dashboardManifest from "@claudeflare/dashboard-web/dist/manifest.json";
 import { DatabaseOperations } from "@claudeflare/database";

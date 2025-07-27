@@ -1,7 +1,7 @@
 import { createWriteStream, existsSync, mkdirSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { LogEvent } from "@claudeflare/core";
+import type { LogEvent } from "@claudeflare/types";
 
 export class LogFileWriter {
 	private logDir: string;

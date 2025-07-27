@@ -12,6 +12,7 @@
 	"dependencies": {
 		"@claudeflare/core": "workspace:*",
 		"@claudeflare/database": "workspace:*",
-		"@claudeflare/config": "workspace:*"
+		"@claudeflare/config": "workspace:*",
+		"@claudeflare/types": "workspace:*"
 	}
 }

@@ -1,3 +1,4 @@
+import type { RequestMeta } from "@claudeflare/types";
 import type { StrategyStore } from "./strategy-store";
 
 // Database row types that match the actual database schema
@@ -66,13 +67,6 @@ export interface Account {
 	rate_limit_reset: number | null;
 	rate_limit_status: string | null;
 	rate_limit_remaining: number | null;
-}
-
-export interface RequestMeta {
-	id: string;
-	method: string;
-	path: string;
-	timestamp: number;
 }
 
 export interface Request {
@@ -161,12 +155,8 @@ export function toRequest(row: RequestRow): Request {
 	};
 }
 
-// Log event type for streaming logs
-export interface LogEvent {
-	ts: number;
-	level: "DEBUG" | "INFO" | "WARN" | "ERROR";
-	msg: string;
-}
-
 // Special account ID for requests without an account
 export const NO_ACCOUNT_ID = "no_account";
+
+// Re-export from types package for backwards compatibility
+export type { LogEvent, RequestMeta } from "@claudeflare/types";
