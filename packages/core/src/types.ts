@@ -158,3 +158,6 @@ export interface LogEvent {
 	level: "DEBUG" | "INFO" | "WARN" | "ERROR";
 	msg: string;
 }
+
+// Special account ID for requests without an account
+export const NO_ACCOUNT_ID = "no_account";
