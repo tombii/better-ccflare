@@ -1,9 +1,9 @@
 node_modules/
 .env
 .env.local
-claude-accounts.db
-claude-accounts.db-wal
-claude-accounts.db-shm
+claudeflare.db
+claudeflare.db-wal
+claudeflare.db-shm
 dist/
 .DS_Store
 *.log
