@@ -89,7 +89,7 @@ export function AccountsScreen({ onBack }: AccountsScreenProps) {
 		if (confirmInput !== accountToRemove) {
 			return;
 		}
-		
+
 		try {
 			await tuiCore.removeAccount(accountToRemove);
 			await loadAccounts();
@@ -165,13 +165,11 @@ export function AccountsScreen({ onBack }: AccountsScreenProps) {
 		return (
 			<Box flexDirection="column" padding={1}>
 				<Text color="red" bold>
-					⚠️  Confirm Account Removal
+					⚠️ Confirm Account Removal
 				</Text>
-				
+
 				<Box marginTop={1} marginBottom={1}>
-					<Text>
-						You are about to remove account '{accountToRemove}'.
-					</Text>
+					<Text>You are about to remove account '{accountToRemove}'.</Text>
 					<Text>This action cannot be undone.</Text>
 				</Box>
 

@@ -100,6 +100,13 @@ export interface TokenBreakdown {
 	outputTokens: number;
 }
 
+export interface ModelPerformance {
+	model: string;
+	avgResponseTime: number;
+	p95ResponseTime: number;
+	errorRate: number;
+}
+
 export interface AnalyticsResponse {
 	totals: {
 		requests: number;
@@ -117,5 +124,6 @@ export interface AnalyticsResponse {
 		requests: number;
 		successRate: number;
 	}>;
-	costByEndpoint: Array<{ path: string; costUsd: number; requests: number }>;
+	costByModel: Array<{ model: string; costUsd: number; requests: number }>;
+	modelPerformance: ModelPerformance[];
 }

@@ -3,9 +3,9 @@ import type { DatabaseOperations } from "@claudeflare/database";
 import { generatePKCE, getOAuthProvider } from "@claudeflare/providers";
 import {
 	promptAccountMode,
+	promptAccountRemovalConfirmation,
 	promptAccountTier,
 	promptAuthorizationCode,
-	promptAccountRemovalConfirmation,
 } from "../prompts/index";
 import { openBrowser } from "../utils/browser";
 
@@ -193,14 +193,14 @@ export async function removeAccountWithConfirmation(
 	// Check if account exists first
 	const accounts = dbOps.getAllAccounts();
 	const exists = accounts.some((a) => a.name === name);
-	
+
 	if (!exists) {
 		return {
 			success: false,
 			message: `Account '${name}' not found`,
 		};
 	}
-	
+
 	// Skip confirmation if force flag is set
 	if (!force) {
 		const confirmed = await promptAccountRemovalConfirmation(name);
@@ -211,7 +211,7 @@ export async function removeAccountWithConfirmation(
 			};
 		}
 	}
-	
+
 	return removeAccount(dbOps, name);
 }
 

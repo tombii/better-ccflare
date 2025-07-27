@@ -1,3 +1,4 @@
+import { NO_ACCOUNT_ID } from "@claudeflare/core";
 import type { AnalyticsResponse, APIContext } from "../types";
 
 interface BucketConfig {
@@ -85,13 +86,14 @@ export function createAnalyticsHandler(context: APIContext) {
 			`);
 			const totals = totalsQuery.get(startMs) as TotalsResult;
 
-			// Get active accounts count
+			// Get active accounts count (including no_account for unauthenticated requests)
 			const activeAccountsQuery = db.prepare(`
-				SELECT COUNT(DISTINCT account_used) as active_accounts
+				SELECT COUNT(DISTINCT COALESCE(account_used, ?)) as active_accounts
 				FROM requests
-				WHERE timestamp > ? AND account_used IS NOT NULL
+				WHERE timestamp > ?
 			`);
 			const activeAccounts = activeAccountsQuery.get(
+				NO_ACCOUNT_ID,
 				startMs,
 			) as ActiveAccountsResult;
 
@@ -157,38 +159,93 @@ export function createAnalyticsHandler(context: APIContext) {
 				count: number;
 			}>;
 
-			// Get account performance
+			// Get account performance (including unauthenticated requests)
 			const accountPerfQuery = db.prepare(`
 				SELECT
-					a.name,
+					COALESCE(a.name, ?) as name,
 					COUNT(r.id) as requests,
 					SUM(CASE WHEN r.success = 1 THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(r.id), 0) as success_rate
-				FROM accounts a
-				LEFT JOIN requests r ON a.id = r.account_used AND r.timestamp > ?
-				GROUP BY a.name
+				FROM requests r
+				LEFT JOIN accounts a ON a.id = r.account_used
+				WHERE r.timestamp > ?
+				GROUP BY name
 				HAVING requests > 0
 				ORDER BY requests DESC
 			`);
-			const accountPerformance = accountPerfQuery.all(startMs) as Array<{
+			const accountPerformance = accountPerfQuery.all(
+				NO_ACCOUNT_ID,
+				startMs,
+			) as Array<{
 				name: string;
 				requests: number;
 				success_rate: number;
 			}>;
 
-			// Get cost by endpoint
-			const costByEndpointQuery = db.prepare(`
+			// Get model performance metrics
+			const modelPerfQuery = db.prepare(`
 				SELECT
-					path,
+					model,
+					AVG(response_time_ms) as avg_response_time,
+					MAX(response_time_ms) as max_response_time,
+					COUNT(*) as total_requests,
+					SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) as error_count,
+					SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0) as error_rate
+				FROM requests
+				WHERE timestamp > ? AND model IS NOT NULL
+				GROUP BY model
+				ORDER BY total_requests DESC
+				LIMIT 10
+			`);
+			const modelPerfData = modelPerfQuery.all(startMs) as Array<{
+				model: string;
+				avg_response_time: number;
+				max_response_time: number;
+				total_requests: number;
+				error_count: number;
+				error_rate: number;
+			}>;
+
+			// Calculate p95 for each model
+			const modelPerformance = modelPerfData.map((modelData) => {
+				// For p95, we'll fetch response times and calculate
+				const responseTimes = db
+					.prepare(`
+					SELECT response_time_ms
+					FROM requests
+					WHERE timestamp > ? AND model = ? AND response_time_ms IS NOT NULL
+					ORDER BY response_time_ms
+				`)
+					.all(startMs, modelData.model) as Array<{ response_time_ms: number }>;
+
+				const p95Index = Math.ceil(responseTimes.length * 0.95) - 1;
+				const p95ResponseTime =
+					responseTimes.length > 0
+						? responseTimes[Math.min(p95Index, responseTimes.length - 1)]
+								.response_time_ms
+						: modelData.avg_response_time;
+
+				return {
+					model: modelData.model,
+					avgResponseTime: modelData.avg_response_time || 0,
+					p95ResponseTime: p95ResponseTime || 0,
+					errorRate: modelData.error_rate || 0,
+				};
+			});
+
+			// Get cost by model
+			const costByModelQuery = db.prepare(`
+				SELECT
+					model,
 					SUM(cost_usd) as cost_usd,
 					COUNT(*) as requests
 				FROM requests
-				WHERE timestamp > ? AND cost_usd > 0
-				GROUP BY path
+				WHERE timestamp > ? AND cost_usd > 0 AND model IS NOT NULL
+				GROUP BY model
 				ORDER BY cost_usd DESC
 				LIMIT 10
 			`);
-			const costByEndpoint = costByEndpointQuery.all(startMs) as Array<{
-				path: string;
+			const costByModel = costByModelQuery.all(startMs) as Array<{
+				model: string;
 				cost_usd: number;
 				requests: number;
 			}>;
@@ -225,11 +282,12 @@ export function createAnalyticsHandler(context: APIContext) {
 					requests: acc.requests,
 					successRate: acc.success_rate || 0,
 				})),
-				costByEndpoint: costByEndpoint.map((endpoint) => ({
-					path: endpoint.path,
-					costUsd: endpoint.cost_usd || 0,
-					requests: endpoint.requests || 0,
+				costByModel: costByModel.map((model) => ({
+					model: model.model,
+					costUsd: model.cost_usd || 0,
+					requests: model.requests || 0,
 				})),
+				modelPerformance,
 			};
 
 			return new Response(JSON.stringify(response), {

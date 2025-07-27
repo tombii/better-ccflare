@@ -115,25 +115,21 @@ export function AnalyticsTab() {
 			})
 		: [];
 
-	// Transform model performance data
+	// Use real model performance data from backend
 	const modelPerformance =
-		analytics?.modelDistribution.slice(0, 3).map((model) => {
-			// Calculate approximate metrics based on available data
-			const avgTime = Math.random() * 500 + 200; // This would ideally come from backend
-			return {
-				model: model.model,
-				avgTime: Math.round(avgTime),
-				p95Time: Math.round(avgTime * 1.5),
-				errorRate: (Math.random() * 2).toFixed(1),
-			};
-		}) || [];
+		analytics?.modelPerformance?.map((perf) => ({
+			model: perf.model,
+			avgTime: Math.round(perf.avgResponseTime),
+			p95Time: Math.round(perf.p95ResponseTime),
+			errorRate: perf.errorRate.toFixed(1),
+		})) || [];
 
-	// Use real cost by endpoint data
-	const costByEndpoint =
-		analytics?.costByEndpoint.slice(0, 4).map((endpoint) => ({
-			endpoint: endpoint.path,
-			cost: endpoint.costUsd,
-			requests: endpoint.requests,
+	// Use real cost by model data
+	const costByModel =
+		analytics?.costByModel?.slice(0, 4).map((model) => ({
+			model: model.model,
+			cost: model.costUsd,
+			requests: model.requests,
 		})) || [];
 
 	return (
@@ -440,21 +436,21 @@ export function AnalyticsTab() {
 					</CardContent>
 				</Card>
 
-				{/* Cost by Endpoint */}
+				{/* Cost by Model */}
 				<Card>
 					<CardHeader>
-						<CardTitle>Cost Analysis by Endpoint</CardTitle>
+						<CardTitle>Cost Analysis by Model</CardTitle>
 						<CardDescription>
-							Top endpoints by cost in the last {timeRange}
+							Top models by cost in the last {timeRange}
 						</CardDescription>
 					</CardHeader>
 					<CardContent>
 						<ResponsiveContainer width="100%" height={300}>
-							<BarChart data={costByEndpoint} layout="horizontal">
+							<BarChart data={costByModel} layout="horizontal">
 								<CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
 								<XAxis type="number" className="text-xs" />
 								<YAxis
-									dataKey="endpoint"
+									dataKey="model"
 									type="category"
 									className="text-xs"
 									width={120}
