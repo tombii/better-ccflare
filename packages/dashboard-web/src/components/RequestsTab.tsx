@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight, RefreshCw } from "lucide-react";
+import { ChevronDown, ChevronRight, RefreshCw, Copy } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { api, type RequestPayload } from "../api";
 import { Button } from "./ui/button";
@@ -55,6 +55,32 @@ export function RequestsTab() {
 		} catch {
 			return "Failed to decode";
 		}
+	};
+
+	/**
+	 * Copy the given request to the clipboard as pretty-printed JSON, with
+	 * any base64-encoded bodies already decoded for easier debugging.
+	 */
+	const copyRequest = (req: RequestPayload) => {
+		const decoded: RequestPayload & { decoded?: true } = {
+			...req,
+			request: {
+				...req.request,
+				body: req.request.body ? decodeBase64(req.request.body) : null,
+			},
+			response: req.response
+				? {
+					...req.response,
+					body: req.response.body ? decodeBase64(req.response.body) : null,
+				}
+				: null,
+			// flag so it's obvious this is a transformed payload
+			decoded: true,
+		};
+
+		navigator.clipboard
+			.writeText(JSON.stringify(decoded, null, 2))
+			.catch((err) => console.error("Failed to copy request", err));
 	};
 
 	const formatHeaders = (headers: Record<string, string>): string => {
@@ -175,6 +201,18 @@ export function RequestsTab() {
 											ID: {request.id.slice(0, 8)}...
 										</div>
 									</button>
+
+									{/* Copy button */}
+									<div className="flex justify-end mt-2">
+										<Button
+											variant="ghost"
+											size="icon"
+											onClick={() => copyRequest(request)}
+											title="Copy as JSON"
+										>
+											<Copy className="h-4 w-4" />
+										</Button>
+									</div>
 
 									{isExpanded && (
 										<div className="mt-3 space-y-3 text-sm">
