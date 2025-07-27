@@ -96,8 +96,8 @@ async function saveUsageToDb(
 	}
 
 	// Update the existing request record with usage information
-	// Note: This requires dbOps to have a method to update just usage info
-	// For now, we'll log it since the request is already saved
+	ctx.dbOps.updateRequestUsage(requestId, usage);
+
 	if (accountId && accountId !== NO_ACCOUNT_ID) {
 		log.info(
 			`Usage for request ${requestId}: Model: ${usage.model}, Tokens: ${usage.totalTokens || 0}, Cost: $${usage.costUsd?.toFixed(4) || "0"}`,

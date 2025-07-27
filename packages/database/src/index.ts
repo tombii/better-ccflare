@@ -279,6 +279,50 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		this.db.run(`UPDATE accounts SET paused = 0 WHERE id = ?`, [accountId]);
 	}
 
+	updateRequestUsage(
+		requestId: string,
+		usage: {
+			model?: string;
+			promptTokens?: number;
+			completionTokens?: number;
+			totalTokens?: number;
+			costUsd?: number;
+			inputTokens?: number;
+			cacheReadInputTokens?: number;
+			cacheCreationInputTokens?: number;
+			outputTokens?: number;
+		},
+	): void {
+		this.db.run(
+			`
+			UPDATE requests
+			SET 
+				model = COALESCE(?, model),
+				prompt_tokens = COALESCE(?, prompt_tokens),
+				completion_tokens = COALESCE(?, completion_tokens),
+				total_tokens = COALESCE(?, total_tokens),
+				cost_usd = COALESCE(?, cost_usd),
+				input_tokens = COALESCE(?, input_tokens),
+				cache_read_input_tokens = COALESCE(?, cache_read_input_tokens),
+				cache_creation_input_tokens = COALESCE(?, cache_creation_input_tokens),
+				output_tokens = COALESCE(?, output_tokens)
+			WHERE id = ?
+			`,
+			[
+				usage.model || null,
+				usage.promptTokens || null,
+				usage.completionTokens || null,
+				usage.totalTokens || null,
+				usage.costUsd || null,
+				usage.inputTokens || null,
+				usage.cacheReadInputTokens || null,
+				usage.cacheCreationInputTokens || null,
+				usage.outputTokens || null,
+				requestId,
+			],
+		);
+	}
+
 	close(): void {
 		this.db.close();
 	}
