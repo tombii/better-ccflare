@@ -1,6 +1,8 @@
 import {
 	createAccountAddHandler,
+	createAccountPauseHandler,
 	createAccountRemoveHandler,
+	createAccountResumeHandler,
 	createAccountsListHandler,
 	createAccountTierUpdateHandler,
 } from "./handlers/accounts";
@@ -104,6 +106,18 @@ export class APIRouter {
 			if (path.endsWith("/tier") && method === "POST") {
 				const tierHandler = createAccountTierUpdateHandler(this.context.dbOps);
 				return await tierHandler(req, accountId);
+			}
+
+			// Account pause
+			if (path.endsWith("/pause") && method === "POST") {
+				const pauseHandler = createAccountPauseHandler(this.context.dbOps);
+				return await pauseHandler(req, accountId);
+			}
+
+			// Account resume
+			if (path.endsWith("/resume") && method === "POST") {
+				const resumeHandler = createAccountResumeHandler(this.context.dbOps);
+				return await resumeHandler(req, accountId);
 			}
 
 			// Account removal

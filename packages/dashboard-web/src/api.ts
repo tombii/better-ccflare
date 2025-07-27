@@ -9,6 +9,7 @@ export interface Account {
 	lastUsed: string | null;
 	created: string;
 	tier: number;
+	paused: boolean;
 	tokenStatus: string;
 	rateLimitStatus: string;
 	sessionInfo: string | null;
@@ -186,6 +187,29 @@ class API {
 		const res = await fetch(`${this.baseUrl}/api/analytics?range=${range}`);
 		if (!res.ok) throw new Error("Failed to fetch analytics data");
 		return res.json() as Promise<AnalyticsResponse>;
+	}
+
+	async pauseAccount(accountId: string): Promise<void> {
+		const res = await fetch(`${this.baseUrl}/api/accounts/${accountId}/pause`, {
+			method: "POST",
+		});
+		if (!res.ok) {
+			const error = (await res.json()) as { error?: string };
+			throw new Error(error.error || "Failed to pause account");
+		}
+	}
+
+	async resumeAccount(accountId: string): Promise<void> {
+		const res = await fetch(
+			`${this.baseUrl}/api/accounts/${accountId}/resume`,
+			{
+				method: "POST",
+			},
+		);
+		if (!res.ok) {
+			const error = (await res.json()) as { error?: string };
+			throw new Error(error.error || "Failed to resume account");
+		}
 	}
 }
 

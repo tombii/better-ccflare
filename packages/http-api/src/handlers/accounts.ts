@@ -28,6 +28,7 @@ export function createAccountsListHandler(db: Database) {
 					session_start,
 					session_request_count,
 					COALESCE(account_tier, 1) as account_tier,
+					COALESCE(paused, 0) as paused,
 					CASE 
 						WHEN expires_at > ?1 THEN 1 
 						ELSE 0 
@@ -57,6 +58,7 @@ export function createAccountsListHandler(db: Database) {
 			session_start: number | null;
 			session_request_count: number;
 			account_tier: number;
+			paused: 0 | 1;
 			token_valid: 0 | 1;
 			rate_limited: 0 | 1;
 			session_info: string | null;
@@ -86,6 +88,7 @@ export function createAccountsListHandler(db: Database) {
 					: null,
 				created: new Date(account.created_at).toISOString(),
 				tier: account.account_tier,
+				paused: account.paused === 1,
 				tokenStatus: account.token_valid ? "valid" : "expired",
 				rateLimitStatus,
 				sessionInfo: account.session_info || "",
@@ -360,6 +363,114 @@ export function createAccountRemoveHandler(dbOps: DatabaseOperations) {
 				JSON.stringify({
 					error:
 						error instanceof Error ? error.message : "Failed to remove account",
+				}),
+				{
+					status: 500,
+					headers: { "Content-Type": "application/json" },
+				},
+			);
+		}
+	};
+}
+
+/**
+ * Create an account pause handler
+ */
+export function createAccountPauseHandler(dbOps: DatabaseOperations) {
+	return async (_req: Request, accountId: string): Promise<Response> => {
+		try {
+			// Get account name by ID
+			const db = dbOps.getDatabase();
+			const account = db
+				.query<{ name: string }, [string]>(
+					"SELECT name FROM accounts WHERE id = ?",
+				)
+				.get(accountId);
+
+			if (!account) {
+				return new Response(JSON.stringify({ error: "Account not found" }), {
+					status: 404,
+					headers: { "Content-Type": "application/json" },
+				});
+			}
+
+			const result = cliCommands.pauseAccount(dbOps, account.name);
+
+			if (!result.success) {
+				return new Response(JSON.stringify({ error: result.message }), {
+					status: 400,
+					headers: { "Content-Type": "application/json" },
+				});
+			}
+
+			return new Response(
+				JSON.stringify({
+					success: true,
+					message: result.message,
+				}),
+				{
+					headers: { "Content-Type": "application/json" },
+				},
+			);
+		} catch (error) {
+			return new Response(
+				JSON.stringify({
+					error:
+						error instanceof Error ? error.message : "Failed to pause account",
+				}),
+				{
+					status: 500,
+					headers: { "Content-Type": "application/json" },
+				},
+			);
+		}
+	};
+}
+
+/**
+ * Create an account resume handler
+ */
+export function createAccountResumeHandler(dbOps: DatabaseOperations) {
+	return async (_req: Request, accountId: string): Promise<Response> => {
+		try {
+			// Get account name by ID
+			const db = dbOps.getDatabase();
+			const account = db
+				.query<{ name: string }, [string]>(
+					"SELECT name FROM accounts WHERE id = ?",
+				)
+				.get(accountId);
+
+			if (!account) {
+				return new Response(JSON.stringify({ error: "Account not found" }), {
+					status: 404,
+					headers: { "Content-Type": "application/json" },
+				});
+			}
+
+			const result = cliCommands.resumeAccount(dbOps, account.name);
+
+			if (!result.success) {
+				return new Response(JSON.stringify({ error: result.message }), {
+					status: 400,
+					headers: { "Content-Type": "application/json" },
+				});
+			}
+
+			return new Response(
+				JSON.stringify({
+					success: true,
+					message: result.message,
+				}),
+				{
+					headers: { "Content-Type": "application/json" },
+				},
+			);
+		} catch (error) {
+			return new Response(
+				JSON.stringify({
+					error:
+						error instanceof Error ? error.message : "Failed to resume account",
 				}),
 				{
 					status: 500,

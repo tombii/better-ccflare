@@ -56,7 +56,8 @@ export class DatabaseOperations implements StrategyStore {
         rate_limited_until,
         session_start,
         session_request_count,
-        COALESCE(account_tier, 1) as account_tier
+        COALESCE(account_tier, 1) as account_tier,
+        COALESCE(paused, 0) as paused
       FROM accounts
     `)
 			.all();
@@ -197,7 +198,8 @@ export class DatabaseOperations implements StrategyStore {
 					rate_limited_until,
 					session_start,
 					session_request_count,
-					COALESCE(account_tier, 1) as account_tier
+					COALESCE(account_tier, 1) as account_tier,
+					COALESCE(paused, 0) as paused
 				FROM accounts
 				WHERE id = ?
 			`)
@@ -248,6 +250,14 @@ export class DatabaseOperations implements StrategyStore {
 				LIMIT ?
 			`)
 			.all(limit);
+	}
+
+	pauseAccount(accountId: string): void {
+		this.db.run(`UPDATE accounts SET paused = 1 WHERE id = ?`, [accountId]);
+	}
+
+	resumeAccount(accountId: string): void {
+		this.db.run(`UPDATE accounts SET paused = 0 WHERE id = ?`, [accountId]);
 	}
 
 	close(): void {

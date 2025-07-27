@@ -17,6 +17,12 @@ Commands:
   remove <name>
     Remove an account
 
+  pause <name>
+    Pause an account to exclude it from load balancing
+
+  resume <name>
+    Resume a paused account to include it in load balancing
+
   reset-stats
     Reset request counts for all accounts
 
@@ -30,5 +36,7 @@ Examples:
   claudeflare-cli add myaccount --mode max --tier 5
   claudeflare-cli list
   claudeflare-cli remove myaccount
+  claudeflare-cli pause myaccount
+  claudeflare-cli resume myaccount
 `;
 }

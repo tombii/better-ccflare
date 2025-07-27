@@ -34,6 +34,7 @@ export interface AccountResponse {
 	lastUsed: string | null;
 	created: string;
 	tier: number;
+	paused: boolean;
 	tokenStatus: "valid" | "expired";
 	rateLimitStatus: string;
 	sessionInfo: string;

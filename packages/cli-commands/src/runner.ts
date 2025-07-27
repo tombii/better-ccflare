@@ -1,7 +1,13 @@
 import { parseArgs } from "node:util";
 import { Config } from "@claudeflare/config";
 import { DatabaseOperations } from "@claudeflare/database";
-import { addAccount, getAccountsList, removeAccount } from "./commands/account";
+import {
+	addAccount,
+	getAccountsList,
+	pauseAccount,
+	removeAccount,
+	resumeAccount,
+} from "./commands/account";
 import { getHelpText } from "./commands/help";
 import { clearRequestHistory, resetAllStats } from "./commands/stats";
 
@@ -117,6 +123,39 @@ export async function runCli(argv: string[]): Promise<void> {
 				console.log(`Cleared ${result.count} request records`);
 				break;
 			}
+
+			case "pause": {
+				const name = positionals[1];
+				if (!name) {
+					console.error("Error: Account name is required");
+					console.log("Usage: claudeflare-cli pause <name>");
+					process.exit(1);
+				}
+
+				const result = pauseAccount(dbOps, name);
+				console.log(result.message);
+				if (!result.success) {
+					process.exit(1);
+				}
+				break;
+			}
+
+			case "resume": {
+				const name = positionals[1];
+				if (!name) {
+					console.error("Error: Account name is required");
+					console.log("Usage: claudeflare-cli resume <name>");
+					process.exit(1);
+				}
+
+				const result = resumeAccount(dbOps, name);
+				console.log(result.message);
+				if (!result.success) {
+					process.exit(1);
+				}
+				break;
+			}
+
 			default: {
 				console.log(getHelpText());
 				if (command && command !== "help") {
