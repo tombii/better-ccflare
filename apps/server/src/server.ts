@@ -2,7 +2,8 @@ import { serve } from "bun";
 import { DatabaseOperations } from "@claudeflare/database";
 import { Config } from "@claudeflare/config";
 import { Logger } from "@claudeflare/logger";
-import { getDashboardHTML } from "@claudeflare/dashboard";
+// Import React dashboard assets
+import dashboardManifest from "@claudeflare/dashboard-web/dist/manifest.json";
 import {
 	RoundRobinStrategy,
 	LeastRequestsStrategy,
@@ -91,11 +92,31 @@ const server = serve({
 			return apiResponse;
 		}
 
-		// Dashboard
+		// Dashboard routes
 		if (url.pathname === "/" || url.pathname === "/dashboard") {
-			return new Response(getDashboardHTML(), {
+			// Read the HTML file directly
+			const dashboardPath = import.meta.resolveSync("@claudeflare/dashboard-web/dist/index.html");
+			const file = Bun.file(dashboardPath);
+			return new Response(file, {
 				headers: { "Content-Type": "text/html" },
 			});
+		}
+
+		// Serve dashboard static assets
+		if ((dashboardManifest as Record<string, string>)[url.pathname]) {
+			try {
+				const assetPath = import.meta.resolveSync(`@claudeflare/dashboard-web/dist${url.pathname}`);
+				const file = Bun.file(assetPath);
+				const mimeType = file.type || "application/octet-stream";
+				return new Response(file, {
+					headers: {
+						"Content-Type": mimeType,
+						"Cache-Control": "public, max-age=31536000",
+					},
+				});
+			} catch {
+				// Asset not found
+			}
 		}
 
 		// Only proxy requests to Anthropic API
@@ -123,3 +144,18 @@ process.on("SIGINT", () => {
 	dbOps.close();
 	process.exit(0);
 });
+
+// Export for programmatic use
+export default function startServer(options?: {
+	port?: number;
+	withDashboard?: boolean;
+}) {
+	// This is a placeholder for when the server needs to be started programmatically
+	return {
+		port: server.port,
+		stop: () => {
+			// Server stop logic
+			server.stop();
+		},
+	};
+}

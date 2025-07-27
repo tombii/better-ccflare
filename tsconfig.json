@@ -13,6 +13,7 @@
 		"forceConsistentCasingInFileNames": true,
 		"allowJs": true,
 		"types": ["bun-types"],
+		"jsx": "react-jsx",
 		"baseUrl": ".",
 		"paths": {
 			"@claudeflare/*": ["packages/*/src"]

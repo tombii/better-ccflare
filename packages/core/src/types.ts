@@ -108,3 +108,10 @@ export function toRequest(row: RequestRow) {
 		failoverAttempts: row.failover_attempts,
 	};
 }
+
+// Log event type for streaming logs
+export interface LogEvent {
+	ts: number;
+	level: "DEBUG" | "INFO" | "WARN" | "ERROR";
+	msg: string;
+}

@@ -1,0 +1,40 @@
+{
+	"name": "claudeflare",
+	"version": "1.0.0",
+	"description": "TUI for Claudeflare load balancer",
+	"bin": {
+		"claudeflare": "./dist/claudeflare"
+	},
+	"type": "module",
+	"scripts": {
+		"dev": "bun run src/main.ts",
+		"build": "bun build src/main.ts --compile --outfile dist/claudeflare --target=bun",
+		"prepublishOnly": "bun run build",
+		"postpublish": "chmod +x dist/claudeflare"
+	},
+	"dependencies": {
+		"@claudeflare/tui-core": "workspace:*",
+		"ink": "^6.0.0",
+		"ink-select-input": "^6.0.0",
+		"ink-spinner": "^5.0.0",
+		"ink-text-input": "^6.0.0",
+		"react": "^19.0.0"
+	},
+	"devDependencies": {
+		"@types/react": "^19.0.0",
+		"@types/node": "^20.0.0",
+		"react-devtools-core": "^5.0.0"
+	},
+	"files": [
+		"dist"
+	],
+	"keywords": [
+		"claudeflare",
+		"load-balancer",
+		"tui",
+		"cli"
+	],
+	"publishConfig": {
+		"access": "public"
+	}
+}

@@ -1,3 +1,6 @@
+import { EventEmitter } from "node:events";
+import type { LogEvent } from "@claudeflare/core";
+
 export enum LogLevel {
 	DEBUG = 0,
 	INFO = 1,
@@ -6,6 +9,9 @@ export enum LogLevel {
 }
 
 export type LogFormat = "pretty" | "json";
+
+// Event emitter for log streaming
+export const logBus = new EventEmitter();
 
 export class Logger {
 	private level: LogLevel;
@@ -49,28 +55,52 @@ export class Logger {
 	// biome-ignore lint/suspicious/noExplicitAny: Logger needs to accept any data type
 	debug(message: string, data?: any): void {
 		if (this.level <= LogLevel.DEBUG) {
-			console.log(this.formatMessage("DEBUG", message, data));
+			const msg = this.formatMessage("DEBUG", message, data);
+			logBus.emit("log", {
+				ts: Date.now(),
+				level: "DEBUG",
+				msg: message,
+			} as LogEvent);
+			console.log(msg);
 		}
 	}
 
 	// biome-ignore lint/suspicious/noExplicitAny: Logger needs to accept any data type
 	info(message: string, data?: any): void {
 		if (this.level <= LogLevel.INFO) {
-			console.log(this.formatMessage("INFO", message, data));
+			const msg = this.formatMessage("INFO", message, data);
+			logBus.emit("log", {
+				ts: Date.now(),
+				level: "INFO",
+				msg: message,
+			} as LogEvent);
+			console.log(msg);
 		}
 	}
 
 	// biome-ignore lint/suspicious/noExplicitAny: Logger needs to accept any data type
 	warn(message: string, data?: any): void {
 		if (this.level <= LogLevel.WARN) {
-			console.warn(this.formatMessage("WARN", message, data));
+			const msg = this.formatMessage("WARN", message, data);
+			logBus.emit("log", {
+				ts: Date.now(),
+				level: "WARN",
+				msg: message,
+			} as LogEvent);
+			console.warn(msg);
 		}
 	}
 
 	// biome-ignore lint/suspicious/noExplicitAny: Logger needs to accept any error type
 	error(message: string, error?: any): void {
 		if (this.level <= LogLevel.ERROR) {
-			console.error(this.formatMessage("ERROR", message), error);
+			const msg = this.formatMessage("ERROR", message);
+			logBus.emit("log", {
+				ts: Date.now(),
+				level: "ERROR",
+				msg: message,
+			} as LogEvent);
+			console.error(msg, error);
 		}
 	}
 
