@@ -13,6 +13,7 @@ export interface RuntimeConfig {
 	retry: { attempts: number; delayMs: number; backoff: number };
 	sessionDurationMs: number;
 	port: number;
+	streamBodyMaxBytes: number;
 }
 
 export interface ConfigData {
@@ -23,6 +24,7 @@ export interface ConfigData {
 	retry_backoff?: number;
 	session_duration_ms?: number;
 	port?: number;
+	stream_body_max_bytes?: number;
 	[key: string]: string | number | boolean | undefined;
 }
 
@@ -134,6 +136,7 @@ export class Config extends EventEmitter {
 			},
 			sessionDurationMs: 5 * 60 * 60 * 1000, // 5 hours
 			port: 8080,
+			streamBodyMaxBytes: 1024 * 1024, // 1MB default
 		};
 
 		// Override with environment variables if present
@@ -155,6 +158,11 @@ export class Config extends EventEmitter {
 		if (process.env.PORT) {
 			defaults.port = parseInt(process.env.PORT);
 		}
+		if (process.env.CF_STREAM_BODY_MAX_BYTES) {
+			defaults.streamBodyMaxBytes = parseInt(
+				process.env.CF_STREAM_BODY_MAX_BYTES,
+			);
+		}
 
 		// Override with config file settings if present
 		if (this.data.client_id) {
@@ -174,6 +182,9 @@ export class Config extends EventEmitter {
 		}
 		if (typeof this.data.port === "number") {
 			defaults.port = this.data.port;
+		}
+		if (typeof this.data.stream_body_max_bytes === "number") {
+			defaults.streamBodyMaxBytes = this.data.stream_body_max_bytes;
 		}
 
 		return defaults;

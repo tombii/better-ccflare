@@ -237,10 +237,10 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 	// Request payload methods
 	saveRequestPayload(id: string, data: unknown): void {
 		const json = JSON.stringify(data);
-		this.db.run(`INSERT INTO request_payloads (id, json) VALUES (?, ?)`, [
-			id,
-			json,
-		]);
+		this.db.run(
+			`INSERT OR REPLACE INTO request_payloads (id, json) VALUES (?, ?)`,
+			[id, json],
+		);
 	}
 
 	getRequestPayload(id: string): unknown | null {

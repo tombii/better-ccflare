@@ -9,6 +9,7 @@ import { estimateCostUSD, NO_ACCOUNT_ID } from "@claudeflare/core";
 import type { DatabaseOperations } from "@claudeflare/database";
 import { Logger } from "@claudeflare/logger";
 import type { Provider, TokenRefreshResult } from "@claudeflare/providers";
+import { combineChunks, teeStream } from "./stream-tee";
 
 export interface ProxyContext {
 	strategy: LoadBalancingStrategy;
@@ -270,6 +271,47 @@ export async function handleProxy(
 			ctx.dbOps.saveRequestPayload(requestMeta.id, payload);
 
 			// Process and return the response
+			if (isStream && response.body) {
+				// Use tee to capture streaming response
+				let payloadSaved = false;
+				const teedStream = teeStream(response.body, {
+					maxBytes: ctx.runtime.streamBodyMaxBytes,
+					onClose: (buffered) => {
+						if (!payloadSaved) {
+							payloadSaved = true;
+							const combined = combineChunks(buffered);
+							const updatedPayload = {
+								...payload,
+								response: {
+									...payload.response,
+									body:
+										combined.length > 0 ? combined.toString("base64") : null,
+								},
+								meta: {
+									...payload.meta,
+									bodyTruncated:
+										buffered.length > 0 &&
+										combined.length >= ctx.runtime.streamBodyMaxBytes,
+								},
+							};
+							// Update the payload with the streamed body
+							ctx.dbOps.saveRequestPayload(requestMeta.id, updatedPayload);
+						}
+					},
+					onError: (error) => {
+						log.error(
+							`Error capturing stream for unauthenticated request: ${error.message}`,
+						);
+					},
+				});
+
+				const newResponse = new Response(teedStream, {
+					status: response.status,
+					statusText: response.statusText,
+					headers: response.headers,
+				});
+				return await ctx.provider.processResponse(newResponse, null);
+			}
 			return await ctx.provider.processResponse(response, null);
 		} catch (error) {
 			const errorMessage =
@@ -524,6 +566,47 @@ export async function handleProxy(
 				}
 
 				// Process and return the response
+				if (isStream && response.body) {
+					// Use tee to capture streaming response
+					let payloadSaved = false;
+					const teedStream = teeStream(response.body, {
+						maxBytes: ctx.runtime.streamBodyMaxBytes,
+						onClose: (buffered) => {
+							if (!payloadSaved) {
+								payloadSaved = true;
+								const combined = combineChunks(buffered);
+								const updatedPayload = {
+									...payload,
+									response: {
+										...payload.response,
+										body:
+											combined.length > 0 ? combined.toString("base64") : null,
+									},
+									meta: {
+										...payload.meta,
+										bodyTruncated:
+											buffered.length > 0 &&
+											combined.length >= ctx.runtime.streamBodyMaxBytes,
+									},
+								};
+								// Update the payload with the streamed body
+								ctx.dbOps.saveRequestPayload(requestMeta.id, updatedPayload);
+							}
+						},
+						onError: (error) => {
+							log.error(
+								`Error capturing stream for ${account.name}: ${error.message}`,
+							);
+						},
+					});
+
+					const newResponse = new Response(teedStream, {
+						status: response.status,
+						statusText: response.statusText,
+						headers: response.headers,
+					});
+					return await ctx.provider.processResponse(newResponse, account);
+				}
 				return await ctx.provider.processResponse(response, account);
 			} catch (error) {
 				lastError = error instanceof Error ? error.message : String(error);

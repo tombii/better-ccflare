@@ -10,6 +10,7 @@ A load balancer proxy for Claude and Claude Code that distributes requests acros
 
 Always run:
 - `bun run lint` - Fix linting issues  
+- `bun run typecheck` - Check for type errors
 - `bun run format` - Format code
 
 ## Commands
