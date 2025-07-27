@@ -63,6 +63,7 @@ export function AnalyticsTab() {
 	const [analytics, setAnalytics] = useState<AnalyticsResponse | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [filterOpen, setFilterOpen] = useState(false);
+	const [viewMode, setViewMode] = useState<"normal" | "cumulative">("normal");
 	const [filters, setFilters] = useState<FilterState>({
 		accounts: [],
 		models: [],
@@ -74,7 +75,7 @@ export function AnalyticsTab() {
 		const loadData = async () => {
 			try {
 				setLoading(true);
-				const data = await api.getAnalytics(timeRange, filters);
+				const data = await api.getAnalytics(timeRange, filters, viewMode);
 				setAnalytics(data);
 				setLoading(false);
 			} catch (error) {
@@ -84,7 +85,7 @@ export function AnalyticsTab() {
 		};
 
 		loadData();
-	}, [timeRange, filters]);
+	}, [timeRange, filters, viewMode]);
 
 	// Get unique accounts and models from analytics data
 	const availableAccounts =
@@ -357,6 +358,24 @@ export function AnalyticsTab() {
 				</div>
 
 				<div className="flex gap-2">
+					<div className="flex gap-1 bg-muted rounded-md p-1">
+						<Button
+							variant={viewMode === "normal" ? "default" : "ghost"}
+							size="sm"
+							className="h-8 px-3"
+							onClick={() => setViewMode("normal")}
+						>
+							Normal
+						</Button>
+						<Button
+							variant={viewMode === "cumulative" ? "default" : "ghost"}
+							size="sm"
+							className="h-8 px-3"
+							onClick={() => setViewMode("cumulative")}
+						>
+							Cumulative
+						</Button>
+					</div>
 					<Button
 						variant="outline"
 						size="sm"
@@ -380,7 +399,9 @@ export function AnalyticsTab() {
 						<div>
 							<CardTitle>Traffic Analytics</CardTitle>
 							<CardDescription>
-								Request volume and performance metrics over time
+								{viewMode === "cumulative"
+									? "Cumulative totals showing growth over time"
+									: "Request volume and performance metrics over time"}
 							</CardDescription>
 						</div>
 						<Select value={selectedMetric} onValueChange={setSelectedMetric}>
@@ -417,6 +438,29 @@ export function AnalyticsTab() {
 											stopOpacity={0.1}
 										/>
 									</linearGradient>
+									<linearGradient
+										id="colorCumulative"
+										x1="0"
+										y1="0"
+										x2="0"
+										y2="1"
+									>
+										<stop
+											offset="0%"
+											stopColor={COLORS.purple}
+											stopOpacity={0.9}
+										/>
+										<stop
+											offset="50%"
+											stopColor={COLORS.primary}
+											stopOpacity={0.7}
+										/>
+										<stop
+											offset="100%"
+											stopColor={COLORS.blue}
+											stopOpacity={0.3}
+										/>
+									</linearGradient>
 								</defs>
 								<CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
 								<XAxis
@@ -430,6 +474,9 @@ export function AnalyticsTab() {
 								/>
 								<YAxis className="text-xs" />
 								<Tooltip
+									labelFormatter={(label) =>
+										viewMode === "cumulative" ? `Cumulative at ${label}` : label
+									}
 									contentStyle={{
 										backgroundColor: "var(--background)",
 										border: "1px solid var(--border)",
@@ -439,9 +486,17 @@ export function AnalyticsTab() {
 								<Area
 									type="monotone"
 									dataKey={selectedMetric}
-									stroke={COLORS.primary}
+									stroke={
+										viewMode === "cumulative" ? COLORS.purple : COLORS.primary
+									}
+									strokeWidth={viewMode === "cumulative" ? 3 : 2}
 									fillOpacity={1}
-									fill="url(#colorMetric)"
+									fill={
+										viewMode === "cumulative"
+											? "url(#colorCumulative)"
+											: "url(#colorMetric)"
+									}
+									animationDuration={1000}
 								/>
 							</AreaChart>
 						</ResponsiveContainer>
@@ -669,6 +724,211 @@ export function AnalyticsTab() {
 					</CardContent>
 				</Card>
 			</div>
+
+			{/* Beautiful Cumulative Chart - Only show in cumulative mode */}
+			{viewMode === "cumulative" && analytics && (
+				<Card className="bg-gradient-to-br from-background to-muted/10 border-muted">
+					<CardHeader>
+						<CardTitle className="bg-gradient-to-r from-purple-500 to-orange-500 bg-clip-text text-transparent">
+							Cumulative Growth Analysis
+						</CardTitle>
+						<CardDescription>
+							Token usage vs. cost accumulation over time
+						</CardDescription>
+					</CardHeader>
+					<CardContent>
+						<ResponsiveContainer width="100%" height={400}>
+							<AreaChart
+								data={data}
+								margin={{ top: 20, right: 30, left: 20, bottom: 20 }}
+							>
+								<defs>
+									<linearGradient id="colorTokens" x1="0" y1="0" x2="0" y2="1">
+										<stop
+											offset="0%"
+											stopColor={COLORS.blue}
+											stopOpacity={0.9}
+										/>
+										<stop
+											offset="100%"
+											stopColor={COLORS.blue}
+											stopOpacity={0.1}
+										/>
+									</linearGradient>
+									<linearGradient id="colorCost" x1="0" y1="0" x2="0" y2="1">
+										<stop
+											offset="0%"
+											stopColor={COLORS.warning}
+											stopOpacity={0.9}
+										/>
+										<stop
+											offset="100%"
+											stopColor={COLORS.warning}
+											stopOpacity={0.1}
+										/>
+									</linearGradient>
+									<filter id="glow">
+										<feGaussianBlur stdDeviation="4" result="coloredBlur" />
+										<feMerge>
+											<feMergeNode in="coloredBlur" />
+											<feMergeNode in="SourceGraphic" />
+										</feMerge>
+									</filter>
+								</defs>
+								<CartesianGrid
+									strokeDasharray="3 3"
+									stroke="rgba(255,255,255,0.1)"
+								/>
+								<XAxis
+									dataKey="time"
+									className="text-xs"
+									stroke="rgba(255,255,255,0.5)"
+								/>
+								<YAxis
+									yAxisId="tokens"
+									className="text-xs"
+									stroke={COLORS.blue}
+								/>
+								<YAxis
+									yAxisId="cost"
+									orientation="right"
+									className="text-xs"
+									stroke={COLORS.warning}
+								/>
+								<Tooltip
+									labelClassName="font-bold"
+									contentStyle={{
+										backgroundColor: "rgba(0,0,0,0.8)",
+										border: "1px solid rgba(255,255,255,0.2)",
+										borderRadius: "8px",
+										backdropFilter: "blur(8px)",
+									}}
+									formatter={(value: number | string, name: string) => {
+										if (name === "cost") return [`$${value}`, "Total Cost"];
+										return [(value as number).toLocaleString(), "Total Tokens"];
+									}}
+								/>
+								<Legend
+									verticalAlign="top"
+									height={36}
+									iconType="rect"
+									wrapperStyle={{
+										paddingBottom: "20px",
+									}}
+								/>
+								<Area
+									yAxisId="tokens"
+									type="monotone"
+									dataKey="tokens"
+									stroke={COLORS.blue}
+									strokeWidth={3}
+									fillOpacity={1}
+									fill="url(#colorTokens)"
+									filter="url(#glow)"
+									name="Total Tokens"
+								/>
+								<Area
+									yAxisId="cost"
+									type="monotone"
+									dataKey="cost"
+									stroke={COLORS.warning}
+									strokeWidth={3}
+									fillOpacity={1}
+									fill="url(#colorCost)"
+									filter="url(#glow)"
+									name="Total Cost"
+								/>
+							</AreaChart>
+						</ResponsiveContainer>
+					</CardContent>
+				</Card>
+			)}
+
+			{/* Cumulative Token Breakdown Ribbon Chart */}
+			{viewMode === "cumulative" && analytics && tokenBreakdown.length > 0 && (
+				<Card>
+					<CardHeader>
+						<CardTitle>Cumulative Token Composition</CardTitle>
+						<CardDescription>Token type distribution over time</CardDescription>
+					</CardHeader>
+					<CardContent>
+						<div className="space-y-6">
+							<div className="relative h-24 bg-muted rounded-lg overflow-hidden">
+								{(() => {
+									let offset = 0;
+									return tokenBreakdown.map((item, index) => {
+										const width = item.percentage;
+										const currentOffset = offset;
+										offset += width;
+										return (
+											<div
+												key={item.type}
+												className="absolute h-full transition-all duration-1000 hover:opacity-80"
+												style={{
+													left: `${currentOffset}%`,
+													width: `${width}%`,
+													background: `linear-gradient(135deg, ${
+														index === 0
+															? COLORS.blue
+															: index === 1
+																? COLORS.success
+																: index === 2
+																	? COLORS.warning
+																	: COLORS.purple
+													} 0%, ${
+														index === 0
+															? COLORS.purple
+															: index === 1
+																? COLORS.blue
+																: index === 2
+																	? COLORS.primary
+																	: COLORS.warning
+													} 100%)`,
+												}}
+											>
+												<div className="flex items-center justify-center h-full">
+													{width > 10 && (
+														<span className="text-white font-medium text-xs">
+															{item.percentage}%
+														</span>
+													)}
+												</div>
+											</div>
+										);
+									});
+								})()}
+							</div>
+							<div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+								{tokenBreakdown.map((item, index) => (
+									<div key={item.type} className="flex items-center gap-2">
+										<div
+											className="w-3 h-3 rounded-full"
+											style={{
+												background:
+													index === 0
+														? COLORS.blue
+														: index === 1
+															? COLORS.success
+															: index === 2
+																? COLORS.warning
+																: COLORS.purple,
+											}}
+										/>
+										<div>
+											<p className="text-xs text-muted-foreground">
+												{item.type}
+											</p>
+											<p className="text-sm font-medium">
+												{item.value.toLocaleString()}
+											</p>
+										</div>
+									</div>
+								))}
+							</div>
+						</div>
+					</CardContent>
+				</Card>
+			)}
 		</div>
 	);
 }
