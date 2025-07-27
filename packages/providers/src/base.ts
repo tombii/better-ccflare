@@ -43,6 +43,10 @@ export abstract class BaseProvider implements Provider {
 	/**
 	 * Parse rate limit information from response
 	 * Default implementation: Check unified headers first, then fall back to 429 status
+	 *
+	 * Note: The default implementation considers any unified status other than "allowed"
+	 * to be a hard rate limit. Providers should override this method if they need to
+	 * distinguish between soft warnings (e.g., "allowed_warning") and hard limits.
 	 */
 	parseRateLimit(response: Response): RateLimitInfo {
 		// Check for unified rate limit headers (used by Anthropic and others)
