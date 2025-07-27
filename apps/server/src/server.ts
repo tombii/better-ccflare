@@ -26,6 +26,10 @@ dbOps.setRuntimeConfig(runtime);
 const apiRouter = new APIRouter({ db, config, dbOps });
 const log = new Logger("Server");
 
+log.info("Starting Claudeflare server...");
+log.info(`Port: ${runtime.port}`);
+log.info(`Session duration: ${runtime.sessionDurationMs}ms`);
+
 // Load balancing strategy initialization
 let strategy: LoadBalancingStrategy;
 
@@ -139,6 +143,20 @@ console.log(`🔍 Health check: http://localhost:${server.port}/health`);
 console.log(
 	`⚙️  Current strategy: ${config.getStrategy()} (default: ${DEFAULT_STRATEGY})`,
 );
+
+// Log initial account status
+const accounts = dbOps.getAllAccounts();
+const activeAccounts = accounts.filter(
+	(a) => !a.paused && (!a.expires_at || a.expires_at > Date.now()),
+);
+log.info(
+	`Loaded ${accounts.length} accounts (${activeAccounts.length} active)`,
+);
+if (activeAccounts.length === 0) {
+	log.warn(
+		"No active accounts available - requests will be forwarded without authentication",
+	);
+}
 
 // Graceful shutdown
 process.on("SIGINT", () => {

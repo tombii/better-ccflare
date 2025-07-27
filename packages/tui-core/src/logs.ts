@@ -1,5 +1,5 @@
 import type { LogEvent } from "@claudeflare/core";
-import { logBus } from "@claudeflare/logger";
+import { logBus, logFileWriter } from "@claudeflare/logger";
 
 export function streamLogs(callback: (log: LogEvent) => void): () => void {
 	const listener = (event: LogEvent) => {
@@ -12,4 +12,13 @@ export function streamLogs(callback: (log: LogEvent) => void): () => void {
 	return () => {
 		logBus.off("log", listener);
 	};
+}
+
+export async function getLogHistory(limit = 1000): Promise<LogEvent[]> {
+	try {
+		return await logFileWriter.readLogs(limit);
+	} catch (error) {
+		console.error("Failed to read log history:", error);
+		return [];
+	}
 }

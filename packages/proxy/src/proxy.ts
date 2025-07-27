@@ -63,6 +63,7 @@ async function getValidAccessToken(
 	) {
 		return account.access_token;
 	}
+	log.info(`Token expired or missing for account: ${account.name}`);
 	return await refreshAccessTokenSafe(account, ctx);
 }
 
@@ -110,6 +111,7 @@ export async function handleProxy(
 		log.info(
 			`Selected ${accounts.length} accounts for request: ${accounts.map((a) => a.name).join(", ")}`,
 		);
+		log.info(`Request: ${req.method} ${url.pathname}`);
 	}
 
 	// Try to read the body once for retries
@@ -132,6 +134,10 @@ export async function handleProxy(
 
 			const responseTime = Date.now() - start;
 			const responseClone = response.clone();
+
+			log.info(
+				`Unauthenticated request completed: ${response.status} in ${responseTime}ms`,
+			);
 
 			// Parse rate limit information even for unauthenticated requests
 			const _rateLimitInfo = ctx.provider.parseRateLimit(response);
@@ -272,6 +278,7 @@ export async function handleProxy(
 				const headers = ctx.provider.prepareHeaders(req.headers, accessToken);
 				const targetUrl = ctx.provider.buildUrl(url.pathname, url.search);
 
+				const start = Date.now();
 				const response = await fetch(targetUrl, {
 					method: req.method,
 					headers: headers,
@@ -283,6 +290,11 @@ export async function handleProxy(
 				// Update usage tracking
 				ctx.dbOps.updateAccountUsage(account.id);
 
+				const _responseTime = Date.now() - start;
+				log.info(
+					`Request completed for ${account.name}: ${response.status} in ${_responseTime}ms`,
+				);
+
 				// Clone response for body reading
 				const responseClone = response.clone();
 
@@ -291,6 +303,9 @@ export async function handleProxy(
 
 				// Update rate limit metadata if available
 				if (rateLimitInfo.statusHeader || rateLimitInfo.resetTime) {
+					log.info(
+						`Rate limit for ${account.name}: ${rateLimitInfo.statusHeader} - Remaining: ${rateLimitInfo.remaining}`,
+					);
 					ctx.dbOps.updateAccountRateLimitMeta(
 						account.id,
 						rateLimitInfo.statusHeader || "",
@@ -355,6 +370,11 @@ export async function handleProxy(
 					| undefined;
 				if (ctx.provider.extractUsageInfo && response.ok) {
 					usage = await ctx.provider.extractUsageInfo(responseClone);
+					if (usage) {
+						log.info(
+							`Usage for ${account.name}: Model: ${usage.model}, Tokens: ${usage.totalTokens || 0}, Cost: $${usage.costUsd?.toFixed(4) || "0"}`,
+						);
+					}
 				}
 
 				// Calculate cost if not provided by headers
