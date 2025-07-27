@@ -350,6 +350,7 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 	}
 }
 
+export { AsyncDbWriter } from "./async-writer";
 export { DatabaseFactory } from "./factory";
 // Re-export migrations for convenience
 export { ensureSchema, runMigrations } from "./migrations";

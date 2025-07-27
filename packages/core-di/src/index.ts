@@ -8,6 +8,7 @@ export const SERVICE_KEYS = {
 	Config: Symbol("Config"),
 	Database: Symbol("Database"),
 	PricingLogger: Symbol("PricingLogger"),
+	AsyncWriter: Symbol("AsyncWriter"),
 } as const;
 
 // Type-safe service resolution helper
