@@ -108,6 +108,11 @@ export interface ModelPerformance {
 }
 
 export interface AnalyticsResponse {
+	meta?: {
+		range: string;
+		bucket: string;
+		cumulative?: boolean;
+	};
 	totals: {
 		requests: number;
 		successRate: number;

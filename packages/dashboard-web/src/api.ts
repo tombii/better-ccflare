@@ -201,6 +201,7 @@ class API {
 			models?: string[];
 			status?: "all" | "success" | "error";
 		},
+		mode: "normal" | "cumulative" = "normal",
 	): Promise<AnalyticsResponse> {
 		const params = new URLSearchParams({ range });
 
@@ -212,6 +213,9 @@ class API {
 		}
 		if (filters?.status && filters.status !== "all") {
 			params.append("status", filters.status);
+		}
+		if (mode === "cumulative") {
+			params.append("mode", "cumulative");
 		}
 
 		const res = await fetch(`${this.baseUrl}/api/analytics?${params}`);

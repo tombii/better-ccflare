@@ -72,6 +72,8 @@ export function createAnalyticsHandler(context: APIContext) {
 		const { db } = context;
 		const range = params.get("range") ?? "24h";
 		const { startMs, bucket } = getRangeConfig(range);
+		const mode = params.get("mode") ?? "normal";
+		const isCumulative = mode === "cumulative";
 
 		// Extract filters
 		const accountsFilter =
@@ -292,7 +294,45 @@ export function createAnalyticsHandler(context: APIContext) {
 				requests: number;
 			}>;
 
+			// Transform timeSeries data
+			let transformedTimeSeries = timeSeries.map((point) => ({
+				ts: point.ts,
+				requests: point.requests || 0,
+				tokens: point.tokens || 0,
+				costUsd: point.cost_usd || 0,
+				successRate: point.success_rate || 0,
+				errorRate: point.error_rate || 0,
+				cacheHitRate: point.cache_hit_rate || 0,
+				avgResponseTime: point.avg_response_time || 0,
+			}));
+
+			// Apply cumulative transformation if requested
+			if (isCumulative) {
+				let runningRequests = 0;
+				let runningTokens = 0;
+				let runningCostUsd = 0;
+
+				transformedTimeSeries = transformedTimeSeries.map((point) => {
+					runningRequests += point.requests;
+					runningTokens += point.tokens;
+					runningCostUsd += point.costUsd;
+
+					return {
+						...point,
+						requests: runningRequests,
+						tokens: runningTokens,
+						costUsd: runningCostUsd,
+						// Keep rates as-is (not cumulative)
+					};
+				});
+			}
+
 			const response: AnalyticsResponse = {
+				meta: {
+					range,
+					bucket: bucket.displayName,
+					cumulative: isCumulative,
+				},
 				totals: {
 					requests: totals.total_requests || 0,
 					successRate: totals.success_rate || 0,
@@ -301,16 +341,7 @@ export function createAnalyticsHandler(context: APIContext) {
 					totalTokens: totals.total_tokens || 0,
 					totalCostUsd: totals.total_cost_usd || 0,
 				},
-				timeSeries: timeSeries.map((point) => ({
-					ts: point.ts,
-					requests: point.requests || 0,
-					tokens: point.tokens || 0,
-					costUsd: point.cost_usd || 0,
-					successRate: point.success_rate || 0,
-					errorRate: point.error_rate || 0,
-					cacheHitRate: point.cache_hit_rate || 0,
-					avgResponseTime: point.avg_response_time || 0,
-				})),
+				timeSeries: transformedTimeSeries,
 				tokenBreakdown: {
 					inputTokens: tokenBreakdown?.input_tokens || 0,
 					cacheReadInputTokens: tokenBreakdown?.cache_read_input_tokens || 0,
