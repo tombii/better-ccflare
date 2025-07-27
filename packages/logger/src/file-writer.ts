@@ -57,7 +57,9 @@ export class LogFileWriter {
 		}
 
 		const line = `${JSON.stringify(event)}\n`;
-		this.stream.write(line);
+		if (this.stream) {
+			this.stream.write(line);
+		}
 	}
 
 	async readLogs(limit = 1000): Promise<LogEvent[]> {

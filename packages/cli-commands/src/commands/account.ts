@@ -26,6 +26,8 @@ export interface AccountListItem {
 	tokenStatus: "valid" | "expired";
 	rateLimitStatus: string;
 	sessionInfo: string;
+	tier: number;
+	mode: "max" | "console";
 }
 
 /**
@@ -146,6 +148,8 @@ export function getAccountsList(dbOps: DatabaseOperations): AccountListItem[] {
 			tokenStatus,
 			rateLimitStatus,
 			sessionInfo,
+			tier: account.account_tier || 1,
+			mode: account.account_tier > 1 ? "max" : "console",
 		};
 	});
 }
