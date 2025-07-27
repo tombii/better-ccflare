@@ -7,6 +7,12 @@ export interface Stats {
 	avgResponseTime: number;
 	totalTokens: number;
 	totalCostUsd: number;
+	tokenDetails?: {
+		inputTokens: number;
+		cacheReadInputTokens: number;
+		cacheCreationInputTokens: number;
+		outputTokens: number;
+	};
 	accounts: Array<{
 		name: string;
 		requestCount: number;
@@ -29,7 +35,11 @@ export async function getStats(): Promise<Stats> {
 					SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successfulRequests,
 					AVG(response_time_ms) as avgResponseTime,
 					SUM(total_tokens) as totalTokens,
-					SUM(cost_usd) as totalCostUsd
+					SUM(cost_usd) as totalCostUsd,
+					SUM(input_tokens) as inputTokens,
+					SUM(cache_read_input_tokens) as cacheReadInputTokens,
+					SUM(cache_creation_input_tokens) as cacheCreationInputTokens,
+					SUM(output_tokens) as outputTokens
 				FROM requests
 			`,
 			)
@@ -40,6 +50,10 @@ export async function getStats(): Promise<Stats> {
 					avgResponseTime: number | null;
 					totalTokens: number | null;
 					totalCostUsd: number | null;
+					inputTokens: number | null;
+					cacheReadInputTokens: number | null;
+					cacheCreationInputTokens: number | null;
+					outputTokens: number | null;
 			  }
 			| undefined;
 
@@ -118,6 +132,15 @@ export async function getStats(): Promise<Stats> {
 			avgResponseTime: Math.round(stats?.avgResponseTime || 0),
 			totalTokens: stats?.totalTokens || 0,
 			totalCostUsd: stats?.totalCostUsd || 0,
+			tokenDetails:
+				stats?.inputTokens || stats?.outputTokens
+					? {
+							inputTokens: stats?.inputTokens || 0,
+							cacheReadInputTokens: stats?.cacheReadInputTokens || 0,
+							cacheCreationInputTokens: stats?.cacheCreationInputTokens || 0,
+							outputTokens: stats?.outputTokens || 0,
+						}
+					: undefined,
 			accounts: accountsWithStats,
 			recentErrors: recentErrors.map((e) => e.error_message),
 		};

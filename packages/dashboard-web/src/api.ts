@@ -72,6 +72,10 @@ export interface RequestSummary {
 	completionTokens?: number;
 	totalTokens?: number;
 	costUsd?: number;
+	inputTokens?: number;
+	cacheReadInputTokens?: number;
+	cacheCreationInputTokens?: number;
+	outputTokens?: number;
 }
 
 class API {

@@ -148,4 +148,36 @@ export function runMigrations(db: Database): void {
 		db.prepare("ALTER TABLE requests ADD COLUMN cost_usd REAL DEFAULT 0").run();
 		console.log("Added cost_usd column to requests table");
 	}
+
+	// Add input_tokens column if it doesn't exist
+	if (!requestsColumnNames.includes("input_tokens")) {
+		db.prepare(
+			"ALTER TABLE requests ADD COLUMN input_tokens INTEGER DEFAULT 0",
+		).run();
+		console.log("Added input_tokens column to requests table");
+	}
+
+	// Add cache_read_input_tokens column if it doesn't exist
+	if (!requestsColumnNames.includes("cache_read_input_tokens")) {
+		db.prepare(
+			"ALTER TABLE requests ADD COLUMN cache_read_input_tokens INTEGER DEFAULT 0",
+		).run();
+		console.log("Added cache_read_input_tokens column to requests table");
+	}
+
+	// Add cache_creation_input_tokens column if it doesn't exist
+	if (!requestsColumnNames.includes("cache_creation_input_tokens")) {
+		db.prepare(
+			"ALTER TABLE requests ADD COLUMN cache_creation_input_tokens INTEGER DEFAULT 0",
+		).run();
+		console.log("Added cache_creation_input_tokens column to requests table");
+	}
+
+	// Add output_tokens column if it doesn't exist
+	if (!requestsColumnNames.includes("output_tokens")) {
+		db.prepare(
+			"ALTER TABLE requests ADD COLUMN output_tokens INTEGER DEFAULT 0",
+		).run();
+		console.log("Added output_tokens column to requests table");
+	}
 }

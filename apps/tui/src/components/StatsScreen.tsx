@@ -67,6 +67,29 @@ export function StatsScreen({ onBack }: StatsScreenProps) {
 							<Text>
 								Total Tokens: {(stats.totalTokens || 0).toLocaleString()}
 							</Text>
+							{stats.tokenDetails && (
+								<Box flexDirection="column" marginLeft={2}>
+									<Text dimColor>
+										├─ Input: {stats.tokenDetails.inputTokens.toLocaleString()}
+									</Text>
+									{stats.tokenDetails.cacheReadInputTokens > 0 && (
+										<Text dimColor>
+											├─ Cache Read:{" "}
+											{stats.tokenDetails.cacheReadInputTokens.toLocaleString()}
+										</Text>
+									)}
+									{stats.tokenDetails.cacheCreationInputTokens > 0 && (
+										<Text dimColor>
+											├─ Cache Creation:{" "}
+											{stats.tokenDetails.cacheCreationInputTokens.toLocaleString()}
+										</Text>
+									)}
+									<Text dimColor>
+										└─ Output:{" "}
+										{stats.tokenDetails.outputTokens.toLocaleString()}
+									</Text>
+								</Box>
+							)}
 							<Text>Total Cost: ${(stats.totalCostUsd || 0).toFixed(2)}</Text>
 						</Box>
 					</Box>

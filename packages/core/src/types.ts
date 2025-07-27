@@ -35,6 +35,10 @@ export type RequestRow = {
 	completion_tokens: number | null;
 	total_tokens: number | null;
 	cost_usd: number | null;
+	input_tokens: number | null;
+	cache_read_input_tokens: number | null;
+	cache_creation_input_tokens: number | null;
+	output_tokens: number | null;
 };
 
 // Application-level types
@@ -79,6 +83,10 @@ export interface Request {
 	completionTokens?: number;
 	totalTokens?: number;
 	costUsd?: number;
+	inputTokens?: number;
+	cacheReadInputTokens?: number;
+	cacheCreationInputTokens?: number;
+	outputTokens?: number;
 }
 
 export interface LoadBalancingStrategy {
@@ -134,6 +142,10 @@ export function toRequest(row: RequestRow): Request {
 		completionTokens: row.completion_tokens || undefined,
 		totalTokens: row.total_tokens || undefined,
 		costUsd: row.cost_usd || undefined,
+		inputTokens: row.input_tokens || undefined,
+		cacheReadInputTokens: row.cache_read_input_tokens || undefined,
+		cacheCreationInputTokens: row.cache_creation_input_tokens || undefined,
+		outputTokens: row.output_tokens || undefined,
 	};
 }
 

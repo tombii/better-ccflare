@@ -42,7 +42,7 @@ export function App() {
 						<div>
 							<h1 className="text-3xl font-bold tracking-tight">Claudeflare</h1>
 							<p className="text-white/90 text-sm">
-								High-performance load balancer for Claude API
+								Powerful proxy for Claude Code
 							</p>
 						</div>
 					</div>

@@ -131,6 +131,10 @@ export class DatabaseOperations implements StrategyStore {
 			completionTokens?: number;
 			totalTokens?: number;
 			costUsd?: number;
+			inputTokens?: number;
+			cacheReadInputTokens?: number;
+			cacheCreationInputTokens?: number;
+			outputTokens?: number;
 		},
 	): void {
 		this.db.run(
@@ -138,9 +142,10 @@ export class DatabaseOperations implements StrategyStore {
       INSERT INTO requests (
         id, timestamp, method, path, account_used, 
         status_code, success, error_message, response_time_ms, failover_attempts,
-        model, prompt_tokens, completion_tokens, total_tokens, cost_usd
+        model, prompt_tokens, completion_tokens, total_tokens, cost_usd,
+        input_tokens, cache_read_input_tokens, cache_creation_input_tokens, output_tokens
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
 			[
 				id,
@@ -158,6 +163,10 @@ export class DatabaseOperations implements StrategyStore {
 				usage?.completionTokens || null,
 				usage?.totalTokens || null,
 				usage?.costUsd || null,
+				usage?.inputTokens || null,
+				usage?.cacheReadInputTokens || null,
+				usage?.cacheCreationInputTokens || null,
+				usage?.outputTokens || null,
 			],
 		);
 	}
