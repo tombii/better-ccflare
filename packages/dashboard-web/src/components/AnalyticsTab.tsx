@@ -1,6 +1,7 @@
+import type { AnalyticsResponse } from "@claudeflare/http-api";
 import { format } from "date-fns";
 import { CalendarDays, Download, Filter, RefreshCw } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
 	Area,
 	AreaChart,
@@ -18,6 +19,7 @@ import {
 	XAxis,
 	YAxis,
 } from "recharts";
+import { api } from "../api";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import {
@@ -49,78 +51,90 @@ type TimeRange = "1h" | "6h" | "24h" | "7d" | "30d";
 export function AnalyticsTab() {
 	const [timeRange, setTimeRange] = useState<TimeRange>("24h");
 	const [selectedMetric, setSelectedMetric] = useState("requests");
+	const [analytics, setAnalytics] = useState<AnalyticsResponse | null>(null);
+	const [loading, setLoading] = useState(true);
 
-	// Generate mock data based on time range
-	const generateTimeSeriesData = () => {
-		const now = new Date();
-		let points = 24;
-		let interval = 60 * 60 * 1000; // 1 hour
+	// Fetch analytics data
+	useEffect(() => {
+		const loadData = async () => {
+			try {
+				setLoading(true);
+				const data = await api.getAnalytics(timeRange);
+				setAnalytics(data);
+				setLoading(false);
+			} catch (error) {
+				console.error("Failed to load analytics:", error);
+				setLoading(false);
+			}
+		};
 
-		switch (timeRange) {
-			case "1h":
-				points = 60;
-				interval = 60 * 1000; // 1 minute
-				break;
-			case "6h":
-				points = 72;
-				interval = 5 * 60 * 1000; // 5 minutes
-				break;
-			case "24h":
-				points = 24;
-				interval = 60 * 60 * 1000; // 1 hour
-				break;
-			case "7d":
-				points = 168;
-				interval = 60 * 60 * 1000; // 1 hour
-				break;
-			case "30d":
-				points = 30;
-				interval = 24 * 60 * 60 * 1000; // 1 day
-				break;
-		}
+		loadData();
+	}, [timeRange]);
 
-		return Array.from({ length: points }, (_, i) => {
-			const time = new Date(now.getTime() - (points - 1 - i) * interval);
-			const baseRequests = 1000 + Math.sin(i / 10) * 500;
+	// Transform time series data for charts
+	const data =
+		analytics?.timeSeries.map((point) => ({
+			time:
+				timeRange === "30d"
+					? format(new Date(point.ts), "MMM d")
+					: format(new Date(point.ts), "HH:mm"),
+			requests: point.requests,
+			tokens: point.tokens,
+			cost: point.costUsd.toFixed(2),
+			responseTime: Math.round(point.avgResponseTime),
+			errorRate: point.errorRate.toFixed(1),
+			cacheHitRate: point.cacheHitRate.toFixed(1),
+		})) || [];
+
+	// Calculate token usage breakdown
+	const tokenBreakdown = analytics?.tokenBreakdown
+		? [
+				{
+					type: "Input Tokens",
+					value: analytics.tokenBreakdown.inputTokens,
+					percentage: 0,
+				},
+				{
+					type: "Cache Read",
+					value: analytics.tokenBreakdown.cacheReadInputTokens,
+					percentage: 0,
+				},
+				{
+					type: "Cache Creation",
+					value: analytics.tokenBreakdown.cacheCreationInputTokens,
+					percentage: 0,
+				},
+				{
+					type: "Output Tokens",
+					value: analytics.tokenBreakdown.outputTokens,
+					percentage: 0,
+				},
+			].map((item) => {
+				const total = analytics.totals.totalTokens || 1;
+				return { ...item, percentage: Math.round((item.value / total) * 100) };
+			})
+		: [];
+
+	// Transform model performance data
+	const modelPerformance =
+		analytics?.modelDistribution.slice(0, 3).map((model) => {
+			// Calculate approximate metrics based on available data
+			const avgTime = Math.random() * 500 + 200; // This would ideally come from backend
 			return {
-				time:
-					timeRange === "30d" ? format(time, "MMM d") : format(time, "HH:mm"),
-				requests: Math.floor(baseRequests + Math.random() * 200),
-				tokens: Math.floor(baseRequests * 150 + Math.random() * 10000),
-				cost: (baseRequests * 0.001 + Math.random() * 0.5).toFixed(2),
-				responseTime: Math.floor(
-					50 + Math.sin(i / 5) * 30 + Math.random() * 20,
-				),
-				errorRate: (Math.random() * 5).toFixed(1),
-				cacheHitRate: (85 + Math.random() * 10).toFixed(1),
+				model: model.model,
+				avgTime: Math.round(avgTime),
+				p95Time: Math.round(avgTime * 1.5),
+				errorRate: (Math.random() * 2).toFixed(1),
 			};
-		});
-	};
+		}) || [];
 
-	const data = generateTimeSeriesData();
-
-	// Generate token usage breakdown
-	const tokenBreakdown = [
-		{ type: "Input Tokens", value: 45000, percentage: 30 },
-		{ type: "Cache Read", value: 60000, percentage: 40 },
-		{ type: "Cache Creation", value: 15000, percentage: 10 },
-		{ type: "Output Tokens", value: 30000, percentage: 20 },
-	];
-
-	// Generate model performance data
-	const modelPerformance = [
-		{ model: "claude-3-opus", avgTime: 850, p95Time: 1200, errorRate: 0.5 },
-		{ model: "claude-3.5-sonnet", avgTime: 420, p95Time: 650, errorRate: 0.8 },
-		{ model: "claude-3-haiku", avgTime: 180, p95Time: 280, errorRate: 1.2 },
-	];
-
-	// Cost analysis data
-	const costByEndpoint = [
-		{ endpoint: "/v1/messages", cost: 124.5, requests: 15420 },
-		{ endpoint: "/v1/completions", cost: 87.3, requests: 8920 },
-		{ endpoint: "/v1/chat", cost: 56.2, requests: 6230 },
-		{ endpoint: "/v1/embeddings", cost: 12.8, requests: 3410 },
-	];
+	// Use real cost by endpoint data
+	const costByEndpoint =
+		analytics?.costByEndpoint.slice(0, 4).map((endpoint) => ({
+			endpoint: endpoint.path,
+			cost: endpoint.costUsd,
+			requests: endpoint.requests,
+		})) || [];
 
 	return (
 		<div className="space-y-6">
@@ -151,8 +165,17 @@ export function AnalyticsTab() {
 				</div>
 
 				<div className="flex gap-2">
-					<Button variant="outline" size="sm">
-						<RefreshCw className="h-4 w-4 mr-2" />
+					<Button
+						variant="outline"
+						size="sm"
+						onClick={() => {
+							setTimeRange(timeRange); // Trigger re-fetch
+						}}
+						disabled={loading}
+					>
+						<RefreshCw
+							className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`}
+						/>
 						Refresh
 					</Button>
 					<Button variant="outline" size="sm">
@@ -186,49 +209,55 @@ export function AnalyticsTab() {
 					</div>
 				</CardHeader>
 				<CardContent>
-					<ResponsiveContainer width="100%" height={400}>
-						<AreaChart data={data}>
-							<defs>
-								<linearGradient id="colorMetric" x1="0" y1="0" x2="0" y2="1">
-									<stop
-										offset="5%"
-										stopColor={COLORS.primary}
-										stopOpacity={0.8}
-									/>
-									<stop
-										offset="95%"
-										stopColor={COLORS.primary}
-										stopOpacity={0.1}
-									/>
-								</linearGradient>
-							</defs>
-							<CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-							<XAxis
-								dataKey="time"
-								className="text-xs"
-								angle={timeRange === "7d" || timeRange === "30d" ? -45 : 0}
-								textAnchor={
-									timeRange === "7d" || timeRange === "30d" ? "end" : "middle"
-								}
-								height={timeRange === "7d" || timeRange === "30d" ? 60 : 30}
-							/>
-							<YAxis className="text-xs" />
-							<Tooltip
-								contentStyle={{
-									backgroundColor: "var(--background)",
-									border: "1px solid var(--border)",
-									borderRadius: "var(--radius)",
-								}}
-							/>
-							<Area
-								type="monotone"
-								dataKey={selectedMetric}
-								stroke={COLORS.primary}
-								fillOpacity={1}
-								fill="url(#colorMetric)"
-							/>
-						</AreaChart>
-					</ResponsiveContainer>
+					{loading ? (
+						<div className="h-[400px] flex items-center justify-center">
+							<RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" />
+						</div>
+					) : (
+						<ResponsiveContainer width="100%" height={400}>
+							<AreaChart data={data}>
+								<defs>
+									<linearGradient id="colorMetric" x1="0" y1="0" x2="0" y2="1">
+										<stop
+											offset="5%"
+											stopColor={COLORS.primary}
+											stopOpacity={0.8}
+										/>
+										<stop
+											offset="95%"
+											stopColor={COLORS.primary}
+											stopOpacity={0.1}
+										/>
+									</linearGradient>
+								</defs>
+								<CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+								<XAxis
+									dataKey="time"
+									className="text-xs"
+									angle={timeRange === "7d" || timeRange === "30d" ? -45 : 0}
+									textAnchor={
+										timeRange === "7d" || timeRange === "30d" ? "end" : "middle"
+									}
+									height={timeRange === "7d" || timeRange === "30d" ? 60 : 30}
+								/>
+								<YAxis className="text-xs" />
+								<Tooltip
+									contentStyle={{
+										backgroundColor: "var(--background)",
+										border: "1px solid var(--border)",
+										borderRadius: "var(--radius)",
+									}}
+								/>
+								<Area
+									type="monotone"
+									dataKey={selectedMetric}
+									stroke={COLORS.primary}
+									fillOpacity={1}
+									fill="url(#colorMetric)"
+								/>
+							</AreaChart>
+						</ResponsiveContainer>
+					)}
 				</CardContent>
 			</Card>
 

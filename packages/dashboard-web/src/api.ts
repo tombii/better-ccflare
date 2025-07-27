@@ -1,3 +1,5 @@
+import type { AnalyticsResponse } from "@claudeflare/http-api";
+
 export interface Account {
 	id: string;
 	name: string;
@@ -178,6 +180,12 @@ class API {
 		const res = await fetch(`${this.baseUrl}/api/requests?limit=${limit}`);
 		if (!res.ok) throw new Error("Failed to fetch request summaries");
 		return res.json() as Promise<RequestSummary[]>;
+	}
+
+	async getAnalytics(range = "24h"): Promise<AnalyticsResponse> {
+		const res = await fetch(`${this.baseUrl}/api/analytics?range=${range}`);
+		if (!res.ok) throw new Error("Failed to fetch analytics data");
+		return res.json() as Promise<AnalyticsResponse>;
 	}
 }
 
