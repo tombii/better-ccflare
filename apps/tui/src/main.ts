@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { DatabaseFactory } from "@claudeflare/database";
 import * as tuiCore from "@claudeflare/tui-core";
 import { parseArgs } from "@claudeflare/tui-core";
 import { render } from "ink";
@@ -16,6 +17,9 @@ async function ensureServer(port: number) {
 }
 
 async function main() {
+	// Initialize database factory
+	DatabaseFactory.initialize();
+
 	const args = process.argv.slice(2);
 	const parsed = parseArgs(args);
 
@@ -121,10 +125,25 @@ Examples:
 	if (runningServer) {
 		runningServer.cleanup();
 	}
+
+	// Close database connections
+	DatabaseFactory.closeAll();
 }
 
 // Run main and handle errors
 main().catch((error) => {
 	console.error("Error:", error.message);
+	DatabaseFactory.closeAll();
 	process.exit(1);
+});
+
+// Handle process termination
+process.on("SIGINT", () => {
+	DatabaseFactory.closeAll();
+	process.exit(0);
+});
+
+process.on("SIGTERM", () => {
+	DatabaseFactory.closeAll();
+	process.exit(0);
 });

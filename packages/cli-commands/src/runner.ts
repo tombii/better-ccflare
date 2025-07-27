@@ -1,6 +1,6 @@
 import { parseArgs } from "node:util";
 import { Config } from "@claudeflare/config";
-import { DatabaseOperations } from "@claudeflare/database";
+import { DatabaseFactory } from "@claudeflare/database";
 import {
 	addAccount,
 	getAccountsList,
@@ -16,8 +16,9 @@ import { clearRequestHistory, resetAllStats } from "./commands/stats";
  */
 export async function runCli(argv: string[]): Promise<void> {
 	// Initialize database and config
-	const dbOps = new DatabaseOperations();
 	const config = new Config();
+	DatabaseFactory.initialize();
+	const dbOps = DatabaseFactory.getInstance();
 
 	try {
 		// Parse command line arguments
@@ -175,6 +176,6 @@ export async function runCli(argv: string[]): Promise<void> {
 		process.exit(1);
 	} finally {
 		// Always close the database
-		dbOps.close();
+		DatabaseFactory.closeAll();
 	}
 }
