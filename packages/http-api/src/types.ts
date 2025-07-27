@@ -37,6 +37,8 @@ export interface AccountResponse {
 	paused: boolean;
 	tokenStatus: "valid" | "expired";
 	rateLimitStatus: string;
+	rateLimitReset: string | null;
+	rateLimitRemaining: number | null;
 	sessionInfo: string;
 }
 

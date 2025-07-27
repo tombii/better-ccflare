@@ -1,6 +1,6 @@
 import { Config } from "@claudeflare/config";
 import type { LoadBalancingStrategy } from "@claudeflare/core";
-import { DEFAULT_STRATEGY } from "@claudeflare/core";
+import { DEFAULT_STRATEGY, StrategyName } from "@claudeflare/core";
 // Import React dashboard assets
 import dashboardManifest from "@claudeflare/dashboard-web/dist/manifest.json";
 import { DatabaseOperations } from "@claudeflare/database";
@@ -13,11 +13,8 @@ import {
 	WeightedStrategy,
 } from "@claudeflare/load-balancer";
 import { Logger } from "@claudeflare/logger";
-import {
-	AnthropicProvider,
-	handleProxy,
-	type ProxyContext,
-} from "@claudeflare/proxy";
+import { getProvider } from "@claudeflare/providers";
+import { handleProxy, type ProxyContext } from "@claudeflare/proxy";
 import { serve } from "bun";
 
 // Initialize components
@@ -35,24 +32,27 @@ let strategy: LoadBalancingStrategy;
 // Refresh token stampede prevention
 const refreshInFlight = new Map<string, Promise<string>>();
 
-// Initialize provider (for now just Anthropic)
-const provider = new AnthropicProvider();
+// Get provider from registry (for now just Anthropic)
+const provider = getProvider("anthropic");
+if (!provider) {
+	throw new Error("Anthropic provider not found in registry");
+}
 
 function initStrategy(): LoadBalancingStrategy {
 	const strategyName = config.getStrategy();
 	log.info(`Initializing load balancing strategy: ${strategyName}`);
 
 	switch (strategyName) {
-		case "round-robin":
+		case StrategyName.RoundRobin:
 			return new RoundRobinStrategy();
-		case "weighted-round-robin":
+		case StrategyName.WeightedRoundRobin:
 			return new WeightedRoundRobinStrategy();
-		case "session": {
+		case StrategyName.Session: {
 			const sessionStrategy = new SessionStrategy(runtime.sessionDurationMs);
 			sessionStrategy.initialize(dbOps);
 			return sessionStrategy;
 		}
-		case "weighted":
+		case StrategyName.Weighted:
 			return new WeightedStrategy();
 		default:
 			return new LeastRequestsStrategy();

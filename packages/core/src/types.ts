@@ -18,6 +18,9 @@ export type AccountRow = {
 	session_request_count?: number;
 	account_tier: number;
 	paused?: 0 | 1;
+	rate_limit_reset?: number | null;
+	rate_limit_status?: string | null;
+	rate_limit_remaining?: number | null;
 };
 
 export type RequestRow = {
@@ -60,6 +63,9 @@ export interface Account {
 	session_request_count: number;
 	account_tier: number; // 1, 5, or 20
 	paused: boolean;
+	rate_limit_reset: number | null;
+	rate_limit_status: string | null;
+	rate_limit_remaining: number | null;
 }
 
 export interface RequestMeta {
@@ -125,6 +131,9 @@ export function toAccount(row: AccountRow): Account {
 		session_request_count: row.session_request_count || 0,
 		account_tier: row.account_tier || 1,
 		paused: row.paused === 1,
+		rate_limit_reset: row.rate_limit_reset || null,
+		rate_limit_status: row.rate_limit_status || null,
+		rate_limit_remaining: row.rate_limit_remaining || null,
 	};
 }
 

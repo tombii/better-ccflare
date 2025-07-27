@@ -25,6 +25,9 @@ export function createAccountsListHandler(db: Database) {
 					last_used,
 					created_at,
 					rate_limited_until,
+					rate_limit_reset,
+					rate_limit_status,
+					rate_limit_remaining,
 					session_start,
 					session_request_count,
 					COALESCE(account_tier, 1) as account_tier,
@@ -55,6 +58,9 @@ export function createAccountsListHandler(db: Database) {
 			last_used: number | null;
 			created_at: number;
 			rate_limited_until: number | null;
+			rate_limit_reset: number | null;
+			rate_limit_status: string | null;
+			rate_limit_remaining: number | null;
 			session_start: number | null;
 			session_request_count: number;
 			account_tier: number;
@@ -66,11 +72,22 @@ export function createAccountsListHandler(db: Database) {
 
 		const response: AccountResponse[] = accounts.map((account) => {
 			let rateLimitStatus = "OK";
-			if (
+
+			// Use unified rate limit status if available
+			if (account.rate_limit_status) {
+				rateLimitStatus = account.rate_limit_status;
+				if (account.rate_limit_reset && account.rate_limit_reset > now) {
+					const minutesLeft = Math.ceil(
+						(account.rate_limit_reset - now) / 60000,
+					);
+					rateLimitStatus = `${account.rate_limit_status} (${minutesLeft}m)`;
+				}
+			} else if (
 				account.rate_limited &&
 				account.rate_limited_until &&
 				account.rate_limited_until > now
 			) {
+				// Fall back to legacy rate limit check
 				const minutesLeft = Math.ceil(
 					(account.rate_limited_until - now) / 60000,
 				);
@@ -91,6 +108,10 @@ export function createAccountsListHandler(db: Database) {
 				paused: account.paused === 1,
 				tokenStatus: account.token_valid ? "valid" : "expired",
 				rateLimitStatus,
+				rateLimitReset: account.rate_limit_reset
+					? new Date(account.rate_limit_reset).toISOString()
+					: null,
+				rateLimitRemaining: account.rate_limit_remaining,
 				sessionInfo: account.session_info || "",
 			};
 		});

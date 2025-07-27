@@ -5,7 +5,6 @@ export type {
 	TokenRefreshResult,
 } from "@claudeflare/providers";
 export {
-	AnthropicProvider,
 	getProvider,
 	listProviders,
 	registerProvider,

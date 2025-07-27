@@ -106,6 +106,28 @@ export function runMigrations(db: Database): void {
 		console.log("Added paused column to accounts table");
 	}
 
+	// Add rate_limit_reset column if it doesn't exist
+	if (!accountsColumnNames.includes("rate_limit_reset")) {
+		db.prepare(
+			"ALTER TABLE accounts ADD COLUMN rate_limit_reset INTEGER",
+		).run();
+		console.log("Added rate_limit_reset column to accounts table");
+	}
+
+	// Add rate_limit_status column if it doesn't exist
+	if (!accountsColumnNames.includes("rate_limit_status")) {
+		db.prepare("ALTER TABLE accounts ADD COLUMN rate_limit_status TEXT").run();
+		console.log("Added rate_limit_status column to accounts table");
+	}
+
+	// Add rate_limit_remaining column if it doesn't exist
+	if (!accountsColumnNames.includes("rate_limit_remaining")) {
+		db.prepare(
+			"ALTER TABLE accounts ADD COLUMN rate_limit_remaining INTEGER",
+		).run();
+		console.log("Added rate_limit_remaining column to accounts table");
+	}
+
 	// Check columns in requests table
 	const requestsInfo = db
 		.prepare("PRAGMA table_info(requests)")
