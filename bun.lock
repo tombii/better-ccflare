@@ -33,6 +33,7 @@
       "dependencies": {
         "@claudeflare/config": "workspace:*",
         "@claudeflare/core": "workspace:*",
+        "@claudeflare/core-di": "workspace:*",
         "@claudeflare/dashboard-web": "workspace:*",
         "@claudeflare/database": "workspace:*",
         "@claudeflare/http-api": "workspace:*",
@@ -49,6 +50,10 @@
         "claudeflare": "./dist/claudeflare",
       },
       "dependencies": {
+        "@claudeflare/config": "workspace:*",
+        "@claudeflare/core-di": "workspace:*",
+        "@claudeflare/database": "workspace:*",
+        "@claudeflare/logger": "workspace:*",
         "@claudeflare/tui-core": "workspace:*",
         "ink": "^6.0.0",
         "ink-select-input": "^6.0.0",
@@ -68,6 +73,7 @@
       "dependencies": {
         "@claudeflare/config": "workspace:*",
         "@claudeflare/core": "workspace:*",
+        "@claudeflare/core-di": "workspace:*",
         "@claudeflare/database": "workspace:*",
         "@claudeflare/providers": "workspace:*",
       },
@@ -85,6 +91,10 @@
       "dependencies": {
         "@claudeflare/types": "workspace:*",
       },
+    },
+    "packages/core-di": {
+      "name": "@claudeflare/core-di",
+      "version": "0.1.0",
     },
     "packages/dashboard-web": {
       "name": "@claudeflare/dashboard-web",
@@ -222,6 +232,8 @@
     "@claudeflare/config": ["@claudeflare/config@workspace:packages/config"],
 
     "@claudeflare/core": ["@claudeflare/core@workspace:packages/core"],
+
+    "@claudeflare/core-di": ["@claudeflare/core-di@workspace:packages/core-di"],
 
     "@claudeflare/dashboard-web": ["@claudeflare/dashboard-web@workspace:packages/dashboard-web"],
 

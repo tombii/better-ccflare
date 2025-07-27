@@ -140,8 +140,11 @@ export async function handleProxy(
 			);
 
 			// Parse rate limit information even for unauthenticated requests
-			const _rateLimitInfo = ctx.provider.parseRateLimit(response);
+			const rateLimitInfo = ctx.provider.parseRateLimit(response);
 			// Note: We can't update account metadata since there's no account
+			log.info(
+				`Rate limit for unauthenticated request: ${rateLimitInfo.statusHeader} - Remaining: ${rateLimitInfo.remaining}`,
+			);
 
 			// Extract usage info if provider supports it
 			let usage:
@@ -159,7 +162,7 @@ export async function handleProxy(
 				| null
 				| undefined;
 			if (ctx.provider.extractUsageInfo && response.ok) {
-				usage = await ctx.provider.extractUsageInfo(responseClone);
+				usage = await ctx.provider.extractUsageInfo(responseClone as Response);
 			}
 
 			// Calculate cost if not provided by headers
@@ -369,7 +372,7 @@ export async function handleProxy(
 					| null
 					| undefined;
 				if (ctx.provider.extractUsageInfo && response.ok) {
-					usage = await ctx.provider.extractUsageInfo(responseClone);
+					usage = await ctx.provider.extractUsageInfo(responseClone as Response);
 					if (usage) {
 						log.info(
 							`Usage for ${account.name}: Model: ${usage.model}, Tokens: ${usage.totalTokens || 0}, Cost: $${usage.costUsd?.toFixed(4) || "0"}`,

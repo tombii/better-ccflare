@@ -1,5 +1,8 @@
 #!/usr/bin/env bun
+import { Config } from "@claudeflare/config";
+import { container, SERVICE_KEYS } from "@claudeflare/core-di";
 import { DatabaseFactory } from "@claudeflare/database";
+import { Logger } from "@claudeflare/logger";
 import * as tuiCore from "@claudeflare/tui-core";
 import { parseArgs } from "@claudeflare/tui-core";
 import { render } from "ink";
@@ -17,8 +20,14 @@ async function ensureServer(port: number) {
 }
 
 async function main() {
+	// Initialize DI container and services
+	container.registerInstance(SERVICE_KEYS.Config, new Config());
+	container.registerInstance(SERVICE_KEYS.Logger, new Logger("TUI"));
+
 	// Initialize database factory
 	DatabaseFactory.initialize();
+	const dbOps = DatabaseFactory.getInstance();
+	container.registerInstance(SERVICE_KEYS.Database, dbOps);
 
 	const args = process.argv.slice(2);
 	const parsed = parseArgs(args);

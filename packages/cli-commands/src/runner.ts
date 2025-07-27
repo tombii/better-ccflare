@@ -1,5 +1,6 @@
 import { parseArgs } from "node:util";
 import { Config } from "@claudeflare/config";
+import { container, SERVICE_KEYS } from "@claudeflare/core-di";
 import { DatabaseFactory } from "@claudeflare/database";
 import {
 	addAccount,
@@ -15,10 +16,12 @@ import { clearRequestHistory, resetAllStats } from "./commands/stats";
  * Main CLI runner
  */
 export async function runCli(argv: string[]): Promise<void> {
-	// Initialize database and config
-	const config = new Config();
+	// Initialize DI container and services
+	container.registerInstance(SERVICE_KEYS.Config, new Config());
+	const config = container.resolve<Config>(SERVICE_KEYS.Config);
 	DatabaseFactory.initialize();
 	const dbOps = DatabaseFactory.getInstance();
+	container.registerInstance(SERVICE_KEYS.Database, dbOps);
 
 	try {
 		// Parse command line arguments
