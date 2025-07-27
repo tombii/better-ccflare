@@ -6,8 +6,16 @@ import { EnhancedRequestsScreen } from "./components/EnhancedRequestsScreen";
 import { EnhancedStatsScreen } from "./components/EnhancedStatsScreen";
 import { LogsScreen } from "./components/LogsScreen";
 import { ServerScreen } from "./components/ServerScreen";
+import { StrategyScreen } from "./components/StrategyScreen";
 
-type Screen = "home" | "server" | "accounts" | "stats" | "requests" | "logs";
+type Screen =
+	| "home"
+	| "server"
+	| "accounts"
+	| "stats"
+	| "requests"
+	| "logs"
+	| "strategy";
 
 export function App() {
 	const [screen, setScreen] = useState<Screen>("home");
@@ -19,6 +27,7 @@ export function App() {
 		{ label: "📊 View Statistics", value: "stats" },
 		{ label: "📜 View Requests", value: "requests" },
 		{ label: "📋 View Logs", value: "logs" },
+		{ label: "⚖️  Load Balancer", value: "strategy" },
 		{ label: "❌ Exit", value: "exit" },
 	];
 
@@ -57,6 +66,7 @@ export function App() {
 			{screen === "stats" && <EnhancedStatsScreen onBack={handleBack} />}
 			{screen === "requests" && <EnhancedRequestsScreen onBack={handleBack} />}
 			{screen === "logs" && <LogsScreen onBack={handleBack} />}
+			{screen === "strategy" && <StrategyScreen onBack={handleBack} />}
 		</Box>
 	);
 }
