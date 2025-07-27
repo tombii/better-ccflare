@@ -1,6 +1,7 @@
 import type { Config } from "@claudeflare/config";
 import { isValidStrategy, STRATEGIES } from "@claudeflare/core";
 import type { ConfigResponse, StrategyUpdateRequest } from "../types";
+import { BadRequest, jsonResponse } from "../utils/http-error";
 
 /**
  * Create config handlers
@@ -17,9 +18,7 @@ export function createConfigHandlers(config: Config) {
 				port: (settings.port as number) || 8080,
 				sessionDurationMs: (settings.sessionDurationMs as number) || 3600000,
 			};
-			return new Response(JSON.stringify(response), {
-				headers: { "Content-Type": "application/json" },
-			});
+			return jsonResponse(response);
 		},
 
 		/**
@@ -27,49 +26,30 @@ export function createConfigHandlers(config: Config) {
 		 */
 		getStrategy: (): Response => {
 			const strategy = config.getStrategy();
-			return new Response(JSON.stringify({ strategy }), {
-				headers: { "Content-Type": "application/json" },
-			});
+			return jsonResponse({ strategy });
 		},
 
 		/**
 		 * Update strategy
 		 */
 		setStrategy: async (req: Request): Promise<Response> => {
-			try {
-				const body = (await req.json()) as StrategyUpdateRequest;
-				const { strategy } = body;
+			const body = (await req.json()) as StrategyUpdateRequest;
+			const { strategy } = body;
 
-				if (!strategy || !isValidStrategy(strategy)) {
-					return new Response(JSON.stringify({ error: "Invalid strategy" }), {
-						status: 400,
-						headers: { "Content-Type": "application/json" },
-					});
-				}
-
-				config.setStrategy(strategy);
-
-				return new Response(JSON.stringify({ success: true, strategy }), {
-					headers: { "Content-Type": "application/json" },
-				});
-			} catch (_error) {
-				return new Response(
-					JSON.stringify({ error: "Failed to update strategy" }),
-					{
-						status: 500,
-						headers: { "Content-Type": "application/json" },
-					},
-				);
+			if (!strategy || !isValidStrategy(strategy)) {
+				throw BadRequest("Invalid strategy");
 			}
+
+			config.setStrategy(strategy);
+
+			return jsonResponse({ success: true, strategy });
 		},
 
 		/**
 		 * Get available strategies
 		 */
 		getStrategies: (): Response => {
-			return new Response(JSON.stringify(STRATEGIES), {
-				headers: { "Content-Type": "application/json" },
-			});
+			return jsonResponse(STRATEGIES);
 		},
 	};
 }
