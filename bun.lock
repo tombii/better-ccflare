@@ -23,6 +23,10 @@
         "@claudeflare/database": "workspace:*",
       },
     },
+    "apps/lander": {
+      "name": "@claudeflare/lander",
+      "version": "1.0.0",
+    },
     "apps/server": {
       "name": "@claudeflare/server",
       "version": "0.1.0",
@@ -77,6 +81,9 @@
     "packages/core": {
       "name": "@claudeflare/core",
       "version": "0.1.0",
+      "dependencies": {
+        "@claudeflare/logger": "workspace:*",
+      },
     },
     "packages/dashboard-web": {
       "name": "@claudeflare/dashboard-web",
@@ -214,6 +221,8 @@
     "@claudeflare/database": ["@claudeflare/database@workspace:packages/database"],
 
     "@claudeflare/http-api": ["@claudeflare/http-api@workspace:packages/http-api"],
+
+    "@claudeflare/lander": ["@claudeflare/lander@workspace:apps/lander"],
 
     "@claudeflare/load-balancer": ["@claudeflare/load-balancer@workspace:packages/load-balancer"],
 
