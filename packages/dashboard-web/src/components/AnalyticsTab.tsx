@@ -74,7 +74,7 @@ export function AnalyticsTab() {
 		const loadData = async () => {
 			try {
 				setLoading(true);
-				const data = await api.getAnalytics(timeRange);
+				const data = await api.getAnalytics(timeRange, filters);
 				setAnalytics(data);
 				setLoading(false);
 			} catch (error) {
@@ -84,7 +84,7 @@ export function AnalyticsTab() {
 		};
 
 		loadData();
-	}, [timeRange]);
+	}, [timeRange, filters]);
 
 	// Get unique accounts and models from analytics data
 	const availableAccounts =

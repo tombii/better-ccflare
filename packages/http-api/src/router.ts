@@ -80,7 +80,7 @@ export class APIRouter {
 		this.handlers.set("GET:/api/logs/stream", () => logsStreamHandler());
 		this.handlers.set("GET:/api/logs/history", () => logsHistoryHandler());
 		this.handlers.set("GET:/api/analytics", (_req, url) => {
-			return analyticsHandler(url.searchParams.get("range") ?? "24h");
+			return analyticsHandler(url.searchParams);
 		});
 	}
 

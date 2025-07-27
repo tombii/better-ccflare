@@ -53,6 +53,7 @@ export interface RequestPayload {
 	error?: string;
 	meta: {
 		accountId?: string;
+		accountName?: string;
 		retry?: number;
 		timestamp: number;
 		success?: boolean;
@@ -193,8 +194,27 @@ class API {
 		return res.json() as Promise<RequestSummary[]>;
 	}
 
-	async getAnalytics(range = "24h"): Promise<AnalyticsResponse> {
-		const res = await fetch(`${this.baseUrl}/api/analytics?range=${range}`);
+	async getAnalytics(
+		range = "24h",
+		filters?: {
+			accounts?: string[];
+			models?: string[];
+			status?: "all" | "success" | "error";
+		},
+	): Promise<AnalyticsResponse> {
+		const params = new URLSearchParams({ range });
+
+		if (filters?.accounts?.length) {
+			params.append("accounts", filters.accounts.join(","));
+		}
+		if (filters?.models?.length) {
+			params.append("models", filters.models.join(","));
+		}
+		if (filters?.status && filters.status !== "all") {
+			params.append("status", filters.status);
+		}
+
+		const res = await fetch(`${this.baseUrl}/api/analytics?${params}`);
 		if (!res.ok) throw new Error("Failed to fetch analytics data");
 		return res.json() as Promise<AnalyticsResponse>;
 	}

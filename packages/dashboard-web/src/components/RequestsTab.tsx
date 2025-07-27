@@ -208,9 +208,11 @@ export function RequestsTab() {
 													${summary.costUsd.toFixed(4)}
 												</Badge>
 											)}
-											{request.meta.accountId && (
+											{(request.meta.accountName || request.meta.accountId) && (
 												<span className="text-sm text-muted-foreground">
-													via {request.meta.accountId.slice(0, 8)}...
+													via{" "}
+													{request.meta.accountName ||
+														`${request.meta.accountId?.slice(0, 8)}...`}
 												</span>
 											)}
 											{request.meta.rateLimited && (
