@@ -39,6 +39,15 @@ export function ensureSchema(db: Database): void {
 	db.run(
 		`CREATE INDEX IF NOT EXISTS idx_requests_timestamp ON requests(timestamp DESC)`,
 	);
+
+	// Create request_payloads table for storing full request/response data
+	db.run(`
+		CREATE TABLE IF NOT EXISTS request_payloads (
+			id TEXT PRIMARY KEY,
+			json TEXT NOT NULL,
+			FOREIGN KEY (id) REFERENCES requests(id) ON DELETE CASCADE
+		)
+	`);
 }
 
 export function runMigrations(db: Database): void {

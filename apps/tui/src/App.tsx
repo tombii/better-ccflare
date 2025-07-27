@@ -3,10 +3,11 @@ import SelectInput from "ink-select-input";
 import { useState } from "react";
 import { AccountsScreen } from "./components/AccountsScreen";
 import { LogsScreen } from "./components/LogsScreen";
+import { RequestsScreen } from "./components/RequestsScreen";
 import { ServerScreen } from "./components/ServerScreen";
 import { StatsScreen } from "./components/StatsScreen";
 
-type Screen = "home" | "server" | "accounts" | "stats" | "logs";
+type Screen = "home" | "server" | "accounts" | "stats" | "requests" | "logs";
 
 export function App() {
 	const [screen, setScreen] = useState<Screen>("home");
@@ -16,7 +17,8 @@ export function App() {
 		{ label: "🚀 Start Server", value: "server" },
 		{ label: "👥 Manage Accounts", value: "accounts" },
 		{ label: "📊 View Statistics", value: "stats" },
-		{ label: "📜 View Logs", value: "logs" },
+		{ label: "📜 View Requests", value: "requests" },
+		{ label: "📋 View Logs", value: "logs" },
 		{ label: "❌ Exit", value: "exit" },
 	];
 
@@ -53,6 +55,7 @@ export function App() {
 			{screen === "server" && <ServerScreen onBack={handleBack} />}
 			{screen === "accounts" && <AccountsScreen onBack={handleBack} />}
 			{screen === "stats" && <StatsScreen onBack={handleBack} />}
+			{screen === "requests" && <RequestsScreen onBack={handleBack} />}
 			{screen === "logs" && <LogsScreen onBack={handleBack} />}
 		</Box>
 	);

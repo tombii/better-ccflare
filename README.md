@@ -203,6 +203,10 @@ LB_STRATEGY=session
 # Options: DEBUG, INFO, WARN, ERROR
 LOG_LEVEL=INFO
 
+# Enable console output (default: 0)
+# Set to 1 to show logs in console (logs are always written to file and logBus)
+CLAUDEFLARE_DEBUG=1
+
 # Optional: Override config file path
 CLAUDEFLARE_CONFIG_PATH=/path/to/config.json
 ```

@@ -191,6 +191,43 @@ export class DatabaseOperations implements StrategyStore {
 		]);
 	}
 
+	// Request payload methods
+	saveRequestPayload(id: string, data: unknown): void {
+		const json = JSON.stringify(data);
+		this.db.run(`INSERT INTO request_payloads (id, json) VALUES (?, ?)`, [
+			id,
+			json,
+		]);
+	}
+
+	getRequestPayload(id: string): unknown | null {
+		const row = this.db
+			.query<{ json: string }, [string]>(
+				`SELECT json FROM request_payloads WHERE id = ?`,
+			)
+			.get(id);
+
+		if (!row) return null;
+
+		try {
+			return JSON.parse(row.json);
+		} catch {
+			return null;
+		}
+	}
+
+	listRequestPayloads(limit = 50): Array<{ id: string; json: string }> {
+		return this.db
+			.query<{ id: string; json: string }, [number]>(`
+				SELECT rp.id, rp.json 
+				FROM request_payloads rp
+				JOIN requests r ON rp.id = r.id
+				ORDER BY r.timestamp DESC
+				LIMIT ?
+			`)
+			.all(limit);
+	}
+
 	close(): void {
 		this.db.close();
 	}

@@ -160,6 +160,9 @@ export async function handleProxy(
 				// Update usage tracking
 				ctx.dbOps.updateAccountUsage(account.id);
 
+				// Clone response for body reading
+				const responseClone = response.clone();
+
 				// Check for rate limiting
 				const rateLimitInfo = ctx.provider.checkRateLimit(response);
 				if (rateLimitInfo.isRateLimited && rateLimitInfo.resetTime) {
@@ -168,6 +171,34 @@ export async function handleProxy(
 					log.warn(
 						`Account ${account.name} rate limited until ${new Date(rateLimitInfo.resetTime).toISOString()}`,
 					);
+
+					// Save rate limited response payload
+					const responseBody = await responseClone
+						.arrayBuffer()
+						.catch(() => null);
+					const payload = {
+						request: {
+							headers: Object.fromEntries(req.headers.entries()),
+							body: requestBody
+								? Buffer.from(requestBody).toString("base64")
+								: null,
+						},
+						response: {
+							status: response.status,
+							headers: Object.fromEntries(response.headers.entries()),
+							body: responseBody
+								? Buffer.from(responseBody).toString("base64")
+								: null,
+						},
+						meta: {
+							accountId: account.id,
+							retry,
+							timestamp: Date.now(),
+							rateLimited: true,
+						},
+					};
+					ctx.dbOps.saveRequestPayload(requestMeta.id, payload);
+
 					// Continue to next account immediately on rate limit
 					break;
 				}
@@ -185,6 +216,33 @@ export async function handleProxy(
 					responseTime,
 					accounts.indexOf(account),
 				);
+
+				// Save successful response payload before processing
+				const responseBody = await responseClone
+					.arrayBuffer()
+					.catch(() => null);
+				const payload = {
+					request: {
+						headers: Object.fromEntries(req.headers.entries()),
+						body: requestBody
+							? Buffer.from(requestBody).toString("base64")
+							: null,
+					},
+					response: {
+						status: response.status,
+						headers: Object.fromEntries(response.headers.entries()),
+						body: responseBody
+							? Buffer.from(responseBody).toString("base64")
+							: null,
+					},
+					meta: {
+						accountId: account.id,
+						retry,
+						timestamp: Date.now(),
+						success: true,
+					},
+				};
+				ctx.dbOps.saveRequestPayload(requestMeta.id, payload);
 
 				// Check for tier information if provider supports it
 				if (ctx.provider.extractTierInfo) {
@@ -207,6 +265,25 @@ export async function handleProxy(
 					`Error proxying request with account ${account.name} (retry ${retry + 1}/${ctx.runtime.retry.attempts}):`,
 					error,
 				);
+
+				// Save error payload
+				const errorPayload = {
+					request: {
+						headers: Object.fromEntries(req.headers.entries()),
+						body: requestBody
+							? Buffer.from(requestBody).toString("base64")
+							: null,
+					},
+					response: null,
+					error: lastError,
+					meta: {
+						accountId: account.id,
+						retry,
+						timestamp: Date.now(),
+						success: false,
+					},
+				};
+				ctx.dbOps.saveRequestPayload(requestMeta.id, errorPayload);
 			}
 		}
 
@@ -226,6 +303,22 @@ export async function handleProxy(
 		responseTime,
 		accounts.length,
 	);
+
+	// Save final failure payload
+	const failurePayload = {
+		request: {
+			headers: Object.fromEntries(req.headers.entries()),
+			body: requestBody ? Buffer.from(requestBody).toString("base64") : null,
+		},
+		response: null,
+		error: "All accounts failed",
+		meta: {
+			timestamp: Date.now(),
+			success: false,
+			accountsAttempted: accounts.length,
+		},
+	};
+	ctx.dbOps.saveRequestPayload(requestMeta.id, failurePayload);
 
 	return new Response(
 		JSON.stringify({

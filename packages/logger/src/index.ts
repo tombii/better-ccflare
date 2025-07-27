@@ -18,11 +18,16 @@ export class Logger {
 	private level: LogLevel;
 	private prefix: string;
 	private format: LogFormat;
+	private silentConsole: boolean;
 
 	constructor(prefix: string = "", level: LogLevel = LogLevel.INFO) {
 		this.prefix = prefix;
 		this.level = this.getLogLevelFromEnv() || level;
 		this.format = (process.env.LOG_FORMAT as LogFormat) || "pretty";
+		// Only show console output in debug mode or if CLAUDEFLARE_DEBUG is set
+		this.silentConsole = !(
+			process.env.CLAUDEFLARE_DEBUG === "1" || this.level === LogLevel.DEBUG
+		);
 	}
 
 	private getLogLevelFromEnv(): LogLevel | null {
@@ -64,7 +69,7 @@ export class Logger {
 			};
 			logBus.emit("log", event);
 			logFileWriter.write(event);
-			console.log(msg);
+			if (!this.silentConsole) console.log(msg);
 		}
 	}
 
@@ -79,7 +84,7 @@ export class Logger {
 			};
 			logBus.emit("log", event);
 			logFileWriter.write(event);
-			console.log(msg);
+			if (!this.silentConsole) console.log(msg);
 		}
 	}
 
@@ -94,7 +99,7 @@ export class Logger {
 			};
 			logBus.emit("log", event);
 			logFileWriter.write(event);
-			console.warn(msg);
+			if (!this.silentConsole) console.warn(msg);
 		}
 	}
 
@@ -109,12 +114,16 @@ export class Logger {
 			};
 			logBus.emit("log", event);
 			logFileWriter.write(event);
-			console.error(msg, error);
+			if (!this.silentConsole) console.error(msg, error);
 		}
 	}
 
 	setLevel(level: LogLevel): void {
 		this.level = level;
+		// Update silentConsole when level changes
+		this.silentConsole = !(
+			process.env.CLAUDEFLARE_DEBUG === "1" || this.level === LogLevel.DEBUG
+		);
 	}
 
 	getLevel(): LogLevel {

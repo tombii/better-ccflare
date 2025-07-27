@@ -5,6 +5,16 @@ import { render } from "ink";
 import React from "react";
 import { App } from "./App";
 
+// Global singleton for auto-started server
+let runningServer: tuiCore.ServeResult | null = null;
+
+async function ensureServer(port: number) {
+	if (!runningServer) {
+		runningServer = await tuiCore.serve({ port, withDashboard: true });
+	}
+	return runningServer;
+}
+
 async function main() {
 	const args = process.argv.slice(2);
 	const parsed = parseArgs(args);
@@ -102,9 +112,15 @@ Examples:
 		return;
 	}
 
-	// Default: Launch interactive TUI
+	// Default: Launch interactive TUI with auto-started server
+	await ensureServer(parsed.port || 8080);
 	const { waitUntilExit } = render(React.createElement(App));
 	await waitUntilExit();
+
+	// Cleanup server when TUI exits
+	if (runningServer) {
+		runningServer.cleanup();
+	}
 }
 
 // Run main and handle errors

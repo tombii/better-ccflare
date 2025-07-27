@@ -30,6 +30,28 @@ export interface LogEntry {
 	msg: string;
 }
 
+export interface RequestPayload {
+	id: string;
+	request: {
+		headers: Record<string, string>;
+		body: string | null;
+	};
+	response: {
+		status: number;
+		headers: Record<string, string>;
+		body: string | null;
+	} | null;
+	error?: string;
+	meta: {
+		accountId?: string;
+		retry?: number;
+		timestamp: number;
+		success?: boolean;
+		rateLimited?: boolean;
+		accountsAttempted?: number;
+	};
+}
+
 class API {
 	private baseUrl = "";
 
@@ -116,6 +138,14 @@ class API {
 			}
 		});
 		return eventSource;
+	}
+
+	async getRequestsDetail(limit = 100): Promise<RequestPayload[]> {
+		const res = await fetch(
+			`${this.baseUrl}/api/requests/detail?limit=${limit}`,
+		);
+		if (!res.ok) throw new Error("Failed to fetch detailed requests");
+		return res.json() as Promise<RequestPayload[]>;
 	}
 }
 
