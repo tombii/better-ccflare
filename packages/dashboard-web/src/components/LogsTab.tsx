@@ -54,7 +54,8 @@ export function LogsTab() {
 		setPaused(!paused);
 	};
 
-	const getLogColor = (level: string) => {
+	const getLogColor = (level: string | undefined) => {
+		if (!level) return "";
 		switch (level.toUpperCase()) {
 			case "ERROR":
 				return "text-destructive";
@@ -115,7 +116,7 @@ export function LogsTab() {
 									{formatTimestamp(log.ts)}
 								</span>
 								<span className={`font-medium ${getLogColor(log.level)}`}>
-									[{log.level}]
+									[{log.level || "LOG"}]
 								</span>
 								<span className="flex-1">{log.msg}</span>
 							</div>

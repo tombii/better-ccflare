@@ -1,6 +1,9 @@
 import type { Database } from "bun:sqlite";
 import type { DatabaseOperations } from "@claudeflare/database";
 import type { AccountResponse } from "../types.js";
+import * as cliCommands from "@claudeflare/cli-commands";
+import { Config } from "@claudeflare/config";
+import { getOAuthProvider, generatePKCE } from "@claudeflare/providers";
 
 /**
  * Create an accounts list handler
@@ -131,18 +134,26 @@ export function createAccountTierUpdateHandler(dbOps: DatabaseOperations) {
 	};
 }
 
+// Store PKCE verifiers temporarily (in production, use a proper cache)
+const pkceStore = new Map<
+	string,
+	{ verifier: string; mode: "max" | "console"; tier: number }
+>();
+
 /**
  * Create an account add handler
  */
-export function createAccountAddHandler(_dbOps: DatabaseOperations) {
+export function createAccountAddHandler(dbOps: DatabaseOperations) {
 	return async (req: Request): Promise<Response> => {
 		try {
 			const body = (await req.json()) as {
 				name: string;
-				mode?: string;
+				mode?: "max" | "console";
 				tier?: number;
+				code?: string;
+				step?: "init" | "callback";
 			};
-			const { name, mode = "max", tier = 1 } = body;
+			const { name, mode = "max", tier = 1, code, step = "init" } = body;
 
 			if (!name || typeof name !== "string") {
 				return new Response(
@@ -154,22 +165,168 @@ export function createAccountAddHandler(_dbOps: DatabaseOperations) {
 				);
 			}
 
-			// Placeholder for actual account creation logic
-			// In a real implementation, this would integrate with the CLI commands
+			// Step 1: Initialize OAuth flow
+			if (step === "init") {
+				// Check if account already exists
+				const existingAccounts = dbOps.getAllAccounts();
+				if (existingAccounts.some((a) => a.name === name)) {
+					return new Response(
+						JSON.stringify({
+							error: `Account with name '${name}' already exists`,
+						}),
+						{
+							status: 400,
+							headers: { "Content-Type": "application/json" },
+						},
+					);
+				}
+
+				// Get OAuth provider
+				const oauthProvider = getOAuthProvider("anthropic");
+				if (!oauthProvider) {
+					return new Response(
+						JSON.stringify({ error: "OAuth provider not found" }),
+						{
+							status: 500,
+							headers: { "Content-Type": "application/json" },
+						},
+					);
+				}
+
+				// Generate PKCE
+				const pkce = await generatePKCE();
+				const config = new Config();
+				const runtime = config.getRuntime();
+				const oauthConfig = oauthProvider.getOAuthConfig(mode);
+				oauthConfig.clientId = runtime.clientId;
+
+				// Generate auth URL
+				const authUrl = oauthProvider.generateAuthUrl(oauthConfig, pkce);
+
+				// Store PKCE verifier for later
+				pkceStore.set(name, { verifier: pkce.verifier, mode, tier });
+
+				// Clean up old entries after 10 minutes
+				setTimeout(() => pkceStore.delete(name), 10 * 60 * 1000);
+
+				return new Response(
+					JSON.stringify({
+						success: true,
+						authUrl,
+						step: "authorize",
+					}),
+					{
+						headers: { "Content-Type": "application/json" },
+					},
+				);
+			}
+
+			// Step 2: Handle OAuth callback
+			if (step === "callback") {
+				if (!code) {
+					return new Response(
+						JSON.stringify({ error: "Authorization code is required" }),
+						{
+							status: 400,
+							headers: { "Content-Type": "application/json" },
+						},
+					);
+				}
+
+				// Get stored PKCE verifier
+				const pkceData = pkceStore.get(name);
+				if (!pkceData) {
+					return new Response(
+						JSON.stringify({
+							error: "OAuth session expired. Please try again.",
+						}),
+						{
+							status: 400,
+							headers: { "Content-Type": "application/json" },
+						},
+					);
+				}
+
+				const { verifier, mode: savedMode, tier: savedTier } = pkceData;
+
+				// Get OAuth provider
+				const oauthProvider = getOAuthProvider("anthropic");
+				if (!oauthProvider) {
+					return new Response(
+						JSON.stringify({ error: "OAuth provider not found" }),
+						{
+							status: 500,
+							headers: { "Content-Type": "application/json" },
+						},
+					);
+				}
+
+				const config = new Config();
+				const runtime = config.getRuntime();
+				const oauthConfig = oauthProvider.getOAuthConfig(savedMode);
+				oauthConfig.clientId = runtime.clientId;
+
+				// Exchange code for tokens
+				const tokens = await oauthProvider.exchangeCode(
+					code,
+					verifier,
+					oauthConfig,
+				);
+
+				// Create account in database
+				const db = dbOps.getDatabase();
+				const accountId = crypto.randomUUID();
+				db.run(
+					`
+					INSERT INTO accounts (
+						id, name, provider, refresh_token, access_token, expires_at, 
+						created_at, request_count, total_requests, account_tier
+					) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?)
+					`,
+					[
+						accountId,
+						name,
+						"anthropic",
+						tokens.refreshToken,
+						tokens.accessToken,
+						tokens.expiresAt,
+						Date.now(),
+						savedTier,
+					],
+				);
+
+				// Clean up PKCE data
+				pkceStore.delete(name);
+
+				return new Response(
+					JSON.stringify({
+						success: true,
+						message: `Account '${name}' added successfully!`,
+						mode: savedMode === "max" ? "Claude Max" : "Claude Console",
+						tier: savedTier,
+					}),
+					{
+						headers: { "Content-Type": "application/json" },
+					},
+				);
+			}
+
+			return new Response(JSON.stringify({ error: "Invalid step" }), {
+				status: 400,
+				headers: { "Content-Type": "application/json" },
+			});
+		} catch (error) {
+			console.error("Account add error:", error);
 			return new Response(
 				JSON.stringify({
-					success: true,
-					message: `Account ${name} created with ${mode} mode and tier ${tier}`,
+					error:
+						error instanceof Error ? error.message : "Failed to add account",
 				}),
 				{
+					status: 500,
 					headers: { "Content-Type": "application/json" },
 				},
 			);
-		} catch (_error) {
-			return new Response(JSON.stringify({ error: "Failed to add account" }), {
-				status: 500,
-				headers: { "Content-Type": "application/json" },
-			});
 		}
 	};
 }
@@ -177,22 +334,33 @@ export function createAccountAddHandler(_dbOps: DatabaseOperations) {
 /**
  * Create an account remove handler
  */
-export function createAccountRemoveHandler(_dbOps: DatabaseOperations) {
+export function createAccountRemoveHandler(dbOps: DatabaseOperations) {
 	return async (_req: Request, accountName: string): Promise<Response> => {
 		try {
-			// Placeholder for actual account removal logic
+			const result = cliCommands.removeAccount(dbOps, accountName);
+
+			if (!result.success) {
+				return new Response(JSON.stringify({ error: result.message }), {
+					status: 404,
+					headers: { "Content-Type": "application/json" },
+				});
+			}
+
 			return new Response(
 				JSON.stringify({
 					success: true,
-					message: `Account ${accountName} removed`,
+					message: result.message,
 				}),
 				{
 					headers: { "Content-Type": "application/json" },
 				},
 			);
-		} catch (_error) {
+		} catch (error) {
 			return new Response(
-				JSON.stringify({ error: "Failed to remove account" }),
+				JSON.stringify({
+					error:
+						error instanceof Error ? error.message : "Failed to remove account",
+				}),
 				{
 					status: 500,
 					headers: { "Content-Type": "application/json" },

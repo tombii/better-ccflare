@@ -24,6 +24,8 @@ export function AccountsTab() {
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
 	const [adding, setAdding] = useState(false);
+	const [authStep, setAuthStep] = useState<"form" | "code">("form");
+	const [authCode, setAuthCode] = useState("");
 	const [newAccount, setNewAccount] = useState({
 		name: "",
 		mode: "max" as "max" | "console",
@@ -53,13 +55,46 @@ export function AccountsTab() {
 		}
 
 		try {
-			await api.addAccount(newAccount);
+			// Step 1: Initialize OAuth flow
+			const { authUrl } = await api.initAddAccount(newAccount);
+
+			// Open auth URL in new tab
+			window.open(authUrl, "_blank");
+
+			// Move to code entry step
+			setAuthStep("code");
+			setError(null);
+		} catch (err) {
+			setError(
+				err instanceof Error ? err.message : "Failed to initialize account",
+			);
+		}
+	};
+
+	const handleCodeSubmit = async () => {
+		if (!authCode) {
+			setError("Authorization code is required");
+			return;
+		}
+
+		try {
+			// Step 2: Complete OAuth flow
+			await api.completeAddAccount({
+				name: newAccount.name,
+				code: authCode,
+			});
+
+			// Success!
 			await loadAccounts();
 			setAdding(false);
+			setAuthStep("form");
+			setAuthCode("");
 			setNewAccount({ name: "", mode: "max", tier: 1 });
 			setError(null);
 		} catch (err) {
-			setError(err instanceof Error ? err.message : "Failed to add account");
+			setError(
+				err instanceof Error ? err.message : "Failed to complete account setup",
+			);
 		}
 	};
 
@@ -115,68 +150,113 @@ export function AccountsTab() {
 				<CardContent>
 					{adding && (
 						<div className="space-y-4 mb-6 p-4 border rounded-lg">
-							<h4 className="font-medium">Add New Account</h4>
-							<div className="space-y-2">
-								<Label htmlFor="name">Account Name</Label>
-								<Input
-									id="name"
-									value={newAccount.name}
-									onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-										setNewAccount({
-											...newAccount,
-											name: e.currentTarget.value,
-										})
-									}
-									placeholder="e.g., work-account"
-								/>
-							</div>
-							<div className="space-y-2">
-								<Label htmlFor="mode">Mode</Label>
-								<Select
-									value={newAccount.mode}
-									onValueChange={(value: "max" | "console") =>
-										setNewAccount({ ...newAccount, mode: value })
-									}
-								>
-									<SelectTrigger id="mode">
-										<SelectValue />
-									</SelectTrigger>
-									<SelectContent>
-										<SelectItem value="max">Max (Recommended)</SelectItem>
-										<SelectItem value="console">Console</SelectItem>
-									</SelectContent>
-								</Select>
-							</div>
-							<div className="space-y-2">
-								<Label htmlFor="tier">Tier</Label>
-								<Select
-									value={String(newAccount.tier)}
-									onValueChange={(value: string) =>
-										setNewAccount({ ...newAccount, tier: parseInt(value) })
-									}
-								>
-									<SelectTrigger id="tier">
-										<SelectValue />
-									</SelectTrigger>
-									<SelectContent>
-										<SelectItem value="1">Tier 1 (Default)</SelectItem>
-										<SelectItem value="5">Tier 5</SelectItem>
-										<SelectItem value="20">Tier 20</SelectItem>
-									</SelectContent>
-								</Select>
-							</div>
-							<div className="flex gap-2">
-								<Button onClick={handleAddAccount}>Add Account</Button>
-								<Button
-									variant="outline"
-									onClick={() => {
-										setAdding(false);
-										setNewAccount({ name: "", mode: "max", tier: 1 });
-									}}
-								>
-									Cancel
-								</Button>
-							</div>
+							<h4 className="font-medium">
+								{authStep === "form"
+									? "Add New Account"
+									: "Enter Authorization Code"}
+							</h4>
+							{authStep === "form" && (
+								<>
+									<div className="space-y-2">
+										<Label htmlFor="name">Account Name</Label>
+										<Input
+											id="name"
+											value={newAccount.name}
+											onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+												setNewAccount({
+													...newAccount,
+													name: e.currentTarget.value,
+												})
+											}
+											placeholder="e.g., work-account"
+										/>
+									</div>
+									<div className="space-y-2">
+										<Label htmlFor="mode">Mode</Label>
+										<Select
+											value={newAccount.mode}
+											onValueChange={(value: "max" | "console") =>
+												setNewAccount({ ...newAccount, mode: value })
+											}
+										>
+											<SelectTrigger id="mode">
+												<SelectValue />
+											</SelectTrigger>
+											<SelectContent>
+												<SelectItem value="max">Max (Recommended)</SelectItem>
+												<SelectItem value="console">Console</SelectItem>
+											</SelectContent>
+										</Select>
+									</div>
+									<div className="space-y-2">
+										<Label htmlFor="tier">Tier</Label>
+										<Select
+											value={String(newAccount.tier)}
+											onValueChange={(value: string) =>
+												setNewAccount({ ...newAccount, tier: parseInt(value) })
+											}
+										>
+											<SelectTrigger id="tier">
+												<SelectValue />
+											</SelectTrigger>
+											<SelectContent>
+												<SelectItem value="1">Tier 1 (Default)</SelectItem>
+												<SelectItem value="5">Tier 5</SelectItem>
+												<SelectItem value="20">Tier 20</SelectItem>
+											</SelectContent>
+										</Select>
+									</div>
+								</>
+							)}
+							{authStep === "form" ? (
+								<div className="flex gap-2">
+									<Button onClick={handleAddAccount}>Continue</Button>
+									<Button
+										variant="outline"
+										onClick={() => {
+											setAdding(false);
+											setAuthStep("form");
+											setNewAccount({ name: "", mode: "max", tier: 1 });
+											setError(null);
+										}}
+									>
+										Cancel
+									</Button>
+								</div>
+							) : (
+								<>
+									<div className="space-y-2">
+										<p className="text-sm text-muted-foreground">
+											A new browser tab has opened for authentication. After
+											authorizing, copy the code and paste it below.
+										</p>
+										<Label htmlFor="code">Authorization Code</Label>
+										<Input
+											id="code"
+											value={authCode}
+											onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+												setAuthCode(e.currentTarget.value)
+											}
+											placeholder="Paste authorization code here"
+										/>
+									</div>
+									<div className="flex gap-2">
+										<Button onClick={handleCodeSubmit}>Complete Setup</Button>
+										<Button
+											variant="outline"
+											onClick={() => {
+												setAdding(false);
+												setAuthStep("form");
+												setAuthCode("");
+												setNewAccount({ name: "", mode: "max", tier: 1 });
+												setError(null);
+											}}
+										>
+											Cancel
+										</Button>
+									</div>
+								</>
+							)}
 						</div>
 					)}
 
