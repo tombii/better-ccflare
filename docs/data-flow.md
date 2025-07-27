@@ -2,19 +2,34 @@
 
 ## Overview
 
-Claudeflare is a load balancer proxy for Claude API that distributes requests across multiple OAuth accounts to avoid rate limiting. This document details the complete data flow through the system, including request lifecycle, error handling, token refresh, and rate limit management.
+Claudeflare is a load balancer proxy for Claude API that distributes requests across multiple OAuth accounts to avoid rate limiting. This document details the complete data flow through the system, including request lifecycle, error handling, token refresh, rate limit management, and streaming response capture.
 
 ## Table of Contents
 
-1. [Overview of Request Lifecycle](#overview-of-request-lifecycle)
-2. [Sequence Diagrams](#sequence-diagrams)
+1. [Architecture Overview](#architecture-overview)
+2. [Overview of Request Lifecycle](#overview-of-request-lifecycle)
+3. [Sequence Diagrams](#sequence-diagrams)
    - [Successful Request Flow](#successful-request-flow)
    - [Rate Limited Request Flow](#rate-limited-request-flow)
    - [Token Refresh Flow](#token-refresh-flow)
    - [Failed Request with Retry Flow](#failed-request-with-retry-flow)
-3. [Error Handling Flows](#error-handling-flows)
-4. [Request Retry Logic](#request-retry-logic)
-5. [Database Update Patterns](#database-update-patterns)
+   - [Streaming Response Flow](#streaming-response-flow)
+4. [Error Handling Flows](#error-handling-flows)
+5. [Request Retry Logic](#request-retry-logic)
+6. [Database Update Patterns](#database-update-patterns)
+7. [Asynchronous Database Operations](#asynchronous-database-operations)
+
+## Architecture Overview
+
+Claudeflare uses a modular architecture with the following key components:
+
+- **Server**: Main HTTP server handling routing between API, dashboard, and proxy requests
+- **Proxy**: Core request forwarding logic with retry, rate limiting, and usage tracking
+- **Provider System**: Abstraction layer for different AI providers (currently Anthropic)
+- **Load Balancer**: Strategy pattern implementation for account selection
+- **AsyncDbWriter**: Asynchronous database write queue to prevent blocking
+- **Stream Tee**: Captures streaming responses for analytics without blocking the client
+- **Service Container**: Dependency injection for component management
 
 ## Overview of Request Lifecycle
 
@@ -26,8 +41,10 @@ The request lifecycle in Claudeflare follows these main stages:
 4. **Token Validation**: System checks if account has valid access token, refreshes if needed
 5. **Request Forwarding**: Proxy forwards request to Anthropic API with authentication
 6. **Response Handling**: System processes response, extracts usage data, checks rate limits
-7. **Data Persistence**: Updates database with request history, usage stats, and rate limit info
-8. **Response Streaming**: Returns response to client, preserving streaming capabilities
+7. **Stream Capture**: For streaming responses, uses teeStream to capture content without blocking
+8. **Data Persistence**: Queues database updates via AsyncDbWriter for non-blocking writes
+9. **Response Streaming**: Returns response to client, preserving streaming capabilities
+10. **Async Processing**: Background processing of usage data, cost calculation, and analytics
 
 ## Sequence Diagrams
 
@@ -41,6 +58,7 @@ sequenceDiagram
     participant LoadBalancer as Load Balancer
     participant Proxy
     participant Provider as Anthropic Provider
+    participant AsyncWriter as Async DB Writer
     participant DB as Database
     participant Anthropic as Anthropic API
 
@@ -57,7 +75,7 @@ sequenceDiagram
     Proxy->>LoadBalancer: getOrderedAccounts(meta, strategy)
     LoadBalancer->>DB: getAllAccounts()
     DB-->>LoadBalancer: Account list
-    LoadBalancer->>LoadBalancer: Filter by availability
+    LoadBalancer->>LoadBalancer: Filter by provider & availability
     LoadBalancer->>LoadBalancer: Apply strategy algorithm
     LoadBalancer-->>Proxy: Ordered account list
     
@@ -65,9 +83,10 @@ sequenceDiagram
         Proxy->>Proxy: Check token validity
         alt Token expired
             Proxy->>Provider: refreshAccessTokenSafe()
-            Provider->>Anthropic: POST /oauth/token
+            Provider->>Anthropic: POST /v1/oauth/token
             Anthropic-->>Provider: New access token
-            Provider->>DB: updateAccountTokens()
+            Provider->>AsyncWriter: enqueue(updateAccountTokens)
+            Note over AsyncWriter: Queued for async write
         end
         
         Proxy->>Provider: prepareHeaders(headers, accessToken)
@@ -75,33 +94,49 @@ sequenceDiagram
         Proxy->>Anthropic: Forward request
         Anthropic-->>Proxy: Response (streaming or JSON)
         
-        Proxy->>DB: updateAccountUsage(accountId)
+        Proxy->>AsyncWriter: enqueue(updateAccountUsage)
         
         Proxy->>Provider: parseRateLimit(response)
         Provider-->>Proxy: Rate limit info
         
         alt Has rate limit metadata
-            Proxy->>DB: updateAccountRateLimitMeta()
+            Proxy->>AsyncWriter: enqueue(updateAccountRateLimitMeta)
         end
         
         alt Response OK
-            Proxy->>Provider: extractUsageInfo(response)
-            Provider-->>Proxy: Usage data (tokens, model, cost)
-            
-            alt Has tier info
-                Proxy->>Provider: extractTierInfo(response)
-                Provider-->>Proxy: Account tier
-                Proxy->>DB: updateAccountTier()
+            alt Streaming Response
+                Proxy->>Proxy: teeStream(response.body)
+                Note over Proxy: Capture stream without blocking
+                Proxy->>Provider: extractUsageInfo(async)
+                Provider-->>Proxy: Usage promise
+                Proxy->>Client: Stream response immediately
+                
+                Note over Proxy: Background processing
+                Proxy->>Proxy: await usage promise
+                Proxy->>AsyncWriter: enqueue(updateRequestUsage)
+                Proxy->>AsyncWriter: enqueue(saveRequestPayload with stream data)
+            else Non-streaming Response
+                Proxy->>Provider: extractUsageInfo(response)
+                Provider-->>Proxy: Usage data (tokens, model)
+                Proxy->>Proxy: estimateCostUSD(model, tokens)
+                
+                alt Has tier info
+                    Proxy->>Provider: extractTierInfo(response)
+                    Provider-->>Proxy: Account tier
+                    Proxy->>AsyncWriter: enqueue(updateAccountTier)
+                end
+                
+                Proxy->>AsyncWriter: enqueue(saveRequest)
+                Proxy->>AsyncWriter: enqueue(saveRequestPayload)
+                
+                Proxy->>Provider: processResponse(response)
+                Proxy-->>Client: Processed response
             end
-            
-            Proxy->>DB: saveRequest(success)
-            Proxy->>DB: saveRequestPayload()
-            
-            Proxy->>Provider: processResponse(response)
-            Proxy-->>Server: Processed response
-            Server-->>Client: Stream response
         end
     end
+    
+    Note over AsyncWriter,DB: Background processing
+    AsyncWriter->>DB: Process queued writes
 ```
 
 ### Rate Limited Request Flow
@@ -164,6 +199,7 @@ sequenceDiagram
     participant Proxy
     participant RefreshMap as refreshInFlight Map
     participant Provider
+    participant AsyncWriter as Async DB Writer
     participant DB
     participant Anthropic
 
@@ -182,14 +218,16 @@ sequenceDiagram
             
             alt Refresh successful
                 Anthropic-->>Provider: {access_token: "new_token", expires_in: 3600}
-                Provider->>DB: updateAccountTokens(id, token, expiresAt)
-                Provider-->>Proxy: New access token
+                Provider-->>Proxy: TokenRefreshResult
+                Proxy->>AsyncWriter: enqueue(updateAccountTokens)
+                Note over AsyncWriter: Token update queued
                 Proxy->>RefreshMap: Delete promise
+                Proxy-->>Proxy: Return new access token
             else Refresh failed
                 Anthropic-->>Provider: Error response
                 Provider-->>Proxy: Throw error
                 Proxy->>RefreshMap: Delete promise
-                Proxy->>Proxy: Try next account
+                Note over Proxy: Refresh failed - will try next account
             end
         else Refresh already in progress
             Proxy->>RefreshMap: Get existing promise
@@ -199,6 +237,9 @@ sequenceDiagram
     else Token still valid
         Proxy-->>Proxy: Return existing token
     end
+    
+    Note over AsyncWriter,DB: Background processing
+    AsyncWriter->>DB: Process token update
 ```
 
 ### Failed Request with Retry Flow
@@ -253,6 +294,61 @@ sequenceDiagram
     end
 ```
 
+### Streaming Response Flow
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Proxy
+    participant TeeStream
+    participant AsyncWriter as Async DB Writer
+    participant Provider
+    participant DB
+
+    Note over Proxy: Streaming response detected
+    
+    Proxy->>Provider: isStreamingResponse(response)?
+    Provider-->>Proxy: true
+    
+    Proxy->>TeeStream: Create teeStream(response.body)
+    Note over TeeStream: maxBytes: runtime.streamBodyMaxBytes
+    
+    TeeStream->>TeeStream: Create new ReadableStream
+    
+    par Stream to Client
+        TeeStream->>Client: Pass through chunks immediately
+        Note over Client: Receives stream without delay
+    and Buffer for Analytics
+        loop While streaming
+            TeeStream->>TeeStream: Buffer chunks (up to maxBytes)
+            alt Buffer full
+                TeeStream->>TeeStream: Set truncated flag
+                Note over TeeStream: Stop buffering
+            end
+        end
+    end
+    
+    Note over Proxy: Fire-and-forget usage extraction
+    Proxy->>Provider: extractUsageInfo(responseClone)
+    
+    alt Stream completed
+        TeeStream->>TeeStream: onClose callback
+        TeeStream->>TeeStream: combineChunks(buffered)
+        TeeStream->>AsyncWriter: enqueue(saveRequestPayload)
+        Note over AsyncWriter: Payload includes:<br/>- Captured stream data<br/>- bodyTruncated flag<br/>- Stream metadata
+    else Stream error
+        TeeStream->>TeeStream: onError callback
+        Note over Proxy: Log error, continue streaming
+    end
+    
+    Note over Provider: Background usage extraction
+    Provider->>Provider: Parse streaming response
+    Provider-->>AsyncWriter: enqueue(updateRequestUsage)
+    
+    Note over AsyncWriter,DB: Async processing
+    AsyncWriter->>DB: Process all queued updates
+```
+
 ## Error Handling Flows
 
 ### Provider Cannot Handle Path
@@ -276,6 +372,7 @@ sequenceDiagram
     participant Client
     participant Proxy
     participant LoadBalancer
+    participant AsyncWriter
     participant DB
     participant Anthropic
 
@@ -291,13 +388,25 @@ sequenceDiagram
     
     alt Success
         Anthropic-->>Proxy: Response
-        Proxy->>DB: saveRequest(accountId: "no-account")
-        Proxy-->>Client: Forward response
+        
+        alt Streaming Response
+            Proxy->>Proxy: teeStream for capture
+            Proxy-->>Client: Stream response
+            Proxy->>AsyncWriter: enqueue(saveRequest)<br/>accountId: NO_ACCOUNT_ID
+            Proxy->>AsyncWriter: enqueue(saveRequestPayload)
+        else Non-streaming
+            Proxy->>AsyncWriter: enqueue(saveRequest)<br/>accountId: NO_ACCOUNT_ID
+            Proxy->>AsyncWriter: enqueue(saveRequestPayload)
+            Proxy-->>Client: Forward response
+        end
     else Failure
         Anthropic-->>Proxy: Error
-        Proxy->>DB: saveRequest(error)
+        Proxy->>AsyncWriter: enqueue(saveRequest with error)
         Proxy-->>Client: 502 Bad Gateway
     end
+    
+    Note over AsyncWriter,DB: Background processing
+    AsyncWriter->>DB: Process queued operations
 ```
 
 ## Request Retry Logic
@@ -334,10 +443,16 @@ flowchart TD
 
 ### Retry Configuration
 
-- **Initial delay**: `runtime.retry.delayMs` (default from config)
-- **Backoff multiplier**: `runtime.retry.backoff`
-- **Max attempts**: `runtime.retry.attempts`
+- **Initial delay**: `runtime.retry.delayMs` (default: 1000ms, configurable)
+- **Backoff multiplier**: `runtime.retry.backoff` (default: 2, configurable)
+- **Max attempts**: `runtime.retry.attempts` (default: 3, configurable)
 - **Delay calculation**: `delayMs * (backoff ^ attemptNumber)`
+- **Stream body max bytes**: Default: 1MB (1024 * 1024 bytes) in teeStream
+
+Configuration can be set via:
+1. Environment variables: `RETRY_ATTEMPTS`, `RETRY_DELAY_MS`, `RETRY_BACKOFF`
+2. Config file: `retry_attempts`, `retry_delay_ms`, `retry_backoff`
+3. Default values in code
 
 ## Database Update Patterns
 
@@ -345,25 +460,30 @@ flowchart TD
 
 ```mermaid
 flowchart LR
-    subgraph "Per Request Updates"
-        A[Request Start] --> B[updateAccountUsage]
+    subgraph "Per Request Updates (via AsyncDbWriter)"
+        A[Request Start] --> B[enqueue: updateAccountUsage]
         B --> C{Response Type}
-        C -->|Success| D[saveRequest<br/>success=true]
-        C -->|Rate Limited| E[markAccountRateLimited<br/>saveRequest]
-        C -->|Error| F[saveRequest<br/>with error]
+        C -->|Success| D[enqueue: saveRequest<br/>success=true]
+        C -->|Rate Limited| E[enqueue: markAccountRateLimited<br/>+ saveRequest]
+        C -->|Error| F[enqueue: saveRequest<br/>with error]
         
-        D --> G[saveRequestPayload]
+        D --> G[enqueue: saveRequestPayload]
         E --> G
         F --> G
         
-        D --> H[updateAccountRateLimitMeta]
+        D --> H[enqueue: updateAccountRateLimitMeta]
         E --> H
         
         D --> I[extractUsageInfo]
-        I --> J[Update cost/tokens]
+        I --> J[enqueue: updateRequestUsage<br/>with cost/tokens]
         
         D --> K[extractTierInfo]
-        K --> L[updateAccountTier]
+        K --> L[enqueue: updateAccountTier]
+        
+        subgraph "Async Processing"
+            M[AsyncDbWriter Queue] --> N[Process Jobs]
+            N --> O[Execute DB Operations]
+        end
     end
 ```
 
@@ -431,51 +551,111 @@ flowchart TD
    - `account_tier`: Updated when detected from response
    - `session_start` & `session_request_count`: For session strategy
    - `rate_limit_status`, `rate_limit_reset`, `rate_limit_remaining`: Rate limit metadata
+   - `provider`: Provider type (e.g., "anthropic")
 
 2. **requests** table:
    - One row per request with status, timing, and usage data
    - Links to account used (or "no-account" for fallback)
    - Stores error messages for failed requests
+   - Enhanced usage tracking:
+     - `model`: AI model used
+     - `input_tokens`, `output_tokens`: Token counts
+     - `cache_read_input_tokens`, `cache_creation_input_tokens`: Cache token details
+     - `cost_usd`: Calculated cost in USD
 
 3. **request_payloads** table:
    - Stores full request/response bodies (base64 encoded)
    - Includes headers and metadata
-   - Used for debugging and replay
+   - Enhanced metadata:
+     - `isStream`: Whether response was streamed
+     - `bodyTruncated`: If stream body exceeded maxBytes
+     - `rateLimited`: If request hit rate limits
+   - Used for debugging, replay, and analytics
 
 ### Update Transaction Flow
 
 ```mermaid
 sequenceDiagram
     participant Request
+    participant AsyncWriter as Async DB Writer
     participant DB
     
-    Note over Request,DB: During Request Processing
+    Note over Request,AsyncWriter: During Request Processing
     
-    Request->>DB: BEGIN (implicit)
-    Request->>DB: updateAccountUsage()
-    Note over DB: UPDATE accounts SET last_used, request_count++
+    Request->>AsyncWriter: enqueue(updateAccountUsage)
+    Request->>AsyncWriter: enqueue(updateAccountRateLimitMeta)
     
     alt Rate Limited
-        Request->>DB: markAccountRateLimited()
-        Note over DB: UPDATE accounts SET rate_limited_until
+        Request->>AsyncWriter: enqueue(markAccountRateLimited)
     end
     
-    Request->>DB: updateAccountRateLimitMeta()
-    Note over DB: UPDATE accounts SET rate_limit_*
-    
-    Request->>DB: saveRequest()
-    Note over DB: INSERT INTO requests
-    
-    Request->>DB: saveRequestPayload()
-    Note over DB: INSERT INTO request_payloads
+    Request->>AsyncWriter: enqueue(saveRequest)
+    Request->>AsyncWriter: enqueue(saveRequestPayload)
     
     alt Tier Changed
-        Request->>DB: updateAccountTier()
-        Note over DB: UPDATE accounts SET account_tier
+        Request->>AsyncWriter: enqueue(updateAccountTier)
     end
     
-    Request->>DB: COMMIT (implicit)
+    alt Streaming Response
+        Note over Request: Response sent to client
+        Request->>AsyncWriter: enqueue(updateRequestUsage)
+        Note over AsyncWriter: Usage data queued after extraction
+    end
+    
+    Note over AsyncWriter,DB: Background Processing (every 100ms)
+    
+    loop Process Queue
+        AsyncWriter->>AsyncWriter: Check queue
+        alt Jobs Available
+            AsyncWriter->>DB: BEGIN (implicit)
+            AsyncWriter->>DB: Execute queued operations
+            Note over DB: UPDATE accounts<br/>INSERT requests<br/>INSERT request_payloads
+            AsyncWriter->>DB: COMMIT (implicit)
+        end
+    end
+    
+    Note over AsyncWriter: On shutdown: flush remaining jobs
 ```
+
+## Asynchronous Database Operations
+
+The AsyncDbWriter component ensures non-blocking database operations:
+
+### Architecture
+
+```mermaid
+flowchart TD
+    subgraph "Request Thread"
+        A[Proxy Handler] --> B[Process Request]
+        B --> C[Enqueue DB Operations]
+        C --> D[Return Response Immediately]
+    end
+    
+    subgraph "AsyncDbWriter"
+        E[Job Queue] --> F{Queue Empty?}
+        F -->|No| G[Process Job]
+        G --> H[Execute DB Operation]
+        H --> F
+        F -->|Yes| I[Wait 100ms]
+        I --> F
+    end
+    
+    C -.-> E
+    
+    subgraph "On Shutdown"
+        J[SIGINT/SIGTERM] --> K[Stop Timer]
+        K --> L[Flush Queue]
+        L --> M[Exit]
+    end
+```
+
+### Key Features
+
+1. **Non-blocking Operations**: All database writes are queued, allowing requests to complete without waiting
+2. **Batch Processing**: Queue processed every 100ms or immediately when jobs are added
+3. **Graceful Shutdown**: Ensures all queued operations complete before process exit
+4. **Error Isolation**: Failed DB operations don't affect request processing
+5. **Memory Efficient**: Processes queue continuously to prevent unbounded growth
 
 ## Summary
 
@@ -483,9 +663,14 @@ The Claudeflare data flow is designed to:
 
 1. **Maximize availability** through multiple account rotation and retry logic
 2. **Prevent stampedes** with singleton token refresh promises
-3. **Track everything** for debugging and analytics
+3. **Track everything** for debugging, analytics, and replay capabilities
 4. **Handle failures gracefully** with fallback modes and clear error reporting
 5. **Respect rate limits** intelligently, distinguishing between hard limits and warnings
-6. **Optimize performance** through streaming responses and efficient database updates
+6. **Optimize performance** through:
+   - Non-blocking async database writes
+   - Streaming response passthrough with tee capture
+   - Efficient request/response payload storage
+7. **Support analytics** by capturing streaming responses without impacting performance
+8. **Enable debugging** through comprehensive request/response payload storage
 
-The system ensures reliable Claude API access while providing comprehensive monitoring and management capabilities through its dashboard and API endpoints.
+The system ensures reliable Claude API access while providing comprehensive monitoring and management capabilities through its dashboard and API endpoints. Recent enhancements include streaming response capture for analytics, asynchronous database operations for better performance, and enhanced cost tracking with detailed token breakdowns.

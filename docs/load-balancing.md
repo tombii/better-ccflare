@@ -24,6 +24,8 @@ Claudeflare implements a sophisticated load balancing system to distribute reque
 - **Tier-Based Weighting**: Supports different account tiers (1x, 5x, 20x)
 - **Session Persistence**: Maintains user sessions on specific accounts
 - **Real-time Strategy Switching**: Change strategies without restarting the server
+- **Async Database Operations**: Non-blocking database writes via AsyncDbWriter
+- **Default Strategy**: Session-based strategy is the default (configurable)
 
 ## Load Balancing Strategies
 
@@ -147,6 +149,34 @@ export class SessionStrategy implements LoadBalancingStrategy {
         this.sessionDurationMs = sessionDurationMs;
     }
 
+    initialize(store: StrategyStore): void {
+        this.store = store;
+    }
+
+    private resetSessionIfExpired(account: Account): void {
+        const now = Date.now();
+
+        if (
+            !account.session_start ||
+            now - account.session_start >= this.sessionDurationMs
+        ) {
+            // Reset session
+            if (this.store) {
+                const wasExpired = account.session_start !== null;
+                this.log.info(
+                    wasExpired
+                        ? `Session expired for account ${account.name}, starting new session`
+                        : `Starting new session for account ${account.name}`,
+                );
+                this.store.resetAccountSession(account.id, now);
+
+                // Update the account object to reflect changes
+                account.session_start = now;
+                account.session_request_count = 0;
+            }
+        }
+    }
+
     select(accounts: Account[], _meta: RequestMeta): Account[] {
         const now = Date.now();
 
@@ -167,6 +197,12 @@ export class SessionStrategy implements LoadBalancingStrategy {
 
         // If active account is available, use it
         if (activeAccount && isAccountAvailable(activeAccount, now)) {
+            // Reset session if expired (shouldn't happen but just in case)
+            this.resetSessionIfExpired(activeAccount);
+            this.log.info(
+                `Continuing session for account ${activeAccount.name} (${activeAccount.session_request_count} requests in session)`,
+            );
+            // Return active account first, then others as fallback
             const others = accounts.filter(
                 (a) => a.id !== activeAccount.id && isAccountAvailable(a, now),
             );
@@ -208,12 +244,19 @@ export class SessionStrategy implements LoadBalancingStrategy {
 - Can lead to uneven distribution
 - One account may handle entire session
 - Complexity in session management
+- Requires StrategyStore initialization for session persistence
 
 **When to Use**:
 - For conversational AI applications
 - When context persistence is critical
 - For long-running interactions
 - When account switching causes issues
+
+**Important Notes**:
+- The strategy logs session lifecycle events for debugging
+- Sessions are automatically reset after expiration
+- If the StrategyStore is not initialized, sessions won't persist across restarts
+- The strategy maintains session_request_count for monitoring
 
 ### Weighted
 
@@ -370,7 +413,7 @@ flowchart TD
 ### Decision Criteria
 
 1. **Session Persistence Required?**
-   - Yes → Use Session-Based Strategy
+   - Yes → Use Session-Based Strategy (Note: Initialize with StrategyStore for persistence)
    - No → Continue to next criterion
 
 2. **Different Account Tiers?**
@@ -390,7 +433,7 @@ flowchart TD
 ### Environment Variables
 
 ```bash
-# Set default strategy
+# Set default strategy (defaults to 'session' if not specified)
 LB_STRATEGY=session
 
 # Configure session duration (milliseconds)
@@ -399,6 +442,8 @@ SESSION_DURATION_MS=18000000  # 5 hours
 # Server port
 PORT=8080
 ```
+
+**Note**: The default strategy is defined as `DEFAULT_STRATEGY = StrategyName.Session` in the core package.
 
 ### Configuration File
 
@@ -492,6 +537,7 @@ Here's how to implement a custom random selection strategy:
 ```typescript
 import type { Account, LoadBalancingStrategy, RequestMeta } from "@claudeflare/core";
 import { isAccountAvailable } from "@claudeflare/core";
+// isAccountAvailable checks if account is not paused and not rate-limited
 
 export class RandomStrategy implements LoadBalancingStrategy {
     select(accounts: Account[], _meta: RequestMeta): Account[] {
@@ -539,7 +585,8 @@ export class LeastRateLimitedStrategy implements LoadBalancingStrategy {
 1. **Create Strategy Class**: Implement in `packages/load-balancer/src/strategies/`
 2. **Export Strategy**: Add to `packages/load-balancer/src/strategies/index.ts`
 3. **Register Strategy**: Update `StrategyName` enum in `packages/types/src/strategy.ts`
-4. **Wire Strategy**: Add case in `createStrategy()` function in `apps/server/src/server.ts`
+4. **Wire Strategy**: Add case in `initStrategy()` function in `apps/server/src/server.ts`
+5. **Initialize Dependencies**: If your strategy needs database access, implement the `initialize(store: StrategyStore)` method
 
 ### Best Practices
 
@@ -549,6 +596,8 @@ export class LeastRateLimitedStrategy implements LoadBalancingStrategy {
 4. **Maintain State Carefully**: Consider persistence needs
 5. **Log Decisions**: Use Logger for debugging strategy behavior
 6. **Test Thoroughly**: Unit test with various account states
+7. **Initialize Store**: If using database operations, implement `initialize(store: StrategyStore)`
+8. **Async Operations**: Use AsyncDbWriter for non-blocking database writes when needed
 
 ### Advanced Features
 
@@ -558,6 +607,38 @@ Consider implementing:
 - **Cost-optimized**: Minimize usage of expensive tiers
 - **Time-based**: Different strategies for peak/off-peak
 - **Adaptive**: Adjust strategy based on success rates
+
+## Monitoring and Debugging
+
+### Rate Limiting Behavior
+
+When an account is rate-limited:
+1. The `rate_limited_until` timestamp is set on the account
+2. `isAccountAvailable()` returns false for that account
+3. The account is excluded from all strategy selections
+4. Once the timestamp passes, the account automatically becomes available again
+
+### Logging
+
+All strategies use the `@claudeflare/logger` package for debugging:
+- **Session Strategy**: Logs session starts, expirations, and continuations
+- **All Strategies**: Can log selection decisions with appropriate log levels
+
+### Account States
+
+Accounts can be in several states:
+- **Available**: Not paused and not rate-limited
+- **Paused**: Manually disabled (paused = true)
+- **Rate Limited**: Temporarily unavailable (rate_limited_until > now)
+- **In Session**: Has active session_start timestamp (Session strategy only)
+
+## Recent Updates
+
+### Async Database Writer
+The system now includes an `AsyncDbWriter` component that handles non-blocking database operations. This is particularly useful for strategies that need to update account statistics or session information without blocking request processing.
+
+### Streaming Response Support
+The proxy layer has been enhanced with streaming response capture capabilities for analytics, though this doesn't directly impact load balancing strategy selection.
 
 ## Conclusion
 

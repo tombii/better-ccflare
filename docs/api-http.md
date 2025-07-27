@@ -400,7 +400,9 @@ Get detailed request information including payloads.
       "meta": {
         "accountId": "uuid",
         "timestamp": 1234567890,
-        "success": true
+        "success": true,
+        "isStream": false,
+        "bodyTruncated": false
       }
     }
   }
@@ -528,6 +530,9 @@ Get detailed analytics data.
 
 **Query Parameters:**
 - `range` - Time range: `1h`, `6h`, `24h`, `7d`, `30d` (default: `24h`)
+- `accounts` - Filter by account names (comma-separated list)
+- `models` - Filter by model names (comma-separated list)
+- `status` - Filter by request status: `all`, `success`, `error` (default: `all`)
 
 **Response:**
 ```json
@@ -578,9 +583,19 @@ Get detailed analytics data.
 }
 ```
 
-**Example:**
+**Examples:**
 ```bash
+# Basic analytics for last 7 days
 curl "http://localhost:8080/api/analytics?range=7d"
+
+# Analytics filtered by specific accounts
+curl "http://localhost:8080/api/analytics?range=24h&accounts=account1,account2"
+
+# Analytics for specific models with success status only
+curl "http://localhost:8080/api/analytics?range=24h&models=claude-3-opus-20240229,claude-3-sonnet-20240229&status=success"
+
+# Combined filters
+curl "http://localhost:8080/api/analytics?range=7d&accounts=premium1,premium2&models=claude-3-opus-20240229&status=error"
 ```
 
 ---
@@ -664,6 +679,13 @@ The proxy endpoints support streaming responses for compatible Claude API calls.
 2. The response will be `Content-Type: text/event-stream`
 3. Each chunk is delivered as a Server-Sent Event
 
+**Streaming Response Capture:**
+Claudeflare automatically captures streaming response bodies for analytics and debugging purposes:
+- Captured data is limited to `CF_STREAM_BODY_MAX_BYTES` (default: 256KB)
+- The capture process doesn't interfere with the client's stream
+- Captured bodies are stored base64-encoded in the request history
+- If the response exceeds the size limit, it's marked as truncated in metadata
+
 **Example:**
 ```bash
 curl -X POST http://localhost:8080/v1/messages \
@@ -705,7 +727,34 @@ Claudeflare can be configured using the following environment variables:
 - `PORT` - Server port (default: 8080)
 - `LB_STRATEGY` - Load balancing strategy (default: round-robin)
 - `SESSION_DURATION_MS` - Session duration in milliseconds (default: 18000000 / 5 hours)
-- `OAUTH_CLIENT_ID` - OAuth client ID for Anthropic authentication
+- `CLIENT_ID` - OAuth client ID for Anthropic authentication (default: 9d1c250a-e61b-44d9-88ed-5944d1962f5e)
+- `CF_STREAM_BODY_MAX_BYTES` - Maximum bytes to capture from streaming responses (default: 262144 / 256KB)
+- `RETRY_ATTEMPTS` - Number of retry attempts for failed requests (default: 3)
+- `RETRY_DELAY_MS` - Initial delay between retries in milliseconds (default: 1000)
+- `RETRY_BACKOFF` - Exponential backoff multiplier for retries (default: 2)
+
+### Configuration File
+
+In addition to environment variables, Claudeflare supports configuration through a JSON file. The config file location varies by platform:
+- macOS: `~/Library/Application Support/claudeflare/config.json`
+- Linux: `~/.config/claudeflare/config.json`
+- Windows: `%APPDATA%\claudeflare\config.json`
+
+**Supported Configuration Keys:**
+```json
+{
+  "lb_strategy": "round-robin",
+  "client_id": "your-oauth-client-id",
+  "retry_attempts": 3,
+  "retry_delay_ms": 1000,
+  "retry_backoff": 2,
+  "session_duration_ms": 18000000,
+  "port": 8080,
+  "stream_body_max_bytes": 262144
+}
+```
+
+**Note:** Environment variables take precedence over config file settings.
 
 ### Load Balancing Strategies
 
@@ -720,12 +769,16 @@ The following strategies are available:
 
 1. **No Authentication**: The API endpoints do not require authentication. Claudeflare manages the OAuth tokens internally for proxying to Claude.
 
-2. **Automatic Failover**: When a request fails or an account is rate limited, Claudeflare automatically tries the next available account.
+2. **Automatic Failover**: When a request fails or an account is rate limited, Claudeflare automatically tries the next available account. If no accounts are available, requests are forwarded without authentication as a fallback.
 
 3. **Token Refresh**: Access tokens are automatically refreshed when they expire.
 
-4. **Request Logging**: All requests are logged with detailed metrics including tokens used, cost, and response times.
+4. **Request Logging**: All requests are logged with detailed metrics including tokens used, cost, and response times. Database writes are performed asynchronously to avoid blocking request processing.
 
 5. **Account Tiers**: Accounts can have different tiers (1, 5, or 20) which affect their weight in certain load balancing strategies.
 
 6. **Session Affinity**: The "session" strategy maintains sticky sessions for consistent routing within a time window.
+
+7. **Rate Limit Tracking**: Rate limit information is automatically extracted from responses and stored for each account, including reset times and remaining requests.
+
+8. **Provider Filtering**: Accounts are automatically filtered by provider when selecting for requests, ensuring compatibility.

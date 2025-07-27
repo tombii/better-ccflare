@@ -4,7 +4,7 @@
 
 Claudeflare is a sophisticated load balancer proxy system designed to distribute requests across multiple OAuth accounts for AI services (currently focused on Anthropic's Claude API). It prevents rate limiting by intelligently routing requests through different authenticated accounts using various load balancing strategies.
 
-The system is built with a modular, microservices-inspired architecture using TypeScript and Bun runtime, emphasizing separation of concerns, extensibility, and real-time monitoring capabilities.
+The system is built with a modular, microservices-inspired architecture using TypeScript and Bun runtime, emphasizing separation of concerns, extensibility, and real-time monitoring capabilities. Recent enhancements include asynchronous database operations, streaming response capture for analytics, and advanced request filtering.
 
 ## System Overview
 
@@ -300,7 +300,7 @@ graph TB
 
 ### 4. Database Package (`packages/database`)
 
-SQLite-based persistence layer:
+SQLite-based persistence layer with asynchronous write capabilities:
 
 ```mermaid
 erDiagram
@@ -361,10 +361,14 @@ erDiagram
 - Session management
 - Usage statistics
 - Migration system for schema evolution
+- **AsyncDbWriter**: Queue-based asynchronous writes to prevent blocking
+  - Processes database writes in batches every 100ms
+  - Ensures graceful shutdown with queue flushing
+  - Prevents database write bottlenecks during high load
 
 ### 5. Proxy Package (`packages/proxy`)
 
-Core request forwarding logic:
+Core request forwarding logic with streaming support:
 
 ```mermaid
 stateDiagram-v2
@@ -409,6 +413,13 @@ stateDiagram-v2
 - Rate limit detection and account marking
 - Usage tracking and cost calculation
 - Request/response payload logging
+- **Streaming Response Capture**: 
+  - Tees streaming responses for analytics without blocking
+  - Configurable buffer size (default 256KB)
+  - Captures partial response bodies for debugging
+- **Request Body Buffering**:
+  - Buffers small request bodies (up to 256KB) for retry scenarios
+  - Enables request replay on failover without client resend
 
 ### 6. HTTP API Package (`packages/http-api`)
 
@@ -446,6 +457,19 @@ graph LR
             LOG_HIST[GET /api/logs/history]
         end
     end
+
+**Analytics Endpoint Enhancements:**
+- **GET /api/analytics**: Advanced analytics with filtering support
+  - Filter by time range (1h, 6h, 24h, 7d, 30d)
+  - Filter by accounts (comma-separated list)
+  - Filter by models (comma-separated list)
+  - Filter by status (all, success, error)
+  - Returns comprehensive metrics including:
+    - Time series data with configurable bucketing
+    - Token breakdown (input, cache, output)
+    - Model distribution and performance metrics
+    - Cost analysis by model
+    - Account performance statistics
 ```
 
 ### 7. Core Packages
@@ -465,6 +489,7 @@ graph TB
             LOG[Logger Service]
             DB[Database Service]
             PRICE[Pricing Logger]
+            ASYNC[AsyncWriter Service]
         end
     end
     
@@ -472,6 +497,7 @@ graph TB
     CONT -->|Register| LOG
     CONT -->|Register| DB
     CONT -->|Register| PRICE
+    CONT -->|Register| ASYNC
     KEYS -->|Identify| CONT
 ```
 
@@ -480,6 +506,7 @@ graph TB
 - Singleton pattern for shared instances
 - Type-safe service keys
 - Lifecycle management
+- AsyncWriter integration for non-blocking database operations
 
 #### Core (`packages/core`)
 
@@ -498,6 +525,10 @@ Configuration management:
 - Port and session duration settings
 - File-based persistence
 - Change event notifications
+- **New Configuration Options**:
+  - `streamBodyMaxBytes`: Controls streaming response buffer size (default: 256KB)
+  - Environment variable support for all settings
+  - Dynamic configuration reloading
 
 #### Types (`packages/types`)
 
@@ -542,7 +573,41 @@ Terminal UI functionality:
 - Statistics display
 - Server status
 
-### 10. Dashboard Package (`packages/dashboard-web`)
+### 10. Stream Tee Utility (`packages/proxy/src/stream-tee.ts`)
+
+Stream processing utility for non-blocking analytics:
+
+```mermaid
+graph LR
+    subgraph "Stream Tee Process"
+        UPSTREAM[Upstream Response]
+        TEE[Tee Function]
+        CLIENT[Client Stream]
+        BUFFER[Analytics Buffer]
+    end
+    
+    UPSTREAM --> TEE
+    TEE --> CLIENT
+    TEE --> BUFFER
+    
+    subgraph "Buffer Management"
+        CHECK{Size Check}
+        STORE[Memory Buffer]
+        TRUNCATE[Truncate Flag]
+    end
+    
+    BUFFER --> CHECK
+    CHECK -->|Under Limit| STORE
+    CHECK -->|Over Limit| TRUNCATE
+```
+
+**Features:**
+- Zero-copy forwarding to client
+- Configurable buffer limits
+- Graceful truncation handling
+- Error isolation from main stream
+
+### 11. Dashboard Package (`packages/dashboard-web`)
 
 React-based monitoring dashboard:
 
@@ -639,6 +704,7 @@ sequenceDiagram
     participant Router
     participant Proxy
     participant LoadBalancer
+    participant AsyncWriter
     participant Database
     participant Provider
     participant Claude API
@@ -660,15 +726,25 @@ sequenceDiagram
         alt Token Expired
             Proxy->>Provider: Refresh Token
             Provider-->>Proxy: New Token
-            Proxy->>Database: Update Token
+            Proxy->>AsyncWriter: Queue Token Update
+            AsyncWriter->>Database: Update Token (Async)
         end
         
         Proxy->>Claude API: Forward Request
         Claude API-->>Proxy: Response
         
-        Proxy->>Database: Log Request
-        Proxy->>Database: Update Stats
-        Proxy-->>Client: Proxy Response
+        alt Streaming Response
+            Proxy->>Proxy: Tee Stream
+            Proxy-->>Client: Stream Response
+            Proxy->>AsyncWriter: Queue Response Capture
+            AsyncWriter->>Database: Save Payload (Async)
+        else Regular Response
+            Proxy->>AsyncWriter: Queue Request Log
+            AsyncWriter->>Database: Log Request (Async)
+            Proxy->>AsyncWriter: Queue Stats Update
+            AsyncWriter->>Database: Update Stats (Async)
+            Proxy-->>Client: Proxy Response
+        end
     end
 ```
 
@@ -691,6 +767,48 @@ stateDiagram-v2
     Paused --> Removed: Delete Account
     Removed --> [*]
 ```
+
+### Streaming Architecture
+
+Claudeflare implements sophisticated streaming support for handling large language model responses:
+
+```mermaid
+graph TB
+    subgraph "Streaming Pipeline"
+        REQ[Incoming Request]
+        PROXY[Proxy Handler]
+        
+        subgraph "Stream Processing"
+            TEE[Stream Tee]
+            CLIENT[Client Stream]
+            CAPTURE[Analytics Capture]
+        end
+        
+        subgraph "Storage"
+            BUFFER[Memory Buffer]
+            ASYNC[AsyncWriter Queue]
+            DB[(Database)]
+        end
+    end
+    
+    REQ --> PROXY
+    PROXY --> TEE
+    TEE --> CLIENT
+    TEE --> CAPTURE
+    CAPTURE --> BUFFER
+    BUFFER --> ASYNC
+    ASYNC --> DB
+    
+    style TEE fill:#f9f,stroke:#333,stroke-width:2px
+    style ASYNC fill:#9f9,stroke:#333,stroke-width:2px
+```
+
+**Stream Tee Features:**
+- Non-blocking stream duplication
+- Configurable buffer limits (default 256KB)
+- Graceful truncation for large responses
+- Error handling without stream interruption
+- Metadata preservation (truncation flags)
 
 ## Key Architectural Decisions
 
@@ -719,7 +837,17 @@ stateDiagram-v2
 - **Rationale**: Future-proof for multiple AI services
 - **Trade-offs**: Over-engineering for single provider vs. extensibility
 
-### 6. Real-time Monitoring
+### 6. Asynchronous Database Writes
+- **Decision**: Implement AsyncDbWriter for non-blocking database operations
+- **Rationale**: Prevent database writes from blocking request processing
+- **Trade-offs**: Eventual consistency vs. immediate durability
+
+### 7. Streaming Response Capture
+- **Decision**: Tee streaming responses for analytics without blocking
+- **Rationale**: Enable debugging and analytics for streaming LLM responses
+- **Trade-offs**: Memory usage vs. complete observability
+
+### 8. Real-time Monitoring
 - **Decision**: Include comprehensive logging and real-time dashboards
 - **Rationale**: Critical for debugging rate limits and performance
 - **Trade-offs**: Storage overhead vs. observability
@@ -752,14 +880,28 @@ stateDiagram-v2
 1. **Token Storage**: OAuth tokens encrypted at rest
 2. **API Authentication**: Currently relies on network security (localhost)
 3. **Rate Limit Protection**: Automatic account rotation prevents service disruption
-4. **Request Logging**: Sensitive data can be logged (configurable)
+4. **Request Logging**: 
+   - Sensitive data can be logged (configurable)
+   - Request bodies buffered only for small payloads
+   - Streaming responses captured with size limits
+5. **Data Retention**: Automatic cleanup of old request payloads (configurable)
 
 ## Performance Characteristics
 
 1. **Request Overhead**: ~5-10ms for load balancing decision
 2. **Token Refresh**: Cached to prevent stampedes
-3. **Database Queries**: Optimized with indexes on timestamp fields
-4. **Memory Usage**: Scales with active connections and log retention
+3. **Database Operations**: 
+   - Read operations: Direct synchronous access
+   - Write operations: Queued through AsyncDbWriter (sub-millisecond enqueue)
+   - Batch processing: Every 100ms for optimal throughput
+4. **Memory Usage**: 
+   - Base: Scales with active connections
+   - Streaming: Up to 256KB per active stream (configurable)
+   - AsyncWriter queue: Minimal, processes continuously
+5. **Streaming Performance**:
+   - Zero-copy stream forwarding to clients
+   - Parallel capture for analytics
+   - Graceful degradation on memory pressure
 
 ## Future Extensibility
 
@@ -769,6 +911,9 @@ The architecture supports:
 3. Webhook notifications for events
 4. Advanced analytics and ML-based load prediction
 5. Multi-region deployment for global distribution
+6. Real-time metrics export (Prometheus, DataDog)
+7. Request replay and debugging tools
+8. A/B testing for load balancing strategies
 
 ## Deployment Architecture
 
@@ -858,3 +1003,33 @@ graph TB
 3. **Building**: Bun handles build orchestration
 4. **Type Safety**: TypeScript project references ensure type consistency
 5. **Linting/Formatting**: Biome provides consistent code style
+
+## Recent Architectural Changes
+
+### Version 2.0 Enhancements (Current)
+
+1. **Asynchronous Database Operations**
+   - Added AsyncDbWriter for non-blocking database writes
+   - Improved request throughput by preventing database bottlenecks
+   - Graceful shutdown with queue flushing
+
+2. **Streaming Response Analytics**
+   - Implemented stream teeing for response capture
+   - Configurable buffer sizes for memory management
+   - Partial response logging for debugging
+
+3. **Enhanced Analytics API**
+   - Advanced filtering by accounts, models, and status
+   - Time-based bucketing for different time ranges
+   - Comprehensive performance metrics per model
+   - Cost analysis and token breakdown
+
+4. **Request Handling Improvements**
+   - Small request body buffering for retry scenarios
+   - Better error handling and payload capture
+   - Streaming response support with minimal overhead
+
+5. **Configuration Enhancements**
+   - New `streamBodyMaxBytes` setting
+   - Environment variable support for all settings
+   - Dynamic configuration updates without restart

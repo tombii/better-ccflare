@@ -1,6 +1,6 @@
 # Claudeflare Documentation
 
-## Intelligent Load Balancing for Claude API
+## Track Every Request. Go Low-Level. Never Hit Rate Limits Again.
 
 ![Build Status](https://img.shields.io/badge/build-passing-brightgreen)
 ![Version](https://img.shields.io/badge/version-1.0.0-blue)
@@ -9,61 +9,66 @@
 
 ## Overview
 
-Claudeflare is a sophisticated load balancer proxy designed to maximize your Claude API usage by intelligently distributing requests across multiple OAuth accounts. Built with performance and reliability in mind, it provides automatic failover, session-based routing for optimal prompt caching, and comprehensive monitoring capabilities.
+Claudeflare is the ultimate Claude API proxy with intelligent load balancing across multiple accounts. Built with TypeScript and Bun runtime, it provides full visibility into every request, response, and rate limit, ensuring your AI applications never experience downtime due to rate limiting.
 
 ### Why Claudeflare?
 
 When working with Claude API at scale, rate limits can become a significant bottleneck. Claudeflare solves this by:
 
-- **Maximizing Prompt Cache Efficiency**: Default session-based routing keeps conversations on the same account for 5 hours, dramatically improving cache hit rates and reducing costs
-- **Seamless Failover**: Automatically switches to the next available account when rate limits are hit, ensuring uninterrupted service
-- **Tier-Aware Distribution**: Supports Pro (1x), Max 5x, and Max 20x accounts with intelligent capacity-based routing
-- **Real-time Monitoring**: Web dashboard provides instant visibility into usage, performance, and account health
-- **Zero Configuration Changes**: Acts as a transparent proxy - just point your Claude client to Claudeflare
+- **🚀 Zero Rate Limit Errors**: Automatically distributes requests across multiple accounts with intelligent failover
+- **📊 Request-Level Analytics**: Track latency, token usage, and costs in real-time with <10ms overhead
+- **🔍 Deep Debugging**: Full request/response logging and error traces for complete visibility
+- **💸 Session-Based Routing**: Default 5-hour sessions maximize prompt cache efficiency, reducing costs
+- **⚡ Production Ready**: Built for scale with SQLite persistence, OAuth token refresh, and configurable retry logic
 
 ## Key Features
 
-- 🔄 **Multiple Load Balancing Strategies**: Session-based (default), round-robin, weighted, and least-requests algorithms
-- 📊 **Account Tier Support**: Intelligently manages accounts with different capacity multipliers (1x, 5x, 20x)
-- 🚀 **Automatic Failover**: Seamless switching between accounts when rate limits are encountered
-- 🔁 **Smart Retry Logic**: Configurable retry attempts with exponential backoff per account
-- 📈 **Comprehensive Analytics**: Track requests, response times, token usage, and costs
-- 🌐 **Web Dashboard**: Real-time monitoring interface with strategy switching and account management
-- 🔧 **CLI Management**: Command-line tools for account configuration and maintenance
-- 🗄️ **Request History**: SQLite-based storage for complete request tracking and analysis
-- 🔐 **OAuth Token Management**: Automatic token refresh and secure credential storage
-- 🏗️ **Extensible Architecture**: Provider-based design ready for additional AI services
+### 🎯 Intelligent Load Balancing
+- **Session-based** (default): Maintains conversation context with 5-hour sessions
+- **Round-robin**: Even distribution across accounts
+- **Least-requests**: Routes to account with fewest active requests
+- **Weighted**: Prioritizes accounts by tier (Free/Pro/Max)
+
+### 📈 Real-Time Monitoring & Analytics
+- **Web Dashboard**: Interactive UI at `/dashboard` with live metrics
+- **Terminal UI**: Built-in TUI for server management and monitoring
+- **Request Tracking**: Complete history with token usage and costs
+- **Performance Metrics**: Response times, success rates, and error tracking
+
+### 🛠️ Developer Experience
+- **Zero Config Proxy**: Drop-in replacement for Claude API
+- **CLI Management**: Add, remove, and manage accounts easily
+- **Automatic Failover**: Seamless switching on rate limits
+- **OAuth Token Refresh**: Handles authentication automatically
+
+### 🏗️ Production Ready
+- **SQLite Persistence**: Reliable data storage with migrations
+- **Configurable Retry Logic**: Smart exponential backoff
+- **Account Tiers**: Support for Pro (1x), Max 5x, and Max 20x
+- **Extensible Architecture**: Provider-based design for future AI services
 
 ## Documentation
 
 ### Getting Started
-- [Quick Start Guide](./quick-start.md) - Get up and running in 5 minutes
-- [Installation](./installation.md) - Detailed installation instructions
-- [Configuration](./configuration.md) - Configuration options and environment variables
+- [Configuration Guide](./configuration.md) - Environment variables and configuration options
+- [Architecture Overview](./architecture.md) - System components and design principles
+- [Data Flow](./data-flow.md) - Request lifecycle through the system
 
-### Architecture & Design
-- [System Architecture](./architecture.md) - Overview of system components and design principles
-- [Data Flow](./data-flow.md) - Request lifecycle and data flow through the system
-- [Load Balancing Strategies](./load-balancing.md) - Deep dive into available load balancing algorithms
-- [Database Schema](./database.md) - SQLite database structure and migrations
+### Core Features
+- [Load Balancing Strategies](./load-balancing.md) - Session-based, round-robin, weighted, and least-requests algorithms
+- [Provider System](./providers.md) - Provider abstraction and OAuth implementation
+- [Database Schema](./database.md) - SQLite structure, migrations, and maintenance
 
-### Core Components
-- [Provider Registry](./providers.md) - Provider abstraction and OAuth implementation
+### User Interfaces
 - [HTTP API Reference](./api-http.md) - Complete REST API documentation
 - [CLI Commands](./cli.md) - Command-line interface reference
 - [Terminal UI Guide](./tui.md) - Interactive terminal interface documentation
 
-### Operations & Deployment
-- [Deployment Guide](./deployment.md) - Production deployment best practices
-- [Security Considerations](./security.md) - Security guidelines and recommendations
+### Operations
+- [Deployment Guide](./deployment.md) - Production deployment with Docker, systemd, PM2, and Kubernetes
+- [Security Considerations](./security.md) - Authentication, encryption, and best practices
 - [Troubleshooting](./troubleshooting.md) - Common issues and solutions
-- [Performance Tuning](./performance.md) - Optimization tips and benchmarks
-
-### Development
-- [Contributing Guidelines](./contributing.md) - How to contribute to Claudeflare
-- [Development Setup](./development.md) - Setting up a development environment
-- [API Development](./api-development.md) - Extending the API and adding features
-- [Testing Guide](./testing.md) - Testing strategies and running tests
+- [Contributing](./contributing.md) - Development setup and contribution guidelines
 
 ## Quick Start
 
@@ -78,27 +83,32 @@ cd claudeflare
 bun install
 ```
 
-### 2. Add Your Claude Accounts
+### 2. Start Claudeflare (TUI + Server)
 
 ```bash
-# Add a Pro account (1x capacity)
-bun cli add my-pro-account --mode max --tier 1
+# Start Claudeflare with interactive TUI and server
+bun run claudeflare
 
-# Add a Max 5x account
-bun cli add my-max-account --mode max --tier 5
+# Or start just the server without TUI
+bun run server
 
-# Add an API Console account
-bun cli add my-api-account --mode console
+# Or specify a different load balancing strategy
+LB_STRATEGY=weighted bun run server
 ```
 
-### 3. Start the Server
+### 3. Add Your Claude Accounts
 
 ```bash
-# Start with default session-based strategy
-bun start
+# In another terminal, add your accounts
+# Add a work account
+bun cli add work-account
 
-# Or specify a different strategy
-LB_STRATEGY=weighted bun start
+# Add a personal account
+bun cli add personal-account
+
+# Add accounts with specific tiers
+bun cli add pro-account --mode max --tier 1
+bun cli add max-account --mode max --tier 5
 ```
 
 ### 4. Configure Your Claude Client
@@ -108,9 +118,67 @@ LB_STRATEGY=weighted bun start
 export ANTHROPIC_BASE_URL=http://localhost:8080
 ```
 
-### 5. Monitor via Dashboard
+### 5. Monitor Your Usage
 
-Open your browser to [http://localhost:8080/dashboard](http://localhost:8080/dashboard) to view real-time statistics and manage accounts.
+- **Web Dashboard**: Open [http://localhost:8080/dashboard](http://localhost:8080/dashboard) for real-time analytics
+- **Terminal UI**: Use the interactive TUI started with `bun run claudeflare`
+- **CLI**: Check status with `bun cli list`
+
+## Project Structure
+
+```
+claudeflare/
+├── apps/               # Application packages
+│   ├── cli/           # Command-line interface
+│   ├── server/        # Main proxy server
+│   ├── tui/           # Terminal UI interface
+│   └── lander/        # Landing page
+├── packages/          # Core packages
+│   ├── core/          # Core business logic
+│   ├── database/      # SQLite database layer
+│   ├── dashboard-web/ # Web dashboard UI
+│   ├── http-api/      # REST API handlers
+│   ├── load-balancer/ # Load balancing strategies
+│   ├── logger/        # Logging utilities
+│   ├── providers/     # OAuth provider system
+│   └── proxy/         # HTTP proxy implementation
+└── docs/              # Documentation
+
+```
+
+## Scripts Reference
+
+```bash
+# Main commands
+bun run claudeflare    # Start TUI + Server
+bun run server         # Start server only
+bun run tui            # Start TUI only
+bun run cli            # Run CLI commands
+
+# Development
+bun run dev:server     # Server with hot reload
+bun run dev:dashboard  # Dashboard development
+bun run dev:cli        # CLI development
+
+# Build & Quality
+bun run build          # Build all packages
+bun run typecheck      # Check TypeScript types
+bun run lint           # Fix linting issues
+bun run format         # Format code
+```
+
+## Environment Variables
+
+```bash
+# Server Configuration
+PORT=8080                    # Server port (default: 8080)
+LB_STRATEGY=session         # Load balancing strategy
+SESSION_DURATION=18000000   # Session duration in ms (default: 5 hours)
+
+# Development
+LOG_LEVEL=info              # Logging level (debug|info|warn|error)
+NODE_ENV=production         # Environment mode
+```
 
 ## Related Resources
 
@@ -119,15 +187,9 @@ Open your browser to [http://localhost:8080/dashboard](http://localhost:8080/das
 - [Bun Documentation](https://bun.sh/docs) - Bun runtime documentation
 - [SQLite Documentation](https://www.sqlite.org/docs.html) - SQLite database docs
 
-### Community & Support
-- [GitHub Issues](https://github.com/snipeship/claudeflare/issues) - Report bugs and request features
-- [Discussions](https://github.com/snipeship/claudeflare/discussions) - Community discussions
-- [Discord Server](https://discord.gg/claudeflare) - Real-time chat and support
-
-### Related Projects
-- [Claude SDK](https://github.com/anthropics/anthropic-sdk-typescript) - Official TypeScript SDK
-- [LangChain](https://github.com/langchain-ai/langchain) - Framework for LLM applications
-- [LiteLLM](https://github.com/BerriAI/litellm) - Unified interface for LLM APIs
+### Support
+- [GitHub Repository](https://github.com/snipeship/claudeflare) - Source code and issues
+- [Contributing](./contributing.md) - How to contribute to Claudeflare
 
 ## License
 
@@ -136,9 +198,9 @@ Claudeflare is open source software licensed under the MIT License. See the [LIC
 ---
 
 <div align="center">
-  <p>Built with ❤️ using <a href="https://bun.sh">Bun</a></p>
+  <p>Built with ❤️ for developers who ship</p>
   <p>
-    <a href="./quick-start.md">Get Started</a> •
+    <a href="#quick-start">Get Started</a> •
     <a href="./architecture.md">Learn More</a> •
     <a href="./contributing.md">Contribute</a>
   </p>

@@ -10,6 +10,8 @@ Claudeflare uses SQLite as its database engine, providing a lightweight, serverl
 - **Thread-safe operations** using Bun's SQLite bindings
 - **Comprehensive indexing** for fast query performance
 - **Foreign key constraints** for data integrity
+- **Asynchronous write operations** for improved performance
+- **Singleton pattern** with dependency injection support
 
 ## Database Schema
 
@@ -89,14 +91,16 @@ The `accounts` table stores OAuth account information and usage statistics for l
 | `last_used` | INTEGER | NULL | Unix timestamp of last request |
 | `request_count` | INTEGER | DEFAULT 0 | Rolling window request count |
 | `total_requests` | INTEGER | DEFAULT 0 | All-time request count |
-| `rate_limited_until` | INTEGER | NULL | Unix timestamp when rate limit expires |
-| `session_start` | INTEGER | NULL | Start of current usage session |
-| `session_request_count` | INTEGER | DEFAULT 0 | Requests in current session |
-| `account_tier` | INTEGER | DEFAULT 1 | Account tier (1=Free, 5=Pro, 20=Team) |
-| `paused` | INTEGER | DEFAULT 0 | 1 if account is paused, 0 if active |
-| `rate_limit_reset` | INTEGER | NULL | Next rate limit window reset time |
-| `rate_limit_status` | TEXT | NULL | Current rate limit status message |
-| `rate_limit_remaining` | INTEGER | NULL | Remaining requests in current window |
+| `rate_limited_until` | INTEGER | NULL* | Unix timestamp when rate limit expires |
+| `session_start` | INTEGER | NULL* | Start of current usage session |
+| `session_request_count` | INTEGER | DEFAULT 0* | Requests in current session |
+| `account_tier` | INTEGER | DEFAULT 1* | Account tier (1=Free, 5=Pro, 20=Team) |
+| `paused` | INTEGER | DEFAULT 0* | 1 if account is paused, 0 if active |
+| `rate_limit_reset` | INTEGER | NULL* | Next rate limit window reset time |
+| `rate_limit_status` | TEXT | NULL* | Current rate limit status message |
+| `rate_limit_remaining` | INTEGER | NULL* | Remaining requests in current window |
+
+*Note: Columns marked with * are added via migrations and may not exist in databases created before the migration was introduced.
 
 ### requests Table
 
@@ -114,15 +118,17 @@ The `requests` table logs all proxied requests for analytics and debugging.
 | `error_message` | TEXT | NULL | Error details if request failed |
 | `response_time_ms` | INTEGER | NULL | Total response time in milliseconds |
 | `failover_attempts` | INTEGER | DEFAULT 0 | Number of retry attempts |
-| `model` | TEXT | NULL | AI model used (e.g., claude-3-sonnet) |
-| `prompt_tokens` | INTEGER | DEFAULT 0 | Legacy: Input token count |
-| `completion_tokens` | INTEGER | DEFAULT 0 | Legacy: Output token count |
-| `total_tokens` | INTEGER | DEFAULT 0 | Legacy: Total token count |
-| `cost_usd` | REAL | DEFAULT 0 | Estimated cost in USD |
-| `input_tokens` | INTEGER | DEFAULT 0 | Detailed input token count |
-| `cache_read_input_tokens` | INTEGER | DEFAULT 0 | Tokens read from cache |
-| `cache_creation_input_tokens` | INTEGER | DEFAULT 0 | Tokens written to cache |
-| `output_tokens` | INTEGER | DEFAULT 0 | Detailed output token count |
+| `model` | TEXT | NULL* | AI model used (e.g., claude-3-sonnet) |
+| `prompt_tokens` | INTEGER | DEFAULT 0* | Legacy: Input token count |
+| `completion_tokens` | INTEGER | DEFAULT 0* | Legacy: Output token count |
+| `total_tokens` | INTEGER | DEFAULT 0* | Legacy: Total token count |
+| `cost_usd` | REAL | DEFAULT 0* | Estimated cost in USD |
+| `input_tokens` | INTEGER | DEFAULT 0* | Detailed input token count |
+| `cache_read_input_tokens` | INTEGER | DEFAULT 0* | Tokens read from cache |
+| `cache_creation_input_tokens` | INTEGER | DEFAULT 0* | Tokens written to cache |
+| `output_tokens` | INTEGER | DEFAULT 0* | Detailed output token count |
+
+*Note: Columns marked with * are added via migrations and may not exist in databases created before the migration was introduced.
 
 **Indexes:**
 - `idx_requests_timestamp` on `timestamp DESC` for efficient time-based queries
@@ -162,6 +168,40 @@ Key migrations include:
 - Account tiers and pausing
 - Token usage tracking for cost analysis
 
+## Database Architecture
+
+### Core Components
+
+#### DatabaseOperations
+The main database access layer that implements both `StrategyStore` and `Disposable` interfaces:
+- Manages direct SQLite connections via Bun's native SQLite bindings
+- Handles all CRUD operations for accounts and requests
+- Supports runtime configuration injection for session management
+- Thread-safe for concurrent operations
+
+#### DatabaseFactory
+Singleton pattern implementation for global database instance management:
+- Ensures a single database connection throughout the application
+- Provides `initialize()` and `getInstance()` methods
+- Integrates with the dependency injection container
+
+#### AsyncDbWriter
+Asynchronous write queue for non-blocking database operations:
+- Batches write operations to improve performance
+- Processes queue every 100ms or immediately when jobs are added
+- Gracefully flushes pending operations on shutdown
+- Prevents blocking the main thread during heavy write loads
+
+### Dependency Injection Integration
+The database integrates with the DI container:
+```typescript
+// Registration in container
+container.registerInstance(SERVICE_KEYS.Database, dbOps);
+
+// Resolution from container
+const db = container.resolve<DatabaseOperations>(SERVICE_KEYS.Database);
+```
+
 ## Database Location and Configuration
 
 ### Default Location
@@ -180,12 +220,22 @@ You can override the default location using the `CLAUDEFLARE_DB_PATH` environmen
 export CLAUDEFLARE_DB_PATH=/custom/path/to/database.db
 ```
 
+### Runtime Configuration
+
+The database supports runtime configuration for dynamic behavior:
+```typescript
+interface RuntimeConfig {
+  sessionDurationMs?: number; // Default: 5 hours (5 * 60 * 60 * 1000)
+}
+```
+
 ### Database Initialization
 
 The database is automatically initialized with:
 - Directory creation if needed
 - Schema creation on first use
 - Migration application on startup
+- Foreign key constraint enforcement
 
 ## Query Patterns and Indexes
 
@@ -217,6 +267,16 @@ SELECT
 FROM requests
 WHERE timestamp >= ?
 GROUP BY account_used
+```
+
+4. **Request Payloads with Account Names**
+```sql
+SELECT rp.id, rp.json, a.name as account_name
+FROM request_payloads rp
+JOIN requests r ON rp.id = r.id
+LEFT JOIN accounts a ON r.account_used = a.id
+ORDER BY r.timestamp DESC
+LIMIT ?
 ```
 
 ### Index Strategy
@@ -263,6 +323,62 @@ DELETE FROM request_payloads WHERE id NOT IN (SELECT id FROM requests);
 
 3. **Statistics Aggregation**: Pre-aggregate statistics for common time windows to reduce query complexity.
 
+## API Methods
+
+### Core Database Operations
+
+#### Account Management
+- `getAllAccounts()`: Retrieve all accounts with computed fields
+- `getAccount(accountId: string)`: Get a specific account by ID
+- `updateAccountTokens(accountId, accessToken, expiresAt)`: Update OAuth tokens
+- `updateAccountUsage(accountId)`: Increment usage counters and manage sessions
+- `updateAccountTier(accountId, tier)`: Set account tier (1, 5, or 20)
+- `pauseAccount(accountId)` / `resumeAccount(accountId)`: Toggle account availability
+
+#### Rate Limiting
+- `markAccountRateLimited(accountId, until)`: Set rate limit expiration
+- `updateAccountRateLimitMeta(accountId, status, reset, remaining?)`: Update rate limit metadata
+- `resetAccountSession(accountId, timestamp)`: Reset session counters
+
+#### Request Tracking
+- `saveRequest(id, method, path, ...)`: Log request with full metadata
+- `updateRequestUsage(requestId, usage)`: Update token usage after request completion
+- `saveRequestPayload(id, data)`: Store request/response JSON
+- `getRequestPayload(id)`: Retrieve specific payload
+- `listRequestPayloads(limit?)`: List recent payloads
+- `listRequestPayloadsWithAccountNames(limit?)`: List payloads with account names
+
+## CLI Commands
+
+The database can be managed through CLI commands:
+
+### Account Management
+```bash
+# Add a new account
+bun cli add <name> [--mode <max|console>] [--tier <1|5|20>]
+
+# List all accounts with status
+bun cli list
+
+# Remove an account
+bun cli remove <name>
+
+# Pause/resume an account
+bun cli pause <name>
+bun cli resume <name>
+```
+
+### Database Maintenance
+```bash
+# Reset all usage statistics
+bun cli reset-stats
+
+# Clear all request history
+bun cli clear-history
+```
+
+These commands directly interact with the database through the `DatabaseOperations` class.
+
 ## Backup and Maintenance
 
 ### Backup Strategies
@@ -283,39 +399,44 @@ VACUUM INTO 'backup.db';
 0 2 * * * cp /path/to/claudeflare.db /backups/claudeflare-$(date +\%Y\%m\%d).db
 ```
 
-### Maintenance Tasks
+### Maintenance Operations
 
-1. **Database Optimization**:
+The following maintenance operations are available through the CLI:
+
+1. **Reset Statistics**:
+```bash
+# Resets request_count, session_start, and session_request_count for all accounts
+bun cli reset-stats
+```
+
+2. **Clear History**:
+```bash
+# Removes all entries from the requests table
+bun cli clear-history
+```
+
+3. **Manual Cleanup** (via SQL):
 ```sql
--- Rebuild database statistics
-ANALYZE;
+-- Clean up old requests (keep last 30 days)
+DELETE FROM requests WHERE timestamp < strftime('%s', 'now') * 1000 - 30 * 24 * 60 * 60 * 1000;
 
--- Compact database file
-VACUUM;
+-- Clean up orphaned payloads
+DELETE FROM request_payloads WHERE id NOT IN (SELECT id FROM requests);
 ```
 
-2. **Data Cleanup Script**:
-```typescript
-// Clean up old requests (keep last 30 days)
-const thirtyDaysAgo = Date.now() - (30 * 24 * 60 * 60 * 1000);
-db.run("DELETE FROM requests WHERE timestamp < ?", [thirtyDaysAgo]);
+### Integrity Checks
 
-// Reset session data for inactive accounts
-const fiveHoursAgo = Date.now() - (5 * 60 * 60 * 1000);
-db.run(`
-  UPDATE accounts 
-  SET session_start = NULL, session_request_count = 0 
-  WHERE last_used < ?
-`, [fiveHoursAgo]);
-```
-
-3. **Integrity Checks**:
+Regular integrity checks should be performed:
 ```sql
 -- Check database integrity
 PRAGMA integrity_check;
 
 -- Check foreign key constraints
 PRAGMA foreign_key_check;
+
+-- Analyze and optimize
+ANALYZE;
+VACUUM;
 ```
 
 ### Monitoring
@@ -347,8 +468,18 @@ chmod 600 claudeflare.db
 
 2. **Replication**: Add read replicas for analytics queries without impacting operational performance.
 
-3. **Migration Versioning**: Implement a formal migration version tracking system.
+3. **Migration Versioning**: Implement a formal migration version tracking system with a `migrations` table to track applied migrations.
 
-4. **Audit Logging**: Add a separate audit table for security-sensitive operations.
+4. **Audit Logging**: Add a separate audit table for security-sensitive operations like account modifications and token refreshes.
 
 5. **Performance Metrics**: Store query performance metrics for optimization.
+
+6. **Encryption**: Implement column-level encryption for sensitive data (tokens, API keys).
+
+7. **Compression**: Enable compression for the `request_payloads` table to reduce storage requirements.
+
+8. **Analytics Tables**: Create pre-aggregated tables for common analytics queries.
+
+9. **Connection Pooling**: Implement connection pooling for high-concurrency scenarios.
+
+10. **Streaming Backups**: Implement streaming backups to cloud storage providers.

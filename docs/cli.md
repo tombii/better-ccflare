@@ -26,7 +26,7 @@ The Claudeflare CLI provides a command-line interface for managing OAuth account
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/your-org/claudeflare.git
+git clone https://github.com/snipe-code/claudeflare.git
 cd claudeflare
 ```
 
@@ -108,10 +108,10 @@ bun cli add <name> [--mode <max|console>] [--tier <1|5|20>]
 
 **Interactive Flow:**
 1. If mode not provided, prompts for account type selection
-2. If tier not provided (Max accounts), prompts for tier selection
+2. If tier not provided (Max accounts only), prompts for tier selection
 3. Opens browser for OAuth authentication
-4. Waits for OAuth callback
-5. Stores account credentials securely
+4. Waits for OAuth callback on localhost:7856
+5. Stores account credentials securely in the database
 
 #### `list`
 
@@ -317,6 +317,7 @@ Or fallback to:
 
 ```json
 {
+  "lb_strategy": "session",
   "client_id": "optional-custom-client-id",
   "retry_attempts": 3,
   "retry_delay_ms": 1000,
@@ -341,13 +342,13 @@ The SQLite database follows the same directory structure:
 | `CLAUDEFLARE_CONFIG_PATH` | Override config file location | Platform default |
 | `CLAUDEFLARE_DB_PATH` | Override database location | Platform default |
 | `PORT` | Server port | 8080 |
-| `CLIENT_ID` | OAuth client ID | Built-in default |
+| `CLIENT_ID` | OAuth client ID | 9d1c250a-e61b-44d9-88ed-5944d1962f5e |
 
 ### Load Balancing
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `LB_STRATEGY` | Load balancing strategy | weighted |
+| `LB_STRATEGY` | Load balancing strategy (least-requests, round-robin, session, weighted, weighted-round-robin) | session |
 
 ### Retry Configuration
 
@@ -369,7 +370,7 @@ The SQLite database follows the same directory structure:
 |----------|-------------|---------|
 | `LOG_LEVEL` | Log verbosity (DEBUG/INFO/WARN/ERROR) | INFO |
 | `LOG_FORMAT` | Output format (pretty/json) | pretty |
-| `CLAUDEFLARE_DEBUG` | Enable debug mode (1/0) | 0 |
+| `CLAUDEFLARE_DEBUG` | Enable debug mode (1/0) - enables console output | 0 |
 
 ### Pricing and Features
 
