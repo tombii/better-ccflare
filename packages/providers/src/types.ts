@@ -57,6 +57,10 @@ export interface Provider {
 		completionTokens?: number;
 		totalTokens?: number;
 		costUsd?: number;
+		inputTokens?: number;
+		cacheReadInputTokens?: number;
+		cacheCreationInputTokens?: number;
+		outputTokens?: number;
 	} | null>;
 }
 

@@ -250,6 +250,73 @@ export function RequestsTab() {
 
 									{isExpanded && (
 										<div className="mt-3 space-y-3 text-sm">
+											{/* Token Usage Details */}
+											{summary &&
+												(summary.inputTokens || summary.outputTokens) && (
+													<div>
+														<h4 className="font-medium mb-1">Token Usage</h4>
+														<div className="grid grid-cols-2 gap-2 text-xs">
+															{summary.inputTokens !== undefined && (
+																<div className="bg-muted p-2 rounded">
+																	<span className="text-muted-foreground">
+																		Input:{" "}
+																	</span>
+																	<span className="font-mono">
+																		{summary.inputTokens.toLocaleString()}
+																	</span>
+																</div>
+															)}
+															{summary.cacheReadInputTokens !== undefined &&
+																summary.cacheReadInputTokens > 0 && (
+																	<div className="bg-muted p-2 rounded">
+																		<span className="text-muted-foreground">
+																			Cache Read:{" "}
+																		</span>
+																		<span className="font-mono">
+																			{summary.cacheReadInputTokens.toLocaleString()}
+																		</span>
+																	</div>
+																)}
+															{summary.cacheCreationInputTokens !== undefined &&
+																summary.cacheCreationInputTokens > 0 && (
+																	<div className="bg-muted p-2 rounded">
+																		<span className="text-muted-foreground">
+																			Cache Creation:{" "}
+																		</span>
+																		<span className="font-mono">
+																			{summary.cacheCreationInputTokens.toLocaleString()}
+																		</span>
+																	</div>
+																)}
+															{summary.outputTokens !== undefined && (
+																<div className="bg-muted p-2 rounded">
+																	<span className="text-muted-foreground">
+																		Output:{" "}
+																	</span>
+																	<span className="font-mono">
+																		{summary.outputTokens.toLocaleString()}
+																	</span>
+																</div>
+															)}
+															{summary.totalTokens !== undefined && (
+																<div className="bg-muted p-2 rounded col-span-2">
+																	<span className="text-muted-foreground">
+																		Total:{" "}
+																	</span>
+																	<span className="font-mono font-medium">
+																		{summary.totalTokens.toLocaleString()}
+																	</span>
+																	{summary.costUsd && summary.costUsd > 0 && (
+																		<span className="ml-2 text-muted-foreground">
+																			(${summary.costUsd.toFixed(4)})
+																		</span>
+																	)}
+																</div>
+															)}
+														</div>
+													</div>
+												)}
+
 											<div>
 												<h4 className="font-medium mb-1">Request Headers</h4>
 												<pre className="bg-muted p-2 rounded overflow-x-auto text-xs">
