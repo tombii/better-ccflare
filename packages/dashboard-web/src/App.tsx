@@ -1,11 +1,11 @@
-import { useState, useEffect, useCallback } from "react";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs";
-import { Card, CardContent, CardHeader, CardTitle } from "./components/ui/card";
-import { Button } from "./components/ui/button";
-import { AccountsTab } from "./components/AccountsTab";
-import { StatsTab } from "./components/StatsTab";
-import { LogsTab } from "./components/LogsTab";
+import { useCallback, useEffect, useState } from "react";
 import { api, type Stats } from "./api";
+import { AccountsTab } from "./components/AccountsTab";
+import { LogsTab } from "./components/LogsTab";
+import { StatsTab } from "./components/StatsTab";
+import { Button } from "./components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "./components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs";
 import "./index.css";
 
 export function App() {

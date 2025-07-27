@@ -1,6 +1,6 @@
 import type {
-	OAuthProvider,
 	OAuthConfig,
+	OAuthProvider,
 	PKCEChallenge,
 	TokenResult,
 } from "../../types.js";

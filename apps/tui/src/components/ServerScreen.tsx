@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import * as tuiCore from "@claudeflare/tui-core";
 import { Box, Text, useInput } from "ink";
 import Spinner from "ink-spinner";
-import * as tuiCore from "@claudeflare/tui-core";
+import { useEffect, useState } from "react";
 
 interface ServerScreenProps {
 	onBack: () => void;

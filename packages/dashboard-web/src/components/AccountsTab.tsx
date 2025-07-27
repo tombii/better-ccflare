@@ -1,4 +1,7 @@
-import { useState, useEffect, useCallback } from "react";
+import { AlertCircle, CheckCircle, Plus, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { type Account, api } from "../api";
+import { Button } from "./ui/button";
 import {
 	Card,
 	CardContent,
@@ -6,7 +9,6 @@ import {
 	CardHeader,
 	CardTitle,
 } from "./ui/card";
-import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import {
@@ -16,8 +18,6 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "./ui/select";
-import { api, type Account } from "../api";
-import { Plus, Trash2, AlertCircle, CheckCircle } from "lucide-react";
 
 export function AccountsTab() {
 	const [accounts, setAccounts] = useState<Account[]>([]);

@@ -1,5 +1,5 @@
 import type { Account } from "@claudeflare/core";
-import type { Provider, TokenRefreshResult, RateLimitInfo } from "./types.js";
+import type { Provider, RateLimitInfo, TokenRefreshResult } from "./types.js";
 
 export abstract class BaseProvider implements Provider {
 	abstract name: string;

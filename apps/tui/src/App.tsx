@@ -1,10 +1,10 @@
-import { useState } from "react";
 import { Box, Text, useApp } from "ink";
 import SelectInput from "ink-select-input";
-import { ServerScreen } from "./components/ServerScreen";
+import { useState } from "react";
 import { AccountsScreen } from "./components/AccountsScreen";
-import { StatsScreen } from "./components/StatsScreen";
 import { LogsScreen } from "./components/LogsScreen";
+import { ServerScreen } from "./components/ServerScreen";
+import { StatsScreen } from "./components/StatsScreen";
 
 type Screen = "home" | "server" | "accounts" | "stats" | "logs";
 

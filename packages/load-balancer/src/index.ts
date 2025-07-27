@@ -1,7 +1,7 @@
 export {
-	RoundRobinStrategy,
 	LeastRequestsStrategy,
+	RoundRobinStrategy,
 	SessionStrategy,
-	WeightedStrategy,
 	WeightedRoundRobinStrategy,
+	WeightedStrategy,
 } from "./strategies";

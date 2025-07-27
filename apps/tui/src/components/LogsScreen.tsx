@@ -1,6 +1,6 @@
-import { useState, useEffect } from "react";
-import { Box, Text, useInput } from "ink";
 import * as tuiCore from "@claudeflare/tui-core";
+import { Box, Text, useInput } from "ink";
+import { useEffect, useState } from "react";
 
 interface LogsScreenProps {
 	onBack: () => void;

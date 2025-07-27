@@ -1,8 +1,8 @@
-import { useState, useEffect, useCallback } from "react";
+import * as tuiCore from "@claudeflare/tui-core";
 import { Box, Text, useInput } from "ink";
 import SelectInput from "ink-select-input";
 import TextInput from "ink-text-input";
-import * as tuiCore from "@claudeflare/tui-core";
+import { useCallback, useEffect, useState } from "react";
 
 interface AccountsScreenProps {
 	onBack: () => void;

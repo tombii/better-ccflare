@@ -1,4 +1,7 @@
-import { useState, useEffect, useCallback } from "react";
+import { RefreshCw } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { api, type Stats } from "../api";
+import { Button } from "./ui/button";
 import {
 	Card,
 	CardContent,
@@ -6,9 +9,6 @@ import {
 	CardHeader,
 	CardTitle,
 } from "./ui/card";
-import { Button } from "./ui/button";
-import { api, type Stats } from "../api";
-import { RefreshCw } from "lucide-react";
 
 export function StatsTab() {
 	const [stats, setStats] = useState<Stats | null>(null);

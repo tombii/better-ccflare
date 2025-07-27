@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
-import React from "react";
-import { render } from "ink";
-import { parseArgs } from "@claudeflare/tui-core";
 import * as tuiCore from "@claudeflare/tui-core";
+import { parseArgs } from "@claudeflare/tui-core";
+import { render } from "ink";
+import React from "react";
 import { App } from "./App";
 
 async function main() {

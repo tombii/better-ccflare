@@ -1,7 +1,7 @@
-import { useState, useEffect, useCallback } from "react";
-import { Box, Text, useInput } from "ink";
-import * as tuiCore from "@claudeflare/tui-core";
 import type { Stats } from "@claudeflare/tui-core";
+import * as tuiCore from "@claudeflare/tui-core";
+import { Box, Text, useInput } from "ink";
+import { useCallback, useEffect, useState } from "react";
 
 interface StatsScreenProps {
 	onBack: () => void;
