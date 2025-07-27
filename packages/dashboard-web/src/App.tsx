@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, type Stats } from "./api";
 import { AccountsTab } from "./components/AccountsTab";
 import { LogsTab } from "./components/LogsTab";
+import { RequestsTab } from "./components/RequestsTab";
 import { StatsTab } from "./components/StatsTab";
 import { Button } from "./components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./components/ui/card";
@@ -89,9 +90,10 @@ export function App() {
 				)}
 
 				<Tabs value={activeTab} onValueChange={setActiveTab}>
-					<TabsList className="grid w-full grid-cols-3">
+					<TabsList className="grid w-full grid-cols-4">
 						<TabsTrigger value="stats">Statistics</TabsTrigger>
 						<TabsTrigger value="accounts">Accounts</TabsTrigger>
+						<TabsTrigger value="requests">Requests</TabsTrigger>
 						<TabsTrigger value="logs">Logs</TabsTrigger>
 					</TabsList>
 
@@ -101,6 +103,10 @@ export function App() {
 
 					<TabsContent value="accounts">
 						<AccountsTab />
+					</TabsContent>
+
+					<TabsContent value="requests">
+						<RequestsTab />
 					</TabsContent>
 
 					<TabsContent value="logs">

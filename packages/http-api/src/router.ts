@@ -8,7 +8,10 @@ import { createConfigHandlers } from "./handlers/config.js";
 import { createHealthHandler } from "./handlers/health.js";
 import { createLogsStreamHandler } from "./handlers/logs.js";
 import { createLogsHistoryHandler } from "./handlers/logs-history.js";
-import { createRequestsHandler } from "./handlers/requests.js";
+import {
+	createRequestsDetailHandler,
+	createRequestsSummaryHandler,
+} from "./handlers/requests.js";
 import {
 	createStatsHandler,
 	createStatsResetHandler,
@@ -42,7 +45,8 @@ export class APIRouter {
 		const accountAddHandler = createAccountAddHandler(dbOps);
 		const _accountRemoveHandler = createAccountRemoveHandler(dbOps);
 		const _accountTierHandler = createAccountTierUpdateHandler(dbOps);
-		const requestsHandler = createRequestsHandler(db);
+		const requestsSummaryHandler = createRequestsSummaryHandler(db);
+		const requestsDetailHandler = createRequestsDetailHandler(dbOps);
 		const configHandlers = createConfigHandlers(config);
 		const logsStreamHandler = createLogsStreamHandler();
 		const logsHistoryHandler = createLogsHistoryHandler();
@@ -55,7 +59,11 @@ export class APIRouter {
 		this.handlers.set("POST:/api/accounts", (req) => accountAddHandler(req));
 		this.handlers.set("GET:/api/requests", (_req, url) => {
 			const limit = parseInt(url.searchParams.get("limit") || "50");
-			return requestsHandler(limit);
+			return requestsSummaryHandler(limit);
+		});
+		this.handlers.set("GET:/api/requests/detail", (_req, url) => {
+			const limit = parseInt(url.searchParams.get("limit") || "100");
+			return requestsDetailHandler(limit);
 		});
 		this.handlers.set("GET:/api/config", () => configHandlers.getConfig());
 		this.handlers.set("GET:/api/config/strategy", () =>

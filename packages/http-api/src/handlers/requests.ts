@@ -1,10 +1,11 @@
 import type { Database } from "bun:sqlite";
+import type { DatabaseOperations } from "@claudeflare/database";
 import type { RequestResponse } from "../types.js";
 
 /**
- * Create a requests handler
+ * Create a requests summary handler (existing functionality)
  */
-export function createRequestsHandler(db: Database) {
+export function createRequestsSummaryHandler(db: Database) {
 	return (limit: number = 50): Response => {
 		const requests = db
 			.query(
@@ -44,6 +45,27 @@ export function createRequestsHandler(db: Database) {
 		}));
 
 		return new Response(JSON.stringify(response), {
+			headers: { "Content-Type": "application/json" },
+		});
+	};
+}
+
+/**
+ * Create a detailed requests handler with full payload data
+ */
+export function createRequestsDetailHandler(dbOps: DatabaseOperations) {
+	return (limit = 100): Response => {
+		const rows = dbOps.listRequestPayloads(limit);
+		const parsed = rows.map((r) => {
+			try {
+				const data = JSON.parse(r.json);
+				return { id: r.id, ...data };
+			} catch {
+				return { id: r.id, error: "Failed to parse payload" };
+			}
+		});
+
+		return new Response(JSON.stringify(parsed), {
 			headers: { "Content-Type": "application/json" },
 		});
 	};
