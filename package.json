@@ -16,6 +16,7 @@
 		"build": "bun run build:dashboard && bun run build:tui",
 		"build:dashboard": "bun run --cwd packages/dashboard-web build",
 		"build:tui": "bun run --cwd apps/tui build",
+		"build:lander": "bun run --cwd apps/lander build",
 		"format": "bunx biome format --write .",
 		"lint": "bunx --bun biome check --write --unsafe ."
 	},

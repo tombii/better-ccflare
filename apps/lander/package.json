@@ -1,0 +1,17 @@
+{
+	"name": "@claudeflare/lander",
+	"version": "1.0.0",
+	"description": "Landing page for Claudeflare - The ultimate Claude Code proxy for power users",
+	"private": true,
+	"scripts": {
+		"build": "mkdir -p dist && cp -r src/* dist/",
+		"preview": "bunx serve src"
+	},
+	"keywords": [
+		"claudeflare",
+		"landing-page",
+		"static-site"
+	],
+	"author": "snipeship",
+	"license": "MIT"
+}
