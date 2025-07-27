@@ -29,11 +29,13 @@ export abstract class BaseProvider implements Provider {
 
 	/**
 	 * Prepare headers for the provider request
-	 * Default implementation: Add Bearer token and remove host header
+	 * Default implementation: Add Bearer token (if provided) and remove host header
 	 */
-	prepareHeaders(headers: Headers, accessToken: string): Headers {
+	prepareHeaders(headers: Headers, accessToken?: string): Headers {
 		const newHeaders = new Headers(headers);
-		newHeaders.set("Authorization", `Bearer ${accessToken}`);
+		if (accessToken) {
+			newHeaders.set("Authorization", `Bearer ${accessToken}`);
+		}
 		newHeaders.delete("host");
 		return newHeaders;
 	}
@@ -70,7 +72,7 @@ export abstract class BaseProvider implements Provider {
 	 */
 	async processResponse(
 		response: Response,
-		_account: Account,
+		_account: Account | null,
 	): Promise<Response> {
 		return response;
 	}

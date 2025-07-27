@@ -5,6 +5,7 @@ import type {
 	LoadBalancingStrategy,
 	RequestMeta,
 } from "@claudeflare/core";
+import { NO_ACCOUNT_ID } from "@claudeflare/core";
 import type { DatabaseOperations } from "@claudeflare/database";
 import { Logger } from "@claudeflare/logger";
 import type { Provider, TokenRefreshResult } from "@claudeflare/providers";
@@ -99,35 +100,142 @@ export async function handleProxy(
 	}
 
 	const accounts = getOrderedAccounts(requestMeta, ctx);
-	if (accounts.length === 0) {
-		log.error("No active accounts available");
-		ctx.dbOps.saveRequest(
-			requestMeta.id,
-			req.method,
-			url.pathname,
-			null,
-			503,
-			false,
-			"No active accounts available",
-			0,
-			0,
-			undefined,
+	const fallbackUnauthenticated = accounts.length === 0;
+
+	if (fallbackUnauthenticated) {
+		log.warn(
+			"No active accounts available - forwarding request without authentication",
 		);
-		return new Response(
-			JSON.stringify({ error: "No active accounts available" }),
-			{
-				status: 503,
-				headers: { "Content-Type": "application/json" },
-			},
+	} else {
+		log.info(
+			`Selected ${accounts.length} accounts for request: ${accounts.map((a) => a.name).join(", ")}`,
 		);
 	}
 
-	log.info(
-		`Selected ${accounts.length} accounts for request: ${accounts.map((a) => a.name).join(", ")}`,
-	);
-
 	// Try to read the body once for retries
 	const requestBody = req.body ? await req.arrayBuffer() : null;
+
+	// Handle unauthenticated fallback
+	if (fallbackUnauthenticated) {
+		const targetUrl = ctx.provider.buildUrl(url.pathname, url.search);
+		const headers = ctx.provider.prepareHeaders(req.headers); // No access token
+		const start = Date.now();
+
+		try {
+			const response = await fetch(targetUrl, {
+				method: req.method,
+				headers: headers,
+				body: requestBody,
+				// @ts-ignore - Bun supports duplex
+				duplex: "half",
+			});
+
+			const responseTime = Date.now() - start;
+			const responseClone = response.clone();
+
+			// Extract usage info if provider supports it
+			let usage:
+				| {
+						model?: string;
+						promptTokens?: number;
+						completionTokens?: number;
+						totalTokens?: number;
+						costUsd?: number;
+						inputTokens?: number;
+						cacheReadInputTokens?: number;
+						cacheCreationInputTokens?: number;
+						outputTokens?: number;
+				  }
+				| null
+				| undefined;
+			if (ctx.provider.extractUsageInfo && response.ok) {
+				usage = await ctx.provider.extractUsageInfo(responseClone);
+			}
+
+			// Save request to database
+			ctx.dbOps.saveRequest(
+				requestMeta.id,
+				req.method,
+				url.pathname,
+				NO_ACCOUNT_ID,
+				response.status,
+				response.ok,
+				null,
+				responseTime,
+				0,
+				usage || undefined,
+			);
+
+			// Save response payload
+			const responseBody = await responseClone.arrayBuffer().catch(() => null);
+			const payload = {
+				request: {
+					headers: Object.fromEntries(req.headers.entries()),
+					body: requestBody
+						? Buffer.from(requestBody).toString("base64")
+						: null,
+				},
+				response: {
+					status: response.status,
+					headers: Object.fromEntries(response.headers.entries()),
+					body: responseBody
+						? Buffer.from(responseBody).toString("base64")
+						: null,
+				},
+				meta: {
+					accountId: NO_ACCOUNT_ID,
+					timestamp: Date.now(),
+					success: response.ok,
+				},
+			};
+			ctx.dbOps.saveRequestPayload(requestMeta.id, payload);
+
+			// Process and return the response
+			return await ctx.provider.processResponse(response, null);
+		} catch (error) {
+			const errorMessage =
+				error instanceof Error ? error.message : String(error);
+			log.error("Error forwarding unauthenticated request:", error);
+
+			// Save error to database
+			ctx.dbOps.saveRequest(
+				requestMeta.id,
+				req.method,
+				url.pathname,
+				NO_ACCOUNT_ID,
+				0,
+				false,
+				errorMessage,
+				Date.now() - start,
+				0,
+				undefined,
+			);
+
+			// Save error payload
+			const errorPayload = {
+				request: {
+					headers: Object.fromEntries(req.headers.entries()),
+					body: requestBody
+						? Buffer.from(requestBody).toString("base64")
+						: null,
+				},
+				response: null,
+				error: errorMessage,
+				meta: {
+					accountId: NO_ACCOUNT_ID,
+					timestamp: Date.now(),
+					success: false,
+				},
+			};
+			ctx.dbOps.saveRequestPayload(requestMeta.id, errorPayload);
+
+			// Return error response
+			return new Response(JSON.stringify({ error: errorMessage }), {
+				status: 502,
+				headers: { "Content-Type": "application/json" },
+			});
+		}
+	}
 
 	// Try each account in order
 	for (const account of accounts) {

@@ -50,7 +50,7 @@ export class AnthropicProvider extends BaseProvider {
 		return `https://api.anthropic.com${path}${query}`;
 	}
 
-	prepareHeaders(headers: Headers, accessToken: string): Headers {
+	prepareHeaders(headers: Headers, accessToken?: string): Headers {
 		const newHeaders = super.prepareHeaders(headers, accessToken);
 		// Remove compression headers to avoid decompression issues
 		newHeaders.delete("accept-encoding");
@@ -76,7 +76,7 @@ export class AnthropicProvider extends BaseProvider {
 
 	async processResponse(
 		response: Response,
-		_account: Account,
+		_account: Account | null,
 	): Promise<Response> {
 		// Strip Content-Encoding header to avoid decompression issues
 		const headers = new Headers(response.headers);

@@ -31,7 +31,7 @@ export interface Provider {
 	/**
 	 * Prepare headers for the provider request
 	 */
-	prepareHeaders(headers: Headers, accessToken: string): Headers;
+	prepareHeaders(headers: Headers, accessToken?: string): Headers;
 
 	/**
 	 * Check if response indicates rate limiting
@@ -41,7 +41,10 @@ export interface Provider {
 	/**
 	 * Process the response before returning to client
 	 */
-	processResponse(response: Response, account: Account): Promise<Response>;
+	processResponse(
+		response: Response,
+		account: Account | null,
+	): Promise<Response>;
 
 	/**
 	 * Extract tier information from response if available
