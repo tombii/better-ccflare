@@ -29,7 +29,7 @@ export function createLogsStreamHandler() {
 			try {
 				const data = `data: ${JSON.stringify(event)}\n\n`;
 				await writer.write(encoder.encode(data));
-			} catch (error) {
+			} catch (_error) {
 				// Stream closed
 				closed = true;
 				logBus.off("log", handleLogEvent);
@@ -57,7 +57,7 @@ export function createLogsStreamHandler() {
 			}
 		}, 0);
 
-		return new Response(stream, {
+		return new Response(readable, {
 			headers: {
 				"Content-Type": "text/event-stream",
 				"Cache-Control": "no-cache",
