@@ -47,8 +47,8 @@
                     <span class="gradient-text">Go Low-Level.</span>
                 </h1>
                 <p class="hero-subtitle">
-                    Never hit rate limits again. Monitor usage down to the millisecond. Total control 
-                    over your Claude API calls with intelligent load balancing across multiple accounts.
+                    Never hit rate limits again. One command gives you a full proxy server, real-time 
+                    analytics, and intelligent load balancing. It's really that simple.
                 </p>
                 <div class="hero-actions">
                     <a href="#get-started" class="btn btn-primary">
@@ -238,42 +238,52 @@
         <section id="get-started" class="get-started">
             <div class="container">
                 <div class="section-header">
-                    <h2>Get Started in Minutes</h2>
-                    <p>Simple setup, powerful results</p>
+                    <h2>One Command. Everything You Need.</h2>
+                    <p>Seriously, it's this simple</p>
+                </div>
+                <div class="hero-code-block">
+                    <div class="code-block large">
+                        <pre><code># Clone, install, and run - that's it!
+git clone https://github.com/snipeship/claudeflare
+cd claudeflare
+bun install
+<span class="highlight">bun run claudeflare</span></code></pre>
+                    </div>
+                    <div class="command-benefits">
+                        <h3>That single command gives you:</h3>
+                        <ul>
+                            <li>✅ Full proxy server on port 8080</li>
+                            <li>✅ Interactive TUI for monitoring</li>
+                            <li>✅ Web dashboard at http://localhost:8080/dashboard</li>
+                            <li>✅ Real-time analytics and request logs</li>
+                            <li>✅ Automatic rate limit handling</li>
+                        </ul>
+                    </div>
                 </div>
                 <div class="steps-grid">
                     <div class="step-card">
                         <div class="step-number">01</div>
-                        <h3>Clone & Install</h3>
+                        <h3>Add Your Accounts</h3>
                         <div class="code-block">
-                            <pre><code>git clone https://github.com/snipeship/claudeflare
-cd claudeflare
-bun install</code></pre>
+                            <pre><code># In another terminal
+bun cli add work-account
+bun cli add personal-account</code></pre>
                         </div>
                     </div>
                     <div class="step-card">
                         <div class="step-number">02</div>
-                        <h3>Add Accounts</h3>
+                        <h3>Configure Claude</h3>
                         <div class="code-block">
-                            <pre><code>bun cli add work-account
-bun cli add personal-account
-bun cli add team-account</code></pre>
+                            <pre><code># Point Claude to your proxy
+export ANTHROPIC_BASE_URL=http://localhost:8080</code></pre>
                         </div>
                     </div>
                     <div class="step-card">
                         <div class="step-number">03</div>
-                        <h3>Start Proxy</h3>
+                        <h3>Never Hit Rate Limits</h3>
                         <div class="code-block">
-                            <pre><code>bun start
-# Proxy running at http://localhost:8080</code></pre>
-                        </div>
-                    </div>
-                    <div class="step-card">
-                        <div class="step-number">04</div>
-                        <h3>Configure Claude Code</h3>
-                        <div class="code-block">
-                            <pre><code># Set your environment variable
-export ANTHROPIC_BASE_URL=http://localhost:8080</code></pre>
+                            <pre><code># Just use Claude normally
+# Claudeflare handles the rest! 🚀</code></pre>
                         </div>
                     </div>
                 </div>
