@@ -2,6 +2,17 @@ import type { Account } from "@claudeflare/core";
 import { BaseProvider } from "../../base";
 import type { RateLimitInfo, TokenRefreshResult } from "../../types";
 
+// Hard rate limit statuses that should block account usage
+const HARD_LIMIT_STATUSES = new Set([
+	"rate_limited",
+	"blocked",
+	"queueing_hard",
+	"payment_required",
+]);
+
+// Soft warning statuses that should not block account usage
+const _SOFT_WARNING_STATUSES = new Set(["allowed_warning", "queueing_soft"]);
+
 export class AnthropicProvider extends BaseProvider {
 	name = "anthropic";
 
@@ -74,8 +85,12 @@ export class AnthropicProvider extends BaseProvider {
 			const resetTime = resetHeader ? Number(resetHeader) * 1000 : undefined; // Convert to ms
 			const remaining = remainingHeader ? Number(remainingHeader) : undefined;
 
+			// Only mark as rate limited for hard limit statuses or 429
+			const isRateLimited =
+				HARD_LIMIT_STATUSES.has(statusHeader || "") || response.status === 429;
+
 			return {
-				isRateLimited: statusHeader !== "allowed",
+				isRateLimited,
 				resetTime,
 				statusHeader: statusHeader || undefined,
 				remaining,
