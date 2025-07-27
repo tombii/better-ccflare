@@ -8,7 +8,7 @@ interface AccountsScreenProps {
 	onBack: () => void;
 }
 
-type Mode = "list" | "add" | "remove" | "confirmRemove";
+type Mode = "list" | "add" | "remove" | "confirmRemove" | "waitingForCode";
 
 interface Account {
 	id: string;
@@ -33,6 +33,10 @@ export function AccountsScreen({ onBack }: AccountsScreenProps) {
 	const [step, setStep] = useState<"name" | "mode" | "tier" | "confirm">(
 		"name",
 	);
+	const [authCode, setAuthCode] = useState("");
+	const [oauthFlowData, setOauthFlowData] =
+		useState<tuiCore.OAuthFlowResult | null>(null);
+	const [error, setError] = useState<string | null>(null);
 	const [accountToRemove, setAccountToRemove] = useState("");
 	const [confirmInput, setConfirmInput] = useState("");
 
@@ -42,10 +46,13 @@ export function AccountsScreen({ onBack }: AccountsScreenProps) {
 				setMode("list");
 				setAccountToRemove("");
 				setConfirmInput("");
-			} else if (mode === "add") {
+			} else if (mode === "add" || mode === "waitingForCode") {
 				setMode("list");
 				setNewAccountName("");
 				setStep("name");
+				setAuthCode("");
+				setOauthFlowData(null);
+				setError(null);
 			} else {
 				onBack();
 			}
@@ -63,19 +70,45 @@ export function AccountsScreen({ onBack }: AccountsScreenProps) {
 		loadAccounts();
 	}, [loadAccounts]);
 
-	const handleAddAccount = async () => {
+	const handleBeginAddAccount = async () => {
 		try {
-			await tuiCore.addAccount({
+			const flowData = await tuiCore.beginAddAccount({
 				name: newAccountName,
 				mode: selectedMode,
 				tier: selectedTier,
+			});
+			setOauthFlowData(flowData);
+			setMode("waitingForCode");
+			setError(null);
+		} catch (error) {
+			setError(
+				error instanceof Error ? error.message : "Failed to begin OAuth flow",
+			);
+		}
+	};
+
+	const handleCompleteAddAccount = async () => {
+		if (!oauthFlowData || !authCode) return;
+
+		try {
+			await tuiCore.completeAddAccount({
+				name: newAccountName,
+				mode: selectedMode,
+				tier: selectedTier,
+				code: authCode,
+				flowData: oauthFlowData,
 			});
 			await loadAccounts();
 			setMode("list");
 			setNewAccountName("");
 			setStep("name");
-		} catch (_error) {
-			// Handle error
+			setAuthCode("");
+			setOauthFlowData(null);
+			setError(null);
+		} catch (error) {
+			setError(
+				error instanceof Error ? error.message : "Failed to add account",
+			);
 		}
 	};
 
@@ -148,9 +181,51 @@ export function AccountsScreen({ onBack }: AccountsScreenProps) {
 							]}
 							onSelect={(item) => {
 								setSelectedTier(item.value as 1 | 5 | 20);
-								handleAddAccount();
+								handleBeginAddAccount();
 							}}
 						/>
+					</Box>
+				)}
+
+				{error && (
+					<Box marginTop={1}>
+						<Text color="red">{error}</Text>
+					</Box>
+				)}
+
+				<Box marginTop={2}>
+					<Text dimColor>Press ESC to cancel</Text>
+				</Box>
+			</Box>
+		);
+	}
+
+	if (mode === "waitingForCode") {
+		return (
+			<Box flexDirection="column" padding={1}>
+				<Text color="cyan" bold>
+					Complete Authentication
+				</Text>
+
+				<Box flexDirection="column" marginTop={1}>
+					<Text>A browser window should have opened for authentication.</Text>
+					<Text>After authorizing, enter the code below:</Text>
+
+					<Box marginTop={1}>
+						<Text>Authorization code:</Text>
+						<TextInput
+							value={authCode}
+							onChange={setAuthCode}
+							onSubmit={() => {
+								if (authCode) handleCompleteAddAccount();
+							}}
+						/>
+					</Box>
+				</Box>
+
+				{error && (
+					<Box marginTop={1}>
+						<Text color="red">{error}</Text>
 					</Box>
 				)}
 

@@ -2,10 +2,9 @@ import type { Config } from "@claudeflare/config";
 import type { DatabaseOperations } from "@claudeflare/database";
 import { generatePKCE, getOAuthProvider } from "@claudeflare/providers";
 import {
-	promptAccountMode,
+	type PromptAdapter,
 	promptAccountRemovalConfirmation,
-	promptAccountTier,
-	promptAuthorizationCode,
+	stdPromptAdapter,
 } from "../prompts/index";
 import { openBrowser } from "../utils/browser";
 
@@ -13,6 +12,7 @@ export interface AddAccountOptions {
 	name: string;
 	mode?: "max" | "console";
 	tier?: 1 | 5 | 20;
+	adapter?: PromptAdapter;
 }
 
 export interface AccountListItem {
@@ -40,7 +40,12 @@ export async function addAccount(
 	config: Config,
 	options: AddAccountOptions,
 ): Promise<void> {
-	const { name, mode: providedMode, tier: providedTier } = options;
+	const {
+		name,
+		mode: providedMode,
+		tier: providedTier,
+		adapter = stdPromptAdapter,
+	} = options;
 	const runtime = config.getRuntime();
 
 	// Check if account exists
@@ -56,7 +61,12 @@ export async function addAccount(
 	}
 
 	// Prompt for mode if not provided
-	const mode = providedMode || (await promptAccountMode());
+	const mode =
+		providedMode ||
+		(await adapter.select("What type of account would you like to add?", [
+			{ label: "Claude Max account", value: "max" },
+			{ label: "Claude Console account", value: "console" },
+		]));
 
 	// Generate PKCE
 	const pkce = await generatePKCE();
@@ -74,7 +84,7 @@ export async function addAccount(
 	}
 
 	// Get authorization code
-	const code = await promptAuthorizationCode();
+	const code = await adapter.input("\nEnter the authorization code: ");
 
 	// Exchange code for tokens
 	console.log("\nExchanging code for tokens...");
@@ -85,7 +95,18 @@ export async function addAccount(
 	);
 
 	// Get tier for Max accounts
-	const tier = mode === "max" ? providedTier || (await promptAccountTier()) : 1;
+	const tier =
+		mode === "max"
+			? providedTier ||
+				(await adapter.select(
+					"Select the tier for this account (used for weighted load balancing):",
+					[
+						{ label: "1x tier (default free account)", value: 1 },
+						{ label: "5x tier (paid account)", value: 5 },
+						{ label: "20x tier (enterprise account)", value: 20 },
+					],
+				))
+			: 1;
 
 	// Create account
 	const db = dbOps.getDatabase();
