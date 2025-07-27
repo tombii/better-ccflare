@@ -17,6 +17,7 @@ import {
 } from "./handlers/requests";
 import { createStatsHandler, createStatsResetHandler } from "./handlers/stats";
 import type { APIContext } from "./types";
+import { errorResponse } from "./utils/http-error";
 
 /**
  * API Router that handles all API endpoints
@@ -84,6 +85,21 @@ export class APIRouter {
 	}
 
 	/**
+	 * Wrap a handler with error handling
+	 */
+	private wrapHandler(
+		handler: (req: Request, url: URL) => Response | Promise<Response>,
+	): (req: Request, url: URL) => Promise<Response> {
+		return async (req: Request, url: URL) => {
+			try {
+				return await handler(req, url);
+			} catch (error) {
+				return errorResponse(error);
+			}
+		};
+	}
+
+	/**
 	 * Handle an incoming request
 	 */
 	async handleRequest(url: URL, req: Request): Promise<Response | null> {
@@ -94,7 +110,7 @@ export class APIRouter {
 		// Check for exact match
 		const handler = this.handlers.get(key);
 		if (handler) {
-			return await handler(req, url);
+			return await this.wrapHandler(handler)(req, url);
 		}
 
 		// Check for dynamic account endpoints
@@ -105,25 +121,37 @@ export class APIRouter {
 			// Account tier update
 			if (path.endsWith("/tier") && method === "POST") {
 				const tierHandler = createAccountTierUpdateHandler(this.context.dbOps);
-				return await tierHandler(req, accountId);
+				return await this.wrapHandler((req) => tierHandler(req, accountId))(
+					req,
+					url,
+				);
 			}
 
 			// Account pause
 			if (path.endsWith("/pause") && method === "POST") {
 				const pauseHandler = createAccountPauseHandler(this.context.dbOps);
-				return await pauseHandler(req, accountId);
+				return await this.wrapHandler((req) => pauseHandler(req, accountId))(
+					req,
+					url,
+				);
 			}
 
 			// Account resume
 			if (path.endsWith("/resume") && method === "POST") {
 				const resumeHandler = createAccountResumeHandler(this.context.dbOps);
-				return await resumeHandler(req, accountId);
+				return await this.wrapHandler((req) => resumeHandler(req, accountId))(
+					req,
+					url,
+				);
 			}
 
 			// Account removal
 			if (parts.length === 4 && method === "DELETE") {
 				const removeHandler = createAccountRemoveHandler(this.context.dbOps);
-				return await removeHandler(req, accountId);
+				return await this.wrapHandler((req) => removeHandler(req, accountId))(
+					req,
+					url,
+				);
 			}
 		}
 

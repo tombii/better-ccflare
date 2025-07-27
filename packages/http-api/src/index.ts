@@ -10,3 +10,5 @@ export * from "./handlers/stats";
 // Export router
 export { APIRouter } from "./router";
 export * from "./types";
+// Export utilities
+export * from "./utils/http-error";

@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { NO_ACCOUNT_ID } from "@claudeflare/core";
 import type { DatabaseOperations } from "@claudeflare/database";
+import { jsonResponse } from "../utils/http-error";
 
 /**
  * Create a stats handler
@@ -128,37 +129,24 @@ export function createStatsHandler(db: Database) {
 			recentErrors: recentErrors.map((e) => e.error_message),
 		};
 
-		return new Response(JSON.stringify(response), {
-			headers: { "Content-Type": "application/json" },
-		});
+		return jsonResponse(response);
 	};
 }
 
 /**
  * Create a stats reset handler
  */
-export function createStatsResetHandler(_dbOps: DatabaseOperations) {
+export function createStatsResetHandler(dbOps: DatabaseOperations) {
 	return async (): Promise<Response> => {
-		try {
-			// Reset statistics by clearing request history
-			// This is a placeholder - actual implementation would use database methods
-			return new Response(
-				JSON.stringify({
-					success: true,
-					message: "Statistics reset successfully",
-				}),
-				{
-					headers: { "Content-Type": "application/json" },
-				},
-			);
-		} catch (_error) {
-			return new Response(
-				JSON.stringify({ error: "Failed to reset statistics" }),
-				{
-					status: 500,
-					headers: { "Content-Type": "application/json" },
-				},
-			);
-		}
+		const db = dbOps.getDatabase();
+		// Clear request history
+		db.run("DELETE FROM requests");
+		// Reset account statistics
+		db.run("UPDATE accounts SET request_count = 0, session_request_count = 0");
+
+		return jsonResponse({
+			success: true,
+			message: "Statistics reset successfully",
+		});
 	};
 }
