@@ -32,7 +32,7 @@ export function AccountsTab() {
 
 	useEffect(() => {
 		loadAccounts();
-	}, []);
+	}, [loadAccounts]);
 
 	const loadAccounts = async () => {
 		try {

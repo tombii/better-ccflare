@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import { useState } from "react";
 import { Box, Text, useApp } from "ink";
 import SelectInput from "ink-select-input";
 import { ServerScreen } from "./components/ServerScreen";

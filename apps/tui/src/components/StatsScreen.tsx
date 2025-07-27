@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { Box, Text, useInput } from "ink";
 import * as tuiCore from "@claudeflare/tui-core";
 
@@ -23,14 +23,14 @@ export function StatsScreen({ onBack }: StatsScreenProps) {
 		loadStats();
 		const interval = setInterval(loadStats, 5000); // Auto-refresh every 5 seconds
 		return () => clearInterval(interval);
-	}, []);
+	}, [loadStats]);
 
 	const loadStats = async () => {
 		try {
 			const data = await tuiCore.getStats();
 			setStats(data);
 			setLoading(false);
-		} catch (error) {
+		} catch (_error) {
 			setLoading(false);
 		}
 	};

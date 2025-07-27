@@ -146,7 +146,7 @@ process.on("SIGINT", () => {
 });
 
 // Export for programmatic use
-export default function startServer(options?: {
+export default function startServer(_options?: {
 	port?: number;
 	withDashboard?: boolean;
 }) {

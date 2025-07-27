@@ -1,6 +1,5 @@
 import type { Database } from "bun:sqlite";
 import type { DatabaseOperations } from "@claudeflare/database";
-import type { StatsResponse } from "../types.js";
 
 /**
  * Create a stats handler
@@ -106,7 +105,7 @@ export function createStatsHandler(db: Database) {
 /**
  * Create a stats reset handler
  */
-export function createStatsResetHandler(dbOps: DatabaseOperations) {
+export function createStatsResetHandler(_dbOps: DatabaseOperations) {
 	return async (): Promise<Response> => {
 		try {
 			// Reset statistics by clearing request history

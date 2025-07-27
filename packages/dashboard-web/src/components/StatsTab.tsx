@@ -8,7 +8,7 @@ import {
 } from "./ui/card";
 import { Button } from "./ui/button";
 import { api, type Stats } from "../api";
-import { RefreshCw, TrendingUp, TrendingDown } from "lucide-react";
+import { RefreshCw, } from "lucide-react";
 
 export function StatsTab() {
 	const [stats, setStats] = useState<Stats | null>(null);
@@ -19,7 +19,7 @@ export function StatsTab() {
 		loadStats();
 		const interval = setInterval(loadStats, 10000);
 		return () => clearInterval(interval);
-	}, []);
+	}, [loadStats]);
 
 	const loadStats = async () => {
 		try {

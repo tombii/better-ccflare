@@ -134,7 +134,7 @@ export function createAccountTierUpdateHandler(dbOps: DatabaseOperations) {
 /**
  * Create an account add handler
  */
-export function createAccountAddHandler(dbOps: DatabaseOperations) {
+export function createAccountAddHandler(_dbOps: DatabaseOperations) {
 	return async (req: Request): Promise<Response> => {
 		try {
 			const body = (await req.json()) as {
@@ -177,7 +177,7 @@ export function createAccountAddHandler(dbOps: DatabaseOperations) {
 /**
  * Create an account remove handler
  */
-export function createAccountRemoveHandler(dbOps: DatabaseOperations) {
+export function createAccountRemoveHandler(_dbOps: DatabaseOperations) {
 	return async (_req: Request, accountName: string): Promise<Response> => {
 		try {
 			// Placeholder for actual account removal logic

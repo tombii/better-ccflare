@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { Box, Text, useInput } from "ink";
 import * as tuiCore from "@claudeflare/tui-core";
 

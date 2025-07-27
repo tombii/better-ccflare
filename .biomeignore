@@ -1,0 +1,11 @@
+**/dist
+**/dist/**
+**/build
+**/build/**
+**/node_modules
+**/node_modules/**
+**/*.min.js
+**/*.min.css
+**/*.bundle.js
+packages/dashboard-web/dist
+packages/dashboard-web/dist/**
