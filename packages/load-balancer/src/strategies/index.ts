@@ -7,7 +7,6 @@ import type {
 import { isAccountAvailable } from "@claudeflare/core";
 import { Logger } from "@claudeflare/logger";
 
-
 export class SessionStrategy implements LoadBalancingStrategy {
 	private sessionDurationMs: number;
 	private store: StrategyStore | null = null;
@@ -92,4 +91,3 @@ export class SessionStrategy implements LoadBalancingStrategy {
 		return [chosenAccount, ...others];
 	}
 }
-

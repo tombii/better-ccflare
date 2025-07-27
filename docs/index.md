@@ -24,10 +24,8 @@ When working with Claude API at scale, rate limits can become a significant bott
 ## Key Features
 
 ### 🎯 Intelligent Load Balancing
-- **Session-based** (default): Maintains conversation context with 5-hour sessions
-- **Round-robin**: Even distribution across accounts
-- **Least-requests**: Routes to account with fewest active requests
-- **Weighted**: Prioritizes accounts by tier (Free/Pro/Max)
+- **Session-based** (only supported strategy): Maintains conversation context with 5-hour sessions to avoid rate limits and account bans
+- **⚠️ WARNING**: Other strategies (round-robin, least-requests, weighted) have been removed as they can trigger Claude's anti-abuse systems
 
 ### 📈 Real-Time Monitoring & Analytics
 - **Web Dashboard**: Interactive UI at `/dashboard` with live metrics
@@ -55,7 +53,7 @@ When working with Claude API at scale, rate limits can become a significant bott
 - [Data Flow](./data-flow.md) - Request lifecycle through the system
 
 ### Core Features
-- [Load Balancing Strategies](./load-balancing.md) - Session-based, round-robin, weighted, and least-requests algorithms
+- [Load Balancing Strategy](./load-balancing.md) - Session-based strategy for safe account usage
 - [Provider System](./providers.md) - Provider abstraction and OAuth implementation
 - [Database Schema](./database.md) - SQLite structure, migrations, and maintenance
 
@@ -92,8 +90,8 @@ bun run claudeflare
 # Or start just the server without TUI
 bun run server
 
-# Or specify a different load balancing strategy
-LB_STRATEGY=weighted bun run server
+# Specify session duration (default: 5 hours)
+SESSION_DURATION_MS=21600000 bun run server  # 6 hours
 ```
 
 ### 3. Add Your Claude Accounts

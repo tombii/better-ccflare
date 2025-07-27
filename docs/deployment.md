@@ -91,7 +91,7 @@ bun cli add myaccount
 ```bash
 # Environment variables for development
 export PORT=8080
-export LB_STRATEGY=least-requests  # Options: least-requests, round-robin, session, weighted, weighted-round-robin
+export LB_STRATEGY=session  # Only 'session' strategy is supported
 export LOG_LEVEL=DEBUG
 export LOG_FORMAT=pretty  # Options: pretty, json
 export CF_STREAM_BODY_MAX_BYTES=262144  # 256KB default
@@ -174,7 +174,7 @@ module.exports = {
     exec_mode: 'fork',
     env: {
       PORT: 8080,
-      LB_STRATEGY: 'least-requests',
+      LB_STRATEGY: 'session',
       LOG_LEVEL: 'INFO',
       LOG_FORMAT: 'json',
       CF_STREAM_BODY_MAX_BYTES: 262144,
@@ -220,7 +220,7 @@ RestartSec=5
 
 # Environment
 Environment="PORT=8080"
-Environment="LB_STRATEGY=least-requests"
+Environment="LB_STRATEGY=session"
 Environment="LOG_LEVEL=INFO"
 Environment="LOG_FORMAT=json"
 Environment="CF_STREAM_BODY_MAX_BYTES=262144"
@@ -329,7 +329,7 @@ services:
       - "8080:8080"
     environment:
       - PORT=8080
-      - LB_STRATEGY=least-requests
+      - LB_STRATEGY=session
       - LOG_LEVEL=INFO
       - LOG_FORMAT=json
       - CF_STREAM_BODY_MAX_BYTES=262144
@@ -991,7 +991,7 @@ Response format:
   "status": "ok",
   "accounts": 5,
   "timestamp": "2025-01-27T12:00:00.000Z",
-  "strategy": "least-requests"
+  "strategy": "session"
 }
 ```
 
@@ -1136,7 +1136,7 @@ find /backup/claudeflare -name "*.tar.gz" -mtime +30 -delete
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PORT` | 8080 | Server port |
-| `LB_STRATEGY` | least-requests | Load balancing strategy: `least-requests`, `round-robin`, `session`, `weighted`, `weighted-round-robin` |
+| `LB_STRATEGY` | session | Load balancing strategy: Only `session` is supported |
 | `LOG_LEVEL` | INFO | Logging level: `DEBUG`, `INFO`, `WARN`, `ERROR` |
 | `LOG_FORMAT` | pretty | Log format: `pretty` (human-readable) or `json` (structured) |
 

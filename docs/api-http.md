@@ -51,7 +51,7 @@ Check the health status of the Claudeflare service.
   "status": "ok",
   "accounts": 5,
   "timestamp": "2024-12-17T10:30:45.123Z",
-  "strategy": "round-robin"
+  "strategy": "session"
 }
 ```
 
@@ -425,7 +425,7 @@ Get current configuration.
 **Response:**
 ```json
 {
-  "lb_strategy": "round-robin",
+  "lb_strategy": "session",
   "port": 8080,
   "sessionDurationMs": 18000000
 }
@@ -443,7 +443,7 @@ Get current load balancing strategy.
 **Response:**
 ```json
 {
-  "strategy": "round-robin"
+  "strategy": "session"
 }
 ```
 
@@ -459,7 +459,7 @@ Update load balancing strategy.
 **Request:**
 ```json
 {
-  "strategy": "weighted-round-robin"
+  "strategy": "session"
 }
 ```
 
@@ -467,16 +467,14 @@ Update load balancing strategy.
 ```json
 {
   "success": true,
-  "strategy": "weighted-round-robin"
+  "strategy": "session"
 }
 ```
 
-**Available Strategies:**
-- `round-robin` - Simple round-robin distribution
-- `weighted-round-robin` - Round-robin weighted by account tier
-- `least-requests` - Route to account with fewest requests
-- `session` - Sticky sessions for consistent routing
-- `weighted` - Weighted by tier and usage
+**Available Strategy:**
+- `session` - Session-based routing that maintains 5-hour sessions with individual accounts to avoid rate limits and account bans
+
+**⚠️ WARNING:** Only the session strategy is supported. Other strategies have been removed as they can trigger Claude's anti-abuse systems.
 
 **Example:**
 ```bash
@@ -493,24 +491,8 @@ List all available load balancing strategies.
 ```json
 [
   {
-    "name": "round-robin",
-    "description": "Simple round-robin load balancing"
-  },
-  {
-    "name": "weighted-round-robin",
-    "description": "Round-robin weighted by account tier"
-  },
-  {
-    "name": "least-requests",
-    "description": "Route to account with least requests"
-  },
-  {
     "name": "session",
-    "description": "Sticky sessions for consistent routing"
-  },
-  {
-    "name": "weighted",
-    "description": "Weighted by tier and current usage"
+    "description": "Session-based routing for safe account usage"
   }
 ]
 ```
@@ -725,7 +707,7 @@ The dashboard provides a visual interface for:
 Claudeflare can be configured using the following environment variables:
 
 - `PORT` - Server port (default: 8080)
-- `LB_STRATEGY` - Load balancing strategy (default: round-robin)
+- `LB_STRATEGY` - Load balancing strategy (default: session)
 - `SESSION_DURATION_MS` - Session duration in milliseconds (default: 18000000 / 5 hours)
 - `CLIENT_ID` - OAuth client ID for Anthropic authentication (default: 9d1c250a-e61b-44d9-88ed-5944d1962f5e)
 - `CF_STREAM_BODY_MAX_BYTES` - Maximum bytes to capture from streaming responses (default: 262144 / 256KB)
@@ -743,7 +725,7 @@ In addition to environment variables, Claudeflare supports configuration through
 **Supported Configuration Keys:**
 ```json
 {
-  "lb_strategy": "round-robin",
+  "lb_strategy": "session",
   "client_id": "your-oauth-client-id",
   "retry_attempts": 3,
   "retry_delay_ms": 1000,
@@ -758,12 +740,10 @@ In addition to environment variables, Claudeflare supports configuration through
 
 ### Load Balancing Strategies
 
-The following strategies are available:
-- `round-robin` - Simple round-robin distribution
-- `weighted-round-robin` - Round-robin weighted by account tier
-- `least-requests` - Route to account with fewest requests  
-- `session` - Sticky sessions for consistent routing
-- `weighted` - Weighted by tier and current usage
+The following strategy is available:
+- `session` - Session-based routing that maintains 5-hour sessions with individual accounts
+
+**⚠️ WARNING:** Only use the session strategy. Other strategies can trigger Claude's anti-abuse systems and result in account bans.
 
 ## Notes
 

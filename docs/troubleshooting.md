@@ -243,9 +243,9 @@ export NO_PROXY=localhost,127.0.0.1
    # Look for: paused, rate_limited, or expired
    ```
 
-2. Account tier and weight (for weighted strategies):
-   - Higher tier accounts get more requests
-   - Check account_tier in the database
+2. Session persistence:
+   - Check if account has an active session
+   - Verify session hasn't expired
 
 **Solutions**:
 1. Unpause the account if paused
@@ -262,11 +262,10 @@ export NO_PROXY=localhost,127.0.0.1
    bun cli config get lb_strategy
    ```
 
-2. Choose appropriate strategy:
-   - `round-robin`: Equal distribution
-   - `weighted`: Based on account tier
-   - `least-requests`: Least used account first
-   - `session`: Sticky sessions for conversations
+2. Session strategy behavior:
+   - `session`: Maintains 5-hour sessions with individual accounts
+   - This is the only supported strategy to avoid account bans
+   - Adjust session_duration_ms if needed
 
 ## Configuration Problems
 
@@ -659,9 +658,9 @@ grep "\[Server\]" /tmp/claudeflare-logs/app.log
 **Meaning**: Unknown load balancing strategy specified
 
 **Solutions**:
-1. Valid strategies: `round-robin`, `weighted`, `least-requests`, `session`
+1. Only valid strategy: `session`
 2. Check spelling in config or environment variable
-3. Use default if unsure: `round-robin`
+3. The default is already `session`
 
 ### HTTP Status Codes
 
@@ -720,7 +719,7 @@ grep "\[Server\]" /tmp/claudeflare-logs/app.log
 |----------|-------------|---------|---------|
 | `CLIENT_ID` | OAuth client ID for Anthropic | None | `my-oauth-client-id` |
 | `PORT` | Server port | 8080 | `3000` |
-| `LB_STRATEGY` | Load balancing strategy | `round-robin` | `weighted`, `least-requests`, `session` |
+| `LB_STRATEGY` | Load balancing strategy | `session` | Only `session` is supported |
 | `RETRY_ATTEMPTS` | Number of retry attempts | 3 | `5` |
 | `RETRY_DELAY_MS` | Initial retry delay in ms | 1000 | `500` |
 | `RETRY_BACKOFF` | Retry backoff multiplier | 2 | `1.5` |
@@ -841,7 +840,7 @@ Expected response:
 
 **A**: Best practices for rate limit handling:
 1. Add multiple accounts to your pool
-2. Use the weighted strategy to prioritize higher-tier accounts
+2. Maintain proper session duration (default 5 hours)
 3. Monitor rate limit warnings in logs (soft limits)
 4. Set up alerts for hard rate limits
 5. Consider implementing request queuing in your application
@@ -862,7 +861,7 @@ Expected response:
 1. **Paused**: Manually paused via CLI
 2. **Rate Limited**: Temporarily unavailable due to rate limits
 3. **Expired Token**: Needs re-authentication
-4. **Strategy**: Some strategies (like weighted) prefer certain accounts
+4. **Session**: Account may have an active session
 5. Check status: `bun cli list`
 
 ### Q: How do I troubleshoot slow responses?

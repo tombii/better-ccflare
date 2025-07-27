@@ -101,7 +101,7 @@ bun cli add <name> [--mode <max|console>] [--tier <1|5|20>]
 - `--mode`: Account type (optional)
   - `max`: Claude Max account
   - `console`: Console account
-- `--tier`: Account tier for weighted load balancing (optional, Max accounts only)
+- `--tier`: Account tier (optional, Max accounts only)
   - `1`: Tier 1 account
   - `5`: Tier 5 account
   - `20`: Tier 20 account
@@ -348,7 +348,7 @@ The SQLite database follows the same directory structure:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `LB_STRATEGY` | Load balancing strategy (least-requests, round-robin, session, weighted, weighted-round-robin) | session |
+| `LB_STRATEGY` | Load balancing strategy (only 'session' is supported) | session |
 
 ### Retry Configuration
 
@@ -408,7 +408,7 @@ The SQLite database follows the same directory structure:
 
 **Solutions**:
 1. Add more accounts to the pool
-2. Use weighted distribution for higher-tier accounts
+2. Increase session duration for less frequent switching
 3. Implement request throttling in client code
 4. Monitor usage with `bun cli list`
 
