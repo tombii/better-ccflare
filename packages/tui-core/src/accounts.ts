@@ -1,4 +1,5 @@
 import * as cliCommands from "@claudeflare/cli-commands";
+import type { AccountListItem } from "@claudeflare/cli-commands";
 import { DatabaseOperations } from "@claudeflare/database";
 import { Config } from "@claudeflare/config";
 
@@ -14,7 +15,7 @@ export async function addAccount(options: AddAccountOptions): Promise<void> {
 	await cliCommands.addAccount(dbOps, config, options);
 }
 
-export async function getAccounts(): Promise<any[]> {
+export async function getAccounts(): Promise<AccountListItem[]> {
 	const dbOps = new DatabaseOperations();
 	return await cliCommands.getAccountsList(dbOps);
 }

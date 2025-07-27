@@ -1,13 +1,14 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Box, Text, useInput } from "ink";
 import * as tuiCore from "@claudeflare/tui-core";
+import type { Stats } from "@claudeflare/tui-core";
 
 interface StatsScreenProps {
 	onBack: () => void;
 }
 
 export function StatsScreen({ onBack }: StatsScreenProps) {
-	const [stats, setStats] = useState<any>(null);
+	const [stats, setStats] = useState<Stats | null>(null);
 	const [loading, setLoading] = useState(true);
 
 	useInput((input, key) => {
@@ -19,13 +20,7 @@ export function StatsScreen({ onBack }: StatsScreenProps) {
 		}
 	});
 
-	useEffect(() => {
-		loadStats();
-		const interval = setInterval(loadStats, 5000); // Auto-refresh every 5 seconds
-		return () => clearInterval(interval);
-	}, [loadStats]);
-
-	const loadStats = async () => {
+	const loadStats = useCallback(async () => {
 		try {
 			const data = await tuiCore.getStats();
 			setStats(data);
@@ -33,7 +28,13 @@ export function StatsScreen({ onBack }: StatsScreenProps) {
 		} catch (_error) {
 			setLoading(false);
 		}
-	};
+	}, []);
+
+	useEffect(() => {
+		loadStats();
+		const interval = setInterval(loadStats, 5000); // Auto-refresh every 5 seconds
+		return () => clearInterval(interval);
+	}, [loadStats]);
 
 	if (loading) {
 		return (
@@ -68,7 +69,7 @@ export function StatsScreen({ onBack }: StatsScreenProps) {
 					{stats.accounts && stats.accounts.length > 0 && (
 						<Box flexDirection="column">
 							<Text bold>Account Usage</Text>
-							{stats.accounts.map((acc: any) => (
+							{stats.accounts.map((acc) => (
 								<Box key={acc.name} marginLeft={2}>
 									<Text>
 										{acc.name}: {acc.requestCount || 0} requests (
@@ -84,8 +85,11 @@ export function StatsScreen({ onBack }: StatsScreenProps) {
 							<Text bold color="red">
 								Recent Errors
 							</Text>
-							{stats.recentErrors.slice(0, 5).map((error: any, i: number) => (
-								<Box key={i} marginLeft={2}>
+							{stats.recentErrors.slice(0, 5).map((error, i) => (
+								<Box
+									key={`error-${i}-${error.substring(0, 10)}`}
+									marginLeft={2}
+								>
 									<Text dimColor>{error}</Text>
 								</Box>
 							))}

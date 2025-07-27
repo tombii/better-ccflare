@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Box, Text, useInput } from "ink";
 import SelectInput from "ink-select-input";
 import TextInput from "ink-text-input";
@@ -10,9 +10,23 @@ interface AccountsScreenProps {
 
 type Mode = "list" | "add" | "remove";
 
+interface Account {
+	id: string;
+	name: string;
+	provider: string;
+	tierDisplay: string;
+	created: Date;
+	lastUsed: Date | null;
+	requestCount: number;
+	totalRequests: number;
+	tokenStatus: "valid" | "expired";
+	rateLimitStatus: string;
+	sessionInfo: string;
+}
+
 export function AccountsScreen({ onBack }: AccountsScreenProps) {
 	const [mode, setMode] = useState<Mode>("list");
-	const [accounts, setAccounts] = useState<any[]>([]);
+	const [accounts, setAccounts] = useState<Account[]>([]);
 	const [newAccountName, setNewAccountName] = useState("");
 	const [selectedMode, setSelectedMode] = useState<"max" | "console">("max");
 	const [selectedTier, setSelectedTier] = useState<1 | 5 | 20>(1);
@@ -26,14 +40,14 @@ export function AccountsScreen({ onBack }: AccountsScreenProps) {
 		}
 	});
 
+	const loadAccounts = useCallback(async () => {
+		const data = await tuiCore.getAccounts();
+		setAccounts(data);
+	}, []);
+
 	useEffect(() => {
 		loadAccounts();
 	}, [loadAccounts]);
-
-	const loadAccounts = async () => {
-		const data = await tuiCore.getAccounts();
-		setAccounts(data);
-	};
 
 	const handleAddAccount = async () => {
 		try {
@@ -122,7 +136,7 @@ export function AccountsScreen({ onBack }: AccountsScreenProps) {
 
 	const menuItems = [
 		...accounts.map((acc) => ({
-			label: `${acc.name} (${acc.mode} mode, tier ${acc.tier})`,
+			label: `${acc.name} (tier ${acc.tierDisplay})`,
 			value: `account:${acc.name}`,
 		})),
 		{ label: "➕ Add Account", value: "add" },
