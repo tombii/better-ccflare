@@ -594,9 +594,10 @@ export function AnalyticsTab() {
 								/>
 								<Tooltip
 									contentStyle={{
-										backgroundColor: "var(--background)",
-										border: "1px solid var(--border)",
+										backgroundColor: COLORS.success,
+										border: `1px solid ${COLORS.success}`,
 										borderRadius: "var(--radius)",
+										color: "#fff",
 									}}
 									formatter={(value: number | string, name: string) => {
 										if (name === "avgTime") return [`${value}ms`, "Avg Time"];
