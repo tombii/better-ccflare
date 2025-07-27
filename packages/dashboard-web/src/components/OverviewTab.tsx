@@ -37,7 +37,7 @@ import {
 } from "./ui/card";
 import { Skeleton } from "./ui/skeleton";
 
-// Cloudflare-inspired color palette
+// Claudeflare-inspired color palette
 const COLORS = {
 	primary: "#f38020",
 	success: "#10b981",
