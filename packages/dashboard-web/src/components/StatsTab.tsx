@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
 	Card,
 	CardContent,
@@ -8,20 +8,14 @@ import {
 } from "./ui/card";
 import { Button } from "./ui/button";
 import { api, type Stats } from "../api";
-import { RefreshCw, } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 
 export function StatsTab() {
 	const [stats, setStats] = useState<Stats | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
 
-	useEffect(() => {
-		loadStats();
-		const interval = setInterval(loadStats, 10000);
-		return () => clearInterval(interval);
-	}, [loadStats]);
-
-	const loadStats = async () => {
+	const loadStats = useCallback(async () => {
 		try {
 			const data = await api.getStats();
 			setStats(data);
@@ -31,7 +25,13 @@ export function StatsTab() {
 		} finally {
 			setLoading(false);
 		}
-	};
+	}, []);
+
+	useEffect(() => {
+		loadStats();
+		const interval = setInterval(loadStats, 10000);
+		return () => clearInterval(interval);
+	}, [loadStats]);
 
 	const handleResetStats = async () => {
 		if (!confirm("Are you sure you want to reset all statistics?")) return;
@@ -142,7 +142,7 @@ export function StatsTab() {
 						<div className="space-y-2">
 							{stats.recentErrors.map((error: string, i: number) => (
 								<div
-									key={i}
+									key={`error-${i}-${error.substring(0, 10)}`}
 									className="text-sm p-2 bg-destructive/10 rounded-md"
 								>
 									<p className="text-destructive">{error}</p>

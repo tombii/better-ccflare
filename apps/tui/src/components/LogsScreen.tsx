@@ -68,7 +68,7 @@ export function LogsScreen({ onBack }: LogsScreenProps) {
 					<Text dimColor>No logs yet...</Text>
 				) : (
 					logs.map((log, i) => (
-						<Box key={i}>
+						<Box key={`${log.ts}-${i}`}>
 							<Text color={getLogColor(log.level)}>
 								[{log.level}] {log.msg}
 							</Text>

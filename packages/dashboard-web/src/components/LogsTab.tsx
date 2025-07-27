@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import {
 	Card,
 	CardContent,
@@ -17,6 +17,19 @@ export function LogsTab() {
 	const eventSourceRef = useRef<EventSource | null>(null);
 	const logsEndRef = useRef<HTMLDivElement>(null);
 
+	const startStreaming = useCallback(() => {
+		eventSourceRef.current = api.streamLogs((log: LogEntry) => {
+			setLogs((prev) => [...prev.slice(-999), log]); // Keep last 1000 logs
+		});
+	}, []);
+
+	const stopStreaming = useCallback(() => {
+		if (eventSourceRef.current) {
+			eventSourceRef.current.close();
+			eventSourceRef.current = null;
+		}
+	}, []);
+
 	useEffect(() => {
 		if (!paused) {
 			startStreaming();
@@ -29,22 +42,9 @@ export function LogsTab() {
 
 	useEffect(() => {
 		if (autoScroll && logsEndRef.current) {
-			(logsEndRef.current as any).scrollIntoView({ behavior: "smooth" });
+			logsEndRef.current.scrollIntoView({ behavior: "smooth" });
 		}
 	}, [autoScroll]);
-
-	const startStreaming = () => {
-		eventSourceRef.current = api.streamLogs((log: LogEntry) => {
-			setLogs((prev) => [...prev.slice(-999), log]); // Keep last 1000 logs
-		});
-	};
-
-	const stopStreaming = () => {
-		if (eventSourceRef.current) {
-			eventSourceRef.current.close();
-			eventSourceRef.current = null;
-		}
-	};
 
 	const clearLogs = () => {
 		setLogs([]);
@@ -110,7 +110,7 @@ export function LogsTab() {
 						<p className="text-muted-foreground">No logs yet...</p>
 					) : (
 						logs.map((log, i) => (
-							<div key={i} className="flex gap-2">
+							<div key={`${log.ts}-${i}`} className="flex gap-2">
 								<span className="text-muted-foreground">
 									{formatTimestamp(log.ts)}
 								</span>
@@ -128,7 +128,7 @@ export function LogsTab() {
 						type="checkbox"
 						id="autoscroll"
 						checked={autoScroll}
-						onChange={(e: any) =>
+						onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
 							setAutoScroll(e.currentTarget.checked)
 						}
 						className="rounded border-gray-300"

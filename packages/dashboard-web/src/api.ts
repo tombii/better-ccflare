@@ -73,10 +73,8 @@ class API {
 	}
 
 	streamLogs(onLog: (log: LogEntry) => void): EventSource {
-		const eventSource = new (EventSource as any)(
-			`${this.baseUrl}/api/logs/stream`,
-		);
-		eventSource.onmessage = (event: any) => {
+		const eventSource = new EventSource(`${this.baseUrl}/api/logs/stream`);
+		eventSource.onmessage = (event: MessageEvent) => {
 			const log = JSON.parse(event.data);
 			onLog(log);
 		};

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
 	Card,
 	CardContent,
@@ -30,11 +30,7 @@ export function AccountsTab() {
 		tier: 1,
 	});
 
-	useEffect(() => {
-		loadAccounts();
-	}, [loadAccounts]);
-
-	const loadAccounts = async () => {
+	const loadAccounts = useCallback(async () => {
 		try {
 			const data = await api.getAccounts();
 			setAccounts(data);
@@ -44,7 +40,11 @@ export function AccountsTab() {
 		} finally {
 			setLoading(false);
 		}
-	};
+	}, []);
+
+	useEffect(() => {
+		loadAccounts();
+	}, [loadAccounts]);
 
 	const handleAddAccount = async () => {
 		if (!newAccount.name) {
@@ -121,7 +121,7 @@ export function AccountsTab() {
 								<Input
 									id="name"
 									value={newAccount.name}
-									onChange={(e: any) =>
+									onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
 										setNewAccount({
 											...newAccount,
 											name: e.currentTarget.value,

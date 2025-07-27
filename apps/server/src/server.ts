@@ -95,7 +95,9 @@ const server = serve({
 		// Dashboard routes
 		if (url.pathname === "/" || url.pathname === "/dashboard") {
 			// Read the HTML file directly
-			const dashboardPath = import.meta.resolveSync("@claudeflare/dashboard-web/dist/index.html");
+			const dashboardPath = import.meta.resolveSync(
+				"@claudeflare/dashboard-web/dist/index.html",
+			);
 			const file = Bun.file(dashboardPath);
 			return new Response(file, {
 				headers: { "Content-Type": "text/html" },
@@ -105,7 +107,9 @@ const server = serve({
 		// Serve dashboard static assets
 		if ((dashboardManifest as Record<string, string>)[url.pathname]) {
 			try {
-				const assetPath = import.meta.resolveSync(`@claudeflare/dashboard-web/dist${url.pathname}`);
+				const assetPath = import.meta.resolveSync(
+					`@claudeflare/dashboard-web/dist${url.pathname}`,
+				);
 				const file = Bun.file(assetPath);
 				const mimeType = file.type || "application/octet-stream";
 				return new Response(file, {

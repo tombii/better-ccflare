@@ -20,9 +20,10 @@ export function ServerScreen({ onBack }: ServerScreenProps) {
 		}
 		if (input === "d" && status === "running") {
 			// Open dashboard in browser
-			import("open" as any)
-				.then((open: any) => {
-					open.default(url);
+			import("open")
+				.then((module) => {
+					const open = module.default as (url: string) => Promise<void>;
+					open(url);
 				})
 				.catch(() => {
 					// Fallback if open package is not available

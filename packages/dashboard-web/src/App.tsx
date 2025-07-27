@@ -1,30 +1,19 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs";
-import {
-	Card,
-	CardContent,
-	CardHeader,
-	CardTitle,
-} from "./components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "./components/ui/card";
 import { Button } from "./components/ui/button";
 import { AccountsTab } from "./components/AccountsTab";
 import { StatsTab } from "./components/StatsTab";
 import { LogsTab } from "./components/LogsTab";
-import { api } from "./api";
+import { api, type Stats } from "./api";
 import "./index.css";
 
 export function App() {
 	const [activeTab, setActiveTab] = useState("stats");
-	const [stats, setStats] = useState<any>(null);
+	const [stats, setStats] = useState<Stats | null>(null);
 	const [error, setError] = useState<string | null>(null);
 
-	useEffect(() => {
-		loadStats();
-		const interval = setInterval(loadStats, 5000);
-		return () => clearInterval(interval);
-	}, [loadStats]);
-
-	const loadStats = async () => {
+	const loadStats = useCallback(async () => {
 		try {
 			const data = await api.getStats();
 			setStats(data);
@@ -32,7 +21,13 @@ export function App() {
 		} catch (err) {
 			setError(err instanceof Error ? err.message : "Failed to load stats");
 		}
-	};
+	}, []);
+
+	useEffect(() => {
+		loadStats();
+		const interval = setInterval(loadStats, 5000);
+		return () => clearInterval(interval);
+	}, [loadStats]);
 
 	return (
 		<div className="min-h-screen bg-background">
