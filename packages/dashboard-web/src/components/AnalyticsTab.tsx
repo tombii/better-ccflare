@@ -29,6 +29,8 @@ import {
 	CardHeader,
 	CardTitle,
 } from "./ui/card";
+import { Label } from "./ui/label";
+import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 import {
 	Select,
 	SelectContent,
@@ -36,6 +38,7 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "./ui/select";
+import { Separator } from "./ui/separator";
 
 const COLORS = {
 	primary: "#f38020",
@@ -48,11 +51,23 @@ const COLORS = {
 
 type TimeRange = "1h" | "6h" | "24h" | "7d" | "30d";
 
+interface FilterState {
+	accounts: string[];
+	models: string[];
+	status: "all" | "success" | "error";
+}
+
 export function AnalyticsTab() {
 	const [timeRange, setTimeRange] = useState<TimeRange>("1h");
 	const [selectedMetric, setSelectedMetric] = useState("requests");
 	const [analytics, setAnalytics] = useState<AnalyticsResponse | null>(null);
 	const [loading, setLoading] = useState(true);
+	const [filterOpen, setFilterOpen] = useState(false);
+	const [filters, setFilters] = useState<FilterState>({
+		accounts: [],
+		models: [],
+		status: "all",
+	});
 
 	// Fetch analytics data
 	useEffect(() => {
@@ -71,8 +86,37 @@ export function AnalyticsTab() {
 		loadData();
 	}, [timeRange]);
 
+	// Get unique accounts and models from analytics data
+	const availableAccounts =
+		analytics?.accountPerformance?.map((a) => a.name) || [];
+	const availableModels =
+		analytics?.modelDistribution?.map((m) => m.model) || [];
+
+	// Apply filters to data
+	const filterData = <T extends { errorRate?: number | string }>(
+		data: T[],
+	): T[] => {
+		if (!analytics) return data;
+
+		return data.filter((point) => {
+			// Status filter
+			if (filters.status !== "all") {
+				const errorRate =
+					typeof point.errorRate === "string"
+						? parseFloat(point.errorRate)
+						: point.errorRate || 0;
+				if (filters.status === "success" && errorRate > 50) return false;
+				if (filters.status === "error" && errorRate <= 50) return false;
+			}
+
+			// For time series data, we can't filter by specific accounts/models
+			// Those filters will be applied to the other charts
+			return true;
+		});
+	};
+
 	// Transform time series data for charts
-	const data =
+	const data = filterData(
 		analytics?.timeSeries.map((point) => ({
 			time:
 				timeRange === "30d"
@@ -84,7 +128,8 @@ export function AnalyticsTab() {
 			responseTime: Math.round(point.avgResponseTime),
 			errorRate: point.errorRate.toFixed(1),
 			cacheHitRate: point.cacheHitRate.toFixed(1),
-		})) || [];
+		})) || [],
+	);
 
 	// Calculate token usage breakdown
 	const tokenBreakdown = analytics?.tokenBreakdown
@@ -115,22 +160,39 @@ export function AnalyticsTab() {
 			})
 		: [];
 
-	// Use real model performance data from backend
+	// Use real model performance data from backend with filters
 	const modelPerformance =
-		analytics?.modelPerformance?.map((perf) => ({
-			model: perf.model,
-			avgTime: Math.round(perf.avgResponseTime),
-			p95Time: Math.round(perf.p95ResponseTime),
-			errorRate: perf.errorRate.toFixed(1),
-		})) || [];
+		analytics?.modelPerformance
+			?.filter(
+				(perf) =>
+					filters.models.length === 0 || filters.models.includes(perf.model),
+			)
+			?.map((perf) => ({
+				model: perf.model,
+				avgTime: Math.round(perf.avgResponseTime),
+				p95Time: Math.round(perf.p95ResponseTime),
+				errorRate: perf.errorRate.toFixed(1),
+			})) || [];
 
-	// Use real cost by model data
+	// Use real cost by model data with filters
 	const costByModel =
-		analytics?.costByModel?.slice(0, 4).map((model) => ({
-			model: model.model,
-			cost: model.costUsd,
-			requests: model.requests,
-		})) || [];
+		analytics?.costByModel
+			?.filter(
+				(model) =>
+					filters.models.length === 0 || filters.models.includes(model.model),
+			)
+			?.slice(0, 4)
+			.map((model) => ({
+				model: model.model,
+				cost: model.costUsd,
+				requests: model.requests,
+			})) || [];
+
+	// Count active filters
+	const activeFilterCount =
+		filters.accounts.length +
+		filters.models.length +
+		(filters.status !== "all" ? 1 : 0);
 
 	return (
 		<div className="space-y-6">
@@ -154,10 +216,144 @@ export function AnalyticsTab() {
 						</SelectContent>
 					</Select>
 
-					<Button variant="outline" size="sm">
-						<Filter className="h-4 w-4 mr-2" />
-						Filters
-					</Button>
+					<Popover open={filterOpen} onOpenChange={setFilterOpen}>
+						<PopoverTrigger asChild>
+							<Button variant="outline" size="sm">
+								<Filter className="h-4 w-4 mr-2" />
+								Filters
+								{activeFilterCount > 0 && (
+									<Badge variant="secondary" className="ml-2 h-5 px-1">
+										{activeFilterCount}
+									</Badge>
+								)}
+							</Button>
+						</PopoverTrigger>
+						<PopoverContent className="w-80" align="start">
+							<div className="space-y-4">
+								<div className="flex items-center justify-between">
+									<h4 className="font-medium leading-none">Filters</h4>
+									{activeFilterCount > 0 && (
+										<Button
+											variant="ghost"
+											size="sm"
+											onClick={() =>
+												setFilters({ accounts: [], models: [], status: "all" })
+											}
+										>
+											Clear all
+										</Button>
+									)}
+								</div>
+
+								<Separator />
+
+								{/* Status Filter */}
+								<div className="space-y-2">
+									<Label>Status</Label>
+									<Select
+										value={filters.status}
+										onValueChange={(value) =>
+											setFilters({
+												...filters,
+												status: value as FilterState["status"],
+											})
+										}
+									>
+										<SelectTrigger>
+											<SelectValue />
+										</SelectTrigger>
+										<SelectContent>
+											<SelectItem value="all">All Requests</SelectItem>
+											<SelectItem value="success">Success Only</SelectItem>
+											<SelectItem value="error">Errors Only</SelectItem>
+										</SelectContent>
+									</Select>
+								</div>
+
+								{/* Account Filter */}
+								{availableAccounts.length > 0 && (
+									<div className="space-y-2">
+										<Label>Accounts ({filters.accounts.length} selected)</Label>
+										<div className="border rounded-md p-2 max-h-32 overflow-y-auto space-y-1">
+											{availableAccounts.map((account) => (
+												<label
+													key={account}
+													className="flex items-center space-x-2 cursor-pointer hover:bg-muted/50 p-1 rounded"
+												>
+													<input
+														type="checkbox"
+														className="rounded border-gray-300"
+														checked={filters.accounts.includes(account)}
+														onChange={(e) => {
+															if (e.target.checked) {
+																setFilters({
+																	...filters,
+																	accounts: [...filters.accounts, account],
+																});
+															} else {
+																setFilters({
+																	...filters,
+																	accounts: filters.accounts.filter(
+																		(a) => a !== account,
+																	),
+																});
+															}
+														}}
+													/>
+													<span className="text-sm">{account}</span>
+												</label>
+											))}
+										</div>
+									</div>
+								)}
+
+								{/* Model Filter */}
+								{availableModels.length > 0 && (
+									<div className="space-y-2">
+										<Label>Models ({filters.models.length} selected)</Label>
+										<div className="border rounded-md p-2 max-h-32 overflow-y-auto space-y-1">
+											{availableModels.map((model) => (
+												<label
+													key={model}
+													className="flex items-center space-x-2 cursor-pointer hover:bg-muted/50 p-1 rounded"
+												>
+													<input
+														type="checkbox"
+														className="rounded border-gray-300"
+														checked={filters.models.includes(model)}
+														onChange={(e) => {
+															if (e.target.checked) {
+																setFilters({
+																	...filters,
+																	models: [...filters.models, model],
+																});
+															} else {
+																setFilters({
+																	...filters,
+																	models: filters.models.filter(
+																		(m) => m !== model,
+																	),
+																});
+															}
+														}}
+													/>
+													<span className="text-sm truncate">{model}</span>
+												</label>
+											))}
+										</div>
+									</div>
+								)}
+
+								<Separator />
+
+								<div className="flex justify-end">
+									<Button size="sm" onClick={() => setFilterOpen(false)}>
+										Done
+									</Button>
+								</div>
+							</div>
+						</PopoverContent>
+					</Popover>
 				</div>
 
 				<div className="flex gap-2">
