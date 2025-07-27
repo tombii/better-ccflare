@@ -1,6 +1,8 @@
-import { ChevronDown, ChevronRight, Copy, RefreshCw } from "lucide-react";
+import { ChevronDown, ChevronRight, Copy, Eye, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { api, type RequestPayload, type RequestSummary } from "../api";
+import { RequestDetailsModal } from "./RequestDetailsModal";
+import { TokenUsageDisplay } from "./TokenUsageDisplay";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import {
@@ -21,6 +23,7 @@ export function RequestsTab() {
 	const [expandedRequests, setExpandedRequests] = useState<Set<string>>(
 		new Set(),
 	);
+	const [modalRequest, setModalRequest] = useState<RequestPayload | null>(null);
 
 	const loadRequests = useCallback(async () => {
 		try {
@@ -101,12 +104,6 @@ export function RequestsTab() {
 		navigator.clipboard
 			.writeText(JSON.stringify(decoded, null, 2))
 			.catch((err) => console.error("Failed to copy request", err));
-	};
-
-	const formatHeaders = (headers: Record<string, string>): string => {
-		return Object.entries(headers)
-			.map(([key, value]) => `${key}: ${value}`)
-			.join("\n");
 	};
 
 	if (loading) {
@@ -243,8 +240,16 @@ export function RequestsTab() {
 										</div>
 									</button>
 
-									{/* Copy button */}
-									<div className="flex justify-end mt-2">
+									{/* Action buttons */}
+									<div className="flex justify-end gap-2 mt-2">
+										<Button
+											variant="ghost"
+											size="icon"
+											onClick={() => setModalRequest(request)}
+											title="View Details"
+										>
+											<Eye className="h-4 w-4" />
+										</Button>
 										<Button
 											variant="ghost"
 											size="icon"
@@ -256,120 +261,17 @@ export function RequestsTab() {
 									</div>
 
 									{isExpanded && (
-										<div className="mt-3 space-y-3 text-sm">
-											{/* Token Usage Details */}
-											{summary &&
-												(summary.inputTokens || summary.outputTokens) && (
-													<div>
-														<h4 className="font-medium mb-1">Token Usage</h4>
-														<div className="grid grid-cols-2 gap-2 text-xs">
-															{summary.inputTokens !== undefined && (
-																<div className="bg-muted p-2 rounded">
-																	<span className="text-muted-foreground">
-																		Input:{" "}
-																	</span>
-																	<span className="font-mono">
-																		{summary.inputTokens.toLocaleString()}
-																	</span>
-																</div>
-															)}
-															{summary.cacheReadInputTokens !== undefined &&
-																summary.cacheReadInputTokens > 0 && (
-																	<div className="bg-muted p-2 rounded">
-																		<span className="text-muted-foreground">
-																			Cache Read:{" "}
-																		</span>
-																		<span className="font-mono">
-																			{summary.cacheReadInputTokens.toLocaleString()}
-																		</span>
-																	</div>
-																)}
-															{summary.cacheCreationInputTokens !== undefined &&
-																summary.cacheCreationInputTokens > 0 && (
-																	<div className="bg-muted p-2 rounded">
-																		<span className="text-muted-foreground">
-																			Cache Creation:{" "}
-																		</span>
-																		<span className="font-mono">
-																			{summary.cacheCreationInputTokens.toLocaleString()}
-																		</span>
-																	</div>
-																)}
-															{summary.outputTokens !== undefined && (
-																<div className="bg-muted p-2 rounded">
-																	<span className="text-muted-foreground">
-																		Output:{" "}
-																	</span>
-																	<span className="font-mono">
-																		{summary.outputTokens.toLocaleString()}
-																	</span>
-																</div>
-															)}
-															{summary.totalTokens !== undefined && (
-																<div className="bg-muted p-2 rounded col-span-2">
-																	<span className="text-muted-foreground">
-																		Total:{" "}
-																	</span>
-																	<span className="font-mono font-medium">
-																		{summary.totalTokens.toLocaleString()}
-																	</span>
-																	{summary.costUsd && summary.costUsd > 0 && (
-																		<span className="ml-2 text-muted-foreground">
-																			(${summary.costUsd.toFixed(4)})
-																		</span>
-																	)}
-																</div>
-															)}
-														</div>
-													</div>
-												)}
-
-											<div>
-												<h4 className="font-medium mb-1">Request Headers</h4>
-												<pre className="bg-muted p-2 rounded overflow-x-auto text-xs">
-													{formatHeaders(request.request.headers)}
-												</pre>
-											</div>
-
-											{request.request.body && (
-												<div>
-													<h4 className="font-medium mb-1">Request Body</h4>
-													<pre className="bg-muted p-2 rounded overflow-x-auto text-xs max-h-40 overflow-y-auto">
-														{decodeBase64(request.request.body)}
-													</pre>
-												</div>
-											)}
-
-											{request.response && (
-												<>
-													<div>
-														<h4 className="font-medium mb-1">
-															Response Headers
-														</h4>
-														<pre className="bg-muted p-2 rounded overflow-x-auto text-xs">
-															{formatHeaders(request.response.headers)}
-														</pre>
-													</div>
-
-													{request.response.body && (
-														<div>
-															<h4 className="font-medium mb-1">
-																Response Body
-															</h4>
-															<pre className="bg-muted p-2 rounded overflow-x-auto text-xs max-h-40 overflow-y-auto">
-																{decodeBase64(request.response.body)}
-															</pre>
-														</div>
-													)}
-												</>
-											)}
-
-											<div>
-												<h4 className="font-medium mb-1">Metadata</h4>
-												<pre className="bg-muted p-2 rounded overflow-x-auto text-xs">
-													{JSON.stringify(request.meta, null, 2)}
-												</pre>
-											</div>
+										<div className="mt-3 space-y-3">
+											<TokenUsageDisplay summary={summary} />
+											<Button
+												variant="outline"
+												size="sm"
+												onClick={() => setModalRequest(request)}
+												className="w-full"
+											>
+												<Eye className="h-4 w-4 mr-2" />
+												View More Details
+											</Button>
 										</div>
 									)}
 								</div>
@@ -378,6 +280,15 @@ export function RequestsTab() {
 					</div>
 				)}
 			</CardContent>
+
+			{modalRequest && (
+				<RequestDetailsModal
+					request={modalRequest}
+					summary={summaries.get(modalRequest.id)}
+					isOpen={true}
+					onClose={() => setModalRequest(null)}
+				/>
+			)}
 		</Card>
 	);
 }
