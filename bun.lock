@@ -160,6 +160,7 @@
       "name": "@claudeflare/logger",
       "version": "0.1.0",
       "dependencies": {
+        "@claudeflare/core": "workspace:*",
         "@claudeflare/types": "workspace:*",
       },
     },

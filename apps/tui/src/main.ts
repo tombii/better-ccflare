@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { Config } from "@claudeflare/config";
+import { shutdown } from "@claudeflare/core";
 import { container, SERVICE_KEYS } from "@claudeflare/core-di";
 import { DatabaseFactory } from "@claudeflare/database";
 import { Logger } from "@claudeflare/logger";
@@ -135,24 +136,36 @@ Examples:
 		runningServer.cleanup();
 	}
 
-	// Close database connections
-	DatabaseFactory.closeAll();
+	// Shutdown all resources
+	await shutdown();
 }
 
 // Run main and handle errors
-main().catch((error) => {
+main().catch(async (error) => {
 	console.error("Error:", error.message);
-	DatabaseFactory.closeAll();
+	try {
+		await shutdown();
+	} catch (shutdownError) {
+		console.error("Error during shutdown:", shutdownError);
+	}
 	process.exit(1);
 });
 
 // Handle process termination
-process.on("SIGINT", () => {
-	DatabaseFactory.closeAll();
+process.on("SIGINT", async () => {
+	try {
+		await shutdown();
+	} catch (error) {
+		console.error("Error during shutdown:", error);
+	}
 	process.exit(0);
 });
 
-process.on("SIGTERM", () => {
-	DatabaseFactory.closeAll();
+process.on("SIGTERM", async () => {
+	try {
+		await shutdown();
+	} catch (error) {
+		console.error("Error during shutdown:", error);
+	}
 	process.exit(0);
 });

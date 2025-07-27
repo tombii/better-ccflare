@@ -1,3 +1,4 @@
+import { registerDisposable, unregisterDisposable } from "@claudeflare/core";
 import { DatabaseOperations, type RuntimeConfig } from "./index";
 
 let instance: DatabaseOperations | null = null;
@@ -18,12 +19,15 @@ export function getInstance(): DatabaseOperations {
 		if (runtimeConfig) {
 			instance.setRuntimeConfig(runtimeConfig);
 		}
+		// Register with lifecycle manager
+		registerDisposable(instance);
 	}
 	return instance;
 }
 
 export function closeAll(): void {
 	if (instance) {
+		unregisterDisposable(instance);
 		instance.close();
 		instance = null;
 	}

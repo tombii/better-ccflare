@@ -4,6 +4,7 @@ import { dirname } from "node:path";
 import {
 	type Account,
 	type AccountRow,
+	type Disposable,
 	type StrategyStore,
 	toAccount,
 } from "@claudeflare/core";
@@ -14,7 +15,7 @@ export interface RuntimeConfig {
 	sessionDurationMs?: number;
 }
 
-export class DatabaseOperations implements StrategyStore {
+export class DatabaseOperations implements StrategyStore, Disposable {
 	private db: Database;
 	private runtime?: RuntimeConfig;
 
@@ -280,6 +281,10 @@ export class DatabaseOperations implements StrategyStore {
 
 	close(): void {
 		this.db.close();
+	}
+
+	dispose(): void {
+		this.close();
 	}
 }
 

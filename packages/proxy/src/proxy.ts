@@ -372,7 +372,9 @@ export async function handleProxy(
 					| null
 					| undefined;
 				if (ctx.provider.extractUsageInfo && response.ok) {
-					usage = await ctx.provider.extractUsageInfo(responseClone as Response);
+					usage = await ctx.provider.extractUsageInfo(
+						responseClone as Response,
+					);
 					if (usage) {
 						log.info(
 							`Usage for ${account.name}: Model: ${usage.model}, Tokens: ${usage.totalTokens || 0}, Cost: $${usage.costUsd?.toFixed(4) || "0"}`,

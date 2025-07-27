@@ -1,5 +1,6 @@
 import { parseArgs } from "node:util";
 import { Config } from "@claudeflare/config";
+import { shutdown } from "@claudeflare/core";
 import { container, SERVICE_KEYS } from "@claudeflare/core-di";
 import { DatabaseFactory } from "@claudeflare/database";
 import {
@@ -178,7 +179,7 @@ export async function runCli(argv: string[]): Promise<void> {
 		console.error(`Error: ${error instanceof Error ? error.message : error}`);
 		process.exit(1);
 	} finally {
-		// Always close the database
-		DatabaseFactory.closeAll();
+		// Always shutdown resources
+		await shutdown();
 	}
 }

@@ -1,6 +1,10 @@
 import { Config } from "@claudeflare/config";
 import type { LoadBalancingStrategy } from "@claudeflare/core";
-import { DEFAULT_STRATEGY, setPricingLogger } from "@claudeflare/core";
+import {
+	DEFAULT_STRATEGY,
+	setPricingLogger,
+	shutdown,
+} from "@claudeflare/core";
 import { container, SERVICE_KEYS } from "@claudeflare/core-di";
 // Import React dashboard assets
 import dashboardManifest from "@claudeflare/dashboard-web/dist/manifest.json";
@@ -172,10 +176,28 @@ if (activeAccounts.length === 0) {
 }
 
 // Graceful shutdown
-process.on("SIGINT", () => {
+process.on("SIGINT", async () => {
 	console.log("\n👋 Shutting down gracefully...");
-	DatabaseFactory.closeAll();
-	process.exit(0);
+	try {
+		await shutdown();
+		console.log("✅ Shutdown complete");
+		process.exit(0);
+	} catch (error) {
+		console.error("❌ Error during shutdown:", error);
+		process.exit(1);
+	}
+});
+
+process.on("SIGTERM", async () => {
+	console.log("\n👋 Shutting down gracefully...");
+	try {
+		await shutdown();
+		console.log("✅ Shutdown complete");
+		process.exit(0);
+	} catch (error) {
+		console.error("❌ Error during shutdown:", error);
+		process.exit(1);
+	}
 });
 
 // Export for programmatic use

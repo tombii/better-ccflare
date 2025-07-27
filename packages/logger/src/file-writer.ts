@@ -1,9 +1,10 @@
 import { createWriteStream, existsSync, mkdirSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { type Disposable, registerDisposable } from "@claudeflare/core";
 import type { LogEvent } from "@claudeflare/types";
 
-export class LogFileWriter {
+export class LogFileWriter implements Disposable {
 	private logDir: string;
 	private logFile: string;
 	private stream: ReturnType<typeof createWriteStream> | null = null;
@@ -94,7 +95,14 @@ export class LogFileWriter {
 			this.stream = null;
 		}
 	}
+
+	dispose(): void {
+		this.close();
+	}
 }
 
 // Singleton instance
 export const logFileWriter = new LogFileWriter();
+
+// Register with lifecycle manager
+registerDisposable(logFileWriter);
