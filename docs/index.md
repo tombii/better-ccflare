@@ -71,7 +71,7 @@ When working with Claude API at scale, rate limits can become a significant bott
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/claudeflare.git
+git clone https://github.com/snipeship/claudeflare.git
 cd claudeflare
 
 # Install dependencies
@@ -120,8 +120,8 @@ Open your browser to [http://localhost:8080/dashboard](http://localhost:8080/das
 - [SQLite Documentation](https://www.sqlite.org/docs.html) - SQLite database docs
 
 ### Community & Support
-- [GitHub Issues](https://github.com/yourusername/claudeflare/issues) - Report bugs and request features
-- [Discussions](https://github.com/yourusername/claudeflare/discussions) - Community discussions
+- [GitHub Issues](https://github.com/snipeship/claudeflare/issues) - Report bugs and request features
+- [Discussions](https://github.com/snipeship/claudeflare/discussions) - Community discussions
 - [Discord Server](https://discord.gg/claudeflare) - Real-time chat and support
 
 ### Related Projects
