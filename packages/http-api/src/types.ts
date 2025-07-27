@@ -54,6 +54,10 @@ export interface RequestResponse {
 	promptTokens?: number;
 	completionTokens?: number;
 	totalTokens?: number;
+	inputTokens?: number;
+	cacheReadInputTokens?: number;
+	cacheCreationInputTokens?: number;
+	outputTokens?: number;
 	costUsd?: number;
 }
 

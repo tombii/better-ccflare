@@ -35,6 +35,7 @@ export function createStatsHandler(db: Database) {
 			.query(
 				`
 				SELECT 
+					id,
 					name,
 					request_count as requestCount,
 					total_requests as totalRequests
@@ -45,6 +46,7 @@ export function createStatsHandler(db: Database) {
 			`,
 			)
 			.all() as Array<{
+			id: string;
 			name: string;
 			requestCount: number;
 			totalRequests: number;
@@ -62,7 +64,7 @@ export function createStatsHandler(db: Database) {
 					WHERE account_used = ?
 				`,
 				)
-				.get(acc.name) as { total: number; successful: number } | undefined;
+				.get(acc.id) as { total: number; successful: number } | undefined;
 
 			const accSuccessRate =
 				accRequests && accRequests.total > 0
