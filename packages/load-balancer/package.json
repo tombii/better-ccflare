@@ -1,0 +1,17 @@
+{
+	"name": "@claudeflare/load-balancer",
+	"version": "0.1.0",
+	"type": "module",
+	"main": "./src/index.ts",
+	"exports": {
+		".": "./src/index.ts"
+	},
+	"scripts": {
+		"typecheck": "bunx tsc --noEmit"
+	},
+	"dependencies": {
+		"@claudeflare/core": "workspace:*",
+		"@claudeflare/database": "workspace:*",
+		"@claudeflare/logger": "workspace:*"
+	}
+}
