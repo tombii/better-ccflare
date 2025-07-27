@@ -67,6 +67,44 @@ async function getValidAccessToken(
 	return await refreshAccessTokenSafe(account, ctx);
 }
 
+async function saveUsageToDb(
+	requestId: string,
+	accountId: string | null,
+	usage?: {
+		model?: string;
+		promptTokens?: number;
+		completionTokens?: number;
+		totalTokens?: number;
+		costUsd?: number;
+		inputTokens?: number;
+		cacheReadInputTokens?: number;
+		cacheCreationInputTokens?: number;
+		outputTokens?: number;
+	} | null,
+	ctx?: ProxyContext,
+): Promise<void> {
+	if (!usage || !ctx) return;
+
+	// Calculate cost if not provided
+	if (usage.model && usage.costUsd === undefined) {
+		usage.costUsd = await estimateCostUSD(usage.model, {
+			inputTokens: usage.inputTokens,
+			outputTokens: usage.outputTokens,
+			cacheReadInputTokens: usage.cacheReadInputTokens,
+			cacheCreationInputTokens: usage.cacheCreationInputTokens,
+		});
+	}
+
+	// Update the existing request record with usage information
+	// Note: This requires dbOps to have a method to update just usage info
+	// For now, we'll log it since the request is already saved
+	if (accountId && accountId !== NO_ACCOUNT_ID) {
+		log.info(
+			`Usage for request ${requestId}: Model: ${usage.model}, Tokens: ${usage.totalTokens || 0}, Cost: $${usage.costUsd?.toFixed(4) || "0"}`,
+		);
+	}
+}
+
 function getOrderedAccounts(meta: RequestMeta, ctx: ProxyContext): Account[] {
 	const allAccounts = ctx.dbOps.getAllAccounts();
 	// Filter accounts by provider
@@ -161,18 +199,33 @@ export async function handleProxy(
 				  }
 				| null
 				| undefined;
-			if (ctx.provider.extractUsageInfo && response.ok) {
-				usage = await ctx.provider.extractUsageInfo(responseClone as Response);
-			}
 
-			// Calculate cost if not provided by headers
-			if (usage?.model && usage.costUsd === undefined) {
-				usage.costUsd = await estimateCostUSD(usage.model, {
-					inputTokens: usage.inputTokens,
-					outputTokens: usage.outputTokens,
-					cacheReadInputTokens: usage.cacheReadInputTokens,
-					cacheCreationInputTokens: usage.cacheCreationInputTokens,
-				});
+			// Check if this is a streaming response
+			const isStream = ctx.provider.isStreamingResponse?.(response) ?? false;
+
+			if (ctx.provider.extractUsageInfo && response.ok) {
+				const extractPromise = ctx.provider
+					.extractUsageInfo(responseClone as Response)
+					.catch(() => null);
+
+				if (isStream) {
+					// Fire-and-forget for streaming responses
+					extractPromise.then((extractedUsage) => {
+						saveUsageToDb(requestMeta.id, NO_ACCOUNT_ID, extractedUsage, ctx);
+					});
+				} else {
+					// Wait for non-streaming responses
+					usage = await extractPromise;
+					// Calculate cost if not provided by headers
+					if (usage?.model && usage.costUsd === undefined) {
+						usage.costUsd = await estimateCostUSD(usage.model, {
+							inputTokens: usage.inputTokens,
+							outputTokens: usage.outputTokens,
+							cacheReadInputTokens: usage.cacheReadInputTokens,
+							cacheCreationInputTokens: usage.cacheCreationInputTokens,
+						});
+					}
+				}
 			}
 
 			// Save request to database
@@ -189,8 +242,10 @@ export async function handleProxy(
 				usage || undefined,
 			);
 
-			// Save response payload
-			const responseBody = await responseClone.arrayBuffer().catch(() => null);
+			// Save response payload (skip body for streaming responses)
+			const responseBody = isStream
+				? null
+				: await responseClone.arrayBuffer().catch(() => null);
 			const payload = {
 				request: {
 					headers: Object.fromEntries(req.headers.entries()),
@@ -209,6 +264,7 @@ export async function handleProxy(
 					accountId: NO_ACCOUNT_ID,
 					timestamp: Date.now(),
 					success: response.ok,
+					isStream,
 				},
 			};
 			ctx.dbOps.saveRequestPayload(requestMeta.id, payload);
@@ -301,6 +357,9 @@ export async function handleProxy(
 				// Clone response for body reading
 				const responseClone = response.clone();
 
+				// Check if this is a streaming response
+				const isStream = ctx.provider.isStreamingResponse?.(response) ?? false;
+
 				// Parse rate limit information from all responses
 				const rateLimitInfo = ctx.provider.parseRateLimit(response);
 
@@ -325,10 +384,10 @@ export async function handleProxy(
 						`Account ${account.name} rate limited until ${new Date(rateLimitInfo.resetTime).toISOString()}`,
 					);
 
-					// Save rate limited response payload
-					const responseBody = await responseClone
-						.arrayBuffer()
-						.catch(() => null);
+					// Save rate limited response payload (skip body for streaming responses)
+					const responseBody = isStream
+						? null
+						: await responseClone.arrayBuffer().catch(() => null);
 					const payload = {
 						request: {
 							headers: Object.fromEntries(req.headers.entries()),
@@ -348,6 +407,7 @@ export async function handleProxy(
 							retry,
 							timestamp: Date.now(),
 							rateLimited: true,
+							isStream,
 						},
 					};
 					ctx.dbOps.saveRequestPayload(requestMeta.id, payload);
@@ -371,25 +431,40 @@ export async function handleProxy(
 					  }
 					| null
 					| undefined;
-				if (ctx.provider.extractUsageInfo && response.ok) {
-					usage = await ctx.provider.extractUsageInfo(
-						responseClone as Response,
-					);
-					if (usage) {
-						log.info(
-							`Usage for ${account.name}: Model: ${usage.model}, Tokens: ${usage.totalTokens || 0}, Cost: $${usage.costUsd?.toFixed(4) || "0"}`,
-						);
-					}
-				}
 
-				// Calculate cost if not provided by headers
-				if (usage?.model && usage.costUsd === undefined) {
-					usage.costUsd = await estimateCostUSD(usage.model, {
-						inputTokens: usage.inputTokens,
-						outputTokens: usage.outputTokens,
-						cacheReadInputTokens: usage.cacheReadInputTokens,
-						cacheCreationInputTokens: usage.cacheCreationInputTokens,
-					});
+				if (ctx.provider.extractUsageInfo && response.ok) {
+					const extractPromise = ctx.provider
+						.extractUsageInfo(responseClone as Response)
+						.catch(() => null);
+
+					if (isStream) {
+						// Fire-and-forget for streaming responses
+						extractPromise.then((extractedUsage) => {
+							if (extractedUsage) {
+								log.info(
+									`Usage for ${account.name}: Model: ${extractedUsage.model}, Tokens: ${extractedUsage.totalTokens || 0}, Cost: $${extractedUsage.costUsd?.toFixed(4) || "0"}`,
+								);
+							}
+							saveUsageToDb(requestMeta.id, account.id, extractedUsage, ctx);
+						});
+					} else {
+						// Wait for non-streaming responses
+						usage = await extractPromise;
+						if (usage) {
+							log.info(
+								`Usage for ${account.name}: Model: ${usage.model}, Tokens: ${usage.totalTokens || 0}, Cost: $${usage.costUsd?.toFixed(4) || "0"}`,
+							);
+						}
+						// Calculate cost if not provided by headers
+						if (usage?.model && usage.costUsd === undefined) {
+							usage.costUsd = await estimateCostUSD(usage.model, {
+								inputTokens: usage.inputTokens,
+								outputTokens: usage.outputTokens,
+								cacheReadInputTokens: usage.cacheReadInputTokens,
+								cacheCreationInputTokens: usage.cacheCreationInputTokens,
+							});
+						}
+					}
 				}
 
 				// Log successful request
@@ -407,10 +482,10 @@ export async function handleProxy(
 					usage || undefined,
 				);
 
-				// Save successful response payload before processing
-				const responseBody = await responseClone
-					.arrayBuffer()
-					.catch(() => null);
+				// Save successful response payload before processing (skip body for streaming responses)
+				const responseBody = isStream
+					? null
+					: await responseClone.arrayBuffer().catch(() => null);
 				const payload = {
 					request: {
 						headers: Object.fromEntries(req.headers.entries()),
@@ -430,6 +505,7 @@ export async function handleProxy(
 						retry,
 						timestamp: Date.now(),
 						success: true,
+						isStream,
 					},
 				};
 				ctx.dbOps.saveRequestPayload(requestMeta.id, payload);

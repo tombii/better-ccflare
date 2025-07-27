@@ -170,8 +170,42 @@ export class AnthropicProvider extends BaseProvider {
 
 			// Handle streaming responses (SSE)
 			if (contentType?.includes("text/event-stream")) {
-				const text = await clone.text();
-				const lines = text.split("\n");
+				// Use bounded reader to avoid consuming entire stream
+				const reader = clone.body?.getReader();
+				if (!reader) return null;
+
+				let buffered = "";
+				const maxBytes = 32768; // 32 KB cap
+				const decoder = new TextDecoder();
+				let foundMessageStart = false;
+
+				try {
+					while (buffered.length < maxBytes) {
+						const { value, done } = await reader.read();
+						if (done) break;
+
+						buffered += decoder.decode(value, { stream: true });
+
+						// Check if we have the message_start event
+						if (buffered.includes("event: message_start")) {
+							foundMessageStart = true;
+							// Read a bit more to ensure we get the data line
+							const { value: nextValue, done: nextDone } = await reader.read();
+							if (!nextDone && nextValue) {
+								buffered += decoder.decode(nextValue, { stream: true });
+							}
+							break;
+						}
+					}
+				} finally {
+					// Cancel the reader to prevent hanging
+					reader.cancel().catch(() => {});
+				}
+
+				if (!foundMessageStart) return null;
+
+				// Parse the buffered content
+				const lines = buffered.split("\n");
 
 				// Parse SSE events
 				for (let i = 0; i < lines.length; i++) {
@@ -180,95 +214,64 @@ export class AnthropicProvider extends BaseProvider {
 						// Next line should be the data
 						const dataLine = lines[i + 1];
 						if (dataLine?.startsWith("data: ")) {
-							const jsonStr = dataLine.slice(6); // Remove "data: " prefix
-							const data = JSON.parse(jsonStr) as {
-								message?: {
-									model?: string;
-									usage?: {
-										input_tokens?: number;
-										output_tokens?: number;
-										cache_creation_input_tokens?: number;
-										cache_read_input_tokens?: number;
+							try {
+								const jsonStr = dataLine.slice(6); // Remove "data: " prefix
+								const data = JSON.parse(jsonStr) as {
+									message?: {
+										model?: string;
+										usage?: {
+											input_tokens?: number;
+											output_tokens?: number;
+											cache_creation_input_tokens?: number;
+											cache_read_input_tokens?: number;
+										};
 									};
 								};
-							};
 
-							if (data.message?.usage) {
-								const usage = data.message.usage;
-								const inputTokens = usage.input_tokens || 0;
-								const cacheCreationInputTokens =
-									usage.cache_creation_input_tokens || 0;
-								const cacheReadInputTokens = usage.cache_read_input_tokens || 0;
-								const outputTokens = usage.output_tokens || 0;
-								const promptTokens =
-									inputTokens + cacheCreationInputTokens + cacheReadInputTokens;
-								const completionTokens = outputTokens;
-								const totalTokens = promptTokens + completionTokens;
+								if (data.message?.usage) {
+									const usage = data.message.usage;
+									const inputTokens = usage.input_tokens || 0;
+									const cacheCreationInputTokens =
+										usage.cache_creation_input_tokens || 0;
+									const cacheReadInputTokens =
+										usage.cache_read_input_tokens || 0;
+									const outputTokens = usage.output_tokens || 0;
+									const promptTokens =
+										inputTokens +
+										cacheCreationInputTokens +
+										cacheReadInputTokens;
+									const completionTokens = outputTokens;
+									const totalTokens = promptTokens + completionTokens;
 
-								// Extract cost from header if available
-								const costHeader = response.headers.get(
-									"anthropic-billing-cost",
-								);
-								const costUsd = costHeader ? parseFloat(costHeader) : undefined;
+									// Extract cost from header if available
+									const costHeader = response.headers.get(
+										"anthropic-billing-cost",
+									);
+									const costUsd = costHeader
+										? parseFloat(costHeader)
+										: undefined;
 
-								return {
-									model: data.message.model,
-									promptTokens,
-									completionTokens,
-									totalTokens,
-									costUsd,
-									inputTokens,
-									cacheReadInputTokens,
-									cacheCreationInputTokens,
-									outputTokens,
-								};
+									return {
+										model: data.message.model,
+										promptTokens,
+										completionTokens,
+										totalTokens,
+										costUsd,
+										inputTokens,
+										cacheReadInputTokens,
+										cacheCreationInputTokens,
+										outputTokens,
+									};
+								}
+							} catch {
+								// Ignore parse errors
 							}
 						}
 					}
 				}
 
-				// Also check for message_delta events to accumulate final usage
-				const accumulatedUsage = {
-					output_tokens: 0,
-				};
-				let model: string | undefined;
-
-				for (const line of lines) {
-					if (line.startsWith("data: ")) {
-						const jsonStr = line.slice(6);
-						try {
-							const data = JSON.parse(jsonStr);
-							if (data.type === "message_delta" && data.usage?.output_tokens) {
-								accumulatedUsage.output_tokens = data.usage.output_tokens;
-							}
-							if (data.type === "message_start" && data.message?.model) {
-								model = data.message.model;
-							}
-						} catch {
-							// Ignore parse errors for individual lines
-						}
-					}
-				}
-
-				// If we found usage in delta events, return that
-				if (accumulatedUsage.output_tokens > 0) {
-					const costHeader = response.headers.get("anthropic-billing-cost");
-					const costUsd = costHeader ? parseFloat(costHeader) : undefined;
-
-					return {
-						model,
-						promptTokens: 0, // We don't have prompt tokens in delta
-						completionTokens: accumulatedUsage.output_tokens,
-						totalTokens: accumulatedUsage.output_tokens,
-						costUsd,
-						inputTokens: 0,
-						cacheReadInputTokens: 0,
-						cacheCreationInputTokens: 0,
-						outputTokens: accumulatedUsage.output_tokens,
-					};
-				}
-
-				// No usage data found in streaming response
+				// For streaming responses, we only extract initial usage
+				// Output tokens will be accumulated during streaming but we can't capture that here
 				return null;
 			} else {
 				// Handle non-streaming JSON responses

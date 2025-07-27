@@ -120,4 +120,16 @@ export abstract class BaseProvider implements Provider {
 	} | null> {
 		return null;
 	}
+
+	/**
+	 * Check if the response is a streaming response
+	 * Default implementation: Check for text/event-stream or stream in content-type
+	 */
+	isStreamingResponse?(response: Response): boolean {
+		const contentType = response.headers.get("content-type") ?? "";
+		return (
+			contentType.includes("text/event-stream") ||
+			contentType.includes("stream")
+		);
+	}
 }
