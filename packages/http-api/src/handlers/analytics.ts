@@ -79,8 +79,8 @@ export function createAnalyticsHandler(context: APIContext) {
 					COUNT(*) as total_requests,
 					SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0) as success_rate,
 					AVG(response_time_ms) as avg_response_time,
-					SUM(total_tokens) as total_tokens,
-					SUM(cost_usd) as total_cost_usd
+					SUM(COALESCE(total_tokens, 0)) as total_tokens,
+					SUM(COALESCE(cost_usd, 0)) as total_cost_usd
 				FROM requests
 				WHERE timestamp > ?
 			`);
@@ -102,12 +102,12 @@ export function createAnalyticsHandler(context: APIContext) {
 				SELECT
 					(timestamp / ?) * ? as ts,
 					COUNT(*) as requests,
-					SUM(total_tokens) as tokens,
-					SUM(cost_usd) as cost_usd,
+					SUM(COALESCE(total_tokens, 0)) as tokens,
+					SUM(COALESCE(cost_usd, 0)) as cost_usd,
 					SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0) as success_rate,
 					SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0) as error_rate,
-					SUM(cache_read_input_tokens) * 100.0 / 
-						NULLIF(SUM(input_tokens + cache_read_input_tokens), 0) as cache_hit_rate,
+					SUM(COALESCE(cache_read_input_tokens, 0)) * 100.0 / 
+						NULLIF(SUM(COALESCE(input_tokens, 0) + COALESCE(cache_read_input_tokens, 0) + COALESCE(cache_creation_input_tokens, 0)), 0) as cache_hit_rate,
 					AVG(response_time_ms) as avg_response_time
 				FROM requests
 				WHERE timestamp > ?
@@ -132,10 +132,10 @@ export function createAnalyticsHandler(context: APIContext) {
 			// Get token breakdown
 			const tokenBreakdownQuery = db.prepare(`
 				SELECT
-					SUM(input_tokens) as input_tokens,
-					SUM(cache_read_input_tokens) as cache_read_input_tokens,
-					SUM(cache_creation_input_tokens) as cache_creation_input_tokens,
-					SUM(output_tokens) as output_tokens
+					SUM(COALESCE(input_tokens, 0)) as input_tokens,
+					SUM(COALESCE(cache_read_input_tokens, 0)) as cache_read_input_tokens,
+					SUM(COALESCE(cache_creation_input_tokens, 0)) as cache_creation_input_tokens,
+					SUM(COALESCE(output_tokens, 0)) as output_tokens
 				FROM requests
 				WHERE timestamp > ?
 			`);
@@ -236,10 +236,10 @@ export function createAnalyticsHandler(context: APIContext) {
 			const costByModelQuery = db.prepare(`
 				SELECT
 					model,
-					SUM(cost_usd) as cost_usd,
+					SUM(COALESCE(cost_usd, 0)) as cost_usd,
 					COUNT(*) as requests
 				FROM requests
-				WHERE timestamp > ? AND cost_usd > 0 AND model IS NOT NULL
+				WHERE timestamp > ? AND COALESCE(cost_usd, 0) > 0 AND model IS NOT NULL
 				GROUP BY model
 				ORDER BY cost_usd DESC
 				LIMIT 10
