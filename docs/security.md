@@ -1,6 +1,34 @@
 # Security Documentation
 
+**Last Security Review**: July 27, 2025
+
 This document outlines the security considerations, practices, and recommendations for the Claudeflare load balancer system.
+
+## ⚠️ Critical Security Notice
+
+**IMPORTANT**: Claudeflare is designed for local development and trusted environments. The current implementation has several security limitations:
+
+1. **No Authentication**: All API endpoints and the dashboard are publicly accessible
+2. **Network Exposure**: Server binds to all interfaces (0.0.0.0) by default
+3. **Plaintext Token Storage**: OAuth tokens are stored unencrypted in SQLite
+4. **No HTTPS**: Communication is over HTTP without TLS encryption
+5. **Full Request Logging**: All request/response payloads are stored (up to 10MB for streaming)
+
+**Recommended Usage**: 
+- Run only in isolated, trusted networks
+- Use firewall rules to restrict access to localhost
+- Implement reverse proxy with authentication for production use
+- Regularly rotate OAuth tokens
+- Monitor access logs for unauthorized usage
+
+## ⚠️ Immediate Security Actions Required
+
+Based on the latest security review, the following critical issues require immediate attention:
+
+1. **Memory Exhaustion Risk**: Streaming responses have NO size limit (`maxBytes: Infinity`). Implement a 10MB limit urgently.
+2. **No Authentication**: All endpoints are publicly accessible. Implement API key authentication immediately.
+3. **Network Exposure**: Server binds to 0.0.0.0. Use firewall rules or bind to localhost only.
+4. **Plaintext Tokens**: OAuth tokens stored unencrypted. Implement AES-256-GCM encryption.
 
 ## Table of Contents
 
@@ -21,11 +49,12 @@ Claudeflare is a load balancer proxy that manages multiple OAuth accounts to dis
 
 ### Key Security Components
 
-- **OAuth Token Management**: Handles refresh tokens, access tokens, and token rotation
-- **Request Proxying**: Forwards API requests with authentication headers
+- **OAuth Token Management**: Handles refresh tokens, access tokens, and token rotation using the official Anthropic OAuth flow
+- **Request Proxying**: Forwards API requests with authentication headers, with fallback to unauthenticated mode
 - **Data Storage**: SQLite database storing account credentials and request history
-- **Local Network Binding**: Server binds to localhost by default
-- **Request/Response Logging**: Full payload storage for debugging and analytics
+- **Network Binding**: Server binds to all interfaces (0.0.0.0) on port 8080 by default
+- **Request/Response Logging**: Full payload storage for debugging and analytics with streaming response capture
+- **Asynchronous DB Operations**: Non-blocking database writes for improved performance
 
 ## Threat Model
 
@@ -68,6 +97,25 @@ CREATE TABLE IF NOT EXISTS accounts (
 
 **Security Concern**: Tokens are currently stored in plaintext in the SQLite database.
 
+#### OAuth Flow Implementation
+```typescript
+// packages/providers/src/providers/anthropic/oauth.ts
+// Uses PKCE (Proof Key for Code Exchange) for enhanced security
+generateAuthUrl(config: OAuthConfig, pkce: PKCEChallenge): string {
+    url.searchParams.set("code_challenge", pkce.challenge);
+    url.searchParams.set("code_challenge_method", "S256");
+    // ...
+}
+
+// Scopes requested from Anthropic
+scopes: ["org:create_api_key", "user:profile", "user:inference"]
+```
+
+**Security Strengths**: 
+- Implements PKCE flow for protection against authorization code interception
+- Uses SHA256 for code challenge generation
+- Requests minimal necessary scopes
+
 #### Token Refresh Pattern
 ```typescript
 // packages/proxy/src/proxy.ts
@@ -88,12 +136,10 @@ async function refreshAccessTokenSafe(account: Account, ctx: ProxyContext): Prom
 }
 ```
 
-**Security Strength**: Implements stampede prevention to avoid multiple concurrent refresh attempts.
-
-#### Token Scope Limitations
-- OAuth tokens are obtained through the official Anthropic OAuth flow
-- Tokens are scoped to the specific client ID
-- No mechanism currently exists to limit token permissions further
+**Security Strengths**: 
+- Implements stampede prevention to avoid multiple concurrent refresh attempts
+- Automatic token rotation before expiry
+- In-memory tracking of ongoing refresh operations
 
 ### Future Improvements
 
@@ -167,30 +213,33 @@ parseRateLimit(response: Response): RateLimitInfo {
 
 #### Default Binding
 ```typescript
-// packages/config/src/index.ts
-getRuntime(): RuntimeConfig {
-    const defaults: RuntimeConfig = {
-        port: 8080,  // Binds to all interfaces by default
-        // ...
-    };
-}
+// apps/server/src/server.ts
+const server = serve({
+    port: runtime.port,  // Port 8080 by default
+    async fetch(req) {
+        // Handle requests
+    }
+});
 ```
 
-**Security Concern**: The server binds to port 8080 on all interfaces, potentially exposing it to the network.
+**Security Concern**: The server binds to port 8080 on all interfaces (0.0.0.0) by default, potentially exposing it to the network.
 
 ### Recommended Configuration
 
-#### 1. Local-Only Binding
-**Note**: Currently, the server binds to all interfaces (0.0.0.0) by default. To restrict to localhost only:
+#### 1. Network Isolation
+**Important**: The server currently binds to all network interfaces. To secure the deployment:
 
 ```bash
-# Use environment variable (requires code modification)
-HOST=127.0.0.1 PORT=8080 bun start
+# Use firewall rules to restrict access
+sudo ufw allow from 127.0.0.1 to any port 8080
+sudo ufw deny 8080
 
-# Or use a reverse proxy/firewall to restrict access
+# Or use iptables
+iptables -A INPUT -p tcp --dport 8080 -s 127.0.0.1 -j ACCEPT
+iptables -A INPUT -p tcp --dport 8080 -j DROP
 ```
 
-**TODO**: Implement HOST environment variable support in server configuration.
+**Recommended Enhancement**: Modify the server to support a HOST environment variable for binding configuration.
 
 #### 2. Reverse Proxy Setup
 ```nginx
@@ -230,10 +279,11 @@ server {
 #### Current Implementation
 ```typescript
 // packages/proxy/src/proxy.ts
+// Standard responses
 const payload = {
     request: {
         headers: Object.fromEntries(req.headers.entries()),
-        body: requestBody ? Buffer.from(requestBody).toString("base64") : null
+        body: requestBody ? "[streamed]" : null  // Request bodies marked as streamed
     },
     response: {
         status: response.status,
@@ -241,10 +291,37 @@ const payload = {
         body: responseBody ? Buffer.from(responseBody).toString("base64") : null
     }
 };
-ctx.dbOps.saveRequestPayload(requestMeta.id, payload);
+
+// Streaming responses (recent update)
+if (isStream && response.body) {
+    const teedStream = teeStream(response.body, {
+        maxBytes: Infinity, // WARNING: No limit - captures entire stream
+        onClose: (buffered) => {
+            const combined = combineChunks(buffered);
+            const updatedPayload = {
+                ...payload,
+                response: {
+                    ...payload.response,
+                    body: combined.length > 0 ? combined.toString("base64") : null,
+                },
+                meta: {
+                    // No truncation tracking since there's no limit
+                },
+            };
+            ctx.asyncWriter.enqueue(() =>
+                ctx.dbOps.saveRequestPayload(requestMeta.id, updatedPayload),
+            );
+        }
+    });
+}
 ```
 
-**Privacy Concern**: Full request/response bodies are stored, potentially containing sensitive information.
+**Privacy Concerns**: 
+- Full request/response bodies are stored, potentially containing sensitive information
+- **CRITICAL**: Streaming responses are captured with NO size limit (maxBytes: Infinity), which could lead to memory exhaustion
+- Request bodies are marked as "[streamed]" in logs to reduce storage
+- Error payloads include full error details and request metadata
+- Asynchronous writes may delay data persistence
 
 ### Storage Security Considerations
 
@@ -294,13 +371,20 @@ bun cli cleanup --type requests --force
 ## Access Control
 
 ### Current State
-- No authentication required to access the proxy
-- Dashboard accessible without authentication
-- API endpoints unprotected
-- No CORS headers configured (allows any origin)
-- No rate limiting on API endpoints
+- **No authentication required**: All endpoints are publicly accessible when network-reachable
+- **Dashboard**: Accessible without authentication at `/dashboard`
+- **API endpoints**: All `/api/*` endpoints are unprotected
+- **No CORS headers**: The server does not set any CORS headers, effectively allowing requests from any origin
+- **No rate limiting**: Individual clients can make unlimited requests to API endpoints
+- **Proxy endpoint**: The `/v1/*` proxy endpoint has no authentication (relies on OAuth tokens for upstream authentication)
 
-### Future Authentication Implementation
+### Security Implications
+1. **Data Exposure**: Anyone with network access can view account information, request logs, and analytics
+2. **Configuration Changes**: Unprotected configuration endpoints allow unauthorized strategy changes
+3. **Account Management**: Account addition/removal endpoints are exposed
+4. **Resource Exhaustion**: No rate limiting can lead to DoS vulnerabilities
+
+### Recommended Authentication Implementation
 
 #### 1. API Key Authentication
 ```typescript
@@ -465,6 +549,32 @@ const corsHeaders = {
 **Risk**: Predictable IDs or tokens
 **Mitigation**: Use crypto.randomUUID() and crypto.getRandomValues()
 
+### 9. Streaming Response Capture
+**Risk**: Large streaming responses consuming excessive memory/storage
+**Mitigation**: **CRITICAL**: Currently NO limit implemented (maxBytes: Infinity) - urgent fix needed
+
+### 10. Asynchronous Database Writes
+**Risk**: Data loss if application crashes before async writes complete
+**Mitigation**: Graceful shutdown handlers ensure queue is flushed
+
+## Recent Security Updates
+
+### Streaming Response Capture (Latest)
+- **Change**: Added ability to capture streaming API responses for analytics
+- **Security Consideration**: Currently NO size limit (maxBytes: Infinity) - this is a CRITICAL security issue that could lead to memory exhaustion
+- **Implementation**: Uses stream tee mechanism to capture data without blocking response delivery
+- **Recommendation**: Implement a reasonable size limit (e.g., 10MB) to prevent memory exhaustion attacks
+
+### Asynchronous Database Writer
+- **Change**: Introduced AsyncDbWriter for non-blocking database operations
+- **Security Consideration**: Ensures request payloads are persisted even under high load
+- **Implementation**: Queue-based system with graceful shutdown handling
+
+### Unauthenticated Fallback Mode
+- **Feature**: System can operate without any configured accounts
+- **Security Implication**: Requests are forwarded to Claude API without authentication
+- **Use Case**: Testing or environments where users provide their own API keys
+
 ## Security Roadmap
 
 ### Phase 1: Token Encryption (Priority: High)
@@ -519,8 +629,83 @@ SESSION_DURATION_MS=18000000 # Session duration (5 hours)
 3. **Restrict file permissions** on environment files: `chmod 600 .env`
 4. **Audit environment access** in containerized deployments
 
+## Security Monitoring and Detection
+
+### Logging and Auditing
+
+#### Current Logging Capabilities
+- All API requests are logged with timestamps and response codes
+- Request/response payloads are stored for analysis
+- Account usage and rate limit events are tracked
+- Error conditions are logged with details
+
+#### Recommended Monitoring
+1. **Access Patterns**
+   - Monitor for unusual request volumes
+   - Track access from unexpected IP addresses
+   - Detect repeated failed requests
+   - Watch for configuration changes
+
+2. **Token Usage**
+   - Monitor token refresh frequency
+   - Detect unusual account switching patterns
+   - Track rate limit exhaustion events
+   - Alert on authentication failures
+
+3. **System Health**
+   - Database size growth
+   - Memory usage patterns
+   - Response time anomalies
+   - Error rate spikes
+
+### Security Event Detection
+
+```bash
+# Example monitoring queries
+
+# Find requests from non-localhost IPs (requires reverse proxy logs)
+grep -v "127.0.0.1\|::1" access.log
+
+# Monitor for high request volumes
+sqlite3 claudeflare.db "SELECT COUNT(*) as count, account_used 
+FROM requests 
+WHERE timestamp > strftime('%s', 'now', '-1 hour') * 1000 
+GROUP BY account_used 
+ORDER BY count DESC"
+
+# Check for configuration changes
+sqlite3 claudeflare.db "SELECT * FROM audit_log WHERE action LIKE '%config%'"
+```
+
+### Incident Response
+
+1. **Suspected Token Compromise**
+   - Immediately pause affected accounts via API
+   - Rotate OAuth tokens through Anthropic console
+   - Review request logs for unauthorized usage
+   - Update tokens in Claudeflare
+
+2. **Unauthorized Access**
+   - Implement firewall rules immediately
+   - Review all recent API requests
+   - Check for data exfiltration
+   - Consider rotating all tokens
+
+3. **Rate Limit Abuse**
+   - Identify source of excessive requests
+   - Implement IP-based blocking
+   - Review load balancing strategy
+   - Consider implementing request queuing
+
 ## Conclusion
 
 Security is an ongoing process. This documentation should be reviewed and updated regularly as the system evolves and new threats emerge. All contributors should familiarize themselves with these security considerations and follow the best practices outlined above.
+
+### Key Takeaways
+1. **Claudeflare prioritizes functionality over security** - suitable for development, not production
+2. **Network isolation is critical** - always restrict access to trusted networks
+3. **Token security requires enhancement** - implement encryption for production use
+4. **Monitoring is essential** - regular review of logs can detect security issues early
+5. **Regular updates needed** - keep dependencies and documentation current
 
 For security-related questions or concerns, please refer to the vulnerability disclosure process or contact the project maintainers directly.

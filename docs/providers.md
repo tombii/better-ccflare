@@ -1,5 +1,18 @@
 # Providers System Documentation
 
+## Quick Reference
+
+### Currently Supported Providers
+- **Anthropic** - Single provider with two modes:
+  - **console mode**: Standard Claude API (console.anthropic.com)
+  - **max mode**: Claude Code (claude.ai)
+
+### Key Points
+- All API requests route to `https://api.anthropic.com`
+- OAuth is the preferred authentication method
+- Recent updates include enhanced streaming response capture for analytics
+- Provider system is extensible for future providers (OpenAI, Gemini, etc.)
+
 ## Table of Contents
 - [Overview](#overview)
 - [Provider Registry Pattern](#provider-registry-pattern)
@@ -13,7 +26,13 @@
 
 ## Overview
 
-The Claudeflare providers system is a modular architecture designed to support multiple AI service providers through a unified interface. Currently, it implements support for Anthropic's Claude API, but the system is extensible to accommodate other providers like OpenAI, Gemini, or custom implementations.
+The Claudeflare providers system is a modular architecture designed to support multiple AI service providers through a unified interface. Currently, it implements support for Anthropic's services through a single provider that can operate in two modes:
+
+### Supported Providers
+
+1. **Anthropic Provider** - Provides access to:
+   - **Claude API** (console mode) - Standard API access via console.anthropic.com
+   - **Claude Code** (max mode) - Enhanced access via claude.ai
 
 The providers system handles:
 - OAuth authentication flows with PKCE security
@@ -22,6 +41,7 @@ The providers system handles:
 - Rate limit detection and handling
 - Usage tracking and tier detection
 - Response processing and transformation
+- Streaming response capture for analytics
 
 ## Provider Registry Pattern
 
@@ -122,13 +142,17 @@ export async function generatePKCE(): Promise<PKCEChallenge> {
 
 ### OAuth Configuration
 
-Each provider defines its OAuth endpoints and scopes:
+The Anthropic provider supports two OAuth modes with different authorization endpoints:
 
 ```typescript
 getOAuthConfig(mode: "console" | "max" = "console"): OAuthConfig {
+  const baseUrl = mode === "console" 
+    ? "https://console.anthropic.com"  // Standard Claude API
+    : "https://claude.ai";              // Claude Code
+    
   return {
     authorizeUrl: `${baseUrl}/oauth/authorize`,
-    tokenUrl: "https://console.anthropic.com/v1/oauth/token",
+    tokenUrl: "https://console.anthropic.com/v1/oauth/token", // Always uses console endpoint
     clientId: "", // Provided by configuration
     scopes: ["org:create_api_key", "user:profile", "user:inference"],
     redirectUri: "https://console.anthropic.com/oauth/code/callback",
@@ -137,9 +161,34 @@ getOAuthConfig(mode: "console" | "max" = "console"): OAuthConfig {
 }
 ```
 
+**Mode Differences:**
+- **console mode**: Uses the standard Claude API via console.anthropic.com
+- **max mode**: Uses Claude Code via claude.ai for enhanced capabilities
+- Both modes use the same API endpoint (api.anthropic.com) for actual requests
+
 ## AnthropicProvider Implementation
 
 The AnthropicProvider extends the BaseProvider class and implements Anthropic-specific functionality.
+
+### Request Routing
+
+The provider handles all request paths and routes them to the standard Anthropic API endpoint:
+
+```typescript
+canHandle(_path: string): boolean {
+  // Handle all paths for now since this is Anthropic-specific
+  return true;
+}
+
+buildUrl(path: string, query: string): string {
+  return `https://api.anthropic.com${path}${query}`;
+}
+```
+
+**Important**: Both console and max modes use the same API endpoint. The mode only affects:
+- OAuth authorization flow (which frontend to use)
+- Account tier capabilities
+- Rate limits based on subscription type
 
 ### Key Features
 
@@ -148,6 +197,7 @@ The AnthropicProvider extends the BaseProvider class and implements Anthropic-sp
 3. **Usage Extraction**: Parses token usage from both streaming and non-streaming responses
 4. **Tier Detection**: Automatically detects account tier based on rate limit tokens
 5. **Header Management**: Handles compression and authorization headers
+6. **Streaming Response Capture**: Captures complete streaming responses for analytics (recent enhancement)
 
 ### Rate Limit Status Types
 
@@ -310,6 +360,20 @@ When rate limited, accounts are temporarily blocked:
 3. **Token Rotation**: Regularly refresh access tokens before expiration
 4. **Minimal Exposure**: Never log or expose tokens in error messages
 
+### Authentication Methods
+
+The system supports two authentication methods:
+
+1. **OAuth Authentication** (Recommended)
+   - Used for both console and max modes
+   - Provides automatic token refresh
+   - Better security with short-lived access tokens
+
+2. **API Key Authentication** (Legacy)
+   - Direct API key usage
+   - No automatic refresh
+   - Simpler but less secure
+
 ### Token Lifecycle
 
 ```typescript
@@ -323,6 +387,8 @@ interface Account {
   api_key: string | null;      // Direct API key authentication
 }
 ```
+
+**Note**: The current implementation prioritizes OAuth authentication. API key support is maintained for backward compatibility but OAuth is the preferred method.
 
 ### Token Refresh Strategy
 
@@ -426,11 +492,17 @@ registry.registerProvider(new NewProvider());
 6. **Performance**: Cache provider configurations when possible
 7. **Compatibility**: Maintain backward compatibility when updating
 
+## Recent Updates
+
+- **Streaming Response Capture**: Added complete capture of streaming responses for analytics (commit 55446bf)
+- **Enhanced Analytics**: Improved usage tracking and cost estimation for both streaming and non-streaming responses
+
 ## Future Enhancements
 
-1. **Multi-Provider Support**: Route requests to different providers based on capabilities
+1. **Multi-Provider Support**: Add support for OpenAI, Google Gemini, and other AI providers
 2. **Provider Health Checks**: Monitor provider availability and performance
 3. **Dynamic Provider Loading**: Load providers from external packages
 4. **Provider Metrics**: Track success rates, latency, and costs per provider
-5. **Fallback Strategies**: Automatic fallback to alternative providers
-6. **Provider-Specific Features**: Expose unique capabilities of each provider
+5. **Fallback Strategies**: Automatic fallback to alternative providers on failure
+6. **Provider-Specific Features**: Expose unique capabilities of each provider (e.g., vision, tools, etc.)
+7. **Path-Based Routing**: Route specific API paths to different providers based on capabilities

@@ -55,7 +55,8 @@ The configuration file is stored at:
   "retry_delay_ms": 1000,
   "retry_backoff": 2,
   "session_duration_ms": 18000000,
-  "port": 8080
+  "port": 8080,
+  "stream_body_max_bytes": 262144
 }
 ```
 
@@ -72,6 +73,7 @@ The configuration file is stored at:
 | `retry_backoff` | number | `2` | Exponential backoff multiplier for retry delays |
 | `session_duration_ms` | number | `18000000` (5 hours) | Session persistence duration in milliseconds |
 | `port` | number | `8080` | HTTP server port |
+| `stream_body_max_bytes` | number | `262144` (256KB) | Maximum size for streaming response bodies in analytics capture |
 
 ### Load Balancing Strategies
 
@@ -104,15 +106,19 @@ The configuration file is stored at:
 | `RETRY_BACKOFF` | `retry_backoff` | number | `RETRY_BACKOFF=1.5` |
 | `SESSION_DURATION_MS` | `session_duration_ms` | number | `SESSION_DURATION_MS=3600000` |
 | `PORT` | `port` | number | `PORT=3000` |
+| `CF_STREAM_BODY_MAX_BYTES` | `stream_body_max_bytes` | number | `CF_STREAM_BODY_MAX_BYTES=524288` |
 | `CLAUDEFLARE_CONFIG_PATH` | - | string | `CLAUDEFLARE_CONFIG_PATH=/etc/claudeflare.json` |
 
 ### Additional Environment Variables
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `LOG_LEVEL` | Set logging verbosity | `LOG_LEVEL=DEBUG` |
-| `LOG_FORMAT` | Set log output format | `LOG_FORMAT=json` |
-| `CLAUDEFLARE_DEBUG` | Enable debug mode | `CLAUDEFLARE_DEBUG=1` |
+| `LOG_LEVEL` | Set logging verbosity (DEBUG, INFO, WARN, ERROR) | `LOG_LEVEL=DEBUG` |
+| `LOG_FORMAT` | Set log output format (pretty, json) | `LOG_FORMAT=json` |
+| `CLAUDEFLARE_DEBUG` | Enable debug mode with console output | `CLAUDEFLARE_DEBUG=1` |
+| `CLAUDEFLARE_DB_PATH` | Custom database file path | `CLAUDEFLARE_DB_PATH=/var/lib/claudeflare/db.sqlite` |
+| `CF_PRICING_REFRESH_HOURS` | Hours between pricing data refreshes | `CF_PRICING_REFRESH_HOURS=12` |
+| `CF_PRICING_OFFLINE` | Disable online pricing updates | `CF_PRICING_OFFLINE=1` |
 
 ## Runtime Configuration API
 
@@ -194,7 +200,8 @@ Optimized for maximum request throughput with minimal overhead:
   "retry_delay_ms": 500,
   "retry_backoff": 1.5,
   "session_duration_ms": 300000,
-  "port": 8080
+  "port": 8080,
+  "stream_body_max_bytes": 131072
 }
 ```
 
@@ -204,6 +211,7 @@ export LB_STRATEGY=least-requests
 export RETRY_ATTEMPTS=2
 export RETRY_DELAY_MS=500
 export SESSION_DURATION_MS=300000  # 5 minutes
+export CF_STREAM_BODY_MAX_BYTES=131072  # 128KB for faster streaming
 export LOG_LEVEL=WARN  # Reduce logging overhead
 ```
 
@@ -218,7 +226,8 @@ Ideal for maintaining conversation context with Claude:
   "retry_delay_ms": 1000,
   "retry_backoff": 2,
   "session_duration_ms": 21600000,
-  "port": 8080
+  "port": 8080,
+  "stream_body_max_bytes": 262144
 }
 ```
 
@@ -241,7 +250,8 @@ Configuration for local development and debugging:
   "retry_delay_ms": 2000,
   "retry_backoff": 2,
   "session_duration_ms": 3600000,
-  "port": 3000
+  "port": 3000,
+  "stream_body_max_bytes": 524288
 }
 ```
 
@@ -265,7 +275,8 @@ Leverage weighted strategies for tier-based routing:
   "retry_delay_ms": 1000,
   "retry_backoff": 2,
   "session_duration_ms": 7200000,
-  "port": 8080
+  "port": 8080,
+  "stream_body_max_bytes": 262144
 }
 ```
 
@@ -275,18 +286,20 @@ Leverage weighted strategies for tier-based routing:
 
 Claudeflare performs validation on:
 
-1. **Strategy names**: Must be one of the valid strategy options
+1. **Strategy names**: Must be one of the valid strategy options (validated by `isValidStrategy`)
 2. **Numeric values**: Parsed and validated as integers/floats
 3. **Port ranges**: Should be valid port numbers (1-65535)
 4. **File permissions**: Config directory is created with appropriate permissions
+5. **Byte sizes**: Stream body max bytes must be a positive integer
 
 ### Validation Errors
 
 Invalid configurations result in:
 
-- **Strategy errors**: Throws error, falls back to default strategy
+- **Strategy errors**: Throws error when setting via API, falls back to default strategy when loading
 - **Parse errors**: Logged to console, uses default values
 - **File errors**: Creates new config file with defaults
+- **Invalid numeric values**: Falls back to default values
 
 ### Best Practices
 

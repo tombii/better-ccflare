@@ -4,6 +4,8 @@
 
 Claudeflare is a load balancer proxy for Claude API accounts that can be deployed in various configurations, from simple local development to production-grade distributed systems. This document covers all deployment options, from single-instance setups to scalable architectures.
 
+> **Recent Updates**: Claudeflare now includes a Terminal User Interface (TUI) for interactive monitoring and management, alongside the web dashboard. The async database writer improves performance for high-throughput scenarios.
+
 ## Table of Contents
 
 1. [Deployment Options Overview](#deployment-options-overview)
@@ -18,6 +20,7 @@ Claudeflare is a load balancer proxy for Claude API accounts that can be deploye
 7. [Monitoring and Logging](#monitoring-and-logging)
 8. [Performance Tuning](#performance-tuning)
 9. [Scaling Considerations](#scaling-considerations)
+10. [Environment Variables Reference](#environment-variables-reference)
 
 ## Deployment Options Overview
 
@@ -60,20 +63,27 @@ graph TB
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-org/claudeflare.git
+git clone https://github.com/snipeship/claudeflare.git
 cd claudeflare
 
 # Install dependencies
 bun install
 
-# Add Claude accounts
-bun run cli add myaccount
+# Start Claudeflare (TUI + Server combined)
+bun run claudeflare
 
-# Start the development server
-bun start
+# Or start components separately:
+# Terminal UI only
+bun run tui
 
-# Or with hot-reload
+# Server only
+bun run server
+
+# Server with hot-reload
 bun run dev:server
+
+# In another terminal, add Claude accounts
+bun cli add myaccount
 ```
 
 ### Development Configuration
@@ -81,12 +91,13 @@ bun run dev:server
 ```bash
 # Environment variables for development
 export PORT=8080
-export LB_STRATEGY=session
+export LB_STRATEGY=least-requests  # Options: least-requests, round-robin, session, weighted, weighted-round-robin
 export LOG_LEVEL=DEBUG
-export CLAUDEFLARE_DEBUG=1
+export LOG_FORMAT=pretty  # Options: pretty, json
+export CF_STREAM_BODY_MAX_BYTES=262144  # 256KB default
 
 # Start with custom config
-bun start
+bun run claudeflare
 ```
 
 ## Production Deployment
@@ -110,17 +121,25 @@ bun start
 Compile Claudeflare into a single executable for easy deployment:
 
 ```bash
+# Build all components
+bun run build  # Builds dashboard and TUI
+
 # Build the server binary
 cd apps/server
 bun build src/server.ts --compile --outfile dist/claudeflare-server
 
 # Build the CLI binary
 cd ../cli
-bun build src/cli.ts --compile --outfile dist/claudeflare-cli
+bun build src/cli.ts --compile --outfile dist/cli
+
+# Build the TUI binary (optional, for standalone TUI deployment)
+cd ../tui
+bun build src/main.ts --compile --outfile dist/claudeflare-tui
 
 # Copy binaries to deployment location
 cp apps/server/dist/claudeflare-server /opt/claudeflare/
-cp apps/cli/dist/claudeflare-cli /opt/claudeflare/
+cp apps/cli/dist/cli /opt/claudeflare/claudeflare-cli
+cp apps/tui/dist/claudeflare-tui /opt/claudeflare/  # Optional
 ```
 
 #### Binary Deployment Structure
@@ -129,6 +148,7 @@ cp apps/cli/dist/claudeflare-cli /opt/claudeflare/
 /opt/claudeflare/
 ├── claudeflare-server      # Main server binary
 ├── claudeflare-cli         # CLI tool binary
+├── claudeflare-tui         # TUI binary (optional)
 ├── config/
 │   └── claudeflare.json    # Configuration
 └── data/
@@ -154,8 +174,10 @@ module.exports = {
     exec_mode: 'fork',
     env: {
       PORT: 8080,
-      LB_STRATEGY: 'session',
+      LB_STRATEGY: 'least-requests',
       LOG_LEVEL: 'INFO',
+      LOG_FORMAT: 'json',
+      CF_STREAM_BODY_MAX_BYTES: 262144,
       CLAUDEFLARE_CONFIG_PATH: '/opt/claudeflare/config/claudeflare.json'
     },
     error_file: '/opt/claudeflare/data/logs/error.log',
@@ -198,8 +220,10 @@ RestartSec=5
 
 # Environment
 Environment="PORT=8080"
-Environment="LB_STRATEGY=session"
+Environment="LB_STRATEGY=least-requests"
 Environment="LOG_LEVEL=INFO"
+Environment="LOG_FORMAT=json"
+Environment="CF_STREAM_BODY_MAX_BYTES=262144"
 Environment="CLAUDEFLARE_CONFIG_PATH=/opt/claudeflare/config/claudeflare.json"
 
 # Security
@@ -230,7 +254,9 @@ sudo systemctl start claudeflare
 
 ## Docker Deployment
 
-### Dockerfile
+> **Note**: The Docker configuration below is a template. Docker files are not included in the repository and need to be created based on your specific requirements.
+
+### Example Dockerfile
 
 ```dockerfile
 # Multi-stage build for optimal size
@@ -263,7 +289,8 @@ RUN useradd -r -s /bin/false claudeflare
 
 # Copy binaries
 COPY --from=builder /app/apps/server/dist/claudeflare-server /usr/local/bin/
-COPY --from=builder /app/apps/cli/dist/claudeflare-cli /usr/local/bin/
+COPY --from=builder /app/apps/cli/dist/cli /usr/local/bin/claudeflare-cli
+COPY --from=builder /app/apps/tui/dist/claudeflare-tui /usr/local/bin/
 COPY --from=builder /app/packages/dashboard-web/dist /opt/claudeflare/dashboard
 
 # Set permissions
@@ -288,7 +315,7 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
 ENTRYPOINT ["/usr/local/bin/claudeflare-server"]
 ```
 
-### Docker Compose
+### Example Docker Compose
 
 ```yaml
 version: '3.8'
@@ -302,8 +329,10 @@ services:
       - "8080:8080"
     environment:
       - PORT=8080
-      - LB_STRATEGY=session
+      - LB_STRATEGY=least-requests
       - LOG_LEVEL=INFO
+      - LOG_FORMAT=json
+      - CF_STREAM_BODY_MAX_BYTES=262144
     volumes:
       - ./data:/data
       - ./config:/config
@@ -570,12 +599,12 @@ graph TB
     CLOUDWATCH --> GRAFANA
 ```
 
-### Prometheus Metrics
+### Prometheus Metrics (Future Enhancement)
 
-Add Prometheus metrics endpoint:
+> **Note**: Prometheus metrics support is planned but not yet implemented. The following is an example of how metrics could be integrated:
 
 ```typescript
-// packages/http-api/src/metrics.ts
+// Example: packages/http-api/src/metrics.ts
 import { register, Counter, Histogram, Gauge } from 'prom-client';
 
 export const metrics = {
@@ -693,10 +722,13 @@ sysctl -p
 // config/production.json
 {
   "server": {
-    "maxRequestsPerSocket": 100,
-    "keepAliveTimeout": 65000,
-    "bodyLimit": 104857600, // 100MB for large prompts
-    "trustProxy": true
+    "port": 8080,
+    "client_id": "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
+    "session_duration_ms": 18000000,  // 5 hours
+    "stream_body_max_bytes": 262144,  // 256KB
+    "retry_attempts": 3,
+    "retry_delay_ms": 1000,
+    "retry_backoff": 2
   },
   "database": {
     "walMode": true,
@@ -942,6 +974,86 @@ spec:
    - [ ] Intrusion detection configured
    - [ ] Incident response plan
 
+## Health Monitoring
+
+### Health Check Endpoint
+
+Claudeflare provides a health check endpoint for monitoring:
+
+```bash
+# Check health status
+curl http://localhost:8080/health
+```
+
+Response format:
+```json
+{
+  "status": "ok",
+  "accounts": 5,
+  "timestamp": "2025-01-27T12:00:00.000Z",
+  "strategy": "least-requests"
+}
+```
+
+### Monitoring Integration
+
+Use the health endpoint with monitoring tools:
+
+```yaml
+# Kubernetes liveness probe
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 8080
+  initialDelaySeconds: 10
+  periodSeconds: 30
+
+# Docker Compose health check  
+healthcheck:
+  test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+  interval: 30s
+  timeout: 10s
+  retries: 3
+```
+
+## API Endpoints Reference
+
+### Management API
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | GET | Health check and system status |
+| `/api/stats` | GET | Account statistics and usage |
+| `/api/stats/reset` | POST | Reset usage statistics |
+| `/api/requests` | GET | Request history with pagination |
+| `/api/accounts` | GET | List all accounts |
+| `/api/accounts/:name` | GET | Get specific account details |
+| `/api/accounts/:name` | PATCH | Update account (pause/unpause) |
+| `/api/accounts/:name` | DELETE | Remove account |
+| `/api/config` | GET | Get current configuration |
+| `/api/config` | PATCH | Update configuration |
+
+### Analytics API
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/analytics/usage` | GET | Usage analytics with filtering |
+| `/api/analytics/costs` | GET | Cost breakdown by model/account |
+| `/api/analytics/requests/:id` | GET | Request details with payload |
+
+### Real-time API
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/logs/stream` | GET | Real-time log streaming (SSE) |
+| `/api/logs/history` | GET | Historical logs (paginated) |
+
+### Claude API Proxy
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/v1/*` | * | All Claude API endpoints |
+
 ## Troubleshooting
 
 ### Common Issues
@@ -1017,8 +1129,144 @@ rm -rf "$BACKUP_DIR"
 find /backup/claudeflare -name "*.tar.gz" -mtime +30 -delete
 ```
 
+## Environment Variables Reference
+
+### Core Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PORT` | 8080 | Server port |
+| `LB_STRATEGY` | least-requests | Load balancing strategy: `least-requests`, `round-robin`, `session`, `weighted`, `weighted-round-robin` |
+| `LOG_LEVEL` | INFO | Logging level: `DEBUG`, `INFO`, `WARN`, `ERROR` |
+| `LOG_FORMAT` | pretty | Log format: `pretty` (human-readable) or `json` (structured) |
+
+### Advanced Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CLIENT_ID` | 9d1c250a-e61b-44d9-88ed-5944d1962f5e | OAuth client ID for authentication |
+| `SESSION_DURATION_MS` | 18000000 | Session duration in milliseconds (5 hours) |
+| `CF_STREAM_BODY_MAX_BYTES` | 262144 | Maximum size for streaming response bodies (256KB) |
+| `RETRY_ATTEMPTS` | 3 | Number of retry attempts for failed requests |
+| `RETRY_DELAY_MS` | 1000 | Initial delay between retries in milliseconds |
+| `RETRY_BACKOFF` | 2 | Backoff multiplier for exponential retry delays |
+| `CLAUDEFLARE_CONFIG_PATH` | Platform-specific | Path to configuration file |
+
+### Configuration File
+
+Claudeflare also supports a JSON configuration file that takes precedence over environment variables:
+
+```json
+{
+  "lb_strategy": "session",
+  "client_id": "your-client-id",
+  "retry_attempts": 5,
+  "retry_delay_ms": 2000,
+  "retry_backoff": 1.5,
+  "session_duration_ms": 7200000,
+  "port": 3000,
+  "stream_body_max_bytes": 524288
+}
+```
+
+The configuration file is located at:
+- **Linux/macOS**: `~/.config/claudeflare/config.json`
+- **Windows**: `%APPDATA%\claudeflare\config.json`
+
 ## Conclusion
 
 Claudeflare is designed to be flexible and scalable, supporting everything from simple local deployments to complex distributed architectures. Choose the deployment option that best fits your needs and scale as your requirements grow.
 
-For additional support and updates, refer to the project repository and documentation.
+### Key Features Summary
+
+- **Interactive TUI**: Monitor and manage your deployment in real-time
+- **Web Dashboard**: Access analytics and logs through a modern web interface
+- **Async Database Writer**: Improved performance for high-throughput scenarios
+- **Multiple Load Balancing Strategies**: Choose the best strategy for your use case
+- **Binary Compilation**: Deploy as standalone executables without runtime dependencies
+
+### Additional Resources
+
+- [Main Documentation](./index.md)
+- [Configuration Guide](./configuration.md)
+- [Load Balancing Strategies](./load-balancing.md)
+- [API Reference](./api-http.md)
+- [GitHub Repository](https://github.com/snipeship/claudeflare)
+
+## Terminal User Interface (TUI)
+
+Claudeflare includes a powerful Terminal User Interface for interactive monitoring and management.
+
+### Starting the TUI
+
+```bash
+# Start TUI with server (recommended)
+bun run claudeflare
+
+# Start TUI separately (connects to existing server)
+bun run tui
+
+# Build TUI as standalone binary
+cd apps/tui
+bun build src/main.ts --compile --outfile dist/claudeflare-tui
+```
+
+### TUI Features
+
+- **Real-time Dashboard**: Live system status and metrics
+- **Account Management**: View and manage Claude accounts
+  - Account status and rate limits
+  - Pause/unpause accounts
+  - View usage statistics
+- **Request Monitor**: Track requests as they happen
+  - Request details and timing
+  - Success/failure status
+  - Token usage per request
+- **Log Viewer**: Browse historical logs
+  - Filter by level and time
+  - Search functionality
+  - Export capabilities
+- **Statistics Screen**: Comprehensive analytics
+  - Usage patterns
+  - Cost breakdown
+  - Performance metrics
+
+### Keyboard Navigation
+
+| Key | Action |
+|-----|--------|
+| `Tab` / `Shift+Tab` | Navigate between screens |
+| `↑` / `↓` | Navigate within lists |
+| `←` / `→` | Switch between tabs |
+| `Enter` | Select/view details |
+| `Space` | Toggle selection |
+| `r` | Refresh current view |
+| `f` | Focus search/filter |
+| `Esc` | Close dialog/cancel |
+| `q` / `Ctrl+C` | Quit TUI |
+
+### Remote TUI Connection
+
+The TUI can connect to a remote Claudeflare server:
+
+```bash
+# Set API URL for remote connection
+export CLAUDEFLARE_API_URL=https://claudeflare.example.com
+bun run tui
+```
+
+### TUI Configuration
+
+Customize TUI behavior through environment variables:
+
+```bash
+# Refresh intervals (milliseconds)
+export TUI_REFRESH_INTERVAL=1000      # Dashboard refresh
+export TUI_LOG_POLL_INTERVAL=500      # Log updates
+
+# Display options
+export TUI_THEME=dark                 # dark or light
+export TUI_COMPACT_MODE=false         # Compact display
+```
+
+For support and updates, check the project repository and documentation.

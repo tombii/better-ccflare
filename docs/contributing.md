@@ -14,6 +14,7 @@ Welcome to Claudeflare! We're thrilled that you're interested in contributing to
 8. [Documentation Standards](#documentation-standards)
 9. [Adding New Features Checklist](#adding-new-features-checklist)
 10. [Release Process](#release-process)
+11. [Common Development Tasks](#common-development-tasks)
 
 ## Welcome & Code of Conduct
 
@@ -52,9 +53,10 @@ We are committed to providing a welcoming and inspiring community for all. We pl
 Before you begin, ensure you have the following installed:
 
 - **Bun** >= 1.2.8 (required): Install from [bun.sh](https://bun.sh)
-- **Node.js** >= 18 (optional, for compatibility): Some tools may require Node.js
 - **Git**: For version control
-- **SQLite**: Comes bundled with Bun
+- **SQLite**: Comes bundled with Bun, no separate installation needed
+
+**Note**: Node.js is not required as the project uses Bun exclusively.
 
 ### Cloning and Installing
 
@@ -88,6 +90,17 @@ Before you begin, ensure you have the following installed:
    bun run format
    ```
 
+### Environment Variables (Optional)
+
+The following environment variables can be used during development:
+
+- `LB_STRATEGY` - Override the default load balancing strategy
+- `CLIENT_ID` - Set a custom OAuth client ID
+- `RETRY_ATTEMPTS` - Number of retry attempts for failed requests
+- `RETRY_DELAY_MS` - Delay between retry attempts in milliseconds
+
+**Note**: Most configuration is handled through the config file and CLI. Environment variables are optional overrides.
+
 ### Running the Development Environment
 
 ```bash
@@ -106,7 +119,9 @@ bun run dev:dashboard
 
 ### Running Tests
 
-Currently, the project is in the process of setting up a comprehensive test suite. When implemented:
+**Note**: The project is currently in the process of setting up a comprehensive test suite. Test infrastructure is not yet implemented.
+
+When implemented, tests will use Bun's built-in test runner:
 
 ```bash
 # Run all tests
@@ -117,6 +132,21 @@ bun test --watch
 
 # Run tests for a specific package
 bun test packages/core
+```
+
+### Important Post-Change Commands
+
+After making any code changes, always run these commands before committing:
+
+```bash
+# Fix linting issues
+bun run lint
+
+# Check for type errors
+bun run typecheck
+
+# Format code
+bun run format
 ```
 
 ## Project Structure
@@ -239,15 +269,16 @@ Our Biome configuration enforces:
 
 - Tab indentation (not spaces)
 - Double quotes for strings
-- Organized imports
-- No unused variables
-- No console.log in production code
+- Organized imports (automatic with `organizeImports: "on"`)
+- All recommended Biome rules
 - Consistent code formatting
 
-Run linting with:
+Run linting and auto-fix issues with:
 ```bash
 bun run lint
 ```
+
+**Note**: The lint command includes `--write --unsafe` flags which will automatically fix issues where possible.
 
 ### Import Conventions
 
@@ -413,11 +444,13 @@ Closes #(issue number)
 
 ### Review Process
 
-1. **Automated Checks**: Ensure all CI checks pass (when implemented)
+1. **Manual Checks**: Run `bun run lint`, `bun run typecheck`, and `bun run format` locally
 2. **Code Review**: At least one maintainer must review and approve
 3. **Testing**: Reviewer may ask for additional tests or manual testing
 4. **Documentation**: Ensure docs are updated if needed
 5. **Merge**: Maintainer will merge using "Squash and merge"
+
+**Note**: CI/CD is not yet implemented. Contributors must ensure all checks pass locally before submitting PRs.
 
 ### After PR is Merged
 
@@ -427,9 +460,11 @@ Closes #(issue number)
 
 ## Testing Guidelines
 
-### Test Structure
+**Current Status**: Test infrastructure is not yet implemented. This section describes the planned testing approach.
 
-Tests should be co-located with the code they test:
+### Future Test Structure
+
+Tests will be co-located with the code they test:
 
 ```
 packages/core/
@@ -441,7 +476,7 @@ packages/core/
 └── package.json
 ```
 
-### Writing Tests
+### Writing Tests (Future Implementation)
 
 1. **Unit Tests**
    - Test individual functions and classes
@@ -637,5 +672,81 @@ Contributors are recognized in:
 - GitHub contributors page
 - Release notes
 - Project README (for significant contributions)
+
+## Common Development Tasks
+
+### Working with the CLI
+
+The CLI supports the following commands:
+
+```bash
+# Add a new account
+bun cli add <name>
+
+# List all accounts
+bun cli list
+
+# Remove an account
+bun cli remove <name>
+
+# Reset usage statistics
+bun cli reset-stats
+
+# Clear request history
+bun cli clear-history
+```
+
+### Running the Server
+
+```bash
+# Start the production server (port 8080)
+bun run server
+
+# Start the server with hot reload
+bun run dev:server
+```
+
+### Working with the Dashboard
+
+```bash
+# Build the dashboard
+bun run build:dashboard
+
+# Run dashboard in development mode
+bun run dev:dashboard
+```
+
+### Working with the TUI
+
+```bash
+# Run the TUI application
+bun run tui
+# or
+bun run dev
+# or (builds first, then runs)
+bun run claudeflare
+
+# Build the TUI
+bun run build:tui
+```
+
+### Building for Production
+
+```bash
+# Build all applications
+bun run build
+
+# Build specific applications
+bun run build:dashboard
+bun run build:tui
+bun run build:lander
+```
+
+### Troubleshooting Common Issues
+
+1. **TypeScript errors**: Run `bun run typecheck` to identify issues
+2. **Formatting issues**: Run `bun run format` to auto-fix
+3. **Import errors**: Ensure you're using workspace imports (`@claudeflare/*`) for cross-package dependencies
+4. **Database issues**: The SQLite database is created automatically in the data directory
 
 Thank you for contributing to Claudeflare! Your efforts help make Claude AI more accessible to everyone.
