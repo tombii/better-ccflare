@@ -340,11 +340,11 @@ The scope should be the package or app name:
 ### Examples
 
 ```bash
-feat(load-balancer): add weighted round-robin strategy
+feat(load-balancer): improve session persistence
 
-Implements a new load balancing strategy that considers account tiers
-when distributing requests. This ensures fair distribution based on
-account capacity.
+Enhances the session-based strategy to better handle failover scenarios
+while maintaining session affinity. This reduces rate limit occurrences
+and improves overall reliability.
 
 Closes #123
 
@@ -537,7 +537,7 @@ packages/core/
     * @returns The selected account or null if no accounts are available
     * 
     * @example
-    * const account = selectAccount(accounts, 'round-robin');
+    * const account = selectAccount(accounts, 'session');
     * if (account) {
     *   await forwardRequest(account, request);
     * }

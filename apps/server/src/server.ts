@@ -16,7 +16,6 @@ import { SessionStrategy } from "@claudeflare/load-balancer";
 import { Logger } from "@claudeflare/logger";
 import { getProvider } from "@claudeflare/providers";
 import { handleProxy, type ProxyContext } from "@claudeflare/proxy";
-import { StrategyName } from "@claudeflare/types";
 import { serve } from "bun";
 
 // Initialize DI container

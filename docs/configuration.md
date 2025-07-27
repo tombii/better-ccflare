@@ -66,7 +66,7 @@ The configuration file is stored at:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `lb_strategy` | string | `"session"` | Load balancing strategy. Options: `"least-requests"`, `"round-robin"`, `"session"`, `"weighted"`, `"weighted-round-robin"` |
+| `lb_strategy` | string | `"session"` | Load balancing strategy. Only `"session"` is supported (using other strategies risks account bans) |
 | `client_id` | string | `"9d1c250a-e61b-44d9-88ed-5944d1962f5e"` | OAuth client ID for authentication |
 | `retry_attempts` | number | `3` | Maximum number of retry attempts for failed requests |
 | `retry_delay_ms` | number | `1000` | Initial delay in milliseconds between retry attempts |
@@ -75,15 +75,13 @@ The configuration file is stored at:
 | `port` | number | `8080` | HTTP server port |
 | `stream_body_max_bytes` | number | `262144` (256KB) | Maximum size for streaming response bodies in analytics capture |
 
-### Load Balancing Strategies
+### Load Balancing Strategy
+
+⚠️ **WARNING**: Only use the `session` strategy. Other strategies can trigger Claude's anti-abuse systems and result in account bans.
 
 | Strategy | Description | Use Case |
 |----------|-------------|----------|
-| `least-requests` | Routes to the account with fewest active requests | Optimal for balanced load distribution |
-| `round-robin` | Cycles through accounts sequentially | Simple, predictable distribution |
-| `session` | Maintains client-account affinity for session duration | Best for stateful interactions |
-| `weighted` | Routes based on account tier weights | Premium account prioritization |
-| `weighted-round-robin` | Round-robin with tier-based weighting | Balanced with tier consideration |
+| `session` | Maintains client-account affinity for session duration | Only supported strategy - mimics natural usage patterns |
 
 ### Logging Configuration (Environment Only)
 
@@ -158,7 +156,7 @@ POST /api/config/strategy
 Content-Type: application/json
 
 {
-  "strategy": "round-robin"
+  "strategy": "session"
 }
 ```
 
@@ -166,7 +164,7 @@ Response:
 ```json
 {
   "success": true,
-  "strategy": "round-robin"
+  "strategy": "session"
 }
 ```
 
