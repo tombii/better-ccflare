@@ -5,6 +5,7 @@ import type {
 	StrategyStore,
 } from "@claudeflare/core";
 import { isAccountAvailable } from "@claudeflare/core";
+import { Logger } from "@claudeflare/logger";
 
 export class RoundRobinStrategy implements LoadBalancingStrategy {
 	private cursor = 0;
@@ -46,6 +47,7 @@ export class LeastRequestsStrategy implements LoadBalancingStrategy {
 export class SessionStrategy implements LoadBalancingStrategy {
 	private sessionDurationMs: number;
 	private store: StrategyStore | null = null;
+	private log = new Logger("SessionStrategy");
 
 	constructor(sessionDurationMs: number = 5 * 60 * 60 * 1000) {
 		this.sessionDurationMs = sessionDurationMs;
@@ -64,6 +66,12 @@ export class SessionStrategy implements LoadBalancingStrategy {
 		) {
 			// Reset session
 			if (this.store) {
+				const wasExpired = account.session_start !== null;
+				this.log.info(
+					wasExpired
+						? `Session expired for account ${account.name}, starting new session`
+						: `Starting new session for account ${account.name}`,
+				);
 				this.store.resetAccountSession(account.id, now);
 
 				// Update the account object to reflect changes
@@ -95,6 +103,9 @@ export class SessionStrategy implements LoadBalancingStrategy {
 		if (activeAccount && isAccountAvailable(activeAccount, now)) {
 			// Reset session if expired (shouldn't happen but just in case)
 			this.resetSessionIfExpired(activeAccount);
+			this.log.info(
+				`Continuing session for account ${activeAccount.name} (${activeAccount.session_request_count} requests in session)`,
+			);
 			// Return active account first, then others as fallback
 			const others = accounts.filter(
 				(a) => a.id !== activeAccount.id && isAccountAvailable(a, now),
