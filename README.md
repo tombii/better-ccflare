@@ -79,6 +79,12 @@ Full documentation available in [`docs/`](docs/):
     <td align="center"><b>Real-time Dashboard</b></td>
     <td align="center"><b>Request Logs</b></td>
   </tr>
+  <tr>
+    <td colspan="2"><img src="apps/lander/src/screenshot-analytics.png" alt="Analytics"/></td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center"><b>Analytics & Usage Tracking</b></td>
+  </tr>
 </table>
 
 ## Requirements
