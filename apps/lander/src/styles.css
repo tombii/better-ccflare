@@ -390,12 +390,6 @@ body {
 	color: var(--muted-foreground);
 }
 
-.screenshot-wrapper::before {
-	content: "Screenshot placeholder";
-	position: absolute;
-	opacity: 0.5;
-}
-
 .screenshot-card p {
 	color: var(--muted-foreground);
 	font-size: 0.875rem;
