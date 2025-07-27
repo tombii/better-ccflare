@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import type { LogEvent } from "@claudeflare/core";
+import type { LogEvent } from "@claudeflare/types";
 import { logFileWriter } from "./file-writer";
 
 export enum LogLevel {

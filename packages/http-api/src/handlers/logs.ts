@@ -1,4 +1,4 @@
-import type { LogEvent } from "@claudeflare/core";
+import type { LogEvent } from "@claudeflare/types";
 import { logBus } from "@claudeflare/logger";
 
 /**

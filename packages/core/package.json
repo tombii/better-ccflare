@@ -10,6 +10,6 @@
 		"typecheck": "bunx tsc --noEmit"
 	},
 	"dependencies": {
-		"@claudeflare/logger": "workspace:*"
+		"@claudeflare/types": "workspace:*"
 	}
 }

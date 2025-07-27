@@ -14,7 +14,8 @@
 		"@claudeflare/cli-commands": "workspace:*",
 		"@claudeflare/database": "workspace:*",
 		"@claudeflare/logger": "workspace:*",
-		"@claudeflare/core": "workspace:*"
+		"@claudeflare/core": "workspace:*",
+		"@claudeflare/types": "workspace:*"
 	},
 	"devDependencies": {
 		"@types/node": "^20.0.0"

@@ -39,6 +39,7 @@
         "@claudeflare/load-balancer": "workspace:*",
         "@claudeflare/logger": "workspace:*",
         "@claudeflare/proxy": "workspace:*",
+        "@claudeflare/types": "workspace:*",
       },
     },
     "apps/tui": {
@@ -82,7 +83,7 @@
       "name": "@claudeflare/core",
       "version": "0.1.0",
       "dependencies": {
-        "@claudeflare/logger": "workspace:*",
+        "@claudeflare/types": "workspace:*",
       },
     },
     "packages/dashboard-web": {
@@ -133,6 +134,7 @@
         "@claudeflare/config": "workspace:*",
         "@claudeflare/core": "workspace:*",
         "@claudeflare/database": "workspace:*",
+        "@claudeflare/types": "workspace:*",
       },
     },
     "packages/load-balancer": {
@@ -148,7 +150,7 @@
       "name": "@claudeflare/logger",
       "version": "0.1.0",
       "dependencies": {
-        "@claudeflare/core": "workspace:*",
+        "@claudeflare/types": "workspace:*",
       },
     },
     "packages/providers": {
@@ -177,10 +179,15 @@
         "@claudeflare/core": "workspace:*",
         "@claudeflare/database": "workspace:*",
         "@claudeflare/logger": "workspace:*",
+        "@claudeflare/types": "workspace:*",
       },
       "devDependencies": {
         "@types/node": "^20.0.0",
       },
+    },
+    "packages/types": {
+      "name": "@claudeflare/types",
+      "version": "0.1.0",
     },
   },
   "overrides": {
@@ -235,6 +242,8 @@
     "@claudeflare/server": ["@claudeflare/server@workspace:apps/server"],
 
     "@claudeflare/tui-core": ["@claudeflare/tui-core@workspace:packages/tui-core"],
+
+    "@claudeflare/types": ["@claudeflare/types@workspace:packages/types"],
 
     "@floating-ui/core": ["@floating-ui/core@1.7.2", "", { "dependencies": { "@floating-ui/utils": "^0.2.10" } }, "sha512-wNB5ooIKHQc+Kui96jE/n69rHFWAVoxn5CAzL1Xdd8FG03cgY3MLO+GF9U3W737fYDSgPWA6MReKhBQBop6Pcw=="],
 
