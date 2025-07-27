@@ -15,6 +15,7 @@ interface LogEntry {
 export function LogsScreen({ onBack }: LogsScreenProps) {
 	const [logs, setLogs] = useState<LogEntry[]>([]);
 	const [paused, setPaused] = useState(false);
+	const [loading, setLoading] = useState(true);
 
 	useInput((input, key) => {
 		if (key.escape || input === "q") {
@@ -28,17 +29,32 @@ export function LogsScreen({ onBack }: LogsScreenProps) {
 		}
 	});
 
+	// Load historical logs on mount
 	useEffect(() => {
-		if (!paused) {
+		const loadHistory = async () => {
+			try {
+				const history = await tuiCore.getLogHistory();
+				setLogs(history.slice(-200)); // Keep last 200 logs
+			} catch (error) {
+				console.error("Failed to load log history:", error);
+			} finally {
+				setLoading(false);
+			}
+		};
+		loadHistory();
+	}, []);
+
+	useEffect(() => {
+		if (!paused && !loading) {
 			const unsubscribe = tuiCore.streamLogs((log) => {
-				setLogs((prev) => [...prev.slice(-100), log]); // Keep last 100 logs
+				setLogs((prev) => [...prev.slice(-200), log]); // Keep last 200 logs
 			});
 
 			return () => {
 				unsubscribe();
 			};
 		}
-	}, [paused]);
+	}, [paused, loading]);
 
 	const getLogColor = (level: string) => {
 		switch (level.toUpperCase()) {
@@ -64,7 +80,9 @@ export function LogsScreen({ onBack }: LogsScreenProps) {
 			</Box>
 
 			<Box flexDirection="column" flexGrow={1}>
-				{logs.length === 0 ? (
+				{loading ? (
+					<Text dimColor>Loading logs...</Text>
+				) : logs.length === 0 ? (
 					<Text dimColor>No logs yet...</Text>
 				) : (
 					logs.map((log, i) => (
