@@ -66,9 +66,14 @@ export function RequestsTab() {
 	const decodeBase64 = (str: string | null): string => {
 		if (!str) return "No data";
 		try {
+			// Handle edge cases like "[streamed]" from older data
+			if (str === "[streamed]") {
+				return "[Streaming data not captured]";
+			}
 			return atob(str);
-		} catch {
-			return "Failed to decode";
+		} catch (error) {
+			console.error("Failed to decode base64:", error, "Input:", str);
+			return `Failed to decode: ${str}`;
 		}
 	};
 
