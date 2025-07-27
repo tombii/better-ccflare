@@ -1,3 +1,5 @@
+import type { StrategyStore } from "./strategy-store.js";
+
 // Database row types that match the actual database schema
 export type AccountRow = {
 	id: string;
@@ -63,6 +65,12 @@ export interface LoadBalancingStrategy {
 	 * The first account in the list should be tried first.
 	 */
 	select(accounts: Account[], meta: RequestMeta): Account[];
+
+	/**
+	 * Optional initialization method to inject dependencies
+	 * Used for strategies that need access to a StrategyStore
+	 */
+	initialize?(store: StrategyStore): void;
 }
 
 // Type mapper functions

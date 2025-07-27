@@ -1,14 +1,15 @@
 export { handleProxy, type ProxyContext } from "./proxy";
+export type { ProxyRequest, ProxyResponse } from "./types";
+
+// Re-export provider-related types and functions from @claudeflare/providers
 export type {
 	Provider,
-	ProxyRequest,
-	ProxyResponse,
 	TokenRefreshResult,
 	RateLimitInfo,
-} from "./types";
+} from "@claudeflare/providers";
 export {
 	getProvider,
 	registerProvider,
 	listProviders,
 	AnthropicProvider,
-} from "./providers";
+} from "@claudeflare/providers";

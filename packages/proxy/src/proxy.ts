@@ -7,7 +7,7 @@ import type {
 } from "@claudeflare/core";
 import type { DatabaseOperations } from "@claudeflare/database";
 import type { RuntimeConfig } from "@claudeflare/config";
-import type { Provider, TokenRefreshResult } from "./types";
+import type { Provider, TokenRefreshResult } from "@claudeflare/providers";
 
 export interface ProxyContext {
 	strategy: LoadBalancingStrategy;

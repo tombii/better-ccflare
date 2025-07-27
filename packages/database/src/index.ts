@@ -1,7 +1,12 @@
 import { Database } from "bun:sqlite";
 import { ensureSchema, runMigrations } from "./migrations";
 import { resolveDbPath } from "./paths";
-import { type Account, type AccountRow, toAccount } from "@claudeflare/core";
+import {
+	type Account,
+	type AccountRow,
+	toAccount,
+	type StrategyStore,
+} from "@claudeflare/core";
 import { dirname } from "node:path";
 import { mkdirSync } from "node:fs";
 
@@ -9,7 +14,7 @@ export interface RuntimeConfig {
 	sessionDurationMs?: number;
 }
 
-export class DatabaseOperations {
+export class DatabaseOperations implements StrategyStore {
 	private db: Database;
 	private runtime?: RuntimeConfig;
 
@@ -142,6 +147,48 @@ export class DatabaseOperations {
 				failoverAttempts,
 			],
 		);
+	}
+
+	// StrategyStore implementation
+	resetAccountSession(accountId: string, timestamp: number): void {
+		this.db.run(
+			`UPDATE accounts SET session_start = ?, session_request_count = 0 WHERE id = ?`,
+			[timestamp, accountId],
+		);
+	}
+
+	getAccount(accountId: string): Account | null {
+		const row = this.db
+			.query<AccountRow, [string]>(`
+				SELECT 
+					id,
+					name,
+					provider,
+					api_key,
+					refresh_token,
+					access_token,
+					expires_at,
+					created_at,
+					last_used,
+					request_count,
+					total_requests,
+					rate_limited_until,
+					session_start,
+					session_request_count,
+					COALESCE(account_tier, 1) as account_tier
+				FROM accounts
+				WHERE id = ?
+			`)
+			.get(accountId);
+
+		return row ? toAccount(row) : null;
+	}
+
+	updateAccountRequestCount(accountId: string, count: number): void {
+		this.db.run(`UPDATE accounts SET session_request_count = ? WHERE id = ?`, [
+			count,
+			accountId,
+		]);
 	}
 
 	close(): void {

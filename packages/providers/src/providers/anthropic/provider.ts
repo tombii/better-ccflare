@@ -1,7 +1,8 @@
-import type { Provider, TokenRefreshResult, RateLimitInfo } from "../types";
 import type { Account } from "@claudeflare/core";
+import { BaseProvider } from "../../base.js";
+import type { TokenRefreshResult, RateLimitInfo } from "../../types.js";
 
-export class AnthropicProvider implements Provider {
+export class AnthropicProvider extends BaseProvider {
 	name = "anthropic";
 
 	canHandle(_path: string): boolean {
@@ -50,9 +51,7 @@ export class AnthropicProvider implements Provider {
 	}
 
 	prepareHeaders(headers: Headers, accessToken: string): Headers {
-		const newHeaders = new Headers(headers);
-		newHeaders.set("Authorization", `Bearer ${accessToken}`);
-		newHeaders.delete("host");
+		const newHeaders = super.prepareHeaders(headers, accessToken);
 		// Remove compression headers to avoid decompression issues
 		newHeaders.delete("accept-encoding");
 		newHeaders.delete("content-encoding");
@@ -113,5 +112,21 @@ export class AnthropicProvider implements Provider {
 		}
 
 		return null;
+	}
+
+	/**
+	 * Check if this provider supports OAuth
+	 */
+	supportsOAuth(): boolean {
+		return true;
+	}
+
+	/**
+	 * Get the OAuth provider for this provider
+	 */
+	getOAuthProvider() {
+		// Lazy load to avoid circular dependencies
+		const { AnthropicOAuthProvider } = require("./oauth.js");
+		return new AnthropicOAuthProvider();
 	}
 }

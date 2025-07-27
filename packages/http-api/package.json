@@ -1,5 +1,5 @@
 {
-	"name": "@claudeflare/proxy",
+	"name": "@claudeflare/http-api",
 	"version": "0.1.0",
 	"type": "module",
 	"main": "./src/index.ts",
@@ -12,8 +12,6 @@
 	"dependencies": {
 		"@claudeflare/core": "workspace:*",
 		"@claudeflare/database": "workspace:*",
-		"@claudeflare/config": "workspace:*",
-		"@claudeflare/logger": "workspace:*",
-		"@claudeflare/providers": "workspace:*"
+		"@claudeflare/config": "workspace:*"
 	}
 }
