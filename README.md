@@ -1,6 +1,6 @@
-# Claude Load Balancer
+# Claudeflare - Claude Load Balancer
 
-A load balancer proxy for multiple Claude OAuth accounts with automatic failover, request tracking, and web dashboard.
+A load balancer proxy for multiple Claude OAuth accounts with automatic failover, request tracking, and web dashboard. Built as a Bun monorepo for modularity and extensibility.
 
 ## Why?
 
@@ -35,6 +35,7 @@ The default session-based strategy ensures you get the most out of Claude's prom
 - **Enhanced Logging**: Detailed logging with configurable levels
 - **Token Management**: Automatic token refresh when expired
 - **Hot Configuration**: Change strategies without restarting the server
+- **Extensible Architecture**: Provider-based proxy system for future AI provider support
 
 ## Installation
 
@@ -96,25 +97,25 @@ export ANTHROPIC_BASE_URL=http://localhost:8080
 
 ```bash
 # Add a new account (interactive mode)
-bun cli.ts add <name>
+bun run cli add <name>
 
 # Add with specific options
-bun cli.ts add <name> [--mode max|console] [--tier 1|5|20]
+bun run cli add <name> [--mode max|console] [--tier 1|5|20]
 
 # List all accounts with tier information
-bun cli.ts list
+bun run cli list
 
 # Remove an account
-bun cli.ts remove <name>
+bun run cli remove <name>
 
 # Reset usage statistics
-bun cli.ts reset-stats
+bun run cli reset-stats
 
 # Clear request history
-bun cli.ts clear-history
+bun run cli clear-history
 
 # Show help
-bun cli.ts help
+bun run cli help
 ```
 
 ## API Endpoints
@@ -186,27 +187,6 @@ The server logs all activity with timestamps and configurable levels:
 
 Set the log level with the `LOG_LEVEL` environment variable.
 
-## Database
-
-The load balancer uses SQLite to store:
-- Account information, tokens, and tiers
-- Request history and statistics
-- Configuration settings
-- Rate limit and session data
-
-Database file: `claude-accounts.db`
-
-## Architecture
-
-The codebase follows a modular architecture:
-- `server.ts` - Main server entry point
-- `config.ts` - Configuration management
-- `database.ts` - Database operations
-- `api-routes.ts` - API endpoint handlers
-- `dashboard.ts` - Web dashboard UI
-- `strategies/` - Load balancing strategy implementations
-- `migrations.ts` - Database schema migrations
-
 ## Configuration
 
 ### Environment Variables
@@ -222,24 +202,97 @@ LB_STRATEGY=session
 # Log level (default: INFO)
 # Options: DEBUG, INFO, WARN, ERROR
 LOG_LEVEL=INFO
+
+# Optional: Override config file path
+CLAUDEFLARE_CONFIG_PATH=/path/to/config.json
 ```
 
-### Example `.env` file
+### Configuration File
+
+The configuration is stored in JSON format at:
+- **Linux/macOS**: `~/.config/claudeflare/claudeflare.json`
+- **Windows**: `%LOCALAPPDATA%\claudeflare\claudeflare.json`
+
+Example configuration:
+
+```json
+{
+  "lb_strategy": "session",
+  "client_id": "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
+  "retry_attempts": 3,
+  "retry_delay_ms": 1000,
+  "retry_backoff": 2,
+  "session_duration_ms": 18000000,
+  "port": 8080
+}
+```
+
+## Architecture
+
+Claudeflare is built as a Bun monorepo with the following structure:
+
+### Apps
+- **`apps/server`** - Main HTTP server and proxy
+- **`apps/cli`** - Command-line interface for account management
+
+### Packages
+- **`@claudeflare/core`** - Core types and interfaces
+- **`@claudeflare/database`** - SQLite database operations and migrations
+- **`@claudeflare/config`** - Configuration management with hot reloading
+- **`@claudeflare/logger`** - Centralized logging utilities
+- **`@claudeflare/load-balancer`** - Load balancing strategies
+- **`@claudeflare/proxy`** - Provider-based proxy system
+- **`@claudeflare/dashboard`** - Web dashboard UI
+
+### Key Design Patterns
+- **Provider Abstraction**: Extensible proxy system that can support multiple AI providers
+- **Strategy Pattern**: Pluggable load balancing algorithms
+- **Event-Driven Config**: Real-time configuration updates without restarts
+- **XDG Compliance**: Follows platform conventions for config/data directories
+
+## Development
+
+### Project Structure
+```
+claudeflare/
+├── apps/
+│   ├── cli/         # CLI application
+│   └── server/      # HTTP server
+├── packages/
+│   ├── config/      # Configuration management
+│   ├── core/        # Core types and interfaces
+│   ├── dashboard/   # Web dashboard
+│   ├── database/    # Database operations
+│   ├── load-balancer/ # Load balancing strategies
+│   ├── logger/      # Logging utilities
+│   └── proxy/       # Proxy and providers
+├── package.json     # Root workspace configuration
+└── tsconfig.json    # TypeScript configuration
+```
+
+### Building Single Executables
+
+You can compile the apps into single executables:
 
 ```bash
-cp .env.example .env
-# Edit .env with your preferences
+# Build server executable
+bun build apps/server/src/server.ts --compile --outfile=claudeflare-server
+
+# Build CLI executable
+bun build apps/cli/src/cli.ts --compile --outfile=claudeflare-cli
 ```
 
-### Retry Configuration
+## Database
 
-You can modify retry behavior by editing these constants in `src/server.ts`:
+The load balancer uses SQLite to store:
+- Account information, tokens, and tiers
+- Request history and statistics
+- Configuration settings
+- Rate limit and session data
 
-```typescript
-const RETRY_COUNT = 3        // Number of retries per account
-const RETRY_DELAY_MS = 1000  // Initial delay between retries (milliseconds)
-const RETRY_BACKOFF = 2      // Exponential backoff multiplier
-```
+Database location:
+- **Linux/macOS**: `~/.config/claudeflare/claude-accounts.db`
+- **Windows**: `%LOCALAPPDATA%\claudeflare\claude-accounts.db`
 
 ## Requirements
 

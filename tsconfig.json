@@ -7,12 +7,16 @@
 		"moduleDetection": "force",
 		"allowImportingTsExtensions": true,
 		"noEmit": true,
-		"composite": true,
 		"strict": true,
 		"skipLibCheck": true,
 		"allowSyntheticDefaultImports": true,
 		"forceConsistentCasingInFileNames": true,
 		"allowJs": true,
-		"types": ["bun-types"]
-	}
+		"types": ["bun-types"],
+		"baseUrl": ".",
+		"paths": {
+			"@claudeflare/*": ["packages/*/src"]
+		}
+	},
+	"include": ["packages/*/src/**/*", "apps/*/src/**/*"]
 }

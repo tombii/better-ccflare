@@ -2,13 +2,82 @@
   "lockfileVersion": 1,
   "workspaces": {
     "": {
-      "name": "claude-load-balancer",
-      "dependencies": {
-        "@types/bun": "latest",
-      },
+      "name": "claudeflare-",
       "devDependencies": {
         "@biomejs/biome": "2.1.2",
+        "@types/bun": "latest",
         "bun-types": "latest",
+        "typescript": "^5.0.0",
+      },
+    },
+    "apps/cli": {
+      "name": "@claudeflare/cli",
+      "version": "0.1.0",
+      "bin": {
+        "claudeflare": "./dist/cli",
+      },
+      "dependencies": {
+        "@claudeflare/config": "workspace:*",
+        "@claudeflare/core": "workspace:*",
+        "@claudeflare/database": "workspace:*",
+      },
+    },
+    "apps/server": {
+      "name": "@claudeflare/server",
+      "version": "0.1.0",
+      "dependencies": {
+        "@claudeflare/config": "workspace:*",
+        "@claudeflare/core": "workspace:*",
+        "@claudeflare/dashboard": "workspace:*",
+        "@claudeflare/database": "workspace:*",
+        "@claudeflare/load-balancer": "workspace:*",
+        "@claudeflare/logger": "workspace:*",
+        "@claudeflare/proxy": "workspace:*",
+      },
+    },
+    "packages/config": {
+      "name": "@claudeflare/config",
+      "version": "0.1.0",
+      "dependencies": {
+        "@claudeflare/core": "workspace:*",
+      },
+    },
+    "packages/core": {
+      "name": "@claudeflare/core",
+      "version": "0.1.0",
+    },
+    "packages/dashboard": {
+      "name": "@claudeflare/dashboard",
+      "version": "0.1.0",
+    },
+    "packages/database": {
+      "name": "@claudeflare/database",
+      "version": "0.1.0",
+      "dependencies": {
+        "@claudeflare/core": "workspace:*",
+      },
+    },
+    "packages/load-balancer": {
+      "name": "@claudeflare/load-balancer",
+      "version": "0.1.0",
+      "dependencies": {
+        "@claudeflare/core": "workspace:*",
+        "@claudeflare/database": "workspace:*",
+        "@claudeflare/logger": "workspace:*",
+      },
+    },
+    "packages/logger": {
+      "name": "@claudeflare/logger",
+      "version": "0.1.0",
+    },
+    "packages/proxy": {
+      "name": "@claudeflare/proxy",
+      "version": "0.1.0",
+      "dependencies": {
+        "@claudeflare/config": "workspace:*",
+        "@claudeflare/core": "workspace:*",
+        "@claudeflare/database": "workspace:*",
+        "@claudeflare/logger": "workspace:*",
       },
     },
   },
@@ -31,6 +100,24 @@
 
     "@biomejs/cli-win32-x64": ["@biomejs/cli-win32-x64@2.1.2", "", { "os": "win32", "cpu": "x64" }, "sha512-9zajnk59PMpjBkty3bK2IrjUsUHvqe9HWwyAWQBjGLE7MIBjbX2vwv1XPEhmO2RRuGoTkVx3WCanHrjAytICLA=="],
 
+    "@claudeflare/cli": ["@claudeflare/cli@workspace:apps/cli"],
+
+    "@claudeflare/config": ["@claudeflare/config@workspace:packages/config"],
+
+    "@claudeflare/core": ["@claudeflare/core@workspace:packages/core"],
+
+    "@claudeflare/dashboard": ["@claudeflare/dashboard@workspace:packages/dashboard"],
+
+    "@claudeflare/database": ["@claudeflare/database@workspace:packages/database"],
+
+    "@claudeflare/load-balancer": ["@claudeflare/load-balancer@workspace:packages/load-balancer"],
+
+    "@claudeflare/logger": ["@claudeflare/logger@workspace:packages/logger"],
+
+    "@claudeflare/proxy": ["@claudeflare/proxy@workspace:packages/proxy"],
+
+    "@claudeflare/server": ["@claudeflare/server@workspace:apps/server"],
+
     "@types/bun": ["@types/bun@1.2.19", "", { "dependencies": { "bun-types": "1.2.19" } }, "sha512-d9ZCmrH3CJ2uYKXQIUuZ/pUnTqIvLDS0SK7pFmbx8ma+ziH/FRMoAq5bYpRG7y+w1gl+HgyNZbtqgMq4W4e2Lg=="],
 
     "@types/node": ["@types/node@24.1.0", "", { "dependencies": { "undici-types": "~7.8.0" } }, "sha512-ut5FthK5moxFKH2T1CUOC6ctR67rQRvvHdFLCD2Ql6KXmMuCrjsSsRI9UsLCm9M18BMwClv4pn327UvB7eeO1w=="],
@@ -40,6 +127,8 @@
     "bun-types": ["bun-types@1.2.19", "", { "dependencies": { "@types/node": "*" }, "peerDependencies": { "@types/react": "^19" } }, "sha512-uAOTaZSPuYsWIXRpj7o56Let0g/wjihKCkeRqUBhlLVM/Bt+Fj9xTo+LhC1OV1XDaGkz4hNC80et5xgy+9KTHQ=="],
 
     "csstype": ["csstype@3.1.3", "", {}, "sha512-M1uQkMl8rQK/szD0LNhtqxIPLpimGm8sOBwU7lLnCpSbTyY3yeU1Vc7l4KT5zT4s/yOxHH5O7tIuuLOCnLADRw=="],
+
+    "typescript": ["typescript@5.8.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-p1diW6TqL9L07nNxvRMM7hMMw4c5XOo/1ibL4aAIGmSAt9slTE1Xgw5KWuof2uTOvCg9BY7ZRi+GaF+7sfgPeQ=="],
 
     "undici-types": ["undici-types@7.8.0", "", {}, "sha512-9UJ2xGDvQ43tYyVMpuHlsgApydB8ZKfVYTsLDhXkFL/6gfkp+U8xTGdh8pMJv1SpZna0zxG1DwsKZsreLbXBxw=="],
   }
