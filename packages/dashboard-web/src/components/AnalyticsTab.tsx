@@ -729,7 +729,7 @@ export function AnalyticsTab() {
 			{viewMode === "cumulative" && analytics && (
 				<Card className="bg-gradient-to-br from-background to-muted/10 border-muted">
 					<CardHeader>
-						<CardTitle className="bg-gradient-to-r from-purple-500 to-orange-500 bg-clip-text text-transparent">
+						<CardTitle className="text-2xl font-bold">
 							Cumulative Growth Analysis
 						</CardTitle>
 						<CardDescription>
@@ -804,7 +804,7 @@ export function AnalyticsTab() {
 										backdropFilter: "blur(8px)",
 									}}
 									formatter={(value: number | string, name: string) => {
-										if (name === "cost") return [`$${value}`, "Total Cost"];
+										if (name === "Total Cost") return [`$${value}`, "Total Cost"];
 										return [(value as number).toLocaleString(), "Total Tokens"];
 									}}
 								/>
