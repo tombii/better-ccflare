@@ -10,5 +10,5 @@ export function resolveDbPath(): string {
 
 	// Use common platform config directory
 	const configDir = getPlatformConfigDir();
-	return join(configDir, "claude-accounts.db");
+	return join(configDir, "claudeflare.db");
 }
