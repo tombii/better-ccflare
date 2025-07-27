@@ -29,7 +29,6 @@
       "dependencies": {
         "@claudeflare/config": "workspace:*",
         "@claudeflare/core": "workspace:*",
-        "@claudeflare/dashboard": "workspace:*",
         "@claudeflare/dashboard-web": "workspace:*",
         "@claudeflare/database": "workspace:*",
         "@claudeflare/http-api": "workspace:*",
@@ -77,10 +76,6 @@
     },
     "packages/core": {
       "name": "@claudeflare/core",
-      "version": "0.1.0",
-    },
-    "packages/dashboard": {
-      "name": "@claudeflare/dashboard",
       "version": "0.1.0",
     },
     "packages/dashboard-web": {
@@ -172,8 +167,8 @@
     },
   },
   "overrides": {
-    "react": "^19.0.0",
     "@types/react": "^19.0.0",
+    "react": "^19.0.0",
   },
   "packages": {
     "@alcalzone/ansi-tokenize": ["@alcalzone/ansi-tokenize@0.1.3", "", { "dependencies": { "ansi-styles": "^6.2.1", "is-fullwidth-code-point": "^4.0.0" } }, "sha512-3yWxPTq3UQ/FY9p1ErPxIyfT64elWaMvM9lIHnaqpyft63tkxodF5aUElYHrdisWve5cETkh1+KBw1yJuW0aRw=="],
@@ -203,8 +198,6 @@
     "@claudeflare/config": ["@claudeflare/config@workspace:packages/config"],
 
     "@claudeflare/core": ["@claudeflare/core@workspace:packages/core"],
-
-    "@claudeflare/dashboard": ["@claudeflare/dashboard@workspace:packages/dashboard"],
 
     "@claudeflare/dashboard-web": ["@claudeflare/dashboard-web@workspace:packages/dashboard-web"],
 
