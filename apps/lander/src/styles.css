@@ -558,6 +558,15 @@ body {
 	gap: 0.25rem;
 }
 
+.pricing-tagline {
+	text-align: center;
+	color: var(--muted-foreground);
+	font-size: 1.125rem;
+	font-weight: 500;
+	margin-top: 0.75rem;
+	letter-spacing: -0.01em;
+}
+
 .currency {
 	font-size: 1.5rem;
 	color: var(--muted-foreground);
