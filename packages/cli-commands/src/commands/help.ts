@@ -14,8 +14,9 @@ Commands:
   list
     List all accounts with their details
 
-  remove <name>
+  remove <name> [--force]
     Remove an account
+    --force: Skip confirmation prompt
 
   pause <name>
     Pause an account to exclude it from load balancing

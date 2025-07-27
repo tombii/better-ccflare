@@ -14,7 +14,7 @@ export function App() {
 	const { exit } = useApp();
 
 	const items = [
-		{ label: "🚀 Start Server", value: "server" },
+		{ label: "🚀 Server", value: "server" },
 		{ label: "👥 Manage Accounts", value: "accounts" },
 		{ label: "📊 View Statistics", value: "stats" },
 		{ label: "📜 View Requests", value: "requests" },

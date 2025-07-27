@@ -5,6 +5,7 @@ import {
 	promptAccountMode,
 	promptAccountTier,
 	promptAuthorizationCode,
+	promptAccountRemovalConfirmation,
 } from "../prompts/index";
 import { openBrowser } from "../utils/browser";
 
@@ -179,6 +180,39 @@ export function removeAccount(
 		success: true,
 		message: `Account '${name}' removed successfully`,
 	};
+}
+
+/**
+ * Remove an account by name with confirmation prompt (for CLI)
+ */
+export async function removeAccountWithConfirmation(
+	dbOps: DatabaseOperations,
+	name: string,
+	force?: boolean,
+): Promise<{ success: boolean; message: string }> {
+	// Check if account exists first
+	const accounts = dbOps.getAllAccounts();
+	const exists = accounts.some((a) => a.name === name);
+	
+	if (!exists) {
+		return {
+			success: false,
+			message: `Account '${name}' not found`,
+		};
+	}
+	
+	// Skip confirmation if force flag is set
+	if (!force) {
+		const confirmed = await promptAccountRemovalConfirmation(name);
+		if (!confirmed) {
+			return {
+				success: false,
+				message: "Account removal cancelled",
+			};
+		}
+	}
+	
+	return removeAccount(dbOps, name);
 }
 
 /**
