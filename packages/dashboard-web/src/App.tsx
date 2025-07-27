@@ -32,10 +32,20 @@ export function App() {
 
 	return (
 		<div className="min-h-screen bg-background">
-			<header className="border-b">
-				<div className="container mx-auto px-4 py-4">
-					<h1 className="text-2xl font-bold">🎯 Claudeflare Dashboard</h1>
-					<p className="text-muted-foreground">Load balancer for Claude</p>
+			<header className="relative bg-gradient-to-r from-orange-500 to-orange-600 dark:from-orange-600 dark:to-orange-700 text-white shadow-lg">
+				<div className="absolute inset-0 bg-black/10 dark:bg-black/20"></div>
+				<div className="relative container mx-auto px-4 py-6">
+					<div className="flex items-center gap-3">
+						<div className="w-10 h-10 bg-white/20 rounded-lg flex items-center justify-center backdrop-blur-sm">
+							<span className="text-2xl">⚡</span>
+						</div>
+						<div>
+							<h1 className="text-3xl font-bold tracking-tight">Claudeflare</h1>
+							<p className="text-white/90 text-sm">
+								High-performance load balancer for Claude API
+							</p>
+						</div>
+					</div>
 				</div>
 			</header>
 
@@ -57,36 +67,122 @@ export function App() {
 				)}
 
 				{stats && (
-					<div className="grid gap-4 md:grid-cols-3 mb-6">
-						<Card>
-							<CardHeader className="pb-2">
-								<CardTitle className="text-base">Total Requests</CardTitle>
-							</CardHeader>
-							<CardContent>
-								<p className="text-2xl font-bold">{stats.totalRequests || 0}</p>
-							</CardContent>
-						</Card>
+					<>
+						<div className="grid gap-4 md:grid-cols-3 lg:grid-cols-6 mb-6">
+							<Card>
+								<CardHeader className="pb-2">
+									<CardTitle className="text-sm font-medium text-muted-foreground">
+										Total Requests
+									</CardTitle>
+								</CardHeader>
+								<CardContent>
+									<p className="text-2xl font-bold">
+										{stats.totalRequests || 0}
+									</p>
+								</CardContent>
+							</Card>
 
-						<Card>
-							<CardHeader className="pb-2">
-								<CardTitle className="text-base">Success Rate</CardTitle>
-							</CardHeader>
-							<CardContent>
-								<p className="text-2xl font-bold">{stats.successRate || 0}%</p>
-							</CardContent>
-						</Card>
+							<Card>
+								<CardHeader className="pb-2">
+									<CardTitle className="text-sm font-medium text-muted-foreground">
+										Success Rate
+									</CardTitle>
+								</CardHeader>
+								<CardContent>
+									<p className="text-2xl font-bold text-green-600 dark:text-green-400">
+										{stats.successRate || 0}%
+									</p>
+								</CardContent>
+							</Card>
 
-						<Card>
-							<CardHeader className="pb-2">
-								<CardTitle className="text-base">Active Accounts</CardTitle>
-							</CardHeader>
-							<CardContent>
-								<p className="text-2xl font-bold">
-									{stats.activeAccounts || 0}
-								</p>
-							</CardContent>
-						</Card>
-					</div>
+							<Card>
+								<CardHeader className="pb-2">
+									<CardTitle className="text-sm font-medium text-muted-foreground">
+										Active Accounts
+									</CardTitle>
+								</CardHeader>
+								<CardContent>
+									<p className="text-2xl font-bold">
+										{stats.activeAccounts || 0}
+									</p>
+								</CardContent>
+							</Card>
+
+							<Card>
+								<CardHeader className="pb-2">
+									<CardTitle className="text-sm font-medium text-muted-foreground">
+										Total Tokens
+									</CardTitle>
+								</CardHeader>
+								<CardContent>
+									<p className="text-2xl font-bold">
+										{(stats.totalTokens || 0).toLocaleString()}
+									</p>
+								</CardContent>
+							</Card>
+
+							<Card>
+								<CardHeader className="pb-2">
+									<CardTitle className="text-sm font-medium text-muted-foreground">
+										Total Cost
+									</CardTitle>
+								</CardHeader>
+								<CardContent>
+									<p className="text-2xl font-bold text-primary">
+										${(stats.totalCostUsd || 0).toFixed(2)}
+									</p>
+								</CardContent>
+							</Card>
+
+							<Card>
+								<CardHeader className="pb-2">
+									<CardTitle className="text-sm font-medium text-muted-foreground">
+										Avg Response
+									</CardTitle>
+								</CardHeader>
+								<CardContent>
+									<p className="text-2xl font-bold">
+										{stats.avgResponseTime || 0}ms
+									</p>
+								</CardContent>
+							</Card>
+						</div>
+
+						{stats.topModels && stats.topModels.length > 0 && (
+							<Card className="mb-6">
+								<CardHeader>
+									<CardTitle>Model Usage</CardTitle>
+								</CardHeader>
+								<CardContent>
+									<div className="space-y-2">
+										{stats.topModels.map((model) => (
+											<div
+												key={model.model}
+												className="flex items-center justify-between"
+											>
+												<span className="text-sm font-medium">
+													{model.model}
+												</span>
+												<div className="flex items-center gap-2">
+													<div className="w-32 bg-secondary rounded-full h-2">
+														<div
+															className="bg-primary h-2 rounded-full transition-all"
+															style={{
+																width: `${(model.count / stats.totalRequests) * 100}%`,
+															}}
+														/>
+													</div>
+													<span className="text-sm text-muted-foreground w-12 text-right">
+														{model.count}
+													</span>
+												</div>
+											</div>
+										))}
+									</div>
+								</CardContent>
+							</Card>
+						)}
+					</>
 				)}
 
 				<Tabs value={activeTab} onValueChange={setActiveTab}>

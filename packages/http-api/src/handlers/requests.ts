@@ -29,6 +29,11 @@ export function createRequestsSummaryHandler(db: Database) {
 			error_message: string | null;
 			response_time_ms: number | null;
 			failover_attempts: number;
+			model: string | null;
+			prompt_tokens: number | null;
+			completion_tokens: number | null;
+			total_tokens: number | null;
+			cost_usd: number | null;
 		}>;
 
 		const response: RequestResponse[] = requests.map((request) => ({
@@ -42,6 +47,11 @@ export function createRequestsSummaryHandler(db: Database) {
 			errorMessage: request.error_message,
 			responseTimeMs: request.response_time_ms,
 			failoverAttempts: request.failover_attempts,
+			model: request.model || undefined,
+			promptTokens: request.prompt_tokens || undefined,
+			completionTokens: request.completion_tokens || undefined,
+			totalTokens: request.total_tokens || undefined,
+			costUsd: request.cost_usd || undefined,
 		}));
 
 		return new Response(JSON.stringify(response), {

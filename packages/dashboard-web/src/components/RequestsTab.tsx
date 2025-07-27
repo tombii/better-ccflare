@@ -1,6 +1,7 @@
-import { ChevronDown, ChevronRight, RefreshCw, Copy } from "lucide-react";
+import { ChevronDown, ChevronRight, Copy, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
-import { api, type RequestPayload } from "../api";
+import { api, type RequestPayload, type RequestSummary } from "../api";
+import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import {
 	Card,
@@ -12,6 +13,9 @@ import {
 
 export function RequestsTab() {
 	const [requests, setRequests] = useState<RequestPayload[]>([]);
+	const [summaries, setSummaries] = useState<Map<string, RequestSummary>>(
+		new Map(),
+	);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
 	const [expandedRequests, setExpandedRequests] = useState<Set<string>>(
@@ -20,8 +24,19 @@ export function RequestsTab() {
 
 	const loadRequests = useCallback(async () => {
 		try {
-			const data = await api.getRequestsDetail(200);
-			setRequests(data);
+			const [detailData, summaryData] = await Promise.all([
+				api.getRequestsDetail(200),
+				api.getRequestsSummary(200),
+			]);
+			setRequests(detailData);
+
+			// Create a map of summaries by ID
+			const summaryMap = new Map<string, RequestSummary>();
+			summaryData.forEach((summary) => {
+				summaryMap.set(summary.id, summary);
+			});
+			setSummaries(summaryMap);
+
 			setError(null);
 		} catch (err) {
 			setError(err instanceof Error ? err.message : "Failed to load requests");
@@ -70,9 +85,9 @@ export function RequestsTab() {
 			},
 			response: req.response
 				? {
-					...req.response,
-					body: req.response.body ? decodeBase64(req.response.body) : null,
-				}
+						...req.response,
+						body: req.response.body ? decodeBase64(req.response.body) : null,
+					}
 				: null,
 			// flag so it's obvious this is a transformed payload
 			decoded: true,
@@ -142,6 +157,7 @@ export function RequestsTab() {
 							const isExpanded = expandedRequests.has(request.id);
 							const isError = request.error || !request.meta.success;
 							const statusCode = request.response?.status;
+							const summary = summaries.get(request.id);
 
 							return (
 								<div
@@ -155,7 +171,7 @@ export function RequestsTab() {
 										className="flex items-center justify-between cursor-pointer w-full text-left"
 										onClick={() => toggleExpanded(request.id)}
 									>
-										<div className="flex items-center gap-2">
+										<div className="flex items-center gap-2 flex-wrap">
 											{isExpanded ? (
 												<ChevronDown className="h-4 w-4" />
 											) : (
@@ -177,15 +193,30 @@ export function RequestsTab() {
 													{statusCode}
 												</span>
 											)}
+											{summary?.model && (
+												<Badge variant="secondary" className="text-xs">
+													{summary.model}
+												</Badge>
+											)}
+											{summary?.totalTokens && (
+												<Badge variant="outline" className="text-xs">
+													{summary.totalTokens.toLocaleString()} tokens
+												</Badge>
+											)}
+											{summary?.costUsd && summary.costUsd > 0 && (
+												<Badge variant="default" className="text-xs">
+													${summary.costUsd.toFixed(4)}
+												</Badge>
+											)}
 											{request.meta.accountId && (
 												<span className="text-sm text-muted-foreground">
 													via {request.meta.accountId.slice(0, 8)}...
 												</span>
 											)}
 											{request.meta.rateLimited && (
-												<span className="text-sm text-orange-600">
+												<Badge variant="warning" className="text-xs">
 													Rate Limited
-												</span>
+												</Badge>
 											)}
 											{request.error && (
 												<span className="text-sm text-destructive">
@@ -193,12 +224,15 @@ export function RequestsTab() {
 												</span>
 											)}
 										</div>
-										<div className="text-sm text-muted-foreground">
+										<div className="text-sm text-muted-foreground flex items-center gap-2">
+											{summary?.responseTimeMs && (
+												<span>{summary.responseTimeMs}ms</span>
+											)}
 											{request.meta.retry !== undefined &&
 												request.meta.retry > 0 && (
-													<span>Retry {request.meta.retry} • </span>
+													<span>Retry {request.meta.retry}</span>
 												)}
-											ID: {request.id.slice(0, 8)}...
+											<span>ID: {request.id.slice(0, 8)}...</span>
 										</div>
 									</button>
 

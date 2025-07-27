@@ -111,6 +111,7 @@ export async function handleProxy(
 			"No active accounts available",
 			0,
 			0,
+			undefined,
 		);
 		return new Response(
 			JSON.stringify({ error: "No active accounts available" }),
@@ -203,6 +204,21 @@ export async function handleProxy(
 					break;
 				}
 
+				// Extract usage info if provider supports it
+				let usage:
+					| {
+							model?: string;
+							promptTokens?: number;
+							completionTokens?: number;
+							totalTokens?: number;
+							costUsd?: number;
+					  }
+					| null
+					| undefined;
+				if (ctx.provider.extractUsageInfo && response.ok) {
+					usage = await ctx.provider.extractUsageInfo(responseClone);
+				}
+
 				// Log successful request
 				const responseTime = Date.now() - requestMeta.timestamp;
 				ctx.dbOps.saveRequest(
@@ -215,6 +231,7 @@ export async function handleProxy(
 					null,
 					responseTime,
 					accounts.indexOf(account),
+					usage || undefined,
 				);
 
 				// Save successful response payload before processing
@@ -302,6 +319,7 @@ export async function handleProxy(
 		"All accounts failed",
 		responseTime,
 		accounts.length,
+		undefined,
 	);
 
 	// Save final failure payload

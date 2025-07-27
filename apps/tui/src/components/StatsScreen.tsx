@@ -63,6 +63,11 @@ export function StatsScreen({ onBack }: StatsScreenProps) {
 							<Text>Total Requests: {stats.totalRequests || 0}</Text>
 							<Text>Success Rate: {stats.successRate || 0}%</Text>
 							<Text>Active Accounts: {stats.activeAccounts || 0}</Text>
+							<Text>Avg Response Time: {stats.avgResponseTime || 0}ms</Text>
+							<Text>
+								Total Tokens: {(stats.totalTokens || 0).toLocaleString()}
+							</Text>
+							<Text>Total Cost: ${(stats.totalCostUsd || 0).toFixed(2)}</Text>
 						</Box>
 					</Box>
 

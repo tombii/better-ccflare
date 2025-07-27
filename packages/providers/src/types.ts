@@ -47,6 +47,17 @@ export interface Provider {
 	 * Extract tier information from response if available
 	 */
 	extractTierInfo?(response: Response): Promise<number | null>;
+
+	/**
+	 * Extract usage information from response if available
+	 */
+	extractUsageInfo?(response: Response): Promise<{
+		model?: string;
+		promptTokens?: number;
+		completionTokens?: number;
+		totalTokens?: number;
+		costUsd?: number;
+	} | null>;
 }
 
 // OAuth-specific types

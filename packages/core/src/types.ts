@@ -30,6 +30,11 @@ export type RequestRow = {
 	error_message: string | null;
 	response_time_ms: number | null;
 	failover_attempts: number;
+	model: string | null;
+	prompt_tokens: number | null;
+	completion_tokens: number | null;
+	total_tokens: number | null;
+	cost_usd: number | null;
 };
 
 // Application-level types
@@ -56,6 +61,24 @@ export interface RequestMeta {
 	method: string;
 	path: string;
 	timestamp: number;
+}
+
+export interface Request {
+	id: string;
+	timestamp: number;
+	method: string;
+	path: string;
+	accountUsed: string | null;
+	statusCode: number | null;
+	success: boolean;
+	errorMessage: string | null;
+	responseTimeMs: number | null;
+	failoverAttempts: number;
+	model?: string;
+	promptTokens?: number;
+	completionTokens?: number;
+	totalTokens?: number;
+	costUsd?: number;
 }
 
 export interface LoadBalancingStrategy {
@@ -94,7 +117,7 @@ export function toAccount(row: AccountRow): Account {
 	};
 }
 
-export function toRequest(row: RequestRow) {
+export function toRequest(row: RequestRow): Request {
 	return {
 		id: row.id,
 		timestamp: row.timestamp,
@@ -106,6 +129,11 @@ export function toRequest(row: RequestRow) {
 		errorMessage: row.error_message,
 		responseTimeMs: row.response_time_ms,
 		failoverAttempts: row.failover_attempts,
+		model: row.model || undefined,
+		promptTokens: row.prompt_tokens || undefined,
+		completionTokens: row.completion_tokens || undefined,
+		totalTokens: row.total_tokens || undefined,
+		costUsd: row.cost_usd || undefined,
 	};
 }
 

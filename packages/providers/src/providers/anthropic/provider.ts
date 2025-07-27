@@ -114,6 +114,51 @@ export class AnthropicProvider extends BaseProvider {
 		return null;
 	}
 
+	async extractUsageInfo(response: Response): Promise<{
+		model?: string;
+		promptTokens?: number;
+		completionTokens?: number;
+		totalTokens?: number;
+		costUsd?: number;
+	} | null> {
+		try {
+			const clone = response.clone();
+			const json = (await clone.json()) as {
+				model?: string;
+				usage?: {
+					input_tokens?: number;
+					output_tokens?: number;
+					cache_creation_input_tokens?: number;
+					cache_read_input_tokens?: number;
+				};
+			};
+
+			if (!json.usage) return null;
+
+			const promptTokens =
+				(json.usage.input_tokens || 0) +
+				(json.usage.cache_creation_input_tokens || 0) +
+				(json.usage.cache_read_input_tokens || 0);
+			const completionTokens = json.usage.output_tokens || 0;
+			const totalTokens = promptTokens + completionTokens;
+
+			// Extract cost from header if available
+			const costHeader = response.headers.get("anthropic-billing-cost");
+			const costUsd = costHeader ? parseFloat(costHeader) : undefined;
+
+			return {
+				model: json.model,
+				promptTokens,
+				completionTokens,
+				totalTokens,
+				costUsd,
+			};
+		} catch {
+			// Ignore parsing errors
+			return null;
+		}
+	}
+
 	/**
 	 * Check if this provider supports OAuth
 	 */

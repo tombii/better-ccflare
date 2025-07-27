@@ -66,10 +66,10 @@ export function runMigrations(db: Database): void {
 		pk: number;
 	}>;
 
-	const columnNames = accountsInfo.map((col) => col.name);
+	const accountsColumnNames = accountsInfo.map((col) => col.name);
 
 	// Add rate_limited_until column if it doesn't exist
-	if (!columnNames.includes("rate_limited_until")) {
+	if (!accountsColumnNames.includes("rate_limited_until")) {
 		db.prepare(
 			"ALTER TABLE accounts ADD COLUMN rate_limited_until INTEGER",
 		).run();
@@ -77,13 +77,13 @@ export function runMigrations(db: Database): void {
 	}
 
 	// Add session_start column if it doesn't exist
-	if (!columnNames.includes("session_start")) {
+	if (!accountsColumnNames.includes("session_start")) {
 		db.prepare("ALTER TABLE accounts ADD COLUMN session_start INTEGER").run();
 		console.log("Added session_start column to accounts table");
 	}
 
 	// Add session_request_count column if it doesn't exist
-	if (!columnNames.includes("session_request_count")) {
+	if (!accountsColumnNames.includes("session_request_count")) {
 		db.prepare(
 			"ALTER TABLE accounts ADD COLUMN session_request_count INTEGER DEFAULT 0",
 		).run();
@@ -91,10 +91,61 @@ export function runMigrations(db: Database): void {
 	}
 
 	// Add account_tier column if it doesn't exist
-	if (!columnNames.includes("account_tier")) {
+	if (!accountsColumnNames.includes("account_tier")) {
 		db.prepare(
 			"ALTER TABLE accounts ADD COLUMN account_tier INTEGER DEFAULT 1",
 		).run();
 		console.log("Added account_tier column to accounts table");
+	}
+
+	// Check columns in requests table
+	const requestsInfo = db
+		.prepare("PRAGMA table_info(requests)")
+		.all() as Array<{
+		cid: number;
+		name: string;
+		type: string;
+		notnull: number;
+		// biome-ignore lint/suspicious/noExplicitAny: SQLite pragma can return various default value types
+		dflt_value: any;
+		pk: number;
+	}>;
+
+	const requestsColumnNames = requestsInfo.map((col) => col.name);
+
+	// Add model column if it doesn't exist
+	if (!requestsColumnNames.includes("model")) {
+		db.prepare("ALTER TABLE requests ADD COLUMN model TEXT").run();
+		console.log("Added model column to requests table");
+	}
+
+	// Add prompt_tokens column if it doesn't exist
+	if (!requestsColumnNames.includes("prompt_tokens")) {
+		db.prepare(
+			"ALTER TABLE requests ADD COLUMN prompt_tokens INTEGER DEFAULT 0",
+		).run();
+		console.log("Added prompt_tokens column to requests table");
+	}
+
+	// Add completion_tokens column if it doesn't exist
+	if (!requestsColumnNames.includes("completion_tokens")) {
+		db.prepare(
+			"ALTER TABLE requests ADD COLUMN completion_tokens INTEGER DEFAULT 0",
+		).run();
+		console.log("Added completion_tokens column to requests table");
+	}
+
+	// Add total_tokens column if it doesn't exist
+	if (!requestsColumnNames.includes("total_tokens")) {
+		db.prepare(
+			"ALTER TABLE requests ADD COLUMN total_tokens INTEGER DEFAULT 0",
+		).run();
+		console.log("Added total_tokens column to requests table");
+	}
+
+	// Add cost_usd column if it doesn't exist
+	if (!requestsColumnNames.includes("cost_usd")) {
+		db.prepare("ALTER TABLE requests ADD COLUMN cost_usd REAL DEFAULT 0").run();
+		console.log("Added cost_usd column to requests table");
 	}
 }
