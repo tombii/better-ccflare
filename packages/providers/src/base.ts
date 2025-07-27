@@ -41,10 +41,28 @@ export abstract class BaseProvider implements Provider {
 	}
 
 	/**
-	 * Check if response indicates rate limiting
-	 * Default implementation: Check for 429 status
+	 * Parse rate limit information from response
+	 * Default implementation: Check unified headers first, then fall back to 429 status
 	 */
-	checkRateLimit(response: Response): RateLimitInfo {
+	parseRateLimit(response: Response): RateLimitInfo {
+		// Check for unified rate limit headers (used by Anthropic and others)
+		const statusHeader = response.headers.get(
+			"anthropic-ratelimit-unified-status",
+		);
+		const resetHeader = response.headers.get(
+			"anthropic-ratelimit-unified-reset",
+		);
+
+		if (statusHeader || resetHeader) {
+			const resetTime = resetHeader ? Number(resetHeader) * 1000 : undefined; // Convert to ms
+			return {
+				isRateLimited: statusHeader !== "allowed",
+				resetTime,
+				statusHeader: statusHeader || undefined,
+			};
+		}
+
+		// Fall back to traditional 429 check
 		if (response.status !== 429) {
 			return { isRateLimited: false };
 		}

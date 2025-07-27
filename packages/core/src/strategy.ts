@@ -1,22 +1,23 @@
 import type { Account } from "./types";
 
-// Central strategy list
-export const STRATEGIES = [
-	"least-requests",
-	"round-robin",
-	"session",
-	"weighted",
-	"weighted-round-robin",
-] as const;
+// Strategy enum for better type safety
+export enum StrategyName {
+	LeastRequests = "least-requests",
+	RoundRobin = "round-robin",
+	Session = "session",
+	Weighted = "weighted",
+	WeightedRoundRobin = "weighted-round-robin",
+}
 
-export type StrategyName = (typeof STRATEGIES)[number];
+// Array of all strategies for backwards compatibility
+export const STRATEGIES = Object.values(StrategyName);
 
 export function isValidStrategy(strategy: string): strategy is StrategyName {
-	return STRATEGIES.includes(strategy as StrategyName);
+	return Object.values(StrategyName).includes(strategy as StrategyName);
 }
 
 // Default load balancing strategy
-export const DEFAULT_STRATEGY: StrategyName = "session";
+export const DEFAULT_STRATEGY = StrategyName.Session;
 
 // Helper to check if an account is available (not rate-limited or paused)
 export function isAccountAvailable(

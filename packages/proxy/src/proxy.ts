@@ -133,6 +133,10 @@ export async function handleProxy(
 			const responseTime = Date.now() - start;
 			const responseClone = response.clone();
 
+			// Parse rate limit information even for unauthenticated requests
+			const _rateLimitInfo = ctx.provider.parseRateLimit(response);
+			// Note: We can't update account metadata since there's no account
+
 			// Extract usage info if provider supports it
 			let usage:
 				| {
@@ -272,8 +276,20 @@ export async function handleProxy(
 				// Clone response for body reading
 				const responseClone = response.clone();
 
-				// Check for rate limiting
-				const rateLimitInfo = ctx.provider.checkRateLimit(response);
+				// Parse rate limit information from all responses
+				const rateLimitInfo = ctx.provider.parseRateLimit(response);
+
+				// Update rate limit metadata if available
+				if (rateLimitInfo.statusHeader || rateLimitInfo.resetTime) {
+					ctx.dbOps.updateAccountRateLimitMeta(
+						account.id,
+						rateLimitInfo.statusHeader || "",
+						rateLimitInfo.resetTime || null,
+						rateLimitInfo.remaining,
+					);
+				}
+
+				// Handle hard rate limiting (status != allowed or 429)
 				if (rateLimitInfo.isRateLimited && rateLimitInfo.resetTime) {
 					ctx.dbOps.markAccountRateLimited(account.id, rateLimitInfo.resetTime);
 					lastError = `Rate limited until ${new Date(rateLimitInfo.resetTime).toISOString()}`;

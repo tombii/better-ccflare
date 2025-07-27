@@ -57,7 +57,10 @@ export class DatabaseOperations implements StrategyStore {
         session_start,
         session_request_count,
         COALESCE(account_tier, 1) as account_tier,
-        COALESCE(paused, 0) as paused
+        COALESCE(paused, 0) as paused,
+        rate_limit_reset,
+        rate_limit_status,
+        rate_limit_remaining
       FROM accounts
     `)
 			.all();
@@ -107,6 +110,18 @@ export class DatabaseOperations implements StrategyStore {
 			until,
 			accountId,
 		]);
+	}
+
+	updateAccountRateLimitMeta(
+		accountId: string,
+		status: string,
+		reset: number | null,
+		remaining?: number | null,
+	): void {
+		this.db.run(
+			`UPDATE accounts SET rate_limit_status = ?, rate_limit_reset = ?, rate_limit_remaining = ? WHERE id = ?`,
+			[status, reset, remaining ?? null, accountId],
+		);
 	}
 
 	updateAccountTier(accountId: string, tier: number): void {
@@ -199,7 +214,10 @@ export class DatabaseOperations implements StrategyStore {
 					session_start,
 					session_request_count,
 					COALESCE(account_tier, 1) as account_tier,
-					COALESCE(paused, 0) as paused
+					COALESCE(paused, 0) as paused,
+					rate_limit_reset,
+					rate_limit_status,
+					rate_limit_remaining
 				FROM accounts
 				WHERE id = ?
 			`)

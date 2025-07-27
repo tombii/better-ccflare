@@ -8,6 +8,8 @@ export interface TokenRefreshResult {
 export interface RateLimitInfo {
 	isRateLimited: boolean;
 	resetTime?: number;
+	statusHeader?: string;
+	remaining?: number;
 }
 
 export interface Provider {
@@ -34,9 +36,9 @@ export interface Provider {
 	prepareHeaders(headers: Headers, accessToken?: string): Headers;
 
 	/**
-	 * Check if response indicates rate limiting
+	 * Parse rate limit information from response
 	 */
-	checkRateLimit(response: Response): RateLimitInfo;
+	parseRateLimit(response: Response): RateLimitInfo;
 
 	/**
 	 * Process the response before returning to client

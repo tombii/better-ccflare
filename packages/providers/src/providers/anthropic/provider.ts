@@ -58,7 +58,31 @@ export class AnthropicProvider extends BaseProvider {
 		return newHeaders;
 	}
 
-	checkRateLimit(response: Response): RateLimitInfo {
+	parseRateLimit(response: Response): RateLimitInfo {
+		// Check for unified rate limit headers
+		const statusHeader = response.headers.get(
+			"anthropic-ratelimit-unified-status",
+		);
+		const resetHeader = response.headers.get(
+			"anthropic-ratelimit-unified-reset",
+		);
+		const remainingHeader = response.headers.get(
+			"anthropic-ratelimit-unified-remaining",
+		);
+
+		if (statusHeader || resetHeader) {
+			const resetTime = resetHeader ? Number(resetHeader) * 1000 : undefined; // Convert to ms
+			const remaining = remainingHeader ? Number(remainingHeader) : undefined;
+
+			return {
+				isRateLimited: statusHeader !== "allowed",
+				resetTime,
+				statusHeader: statusHeader || undefined,
+				remaining,
+			};
+		}
+
+		// Fall back to 429 status with x-ratelimit-reset header
 		if (response.status !== 429) {
 			return { isRateLimited: false };
 		}

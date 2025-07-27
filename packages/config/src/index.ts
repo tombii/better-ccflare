@@ -182,3 +182,5 @@ export class Config extends EventEmitter {
 
 // Re-export types
 export type { StrategyName } from "@claudeflare/core";
+export { resolveConfigPath } from "./paths";
+export { getPlatformConfigDir } from "./paths-common";
