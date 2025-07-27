@@ -49,7 +49,7 @@ const COLORS = {
 type TimeRange = "1h" | "6h" | "24h" | "7d" | "30d";
 
 export function AnalyticsTab() {
-	const [timeRange, setTimeRange] = useState<TimeRange>("24h");
+	const [timeRange, setTimeRange] = useState<TimeRange>("1h");
 	const [selectedMetric, setSelectedMetric] = useState("requests");
 	const [analytics, setAnalytics] = useState<AnalyticsResponse | null>(null);
 	const [loading, setLoading] = useState(true);
@@ -442,7 +442,7 @@ export function AnalyticsTab() {
 					</CardHeader>
 					<CardContent>
 						<ResponsiveContainer width="100%" height={300}>
-							<BarChart data={costByModel} layout="horizontal">
+							<BarChart data={costByModel} layout="vertical">
 								<CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
 								<XAxis type="number" className="text-xs" />
 								<YAxis
