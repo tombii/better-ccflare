@@ -1,6 +1,6 @@
 {
 	"private": true,
-	"name": "claudeflare-",
+	"name": "claudeflare",
 	"workspaces": [
 		"apps/*",
 		"packages/*"
