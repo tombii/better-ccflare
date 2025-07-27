@@ -3,7 +3,7 @@ import * as cliCommands from "@claudeflare/cli-commands";
 import { Config } from "@claudeflare/config";
 import type { DatabaseOperations } from "@claudeflare/database";
 import { generatePKCE, getOAuthProvider } from "@claudeflare/providers";
-import type { AccountResponse, AccountDeleteRequest } from "../types";
+import type { AccountDeleteRequest, AccountResponse } from "../types";
 
 /**
  * Create an accounts list handler
@@ -361,20 +361,20 @@ export function createAccountAddHandler(dbOps: DatabaseOperations) {
 export function createAccountRemoveHandler(dbOps: DatabaseOperations) {
 	return async (req: Request, accountName: string): Promise<Response> => {
 		const JSON_HEADERS = { "Content-Type": "application/json" };
-		
+
 		try {
 			// Parse and validate confirmation
-			const body = await req.json() as AccountDeleteRequest;
+			const body = (await req.json()) as AccountDeleteRequest;
 			if (!body.confirm || body.confirm !== accountName) {
 				return new Response(
 					JSON.stringify({
 						error: "Confirmation string does not match account name",
-						confirmationRequired: true
+						confirmationRequired: true,
 					}),
-					{ 
-						status: 400, 
-						headers: JSON_HEADERS 
-					}
+					{
+						status: 400,
+						headers: JSON_HEADERS,
+					},
 				);
 			}
 

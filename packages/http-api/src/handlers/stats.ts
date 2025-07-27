@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { NO_ACCOUNT_ID } from "@claudeflare/core";
 import type { DatabaseOperations } from "@claudeflare/database";
 
 /**
@@ -30,22 +31,32 @@ export function createStatsHandler(db: Database) {
 				? Math.round((stats.successfulRequests / stats.totalRequests) * 100)
 				: 0;
 
-		// Get per-account stats
+		// Get per-account stats (including unauthenticated requests)
 		const accountStats = db
 			.query(
 				`
-				SELECT 
-					id,
-					name,
-					request_count as requestCount,
-					total_requests as totalRequests
-				FROM accounts
-				WHERE request_count > 0
-				ORDER BY request_count DESC
+				WITH account_requests AS (
+					SELECT 
+						COALESCE(a.id, ?) as id,
+						COALESCE(a.name, ?) as name,
+						COUNT(r.id) as requestCount,
+						COUNT(r.id) as totalRequests
+					FROM requests r
+					LEFT JOIN accounts a ON a.id = r.account_used
+					GROUP BY COALESCE(a.id, ?), COALESCE(a.name, ?)
+					HAVING requestCount > 0
+				)
+				SELECT * FROM account_requests
+				ORDER BY requestCount DESC
 				LIMIT 10
 			`,
 			)
-			.all() as Array<{
+			.all(
+				NO_ACCOUNT_ID,
+				NO_ACCOUNT_ID,
+				NO_ACCOUNT_ID,
+				NO_ACCOUNT_ID,
+			) as Array<{
 			id: string;
 			name: string;
 			requestCount: number;

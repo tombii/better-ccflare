@@ -140,7 +140,10 @@ class API {
 			body: JSON.stringify({ confirm }),
 		});
 		if (!res.ok) {
-			const error = (await res.json()) as { error?: string; confirmationRequired?: boolean };
+			const error = (await res.json()) as {
+				error?: string;
+				confirmationRequired?: boolean;
+			};
 			throw new Error(error.error || "Failed to remove account");
 		}
 	}

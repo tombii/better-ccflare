@@ -103,7 +103,11 @@ export async function runCli(argv: string[]): Promise<void> {
 					process.exit(1);
 				}
 
-				const result = await removeAccountWithConfirmation(dbOps, name, values.force);
+				const result = await removeAccountWithConfirmation(
+					dbOps,
+					name,
+					values.force === true,
+				);
 				console.log(result.message);
 				if (!result.success) {
 					process.exit(1);

@@ -38,7 +38,11 @@ export function AccountsTab() {
 		mode: "max" as "max" | "console",
 		tier: 1,
 	});
-	const [confirmDelete, setConfirmDelete] = useState<{ show: boolean; accountName: string; confirmInput: string }>({
+	const [confirmDelete, setConfirmDelete] = useState<{
+		show: boolean;
+		accountName: string;
+		confirmInput: string;
+	}>({
 		show: false,
 		accountName: "",
 		confirmInput: "",
@@ -118,12 +122,17 @@ export function AccountsTab() {
 
 	const handleConfirmDelete = async () => {
 		if (confirmDelete.confirmInput !== confirmDelete.accountName) {
-			setError("Account name does not match. Please type the exact account name.");
+			setError(
+				"Account name does not match. Please type the exact account name.",
+			);
 			return;
 		}
 
 		try {
-			await api.removeAccount(confirmDelete.accountName, confirmDelete.confirmInput);
+			await api.removeAccount(
+				confirmDelete.accountName,
+				confirmDelete.confirmInput,
+			);
 			await loadAccounts();
 			setConfirmDelete({ show: false, accountName: "", confirmInput: "" });
 			setError(null);
@@ -370,9 +379,7 @@ export function AccountsTab() {
 					<Card className="w-full max-w-md">
 						<CardHeader>
 							<CardTitle>Confirm Account Removal</CardTitle>
-							<CardDescription>
-								This action cannot be undone.
-							</CardDescription>
+							<CardDescription>This action cannot be undone.</CardDescription>
 						</CardHeader>
 						<CardContent className="space-y-4">
 							<div className="p-4 bg-destructive/10 border border-destructive/20 rounded-lg">
@@ -381,13 +388,18 @@ export function AccountsTab() {
 									<p className="font-medium">Warning</p>
 								</div>
 								<p className="text-sm mt-2">
-									You are about to permanently remove the account '{confirmDelete.accountName}'.
-									This will delete all associated data and cannot be recovered.
+									You are about to permanently remove the account '
+									{confirmDelete.accountName}'. This will delete all associated
+									data and cannot be recovered.
 								</p>
 							</div>
 							<div className="space-y-2">
 								<Label htmlFor="confirm-input">
-									Type <span className="font-mono font-semibold">{confirmDelete.accountName}</span> to confirm:
+									Type{" "}
+									<span className="font-mono font-semibold">
+										{confirmDelete.accountName}
+									</span>{" "}
+									to confirm:
 								</Label>
 								<Input
 									id="confirm-input"
@@ -406,14 +418,20 @@ export function AccountsTab() {
 								<Button
 									variant="destructive"
 									onClick={handleConfirmDelete}
-									disabled={confirmDelete.confirmInput !== confirmDelete.accountName}
+									disabled={
+										confirmDelete.confirmInput !== confirmDelete.accountName
+									}
 								>
 									Delete Account
 								</Button>
 								<Button
 									variant="outline"
 									onClick={() => {
-										setConfirmDelete({ show: false, accountName: "", confirmInput: "" });
+										setConfirmDelete({
+											show: false,
+											accountName: "",
+											confirmInput: "",
+										});
 										setError(null);
 									}}
 								>
