@@ -4,6 +4,7 @@ import {
 	createAccountsListHandler,
 	createAccountTierUpdateHandler,
 } from "./handlers/accounts";
+import { createAnalyticsHandler } from "./handlers/analytics";
 import { createConfigHandlers } from "./handlers/config";
 import { createHealthHandler } from "./handlers/health";
 import { createLogsStreamHandler } from "./handlers/logs";
@@ -47,6 +48,7 @@ export class APIRouter {
 		const configHandlers = createConfigHandlers(config);
 		const logsStreamHandler = createLogsStreamHandler();
 		const logsHistoryHandler = createLogsHistoryHandler();
+		const analyticsHandler = createAnalyticsHandler(this.context);
 
 		// Register routes
 		this.handlers.set("GET:/health", () => healthHandler());
@@ -74,6 +76,9 @@ export class APIRouter {
 		);
 		this.handlers.set("GET:/api/logs/stream", () => logsStreamHandler());
 		this.handlers.set("GET:/api/logs/history", () => logsHistoryHandler());
+		this.handlers.set("GET:/api/analytics", (_req, url) => {
+			return analyticsHandler(url.searchParams.get("range") ?? "24h");
+		});
 	}
 
 	/**

@@ -133,9 +133,7 @@ const server = serve({
 	},
 });
 
-console.log(
-	`🚀 Claudeflare server running on http://localhost:${server.port}`,
-);
+console.log(`🚀 Claudeflare server running on http://localhost:${server.port}`);
 console.log(`📊 Dashboard: http://localhost:${server.port}/dashboard`);
 console.log(`🔍 Health check: http://localhost:${server.port}/health`);
 console.log(

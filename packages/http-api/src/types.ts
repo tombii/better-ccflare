@@ -70,3 +70,41 @@ export interface StrategyUpdateRequest {
 export interface TierUpdateRequest {
 	tier: number;
 }
+
+export interface TimePoint {
+	ts: number; // period start (ms)
+	requests: number;
+	tokens: number;
+	costUsd: number;
+	successRate: number; // 0-100
+	errorRate: number; // 0-100
+	cacheHitRate: number; // 0-100
+	avgResponseTime: number; // ms
+}
+
+export interface TokenBreakdown {
+	inputTokens: number;
+	cacheReadInputTokens: number;
+	cacheCreationInputTokens: number;
+	outputTokens: number;
+}
+
+export interface AnalyticsResponse {
+	totals: {
+		requests: number;
+		successRate: number;
+		activeAccounts: number;
+		avgResponseTime: number;
+		totalTokens: number;
+		totalCostUsd: number;
+	};
+	timeSeries: TimePoint[];
+	tokenBreakdown: TokenBreakdown;
+	modelDistribution: Array<{ model: string; count: number }>;
+	accountPerformance: Array<{
+		name: string;
+		requests: number;
+		successRate: number;
+	}>;
+	costByEndpoint: Array<{ path: string; costUsd: number; requests: number }>;
+}

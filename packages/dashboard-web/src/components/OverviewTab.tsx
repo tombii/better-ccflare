@@ -1,3 +1,4 @@
+import type { AnalyticsResponse } from "@claudeflare/http-api";
 import { format } from "date-fns";
 import {
 	Activity,
@@ -107,6 +108,7 @@ function MetricCard({
 
 export function OverviewTab() {
 	const [stats, setStats] = useState<Stats | null>(null);
+	const [analytics, setAnalytics] = useState<AnalyticsResponse | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [timeSeriesData, setTimeSeriesData] = useState<
 		Array<{
@@ -121,26 +123,27 @@ export function OverviewTab() {
 	useEffect(() => {
 		const loadData = async () => {
 			try {
-				const data = await api.getStats();
-				setStats(data);
+				// Fetch both stats and analytics data
+				const [statsData, analyticsData] = await Promise.all([
+					api.getStats(),
+					api.getAnalytics("24h"),
+				]);
+				setStats(statsData);
+				setAnalytics(analyticsData);
 
-				// Generate mock time series data (in a real app, this would come from the API)
-				const now = new Date();
-				const mockTimeSeries = Array.from({ length: 24 }, (_, i) => {
-					const time = new Date(now.getTime() - (23 - i) * 60 * 60 * 1000);
-					return {
-						time: format(time, "HH:mm"),
-						requests: Math.floor(Math.random() * 1000) + 500,
-						successRate: Math.floor(Math.random() * 10) + 90,
-						responseTime: Math.floor(Math.random() * 100) + 50,
-						cost: (Math.random() * 5).toFixed(2),
-					};
-				});
-				setTimeSeriesData(mockTimeSeries);
+				// Transform analytics time series data
+				const transformedTimeSeries = analyticsData.timeSeries.map((point) => ({
+					time: format(new Date(point.ts), "HH:mm"),
+					requests: point.requests,
+					successRate: point.successRate,
+					responseTime: Math.round(point.avgResponseTime),
+					cost: point.costUsd.toFixed(2),
+				}));
+				setTimeSeriesData(transformedTimeSeries);
 
 				setLoading(false);
 			} catch (error) {
-				console.error("Failed to load stats:", error);
+				console.error("Failed to load data:", error);
 				setLoading(false);
 			}
 		};
@@ -177,20 +180,15 @@ export function OverviewTab() {
 		);
 	}
 
-	// Calculate model distribution for pie chart
+	// Use analytics data for model distribution
 	const modelData =
-		stats?.topModels?.map((model) => ({
+		analytics?.modelDistribution?.map((model) => ({
 			name: model.model || "Unknown",
 			value: model.count,
 		})) || [];
 
-	// Calculate account health data
-	const accountHealthData =
-		stats?.accounts?.map((acc) => ({
-			name: acc.name,
-			requests: acc.requestCount,
-			successRate: acc.successRate,
-		})) || [];
+	// Use analytics data for account health
+	const accountHealthData = analytics?.accountPerformance || [];
 
 	return (
 		<div className="space-y-6">
@@ -198,28 +196,28 @@ export function OverviewTab() {
 			<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
 				<MetricCard
 					title="Total Requests"
-					value={stats?.totalRequests?.toLocaleString() || "0"}
+					value={analytics?.totals.requests?.toLocaleString() || "0"}
 					change={12}
 					trend="up"
 					icon={Activity}
 				/>
 				<MetricCard
 					title="Success Rate"
-					value={`${stats?.successRate || 0}%`}
+					value={`${Math.round(analytics?.totals.successRate || 0)}%`}
 					change={2}
 					trend="up"
 					icon={CheckCircle}
 				/>
 				<MetricCard
 					title="Avg Response Time"
-					value={`${stats?.avgResponseTime || 0}ms`}
+					value={`${Math.round(analytics?.totals.avgResponseTime || 0)}ms`}
 					change={-5}
 					trend="up"
 					icon={Clock}
 				/>
 				<MetricCard
 					title="Total Cost"
-					value={`$${stats?.totalCostUsd?.toFixed(2) || "0.00"}`}
+					value={`$${analytics?.totals.totalCostUsd?.toFixed(2) || "0.00"}`}
 					change={8}
 					trend="down"
 					icon={DollarSign}
