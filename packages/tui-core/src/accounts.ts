@@ -2,7 +2,7 @@ import type { AccountListItem } from "@claudeflare/cli-commands";
 import * as cliCommands from "@claudeflare/cli-commands";
 import { openBrowser } from "@claudeflare/cli-commands";
 import { Config } from "@claudeflare/config";
-import { DatabaseOperations } from "@claudeflare/database";
+import { DatabaseFactory } from "@claudeflare/database";
 import {
 	generatePKCE,
 	getOAuthProvider,
@@ -29,9 +29,9 @@ export async function beginAddAccount(
 	options: AddAccountOptions,
 ): Promise<OAuthFlowResult> {
 	const { name, mode = "max" } = options;
-	const dbOps = new DatabaseOperations();
 	const config = new Config();
 	const runtime = config.getRuntime();
+	const dbOps = DatabaseFactory.getInstance();
 
 	// Check if account exists
 	const existingAccounts = dbOps.getAllAccounts();
@@ -60,8 +60,6 @@ export async function beginAddAccount(
 		console.log(`Please open the following URL in your browser:\n${authUrl}`);
 	}
 
-	dbOps.close();
-
 	return { authUrl, pkce, oauthConfig };
 }
 
@@ -72,7 +70,7 @@ export async function completeAddAccount(
 	options: AddAccountOptions & { code: string; flowData: OAuthFlowResult },
 ): Promise<void> {
 	const { name, mode = "max", tier = 1, code, flowData } = options;
-	const dbOps = new DatabaseOperations();
+	const dbOps = DatabaseFactory.getInstance();
 
 	// Get provider
 	const oauthProvider = getOAuthProvider("anthropic");
@@ -113,25 +111,23 @@ export async function completeAddAccount(
 	console.log(`\nAccount '${name}' added successfully!`);
 	console.log(`Type: ${mode === "max" ? "Claude Max" : "Claude Console"}`);
 	console.log(`Tier: ${tier}x`);
-
-	dbOps.close();
 }
 
 /**
  * Legacy function for non-TUI usage
  */
 export async function addAccount(options: AddAccountOptions): Promise<void> {
-	const dbOps = new DatabaseOperations();
+	const dbOps = DatabaseFactory.getInstance();
 	const config = new Config();
 	await cliCommands.addAccount(dbOps, config, options);
 }
 
 export async function getAccounts(): Promise<AccountListItem[]> {
-	const dbOps = new DatabaseOperations();
+	const dbOps = DatabaseFactory.getInstance();
 	return await cliCommands.getAccountsList(dbOps);
 }
 
 export async function removeAccount(name: string): Promise<void> {
-	const dbOps = new DatabaseOperations();
+	const dbOps = DatabaseFactory.getInstance();
 	await cliCommands.removeAccount(dbOps, name);
 }

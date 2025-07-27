@@ -1,10 +1,9 @@
 import { Config } from "@claudeflare/config";
 import type { LoadBalancingStrategy } from "@claudeflare/core";
 import { DEFAULT_STRATEGY } from "@claudeflare/core";
-import { StrategyName } from "@claudeflare/types";
 // Import React dashboard assets
 import dashboardManifest from "@claudeflare/dashboard-web/dist/manifest.json";
-import { DatabaseOperations } from "@claudeflare/database";
+import { DatabaseFactory } from "@claudeflare/database";
 import { APIRouter } from "@claudeflare/http-api";
 import {
 	LeastRequestsStrategy,
@@ -16,14 +15,15 @@ import {
 import { Logger } from "@claudeflare/logger";
 import { getProvider } from "@claudeflare/providers";
 import { handleProxy, type ProxyContext } from "@claudeflare/proxy";
+import { StrategyName } from "@claudeflare/types";
 import { serve } from "bun";
 
 // Initialize components
-const dbOps = new DatabaseOperations();
-const db = dbOps.getDatabase();
 const config = new Config();
 const runtime = config.getRuntime();
-dbOps.setRuntimeConfig(runtime);
+DatabaseFactory.initialize(undefined, runtime);
+const dbOps = DatabaseFactory.getInstance();
+const db = dbOps.getDatabase();
 const apiRouter = new APIRouter({ db, config, dbOps });
 const log = new Logger("Server");
 
@@ -162,7 +162,7 @@ if (activeAccounts.length === 0) {
 // Graceful shutdown
 process.on("SIGINT", () => {
 	console.log("\n👋 Shutting down gracefully...");
-	dbOps.close();
+	DatabaseFactory.closeAll();
 	process.exit(0);
 });
 

@@ -283,6 +283,7 @@ export class DatabaseOperations implements StrategyStore {
 	}
 }
 
+export { DatabaseFactory } from "./factory";
 // Re-export migrations for convenience
 export { ensureSchema, runMigrations } from "./migrations";
 export { resolveDbPath } from "./paths";

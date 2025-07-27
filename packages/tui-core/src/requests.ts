@@ -1,4 +1,4 @@
-import { DatabaseOperations } from "@claudeflare/database";
+import { DatabaseFactory } from "@claudeflare/database";
 
 export interface RequestPayload {
 	id: string;
@@ -23,7 +23,7 @@ export interface RequestPayload {
 }
 
 export async function getRequests(limit = 100): Promise<RequestPayload[]> {
-	const dbOps = new DatabaseOperations();
+	const dbOps = DatabaseFactory.getInstance();
 	const rows = dbOps.listRequestPayloads(limit);
 
 	const parsed = rows.map((r: { id: string; json: string }) => {

@@ -1,5 +1,5 @@
-import type { LogEvent } from "@claudeflare/types";
 import { logBus, logFileWriter } from "@claudeflare/logger";
+import type { LogEvent } from "@claudeflare/types";
 
 export function streamLogs(callback: (log: LogEvent) => void): () => void {
 	const listener = (event: LogEvent) => {

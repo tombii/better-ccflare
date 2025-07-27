@@ -1,5 +1,5 @@
-import type { LogEvent } from "@claudeflare/types";
 import { logBus } from "@claudeflare/logger";
+import type { LogEvent } from "@claudeflare/types";
 
 /**
  * Create a logs stream handler using Server-Sent Events
