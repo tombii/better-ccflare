@@ -2,7 +2,7 @@
   "lockfileVersion": 1,
   "workspaces": {
     "": {
-      "name": "claudeflare-",
+      "name": "claudeflare",
       "devDependencies": {
         "@biomejs/biome": "2.1.2",
         "@types/bun": "latest",
