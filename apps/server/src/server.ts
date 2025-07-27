@@ -1,3 +1,4 @@
+import { dirname } from "node:path";
 import { Config } from "@claudeflare/config";
 import type { LoadBalancingStrategy } from "@claudeflare/core";
 import {
@@ -123,10 +124,23 @@ const server = serve({
 		// Dashboard routes
 		if (url.pathname === "/" || url.pathname === "/dashboard") {
 			// Read the HTML file directly
-			const dashboardPath = import.meta.resolveSync(
-				"@claudeflare/dashboard-web/dist/index.html",
-			);
+			let dashboardPath: string;
+			try {
+				dashboardPath = Bun.resolveSync(
+					"@claudeflare/dashboard-web/dist/index.html",
+					dirname(import.meta.path),
+				);
+			} catch {
+				// Fallback to a relative path within the repo (development / mono-repo usage)
+				dashboardPath = Bun.resolveSync(
+					"../../../packages/dashboard-web/dist/index.html",
+					dirname(import.meta.path),
+				);
+			}
 			const file = Bun.file(dashboardPath);
+			if (!file.exists()) {
+				return new Response("Not Found", { status: 404 });
+			}
 			return new Response(file, {
 				headers: { "Content-Type": "text/html" },
 			});
@@ -135,10 +149,24 @@ const server = serve({
 		// Serve dashboard static assets
 		if ((dashboardManifest as Record<string, string>)[url.pathname]) {
 			try {
-				const assetPath = import.meta.resolveSync(
-					`@claudeflare/dashboard-web/dist${url.pathname}`,
-				);
+				let assetPath: string;
+				try {
+					assetPath = Bun.resolveSync(
+						`@claudeflare/dashboard-web/dist${url.pathname}`,
+						dirname(import.meta.path),
+					);
+				} catch {
+					// Fallback to relative path in mono-repo
+					assetPath = Bun.resolveSync(
+						`../../../packages/dashboard-web/dist${url.pathname}`,
+						dirname(import.meta.path),
+					);
+				}
+
 				const file = Bun.file(assetPath);
+				if (!file.exists()) {
+					return new Response("Not Found", { status: 404 });
+				}
 				const mimeType = file.type || "application/octet-stream";
 				return new Response(file, {
 					headers: {
