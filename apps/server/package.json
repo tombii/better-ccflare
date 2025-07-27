@@ -15,7 +15,6 @@
 		"@claudeflare/logger": "workspace:*",
 		"@claudeflare/load-balancer": "workspace:*",
 		"@claudeflare/proxy": "workspace:*",
-		"@claudeflare/dashboard": "workspace:*",
 		"@claudeflare/dashboard-web": "workspace:*",
 		"@claudeflare/http-api": "workspace:*"
 	}
