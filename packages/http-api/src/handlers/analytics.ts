@@ -105,7 +105,7 @@ export function createAnalyticsHandler(context: APIContext) {
 					SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0) as success_rate,
 					SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0) as error_rate,
 					SUM(cache_read_input_tokens) * 100.0 / 
-						NULLIF(SUM(input_tokens + cache_creation_input_tokens + cache_read_input_tokens), 0) as cache_hit_rate,
+						NULLIF(SUM(input_tokens + cache_read_input_tokens), 0) as cache_hit_rate,
 					AVG(response_time_ms) as avg_response_time
 				FROM requests
 				WHERE timestamp > ?
