@@ -78,6 +78,10 @@ export interface TierUpdateRequest {
 	tier: number;
 }
 
+export interface AccountDeleteRequest {
+	confirm: string;
+}
+
 export interface TimePoint {
 	ts: number; // period start (ms)
 	requests: number;

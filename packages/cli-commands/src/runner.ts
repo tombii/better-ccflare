@@ -5,7 +5,7 @@ import {
 	addAccount,
 	getAccountsList,
 	pauseAccount,
-	removeAccount,
+	removeAccountWithConfirmation,
 	resumeAccount,
 } from "./commands/account";
 import { getHelpText } from "./commands/help";
@@ -27,6 +27,7 @@ export async function runCli(argv: string[]): Promise<void> {
 			options: {
 				mode: { type: "string" },
 				tier: { type: "string" },
+				force: { type: "boolean" },
 			},
 		});
 
@@ -98,11 +99,11 @@ export async function runCli(argv: string[]): Promise<void> {
 				const name = positionals[1];
 				if (!name) {
 					console.error("Error: Account name is required");
-					console.log("Usage: claudeflare-cli remove <name>");
+					console.log("Usage: claudeflare-cli remove <name> [--force]");
 					process.exit(1);
 				}
 
-				const result = removeAccount(dbOps, name);
+				const result = await removeAccountWithConfirmation(dbOps, name, values.force);
 				console.log(result.message);
 				if (!result.success) {
 					process.exit(1);

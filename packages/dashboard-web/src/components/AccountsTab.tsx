@@ -38,6 +38,11 @@ export function AccountsTab() {
 		mode: "max" as "max" | "console",
 		tier: 1,
 	});
+	const [confirmDelete, setConfirmDelete] = useState<{ show: boolean; accountName: string; confirmInput: string }>({
+		show: false,
+		accountName: "",
+		confirmInput: "",
+	});
 
 	const loadAccounts = useCallback(async () => {
 		try {
@@ -107,12 +112,21 @@ export function AccountsTab() {
 		}
 	};
 
-	const handleRemoveAccount = async (name: string) => {
-		if (!confirm(`Are you sure you want to remove account "${name}"?`)) return;
+	const handleRemoveAccount = (name: string) => {
+		setConfirmDelete({ show: true, accountName: name, confirmInput: "" });
+	};
+
+	const handleConfirmDelete = async () => {
+		if (confirmDelete.confirmInput !== confirmDelete.accountName) {
+			setError("Account name does not match. Please type the exact account name.");
+			return;
+		}
 
 		try {
-			await api.removeAccount(name);
+			await api.removeAccount(confirmDelete.accountName, confirmDelete.confirmInput);
 			await loadAccounts();
+			setConfirmDelete({ show: false, accountName: "", confirmInput: "" });
+			setError(null);
 		} catch (err) {
 			setError(err instanceof Error ? err.message : "Failed to remove account");
 		}
@@ -350,6 +364,66 @@ export function AccountsTab() {
 					)}
 				</CardContent>
 			</Card>
+
+			{confirmDelete.show && (
+				<div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+					<Card className="w-full max-w-md">
+						<CardHeader>
+							<CardTitle>Confirm Account Removal</CardTitle>
+							<CardDescription>
+								This action cannot be undone.
+							</CardDescription>
+						</CardHeader>
+						<CardContent className="space-y-4">
+							<div className="p-4 bg-destructive/10 border border-destructive/20 rounded-lg">
+								<div className="flex items-center gap-2 text-destructive">
+									<AlertCircle className="h-5 w-5" />
+									<p className="font-medium">Warning</p>
+								</div>
+								<p className="text-sm mt-2">
+									You are about to permanently remove the account '{confirmDelete.accountName}'.
+									This will delete all associated data and cannot be recovered.
+								</p>
+							</div>
+							<div className="space-y-2">
+								<Label htmlFor="confirm-input">
+									Type <span className="font-mono font-semibold">{confirmDelete.accountName}</span> to confirm:
+								</Label>
+								<Input
+									id="confirm-input"
+									value={confirmDelete.confirmInput}
+									onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+										setConfirmDelete({
+											...confirmDelete,
+											confirmInput: (e.target as HTMLInputElement).value,
+										})
+									}
+									placeholder="Enter account name"
+									autoComplete="off"
+								/>
+							</div>
+							<div className="flex gap-2">
+								<Button
+									variant="destructive"
+									onClick={handleConfirmDelete}
+									disabled={confirmDelete.confirmInput !== confirmDelete.accountName}
+								>
+									Delete Account
+								</Button>
+								<Button
+									variant="outline"
+									onClick={() => {
+										setConfirmDelete({ show: false, accountName: "", confirmInput: "" });
+										setError(null);
+									}}
+								>
+									Cancel
+								</Button>
+							</div>
+						</CardContent>
+					</Card>
+				</div>
+			)}
 		</div>
 	);
 }

@@ -133,11 +133,16 @@ class API {
 		}>;
 	}
 
-	async removeAccount(name: string): Promise<void> {
+	async removeAccount(name: string, confirm: string): Promise<void> {
 		const res = await fetch(`${this.baseUrl}/api/accounts/${name}`, {
 			method: "DELETE",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ confirm }),
 		});
-		if (!res.ok) throw new Error("Failed to remove account");
+		if (!res.ok) {
+			const error = (await res.json()) as { error?: string; confirmationRequired?: boolean };
+			throw new Error(error.error || "Failed to remove account");
+		}
 	}
 
 	async resetStats(): Promise<void> {

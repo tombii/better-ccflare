@@ -8,7 +8,7 @@ interface AccountsScreenProps {
 	onBack: () => void;
 }
 
-type Mode = "list" | "add" | "remove";
+type Mode = "list" | "add" | "remove" | "confirmRemove";
 
 interface Account {
 	id: string;
@@ -33,9 +33,23 @@ export function AccountsScreen({ onBack }: AccountsScreenProps) {
 	const [step, setStep] = useState<"name" | "mode" | "tier" | "confirm">(
 		"name",
 	);
+	const [accountToRemove, setAccountToRemove] = useState("");
+	const [confirmInput, setConfirmInput] = useState("");
 
 	useInput((input, key) => {
-		if (key.escape || (input === "q" && mode === "list")) {
+		if (key.escape) {
+			if (mode === "confirmRemove") {
+				setMode("list");
+				setAccountToRemove("");
+				setConfirmInput("");
+			} else if (mode === "add") {
+				setMode("list");
+				setNewAccountName("");
+				setStep("name");
+			} else {
+				onBack();
+			}
+		} else if (input === "q" && mode === "list") {
 			onBack();
 		}
 	});
@@ -65,10 +79,23 @@ export function AccountsScreen({ onBack }: AccountsScreenProps) {
 		}
 	};
 
-	const handleRemoveAccount = async (name: string) => {
+	const handleRemoveAccount = (name: string) => {
+		setAccountToRemove(name);
+		setConfirmInput("");
+		setMode("confirmRemove");
+	};
+
+	const handleConfirmRemove = async () => {
+		if (confirmInput !== accountToRemove) {
+			return;
+		}
+		
 		try {
-			await tuiCore.removeAccount(name);
+			await tuiCore.removeAccount(accountToRemove);
 			await loadAccounts();
+			setMode("list");
+			setAccountToRemove("");
+			setConfirmInput("");
 		} catch (_error) {
 			// Handle error
 		}
@@ -129,6 +156,46 @@ export function AccountsScreen({ onBack }: AccountsScreenProps) {
 
 				<Box marginTop={2}>
 					<Text dimColor>Press ESC to cancel</Text>
+				</Box>
+			</Box>
+		);
+	}
+
+	if (mode === "confirmRemove") {
+		return (
+			<Box flexDirection="column" padding={1}>
+				<Text color="red" bold>
+					⚠️  Confirm Account Removal
+				</Text>
+				
+				<Box marginTop={1} marginBottom={1}>
+					<Text>
+						You are about to remove account '{accountToRemove}'.
+					</Text>
+					<Text>This action cannot be undone.</Text>
+				</Box>
+
+				<Box flexDirection="column">
+					<Text>
+						Type <Text bold>{accountToRemove}</Text> to confirm:
+					</Text>
+					<TextInput
+						value={confirmInput}
+						onChange={setConfirmInput}
+						onSubmit={() => {
+							handleConfirmRemove();
+						}}
+					/>
+				</Box>
+
+				{confirmInput && confirmInput !== accountToRemove && (
+					<Box marginTop={1}>
+						<Text color="red">Account name does not match</Text>
+					</Box>
+				)}
+
+				<Box marginTop={2}>
+					<Text dimColor>Press ENTER to confirm, ESC to cancel</Text>
 				</Box>
 			</Box>
 		);

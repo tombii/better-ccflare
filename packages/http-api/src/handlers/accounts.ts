@@ -3,7 +3,7 @@ import * as cliCommands from "@claudeflare/cli-commands";
 import { Config } from "@claudeflare/config";
 import type { DatabaseOperations } from "@claudeflare/database";
 import { generatePKCE, getOAuthProvider } from "@claudeflare/providers";
-import type { AccountResponse } from "../types";
+import type { AccountResponse, AccountDeleteRequest } from "../types";
 
 /**
  * Create an accounts list handler
@@ -359,14 +359,31 @@ export function createAccountAddHandler(dbOps: DatabaseOperations) {
  * Create an account remove handler
  */
 export function createAccountRemoveHandler(dbOps: DatabaseOperations) {
-	return async (_req: Request, accountName: string): Promise<Response> => {
+	return async (req: Request, accountName: string): Promise<Response> => {
+		const JSON_HEADERS = { "Content-Type": "application/json" };
+		
 		try {
+			// Parse and validate confirmation
+			const body = await req.json() as AccountDeleteRequest;
+			if (!body.confirm || body.confirm !== accountName) {
+				return new Response(
+					JSON.stringify({
+						error: "Confirmation string does not match account name",
+						confirmationRequired: true
+					}),
+					{ 
+						status: 400, 
+						headers: JSON_HEADERS 
+					}
+				);
+			}
+
 			const result = cliCommands.removeAccount(dbOps, accountName);
 
 			if (!result.success) {
 				return new Response(JSON.stringify({ error: result.message }), {
 					status: 404,
-					headers: { "Content-Type": "application/json" },
+					headers: JSON_HEADERS,
 				});
 			}
 
@@ -376,7 +393,7 @@ export function createAccountRemoveHandler(dbOps: DatabaseOperations) {
 					message: result.message,
 				}),
 				{
-					headers: { "Content-Type": "application/json" },
+					headers: JSON_HEADERS,
 				},
 			);
 		} catch (error) {
@@ -387,7 +404,7 @@ export function createAccountRemoveHandler(dbOps: DatabaseOperations) {
 				}),
 				{
 					status: 500,
-					headers: { "Content-Type": "application/json" },
+					headers: JSON_HEADERS,
 				},
 			);
 		}
