@@ -241,6 +241,31 @@ class API {
 			throw new Error(error.error || "Failed to resume account");
 		}
 	}
+
+	async getStrategy(): Promise<string> {
+		const res = await fetch(`${this.baseUrl}/api/config/strategy`);
+		if (!res.ok) throw new Error("Failed to fetch strategy");
+		const data = (await res.json()) as { strategy: string };
+		return data.strategy;
+	}
+
+	async listStrategies(): Promise<string[]> {
+		const res = await fetch(`${this.baseUrl}/api/strategies`);
+		if (!res.ok) throw new Error("Failed to list strategies");
+		return res.json() as Promise<string[]>;
+	}
+
+	async setStrategy(strategy: string): Promise<void> {
+		const res = await fetch(`${this.baseUrl}/api/config/strategy`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ strategy }),
+		});
+		if (!res.ok) {
+			const error = (await res.json()) as { error?: string };
+			throw new Error(error.error || "Failed to set strategy");
+		}
+	}
 }
 
 export const api = new API();

@@ -12,13 +12,7 @@ import { container, SERVICE_KEYS } from "@claudeflare/core-di";
 import dashboardManifest from "@claudeflare/dashboard-web/dist/manifest.json";
 import { AsyncDbWriter, DatabaseFactory } from "@claudeflare/database";
 import { APIRouter } from "@claudeflare/http-api";
-import {
-	LeastRequestsStrategy,
-	RoundRobinStrategy,
-	SessionStrategy,
-	WeightedRoundRobinStrategy,
-	WeightedStrategy,
-} from "@claudeflare/load-balancer";
+import { SessionStrategy } from "@claudeflare/load-balancer";
 import { Logger } from "@claudeflare/logger";
 import { getProvider } from "@claudeflare/providers";
 import { handleProxy, type ProxyContext } from "@claudeflare/proxy";
@@ -70,21 +64,10 @@ function initStrategy(): LoadBalancingStrategy {
 	const strategyName = config.getStrategy();
 	log.info(`Initializing load balancing strategy: ${strategyName}`);
 
-	switch (strategyName) {
-		case StrategyName.RoundRobin:
-			return new RoundRobinStrategy();
-		case StrategyName.WeightedRoundRobin:
-			return new WeightedRoundRobinStrategy();
-		case StrategyName.Session: {
-			const sessionStrategy = new SessionStrategy(runtime.sessionDurationMs);
-			sessionStrategy.initialize(dbOps);
-			return sessionStrategy;
-		}
-		case StrategyName.Weighted:
-			return new WeightedStrategy();
-		default:
-			return new LeastRequestsStrategy();
-	}
+	// Only session-based strategy is supported
+	const sessionStrategy = new SessionStrategy(runtime.sessionDurationMs);
+	sessionStrategy.initialize(dbOps);
+	return sessionStrategy;
 }
 
 strategy = initStrategy();

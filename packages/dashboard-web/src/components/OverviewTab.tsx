@@ -29,6 +29,7 @@ import {
 	YAxis,
 } from "recharts";
 import { type Account, api, type Stats } from "../api";
+import { StrategyCard } from "./StrategyCard";
 import { Badge } from "./ui/badge";
 import {
 	Card,
@@ -595,6 +596,11 @@ export function OverviewTab() {
 					</CardContent>
 				</Card>
 			)}
+
+			{/* Configuration Row */}
+			<div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+				<StrategyCard />
+			</div>
 		</div>
 	);
 }
