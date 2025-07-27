@@ -3,7 +3,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs";
 import {
 	Card,
 	CardContent,
-	CardDescription,
 	CardHeader,
 	CardTitle,
 } from "./components/ui/card";
@@ -23,7 +22,7 @@ export function App() {
 		loadStats();
 		const interval = setInterval(loadStats, 5000);
 		return () => clearInterval(interval);
-	}, []);
+	}, [loadStats]);
 
 	const loadStats = async () => {
 		try {

@@ -48,7 +48,7 @@ Examples:
 	}
 
 	if (parsed.logs !== undefined) {
-		const limit = typeof parsed.logs === "number" ? parsed.logs : 100;
+		const _limit = typeof parsed.logs === "number" ? parsed.logs : 100;
 		await tuiCore.streamLogs((log) => {
 			console.log(`[${log.level}] ${log.msg}`);
 		});

@@ -25,13 +25,13 @@ export function LogsTab() {
 		return () => {
 			stopStreaming();
 		};
-	}, [paused]);
+	}, [paused, startStreaming, stopStreaming]);
 
 	useEffect(() => {
 		if (autoScroll && logsEndRef.current) {
 			(logsEndRef.current as any).scrollIntoView({ behavior: "smooth" });
 		}
-	}, [logs, autoScroll]);
+	}, [autoScroll]);
 
 	const startStreaming = () => {
 		eventSourceRef.current = api.streamLogs((log: LogEntry) => {

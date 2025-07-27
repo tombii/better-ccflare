@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { Box, Text, useInput } from "ink";
 import SelectInput from "ink-select-input";
 import TextInput from "ink-text-input";
@@ -28,7 +28,7 @@ export function AccountsScreen({ onBack }: AccountsScreenProps) {
 
 	useEffect(() => {
 		loadAccounts();
-	}, []);
+	}, [loadAccounts]);
 
 	const loadAccounts = async () => {
 		const data = await tuiCore.getAccounts();
@@ -46,7 +46,7 @@ export function AccountsScreen({ onBack }: AccountsScreenProps) {
 			setMode("list");
 			setNewAccountName("");
 			setStep("name");
-		} catch (error) {
+		} catch (_error) {
 			// Handle error
 		}
 	};
@@ -55,7 +55,7 @@ export function AccountsScreen({ onBack }: AccountsScreenProps) {
 		try {
 			await tuiCore.removeAccount(name);
 			await loadAccounts();
-		} catch (error) {
+		} catch (_error) {
 			// Handle error
 		}
 	};
