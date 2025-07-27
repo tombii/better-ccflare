@@ -1,4 +1,4 @@
 export {
 	AnthropicOAuthProvider,
 	AnthropicProvider,
-} from "./anthropic/index.js";
+} from "./anthropic/index";

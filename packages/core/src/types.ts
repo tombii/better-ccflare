@@ -1,4 +1,4 @@
-import type { StrategyStore } from "./strategy-store.js";
+import type { StrategyStore } from "./strategy-store";
 
 // Database row types that match the actual database schema
 export type AccountRow = {

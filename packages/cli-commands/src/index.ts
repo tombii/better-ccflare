@@ -1,11 +1,11 @@
 // Export all commands
-export * from "./commands/account.js";
-export * from "./commands/help.js";
-export * from "./commands/stats.js";
+export * from "./commands/account";
+export * from "./commands/help";
+export * from "./commands/stats";
 
 // Export prompts
-export * from "./prompts/index.js";
+export * from "./prompts/index";
 // Export main CLI runner
-export { runCli } from "./runner.js";
+export { runCli } from "./runner";
 // Export utilities
-export * from "./utils/browser.js";
+export * from "./utils/browser";

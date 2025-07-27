@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import type { LogEvent } from "@claudeflare/core";
-import { logFileWriter } from "./file-writer.js";
+import { logFileWriter } from "./file-writer";
 
 export enum LogLevel {
 	DEBUG = 0,
@@ -133,4 +133,4 @@ export class Logger {
 
 // Default logger instance
 export const log = new Logger();
-export { logFileWriter } from "./file-writer.js";
+export { logFileWriter } from "./file-writer";

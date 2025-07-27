@@ -1,4 +1,4 @@
-import type { PKCEChallenge } from "../types.js";
+import type { PKCEChallenge } from "../types";
 
 /**
  * Generate a PKCE challenge for OAuth flows

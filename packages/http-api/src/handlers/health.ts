@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import type { Config } from "@claudeflare/config";
-import type { HealthResponse } from "../types.js";
+import type { HealthResponse } from "../types";
 
 /**
  * Create a health check handler
