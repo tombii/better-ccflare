@@ -2,13 +2,14 @@ import { Config } from "@claudeflare/config";
 import type { LoadBalancingStrategy } from "@claudeflare/core";
 import {
 	DEFAULT_STRATEGY,
+	registerDisposable,
 	setPricingLogger,
 	shutdown,
 } from "@claudeflare/core";
 import { container, SERVICE_KEYS } from "@claudeflare/core-di";
 // Import React dashboard assets
 import dashboardManifest from "@claudeflare/dashboard-web/dist/manifest.json";
-import { DatabaseFactory } from "@claudeflare/database";
+import { AsyncDbWriter, DatabaseFactory } from "@claudeflare/database";
 import { APIRouter } from "@claudeflare/http-api";
 import {
 	LeastRequestsStrategy,
@@ -34,6 +35,11 @@ DatabaseFactory.initialize(undefined, runtime);
 const dbOps = DatabaseFactory.getInstance();
 const db = dbOps.getDatabase();
 container.registerInstance(SERVICE_KEYS.Database, dbOps);
+
+// Initialize async DB writer
+const asyncWriter = new AsyncDbWriter();
+container.registerInstance(SERVICE_KEYS.AsyncWriter, asyncWriter);
+registerDisposable(asyncWriter);
 
 // Initialize pricing logger
 const pricingLogger = new Logger("Pricing");
@@ -89,6 +95,7 @@ const proxyContext: ProxyContext = {
 	runtime,
 	provider,
 	refreshInFlight,
+	asyncWriter,
 };
 
 // Watch for strategy changes
