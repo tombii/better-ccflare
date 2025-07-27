@@ -1,4 +1,4 @@
-import type { Account } from "./types.js";
+import type { Account } from "./types";
 
 /**
  * Interface for strategy-specific database operations

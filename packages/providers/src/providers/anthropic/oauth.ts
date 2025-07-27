@@ -3,7 +3,7 @@ import type {
 	OAuthProvider,
 	PKCEChallenge,
 	TokenResult,
-} from "../../types.js";
+} from "../../types";
 
 export class AnthropicOAuthProvider implements OAuthProvider {
 	getOAuthConfig(mode: "console" | "max" = "console"): OAuthConfig {

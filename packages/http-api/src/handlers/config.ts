@@ -1,6 +1,6 @@
 import type { Config } from "@claudeflare/config";
 import { isValidStrategy, STRATEGIES } from "@claudeflare/core";
-import type { ConfigResponse, StrategyUpdateRequest } from "../types.js";
+import type { ConfigResponse, StrategyUpdateRequest } from "../types";
 
 /**
  * Create config handlers

@@ -5,8 +5,8 @@ import {
 	promptAccountMode,
 	promptAccountTier,
 	promptAuthorizationCode,
-} from "../prompts/index.js";
-import { openBrowser } from "../utils/browser.js";
+} from "../prompts/index";
+import { openBrowser } from "../utils/browser";
 
 export interface AddAccountOptions {
 	name: string;

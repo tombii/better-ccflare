@@ -3,20 +3,17 @@ import {
 	createAccountRemoveHandler,
 	createAccountsListHandler,
 	createAccountTierUpdateHandler,
-} from "./handlers/accounts.js";
-import { createConfigHandlers } from "./handlers/config.js";
-import { createHealthHandler } from "./handlers/health.js";
-import { createLogsStreamHandler } from "./handlers/logs.js";
-import { createLogsHistoryHandler } from "./handlers/logs-history.js";
+} from "./handlers/accounts";
+import { createConfigHandlers } from "./handlers/config";
+import { createHealthHandler } from "./handlers/health";
+import { createLogsStreamHandler } from "./handlers/logs";
+import { createLogsHistoryHandler } from "./handlers/logs-history";
 import {
 	createRequestsDetailHandler,
 	createRequestsSummaryHandler,
-} from "./handlers/requests.js";
-import {
-	createStatsHandler,
-	createStatsResetHandler,
-} from "./handlers/stats.js";
-import type { APIContext } from "./types.js";
+} from "./handlers/requests";
+import { createStatsHandler, createStatsResetHandler } from "./handlers/stats";
+import type { APIContext } from "./types";
 
 /**
  * API Router that handles all API endpoints

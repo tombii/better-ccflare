@@ -1,11 +1,11 @@
 // Export all types
 
 // Export base provider class
-export { BaseProvider } from "./base.js";
+export { BaseProvider } from "./base";
 // Export OAuth utilities
-export { generatePKCE } from "./oauth/pkce.js";
+export { generatePKCE } from "./oauth/pkce";
 // Export providers
-export * from "./providers/index.js";
+export * from "./providers/index";
 // Export registry functions
 export {
 	getOAuthProvider,
@@ -13,11 +13,11 @@ export {
 	listOAuthProviders,
 	listProviders,
 	registerProvider,
-} from "./registry.js";
-export * from "./types.js";
+} from "./registry";
+export * from "./types";
 
-import { AnthropicProvider } from "./providers/anthropic/provider.js";
+import { AnthropicProvider } from "./providers/anthropic/provider";
 // Auto-register built-in providers
-import { registry } from "./registry.js";
+import { registry } from "./registry";
 
 registry.registerProvider(new AnthropicProvider());

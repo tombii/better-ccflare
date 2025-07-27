@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import type { DatabaseOperations } from "@claudeflare/database";
-import type { RequestResponse } from "../types.js";
+import type { RequestResponse } from "../types";
 
 /**
  * Create a requests summary handler (existing functionality)

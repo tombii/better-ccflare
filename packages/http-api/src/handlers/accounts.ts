@@ -3,7 +3,7 @@ import * as cliCommands from "@claudeflare/cli-commands";
 import { Config } from "@claudeflare/config";
 import type { DatabaseOperations } from "@claudeflare/database";
 import { generatePKCE, getOAuthProvider } from "@claudeflare/providers";
-import type { AccountResponse } from "../types.js";
+import type { AccountResponse } from "../types";
 
 /**
  * Create an accounts list handler

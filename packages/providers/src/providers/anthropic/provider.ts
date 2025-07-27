@@ -1,6 +1,6 @@
 import type { Account } from "@claudeflare/core";
-import { BaseProvider } from "../../base.js";
-import type { RateLimitInfo, TokenRefreshResult } from "../../types.js";
+import { BaseProvider } from "../../base";
+import type { RateLimitInfo, TokenRefreshResult } from "../../types";
 
 export class AnthropicProvider extends BaseProvider {
 	name = "anthropic";
