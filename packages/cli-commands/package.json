@@ -11,6 +11,7 @@
 	},
 	"dependencies": {
 		"@claudeflare/core": "workspace:*",
+		"@claudeflare/core-di": "workspace:*",
 		"@claudeflare/database": "workspace:*",
 		"@claudeflare/config": "workspace:*",
 		"@claudeflare/providers": "workspace:*"

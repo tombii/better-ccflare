@@ -15,6 +15,9 @@
 	"dependencies": {
 		"@claudeflare/tui-core": "workspace:*",
 		"@claudeflare/database": "workspace:*",
+		"@claudeflare/core-di": "workspace:*",
+		"@claudeflare/config": "workspace:*",
+		"@claudeflare/logger": "workspace:*",
 		"ink": "^6.0.0",
 		"ink-select-input": "^6.0.0",
 		"ink-spinner": "^5.0.0",

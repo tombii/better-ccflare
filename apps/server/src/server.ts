@@ -1,6 +1,7 @@
 import { Config } from "@claudeflare/config";
 import type { LoadBalancingStrategy } from "@claudeflare/core";
-import { DEFAULT_STRATEGY } from "@claudeflare/core";
+import { DEFAULT_STRATEGY, setPricingLogger } from "@claudeflare/core";
+import { container, SERVICE_KEYS } from "@claudeflare/core-di";
 // Import React dashboard assets
 import dashboardManifest from "@claudeflare/dashboard-web/dist/manifest.json";
 import { DatabaseFactory } from "@claudeflare/database";
@@ -18,14 +19,25 @@ import { handleProxy, type ProxyContext } from "@claudeflare/proxy";
 import { StrategyName } from "@claudeflare/types";
 import { serve } from "bun";
 
+// Initialize DI container
+container.registerInstance(SERVICE_KEYS.Config, new Config());
+container.registerInstance(SERVICE_KEYS.Logger, new Logger("Server"));
+
 // Initialize components
-const config = new Config();
+const config = container.resolve<Config>(SERVICE_KEYS.Config);
 const runtime = config.getRuntime();
 DatabaseFactory.initialize(undefined, runtime);
 const dbOps = DatabaseFactory.getInstance();
 const db = dbOps.getDatabase();
+container.registerInstance(SERVICE_KEYS.Database, dbOps);
+
+// Initialize pricing logger
+const pricingLogger = new Logger("Pricing");
+container.registerInstance(SERVICE_KEYS.PricingLogger, pricingLogger);
+setPricingLogger(pricingLogger);
+
 const apiRouter = new APIRouter({ db, config, dbOps });
-const log = new Logger("Server");
+const log = container.resolve<Logger>(SERVICE_KEYS.Logger);
 
 log.info("Starting Claudeflare server...");
 log.info(`Port: ${runtime.port}`);
