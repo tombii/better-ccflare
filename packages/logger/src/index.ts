@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import type { LogEvent } from "@claudeflare/core";
+import { logFileWriter } from "./file-writer.js";
 
 export enum LogLevel {
 	DEBUG = 0,
@@ -56,11 +57,13 @@ export class Logger {
 	debug(message: string, data?: any): void {
 		if (this.level <= LogLevel.DEBUG) {
 			const msg = this.formatMessage("DEBUG", message, data);
-			logBus.emit("log", {
+			const event: LogEvent = {
 				ts: Date.now(),
 				level: "DEBUG",
 				msg: message,
-			} as LogEvent);
+			};
+			logBus.emit("log", event);
+			logFileWriter.write(event);
 			console.log(msg);
 		}
 	}
@@ -69,11 +72,13 @@ export class Logger {
 	info(message: string, data?: any): void {
 		if (this.level <= LogLevel.INFO) {
 			const msg = this.formatMessage("INFO", message, data);
-			logBus.emit("log", {
+			const event: LogEvent = {
 				ts: Date.now(),
 				level: "INFO",
 				msg: message,
-			} as LogEvent);
+			};
+			logBus.emit("log", event);
+			logFileWriter.write(event);
 			console.log(msg);
 		}
 	}
@@ -82,11 +87,13 @@ export class Logger {
 	warn(message: string, data?: any): void {
 		if (this.level <= LogLevel.WARN) {
 			const msg = this.formatMessage("WARN", message, data);
-			logBus.emit("log", {
+			const event: LogEvent = {
 				ts: Date.now(),
 				level: "WARN",
 				msg: message,
-			} as LogEvent);
+			};
+			logBus.emit("log", event);
+			logFileWriter.write(event);
 			console.warn(msg);
 		}
 	}
@@ -95,11 +102,13 @@ export class Logger {
 	error(message: string, error?: any): void {
 		if (this.level <= LogLevel.ERROR) {
 			const msg = this.formatMessage("ERROR", message);
-			logBus.emit("log", {
+			const event: LogEvent = {
 				ts: Date.now(),
 				level: "ERROR",
 				msg: message,
-			} as LogEvent);
+			};
+			logBus.emit("log", event);
+			logFileWriter.write(event);
 			console.error(msg, error);
 		}
 	}
@@ -115,3 +124,4 @@ export class Logger {
 
 // Default logger instance
 export const log = new Logger();
+export { logFileWriter } from "./file-writer.js";

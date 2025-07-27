@@ -13,6 +13,7 @@ import {
 import { createRequestsHandler } from "./handlers/requests.js";
 import { createConfigHandlers } from "./handlers/config.js";
 import { createLogsStreamHandler } from "./handlers/logs.js";
+import { createLogsHistoryHandler } from "./handlers/logs-history.js";
 
 /**
  * API Router that handles all API endpoints
@@ -44,6 +45,7 @@ export class APIRouter {
 		const requestsHandler = createRequestsHandler(db);
 		const configHandlers = createConfigHandlers(config);
 		const logsStreamHandler = createLogsStreamHandler();
+		const logsHistoryHandler = createLogsHistoryHandler();
 
 		// Register routes
 		this.handlers.set("GET:/health", () => healthHandler());
@@ -66,6 +68,7 @@ export class APIRouter {
 			configHandlers.getStrategies(),
 		);
 		this.handlers.set("GET:/api/logs/stream", () => logsStreamHandler());
+		this.handlers.set("GET:/api/logs/history", () => logsHistoryHandler());
 	}
 
 	/**

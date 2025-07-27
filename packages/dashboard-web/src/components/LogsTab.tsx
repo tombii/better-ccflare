@@ -14,6 +14,7 @@ export function LogsTab() {
 	const [logs, setLogs] = useState<LogEntry[]>([]);
 	const [paused, setPaused] = useState(false);
 	const [autoScroll, setAutoScroll] = useState(true);
+	const [loading, setLoading] = useState(true);
 	const eventSourceRef = useRef<EventSource | null>(null);
 	const logsEndRef = useRef<HTMLDivElement>(null);
 
@@ -30,15 +31,30 @@ export function LogsTab() {
 		}
 	}, []);
 
+	// Load historical logs on mount
 	useEffect(() => {
-		if (!paused) {
+		const loadHistory = async () => {
+			try {
+				const history = await api.getLogHistory();
+				setLogs(history);
+			} catch (error) {
+				console.error("Failed to load log history:", error);
+			} finally {
+				setLoading(false);
+			}
+		};
+		loadHistory();
+	}, []);
+
+	useEffect(() => {
+		if (!paused && !loading) {
 			startStreaming();
 		}
 
 		return () => {
 			stopStreaming();
 		};
-	}, [paused, startStreaming, stopStreaming]);
+	}, [paused, loading, startStreaming, stopStreaming]);
 
 	useEffect(() => {
 		if (autoScroll && logsEndRef.current) {
@@ -107,7 +123,9 @@ export function LogsTab() {
 			</CardHeader>
 			<CardContent>
 				<div className="space-y-1 max-h-[500px] overflow-y-auto font-mono text-sm">
-					{logs.length === 0 ? (
+					{loading ? (
+						<p className="text-muted-foreground">Loading logs...</p>
+					) : logs.length === 0 ? (
 						<p className="text-muted-foreground">No logs yet...</p>
 					) : (
 						logs.map((log, i) => (

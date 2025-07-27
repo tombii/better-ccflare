@@ -96,6 +96,12 @@ class API {
 		if (!res.ok) throw new Error("Failed to reset stats");
 	}
 
+	async getLogHistory(): Promise<LogEntry[]> {
+		const res = await fetch(`${this.baseUrl}/api/logs/history`);
+		if (!res.ok) throw new Error("Failed to fetch log history");
+		return res.json() as Promise<LogEntry[]>;
+	}
+
 	streamLogs(onLog: (log: LogEntry) => void): EventSource {
 		const eventSource = new EventSource(`${this.baseUrl}/api/logs/stream`);
 		eventSource.onmessage = (event: MessageEvent) => {

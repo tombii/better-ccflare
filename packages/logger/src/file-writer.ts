@@ -1,0 +1,98 @@
+import { mkdirSync, createWriteStream, existsSync, statSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import type { LogEvent } from "@claudeflare/core";
+
+export class LogFileWriter {
+	private logDir: string;
+	private logFile: string;
+	private stream: ReturnType<typeof createWriteStream> | null = null;
+	private maxFileSize = 10 * 1024 * 1024; // 10MB
+
+	constructor() {
+		// Create log directory in tmp folder
+		this.logDir = join(tmpdir(), "claudeflare-logs");
+		if (!existsSync(this.logDir)) {
+			mkdirSync(this.logDir, { recursive: true });
+		}
+
+		this.logFile = join(this.logDir, "app.log");
+		this.initStream();
+	}
+
+	private initStream(): void {
+		// Check if we need to rotate
+		if (existsSync(this.logFile)) {
+			const stats = statSync(this.logFile);
+			if (stats.size > this.maxFileSize) {
+				this.rotateLog();
+			}
+		}
+
+		// Create write stream with append mode
+		this.stream = createWriteStream(this.logFile, { flags: "a" });
+	}
+
+	private rotateLog(): void {
+		if (this.stream) {
+			this.stream.end();
+		}
+
+		// Simple rotation: just delete old log
+		// In production, you might want to keep a few rotated files
+		if (existsSync(this.logFile)) {
+			// For now, just delete the old file
+			// In a production system, you'd rename it to keep history
+			try {
+				require("node:fs").unlinkSync(this.logFile);
+			} catch (_e) {
+				console.error("Failed to rotate log:", _e);
+			}
+		}
+	}
+
+	write(event: LogEvent): void {
+		if (!this.stream || this.stream.destroyed) {
+			this.initStream();
+		}
+
+		const line = `${JSON.stringify(event)}\n`;
+		this.stream.write(line);
+	}
+
+	async readLogs(limit = 1000): Promise<LogEvent[]> {
+		if (!existsSync(this.logFile)) {
+			return [];
+		}
+
+		try {
+			const content = await Bun.file(this.logFile).text();
+			const lines = content.trim().split("\n").filter(Boolean);
+
+			// Return the last N logs
+			return lines
+				.slice(-limit)
+				.map((line) => {
+					try {
+						return JSON.parse(line);
+					} catch {
+						return null;
+					}
+				})
+				.filter((log): log is LogEvent => log !== null);
+		} catch (_e) {
+			console.error("Failed to read logs:", _e);
+			return [];
+		}
+	}
+
+	close(): void {
+		if (this.stream) {
+			this.stream.end();
+			this.stream = null;
+		}
+	}
+}
+
+// Singleton instance
+export const logFileWriter = new LogFileWriter();
