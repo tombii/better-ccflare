@@ -535,9 +535,9 @@ export function OverviewTab() {
 			) && (
 				<Card>
 					<CardHeader>
-						<CardTitle>Rate Limited Accounts</CardTitle>
+						<CardTitle>Rate Limit Info</CardTitle>
 						<CardDescription>
-							Accounts currently experiencing rate limits
+							Rate limit information about accounts
 						</CardDescription>
 					</CardHeader>
 					<CardContent>
