@@ -125,14 +125,22 @@ export class DatabaseOperations implements StrategyStore {
 		errorMessage: string | null,
 		responseTime: number,
 		failoverAttempts: number,
+		usage?: {
+			model?: string;
+			promptTokens?: number;
+			completionTokens?: number;
+			totalTokens?: number;
+			costUsd?: number;
+		},
 	): void {
 		this.db.run(
 			`
       INSERT INTO requests (
         id, timestamp, method, path, account_used, 
-        status_code, success, error_message, response_time_ms, failover_attempts
+        status_code, success, error_message, response_time_ms, failover_attempts,
+        model, prompt_tokens, completion_tokens, total_tokens, cost_usd
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
 			[
 				id,
@@ -145,6 +153,11 @@ export class DatabaseOperations implements StrategyStore {
 				errorMessage,
 				responseTime,
 				failoverAttempts,
+				usage?.model || null,
+				usage?.promptTokens || null,
+				usage?.completionTokens || null,
+				usage?.totalTokens || null,
+				usage?.costUsd || null,
 			],
 		);
 	}

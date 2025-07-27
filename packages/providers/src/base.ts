@@ -82,4 +82,18 @@ export abstract class BaseProvider implements Provider {
 	async extractTierInfo?(_response: Response): Promise<number | null> {
 		return null;
 	}
+
+	/**
+	 * Extract usage information from response if available
+	 * Default implementation: Return null (no usage info)
+	 */
+	async extractUsageInfo?(_response: Response): Promise<{
+		model?: string;
+		promptTokens?: number;
+		completionTokens?: number;
+		totalTokens?: number;
+		costUsd?: number;
+	} | null> {
+		return null;
+	}
 }

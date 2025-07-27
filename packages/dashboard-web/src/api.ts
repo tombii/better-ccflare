@@ -16,6 +16,10 @@ export interface Stats {
 	totalRequests: number;
 	successRate: number;
 	activeAccounts: number;
+	avgResponseTime: number;
+	totalTokens: number;
+	totalCostUsd: number;
+	topModels: Array<{ model: string; count: number }>;
 	accounts: Array<{
 		name: string;
 		requestCount: number;
@@ -50,6 +54,24 @@ export interface RequestPayload {
 		rateLimited?: boolean;
 		accountsAttempted?: number;
 	};
+}
+
+export interface RequestSummary {
+	id: string;
+	timestamp: string;
+	method: string;
+	path: string;
+	accountUsed: string | null;
+	statusCode: number | null;
+	success: boolean;
+	errorMessage: string | null;
+	responseTimeMs: number | null;
+	failoverAttempts: number;
+	model?: string;
+	promptTokens?: number;
+	completionTokens?: number;
+	totalTokens?: number;
+	costUsd?: number;
 }
 
 class API {
@@ -146,6 +168,12 @@ class API {
 		);
 		if (!res.ok) throw new Error("Failed to fetch detailed requests");
 		return res.json() as Promise<RequestPayload[]>;
+	}
+
+	async getRequestsSummary(limit = 50): Promise<RequestSummary[]> {
+		const res = await fetch(`${this.baseUrl}/api/requests?limit=${limit}`);
+		if (!res.ok) throw new Error("Failed to fetch request summaries");
+		return res.json() as Promise<RequestSummary[]>;
 	}
 }
 

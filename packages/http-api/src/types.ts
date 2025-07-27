@@ -20,6 +20,9 @@ export interface StatsResponse {
 	successRate: number;
 	activeAccounts: number;
 	avgResponseTime: number;
+	totalTokens: number;
+	totalCostUsd: number;
+	topModels: Array<{ model: string; count: number }>;
 }
 
 export interface AccountResponse {
@@ -47,6 +50,11 @@ export interface RequestResponse {
 	errorMessage: string | null;
 	responseTimeMs: number | null;
 	failoverAttempts: number;
+	model?: string;
+	promptTokens?: number;
+	completionTokens?: number;
+	totalTokens?: number;
+	costUsd?: number;
 }
 
 export interface ConfigResponse {
