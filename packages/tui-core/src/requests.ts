@@ -14,12 +14,25 @@ export interface RequestPayload {
 	error?: string;
 	meta: {
 		accountId?: string;
+		accountName?: string;
 		retry?: number;
 		timestamp: number;
 		success?: boolean;
 		rateLimited?: boolean;
 		accountsAttempted?: number;
 	};
+}
+
+export interface RequestSummary {
+	id: string;
+	model?: string;
+	inputTokens?: number;
+	outputTokens?: number;
+	totalTokens?: number;
+	cacheReadInputTokens?: number;
+	cacheCreationInputTokens?: number;
+	costUsd?: number;
+	responseTimeMs?: number;
 }
 
 export async function getRequests(limit = 100): Promise<RequestPayload[]> {
@@ -29,6 +42,13 @@ export async function getRequests(limit = 100): Promise<RequestPayload[]> {
 	const parsed = rows.map((r: { id: string; json: string }) => {
 		try {
 			const data = JSON.parse(r.json);
+			// Add account name if we have accountId
+			if (data.meta?.accountId) {
+				const account = dbOps.getAccount(data.meta.accountId);
+				if (account) {
+					data.meta.accountName = account.name;
+				}
+			}
 			return { id: r.id, ...data } as RequestPayload;
 		} catch {
 			return {
@@ -42,4 +62,56 @@ export async function getRequests(limit = 100): Promise<RequestPayload[]> {
 	});
 
 	return parsed;
+}
+
+export async function getRequestSummaries(
+	limit = 100,
+): Promise<Map<string, RequestSummary>> {
+	const dbOps = DatabaseFactory.getInstance();
+	const db = dbOps.getDatabase();
+
+	const summaries = db
+		.query(`
+		SELECT 
+			id,
+			model,
+			input_tokens as inputTokens,
+			output_tokens as outputTokens,
+			total_tokens as totalTokens,
+			cache_read_input_tokens as cacheReadInputTokens,
+			cache_creation_input_tokens as cacheCreationInputTokens,
+			cost_usd as costUsd,
+			response_time_ms as responseTimeMs
+		FROM requests
+		ORDER BY timestamp DESC
+		LIMIT ?
+	`)
+		.all(limit) as Array<{
+		id: string;
+		model?: string;
+		inputTokens?: number;
+		outputTokens?: number;
+		totalTokens?: number;
+		cacheReadInputTokens?: number;
+		cacheCreationInputTokens?: number;
+		costUsd?: number;
+		responseTimeMs?: number;
+	}>;
+
+	const summaryMap = new Map<string, RequestSummary>();
+	summaries.forEach((summary) => {
+		summaryMap.set(summary.id, {
+			id: summary.id,
+			model: summary.model || undefined,
+			inputTokens: summary.inputTokens || undefined,
+			outputTokens: summary.outputTokens || undefined,
+			totalTokens: summary.totalTokens || undefined,
+			cacheReadInputTokens: summary.cacheReadInputTokens || undefined,
+			cacheCreationInputTokens: summary.cacheCreationInputTokens || undefined,
+			costUsd: summary.costUsd || undefined,
+			responseTimeMs: summary.responseTimeMs || undefined,
+		});
+	});
+
+	return summaryMap;
 }

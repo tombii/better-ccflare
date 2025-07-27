@@ -2,10 +2,10 @@ import { Box, Text, useApp } from "ink";
 import SelectInput from "ink-select-input";
 import { useState } from "react";
 import { AccountsScreen } from "./components/AccountsScreen";
+import { EnhancedRequestsScreen } from "./components/EnhancedRequestsScreen";
+import { EnhancedStatsScreen } from "./components/EnhancedStatsScreen";
 import { LogsScreen } from "./components/LogsScreen";
-import { RequestsScreen } from "./components/RequestsScreen";
 import { ServerScreen } from "./components/ServerScreen";
-import { StatsScreen } from "./components/StatsScreen";
 
 type Screen = "home" | "server" | "accounts" | "stats" | "requests" | "logs";
 
@@ -54,8 +54,8 @@ export function App() {
 		<Box flexDirection="column" height="100%">
 			{screen === "server" && <ServerScreen onBack={handleBack} />}
 			{screen === "accounts" && <AccountsScreen onBack={handleBack} />}
-			{screen === "stats" && <StatsScreen onBack={handleBack} />}
-			{screen === "requests" && <RequestsScreen onBack={handleBack} />}
+			{screen === "stats" && <EnhancedStatsScreen onBack={handleBack} />}
+			{screen === "requests" && <EnhancedRequestsScreen onBack={handleBack} />}
 			{screen === "logs" && <LogsScreen onBack={handleBack} />}
 		</Box>
 	);

@@ -197,9 +197,8 @@ export function RequestDetailsModal({
 											variant="ghost"
 											size="sm"
 											onClick={() =>
-												copyToClipboard(
-													formatHeaders(request.response!.headers),
-												)
+												request.response &&
+												copyToClipboard(formatHeaders(request.response.headers))
 											}
 										>
 											<Copy className="h-4 w-4 mr-1" />
@@ -219,7 +218,8 @@ export function RequestDetailsModal({
 												variant="ghost"
 												size="sm"
 												onClick={() =>
-													copyToClipboard(formatBody(request.response!.body))
+													request.response &&
+													copyToClipboard(formatBody(request.response.body))
 												}
 											>
 												<Copy className="h-4 w-4 mr-1" />
