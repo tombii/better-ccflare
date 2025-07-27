@@ -1,12 +1,12 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
 import { EventEmitter } from "node:events";
-import { resolveConfigPath } from "./paths";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import {
+	DEFAULT_STRATEGY,
 	isValidStrategy,
 	type StrategyName,
-	DEFAULT_STRATEGY,
 } from "@claudeflare/core";
+import { resolveConfigPath } from "./paths";
 
 export interface RuntimeConfig {
 	clientId: string;

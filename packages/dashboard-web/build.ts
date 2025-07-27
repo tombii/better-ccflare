@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
-import plugin from "bun-plugin-tailwind";
 import { existsSync } from "node:fs";
 import { rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import plugin from "bun-plugin-tailwind";
 
 console.log("\n🚀 Building dashboard...\n");
 

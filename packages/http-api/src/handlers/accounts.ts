@@ -1,9 +1,9 @@
 import type { Database } from "bun:sqlite";
-import type { DatabaseOperations } from "@claudeflare/database";
-import type { AccountResponse } from "../types.js";
 import * as cliCommands from "@claudeflare/cli-commands";
 import { Config } from "@claudeflare/config";
-import { getOAuthProvider, generatePKCE } from "@claudeflare/providers";
+import type { DatabaseOperations } from "@claudeflare/database";
+import { generatePKCE, getOAuthProvider } from "@claudeflare/providers";
+import type { AccountResponse } from "../types.js";
 
 /**
  * Create an accounts list handler

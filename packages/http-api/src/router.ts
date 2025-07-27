@@ -1,19 +1,19 @@
-import type { APIContext } from "./types.js";
+import {
+	createAccountAddHandler,
+	createAccountRemoveHandler,
+	createAccountsListHandler,
+	createAccountTierUpdateHandler,
+} from "./handlers/accounts.js";
+import { createConfigHandlers } from "./handlers/config.js";
 import { createHealthHandler } from "./handlers/health.js";
+import { createLogsStreamHandler } from "./handlers/logs.js";
+import { createLogsHistoryHandler } from "./handlers/logs-history.js";
+import { createRequestsHandler } from "./handlers/requests.js";
 import {
 	createStatsHandler,
 	createStatsResetHandler,
 } from "./handlers/stats.js";
-import {
-	createAccountsListHandler,
-	createAccountTierUpdateHandler,
-	createAccountAddHandler,
-	createAccountRemoveHandler,
-} from "./handlers/accounts.js";
-import { createRequestsHandler } from "./handlers/requests.js";
-import { createConfigHandlers } from "./handlers/config.js";
-import { createLogsStreamHandler } from "./handlers/logs.js";
-import { createLogsHistoryHandler } from "./handlers/logs-history.js";
+import type { APIContext } from "./types.js";
 
 /**
  * API Router that handles all API endpoints

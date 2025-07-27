@@ -1,4 +1,4 @@
-import type { Provider, OAuthProvider } from "./types.js";
+import type { OAuthProvider, Provider } from "./types.js";
 
 class ProviderRegistry {
 	private providers = new Map<string, Provider>();

@@ -1,4 +1,7 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { Pause, Play, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { api, type LogEntry } from "../api";
+import { Button } from "./ui/button";
 import {
 	Card,
 	CardContent,
@@ -6,9 +9,6 @@ import {
 	CardHeader,
 	CardTitle,
 } from "./ui/card";
-import { Button } from "./ui/button";
-import { api, type LogEntry } from "../api";
-import { Pause, Play, Trash2 } from "lucide-react";
 
 export function LogsTab() {
 	const [logs, setLogs] = useState<LogEntry[]>([]);

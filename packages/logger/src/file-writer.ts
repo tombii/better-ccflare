@@ -1,6 +1,6 @@
-import { mkdirSync, createWriteStream, existsSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { createWriteStream, existsSync, mkdirSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { LogEvent } from "@claudeflare/core";
 
 export class LogFileWriter {

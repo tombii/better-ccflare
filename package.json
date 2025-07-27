@@ -17,7 +17,7 @@
 		"build:dashboard": "bun run --cwd packages/dashboard-web build",
 		"build:tui": "bun run --cwd apps/tui build",
 		"format": "bunx biome format --write .",
-		"lint": "bunx --bun biome lint --write ."
+		"lint": "bunx --bun biome check --write --unsafe ."
 	},
 	"engines": {
 		"bun": ">=1.2.8"

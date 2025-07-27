@@ -1,13 +1,13 @@
 import { parseArgs } from "node:util";
-import { DatabaseOperations } from "@claudeflare/database";
 import { Config } from "@claudeflare/config";
+import { DatabaseOperations } from "@claudeflare/database";
 import {
 	addAccount,
 	getAccountsList,
 	removeAccount,
 } from "./commands/account.js";
-import { resetAllStats, clearRequestHistory } from "./commands/stats.js";
 import { getHelpText } from "./commands/help.js";
+import { clearRequestHistory, resetAllStats } from "./commands/stats.js";
 
 /**
  * Main CLI runner
