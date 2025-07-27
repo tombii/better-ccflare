@@ -44,16 +44,11 @@ export function createLogsStreamHandler() {
 
 		// Clean up on request abort
 		setTimeout(() => {
-			if (
-				!closed &&
-				typeof (readable as any).closed !== "undefined" &&
-				(readable as any).closed
-			) {
-				closed = true;
-				logBus.off("log", handleLogEvent);
-				try {
-					writer.close();
-				} catch {}
+			// ReadableStream doesn't have a standard 'closed' property
+			// This is a workaround for stream closure detection
+			if (!closed) {
+				// Just rely on the error handling in handleLogEvent
+				// to detect when the stream is closed
 			}
 		}, 0);
 

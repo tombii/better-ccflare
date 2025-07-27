@@ -56,7 +56,7 @@ class API {
 			body: JSON.stringify({ ...data, step: "init" }),
 		});
 		if (!res.ok) {
-			const error = await res.json();
+			const error = (await res.json()) as { error?: string };
 			throw new Error(error.error || "Failed to initialize account");
 		}
 		return res.json() as Promise<{ authUrl: string }>;
@@ -72,7 +72,7 @@ class API {
 			body: JSON.stringify({ ...data, step: "callback" }),
 		});
 		if (!res.ok) {
-			const error = await res.json();
+			const error = (await res.json()) as { error?: string };
 			throw new Error(error.error || "Failed to complete account setup");
 		}
 		return res.json() as Promise<{
@@ -104,7 +104,7 @@ class API {
 
 	streamLogs(onLog: (log: LogEntry) => void): EventSource {
 		const eventSource = new EventSource(`${this.baseUrl}/api/logs/stream`);
-		eventSource.onmessage = (event: MessageEvent) => {
+		eventSource.addEventListener("message", (event) => {
 			try {
 				const data = JSON.parse(event.data);
 				// Skip non-log messages (like the initial "connected" message)
@@ -114,7 +114,7 @@ class API {
 			} catch (e) {
 				console.error("Error parsing log event:", e);
 			}
-		};
+		});
 		return eventSource;
 	}
 }

@@ -59,7 +59,9 @@ export function AccountsTab() {
 			const { authUrl } = await api.initAddAccount(newAccount);
 
 			// Open auth URL in new tab
-			window.open(authUrl, "_blank");
+			if (typeof window !== "undefined") {
+				window.open(authUrl, "_blank");
+			}
 
 			// Move to code entry step
 			setAuthStep("code");
@@ -165,7 +167,7 @@ export function AccountsTab() {
 											onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
 												setNewAccount({
 													...newAccount,
-													name: e.currentTarget.value,
+													name: (e.target as HTMLInputElement).value,
 												})
 											}
 											placeholder="e.g., work-account"
@@ -235,7 +237,7 @@ export function AccountsTab() {
 											id="code"
 											value={authCode}
 											onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-												setAuthCode(e.currentTarget.value)
+												setAuthCode((e.target as HTMLInputElement).value)
 											}
 											placeholder="Paste authorization code here"
 										/>
