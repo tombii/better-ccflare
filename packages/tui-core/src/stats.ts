@@ -71,6 +71,7 @@ export async function getStats(): Promise<Stats> {
 			.query(
 				`
 				SELECT 
+					id,
 					name,
 					request_count as requestCount,
 					total_requests as totalRequests
@@ -81,6 +82,7 @@ export async function getStats(): Promise<Stats> {
 			`,
 			)
 			.all() as Array<{
+			id: string;
 			name: string;
 			requestCount: number;
 			totalRequests: number;
@@ -98,7 +100,7 @@ export async function getStats(): Promise<Stats> {
 					WHERE account_used = ?
 				`,
 				)
-				.get(acc.name) as { total: number; successful: number } | undefined;
+				.get(acc.id) as { total: number; successful: number } | undefined;
 
 			const accSuccessRate =
 				accRequests && accRequests.total > 0

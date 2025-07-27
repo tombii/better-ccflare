@@ -1,4 +1,4 @@
-import type { AnalyticsResponse, APIContext, TimePoint } from "../types";
+import type { AnalyticsResponse, APIContext } from "../types";
 
 interface BucketConfig {
 	bucketMs: number;
@@ -116,7 +116,16 @@ export function createAnalyticsHandler(context: APIContext) {
 				bucket.bucketMs,
 				bucket.bucketMs,
 				startMs,
-			) as TimePoint[];
+			) as Array<{
+				ts: number;
+				requests: number;
+				tokens: number;
+				cost_usd: number;
+				success_rate: number;
+				error_rate: number;
+				cache_hit_rate: number;
+				avg_response_time: number;
+			}>;
 
 			// Get token breakdown
 			const tokenBreakdownQuery = db.prepare(`
@@ -155,7 +164,7 @@ export function createAnalyticsHandler(context: APIContext) {
 					COUNT(r.id) as requests,
 					SUM(CASE WHEN r.success = 1 THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(r.id), 0) as success_rate
 				FROM accounts a
-				LEFT JOIN requests r ON a.name = r.account_used AND r.timestamp > ?
+				LEFT JOIN requests r ON a.id = r.account_used AND r.timestamp > ?
 				GROUP BY a.name
 				HAVING requests > 0
 				ORDER BY requests DESC
@@ -163,7 +172,7 @@ export function createAnalyticsHandler(context: APIContext) {
 			const accountPerformance = accountPerfQuery.all(startMs) as Array<{
 				name: string;
 				requests: number;
-				successRate: number;
+				success_rate: number;
 			}>;
 
 			// Get cost by endpoint
@@ -180,7 +189,7 @@ export function createAnalyticsHandler(context: APIContext) {
 			`);
 			const costByEndpoint = costByEndpointQuery.all(startMs) as Array<{
 				path: string;
-				costUsd: number;
+				cost_usd: number;
 				requests: number;
 			}>;
 
@@ -197,11 +206,11 @@ export function createAnalyticsHandler(context: APIContext) {
 					ts: point.ts,
 					requests: point.requests || 0,
 					tokens: point.tokens || 0,
-					costUsd: point.costUsd || 0,
-					successRate: point.successRate || 0,
-					errorRate: point.errorRate || 0,
-					cacheHitRate: point.cacheHitRate || 0,
-					avgResponseTime: point.avgResponseTime || 0,
+					costUsd: point.cost_usd || 0,
+					successRate: point.success_rate || 0,
+					errorRate: point.error_rate || 0,
+					cacheHitRate: point.cache_hit_rate || 0,
+					avgResponseTime: point.avg_response_time || 0,
 				})),
 				tokenBreakdown: {
 					inputTokens: tokenBreakdown?.input_tokens || 0,
@@ -214,11 +223,11 @@ export function createAnalyticsHandler(context: APIContext) {
 				accountPerformance: accountPerformance.map((acc) => ({
 					name: acc.name,
 					requests: acc.requests,
-					successRate: acc.successRate || 0,
+					successRate: acc.success_rate || 0,
 				})),
 				costByEndpoint: costByEndpoint.map((endpoint) => ({
 					path: endpoint.path,
-					costUsd: endpoint.costUsd || 0,
+					costUsd: endpoint.cost_usd || 0,
 					requests: endpoint.requests || 0,
 				})),
 			};

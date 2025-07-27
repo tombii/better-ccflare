@@ -33,6 +33,10 @@ export function createRequestsSummaryHandler(db: Database) {
 			prompt_tokens: number | null;
 			completion_tokens: number | null;
 			total_tokens: number | null;
+			input_tokens: number | null;
+			cache_read_input_tokens: number | null;
+			cache_creation_input_tokens: number | null;
+			output_tokens: number | null;
 			cost_usd: number | null;
 		}>;
 
@@ -51,6 +55,11 @@ export function createRequestsSummaryHandler(db: Database) {
 			promptTokens: request.prompt_tokens || undefined,
 			completionTokens: request.completion_tokens || undefined,
 			totalTokens: request.total_tokens || undefined,
+			inputTokens: request.input_tokens || undefined,
+			cacheReadInputTokens: request.cache_read_input_tokens || undefined,
+			cacheCreationInputTokens:
+				request.cache_creation_input_tokens || undefined,
+			outputTokens: request.output_tokens || undefined,
 			costUsd: request.cost_usd || undefined,
 		}));
 
