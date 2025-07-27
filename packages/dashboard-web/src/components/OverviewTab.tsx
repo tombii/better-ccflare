@@ -2,6 +2,7 @@ import type { AnalyticsResponse } from "@claudeflare/http-api";
 import { format } from "date-fns";
 import {
 	Activity,
+	AlertCircle,
 	CheckCircle,
 	Clock,
 	DollarSign,
@@ -27,7 +28,7 @@ import {
 	XAxis,
 	YAxis,
 } from "recharts";
-import { api, type Stats } from "../api";
+import { type Account, api, type Stats } from "../api";
 import { Badge } from "./ui/badge";
 import {
 	Card,
@@ -62,7 +63,7 @@ interface MetricCardProps {
 	value: string | number;
 	change?: number;
 	icon: React.ComponentType<{ className?: string }>;
-	trend?: "up" | "down";
+	trend?: "up" | "down" | "flat";
 }
 
 function MetricCard({
@@ -79,7 +80,7 @@ function MetricCard({
 					<div className="space-y-1">
 						<p className="text-sm font-medium text-muted-foreground">{title}</p>
 						<p className="text-2xl font-bold">{value}</p>
-						{change !== undefined && (
+						{change !== undefined && trend && trend !== "flat" && (
 							<div className="flex items-center gap-1 text-sm">
 								{trend === "up" ? (
 									<TrendingUp className="h-4 w-4 text-success" />
@@ -91,9 +92,14 @@ function MetricCard({
 										trend === "up" ? "text-success" : "text-destructive"
 									}
 								>
-									{Math.abs(change)}%
+									{Math.abs(change).toFixed(1)}%
 								</span>
 								<span className="text-muted-foreground">vs last hour</span>
+							</div>
+						)}
+						{(change === undefined || trend === "flat") && (
+							<div className="flex items-center gap-1 text-sm">
+								<span className="text-muted-foreground">— vs last hour</span>
 							</div>
 						)}
 					</div>
@@ -109,6 +115,7 @@ function MetricCard({
 export function OverviewTab() {
 	const [stats, setStats] = useState<Stats | null>(null);
 	const [analytics, setAnalytics] = useState<AnalyticsResponse | null>(null);
+	const [accounts, setAccounts] = useState<Account[] | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [timeSeriesData, setTimeSeriesData] = useState<
 		Array<{
@@ -123,13 +130,15 @@ export function OverviewTab() {
 	useEffect(() => {
 		const loadData = async () => {
 			try {
-				// Fetch both stats and analytics data
-				const [statsData, analyticsData] = await Promise.all([
+				// Fetch stats, analytics, and accounts data
+				const [statsData, analyticsData, accountsData] = await Promise.all([
 					api.getStats(),
 					api.getAnalytics("24h"),
+					api.getAccounts(),
 				]);
 				setStats(statsData);
 				setAnalytics(analyticsData);
+				setAccounts(accountsData);
 
 				// Transform analytics time series data
 				const transformedTimeSeries = analyticsData.timeSeries.map((point) => ({
@@ -180,6 +189,62 @@ export function OverviewTab() {
 		);
 	}
 
+	// Helper function to calculate percentage change
+	function pctChange(current: number, previous: number): number | null {
+		if (previous === 0) return null; // avoid division by zero
+		return ((current - previous) / previous) * 100;
+	}
+
+	// Calculate percentage changes from time series data
+	let deltaRequests: number | null = null;
+	let deltaSuccessRate: number | null = null;
+	let deltaResponseTime: number | null = null;
+	let deltaCost: number | null = null;
+	let trendRequests: "up" | "down" | "flat" = "flat";
+	let trendSuccessRate: "up" | "down" | "flat" = "flat";
+	let trendResponseTime: "up" | "down" | "flat" = "flat";
+	let trendCost: "up" | "down" | "flat" = "flat";
+
+	if (timeSeriesData.length >= 2) {
+		const lastBucket = timeSeriesData[timeSeriesData.length - 1];
+		const prevBucket = timeSeriesData[timeSeriesData.length - 2];
+
+		// Calculate deltas
+		deltaRequests = pctChange(lastBucket.requests, prevBucket.requests);
+		deltaSuccessRate = pctChange(
+			lastBucket.successRate,
+			prevBucket.successRate,
+		);
+		// For response time, lower is better, so we invert the calculation
+		deltaResponseTime = pctChange(
+			prevBucket.responseTime,
+			lastBucket.responseTime,
+		);
+		deltaCost = pctChange(
+			Number.parseFloat(lastBucket.cost),
+			Number.parseFloat(prevBucket.cost),
+		);
+
+		// Determine trends
+		trendRequests =
+			deltaRequests !== null ? (deltaRequests >= 0 ? "up" : "down") : "flat";
+		trendSuccessRate =
+			deltaSuccessRate !== null
+				? deltaSuccessRate >= 0
+					? "up"
+					: "down"
+				: "flat";
+		// For response time, lower is better (negative change is good)
+		trendResponseTime =
+			deltaResponseTime !== null
+				? deltaResponseTime >= 0
+					? "up"
+					: "down"
+				: "flat";
+		// For cost, higher is bad (positive change is bad)
+		trendCost = deltaCost !== null ? (deltaCost >= 0 ? "down" : "up") : "flat";
+	}
+
 	// Use analytics data for model distribution
 	const modelData =
 		analytics?.modelDistribution?.map((model) => ({
@@ -197,29 +262,29 @@ export function OverviewTab() {
 				<MetricCard
 					title="Total Requests"
 					value={analytics?.totals.requests?.toLocaleString() || "0"}
-					change={12}
-					trend="up"
+					change={deltaRequests !== null ? deltaRequests : undefined}
+					trend={trendRequests}
 					icon={Activity}
 				/>
 				<MetricCard
 					title="Success Rate"
 					value={`${Math.round(analytics?.totals.successRate || 0)}%`}
-					change={2}
-					trend="up"
+					change={deltaSuccessRate !== null ? deltaSuccessRate : undefined}
+					trend={trendSuccessRate}
 					icon={CheckCircle}
 				/>
 				<MetricCard
 					title="Avg Response Time"
 					value={`${Math.round(analytics?.totals.avgResponseTime || 0)}ms`}
-					change={-5}
-					trend="up"
+					change={deltaResponseTime !== null ? deltaResponseTime : undefined}
+					trend={trendResponseTime}
 					icon={Clock}
 				/>
 				<MetricCard
 					title="Total Cost"
 					value={`$${analytics?.totals.totalCostUsd?.toFixed(2) || "0.00"}`}
-					change={8}
-					trend="down"
+					change={deltaCost !== null ? deltaCost : undefined}
+					trend={trendCost}
 					icon={DollarSign}
 				/>
 			</div>
@@ -461,6 +526,74 @@ export function OverviewTab() {
 					</div>
 				</CardContent>
 			</Card>
+
+			{/* Rate Limit Status */}
+			{accounts?.some(
+				(acc) =>
+					acc.rateLimitStatus !== "OK" && acc.rateLimitStatus !== "Paused",
+			) && (
+				<Card>
+					<CardHeader>
+						<CardTitle>Rate Limited Accounts</CardTitle>
+						<CardDescription>
+							Accounts currently experiencing rate limits
+						</CardDescription>
+					</CardHeader>
+					<CardContent>
+						<div className="space-y-3">
+							{accounts
+								.filter(
+									(acc) =>
+										acc.rateLimitStatus !== "OK" &&
+										acc.rateLimitStatus !== "Paused",
+								)
+								.map((account) => {
+									const resetTime = account.rateLimitReset
+										? new Date(account.rateLimitReset)
+										: null;
+									const now = new Date();
+									const timeUntilReset = resetTime
+										? Math.max(0, resetTime.getTime() - now.getTime())
+										: null;
+									const minutesLeft = timeUntilReset
+										? Math.ceil(timeUntilReset / 60000)
+										: null;
+
+									return (
+										<div
+											key={account.id}
+											className="flex items-center justify-between p-4 rounded-lg bg-warning/10"
+										>
+											<div className="flex items-center gap-3">
+												<AlertCircle className="h-5 w-5 text-warning" />
+												<div>
+													<p className="font-medium">{account.name}</p>
+													<p className="text-sm text-muted-foreground">
+														{account.rateLimitStatus}
+														{account.rateLimitRemaining !== null &&
+															` • ${account.rateLimitRemaining} requests remaining`}
+													</p>
+												</div>
+											</div>
+											<div className="text-right">
+												{resetTime && (
+													<>
+														<p className="text-sm font-medium">
+															Resets in {minutesLeft}m
+														</p>
+														<p className="text-xs text-muted-foreground">
+															{format(resetTime, "HH:mm:ss")}
+														</p>
+													</>
+												)}
+											</div>
+										</div>
+									);
+								})}
+						</div>
+					</CardContent>
+				</Card>
+			)}
 		</div>
 	);
 }

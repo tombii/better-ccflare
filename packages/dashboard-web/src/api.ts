@@ -12,6 +12,8 @@ export interface Account {
 	paused: boolean;
 	tokenStatus: string;
 	rateLimitStatus: string;
+	rateLimitReset: string | null;
+	rateLimitRemaining: number | null;
 	sessionInfo: string | null;
 }
 
