@@ -45,17 +45,41 @@ class API {
 		return res.json() as Promise<Account[]>;
 	}
 
-	async addAccount(data: {
+	async initAddAccount(data: {
 		name: string;
 		mode: "max" | "console";
 		tier: number;
-	}): Promise<void> {
+	}): Promise<{ authUrl: string }> {
 		const res = await fetch(`${this.baseUrl}/api/accounts`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify(data),
+			body: JSON.stringify({ ...data, step: "init" }),
 		});
-		if (!res.ok) throw new Error("Failed to add account");
+		if (!res.ok) {
+			const error = await res.json();
+			throw new Error(error.error || "Failed to initialize account");
+		}
+		return res.json() as Promise<{ authUrl: string }>;
+	}
+
+	async completeAddAccount(data: {
+		name: string;
+		code: string;
+	}): Promise<{ message: string; mode: string; tier: number }> {
+		const res = await fetch(`${this.baseUrl}/api/accounts`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ ...data, step: "callback" }),
+		});
+		if (!res.ok) {
+			const error = await res.json();
+			throw new Error(error.error || "Failed to complete account setup");
+		}
+		return res.json() as Promise<{
+			message: string;
+			mode: string;
+			tier: number;
+		}>;
 	}
 
 	async removeAccount(name: string): Promise<void> {
@@ -75,8 +99,15 @@ class API {
 	streamLogs(onLog: (log: LogEntry) => void): EventSource {
 		const eventSource = new EventSource(`${this.baseUrl}/api/logs/stream`);
 		eventSource.onmessage = (event: MessageEvent) => {
-			const log = JSON.parse(event.data);
-			onLog(log);
+			try {
+				const data = JSON.parse(event.data);
+				// Skip non-log messages (like the initial "connected" message)
+				if (data.ts && data.level && data.msg) {
+					onLog(data as LogEntry);
+				}
+			} catch (e) {
+				console.error("Error parsing log event:", e);
+			}
 		};
 		return eventSource;
 	}

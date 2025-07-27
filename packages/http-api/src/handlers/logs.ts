@@ -6,28 +6,56 @@ import type { LogEvent } from "@claudeflare/core";
  */
 export function createLogsStreamHandler() {
 	return (): Response => {
-		const stream = new ReadableStream({
-			start(controller) {
-				// Send initial connection message
-				controller.enqueue(`data: ${JSON.stringify({ connected: true })}\n\n`);
+		// Use TransformStream for better Bun compatibility
+		const { readable, writable } = new TransformStream();
+		const writer = writable.getWriter();
+		const encoder = new TextEncoder();
+		let closed = false;
 
-				// Listen for log events
-				const listener = (event: LogEvent) => {
-					const data = `data: ${JSON.stringify(event)}\n\n`;
-					controller.enqueue(data);
-				};
+		// Send initial connection message
+		(async () => {
+			try {
+				const initialData = `data: ${JSON.stringify({ connected: true })}\n\n`;
+				await writer.write(encoder.encode(initialData));
+			} catch (e) {
+				console.error("Error sending initial message:", e);
+			}
+		})();
 
-				logBus.on("log", listener);
+		// Listen for log events
+		const handleLogEvent = async (event: LogEvent) => {
+			if (closed) return;
 
-				// Clean up on close
-				const cleanup = () => {
-					logBus.off("log", listener);
-				};
+			try {
+				const data = `data: ${JSON.stringify(event)}\n\n`;
+				await writer.write(encoder.encode(data));
+			} catch (error) {
+				// Stream closed
+				closed = true;
+				logBus.off("log", handleLogEvent);
+				try {
+					await writer.close();
+				} catch {}
+			}
+		};
 
-				// Handle client disconnect
-				return cleanup;
-			},
-		});
+		// Subscribe to log events
+		logBus.on("log", handleLogEvent);
+
+		// Clean up on request abort
+		setTimeout(() => {
+			if (
+				!closed &&
+				typeof (readable as any).closed !== "undefined" &&
+				(readable as any).closed
+			) {
+				closed = true;
+				logBus.off("log", handleLogEvent);
+				try {
+					writer.close();
+				} catch {}
+			}
+		}, 0);
 
 		return new Response(stream, {
 			headers: {
