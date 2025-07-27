@@ -156,8 +156,16 @@ export async function handleProxy(
 		log.info(`Request: ${req.method} ${url.pathname}`);
 	}
 
-	// Always pass request body as-is (stream or nothing)
-	const requestBody = req.body ?? undefined;
+	// Capture request body for analytics while preserving streaming
+	let requestBodyBuffer: ArrayBuffer | null = null;
+	let requestBodyForFetch: ReadableStream<Uint8Array> | undefined;
+
+	if (req.body) {
+		// Read the entire body into a buffer for storage
+		requestBodyBuffer = await req.arrayBuffer();
+		// Create a new stream from the buffer for the fetch
+		requestBodyForFetch = new Response(requestBodyBuffer).body ?? undefined;
+	}
 
 	// Handle unauthenticated fallback
 	if (fallbackUnauthenticated) {
@@ -169,7 +177,7 @@ export async function handleProxy(
 			const response = await fetch(targetUrl, {
 				method: req.method,
 				headers: headers,
-				body: requestBody ?? undefined,
+				body: requestBodyForFetch,
 				// @ts-ignore - Bun supports duplex
 				duplex: "half",
 			});
@@ -255,7 +263,9 @@ export async function handleProxy(
 			const payload = {
 				request: {
 					headers: Object.fromEntries(req.headers.entries()),
-					body: requestBody ? "[streamed]" : null,
+					body: requestBodyBuffer
+						? Buffer.from(requestBodyBuffer).toString("base64")
+						: null,
 				},
 				response: {
 					status: response.status,
@@ -342,7 +352,9 @@ export async function handleProxy(
 			const errorPayload = {
 				request: {
 					headers: Object.fromEntries(req.headers.entries()),
-					body: requestBody ? "[streamed]" : null,
+					body: requestBodyBuffer
+						? Buffer.from(requestBodyBuffer).toString("base64")
+						: null,
 				},
 				response: null,
 				error: errorMessage,
@@ -389,7 +401,7 @@ export async function handleProxy(
 				const response = await fetch(targetUrl, {
 					method: req.method,
 					headers: headers,
-					body: requestBody ?? undefined,
+					body: requestBodyForFetch,
 					// @ts-ignore - Bun supports duplex
 					duplex: "half",
 				});
@@ -460,7 +472,9 @@ export async function handleProxy(
 					const payload = {
 						request: {
 							headers: Object.fromEntries(req.headers.entries()),
-							body: requestBody ? "[streamed]" : null,
+							body: requestBodyBuffer
+								? Buffer.from(requestBodyBuffer).toString("base64")
+								: null,
 						},
 						response: {
 							status: response.status,
@@ -566,7 +580,9 @@ export async function handleProxy(
 				const payload = {
 					request: {
 						headers: Object.fromEntries(req.headers.entries()),
-						body: requestBody ? "[streamed]" : null,
+						body: requestBodyBuffer
+							? Buffer.from(requestBodyBuffer).toString("base64")
+							: null,
 					},
 					response: {
 						status: response.status,
@@ -655,7 +671,9 @@ export async function handleProxy(
 				const errorPayload = {
 					request: {
 						headers: Object.fromEntries(req.headers.entries()),
-						body: requestBody ? "[streamed]" : null,
+						body: requestBodyBuffer
+							? Buffer.from(requestBodyBuffer).toString("base64")
+							: null,
 					},
 					response: null,
 					error: lastError,
@@ -696,7 +714,9 @@ export async function handleProxy(
 	const failurePayload = {
 		request: {
 			headers: Object.fromEntries(req.headers.entries()),
-			body: requestBody ? "[streamed]" : null,
+			body: requestBodyBuffer
+				? Buffer.from(requestBodyBuffer).toString("base64")
+				: null,
 		},
 		response: null,
 		error: "All accounts failed",
