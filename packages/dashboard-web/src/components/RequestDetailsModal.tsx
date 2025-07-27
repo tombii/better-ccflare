@@ -1,9 +1,9 @@
-import { Copy, Eye } from "lucide-react";
+import { Eye } from "lucide-react";
 import { useState } from "react";
 import type { RequestPayload, RequestSummary } from "../api";
+import { CopyButton } from "./CopyButton";
 import { TokenUsageDisplay } from "./TokenUsageDisplay";
 import { Badge } from "./ui/badge";
-import { Button } from "./ui/button";
 import {
 	Dialog,
 	DialogContent,
@@ -66,12 +66,6 @@ export function RequestDetailsModal({
 		const decoded = decodeBase64(body);
 		if (!beautifyMode) return decoded;
 		return formatJson(decoded);
-	};
-
-	const copyToClipboard = (text: string) => {
-		navigator.clipboard
-			.writeText(text)
-			.catch((err) => console.error("Failed to copy", err));
 	};
 
 	const _isError = request.error || !request.meta.success;
@@ -146,16 +140,13 @@ export function RequestDetailsModal({
 						<div>
 							<div className="flex items-center justify-between mb-2">
 								<h3 className="font-semibold">Headers</h3>
-								<Button
+								<CopyButton
 									variant="ghost"
 									size="sm"
-									onClick={() =>
-										copyToClipboard(formatHeaders(request.request.headers))
-									}
+									getValue={() => formatHeaders(request.request.headers)}
 								>
-									<Copy className="h-4 w-4 mr-1" />
 									Copy
-								</Button>
+								</CopyButton>
 							</div>
 							<pre className="bg-muted p-4 rounded-lg overflow-x-auto text-sm font-mono">
 								{formatHeaders(request.request.headers)}
@@ -166,16 +157,13 @@ export function RequestDetailsModal({
 							<div>
 								<div className="flex items-center justify-between mb-2">
 									<h3 className="font-semibold">Body</h3>
-									<Button
+									<CopyButton
 										variant="ghost"
 										size="sm"
-										onClick={() =>
-											copyToClipboard(formatBody(request.request.body))
-										}
+										getValue={() => formatBody(request.request.body)}
 									>
-										<Copy className="h-4 w-4 mr-1" />
 										Copy
-									</Button>
+									</CopyButton>
 								</div>
 								<pre className="bg-muted p-4 rounded-lg overflow-x-auto text-sm font-mono">
 									{formatBody(request.request.body)}
@@ -193,17 +181,17 @@ export function RequestDetailsModal({
 								<div>
 									<div className="flex items-center justify-between mb-2">
 										<h3 className="font-semibold">Headers</h3>
-										<Button
+										<CopyButton
 											variant="ghost"
 											size="sm"
-											onClick={() =>
-												request.response &&
-												copyToClipboard(formatHeaders(request.response.headers))
+											getValue={() =>
+												request.response
+													? formatHeaders(request.response.headers)
+													: ""
 											}
 										>
-											<Copy className="h-4 w-4 mr-1" />
 											Copy
-										</Button>
+										</CopyButton>
 									</div>
 									<pre className="bg-muted p-4 rounded-lg overflow-x-auto text-sm font-mono">
 										{formatHeaders(request.response.headers)}
@@ -214,17 +202,17 @@ export function RequestDetailsModal({
 									<div>
 										<div className="flex items-center justify-between mb-2">
 											<h3 className="font-semibold">Body</h3>
-											<Button
+											<CopyButton
 												variant="ghost"
 												size="sm"
-												onClick={() =>
-													request.response &&
-													copyToClipboard(formatBody(request.response.body))
+												getValue={() =>
+													request.response
+														? formatBody(request.response.body)
+														: ""
 												}
 											>
-												<Copy className="h-4 w-4 mr-1" />
 												Copy
-											</Button>
+											</CopyButton>
 										</div>
 										<pre className="bg-muted p-4 rounded-lg overflow-x-auto text-sm font-mono">
 											{formatBody(request.response.body)}
@@ -255,20 +243,17 @@ export function RequestDetailsModal({
 						<div>
 							<div className="flex items-center justify-between mb-2">
 								<h3 className="font-semibold">Request Metadata</h3>
-								<Button
+								<CopyButton
 									variant="ghost"
 									size="sm"
-									onClick={() =>
-										copyToClipboard(
-											beautifyMode
-												? JSON.stringify(request.meta, null, 2)
-												: JSON.stringify(request.meta),
-										)
+									getValue={() =>
+										beautifyMode
+											? JSON.stringify(request.meta, null, 2)
+											: JSON.stringify(request.meta)
 									}
 								>
-									<Copy className="h-4 w-4 mr-1" />
 									Copy
-								</Button>
+								</CopyButton>
 							</div>
 							<pre className="bg-muted p-4 rounded-lg overflow-x-auto text-sm font-mono">
 								{beautifyMode

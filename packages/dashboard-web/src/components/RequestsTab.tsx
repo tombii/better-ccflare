@@ -1,6 +1,7 @@
-import { ChevronDown, ChevronRight, Copy, Eye, RefreshCw } from "lucide-react";
+import { ChevronDown, ChevronRight, Eye, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { api, type RequestPayload, type RequestSummary } from "../api";
+import { CopyButton } from "./CopyButton";
 import { RequestDetailsModal } from "./RequestDetailsModal";
 import { TokenUsageDisplay } from "./TokenUsageDisplay";
 import { Badge } from "./ui/badge";
@@ -84,27 +85,7 @@ export function RequestsTab() {
 	 * Copy the given request to the clipboard as pretty-printed JSON, with
 	 * any base64-encoded bodies already decoded for easier debugging.
 	 */
-	const copyRequest = (req: RequestPayload) => {
-		const decoded: RequestPayload & { decoded?: true } = {
-			...req,
-			request: {
-				...req.request,
-				body: req.request.body ? decodeBase64(req.request.body) : null,
-			},
-			response: req.response
-				? {
-						...req.response,
-						body: req.response.body ? decodeBase64(req.response.body) : null,
-					}
-				: null,
-			// flag so it's obvious this is a transformed payload
-			decoded: true,
-		};
-
-		navigator.clipboard
-			.writeText(JSON.stringify(decoded, null, 2))
-			.catch((err) => console.error("Failed to copy request", err));
-	};
+	// copyRequest helper removed – handled inline by CopyButton
 
 	if (loading) {
 		return (
@@ -250,14 +231,32 @@ export function RequestsTab() {
 										>
 											<Eye className="h-4 w-4" />
 										</Button>
-										<Button
+										<CopyButton
 											variant="ghost"
 											size="icon"
-											onClick={() => copyRequest(request)}
 											title="Copy as JSON"
-										>
-											<Copy className="h-4 w-4" />
-										</Button>
+											getValue={() => {
+												const decoded: RequestPayload & { decoded?: true } = {
+													...request,
+													request: {
+														...request.request,
+														body: request.request.body
+															? decodeBase64(request.request.body)
+															: null,
+													},
+													response: request.response
+														? {
+																...request.response,
+																body: request.response.body
+																	? decodeBase64(request.response.body)
+																	: null,
+															}
+														: null,
+													decoded: true,
+												};
+												return JSON.stringify(decoded, null, 2);
+											}}
+										/>
 									</div>
 
 									{isExpanded && (
