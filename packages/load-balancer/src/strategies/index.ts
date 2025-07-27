@@ -2,9 +2,9 @@ import type {
 	LoadBalancingStrategy,
 	Account,
 	RequestMeta,
+	StrategyStore,
 } from "@claudeflare/core";
 import { isAccountAvailable } from "@claudeflare/core";
-import type { Database } from "bun:sqlite";
 
 export class RoundRobinStrategy implements LoadBalancingStrategy {
 	private cursor = 0;
@@ -45,14 +45,14 @@ export class LeastRequestsStrategy implements LoadBalancingStrategy {
 
 export class SessionStrategy implements LoadBalancingStrategy {
 	private sessionDurationMs: number;
-	private db: Database | null = null;
+	private store: StrategyStore | null = null;
 
 	constructor(sessionDurationMs: number = 5 * 60 * 60 * 1000) {
 		this.sessionDurationMs = sessionDurationMs;
 	}
 
-	setDatabase(db: Database): void {
-		this.db = db;
+	initialize(store: StrategyStore): void {
+		this.store = store;
 	}
 
 	private resetSessionIfExpired(account: Account): void {
@@ -63,14 +63,8 @@ export class SessionStrategy implements LoadBalancingStrategy {
 			now - account.session_start >= this.sessionDurationMs
 		) {
 			// Reset session
-			if (this.db) {
-				this.db
-					.prepare(`
-          UPDATE accounts 
-          SET session_start = ?, session_request_count = 0 
-          WHERE id = ?
-        `)
-					.run(now, account.id);
+			if (this.store) {
+				this.store.resetAccountSession(account.id, now);
 
 				// Update the account object to reflect changes
 				account.session_start = now;

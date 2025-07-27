@@ -17,7 +17,7 @@ import {
 	type ProxyContext,
 	AnthropicProvider,
 } from "@claudeflare/proxy";
-import { ApiRoutes } from "./api-routes";
+import { APIRouter } from "@claudeflare/http-api";
 
 // Initialize components
 const dbOps = new DatabaseOperations();
@@ -25,7 +25,7 @@ const db = dbOps.getDatabase();
 const config = new Config();
 const runtime = config.getRuntime();
 dbOps.setRuntimeConfig(runtime);
-const apiRoutes = new ApiRoutes(db, config, dbOps);
+const apiRouter = new APIRouter({ db, config, dbOps });
 const log = new Logger("Server");
 
 // Load balancing strategy initialization
@@ -48,7 +48,7 @@ function initStrategy(): LoadBalancingStrategy {
 			return new WeightedRoundRobinStrategy();
 		case "session": {
 			const sessionStrategy = new SessionStrategy(runtime.sessionDurationMs);
-			sessionStrategy.setDatabase(db);
+			sessionStrategy.initialize(dbOps);
 			return sessionStrategy;
 		}
 		case "weighted":
@@ -86,7 +86,7 @@ const server = serve({
 		const url = new URL(req.url);
 
 		// Try API routes first
-		const apiResponse = await apiRoutes.handleRequest(url, req);
+		const apiResponse = await apiRouter.handleRequest(url, req);
 		if (apiResponse) {
 			return apiResponse;
 		}
