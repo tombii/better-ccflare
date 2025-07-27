@@ -98,6 +98,14 @@ export function runMigrations(db: Database): void {
 		console.log("Added account_tier column to accounts table");
 	}
 
+	// Add paused column if it doesn't exist
+	if (!accountsColumnNames.includes("paused")) {
+		db.prepare(
+			"ALTER TABLE accounts ADD COLUMN paused INTEGER DEFAULT 0",
+		).run();
+		console.log("Added paused column to accounts table");
+	}
+
 	// Check columns in requests table
 	const requestsInfo = db
 		.prepare("PRAGMA table_info(requests)")

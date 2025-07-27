@@ -1,4 +1,11 @@
-import { AlertCircle, CheckCircle, Plus, Trash2 } from "lucide-react";
+import {
+	AlertCircle,
+	CheckCircle,
+	Pause,
+	Play,
+	Plus,
+	Trash2,
+} from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { type Account, api } from "../api";
 import { Button } from "./ui/button";
@@ -108,6 +115,21 @@ export function AccountsTab() {
 			await loadAccounts();
 		} catch (err) {
 			setError(err instanceof Error ? err.message : "Failed to remove account");
+		}
+	};
+
+	const handlePauseToggle = async (account: Account) => {
+		try {
+			if (account.paused) {
+				await api.resumeAccount(account.id);
+			} else {
+				await api.pauseAccount(account.id);
+			}
+			await loadAccounts();
+		} catch (err) {
+			setError(
+				err instanceof Error ? err.message : "Failed to update account status",
+			);
 		}
 	};
 
@@ -287,20 +309,41 @@ export function AccountsTab() {
 											<span className="text-sm">
 												{account.requestCount} requests
 											</span>
-											{account.rateLimitStatus !== "OK" && (
+											{account.paused && (
+												<span className="text-sm text-muted-foreground">
+													Paused
+												</span>
+											)}
+											{!account.paused && account.rateLimitStatus !== "OK" && (
 												<span className="text-sm text-destructive">
 													{account.rateLimitStatus}
 												</span>
 											)}
 										</div>
 									</div>
-									<Button
-										variant="ghost"
-										size="sm"
-										onClick={() => handleRemoveAccount(account.name)}
-									>
-										<Trash2 className="h-4 w-4" />
-									</Button>
+									<div className="flex items-center gap-2">
+										<Button
+											variant="ghost"
+											size="sm"
+											onClick={() => handlePauseToggle(account)}
+											title={
+												account.paused ? "Resume account" : "Pause account"
+											}
+										>
+											{account.paused ? (
+												<Play className="h-4 w-4" />
+											) : (
+												<Pause className="h-4 w-4" />
+											)}
+										</Button>
+										<Button
+											variant="ghost"
+											size="sm"
+											onClick={() => handleRemoveAccount(account.name)}
+										>
+											<Trash2 className="h-4 w-4" />
+										</Button>
+									</div>
 								</div>
 							))}
 						</div>

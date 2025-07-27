@@ -23,6 +23,7 @@ export interface AccountListItem {
 	lastUsed: Date | null;
 	requestCount: number;
 	totalRequests: number;
+	paused: boolean;
 	tokenStatus: "valid" | "expired";
 	rateLimitStatus: string;
 	sessionInfo: string;
@@ -125,7 +126,9 @@ export function getAccountsList(dbOps: DatabaseOperations): AccountListItem[] {
 			account.expires_at && account.expires_at > now ? "valid" : "expired";
 
 		let rateLimitStatus = "OK";
-		if (account.rate_limited_until && account.rate_limited_until > now) {
+		if (account.paused) {
+			rateLimitStatus = "Paused";
+		} else if (account.rate_limited_until && account.rate_limited_until > now) {
 			const minutesLeft = Math.ceil((account.rate_limited_until - now) / 60000);
 			rateLimitStatus = `Rate limited (${minutesLeft}m)`;
 		}
@@ -145,6 +148,7 @@ export function getAccountsList(dbOps: DatabaseOperations): AccountListItem[] {
 			lastUsed: account.last_used ? new Date(account.last_used) : null,
 			requestCount: account.request_count,
 			totalRequests: account.total_requests,
+			paused: account.paused,
 			tokenStatus,
 			rateLimitStatus,
 			sessionInfo,
@@ -174,5 +178,81 @@ export function removeAccount(
 	return {
 		success: true,
 		message: `Account '${name}' removed successfully`,
+	};
+}
+
+/**
+ * Pause an account by name
+ */
+export function pauseAccount(
+	dbOps: DatabaseOperations,
+	name: string,
+): { success: boolean; message: string } {
+	const db = dbOps.getDatabase();
+
+	// Get account ID by name
+	const account = db
+		.query<{ id: string; paused: 0 | 1 }, [string]>(
+			"SELECT id, COALESCE(paused, 0) as paused FROM accounts WHERE name = ?",
+		)
+		.get(name);
+
+	if (!account) {
+		return {
+			success: false,
+			message: `Account '${name}' not found`,
+		};
+	}
+
+	if (account.paused === 1) {
+		return {
+			success: false,
+			message: `Account '${name}' is already paused`,
+		};
+	}
+
+	dbOps.pauseAccount(account.id);
+
+	return {
+		success: true,
+		message: `Account '${name}' paused successfully`,
+	};
+}
+
+/**
+ * Resume a paused account by name
+ */
+export function resumeAccount(
+	dbOps: DatabaseOperations,
+	name: string,
+): { success: boolean; message: string } {
+	const db = dbOps.getDatabase();
+
+	// Get account ID by name
+	const account = db
+		.query<{ id: string; paused: 0 | 1 }, [string]>(
+			"SELECT id, COALESCE(paused, 0) as paused FROM accounts WHERE name = ?",
+		)
+		.get(name);
+
+	if (!account) {
+		return {
+			success: false,
+			message: `Account '${name}' not found`,
+		};
+	}
+
+	if (account.paused === 0) {
+		return {
+			success: false,
+			message: `Account '${name}' is not paused`,
+		};
+	}
+
+	dbOps.resumeAccount(account.id);
+
+	return {
+		success: true,
+		message: `Account '${name}' resumed successfully`,
 	};
 }

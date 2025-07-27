@@ -17,6 +17,7 @@ export type AccountRow = {
 	session_start?: number | null;
 	session_request_count?: number;
 	account_tier: number;
+	paused?: 0 | 1;
 };
 
 export type RequestRow = {
@@ -58,6 +59,7 @@ export interface Account {
 	session_start: number | null;
 	session_request_count: number;
 	account_tier: number; // 1, 5, or 20
+	paused: boolean;
 }
 
 export interface RequestMeta {
@@ -122,6 +124,7 @@ export function toAccount(row: AccountRow): Account {
 		session_start: row.session_start || null,
 		session_request_count: row.session_request_count || 0,
 		account_tier: row.account_tier || 1,
+		paused: row.paused === 1,
 	};
 }
 
