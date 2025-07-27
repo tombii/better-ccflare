@@ -1,15 +1,34 @@
 # Claudeflare Landing Page
 
-Static landing page for Claudeflare
+Static landing page for Claudeflare - showcasing how simple it is to never hit rate limits again.
 
-## Local Development
+## 🚀 Getting Started is This Simple
+
+```bash
+# Clone and run - that's it!
+git clone https://github.com/snipeship/claudeflare
+cd claudeflare
+bun install
+bun run claudeflare
+```
+
+That single `bun run claudeflare` command gives you:
+- ✅ Full proxy server on port 8080
+- ✅ Interactive TUI for monitoring
+- ✅ Web dashboard at http://localhost:8080/dashboard
+- ✅ Real-time analytics and request logs
+- ✅ Automatic rate limit handling
+
+## Landing Page Development
+
+### Local Preview
 
 ```bash
 # Preview the site locally
 bun run preview
 ```
 
-## Build
+### Build
 
 ```bash
 # Build the site (copies src to dist)
@@ -59,3 +78,4 @@ bun run build
 - Security headers configured
 - Optimized for performance
 - Static HTML/CSS (no JavaScript framework)
+- Real screenshots from actual Claudeflare usage
