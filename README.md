@@ -36,10 +36,7 @@ export ANTHROPIC_BASE_URL=http://localhost:8080
 ## Features
 
 ### 🎯 Intelligent Load Balancing
-- **Round-robin** - Even distribution across accounts
-- **Least-requests** - Route to account with fewest requests
 - **Session-based** - Maintain conversation context (5hr sessions)
-- **Weighted** - Prioritize accounts by tier (Free/Pro/Team)
 
 ### 📈 Real-Time Analytics
 - Token usage tracking per request
