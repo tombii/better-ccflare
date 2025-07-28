@@ -1,4 +1,5 @@
 import * as tuiCore from "@claudeflare/tui-core";
+import { formatCost, formatTokens } from "@claudeflare/ui-common";
 import { Box, Text, useInput } from "ink";
 import { useCallback, useEffect, useState } from "react";
 import { TokenUsageDisplay } from "./TokenUsageDisplay";
@@ -80,7 +81,8 @@ export function EnhancedRequestsScreen({
 		return () => clearInterval(interval);
 	}, [loadRequests]);
 
-	const formatTimestamp = (ts: number): string => {
+	// For TUI, we want to show just time not full timestamp for space reasons
+	const formatTime = (ts: number): string => {
 		return new Date(ts).toLocaleTimeString();
 	};
 
@@ -104,16 +106,6 @@ export function EnhancedRequestsScreen({
 			// If it's not valid JSON, return as-is
 			return str;
 		}
-	};
-
-	const formatCost = (cost?: number): string => {
-		if (!cost) return "";
-		return `$${cost.toFixed(4)}`;
-	};
-
-	const formatTokens = (tokens?: number): string => {
-		if (!tokens) return "";
-		return tokens.toLocaleString();
 	};
 
 	if (loading) {
@@ -143,9 +135,7 @@ export function EnhancedRequestsScreen({
 
 				<Box flexDirection="column">
 					<Text bold>ID: {selectedRequest.id}</Text>
-					<Text bold>
-						Time: {formatTimestamp(selectedRequest.meta.timestamp)}
-					</Text>
+					<Text bold>Time: {formatTime(selectedRequest.meta.timestamp)}</Text>
 
 					{selectedRequest.meta.accountName && (
 						<Text>Account: {selectedRequest.meta.accountName}</Text>
@@ -290,7 +280,7 @@ export function EnhancedRequestsScreen({
 									inverse={isSelected}
 								>
 									{isSelected ? "▶ " : "  "}
-									{formatTimestamp(req.meta.timestamp)} -{" "}
+									{formatTime(req.meta.timestamp)} -{" "}
 									{statusCode ? (
 										<Text
 											color={

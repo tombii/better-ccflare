@@ -1,6 +1,7 @@
 import type { Config } from "@claudeflare/config";
 import type { DatabaseOperations } from "@claudeflare/database";
 import { generatePKCE, getOAuthProvider } from "@claudeflare/providers";
+import type { AccountListItem } from "@claudeflare/types";
 import {
 	type PromptAdapter,
 	promptAccountRemovalConfirmation,
@@ -8,6 +9,7 @@ import {
 } from "../prompts/index";
 import { openBrowser } from "../utils/browser";
 
+// Re-export types with adapter extension for CLI-specific options
 export interface AddAccountOptions {
 	name: string;
 	mode?: "max" | "console";
@@ -15,20 +17,11 @@ export interface AddAccountOptions {
 	adapter?: PromptAdapter;
 }
 
-export interface AccountListItem {
-	id: string;
-	name: string;
-	provider: string;
-	tierDisplay: string;
-	created: Date;
-	lastUsed: Date | null;
-	requestCount: number;
-	totalRequests: number;
-	paused: boolean;
-	tokenStatus: "valid" | "expired";
-	rateLimitStatus: string;
-	sessionInfo: string;
-	tier: number;
+// Re-export AccountListItem from types for backward compatibility
+export type { AccountListItem } from "@claudeflare/types";
+
+// Add mode property to AccountListItem for CLI display
+export interface AccountListItemWithMode extends AccountListItem {
 	mode: "max" | "console";
 }
 

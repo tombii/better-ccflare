@@ -1,4 +1,5 @@
 import type { RequestSummary } from "@claudeflare/tui-core";
+import { formatCost, formatTokens } from "@claudeflare/ui-common";
 import { Box, Text } from "ink";
 
 interface TokenUsageDisplayProps {
@@ -6,16 +7,6 @@ interface TokenUsageDisplayProps {
 }
 
 export function TokenUsageDisplay({ summary }: TokenUsageDisplayProps) {
-	const formatTokens = (tokens?: number): string => {
-		if (!tokens) return "0";
-		return tokens.toLocaleString();
-	};
-
-	const formatCost = (cost?: number): string => {
-		if (!cost || cost === 0) return "$0.0000";
-		return `$${cost.toFixed(4)}`;
-	};
-
 	if (!summary.inputTokens && !summary.outputTokens) {
 		return (
 			<Box flexDirection="column" marginTop={1}>

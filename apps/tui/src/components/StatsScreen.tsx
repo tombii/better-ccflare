@@ -1,5 +1,11 @@
 import type { Stats } from "@claudeflare/tui-core";
 import * as tuiCore from "@claudeflare/tui-core";
+import {
+	formatCost,
+	formatDuration,
+	formatPercentage,
+	formatTokens,
+} from "@claudeflare/ui-common";
 import { Box, Text, useInput } from "ink";
 import { useCallback, useEffect, useState } from "react";
 
@@ -61,36 +67,39 @@ export function StatsScreen({ onBack }: StatsScreenProps) {
 						<Text bold>Overall Stats</Text>
 						<Box flexDirection="column" marginLeft={2}>
 							<Text>Total Requests: {stats.totalRequests || 0}</Text>
-							<Text>Success Rate: {stats.successRate || 0}%</Text>
-							<Text>Active Accounts: {stats.activeAccounts || 0}</Text>
-							<Text>Avg Response Time: {stats.avgResponseTime || 0}ms</Text>
 							<Text>
-								Total Tokens: {(stats.totalTokens || 0).toLocaleString()}
+								Success Rate: {formatPercentage(stats.successRate || 0)}
 							</Text>
+							<Text>Active Accounts: {stats.activeAccounts || 0}</Text>
+							<Text>
+								Avg Response Time: {formatDuration(stats.avgResponseTime || 0)}
+							</Text>
+							<Text>Total Tokens: {formatTokens(stats.totalTokens || 0)}</Text>
 							{stats.tokenDetails && (
 								<Box flexDirection="column" marginLeft={2}>
 									<Text dimColor>
-										├─ Input: {stats.tokenDetails.inputTokens.toLocaleString()}
+										├─ Input: {formatTokens(stats.tokenDetails.inputTokens)}
 									</Text>
 									{stats.tokenDetails.cacheReadInputTokens > 0 && (
 										<Text dimColor>
 											├─ Cache Read:{" "}
-											{stats.tokenDetails.cacheReadInputTokens.toLocaleString()}
+											{formatTokens(stats.tokenDetails.cacheReadInputTokens)}
 										</Text>
 									)}
 									{stats.tokenDetails.cacheCreationInputTokens > 0 && (
 										<Text dimColor>
 											├─ Cache Creation:{" "}
-											{stats.tokenDetails.cacheCreationInputTokens.toLocaleString()}
+											{formatTokens(
+												stats.tokenDetails.cacheCreationInputTokens,
+											)}
 										</Text>
 									)}
 									<Text dimColor>
-										└─ Output:{" "}
-										{stats.tokenDetails.outputTokens.toLocaleString()}
+										└─ Output: {formatTokens(stats.tokenDetails.outputTokens)}
 									</Text>
 								</Box>
 							)}
-							<Text>Total Cost: ${(stats.totalCostUsd || 0).toFixed(2)}</Text>
+							<Text>Total Cost: {formatCost(stats.totalCostUsd || 0)}</Text>
 						</Box>
 					</Box>
 
@@ -101,7 +110,7 @@ export function StatsScreen({ onBack }: StatsScreenProps) {
 								<Box key={acc.name} marginLeft={2}>
 									<Text>
 										{acc.name}: {acc.requestCount || 0} requests (
-										{acc.successRate || 0}% success)
+										{formatPercentage(acc.successRate || 0)} success)
 									</Text>
 								</Box>
 							))}

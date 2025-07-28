@@ -1,4 +1,9 @@
 import type { AnalyticsResponse } from "@claudeflare/http-api";
+import {
+	formatCost,
+	formatNumber,
+	formatPercentage,
+} from "@claudeflare/ui-common";
 import { format } from "date-fns";
 import {
 	Activity,
@@ -93,7 +98,7 @@ function MetricCard({
 										trend === "up" ? "text-success" : "text-destructive"
 									}
 								>
-									{Math.abs(change).toFixed(1)}%
+									{formatPercentage(Math.abs(change), 1)}
 								</span>
 								<span className="text-muted-foreground">vs last hour</span>
 							</div>
@@ -262,14 +267,14 @@ export function OverviewTab() {
 			<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
 				<MetricCard
 					title="Total Requests"
-					value={analytics?.totals.requests?.toLocaleString() || "0"}
+					value={formatNumber(analytics?.totals.requests || 0)}
 					change={deltaRequests !== null ? deltaRequests : undefined}
 					trend={trendRequests}
 					icon={Activity}
 				/>
 				<MetricCard
 					title="Success Rate"
-					value={`${Math.round(analytics?.totals.successRate || 0)}%`}
+					value={formatPercentage(analytics?.totals.successRate || 0, 0)}
 					change={deltaSuccessRate !== null ? deltaSuccessRate : undefined}
 					trend={trendSuccessRate}
 					icon={CheckCircle}
@@ -283,7 +288,11 @@ export function OverviewTab() {
 				/>
 				<MetricCard
 					title="Total Cost"
-					value={`$${analytics?.totals.totalCostUsd?.toFixed(2) || "0.00"}`}
+					value={
+						analytics?.totals.totalCostUsd
+							? formatCost(analytics.totals.totalCostUsd)
+							: "$0.0000"
+					}
 					change={deltaCost !== null ? deltaCost : undefined}
 					trend={trendCost}
 					icon={DollarSign}

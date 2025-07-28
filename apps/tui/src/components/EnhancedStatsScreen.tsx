@@ -1,4 +1,9 @@
 import * as tuiCore from "@claudeflare/tui-core";
+import {
+	formatCost,
+	formatNumber,
+	formatPercentage,
+} from "@claudeflare/ui-common";
 import { Box, Text, useInput } from "ink";
 import { useCallback, useEffect, useState } from "react";
 
@@ -37,19 +42,8 @@ export function EnhancedStatsScreen({ onBack }: EnhancedStatsScreenProps) {
 		return () => clearInterval(interval);
 	}, [loadStats]);
 
-	const formatNumber = (num: number): string => {
-		return num.toLocaleString();
-	};
-
-	const formatCost = (cost: number): string => {
-		return `$${cost.toFixed(4)}`;
-	};
-
-	const formatPercentage = (rate: number): string => {
-		return `${rate}%`;
-	};
-
-	const formatTimestamp = (date: Date): string => {
+	// For TUI, we want to show just time not full timestamp for space reasons
+	const formatTime = (date: Date): string => {
 		return date.toLocaleTimeString();
 	};
 
@@ -89,7 +83,7 @@ export function EnhancedStatsScreen({ onBack }: EnhancedStatsScreenProps) {
 				<Text color="cyan" bold>
 					📊 Enhanced Statistics Dashboard
 				</Text>
-				<Text dimColor>Last updated: {formatTimestamp(lastUpdated)}</Text>
+				<Text dimColor>Last updated: {formatTime(lastUpdated)}</Text>
 			</Box>
 
 			{/* Overall Statistics */}

@@ -1,9 +1,22 @@
 import type { Database } from "bun:sqlite";
 import * as cliCommands from "@claudeflare/cli-commands";
 import { Config } from "@claudeflare/config";
+import {
+	patterns,
+	sanitizers,
+	validateNumber,
+	validateString,
+} from "@claudeflare/core";
 import type { DatabaseOperations } from "@claudeflare/database";
+import {
+	BadRequest,
+	errorResponse,
+	InternalServerError,
+	jsonResponse,
+	NotFound,
+} from "@claudeflare/http-common";
 import { generatePKCE, getOAuthProvider } from "@claudeflare/providers";
-import type { AccountDeleteRequest, AccountResponse } from "../types";
+import type { AccountResponse } from "../types";
 
 /**
  * Create an accounts list handler
@@ -116,9 +129,7 @@ export function createAccountsListHandler(db: Database) {
 			};
 		});
 
-		return new Response(JSON.stringify(response), {
-			headers: { "Content-Type": "application/json" },
-		});
+		return jsonResponse(response);
 	};
 }
 
@@ -128,41 +139,33 @@ export function createAccountsListHandler(db: Database) {
 export function createAccountTierUpdateHandler(dbOps: DatabaseOperations) {
 	return async (req: Request, accountId: string): Promise<Response> => {
 		try {
-			const body = (await req.json()) as { tier: number };
-			const { tier } = body;
+			const body = await req.json();
 
-			if (!tier || ![1, 5, 20].includes(tier)) {
-				return new Response(
-					JSON.stringify({ error: "Invalid tier. Must be 1, 5, or 20" }),
-					{
-						status: 400,
-						headers: { "Content-Type": "application/json" },
-					},
-				);
+			// Validate tier input
+			const tier = validateNumber(body.tier, "tier", {
+				required: true,
+				allowedValues: [1, 5, 20] as const,
+			});
+
+			if (tier === undefined) {
+				return errorResponse(BadRequest("Tier is required"));
 			}
 
 			dbOps.updateAccountTier(accountId, tier);
 
-			return new Response(JSON.stringify({ success: true, tier }), {
-				headers: { "Content-Type": "application/json" },
-			});
+			return jsonResponse({ success: true, tier });
 		} catch (_error) {
-			return new Response(
-				JSON.stringify({ error: "Failed to update account tier" }),
-				{
-					status: 500,
-					headers: { "Content-Type": "application/json" },
-				},
+			return errorResponse(
+				InternalServerError("Failed to update account tier"),
 			);
 		}
 	};
 }
 
-// Store PKCE verifiers temporarily (in production, use a proper cache)
-const pkceStore = new Map<
-	string,
-	{ verifier: string; mode: "max" | "console"; tier: number }
->();
+// Session ID generation for OAuth flow
+function generateSessionId(): string {
+	return crypto.randomUUID();
+}
 
 /**
  * Create an account add handler
@@ -170,51 +173,58 @@ const pkceStore = new Map<
 export function createAccountAddHandler(dbOps: DatabaseOperations) {
 	return async (req: Request): Promise<Response> => {
 		try {
-			const body = (await req.json()) as {
-				name: string;
-				mode?: "max" | "console";
-				tier?: number;
-				code?: string;
-				step?: "init" | "callback";
-			};
-			const { name, mode = "max", tier = 1, code, step = "init" } = body;
+			const body = await req.json();
 
-			if (!name || typeof name !== "string") {
-				return new Response(
-					JSON.stringify({ error: "Account name is required" }),
-					{
-						status: 400,
-						headers: { "Content-Type": "application/json" },
-					},
-				);
+			// Validate step
+			const step =
+				validateString(body.step, "step", {
+					allowedValues: ["init", "callback"] as const,
+				}) || "init";
+
+			// Validate account name
+			const name = validateString(body.name, "name", {
+				required: true,
+				minLength: 1,
+				maxLength: 100,
+				pattern: patterns.accountName,
+				transform: sanitizers.trim,
+			});
+
+			if (!name) {
+				return errorResponse(BadRequest("Account name is required"));
 			}
+
+			// Validate mode
+			const mode = (validateString(body.mode, "mode", {
+				allowedValues: ["max", "console"] as const,
+			}) || "max") as "max" | "console";
+
+			// Validate tier
+			const tier =
+				validateNumber(body.tier, "tier", {
+					allowedValues: [1, 5, 20] as const,
+				}) || 1;
+
+			// Validate code for callback step
+			const code = validateString(body.code, "code", {
+				required: step === "callback",
+				minLength: step === "callback" ? 1 : undefined,
+			});
 
 			// Step 1: Initialize OAuth flow
 			if (step === "init") {
 				// Check if account already exists
 				const existingAccounts = dbOps.getAllAccounts();
 				if (existingAccounts.some((a) => a.name === name)) {
-					return new Response(
-						JSON.stringify({
-							error: `Account with name '${name}' already exists`,
-						}),
-						{
-							status: 400,
-							headers: { "Content-Type": "application/json" },
-						},
+					return errorResponse(
+						BadRequest(`Account with name '${name}' already exists`),
 					);
 				}
 
 				// Get OAuth provider
 				const oauthProvider = getOAuthProvider("anthropic");
 				if (!oauthProvider) {
-					return new Response(
-						JSON.stringify({ error: "OAuth provider not found" }),
-						{
-							status: 500,
-							headers: { "Content-Type": "application/json" },
-						},
-					);
+					return errorResponse(InternalServerError("OAuth provider not found"));
 				}
 
 				// Generate PKCE
@@ -224,71 +234,72 @@ export function createAccountAddHandler(dbOps: DatabaseOperations) {
 				const oauthConfig = oauthProvider.getOAuthConfig(mode);
 				oauthConfig.clientId = runtime.clientId;
 
-				// Generate auth URL
+				// Generate session ID and auth URL
+				const sessionId = generateSessionId();
 				const authUrl = oauthProvider.generateAuthUrl(oauthConfig, pkce);
 
-				// Store PKCE verifier for later
-				pkceStore.set(name, { verifier: pkce.verifier, mode, tier });
-
-				// Clean up old entries after 10 minutes
-				setTimeout(() => pkceStore.delete(name), 10 * 60 * 1000);
-
-				return new Response(
-					JSON.stringify({
-						success: true,
-						authUrl,
-						step: "authorize",
-					}),
-					{
-						headers: { "Content-Type": "application/json" },
-					},
+				// Store PKCE verifier securely in database
+				dbOps.createOAuthSession(
+					sessionId,
+					name,
+					pkce.verifier,
+					mode,
+					tier,
+					10, // 10 minute TTL
 				);
+
+				return jsonResponse({
+					success: true,
+					authUrl,
+					sessionId,
+					step: "authorize",
+				});
 			}
 
 			// Step 2: Handle OAuth callback
 			if (step === "callback") {
-				if (!code) {
-					return new Response(
-						JSON.stringify({ error: "Authorization code is required" }),
-						{
-							status: 400,
-							headers: { "Content-Type": "application/json" },
-						},
+				// Validate session ID
+				const sessionId = validateString(body.sessionId, "sessionId", {
+					required: true,
+					pattern: patterns.uuid,
+				});
+
+				if (!sessionId) {
+					return errorResponse(BadRequest("Session ID is required"));
+				}
+
+				// Get stored PKCE verifier from database
+				const oauthSession = dbOps.getOAuthSession(sessionId);
+				if (!oauthSession) {
+					return errorResponse(
+						BadRequest("OAuth session expired or invalid. Please try again."),
 					);
 				}
 
-				// Get stored PKCE verifier
-				const pkceData = pkceStore.get(name);
-				if (!pkceData) {
-					return new Response(
-						JSON.stringify({
-							error: "OAuth session expired. Please try again.",
-						}),
-						{
-							status: 400,
-							headers: { "Content-Type": "application/json" },
-						},
+				// Verify account name matches
+				if (oauthSession.accountName !== name) {
+					return errorResponse(
+						BadRequest("Session does not match the account name"),
 					);
 				}
 
-				const { verifier, mode: savedMode, tier: savedTier } = pkceData;
+				const { verifier, mode: savedMode, tier: savedTier } = oauthSession;
 
 				// Get OAuth provider
 				const oauthProvider = getOAuthProvider("anthropic");
 				if (!oauthProvider) {
-					return new Response(
-						JSON.stringify({ error: "OAuth provider not found" }),
-						{
-							status: 500,
-							headers: { "Content-Type": "application/json" },
-						},
-					);
+					return errorResponse(InternalServerError("OAuth provider not found"));
 				}
 
 				const config = new Config();
 				const runtime = config.getRuntime();
 				const oauthConfig = oauthProvider.getOAuthConfig(savedMode);
 				oauthConfig.clientId = runtime.clientId;
+
+				// Ensure code is provided
+				if (!code) {
+					return errorResponse(BadRequest("Authorization code is required"));
+				}
 
 				// Exchange code for tokens
 				const tokens = await oauthProvider.exchangeCode(
@@ -319,37 +330,22 @@ export function createAccountAddHandler(dbOps: DatabaseOperations) {
 					],
 				);
 
-				// Clean up PKCE data
-				pkceStore.delete(name);
+				// Clean up OAuth session from database
+				dbOps.deleteOAuthSession(sessionId);
 
-				return new Response(
-					JSON.stringify({
-						success: true,
-						message: `Account '${name}' added successfully!`,
-						mode: savedMode === "max" ? "Claude Max" : "Claude Console",
-						tier: savedTier,
-					}),
-					{
-						headers: { "Content-Type": "application/json" },
-					},
-				);
+				return jsonResponse({
+					success: true,
+					message: `Account '${name}' added successfully!`,
+					mode: savedMode === "max" ? "Claude Max" : "Claude Console",
+					tier: savedTier,
+				});
 			}
 
-			return new Response(JSON.stringify({ error: "Invalid step" }), {
-				status: 400,
-				headers: { "Content-Type": "application/json" },
-			});
+			return errorResponse(BadRequest("Invalid step"));
 		} catch (error) {
 			console.error("Account add error:", error);
-			return new Response(
-				JSON.stringify({
-					error:
-						error instanceof Error ? error.message : "Failed to add account",
-				}),
-				{
-					status: 500,
-					headers: { "Content-Type": "application/json" },
-				},
+			return errorResponse(
+				error instanceof Error ? error : new Error("Failed to add account"),
 			);
 		}
 	};
@@ -360,52 +356,36 @@ export function createAccountAddHandler(dbOps: DatabaseOperations) {
  */
 export function createAccountRemoveHandler(dbOps: DatabaseOperations) {
 	return async (req: Request, accountName: string): Promise<Response> => {
-		const JSON_HEADERS = { "Content-Type": "application/json" };
-
 		try {
 			// Parse and validate confirmation
-			const body = (await req.json()) as AccountDeleteRequest;
-			if (!body.confirm || body.confirm !== accountName) {
-				return new Response(
-					JSON.stringify({
-						error: "Confirmation string does not match account name",
+			const body = await req.json();
+
+			// Validate confirmation string
+			const confirm = validateString(body.confirm, "confirm", {
+				required: true,
+			});
+
+			if (confirm !== accountName) {
+				return errorResponse(
+					BadRequest("Confirmation string does not match account name", {
 						confirmationRequired: true,
 					}),
-					{
-						status: 400,
-						headers: JSON_HEADERS,
-					},
 				);
 			}
 
 			const result = cliCommands.removeAccount(dbOps, accountName);
 
 			if (!result.success) {
-				return new Response(JSON.stringify({ error: result.message }), {
-					status: 404,
-					headers: JSON_HEADERS,
-				});
+				return errorResponse(NotFound(result.message));
 			}
 
-			return new Response(
-				JSON.stringify({
-					success: true,
-					message: result.message,
-				}),
-				{
-					headers: JSON_HEADERS,
-				},
-			);
+			return jsonResponse({
+				success: true,
+				message: result.message,
+			});
 		} catch (error) {
-			return new Response(
-				JSON.stringify({
-					error:
-						error instanceof Error ? error.message : "Failed to remove account",
-				}),
-				{
-					status: 500,
-					headers: JSON_HEADERS,
-				},
+			return errorResponse(
+				error instanceof Error ? error : new Error("Failed to remove account"),
 			);
 		}
 	};
@@ -426,40 +406,22 @@ export function createAccountPauseHandler(dbOps: DatabaseOperations) {
 				.get(accountId);
 
 			if (!account) {
-				return new Response(JSON.stringify({ error: "Account not found" }), {
-					status: 404,
-					headers: { "Content-Type": "application/json" },
-				});
+				return errorResponse(NotFound("Account not found"));
 			}
 
 			const result = cliCommands.pauseAccount(dbOps, account.name);
 
 			if (!result.success) {
-				return new Response(JSON.stringify({ error: result.message }), {
-					status: 400,
-					headers: { "Content-Type": "application/json" },
-				});
+				return errorResponse(BadRequest(result.message));
 			}
 
-			return new Response(
-				JSON.stringify({
-					success: true,
-					message: result.message,
-				}),
-				{
-					headers: { "Content-Type": "application/json" },
-				},
-			);
+			return jsonResponse({
+				success: true,
+				message: result.message,
+			});
 		} catch (error) {
-			return new Response(
-				JSON.stringify({
-					error:
-						error instanceof Error ? error.message : "Failed to pause account",
-				}),
-				{
-					status: 500,
-					headers: { "Content-Type": "application/json" },
-				},
+			return errorResponse(
+				error instanceof Error ? error : new Error("Failed to pause account"),
 			);
 		}
 	};
@@ -480,40 +442,22 @@ export function createAccountResumeHandler(dbOps: DatabaseOperations) {
 				.get(accountId);
 
 			if (!account) {
-				return new Response(JSON.stringify({ error: "Account not found" }), {
-					status: 404,
-					headers: { "Content-Type": "application/json" },
-				});
+				return errorResponse(NotFound("Account not found"));
 			}
 
 			const result = cliCommands.resumeAccount(dbOps, account.name);
 
 			if (!result.success) {
-				return new Response(JSON.stringify({ error: result.message }), {
-					status: 400,
-					headers: { "Content-Type": "application/json" },
-				});
+				return errorResponse(BadRequest(result.message));
 			}
 
-			return new Response(
-				JSON.stringify({
-					success: true,
-					message: result.message,
-				}),
-				{
-					headers: { "Content-Type": "application/json" },
-				},
-			);
+			return jsonResponse({
+				success: true,
+				message: result.message,
+			});
 		} catch (error) {
-			return new Response(
-				JSON.stringify({
-					error:
-						error instanceof Error ? error.message : "Failed to resume account",
-				}),
-				{
-					status: 500,
-					headers: { "Content-Type": "application/json" },
-				},
+			return errorResponse(
+				error instanceof Error ? error : new Error("Failed to resume account"),
 			);
 		}
 	};

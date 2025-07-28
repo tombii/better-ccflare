@@ -14,6 +14,7 @@
 		"@claudeflare/database": "workspace:*",
 		"@claudeflare/config": "workspace:*",
 		"@claudeflare/logger": "workspace:*",
-		"@claudeflare/providers": "workspace:*"
+		"@claudeflare/providers": "workspace:*",
+		"@claudeflare/ui-common": "workspace:*"
 	}
 }

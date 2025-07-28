@@ -1,9 +1,15 @@
 import crypto from "node:crypto";
 import type { RuntimeConfig } from "@claudeflare/config";
-import type {
-	Account,
-	LoadBalancingStrategy,
-	RequestMeta,
+import {
+	type Account,
+	type LoadBalancingStrategy,
+	logError,
+	ProviderError,
+	RateLimitError,
+	type RequestMeta,
+	ServiceUnavailableError,
+	TokenRefreshError,
+	ValidationError,
 } from "@claudeflare/core";
 import type { AsyncDbWriter, DatabaseOperations } from "@claudeflare/database";
 import { Logger } from "@claudeflare/logger";
@@ -32,8 +38,13 @@ export function getUsageWorker(): Worker {
 			new URL("./post-processor.worker.ts", import.meta.url).href,
 			{ smol: true },
 		);
-		// @ts-ignore - Bun extends Worker with unref
-		usageWorkerInstance.unref(); // Don't keep process alive
+		// Bun extends Worker with unref method
+		if (
+			"unref" in usageWorkerInstance &&
+			typeof usageWorkerInstance.unref === "function"
+		) {
+			usageWorkerInstance.unref(); // Don't keep process alive
+		}
 	}
 	return usageWorkerInstance;
 }
@@ -73,6 +84,9 @@ async function refreshAccessTokenSafe(
 				);
 				return result.accessToken;
 			})
+			.catch((error) => {
+				throw new TokenRefreshError(account.id, error as Error);
+			})
 			.finally(() => {
 				// Clean up the map when done (success or failure)
 				ctx.refreshInFlight.delete(account.id);
@@ -83,7 +97,9 @@ async function refreshAccessTokenSafe(
 	// Return the existing or new refresh promise
 	const promise = ctx.refreshInFlight.get(account.id);
 	if (!promise) {
-		throw new Error(`Refresh promise not found for account ${account.id}`);
+		throw new ServiceUnavailableError(
+			`Refresh promise not found for account ${account.id}`,
+		);
 	}
 	return promise;
 }
@@ -127,12 +143,10 @@ export async function handleProxy(
 
 	// Check if provider can handle this request
 	if (!ctx.provider.canHandle(url.pathname)) {
-		return new Response(
-			JSON.stringify({ error: "Provider cannot handle this request path" }),
-			{
-				status: 400,
-				headers: { "Content-Type": "application/json" },
-			},
+		throw new ValidationError(
+			`Provider ${ctx.provider.name} cannot handle path: ${url.pathname}`,
+			"path",
+			url.pathname,
 		);
 	}
 
@@ -174,8 +188,7 @@ export async function handleProxy(
 				method: req.method,
 				headers: headers,
 				body: createBodyStream(),
-				// @ts-ignore - Bun supports duplex
-				duplex: "half",
+				...(req.body ? ({ duplex: "half" } as RequestInit) : {}),
 			});
 
 			// Use unified response handler
@@ -195,15 +208,15 @@ export async function handleProxy(
 				ctx,
 			);
 		} catch (error) {
-			const errorMessage =
-				error instanceof Error ? error.message : String(error);
-			log.error("Error forwarding unauthenticated request:", error);
-
-			// Return error response
-			return new Response(JSON.stringify({ error: errorMessage }), {
-				status: 502,
-				headers: { "Content-Type": "application/json" },
-			});
+			logError(error, log);
+			throw new ProviderError(
+				"Failed to forward unauthenticated request",
+				ctx.provider.name,
+				502,
+				{
+					originalError: error instanceof Error ? error.message : String(error),
+				},
+			);
 		}
 	}
 
@@ -220,8 +233,7 @@ export async function handleProxy(
 				method: req.method,
 				headers,
 				body: createBodyStream(),
-				// @ts-ignore - Bun supports duplex
-				duplex: "half",
+				...(req.body ? ({ duplex: "half" } as RequestInit) : {}),
 			});
 
 			const isStream = ctx.provider.isStreamingResponse?.(response) ?? false;
@@ -240,6 +252,13 @@ export async function handleProxy(
 				ctx.asyncWriter.enqueue(() =>
 					ctx.dbOps.markAccountRateLimited(account.id, resetTime),
 				);
+				// Log the rate limit error but continue to next account
+				const rateLimitError = new RateLimitError(
+					account.id,
+					rateLimitInfo.resetTime,
+					rateLimitInfo.remaining,
+				);
+				logError(rateLimitError, log);
 				continue; // try next account
 			}
 
@@ -279,20 +298,14 @@ export async function handleProxy(
 				ctx,
 			);
 		} catch (err) {
-			const msg = err instanceof Error ? err.message : String(err);
-			log.error(`Error with account ${account.name}: ${msg}`);
+			logError(err, log);
+			log.error(`Failed to proxy request with account ${account.name}`);
 		}
 	}
 
 	// All accounts failed
-	return new Response(
-		JSON.stringify({
-			error: "All accounts failed to proxy the request",
-			attempts: accounts.length,
-		}),
-		{
-			status: 503,
-			headers: { "Content-Type": "application/json" },
-		},
+	throw new ServiceUnavailableError(
+		`All ${accounts.length} accounts failed to proxy the request`,
+		ctx.provider.name,
 	);
 }

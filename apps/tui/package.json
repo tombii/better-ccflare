@@ -14,6 +14,7 @@
 	},
 	"dependencies": {
 		"@claudeflare/tui-core": "workspace:*",
+		"@claudeflare/ui-common": "workspace:*",
 		"@claudeflare/database": "workspace:*",
 		"@claudeflare/core-di": "workspace:*",
 		"@claudeflare/config": "workspace:*",

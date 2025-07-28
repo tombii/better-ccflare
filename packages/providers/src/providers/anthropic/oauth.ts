@@ -1,3 +1,4 @@
+import { OAuthError } from "@claudeflare/core";
 import type {
 	OAuthConfig,
 	OAuthProvider,
@@ -55,7 +56,21 @@ export class AnthropicOAuthProvider implements OAuthProvider {
 		});
 
 		if (!response.ok) {
-			throw new Error(`Exchange failed: ${response.statusText}`);
+			let errorDetails: { error?: string; error_description?: string } | null =
+				null;
+			try {
+				errorDetails = await response.json();
+			} catch {
+				// Failed to parse error response
+			}
+
+			const errorMessage =
+				errorDetails?.error_description ||
+				errorDetails?.error ||
+				response.statusText ||
+				"OAuth token exchange failed";
+
+			throw new OAuthError(errorMessage, "anthropic", errorDetails?.error);
 		}
 
 		const json = (await response.json()) as {

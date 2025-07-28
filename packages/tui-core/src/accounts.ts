@@ -1,4 +1,3 @@
-import type { AccountListItem } from "@claudeflare/cli-commands";
 import * as cliCommands from "@claudeflare/cli-commands";
 import { openBrowser } from "@claudeflare/cli-commands";
 import { Config } from "@claudeflare/config";
@@ -8,12 +7,7 @@ import {
 	getOAuthProvider,
 	type OAuthConfig,
 } from "@claudeflare/providers";
-
-export interface AddAccountOptions {
-	name: string;
-	mode?: "max" | "console";
-	tier?: 1 | 5 | 20;
-}
+import type { AccountListItem, AddAccountOptions } from "@claudeflare/types";
 
 export interface OAuthFlowResult {
 	authUrl: string;
@@ -119,7 +113,11 @@ export async function completeAddAccount(
 export async function addAccount(options: AddAccountOptions): Promise<void> {
 	const dbOps = DatabaseFactory.getInstance();
 	const config = new Config();
-	await cliCommands.addAccount(dbOps, config, options);
+	await cliCommands.addAccount(dbOps, config, {
+		name: options.name,
+		mode: options.mode || "max",
+		tier: options.tier || 1,
+	});
 }
 
 export async function getAccounts(): Promise<AccountListItem[]> {
