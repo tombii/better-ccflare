@@ -35,7 +35,7 @@ export class AsyncDbWriter implements Disposable {
 				try {
 					await job();
 				} catch (error) {
-					logger.error("Failed to execute DB job", { error });
+					logger.error("Failed to execute DB job", error);
 				}
 			}
 		} finally {

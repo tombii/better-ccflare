@@ -5,12 +5,11 @@ import type {
 	LoadBalancingStrategy,
 	RequestMeta,
 } from "@claudeflare/core";
-import { estimateCostUSD, NO_ACCOUNT_ID } from "@claudeflare/core";
 import type { AsyncDbWriter, DatabaseOperations } from "@claudeflare/database";
 import { Logger } from "@claudeflare/logger";
 import type { Provider, TokenRefreshResult } from "@claudeflare/providers";
-import { combineChunks, teeStream } from "./stream-tee";
-import type { ChunkMessage, UsageMessage } from "./usage-types";
+import { forwardToClient } from "./response-handler";
+import type { ControlMessage } from "./worker-messages";
 
 export interface ProxyContext {
 	strategy: LoadBalancingStrategy;
@@ -27,35 +26,31 @@ const log = new Logger("Proxy");
 // Create usage worker instance
 let usageWorkerInstance: Worker | null = null;
 
-export function getUsageWorker(ctx?: ProxyContext): Worker {
+export function getUsageWorker(): Worker {
 	if (!usageWorkerInstance) {
 		usageWorkerInstance = new Worker(
-			new URL("./usage-worker.ts", import.meta.url).href,
+			new URL("./post-processor.worker.ts", import.meta.url).href,
 			{ smol: true },
 		);
 		// @ts-ignore - Bun extends Worker with unref
 		usageWorkerInstance.unref(); // Don't keep process alive
-
-		// Set up message handler if context is provided
-		if (ctx) {
-			usageWorkerInstance.onmessage = (event: MessageEvent<UsageMessage>) => {
-				handleUsageMessage(event.data, ctx);
-			};
-		}
 	}
 	return usageWorkerInstance;
 }
 
 export function terminateUsageWorker(): void {
 	if (usageWorkerInstance) {
-		usageWorkerInstance.terminate();
-		usageWorkerInstance = null;
+		// Send shutdown message to allow worker to flush
+		const shutdownMsg: ControlMessage = { type: "shutdown" };
+		usageWorkerInstance.postMessage(shutdownMsg);
+		// Give worker time to flush before terminating
+		setTimeout(() => {
+			if (usageWorkerInstance) {
+				usageWorkerInstance.terminate();
+				usageWorkerInstance = null;
+			}
+		}, 100);
 	}
-}
-
-function handleUsageMessage(msg: UsageMessage, ctx: ProxyContext): void {
-	if (msg.type !== "usage") return;
-	saveUsageToDb(msg.id, msg.accountId, msg.usage, ctx);
 }
 
 async function refreshAccessTokenSafe(
@@ -108,44 +103,6 @@ async function getValidAccessToken(
 	return await refreshAccessTokenSafe(account, ctx);
 }
 
-async function saveUsageToDb(
-	requestId: string,
-	accountId: string | null,
-	usage?: {
-		model?: string;
-		promptTokens?: number;
-		completionTokens?: number;
-		totalTokens?: number;
-		costUsd?: number;
-		inputTokens?: number;
-		cacheReadInputTokens?: number;
-		cacheCreationInputTokens?: number;
-		outputTokens?: number;
-	} | null,
-	ctx?: ProxyContext,
-): Promise<void> {
-	if (!usage || !ctx) return;
-
-	// Calculate cost if not provided
-	if (usage.model && usage.costUsd === undefined) {
-		usage.costUsd = await estimateCostUSD(usage.model, {
-			inputTokens: usage.inputTokens,
-			outputTokens: usage.outputTokens,
-			cacheReadInputTokens: usage.cacheReadInputTokens,
-			cacheCreationInputTokens: usage.cacheCreationInputTokens,
-		});
-	}
-
-	// Update the existing request record with usage information
-	ctx.asyncWriter.enqueue(() => ctx.dbOps.updateRequestUsage(requestId, usage));
-
-	if (accountId && accountId !== NO_ACCOUNT_ID) {
-		log.info(
-			`Usage for request ${requestId}: Model: ${usage.model}, Tokens: ${usage.totalTokens || 0}, Cost: $${usage.costUsd?.toFixed(4) || "0"}`,
-		);
-	}
-}
-
 function getOrderedAccounts(meta: RequestMeta, ctx: ProxyContext): Account[] {
 	const allAccounts = ctx.dbOps.getAllAccounts();
 	// Filter accounts by provider
@@ -179,6 +136,20 @@ export async function handleProxy(
 		);
 	}
 
+	// Capture request body for analytics while preserving streaming
+	let requestBodyBuffer: ArrayBuffer | null = null;
+
+	if (req.body) {
+		// Read the entire body into a buffer for storage
+		requestBodyBuffer = await req.arrayBuffer();
+	}
+
+	// Helper to create a fresh body stream for each fetch attempt
+	const createBodyStream = () => {
+		if (!requestBodyBuffer) return undefined;
+		return new Response(requestBodyBuffer).body ?? undefined;
+	};
+
 	const accounts = getOrderedAccounts(requestMeta, ctx);
 	const fallbackUnauthenticated = accounts.length === 0;
 
@@ -193,220 +164,40 @@ export async function handleProxy(
 		log.info(`Request: ${req.method} ${url.pathname}`);
 	}
 
-	// Capture request body for analytics while preserving streaming
-	let requestBodyBuffer: ArrayBuffer | null = null;
-	let requestBodyForFetch: ReadableStream<Uint8Array> | undefined;
-
-	if (req.body) {
-		// Read the entire body into a buffer for storage
-		requestBodyBuffer = await req.arrayBuffer();
-		// Create a new stream from the buffer for the fetch
-		requestBodyForFetch = new Response(requestBodyBuffer).body ?? undefined;
-	}
-
 	// Handle unauthenticated fallback
 	if (fallbackUnauthenticated) {
 		const targetUrl = ctx.provider.buildUrl(url.pathname, url.search);
 		const headers = ctx.provider.prepareHeaders(req.headers); // No access token
-		const start = Date.now();
 
 		try {
 			const response = await fetch(targetUrl, {
 				method: req.method,
 				headers: headers,
-				body: requestBodyForFetch,
+				body: createBodyStream(),
 				// @ts-ignore - Bun supports duplex
 				duplex: "half",
 			});
 
-			const responseTime = Date.now() - start;
-			const responseClone = response.clone();
-
-			log.info(
-				`Unauthenticated request completed: ${response.status} in ${responseTime}ms`,
-			);
-
-			// Parse rate limit information even for unauthenticated requests
-			const rateLimitInfo = ctx.provider.parseRateLimit(response);
-			// Note: We can't update account metadata since there's no account
-			log.info(
-				`Rate limit for unauthenticated request: ${rateLimitInfo.statusHeader} - Remaining: ${rateLimitInfo.remaining}`,
-			);
-
-			// Extract usage info if provider supports it
-			let usage:
-				| {
-						model?: string;
-						promptTokens?: number;
-						completionTokens?: number;
-						totalTokens?: number;
-						costUsd?: number;
-						inputTokens?: number;
-						cacheReadInputTokens?: number;
-						cacheCreationInputTokens?: number;
-						outputTokens?: number;
-				  }
-				| null
-				| undefined;
-
-			// Check if this is a streaming response
-			const isStream = ctx.provider.isStreamingResponse?.(response) ?? false;
-
-			if (ctx.provider.extractUsageInfo && response.ok && !isStream) {
-				// Only extract usage for non-streaming responses
-				// Streaming responses are handled by the worker
-				usage = await ctx.provider
-					.extractUsageInfo(responseClone as Response)
-					.catch(() => null);
-				// Calculate cost if not provided by headers
-				if (usage?.model && usage.costUsd === undefined) {
-					usage.costUsd = await estimateCostUSD(usage.model, {
-						inputTokens: usage.inputTokens,
-						outputTokens: usage.outputTokens,
-						cacheReadInputTokens: usage.cacheReadInputTokens,
-						cacheCreationInputTokens: usage.cacheCreationInputTokens,
-					});
-				}
-			}
-
-			// Save request to database
-			ctx.asyncWriter.enqueue(() =>
-				ctx.dbOps.saveRequest(
-					requestMeta.id,
-					req.method,
-					url.pathname,
-					NO_ACCOUNT_ID,
-					response.status,
-					response.ok,
-					null,
-					responseTime,
-					0,
-					usage || undefined,
-				),
-			);
-
-			// Save response payload (skip body for streaming responses)
-			const responseBody = isStream
-				? null
-				: await responseClone.arrayBuffer().catch(() => null);
-			const payload = {
-				request: {
-					headers: Object.fromEntries(req.headers.entries()),
-					body: requestBodyBuffer
-						? Buffer.from(requestBodyBuffer).toString("base64")
-						: null,
+			// Use unified response handler
+			return forwardToClient(
+				{
+					requestId: requestMeta.id,
+					method: req.method,
+					path: url.pathname,
+					account: null,
+					requestHeaders: req.headers,
+					requestBody: requestBodyBuffer,
+					response,
+					timestamp: requestMeta.timestamp,
+					retryAttempt: 0,
+					failoverAttempts: 0,
 				},
-				response: {
-					status: response.status,
-					headers: Object.fromEntries(response.headers.entries()),
-					body: responseBody
-						? Buffer.from(responseBody).toString("base64")
-						: null,
-				},
-				meta: {
-					accountId: NO_ACCOUNT_ID,
-					timestamp: Date.now(),
-					success: response.ok,
-					isStream,
-				},
-			};
-			ctx.asyncWriter.enqueue(() =>
-				ctx.dbOps.saveRequestPayload(requestMeta.id, payload),
+				ctx,
 			);
-
-			// Process and return the response
-			if (isStream && response.body) {
-				// Use tee to capture streaming response
-				let payloadSaved = false;
-				const teedStream = teeStream(response.body, {
-					maxBytes: Infinity, // No limit - capture everything
-					onChunk: (chunk) => {
-						ctx.usageWorker.postMessage({
-							id: requestMeta.id,
-							data: chunk,
-						} as ChunkMessage);
-					},
-					onClose: (buffered) => {
-						if (!payloadSaved) {
-							payloadSaved = true;
-							const combined = combineChunks(buffered);
-							const updatedPayload = {
-								...payload,
-								response: {
-									...payload.response,
-									body:
-										combined.length > 0 ? combined.toString("base64") : null,
-								},
-								meta: {
-									...payload.meta,
-								},
-							};
-							// Update the payload with the streamed body
-							ctx.asyncWriter.enqueue(() =>
-								ctx.dbOps.saveRequestPayload(requestMeta.id, updatedPayload),
-							);
-						}
-						// Send final message to worker
-						ctx.usageWorker.postMessage({
-							id: requestMeta.id,
-							final: true,
-						} as ChunkMessage);
-					},
-					onError: (error) => {
-						log.error(
-							`Error capturing stream for unauthenticated request: ${error.message}`,
-						);
-					},
-				});
-
-				const newResponse = new Response(teedStream, {
-					status: response.status,
-					statusText: response.statusText,
-					headers: response.headers,
-				});
-				return await ctx.provider.processResponse(newResponse, null);
-			}
-			return await ctx.provider.processResponse(response, null);
 		} catch (error) {
 			const errorMessage =
 				error instanceof Error ? error.message : String(error);
 			log.error("Error forwarding unauthenticated request:", error);
-
-			// Save error to database
-			ctx.asyncWriter.enqueue(() =>
-				ctx.dbOps.saveRequest(
-					requestMeta.id,
-					req.method,
-					url.pathname,
-					NO_ACCOUNT_ID,
-					0,
-					false,
-					errorMessage,
-					Date.now() - start,
-					0,
-					undefined,
-				),
-			);
-
-			// Save error payload
-			const errorPayload = {
-				request: {
-					headers: Object.fromEntries(req.headers.entries()),
-					body: requestBodyBuffer
-						? Buffer.from(requestBodyBuffer).toString("base64")
-						: null,
-				},
-				response: null,
-				error: errorMessage,
-				meta: {
-					accountId: NO_ACCOUNT_ID,
-					timestamp: Date.now(),
-					success: false,
-				},
-			};
-			ctx.asyncWriter.enqueue(() =>
-				ctx.dbOps.saveRequestPayload(requestMeta.id, errorPayload),
-			);
 
 			// Return error response
 			return new Response(JSON.stringify({ error: errorMessage }), {
@@ -418,368 +209,86 @@ export async function handleProxy(
 
 	// Try each account in order
 	for (const account of accounts) {
-		let lastError: string | null = null;
-		let retryDelay = ctx.runtime.retry.delayMs;
+		try {
+			log.info(`Attempting request with account: ${account.name}`);
 
-		for (let retry = 0; retry < ctx.runtime.retry.attempts; retry++) {
-			try {
-				if (retry > 0) {
-					log.info(
-						`Retrying request with account: ${account.name} (attempt ${retry + 1}/${ctx.runtime.retry.attempts})`,
-					);
-					await new Promise((resolve) => setTimeout(resolve, retryDelay));
-					retryDelay *= ctx.runtime.retry.backoff;
-				} else {
-					log.info(`Attempting request with account: ${account.name}`);
-				}
+			const accessToken = await getValidAccessToken(account, ctx);
+			const headers = ctx.provider.prepareHeaders(req.headers, accessToken);
+			const targetUrl = ctx.provider.buildUrl(url.pathname, url.search);
 
-				const accessToken = await getValidAccessToken(account, ctx);
-				const headers = ctx.provider.prepareHeaders(req.headers, accessToken);
-				const targetUrl = ctx.provider.buildUrl(url.pathname, url.search);
+			const response = await fetch(targetUrl, {
+				method: req.method,
+				headers,
+				body: createBodyStream(),
+				// @ts-ignore - Bun supports duplex
+				duplex: "half",
+			});
 
-				const start = Date.now();
-				const response = await fetch(targetUrl, {
-					method: req.method,
-					headers: headers,
-					body: requestBodyForFetch,
-					// @ts-ignore - Bun supports duplex
-					duplex: "half",
-				});
+			const isStream = ctx.provider.isStreamingResponse?.(response) ?? false;
 
-				// Update usage tracking
-				ctx.asyncWriter.enqueue(() => ctx.dbOps.updateAccountUsage(account.id));
+			// Parse rate-limit information
+			const rateLimitInfo = ctx.provider.parseRateLimit(response);
 
-				const _responseTime = Date.now() - start;
-				log.info(
-					`Request completed for ${account.name}: ${response.status} in ${_responseTime}ms`,
+			// Hard rate-limit ⇒ mark account + try next one
+			if (!isStream && rateLimitInfo.isRateLimited && rateLimitInfo.resetTime) {
+				log.warn(
+					`Account ${account.name} rate-limited until ${new Date(
+						rateLimitInfo.resetTime,
+					).toISOString()}`,
 				);
-
-				// Clone response for body reading
-				const responseClone = response.clone();
-
-				// Check if this is a streaming response
-				const isStream = ctx.provider.isStreamingResponse?.(response) ?? false;
-
-				// If we're streaming, we commit to this response (no retries)
-				if (isStream) {
-					log.info(
-						`Streaming response detected for ${account.name} - committing to this response`,
-					);
-					// Skip all retry logic and go straight to response processing
-					// by jumping to the successful response handling section
-				}
-
-				// Parse rate limit information from all responses
-				const rateLimitInfo = ctx.provider.parseRateLimit(response);
-
-				// Update rate limit metadata if available
-				if (
-					!isStream &&
-					(rateLimitInfo.statusHeader || rateLimitInfo.resetTime)
-				) {
-					log.info(
-						`Rate limit for ${account.name}: ${rateLimitInfo.statusHeader} - Remaining: ${rateLimitInfo.remaining}`,
-					);
-					ctx.asyncWriter.enqueue(() =>
-						ctx.dbOps.updateAccountRateLimitMeta(
-							account.id,
-							rateLimitInfo.statusHeader || "",
-							rateLimitInfo.resetTime || null,
-							rateLimitInfo.remaining,
-						),
-					);
-				}
-
-				// Handle hard rate limiting (status != allowed or 429) - but not if streaming
-				if (
-					!isStream &&
-					rateLimitInfo.isRateLimited &&
-					rateLimitInfo.resetTime
-				) {
-					const resetTime = rateLimitInfo.resetTime;
-					ctx.asyncWriter.enqueue(() =>
-						ctx.dbOps.markAccountRateLimited(account.id, resetTime),
-					);
-					lastError = `Rate limited until ${new Date(rateLimitInfo.resetTime).toISOString()}`;
-					log.warn(
-						`Account ${account.name} rate limited until ${new Date(rateLimitInfo.resetTime).toISOString()}`,
-					);
-
-					// Save rate limited response payload (skip body for streaming responses)
-					const responseBody = isStream
-						? null
-						: await responseClone.arrayBuffer().catch(() => null);
-					const payload = {
-						request: {
-							headers: Object.fromEntries(req.headers.entries()),
-							body: requestBodyBuffer
-								? Buffer.from(requestBodyBuffer).toString("base64")
-								: null,
-						},
-						response: {
-							status: response.status,
-							headers: Object.fromEntries(response.headers.entries()),
-							body: responseBody
-								? Buffer.from(responseBody).toString("base64")
-								: null,
-						},
-						meta: {
-							accountId: account.id,
-							retry,
-							timestamp: Date.now(),
-							rateLimited: true,
-							isStream,
-						},
-					};
-					ctx.asyncWriter.enqueue(() =>
-						ctx.dbOps.saveRequestPayload(requestMeta.id, payload),
-					);
-
-					// Continue to next account immediately on rate limit
-					break;
-				}
-
-				// For streaming responses, skip error checking and process immediately
-				if (!isStream && !response.ok) {
-					// Non-streaming error response - this will be retried
-					continue;
-				}
-
-				// Extract usage info if provider supports it
-				let usage:
-					| {
-							model?: string;
-							promptTokens?: number;
-							completionTokens?: number;
-							totalTokens?: number;
-							costUsd?: number;
-							inputTokens?: number;
-							cacheReadInputTokens?: number;
-							cacheCreationInputTokens?: number;
-							outputTokens?: number;
-					  }
-					| null
-					| undefined;
-
-				if (ctx.provider.extractUsageInfo && response.ok && !isStream) {
-					// Only extract usage for non-streaming responses
-					// Streaming responses are handled by the worker
-					usage = await ctx.provider
-						.extractUsageInfo(responseClone as Response)
-						.catch(() => null);
-					if (usage) {
-						log.info(
-							`Usage for ${account.name}: Model: ${usage.model}, Tokens: ${usage.totalTokens || 0}, Cost: $${usage.costUsd?.toFixed(4) || "0"}`,
-						);
-					}
-					// Calculate cost if not provided by headers
-					if (usage?.model && usage.costUsd === undefined) {
-						usage.costUsd = await estimateCostUSD(usage.model, {
-							inputTokens: usage.inputTokens,
-							outputTokens: usage.outputTokens,
-							cacheReadInputTokens: usage.cacheReadInputTokens,
-							cacheCreationInputTokens: usage.cacheCreationInputTokens,
-						});
-					}
-				}
-
-				// Log successful request
-				const responseTime = Date.now() - requestMeta.timestamp;
+				const resetTime = rateLimitInfo.resetTime; // Capture for closure
 				ctx.asyncWriter.enqueue(() =>
-					ctx.dbOps.saveRequest(
-						requestMeta.id,
-						req.method,
-						url.pathname,
-						account.id,
-						response.status,
-						response.ok,
-						null,
-						responseTime,
-						accounts.indexOf(account),
-						usage || undefined,
-					),
+					ctx.dbOps.markAccountRateLimited(account.id, resetTime),
 				);
+				continue; // try next account
+			}
 
-				// Save successful response payload before processing (skip body for streaming responses)
-				const responseBody = isStream
-					? null
-					: await responseClone.arrayBuffer().catch(() => null);
-				const payload = {
-					request: {
-						headers: Object.fromEntries(req.headers.entries()),
-						body: requestBodyBuffer
-							? Buffer.from(requestBodyBuffer).toString("base64")
-							: null,
-					},
-					response: {
-						status: response.status,
-						headers: Object.fromEntries(response.headers.entries()),
-						body: responseBody
-							? Buffer.from(responseBody).toString("base64")
-							: null,
-					},
-					meta: {
-						accountId: account.id,
-						retry,
-						timestamp: Date.now(),
-						success: true,
-						isStream,
-					},
-				};
-				ctx.asyncWriter.enqueue(() =>
-					ctx.dbOps.saveRequestPayload(requestMeta.id, payload),
-				);
+			// Update basic account metadata (non-blocking)
+			ctx.asyncWriter.enqueue(() => ctx.dbOps.updateAccountUsage(account.id));
 
-				// Check for tier information if provider supports it
-				if (ctx.provider.extractTierInfo) {
-					const tierInfo = await ctx.provider.extractTierInfo(
-						response.clone() as Response,
-					);
-					if (tierInfo && tierInfo !== account.account_tier) {
+			// Extract tier info if provider supports it (background)
+			if (ctx.provider.extractTierInfo) {
+				const extractTierInfo = ctx.provider.extractTierInfo.bind(ctx.provider);
+				(async () => {
+					const tier = await extractTierInfo(response.clone() as Response);
+					if (tier && tier !== account.account_tier) {
 						log.info(
-							`Updating account ${account.name} tier from ${account.account_tier} to ${tierInfo}`,
+							`Updating account ${account.name} tier from ${account.account_tier} to ${tier}`,
 						);
 						ctx.asyncWriter.enqueue(() =>
-							ctx.dbOps.updateAccountTier(account.id, tierInfo),
+							ctx.dbOps.updateAccountTier(account.id, tier),
 						);
 					}
-				}
-
-				// Process and return the response
-				if (isStream && response.body) {
-					// Send account ID to worker before streaming starts
-					ctx.usageWorker.postMessage({
-						type: "account",
-						id: requestMeta.id,
-						accountId: account.id,
-					});
-
-					// Use tee to capture streaming response
-					let payloadSaved = false;
-					const teedStream = teeStream(response.body, {
-						maxBytes: Infinity, // No limit - capture everything
-						onChunk: (chunk) => {
-							ctx.usageWorker.postMessage({
-								id: requestMeta.id,
-								data: chunk,
-							} as ChunkMessage);
-						},
-						onClose: (buffered) => {
-							if (!payloadSaved) {
-								payloadSaved = true;
-								const combined = combineChunks(buffered);
-								const updatedPayload = {
-									...payload,
-									response: {
-										...payload.response,
-										body:
-											combined.length > 0 ? combined.toString("base64") : null,
-									},
-									meta: {
-										...payload.meta,
-									},
-								};
-								// Update the payload with the streamed body
-								ctx.asyncWriter.enqueue(() =>
-									ctx.dbOps.saveRequestPayload(requestMeta.id, updatedPayload),
-								);
-							}
-							// Send final message to worker
-							ctx.usageWorker.postMessage({
-								id: requestMeta.id,
-								final: true,
-							} as ChunkMessage);
-						},
-						onError: (error) => {
-							log.error(
-								`Error capturing stream for ${account.name}: ${error.message}`,
-							);
-						},
-					});
-
-					const newResponse = new Response(teedStream, {
-						status: response.status,
-						statusText: response.statusText,
-						headers: response.headers,
-					});
-					return await ctx.provider.processResponse(newResponse, account);
-				}
-				return await ctx.provider.processResponse(response, account);
-			} catch (error) {
-				lastError = error instanceof Error ? error.message : String(error);
-				log.error(
-					`Error proxying request with account ${account.name} (retry ${retry + 1}/${ctx.runtime.retry.attempts}):`,
-					error,
-				);
-
-				// Save error payload
-				const errorPayload = {
-					request: {
-						headers: Object.fromEntries(req.headers.entries()),
-						body: requestBodyBuffer
-							? Buffer.from(requestBodyBuffer).toString("base64")
-							: null,
-					},
-					response: null,
-					error: lastError,
-					meta: {
-						accountId: account.id,
-						retry,
-						timestamp: Date.now(),
-						success: false,
-					},
-				};
-				ctx.asyncWriter.enqueue(() =>
-					ctx.dbOps.saveRequestPayload(requestMeta.id, errorPayload),
-				);
+				})();
 			}
-		}
 
-		log.warn(`All retries failed for account ${account.name}: ${lastError}`);
+			// Pass straight through to client with background analytics
+			return forwardToClient(
+				{
+					requestId: requestMeta.id,
+					method: req.method,
+					path: url.pathname,
+					account,
+					requestHeaders: req.headers,
+					requestBody: requestBodyBuffer,
+					response,
+					timestamp: requestMeta.timestamp,
+					retryAttempt: 0, // No retry loop anymore
+					failoverAttempts: accounts.indexOf(account),
+				},
+				ctx,
+			);
+		} catch (err) {
+			const msg = err instanceof Error ? err.message : String(err);
+			log.error(`Error with account ${account.name}: ${msg}`);
+		}
 	}
 
 	// All accounts failed
-	const responseTime = Date.now() - requestMeta.timestamp;
-	ctx.asyncWriter.enqueue(() =>
-		ctx.dbOps.saveRequest(
-			requestMeta.id,
-			req.method,
-			url.pathname,
-			null,
-			503,
-			false,
-			"All accounts failed",
-			responseTime,
-			accounts.length,
-			undefined,
-		),
-	);
-
-	// Save final failure payload
-	const failurePayload = {
-		request: {
-			headers: Object.fromEntries(req.headers.entries()),
-			body: requestBodyBuffer
-				? Buffer.from(requestBodyBuffer).toString("base64")
-				: null,
-		},
-		response: null,
-		error: "All accounts failed",
-		meta: {
-			timestamp: Date.now(),
-			success: false,
-			accountsAttempted: accounts.length,
-		},
-	};
-	ctx.asyncWriter.enqueue(() =>
-		ctx.dbOps.saveRequestPayload(requestMeta.id, failurePayload),
-	);
-
 	return new Response(
 		JSON.stringify({
 			error: "All accounts failed to proxy the request",
 			attempts: accounts.length,
-			lastError: "All accounts failed",
 		}),
 		{
 			status: 503,
