@@ -3,6 +3,7 @@ import type { Account } from "@claudeflare/core";
 export interface TokenRefreshResult {
 	accessToken: string;
 	expiresAt: number;
+	refreshToken?: string; // New refresh token if provided by the auth server
 }
 
 export interface RateLimitInfo {

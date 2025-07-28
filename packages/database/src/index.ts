@@ -73,11 +73,19 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		accountId: string,
 		accessToken: string,
 		expiresAt: number,
+		refreshToken?: string,
 	): void {
-		this.db.run(
-			`UPDATE accounts SET access_token = ?, expires_at = ? WHERE id = ?`,
-			[accessToken, expiresAt, accountId],
-		);
+		if (refreshToken) {
+			this.db.run(
+				`UPDATE accounts SET access_token = ?, expires_at = ?, refresh_token = ? WHERE id = ?`,
+				[accessToken, expiresAt, refreshToken, accountId],
+			);
+		} else {
+			this.db.run(
+				`UPDATE accounts SET access_token = ?, expires_at = ? WHERE id = ?`,
+				[accessToken, expiresAt, accountId],
+			);
+		}
 	}
 
 	updateAccountUsage(accountId: string): void {

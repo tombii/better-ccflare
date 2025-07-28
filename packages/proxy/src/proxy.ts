@@ -10,6 +10,7 @@ import type { AsyncDbWriter, DatabaseOperations } from "@claudeflare/database";
 import { Logger } from "@claudeflare/logger";
 import type { Provider, TokenRefreshResult } from "@claudeflare/providers";
 import { combineChunks, teeStream } from "./stream-tee";
+import type { ChunkMessage, UsageMessage } from "./usage-types";
 
 export interface ProxyContext {
 	strategy: LoadBalancingStrategy;
@@ -18,9 +19,44 @@ export interface ProxyContext {
 	provider: Provider;
 	refreshInFlight: Map<string, Promise<string>>;
 	asyncWriter: AsyncDbWriter;
+	usageWorker: Worker;
 }
 
 const log = new Logger("Proxy");
+
+// Create usage worker instance
+let usageWorkerInstance: Worker | null = null;
+
+export function getUsageWorker(ctx?: ProxyContext): Worker {
+	if (!usageWorkerInstance) {
+		usageWorkerInstance = new Worker(
+			new URL("./usage-worker.ts", import.meta.url).href,
+			{ smol: true },
+		);
+		// @ts-ignore - Bun extends Worker with unref
+		usageWorkerInstance.unref(); // Don't keep process alive
+
+		// Set up message handler if context is provided
+		if (ctx) {
+			usageWorkerInstance.onmessage = (event: MessageEvent<UsageMessage>) => {
+				handleUsageMessage(event.data, ctx);
+			};
+		}
+	}
+	return usageWorkerInstance;
+}
+
+export function terminateUsageWorker(): void {
+	if (usageWorkerInstance) {
+		usageWorkerInstance.terminate();
+		usageWorkerInstance = null;
+	}
+}
+
+function handleUsageMessage(msg: UsageMessage, ctx: ProxyContext): void {
+	if (msg.type !== "usage") return;
+	saveUsageToDb(msg.id, msg.accountId, msg.usage, ctx);
+}
 
 async function refreshAccessTokenSafe(
 	account: Account,
@@ -37,6 +73,7 @@ async function refreshAccessTokenSafe(
 						account.id,
 						result.accessToken,
 						result.expiresAt,
+						result.refreshToken,
 					),
 				);
 				return result.accessToken;
@@ -215,28 +252,20 @@ export async function handleProxy(
 			// Check if this is a streaming response
 			const isStream = ctx.provider.isStreamingResponse?.(response) ?? false;
 
-			if (ctx.provider.extractUsageInfo && response.ok) {
-				const extractPromise = ctx.provider
+			if (ctx.provider.extractUsageInfo && response.ok && !isStream) {
+				// Only extract usage for non-streaming responses
+				// Streaming responses are handled by the worker
+				usage = await ctx.provider
 					.extractUsageInfo(responseClone as Response)
 					.catch(() => null);
-
-				if (isStream) {
-					// Fire-and-forget for streaming responses
-					extractPromise.then((extractedUsage) => {
-						saveUsageToDb(requestMeta.id, NO_ACCOUNT_ID, extractedUsage, ctx);
+				// Calculate cost if not provided by headers
+				if (usage?.model && usage.costUsd === undefined) {
+					usage.costUsd = await estimateCostUSD(usage.model, {
+						inputTokens: usage.inputTokens,
+						outputTokens: usage.outputTokens,
+						cacheReadInputTokens: usage.cacheReadInputTokens,
+						cacheCreationInputTokens: usage.cacheCreationInputTokens,
 					});
-				} else {
-					// Wait for non-streaming responses
-					usage = await extractPromise;
-					// Calculate cost if not provided by headers
-					if (usage?.model && usage.costUsd === undefined) {
-						usage.costUsd = await estimateCostUSD(usage.model, {
-							inputTokens: usage.inputTokens,
-							outputTokens: usage.outputTokens,
-							cacheReadInputTokens: usage.cacheReadInputTokens,
-							cacheCreationInputTokens: usage.cacheCreationInputTokens,
-						});
-					}
 				}
 			}
 
@@ -291,6 +320,12 @@ export async function handleProxy(
 				let payloadSaved = false;
 				const teedStream = teeStream(response.body, {
 					maxBytes: Infinity, // No limit - capture everything
+					onChunk: (chunk) => {
+						ctx.usageWorker.postMessage({
+							id: requestMeta.id,
+							data: chunk,
+						} as ChunkMessage);
+					},
 					onClose: (buffered) => {
 						if (!payloadSaved) {
 							payloadSaved = true;
@@ -311,6 +346,11 @@ export async function handleProxy(
 								ctx.dbOps.saveRequestPayload(requestMeta.id, updatedPayload),
 							);
 						}
+						// Send final message to worker
+						ctx.usageWorker.postMessage({
+							id: requestMeta.id,
+							final: true,
+						} as ChunkMessage);
 					},
 					onError: (error) => {
 						log.error(
@@ -521,38 +561,25 @@ export async function handleProxy(
 					| null
 					| undefined;
 
-				if (ctx.provider.extractUsageInfo && (response.ok || isStream)) {
-					const extractPromise = ctx.provider
+				if (ctx.provider.extractUsageInfo && response.ok && !isStream) {
+					// Only extract usage for non-streaming responses
+					// Streaming responses are handled by the worker
+					usage = await ctx.provider
 						.extractUsageInfo(responseClone as Response)
 						.catch(() => null);
-
-					if (isStream) {
-						// Fire-and-forget for streaming responses
-						extractPromise.then((extractedUsage) => {
-							if (extractedUsage) {
-								log.info(
-									`Usage for ${account.name}: Model: ${extractedUsage.model}, Tokens: ${extractedUsage.totalTokens || 0}, Cost: $${extractedUsage.costUsd?.toFixed(4) || "0"}`,
-								);
-							}
-							saveUsageToDb(requestMeta.id, account.id, extractedUsage, ctx);
+					if (usage) {
+						log.info(
+							`Usage for ${account.name}: Model: ${usage.model}, Tokens: ${usage.totalTokens || 0}, Cost: $${usage.costUsd?.toFixed(4) || "0"}`,
+						);
+					}
+					// Calculate cost if not provided by headers
+					if (usage?.model && usage.costUsd === undefined) {
+						usage.costUsd = await estimateCostUSD(usage.model, {
+							inputTokens: usage.inputTokens,
+							outputTokens: usage.outputTokens,
+							cacheReadInputTokens: usage.cacheReadInputTokens,
+							cacheCreationInputTokens: usage.cacheCreationInputTokens,
 						});
-					} else {
-						// Wait for non-streaming responses
-						usage = await extractPromise;
-						if (usage) {
-							log.info(
-								`Usage for ${account.name}: Model: ${usage.model}, Tokens: ${usage.totalTokens || 0}, Cost: $${usage.costUsd?.toFixed(4) || "0"}`,
-							);
-						}
-						// Calculate cost if not provided by headers
-						if (usage?.model && usage.costUsd === undefined) {
-							usage.costUsd = await estimateCostUSD(usage.model, {
-								inputTokens: usage.inputTokens,
-								outputTokens: usage.outputTokens,
-								cacheReadInputTokens: usage.cacheReadInputTokens,
-								cacheCreationInputTokens: usage.cacheCreationInputTokens,
-							});
-						}
 					}
 				}
 
@@ -620,10 +647,23 @@ export async function handleProxy(
 
 				// Process and return the response
 				if (isStream && response.body) {
+					// Send account ID to worker before streaming starts
+					ctx.usageWorker.postMessage({
+						type: "account",
+						id: requestMeta.id,
+						accountId: account.id,
+					});
+
 					// Use tee to capture streaming response
 					let payloadSaved = false;
 					const teedStream = teeStream(response.body, {
 						maxBytes: Infinity, // No limit - capture everything
+						onChunk: (chunk) => {
+							ctx.usageWorker.postMessage({
+								id: requestMeta.id,
+								data: chunk,
+							} as ChunkMessage);
+						},
 						onClose: (buffered) => {
 							if (!payloadSaved) {
 								payloadSaved = true;
@@ -644,6 +684,11 @@ export async function handleProxy(
 									ctx.dbOps.saveRequestPayload(requestMeta.id, updatedPayload),
 								);
 							}
+							// Send final message to worker
+							ctx.usageWorker.postMessage({
+								id: requestMeta.id,
+								final: true,
+							} as ChunkMessage);
 						},
 						onError: (error) => {
 							log.error(

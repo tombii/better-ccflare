@@ -9,5 +9,10 @@ export {
 	listProviders,
 	registerProvider,
 } from "@claudeflare/providers";
-export { handleProxy, type ProxyContext } from "./proxy";
+export {
+	getUsageWorker,
+	handleProxy,
+	type ProxyContext,
+	terminateUsageWorker,
+} from "./proxy";
 export type { ProxyRequest, ProxyResponse } from "./types";
