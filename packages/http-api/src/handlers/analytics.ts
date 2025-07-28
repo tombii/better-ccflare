@@ -1,4 +1,9 @@
 import { NO_ACCOUNT_ID } from "@claudeflare/core";
+import {
+	errorResponse,
+	InternalServerError,
+	jsonResponse,
+} from "@claudeflare/http-common";
 import type { AnalyticsResponse, APIContext } from "../types";
 
 interface BucketConfig {
@@ -247,31 +252,34 @@ export function createAnalyticsHandler(context: APIContext) {
 				error_rate: number;
 			}>;
 
-			// Calculate p95 for each model
+			// Calculate p95 for each model using SQL window functions
 			const modelPerformance = modelPerfData.map((modelData) => {
-				// For p95, we'll fetch response times and calculate
-				const responseTimes = db
+				// Use SQLite's NTILE or manual percentile calculation
+				// SQLite doesn't have built-in percentile functions, but we can use a more efficient query
+				const p95Result = db
 					.prepare(`
-					SELECT response_time_ms
-					FROM requests r
-					WHERE ${whereClause} AND model = ? AND response_time_ms IS NOT NULL
-					ORDER BY response_time_ms
+					WITH ordered_times AS (
+						SELECT 
+							response_time_ms,
+							ROW_NUMBER() OVER (ORDER BY response_time_ms) as row_num,
+							COUNT(*) OVER () as total_count
+						FROM requests r
+						WHERE ${whereClause} AND model = ? AND response_time_ms IS NOT NULL
+					)
+					SELECT response_time_ms as p95_response_time
+					FROM ordered_times
+					WHERE row_num = CAST(CEIL(total_count * 0.95) AS INTEGER)
+					LIMIT 1
 				`)
-					.all(...queryParams, modelData.model) as Array<{
-					response_time_ms: number;
-				}>;
-
-				const p95Index = Math.ceil(responseTimes.length * 0.95) - 1;
-				const p95ResponseTime =
-					responseTimes.length > 0
-						? responseTimes[Math.min(p95Index, responseTimes.length - 1)]
-								.response_time_ms
-						: modelData.avg_response_time;
+					.get(...queryParams, modelData.model) as
+					| { p95_response_time: number }
+					| undefined;
 
 				return {
 					model: modelData.model,
 					avgResponseTime: modelData.avg_response_time || 0,
-					p95ResponseTime: p95ResponseTime || 0,
+					p95ResponseTime:
+						p95Result?.p95_response_time || modelData.avg_response_time || 0,
 					errorRate: modelData.error_rate || 0,
 				};
 			});
@@ -363,17 +371,11 @@ export function createAnalyticsHandler(context: APIContext) {
 				modelPerformance,
 			};
 
-			return new Response(JSON.stringify(response), {
-				headers: { "Content-Type": "application/json" },
-			});
+			return jsonResponse(response);
 		} catch (error) {
 			console.error("Analytics error:", error);
-			return new Response(
-				JSON.stringify({ error: "Failed to fetch analytics data" }),
-				{
-					status: 500,
-					headers: { "Content-Type": "application/json" },
-				},
+			return errorResponse(
+				InternalServerError("Failed to fetch analytics data"),
 			);
 		}
 	};

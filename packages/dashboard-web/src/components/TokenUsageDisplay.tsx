@@ -1,3 +1,8 @@
+import {
+	formatCost,
+	formatDuration,
+	formatTokens,
+} from "@claudeflare/ui-common";
 import type { RequestSummary } from "../api";
 
 interface TokenUsageDisplayProps {
@@ -20,7 +25,7 @@ export function TokenUsageDisplay({ summary }: TokenUsageDisplayProps) {
 					<div className="bg-muted p-4 rounded-lg">
 						<h4 className="font-semibold mb-2">Input Tokens</h4>
 						<p className="text-2xl font-mono">
-							{summary.inputTokens.toLocaleString()}
+							{formatTokens(summary.inputTokens)}
 						</p>
 					</div>
 				)}
@@ -29,7 +34,7 @@ export function TokenUsageDisplay({ summary }: TokenUsageDisplayProps) {
 					<div className="bg-muted p-4 rounded-lg">
 						<h4 className="font-semibold mb-2">Output Tokens</h4>
 						<p className="text-2xl font-mono">
-							{summary.outputTokens.toLocaleString()}
+							{formatTokens(summary.outputTokens)}
 						</p>
 					</div>
 				)}
@@ -39,7 +44,7 @@ export function TokenUsageDisplay({ summary }: TokenUsageDisplayProps) {
 						<div className="bg-muted p-4 rounded-lg">
 							<h4 className="font-semibold mb-2">Cache Read Tokens</h4>
 							<p className="text-2xl font-mono">
-								{summary.cacheReadInputTokens.toLocaleString()}
+								{formatTokens(summary.cacheReadInputTokens)}
 							</p>
 						</div>
 					)}
@@ -49,7 +54,7 @@ export function TokenUsageDisplay({ summary }: TokenUsageDisplayProps) {
 						<div className="bg-muted p-4 rounded-lg">
 							<h4 className="font-semibold mb-2">Cache Creation Tokens</h4>
 							<p className="text-2xl font-mono">
-								{summary.cacheCreationInputTokens.toLocaleString()}
+								{formatTokens(summary.cacheCreationInputTokens)}
 							</p>
 						</div>
 					)}
@@ -59,11 +64,11 @@ export function TokenUsageDisplay({ summary }: TokenUsageDisplayProps) {
 				<div className="bg-primary/10 p-4 rounded-lg">
 					<h4 className="font-semibold mb-2">Total Tokens</h4>
 					<p className="text-3xl font-mono font-bold">
-						{summary.totalTokens.toLocaleString()}
+						{formatTokens(summary.totalTokens)}
 					</p>
 					{summary.costUsd && summary.costUsd > 0 && (
 						<p className="mt-2 text-lg text-muted-foreground">
-							Cost: ${summary.costUsd.toFixed(4)}
+							Cost: {formatCost(summary.costUsd)}
 						</p>
 					)}
 				</div>
@@ -72,7 +77,9 @@ export function TokenUsageDisplay({ summary }: TokenUsageDisplayProps) {
 			{summary.responseTimeMs && (
 				<div className="bg-muted p-4 rounded-lg">
 					<h4 className="font-semibold mb-2">Response Time</h4>
-					<p className="text-2xl font-mono">{summary.responseTimeMs}ms</p>
+					<p className="text-2xl font-mono">
+						{formatDuration(summary.responseTimeMs)}
+					</p>
 				</div>
 			)}
 		</div>

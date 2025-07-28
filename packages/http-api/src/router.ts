@@ -1,3 +1,4 @@
+import { validateNumber } from "@claudeflare/core";
 import {
 	createAccountAddHandler,
 	createAccountPauseHandler,
@@ -60,11 +61,23 @@ export class APIRouter {
 		this.handlers.set("GET:/api/accounts", () => accountsHandler());
 		this.handlers.set("POST:/api/accounts", (req) => accountAddHandler(req));
 		this.handlers.set("GET:/api/requests", (_req, url) => {
-			const limit = parseInt(url.searchParams.get("limit") || "50");
+			const limitParam = url.searchParams.get("limit");
+			const limit =
+				validateNumber(limitParam || "50", "limit", {
+					min: 1,
+					max: 1000,
+					integer: true,
+				}) || 50;
 			return requestsSummaryHandler(limit);
 		});
 		this.handlers.set("GET:/api/requests/detail", (_req, url) => {
-			const limit = parseInt(url.searchParams.get("limit") || "100");
+			const limitParam = url.searchParams.get("limit");
+			const limit =
+				validateNumber(limitParam || "100", "limit", {
+					min: 1,
+					max: 1000,
+					integer: true,
+				}) || 100;
 			return requestsDetailHandler(limit);
 		});
 		this.handlers.set("GET:/api/config", () => configHandlers.getConfig());

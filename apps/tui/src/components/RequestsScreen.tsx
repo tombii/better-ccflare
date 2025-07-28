@@ -55,10 +55,6 @@ export function RequestsScreen({ onBack }: RequestsScreenProps) {
 		return () => clearInterval(interval);
 	}, [loadRequests]);
 
-	const formatTimestamp = (ts: number): string => {
-		return new Date(ts).toLocaleTimeString();
-	};
-
 	const decodeBase64 = (str: string | null): string => {
 		if (!str) return "No data";
 		try {
@@ -93,7 +89,8 @@ export function RequestsScreen({ onBack }: RequestsScreenProps) {
 				<Box flexDirection="column">
 					<Text bold>ID: {selectedRequest.id}</Text>
 					<Text bold>
-						Time: {formatTimestamp(selectedRequest.meta.timestamp)}
+						Time:{" "}
+						{new Date(selectedRequest.meta.timestamp).toLocaleTimeString()}
 					</Text>
 
 					{selectedRequest.meta.accountId && (
@@ -209,7 +206,7 @@ export function RequestsScreen({ onBack }: RequestsScreenProps) {
 									inverse={isSelected}
 								>
 									{isSelected ? "▶ " : "  "}
-									{formatTimestamp(req.meta.timestamp)} -{" "}
+									{new Date(req.meta.timestamp).toLocaleTimeString()} -{" "}
 									{statusCode ? (
 										<Text
 											color={

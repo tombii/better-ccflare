@@ -1,3 +1,4 @@
+import { sseResponse } from "@claudeflare/http-common";
 import { logBus } from "@claudeflare/logger";
 import type { LogEvent } from "@claudeflare/types";
 
@@ -52,12 +53,6 @@ export function createLogsStreamHandler() {
 			}
 		}, 0);
 
-		return new Response(readable, {
-			headers: {
-				"Content-Type": "text/event-stream",
-				"Cache-Control": "no-cache",
-				Connection: "keep-alive",
-			},
-		});
+		return sseResponse(readable);
 	};
 }

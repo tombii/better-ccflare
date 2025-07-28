@@ -1,3 +1,4 @@
+import { AccountPresenter } from "@claudeflare/ui-common";
 import {
 	AlertCircle,
 	CheckCircle,
@@ -311,64 +312,68 @@ export function AccountsTab() {
 						<p className="text-muted-foreground">No accounts configured</p>
 					) : (
 						<div className="space-y-2">
-							{accounts.map((account) => (
-								<div
-									key={account.name}
-									className="flex items-center justify-between p-4 border rounded-lg"
-								>
-									<div className="flex items-center gap-4">
-										<div>
-											<p className="font-medium">{account.name}</p>
-											<p className="text-sm text-muted-foreground">
-												{account.provider} • Tier {account.tier}
-											</p>
+							{accounts.map((account) => {
+								const presenter = new AccountPresenter(account);
+								return (
+									<div
+										key={account.name}
+										className="flex items-center justify-between p-4 border rounded-lg"
+									>
+										<div className="flex items-center gap-4">
+											<div>
+												<p className="font-medium">{account.name}</p>
+												<p className="text-sm text-muted-foreground">
+													{account.provider} • {presenter.tierDisplay}
+												</p>
+											</div>
+											<div className="flex items-center gap-2">
+												{presenter.tokenStatus === "valid" ? (
+													<CheckCircle className="h-4 w-4 text-green-600" />
+												) : (
+													<AlertCircle className="h-4 w-4 text-yellow-600" />
+												)}
+												<span className="text-sm">
+													{presenter.requestCount} requests
+												</span>
+												{presenter.isPaused && (
+													<span className="text-sm text-muted-foreground">
+														Paused
+													</span>
+												)}
+												{!presenter.isPaused &&
+													presenter.rateLimitStatus !== "OK" && (
+														<span className="text-sm text-destructive">
+															{presenter.rateLimitStatus}
+														</span>
+													)}
+											</div>
 										</div>
 										<div className="flex items-center gap-2">
-											{account.tokenStatus === "valid" ? (
-												<CheckCircle className="h-4 w-4 text-green-600" />
-											) : (
-												<AlertCircle className="h-4 w-4 text-yellow-600" />
-											)}
-											<span className="text-sm">
-												{account.requestCount} requests
-											</span>
-											{account.paused && (
-												<span className="text-sm text-muted-foreground">
-													Paused
-												</span>
-											)}
-											{!account.paused && account.rateLimitStatus !== "OK" && (
-												<span className="text-sm text-destructive">
-													{account.rateLimitStatus}
-												</span>
-											)}
+											<Button
+												variant="ghost"
+												size="sm"
+												onClick={() => handlePauseToggle(account)}
+												title={
+													account.paused ? "Resume account" : "Pause account"
+												}
+											>
+												{account.paused ? (
+													<Play className="h-4 w-4" />
+												) : (
+													<Pause className="h-4 w-4" />
+												)}
+											</Button>
+											<Button
+												variant="ghost"
+												size="sm"
+												onClick={() => handleRemoveAccount(account.name)}
+											>
+												<Trash2 className="h-4 w-4" />
+											</Button>
 										</div>
 									</div>
-									<div className="flex items-center gap-2">
-										<Button
-											variant="ghost"
-											size="sm"
-											onClick={() => handlePauseToggle(account)}
-											title={
-												account.paused ? "Resume account" : "Pause account"
-											}
-										>
-											{account.paused ? (
-												<Play className="h-4 w-4" />
-											) : (
-												<Pause className="h-4 w-4" />
-											)}
-										</Button>
-										<Button
-											variant="ghost"
-											size="sm"
-											onClick={() => handleRemoveAccount(account.name)}
-										>
-											<Trash2 className="h-4 w-4" />
-										</Button>
-									</div>
-								</div>
-							))}
+								);
+							})}
 						</div>
 					)}
 				</CardContent>

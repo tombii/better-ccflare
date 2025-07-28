@@ -30,6 +30,9 @@ Commands:
   clear-history
     Clear request history
 
+  analyze
+    Analyze database performance and index usage
+
   help
     Show this help message
 

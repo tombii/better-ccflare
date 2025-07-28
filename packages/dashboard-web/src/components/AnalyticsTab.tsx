@@ -1,4 +1,10 @@
 import type { AnalyticsResponse } from "@claudeflare/http-api";
+import {
+	formatCost,
+	formatNumber,
+	formatPercentage,
+	formatTokens,
+} from "@claudeflare/ui-common";
 import { format } from "date-fns";
 import { CalendarDays, Filter, RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -125,10 +131,10 @@ export function AnalyticsTab() {
 					: format(new Date(point.ts), "HH:mm"),
 			requests: point.requests,
 			tokens: point.tokens,
-			cost: point.costUsd.toFixed(2),
+			cost: parseFloat(point.costUsd.toFixed(2)),
 			responseTime: Math.round(point.avgResponseTime),
-			errorRate: point.errorRate.toFixed(1),
-			cacheHitRate: point.cacheHitRate.toFixed(1),
+			errorRate: parseFloat(point.errorRate.toFixed(1)),
+			cacheHitRate: parseFloat(point.cacheHitRate.toFixed(1)),
 		})) || [],
 	);
 
@@ -172,7 +178,7 @@ export function AnalyticsTab() {
 				model: perf.model,
 				avgTime: Math.round(perf.avgResponseTime),
 				p95Time: Math.round(perf.p95ResponseTime),
-				errorRate: perf.errorRate.toFixed(1),
+				errorRate: parseFloat(perf.errorRate.toFixed(1)),
 			})) || [];
 
 	// Use real cost by model data with filters
@@ -575,7 +581,7 @@ export function AnalyticsTab() {
 										<span className="text-sm font-medium">{item.type}</span>
 										<div className="flex items-center gap-2">
 											<span className="text-sm text-muted-foreground">
-												{item.value.toLocaleString()} tokens
+												{formatTokens(item.value)} tokens
 											</span>
 											<Badge variant="outline">{item.percentage}%</Badge>
 										</div>
@@ -602,9 +608,7 @@ export function AnalyticsTab() {
 								<div className="flex items-center justify-between">
 									<span className="text-sm font-medium">Total Tokens</span>
 									<span className="text-lg font-bold">
-										{tokenBreakdown
-											.reduce((acc, item) => acc + item.value, 0)
-											.toLocaleString()}
+										{tokenBreakdown.reduce((acc, item) => acc + item.value, 0)}
 									</span>
 								</div>
 							</div>
@@ -657,7 +661,7 @@ export function AnalyticsTab() {
 									formatter={(value: number | string, name: string) => {
 										if (name === "avgTime") return [`${value}ms`, "Avg Time"];
 										if (name === "errorRate")
-											return [`${value}%`, "Error Rate"];
+											return [formatPercentage(Number(value)), "Error Rate"];
 										return [value, name];
 									}}
 								/>
@@ -710,8 +714,9 @@ export function AnalyticsTab() {
 										borderRadius: "var(--radius)",
 									}}
 									formatter={(value: number | string, name: string) => {
-										if (name === "cost") return [`$${value}`, "Cost"];
-										return [(value as number).toLocaleString(), "Requests"];
+										if (name === "cost")
+											return [formatCost(Number(value)), "Cost"];
+										return [formatNumber(value as number), "Requests"];
 									}}
 								/>
 								<Bar
@@ -805,8 +810,8 @@ export function AnalyticsTab() {
 									}}
 									formatter={(value: number | string, name: string) => {
 										if (name === "Total Cost")
-											return [`$${value}`, "Total Cost"];
-										return [(value as number).toLocaleString(), "Total Tokens"];
+											return [formatCost(Number(value)), "Total Cost"];
+										return [formatTokens(value as number), "Total Tokens"];
 									}}
 								/>
 								<Legend
@@ -920,7 +925,7 @@ export function AnalyticsTab() {
 												{item.type}
 											</p>
 											<p className="text-sm font-medium">
-												{item.value.toLocaleString()}
+												{formatTokens(item.value)}
 											</p>
 										</div>
 									</div>

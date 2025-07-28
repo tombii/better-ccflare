@@ -1,7 +1,11 @@
 import type { Config } from "@claudeflare/config";
-import { isValidStrategy, STRATEGIES } from "@claudeflare/core";
-import type { ConfigResponse, StrategyUpdateRequest } from "../types";
-import { BadRequest, jsonResponse } from "../utils/http-error";
+import {
+	STRATEGIES,
+	type StrategyName,
+	validateString,
+} from "@claudeflare/core";
+import { jsonResponse } from "@claudeflare/http-common";
+import type { ConfigResponse } from "../types";
 
 /**
  * Create config handlers
@@ -33,12 +37,13 @@ export function createConfigHandlers(config: Config) {
 		 * Update strategy
 		 */
 		setStrategy: async (req: Request): Promise<Response> => {
-			const body = (await req.json()) as StrategyUpdateRequest;
-			const { strategy } = body;
+			const body = await req.json();
 
-			if (!strategy || !isValidStrategy(strategy)) {
-				throw BadRequest("Invalid strategy");
-			}
+			// Validate strategy input
+			const strategy = validateString(body.strategy, "strategy", {
+				required: true,
+				allowedValues: STRATEGIES,
+			})! as StrategyName;
 
 			config.setStrategy(strategy);
 

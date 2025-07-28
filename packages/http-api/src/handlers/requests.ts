@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import type { DatabaseOperations } from "@claudeflare/database";
+import { jsonResponse } from "@claudeflare/http-common";
 import type { RequestResponse } from "../types";
 
 /**
@@ -63,9 +64,7 @@ export function createRequestsSummaryHandler(db: Database) {
 			costUsd: request.cost_usd || undefined,
 		}));
 
-		return new Response(JSON.stringify(response), {
-			headers: { "Content-Type": "application/json" },
-		});
+		return jsonResponse(response);
 	};
 }
 
@@ -88,8 +87,6 @@ export function createRequestsDetailHandler(dbOps: DatabaseOperations) {
 			}
 		});
 
-		return new Response(JSON.stringify(parsed), {
-			headers: { "Content-Type": "application/json" },
-		});
+		return jsonResponse(parsed);
 	};
 }

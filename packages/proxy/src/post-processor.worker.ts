@@ -3,6 +3,7 @@ declare var self: Worker;
 import { estimateCostUSD, NO_ACCOUNT_ID } from "@claudeflare/core";
 import { AsyncDbWriter, DatabaseOperations } from "@claudeflare/database";
 import { Logger } from "@claudeflare/logger";
+import { formatCost } from "@claudeflare/ui-common";
 import { combineChunks } from "./stream-tee";
 import type {
 	ChunkMessage,
@@ -265,7 +266,7 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 	if (state.usage.model && startMessage.accountId !== NO_ACCOUNT_ID) {
 		log.info(
 			`Usage for request ${startMessage.requestId}: Model: ${state.usage.model}, ` +
-				`Tokens: ${state.usage.totalTokens || 0}, Cost: ${state.usage.costUsd?.toFixed(4) || "0"}`,
+				`Tokens: ${state.usage.totalTokens || 0}, Cost: ${formatCost(state.usage.costUsd)}`,
 		);
 	}
 

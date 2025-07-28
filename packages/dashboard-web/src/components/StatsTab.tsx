@@ -1,3 +1,4 @@
+import { formatPercentage } from "@claudeflare/ui-common";
 import { RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { api, type Stats } from "../api";
@@ -119,7 +120,7 @@ export function StatsTab() {
 															: "text-red-600"
 												}
 											>
-												{account.successRate}%
+												{formatPercentage(account.successRate)}
 											</span>
 										</div>
 									</div>

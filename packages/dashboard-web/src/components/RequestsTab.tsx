@@ -1,3 +1,8 @@
+import {
+	formatCost,
+	formatDuration,
+	formatTokens,
+} from "@claudeflare/ui-common";
 import { ChevronDown, ChevronRight, Eye, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { api, type RequestPayload, type RequestSummary } from "../api";
@@ -183,12 +188,12 @@ export function RequestsTab() {
 											)}
 											{summary?.totalTokens && (
 												<Badge variant="outline" className="text-xs">
-													{summary.totalTokens.toLocaleString()} tokens
+													{formatTokens(summary.totalTokens)} tokens
 												</Badge>
 											)}
 											{summary?.costUsd && summary.costUsd > 0 && (
 												<Badge variant="default" className="text-xs">
-													${summary.costUsd.toFixed(4)}
+													{formatCost(summary.costUsd)}
 												</Badge>
 											)}
 											{(request.meta.accountName || request.meta.accountId) && (
@@ -211,7 +216,7 @@ export function RequestsTab() {
 										</div>
 										<div className="text-sm text-muted-foreground flex items-center gap-2">
 											{summary?.responseTimeMs && (
-												<span>{summary.responseTimeMs}ms</span>
+												<span>{formatDuration(summary.responseTimeMs)}</span>
 											)}
 											{request.meta.retry !== undefined &&
 												request.meta.retry > 0 && (

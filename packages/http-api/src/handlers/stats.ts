@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { NO_ACCOUNT_ID } from "@claudeflare/core";
 import type { DatabaseOperations } from "@claudeflare/database";
-import { jsonResponse } from "../utils/http-error";
+import { jsonResponse } from "@claudeflare/http-common";
 
 /**
  * Create a stats handler

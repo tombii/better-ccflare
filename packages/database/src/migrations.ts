@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { addPerformanceIndexes } from "./performance-indexes";
 
 export function ensureSchema(db: Database): void {
 	// Create accounts table
@@ -48,6 +49,24 @@ export function ensureSchema(db: Database): void {
 			FOREIGN KEY (id) REFERENCES requests(id) ON DELETE CASCADE
 		)
 	`);
+
+	// Create oauth_sessions table for secure PKCE verifier storage
+	db.run(`
+		CREATE TABLE IF NOT EXISTS oauth_sessions (
+			id TEXT PRIMARY KEY,
+			account_name TEXT NOT NULL,
+			verifier TEXT NOT NULL,
+			mode TEXT NOT NULL,
+			tier INTEGER DEFAULT 1,
+			created_at INTEGER NOT NULL,
+			expires_at INTEGER NOT NULL
+		)
+	`);
+
+	// Create index for faster cleanup of expired sessions
+	db.run(
+		`CREATE INDEX IF NOT EXISTS idx_oauth_sessions_expires ON oauth_sessions(expires_at)`,
+	);
 }
 
 export function runMigrations(db: Database): void {
@@ -210,4 +229,7 @@ export function runMigrations(db: Database): void {
 		).run();
 		console.log("Added output_tokens column to requests table");
 	}
+
+	// Add performance indexes
+	addPerformanceIndexes(db);
 }
