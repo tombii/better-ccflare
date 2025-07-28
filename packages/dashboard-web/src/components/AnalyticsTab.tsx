@@ -804,7 +804,8 @@ export function AnalyticsTab() {
 										backdropFilter: "blur(8px)",
 									}}
 									formatter={(value: number | string, name: string) => {
-										if (name === "Total Cost") return [`$${value}`, "Total Cost"];
+										if (name === "Total Cost")
+											return [`$${value}`, "Total Cost"];
 										return [(value as number).toLocaleString(), "Total Tokens"];
 									}}
 								/>

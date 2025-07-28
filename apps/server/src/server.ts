@@ -15,7 +15,12 @@ import { APIRouter } from "@claudeflare/http-api";
 import { SessionStrategy } from "@claudeflare/load-balancer";
 import { Logger } from "@claudeflare/logger";
 import { getProvider } from "@claudeflare/providers";
-import { handleProxy, type ProxyContext } from "@claudeflare/proxy";
+import {
+	getUsageWorker,
+	handleProxy,
+	type ProxyContext,
+	terminateUsageWorker,
+} from "@claudeflare/proxy";
 import { serve } from "bun";
 
 // Initialize DI container
@@ -71,7 +76,7 @@ function initStrategy(): LoadBalancingStrategy {
 
 strategy = initStrategy();
 
-// Create proxy context
+// Create proxy context (without worker initially)
 const proxyContext: ProxyContext = {
 	strategy,
 	dbOps,
@@ -79,7 +84,11 @@ const proxyContext: ProxyContext = {
 	provider,
 	refreshInFlight,
 	asyncWriter,
+	usageWorker: null as unknown as Worker, // Will be set below
 };
+
+// Initialize usage worker with context
+proxyContext.usageWorker = getUsageWorker(proxyContext);
 
 // Watch for strategy changes
 config.on("change", ({ key }) => {
@@ -94,6 +103,7 @@ config.on("change", ({ key }) => {
 // Main server
 const server = serve({
 	port: runtime.port,
+	idleTimeout: 255, // Max allowed by Bun
 	async fetch(req) {
 		const url = new URL(req.url);
 
@@ -196,6 +206,7 @@ if (activeAccounts.length === 0) {
 process.on("SIGINT", async () => {
 	console.log("\n👋 Shutting down gracefully...");
 	try {
+		terminateUsageWorker();
 		await shutdown();
 		console.log("✅ Shutdown complete");
 		process.exit(0);
@@ -208,6 +219,7 @@ process.on("SIGINT", async () => {
 process.on("SIGTERM", async () => {
 	console.log("\n👋 Shutting down gracefully...");
 	try {
+		terminateUsageWorker();
 		await shutdown();
 		console.log("✅ Shutdown complete");
 		process.exit(0);

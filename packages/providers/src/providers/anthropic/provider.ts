@@ -1,4 +1,5 @@
 import type { Account } from "@claudeflare/core";
+import { Logger } from "@claudeflare/logger";
 import { BaseProvider } from "../../base";
 import type { RateLimitInfo, TokenRefreshResult } from "../../types";
 
@@ -13,6 +14,8 @@ const HARD_LIMIT_STATUSES = new Set([
 // Soft warning statuses that should not block account usage
 const _SOFT_WARNING_STATUSES = new Set(["allowed_warning", "queueing_soft"]);
 
+const log = new Logger("AnthropicProvider");
+
 export class AnthropicProvider extends BaseProvider {
 	name = "anthropic";
 
@@ -25,6 +28,14 @@ export class AnthropicProvider extends BaseProvider {
 		account: Account,
 		clientId: string,
 	): Promise<TokenRefreshResult> {
+		if (!account.refresh_token) {
+			throw new Error(`No refresh token available for account ${account.name}`);
+		}
+
+		log.info(
+			`Refreshing token for account ${account.name} with client ID: ${clientId}`,
+		);
+
 		const response = await fetch(
 			"https://console.anthropic.com/v1/oauth/token",
 			{
@@ -41,19 +52,38 @@ export class AnthropicProvider extends BaseProvider {
 		);
 
 		if (!response.ok) {
+			let errorMessage = response.statusText;
+			let errorData: unknown = null;
+			try {
+				errorData = await response.json();
+				const errorObj = errorData as { error?: string; message?: string };
+				errorMessage = errorObj.error || errorObj.message || errorMessage;
+			} catch {
+				// If we can't parse the error response, use the status text
+			}
+			log.error(
+				`Token refresh failed for ${account.name}: Status ${response.status}, Error: ${errorMessage}`,
+				errorData,
+			);
 			throw new Error(
-				`Failed to refresh token for account ${account.name}: ${response.statusText}`,
+				`Failed to refresh token for account ${account.name}: ${errorMessage}`,
 			);
 		}
 
 		const json = (await response.json()) as {
 			access_token: string;
 			expires_in: number;
+			refresh_token?: string;
 		};
+
+		log.info(
+			`Token refresh successful for ${account.name}, new refresh token: ${json.refresh_token ? "provided" : "not provided"}`,
+		);
 
 		return {
 			accessToken: json.access_token,
 			expiresAt: Date.now() + json.expires_in * 1000,
+			refreshToken: json.refresh_token,
 		};
 	}
 
