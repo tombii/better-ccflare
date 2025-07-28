@@ -140,6 +140,26 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		]);
 	}
 
+	saveRequestMeta(
+		id: string,
+		method: string,
+		path: string,
+		accountUsed: string | null,
+		statusCode: number | null,
+		timestamp?: number,
+	): void {
+		this.db.run(
+			`
+      INSERT INTO requests (
+        id, timestamp, method, path, account_used, 
+        status_code, success, error_message, response_time_ms, failover_attempts
+      )
+      VALUES (?, ?, ?, ?, ?, ?, 0, NULL, 0, 0)
+    `,
+			[id, timestamp || Date.now(), method, path, accountUsed, statusCode],
+		);
+	}
+
 	saveRequest(
 		id: string,
 		method: string,
@@ -164,7 +184,7 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 	): void {
 		this.db.run(
 			`
-      INSERT INTO requests (
+      INSERT OR REPLACE INTO requests (
         id, timestamp, method, path, account_used, 
         status_code, success, error_message, response_time_ms, failover_attempts,
         model, prompt_tokens, completion_tokens, total_tokens, cost_usd,

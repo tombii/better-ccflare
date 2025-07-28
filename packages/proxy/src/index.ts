@@ -15,4 +15,15 @@ export {
 	type ProxyContext,
 	terminateUsageWorker,
 } from "./proxy";
+export {
+	forwardToClient,
+	type ResponseHandlerOptions,
+} from "./response-handler";
 export type { ProxyRequest, ProxyResponse } from "./types";
+export type {
+	ChunkMessage,
+	ControlMessage,
+	EndMessage,
+	StartMessage,
+	WorkerMessage,
+} from "./worker-messages";

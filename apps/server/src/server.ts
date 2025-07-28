@@ -87,8 +87,8 @@ const proxyContext: ProxyContext = {
 	usageWorker: null as unknown as Worker, // Will be set below
 };
 
-// Initialize usage worker with context
-proxyContext.usageWorker = getUsageWorker(proxyContext);
+// Initialize usage worker
+proxyContext.usageWorker = getUsageWorker();
 
 // Watch for strategy changes
 config.on("change", ({ key }) => {
