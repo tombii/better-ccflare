@@ -1,4 +1,3 @@
-import type { Database } from "bun:sqlite";
 import { BaseRepository } from "./base.repository";
 
 export interface OAuthSession {
@@ -9,18 +8,24 @@ export interface OAuthSession {
 }
 
 export class OAuthRepository extends BaseRepository<OAuthSession> {
-	constructor(db: Database) {
-		super(db);
-	}
-
-	createSession(sessionId: string, accountName: string, verifier: string, mode: "console" | "max", tier: number, ttlMinutes = 10): void {
+	createSession(
+		sessionId: string,
+		accountName: string,
+		verifier: string,
+		mode: "console" | "max",
+		tier: number,
+		ttlMinutes = 10,
+	): void {
 		const now = Date.now();
 		const expiresAt = now + ttlMinutes * 60 * 1000;
 
-		this.run(`
+		this.run(
+			`
 			INSERT INTO oauth_sessions (id, account_name, verifier, mode, tier, created_at, expires_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?)
-		`, [sessionId, accountName, verifier, mode, tier, now, expiresAt]);
+		`,
+			[sessionId, accountName, verifier, mode, tier, now, expiresAt],
+		);
 	}
 
 	getSession(sessionId: string): OAuthSession | null {
@@ -30,11 +35,14 @@ export class OAuthRepository extends BaseRepository<OAuthSession> {
 			mode: "console" | "max";
 			tier: number;
 			expires_at: number;
-		}>(`
+		}>(
+			`
 			SELECT account_name, verifier, mode, tier, expires_at 
 			FROM oauth_sessions 
 			WHERE id = ? AND expires_at > ?
-		`, [sessionId, Date.now()]);
+		`,
+			[sessionId, Date.now()],
+		);
 
 		if (!row) return null;
 
@@ -53,7 +61,7 @@ export class OAuthRepository extends BaseRepository<OAuthSession> {
 	cleanupExpiredSessions(): number {
 		return this.runWithChanges(
 			`DELETE FROM oauth_sessions WHERE expires_at <= ?`,
-			[Date.now()]
+			[Date.now()],
 		);
 	}
 }

@@ -1,4 +1,3 @@
-import type { Database } from "bun:sqlite";
 import { BaseRepository } from "./base.repository";
 
 export interface RequestData {
@@ -25,23 +24,30 @@ export interface RequestData {
 }
 
 export class RequestRepository extends BaseRepository<RequestData> {
-	constructor(db: Database) {
-		super(db);
-	}
-
-	saveMeta(id: string, method: string, path: string, accountUsed: string | null, statusCode: number | null, timestamp?: number): void {
-		this.run(`
+	saveMeta(
+		id: string,
+		method: string,
+		path: string,
+		accountUsed: string | null,
+		statusCode: number | null,
+		timestamp?: number,
+	): void {
+		this.run(
+			`
 			INSERT INTO requests (
 				id, timestamp, method, path, account_used, 
 				status_code, success, error_message, response_time_ms, failover_attempts
 			)
 			VALUES (?, ?, ?, ?, ?, ?, 0, NULL, 0, 0)
-		`, [id, timestamp || Date.now(), method, path, accountUsed, statusCode]);
+		`,
+			[id, timestamp || Date.now(), method, path, accountUsed, statusCode],
+		);
 	}
 
 	save(data: RequestData): void {
 		const { usage } = data;
-		this.run(`
+		this.run(
+			`
 			INSERT OR REPLACE INTO requests (
 				id, timestamp, method, path, account_used, 
 				status_code, success, error_message, response_time_ms, failover_attempts,
@@ -49,33 +55,36 @@ export class RequestRepository extends BaseRepository<RequestData> {
 				input_tokens, cache_read_input_tokens, cache_creation_input_tokens, output_tokens
 			)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		`, [
-			data.id,
-			Date.now(),
-			data.method,
-			data.path,
-			data.accountUsed,
-			data.statusCode,
-			data.success ? 1 : 0,
-			data.errorMessage,
-			data.responseTime,
-			data.failoverAttempts,
-			usage?.model || null,
-			usage?.promptTokens || null,
-			usage?.completionTokens || null,
-			usage?.totalTokens || null,
-			usage?.costUsd || null,
-			usage?.inputTokens || null,
-			usage?.cacheReadInputTokens || null,
-			usage?.cacheCreationInputTokens || null,
-			usage?.outputTokens || null,
-		]);
+		`,
+			[
+				data.id,
+				Date.now(),
+				data.method,
+				data.path,
+				data.accountUsed,
+				data.statusCode,
+				data.success ? 1 : 0,
+				data.errorMessage,
+				data.responseTime,
+				data.failoverAttempts,
+				usage?.model || null,
+				usage?.promptTokens || null,
+				usage?.completionTokens || null,
+				usage?.totalTokens || null,
+				usage?.costUsd || null,
+				usage?.inputTokens || null,
+				usage?.cacheReadInputTokens || null,
+				usage?.cacheCreationInputTokens || null,
+				usage?.outputTokens || null,
+			],
+		);
 	}
 
-	updateUsage(requestId: string, usage: RequestData['usage']): void {
+	updateUsage(requestId: string, usage: RequestData["usage"]): void {
 		if (!usage) return;
-		
-		this.run(`
+
+		this.run(
+			`
 			UPDATE requests
 			SET 
 				model = COALESCE(?, model),
@@ -88,18 +97,20 @@ export class RequestRepository extends BaseRepository<RequestData> {
 				cache_creation_input_tokens = COALESCE(?, cache_creation_input_tokens),
 				output_tokens = COALESCE(?, output_tokens)
 			WHERE id = ?
-		`, [
-			usage.model || null,
-			usage.promptTokens || null,
-			usage.completionTokens || null,
-			usage.totalTokens || null,
-			usage.costUsd || null,
-			usage.inputTokens || null,
-			usage.cacheReadInputTokens || null,
-			usage.cacheCreationInputTokens || null,
-			usage.outputTokens || null,
-			requestId,
-		]);
+		`,
+			[
+				usage.model || null,
+				usage.promptTokens || null,
+				usage.completionTokens || null,
+				usage.totalTokens || null,
+				usage.costUsd || null,
+				usage.inputTokens || null,
+				usage.cacheReadInputTokens || null,
+				usage.cacheCreationInputTokens || null,
+				usage.outputTokens || null,
+				requestId,
+			],
+		);
 	}
 
 	// Payload management
@@ -107,14 +118,14 @@ export class RequestRepository extends BaseRepository<RequestData> {
 		const json = JSON.stringify(data);
 		this.run(
 			`INSERT OR REPLACE INTO request_payloads (id, json) VALUES (?, ?)`,
-			[id, json]
+			[id, json],
 		);
 	}
 
 	getPayload(id: string): unknown | null {
 		const row = this.get<{ json: string }>(
 			`SELECT json FROM request_payloads WHERE id = ?`,
-			[id]
+			[id],
 		);
 
 		if (!row) return null;
@@ -127,23 +138,140 @@ export class RequestRepository extends BaseRepository<RequestData> {
 	}
 
 	listPayloads(limit = 50): Array<{ id: string; json: string }> {
-		return this.query<{ id: string; json: string }>(`
+		return this.query<{ id: string; json: string }>(
+			`
 			SELECT rp.id, rp.json 
 			FROM request_payloads rp
 			JOIN requests r ON rp.id = r.id
 			ORDER BY r.timestamp DESC
 			LIMIT ?
-		`, [limit]);
+		`,
+			[limit],
+		);
 	}
 
-	listPayloadsWithAccountNames(limit = 50): Array<{ id: string; json: string; account_name: string | null }> {
-		return this.query<{ id: string; json: string; account_name: string | null }>(`
+	listPayloadsWithAccountNames(
+		limit = 50,
+	): Array<{ id: string; json: string; account_name: string | null }> {
+		return this.query<{
+			id: string;
+			json: string;
+			account_name: string | null;
+		}>(
+			`
 			SELECT rp.id, rp.json, a.name as account_name
 			FROM request_payloads rp
 			JOIN requests r ON rp.id = r.id
 			LEFT JOIN accounts a ON r.account_used = a.id
 			ORDER BY r.timestamp DESC
 			LIMIT ?
-		`, [limit]);
+		`,
+			[limit],
+		);
+	}
+
+	// Analytics queries
+	getRecentRequests(limit = 100): Array<{
+		id: string;
+		timestamp: number;
+		method: string;
+		path: string;
+		account_used: string | null;
+		status_code: number | null;
+		success: boolean;
+		response_time_ms: number | null;
+	}> {
+		return this.query<{
+			id: string;
+			timestamp: number;
+			method: string;
+			path: string;
+			account_used: string | null;
+			status_code: number | null;
+			success: 0 | 1;
+			response_time_ms: number | null;
+		}>(
+			`
+			SELECT id, timestamp, method, path, account_used, status_code, success, response_time_ms
+			FROM requests
+			ORDER BY timestamp DESC
+			LIMIT ?
+		`,
+			[limit],
+		).map((row) => ({
+			...row,
+			success: row.success === 1,
+		}));
+	}
+
+	getRequestStats(since?: number): {
+		totalRequests: number;
+		successfulRequests: number;
+		failedRequests: number;
+		avgResponseTime: number | null;
+	} {
+		const whereClause = since ? "WHERE timestamp > ?" : "";
+		const params = since ? [since] : [];
+
+		const result = this.get<{
+			total_requests: number;
+			successful_requests: number;
+			failed_requests: number;
+			avg_response_time: number | null;
+		}>(
+			`
+			SELECT 
+				COUNT(*) as total_requests,
+				SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successful_requests,
+				SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) as failed_requests,
+				AVG(response_time_ms) as avg_response_time
+			FROM requests
+			${whereClause}
+		`,
+			params,
+		);
+
+		return {
+			totalRequests: result?.total_requests || 0,
+			successfulRequests: result?.successful_requests || 0,
+			failedRequests: result?.failed_requests || 0,
+			avgResponseTime: result?.avg_response_time || null,
+		};
+	}
+
+	getRequestsByAccount(since?: number): Array<{
+		accountId: string;
+		accountName: string | null;
+		requestCount: number;
+		successRate: number;
+	}> {
+		const whereClause = since ? "WHERE r.timestamp > ?" : "";
+		const params = since ? [since] : [];
+
+		return this.query<{
+			account_id: string;
+			account_name: string | null;
+			request_count: number;
+			success_rate: number;
+		}>(
+			`
+			SELECT 
+				r.account_used as account_id,
+				a.name as account_name,
+				COUNT(*) as request_count,
+				SUM(CASE WHEN r.success = 1 THEN 1 ELSE 0 END) * 100.0 / COUNT(*) as success_rate
+			FROM requests r
+			LEFT JOIN accounts a ON r.account_used = a.id
+			${whereClause}
+			GROUP BY r.account_used
+			ORDER BY request_count DESC
+		`,
+			params,
+		).map((row) => ({
+			accountId: row.account_id,
+			accountName: row.account_name,
+			requestCount: row.request_count,
+			successRate: row.success_rate,
+		}));
 	}
 }

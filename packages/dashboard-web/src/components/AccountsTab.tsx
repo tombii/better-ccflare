@@ -7,8 +7,10 @@ import {
 	Plus,
 	Trash2,
 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import { type Account, api } from "../api";
+import { useApiData } from "../hooks/useApiData";
+import { useApiError } from "../hooks/useApiError";
 import { Button } from "./ui/button";
 import {
 	Card,
@@ -28,9 +30,16 @@ import {
 } from "./ui/select";
 
 export function AccountsTab() {
-	const [accounts, setAccounts] = useState<Account[]>([]);
-	const [loading, setLoading] = useState(true);
-	const [error, setError] = useState<string | null>(null);
+	const { formatError } = useApiError();
+	const {
+		data: accounts,
+		loading,
+		error,
+		refetch: loadAccounts,
+	} = useApiData<Account[]>(() => api.getAccounts(), {
+		fetchOnMount: true,
+	});
+
 	const [adding, setAdding] = useState(false);
 	const [authStep, setAuthStep] = useState<"form" | "code">("form");
 	const [authCode, setAuthCode] = useState("");
@@ -48,26 +57,11 @@ export function AccountsTab() {
 		accountName: "",
 		confirmInput: "",
 	});
-
-	const loadAccounts = useCallback(async () => {
-		try {
-			const data = await api.getAccounts();
-			setAccounts(data);
-			setError(null);
-		} catch (err) {
-			setError(err instanceof Error ? err.message : "Failed to load accounts");
-		} finally {
-			setLoading(false);
-		}
-	}, []);
-
-	useEffect(() => {
-		loadAccounts();
-	}, [loadAccounts]);
+	const [actionError, setActionError] = useState<string | null>(null);
 
 	const handleAddAccount = async () => {
 		if (!newAccount.name) {
-			setError("Account name is required");
+			setActionError("Account name is required");
 			return;
 		}
 
@@ -82,17 +76,15 @@ export function AccountsTab() {
 
 			// Move to code entry step
 			setAuthStep("code");
-			setError(null);
+			setActionError(null);
 		} catch (err) {
-			setError(
-				err instanceof Error ? err.message : "Failed to initialize account",
-			);
+			setActionError(formatError(err));
 		}
 	};
 
 	const handleCodeSubmit = async () => {
 		if (!authCode) {
-			setError("Authorization code is required");
+			setActionError("Authorization code is required");
 			return;
 		}
 
@@ -109,11 +101,9 @@ export function AccountsTab() {
 			setAuthStep("form");
 			setAuthCode("");
 			setNewAccount({ name: "", mode: "max", tier: 1 });
-			setError(null);
+			setActionError(null);
 		} catch (err) {
-			setError(
-				err instanceof Error ? err.message : "Failed to complete account setup",
-			);
+			setActionError(formatError(err));
 		}
 	};
 
@@ -123,7 +113,7 @@ export function AccountsTab() {
 
 	const handleConfirmDelete = async () => {
 		if (confirmDelete.confirmInput !== confirmDelete.accountName) {
-			setError(
+			setActionError(
 				"Account name does not match. Please type the exact account name.",
 			);
 			return;
@@ -136,9 +126,9 @@ export function AccountsTab() {
 			);
 			await loadAccounts();
 			setConfirmDelete({ show: false, accountName: "", confirmInput: "" });
-			setError(null);
+			setActionError(null);
 		} catch (err) {
-			setError(err instanceof Error ? err.message : "Failed to remove account");
+			setActionError(formatError(err));
 		}
 	};
 
@@ -151,9 +141,7 @@ export function AccountsTab() {
 			}
 			await loadAccounts();
 		} catch (err) {
-			setError(
-				err instanceof Error ? err.message : "Failed to update account status",
-			);
+			setActionError(formatError(err));
 		}
 	};
 
@@ -167,14 +155,16 @@ export function AccountsTab() {
 		);
 	}
 
+	const displayError = error || actionError;
+
 	return (
 		<div className="space-y-4">
-			{error && (
+			{displayError && (
 				<Card className="border-destructive">
 					<CardContent className="pt-6">
 						<div className="flex items-center gap-2">
 							<AlertCircle className="h-4 w-4 text-destructive" />
-							<p className="text-destructive">{error}</p>
+							<p className="text-destructive">{displayError}</p>
 						</div>
 					</CardContent>
 				</Card>
@@ -265,7 +255,7 @@ export function AccountsTab() {
 											setAdding(false);
 											setAuthStep("form");
 											setNewAccount({ name: "", mode: "max", tier: 1 });
-											setError(null);
+											setActionError(null);
 										}}
 									>
 										Cancel
@@ -297,7 +287,7 @@ export function AccountsTab() {
 												setAuthStep("form");
 												setAuthCode("");
 												setNewAccount({ name: "", mode: "max", tier: 1 });
-												setError(null);
+												setActionError(null);
 											}}
 										>
 											Cancel
@@ -308,7 +298,7 @@ export function AccountsTab() {
 						</div>
 					)}
 
-					{accounts.length === 0 ? (
+					{!accounts || accounts.length === 0 ? (
 						<p className="text-muted-foreground">No accounts configured</p>
 					) : (
 						<div className="space-y-2">
@@ -437,7 +427,7 @@ export function AccountsTab() {
 											accountName: "",
 											confirmInput: "",
 										});
-										setError(null);
+										setActionError(null);
 									}}
 								>
 									Cancel

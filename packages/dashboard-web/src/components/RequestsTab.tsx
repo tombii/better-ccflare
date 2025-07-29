@@ -4,8 +4,10 @@ import {
 	formatTokens,
 } from "@claudeflare/ui-common";
 import { ChevronDown, ChevronRight, Eye, RefreshCw } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { api, type RequestPayload, type RequestSummary } from "../api";
+import { REFRESH_INTERVALS } from "../constants";
+import { useApiData } from "../hooks/useApiData";
 import { CopyButton } from "./CopyButton";
 import { RequestDetailsModal } from "./RequestDetailsModal";
 import { TokenUsageDisplay } from "./TokenUsageDisplay";
@@ -19,46 +21,43 @@ import {
 	CardTitle,
 } from "./ui/card";
 
+interface RequestsData {
+	requests: RequestPayload[];
+	summaries: Map<string, RequestSummary>;
+}
+
 export function RequestsTab() {
-	const [requests, setRequests] = useState<RequestPayload[]>([]);
-	const [summaries, setSummaries] = useState<Map<string, RequestSummary>>(
-		new Map(),
-	);
-	const [loading, setLoading] = useState(true);
-	const [error, setError] = useState<string | null>(null);
 	const [expandedRequests, setExpandedRequests] = useState<Set<string>>(
 		new Set(),
 	);
 	const [modalRequest, setModalRequest] = useState<RequestPayload | null>(null);
 
-	const loadRequests = useCallback(async () => {
-		try {
-			const [detailData, summaryData] = await Promise.all([
-				api.getRequestsDetail(200),
-				api.getRequestsSummary(200),
-			]);
-			setRequests(detailData);
+	const fetcher = useCallback(async (): Promise<RequestsData> => {
+		const [detailData, summaryData] = await Promise.all([
+			api.getRequestsDetail(200),
+			api.getRequestsSummary(200),
+		]);
 
-			// Create a map of summaries by ID
-			const summaryMap = new Map<string, RequestSummary>();
-			summaryData.forEach((summary) => {
-				summaryMap.set(summary.id, summary);
-			});
-			setSummaries(summaryMap);
+		// Create a map of summaries by ID
+		const summaryMap = new Map<string, RequestSummary>();
+		summaryData.forEach((summary) => {
+			summaryMap.set(summary.id, summary);
+		});
 
-			setError(null);
-		} catch (err) {
-			setError(err instanceof Error ? err.message : "Failed to load requests");
-		} finally {
-			setLoading(false);
-		}
+		return {
+			requests: detailData,
+			summaries: summaryMap,
+		};
 	}, []);
 
-	useEffect(() => {
-		loadRequests();
-		const interval = setInterval(loadRequests, 10000);
-		return () => clearInterval(interval);
-	}, [loadRequests]);
+	const {
+		data,
+		loading,
+		error,
+		refetch: loadRequests,
+	} = useApiData<RequestsData>(fetcher, {
+		refetchInterval: REFRESH_INTERVALS.fast,
+	});
 
 	const toggleExpanded = (id: string) => {
 		setExpandedRequests((prev) => {
@@ -137,15 +136,15 @@ export function RequestsTab() {
 				</div>
 			</CardHeader>
 			<CardContent>
-				{requests.length === 0 ? (
+				{!data || data.requests.length === 0 ? (
 					<p className="text-muted-foreground">No requests found</p>
 				) : (
 					<div className="space-y-2">
-						{requests.map((request) => {
+						{data.requests.map((request) => {
 							const isExpanded = expandedRequests.has(request.id);
 							const isError = request.error || !request.meta.success;
 							const statusCode = request.response?.status;
-							const summary = summaries.get(request.id);
+							const summary = data.summaries.get(request.id);
 
 							return (
 								<div
@@ -288,7 +287,7 @@ export function RequestsTab() {
 			{modalRequest && (
 				<RequestDetailsModal
 					request={modalRequest}
-					summary={summaries.get(modalRequest.id)}
+					summary={data?.summaries.get(modalRequest.id)}
 					isOpen={true}
 					onClose={() => setModalRequest(null)}
 				/>

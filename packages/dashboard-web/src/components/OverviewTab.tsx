@@ -1,4 +1,3 @@
-import type { AnalyticsResponse } from "@claudeflare/http-api";
 import {
 	formatCost,
 	formatNumber,
@@ -15,25 +14,17 @@ import {
 	TrendingUp,
 	XCircle,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useMemo } from "react";
+import { api } from "../api";
+import { CHART_COLORS, COLORS, REFRESH_INTERVALS } from "../constants";
+import { useApiData } from "../hooks/useApiData";
+import { useApiError } from "../hooks/useApiError";
 import {
-	Area,
-	AreaChart,
-	Bar,
-	BarChart,
-	CartesianGrid,
-	Cell,
-	Legend,
-	Line,
-	LineChart,
-	Pie,
-	PieChart,
-	ResponsiveContainer,
-	Tooltip,
-	XAxis,
-	YAxis,
-} from "recharts";
-import { type Account, api, type Stats } from "../api";
+	BaseAreaChart,
+	BaseBarChart,
+	BaseLineChart,
+	BasePieChart,
+} from "./charts";
 import { StrategyCard } from "./StrategyCard";
 import { Badge } from "./ui/badge";
 import {
@@ -44,25 +35,6 @@ import {
 	CardTitle,
 } from "./ui/card";
 import { Skeleton } from "./ui/skeleton";
-
-// Claudeflare-inspired color palette
-const COLORS = {
-	primary: "#f38020",
-	success: "#10b981",
-	warning: "#f59e0b",
-	error: "#ef4444",
-	blue: "#3b82f6",
-	purple: "#8b5cf6",
-	pink: "#ec4899",
-};
-
-const CHART_COLORS = [
-	COLORS.primary,
-	COLORS.blue,
-	COLORS.purple,
-	COLORS.pink,
-	COLORS.success,
-];
 
 interface MetricCardProps {
 	title: string;
@@ -119,56 +91,46 @@ function MetricCard({
 }
 
 export function OverviewTab() {
-	const [stats, setStats] = useState<Stats | null>(null);
-	const [analytics, setAnalytics] = useState<AnalyticsResponse | null>(null);
-	const [accounts, setAccounts] = useState<Account[] | null>(null);
-	const [loading, setLoading] = useState(true);
-	const [timeSeriesData, setTimeSeriesData] = useState<
-		Array<{
-			time: string;
-			requests: number;
-			successRate: number;
-			responseTime: number;
-			cost: string;
-		}>
-	>([]);
+	const { formatError } = useApiError();
 
-	useEffect(() => {
-		const loadData = async () => {
-			try {
-				// Fetch stats, analytics, and accounts data
-				const [statsData, analyticsData, accountsData] = await Promise.all([
-					api.getStats(),
-					api.getAnalytics("24h"),
-					api.getAccounts(),
-				]);
-				setStats(statsData);
-				setAnalytics(analyticsData);
-				setAccounts(accountsData);
+	// Fetch all data in a single combined request
+	const { data: combinedData, loading } = useApiData(
+		async () => {
+			const [statsData, analyticsData, accountsData] = await Promise.all([
+				api.getStats(),
+				api.getAnalytics("24h"),
+				api.getAccounts(),
+			]);
+			return {
+				stats: statsData,
+				analytics: analyticsData,
+				accounts: accountsData,
+			};
+		},
+		{
+			refetchInterval: REFRESH_INTERVALS.default,
+			onError: formatError,
+		},
+	);
 
-				// Transform analytics time series data
-				const transformedTimeSeries = analyticsData.timeSeries.map((point) => ({
-					time: format(new Date(point.ts), "HH:mm"),
-					requests: point.requests,
-					successRate: point.successRate,
-					responseTime: Math.round(point.avgResponseTime),
-					cost: point.costUsd.toFixed(2),
-				}));
-				setTimeSeriesData(transformedTimeSeries);
+	// Extract data from combined result
+	const stats = combinedData?.stats || null;
+	const analytics = combinedData?.analytics || null;
+	const accounts = combinedData?.accounts || null;
 
-				setLoading(false);
-			} catch (error) {
-				console.error("Failed to load data:", error);
-				setLoading(false);
-			}
-		};
+	// Transform time series data
+	const timeSeriesData = useMemo(() => {
+		if (!analytics) return [];
+		return analytics.timeSeries.map((point) => ({
+			time: format(new Date(point.ts), "HH:mm"),
+			requests: point.requests,
+			successRate: point.successRate,
+			responseTime: Math.round(point.avgResponseTime),
+			cost: point.costUsd.toFixed(2),
+		}));
+	}, [analytics]);
 
-		loadData();
-		const interval = setInterval(loadData, 30000); // Update every 30 seconds
-		return () => clearInterval(interval);
-	}, []);
-
-	if (loading) {
+	if (loading && !combinedData) {
 		return (
 			<div className="space-y-6">
 				<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -310,47 +272,12 @@ export function OverviewTab() {
 						</CardDescription>
 					</CardHeader>
 					<CardContent>
-						<ResponsiveContainer width="100%" height={300}>
-							<AreaChart data={timeSeriesData}>
-								<defs>
-									<linearGradient
-										id="colorRequests"
-										x1="0"
-										y1="0"
-										x2="0"
-										y2="1"
-									>
-										<stop
-											offset="5%"
-											stopColor={COLORS.primary}
-											stopOpacity={0.8}
-										/>
-										<stop
-											offset="95%"
-											stopColor={COLORS.primary}
-											stopOpacity={0.1}
-										/>
-									</linearGradient>
-								</defs>
-								<CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-								<XAxis dataKey="time" className="text-xs" />
-								<YAxis className="text-xs" />
-								<Tooltip
-									contentStyle={{
-										backgroundColor: "var(--background)",
-										border: "1px solid var(--border)",
-										borderRadius: "var(--radius)",
-									}}
-								/>
-								<Area
-									type="monotone"
-									dataKey="requests"
-									stroke={COLORS.primary}
-									fillOpacity={1}
-									fill="url(#colorRequests)"
-								/>
-							</AreaChart>
-						</ResponsiveContainer>
+						<BaseAreaChart
+							data={timeSeriesData}
+							dataKey="requests"
+							loading={loading}
+							height="medium"
+						/>
 					</CardContent>
 				</Card>
 
@@ -361,27 +288,13 @@ export function OverviewTab() {
 						<CardDescription>Success percentage over time</CardDescription>
 					</CardHeader>
 					<CardContent>
-						<ResponsiveContainer width="100%" height={300}>
-							<LineChart data={timeSeriesData}>
-								<CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-								<XAxis dataKey="time" className="text-xs" />
-								<YAxis domain={[80, 100]} className="text-xs" />
-								<Tooltip
-									contentStyle={{
-										backgroundColor: "var(--background)",
-										border: "1px solid var(--border)",
-										borderRadius: "var(--radius)",
-									}}
-								/>
-								<Line
-									type="monotone"
-									dataKey="successRate"
-									stroke={COLORS.success}
-									strokeWidth={2}
-									dot={false}
-								/>
-							</LineChart>
-						</ResponsiveContainer>
+						<BaseLineChart
+							data={timeSeriesData}
+							lines={{ dataKey: "successRate", stroke: COLORS.success }}
+							loading={loading}
+							height="medium"
+							yAxisDomain={[80, 100]}
+						/>
 					</CardContent>
 				</Card>
 			</div>
@@ -397,34 +310,15 @@ export function OverviewTab() {
 						</CardDescription>
 					</CardHeader>
 					<CardContent>
-						<ResponsiveContainer width="100%" height={250}>
-							<PieChart>
-								<Pie
-									data={modelData}
-									cx="50%"
-									cy="50%"
-									innerRadius={60}
-									outerRadius={80}
-									paddingAngle={5}
-									dataKey="value"
-								>
-									{modelData.map((entry, index) => (
-										<Cell
-											key={`cell-${entry.name}`}
-											fill={CHART_COLORS[index % CHART_COLORS.length]}
-										/>
-									))}
-								</Pie>
-								<Tooltip
-									contentStyle={{
-										backgroundColor: COLORS.success,
-										border: `1px solid ${COLORS.success}`,
-										borderRadius: "var(--radius)",
-										color: "#fff",
-									}}
-								/>
-							</PieChart>
-						</ResponsiveContainer>
+						<BasePieChart
+							data={modelData}
+							loading={loading}
+							height="small"
+							innerRadius={60}
+							outerRadius={80}
+							paddingAngle={5}
+							tooltipStyle="success"
+						/>
 						<div className="mt-4 space-y-2">
 							{modelData.map((model, index) => (
 								<div
@@ -457,38 +351,23 @@ export function OverviewTab() {
 						</CardDescription>
 					</CardHeader>
 					<CardContent>
-						<ResponsiveContainer width="100%" height={250}>
-							<BarChart data={accountHealthData}>
-								<CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-								<XAxis dataKey="name" className="text-xs" />
-								<YAxis yAxisId="left" className="text-xs" />
-								<YAxis
-									yAxisId="right"
-									orientation="right"
-									className="text-xs"
-								/>
-								<Tooltip
-									contentStyle={{
-										backgroundColor: "var(--background)",
-										border: "1px solid var(--border)",
-										borderRadius: "var(--radius)",
-									}}
-								/>
-								<Legend />
-								<Bar
-									yAxisId="left"
-									dataKey="requests"
-									fill={COLORS.primary}
-									name="Requests"
-								/>
-								<Bar
-									yAxisId="right"
-									dataKey="successRate"
-									fill={COLORS.success}
-									name="Success %"
-								/>
-							</BarChart>
-						</ResponsiveContainer>
+						<BaseBarChart
+							data={accountHealthData}
+							bars={[
+								{ dataKey: "requests", yAxisId: "left", name: "Requests" },
+								{
+									dataKey: "successRate",
+									yAxisId: "right",
+									fill: COLORS.success,
+									name: "Success %",
+								},
+							]}
+							xAxisKey="name"
+							loading={loading}
+							height="small"
+							secondaryYAxis={true}
+							showLegend={true}
+						/>
 					</CardContent>
 				</Card>
 			</div>

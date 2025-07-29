@@ -1,7 +1,9 @@
 import type { Config } from "@claudeflare/config";
 import {
+	NETWORK,
 	STRATEGIES,
 	type StrategyName,
+	TIME_CONSTANTS,
 	validateString,
 } from "@claudeflare/core";
 import { jsonResponse } from "@claudeflare/http-common";
@@ -19,8 +21,10 @@ export function createConfigHandlers(config: Config) {
 			const settings = config.getAllSettings();
 			const response: ConfigResponse = {
 				lb_strategy: (settings.lb_strategy as string) || "round_robin",
-				port: (settings.port as number) || 8080,
-				sessionDurationMs: (settings.sessionDurationMs as number) || 3600000,
+				port: (settings.port as number) || NETWORK.DEFAULT_PORT,
+				sessionDurationMs:
+					(settings.sessionDurationMs as number) ||
+					TIME_CONSTANTS.SESSION_DURATION_FALLBACK,
 			};
 			return jsonResponse(response);
 		},

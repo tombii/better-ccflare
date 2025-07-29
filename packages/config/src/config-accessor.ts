@@ -1,3 +1,4 @@
+import { NETWORK, TIME_CONSTANTS } from "@claudeflare/core";
 import type { Config } from "./index";
 
 /**
@@ -7,7 +8,9 @@ export class ConfigAccessor {
 	constructor(private config: Config) {}
 
 	get port(): number {
-		return (this.config.getAllSettings().port as number) || 8080;
+		return (
+			(this.config.getAllSettings().port as number) || NETWORK.DEFAULT_PORT
+		);
 	}
 
 	get strategy(): string {
@@ -15,7 +18,10 @@ export class ConfigAccessor {
 	}
 
 	get sessionDurationMs(): number {
-		return (this.config.getAllSettings().sessionDurationMs as number) || 5 * 60 * 60 * 1000;
+		return (
+			(this.config.getAllSettings().sessionDurationMs as number) ||
+			TIME_CONSTANTS.SESSION_DURATION_DEFAULT
+		);
 	}
 
 	get dbPath(): string | undefined {
@@ -41,7 +47,7 @@ export class ConfigAccessor {
 		logLevel: string;
 		enableMetrics: boolean;
 	} {
-		const settings = this.config.getAllSettings();
+		const _settings = this.config.getAllSettings();
 		return {
 			port: this.port,
 			strategy: this.strategy,
@@ -55,14 +61,16 @@ export class ConfigAccessor {
 	/**
 	 * Update multiple settings at once
 	 */
-	updateSettings(updates: Partial<{
-		port: number;
-		strategy: string;
-		sessionDurationMs: number;
-		dbPath: string;
-		logLevel: string;
-		enableMetrics: boolean;
-	}>): void {
+	updateSettings(
+		updates: Partial<{
+			port: number;
+			strategy: string;
+			sessionDurationMs: number;
+			dbPath: string;
+			logLevel: string;
+			enableMetrics: boolean;
+		}>,
+	): void {
 		if (updates.strategy) {
 			this.config.setStrategy(updates.strategy as any);
 		}

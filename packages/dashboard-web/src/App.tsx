@@ -7,14 +7,15 @@ import { Navigation } from "./components/navigation";
 import { OverviewTab } from "./components/OverviewTab";
 import { RequestsTab } from "./components/RequestsTab";
 import { TooltipProvider } from "./components/ui/tooltip";
+import { QUERY_CONFIG, REFRESH_INTERVALS } from "./constants";
 import { ThemeProvider } from "./contexts/theme-context";
 import "./index.css";
 
 const queryClient = new QueryClient({
 	defaultOptions: {
 		queries: {
-			refetchInterval: 30000, // Refetch every 30 seconds
-			staleTime: 10000, // Consider data stale after 10 seconds
+			refetchInterval: REFRESH_INTERVALS.default, // Refetch every 30 seconds
+			staleTime: QUERY_CONFIG.staleTime, // Consider data stale after 10 seconds
 		},
 	},
 });

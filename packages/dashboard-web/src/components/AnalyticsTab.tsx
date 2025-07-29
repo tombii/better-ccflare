@@ -1,31 +1,36 @@
-import type { AnalyticsResponse } from "@claudeflare/http-api";
-import {
-	formatCost,
-	formatNumber,
-	formatPercentage,
-	formatTokens,
-} from "@claudeflare/ui-common";
+import { formatCost, formatNumber, formatTokens } from "@claudeflare/ui-common";
 import { format } from "date-fns";
 import { CalendarDays, Filter, RefreshCw } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useMemo, useState } from "react";
 import {
 	Area,
 	AreaChart,
-	Bar,
-	BarChart,
 	CartesianGrid,
 	Legend,
-	Line,
-	LineChart,
-	ReferenceLine,
 	ResponsiveContainer,
-	Scatter,
-	ScatterChart,
 	Tooltip,
 	XAxis,
 	YAxis,
 } from "recharts";
 import { api } from "../api";
+import {
+	CHART_HEIGHTS,
+	CHART_PROPS,
+	COLORS,
+	type TimeRange,
+} from "../constants";
+import { useApiData } from "../hooks/useApiData";
+import { useApiError } from "../hooks/useApiError";
+import {
+	BaseAreaChart,
+	BaseBarChart,
+	BaseLineChart,
+	CostChart,
+	ModelPerformanceChart,
+	RequestVolumeChart,
+	ResponseTimeChart,
+	TokenUsageChart,
+} from "./charts";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import {
@@ -46,17 +51,6 @@ import {
 } from "./ui/select";
 import { Separator } from "./ui/separator";
 
-const COLORS = {
-	primary: "#f38020",
-	success: "#10b981",
-	warning: "#f59e0b",
-	error: "#ef4444",
-	blue: "#3b82f6",
-	purple: "#8b5cf6",
-};
-
-type TimeRange = "1h" | "6h" | "24h" | "7d" | "30d";
-
 interface FilterState {
 	accounts: string[];
 	models: string[];
@@ -64,10 +58,9 @@ interface FilterState {
 }
 
 export function AnalyticsTab() {
+	const { formatError } = useApiError();
 	const [timeRange, setTimeRange] = useState<TimeRange>("1h");
 	const [selectedMetric, setSelectedMetric] = useState("requests");
-	const [analytics, setAnalytics] = useState<AnalyticsResponse | null>(null);
-	const [loading, setLoading] = useState(true);
 	const [filterOpen, setFilterOpen] = useState(false);
 	const [viewMode, setViewMode] = useState<"normal" | "cumulative">("normal");
 	const [filters, setFilters] = useState<FilterState>({
@@ -76,28 +69,24 @@ export function AnalyticsTab() {
 		status: "all",
 	});
 
-	// Fetch analytics data
-	useEffect(() => {
-		const loadData = async () => {
-			try {
-				setLoading(true);
-				const data = await api.getAnalytics(timeRange, filters, viewMode);
-				setAnalytics(data);
-				setLoading(false);
-			} catch (error) {
-				console.error("Failed to load analytics:", error);
-				setLoading(false);
-			}
-		};
-
-		loadData();
-	}, [timeRange, filters, viewMode]);
+	// Fetch analytics data with automatic refetch on dependency changes
+	const { data: analytics, loading } = useApiData(
+		() => api.getAnalytics(timeRange, filters, viewMode),
+		{
+			dependencies: [timeRange, filters, viewMode],
+			onError: formatError,
+		},
+	);
 
 	// Get unique accounts and models from analytics data
-	const availableAccounts =
-		analytics?.accountPerformance?.map((a) => a.name) || [];
-	const availableModels =
-		analytics?.modelDistribution?.map((m) => m.model) || [];
+	const availableAccounts = useMemo(
+		() => analytics?.accountPerformance?.map((a) => a.name) || [],
+		[analytics],
+	);
+	const availableModels = useMemo(
+		() => analytics?.modelDistribution?.map((m) => m.model) || [],
+		[analytics],
+	);
 
 	// Apply filters to data
 	const filterData = <T extends { errorRate?: number | string }>(
@@ -424,88 +413,55 @@ export function AnalyticsTab() {
 					</div>
 				</CardHeader>
 				<CardContent>
-					{loading ? (
-						<div className="h-[400px] flex items-center justify-center">
-							<RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" />
-						</div>
+					{selectedMetric === "tokens" ? (
+						<TokenUsageChart
+							data={data}
+							loading={loading}
+							height={CHART_HEIGHTS.large}
+							viewMode={viewMode}
+							timeRange={timeRange}
+						/>
+					) : selectedMetric === "cost" ? (
+						<CostChart
+							data={data}
+							loading={loading}
+							height={CHART_HEIGHTS.large}
+							viewMode={viewMode}
+							timeRange={timeRange}
+						/>
+					) : selectedMetric === "requests" ? (
+						<RequestVolumeChart
+							data={data}
+							loading={loading}
+							height={CHART_HEIGHTS.large}
+							viewMode={viewMode}
+							timeRange={timeRange}
+						/>
+					) : selectedMetric === "responseTime" ? (
+						<ResponseTimeChart
+							data={data}
+							loading={loading}
+							height={CHART_HEIGHTS.large}
+							viewMode={viewMode}
+							timeRange={timeRange}
+						/>
 					) : (
-						<ResponsiveContainer width="100%" height={400}>
-							<AreaChart data={data}>
-								<defs>
-									<linearGradient id="colorMetric" x1="0" y1="0" x2="0" y2="1">
-										<stop
-											offset="5%"
-											stopColor={COLORS.primary}
-											stopOpacity={0.8}
-										/>
-										<stop
-											offset="95%"
-											stopColor={COLORS.primary}
-											stopOpacity={0.1}
-										/>
-									</linearGradient>
-									<linearGradient
-										id="colorCumulative"
-										x1="0"
-										y1="0"
-										x2="0"
-										y2="1"
-									>
-										<stop
-											offset="0%"
-											stopColor={COLORS.purple}
-											stopOpacity={0.9}
-										/>
-										<stop
-											offset="50%"
-											stopColor={COLORS.primary}
-											stopOpacity={0.7}
-										/>
-										<stop
-											offset="100%"
-											stopColor={COLORS.blue}
-											stopOpacity={0.3}
-										/>
-									</linearGradient>
-								</defs>
-								<CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-								<XAxis
-									dataKey="time"
-									className="text-xs"
-									angle={timeRange === "7d" || timeRange === "30d" ? -45 : 0}
-									textAnchor={
-										timeRange === "7d" || timeRange === "30d" ? "end" : "middle"
-									}
-									height={timeRange === "7d" || timeRange === "30d" ? 60 : 30}
-								/>
-								<YAxis className="text-xs" />
-								<Tooltip
-									labelFormatter={(label) =>
-										viewMode === "cumulative" ? `Cumulative at ${label}` : label
-									}
-									contentStyle={{
-										backgroundColor: "var(--background)",
-										border: "1px solid var(--border)",
-										borderRadius: "var(--radius)",
-									}}
-								/>
-								<Area
-									type="monotone"
-									dataKey={selectedMetric}
-									stroke={
-										viewMode === "cumulative" ? COLORS.purple : COLORS.primary
-									}
-									strokeWidth={viewMode === "cumulative" ? 3 : 2}
-									fillOpacity={1}
-									fill={
-										viewMode === "cumulative"
-											? "url(#colorCumulative)"
-											: "url(#colorMetric)"
-									}
-									animationDuration={1000}
-								/>
-							</AreaChart>
-						</ResponsiveContainer>
+						<BaseAreaChart
+							data={data}
+							dataKey={selectedMetric}
+							loading={loading}
+							height="large"
+							color={viewMode === "cumulative" ? COLORS.purple : COLORS.primary}
+							strokeWidth={viewMode === "cumulative" ? 3 : 2}
+							xAxisAngle={timeRange === "7d" || timeRange === "30d" ? -45 : 0}
+							xAxisTextAnchor={
+								timeRange === "7d" || timeRange === "30d" ? "end" : "middle"
+							}
+							xAxisHeight={timeRange === "7d" || timeRange === "30d" ? 60 : 30}
+							tooltipLabelFormatter={(label) =>
+								viewMode === "cumulative" ? `Cumulative at ${label}` : label
+							}
+						/>
 					)}
 				</CardContent>
 			</Card>
@@ -521,47 +477,28 @@ export function AnalyticsTab() {
 						</CardDescription>
 					</CardHeader>
 					<CardContent>
-						<ResponsiveContainer width="100%" height={300}>
-							<LineChart data={data}>
-								<CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-								<XAxis dataKey="time" className="text-xs" />
-								<YAxis className="text-xs" />
-								<Tooltip
-									contentStyle={{
-										backgroundColor: "var(--background)",
-										border: "1px solid var(--border)",
-										borderRadius: "var(--radius)",
-									}}
-								/>
-								<Legend />
-								<Line
-									type="monotone"
-									dataKey="errorRate"
-									stroke={COLORS.error}
-									strokeWidth={2}
-									dot={false}
-									name="Error Rate %"
-								/>
-								<Line
-									type="monotone"
-									dataKey="cacheHitRate"
-									stroke={COLORS.success}
-									strokeWidth={2}
-									dot={false}
-									name="Cache Hit %"
-								/>
-								<ReferenceLine
-									y={90}
-									stroke={COLORS.success}
-									strokeDasharray="3 3"
-								/>
-								<ReferenceLine
-									y={5}
-									stroke={COLORS.error}
-									strokeDasharray="3 3"
-								/>
-							</LineChart>
-						</ResponsiveContainer>
+						<BaseLineChart
+							data={data}
+							lines={[
+								{
+									dataKey: "errorRate",
+									stroke: COLORS.error,
+									name: "Error Rate %",
+								},
+								{
+									dataKey: "cacheHitRate",
+									stroke: COLORS.success,
+									name: "Cache Hit %",
+								},
+							]}
+							loading={loading}
+							height="medium"
+							showLegend={true}
+							referenceLines={[
+								{ y: 90, stroke: COLORS.success },
+								{ y: 5, stroke: COLORS.error },
+							]}
+						/>
 					</CardContent>
 				</Card>
 
@@ -628,63 +565,11 @@ export function AnalyticsTab() {
 						</CardDescription>
 					</CardHeader>
 					<CardContent>
-						<ResponsiveContainer width="100%" height={300}>
-							<ScatterChart>
-								<CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-								<XAxis
-									dataKey="avgTime"
-									name="Avg Response Time (ms)"
-									className="text-xs"
-									label={{
-										value: "Avg Response Time (ms)",
-										position: "insideBottom",
-										offset: -5,
-									}}
-								/>
-								<YAxis
-									dataKey="errorRate"
-									name="Error Rate %"
-									className="text-xs"
-									label={{
-										value: "Error Rate %",
-										angle: -90,
-										position: "insideLeft",
-									}}
-								/>
-								<Tooltip
-									contentStyle={{
-										backgroundColor: COLORS.success,
-										border: `1px solid ${COLORS.success}`,
-										borderRadius: "var(--radius)",
-										color: "#fff",
-									}}
-									formatter={(value: number | string, name: string) => {
-										if (name === "avgTime") return [`${value}ms`, "Avg Time"];
-										if (name === "errorRate")
-											return [formatPercentage(Number(value)), "Error Rate"];
-										return [value, name];
-									}}
-								/>
-								<Scatter
-									name="Models"
-									data={modelPerformance}
-									fill={COLORS.primary}
-								>
-									{modelPerformance.map((entry) => (
-										<text
-											key={`label-${entry.model}`}
-											x={entry.avgTime}
-											y={entry.errorRate}
-											dy={-10}
-											textAnchor="middle"
-											className="text-xs fill-foreground"
-										>
-											{entry.model}
-										</text>
-									))}
-								</Scatter>
-							</ScatterChart>
-						</ResponsiveContainer>
+						<ModelPerformanceChart
+							data={modelPerformance}
+							loading={loading}
+							height={CHART_HEIGHTS.medium}
+						/>
 					</CardContent>
 				</Card>
 
@@ -697,35 +582,19 @@ export function AnalyticsTab() {
 						</CardDescription>
 					</CardHeader>
 					<CardContent>
-						<ResponsiveContainer width="100%" height={300}>
-							<BarChart data={costByModel} layout="vertical">
-								<CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-								<XAxis type="number" className="text-xs" />
-								<YAxis
-									dataKey="model"
-									type="category"
-									className="text-xs"
-									width={120}
-								/>
-								<Tooltip
-									contentStyle={{
-										backgroundColor: "var(--background)",
-										border: "1px solid var(--border)",
-										borderRadius: "var(--radius)",
-									}}
-									formatter={(value: number | string, name: string) => {
-										if (name === "cost")
-											return [formatCost(Number(value)), "Cost"];
-										return [formatNumber(value as number), "Requests"];
-									}}
-								/>
-								<Bar
-									dataKey="cost"
-									fill={COLORS.primary}
-									radius={[0, 4, 4, 0]}
-								/>
-							</BarChart>
-						</ResponsiveContainer>
+						<BaseBarChart
+							data={costByModel}
+							bars={{ dataKey: "cost", radius: [0, 4, 4, 0] }}
+							xAxisKey="model"
+							loading={loading}
+							height="medium"
+							layout="vertical"
+							yAxisWidth={120}
+							tooltipFormatter={(value, name) => {
+								if (name === "cost") return [formatCost(Number(value)), "Cost"];
+								return [formatNumber(value as number), "Requests"];
+							}}
+						/>
 					</CardContent>
 				</Card>
 			</div>
@@ -742,7 +611,7 @@ export function AnalyticsTab() {
 						</CardDescription>
 					</CardHeader>
 					<CardContent>
-						<ResponsiveContainer width="100%" height={400}>
+						<ResponsiveContainer width="100%" height={CHART_HEIGHTS.large}>
 							<AreaChart
 								data={data}
 								margin={{ top: 20, right: 30, left: 20, bottom: 20 }}
@@ -781,7 +650,7 @@ export function AnalyticsTab() {
 									</filter>
 								</defs>
 								<CartesianGrid
-									strokeDasharray="3 3"
+									strokeDasharray={CHART_PROPS.strokeDasharray}
 									stroke="rgba(255,255,255,0.1)"
 								/>
 								<XAxis

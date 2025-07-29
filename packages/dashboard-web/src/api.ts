@@ -7,6 +7,7 @@ import type {
 	RequestResponse,
 	StatsWithAccounts,
 } from "@claudeflare/types";
+import { API_LIMITS, API_TIMEOUT } from "./constants";
 
 // Re-export types with dashboard-specific aliases for backward compatibility
 export type Account = AccountResponse;
@@ -24,7 +25,7 @@ class API extends HttpClient {
 			defaultHeaders: {
 				"Content-Type": "application/json",
 			},
-			timeout: 30000,
+			timeout: API_TIMEOUT,
 			retries: 1,
 		});
 	}
@@ -113,11 +114,15 @@ class API extends HttpClient {
 		return eventSource;
 	}
 
-	async getRequestsDetail(limit = 100): Promise<RequestPayload[]> {
+	async getRequestsDetail(
+		limit = API_LIMITS.requestsDetail,
+	): Promise<RequestPayload[]> {
 		return this.get<RequestPayload[]>(`/api/requests/detail?limit=${limit}`);
 	}
 
-	async getRequestsSummary(limit = 50): Promise<RequestSummary[]> {
+	async getRequestsSummary(
+		limit = API_LIMITS.requestsSummary,
+	): Promise<RequestSummary[]> {
 		return this.get<RequestSummary[]>(`/api/requests?limit=${limit}`);
 	}
 

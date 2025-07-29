@@ -4,7 +4,9 @@ import { dirname } from "node:path";
 import {
 	DEFAULT_STRATEGY,
 	isValidStrategy,
+	NETWORK,
 	type StrategyName,
+	TIME_CONSTANTS,
 } from "@claudeflare/core";
 import { resolveConfigPath } from "./paths";
 
@@ -129,11 +131,11 @@ export class Config extends EventEmitter {
 			clientId: "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
 			retry: {
 				attempts: 3,
-				delayMs: 1000,
+				delayMs: TIME_CONSTANTS.RETRY_DELAY_DEFAULT,
 				backoff: 2,
 			},
-			sessionDurationMs: 5 * 60 * 60 * 1000, // 5 hours
-			port: 8080,
+			sessionDurationMs: TIME_CONSTANTS.SESSION_DURATION_DEFAULT,
+			port: NETWORK.DEFAULT_PORT,
 		};
 
 		// Override with environment variables if present
