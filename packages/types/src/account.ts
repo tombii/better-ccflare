@@ -1,3 +1,6 @@
+// AccountTier represents the tier level (1, 5, or 20)
+export type AccountTier = number;
+
 // Database row types that match the actual database schema
 export interface AccountRow {
 	id: string;

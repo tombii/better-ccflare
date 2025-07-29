@@ -1,6 +1,6 @@
 import { dirname } from "node:path";
-import { Config } from "@claudeflare/config";
-import type { LoadBalancingStrategy } from "@claudeflare/core";
+import { Config, type RuntimeConfig } from "@claudeflare/config";
+import type { LoadBalancingStrategy } from "@claudeflare/types";
 import {
 	CACHE,
 	DEFAULT_STRATEGY,
@@ -9,6 +9,7 @@ import {
 	registerDisposable,
 	setPricingLogger,
 	shutdown,
+	TIME_CONSTANTS,
 } from "@claudeflare/core";
 import { container, SERVICE_KEYS } from "@claudeflare/core-di";
 // Import React dashboard assets
@@ -129,29 +130,39 @@ export default function startServer(options?: {
 	const apiRouter = new APIRouter({ db, config, dbOps });
 
 	// Initialize load balancing strategy
-	const _strategyName = (config.getStrategy() ||
-		DEFAULT_STRATEGY) as LoadBalancingStrategy;
-	const StrategyClass = SessionStrategy;
-	const strategy = new StrategyClass(dbOps);
+	const strategy = new SessionStrategy();
+
+	// Get the provider
+	const provider = getProvider("anthropic");
+	if (!provider) {
+		throw new Error("Anthropic provider not available");
+	}
+
+	// Create runtime config
+	const runtimeConfig: RuntimeConfig = {
+		clientId: config.get("client_id", "default_client_id") as string,
+		retry: {
+			attempts: config.get("retry_attempts", 3) as number,
+			delayMs: config.get("retry_delay_ms", 1000) as number,
+			backoff: config.get("retry_backoff", 2) as number,
+		},
+		sessionDurationMs: config.get(
+			"session_duration_ms",
+			TIME_CONSTANTS.SESSION_DURATION_DEFAULT,
+		) as number,
+		port,
+	};
 
 	// Proxy context
 	const proxyContext: ProxyContext = {
 		strategy,
-		providers: new Map(
-			getProvider("anthropic")
-				? [["anthropic", getProvider("anthropic")!]]
-				: [],
-		),
-		rateLimiter: null,
-		requestRepository: dbOps.getRequestRepository(),
-		usageWorker: null,
-		processRequestResponse: async (_request, _response, _info) => {
-			// This is now handled by the usage worker
-		},
+		dbOps,
+		runtime: runtimeConfig,
+		provider,
+		refreshInFlight: new Map(),
+		asyncWriter,
+		usageWorker: getUsageWorker(),
 	};
-
-	// Initialize usage worker
-	proxyContext.usageWorker = getUsageWorker();
 
 	// Hot reload strategy configuration
 	config.on("change", (changeType, fieldName) => {
@@ -194,7 +205,7 @@ export default function startServer(options?: {
 			}
 
 			// All other paths go to proxy
-			return handleProxy(req, proxyContext);
+			return handleProxy(req, url, proxyContext);
 		},
 	});
 

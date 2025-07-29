@@ -59,6 +59,7 @@ export const CACHE = {
 	STATIC_ASSETS_MAX_AGE: 31536000, // 1 year
 	CACHE_CONTROL_IMMUTABLE: "public, max-age=31536000, immutable",
 	CACHE_CONTROL_STATIC: "public, max-age=31536000",
+	CACHE_CONTROL_NO_CACHE: "no-cache, no-store, must-revalidate",
 } as const;
 
 // Request/Response limits

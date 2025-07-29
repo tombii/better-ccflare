@@ -49,6 +49,7 @@ interface ChartData {
 	responseTime: number;
 	errorRate: number;
 	cacheHitRate: number;
+	[key: string]: string | number;
 }
 
 interface MainMetricsChartProps {

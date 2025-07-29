@@ -1,4 +1,4 @@
-import { NO_ACCOUNT_ID } from "@claudeflare/core";
+import { NO_ACCOUNT_ID } from "@claudeflare/types";
 import type { DatabaseOperations } from "@claudeflare/database";
 import { jsonResponse } from "@claudeflare/http-common";
 
