@@ -35,7 +35,7 @@ export class StatsRepository {
 				`SELECT 
 					COUNT(*) as totalRequests,
 					SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successfulRequests,
-					AVG(response_time) as avgResponseTime,
+					AVG(response_time_ms) as avgResponseTime,
 					SUM(input_tokens) as inputTokens,
 					SUM(output_tokens) as outputTokens,
 					SUM(cache_creation_input_tokens) as cacheCreationInputTokens,

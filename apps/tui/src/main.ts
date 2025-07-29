@@ -44,6 +44,7 @@ Usage: claudeflare [options]
 
 Options:
   --serve              Start API server with dashboard
+  --port <number>      Server port (default: 8080, or PORT env var)
   --logs [N]           Stream latest N lines then follow
   --stats              Show statistics (JSON output)
   --add-account <name> Add a new account
@@ -74,7 +75,9 @@ Examples:
 
 	// Handle non-interactive commands
 	if (parsed.serve) {
-		startServer({ port: parsed.port, withDashboard: true });
+		const config = new Config();
+		const port = parsed.port || config.getRuntime().port || NETWORK.DEFAULT_PORT;
+		startServer({ port, withDashboard: true });
 		// Keep process alive
 		await new Promise(() => {});
 		return;
@@ -159,7 +162,9 @@ Examples:
 	}
 
 	// Default: Launch interactive TUI with auto-started server
-	await ensureServer(parsed.port || NETWORK.DEFAULT_PORT);
+	const config = new Config();
+	const port = parsed.port || config.getRuntime().port || NETWORK.DEFAULT_PORT;
+	await ensureServer(port);
 	const { waitUntilExit } = render(React.createElement(App));
 	await waitUntilExit();
 
