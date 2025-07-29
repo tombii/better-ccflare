@@ -1,6 +1,11 @@
 declare var self: Worker;
 
-import { estimateCostUSD, NO_ACCOUNT_ID } from "@claudeflare/core";
+import {
+	BUFFER_SIZES,
+	estimateCostUSD,
+	NO_ACCOUNT_ID,
+	TIME_CONSTANTS,
+} from "@claudeflare/core";
 import { AsyncDbWriter, DatabaseOperations } from "@claudeflare/database";
 import { Logger } from "@claudeflare/logger";
 import { formatCost } from "@claudeflare/ui-common";
@@ -37,8 +42,13 @@ const asyncWriter = new AsyncDbWriter();
 
 // Environment variables
 const MAX_BUFFER_SIZE =
-	Number(process.env.CF_STREAM_USAGE_BUFFER_KB || 64) * 1024;
-const TIMEOUT_MS = Number(process.env.CF_STREAM_TIMEOUT_MS || 1000 * 60 * 1); // 1 minute default
+	Number(
+		process.env.CF_STREAM_USAGE_BUFFER_KB ||
+			BUFFER_SIZES.STREAM_USAGE_BUFFER_KB,
+	) * 1024;
+const TIMEOUT_MS = Number(
+	process.env.CF_STREAM_TIMEOUT_MS || TIME_CONSTANTS.STREAM_TIMEOUT_DEFAULT,
+);
 
 // Parse SSE lines to extract usage (reuse existing logic)
 function parseSSELine(line: string): { event?: string; data?: string } {

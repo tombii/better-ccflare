@@ -11,7 +11,7 @@ export interface HandlerOptions {
  */
 export function createHandler<T extends unknown[], R>(
 	handler: (context: APIContext, ...args: T) => R | Promise<R>,
-	options: HandlerOptions = {}
+	_options: HandlerOptions = {},
 ): (...args: T) => Promise<Response> {
 	return async (...args: T): Promise<Response> => {
 		try {
@@ -32,7 +32,7 @@ export async function parseRequestBody<T>(req: Request): Promise<T> {
 	try {
 		const body = await req.json();
 		return body as T;
-	} catch (error) {
+	} catch (_error) {
 		throw new Error("Invalid JSON in request body");
 	}
 }
@@ -40,7 +40,10 @@ export async function parseRequestBody<T>(req: Request): Promise<T> {
 /**
  * Helper for extracting common query parameters
  */
-export function extractQueryParams(url: URL, params: string[]): Record<string, string | null> {
+export function extractQueryParams(
+	url: URL,
+	params: string[],
+): Record<string, string | null> {
 	const result: Record<string, string | null> = {};
 	for (const param of params) {
 		result[param] = url.searchParams.get(param);

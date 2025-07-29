@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { Config } from "@claudeflare/config";
-import { shutdown } from "@claudeflare/core";
+import { NETWORK, shutdown } from "@claudeflare/core";
 import { container, SERVICE_KEYS } from "@claudeflare/core-di";
 import { DatabaseFactory } from "@claudeflare/database";
 import { Logger } from "@claudeflare/logger";
@@ -127,7 +127,7 @@ Examples:
 	}
 
 	// Default: Launch interactive TUI with auto-started server
-	await ensureServer(parsed.port || 8080);
+	await ensureServer(parsed.port || NETWORK.DEFAULT_PORT);
 	const { waitUntilExit } = render(React.createElement(App));
 	await waitUntilExit();
 

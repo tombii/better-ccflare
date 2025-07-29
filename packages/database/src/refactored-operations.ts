@@ -5,8 +5,12 @@ import type { Account, Disposable, StrategyStore } from "@claudeflare/core";
 import { ensureSchema, runMigrations } from "./migrations";
 import { resolveDbPath } from "./paths";
 import { AccountRepository } from "./repositories/account.repository";
-import { RequestRepository, type RequestData } from "./repositories/request.repository";
 import { OAuthRepository } from "./repositories/oauth.repository";
+import {
+	type RequestData,
+	RequestRepository,
+} from "./repositories/request.repository";
+import { StrategyRepository } from "./repositories/strategy.repository";
 
 export interface RuntimeConfig {
 	sessionDurationMs?: number;
@@ -19,11 +23,12 @@ export interface RuntimeConfig {
 export class RefactoredDatabaseOperations implements StrategyStore, Disposable {
 	private db: Database;
 	private runtime?: RuntimeConfig;
-	
+
 	// Repositories
 	private accounts: AccountRepository;
 	private requests: RequestRepository;
 	private oauth: OAuthRepository;
+	private strategy: StrategyRepository;
 
 	constructor(dbPath?: string) {
 		const resolvedPath = dbPath ?? resolveDbPath();
@@ -40,6 +45,7 @@ export class RefactoredDatabaseOperations implements StrategyStore, Disposable {
 		this.accounts = new AccountRepository(this.db);
 		this.requests = new RequestRepository(this.db);
 		this.oauth = new OAuthRepository(this.db);
+		this.strategy = new StrategyRepository(this.db);
 	}
 
 	setRuntimeConfig(runtime: RuntimeConfig): void {
@@ -59,12 +65,18 @@ export class RefactoredDatabaseOperations implements StrategyStore, Disposable {
 		return this.accounts.findById(accountId);
 	}
 
-	updateAccountTokens(accountId: string, accessToken: string, expiresAt: number, refreshToken?: string): void {
+	updateAccountTokens(
+		accountId: string,
+		accessToken: string,
+		expiresAt: number,
+		refreshToken?: string,
+	): void {
 		this.accounts.updateTokens(accountId, accessToken, expiresAt, refreshToken);
 	}
 
 	updateAccountUsage(accountId: string): void {
-		const sessionDuration = this.runtime?.sessionDurationMs || 5 * 60 * 60 * 1000;
+		const sessionDuration =
+			this.runtime?.sessionDurationMs || 5 * 60 * 60 * 1000;
 		this.accounts.incrementUsage(accountId, sessionDuration);
 	}
 
@@ -72,7 +84,12 @@ export class RefactoredDatabaseOperations implements StrategyStore, Disposable {
 		this.accounts.setRateLimited(accountId, until);
 	}
 
-	updateAccountRateLimitMeta(accountId: string, status: string, reset: number | null, remaining?: number | null): void {
+	updateAccountRateLimitMeta(
+		accountId: string,
+		status: string,
+		reset: number | null,
+		remaining?: number | null,
+	): void {
 		this.accounts.updateRateLimitMeta(accountId, status, reset, remaining);
 	}
 
@@ -97,11 +114,36 @@ export class RefactoredDatabaseOperations implements StrategyStore, Disposable {
 	}
 
 	// Request operations delegated to repository
-	saveRequestMeta(id: string, method: string, path: string, accountUsed: string | null, statusCode: number | null, timestamp?: number): void {
-		this.requests.saveMeta(id, method, path, accountUsed, statusCode, timestamp);
+	saveRequestMeta(
+		id: string,
+		method: string,
+		path: string,
+		accountUsed: string | null,
+		statusCode: number | null,
+		timestamp?: number,
+	): void {
+		this.requests.saveMeta(
+			id,
+			method,
+			path,
+			accountUsed,
+			statusCode,
+			timestamp,
+		);
 	}
 
-	saveRequest(id: string, method: string, path: string, accountUsed: string | null, statusCode: number | null, success: boolean, errorMessage: string | null, responseTime: number, failoverAttempts: number, usage?: RequestData['usage']): void {
+	saveRequest(
+		id: string,
+		method: string,
+		path: string,
+		accountUsed: string | null,
+		statusCode: number | null,
+		success: boolean,
+		errorMessage: string | null,
+		responseTime: number,
+		failoverAttempts: number,
+		usage?: RequestData["usage"],
+	): void {
 		this.requests.save({
 			id,
 			method,
@@ -112,11 +154,11 @@ export class RefactoredDatabaseOperations implements StrategyStore, Disposable {
 			errorMessage,
 			responseTime,
 			failoverAttempts,
-			usage
+			usage,
 		});
 	}
 
-	updateRequestUsage(requestId: string, usage: RequestData['usage']): void {
+	updateRequestUsage(requestId: string, usage: RequestData["usage"]): void {
 		this.requests.updateUsage(requestId, usage);
 	}
 
@@ -132,16 +174,37 @@ export class RefactoredDatabaseOperations implements StrategyStore, Disposable {
 		return this.requests.listPayloads(limit);
 	}
 
-	listRequestPayloadsWithAccountNames(limit = 50): Array<{ id: string; json: string; account_name: string | null }> {
+	listRequestPayloadsWithAccountNames(
+		limit = 50,
+	): Array<{ id: string; json: string; account_name: string | null }> {
 		return this.requests.listPayloadsWithAccountNames(limit);
 	}
 
 	// OAuth operations delegated to repository
-	createOAuthSession(sessionId: string, accountName: string, verifier: string, mode: "console" | "max", tier: number, ttlMinutes = 10): void {
-		this.oauth.createSession(sessionId, accountName, verifier, mode, tier, ttlMinutes);
+	createOAuthSession(
+		sessionId: string,
+		accountName: string,
+		verifier: string,
+		mode: "console" | "max",
+		tier: number,
+		ttlMinutes = 10,
+	): void {
+		this.oauth.createSession(
+			sessionId,
+			accountName,
+			verifier,
+			mode,
+			tier,
+			ttlMinutes,
+		);
 	}
 
-	getOAuthSession(sessionId: string): { accountName: string; verifier: string; mode: "console" | "max"; tier: number } | null {
+	getOAuthSession(sessionId: string): {
+		accountName: string;
+		verifier: string;
+		mode: "console" | "max";
+		tier: number;
+	} | null {
 		return this.oauth.getSession(sessionId);
 	}
 
@@ -151,6 +214,63 @@ export class RefactoredDatabaseOperations implements StrategyStore, Disposable {
 
 	cleanupExpiredOAuthSessions(): number {
 		return this.oauth.cleanupExpiredSessions();
+	}
+
+	// Strategy operations delegated to repository
+	getStrategy(name: string): {
+		name: string;
+		config: Record<string, unknown>;
+		updatedAt: number;
+	} | null {
+		return this.strategy.getStrategy(name);
+	}
+
+	setStrategy(name: string, config: Record<string, unknown>): void {
+		this.strategy.set(name, config);
+	}
+
+	listStrategies(): Array<{
+		name: string;
+		config: Record<string, unknown>;
+		updatedAt: number;
+	}> {
+		return this.strategy.list();
+	}
+
+	deleteStrategy(name: string): boolean {
+		return this.strategy.delete(name);
+	}
+
+	// Analytics methods delegated to request repository
+	getRecentRequests(limit = 100): Array<{
+		id: string;
+		timestamp: number;
+		method: string;
+		path: string;
+		account_used: string | null;
+		status_code: number | null;
+		success: boolean;
+		response_time_ms: number | null;
+	}> {
+		return this.requests.getRecentRequests(limit);
+	}
+
+	getRequestStats(since?: number): {
+		totalRequests: number;
+		successfulRequests: number;
+		failedRequests: number;
+		avgResponseTime: number | null;
+	} {
+		return this.requests.getRequestStats(since);
+	}
+
+	getRequestsByAccount(since?: number): Array<{
+		accountId: string;
+		accountName: string | null;
+		requestCount: number;
+		successRate: number;
+	}> {
+		return this.requests.getRequestsByAccount(since);
 	}
 
 	close(): void {

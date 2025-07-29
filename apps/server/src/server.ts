@@ -2,7 +2,10 @@ import { dirname } from "node:path";
 import { Config } from "@claudeflare/config";
 import type { LoadBalancingStrategy } from "@claudeflare/core";
 import {
+	CACHE,
 	DEFAULT_STRATEGY,
+	HTTP_STATUS,
+	NETWORK,
 	registerDisposable,
 	setPricingLogger,
 	shutdown,
@@ -22,6 +25,54 @@ import {
 	terminateUsageWorker,
 } from "@claudeflare/proxy";
 import { serve } from "bun";
+
+// Helper function to resolve dashboard assets with fallback
+function resolveDashboardAsset(assetPath: string): string | null {
+	try {
+		// Try resolving as a package first
+		return Bun.resolveSync(
+			`@claudeflare/dashboard-web/dist${assetPath}`,
+			dirname(import.meta.path),
+		);
+	} catch {
+		// Fallback to relative path within the repo (development / mono-repo usage)
+		try {
+			return Bun.resolveSync(
+				`../../../packages/dashboard-web/dist${assetPath}`,
+				dirname(import.meta.path),
+			);
+		} catch {
+			return null;
+		}
+	}
+}
+
+// Helper function to serve dashboard files with proper headers
+function serveDashboardFile(
+	assetPath: string,
+	contentType?: string,
+	cacheControl?: string,
+): Response {
+	const resolvedPath = resolveDashboardAsset(assetPath);
+	if (!resolvedPath) {
+		return new Response("Not Found", { status: HTTP_STATUS.NOT_FOUND });
+	}
+
+	const file = Bun.file(resolvedPath);
+	if (!file.exists()) {
+		return new Response("Not Found", { status: HTTP_STATUS.NOT_FOUND });
+	}
+
+	const headers: Record<string, string> = {
+		"Content-Type": contentType || file.type || "application/octet-stream",
+	};
+
+	if (cacheControl) {
+		headers["Cache-Control"] = cacheControl;
+	}
+
+	return new Response(file, { headers });
+}
 
 // Initialize DI container
 container.registerInstance(SERVICE_KEYS.Config, new Config());
@@ -103,7 +154,7 @@ config.on("change", ({ key }) => {
 // Main server
 const server = serve({
 	port: runtime.port,
-	idleTimeout: 255, // Max allowed by Bun
+	idleTimeout: NETWORK.IDLE_TIMEOUT_MAX, // Max allowed by Bun
 	async fetch(req) {
 		const url = new URL(req.url);
 
@@ -115,65 +166,21 @@ const server = serve({
 
 		// Dashboard routes
 		if (url.pathname === "/" || url.pathname === "/dashboard") {
-			// Read the HTML file directly
-			let dashboardPath: string;
-			try {
-				dashboardPath = Bun.resolveSync(
-					"@claudeflare/dashboard-web/dist/index.html",
-					dirname(import.meta.path),
-				);
-			} catch {
-				// Fallback to a relative path within the repo (development / mono-repo usage)
-				dashboardPath = Bun.resolveSync(
-					"../../../packages/dashboard-web/dist/index.html",
-					dirname(import.meta.path),
-				);
-			}
-			const file = Bun.file(dashboardPath);
-			if (!file.exists()) {
-				return new Response("Not Found", { status: 404 });
-			}
-			return new Response(file, {
-				headers: { "Content-Type": "text/html" },
-			});
+			return serveDashboardFile("/index.html", "text/html");
 		}
 
 		// Serve dashboard static assets
 		if ((dashboardManifest as Record<string, string>)[url.pathname]) {
-			try {
-				let assetPath: string;
-				try {
-					assetPath = Bun.resolveSync(
-						`@claudeflare/dashboard-web/dist${url.pathname}`,
-						dirname(import.meta.path),
-					);
-				} catch {
-					// Fallback to relative path in mono-repo
-					assetPath = Bun.resolveSync(
-						`../../../packages/dashboard-web/dist${url.pathname}`,
-						dirname(import.meta.path),
-					);
-				}
-
-				const file = Bun.file(assetPath);
-				if (!file.exists()) {
-					return new Response("Not Found", { status: 404 });
-				}
-				const mimeType = file.type || "application/octet-stream";
-				return new Response(file, {
-					headers: {
-						"Content-Type": mimeType,
-						"Cache-Control": "public, max-age=31536000",
-					},
-				});
-			} catch {
-				// Asset not found
-			}
+			return serveDashboardFile(
+				url.pathname,
+				undefined,
+				CACHE.CACHE_CONTROL_STATIC,
+			);
 		}
 
 		// Only proxy requests to Anthropic API
 		if (!url.pathname.startsWith("/v1/")) {
-			return new Response("Not Found", { status: 404 });
+			return new Response("Not Found", { status: HTTP_STATUS.NOT_FOUND });
 		}
 
 		// Handle proxy request
@@ -202,9 +209,9 @@ if (activeAccounts.length === 0) {
 	);
 }
 
-// Graceful shutdown
-process.on("SIGINT", async () => {
-	console.log("\n👋 Shutting down gracefully...");
+// Graceful shutdown handler
+async function handleGracefulShutdown(signal: string) {
+	console.log(`\n👋 Received ${signal}, shutting down gracefully...`);
 	try {
 		terminateUsageWorker();
 		await shutdown();
@@ -214,20 +221,11 @@ process.on("SIGINT", async () => {
 		console.error("❌ Error during shutdown:", error);
 		process.exit(1);
 	}
-});
+}
 
-process.on("SIGTERM", async () => {
-	console.log("\n👋 Shutting down gracefully...");
-	try {
-		terminateUsageWorker();
-		await shutdown();
-		console.log("✅ Shutdown complete");
-		process.exit(0);
-	} catch (error) {
-		console.error("❌ Error during shutdown:", error);
-		process.exit(1);
-	}
-});
+// Register signal handlers
+process.on("SIGINT", () => handleGracefulShutdown("SIGINT"));
+process.on("SIGTERM", () => handleGracefulShutdown("SIGTERM"));
 
 // Export for programmatic use
 export default function startServer(_options?: {

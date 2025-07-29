@@ -1,4 +1,9 @@
-import { ValidationError, ConfigurationError, AuthenticationError, RateLimitError } from "./errors";
+import {
+	AuthenticationError,
+	ConfigurationError,
+	RateLimitError,
+	ValidationError,
+} from "./errors";
 
 /**
  * Unified error handling utilities to reduce duplication
@@ -7,12 +12,16 @@ export class ErrorUtils {
 	/**
 	 * Convert any error to a user-friendly message and status code
 	 */
-	static toHttpError(error: unknown): { status: number; message: string; details?: unknown } {
+	static toHttpError(error: unknown): {
+		status: number;
+		message: string;
+		details?: unknown;
+	} {
 		if (error instanceof ValidationError) {
 			return {
 				status: 400,
 				message: error.message,
-				details: { field: error.field }
+				details: { field: error.field },
 			};
 		}
 
@@ -20,14 +29,14 @@ export class ErrorUtils {
 			return {
 				status: 500,
 				message: "Configuration error",
-				details: { error: error.message }
+				details: { error: error.message },
 			};
 		}
 
 		if (error instanceof AuthenticationError) {
 			return {
 				status: 401,
-				message: error.message
+				message: error.message,
 			};
 		}
 
@@ -35,16 +44,24 @@ export class ErrorUtils {
 			return {
 				status: 429,
 				message: error.message,
-				details: { retryAfter: error.retryAfter }
+				details: { retryAfter: error.retryAfter },
 			};
 		}
 
 		// Check for HTTP-like errors
-		if (error && typeof error === "object" && "status" in error && typeof error.status === "number") {
+		if (
+			error &&
+			typeof error === "object" &&
+			"status" in error &&
+			typeof error.status === "number"
+		) {
 			return {
 				status: error.status,
-				message: "message" in error && typeof error.message === "string" ? error.message : "Unknown error",
-				details: "details" in error ? error.details : undefined
+				message:
+					"message" in error && typeof error.message === "string"
+						? error.message
+						: "Unknown error",
+				details: "details" in error ? error.details : undefined,
 			};
 		}
 
@@ -53,20 +70,26 @@ export class ErrorUtils {
 			return {
 				status: 500,
 				message: "Internal server error",
-				details: process.env.NODE_ENV === "development" ? { error: error.message } : undefined
+				details:
+					process.env.NODE_ENV === "development"
+						? { error: error.message }
+						: undefined,
 			};
 		}
 
 		return {
 			status: 500,
-			message: "Unknown error occurred"
+			message: "Unknown error occurred",
 		};
 	}
 
 	/**
 	 * Create a standardized error response
 	 */
-	static createErrorResponse(error: unknown): { error: string; details?: unknown } {
+	static createErrorResponse(error: unknown): {
+		error: string;
+		details?: unknown;
+	} {
 		const { message, details } = ErrorUtils.toHttpError(error);
 		return details ? { error: message, details } : { error: message };
 	}

@@ -1,4 +1,5 @@
 import type { Account } from "@claudeflare/core";
+import { BUFFER_SIZES } from "@claudeflare/core";
 import { Logger } from "@claudeflare/logger";
 import { BaseProvider } from "../../base";
 import type { RateLimitInfo, TokenRefreshResult } from "../../types";
@@ -205,7 +206,7 @@ export class AnthropicProvider extends BaseProvider {
 				if (!reader) return null;
 
 				let buffered = "";
-				const maxBytes = 32768; // 32 KB cap
+				const maxBytes = BUFFER_SIZES.ANTHROPIC_STREAM_CAP_BYTES;
 				const decoder = new TextDecoder();
 				let foundMessageStart = false;
 

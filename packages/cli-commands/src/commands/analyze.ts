@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { TIME_CONSTANTS } from "@claudeflare/core";
 import { analyzeIndexUsage } from "@claudeflare/database";
 
 /**
@@ -21,7 +22,7 @@ export function analyzePerformance(db: Database): void {
 				FROM requests 
 				WHERE timestamp > ?
 			`,
-			params: [Date.now() - 24 * 60 * 60 * 1000],
+			params: [Date.now() - TIME_CONSTANTS.DAY],
 		},
 		{
 			name: "Active accounts",
@@ -42,7 +43,7 @@ export function analyzePerformance(db: Database): void {
 				ORDER BY count DESC 
 				LIMIT 5
 			`,
-			params: [Date.now() - 24 * 60 * 60 * 1000],
+			params: [Date.now() - TIME_CONSTANTS.DAY],
 		},
 	];
 

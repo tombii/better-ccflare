@@ -1,3 +1,5 @@
+import { TIME_CONSTANTS } from "@claudeflare/core";
+
 /**
  * Format bytes to human-readable string
  */
@@ -15,10 +17,12 @@ export function formatBytes(bytes: number): string {
  * Format duration in milliseconds to human-readable string
  */
 export function formatDuration(ms: number): string {
-	if (ms < 1000) return `${ms}ms`;
-	if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
-	if (ms < 3600000) return `${(ms / 60000).toFixed(1)}m`;
-	return `${(ms / 3600000).toFixed(1)}h`;
+	if (ms < TIME_CONSTANTS.SECOND) return `${ms}ms`;
+	if (ms < TIME_CONSTANTS.MINUTE)
+		return `${(ms / TIME_CONSTANTS.SECOND).toFixed(1)}s`;
+	if (ms < TIME_CONSTANTS.HOUR)
+		return `${(ms / TIME_CONSTANTS.MINUTE).toFixed(1)}m`;
+	return `${(ms / TIME_CONSTANTS.HOUR).toFixed(1)}h`;
 }
 
 /**
@@ -68,10 +72,10 @@ export function formatRelativeTime(timestamp: number | Date): string {
 	const now = new Date();
 	const diffMs = now.getTime() - date.getTime();
 
-	const seconds = Math.floor(diffMs / 1000);
-	const minutes = Math.floor(seconds / 60);
-	const hours = Math.floor(minutes / 60);
-	const days = Math.floor(hours / 24);
+	const seconds = Math.floor(diffMs / TIME_CONSTANTS.SECOND);
+	const minutes = Math.floor(diffMs / TIME_CONSTANTS.MINUTE);
+	const hours = Math.floor(diffMs / TIME_CONSTANTS.HOUR);
+	const days = Math.floor(diffMs / TIME_CONSTANTS.DAY);
 
 	if (days > 0) return `${days} day${days > 1 ? "s" : ""} ago`;
 	if (hours > 0) return `${hours} hour${hours > 1 ? "s" : ""} ago`;

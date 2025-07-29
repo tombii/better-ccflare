@@ -1,7 +1,9 @@
 import { formatPercentage } from "@claudeflare/ui-common";
 import { RefreshCw } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
 import { api, type Stats } from "../api";
+import { REFRESH_INTERVALS } from "../constants";
+import { useApiData } from "../hooks/useApiData";
+import { useApiError } from "../hooks/useApiError";
 import { Button } from "./ui/button";
 import {
 	Card,
@@ -12,27 +14,15 @@ import {
 } from "./ui/card";
 
 export function StatsTab() {
-	const [stats, setStats] = useState<Stats | null>(null);
-	const [loading, setLoading] = useState(true);
-	const [error, setError] = useState<string | null>(null);
-
-	const loadStats = useCallback(async () => {
-		try {
-			const data = await api.getStats();
-			setStats(data);
-			setError(null);
-		} catch (err) {
-			setError(err instanceof Error ? err.message : "Failed to load stats");
-		} finally {
-			setLoading(false);
-		}
-	}, []);
-
-	useEffect(() => {
-		loadStats();
-		const interval = setInterval(loadStats, 10000);
-		return () => clearInterval(interval);
-	}, [loadStats]);
+	const { formatError } = useApiError();
+	const {
+		data: stats,
+		loading,
+		error,
+		refetch: loadStats,
+	} = useApiData<Stats>(() => api.getStats(), {
+		refetchInterval: REFRESH_INTERVALS.fast,
+	});
 
 	const handleResetStats = async () => {
 		if (!confirm("Are you sure you want to reset all statistics?")) return;
@@ -41,7 +31,8 @@ export function StatsTab() {
 			await api.resetStats();
 			await loadStats();
 		} catch (err) {
-			setError(err instanceof Error ? err.message : "Failed to reset stats");
+			// Since we can't set error directly, we'll just alert the user
+			alert(formatError(err));
 		}
 	};
 

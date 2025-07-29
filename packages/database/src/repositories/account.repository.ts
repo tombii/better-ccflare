@@ -1,13 +1,8 @@
-import type { Database } from "bun:sqlite";
 import type { Account, AccountRow } from "@claudeflare/core";
 import { toAccount } from "@claudeflare/core";
 import { BaseRepository } from "./base.repository";
 
 export class AccountRepository extends BaseRepository<Account> {
-	constructor(db: Database) {
-		super(db);
-	}
-
 	findAll(): Account[] {
 		const rows = this.query<AccountRow>(`
 			SELECT 
@@ -23,7 +18,8 @@ export class AccountRepository extends BaseRepository<Account> {
 	}
 
 	findById(accountId: string): Account | null {
-		const row = this.get<AccountRow>(`
+		const row = this.get<AccountRow>(
+			`
 			SELECT 
 				id, name, provider, api_key, refresh_token, access_token,
 				expires_at, created_at, last_used, request_count, total_requests,
@@ -33,28 +29,36 @@ export class AccountRepository extends BaseRepository<Account> {
 				rate_limit_reset, rate_limit_status, rate_limit_remaining
 			FROM accounts
 			WHERE id = ?
-		`, [accountId]);
+		`,
+			[accountId],
+		);
 
 		return row ? toAccount(row) : null;
 	}
 
-	updateTokens(accountId: string, accessToken: string, expiresAt: number, refreshToken?: string): void {
+	updateTokens(
+		accountId: string,
+		accessToken: string,
+		expiresAt: number,
+		refreshToken?: string,
+	): void {
 		if (refreshToken) {
 			this.run(
 				`UPDATE accounts SET access_token = ?, expires_at = ?, refresh_token = ? WHERE id = ?`,
-				[accessToken, expiresAt, refreshToken, accountId]
+				[accessToken, expiresAt, refreshToken, accountId],
 			);
 		} else {
 			this.run(
 				`UPDATE accounts SET access_token = ?, expires_at = ? WHERE id = ?`,
-				[accessToken, expiresAt, accountId]
+				[accessToken, expiresAt, accountId],
 			);
 		}
 	}
 
 	incrementUsage(accountId: string, sessionDurationMs: number): void {
 		const now = Date.now();
-		this.run(`
+		this.run(
+			`
 			UPDATE accounts 
 			SET 
 				last_used = ?,
@@ -69,22 +73,35 @@ export class AccountRepository extends BaseRepository<Account> {
 					ELSE session_request_count + 1
 				END
 			WHERE id = ?
-		`, [now, now, sessionDurationMs, now, now, sessionDurationMs, accountId]);
+		`,
+			[now, now, sessionDurationMs, now, now, sessionDurationMs, accountId],
+		);
 	}
 
 	setRateLimited(accountId: string, until: number): void {
-		this.run(`UPDATE accounts SET rate_limited_until = ? WHERE id = ?`, [until, accountId]);
+		this.run(`UPDATE accounts SET rate_limited_until = ? WHERE id = ?`, [
+			until,
+			accountId,
+		]);
 	}
 
-	updateRateLimitMeta(accountId: string, status: string, reset: number | null, remaining?: number | null): void {
+	updateRateLimitMeta(
+		accountId: string,
+		status: string,
+		reset: number | null,
+		remaining?: number | null,
+	): void {
 		this.run(
 			`UPDATE accounts SET rate_limit_status = ?, rate_limit_reset = ?, rate_limit_remaining = ? WHERE id = ?`,
-			[status, reset, remaining ?? null, accountId]
+			[status, reset, remaining ?? null, accountId],
 		);
 	}
 
 	updateTier(accountId: string, tier: number): void {
-		this.run(`UPDATE accounts SET account_tier = ? WHERE id = ?`, [tier, accountId]);
+		this.run(`UPDATE accounts SET account_tier = ? WHERE id = ?`, [
+			tier,
+			accountId,
+		]);
 	}
 
 	pause(accountId: string): void {
@@ -98,11 +115,14 @@ export class AccountRepository extends BaseRepository<Account> {
 	resetSession(accountId: string, timestamp: number): void {
 		this.run(
 			`UPDATE accounts SET session_start = ?, session_request_count = 0 WHERE id = ?`,
-			[timestamp, accountId]
+			[timestamp, accountId],
 		);
 	}
 
 	updateRequestCount(accountId: string, count: number): void {
-		this.run(`UPDATE accounts SET session_request_count = ? WHERE id = ?`, [count, accountId]);
+		this.run(`UPDATE accounts SET session_request_count = ? WHERE id = ?`, [
+			count,
+			accountId,
+		]);
 	}
 }

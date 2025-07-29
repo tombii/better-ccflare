@@ -29,7 +29,7 @@ export abstract class BaseOAuthProvider {
 	 */
 	generateAuthUrl(state: string): { url: string; verifier: string } {
 		const { codeChallenge, codeVerifier } = generatePKCE();
-		
+
 		const params = new URLSearchParams({
 			response_type: "code",
 			client_id: this.config.clientId,
@@ -50,7 +50,10 @@ export abstract class BaseOAuthProvider {
 	/**
 	 * Exchange authorization code for tokens
 	 */
-	async exchangeCodeForTokens(code: string, verifier: string): Promise<OAuthTokens> {
+	async exchangeCodeForTokens(
+		code: string,
+		verifier: string,
+	): Promise<OAuthTokens> {
 		const body = new URLSearchParams({
 			grant_type: "authorization_code",
 			client_id: this.config.clientId,
@@ -109,14 +112,14 @@ export abstract class BaseOAuthProvider {
 	/**
 	 * Hook for subclasses to add custom authorization parameters
 	 */
-	protected addCustomAuthParams(params: URLSearchParams): void {
+	protected addCustomAuthParams(_params: URLSearchParams): void {
 		// Default implementation does nothing
 	}
 
 	/**
 	 * Hook for subclasses to add custom token exchange parameters
 	 */
-	protected addCustomTokenParams(params: URLSearchParams): void {
+	protected addCustomTokenParams(_params: URLSearchParams): void {
 		// Default implementation does nothing
 	}
 

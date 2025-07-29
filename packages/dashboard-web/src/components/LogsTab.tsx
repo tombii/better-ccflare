@@ -1,6 +1,8 @@
 import { Pause, Play, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type LogEntry } from "../api";
+import { useApiData } from "../hooks/useApiData";
+import { useApiError } from "../hooks/useApiError";
 import { Button } from "./ui/button";
 import {
 	Card,
@@ -11,10 +13,10 @@ import {
 } from "./ui/card";
 
 export function LogsTab() {
+	const { formatError } = useApiError();
 	const [logs, setLogs] = useState<LogEntry[]>([]);
 	const [paused, setPaused] = useState(false);
 	const [autoScroll, setAutoScroll] = useState(true);
-	const [loading, setLoading] = useState(true);
 	const eventSourceRef = useRef<EventSource | null>(null);
 	const logsEndRef = useRef<HTMLDivElement>(null);
 
@@ -32,19 +34,10 @@ export function LogsTab() {
 	}, []);
 
 	// Load historical logs on mount
-	useEffect(() => {
-		const loadHistory = async () => {
-			try {
-				const history = await api.getLogHistory();
-				setLogs(history);
-			} catch (error) {
-				console.error("Failed to load log history:", error);
-			} finally {
-				setLoading(false);
-			}
-		};
-		loadHistory();
-	}, []);
+	const { loading, error } = useApiData(() => api.getLogHistory(), {
+		onSuccess: (history) => setLogs(history),
+		onError: formatError,
+	});
 
 	useEffect(() => {
 		if (!paused && !loading) {
@@ -125,6 +118,8 @@ export function LogsTab() {
 				<div className="space-y-1 max-h-[500px] overflow-y-auto font-mono text-sm">
 					{loading ? (
 						<p className="text-muted-foreground">Loading logs...</p>
+					) : error ? (
+						<p className="text-destructive">Error: {error}</p>
 					) : logs.length === 0 ? (
 						<p className="text-muted-foreground">No logs yet...</p>
 					) : (

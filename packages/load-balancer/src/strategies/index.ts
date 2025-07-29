@@ -4,7 +4,7 @@ import type {
 	RequestMeta,
 	StrategyStore,
 } from "@claudeflare/core";
-import { isAccountAvailable } from "@claudeflare/core";
+import { isAccountAvailable, TIME_CONSTANTS } from "@claudeflare/core";
 import { Logger } from "@claudeflare/logger";
 
 export class SessionStrategy implements LoadBalancingStrategy {
@@ -12,7 +12,9 @@ export class SessionStrategy implements LoadBalancingStrategy {
 	private store: StrategyStore | null = null;
 	private log = new Logger("SessionStrategy");
 
-	constructor(sessionDurationMs: number = 5 * 60 * 60 * 1000) {
+	constructor(
+		sessionDurationMs: number = TIME_CONSTANTS.SESSION_DURATION_DEFAULT,
+	) {
 		this.sessionDurationMs = sessionDurationMs;
 	}
 
