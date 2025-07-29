@@ -1,3 +1,4 @@
+import * as cliCommands from "@claudeflare/cli-commands";
 import { DatabaseFactory } from "@claudeflare/database";
 
 export interface Stats {
@@ -159,4 +160,10 @@ export async function clearHistory(): Promise<void> {
 	const dbOps = DatabaseFactory.getInstance();
 	const db = dbOps.getDatabase();
 	db.run("DELETE FROM requests");
+}
+
+export async function analyzePerformance(): Promise<void> {
+	const dbOps = DatabaseFactory.getInstance();
+	const db = dbOps.getDatabase();
+	cliCommands.analyzePerformance(db);
 }

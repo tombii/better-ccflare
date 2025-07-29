@@ -4,6 +4,8 @@ import { NETWORK, shutdown } from "@claudeflare/core";
 import { container, SERVICE_KEYS } from "@claudeflare/core-di";
 import { DatabaseFactory } from "@claudeflare/database";
 import { Logger } from "@claudeflare/logger";
+// Import server
+import startServer from "@claudeflare/server";
 import * as tuiCore from "@claudeflare/tui-core";
 import { parseArgs } from "@claudeflare/tui-core";
 import { render } from "ink";
@@ -11,11 +13,11 @@ import React from "react";
 import { App } from "./App";
 
 // Global singleton for auto-started server
-let runningServer: tuiCore.ServeResult | null = null;
+let runningServer: ReturnType<typeof startServer> | null = null;
 
 async function ensureServer(port: number) {
 	if (!runningServer) {
-		runningServer = await tuiCore.serve({ port, withDashboard: true });
+		runningServer = startServer({ port, withDashboard: true });
 	}
 	return runningServer;
 }
@@ -49,6 +51,9 @@ Options:
     --tier <1|5|20>       Account tier (default: 1)
   --list               List all accounts
   --remove <name>      Remove an account
+  --pause <name>       Pause an account
+  --resume <name>      Resume an account
+  --analyze            Analyze database performance
   --reset-stats        Reset usage statistics
   --clear-history      Clear request history
   --help, -h           Show this help message
@@ -60,6 +65,8 @@ Examples:
   claudeflare                        # Interactive mode
   claudeflare --serve                # Start server
   claudeflare --add-account work     # Add account
+  claudeflare --pause work           # Pause account
+  claudeflare --analyze              # Run performance analysis
   claudeflare --stats                # View stats
 `);
 		process.exit(0);
@@ -67,7 +74,9 @@ Examples:
 
 	// Handle non-interactive commands
 	if (parsed.serve) {
-		await tuiCore.serve({ port: parsed.port });
+		startServer({ port: parsed.port, withDashboard: true });
+		// Keep process alive
+		await new Promise(() => {});
 		return;
 	}
 
@@ -126,6 +135,29 @@ Examples:
 		return;
 	}
 
+	if (parsed.pause) {
+		const result = await tuiCore.pauseAccount(parsed.pause);
+		console.log(result.message);
+		if (!result.success) {
+			process.exit(1);
+		}
+		return;
+	}
+
+	if (parsed.resume) {
+		const result = await tuiCore.resumeAccount(parsed.resume);
+		console.log(result.message);
+		if (!result.success) {
+			process.exit(1);
+		}
+		return;
+	}
+
+	if (parsed.analyze) {
+		await tuiCore.analyzePerformance();
+		return;
+	}
+
 	// Default: Launch interactive TUI with auto-started server
 	await ensureServer(parsed.port || NETWORK.DEFAULT_PORT);
 	const { waitUntilExit } = render(React.createElement(App));
@@ -133,7 +165,7 @@ Examples:
 
 	// Cleanup server when TUI exits
 	if (runningServer) {
-		runningServer.cleanup();
+		runningServer.stop();
 	}
 
 	// Shutdown all resources

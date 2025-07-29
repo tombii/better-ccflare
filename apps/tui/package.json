@@ -19,6 +19,7 @@
 		"@claudeflare/core-di": "workspace:*",
 		"@claudeflare/config": "workspace:*",
 		"@claudeflare/logger": "workspace:*",
+		"@claudeflare/server": "workspace:*",
 		"ink": "^6.0.0",
 		"ink-select-input": "^6.0.0",
 		"ink-spinner": "^5.0.0",
