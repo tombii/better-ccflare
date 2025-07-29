@@ -95,15 +95,5 @@ export const HTTP_STATUS = {
 	SERVICE_UNAVAILABLE: 503,
 } as const;
 
-// Account tiers
-export const ACCOUNT_TIERS = {
-	BASIC: 1,
-	PAID: 5,
-	ENTERPRISE: 20,
-	ALLOWED_VALUES: [1, 5, 20] as const,
-} as const;
-
-// Statistical calculations
-export const STATS = {
-	PERCENTAGE_MULTIPLIER: 100,
-} as const;
+// Account tiers - removed unused ACCOUNT_TIERS export
+// Statistical calculations - removed unused STATS export

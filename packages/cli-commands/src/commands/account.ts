@@ -196,11 +196,12 @@ export async function removeAccountWithConfirmation(
 }
 
 /**
- * Pause an account by name
+ * Toggle account pause state (shared logic for pause/resume)
  */
-export function pauseAccount(
+function toggleAccountPause(
 	dbOps: DatabaseOperations,
 	name: string,
+	shouldPause: boolean,
 ): { success: boolean; message: string } {
 	const db = dbOps.getDatabase();
 
@@ -218,19 +219,37 @@ export function pauseAccount(
 		};
 	}
 
-	if (account.paused === 1) {
+	const isPaused = account.paused === 1;
+	const _action = shouldPause ? "pause" : "resume";
+	const actionPast = shouldPause ? "paused" : "resumed";
+
+	if (isPaused === shouldPause) {
 		return {
 			success: false,
-			message: `Account '${name}' is already paused`,
+			message: `Account '${name}' is already ${actionPast}`,
 		};
 	}
 
-	dbOps.pauseAccount(account.id);
+	if (shouldPause) {
+		dbOps.pauseAccount(account.id);
+	} else {
+		dbOps.resumeAccount(account.id);
+	}
 
 	return {
 		success: true,
-		message: `Account '${name}' paused successfully`,
+		message: `Account '${name}' ${actionPast} successfully`,
 	};
+}
+
+/**
+ * Pause an account by name
+ */
+export function pauseAccount(
+	dbOps: DatabaseOperations,
+	name: string,
+): { success: boolean; message: string } {
+	return toggleAccountPause(dbOps, name, true);
 }
 
 /**
@@ -240,33 +259,5 @@ export function resumeAccount(
 	dbOps: DatabaseOperations,
 	name: string,
 ): { success: boolean; message: string } {
-	const db = dbOps.getDatabase();
-
-	// Get account ID by name
-	const account = db
-		.query<{ id: string; paused: 0 | 1 }, [string]>(
-			"SELECT id, COALESCE(paused, 0) as paused FROM accounts WHERE name = ?",
-		)
-		.get(name);
-
-	if (!account) {
-		return {
-			success: false,
-			message: `Account '${name}' not found`,
-		};
-	}
-
-	if (account.paused === 0) {
-		return {
-			success: false,
-			message: `Account '${name}' is not paused`,
-		};
-	}
-
-	dbOps.resumeAccount(account.id);
-
-	return {
-		success: true,
-		message: `Account '${name}' resumed successfully`,
-	};
+	return toggleAccountPause(dbOps, name, false);
 }
