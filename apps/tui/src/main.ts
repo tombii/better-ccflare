@@ -76,7 +76,8 @@ Examples:
 	// Handle non-interactive commands
 	if (parsed.serve) {
 		const config = new Config();
-		const port = parsed.port || config.getRuntime().port || NETWORK.DEFAULT_PORT;
+		const port =
+			parsed.port || config.getRuntime().port || NETWORK.DEFAULT_PORT;
 		startServer({ port, withDashboard: true });
 		// Keep process alive
 		await new Promise(() => {});

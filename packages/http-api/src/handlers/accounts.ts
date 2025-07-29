@@ -1,6 +1,5 @@
 import type { Database } from "bun:sqlite";
 import * as cliCommands from "@claudeflare/cli-commands";
-import { Config } from "@claudeflare/config";
 import {
 	patterns,
 	sanitizers,
@@ -15,7 +14,6 @@ import {
 	jsonResponse,
 	NotFound,
 } from "@claudeflare/http-common";
-import { createOAuthFlow } from "@claudeflare/oauth-flow";
 import type { AccountResponse } from "../types";
 
 /**
@@ -162,24 +160,15 @@ export function createAccountTierUpdateHandler(dbOps: DatabaseOperations) {
 	};
 }
 
-// Session ID generation for OAuth flow
-function _generateSessionId(): string {
-	return crypto.randomUUID();
-}
-
 /**
- * Create an account add handler
+ * Create an account add handler (manual token addition)
+ * This is primarily used for adding accounts with existing tokens
+ * For OAuth flow, use the OAuth handlers
  */
 export function createAccountAddHandler(dbOps: DatabaseOperations) {
 	return async (req: Request): Promise<Response> => {
 		try {
 			const body = await req.json();
-
-			// Validate step
-			const step =
-				validateString(body.step, "step", {
-					allowedValues: ["init", "callback"] as const,
-				}) || "init";
 
 			// Validate account name
 			const name = validateString(body.name, "name", {
@@ -194,10 +183,28 @@ export function createAccountAddHandler(dbOps: DatabaseOperations) {
 				return errorResponse(BadRequest("Account name is required"));
 			}
 
-			// Validate mode
-			const mode = (validateString(body.mode, "mode", {
-				allowedValues: ["max", "console"] as const,
-			}) || "max") as "max" | "console";
+			// Validate tokens
+			const accessToken = validateString(body.accessToken, "accessToken", {
+				required: true,
+				minLength: 1,
+			});
+
+			const refreshToken = validateString(body.refreshToken, "refreshToken", {
+				required: true,
+				minLength: 1,
+			});
+
+			if (!accessToken || !refreshToken) {
+				return errorResponse(
+					BadRequest("Access token and refresh token are required"),
+				);
+			}
+
+			// Validate provider
+			const provider =
+				validateString(body.provider, "provider", {
+					allowedValues: ["anthropic"] as const,
+				}) || "anthropic";
 
 			// Validate tier
 			const tier =
@@ -205,133 +212,34 @@ export function createAccountAddHandler(dbOps: DatabaseOperations) {
 					allowedValues: [1, 5, 20] as const,
 				}) || 1;
 
-			// Validate code for callback step
-			const code = validateString(body.code, "code", {
-				required: step === "callback",
-				minLength: step === "callback" ? 1 : undefined,
-			});
-
-			// Step 1: Initialize OAuth flow
-			if (step === "init") {
-				const config = new Config();
-				const oauthFlow = await createOAuthFlow(dbOps, config);
-
-				try {
-					// Begin OAuth flow using consolidated logic
-					const flowResult = await oauthFlow.begin({
-						name,
-						mode,
-					});
-
-					// Store tier in session for later use
-					dbOps.createOAuthSession(
-						flowResult.sessionId,
-						name,
-						flowResult.pkce.verifier,
-						mode,
-						tier,
-						10, // 10 minute TTL
-					);
-
-					return jsonResponse({
-						success: true,
-						authUrl: flowResult.authUrl,
-						sessionId: flowResult.sessionId,
-						step: "authorize",
-					});
-				} catch (error) {
-					if (
-						error instanceof Error &&
-						error.message.includes("already exists")
-					) {
-						return errorResponse(BadRequest(error.message));
-					}
-					return errorResponse(InternalServerError((error as Error).message));
-				}
-			}
-
-			// Step 2: Handle OAuth callback
-			if (step === "callback") {
-				// Validate session ID
-				const sessionId = validateString(body.sessionId, "sessionId", {
-					required: true,
-					pattern: patterns.uuid,
+			try {
+				// Add account using CLI command
+				const result = cliCommands.addAccount(dbOps, {
+					name,
+					accessToken,
+					refreshToken,
+					provider,
+					tier,
 				});
 
-				if (!sessionId) {
-					return errorResponse(BadRequest("Session ID is required"));
+				if (!result.success) {
+					return errorResponse(BadRequest(result.message));
 				}
 
-				// Get stored PKCE verifier from database
-				const oauthSession = dbOps.getOAuthSession(sessionId);
-				if (!oauthSession) {
-					return errorResponse(
-						BadRequest("OAuth session expired or invalid. Please try again."),
-					);
+				return jsonResponse({
+					success: true,
+					message: result.message,
+					tier,
+				});
+			} catch (error) {
+				if (
+					error instanceof Error &&
+					error.message.includes("already exists")
+				) {
+					return errorResponse(BadRequest(error.message));
 				}
-
-				// Verify account name matches
-				if (oauthSession.accountName !== name) {
-					return errorResponse(
-						BadRequest("Session does not match the account name"),
-					);
-				}
-
-				const { verifier, mode: savedMode, tier: savedTier } = oauthSession;
-
-				// Ensure code is provided
-				if (!code) {
-					return errorResponse(BadRequest("Authorization code is required"));
-				}
-
-				try {
-					// Create OAuth flow instance
-					const config = new Config();
-					const oauthFlow = await createOAuthFlow(dbOps, config);
-
-					// We need to reconstruct the flow data since we can't pass the full BeginResult through HTTP
-					// The OAuth flow will handle the token exchange and account creation
-					const oauthProvider = await import("@claudeflare/providers").then(
-						(m) => m.getOAuthProvider("anthropic"),
-					);
-					if (!oauthProvider) {
-						throw new Error("OAuth provider not found");
-					}
-					const runtime = config.getRuntime();
-					const oauthConfig = oauthProvider.getOAuthConfig(savedMode);
-					oauthConfig.clientId = runtime.clientId;
-					
-					const flowData = {
-						sessionId,
-						authUrl: "", // Not needed for complete
-						pkce: { verifier, challenge: "" }, // Only verifier is needed
-						oauthConfig,
-					};
-
-					await oauthFlow.complete(
-						{ sessionId, code, tier: savedTier, name },
-						flowData,
-					);
-
-					// Clean up OAuth session from database
-					dbOps.deleteOAuthSession(sessionId);
-
-					return jsonResponse({
-						success: true,
-						message: `Account '${name}' added successfully!`,
-						mode: savedMode === "max" ? "Claude Max" : "Claude Console",
-						tier: savedTier,
-					});
-				} catch (error) {
-					return errorResponse(
-						error instanceof Error
-							? error
-							: new Error("Failed to complete OAuth flow"),
-					);
-				}
+				return errorResponse(InternalServerError((error as Error).message));
 			}
-
-			return errorResponse(BadRequest("Invalid step"));
 		} catch (error) {
 			console.error("Account add error:", error);
 			return errorResponse(
