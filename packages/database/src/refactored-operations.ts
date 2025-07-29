@@ -265,6 +265,18 @@ export class RefactoredDatabaseOperations implements StrategyStore, Disposable {
 		return this.requests.getRequestStats(since);
 	}
 
+	aggregateStats(rangeMs?: number) {
+		return this.requests.aggregateStats(rangeMs);
+	}
+
+	getRecentErrors(limit?: number): string[] {
+		return this.requests.getRecentErrors(limit);
+	}
+
+	getTopModels(limit?: number): Array<{ model: string; count: number }> {
+		return this.requests.getTopModels(limit);
+	}
+
 	getRequestsByAccount(since?: number): Array<{
 		accountId: string;
 		accountName: string | null;
