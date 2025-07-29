@@ -1,6 +1,6 @@
 export { selectAccountsForRequest } from "./account-selector";
 export { proxyUnauthenticated, proxyWithAccount } from "./proxy-operations";
-export { ERROR_MESSAGES, TIMING, type ProxyContext } from "./proxy-types";
+export { ERROR_MESSAGES, type ProxyContext, TIMING } from "./proxy-types";
 export {
 	createRequestMetadata,
 	prepareRequestBody,
