@@ -1,11 +1,11 @@
 import { isAccountAvailable, TIME_CONSTANTS } from "@claudeflare/core";
+import { Logger } from "@claudeflare/logger";
 import type {
 	Account,
 	LoadBalancingStrategy,
 	RequestMeta,
 	StrategyStore,
 } from "@claudeflare/types";
-import { Logger } from "@claudeflare/logger";
 
 export class SessionStrategy implements LoadBalancingStrategy {
 	private sessionDurationMs: number;

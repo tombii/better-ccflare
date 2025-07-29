@@ -18,10 +18,10 @@ export interface RuntimeConfig {
 }
 
 /**
- * Refactored DatabaseOperations using Repository Pattern
- * This reduces the file from 452 lines to a much cleaner structure
+ * DatabaseOperations using Repository Pattern
+ * Provides a clean, organized interface for database operations
  */
-export class RefactoredDatabaseOperations implements StrategyStore, Disposable {
+export class DatabaseOperations implements StrategyStore, Disposable {
 	private db: Database;
 	private runtime?: RuntimeConfig;
 

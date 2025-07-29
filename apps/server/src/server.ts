@@ -1,6 +1,5 @@
 import { dirname } from "node:path";
 import { Config, type RuntimeConfig } from "@claudeflare/config";
-import type { LoadBalancingStrategy } from "@claudeflare/types";
 import {
 	CACHE,
 	DEFAULT_STRATEGY,
@@ -25,6 +24,7 @@ import {
 	type ProxyContext,
 	terminateUsageWorker,
 } from "@claudeflare/proxy";
+import type { LoadBalancingStrategy } from "@claudeflare/types";
 import { serve } from "bun";
 
 // Helper function to resolve dashboard assets with fallback
