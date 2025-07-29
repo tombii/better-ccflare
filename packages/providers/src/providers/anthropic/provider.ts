@@ -1,4 +1,4 @@
-import type { Account } from "@claudeflare/core";
+import type { Account } from "@claudeflare/types";
 import { BUFFER_SIZES } from "@claudeflare/core";
 import { Logger } from "@claudeflare/logger";
 import { BaseProvider } from "../../base";

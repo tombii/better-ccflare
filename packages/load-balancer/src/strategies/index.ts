@@ -1,10 +1,10 @@
+import { isAccountAvailable, TIME_CONSTANTS } from "@claudeflare/core";
 import type {
 	Account,
 	LoadBalancingStrategy,
 	RequestMeta,
 	StrategyStore,
-} from "@claudeflare/core";
-import { isAccountAvailable, TIME_CONSTANTS } from "@claudeflare/core";
+} from "@claudeflare/types";
 import { Logger } from "@claudeflare/logger";
 
 export class SessionStrategy implements LoadBalancingStrategy {

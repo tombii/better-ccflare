@@ -3,9 +3,9 @@ declare var self: Worker;
 import {
 	BUFFER_SIZES,
 	estimateCostUSD,
-	NO_ACCOUNT_ID,
 	TIME_CONSTANTS,
 } from "@claudeflare/core";
+import { NO_ACCOUNT_ID } from "@claudeflare/types";
 import { AsyncDbWriter, DatabaseOperations } from "@claudeflare/database";
 import { Logger } from "@claudeflare/logger";
 import { formatCost } from "@claudeflare/ui-common";

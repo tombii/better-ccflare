@@ -1,5 +1,4 @@
-import type { Account, AccountRow } from "@claudeflare/core";
-import { toAccount } from "@claudeflare/core";
+import { toAccount, type Account, type AccountRow } from "@claudeflare/types";
 import { BaseRepository } from "./base.repository";
 
 export class AccountRepository extends BaseRepository<Account> {

@@ -52,7 +52,10 @@ export async function addAccount(
 		]));
 
 	// Begin OAuth flow
-	const flowResult = await oauthFlow.begin({ name, mode });
+	const flowResult = await oauthFlow.begin({
+		name,
+		mode: mode as "max" | "console",
+	});
 	const { authUrl, sessionId } = flowResult;
 
 	// Open browser and prompt for code

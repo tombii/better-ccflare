@@ -1,17 +1,4 @@
-import crypto from "node:crypto";
-import type { RuntimeConfig } from "@claudeflare/config";
-import {
-	type Account,
-	type LoadBalancingStrategy,
-	logError,
-	ProviderError,
-	RateLimitError,
-	type RequestMeta,
-	ServiceUnavailableError,
-	TokenRefreshError,
-	ValidationError,
-} from "@claudeflare/core";
-import type { AsyncDbWriter, DatabaseOperations } from "@claudeflare/database";
+import { ServiceUnavailableError } from "@claudeflare/core";
 import { Logger } from "@claudeflare/logger";
 import type { Provider, TokenRefreshResult } from "@claudeflare/providers";
 import { forwardToClient } from "./response-handler";
@@ -97,8 +84,6 @@ export function terminateUsageWorker(): void {
 		}, TIMING.WORKER_SHUTDOWN_DELAY);
 	}
 }
-
-
 
 // ===== MAIN HANDLER =====
 
