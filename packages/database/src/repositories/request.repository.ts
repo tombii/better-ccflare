@@ -302,7 +302,7 @@ export class RequestRepository extends BaseRepository<RequestData> {
 	 * Get top models by usage
 	 */
 	getTopModels(limit = 10): Array<{ model: string; count: number }> {
-		return this.all<{ model: string; count: number }>(
+		return this.query<{ model: string; count: number }>(
 			`
 			SELECT model, COUNT(*) as count
 			FROM requests
@@ -319,7 +319,7 @@ export class RequestRepository extends BaseRepository<RequestData> {
 	 * Get recent error messages
 	 */
 	getRecentErrors(limit = 10): string[] {
-		const errors = this.all<{ error_message: string }>(
+		const errors = this.query<{ error_message: string }>(
 			`
 			SELECT error_message
 			FROM requests
@@ -329,7 +329,7 @@ export class RequestRepository extends BaseRepository<RequestData> {
 		`,
 			[limit],
 		);
-		return errors.map((e) => e.error_message);
+		return errors.map((e: { error_message: string }) => e.error_message);
 	}
 
 	getRequestsByAccount(since?: number): Array<{

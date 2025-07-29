@@ -7,8 +7,7 @@ import { jsonResponse } from "@claudeflare/http-common";
  */
 export function createStatsHandler(dbOps: DatabaseOperations) {
 	return (): Response => {
-		const requestRepository = dbOps.getRequestRepository();
-		const stats = requestRepository.aggregateStats();
+		const stats = dbOps.aggregateStats();
 
 		const db = dbOps.getDatabase();
 		const accountCount = db
@@ -79,10 +78,10 @@ export function createStatsHandler(dbOps: DatabaseOperations) {
 		});
 
 		// Get recent errors
-		const recentErrors = requestRepository.getRecentErrors();
+		const recentErrors = dbOps.getRecentErrors();
 
 		// Get top models
-		const topModels = requestRepository.getTopModels();
+		const topModels = dbOps.getTopModels();
 
 		const response = {
 			totalRequests: stats.totalRequests,

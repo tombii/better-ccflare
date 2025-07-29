@@ -1,45 +1,21 @@
 import { ServiceUnavailableError } from "@claudeflare/core";
 import { Logger } from "@claudeflare/logger";
-import type { Provider, TokenRefreshResult } from "@claudeflare/providers";
-import { forwardToClient } from "./response-handler";
+import {
+	createRequestMetadata,
+	ERROR_MESSAGES,
+	prepareRequestBody,
+	type ProxyContext,
+	proxyUnauthenticated,
+	proxyWithAccount,
+	selectAccountsForRequest,
+	TIMING,
+	validateProviderPath,
+} from "./handlers";
 import type { ControlMessage } from "./worker-messages";
 
-export interface ProxyContext {
-	strategy: LoadBalancingStrategy;
-	dbOps: DatabaseOperations;
-	runtime: RuntimeConfig;
-	provider: Provider;
-	refreshInFlight: Map<string, Promise<string>>;
-	asyncWriter: AsyncDbWriter;
-	usageWorker: Worker;
-}
+export type { ProxyContext } from "./handlers";
 
 const log = new Logger("Proxy");
-
-// ===== CONSTANTS =====
-
-/** Error messages used throughout the proxy module */
-const ERROR_MESSAGES = {
-	NO_ACCOUNTS:
-		"No active accounts available - forwarding request without authentication",
-	PROVIDER_CANNOT_HANDLE: "Provider cannot handle path",
-	REFRESH_NOT_FOUND: "Refresh promise not found for account",
-	UNAUTHENTICATED_FAILED: "Failed to forward unauthenticated request",
-	ALL_ACCOUNTS_FAILED: "All accounts failed to proxy the request",
-	TOKEN_REFRESH_FAILED: "Failed to refresh access token",
-	PROXY_REQUEST_FAILED: "Failed to proxy request with account",
-} as const;
-
-/** Timing constants */
-const TIMING = {
-	WORKER_SHUTDOWN_DELAY: 100, // ms
-} as const;
-
-/** HTTP headers used in proxy operations */
-const _HEADERS = {
-	CONTENT_TYPE: "Content-Type",
-	AUTHORIZATION: "Authorization",
-} as const;
 
 // ===== WORKER MANAGEMENT =====
 

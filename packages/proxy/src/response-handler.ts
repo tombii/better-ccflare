@@ -1,5 +1,5 @@
 import type { Account } from "@claudeflare/types";
-import type { ProxyContext } from "./proxy";
+import type { ProxyContext } from "./handlers";
 import type { ChunkMessage, EndMessage, StartMessage } from "./worker-messages";
 
 export interface ResponseHandlerOptions {
