@@ -44,11 +44,16 @@ export function createConfigHandlers(config: Config) {
 			const body = await req.json();
 
 			// Validate strategy input
-			const strategy = validateString(body.strategy, "strategy", {
+			const strategyValidation = validateString(body.strategy, "strategy", {
 				required: true,
 				allowedValues: STRATEGIES,
-			})! as StrategyName;
+			});
 
+			if (!strategyValidation) {
+				throw BadRequest("Strategy is required");
+			}
+
+			const strategy = strategyValidation as StrategyName;
 			config.setStrategy(strategy);
 
 			return jsonResponse({ success: true, strategy });

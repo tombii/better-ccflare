@@ -1,4 +1,4 @@
-import { NETWORK, TIME_CONSTANTS } from "@claudeflare/core";
+import { isValidStrategy, NETWORK, TIME_CONSTANTS } from "@claudeflare/core";
 import type { Config } from "./index";
 
 /**
@@ -71,8 +71,8 @@ export class ConfigAccessor {
 			enableMetrics: boolean;
 		}>,
 	): void {
-		if (updates.strategy) {
-			this.config.setStrategy(updates.strategy as any);
+		if (updates.strategy && isValidStrategy(updates.strategy)) {
+			this.config.setStrategy(updates.strategy);
 		}
 		// Add other setters as needed
 	}

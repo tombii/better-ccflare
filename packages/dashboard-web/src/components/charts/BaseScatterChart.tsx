@@ -127,9 +127,9 @@ export function BaseScatterChart({
 						onClick={onDotClick}
 					>
 						{renderLabel &&
-							data.map((entry, index) => (
+							data.map((entry) => (
 								<text
-									key={`label-${index}`}
+									key={`label-${entry[xKey]}-${entry[yKey]}`}
 									x={entry[xKey]}
 									y={entry[yKey]}
 									dy={-10}

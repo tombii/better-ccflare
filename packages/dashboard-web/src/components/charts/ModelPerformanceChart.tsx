@@ -32,7 +32,7 @@ export function ModelPerformanceChart({
 				if (name === "avgTime") return [`${value}ms`, "Avg Time"];
 				if (name === "errorRate")
 					return [formatPercentage(Number(value)), "Error Rate"];
-				return [value, name];
+				return [`${value}`, name || ""];
 			}}
 			tooltipStyle={{
 				backgroundColor: COLORS.success,
