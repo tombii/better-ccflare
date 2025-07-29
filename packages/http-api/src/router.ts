@@ -13,6 +13,10 @@ import { createHealthHandler } from "./handlers/health";
 import { createLogsStreamHandler } from "./handlers/logs";
 import { createLogsHistoryHandler } from "./handlers/logs-history";
 import {
+	createOAuthCallbackHandler,
+	createOAuthInitHandler,
+} from "./handlers/oauth";
+import {
 	createRequestsDetailHandler,
 	createRequestsSummaryHandler,
 } from "./handlers/requests";
@@ -53,6 +57,8 @@ export class APIRouter {
 		const logsStreamHandler = createLogsStreamHandler();
 		const logsHistoryHandler = createLogsHistoryHandler();
 		const analyticsHandler = createAnalyticsHandler(this.context);
+		const oauthInitHandler = createOAuthInitHandler(dbOps);
+		const oauthCallbackHandler = createOAuthCallbackHandler(dbOps);
 
 		// Register routes
 		this.handlers.set("GET:/health", () => healthHandler());
@@ -60,6 +66,10 @@ export class APIRouter {
 		this.handlers.set("POST:/api/stats/reset", () => statsResetHandler());
 		this.handlers.set("GET:/api/accounts", () => accountsHandler());
 		this.handlers.set("POST:/api/accounts", (req) => accountAddHandler(req));
+		this.handlers.set("POST:/api/oauth/init", (req) => oauthInitHandler(req));
+		this.handlers.set("POST:/api/oauth/callback", (req) =>
+			oauthCallbackHandler(req),
+		);
 		this.handlers.set("GET:/api/requests", (_req, url) => {
 			const limitParam = url.searchParams.get("limit");
 			const limit =

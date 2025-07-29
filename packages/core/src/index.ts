@@ -21,9 +21,9 @@ export {
 export * from "./lifecycle";
 
 export {
-	type TokenBreakdown,
 	estimateCostUSD,
 	setPricingLogger,
+	type TokenBreakdown,
 } from "./pricing";
 
 export * from "./strategy";

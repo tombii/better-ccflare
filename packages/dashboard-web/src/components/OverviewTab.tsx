@@ -4,89 +4,16 @@ import {
 	formatPercentage,
 } from "@claudeflare/ui-common";
 import { format } from "date-fns";
-import {
-	Activity,
-	AlertCircle,
-	CheckCircle,
-	Clock,
-	DollarSign,
-	TrendingDown,
-	TrendingUp,
-	XCircle,
-} from "lucide-react";
+import { Activity, CheckCircle, Clock, DollarSign } from "lucide-react";
 import { useMemo } from "react";
-import { CHART_COLORS, COLORS, REFRESH_INTERVALS } from "../constants";
+import { REFRESH_INTERVALS } from "../constants";
 import { useAccounts, useAnalytics, useStats } from "../hooks/queries";
-import {
-	BaseAreaChart,
-	BaseBarChart,
-	BaseLineChart,
-	BasePieChart,
-} from "./charts";
+import { ChartsSection } from "./overview/ChartsSection";
+import { LoadingSkeleton } from "./overview/LoadingSkeleton";
+import { MetricCard } from "./overview/MetricCard";
+import { RateLimitInfo } from "./overview/RateLimitInfo";
+import { SystemStatus } from "./overview/SystemStatus";
 import { StrategyCard } from "./StrategyCard";
-import { Badge } from "./ui/badge";
-import {
-	Card,
-	CardContent,
-	CardDescription,
-	CardHeader,
-	CardTitle,
-} from "./ui/card";
-import { Skeleton } from "./ui/skeleton";
-
-interface MetricCardProps {
-	title: string;
-	value: string | number;
-	change?: number;
-	icon: React.ComponentType<{ className?: string }>;
-	trend?: "up" | "down" | "flat";
-}
-
-function MetricCard({
-	title,
-	value,
-	change,
-	icon: Icon,
-	trend,
-}: MetricCardProps) {
-	return (
-		<Card className="card-hover">
-			<CardContent className="p-6">
-				<div className="flex items-center justify-between">
-					<div className="space-y-1">
-						<p className="text-sm font-medium text-muted-foreground">{title}</p>
-						<p className="text-2xl font-bold">{value}</p>
-						{change !== undefined && trend && trend !== "flat" && (
-							<div className="flex items-center gap-1 text-sm">
-								{trend === "up" ? (
-									<TrendingUp className="h-4 w-4 text-success" />
-								) : (
-									<TrendingDown className="h-4 w-4 text-destructive" />
-								)}
-								<span
-									className={
-										trend === "up" ? "text-success" : "text-destructive"
-									}
-								>
-									{formatPercentage(Math.abs(change), 1)}
-								</span>
-								<span className="text-muted-foreground">vs last hour</span>
-							</div>
-						)}
-						{(change === undefined || trend === "flat") && (
-							<div className="flex items-center gap-1 text-sm">
-								<span className="text-muted-foreground">— vs last hour</span>
-							</div>
-						)}
-					</div>
-					<div className="rounded-full bg-primary/10 p-3">
-						<Icon className="h-6 w-6 text-primary" />
-					</div>
-				</div>
-			</CardContent>
-		</Card>
-	);
-}
 
 export function OverviewTab() {
 	// Fetch all data using React Query hooks
@@ -117,30 +44,7 @@ export function OverviewTab() {
 	}, [analytics]);
 
 	if (loading && !combinedData) {
-		return (
-			<div className="space-y-6">
-				<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-					{[...Array(4)].map((_, i) => (
-						// biome-ignore lint/suspicious/noArrayIndexKey: Skeleton cards are temporary placeholders
-						<Card key={i}>
-							<CardContent className="p-6">
-								<Skeleton className="h-4 w-24 mb-2" />
-								<Skeleton className="h-8 w-32 mb-2" />
-								<Skeleton className="h-4 w-20" />
-							</CardContent>
-						</Card>
-					))}
-				</div>
-				<Card>
-					<CardHeader>
-						<Skeleton className="h-6 w-32" />
-					</CardHeader>
-					<CardContent>
-						<Skeleton className="h-64 w-full" />
-					</CardContent>
-				</Card>
-			</div>
-		);
+		return <LoadingSkeleton />;
 	}
 
 	// Helper function to calculate percentage change
@@ -247,229 +151,16 @@ export function OverviewTab() {
 				/>
 			</div>
 
-			{/* Charts Row 1 */}
-			<div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-				{/* Request Volume Chart */}
-				<Card>
-					<CardHeader>
-						<CardTitle>Request Volume</CardTitle>
-						<CardDescription>
-							Requests per hour over the last 24 hours
-						</CardDescription>
-					</CardHeader>
-					<CardContent>
-						<BaseAreaChart
-							data={timeSeriesData}
-							dataKey="requests"
-							loading={loading}
-							height="medium"
-						/>
-					</CardContent>
-				</Card>
+			<ChartsSection
+				timeSeriesData={timeSeriesData}
+				modelData={modelData}
+				accountHealthData={accountHealthData}
+				loading={loading}
+			/>
 
-				{/* Success Rate Chart */}
-				<Card>
-					<CardHeader>
-						<CardTitle>Success Rate Trend</CardTitle>
-						<CardDescription>Success percentage over time</CardDescription>
-					</CardHeader>
-					<CardContent>
-						<BaseLineChart
-							data={timeSeriesData}
-							lines={{ dataKey: "successRate", stroke: COLORS.success }}
-							loading={loading}
-							height="medium"
-							yAxisDomain={[80, 100]}
-						/>
-					</CardContent>
-				</Card>
-			</div>
+			<SystemStatus recentErrors={stats?.recentErrors} />
 
-			{/* Charts Row 2 */}
-			<div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-				{/* Model Distribution */}
-				<Card>
-					<CardHeader>
-						<CardTitle>Model Usage</CardTitle>
-						<CardDescription>
-							Distribution of API calls by model
-						</CardDescription>
-					</CardHeader>
-					<CardContent>
-						<BasePieChart
-							data={modelData}
-							loading={loading}
-							height="small"
-							innerRadius={60}
-							outerRadius={80}
-							paddingAngle={5}
-							tooltipStyle="success"
-						/>
-						<div className="mt-4 space-y-2">
-							{modelData.map((model, index) => (
-								<div
-									key={model.name}
-									className="flex items-center justify-between text-sm"
-								>
-									<div className="flex items-center gap-2">
-										<div
-											className="h-3 w-3 rounded-full"
-											style={{
-												backgroundColor:
-													CHART_COLORS[index % CHART_COLORS.length],
-											}}
-										/>
-										<span className="text-muted-foreground">{model.name}</span>
-									</div>
-									<span className="font-medium">{model.value}</span>
-								</div>
-							))}
-						</div>
-					</CardContent>
-				</Card>
-
-				{/* Account Health */}
-				<Card className="lg:col-span-2">
-					<CardHeader>
-						<CardTitle>Account Performance</CardTitle>
-						<CardDescription>
-							Request distribution and success rates by account
-						</CardDescription>
-					</CardHeader>
-					<CardContent>
-						<BaseBarChart
-							data={accountHealthData}
-							bars={[
-								{ dataKey: "requests", yAxisId: "left", name: "Requests" },
-								{
-									dataKey: "successRate",
-									yAxisId: "right",
-									fill: COLORS.success,
-									name: "Success %",
-								},
-							]}
-							xAxisKey="name"
-							loading={loading}
-							height="small"
-							secondaryYAxis={true}
-							showLegend={true}
-						/>
-					</CardContent>
-				</Card>
-			</div>
-
-			{/* Recent Activity */}
-			<Card>
-				<CardHeader>
-					<CardTitle>System Status</CardTitle>
-					<CardDescription>
-						Current operational status and recent events
-					</CardDescription>
-				</CardHeader>
-				<CardContent>
-					<div className="space-y-4">
-						<div className="flex items-center justify-between p-4 rounded-lg bg-success/10">
-							<div className="flex items-center gap-3">
-								<CheckCircle className="h-5 w-5 text-success" />
-								<div>
-									<p className="font-medium">All Systems Operational</p>
-									<p className="text-sm text-muted-foreground">
-										No issues detected
-									</p>
-								</div>
-							</div>
-							<Badge variant="default" className="bg-success">
-								Healthy
-							</Badge>
-						</div>
-
-						{stats?.recentErrors && stats.recentErrors.length > 0 && (
-							<div className="space-y-2">
-								<h4 className="text-sm font-medium text-muted-foreground">
-									Recent Errors
-								</h4>
-								{stats.recentErrors.slice(0, 3).map((error, i) => (
-									<div
-										key={`error-${error.substring(0, 20)}-${i}`}
-										className="flex items-start gap-2 p-3 rounded-lg bg-destructive/10"
-									>
-										<XCircle className="h-4 w-4 text-destructive mt-0.5" />
-										<p className="text-sm text-muted-foreground">{error}</p>
-									</div>
-								))}
-							</div>
-						)}
-					</div>
-				</CardContent>
-			</Card>
-
-			{/* Rate Limit Status */}
-			{accounts?.some(
-				(acc) =>
-					acc.rateLimitStatus !== "OK" && acc.rateLimitStatus !== "Paused",
-			) && (
-				<Card>
-					<CardHeader>
-						<CardTitle>Rate Limit Info</CardTitle>
-						<CardDescription>
-							Rate limit information about accounts
-						</CardDescription>
-					</CardHeader>
-					<CardContent>
-						<div className="space-y-3">
-							{accounts
-								.filter(
-									(acc) =>
-										acc.rateLimitStatus !== "OK" &&
-										acc.rateLimitStatus !== "Paused",
-								)
-								.map((account) => {
-									const resetTime = account.rateLimitReset
-										? new Date(account.rateLimitReset)
-										: null;
-									const now = new Date();
-									const timeUntilReset = resetTime
-										? Math.max(0, resetTime.getTime() - now.getTime())
-										: null;
-									const minutesLeft = timeUntilReset
-										? Math.ceil(timeUntilReset / 60000)
-										: null;
-
-									return (
-										<div
-											key={account.id}
-											className="flex items-center justify-between p-4 rounded-lg bg-warning/10"
-										>
-											<div className="flex items-center gap-3">
-												<AlertCircle className="h-5 w-5 text-warning" />
-												<div>
-													<p className="font-medium">{account.name}</p>
-													<p className="text-sm text-muted-foreground">
-														{account.rateLimitStatus}
-														{account.rateLimitRemaining !== null &&
-															` • ${account.rateLimitRemaining} requests remaining`}
-													</p>
-												</div>
-											</div>
-											<div className="text-right">
-												{resetTime && (
-													<>
-														<p className="text-sm font-medium">
-															Resets in {minutesLeft}m
-														</p>
-														<p className="text-xs text-muted-foreground">
-															{format(resetTime, "HH:mm:ss")}
-														</p>
-													</>
-												)}
-											</div>
-										</div>
-									);
-								})}
-						</div>
-					</CardContent>
-				</Card>
-			)}
+			{accounts && <RateLimitInfo accounts={accounts} />}
 
 			{/* Configuration Row */}
 			<div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
