@@ -1,6 +1,6 @@
 import type { Config } from "@claudeflare/config";
 import type { DatabaseOperations } from "@claudeflare/database";
-import { generatePKCE, getOAuthProvider } from "@claudeflare/providers";
+import { createOAuthFlow } from "@claudeflare/oauth-flow";
 import type { AccountListItem } from "@claudeflare/types";
 import {
 	type PromptAdapter,
@@ -39,19 +39,9 @@ export async function addAccount(
 		tier: providedTier,
 		adapter = stdPromptAdapter,
 	} = options;
-	const runtime = config.getRuntime();
 
-	// Check if account exists
-	const existingAccounts = dbOps.getAllAccounts();
-	if (existingAccounts.some((a) => a.name === name)) {
-		throw new Error(`Account with name '${name}' already exists`);
-	}
-
-	// Get provider
-	const oauthProvider = getOAuthProvider("anthropic");
-	if (!oauthProvider) {
-		throw new Error("Anthropic OAuth provider not found");
-	}
+	// Create OAuth flow instance
+	const oauthFlow = await createOAuthFlow(dbOps, config);
 
 	// Prompt for mode if not provided
 	const mode =
@@ -61,13 +51,9 @@ export async function addAccount(
 			{ label: "Claude Console account", value: "console" },
 		]));
 
-	// Generate PKCE
-	const pkce = await generatePKCE();
-	const oauthConfig = oauthProvider.getOAuthConfig(mode);
-	oauthConfig.clientId = runtime.clientId;
-
-	// Generate auth URL
-	const authUrl = oauthProvider.generateAuthUrl(oauthConfig, pkce);
+	// Begin OAuth flow
+	const flowResult = await oauthFlow.begin({ name, mode });
+	const { authUrl, sessionId } = flowResult;
 
 	// Open browser and prompt for code
 	console.log(`\nOpening browser to authenticate...`);
@@ -78,14 +64,6 @@ export async function addAccount(
 
 	// Get authorization code
 	const code = await adapter.input("\nEnter the authorization code: ");
-
-	// Exchange code for tokens
-	console.log("\nExchanging code for tokens...");
-	const tokens = await oauthProvider.exchangeCode(
-		code,
-		pkce.verifier,
-		oauthConfig,
-	);
 
 	// Get tier for Max accounts
 	const tier =
@@ -101,26 +79,11 @@ export async function addAccount(
 				))
 			: 1;
 
-	// Create account
-	const db = dbOps.getDatabase();
-	const accountId = crypto.randomUUID();
-	db.run(
-		`
-		INSERT INTO accounts (
-			id, name, provider, refresh_token, access_token, expires_at, 
-			created_at, request_count, total_requests, account_tier
-		) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?)
-		`,
-		[
-			accountId,
-			name,
-			"anthropic",
-			tokens.refreshToken,
-			tokens.accessToken,
-			tokens.expiresAt,
-			Date.now(),
-			tier,
-		],
+	// Complete OAuth flow
+	console.log("\nExchanging code for tokens...");
+	const _account = await oauthFlow.complete(
+		{ sessionId, code, tier, name },
+		flowResult,
 	);
 
 	console.log(`\nAccount '${name}' added successfully!`);

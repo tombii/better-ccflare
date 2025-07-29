@@ -53,160 +53,199 @@ function serveDashboardFile(
 	contentType?: string,
 	cacheControl?: string,
 ): Response {
-	const resolvedPath = resolveDashboardAsset(assetPath);
-	if (!resolvedPath) {
+	const fullPath = resolveDashboardAsset(assetPath);
+	if (!fullPath) {
 		return new Response("Not Found", { status: HTTP_STATUS.NOT_FOUND });
 	}
 
-	const file = Bun.file(resolvedPath);
-	if (!file.exists()) {
-		return new Response("Not Found", { status: HTTP_STATUS.NOT_FOUND });
+	// Auto-detect content type if not provided
+	if (!contentType) {
+		if (assetPath.endsWith(".js")) contentType = "application/javascript";
+		else if (assetPath.endsWith(".css")) contentType = "text/css";
+		else if (assetPath.endsWith(".html")) contentType = "text/html";
+		else if (assetPath.endsWith(".json")) contentType = "application/json";
+		else if (assetPath.endsWith(".svg")) contentType = "image/svg+xml";
+		else contentType = "text/plain";
 	}
 
-	const headers: Record<string, string> = {
-		"Content-Type": contentType || file.type || "application/octet-stream",
+	return new Response(Bun.file(fullPath), {
+		headers: {
+			"Content-Type": contentType,
+			"Cache-Control": cacheControl || CACHE.CACHE_CONTROL_NO_CACHE,
+		},
+	});
+}
+
+// Module-level server instance
+let serverInstance: ReturnType<typeof serve> | null = null;
+
+// Export for programmatic use
+export default function startServer(options?: {
+	port?: number;
+	withDashboard?: boolean;
+}) {
+	// Return existing server if already running
+	if (serverInstance) {
+		return {
+			port: serverInstance.port,
+			stop: () => {
+				if (serverInstance) {
+					serverInstance.stop();
+					serverInstance = null;
+				}
+			},
+		};
+	}
+
+	const { port = NETWORK.DEFAULT_PORT, withDashboard = true } = options || {};
+
+	// Initialize DI container
+	container.registerInstance(SERVICE_KEYS.Config, new Config());
+	container.registerInstance(SERVICE_KEYS.Logger, new Logger("Server"));
+
+	// Initialize components
+	const config = container.resolve<Config>(SERVICE_KEYS.Config);
+	const runtime = config.getRuntime();
+	// Override port if provided
+	if (port !== runtime.port) {
+		runtime.port = port;
+	}
+	DatabaseFactory.initialize(undefined, runtime);
+	const dbOps = DatabaseFactory.getInstance();
+	const db = dbOps.getDatabase();
+	const log = container.resolve<Logger>(SERVICE_KEYS.Logger);
+	container.registerInstance(SERVICE_KEYS.Database, dbOps);
+
+	// Initialize async DB writer
+	const asyncWriter = new AsyncDbWriter();
+	container.registerInstance(SERVICE_KEYS.AsyncWriter, asyncWriter);
+	registerDisposable(asyncWriter);
+
+	// Initialize pricing logger
+	const pricingLogger = new Logger("Pricing");
+	container.registerInstance(SERVICE_KEYS.PricingLogger, pricingLogger);
+	setPricingLogger(pricingLogger);
+
+	const apiRouter = new APIRouter({ db, config, dbOps });
+
+	// Initialize load balancing strategy
+	const _strategyName = (config.getStrategy() ||
+		DEFAULT_STRATEGY) as LoadBalancingStrategy;
+	const StrategyClass = SessionStrategy;
+	const strategy = new StrategyClass(dbOps);
+
+	// Proxy context
+	const proxyContext: ProxyContext = {
+		strategy,
+		providers: new Map(
+			getProvider("anthropic")
+				? [["anthropic", getProvider("anthropic")!]]
+				: [],
+		),
+		rateLimiter: null,
+		requestRepository: dbOps.getRequestRepository(),
+		usageWorker: null,
+		processRequestResponse: async (_request, _response, _info) => {
+			// This is now handled by the usage worker
+		},
 	};
 
-	if (cacheControl) {
-		headers["Cache-Control"] = cacheControl;
-	}
+	// Initialize usage worker
+	proxyContext.usageWorker = getUsageWorker();
 
-	return new Response(file, { headers });
-}
-
-// Initialize DI container
-container.registerInstance(SERVICE_KEYS.Config, new Config());
-container.registerInstance(SERVICE_KEYS.Logger, new Logger("Server"));
-
-// Initialize components
-const config = container.resolve<Config>(SERVICE_KEYS.Config);
-const runtime = config.getRuntime();
-DatabaseFactory.initialize(undefined, runtime);
-const dbOps = DatabaseFactory.getInstance();
-const db = dbOps.getDatabase();
-container.registerInstance(SERVICE_KEYS.Database, dbOps);
-
-// Initialize async DB writer
-const asyncWriter = new AsyncDbWriter();
-container.registerInstance(SERVICE_KEYS.AsyncWriter, asyncWriter);
-registerDisposable(asyncWriter);
-
-// Initialize pricing logger
-const pricingLogger = new Logger("Pricing");
-container.registerInstance(SERVICE_KEYS.PricingLogger, pricingLogger);
-setPricingLogger(pricingLogger);
-
-const apiRouter = new APIRouter({ db, config, dbOps });
-const log = container.resolve<Logger>(SERVICE_KEYS.Logger);
-
-log.info("Starting Claudeflare server...");
-log.info(`Port: ${runtime.port}`);
-log.info(`Session duration: ${runtime.sessionDurationMs}ms`);
-
-// Load balancing strategy initialization
-let strategy: LoadBalancingStrategy;
-
-// Refresh token stampede prevention
-const refreshInFlight = new Map<string, Promise<string>>();
-
-// Get provider from registry (for now just Anthropic)
-const provider = getProvider("anthropic");
-if (!provider) {
-	throw new Error("Anthropic provider not found in registry");
-}
-
-function initStrategy(): LoadBalancingStrategy {
-	const strategyName = config.getStrategy();
-	log.info(`Initializing load balancing strategy: ${strategyName}`);
-
-	// Only session-based strategy is supported
-	const sessionStrategy = new SessionStrategy(runtime.sessionDurationMs);
-	sessionStrategy.initialize(dbOps);
-	return sessionStrategy;
-}
-
-strategy = initStrategy();
-
-// Create proxy context (without worker initially)
-const proxyContext: ProxyContext = {
-	strategy,
-	dbOps,
-	runtime,
-	provider,
-	refreshInFlight,
-	asyncWriter,
-	usageWorker: null as unknown as Worker, // Will be set below
-};
-
-// Initialize usage worker
-proxyContext.usageWorker = getUsageWorker();
-
-// Watch for strategy changes
-config.on("change", ({ key }) => {
-	if (key === "lb_strategy") {
-		log.info(`Strategy changed to ${config.getStrategy()}`);
-		strategy = initStrategy();
-		// Update proxy context strategy
-		proxyContext.strategy = strategy;
-	}
-});
-
-// Main server
-const server = serve({
-	port: runtime.port,
-	idleTimeout: NETWORK.IDLE_TIMEOUT_MAX, // Max allowed by Bun
-	async fetch(req) {
-		const url = new URL(req.url);
-
-		// Try API routes first
-		const apiResponse = await apiRouter.handleRequest(url, req);
-		if (apiResponse) {
-			return apiResponse;
+	// Hot reload strategy configuration
+	config.on("change", (changeType, fieldName) => {
+		if (fieldName === "strategy") {
+			log.info(`Strategy configuration changed: ${changeType}`);
+			const _newStrategyName = config.getStrategy() as LoadBalancingStrategy;
+			const NewStrategyClass = SessionStrategy;
+			const strategy = new NewStrategyClass(dbOps);
+			proxyContext.strategy = strategy;
 		}
+	});
 
-		// Dashboard routes
-		if (url.pathname === "/" || url.pathname === "/dashboard") {
-			return serveDashboardFile("/index.html", "text/html");
-		}
+	// Main server
+	serverInstance = serve({
+		port: runtime.port,
+		idleTimeout: NETWORK.IDLE_TIMEOUT_MAX, // Max allowed by Bun
+		async fetch(req) {
+			const url = new URL(req.url);
 
-		// Serve dashboard static assets
-		if ((dashboardManifest as Record<string, string>)[url.pathname]) {
-			return serveDashboardFile(
-				url.pathname,
-				undefined,
-				CACHE.CACHE_CONTROL_STATIC,
-			);
-		}
+			// Try API routes first
+			const apiResponse = await apiRouter.handleRequest(url, req);
+			if (apiResponse) {
+				return apiResponse;
+			}
 
-		// Only proxy requests to Anthropic API
-		if (!url.pathname.startsWith("/v1/")) {
-			return new Response("Not Found", { status: HTTP_STATUS.NOT_FOUND });
-		}
+			// Dashboard routes (only if enabled)
+			if (withDashboard) {
+				if (url.pathname === "/" || url.pathname === "/dashboard") {
+					return serveDashboardFile("/index.html", "text/html");
+				}
 
-		// Handle proxy request
-		return handleProxy(req, url, proxyContext);
-	},
-});
+				// Serve dashboard static assets
+				if ((dashboardManifest as Record<string, string>)[url.pathname]) {
+					return serveDashboardFile(
+						url.pathname,
+						undefined,
+						CACHE.CACHE_CONTROL_STATIC,
+					);
+				}
+			}
 
-console.log(`🚀 Claudeflare server running on http://localhost:${server.port}`);
-console.log(`📊 Dashboard: http://localhost:${server.port}/dashboard`);
-console.log(`🔍 Health check: http://localhost:${server.port}/health`);
-console.log(
-	`⚙️  Current strategy: ${config.getStrategy()} (default: ${DEFAULT_STRATEGY})`,
-);
+			// All other paths go to proxy
+			return handleProxy(req, proxyContext);
+		},
+	});
 
-// Log initial account status
-const accounts = dbOps.getAllAccounts();
-const activeAccounts = accounts.filter(
-	(a) => !a.paused && (!a.expires_at || a.expires_at > Date.now()),
-);
-log.info(
-	`Loaded ${accounts.length} accounts (${activeAccounts.length} active)`,
-);
-if (activeAccounts.length === 0) {
-	log.warn(
-		"No active accounts available - requests will be forwarded without authentication",
+	// Log server startup
+	console.log(`
+🎯 Claudeflare Server v${process.env.npm_package_version || "1.0.0"}
+🌐 Port: ${serverInstance.port}
+📊 Dashboard: ${withDashboard ? `http://localhost:${serverInstance.port}` : "disabled"}
+🔗 API Base: http://localhost:${serverInstance.port}/api
+
+Available endpoints:
+- POST   http://localhost:${serverInstance.port}/v1/*            → Proxy to Claude API
+- GET    http://localhost:${serverInstance.port}/api/accounts    → List accounts
+- POST   http://localhost:${serverInstance.port}/api/accounts    → Add account
+- DELETE http://localhost:${serverInstance.port}/api/accounts/:id → Remove account
+- GET    http://localhost:${serverInstance.port}/api/stats       → View statistics
+- POST   http://localhost:${serverInstance.port}/api/stats/reset → Reset statistics
+- GET    http://localhost:${serverInstance.port}/api/config      → View configuration
+- PATCH  http://localhost:${serverInstance.port}/api/config      → Update configuration
+
+⚡ Ready to proxy requests...
+`);
+
+	// Log configuration
+	console.log(
+		`⚙️  Current strategy: ${config.getStrategy()} (default: ${DEFAULT_STRATEGY})`,
 	);
+
+	// Log initial account status
+	const accounts = dbOps.getAllAccounts();
+	const activeAccounts = accounts.filter(
+		(a) => !a.paused && (!a.expires_at || a.expires_at > Date.now()),
+	);
+	log.info(
+		`Loaded ${accounts.length} accounts (${activeAccounts.length} active)`,
+	);
+	if (activeAccounts.length === 0) {
+		log.warn(
+			"No active accounts available - requests will be forwarded without authentication",
+		);
+	}
+
+	return {
+		port: serverInstance.port,
+		stop: () => {
+			if (serverInstance) {
+				serverInstance.stop();
+				serverInstance = null;
+			}
+		},
+	};
 }
 
 // Graceful shutdown handler
@@ -227,17 +266,7 @@ async function handleGracefulShutdown(signal: string) {
 process.on("SIGINT", () => handleGracefulShutdown("SIGINT"));
 process.on("SIGTERM", () => handleGracefulShutdown("SIGTERM"));
 
-// Export for programmatic use
-export default function startServer(_options?: {
-	port?: number;
-	withDashboard?: boolean;
-}) {
-	// This is a placeholder for when the server needs to be started programmatically
-	return {
-		port: server.port,
-		stop: () => {
-			// Server stop logic
-			server.stop();
-		},
-	};
+// Run server if this is the main entry point
+if (import.meta.main) {
+	startServer();
 }

@@ -2,17 +2,11 @@ import * as cliCommands from "@claudeflare/cli-commands";
 import { openBrowser } from "@claudeflare/cli-commands";
 import { Config } from "@claudeflare/config";
 import { DatabaseFactory } from "@claudeflare/database";
-import {
-	generatePKCE,
-	getOAuthProvider,
-	type OAuthConfig,
-} from "@claudeflare/providers";
+import { type BeginResult, createOAuthFlow } from "@claudeflare/oauth-flow";
 import type { AccountListItem, AddAccountOptions } from "@claudeflare/types";
 
-export interface OAuthFlowResult {
-	authUrl: string;
-	pkce: { verifier: string; challenge: string };
-	oauthConfig: OAuthConfig;
+export interface OAuthFlowResult extends BeginResult {
+	// Extends BeginResult from oauth-flow package
 }
 
 /**
@@ -24,37 +18,24 @@ export async function beginAddAccount(
 ): Promise<OAuthFlowResult> {
 	const { name, mode = "max" } = options;
 	const config = new Config();
-	const runtime = config.getRuntime();
 	const dbOps = DatabaseFactory.getInstance();
 
-	// Check if account exists
-	const existingAccounts = dbOps.getAllAccounts();
-	if (existingAccounts.some((a) => a.name === name)) {
-		throw new Error(`Account with name '${name}' already exists`);
-	}
+	// Create OAuth flow instance
+	const oauthFlow = await createOAuthFlow(dbOps, config);
 
-	// Get provider
-	const oauthProvider = getOAuthProvider("anthropic");
-	if (!oauthProvider) {
-		throw new Error("Anthropic OAuth provider not found");
-	}
-
-	// Generate PKCE
-	const pkce = await generatePKCE();
-	const oauthConfig = oauthProvider.getOAuthConfig(mode);
-	oauthConfig.clientId = runtime.clientId;
-
-	// Generate auth URL
-	const authUrl = oauthProvider.generateAuthUrl(oauthConfig, pkce);
+	// Begin OAuth flow
+	const flowResult = await oauthFlow.begin({ name, mode });
 
 	// Open browser
 	console.log(`\nOpening browser to authenticate...`);
-	const browserOpened = await openBrowser(authUrl);
+	const browserOpened = await openBrowser(flowResult.authUrl);
 	if (!browserOpened) {
-		console.log(`Please open the following URL in your browser:\n${authUrl}`);
+		console.log(
+			`Please open the following URL in your browser:\n${flowResult.authUrl}`,
+		);
 	}
 
-	return { authUrl, pkce, oauthConfig };
+	return flowResult;
 }
 
 /**
@@ -64,42 +45,17 @@ export async function completeAddAccount(
 	options: AddAccountOptions & { code: string; flowData: OAuthFlowResult },
 ): Promise<void> {
 	const { name, mode = "max", tier = 1, code, flowData } = options;
+	const config = new Config();
 	const dbOps = DatabaseFactory.getInstance();
 
-	// Get provider
-	const oauthProvider = getOAuthProvider("anthropic");
-	if (!oauthProvider) {
-		throw new Error("Anthropic OAuth provider not found");
-	}
+	// Create OAuth flow instance
+	const oauthFlow = await createOAuthFlow(dbOps, config);
 
-	// Exchange code for tokens
+	// Complete OAuth flow
 	console.log("\nExchanging code for tokens...");
-	const tokens = await oauthProvider.exchangeCode(
-		code,
-		flowData.pkce.verifier,
-		flowData.oauthConfig,
-	);
-
-	// Create account
-	const db = dbOps.getDatabase();
-	const accountId = crypto.randomUUID();
-	db.run(
-		`
-		INSERT INTO accounts (
-			id, name, provider, refresh_token, access_token, expires_at, 
-			created_at, request_count, total_requests, account_tier
-		) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?)
-		`,
-		[
-			accountId,
-			name,
-			"anthropic",
-			tokens.refreshToken,
-			tokens.accessToken,
-			tokens.expiresAt,
-			Date.now(),
-			tier,
-		],
+	const _account = await oauthFlow.complete(
+		{ sessionId: flowData.sessionId, code, tier, name },
+		flowData,
 	);
 
 	console.log(`\nAccount '${name}' added successfully!`);
@@ -128,4 +84,18 @@ export async function getAccounts(): Promise<AccountListItem[]> {
 export async function removeAccount(name: string): Promise<void> {
 	const dbOps = DatabaseFactory.getInstance();
 	await cliCommands.removeAccount(dbOps, name);
+}
+
+export async function pauseAccount(
+	name: string,
+): Promise<{ success: boolean; message: string }> {
+	const dbOps = DatabaseFactory.getInstance();
+	return cliCommands.pauseAccount(dbOps, name);
+}
+
+export async function resumeAccount(
+	name: string,
+): Promise<{ success: boolean; message: string }> {
+	const dbOps = DatabaseFactory.getInstance();
+	return cliCommands.resumeAccount(dbOps, name);
 }
