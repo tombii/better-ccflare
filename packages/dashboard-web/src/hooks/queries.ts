@@ -66,21 +66,6 @@ export const useLogHistory = () => {
 };
 
 // Mutations
-export const useAddAccount = () => {
-	const queryClient = useQueryClient();
-	return useMutation({
-		// Note: addAccount requires OAuth flow - not a simple mutation
-		mutationFn: async () => {
-			throw new Error(
-				"Use initAddAccount and completeAddAccount for OAuth flow",
-			);
-		},
-		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: queryKeys.accounts() });
-		},
-	});
-};
-
 export const useRemoveAccount = () => {
 	const queryClient = useQueryClient();
 	return useMutation({

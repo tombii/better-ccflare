@@ -41,7 +41,7 @@ export class APIRouter {
 
 		// Create handlers
 		const healthHandler = createHealthHandler(db, config);
-		const statsHandler = createStatsHandler(db);
+		const statsHandler = createStatsHandler(dbOps);
 		const statsResetHandler = createStatsResetHandler(dbOps);
 		const accountsHandler = createAccountsListHandler(db);
 		const accountAddHandler = createAccountAddHandler(dbOps);

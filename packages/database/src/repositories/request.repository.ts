@@ -239,6 +239,99 @@ export class RequestRepository extends BaseRepository<RequestData> {
 		};
 	}
 
+	/**
+	 * Aggregate statistics with optional time range
+	 * Consolidates duplicate SQL queries from stats handlers
+	 */
+	aggregateStats(rangeMs?: number): {
+		totalRequests: number;
+		successfulRequests: number;
+		avgResponseTime: number | null;
+		totalTokens: number;
+		totalCostUsd: number;
+		inputTokens: number;
+		outputTokens: number;
+		cacheReadInputTokens: number;
+		cacheCreationInputTokens: number;
+	} {
+		const whereClause = rangeMs ? "WHERE timestamp > ?" : "";
+		const params = rangeMs ? [Date.now() - rangeMs] : [];
+
+		const result = this.get<{
+			total_requests: number;
+			successful_requests: number;
+			avg_response_time: number | null;
+			total_tokens: number | null;
+			total_cost_usd: number | null;
+			input_tokens: number | null;
+			output_tokens: number | null;
+			cache_read_input_tokens: number | null;
+			cache_creation_input_tokens: number | null;
+		}>(
+			`
+			SELECT 
+				COUNT(*) as total_requests,
+				SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successful_requests,
+				AVG(response_time_ms) as avg_response_time,
+				SUM(total_tokens) as total_tokens,
+				SUM(cost_usd) as total_cost_usd,
+				SUM(input_tokens) as input_tokens,
+				SUM(output_tokens) as output_tokens,
+				SUM(cache_read_input_tokens) as cache_read_input_tokens,
+				SUM(cache_creation_input_tokens) as cache_creation_input_tokens
+			FROM requests
+			${whereClause}
+		`,
+			params,
+		);
+
+		return {
+			totalRequests: result?.total_requests || 0,
+			successfulRequests: result?.successful_requests || 0,
+			avgResponseTime: result?.avg_response_time || null,
+			totalTokens: result?.total_tokens || 0,
+			totalCostUsd: result?.total_cost_usd || 0,
+			inputTokens: result?.input_tokens || 0,
+			outputTokens: result?.output_tokens || 0,
+			cacheReadInputTokens: result?.cache_read_input_tokens || 0,
+			cacheCreationInputTokens: result?.cache_creation_input_tokens || 0,
+		};
+	}
+
+	/**
+	 * Get top models by usage
+	 */
+	getTopModels(limit = 10): Array<{ model: string; count: number }> {
+		return this.all<{ model: string; count: number }>(
+			`
+			SELECT model, COUNT(*) as count
+			FROM requests
+			WHERE model IS NOT NULL
+			GROUP BY model
+			ORDER BY count DESC
+			LIMIT ?
+		`,
+			[limit],
+		);
+	}
+
+	/**
+	 * Get recent error messages
+	 */
+	getRecentErrors(limit = 10): string[] {
+		const errors = this.all<{ error_message: string }>(
+			`
+			SELECT error_message
+			FROM requests
+			WHERE success = 0 AND error_message IS NOT NULL
+			ORDER BY timestamp DESC
+			LIMIT ?
+		`,
+			[limit],
+		);
+		return errors.map((e) => e.error_message);
+	}
+
 	getRequestsByAccount(since?: number): Array<{
 		accountId: string;
 		accountName: string | null;
