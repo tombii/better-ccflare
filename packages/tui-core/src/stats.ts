@@ -25,36 +25,10 @@ export interface Stats {
 export async function getStats(): Promise<Stats> {
 	const dbOps = DatabaseFactory.getInstance();
 	const db = dbOps.getDatabase();
-	// Get overall statistics
-	const stats = db
-		.query(
-			`
-				SELECT 
-					COUNT(*) as totalRequests,
-					SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successfulRequests,
-					AVG(response_time_ms) as avgResponseTime,
-					SUM(total_tokens) as totalTokens,
-					SUM(cost_usd) as totalCostUsd,
-					SUM(input_tokens) as inputTokens,
-					SUM(cache_read_input_tokens) as cacheReadInputTokens,
-					SUM(cache_creation_input_tokens) as cacheCreationInputTokens,
-					SUM(output_tokens) as outputTokens
-				FROM requests
-			`,
-		)
-		.get() as
-		| {
-				totalRequests: number;
-				successfulRequests: number;
-				avgResponseTime: number | null;
-				totalTokens: number | null;
-				totalCostUsd: number | null;
-				inputTokens: number | null;
-				cacheReadInputTokens: number | null;
-				cacheCreationInputTokens: number | null;
-				outputTokens: number | null;
-		  }
-		| undefined;
+	const requestRepository = dbOps.getRequestRepository();
+
+	// Get overall statistics using the repository method
+	const stats = requestRepository.aggregateStats();
 
 	const accountCount = db
 		.query("SELECT COUNT(*) as count FROM accounts")
@@ -114,36 +88,26 @@ export async function getStats(): Promise<Stats> {
 	});
 
 	// Get recent errors
-	const recentErrors = db
-		.query(
-			`
-				SELECT error_message
-				FROM requests
-				WHERE success = 0 AND error_message IS NOT NULL
-				ORDER BY timestamp DESC
-				LIMIT 10
-			`,
-		)
-		.all() as Array<{ error_message: string }>;
+	const recentErrors = requestRepository.getRecentErrors();
 
 	return {
-		totalRequests: stats?.totalRequests || 0,
+		totalRequests: stats.totalRequests,
 		successRate,
 		activeAccounts: accountCount?.count || 0,
-		avgResponseTime: Math.round(stats?.avgResponseTime || 0),
-		totalTokens: stats?.totalTokens || 0,
-		totalCostUsd: stats?.totalCostUsd || 0,
+		avgResponseTime: Math.round(stats.avgResponseTime || 0),
+		totalTokens: stats.totalTokens,
+		totalCostUsd: stats.totalCostUsd,
 		tokenDetails:
-			stats?.inputTokens || stats?.outputTokens
+			stats.inputTokens || stats.outputTokens
 				? {
-						inputTokens: stats?.inputTokens || 0,
-						cacheReadInputTokens: stats?.cacheReadInputTokens || 0,
-						cacheCreationInputTokens: stats?.cacheCreationInputTokens || 0,
-						outputTokens: stats?.outputTokens || 0,
+						inputTokens: stats.inputTokens,
+						cacheReadInputTokens: stats.cacheReadInputTokens,
+						cacheCreationInputTokens: stats.cacheCreationInputTokens,
+						outputTokens: stats.outputTokens,
 					}
 				: undefined,
 		accounts: accountsWithStats,
-		recentErrors: recentErrors.map((e) => e.error_message),
+		recentErrors,
 	};
 }
 

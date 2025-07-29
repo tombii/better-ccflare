@@ -1,4 +1,3 @@
-import type { Database } from "bun:sqlite";
 import { NO_ACCOUNT_ID } from "@claudeflare/core";
 import type { DatabaseOperations } from "@claudeflare/database";
 import { jsonResponse } from "@claudeflare/http-common";
@@ -6,29 +5,18 @@ import { jsonResponse } from "@claudeflare/http-common";
 /**
  * Create a stats handler
  */
-export function createStatsHandler(db: Database) {
+export function createStatsHandler(dbOps: DatabaseOperations) {
 	return (): Response => {
-		const stats = db
-			.query(
-				`
-				SELECT 
-					COUNT(*) as totalRequests,
-					SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successfulRequests,
-					AVG(response_time_ms) as avgResponseTime,
-					SUM(total_tokens) as totalTokens,
-					SUM(cost_usd) as totalCostUsd
-				FROM requests
-			`,
-			)
-			// biome-ignore lint/suspicious/noExplicitAny: Database query results can vary in shape
-			.get() as any;
+		const requestRepository = dbOps.getRequestRepository();
+		const stats = requestRepository.aggregateStats();
 
+		const db = dbOps.getDatabase();
 		const accountCount = db
 			.query("SELECT COUNT(*) as count FROM accounts")
 			.get() as { count: number } | undefined;
 
 		const successRate =
-			stats?.totalRequests > 0
+			stats.totalRequests > 0
 				? Math.round((stats.successfulRequests / stats.totalRequests) * 100)
 				: 0;
 
@@ -91,42 +79,21 @@ export function createStatsHandler(db: Database) {
 		});
 
 		// Get recent errors
-		const recentErrors = db
-			.query(
-				`
-				SELECT error_message
-				FROM requests
-				WHERE success = 0 AND error_message IS NOT NULL
-				ORDER BY timestamp DESC
-				LIMIT 10
-			`,
-			)
-			.all() as Array<{ error_message: string }>;
+		const recentErrors = requestRepository.getRecentErrors();
 
 		// Get top models
-		const topModels = db
-			.query(
-				`
-				SELECT model, COUNT(*) as count
-				FROM requests
-				WHERE model IS NOT NULL
-				GROUP BY model
-				ORDER BY count DESC
-				LIMIT 10
-			`,
-			)
-			.all() as Array<{ model: string; count: number }>;
+		const topModels = requestRepository.getTopModels();
 
 		const response = {
-			totalRequests: stats?.totalRequests || 0,
+			totalRequests: stats.totalRequests,
 			successRate,
 			activeAccounts: accountCount?.count || 0,
-			avgResponseTime: Math.round(stats?.avgResponseTime || 0),
-			totalTokens: stats?.totalTokens || 0,
-			totalCostUsd: stats?.totalCostUsd || 0,
+			avgResponseTime: Math.round(stats.avgResponseTime || 0),
+			totalTokens: stats.totalTokens,
+			totalCostUsd: stats.totalCostUsd,
 			topModels,
 			accounts: accountsWithStats,
-			recentErrors: recentErrors.map((e) => e.error_message),
+			recentErrors,
 		};
 
 		return jsonResponse(response);
