@@ -1,8 +1,7 @@
 import { Pause, Play, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type LogEntry } from "../api";
-import { useApiData } from "../hooks/useApiData";
-import { useApiError } from "../hooks/useApiError";
+import { useLogHistory } from "../hooks/queries";
 import { Button } from "./ui/button";
 import {
 	Card,
@@ -13,7 +12,6 @@ import {
 } from "./ui/card";
 
 export function LogsTab() {
-	const { formatError } = useApiError();
 	const [logs, setLogs] = useState<LogEntry[]>([]);
 	const [paused, setPaused] = useState(false);
 	const [autoScroll, setAutoScroll] = useState(true);
@@ -34,10 +32,13 @@ export function LogsTab() {
 	}, []);
 
 	// Load historical logs on mount
-	const { loading, error } = useApiData(() => api.getLogHistory(), {
-		onSuccess: (history) => setLogs(history),
-		onError: formatError,
-	});
+	const { data: history, isLoading: loading, error } = useLogHistory();
+
+	useEffect(() => {
+		if (history) {
+			setLogs(history);
+		}
+	}, [history]);
 
 	useEffect(() => {
 		if (!paused && !loading) {
@@ -119,7 +120,9 @@ export function LogsTab() {
 					{loading ? (
 						<p className="text-muted-foreground">Loading logs...</p>
 					) : error ? (
-						<p className="text-destructive">Error: {error}</p>
+						<p className="text-destructive">
+							Error: {error instanceof Error ? error.message : String(error)}
+						</p>
 					) : logs.length === 0 ? (
 						<p className="text-muted-foreground">No logs yet...</p>
 					) : (

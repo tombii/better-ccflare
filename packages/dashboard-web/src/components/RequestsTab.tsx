@@ -4,10 +4,9 @@ import {
 	formatTokens,
 } from "@claudeflare/ui-common";
 import { ChevronDown, ChevronRight, Eye, RefreshCw } from "lucide-react";
-import { useCallback, useState } from "react";
-import { api, type RequestPayload, type RequestSummary } from "../api";
-import { REFRESH_INTERVALS } from "../constants";
-import { useApiData } from "../hooks/useApiData";
+import { useState } from "react";
+import type { RequestPayload, RequestSummary } from "../api";
+import { useRequests } from "../hooks/queries";
 import { CopyButton } from "./CopyButton";
 import { RequestDetailsModal } from "./RequestDetailsModal";
 import { TokenUsageDisplay } from "./TokenUsageDisplay";
@@ -21,43 +20,30 @@ import {
 	CardTitle,
 } from "./ui/card";
 
-interface RequestsData {
-	requests: RequestPayload[];
-	summaries: Map<string, RequestSummary>;
-}
-
 export function RequestsTab() {
 	const [expandedRequests, setExpandedRequests] = useState<Set<string>>(
 		new Set(),
 	);
 	const [modalRequest, setModalRequest] = useState<RequestPayload | null>(null);
 
-	const fetcher = useCallback(async (): Promise<RequestsData> => {
-		const [detailData, summaryData] = await Promise.all([
-			api.getRequestsDetail(200),
-			api.getRequestsSummary(200),
-		]);
-
-		// Create a map of summaries by ID
-		const summaryMap = new Map<string, RequestSummary>();
-		summaryData.forEach((summary) => {
-			summaryMap.set(summary.id, summary);
-		});
-
-		return {
-			requests: detailData,
-			summaries: summaryMap,
-		};
-	}, []);
-
 	const {
-		data,
-		loading,
+		data: requestsData,
+		isLoading: loading,
 		error,
 		refetch: loadRequests,
-	} = useApiData<RequestsData>(fetcher, {
-		refetchInterval: REFRESH_INTERVALS.fast,
-	});
+	} = useRequests(200);
+
+	// Transform the data to match the expected structure
+	const data = requestsData
+		? {
+				requests: requestsData.requests,
+				summaries: new Map(
+					requestsData.detailsMap.map(
+						(s: RequestSummary) => [s.id, s] as [string, RequestSummary],
+					),
+				),
+			}
+		: null;
 
 	const toggleExpanded = (id: string) => {
 		setExpandedRequests((prev) => {
@@ -105,9 +91,11 @@ export function RequestsTab() {
 		return (
 			<Card>
 				<CardContent className="pt-6">
-					<p className="text-destructive">Error: {error}</p>
+					<p className="text-destructive">
+						Error: {error instanceof Error ? error.message : String(error)}
+					</p>
 					<Button
-						onClick={loadRequests}
+						onClick={() => loadRequests()}
 						variant="outline"
 						size="sm"
 						className="mt-2"
@@ -130,7 +118,7 @@ export function RequestsTab() {
 							Detailed request and response data (last 200)
 						</CardDescription>
 					</div>
-					<Button onClick={loadRequests} variant="ghost" size="sm">
+					<Button onClick={() => loadRequests()} variant="ghost" size="sm">
 						<RefreshCw className="h-4 w-4" />
 					</Button>
 				</div>
