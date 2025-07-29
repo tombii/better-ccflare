@@ -9,3 +9,6 @@ export { DatabaseFactory } from "./factory";
 export { ensureSchema, runMigrations } from "./migrations";
 export { resolveDbPath } from "./paths";
 export { analyzeIndexUsage } from "./performance-indexes";
+
+// Re-export repository types
+export type { StatsRepository } from "./repositories/stats.repository";

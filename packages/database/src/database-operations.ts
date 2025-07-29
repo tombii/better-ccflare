@@ -11,6 +11,7 @@ import {
 	type RequestData,
 	RequestRepository,
 } from "./repositories/request.repository";
+import { StatsRepository } from "./repositories/stats.repository";
 import { StrategyRepository } from "./repositories/strategy.repository";
 
 export interface RuntimeConfig {
@@ -30,6 +31,7 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 	private requests: RequestRepository;
 	private oauth: OAuthRepository;
 	private strategy: StrategyRepository;
+	private stats: StatsRepository;
 
 	constructor(dbPath?: string) {
 		const resolvedPath = dbPath ?? resolveDbPath();
@@ -47,6 +49,7 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		this.requests = new RequestRepository(this.db);
 		this.oauth = new OAuthRepository(this.db);
 		this.strategy = new StrategyRepository(this.db);
+		this.stats = new StatsRepository(this.db);
 	}
 
 	setRuntimeConfig(runtime: RuntimeConfig): void {
@@ -292,5 +295,12 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 
 	dispose(): void {
 		this.close();
+	}
+
+	/**
+	 * Get the stats repository for consolidated stats access
+	 */
+	getStatsRepository(): StatsRepository {
+		return this.stats;
 	}
 }

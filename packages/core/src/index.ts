@@ -1,6 +1,36 @@
-export * from "./constants";
-export * from "./errors";
+// Re-export only used items from each module
+export {
+	BUFFER_SIZES,
+	CACHE,
+	HTTP_STATUS,
+	LIMITS,
+	NETWORK,
+	TIME_CONSTANTS,
+} from "./constants";
+
+export {
+	logError,
+	OAuthError,
+	ProviderError,
+	RateLimitError,
+	ServiceUnavailableError,
+	TokenRefreshError,
+	ValidationError,
+} from "./errors";
+
 export * from "./lifecycle";
-export * from "./pricing";
+
+export {
+	estimateCostUSD,
+	setPricingLogger,
+	TokenBreakdown,
+} from "./pricing";
+
 export * from "./strategy";
-export * from "./validation";
+
+export {
+	patterns,
+	sanitizers,
+	validateNumber,
+	validateString,
+} from "./validation";

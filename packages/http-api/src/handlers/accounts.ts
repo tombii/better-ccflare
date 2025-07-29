@@ -15,7 +15,7 @@ import {
 	jsonResponse,
 	NotFound,
 } from "@claudeflare/http-common";
-import { generatePKCE, getOAuthProvider } from "@claudeflare/providers";
+import { createOAuthFlow } from "@claudeflare/oauth-flow";
 import type { AccountResponse } from "../types";
 
 /**
@@ -163,7 +163,7 @@ export function createAccountTierUpdateHandler(dbOps: DatabaseOperations) {
 }
 
 // Session ID generation for OAuth flow
-function generateSessionId(): string {
+function _generateSessionId(): string {
 	return crypto.randomUUID();
 }
 
@@ -213,47 +213,41 @@ export function createAccountAddHandler(dbOps: DatabaseOperations) {
 
 			// Step 1: Initialize OAuth flow
 			if (step === "init") {
-				// Check if account already exists
-				const existingAccounts = dbOps.getAllAccounts();
-				if (existingAccounts.some((a) => a.name === name)) {
-					return errorResponse(
-						BadRequest(`Account with name '${name}' already exists`),
-					);
-				}
-
-				// Get OAuth provider
-				const oauthProvider = getOAuthProvider("anthropic");
-				if (!oauthProvider) {
-					return errorResponse(InternalServerError("OAuth provider not found"));
-				}
-
-				// Generate PKCE
-				const pkce = await generatePKCE();
 				const config = new Config();
-				const runtime = config.getRuntime();
-				const oauthConfig = oauthProvider.getOAuthConfig(mode);
-				oauthConfig.clientId = runtime.clientId;
+				const oauthFlow = await createOAuthFlow(dbOps, config);
 
-				// Generate session ID and auth URL
-				const sessionId = generateSessionId();
-				const authUrl = oauthProvider.generateAuthUrl(oauthConfig, pkce);
+				try {
+					// Begin OAuth flow using consolidated logic
+					const flowResult = await oauthFlow.begin({
+						name,
+						mode,
+					});
 
-				// Store PKCE verifier securely in database
-				dbOps.createOAuthSession(
-					sessionId,
-					name,
-					pkce.verifier,
-					mode,
-					tier,
-					10, // 10 minute TTL
-				);
+					// Store tier in session for later use
+					dbOps.createOAuthSession(
+						flowResult.sessionId,
+						name,
+						flowResult.pkce.verifier,
+						mode,
+						tier,
+						10, // 10 minute TTL
+					);
 
-				return jsonResponse({
-					success: true,
-					authUrl,
-					sessionId,
-					step: "authorize",
-				});
+					return jsonResponse({
+						success: true,
+						authUrl: flowResult.authUrl,
+						sessionId: flowResult.sessionId,
+						step: "authorize",
+					});
+				} catch (error) {
+					if (
+						error instanceof Error &&
+						error.message.includes("already exists")
+					) {
+						return errorResponse(BadRequest(error.message));
+					}
+					return errorResponse(InternalServerError((error as Error).message));
+				}
 			}
 
 			// Step 2: Handle OAuth callback
@@ -285,60 +279,56 @@ export function createAccountAddHandler(dbOps: DatabaseOperations) {
 
 				const { verifier, mode: savedMode, tier: savedTier } = oauthSession;
 
-				// Get OAuth provider
-				const oauthProvider = getOAuthProvider("anthropic");
-				if (!oauthProvider) {
-					return errorResponse(InternalServerError("OAuth provider not found"));
-				}
-
-				const config = new Config();
-				const runtime = config.getRuntime();
-				const oauthConfig = oauthProvider.getOAuthConfig(savedMode);
-				oauthConfig.clientId = runtime.clientId;
-
 				// Ensure code is provided
 				if (!code) {
 					return errorResponse(BadRequest("Authorization code is required"));
 				}
 
-				// Exchange code for tokens
-				const tokens = await oauthProvider.exchangeCode(
-					code,
-					verifier,
-					oauthConfig,
-				);
+				try {
+					// Create OAuth flow instance
+					const config = new Config();
+					const oauthFlow = await createOAuthFlow(dbOps, config);
 
-				// Create account in database
-				const db = dbOps.getDatabase();
-				const accountId = crypto.randomUUID();
-				db.run(
-					`
-					INSERT INTO accounts (
-						id, name, provider, refresh_token, access_token, expires_at, 
-						created_at, request_count, total_requests, account_tier
-					) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?)
-					`,
-					[
-						accountId,
-						name,
-						"anthropic",
-						tokens.refreshToken,
-						tokens.accessToken,
-						tokens.expiresAt,
-						Date.now(),
-						savedTier,
-					],
-				);
+					// We need to reconstruct the flow data since we can't pass the full BeginResult through HTTP
+					// The OAuth flow will handle the token exchange and account creation
+					const oauthProvider = await import("@claudeflare/providers").then(
+						(m) => m.getOAuthProvider("anthropic"),
+					);
+					if (!oauthProvider) {
+						throw new Error("OAuth provider not found");
+					}
+					const runtime = config.getRuntime();
+					const oauthConfig = oauthProvider.getOAuthConfig(savedMode);
+					oauthConfig.clientId = runtime.clientId;
+					
+					const flowData = {
+						sessionId,
+						authUrl: "", // Not needed for complete
+						pkce: { verifier, challenge: "" }, // Only verifier is needed
+						oauthConfig,
+					};
 
-				// Clean up OAuth session from database
-				dbOps.deleteOAuthSession(sessionId);
+					await oauthFlow.complete(
+						{ sessionId, code, tier: savedTier, name },
+						flowData,
+					);
 
-				return jsonResponse({
-					success: true,
-					message: `Account '${name}' added successfully!`,
-					mode: savedMode === "max" ? "Claude Max" : "Claude Console",
-					tier: savedTier,
-				});
+					// Clean up OAuth session from database
+					dbOps.deleteOAuthSession(sessionId);
+
+					return jsonResponse({
+						success: true,
+						message: `Account '${name}' added successfully!`,
+						mode: savedMode === "max" ? "Claude Max" : "Claude Console",
+						tier: savedTier,
+					});
+				} catch (error) {
+					return errorResponse(
+						error instanceof Error
+							? error
+							: new Error("Failed to complete OAuth flow"),
+					);
+				}
 			}
 
 			return errorResponse(BadRequest("Invalid step"));

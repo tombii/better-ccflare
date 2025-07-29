@@ -219,7 +219,7 @@ export function setPricingLogger(logger: Logger): void {
  * @returns Cost in dollars per token (NOT per million)
  * @throws If model or cost type is unknown
  */
-export async function getCostRate(
+async function getCostRate(
 	modelId: string,
 	kind: "input" | "output" | "cache_read" | "cache_write",
 ): Promise<number> {
