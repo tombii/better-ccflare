@@ -115,13 +115,13 @@ class API extends HttpClient {
 	}
 
 	async getRequestsDetail(
-		limit = API_LIMITS.requestsDetail,
+		limit: number = API_LIMITS.requestsDetail,
 	): Promise<RequestPayload[]> {
 		return this.get<RequestPayload[]>(`/api/requests/detail?limit=${limit}`);
 	}
 
 	async getRequestsSummary(
-		limit = API_LIMITS.requestsSummary,
+		limit: number = API_LIMITS.requestsSummary,
 	): Promise<RequestSummary[]> {
 		return this.get<RequestSummary[]>(`/api/requests?limit=${limit}`);
 	}

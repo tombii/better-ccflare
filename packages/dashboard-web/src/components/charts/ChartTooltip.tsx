@@ -1,9 +1,17 @@
-import type { TooltipProps } from "recharts";
 import { CHART_TOOLTIP_STYLE } from "../../constants";
 import type { TooltipFormatterValue } from "./types";
 
-interface ChartTooltipProps
-	extends TooltipProps<TooltipFormatterValue, string> {
+interface PayloadItem {
+	dataKey: string;
+	value: TooltipFormatterValue;
+	name?: string;
+	color?: string;
+}
+
+interface ChartTooltipProps {
+	active?: boolean;
+	payload?: PayloadItem[];
+	label?: string;
 	formatters?: Record<string, (value: TooltipFormatterValue) => string>;
 	labelFormatter?: (label: string) => string;
 	style?: keyof typeof CHART_TOOLTIP_STYLE | object;
@@ -24,7 +32,8 @@ export function ChartTooltip({
 	const tooltipStyle =
 		typeof style === "string" ? CHART_TOOLTIP_STYLE[style] : style;
 
-	const formattedLabel = labelFormatter ? labelFormatter(label) : label;
+	const formattedLabel =
+		labelFormatter && label ? labelFormatter(label) : label;
 
 	return (
 		<div className="p-3 rounded-md shadow-lg" style={tooltipStyle}>

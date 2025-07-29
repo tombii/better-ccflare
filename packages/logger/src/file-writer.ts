@@ -68,7 +68,7 @@ export class LogFileWriter implements Disposable {
 		}
 	}
 
-	async readLogs(limit = LIMITS.LOG_READ_DEFAULT): Promise<LogEvent[]> {
+	async readLogs(limit: number = LIMITS.LOG_READ_DEFAULT): Promise<LogEvent[]> {
 		if (!existsSync(this.logFile)) {
 			return [];
 		}

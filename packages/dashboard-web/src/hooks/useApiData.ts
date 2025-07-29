@@ -113,7 +113,8 @@ export function useApiData<T>(
 		if (dependencies.length > 0) {
 			fetch();
 		}
-	}, dependencies); // eslint-disable-line react-hooks/exhaustive-deps
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [...dependencies, fetch, dependencies.length]);
 
 	// Set up auto-refresh interval
 	useEffect(() => {

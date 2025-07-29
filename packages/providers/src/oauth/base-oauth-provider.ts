@@ -27,8 +27,11 @@ export abstract class BaseOAuthProvider {
 	/**
 	 * Generate authorization URL with PKCE
 	 */
-	generateAuthUrl(state: string): { url: string; verifier: string } {
-		const { codeChallenge, codeVerifier } = generatePKCE();
+	async generateAuthUrl(
+		state: string,
+	): Promise<{ url: string; verifier: string }> {
+		const { challenge: codeChallenge, verifier: codeVerifier } =
+			await generatePKCE();
 
 		const params = new URLSearchParams({
 			response_type: "code",
@@ -126,5 +129,5 @@ export abstract class BaseOAuthProvider {
 	/**
 	 * Parse token response - must be implemented by subclasses
 	 */
-	protected abstract parseTokenResponse(data: any): OAuthTokens;
+	protected abstract parseTokenResponse(data: unknown): OAuthTokens;
 }

@@ -136,9 +136,9 @@ export function BaseLineChart({
 							animationDuration={animationDuration}
 						/>
 					))}
-					{referenceLines.map((refLine, index) => (
+					{referenceLines.map((refLine) => (
 						<ReferenceLine
-							key={`ref-line-${index}`}
+							key={`ref-line-${refLine.y}`}
 							y={refLine.y}
 							stroke={refLine.stroke || COLORS.primary}
 							strokeDasharray={

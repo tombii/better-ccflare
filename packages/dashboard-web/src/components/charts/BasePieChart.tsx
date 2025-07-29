@@ -34,9 +34,7 @@ interface BasePieChartProps {
 	legendLayout?: "horizontal" | "vertical";
 	legendAlign?: "left" | "center" | "right";
 	legendVerticalAlign?: "top" | "middle" | "bottom";
-	renderLabel?:
-		| ((data: { name: string; value: number }) => ReactNode)
-		| boolean;
+	renderLabel?: boolean;
 	className?: string;
 	error?: Error | null;
 	emptyState?: ReactNode;
