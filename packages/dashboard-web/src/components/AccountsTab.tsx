@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { type Account, api } from "../api";
-import { useApiData } from "../hooks/useApiData";
+import { useAccounts } from "../hooks/queries";
 import { useApiError } from "../hooks/useApiError";
 import { Button } from "./ui/button";
 import {
@@ -33,12 +33,10 @@ export function AccountsTab() {
 	const { formatError } = useApiError();
 	const {
 		data: accounts,
-		loading,
+		isLoading: loading,
 		error,
 		refetch: loadAccounts,
-	} = useApiData<Account[]>(() => api.getAccounts(), {
-		fetchOnMount: true,
-	});
+	} = useAccounts();
 
 	const [adding, setAdding] = useState(false);
 	const [authStep, setAuthStep] = useState<"form" | "code">("form");
@@ -155,7 +153,7 @@ export function AccountsTab() {
 		);
 	}
 
-	const displayError = error || actionError;
+	const displayError = error ? formatError(error) : actionError;
 
 	return (
 		<div className="space-y-4">

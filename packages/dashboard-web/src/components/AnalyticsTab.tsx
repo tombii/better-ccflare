@@ -12,15 +12,13 @@ import {
 	XAxis,
 	YAxis,
 } from "recharts";
-import { api } from "../api";
 import {
 	CHART_HEIGHTS,
 	CHART_PROPS,
 	COLORS,
 	type TimeRange,
 } from "../constants";
-import { useApiData } from "../hooks/useApiData";
-import { useApiError } from "../hooks/useApiError";
+import { useAnalytics } from "../hooks/queries";
 import {
 	BaseAreaChart,
 	BaseBarChart,
@@ -58,7 +56,6 @@ interface FilterState {
 }
 
 export function AnalyticsTab() {
-	const { formatError } = useApiError();
 	const [timeRange, setTimeRange] = useState<TimeRange>("1h");
 	const [selectedMetric, setSelectedMetric] = useState("requests");
 	const [filterOpen, setFilterOpen] = useState(false);
@@ -70,12 +67,10 @@ export function AnalyticsTab() {
 	});
 
 	// Fetch analytics data with automatic refetch on dependency changes
-	const { data: analytics, loading } = useApiData(
-		() => api.getAnalytics(timeRange, filters, viewMode),
-		{
-			dependencies: [timeRange, filters, viewMode],
-			onError: formatError,
-		},
+	const { data: analytics, isLoading: loading } = useAnalytics(
+		timeRange,
+		filters,
+		viewMode,
 	);
 
 	// Get unique accounts and models from analytics data

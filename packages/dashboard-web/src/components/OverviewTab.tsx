@@ -15,10 +15,8 @@ import {
 	XCircle,
 } from "lucide-react";
 import { useMemo } from "react";
-import { api } from "../api";
 import { CHART_COLORS, COLORS, REFRESH_INTERVALS } from "../constants";
-import { useApiData } from "../hooks/useApiData";
-import { useApiError } from "../hooks/useApiError";
+import { useAccounts, useAnalytics, useStats } from "../hooks/queries";
 import {
 	BaseAreaChart,
 	BaseBarChart,
@@ -91,32 +89,20 @@ function MetricCard({
 }
 
 export function OverviewTab() {
-	const { formatError } = useApiError();
-
-	// Fetch all data in a single combined request
-	const { data: combinedData, loading } = useApiData(
-		async () => {
-			const [statsData, analyticsData, accountsData] = await Promise.all([
-				api.getStats(),
-				api.getAnalytics("24h"),
-				api.getAccounts(),
-			]);
-			return {
-				stats: statsData,
-				analytics: analyticsData,
-				accounts: accountsData,
-			};
-		},
-		{
-			refetchInterval: REFRESH_INTERVALS.default,
-			onError: formatError,
-		},
+	// Fetch all data using React Query hooks
+	const { data: stats, isLoading: statsLoading } = useStats(
+		REFRESH_INTERVALS.default,
 	);
+	const { data: analytics, isLoading: analyticsLoading } = useAnalytics(
+		"24h",
+		{ accounts: [], models: [], status: "all" },
+		"normal",
+	);
+	const { data: accounts, isLoading: accountsLoading } = useAccounts();
 
-	// Extract data from combined result
-	const stats = combinedData?.stats || null;
-	const analytics = combinedData?.analytics || null;
-	const accounts = combinedData?.accounts || null;
+	const loading = statsLoading || analyticsLoading || accountsLoading;
+	const combinedData =
+		stats && analytics && accounts ? { stats, analytics, accounts } : null;
 
 	// Transform time series data
 	const timeSeriesData = useMemo(() => {
