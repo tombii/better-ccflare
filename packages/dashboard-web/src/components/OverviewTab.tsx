@@ -41,6 +41,7 @@ export function OverviewTab() {
 			successRate: point.successRate,
 			responseTime: Math.round(point.avgResponseTime),
 			cost: point.costUsd.toFixed(2),
+			tokensPerSecond: point.avgTokensPerSecond || 0,
 		}));
 	}, [analytics]);
 
@@ -59,10 +60,12 @@ export function OverviewTab() {
 	let deltaSuccessRate: number | null = null;
 	let deltaResponseTime: number | null = null;
 	let deltaCost: number | null = null;
+	let deltaOutputSpeed: number | null = null;
 	let trendRequests: "up" | "down" | "flat" = "flat";
 	let trendSuccessRate: "up" | "down" | "flat" = "flat";
 	let trendResponseTime: "up" | "down" | "flat" = "flat";
 	let trendCost: "up" | "down" | "flat" = "flat";
+	let trendOutputSpeed: "up" | "down" | "flat" = "flat";
 
 	if (timeSeriesData.length >= 2) {
 		const lastBucket = timeSeriesData[timeSeriesData.length - 1];
@@ -74,14 +77,18 @@ export function OverviewTab() {
 			lastBucket.successRate,
 			prevBucket.successRate,
 		);
-		// For response time, lower is better, so we invert the calculation
+		// For response time, calculate normal percentage change
 		deltaResponseTime = pctChange(
-			prevBucket.responseTime,
 			lastBucket.responseTime,
+			prevBucket.responseTime,
 		);
 		deltaCost = pctChange(
 			Number.parseFloat(lastBucket.cost),
 			Number.parseFloat(prevBucket.cost),
+		);
+		deltaOutputSpeed = pctChange(
+			lastBucket.tokensPerSecond,
+			prevBucket.tokensPerSecond,
 		);
 
 		// Determine trends
@@ -93,15 +100,22 @@ export function OverviewTab() {
 					? "up"
 					: "down"
 				: "flat";
-		// For response time, lower is better (negative change is good)
+		// For response time, higher is worse (positive change is bad)
 		trendResponseTime =
 			deltaResponseTime !== null
 				? deltaResponseTime >= 0
-					? "up"
-					: "down"
+					? "down"
+					: "up"
 				: "flat";
 		// For cost, higher is bad (positive change is bad)
 		trendCost = deltaCost !== null ? (deltaCost >= 0 ? "down" : "up") : "flat";
+		// For output speed, higher is better
+		trendOutputSpeed =
+			deltaOutputSpeed !== null
+				? deltaOutputSpeed >= 0
+					? "up"
+					: "down"
+				: "flat";
 	}
 
 	// Use analytics data for model distribution
@@ -153,6 +167,8 @@ export function OverviewTab() {
 				<MetricCard
 					title="Output Speed"
 					value={formatTokensPerSecond(analytics?.totals.avgTokensPerSecond)}
+					change={deltaOutputSpeed !== null ? deltaOutputSpeed : undefined}
+					trend={trendOutputSpeed}
 					icon={Zap}
 				/>
 			</div>
