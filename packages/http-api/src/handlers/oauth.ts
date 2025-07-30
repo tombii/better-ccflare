@@ -7,7 +7,10 @@ import {
 	InternalServerError,
 	jsonResponse,
 } from "@claudeflare/http-common";
+import { Logger } from "@claudeflare/logger";
 import { createOAuthFlow } from "@claudeflare/oauth-flow";
+
+const log = new Logger("OAuthHandler");
 
 /**
  * Create an OAuth initialization handler
@@ -76,7 +79,7 @@ export function createOAuthInitHandler(dbOps: DatabaseOperations) {
 				return errorResponse(InternalServerError((error as Error).message));
 			}
 		} catch (error) {
-			console.error("OAuth init error:", error);
+			log.error("OAuth init error:", error);
 			return errorResponse(
 				error instanceof Error
 					? error
@@ -175,7 +178,7 @@ export function createOAuthCallbackHandler(dbOps: DatabaseOperations) {
 				);
 			}
 		} catch (error) {
-			console.error("OAuth callback error:", error);
+			log.error("OAuth callback error:", error);
 			return errorResponse(
 				error instanceof Error
 					? error

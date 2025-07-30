@@ -7,6 +7,10 @@ import {
 	createAccountsListHandler,
 	createAccountTierUpdateHandler,
 } from "./handlers/accounts";
+import {
+	createAgentPreferenceUpdateHandler,
+	createAgentsListHandler,
+} from "./handlers/agents";
 import { createAnalyticsHandler } from "./handlers/analytics";
 import { createConfigHandlers } from "./handlers/config";
 import { createHealthHandler } from "./handlers/health";
@@ -59,6 +63,7 @@ export class APIRouter {
 		const analyticsHandler = createAnalyticsHandler(this.context);
 		const oauthInitHandler = createOAuthInitHandler(dbOps);
 		const oauthCallbackHandler = createOAuthCallbackHandler(dbOps);
+		const agentsHandler = createAgentsListHandler(dbOps);
 
 		// Register routes
 		this.handlers.set("GET:/health", () => healthHandler());
@@ -105,6 +110,7 @@ export class APIRouter {
 		this.handlers.set("GET:/api/analytics", (_req, url) => {
 			return analyticsHandler(url.searchParams);
 		});
+		this.handlers.set("GET:/api/agents", () => agentsHandler());
 	}
 
 	/**
@@ -172,6 +178,23 @@ export class APIRouter {
 			if (parts.length === 4 && method === "DELETE") {
 				const removeHandler = createAccountRemoveHandler(this.context.dbOps);
 				return await this.wrapHandler((req) => removeHandler(req, accountId))(
+					req,
+					url,
+				);
+			}
+		}
+
+		// Check for dynamic agent endpoints
+		if (path.startsWith("/api/agents/")) {
+			const parts = path.split("/");
+			const agentId = parts[3];
+
+			// Agent preference update
+			if (path.endsWith("/preference") && method === "POST") {
+				const preferenceHandler = createAgentPreferenceUpdateHandler(
+					this.context.dbOps,
+				);
+				return await this.wrapHandler((req) => preferenceHandler(req, agentId))(
 					req,
 					url,
 				);

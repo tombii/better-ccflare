@@ -15,7 +15,10 @@ import {
 	jsonResponse,
 	NotFound,
 } from "@claudeflare/http-common";
+import { Logger } from "@claudeflare/logger";
 import type { AccountResponse } from "../types";
+
+const log = new Logger("AccountsHandler");
 
 /**
  * Create an accounts list handler
@@ -244,7 +247,7 @@ export function createAccountAddHandler(
 				return errorResponse(InternalServerError((error as Error).message));
 			}
 		} catch (error) {
-			console.error("Account add error:", error);
+			log.error("Account add error:", error);
 			return errorResponse(
 				error instanceof Error ? error : new Error("Failed to add account"),
 			);

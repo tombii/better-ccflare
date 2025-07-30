@@ -39,6 +39,7 @@ export function createRequestsSummaryHandler(db: Database) {
 			cache_creation_input_tokens: number | null;
 			output_tokens: number | null;
 			cost_usd: number | null;
+			agent_used: string | null;
 		}>;
 
 		const response: RequestResponse[] = requests.map((request) => ({
@@ -62,6 +63,7 @@ export function createRequestsSummaryHandler(db: Database) {
 				request.cache_creation_input_tokens || undefined,
 			outputTokens: request.output_tokens || undefined,
 			costUsd: request.cost_usd || undefined,
+			agentUsed: request.agent_used || undefined,
 		}));
 
 		return jsonResponse(response);
