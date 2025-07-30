@@ -317,6 +317,10 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		return this.agentPreferences.deletePreference(agentId);
 	}
 
+	setBulkAgentPreferences(agentIds: string[], model: string): void {
+		this.agentPreferences.setBulkPreferences(agentIds, model);
+	}
+
 	close(): void {
 		// Ensure all write operations are flushed before closing
 		this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");

@@ -14,6 +14,8 @@ export const useAgents = () => {
 	return useQuery({
 		queryKey: queryKeys.agents(),
 		queryFn: () => api.getAgents(),
+		refetchInterval: REFRESH_INTERVALS.slow, // Poll every 60 seconds for new agents
+		refetchIntervalInBackground: true, // Continue polling when tab is not focused
 	});
 };
 
@@ -106,6 +108,38 @@ export const useUpdateAgentPreference = () => {
 	return useMutation({
 		mutationFn: ({ agentId, model }: { agentId: string; model: string }) =>
 			api.updateAgentPreference(agentId, model),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.agents() });
+		},
+	});
+};
+
+export const useDefaultAgentModel = () => {
+	return useQuery({
+		queryKey: queryKeys.defaultAgentModel(),
+		queryFn: () => api.getDefaultAgentModel(),
+		refetchInterval: REFRESH_INTERVALS.slow, // Poll for config changes
+		refetchIntervalInBackground: true, // Continue polling when tab is not focused
+	});
+};
+
+export const useSetDefaultAgentModel = () => {
+	const queryClient = useQueryClient();
+	return useMutation({
+		mutationFn: (model: string) => api.setDefaultAgentModel(model),
+		onSuccess: () => {
+			queryClient.invalidateQueries({
+				queryKey: queryKeys.defaultAgentModel(),
+			});
+			queryClient.invalidateQueries({ queryKey: queryKeys.agents() });
+		},
+	});
+};
+
+export const useBulkUpdateAgentPreferences = () => {
+	const queryClient = useQueryClient();
+	return useMutation({
+		mutationFn: (model: string) => api.setBulkAgentPreferences(model),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.agents() });
 		},

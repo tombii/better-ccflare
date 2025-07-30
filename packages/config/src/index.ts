@@ -28,6 +28,7 @@ export interface ConfigData {
 	retry_backoff?: number;
 	session_duration_ms?: number;
 	port?: number;
+	default_agent_model?: string;
 	[key: string]: string | number | boolean | undefined;
 }
 
@@ -120,11 +121,33 @@ export class Config extends EventEmitter {
 		this.set("lb_strategy", strategy);
 	}
 
+	getDefaultAgentModel(): string {
+		// First check environment variable
+		const envModel = process.env.DEFAULT_AGENT_MODEL;
+		if (envModel) {
+			return envModel;
+		}
+
+		// Then check config file
+		const configModel = this.data.default_agent_model;
+		if (configModel) {
+			return configModel;
+		}
+
+		// Default to claude-sonnet-4
+		return "claude-sonnet-4-20250514";
+	}
+
+	setDefaultAgentModel(model: string): void {
+		this.set("default_agent_model", model);
+	}
+
 	getAllSettings(): Record<string, string | number | boolean | undefined> {
 		// Include current strategy (which might come from env)
 		return {
 			...this.data,
 			lb_strategy: this.getStrategy(),
+			default_agent_model: this.getDefaultAgentModel(),
 		};
 	}
 
