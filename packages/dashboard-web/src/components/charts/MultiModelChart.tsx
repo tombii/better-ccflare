@@ -29,7 +29,14 @@ interface MultiModelChartProps {
 		[model: string]: string | number;
 	}>;
 	models: string[];
-	metric: "requests" | "tokens" | "cost" | "responseTime" | "tokensPerSecond";
+	metric:
+		| "requests"
+		| "tokens"
+		| "cost"
+		| "responseTime"
+		| "tokensPerSecond"
+		| "errorRate"
+		| "cacheHitRate";
 	loading?: boolean;
 	height?: number;
 	viewMode?: "normal" | "cumulative";
@@ -70,6 +77,10 @@ function getMetricLabel(metric: string): string {
 			return "Response Time (ms)";
 		case "tokensPerSecond":
 			return "Tokens/Second";
+		case "errorRate":
+			return "Error Rate (%)";
+		case "cacheHitRate":
+			return "Cache Hit Rate (%)";
 		default:
 			return metric;
 	}
@@ -85,6 +96,9 @@ function formatValue(value: number, metric: string): string {
 			return formatTokensPerSecond(value);
 		case "responseTime":
 			return `${value.toFixed(0)}ms`;
+		case "errorRate":
+		case "cacheHitRate":
+			return `${value.toFixed(1)}%`;
 		default:
 			return formatNumber(value);
 	}

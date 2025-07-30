@@ -198,7 +198,13 @@ export function AnalyticsTab() {
 				<>
 					{/* Secondary Charts Row */}
 					<div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-						<PerformanceIndicatorsChart data={data} loading={loading} />
+						<PerformanceIndicatorsChart
+							data={data}
+							loading={loading}
+							modelBreakdown={modelBreakdown}
+							rawTimeSeries={analytics?.timeSeries}
+							timeRange={timeRange}
+						/>
 						<TokenUsageBreakdown
 							tokenBreakdown={tokenBreakdown}
 							timeRange={timeRange}
