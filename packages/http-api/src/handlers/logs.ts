@@ -1,6 +1,8 @@
 import { sseResponse } from "@claudeflare/http-common";
-import { logBus } from "@claudeflare/logger";
+import { Logger, logBus } from "@claudeflare/logger";
 import type { LogEvent } from "@claudeflare/types";
+
+const log = new Logger("LogsHandler");
 
 /**
  * Create a logs stream handler using Server-Sent Events
@@ -19,7 +21,7 @@ export function createLogsStreamHandler() {
 				const initialData = `data: ${JSON.stringify({ connected: true })}\n\n`;
 				await writer.write(encoder.encode(initialData));
 			} catch (e) {
-				console.error("Error sending initial message:", e);
+				log.error("Error sending initial message:", e);
 			}
 		})();
 

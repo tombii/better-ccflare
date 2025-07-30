@@ -3,8 +3,11 @@ import {
 	InternalServerError,
 	jsonResponse,
 } from "@claudeflare/http-common";
+import { Logger } from "@claudeflare/logger";
 import { NO_ACCOUNT_ID } from "@claudeflare/types";
 import type { AnalyticsResponse, APIContext } from "../types";
+
+const log = new Logger("AnalyticsHandler");
 
 interface BucketConfig {
 	bucketMs: number;
@@ -373,7 +376,7 @@ export function createAnalyticsHandler(context: APIContext) {
 
 			return jsonResponse(response);
 		} catch (error) {
-			console.error("Analytics error:", error);
+			log.error("Analytics error:", error);
 			return errorResponse(
 				InternalServerError("Failed to fetch analytics data"),
 			);
