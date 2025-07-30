@@ -25,9 +25,8 @@ export {
 	setPricingLogger,
 	type TokenBreakdown,
 } from "./pricing";
-
+export * from "./request-events";
 export * from "./strategy";
-
 export {
 	patterns,
 	sanitizers,

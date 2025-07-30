@@ -8,6 +8,7 @@ import { ChevronDown, ChevronRight, Eye, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import type { RequestPayload, RequestSummary } from "../api";
 import { useRequests } from "../hooks/queries";
+import { useRequestStream } from "../hooks/useRequestStream";
 import { CopyButton } from "./CopyButton";
 import { RequestDetailsModal } from "./RequestDetailsModal";
 import { TokenUsageDisplay } from "./TokenUsageDisplay";
@@ -34,14 +35,19 @@ export function RequestsTab() {
 		refetch: loadRequests,
 	} = useRequests(200);
 
+	// Enable real-time updates
+	useRequestStream(200);
+
 	// Transform the data to match the expected structure
 	const data = requestsData
 		? {
 				requests: requestsData.requests,
 				summaries: new Map(
-					requestsData.detailsMap.map(
-						(s: RequestSummary) => [s.id, s] as [string, RequestSummary],
-					),
+					requestsData.detailsMap instanceof Map
+						? requestsData.detailsMap
+						: requestsData.detailsMap.map(
+								(s: RequestSummary) => [s.id, s] as [string, RequestSummary],
+							),
 				),
 			}
 		: null;
@@ -140,7 +146,7 @@ export function RequestsTab() {
 									key={request.id}
 									className={`border rounded-lg p-3 ${
 										isError ? "border-destructive/50" : "border-border"
-									}`}
+									} ${request.meta.pending ? "animate-pulse" : ""}`}
 								>
 									<button
 										type="button"
@@ -156,6 +162,16 @@ export function RequestsTab() {
 											<span className="text-sm font-mono">
 												{new Date(request.meta.timestamp).toLocaleTimeString()}
 											</span>
+											{(request.meta.method || summary?.method) && (
+												<span className="text-sm font-medium">
+													{request.meta.method || summary?.method}
+												</span>
+											)}
+											{(request.meta.path || summary?.path) && (
+												<span className="text-sm text-muted-foreground font-mono">
+													{request.meta.path || summary?.path}
+												</span>
+											)}
 											{statusCode && (
 												<span
 													className={`text-sm font-medium ${
