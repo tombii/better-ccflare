@@ -1,4 +1,4 @@
-import type { Account } from "@claudeflare/types";
+import type { Account } from "@ccflare/types";
 
 export interface TokenRefreshResult {
 	accessToken: string;

@@ -1,5 +1,5 @@
 import { dirname } from "node:path";
-import { Config, type RuntimeConfig } from "@claudeflare/config";
+import { Config, type RuntimeConfig } from "@ccflare/config";
 import {
 	CACHE,
 	DEFAULT_STRATEGY,
@@ -9,21 +9,21 @@ import {
 	setPricingLogger,
 	shutdown,
 	TIME_CONSTANTS,
-} from "@claudeflare/core";
-import { container, SERVICE_KEYS } from "@claudeflare/core-di";
+} from "@ccflare/core";
+import { container, SERVICE_KEYS } from "@ccflare/core-di";
 // Import React dashboard assets
-import dashboardManifest from "@claudeflare/dashboard-web/dist/manifest.json";
-import { AsyncDbWriter, DatabaseFactory } from "@claudeflare/database";
-import { APIRouter } from "@claudeflare/http-api";
-import { SessionStrategy } from "@claudeflare/load-balancer";
-import { Logger } from "@claudeflare/logger";
-import { getProvider } from "@claudeflare/providers";
+import dashboardManifest from "@ccflare/dashboard-web/dist/manifest.json";
+import { AsyncDbWriter, DatabaseFactory } from "@ccflare/database";
+import { APIRouter } from "@ccflare/http-api";
+import { SessionStrategy } from "@ccflare/load-balancer";
+import { Logger } from "@ccflare/logger";
+import { getProvider } from "@ccflare/providers";
 import {
 	getUsageWorker,
 	handleProxy,
 	type ProxyContext,
 	terminateUsageWorker,
-} from "@claudeflare/proxy";
+} from "@ccflare/proxy";
 import { serve } from "bun";
 
 // Helper function to resolve dashboard assets with fallback
@@ -31,7 +31,7 @@ function resolveDashboardAsset(assetPath: string): string | null {
 	try {
 		// Try resolving as a package first
 		return Bun.resolveSync(
-			`@claudeflare/dashboard-web/dist${assetPath}`,
+			`@ccflare/dashboard-web/dist${assetPath}`,
 			dirname(import.meta.path),
 		);
 	} catch {
@@ -216,7 +216,7 @@ export default function startServer(options?: {
 
 	// Log server startup
 	console.log(`
-🎯 Claudeflare Server v${process.env.npm_package_version || "1.0.0"}
+🎯 ccflare Server v${process.env.npm_package_version || "1.0.0"}
 🌐 Port: ${serverInstance.port}
 📊 Dashboard: ${withDashboard ? `http://localhost:${serverInstance.port}` : "disabled"}
 🔗 API Base: http://localhost:${serverInstance.port}/api

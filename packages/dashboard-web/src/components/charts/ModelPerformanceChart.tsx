@@ -1,4 +1,4 @@
-import { formatPercentage } from "@claudeflare/ui-common";
+import { formatPercentage } from "@ccflare/ui-common";
 import { COLORS } from "../../constants";
 import { BaseScatterChart } from "./BaseScatterChart";
 

@@ -1,7 +1,7 @@
 {
-	"name": "@claudeflare/agents",
+	"name": "@ccflare/agents",
 	"version": "1.0.0",
-	"description": "Agent discovery and management for Claudeflare",
+	"description": "Agent discovery and management for ccflare",
 	"main": "dist/index.js",
 	"types": "dist/index.d.ts",
 	"scripts": {
@@ -13,9 +13,9 @@
 		"typecheck": "tsc --noEmit"
 	},
 	"dependencies": {
-		"@claudeflare/config": "workspace:*",
-		"@claudeflare/logger": "workspace:*",
-		"@claudeflare/types": "workspace:*"
+		"@ccflare/config": "workspace:*",
+		"@ccflare/logger": "workspace:*",
+		"@ccflare/types": "workspace:*"
 	},
 	"devDependencies": {
 		"@types/node": "^22.5.4",

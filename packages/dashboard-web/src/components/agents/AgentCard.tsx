@@ -1,5 +1,5 @@
-import type { Agent } from "@claudeflare/types";
-import { ALLOWED_MODELS } from "@claudeflare/types";
+import type { Agent } from "@ccflare/types";
+import { ALLOWED_MODELS } from "@ccflare/types";
 import { Bot } from "lucide-react";
 import {
 	Card,

@@ -7,8 +7,8 @@ import {
 	NETWORK,
 	type StrategyName,
 	TIME_CONSTANTS,
-} from "@claudeflare/core";
-import { Logger } from "@claudeflare/logger";
+} from "@ccflare/core";
+import { Logger } from "@ccflare/logger";
 import { resolveConfigPath } from "./paths";
 
 const log = new Logger("Config");
@@ -186,6 +186,6 @@ export class Config extends EventEmitter {
 }
 
 // Re-export types
-export type { StrategyName } from "@claudeflare/core";
+export type { StrategyName } from "@ccflare/core";
 export { resolveConfigPath } from "./paths";
 export { getPlatformConfigDir } from "./paths-common";

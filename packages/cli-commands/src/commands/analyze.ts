@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
-import { TIME_CONSTANTS } from "@claudeflare/core";
-import { analyzeIndexUsage } from "@claudeflare/database";
+import { TIME_CONSTANTS } from "@ccflare/core";
+import { analyzeIndexUsage } from "@ccflare/database";
 
 /**
  * Analyze query performance and index usage

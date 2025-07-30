@@ -1,4 +1,4 @@
-import { OAuthError } from "@claudeflare/core";
+import { OAuthError } from "@ccflare/core";
 import type {
 	OAuthProvider,
 	OAuthProviderConfig,

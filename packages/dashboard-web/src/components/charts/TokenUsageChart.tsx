@@ -1,4 +1,4 @@
-import { formatTokens } from "@claudeflare/ui-common";
+import { formatTokens } from "@ccflare/ui-common";
 import { COLORS } from "../../constants";
 import { BaseAreaChart } from "./BaseAreaChart";
 

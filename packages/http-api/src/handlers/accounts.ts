@@ -1,21 +1,21 @@
 import type { Database } from "bun:sqlite";
-import * as cliCommands from "@claudeflare/cli-commands";
-import type { Config } from "@claudeflare/config";
+import * as cliCommands from "@ccflare/cli-commands";
+import type { Config } from "@ccflare/config";
 import {
 	patterns,
 	sanitizers,
 	validateNumber,
 	validateString,
-} from "@claudeflare/core";
-import type { DatabaseOperations } from "@claudeflare/database";
+} from "@ccflare/core";
+import type { DatabaseOperations } from "@ccflare/database";
 import {
 	BadRequest,
 	errorResponse,
 	InternalServerError,
 	jsonResponse,
 	NotFound,
-} from "@claudeflare/http-common";
-import { Logger } from "@claudeflare/logger";
+} from "@ccflare/http-common";
+import { Logger } from "@ccflare/logger";
 import type { AccountResponse } from "../types";
 
 const log = new Logger("AccountsHandler");

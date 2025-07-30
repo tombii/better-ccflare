@@ -1,4 +1,4 @@
-import { HttpClient, HttpError } from "@claudeflare/http-common";
+import { HttpClient, HttpError } from "@ccflare/http-common";
 import type {
 	AccountResponse,
 	Agent,
@@ -7,7 +7,7 @@ import type {
 	RequestPayload,
 	RequestResponse,
 	StatsWithAccounts,
-} from "@claudeflare/types";
+} from "@ccflare/types";
 import { API_LIMITS, API_TIMEOUT } from "./constants";
 
 // Re-export types with dashboard-specific aliases for backward compatibility
@@ -17,7 +17,7 @@ export type LogEntry = LogEvent;
 export type RequestSummary = RequestResponse;
 
 // Re-export types directly
-export type { Agent, RequestPayload } from "@claudeflare/types";
+export type { Agent, RequestPayload } from "@ccflare/types";
 
 class API extends HttpClient {
 	constructor() {

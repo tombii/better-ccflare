@@ -13,4 +13,4 @@ export type {
 	TierUpdateRequest,
 	TimePoint,
 	TokenBreakdown,
-} from "@claudeflare/types";
+} from "@ccflare/types";

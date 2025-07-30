@@ -1,5 +1,5 @@
-import { DatabaseFactory } from "@claudeflare/database";
-import type { RequestPayload } from "@claudeflare/types";
+import { DatabaseFactory } from "@ccflare/database";
+import type { RequestPayload } from "@ccflare/types";
 
 export type { RequestPayload };
 

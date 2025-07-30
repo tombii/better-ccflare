@@ -1,4 +1,4 @@
-import { errorResponse } from "@claudeflare/http-common";
+import { errorResponse } from "@ccflare/http-common";
 import type { APIContext } from "../types";
 
 export interface HandlerOptions {

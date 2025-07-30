@@ -1,7 +1,7 @@
-import { ServiceUnavailableError, TokenRefreshError } from "@claudeflare/core";
-import { Logger } from "@claudeflare/logger";
-import type { TokenRefreshResult } from "@claudeflare/providers";
-import type { Account } from "@claudeflare/types";
+import { ServiceUnavailableError, TokenRefreshError } from "@ccflare/core";
+import { Logger } from "@ccflare/logger";
+import type { TokenRefreshResult } from "@ccflare/providers";
+import type { Account } from "@ccflare/types";
 import { ERROR_MESSAGES, type ProxyContext } from "./proxy-types";
 
 const log = new Logger("TokenManager");

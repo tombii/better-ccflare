@@ -1,8 +1,8 @@
 import { parseArgs } from "node:util";
-import { Config } from "@claudeflare/config";
-import { shutdown } from "@claudeflare/core";
-import { container, SERVICE_KEYS } from "@claudeflare/core-di";
-import { DatabaseFactory } from "@claudeflare/database";
+import { Config } from "@ccflare/config";
+import { shutdown } from "@ccflare/core";
+import { container, SERVICE_KEYS } from "@ccflare/core-di";
+import { DatabaseFactory } from "@ccflare/database";
 import {
 	addAccount,
 	getAccountsList,
@@ -45,7 +45,7 @@ export async function runCli(argv: string[]): Promise<void> {
 				if (!name) {
 					console.error("Error: Account name is required");
 					console.log(
-						"Usage: claudeflare-cli add <name> [--mode <max|console>] [--tier <1|5|20>]",
+						"Usage: ccflare-cli add <name> [--mode <max|console>] [--tier <1|5|20>]",
 					);
 					process.exit(1);
 				}
@@ -105,7 +105,7 @@ export async function runCli(argv: string[]): Promise<void> {
 				const name = positionals[1];
 				if (!name) {
 					console.error("Error: Account name is required");
-					console.log("Usage: claudeflare-cli remove <name> [--force]");
+					console.log("Usage: ccflare-cli remove <name> [--force]");
 					process.exit(1);
 				}
 
@@ -139,7 +139,7 @@ export async function runCli(argv: string[]): Promise<void> {
 				const name = positionals[1];
 				if (!name) {
 					console.error("Error: Account name is required");
-					console.log("Usage: claudeflare-cli pause <name>");
+					console.log("Usage: ccflare-cli pause <name>");
 					process.exit(1);
 				}
 
@@ -155,7 +155,7 @@ export async function runCli(argv: string[]): Promise<void> {
 				const name = positionals[1];
 				if (!name) {
 					console.error("Error: Account name is required");
-					console.log("Usage: claudeflare-cli resume <name>");
+					console.log("Usage: ccflare-cli resume <name>");
 					process.exit(1);
 				}
 

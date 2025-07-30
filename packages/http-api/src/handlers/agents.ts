@@ -1,8 +1,8 @@
-import { agentRegistry } from "@claudeflare/agents";
-import type { DatabaseOperations } from "@claudeflare/database";
-import { BadRequest, HttpError, jsonResponse } from "@claudeflare/http-common";
-import { Logger } from "@claudeflare/logger";
-import { ALLOWED_MODELS } from "@claudeflare/types";
+import { agentRegistry } from "@ccflare/agents";
+import type { DatabaseOperations } from "@ccflare/database";
+import { BadRequest, HttpError, jsonResponse } from "@ccflare/http-common";
+import { Logger } from "@ccflare/logger";
+import { ALLOWED_MODELS } from "@ccflare/types";
 
 const log = new Logger("AgentsHandler");
 

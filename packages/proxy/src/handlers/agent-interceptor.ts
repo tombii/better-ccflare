@@ -1,7 +1,7 @@
-import { agentRegistry } from "@claudeflare/agents";
-import type { DatabaseOperations } from "@claudeflare/database";
-import { Logger } from "@claudeflare/logger";
-import type { Agent } from "@claudeflare/types";
+import { agentRegistry } from "@ccflare/agents";
+import type { DatabaseOperations } from "@ccflare/database";
+import { Logger } from "@ccflare/logger";
+import type { Agent } from "@ccflare/types";
 
 const log = new Logger("AgentInterceptor");
 

@@ -1,4 +1,4 @@
-import { TIME_CONSTANTS } from "@claudeflare/core";
+import { TIME_CONSTANTS } from "@ccflare/core";
 
 /**
  * Format duration in milliseconds to human-readable string

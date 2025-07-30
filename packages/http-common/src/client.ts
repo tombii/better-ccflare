@@ -1,4 +1,4 @@
-import { HttpError, parseHttpError } from "@claudeflare/errors";
+import { HttpError, parseHttpError } from "@ccflare/errors";
 
 export interface RequestOptions extends RequestInit {
 	timeout?: number;

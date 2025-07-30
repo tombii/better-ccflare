@@ -1,4 +1,4 @@
-import { BUFFER_SIZES } from "@claudeflare/core";
+import { BUFFER_SIZES } from "@ccflare/core";
 
 /**
  * Tees a ReadableStream to capture data without blocking the original stream.

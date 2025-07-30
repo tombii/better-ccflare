@@ -1,4 +1,4 @@
-import { AccountPresenter } from "@claudeflare/ui-common";
+import { AccountPresenter } from "@ccflare/ui-common";
 import { AlertCircle, CheckCircle, Pause, Play, Trash2 } from "lucide-react";
 import type { Account } from "../../api";
 import { Button } from "../ui/button";

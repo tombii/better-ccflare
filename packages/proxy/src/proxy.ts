@@ -1,5 +1,5 @@
-import { ServiceUnavailableError } from "@claudeflare/core";
-import { Logger } from "@claudeflare/logger";
+import { ServiceUnavailableError } from "@ccflare/core";
+import { Logger } from "@ccflare/logger";
 import {
 	createRequestMetadata,
 	ERROR_MESSAGES,

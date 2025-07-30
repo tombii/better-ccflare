@@ -6,7 +6,7 @@ export {
 	ServiceUnavailableError,
 	TokenRefreshError,
 	ValidationError,
-} from "@claudeflare/core";
+} from "@ccflare/core";
 
 // Error type constants
 export const ERROR_TYPES = {
