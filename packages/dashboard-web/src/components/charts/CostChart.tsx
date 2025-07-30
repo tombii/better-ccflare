@@ -1,4 +1,4 @@
-import { formatCost } from "@claudeflare/ui-common";
+import { formatCost } from "@ccflare/ui-common";
 import { COLORS } from "../../constants";
 import { BaseAreaChart } from "./BaseAreaChart";
 

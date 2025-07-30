@@ -1,4 +1,4 @@
-import { NETWORK } from "@claudeflare/core";
+import { NETWORK } from "@ccflare/core";
 import { Box, Text, useInput } from "ink";
 
 interface ServerScreenProps {

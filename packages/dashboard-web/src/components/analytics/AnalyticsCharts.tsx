@@ -1,4 +1,4 @@
-import { formatCost, formatNumber, formatTokens } from "@claudeflare/ui-common";
+import { formatCost, formatNumber, formatTokens } from "@ccflare/ui-common";
 import {
 	Area,
 	AreaChart,

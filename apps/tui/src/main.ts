@@ -1,13 +1,13 @@
 #!/usr/bin/env bun
-import { Config } from "@claudeflare/config";
-import { NETWORK, shutdown } from "@claudeflare/core";
-import { container, SERVICE_KEYS } from "@claudeflare/core-di";
-import { DatabaseFactory } from "@claudeflare/database";
-import { Logger } from "@claudeflare/logger";
+import { Config } from "@ccflare/config";
+import { NETWORK, shutdown } from "@ccflare/core";
+import { container, SERVICE_KEYS } from "@ccflare/core-di";
+import { DatabaseFactory } from "@ccflare/database";
+import { Logger } from "@ccflare/logger";
 // Import server
-import startServer from "@claudeflare/server";
-import * as tuiCore from "@claudeflare/tui-core";
-import { parseArgs } from "@claudeflare/tui-core";
+import startServer from "@ccflare/server";
+import * as tuiCore from "@ccflare/tui-core";
+import { parseArgs } from "@ccflare/tui-core";
 import { render } from "ink";
 import React from "react";
 import { App } from "./App";
@@ -38,9 +38,9 @@ async function main() {
 	// Handle help
 	if (parsed.help) {
 		console.log(`
-🎯 Claudeflare - Load Balancer for Claude
+🎯 ccflare - Load Balancer for Claude
 
-Usage: claudeflare [options]
+Usage: ccflare [options]
 
 Options:
   --serve              Start API server with dashboard
@@ -60,15 +60,15 @@ Options:
   --help, -h           Show this help message
 
 Interactive Mode:
-  claudeflare          Launch interactive TUI (default)
+  ccflare          Launch interactive TUI (default)
 
 Examples:
-  claudeflare                        # Interactive mode
-  claudeflare --serve                # Start server
-  claudeflare --add-account work     # Add account
-  claudeflare --pause work           # Pause account
-  claudeflare --analyze              # Run performance analysis
-  claudeflare --stats                # View stats
+  ccflare                        # Interactive mode
+  ccflare --serve                # Start server
+  ccflare --add-account work     # Add account
+  ccflare --pause work           # Pause account
+  ccflare --analyze              # Run performance analysis
+  ccflare --stats                # View stats
 `);
 		process.exit(0);
 	}

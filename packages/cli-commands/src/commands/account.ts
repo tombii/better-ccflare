@@ -1,7 +1,7 @@
-import type { Config } from "@claudeflare/config";
-import type { DatabaseOperations } from "@claudeflare/database";
-import { createOAuthFlow } from "@claudeflare/oauth-flow";
-import type { AccountListItem } from "@claudeflare/types";
+import type { Config } from "@ccflare/config";
+import type { DatabaseOperations } from "@ccflare/database";
+import { createOAuthFlow } from "@ccflare/oauth-flow";
+import type { AccountListItem } from "@ccflare/types";
 import {
 	type PromptAdapter,
 	promptAccountRemovalConfirmation,
@@ -18,7 +18,7 @@ export interface AddAccountOptions {
 }
 
 // Re-export AccountListItem from types for backward compatibility
-export type { AccountListItem } from "@claudeflare/types";
+export type { AccountListItem } from "@ccflare/types";
 
 // Add mode property to AccountListItem for CLI display
 export interface AccountListItemWithMode extends AccountListItem {

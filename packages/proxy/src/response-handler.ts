@@ -1,4 +1,4 @@
-import type { Account } from "@claudeflare/types";
+import type { Account } from "@ccflare/types";
 import type { ProxyContext } from "./handlers";
 import type { ChunkMessage, EndMessage, StartMessage } from "./worker-messages";
 

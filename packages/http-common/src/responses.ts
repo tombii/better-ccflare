@@ -1,4 +1,4 @@
-import { Logger } from "@claudeflare/logger";
+import { Logger } from "@ccflare/logger";
 import { HttpError } from "./errors";
 
 const log = new Logger("HttpCommon");

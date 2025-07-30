@@ -2,7 +2,7 @@
  * Consolidated stats repository to eliminate duplication between tui-core and http-api
  */
 import type { Database } from "bun:sqlite";
-import { NO_ACCOUNT_ID } from "@claudeflare/types";
+import { NO_ACCOUNT_ID } from "@ccflare/types";
 
 export interface AccountStats {
 	name: string;

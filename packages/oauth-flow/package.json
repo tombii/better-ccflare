@@ -1,5 +1,5 @@
 {
-	"name": "@claudeflare/oauth-flow",
+	"name": "@ccflare/oauth-flow",
 	"version": "0.1.0",
 	"type": "module",
 	"main": "./src/index.ts",
@@ -7,9 +7,9 @@
 		"typecheck": "bunx tsc --noEmit"
 	},
 	"dependencies": {
-		"@claudeflare/config": "workspace:*",
-		"@claudeflare/database": "workspace:*",
-		"@claudeflare/providers": "workspace:*",
-		"@claudeflare/types": "workspace:*"
+		"@ccflare/config": "workspace:*",
+		"@ccflare/database": "workspace:*",
+		"@ccflare/providers": "workspace:*",
+		"@ccflare/types": "workspace:*"
 	}
 }

@@ -2,7 +2,7 @@ import {
 	formatCost,
 	formatNumber,
 	formatPercentage,
-} from "@claudeflare/ui-common";
+} from "@ccflare/ui-common";
 import { format } from "date-fns";
 import { Activity, CheckCircle, Clock, DollarSign } from "lucide-react";
 import { useMemo } from "react";

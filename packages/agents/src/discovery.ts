@@ -1,8 +1,8 @@
 import { existsSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { Logger } from "@claudeflare/logger";
-import type { Agent, AllowedModel } from "@claudeflare/types";
+import { Logger } from "@ccflare/logger";
+import type { Agent, AllowedModel } from "@ccflare/types";
 import { getAgentsDirectory } from "./paths";
 
 interface AgentCache {

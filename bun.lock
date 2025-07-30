@@ -2,7 +2,7 @@
   "lockfileVersion": 1,
   "workspaces": {
     "": {
-      "name": "claudeflare",
+      "name": "ccflare",
       "devDependencies": {
         "@biomejs/biome": "2.1.2",
         "@types/bun": "latest",
@@ -11,39 +11,39 @@
       },
     },
     "apps/lander": {
-      "name": "@claudeflare/lander",
+      "name": "@ccflare/lander",
       "version": "1.0.0",
     },
     "apps/server": {
-      "name": "@claudeflare/server",
+      "name": "@ccflare/server",
       "version": "0.1.0",
       "dependencies": {
-        "@claudeflare/config": "workspace:*",
-        "@claudeflare/core": "workspace:*",
-        "@claudeflare/core-di": "workspace:*",
-        "@claudeflare/dashboard-web": "workspace:*",
-        "@claudeflare/database": "workspace:*",
-        "@claudeflare/http-api": "workspace:*",
-        "@claudeflare/load-balancer": "workspace:*",
-        "@claudeflare/logger": "workspace:*",
-        "@claudeflare/proxy": "workspace:*",
-        "@claudeflare/types": "workspace:*",
+        "@ccflare/config": "workspace:*",
+        "@ccflare/core": "workspace:*",
+        "@ccflare/core-di": "workspace:*",
+        "@ccflare/dashboard-web": "workspace:*",
+        "@ccflare/database": "workspace:*",
+        "@ccflare/http-api": "workspace:*",
+        "@ccflare/load-balancer": "workspace:*",
+        "@ccflare/logger": "workspace:*",
+        "@ccflare/proxy": "workspace:*",
+        "@ccflare/types": "workspace:*",
       },
     },
     "apps/tui": {
-      "name": "claudeflare",
+      "name": "ccflare",
       "version": "1.0.0",
       "bin": {
-        "claudeflare": "./dist/claudeflare",
+        "ccflare": "./dist/ccflare",
       },
       "dependencies": {
-        "@claudeflare/config": "workspace:*",
-        "@claudeflare/core-di": "workspace:*",
-        "@claudeflare/database": "workspace:*",
-        "@claudeflare/logger": "workspace:*",
-        "@claudeflare/server": "workspace:*",
-        "@claudeflare/tui-core": "workspace:*",
-        "@claudeflare/ui-common": "workspace:*",
+        "@ccflare/config": "workspace:*",
+        "@ccflare/core-di": "workspace:*",
+        "@ccflare/database": "workspace:*",
+        "@ccflare/logger": "workspace:*",
+        "@ccflare/server": "workspace:*",
+        "@ccflare/tui-core": "workspace:*",
+        "@ccflare/ui-common": "workspace:*",
         "ink": "^6.0.0",
         "ink-select-input": "^6.0.0",
         "ink-spinner": "^5.0.0",
@@ -57,12 +57,12 @@
       },
     },
     "packages/agents": {
-      "name": "@claudeflare/agents",
+      "name": "@ccflare/agents",
       "version": "1.0.0",
       "dependencies": {
-        "@claudeflare/config": "workspace:*",
-        "@claudeflare/logger": "workspace:*",
-        "@claudeflare/types": "workspace:*",
+        "@ccflare/config": "workspace:*",
+        "@ccflare/logger": "workspace:*",
+        "@ccflare/types": "workspace:*",
       },
       "devDependencies": {
         "@types/node": "^22.5.4",
@@ -70,43 +70,43 @@
       },
     },
     "packages/cli-commands": {
-      "name": "@claudeflare/cli-commands",
+      "name": "@ccflare/cli-commands",
       "version": "0.1.0",
       "dependencies": {
-        "@claudeflare/config": "workspace:*",
-        "@claudeflare/core": "workspace:*",
-        "@claudeflare/core-di": "workspace:*",
-        "@claudeflare/database": "workspace:*",
-        "@claudeflare/oauth-flow": "workspace:*",
-        "@claudeflare/providers": "workspace:*",
+        "@ccflare/config": "workspace:*",
+        "@ccflare/core": "workspace:*",
+        "@ccflare/core-di": "workspace:*",
+        "@ccflare/database": "workspace:*",
+        "@ccflare/oauth-flow": "workspace:*",
+        "@ccflare/providers": "workspace:*",
       },
     },
     "packages/config": {
-      "name": "@claudeflare/config",
+      "name": "@ccflare/config",
       "version": "0.1.0",
       "dependencies": {
-        "@claudeflare/core": "workspace:*",
-        "@claudeflare/logger": "workspace:*",
+        "@ccflare/core": "workspace:*",
+        "@ccflare/logger": "workspace:*",
       },
     },
     "packages/core": {
-      "name": "@claudeflare/core",
+      "name": "@ccflare/core",
       "version": "0.1.0",
       "dependencies": {
-        "@claudeflare/types": "workspace:*",
+        "@ccflare/types": "workspace:*",
       },
     },
     "packages/core-di": {
-      "name": "@claudeflare/core-di",
+      "name": "@ccflare/core-di",
       "version": "0.1.0",
     },
     "packages/dashboard-web": {
-      "name": "@claudeflare/dashboard-web",
+      "name": "@ccflare/dashboard-web",
       "version": "1.0.0",
       "dependencies": {
-        "@claudeflare/errors": "workspace:*",
-        "@claudeflare/ui-common": "workspace:*",
-        "@claudeflare/ui-constants": "workspace:*",
+        "@ccflare/errors": "workspace:*",
+        "@ccflare/ui-common": "workspace:*",
+        "@ccflare/ui-constants": "workspace:*",
         "@radix-ui/react-dialog": "^1.1.14",
         "@radix-ui/react-dropdown-menu": "^2.1.15",
         "@radix-ui/react-label": "^2.1.0",
@@ -139,18 +139,18 @@
       },
     },
     "packages/database": {
-      "name": "@claudeflare/database",
+      "name": "@ccflare/database",
       "version": "0.1.0",
       "dependencies": {
-        "@claudeflare/core": "workspace:*",
-        "@claudeflare/logger": "workspace:*",
+        "@ccflare/core": "workspace:*",
+        "@ccflare/logger": "workspace:*",
       },
     },
     "packages/errors": {
-      "name": "@claudeflare/errors",
+      "name": "@ccflare/errors",
       "version": "1.0.0",
       "dependencies": {
-        "@claudeflare/core": "workspace:*",
+        "@ccflare/core": "workspace:*",
       },
       "devDependencies": {
         "@types/bun": "1.1.15",
@@ -158,25 +158,25 @@
       },
     },
     "packages/http-api": {
-      "name": "@claudeflare/http-api",
+      "name": "@ccflare/http-api",
       "version": "0.1.0",
       "dependencies": {
-        "@claudeflare/agents": "workspace:*",
-        "@claudeflare/config": "workspace:*",
-        "@claudeflare/core": "workspace:*",
-        "@claudeflare/database": "workspace:*",
-        "@claudeflare/oauth-flow": "workspace:*",
-        "@claudeflare/providers": "workspace:*",
-        "@claudeflare/types": "workspace:*",
+        "@ccflare/agents": "workspace:*",
+        "@ccflare/config": "workspace:*",
+        "@ccflare/core": "workspace:*",
+        "@ccflare/database": "workspace:*",
+        "@ccflare/oauth-flow": "workspace:*",
+        "@ccflare/providers": "workspace:*",
+        "@ccflare/types": "workspace:*",
       },
     },
     "packages/http-common": {
-      "name": "@claudeflare/http-common",
+      "name": "@ccflare/http-common",
       "version": "0.0.0",
       "dependencies": {
-        "@claudeflare/errors": "workspace:*",
-        "@claudeflare/logger": "workspace:*",
-        "@claudeflare/types": "workspace:*",
+        "@ccflare/errors": "workspace:*",
+        "@ccflare/logger": "workspace:*",
+        "@ccflare/types": "workspace:*",
       },
       "devDependencies": {
         "@types/node": "^22.10.2",
@@ -184,78 +184,78 @@
       },
     },
     "packages/load-balancer": {
-      "name": "@claudeflare/load-balancer",
+      "name": "@ccflare/load-balancer",
       "version": "0.1.0",
       "dependencies": {
-        "@claudeflare/core": "workspace:*",
-        "@claudeflare/database": "workspace:*",
-        "@claudeflare/logger": "workspace:*",
+        "@ccflare/core": "workspace:*",
+        "@ccflare/database": "workspace:*",
+        "@ccflare/logger": "workspace:*",
       },
     },
     "packages/logger": {
-      "name": "@claudeflare/logger",
+      "name": "@ccflare/logger",
       "version": "0.1.0",
       "dependencies": {
-        "@claudeflare/core": "workspace:*",
-        "@claudeflare/types": "workspace:*",
+        "@ccflare/core": "workspace:*",
+        "@ccflare/types": "workspace:*",
       },
     },
     "packages/oauth-flow": {
-      "name": "@claudeflare/oauth-flow",
+      "name": "@ccflare/oauth-flow",
       "version": "0.1.0",
       "dependencies": {
-        "@claudeflare/config": "workspace:*",
-        "@claudeflare/database": "workspace:*",
-        "@claudeflare/providers": "workspace:*",
-        "@claudeflare/types": "workspace:*",
+        "@ccflare/config": "workspace:*",
+        "@ccflare/database": "workspace:*",
+        "@ccflare/providers": "workspace:*",
+        "@ccflare/types": "workspace:*",
       },
     },
     "packages/providers": {
-      "name": "@claudeflare/providers",
+      "name": "@ccflare/providers",
       "version": "0.1.0",
       "dependencies": {
-        "@claudeflare/core": "workspace:*",
+        "@ccflare/core": "workspace:*",
       },
     },
     "packages/proxy": {
-      "name": "@claudeflare/proxy",
+      "name": "@ccflare/proxy",
       "version": "0.1.0",
       "dependencies": {
-        "@claudeflare/agents": "workspace:*",
-        "@claudeflare/config": "workspace:*",
-        "@claudeflare/core": "workspace:*",
-        "@claudeflare/database": "workspace:*",
-        "@claudeflare/logger": "workspace:*",
-        "@claudeflare/providers": "workspace:*",
-        "@claudeflare/ui-common": "workspace:*",
+        "@ccflare/agents": "workspace:*",
+        "@ccflare/config": "workspace:*",
+        "@ccflare/core": "workspace:*",
+        "@ccflare/database": "workspace:*",
+        "@ccflare/logger": "workspace:*",
+        "@ccflare/providers": "workspace:*",
+        "@ccflare/ui-common": "workspace:*",
       },
     },
     "packages/tui-core": {
-      "name": "@claudeflare/tui-core",
+      "name": "@ccflare/tui-core",
       "version": "1.0.0",
       "dependencies": {
-        "@claudeflare/cli-commands": "workspace:*",
-        "@claudeflare/config": "workspace:*",
-        "@claudeflare/core": "workspace:*",
-        "@claudeflare/database": "workspace:*",
-        "@claudeflare/logger": "workspace:*",
-        "@claudeflare/oauth-flow": "workspace:*",
-        "@claudeflare/providers": "workspace:*",
-        "@claudeflare/types": "workspace:*",
+        "@ccflare/cli-commands": "workspace:*",
+        "@ccflare/config": "workspace:*",
+        "@ccflare/core": "workspace:*",
+        "@ccflare/database": "workspace:*",
+        "@ccflare/logger": "workspace:*",
+        "@ccflare/oauth-flow": "workspace:*",
+        "@ccflare/providers": "workspace:*",
+        "@ccflare/types": "workspace:*",
       },
       "devDependencies": {
         "@types/node": "^20.0.0",
       },
     },
     "packages/types": {
-      "name": "@claudeflare/types",
+      "name": "@ccflare/types",
       "version": "0.1.0",
     },
     "packages/ui-common": {
-      "name": "@claudeflare/ui-common",
+      "name": "@ccflare/ui-common",
       "version": "0.0.0",
       "dependencies": {
-        "@claudeflare/types": "workspace:*",
+        "@ccflare/types": "workspace:*",
       },
       "devDependencies": {
         "@types/node": "^22.10.2",
@@ -263,7 +263,7 @@
       },
     },
     "packages/ui-constants": {
-      "name": "@claudeflare/ui-constants",
+      "name": "@ccflare/ui-constants",
       "version": "1.0.0",
       "devDependencies": {
         "@types/bun": "1.1.15",
@@ -296,47 +296,47 @@
 
     "@biomejs/cli-win32-x64": ["@biomejs/cli-win32-x64@2.1.2", "", { "os": "win32", "cpu": "x64" }, "sha512-9zajnk59PMpjBkty3bK2IrjUsUHvqe9HWwyAWQBjGLE7MIBjbX2vwv1XPEhmO2RRuGoTkVx3WCanHrjAytICLA=="],
 
-    "@claudeflare/agents": ["@claudeflare/agents@workspace:packages/agents"],
+    "@ccflare/agents": ["@ccflare/agents@workspace:packages/agents"],
 
-    "@claudeflare/cli-commands": ["@claudeflare/cli-commands@workspace:packages/cli-commands"],
+    "@ccflare/cli-commands": ["@ccflare/cli-commands@workspace:packages/cli-commands"],
 
-    "@claudeflare/config": ["@claudeflare/config@workspace:packages/config"],
+    "@ccflare/config": ["@ccflare/config@workspace:packages/config"],
 
-    "@claudeflare/core": ["@claudeflare/core@workspace:packages/core"],
+    "@ccflare/core": ["@ccflare/core@workspace:packages/core"],
 
-    "@claudeflare/core-di": ["@claudeflare/core-di@workspace:packages/core-di"],
+    "@ccflare/core-di": ["@ccflare/core-di@workspace:packages/core-di"],
 
-    "@claudeflare/dashboard-web": ["@claudeflare/dashboard-web@workspace:packages/dashboard-web"],
+    "@ccflare/dashboard-web": ["@ccflare/dashboard-web@workspace:packages/dashboard-web"],
 
-    "@claudeflare/database": ["@claudeflare/database@workspace:packages/database"],
+    "@ccflare/database": ["@ccflare/database@workspace:packages/database"],
 
-    "@claudeflare/errors": ["@claudeflare/errors@workspace:packages/errors"],
+    "@ccflare/errors": ["@ccflare/errors@workspace:packages/errors"],
 
-    "@claudeflare/http-api": ["@claudeflare/http-api@workspace:packages/http-api"],
+    "@ccflare/http-api": ["@ccflare/http-api@workspace:packages/http-api"],
 
-    "@claudeflare/http-common": ["@claudeflare/http-common@workspace:packages/http-common"],
+    "@ccflare/http-common": ["@ccflare/http-common@workspace:packages/http-common"],
 
-    "@claudeflare/lander": ["@claudeflare/lander@workspace:apps/lander"],
+    "@ccflare/lander": ["@ccflare/lander@workspace:apps/lander"],
 
-    "@claudeflare/load-balancer": ["@claudeflare/load-balancer@workspace:packages/load-balancer"],
+    "@ccflare/load-balancer": ["@ccflare/load-balancer@workspace:packages/load-balancer"],
 
-    "@claudeflare/logger": ["@claudeflare/logger@workspace:packages/logger"],
+    "@ccflare/logger": ["@ccflare/logger@workspace:packages/logger"],
 
-    "@claudeflare/oauth-flow": ["@claudeflare/oauth-flow@workspace:packages/oauth-flow"],
+    "@ccflare/oauth-flow": ["@ccflare/oauth-flow@workspace:packages/oauth-flow"],
 
-    "@claudeflare/providers": ["@claudeflare/providers@workspace:packages/providers"],
+    "@ccflare/providers": ["@ccflare/providers@workspace:packages/providers"],
 
-    "@claudeflare/proxy": ["@claudeflare/proxy@workspace:packages/proxy"],
+    "@ccflare/proxy": ["@ccflare/proxy@workspace:packages/proxy"],
 
-    "@claudeflare/server": ["@claudeflare/server@workspace:apps/server"],
+    "@ccflare/server": ["@ccflare/server@workspace:apps/server"],
 
-    "@claudeflare/tui-core": ["@claudeflare/tui-core@workspace:packages/tui-core"],
+    "@ccflare/tui-core": ["@ccflare/tui-core@workspace:packages/tui-core"],
 
-    "@claudeflare/types": ["@claudeflare/types@workspace:packages/types"],
+    "@ccflare/types": ["@ccflare/types@workspace:packages/types"],
 
-    "@claudeflare/ui-common": ["@claudeflare/ui-common@workspace:packages/ui-common"],
+    "@ccflare/ui-common": ["@ccflare/ui-common@workspace:packages/ui-common"],
 
-    "@claudeflare/ui-constants": ["@claudeflare/ui-constants@workspace:packages/ui-constants"],
+    "@ccflare/ui-constants": ["@ccflare/ui-constants@workspace:packages/ui-constants"],
 
     "@floating-ui/core": ["@floating-ui/core@1.7.2", "", { "dependencies": { "@floating-ui/utils": "^0.2.10" } }, "sha512-wNB5ooIKHQc+Kui96jE/n69rHFWAVoxn5CAzL1Xdd8FG03cgY3MLO+GF9U3W737fYDSgPWA6MReKhBQBop6Pcw=="],
 
@@ -478,7 +478,7 @@
 
     "class-variance-authority": ["class-variance-authority@0.7.1", "", { "dependencies": { "clsx": "^2.1.1" } }, "sha512-Ka+9Trutv7G8M6WT6SeiRWz792K5qEqIGEGzXKhAE6xOWAY6pPH8U+9IY3oCMv6kqTmLsv7Xh/2w2RigkePMsg=="],
 
-    "claudeflare": ["claudeflare@workspace:apps/tui"],
+    "ccflare": ["ccflare@workspace:apps/tui"],
 
     "cli-boxes": ["cli-boxes@3.0.0", "", {}, "sha512-/lzGpEWL/8PfI0BmBOPRwp0c/wFNX1RdUML3jK/RcSBA9T8mZDdQpqYBKtCFTOfQbwPqWEOpjqW+Fnayc0969g=="],
 
@@ -656,17 +656,17 @@
 
     "yoga-layout": ["yoga-layout@3.2.1", "", {}, "sha512-0LPOt3AxKqMdFBZA3HBAt/t/8vIKq7VaQYbuA8WxCgung+p9TVyKRYdpvCb80HcdTN2NkbIKbhNwKUfm3tQywQ=="],
 
-    "@claudeflare/errors/@types/bun": ["@types/bun@1.1.15", "", { "dependencies": { "bun-types": "1.1.42" } }, "sha512-Fi7ND1jCq8O5iU3s9z3TKHggD0hidgpe7wSxyisviXpbMmY4B1KiokF3f/mmjOoDrEcf873tSpixgen7Wm9X0g=="],
+    "@ccflare/errors/@types/bun": ["@types/bun@1.1.15", "", { "dependencies": { "bun-types": "1.1.42" } }, "sha512-Fi7ND1jCq8O5iU3s9z3TKHggD0hidgpe7wSxyisviXpbMmY4B1KiokF3f/mmjOoDrEcf873tSpixgen7Wm9X0g=="],
 
-    "@claudeflare/errors/typescript": ["typescript@5.7.2", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-i5t66RHxDvVN40HfDd1PsEThGNnlMCMT3jMUuoh9/0TaqWevNontacunWyN02LA9/fIbEWlcHZcgTKb9QoaLfg=="],
+    "@ccflare/errors/typescript": ["typescript@5.7.2", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-i5t66RHxDvVN40HfDd1PsEThGNnlMCMT3jMUuoh9/0TaqWevNontacunWyN02LA9/fIbEWlcHZcgTKb9QoaLfg=="],
 
-    "@claudeflare/tui-core/@types/node": ["@types/node@20.19.9", "", { "dependencies": { "undici-types": "~6.21.0" } }, "sha512-cuVNgarYWZqxRJDQHEB58GEONhOK79QVR/qYx4S7kcUObQvUwvFnYxJuuHUKm2aieN9X3yZB4LZsuYNU1Qphsw=="],
+    "@ccflare/tui-core/@types/node": ["@types/node@20.19.9", "", { "dependencies": { "undici-types": "~6.21.0" } }, "sha512-cuVNgarYWZqxRJDQHEB58GEONhOK79QVR/qYx4S7kcUObQvUwvFnYxJuuHUKm2aieN9X3yZB4LZsuYNU1Qphsw=="],
 
-    "@claudeflare/ui-constants/@types/bun": ["@types/bun@1.1.15", "", { "dependencies": { "bun-types": "1.1.42" } }, "sha512-Fi7ND1jCq8O5iU3s9z3TKHggD0hidgpe7wSxyisviXpbMmY4B1KiokF3f/mmjOoDrEcf873tSpixgen7Wm9X0g=="],
+    "@ccflare/ui-constants/@types/bun": ["@types/bun@1.1.15", "", { "dependencies": { "bun-types": "1.1.42" } }, "sha512-Fi7ND1jCq8O5iU3s9z3TKHggD0hidgpe7wSxyisviXpbMmY4B1KiokF3f/mmjOoDrEcf873tSpixgen7Wm9X0g=="],
 
-    "@claudeflare/ui-constants/typescript": ["typescript@5.7.2", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-i5t66RHxDvVN40HfDd1PsEThGNnlMCMT3jMUuoh9/0TaqWevNontacunWyN02LA9/fIbEWlcHZcgTKb9QoaLfg=="],
+    "@ccflare/ui-constants/typescript": ["typescript@5.7.2", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-i5t66RHxDvVN40HfDd1PsEThGNnlMCMT3jMUuoh9/0TaqWevNontacunWyN02LA9/fIbEWlcHZcgTKb9QoaLfg=="],
 
-    "claudeflare/@types/node": ["@types/node@20.19.9", "", { "dependencies": { "undici-types": "~6.21.0" } }, "sha512-cuVNgarYWZqxRJDQHEB58GEONhOK79QVR/qYx4S7kcUObQvUwvFnYxJuuHUKm2aieN9X3yZB4LZsuYNU1Qphsw=="],
+    "ccflare/@types/node": ["@types/node@20.19.9", "", { "dependencies": { "undici-types": "~6.21.0" } }, "sha512-cuVNgarYWZqxRJDQHEB58GEONhOK79QVR/qYx4S7kcUObQvUwvFnYxJuuHUKm2aieN9X3yZB4LZsuYNU1Qphsw=="],
 
     "cli-truncate/slice-ansi": ["slice-ansi@5.0.0", "", { "dependencies": { "ansi-styles": "^6.0.0", "is-fullwidth-code-point": "^4.0.0" } }, "sha512-FC+lgizVPfie0kkhqUScwRu1O/lF6NOgJmlCgK+/LYxDCTk8sGelYaHDhFcDN+Sn3Cv+3VSa4Byeo+IMCzpMgQ=="],
 
@@ -676,16 +676,16 @@
 
     "slice-ansi/is-fullwidth-code-point": ["is-fullwidth-code-point@5.0.0", "", { "dependencies": { "get-east-asian-width": "^1.0.0" } }, "sha512-OVa3u9kkBbw7b8Xw5F9P+D/T9X+Z4+JruYVNapTjPYZYUznQ5YfWeFkOj606XYYW8yugTfC8Pj0hYqvi4ryAhA=="],
 
-    "@claudeflare/errors/@types/bun/bun-types": ["bun-types@1.1.42", "", { "dependencies": { "@types/node": "~20.12.8", "@types/ws": "~8.5.10" } }, "sha512-beMbnFqWbbBQHll/bn3phSwmoOQmnX2nt8NI9iOQKFbgR5Z6rlH3YuaMdlid8vp5XGct3/W4QVQBmhoOEoe4nw=="],
+    "@ccflare/errors/@types/bun/bun-types": ["bun-types@1.1.42", "", { "dependencies": { "@types/node": "~20.12.8", "@types/ws": "~8.5.10" } }, "sha512-beMbnFqWbbBQHll/bn3phSwmoOQmnX2nt8NI9iOQKFbgR5Z6rlH3YuaMdlid8vp5XGct3/W4QVQBmhoOEoe4nw=="],
 
-    "@claudeflare/ui-constants/@types/bun/bun-types": ["bun-types@1.1.42", "", { "dependencies": { "@types/node": "~20.12.8", "@types/ws": "~8.5.10" } }, "sha512-beMbnFqWbbBQHll/bn3phSwmoOQmnX2nt8NI9iOQKFbgR5Z6rlH3YuaMdlid8vp5XGct3/W4QVQBmhoOEoe4nw=="],
+    "@ccflare/ui-constants/@types/bun/bun-types": ["bun-types@1.1.42", "", { "dependencies": { "@types/node": "~20.12.8", "@types/ws": "~8.5.10" } }, "sha512-beMbnFqWbbBQHll/bn3phSwmoOQmnX2nt8NI9iOQKFbgR5Z6rlH3YuaMdlid8vp5XGct3/W4QVQBmhoOEoe4nw=="],
 
-    "@claudeflare/errors/@types/bun/bun-types/@types/node": ["@types/node@20.12.14", "", { "dependencies": { "undici-types": "~5.26.4" } }, "sha512-scnD59RpYD91xngrQQLGkE+6UrHUPzeKZWhhjBSa3HSkwjbQc38+q3RoIVEwxQGRw3M+j5hpNAM+lgV3cVormg=="],
+    "@ccflare/errors/@types/bun/bun-types/@types/node": ["@types/node@20.12.14", "", { "dependencies": { "undici-types": "~5.26.4" } }, "sha512-scnD59RpYD91xngrQQLGkE+6UrHUPzeKZWhhjBSa3HSkwjbQc38+q3RoIVEwxQGRw3M+j5hpNAM+lgV3cVormg=="],
 
-    "@claudeflare/ui-constants/@types/bun/bun-types/@types/node": ["@types/node@20.12.14", "", { "dependencies": { "undici-types": "~5.26.4" } }, "sha512-scnD59RpYD91xngrQQLGkE+6UrHUPzeKZWhhjBSa3HSkwjbQc38+q3RoIVEwxQGRw3M+j5hpNAM+lgV3cVormg=="],
+    "@ccflare/ui-constants/@types/bun/bun-types/@types/node": ["@types/node@20.12.14", "", { "dependencies": { "undici-types": "~5.26.4" } }, "sha512-scnD59RpYD91xngrQQLGkE+6UrHUPzeKZWhhjBSa3HSkwjbQc38+q3RoIVEwxQGRw3M+j5hpNAM+lgV3cVormg=="],
 
-    "@claudeflare/errors/@types/bun/bun-types/@types/node/undici-types": ["undici-types@5.26.5", "", {}, "sha512-JlCMO+ehdEIKqlFxk6IfVoAUVmgz7cU7zD/h9XZ0qzeosSHmUJVOzSQvvYSYWXkFXC+IfLKSIffhv0sVZup6pA=="],
+    "@ccflare/errors/@types/bun/bun-types/@types/node/undici-types": ["undici-types@5.26.5", "", {}, "sha512-JlCMO+ehdEIKqlFxk6IfVoAUVmgz7cU7zD/h9XZ0qzeosSHmUJVOzSQvvYSYWXkFXC+IfLKSIffhv0sVZup6pA=="],
 
-    "@claudeflare/ui-constants/@types/bun/bun-types/@types/node/undici-types": ["undici-types@5.26.5", "", {}, "sha512-JlCMO+ehdEIKqlFxk6IfVoAUVmgz7cU7zD/h9XZ0qzeosSHmUJVOzSQvvYSYWXkFXC+IfLKSIffhv0sVZup6pA=="],
+    "@ccflare/ui-constants/@types/bun/bun-types/@types/node/undici-types": ["undici-types@5.26.5", "", {}, "sha512-JlCMO+ehdEIKqlFxk6IfVoAUVmgz7cU7zD/h9XZ0qzeosSHmUJVOzSQvvYSYWXkFXC+IfLKSIffhv0sVZup6pA=="],
   }
 }

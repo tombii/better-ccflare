@@ -1,4 +1,4 @@
-import { formatPercentage } from "@claudeflare/ui-common";
+import { formatPercentage } from "@ccflare/ui-common";
 import { TrendingDown, TrendingUp } from "lucide-react";
 import { Card, CardContent } from "../ui/card";
 

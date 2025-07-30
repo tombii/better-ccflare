@@ -1,5 +1,5 @@
-import * as cliCommands from "@claudeflare/cli-commands";
-import { DatabaseFactory } from "@claudeflare/database";
+import * as cliCommands from "@ccflare/cli-commands";
+import { DatabaseFactory } from "@ccflare/database";
 
 export interface Stats {
 	totalRequests: number;

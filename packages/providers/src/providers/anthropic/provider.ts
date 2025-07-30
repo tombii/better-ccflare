@@ -1,6 +1,6 @@
-import { BUFFER_SIZES } from "@claudeflare/core";
-import { Logger } from "@claudeflare/logger";
-import type { Account } from "@claudeflare/types";
+import { BUFFER_SIZES } from "@ccflare/core";
+import { Logger } from "@ccflare/logger";
+import type { Account } from "@ccflare/types";
 import { BaseProvider } from "../../base";
 import type { RateLimitInfo, TokenRefreshResult } from "../../types";
 

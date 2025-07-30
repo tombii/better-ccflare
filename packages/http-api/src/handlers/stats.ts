@@ -1,5 +1,5 @@
-import type { DatabaseOperations } from "@claudeflare/database";
-import { jsonResponse } from "@claudeflare/http-common";
+import type { DatabaseOperations } from "@ccflare/database";
+import { jsonResponse } from "@ccflare/http-common";
 
 /**
  * Create a stats handler

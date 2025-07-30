@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
-import type { Config } from "@claudeflare/config";
-import type { DatabaseOperations } from "@claudeflare/database";
+import type { Config } from "@ccflare/config";
+import type { DatabaseOperations } from "@ccflare/database";
 import type { Account } from "./account";
 import type { RequestMeta } from "./api";
 import type { StrategyStore } from "./strategy";

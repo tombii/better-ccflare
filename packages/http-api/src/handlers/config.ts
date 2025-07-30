@@ -1,16 +1,16 @@
-import type { Config } from "@claudeflare/config";
+import type { Config } from "@ccflare/config";
 import {
 	NETWORK,
 	STRATEGIES,
 	type StrategyName,
 	TIME_CONSTANTS,
 	validateString,
-} from "@claudeflare/core";
+} from "@ccflare/core";
 import {
 	BadRequest,
 	errorResponse,
 	jsonResponse,
-} from "@claudeflare/http-common";
+} from "@ccflare/http-common";
 import type { ConfigResponse } from "../types";
 
 /**

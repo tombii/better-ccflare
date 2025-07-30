@@ -19,10 +19,10 @@ Always run:
 - `bun start` - Start the load balancer (port 8080)
 
 ### Managing accounts
-- `claudeflare --add-account <name>` - Add a new account
-- `claudeflare --list` - List all accounts
-- `claudeflare --remove <name>` - Remove an account
+- `ccflare --add-account <name>` - Add a new account
+- `ccflare --list` - List all accounts
+- `ccflare --remove <name>` - Remove an account
 
 ### Maintenance
-- `claudeflare --reset-stats` - Reset usage statistics
-- `claudeflare --clear-history` - Clear request history
+- `ccflare --reset-stats` - Reset usage statistics
+- `ccflare --clear-history` - Clear request history

@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { Logger } from "@claudeflare/logger";
+import { Logger } from "@ccflare/logger";
 
 const log = new Logger("PerformanceIndexes");
 

@@ -1,7 +1,7 @@
 {
-	"name": "@claudeflare/tui-core",
+	"name": "@ccflare/tui-core",
 	"version": "1.0.0",
-	"description": "Core controller logic for Claudeflare TUI",
+	"description": "Core controller logic for ccflare TUI",
 	"type": "module",
 	"main": "./src/index.ts",
 	"exports": {
@@ -11,14 +11,14 @@
 		"typecheck": "tsc --noEmit"
 	},
 	"dependencies": {
-		"@claudeflare/cli-commands": "workspace:*",
-		"@claudeflare/config": "workspace:*",
-		"@claudeflare/database": "workspace:*",
-		"@claudeflare/logger": "workspace:*",
-		"@claudeflare/core": "workspace:*",
-		"@claudeflare/oauth-flow": "workspace:*",
-		"@claudeflare/providers": "workspace:*",
-		"@claudeflare/types": "workspace:*"
+		"@ccflare/cli-commands": "workspace:*",
+		"@ccflare/config": "workspace:*",
+		"@ccflare/database": "workspace:*",
+		"@ccflare/logger": "workspace:*",
+		"@ccflare/core": "workspace:*",
+		"@ccflare/oauth-flow": "workspace:*",
+		"@ccflare/providers": "workspace:*",
+		"@ccflare/types": "workspace:*"
 	},
 	"devDependencies": {
 		"@types/node": "^20.0.0"

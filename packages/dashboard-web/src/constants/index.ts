@@ -11,4 +11,4 @@ export {
 	REFRESH_INTERVALS,
 	TIME_RANGES,
 	type TimeRange,
-} from "@claudeflare/ui-constants";
+} from "@ccflare/ui-constants";
