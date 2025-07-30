@@ -54,6 +54,7 @@ export async function proxyUnauthenticated(
 				timestamp: requestMeta.timestamp,
 				retryAttempt: 0,
 				failoverAttempts: 0,
+				agentUsed: requestMeta.agentUsed,
 			},
 			ctx,
 		);
@@ -130,6 +131,7 @@ export async function proxyWithAccount(
 				timestamp: requestMeta.timestamp,
 				retryAttempt: 0,
 				failoverAttempts,
+				agentUsed: requestMeta.agentUsed,
 			},
 			ctx,
 		);

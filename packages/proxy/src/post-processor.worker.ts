@@ -31,6 +31,7 @@ interface RequestState {
 		costUsd?: number;
 	};
 	lastActivity: number;
+	agentUsed?: string;
 }
 
 const log = new Logger("PostProcessor");
@@ -49,6 +50,38 @@ const MAX_BUFFER_SIZE =
 const TIMEOUT_MS = Number(
 	process.env.CF_STREAM_TIMEOUT_MS || TIME_CONSTANTS.STREAM_TIMEOUT_DEFAULT,
 );
+
+// Extract system prompt from request body
+function _extractSystemPrompt(requestBody: string | null): string | null {
+	if (!requestBody) return null;
+
+	try {
+		// Decode base64 request body
+		const decodedBody = Buffer.from(requestBody, "base64").toString("utf-8");
+		const parsed = JSON.parse(decodedBody);
+
+		// Check if there's a system property in the request
+		if (parsed.system) {
+			// Handle both string and array formats
+			if (typeof parsed.system === "string") {
+				return parsed.system;
+			} else if (Array.isArray(parsed.system)) {
+				// Concatenate all text from system messages
+				return parsed.system
+					.filter(
+						(item: { type?: string; text?: string }) =>
+							item.type === "text" && item.text,
+					)
+					.map((item: { type?: string; text?: string }) => item.text)
+					.join("\n");
+			}
+		}
+	} catch (error) {
+		log.debug("Failed to extract system prompt:", error);
+	}
+
+	return null;
+}
 
 // Parse SSE lines to extract usage (reuse existing logic)
 function parseSSELine(line: string): { event?: string; data?: string } {
@@ -142,6 +175,13 @@ async function handleStart(msg: StartMessage): Promise<void> {
 		usage: {},
 		lastActivity: Date.now(),
 	};
+
+	// Use agent from message if provided
+	if (msg.agentUsed) {
+		state.agentUsed = msg.agentUsed;
+		log.debug(`Agent '${msg.agentUsed}' used for request ${msg.requestId}`);
+	}
+
 	requests.set(msg.requestId, state);
 
 	// Save minimal request info immediately
@@ -232,6 +272,7 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 						cacheCreationInputTokens: state.usage.cacheCreationInputTokens,
 					}
 				: undefined,
+			state.agentUsed,
 		),
 	);
 

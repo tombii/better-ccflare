@@ -3,6 +3,7 @@ import { Logger } from "@claudeflare/logger";
 import {
 	createRequestMetadata,
 	ERROR_MESSAGES,
+	interceptAndModifyRequest,
 	type ProxyContext,
 	prepareRequestBody,
 	proxyUnauthenticated,
@@ -87,46 +88,63 @@ export async function handleProxy(
 	url: URL,
 	ctx: ProxyContext,
 ): Promise<Response> {
-	// 1. Create request metadata
-	const requestMeta = createRequestMetadata(req, url);
-
-	// 2. Validate provider can handle path
+	// 1. Validate provider can handle path
 	validateProviderPath(ctx.provider, url.pathname);
 
-	// 3. Prepare request body
-	const { buffer: requestBodyBuffer, createStream: createBodyStream } =
-		await prepareRequestBody(req);
+	// 2. Prepare request body
+	const { buffer: requestBodyBuffer } = await prepareRequestBody(req);
 
-	// 4. Select accounts
+	// 3. Intercept and modify request for agent model preferences
+	const { modifiedBody, agentUsed, originalModel, appliedModel } =
+		await interceptAndModifyRequest(requestBodyBuffer, ctx.dbOps);
+
+	// Use modified body if available
+	const finalBodyBuffer = modifiedBody || requestBodyBuffer;
+	const finalCreateBodyStream = () => {
+		if (!finalBodyBuffer) return undefined;
+		return new Response(finalBodyBuffer).body ?? undefined;
+	};
+
+	if (agentUsed && originalModel !== appliedModel) {
+		log.info(
+			`Agent ${agentUsed} detected, model changed from ${originalModel} to ${appliedModel}`,
+		);
+	}
+
+	// 4. Create request metadata with agent info
+	const requestMeta = createRequestMetadata(req, url);
+	requestMeta.agentUsed = agentUsed;
+
+	// 5. Select accounts
 	const accounts = selectAccountsForRequest(requestMeta, ctx);
 
-	// 5. Handle no accounts case
+	// 6. Handle no accounts case
 	if (accounts.length === 0) {
 		return proxyUnauthenticated(
 			req,
 			url,
 			requestMeta,
-			requestBodyBuffer,
-			createBodyStream,
+			finalBodyBuffer,
+			finalCreateBodyStream,
 			ctx,
 		);
 	}
 
-	// 6. Log selected accounts
+	// 7. Log selected accounts
 	log.info(
 		`Selected ${accounts.length} accounts: ${accounts.map((a) => a.name).join(", ")}`,
 	);
 	log.info(`Request: ${req.method} ${url.pathname}`);
 
-	// 7. Try each account
+	// 8. Try each account
 	for (let i = 0; i < accounts.length; i++) {
 		const response = await proxyWithAccount(
 			req,
 			url,
 			accounts[i],
 			requestMeta,
-			requestBodyBuffer,
-			createBodyStream,
+			finalBodyBuffer,
+			finalCreateBodyStream,
 			i,
 			ctx,
 		);
@@ -136,7 +154,7 @@ export async function handleProxy(
 		}
 	}
 
-	// 8. All accounts failed
+	// 9. All accounts failed
 	throw new ServiceUnavailableError(
 		`${ERROR_MESSAGES.ALL_ACCOUNTS_FAILED} (${accounts.length} attempted)`,
 		ctx.provider.name,

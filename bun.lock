@@ -56,6 +56,19 @@
         "react-devtools-core": "^5.0.0",
       },
     },
+    "packages/agents": {
+      "name": "@claudeflare/agents",
+      "version": "1.0.0",
+      "dependencies": {
+        "@claudeflare/config": "workspace:*",
+        "@claudeflare/logger": "workspace:*",
+        "@claudeflare/types": "workspace:*",
+      },
+      "devDependencies": {
+        "@types/node": "^22.5.4",
+        "typescript": "^5.7.2",
+      },
+    },
     "packages/cli-commands": {
       "name": "@claudeflare/cli-commands",
       "version": "0.1.0",
@@ -73,6 +86,7 @@
       "version": "0.1.0",
       "dependencies": {
         "@claudeflare/core": "workspace:*",
+        "@claudeflare/logger": "workspace:*",
       },
     },
     "packages/core": {
@@ -129,6 +143,7 @@
       "version": "0.1.0",
       "dependencies": {
         "@claudeflare/core": "workspace:*",
+        "@claudeflare/logger": "workspace:*",
       },
     },
     "packages/errors": {
@@ -146,6 +161,7 @@
       "name": "@claudeflare/http-api",
       "version": "0.1.0",
       "dependencies": {
+        "@claudeflare/agents": "workspace:*",
         "@claudeflare/config": "workspace:*",
         "@claudeflare/core": "workspace:*",
         "@claudeflare/database": "workspace:*",
@@ -159,6 +175,7 @@
       "version": "0.0.0",
       "dependencies": {
         "@claudeflare/errors": "workspace:*",
+        "@claudeflare/logger": "workspace:*",
         "@claudeflare/types": "workspace:*",
       },
       "devDependencies": {
@@ -204,6 +221,7 @@
       "name": "@claudeflare/proxy",
       "version": "0.1.0",
       "dependencies": {
+        "@claudeflare/agents": "workspace:*",
         "@claudeflare/config": "workspace:*",
         "@claudeflare/core": "workspace:*",
         "@claudeflare/database": "workspace:*",
@@ -277,6 +295,8 @@
     "@biomejs/cli-win32-arm64": ["@biomejs/cli-win32-arm64@2.1.2", "", { "os": "win32", "cpu": "arm64" }, "sha512-G8KWZli5ASOXA3yUQgx+M4pZRv3ND16h77UsdunUL17uYpcL/UC7RkWTdkfvMQvogVsAuz5JUcBDjgZHXxlKoA=="],
 
     "@biomejs/cli-win32-x64": ["@biomejs/cli-win32-x64@2.1.2", "", { "os": "win32", "cpu": "x64" }, "sha512-9zajnk59PMpjBkty3bK2IrjUsUHvqe9HWwyAWQBjGLE7MIBjbX2vwv1XPEhmO2RRuGoTkVx3WCanHrjAytICLA=="],
+
+    "@claudeflare/agents": ["@claudeflare/agents@workspace:packages/agents"],
 
     "@claudeflare/cli-commands": ["@claudeflare/cli-commands@workspace:packages/cli-commands"],
 

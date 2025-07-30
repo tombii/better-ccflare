@@ -19,6 +19,7 @@ export interface RequestRow {
 	cache_read_input_tokens: number | null;
 	cache_creation_input_tokens: number | null;
 	output_tokens: number | null;
+	agent_used: string | null;
 }
 
 // Domain model
@@ -42,6 +43,7 @@ export interface Request {
 	cacheReadInputTokens?: number;
 	cacheCreationInputTokens?: number;
 	outputTokens?: number;
+	agentUsed?: string;
 }
 
 // API response type
@@ -65,6 +67,7 @@ export interface RequestResponse {
 	cacheCreationInputTokens?: number;
 	outputTokens?: number;
 	costUsd?: number;
+	agentUsed?: string;
 }
 
 // Detailed request with payload
@@ -113,6 +116,7 @@ export function toRequest(row: RequestRow): Request {
 		cacheReadInputTokens: row.cache_read_input_tokens || undefined,
 		cacheCreationInputTokens: row.cache_creation_input_tokens || undefined,
 		outputTokens: row.output_tokens || undefined,
+		agentUsed: row.agent_used || undefined,
 	};
 }
 
@@ -137,6 +141,7 @@ export function toRequestResponse(request: Request): RequestResponse {
 		cacheCreationInputTokens: request.cacheCreationInputTokens,
 		outputTokens: request.outputTokens,
 		costUsd: request.costUsd,
+		agentUsed: request.agentUsed,
 	};
 }
 

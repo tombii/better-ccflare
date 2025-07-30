@@ -10,6 +10,7 @@
 		"typecheck": "bunx tsc --noEmit"
 	},
 	"dependencies": {
+		"@claudeflare/agents": "workspace:*",
 		"@claudeflare/core": "workspace:*",
 		"@claudeflare/database": "workspace:*",
 		"@claudeflare/config": "workspace:*",
