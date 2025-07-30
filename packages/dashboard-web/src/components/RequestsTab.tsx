@@ -4,7 +4,13 @@ import {
 	formatTokens,
 	formatTokensPerSecond,
 } from "@ccflare/ui-common";
-import { ChevronDown, ChevronRight, Eye, RefreshCw } from "lucide-react";
+import {
+	ChevronDown,
+	ChevronRight,
+	Eye,
+	Filter,
+	RefreshCw,
+} from "lucide-react";
 import { useState } from "react";
 import type { RequestPayload, RequestSummary } from "../api";
 import { useRequests } from "../hooks/queries";
@@ -21,12 +27,25 @@ import {
 	CardHeader,
 	CardTitle,
 } from "./ui/card";
+import { Input } from "./ui/input";
+import { Label } from "./ui/label";
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "./ui/select";
 
 export function RequestsTab() {
 	const [expandedRequests, setExpandedRequests] = useState<Set<string>>(
 		new Set(),
 	);
 	const [modalRequest, setModalRequest] = useState<RequestPayload | null>(null);
+	const [accountFilter, setAccountFilter] = useState<string>("all");
+	const [dateFrom, setDateFrom] = useState<string>("");
+	const [dateTo, setDateTo] = useState<string>("");
+	const [showFilters, setShowFilters] = useState(false);
 
 	const {
 		data: requestsData,
@@ -51,6 +70,44 @@ export function RequestsTab() {
 				),
 			}
 		: null;
+
+	// Extract unique accounts for filter dropdown
+	const uniqueAccounts = data
+		? Array.from(
+				new Set(
+					data.requests
+						.map((r) => r.meta.accountName || r.meta.accountId)
+						.filter(Boolean),
+				),
+			).sort()
+		: [];
+
+	// Filter requests based on selected filters
+	const filteredRequests = data
+		? data.requests.filter((request) => {
+				// Account filter
+				if (accountFilter !== "all") {
+					const requestAccount =
+						request.meta.accountName || request.meta.accountId;
+					if (requestAccount !== accountFilter) return false;
+				}
+
+				// Date range filter
+				const requestDate = new Date(request.meta.timestamp);
+				if (dateFrom) {
+					const fromDate = new Date(dateFrom);
+					fromDate.setHours(0, 0, 0, 0);
+					if (requestDate < fromDate) return false;
+				}
+				if (dateTo) {
+					const toDate = new Date(dateTo);
+					toDate.setHours(23, 59, 59, 999);
+					if (requestDate > toDate) return false;
+				}
+
+				return true;
+			})
+		: [];
 
 	const toggleExpanded = (id: string) => {
 		setExpandedRequests((prev) => {
@@ -125,17 +182,92 @@ export function RequestsTab() {
 							Detailed request and response data (last 200)
 						</CardDescription>
 					</div>
-					<Button onClick={() => loadRequests()} variant="ghost" size="sm">
-						<RefreshCw className="h-4 w-4" />
-					</Button>
+					<div className="flex gap-2">
+						<Button
+							onClick={() => setShowFilters(!showFilters)}
+							variant="outline"
+							size="sm"
+							className="relative"
+						>
+							<Filter className="h-4 w-4 mr-2" />
+							Filters
+							{(accountFilter !== "all" || dateFrom || dateTo) && (
+								<span className="absolute -top-1 -right-1 h-2 w-2 bg-primary rounded-full" />
+							)}
+						</Button>
+						<Button onClick={() => loadRequests()} variant="ghost" size="sm">
+							<RefreshCw className="h-4 w-4" />
+						</Button>
+					</div>
 				</div>
 			</CardHeader>
 			<CardContent>
-				{!data || data.requests.length === 0 ? (
+				{/* Filters */}
+				{showFilters && (
+					<div className="mb-4 space-y-4 p-4 border rounded-lg bg-muted/50">
+						<div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+							<div className="space-y-2">
+								<Label htmlFor="account-filter">Account</Label>
+								<Select value={accountFilter} onValueChange={setAccountFilter}>
+									<SelectTrigger id="account-filter">
+										<SelectValue placeholder="All accounts" />
+									</SelectTrigger>
+									<SelectContent>
+										<SelectItem value="all">All accounts</SelectItem>
+										{uniqueAccounts.map((account) => (
+											<SelectItem key={account} value={account || ""}>
+												{account}
+											</SelectItem>
+										))}
+									</SelectContent>
+								</Select>
+							</div>
+							<div className="space-y-2">
+								<Label htmlFor="date-from">From Date</Label>
+								<Input
+									id="date-from"
+									type="datetime-local"
+									value={dateFrom}
+									onChange={(e) => setDateFrom(e.target.value)}
+									className="w-full"
+								/>
+							</div>
+							<div className="space-y-2">
+								<Label htmlFor="date-to">To Date</Label>
+								<Input
+									id="date-to"
+									type="datetime-local"
+									value={dateTo}
+									onChange={(e) => setDateTo(e.target.value)}
+									className="w-full"
+								/>
+							</div>
+						</div>
+						{(accountFilter !== "all" || dateFrom || dateTo) && (
+							<Button
+								variant="ghost"
+								size="sm"
+								onClick={() => {
+									setAccountFilter("all");
+									setDateFrom("");
+									setDateTo("");
+								}}
+							>
+								Clear filters
+							</Button>
+						)}
+					</div>
+				)}
+
+				{!data ? (
 					<p className="text-muted-foreground">No requests found</p>
+				) : filteredRequests.length === 0 ? (
+					<p className="text-muted-foreground">
+						No requests match the selected filters
+					</p>
 				) : (
 					<div className="space-y-2">
-						{data.requests.map((request) => {
+						{filteredRequests.map((request) => {
 							const isExpanded = expandedRequests.has(request.id);
 							const isError = request.error || !request.meta.success;
 							const statusCode = request.response?.status;
