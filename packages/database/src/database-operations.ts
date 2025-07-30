@@ -6,6 +6,7 @@ import type { Account, StrategyStore } from "@claudeflare/types";
 import { ensureSchema, runMigrations } from "./migrations";
 import { resolveDbPath } from "./paths";
 import { AccountRepository } from "./repositories/account.repository";
+import { AgentPreferenceRepository } from "./repositories/agent-preference.repository";
 import { OAuthRepository } from "./repositories/oauth.repository";
 import {
 	type RequestData,
@@ -32,6 +33,7 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 	private oauth: OAuthRepository;
 	private strategy: StrategyRepository;
 	private stats: StatsRepository;
+	private agentPreferences: AgentPreferenceRepository;
 
 	constructor(dbPath?: string) {
 		const resolvedPath = dbPath ?? resolveDbPath();
@@ -56,6 +58,7 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		this.oauth = new OAuthRepository(this.db);
 		this.strategy = new StrategyRepository(this.db);
 		this.stats = new StatsRepository(this.db);
+		this.agentPreferences = new AgentPreferenceRepository(this.db);
 	}
 
 	setRuntimeConfig(runtime: RuntimeConfig): void {
@@ -153,6 +156,7 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		responseTime: number,
 		failoverAttempts: number,
 		usage?: RequestData["usage"],
+		agentUsed?: string,
 	): void {
 		this.requests.save({
 			id,
@@ -165,6 +169,7 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 			responseTime,
 			failoverAttempts,
 			usage,
+			agentUsed,
 		});
 	}
 
@@ -293,6 +298,23 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		successRate: number;
 	}> {
 		return this.requests.getRequestsByAccount(since);
+	}
+
+	// Agent preference operations delegated to repository
+	getAgentPreference(agentId: string): { model: string } | null {
+		return this.agentPreferences.getPreference(agentId);
+	}
+
+	getAllAgentPreferences(): Array<{ agent_id: string; model: string }> {
+		return this.agentPreferences.getAllPreferences();
+	}
+
+	setAgentPreference(agentId: string, model: string): void {
+		this.agentPreferences.setPreference(agentId, model);
+	}
+
+	deleteAgentPreference(agentId: string): boolean {
+		return this.agentPreferences.deletePreference(agentId);
 	}
 
 	close(): void {
