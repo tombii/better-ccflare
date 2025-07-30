@@ -11,6 +11,7 @@ import {
 	YAxis,
 } from "recharts";
 import { CHART_PROPS, COLORS } from "../../constants";
+import { formatCompactNumber } from "../../lib/chart-utils";
 import { getTooltipStyles } from "./chart-utils";
 
 interface ModelTokenSpeedData {
@@ -108,7 +109,7 @@ export function ModelTokenSpeedChart({
 				/>
 				<YAxis
 					fontSize={12}
-					tickFormatter={(value) => `${value}`}
+					tickFormatter={formatCompactNumber}
 					label={{
 						value: "Tokens/Second",
 						angle: -90,

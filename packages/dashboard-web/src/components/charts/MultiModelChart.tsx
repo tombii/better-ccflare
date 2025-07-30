@@ -20,6 +20,10 @@ import {
 	CHART_PROPS,
 	COLORS,
 } from "../../constants";
+import {
+	formatCompactCurrency,
+	formatCompactNumber,
+} from "../../lib/chart-utils";
 import { ChartContainer } from "./ChartContainer";
 import { getTooltipStyles } from "./chart-utils";
 
@@ -104,6 +108,25 @@ function formatValue(value: number, metric: string): string {
 	}
 }
 
+function formatAxisValue(value: number, metric: string): string {
+	switch (metric) {
+		case "cost":
+			return formatCompactCurrency(value);
+		case "tokens":
+		case "requests":
+			return formatCompactNumber(value);
+		case "tokensPerSecond":
+			return formatCompactNumber(value);
+		case "responseTime":
+			return formatCompactNumber(value);
+		case "errorRate":
+		case "cacheHitRate":
+			return `${value.toFixed(0)}%`;
+		default:
+			return formatCompactNumber(value);
+	}
+}
+
 export function MultiModelChart({
 	data,
 	models,
@@ -176,7 +199,7 @@ export function MultiModelChart({
 				/>
 				<YAxis
 					fontSize={12}
-					tickFormatter={(value) => formatValue(value, metric)}
+					tickFormatter={(value) => formatAxisValue(value, metric)}
 					label={{
 						value: getMetricLabel(metric),
 						angle: -90,
