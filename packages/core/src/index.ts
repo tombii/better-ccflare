@@ -19,7 +19,17 @@ export {
 } from "./errors";
 
 export * from "./lifecycle";
-
+export {
+	CLAUDE_MODEL_IDS,
+	type ClaudeModelId,
+	DEFAULT_AGENT_MODEL,
+	DEFAULT_MODEL,
+	getModelDisplayName,
+	getModelShortName,
+	isValidModelId,
+	MODEL_DISPLAY_NAMES,
+	MODEL_SHORT_NAMES,
+} from "./models";
 export {
 	estimateCostUSD,
 	setPricingLogger,

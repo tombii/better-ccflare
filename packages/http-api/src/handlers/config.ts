@@ -1,5 +1,6 @@
 import type { Config } from "@ccflare/config";
 import {
+	DEFAULT_AGENT_MODEL,
 	NETWORK,
 	STRATEGIES,
 	type StrategyName,
@@ -26,8 +27,7 @@ export function createConfigHandlers(config: Config) {
 					(settings.sessionDurationMs as number) ||
 					TIME_CONSTANTS.SESSION_DURATION_FALLBACK,
 				default_agent_model:
-					(settings.default_agent_model as string) ||
-					"claude-sonnet-4-20250514",
+					(settings.default_agent_model as string) || DEFAULT_AGENT_MODEL,
 			};
 			return jsonResponse(response);
 		},

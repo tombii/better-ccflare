@@ -3,7 +3,12 @@ import { readdir, readFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { Config } from "@ccflare/config";
 import { Logger } from "@ccflare/logger";
-import type { Agent, AgentWorkspace, AllowedModel } from "@ccflare/types";
+import {
+	type Agent,
+	type AgentWorkspace,
+	ALLOWED_MODELS,
+	type AllowedModel,
+} from "@ccflare/types";
 import { getAgentsDirectory } from "./paths";
 import { workspacePersistence } from "./workspace-persistence";
 
@@ -52,11 +57,7 @@ export class AgentRegistry {
 	}
 
 	private isValidModel(model: string): model is AllowedModel {
-		const allowedModels: AllowedModel[] = [
-			"claude-opus-4-20250514",
-			"claude-sonnet-4-20250514",
-		];
-		return allowedModels.includes(model as AllowedModel);
+		return ALLOWED_MODELS.includes(model as AllowedModel);
 	}
 
 	private async loadAgentFromFile(

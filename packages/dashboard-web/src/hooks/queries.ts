@@ -7,6 +7,7 @@ export const useAccounts = () => {
 	return useQuery({
 		queryKey: queryKeys.accounts(),
 		queryFn: () => api.getAccounts(),
+		refetchInterval: REFRESH_INTERVALS.fast, // Refresh every 10 seconds for rate limit updates
 	});
 };
 

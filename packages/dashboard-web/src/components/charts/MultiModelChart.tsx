@@ -1,3 +1,4 @@
+import { getModelShortName } from "@ccflare/core";
 import {
 	formatCost,
 	formatNumber,
@@ -55,7 +56,11 @@ const MODEL_COLORS: Record<string, string> = {
 };
 
 function getModelColor(model: string, index: number): string {
-	// Check for exact match first
+	// Try to find color by short name first
+	const shortName = getModelShortName(model);
+	if (MODEL_COLORS[shortName]) return MODEL_COLORS[shortName];
+
+	// Check for exact match
 	if (MODEL_COLORS[model]) return MODEL_COLORS[model];
 
 	// Check for partial matches

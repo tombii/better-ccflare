@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { Config } from "@ccflare/config";
-import { NETWORK, shutdown } from "@ccflare/core";
+import { CLAUDE_MODEL_IDS, NETWORK, shutdown } from "@ccflare/core";
 import { container, SERVICE_KEYS } from "@ccflare/core-di";
 import { DatabaseFactory } from "@ccflare/database";
 import { Logger } from "@ccflare/logger";
@@ -185,12 +185,12 @@ Examples:
 	if (parsed.setModel) {
 		const config = new Config();
 		// Validate the model
-		const _validModels = ["claude-opus-4-20250514", "claude-sonnet-4-20250514"];
+		const _validModels = [CLAUDE_MODEL_IDS.OPUS_4, CLAUDE_MODEL_IDS.SONNET_4];
 		const modelMap: Record<string, string> = {
-			"opus-4": "claude-opus-4-20250514",
-			"sonnet-4": "claude-sonnet-4-20250514",
-			"claude-opus-4-20250514": "claude-opus-4-20250514",
-			"claude-sonnet-4-20250514": "claude-sonnet-4-20250514",
+			"opus-4": CLAUDE_MODEL_IDS.OPUS_4,
+			"sonnet-4": CLAUDE_MODEL_IDS.SONNET_4,
+			[CLAUDE_MODEL_IDS.OPUS_4]: CLAUDE_MODEL_IDS.OPUS_4,
+			[CLAUDE_MODEL_IDS.SONNET_4]: CLAUDE_MODEL_IDS.SONNET_4,
 		};
 
 		const fullModel = modelMap[parsed.setModel];
