@@ -144,9 +144,9 @@ export function RequestsTab() {
 							return (
 								<div
 									key={request.id}
-									className={`border rounded-lg p-3 ${
+									className={`border rounded-lg p-3 transition-all duration-300 ${
 										isError ? "border-destructive/50" : "border-border"
-									} ${request.meta.pending ? "animate-pulse" : ""}`}
+									} ${request.meta.pending ? "animate-pulse opacity-70" : "opacity-100"}`}
 								>
 									<button
 										type="button"
@@ -195,14 +195,19 @@ export function RequestsTab() {
 													Agent: {summary.agentUsed}
 												</Badge>
 											)}
-											{summary?.totalTokens && (
+											{(summary?.totalTokens || request.meta.pending) && (
 												<Badge variant="outline" className="text-xs">
-													{formatTokens(summary.totalTokens)} tokens
+													{summary?.totalTokens
+														? formatTokens(summary.totalTokens)
+														: "--"}{" "}
+													tokens
 												</Badge>
 											)}
-											{summary?.costUsd && summary.costUsd > 0 && (
+											{(summary?.costUsd || request.meta.pending) && (
 												<Badge variant="default" className="text-xs">
-													{formatCost(summary.costUsd)}
+													{summary?.costUsd && summary.costUsd > 0
+														? formatCost(summary.costUsd)
+														: "--"}
 												</Badge>
 											)}
 											{summary?.tokensPerSecond &&
@@ -230,8 +235,12 @@ export function RequestsTab() {
 											)}
 										</div>
 										<div className="text-sm text-muted-foreground flex items-center gap-2">
-											{summary?.responseTimeMs && (
-												<span>{formatDuration(summary.responseTimeMs)}</span>
+											{(summary?.responseTimeMs || request.meta.pending) && (
+												<span>
+													{summary?.responseTimeMs
+														? formatDuration(summary.responseTimeMs)
+														: "--"}
+												</span>
 											)}
 											{request.meta.retry !== undefined &&
 												request.meta.retry > 0 && (
