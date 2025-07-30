@@ -50,3 +50,11 @@ export function formatTimestamp(timestamp: number | string): string {
 		typeof timestamp === "string" ? new Date(timestamp) : new Date(timestamp);
 	return date.toLocaleString();
 }
+
+/**
+ * Format tokens per second with 1 decimal place
+ */
+export function formatTokensPerSecond(tokensPerSecond?: number | null): string {
+	if (!tokensPerSecond || tokensPerSecond === 0) return "0 tok/s";
+	return `${tokensPerSecond.toFixed(1)} tok/s`;
+}

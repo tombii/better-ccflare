@@ -227,6 +227,7 @@
         "@ccflare/logger": "workspace:*",
         "@ccflare/providers": "workspace:*",
         "@ccflare/ui-common": "workspace:*",
+        "@dqbd/tiktoken": "^1.0.21",
       },
     },
     "packages/tui-core": {
@@ -336,6 +337,8 @@
     "@ccflare/ui-common": ["@ccflare/ui-common@workspace:packages/ui-common"],
 
     "@ccflare/ui-constants": ["@ccflare/ui-constants@workspace:packages/ui-constants"],
+
+    "@dqbd/tiktoken": ["@dqbd/tiktoken@1.0.21", "", {}, "sha512-grBxRSY9+/iBM205EWjbMm5ySeXQrhJyXWMP38VJd+pO2DRGraDAbi4n8J8T9M4XY1M/FHgonMcmu3J+KjcX0Q=="],
 
     "@floating-ui/core": ["@floating-ui/core@1.7.2", "", { "dependencies": { "@floating-ui/utils": "^0.2.10" } }, "sha512-wNB5ooIKHQc+Kui96jE/n69rHFWAVoxn5CAzL1Xdd8FG03cgY3MLO+GF9U3W737fYDSgPWA6MReKhBQBop6Pcw=="],
 

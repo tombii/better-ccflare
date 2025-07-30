@@ -21,6 +21,7 @@ export interface RequestData {
 		cacheReadInputTokens?: number;
 		cacheCreationInputTokens?: number;
 		outputTokens?: number;
+		tokensPerSecond?: number;
 	};
 }
 
@@ -54,9 +55,9 @@ export class RequestRepository extends BaseRepository<RequestData> {
 				status_code, success, error_message, response_time_ms, failover_attempts,
 				model, prompt_tokens, completion_tokens, total_tokens, cost_usd,
 				input_tokens, cache_read_input_tokens, cache_creation_input_tokens, output_tokens,
-				agent_used
+				agent_used, output_tokens_per_second
 			)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`,
 			[
 				data.id,
@@ -79,6 +80,7 @@ export class RequestRepository extends BaseRepository<RequestData> {
 				usage?.cacheCreationInputTokens || null,
 				usage?.outputTokens || null,
 				data.agentUsed || null,
+				usage?.tokensPerSecond || null,
 			],
 		);
 	}
@@ -98,7 +100,8 @@ export class RequestRepository extends BaseRepository<RequestData> {
 				input_tokens = COALESCE(?, input_tokens),
 				cache_read_input_tokens = COALESCE(?, cache_read_input_tokens),
 				cache_creation_input_tokens = COALESCE(?, cache_creation_input_tokens),
-				output_tokens = COALESCE(?, output_tokens)
+				output_tokens = COALESCE(?, output_tokens),
+				output_tokens_per_second = COALESCE(?, output_tokens_per_second)
 			WHERE id = ?
 		`,
 			[
@@ -111,6 +114,7 @@ export class RequestRepository extends BaseRepository<RequestData> {
 				usage.cacheReadInputTokens || null,
 				usage.cacheCreationInputTokens || null,
 				usage.outputTokens || null,
+				usage.tokensPerSecond || null,
 				requestId,
 			],
 		);
@@ -256,6 +260,7 @@ export class RequestRepository extends BaseRepository<RequestData> {
 		outputTokens: number;
 		cacheReadInputTokens: number;
 		cacheCreationInputTokens: number;
+		avgTokensPerSecond: number | null;
 	} {
 		const whereClause = rangeMs ? "WHERE timestamp > ?" : "";
 		const params = rangeMs ? [Date.now() - rangeMs] : [];
@@ -270,6 +275,7 @@ export class RequestRepository extends BaseRepository<RequestData> {
 			output_tokens: number | null;
 			cache_read_input_tokens: number | null;
 			cache_creation_input_tokens: number | null;
+			avg_tokens_per_second: number | null;
 		}>(
 			`
 			SELECT 
@@ -281,7 +287,8 @@ export class RequestRepository extends BaseRepository<RequestData> {
 				SUM(input_tokens) as input_tokens,
 				SUM(output_tokens) as output_tokens,
 				SUM(cache_read_input_tokens) as cache_read_input_tokens,
-				SUM(cache_creation_input_tokens) as cache_creation_input_tokens
+				SUM(cache_creation_input_tokens) as cache_creation_input_tokens,
+				AVG(output_tokens_per_second) as avg_tokens_per_second
 			FROM requests
 			${whereClause}
 		`,
@@ -298,6 +305,7 @@ export class RequestRepository extends BaseRepository<RequestData> {
 			outputTokens: result?.output_tokens || 0,
 			cacheReadInputTokens: result?.cache_read_input_tokens || 0,
 			cacheCreationInputTokens: result?.cache_creation_input_tokens || 0,
+			avgTokensPerSecond: result?.avg_tokens_per_second || null,
 		};
 	}
 

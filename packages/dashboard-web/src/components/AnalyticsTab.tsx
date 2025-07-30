@@ -77,6 +77,7 @@ export function AnalyticsTab() {
 			responseTime: Math.round(point.avgResponseTime),
 			errorRate: parseFloat(point.errorRate.toFixed(1)),
 			cacheHitRate: parseFloat(point.cacheHitRate.toFixed(1)),
+			avgTokensPerSecond: point.avgTokensPerSecond || 0,
 		})) || [],
 	);
 

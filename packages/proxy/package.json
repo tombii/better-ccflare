@@ -11,11 +11,12 @@
 	},
 	"dependencies": {
 		"@ccflare/agents": "workspace:*",
+		"@ccflare/config": "workspace:*",
 		"@ccflare/core": "workspace:*",
 		"@ccflare/database": "workspace:*",
-		"@ccflare/config": "workspace:*",
 		"@ccflare/logger": "workspace:*",
 		"@ccflare/providers": "workspace:*",
-		"@ccflare/ui-common": "workspace:*"
+		"@ccflare/ui-common": "workspace:*",
+		"@dqbd/tiktoken": "^1.0.21"
 	}
 }

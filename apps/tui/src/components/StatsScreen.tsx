@@ -1,5 +1,10 @@
 import * as tuiCore from "@ccflare/tui-core";
-import { formatCost, formatNumber, formatPercentage } from "@ccflare/ui-common";
+import {
+	formatCost,
+	formatNumber,
+	formatPercentage,
+	formatTokensPerSecond,
+} from "@ccflare/ui-common";
 import { Box, Text, useInput } from "ink";
 import { useCallback, useEffect, useState } from "react";
 import { BarChart, PieChart, SparklineChart } from "./charts";
@@ -128,6 +133,14 @@ export function StatsScreen({ onBack }: StatsScreenProps) {
 						{formatNumber(stats.avgResponseTime)}ms
 					</Text>
 				</Box>
+				{stats.avgTokensPerSecond !== null && (
+					<Box>
+						<Text>Avg Output Speed: </Text>
+						<Text color="blue" bold>
+							{formatTokensPerSecond(stats.avgTokensPerSecond)}
+						</Text>
+					</Box>
+				)}
 			</Box>
 
 			{/* Token Usage */}

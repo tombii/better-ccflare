@@ -16,6 +16,7 @@ export function TokenUsageDisplay({ summary }: TokenUsageDisplayProps) {
 				totalTokens: summary.totalTokens,
 				costUsd: summary.costUsd,
 				responseTimeMs: summary.responseTimeMs ?? undefined,
+				tokensPerSecond: summary.tokensPerSecond,
 			}
 		: undefined;
 
@@ -91,6 +92,15 @@ export function TokenUsageDisplay({ summary }: TokenUsageDisplayProps) {
 				<div className="bg-muted p-4 rounded-lg">
 					<h4 className="font-semibold mb-2">{sections.responseTime.label}</h4>
 					<p className="text-2xl font-mono">{sections.responseTime.value}</p>
+				</div>
+			)}
+
+			{sections.tokensPerSecond && (
+				<div className="bg-muted p-4 rounded-lg">
+					<h4 className="font-semibold mb-2">
+						{sections.tokensPerSecond.label}
+					</h4>
+					<p className="text-2xl font-mono">{sections.tokensPerSecond.value}</p>
 				</div>
 			)}
 		</div>

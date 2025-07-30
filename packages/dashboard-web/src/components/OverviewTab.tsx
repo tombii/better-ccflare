@@ -1,6 +1,11 @@
-import { formatCost, formatNumber, formatPercentage } from "@ccflare/ui-common";
+import {
+	formatCost,
+	formatNumber,
+	formatPercentage,
+	formatTokensPerSecond,
+} from "@ccflare/ui-common";
 import { format } from "date-fns";
-import { Activity, CheckCircle, Clock, DollarSign } from "lucide-react";
+import { Activity, CheckCircle, Clock, DollarSign, Zap } from "lucide-react";
 import { useMemo } from "react";
 import { REFRESH_INTERVALS } from "../constants";
 import { useAccounts, useAnalytics, useStats } from "../hooks/queries";
@@ -112,7 +117,7 @@ export function OverviewTab() {
 	return (
 		<div className="space-y-6">
 			{/* Metrics Grid */}
-			<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+			<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
 				<MetricCard
 					title="Total Requests"
 					value={formatNumber(analytics?.totals.requests || 0)}
@@ -144,6 +149,11 @@ export function OverviewTab() {
 					change={deltaCost !== null ? deltaCost : undefined}
 					trend={trendCost}
 					icon={DollarSign}
+				/>
+				<MetricCard
+					title="Output Speed"
+					value={formatTokensPerSecond(analytics?.totals.avgTokensPerSecond)}
+					icon={Zap}
 				/>
 			</div>
 

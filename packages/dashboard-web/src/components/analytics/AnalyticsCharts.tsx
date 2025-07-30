@@ -23,6 +23,7 @@ import {
 	ModelPerformanceChart,
 	RequestVolumeChart,
 	ResponseTimeChart,
+	TokenSpeedChart,
 	TokenUsageChart,
 } from "../charts";
 import { Badge } from "../ui/badge";
@@ -49,6 +50,7 @@ interface ChartData {
 	responseTime: number;
 	errorRate: number;
 	cacheHitRate: number;
+	avgTokensPerSecond: number;
 	[key: string]: string | number;
 }
 
@@ -90,6 +92,7 @@ export function MainMetricsChart({
 							<SelectItem value="tokens">Token Usage</SelectItem>
 							<SelectItem value="cost">Cost ($)</SelectItem>
 							<SelectItem value="responseTime">Response Time</SelectItem>
+							<SelectItem value="tokensPerSecond">Output Speed</SelectItem>
 						</SelectContent>
 					</Select>
 				</div>
@@ -113,6 +116,8 @@ export function MainMetricsChart({
 							return <RequestVolumeChart {...commonProps} />;
 						case "responseTime":
 							return <ResponseTimeChart {...commonProps} />;
+						case "tokensPerSecond":
+							return <TokenSpeedChart {...commonProps} />;
 						default:
 							return (
 								<BaseAreaChart

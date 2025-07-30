@@ -1,4 +1,9 @@
-import { formatCost, formatDuration, formatTokens } from "@ccflare/ui-common";
+import {
+	formatCost,
+	formatDuration,
+	formatTokens,
+	formatTokensPerSecond,
+} from "@ccflare/ui-common";
 import { ChevronDown, ChevronRight, Eye, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import type { RequestPayload, RequestSummary } from "../api";
@@ -184,6 +189,12 @@ export function RequestsTab() {
 													{formatCost(summary.costUsd)}
 												</Badge>
 											)}
+											{summary?.tokensPerSecond &&
+												summary.tokensPerSecond > 0 && (
+													<Badge variant="secondary" className="text-xs">
+														{formatTokensPerSecond(summary.tokensPerSecond)}
+													</Badge>
+												)}
 											{(request.meta.accountName || request.meta.accountId) && (
 												<span className="text-sm text-muted-foreground">
 													via{" "}

@@ -2,6 +2,20 @@ import type { Account } from "@ccflare/types";
 import type { ProxyContext } from "./handlers";
 import type { ChunkMessage, EndMessage, StartMessage } from "./worker-messages";
 
+/**
+ * Check if a response should be considered successful/expected
+ * Treats certain well-known paths that return 404 as expected
+ */
+function isExpectedResponse(path: string, response: Response): boolean {
+	// Any .well-known path returning 404 is expected
+	if (path.startsWith("/.well-known/") && response.status === 404) {
+		return true;
+	}
+
+	// Otherwise use standard HTTP success logic
+	return response.ok;
+}
+
 export interface ResponseHandlerOptions {
 	requestId: string;
 	method: string;
@@ -95,7 +109,7 @@ export async function forwardToClient(
 				const endMsg: EndMessage = {
 					type: "end",
 					requestId,
-					success: analyticsClone.ok,
+					success: isExpectedResponse(path, analyticsClone),
 				};
 				ctx.usageWorker.postMessage(endMsg);
 			} catch (err) {
@@ -127,7 +141,7 @@ export async function forwardToClient(
 					bodyBuf.byteLength > 0
 						? Buffer.from(bodyBuf).toString("base64")
 						: null,
-				success: clone.ok,
+				success: isExpectedResponse(path, clone),
 			};
 			ctx.usageWorker.postMessage(endMsg);
 		} catch (err) {

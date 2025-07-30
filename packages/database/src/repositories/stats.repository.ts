@@ -21,6 +21,7 @@ export interface AggregatedStats {
 	outputTokens: number;
 	cacheReadInputTokens: number;
 	cacheCreationInputTokens: number;
+	avgTokensPerSecond: number | null;
 }
 
 export class StatsRepository {
@@ -40,7 +41,8 @@ export class StatsRepository {
 					SUM(output_tokens) as outputTokens,
 					SUM(cache_creation_input_tokens) as cacheCreationInputTokens,
 					SUM(cache_read_input_tokens) as cacheReadInputTokens,
-					SUM(cost_usd) as totalCostUsd
+					SUM(cost_usd) as totalCostUsd,
+					AVG(output_tokens_per_second) as avgTokensPerSecond
 				FROM requests`,
 			)
 			.get() as AggregatedStats;

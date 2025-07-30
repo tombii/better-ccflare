@@ -8,6 +8,7 @@ export interface Stats {
 	avgResponseTime: number;
 	totalTokens: number;
 	totalCostUsd: number;
+	avgTokensPerSecond: number | null;
 	tokenDetails?: {
 		inputTokens: number;
 		cacheReadInputTokens: number;
@@ -48,6 +49,7 @@ export async function getStats(): Promise<Stats> {
 		avgResponseTime: Math.round(stats.avgResponseTime || 0),
 		totalTokens: stats.totalTokens,
 		totalCostUsd: stats.totalCostUsd,
+		avgTokensPerSecond: stats.avgTokensPerSecond,
 		tokenDetails:
 			stats.inputTokens || stats.outputTokens
 				? {
