@@ -5,13 +5,16 @@ import {
 	formatTokensPerSecond,
 } from "@ccflare/ui-common";
 import {
+	Bot,
 	Calendar,
 	ChevronDown,
 	ChevronRight,
 	Clock,
 	Eye,
 	Filter,
+	Hash,
 	RefreshCw,
+	User,
 	X,
 } from "lucide-react";
 import { useState } from "react";
@@ -303,17 +306,17 @@ export function RequestsTab() {
 					<div className="flex gap-2">
 						<Button
 							onClick={() => setShowFilters(!showFilters)}
-							variant="outline"
+							variant={showFilters ? "default" : "outline"}
 							size="sm"
 							className="relative"
 						>
 							<Filter className="h-4 w-4 mr-2" />
 							Filters
-							{hasActiveFilters && (
-								<span className="absolute -top-1 -right-1 h-2 w-2 bg-primary rounded-full" />
+							{hasActiveFilters && !showFilters && (
+								<span className="absolute -top-1 -right-1 h-2 w-2 bg-primary rounded-full animate-pulse" />
 							)}
 						</Button>
-						<Button onClick={() => loadRequests()} variant="ghost" size="sm">
+						<Button onClick={() => loadRequests()} variant="ghost" size="icon">
 							<RefreshCw className="h-4 w-4" />
 						</Button>
 					</div>
@@ -321,270 +324,283 @@ export function RequestsTab() {
 			</CardHeader>
 			<CardContent>
 				{/* Active Filters Display */}
-				{hasActiveFilters && !showFilters && (
-					<div className="mb-4 flex flex-wrap items-center gap-2">
-						<span className="text-sm text-muted-foreground">
-							Active filters:
-						</span>
-						{accountFilter !== "all" && (
-							<Badge variant="secondary" className="gap-1">
-								Account: {accountFilter}
-								<button
-									type="button"
-									onClick={() => setAccountFilter("all")}
-									className="ml-1 hover:text-destructive"
+				{hasActiveFilters && (
+					<div className="mb-4 p-3 bg-muted/50 rounded-lg">
+						<div className="flex flex-wrap items-center gap-2">
+							{accountFilter !== "all" && (
+								<Badge variant="outline" className="gap-1.5 pr-1">
+									<User className="h-3 w-3" />
+									{accountFilter}
+									<button
+										type="button"
+										onClick={() => setAccountFilter("all")}
+										className="ml-1 p-0.5 hover:bg-destructive/20 rounded"
+									>
+										<X className="h-3 w-3" />
+									</button>
+								</Badge>
+							)}
+							{agentFilter !== "all" && (
+								<Badge variant="outline" className="gap-1.5 pr-1">
+									<Bot className="h-3 w-3" />
+									{agentFilter}
+									<button
+										type="button"
+										onClick={() => setAgentFilter("all")}
+										className="ml-1 p-0.5 hover:bg-destructive/20 rounded"
+									>
+										<X className="h-3 w-3" />
+									</button>
+								</Badge>
+							)}
+							{statusCodeFilters.size > 0 && (
+								<Badge variant="outline" className="gap-1.5 pr-1">
+									<Hash className="h-3 w-3" />
+									{Array.from(statusCodeFilters).join(", ")}
+									<button
+										type="button"
+										onClick={() => setStatusCodeFilters(new Set())}
+										className="ml-1 p-0.5 hover:bg-destructive/20 rounded"
+									>
+										<X className="h-3 w-3" />
+									</button>
+								</Badge>
+							)}
+							{(dateFrom || dateTo) && (
+								<Badge variant="outline" className="gap-1.5 pr-1">
+									<Calendar className="h-3 w-3" />
+									{dateFrom && dateTo
+										? "Custom range"
+										: dateFrom
+											? `From ${new Date(dateFrom).toLocaleDateString()}`
+											: `Until ${new Date(dateTo).toLocaleDateString()}`}
+									<button
+										type="button"
+										onClick={() => {
+											setDateFrom("");
+											setDateTo("");
+										}}
+										className="ml-1 p-0.5 hover:bg-destructive/20 rounded"
+									>
+										<X className="h-3 w-3" />
+									</button>
+								</Badge>
+							)}
+							<div className="ml-auto flex items-center gap-2">
+								<span className="text-xs text-muted-foreground">
+									{filteredRequests.length} of {data?.requests.length || 0}{" "}
+									requests
+								</span>
+								<Button
+									variant="ghost"
+									size="sm"
+									onClick={clearAllFilters}
+									className="h-7 text-xs"
 								>
-									<X className="h-3 w-3" />
-								</button>
-							</Badge>
-						)}
-						{agentFilter !== "all" && (
-							<Badge variant="secondary" className="gap-1">
-								Agent: {agentFilter}
-								<button
-									type="button"
-									onClick={() => setAgentFilter("all")}
-									className="ml-1 hover:text-destructive"
-								>
-									<X className="h-3 w-3" />
-								</button>
-							</Badge>
-						)}
-						{statusCodeFilters.size > 0 && (
-							<Badge variant="secondary" className="gap-1">
-								Status: {Array.from(statusCodeFilters).join(", ")}
-								<button
-									type="button"
-									onClick={() => setStatusCodeFilters(new Set())}
-									className="ml-1 hover:text-destructive"
-								>
-									<X className="h-3 w-3" />
-								</button>
-							</Badge>
-						)}
-						{(dateFrom || dateTo) && (
-							<Badge variant="secondary" className="gap-1">
-								Date range
-								<button
-									type="button"
-									onClick={() => {
-										setDateFrom("");
-										setDateTo("");
-									}}
-									className="ml-1 hover:text-destructive"
-								>
-									<X className="h-3 w-3" />
-								</button>
-							</Badge>
-						)}
-						<Button
-							variant="ghost"
-							size="sm"
-							onClick={clearAllFilters}
-							className="h-6 px-2 text-xs"
-						>
-							Clear all
-						</Button>
+									Clear all
+								</Button>
+							</div>
+						</div>
 					</div>
 				)}
 
 				{/* Filters Panel */}
 				{showFilters && (
-					<div className="mb-6 space-y-4 p-6 border rounded-lg bg-muted/30">
-						{/* Quick Presets */}
-						<div className="flex flex-wrap items-center gap-2">
-							<span className="text-sm font-medium">Quick filters:</span>
-							<div className="flex gap-2">
+					<div className="mb-6 border rounded-lg bg-card">
+						<div className="p-4 border-b">
+							<div className="flex items-center justify-between">
+								<h3 className="font-medium">Filters</h3>
 								<Button
-									variant="outline"
-									size="sm"
-									onClick={() => applyDatePreset("1h")}
-									className="h-8"
-								>
-									<Clock className="h-3 w-3 mr-1" />
-									Last hour
-								</Button>
-								<Button
-									variant="outline"
-									size="sm"
-									onClick={() => applyDatePreset("24h")}
-									className="h-8"
-								>
-									<Clock className="h-3 w-3 mr-1" />
-									Last 24h
-								</Button>
-								<Button
-									variant="outline"
-									size="sm"
-									onClick={() => applyDatePreset("7d")}
-									className="h-8"
-								>
-									<Calendar className="h-3 w-3 mr-1" />
-									Last 7 days
-								</Button>
-								<Button
-									variant="outline"
-									size="sm"
-									onClick={() => applyDatePreset("30d")}
-									className="h-8"
-								>
-									<Calendar className="h-3 w-3 mr-1" />
-									Last 30 days
-								</Button>
-							</div>
-						</div>
-
-						<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-							{/* Account Filter */}
-							<div className="space-y-2">
-								<Label htmlFor="account-filter" className="text-sm font-medium">
-									Account
-								</Label>
-								<Select value={accountFilter} onValueChange={setAccountFilter}>
-									<SelectTrigger id="account-filter" className="h-9">
-										<SelectValue placeholder="All accounts" />
-									</SelectTrigger>
-									<SelectContent>
-										<SelectItem value="all">All accounts</SelectItem>
-										{uniqueAccounts.map((account) => (
-											<SelectItem key={account} value={account || ""}>
-												{account}
-											</SelectItem>
-										))}
-									</SelectContent>
-								</Select>
-							</div>
-
-							{/* Agent Filter */}
-							<div className="space-y-2">
-								<Label htmlFor="agent-filter" className="text-sm font-medium">
-									Agent
-								</Label>
-								<Select value={agentFilter} onValueChange={setAgentFilter}>
-									<SelectTrigger id="agent-filter" className="h-9">
-										<SelectValue placeholder="All agents" />
-									</SelectTrigger>
-									<SelectContent>
-										<SelectItem value="all">All agents</SelectItem>
-										{uniqueAgents.map((agent) => (
-											<SelectItem key={agent} value={agent || ""}>
-												{agent}
-											</SelectItem>
-										))}
-									</SelectContent>
-								</Select>
-							</div>
-
-							{/* Status Code Filter */}
-							<div className="space-y-2">
-								<Label className="text-sm font-medium">Status Code</Label>
-								<DropdownMenu>
-									<DropdownMenuTrigger asChild>
-										<Button
-											variant="outline"
-											className="h-9 w-full justify-between font-normal"
-										>
-											{statusCodeFilters.size > 0
-												? `${statusCodeFilters.size} selected`
-												: "All status codes"}
-											<ChevronDown className="h-4 w-4 opacity-50" />
-										</Button>
-									</DropdownMenuTrigger>
-									<DropdownMenuContent className="w-56 max-h-64 overflow-y-auto">
-										{uniqueStatusCodes.map((code) => (
-											<button
-												key={code}
-												type="button"
-												className="flex items-center space-x-2 p-2 hover:bg-accent rounded cursor-pointer w-full text-left"
-												onClick={() => toggleStatusCode(code.toString())}
-											>
-												<div
-													className={`w-4 h-4 border rounded flex-shrink-0 ${
-														statusCodeFilters.has(code.toString())
-															? "bg-primary border-primary"
-															: "border-input"
-													}`}
-												>
-													{statusCodeFilters.has(code.toString()) && (
-														<svg
-															className="w-4 h-4 text-primary-foreground"
-															fill="none"
-															viewBox="0 0 24 24"
-															stroke="currentColor"
-															role="img"
-															aria-label="Selected"
-														>
-															<title>Selected</title>
-															<path
-																strokeLinecap="round"
-																strokeLinejoin="round"
-																strokeWidth={2}
-																d="M5 13l4 4L19 7"
-															/>
-														</svg>
-													)}
-												</div>
-												<span className={`text-sm ${getStatusCodeColor(code)}`}>
-													{code}
-												</span>
-											</button>
-										))}
-									</DropdownMenuContent>
-								</DropdownMenu>
-							</div>
-
-							{/* Date From */}
-							<div className="space-y-2">
-								<Label htmlFor="date-from" className="text-sm font-medium">
-									From Date
-								</Label>
-								<Input
-									id="date-from"
-									type="datetime-local"
-									value={dateFrom}
-									onChange={(e) => setDateFrom(e.target.value)}
-									className="h-9"
-								/>
-							</div>
-
-							{/* Date To */}
-							<div className="space-y-2">
-								<Label htmlFor="date-to" className="text-sm font-medium">
-									To Date
-								</Label>
-								<Input
-									id="date-to"
-									type="datetime-local"
-									value={dateTo}
-									onChange={(e) => setDateTo(e.target.value)}
-									className="h-9"
-								/>
-							</div>
-						</div>
-
-						{/* Actions */}
-						<div className="flex items-center justify-between pt-2">
-							<div className="text-sm text-muted-foreground">
-								{data && (
-									<span>
-										Showing {filteredRequests.length} of {data.requests.length}{" "}
-										requests
-									</span>
-								)}
-							</div>
-							<div className="flex gap-2">
-								{hasActiveFilters && (
-									<Button variant="ghost" size="sm" onClick={clearAllFilters}>
-										Clear all filters
-									</Button>
-								)}
-								<Button
-									variant="outline"
+									variant="ghost"
 									size="sm"
 									onClick={() => setShowFilters(false)}
+									className="h-8 w-8 p-0"
 								>
-									Close
+									<X className="h-4 w-4" />
 								</Button>
+							</div>
+						</div>
+
+						<div className="p-4 space-y-4">
+							{/* Time Range Section */}
+							<div>
+								<h4 className="text-sm font-medium mb-3 flex items-center gap-2">
+									<Clock className="h-4 w-4" />
+									Time Range
+								</h4>
+								<div className="flex flex-wrap gap-2 mb-3">
+									<Button
+										variant={dateFrom || dateTo ? "outline" : "secondary"}
+										size="sm"
+										onClick={() => applyDatePreset("1h")}
+									>
+										Last hour
+									</Button>
+									<Button
+										variant={dateFrom || dateTo ? "outline" : "secondary"}
+										size="sm"
+										onClick={() => applyDatePreset("24h")}
+									>
+										Last 24h
+									</Button>
+									<Button
+										variant={dateFrom || dateTo ? "outline" : "secondary"}
+										size="sm"
+										onClick={() => applyDatePreset("7d")}
+									>
+										Last 7 days
+									</Button>
+									<Button
+										variant={dateFrom || dateTo ? "outline" : "secondary"}
+										size="sm"
+										onClick={() => applyDatePreset("30d")}
+									>
+										Last 30 days
+									</Button>
+								</div>
+								<div className="grid grid-cols-2 gap-3">
+									<div>
+										<Label htmlFor="date-from" className="text-xs">
+											From
+										</Label>
+										<Input
+											id="date-from"
+											type="datetime-local"
+											value={dateFrom}
+											onChange={(e) => setDateFrom(e.target.value)}
+											className="h-9 text-sm"
+										/>
+									</div>
+									<div>
+										<Label htmlFor="date-to" className="text-xs">
+											To
+										</Label>
+										<Input
+											id="date-to"
+											type="datetime-local"
+											value={dateTo}
+											onChange={(e) => setDateTo(e.target.value)}
+											className="h-9 text-sm"
+										/>
+									</div>
+								</div>
+							</div>
+
+							<div className="h-px bg-border" />
+
+							{/* Resource Filters */}
+							<div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+								{/* Account Filter */}
+								<div>
+									<Label className="text-xs flex items-center gap-1 mb-2">
+										<User className="h-3 w-3" />
+										Account
+									</Label>
+									<Select
+										value={accountFilter}
+										onValueChange={setAccountFilter}
+									>
+										<SelectTrigger className="h-9">
+											<SelectValue placeholder="All accounts" />
+										</SelectTrigger>
+										<SelectContent>
+											<SelectItem value="all">All accounts</SelectItem>
+											{uniqueAccounts.map((account) => (
+												<SelectItem key={account} value={account || ""}>
+													{account}
+												</SelectItem>
+											))}
+										</SelectContent>
+									</Select>
+								</div>
+
+								{/* Agent Filter */}
+								<div>
+									<Label className="text-xs flex items-center gap-1 mb-2">
+										<Bot className="h-3 w-3" />
+										Agent
+									</Label>
+									<Select value={agentFilter} onValueChange={setAgentFilter}>
+										<SelectTrigger className="h-9">
+											<SelectValue placeholder="All agents" />
+										</SelectTrigger>
+										<SelectContent>
+											<SelectItem value="all">All agents</SelectItem>
+											{uniqueAgents.map((agent) => (
+												<SelectItem key={agent} value={agent || ""}>
+													{agent}
+												</SelectItem>
+											))}
+										</SelectContent>
+									</Select>
+								</div>
+
+								{/* Status Code Filter */}
+								<div>
+									<Label className="text-xs flex items-center gap-1 mb-2">
+										<Hash className="h-3 w-3" />
+										Status Code
+									</Label>
+									<DropdownMenu>
+										<DropdownMenuTrigger asChild>
+											<Button
+												variant="outline"
+												className="h-9 w-full justify-between font-normal"
+											>
+												{statusCodeFilters.size > 0
+													? `${statusCodeFilters.size} selected`
+													: "All codes"}
+												<ChevronDown className="h-4 w-4 opacity-50" />
+											</Button>
+										</DropdownMenuTrigger>
+										<DropdownMenuContent className="w-56 max-h-64 overflow-y-auto">
+											<div className="p-2">
+												<div className="text-xs font-medium text-muted-foreground mb-2">
+													Select status codes
+												</div>
+												{uniqueStatusCodes.map((code) => (
+													<button
+														key={code}
+														type="button"
+														className="flex items-center gap-2 p-2 hover:bg-accent rounded cursor-pointer w-full text-left"
+														onClick={() => toggleStatusCode(code.toString())}
+													>
+														<div
+															className={`w-4 h-4 border rounded-sm flex items-center justify-center ${
+																statusCodeFilters.has(code.toString())
+																	? "bg-primary border-primary"
+																	: "border-input"
+															}`}
+														>
+															{statusCodeFilters.has(code.toString()) && (
+																<svg
+																	className="w-3 h-3 text-primary-foreground"
+																	fill="none"
+																	viewBox="0 0 24 24"
+																	stroke="currentColor"
+																	aria-label="Selected"
+																>
+																	<title>Selected</title>
+																	<path
+																		strokeLinecap="round"
+																		strokeLinejoin="round"
+																		strokeWidth={3}
+																		d="M5 13l4 4L19 7"
+																	/>
+																</svg>
+															)}
+														</div>
+														<span
+															className={`text-sm font-medium ${getStatusCodeColor(code)}`}
+														>
+															{code}
+														</span>
+													</button>
+												))}
+											</div>
+										</DropdownMenuContent>
+									</DropdownMenu>
+								</div>
 							</div>
 						</div>
 					</div>
