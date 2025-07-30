@@ -1,3 +1,4 @@
+import { getModelShortName } from "@ccflare/core";
 import * as tuiCore from "@ccflare/tui-core";
 import { formatCost, formatNumber, formatPercentage } from "@ccflare/ui-common";
 import { Box, Text, useInput } from "ink";
@@ -427,9 +428,10 @@ export function AnalyticsScreen({ onBack }: AnalyticsScreenProps) {
 							<Text bold>Model Performance</Text>
 							<Box flexDirection="column" marginTop={1}>
 								{modelDistribution.slice(0, 5).map((model) => {
-									const color = model.model.includes("opus")
+									const shortName = getModelShortName(model.model);
+									const color = shortName.includes("opus")
 										? "magenta"
-										: model.model.includes("sonnet")
+										: shortName.includes("sonnet")
 											? "cyan"
 											: "yellow";
 									return (

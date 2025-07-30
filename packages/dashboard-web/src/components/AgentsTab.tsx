@@ -1,3 +1,4 @@
+import { CLAUDE_MODEL_IDS, DEFAULT_AGENT_MODEL } from "@ccflare/core";
 import {
 	AlertCircle,
 	Bot,
@@ -58,9 +59,8 @@ export function AgentsTab() {
 		null,
 	);
 	const [bulkUpdateDialogOpen, setBulkUpdateDialogOpen] = useState(false);
-	const [bulkUpdateModel, setBulkUpdateModel] = useState(
-		"claude-sonnet-4-20250514",
-	);
+	const [bulkUpdateModel, setBulkUpdateModel] =
+		useState<string>(DEFAULT_AGENT_MODEL);
 
 	const handleModelChange = (agentId: string, model: string) => {
 		updatePreference.mutate({ agentId, model });
@@ -160,7 +160,7 @@ export function AgentsTab() {
 name: My Agent
 description: Description of what this agent does
 color: blue
-model: claude-sonnet-4-20250514
+model: ${DEFAULT_AGENT_MODEL}
 ---
 
 Your system prompt content here...`}
@@ -230,7 +230,7 @@ Your system prompt content here...`}
 							<div className="flex items-center gap-4">
 								<div className="flex-1">
 									<Select
-										value={defaultModel || "claude-sonnet-4-20250514"}
+										value={defaultModel || DEFAULT_AGENT_MODEL}
 										onValueChange={handleDefaultModelChange}
 										disabled={
 											isLoadingDefaultModel || setDefaultModel.isPending
@@ -240,10 +240,10 @@ Your system prompt content here...`}
 											<SelectValue placeholder="Select a model" />
 										</SelectTrigger>
 										<SelectContent>
-											<SelectItem value="claude-opus-4-20250514">
+											<SelectItem value={CLAUDE_MODEL_IDS.OPUS_4}>
 												Claude Opus 4
 											</SelectItem>
-											<SelectItem value="claude-sonnet-4-20250514">
+											<SelectItem value={CLAUDE_MODEL_IDS.SONNET_4}>
 												Claude Sonnet 4
 											</SelectItem>
 										</SelectContent>
@@ -291,10 +291,10 @@ Your system prompt content here...`}
 													<SelectValue />
 												</SelectTrigger>
 												<SelectContent>
-													<SelectItem value="claude-opus-4-20250514">
+													<SelectItem value={CLAUDE_MODEL_IDS.OPUS_4}>
 														Claude Opus 4
 													</SelectItem>
-													<SelectItem value="claude-sonnet-4-20250514">
+													<SelectItem value={CLAUDE_MODEL_IDS.SONNET_4}>
 														Claude Sonnet 4
 													</SelectItem>
 												</SelectContent>

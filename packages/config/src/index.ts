@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import {
+	DEFAULT_AGENT_MODEL,
 	DEFAULT_STRATEGY,
 	isValidStrategy,
 	NETWORK,
@@ -134,8 +135,8 @@ export class Config extends EventEmitter {
 			return configModel;
 		}
 
-		// Default to claude-sonnet-4
-		return "claude-sonnet-4-20250514";
+		// Default to the centralized default agent model
+		return DEFAULT_AGENT_MODEL;
 	}
 
 	setDefaultAgentModel(model: string): void {
