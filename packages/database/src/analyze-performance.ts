@@ -1,13 +1,16 @@
 #!/usr/bin/env bun
 import { Database } from "bun:sqlite";
+import { Logger } from "@claudeflare/logger";
 import { resolveDbPath } from "./paths";
 import { analyzeIndexUsage } from "./performance-indexes";
+
+const log = new Logger("PerformanceAnalysis");
 
 /**
  * Analyze query performance and index usage
  */
 function analyzeQueryPerformance(db: Database) {
-	console.log("\n=== Query Performance Analysis ===\n");
+	log.info("\n=== Query Performance Analysis ===\n");
 
 	// Test queries that should benefit from the new indexes
 	const testQueries = [
@@ -84,15 +87,15 @@ function analyzeQueryPerformance(db: Database) {
 
 	// Run each test query with EXPLAIN QUERY PLAN
 	for (const test of testQueries) {
-		console.log(`\n--- ${test.name} ---`);
+		log.info(`\n--- ${test.name} ---`);
 
 		try {
 			// Get query plan
 			const planStmt = db.prepare(`EXPLAIN QUERY PLAN ${test.query}`);
 			const plan = planStmt.all(...test.params);
-			console.log("Query Plan:");
+			log.info("Query Plan:");
 			for (const row of plan) {
-				console.log(`  ${JSON.stringify(row)}`);
+				log.info(`  ${JSON.stringify(row)}`);
 			}
 
 			// Time the actual query
@@ -101,10 +104,10 @@ function analyzeQueryPerformance(db: Database) {
 			const result = stmt.all(...test.params);
 			const duration = performance.now() - start;
 
-			console.log(`Execution time: ${duration.toFixed(2)}ms`);
-			console.log(`Rows returned: ${result.length}`);
+			log.info(`Execution time: ${duration.toFixed(2)}ms`);
+			log.info(`Rows returned: ${result.length}`);
 		} catch (error) {
-			console.error(`Error: ${error}`);
+			log.error(`Error: ${error}`);
 		}
 	}
 }
@@ -113,7 +116,7 @@ function analyzeQueryPerformance(db: Database) {
  * Show index statistics
  */
 function showIndexStats(db: Database) {
-	console.log("\n=== Index Statistics ===\n");
+	log.info("\n=== Index Statistics ===\n");
 
 	// Get index list with size estimates
 	const indexes = db
@@ -137,24 +140,24 @@ function showIndexStats(db: Database) {
 		stat_value: string | null;
 	}>;
 
-	console.log(`Total performance indexes: ${indexes.length}\n`);
+	log.info(`Total performance indexes: ${indexes.length}\n`);
 
 	let currentTable = "";
 	for (const index of indexes) {
 		if (index.table_name !== currentTable) {
 			currentTable = index.table_name;
-			console.log(`\n${currentTable}:`);
+			log.info(`\n${currentTable}:`);
 		}
-		console.log(`  - ${index.index_name}`);
+		log.info(`  - ${index.index_name}`);
 		if (index.stat_value) {
-			console.log(`    Stats: ${index.stat_value}`);
+			log.info(`    Stats: ${index.stat_value}`);
 		}
 	}
 
 	// Run ANALYZE to update statistics
-	console.log("\nRunning ANALYZE to update statistics...");
+	log.info("\nRunning ANALYZE to update statistics...");
 	db.exec("ANALYZE");
-	console.log("Statistics updated.");
+	log.info("Statistics updated.");
 }
 
 /**
@@ -162,7 +165,7 @@ function showIndexStats(db: Database) {
  */
 function main() {
 	const dbPath = resolveDbPath();
-	console.log(`Analyzing database at: ${dbPath}\n`);
+	log.info(`Analyzing database at: ${dbPath}\n`);
 
 	const db = new Database(dbPath, { readonly: true });
 
@@ -176,7 +179,7 @@ function main() {
 		// Analyze query performance
 		analyzeQueryPerformance(db);
 
-		console.log("\n=== Analysis Complete ===\n");
+		log.info("\n=== Analysis Complete ===\n");
 	} finally {
 		db.close();
 	}

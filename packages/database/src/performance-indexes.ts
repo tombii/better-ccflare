@@ -1,11 +1,14 @@
 import type { Database } from "bun:sqlite";
+import { Logger } from "@claudeflare/logger";
+
+const log = new Logger("PerformanceIndexes");
 
 /**
  * Add performance indexes to improve query performance
  * This migration adds indexes based on common query patterns in the application
  */
 export function addPerformanceIndexes(db: Database): void {
-	console.log("Adding performance indexes...");
+	log.info("Adding performance indexes...");
 
 	// 1. Composite index on requests(timestamp, account_used) for time-based account queries
 	// Used in analytics for filtering by time range and account
@@ -13,7 +16,7 @@ export function addPerformanceIndexes(db: Database): void {
 		CREATE INDEX IF NOT EXISTS idx_requests_timestamp_account 
 		ON requests(timestamp DESC, account_used)
 	`);
-	console.log("Added index: idx_requests_timestamp_account");
+	log.info("Added index: idx_requests_timestamp_account");
 
 	// 2. Index on requests(model, timestamp) for model analytics
 	// Used in model distribution and performance queries
@@ -22,7 +25,7 @@ export function addPerformanceIndexes(db: Database): void {
 		ON requests(model, timestamp DESC) 
 		WHERE model IS NOT NULL
 	`);
-	console.log("Added index: idx_requests_model_timestamp");
+	log.info("Added index: idx_requests_model_timestamp");
 
 	// 3. Index on requests(success, timestamp) for success rate calculations
 	// Used in analytics for calculating success rates over time
@@ -30,7 +33,7 @@ export function addPerformanceIndexes(db: Database): void {
 		CREATE INDEX IF NOT EXISTS idx_requests_success_timestamp 
 		ON requests(success, timestamp DESC)
 	`);
-	console.log("Added index: idx_requests_success_timestamp");
+	log.info("Added index: idx_requests_success_timestamp");
 
 	// 4. Index on accounts(paused) for finding active accounts
 	// Used in load balancer to quickly filter active accounts
@@ -39,7 +42,7 @@ export function addPerformanceIndexes(db: Database): void {
 		ON accounts(paused) 
 		WHERE paused = 0
 	`);
-	console.log("Added index: idx_accounts_paused");
+	log.info("Added index: idx_accounts_paused");
 
 	// 5. Index on requests(account_used, timestamp) for per-account analytics
 	// Used in account performance queries
@@ -47,7 +50,7 @@ export function addPerformanceIndexes(db: Database): void {
 		CREATE INDEX IF NOT EXISTS idx_requests_account_timestamp 
 		ON requests(account_used, timestamp DESC)
 	`);
-	console.log("Added index: idx_requests_account_timestamp");
+	log.info("Added index: idx_requests_account_timestamp");
 
 	// 6. Additional indexes based on observed query patterns
 
@@ -57,7 +60,7 @@ export function addPerformanceIndexes(db: Database): void {
 		ON requests(cost_usd, model, timestamp DESC) 
 		WHERE cost_usd > 0 AND model IS NOT NULL
 	`);
-	console.log("Added index: idx_requests_cost_model");
+	log.info("Added index: idx_requests_cost_model");
 
 	// Index for response time analysis (for p95 calculations)
 	db.run(`
@@ -65,7 +68,7 @@ export function addPerformanceIndexes(db: Database): void {
 		ON requests(model, response_time_ms) 
 		WHERE response_time_ms IS NOT NULL AND model IS NOT NULL
 	`);
-	console.log("Added index: idx_requests_response_time");
+	log.info("Added index: idx_requests_response_time");
 
 	// Index for token usage analysis
 	db.run(`
@@ -73,14 +76,14 @@ export function addPerformanceIndexes(db: Database): void {
 		ON requests(timestamp DESC, total_tokens) 
 		WHERE total_tokens > 0
 	`);
-	console.log("Added index: idx_requests_tokens");
+	log.info("Added index: idx_requests_tokens");
 
 	// Index for account name lookups (used in analytics joins)
 	db.run(`
 		CREATE INDEX IF NOT EXISTS idx_accounts_name 
 		ON accounts(name)
 	`);
-	console.log("Added index: idx_accounts_name");
+	log.info("Added index: idx_accounts_name");
 
 	// Index for rate limit checks
 	db.run(`
@@ -88,7 +91,7 @@ export function addPerformanceIndexes(db: Database): void {
 		ON accounts(rate_limited_until) 
 		WHERE rate_limited_until IS NOT NULL
 	`);
-	console.log("Added index: idx_accounts_rate_limited");
+	log.info("Added index: idx_accounts_rate_limited");
 
 	// Index for session management
 	db.run(`
@@ -96,23 +99,23 @@ export function addPerformanceIndexes(db: Database): void {
 		ON accounts(session_start, session_request_count) 
 		WHERE session_start IS NOT NULL
 	`);
-	console.log("Added index: idx_accounts_session");
+	log.info("Added index: idx_accounts_session");
 
 	// Composite index for account ordering in load balancer
 	db.run(`
 		CREATE INDEX IF NOT EXISTS idx_accounts_request_count 
 		ON accounts(request_count DESC, last_used)
 	`);
-	console.log("Added index: idx_accounts_request_count");
+	log.info("Added index: idx_accounts_request_count");
 
-	console.log("Performance indexes added successfully");
+	log.info("Performance indexes added successfully");
 }
 
 /**
  * Analyze current index usage and suggest optimizations
  */
 export function analyzeIndexUsage(db: Database): void {
-	console.log("\nAnalyzing index usage...");
+	log.info("\nAnalyzing index usage...");
 
 	// Get all indexes
 	const indexes = db
@@ -124,9 +127,9 @@ export function analyzeIndexUsage(db: Database): void {
 		)
 		.all() as Array<{ name: string; tbl_name: string; sql: string }>;
 
-	console.log(`\nTotal indexes: ${indexes.length}`);
+	log.info(`\nTotal indexes: ${indexes.length}`);
 	for (const index of indexes) {
-		console.log(`- ${index.name} on ${index.tbl_name}`);
+		log.info(`- ${index.name} on ${index.tbl_name}`);
 	}
 
 	// Analyze table statistics
@@ -135,6 +138,6 @@ export function analyzeIndexUsage(db: Database): void {
 		const count = db
 			.prepare(`SELECT COUNT(*) as count FROM ${table}`)
 			.get() as { count: number };
-		console.log(`\n${table} table: ${count.count} rows`);
+		log.info(`\n${table} table: ${count.count} rows`);
 	}
 }
