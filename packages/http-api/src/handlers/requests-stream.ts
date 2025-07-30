@@ -2,12 +2,15 @@ import { type RequestEvt, requestEvents } from "@ccflare/core";
 
 export function createRequestsStreamHandler() {
 	return (): Response => {
+		// Store the write handler outside to access it in cancel
+		let writeHandler: ((data: RequestEvt) => void) | null = null;
+
 		const stream = new ReadableStream({
 			start(controller) {
 				const encoder = new TextEncoder();
 
 				// Helper to send SSE formatted data
-				const write = (data: RequestEvt) => {
+				writeHandler = (data: RequestEvt) => {
 					const message = `data: ${JSON.stringify(data)}\n\n`;
 					controller.enqueue(encoder.encode(message));
 				};
@@ -17,11 +20,14 @@ export function createRequestsStreamHandler() {
 				controller.enqueue(encoder.encode(connectMsg));
 
 				// Listen for events
-				requestEvents.on("event", write);
+				requestEvents.on("event", writeHandler);
 			},
 			cancel() {
-				// Cleanup on stream cancellation
-				requestEvents.removeAllListeners("event");
+				// Cleanup only this specific listener
+				if (writeHandler) {
+					requestEvents.off("event", writeHandler);
+					writeHandler = null;
+				}
 			},
 		});
 
