@@ -8,7 +8,10 @@ import {
 	type StrategyName,
 	TIME_CONSTANTS,
 } from "@claudeflare/core";
+import { Logger } from "@claudeflare/logger";
 import { resolveConfigPath } from "./paths";
+
+const log = new Logger("Config");
 
 export interface RuntimeConfig {
 	clientId: string;
@@ -44,7 +47,7 @@ export class Config extends EventEmitter {
 				const content = readFileSync(this.configPath, "utf8");
 				this.data = JSON.parse(content) as ConfigData;
 			} catch (error) {
-				console.error(`Failed to parse config file: ${error}`);
+				log.error(`Failed to parse config file: ${error}`);
 				this.data = {};
 			}
 		} else {
@@ -65,7 +68,7 @@ export class Config extends EventEmitter {
 			const content = JSON.stringify(this.data, null, 2);
 			writeFileSync(this.configPath, content, "utf8");
 		} catch (error) {
-			console.error(`Failed to save config file: ${error}`);
+			log.error(`Failed to save config file: ${error}`);
 		}
 	}
 
