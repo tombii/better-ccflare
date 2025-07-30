@@ -5,11 +5,14 @@ import {
 	formatTokensPerSecond,
 } from "@ccflare/ui-common";
 import {
+	Calendar,
 	ChevronDown,
 	ChevronRight,
+	Clock,
 	Eye,
 	Filter,
 	RefreshCw,
+	X,
 } from "lucide-react";
 import { useState } from "react";
 import type { RequestPayload, RequestSummary } from "../api";
@@ -27,6 +30,11 @@ import {
 	CardHeader,
 	CardTitle,
 } from "./ui/card";
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuTrigger,
+} from "./ui/dropdown-menu";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import {
@@ -46,6 +54,9 @@ export function RequestsTab() {
 	const [dateFrom, setDateFrom] = useState<string>("");
 	const [dateTo, setDateTo] = useState<string>("");
 	const [showFilters, setShowFilters] = useState(false);
+	const [statusCodeFilters, setStatusCodeFilters] = useState<Set<string>>(
+		new Set(),
+	);
 
 	const {
 		data: requestsData,
@@ -82,6 +93,17 @@ export function RequestsTab() {
 			).sort()
 		: [];
 
+	// Extract unique status codes for filter
+	const uniqueStatusCodes = data
+		? Array.from(
+				new Set(
+					data.requests
+						.map((r) => r.response?.status)
+						.filter((status): status is number => status !== undefined),
+				),
+			).sort((a, b) => a - b)
+		: [];
+
 	// Filter requests based on selected filters
 	const filteredRequests = data
 		? data.requests.filter((request) => {
@@ -90,6 +112,13 @@ export function RequestsTab() {
 					const requestAccount =
 						request.meta.accountName || request.meta.accountId;
 					if (requestAccount !== accountFilter) return false;
+				}
+
+				// Status code filter
+				if (statusCodeFilters.size > 0 && request.response?.status) {
+					if (!statusCodeFilters.has(request.response.status.toString())) {
+						return false;
+					}
 				}
 
 				// Date range filter
@@ -120,6 +149,68 @@ export function RequestsTab() {
 			return next;
 		});
 	};
+
+	// Date preset helpers
+	const applyDatePreset = (preset: string) => {
+		const now = new Date();
+		const toDate = now.toISOString().slice(0, 16);
+
+		switch (preset) {
+			case "1h": {
+				const fromDate = new Date(now.getTime() - 60 * 60 * 1000);
+				setDateFrom(fromDate.toISOString().slice(0, 16));
+				setDateTo(toDate);
+				break;
+			}
+			case "24h": {
+				const fromDate = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+				setDateFrom(fromDate.toISOString().slice(0, 16));
+				setDateTo(toDate);
+				break;
+			}
+			case "7d": {
+				const fromDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+				setDateFrom(fromDate.toISOString().slice(0, 16));
+				setDateTo(toDate);
+				break;
+			}
+			case "30d": {
+				const fromDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+				setDateFrom(fromDate.toISOString().slice(0, 16));
+				setDateTo(toDate);
+				break;
+			}
+		}
+	};
+
+	const toggleStatusCode = (code: string) => {
+		setStatusCodeFilters((prev) => {
+			const next = new Set(prev);
+			if (next.has(code)) {
+				next.delete(code);
+			} else {
+				next.add(code);
+			}
+			return next;
+		});
+	};
+
+	const getStatusCodeColor = (code: number) => {
+		if (code >= 200 && code < 300) return "text-green-600";
+		if (code >= 400 && code < 500) return "text-yellow-600";
+		if (code >= 500) return "text-red-600";
+		return "text-gray-600";
+	};
+
+	const clearAllFilters = () => {
+		setAccountFilter("all");
+		setDateFrom("");
+		setDateTo("");
+		setStatusCodeFilters(new Set());
+	};
+
+	const hasActiveFilters =
+		accountFilter !== "all" || dateFrom || dateTo || statusCodeFilters.size > 0;
 
 	const decodeBase64 = (str: string | null): string => {
 		if (!str) return "No data";
@@ -191,7 +282,7 @@ export function RequestsTab() {
 						>
 							<Filter className="h-4 w-4 mr-2" />
 							Filters
-							{(accountFilter !== "all" || dateFrom || dateTo) && (
+							{hasActiveFilters && (
 								<span className="absolute -top-1 -right-1 h-2 w-2 bg-primary rounded-full" />
 							)}
 						</Button>
@@ -202,14 +293,116 @@ export function RequestsTab() {
 				</div>
 			</CardHeader>
 			<CardContent>
-				{/* Filters */}
+				{/* Active Filters Display */}
+				{hasActiveFilters && !showFilters && (
+					<div className="mb-4 flex flex-wrap items-center gap-2">
+						<span className="text-sm text-muted-foreground">
+							Active filters:
+						</span>
+						{accountFilter !== "all" && (
+							<Badge variant="secondary" className="gap-1">
+								Account: {accountFilter}
+								<button
+									type="button"
+									onClick={() => setAccountFilter("all")}
+									className="ml-1 hover:text-destructive"
+								>
+									<X className="h-3 w-3" />
+								</button>
+							</Badge>
+						)}
+						{statusCodeFilters.size > 0 && (
+							<Badge variant="secondary" className="gap-1">
+								Status: {Array.from(statusCodeFilters).join(", ")}
+								<button
+									type="button"
+									onClick={() => setStatusCodeFilters(new Set())}
+									className="ml-1 hover:text-destructive"
+								>
+									<X className="h-3 w-3" />
+								</button>
+							</Badge>
+						)}
+						{(dateFrom || dateTo) && (
+							<Badge variant="secondary" className="gap-1">
+								Date range
+								<button
+									type="button"
+									onClick={() => {
+										setDateFrom("");
+										setDateTo("");
+									}}
+									className="ml-1 hover:text-destructive"
+								>
+									<X className="h-3 w-3" />
+								</button>
+							</Badge>
+						)}
+						<Button
+							variant="ghost"
+							size="sm"
+							onClick={clearAllFilters}
+							className="h-6 px-2 text-xs"
+						>
+							Clear all
+						</Button>
+					</div>
+				)}
+
+				{/* Filters Panel */}
 				{showFilters && (
-					<div className="mb-4 space-y-4 p-4 border rounded-lg bg-muted/50">
-						<div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+					<div className="mb-6 space-y-4 p-6 border rounded-lg bg-muted/30">
+						{/* Quick Presets */}
+						<div className="flex flex-wrap items-center gap-2">
+							<span className="text-sm font-medium">Quick filters:</span>
+							<div className="flex gap-2">
+								<Button
+									variant="outline"
+									size="sm"
+									onClick={() => applyDatePreset("1h")}
+									className="h-8"
+								>
+									<Clock className="h-3 w-3 mr-1" />
+									Last hour
+								</Button>
+								<Button
+									variant="outline"
+									size="sm"
+									onClick={() => applyDatePreset("24h")}
+									className="h-8"
+								>
+									<Clock className="h-3 w-3 mr-1" />
+									Last 24h
+								</Button>
+								<Button
+									variant="outline"
+									size="sm"
+									onClick={() => applyDatePreset("7d")}
+									className="h-8"
+								>
+									<Calendar className="h-3 w-3 mr-1" />
+									Last 7 days
+								</Button>
+								<Button
+									variant="outline"
+									size="sm"
+									onClick={() => applyDatePreset("30d")}
+									className="h-8"
+								>
+									<Calendar className="h-3 w-3 mr-1" />
+									Last 30 days
+								</Button>
+							</div>
+						</div>
+
+						<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+							{/* Account Filter */}
 							<div className="space-y-2">
-								<Label htmlFor="account-filter">Account</Label>
+								<Label htmlFor="account-filter" className="text-sm font-medium">
+									Account
+								</Label>
 								<Select value={accountFilter} onValueChange={setAccountFilter}>
-									<SelectTrigger id="account-filter">
+									<SelectTrigger id="account-filter" className="h-9">
 										<SelectValue placeholder="All accounts" />
 									</SelectTrigger>
 									<SelectContent>
@@ -222,40 +415,119 @@ export function RequestsTab() {
 									</SelectContent>
 								</Select>
 							</div>
+
+							{/* Status Code Filter */}
 							<div className="space-y-2">
-								<Label htmlFor="date-from">From Date</Label>
+								<Label className="text-sm font-medium">Status Code</Label>
+								<DropdownMenu>
+									<DropdownMenuTrigger asChild>
+										<Button
+											variant="outline"
+											className="h-9 w-full justify-between font-normal"
+										>
+											{statusCodeFilters.size > 0
+												? `${statusCodeFilters.size} selected`
+												: "All status codes"}
+											<ChevronDown className="h-4 w-4 opacity-50" />
+										</Button>
+									</DropdownMenuTrigger>
+									<DropdownMenuContent className="w-56 max-h-64 overflow-y-auto">
+										{uniqueStatusCodes.map((code) => (
+											<button
+												key={code}
+												type="button"
+												className="flex items-center space-x-2 p-2 hover:bg-accent rounded cursor-pointer w-full text-left"
+												onClick={() => toggleStatusCode(code.toString())}
+											>
+												<div
+													className={`w-4 h-4 border rounded flex-shrink-0 ${
+														statusCodeFilters.has(code.toString())
+															? "bg-primary border-primary"
+															: "border-input"
+													}`}
+												>
+													{statusCodeFilters.has(code.toString()) && (
+														<svg
+															className="w-4 h-4 text-primary-foreground"
+															fill="none"
+															viewBox="0 0 24 24"
+															stroke="currentColor"
+															role="img"
+															aria-label="Selected"
+														>
+															<title>Selected</title>
+															<path
+																strokeLinecap="round"
+																strokeLinejoin="round"
+																strokeWidth={2}
+																d="M5 13l4 4L19 7"
+															/>
+														</svg>
+													)}
+												</div>
+												<span className={`text-sm ${getStatusCodeColor(code)}`}>
+													{code}
+												</span>
+											</button>
+										))}
+									</DropdownMenuContent>
+								</DropdownMenu>
+							</div>
+
+							{/* Date From */}
+							<div className="space-y-2">
+								<Label htmlFor="date-from" className="text-sm font-medium">
+									From Date
+								</Label>
 								<Input
 									id="date-from"
 									type="datetime-local"
 									value={dateFrom}
 									onChange={(e) => setDateFrom(e.target.value)}
-									className="w-full"
+									className="h-9"
 								/>
 							</div>
+
+							{/* Date To */}
 							<div className="space-y-2">
-								<Label htmlFor="date-to">To Date</Label>
+								<Label htmlFor="date-to" className="text-sm font-medium">
+									To Date
+								</Label>
 								<Input
 									id="date-to"
 									type="datetime-local"
 									value={dateTo}
 									onChange={(e) => setDateTo(e.target.value)}
-									className="w-full"
+									className="h-9"
 								/>
 							</div>
 						</div>
-						{(accountFilter !== "all" || dateFrom || dateTo) && (
-							<Button
-								variant="ghost"
-								size="sm"
-								onClick={() => {
-									setAccountFilter("all");
-									setDateFrom("");
-									setDateTo("");
-								}}
-							>
-								Clear filters
-							</Button>
-						)}
+
+						{/* Actions */}
+						<div className="flex items-center justify-between pt-2">
+							<div className="text-sm text-muted-foreground">
+								{data && (
+									<span>
+										Showing {filteredRequests.length} of {data.requests.length}{" "}
+										requests
+									</span>
+								)}
+							</div>
+							<div className="flex gap-2">
+								{hasActiveFilters && (
+									<Button variant="ghost" size="sm" onClick={clearAllFilters}>
+										Clear all filters
+									</Button>
+								)}
+								<Button
+									variant="outline"
+									size="sm"
+									onClick={() => setShowFilters(false)}
+								>
+									Close
+								</Button>
+							</div>
+						</div>
 					</div>
 				)}
 
