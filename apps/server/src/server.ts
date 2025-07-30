@@ -138,7 +138,10 @@ export default function startServer(options?: {
 
 	// Create runtime config
 	const runtimeConfig: RuntimeConfig = {
-		clientId: config.get("client_id", "default_client_id") as string,
+		clientId: config.get(
+			"client_id",
+			"9d1c250a-e61b-44d9-88ed-5944d1962f5e",
+		) as string,
 		retry: {
 			attempts: config.get("retry_attempts", 3) as number,
 			delayMs: config.get("retry_delay_ms", 1000) as number,
