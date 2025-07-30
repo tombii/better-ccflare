@@ -305,7 +305,8 @@ export function createAnalyticsHandler(context: APIContext) {
 				SELECT
 					model,
 					SUM(COALESCE(cost_usd, 0)) as cost_usd,
-					COUNT(*) as requests
+					COUNT(*) as requests,
+					SUM(COALESCE(total_tokens, 0)) as total_tokens
 				FROM requests r
 				WHERE ${whereClause} AND COALESCE(cost_usd, 0) > 0 AND model IS NOT NULL
 				GROUP BY model
@@ -316,6 +317,7 @@ export function createAnalyticsHandler(context: APIContext) {
 				model: string;
 				cost_usd: number;
 				requests: number;
+				total_tokens: number;
 			}>;
 
 			// Transform timeSeries data
@@ -385,6 +387,7 @@ export function createAnalyticsHandler(context: APIContext) {
 					model: model.model,
 					costUsd: model.cost_usd || 0,
 					requests: model.requests || 0,
+					totalTokens: model.total_tokens || 0,
 				})),
 				modelPerformance,
 			};

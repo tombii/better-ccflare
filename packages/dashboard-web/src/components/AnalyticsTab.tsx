@@ -8,7 +8,7 @@ import {
 	CumulativeTokenComposition,
 	type FilterState,
 	MainMetricsChart,
-	ModelComparisonCharts,
+	ModelAnalytics,
 	PerformanceIndicatorsChart,
 	TokenSpeedAnalytics,
 	TokenUsageBreakdown,
@@ -112,7 +112,7 @@ export function AnalyticsTab() {
 		: [];
 
 	// Use real model performance data from backend with filters
-	const modelPerformance =
+	const _modelPerformance =
 		analytics?.modelPerformance
 			?.filter(
 				(perf) =>
@@ -132,12 +132,7 @@ export function AnalyticsTab() {
 				(model) =>
 					filters.models.length === 0 || filters.models.includes(model.model),
 			)
-			?.slice(0, 4)
-			.map((model) => ({
-				model: model.model,
-				cost: model.costUsd,
-				requests: model.requests,
-			})) || [];
+			?.slice(0, 4) || [];
 
 	// Count active filters
 	const activeFilterCount =
@@ -183,9 +178,9 @@ export function AnalyticsTab() {
 				/>
 			</div>
 
-			{/* Model Performance & Cost Analysis */}
-			<ModelComparisonCharts
-				modelPerformance={modelPerformance}
+			{/* Enhanced Model Analytics */}
+			<ModelAnalytics
+				modelPerformance={analytics?.modelPerformance || []}
 				costByModel={costByModel}
 				loading={loading}
 				timeRange={timeRange}
