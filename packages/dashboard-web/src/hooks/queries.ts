@@ -10,6 +10,13 @@ export const useAccounts = () => {
 	});
 };
 
+export const useAgents = () => {
+	return useQuery({
+		queryKey: queryKeys.agents(),
+		queryFn: () => api.getAgents(),
+	});
+};
+
 export const useStats = (refetchInterval?: number) => {
 	return useQuery({
 		queryKey: queryKeys.stats(),
@@ -88,6 +95,17 @@ export const useResetStats = () => {
 		mutationFn: () => api.resetStats(),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.stats() });
+		},
+	});
+};
+
+export const useUpdateAgentPreference = () => {
+	const queryClient = useQueryClient();
+	return useMutation({
+		mutationFn: ({ agentId, model }: { agentId: string; model: string }) =>
+			api.updateAgentPreference(agentId, model),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.agents() });
 		},
 	});
 };

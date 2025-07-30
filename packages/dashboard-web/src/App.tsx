@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState } from "react";
 import { AccountsTab } from "./components/AccountsTab";
+import { AgentsTab } from "./components/AgentsTab";
 import { AnalyticsTab } from "./components/AnalyticsTab";
 import { LogsTab } from "./components/LogsTab";
 import { Navigation } from "./components/navigation";
@@ -32,6 +33,8 @@ export function App() {
 				return <RequestsTab />;
 			case "accounts":
 				return <AccountsTab />;
+			case "agents":
+				return <AgentsTab />;
 			case "logs":
 				return <LogsTab />;
 			default:
@@ -59,6 +62,7 @@ export function App() {
 									{activeTab === "analytics" && "Analytics"}
 									{activeTab === "requests" && "Request History"}
 									{activeTab === "accounts" && "Account Management"}
+									{activeTab === "agents" && "Agent Management"}
 									{activeTab === "logs" && "System Logs"}
 								</h1>
 								<p className="text-muted-foreground mt-2">
@@ -70,6 +74,8 @@ export function App() {
 										"View detailed request and response data"}
 									{activeTab === "accounts" &&
 										"Manage your OAuth accounts and settings"}
+									{activeTab === "agents" &&
+										"Discover and manage Claude Code agents"}
 									{activeTab === "logs" &&
 										"Real-time system logs and debugging information"}
 								</p>

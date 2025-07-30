@@ -11,6 +11,7 @@
 		"analyze": "bun run ./src/analyze-performance.ts"
 	},
 	"dependencies": {
-		"@claudeflare/core": "workspace:*"
+		"@claudeflare/core": "workspace:*",
+		"@claudeflare/logger": "workspace:*"
 	}
 }
