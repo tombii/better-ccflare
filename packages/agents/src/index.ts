@@ -1,6 +1,4 @@
-export { AgentRegistry } from "./discovery";
+export type { Agent, AgentSource, AgentWorkspace } from "@ccflare/types";
+export { AgentRegistry, agentRegistry } from "./discovery";
 export { getAgentsDirectory } from "./paths";
-
-// Create a singleton instance for convenience
-import { AgentRegistry } from "./discovery";
-export const agentRegistry = new AgentRegistry();
+export { workspacePersistence } from "./workspace-persistence";

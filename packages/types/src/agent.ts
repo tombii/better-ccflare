@@ -1,3 +1,11 @@
+export type AgentSource = "global" | "workspace";
+
+export interface AgentWorkspace {
+	path: string;
+	name: string;
+	lastSeen: number; // timestamp
+}
+
 export interface Agent {
 	id: string;
 	name: string;
@@ -5,6 +13,8 @@ export interface Agent {
 	color: string;
 	model: string;
 	systemPrompt: string;
+	source: AgentSource;
+	workspace?: string; // workspace path if source is "workspace"
 }
 
 export type AgentResponse = Agent[];

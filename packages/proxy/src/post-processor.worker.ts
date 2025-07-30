@@ -1,10 +1,6 @@
 declare var self: Worker;
 
-import {
-	BUFFER_SIZES,
-	estimateCostUSD,
-	TIME_CONSTANTS,
-} from "@ccflare/core";
+import { BUFFER_SIZES, estimateCostUSD, TIME_CONSTANTS } from "@ccflare/core";
 import { AsyncDbWriter, DatabaseOperations } from "@ccflare/database";
 import { Logger } from "@ccflare/logger";
 import { NO_ACCOUNT_ID } from "@ccflare/types";

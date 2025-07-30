@@ -10,6 +10,7 @@ import {
 import {
 	createAgentPreferenceUpdateHandler,
 	createAgentsListHandler,
+	createWorkspacesListHandler,
 } from "./handlers/agents";
 import { createAnalyticsHandler } from "./handlers/analytics";
 import { createConfigHandlers } from "./handlers/config";
@@ -64,6 +65,7 @@ export class APIRouter {
 		const oauthInitHandler = createOAuthInitHandler(dbOps);
 		const oauthCallbackHandler = createOAuthCallbackHandler(dbOps);
 		const agentsHandler = createAgentsListHandler(dbOps);
+		const workspacesHandler = createWorkspacesListHandler();
 
 		// Register routes
 		this.handlers.set("GET:/health", () => healthHandler());
@@ -111,6 +113,7 @@ export class APIRouter {
 			return analyticsHandler(url.searchParams);
 		});
 		this.handlers.set("GET:/api/agents", () => agentsHandler());
+		this.handlers.set("GET:/api/workspaces", () => workspacesHandler());
 	}
 
 	/**

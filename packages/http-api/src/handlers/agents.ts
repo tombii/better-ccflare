@@ -21,7 +21,23 @@ export function createAgentsListHandler(dbOps: DatabaseOperations) {
 				model: prefMap.get(agent.id) || agent.model,
 			}));
 
-			return jsonResponse({ agents: agentsWithPreferences });
+			// Group agents by source
+			const globalAgents = agentsWithPreferences.filter(
+				(a) => a.source === "global",
+			);
+			const workspaceAgents = agentsWithPreferences.filter(
+				(a) => a.source === "workspace",
+			);
+
+			// Get workspaces
+			const workspaces = agentRegistry.getWorkspaces();
+
+			return jsonResponse({
+				agents: agentsWithPreferences,
+				globalAgents,
+				workspaceAgents,
+				workspaces,
+			});
 		} catch (error) {
 			log.error("Error fetching agents:", error);
 			return jsonResponse({ error: "Failed to fetch agents" }, 500);
@@ -60,6 +76,32 @@ export function createAgentPreferenceUpdateHandler(dbOps: DatabaseOperations) {
 				return jsonResponse({ error: error.message }, error.status);
 			}
 			return jsonResponse({ error: "Failed to update agent preference" }, 500);
+		}
+	};
+}
+
+export function createWorkspacesListHandler() {
+	return async (): Promise<Response> => {
+		try {
+			const workspaces = agentRegistry.getWorkspaces();
+
+			// Add agent count for each workspace
+			const agents = await agentRegistry.getAgents();
+			const workspacesWithStats = workspaces.map((workspace) => {
+				const agentCount = agents.filter(
+					(a) => a.source === "workspace" && a.workspace === workspace.path,
+				).length;
+
+				return {
+					...workspace,
+					agentCount,
+				};
+			});
+
+			return jsonResponse({ workspaces: workspacesWithStats });
+		} catch (error) {
+			log.error("Error fetching workspaces:", error);
+			return jsonResponse({ error: "Failed to fetch workspaces" }, 500);
 		}
 	};
 }

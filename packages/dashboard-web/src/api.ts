@@ -2,6 +2,7 @@ import { HttpClient, HttpError } from "@ccflare/http-common";
 import type {
 	AccountResponse,
 	Agent,
+	AgentWorkspace,
 	AnalyticsResponse,
 	LogEvent,
 	RequestPayload,
@@ -17,7 +18,15 @@ export type LogEntry = LogEvent;
 export type RequestSummary = RequestResponse;
 
 // Re-export types directly
-export type { Agent, RequestPayload } from "@ccflare/types";
+export type { Agent, AgentWorkspace, RequestPayload } from "@ccflare/types";
+
+// Agent response interface
+export interface AgentsResponse {
+	agents: Agent[];
+	globalAgents: Agent[];
+	workspaceAgents: Agent[];
+	workspaces: AgentWorkspace[];
+}
 
 class API extends HttpClient {
 	constructor() {
@@ -196,9 +205,8 @@ class API extends HttpClient {
 		}
 	}
 
-	async getAgents(): Promise<Agent[]> {
-		const data = await this.get<{ agents: Agent[] }>("/api/agents");
-		return data.agents;
+	async getAgents(): Promise<AgentsResponse> {
+		return await this.get<AgentsResponse>("/api/agents");
 	}
 
 	async updateAgentPreference(agentId: string, model: string): Promise<void> {
