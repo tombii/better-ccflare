@@ -41,6 +41,12 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		mkdirSync(dir, { recursive: true });
 
 		this.db = new Database(resolvedPath, { create: true });
+
+		// Configure SQLite for better concurrency
+		this.db.exec("PRAGMA journal_mode = WAL"); // Enable Write-Ahead Logging
+		this.db.exec("PRAGMA busy_timeout = 5000"); // Wait up to 5 seconds before throwing "database is locked"
+		this.db.exec("PRAGMA synchronous = NORMAL"); // Better performance while maintaining safety
+
 		ensureSchema(this.db);
 		runMigrations(this.db);
 
@@ -290,11 +296,19 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 	}
 
 	close(): void {
+		// Ensure all write operations are flushed before closing
+		this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
 		this.db.close();
 	}
 
 	dispose(): void {
 		this.close();
+	}
+
+	// Optimize database periodically to maintain performance
+	optimize(): void {
+		this.db.exec("PRAGMA optimize");
+		this.db.exec("PRAGMA wal_checkpoint(PASSIVE)");
 	}
 
 	/**
