@@ -6,6 +6,7 @@ import {
 } from "@claudeflare/ui-common";
 import { Box, Text, useInput } from "ink";
 import { useCallback, useEffect, useState } from "react";
+import { BarChart, PieChart, SparklineChart } from "./charts";
 
 interface StatsScreenProps {
 	onBack: () => void;
@@ -15,6 +16,7 @@ export function StatsScreen({ onBack }: StatsScreenProps) {
 	const [stats, setStats] = useState<tuiCore.Stats | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
+	const [showCharts, setShowCharts] = useState(false);
 
 	useInput((input, key) => {
 		if (key.escape || input === "q") {
@@ -22,6 +24,9 @@ export function StatsScreen({ onBack }: StatsScreenProps) {
 		}
 		if (input === "r") {
 			loadStats();
+		}
+		if (input === "c") {
+			setShowCharts(!showCharts);
 		}
 	});
 
@@ -229,8 +234,89 @@ export function StatsScreen({ onBack }: StatsScreenProps) {
 				</>
 			)}
 
+			{/* Charts Section - Toggle with 'c' */}
+			{showCharts && (
+				<>
+					<Box marginTop={2} marginBottom={1}>
+						<Text bold underline>
+							Visual Analytics
+						</Text>
+					</Box>
+
+					{/* Token Usage Pie Chart */}
+					{stats.tokenDetails && (
+						<Box marginBottom={2}>
+							<PieChart
+								title="Token Distribution"
+								data={[
+									{
+										label: "Input",
+										value: stats.tokenDetails.inputTokens,
+										color: "yellow",
+									},
+									{
+										label: "Cache",
+										value:
+											stats.tokenDetails.cacheReadInputTokens +
+											stats.tokenDetails.cacheCreationInputTokens,
+										color: "cyan",
+									},
+									{
+										label: "Output",
+										value: stats.tokenDetails.outputTokens,
+										color: "green",
+									},
+								]}
+								size="small"
+								showLegend={true}
+							/>
+						</Box>
+					)}
+
+					{/* Account Performance Bar Chart */}
+					{stats.accounts.length > 0 && (
+						<Box marginBottom={2}>
+							<BarChart
+								title="Account Request Distribution"
+								data={stats.accounts.map((account) => ({
+									label: account.name,
+									value: account.requestCount,
+									color:
+										account.successRate >= 95
+											? "green"
+											: account.successRate >= 80
+												? "yellow"
+												: "red",
+								}))}
+								width={30}
+								showValues={true}
+							/>
+						</Box>
+					)}
+
+					{/* Success Rate Sparkline */}
+					<Box marginBottom={2}>
+						<Text bold>Performance Trend</Text>
+						<Box marginTop={1}>
+							<SparklineChart
+								data={[85, 88, 90, 92, 91, 93, 95, stats.successRate]}
+								label="Success %"
+								color={
+									stats.successRate >= 95
+										? "green"
+										: stats.successRate >= 80
+											? "yellow"
+											: "red"
+								}
+								showCurrent={true}
+							/>
+						</Box>
+					</Box>
+				</>
+			)}
+
 			{/* Recent Errors */}
-			{stats.recentErrors.length > 0 && (
+			{stats.recentErrors.length > 0 && !showCharts && (
 				<>
 					<Box marginTop={1} marginBottom={1}>
 						<Text bold underline color="red">
@@ -253,7 +339,9 @@ export function StatsScreen({ onBack }: StatsScreenProps) {
 			)}
 
 			<Box marginTop={2}>
-				<Text dimColor>Press 'r' to refresh • 'q' or ESC to go back</Text>
+				<Text dimColor>
+					[c] {showCharts ? "Hide" : "Show"} Charts • [r] Refresh • [q/ESC] Back
+				</Text>
 			</Box>
 		</Box>
 	);
