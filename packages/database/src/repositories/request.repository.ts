@@ -10,6 +10,7 @@ export interface RequestData {
 	errorMessage: string | null;
 	responseTime: number;
 	failoverAttempts: number;
+	agentUsed?: string;
 	usage?: {
 		model?: string;
 		promptTokens?: number;
@@ -52,9 +53,10 @@ export class RequestRepository extends BaseRepository<RequestData> {
 				id, timestamp, method, path, account_used, 
 				status_code, success, error_message, response_time_ms, failover_attempts,
 				model, prompt_tokens, completion_tokens, total_tokens, cost_usd,
-				input_tokens, cache_read_input_tokens, cache_creation_input_tokens, output_tokens
+				input_tokens, cache_read_input_tokens, cache_creation_input_tokens, output_tokens,
+				agent_used
 			)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`,
 			[
 				data.id,
@@ -76,6 +78,7 @@ export class RequestRepository extends BaseRepository<RequestData> {
 				usage?.cacheReadInputTokens || null,
 				usage?.cacheCreationInputTokens || null,
 				usage?.outputTokens || null,
+				data.agentUsed || null,
 			],
 		);
 	}
