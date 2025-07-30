@@ -91,6 +91,7 @@ export async function forwardToClient(
 		path,
 		accountId: account?.id || null,
 		statusCode: response.status,
+		agentUsed: agentUsed || null,
 	});
 
 	/*********************************************************************

@@ -594,9 +594,9 @@ export function RequestsTab() {
 													{summary.model}
 												</Badge>
 											)}
-											{summary?.agentUsed && (
+											{(summary?.agentUsed || request.meta.agentUsed) && (
 												<Badge variant="secondary" className="text-xs">
-													Agent: {summary.agentUsed}
+													Agent: {summary?.agentUsed || request.meta.agentUsed}
 												</Badge>
 											)}
 											{(summary?.totalTokens || request.meta.pending) && (
