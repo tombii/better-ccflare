@@ -19,6 +19,7 @@ export function AnalyticsTab() {
 	const [selectedMetric, setSelectedMetric] = useState("requests");
 	const [filterOpen, setFilterOpen] = useState(false);
 	const [viewMode, setViewMode] = useState<"normal" | "cumulative">("normal");
+	const [modelBreakdown, setModelBreakdown] = useState(false);
 	const [filters, setFilters] = useState<FilterState>({
 		accounts: [],
 		models: [],
@@ -30,6 +31,7 @@ export function AnalyticsTab() {
 		timeRange,
 		filters,
 		viewMode,
+		modelBreakdown,
 	);
 
 	// Get unique accounts and models from analytics data
@@ -162,11 +164,14 @@ export function AnalyticsTab() {
 			{/* Main Metrics Chart */}
 			<MainMetricsChart
 				data={data}
+				rawTimeSeries={analytics?.timeSeries}
 				loading={loading}
 				viewMode={viewMode}
 				timeRange={timeRange}
 				selectedMetric={selectedMetric}
 				setSelectedMetric={setSelectedMetric}
+				modelBreakdown={modelBreakdown}
+				onModelBreakdownChange={setModelBreakdown}
 			/>
 
 			{/* Secondary Charts Row */}

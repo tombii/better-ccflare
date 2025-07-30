@@ -141,6 +141,7 @@ class API extends HttpClient {
 			status?: "all" | "success" | "error";
 		},
 		mode: "normal" | "cumulative" = "normal",
+		modelBreakdown?: boolean,
 	): Promise<AnalyticsResponse> {
 		const params = new URLSearchParams({ range });
 
@@ -155,6 +156,9 @@ class API extends HttpClient {
 		}
 		if (mode === "cumulative") {
 			params.append("mode", "cumulative");
+		}
+		if (modelBreakdown) {
+			params.append("modelBreakdown", "true");
 		}
 
 		return this.get<AnalyticsResponse>(`/api/analytics?${params}`);

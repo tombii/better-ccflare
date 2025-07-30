@@ -9,6 +9,7 @@ export { CostChart } from "./CostChart";
 export { ModelPerformanceChart } from "./ModelPerformanceChart";
 export { ModelPerformanceComparison } from "./ModelPerformanceComparison";
 export { ModelTokenSpeedChart } from "./ModelTokenSpeedChart";
+export { MultiModelChart } from "./MultiModelChart";
 export { RequestVolumeChart } from "./RequestVolumeChart";
 export { ResponseTimeChart } from "./ResponseTimeChart";
 export { TokenSpeedChart } from "./TokenSpeedChart";

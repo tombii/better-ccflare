@@ -33,6 +33,7 @@ export interface StatsWithAccounts extends Stats {
 // Analytics types
 export interface TimePoint {
 	ts: number; // period start (ms)
+	model?: string; // Optional model name for per-model time series
 	requests: number;
 	tokens: number;
 	costUsd: number;

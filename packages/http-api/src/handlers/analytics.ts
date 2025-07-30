@@ -149,10 +149,14 @@ export function createAnalyticsHandler(context: APIContext) {
 				...queryParams,
 			) as ActiveAccountsResult;
 
+			// Check if we need per-model time series
+			const includeModelBreakdown = params.get("modelBreakdown") === "true";
+
 			// Get time series data
 			const timeSeriesQuery = db.prepare(`
 				SELECT
 					(timestamp / ?) * ? as ts,
+					${includeModelBreakdown ? "model," : ""}
 					COUNT(*) as requests,
 					SUM(COALESCE(total_tokens, 0)) as tokens,
 					SUM(COALESCE(cost_usd, 0)) as cost_usd,
@@ -163,9 +167,9 @@ export function createAnalyticsHandler(context: APIContext) {
 					AVG(response_time_ms) as avg_response_time,
 					AVG(output_tokens_per_second) as avg_tokens_per_second
 				FROM requests r
-				WHERE ${whereClause}
-				GROUP BY ts
-				ORDER BY ts
+				WHERE ${whereClause} ${includeModelBreakdown ? "AND model IS NOT NULL" : ""}
+				GROUP BY ts${includeModelBreakdown ? ", model" : ""}
+				ORDER BY ts${includeModelBreakdown ? ", model" : ""}
 			`);
 			const timeSeries = timeSeriesQuery.all(
 				bucket.bucketMs,
@@ -173,6 +177,7 @@ export function createAnalyticsHandler(context: APIContext) {
 				...queryParams,
 			) as Array<{
 				ts: number;
+				model?: string;
 				requests: number;
 				tokens: number;
 				cost_usd: number;
@@ -323,6 +328,7 @@ export function createAnalyticsHandler(context: APIContext) {
 			// Transform timeSeries data
 			let transformedTimeSeries = timeSeries.map((point) => ({
 				ts: point.ts,
+				...(point.model && { model: point.model }),
 				requests: point.requests || 0,
 				tokens: point.tokens || 0,
 				costUsd: point.cost_usd || 0,
@@ -334,7 +340,7 @@ export function createAnalyticsHandler(context: APIContext) {
 			}));
 
 			// Apply cumulative transformation if requested
-			if (isCumulative) {
+			if (isCumulative && !includeModelBreakdown) {
 				let runningRequests = 0;
 				let runningTokens = 0;
 				let runningCostUsd = 0;
@@ -351,6 +357,35 @@ export function createAnalyticsHandler(context: APIContext) {
 						costUsd: runningCostUsd,
 						// Keep rates as-is (not cumulative)
 					};
+				});
+			} else if (isCumulative && includeModelBreakdown) {
+				// For per-model cumulative, track running totals per model
+				const runningTotals: Record<
+					string,
+					{ requests: number; tokens: number; costUsd: number }
+				> = {};
+
+				transformedTimeSeries = transformedTimeSeries.map((point) => {
+					if (point.model) {
+						if (!runningTotals[point.model]) {
+							runningTotals[point.model] = {
+								requests: 0,
+								tokens: 0,
+								costUsd: 0,
+							};
+						}
+						runningTotals[point.model].requests += point.requests;
+						runningTotals[point.model].tokens += point.tokens;
+						runningTotals[point.model].costUsd += point.costUsd;
+
+						return {
+							...point,
+							requests: runningTotals[point.model].requests,
+							tokens: runningTotals[point.model].tokens,
+							costUsd: runningTotals[point.model].costUsd,
+						};
+					}
+					return point;
 				});
 			}
 
