@@ -363,26 +363,24 @@ Manages AI service providers with extensible architecture:
 
 ```mermaid
 graph TB
-    subgraph "Provider System"
-        REG[Provider Registry]
-        BASE[Base Provider]
-        
-        subgraph "Provider Implementations"
-            ANTH[Anthropic Provider]
-            OAUTH_PROV[OAuth Provider]
-        end
-        
-        subgraph "Provider Interface"
-            HANDLE[canHandle()]
-            BUILD[buildUrl()]
-            PREP[prepareHeaders()]
-            PARSE[parseRateLimit()]
-            PROC[processResponse()]
-            USAGE[extractUsageInfo()]
-            TIER[extractTierInfo()]
-        end
+    REG["Provider Registry"]
+    BASE["Base Provider"]
+
+    subgraph "Provider Implementations"
+        ANTH["Anthropic Provider"]
+        OAUTH_PROV["OAuth Provider"]
     end
-    
+
+    subgraph "Provider Interface"
+        HANDLE["canHandle()"]
+        BUILD["buildUrl()"]
+        PREP["prepareHeaders()"]
+        PARSE["parseRateLimit()"]
+        PROC["processResponse()"]
+        USAGE["extractUsageInfo()"]
+        TIER["extractTierInfo()"]
+    end
+
     REG -->|Manages| BASE
     BASE -->|Implements| ANTH
     ANTH -->|Uses| OAUTH_PROV
@@ -745,16 +743,16 @@ Common HTTP utilities:
 ```mermaid
 graph TB
     subgraph "HTTP Common Utilities"
-        HEADERS[Header Utilities]
-        CLIENT[HTTP Client]
-        RESPONSES[Response Helpers]
-        ERRORS[Error Handlers]
-        
-        subgraph "Header Functions"
-            SANITIZE[sanitizeProxyHeaders()]
-        end
+        HEADERS["Header Utilities"]
+        CLIENT["HTTP Client"]
+        RESPONSES["Response Helpers"]
+        ERRORS["Error Handlers"]
     end
-    
+
+    subgraph "Header Functions"
+        SANITIZE["sanitizeProxyHeaders()"]
+    end
+
     HEADERS --> SANITIZE
 ```
 
@@ -772,23 +770,21 @@ Shared UI components and formatting utilities:
 
 ```mermaid
 graph LR
-    subgraph "UI Common"
-        subgraph "Components"
-            TOKEN_DISPLAY[TokenUsageDisplay]
-        end
-        
-        subgraph "Formatters"
-            DURATION[formatDuration()]
-            TOKENS[formatTokens()]
-            COST[formatCost()]
-            PERCENT[formatPercentage()]
-            TIMESTAMP[formatTimestamp()]
-            SPEED[formatTokensPerSecond()]
-        end
-        
-        subgraph "Presenters"
-            DATA_PRESENT[Data Presenters]
-        end
+    subgraph "Components"
+        TOKEN_DISPLAY["TokenUsageDisplay"]
+    end
+
+    subgraph "Formatters"
+        DURATION["formatDuration()"]
+        TOKENS["formatTokens()"]
+        COST["formatCost()"]
+        PERCENT["formatPercentage()"]
+        TIMESTAMP["formatTimestamp()"]
+        SPEED["formatTokensPerSecond()"]
+    end
+
+    subgraph "Presenters"
+        DATA_PRESENT["Data Presenters"]
     end
 ```
 
