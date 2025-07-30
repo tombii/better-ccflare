@@ -1,5 +1,6 @@
 import type { TimePoint } from "@ccflare/types";
 import { formatCost, formatNumber, formatTokens } from "@ccflare/ui-common";
+import { useState } from "react";
 import {
 	Area,
 	AreaChart,
@@ -297,41 +298,160 @@ export function MainMetricsChart({
 interface PerformanceIndicatorsChartProps {
 	data: ChartData[];
 	loading: boolean;
+	modelBreakdown?: boolean;
+	rawTimeSeries?: TimePoint[];
+	selectedMetric?: "errorRate" | "cacheHitRate";
+	timeRange?: TimeRange;
 }
 
 export function PerformanceIndicatorsChart({
 	data,
 	loading,
+	modelBreakdown = false,
+	rawTimeSeries,
+	selectedMetric = "errorRate",
+	timeRange = "24h",
 }: PerformanceIndicatorsChartProps) {
+	const [currentMetric, setCurrentMetric] = useState(selectedMetric);
+
+	// Process data for multi-model chart if model breakdown is enabled
+	const processedMultiModelData =
+		rawTimeSeries && modelBreakdown
+			? (() => {
+					// Group by timestamp and pivot models
+					const grouped: Record<
+						string,
+						{ time: string; [model: string]: string | number }
+					> = {};
+					const models = new Set<string>();
+					const timeToTimestamp = new Map<string, number>();
+
+					rawTimeSeries.forEach((point) => {
+						if (point.model) {
+							models.add(point.model);
+							const time =
+								timeRange === "30d"
+									? new Date(point.ts).toLocaleDateString()
+									: new Date(point.ts).toLocaleTimeString([], {
+											hour: "2-digit",
+											minute: "2-digit",
+										});
+							timeToTimestamp.set(time, point.ts);
+						}
+					});
+
+					// Sort time points chronologically
+					const sortedTimes = Array.from(new Set(timeToTimestamp.keys())).sort(
+						(a, b) => {
+							const tsA = timeToTimestamp.get(a) || 0;
+							const tsB = timeToTimestamp.get(b) || 0;
+							return tsA - tsB;
+						},
+					);
+
+					const modelArrays = Array.from(models).sort();
+
+					// Initialize all time points with all models
+					sortedTimes.forEach((time) => {
+						grouped[time] = { time };
+						modelArrays.forEach((model) => {
+							grouped[time][model] = 0;
+						});
+					});
+
+					// Fill in actual values
+					rawTimeSeries.forEach((point) => {
+						if (point.model) {
+							const time =
+								timeRange === "30d"
+									? new Date(point.ts).toLocaleDateString()
+									: new Date(point.ts).toLocaleTimeString([], {
+											hour: "2-digit",
+											minute: "2-digit",
+										});
+
+							// Map the metric value
+							const value =
+								currentMetric === "errorRate"
+									? point.errorRate
+									: point.cacheHitRate;
+
+							grouped[time][point.model] = value;
+						}
+					});
+
+					const finalData = sortedTimes.map((time) => grouped[time]);
+
+					return {
+						data: finalData,
+						models: modelArrays,
+					};
+				})()
+			: null;
+
 	return (
 		<Card>
 			<CardHeader>
-				<CardTitle>Performance Indicators</CardTitle>
-				<CardDescription>Error rate and cache hit rate trends</CardDescription>
+				<div className="flex items-center justify-between">
+					<div>
+						<CardTitle>Performance Indicators</CardTitle>
+						<CardDescription>
+							{modelBreakdown
+								? "Per-model error rate and cache hit rate trends"
+								: "Error rate and cache hit rate trends"}
+						</CardDescription>
+					</div>
+					{modelBreakdown && (
+						<Select
+							value={currentMetric}
+							onValueChange={(value) =>
+								setCurrentMetric(value as "errorRate" | "cacheHitRate")
+							}
+						>
+							<SelectTrigger className="w-36">
+								<SelectValue />
+							</SelectTrigger>
+							<SelectContent>
+								<SelectItem value="errorRate">Error Rate</SelectItem>
+								<SelectItem value="cacheHitRate">Cache Hit Rate</SelectItem>
+							</SelectContent>
+						</Select>
+					)}
+				</div>
 			</CardHeader>
 			<CardContent>
-				<BaseLineChart
-					data={data}
-					lines={[
-						{
-							dataKey: "errorRate",
-							stroke: COLORS.error,
-							name: "Error Rate %",
-						},
-						{
-							dataKey: "cacheHitRate",
-							stroke: COLORS.success,
-							name: "Cache Hit %",
-						},
-					]}
-					loading={loading}
-					height="medium"
-					showLegend={true}
-					referenceLines={[
-						{ y: 90, stroke: COLORS.success },
-						{ y: 5, stroke: COLORS.error },
-					]}
-				/>
+				{modelBreakdown && processedMultiModelData ? (
+					<MultiModelChart
+						data={processedMultiModelData.data}
+						models={processedMultiModelData.models}
+						metric={currentMetric}
+						loading={loading}
+						height={CHART_HEIGHTS.medium}
+					/>
+				) : (
+					<BaseLineChart
+						data={data}
+						lines={[
+							{
+								dataKey: "errorRate",
+								stroke: COLORS.error,
+								name: "Error Rate %",
+							},
+							{
+								dataKey: "cacheHitRate",
+								stroke: COLORS.success,
+								name: "Cache Hit %",
+							},
+						]}
+						loading={loading}
+						height="medium"
+						showLegend={true}
+						referenceLines={[
+							{ y: 90, stroke: COLORS.success },
+							{ y: 5, stroke: COLORS.error },
+						]}
+					/>
+				)}
 			</CardContent>
 		</Card>
 	);
