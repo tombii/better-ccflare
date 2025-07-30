@@ -1,7 +1,4 @@
-import { Logger } from "@ccflare/logger";
 import { HttpError } from "./errors";
-
-const log = new Logger("HttpCommon");
 
 /**
  * Create a JSON response with proper headers
@@ -39,8 +36,11 @@ export function errorResponse(error: unknown): Response {
 		error instanceof Error ? error.message : "Internal server error";
 	const status = 500;
 
-	// Log unexpected errors
-	log.error("Unhandled error:", error);
+	// In browser context, we can't log to files
+	// Server-side code should handle logging before calling errorResponse
+	if (typeof console !== "undefined" && console.error) {
+		console.error("Unhandled error:", error);
+	}
 
 	return jsonResponse({ error: message }, status);
 }
