@@ -309,7 +309,7 @@ export function PerformanceIndicatorsChart({
 	loading,
 	modelBreakdown = false,
 	rawTimeSeries,
-	selectedMetric = "errorRate",
+	selectedMetric = "cacheHitRate",
 	timeRange = "24h",
 }: PerformanceIndicatorsChartProps) {
 	const [currentMetric, setCurrentMetric] = useState(selectedMetric);
@@ -412,8 +412,8 @@ export function PerformanceIndicatorsChart({
 								<SelectValue />
 							</SelectTrigger>
 							<SelectContent>
-								<SelectItem value="errorRate">Error Rate</SelectItem>
 								<SelectItem value="cacheHitRate">Cache Hit Rate</SelectItem>
+								<SelectItem value="errorRate">Error Rate</SelectItem>
 							</SelectContent>
 						</Select>
 					)}
