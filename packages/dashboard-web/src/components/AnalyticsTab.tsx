@@ -149,7 +149,13 @@ export function AnalyticsTab() {
 				timeRange={timeRange}
 				setTimeRange={setTimeRange}
 				viewMode={viewMode}
-				setViewMode={setViewMode}
+				setViewMode={(mode) => {
+					setViewMode(mode);
+					// Disable per-model breakdown when switching to cumulative
+					if (mode === "cumulative") {
+						setModelBreakdown(false);
+					}
+				}}
 				filters={filters}
 				setFilters={setFilters}
 				availableAccounts={availableAccounts}
@@ -160,6 +166,19 @@ export function AnalyticsTab() {
 				loading={loading}
 				onRefresh={() => setTimeRange(timeRange)}
 			/>
+
+			{/* Cumulative View - Show cumulative charts first */}
+			{viewMode === "cumulative" && analytics && (
+				<>
+					{/* Beautiful Cumulative Chart */}
+					<CumulativeGrowthChart data={data} />
+
+					{/* Cumulative Token Breakdown Ribbon Chart */}
+					{tokenBreakdown.length > 0 && (
+						<CumulativeTokenComposition tokenBreakdown={tokenBreakdown} />
+					)}
+				</>
+			)}
 
 			{/* Main Metrics Chart */}
 			<MainMetricsChart
@@ -174,39 +193,34 @@ export function AnalyticsTab() {
 				onModelBreakdownChange={setModelBreakdown}
 			/>
 
-			{/* Secondary Charts Row */}
-			<div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-				<PerformanceIndicatorsChart data={data} loading={loading} />
-				<TokenUsageBreakdown
-					tokenBreakdown={tokenBreakdown}
-					timeRange={timeRange}
-				/>
-			</div>
+			{/* Normal View Charts - Only show in normal mode */}
+			{viewMode === "normal" && (
+				<>
+					{/* Secondary Charts Row */}
+					<div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+						<PerformanceIndicatorsChart data={data} loading={loading} />
+						<TokenUsageBreakdown
+							tokenBreakdown={tokenBreakdown}
+							timeRange={timeRange}
+						/>
+					</div>
 
-			{/* Enhanced Model Analytics */}
-			<ModelAnalytics
-				modelPerformance={analytics?.modelPerformance || []}
-				costByModel={costByModel}
-				loading={loading}
-				timeRange={timeRange}
-			/>
+					{/* Enhanced Model Analytics */}
+					<ModelAnalytics
+						modelPerformance={analytics?.modelPerformance || []}
+						costByModel={costByModel}
+						loading={loading}
+						timeRange={timeRange}
+					/>
 
-			{/* Token Speed Analytics */}
-			<TokenSpeedAnalytics
-				timeSeriesData={data}
-				modelPerformance={analytics?.modelPerformance || []}
-				loading={loading}
-				timeRange={timeRange}
-			/>
-
-			{/* Beautiful Cumulative Chart - Only show in cumulative mode */}
-			{viewMode === "cumulative" && analytics && (
-				<CumulativeGrowthChart data={data} />
-			)}
-
-			{/* Cumulative Token Breakdown Ribbon Chart */}
-			{viewMode === "cumulative" && analytics && tokenBreakdown.length > 0 && (
-				<CumulativeTokenComposition tokenBreakdown={tokenBreakdown} />
+					{/* Token Speed Analytics */}
+					<TokenSpeedAnalytics
+						timeSeriesData={data}
+						modelPerformance={analytics?.modelPerformance || []}
+						loading={loading}
+						timeRange={timeRange}
+					/>
+				</>
 			)}
 		</div>
 	);

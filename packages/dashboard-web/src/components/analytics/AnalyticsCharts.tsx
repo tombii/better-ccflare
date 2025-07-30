@@ -81,9 +81,9 @@ export function MainMetricsChart({
 	modelBreakdown = false,
 	onModelBreakdownChange,
 }: MainMetricsChartProps) {
-	// Process data for multi-model chart if model breakdown is enabled
+	// Process data for multi-model chart if model breakdown is enabled (not in cumulative mode)
 	const processedMultiModelData =
-		rawTimeSeries && modelBreakdown
+		rawTimeSeries && modelBreakdown && viewMode !== "cumulative"
 			? (() => {
 					// Group by timestamp and pivot models
 					const grouped: Record<
@@ -94,6 +94,7 @@ export function MainMetricsChart({
 
 					// First pass: collect all time points and models
 					const timePoints = new Set<string>();
+					const timeToTimestamp = new Map<string, number>();
 
 					rawTimeSeries.forEach((point) => {
 						if (point.model) {
@@ -106,18 +107,32 @@ export function MainMetricsChart({
 											minute: "2-digit",
 										});
 							timePoints.add(time);
+							timeToTimestamp.set(time, point.ts);
 						}
 					});
 
-					// Initialize all time points with all models set to 0
-					for (const time of timePoints) {
-						grouped[time] = { time };
-						for (const model of models) {
-							grouped[time][model] = 0;
-						}
-					}
+					// Sort time points chronologically using the original timestamps
+					const sortedTimes = Array.from(timePoints).sort((a, b) => {
+						const tsA = timeToTimestamp.get(a) || 0;
+						const tsB = timeToTimestamp.get(b) || 0;
+						return tsA - tsB;
+					});
 
-					// Second pass: fill in actual values
+					// Initialize data structure
+					const modelArrays = Array.from(models).sort();
+
+					// Process time points in order
+					sortedTimes.forEach((time) => {
+						grouped[time] = { time };
+
+						// Initialize all models for this time point
+						modelArrays.forEach((model) => {
+							// Default to 0 for missing data points
+							grouped[time][model] = 0;
+						});
+					});
+
+					// Fill in actual values
 					rawTimeSeries.forEach((point) => {
 						if (point.model) {
 							const time =
@@ -152,19 +167,12 @@ export function MainMetricsChart({
 						}
 					});
 
-					// Sort time points chronologically
-					const sortedData = Object.values(grouped).sort((a, b) => {
-						// For proper chronological sorting, we need to parse the time strings
-						if (timeRange === "30d") {
-							return new Date(a.time).getTime() - new Date(b.time).getTime();
-						}
-						// For time strings, we need to be more careful
-						return a.time.localeCompare(b.time);
-					});
+					// Sort and return the data
+					const finalData = sortedTimes.map((time) => grouped[time]);
 
 					return {
-						data: sortedData,
-						models: Array.from(models).sort(),
+						data: finalData,
+						models: modelArrays,
 					};
 				})()
 			: null;
@@ -184,7 +192,7 @@ export function MainMetricsChart({
 						</CardDescription>
 					</div>
 					<div className="flex items-center gap-4">
-						{!viewMode || viewMode === "normal" ? (
+						{viewMode !== "cumulative" && (
 							<div className="flex items-center gap-2">
 								<Switch
 									id="model-breakdown"
@@ -195,7 +203,7 @@ export function MainMetricsChart({
 									Per Model
 								</Label>
 							</div>
-						) : null}
+						)}
 						<Select value={selectedMetric} onValueChange={setSelectedMetric}>
 							<SelectTrigger className="w-40">
 								<SelectValue />
