@@ -12,7 +12,8 @@
 	},
 	"dependencies": {
 		"@claudeflare/types": "workspace:*",
-		"@claudeflare/errors": "workspace:*"
+		"@claudeflare/errors": "workspace:*",
+		"@claudeflare/logger": "workspace:*"
 	},
 	"devDependencies": {
 		"@types/node": "^22.10.2",

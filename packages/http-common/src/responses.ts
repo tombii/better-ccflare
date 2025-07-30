@@ -1,4 +1,7 @@
+import { Logger } from "@claudeflare/logger";
 import { HttpError } from "./errors";
+
+const log = new Logger("HttpCommon");
 
 /**
  * Create a JSON response with proper headers
@@ -37,7 +40,7 @@ export function errorResponse(error: unknown): Response {
 	const status = 500;
 
 	// Log unexpected errors
-	console.error("Unhandled error:", error);
+	log.error("Unhandled error:", error);
 
 	return jsonResponse({ error: message }, status);
 }
