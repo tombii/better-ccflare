@@ -10,6 +10,7 @@ import {
 	MainMetricsChart,
 	ModelComparisonCharts,
 	PerformanceIndicatorsChart,
+	TokenSpeedAnalytics,
 	TokenUsageBreakdown,
 } from "./analytics";
 
@@ -186,6 +187,14 @@ export function AnalyticsTab() {
 			<ModelComparisonCharts
 				modelPerformance={modelPerformance}
 				costByModel={costByModel}
+				loading={loading}
+				timeRange={timeRange}
+			/>
+
+			{/* Token Speed Analytics */}
+			<TokenSpeedAnalytics
+				timeSeriesData={data}
+				modelPerformance={analytics?.modelPerformance || []}
 				loading={loading}
 				timeRange={timeRange}
 			/>

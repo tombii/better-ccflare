@@ -55,6 +55,9 @@ export interface ModelPerformance {
 	avgResponseTime: number;
 	p95ResponseTime: number;
 	errorRate: number;
+	avgTokensPerSecond: number | null;
+	minTokensPerSecond: number | null;
+	maxTokensPerSecond: number | null;
 }
 
 export interface AnalyticsResponse {

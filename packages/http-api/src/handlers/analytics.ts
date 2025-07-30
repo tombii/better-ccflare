@@ -243,7 +243,10 @@ export function createAnalyticsHandler(context: APIContext) {
 					MAX(response_time_ms) as max_response_time,
 					COUNT(*) as total_requests,
 					SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) as error_count,
-					SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0) as error_rate
+					SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0) as error_rate,
+					AVG(output_tokens_per_second) as avg_tokens_per_second,
+					MIN(CASE WHEN output_tokens_per_second > 0 THEN output_tokens_per_second ELSE NULL END) as min_tokens_per_second,
+					MAX(output_tokens_per_second) as max_tokens_per_second
 				FROM requests r
 				WHERE ${whereClause} AND model IS NOT NULL
 				GROUP BY model
@@ -257,6 +260,9 @@ export function createAnalyticsHandler(context: APIContext) {
 				total_requests: number;
 				error_count: number;
 				error_rate: number;
+				avg_tokens_per_second: number | null;
+				min_tokens_per_second: number | null;
+				max_tokens_per_second: number | null;
 			}>;
 
 			// Calculate p95 for each model using SQL window functions
@@ -288,6 +294,9 @@ export function createAnalyticsHandler(context: APIContext) {
 					p95ResponseTime:
 						p95Result?.p95_response_time || modelData.avg_response_time || 0,
 					errorRate: modelData.error_rate || 0,
+					avgTokensPerSecond: modelData.avg_tokens_per_second || null,
+					minTokensPerSecond: modelData.min_tokens_per_second || null,
+					maxTokensPerSecond: modelData.max_tokens_per_second || null,
 				};
 			});
 
