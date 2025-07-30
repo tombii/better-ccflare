@@ -1,4 +1,4 @@
-import { HttpError } from "./errors";
+import { HttpError, parseHttpError } from "@claudeflare/errors";
 
 export interface RequestOptions extends RequestInit {
 	timeout?: number;
@@ -68,7 +68,7 @@ export class HttpClient {
 				clearTimeout(timeoutId);
 
 				if (!response.ok) {
-					const error = await this.parseError(response);
+					const error = await parseHttpError(response);
 					throw error;
 				}
 
@@ -158,28 +158,6 @@ export class HttpClient {
 
 	delete<T = unknown>(url: string, options?: RequestOptions): Promise<T> {
 		return this.request<T>(url, { ...options, method: "DELETE" });
-	}
-
-	/**
-	 * Parse error response
-	 */
-	private async parseError(response: Response): Promise<HttpError> {
-		try {
-			const contentType = response.headers.get("content-type");
-			if (contentType?.includes("application/json")) {
-				const data = await response.json();
-				return new HttpError(
-					response.status,
-					data.error || data.message || response.statusText,
-					data.details,
-				);
-			}
-
-			const text = await response.text();
-			return new HttpError(response.status, text || response.statusText);
-		} catch {
-			return new HttpError(response.status, response.statusText);
-		}
 	}
 
 	/**

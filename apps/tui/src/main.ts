@@ -85,7 +85,18 @@ Examples:
 	}
 
 	if (parsed.logs !== undefined) {
-		const _limit = typeof parsed.logs === "number" ? parsed.logs : 100;
+		const limit = typeof parsed.logs === "number" ? parsed.logs : 100;
+
+		// First print historical logs if limit was specified
+		if (typeof parsed.logs === "number") {
+			const history = await tuiCore.getLogHistory(limit);
+			for (const log of history) {
+				console.log(`[${log.level}] ${log.msg}`);
+			}
+			console.log("--- Live logs ---");
+		}
+
+		// Then stream live logs
 		await tuiCore.streamLogs((log) => {
 			console.log(`[${log.level}] ${log.msg}`);
 		});

@@ -1,13 +1,13 @@
 import { OAuthError } from "@claudeflare/core";
 import type {
-	OAuthConfig,
 	OAuthProvider,
+	OAuthProviderConfig,
 	PKCEChallenge,
 	TokenResult,
 } from "../../types";
 
 export class AnthropicOAuthProvider implements OAuthProvider {
-	getOAuthConfig(mode: "console" | "max" = "console"): OAuthConfig {
+	getOAuthConfig(mode: "console" | "max" = "console"): OAuthProviderConfig {
 		const baseUrl =
 			mode === "console"
 				? "https://console.anthropic.com"
@@ -23,7 +23,7 @@ export class AnthropicOAuthProvider implements OAuthProvider {
 		};
 	}
 
-	generateAuthUrl(config: OAuthConfig, pkce: PKCEChallenge): string {
+	generateAuthUrl(config: OAuthProviderConfig, pkce: PKCEChallenge): string {
 		const url = new URL(config.authorizeUrl);
 		url.searchParams.set("code", "true");
 		url.searchParams.set("client_id", config.clientId);
@@ -39,7 +39,7 @@ export class AnthropicOAuthProvider implements OAuthProvider {
 	async exchangeCode(
 		code: string,
 		verifier: string,
-		config: OAuthConfig,
+		config: OAuthProviderConfig,
 	): Promise<TokenResult> {
 		const splits = code.split("#");
 		const response = await fetch(config.tokenUrl, {

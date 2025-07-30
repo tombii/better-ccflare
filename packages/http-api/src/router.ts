@@ -48,7 +48,7 @@ export class APIRouter {
 		const statsHandler = createStatsHandler(dbOps);
 		const statsResetHandler = createStatsResetHandler(dbOps);
 		const accountsHandler = createAccountsListHandler(db);
-		const accountAddHandler = createAccountAddHandler(dbOps);
+		const accountAddHandler = createAccountAddHandler(dbOps, config);
 		const _accountRemoveHandler = createAccountRemoveHandler(dbOps);
 		const _accountTierHandler = createAccountTierUpdateHandler(dbOps);
 		const requestsSummaryHandler = createRequestsSummaryHandler(db);

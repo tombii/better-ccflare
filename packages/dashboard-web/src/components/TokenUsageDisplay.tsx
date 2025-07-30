@@ -6,7 +6,20 @@ interface TokenUsageDisplayProps {
 }
 
 export function TokenUsageDisplay({ summary }: TokenUsageDisplayProps) {
-	const usage = processTokenUsage(summary);
+	// Convert RequestSummary to TokenUsageData format, handling null -> undefined conversion
+	const tokenData = summary
+		? {
+				inputTokens: summary.inputTokens,
+				outputTokens: summary.outputTokens,
+				cacheReadInputTokens: summary.cacheReadInputTokens,
+				cacheCreationInputTokens: summary.cacheCreationInputTokens,
+				totalTokens: summary.totalTokens,
+				costUsd: summary.costUsd,
+				responseTimeMs: summary.responseTimeMs ?? undefined,
+			}
+		: undefined;
+
+	const usage = processTokenUsage(tokenData);
 
 	if (!usage.hasData) {
 		return (

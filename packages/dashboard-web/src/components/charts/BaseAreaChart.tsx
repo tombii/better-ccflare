@@ -9,45 +9,22 @@ import {
 	XAxis,
 	YAxis,
 } from "recharts";
-import {
-	CHART_HEIGHTS,
-	CHART_PROPS,
-	CHART_TOOLTIP_STYLE,
-	COLORS,
-} from "../../constants";
+import { CHART_PROPS, COLORS } from "../../constants";
 import { ChartContainer } from "./ChartContainer";
-import type {
-	ChartClickHandler,
-	ChartDataPoint,
-	TooltipFormatterFunction,
-} from "./types";
+import {
+	type CommonChartProps,
+	getChartHeight,
+	getTooltipStyles,
+	isChartEmpty,
+} from "./chart-utils";
 
-interface BaseAreaChartProps {
-	data: ChartDataPoint[];
+interface BaseAreaChartProps extends CommonChartProps {
 	dataKey: string;
-	xAxisKey?: string;
-	loading?: boolean;
-	height?: keyof typeof CHART_HEIGHTS | number;
 	color?: string;
 	gradientId?: string;
 	customGradient?: ReactNode;
 	strokeWidth?: number;
 	fillOpacity?: number;
-	xAxisAngle?: number;
-	xAxisTextAnchor?: "start" | "middle" | "end";
-	xAxisHeight?: number;
-	yAxisDomain?: [number | "auto", number | "auto"];
-	tooltipFormatter?: TooltipFormatterFunction;
-	tooltipLabelFormatter?: (label: string) => string;
-	tooltipStyle?: keyof typeof CHART_TOOLTIP_STYLE | object;
-	animationDuration?: number;
-	showLegend?: boolean;
-	legendHeight?: number;
-	margin?: { top?: number; right?: number; bottom?: number; left?: number };
-	className?: string;
-	error?: Error | null;
-	emptyState?: ReactNode;
-	onChartClick?: ChartClickHandler;
 }
 
 export function BaseAreaChart({
@@ -77,9 +54,9 @@ export function BaseAreaChart({
 	emptyState,
 	onChartClick,
 }: BaseAreaChartProps) {
-	const chartHeight =
-		typeof height === "number" ? height : CHART_HEIGHTS[height];
-	const isEmpty = !data || data.length === 0;
+	const chartHeight = getChartHeight(height);
+	const isEmpty = isChartEmpty(data);
+	const tooltipStyles = getTooltipStyles(tooltipStyle);
 
 	const defaultGradient = (
 		<linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
@@ -87,11 +64,6 @@ export function BaseAreaChart({
 			<stop offset="95%" stopColor={color} stopOpacity={0.1} />
 		</linearGradient>
 	);
-
-	const tooltipStyles =
-		typeof tooltipStyle === "string"
-			? CHART_TOOLTIP_STYLE[tooltipStyle]
-			: tooltipStyle;
 
 	return (
 		<ChartContainer

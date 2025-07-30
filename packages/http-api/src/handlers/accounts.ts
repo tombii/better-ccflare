@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import * as cliCommands from "@claudeflare/cli-commands";
+import type { Config } from "@claudeflare/config";
 import {
 	patterns,
 	sanitizers,
@@ -165,7 +166,10 @@ export function createAccountTierUpdateHandler(dbOps: DatabaseOperations) {
  * This is primarily used for adding accounts with existing tokens
  * For OAuth flow, use the OAuth handlers
  */
-export function createAccountAddHandler(dbOps: DatabaseOperations) {
+export function createAccountAddHandler(
+	dbOps: DatabaseOperations,
+	_config: Config,
+) {
 	return async (req: Request): Promise<Response> => {
 		try {
 			const body = await req.json();
@@ -207,29 +211,28 @@ export function createAccountAddHandler(dbOps: DatabaseOperations) {
 				}) || "anthropic";
 
 			// Validate tier
-			const tier =
-				validateNumber(body.tier, "tier", {
-					allowedValues: [1, 5, 20] as const,
-				}) || 1;
+			const tier = (validateNumber(body.tier, "tier", {
+				allowedValues: [1, 5, 20] as const,
+			}) || 1) as 1 | 5 | 20;
 
 			try {
-				// Add account using CLI command
-				const result = cliCommands.addAccount(dbOps, {
-					name,
-					accessToken,
-					refreshToken,
-					provider,
-					tier,
-				});
+				// Add account directly to database
+				const accountId = crypto.randomUUID();
+				const now = Date.now();
 
-				if (!result.success) {
-					return errorResponse(BadRequest(result.message));
-				}
+				dbOps.getDatabase().run(
+					`INSERT INTO accounts (
+						id, name, provider, refresh_token, access_token,
+						created_at, request_count, total_requests, account_tier
+					) VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?)`,
+					[accountId, name, provider, refreshToken, accessToken, now, tier],
+				);
 
 				return jsonResponse({
 					success: true,
-					message: result.message,
+					message: `Account ${name} added successfully`,
 					tier,
+					accountId,
 				});
 			} catch (error) {
 				if (

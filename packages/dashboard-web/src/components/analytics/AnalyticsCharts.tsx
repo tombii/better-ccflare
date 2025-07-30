@@ -95,56 +95,51 @@ export function MainMetricsChart({
 				</div>
 			</CardHeader>
 			<CardContent>
-				{selectedMetric === "tokens" ? (
-					<TokenUsageChart
-						data={data}
-						loading={loading}
-						height={CHART_HEIGHTS.large}
-						viewMode={viewMode}
-						timeRange={timeRange}
-					/>
-				) : selectedMetric === "cost" ? (
-					<CostChart
-						data={data}
-						loading={loading}
-						height={CHART_HEIGHTS.large}
-						viewMode={viewMode}
-						timeRange={timeRange}
-					/>
-				) : selectedMetric === "requests" ? (
-					<RequestVolumeChart
-						data={data}
-						loading={loading}
-						height={CHART_HEIGHTS.large}
-						viewMode={viewMode}
-						timeRange={timeRange}
-					/>
-				) : selectedMetric === "responseTime" ? (
-					<ResponseTimeChart
-						data={data}
-						loading={loading}
-						height={CHART_HEIGHTS.large}
-						viewMode={viewMode}
-						timeRange={timeRange}
-					/>
-				) : (
-					<BaseAreaChart
-						data={data}
-						dataKey={selectedMetric}
-						loading={loading}
-						height="large"
-						color={viewMode === "cumulative" ? COLORS.purple : COLORS.primary}
-						strokeWidth={viewMode === "cumulative" ? 3 : 2}
-						xAxisAngle={timeRange === "7d" || timeRange === "30d" ? -45 : 0}
-						xAxisTextAnchor={
-							timeRange === "7d" || timeRange === "30d" ? "end" : "middle"
-						}
-						xAxisHeight={timeRange === "7d" || timeRange === "30d" ? 60 : 30}
-						tooltipLabelFormatter={(label) =>
-							viewMode === "cumulative" ? `Cumulative at ${label}` : label
-						}
-					/>
-				)}
+				{(() => {
+					const commonProps = {
+						data,
+						loading,
+						height: CHART_HEIGHTS.large,
+						viewMode,
+						timeRange,
+					};
+
+					switch (selectedMetric) {
+						case "tokens":
+							return <TokenUsageChart {...commonProps} />;
+						case "cost":
+							return <CostChart {...commonProps} />;
+						case "requests":
+							return <RequestVolumeChart {...commonProps} />;
+						case "responseTime":
+							return <ResponseTimeChart {...commonProps} />;
+						default:
+							return (
+								<BaseAreaChart
+									data={data}
+									dataKey={selectedMetric}
+									loading={loading}
+									height="large"
+									color={
+										viewMode === "cumulative" ? COLORS.purple : COLORS.primary
+									}
+									strokeWidth={viewMode === "cumulative" ? 3 : 2}
+									xAxisAngle={
+										timeRange === "7d" || timeRange === "30d" ? -45 : 0
+									}
+									xAxisTextAnchor={
+										timeRange === "7d" || timeRange === "30d" ? "end" : "middle"
+									}
+									xAxisHeight={
+										timeRange === "7d" || timeRange === "30d" ? 60 : 30
+									}
+									tooltipLabelFormatter={(label) =>
+										viewMode === "cumulative" ? `Cumulative at ${label}` : label
+									}
+								/>
+							);
+					}
+				})()}
 			</CardContent>
 		</Card>
 	);

@@ -9,10 +9,11 @@ import {
 } from "recharts";
 import {
 	CHART_COLORS,
-	CHART_HEIGHTS,
-	CHART_TOOLTIP_STYLE,
+	type CHART_HEIGHTS,
+	type CHART_TOOLTIP_STYLE,
 } from "../../constants";
 import { ChartContainer } from "./ChartContainer";
+import { getChartHeight, getTooltipStyles } from "./chart-utils";
 import type { ChartClickHandler, TooltipFormatterFunction } from "./types";
 
 interface BasePieChartProps {
@@ -66,14 +67,9 @@ export function BasePieChart({
 	emptyState,
 	onPieClick,
 }: BasePieChartProps) {
-	const chartHeight =
-		typeof height === "number" ? height : CHART_HEIGHTS[height];
+	const chartHeight = getChartHeight(height);
 	const isEmpty = !data || data.length === 0;
-
-	const tooltipStyles =
-		typeof tooltipStyle === "string"
-			? CHART_TOOLTIP_STYLE[tooltipStyle]
-			: tooltipStyle;
+	const tooltipStyles = getTooltipStyles(tooltipStyle);
 
 	return (
 		<ChartContainer
