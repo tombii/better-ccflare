@@ -1,9 +1,5 @@
 import * as tuiCore from "@ccflare/tui-core";
-import {
-	formatCost,
-	formatNumber,
-	formatPercentage,
-} from "@ccflare/ui-common";
+import { formatCost, formatNumber, formatPercentage } from "@ccflare/ui-common";
 import { Box, Text, useInput } from "ink";
 import SelectInput from "ink-select-input";
 import Spinner from "ink-spinner";

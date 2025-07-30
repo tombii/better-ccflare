@@ -6,11 +6,7 @@ import {
 	TIME_CONSTANTS,
 	validateString,
 } from "@ccflare/core";
-import {
-	BadRequest,
-	errorResponse,
-	jsonResponse,
-} from "@ccflare/http-common";
+import { BadRequest, errorResponse, jsonResponse } from "@ccflare/http-common";
 import type { ConfigResponse } from "../types";
 
 /**

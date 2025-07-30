@@ -1,8 +1,4 @@
-import {
-	formatCost,
-	formatTimestamp,
-	formatTokens,
-} from "@ccflare/ui-common";
+import { formatCost, formatTimestamp, formatTokens } from "@ccflare/ui-common";
 import { Eye } from "lucide-react";
 import { useState } from "react";
 import type { RequestPayload, RequestSummary } from "../api";

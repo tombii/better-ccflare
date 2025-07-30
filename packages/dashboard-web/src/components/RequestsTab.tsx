@@ -1,8 +1,4 @@
-import {
-	formatCost,
-	formatDuration,
-	formatTokens,
-} from "@ccflare/ui-common";
+import { formatCost, formatDuration, formatTokens } from "@ccflare/ui-common";
 import { ChevronDown, ChevronRight, Eye, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import type { RequestPayload, RequestSummary } from "../api";
