@@ -15,8 +15,11 @@ interface AccountAddFormProps {
 		name: string;
 		mode: "max" | "console";
 		tier: number;
-	}) => Promise<{ authUrl: string }>;
-	onCompleteAccount: (params: { name: string; code: string }) => Promise<void>;
+	}) => Promise<{ authUrl: string; sessionId: string }>;
+	onCompleteAccount: (params: {
+		sessionId: string;
+		code: string;
+	}) => Promise<void>;
 	onCancel: () => void;
 	onSuccess: () => void;
 	onError: (error: string) => void;
@@ -31,6 +34,7 @@ export function AccountAddForm({
 }: AccountAddFormProps) {
 	const [authStep, setAuthStep] = useState<"form" | "code">("form");
 	const [authCode, setAuthCode] = useState("");
+	const [sessionId, setSessionId] = useState("");
 	const [newAccount, setNewAccount] = useState({
 		name: "",
 		mode: "max" as "max" | "console",
@@ -43,7 +47,8 @@ export function AccountAddForm({
 			return;
 		}
 		// Step 1: Initialize OAuth flow
-		const { authUrl } = await onAddAccount(newAccount);
+		const { authUrl, sessionId } = await onAddAccount(newAccount);
+		setSessionId(sessionId);
 
 		// Open auth URL in new tab
 		if (typeof window !== "undefined") {
@@ -61,13 +66,14 @@ export function AccountAddForm({
 		}
 		// Step 2: Complete OAuth flow
 		await onCompleteAccount({
-			name: newAccount.name,
+			sessionId,
 			code: authCode,
 		});
 
 		// Success! Reset form
 		setAuthStep("form");
 		setAuthCode("");
+		setSessionId("");
 		setNewAccount({ name: "", mode: "max", tier: 1 });
 		onSuccess();
 	};
@@ -75,6 +81,7 @@ export function AccountAddForm({
 	const handleCancel = () => {
 		setAuthStep("form");
 		setAuthCode("");
+		setSessionId("");
 		setNewAccount({ name: "", mode: "max", tier: 1 });
 		onCancel();
 	};

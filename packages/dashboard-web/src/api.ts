@@ -52,12 +52,12 @@ class API extends HttpClient {
 		name: string;
 		mode: "max" | "console";
 		tier: number;
-	}): Promise<{ authUrl: string }> {
+	}): Promise<{ authUrl: string; sessionId: string }> {
 		try {
-			return await this.post<{ authUrl: string }>("/api/accounts", {
-				...data,
-				step: "init",
-			});
+			return await this.post<{ authUrl: string; sessionId: string }>(
+				"/api/oauth/init",
+				data,
+			);
 		} catch (error) {
 			if (error instanceof HttpError) {
 				throw new Error(error.message);
@@ -67,16 +67,13 @@ class API extends HttpClient {
 	}
 
 	async completeAddAccount(data: {
-		name: string;
+		sessionId: string;
 		code: string;
 	}): Promise<{ message: string; mode: string; tier: number }> {
 		try {
 			return await this.post<{ message: string; mode: string; tier: number }>(
-				"/api/accounts",
-				{
-					...data,
-					step: "callback",
-				},
+				"/api/oauth/callback",
+				data,
 			);
 		} catch (error) {
 			if (error instanceof HttpError) {

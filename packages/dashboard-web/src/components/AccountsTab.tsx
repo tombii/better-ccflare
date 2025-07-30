@@ -54,7 +54,7 @@ export function AccountsTab() {
 	};
 
 	const handleCompleteAccount = async (params: {
-		name: string;
+		sessionId: string;
 		code: string;
 	}) => {
 		try {
