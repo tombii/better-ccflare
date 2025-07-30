@@ -18,7 +18,12 @@ export type LogEntry = LogEvent;
 export type RequestSummary = RequestResponse;
 
 // Re-export types directly
-export type { Agent, AgentWorkspace, RequestPayload } from "@ccflare/types";
+export type {
+	Agent,
+	AgentWorkspace,
+	RequestPayload,
+	RequestResponse,
+} from "@ccflare/types";
 
 // Agent response interface
 export interface AgentsResponse {
