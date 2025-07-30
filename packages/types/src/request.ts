@@ -97,6 +97,7 @@ export interface RequestPayload {
 		pending?: boolean;
 		path?: string;
 		method?: string;
+		agentUsed?: string;
 	};
 }
 

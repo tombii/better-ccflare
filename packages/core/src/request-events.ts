@@ -8,6 +8,7 @@ export type RequestStartEvt = {
 	path: string;
 	accountId: string | null;
 	statusCode: number;
+	agentUsed: string | null;
 };
 
 export type RequestSummaryEvt = {

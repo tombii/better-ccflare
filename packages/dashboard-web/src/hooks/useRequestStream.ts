@@ -36,6 +36,7 @@ export function useRequestStream(limit = 200) {
 							timestamp: number;
 							accountId: string | null;
 							statusCode: number;
+							agentUsed: string | null;
 					  }
 					| { type: "summary"; payload: RequestResponse };
 
@@ -86,6 +87,7 @@ export function useRequestStream(limit = 200) {
 									accountName: account?.name,
 									success: false,
 									pending: true,
+									agentUsed: evt.agentUsed || undefined,
 								},
 							};
 
