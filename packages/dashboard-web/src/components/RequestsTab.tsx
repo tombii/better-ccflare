@@ -51,6 +51,7 @@ export function RequestsTab() {
 	);
 	const [modalRequest, setModalRequest] = useState<RequestPayload | null>(null);
 	const [accountFilter, setAccountFilter] = useState<string>("all");
+	const [agentFilter, setAgentFilter] = useState<string>("all");
 	const [dateFrom, setDateFrom] = useState<string>("");
 	const [dateTo, setDateTo] = useState<string>("");
 	const [showFilters, setShowFilters] = useState(false);
@@ -104,6 +105,20 @@ export function RequestsTab() {
 			).sort((a, b) => a - b)
 		: [];
 
+	// Extract unique agents for filter
+	const uniqueAgents = data
+		? Array.from(
+				new Set(
+					data.requests
+						.map((r) => {
+							const summary = data.summaries.get(r.id);
+							return summary?.agentUsed || r.meta.agentUsed;
+						})
+						.filter(Boolean),
+				),
+			).sort()
+		: [];
+
 	// Filter requests based on selected filters
 	const filteredRequests = data
 		? data.requests.filter((request) => {
@@ -112,6 +127,13 @@ export function RequestsTab() {
 					const requestAccount =
 						request.meta.accountName || request.meta.accountId;
 					if (requestAccount !== accountFilter) return false;
+				}
+
+				// Agent filter
+				if (agentFilter !== "all") {
+					const summary = data.summaries.get(request.id);
+					const requestAgent = summary?.agentUsed || request.meta.agentUsed;
+					if (requestAgent !== agentFilter) return false;
 				}
 
 				// Status code filter
@@ -204,13 +226,18 @@ export function RequestsTab() {
 
 	const clearAllFilters = () => {
 		setAccountFilter("all");
+		setAgentFilter("all");
 		setDateFrom("");
 		setDateTo("");
 		setStatusCodeFilters(new Set());
 	};
 
 	const hasActiveFilters =
-		accountFilter !== "all" || dateFrom || dateTo || statusCodeFilters.size > 0;
+		accountFilter !== "all" ||
+		agentFilter !== "all" ||
+		dateFrom ||
+		dateTo ||
+		statusCodeFilters.size > 0;
 
 	const decodeBase64 = (str: string | null): string => {
 		if (!str) return "No data";
@@ -305,6 +332,18 @@ export function RequestsTab() {
 								<button
 									type="button"
 									onClick={() => setAccountFilter("all")}
+									className="ml-1 hover:text-destructive"
+								>
+									<X className="h-3 w-3" />
+								</button>
+							</Badge>
+						)}
+						{agentFilter !== "all" && (
+							<Badge variant="secondary" className="gap-1">
+								Agent: {agentFilter}
+								<button
+									type="button"
+									onClick={() => setAgentFilter("all")}
 									className="ml-1 hover:text-destructive"
 								>
 									<X className="h-3 w-3" />
@@ -410,6 +449,26 @@ export function RequestsTab() {
 										{uniqueAccounts.map((account) => (
 											<SelectItem key={account} value={account || ""}>
 												{account}
+											</SelectItem>
+										))}
+									</SelectContent>
+								</Select>
+							</div>
+
+							{/* Agent Filter */}
+							<div className="space-y-2">
+								<Label htmlFor="agent-filter" className="text-sm font-medium">
+									Agent
+								</Label>
+								<Select value={agentFilter} onValueChange={setAgentFilter}>
+									<SelectTrigger id="agent-filter" className="h-9">
+										<SelectValue placeholder="All agents" />
+									</SelectTrigger>
+									<SelectContent>
+										<SelectItem value="all">All agents</SelectItem>
+										{uniqueAgents.map((agent) => (
+											<SelectItem key={agent} value={agent || ""}>
+												{agent}
 											</SelectItem>
 										))}
 									</SelectContent>
