@@ -25,10 +25,6 @@ bun install
 # Start ccflare (TUI + Server)
 bun run ccflare
 
-# In another terminal, add your Claude accounts
-bun cli add work-account
-bun cli add personal-account
-
 # Configure Claude SDK
 export ANTHROPIC_BASE_URL=http://localhost:8080
 ```
