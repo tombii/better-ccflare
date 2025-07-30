@@ -7,6 +7,7 @@ export { ChartContainer } from "./ChartContainer";
 export { ChartTooltip } from "./ChartTooltip";
 export { CostChart } from "./CostChart";
 export { ModelPerformanceChart } from "./ModelPerformanceChart";
+export { ModelTokenSpeedChart } from "./ModelTokenSpeedChart";
 export { RequestVolumeChart } from "./RequestVolumeChart";
 export { ResponseTimeChart } from "./ResponseTimeChart";
 export { TokenSpeedChart } from "./TokenSpeedChart";

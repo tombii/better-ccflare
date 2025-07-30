@@ -8,3 +8,4 @@ export {
 } from "./AnalyticsCharts";
 export { AnalyticsControls } from "./AnalyticsControls";
 export { AnalyticsFilters, type FilterState } from "./AnalyticsFilters";
+export { TokenSpeedAnalytics } from "./TokenSpeedAnalytics";
