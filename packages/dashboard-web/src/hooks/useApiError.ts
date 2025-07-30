@@ -75,7 +75,7 @@ export function useApiError(
 				401: "Authentication failed. Please re-add your account.",
 			},
 		}),
-		// biome-ignore lint/correctness/useExhaustiveDependencies: We're spreading formatOptions in the object above
+		// biome-ignore lint/correctness/useExhaustiveDependencies: Spreading formatOptions above
 		[
 			formatOptions.defaultMessage,
 			formatOptions.errorMap,
