@@ -11,7 +11,8 @@
 		"typecheck": "tsc --noEmit"
 	},
 	"dependencies": {
-		"@claudeflare/types": "workspace:*"
+		"@claudeflare/types": "workspace:*",
+		"@claudeflare/errors": "workspace:*"
 	},
 	"devDependencies": {
 		"@types/node": "^22.10.2",

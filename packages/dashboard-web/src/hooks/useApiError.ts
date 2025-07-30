@@ -1,15 +1,15 @@
+import {
+	type ErrorFormatterOptions,
+	type ErrorType,
+	formatError as formatErrorFromPackage,
+	getErrorType,
+	isAuthError as isAuthErrorCheck,
+	isNetworkError as isNetworkErrorCheck,
+	isRateLimitError as isRateLimitErrorCheck,
+} from "@claudeflare/errors";
 import { useCallback, useMemo } from "react";
 
-export interface UseApiErrorOptions {
-	/**
-	 * Default error message when error is not an Error instance
-	 * @default "An unexpected error occurred"
-	 */
-	defaultMessage?: string;
-	/**
-	 * Transform specific error messages
-	 */
-	errorMap?: Record<string, string>;
+export interface UseApiErrorOptions extends ErrorFormatterOptions {
 	/**
 	 * Whether to log errors to console
 	 * @default false
@@ -37,9 +37,7 @@ export interface UseApiErrorReturn {
 	/**
 	 * Get error type
 	 */
-	getErrorType: (
-		error: unknown,
-	) => "network" | "auth" | "rate-limit" | "validation" | "server" | "unknown";
+	getErrorType: (error: unknown) => ErrorType;
 }
 
 /**
@@ -64,11 +62,27 @@ export interface UseApiErrorReturn {
 export function useApiError(
 	options: UseApiErrorOptions = {},
 ): UseApiErrorReturn {
-	const {
-		defaultMessage = "An unexpected error occurred",
-		errorMap = {},
-		logErrors = false,
-	} = options;
+	const { logErrors = false, ...formatOptions } = options;
+
+	// Memoize formatOptions to avoid re-creating on every render
+	const memoizedFormatOptions = useMemo(
+		() => ({
+			...formatOptions,
+			errorMap: {
+				...formatOptions.errorMap,
+				// Override auth error message for dashboard context
+				unauthorized: "Authentication failed. Please re-add your account.",
+				401: "Authentication failed. Please re-add your account.",
+			},
+		}),
+		// biome-ignore lint/correctness/useExhaustiveDependencies: We're spreading formatOptions in the object above
+		[
+			formatOptions.defaultMessage,
+			formatOptions.errorMap,
+			formatOptions.includeDetails,
+			formatOptions,
+		],
+	);
 
 	const formatError = useCallback(
 		(error: unknown): string => {
@@ -76,147 +90,27 @@ export function useApiError(
 				console.error("[API Error]", error);
 			}
 
-			// Handle null/undefined
-			if (error == null) {
-				return defaultMessage;
-			}
-
-			// Handle Error instances
-			if (error instanceof Error) {
-				const message = error.message;
-
-				// Check error map for custom messages
-				for (const [key, value] of Object.entries(errorMap)) {
-					if (message.includes(key)) {
-						return value;
-					}
-				}
-
-				// Handle specific error types
-				if (message.toLowerCase().includes("network")) {
-					return "Network error. Please check your connection and try again.";
-				}
-
-				if (
-					message.toLowerCase().includes("unauthorized") ||
-					message.toLowerCase().includes("401")
-				) {
-					return "Authentication failed. Please re-add your account.";
-				}
-
-				if (
-					message.toLowerCase().includes("rate limit") ||
-					message.toLowerCase().includes("429")
-				) {
-					return "Rate limit exceeded. Please try again later.";
-				}
-
-				if (message.toLowerCase().includes("validation")) {
-					return message; // Validation errors are usually already user-friendly
-				}
-
-				if (message.toLowerCase().includes("timeout")) {
-					return "Request timed out. Please try again.";
-				}
-
-				return message;
-			}
-
-			// Handle string errors
-			if (typeof error === "string") {
-				// Check error map
-				for (const [key, value] of Object.entries(errorMap)) {
-					if (error.includes(key)) {
-						return value;
-					}
-				}
-				return error;
-			}
-
-			// Handle objects with message property
-			if (
-				typeof error === "object" &&
-				"message" in error &&
-				typeof error.message === "string"
-			) {
-				return formatError(new Error(error.message));
-			}
-
-			// Fallback
-			return defaultMessage;
+			// Use the formatError from the errors package with custom auth message
+			return formatErrorFromPackage(error, memoizedFormatOptions);
 		},
-		[defaultMessage, errorMap, logErrors],
+		[logErrors, memoizedFormatOptions],
 	);
 
 	const isNetworkError = useCallback((error: unknown): boolean => {
-		if (error instanceof Error) {
-			const message = error.message.toLowerCase();
-			return (
-				message.includes("network") ||
-				message.includes("fetch") ||
-				message.includes("connect") ||
-				message.includes("timeout") ||
-				message.includes("offline")
-			);
-		}
-		return false;
+		return isNetworkErrorCheck(error);
 	}, []);
 
 	const isAuthError = useCallback((error: unknown): boolean => {
-		if (error instanceof Error) {
-			const message = error.message.toLowerCase();
-			return (
-				message.includes("unauthorized") ||
-				message.includes("401") ||
-				message.includes("authentication") ||
-				message.includes("auth") ||
-				message.includes("forbidden") ||
-				message.includes("403")
-			);
-		}
-		return false;
+		return isAuthErrorCheck(error);
 	}, []);
 
 	const isRateLimitError = useCallback((error: unknown): boolean => {
-		if (error instanceof Error) {
-			const message = error.message.toLowerCase();
-			return (
-				message.includes("rate limit") ||
-				message.includes("429") ||
-				message.includes("too many requests")
-			);
-		}
-		return false;
+		return isRateLimitErrorCheck(error);
 	}, []);
 
-	const getErrorType = useCallback(
-		(
-			error: unknown,
-		):
-			| "network"
-			| "auth"
-			| "rate-limit"
-			| "validation"
-			| "server"
-			| "unknown" => {
-			if (isNetworkError(error)) return "network";
-			if (isAuthError(error)) return "auth";
-			if (isRateLimitError(error)) return "rate-limit";
-
-			if (error instanceof Error) {
-				const message = error.message.toLowerCase();
-				if (message.includes("validation") || message.includes("invalid")) {
-					return "validation";
-				}
-				if (message.includes("500") || message.includes("server error")) {
-					return "server";
-				}
-			}
-
-			return "unknown";
-		},
-		[isNetworkError, isAuthError, isRateLimitError],
-	);
+	const getErrorTypeWrapper = useCallback((error: unknown): ErrorType => {
+		return getErrorType(error);
+	}, []);
 
 	return useMemo(
 		() => ({
@@ -224,8 +118,14 @@ export function useApiError(
 			isNetworkError,
 			isAuthError,
 			isRateLimitError,
-			getErrorType,
+			getErrorType: getErrorTypeWrapper,
 		}),
-		[formatError, isNetworkError, isAuthError, isRateLimitError, getErrorType],
+		[
+			formatError,
+			isNetworkError,
+			isAuthError,
+			isRateLimitError,
+			getErrorTypeWrapper,
+		],
 	);
 }

@@ -3,7 +3,7 @@ import type { DatabaseOperations } from "@claudeflare/database";
 import {
 	generatePKCE,
 	getOAuthProvider,
-	type OAuthConfig,
+	type OAuthProviderConfig,
 	type OAuthTokens,
 	type PKCEChallenge,
 } from "@claudeflare/providers";
@@ -18,7 +18,7 @@ export interface BeginResult {
 	sessionId: string;
 	authUrl: string;
 	pkce: PKCEChallenge;
-	oauthConfig: OAuthConfig;
+	oauthConfig: OAuthProviderConfig;
 }
 
 export interface CompleteOptions {
@@ -146,7 +146,7 @@ export class OAuthFlow {
 				id,
 				name, // This needs to be passed properly
 				"anthropic",
-				tokens.refreshToken,
+				tokens.refreshToken || "",
 				tokens.accessToken,
 				tokens.expiresAt,
 				Date.now(),

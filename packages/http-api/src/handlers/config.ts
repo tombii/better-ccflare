@@ -6,7 +6,11 @@ import {
 	TIME_CONSTANTS,
 	validateString,
 } from "@claudeflare/core";
-import { jsonResponse } from "@claudeflare/http-common";
+import {
+	BadRequest,
+	errorResponse,
+	jsonResponse,
+} from "@claudeflare/http-common";
 import type { ConfigResponse } from "../types";
 
 /**
@@ -50,7 +54,7 @@ export function createConfigHandlers(config: Config) {
 			});
 
 			if (!strategyValidation) {
-				throw BadRequest("Strategy is required");
+				return errorResponse(BadRequest("Strategy is required"));
 			}
 
 			const strategy = strategyValidation as StrategyName;

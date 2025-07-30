@@ -24,7 +24,6 @@ import {
 	type ProxyContext,
 	terminateUsageWorker,
 } from "@claudeflare/proxy";
-import type { LoadBalancingStrategy } from "@claudeflare/types";
 import { serve } from "bun";
 
 // Helper function to resolve dashboard assets with fallback
@@ -129,8 +128,7 @@ export default function startServer(options?: {
 
 	const apiRouter = new APIRouter({ db, config, dbOps });
 
-	// Initialize load balancing strategy
-	const strategy = new SessionStrategy();
+	// Initialize load balancing strategy (will be created after runtime config)
 
 	// Get the provider
 	const provider = getProvider("anthropic");
@@ -153,6 +151,10 @@ export default function startServer(options?: {
 		port,
 	};
 
+	// Now create the strategy with runtime config
+	const strategy = new SessionStrategy(runtimeConfig.sessionDurationMs);
+	strategy.initialize(dbOps);
+
 	// Proxy context
 	const proxyContext: ProxyContext = {
 		strategy,
@@ -168,10 +170,13 @@ export default function startServer(options?: {
 	config.on("change", (changeType, fieldName) => {
 		if (fieldName === "strategy") {
 			log.info(`Strategy configuration changed: ${changeType}`);
-			const _newStrategyName = config.getStrategy() as LoadBalancingStrategy;
-			const NewStrategyClass = SessionStrategy;
-			const strategy = new NewStrategyClass(dbOps);
-			proxyContext.strategy = strategy;
+			const newStrategyName = config.getStrategy();
+			// For now, only SessionStrategy is supported
+			if (newStrategyName === "session") {
+				const strategy = new SessionStrategy(runtimeConfig.sessionDurationMs);
+				strategy.initialize(dbOps);
+				proxyContext.strategy = strategy;
+			}
 		}
 	});
 

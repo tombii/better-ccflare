@@ -43,12 +43,6 @@ export class AuthError extends AppError {
 	}
 }
 
-export class TokenExpiredError extends AuthError {
-	constructor(accountId: string) {
-		super("Access token has expired", { accountId });
-	}
-}
-
 export class TokenRefreshError extends AuthError {
 	constructor(accountId: string, originalError?: Error) {
 		super("Failed to refresh access token", {
@@ -89,17 +83,6 @@ export class ValidationError extends AppError {
 }
 
 /**
- * Database errors
- */
-export class DatabaseError extends AppError {
-	constructor(message: string, originalError?: Error) {
-		super(message, "DATABASE_ERROR", 500, {
-			originalError: originalError?.message,
-		});
-	}
-}
-
-/**
  * Provider errors
  */
 export class ProviderError extends AppError {
@@ -124,33 +107,6 @@ export class OAuthError extends ProviderError {
 }
 
 /**
- * Configuration errors
- */
-export class ConfigError extends AppError {
-	constructor(
-		message: string,
-		public readonly configKey?: string,
-	) {
-		super(message, "CONFIG_ERROR", 500, { configKey });
-	}
-}
-
-/**
- * Not found errors
- */
-export class NotFoundError extends AppError {
-	constructor(
-		public readonly resource: string,
-		public readonly identifier?: string,
-	) {
-		super(`${resource} not found`, "NOT_FOUND", 404, {
-			resource,
-			identifier,
-		});
-	}
-}
-
-/**
  * Service unavailable errors
  */
 export class ServiceUnavailableError extends AppError {
@@ -167,18 +123,6 @@ export class ServiceUnavailableError extends AppError {
  */
 export function isAppError(error: unknown): error is AppError {
 	return error instanceof AppError;
-}
-
-export function isAuthError(error: unknown): error is AuthError {
-	return error instanceof AuthError;
-}
-
-export function isRateLimitError(error: unknown): error is RateLimitError {
-	return error instanceof RateLimitError;
-}
-
-export function isValidationError(error: unknown): error is ValidationError {
-	return error instanceof ValidationError;
 }
 
 /**

@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import {
 	CartesianGrid,
 	Legend,
@@ -10,18 +9,14 @@ import {
 	XAxis,
 	YAxis,
 } from "recharts";
-import {
-	CHART_HEIGHTS,
-	CHART_PROPS,
-	CHART_TOOLTIP_STYLE,
-	COLORS,
-} from "../../constants";
+import { CHART_PROPS, COLORS } from "../../constants";
 import { ChartContainer } from "./ChartContainer";
-import type {
-	ChartClickHandler,
-	ChartDataPoint,
-	TooltipFormatterFunction,
-} from "./types";
+import {
+	type CommonChartProps,
+	getChartHeight,
+	getTooltipStyles,
+	isChartEmpty,
+} from "./chart-utils";
 
 interface LineConfig {
 	dataKey: string;
@@ -38,28 +33,9 @@ interface ReferenceLineConfig {
 	label?: string;
 }
 
-interface BaseLineChartProps {
-	data: ChartDataPoint[];
+interface BaseLineChartProps extends CommonChartProps {
 	lines: LineConfig | LineConfig[];
-	xAxisKey?: string;
-	loading?: boolean;
-	height?: keyof typeof CHART_HEIGHTS | number;
-	xAxisAngle?: number;
-	xAxisTextAnchor?: "start" | "middle" | "end";
-	xAxisHeight?: number;
-	yAxisDomain?: [number | "auto", number | "auto"];
-	tooltipFormatter?: TooltipFormatterFunction;
-	tooltipLabelFormatter?: (label: string) => string;
-	tooltipStyle?: keyof typeof CHART_TOOLTIP_STYLE | object;
-	animationDuration?: number;
-	showLegend?: boolean;
-	legendHeight?: number;
 	referenceLines?: ReferenceLineConfig[];
-	margin?: { top?: number; right?: number; bottom?: number; left?: number };
-	className?: string;
-	error?: Error | null;
-	emptyState?: ReactNode;
-	onChartClick?: ChartClickHandler;
 }
 
 export function BaseLineChart({
@@ -85,15 +61,10 @@ export function BaseLineChart({
 	emptyState,
 	onChartClick,
 }: BaseLineChartProps) {
-	const chartHeight =
-		typeof height === "number" ? height : CHART_HEIGHTS[height];
-	const isEmpty = !data || data.length === 0;
+	const chartHeight = getChartHeight(height);
+	const isEmpty = isChartEmpty(data);
+	const tooltipStyles = getTooltipStyles(tooltipStyle);
 	const lineConfigs = Array.isArray(lines) ? lines : [lines];
-
-	const tooltipStyles =
-		typeof tooltipStyle === "string"
-			? CHART_TOOLTIP_STYLE[tooltipStyle]
-			: tooltipStyle;
 
 	return (
 		<ChartContainer

@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import {
 	Bar,
 	BarChart,
@@ -9,18 +8,14 @@ import {
 	XAxis,
 	YAxis,
 } from "recharts";
-import {
-	CHART_HEIGHTS,
-	CHART_PROPS,
-	CHART_TOOLTIP_STYLE,
-	COLORS,
-} from "../../constants";
+import { CHART_PROPS, COLORS } from "../../constants";
 import { ChartContainer } from "./ChartContainer";
-import type {
-	ChartClickHandler,
-	ChartDataPoint,
-	TooltipFormatterFunction,
-} from "./types";
+import {
+	type CommonChartProps,
+	getChartHeight,
+	getTooltipStyles,
+	isChartEmpty,
+} from "./chart-utils";
 
 interface BarConfig {
 	dataKey: string;
@@ -30,33 +25,14 @@ interface BarConfig {
 	radius?: [number, number, number, number];
 }
 
-interface BaseBarChartProps {
-	data: ChartDataPoint[];
+interface BaseBarChartProps extends CommonChartProps {
 	bars: BarConfig | BarConfig[];
-	xAxisKey?: string;
-	loading?: boolean;
-	height?: keyof typeof CHART_HEIGHTS | number;
 	layout?: "horizontal" | "vertical";
-	xAxisAngle?: number;
-	xAxisTextAnchor?: "start" | "middle" | "end";
-	xAxisHeight?: number;
 	xAxisType?: "number" | "category";
 	yAxisType?: "number" | "category";
 	yAxisWidth?: number;
-	yAxisDomain?: [number | "auto", number | "auto"];
 	yAxisOrientation?: "left" | "right";
 	secondaryYAxis?: boolean;
-	tooltipFormatter?: TooltipFormatterFunction;
-	tooltipLabelFormatter?: (label: string) => string;
-	tooltipStyle?: keyof typeof CHART_TOOLTIP_STYLE | object;
-	animationDuration?: number;
-	showLegend?: boolean;
-	legendHeight?: number;
-	margin?: { top?: number; right?: number; bottom?: number; left?: number };
-	className?: string;
-	error?: Error | null;
-	emptyState?: ReactNode;
-	onChartClick?: ChartClickHandler;
 }
 
 export function BaseBarChart({
@@ -87,15 +63,10 @@ export function BaseBarChart({
 	emptyState,
 	onChartClick,
 }: BaseBarChartProps) {
-	const chartHeight =
-		typeof height === "number" ? height : CHART_HEIGHTS[height];
-	const isEmpty = !data || data.length === 0;
+	const chartHeight = getChartHeight(height);
+	const isEmpty = isChartEmpty(data);
+	const tooltipStyles = getTooltipStyles(tooltipStyle);
 	const barConfigs = Array.isArray(bars) ? bars : [bars];
-
-	const tooltipStyles =
-		typeof tooltipStyle === "string"
-			? CHART_TOOLTIP_STYLE[tooltipStyle]
-			: tooltipStyle;
 
 	return (
 		<ChartContainer

@@ -9,12 +9,13 @@ import {
 	YAxis,
 } from "recharts";
 import {
-	CHART_HEIGHTS,
+	type CHART_HEIGHTS,
 	CHART_PROPS,
-	CHART_TOOLTIP_STYLE,
+	type CHART_TOOLTIP_STYLE,
 	COLORS,
 } from "../../constants";
 import { ChartContainer } from "./ChartContainer";
+import { getChartHeight, getTooltipStyles, isChartEmpty } from "./chart-utils";
 import type {
 	ChartClickHandler,
 	ChartDataPoint,
@@ -64,14 +65,9 @@ export function BaseScatterChart({
 	onDotClick,
 	renderLabel,
 }: BaseScatterChartProps) {
-	const chartHeight =
-		typeof height === "number" ? height : CHART_HEIGHTS[height];
-	const isEmpty = !data || data.length === 0;
-
-	const tooltipStyles =
-		typeof tooltipStyle === "string"
-			? CHART_TOOLTIP_STYLE[tooltipStyle]
-			: tooltipStyle;
+	const chartHeight = getChartHeight(height);
+	const isEmpty = isChartEmpty(data);
+	const tooltipStyles = getTooltipStyles(tooltipStyle);
 
 	return (
 		<ChartContainer
