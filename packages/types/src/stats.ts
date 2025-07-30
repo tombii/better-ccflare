@@ -83,7 +83,12 @@ export interface AnalyticsResponse {
 		requests: number;
 		successRate: number;
 	}>;
-	costByModel: Array<{ model: string; costUsd: number; requests: number }>;
+	costByModel: Array<{
+		model: string;
+		costUsd: number;
+		requests: number;
+		totalTokens?: number;
+	}>;
 	modelPerformance: ModelPerformance[];
 }
 

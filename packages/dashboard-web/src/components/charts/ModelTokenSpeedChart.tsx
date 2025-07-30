@@ -11,7 +11,7 @@ import {
 	YAxis,
 } from "recharts";
 import { CHART_PROPS, COLORS } from "../../constants";
-import { getTooltipStyles, isChartEmpty } from "./chart-utils";
+import { getTooltipStyles } from "./chart-utils";
 
 interface ModelTokenSpeedData {
 	model: string;
