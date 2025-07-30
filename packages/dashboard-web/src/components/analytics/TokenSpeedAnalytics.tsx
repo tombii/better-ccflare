@@ -37,13 +37,19 @@ export function TokenSpeedAnalytics({
 			? validSpeeds.reduce((sum, speed) => sum + speed, 0) / validSpeeds.length
 			: 0;
 
-	const maxSpeed = validSpeeds.length > 0 ? Math.max(...validSpeeds) : 0;
+	// Get the true maximum speed from model performance data
+	const maxSpeed = Math.max(
+		...modelPerformance
+			.map((m) => m.maxTokensPerSecond || 0)
+			.filter((speed) => speed > 0),
+		0,
+	);
 
-	// Find fastest model
+	// Find fastest model by peak speed
 	const fastestModel = modelPerformance
-		.filter((m) => m.avgTokensPerSecond !== null)
+		.filter((m) => m.maxTokensPerSecond !== null && m.maxTokensPerSecond > 0)
 		.sort(
-			(a, b) => (b.avgTokensPerSecond || 0) - (a.avgTokensPerSecond || 0),
+			(a, b) => (b.maxTokensPerSecond || 0) - (a.maxTokensPerSecond || 0),
 		)[0];
 
 	return (
@@ -93,7 +99,7 @@ export function TokenSpeedAnalytics({
 						</div>
 						<p className="text-xs text-muted-foreground">
 							{fastestModel
-								? formatTokensPerSecond(fastestModel.avgTokensPerSecond || 0)
+								? `Peak: ${formatTokensPerSecond(fastestModel.maxTokensPerSecond || 0)}`
 								: "No data"}
 						</p>
 					</CardContent>
