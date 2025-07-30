@@ -32,6 +32,8 @@ interface RequestState {
 	lastActivity: number;
 	agentUsed?: string;
 	firstTokenTimestamp?: number;
+	lastTokenTimestamp?: number;
+	providerFinalOutputTokens?: number;
 	shouldSkipLogging?: boolean;
 }
 
@@ -124,26 +126,49 @@ function extractUsageFromData(data: string, state: RequestState): void {
 			}
 		}
 
-		// Handle message_delta
-		if (parsed.type === "message_delta" && parsed.usage) {
-			state.usage.outputTokens =
-				parsed.usage.output_tokens || state.usage.outputTokens || 0;
+		// Track streaming start time on first content block
+		if (parsed.type === "content_block_start" && !state.firstTokenTimestamp) {
+			state.firstTokenTimestamp = Date.now();
 		}
 
-		// Handle content_block_delta with text (for token counting)
-		if (parsed.type === "content_block_delta" && parsed.delta?.text) {
-			// Track first token timestamp
-			if (!state.firstTokenTimestamp && parsed.delta.text.length > 0) {
-				state.firstTokenTimestamp = Date.now();
+		// Handle message_delta - provider's authoritative output token count AND end time
+		if (parsed.type === "message_delta") {
+			state.lastTokenTimestamp = Date.now();
+
+			if (parsed.usage?.output_tokens !== undefined) {
+				state.providerFinalOutputTokens = parsed.usage.output_tokens;
+				state.usage.outputTokens = parsed.usage.output_tokens;
+				return; // No further processing needed
+			}
+		}
+
+		// Count tokens locally as fallback (but provider's count takes precedence)
+		if (
+			parsed.type === "content_block_delta" &&
+			parsed.delta &&
+			state.providerFinalOutputTokens === undefined // Avoid double counting
+		) {
+			let textToCount: string | undefined;
+
+			// Extract text from different delta types
+			if (parsed.delta.type === "text_delta" && parsed.delta.text) {
+				textToCount = parsed.delta.text;
+			} else if (
+				parsed.delta.type === "thinking_delta" &&
+				parsed.delta.thinking
+			) {
+				textToCount = parsed.delta.thinking;
 			}
 
-			// Count tokens using tiktoken
-			try {
-				const tokens = tokenEncoder.encode(parsed.delta.text);
-				state.usage.outputTokensComputed =
-					(state.usage.outputTokensComputed || 0) + tokens.length;
-			} catch (err) {
-				log.debug("Failed to count tokens:", err);
+			if (textToCount) {
+				// Count tokens using tiktoken
+				try {
+					const tokens = tokenEncoder.encode(textToCount);
+					state.usage.outputTokensComputed =
+						(state.usage.outputTokensComputed || 0) + tokens.length;
+				} catch (err) {
+					log.debug("Failed to count tokens:", err);
+				}
 			}
 		}
 
@@ -276,9 +301,16 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 
 	// Calculate total tokens and cost
 	if (state.usage.model) {
-		// Use API-provided token count if available, fallback to computed
+		// Use provider's authoritative count if available, fallback to computed
 		const finalOutputTokens =
-			state.usage.outputTokens || state.usage.outputTokensComputed || 0;
+			state.providerFinalOutputTokens ??
+			state.usage.outputTokens ??
+			state.usage.outputTokensComputed ??
+			0;
+
+		// Update usage with final values
+		state.usage.outputTokens = finalOutputTokens;
+		state.usage.outputTokensComputed = undefined; // Clear to avoid confusion
 
 		state.usage.totalTokens =
 			(state.usage.inputTokens || 0) +
@@ -293,11 +325,19 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 			cacheCreationInputTokens: state.usage.cacheCreationInputTokens,
 		});
 
-		// Calculate tokens per second
-		if (state.firstTokenTimestamp && finalOutputTokens > 0) {
-			const durationSec = (Date.now() - state.firstTokenTimestamp) / 1000;
+		// Calculate tokens per second using actual streaming duration
+		if (
+			state.firstTokenTimestamp &&
+			state.lastTokenTimestamp &&
+			finalOutputTokens > 0
+		) {
+			const durationSec =
+				(state.lastTokenTimestamp - state.firstTokenTimestamp) / 1000;
 			if (durationSec > 0) {
 				state.usage.tokensPerSecond = finalOutputTokens / durationSec;
+			} else if (finalOutputTokens > 0) {
+				// If tokens were generated instantly, use a very small duration
+				state.usage.tokensPerSecond = finalOutputTokens / 0.001;
 			}
 		}
 	}
@@ -321,14 +361,12 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 							(state.usage.inputTokens || 0) +
 							(state.usage.cacheReadInputTokens || 0) +
 							(state.usage.cacheCreationInputTokens || 0),
-						completionTokens:
-							state.usage.outputTokens || state.usage.outputTokensComputed,
+						completionTokens: state.usage.outputTokens,
 						totalTokens: state.usage.totalTokens,
 						costUsd: state.usage.costUsd,
 						// Keep original breakdown for payload
 						inputTokens: state.usage.inputTokens,
-						outputTokens:
-							state.usage.outputTokens || state.usage.outputTokensComputed,
+						outputTokens: state.usage.outputTokens,
 						cacheReadInputTokens: state.usage.cacheReadInputTokens,
 						cacheCreationInputTokens: state.usage.cacheCreationInputTokens,
 						tokensPerSecond: state.usage.tokensPerSecond,
