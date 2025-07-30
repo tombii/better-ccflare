@@ -33,10 +33,12 @@ export const useAnalytics = (
 		status?: "all" | "success" | "error";
 	},
 	viewMode: "normal" | "cumulative",
+	modelBreakdown?: boolean,
 ) => {
 	return useQuery({
-		queryKey: queryKeys.analytics(timeRange, filters, viewMode),
-		queryFn: () => api.getAnalytics(timeRange, filters, viewMode),
+		queryKey: queryKeys.analytics(timeRange, filters, viewMode, modelBreakdown),
+		queryFn: () =>
+			api.getAnalytics(timeRange, filters, viewMode, modelBreakdown),
 	});
 };
 

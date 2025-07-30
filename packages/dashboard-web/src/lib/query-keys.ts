@@ -3,8 +3,17 @@ export const queryKeys = {
 	accounts: () => [...queryKeys.all, "accounts"] as const,
 	agents: () => [...queryKeys.all, "agents"] as const,
 	stats: () => [...queryKeys.all, "stats"] as const,
-	analytics: (timeRange?: string, filters?: unknown, viewMode?: string) =>
-		[...queryKeys.all, "analytics", { timeRange, filters, viewMode }] as const,
+	analytics: (
+		timeRange?: string,
+		filters?: unknown,
+		viewMode?: string,
+		modelBreakdown?: boolean,
+	) =>
+		[
+			...queryKeys.all,
+			"analytics",
+			{ timeRange, filters, viewMode, modelBreakdown },
+		] as const,
 	requests: (limit?: number) =>
 		[...queryKeys.all, "requests", { limit }] as const,
 	requestDetails: (id: string) =>

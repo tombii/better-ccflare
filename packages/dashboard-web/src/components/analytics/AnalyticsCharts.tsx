@@ -1,3 +1,4 @@
+import type { TimePoint } from "@ccflare/types";
 import { formatCost, formatNumber, formatTokens } from "@ccflare/ui-common";
 import {
 	Area,
@@ -21,6 +22,7 @@ import {
 	BaseLineChart,
 	CostChart,
 	ModelPerformanceChart,
+	MultiModelChart,
 	RequestVolumeChart,
 	ResponseTimeChart,
 	TokenSpeedChart,
@@ -34,6 +36,7 @@ import {
 	CardHeader,
 	CardTitle,
 } from "../ui/card";
+import { Label } from "../ui/label";
 import {
 	Select,
 	SelectContent,
@@ -41,6 +44,7 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "../ui/select";
+import { Switch } from "../ui/switch";
 
 interface ChartData {
 	time: string;
@@ -56,21 +60,115 @@ interface ChartData {
 
 interface MainMetricsChartProps {
 	data: ChartData[];
+	rawTimeSeries?: TimePoint[];
 	loading: boolean;
 	viewMode: "normal" | "cumulative";
 	timeRange: TimeRange;
 	selectedMetric: string;
 	setSelectedMetric: (metric: string) => void;
+	modelBreakdown?: boolean;
+	onModelBreakdownChange?: (enabled: boolean) => void;
 }
 
 export function MainMetricsChart({
 	data,
+	rawTimeSeries,
 	loading,
 	viewMode,
 	timeRange,
 	selectedMetric,
 	setSelectedMetric,
+	modelBreakdown = false,
+	onModelBreakdownChange,
 }: MainMetricsChartProps) {
+	// Process data for multi-model chart if model breakdown is enabled
+	const processedMultiModelData =
+		rawTimeSeries && modelBreakdown
+			? (() => {
+					// Group by timestamp and pivot models
+					const grouped: Record<
+						string,
+						{ time: string; [model: string]: string | number }
+					> = {};
+					const models = new Set<string>();
+
+					// First pass: collect all time points and models
+					const timePoints = new Set<string>();
+
+					rawTimeSeries.forEach((point) => {
+						if (point.model) {
+							models.add(point.model);
+							const time =
+								timeRange === "30d"
+									? new Date(point.ts).toLocaleDateString()
+									: new Date(point.ts).toLocaleTimeString([], {
+											hour: "2-digit",
+											minute: "2-digit",
+										});
+							timePoints.add(time);
+						}
+					});
+
+					// Initialize all time points with all models set to 0
+					for (const time of timePoints) {
+						grouped[time] = { time };
+						for (const model of models) {
+							grouped[time][model] = 0;
+						}
+					}
+
+					// Second pass: fill in actual values
+					rawTimeSeries.forEach((point) => {
+						if (point.model) {
+							const time =
+								timeRange === "30d"
+									? new Date(point.ts).toLocaleDateString()
+									: new Date(point.ts).toLocaleTimeString([], {
+											hour: "2-digit",
+											minute: "2-digit",
+										});
+
+							// Map the metric value
+							let value = 0;
+							switch (selectedMetric) {
+								case "requests":
+									value = point.requests;
+									break;
+								case "tokens":
+									value = point.tokens;
+									break;
+								case "cost":
+									value = point.costUsd;
+									break;
+								case "responseTime":
+									value = point.avgResponseTime;
+									break;
+								case "tokensPerSecond":
+									value = point.avgTokensPerSecond || 0;
+									break;
+							}
+
+							grouped[time][point.model] = value;
+						}
+					});
+
+					// Sort time points chronologically
+					const sortedData = Object.values(grouped).sort((a, b) => {
+						// For proper chronological sorting, we need to parse the time strings
+						if (timeRange === "30d") {
+							return new Date(a.time).getTime() - new Date(b.time).getTime();
+						}
+						// For time strings, we need to be more careful
+						return a.time.localeCompare(b.time);
+					});
+
+					return {
+						data: sortedData,
+						models: Array.from(models).sort(),
+					};
+				})()
+			: null;
+
 	return (
 		<Card>
 			<CardHeader>
@@ -80,25 +178,63 @@ export function MainMetricsChart({
 						<CardDescription>
 							{viewMode === "cumulative"
 								? "Cumulative totals showing growth over time"
-								: "Request volume and performance metrics over time"}
+								: modelBreakdown
+									? "Per-model breakdown over time"
+									: "Request volume and performance metrics over time"}
 						</CardDescription>
 					</div>
-					<Select value={selectedMetric} onValueChange={setSelectedMetric}>
-						<SelectTrigger className="w-40">
-							<SelectValue />
-						</SelectTrigger>
-						<SelectContent>
-							<SelectItem value="requests">Requests</SelectItem>
-							<SelectItem value="tokens">Token Usage</SelectItem>
-							<SelectItem value="cost">Cost ($)</SelectItem>
-							<SelectItem value="responseTime">Response Time</SelectItem>
-							<SelectItem value="tokensPerSecond">Output Speed</SelectItem>
-						</SelectContent>
-					</Select>
+					<div className="flex items-center gap-4">
+						{!viewMode || viewMode === "normal" ? (
+							<div className="flex items-center gap-2">
+								<Switch
+									id="model-breakdown"
+									checked={modelBreakdown}
+									onCheckedChange={onModelBreakdownChange}
+								/>
+								<Label htmlFor="model-breakdown" className="text-sm">
+									Per Model
+								</Label>
+							</div>
+						) : null}
+						<Select value={selectedMetric} onValueChange={setSelectedMetric}>
+							<SelectTrigger className="w-40">
+								<SelectValue />
+							</SelectTrigger>
+							<SelectContent>
+								<SelectItem value="requests">Requests</SelectItem>
+								<SelectItem value="tokens">Token Usage</SelectItem>
+								<SelectItem value="cost">Cost ($)</SelectItem>
+								<SelectItem value="responseTime">Response Time</SelectItem>
+								<SelectItem value="tokensPerSecond">Output Speed</SelectItem>
+							</SelectContent>
+						</Select>
+					</div>
 				</div>
 			</CardHeader>
 			<CardContent>
 				{(() => {
+					// Show multi-model chart if breakdown is enabled
+					if (modelBreakdown && processedMultiModelData) {
+						return (
+							<MultiModelChart
+								data={processedMultiModelData.data}
+								models={processedMultiModelData.models}
+								metric={
+									selectedMetric as
+										| "requests"
+										| "tokens"
+										| "cost"
+										| "responseTime"
+										| "tokensPerSecond"
+								}
+								loading={loading}
+								height={CHART_HEIGHTS.large}
+								viewMode={viewMode}
+							/>
+						);
+					}
+
+					// Otherwise show normal charts
 					const commonProps = {
 						data,
 						loading,
