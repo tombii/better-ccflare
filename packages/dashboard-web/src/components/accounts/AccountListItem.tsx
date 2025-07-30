@@ -5,12 +5,14 @@ import { Button } from "../ui/button";
 
 interface AccountListItemProps {
 	account: Account;
+	isActive?: boolean;
 	onPauseToggle: (account: Account) => void;
 	onRemove: (name: string) => void;
 }
 
 export function AccountListItem({
 	account,
+	isActive = false,
 	onPauseToggle,
 	onRemove,
 }: AccountListItemProps) {
@@ -19,11 +21,22 @@ export function AccountListItem({
 	return (
 		<div
 			key={account.name}
-			className="flex items-center justify-between p-4 border rounded-lg"
+			className={`flex items-center justify-between p-4 border rounded-lg transition-colors ${
+				isActive
+					? "border-primary bg-primary/5 shadow-sm"
+					: "border-border hover:border-muted-foreground/50"
+			}`}
 		>
 			<div className="flex items-center gap-4">
 				<div>
-					<p className="font-medium">{account.name}</p>
+					<div className="flex items-center gap-2">
+						<p className="font-medium">{account.name}</p>
+						{isActive && (
+							<span className="px-2 py-0.5 text-xs font-medium bg-primary text-primary-foreground rounded-full">
+								Active
+							</span>
+						)}
+					</div>
 					<p className="text-sm text-muted-foreground">
 						{account.provider} • {presenter.tierDisplay}
 					</p>

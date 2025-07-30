@@ -220,6 +220,40 @@ class API extends HttpClient {
 			throw error;
 		}
 	}
+
+	async getDefaultAgentModel(): Promise<string> {
+		const data = await this.get<{ model: string }>("/api/config/model");
+		return data.model;
+	}
+
+	async setDefaultAgentModel(model: string): Promise<void> {
+		try {
+			await this.post("/api/config/model", { model });
+		} catch (error) {
+			if (error instanceof HttpError) {
+				throw new Error(error.message);
+			}
+			throw error;
+		}
+	}
+
+	async setBulkAgentPreferences(
+		model: string,
+	): Promise<{ updatedCount: number }> {
+		try {
+			const response = await this.post<{
+				success: boolean;
+				updatedCount: number;
+				model: string;
+			}>("/api/agents/bulk-preference", { model });
+			return { updatedCount: response.updatedCount };
+		} catch (error) {
+			if (error instanceof HttpError) {
+				throw new Error(error.message);
+			}
+			throw error;
+		}
+	}
 }
 
 export const api = new API();

@@ -25,6 +25,9 @@ export function createConfigHandlers(config: Config) {
 				sessionDurationMs:
 					(settings.sessionDurationMs as number) ||
 					TIME_CONSTANTS.SESSION_DURATION_FALLBACK,
+				default_agent_model:
+					(settings.default_agent_model as string) ||
+					"claude-sonnet-4-20250514",
 			};
 			return jsonResponse(response);
 		},
@@ -64,6 +67,34 @@ export function createConfigHandlers(config: Config) {
 		 */
 		getStrategies: (): Response => {
 			return jsonResponse(STRATEGIES);
+		},
+
+		/**
+		 * Get default agent model
+		 */
+		getDefaultAgentModel: (): Response => {
+			const model = config.getDefaultAgentModel();
+			return jsonResponse({ model });
+		},
+
+		/**
+		 * Set default agent model
+		 */
+		setDefaultAgentModel: async (req: Request): Promise<Response> => {
+			const body = await req.json();
+
+			// Validate model input
+			const modelValidation = validateString(body.model, "model", {
+				required: true,
+			});
+
+			if (!modelValidation) {
+				return errorResponse(BadRequest("Model is required"));
+			}
+
+			config.setDefaultAgentModel(modelValidation);
+
+			return jsonResponse({ success: true, model: modelValidation });
 		},
 	};
 }

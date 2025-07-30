@@ -10,6 +10,7 @@ import {
 import {
 	createAgentPreferenceUpdateHandler,
 	createAgentsListHandler,
+	createBulkAgentPreferenceUpdateHandler,
 	createWorkspacesListHandler,
 } from "./handlers/agents";
 import { createAnalyticsHandler } from "./handlers/analytics";
@@ -107,12 +108,24 @@ export class APIRouter {
 		this.handlers.set("GET:/api/strategies", () =>
 			configHandlers.getStrategies(),
 		);
+		this.handlers.set("GET:/api/config/model", () =>
+			configHandlers.getDefaultAgentModel(),
+		);
+		this.handlers.set("POST:/api/config/model", (req) =>
+			configHandlers.setDefaultAgentModel(req),
+		);
 		this.handlers.set("GET:/api/logs/stream", () => logsStreamHandler());
 		this.handlers.set("GET:/api/logs/history", () => logsHistoryHandler());
 		this.handlers.set("GET:/api/analytics", (_req, url) => {
 			return analyticsHandler(url.searchParams);
 		});
 		this.handlers.set("GET:/api/agents", () => agentsHandler());
+		this.handlers.set("POST:/api/agents/bulk-preference", (req) => {
+			const bulkHandler = createBulkAgentPreferenceUpdateHandler(
+				this.context.dbOps,
+			);
+			return bulkHandler(req);
+		});
 		this.handlers.set("GET:/api/workspaces", () => workspacesHandler());
 	}
 
