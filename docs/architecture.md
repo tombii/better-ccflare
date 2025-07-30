@@ -230,11 +230,14 @@ The Terminal User Interface application that also serves as the CLI:
 
 ```mermaid
 graph TB
+    %% Entry Point
     subgraph "TUI/CLI Entry Point"
         MAIN[main.ts]
         ARGS[Parse Arguments]
-        
+
+        %% CLI Commands group
         subgraph "CLI Commands"
+            CLI_CMDS[CLI Commands]
             SERVE[--serve]
             ADD[--add-account]
             LIST[--list]
@@ -242,18 +245,28 @@ graph TB
             STATS[--stats]
             LOGS[--logs]
             ANALYZE[--analyze]
+            CLI_CMDS --> SERVE
+            CLI_CMDS --> ADD
+            CLI_CMDS --> LIST
+            CLI_CMDS --> REMOVE
+            CLI_CMDS --> STATS
+            CLI_CMDS --> LOGS
+            CLI_CMDS --> ANALYZE
         end
-        
+
+        %% Interactive Mode group
         subgraph "Interactive Mode"
+            INT_MODE[Interactive Mode]
             TUI[TUI Interface]
             AUTO_SERVER[Auto-start Server]
+            INT_MODE --> TUI
+            TUI --> AUTO_SERVER
         end
     end
-    
+
     MAIN --> ARGS
-    ARGS -->|CLI Command| CLI Commands
-    ARGS -->|No Command| Interactive Mode
-    TUI --> AUTO_SERVER
+    ARGS -->|CLI Command| CLI_CMDS
+    ARGS -->|No Command| INT_MODE
 ```
 
 **Features:**
