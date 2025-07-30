@@ -1,4 +1,5 @@
 import { BUFFER_SIZES } from "@ccflare/core";
+import { sanitizeProxyHeaders } from "@ccflare/http-common";
 import { Logger } from "@ccflare/logger";
 import type { Account } from "@ccflare/types";
 import { BaseProvider } from "../../base";
@@ -148,10 +149,8 @@ export class AnthropicProvider extends BaseProvider {
 		response: Response,
 		_account: Account | null,
 	): Promise<Response> {
-		// Strip Content-Encoding header to avoid decompression issues
-		const headers = new Headers(response.headers);
-		headers.delete("content-encoding");
-		headers.delete("Content-Encoding");
+		// Sanitize headers by removing hop-by-hop headers
+		const headers = sanitizeProxyHeaders(response.headers);
 
 		return new Response(response.body, {
 			status: response.status,
