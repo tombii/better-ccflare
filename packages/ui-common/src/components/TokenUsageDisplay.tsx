@@ -1,4 +1,9 @@
-import { formatCost, formatDuration, formatTokens } from "../formatters";
+import {
+	formatCost,
+	formatDuration,
+	formatTokens,
+	formatTokensPerSecond,
+} from "../formatters";
 
 /**
  * Token usage data structure
@@ -11,6 +16,7 @@ export interface TokenUsageData {
 	totalTokens?: number;
 	costUsd?: number;
 	responseTimeMs?: number;
+	tokensPerSecond?: number;
 }
 
 /**
@@ -26,6 +32,7 @@ export interface TokenUsageInfo {
 		totalTokens?: { label: string; value: string };
 		cost?: { label: string; value: string };
 		responseTime?: { label: string; value: string };
+		tokensPerSecond?: { label: string; value: string };
 	};
 }
 
@@ -104,6 +111,14 @@ export function processTokenUsage(
 		sections.responseTime = {
 			label: "Response Time",
 			value: formatDuration(data.responseTimeMs),
+		};
+	}
+
+	// Tokens per second
+	if (data.tokensPerSecond !== undefined && data.tokensPerSecond > 0) {
+		sections.tokensPerSecond = {
+			label: "Speed",
+			value: formatTokensPerSecond(data.tokensPerSecond),
 		};
 	}
 

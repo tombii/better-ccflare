@@ -20,6 +20,7 @@ interface TotalsResult {
 	avg_response_time: number;
 	total_tokens: number;
 	total_cost_usd: number;
+	avg_tokens_per_second: number;
 }
 
 interface ActiveAccountsResult {
@@ -130,7 +131,8 @@ export function createAnalyticsHandler(context: APIContext) {
 					SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0) as success_rate,
 					AVG(response_time_ms) as avg_response_time,
 					SUM(COALESCE(total_tokens, 0)) as total_tokens,
-					SUM(COALESCE(cost_usd, 0)) as total_cost_usd
+					SUM(COALESCE(cost_usd, 0)) as total_cost_usd,
+					AVG(output_tokens_per_second) as avg_tokens_per_second
 				FROM requests r
 				WHERE ${whereClause}
 			`);
@@ -158,7 +160,8 @@ export function createAnalyticsHandler(context: APIContext) {
 					SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0) as error_rate,
 					SUM(COALESCE(cache_read_input_tokens, 0)) * 100.0 / 
 						NULLIF(SUM(COALESCE(input_tokens, 0) + COALESCE(cache_read_input_tokens, 0) + COALESCE(cache_creation_input_tokens, 0)), 0) as cache_hit_rate,
-					AVG(response_time_ms) as avg_response_time
+					AVG(response_time_ms) as avg_response_time,
+					AVG(output_tokens_per_second) as avg_tokens_per_second
 				FROM requests r
 				WHERE ${whereClause}
 				GROUP BY ts
@@ -177,6 +180,7 @@ export function createAnalyticsHandler(context: APIContext) {
 				error_rate: number;
 				cache_hit_rate: number;
 				avg_response_time: number;
+				avg_tokens_per_second: number | null;
 			}>;
 
 			// Get token breakdown
@@ -315,6 +319,7 @@ export function createAnalyticsHandler(context: APIContext) {
 				errorRate: point.error_rate || 0,
 				cacheHitRate: point.cache_hit_rate || 0,
 				avgResponseTime: point.avg_response_time || 0,
+				avgTokensPerSecond: point.avg_tokens_per_second || null,
 			}));
 
 			// Apply cumulative transformation if requested
@@ -351,6 +356,7 @@ export function createAnalyticsHandler(context: APIContext) {
 					avgResponseTime: totals.avg_response_time || 0,
 					totalTokens: totals.total_tokens || 0,
 					totalCostUsd: totals.total_cost_usd || 0,
+					avgTokensPerSecond: totals.avg_tokens_per_second || null,
 				},
 				timeSeries: transformedTimeSeries,
 				tokenBreakdown: {

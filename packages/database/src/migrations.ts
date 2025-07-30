@@ -35,7 +35,18 @@ export function ensureSchema(db: Database): void {
 			success BOOLEAN,
 			error_message TEXT,
 			response_time_ms INTEGER,
-			failover_attempts INTEGER DEFAULT 0
+			failover_attempts INTEGER DEFAULT 0,
+			model TEXT,
+			prompt_tokens INTEGER DEFAULT 0,
+			completion_tokens INTEGER DEFAULT 0,
+			total_tokens INTEGER DEFAULT 0,
+			cost_usd REAL DEFAULT 0,
+			output_tokens_per_second REAL,
+			input_tokens INTEGER DEFAULT 0,
+			cache_read_input_tokens INTEGER DEFAULT 0,
+			cache_creation_input_tokens INTEGER DEFAULT 0,
+			output_tokens INTEGER DEFAULT 0,
+			agent_used TEXT
 		)
 	`);
 
@@ -246,6 +257,14 @@ export function runMigrations(db: Database): void {
 	if (!requestsColumnNames.includes("agent_used")) {
 		db.prepare("ALTER TABLE requests ADD COLUMN agent_used TEXT").run();
 		log.info("Added agent_used column to requests table");
+	}
+
+	// Add output_tokens_per_second column if it doesn't exist
+	if (!requestsColumnNames.includes("output_tokens_per_second")) {
+		db.prepare(
+			"ALTER TABLE requests ADD COLUMN output_tokens_per_second REAL",
+		).run();
+		log.info("Added output_tokens_per_second column to requests table");
 	}
 
 	// Add performance indexes

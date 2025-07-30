@@ -5,6 +5,7 @@ import { AsyncDbWriter, DatabaseOperations } from "@ccflare/database";
 import { Logger } from "@ccflare/logger";
 import { NO_ACCOUNT_ID } from "@ccflare/types";
 import { formatCost } from "@ccflare/ui-common";
+import { get_encoding } from "@dqbd/tiktoken";
 import { combineChunks } from "./stream-tee";
 import type {
 	ChunkMessage,
@@ -23,15 +24,22 @@ interface RequestState {
 		cacheReadInputTokens?: number;
 		cacheCreationInputTokens?: number;
 		outputTokens?: number;
+		outputTokensComputed?: number;
 		totalTokens?: number;
 		costUsd?: number;
+		tokensPerSecond?: number;
 	};
 	lastActivity: number;
 	agentUsed?: string;
+	firstTokenTimestamp?: number;
+	shouldSkipLogging?: boolean;
 }
 
 const log = new Logger("PostProcessor");
 const requests = new Map<string, RequestState>();
+
+// Initialize tiktoken encoder (cl100k_base is used for Claude models)
+const tokenEncoder = get_encoding("cl100k_base");
 
 // Initialize database connection for worker
 const dbOps = new DatabaseOperations();
@@ -46,6 +54,15 @@ const MAX_BUFFER_SIZE =
 const TIMEOUT_MS = Number(
 	process.env.CF_STREAM_TIMEOUT_MS || TIME_CONSTANTS.STREAM_TIMEOUT_DEFAULT,
 );
+
+// Check if a request should be logged
+function shouldLogRequest(path: string, status: number): boolean {
+	// Skip logging .well-known 404s
+	if (path.startsWith("/.well-known/") && status === 404) {
+		return false;
+	}
+	return true;
+}
 
 // Extract system prompt from request body
 function _extractSystemPrompt(requestBody: string | null): string | null {
@@ -113,6 +130,23 @@ function extractUsageFromData(data: string, state: RequestState): void {
 				parsed.usage.output_tokens || state.usage.outputTokens || 0;
 		}
 
+		// Handle content_block_delta with text (for token counting)
+		if (parsed.type === "content_block_delta" && parsed.delta?.text) {
+			// Track first token timestamp
+			if (!state.firstTokenTimestamp && parsed.delta.text.length > 0) {
+				state.firstTokenTimestamp = Date.now();
+			}
+
+			// Count tokens using tiktoken
+			try {
+				const tokens = tokenEncoder.encode(parsed.delta.text);
+				state.usage.outputTokensComputed =
+					(state.usage.outputTokensComputed || 0) + tokens.length;
+			} catch (err) {
+				log.debug("Failed to count tokens:", err);
+			}
+		}
+
 		// Handle any usage field in the data
 		if (parsed.usage) {
 			if (parsed.usage.input_tokens !== undefined) {
@@ -163,6 +197,9 @@ function processStreamChunk(chunk: Uint8Array, state: RequestState): void {
 }
 
 async function handleStart(msg: StartMessage): Promise<void> {
+	// Check if we should skip logging this request
+	const shouldSkip = !shouldLogRequest(msg.path, msg.responseStatus);
+
 	// Create request state
 	const state: RequestState = {
 		startMessage: msg,
@@ -170,6 +207,7 @@ async function handleStart(msg: StartMessage): Promise<void> {
 		chunks: [],
 		usage: {},
 		lastActivity: Date.now(),
+		shouldSkipLogging: shouldSkip,
 	};
 
 	// Use agent from message if provided
@@ -179,6 +217,12 @@ async function handleStart(msg: StartMessage): Promise<void> {
 	}
 
 	requests.set(msg.requestId, state);
+
+	// Skip all database operations for ignored requests
+	if (shouldSkip) {
+		log.debug(`Skipping logging for ${msg.path} (${msg.responseStatus})`);
+		return;
+	}
 
 	// Save minimal request info immediately
 	asyncWriter.enqueue(() =>
@@ -223,20 +267,39 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 	const { startMessage } = state;
 	const responseTime = Date.now() - startMessage.timestamp;
 
+	// Skip all database operations for ignored requests
+	if (state.shouldSkipLogging) {
+		// Clean up state without logging
+		requests.delete(msg.requestId);
+		return;
+	}
+
 	// Calculate total tokens and cost
 	if (state.usage.model) {
+		// Use API-provided token count if available, fallback to computed
+		const finalOutputTokens =
+			state.usage.outputTokens || state.usage.outputTokensComputed || 0;
+
 		state.usage.totalTokens =
 			(state.usage.inputTokens || 0) +
-			(state.usage.outputTokens || 0) +
+			finalOutputTokens +
 			(state.usage.cacheReadInputTokens || 0) +
 			(state.usage.cacheCreationInputTokens || 0);
 
 		state.usage.costUsd = await estimateCostUSD(state.usage.model, {
 			inputTokens: state.usage.inputTokens,
-			outputTokens: state.usage.outputTokens,
+			outputTokens: finalOutputTokens,
 			cacheReadInputTokens: state.usage.cacheReadInputTokens,
 			cacheCreationInputTokens: state.usage.cacheCreationInputTokens,
 		});
+
+		// Calculate tokens per second
+		if (state.firstTokenTimestamp && finalOutputTokens > 0) {
+			const durationSec = (Date.now() - state.firstTokenTimestamp) / 1000;
+			if (durationSec > 0) {
+				state.usage.tokensPerSecond = finalOutputTokens / durationSec;
+			}
+		}
 	}
 
 	// Update request with final data
@@ -258,14 +321,17 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 							(state.usage.inputTokens || 0) +
 							(state.usage.cacheReadInputTokens || 0) +
 							(state.usage.cacheCreationInputTokens || 0),
-						completionTokens: state.usage.outputTokens,
+						completionTokens:
+							state.usage.outputTokens || state.usage.outputTokensComputed,
 						totalTokens: state.usage.totalTokens,
 						costUsd: state.usage.costUsd,
 						// Keep original breakdown for payload
 						inputTokens: state.usage.inputTokens,
-						outputTokens: state.usage.outputTokens,
+						outputTokens:
+							state.usage.outputTokens || state.usage.outputTokensComputed,
 						cacheReadInputTokens: state.usage.cacheReadInputTokens,
 						cacheCreationInputTokens: state.usage.cacheCreationInputTokens,
+						tokensPerSecond: state.usage.tokensPerSecond,
 					}
 				: undefined,
 			state.agentUsed,

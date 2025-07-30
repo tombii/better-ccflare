@@ -7,6 +7,7 @@ export interface Stats {
 	totalTokens: number;
 	totalCostUsd: number;
 	topModels: Array<{ model: string; count: number }>;
+	avgTokensPerSecond: number | null;
 }
 
 export interface StatsResponse {
@@ -17,6 +18,7 @@ export interface StatsResponse {
 	totalTokens: number;
 	totalCostUsd: number;
 	topModels: Array<{ model: string; count: number }>;
+	avgTokensPerSecond: number | null;
 }
 
 export interface StatsWithAccounts extends Stats {
@@ -38,6 +40,7 @@ export interface TimePoint {
 	errorRate: number; // 0-100
 	cacheHitRate: number; // 0-100
 	avgResponseTime: number; // ms
+	avgTokensPerSecond: number | null;
 }
 
 export interface TokenBreakdown {
@@ -67,6 +70,7 @@ export interface AnalyticsResponse {
 		avgResponseTime: number;
 		totalTokens: number;
 		totalCostUsd: number;
+		avgTokensPerSecond: number | null;
 	};
 	timeSeries: TimePoint[];
 	tokenBreakdown: TokenBreakdown;

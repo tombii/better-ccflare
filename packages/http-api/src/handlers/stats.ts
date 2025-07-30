@@ -34,6 +34,7 @@ export function createStatsHandler(dbOps: DatabaseOperations) {
 			totalTokens: stats.totalTokens,
 			totalCostUsd: stats.totalCostUsd,
 			topModels,
+			avgTokensPerSecond: stats.avgTokensPerSecond,
 			accounts: accountsWithStats,
 			recentErrors,
 		};
