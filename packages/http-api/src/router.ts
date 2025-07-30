@@ -3,6 +3,7 @@ import {
 	createAccountAddHandler,
 	createAccountPauseHandler,
 	createAccountRemoveHandler,
+	createAccountRenameHandler,
 	createAccountResumeHandler,
 	createAccountsListHandler,
 	createAccountTierUpdateHandler,
@@ -185,6 +186,15 @@ export class APIRouter {
 			if (path.endsWith("/resume") && method === "POST") {
 				const resumeHandler = createAccountResumeHandler(this.context.dbOps);
 				return await this.wrapHandler((req) => resumeHandler(req, accountId))(
+					req,
+					url,
+				);
+			}
+
+			// Account rename
+			if (path.endsWith("/rename") && method === "POST") {
+				const renameHandler = createAccountRenameHandler(this.context.dbOps);
+				return await this.wrapHandler((req) => renameHandler(req, accountId))(
 					req,
 					url,
 				);

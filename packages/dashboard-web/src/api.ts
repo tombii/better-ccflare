@@ -186,6 +186,25 @@ class API extends HttpClient {
 		}
 	}
 
+	async renameAccount(
+		accountId: string,
+		newName: string,
+	): Promise<{ newName: string }> {
+		try {
+			const response = await this.post<{
+				success: boolean;
+				message: string;
+				newName: string;
+			}>(`/api/accounts/${accountId}/rename`, { name: newName });
+			return { newName: response.newName };
+		} catch (error) {
+			if (error instanceof HttpError) {
+				throw new Error(error.message);
+			}
+			throw error;
+		}
+	}
+
 	async getStrategy(): Promise<string> {
 		const data = await this.get<{ strategy: string }>("/api/config/strategy");
 		return data.strategy;

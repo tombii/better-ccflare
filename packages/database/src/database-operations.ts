@@ -118,6 +118,10 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		this.accounts.resume(accountId);
 	}
 
+	renameAccount(accountId: string, newName: string): void {
+		this.accounts.rename(accountId, newName);
+	}
+
 	resetAccountSession(accountId: string, timestamp: number): void {
 		this.accounts.resetSession(accountId, timestamp);
 	}
