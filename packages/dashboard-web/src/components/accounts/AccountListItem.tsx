@@ -1,5 +1,12 @@
 import { AccountPresenter } from "@ccflare/ui-common";
-import { AlertCircle, CheckCircle, Pause, Play, Trash2 } from "lucide-react";
+import {
+	AlertCircle,
+	CheckCircle,
+	Edit2,
+	Pause,
+	Play,
+	Trash2,
+} from "lucide-react";
 import type { Account } from "../../api";
 import { Button } from "../ui/button";
 
@@ -8,6 +15,7 @@ interface AccountListItemProps {
 	isActive?: boolean;
 	onPauseToggle: (account: Account) => void;
 	onRemove: (name: string) => void;
+	onRename: (account: Account) => void;
 }
 
 export function AccountListItem({
@@ -15,6 +23,7 @@ export function AccountListItem({
 	isActive = false,
 	onPauseToggle,
 	onRemove,
+	onRename,
 }: AccountListItemProps) {
 	const presenter = new AccountPresenter(account);
 
@@ -42,10 +51,10 @@ export function AccountListItem({
 					</p>
 				</div>
 				<div className="flex items-center gap-2">
-					{presenter.tokenStatus === "valid" ? (
-						<CheckCircle className="h-4 w-4 text-green-600" />
-					) : (
+					{presenter.isRateLimited ? (
 						<AlertCircle className="h-4 w-4 text-yellow-600" />
+					) : (
+						<CheckCircle className="h-4 w-4 text-green-600" />
 					)}
 					<span className="text-sm">{presenter.requestCount} requests</span>
 					{presenter.isPaused && (
@@ -59,6 +68,14 @@ export function AccountListItem({
 				</div>
 			</div>
 			<div className="flex items-center gap-2">
+				<Button
+					variant="ghost"
+					size="sm"
+					onClick={() => onRename(account)}
+					title="Rename account"
+				>
+					<Edit2 className="h-4 w-4" />
+				</Button>
 				<Button
 					variant="ghost"
 					size="sm"

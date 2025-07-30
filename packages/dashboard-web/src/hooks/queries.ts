@@ -93,6 +93,22 @@ export const useRemoveAccount = () => {
 	});
 };
 
+export const useRenameAccount = () => {
+	const queryClient = useQueryClient();
+	return useMutation({
+		mutationFn: ({
+			accountId,
+			newName,
+		}: {
+			accountId: string;
+			newName: string;
+		}) => api.renameAccount(accountId, newName),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.accounts() });
+		},
+	});
+};
+
 export const useResetStats = () => {
 	const queryClient = useQueryClient();
 	return useMutation({
