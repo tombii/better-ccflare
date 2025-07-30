@@ -6,7 +6,7 @@ import {
 } from "@ccflare/ui-common";
 import { format } from "date-fns";
 import { Activity, CheckCircle, Clock, DollarSign, Zap } from "lucide-react";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { REFRESH_INTERVALS } from "../constants";
 import { useAccounts, useAnalytics, useStats } from "../hooks/queries";
 import { ChartsSection } from "./overview/ChartsSection";
@@ -14,6 +14,7 @@ import { LoadingSkeleton } from "./overview/LoadingSkeleton";
 import { MetricCard } from "./overview/MetricCard";
 import { RateLimitInfo } from "./overview/RateLimitInfo";
 import { SystemStatus } from "./overview/SystemStatus";
+import { TimeRangeSelector } from "./overview/TimeRangeSelector";
 import { StrategyCard } from "./StrategyCard";
 
 export function OverviewTab() {
@@ -21,8 +22,9 @@ export function OverviewTab() {
 	const { data: stats, isLoading: statsLoading } = useStats(
 		REFRESH_INTERVALS.default,
 	);
+	const [timeRange, setTimeRange] = useState("24h");
 	const { data: analytics, isLoading: analyticsLoading } = useAnalytics(
-		"24h",
+		timeRange,
 		{ accounts: [], models: [], status: "all" },
 		"normal",
 	);
@@ -54,6 +56,26 @@ export function OverviewTab() {
 		if (previous === 0) return null; // avoid division by zero
 		return ((current - previous) / previous) * 100;
 	}
+
+	// Get trend period description based on time range
+	function getTrendPeriod(range: string): string {
+		switch (range) {
+			case "1h":
+				return "previous minute";
+			case "6h":
+				return "previous 5 minutes";
+			case "24h":
+				return "previous hour";
+			case "7d":
+				return "previous hour";
+			case "30d":
+				return "previous day";
+			default:
+				return "previous period";
+		}
+	}
+
+	const trendPeriod = getTrendPeriod(timeRange);
 
 	// Calculate percentage changes from time series data
 	let deltaRequests: number | null = null;
@@ -130,6 +152,12 @@ export function OverviewTab() {
 
 	return (
 		<div className="space-y-6">
+			{/* Header with Time Range Selector */}
+			<div className="flex justify-between items-center">
+				<h2 className="text-2xl font-semibold">Overview</h2>
+				<TimeRangeSelector value={timeRange} onChange={setTimeRange} />
+			</div>
+
 			{/* Metrics Grid */}
 			<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
 				<MetricCard
@@ -137,6 +165,7 @@ export function OverviewTab() {
 					value={formatNumber(analytics?.totals.requests || 0)}
 					change={deltaRequests !== null ? deltaRequests : undefined}
 					trend={trendRequests}
+					trendPeriod={trendPeriod}
 					icon={Activity}
 				/>
 				<MetricCard
@@ -144,6 +173,7 @@ export function OverviewTab() {
 					value={formatPercentage(analytics?.totals.successRate || 0, 0)}
 					change={deltaSuccessRate !== null ? deltaSuccessRate : undefined}
 					trend={trendSuccessRate}
+					trendPeriod={trendPeriod}
 					icon={CheckCircle}
 				/>
 				<MetricCard
@@ -151,6 +181,7 @@ export function OverviewTab() {
 					value={`${Math.round(analytics?.totals.avgResponseTime || 0)}ms`}
 					change={deltaResponseTime !== null ? deltaResponseTime : undefined}
 					trend={trendResponseTime}
+					trendPeriod={trendPeriod}
 					icon={Clock}
 				/>
 				<MetricCard
@@ -162,6 +193,7 @@ export function OverviewTab() {
 					}
 					change={deltaCost !== null ? deltaCost : undefined}
 					trend={trendCost}
+					trendPeriod={trendPeriod}
 					icon={DollarSign}
 				/>
 				<MetricCard
@@ -169,6 +201,7 @@ export function OverviewTab() {
 					value={formatTokensPerSecond(analytics?.totals.avgTokensPerSecond)}
 					change={deltaOutputSpeed !== null ? deltaOutputSpeed : undefined}
 					trend={trendOutputSpeed}
+					trendPeriod={trendPeriod}
 					icon={Zap}
 				/>
 			</div>
