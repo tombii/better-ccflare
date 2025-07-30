@@ -1,6 +1,7 @@
 export const queryKeys = {
 	all: ["claudeflare"] as const,
 	accounts: () => [...queryKeys.all, "accounts"] as const,
+	agents: () => [...queryKeys.all, "agents"] as const,
 	stats: () => [...queryKeys.all, "stats"] as const,
 	analytics: (timeRange?: string, filters?: unknown, viewMode?: string) =>
 		[...queryKeys.all, "analytics", { timeRange, filters, viewMode }] as const,

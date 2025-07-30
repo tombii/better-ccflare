@@ -75,13 +75,8 @@ export function useApiError(
 				401: "Authentication failed. Please re-add your account.",
 			},
 		}),
-		// biome-ignore lint/correctness/useExhaustiveDependencies: Spreading formatOptions above
-		[
-			formatOptions.defaultMessage,
-			formatOptions.errorMap,
-			formatOptions.includeDetails,
-			formatOptions,
-		],
+		// biome-ignore lint/correctness/useExhaustiveDependencies: formatOptions is destructured from options
+		[formatOptions],
 	);
 
 	const formatError = useCallback(

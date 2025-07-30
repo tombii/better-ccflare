@@ -105,6 +105,9 @@ export function RequestDetailsModal({
 							{summary?.model && (
 								<Badge variant="secondary">{summary.model}</Badge>
 							)}
+							{summary?.agentUsed && (
+								<Badge variant="secondary">Agent: {summary.agentUsed}</Badge>
+							)}
 							{summary?.totalTokens && (
 								<Badge variant="outline">
 									{formatTokens(summary.totalTokens)} tokens

@@ -173,6 +173,11 @@ export function RequestsTab() {
 													{summary.model}
 												</Badge>
 											)}
+											{summary?.agentUsed && (
+												<Badge variant="secondary" className="text-xs">
+													Agent: {summary.agentUsed}
+												</Badge>
+											)}
 											{summary?.totalTokens && (
 												<Badge variant="outline" className="text-xs">
 													{formatTokens(summary.totalTokens)} tokens

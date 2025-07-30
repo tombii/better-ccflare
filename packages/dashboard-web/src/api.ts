@@ -1,6 +1,7 @@
 import { HttpClient, HttpError } from "@claudeflare/http-common";
 import type {
 	AccountResponse,
+	Agent,
 	AnalyticsResponse,
 	LogEvent,
 	RequestPayload,
@@ -15,8 +16,8 @@ export type Stats = StatsWithAccounts;
 export type LogEntry = LogEvent;
 export type RequestSummary = RequestResponse;
 
-// Re-export RequestPayload directly
-export type { RequestPayload } from "@claudeflare/types";
+// Re-export types directly
+export type { Agent, RequestPayload } from "@claudeflare/types";
 
 class API extends HttpClient {
 	constructor() {
@@ -187,6 +188,22 @@ class API extends HttpClient {
 	async setStrategy(strategy: string): Promise<void> {
 		try {
 			await this.post("/api/config/strategy", { strategy });
+		} catch (error) {
+			if (error instanceof HttpError) {
+				throw new Error(error.message);
+			}
+			throw error;
+		}
+	}
+
+	async getAgents(): Promise<Agent[]> {
+		const data = await this.get<{ agents: Agent[] }>("/api/agents");
+		return data.agents;
+	}
+
+	async updateAgentPreference(agentId: string, model: string): Promise<void> {
+		try {
+			await this.post(`/api/agents/${agentId}/preference`, { model });
 		} catch (error) {
 			if (error instanceof HttpError) {
 				throw new Error(error.message);
