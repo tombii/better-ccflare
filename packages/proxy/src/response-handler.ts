@@ -13,6 +13,7 @@ export interface ResponseHandlerOptions {
 	timestamp: number;
 	retryAttempt: number;
 	failoverAttempts: number;
+	agentUsed?: string | null;
 }
 
 /**
@@ -35,6 +36,7 @@ export async function forwardToClient(
 		timestamp,
 		retryAttempt, // Always 0 in new flow, but kept for message compatibility
 		failoverAttempts,
+		agentUsed,
 	} = options;
 
 	// Prepare objects once for serialisation
@@ -59,6 +61,7 @@ export async function forwardToClient(
 		responseHeaders: responseHeadersObj,
 		isStream,
 		providerName: ctx.provider.name,
+		agentUsed: agentUsed || null,
 		retryAttempt,
 		failoverAttempts,
 	};
