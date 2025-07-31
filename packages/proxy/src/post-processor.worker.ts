@@ -110,6 +110,41 @@ function parseSSELine(line: string): { event?: string; data?: string } {
 	return {};
 }
 
+// Extract usage data from non-stream JSON response bodies
+function extractUsageFromJson(
+	json: {
+		model?: string;
+		usage?: {
+			input_tokens?: number;
+			cache_read_input_tokens?: number;
+			cache_creation_input_tokens?: number;
+			output_tokens?: number;
+		};
+	},
+	state: RequestState,
+): void {
+	if (!json) return;
+
+	const usageObj = json.usage;
+	if (!usageObj) return;
+
+	state.usage.model = json.model ?? state.usage.model;
+
+	state.usage.inputTokens = usageObj.input_tokens ?? 0;
+	state.usage.cacheReadInputTokens = usageObj.cache_read_input_tokens ?? 0;
+	state.usage.cacheCreationInputTokens =
+		usageObj.cache_creation_input_tokens ?? 0;
+	state.usage.outputTokens = usageObj.output_tokens ?? 0;
+
+	// Calculate total tokens
+	const prompt =
+		(state.usage.inputTokens ?? 0) +
+		(state.usage.cacheReadInputTokens ?? 0) +
+		(state.usage.cacheCreationInputTokens ?? 0);
+	const completion = state.usage.outputTokens ?? 0;
+	state.usage.totalTokens = prompt + completion;
+}
+
 function extractUsageFromData(data: string, state: RequestState): void {
 	try {
 		const parsed = JSON.parse(data);
@@ -298,6 +333,17 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 		// Clean up state without logging
 		requests.delete(msg.requestId);
 		return;
+	}
+
+	// For non-stream responses, extract usage data from response body
+	if (!state.usage.model && msg.responseBody) {
+		try {
+			const decoded = Buffer.from(msg.responseBody, "base64").toString("utf-8");
+			const json = JSON.parse(decoded);
+			extractUsageFromJson(json, state);
+		} catch {
+			// Ignore parse errors
+		}
 	}
 
 	// Calculate total tokens and cost
