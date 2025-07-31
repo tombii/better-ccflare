@@ -104,7 +104,7 @@ export function AccountAddForm({
 									name: (e.target as HTMLInputElement).value,
 								})
 							}
-							placeholder="e.g., work-account"
+							placeholder="e.g., work-account or user@example.com"
 						/>
 					</div>
 					<div className="space-y-2">
