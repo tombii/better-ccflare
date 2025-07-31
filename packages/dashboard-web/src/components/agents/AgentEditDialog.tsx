@@ -110,7 +110,9 @@ export function AgentEditDialog({
 }: AgentEditDialogProps) {
 	const updateAgent = useUpdateAgent();
 
-	const [description, setDescription] = useState(agent.description);
+	const [description, setDescription] = useState(
+		agent.description.replace(/\\n/g, "\n"),
+	);
 	const [model, setModel] = useState<AllowedModel>(agent.model);
 	const [color, setColor] = useState(agent.color);
 	const [systemPrompt, setSystemPrompt] = useState(agent.systemPrompt);
@@ -322,7 +324,7 @@ export function AgentEditDialog({
 			await updateAgent.mutateAsync({
 				id: agent.id,
 				payload: {
-					description,
+					description: description.replace(/\n/g, "\\n"),
 					model,
 					color,
 					systemPrompt,
@@ -397,41 +399,27 @@ export function AgentEditDialog({
 				</DialogHeader>
 
 				<Tabs defaultValue="general" className="flex-1 overflow-hidden">
-					<TabsList className="grid w-full grid-cols-3">
+					<TabsList className="grid w-full grid-cols-4">
 						<TabsTrigger value="general" className="gap-2">
 							<FileText className="h-4 w-4" />
 							General
 						</TabsTrigger>
+						<TabsTrigger value="description" className="gap-2">
+							<Edit3 className="h-4 w-4" />
+							Description
+						</TabsTrigger>
 						<TabsTrigger value="tools" className="gap-2">
 							<Shield className="h-4 w-4" />
-							Tool Access
+							Tools
 						</TabsTrigger>
 						<TabsTrigger value="prompt" className="gap-2">
 							<Cpu className="h-4 w-4" />
-							System Prompt
+							Prompt
 						</TabsTrigger>
 					</TabsList>
 
 					<div className="overflow-y-auto flex-1 px-1">
 						<TabsContent value="general" className="mt-6 space-y-6">
-							{/* Description */}
-							<div className="space-y-3">
-								<Label htmlFor="description" className="text-base font-medium">
-									Description
-								</Label>
-								<textarea
-									id="description"
-									value={description}
-									onChange={(e) => setDescription(e.target.value)}
-									rows={4}
-									className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 resize-none"
-									placeholder="Describe what this agent does and when to use it..."
-								/>
-								<p className="text-xs text-muted-foreground">
-									This description helps users understand when to use this agent
-								</p>
-							</div>
-
 							{/* Model */}
 							<div className="space-y-3">
 								<Label className="text-base font-medium">Language Model</Label>
@@ -497,6 +485,25 @@ export function AgentEditDialog({
 										</button>
 									))}
 								</div>
+							</div>
+						</TabsContent>
+
+						<TabsContent value="description" className="mt-6 space-y-4">
+							<div className="space-y-3">
+								<Label htmlFor="description" className="text-base font-medium">
+									Agent Description
+								</Label>
+								<textarea
+									id="description"
+									value={description}
+									onChange={(e) => setDescription(e.target.value)}
+									rows={12}
+									className="flex min-h-[300px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 resize-none font-mono"
+									placeholder="Describe what this agent does and when to use it..."
+								/>
+								<p className="text-xs text-muted-foreground">
+									This description helps users understand when to use this agent
+								</p>
 							</div>
 						</TabsContent>
 
