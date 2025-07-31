@@ -38,6 +38,30 @@ interface AgentEditDialogProps {
 
 type ToolPresetMode = keyof typeof TOOL_PRESETS;
 
+// Helper function to get all combinations of array elements
+function getCombinations<T>(arr: T[], size: number): T[][] {
+	if (size === 0) return [[]];
+	if (size > arr.length) return [];
+
+	const result: T[][] = [];
+
+	function combine(start: number, combo: T[]) {
+		if (combo.length === size) {
+			result.push([...combo]);
+			return;
+		}
+
+		for (let i = start; i < arr.length; i++) {
+			combo.push(arr[i]);
+			combine(i + 1, combo);
+			combo.pop();
+		}
+	}
+
+	combine(0, []);
+	return result;
+}
+
 const COLORS = [
 	{ name: "gray", class: "bg-gray-500" },
 	{ name: "blue", class: "bg-blue-500" },
@@ -101,7 +125,7 @@ export function AgentEditDialog({
 			const toolsSet = new Set(agent.tools);
 			const matchingModes = new Set<ToolPresetMode>();
 
-			// Check if tools match any single preset exactly
+			// First, try to find exact matches with single presets
 			for (const [mode, presetTools] of Object.entries(TOOL_PRESETS)) {
 				if (mode === "all") continue;
 				const presetSet = new Set(presetTools);
@@ -113,18 +137,36 @@ export function AgentEditDialog({
 				}
 			}
 
-			// If no exact match, check which presets are subsets of current tools
-			if (matchingModes.size === 0) {
-				for (const [mode, presetTools] of Object.entries(TOOL_PRESETS)) {
-					if (mode === "all") continue;
-					const presetSet = new Set(presetTools);
-					if ([...presetSet].every((tool) => toolsSet.has(tool))) {
-						matchingModes.add(mode as ToolPresetMode);
+			// If we found exact single preset matches, return them
+			if (matchingModes.size > 0) {
+				return matchingModes;
+			}
+
+			// Otherwise, find the combination of presets that exactly matches our tools
+			const presetModes = Object.keys(TOOL_PRESETS).filter(
+				(m) => m !== "all",
+			) as ToolPresetMode[];
+
+			// Try all combinations of presets to find exact matches
+			for (let i = 1; i <= presetModes.length; i++) {
+				const combinations = getCombinations(presetModes, i);
+				for (const combo of combinations) {
+					const comboTools = new Set<AgentTool>();
+					for (const mode of combo) {
+						TOOL_PRESETS[mode].forEach((tool) => comboTools.add(tool));
+					}
+					// Check if this combination exactly matches our tools
+					if (
+						comboTools.size === toolsSet.size &&
+						[...toolsSet].every((tool) => comboTools.has(tool))
+					) {
+						return new Set(combo);
 					}
 				}
 			}
 
-			return matchingModes;
+			// If no exact combination found, return empty set (will trigger custom mode)
+			return new Set<ToolPresetMode>();
 		},
 	);
 
@@ -133,18 +175,16 @@ export function AgentEditDialog({
 	);
 
 	const [isCustomMode, setIsCustomMode] = useState(() => {
-		// Start in custom mode if no modes are selected or if tools don't match presets exactly
-		return (
-			selectedModes.size === 0 ||
-			(agent.tools &&
-				!Object.entries(TOOL_PRESETS).some(([mode, tools]) => {
-					if (mode === "all") return agent.tools?.length === 0;
-					return (
-						agent.tools?.length === tools.length &&
-						agent.tools.every((t) => tools.includes(t))
-					);
-				}))
-		);
+		// Start in custom mode if:
+		// 1. No modes are selected (tools don't match any preset combination)
+		// 2. Or if we have the "all" preset selected and there are tools
+		if (selectedModes.size === 0) {
+			return true;
+		}
+		if (selectedModes.has("all") && agent.tools && agent.tools.length > 0) {
+			return true;
+		}
+		return false;
 	});
 
 	// Compute effective tools based on selected modes
@@ -189,23 +229,72 @@ export function AgentEditDialog({
 		}
 
 		setSelectedModes(newModes);
-		setIsCustomMode(false);
 
-		// Update custom tools to match the new selection
+		// Calculate the tools from the new preset selection
 		const newToolSet = new Set<AgentTool>();
 		for (const m of newModes) {
 			if (m !== "all") {
 				TOOL_PRESETS[m].forEach((tool) => newToolSet.add(tool));
 			}
 		}
-		setCustomTools(Array.from(newToolSet));
+
+		// Check if custom tools match the new preset selection
+		const customToolSet = new Set(customTools);
+		const hasExtraTools = [...customToolSet].some(
+			(tool) => !newToolSet.has(tool),
+		);
+		const _missingTools = [...newToolSet].some(
+			(tool) => !customToolSet.has(tool),
+		);
+
+		// Only stay in custom mode if we have extra tools that aren't in the presets
+		if (isCustomMode && hasExtraTools && newModes.size > 0) {
+			// Stay in custom mode but update the selection
+			setIsCustomMode(true);
+		} else {
+			// Switch to preset mode
+			setIsCustomMode(false);
+			setCustomTools(Array.from(newToolSet));
+		}
 	};
 
 	const handleCustomModeToggle = () => {
-		setIsCustomMode(!isCustomMode);
 		if (!isCustomMode) {
 			// Entering custom mode - keep current tools
 			setCustomTools(effectiveTools);
+			setIsCustomMode(true);
+		} else {
+			// Exiting custom mode - try to find matching presets
+			const toolSet = new Set(customTools);
+
+			// Try to find matching preset combinations
+			const presetModes = Object.keys(TOOL_PRESETS).filter(
+				(m) => m !== "all",
+			) as ToolPresetMode[];
+
+			for (let i = 1; i <= presetModes.length; i++) {
+				const combinations = getCombinations(presetModes, i);
+				for (const combo of combinations) {
+					const comboTools = new Set<AgentTool>();
+					for (const mode of combo) {
+						TOOL_PRESETS[mode].forEach((tool) => comboTools.add(tool));
+					}
+					// Check if this combination exactly matches our tools
+					if (
+						comboTools.size === toolSet.size &&
+						[...toolSet].every((tool) => comboTools.has(tool))
+					) {
+						// Found a matching preset combination
+						setSelectedModes(new Set(combo));
+						setIsCustomMode(false);
+						return;
+					}
+				}
+			}
+
+			// If no exact match found, just exit custom mode with empty selection
+			setSelectedModes(new Set());
+			setIsCustomMode(false);
 		}
 	};
 
@@ -249,9 +338,42 @@ export function AgentEditDialog({
 	};
 
 	const handleToolToggle = (tool: AgentTool) => {
-		setCustomTools((prev) =>
-			prev.includes(tool) ? prev.filter((t) => t !== tool) : [...prev, tool],
-		);
+		const newTools = customTools.includes(tool)
+			? customTools.filter((t) => t !== tool)
+			: [...customTools, tool];
+
+		setCustomTools(newTools);
+
+		// Check if the new tool selection matches any preset combination
+		const newToolSet = new Set(newTools);
+
+		// Try to find matching preset combinations
+		const presetModes = Object.keys(TOOL_PRESETS).filter(
+			(m) => m !== "all",
+		) as ToolPresetMode[];
+
+		for (let i = 1; i <= presetModes.length; i++) {
+			const combinations = getCombinations(presetModes, i);
+			for (const combo of combinations) {
+				const comboTools = new Set<AgentTool>();
+				for (const mode of combo) {
+					TOOL_PRESETS[mode].forEach((tool) => comboTools.add(tool));
+				}
+				// Check if this combination exactly matches our tools
+				if (
+					comboTools.size === newToolSet.size &&
+					[...newToolSet].every((tool) => comboTools.has(tool))
+				) {
+					// Found a matching preset combination
+					setSelectedModes(new Set(combo));
+					setIsCustomMode(false);
+					return;
+				}
+			}
+		}
+
+		// No matching preset combination found, stay in custom mode
+		setIsCustomMode(true);
 	};
 
 	return (
