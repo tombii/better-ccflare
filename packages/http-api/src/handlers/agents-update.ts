@@ -2,22 +2,7 @@ import { agentRegistry } from "@ccflare/agents";
 import type { DatabaseOperations } from "@ccflare/database";
 import { errorResponse, jsonResponse } from "@ccflare/http-common";
 import type { AgentTool, AllowedModel } from "@ccflare/types";
-
-const TOOL_PRESETS = {
-	all: [] as AgentTool[], // empty means don't set tools property
-	edit: ["Edit", "MultiEdit", "Write", "NotebookEdit"] as AgentTool[],
-	"read-only": [
-		"Glob",
-		"Grep",
-		"LS",
-		"Read",
-		"NotebookRead",
-		"WebFetch",
-		"TodoWrite",
-		"WebSearch",
-	] as AgentTool[],
-	execution: ["Bash"] as AgentTool[],
-} as const;
+import { TOOL_PRESETS } from "@ccflare/types";
 
 type ToolMode = keyof typeof TOOL_PRESETS | "custom";
 

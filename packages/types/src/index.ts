@@ -1,6 +1,7 @@
 // Re-export all types organized by domain
 export * from "./account";
 export * from "./agent";
+export * from "./agent-constants";
 // Keep existing exports for backward compatibility
 export * from "./api";
 export * from "./context";

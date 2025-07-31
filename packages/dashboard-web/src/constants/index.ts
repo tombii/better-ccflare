@@ -1,4 +1,7 @@
 // Re-export all shared constants from ui-constants
+
+// Re-export agent constants from types
+export { TOOL_PRESETS } from "@ccflare/types";
 export {
 	API_LIMITS,
 	API_TIMEOUT,
@@ -12,21 +15,3 @@ export {
 	TIME_RANGES,
 	type TimeRange,
 } from "@ccflare/ui-constants";
-
-import type { AgentTool } from "@ccflare/types";
-
-export const TOOL_PRESETS = {
-	all: [] as AgentTool[], // empty => don't write tools: key
-	edit: ["Edit", "MultiEdit", "Write", "NotebookEdit"] as AgentTool[],
-	"read-only": [
-		"Glob",
-		"Grep",
-		"LS",
-		"Read",
-		"NotebookRead",
-		"WebFetch",
-		"TodoWrite",
-		"WebSearch",
-	] as AgentTool[],
-	execution: ["Bash"] as AgentTool[],
-} as const;
