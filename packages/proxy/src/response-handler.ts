@@ -1,4 +1,8 @@
 import { requestEvents } from "@ccflare/core";
+import {
+	sanitizeRequestHeaders,
+	withSanitizedProxyHeaders,
+} from "@ccflare/http-common";
 import type { Account } from "@ccflare/types";
 import type { ProxyContext } from "./handlers";
 import type { ChunkMessage, EndMessage, StartMessage } from "./worker-messages";
@@ -47,15 +51,20 @@ export async function forwardToClient(
 		account,
 		requestHeaders,
 		requestBody,
-		response,
+		response: responseRaw,
 		timestamp,
 		retryAttempt, // Always 0 in new flow, but kept for message compatibility
 		failoverAttempts,
 		agentUsed,
 	} = options;
 
-	// Prepare objects once for serialisation
-	const requestHeadersObj = Object.fromEntries(requestHeaders.entries());
+	// Always strip compression headers *before* we do anything else
+	const response = withSanitizedProxyHeaders(responseRaw);
+
+	// Prepare objects once for serialisation - sanitize headers before storing
+	const sanitizedReq = sanitizeRequestHeaders(requestHeaders);
+	const requestHeadersObj = Object.fromEntries(sanitizedReq.entries());
+
 	const responseHeadersObj = Object.fromEntries(response.headers.entries());
 
 	const isStream = ctx.provider.isStreamingResponse?.(response) ?? false;
@@ -136,7 +145,7 @@ export async function forwardToClient(
 			}
 		})();
 
-		// Return the ORIGINAL response untouched
+		// Return the sanitized response
 		return response;
 	}
 
@@ -168,6 +177,6 @@ export async function forwardToClient(
 		}
 	})();
 
-	// Immediately return original response (no header/body changes)
+	// Return the sanitized response
 	return response;
 }
