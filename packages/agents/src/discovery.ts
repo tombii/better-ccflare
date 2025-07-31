@@ -1,10 +1,11 @@
 import { existsSync } from "node:fs";
-import { readdir, readFile } from "node:fs/promises";
+import { readdir, readFile, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { Config } from "@ccflare/config";
 import { Logger } from "@ccflare/logger";
 import {
 	type Agent,
+	type AgentTool,
 	type AgentWorkspace,
 	ALLOWED_MODELS,
 	type AllowedModel,
@@ -17,7 +18,7 @@ interface AgentCache {
 	timestamp: number;
 }
 
-const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const CACHE_TTL_MS = 30 * 1000; // 30 seconds
 const DEFAULT_COLOR = "gray";
 
 const log = new Logger("AgentRegistry");
@@ -68,7 +69,7 @@ export class AgentRegistry {
 		try {
 			const content = await readFile(filePath, "utf-8");
 
-			// Extract frontmatter manually using regex
+			// Extract frontmatter manually
 			const frontmatterMatch = content.match(
 				/^---\s*\n([\s\S]*?)\n---\s*\n([\s\S]*)$/,
 			);
@@ -80,23 +81,31 @@ export class AgentRegistry {
 			const frontmatterContent = frontmatterMatch[1];
 			const systemPrompt = frontmatterMatch[2];
 
-			// Parse frontmatter line by line for simple key-value pairs
-			const data: {
-				name?: string;
-				description?: string;
-				color?: string;
-				model?: string;
-				[key: string]: string | undefined;
-			} = {};
-
+			// Parse frontmatter into a data object
+			const data: Record<string, string> = {};
 			const lines = frontmatterContent.split("\n");
+			let currentKey = "";
+			let currentValue = "";
+
 			for (const line of lines) {
-				const match = line.match(/^(\w+):\s*(.*)$/);
-				if (match) {
-					const [, key, value] = match;
-					// Handle quoted strings and trim
-					data[key] = value.replace(/^["']|["']$/g, "").trim();
+				// Check if this line starts a new key-value pair
+				const keyMatch = line.match(/^(\w+):\s*(.*)$/);
+				if (keyMatch) {
+					// Save previous key-value pair if exists
+					if (currentKey) {
+						data[currentKey] = currentValue.trim();
+					}
+					// Start new key-value pair
+					currentKey = keyMatch[1];
+					currentValue = keyMatch[2];
+				} else if (currentKey && line.trim()) {
+					// This is a continuation of the previous value
+					currentValue += ` ${line.trim()}`;
 				}
+			}
+			// Save the last key-value pair
+			if (currentKey) {
+				data[currentKey] = currentValue.trim();
 			}
 
 			// Validate required fields
@@ -107,13 +116,33 @@ export class AgentRegistry {
 				return null;
 			}
 
-			// Extract and validate model (now optional - will use global default)
+			// Parse and validate model
 			const defaultModel = this.config.getDefaultAgentModel();
-			const model = data.model || defaultModel;
-			if (data.model && !this.isValidModel(model)) {
-				log.warn(
-					`Agent file ${filePath} has invalid model: ${model}. Using default.`,
-				);
+			let model: AllowedModel = defaultModel as AllowedModel;
+
+			// Handle shorthand model names
+			if (data.model) {
+				const modelLower = data.model.toLowerCase();
+				if (modelLower === "opus") {
+					model = ALLOWED_MODELS[0]; // claude-opus-4-20250514
+				} else if (modelLower === "sonnet") {
+					model = ALLOWED_MODELS[1]; // claude-sonnet-4-20250514
+				} else if (this.isValidModel(data.model)) {
+					model = data.model as AllowedModel;
+				} else {
+					log.warn(
+						`Agent file ${filePath} has invalid model: ${data.model}. Using default.`,
+					);
+				}
+			}
+
+			// Parse tools from frontmatter
+			let tools: AgentTool[] | undefined;
+			if (data.tools) {
+				tools = data.tools
+					.split(",")
+					.map((t: string) => t.trim() as AgentTool)
+					.filter(Boolean);
 			}
 
 			const id = basename(filePath, ".md");
@@ -123,10 +152,12 @@ export class AgentRegistry {
 				name: data.name,
 				description: data.description,
 				color: data.color || DEFAULT_COLOR,
-				model: defaultModel as AllowedModel, // Always use global default, UI will override
+				model,
 				systemPrompt: systemPrompt.trim(),
 				source,
 				workspace,
+				tools,
+				filePath,
 			};
 		} catch (error) {
 			log.error(`Error loading agent from ${filePath}:`, error);
@@ -338,6 +369,133 @@ export class AgentRegistry {
 			this.cache = null; // Clear cache to force reload
 			await this.saveWorkspaces();
 		}
+	}
+
+	// Update an agent in the filesystem
+	async updateAgent(
+		agentId: string,
+		updates: Partial<
+			Pick<Agent, "description" | "model" | "tools" | "color" | "systemPrompt">
+		>,
+		dbOps?: { deleteAgentPreference: (agentId: string) => boolean },
+	): Promise<Agent> {
+		// Ensure we're initialized
+		await this.initialize();
+
+		// Find the agent
+		const agents = await this.getAgents();
+		const agent = agents.find((a) => a.id === agentId);
+		if (!agent) {
+			throw new Error(`Agent with id ${agentId} not found`);
+		}
+
+		// Prepare front-matter updates
+		const frontMatterUpdates: Record<string, unknown> = {};
+
+		if (updates.description !== undefined) {
+			frontMatterUpdates.description = updates.description;
+		}
+		if (updates.model !== undefined) {
+			frontMatterUpdates.model = updates.model;
+		}
+		if (updates.tools !== undefined) {
+			if (updates.tools.length === 0) {
+				// Remove tools property entirely for "all" mode
+				frontMatterUpdates.tools = undefined;
+			} else {
+				frontMatterUpdates.tools = updates.tools.join(", ");
+			}
+		}
+		if (updates.color !== undefined) {
+			frontMatterUpdates.color = updates.color;
+		}
+
+		// Reconstruct the agent file
+		const currentContent = await readFile(agent.filePath, "utf-8");
+		const frontmatterMatch = currentContent.match(
+			/^---\s*\n([\s\S]*?)\n---\s*\n([\s\S]*)$/,
+		);
+
+		if (!frontmatterMatch) {
+			throw new Error(`Invalid agent file format: ${agent.filePath}`);
+		}
+
+		// Parse existing frontmatter
+		const existingFrontmatter = frontmatterMatch[1];
+		const existingData: Record<string, string> = {};
+		const lines = existingFrontmatter.split("\n");
+		let currentKey = "";
+		let currentValue = "";
+
+		for (const line of lines) {
+			const keyMatch = line.match(/^(\w+):\s*(.*)$/);
+			if (keyMatch) {
+				if (currentKey) {
+					existingData[currentKey] = currentValue.trim();
+				}
+				currentKey = keyMatch[1];
+				currentValue = keyMatch[2];
+			} else if (currentKey && line.trim()) {
+				currentValue += ` ${line.trim()}`;
+			}
+		}
+		if (currentKey) {
+			existingData[currentKey] = currentValue.trim();
+		}
+
+		// Apply updates to frontmatter
+		if (updates.description !== undefined) {
+			existingData.description = updates.description;
+		}
+		if (updates.model !== undefined) {
+			existingData.model = updates.model;
+		}
+		if (updates.tools !== undefined) {
+			if (updates.tools.length === 0) {
+				delete existingData.tools;
+			} else {
+				existingData.tools = updates.tools.join(", ");
+			}
+		}
+		if (updates.color !== undefined) {
+			existingData.color = updates.color;
+		}
+
+		// Reconstruct frontmatter with proper formatting
+		const newFrontmatter = Object.entries(existingData)
+			.map(([key, value]) => `${key}: ${value}`)
+			.join("\n");
+
+		// Use updated system prompt or existing one
+		const newSystemPrompt =
+			updates.systemPrompt !== undefined
+				? updates.systemPrompt
+				: frontmatterMatch[2].trim();
+
+		// Write the updated file
+		const newContent = `---\n${newFrontmatter}\n---\n\n${newSystemPrompt}`;
+		await writeFile(agent.filePath, newContent, "utf-8");
+
+		// If model was updated, clear any database preference to avoid conflicts
+		if (updates.model && dbOps?.deleteAgentPreference) {
+			try {
+				dbOps.deleteAgentPreference(agentId);
+			} catch (error) {
+				log.warn(`Failed to clear agent preference for ${agentId}:`, error);
+			}
+		}
+
+		// Force cache refresh
+		await this.refresh();
+
+		// Return updated agent
+		const updatedAgents = await this.getAgents();
+		const updatedAgent = updatedAgents.find((a) => a.id === agentId);
+		if (!updatedAgent) {
+			throw new Error(`Failed to reload updated agent ${agentId}`);
+		}
+
+		return updatedAgent;
 	}
 }
 

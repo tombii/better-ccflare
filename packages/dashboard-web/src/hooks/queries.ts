@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { AgentUpdatePayload } from "@ccflare/types";
 import { api } from "../api";
 import { REFRESH_INTERVALS } from "../constants";
 import { queryKeys } from "../lib/query-keys";
@@ -15,7 +16,7 @@ export const useAgents = () => {
 	return useQuery({
 		queryKey: queryKeys.agents(),
 		queryFn: () => api.getAgents(),
-		refetchInterval: REFRESH_INTERVALS.slow, // Poll every 60 seconds for new agents
+		refetchInterval: 30000, // Poll every 30 seconds for new agents
 		refetchIntervalInBackground: true, // Continue polling when tab is not focused
 	});
 };
@@ -157,6 +158,22 @@ export const useBulkUpdateAgentPreferences = () => {
 	const queryClient = useQueryClient();
 	return useMutation({
 		mutationFn: (model: string) => api.setBulkAgentPreferences(model),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.agents() });
+		},
+	});
+};
+
+export const useUpdateAgent = () => {
+	const queryClient = useQueryClient();
+	return useMutation({
+		mutationFn: ({
+			id,
+			payload,
+		}: {
+			id: string;
+			payload: AgentUpdatePayload;
+		}) => api.updateAgent(id, payload),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.agents() });
 		},

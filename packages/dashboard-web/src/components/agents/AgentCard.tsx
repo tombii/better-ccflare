@@ -1,7 +1,9 @@
 import type { Agent } from "@ccflare/types";
 import { ALLOWED_MODELS } from "@ccflare/types";
-import { Bot, Cpu, Folder, Globe, Sparkles } from "lucide-react";
+import { Bot, Cpu, Edit3, Folder, Globe, Sparkles } from "lucide-react";
+import { useState } from "react";
 import { Badge } from "../ui/badge";
+import { Button } from "../ui/button";
 import {
 	Card,
 	CardContent,
@@ -17,6 +19,7 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "../ui/select";
+import { AgentEditDialog } from "./AgentEditDialog";
 
 interface AgentCardProps {
 	agent: Agent;
@@ -29,6 +32,8 @@ export function AgentCard({
 	onModelChange,
 	isUpdating,
 }: AgentCardProps) {
+	const [editDialogOpen, setEditDialogOpen] = useState(false);
+
 	// Map color names to more sophisticated gradient classes
 	const colorMap: Record<string, { border: string; bg: string; icon: string }> =
 		{
@@ -133,6 +138,14 @@ export function AgentCard({
 								</div>
 							</div>
 						</div>
+						<Button
+							variant="ghost"
+							size="sm"
+							onClick={() => setEditDialogOpen(true)}
+							className="opacity-0 group-hover:opacity-100 transition-opacity"
+						>
+							<Edit3 className="h-4 w-4" />
+						</Button>
 					</div>
 					<CardDescription className="text-sm leading-relaxed line-clamp-3">
 						{agent.description}
@@ -176,6 +189,12 @@ export function AgentCard({
 					<p className="text-xs text-muted-foreground font-mono">{agent.id}</p>
 				</div>
 			</CardContent>
+
+			<AgentEditDialog
+				agent={agent}
+				open={editDialogOpen}
+				onOpenChange={setEditDialogOpen}
+			/>
 		</Card>
 	);
 }
