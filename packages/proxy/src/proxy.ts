@@ -46,6 +46,8 @@ export function getUsageWorker(): Worker {
 			const data = ev.data as OutgoingWorkerMessage;
 			if (data.type === "summary") {
 				requestEvents.emit("event", { type: "summary", payload: data.summary });
+			} else if (data.type === "payload") {
+				requestEvents.emit("event", { type: "payload", payload: data.payload });
 			}
 		};
 	}
