@@ -12,5 +12,5 @@ export interface AgentUpdatePayload {
 	tools?: string[];
 	color?: string;
 	systemPrompt?: string;
-	mode?: "all" | "edit" | "read-only" | "execution";
+	mode?: "all" | "edit" | "read-only" | "execution" | "custom";
 }

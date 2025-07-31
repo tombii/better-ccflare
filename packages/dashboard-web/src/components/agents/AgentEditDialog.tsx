@@ -1,6 +1,12 @@
-import type { Agent, AgentTool, AllowedModel } from "@ccflare/types";
+import type {
+	Agent,
+	AgentTool,
+	AgentUpdatePayload,
+	AllowedModel,
+} from "@ccflare/types";
+import { ALL_TOOLS } from "@ccflare/types";
 import { Cpu, Edit3, FileText, Palette, Save, Shield, X } from "lucide-react";
-import { useState, useMemo } from "react";
+import { useMemo, useState } from "react";
 import { TOOL_PRESETS } from "../../constants";
 import { useUpdateAgent } from "../../hooks/queries";
 import { cn } from "../../lib/utils";
@@ -31,22 +37,6 @@ interface AgentEditDialogProps {
 }
 
 type ToolPresetMode = keyof typeof TOOL_PRESETS;
-
-const ALL_TOOLS: AgentTool[] = [
-	"Bash",
-	"Glob",
-	"Grep",
-	"LS",
-	"Read",
-	"Edit",
-	"MultiEdit",
-	"Write",
-	"NotebookRead",
-	"NotebookEdit",
-	"WebFetch",
-	"TodoWrite",
-	"WebSearch",
-];
 
 const COLORS = [
 	{ name: "gray", class: "bg-gray-500" },
@@ -247,7 +237,7 @@ export function AgentEditDialog({
 					model,
 					color,
 					systemPrompt,
-					mode: mode as any,
+					mode: mode as AgentUpdatePayload["mode"],
 					tools: mode ? undefined : tools,
 				},
 			});
