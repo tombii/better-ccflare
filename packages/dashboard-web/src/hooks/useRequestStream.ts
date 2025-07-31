@@ -38,7 +38,8 @@ export function useRequestStream(limit = 200) {
 							statusCode: number;
 							agentUsed: string | null;
 					  }
-					| { type: "summary"; payload: RequestResponse };
+					| { type: "summary"; payload: RequestResponse }
+					| { type: "payload"; payload: RequestPayload };
 
 				queryClient.setQueryData(
 					queryKeys.requests(limit),
@@ -110,6 +111,20 @@ export function useRequestStream(limit = 200) {
 							return {
 								...current,
 								requests: [placeholder, ...current.requests].slice(0, limit),
+								detailsMap: currentDetailsMap,
+							};
+						} else if (evt.type === "payload") {
+							// Replace placeholder or insert if missing
+							const newRequests = [...current.requests];
+							const idx = newRequests.findIndex((r) => r.id === evt.payload.id);
+							if (idx >= 0) {
+								newRequests[idx] = evt.payload;
+							} else {
+								newRequests.unshift(evt.payload);
+							}
+							return {
+								...current,
+								requests: newRequests.slice(0, limit),
 								detailsMap: currentDetailsMap,
 							};
 						} else {
