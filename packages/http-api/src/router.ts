@@ -14,6 +14,7 @@ import {
 	createBulkAgentPreferenceUpdateHandler,
 	createWorkspacesListHandler,
 } from "./handlers/agents";
+import { createAgentUpdateHandler } from "./handlers/agents-update";
 import { createAnalyticsHandler } from "./handlers/analytics";
 import { createConfigHandlers } from "./handlers/config";
 import { createHealthHandler } from "./handlers/health";
@@ -226,6 +227,15 @@ export class APIRouter {
 					this.context.dbOps,
 				);
 				return await this.wrapHandler((req) => preferenceHandler(req, agentId))(
+					req,
+					url,
+				);
+			}
+
+			// Agent update (PATCH /api/agents/:id)
+			if (parts.length === 4 && method === "PATCH") {
+				const updateHandler = createAgentUpdateHandler(this.context.dbOps);
+				return await this.wrapHandler((req) => updateHandler(req, agentId))(
 					req,
 					url,
 				);

@@ -2,6 +2,21 @@ import { CLAUDE_MODEL_IDS } from "@ccflare/core";
 
 export type AgentSource = "global" | "workspace";
 
+export type AgentTool =
+	| "Bash"
+	| "Glob"
+	| "Grep"
+	| "LS"
+	| "Read"
+	| "Edit"
+	| "MultiEdit"
+	| "Write"
+	| "NotebookRead"
+	| "NotebookEdit"
+	| "WebFetch"
+	| "TodoWrite"
+	| "WebSearch";
+
 export interface AgentWorkspace {
 	path: string;
 	name: string;
@@ -13,10 +28,12 @@ export interface Agent {
 	name: string;
 	description: string;
 	color: string;
-	model: string;
+	model: AllowedModel;
 	systemPrompt: string;
 	source: AgentSource;
 	workspace?: string; // workspace path if source is "workspace"
+	tools?: AgentTool[]; // parsed from tools: front-matter
+	filePath: string; // absolute path of the markdown file
 }
 
 export type AgentResponse = Agent[];

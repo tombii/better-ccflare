@@ -2,6 +2,7 @@ import { HttpClient, HttpError } from "@ccflare/http-common";
 import type {
 	AccountResponse,
 	Agent,
+	AgentUpdatePayload,
 	AgentWorkspace,
 	AnalyticsResponse,
 	LogEvent,
@@ -237,6 +238,24 @@ class API extends HttpClient {
 	async updateAgentPreference(agentId: string, model: string): Promise<void> {
 		try {
 			await this.post(`/api/agents/${agentId}/preference`, { model });
+		} catch (error) {
+			if (error instanceof HttpError) {
+				throw new Error(error.message);
+			}
+			throw error;
+		}
+	}
+
+	async updateAgent(
+		agentId: string,
+		payload: AgentUpdatePayload,
+	): Promise<Agent> {
+		try {
+			const response = await this.patch<{ success: boolean; agent: Agent }>(
+				`/api/agents/${agentId}`,
+				payload,
+			);
+			return response.agent;
 		} catch (error) {
 			if (error instanceof HttpError) {
 				throw new Error(error.message);
