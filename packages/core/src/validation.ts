@@ -327,8 +327,8 @@ export const patterns = {
 	uuid: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
 	alphanumeric: /^[a-zA-Z0-9]+$/,
 	alphanumericWithSpaces: /^[a-zA-Z0-9\s]+$/,
-	// Account name: alphanumeric with spaces, hyphens, and underscores
-	accountName: /^[a-zA-Z0-9\s\-_]+$/,
+	// Account name: alphanumeric with spaces, hyphens, underscores, plus @ and . for email addresses
+	accountName: /^[a-zA-Z0-9\s\-_@.+]+$/,
 	// Path pattern for API endpoints
 	apiPath: /^\/v1\/[a-zA-Z0-9\-_/]*$/,
 };
