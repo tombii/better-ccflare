@@ -147,8 +147,8 @@ export function AgentCard({
 							<Edit3 className="h-4 w-4" />
 						</Button>
 					</div>
-					<CardDescription className="text-sm leading-relaxed line-clamp-3">
-						{agent.description}
+					<CardDescription className="text-sm leading-relaxed line-clamp-3 whitespace-pre-wrap">
+						{agent.description.replace(/\\n/g, "\n")}
 					</CardDescription>
 				</div>
 			</CardHeader>
