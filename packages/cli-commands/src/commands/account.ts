@@ -60,9 +60,10 @@ export async function addAccount(
 
 	// Open browser and prompt for code
 	console.log(`\nOpening browser to authenticate...`);
+	console.log(`URL: ${authUrl}`);
 	const browserOpened = await openBrowser(authUrl);
 	if (!browserOpened) {
-		console.log(`Please open the following URL in your browser:\n${authUrl}`);
+		console.log(`\nFailed to open browser automatically. Please manually open the URL above.`);
 	}
 
 	// Get authorization code
