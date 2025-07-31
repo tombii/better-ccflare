@@ -149,7 +149,9 @@ export function AgentsTab() {
 						<h4 className="font-medium mb-2">Workspace Agents</h4>
 						<p className="text-sm text-muted-foreground">
 							To add workspace-specific agents, create markdown files in your
-							project's .claude/agents/ directory.
+							project's .claude/agents/ directory. They should be able to
+							discover local project agents after you send a message from within
+							that directory.
 						</p>
 					</div>
 					<Separator />
@@ -464,7 +466,9 @@ Your system prompt content here...`}
 								</CardTitle>
 								<CardDescription>
 									Workspace agents are automatically discovered from your
-									project directories
+									project directories. They should be able to discover local
+									project agents after you send a message from within that
+									directory.
 								</CardDescription>
 							</CardHeader>
 						</Card>
