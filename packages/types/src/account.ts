@@ -59,6 +59,7 @@ export interface AccountResponse {
 	tier: number;
 	paused: boolean;
 	tokenStatus: "valid" | "expired";
+	tokenExpiresAt: string | null; // ISO timestamp of token expiration
 	rateLimitStatus: string;
 	rateLimitReset: string | null;
 	rateLimitRemaining: number | null;
@@ -167,6 +168,9 @@ export function toAccountResponse(account: Account): AccountResponse {
 		tier: account.account_tier,
 		paused: account.paused,
 		tokenStatus,
+		tokenExpiresAt: account.expires_at
+			? new Date(account.expires_at).toISOString()
+			: null,
 		rateLimitStatus,
 		rateLimitReset: account.rate_limit_reset
 			? new Date(account.rate_limit_reset).toISOString()

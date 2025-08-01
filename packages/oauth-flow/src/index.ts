@@ -19,6 +19,7 @@ export interface BeginResult {
 	authUrl: string;
 	pkce: PKCEChallenge;
 	oauthConfig: OAuthProviderConfig;
+	mode: "max" | "console"; // Track mode to handle differently in complete()
 }
 
 export interface CompleteOptions {
@@ -33,6 +34,7 @@ export interface AccountCreated {
 	name: string;
 	tier: number;
 	provider: "anthropic";
+	authType: "oauth" | "api_key"; // Track authentication type
 }
 
 export interface OAuthFlowResult {
@@ -88,6 +90,7 @@ export class OAuthFlow {
 			authUrl,
 			pkce,
 			oauthConfig,
+			mode, // Include mode in the result
 		};
 	}
 
@@ -98,7 +101,7 @@ export class OAuthFlow {
 		opts: CompleteOptions,
 		flowData: BeginResult,
 	): Promise<AccountCreated> {
-		const { code, tier = 1 } = opts;
+		const { code, tier = 1, name } = opts;
 
 		// Get OAuth provider
 		const oauthProvider = getOAuthProvider("anthropic");
@@ -113,17 +116,46 @@ export class OAuthFlow {
 			flowData.oauthConfig,
 		);
 
-		// Create account in database
 		const accountId = crypto.randomUUID();
-		const account = this.createAccount(accountId, opts.name, tokens, tier);
 
-		return account;
+		// Handle console mode - create API key
+		if (flowData.mode === "console" || !tokens.refreshToken) {
+			const apiKey = await this.createAnthropicApiKey(tokens.accessToken);
+			return this.createAccountWithApiKey(accountId, name, apiKey, tier);
+		}
+
+		// Handle max mode - standard OAuth flow
+		return this.createAccountWithOAuth(accountId, name, tokens, tier);
 	}
 
 	/**
-	 * Create account in database
+	 * Create API key using Anthropic console endpoint
 	 */
-	private createAccount(
+	private async createAnthropicApiKey(accessToken: string): Promise<string> {
+		const response = await fetch(
+			"https://api.anthropic.com/api/oauth/claude_cli/create_api_key",
+			{
+				method: "POST",
+				headers: {
+					Authorization: `Bearer ${accessToken}`,
+					"Content-Type": "application/x-www-form-urlencoded",
+					Accept: "application/json, text/plain, */*",
+				},
+			},
+		);
+
+		if (!response.ok) {
+			throw new Error(`Failed to create API key: ${response.statusText}`);
+		}
+
+		const json = (await response.json()) as { raw_key: string };
+		return json.raw_key;
+	}
+
+	/**
+	 * Create account with OAuth tokens (max mode)
+	 */
+	private createAccountWithOAuth(
 		id: string,
 		name: string,
 		tokens: OAuthTokens,
@@ -131,20 +163,16 @@ export class OAuthFlow {
 	): AccountCreated {
 		const db = this.dbOps.getDatabase();
 
-		// Parse name from session data (in real implementation, this would be retrieved from session store)
-		// For now, we'll need to pass the name through the complete method
-		// This is a limitation of the current design that should be addressed
-
 		db.run(
 			`
 			INSERT INTO accounts (
-				id, name, provider, refresh_token, access_token, expires_at, 
+				id, name, provider, api_key, refresh_token, access_token, expires_at, 
 				created_at, request_count, total_requests, account_tier
-			) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?)
+			) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, 0, 0, ?)
 			`,
 			[
 				id,
-				name, // This needs to be passed properly
+				name,
 				"anthropic",
 				tokens.refreshToken || "",
 				tokens.accessToken,
@@ -159,6 +187,37 @@ export class OAuthFlow {
 			name,
 			tier,
 			provider: "anthropic",
+			authType: "oauth",
+		};
+	}
+
+	/**
+	 * Create account with API key (console mode)
+	 */
+	private createAccountWithApiKey(
+		id: string,
+		name: string,
+		apiKey: string,
+		tier: AccountTier,
+	): AccountCreated {
+		const db = this.dbOps.getDatabase();
+
+		db.run(
+			`
+			INSERT INTO accounts (
+				id, name, provider, api_key, refresh_token, access_token, expires_at, 
+				created_at, request_count, total_requests, account_tier
+			) VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, 0, 0, ?)
+			`,
+			[id, name, "anthropic", apiKey, Date.now(), tier],
+		);
+
+		return {
+			id,
+			name,
+			tier,
+			provider: "anthropic",
+			authType: "api_key",
 		};
 	}
 }
