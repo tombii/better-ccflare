@@ -43,6 +43,15 @@ export interface OAuthFlowResult {
 	data?: AccountCreated;
 }
 
+/**
+ * Handles the Anthropic OAuth flow for both "max" and "console" authentication modes.
+ *
+ * - "max" mode: Standard OAuth with refresh tokens for Claude Max accounts
+ * - "console" mode: OAuth flow that creates a static API key
+ *
+ * This class does not persist session data. The caller must handle storage
+ * between {@link begin} and {@link complete} calls.
+ */
 export class OAuthFlow {
 	constructor(
 		private dbOps: DatabaseOperations,
@@ -50,7 +59,16 @@ export class OAuthFlow {
 	) {}
 
 	/**
-	 * Begin OAuth flow - generates PKCE, creates session, returns auth URL
+	 * Starts an Anthropic OAuth flow.
+	 *
+	 * The caller MUST persist the returned `sessionId`, `pkce.verifier`,
+	 * `mode`, and `tier` so that {@link complete} can validate the callback.
+	 *
+	 * @param opts - OAuth flow options
+	 * @param opts.name - Unique account name
+	 * @param opts.mode - Authentication mode ("max" for Claude Max, "console" for API key)
+	 * @returns OAuth flow data including auth URL and session info
+	 * @throws {Error} If account name already exists
 	 */
 	async begin(opts: BeginOptions): Promise<BeginResult> {
 		const { name, mode } = opts;
@@ -78,24 +96,37 @@ export class OAuthFlow {
 		// Generate auth URL
 		const authUrl = oauthProvider.generateAuthUrl(oauthConfig, pkce);
 
-		// Create session ID (could be stored in DB for multi-instance setups)
+		// Create session ID for this OAuth flow
 		const sessionId = crypto.randomUUID();
 
-		// Store session data in memory or DB
-		// For now, we'll return it to be passed back in complete()
-		// In a production system, this would be stored in Redis or DB
+		// NOTE: OAuthFlow itself does not persist the session.
+		//       The caller (HTTP-API oauth-init handler) must
+		//       store {sessionId, verifier, mode, tier} – typically
+		//       via DatabaseOperations.createOAuthSession().
 
 		return {
 			sessionId,
 			authUrl,
 			pkce,
 			oauthConfig,
-			mode, // Include mode in the result
+			mode,
 		};
 	}
 
 	/**
-	 * Complete OAuth flow - exchanges code for tokens and creates account
+	 * Completes the Anthropic OAuth flow after user authorization.
+	 *
+	 * Exchanges the authorization code for tokens and creates the account.
+	 * For "console" mode, creates an API key instead of storing OAuth tokens.
+	 *
+	 * @param opts - Completion options
+	 * @param opts.sessionId - Session ID from {@link begin}
+	 * @param opts.code - Authorization code from OAuth callback
+	 * @param opts.tier - Account tier (1, 5, or 20)
+	 * @param opts.name - Account name (must match the one from begin)
+	 * @param flowData - Flow data returned from {@link begin}
+	 * @returns Created account information
+	 * @throws {Error} If OAuth provider not found or token exchange fails
 	 */
 	async complete(
 		opts: CompleteOptions,
@@ -129,7 +160,14 @@ export class OAuthFlow {
 	}
 
 	/**
-	 * Create API key using Anthropic console endpoint
+	 * Creates an API key using the Anthropic console endpoint.
+	 *
+	 * This is used for "console" mode accounts where users want a static API key
+	 * instead of OAuth tokens that need refreshing.
+	 *
+	 * @param accessToken - Temporary access token from OAuth flow
+	 * @returns The newly created API key
+	 * @throws {Error} If API key creation fails
 	 */
 	private async createAnthropicApiKey(accessToken: string): Promise<string> {
 		const response = await fetch(
@@ -153,7 +191,15 @@ export class OAuthFlow {
 	}
 
 	/**
-	 * Create account with OAuth tokens (max mode)
+	 * Creates an account with OAuth tokens (max mode).
+	 *
+	 * Stores refresh token, access token, and expiration for automatic token refresh.
+	 *
+	 * @param id - Unique account ID
+	 * @param name - Account name
+	 * @param tokens - OAuth tokens from token exchange
+	 * @param tier - Account tier (1, 5, or 20)
+	 * @returns Created account information
 	 */
 	private createAccountWithOAuth(
 		id: string,
@@ -192,7 +238,16 @@ export class OAuthFlow {
 	}
 
 	/**
-	 * Create account with API key (console mode)
+	 * Creates an account with API key (console mode).
+	 *
+	 * Stores only the API key, no OAuth tokens. These accounts don't require
+	 * token refresh but cannot be refreshed if the API key is revoked.
+	 *
+	 * @param id - Unique account ID
+	 * @param name - Account name
+	 * @param apiKey - API key from Anthropic console
+	 * @param tier - Account tier (1, 5, or 20)
+	 * @returns Created account information
 	 */
 	private createAccountWithApiKey(
 		id: string,
