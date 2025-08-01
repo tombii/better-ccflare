@@ -27,7 +27,7 @@ function MessageBubbleComponent({ role, content }: MessageBubbleProps) {
 		<div>
 			<div className={`rounded-lg px-4 py-2 ${bgColor}`}>
 				<div
-					className={`whitespace-pre text-sm overflow-x-auto ${
+					className={`whitespace-pre text-sm overflow-x-auto text-left ${
 						isExpanded && isLong ? "max-h-96 overflow-y-auto pr-2" : ""
 					}`}
 				>
