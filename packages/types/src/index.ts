@@ -5,6 +5,7 @@ export * from "./agent-constants";
 // Keep existing exports for backward compatibility
 export * from "./api";
 export * from "./context";
+export * from "./conversation";
 export * from "./logging";
 export * from "./request";
 export * from "./stats";
