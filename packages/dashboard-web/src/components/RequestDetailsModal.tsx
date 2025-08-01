@@ -2,6 +2,7 @@ import { formatCost, formatTimestamp, formatTokens } from "@ccflare/ui-common";
 import { Eye } from "lucide-react";
 import { useState } from "react";
 import type { RequestPayload, RequestSummary } from "../api";
+import { ConversationView } from "./ConversationView";
 import { CopyButton } from "./CopyButton";
 import { TokenUsageDisplay } from "./TokenUsageDisplay";
 import { Badge } from "./ui/badge";
@@ -129,13 +130,21 @@ export function RequestDetailsModal({
 					</DialogDescription>
 				</DialogHeader>
 
-				<Tabs defaultValue="request" className="flex-1 overflow-hidden">
-					<TabsList className="grid w-full grid-cols-4">
+				<Tabs defaultValue="conversation" className="flex-1 overflow-hidden">
+					<TabsList className="grid w-full grid-cols-5">
+						<TabsTrigger value="conversation">Conversation</TabsTrigger>
 						<TabsTrigger value="request">Request</TabsTrigger>
 						<TabsTrigger value="response">Response</TabsTrigger>
 						<TabsTrigger value="metadata">Metadata</TabsTrigger>
 						<TabsTrigger value="tokens">Token Usage</TabsTrigger>
 					</TabsList>
+
+					<TabsContent value="conversation" className="mt-4 flex-1 min-h-0">
+						<ConversationView
+							requestBody={decodeBase64(request.request.body)}
+							responseBody={decodeBase64(request.response?.body || null)}
+						/>
+					</TabsContent>
 
 					<TabsContent
 						value="request"
