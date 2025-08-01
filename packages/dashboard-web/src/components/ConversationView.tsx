@@ -587,7 +587,7 @@ function ConversationViewComponent({
 														{tool.input &&
 															Object.keys(tool.input).length > 0 && (
 																<pre
-																	className={`text-xs bg-blue-100/50 dark:bg-blue-900/20 p-2 rounded mt-1 overflow-x-auto whitespace-pre-wrap break-words ${
+																	className={`text-xs bg-blue-100/50 dark:bg-blue-900/20 p-2 rounded mt-1 overflow-x-auto whitespace-pre-wrap break-words text-left ${
 																		isExpanded && isLong
 																			? "max-h-96 overflow-y-auto pr-2"
 																			: ""
@@ -639,7 +639,7 @@ function ConversationViewComponent({
 														</div>
 														<div className="text-xs bg-green-100/50 dark:bg-green-900/20 p-2 rounded mt-1 overflow-hidden">
 															<pre
-																className={`overflow-x-auto whitespace-pre-wrap break-words ${
+																className={`overflow-x-auto whitespace-pre-wrap break-words text-left ${
 																	isExpanded && isLong
 																		? "max-h-96 overflow-y-auto pr-2"
 																		: ""
