@@ -493,7 +493,7 @@ function ConversationViewComponent({
 															</Button>
 														)}
 													</div>
-													<div className="text-xs text-yellow-700 dark:text-yellow-300 whitespace-pre-wrap break-words">
+													<div className="text-xs text-yellow-700 dark:text-yellow-300 whitespace-pre overflow-x-auto">
 														{isExpanded || !isLong
 															? thinkingContent
 															: thinkingContent
@@ -523,7 +523,7 @@ function ConversationViewComponent({
 														}`}
 													>
 														<div
-															className={`whitespace-pre-wrap break-words text-sm ${
+															className={`whitespace-pre text-sm overflow-x-auto ${
 																isExpanded && isLong
 																	? "max-h-96 overflow-y-auto pr-2"
 																	: ""
@@ -587,7 +587,7 @@ function ConversationViewComponent({
 														{tool.input &&
 															Object.keys(tool.input).length > 0 && (
 																<pre
-																	className={`text-xs bg-blue-100/50 dark:bg-blue-900/20 p-2 rounded mt-1 overflow-x-auto whitespace-pre-wrap break-words text-left ${
+																	className={`text-xs bg-blue-100/50 dark:bg-blue-900/20 p-2 rounded mt-1 overflow-x-auto whitespace-pre text-left ${
 																		isExpanded && isLong
 																			? "max-h-96 overflow-y-auto pr-2"
 																			: ""
@@ -639,7 +639,7 @@ function ConversationViewComponent({
 														</div>
 														<div className="text-xs bg-green-100/50 dark:bg-green-900/20 p-2 rounded mt-1 overflow-hidden">
 															<pre
-																className={`overflow-x-auto whitespace-pre-wrap break-words text-left ${
+																className={`overflow-x-auto whitespace-pre text-left ${
 																	isExpanded && isLong
 																		? "max-h-96 overflow-y-auto pr-2"
 																		: ""
