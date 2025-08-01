@@ -154,6 +154,7 @@ export function createOAuthCallbackHandler(dbOps: DatabaseOperations) {
 					authUrl: "", // Not needed for complete
 					pkce: { verifier, challenge: "" }, // Only verifier is needed
 					oauthConfig,
+					mode: savedMode || "max", // Add mode to match BeginResult type
 				};
 
 				await oauthFlow.complete(

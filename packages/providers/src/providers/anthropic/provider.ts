@@ -78,14 +78,23 @@ export class AnthropicProvider extends BaseProvider {
 			refresh_token?: string;
 		};
 
-		log.info(
-			`Token refresh successful for ${account.name}, new refresh token: ${json.refresh_token ? "provided" : "not provided"}`,
-		);
+		// Ensure we always return a refresh token
+		const refreshToken = json.refresh_token || account.refresh_token;
+
+		if (!json.refresh_token) {
+			log.warn(
+				`Anthropic refresh endpoint did not return a refresh_token for ${account.name} - continuing with previous one`,
+			);
+		} else {
+			log.info(
+				`Token refresh successful for ${account.name}, new refresh token provided`,
+			);
+		}
 
 		return {
 			accessToken: json.access_token,
 			expiresAt: Date.now() + json.expires_in * 1000,
-			refreshToken: json.refresh_token,
+			refreshToken: refreshToken,
 		};
 	}
 
@@ -93,11 +102,27 @@ export class AnthropicProvider extends BaseProvider {
 		return `https://api.anthropic.com${path}${query}`;
 	}
 
-	prepareHeaders(headers: Headers, accessToken?: string): Headers {
-		const newHeaders = super.prepareHeaders(headers, accessToken);
+	prepareHeaders(
+		headers: Headers,
+		accessToken?: string,
+		apiKey?: string,
+	): Headers {
+		const newHeaders = new Headers(headers);
+
+		// Set authentication header
+		if (accessToken) {
+			newHeaders.set("Authorization", `Bearer ${accessToken}`);
+		} else if (apiKey) {
+			newHeaders.set("x-api-key", apiKey);
+		}
+
+		// Remove host header
+		newHeaders.delete("host");
+
 		// Remove compression headers to avoid decompression issues
 		newHeaders.delete("accept-encoding");
 		newHeaders.delete("content-encoding");
+
 		return newHeaders;
 	}
 

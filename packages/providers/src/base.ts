@@ -30,12 +30,21 @@ export abstract class BaseProvider implements Provider {
 	/**
 	 * Prepare headers for the provider request
 	 * Default implementation: Add Bearer token (if provided) and remove host header
+	 * @param headers - Original request headers
+	 * @param accessToken - OAuth access token (for Bearer authentication)
+	 * @param apiKey - API key (provider-specific header)
 	 */
-	prepareHeaders(headers: Headers, accessToken?: string): Headers {
+	prepareHeaders(
+		headers: Headers,
+		accessToken?: string,
+		_apiKey?: string,
+	): Headers {
 		const newHeaders = new Headers(headers);
 		if (accessToken) {
 			newHeaders.set("Authorization", `Bearer ${accessToken}`);
 		}
+		// Note: API key handling is provider-specific and should be
+		// implemented in the provider subclass
 		newHeaders.delete("host");
 		return newHeaders;
 	}

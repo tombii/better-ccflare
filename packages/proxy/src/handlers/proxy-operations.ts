@@ -31,7 +31,11 @@ export async function proxyUnauthenticated(
 	log.warn(ERROR_MESSAGES.NO_ACCOUNTS);
 
 	const targetUrl = ctx.provider.buildUrl(url.pathname, url.search);
-	const headers = ctx.provider.prepareHeaders(req.headers);
+	const headers = ctx.provider.prepareHeaders(
+		req.headers,
+		undefined,
+		undefined,
+	);
 
 	try {
 		const response = await makeProxyRequest(
@@ -100,7 +104,11 @@ export async function proxyWithAccount(
 		const accessToken = await getValidAccessToken(account, ctx);
 
 		// Prepare request
-		const headers = ctx.provider.prepareHeaders(req.headers, accessToken);
+		const headers = ctx.provider.prepareHeaders(
+			req.headers,
+			accessToken,
+			account.api_key || undefined,
+		);
 		const targetUrl = ctx.provider.buildUrl(url.pathname, url.search);
 
 		// Make the request

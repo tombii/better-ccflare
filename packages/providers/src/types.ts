@@ -3,7 +3,7 @@ import type { Account } from "@ccflare/types";
 export interface TokenRefreshResult {
 	accessToken: string;
 	expiresAt: number;
-	refreshToken?: string; // New refresh token if provided by the auth server
+	refreshToken: string; // Always required - either new token or existing one
 }
 
 export interface RateLimitInfo {
@@ -33,8 +33,15 @@ export interface Provider {
 
 	/**
 	 * Prepare headers for the provider request
+	 * @param headers - Original request headers
+	 * @param accessToken - OAuth access token (for Bearer authentication)
+	 * @param apiKey - API key (provider-specific header)
 	 */
-	prepareHeaders(headers: Headers, accessToken?: string): Headers;
+	prepareHeaders(
+		headers: Headers,
+		accessToken?: string,
+		apiKey?: string,
+	): Headers;
 
 	/**
 	 * Parse rate limit information from response
