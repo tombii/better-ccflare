@@ -1,3 +1,4 @@
+import { getModelDisplayName } from "@ccflare/core";
 import type {
 	Agent,
 	AgentTool,
@@ -5,7 +6,6 @@ import type {
 	AllowedModel,
 } from "@ccflare/types";
 import { ALL_TOOLS, ALLOWED_MODELS } from "@ccflare/types";
-import { getModelDisplayName } from "@ccflare/core";
 import { Cpu, Edit3, FileText, Palette, Save, Shield, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { TOOL_PRESETS } from "../../constants";
@@ -75,7 +75,6 @@ const COLORS = [
 	{ name: "indigo", class: "bg-indigo-500" },
 	{ name: "cyan", class: "bg-cyan-500" },
 ];
-
 
 const TOOL_MODE_INFO = {
 	all: {

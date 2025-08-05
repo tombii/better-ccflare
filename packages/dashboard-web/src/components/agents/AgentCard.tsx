@@ -172,7 +172,7 @@ export function AgentCard({
 									className="flex items-center"
 								>
 									<span className="flex items-center gap-2">
-										{model.replace("claude-", "").replace("-20250514", "").replace("-20250805", "")}
+										{getModelDisplayName(model)}
 										{model.includes("opus") && (
 											<Badge variant="secondary" className="text-xs">
 												Premium
