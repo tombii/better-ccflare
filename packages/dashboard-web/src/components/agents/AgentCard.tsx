@@ -1,3 +1,4 @@
+import { getModelDisplayName } from "@ccflare/core";
 import type { Agent } from "@ccflare/types";
 import { ALLOWED_MODELS } from "@ccflare/types";
 import { Bot, Cpu, Edit3, Folder, Globe, Sparkles } from "lucide-react";
