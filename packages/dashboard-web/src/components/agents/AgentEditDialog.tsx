@@ -77,6 +77,7 @@ const COLORS = [
 
 const ALLOWED_MODELS: AllowedModel[] = [
 	"claude-opus-4-20250514",
+	"claude-opus-4-1-20250805",
 	"claude-sonnet-4-20250514",
 ];
 
@@ -435,7 +436,9 @@ export function AgentEditDialog({
 											<SelectItem key={m} value={m}>
 												<div className="flex items-center gap-2">
 													<Cpu className="h-4 w-4" />
-													{m.includes("opus")
+													{m.includes("opus-4-1")
+														? "Claude Opus 4.1"
+														: m.includes("opus-4")
 														? "Claude Opus 4"
 														: "Claude Sonnet 4"}
 													{m.includes("opus") && (
