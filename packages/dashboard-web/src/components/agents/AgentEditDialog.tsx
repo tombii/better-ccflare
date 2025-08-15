@@ -394,7 +394,7 @@ export function AgentEditDialog({
 					</DialogDescription>
 				</DialogHeader>
 
-				<Tabs defaultValue="general" className="flex-1 overflow-hidden">
+				<Tabs defaultValue="general" className="flex-1 overflow-y-auto">
 					<TabsList className="grid w-full grid-cols-4">
 						<TabsTrigger value="general" className="gap-2">
 							<FileText className="h-4 w-4" />
