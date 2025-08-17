@@ -12,6 +12,7 @@ import {
 	Zap,
 } from "lucide-react";
 import { useState } from "react";
+import { Link, useLocation } from "react-router-dom";
 import { cn } from "../lib/utils";
 import { ThemeToggle } from "./theme-toggle";
 import { Button } from "./ui/button";
@@ -20,26 +21,22 @@ import { Separator } from "./ui/separator";
 interface NavItem {
 	label: string;
 	icon: React.ComponentType<{ className?: string }>;
-	value: string;
+	path: string;
 	badge?: string;
 }
 
 const navItems: NavItem[] = [
-	{ label: "Overview", icon: LayoutDashboard, value: "overview" },
-	{ label: "Analytics", icon: BarChart3, value: "analytics" },
-	{ label: "Requests", icon: Activity, value: "requests" },
-	{ label: "Accounts", icon: Users, value: "accounts" },
-	{ label: "Agents", icon: Bot, value: "agents" },
-	{ label: "Logs", icon: FileText, value: "logs" },
+	{ label: "Overview", icon: LayoutDashboard, path: "/" },
+	{ label: "Analytics", icon: BarChart3, path: "/analytics" },
+	{ label: "Requests", icon: Activity, path: "/requests" },
+	{ label: "Accounts", icon: Users, path: "/accounts" },
+	{ label: "Agents", icon: Bot, path: "/agents" },
+	{ label: "Logs", icon: FileText, path: "/logs" },
 ];
 
-interface NavigationProps {
-	activeTab: string;
-	onTabChange: (tab: string) => void;
-}
-
-export function Navigation({ activeTab, onTabChange }: NavigationProps) {
+export function Navigation() {
 	const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+	const location = useLocation();
 
 	return (
 		<>
@@ -106,29 +103,30 @@ export function Navigation({ activeTab, onTabChange }: NavigationProps) {
 					<nav className="flex-1 space-y-1 p-4">
 						{navItems.map((item) => {
 							const Icon = item.icon;
-							const isActive = activeTab === item.value;
+							const isActive = location.pathname === item.path;
 							return (
-								<Button
-									key={item.value}
-									variant={isActive ? "secondary" : "ghost"}
-									className={cn(
-										"w-full justify-start gap-3 transition-all",
-										isActive &&
-											"bg-primary/10 text-primary hover:bg-primary/20",
-									)}
-									onClick={() => {
-										onTabChange(item.value);
-										setIsMobileMenuOpen(false);
-									}}
+								<Link
+									key={item.path}
+									to={item.path}
+									onClick={() => setIsMobileMenuOpen(false)}
 								>
-									<Icon className="h-4 w-4" />
-									{item.label}
-									{item.badge && (
-										<span className="ml-auto rounded-full bg-primary/20 px-2 py-0.5 text-xs font-medium">
-											{item.badge}
-										</span>
-									)}
-								</Button>
+									<Button
+										variant={isActive ? "secondary" : "ghost"}
+										className={cn(
+											"w-full justify-start gap-3 transition-all",
+											isActive &&
+												"bg-primary/10 text-primary hover:bg-primary/20",
+										)}
+									>
+										<Icon className="h-4 w-4" />
+										{item.label}
+										{item.badge && (
+											<span className="ml-auto rounded-full bg-primary/20 px-2 py-0.5 text-xs font-medium">
+												{item.badge}
+											</span>
+										)}
+									</Button>
+								</Link>
 							);
 						})}
 					</nav>
