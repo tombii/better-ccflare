@@ -102,3 +102,7 @@ MIT - See [LICENSE](LICENSE) for details
 <p align="center">
   Built with ❤️ for developers who ship
 </p>
+
+[![Mentioned in Awesome Claude Code](https://awesome.re/mentioned-badge-flat.svg)](https://github.com/hesreallyhim/awesome-claude-code)
+
+[![Mentioned in Awesome Claude Code](https://awesome.re/mentioned-badge.svg)](https://github.com/hesreallyhim/awesome-claude-code)
