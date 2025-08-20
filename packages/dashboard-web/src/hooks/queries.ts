@@ -181,3 +181,34 @@ export const useUpdateAgent = () => {
 };
 
 // Note: Clear logs functionality appears to be removed from the API
+
+// Retention settings
+export const useRetention = () => {
+	return useQuery({
+		queryKey: ["retention"],
+		queryFn: () => api.getRetention(),
+	});
+};
+
+export const useSetRetention = () => {
+	const queryClient = useQueryClient();
+	return useMutation({
+		mutationFn: (partial: { payloadDays?: number; requestDays?: number }) =>
+			api.setRetention(partial),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ["retention"] });
+		},
+	});
+};
+
+export const useCleanupNow = () => {
+	return useMutation({
+		mutationFn: () => api.cleanupNow(),
+	});
+};
+
+export const useCompactDb = () => {
+	return useMutation({
+		mutationFn: () => api.compactDb(),
+	});
+};
