@@ -198,10 +198,6 @@ export default function startServer(options?: {
 
 			// Dashboard routes (only if enabled)
 			if (withDashboard) {
-				if (url.pathname === "/" || url.pathname === "/dashboard") {
-					return serveDashboardFile("/index.html", "text/html");
-				}
-
 				// Serve dashboard static assets
 				if ((dashboardManifest as Record<string, string>)[url.pathname]) {
 					return serveDashboardFile(
@@ -209,6 +205,15 @@ export default function startServer(options?: {
 						undefined,
 						CACHE.CACHE_CONTROL_STATIC,
 					);
+				}
+
+				// For all non-API routes, serve the dashboard index.html (client-side routing)
+				// This allows React Router to handle all dashboard routes without maintaining a list
+				if (
+					!url.pathname.startsWith("/api/") &&
+					!url.pathname.startsWith("/v1/")
+				) {
+					return serveDashboardFile("/index.html", "text/html");
 				}
 			}
 
