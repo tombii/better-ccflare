@@ -102,6 +102,8 @@ The configuration file is stored at:
 | `RETRY_BACKOFF` | `retry_backoff` | number | `RETRY_BACKOFF=1.5` |
 | `SESSION_DURATION_MS` | `session_duration_ms` | number | `SESSION_DURATION_MS=3600000` |
 | `PORT` | `port` | number | `PORT=3000` |
+| `DATA_RETENTION_DAYS` | `data_retention_days` | number | `DATA_RETENTION_DAYS=7` (payloads) |
+| `REQUEST_RETENTION_DAYS` | `request_retention_days` | number | `REQUEST_RETENTION_DAYS=365` (metadata) |
 | `ccflare_CONFIG_PATH` | - | string | `ccflare_CONFIG_PATH=/etc/ccflare.json` |
 
 ### Additional Environment Variables
@@ -389,3 +391,35 @@ export LOG_FORMAT=json  # For structured logging
 ```
 
 This provides detailed configuration loading information and operation logs.
+
+#### Get Retention
+```http
+GET /api/config/retention
+```
+
+Response:
+```json
+{ "payloadDays": 7, "requestDays": 365 }
+```
+
+Note: Payload retention applies to request/response JSON payloads. Request metadata retention controls how long rows in the `requests` table are kept (affects analytics beyond the window).
+
+#### Set Retention
+```http
+POST /api/config/retention
+Content-Type: application/json
+
+{ "payloadDays": 14, "requestDays": 180 }
+```
+
+Response: `204 No Content`
+
+#### Manual Cleanup
+```http
+POST /api/maintenance/cleanup
+```
+
+Response:
+```json
+{ "removedRequests": 0, "removedPayloads": 123, "cutoffIso": "2025-08-20T12:34:56.000Z" }
+```
