@@ -30,6 +30,8 @@ export interface ConfigData {
 	session_duration_ms?: number;
 	port?: number;
 	default_agent_model?: string;
+	data_retention_days?: number;
+	request_retention_days?: number;
 	[key: string]: string | number | boolean | undefined;
 }
 
@@ -143,12 +145,50 @@ export class Config extends EventEmitter {
 		this.set("default_agent_model", model);
 	}
 
+	private clamp(n: number, min: number, max: number): number {
+		return Math.max(min, Math.min(max, n));
+	}
+
+	getDataRetentionDays(): number {
+		const fromEnv = process.env.DATA_RETENTION_DAYS;
+		if (fromEnv) {
+			const n = parseInt(fromEnv, 10);
+			if (!Number.isNaN(n)) return this.clamp(n, 1, 365);
+		}
+		const fromFile = this.data.data_retention_days;
+		if (typeof fromFile === "number") return this.clamp(fromFile, 1, 365);
+		return 7;
+	}
+
+	setDataRetentionDays(days: number): void {
+		const clamped = this.clamp(days, 1, 365);
+		this.set("data_retention_days", clamped);
+	}
+
+	getRequestRetentionDays(): number {
+		const fromEnv = process.env.REQUEST_RETENTION_DAYS;
+		if (fromEnv) {
+			const n = parseInt(fromEnv, 10);
+			if (!Number.isNaN(n)) return this.clamp(n, 1, 3650);
+		}
+		const fromFile = this.data.request_retention_days;
+		if (typeof fromFile === "number") return this.clamp(fromFile, 1, 3650);
+		return 365; // default metadata retention
+	}
+
+	setRequestRetentionDays(days: number): void {
+		const clamped = this.clamp(days, 1, 3650);
+		this.set("request_retention_days", clamped);
+	}
+
 	getAllSettings(): Record<string, string | number | boolean | undefined> {
 		// Include current strategy (which might come from env)
 		return {
 			...this.data,
 			lb_strategy: this.getStrategy(),
 			default_agent_model: this.getDefaultAgentModel(),
+			data_retention_days: this.getDataRetentionDays(),
+			request_retention_days: this.getRequestRetentionDays(),
 		};
 	}
 

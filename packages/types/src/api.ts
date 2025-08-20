@@ -14,3 +14,24 @@ export interface AgentUpdatePayload {
 	systemPrompt?: string;
 	mode?: "all" | "edit" | "read-only" | "execution" | "custom";
 }
+
+// Retention and maintenance API shapes
+export interface RetentionGetResponse {
+	payloadDays: number;
+	requestDays: number;
+}
+
+export interface RetentionSetRequest {
+	payloadDays?: number;
+	requestDays?: number;
+}
+
+export interface CleanupResponse {
+	removedRequests: number;
+	removedPayloads: number;
+	cutoffIso: string;
+}
+
+export interface CompactResponse {
+	ok: boolean;
+}
