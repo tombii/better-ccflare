@@ -13,6 +13,7 @@ import {
 import { container, SERVICE_KEYS } from "@ccflare/core-di";
 // Import React dashboard assets
 import dashboardManifest from "@ccflare/dashboard-web/dist/manifest.json";
+import type { DatabaseOperations } from "@ccflare/database";
 import { AsyncDbWriter, DatabaseFactory } from "@ccflare/database";
 import { APIRouter } from "@ccflare/http-api";
 import { SessionStrategy } from "@ccflare/load-balancer";
@@ -78,6 +79,33 @@ function serveDashboardFile(
 
 // Module-level server instance
 let serverInstance: ReturnType<typeof serve> | null = null;
+let stopRetentionJob: (() => void) | null = null;
+
+// Startup maintenance (one-shot): cleanup + compact
+function runStartupMaintenance(config: Config, dbOps: DatabaseOperations) {
+	const log = new Logger("StartupMaintenance");
+	try {
+		const payloadDays = config.getDataRetentionDays();
+		const requestDays = config.getRequestRetentionDays();
+		const { removedRequests, removedPayloads } = dbOps.cleanupOldRequests(
+			payloadDays * 24 * 60 * 60 * 1000,
+			requestDays * 24 * 60 * 60 * 1000,
+		);
+		log.info(
+			`Startup cleanup removed ${removedRequests} requests and ${removedPayloads} payloads (payload=${payloadDays}d, requests=${requestDays}d)`,
+		);
+	} catch (err) {
+		log.error(`Startup cleanup error: ${err}`);
+	}
+	try {
+		dbOps.compact();
+		log.info("Database compacted at startup");
+	} catch (err) {
+		log.error(`Database compaction error: ${err}`);
+	}
+	// Return a no-op stopper for compatibility
+	return () => {};
+}
 
 // Export for programmatic use
 export default function startServer(options?: {
@@ -127,6 +155,9 @@ export default function startServer(options?: {
 	setPricingLogger(pricingLogger);
 
 	const apiRouter = new APIRouter({ db, config, dbOps });
+
+	// Run startup maintenance once (cleanup + compact)
+	stopRetentionJob = runStartupMaintenance(config, dbOps);
 
 	// Initialize load balancing strategy (will be created after runtime config)
 
@@ -276,6 +307,10 @@ Available endpoints:
 async function handleGracefulShutdown(signal: string) {
 	console.log(`\n👋 Received ${signal}, shutting down gracefully...`);
 	try {
+		if (stopRetentionJob) {
+			stopRetentionJob();
+			stopRetentionJob = null;
+		}
 		terminateUsageWorker();
 		await shutdown();
 		console.log("✅ Shutdown complete");
