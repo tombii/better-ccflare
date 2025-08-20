@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { useState } from "react";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { AccountsTab } from "./components/AccountsTab";
 import { AgentsTab } from "./components/AgentsTab";
 import { AnalyticsTab } from "./components/AnalyticsTab";
@@ -20,33 +20,55 @@ const queryClient = new QueryClient({
 	},
 });
 
-export function App() {
-	const [activeTab, setActiveTab] = useState("overview");
+const routes = [
+	{
+		path: "/",
+		element: <OverviewTab />,
+		title: "Dashboard Overview",
+		subtitle: "Monitor your ccflare performance and usage",
+	},
+	{
+		path: "/analytics",
+		element: <AnalyticsTab />,
+		title: "Analytics",
+		subtitle: "Deep dive into your usage patterns and trends",
+	},
+	{
+		path: "/requests",
+		element: <RequestsTab />,
+		title: "Request History",
+		subtitle: "View detailed request and response data",
+	},
+	{
+		path: "/accounts",
+		element: <AccountsTab />,
+		title: "Account Management",
+		subtitle: "Manage your OAuth accounts and settings",
+	},
+	{
+		path: "/agents",
+		element: <AgentsTab />,
+		title: "Agent Management",
+		subtitle: "Discover and manage Claude Code agents",
+	},
+	{
+		path: "/logs",
+		element: <LogsTab />,
+		title: "System Logs",
+		subtitle: "Real-time system logs and debugging information",
+	},
+];
 
-	const renderContent = () => {
-		switch (activeTab) {
-			case "overview":
-				return <OverviewTab />;
-			case "analytics":
-				return <AnalyticsTab />;
-			case "requests":
-				return <RequestsTab />;
-			case "accounts":
-				return <AccountsTab />;
-			case "agents":
-				return <AgentsTab />;
-			case "logs":
-				return <LogsTab />;
-			default:
-				return <OverviewTab />;
-		}
-	};
+export function App() {
+	const location = useLocation();
+	const currentRoute =
+		routes.find((route) => route.path === location.pathname) || routes[0];
 
 	return (
 		<QueryClientProvider client={queryClient}>
 			<ThemeProvider>
 				<div className="min-h-screen bg-background">
-					<Navigation activeTab={activeTab} onTabChange={setActiveTab} />
+					<Navigation />
 
 					{/* Main Content */}
 					<main className="lg:pl-64">
@@ -58,32 +80,25 @@ export function App() {
 							{/* Page Header */}
 							<div className="mb-8">
 								<h1 className="text-3xl font-bold gradient-text">
-									{activeTab === "overview" && "Dashboard Overview"}
-									{activeTab === "analytics" && "Analytics"}
-									{activeTab === "requests" && "Request History"}
-									{activeTab === "accounts" && "Account Management"}
-									{activeTab === "agents" && "Agent Management"}
-									{activeTab === "logs" && "System Logs"}
+									{currentRoute.title}
 								</h1>
 								<p className="text-muted-foreground mt-2">
-									{activeTab === "overview" &&
-										"Monitor your ccflare performance and usage"}
-									{activeTab === "analytics" &&
-										"Deep dive into your usage patterns and trends"}
-									{activeTab === "requests" &&
-										"View detailed request and response data"}
-									{activeTab === "accounts" &&
-										"Manage your OAuth accounts and settings"}
-									{activeTab === "agents" &&
-										"Discover and manage Claude Code agents"}
-									{activeTab === "logs" &&
-										"Real-time system logs and debugging information"}
+									{currentRoute.subtitle}
 								</p>
 							</div>
 
 							{/* Tab Content */}
 							<div className="animate-in fade-in-0 duration-200">
-								{renderContent()}
+								<Routes>
+									{routes.map((route) => (
+										<Route
+											key={route.path}
+											path={route.path}
+											element={route.element}
+										/>
+									))}
+									<Route path="*" element={<Navigate to="/" replace />} />
+								</Routes>
 							</div>
 						</div>
 					</main>
