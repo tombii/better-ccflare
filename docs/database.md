@@ -429,15 +429,35 @@ PRAGMA wal_checkpoint(PASSIVE);
 
 ### Data Growth Management
 
-1. **Request History**: Implement periodic cleanup of old request records:
+Default data retention:
+- Payloads: 7 days (configurable via `DATA_RETENTION_DAYS` / `data_retention_days`)
+- Request metadata: 365 days (configurable via `REQUEST_RETENTION_DAYS` / `request_retention_days`)
+
+The server performs automatic cleanup at startup (one-shot), removing payloads older than the payload retention window, then removing any orphaned payloads. It also deletes request rows older than the request metadata retention window.
+
+You can change both via environment variables, the config file, or the dashboard (Overview → Data Retention). A manual “Clean up now” action is also available. There is no periodic cleanup job; use the manual action if needed between restarts.
+
+1. **Payload Storage**: Periodic cleanup of old payloads:
 ```sql
-DELETE FROM requests WHERE timestamp < ?;
+DELETE FROM request_payloads WHERE id IN (
+  SELECT id FROM requests WHERE timestamp < ?
+);
 DELETE FROM request_payloads WHERE id NOT IN (SELECT id FROM requests);
 ```
 
-2. **Payload Storage**: Consider external storage for large payloads to prevent database bloat.
+2. **Request Metadata**: Optional cleanup of old request records:
+```sql
+DELETE FROM requests WHERE timestamp < ?;
+```
 
-3. **Statistics Aggregation**: Pre-aggregate statistics for common time windows to reduce query complexity.
+3. **Compaction**: After cleanup, SQLite doesn't shrink the main DB file automatically. To reclaim disk space:
+```sql
+PRAGMA wal_checkpoint(TRUNCATE);
+VACUUM;
+```
+The dashboard exposes a "Compact database" button that runs these for you. Expect a brief pause during compaction.
+
+4. **Statistics Aggregation**: Pre-aggregate statistics for common time windows to reduce query complexity.
 
 ## API Methods
 
