@@ -304,6 +304,31 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		return this.requests.getRequestsByAccount(since);
 	}
 
+	// Cleanup operations (payload by age; request metadata by age; plus orphan sweep)
+	cleanupOldRequests(
+		payloadRetentionMs: number,
+		requestRetentionMs?: number,
+	): {
+		removedRequests: number;
+		removedPayloads: number;
+	} {
+		const now = Date.now();
+		const payloadCutoff = now - payloadRetentionMs;
+		let removedRequests = 0;
+		if (
+			typeof requestRetentionMs === "number" &&
+			Number.isFinite(requestRetentionMs)
+		) {
+			const requestCutoff = now - requestRetentionMs;
+			removedRequests = this.requests.deleteOlderThan(requestCutoff);
+		}
+		const removedPayloadsByAge =
+			this.requests.deletePayloadsOlderThan(payloadCutoff);
+		const removedOrphans = this.requests.deleteOrphanedPayloads();
+		const removedPayloads = removedPayloadsByAge + removedOrphans;
+		return { removedRequests, removedPayloads };
+	}
+
 	// Agent preference operations delegated to repository
 	getAgentPreference(agentId: string): { model: string } | null {
 		return this.agentPreferences.getPreference(agentId);
@@ -339,6 +364,13 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 	optimize(): void {
 		this.db.exec("PRAGMA optimize");
 		this.db.exec("PRAGMA wal_checkpoint(PASSIVE)");
+	}
+
+	/** Compact and reclaim disk space (blocks DB during operation) */
+	compact(): void {
+		// Ensure WAL is checkpointed and truncated, then VACUUM to rebuild file
+		this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+		this.db.exec("VACUUM");
 	}
 
 	/**
