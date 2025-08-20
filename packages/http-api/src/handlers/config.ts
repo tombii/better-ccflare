@@ -5,10 +5,11 @@ import {
 	STRATEGIES,
 	type StrategyName,
 	TIME_CONSTANTS,
+	validateNumber,
 	validateString,
 } from "@ccflare/core";
 import { BadRequest, errorResponse, jsonResponse } from "@ccflare/http-common";
-import type { ConfigResponse } from "../types";
+import type { ConfigResponse, RetentionSetRequest } from "../types";
 
 /**
  * Create config handlers
@@ -95,6 +96,52 @@ export function createConfigHandlers(config: Config) {
 			config.setDefaultAgentModel(modelValidation);
 
 			return jsonResponse({ success: true, model: modelValidation });
+		},
+
+		/**
+		 * Get current data retention in days
+		 */
+		getRetention: (): Response => {
+			return jsonResponse({
+				payloadDays: config.getDataRetentionDays(),
+				requestDays: config.getRequestRetentionDays(),
+			});
+		},
+
+		/**
+		 * Set data retention in days
+		 */
+		setRetention: async (req: Request): Promise<Response> => {
+			const body = (await req.json()) as RetentionSetRequest;
+			let updated = false;
+			if (body.payloadDays !== undefined) {
+				const payloadDays = validateNumber(body.payloadDays, "payloadDays", {
+					min: 1,
+					max: 365,
+					integer: true,
+				});
+				if (typeof payloadDays !== "number") {
+					return errorResponse(BadRequest("Invalid 'payloadDays'"));
+				}
+				config.setDataRetentionDays(payloadDays);
+				updated = true;
+			}
+			if (body.requestDays !== undefined) {
+				const requestDays = validateNumber(body.requestDays, "requestDays", {
+					min: 1,
+					max: 3650,
+					integer: true,
+				});
+				if (typeof requestDays !== "number") {
+					return errorResponse(BadRequest("Invalid 'requestDays'"));
+				}
+				config.setRequestRetentionDays(requestDays);
+				updated = true;
+			}
+			if (!updated) {
+				return errorResponse(BadRequest("No retention fields provided"));
+			}
+			return new Response(null, { status: 204 });
 		},
 	};
 }
