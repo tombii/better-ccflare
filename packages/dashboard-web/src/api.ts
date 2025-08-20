@@ -297,6 +297,36 @@ class API extends HttpClient {
 			throw error;
 		}
 	}
+
+	// Retention settings
+	async getRetention(): Promise<{ payloadDays: number; requestDays: number }> {
+		return this.get<{ payloadDays: number; requestDays: number }>(
+			"/api/config/retention",
+		);
+	}
+
+	async setRetention(partial: {
+		payloadDays?: number;
+		requestDays?: number;
+	}): Promise<void> {
+		await this.post("/api/config/retention", partial);
+	}
+
+	async cleanupNow(): Promise<{
+		removedRequests: number;
+		removedPayloads: number;
+		cutoffIso: string;
+	}> {
+		return this.post<{
+			removedRequests: number;
+			removedPayloads: number;
+			cutoffIso: string;
+		}>("/api/maintenance/cleanup");
+	}
+
+	async compactDb(): Promise<{ ok: boolean }> {
+		return this.post<{ ok: boolean }>("/api/maintenance/compact");
+	}
 }
 
 export const api = new API();
