@@ -21,6 +21,10 @@ import { createHealthHandler } from "./handlers/health";
 import { createLogsStreamHandler } from "./handlers/logs";
 import { createLogsHistoryHandler } from "./handlers/logs-history";
 import {
+	createCleanupHandler,
+	createCompactHandler,
+} from "./handlers/maintenance";
+import {
 	createOAuthCallbackHandler,
 	createOAuthInitHandler,
 } from "./handlers/oauth";
@@ -71,6 +75,8 @@ export class APIRouter {
 		const agentsHandler = createAgentsListHandler(dbOps);
 		const workspacesHandler = createWorkspacesListHandler();
 		const requestsStreamHandler = createRequestsStreamHandler();
+		const cleanupHandler = createCleanupHandler(dbOps, config);
+		const compactHandler = createCompactHandler(dbOps);
 
 		// Register routes
 		this.handlers.set("GET:/health", () => healthHandler());
@@ -121,6 +127,14 @@ export class APIRouter {
 		this.handlers.set("POST:/api/config/model", (req) =>
 			configHandlers.setDefaultAgentModel(req),
 		);
+		this.handlers.set("GET:/api/config/retention", () =>
+			configHandlers.getRetention(),
+		);
+		this.handlers.set("POST:/api/config/retention", (req) =>
+			configHandlers.setRetention(req),
+		);
+		this.handlers.set("POST:/api/maintenance/cleanup", () => cleanupHandler());
+		this.handlers.set("POST:/api/maintenance/compact", () => compactHandler());
 		this.handlers.set("GET:/api/logs/stream", () => logsStreamHandler());
 		this.handlers.set("GET:/api/logs/history", () => logsHistoryHandler());
 		this.handlers.set("GET:/api/analytics", (_req, url) => {
