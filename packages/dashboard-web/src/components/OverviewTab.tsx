@@ -10,6 +10,7 @@ import { useMemo, useState } from "react";
 import { REFRESH_INTERVALS } from "../constants";
 import { useAccounts, useAnalytics, useStats } from "../hooks/queries";
 import { ChartsSection } from "./overview/ChartsSection";
+import { DataRetentionCard } from "./overview/DataRetentionCard";
 import { LoadingSkeleton } from "./overview/LoadingSkeleton";
 import { MetricCard } from "./overview/MetricCard";
 import { RateLimitInfo } from "./overview/RateLimitInfo";
@@ -220,6 +221,7 @@ export function OverviewTab() {
 			{/* Configuration Row */}
 			<div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
 				<StrategyCard />
+				<DataRetentionCard />
 			</div>
 		</div>
 	);
