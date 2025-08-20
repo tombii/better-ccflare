@@ -378,4 +378,23 @@ export class RequestRepository extends BaseRepository<RequestData> {
 			successRate: row.success_rate,
 		}));
 	}
+
+	deleteOlderThan(cutoffTs: number): number {
+		return this.runWithChanges(`DELETE FROM requests WHERE timestamp < ?`, [
+			cutoffTs,
+		]);
+	}
+
+	deleteOrphanedPayloads(): number {
+		return this.runWithChanges(
+			`DELETE FROM request_payloads WHERE id NOT IN (SELECT id FROM requests)`,
+		);
+	}
+
+	deletePayloadsOlderThan(cutoffTs: number): number {
+		return this.runWithChanges(
+			`DELETE FROM request_payloads WHERE id IN (SELECT id FROM requests WHERE timestamp < ?)`,
+			[cutoffTs],
+		);
+	}
 }
