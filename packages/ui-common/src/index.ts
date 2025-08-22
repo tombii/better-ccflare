@@ -10,3 +10,4 @@ export * from "./presenters";
 // Export utilities
 export * from "./utils/clean-line-numbers";
 export * from "./utils/generate-message-key";
+export * from "./utils/normalize-text";
