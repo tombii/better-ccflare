@@ -3,6 +3,7 @@ import {
 	type MessageData,
 	type ToolUse,
 } from "@ccflare/types";
+import { normalizeText } from "../utils/normalize-text";
 
 export function parseRequestMessages(body: string | null): MessageData[] {
 	if (!body) return [];
@@ -20,11 +21,12 @@ export function parseRequestMessages(body: string | null): MessageData[] {
 						| Array<{
 								type: string;
 								text?: string;
+								thinking?: string;
 								id?: string;
 								name?: string;
 								input?: Record<string, unknown>;
 								tool_use_id?: string;
-								content?: string;
+								content?: string | Array<{ type: string; text?: string }>;
 						  }>;
 				}): MessageData | null => {
 					const message: MessageData = {
@@ -43,8 +45,8 @@ export function parseRequestMessages(body: string | null): MessageData[] {
 
 						for (const item of msg.content) {
 							if (item.type === "text") {
-								// Filter out system reminders
-								let text = item.text || "";
+							// Filter out system reminders
+								let text = normalizeText(item.text || "");
 								if (text.includes("<system-reminder>")) {
 									text = text
 										.split(/<system-reminder>[\s\S]*?<\/system-reminder>/g)
@@ -70,16 +72,31 @@ export function parseRequestMessages(body: string | null): MessageData[] {
 									name: item.name,
 									input: item.input,
 								});
-							} else if (item.type === "tool_result") {
+						} else if (item.type === "tool_result") {
+								const resultContent = Array.isArray((item as any).content)
+									? ((item as any).content as Array<{ type: string; text?: string }>)
+										.map((c) => normalizeText(typeof c.text === "string" ? c.text : ""))
+										.join("")
+									: typeof (item as any).content === "string"
+										? normalizeText((item as any).content as string)
+										: "";
 								message.toolResults?.push({
-									tool_use_id: item.tool_use_id || "",
-									content: item.content || "",
+									tool_use_id: (item as any).tool_use_id || "",
+									content: resultContent,
 								});
 								message.contentBlocks?.push({
 									type: ContentBlockType.ToolResult,
-									tool_use_id: item.tool_use_id,
-									content: item.content,
+									tool_use_id: (item as any).tool_use_id,
+									content: resultContent,
 								});
+						} else if (item.type === "thinking") {
+								const thinking = normalizeText((item as any).thinking || "");
+								if (thinking) {
+									message.contentBlocks?.push({
+										type: ContentBlockType.Thinking,
+										thinking,
+									});
+								}
 							}
 						}
 
@@ -113,6 +130,7 @@ export function parseAssistantMessage(body: string | null): MessageData | null {
 			content: "",
 			contentBlocks: [],
 			tools: [],
+			toolResults: [],
 		};
 
 		let currentContent = "";
@@ -203,28 +221,54 @@ export function parseAssistantMessage(body: string | null): MessageData | null {
 		if (!isStreaming) {
 			try {
 				const parsed = JSON.parse(body);
-				if (parsed.content) {
-					if (typeof parsed.content === "string") {
-						currentContent = parsed.content;
-					} else if (Array.isArray(parsed.content)) {
-						for (const item of parsed.content) {
-							if (item.type === "text" && item.text) {
-								currentContent += item.text;
-								message.contentBlocks?.push({
-									type: ContentBlockType.Text,
-									text: item.text,
-								});
-							} else if (item.type === "tool_use") {
-								message.tools?.push({
-									id: item.id,
-									name: item.name || "unknown",
-									input: item.input,
-								});
-								message.contentBlocks?.push({
-									type: ContentBlockType.ToolUse,
-									...item,
-								});
-							}
+					if (parsed.content) {
+						if (typeof parsed.content === "string") {
+							currentContent = normalizeText(parsed.content);
+						} else if (Array.isArray(parsed.content)) {
+							for (const item of parsed.content) {
+								if (item.type === "text" && item.text) {
+									const norm = normalizeText(item.text);
+									currentContent += norm;
+									message.contentBlocks?.push({
+										type: ContentBlockType.Text,
+										text: norm,
+									});
+								} else if (item.type === "tool_use") {
+									message.tools?.push({
+										id: item.id,
+										name: item.name || "unknown",
+										input: item.input,
+									});
+									message.contentBlocks?.push({
+										type: ContentBlockType.ToolUse,
+										...item,
+									});
+								} else if (item.type === "thinking") {
+									const thinking = normalizeText((item as any).thinking || "");
+									if (thinking) {
+										message.contentBlocks?.push({
+											type: ContentBlockType.Thinking,
+											thinking,
+										});
+									}
+								} else if (item.type === "tool_result") {
+									const resultContent = Array.isArray((item as any).content)
+										? ((item as any).content as Array<{ type: string; text?: string }>)
+												.map((c) => normalizeText(typeof c.text === "string" ? c.text : ""))
+												.join("")
+										: typeof (item as any).content === "string"
+											? normalizeText((item as any).content as string)
+											: "";
+									message.toolResults?.push({
+										tool_use_id: (item as any).tool_use_id || "",
+										content: resultContent,
+									});
+									message.contentBlocks?.push({
+										type: ContentBlockType.ToolResult,
+										tool_use_id: (item as any).tool_use_id,
+										content: resultContent,
+									});
+								}
 						}
 					}
 				}
@@ -246,7 +290,8 @@ export function parseAssistantMessage(body: string | null): MessageData | null {
 		if (
 			!message.content &&
 			!currentThinking &&
-			(!message.tools || message.tools.length === 0)
+			(!message.tools || message.tools.length === 0) &&
+			(!message.toolResults || message.toolResults.length === 0)
 		) {
 			return null;
 		}
