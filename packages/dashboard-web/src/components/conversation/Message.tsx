@@ -41,10 +41,11 @@ function MessageComponent({
 	const thinkingBlock = contentBlocks?.find(
 		(b) => b.type === ContentBlockType.Thinking,
 	);
-	const hasThinking =
-		thinkingBlock?.thinking &&
-		cleanLineNumbers(thinkingBlock.thinking).trim().length > 0;
-	const cleanedContent = content ? cleanLineNumbers(content).trim() : "";
+	const thinkingText =
+		typeof thinkingBlock?.thinking === "string" ? thinkingBlock.thinking : "";
+	const hasThinking = thinkingText && cleanLineNumbers(thinkingText).trim().length > 0;
+	const cleanedContent =
+		typeof content === "string" ? cleanLineNumbers(content).trim() : "";
 	const hasTools = tools?.length || 0;
 	const hasToolResults = toolResults?.length || 0;
 
@@ -93,9 +94,7 @@ function MessageComponent({
 					{/* Thinking block */}
 					{hasThinking && thinkingBlock && (
 						<div className="mb-2">
-							<ThinkingBlock
-								content={cleanLineNumbers(thinkingBlock.thinking || "")}
-							/>
+							<ThinkingBlock content={cleanLineNumbers(thinkingText)} />
 						</div>
 					)}
 
@@ -123,7 +122,11 @@ function MessageComponent({
 							{toolResults?.map((result, index) => (
 								<ToolResultBlock
 									key={`result-${result.tool_use_id || index}`}
-									content={cleanLineNumbers(result.content || "")}
+									content={
+										typeof result.content === "string"
+											? cleanLineNumbers(result.content)
+											: ""
+									}
 								/>
 							))}
 						</div>
