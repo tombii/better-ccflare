@@ -1,4 +1,5 @@
 import { NETWORK } from "@ccflare/core";
+import { Config } from "@ccflare/config";
 import { Box, Text, useInput } from "ink";
 
 interface ServerScreenProps {
@@ -7,7 +8,9 @@ interface ServerScreenProps {
 
 export function ServerScreen({ onBack }: ServerScreenProps) {
 	// Server is auto-started now, so just show the running status
-	const port = NETWORK.DEFAULT_PORT;
+	// Use the same logic as main.ts line 208
+	const config = new Config();
+	const port = config.getRuntime().port || NETWORK.DEFAULT_PORT;
 	const url = `http://localhost:${port}`;
 
 	useInput((input, key) => {
