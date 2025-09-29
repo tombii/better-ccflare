@@ -55,7 +55,14 @@ export async function beginAddAccount(
 export async function completeAddAccount(
 	options: AddAccountOptions & { code: string; flowData: OAuthFlowResult },
 ): Promise<void> {
-	const { name, mode = "max", tier = 1, code, flowData } = options;
+	const {
+		name,
+		mode = "max",
+		tier = 1,
+		priority = 0,
+		code,
+		flowData,
+	} = options;
 	const config = new Config();
 	const dbOps = DatabaseFactory.getInstance();
 
@@ -65,13 +72,14 @@ export async function completeAddAccount(
 	// Complete OAuth flow
 	console.log("\nExchanging code for tokens...");
 	const _account = await oauthFlow.complete(
-		{ sessionId: flowData.sessionId, code, tier, name },
+		{ sessionId: flowData.sessionId, code, tier, name, priority },
 		flowData,
 	);
 
 	console.log(`\nAccount '${name}' added successfully!`);
 	console.log(`Type: ${mode === "max" ? "Claude Max" : "Claude Console"}`);
 	console.log(`Tier: ${tier}x`);
+	console.log(`Priority: ${priority}`);
 }
 
 /**
@@ -84,6 +92,7 @@ export async function addAccount(options: AddAccountOptions): Promise<void> {
 		name: options.name,
 		mode: options.mode || "max",
 		tier: options.tier || 1,
+		priority: options.priority || 0,
 	});
 }
 

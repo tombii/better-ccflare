@@ -9,10 +9,12 @@ export interface ParsedArgs {
 	addAccount?: string;
 	mode?: "max" | "console" | "zai";
 	tier?: 1 | 5 | 20;
+	priority?: number;
 	list?: boolean;
 	remove?: string;
 	pause?: string;
 	resume?: string;
+	setPriority?: [string, string];
 	analyze?: boolean;
 	resetStats?: boolean;
 	clearHistory?: boolean;
@@ -22,7 +24,7 @@ export interface ParsedArgs {
 
 export function parseArgs(args: string[]): ParsedArgs {
 	try {
-		const { values } = nodeParseArgs({
+		const { values, positionals } = nodeParseArgs({
 			args,
 			options: {
 				help: { type: "boolean", short: "h" },
@@ -33,10 +35,12 @@ export function parseArgs(args: string[]): ParsedArgs {
 				"add-account": { type: "string" },
 				mode: { type: "string" },
 				tier: { type: "string" },
+				priority: { type: "string" },
 				list: { type: "boolean" },
 				remove: { type: "string" },
 				pause: { type: "string" },
 				resume: { type: "string" },
+				"set-priority": { type: "boolean" },
 				analyze: { type: "boolean" },
 				"reset-stats": { type: "boolean" },
 				"clear-history": { type: "boolean" },
@@ -58,10 +62,14 @@ export function parseArgs(args: string[]): ParsedArgs {
 		if (values["add-account"]) result.addAccount = values["add-account"];
 		if (values.mode) result.mode = values.mode as "max" | "console" | "zai";
 		if (values.tier) result.tier = parseInt(values.tier, 10) as 1 | 5 | 20;
+		if (values.priority) result.priority = parseInt(values.priority, 10);
 		if (values.list) result.list = true;
 		if (values.remove) result.remove = values.remove;
 		if (values.pause) result.pause = values.pause;
 		if (values.resume) result.resume = values.resume;
+		if (values["set-priority"] && positionals.length >= 2) {
+			result.setPriority = [positionals[0], positionals[1]];
+		}
 		if (values.analyze) result.analyze = true;
 		if (values["reset-stats"]) result.resetStats = true;
 		if (values["clear-history"]) result.clearHistory = true;
