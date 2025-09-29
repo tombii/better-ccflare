@@ -16,6 +16,7 @@ https://github.com/user-attachments/assets/c859872f-ca5e-4f8b-b6a0-7cc7461fe62a
 - **📊 Request-Level Analytics** - Track latency, token usage, and costs in real-time  
 - **🔍 Deep Debugging** - Full request/response logging and error traces
 - **⚡ <10ms Overhead** - Minimal performance impact on your API calls
+- **Supports z.ai coder plan** - Setup Claude and z.ai accounts and prioritize in which order they are used
 - **💸 Free & Open Source** - Run it yourself, modify it, own your infrastructure
 
 ## Quick Start
