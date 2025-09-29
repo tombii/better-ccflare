@@ -48,12 +48,14 @@ Options:
   --logs [N]           Stream latest N lines then follow
   --stats              Show statistics (JSON output)
   --add-account <name> Add a new account
-    --mode <max|console>  Account mode (default: max)
+    --mode <max|console|zai>  Account mode (default: max)
     --tier <1|5|20>       Account tier (default: 1)
+    --priority <number>   Account priority (default: 0)
   --list               List all accounts
   --remove <name>      Remove an account
   --pause <name>       Pause an account
   --resume <name>      Resume an account
+  --set-priority <name> <priority>  Set account priority
   --analyze            Analyze database performance
   --reset-stats        Reset usage statistics
   --clear-history      Clear request history
@@ -116,6 +118,7 @@ Examples:
 			name: parsed.addAccount,
 			mode: parsed.mode || "max",
 			tier: parsed.tier || 1,
+			priority: parsed.priority || 0,
 		});
 		console.log(`✅ Account "${parsed.addAccount}" added successfully`);
 		return;
@@ -128,7 +131,9 @@ Examples:
 		} else {
 			console.log("\nAccounts:");
 			accounts.forEach((acc) => {
-				console.log(`  - ${acc.name} (${acc.mode} mode, tier ${acc.tier})`);
+				console.log(
+					`  - ${acc.name} (${acc.mode} mode, tier ${acc.tier}, priority ${acc.priority})`,
+				);
 			});
 		}
 		return;
@@ -163,6 +168,23 @@ Examples:
 
 	if (parsed.resume) {
 		const result = await tuiCore.resumeAccount(parsed.resume);
+		console.log(result.message);
+		if (!result.success) {
+			process.exit(1);
+		}
+		return;
+	}
+
+	if (parsed.setPriority) {
+		const [name, priorityStr] = parsed.setPriority;
+		const priority = parseInt(priorityStr, 10);
+
+		if (Number.isNaN(priority)) {
+			console.error(`❌ Invalid priority value: ${priorityStr}`);
+			process.exit(1);
+		}
+
+		const result = await tuiCore.updateAccountPriority(name, priority);
 		console.log(result.message);
 		if (!result.success) {
 			process.exit(1);
