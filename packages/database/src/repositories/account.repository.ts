@@ -4,14 +4,16 @@ import { BaseRepository } from "./base.repository";
 export class AccountRepository extends BaseRepository<Account> {
 	findAll(): Account[] {
 		const rows = this.query<AccountRow>(`
-			SELECT 
+			SELECT
 				id, name, provider, api_key, refresh_token, access_token,
 				expires_at, created_at, last_used, request_count, total_requests,
 				rate_limited_until, session_start, session_request_count,
 				COALESCE(account_tier, 1) as account_tier,
 				COALESCE(paused, 0) as paused,
-				rate_limit_reset, rate_limit_status, rate_limit_remaining
+				rate_limit_reset, rate_limit_status, rate_limit_remaining,
+				COALESCE(priority, 0) as priority
 			FROM accounts
+			ORDER BY priority DESC
 		`);
 		return rows.map(toAccount);
 	}
@@ -19,13 +21,14 @@ export class AccountRepository extends BaseRepository<Account> {
 	findById(accountId: string): Account | null {
 		const row = this.get<AccountRow>(
 			`
-			SELECT 
+			SELECT
 				id, name, provider, api_key, refresh_token, access_token,
 				expires_at, created_at, last_used, request_count, total_requests,
 				rate_limited_until, session_start, session_request_count,
 				COALESCE(account_tier, 1) as account_tier,
 				COALESCE(paused, 0) as paused,
-				rate_limit_reset, rate_limit_status, rate_limit_remaining
+				rate_limit_reset, rate_limit_status, rate_limit_remaining,
+				COALESCE(priority, 0) as priority
 			FROM accounts
 			WHERE id = ?
 		`,
@@ -127,5 +130,12 @@ export class AccountRepository extends BaseRepository<Account> {
 
 	rename(accountId: string, newName: string): void {
 		this.run(`UPDATE accounts SET name = ? WHERE id = ?`, [newName, accountId]);
+	}
+
+	updatePriority(accountId: string, priority: number): void {
+		this.run(`UPDATE accounts SET priority = ? WHERE id = ?`, [
+			priority,
+			accountId,
+		]);
 	}
 }

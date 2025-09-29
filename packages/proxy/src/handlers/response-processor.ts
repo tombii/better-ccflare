@@ -43,11 +43,13 @@ export function handleRateLimitResponse(
  * @param account - The account to update
  * @param response - The response to extract metadata from
  * @param ctx - The proxy context
+ * @param requestId - The request ID for usage tracking
  */
 export function updateAccountMetadata(
 	account: Account,
 	response: Response,
 	ctx: ProxyContext,
+	requestId?: string,
 ): void {
 	// Update basic usage
 	ctx.asyncWriter.enqueue(() => ctx.dbOps.updateAccountUsage(account.id));
@@ -82,6 +84,23 @@ export function updateAccountMetadata(
 			}
 		})();
 	}
+
+	// Extract usage info if supported
+	if (ctx.provider.extractUsageInfo && requestId) {
+		const extractUsageInfo = ctx.provider.extractUsageInfo.bind(ctx.provider);
+		(async () => {
+			const usageInfo = await extractUsageInfo(response.clone() as Response);
+			if (usageInfo) {
+				log.debug(
+					`Extracted usage info for account ${account.name}: ${JSON.stringify(usageInfo)}`,
+				);
+				// Store usage info in database
+				ctx.asyncWriter.enqueue(() =>
+					ctx.dbOps.updateRequestUsage(requestId, usageInfo),
+				);
+			}
+		})();
+	}
 }
 
 /**
@@ -89,12 +108,14 @@ export function updateAccountMetadata(
  * @param response - The provider response
  * @param account - The account used
  * @param ctx - The proxy context
+ * @param requestId - The request ID for usage tracking
  * @returns Whether the response is rate-limited
  */
 export function processProxyResponse(
 	response: Response,
 	account: Account,
 	ctx: ProxyContext,
+	requestId?: string,
 ): boolean {
 	const isStream = ctx.provider.isStreamingResponse?.(response) ?? false;
 	const rateLimitInfo = ctx.provider.parseRateLimit(response);
@@ -103,12 +124,12 @@ export function processProxyResponse(
 	if (!isStream && rateLimitInfo.isRateLimited && rateLimitInfo.resetTime) {
 		handleRateLimitResponse(account, rateLimitInfo, ctx);
 		// Also update metadata for rate-limited responses
-		updateAccountMetadata(account, response, ctx);
+		updateAccountMetadata(account, response, ctx, requestId);
 		return true; // Signal rate limit
 	}
 
 	// Update account metadata in background
-	updateAccountMetadata(account, response, ctx);
+	updateAccountMetadata(account, response, ctx, requestId);
 	return false;
 }
 

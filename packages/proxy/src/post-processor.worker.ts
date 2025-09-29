@@ -172,15 +172,36 @@ function extractUsageFromData(data: string, state: RequestState): void {
 			state.firstTokenTimestamp = Date.now();
 		}
 
-		// Handle message_delta - provider's authoritative output token count AND end time
+		// Handle message_delta - provider's authoritative token counts AND end time
 		if (parsed.type === "message_delta") {
 			state.lastTokenTimestamp = Date.now();
+			log.info(`ZAI message_delta event received with usage:`, parsed.usage);
 
-			if (parsed.usage?.output_tokens !== undefined) {
-				state.providerFinalOutputTokens = parsed.usage.output_tokens;
-				state.usage.outputTokens = parsed.usage.output_tokens;
+			if (parsed.usage) {
+				// Update all token counts from message_delta (authoritative for zai)
+				if (parsed.usage.output_tokens !== undefined) {
+					state.providerFinalOutputTokens = parsed.usage.output_tokens;
+					state.usage.outputTokens = parsed.usage.output_tokens;
+					log.info(
+						`ZAI set providerFinalOutputTokens to: ${parsed.usage.output_tokens}`,
+					);
+				}
+				if (parsed.usage.input_tokens !== undefined) {
+					state.usage.inputTokens = parsed.usage.input_tokens;
+					log.info(`ZAI set inputTokens to: ${parsed.usage.input_tokens}`);
+				}
+				if (parsed.usage.cache_read_input_tokens !== undefined) {
+					state.usage.cacheReadInputTokens =
+						parsed.usage.cache_read_input_tokens;
+					log.info(
+						`ZAI set cacheReadInputTokens to: ${parsed.usage.cache_read_input_tokens}`,
+					);
+				}
 				return; // No further processing needed
+			} else {
+				log.info(`ZAI message_delta event has no usage information`);
 			}
+			// Even if no usage info, we still set the timestamp for duration calculation
 		}
 
 		// Count tokens locally as fallback (but provider's count takes precedence)
@@ -370,6 +391,16 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 			(state.usage.cacheReadInputTokens || 0) +
 			(state.usage.cacheCreationInputTokens || 0);
 
+		// Debug: Log the values being used for calculation
+		log.info(
+			`Token calculation debug - finalOutputTokens: ${finalOutputTokens}, providerFinalOutputTokens: ${state.providerFinalOutputTokens}, usage.outputTokens: ${state.usage.outputTokens}, outputTokensComputed: ${state.usage.outputTokensComputed}, totalTokens: ${state.usage.totalTokens}`,
+		);
+
+		// Log timestamp info
+		log.info(
+			`Timestamp debug - firstTokenTimestamp: ${state.firstTokenTimestamp}, lastTokenTimestamp: ${state.lastTokenTimestamp}, responseTime: ${responseTime}`,
+		);
+
 		state.usage.costUsd = await estimateCostUSD(state.usage.model, {
 			inputTokens: state.usage.inputTokens,
 			outputTokens: finalOutputTokens,
@@ -377,19 +408,56 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 			cacheCreationInputTokens: state.usage.cacheCreationInputTokens,
 		});
 
-		// Calculate tokens per second using actual streaming duration
-		if (
-			state.firstTokenTimestamp &&
-			state.lastTokenTimestamp &&
-			finalOutputTokens > 0
-		) {
-			const durationSec =
-				(state.lastTokenTimestamp - state.firstTokenTimestamp) / 1000;
-			if (durationSec > 0) {
-				state.usage.tokensPerSecond = finalOutputTokens / durationSec;
-			} else if (finalOutputTokens > 0) {
-				// If tokens were generated instantly, use a very small duration
+		// Calculate tokens per second - zai specific vs other providers
+		if (finalOutputTokens > 0) {
+			const totalDurationSec = responseTime / 1000;
+
+			if (totalDurationSec > 0) {
+				// Check if this is a zai model (glm-*)
+				const isZaiModel = state.usage.model?.startsWith("glm-");
+
+				if (isZaiModel) {
+					// For zai models, use total response time (more intuitive for users)
+					state.usage.tokensPerSecond = finalOutputTokens / totalDurationSec;
+					log.info(
+						`ZAI token/s calculation: ${finalOutputTokens} tokens / ${totalDurationSec}s = ${state.usage.tokensPerSecond} tok/s (using total response time: ${responseTime}ms)`,
+					);
+				} else {
+					// For other providers (like Anthropic), use streaming duration if available
+					if (state.firstTokenTimestamp && state.lastTokenTimestamp) {
+						const streamingDurationMs =
+							state.lastTokenTimestamp - state.firstTokenTimestamp;
+						const streamingDurationSec = streamingDurationMs / 1000;
+
+						if (streamingDurationMs > 0) {
+							// Use streaming duration for generation speed
+							state.usage.tokensPerSecond =
+								finalOutputTokens / streamingDurationSec;
+							log.info(
+								`Token/s calculation (streaming): ${finalOutputTokens} tokens / ${streamingDurationSec}s = ${state.usage.tokensPerSecond} tok/s (streaming duration: ${streamingDurationMs}ms)`,
+							);
+						} else {
+							// Fallback to total response time
+							state.usage.tokensPerSecond =
+								finalOutputTokens / totalDurationSec;
+							log.info(
+								`Token/s calculation (fallback): ${finalOutputTokens} tokens / ${totalDurationSec}s = ${state.usage.tokensPerSecond} tok/s (total response time: ${responseTime}ms)`,
+							);
+						}
+					} else {
+						// No streaming timestamps available, use total response time
+						state.usage.tokensPerSecond = finalOutputTokens / totalDurationSec;
+						log.info(
+							`Token/s calculation (no timestamps): ${finalOutputTokens} tokens / ${totalDurationSec}s = ${state.usage.tokensPerSecond} tok/s (total response time: ${responseTime}ms)`,
+						);
+					}
+				}
+			} else {
+				// If response time is 0, use a very small duration
 				state.usage.tokensPerSecond = finalOutputTokens / 0.001;
+				log.info(
+					`Token/s calculation (instant): ${finalOutputTokens} tokens / 0.001s = ${state.usage.tokensPerSecond} tok/s`,
+				);
 			}
 		}
 	}

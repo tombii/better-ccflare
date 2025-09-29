@@ -90,6 +90,32 @@ const BUNDLED_PRICING: ApiResponse = {
 	},
 };
 
+// Pricing for Zhipu AI models (GLM models)
+BUNDLED_PRICING.zai = {
+	models: {
+		"glm-4.5": {
+			id: "glm-4.5",
+			name: "GLM-4.5",
+			cost: {
+				input: 0.6,
+				output: 2.2,
+				cache_read: 0.11,
+				cache_write: 0,
+			},
+		},
+		"glm-4.5-air": {
+			id: "glm-4.5-air",
+			name: "GLM-4.5-Air",
+			cost: {
+				input: 0.2,
+				output: 1.1,
+				cache_read: 0.03,
+				cache_write: 0,
+			},
+		},
+	},
+};
+
 interface Logger {
 	warn(message: string, ...args: unknown[]): void;
 }
@@ -133,6 +159,127 @@ class PriceCatalogue {
 		} catch (error) {
 			this.logger?.warn("Failed to create cache directory: %s", error);
 		}
+	}
+
+	/**
+	 * Merge remote pricing data with bundled pricing data to ensure all models are included
+	 */
+	private mergePricingData(
+		remote: ApiResponse,
+		bundled: ApiResponse,
+	): ApiResponse {
+		const merged: ApiResponse = {};
+
+		// List of preferred providers in priority order
+		const preferredProviders = ["zai", "anthropic"];
+
+		// First, add preferred providers from remote data
+		for (const providerName of preferredProviders) {
+			if (remote[providerName]) {
+				merged[providerName] = remote[providerName];
+			}
+		}
+
+		// Then add remaining providers from remote data, filtering out problematic ones
+		for (const [providerName, providerData] of Object.entries(remote)) {
+			if (
+				!merged[providerName] &&
+				!this.shouldFilterProvider(providerName, providerData)
+			) {
+				merged[providerName] = providerData;
+			}
+		}
+
+		// For each provider in bundled pricing, ensure it exists in merged data
+		for (const [providerName, providerData] of Object.entries(bundled)) {
+			if (!merged[providerName]) {
+				this.logger?.warn(
+					"Provider %s not found in remote pricing, using bundled data",
+					providerName,
+				);
+				merged[providerName] = providerData;
+			} else if (providerData.models) {
+				// Merge models from bundled into remote data
+				if (!merged[providerName].models) {
+					merged[providerName].models = {};
+				}
+
+				// Add any missing models from bundled data
+				let addedModels = 0;
+				for (const [modelId, modelData] of Object.entries(
+					providerData.models,
+				)) {
+					if (!merged[providerName].models?.[modelId]) {
+						merged[providerName].models[modelId] = modelData;
+						addedModels++;
+					}
+				}
+
+				if (addedModels > 0) {
+					this.logger?.warn(
+						"Added %d missing models for provider %s from bundled pricing",
+						addedModels,
+						providerName,
+					);
+				}
+			}
+		}
+
+		return merged;
+	}
+
+	/**
+	 * Determine if a provider should be filtered out (e.g., zero-cost duplicates)
+	 */
+	private shouldFilterProvider(
+		providerName: string,
+		providerData: { models?: Record<string, any> },
+	): boolean {
+		// Filter out providers with names that suggest they're coding plans or special variants
+		const problematicPatterns = [
+			/-coding-plan$/,
+			/-special$/,
+			/-demo$/,
+			/-free$/,
+			/-trial$/,
+		];
+
+		if (problematicPatterns.some((pattern) => pattern.test(providerName))) {
+			this.logger?.warn(
+				"Filtering out provider %s due to problematic name pattern",
+				providerName,
+			);
+			return true;
+		}
+
+		// Filter out providers that have models with all zero costs
+		if (providerData.models) {
+			const modelEntries = Object.entries(providerData.models);
+			if (modelEntries.length > 0) {
+				const allZeroCost = modelEntries.every(([, model]) => {
+					if (!model.cost) return true;
+					const {
+						input = 0,
+						output = 0,
+						cache_read = 0,
+						cache_write = 0,
+					} = model.cost;
+					return (
+						input === 0 && output === 0 && cache_read === 0 && cache_write === 0
+					);
+				});
+
+				if (allZeroCost) {
+					this.logger?.warn(
+						"Filtering out provider %s because all models have zero cost",
+						providerName,
+					);
+					return true;
+				}
+			}
+		}
+
+		return false;
 	}
 
 	private async loadFromCache(): Promise<ApiResponse | null> {
@@ -197,8 +344,11 @@ class PriceCatalogue {
 			data = await this.loadFromCache();
 		}
 
-		// Fall back to bundled pricing
-		if (!data) {
+		// If we have remote data, merge it with bundled pricing to ensure we have all models
+		if (data) {
+			data = this.mergePricingData(data, BUNDLED_PRICING);
+		} else {
+			// Fall back to bundled pricing
 			data = BUNDLED_PRICING;
 		}
 

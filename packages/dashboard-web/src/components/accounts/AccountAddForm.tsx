@@ -13,12 +13,19 @@ import {
 interface AccountAddFormProps {
 	onAddAccount: (params: {
 		name: string;
-		mode: "max" | "console";
+		mode: "max" | "console" | "zai";
 		tier: number;
+		priority: number;
 	}) => Promise<{ authUrl: string; sessionId: string }>;
 	onCompleteAccount: (params: {
 		sessionId: string;
 		code: string;
+	}) => Promise<void>;
+	onAddZaiAccount: (params: {
+		name: string;
+		apiKey: string;
+		tier: number;
+		priority: number;
 	}) => Promise<void>;
 	onCancel: () => void;
 	onSuccess: () => void;
@@ -28,6 +35,7 @@ interface AccountAddFormProps {
 export function AccountAddForm({
 	onAddAccount,
 	onCompleteAccount,
+	onAddZaiAccount,
 	onCancel,
 	onSuccess,
 	onError,
@@ -37,8 +45,10 @@ export function AccountAddForm({
 	const [sessionId, setSessionId] = useState("");
 	const [newAccount, setNewAccount] = useState({
 		name: "",
-		mode: "max" as "max" | "console",
+		mode: "max" as "max" | "console" | "zai",
 		tier: 1,
+		priority: 0,
+		apiKey: "",
 	});
 
 	const handleAddAccount = async () => {
@@ -46,7 +56,32 @@ export function AccountAddForm({
 			onError("Account name is required");
 			return;
 		}
-		// Step 1: Initialize OAuth flow
+
+		if (newAccount.mode === "zai") {
+			if (!newAccount.apiKey) {
+				onError("API key is required for z.ai accounts");
+				return;
+			}
+			// For z.ai accounts, we don't need OAuth flow
+			await onAddZaiAccount({
+				name: newAccount.name,
+				apiKey: newAccount.apiKey,
+				tier: newAccount.tier,
+				priority: newAccount.priority,
+			});
+			// Reset form and signal success
+			setNewAccount({
+				name: "",
+				mode: "max",
+				tier: 1,
+				priority: 0,
+				apiKey: "",
+			});
+			onSuccess();
+			return;
+		}
+
+		// Step 1: Initialize OAuth flow for Max/Console accounts
 		const { authUrl, sessionId } = await onAddAccount(newAccount);
 		setSessionId(sessionId);
 
@@ -74,7 +109,7 @@ export function AccountAddForm({
 		setAuthStep("form");
 		setAuthCode("");
 		setSessionId("");
-		setNewAccount({ name: "", mode: "max", tier: 1 });
+		setNewAccount({ name: "", mode: "max", tier: 1, priority: 0, apiKey: "" });
 		onSuccess();
 	};
 
@@ -82,7 +117,7 @@ export function AccountAddForm({
 		setAuthStep("form");
 		setAuthCode("");
 		setSessionId("");
-		setNewAccount({ name: "", mode: "max", tier: 1 });
+		setNewAccount({ name: "", mode: "max", tier: 1, priority: 0, apiKey: "" });
 		onCancel();
 	};
 
@@ -111,7 +146,7 @@ export function AccountAddForm({
 						<Label htmlFor="mode">Mode</Label>
 						<Select
 							value={newAccount.mode}
-							onValueChange={(value: "max" | "console") =>
+							onValueChange={(value: "max" | "console" | "zai") =>
 								setNewAccount({ ...newAccount, mode: value })
 							}
 						>
@@ -121,9 +156,27 @@ export function AccountAddForm({
 							<SelectContent>
 								<SelectItem value="max">Max (Recommended)</SelectItem>
 								<SelectItem value="console">Console</SelectItem>
+								<SelectItem value="zai">z.ai (API Key)</SelectItem>
 							</SelectContent>
 						</Select>
 					</div>
+					{newAccount.mode === "zai" && (
+						<div className="space-y-2">
+							<Label htmlFor="apiKey">z.ai API Key</Label>
+							<Input
+								id="apiKey"
+								type="password"
+								value={newAccount.apiKey}
+								onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+									setNewAccount({
+										...newAccount,
+										apiKey: (e.target as HTMLInputElement).value,
+									})
+								}
+								placeholder="Enter your z.ai API key"
+							/>
+						</div>
+					)}
 					<div className="space-y-2">
 						<Label htmlFor="tier">Tier</Label>
 						<Select
@@ -139,6 +192,26 @@ export function AccountAddForm({
 								<SelectItem value="1">Tier 1 (Default)</SelectItem>
 								<SelectItem value="5">Tier 5</SelectItem>
 								<SelectItem value="20">Tier 20</SelectItem>
+							</SelectContent>
+						</Select>
+					</div>
+					<div className="space-y-2">
+						<Label htmlFor="priority">Priority</Label>
+						<Select
+							value={String(newAccount.priority)}
+							onValueChange={(value: string) =>
+								setNewAccount({ ...newAccount, priority: parseInt(value) })
+							}
+						>
+							<SelectTrigger id="priority">
+								<SelectValue />
+							</SelectTrigger>
+							<SelectContent>
+								<SelectItem value="0">0 (Highest)</SelectItem>
+								<SelectItem value="25">25 (High)</SelectItem>
+								<SelectItem value="50">50 (Medium)</SelectItem>
+								<SelectItem value="75">75 (Low)</SelectItem>
+								<SelectItem value="100">100 (Lowest)</SelectItem>
 							</SelectContent>
 						</Select>
 					</div>

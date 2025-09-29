@@ -103,10 +103,17 @@ export function addPerformanceIndexes(db: Database): void {
 
 	// Composite index for account ordering in load balancer
 	db.run(`
-		CREATE INDEX IF NOT EXISTS idx_accounts_request_count 
+		CREATE INDEX IF NOT EXISTS idx_accounts_request_count
 		ON accounts(request_count DESC, last_used)
 	`);
 	log.info("Added index: idx_accounts_request_count");
+
+	// Index for account priority in load balancer
+	db.run(`
+		CREATE INDEX IF NOT EXISTS idx_accounts_priority
+		ON accounts(priority ASC, request_count DESC, last_used)
+	`);
+	log.info("Added index: idx_accounts_priority");
 
 	log.info("Performance indexes added successfully");
 }

@@ -12,12 +12,8 @@ export function getOrderedAccounts(
 	ctx: ProxyContext,
 ): Account[] {
 	const allAccounts = ctx.dbOps.getAllAccounts();
-	// Filter accounts by provider
-	const providerAccounts = allAccounts.filter(
-		(account) =>
-			account.provider === ctx.provider.name || account.provider === null,
-	);
-	return ctx.strategy.select(providerAccounts, meta);
+	// Return all accounts - the provider will be determined dynamically per account
+	return ctx.strategy.select(allAccounts, meta);
 }
 
 /**

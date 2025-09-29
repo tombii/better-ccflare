@@ -130,6 +130,10 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		this.accounts.updateRequestCount(accountId, count);
 	}
 
+	updateAccountPriority(accountId: string, priority: number): void {
+		this.accounts.updatePriority(accountId, priority);
+	}
+
 	// Request operations delegated to repository
 	saveRequestMeta(
 		id: string,

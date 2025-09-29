@@ -56,6 +56,7 @@ When working with Claude API at scale, rate limits can become a significant bott
 - [Load Balancing Strategy](./load-balancing.md) - Session-based strategy for safe account usage
 - [Provider System](./providers.md) - Provider abstraction and OAuth implementation
 - [Database Schema](./database.md) - SQLite structure, migrations, and maintenance
+- [Model Mappings](./models.md) - Claude AI model definitions and constants
 
 ### User Interfaces
 - [HTTP API Reference](./api-http.md) - Complete REST API documentation

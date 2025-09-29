@@ -9,6 +9,7 @@ import {
 	pauseAccount,
 	removeAccountWithConfirmation,
 	resumeAccount,
+	setAccountPriority,
 } from "./commands/account";
 import { analyzePerformance } from "./commands/analyze";
 import { getHelpText } from "./commands/help";
@@ -33,6 +34,7 @@ export async function runCli(argv: string[]): Promise<void> {
 			options: {
 				mode: { type: "string" },
 				tier: { type: "string" },
+				priority: { type: "string" },
 				force: { type: "boolean" },
 			},
 		});
@@ -45,7 +47,7 @@ export async function runCli(argv: string[]): Promise<void> {
 				if (!name) {
 					console.error("Error: Account name is required");
 					console.log(
-						"Usage: ccflare-cli add <name> [--mode <max|console>] [--tier <1|5|20>]",
+						"Usage: ccflare-cli add <name> [--mode <max|console>] [--tier <1|5|20>] [--priority <number>]",
 					);
 					process.exit(1);
 				}
@@ -59,8 +61,15 @@ export async function runCli(argv: string[]): Promise<void> {
 					tierValue === 1 || tierValue === 5 || tierValue === 20
 						? tierValue
 						: undefined;
+				const priorityValue = values.priority
+					? parseInt(values.priority as string)
+					: undefined;
+				const priority =
+					typeof priorityValue === "number" && !Number.isNaN(priorityValue)
+						? priorityValue
+						: undefined;
 
-				await addAccount(dbOps, config, { name, mode, tier });
+				await addAccount(dbOps, config, { name, mode, tier, priority });
 				break;
 			}
 
@@ -78,6 +87,7 @@ export async function runCli(argv: string[]): Promise<void> {
 						"Name".padEnd(20) +
 							"Type".padEnd(10) +
 							"Tier".padEnd(6) +
+							"Priority".padEnd(9) +
 							"Requests".padEnd(12) +
 							"Token".padEnd(10) +
 							"Status".padEnd(20) +
@@ -91,6 +101,7 @@ export async function runCli(argv: string[]): Promise<void> {
 							account.name.padEnd(20) +
 								account.provider.padEnd(10) +
 								account.tierDisplay.padEnd(6) +
+								account.priority.toString().padEnd(9) +
 								`${account.requestCount}/${account.totalRequests}`.padEnd(12) +
 								account.tokenStatus.padEnd(10) +
 								account.rateLimitStatus.padEnd(20) +
@@ -160,6 +171,36 @@ export async function runCli(argv: string[]): Promise<void> {
 				}
 
 				const result = resumeAccount(dbOps, name);
+				console.log(result.message);
+				if (!result.success) {
+					process.exit(1);
+				}
+				break;
+			}
+
+			case "set-priority": {
+				const name = positionals[1];
+				const priorityValue = positionals[2];
+
+				if (!name) {
+					console.error("Error: Account name is required");
+					console.log("Usage: ccflare-cli set-priority <name> <priority>");
+					process.exit(1);
+				}
+
+				if (priorityValue === undefined) {
+					console.error("Error: Priority value is required");
+					console.log("Usage: ccflare-cli set-priority <name> <priority>");
+					process.exit(1);
+				}
+
+				const priority = parseInt(priorityValue);
+				if (Number.isNaN(priority)) {
+					console.error("Error: Priority must be a number");
+					process.exit(1);
+				}
+
+				const result = setAccountPriority(dbOps, name, priority);
 				console.log(result.message);
 				if (!result.success) {
 					process.exit(1);

@@ -43,7 +43,8 @@ function MessageComponent({
 	);
 	const thinkingText =
 		typeof thinkingBlock?.thinking === "string" ? thinkingBlock.thinking : "";
-	const hasThinking = thinkingText && cleanLineNumbers(thinkingText).trim().length > 0;
+	const hasThinking =
+		thinkingText && cleanLineNumbers(thinkingText).trim().length > 0;
 	const cleanedContent =
 		typeof content === "string" ? cleanLineNumbers(content).trim() : "";
 	const hasTools = tools?.length || 0;

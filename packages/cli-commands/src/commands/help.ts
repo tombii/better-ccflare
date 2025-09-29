@@ -6,10 +6,11 @@ export function getHelpText(): string {
 Usage: ccflare-cli <command> [options]
 
 Commands:
-  add <name> [--mode <max|console>] [--tier <1|5|20>]
+  add <name> [--mode <max|console>] [--tier <1|5|20>] [--priority <number>]
     Add a new account using OAuth
     --mode: Account type (optional, will prompt if not provided)
     --tier: Account tier (1, 5, or 20) (optional, will prompt for Max accounts)
+    --priority: Account priority (0-100, default 0, lower numbers = higher priority)
 
   list
     List all accounts with their details
@@ -24,6 +25,10 @@ Commands:
   resume <name>
     Resume a paused account to include it in load balancing
 
+  set-priority <name> <priority>
+    Set the priority of an account
+    --priority: Account priority (0-100, lower numbers = higher priority)
+
   reset-stats
     Reset request counts for all accounts
 
@@ -37,10 +42,11 @@ Commands:
     Show this help message
 
 Examples:
-  ccflare-cli add myaccount --mode max --tier 5
+  ccflare-cli add myaccount --mode max --tier 5 --priority 10
   ccflare-cli list
   ccflare-cli remove myaccount
   ccflare-cli pause myaccount
   ccflare-cli resume myaccount
+  ccflare-cli set-priority myaccount 20
 `;
 }

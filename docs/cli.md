@@ -8,6 +8,7 @@ The ccflare CLI provides a command-line interface for managing OAuth accounts, m
 - [Global Options and Help](#global-options-and-help)
 - [Command Reference](#command-reference)
   - [Account Management](#account-management)
+  - [Account Priorities](#account-priorities)
   - [Statistics and History](#statistics-and-history)
   - [System Commands](#system-commands)
   - [Server and Monitoring](#server-and-monitoring)
@@ -27,7 +28,7 @@ The ccflare CLI provides a command-line interface for managing OAuth accounts, m
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/snipe-code/ccflare.git
+git clone https://github.com/tombii/ccflare.git
 cd ccflare
 ```
 
@@ -89,10 +90,12 @@ Options:
   --add-account <name> Add a new account
     --mode <max|console>  Account mode (default: max)
     --tier <1|5|20>       Account tier (default: 1)
+    --priority <number>    Account priority (0-100, default: 0)
   --list               List all accounts
   --remove <name>      Remove an account
   --pause <name>       Pause an account
   --resume <name>      Resume an account
+  --set-priority <name> <priority> Set account priority (0-100)
   --analyze            Analyze database performance
   --reset-stats        Reset usage statistics
   --clear-history      Clear request history
@@ -112,7 +115,7 @@ Add a new OAuth account to the load balancer pool.
 
 **Syntax:**
 ```bash
-ccflare --add-account <name> [--mode <max|console>] [--tier <1|5|20>]
+ccflare --add-account <name> [--mode <max|console>] [--tier <1|5|20>] [--priority <number>]
 ```
 
 **Options:**
@@ -123,13 +126,18 @@ ccflare --add-account <name> [--mode <max|console>] [--tier <1|5|20>]
   - `1`: Tier 1 account
   - `5`: Tier 5 account
   - `20`: Tier 20 account
+- `--priority`: Account priority (optional, defaults to 0)
+  - Range: 0-100
+  - Lower numbers indicate higher priority in load balancing
+  - If not specified, defaults to 0 (highest priority)
 
 **Interactive Flow:**
 1. If mode not provided, defaults to "max"
 2. If tier not provided (Max accounts only), defaults to 1
-3. Opens browser for OAuth authentication
-4. Waits for OAuth callback on localhost:7856
-5. Stores account credentials securely in the database
+3. If priority not provided, defaults to 0
+4. Opens browser for OAuth authentication
+5. Waits for OAuth callback on localhost:7856
+6. Stores account credentials securely in the database
 
 #### `--list`
 
@@ -143,8 +151,8 @@ ccflare --list
 **Output Format:**
 ```
 Accounts:
-  - account1 (max mode, tier 5)
-  - account2 (console mode, tier 1)
+  - account1 (max mode, tier 5, priority 10)
+  - account2 (console mode, tier 1, priority 5)
 ```
 
 #### `--remove <name>`
@@ -182,6 +190,39 @@ Re-enable a paused account for load balancing.
 **Syntax:**
 ```bash
 ccflare --resume <name>
+```
+
+### Account Priorities
+
+#### `--set-priority <name> <priority>`
+
+Set or update the priority of an account. Accounts with lower priority numbers are preferred in the load balancing algorithm.
+
+**Syntax:**
+```bash
+ccflare --set-priority <name> <priority>
+```
+
+**Parameters:**
+- `name`: Account name to update
+- `priority`: Priority value (0-100, where lower numbers indicate higher priority)
+
+**How Priorities Work:**
+- Accounts with lower priority numbers are selected first
+- Default priority is 0 if not specified
+- Priority affects both primary account selection and fallback order
+- Changes take effect immediately without restarting the server
+
+**Example:**
+```bash
+# Set account to high priority (low number)
+ccflare --set-priority production-account 10
+
+# Set account to medium priority
+ccflare --set-priority development-account 50
+
+# Set account to low priority (high number)
+ccflare --set-priority backup-account 90
 ```
 
 ### Statistics and History
@@ -300,14 +341,20 @@ ccflare --logs 50
 ### Basic Account Setup
 
 ```bash
-# Add a Claude Max account with tier 5
-ccflare --add-account work-account --mode max --tier 5
+# Add a Claude Max account with tier 5 and high priority (low number)
+ccflare --add-account work-account --mode max --tier 5 --priority 10
 
-# Add a Console account
-ccflare --add-account personal-account --mode console
+# Add a Console account with medium priority
+ccflare --add-account personal-account --mode console --priority 50
+
+# Add a backup account with low priority (high number)
+ccflare --add-account backup-account --mode max --tier 1 --priority 90
 
 # List all accounts
 ccflare --list
+
+# Update account priority
+ccflare --set-priority backup-account 20
 
 # View statistics
 ccflare --stats
@@ -368,10 +415,10 @@ ccflare
 ### Automation Examples
 
 ```bash
-# Add multiple accounts via script
-for i in {1..3}; do
-  ccflare --add-account "account-$i" --mode max --tier 5
-done
+# Add multiple accounts with different priorities
+ccflare --add-account "primary-account" --mode max --tier 20 --priority 10
+ccflare --add-account "secondary-account" --mode max --tier 5 --priority 50
+ccflare --add-account "backup-account" --mode max --tier 1 --priority 90
 
 # Monitor account status
 watch -n 5 'ccflare --list'
@@ -381,6 +428,11 @@ ccflare --clear-history && ccflare --reset-stats
 
 # Export statistics for monitoring
 ccflare --stats > stats.json
+
+# Prioritize specific account temporarily
+ccflare --set-priority primary-account 5
+# ... run important workload ...
+ccflare --set-priority primary-account 10  # Restore normal priority
 ```
 
 ## Configuration
@@ -556,6 +608,10 @@ ccflare --logs
    - Use descriptive account names
    - Distribute load across multiple accounts
    - Keep accounts of similar tiers for consistent performance
+   - Use account priorities to control load distribution:
+     - Set lower priority numbers for premium or preferred accounts
+     - Use higher priority numbers for backup or development accounts
+     - Adjust priorities temporarily for specific workloads
    - Pause accounts proactively when approaching rate limits
 
 3. **Security**

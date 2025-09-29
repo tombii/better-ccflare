@@ -17,7 +17,9 @@ export {
 export * from "./types";
 
 import { AnthropicProvider } from "./providers/anthropic/provider";
+import { ZaiProvider } from "./providers/zai/provider";
 // Auto-register built-in providers
 import { registry } from "./registry";
 
 registry.registerProvider(new AnthropicProvider());
+registry.registerProvider(new ZaiProvider());
