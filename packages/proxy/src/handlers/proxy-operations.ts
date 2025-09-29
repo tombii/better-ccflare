@@ -1,5 +1,6 @@
 import { logError, ProviderError } from "@ccflare/core";
 import { Logger } from "@ccflare/logger";
+import { getProvider } from "@ccflare/providers";
 import type { Account, RequestMeta } from "@ccflare/types";
 import { forwardToClient } from "../response-handler";
 import { ERROR_MESSAGES, type ProxyContext } from "./proxy-types";
@@ -98,18 +99,23 @@ export async function proxyWithAccount(
 	ctx: ProxyContext,
 ): Promise<Response | null> {
 	try {
-		log.info(`Attempting request with account: ${account.name}`);
+		log.info(
+			`Attempting request with account: ${account.name} (provider: ${account.provider})`,
+		);
+
+		// Get the provider for this account
+		const provider = getProvider(account.provider) || ctx.provider;
 
 		// Get valid access token
 		const accessToken = await getValidAccessToken(account, ctx);
 
-		// Prepare request
-		const headers = ctx.provider.prepareHeaders(
+		// Prepare request using account-specific provider
+		const headers = provider.prepareHeaders(
 			req.headers,
 			accessToken,
 			account.api_key || undefined,
 		);
-		const targetUrl = ctx.provider.buildUrl(url.pathname, url.search);
+		const targetUrl = provider.buildUrl(url.pathname, url.search);
 
 		// Make the request
 		const response = await makeProxyRequest(
@@ -120,8 +126,16 @@ export async function proxyWithAccount(
 			!!req.body,
 		);
 
-		// Process response and check for rate limit
-		const isRateLimited = processProxyResponse(response, account, ctx);
+		// Process response and check for rate limit using account-specific provider
+		const isRateLimited = processProxyResponse(
+			response,
+			account,
+			{
+				...ctx,
+				provider,
+			},
+			requestMeta.id,
+		);
 		if (isRateLimited) {
 			return null; // Signal to try next account
 		}
@@ -141,7 +155,7 @@ export async function proxyWithAccount(
 				failoverAttempts,
 				agentUsed: requestMeta.agentUsed,
 			},
-			ctx,
+			{ ...ctx, provider },
 		);
 	} catch (err) {
 		handleProxyError(err, account, log);

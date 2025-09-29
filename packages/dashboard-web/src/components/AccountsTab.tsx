@@ -6,6 +6,7 @@ import { useApiError } from "../hooks/useApiError";
 import {
 	AccountAddForm,
 	AccountList,
+	AccountPriorityDialog,
 	DeleteConfirmationDialog,
 	RenameAccountDialog,
 } from "./accounts";
@@ -45,12 +46,20 @@ export function AccountsTab() {
 		isOpen: false,
 		account: null,
 	});
+	const [priorityDialog, setPriorityDialog] = useState<{
+		isOpen: boolean;
+		account: Account | null;
+	}>({
+		isOpen: false,
+		account: null,
+	});
 	const [actionError, setActionError] = useState<string | null>(null);
 
 	const handleAddAccount = async (params: {
 		name: string;
-		mode: "max" | "console";
+		mode: "max" | "console" | "zai";
 		tier: number;
+		priority: number;
 	}) => {
 		try {
 			const result = await api.initAddAccount(params);
@@ -68,6 +77,23 @@ export function AccountsTab() {
 	}) => {
 		try {
 			await api.completeAddAccount(params);
+			await loadAccounts();
+			setAdding(false);
+			setActionError(null);
+		} catch (err) {
+			setActionError(formatError(err));
+			throw err;
+		}
+	};
+
+	const handleAddZaiAccount = async (params: {
+		name: string;
+		apiKey: string;
+		tier: number;
+		priority: number;
+	}) => {
+		try {
+			await api.addZaiAccount(params);
 			await loadAccounts();
 			setAdding(false);
 			setActionError(null);
@@ -134,6 +160,20 @@ export function AccountsTab() {
 		}
 	};
 
+	const handlePriorityChange = (account: Account) => {
+		setPriorityDialog({ isOpen: true, account });
+	};
+
+	const handleUpdatePriority = async (accountId: string, priority: number) => {
+		try {
+			await api.updateAccountPriority(accountId, priority);
+			await loadAccounts();
+		} catch (err) {
+			setActionError(formatError(err));
+			throw err;
+		}
+	};
+
 	if (loading) {
 		return (
 			<Card>
@@ -179,6 +219,7 @@ export function AccountsTab() {
 						<AccountAddForm
 							onAddAccount={handleAddAccount}
 							onCompleteAccount={handleCompleteAccount}
+							onAddZaiAccount={handleAddZaiAccount}
 							onCancel={() => {
 								setAdding(false);
 								setActionError(null);
@@ -195,6 +236,7 @@ export function AccountsTab() {
 						onPauseToggle={handlePauseToggle}
 						onRemove={handleRemoveAccount}
 						onRename={handleRename}
+						onPriorityChange={handlePriorityChange}
 					/>
 				</CardContent>
 			</Card>
@@ -228,6 +270,20 @@ export function AccountsTab() {
 					onClose={() => setRenameDialog({ isOpen: false, account: null })}
 					onRename={handleConfirmRename}
 					isLoading={renameAccount.isPending}
+				/>
+			)}
+
+			{priorityDialog.isOpen && priorityDialog.account && (
+				<AccountPriorityDialog
+					account={priorityDialog.account}
+					isOpen={priorityDialog.isOpen}
+					onOpenChange={(open) =>
+						setPriorityDialog({
+							isOpen: open,
+							account: open ? priorityDialog.account : null,
+						})
+					}
+					onUpdatePriority={handleUpdatePriority}
 				/>
 			)}
 		</div>

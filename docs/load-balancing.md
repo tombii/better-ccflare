@@ -3,10 +3,11 @@
 ## Table of Contents
 1. [Overview](#overview)
 2. [Session-Based Strategy](#session-based-strategy)
-3. [Configuration](#configuration)
-4. [Account Selection Process](#account-selection-process)
-5. [Performance Considerations](#performance-considerations)
-6. [Important: Why Only Session-Based Strategy](#important-why-only-session-based-strategy)
+3. [Account Priorities](#account-priorities)
+4. [Configuration](#configuration)
+5. [Account Selection Process](#account-selection-process)
+6. [Performance Considerations](#performance-considerations)
+7. [Important: Why Only Session-Based Strategy](#important-why-only-session-based-strategy)
 
 ## Overview
 
@@ -16,6 +17,7 @@ ccflare implements a session-based load balancing system to distribute requests 
 - **Account Health Monitoring**: Automatically filters out rate-limited or paused accounts
 - **Failover Support**: Returns ordered lists of accounts for automatic failover
 - **Session Persistence**: Maintains configurable sessions on specific accounts
+- **Account Priorities**: Supports prioritized account selection for better control over load distribution
 - **Real-time Configuration**: Change settings without restarting the server
 - **Provider Filtering**: Accounts are filtered by provider compatibility
 
@@ -83,6 +85,53 @@ export class SessionStrategy implements LoadBalancingStrategy {
 - ✅ **Good for Long Sessions**: Ideal for extended AI conversations
 - ⚠️ **Uneven Load Distribution**: May concentrate load on fewer accounts
 - ⚠️ **Session Dependency**: Performance tied to specific account availability
+
+## Account Priorities
+
+Account priorities allow you to control which accounts are preferred when multiple accounts are available. This feature gives you fine-grained control over load distribution and account selection.
+
+### How Priorities Work
+
+- **Priority Range**: Accounts can have a priority value from 0-100 (default: 0)
+- **Lower Value = Higher Priority**: Accounts with lower priority values are selected first
+- **Optional Parameter**: Priority is optional when adding accounts and defaults to 0 (highest priority)
+- **Affects Both Primary and Fallback Selection**: Priorities determine both the primary account and the order of fallback accounts
+- **Real-time Updates**: Priority changes take effect immediately without restarting the server
+
+### Setting Account Priorities
+
+Priorities can be set when adding an account or updated later:
+
+```bash
+# Add account with priority
+ccflare --add-account myaccount --mode max --tier 5 --priority 10
+
+# Update account priority
+ccflare set-priority myaccount 20
+```
+
+### Priority in Load Balancing
+
+The SessionStrategy considers priorities when selecting accounts:
+
+1. **Active Session Check**: First looks for an account with an active session
+2. **Priority Sorting**: If no active session or the active account is unavailable, available accounts are sorted by priority (descending)
+3. **Fallback Order**: Remaining accounts are also ordered by priority for failover scenarios
+
+```typescript
+// From load-balancer/src/strategies/index.ts
+// Filter available accounts and sort by priority (lower value = higher priority)
+const available = accounts
+    .filter((a) => isAccountAvailable(a, now))
+    .sort((a, b) => a.priority - b.priority); // Ascending sort
+```
+
+### Use Cases for Priorities
+
+1. **Primary/Backup Setup**: Assign higher priorities to preferred accounts
+2. **Cost Management**: Prioritize free or lower-cost accounts
+3. **Performance Optimization**: Prioritize accounts with better performance characteristics
+4. **Tiered Access**: Create hierarchical access patterns based on account capabilities
 
 ## Configuration
 
@@ -190,7 +239,7 @@ The SessionStrategy manages account sessions through the following process:
 2. **Session Validation**: Checks if the session is within the configured duration
 3. **Account Ordering**: Returns accounts in priority order:
    - Active session account (if available) comes first
-   - Other available accounts follow as fallback options
+   - Other available accounts are sorted by priority (lower values first) as fallback options
 
 ### 4. Session Reset
 Sessions are reset when:

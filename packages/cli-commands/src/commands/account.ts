@@ -12,8 +12,9 @@ import { openBrowser } from "../utils/browser";
 // Re-export types with adapter extension for CLI-specific options
 export interface AddAccountOptions {
 	name: string;
-	mode?: "max" | "console";
+	mode?: "max" | "console" | "zai";
 	tier?: 1 | 5 | 20;
+	priority?: number;
 	adapter?: PromptAdapter;
 }
 
@@ -22,7 +23,7 @@ export type { AccountListItem } from "@ccflare/types";
 
 // Add mode property to AccountListItem for CLI display
 export interface AccountListItemWithMode extends AccountListItem {
-	mode: "max" | "console";
+	mode: "max" | "console" | "zai";
 }
 
 /**
@@ -37,6 +38,7 @@ export async function addAccount(
 		name,
 		mode: providedMode,
 		tier: providedTier,
+		priority: providedPriority,
 		adapter = stdPromptAdapter,
 	} = options;
 
@@ -49,52 +51,99 @@ export async function addAccount(
 		(await adapter.select("What type of account would you like to add?", [
 			{ label: "Claude Max account", value: "max" },
 			{ label: "Claude Console account", value: "console" },
+			{ label: "z.ai account (API key)", value: "zai" },
 		]));
 
-	// Begin OAuth flow
-	const flowResult = await oauthFlow.begin({
-		name,
-		mode: mode as "max" | "console",
-	});
-	const { authUrl, sessionId } = flowResult;
+	if (mode === "zai") {
+		// Handle z.ai accounts with API keys
+		const apiKey = await adapter.input("\nEnter your z.ai API key: ");
 
-	// Open browser and prompt for code
-	console.log(`\nOpening browser to authenticate...`);
-	console.log(`URL: ${authUrl}`);
-	const browserOpened = await openBrowser(authUrl);
-	if (!browserOpened) {
-		console.log(
-			`\nFailed to open browser automatically. Please manually open the URL above.`,
+		// Get tier for z.ai accounts
+		const tier =
+			providedTier ||
+			(await adapter.select(
+				"Select the tier for this account (used for weighted load balancing):",
+				[
+					{ label: "1x tier (default)", value: 1 },
+					{ label: "5x tier (higher priority)", value: 5 },
+					{ label: "20x tier (highest priority)", value: 20 },
+				],
+			));
+
+		// Create z.ai account directly in database
+		const accountId = crypto.randomUUID();
+		const now = Date.now();
+
+		dbOps.getDatabase().run(
+			`INSERT INTO accounts (
+				id, name, provider, api_key, refresh_token, access_token,
+				expires_at, created_at, account_tier, request_count, total_requests, priority
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			[
+				accountId,
+				name,
+				"zai",
+				apiKey,
+				apiKey, // Store API key as refresh_token for consistency
+				apiKey, // Store API key as access_token
+				now + 365 * 24 * 60 * 60 * 1000, // 1 year expiry
+				now,
+				tier,
+				0,
+				0,
+				providedPriority || 0,
+			],
 		);
+
+		console.log(`\nAccount '${name}' added successfully!`);
+		console.log("Type: z.ai (API key)");
+		console.log(`Tier: ${tier}x`);
+	} else {
+		// Handle OAuth accounts (Anthropic)
+		const flowResult = await oauthFlow.begin({
+			name,
+			mode: mode as "max" | "console",
+		});
+		const { authUrl, sessionId } = flowResult;
+
+		// Open browser and prompt for code
+		console.log(`\nOpening browser to authenticate...`);
+		console.log(`URL: ${authUrl}`);
+		const browserOpened = await openBrowser(authUrl);
+		if (!browserOpened) {
+			console.log(
+				`\nFailed to open browser automatically. Please manually open the URL above.`,
+			);
+		}
+
+		// Get authorization code
+		const code = await adapter.input("\nEnter the authorization code: ");
+
+		// Get tier for Max accounts
+		const tier =
+			mode === "max"
+				? providedTier ||
+					(await adapter.select(
+						"Select the tier for this account (used for weighted load balancing):",
+						[
+							{ label: "1x tier (default free account)", value: 1 },
+							{ label: "5x tier (paid account)", value: 5 },
+							{ label: "20x tier (enterprise account)", value: 20 },
+						],
+					))
+				: 1;
+
+		// Complete OAuth flow
+		console.log("\nExchanging code for tokens...");
+		const _account = await oauthFlow.complete(
+			{ sessionId, code, tier, name, priority: providedPriority || 0 },
+			flowResult,
+		);
+
+		console.log(`\nAccount '${name}' added successfully!`);
+		console.log(`Type: ${mode === "max" ? "Claude Max" : "Claude Console"}`);
+		console.log(`Tier: ${tier}x`);
 	}
-
-	// Get authorization code
-	const code = await adapter.input("\nEnter the authorization code: ");
-
-	// Get tier for Max accounts
-	const tier =
-		mode === "max"
-			? providedTier ||
-				(await adapter.select(
-					"Select the tier for this account (used for weighted load balancing):",
-					[
-						{ label: "1x tier (default free account)", value: 1 },
-						{ label: "5x tier (paid account)", value: 5 },
-						{ label: "20x tier (enterprise account)", value: 20 },
-					],
-				))
-			: 1;
-
-	// Complete OAuth flow
-	console.log("\nExchanging code for tokens...");
-	const _account = await oauthFlow.complete(
-		{ sessionId, code, tier, name },
-		flowResult,
-	);
-
-	console.log(`\nAccount '${name}' added successfully!`);
-	console.log(`Type: ${mode === "max" ? "Claude Max" : "Claude Console"}`);
-	console.log(`Tier: ${tier}x`);
 }
 
 /**
@@ -137,7 +186,13 @@ export function getAccountsList(dbOps: DatabaseOperations): AccountListItem[] {
 			rateLimitStatus,
 			sessionInfo,
 			tier: account.account_tier || 1,
-			mode: account.account_tier > 1 ? "max" : "console",
+			mode:
+				account.provider === "zai"
+					? "zai"
+					: account.account_tier > 1
+						? "max"
+						: "console",
+			priority: account.priority || 0,
 		};
 	});
 }
@@ -263,4 +318,38 @@ export function resumeAccount(
 	name: string,
 ): { success: boolean; message: string } {
 	return toggleAccountPause(dbOps, name, false);
+}
+
+/**
+ * Set the priority of an account by name
+ */
+export function setAccountPriority(
+	dbOps: DatabaseOperations,
+	name: string,
+	priority: number,
+): { success: boolean; message: string } {
+	const db = dbOps.getDatabase();
+
+	// Get account ID by name
+	const account = db
+		.query<{ id: string }, [string]>("SELECT id FROM accounts WHERE name = ?")
+		.get(name);
+
+	if (!account) {
+		return {
+			success: false,
+			message: `Account '${name}' not found`,
+		};
+	}
+
+	// Update the account priority
+	db.run("UPDATE accounts SET priority = ? WHERE id = ?", [
+		priority,
+		account.id,
+	]);
+
+	return {
+		success: true,
+		message: `Account '${name}' priority set to ${priority}`,
+	};
 }

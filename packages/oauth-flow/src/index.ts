@@ -27,6 +27,7 @@ export interface CompleteOptions {
 	code: string;
 	tier?: AccountTier;
 	name: string; // Required to properly create the account
+	priority?: number;
 }
 
 export interface AccountCreated {
@@ -132,7 +133,7 @@ export class OAuthFlow {
 		opts: CompleteOptions,
 		flowData: BeginResult,
 	): Promise<AccountCreated> {
-		const { code, tier = 1, name } = opts;
+		const { code, tier = 1, name, priority = 0 } = opts;
 
 		// Get OAuth provider
 		const oauthProvider = getOAuthProvider("anthropic");
@@ -152,11 +153,17 @@ export class OAuthFlow {
 		// Handle console mode - create API key
 		if (flowData.mode === "console" || !tokens.refreshToken) {
 			const apiKey = await this.createAnthropicApiKey(tokens.accessToken);
-			return this.createAccountWithApiKey(accountId, name, apiKey, tier);
+			return this.createAccountWithApiKey(
+				accountId,
+				name,
+				apiKey,
+				tier,
+				priority,
+			);
 		}
 
 		// Handle max mode - standard OAuth flow
-		return this.createAccountWithOAuth(accountId, name, tokens, tier);
+		return this.createAccountWithOAuth(accountId, name, tokens, tier, priority);
 	}
 
 	/**
@@ -206,15 +213,16 @@ export class OAuthFlow {
 		name: string,
 		tokens: OAuthTokens,
 		tier: AccountTier,
+		priority: number,
 	): AccountCreated {
 		const db = this.dbOps.getDatabase();
 
 		db.run(
 			`
 			INSERT INTO accounts (
-				id, name, provider, api_key, refresh_token, access_token, expires_at, 
-				created_at, request_count, total_requests, account_tier
-			) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, 0, 0, ?)
+				id, name, provider, api_key, refresh_token, access_token, expires_at,
+				created_at, request_count, total_requests, account_tier, priority
+			) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, 0, 0, ?, ?)
 			`,
 			[
 				id,
@@ -225,6 +233,7 @@ export class OAuthFlow {
 				tokens.expiresAt,
 				Date.now(),
 				tier,
+				priority,
 			],
 		);
 
@@ -254,17 +263,18 @@ export class OAuthFlow {
 		name: string,
 		apiKey: string,
 		tier: AccountTier,
+		priority: number,
 	): AccountCreated {
 		const db = this.dbOps.getDatabase();
 
 		db.run(
 			`
 			INSERT INTO accounts (
-				id, name, provider, api_key, refresh_token, access_token, expires_at, 
-				created_at, request_count, total_requests, account_tier
-			) VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, 0, 0, ?)
+				id, name, provider, api_key, refresh_token, access_token, expires_at,
+				created_at, request_count, total_requests, account_tier, priority
+			) VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, 0, 0, ?, ?)
 			`,
-			[id, name, "anthropic", apiKey, Date.now(), tier],
+			[id, name, "anthropic", apiKey, Date.now(), tier, priority],
 		);
 
 		return {

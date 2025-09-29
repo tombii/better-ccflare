@@ -22,7 +22,7 @@ https://github.com/user-attachments/assets/c859872f-ca5e-4f8b-b6a0-7cc7461fe62a
 
 ```bash
 # Clone and install
-git clone https://github.com/snipeship/ccflare
+git clone https://github.com/tombii/ccflare
 cd ccflare
 bun install
 
@@ -87,7 +87,7 @@ Full documentation available in [`docs/`](docs/):
 ## Requirements
 
 - [Bun](https://bun.sh) >= 1.2.8
-- Claude API accounts (Free, Pro, or Team)
+- Claude API accounts (Free, Pro, or Team) or z.ai code plan accounts
 
 ## Contributing
 

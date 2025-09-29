@@ -19,7 +19,8 @@ export function ensureSchema(db: Database): void {
 			last_used INTEGER,
 			request_count INTEGER DEFAULT 0,
 			total_requests INTEGER DEFAULT 0,
-			account_tier INTEGER DEFAULT 1
+			account_tier INTEGER DEFAULT 1,
+			priority INTEGER DEFAULT 0
 		)
 	`);
 
@@ -168,6 +169,14 @@ export function runMigrations(db: Database): void {
 			"ALTER TABLE accounts ADD COLUMN rate_limit_remaining INTEGER",
 		).run();
 		log.info("Added rate_limit_remaining column to accounts table");
+	}
+
+	// Add priority column if it doesn't exist
+	if (!accountsColumnNames.includes("priority")) {
+		db.prepare(
+			"ALTER TABLE accounts ADD COLUMN priority INTEGER DEFAULT 0",
+		).run();
+		log.info("Added priority column to accounts table");
 	}
 
 	// Check columns in requests table

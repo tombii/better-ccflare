@@ -17,6 +17,14 @@ export async function beginAddAccount(
 	options: AddAccountOptions,
 ): Promise<OAuthFlowResult> {
 	const { name, mode = "max" } = options;
+
+	// z.ai accounts don't use OAuth flow
+	if (mode === "zai") {
+		throw new Error(
+			"z.ai accounts should be added directly with API key, not via OAuth flow",
+		);
+	}
+
 	const config = new Config();
 	const dbOps = DatabaseFactory.getInstance();
 
@@ -24,7 +32,10 @@ export async function beginAddAccount(
 	const oauthFlow = await createOAuthFlow(dbOps, config);
 
 	// Begin OAuth flow
-	const flowResult = await oauthFlow.begin({ name, mode });
+	const flowResult = await oauthFlow.begin({
+		name,
+		mode: mode as "max" | "console",
+	});
 
 	// Open browser
 	console.log(`\nOpening browser to authenticate...`);
@@ -98,4 +109,12 @@ export async function resumeAccount(
 ): Promise<{ success: boolean; message: string }> {
 	const dbOps = DatabaseFactory.getInstance();
 	return cliCommands.resumeAccount(dbOps, name);
+}
+
+export async function updateAccountPriority(
+	name: string,
+	priority: number,
+): Promise<{ success: boolean; message: string }> {
+	const dbOps = DatabaseFactory.getInstance();
+	return cliCommands.setAccountPriority(dbOps, name, priority);
 }

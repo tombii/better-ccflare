@@ -6,6 +6,9 @@
 - **Anthropic** - Single provider with two modes:
   - **console mode**: Standard Claude API (console.anthropic.com)
   - **max mode**: Claude Code (claude.ai)
+- **Z.ai** - Claude proxy service with API key authentication:
+  - Lite, Pro, and Max plans with higher rate limits than direct Claude API
+  - Uses API key authentication (no OAuth support)
 
 ### Key Points
 - All API requests route to `https://api.anthropic.com`
@@ -35,8 +38,14 @@ The ccflare providers system is a modular architecture designed to support multi
    - **Claude API** (console mode) - Standard API access via console.anthropic.com
    - **Claude Code** (max mode) - Enhanced access via claude.ai
 
+2. **Z.ai Provider** - Provides access to:
+   - **Z.ai API** - Claude proxy service with enhanced rate limits
+   - Uses API key authentication instead of OAuth
+   - Supports Lite, Pro, and Max plans with ~3× the usage quota of equivalent Claude plans
+
 The providers system handles:
-- OAuth authentication flows with PKCE security
+- OAuth authentication flows with PKCE security (Anthropic)
+- API key authentication (Z.ai)
 - Token lifecycle management (refresh, expiration)
 - Provider-specific request routing and header management
 - Rate limit detection and handling
@@ -179,9 +188,52 @@ The OAuth client ID can be configured in multiple ways (in order of precedence):
 
 The AnthropicProvider extends the BaseProvider class and implements Anthropic-specific functionality.
 
-### Request Routing
+## ZaiProvider Implementation
 
-The provider handles all request paths and routes them to the standard Anthropic API endpoint:
+The ZaiProvider extends the BaseProvider class and implements Z.ai-specific functionality.
+
+### Key Features
+
+1. **API Key Authentication**: Uses `x-api-key` header instead of OAuth
+2. **No Tier Detection**: Returns null from `extractTierInfo()` - tiers must be set manually
+3. **Usage Extraction**: Parses token usage from both streaming and non-streaming responses (similar to Anthropic)
+4. **Request Routing**: Routes all requests to `https://api.z.ai/api/anthropic`
+5. **Compatible Response Format**: Z.ai responses follow the same format as Anthropic's API
+
+### Z.ai Request Routing
+
+The Z.ai provider routes all requests to the Z.ai API endpoint:
+
+```typescript
+buildUrl(path: string, query: string): string {
+  return `https://api.z.ai/api/anthropic${path}${query}`;
+}
+```
+
+### Z.ai Authentication
+
+Z.ai uses API key authentication via the `x-api-key` header:
+
+```typescript
+prepareHeaders(headers: Headers, accessToken?: string, apiKey?: string): Headers {
+  const newHeaders = new Headers(headers);
+
+  // z.ai expects the API key in x-api-key header
+  if (accessToken) {
+    newHeaders.set("x-api-key", accessToken);
+  } else if (apiKey) {
+    newHeaders.set("x-api-key", apiKey);
+  }
+
+  return newHeaders;
+}
+```
+
+The API key is stored in the `refresh_token` field of the account record for consistency with the authentication system.
+
+## Anthropic Request Routing
+
+The Anthropic provider handles all request paths and routes them to the standard Anthropic API endpoint:
 
 ```typescript
 canHandle(_path: string): boolean {
@@ -301,9 +353,27 @@ ccflare supports three account tiers based on Anthropic's subscription levels:
 | Pro | 5 | 200,000 tokens/min | Individual pro subscriptions |
 | Team | 20 | 800,000+ tokens/min | Team/enterprise accounts |
 
-### Automatic Tier Detection
+### Z.ai Tier Mapping
 
-The system automatically detects account tiers from API responses:
+Z.ai plans map to ccflare tiers as follows:
+
+| Z.ai Plan | ccflare Tier | Usage Limit | Description |
+|-----------|--------------|-------------|-------------|
+| Lite | 1 | ~120 prompts/5hrs | ~3× Claude Pro usage quota |
+| Pro | 5 | ~600 prompts/5hrs | ~3× Claude Max (5×) usage quota |
+| Max | 20 | ~2400 prompts/5hrs | ~3× Claude Max (20×) usage quota |
+
+**Important**: Z.ai does not provide automatic tier detection. You must manually specify the tier when adding z.ai accounts:
+
+```bash
+ccflare --add-account my-zai-account --tier 1  # For Lite plan
+ccflare --add-account my-zai-account --tier 5  # For Pro plan
+ccflare --add-account my-zai-account --tier 20 # For Max plan
+```
+
+### Automatic Tier Detection (Anthropic Only)
+
+The system automatically detects account tiers from Anthropic API responses:
 
 ```typescript
 async extractTierInfo(response: Response): Promise<number | null> {
@@ -410,7 +480,7 @@ interface Account {
 }
 ```
 
-**Note**: The current implementation prioritizes OAuth authentication. API key support is maintained for backward compatibility but OAuth is the preferred method.
+**Note**: The current implementation prioritizes OAuth authentication for Anthropic. Z.ai uses API key authentication exclusively as it does not support OAuth.
 
 ### Token Refresh Strategy
 

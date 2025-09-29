@@ -120,6 +120,7 @@ List all configured accounts with their current status.
     "lastUsed": "2024-12-17T10:25:30.123Z",
     "created": "2024-12-01T08:00:00.000Z",
     "tier": 5,
+    "priority": 50,
     "paused": false,
     "tokenStatus": "valid",
     "rateLimitStatus": "allowed_warning (5m)",
@@ -148,7 +149,8 @@ Initialize OAuth flow for adding a new account.
 {
   "name": "myaccount",
   "mode": "max",  // "max" or "console" (default: "max")
-  "tier": 5       // 1, 5, or 20 (default: 1)
+  "tier": 5,      // 1, 5, or 20 (default: 1)
+  "priority": 50  // 0-100, lower value = higher priority (optional, defaults: 0)
 }
 ```
 
@@ -187,7 +189,8 @@ Complete OAuth flow after user authorization.
   "success": true,
   "message": "Account 'myaccount' added successfully!",
   "mode": "Claude Max",
-  "tier": 5
+  "tier": 5,
+  "priority": 50
 }
 ```
 
@@ -253,6 +256,39 @@ curl -X POST http://localhost:8080/api/accounts/uuid-here/tier \
   -H "Content-Type: application/json" \
   -d '{"tier": 20}'
 ```
+
+#### POST /api/accounts/:accountId/priority
+
+Update account priority. Lower priority values increase the likelihood of the account being selected by the load balancer.
+
+**Request:**
+```json
+{
+  "priority": 75  // 0-100, lower value = higher priority
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "priority": 75
+}
+```
+
+**Example:**
+```bash
+curl -X POST http://localhost:8080/api/accounts/uuid-here/priority \
+  -H "Content-Type: application/json" \
+  -d '{"priority": 75}'
+```
+
+**How Priorities Work:**
+- Priority values range from 0 to 100
+- Lower values indicate higher priority in load balancing
+- Priority is optional and defaults to 0 (highest priority) if not specified
+- Priority affects both primary account selection and fallback order
+- Changes take effect immediately without restarting the server
 
 #### POST /api/accounts/:accountId/pause
 

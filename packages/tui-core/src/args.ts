@@ -7,7 +7,7 @@ export interface ParsedArgs {
 	logs?: boolean | number;
 	stats?: boolean;
 	addAccount?: string;
-	mode?: "max" | "console";
+	mode?: "max" | "console" | "zai";
 	tier?: 1 | 5 | 20;
 	list?: boolean;
 	remove?: string;
@@ -56,7 +56,7 @@ export function parseArgs(args: string[]): ParsedArgs {
 		}
 		if (values.stats) result.stats = true;
 		if (values["add-account"]) result.addAccount = values["add-account"];
-		if (values.mode) result.mode = values.mode as "max" | "console";
+		if (values.mode) result.mode = values.mode as "max" | "console" | "zai";
 		if (values.tier) result.tier = parseInt(values.tier, 10) as 1 | 5 | 20;
 		if (values.list) result.list = true;
 		if (values.remove) result.remove = values.remove;

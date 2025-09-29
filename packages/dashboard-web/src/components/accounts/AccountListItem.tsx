@@ -6,6 +6,7 @@ import {
 	Pause,
 	Play,
 	Trash2,
+	Zap,
 } from "lucide-react";
 import type { Account } from "../../api";
 import { Button } from "../ui/button";
@@ -17,6 +18,7 @@ interface AccountListItemProps {
 	onPauseToggle: (account: Account) => void;
 	onRemove: (name: string) => void;
 	onRename: (account: Account) => void;
+	onPriorityChange: (account: Account) => void;
 }
 
 export function AccountListItem({
@@ -25,6 +27,7 @@ export function AccountListItem({
 	onPauseToggle,
 	onRemove,
 	onRename,
+	onPriorityChange,
 }: AccountListItemProps) {
 	const presenter = new AccountPresenter(account);
 
@@ -47,6 +50,9 @@ export function AccountListItem({
 									Active
 								</span>
 							)}
+							<span className="px-2 py-0.5 text-xs font-medium bg-secondary text-secondary-foreground rounded-full">
+								Priority: {account.priority}
+							</span>
 						</div>
 						<p className="text-sm text-muted-foreground">
 							{account.provider} • {presenter.tierDisplay}
@@ -77,6 +83,14 @@ export function AccountListItem({
 						title="Rename account"
 					>
 						<Edit2 className="h-4 w-4" />
+					</Button>
+					<Button
+						variant="ghost"
+						size="sm"
+						onClick={() => onPriorityChange(account)}
+						title="Change account priority"
+					>
+						<Zap className="h-4 w-4" />
 					</Button>
 					<Button
 						variant="ghost"

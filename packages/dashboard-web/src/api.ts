@@ -56,8 +56,10 @@ class API extends HttpClient {
 
 	async initAddAccount(data: {
 		name: string;
-		mode: "max" | "console";
+		mode: "max" | "console" | "zai";
+		apiKey?: string;
 		tier: number;
+		priority: number;
 	}): Promise<{ authUrl: string; sessionId: string }> {
 		try {
 			return await this.post<{ authUrl: string; sessionId: string }>(
@@ -79,6 +81,25 @@ class API extends HttpClient {
 		try {
 			return await this.post<{ message: string; mode: string; tier: number }>(
 				"/api/oauth/callback",
+				data,
+			);
+		} catch (error) {
+			if (error instanceof HttpError) {
+				throw new Error(error.message);
+			}
+			throw error;
+		}
+	}
+
+	async addZaiAccount(data: {
+		name: string;
+		apiKey: string;
+		tier: number;
+		priority: number;
+	}): Promise<{ message: string; account: Account }> {
+		try {
+			return await this.post<{ message: string; account: Account }>(
+				"/api/accounts/zai",
 				data,
 			);
 		} catch (error) {
@@ -203,6 +224,20 @@ class API extends HttpClient {
 				newName: string;
 			}>(`/api/accounts/${accountId}/rename`, { name: newName });
 			return { newName: response.newName };
+		} catch (error) {
+			if (error instanceof HttpError) {
+				throw new Error(error.message);
+			}
+			throw error;
+		}
+	}
+
+	async updateAccountPriority(
+		accountId: string,
+		priority: number,
+	): Promise<void> {
+		try {
+			await this.post(`/api/accounts/${accountId}/priority`, { priority });
 		} catch (error) {
 			if (error instanceof HttpError) {
 				throw new Error(error.message);

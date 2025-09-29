@@ -1,6 +1,6 @@
 import { ServiceUnavailableError, TokenRefreshError } from "@ccflare/core";
 import { Logger } from "@ccflare/logger";
-import type { TokenRefreshResult } from "@ccflare/providers";
+import { getProvider, type TokenRefreshResult } from "@ccflare/providers";
 import type { Account } from "@ccflare/types";
 import { TOKEN_REFRESH_BACKOFF_MS, TOKEN_SAFETY_WINDOW_MS } from "../constants";
 import { ERROR_MESSAGES, type ProxyContext } from "./proxy-types";
@@ -33,8 +33,11 @@ export async function refreshAccessTokenSafe(
 
 	// Check if a refresh is already in progress for this account
 	if (!ctx.refreshInFlight.has(account.id)) {
+		// Get the provider for this account
+		const provider = getProvider(account.provider) || ctx.provider;
+
 		// Create a new refresh promise and store it
-		const refreshPromise = ctx.provider
+		const refreshPromise = provider
 			.refreshToken(account, ctx.runtime.clientId)
 			.then((result: TokenRefreshResult) => {
 				// 1. Persist to database asynchronously

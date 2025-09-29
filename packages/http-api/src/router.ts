@@ -2,11 +2,13 @@ import { validateNumber } from "@ccflare/core";
 import {
 	createAccountAddHandler,
 	createAccountPauseHandler,
+	createAccountPriorityUpdateHandler,
 	createAccountRemoveHandler,
 	createAccountRenameHandler,
 	createAccountResumeHandler,
 	createAccountsListHandler,
 	createAccountTierUpdateHandler,
+	createZaiAccountAddHandler,
 } from "./handlers/accounts";
 import {
 	createAgentPreferenceUpdateHandler,
@@ -62,6 +64,7 @@ export class APIRouter {
 		const statsResetHandler = createStatsResetHandler(dbOps);
 		const accountsHandler = createAccountsListHandler(db);
 		const accountAddHandler = createAccountAddHandler(dbOps, config);
+		const zaiAccountAddHandler = createZaiAccountAddHandler(dbOps);
 		const _accountRemoveHandler = createAccountRemoveHandler(dbOps);
 		const _accountTierHandler = createAccountTierUpdateHandler(dbOps);
 		const requestsSummaryHandler = createRequestsSummaryHandler(db);
@@ -84,6 +87,9 @@ export class APIRouter {
 		this.handlers.set("POST:/api/stats/reset", () => statsResetHandler());
 		this.handlers.set("GET:/api/accounts", () => accountsHandler());
 		this.handlers.set("POST:/api/accounts", (req) => accountAddHandler(req));
+		this.handlers.set("POST:/api/accounts/zai", (req) =>
+			zaiAccountAddHandler(req),
+		);
 		this.handlers.set("POST:/api/oauth/init", (req) => oauthInitHandler(req));
 		this.handlers.set("POST:/api/oauth/callback", (req) =>
 			oauthCallbackHandler(req),
@@ -215,6 +221,17 @@ export class APIRouter {
 			if (path.endsWith("/rename") && method === "POST") {
 				const renameHandler = createAccountRenameHandler(this.context.dbOps);
 				return await this.wrapHandler((req) => renameHandler(req, accountId))(
+					req,
+					url,
+				);
+			}
+
+			// Account priority update
+			if (path.endsWith("/priority") && method === "POST") {
+				const priorityHandler = createAccountPriorityUpdateHandler(
+					this.context.dbOps,
+				);
+				return await this.wrapHandler((req) => priorityHandler(req, accountId))(
 					req,
 					url,
 				);

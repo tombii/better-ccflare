@@ -10,7 +10,13 @@ interface AccountsScreenProps {
 	onBack: () => void;
 }
 
-type Mode = "list" | "add" | "remove" | "confirmRemove" | "waitingForCode";
+type Mode =
+	| "list"
+	| "add"
+	| "remove"
+	| "confirmRemove"
+	| "waitingForCode"
+	| "setPriority";
 
 export function AccountsScreen({ onBack }: AccountsScreenProps) {
 	const [mode, setMode] = useState<Mode>("list");
@@ -27,6 +33,9 @@ export function AccountsScreen({ onBack }: AccountsScreenProps) {
 	const [error, setError] = useState<string | null>(null);
 	const [accountToRemove, setAccountToRemove] = useState("");
 	const [confirmInput, setConfirmInput] = useState("");
+	const [accountForPriority, setAccountForPriority] =
+		useState<AccountDisplay | null>(null);
+	const [priorityInput, setPriorityInput] = useState("");
 
 	useInput((input, key) => {
 		if (key.escape) {
@@ -34,6 +43,10 @@ export function AccountsScreen({ onBack }: AccountsScreenProps) {
 				setMode("list");
 				setAccountToRemove("");
 				setConfirmInput("");
+			} else if (mode === "setPriority") {
+				setMode("list");
+				setAccountForPriority(null);
+				setPriorityInput("");
 			} else if (mode === "add" || mode === "waitingForCode") {
 				setMode("list");
 				setNewAccountName("");
@@ -64,6 +77,7 @@ export function AccountsScreen({ onBack }: AccountsScreenProps) {
 				name: newAccountName,
 				mode: selectedMode,
 				tier: selectedTier,
+				priority: 0, // Default priority
 			});
 			setOauthFlowData(flowData);
 			setMode("waitingForCode");
@@ -83,6 +97,7 @@ export function AccountsScreen({ onBack }: AccountsScreenProps) {
 				name: newAccountName,
 				mode: selectedMode,
 				tier: selectedTier,
+				priority: 0, // Default priority
 				code: authCode,
 				flowData: oauthFlowData,
 			});
@@ -100,10 +115,40 @@ export function AccountsScreen({ onBack }: AccountsScreenProps) {
 		}
 	};
 
-	const handleRemoveAccount = (name: string) => {
+	const _handleRemoveAccount = (name: string) => {
 		setAccountToRemove(name);
 		setConfirmInput("");
 		setMode("confirmRemove");
+	};
+
+	const handleSetPriority = (account: AccountDisplay) => {
+		setAccountForPriority(account);
+		setPriorityInput(account.priority.toString());
+		setMode("setPriority");
+	};
+
+	const handleUpdatePriority = async () => {
+		if (!accountForPriority || !priorityInput) return;
+
+		const priority = parseInt(priorityInput, 10);
+		if (Number.isNaN(priority) || priority < 0 || priority > 100) {
+			setError("Priority must be a number between 0 and 100");
+			return;
+		}
+
+		try {
+			// Using tuiCore for priority update
+			await tuiCore.updateAccountPriority(accountForPriority.name, priority);
+			await loadAccounts();
+			setMode("list");
+			setAccountForPriority(null);
+			setPriorityInput("");
+			setError(null);
+		} catch (error) {
+			setError(
+				error instanceof Error ? error.message : "Failed to update priority",
+			);
+		}
 	};
 
 	const handleConfirmRemove = async () => {
@@ -262,11 +307,55 @@ export function AccountsScreen({ onBack }: AccountsScreenProps) {
 		);
 	}
 
+	if (mode === "setPriority") {
+		return (
+			<Box flexDirection="column" padding={1}>
+				<Text color="cyan" bold>
+					🔢 Set Account Priority
+				</Text>
+
+				<Box marginTop={1} marginBottom={1}>
+					<Text>
+						Setting priority for account:{" "}
+						<Text bold>{accountForPriority?.name}</Text>
+					</Text>
+					<Text>
+						Current priority: <Text bold>{accountForPriority?.priority}</Text>
+					</Text>
+					<Text dimColor>
+						Priority values range from 0 (lowest) to 100 (highest)
+					</Text>
+				</Box>
+
+				<Box flexDirection="column">
+					<Text>New priority (0-100):</Text>
+					<TextInput
+						value={priorityInput}
+						onChange={setPriorityInput}
+						onSubmit={() => {
+							if (priorityInput) handleUpdatePriority();
+						}}
+					/>
+				</Box>
+
+				{error && (
+					<Box marginTop={1}>
+						<Text color="red">{error}</Text>
+					</Box>
+				)}
+
+				<Box marginTop={2}>
+					<Text dimColor>Press ENTER to confirm, ESC to cancel</Text>
+				</Box>
+			</Box>
+		);
+	}
+
 	const menuItems = [
 		...accounts.map((acc) => {
 			const presenter = new AccountPresenter(acc);
 			return {
-				label: `${acc.name} (${presenter.tierDisplay})`,
+				label: `${acc.name} (${presenter.tierDisplay}) - Priority: ${acc.priority}`,
 				value: `account:${acc.name}`,
 			};
 		}),
@@ -298,7 +387,10 @@ export function AccountsScreen({ onBack }: AccountsScreenProps) {
 							setMode("add");
 						} else if (item.value.startsWith("account:")) {
 							const accountName = item.value.replace("account:", "");
-							handleRemoveAccount(accountName);
+							const account = accounts.find((acc) => acc.name === accountName);
+							if (account) {
+								handleSetPriority(account);
+							}
 						}
 					}}
 				/>

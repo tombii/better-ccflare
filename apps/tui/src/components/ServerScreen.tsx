@@ -1,5 +1,5 @@
-import { NETWORK } from "@ccflare/core";
 import { Config } from "@ccflare/config";
+import { NETWORK } from "@ccflare/core";
 import { Box, Text, useInput } from "ink";
 
 interface ServerScreenProps {
