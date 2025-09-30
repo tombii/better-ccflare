@@ -7,6 +7,8 @@ export const COLORS = {
 	blue: "#3b82f6",
 	purple: "#8b5cf6",
 	pink: "#ec4899",
+	indigo: "#6366f1",
+	cyan: "#06b6d4",
 } as const;
 
 // Chart color sequence for multi-series charts
