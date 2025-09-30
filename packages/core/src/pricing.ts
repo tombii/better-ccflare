@@ -387,13 +387,21 @@ class PriceCatalogue {
 		return data;
 	}
 
-	warnOnce(modelId: string): void {
+	warnOnce(modelId: string, error?: Error | string): void {
 		if (!this.warnedModels.has(modelId)) {
 			this.warnedModels.add(modelId);
-			this.logger?.warn(
-				"Price for model %s not found - cost set to 0",
-				modelId,
-			);
+			if (error) {
+				this.logger?.warn(
+					"Price for model %s not found - cost set to 0 (reason: %s)",
+					modelId,
+					error instanceof Error ? error.message : error,
+				);
+			} else {
+				this.logger?.warn(
+					"Price for model %s not found - cost set to 0",
+					modelId,
+				);
+			}
 		}
 	}
 }
@@ -479,8 +487,11 @@ export async function estimateCostUSD(
 		}
 
 		return totalCost;
-	} catch (_error) {
-		catalogue.warnOnce(modelId);
+	} catch (error) {
+		catalogue.warnOnce(
+			modelId,
+			error instanceof Error ? error : String(error),
+		);
 		return 0;
 	}
 }
