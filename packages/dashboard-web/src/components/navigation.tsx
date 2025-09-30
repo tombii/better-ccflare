@@ -148,7 +148,7 @@ export function Navigation() {
 						<div className="hidden lg:flex items-center justify-between">
 							<div className="flex items-center gap-2 text-xs text-muted-foreground">
 								<GitBranch className="h-3 w-3" />
-								<span>v1.0.0</span>
+								<span>v1.0.1</span>
 							</div>
 							<ThemeToggle />
 						</div>
