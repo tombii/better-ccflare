@@ -123,6 +123,16 @@ BUNDLED_PRICING.zai = {
 				cache_write: 0,
 			},
 		},
+		"glm-4.6": {
+			id: "glm-4.6",
+			name: "GLM-4.6",
+			cost: {
+				input: 0.6,
+				output: 2.2,
+				cache_read: 0.11,
+				cache_write: 0,
+			},
+		},
 	},
 };
 
