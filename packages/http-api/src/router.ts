@@ -31,6 +31,7 @@ import {
 	createOAuthInitHandler,
 } from "./handlers/oauth";
 import {
+	createRequestPayloadHandler,
 	createRequestsDetailHandler,
 	createRequestsSummaryHandler,
 } from "./handlers/requests";
@@ -183,6 +184,19 @@ export class APIRouter {
 		const handler = this.handlers.get(key);
 		if (handler) {
 			return await this.wrapHandler(handler)(req, url);
+		}
+
+		// Check for dynamic request payload endpoint
+		if (path.startsWith("/api/requests/payload/") && method === "GET") {
+			const parts = path.split("/");
+			const requestId = parts[4];
+			if (requestId) {
+				const payloadHandler = createRequestPayloadHandler(this.context.dbOps);
+				return await this.wrapHandler(() => payloadHandler(requestId))(
+					req,
+					url,
+				);
+			}
 		}
 
 		// Check for dynamic account endpoints
