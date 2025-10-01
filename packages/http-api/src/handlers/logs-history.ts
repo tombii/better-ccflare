@@ -2,8 +2,8 @@ import {
 	errorResponse,
 	InternalServerError,
 	jsonResponse,
-} from "@ccflare/http-common";
-import { logFileWriter } from "@ccflare/logger";
+} from "@better-ccflare/http-common";
+import { logFileWriter } from "@better-ccflare/logger";
 
 /**
  * Create a logs history handler to fetch past logs

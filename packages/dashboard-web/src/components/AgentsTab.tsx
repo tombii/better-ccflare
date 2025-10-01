@@ -1,5 +1,5 @@
-import { DEFAULT_AGENT_MODEL, getModelDisplayName } from "@ccflare/core";
-import { ALLOWED_MODELS } from "@ccflare/types";
+import { DEFAULT_AGENT_MODEL, getModelDisplayName } from "@better-ccflare/core";
+import { ALLOWED_MODELS } from "@better-ccflare/types";
 import {
 	AlertCircle,
 	Bot,

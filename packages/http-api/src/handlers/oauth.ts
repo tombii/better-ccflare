@@ -1,14 +1,14 @@
-import { Config } from "@ccflare/config";
-import { patterns, validateNumber, validateString } from "@ccflare/core";
-import type { DatabaseOperations } from "@ccflare/database";
+import { Config } from "@better-ccflare/config";
+import { patterns, validateNumber, validateString } from "@better-ccflare/core";
+import type { DatabaseOperations } from "@better-ccflare/database";
 import {
 	BadRequest,
 	errorResponse,
 	InternalServerError,
 	jsonResponse,
-} from "@ccflare/http-common";
-import { Logger } from "@ccflare/logger";
-import { createOAuthFlow } from "@ccflare/oauth-flow";
+} from "@better-ccflare/http-common";
+import { Logger } from "@better-ccflare/logger";
+import { createOAuthFlow } from "@better-ccflare/oauth-flow";
 
 const log = new Logger("OAuthHandler");
 
@@ -139,8 +139,8 @@ export function createOAuthCallbackHandler(dbOps: DatabaseOperations) {
 
 				// We need to reconstruct the flow data since we can't pass the full BeginResult through HTTP
 				// The OAuth flow will handle the token exchange and account creation
-				const oauthProvider = await import("@ccflare/providers").then((m) =>
-					m.getOAuthProvider("anthropic"),
+				const oauthProvider = await import("@better-ccflare/providers").then(
+					(m) => m.getOAuthProvider("anthropic"),
 				);
 				if (!oauthProvider) {
 					throw new Error("OAuth provider not found");

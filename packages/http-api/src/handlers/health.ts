@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
-import type { Config } from "@ccflare/config";
-import { jsonResponse } from "@ccflare/http-common";
+import type { Config } from "@better-ccflare/config";
+import { jsonResponse } from "@better-ccflare/http-common";
 import type { HealthResponse } from "../types";
 
 /**

@@ -44,7 +44,7 @@ export function Navigation() {
 			<div className="lg:hidden fixed top-0 left-0 right-0 z-50 h-16 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-b px-4 flex items-center justify-between">
 				<div className="flex items-center gap-3">
 					<Shield className="h-6 w-6 text-primary" />
-					<span className="font-semibold text-lg">ccflare</span>
+					<span className="font-semibold text-lg">better-ccflare</span>
 				</div>
 				<div className="flex items-center gap-2">
 					<ThemeToggle />
@@ -89,7 +89,7 @@ export function Navigation() {
 								<Shield className="h-6 w-6 text-primary" />
 							</div>
 							<div>
-								<h1 className="font-semibold text-lg">ccflare</h1>
+								<h1 className="font-semibold text-lg">better-ccflare</h1>
 								<p className="text-xs text-muted-foreground">
 									Powerful proxy for Claude Code
 								</p>

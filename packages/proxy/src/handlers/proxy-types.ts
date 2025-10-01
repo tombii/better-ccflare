@@ -1,7 +1,10 @@
-import type { RuntimeConfig } from "@ccflare/config";
-import type { AsyncDbWriter, DatabaseOperations } from "@ccflare/database";
-import type { Provider } from "@ccflare/providers";
-import type { LoadBalancingStrategy } from "@ccflare/types";
+import type { RuntimeConfig } from "@better-ccflare/config";
+import type {
+	AsyncDbWriter,
+	DatabaseOperations,
+} from "@better-ccflare/database";
+import type { Provider } from "@better-ccflare/providers";
+import type { LoadBalancingStrategy } from "@better-ccflare/types";
 
 export interface ProxyContext {
 	strategy: LoadBalancingStrategy;

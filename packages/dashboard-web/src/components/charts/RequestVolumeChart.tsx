@@ -1,4 +1,4 @@
-import { formatNumber } from "@ccflare/ui-common";
+import { formatNumber } from "@better-ccflare/ui-common";
 import { COLORS } from "../../constants";
 import { formatCompactNumber } from "../../lib/chart-utils";
 import { BaseAreaChart } from "./BaseAreaChart";

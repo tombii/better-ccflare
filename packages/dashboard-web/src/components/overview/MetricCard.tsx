@@ -1,4 +1,4 @@
-import { formatPercentage } from "@ccflare/ui-common";
+import { formatPercentage } from "@better-ccflare/ui-common";
 import { Info, TrendingDown, TrendingUp } from "lucide-react";
 import { Card, CardContent } from "../ui/card";
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";

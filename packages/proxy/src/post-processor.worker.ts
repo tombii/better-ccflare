@@ -1,14 +1,18 @@
 declare var self: Worker;
 
-import { BUFFER_SIZES, estimateCostUSD, TIME_CONSTANTS } from "@ccflare/core";
-import { AsyncDbWriter, DatabaseOperations } from "@ccflare/database";
-import { Logger } from "@ccflare/logger";
+import {
+	BUFFER_SIZES,
+	estimateCostUSD,
+	TIME_CONSTANTS,
+} from "@better-ccflare/core";
+import { AsyncDbWriter, DatabaseOperations } from "@better-ccflare/database";
+import { Logger } from "@better-ccflare/logger";
 import {
 	NO_ACCOUNT_ID,
 	type RequestPayload,
 	type RequestResponse,
-} from "@ccflare/types";
-import { formatCost } from "@ccflare/ui-common";
+} from "@better-ccflare/types";
+import { formatCost } from "@better-ccflare/ui-common";
 import { get_encoding } from "@dqbd/tiktoken";
 import { combineChunks } from "./stream-tee";
 import type {

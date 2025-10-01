@@ -1,4 +1,4 @@
-import { formatTokensPerSecond } from "@ccflare/ui-common";
+import { formatTokensPerSecond } from "@better-ccflare/ui-common";
 import { COLORS } from "../../constants";
 import { formatCompactNumber } from "../../lib/chart-utils";
 import { BaseAreaChart } from "./BaseAreaChart";

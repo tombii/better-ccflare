@@ -1,4 +1,4 @@
-import { formatTokensPerSecond } from "@ccflare/ui-common";
+import { formatTokensPerSecond } from "@better-ccflare/ui-common";
 import { Activity, Zap } from "lucide-react";
 import type { TimeRange } from "../../constants";
 import { ModelTokenSpeedChart } from "../charts/ModelTokenSpeedChart";

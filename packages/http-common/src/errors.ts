@@ -12,4 +12,4 @@ export {
 	TooManyRequests,
 	Unauthorized,
 	UnprocessableEntity,
-} from "@ccflare/errors";
+} from "@better-ccflare/errors";

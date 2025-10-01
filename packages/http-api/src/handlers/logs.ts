@@ -1,6 +1,6 @@
-import { sseResponse } from "@ccflare/http-common";
-import { Logger, logBus } from "@ccflare/logger";
-import type { LogEvent } from "@ccflare/types";
+import { sseResponse } from "@better-ccflare/http-common";
+import { Logger, logBus } from "@better-ccflare/logger";
+import type { LogEvent } from "@better-ccflare/types";
 
 const log = new Logger("LogsHandler");
 

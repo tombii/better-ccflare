@@ -1,5 +1,5 @@
 {
-	"name": "@ccflare/core-di",
+	"name": "@better-ccflare/core-di",
 	"version": "0.1.0",
 	"type": "module",
 	"main": "./src/index.ts",

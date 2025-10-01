@@ -1,13 +1,14 @@
 import { existsSync } from "node:fs";
-import { readFile, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
-import { Logger } from "@ccflare/logger";
-import type { AgentWorkspace } from "@ccflare/types";
+import { dirname, join } from "node:path";
+import { Logger } from "@better-ccflare/logger";
+import type { AgentWorkspace } from "@better-ccflare/types";
 
 const log = new Logger("WorkspacePersistence");
 
-const WORKSPACES_FILE = join(homedir(), ".ccflare", "workspaces.json");
+const WORKSPACES_FILE = join(homedir(), ".better-ccflare", "workspaces.json");
+const LEGACY_WORKSPACES_FILE = join(homedir(), ".ccflare", "workspaces.json");
 
 interface WorkspacesData {
 	version: number;
@@ -15,7 +16,43 @@ interface WorkspacesData {
 }
 
 export class WorkspacePersistence {
+	private migrationChecked = false;
+
+	private async migrateFromLegacy(): Promise<void> {
+		if (this.migrationChecked) return;
+		this.migrationChecked = true;
+
+		// If new file exists, no migration needed
+		if (existsSync(WORKSPACES_FILE)) {
+			return;
+		}
+
+		// If legacy file doesn't exist, nothing to migrate
+		if (!existsSync(LEGACY_WORKSPACES_FILE)) {
+			return;
+		}
+
+		try {
+			// Ensure target directory exists
+			const targetDir = dirname(WORKSPACES_FILE);
+			if (!existsSync(targetDir)) {
+				await mkdir(targetDir, { recursive: true });
+			}
+
+			// Copy legacy file to new location
+			await copyFile(LEGACY_WORKSPACES_FILE, WORKSPACES_FILE);
+			log.info(
+				`✅ Migrated workspaces from ${LEGACY_WORKSPACES_FILE} to ${WORKSPACES_FILE}`,
+			);
+		} catch (error) {
+			log.error(`Failed to migrate workspaces file: ${error}`);
+		}
+	}
+
 	async loadWorkspaces(): Promise<AgentWorkspace[]> {
+		// Check for migration
+		await this.migrateFromLegacy();
+
 		try {
 			if (!existsSync(WORKSPACES_FILE)) {
 				log.debug("No workspaces file found");
@@ -48,9 +85,8 @@ export class WorkspacePersistence {
 			const content = JSON.stringify(data, null, 2);
 
 			// Ensure directory exists
-			const dir = join(homedir(), ".ccflare");
+			const dir = dirname(WORKSPACES_FILE);
 			if (!existsSync(dir)) {
-				const { mkdir } = await import("node:fs/promises");
 				await mkdir(dir, { recursive: true });
 			}
 

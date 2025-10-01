@@ -1,7 +1,7 @@
-import { logError, ProviderError } from "@ccflare/core";
-import { Logger } from "@ccflare/logger";
-import { getProvider } from "@ccflare/providers";
-import type { Account, RequestMeta } from "@ccflare/types";
+import { logError, ProviderError } from "@better-ccflare/core";
+import { Logger } from "@better-ccflare/logger";
+import { getProvider } from "@better-ccflare/providers";
+import type { Account, RequestMeta } from "@better-ccflare/types";
 import { forwardToClient } from "../response-handler";
 import { ERROR_MESSAGES, type ProxyContext } from "./proxy-types";
 import { makeProxyRequest } from "./request-handler";

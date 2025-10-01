@@ -1,9 +1,9 @@
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { agentRegistry } from "@ccflare/agents";
-import type { DatabaseOperations } from "@ccflare/database";
-import { Logger } from "@ccflare/logger";
-import type { Agent } from "@ccflare/types";
+import { agentRegistry } from "@better-ccflare/agents";
+import type { DatabaseOperations } from "@better-ccflare/database";
+import { Logger } from "@better-ccflare/logger";
+import type { Agent } from "@better-ccflare/types";
 
 const log = new Logger("AgentInterceptor");
 

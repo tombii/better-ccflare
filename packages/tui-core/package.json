@@ -1,5 +1,5 @@
 {
-	"name": "@ccflare/tui-core",
+	"name": "@better-ccflare/tui-core",
 	"version": "1.0.0",
 	"description": "Core controller logic for ccflare TUI",
 	"type": "module",
@@ -11,14 +11,14 @@
 		"typecheck": "tsc --noEmit"
 	},
 	"dependencies": {
-		"@ccflare/cli-commands": "workspace:*",
-		"@ccflare/config": "workspace:*",
-		"@ccflare/database": "workspace:*",
-		"@ccflare/logger": "workspace:*",
-		"@ccflare/core": "workspace:*",
-		"@ccflare/oauth-flow": "workspace:*",
-		"@ccflare/providers": "workspace:*",
-		"@ccflare/types": "workspace:*"
+		"@better-ccflare/cli-commands": "workspace:*",
+		"@better-ccflare/config": "workspace:*",
+		"@better-ccflare/database": "workspace:*",
+		"@better-ccflare/logger": "workspace:*",
+		"@better-ccflare/core": "workspace:*",
+		"@better-ccflare/oauth-flow": "workspace:*",
+		"@better-ccflare/providers": "workspace:*",
+		"@better-ccflare/types": "workspace:*"
 	},
 	"devDependencies": {
 		"@types/node": "^20.0.0"

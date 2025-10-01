@@ -1,8 +1,8 @@
-import { agentRegistry } from "@ccflare/agents";
-import type { DatabaseOperations } from "@ccflare/database";
-import { errorResponse, jsonResponse } from "@ccflare/http-common";
-import type { AgentTool, AllowedModel } from "@ccflare/types";
-import { ALLOWED_MODELS, TOOL_PRESETS } from "@ccflare/types";
+import { agentRegistry } from "@better-ccflare/agents";
+import type { DatabaseOperations } from "@better-ccflare/database";
+import { errorResponse, jsonResponse } from "@better-ccflare/http-common";
+import type { AgentTool, AllowedModel } from "@better-ccflare/types";
+import { ALLOWED_MODELS, TOOL_PRESETS } from "@better-ccflare/types";
 
 type ToolMode = keyof typeof TOOL_PRESETS | "custom";
 

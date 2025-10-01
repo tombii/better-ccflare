@@ -1,5 +1,5 @@
 {
-	"name": "@ccflare/providers",
+	"name": "@better-ccflare/providers",
 	"version": "0.1.0",
 	"type": "module",
 	"main": "./src/index.ts",
@@ -10,6 +10,6 @@
 		"typecheck": "bunx tsc --noEmit"
 	},
 	"dependencies": {
-		"@ccflare/core": "workspace:*"
+		"@better-ccflare/core": "workspace:*"
 	}
 }

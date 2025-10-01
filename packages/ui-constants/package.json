@@ -1,5 +1,5 @@
 {
-	"name": "@ccflare/ui-constants",
+	"name": "@better-ccflare/ui-constants",
 	"version": "1.0.0",
 	"main": "./src/index.ts",
 	"types": "./src/index.ts",

@@ -1,7 +1,7 @@
-import { logError, RateLimitError } from "@ccflare/core";
-import { Logger } from "@ccflare/logger";
-import type { Provider } from "@ccflare/providers";
-import type { Account } from "@ccflare/types";
+import { logError, RateLimitError } from "@better-ccflare/core";
+import { Logger } from "@better-ccflare/logger";
+import type { Provider } from "@better-ccflare/providers";
+import type { Account } from "@better-ccflare/types";
 import type { ProxyContext } from "./proxy-types";
 
 const log = new Logger("ResponseProcessor");

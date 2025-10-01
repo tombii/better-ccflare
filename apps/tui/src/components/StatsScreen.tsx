@@ -1,10 +1,10 @@
-import * as tuiCore from "@ccflare/tui-core";
+import * as tuiCore from "@better-ccflare/tui-core";
 import {
 	formatCost,
 	formatNumber,
 	formatPercentage,
 	formatTokensPerSecond,
-} from "@ccflare/ui-common";
+} from "@better-ccflare/ui-common";
 import { Box, Text, useInput } from "ink";
 import { useCallback, useEffect, useState } from "react";
 import { BarChart, PieChart, SparklineChart } from "./charts";

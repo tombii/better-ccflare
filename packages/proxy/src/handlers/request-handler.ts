@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
-import { ValidationError } from "@ccflare/core";
-import type { Provider } from "@ccflare/providers";
-import type { RequestMeta } from "@ccflare/types";
+import { ValidationError } from "@better-ccflare/core";
+import type { Provider } from "@better-ccflare/providers";
+import type { RequestMeta } from "@better-ccflare/types";
 import { ERROR_MESSAGES } from "./proxy-types";
 
 /**

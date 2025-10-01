@@ -1,5 +1,8 @@
-import { DatabaseFactory, withDatabaseRetrySync } from "@ccflare/database";
-import type { RequestPayload } from "@ccflare/types";
+import {
+	DatabaseFactory,
+	withDatabaseRetrySync,
+} from "@better-ccflare/database";
+import type { RequestPayload } from "@better-ccflare/types";
 
 export type { RequestPayload };
 

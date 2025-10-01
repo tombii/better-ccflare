@@ -1,8 +1,8 @@
 import { parseArgs } from "node:util";
-import { Config } from "@ccflare/config";
-import { shutdown } from "@ccflare/core";
-import { container, SERVICE_KEYS } from "@ccflare/core-di";
-import { DatabaseFactory } from "@ccflare/database";
+import { Config } from "@better-ccflare/config";
+import { shutdown } from "@better-ccflare/core";
+import { container, SERVICE_KEYS } from "@better-ccflare/core-di";
+import { DatabaseFactory } from "@better-ccflare/database";
 import {
 	addAccount,
 	getAccountsList,

@@ -1,4 +1,4 @@
-import { type RequestEvt, requestEvents } from "@ccflare/core";
+import { type RequestEvt, requestEvents } from "@better-ccflare/core";
 
 export function createRequestsStreamHandler() {
 	return (): Response => {

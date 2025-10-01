@@ -12,11 +12,14 @@
 		"allowSyntheticDefaultImports": true,
 		"forceConsistentCasingInFileNames": true,
 		"allowJs": true,
+		"resolveJsonModule": true,
 		"types": ["bun-types"],
 		"jsx": "react-jsx",
 		"baseUrl": ".",
 		"paths": {
-			"@ccflare/*": ["packages/*/src"]
+			"@better-ccflare/*": ["packages/*/src"],
+			"@better-ccflare/server": ["apps/server/src/server.ts"],
+			"@better-ccflare/dashboard-web/dist/*": ["packages/dashboard-web/dist/*"]
 		}
 	},
 	"include": ["packages/*/src/**/*", "apps/*/src/**/*"]

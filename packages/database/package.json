@@ -1,5 +1,5 @@
 {
-	"name": "@ccflare/database",
+	"name": "@better-ccflare/database",
 	"version": "0.1.0",
 	"type": "module",
 	"main": "./src/index.ts",
@@ -11,7 +11,7 @@
 		"analyze": "bun run ./src/analyze-performance.ts"
 	},
 	"dependencies": {
-		"@ccflare/core": "workspace:*",
-		"@ccflare/logger": "workspace:*"
+		"@better-ccflare/core": "workspace:*",
+		"@better-ccflare/logger": "workspace:*"
 	}
 }

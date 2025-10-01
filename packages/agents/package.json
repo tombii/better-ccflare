@@ -1,5 +1,5 @@
 {
-	"name": "@ccflare/agents",
+	"name": "@better-ccflare/agents",
 	"version": "1.0.0",
 	"description": "Agent discovery and management for ccflare",
 	"main": "dist/index.js",
@@ -13,9 +13,9 @@
 		"typecheck": "tsc --noEmit"
 	},
 	"dependencies": {
-		"@ccflare/config": "workspace:*",
-		"@ccflare/logger": "workspace:*",
-		"@ccflare/types": "workspace:*"
+		"@better-ccflare/config": "workspace:*",
+		"@better-ccflare/logger": "workspace:*",
+		"@better-ccflare/types": "workspace:*"
 	},
 	"devDependencies": {
 		"@types/node": "^22.5.4",

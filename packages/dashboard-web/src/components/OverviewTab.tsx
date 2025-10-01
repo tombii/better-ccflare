@@ -3,7 +3,7 @@ import {
 	formatNumber,
 	formatPercentage,
 	formatTokensPerSecond,
-} from "@ccflare/ui-common";
+} from "@better-ccflare/ui-common";
 import { format } from "date-fns";
 import { Activity, CheckCircle, Clock, DollarSign, Zap } from "lucide-react";
 import { useMemo, useState } from "react";

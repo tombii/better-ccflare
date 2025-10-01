@@ -2,7 +2,7 @@
 import { DatabaseOperations } from "./database-operations";
 export { DatabaseOperations };
 
-export type { RuntimeConfig } from "@ccflare/config";
+export type { RuntimeConfig } from "@better-ccflare/config";
 // Re-export other utilities
 export { AsyncDbWriter } from "./async-writer";
 export type {
@@ -10,8 +10,9 @@ export type {
 	DatabaseRetryConfig,
 } from "./database-operations";
 export { DatabaseFactory } from "./factory";
+export { migrateFromCcflare } from "./migrate-from-ccflare";
 export { ensureSchema, runMigrations } from "./migrations";
-export { resolveDbPath } from "./paths";
+export { getLegacyDbPath, resolveDbPath } from "./paths";
 export { analyzeIndexUsage } from "./performance-indexes";
 
 // Re-export repository types

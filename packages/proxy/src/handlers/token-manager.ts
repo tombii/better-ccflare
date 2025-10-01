@@ -1,7 +1,13 @@
-import { ServiceUnavailableError, TokenRefreshError } from "@ccflare/core";
-import { Logger } from "@ccflare/logger";
-import { getProvider, type TokenRefreshResult } from "@ccflare/providers";
-import type { Account } from "@ccflare/types";
+import {
+	ServiceUnavailableError,
+	TokenRefreshError,
+} from "@better-ccflare/core";
+import { Logger } from "@better-ccflare/logger";
+import {
+	getProvider,
+	type TokenRefreshResult,
+} from "@better-ccflare/providers";
+import type { Account } from "@better-ccflare/types";
 import { TOKEN_REFRESH_BACKOFF_MS, TOKEN_SAFETY_WINDOW_MS } from "../constants";
 import { ERROR_MESSAGES, type ProxyContext } from "./proxy-types";
 

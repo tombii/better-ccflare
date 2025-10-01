@@ -1,9 +1,9 @@
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import type { RuntimeConfig } from "@ccflare/config";
-import type { Disposable } from "@ccflare/core";
-import type { Account, StrategyStore } from "@ccflare/types";
+import type { RuntimeConfig } from "@better-ccflare/config";
+import type { Disposable } from "@better-ccflare/core";
+import type { Account, StrategyStore } from "@better-ccflare/types";
 import { ensureSchema, runMigrations } from "./migrations";
 import { resolveDbPath } from "./paths";
 import { AccountRepository } from "./repositories/account.repository";

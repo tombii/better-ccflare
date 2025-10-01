@@ -1,6 +1,6 @@
-import * as tuiCore from "@ccflare/tui-core";
-import type { AccountDisplay } from "@ccflare/types";
-import { AccountPresenter } from "@ccflare/ui-common";
+import * as tuiCore from "@better-ccflare/tui-core";
+import type { AccountDisplay } from "@better-ccflare/types";
+import { AccountPresenter } from "@better-ccflare/ui-common";
 import { Box, Text, useInput } from "ink";
 import SelectInput from "ink-select-input";
 import TextInput from "ink-text-input";
