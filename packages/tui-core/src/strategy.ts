@@ -1,4 +1,4 @@
-import { Config } from "@ccflare/config";
+import { Config } from "@better-ccflare/config";
 
 async function getPort(): Promise<number> {
 	const config = new Config();

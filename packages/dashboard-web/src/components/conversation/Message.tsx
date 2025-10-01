@@ -4,7 +4,7 @@ import {
 	type Role,
 	type ToolResult,
 	type ToolUse,
-} from "@ccflare/types";
+} from "@better-ccflare/types";
 import type { LucideIcon } from "lucide-react";
 import { Bot, FileText, Terminal, User } from "lucide-react";
 import React from "react";

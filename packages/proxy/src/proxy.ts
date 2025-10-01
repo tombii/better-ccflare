@@ -1,5 +1,5 @@
-import { requestEvents, ServiceUnavailableError } from "@ccflare/core";
-import { Logger } from "@ccflare/logger";
+import { requestEvents, ServiceUnavailableError } from "@better-ccflare/core";
+import { Logger } from "@better-ccflare/logger";
 import {
 	createRequestMetadata,
 	ERROR_MESSAGES,

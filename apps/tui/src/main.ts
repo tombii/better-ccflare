@@ -1,13 +1,13 @@
 #!/usr/bin/env bun
-import { Config } from "@ccflare/config";
-import { CLAUDE_MODEL_IDS, NETWORK, shutdown } from "@ccflare/core";
-import { container, SERVICE_KEYS } from "@ccflare/core-di";
-import { DatabaseFactory } from "@ccflare/database";
-import { Logger } from "@ccflare/logger";
+import { Config } from "@better-ccflare/config";
+import { CLAUDE_MODEL_IDS, NETWORK, shutdown } from "@better-ccflare/core";
+import { container, SERVICE_KEYS } from "@better-ccflare/core-di";
+import { DatabaseFactory } from "@better-ccflare/database";
+import { Logger } from "@better-ccflare/logger";
 // Import server
-import startServer from "@ccflare/server";
-import * as tuiCore from "@ccflare/tui-core";
-import { parseArgs } from "@ccflare/tui-core";
+import startServer from "@better-ccflare/server";
+import * as tuiCore from "@better-ccflare/tui-core";
+import { parseArgs } from "@better-ccflare/tui-core";
 import { render } from "ink";
 import React from "react";
 import { App } from "./App";

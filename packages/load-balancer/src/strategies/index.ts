@@ -1,11 +1,11 @@
-import { isAccountAvailable, TIME_CONSTANTS } from "@ccflare/core";
-import { Logger } from "@ccflare/logger";
+import { isAccountAvailable, TIME_CONSTANTS } from "@better-ccflare/core";
+import { Logger } from "@better-ccflare/logger";
 import type {
 	Account,
 	LoadBalancingStrategy,
 	RequestMeta,
 	StrategyStore,
-} from "@ccflare/types";
+} from "@better-ccflare/types";
 
 export class SessionStrategy implements LoadBalancingStrategy {
 	private sessionDurationMs: number;

@@ -1,5 +1,9 @@
-import type { TimePoint } from "@ccflare/types";
-import { formatCost, formatNumber, formatTokens } from "@ccflare/ui-common";
+import type { TimePoint } from "@better-ccflare/types";
+import {
+	formatCost,
+	formatNumber,
+	formatTokens,
+} from "@better-ccflare/ui-common";
 import { useState } from "react";
 import {
 	Area,

@@ -1,4 +1,4 @@
-import { OAuthError } from "@ccflare/core";
+import { OAuthError } from "@better-ccflare/core";
 import type {
 	OAuthProvider,
 	OAuthProviderConfig,

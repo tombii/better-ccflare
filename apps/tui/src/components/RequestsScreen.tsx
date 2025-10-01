@@ -1,5 +1,5 @@
-import * as tuiCore from "@ccflare/tui-core";
-import { formatCost, formatTokens } from "@ccflare/ui-common";
+import * as tuiCore from "@better-ccflare/tui-core";
+import { formatCost, formatTokens } from "@better-ccflare/ui-common";
 import { Box, Text, useInput } from "ink";
 import { useCallback, useEffect, useState } from "react";
 import { TokenUsageDisplay } from "./TokenUsageDisplay";

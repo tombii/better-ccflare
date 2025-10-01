@@ -1,4 +1,4 @@
-import { formatPercentage } from "@ccflare/ui-common";
+import { formatPercentage } from "@better-ccflare/ui-common";
 import { RefreshCw } from "lucide-react";
 import { useResetStats, useStats } from "../hooks/queries";
 import { useApiError } from "../hooks/useApiError";

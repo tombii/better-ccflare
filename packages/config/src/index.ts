@@ -11,8 +11,8 @@ import {
 	ValidationError,
 	validateNumber,
 	validateString,
-} from "@ccflare/core";
-import { Logger } from "@ccflare/logger";
+} from "@better-ccflare/core";
+import { Logger } from "@better-ccflare/logger";
 import { resolveConfigPath } from "./paths";
 
 const log = new Logger("Config");
@@ -446,6 +446,6 @@ export class Config extends EventEmitter {
 }
 
 // Re-export types
-export type { StrategyName } from "@ccflare/core";
+export type { StrategyName } from "@better-ccflare/core";
 export { resolveConfigPath } from "./paths";
-export { getPlatformConfigDir } from "./paths-common";
+export { getLegacyConfigDir, getPlatformConfigDir } from "./paths-common";

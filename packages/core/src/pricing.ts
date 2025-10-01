@@ -171,7 +171,7 @@ class PriceCatalogue {
 	}
 
 	private getCacheDir(): string {
-		return join(tmpdir(), "ccflare");
+		return join(tmpdir(), "better-ccflare");
 	}
 
 	private getCachePath(): string {

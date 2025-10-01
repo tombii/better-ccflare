@@ -1,4 +1,4 @@
-import type { Config } from "@ccflare/config";
+import type { Config } from "@better-ccflare/config";
 import {
 	DEFAULT_AGENT_MODEL,
 	NETWORK,
@@ -7,8 +7,12 @@ import {
 	TIME_CONSTANTS,
 	validateNumber,
 	validateString,
-} from "@ccflare/core";
-import { BadRequest, errorResponse, jsonResponse } from "@ccflare/http-common";
+} from "@better-ccflare/core";
+import {
+	BadRequest,
+	errorResponse,
+	jsonResponse,
+} from "@better-ccflare/http-common";
 import type { ConfigResponse, RetentionSetRequest } from "../types";
 
 /**

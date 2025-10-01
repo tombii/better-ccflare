@@ -1,14 +1,16 @@
-import type { RuntimeConfig } from "@ccflare/config";
-import { registerDisposable, unregisterDisposable } from "@ccflare/core";
+import type { RuntimeConfig } from "@better-ccflare/config";
+import { registerDisposable, unregisterDisposable } from "@better-ccflare/core";
 import {
 	type DatabaseConfig,
 	DatabaseOperations,
 	type DatabaseRetryConfig,
 } from "./database-operations";
+import { migrateFromCcflare } from "./migrate-from-ccflare";
 
 let instance: DatabaseOperations | null = null;
 let dbPath: string | undefined;
 let runtimeConfig: RuntimeConfig | undefined;
+let migrationChecked = false;
 
 export function initialize(
 	dbPathParam?: string,
@@ -20,6 +22,11 @@ export function initialize(
 
 export function getInstance(): DatabaseOperations {
 	if (!instance) {
+		// Perform one-time migration check from legacy ccflare
+		if (!migrationChecked) {
+			migrateFromCcflare();
+			migrationChecked = true;
+		}
 		// Extract database configuration from runtime config
 		const dbConfig: DatabaseConfig | undefined = runtimeConfig?.database
 			? {

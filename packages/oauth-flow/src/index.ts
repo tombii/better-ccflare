@@ -1,13 +1,13 @@
-import type { Config } from "@ccflare/config";
-import type { DatabaseOperations } from "@ccflare/database";
+import type { Config } from "@better-ccflare/config";
+import type { DatabaseOperations } from "@better-ccflare/database";
 import {
 	generatePKCE,
 	getOAuthProvider,
 	type OAuthProviderConfig,
 	type OAuthTokens,
 	type PKCEChallenge,
-} from "@ccflare/providers";
-import type { AccountTier } from "@ccflare/types";
+} from "@better-ccflare/providers";
+import type { AccountTier } from "@better-ccflare/types";
 
 export interface BeginOptions {
 	name: string;

@@ -1,4 +1,4 @@
-import { CLAUDE_MODEL_IDS } from "@ccflare/core";
+import { CLAUDE_MODEL_IDS } from "@better-ccflare/core";
 
 export type AgentSource = "global" | "workspace";
 

@@ -1,5 +1,5 @@
 import { dirname } from "node:path";
-import { Config, type RuntimeConfig } from "@ccflare/config";
+import { Config, type RuntimeConfig } from "@better-ccflare/config";
 import {
 	CACHE,
 	DEFAULT_STRATEGY,
@@ -9,22 +9,22 @@ import {
 	setPricingLogger,
 	shutdown,
 	TIME_CONSTANTS,
-} from "@ccflare/core";
-import { container, SERVICE_KEYS } from "@ccflare/core-di";
+} from "@better-ccflare/core";
+import { container, SERVICE_KEYS } from "@better-ccflare/core-di";
 // Import React dashboard assets
-import dashboardManifest from "@ccflare/dashboard-web/dist/manifest.json";
-import type { DatabaseOperations } from "@ccflare/database";
-import { AsyncDbWriter, DatabaseFactory } from "@ccflare/database";
-import { APIRouter } from "@ccflare/http-api";
-import { SessionStrategy } from "@ccflare/load-balancer";
-import { Logger } from "@ccflare/logger";
-import { getProvider } from "@ccflare/providers";
+import dashboardManifest from "@better-ccflare/dashboard-web/dist/manifest.json";
+import type { DatabaseOperations } from "@better-ccflare/database";
+import { AsyncDbWriter, DatabaseFactory } from "@better-ccflare/database";
+import { APIRouter } from "@better-ccflare/http-api";
+import { SessionStrategy } from "@better-ccflare/load-balancer";
+import { Logger } from "@better-ccflare/logger";
+import { getProvider } from "@better-ccflare/providers";
 import {
 	getUsageWorker,
 	handleProxy,
 	type ProxyContext,
 	terminateUsageWorker,
-} from "@ccflare/proxy";
+} from "@better-ccflare/proxy";
 import { serve } from "bun";
 
 // Helper function to resolve dashboard assets with fallback
@@ -32,7 +32,7 @@ function resolveDashboardAsset(assetPath: string): string | null {
 	try {
 		// Try resolving as a package first
 		return Bun.resolveSync(
-			`@ccflare/dashboard-web/dist${assetPath}`,
+			`@better-ccflare/dashboard-web/dist${assetPath}`,
 			dirname(import.meta.path),
 		);
 	} catch {
@@ -255,7 +255,7 @@ export default function startServer(options?: {
 
 	// Log server startup
 	console.log(`
-🎯 ccflare Server v${process.env.npm_package_version || "1.0.0"}
+🎯 better-ccflare Server v${process.env.npm_package_version || "1.0.0"}
 🌐 Port: ${serverInstance.port}
 📊 Dashboard: ${withDashboard ? `http://localhost:${serverInstance.port}` : "disabled"}
 🔗 API Base: http://localhost:${serverInstance.port}/api

@@ -1,5 +1,5 @@
 {
-	"name": "@ccflare/ui-common",
+	"name": "@better-ccflare/ui-common",
 	"private": true,
 	"version": "0.0.0",
 	"type": "module",
@@ -11,7 +11,7 @@
 		"typecheck": "tsc --noEmit"
 	},
 	"dependencies": {
-		"@ccflare/types": "workspace:*"
+		"@better-ccflare/types": "workspace:*"
 	},
 	"devDependencies": {
 		"@types/node": "^22.10.2",

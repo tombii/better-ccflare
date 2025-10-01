@@ -1,4 +1,4 @@
-import { DatabaseFactory } from "@ccflare/database";
+import { DatabaseFactory } from "@better-ccflare/database";
 
 export interface TimeSeriesDataPoint {
 	time: number;

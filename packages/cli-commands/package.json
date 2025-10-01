@@ -1,5 +1,5 @@
 {
-	"name": "@ccflare/cli-commands",
+	"name": "@better-ccflare/cli-commands",
 	"version": "0.1.0",
 	"type": "module",
 	"main": "./src/index.ts",
@@ -10,12 +10,12 @@
 		"typecheck": "bunx tsc --noEmit"
 	},
 	"dependencies": {
-		"@ccflare/core": "workspace:*",
-		"@ccflare/core-di": "workspace:*",
-		"@ccflare/database": "workspace:*",
-		"@ccflare/config": "workspace:*",
-		"@ccflare/providers": "workspace:*",
-		"@ccflare/oauth-flow": "workspace:*",
+		"@better-ccflare/core": "workspace:*",
+		"@better-ccflare/core-di": "workspace:*",
+		"@better-ccflare/database": "workspace:*",
+		"@better-ccflare/config": "workspace:*",
+		"@better-ccflare/providers": "workspace:*",
+		"@better-ccflare/oauth-flow": "workspace:*",
 		"open": "^10.0.0"
 	}
 }

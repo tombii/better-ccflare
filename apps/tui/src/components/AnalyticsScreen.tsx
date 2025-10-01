@@ -1,6 +1,10 @@
-import { getModelShortName } from "@ccflare/core";
-import * as tuiCore from "@ccflare/tui-core";
-import { formatCost, formatNumber, formatPercentage } from "@ccflare/ui-common";
+import { getModelShortName } from "@better-ccflare/core";
+import * as tuiCore from "@better-ccflare/tui-core";
+import {
+	formatCost,
+	formatNumber,
+	formatPercentage,
+} from "@better-ccflare/ui-common";
 import { Box, Text, useInput } from "ink";
 import SelectInput from "ink-select-input";
 import Spinner from "ink-spinner";
