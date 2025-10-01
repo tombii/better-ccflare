@@ -94,3 +94,22 @@ export function createRequestsDetailHandler(dbOps: DatabaseOperations) {
 		return jsonResponse(parsed);
 	};
 }
+
+/**
+ * Create a handler for lazy loading individual request payloads
+ * This endpoint supports the performance optimization that eliminates JSON parsing bottleneck
+ */
+export function createRequestPayloadHandler(dbOps: DatabaseOperations) {
+	return (requestId: string): Response => {
+		const payload = dbOps.getRequestPayload(requestId);
+
+		if (!payload) {
+			return new Response(JSON.stringify({ error: "Request not found" }), {
+				status: 404,
+				headers: { "Content-Type": "application/json" },
+			});
+		}
+
+		return jsonResponse(payload);
+	};
+}
