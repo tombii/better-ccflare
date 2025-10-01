@@ -2,11 +2,11 @@
 
 **Last Security Review**: July 30, 2025
 
-This document outlines the security considerations, practices, and recommendations for the ccflare load balancer system.
+This document outlines the security considerations, practices, and recommendations for the better-ccflare load balancer system.
 
 ## ⚠️ Critical Security Notice
 
-**IMPORTANT**: ccflare is designed for local development and trusted environments. The current implementation has several security limitations:
+**IMPORTANT**: better-ccflare is designed for local development and trusted environments. The current implementation has several security limitations:
 
 1. **No Authentication**: All API endpoints and the dashboard are publicly accessible
 2. **Network Exposure**: Server binds to all interfaces (0.0.0.0) by default
@@ -45,7 +45,7 @@ Based on the latest security review, the following critical issues require immed
 
 ## Security Overview
 
-ccflare is a load balancer proxy that manages multiple OAuth accounts to distribute requests to the Claude API. The system handles sensitive authentication tokens and request/response data, requiring careful security considerations.
+better-ccflare is a load balancer proxy that manages multiple OAuth accounts to distribute requests to the Claude API. The system handles sensitive authentication tokens and request/response data, requiring careful security considerations.
 
 ### Key Security Components
 
@@ -179,7 +179,7 @@ async function encryptToken(token: string, key: Buffer): Promise<EncryptedToken>
 ```
 
 #### 2. Key Management
-- Use environment variable for encryption key: `ccflare_ENCRYPTION_KEY`
+- Use environment variable for encryption key: `better-ccflare_ENCRYPTION_KEY`
 - Implement key derivation from master password
 - Consider integration with OS keychain/credential store
 
@@ -268,7 +268,7 @@ const server = serve({
 # Nginx configuration example
 server {
     listen 443 ssl http2;
-    server_name ccflare.internal;
+    server_name better-ccflare.internal;
     
     ssl_certificate /path/to/cert.pem;
     ssl_certificate_key /path/to/key.pem;
@@ -539,7 +539,7 @@ interface User {
 ## Common Security Pitfalls
 
 ### 1. Exposed Development Instance
-**Risk**: Running ccflare with default settings exposes it to the network
+**Risk**: Running better-ccflare with default settings exposes it to the network
 **Mitigation**: Always bind to localhost in development
 
 ### 2. Token in Logs
@@ -671,10 +671,10 @@ function addSecurityHeaders(response: Response): Response {
 # Logging and Debugging
 LOG_LEVEL=INFO                  # Set to ERROR in production
 LOG_FORMAT=json                 # Use json for structured logging
-ccflare_DEBUG=0            # Set to 1 only for debugging
+better-ccflare_DEBUG=0            # Set to 1 only for debugging
 
 # Configuration
-ccflare_CONFIG_PATH=/path/to/config.json  # Custom config location
+better-ccflare_CONFIG_PATH=/path/to/config.json  # Custom config location
 CLIENT_ID=your-client-id       # OAuth client ID
 
 # Server Configuration
@@ -733,14 +733,14 @@ SESSION_DURATION_MS=18000000 # Session duration (5 hours)
 grep -v "127.0.0.1\|::1" access.log
 
 # Monitor for high request volumes
-sqlite3 ccflare.db "SELECT COUNT(*) as count, account_used 
+sqlite3 better-ccflare.db "SELECT COUNT(*) as count, account_used 
 FROM requests 
 WHERE timestamp > strftime('%s', 'now', '-1 hour') * 1000 
 GROUP BY account_used 
 ORDER BY count DESC"
 
 # Check for configuration changes
-sqlite3 ccflare.db "SELECT * FROM audit_log WHERE action LIKE '%config%'"
+sqlite3 better-ccflare.db "SELECT * FROM audit_log WHERE action LIKE '%config%'"
 ```
 
 ### Incident Response
@@ -749,7 +749,7 @@ sqlite3 ccflare.db "SELECT * FROM audit_log WHERE action LIKE '%config%'"
    - Immediately pause affected accounts via API
    - Rotate OAuth tokens through Anthropic console
    - Review request logs for unauthorized usage
-   - Update tokens in ccflare
+   - Update tokens in better-ccflare
 
 2. **Unauthorized Access**
    - Implement firewall rules immediately
@@ -816,7 +816,7 @@ curl -I http://localhost:8080/api/health
 Security is an ongoing process. This documentation should be reviewed and updated regularly as the system evolves and new threats emerge. All contributors should familiarize themselves with these security considerations and follow the best practices outlined above.
 
 ### Key Takeaways
-1. **ccflare prioritizes functionality over security** - suitable for development, not production
+1. **better-ccflare prioritizes functionality over security** - suitable for development, not production
 2. **Network isolation is critical** - always restrict access to trusted networks
 3. **Token security requires enhancement** - implement encryption for production use
 4. **Authentication is missing** - all endpoints are currently public

@@ -1,16 +1,16 @@
 {
-	"name": "ccflare",
+	"name": "better-ccflare",
 	"version": "1.0.0",
-	"description": "TUI for ccflare load balancer",
+	"description": "TUI for better-ccflare load balancer",
 	"bin": {
-		"ccflare": "./dist/ccflare"
+		"better-ccflare": "./dist/better-ccflare"
 	},
 	"type": "module",
 	"scripts": {
 		"dev": "bun run src/main.ts",
-		"build": "bun build src/main.ts --compile --outfile dist/ccflare --target=bun",
+		"build": "bun build src/main.ts --compile --outfile dist/better-ccflare --target=bun",
 		"prepublishOnly": "bun run build",
-		"postpublish": "chmod +x dist/ccflare"
+		"postpublish": "chmod +x dist/better-ccflare"
 	},
 	"dependencies": {
 		"@ccflare/tui-core": "workspace:*",
@@ -35,7 +35,7 @@
 		"dist"
 	],
 	"keywords": [
-		"ccflare",
+		"better-ccflare",
 		"load-balancer",
 		"tui",
 		"cli"

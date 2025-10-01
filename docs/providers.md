@@ -30,7 +30,7 @@
 
 ## Overview
 
-The ccflare providers system is a modular architecture designed to support multiple AI service providers through a unified interface. Currently, it implements support for Anthropic's services through a single provider that can operate in two modes:
+The better-ccflare providers system is a modular architecture designed to support multiple AI service providers through a unified interface. Currently, it implements support for Anthropic's services through a single provider that can operate in two modes:
 
 ### Supported Providers
 
@@ -345,7 +345,7 @@ The BaseProvider abstract class provides default implementations for common func
 
 ## Account Tier System
 
-ccflare supports three account tiers based on Anthropic's subscription levels:
+better-ccflare supports three account tiers based on Anthropic's subscription levels:
 
 | Tier | Value | Rate Limit | Description |
 |------|-------|------------|-------------|
@@ -355,9 +355,9 @@ ccflare supports three account tiers based on Anthropic's subscription levels:
 
 ### Z.ai Tier Mapping
 
-Z.ai plans map to ccflare tiers as follows:
+Z.ai plans map to better-ccflare tiers as follows:
 
-| Z.ai Plan | ccflare Tier | Usage Limit | Description |
+| Z.ai Plan | better-ccflare Tier | Usage Limit | Description |
 |-----------|--------------|-------------|-------------|
 | Lite | 1 | ~120 prompts/5hrs | ~3× Claude Pro usage quota |
 | Pro | 5 | ~600 prompts/5hrs | ~3× Claude Max (5×) usage quota |
@@ -366,9 +366,9 @@ Z.ai plans map to ccflare tiers as follows:
 **Important**: Z.ai does not provide automatic tier detection. You must manually specify the tier when adding z.ai accounts:
 
 ```bash
-ccflare --add-account my-zai-account --tier 1  # For Lite plan
-ccflare --add-account my-zai-account --tier 5  # For Pro plan
-ccflare --add-account my-zai-account --tier 20 # For Max plan
+better-ccflare --add-account my-zai-account --tier 1  # For Lite plan
+better-ccflare --add-account my-zai-account --tier 5  # For Pro plan
+better-ccflare --add-account my-zai-account --tier 20 # For Max plan
 ```
 
 ### Automatic Tier Detection (Anthropic Only)

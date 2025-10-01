@@ -1,12 +1,12 @@
 {
 	"private": true,
-	"name": "ccflare",
+	"name": "better-ccflare",
 	"workspaces": [
 		"apps/*",
 		"packages/*"
 	],
 	"scripts": {
-		"ccflare": "bun run build && bun run tui",
+		"better-ccflare": "bun run build && bun run tui",
 		"tui": "bun run apps/tui/src/main.ts",
 		"dev": "bun run tui",
 		"start": "bun run apps/server/src/server.ts",

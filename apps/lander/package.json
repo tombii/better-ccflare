@@ -1,14 +1,14 @@
 {
 	"name": "@ccflare/lander",
 	"version": "1.0.0",
-	"description": "Landing page for ccflare - The ultimate Claude Code proxy for power users",
+	"description": "Landing page for better-ccflare - The ultimate Claude Code proxy for power users",
 	"private": true,
 	"scripts": {
 		"build": "mkdir -p dist && cp -r src/* dist/",
 		"preview": "bunx serve src"
 	},
 	"keywords": [
-		"ccflare",
+		"better-ccflare",
 		"landing-page",
 		"static-site"
 	],

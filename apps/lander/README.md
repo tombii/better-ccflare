@@ -1,15 +1,15 @@
-# ccflare Landing Page
+# better-ccflare Landing Page
 
-Static landing page for ccflare - showcasing how simple it is to never hit rate limits again.
+Static landing page for better-ccflare - showcasing how simple it is to never hit rate limits again.
 
 ## 🚀 Getting Started is This Simple
 
 ```bash
 # Clone and run - that's it!
-git clone https://github.com/snipeship/ccflare
-cd ccflare
+git clone https://github.com/tombii/better-ccflare
+cd better-ccflare
 bun install
-bun run ccflare
+bun run better-ccflare
 ```
 
 That single `bun run ccflare` command gives you:
@@ -68,14 +68,14 @@ bun run build
    ```bash
    cd apps/lander
    bun run build
-   wrangler pages deploy dist --project-name=ccflare-landing
+   wrangler pages deploy dist --project-name=better-ccflare-landing
    ```
 
 ## Features
 
-- Dark theme matching ccflare dashboard
+- Dark theme matching better-ccflare dashboard
 - Mobile responsive
 - Security headers configured
 - Optimized for performance
 - Static HTML/CSS (no JavaScript framework)
-- Real screenshots from actual ccflare usage
+- Real screenshots from actual better-ccflare usage

@@ -3,7 +3,7 @@
  */
 export function getHelpText(): string {
 	return `
-Usage: ccflare-cli <command> [options]
+Usage: better-ccflare <command> [options]
 
 Commands:
   add <name> [--mode <max|console>] [--tier <1|5|20>] [--priority <number>]
@@ -42,11 +42,11 @@ Commands:
     Show this help message
 
 Examples:
-  ccflare-cli add myaccount --mode max --tier 5 --priority 10
-  ccflare-cli list
-  ccflare-cli remove myaccount
-  ccflare-cli pause myaccount
-  ccflare-cli resume myaccount
-  ccflare-cli set-priority myaccount 20
+  better-ccflare add myaccount --mode max --tier 5 --priority 10
+  better-ccflare list
+  better-ccflare remove myaccount
+  better-ccflare pause myaccount
+  better-ccflare resume myaccount
+  better-ccflare set-priority myaccount 20
 `;
 }

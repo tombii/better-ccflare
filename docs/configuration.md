@@ -1,6 +1,6 @@
-# ccflare Configuration Guide
+# better-ccflare Configuration Guide
 
-This guide covers all configuration options for ccflare, including file-based configuration, environment variables, and runtime API updates.
+This guide covers all configuration options for better-ccflare, including file-based configuration, environment variables, and runtime API updates.
 
 ## Table of Contents
 
@@ -16,20 +16,20 @@ This guide covers all configuration options for ccflare, including file-based co
 
 ## Configuration Overview
 
-ccflare uses a flexible configuration system that supports:
+better-ccflare uses a flexible configuration system that supports:
 
 - **File-based configuration**: JSON configuration file for persistent settings
 - **Environment variables**: Override configuration for deployment flexibility
 - **Runtime updates**: Modify certain settings via API without restart
 
-Configuration is managed through the `@ccflare/config` package, which provides automatic loading, validation, and change notifications.
+Configuration is managed through the `@better-ccflare/config` package, which provides automatic loading, validation, and change notifications.
 
 ## Configuration Precedence
 
 Configuration values are resolved in the following order (highest to lowest priority):
 
 1. **Environment variables** - Always take precedence when set
-2. **Configuration file** - Values from `~/.config/ccflare/ccflare.json` (or custom path)
+2. **Configuration file** - Values from `~/.config/better-ccflare/better-ccflare.json` (or custom path)
 3. **Default values** - Built-in defaults when no other value is specified
 
 ### Special Cases
@@ -41,9 +41,9 @@ Configuration values are resolved in the following order (highest to lowest prio
 
 The configuration file is stored at:
 
-- **Linux/macOS**: `~/.config/ccflare/ccflare.json` (or `$XDG_CONFIG_HOME/ccflare/ccflare.json`)
-- **Windows**: `%LOCALAPPDATA%\ccflare\ccflare.json` (or `%APPDATA%\ccflare\ccflare.json`)
-- **Custom path**: Set via `ccflare_CONFIG_PATH` environment variable
+- **Linux/macOS**: `~/.config/better-ccflare/better-ccflare.json` (or `$XDG_CONFIG_HOME/better-ccflare/better-ccflare.json`)
+- **Windows**: `%LOCALAPPDATA%\better-ccflare\better-ccflare.json` (or `%APPDATA%\better-ccflare\better-ccflare.json`)
+- **Custom path**: Set via `better-ccflare_CONFIG_PATH` environment variable
 
 ### File Structure
 
@@ -87,7 +87,7 @@ The configuration file is stored at:
 |----------|------|---------|-------------|
 | `LOG_LEVEL` | string | `"INFO"` | Logging level: `DEBUG`, `INFO`, `WARN`, `ERROR` |
 | `LOG_FORMAT` | string | `"pretty"` | Log format: `"pretty"` or `"json"` |
-| `ccflare_DEBUG` | string | - | Set to `"1"` to enable debug mode with console output |
+| `better-ccflare_DEBUG` | string | - | Set to `"1"` to enable debug mode with console output |
 
 ## Environment Variables
 
@@ -104,7 +104,7 @@ The configuration file is stored at:
 | `PORT` | `port` | number | `PORT=3000` |
 | `DATA_RETENTION_DAYS` | `data_retention_days` | number | `DATA_RETENTION_DAYS=7` (payloads) |
 | `REQUEST_RETENTION_DAYS` | `request_retention_days` | number | `REQUEST_RETENTION_DAYS=365` (metadata) |
-| `ccflare_CONFIG_PATH` | - | string | `ccflare_CONFIG_PATH=/etc/ccflare.json` |
+| `better-ccflare_CONFIG_PATH` | - | string | `better-ccflare_CONFIG_PATH=/etc/better-ccflare.json` |
 
 ### Additional Environment Variables
 
@@ -114,8 +114,8 @@ These environment variables are not stored in the configuration file and must be
 |----------|-------------|---------|---------|
 | `LOG_LEVEL` | Set logging verbosity (DEBUG, INFO, WARN, ERROR) | `INFO` | `LOG_LEVEL=DEBUG` |
 | `LOG_FORMAT` | Set log output format (pretty, json) | `pretty` | `LOG_FORMAT=json` |
-| `ccflare_DEBUG` | Enable debug mode with console output | - | `ccflare_DEBUG=1` |
-| `ccflare_DB_PATH` | Custom database file path | Platform-specific | `ccflare_DB_PATH=/var/lib/ccflare/db.sqlite` |
+| `better-ccflare_DEBUG` | Enable debug mode with console output | - | `better-ccflare_DEBUG=1` |
+| `better-ccflare_DB_PATH` | Custom database file path | Platform-specific | `better-ccflare_DB_PATH=/var/lib/better-ccflare/db.sqlite` |
 | `CF_PRICING_REFRESH_HOURS` | Hours between pricing data refreshes | `24` | `CF_PRICING_REFRESH_HOURS=12` |
 | `CF_PRICING_OFFLINE` | Disable online pricing updates | - | `CF_PRICING_OFFLINE=1` |
 | `CF_STREAM_USAGE_BUFFER_KB` | Stream usage buffer size in KB | `64` | `CF_STREAM_USAGE_BUFFER_KB=128` |
@@ -183,7 +183,7 @@ Response:
 ["session"]
 ```
 
-⚠️ **NOTE**: Only the `"session"` strategy is available in ccflare. Other strategies (round-robin, least-requests, weighted) have been removed from the codebase as they can trigger Claude's anti-abuse systems and result in account bans.
+⚠️ **NOTE**: Only the `"session"` strategy is available in better-ccflare. Other strategies (round-robin, least-requests, weighted) have been removed from the codebase as they can trigger Claude's anti-abuse systems and result in account bans.
 
 ### Runtime Update Behavior
 
@@ -261,7 +261,7 @@ Environment variables:
 export PORT=3000
 export LOG_LEVEL=DEBUG
 export LOG_FORMAT=pretty
-export ccflare_DEBUG=1
+export better-ccflare_DEBUG=1
 export RETRY_ATTEMPTS=5
 ```
 
@@ -293,7 +293,7 @@ export CF_PRICING_OFFLINE=1  # Reduce external API calls
 
 ### Automatic Validation
 
-ccflare performs validation on:
+better-ccflare performs validation on:
 
 1. **Strategy names**: Must be one of the valid strategy options (validated by `isValidStrategy`)
 2. **Numeric values**: Parsed and validated as integers/floats
@@ -324,24 +324,24 @@ If migrating from environment variables to file-based configuration:
 
 1. Create the configuration file:
    ```bash
-   mkdir -p ~/.config/ccflare
+   mkdir -p ~/.config/better-ccflare
    ```
 
 2. Export current configuration:
    ```bash
-   curl http://localhost:8080/api/config > ~/.config/ccflare/ccflare.json
+   curl http://localhost:8080/api/config > ~/.config/better-ccflare/better-ccflare.json
    ```
 
 3. Edit and format the file:
    ```bash
-   jq '.' ~/.config/ccflare/ccflare.json > temp.json && mv temp.json ~/.config/ccflare/ccflare.json
+   jq '.' ~/.config/better-ccflare/better-ccflare.json > temp.json && mv temp.json ~/.config/better-ccflare/better-ccflare.json
    ```
 
 ### From Older Versions
 
 #### Pre-1.0 to Current
 
-1. **Configuration location**: Move from `~/.ccflare/config.json` to platform-specific paths
+1. **Configuration location**: Move from `~/.better-ccflare/config.json` to platform-specific paths
 2. **Field naming**: Update any deprecated field names (none currently deprecated)
 3. **Strategy names**: Only `"session"` strategy is available (must be lowercase)
 
@@ -350,7 +350,7 @@ If migrating from environment variables to file-based configuration:
 Always backup your configuration before upgrades:
 
 ```bash
-cp ~/.config/ccflare/ccflare.json ~/.config/ccflare/ccflare.json.backup
+cp ~/.config/better-ccflare/better-ccflare.json ~/.config/better-ccflare/better-ccflare.json.backup
 ```
 
 ### Rollback Procedure
@@ -366,8 +366,8 @@ If issues occur after configuration changes:
 ### Common Issues
 
 1. **Configuration not loading**:
-   - Check file permissions: `ls -la ~/.config/ccflare/`
-   - Verify JSON syntax: `jq '.' ~/.config/ccflare/ccflare.json`
+   - Check file permissions: `ls -la ~/.config/better-ccflare/`
+   - Verify JSON syntax: `jq '.' ~/.config/better-ccflare/better-ccflare.json`
    - Check logs for parse errors
 
 2. **Environment variables not working**:
@@ -385,7 +385,7 @@ If issues occur after configuration changes:
 Enable comprehensive debugging:
 
 ```bash
-export ccflare_DEBUG=1
+export better-ccflare_DEBUG=1
 export LOG_LEVEL=DEBUG
 export LOG_FORMAT=json  # For structured logging
 ```

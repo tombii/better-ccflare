@@ -1,8 +1,8 @@
-# ccflare Data Flow Documentation
+# better-ccflare Data Flow Documentation
 
 ## Overview
 
-ccflare is a load balancer proxy for Claude API that distributes requests across multiple OAuth accounts to avoid rate limiting. This document details the complete data flow through the system, including request lifecycle, error handling, token refresh, rate limit management, and streaming response capture.
+better-ccflare is a load balancer proxy for Claude API that distributes requests across multiple OAuth accounts to avoid rate limiting. This document details the complete data flow through the system, including request lifecycle, error handling, token refresh, rate limit management, and streaming response capture.
 
 ## Table of Contents
 
@@ -22,7 +22,7 @@ ccflare is a load balancer proxy for Claude API that distributes requests across
 
 ## Architecture Overview
 
-ccflare uses a modular architecture with the following key components:
+better-ccflare uses a modular architecture with the following key components:
 
 - **Server**: Main HTTP server handling routing between API, dashboard, and proxy requests
 - **Proxy**: Core request forwarding logic with retry, rate limiting, and usage tracking
@@ -36,9 +36,9 @@ ccflare uses a modular architecture with the following key components:
 
 ## Overview of Request Lifecycle
 
-The request lifecycle in ccflare follows these main stages:
+The request lifecycle in better-ccflare follows these main stages:
 
-1. **Request Reception**: Client sends request to ccflare server
+1. **Request Reception**: Client sends request to better-ccflare server
 2. **Route Determination**: Server checks if it's an API request, dashboard request, or proxy request
 3. **Request Body Preparation**: Request body is buffered for potential modification and reuse
 4. **Agent Interception**: System detects agent usage in system prompts and modifies model preference if configured
@@ -57,7 +57,7 @@ The request lifecycle in ccflare follows these main stages:
 ```mermaid
 sequenceDiagram
     participant Client
-    participant Server as ccflare Server
+    participant Server as better-ccflare Server
     participant Router as API Router
     participant LoadBalancer as Load Balancer
     participant Proxy
@@ -737,7 +737,7 @@ flowchart TD
 
 ## Summary
 
-The ccflare data flow is designed to:
+The better-ccflare data flow is designed to:
 
 1. **Maximize availability** through multiple account rotation and retry logic
 2. **Prevent stampedes** with singleton token refresh promises
