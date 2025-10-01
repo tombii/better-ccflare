@@ -1,5 +1,5 @@
 {
-	"name": "@ccflare/server",
+	"name": "@better-ccflare/server",
 	"version": "0.1.0",
 	"type": "module",
 	"main": "./src/server.ts",
@@ -10,15 +10,15 @@
 		"typecheck": "bunx tsc --noEmit"
 	},
 	"dependencies": {
-		"@ccflare/core": "workspace:*",
-		"@ccflare/core-di": "workspace:*",
-		"@ccflare/database": "workspace:*",
-		"@ccflare/config": "workspace:*",
-		"@ccflare/logger": "workspace:*",
-		"@ccflare/load-balancer": "workspace:*",
-		"@ccflare/proxy": "workspace:*",
-		"@ccflare/dashboard-web": "workspace:*",
-		"@ccflare/http-api": "workspace:*",
-		"@ccflare/types": "workspace:*"
+		"@better-ccflare/core": "workspace:*",
+		"@better-ccflare/core-di": "workspace:*",
+		"@better-ccflare/database": "workspace:*",
+		"@better-ccflare/config": "workspace:*",
+		"@better-ccflare/logger": "workspace:*",
+		"@better-ccflare/load-balancer": "workspace:*",
+		"@better-ccflare/proxy": "workspace:*",
+		"@better-ccflare/dashboard-web": "workspace:*",
+		"@better-ccflare/http-api": "workspace:*",
+		"@better-ccflare/types": "workspace:*"
 	}
 }

@@ -1,4 +1,4 @@
-import type { Account } from "@ccflare/types";
+import type { Account } from "@better-ccflare/types";
 import type { Provider, RateLimitInfo, TokenRefreshResult } from "./types";
 
 export abstract class BaseProvider implements Provider {

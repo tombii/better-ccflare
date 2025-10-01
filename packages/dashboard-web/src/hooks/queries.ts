@@ -1,4 +1,4 @@
-import type { AgentUpdatePayload } from "@ccflare/types";
+import type { AgentUpdatePayload } from "@better-ccflare/types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { REFRESH_INTERVALS } from "../constants";

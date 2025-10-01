@@ -6,7 +6,7 @@ import {
 	isAuthError as isAuthErrorCheck,
 	isNetworkError as isNetworkErrorCheck,
 	isRateLimitError as isRateLimitErrorCheck,
-} from "@ccflare/errors";
+} from "@better-ccflare/errors";
 import { useCallback, useMemo } from "react";
 
 export interface UseApiErrorOptions extends ErrorFormatterOptions {

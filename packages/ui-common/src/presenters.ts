@@ -6,7 +6,7 @@ import type {
 	RequestResponse,
 	StatsResponse,
 	StatsWithAccounts,
-} from "@ccflare/types";
+} from "@better-ccflare/types";
 import {
 	formatCost,
 	formatDuration,

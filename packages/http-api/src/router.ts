@@ -1,4 +1,4 @@
-import { validateNumber } from "@ccflare/core";
+import { validateNumber } from "@better-ccflare/core";
 import {
 	createAccountAddHandler,
 	createAccountPauseHandler,

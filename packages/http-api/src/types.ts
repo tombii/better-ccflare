@@ -17,4 +17,4 @@ export type {
 	TierUpdateRequest,
 	TimePoint,
 	TokenBreakdown,
-} from "@ccflare/types";
+} from "@better-ccflare/types";

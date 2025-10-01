@@ -1,5 +1,5 @@
 {
-	"name": "@ccflare/types",
+	"name": "@better-ccflare/types",
 	"version": "0.1.0",
 	"type": "module",
 	"main": "./src/index.ts",
