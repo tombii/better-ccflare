@@ -6,7 +6,7 @@
 	"scripts": {
 		"dev": "bun run --hot src/server.ts",
 		"start": "bun run src/server.ts",
-		"build": "bun build src/server.ts --compile --outfile dist/ccflare-server",
+		"build": "bun build src/server.ts --compile --outfile dist/better-ccflare-server",
 		"typecheck": "bunx tsc --noEmit"
 	},
 	"dependencies": {
