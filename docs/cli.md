@@ -1,6 +1,6 @@
-# ccflare CLI Documentation
+# better-ccflare CLI Documentation
 
-The ccflare CLI provides a command-line interface for managing OAuth accounts, monitoring usage statistics, and controlling the load balancer.
+The better-ccflare CLI provides a command-line interface for managing OAuth accounts, monitoring usage statistics, and controlling the load balancer.
 
 ## Table of Contents
 
@@ -28,8 +28,8 @@ The ccflare CLI provides a command-line interface for managing OAuth accounts, m
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/tombii/ccflare.git
-cd ccflare
+git clone https://github.com/tombii/better-ccflare.git
+cd better-ccflare
 ```
 
 2. Install dependencies:
@@ -44,19 +44,19 @@ bun run build
 
 4. Run the CLI:
 ```bash
-ccflare [options]
+better-ccflare [options]
 ```
 
 ### First-time Setup
 
 1. Add your first OAuth account:
 ```bash
-ccflare --add-account myaccount
+better-ccflare --add-account myaccount
 ```
 
 2. Start the load balancer server:
 ```bash
-ccflare --serve
+better-ccflare --serve
 ```
 
 ## Global Options and Help
@@ -66,21 +66,21 @@ ccflare --serve
 Display all available commands and options:
 
 ```bash
-ccflare --help
+better-ccflare --help
 ```
 
 Or use the short form:
 
 ```bash
-ccflare -h
+better-ccflare -h
 ```
 
 ### Help Output Format
 
 ```
-🎯 ccflare - Load Balancer for Claude
+🎯 better-ccflare - Load Balancer for Claude
 
-Usage: ccflare [options]
+Usage: better-ccflare [options]
 
 Options:
   --serve              Start API server with dashboard
@@ -102,7 +102,7 @@ Options:
   --help, -h           Show this help message
 
 Interactive Mode:
-  ccflare          Launch interactive TUI (default)
+  better-ccflare          Launch interactive TUI (default)
 ```
 
 ## Command Reference
@@ -115,7 +115,7 @@ Add a new OAuth account to the load balancer pool.
 
 **Syntax:**
 ```bash
-ccflare --add-account <name> [--mode <max|console>] [--tier <1|5|20>] [--priority <number>]
+better-ccflare --add-account <name> [--mode <max|console>] [--tier <1|5|20>] [--priority <number>]
 ```
 
 **Options:**
@@ -145,7 +145,7 @@ Display all configured accounts with their current status.
 
 **Syntax:**
 ```bash
-ccflare --list
+better-ccflare --list
 ```
 
 **Output Format:**
@@ -161,13 +161,13 @@ Remove an account from the configuration.
 
 **Syntax:**
 ```bash
-ccflare --remove <name>
+better-ccflare --remove <name>
 ```
 
 **Behavior:**
 - Removes account from database immediately
 - Cleans up associated session data
-- For confirmation prompts, use the older `ccflare-cli remove <name>` command
+- For confirmation prompts, use the older `better-ccflare-cli remove <name>` command
 
 #### `--pause <name>`
 
@@ -175,7 +175,7 @@ Temporarily exclude an account from the load balancer rotation.
 
 **Syntax:**
 ```bash
-ccflare --pause <name>
+better-ccflare --pause <name>
 ```
 
 **Use Cases:**
@@ -189,7 +189,7 @@ Re-enable a paused account for load balancing.
 
 **Syntax:**
 ```bash
-ccflare --resume <name>
+better-ccflare --resume <name>
 ```
 
 ### Account Priorities
@@ -200,7 +200,7 @@ Set or update the priority of an account. Accounts with lower priority numbers a
 
 **Syntax:**
 ```bash
-ccflare --set-priority <name> <priority>
+better-ccflare --set-priority <name> <priority>
 ```
 
 **Parameters:**
@@ -216,13 +216,13 @@ ccflare --set-priority <name> <priority>
 **Example:**
 ```bash
 # Set account to high priority (low number)
-ccflare --set-priority production-account 10
+better-ccflare --set-priority production-account 10
 
 # Set account to medium priority
-ccflare --set-priority development-account 50
+better-ccflare --set-priority development-account 50
 
 # Set account to low priority (high number)
-ccflare --set-priority backup-account 90
+better-ccflare --set-priority backup-account 90
 ```
 
 ### Statistics and History
@@ -233,7 +233,7 @@ Display current statistics in JSON format.
 
 **Syntax:**
 ```bash
-ccflare --stats
+better-ccflare --stats
 ```
 
 **Output:**
@@ -245,7 +245,7 @@ Reset request counters for all accounts.
 
 **Syntax:**
 ```bash
-ccflare --reset-stats
+better-ccflare --reset-stats
 ```
 
 **Effects:**
@@ -259,7 +259,7 @@ Remove all request history records.
 
 **Syntax:**
 ```bash
-ccflare --clear-history
+better-ccflare --clear-history
 ```
 
 **Effects:**
@@ -275,7 +275,7 @@ Analyze database performance and index usage.
 
 **Syntax:**
 ```bash
-ccflare --analyze
+better-ccflare --analyze
 ```
 
 **Output:**
@@ -288,7 +288,7 @@ ccflare --analyze
 Launch the interactive terminal interface (default mode):
 
 ```bash
-ccflare
+better-ccflare
 ```
 
 **Features:**
@@ -305,7 +305,7 @@ Start the API server with dashboard.
 
 **Syntax:**
 ```bash
-ccflare --serve [--port <number>]
+better-ccflare --serve [--port <number>]
 ```
 
 **Options:**
@@ -321,7 +321,7 @@ Stream request logs in real-time.
 
 **Syntax:**
 ```bash
-ccflare --logs [N]
+better-ccflare --logs [N]
 ```
 
 **Options:**
@@ -330,10 +330,10 @@ ccflare --logs [N]
 **Examples:**
 ```bash
 # Stream live logs only
-ccflare --logs
+better-ccflare --logs
 
 # Show last 50 lines then stream
-ccflare --logs 50
+better-ccflare --logs 50
 ```
 
 ## Usage Examples
@@ -342,71 +342,71 @@ ccflare --logs 50
 
 ```bash
 # Add a Claude Max account with tier 5 and high priority (low number)
-ccflare --add-account work-account --mode max --tier 5 --priority 10
+better-ccflare --add-account work-account --mode max --tier 5 --priority 10
 
 # Add a Console account with medium priority
-ccflare --add-account personal-account --mode console --priority 50
+better-ccflare --add-account personal-account --mode console --priority 50
 
 # Add a backup account with low priority (high number)
-ccflare --add-account backup-account --mode max --tier 1 --priority 90
+better-ccflare --add-account backup-account --mode max --tier 1 --priority 90
 
 # List all accounts
-ccflare --list
+better-ccflare --list
 
 # Update account priority
-ccflare --set-priority backup-account 20
+better-ccflare --set-priority backup-account 20
 
 # View statistics
-ccflare --stats
+better-ccflare --stats
 ```
 
 ### Server Operations
 
 ```bash
 # Start server on default port
-ccflare --serve
+better-ccflare --serve
 
 # Start server on custom port
-ccflare --serve --port 3000
+better-ccflare --serve --port 3000
 
 # Stream logs
-ccflare --logs
+better-ccflare --logs
 
 # View last 100 lines then stream
-ccflare --logs 100
+better-ccflare --logs 100
 ```
 
 ### Managing Rate Limits
 
 ```bash
 # Pause account hitting rate limits
-ccflare --pause work-account
+better-ccflare --pause work-account
 
 # Resume after cooldown
-ccflare --resume work-account
+better-ccflare --resume work-account
 
 # Reset statistics for fresh start
-ccflare --reset-stats
+better-ccflare --reset-stats
 ```
 
 ### Maintenance Operations
 
 ```bash
 # Remove account
-ccflare --remove old-account
+better-ccflare --remove old-account
 
 # Clear old request logs
-ccflare --clear-history
+better-ccflare --clear-history
 
 # Analyze database performance
-ccflare --analyze
+better-ccflare --analyze
 ```
 
 ### Interactive Mode
 
 ```bash
 # Launch interactive TUI (default)
-ccflare
+better-ccflare
 
 # TUI launches with auto-started server
 # Navigate with arrow keys, tab between sections
@@ -416,49 +416,49 @@ ccflare
 
 ```bash
 # Add multiple accounts with different priorities
-ccflare --add-account "primary-account" --mode max --tier 20 --priority 10
-ccflare --add-account "secondary-account" --mode max --tier 5 --priority 50
-ccflare --add-account "backup-account" --mode max --tier 1 --priority 90
+better-ccflare --add-account "primary-account" --mode max --tier 20 --priority 10
+better-ccflare --add-account "secondary-account" --mode max --tier 5 --priority 50
+better-ccflare --add-account "backup-account" --mode max --tier 1 --priority 90
 
 # Monitor account status
-watch -n 5 'ccflare --list'
+watch -n 5 'better-ccflare --list'
 
 # Automated cleanup
-ccflare --clear-history && ccflare --reset-stats
+better-ccflare --clear-history && better-ccflare --reset-stats
 
 # Export statistics for monitoring
-ccflare --stats > stats.json
+better-ccflare --stats > stats.json
 
 # Prioritize specific account temporarily
-ccflare --set-priority primary-account 5
+better-ccflare --set-priority primary-account 5
 # ... run important workload ...
-ccflare --set-priority primary-account 10  # Restore normal priority
+better-ccflare --set-priority primary-account 10  # Restore normal priority
 ```
 
 ## Configuration
 
 ### Configuration File Location
 
-ccflare stores its configuration in platform-specific directories:
+better-ccflare stores its configuration in platform-specific directories:
 
 #### macOS/Linux
 ```
-~/.config/ccflare/ccflare.json
+~/.config/better-ccflare/better-ccflare.json
 ```
 
 Or if `XDG_CONFIG_HOME` is set:
 ```
-$XDG_CONFIG_HOME/ccflare/ccflare.json
+$XDG_CONFIG_HOME/better-ccflare/better-ccflare.json
 ```
 
 #### Windows
 ```
-%LOCALAPPDATA%\ccflare\ccflare.json
+%LOCALAPPDATA%\better-ccflare\better-ccflare.json
 ```
 
 Or fallback to:
 ```
-%APPDATA%\ccflare\ccflare.json
+%APPDATA%\better-ccflare\better-ccflare.json
 ```
 
 ### Configuration Structure
@@ -478,8 +478,8 @@ Or fallback to:
 ### Database Location
 
 The SQLite database follows the same directory structure:
-- **macOS/Linux**: `~/.config/ccflare/ccflare.db`
-- **Windows**: `%LOCALAPPDATA%\ccflare\ccflare.db`
+- **macOS/Linux**: `~/.config/better-ccflare/better-ccflare.db`
+- **Windows**: `%LOCALAPPDATA%\better-ccflare\better-ccflare.db`
 
 ## Environment Variables
 
@@ -487,8 +487,8 @@ The SQLite database follows the same directory structure:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `ccflare_CONFIG_PATH` | Override config file location | Platform default |
-| `ccflare_DB_PATH` | Override database location | Platform default |
+| `better-ccflare_CONFIG_PATH` | Override config file location | Platform default |
+| `better-ccflare_DB_PATH` | Override database location | Platform default |
 | `PORT` | Server port | 8080 |
 | `CLIENT_ID` | OAuth client ID | 9d1c250a-e61b-44d9-88ed-5944d1962f5e |
 
@@ -518,7 +518,7 @@ The SQLite database follows the same directory structure:
 |----------|-------------|---------|
 | `LOG_LEVEL` | Log verbosity (DEBUG/INFO/WARN/ERROR) | INFO |
 | `LOG_FORMAT` | Output format (pretty/json) | pretty |
-| `ccflare_DEBUG` | Enable debug mode (1/0) - enables console output | 0 |
+| `better-ccflare_DEBUG` | Enable debug mode (1/0) - enables console output | 0 |
 
 ### Pricing and Features
 
@@ -565,12 +565,12 @@ The SQLite database follows the same directory structure:
 **Problem**: "Database is locked" or corruption errors
 
 **Solutions**:
-1. Stop all ccflare processes
+1. Stop all better-ccflare processes
 2. Check file permissions on database
 3. Backup and recreate if corrupted:
    ```bash
-   cp ~/.config/ccflare/ccflare.db ~/.config/ccflare/ccflare.db.backup
-   rm ~/.config/ccflare/ccflare.db
+   cp ~/.config/better-ccflare/better-ccflare.db ~/.config/better-ccflare/better-ccflare.db.backup
+   rm ~/.config/better-ccflare/better-ccflare.db
    ```
 
 ### Debug Mode
@@ -579,14 +579,14 @@ Enable detailed logging for troubleshooting:
 
 ```bash
 # Enable debug logging
-export ccflare_DEBUG=1
+export better-ccflare_DEBUG=1
 export LOG_LEVEL=DEBUG
 
 # Run with verbose output
-ccflare --list
+better-ccflare --list
 
 # Stream debug logs
-ccflare --logs
+better-ccflare --logs
 ```
 
 ### Getting Support
@@ -601,8 +601,8 @@ ccflare --logs
 1. **Regular Maintenance**
    - Clear history periodically to manage database size
    - Reset stats monthly for accurate metrics
-   - Monitor account health with regular `ccflare --list` commands
-   - Use `ccflare --analyze` to optimize database performance
+   - Monitor account health with regular `better-ccflare --list` commands
+   - Use `better-ccflare --analyze` to optimize database performance
 
 2. **Account Management**
    - Use descriptive account names
@@ -618,10 +618,10 @@ ccflare --logs
    - Protect configuration directory permissions
    - Don't share OAuth tokens or session data
    - Rotate accounts periodically
-   - Monitor logs with `ccflare --logs` for suspicious activity
+   - Monitor logs with `better-ccflare --logs` for suspicious activity
 
 4. **Performance**
    - Use higher-tier accounts for heavy workloads
    - Implement client-side retry logic
-   - Monitor rate limit patterns with `ccflare --stats`
-   - Run server with `ccflare --serve` for production use
+   - Monitor rate limit patterns with `better-ccflare --stats`
+   - Run server with `better-ccflare --serve` for production use

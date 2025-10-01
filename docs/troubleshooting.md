@@ -1,6 +1,6 @@
 # Troubleshooting Guide
 
-This guide helps you diagnose and resolve common issues with ccflare.
+This guide helps you diagnose and resolve common issues with better-ccflare.
 
 ## Table of Contents
 
@@ -29,15 +29,15 @@ This guide helps you diagnose and resolve common issues with ccflare.
 **Solutions**:
 1. Check if the access token has expired:
    ```bash
-   ccflare --list
+   better-ccflare --list
    ```
    Look for accounts with expired tokens (expires_at in the past)
 
 2. Refresh the token manually:
    - Remove and re-add the account:
      ```bash
-     ccflare --remove <account-name>
-     ccflare --add-account <account-name>
+     better-ccflare --remove <account-name>
+     better-ccflare --add-account <account-name>
      ```
 
 3. Verify the refresh token is still valid in your Anthropic console
@@ -49,7 +49,7 @@ This guide helps you diagnose and resolve common issues with ccflare.
 **Error Message**: `Token expired or missing for account: [name]`
 
 **Solutions**:
-1. ccflare automatically attempts to refresh expired tokens
+1. better-ccflare automatically attempts to refresh expired tokens
 2. If automatic refresh fails, re-authenticate the account
 3. Check for refresh token stampede prevention - multiple simultaneous refresh attempts are prevented
 
@@ -82,8 +82,8 @@ This guide helps you diagnose and resolve common issues with ccflare.
 2. Verify the CLIENT_ID environment variable matches your OAuth app
 3. Remove and re-add the account:
    ```bash
-   ccflare --remove <account-name>
-   ccflare --add-account <account-name>
+   better-ccflare --remove <account-name>
+   better-ccflare --add-account <account-name>
    ```
 4. Check for multiple simultaneous refresh attempts in logs
 
@@ -91,7 +91,7 @@ This guide helps you diagnose and resolve common issues with ccflare.
 
 ### Identifying Rate Limits
 
-ccflare detects rate limits through response headers and HTTP status codes:
+better-ccflare detects rate limits through response headers and HTTP status codes:
 
 1. **Rate Limited Responses**: 
    - HTTP 429 responses
@@ -101,10 +101,10 @@ ccflare detects rate limits through response headers and HTTP status codes:
 **How to Check Rate Limit Status**:
 ```bash
 # View account status including rate limits
-ccflare --list
+better-ccflare --list
 
 # Check logs for rate limit messages
-cat /tmp/ccflare-logs/app.log | grep "rate limited"
+cat /tmp/better-ccflare-logs/app.log | grep "rate limited"
 
 # View rate limit reset times in the dashboard
 curl http://localhost:8080/api/accounts | jq '.[] | {name, rate_limit_status, rate_limit_reset}'
@@ -113,14 +113,14 @@ curl http://localhost:8080/api/accounts | jq '.[] | {name, rate_limit_status, ra
 ### Recovery Strategies
 
 **When an account is rate-limited**:
-1. ccflare automatically rotates to the next available account
+1. better-ccflare automatically rotates to the next available account
 2. Rate-limited accounts are marked with a reset timestamp
 3. Accounts automatically become available again after the reset time
 
 **Manual recovery steps**:
 1. Add more accounts to your pool:
    ```bash
-   ccflare --add-account account2
+   better-ccflare --add-account account2
    ```
 
 2. Check rate limit reset times in the dashboard:
@@ -131,14 +131,14 @@ curl http://localhost:8080/api/accounts | jq '.[] | {name, rate_limit_status, ra
 3. Monitor account-specific rate limits:
    ```bash
    # View rate limit details for each account
-   ccflare --list
+   better-ccflare --list
    # Look for rate_limit_status and rate_limit_reset columns
    ```
 
 4. Pause/resume accounts as needed:
    ```bash
-   ccflare --pause <account-name>
-   ccflare --resume <account-name>
+   better-ccflare --pause <account-name>
+   better-ccflare --resume <account-name>
    ```
 
 ## Connection Problems
@@ -212,12 +212,12 @@ export NO_PROXY=localhost,127.0.0.1
 **Solutions**:
 1. Check log file size (auto-rotates at 10MB):
    ```bash
-   ls -lh /tmp/ccflare-logs/app.log
+   ls -lh /tmp/better-ccflare-logs/app.log
    ```
 
 2. Clear request history:
    ```bash
-   ccflare --clear-history
+   better-ccflare --clear-history
    ```
 
 3. Restart the server to clear in-memory caches:
@@ -226,7 +226,7 @@ export NO_PROXY=localhost,127.0.0.1
    # Then restart
    bun start
    # Or
-   ccflare --serve
+   better-ccflare --serve
    ```
 
 ## Account Management Issues
@@ -238,7 +238,7 @@ export NO_PROXY=localhost,127.0.0.1
 **Check**:
 1. Account status:
    ```bash
-   ccflare --list
+   better-ccflare --list
    # Look for: paused, rate_limited, or expired
    ```
 
@@ -249,7 +249,7 @@ export NO_PROXY=localhost,127.0.0.1
 **Solutions**:
 1. Resume the account if paused:
    ```bash
-   ccflare --resume <account-name>
+   better-ccflare --resume <account-name>
    ```
 2. Wait for rate limit to reset
 3. Re-add the account if expired
@@ -274,9 +274,9 @@ export NO_PROXY=localhost,127.0.0.1
 ### Config File Location
 
 Default locations by platform:
-- **macOS**: `~/.config/ccflare/ccflare.json`
-- **Linux**: `~/.config/ccflare/ccflare.json`
-- **Windows**: `%LOCALAPPDATA%\ccflare\ccflare.json` or `%APPDATA%\ccflare\ccflare.json`
+- **macOS**: `~/.config/better-ccflare/better-ccflare.json`
+- **Linux**: `~/.config/better-ccflare/better-ccflare.json`
+- **Windows**: `%LOCALAPPDATA%\better-ccflare\better-ccflare.json` or `%APPDATA%\better-ccflare\better-ccflare.json`
 
 ### Invalid Configuration
 
@@ -289,15 +289,15 @@ Default locations by platform:
 **Solutions**:
 1. Validate JSON syntax:
    ```bash
-   cat ~/.config/ccflare/ccflare.json | jq .
+   cat ~/.config/better-ccflare/better-ccflare.json | jq .
    ```
 
 2. Reset to defaults:
    ```bash
    # Backup current config
-   cp ~/.config/ccflare/ccflare.json ~/.config/ccflare/config.backup.json
+   cp ~/.config/better-ccflare/better-ccflare.json ~/.config/better-ccflare/config.backup.json
    # Remove corrupted config
-   rm ~/.config/ccflare/ccflare.json
+   rm ~/.config/better-ccflare/better-ccflare.json
    # Restart server to create new config
    bun start
    ```
@@ -327,24 +327,24 @@ Environment variables override config file settings:
 1. Check database file permissions:
    ```bash
    # macOS/Linux
-   ls -la ~/.config/ccflare/ccflare.db
+   ls -la ~/.config/better-ccflare/better-ccflare.db
    
    # Windows
-   dir %LOCALAPPDATA%\ccflare\ccflare.db
+   dir %LOCALAPPDATA%\better-ccflare\better-ccflare.db
    ```
 
 2. Create the directory if it doesn't exist:
    ```bash
    # macOS/Linux
-   mkdir -p ~/.config/ccflare
+   mkdir -p ~/.config/better-ccflare
    
    # Windows
-   mkdir %LOCALAPPDATA%\ccflare
+   mkdir %LOCALAPPDATA%\better-ccflare
    ```
 
 3. Use a custom database path:
    ```bash
-   export ccflare_DB_PATH=/path/to/custom/ccflare.db
+   export better-ccflare_DB_PATH=/path/to/custom/better-ccflare.db
    bun start
    ```
 
@@ -362,16 +362,16 @@ Environment variables override config file settings:
 2. If migrations fail repeatedly:
    ```bash
    # Backup existing database
-   cp ~/.config/ccflare/ccflare.db ~/.config/ccflare/ccflare.db.backup
+   cp ~/.config/better-ccflare/better-ccflare.db ~/.config/better-ccflare/better-ccflare.db.backup
    
    # Remove and let it recreate
-   rm ~/.config/ccflare/ccflare.db
+   rm ~/.config/better-ccflare/better-ccflare.db
    bun start
    ```
 
 3. Check for database corruption:
    ```bash
-   sqlite3 ~/.config/ccflare/ccflare.db "PRAGMA integrity_check;"
+   sqlite3 ~/.config/better-ccflare/better-ccflare.db "PRAGMA integrity_check;"
    ```
 
 ### Async Database Writer Issues
@@ -387,7 +387,7 @@ Environment variables override config file settings:
 2. During shutdown, ensure graceful termination (Ctrl+C) to flush pending writes
 3. Check logs for async writer errors:
    ```bash
-   grep "async-db-writer" /tmp/ccflare-logs/app.log
+   grep "async-db-writer" /tmp/better-ccflare-logs/app.log
    ```
 
 ### Database Lock Errors
@@ -399,21 +399,21 @@ Environment variables override config file settings:
 - `SQLITE_BUSY`
 
 **Solutions**:
-1. Ensure only one instance of ccflare is running:
+1. Ensure only one instance of better-ccflare is running:
    ```bash
    ps aux | grep "bun start" | grep -v grep
-   ps aux | grep "ccflare --serve" | grep -v grep
+   ps aux | grep "better-ccflare --serve" | grep -v grep
    ```
 
 2. Kill any zombie processes:
    ```bash
    pkill -f "bun start"
-   pkill -f "ccflare --serve"
+   pkill -f "better-ccflare --serve"
    ```
 
 3. Check for hanging database connections:
    ```bash
-   lsof ~/.config/ccflare/ccflare.db
+   lsof ~/.config/better-ccflare/better-ccflare.db
    ```
 
 ## Streaming and Analytics Issues
@@ -433,7 +433,7 @@ Environment variables override config file settings:
 3. Check if streaming is working:
    ```bash
    # Look for streaming response logs
-   grep "Streaming response" /tmp/ccflare-logs/app.log
+   grep "Streaming response" /tmp/better-ccflare-logs/app.log
    ```
 
 ### Analytics Data Issues
@@ -448,7 +448,7 @@ Environment variables override config file settings:
 1. Check if requests are being recorded:
    ```bash
    # Count recent requests in database
-   sqlite3 ~/.config/ccflare/ccflare.db "SELECT COUNT(*) FROM requests WHERE timestamp > strftime('%s', 'now', '-1 hour') * 1000;"
+   sqlite3 ~/.config/better-ccflare/better-ccflare.db "SELECT COUNT(*) FROM requests WHERE timestamp > strftime('%s', 'now', '-1 hour') * 1000;"
    ```
 
 2. Verify analytics endpoint:
@@ -459,12 +459,12 @@ Environment variables override config file settings:
 
 3. Clear and rebuild analytics data:
    ```bash
-   ccflare --clear-history
+   better-ccflare --clear-history
    ```
 
 4. Reset account statistics without clearing history:
    ```bash
-   ccflare --reset-stats
+   better-ccflare --reset-stats
    ```
 
 ### Usage Tracking Problems
@@ -475,13 +475,13 @@ Environment variables override config file settings:
 1. Usage is extracted from response headers and streaming data
 2. Check for usage extraction errors:
    ```bash
-   grep "extractUsageInfo" /tmp/ccflare-logs/app.log
+   grep "extractUsageInfo" /tmp/better-ccflare-logs/app.log
    ```
 
 3. Verify model pricing data:
    ```bash
    # Pricing updates every 24 hours by default
-   grep "Fetching latest pricing" /tmp/ccflare-logs/app.log
+   grep "Fetching latest pricing" /tmp/better-ccflare-logs/app.log
    ```
 
 4. Force offline pricing mode:
@@ -495,14 +495,14 @@ Environment variables override config file settings:
 ### Log File Locations
 
 Logs are stored in the system's temporary directory:
-- **All platforms**: `/tmp/ccflare-logs/app.log`
-- **Windows**: `%TEMP%\ccflare-logs\app.log`
+- **All platforms**: `/tmp/better-ccflare-logs/app.log`
+- **Windows**: `%TEMP%\better-ccflare-logs\app.log`
 
 ### Enabling Debug Mode
 
 **Method 1: Environment Variable**
 ```bash
-export ccflare_DEBUG=1
+export better-ccflare_DEBUG=1
 export LOG_LEVEL=DEBUG
 bun start
 ```
@@ -510,7 +510,7 @@ bun start
 **Method 2: Verbose Logging**
 ```bash
 # View real-time logs
-tail -f /tmp/ccflare-logs/app.log
+tail -f /tmp/better-ccflare-logs/app.log
 ```
 
 ### Log Formats
@@ -531,19 +531,19 @@ bun start
 **Filter by log level**:
 ```bash
 # View only errors
-grep "ERROR" /tmp/ccflare-logs/app.log
+grep "ERROR" /tmp/better-ccflare-logs/app.log
 
 # View warnings and errors
-grep -E "WARN|ERROR" /tmp/ccflare-logs/app.log
+grep -E "WARN|ERROR" /tmp/better-ccflare-logs/app.log
 ```
 
 **Filter by component**:
 ```bash
 # View only proxy logs
-grep "\[Proxy\]" /tmp/ccflare-logs/app.log
+grep "\[Proxy\]" /tmp/better-ccflare-logs/app.log
 
 # View only server logs
-grep "\[Server\]" /tmp/ccflare-logs/app.log
+grep "\[Server\]" /tmp/better-ccflare-logs/app.log
 ```
 
 ## Common Error Messages
@@ -555,7 +555,7 @@ grep "\[Server\]" /tmp/ccflare-logs/app.log
 
 **Solution**: 
 - Add new accounts or wait for rate limits to reset
-- Check account status: `ccflare --list`
+- Check account status: `better-ccflare --list`
 - Requests will be forwarded without authentication (may fail)
 
 #### "Refresh promise not found for account"
@@ -631,7 +631,7 @@ grep "\[Server\]" /tmp/ccflare-logs/app.log
 **Meaning**: Another process is accessing the database
 
 **Solutions**:
-1. Ensure only one ccflare instance is running
+1. Ensure only one better-ccflare instance is running
 2. Kill any zombie processes
 3. Wait for current operations to complete
 
@@ -651,7 +651,7 @@ grep "\[Server\]" /tmp/ccflare-logs/app.log
 **Solutions**:
 1. Check if database is accessible
 2. Verify time range parameters
-3. Clear history if data is corrupted: `ccflare --clear-history`
+3. Clear history if data is corrupted: `better-ccflare --clear-history`
 
 ### Configuration Errors
 
@@ -659,7 +659,7 @@ grep "\[Server\]" /tmp/ccflare-logs/app.log
 **Meaning**: JSON syntax error in config file
 
 **Solutions**:
-1. Validate JSON syntax: `cat ~/.config/ccflare/ccflare.json | jq .`
+1. Validate JSON syntax: `cat ~/.config/better-ccflare/better-ccflare.json | jq .`
 2. Check for trailing commas or missing quotes
 3. Reset to defaults by deleting config file
 
@@ -718,7 +718,7 @@ grep "\[Server\]" /tmp/ccflare-logs/app.log
 **Solutions**:
 1. Check directory permissions
 2. Ensure parent directory exists
-3. Use custom path: `export ccflare_DB_PATH=/custom/path/db.db`
+3. Use custom path: `export better-ccflare_DB_PATH=/custom/path/db.db`
 
 ## Environment Variables Reference
 
@@ -738,14 +738,14 @@ grep "\[Server\]" /tmp/ccflare-logs/app.log
 
 | Variable | Description | Default | Example |
 |----------|-------------|---------|---------|
-| `ccflare_CONFIG_PATH` | Custom config file location | Platform-specific | `/opt/ccflare/config.json` |
-| `ccflare_DB_PATH` | Custom database location | Platform-specific | `/opt/ccflare/data.db` |
+| `better-ccflare_CONFIG_PATH` | Custom config file location | Platform-specific | `/opt/better-ccflare/config.json` |
+| `better-ccflare_DB_PATH` | Custom database location | Platform-specific | `/opt/better-ccflare/data.db` |
 
 ### Logging and Debugging
 
 | Variable | Description | Default | Example |
 |----------|-------------|---------|---------|
-| `ccflare_DEBUG` | Enable debug mode | `0` | `1` |
+| `better-ccflare_DEBUG` | Enable debug mode | `0` | `1` |
 | `LOG_LEVEL` | Log level | `INFO` | `DEBUG`, `WARN`, `ERROR` |
 | `LOG_FORMAT` | Log format | `pretty` | `json` |
 
@@ -768,14 +768,14 @@ grep "\[Server\]" /tmp/ccflare-logs/app.log
 
 ```bash
 # Development setup with debug logging
-export ccflare_DEBUG=1
+export better-ccflare_DEBUG=1
 export LOG_LEVEL=DEBUG
 export LOG_FORMAT=json
 bun start
 
 # Production setup with custom paths
-export ccflare_CONFIG_PATH=/etc/ccflare/config.json
-export ccflare_DB_PATH=/var/lib/ccflare/data.db
+export better-ccflare_CONFIG_PATH=/etc/better-ccflare/config.json
+export better-ccflare_DB_PATH=/var/lib/better-ccflare/data.db
 export PORT=3000
 bun start
 
@@ -788,7 +788,7 @@ bun start
 
 ## FAQ
 
-### Q: How do I know if ccflare is working?
+### Q: How do I know if better-ccflare is working?
 
 **A**: Check the health endpoint:
 ```bash
@@ -808,15 +808,15 @@ Expected response:
 }
 ```
 
-### Q: Can I use ccflare with multiple client applications?
+### Q: Can I use better-ccflare with multiple client applications?
 
-**A**: Yes, ccflare acts as a transparent proxy. Point any Claude API client to `http://localhost:8080` instead of `https://api.anthropic.com`.
+**A**: Yes, better-ccflare acts as a transparent proxy. Point any Claude API client to `http://localhost:8080` instead of `https://api.anthropic.com`.
 
 ### Q: How do I backup my accounts?
 
 **A**: The account data is stored in the SQLite database. Backup locations:
-- **macOS/Linux**: `~/.config/ccflare/ccflare.db`
-- **Windows**: `%LOCALAPPDATA%\ccflare\ccflare.db` or `%APPDATA%\ccflare\ccflare.db`
+- **macOS/Linux**: `~/.config/better-ccflare/better-ccflare.db`
+- **Windows**: `%LOCALAPPDATA%\better-ccflare\better-ccflare.db` or `%APPDATA%\better-ccflare\better-ccflare.db`
 
 ### Q: What happens during a graceful shutdown?
 
@@ -831,8 +831,8 @@ Expected response:
 ### Q: How do I migrate to a new machine?
 
 **A**: Copy these files to the new machine:
-1. Database file (`ccflare.db`)
-2. Config file (`ccflare.json`)
+1. Database file (`better-ccflare.db`)
+2. Config file (`better-ccflare.json`)
 3. Set the same CLIENT_ID environment variable
 4. Ensure Bun is installed on the new machine
 
@@ -842,7 +842,7 @@ Expected response:
 1. Streaming responses are only captured up to 1MB
 2. Database writes are async and may be delayed
 3. Usage data depends on response headers from Anthropic
-4. Check if requests are being recorded: `sqlite3 ~/.config/ccflare/ccflare.db "SELECT COUNT(*) FROM requests;"`
+4. Check if requests are being recorded: `sqlite3 ~/.config/better-ccflare/better-ccflare.db "SELECT COUNT(*) FROM requests;"`
 
 ### Q: How do I handle rate limits effectively?
 
@@ -853,7 +853,7 @@ Expected response:
 4. Set up alerts for rate-limited accounts
 5. Consider implementing request queuing in your application
 
-### Q: Can I use ccflare in production?
+### Q: Can I use better-ccflare in production?
 
 **A**: Yes, with these considerations:
 1. Use environment variables for sensitive configuration
@@ -870,7 +870,7 @@ Expected response:
 2. **Rate Limited**: Temporarily unavailable due to rate limits
 3. **Expired Token**: Needs re-authentication
 4. **Session**: Account may have an active session
-5. Check status: `ccflare --list`
+5. Check status: `better-ccflare --list`
 
 ### Q: How do I troubleshoot slow responses?
 
@@ -882,11 +882,11 @@ Expected response:
 5. Check network latency to Anthropic API
 6. Monitor database performance
 
-### Q: What's the difference between running with bun start vs ccflare --serve?
+### Q: What's the difference between running with bun start vs better-ccflare --serve?
 
 **A**: Both commands start the server:
 - `bun start`: Runs the server using the npm script
-- `ccflare --serve`: Runs the server directly via the CLI binary
+- `better-ccflare --serve`: Runs the server directly via the CLI binary
 - Both are functionally equivalent
 
 ## Getting Help
@@ -905,13 +905,13 @@ When reporting issues, include:
 2. **Error Logs**:
    ```bash
    # Last 100 lines of logs
-   tail -n 100 /tmp/ccflare-logs/app.log
+   tail -n 100 /tmp/better-ccflare-logs/app.log
    ```
 
 3. **Configuration** (sanitized):
    ```bash
    # Remove sensitive data before sharing
-   cat ~/.config/ccflare/ccflare.json | jq 'del(.client_id)'
+   cat ~/.config/better-ccflare/better-ccflare.json | jq 'del(.client_id)'
    ```
 
 4. **Steps to Reproduce**:
@@ -924,7 +924,7 @@ When reporting issues, include:
 Save this as `debug-info.sh`:
 ```bash
 #!/bin/bash
-echo "=== ccflare Debug Info ==="
+echo "=== better-ccflare Debug Info ==="
 echo "Date: $(date)"
 echo "System: $(uname -a)"
 echo "Bun Version: $(bun --version)"
@@ -932,11 +932,11 @@ echo "Node Version: $(node --version 2>/dev/null || echo 'Node not installed')"
 echo ""
 
 echo "=== Environment Variables ==="
-env | grep -E "ccflare|CLIENT_ID|PORT|LB_STRATEGY|LOG_|PROXY" | sort
+env | grep -E "better-ccflare|CLIENT_ID|PORT|LB_STRATEGY|LOG_|PROXY" | sort
 echo ""
 
 echo "=== Process Info ==="
-ps aux | grep -E "bun start|ccflare" | grep -v grep
+ps aux | grep -E "bun start|better-ccflare" | grep -v grep
 echo ""
 
 echo "=== Port Check ==="
@@ -944,33 +944,33 @@ lsof -i :${PORT:-8080} 2>/dev/null || echo "Port ${PORT:-8080} not in use"
 echo ""
 
 echo "=== Database Info ==="
-if [ -f "$HOME/.config/ccflare/ccflare.db" ]; then
-    echo "Database size: $(du -h "$HOME/.config/ccflare/ccflare.db" | cut -f1)"
-    echo "Request count: $(sqlite3 "$HOME/.config/ccflare/ccflare.db" "SELECT COUNT(*) FROM requests;" 2>/dev/null || echo "Could not query")"
-    echo "Account count: $(sqlite3 "$HOME/.config/ccflare/ccflare.db" "SELECT COUNT(*) FROM accounts;" 2>/dev/null || echo "Could not query")"
+if [ -f "$HOME/.config/better-ccflare/better-ccflare.db" ]; then
+    echo "Database size: $(du -h "$HOME/.config/better-ccflare/better-ccflare.db" | cut -f1)"
+    echo "Request count: $(sqlite3 "$HOME/.config/better-ccflare/better-ccflare.db" "SELECT COUNT(*) FROM requests;" 2>/dev/null || echo "Could not query")"
+    echo "Account count: $(sqlite3 "$HOME/.config/better-ccflare/better-ccflare.db" "SELECT COUNT(*) FROM accounts;" 2>/dev/null || echo "Could not query")"
 else
     echo "Database not found at default location"
 fi
 echo ""
 
 echo "=== Recent Errors (last 24h) ==="
-if [ -f "/tmp/ccflare-logs/app.log" ]; then
-    grep "ERROR" /tmp/ccflare-logs/app.log | tail -20
+if [ -f "/tmp/better-ccflare-logs/app.log" ]; then
+    grep "ERROR" /tmp/better-ccflare-logs/app.log | tail -20
 else
     echo "Log file not found"
 fi
 echo ""
 
 echo "=== Recent Rate Limits ==="
-if [ -f "/tmp/ccflare-logs/app.log" ]; then
-    grep -E "rate.?limit" /tmp/ccflare-logs/app.log | tail -10
+if [ -f "/tmp/better-ccflare-logs/app.log" ]; then
+    grep -E "rate.?limit" /tmp/better-ccflare-logs/app.log | tail -10
 else
     echo "Log file not found"
 fi
 echo ""
 
 echo "=== Account Status ==="
-ccflare --list 2>/dev/null || echo "Could not get account list"
+better-ccflare --list 2>/dev/null || echo "Could not get account list"
 echo ""
 
 echo "=== API Health Check ==="
@@ -1013,7 +1013,7 @@ curl "http://localhost:8080/api/analytics?range=7d" | jq .
 curl "http://localhost:8080/api/analytics?range=1h&model=claude-3-opus&status=success" | jq .
 
 # Monitor real-time logs
-tail -f /tmp/ccflare-logs/app.log | grep -E "INFO|WARN|ERROR"
+tail -f /tmp/better-ccflare-logs/app.log | grep -E "INFO|WARN|ERROR"
 ```
 
 ### Quick Troubleshooting Checklist
@@ -1027,17 +1027,17 @@ When experiencing issues, check these in order:
 
 2. **Account Status**
    ```bash
-   ccflare --list
+   better-ccflare --list
    ```
 
 3. **Recent Errors**
    ```bash
-   grep ERROR /tmp/ccflare-logs/app.log | tail -20
+   grep ERROR /tmp/better-ccflare-logs/app.log | tail -20
    ```
 
 4. **Rate Limits**
    ```bash
-   grep "rate.?limit" /tmp/ccflare-logs/app.log | tail -10
+   grep "rate.?limit" /tmp/better-ccflare-logs/app.log | tail -10
    ```
 
 5. **Network Connectivity**
@@ -1047,19 +1047,19 @@ When experiencing issues, check these in order:
 
 6. **Database Health**
    ```bash
-   sqlite3 ~/.config/ccflare/ccflare.db "PRAGMA integrity_check;"
+   sqlite3 ~/.config/better-ccflare/better-ccflare.db "PRAGMA integrity_check;"
    ```
 
 ### Common Quick Fixes
 
 | Problem | Quick Fix |
 |---------|-----------|
-| All accounts rate limited | Add more accounts: `ccflare --add-account newaccount` |
-| Token expired | Re-authenticate: `ccflare --remove account && ccflare --add-account account` |
+| All accounts rate limited | Add more accounts: `better-ccflare --add-account newaccount` |
+| Token expired | Re-authenticate: `better-ccflare --remove account && better-ccflare --add-account account` |
 | Database locked | Kill duplicate processes: `pkill -f "bun start"` |
 | Port in use | Use different port: `PORT=3000 bun start` |
-| Config corrupted | Reset config: `rm ~/.config/ccflare/ccflare.json` |
-| Analytics missing | Clear history: `ccflare --clear-history` |
+| Config corrupted | Reset config: `rm ~/.config/better-ccflare/better-ccflare.json` |
+| Analytics missing | Clear history: `better-ccflare --clear-history` |
 | Slow responses | Check session duration settings (default 1 hour) |
 
-Remember: Most issues can be resolved by checking logs, verifying account status, and ensuring proper network connectivity. When in doubt, restart the service with debug logging enabled: `ccflare_DEBUG=1 LOG_LEVEL=DEBUG bun start`
+Remember: Most issues can be resolved by checking logs, verifying account status, and ensuring proper network connectivity. When in doubt, restart the service with debug logging enabled: `better-ccflare_DEBUG=1 LOG_LEVEL=DEBUG bun start`

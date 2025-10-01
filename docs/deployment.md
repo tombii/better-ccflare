@@ -1,12 +1,12 @@
-# ccflare Deployment Documentation
+# better-ccflare Deployment Documentation
 
 ## Overview
 
-ccflare is a load balancer proxy for Claude API accounts that can be deployed in various configurations, from simple local development to production-grade distributed systems. This document covers all deployment options, from single-instance setups to scalable architectures.
+better-ccflare is a load balancer proxy for Claude API accounts that can be deployed in various configurations, from simple local development to production-grade distributed systems. This document covers all deployment options, from single-instance setups to scalable architectures.
 
-> **Recent Updates**: ccflare now includes a Terminal User Interface (TUI) for interactive monitoring and management, alongside the web dashboard. The async database writer improves performance for high-throughput scenarios.
+> **Recent Updates**: better-ccflare now includes a Terminal User Interface (TUI) for interactive monitoring and management, alongside the web dashboard. The async database writer improves performance for high-throughput scenarios.
 > 
-> **Important**: ccflare uses an integrated binary that combines the TUI, CLI commands, and server functionality. The main executable `ccflare` provides all functionality through command-line flags.
+> **Important**: better-ccflare uses an integrated binary that combines the TUI, CLI commands, and server functionality. The main executable `better-ccflare` provides all functionality through command-line flags.
 
 ## Table of Contents
 
@@ -66,8 +66,8 @@ graph TB
 
 ```bash
 # Clone the repository
-git clone https://github.com/snipeship/ccflare.git
-cd ccflare
+git clone https://github.com/snipeship/better-ccflare.git
+cd better-ccflare
 
 # Install dependencies
 bun install
@@ -75,8 +75,8 @@ bun install
 # Build the project (dashboard and TUI)
 bun run build
 
-# Start ccflare (TUI + Server combined)
-bun run ccflare
+# Start better-ccflare (TUI + Server combined)
+bun run better-ccflare
 
 # Or start components separately:
 # Terminal UI only
@@ -89,7 +89,7 @@ bun run server
 bun run dev:server
 
 # In another terminal, add Claude accounts
-bun run ccflare --add-account myaccount
+bun run better-ccflare --add-account myaccount
 ```
 
 ### Development Configuration
@@ -102,7 +102,7 @@ export LOG_LEVEL=DEBUG
 export LOG_FORMAT=pretty  # Options: pretty, json
 
 # Start with custom config
-bun run ccflare
+bun run better-ccflare
 ```
 
 ## Production Deployment
@@ -123,41 +123,41 @@ bun run ccflare
 
 ### Bun Binary Compilation
 
-Compile ccflare into a single executable for easy deployment:
+Compile better-ccflare into a single executable for easy deployment:
 
 ```bash
 # Build all components (dashboard and TUI)
 bun run build
 
-# Build the main ccflare binary (includes TUI, CLI, and server)
+# Build the main better-ccflare binary (includes TUI, CLI, and server)
 cd apps/tui
-bun build src/main.ts --compile --outfile dist/ccflare --target=bun
+bun build src/main.ts --compile --outfile dist/better-ccflare --target=bun
 
 # Build standalone server binary (optional, server-only deployment)
 cd ../server
-bun build src/server.ts --compile --outfile dist/ccflare-server
+bun build src/server.ts --compile --outfile dist/better-ccflare-server
 
 # Copy binary to deployment location
-cp apps/tui/dist/ccflare /opt/ccflare/
+cp apps/tui/dist/better-ccflare /opt/better-ccflare/
 # Make it executable
-chmod +x /opt/ccflare/ccflare
+chmod +x /opt/better-ccflare/better-ccflare
 ```
 
 #### Binary Deployment Structure
 
 ```
-/opt/ccflare/
-├── ccflare             # Main binary (TUI + CLI + Server)
+/opt/better-ccflare/
+├── better-ccflare             # Main binary (TUI + CLI + Server)
 ├── config/
 │   └── config.json     # Configuration (optional)
 └── data/
-    ├── ccflare.db      # SQLite database
+    ├── better-ccflare.db      # SQLite database
     └── logs/           # Log files (if configured)
 ```
 
 **Note**: The configuration and database are automatically created in platform-specific directories:
-- **Linux/macOS**: `~/.config/ccflare/`
-- **Windows**: `%LOCALAPPDATA%\ccflare\` or `%APPDATA%\ccflare\`
+- **Linux/macOS**: `~/.config/better-ccflare/`
+- **Windows**: `%LOCALAPPDATA%\better-ccflare\` or `%APPDATA%\better-ccflare\`
 
 ### Process Management
 
@@ -171,8 +171,8 @@ npm install -g pm2
 cat > ecosystem.config.js << 'EOF'
 module.exports = {
   apps: [{
-    name: 'ccflare',
-    script: '/opt/ccflare/ccflare',
+    name: 'better-ccflare',
+    script: '/opt/better-ccflare/better-ccflare',
     args: '--serve',
     instances: 1,
     exec_mode: 'fork',
@@ -187,9 +187,9 @@ module.exports = {
       RETRY_DELAY_MS: 1000,
       RETRY_BACKOFF: 2
     },
-    error_file: '/opt/ccflare/data/logs/error.log',
-    out_file: '/opt/ccflare/data/logs/out.log',
-    log_file: '/opt/ccflare/data/logs/combined.log',
+    error_file: '/opt/better-ccflare/data/logs/error.log',
+    out_file: '/opt/better-ccflare/data/logs/out.log',
+    log_file: '/opt/better-ccflare/data/logs/combined.log',
     time: true,
     autorestart: true,
     max_restarts: 10,
@@ -211,17 +211,17 @@ Create a systemd service file:
 
 ```bash
 # Create service file
-sudo cat > /etc/systemd/system/ccflare.service << 'EOF'
+sudo cat > /etc/systemd/system/better-ccflare.service << 'EOF'
 [Unit]
-Description=ccflare Load Balancer
+Description=better-ccflare Load Balancer
 After=network.target
 
 [Service]
 Type=simple
-User=ccflare
-Group=ccflare
-WorkingDirectory=/opt/ccflare
-ExecStart=/opt/ccflare/ccflare --serve
+User=better-ccflare
+Group=better-ccflare
+WorkingDirectory=/opt/better-ccflare
+ExecStart=/opt/better-ccflare/better-ccflare --serve
 Restart=always
 RestartSec=5
 
@@ -241,7 +241,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/opt/ccflare/data
+ReadWritePaths=/opt/better-ccflare/data
 
 # Resource limits
 LimitNOFILE=65536
@@ -252,14 +252,14 @@ WantedBy=multi-user.target
 EOF
 
 # Create user and directories
-sudo useradd -r -s /bin/false ccflare
-sudo mkdir -p /opt/ccflare/{config,data/logs}
-sudo chown -R ccflare:ccflare /opt/ccflare
+sudo useradd -r -s /bin/false better-ccflare
+sudo mkdir -p /opt/better-ccflare/{config,data/logs}
+sudo chown -R better-ccflare:better-ccflare /opt/better-ccflare
 
 # Enable and start service
 sudo systemctl daemon-reload
-sudo systemctl enable ccflare
-sudo systemctl start ccflare
+sudo systemctl enable better-ccflare
+sudo systemctl start better-ccflare
 ```
 
 ## Docker Deployment
@@ -283,8 +283,8 @@ COPY tsconfig.json ./
 # Install dependencies and build
 RUN bun install --frozen-lockfile
 RUN bun run build
-RUN cd apps/server && bun build src/server.ts --compile --outfile dist/ccflare-server
-RUN cd apps/cli && bun build src/cli.ts --compile --outfile dist/ccflare-cli
+RUN cd apps/server && bun build src/server.ts --compile --outfile dist/better-ccflare-server
+RUN cd apps/cli && bun build src/cli.ts --compile --outfile dist/better-ccflare-cli
 
 # Runtime stage
 FROM debian:bookworm-slim
@@ -295,32 +295,32 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Create user
-RUN useradd -r -s /bin/false ccflare
+RUN useradd -r -s /bin/false better-ccflare
 
 # Copy binary and dashboard
-COPY --from=builder /app/apps/tui/dist/ccflare /usr/local/bin/ccflare
-COPY --from=builder /app/packages/dashboard-web/dist /opt/ccflare/dashboard
+COPY --from=builder /app/apps/tui/dist/better-ccflare /usr/local/bin/better-ccflare
+COPY --from=builder /app/packages/dashboard-web/dist /opt/better-ccflare/dashboard
 
 # Set permissions
-RUN chmod +x /usr/local/bin/ccflare
+RUN chmod +x /usr/local/bin/better-ccflare
 
 # Create data directories
-RUN mkdir -p /data /config && chown -R ccflare:ccflare /data /config
+RUN mkdir -p /data /config && chown -R better-ccflare:better-ccflare /data /config
 
-USER ccflare
+USER better-ccflare
 
 # Environment
 ENV PORT=8080
-ENV ccflare_CONFIG_PATH=/config/ccflare.json
+ENV better-ccflare_CONFIG_PATH=/config/better-ccflare.json
 
 EXPOSE 8080
 
 VOLUME ["/data", "/config"]
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD ["/usr/local/bin/ccflare-server", "health"] || exit 1
+  CMD ["/usr/local/bin/better-ccflare-server", "health"] || exit 1
 
-ENTRYPOINT ["/usr/local/bin/ccflare", "--serve"]
+ENTRYPOINT ["/usr/local/bin/better-ccflare", "--serve"]
 ```
 
 ### Example Docker Compose
@@ -329,9 +329,9 @@ ENTRYPOINT ["/usr/local/bin/ccflare", "--serve"]
 version: '3.8'
 
 services:
-  ccflare:
+  better-ccflare:
     build: .
-    container_name: ccflare
+    container_name: better-ccflare
     restart: unless-stopped
     ports:
       - "8080:8080"
@@ -355,12 +355,12 @@ services:
       retries: 3
       start_period: 40s
     networks:
-      - ccflare-net
+      - better-ccflare-net
 
   # Optional: Reverse proxy
   nginx:
     image: nginx:alpine
-    container_name: ccflare-nginx
+    container_name: better-ccflare-nginx
     restart: unless-stopped
     ports:
       - "80:80"
@@ -369,12 +369,12 @@ services:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/ssl:/etc/nginx/ssl:ro
     depends_on:
-      - ccflare
+      - better-ccflare
     networks:
-      - ccflare-net
+      - better-ccflare-net
 
 networks:
-  ccflare-net:
+  better-ccflare-net:
     driver: bridge
 ```
 
@@ -382,16 +382,16 @@ networks:
 
 ```bash
 # Build the Docker image
-docker build -t ccflare:latest .
+docker build -t better-ccflare:latest .
 
 # Run with Docker
 docker run -d \
-  --name ccflare \
+  --name better-ccflare \
   -p 8080:8080 \
   -v $(pwd)/data:/data \
   -v $(pwd)/config:/config \
   -e LB_STRATEGY=session \
-  ccflare:latest
+  better-ccflare:latest
 
 # Or use Docker Compose
 docker-compose up -d
@@ -441,25 +441,25 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
 ### Nginx Configuration
 
 ```nginx
-# /etc/nginx/sites-available/ccflare
-upstream ccflare_backend {
+# /etc/nginx/sites-available/better-ccflare
+upstream better-ccflare_backend {
     server 127.0.0.1:8080 max_fails=3 fail_timeout=30s;
     keepalive 32;
 }
 
 server {
     listen 80;
-    server_name ccflare.yourdomain.com;
+    server_name better-ccflare.yourdomain.com;
     return 301 https://$server_name$request_uri;
 }
 
 server {
     listen 443 ssl http2;
-    server_name ccflare.yourdomain.com;
+    server_name better-ccflare.yourdomain.com;
 
     # SSL configuration
-    ssl_certificate /etc/letsencrypt/live/ccflare.yourdomain.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/ccflare.yourdomain.com/privkey.pem;
+    ssl_certificate /etc/letsencrypt/live/better-ccflare.yourdomain.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/better-ccflare.yourdomain.com/privkey.pem;
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers HIGH:!aNULL:!MD5;
     ssl_prefer_server_ciphers on;
@@ -486,12 +486,12 @@ server {
 
     # Main proxy
     location / {
-        proxy_pass http://ccflare_backend;
+        proxy_pass http://better-ccflare_backend;
     }
 
     # API endpoints
     location /v1/ {
-        proxy_pass http://ccflare_backend;
+        proxy_pass http://better-ccflare_backend;
         
         # Increase limits for AI requests
         client_max_body_size 100M;
@@ -501,7 +501,7 @@ server {
 
     # WebSocket support for real-time updates
     location /ws {
-        proxy_pass http://ccflare_backend;
+        proxy_pass http://better-ccflare_backend;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
@@ -510,7 +510,7 @@ server {
 
     # Static assets caching
     location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
-        proxy_pass http://ccflare_backend;
+        proxy_pass http://better-ccflare_backend;
         expires 1y;
         add_header Cache-Control "public, immutable";
     }
@@ -520,7 +520,7 @@ server {
 ### Caddy Configuration
 
 ```caddyfile
-ccflare.yourdomain.com {
+better-ccflare.yourdomain.com {
     # Automatic HTTPS
     tls your-email@example.com
 
@@ -578,10 +578,10 @@ ccflare.yourdomain.com {
 ```mermaid
 graph TB
     subgraph "Logging Architecture"
-        APP[ccflare Server]
+        APP[better-ccflare Server]
         
         subgraph "Log Outputs"
-            FILE[File Logs<br/>/var/log/ccflare/]
+            FILE[File Logs<br/>/var/log/better-ccflare/]
             STDOUT[Container Stdout]
             SYSLOG[Syslog]
         end
@@ -621,26 +621,26 @@ import { register, Counter, Histogram, Gauge } from 'prom-client';
 
 export const metrics = {
   requestsTotal: new Counter({
-    name: 'ccflare_requests_total',
+    name: 'better-ccflare_requests_total',
     help: 'Total number of requests',
     labelNames: ['method', 'status', 'account']
   }),
   
   requestDuration: new Histogram({
-    name: 'ccflare_request_duration_seconds',
+    name: 'better-ccflare_request_duration_seconds',
     help: 'Request duration in seconds',
     labelNames: ['method', 'status'],
     buckets: [0.1, 0.5, 1, 2, 5, 10]
   }),
   
   activeAccounts: new Gauge({
-    name: 'ccflare_active_accounts',
+    name: 'better-ccflare_active_accounts',
     help: 'Number of active accounts',
     labelNames: ['tier']
   }),
   
   rateLimitedAccounts: new Gauge({
-    name: 'ccflare_rate_limited_accounts',
+    name: 'better-ccflare_rate_limited_accounts',
     help: 'Number of rate limited accounts'
   })
 };
@@ -689,7 +689,7 @@ services:
     volumes:
       - ./promtail-config.yaml:/etc/promtail/config.yml
       - /var/log:/var/log:ro
-      - /opt/ccflare/data/logs:/app/logs:ro
+      - /opt/better-ccflare/data/logs:/app/logs:ro
     command: -config.file=/etc/promtail/config.yml
 
 volumes:
@@ -704,8 +704,8 @@ volumes:
 
 ```bash
 # Increase file descriptor limits
-echo "ccflare soft nofile 65536" >> /etc/security/limits.conf
-echo "ccflare hard nofile 65536" >> /etc/security/limits.conf
+echo "better-ccflare soft nofile 65536" >> /etc/security/limits.conf
+echo "better-ccflare hard nofile 65536" >> /etc/security/limits.conf
 
 # TCP tuning for high throughput
 cat >> /etc/sysctl.conf << EOF
@@ -731,7 +731,7 @@ sysctl -p
 ### Application Tuning
 
 ```json
-// ~/.config/ccflare/config.json (or platform-specific location)
+// ~/.config/better-ccflare/config.json (or platform-specific location)
 {
   "lb_strategy": "session",
   "client_id": "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
@@ -773,9 +773,9 @@ graph TB
     end
     
     subgraph "Application Instances"
-        APP1[ccflare-1<br/>Port 8081]
-        APP2[ccflare-2<br/>Port 8082]
-        APP3[ccflare-N<br/>Port 808N]
+        APP1[better-ccflare-1<br/>Port 8081]
+        APP2[better-ccflare-2<br/>Port 8082]
+        APP3[better-ccflare-N<br/>Port 808N]
     end
     
     subgraph "Shared Data Layer"
@@ -810,12 +810,12 @@ graph TB
 
 ### Database Considerations
 
-ccflare uses SQLite by default, which is suitable for most single-instance deployments. The database is automatically created and managed in the platform-specific configuration directory.
+better-ccflare uses SQLite by default, which is suitable for most single-instance deployments. The database is automatically created and managed in the platform-specific configuration directory.
 
 #### SQLite Optimization (Default)
 
 ```sql
--- These optimizations are automatically applied by ccflare
+-- These optimizations are automatically applied by better-ccflare
 PRAGMA journal_mode = WAL;
 PRAGMA synchronous = NORMAL;
 PRAGMA cache_size = -20000;  -- 20MB cache
@@ -880,38 +880,38 @@ CREATE INDEX idx_accounts_rate_limit ON accounts(rate_limited_until);
 ### Kubernetes Deployment
 
 ```yaml
-# ccflare-deployment.yaml
+# better-ccflare-deployment.yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: ccflare
+  name: better-ccflare
   labels:
-    app: ccflare
+    app: better-ccflare
 spec:
   replicas: 3
   selector:
     matchLabels:
-      app: ccflare
+      app: better-ccflare
   template:
     metadata:
       labels:
-        app: ccflare
+        app: better-ccflare
     spec:
       containers:
-      - name: ccflare
-        image: your-registry/ccflare:latest
+      - name: better-ccflare
+        image: your-registry/better-ccflare:latest
         ports:
         - containerPort: 8080
         env:
         - name: DATABASE_URL
           valueFrom:
             secretKeyRef:
-              name: ccflare-secrets
+              name: better-ccflare-secrets
               key: database-url
         - name: REDIS_URL
           valueFrom:
             secretKeyRef:
-              name: ccflare-secrets
+              name: better-ccflare-secrets
               key: redis-url
         resources:
           requests:
@@ -936,10 +936,10 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: ccflare
+  name: better-ccflare
 spec:
   selector:
-    app: ccflare
+    app: better-ccflare
   ports:
   - port: 80
     targetPort: 8080
@@ -991,7 +991,7 @@ spec:
 
 ### Health Check Endpoint
 
-ccflare provides a health check endpoint for monitoring:
+better-ccflare provides a health check endpoint for monitoring:
 
 ```bash
 # Check health status
@@ -1075,32 +1075,32 @@ healthcheck:
    ```bash
    # Find the actual database location
    # Linux/macOS:
-   sqlite3 ~/.config/ccflare/ccflare.db "PRAGMA journal_mode=WAL;"
+   sqlite3 ~/.config/better-ccflare/better-ccflare.db "PRAGMA journal_mode=WAL;"
    
    # Windows:
-   sqlite3 %LOCALAPPDATA%\ccflare\ccflare.db "PRAGMA journal_mode=WAL;"
+   sqlite3 %LOCALAPPDATA%\better-ccflare\better-ccflare.db "PRAGMA journal_mode=WAL;"
    ```
 
 2. **High Memory Usage**
    ```bash
    # Check for memory leaks
-   node --inspect=0.0.0.0:9229 /opt/ccflare/ccflare-server
+   node --inspect=0.0.0.0:9229 /opt/better-ccflare/better-ccflare-server
    ```
 
 3. **Connection Refused**
    ```bash
    # Check if service is running
-   systemctl status ccflare
+   systemctl status better-ccflare
    # Check logs
-   journalctl -u ccflare -f
+   journalctl -u better-ccflare -f
    ```
 
 4. **Rate Limit Issues**
    ```bash
    # Check account status
-   ccflare --list
+   better-ccflare --list
    # Reset statistics
-   ccflare --reset-stats
+   better-ccflare --reset-stats
    ```
 
 ## Maintenance
@@ -1109,18 +1109,18 @@ healthcheck:
 
 ```bash
 # Daily: Check recent logs
-ccflare --logs 100 | grep ERROR
+better-ccflare --logs 100 | grep ERROR
 
 # Weekly: Database maintenance
 # Linux/macOS:
-sqlite3 ~/.config/ccflare/ccflare.db "VACUUM;"
-sqlite3 ~/.config/ccflare/ccflare.db "ANALYZE;"
+sqlite3 ~/.config/better-ccflare/better-ccflare.db "VACUUM;"
+sqlite3 ~/.config/better-ccflare/better-ccflare.db "ANALYZE;"
 
 # Monthly: Clean old request history
-ccflare --clear-history
+better-ccflare --clear-history
 
 # Quarterly: Update dependencies (if running from source)
-cd /path/to/ccflare
+cd /path/to/better-ccflare
 bun update
 ```
 
@@ -1130,20 +1130,20 @@ bun update
 #!/bin/bash
 # backup.sh - Run daily via cron
 
-BACKUP_DIR="/backup/ccflare/$(date +%Y%m%d)"
+BACKUP_DIR="/backup/better-ccflare/$(date +%Y%m%d)"
 mkdir -p "$BACKUP_DIR"
 
 # Determine config directory based on OS
 if [[ "$OSTYPE" == "darwin"* ]] || [[ "$OSTYPE" == "linux-gnu"* ]]; then
-    CONFIG_DIR="$HOME/.config/ccflare"
+    CONFIG_DIR="$HOME/.config/better-ccflare"
 elif [[ "$OSTYPE" == "msys" ]] || [[ "$OSTYPE" == "cygwin" ]]; then
-    CONFIG_DIR="$LOCALAPPDATA/ccflare"
+    CONFIG_DIR="$LOCALAPPDATA/better-ccflare"
 else
-    CONFIG_DIR="$HOME/.config/ccflare"  # Default fallback
+    CONFIG_DIR="$HOME/.config/better-ccflare"  # Default fallback
 fi
 
 # Backup database and config
-sqlite3 "$CONFIG_DIR/ccflare.db" ".backup $BACKUP_DIR/ccflare.db"
+sqlite3 "$CONFIG_DIR/better-ccflare.db" ".backup $BACKUP_DIR/better-ccflare.db"
 cp "$CONFIG_DIR/config.json" "$BACKUP_DIR/" 2>/dev/null || true
 
 # Compress
@@ -1151,7 +1151,7 @@ tar -czf "$BACKUP_DIR.tar.gz" "$BACKUP_DIR"
 rm -rf "$BACKUP_DIR"
 
 # Keep only last 30 days
-find /backup/ccflare -name "*.tar.gz" -mtime +30 -delete
+find /backup/better-ccflare -name "*.tar.gz" -mtime +30 -delete
 ```
 
 ## Environment Variables Reference
@@ -1164,7 +1164,7 @@ find /backup/ccflare -name "*.tar.gz" -mtime +30 -delete
 | `LB_STRATEGY` | session | Load balancing strategy (only 'session' is supported) |
 | `LOG_LEVEL` | INFO | Logging level: `DEBUG`, `INFO`, `WARN`, `ERROR` |
 | `LOG_FORMAT` | pretty | Log format: `pretty` (human-readable) or `json` (structured) |
-| `ccflare_DEBUG` | 0 | Enable debug mode (1/0) - enables console output |
+| `better-ccflare_DEBUG` | 0 | Enable debug mode (1/0) - enables console output |
 
 ### Advanced Configuration
 
@@ -1175,12 +1175,12 @@ find /backup/ccflare -name "*.tar.gz" -mtime +30 -delete
 | `RETRY_ATTEMPTS` | 3 | Number of retry attempts for failed requests |
 | `RETRY_DELAY_MS` | 1000 | Initial delay between retries in milliseconds |
 | `RETRY_BACKOFF` | 2 | Backoff multiplier for exponential retry delays |
-| `ccflare_CONFIG_PATH` | Platform-specific | Path to configuration file |
-| `ccflare_DB_PATH` | Platform-specific | Path to SQLite database file |
+| `better-ccflare_CONFIG_PATH` | Platform-specific | Path to configuration file |
+| `better-ccflare_DB_PATH` | Platform-specific | Path to SQLite database file |
 
 ### Configuration File
 
-ccflare also supports a JSON configuration file that takes precedence over environment variables:
+better-ccflare also supports a JSON configuration file that takes precedence over environment variables:
 
 ```json
 {
@@ -1195,12 +1195,12 @@ ccflare also supports a JSON configuration file that takes precedence over envir
 ```
 
 The configuration file is located at:
-- **Linux/macOS**: `~/.config/ccflare/config.json`
-- **Windows**: `%APPDATA%\ccflare\config.json`
+- **Linux/macOS**: `~/.config/better-ccflare/config.json`
+- **Windows**: `%APPDATA%\better-ccflare\config.json`
 
 ## Conclusion
 
-ccflare is designed to be flexible and scalable, supporting everything from simple local deployments to complex distributed architectures. Choose the deployment option that best fits your needs and scale as your requirements grow.
+better-ccflare is designed to be flexible and scalable, supporting everything from simple local deployments to complex distributed architectures. Choose the deployment option that best fits your needs and scale as your requirements grow.
 
 ### Key Features Summary
 
@@ -1217,26 +1217,26 @@ ccflare is designed to be flexible and scalable, supporting everything from simp
 - [Configuration Guide](./configuration.md)
 - [Load Balancing Strategies](./load-balancing.md)
 - [API Reference](./api-http.md)
-- [GitHub Repository](https://github.com/snipeship/ccflare)
+- [GitHub Repository](https://github.com/snipeship/better-ccflare)
 
 ## Terminal User Interface (TUI)
 
-ccflare includes a powerful Terminal User Interface for interactive monitoring and management.
+better-ccflare includes a powerful Terminal User Interface for interactive monitoring and management.
 
 ### Starting the TUI
 
 ```bash
-# Start ccflare in interactive mode (TUI + Server)
-ccflare
+# Start better-ccflare in interactive mode (TUI + Server)
+better-ccflare
 
 # Or from source:
-bun run ccflare
+bun run better-ccflare
 
 # Start server only (no TUI)
-ccflare --serve
+better-ccflare --serve
 
 # View help for all available commands
-ccflare --help
+better-ccflare --help
 ```
 
 ### TUI Features
@@ -1275,12 +1275,12 @@ ccflare --help
 
 ### Remote API Connection
 
-The ccflare binary can connect to a remote API server for distributed deployments:
+The better-ccflare binary can connect to a remote API server for distributed deployments:
 
 ```bash
 # Set API URL for remote connection
-export ccflare_API_URL=https://ccflare.example.com
-ccflare --list  # Will query the remote server
+export better-ccflare_API_URL=https://better-ccflare.example.com
+better-ccflare --list  # Will query the remote server
 ```
 
 ### TUI Configuration

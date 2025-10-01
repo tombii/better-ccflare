@@ -1,8 +1,8 @@
-# Model Mappings in ccflare
+# Model Mappings in better-ccflare
 
 ## Overview
 
-ccflare includes centralized model definitions and mappings for Claude AI models. These mappings are defined in `packages/core/src/models.ts` and are used throughout the system for consistent model identification and display.
+better-ccflare includes centralized model definitions and mappings for Claude AI models. These mappings are defined in `packages/core/src/models.ts` and are used throughout the system for consistent model identification and display.
 
 ## Model Constants
 
@@ -113,7 +113,7 @@ export type ClaudeModelId = (typeof CLAUDE_MODEL_IDS)[keyof typeof CLAUDE_MODEL_
 ### Getting a Model's Display Name
 
 ```typescript
-import { getModelDisplayName, CLAUDE_MODEL_IDS } from "@ccflare/core";
+import { getModelDisplayName, CLAUDE_MODEL_IDS } from "@better-ccflare/core";
 
 const modelId = CLAUDE_MODEL_IDS.SONNET_4;
 const displayName = getModelDisplayName(modelId);
@@ -123,7 +123,7 @@ const displayName = getModelDisplayName(modelId);
 ### Validating a Model ID
 
 ```typescript
-import { isValidModelId } from "@ccflare/core";
+import { isValidModelId } from "@better-ccflare/core";
 
 if (isValidModelId("claude-3-5-sonnet-20241022")) {
     // This is a valid model ID
@@ -133,7 +133,7 @@ if (isValidModelId("claude-3-5-sonnet-20241022")) {
 ### Using the Model Type
 
 ```typescript
-import type { ClaudeModelId } from "@ccflare/core";
+import type { ClaudeModelId } from "@better-ccflare/core";
 
 function processModel(modelId: ClaudeModelId) {
     // TypeScript knows this is a valid model ID
@@ -160,6 +160,6 @@ The model mappings include both current and legacy model versions:
 
 ## Agent Model Preferences
 
-ccflare supports agent-specific model preferences through the agent system. When an agent is detected in a request, the system can automatically override the model selection based on the agent's configured preference.
+better-ccflare supports agent-specific model preferences through the agent system. When an agent is detected in a request, the system can automatically override the model selection based on the agent's configured preference.
 
 See [Agent Documentation](./providers.md#agent-system) for more details on how agents work with model preferences.

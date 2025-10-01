@@ -1,8 +1,8 @@
-# ccflare TUI Documentation
+# better-ccflare TUI Documentation
 
 ## Overview
 
-The ccflare Terminal User Interface (TUI) provides an interactive way to manage your Claude API load balancer. Built with React and Ink, it offers real-time monitoring, account management, and comprehensive analytics all from your terminal.
+The better-ccflare Terminal User Interface (TUI) provides an interactive way to manage your Claude API load balancer. Built with React and Ink, it offers real-time monitoring, account management, and comprehensive analytics all from your terminal.
 
 ### Key Features
 
@@ -22,7 +22,7 @@ The ccflare Terminal User Interface (TUI) provides an interactive way to manage 
 ### Prerequisites
 
 - Bun runtime (v1.2.8 or higher)
-- ccflare project dependencies installed
+- better-ccflare project dependencies installed
 - Terminal with 256-color support (recommended)
 - Minimum terminal size: 80x24
 
@@ -135,7 +135,7 @@ bun run dev --analyze
 The main menu presents all available options using Ink's SelectInput component:
 
 ```
-🎯 ccflare TUI
+🎯 better-ccflare TUI
 
 Select an option:
   🚀 Server
@@ -548,7 +548,7 @@ bun run dev --clear-history
 ## Architecture Notes
 
 - **Built with Ink**: React-based terminal UI framework
-- **Dependency Injection**: Uses @ccflare/core-di for service management
+- **Dependency Injection**: Uses @better-ccflare/core-di for service management
 - **Database**: SQLite-based storage with DatabaseFactory singleton
 - **Async Operations**: AsyncDbWriter for non-blocking database operations
 - **Graceful Shutdown**: Proper cleanup of resources and server on exit
