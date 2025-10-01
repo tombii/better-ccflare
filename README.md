@@ -90,6 +90,10 @@ Full documentation available in [`docs/`](docs/):
 - [Bun](https://bun.sh) >= 1.2.8
 - Claude API accounts (Free, Pro, or Team) or z.ai code plan accounts
 
+## Acknowledgments
+
+Inspired by [snipeship/ccflare](https://github.com/snipeship/ccflare) - thanks for the original idea and implementation!
+
 ## Contributing
 
 We welcome contributions! See [CONTRIBUTING.md](docs/contributing.md) for guidelines.
