@@ -233,10 +233,36 @@ export class AnthropicProvider extends BaseProvider {
 				const maxBytes = BUFFER_SIZES.ANTHROPIC_STREAM_CAP_BYTES;
 				const decoder = new TextDecoder();
 				let foundMessageStart = false;
+				const READ_TIMEOUT_MS = 10000; // 10 second timeout for stream reads
+				const startTime = Date.now();
 
 				try {
 					while (buffered.length < maxBytes) {
-						const { value, done } = await reader.read();
+						// Check for timeout
+						if (Date.now() - startTime > READ_TIMEOUT_MS) {
+							await reader.cancel();
+							throw new Error(
+								"Stream read timeout while extracting usage info",
+							);
+						}
+
+						// Read with timeout
+						const readPromise = reader.read();
+						const timeoutPromise = new Promise<{
+							value?: Uint8Array;
+							done: boolean;
+						}>((_, reject) =>
+							setTimeout(
+								() => reject(new Error("Read operation timeout")),
+								5000,
+							),
+						);
+
+						const { value, done } = await Promise.race([
+							readPromise,
+							timeoutPromise,
+						]);
+
 						if (done) break;
 
 						buffered += decoder.decode(value, { stream: true });
@@ -245,7 +271,22 @@ export class AnthropicProvider extends BaseProvider {
 						if (buffered.includes("event: message_start")) {
 							foundMessageStart = true;
 							// Read a bit more to ensure we get the data line
-							const { value: nextValue, done: nextDone } = await reader.read();
+							const nextReadPromise = reader.read();
+							const nextTimeoutPromise = new Promise<{
+								value?: Uint8Array;
+								done: boolean;
+							}>((_, reject) =>
+								setTimeout(
+									() => reject(new Error("Read operation timeout")),
+									5000,
+								),
+							);
+
+							const { value: nextValue, done: nextDone } = await Promise.race([
+								nextReadPromise,
+								nextTimeoutPromise,
+							]);
+
 							if (!nextDone && nextValue) {
 								buffered += decoder.decode(nextValue, { stream: true });
 							}

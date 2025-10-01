@@ -111,14 +111,55 @@ export async function forwardToClient(
 		const analyticsClone = response.clone();
 
 		(async () => {
+			const STREAM_TIMEOUT_MS = 300000; // 5 minutes max stream duration
+			const CHUNK_TIMEOUT_MS = 30000; // 30 seconds between chunks
+
 			try {
 				const reader = analyticsClone.body?.getReader();
 				if (!reader) return; // Safety check
+
+				const startTime = Date.now();
+				let lastChunkTime = Date.now();
+
 				// eslint-disable-next-line no-constant-condition
 				while (true) {
-					const { value, done } = await reader.read();
+					// Check for overall stream timeout
+					if (Date.now() - startTime > STREAM_TIMEOUT_MS) {
+						await reader.cancel();
+						throw new Error(
+							`Stream timeout: exceeded ${STREAM_TIMEOUT_MS}ms total duration`,
+						);
+					}
+
+					// Check for chunk timeout (no data received)
+					if (Date.now() - lastChunkTime > CHUNK_TIMEOUT_MS) {
+						await reader.cancel();
+						throw new Error(
+							`Stream timeout: no data received for ${CHUNK_TIMEOUT_MS}ms`,
+						);
+					}
+
+					// Read with a timeout wrapper
+					const readPromise = reader.read();
+					const timeoutPromise = new Promise<{
+						value?: Uint8Array;
+						done: boolean;
+					}>((_, reject) =>
+						setTimeout(
+							() => reject(new Error("Read operation timeout")),
+							CHUNK_TIMEOUT_MS,
+						),
+					);
+
+					const { value, done } = await Promise.race([
+						readPromise,
+						timeoutPromise,
+					]);
+
 					if (done) break;
+
 					if (value) {
+						lastChunkTime = Date.now();
 						const chunkMsg: ChunkMessage = {
 							type: "chunk",
 							requestId,

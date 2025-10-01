@@ -488,10 +488,7 @@ export async function estimateCostUSD(
 
 		return totalCost;
 	} catch (error) {
-		catalogue.warnOnce(
-			modelId,
-			error instanceof Error ? error : String(error),
-		);
+		catalogue.warnOnce(modelId, error instanceof Error ? error : String(error));
 		return 0;
 	}
 }

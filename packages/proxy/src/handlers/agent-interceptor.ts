@@ -328,21 +328,20 @@ function extractAgentDirectories(systemPrompt: string): string[] {
 
 	// Regex #1: Look for explicit /.claude/agents paths
 	const agentPathRegex = /([\\/][\w\-. ]*?\/.claude\/agents)(?=[\s"'\]])/g;
-	let match: RegExpExecArray | null;
 
-	match = agentPathRegex.exec(systemPrompt);
-	while (match !== null) {
+	// Use matchAll to avoid infinite loop issues with exec()
+	const agentPathMatches = systemPrompt.matchAll(agentPathRegex);
+	for (const match of agentPathMatches) {
 		const dir = resolve(match[1]);
 		directories.add(dir);
-		match = agentPathRegex.exec(systemPrompt);
 	}
 
 	// Regex #2: Look for repo root pattern "Contents of (.*?)/CLAUDE.md"
 	const repoRootRegex = /Contents of ([^\n]+?)\/CLAUDE\.md/g;
 
 	let matchCount = 0;
-	match = repoRootRegex.exec(systemPrompt);
-	while (match !== null) {
+	const repoRootMatches = systemPrompt.matchAll(repoRootRegex);
+	for (const match of repoRootMatches) {
 		matchCount++;
 		const repoRoot = match[1];
 		extractDirLog.info(
@@ -357,7 +356,6 @@ function extractAgentDirectories(systemPrompt: string): string[] {
 
 		extractDirLog.info(`Resolved agents dir: "${resolvedDir}"`);
 		directories.add(resolvedDir);
-		match = repoRootRegex.exec(systemPrompt);
 	}
 
 	if (matchCount === 0 && systemPrompt.includes("CLAUDE.md")) {
