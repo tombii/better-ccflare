@@ -395,16 +395,6 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 			(state.usage.cacheReadInputTokens || 0) +
 			(state.usage.cacheCreationInputTokens || 0);
 
-		// Debug: Log the values being used for calculation
-		log.info(
-			`Token calculation debug - finalOutputTokens: ${finalOutputTokens}, providerFinalOutputTokens: ${state.providerFinalOutputTokens}, usage.outputTokens: ${state.usage.outputTokens}, outputTokensComputed: ${state.usage.outputTokensComputed}, totalTokens: ${state.usage.totalTokens}`,
-		);
-
-		// Log timestamp info
-		log.info(
-			`Timestamp debug - firstTokenTimestamp: ${state.firstTokenTimestamp}, lastTokenTimestamp: ${state.lastTokenTimestamp}, responseTime: ${responseTime}`,
-		);
-
 		state.usage.costUsd = await estimateCostUSD(state.usage.model, {
 			inputTokens: state.usage.inputTokens,
 			outputTokens: finalOutputTokens,
