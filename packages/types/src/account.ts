@@ -23,6 +23,7 @@ export interface AccountRow {
 	rate_limit_status?: string | null;
 	rate_limit_remaining?: number | null;
 	priority?: number;
+	auto_fallback_enabled?: 0 | 1;
 }
 
 // Domain model - used throughout the application
@@ -47,6 +48,7 @@ export interface Account {
 	rate_limit_status: string | null;
 	rate_limit_remaining: number | null;
 	priority: number;
+	auto_fallback_enabled: boolean;
 }
 
 // API response type - what clients receive
@@ -67,6 +69,7 @@ export interface AccountResponse {
 	rateLimitRemaining: number | null;
 	sessionInfo: string;
 	priority: number;
+	autoFallbackEnabled: boolean;
 	usageUtilization: number | null; // Percentage utilization (0-100) from API
 	usageWindow: string | null; // Most restrictive window (e.g., "five_hour")
 }
@@ -92,6 +95,7 @@ export interface AccountDisplay {
 	session_request_count?: number;
 	access_token?: string | null;
 	priority: number;
+	autoFallbackEnabled: boolean;
 }
 
 // CLI list item type
@@ -111,6 +115,7 @@ export interface AccountListItem {
 	sessionInfo: string;
 	mode: "max" | "console" | "zai";
 	priority: number;
+	autoFallbackEnabled: boolean;
 }
 
 // Account creation types
@@ -148,6 +153,7 @@ export function toAccount(row: AccountRow): Account {
 		rate_limit_status: row.rate_limit_status || null,
 		rate_limit_remaining: row.rate_limit_remaining || null,
 		priority: row.priority || 0,
+		auto_fallback_enabled: row.auto_fallback_enabled === 1,
 	};
 }
 
@@ -187,6 +193,7 @@ export function toAccountResponse(account: Account): AccountResponse {
 		rateLimitRemaining: account.rate_limit_remaining,
 		sessionInfo,
 		priority: account.priority,
+		autoFallbackEnabled: account.auto_fallback_enabled,
 		usageUtilization: null, // Will be filled in by API handler from cache
 		usageWindow: null, // Will be filled in by API handler from cache
 	};
@@ -225,5 +232,6 @@ export function toAccountDisplay(account: Account): AccountDisplay {
 		session_request_count: account.session_request_count,
 		access_token: account.access_token,
 		priority: account.priority,
+		autoFallbackEnabled: account.auto_fallback_enabled,
 	};
 }

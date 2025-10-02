@@ -189,6 +189,14 @@ export function runMigrations(db: Database): void {
 		log.info("Added priority column to accounts table");
 	}
 
+	// Add auto_fallback_enabled column if it doesn't exist
+	if (!accountsColumnNames.includes("auto_fallback_enabled")) {
+		db.prepare(
+			"ALTER TABLE accounts ADD COLUMN auto_fallback_enabled INTEGER DEFAULT 0",
+		).run();
+		log.info("Added auto_fallback_enabled column to accounts table");
+	}
+
 	// Check columns in requests table
 	const requestsInfo = db
 		.prepare("PRAGMA table_info(requests)")

@@ -15,7 +15,8 @@ export class AccountRepository extends BaseRepository<Account> {
 				COALESCE(account_tier, 1) as account_tier,
 				COALESCE(paused, 0) as paused,
 				rate_limit_reset, rate_limit_status, rate_limit_remaining,
-				COALESCE(priority, 0) as priority
+				COALESCE(priority, 0) as priority,
+				COALESCE(auto_fallback_enabled, 0) as auto_fallback_enabled
 			FROM accounts
 			ORDER BY priority DESC
 		`);
@@ -32,7 +33,8 @@ export class AccountRepository extends BaseRepository<Account> {
 				COALESCE(account_tier, 1) as account_tier,
 				COALESCE(paused, 0) as paused,
 				rate_limit_reset, rate_limit_status, rate_limit_remaining,
-				COALESCE(priority, 0) as priority
+				COALESCE(priority, 0) as priority,
+				COALESCE(auto_fallback_enabled, 0) as auto_fallback_enabled
 			FROM accounts
 			WHERE id = ?
 		`,
@@ -139,6 +141,13 @@ export class AccountRepository extends BaseRepository<Account> {
 	updatePriority(accountId: string, priority: number): void {
 		this.run(`UPDATE accounts SET priority = ? WHERE id = ?`, [
 			priority,
+			accountId,
+		]);
+	}
+
+	setAutoFallbackEnabled(accountId: string, enabled: boolean): void {
+		this.run(`UPDATE accounts SET auto_fallback_enabled = ? WHERE id = ?`, [
+			enabled ? 1 : 0,
 			accountId,
 		]);
 	}

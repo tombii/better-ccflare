@@ -18,6 +18,7 @@ better-ccflare implements a session-based load balancing system to distribute re
 - **Failover Support**: Returns ordered lists of accounts for automatic failover
 - **Session Persistence**: Maintains configurable sessions on specific accounts
 - **Account Priorities**: Supports prioritized account selection for better control over load distribution
+- **Auto-Fallback**: Automatically switches back to higher priority accounts when their usage windows reset
 - **Real-time Configuration**: Change settings without restarting the server
 - **Provider Filtering**: Accounts are filtered by provider compatibility
 
@@ -133,6 +134,99 @@ const available = accounts
 3. **Performance Optimization**: Prioritize accounts with better performance characteristics
 4. **Tiered Access**: Create hierarchical access patterns based on account capabilities
 
+## Auto-Fallback Feature
+
+The auto-fallback feature provides intelligent automatic switching back to higher priority accounts when their usage windows reset, allowing you to automatically take advantage of preferred accounts as soon as they become available again.
+
+### How Auto-Fallback Works
+
+Auto-fallback operates at the account level and uses the API's rate limit reset information to determine when accounts become available:
+
+1. **Anthropic Only**: Auto-fallback is only available for Anthropic accounts since only they provide rate limit reset information via the API
+2. **Per-Account Setting**: Each Anthropic account can have auto-fallback enabled or disabled independently
+3. **Priority-Based Selection**: When multiple accounts have auto-fallback enabled and become available, the system selects the one with the highest priority (lowest priority number)
+4. **API Reset Detection**: Uses the `rate_limit_reset` timestamp from the Anthropic API to detect when usage windows have reset
+5. **Automatic Switching**: Before processing each request, the system checks for higher priority accounts with auto-fallback enabled that have become available
+
+### Auto-Fallback Logic
+
+```typescript
+// Simplified logic from load-balancer/src/strategies/index.ts
+private checkForAutoFallbackAccounts(accounts: Account[], now: number): Account[] {
+    const resetAccounts = accounts.filter((account) => {
+        if (!account.auto_fallback_enabled) return false;
+        if (account.paused) return false;
+
+        // Check if the API usage window has reset
+        const windowReset = account.rate_limit_reset && account.rate_limit_reset <= now;
+
+        // Check if the account is not currently rate limited by our system
+        const notRateLimited = !account.rate_limited_until || account.rate_limited_until <= now;
+
+        return windowReset && notRateLimited;
+    });
+
+    // Sort by priority (lower number = higher priority)
+    return resetAccounts.sort((a, b) => a.priority - b.priority);
+}
+```
+
+### Enabling Auto-Fallback
+
+Auto-fallback can be configured via the HTTP API:
+
+```bash
+# Enable auto-fallback for an account
+curl -X POST http://localhost:8080/api/accounts/{account-id}/auto-fallback \
+  -H "Content-Type: application/json" \
+  -d '{"enabled": 1}'
+
+# Disable auto-fallback for an account
+curl -X POST http://localhost:8080/api/accounts/{account-id}/auto-fallback \
+  -H "Content-Type: application/json" \
+  -d '{"enabled": 0}'
+```
+
+### Auto-Fallback Behavior
+
+1. **Request Processing**: Before each request, the strategy checks for auto-fallback candidates
+2. **Priority Consideration**: Only considers accounts with higher priority than the current active account
+3. **Session Reset**: When switching to an auto-fallback account, the session is reset for the new account
+4. **Logging**: The system logs when auto-fallback is triggered for transparency
+
+### Use Cases for Auto-Fallback
+
+1. **Primary Account Recovery**: Automatically switch back to your main account as soon as its rate limit window resets
+2. **Cost Optimization**: Prioritize lower-cost accounts when they become available
+3. **Performance Preference**: Automatically use higher-performance accounts when they're ready
+4. **Tiered Access Management**: Ensure priority accounts get used first when available
+
+### Example Scenario
+
+```
+Initial State:
+- Account A (priority: 0): Rate limited, auto-fallback enabled
+- Account B (priority: 10): Currently being used
+- Account C (priority: 20): Available as fallback
+
+When Account A's usage window resets:
+1. System detects Account A is available again (rate_limit_reset passed)
+2. Auto-fallback triggers because Account A has higher priority and auto-fallback enabled
+3. System switches to Account A for the next request
+4. Log: "Auto-fallback triggered to account A (priority: 0, auto-fallback enabled)"
+```
+
+### Configuration
+
+Auto-fallback is configured per-account via the API and stored in the database:
+
+```sql
+-- Database field
+ALTER TABLE accounts ADD COLUMN auto_fallback_enabled INTEGER DEFAULT 0;
+```
+
+The setting defaults to `disabled` (0) for all existing accounts to maintain backward compatibility.
+
 ## Configuration
 
 better-ccflare uses a hierarchical configuration system where environment variables take precedence over configuration file settings.
@@ -209,7 +303,18 @@ curl http://localhost:8080/api/config/strategies
 
 The load balancer follows a specific process when selecting accounts for requests:
 
-### 1. Account Filtering
+### 1. Auto-Fallback Check (New)
+Before checking for active sessions, the system first checks for auto-fallback candidates:
+```typescript
+// Check for higher priority accounts that have become available due to rate limit reset
+const fallbackCandidates = this.checkForAutoFallbackAccounts(accounts, now);
+if (fallbackCandidates.length > 0) {
+    // Use the highest priority auto-fallback account
+    return [chosenFallback, ...otherAccounts];
+}
+```
+
+### 2. Account Filtering
 ```typescript
 // From proxy/handlers/account-selector.ts
 const providerAccounts = allAccounts.filter(
