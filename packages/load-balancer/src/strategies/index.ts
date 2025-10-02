@@ -49,6 +49,22 @@ export class SessionStrategy implements LoadBalancingStrategy {
 	select(accounts: Account[], _meta: RequestMeta): Account[] {
 		const now = Date.now();
 
+		// Check for higher priority accounts that have become available due to rate limit reset
+		const fallbackCandidates = this.checkForAutoFallbackAccounts(accounts, now);
+		if (fallbackCandidates.length > 0) {
+			const chosenFallback = fallbackCandidates[0];
+			this.resetSessionIfExpired(chosenFallback);
+			this.log.info(
+				`Auto-fallback triggered to account ${chosenFallback.name} (priority: ${chosenFallback.priority}, auto-fallback enabled)`,
+			);
+
+			// Return fallback account first, then others sorted by priority
+			const others = accounts
+				.filter((a) => a.id !== chosenFallback.id && isAccountAvailable(a, now))
+				.sort((a, b) => a.priority - b.priority);
+			return [chosenFallback, ...others];
+		}
+
 		// Find account with active session (most recent session_start within window)
 		let activeAccount: Account | null = null;
 		let mostRecentSessionStart = 0;
@@ -93,5 +109,38 @@ export class SessionStrategy implements LoadBalancingStrategy {
 		// Return chosen account first, then others as fallback (already sorted by priority)
 		const others = available.filter((a) => a.id !== chosenAccount.id);
 		return [chosenAccount, ...others];
+	}
+
+	/**
+	 * Check for higher priority accounts that have auto-fallback enabled and have become available
+	 * due to rate limit reset
+	 */
+	private checkForAutoFallbackAccounts(
+		accounts: Account[],
+		now: number,
+	): Account[] {
+		// Find accounts with auto-fallback enabled that:
+		// 1. Have an API reset time that has passed (usage window has reset)
+		// 2. Are not currently paused
+		// 3. Are not currently in a rate limited state (rate_limited_until is in the past or null)
+		const resetAccounts = accounts.filter((account) => {
+			if (!account.auto_fallback_enabled) return false;
+			if (account.paused) return false;
+
+			// Check if the API usage window has reset
+			const windowReset =
+				account.rate_limit_reset && account.rate_limit_reset <= now;
+
+			// Check if the account is not currently rate limited by our system
+			const notRateLimited =
+				!account.rate_limited_until || account.rate_limited_until <= now;
+
+			return windowReset && notRateLimited;
+		});
+
+		if (resetAccounts.length === 0) return [];
+
+		// Sort by priority (lower number = higher priority)
+		return resetAccounts.sort((a, b) => a.priority - b.priority);
 	}
 }

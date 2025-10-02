@@ -54,6 +54,7 @@ export function createAccountsListHandler(db: Database) {
 					COALESCE(account_tier, 1) as account_tier,
 					COALESCE(paused, 0) as paused,
 					COALESCE(priority, 0) as priority,
+					COALESCE(auto_fallback_enabled, 0) as auto_fallback_enabled,
 					CASE
 						WHEN expires_at > ?1 THEN 1
 						ELSE 0
@@ -92,6 +93,7 @@ export function createAccountsListHandler(db: Database) {
 			token_valid: 0 | 1;
 			rate_limited: 0 | 1;
 			session_info: string | null;
+			auto_fallback_enabled: 0 | 1;
 		}>;
 
 		const response: AccountResponse[] = accounts.map((account) => {
@@ -146,6 +148,7 @@ export function createAccountsListHandler(db: Database) {
 					: null,
 				rateLimitRemaining: account.rate_limit_remaining,
 				sessionInfo: account.session_info || "",
+				autoFallbackEnabled: account.auto_fallback_enabled === 1,
 				usageUtilization,
 				usageWindow,
 			};
@@ -643,6 +646,64 @@ export function createZaiAccountAddHandler(dbOps: DatabaseOperations) {
 				error instanceof Error
 					? error
 					: new Error("Failed to create z.ai account"),
+			);
+		}
+	};
+}
+
+/**
+ * Create an account auto-fallback toggle handler
+ */
+export function createAccountAutoFallbackHandler(dbOps: DatabaseOperations) {
+	return async (req: Request, accountId: string): Promise<Response> => {
+		try {
+			const body = await req.json();
+
+			// Validate enabled parameter
+			const enabled = validateNumber(body.enabled, "enabled", {
+				required: true,
+				allowedValues: [0, 1] as const,
+			});
+
+			if (enabled === undefined) {
+				return errorResponse(BadRequest("Enabled field is required (0 or 1)"));
+			}
+
+			// Check if account exists
+			const db = dbOps.getDatabase();
+			const account = db
+				.query<{ name: string; provider: string }, [string]>(
+					"SELECT name, provider FROM accounts WHERE id = ?",
+				)
+				.get(accountId);
+
+			if (!account) {
+				return errorResponse(NotFound("Account not found"));
+			}
+
+			// Check if account is Anthropic provider (only Anthropic accounts have rate limit windows)
+			if (account.provider !== "anthropic") {
+				return errorResponse(
+					BadRequest("Auto-fallback is only available for Anthropic accounts"),
+				);
+			}
+
+			// Update auto-fallback setting
+			dbOps.setAutoFallbackEnabled(accountId, enabled === 1);
+
+			const action = enabled === 1 ? "enabled" : "disabled";
+
+			return jsonResponse({
+				success: true,
+				message: `Auto-fallback ${action} for account '${account.name}'`,
+				autoFallbackEnabled: enabled === 1,
+			});
+		} catch (error) {
+			log.error("Account auto-fallback toggle error:", error);
+			return errorResponse(
+				error instanceof Error
+					? error
+					: new Error("Failed to toggle auto-fallback"),
 			);
 		}
 	};

@@ -126,7 +126,8 @@ List all configured accounts with their current status.
     "rateLimitStatus": "allowed_warning (5m)",
     "rateLimitReset": "2024-12-17T10:30:00.000Z",
     "rateLimitRemaining": 100,
-    "sessionInfo": "Session: 25 requests"
+    "sessionInfo": "Session: 25 requests",
+    "autoFallbackEnabled": false
   }
 ]
 ```
@@ -289,6 +290,54 @@ curl -X POST http://localhost:8080/api/accounts/uuid-here/priority \
 - Priority is optional and defaults to 0 (highest priority) if not specified
 - Priority affects both primary account selection and fallback order
 - Changes take effect immediately without restarting the server
+
+#### POST /api/accounts/:accountId/auto-fallback
+
+Enable or disable auto-fallback for an account. When enabled, the system will automatically switch back to this account when its usage window resets and it has higher priority than the currently active account.
+
+**Important**: Auto-fallback is only available for Anthropic accounts since only they provide rate limit reset information via the API. Attempts to enable auto-fallback on non-Anthropic accounts will result in an error.
+
+**Request:**
+```json
+{
+  "enabled": 1  // 1 to enable, 0 to disable
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Auto-fallback enabled for account 'myaccount'",
+  "autoFallbackEnabled": true
+}
+```
+
+**Example:**
+```bash
+# Enable auto-fallback
+curl -X POST http://localhost:8080/api/accounts/uuid-here/auto-fallback \
+  -H "Content-Type: application/json" \
+  -d '{"enabled": 1}'
+
+# Disable auto-fallback
+curl -X POST http://localhost:8080/api/accounts/uuid-here/auto-fallback \
+  -H "Content-Type: application/json" \
+  -d '{"enabled": 0}'
+```
+
+**How Auto-Fallback Works:**
+- Auto-fallback is a per-account setting that defaults to disabled
+- When enabled, the system monitors the account's API rate limit reset time
+- If the account becomes available (usage window resets) and has higher priority than the current active account, the system automatically switches to it
+- The system logs when auto-fallback is triggered for transparency
+- Only accounts that are not paused and not currently rate limited will be considered for auto-fallback
+
+**Use Cases:**
+- **Primary Account Recovery**: Automatically switch back to your main account as soon as its rate limit window resets
+- **Cost Optimization**: Prioritize lower-cost accounts when they become available
+- **Performance Management**: Automatically use higher-performance accounts when they're ready
+- **Tiered Access**: Ensure priority accounts get used first when available
 
 #### POST /api/accounts/:accountId/pause
 

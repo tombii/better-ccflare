@@ -302,6 +302,10 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		this.accounts.updatePriority(accountId, priority);
 	}
 
+	setAutoFallbackEnabled(accountId: string, enabled: boolean): void {
+		this.accounts.setAutoFallbackEnabled(accountId, enabled);
+	}
+
 	// Request operations delegated to repository
 	saveRequestMeta(
 		id: string,
