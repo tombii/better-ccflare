@@ -11,6 +11,7 @@ This guide covers all configuration options for better-ccflare, including file-b
 - [Environment Variables](#environment-variables)
 - [Runtime Configuration API](#runtime-configuration-api)
 - [Example Configurations](#example-configurations)
+- [Auto-Fallback Setup](#auto-fallback-setup)
 - [Configuration Validation](#configuration-validation)
 - [Migration Guide](#migration-guide)
 
@@ -287,6 +288,84 @@ export SESSION_DURATION_MS=7200000  # 2 hours
 export LOG_LEVEL=INFO
 export LOG_FORMAT=json
 export CF_PRICING_OFFLINE=1  # Reduce external API calls
+```
+
+### Auto-Fallback Setup
+
+Configuration for optimizing account usage with automatic fallback to higher priority accounts. **Note**: Auto-fallback is only available for Anthropic accounts.
+
+```json
+{
+  "lb_strategy": "session",
+  "retry_attempts": 3,
+  "retry_delay_ms": 1000,
+  "retry_backoff": 2,
+  "session_duration_ms": 18000000,
+  "port": 8080
+}
+```
+
+**Setup Script for Auto-Fallback Configuration:**
+
+```bash
+#!/bin/bash
+# Setup accounts with auto-fallback for optimal usage
+
+# Add primary account with highest priority and auto-fallback enabled
+better-ccflare --add-account primary-account --mode max --tier 20 --priority 0
+
+# Add secondary accounts with lower priorities
+better-ccflare --add-account secondary-1 --mode max --tier 20 --priority 10
+better-ccflare --add-account secondary-2 --mode max --tier 20 --priority 20
+
+# Add backup account with lowest priority
+better-ccflare --add-account backup --mode console --tier 5 --priority 50
+
+# Enable auto-fallback on primary account (API call)
+ACCOUNT_ID=$(better-ccflare --list | grep "primary-account" | jq -r '.id')
+curl -X POST http://localhost:8080/api/accounts/$ACCOUNT_ID/auto-fallback \
+  -H "Content-Type: application/json" \
+  -d '{"enabled": 1}'
+
+echo "Auto-fallback setup complete!"
+echo "Primary account (priority 0): auto-fallback enabled"
+echo "Secondary accounts (priorities 10, 20): standard usage"
+echo "Backup account (priority 50): emergency fallback"
+```
+
+**Use Case Scenarios:**
+
+1. **Cost Optimization**: Configure free tier accounts with auto-fallback to automatically use them when available:
+   ```bash
+   # Free account (priority 0) - auto-fallback enabled
+   # Paid accounts (priorities 10+) - used when free account is rate limited
+   ```
+
+2. **Performance Prioritization**: Configure highest-tier accounts with auto-fallback:
+   ```bash
+   # Tier 20 account (priority 0) - auto-fallback enabled for best performance
+   # Tier 5 account (priority 10) - fallback when Tier 20 is rate limited
+   # Tier 1 account (priority 20) - emergency backup
+   ```
+
+3. **Mixed Tier Strategy**: Combine different account tiers for optimal performance:
+   ```bash
+   # Tier 20 account (priority 0) - auto-fallback enabled for maximum performance
+   # Tier 5 account (priority 10) - balanced performance and cost
+   # Tier 1 account (priority 20) - cost-effective backup
+   ```
+
+**Monitoring Auto-Fallback:**
+
+```bash
+# Monitor logs for auto-fallback events
+tail -f ~/.local/share/better-ccflare/logs/better-ccflare.log | grep "Auto-fallback"
+
+# Check account status
+curl http://localhost:8080/api/accounts | jq '.[] | {name, priority, autoFallbackEnabled, rateLimitStatus}'
+
+# Real-time monitoring
+watch -n 5 'curl -s http://localhost:8080/api/accounts | jq ".[] | select(.autoFallbackEnabled == true)"'
 ```
 
 ## Configuration Validation

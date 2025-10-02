@@ -13,10 +13,11 @@ https://github.com/user-attachments/assets/c859872f-ca5e-4f8b-b6a0-7cc7461fe62a
 ## Why better-ccflare?
 
 - **🚀 Zero Rate Limit Errors** - Automatically distribute requests across multiple accounts
-- **📊 Request-Level Analytics** - Track latency, token usage, and costs in real-time  
+- **🔄 Smart Auto-Fallback** - Automatically switch back to preferred accounts when their rate limits reset
+- **📊 Request-Level Analytics** - Track latency, token usage, and costs in real-time
 - **🔍 Deep Debugging** - Full request/response logging and error traces
 - **⚡ <10ms Overhead** - Minimal performance impact on your API calls
-- **Supports z.ai coder plan** - Setup Claude and z.ai accounts and prioritize in which order they are used
+- **🤖 Supports z.ai coder plan** - Setup Claude and z.ai accounts and prioritize in which order they are used
 - **💸 Free & Open Source** - Run it yourself, modify it, own your infrastructure
 
 ## Quick Start
@@ -32,12 +33,22 @@ bun run better-ccflare
 
 # Configure Claude SDK
 export ANTHROPIC_BASE_URL=http://localhost:8080
+
+# Add multiple accounts with priorities
+better-ccflare --add-account primary --mode max --tier 20 --priority 0
+better-ccflare --add-account secondary --mode max --tier 20 --priority 10
+
+# Enable auto-fallback on your primary account (via API)
+curl -X POST http://localhost:8080/api/accounts/$(curl -s http://localhost:8080/api/accounts | jq -r '.[0].id')/auto-fallback \
+  -H "Content-Type: application/json" \
+  -d '{"enabled": 1}'
 ```
 
 ## Features
 
 ### 🎯 Intelligent Load Balancing
 - **Session-based** - Maintain conversation context (5hr sessions)
+- **Auto-fallback** - Automatically switch back to higher priority accounts when their usage windows reset
 
 ### 📈 Real-Time Analytics
 - Token usage tracking per request
@@ -61,10 +72,11 @@ export ANTHROPIC_BASE_URL=http://localhost:8080
 
 Full documentation available in [`docs/`](docs/):
 - [Getting Started](docs/index.md)
-- [Architecture](docs/architecture.md) 
+- [Architecture](docs/architecture.md)
 - [API Reference](docs/api-http.md)
 - [Configuration](docs/configuration.md)
 - [Load Balancing Strategies](docs/load-balancing.md)
+- [Auto-Fallback Guide](docs/auto-fallback.md)
 
 ## Screenshots
 

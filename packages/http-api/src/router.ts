@@ -1,6 +1,7 @@
 import { validateNumber } from "@better-ccflare/core";
 import {
 	createAccountAddHandler,
+	createAccountAutoFallbackHandler,
 	createAccountPauseHandler,
 	createAccountPriorityUpdateHandler,
 	createAccountRemoveHandler,
@@ -249,6 +250,15 @@ export class APIRouter {
 					req,
 					url,
 				);
+			}
+			// Account auto-fallback toggle
+			if (path.endsWith("/auto-fallback") && method === "POST") {
+				const autoFallbackHandler = createAccountAutoFallbackHandler(
+					this.context.dbOps,
+				);
+				return await this.wrapHandler((req) =>
+					autoFallbackHandler(req, accountId),
+				)(req, url);
 			}
 
 			// Account removal
