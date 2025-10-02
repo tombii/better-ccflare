@@ -55,6 +55,7 @@ export function createAccountsListHandler(db: Database) {
 					COALESCE(paused, 0) as paused,
 					COALESCE(priority, 0) as priority,
 					COALESCE(auto_fallback_enabled, 0) as auto_fallback_enabled,
+					custom_endpoint,
 					CASE
 						WHEN expires_at > ?1 THEN 1
 						ELSE 0
@@ -94,6 +95,7 @@ export function createAccountsListHandler(db: Database) {
 			rate_limited: 0 | 1;
 			session_info: string | null;
 			auto_fallback_enabled: 0 | 1;
+			custom_endpoint: string | null;
 		}>;
 
 		const response: AccountResponse[] = accounts.map((account) => {
@@ -152,6 +154,7 @@ export function createAccountsListHandler(db: Database) {
 				rateLimitRemaining: account.rate_limit_remaining,
 				sessionInfo: account.session_info || "",
 				autoFallbackEnabled: account.auto_fallback_enabled === 1,
+				customEndpoint: account.custom_endpoint,
 				usageUtilization,
 				usageWindow,
 				usageData: fullUsageData, // Full usage data for UI
@@ -294,6 +297,27 @@ export function createAccountAddHandler(
 					integer: true,
 				}) || 0;
 
+			// Validate custom endpoint
+			const customEndpoint = validateString(
+				body.customEndpoint || null,
+				"customEndpoint",
+				{
+					required: false,
+					transform: (value: string) => {
+						if (!value) return "";
+						const trimmed = value.trim();
+						if (!trimmed) return "";
+						// Validate URL format
+						try {
+							new URL(trimmed);
+							return trimmed;
+						} catch {
+							throw new Error("Invalid URL format");
+						}
+					},
+				},
+			);
+
 			try {
 				// Add account directly to database
 				const accountId = crypto.randomUUID();
@@ -302,8 +326,8 @@ export function createAccountAddHandler(
 				dbOps.getDatabase().run(
 					`INSERT INTO accounts (
 						id, name, provider, refresh_token, access_token,
-						created_at, request_count, total_requests, account_tier, priority
-					) VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, ?)`,
+						created_at, request_count, total_requests, account_tier, priority, custom_endpoint
+					) VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?)`,
 					[
 						accountId,
 						name,
@@ -313,6 +337,7 @@ export function createAccountAddHandler(
 						now,
 						tier,
 						priority,
+						customEndpoint || null,
 					],
 				);
 
@@ -560,6 +585,27 @@ export function createZaiAccountAddHandler(dbOps: DatabaseOperations) {
 					integer: true,
 				}) || 0;
 
+			// Validate custom endpoint
+			const customEndpoint = validateString(
+				body.customEndpoint || null,
+				"customEndpoint",
+				{
+					required: false,
+					transform: (value: string) => {
+						if (!value) return "";
+						const trimmed = value.trim();
+						if (!trimmed) return "";
+						// Validate URL format
+						try {
+							new URL(trimmed);
+							return trimmed;
+						} catch {
+							throw new Error("Invalid URL format");
+						}
+					},
+				},
+			);
+
 			// Create z.ai account directly in database
 			const accountId = crypto.randomUUID();
 			const now = Date.now();
@@ -568,8 +614,8 @@ export function createZaiAccountAddHandler(dbOps: DatabaseOperations) {
 			db.run(
 				`INSERT INTO accounts (
 					id, name, provider, api_key, refresh_token, access_token,
-					expires_at, created_at, account_tier, request_count, total_requests, priority
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+					expires_at, created_at, account_tier, request_count, total_requests, priority, custom_endpoint
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 				[
 					accountId,
 					name,
@@ -583,6 +629,7 @@ export function createZaiAccountAddHandler(dbOps: DatabaseOperations) {
 					0,
 					0,
 					priority,
+					customEndpoint || null,
 				],
 			);
 
