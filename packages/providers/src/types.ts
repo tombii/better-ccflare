@@ -29,7 +29,7 @@ export interface Provider {
 	/**
 	 * Build the target URL for the provider
 	 */
-	buildUrl(path: string, query: string): string;
+	buildUrl(path: string, query: string, account?: Account): string;
 
 	/**
 	 * Prepare headers for the provider request

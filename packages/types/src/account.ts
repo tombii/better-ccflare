@@ -24,6 +24,7 @@ export interface AccountRow {
 	rate_limit_remaining?: number | null;
 	priority?: number;
 	auto_fallback_enabled?: 0 | 1;
+	custom_endpoint?: string | null;
 }
 
 // Domain model - used throughout the application
@@ -49,6 +50,7 @@ export interface Account {
 	rate_limit_remaining: number | null;
 	priority: number;
 	auto_fallback_enabled: boolean;
+	custom_endpoint: string | null;
 }
 
 // API response type - what clients receive
@@ -70,6 +72,7 @@ export interface AccountResponse {
 	sessionInfo: string;
 	priority: number;
 	autoFallbackEnabled: boolean;
+	customEndpoint: string | null;
 	usageUtilization: number | null; // Percentage utilization (0-100) from API
 	usageWindow: string | null; // Most restrictive window (e.g., "five_hour")
 	usageData: any | null; // Full usage data for Anthropic accounts
@@ -125,6 +128,7 @@ export interface AddAccountOptions {
 	mode?: "max" | "console" | "zai";
 	tier?: 1 | 5 | 20;
 	priority?: number;
+	customEndpoint?: string;
 }
 
 export interface AccountDeleteRequest {
@@ -155,6 +159,7 @@ export function toAccount(row: AccountRow): Account {
 		rate_limit_remaining: row.rate_limit_remaining || null,
 		priority: row.priority || 0,
 		auto_fallback_enabled: row.auto_fallback_enabled === 1,
+		custom_endpoint: row.custom_endpoint || null,
 	};
 }
 
@@ -195,6 +200,7 @@ export function toAccountResponse(account: Account): AccountResponse {
 		sessionInfo,
 		priority: account.priority,
 		autoFallbackEnabled: account.auto_fallback_enabled,
+		customEndpoint: account.custom_endpoint,
 		usageUtilization: null, // Will be filled in by API handler from cache
 		usageWindow: null, // Will be filled in by API handler from cache
 		usageData: null, // Will be filled in by API handler from cache

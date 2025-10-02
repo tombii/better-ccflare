@@ -179,31 +179,21 @@ function extractUsageFromData(data: string, state: RequestState): void {
 		// Handle message_delta - provider's authoritative token counts AND end time
 		if (parsed.type === "message_delta") {
 			state.lastTokenTimestamp = Date.now();
-			log.info(`ZAI message_delta event received with usage:`, parsed.usage);
 
 			if (parsed.usage) {
 				// Update all token counts from message_delta (authoritative for zai)
 				if (parsed.usage.output_tokens !== undefined) {
 					state.providerFinalOutputTokens = parsed.usage.output_tokens;
 					state.usage.outputTokens = parsed.usage.output_tokens;
-					log.info(
-						`ZAI set providerFinalOutputTokens to: ${parsed.usage.output_tokens}`,
-					);
 				}
 				if (parsed.usage.input_tokens !== undefined) {
 					state.usage.inputTokens = parsed.usage.input_tokens;
-					log.info(`ZAI set inputTokens to: ${parsed.usage.input_tokens}`);
 				}
 				if (parsed.usage.cache_read_input_tokens !== undefined) {
 					state.usage.cacheReadInputTokens =
 						parsed.usage.cache_read_input_tokens;
-					log.info(
-						`ZAI set cacheReadInputTokens to: ${parsed.usage.cache_read_input_tokens}`,
-					);
 				}
 				return; // No further processing needed
-			} else {
-				log.info(`ZAI message_delta event has no usage information`);
 			}
 			// Even if no usage info, we still set the timestamp for duration calculation
 		}

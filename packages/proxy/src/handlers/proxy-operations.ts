@@ -115,7 +115,7 @@ export async function proxyWithAccount(
 			accessToken,
 			account.api_key || undefined,
 		);
-		const targetUrl = provider.buildUrl(url.pathname, url.search);
+		const targetUrl = provider.buildUrl(url.pathname, url.search, account);
 
 		// Make the request
 		const response = await makeProxyRequest(
