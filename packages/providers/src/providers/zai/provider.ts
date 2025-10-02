@@ -291,7 +291,6 @@ export class ZaiProvider extends BaseProvider {
 					// Calculate cost if we have a model
 					let costUsd: number | undefined;
 					if (model) {
-						log.debug(`Calculating cost for z.ai model: ${model}`);
 						try {
 							costUsd = await estimateCostUSD(model, {
 								inputTokens,
@@ -299,12 +298,9 @@ export class ZaiProvider extends BaseProvider {
 								cacheReadInputTokens,
 								cacheCreationInputTokens,
 							});
-							log.debug(`Cost calculated for ${model}: $${costUsd}`);
 						} catch (error) {
 							log.warn(`Failed to calculate cost for model ${model}:`, error);
 						}
-					} else {
-						log.debug(`No model found in z.ai response for cost calculation`);
 					}
 
 					return {
@@ -349,9 +345,6 @@ export class ZaiProvider extends BaseProvider {
 				const model = json.model;
 				let costUsd: number | undefined;
 				if (model) {
-					log.debug(
-						`Calculating cost for z.ai model (non-streaming): ${model}`,
-					);
 					try {
 						costUsd = await estimateCostUSD(model, {
 							inputTokens,
@@ -359,14 +352,9 @@ export class ZaiProvider extends BaseProvider {
 							cacheReadInputTokens,
 							cacheCreationInputTokens,
 						});
-						log.debug(`Cost calculated for ${model}: $${costUsd}`);
 					} catch (error) {
 						log.warn(`Failed to calculate cost for model ${model}:`, error);
 					}
-				} else {
-					log.debug(
-						`No model found in z.ai non-streaming response for cost calculation`,
-					);
 				}
 
 				return {
