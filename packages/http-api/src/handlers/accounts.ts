@@ -125,6 +125,9 @@ export function createAccountsListHandler(db: Database) {
 			const usageUtilization = getRepresentativeUtilization(usageData);
 			const usageWindow = getRepresentativeWindow(usageData);
 
+			// Include full usage data for Anthropic accounts to show multiple windows
+			const fullUsageData = account.provider === "anthropic" ? usageData : null;
+
 			return {
 				id: account.id,
 				name: account.name,
@@ -151,6 +154,7 @@ export function createAccountsListHandler(db: Database) {
 				autoFallbackEnabled: account.auto_fallback_enabled === 1,
 				usageUtilization,
 				usageWindow,
+				usageData: fullUsageData, // Full usage data for UI
 			};
 		});
 

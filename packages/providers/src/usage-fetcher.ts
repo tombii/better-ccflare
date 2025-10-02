@@ -99,20 +99,25 @@ class UsageCache {
 	/**
 	 * Start polling for an account's usage data
 	 */
-	startPolling(accountId: string, accessToken: string, intervalMs = 30000) {
+	startPolling(accountId: string, accessToken: string, intervalMs?: number) {
 		// Stop existing polling if any
 		this.stopPolling(accountId);
 
 		// Immediate fetch
 		this.fetchAndCache(accountId, accessToken);
 
+		// Default to 90 seconds ± 5 seconds with randomization if not provided
+		const pollingInterval = intervalMs ?? 90000 + Math.random() * 10000;
+
 		// Start interval
 		const interval = setInterval(() => {
 			this.fetchAndCache(accountId, accessToken);
-		}, intervalMs);
+		}, pollingInterval);
 
 		this.polling.set(accountId, interval);
-		log.info(`Started usage polling for account ${accountId}`);
+		log.info(
+			`Started usage polling for account ${accountId} with interval ${Math.round(pollingInterval / 1000)}s`,
+		);
 	}
 
 	/**
