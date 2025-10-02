@@ -14,6 +14,7 @@ import {
 import { useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { cn } from "../lib/utils";
+import { version } from "../lib/version";
 import { ThemeToggle } from "./theme-toggle";
 import { Button } from "./ui/button";
 import { Separator } from "./ui/separator";
@@ -148,7 +149,7 @@ export function Navigation() {
 						<div className="hidden lg:flex items-center justify-between">
 							<div className="flex items-center gap-2 text-xs text-muted-foreground">
 								<GitBranch className="h-3 w-3" />
-								<span>v1.0.1</span>
+								<span>{version}</span>
 							</div>
 							<ThemeToggle />
 						</div>
