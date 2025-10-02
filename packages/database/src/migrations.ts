@@ -197,6 +197,12 @@ export function runMigrations(db: Database): void {
 		log.info("Added auto_fallback_enabled column to accounts table");
 	}
 
+	// Add custom_endpoint column if it doesn't exist
+	if (!accountsColumnNames.includes("custom_endpoint")) {
+		db.prepare("ALTER TABLE accounts ADD COLUMN custom_endpoint TEXT").run();
+		log.info("Added custom_endpoint column to accounts table");
+	}
+
 	// Check columns in requests table
 	const requestsInfo = db
 		.prepare("PRAGMA table_info(requests)")

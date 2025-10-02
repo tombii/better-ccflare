@@ -15,6 +15,7 @@ export interface AddAccountOptions {
 	mode?: "max" | "console" | "zai";
 	tier?: 1 | 5 | 20;
 	priority?: number;
+	customEndpoint?: string;
 	adapter?: PromptAdapter;
 }
 
@@ -39,6 +40,7 @@ export async function addAccount(
 		mode: providedMode,
 		tier: providedTier,
 		priority: providedPriority,
+		customEndpoint,
 		adapter = stdPromptAdapter,
 	} = options;
 
@@ -77,8 +79,8 @@ export async function addAccount(
 		dbOps.getDatabase().run(
 			`INSERT INTO accounts (
 				id, name, provider, api_key, refresh_token, access_token,
-				expires_at, created_at, account_tier, request_count, total_requests, priority
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				expires_at, created_at, account_tier, request_count, total_requests, priority, custom_endpoint
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			[
 				accountId,
 				name,
@@ -92,6 +94,7 @@ export async function addAccount(
 				0,
 				0,
 				providedPriority || 0,
+				customEndpoint || null,
 			],
 		);
 

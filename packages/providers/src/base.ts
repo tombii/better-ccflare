@@ -25,7 +25,7 @@ export abstract class BaseProvider implements Provider {
 	 * Build the target URL for the provider
 	 * Must be implemented by each provider
 	 */
-	abstract buildUrl(path: string, query: string): string;
+	abstract buildUrl(path: string, query: string, account?: Account): string;
 
 	/**
 	 * Prepare headers for the provider request

@@ -36,8 +36,14 @@ export class ZaiProvider extends BaseProvider {
 		};
 	}
 
-	buildUrl(path: string, query: string): string {
-		return `https://api.z.ai/api/anthropic${path}${query}`;
+	buildUrl(path: string, query: string, account?: Account): string {
+		const defaultEndpoint = "https://api.z.ai/api/anthropic";
+		const endpoint = account?.custom_endpoint || defaultEndpoint;
+
+		// Validate and sanitize the custom endpoint
+		const sanitizedEndpoint = endpoint.trim().replace(/\/$/, ""); // Remove trailing slash
+
+		return `${sanitizedEndpoint}${path}${query}`;
 	}
 
 	prepareHeaders(

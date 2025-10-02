@@ -98,8 +98,14 @@ export class AnthropicProvider extends BaseProvider {
 		};
 	}
 
-	buildUrl(path: string, query: string): string {
-		return `https://api.anthropic.com${path}${query}`;
+	buildUrl(path: string, query: string, account?: Account): string {
+		const defaultEndpoint = "https://api.anthropic.com";
+		const endpoint = account?.custom_endpoint || defaultEndpoint;
+
+		// Validate and sanitize the custom endpoint
+		const sanitizedEndpoint = endpoint.trim().replace(/\/$/, ""); // Remove trailing slash
+
+		return `${sanitizedEndpoint}${path}${query}`;
 	}
 
 	prepareHeaders(

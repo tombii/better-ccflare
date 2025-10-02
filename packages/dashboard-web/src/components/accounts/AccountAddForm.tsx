@@ -16,6 +16,7 @@ interface AccountAddFormProps {
 		mode: "max" | "console" | "zai";
 		tier: number;
 		priority: number;
+		customEndpoint?: string;
 	}) => Promise<{ authUrl: string; sessionId: string }>;
 	onCompleteAccount: (params: {
 		sessionId: string;
@@ -26,6 +27,7 @@ interface AccountAddFormProps {
 		apiKey: string;
 		tier: number;
 		priority: number;
+		customEndpoint?: string;
 	}) => Promise<void>;
 	onCancel: () => void;
 	onSuccess: () => void;
@@ -49,13 +51,45 @@ export function AccountAddForm({
 		tier: 1,
 		priority: 0,
 		apiKey: "",
+		customEndpoint: "",
 	});
+
+	const validateCustomEndpoint = (endpoint: string): boolean => {
+		if (!endpoint) return true; // Empty is fine (use default)
+		try {
+			new URL(endpoint);
+			return true;
+		} catch {
+			return false;
+		}
+	};
 
 	const handleAddAccount = async () => {
 		if (!newAccount.name) {
 			onError("Account name is required");
 			return;
 		}
+
+		// Validate custom endpoint if provided
+		if (
+			newAccount.customEndpoint &&
+			!validateCustomEndpoint(newAccount.customEndpoint)
+		) {
+			onError(
+				"Custom endpoint must be a valid URL (e.g., https://api.anthropic.com)",
+			);
+			return;
+		}
+
+		const accountParams = {
+			name: newAccount.name,
+			mode: newAccount.mode as "max" | "console" | "zai",
+			tier: newAccount.tier,
+			priority: newAccount.priority,
+			...(newAccount.customEndpoint && {
+				customEndpoint: newAccount.customEndpoint.trim(),
+			}),
+		};
 
 		if (newAccount.mode === "zai") {
 			if (!newAccount.apiKey) {
@@ -64,10 +98,8 @@ export function AccountAddForm({
 			}
 			// For z.ai accounts, we don't need OAuth flow
 			await onAddZaiAccount({
-				name: newAccount.name,
+				...accountParams,
 				apiKey: newAccount.apiKey,
-				tier: newAccount.tier,
-				priority: newAccount.priority,
 			});
 			// Reset form and signal success
 			setNewAccount({
@@ -76,13 +108,14 @@ export function AccountAddForm({
 				tier: 1,
 				priority: 0,
 				apiKey: "",
+				customEndpoint: "",
 			});
 			onSuccess();
 			return;
 		}
 
 		// Step 1: Initialize OAuth flow for Max/Console accounts
-		const { authUrl, sessionId } = await onAddAccount(newAccount);
+		const { authUrl, sessionId } = await onAddAccount(accountParams);
 		setSessionId(sessionId);
 
 		// Open auth URL in new tab
@@ -109,7 +142,14 @@ export function AccountAddForm({
 		setAuthStep("form");
 		setAuthCode("");
 		setSessionId("");
-		setNewAccount({ name: "", mode: "max", tier: 1, priority: 0, apiKey: "" });
+		setNewAccount({
+			name: "",
+			mode: "max",
+			tier: 1,
+			priority: 0,
+			apiKey: "",
+			customEndpoint: "",
+		});
 		onSuccess();
 	};
 
@@ -117,7 +157,14 @@ export function AccountAddForm({
 		setAuthStep("form");
 		setAuthCode("");
 		setSessionId("");
-		setNewAccount({ name: "", mode: "max", tier: 1, priority: 0, apiKey: "" });
+		setNewAccount({
+			name: "",
+			mode: "max",
+			tier: 1,
+			priority: 0,
+			apiKey: "",
+			customEndpoint: "",
+		});
 		onCancel();
 	};
 
@@ -175,6 +222,31 @@ export function AccountAddForm({
 								}
 								placeholder="Enter your z.ai API key"
 							/>
+						</div>
+					)}
+					{(newAccount.mode === "max" ||
+						newAccount.mode === "console" ||
+						newAccount.mode === "zai") && (
+						<div className="space-y-2">
+							<Label htmlFor="customEndpoint">Custom Endpoint (Optional)</Label>
+							<Input
+								id="customEndpoint"
+								value={newAccount.customEndpoint}
+								onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+									setNewAccount({
+										...newAccount,
+										customEndpoint: (e.target as HTMLInputElement).value,
+									})
+								}
+								placeholder={
+									newAccount.mode === "zai"
+										? "https://api.z.ai/api/anthropic"
+										: "https://api.anthropic.com"
+								}
+							/>
+							<p className="text-xs text-muted-foreground">
+								Leave empty to use default endpoint. Must be a valid URL.
+							</p>
 						</div>
 					)}
 					<div className="space-y-2">
