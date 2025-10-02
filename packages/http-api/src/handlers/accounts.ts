@@ -16,6 +16,11 @@ import {
 	NotFound,
 } from "@better-ccflare/http-common";
 import { Logger } from "@better-ccflare/logger";
+import {
+	getRepresentativeUtilization,
+	getRepresentativeWindow,
+	usageCache,
+} from "@better-ccflare/providers";
 import type { AccountResponse } from "../types";
 
 const log = new Logger("AccountsHandler");
@@ -113,6 +118,11 @@ export function createAccountsListHandler(db: Database) {
 				rateLimitStatus = `Rate limited (${minutesLeft}m)`;
 			}
 
+			// Get usage data from cache for Anthropic accounts
+			const usageData = usageCache.get(account.id);
+			const usageUtilization = getRepresentativeUtilization(usageData);
+			const usageWindow = getRepresentativeWindow(usageData);
+
 			return {
 				id: account.id,
 				name: account.name,
@@ -136,6 +146,8 @@ export function createAccountsListHandler(db: Database) {
 					: null,
 				rateLimitRemaining: account.rate_limit_remaining,
 				sessionInfo: account.session_info || "",
+				usageUtilization,
+				usageWindow,
 			};
 		});
 

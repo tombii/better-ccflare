@@ -15,6 +15,8 @@ export {
 	registerProvider,
 } from "./registry";
 export * from "./types";
+// Export usage fetcher
+export * from "./usage-fetcher";
 
 import { AnthropicProvider } from "./providers/anthropic/provider";
 import { ZaiProvider } from "./providers/zai/provider";

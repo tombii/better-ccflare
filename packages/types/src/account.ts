@@ -67,6 +67,8 @@ export interface AccountResponse {
 	rateLimitRemaining: number | null;
 	sessionInfo: string;
 	priority: number;
+	usageUtilization: number | null; // Percentage utilization (0-100) from API
+	usageWindow: string | null; // Most restrictive window (e.g., "five_hour")
 }
 
 // UI display type - used in TUI and web dashboard
@@ -185,6 +187,8 @@ export function toAccountResponse(account: Account): AccountResponse {
 		rateLimitRemaining: account.rate_limit_remaining,
 		sessionInfo,
 		priority: account.priority,
+		usageUtilization: null, // Will be filled in by API handler from cache
+		usageWindow: null, // Will be filled in by API handler from cache
 	};
 }
 

@@ -18,7 +18,7 @@ import { AsyncDbWriter, DatabaseFactory } from "@better-ccflare/database";
 import { APIRouter } from "@better-ccflare/http-api";
 import { SessionStrategy } from "@better-ccflare/load-balancer";
 import { Logger } from "@better-ccflare/logger";
-import { getProvider } from "@better-ccflare/providers";
+import { getProvider, usageCache } from "@better-ccflare/providers";
 import {
 	getUsageWorker,
 	handleProxy,
@@ -292,6 +292,17 @@ Available endpoints:
 		);
 	}
 
+	// Start usage polling for Anthropic accounts
+	const anthropicAccounts = accounts.filter((a) => a.provider === "anthropic");
+	if (anthropicAccounts.length > 0) {
+		for (const account of anthropicAccounts) {
+			if (account.access_token) {
+				usageCache.startPolling(account.id, account.access_token, 30000); // Poll every 30s
+				log.info(`Started usage polling for account ${account.name}`);
+			}
+		}
+	}
+
 	return {
 		port: serverInstance.port,
 		stop: () => {
@@ -311,6 +322,7 @@ async function handleGracefulShutdown(signal: string) {
 			stopRetentionJob();
 			stopRetentionJob = null;
 		}
+		usageCache.clear(); // Stop all usage polling
 		terminateUsageWorker();
 		await shutdown();
 		console.log("✅ Shutdown complete");

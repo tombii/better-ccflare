@@ -11,39 +11,39 @@
       },
     },
     "apps/lander": {
-      "name": "@ccflare/lander",
+      "name": "@better-ccflare/lander",
       "version": "1.0.0",
     },
     "apps/server": {
-      "name": "@ccflare/server",
+      "name": "@better-ccflare/server",
       "version": "0.1.0",
       "dependencies": {
-        "@ccflare/config": "workspace:*",
-        "@ccflare/core": "workspace:*",
-        "@ccflare/core-di": "workspace:*",
-        "@ccflare/dashboard-web": "workspace:*",
-        "@ccflare/database": "workspace:*",
-        "@ccflare/http-api": "workspace:*",
-        "@ccflare/load-balancer": "workspace:*",
-        "@ccflare/logger": "workspace:*",
-        "@ccflare/proxy": "workspace:*",
-        "@ccflare/types": "workspace:*",
+        "@better-ccflare/config": "workspace:*",
+        "@better-ccflare/core": "workspace:*",
+        "@better-ccflare/core-di": "workspace:*",
+        "@better-ccflare/dashboard-web": "workspace:*",
+        "@better-ccflare/database": "workspace:*",
+        "@better-ccflare/http-api": "workspace:*",
+        "@better-ccflare/load-balancer": "workspace:*",
+        "@better-ccflare/logger": "workspace:*",
+        "@better-ccflare/proxy": "workspace:*",
+        "@better-ccflare/types": "workspace:*",
       },
     },
     "apps/tui": {
-      "name": "ccflare",
+      "name": "better-ccflare",
       "version": "1.0.0",
       "bin": {
-        "ccflare": "./dist/ccflare",
+        "better-ccflare": "./dist/better-ccflare",
       },
       "dependencies": {
-        "@ccflare/config": "workspace:*",
-        "@ccflare/core-di": "workspace:*",
-        "@ccflare/database": "workspace:*",
-        "@ccflare/logger": "workspace:*",
-        "@ccflare/server": "workspace:*",
-        "@ccflare/tui-core": "workspace:*",
-        "@ccflare/ui-common": "workspace:*",
+        "@better-ccflare/config": "workspace:*",
+        "@better-ccflare/core-di": "workspace:*",
+        "@better-ccflare/database": "workspace:*",
+        "@better-ccflare/logger": "workspace:*",
+        "@better-ccflare/server": "workspace:*",
+        "@better-ccflare/tui-core": "workspace:*",
+        "@better-ccflare/ui-common": "workspace:*",
         "ink": "^6.0.0",
         "ink-select-input": "^6.0.0",
         "ink-spinner": "^5.0.0",
@@ -57,12 +57,12 @@
       },
     },
     "packages/agents": {
-      "name": "@ccflare/agents",
+      "name": "@better-ccflare/agents",
       "version": "1.0.0",
       "dependencies": {
-        "@ccflare/config": "workspace:*",
-        "@ccflare/logger": "workspace:*",
-        "@ccflare/types": "workspace:*",
+        "@better-ccflare/config": "workspace:*",
+        "@better-ccflare/logger": "workspace:*",
+        "@better-ccflare/types": "workspace:*",
       },
       "devDependencies": {
         "@types/node": "^22.5.4",
@@ -70,44 +70,44 @@
       },
     },
     "packages/cli-commands": {
-      "name": "@ccflare/cli-commands",
+      "name": "@better-ccflare/cli-commands",
       "version": "0.1.0",
       "dependencies": {
-        "@ccflare/config": "workspace:*",
-        "@ccflare/core": "workspace:*",
-        "@ccflare/core-di": "workspace:*",
-        "@ccflare/database": "workspace:*",
-        "@ccflare/oauth-flow": "workspace:*",
-        "@ccflare/providers": "workspace:*",
+        "@better-ccflare/config": "workspace:*",
+        "@better-ccflare/core": "workspace:*",
+        "@better-ccflare/core-di": "workspace:*",
+        "@better-ccflare/database": "workspace:*",
+        "@better-ccflare/oauth-flow": "workspace:*",
+        "@better-ccflare/providers": "workspace:*",
         "open": "^10.0.0",
       },
     },
     "packages/config": {
-      "name": "@ccflare/config",
+      "name": "@better-ccflare/config",
       "version": "0.1.0",
       "dependencies": {
-        "@ccflare/core": "workspace:*",
-        "@ccflare/logger": "workspace:*",
+        "@better-ccflare/core": "workspace:*",
+        "@better-ccflare/logger": "workspace:*",
       },
     },
     "packages/core": {
-      "name": "@ccflare/core",
+      "name": "@better-ccflare/core",
       "version": "0.1.0",
       "dependencies": {
-        "@ccflare/types": "workspace:*",
+        "@better-ccflare/types": "workspace:*",
       },
     },
     "packages/core-di": {
-      "name": "@ccflare/core-di",
+      "name": "@better-ccflare/core-di",
       "version": "0.1.0",
     },
     "packages/dashboard-web": {
-      "name": "@ccflare/dashboard-web",
+      "name": "@better-ccflare/dashboard-web",
       "version": "1.0.0",
       "dependencies": {
-        "@ccflare/errors": "workspace:*",
-        "@ccflare/ui-common": "workspace:*",
-        "@ccflare/ui-constants": "workspace:*",
+        "@better-ccflare/errors": "workspace:*",
+        "@better-ccflare/ui-common": "workspace:*",
+        "@better-ccflare/ui-constants": "workspace:*",
         "@radix-ui/react-dialog": "^1.1.14",
         "@radix-ui/react-dropdown-menu": "^2.1.15",
         "@radix-ui/react-label": "^2.1.0",
@@ -143,18 +143,18 @@
       },
     },
     "packages/database": {
-      "name": "@ccflare/database",
+      "name": "@better-ccflare/database",
       "version": "0.1.0",
       "dependencies": {
-        "@ccflare/core": "workspace:*",
-        "@ccflare/logger": "workspace:*",
+        "@better-ccflare/core": "workspace:*",
+        "@better-ccflare/logger": "workspace:*",
       },
     },
     "packages/errors": {
-      "name": "@ccflare/errors",
+      "name": "@better-ccflare/errors",
       "version": "1.0.0",
       "dependencies": {
-        "@ccflare/core": "workspace:*",
+        "@better-ccflare/core": "workspace:*",
       },
       "devDependencies": {
         "@types/bun": "1.1.15",
@@ -162,24 +162,24 @@
       },
     },
     "packages/http-api": {
-      "name": "@ccflare/http-api",
+      "name": "@better-ccflare/http-api",
       "version": "0.1.0",
       "dependencies": {
-        "@ccflare/agents": "workspace:*",
-        "@ccflare/config": "workspace:*",
-        "@ccflare/core": "workspace:*",
-        "@ccflare/database": "workspace:*",
-        "@ccflare/oauth-flow": "workspace:*",
-        "@ccflare/providers": "workspace:*",
-        "@ccflare/types": "workspace:*",
+        "@better-ccflare/agents": "workspace:*",
+        "@better-ccflare/config": "workspace:*",
+        "@better-ccflare/core": "workspace:*",
+        "@better-ccflare/database": "workspace:*",
+        "@better-ccflare/oauth-flow": "workspace:*",
+        "@better-ccflare/providers": "workspace:*",
+        "@better-ccflare/types": "workspace:*",
       },
     },
     "packages/http-common": {
-      "name": "@ccflare/http-common",
+      "name": "@better-ccflare/http-common",
       "version": "0.0.0",
       "dependencies": {
-        "@ccflare/errors": "workspace:*",
-        "@ccflare/types": "workspace:*",
+        "@better-ccflare/errors": "workspace:*",
+        "@better-ccflare/types": "workspace:*",
       },
       "devDependencies": {
         "@types/node": "^22.10.2",
@@ -187,79 +187,79 @@
       },
     },
     "packages/load-balancer": {
-      "name": "@ccflare/load-balancer",
+      "name": "@better-ccflare/load-balancer",
       "version": "0.1.0",
       "dependencies": {
-        "@ccflare/core": "workspace:*",
-        "@ccflare/database": "workspace:*",
-        "@ccflare/logger": "workspace:*",
+        "@better-ccflare/core": "workspace:*",
+        "@better-ccflare/database": "workspace:*",
+        "@better-ccflare/logger": "workspace:*",
       },
     },
     "packages/logger": {
-      "name": "@ccflare/logger",
+      "name": "@better-ccflare/logger",
       "version": "0.1.0",
       "dependencies": {
-        "@ccflare/core": "workspace:*",
-        "@ccflare/types": "workspace:*",
+        "@better-ccflare/core": "workspace:*",
+        "@better-ccflare/types": "workspace:*",
       },
     },
     "packages/oauth-flow": {
-      "name": "@ccflare/oauth-flow",
+      "name": "@better-ccflare/oauth-flow",
       "version": "0.1.0",
       "dependencies": {
-        "@ccflare/config": "workspace:*",
-        "@ccflare/database": "workspace:*",
-        "@ccflare/providers": "workspace:*",
-        "@ccflare/types": "workspace:*",
+        "@better-ccflare/config": "workspace:*",
+        "@better-ccflare/database": "workspace:*",
+        "@better-ccflare/providers": "workspace:*",
+        "@better-ccflare/types": "workspace:*",
       },
     },
     "packages/providers": {
-      "name": "@ccflare/providers",
+      "name": "@better-ccflare/providers",
       "version": "0.1.0",
       "dependencies": {
-        "@ccflare/core": "workspace:*",
+        "@better-ccflare/core": "workspace:*",
       },
     },
     "packages/proxy": {
-      "name": "@ccflare/proxy",
+      "name": "@better-ccflare/proxy",
       "version": "0.1.0",
       "dependencies": {
-        "@ccflare/agents": "workspace:*",
-        "@ccflare/config": "workspace:*",
-        "@ccflare/core": "workspace:*",
-        "@ccflare/database": "workspace:*",
-        "@ccflare/logger": "workspace:*",
-        "@ccflare/providers": "workspace:*",
-        "@ccflare/ui-common": "workspace:*",
+        "@better-ccflare/agents": "workspace:*",
+        "@better-ccflare/config": "workspace:*",
+        "@better-ccflare/core": "workspace:*",
+        "@better-ccflare/database": "workspace:*",
+        "@better-ccflare/logger": "workspace:*",
+        "@better-ccflare/providers": "workspace:*",
+        "@better-ccflare/ui-common": "workspace:*",
         "@dqbd/tiktoken": "^1.0.21",
       },
     },
     "packages/tui-core": {
-      "name": "@ccflare/tui-core",
+      "name": "@better-ccflare/tui-core",
       "version": "1.0.0",
       "dependencies": {
-        "@ccflare/cli-commands": "workspace:*",
-        "@ccflare/config": "workspace:*",
-        "@ccflare/core": "workspace:*",
-        "@ccflare/database": "workspace:*",
-        "@ccflare/logger": "workspace:*",
-        "@ccflare/oauth-flow": "workspace:*",
-        "@ccflare/providers": "workspace:*",
-        "@ccflare/types": "workspace:*",
+        "@better-ccflare/cli-commands": "workspace:*",
+        "@better-ccflare/config": "workspace:*",
+        "@better-ccflare/core": "workspace:*",
+        "@better-ccflare/database": "workspace:*",
+        "@better-ccflare/logger": "workspace:*",
+        "@better-ccflare/oauth-flow": "workspace:*",
+        "@better-ccflare/providers": "workspace:*",
+        "@better-ccflare/types": "workspace:*",
       },
       "devDependencies": {
         "@types/node": "^20.0.0",
       },
     },
     "packages/types": {
-      "name": "@ccflare/types",
+      "name": "@better-ccflare/types",
       "version": "0.1.0",
     },
     "packages/ui-common": {
-      "name": "@ccflare/ui-common",
+      "name": "@better-ccflare/ui-common",
       "version": "0.0.0",
       "dependencies": {
-        "@ccflare/types": "workspace:*",
+        "@better-ccflare/types": "workspace:*",
       },
       "devDependencies": {
         "@types/node": "^22.10.2",
@@ -267,7 +267,7 @@
       },
     },
     "packages/ui-constants": {
-      "name": "@ccflare/ui-constants",
+      "name": "@better-ccflare/ui-constants",
       "version": "1.0.0",
       "devDependencies": {
         "@types/bun": "1.1.15",
@@ -281,6 +281,48 @@
   },
   "packages": {
     "@alcalzone/ansi-tokenize": ["@alcalzone/ansi-tokenize@0.1.3", "", { "dependencies": { "ansi-styles": "^6.2.1", "is-fullwidth-code-point": "^4.0.0" } }, "sha512-3yWxPTq3UQ/FY9p1ErPxIyfT64elWaMvM9lIHnaqpyft63tkxodF5aUElYHrdisWve5cETkh1+KBw1yJuW0aRw=="],
+
+    "@better-ccflare/agents": ["@better-ccflare/agents@workspace:packages/agents"],
+
+    "@better-ccflare/cli-commands": ["@better-ccflare/cli-commands@workspace:packages/cli-commands"],
+
+    "@better-ccflare/config": ["@better-ccflare/config@workspace:packages/config"],
+
+    "@better-ccflare/core": ["@better-ccflare/core@workspace:packages/core"],
+
+    "@better-ccflare/core-di": ["@better-ccflare/core-di@workspace:packages/core-di"],
+
+    "@better-ccflare/dashboard-web": ["@better-ccflare/dashboard-web@workspace:packages/dashboard-web"],
+
+    "@better-ccflare/database": ["@better-ccflare/database@workspace:packages/database"],
+
+    "@better-ccflare/errors": ["@better-ccflare/errors@workspace:packages/errors"],
+
+    "@better-ccflare/http-api": ["@better-ccflare/http-api@workspace:packages/http-api"],
+
+    "@better-ccflare/http-common": ["@better-ccflare/http-common@workspace:packages/http-common"],
+
+    "@better-ccflare/lander": ["@better-ccflare/lander@workspace:apps/lander"],
+
+    "@better-ccflare/load-balancer": ["@better-ccflare/load-balancer@workspace:packages/load-balancer"],
+
+    "@better-ccflare/logger": ["@better-ccflare/logger@workspace:packages/logger"],
+
+    "@better-ccflare/oauth-flow": ["@better-ccflare/oauth-flow@workspace:packages/oauth-flow"],
+
+    "@better-ccflare/providers": ["@better-ccflare/providers@workspace:packages/providers"],
+
+    "@better-ccflare/proxy": ["@better-ccflare/proxy@workspace:packages/proxy"],
+
+    "@better-ccflare/server": ["@better-ccflare/server@workspace:apps/server"],
+
+    "@better-ccflare/tui-core": ["@better-ccflare/tui-core@workspace:packages/tui-core"],
+
+    "@better-ccflare/types": ["@better-ccflare/types@workspace:packages/types"],
+
+    "@better-ccflare/ui-common": ["@better-ccflare/ui-common@workspace:packages/ui-common"],
+
+    "@better-ccflare/ui-constants": ["@better-ccflare/ui-constants@workspace:packages/ui-constants"],
 
     "@biomejs/biome": ["@biomejs/biome@2.1.2", "", { "optionalDependencies": { "@biomejs/cli-darwin-arm64": "2.1.2", "@biomejs/cli-darwin-x64": "2.1.2", "@biomejs/cli-linux-arm64": "2.1.2", "@biomejs/cli-linux-arm64-musl": "2.1.2", "@biomejs/cli-linux-x64": "2.1.2", "@biomejs/cli-linux-x64-musl": "2.1.2", "@biomejs/cli-win32-arm64": "2.1.2", "@biomejs/cli-win32-x64": "2.1.2" }, "bin": { "biome": "bin/biome" } }, "sha512-yq8ZZuKuBVDgAS76LWCfFKHSYIAgqkxVB3mGVVpOe2vSkUTs7xG46zXZeNPRNVjiJuw0SZ3+J2rXiYx0RUpfGg=="],
 
@@ -299,48 +341,6 @@
     "@biomejs/cli-win32-arm64": ["@biomejs/cli-win32-arm64@2.1.2", "", { "os": "win32", "cpu": "arm64" }, "sha512-G8KWZli5ASOXA3yUQgx+M4pZRv3ND16h77UsdunUL17uYpcL/UC7RkWTdkfvMQvogVsAuz5JUcBDjgZHXxlKoA=="],
 
     "@biomejs/cli-win32-x64": ["@biomejs/cli-win32-x64@2.1.2", "", { "os": "win32", "cpu": "x64" }, "sha512-9zajnk59PMpjBkty3bK2IrjUsUHvqe9HWwyAWQBjGLE7MIBjbX2vwv1XPEhmO2RRuGoTkVx3WCanHrjAytICLA=="],
-
-    "@ccflare/agents": ["@ccflare/agents@workspace:packages/agents"],
-
-    "@ccflare/cli-commands": ["@ccflare/cli-commands@workspace:packages/cli-commands"],
-
-    "@ccflare/config": ["@ccflare/config@workspace:packages/config"],
-
-    "@ccflare/core": ["@ccflare/core@workspace:packages/core"],
-
-    "@ccflare/core-di": ["@ccflare/core-di@workspace:packages/core-di"],
-
-    "@ccflare/dashboard-web": ["@ccflare/dashboard-web@workspace:packages/dashboard-web"],
-
-    "@ccflare/database": ["@ccflare/database@workspace:packages/database"],
-
-    "@ccflare/errors": ["@ccflare/errors@workspace:packages/errors"],
-
-    "@ccflare/http-api": ["@ccflare/http-api@workspace:packages/http-api"],
-
-    "@ccflare/http-common": ["@ccflare/http-common@workspace:packages/http-common"],
-
-    "@ccflare/lander": ["@ccflare/lander@workspace:apps/lander"],
-
-    "@ccflare/load-balancer": ["@ccflare/load-balancer@workspace:packages/load-balancer"],
-
-    "@ccflare/logger": ["@ccflare/logger@workspace:packages/logger"],
-
-    "@ccflare/oauth-flow": ["@ccflare/oauth-flow@workspace:packages/oauth-flow"],
-
-    "@ccflare/providers": ["@ccflare/providers@workspace:packages/providers"],
-
-    "@ccflare/proxy": ["@ccflare/proxy@workspace:packages/proxy"],
-
-    "@ccflare/server": ["@ccflare/server@workspace:apps/server"],
-
-    "@ccflare/tui-core": ["@ccflare/tui-core@workspace:packages/tui-core"],
-
-    "@ccflare/types": ["@ccflare/types@workspace:packages/types"],
-
-    "@ccflare/ui-common": ["@ccflare/ui-common@workspace:packages/ui-common"],
-
-    "@ccflare/ui-constants": ["@ccflare/ui-constants@workspace:packages/ui-constants"],
 
     "@dqbd/tiktoken": ["@dqbd/tiktoken@1.0.21", "", {}, "sha512-grBxRSY9+/iBM205EWjbMm5ySeXQrhJyXWMP38VJd+pO2DRGraDAbi4n8J8T9M4XY1M/FHgonMcmu3J+KjcX0Q=="],
 
@@ -484,13 +484,13 @@
 
     "auto-bind": ["auto-bind@5.0.1", "", {}, "sha512-ooviqdwwgfIfNmDwo94wlshcdzfO64XV0Cg6oDsDYBJfITDz1EngD2z7DkbvCWn+XIMsIqW27sEVF6qcpJrRcg=="],
 
+    "better-ccflare": ["better-ccflare@workspace:apps/tui"],
+
     "bun-plugin-tailwind": ["bun-plugin-tailwind@0.0.15", "", { "peerDependencies": { "typescript": "^5.0.0" } }, "sha512-qtAXMNGG4R0UGGI8zWrqm2B7BdXqx48vunJXBPzfDOHPA5WkRUZdTSbE7TFwO4jLhYqSE23YMWsM9NhE6ovobw=="],
 
     "bun-types": ["bun-types@1.2.19", "", { "dependencies": { "@types/node": "*" }, "peerDependencies": { "@types/react": "^19" } }, "sha512-uAOTaZSPuYsWIXRpj7o56Let0g/wjihKCkeRqUBhlLVM/Bt+Fj9xTo+LhC1OV1XDaGkz4hNC80et5xgy+9KTHQ=="],
 
     "bundle-name": ["bundle-name@4.1.0", "", { "dependencies": { "run-applescript": "^7.0.0" } }, "sha512-tjwM5exMg6BGRI+kNmTntNsvdZS1X8BFYS6tnJ2hdH0kVxM6/eVZ2xy+FqStSWvYmtfFMDLIxurorHwDKfDz5Q=="],
-
-    "ccflare": ["ccflare@workspace:apps/tui"],
 
     "chalk": ["chalk@5.4.1", "", {}, "sha512-zgVZuo2WcZgfUEmsn6eO3kINexW8RAE4maiQ8QNs8CtpPCSyMiYsULR3HQYkm3w8FIA3SberyMJMSldGsW+U3w=="],
 
@@ -698,19 +698,19 @@
 
     "yoga-layout": ["yoga-layout@3.2.1", "", {}, "sha512-0LPOt3AxKqMdFBZA3HBAt/t/8vIKq7VaQYbuA8WxCgung+p9TVyKRYdpvCb80HcdTN2NkbIKbhNwKUfm3tQywQ=="],
 
-    "@ccflare/dashboard-web/@types/bun": ["@types/bun@1.2.20", "", { "dependencies": { "bun-types": "1.2.20" } }, "sha512-dX3RGzQ8+KgmMw7CsW4xT5ITBSCrSbfHc36SNT31EOUg/LA9JWq0VDdEXDRSe1InVWpd2yLUM1FUF/kEOyTzYA=="],
+    "@better-ccflare/dashboard-web/@types/bun": ["@types/bun@1.2.23", "", { "dependencies": { "bun-types": "1.2.23" } }, "sha512-le8ueOY5b6VKYf19xT3McVbXqLqmxzPXHsQT/q9JHgikJ2X22wyTW3g3ohz2ZMnp7dod6aduIiq8A14Xyimm0A=="],
 
-    "@ccflare/errors/@types/bun": ["@types/bun@1.1.15", "", { "dependencies": { "bun-types": "1.1.42" } }, "sha512-Fi7ND1jCq8O5iU3s9z3TKHggD0hidgpe7wSxyisviXpbMmY4B1KiokF3f/mmjOoDrEcf873tSpixgen7Wm9X0g=="],
+    "@better-ccflare/errors/@types/bun": ["@types/bun@1.1.15", "", { "dependencies": { "bun-types": "1.1.42" } }, "sha512-Fi7ND1jCq8O5iU3s9z3TKHggD0hidgpe7wSxyisviXpbMmY4B1KiokF3f/mmjOoDrEcf873tSpixgen7Wm9X0g=="],
 
-    "@ccflare/errors/typescript": ["typescript@5.7.2", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-i5t66RHxDvVN40HfDd1PsEThGNnlMCMT3jMUuoh9/0TaqWevNontacunWyN02LA9/fIbEWlcHZcgTKb9QoaLfg=="],
+    "@better-ccflare/errors/typescript": ["typescript@5.7.2", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-i5t66RHxDvVN40HfDd1PsEThGNnlMCMT3jMUuoh9/0TaqWevNontacunWyN02LA9/fIbEWlcHZcgTKb9QoaLfg=="],
 
-    "@ccflare/tui-core/@types/node": ["@types/node@20.19.9", "", { "dependencies": { "undici-types": "~6.21.0" } }, "sha512-cuVNgarYWZqxRJDQHEB58GEONhOK79QVR/qYx4S7kcUObQvUwvFnYxJuuHUKm2aieN9X3yZB4LZsuYNU1Qphsw=="],
+    "@better-ccflare/tui-core/@types/node": ["@types/node@20.19.9", "", { "dependencies": { "undici-types": "~6.21.0" } }, "sha512-cuVNgarYWZqxRJDQHEB58GEONhOK79QVR/qYx4S7kcUObQvUwvFnYxJuuHUKm2aieN9X3yZB4LZsuYNU1Qphsw=="],
 
-    "@ccflare/ui-constants/@types/bun": ["@types/bun@1.1.15", "", { "dependencies": { "bun-types": "1.1.42" } }, "sha512-Fi7ND1jCq8O5iU3s9z3TKHggD0hidgpe7wSxyisviXpbMmY4B1KiokF3f/mmjOoDrEcf873tSpixgen7Wm9X0g=="],
+    "@better-ccflare/ui-constants/@types/bun": ["@types/bun@1.1.15", "", { "dependencies": { "bun-types": "1.1.42" } }, "sha512-Fi7ND1jCq8O5iU3s9z3TKHggD0hidgpe7wSxyisviXpbMmY4B1KiokF3f/mmjOoDrEcf873tSpixgen7Wm9X0g=="],
 
-    "@ccflare/ui-constants/typescript": ["typescript@5.7.2", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-i5t66RHxDvVN40HfDd1PsEThGNnlMCMT3jMUuoh9/0TaqWevNontacunWyN02LA9/fIbEWlcHZcgTKb9QoaLfg=="],
+    "@better-ccflare/ui-constants/typescript": ["typescript@5.7.2", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-i5t66RHxDvVN40HfDd1PsEThGNnlMCMT3jMUuoh9/0TaqWevNontacunWyN02LA9/fIbEWlcHZcgTKb9QoaLfg=="],
 
-    "ccflare/@types/node": ["@types/node@20.19.9", "", { "dependencies": { "undici-types": "~6.21.0" } }, "sha512-cuVNgarYWZqxRJDQHEB58GEONhOK79QVR/qYx4S7kcUObQvUwvFnYxJuuHUKm2aieN9X3yZB4LZsuYNU1Qphsw=="],
+    "better-ccflare/@types/node": ["@types/node@20.19.9", "", { "dependencies": { "undici-types": "~6.21.0" } }, "sha512-cuVNgarYWZqxRJDQHEB58GEONhOK79QVR/qYx4S7kcUObQvUwvFnYxJuuHUKm2aieN9X3yZB4LZsuYNU1Qphsw=="],
 
     "cli-truncate/slice-ansi": ["slice-ansi@5.0.0", "", { "dependencies": { "ansi-styles": "^6.0.0", "is-fullwidth-code-point": "^4.0.0" } }, "sha512-FC+lgizVPfie0kkhqUScwRu1O/lF6NOgJmlCgK+/LYxDCTk8sGelYaHDhFcDN+Sn3Cv+3VSa4Byeo+IMCzpMgQ=="],
 
@@ -720,18 +720,18 @@
 
     "slice-ansi/is-fullwidth-code-point": ["is-fullwidth-code-point@5.0.0", "", { "dependencies": { "get-east-asian-width": "^1.0.0" } }, "sha512-OVa3u9kkBbw7b8Xw5F9P+D/T9X+Z4+JruYVNapTjPYZYUznQ5YfWeFkOj606XYYW8yugTfC8Pj0hYqvi4ryAhA=="],
 
-    "@ccflare/dashboard-web/@types/bun/bun-types": ["bun-types@1.2.20", "", { "dependencies": { "@types/node": "*" }, "peerDependencies": { "@types/react": "^19" } }, "sha512-pxTnQYOrKvdOwyiyd/7sMt9yFOenN004Y6O4lCcCUoKVej48FS5cvTw9geRaEcB9TsDZaJKAxPTVvi8tFsVuXA=="],
+    "@better-ccflare/dashboard-web/@types/bun/bun-types": ["bun-types@1.2.23", "", { "dependencies": { "@types/node": "*" }, "peerDependencies": { "@types/react": "^19" } }, "sha512-R9f0hKAZXgFU3mlrA0YpE/fiDvwV0FT9rORApt2aQVWSuJDzZOyB5QLc0N/4HF57CS8IXJ6+L5E4W1bW6NS2Aw=="],
 
-    "@ccflare/errors/@types/bun/bun-types": ["bun-types@1.1.42", "", { "dependencies": { "@types/node": "~20.12.8", "@types/ws": "~8.5.10" } }, "sha512-beMbnFqWbbBQHll/bn3phSwmoOQmnX2nt8NI9iOQKFbgR5Z6rlH3YuaMdlid8vp5XGct3/W4QVQBmhoOEoe4nw=="],
+    "@better-ccflare/errors/@types/bun/bun-types": ["bun-types@1.1.42", "", { "dependencies": { "@types/node": "~20.12.8", "@types/ws": "~8.5.10" } }, "sha512-beMbnFqWbbBQHll/bn3phSwmoOQmnX2nt8NI9iOQKFbgR5Z6rlH3YuaMdlid8vp5XGct3/W4QVQBmhoOEoe4nw=="],
 
-    "@ccflare/ui-constants/@types/bun/bun-types": ["bun-types@1.1.42", "", { "dependencies": { "@types/node": "~20.12.8", "@types/ws": "~8.5.10" } }, "sha512-beMbnFqWbbBQHll/bn3phSwmoOQmnX2nt8NI9iOQKFbgR5Z6rlH3YuaMdlid8vp5XGct3/W4QVQBmhoOEoe4nw=="],
+    "@better-ccflare/ui-constants/@types/bun/bun-types": ["bun-types@1.1.42", "", { "dependencies": { "@types/node": "~20.12.8", "@types/ws": "~8.5.10" } }, "sha512-beMbnFqWbbBQHll/bn3phSwmoOQmnX2nt8NI9iOQKFbgR5Z6rlH3YuaMdlid8vp5XGct3/W4QVQBmhoOEoe4nw=="],
 
-    "@ccflare/errors/@types/bun/bun-types/@types/node": ["@types/node@20.12.14", "", { "dependencies": { "undici-types": "~5.26.4" } }, "sha512-scnD59RpYD91xngrQQLGkE+6UrHUPzeKZWhhjBSa3HSkwjbQc38+q3RoIVEwxQGRw3M+j5hpNAM+lgV3cVormg=="],
+    "@better-ccflare/errors/@types/bun/bun-types/@types/node": ["@types/node@20.12.14", "", { "dependencies": { "undici-types": "~5.26.4" } }, "sha512-scnD59RpYD91xngrQQLGkE+6UrHUPzeKZWhhjBSa3HSkwjbQc38+q3RoIVEwxQGRw3M+j5hpNAM+lgV3cVormg=="],
 
-    "@ccflare/ui-constants/@types/bun/bun-types/@types/node": ["@types/node@20.12.14", "", { "dependencies": { "undici-types": "~5.26.4" } }, "sha512-scnD59RpYD91xngrQQLGkE+6UrHUPzeKZWhhjBSa3HSkwjbQc38+q3RoIVEwxQGRw3M+j5hpNAM+lgV3cVormg=="],
+    "@better-ccflare/ui-constants/@types/bun/bun-types/@types/node": ["@types/node@20.12.14", "", { "dependencies": { "undici-types": "~5.26.4" } }, "sha512-scnD59RpYD91xngrQQLGkE+6UrHUPzeKZWhhjBSa3HSkwjbQc38+q3RoIVEwxQGRw3M+j5hpNAM+lgV3cVormg=="],
 
-    "@ccflare/errors/@types/bun/bun-types/@types/node/undici-types": ["undici-types@5.26.5", "", {}, "sha512-JlCMO+ehdEIKqlFxk6IfVoAUVmgz7cU7zD/h9XZ0qzeosSHmUJVOzSQvvYSYWXkFXC+IfLKSIffhv0sVZup6pA=="],
+    "@better-ccflare/errors/@types/bun/bun-types/@types/node/undici-types": ["undici-types@5.26.5", "", {}, "sha512-JlCMO+ehdEIKqlFxk6IfVoAUVmgz7cU7zD/h9XZ0qzeosSHmUJVOzSQvvYSYWXkFXC+IfLKSIffhv0sVZup6pA=="],
 
-    "@ccflare/ui-constants/@types/bun/bun-types/@types/node/undici-types": ["undici-types@5.26.5", "", {}, "sha512-JlCMO+ehdEIKqlFxk6IfVoAUVmgz7cU7zD/h9XZ0qzeosSHmUJVOzSQvvYSYWXkFXC+IfLKSIffhv0sVZup6pA=="],
+    "@better-ccflare/ui-constants/@types/bun/bun-types/@types/node/undici-types": ["undici-types@5.26.5", "", {}, "sha512-JlCMO+ehdEIKqlFxk6IfVoAUVmgz7cU7zD/h9XZ0qzeosSHmUJVOzSQvvYSYWXkFXC+IfLKSIffhv0sVZup6pA=="],
   }
 }
