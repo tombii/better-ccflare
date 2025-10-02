@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import type { Account } from "../../api";
 import { Button } from "../ui/button";
+import { Switch } from "../ui/switch";
 import { RateLimitProgress } from "./RateLimitProgress";
 
 interface AccountListItemProps {
@@ -19,6 +20,7 @@ interface AccountListItemProps {
 	onRemove: (name: string) => void;
 	onRename: (account: Account) => void;
 	onPriorityChange: (account: Account) => void;
+	onAutoFallbackToggle: (account: Account) => void;
 }
 
 export function AccountListItem({
@@ -28,6 +30,7 @@ export function AccountListItem({
 	onRemove,
 	onRename,
 	onPriorityChange,
+	onAutoFallbackToggle,
 }: AccountListItemProps) {
 	const presenter = new AccountPresenter(account);
 
@@ -53,6 +56,18 @@ export function AccountListItem({
 							<span className="px-2 py-0.5 text-xs font-medium bg-secondary text-secondary-foreground rounded-full">
 								Priority: {account.priority}
 							</span>
+							{account.provider === "anthropic" && (
+								<div className="flex items-center gap-2">
+									<span className="text-xs text-muted-foreground">
+										Auto-fallback:
+									</span>
+									<Switch
+										checked={account.autoFallbackEnabled}
+										onCheckedChange={() => onAutoFallbackToggle(account)}
+										title="Toggle auto-fallback for this account"
+									/>
+								</div>
+							)}
 						</div>
 						<p className="text-sm text-muted-foreground">
 							{account.provider} • {presenter.tierDisplay}

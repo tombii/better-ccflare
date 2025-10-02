@@ -246,6 +246,22 @@ class API extends HttpClient {
 		}
 	}
 
+	async updateAccountAutoFallback(
+		accountId: string,
+		enabled: boolean,
+	): Promise<void> {
+		try {
+			await this.post(`/api/accounts/${accountId}/auto-fallback`, {
+				enabled: enabled ? 1 : 0,
+			});
+		} catch (error) {
+			if (error instanceof HttpError) {
+				throw new Error(error.message);
+			}
+			throw error;
+		}
+	}
+
 	async getStrategy(): Promise<string> {
 		const data = await this.get<{ strategy: string }>("/api/config/strategy");
 		return data.strategy;

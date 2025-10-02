@@ -7,6 +7,7 @@ interface AccountListProps {
 	onRemove: (name: string) => void;
 	onRename: (account: Account) => void;
 	onPriorityChange: (account: Account) => void;
+	onAutoFallbackToggle: (account: Account) => void;
 }
 
 export function AccountList({
@@ -15,6 +16,7 @@ export function AccountList({
 	onRemove,
 	onRename,
 	onPriorityChange,
+	onAutoFallbackToggle,
 }: AccountListProps) {
 	if (!accounts || accounts.length === 0) {
 		return <p className="text-muted-foreground">No accounts configured</p>;
@@ -48,6 +50,7 @@ export function AccountList({
 					onRemove={onRemove}
 					onRename={onRename}
 					onPriorityChange={onPriorityChange}
+					onAutoFallbackToggle={onAutoFallbackToggle}
 				/>
 			))}
 		</div>
