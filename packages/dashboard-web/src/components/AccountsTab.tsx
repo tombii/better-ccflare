@@ -174,6 +174,18 @@ export function AccountsTab() {
 		}
 	};
 
+	const handleAutoFallbackToggle = async (account: Account) => {
+		try {
+			await api.updateAccountAutoFallback(
+				account.id,
+				!account.autoFallbackEnabled,
+			);
+			await loadAccounts();
+		} catch (err) {
+			setActionError(formatError(err));
+		}
+	};
+
 	if (loading) {
 		return (
 			<Card>
@@ -237,6 +249,7 @@ export function AccountsTab() {
 						onRemove={handleRemoveAccount}
 						onRename={handleRename}
 						onPriorityChange={handlePriorityChange}
+						onAutoFallbackToggle={handleAutoFallbackToggle}
 					/>
 				</CardContent>
 			</Card>
