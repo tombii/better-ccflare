@@ -1,6 +1,6 @@
 {
 	"name": "better-ccflare",
-	"version": "1.0.3",
+	"version": "1.0.4",
 	"description": "TUI for better-ccflare load balancer",
 	"bin": {
 		"better-ccflare": "./dist/better-ccflare"
