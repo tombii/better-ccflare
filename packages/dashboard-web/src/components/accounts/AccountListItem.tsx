@@ -114,7 +114,12 @@ export function AccountListItem({
 				</div>
 			</div>
 			{account.rateLimitReset && (
-				<RateLimitProgress resetIso={account.rateLimitReset} />
+				<RateLimitProgress
+					resetIso={account.rateLimitReset}
+					usageUtilization={account.usageUtilization}
+					usageWindow={account.usageWindow}
+					provider={account.provider}
+				/>
 			)}
 		</div>
 	);
