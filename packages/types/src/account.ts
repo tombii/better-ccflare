@@ -72,6 +72,7 @@ export interface AccountResponse {
 	autoFallbackEnabled: boolean;
 	usageUtilization: number | null; // Percentage utilization (0-100) from API
 	usageWindow: string | null; // Most restrictive window (e.g., "five_hour")
+	usageData: any | null; // Full usage data for Anthropic accounts
 }
 
 // UI display type - used in TUI and web dashboard
@@ -196,6 +197,7 @@ export function toAccountResponse(account: Account): AccountResponse {
 		autoFallbackEnabled: account.auto_fallback_enabled,
 		usageUtilization: null, // Will be filled in by API handler from cache
 		usageWindow: null, // Will be filled in by API handler from cache
+		usageData: null, // Will be filled in by API handler from cache
 	};
 }
 

@@ -133,7 +133,9 @@ export function AccountListItem({
 					resetIso={account.rateLimitReset}
 					usageUtilization={account.usageUtilization}
 					usageWindow={account.usageWindow}
+					usageData={account.usageData}
 					provider={account.provider}
+					showWeekly={account.provider === "anthropic"}
 				/>
 			)}
 		</div>
