@@ -6,12 +6,13 @@ import {
 	GitBranch,
 	LayoutDashboard,
 	Menu,
+	RefreshCw,
 	Shield,
 	Users,
 	X,
 	Zap,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { cn } from "../lib/utils";
 import { version } from "../lib/version";
@@ -37,7 +38,56 @@ const navItems: NavItem[] = [
 
 export function Navigation() {
 	const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+	const [updateStatus, setUpdateStatus] = useState<
+		"idle" | "checking" | "available" | "current" | "error"
+	>("idle");
+	const [latestVersion, setLatestVersion] = useState<string>("");
 	const location = useLocation();
+	const isMountedRef = useRef(true);
+
+	// Cleanup on unmount to prevent memory leaks
+	useEffect(() => {
+		return () => {
+			isMountedRef.current = false;
+		};
+	}, []);
+
+	const checkForUpdates = async () => {
+		if (!isMountedRef.current) return;
+
+		setUpdateStatus("checking");
+		try {
+			const response = await fetch(
+				"https://registry.npmjs.org/better-ccflare/latest",
+			);
+			const data = await response.json();
+			const latest = data.version;
+
+			// Only update state if component is still mounted
+			if (!isMountedRef.current) return;
+
+			setLatestVersion(latest);
+
+			// Remove 'v' prefix from version for comparison
+			const currentVersion = version.replace(/^v/, "");
+
+			if (latest !== currentVersion) {
+				setUpdateStatus("available");
+				console.log(
+					`🚀 Update available: ${currentVersion} → ${latest}\nRun: npm install -g better-ccflare`,
+				);
+			} else {
+				setUpdateStatus("current");
+				console.log(`✅ You're on the latest version (${currentVersion})`);
+			}
+		} catch (error) {
+			// Only update state if component is still mounted
+			if (!isMountedRef.current) return;
+
+			setUpdateStatus("error");
+			console.error("❌ Failed to check for updates:", error);
+		}
+	};
 
 	return (
 		<>
@@ -145,6 +195,46 @@ export function Navigation() {
 								All systems operational
 							</p>
 						</div>
+
+						{/* Update Check */}
+						<button
+							type="button"
+							onClick={checkForUpdates}
+							disabled={updateStatus === "checking"}
+							className={cn(
+								"w-full rounded-lg bg-muted/50 p-3 transition-colors hover:bg-muted",
+								updateStatus === "checking" && "opacity-50 cursor-wait",
+							)}
+						>
+							<div className="flex items-center gap-2 text-sm">
+								<RefreshCw
+									className={cn(
+										"h-4 w-4",
+										updateStatus === "checking" && "animate-spin",
+										updateStatus === "available" && "text-green-500",
+										updateStatus === "current" && "text-primary",
+										updateStatus === "error" && "text-red-500",
+									)}
+								/>
+								<span className="font-medium">
+									{updateStatus === "idle" && "Check for Updates"}
+									{updateStatus === "checking" && "Checking..."}
+									{updateStatus === "available" && "Update Available"}
+									{updateStatus === "current" && "Up to Date"}
+									{updateStatus === "error" && "Check Failed"}
+								</span>
+							</div>
+							{updateStatus === "available" && (
+								<p className="mt-1 text-xs text-muted-foreground text-left">
+									{version.replace(/^v/, "")} → {latestVersion}
+								</p>
+							)}
+							{updateStatus === "current" && (
+								<p className="mt-1 text-xs text-muted-foreground text-left">
+									Version {version.replace(/^v/, "")}
+								</p>
+							)}
+						</button>
 
 						<div className="hidden lg:flex items-center justify-between">
 							<div className="flex items-center gap-2 text-xs text-muted-foreground">
