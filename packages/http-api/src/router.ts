@@ -2,6 +2,7 @@ import { validateNumber } from "@better-ccflare/core";
 import {
 	createAccountAddHandler,
 	createAccountAutoFallbackHandler,
+	createAccountCustomEndpointUpdateHandler,
 	createAccountPauseHandler,
 	createAccountPriorityUpdateHandler,
 	createAccountRemoveHandler,
@@ -116,8 +117,8 @@ export class APIRouter {
 				}) || 100;
 			return requestsDetailHandler(limit);
 		});
-		this.handlers.set("GET:/api/requests/stream", () =>
-			requestsStreamHandler(),
+		this.handlers.set("GET:/api/requests/stream", (req) =>
+			requestsStreamHandler(req),
 		);
 		this.handlers.set("GET:/api/config", () => configHandlers.getConfig());
 		this.handlers.set("GET:/api/config/strategy", () =>
@@ -143,7 +144,7 @@ export class APIRouter {
 		);
 		this.handlers.set("POST:/api/maintenance/cleanup", () => cleanupHandler());
 		this.handlers.set("POST:/api/maintenance/compact", () => compactHandler());
-		this.handlers.set("GET:/api/logs/stream", () => logsStreamHandler());
+		this.handlers.set("GET:/api/logs/stream", (req) => logsStreamHandler(req));
 		this.handlers.set("GET:/api/logs/history", () => logsHistoryHandler());
 		this.handlers.set("GET:/api/analytics", (_req, url) => {
 			return analyticsHandler(url.searchParams);
@@ -258,6 +259,16 @@ export class APIRouter {
 				);
 				return await this.wrapHandler((req) =>
 					autoFallbackHandler(req, accountId),
+				)(req, url);
+			}
+
+			// Account custom endpoint update
+			if (path.endsWith("/custom-endpoint") && method === "POST") {
+				const customEndpointHandler = createAccountCustomEndpointUpdateHandler(
+					this.context.dbOps,
+				);
+				return await this.wrapHandler((req) =>
+					customEndpointHandler(req, accountId),
 				)(req, url);
 			}
 

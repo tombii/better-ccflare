@@ -759,3 +759,58 @@ export function createAccountAutoFallbackHandler(dbOps: DatabaseOperations) {
 		}
 	};
 }
+
+/**
+ * Create an account custom endpoint update handler
+ */
+export function createAccountCustomEndpointUpdateHandler(
+	dbOps: DatabaseOperations,
+) {
+	return async (req: Request, accountId: string): Promise<Response> => {
+		try {
+			const body = await req.json();
+
+			// Validate custom endpoint
+			const customEndpoint = validateString(
+				body.customEndpoint,
+				"customEndpoint",
+				{
+					required: false,
+					transform: (value: string) => {
+						if (!value) return "";
+						const trimmed = value.trim();
+						if (!trimmed) return "";
+						// Validate URL format
+						try {
+							new URL(trimmed);
+							return trimmed;
+						} catch {
+							throw new Error("Invalid URL format");
+						}
+					},
+				},
+			);
+
+			// Update account custom endpoint
+			const db = dbOps.getDatabase();
+			db.run("UPDATE accounts SET custom_endpoint = ? WHERE id = ?", [
+				customEndpoint || null,
+				accountId,
+			]);
+
+			log.info(`Updated custom endpoint for account ${accountId}`);
+
+			return jsonResponse({
+				success: true,
+				message: "Custom endpoint updated successfully",
+			});
+		} catch (error) {
+			log.error("Account custom endpoint update error:", error);
+			return errorResponse(
+				error instanceof Error
+					? error
+					: new Error("Failed to update custom endpoint"),
+			);
+		}
+	};
+}

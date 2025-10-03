@@ -28,6 +28,7 @@ export interface CompleteOptions {
 	tier?: AccountTier;
 	name: string; // Required to properly create the account
 	priority?: number;
+	customEndpoint?: string; // Custom API endpoint
 }
 
 export interface AccountCreated {
@@ -133,7 +134,7 @@ export class OAuthFlow {
 		opts: CompleteOptions,
 		flowData: BeginResult,
 	): Promise<AccountCreated> {
-		const { code, tier = 1, name, priority = 0 } = opts;
+		const { code, tier = 1, name, priority = 0, customEndpoint } = opts;
 
 		// Get OAuth provider
 		const oauthProvider = getOAuthProvider("anthropic");
@@ -159,11 +160,19 @@ export class OAuthFlow {
 				apiKey,
 				tier,
 				priority,
+				customEndpoint,
 			);
 		}
 
 		// Handle max mode - standard OAuth flow
-		return this.createAccountWithOAuth(accountId, name, tokens, tier, priority);
+		return this.createAccountWithOAuth(
+			accountId,
+			name,
+			tokens,
+			tier,
+			priority,
+			customEndpoint,
+		);
 	}
 
 	/**
@@ -206,6 +215,8 @@ export class OAuthFlow {
 	 * @param name - Account name
 	 * @param tokens - OAuth tokens from token exchange
 	 * @param tier - Account tier (1, 5, or 20)
+	 * @param priority - Account priority
+	 * @param customEndpoint - Custom API endpoint (optional)
 	 * @returns Created account information
 	 */
 	private createAccountWithOAuth(
@@ -214,6 +225,7 @@ export class OAuthFlow {
 		tokens: OAuthTokens,
 		tier: AccountTier,
 		priority: number,
+		customEndpoint?: string,
 	): AccountCreated {
 		const db = this.dbOps.getDatabase();
 
@@ -221,8 +233,8 @@ export class OAuthFlow {
 			`
 			INSERT INTO accounts (
 				id, name, provider, api_key, refresh_token, access_token, expires_at,
-				created_at, request_count, total_requests, account_tier, priority
-			) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, 0, 0, ?, ?)
+				created_at, request_count, total_requests, account_tier, priority, custom_endpoint
+			) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, 0, 0, ?, ?, ?)
 			`,
 			[
 				id,
@@ -234,6 +246,7 @@ export class OAuthFlow {
 				Date.now(),
 				tier,
 				priority,
+				customEndpoint || null,
 			],
 		);
 
@@ -256,6 +269,8 @@ export class OAuthFlow {
 	 * @param name - Account name
 	 * @param apiKey - API key from Anthropic console
 	 * @param tier - Account tier (1, 5, or 20)
+	 * @param priority - Account priority
+	 * @param customEndpoint - Custom API endpoint (optional)
 	 * @returns Created account information
 	 */
 	private createAccountWithApiKey(
@@ -264,6 +279,7 @@ export class OAuthFlow {
 		apiKey: string,
 		tier: AccountTier,
 		priority: number,
+		customEndpoint?: string,
 	): AccountCreated {
 		const db = this.dbOps.getDatabase();
 
@@ -271,10 +287,19 @@ export class OAuthFlow {
 			`
 			INSERT INTO accounts (
 				id, name, provider, api_key, refresh_token, access_token, expires_at,
-				created_at, request_count, total_requests, account_tier, priority
-			) VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, 0, 0, ?, ?)
+				created_at, request_count, total_requests, account_tier, priority, custom_endpoint
+			) VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, 0, 0, ?, ?, ?)
 			`,
-			[id, name, "anthropic", apiKey, Date.now(), tier, priority],
+			[
+				id,
+				name,
+				"anthropic",
+				apiKey,
+				Date.now(),
+				tier,
+				priority,
+				customEndpoint || null,
+			],
 		);
 
 		return {

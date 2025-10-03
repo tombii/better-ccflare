@@ -1,5 +1,4 @@
 import type { AccountResponse } from "@better-ccflare/types";
-import { format } from "date-fns";
 import { AlertCircle } from "lucide-react";
 import {
 	Card,
@@ -76,7 +75,12 @@ export function RateLimitInfo({ accounts }: RateLimitInfoProps) {
 												Resets in {minutesLeft}m
 											</p>
 											<p className="text-xs text-muted-foreground">
-												{format(resetTime, "HH:mm:ss")}
+												{resetTime.toLocaleTimeString(undefined, {
+													hour: "2-digit",
+													minute: "2-digit",
+													second: "2-digit",
+												})}{" "}
+												(local)
 											</p>
 										</>
 									)}

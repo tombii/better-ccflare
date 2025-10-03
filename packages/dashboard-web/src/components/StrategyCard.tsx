@@ -1,5 +1,5 @@
 import { RefreshCw, Settings } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
 import { Badge } from "./ui/badge";
 import {
@@ -18,7 +18,7 @@ import {
 } from "./ui/select";
 import { Skeleton } from "./ui/skeleton";
 
-export function StrategyCard() {
+export const StrategyCard = React.memo(() => {
 	const [currentStrategy, setCurrentStrategy] = useState<string>("");
 	const [strategies, setStrategies] = useState<string[]>([]);
 	const [loading, setLoading] = useState(true);
@@ -146,4 +146,4 @@ export function StrategyCard() {
 			</CardContent>
 		</Card>
 	);
-}
+});

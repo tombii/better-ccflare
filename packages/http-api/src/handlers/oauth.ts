@@ -43,6 +43,27 @@ export function createOAuthInitHandler(dbOps: DatabaseOperations) {
 					allowedValues: [1, 5, 20] as const,
 				}) || 1;
 
+			// Validate custom endpoint
+			const customEndpoint = validateString(
+				body.customEndpoint,
+				"customEndpoint",
+				{
+					required: false,
+					transform: (value: string) => {
+						if (!value) return "";
+						const trimmed = value.trim();
+						if (!trimmed) return "";
+						// Validate URL format
+						try {
+							new URL(trimmed);
+							return trimmed;
+						} catch {
+							throw new Error("Invalid URL format");
+						}
+					},
+				},
+			);
+
 			const config = new Config();
 			const oauthFlow = await createOAuthFlow(dbOps, config);
 
@@ -53,13 +74,14 @@ export function createOAuthInitHandler(dbOps: DatabaseOperations) {
 					mode,
 				});
 
-				// Store tier in session for later use
+				// Store tier and custom endpoint in session for later use
 				dbOps.createOAuthSession(
 					flowResult.sessionId,
 					name,
 					flowResult.pkce.verifier,
 					mode,
 					tier,
+					customEndpoint,
 					10, // 10 minute TTL
 				);
 
@@ -130,6 +152,7 @@ export function createOAuthCallbackHandler(dbOps: DatabaseOperations) {
 				verifier,
 				mode: savedMode,
 				tier: savedTier,
+				customEndpoint: savedCustomEndpoint,
 			} = oauthSession;
 
 			try {
@@ -158,7 +181,13 @@ export function createOAuthCallbackHandler(dbOps: DatabaseOperations) {
 				};
 
 				await oauthFlow.complete(
-					{ sessionId, code, tier: savedTier, name },
+					{
+						sessionId,
+						code,
+						tier: savedTier,
+						name,
+						customEndpoint: savedCustomEndpoint,
+					},
 					flowData,
 				);
 

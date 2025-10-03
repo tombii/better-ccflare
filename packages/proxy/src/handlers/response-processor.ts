@@ -109,20 +109,59 @@ export function updateAccountMetadata(
  * @param account - The account used
  * @param ctx - The proxy context
  * @param requestId - The request ID for usage tracking
- * @returns Whether the response is rate-limited
+ * @returns Promise resolving to whether the response is rate-limited
  */
-export function processProxyResponse(
+export async function processProxyResponse(
 	response: Response,
 	account: Account,
 	ctx: ProxyContext,
 	requestId?: string,
-): boolean {
+): Promise<boolean> {
 	const isStream = ctx.provider.isStreamingResponse?.(response) ?? false;
-	const rateLimitInfo = ctx.provider.parseRateLimit(response);
+	let rateLimitInfo = ctx.provider.parseRateLimit(response);
+
+	// For Zai provider, if we got a 429 without resetTime, try parsing the body
+	if (
+		rateLimitInfo.isRateLimited &&
+		!rateLimitInfo.resetTime &&
+		account.provider === "zai" &&
+		response.status === 429
+	) {
+		// Try to parse reset time from response body
+		const provider = ctx.provider;
+		if ("parseRateLimitFromBody" in provider) {
+			const bodyResetTime = await (
+				provider as Provider & {
+					parseRateLimitFromBody: (
+						response: Response,
+					) => Promise<number | null>;
+				}
+			).parseRateLimitFromBody(response);
+			if (bodyResetTime) {
+				rateLimitInfo = {
+					...rateLimitInfo,
+					resetTime: bodyResetTime,
+				};
+			}
+		}
+	}
 
 	// Handle rate limit
-	if (!isStream && rateLimitInfo.isRateLimited && rateLimitInfo.resetTime) {
-		handleRateLimitResponse(account, rateLimitInfo, ctx);
+	if (!isStream && rateLimitInfo.isRateLimited) {
+		if (rateLimitInfo.resetTime) {
+			handleRateLimitResponse(account, rateLimitInfo, ctx);
+		} else {
+			// Mark as rate-limited even without reset time
+			log.warn(
+				`Account ${account.name} rate-limited but no reset time available`,
+			);
+			ctx.asyncWriter.enqueue(() =>
+				ctx.dbOps.markAccountRateLimited(
+					account.id,
+					Date.now() + 5 * 60 * 60 * 1000,
+				),
+			); // Default to 5 hours for Zai
+		}
 		// Also update metadata for rate-limited responses
 		updateAccountMetadata(account, response, ctx, requestId);
 		return true; // Signal rate limit

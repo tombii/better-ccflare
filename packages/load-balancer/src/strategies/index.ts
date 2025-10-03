@@ -49,6 +49,15 @@ export class SessionStrategy implements LoadBalancingStrategy {
 	select(accounts: Account[], _meta: RequestMeta): Account[] {
 		const now = Date.now();
 
+		// Cache availability checks within this request lifecycle
+		const availabilityCache = new Map<string, boolean>();
+		const getCachedAvailability = (account: Account): boolean => {
+			if (!availabilityCache.has(account.id)) {
+				availabilityCache.set(account.id, isAccountAvailable(account, now));
+			}
+			return availabilityCache.get(account.id) || false;
+		};
+
 		// Check for higher priority accounts that have become available due to rate limit reset
 		const fallbackCandidates = this.checkForAutoFallbackAccounts(accounts, now);
 		if (fallbackCandidates.length > 0) {
@@ -60,7 +69,7 @@ export class SessionStrategy implements LoadBalancingStrategy {
 
 			// Return fallback account first, then others sorted by priority
 			const others = accounts
-				.filter((a) => a.id !== chosenFallback.id && isAccountAvailable(a, now))
+				.filter((a) => a.id !== chosenFallback.id && getCachedAvailability(a))
 				.sort((a, b) => a.priority - b.priority);
 			return [chosenFallback, ...others];
 		}
@@ -81,7 +90,7 @@ export class SessionStrategy implements LoadBalancingStrategy {
 		}
 
 		// If we have an active account and it's available, use it exclusively
-		if (activeAccount && isAccountAvailable(activeAccount, now)) {
+		if (activeAccount && getCachedAvailability(activeAccount)) {
 			// Reset session if expired (shouldn't happen but just in case)
 			this.resetSessionIfExpired(activeAccount);
 			this.log.info(
@@ -89,7 +98,7 @@ export class SessionStrategy implements LoadBalancingStrategy {
 			);
 			// Return active account first, then others as fallback (sorted by priority)
 			const others = accounts
-				.filter((a) => a.id !== activeAccount.id && isAccountAvailable(a, now))
+				.filter((a) => a.id !== activeAccount.id && getCachedAvailability(a))
 				.sort((a, b) => a.priority - b.priority);
 			return [activeAccount, ...others];
 		}
@@ -97,7 +106,7 @@ export class SessionStrategy implements LoadBalancingStrategy {
 		// No active session or active account is rate limited
 		// Filter available accounts and sort by priority (lower number = higher priority)
 		const available = accounts
-			.filter((a) => isAccountAvailable(a, now))
+			.filter((a) => getCachedAvailability(a))
 			.sort((a, b) => a.priority - b.priority);
 
 		if (available.length === 0) return [];

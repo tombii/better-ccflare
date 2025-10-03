@@ -139,33 +139,49 @@ export async function forwardToClient(
 						);
 					}
 
-					// Read with a timeout wrapper
+					// Read with a timeout wrapper that properly cleans up
 					const readPromise = reader.read();
+					let timeoutId: Timer | null = null;
 					const timeoutPromise = new Promise<{
 						value?: Uint8Array;
 						done: boolean;
-					}>((_, reject) =>
-						setTimeout(
+					}>((_, reject) => {
+						timeoutId = setTimeout(
 							() => reject(new Error("Read operation timeout")),
 							CHUNK_TIMEOUT_MS,
-						),
-					);
+						);
+					});
 
-					const { value, done } = await Promise.race([
-						readPromise,
-						timeoutPromise,
-					]);
+					try {
+						const { value, done } = await Promise.race([
+							readPromise,
+							timeoutPromise,
+						]);
 
-					if (done) break;
+						// Clear timeout if race completed successfully
+						if (timeoutId) {
+							clearTimeout(timeoutId);
+							timeoutId = null;
+						}
 
-					if (value) {
-						lastChunkTime = Date.now();
-						const chunkMsg: ChunkMessage = {
-							type: "chunk",
-							requestId,
-							data: value,
-						};
-						ctx.usageWorker.postMessage(chunkMsg);
+						if (done) break;
+
+						if (value) {
+							lastChunkTime = Date.now();
+							const chunkMsg: ChunkMessage = {
+								type: "chunk",
+								requestId,
+								data: value,
+							};
+							ctx.usageWorker.postMessage(chunkMsg);
+						}
+					} catch (error) {
+						// Ensure timeout is cleared on error
+						if (timeoutId) {
+							clearTimeout(timeoutId);
+							timeoutId = null;
+						}
+						throw error;
 					}
 				}
 				// Finished without errors
