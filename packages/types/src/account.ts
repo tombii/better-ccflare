@@ -75,7 +75,7 @@ export interface AccountResponse {
 	customEndpoint: string | null;
 	usageUtilization: number | null; // Percentage utilization (0-100) from API
 	usageWindow: string | null; // Most restrictive window (e.g., "five_hour")
-	usageData: any | null; // Full usage data for Anthropic accounts
+	usageData: unknown | null; // Full usage data for Anthropic accounts
 }
 
 // UI display type - used in TUI and web dashboard

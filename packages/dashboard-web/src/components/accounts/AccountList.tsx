@@ -8,6 +8,7 @@ interface AccountListProps {
 	onRename: (account: Account) => void;
 	onPriorityChange: (account: Account) => void;
 	onAutoFallbackToggle: (account: Account) => void;
+	onCustomEndpointChange?: (account: Account) => void;
 }
 
 export function AccountList({
@@ -17,6 +18,7 @@ export function AccountList({
 	onRename,
 	onPriorityChange,
 	onAutoFallbackToggle,
+	onCustomEndpointChange,
 }: AccountListProps) {
 	if (!accounts || accounts.length === 0) {
 		return <p className="text-muted-foreground">No accounts configured</p>;
@@ -51,6 +53,7 @@ export function AccountList({
 					onRename={onRename}
 					onPriorityChange={onPriorityChange}
 					onAutoFallbackToggle={onAutoFallbackToggle}
+					onCustomEndpointChange={onCustomEndpointChange}
 				/>
 			))}
 		</div>

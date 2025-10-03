@@ -1,8 +1,8 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { lazy, Suspense } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { AccountsTab } from "./components/AccountsTab";
 import { AgentsTab } from "./components/AgentsTab";
-import { AnalyticsTab } from "./components/AnalyticsTab";
 import { LogsTab } from "./components/LogsTab";
 import { Navigation } from "./components/navigation";
 import { OverviewTab } from "./components/OverviewTab";
@@ -10,6 +10,30 @@ import { RequestsTab } from "./components/RequestsTab";
 import { QUERY_CONFIG, REFRESH_INTERVALS } from "./constants";
 import { ThemeProvider } from "./contexts/theme-context";
 import "./index.css";
+
+// Lazy load heavy components for better bundle splitting
+const LazyAnalyticsTab = lazy(() =>
+	import("./components/LazyAnalytics").then((module) => ({
+		default: module.LazyAnalytics,
+	})),
+);
+const LoadingSkeleton = () => (
+	<div className="space-y-6 p-6">
+		<div className="animate-pulse">
+			<div className="h-8 bg-muted rounded w-32 mb-4"></div>
+			<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+				{Array.from({ length: 4 }, (_, i) => (
+					<div key={`skeleton-${i}`} className="h-24 bg-muted rounded"></div>
+				))}
+			</div>
+			<div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+				{Array.from({ length: 2 }, (_, i) => (
+					<div key={`chart-${i}`} className="h-64 bg-muted rounded"></div>
+				))}
+			</div>
+		</div>
+	</div>
+);
 
 const queryClient = new QueryClient({
 	defaultOptions: {
@@ -29,7 +53,11 @@ const routes = [
 	},
 	{
 		path: "/analytics",
-		element: <AnalyticsTab />,
+		element: (
+			<Suspense fallback={<LoadingSkeleton />}>
+				<LazyAnalyticsTab />
+			</Suspense>
+		),
 		title: "Analytics",
 		subtitle: "Deep dive into your usage patterns and trends",
 	},

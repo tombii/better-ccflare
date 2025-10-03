@@ -93,6 +93,9 @@ export async function getAnalytics(timeRange: string): Promise<Analytics> {
 		success_rate: number;
 	}>;
 
+	// Finalize to prevent memory leak
+	timeSeriesQuery.finalize();
+
 	// Get model distribution
 	const modelDistQuery = db.prepare(`
 		SELECT
@@ -117,6 +120,9 @@ export async function getAnalytics(timeRange: string): Promise<Analytics> {
 		percentage:
 			totalModelRequests > 0 ? (m.count / totalModelRequests) * 100 : 0,
 	}));
+
+	// Finalize to prevent memory leak
+	modelDistQuery.finalize();
 
 	return {
 		timeSeries: timeSeries.map((point) => ({

@@ -22,6 +22,7 @@ const log = new Logger("Proxy");
 
 // Create usage worker instance
 let usageWorkerInstance: Worker | null = null;
+let shutdownTimerId: Timer | null = null;
 
 /**
  * Gets or creates the usage worker instance
@@ -59,15 +60,23 @@ export function getUsageWorker(): Worker {
  */
 export function terminateUsageWorker(): void {
 	if (usageWorkerInstance) {
+		// Clear any existing shutdown timer to prevent duplicate timeouts
+		if (shutdownTimerId) {
+			clearTimeout(shutdownTimerId);
+			shutdownTimerId = null;
+		}
+
 		// Send shutdown message to allow worker to flush
 		const shutdownMsg: ControlMessage = { type: "shutdown" };
 		usageWorkerInstance.postMessage(shutdownMsg);
+
 		// Give worker time to flush before terminating
-		setTimeout(() => {
+		shutdownTimerId = setTimeout(() => {
 			if (usageWorkerInstance) {
 				usageWorkerInstance.terminate();
 				usageWorkerInstance = null;
 			}
+			shutdownTimerId = null;
 		}, TIMING.WORKER_SHUTDOWN_DELAY);
 	}
 }

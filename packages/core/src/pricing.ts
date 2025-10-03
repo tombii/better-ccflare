@@ -263,7 +263,7 @@ class PriceCatalogue {
 	 */
 	private shouldFilterProvider(
 		providerName: string,
-		providerData: { models?: Record<string, any> },
+		providerData: { models?: Record<string, unknown> },
 	): boolean {
 		// Filter out providers with names that suggest they're coding plans or special variants
 		const problematicPatterns = [

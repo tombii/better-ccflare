@@ -6,7 +6,7 @@ interface RateLimitProgressProps {
 	resetIso: string | null;
 	usageUtilization?: number | null; // Actual utilization from API (0-100)
 	usageWindow?: string | null; // Window name (e.g., "five_hour")
-	usageData?: any | null; // Full usage data from API
+	usageData?: unknown | null; // Full usage data from API
 	provider: string;
 	className?: string;
 	showWeekly?: boolean; // Whether to show weekly usage as well
@@ -171,8 +171,22 @@ export function RateLimitProgress({
 								</span>
 								<span className="text-xs text-muted-foreground">
 									{usage.window === "seven_day"
-										? `Resets at ${new Date(usage.resetTime).toLocaleString()}`
-										: `Resets at ${new Date(usage.resetTime).toLocaleTimeString()}`}
+										? `Resets ${new Date(usage.resetTime).toLocaleString(
+												undefined,
+												{
+													month: "short",
+													day: "numeric",
+													hour: "2-digit",
+													minute: "2-digit",
+												},
+											)} (local)`
+										: `Resets ${new Date(usage.resetTime).toLocaleTimeString(
+												undefined,
+												{
+													hour: "2-digit",
+													minute: "2-digit",
+												},
+											)} (local)`}
 								</span>
 							</div>
 						)}

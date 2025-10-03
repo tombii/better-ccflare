@@ -27,6 +27,12 @@ export class LogFileWriter implements Disposable {
 	}
 
 	private initStream(): void {
+		// Close existing stream if any
+		if (this.stream && !this.stream.destroyed) {
+			this.stream.end();
+			this.stream = null;
+		}
+
 		// Check if we need to rotate
 		if (existsSync(this.logFile)) {
 			const stats = statSync(this.logFile);

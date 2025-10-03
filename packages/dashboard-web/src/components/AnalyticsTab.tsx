@@ -1,5 +1,5 @@
 import { format } from "date-fns";
-import { useMemo, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import type { TimeRange } from "../constants";
 import { useAnalytics } from "../hooks/queries";
 import {
@@ -14,7 +14,7 @@ import {
 	TokenUsageBreakdown,
 } from "./analytics";
 
-export function AnalyticsTab() {
+export const AnalyticsTab = React.memo(() => {
 	const [timeRange, setTimeRange] = useState<TimeRange>("1h");
 	const [selectedMetric, setSelectedMetric] = useState("requests");
 	const [filterOpen, setFilterOpen] = useState(false);
@@ -44,36 +44,42 @@ export function AnalyticsTab() {
 		[analytics],
 	);
 
-	// Apply filters to data
-	const filterData = <T extends { errorRate?: number | string }>(
-		data: T[],
-	): T[] => {
-		if (!analytics) return data;
+	// Memoize filter function
+	const filterData = useCallback(
+		<T extends { errorRate?: number | string }>(data: T[]): T[] => {
+			if (!analytics) return data;
 
-		return data.filter((point) => {
-			// Status filter
-			if (filters.status !== "all") {
-				const errorRate =
-					typeof point.errorRate === "string"
-						? parseFloat(point.errorRate)
-						: point.errorRate || 0;
-				if (filters.status === "success" && errorRate > 50) return false;
-				if (filters.status === "error" && errorRate <= 50) return false;
-			}
+			return data.filter((point) => {
+				// Status filter
+				if (filters.status !== "all") {
+					const errorRate =
+						typeof point.errorRate === "string"
+							? parseFloat(point.errorRate)
+							: point.errorRate || 0;
+					if (filters.status === "success" && errorRate > 50) return false;
+					if (filters.status === "error" && errorRate <= 50) return false;
+				}
 
-			// For time series data, we can't filter by specific accounts/models
-			// Those filters will be applied to the other charts
-			return true;
-		});
-	};
+				// For time series data, we can't filter by specific accounts/models
+				// Those filters will be applied to the other charts
+				return true;
+			});
+		},
+		[analytics, filters.status],
+	);
 
-	// Transform time series data for charts
-	const data = filterData(
-		analytics?.timeSeries.map((point) => ({
-			time:
-				timeRange === "30d"
-					? format(new Date(point.ts), "MMM d")
-					: format(new Date(point.ts), "HH:mm"),
+	// Memoize expensive time series data transformation
+	const data = useMemo(() => {
+		if (!analytics?.timeSeries) return [];
+
+		const timeSeries = filterData(analytics.timeSeries);
+		const formatter =
+			timeRange === "30d"
+				? (date: Date) => format(date, "MMM d")
+				: (date: Date) => format(date, "HH:mm");
+
+		return timeSeries.map((point) => ({
+			time: formatter(new Date(point.ts)),
 			requests: point.requests,
 			tokens: point.tokens,
 			cost: parseFloat(point.costUsd.toFixed(2)),
@@ -81,37 +87,42 @@ export function AnalyticsTab() {
 			errorRate: parseFloat(point.errorRate.toFixed(1)),
 			cacheHitRate: parseFloat(point.cacheHitRate.toFixed(1)),
 			avgTokensPerSecond: point.avgTokensPerSecond || 0,
-		})) || [],
-	);
+		}));
+	}, [analytics?.timeSeries, timeRange, filterData]);
 
-	// Calculate token usage breakdown
-	const tokenBreakdown = analytics?.tokenBreakdown
-		? [
-				{
-					type: "Input Tokens",
-					value: analytics.tokenBreakdown.inputTokens,
-					percentage: 0,
-				},
-				{
-					type: "Cache Read",
-					value: analytics.tokenBreakdown.cacheReadInputTokens,
-					percentage: 0,
-				},
-				{
-					type: "Cache Creation",
-					value: analytics.tokenBreakdown.cacheCreationInputTokens,
-					percentage: 0,
-				},
-				{
-					type: "Output Tokens",
-					value: analytics.tokenBreakdown.outputTokens,
-					percentage: 0,
-				},
-			].map((item) => {
-				const total = analytics.totals.totalTokens || 1;
-				return { ...item, percentage: Math.round((item.value / total) * 100) };
-			})
-		: [];
+	// Memoize token usage breakdown calculation
+	const tokenBreakdown = useMemo(() => {
+		if (!analytics?.tokenBreakdown) return [];
+
+		const total = analytics.totals.totalTokens || 1;
+		const breakdown = [
+			{
+				type: "Input Tokens",
+				value: analytics.tokenBreakdown.inputTokens,
+				percentage: 0,
+			},
+			{
+				type: "Cache Read",
+				value: analytics.tokenBreakdown.cacheReadInputTokens,
+				percentage: 0,
+			},
+			{
+				type: "Cache Creation",
+				value: analytics.tokenBreakdown.cacheCreationInputTokens,
+				percentage: 0,
+			},
+			{
+				type: "Output Tokens",
+				value: analytics.tokenBreakdown.outputTokens,
+				percentage: 0,
+			},
+		];
+
+		return breakdown.map((item) => ({
+			...item,
+			percentage: Math.round((item.value / total) * 100),
+		}));
+	}, [analytics?.tokenBreakdown, analytics?.totals.totalTokens]);
 
 	// Use real model performance data from backend with filters
 	const _modelPerformance =
@@ -230,4 +241,4 @@ export function AnalyticsTab() {
 			)}
 		</div>
 	);
-}
+});

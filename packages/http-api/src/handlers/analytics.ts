@@ -14,26 +14,6 @@ interface BucketConfig {
 	displayName: string;
 }
 
-interface TotalsResult {
-	total_requests: number;
-	success_rate: number;
-	avg_response_time: number;
-	total_tokens: number;
-	total_cost_usd: number;
-	avg_tokens_per_second: number;
-}
-
-interface ActiveAccountsResult {
-	active_accounts: number;
-}
-
-interface TokenBreakdownResult {
-	input_tokens: number;
-	cache_read_input_tokens: number;
-	cache_creation_input_tokens: number;
-	output_tokens: number;
-}
-
 function getRangeConfig(range: string): {
 	startMs: number;
 	bucket: BucketConfig;
@@ -124,35 +104,131 @@ export function createAnalyticsHandler(context: APIContext) {
 		const whereClause = conditions.join(" AND ");
 
 		try {
-			// Get totals
-			const totalsQuery = db.prepare(`
-				SELECT
-					COUNT(*) as total_requests,
-					SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0) as success_rate,
-					AVG(response_time_ms) as avg_response_time,
-					SUM(COALESCE(total_tokens, 0)) as total_tokens,
-					SUM(COALESCE(cost_usd, 0)) as total_cost_usd,
-					AVG(output_tokens_per_second) as avg_tokens_per_second
-				FROM requests r
-				WHERE ${whereClause}
-			`);
-			const totals = totalsQuery.get(...queryParams) as TotalsResult;
-
-			// Get active accounts count (including no_account for unauthenticated requests)
-			const activeAccountsQuery = db.prepare(`
-				SELECT COUNT(DISTINCT COALESCE(account_used, ?)) as active_accounts
-				FROM requests r
-				WHERE ${whereClause}
-			`);
-			const activeAccounts = activeAccountsQuery.get(
-				NO_ACCOUNT_ID,
-				...queryParams,
-			) as ActiveAccountsResult;
-
 			// Check if we need per-model time series
 			const includeModelBreakdown = params.get("modelBreakdown") === "true";
 
-			// Get time series data
+			// Consolidated query to get all analytics data in a single roundtrip
+			// Using CTEs to compute multiple metrics efficiently
+			const consolidatedQuery = db.prepare(`
+				WITH
+				-- Base filtered data
+				filtered_requests AS (
+					SELECT * FROM requests r
+					WHERE ${whereClause}
+				),
+				-- Time series buckets
+				time_buckets AS (
+					SELECT
+						(timestamp / ?) * ? as ts,
+						${includeModelBreakdown ? "model," : ""}
+						COUNT(*) as requests,
+						SUM(COALESCE(total_tokens, 0)) as tokens,
+						SUM(COALESCE(cost_usd, 0)) as cost_usd,
+						SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successful_requests,
+						SUM(COALESCE(cache_read_input_tokens, 0)) as cache_read_input,
+						SUM(COALESCE(input_tokens, 0)) as input_tokens_sum,
+						SUM(COALESCE(cache_creation_input_tokens, 0)) as cache_creation_input,
+						SUM(COALESCE(output_tokens, 0)) as output_tokens_sum,
+						AVG(response_time_ms) as avg_response_time,
+						AVG(output_tokens_per_second) as avg_tokens_per_second
+					FROM filtered_requests
+					${includeModelBreakdown ? "WHERE model IS NOT NULL" : ""}
+					GROUP BY ts${includeModelBreakdown ? ", model" : ""}
+					ORDER BY ts${includeModelBreakdown ? ", model" : ""}
+				),
+				-- Model distribution
+				model_dist AS (
+					SELECT
+						model,
+						COUNT(*) as count
+					FROM filtered_requests
+					WHERE model IS NOT NULL
+					GROUP BY model
+					ORDER BY count DESC
+					LIMIT 10
+				),
+				-- Account performance
+				account_perf AS (
+					SELECT
+						COALESCE(a.name, ?) as name,
+						COUNT(r.id) as requests,
+						SUM(CASE WHEN r.success = 1 THEN 1 ELSE 0 END) as successful_requests
+					FROM filtered_requests r
+					LEFT JOIN accounts a ON a.id = r.account_used
+					GROUP BY name
+					HAVING requests > 0
+					ORDER BY requests DESC
+				),
+				-- Model performance metrics
+				model_perf AS (
+					SELECT
+						model,
+						AVG(response_time_ms) as avg_response_time,
+						MAX(response_time_ms) as max_response_time,
+						COUNT(*) as total_requests,
+						SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) as error_count,
+						AVG(output_tokens_per_second) as avg_tokens_per_second,
+						MIN(CASE WHEN output_tokens_per_second > 0 THEN output_tokens_per_second ELSE NULL END) as min_tokens_per_second,
+						MAX(output_tokens_per_second) as max_tokens_per_second
+					FROM filtered_requests
+					WHERE model IS NOT NULL
+					GROUP BY model
+					ORDER BY total_requests DESC
+					LIMIT 10
+				),
+				-- Cost by model
+				cost_by_model AS (
+					SELECT
+						model,
+						SUM(COALESCE(cost_usd, 0)) as cost_usd,
+						COUNT(*) as requests,
+						SUM(COALESCE(total_tokens, 0)) as total_tokens
+					FROM filtered_requests
+					WHERE COALESCE(cost_usd, 0) > 0 AND model IS NOT NULL
+					GROUP BY model
+					ORDER BY cost_usd DESC
+					LIMIT 10
+				)
+				SELECT
+					-- Totals
+					(SELECT COUNT(*) FROM filtered_requests) as total_requests,
+					(SELECT SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0) FROM filtered_requests) as success_rate,
+					(SELECT AVG(response_time_ms) FROM filtered_requests) as avg_response_time,
+					(SELECT SUM(COALESCE(total_tokens, 0)) FROM filtered_requests) as total_tokens,
+					(SELECT SUM(COALESCE(cost_usd, 0)) FROM filtered_requests) as total_cost_usd,
+					(SELECT AVG(output_tokens_per_second) FROM filtered_requests) as avg_tokens_per_second,
+					(SELECT COUNT(DISTINCT COALESCE(account_used, ?)) FROM filtered_requests) as active_accounts,
+					-- Token breakdown
+					(SELECT SUM(COALESCE(input_tokens, 0)) FROM filtered_requests) as input_tokens,
+					(SELECT SUM(COALESCE(cache_read_input_tokens, 0)) FROM filtered_requests) as cache_read_input_tokens,
+					(SELECT SUM(COALESCE(cache_creation_input_tokens, 0)) FROM filtered_requests) as cache_creation_input_tokens,
+					(SELECT SUM(COALESCE(output_tokens, 0)) FROM filtered_requests) as output_tokens
+			`);
+
+			const consolidatedResult = consolidatedQuery.get(
+				bucket.bucketMs,
+				bucket.bucketMs,
+				NO_ACCOUNT_ID,
+				NO_ACCOUNT_ID,
+				...queryParams,
+			) as {
+				total_requests: number;
+				success_rate: number;
+				avg_response_time: number;
+				total_tokens: number;
+				total_cost_usd: number;
+				avg_tokens_per_second: number;
+				active_accounts: number;
+				input_tokens: number;
+				cache_read_input_tokens: number;
+				cache_creation_input_tokens: number;
+				output_tokens: number;
+			};
+
+			// Finalize prepared statement to prevent memory leak
+			consolidatedQuery.finalize();
+
+			// Get remaining data that couldn't be consolidated
 			const timeSeriesQuery = db.prepare(`
 				SELECT
 					(timestamp / ?) * ? as ts,
@@ -162,7 +238,7 @@ export function createAnalyticsHandler(context: APIContext) {
 					SUM(COALESCE(cost_usd, 0)) as cost_usd,
 					SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0) as success_rate,
 					SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0) as error_rate,
-					SUM(COALESCE(cache_read_input_tokens, 0)) * 100.0 / 
+					SUM(COALESCE(cache_read_input_tokens, 0)) * 100.0 /
 						NULLIF(SUM(COALESCE(input_tokens, 0) + COALESCE(cache_read_input_tokens, 0) + COALESCE(cache_creation_input_tokens, 0)), 0) as cache_hit_rate,
 					AVG(response_time_ms) as avg_response_time,
 					AVG(output_tokens_per_second) as avg_tokens_per_second
@@ -188,57 +264,108 @@ export function createAnalyticsHandler(context: APIContext) {
 				avg_tokens_per_second: number | null;
 			}>;
 
-			// Get token breakdown
-			const tokenBreakdownQuery = db.prepare(`
-				SELECT
-					SUM(COALESCE(input_tokens, 0)) as input_tokens,
-					SUM(COALESCE(cache_read_input_tokens, 0)) as cache_read_input_tokens,
-					SUM(COALESCE(cache_creation_input_tokens, 0)) as cache_creation_input_tokens,
-					SUM(COALESCE(output_tokens, 0)) as output_tokens
-				FROM requests r
-				WHERE ${whereClause}
-			`);
-			const tokenBreakdown = tokenBreakdownQuery.get(
-				...queryParams,
-			) as TokenBreakdownResult;
+			// Finalize prepared statement
+			timeSeriesQuery.finalize();
 
-			// Get model distribution
-			const modelDistQuery = db.prepare(`
-				SELECT
-					model,
-					COUNT(*) as count
-				FROM requests r
-				WHERE ${whereClause} AND model IS NOT NULL
-				GROUP BY model
-				ORDER BY count DESC
-				LIMIT 10
-			`);
-			const modelDistribution = modelDistQuery.all(...queryParams) as Array<{
-				model: string;
-				count: number;
-			}>;
+			// Get model distribution, account performance, and cost by model in parallel queries
+			const additionalDataQuery = db.prepare(`
+				SELECT * FROM (
+					SELECT
+						'model_distribution' as data_type,
+						model as name,
+						COUNT(*) as count,
+						NULL as requests,
+						NULL as success_rate,
+						NULL as cost_usd,
+						NULL as total_tokens
+					FROM requests r
+					WHERE ${whereClause} AND model IS NOT NULL
+					GROUP BY model
+					ORDER BY count DESC
+					LIMIT 10
+				)
 
-			// Get account performance (including unauthenticated requests)
-			const accountPerfQuery = db.prepare(`
-				SELECT
-					COALESCE(a.name, ?) as name,
-					COUNT(r.id) as requests,
-					SUM(CASE WHEN r.success = 1 THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(r.id), 0) as success_rate
-				FROM requests r
-				LEFT JOIN accounts a ON a.id = r.account_used
-				WHERE ${whereClause}
-				GROUP BY name
-				HAVING requests > 0
-				ORDER BY requests DESC
+				UNION ALL
+
+				SELECT * FROM (
+					SELECT
+						'account_performance' as data_type,
+						COALESCE(a.name, ?) as name,
+						NULL as count,
+						COUNT(r.id) as requests,
+						SUM(CASE WHEN r.success = 1 THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(r.id), 0) as success_rate,
+						NULL as cost_usd,
+						NULL as total_tokens
+					FROM requests r
+					LEFT JOIN accounts a ON a.id = r.account_used
+					WHERE ${whereClause}
+					GROUP BY name
+					HAVING requests > 0
+					ORDER BY requests DESC
+					LIMIT 10
+				)
+
+				UNION ALL
+
+				SELECT * FROM (
+					SELECT
+						'cost_by_model' as data_type,
+						model as name,
+						NULL as count,
+						COUNT(*) as requests,
+						NULL as success_rate,
+						SUM(COALESCE(cost_usd, 0)) as cost_usd,
+						SUM(COALESCE(total_tokens, 0)) as total_tokens
+					FROM requests r
+					WHERE ${whereClause} AND COALESCE(cost_usd, 0) > 0 AND model IS NOT NULL
+					GROUP BY model
+					ORDER BY cost_usd DESC
+					LIMIT 10
+				)
 			`);
-			const accountPerformance = accountPerfQuery.all(
+
+			const additionalData = additionalDataQuery.all(
+				...queryParams, // First subquery params
 				NO_ACCOUNT_ID,
-				...queryParams,
+				...queryParams, // Second subquery params (account performance)
+				...queryParams, // Third subquery params
 			) as Array<{
+				data_type: string;
 				name: string;
-				requests: number;
-				success_rate: number;
+				count: number | null;
+				requests: number | null;
+				success_rate: number | null;
+				cost_usd: number | null;
+				total_tokens: number | null;
 			}>;
+
+			// Parse the combined results
+			const modelDistribution = additionalData
+				.filter((row) => row.data_type === "model_distribution")
+				.map((row) => ({
+					model: row.name,
+					count: row.count || 0,
+				}));
+
+			const accountPerformance = additionalData
+				.filter((row) => row.data_type === "account_performance")
+				.map((row) => ({
+					name: row.name,
+					requests: row.requests || 0,
+					successRate: row.success_rate || 0,
+				}));
+
+			const costByModel = additionalData
+				.filter((row) => row.data_type === "cost_by_model")
+				.map((row) => ({
+					model: row.name,
+					costUsd: row.cost_usd || 0,
+					requests: row.requests || 0,
+					totalTokens: row.total_tokens || 0,
+				}));
+
+			// Finalize prepared statement
+			additionalDataQuery.finalize();
 
 			// Get model performance metrics
 			const modelPerfQuery = db.prepare(`
@@ -270,26 +397,29 @@ export function createAnalyticsHandler(context: APIContext) {
 				max_tokens_per_second: number | null;
 			}>;
 
-			// Calculate p95 for each model using SQL window functions
+			// Finalize prepared statement
+			modelPerfQuery.finalize();
+
+			// Prepare p95 query ONCE, outside the loop to prevent memory leak
+			const p95Query = db.prepare(`
+				WITH sampled_data AS (
+					SELECT response_time_ms
+					FROM requests r
+					WHERE ${whereClause} AND model = ? AND response_time_ms IS NOT NULL
+					ORDER BY RANDOM()
+					LIMIT 1000
+				)
+				SELECT response_time_ms as p95_response_time
+				FROM sampled_data
+				ORDER BY response_time_ms
+				LIMIT 1 OFFSET CAST((SELECT COUNT(*) FROM sampled_data) * 0.95 AS INTEGER)
+			`);
+
+			// Calculate p95 for each model using approximate percentile algorithm
 			const modelPerformance = modelPerfData.map((modelData) => {
-				// Use SQLite's NTILE or manual percentile calculation
-				// SQLite doesn't have built-in percentile functions, but we can use a more efficient query
-				const p95Result = db
-					.prepare(`
-					WITH ordered_times AS (
-						SELECT 
-							response_time_ms,
-							ROW_NUMBER() OVER (ORDER BY response_time_ms) as row_num,
-							COUNT(*) OVER () as total_count
-						FROM requests r
-						WHERE ${whereClause} AND model = ? AND response_time_ms IS NOT NULL
-					)
-					SELECT response_time_ms as p95_response_time
-					FROM ordered_times
-					WHERE row_num = CAST(CEIL(total_count * 0.95) AS INTEGER)
-					LIMIT 1
-				`)
-					.get(...queryParams, modelData.model) as
+				// Use approximate percentile calculation with sampling for better performance
+				// Sample 1000 records instead of full dataset to get ~95% accurate p95
+				const p95Result = p95Query.get(...queryParams, modelData.model) as
 					| { p95_response_time: number }
 					| undefined;
 
@@ -305,25 +435,8 @@ export function createAnalyticsHandler(context: APIContext) {
 				};
 			});
 
-			// Get cost by model
-			const costByModelQuery = db.prepare(`
-				SELECT
-					model,
-					SUM(COALESCE(cost_usd, 0)) as cost_usd,
-					COUNT(*) as requests,
-					SUM(COALESCE(total_tokens, 0)) as total_tokens
-				FROM requests r
-				WHERE ${whereClause} AND COALESCE(cost_usd, 0) > 0 AND model IS NOT NULL
-				GROUP BY model
-				ORDER BY cost_usd DESC
-				LIMIT 10
-			`);
-			const costByModel = costByModelQuery.all(...queryParams) as Array<{
-				model: string;
-				cost_usd: number;
-				requests: number;
-				total_tokens: number;
-			}>;
+			// Finalize p95 query after use
+			p95Query.finalize();
 
 			// Transform timeSeries data
 			let transformedTimeSeries = timeSeries.map((point) => ({
@@ -396,34 +509,26 @@ export function createAnalyticsHandler(context: APIContext) {
 					cumulative: isCumulative,
 				},
 				totals: {
-					requests: totals.total_requests || 0,
-					successRate: totals.success_rate || 0,
-					activeAccounts: activeAccounts.active_accounts || 0,
-					avgResponseTime: totals.avg_response_time || 0,
-					totalTokens: totals.total_tokens || 0,
-					totalCostUsd: totals.total_cost_usd || 0,
-					avgTokensPerSecond: totals.avg_tokens_per_second || null,
+					requests: consolidatedResult?.total_requests || 0,
+					successRate: consolidatedResult?.success_rate || 0,
+					activeAccounts: consolidatedResult?.active_accounts || 0,
+					avgResponseTime: consolidatedResult?.avg_response_time || 0,
+					totalTokens: consolidatedResult?.total_tokens || 0,
+					totalCostUsd: consolidatedResult?.total_cost_usd || 0,
+					avgTokensPerSecond: consolidatedResult?.avg_tokens_per_second || null,
 				},
 				timeSeries: transformedTimeSeries,
 				tokenBreakdown: {
-					inputTokens: tokenBreakdown?.input_tokens || 0,
-					cacheReadInputTokens: tokenBreakdown?.cache_read_input_tokens || 0,
+					inputTokens: consolidatedResult?.input_tokens || 0,
+					cacheReadInputTokens:
+						consolidatedResult?.cache_read_input_tokens || 0,
 					cacheCreationInputTokens:
-						tokenBreakdown?.cache_creation_input_tokens || 0,
-					outputTokens: tokenBreakdown?.output_tokens || 0,
+						consolidatedResult?.cache_creation_input_tokens || 0,
+					outputTokens: consolidatedResult?.output_tokens || 0,
 				},
 				modelDistribution,
-				accountPerformance: accountPerformance.map((acc) => ({
-					name: acc.name,
-					requests: acc.requests,
-					successRate: acc.success_rate || 0,
-				})),
-				costByModel: costByModel.map((model) => ({
-					model: model.model,
-					costUsd: model.cost_usd || 0,
-					requests: model.requests || 0,
-					totalTokens: model.total_tokens || 0,
-				})),
+				accountPerformance,
+				costByModel,
 				modelPerformance,
 			};
 

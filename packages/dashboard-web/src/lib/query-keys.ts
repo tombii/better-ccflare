@@ -16,8 +16,6 @@ export const queryKeys = {
 		] as const,
 	requests: (limit?: number) =>
 		[...queryKeys.all, "requests", { limit }] as const,
-	requestDetails: (id: string) =>
-		[...queryKeys.all, "requests", "detail", id] as const,
 	logs: () => [...queryKeys.all, "logs"] as const,
 	logHistory: () => [...queryKeys.all, "logs", "history"] as const,
 	defaultAgentModel: () =>

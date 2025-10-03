@@ -80,9 +80,13 @@ function serveDashboardFile(
 // Module-level server instance
 let serverInstance: ReturnType<typeof serve> | null = null;
 let stopRetentionJob: (() => void) | null = null;
+let stopOAuthCleanupJob: (() => void) | null = null;
 
 // Startup maintenance (one-shot): cleanup + compact
-function runStartupMaintenance(config: Config, dbOps: DatabaseOperations) {
+async function runStartupMaintenance(
+	config: Config,
+	dbOps: DatabaseOperations,
+) {
 	const log = new Logger("StartupMaintenance");
 	try {
 		const payloadDays = config.getDataRetentionDays();
@@ -96,6 +100,25 @@ function runStartupMaintenance(config: Config, dbOps: DatabaseOperations) {
 		);
 	} catch (err) {
 		log.error(`Startup cleanup error: ${err}`);
+	}
+	try {
+		// Clean up expired OAuth sessions
+		const removedSessions = dbOps.cleanupExpiredOAuthSessions();
+		if (removedSessions > 0) {
+			log.info(
+				`Startup cleanup removed ${removedSessions} expired OAuth sessions`,
+			);
+		}
+	} catch (err) {
+		log.error(`OAuth session cleanup error: ${err}`);
+	}
+	try {
+		// Prune old agent workspaces (not seen in 7 days)
+		const { agentRegistry } = await import("@better-ccflare/agents");
+		await agentRegistry.pruneOldWorkspaces();
+		log.info("Pruned old agent workspaces");
+	} catch (err) {
+		log.error(`Agent workspace pruning error: ${err}`);
 	}
 	try {
 		dbOps.compact();
@@ -156,8 +179,25 @@ export default function startServer(options?: {
 
 	const apiRouter = new APIRouter({ db, config, dbOps });
 
-	// Run startup maintenance once (cleanup + compact)
-	stopRetentionJob = runStartupMaintenance(config, dbOps);
+	// Run startup maintenance once (cleanup + compact) - fire and forget
+	runStartupMaintenance(config, dbOps).catch((err) => {
+		log.error("Startup maintenance failed:", err);
+	});
+	stopRetentionJob = () => {}; // No-op stopper
+
+	// Set up periodic OAuth session cleanup (every hour)
+	const oauthCleanupInterval = setInterval(() => {
+		try {
+			const removedSessions = dbOps.cleanupExpiredOAuthSessions();
+			if (removedSessions > 0) {
+				log.debug(`Cleaned up ${removedSessions} expired OAuth sessions`);
+			}
+		} catch (err) {
+			log.error(`OAuth session cleanup error: ${err}`);
+		}
+	}, TIME_CONSTANTS.HOUR);
+
+	stopOAuthCleanupJob = () => clearInterval(oauthCleanupInterval);
 
 	// Initialize load balancing strategy (will be created after runtime config)
 
@@ -321,6 +361,10 @@ async function handleGracefulShutdown(signal: string) {
 		if (stopRetentionJob) {
 			stopRetentionJob();
 			stopRetentionJob = null;
+		}
+		if (stopOAuthCleanupJob) {
+			stopOAuthCleanupJob();
+			stopOAuthCleanupJob = null;
 		}
 		usageCache.clear(); // Stop all usage polling
 		terminateUsageWorker();
