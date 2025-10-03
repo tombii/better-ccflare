@@ -2,6 +2,7 @@ import { parseArgs as nodeParseArgs } from "node:util";
 
 export interface ParsedArgs {
 	help?: boolean;
+	version?: boolean;
 	serve?: boolean;
 	port?: number;
 	logs?: boolean | number;
@@ -28,6 +29,7 @@ export function parseArgs(args: string[]): ParsedArgs {
 			args,
 			options: {
 				help: { type: "boolean", short: "h" },
+				version: { type: "boolean", short: "v" },
 				serve: { type: "boolean" },
 				port: { type: "string" },
 				logs: { type: "string" },
@@ -53,6 +55,7 @@ export function parseArgs(args: string[]): ParsedArgs {
 		const result: ParsedArgs = {};
 
 		if (values.help) result.help = true;
+		if (values.version) result.version = true;
 		if (values.serve) result.serve = true;
 		if (values.port) result.port = parseInt(values.port, 10);
 		if (values.logs !== undefined) {
