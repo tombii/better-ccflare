@@ -17,14 +17,20 @@ export function LogsTab() {
 	const [autoScroll, setAutoScroll] = useState(true);
 	const eventSourceRef = useRef<EventSource | null>(null);
 	const logsEndRef = useRef<HTMLDivElement>(null);
+	const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
 	const startStreaming = useCallback(() => {
 		eventSourceRef.current = api.streamLogs((log: LogEntry) => {
 			setLogs((prev) => [...prev.slice(-999), log]); // Keep last 1000 logs
 			// Auto-scroll to bottom when new log arrives
 			if (autoScroll && logsEndRef.current) {
-				setTimeout(() => {
+				// Clear any pending scroll timeout to prevent accumulation
+				if (scrollTimeoutRef.current) {
+					clearTimeout(scrollTimeoutRef.current);
+				}
+				scrollTimeoutRef.current = setTimeout(() => {
 					logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
+					scrollTimeoutRef.current = null;
 				}, 0);
 			}
 		});
@@ -34,6 +40,11 @@ export function LogsTab() {
 		if (eventSourceRef.current) {
 			eventSourceRef.current.close();
 			eventSourceRef.current = null;
+		}
+		// Clear any pending scroll timeout
+		if (scrollTimeoutRef.current) {
+			clearTimeout(scrollTimeoutRef.current);
+			scrollTimeoutRef.current = null;
 		}
 	}, []);
 
@@ -45,8 +56,13 @@ export function LogsTab() {
 			setLogs(history);
 			// Auto-scroll to bottom after loading history
 			if (autoScroll && logsEndRef.current) {
-				setTimeout(() => {
+				// Clear any pending scroll timeout
+				if (scrollTimeoutRef.current) {
+					clearTimeout(scrollTimeoutRef.current);
+				}
+				scrollTimeoutRef.current = setTimeout(() => {
 					logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
+					scrollTimeoutRef.current = null;
 				}, 0);
 			}
 		}
@@ -59,6 +75,11 @@ export function LogsTab() {
 
 		return () => {
 			stopStreaming();
+			// Ensure scroll timeout is cleared on unmount
+			if (scrollTimeoutRef.current) {
+				clearTimeout(scrollTimeoutRef.current);
+				scrollTimeoutRef.current = null;
+			}
 		};
 	}, [paused, loading, startStreaming, stopStreaming]);
 

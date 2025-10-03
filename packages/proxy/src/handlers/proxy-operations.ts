@@ -127,7 +127,7 @@ export async function proxyWithAccount(
 		);
 
 		// Process response and check for rate limit using account-specific provider
-		const isRateLimited = processProxyResponse(
+		const isRateLimited = await processProxyResponse(
 			response,
 			account,
 			{

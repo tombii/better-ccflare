@@ -5,6 +5,7 @@ export interface OAuthSession {
 	verifier: string;
 	mode: "console" | "max";
 	tier: number;
+	customEndpoint?: string;
 }
 
 export class OAuthRepository extends BaseRepository<OAuthSession> {
@@ -14,6 +15,7 @@ export class OAuthRepository extends BaseRepository<OAuthSession> {
 		verifier: string,
 		mode: "console" | "max",
 		tier: number,
+		customEndpoint?: string,
 		ttlMinutes = 10,
 	): void {
 		const now = Date.now();
@@ -21,10 +23,19 @@ export class OAuthRepository extends BaseRepository<OAuthSession> {
 
 		this.run(
 			`
-			INSERT INTO oauth_sessions (id, account_name, verifier, mode, tier, created_at, expires_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?)
+			INSERT INTO oauth_sessions (id, account_name, verifier, mode, tier, custom_endpoint, created_at, expires_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		`,
-			[sessionId, accountName, verifier, mode, tier, now, expiresAt],
+			[
+				sessionId,
+				accountName,
+				verifier,
+				mode,
+				tier,
+				customEndpoint || null,
+				now,
+				expiresAt,
+			],
 		);
 	}
 
@@ -34,11 +45,12 @@ export class OAuthRepository extends BaseRepository<OAuthSession> {
 			verifier: string;
 			mode: "console" | "max";
 			tier: number;
+			custom_endpoint: string | null;
 			expires_at: number;
 		}>(
 			`
-			SELECT account_name, verifier, mode, tier, expires_at 
-			FROM oauth_sessions 
+			SELECT account_name, verifier, mode, tier, custom_endpoint, expires_at
+			FROM oauth_sessions
 			WHERE id = ? AND expires_at > ?
 		`,
 			[sessionId, Date.now()],
@@ -51,6 +63,7 @@ export class OAuthRepository extends BaseRepository<OAuthSession> {
 			verifier: row.verifier,
 			mode: row.mode,
 			tier: row.tier,
+			customEndpoint: row.custom_endpoint || undefined,
 		};
 	}
 

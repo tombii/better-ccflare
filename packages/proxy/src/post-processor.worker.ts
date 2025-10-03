@@ -50,6 +50,9 @@ interface RequestState {
 const log = new Logger("PostProcessor");
 const requests = new Map<string, RequestState>();
 
+// Limit to prevent unbounded growth
+const MAX_REQUESTS_MAP_SIZE = 10000;
+
 // Initialize tiktoken encoder (cl100k_base is used for Claude models)
 const tokenEncoder = get_encoding("cl100k_base");
 
@@ -280,6 +283,19 @@ function processStreamChunk(chunk: Uint8Array, state: RequestState): void {
 async function handleStart(msg: StartMessage): Promise<void> {
 	// Check if we should skip logging this request
 	const shouldSkip = !shouldLogRequest(msg.path, msg.responseStatus);
+
+	// Limit requests map size to prevent memory leak
+	if (requests.size >= MAX_REQUESTS_MAP_SIZE) {
+		log.warn(
+			`Requests map at capacity (${MAX_REQUESTS_MAP_SIZE}), cleaning up oldest entries`,
+		);
+		// Remove oldest 10% of entries
+		const toRemove = Math.floor(MAX_REQUESTS_MAP_SIZE * 0.1);
+		const entries = Array.from(requests.keys()).slice(0, toRemove);
+		for (const key of entries) {
+			requests.delete(key);
+		}
+	}
 
 	// Create request state
 	const state: RequestState = {
@@ -590,6 +606,10 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 
 async function handleShutdown(): Promise<void> {
 	log.info("Worker shutting down, flushing async writer...");
+
+	// Stop cleanup interval
+	stopCleanupInterval();
+
 	await asyncWriter.dispose();
 	dbOps.close();
 	// Worker will be terminated by main thread
@@ -597,22 +617,38 @@ async function handleShutdown(): Promise<void> {
 
 // Periodic cleanup of stale requests (safety net for orphaned requests)
 // This should rarely trigger as the main app handles timeouts
-setInterval(() => {
-	const now = Date.now();
-	for (const [id, state] of requests) {
-		if (now - state.lastActivity > TIMEOUT_MS) {
-			log.warn(
-				`Request ${id} appears orphaned (no activity for ${TIMEOUT_MS}ms), cleaning up...`,
-			);
-			handleEnd({
-				type: "end",
-				requestId: id,
-				success: false,
-				error: "Request orphaned - no activity",
-			});
-		}
+let cleanupInterval: Timer | null = null;
+
+const startCleanupInterval = () => {
+	if (!cleanupInterval) {
+		cleanupInterval = setInterval(() => {
+			const now = Date.now();
+			for (const [id, state] of requests) {
+				if (now - state.lastActivity > TIMEOUT_MS) {
+					log.warn(
+						`Request ${id} appears orphaned (no activity for ${TIMEOUT_MS}ms), cleaning up...`,
+					);
+					handleEnd({
+						type: "end",
+						requestId: id,
+						success: false,
+						error: "Request orphaned - no activity",
+					});
+				}
+			}
+		}, TIMEOUT_MS); // Check every TIMEOUT_MS
 	}
-}, TIMEOUT_MS); // Check every TIMEOUT_MS
+};
+
+const stopCleanupInterval = () => {
+	if (cleanupInterval) {
+		clearInterval(cleanupInterval);
+		cleanupInterval = null;
+	}
+};
+
+// Start cleanup interval
+startCleanupInterval();
 
 // Message handler
 self.onmessage = async (event: MessageEvent<WorkerMessage>) => {

@@ -1,14 +1,16 @@
 import type { AgentUpdatePayload } from "@better-ccflare/types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
-import { REFRESH_INTERVALS } from "../constants";
 import { queryKeys } from "../lib/query-keys";
 
 export const useAccounts = () => {
 	return useQuery({
 		queryKey: queryKeys.accounts(),
 		queryFn: () => api.getAccounts(),
-		refetchInterval: REFRESH_INTERVALS.fast, // Refresh every 10 seconds for rate limit updates
+		staleTime: 20000, // Consider data fresh for 20 seconds
+		refetchInterval: 60000, // Refresh every minute for usage data
+		refetchIntervalInBackground: false, // Don't refresh when tab is not focused
+		gcTime: 5 * 60 * 1000, // Keep in cache for 5 minutes
 	});
 };
 
@@ -16,8 +18,10 @@ export const useAgents = () => {
 	return useQuery({
 		queryKey: queryKeys.agents(),
 		queryFn: () => api.getAgents(),
-		refetchInterval: 30000, // Poll every 30 seconds for new agents
-		refetchIntervalInBackground: true, // Continue polling when tab is not focused
+		staleTime: 60000, // Consider data fresh for 1 minute
+		refetchInterval: 60000, // Increase from 30 to 60 seconds
+		refetchIntervalInBackground: false, // Don't refresh when tab is not focused
+		gcTime: 10 * 60 * 1000, // Keep in cache for 10 minutes
 	});
 };
 
@@ -25,7 +29,10 @@ export const useStats = (refetchInterval?: number) => {
 	return useQuery({
 		queryKey: queryKeys.stats(),
 		queryFn: () => api.getStats(),
-		refetchInterval: refetchInterval ?? REFRESH_INTERVALS.fast,
+		staleTime: 15000, // Consider data fresh for 15 seconds
+		refetchInterval: refetchInterval ?? 30000, // Default to 30 seconds instead of 10
+		refetchIntervalInBackground: false, // Don't refresh when tab is not focused
+		gcTime: 5 * 60 * 1000, // Keep in cache for 5 minutes
 	});
 };
 
@@ -43,10 +50,15 @@ export const useAnalytics = (
 		queryKey: queryKeys.analytics(timeRange, filters, viewMode, modelBreakdown),
 		queryFn: () =>
 			api.getAnalytics(timeRange, filters, viewMode, modelBreakdown),
+		staleTime: 45000, // Consider data fresh for 45 seconds
+		refetchInterval: 60000, // Refresh every minute
+		refetchIntervalInBackground: false, // Don't refresh when tab is not focused
+		gcTime: 15 * 60 * 1000, // Keep in cache for 15 minutes
+		enabled: !!timeRange, // Only fetch if timeRange is provided
 	});
 };
 
-export const useRequests = (limit: number, refetchInterval?: number) => {
+export const useRequests = (limit: number, _refetchInterval?: number) => {
 	return useQuery({
 		queryKey: queryKeys.requests(limit),
 		queryFn: async () => {
@@ -54,20 +66,17 @@ export const useRequests = (limit: number, refetchInterval?: number) => {
 				api.getRequestsDetail(limit),
 				api.getRequestsSummary(limit),
 			]);
-			return { requests: requestsDetail, detailsMap: requestsSummary };
+			// Convert array to Map for detailsMap
+			const detailsMap = new Map(
+				requestsSummary.map((summary) => [summary.id, summary]),
+			);
+			return { requests: requestsDetail, detailsMap };
 		},
-		refetchInterval: refetchInterval ?? REFRESH_INTERVALS.fast,
-	});
-};
-
-export const useRequestDetails = (id: string) => {
-	return useQuery({
-		queryKey: queryKeys.requestDetails(id),
-		queryFn: () =>
-			api
-				.getRequestsDetail(1)
-				.then((requests) => requests.find((r) => r.id === id)),
-		enabled: !!id,
+		staleTime: 5000, // Consider data fresh for 5 seconds
+		refetchInterval: 10000, // Refetch every 10 seconds for updates
+		refetchIntervalInBackground: false, // Don't refresh when tab is not focused
+		gcTime: 5 * 60 * 1000, // Keep in cache for 5 minutes
+		// Remove initialData - let it fetch on first mount
 	});
 };
 
@@ -136,8 +145,10 @@ export const useDefaultAgentModel = () => {
 	return useQuery({
 		queryKey: queryKeys.defaultAgentModel(),
 		queryFn: () => api.getDefaultAgentModel(),
-		refetchInterval: REFRESH_INTERVALS.slow, // Poll for config changes
-		refetchIntervalInBackground: true, // Continue polling when tab is not focused
+		staleTime: 2 * 60 * 1000, // Consider data fresh for 2 minutes
+		refetchInterval: 5 * 60 * 1000, // Poll every 5 minutes instead of 1
+		refetchIntervalInBackground: false, // Don't refresh when tab is not focused
+		gcTime: 30 * 60 * 1000, // Keep in cache for 30 minutes
 	});
 };
 

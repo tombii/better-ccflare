@@ -60,6 +60,7 @@ class API extends HttpClient {
 		apiKey?: string;
 		tier: number;
 		priority: number;
+		customEndpoint?: string;
 	}): Promise<{ authUrl: string; sessionId: string }> {
 		try {
 			return await this.post<{ authUrl: string; sessionId: string }>(
@@ -96,6 +97,7 @@ class API extends HttpClient {
 		apiKey: string;
 		tier: number;
 		priority: number;
+		customEndpoint?: string;
 	}): Promise<{ message: string; account: Account }> {
 		try {
 			return await this.post<{ message: string; account: Account }>(
@@ -191,6 +193,22 @@ class API extends HttpClient {
 		return this.get<AnalyticsResponse>(`/api/analytics?${params}`);
 	}
 
+	// Batch analytics requests for improved performance
+	async getBatchAnalytics(
+		requests: Array<{
+			range?: string;
+			filters?: {
+				accounts?: string[];
+				models?: string[];
+				status?: "all" | "success" | "error";
+			};
+			mode?: "normal" | "cumulative";
+			modelBreakdown?: boolean;
+		}>,
+	): Promise<AnalyticsResponse[]> {
+		return this.post<AnalyticsResponse[]>("/api/analytics/batch", { requests });
+	}
+
 	async pauseAccount(accountId: string): Promise<void> {
 		try {
 			await this.post(`/api/accounts/${accountId}/pause`);
@@ -253,6 +271,22 @@ class API extends HttpClient {
 		try {
 			await this.post(`/api/accounts/${accountId}/auto-fallback`, {
 				enabled: enabled ? 1 : 0,
+			});
+		} catch (error) {
+			if (error instanceof HttpError) {
+				throw new Error(error.message);
+			}
+			throw error;
+		}
+	}
+
+	async updateAccountCustomEndpoint(
+		accountId: string,
+		customEndpoint: string | null,
+	): Promise<void> {
+		try {
+			await this.post(`/api/accounts/${accountId}/custom-endpoint`, {
+				customEndpoint,
 			});
 		} catch (error) {
 			if (error instanceof HttpError) {

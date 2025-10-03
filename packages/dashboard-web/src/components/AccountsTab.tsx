@@ -5,6 +5,7 @@ import { useAccounts, useRenameAccount } from "../hooks/queries";
 import { useApiError } from "../hooks/useApiError";
 import {
 	AccountAddForm,
+	AccountCustomEndpointDialog,
 	AccountList,
 	AccountPriorityDialog,
 	DeleteConfirmationDialog,
@@ -53,6 +54,13 @@ export function AccountsTab() {
 		isOpen: false,
 		account: null,
 	});
+	const [customEndpointDialog, setCustomEndpointDialog] = useState<{
+		isOpen: boolean;
+		account: Account | null;
+	}>({
+		isOpen: false,
+		account: null,
+	});
 	const [actionError, setActionError] = useState<string | null>(null);
 
 	const handleAddAccount = async (params: {
@@ -60,6 +68,7 @@ export function AccountsTab() {
 		mode: "max" | "console" | "zai";
 		tier: number;
 		priority: number;
+		customEndpoint?: string;
 	}) => {
 		try {
 			const result = await api.initAddAccount(params);
@@ -91,6 +100,7 @@ export function AccountsTab() {
 		apiKey: string;
 		tier: number;
 		priority: number;
+		customEndpoint?: string;
 	}) => {
 		try {
 			await api.addZaiAccount(params);
@@ -186,6 +196,23 @@ export function AccountsTab() {
 		}
 	};
 
+	const handleCustomEndpointChange = (account: Account) => {
+		setCustomEndpointDialog({ isOpen: true, account });
+	};
+
+	const handleUpdateCustomEndpoint = async (
+		accountId: string,
+		customEndpoint: string | null,
+	) => {
+		try {
+			await api.updateAccountCustomEndpoint(accountId, customEndpoint);
+			await loadAccounts();
+		} catch (err) {
+			setActionError(formatError(err));
+			throw err;
+		}
+	};
+
 	if (loading) {
 		return (
 			<Card>
@@ -250,6 +277,7 @@ export function AccountsTab() {
 						onRename={handleRename}
 						onPriorityChange={handlePriorityChange}
 						onAutoFallbackToggle={handleAutoFallbackToggle}
+						onCustomEndpointChange={handleCustomEndpointChange}
 					/>
 				</CardContent>
 			</Card>
@@ -297,6 +325,20 @@ export function AccountsTab() {
 						})
 					}
 					onUpdatePriority={handleUpdatePriority}
+				/>
+			)}
+
+			{customEndpointDialog.isOpen && customEndpointDialog.account && (
+				<AccountCustomEndpointDialog
+					isOpen={customEndpointDialog.isOpen}
+					account={customEndpointDialog.account}
+					onOpenChange={(open) =>
+						setCustomEndpointDialog({
+							isOpen: open,
+							account: open ? customEndpointDialog.account : null,
+						})
+					}
+					onUpdateEndpoint={handleUpdateCustomEndpoint}
 				/>
 			)}
 		</div>

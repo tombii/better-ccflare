@@ -1,4 +1,5 @@
 import {
+	registerDisposable,
 	ServiceUnavailableError,
 	TokenRefreshError,
 } from "@better-ccflare/core";
@@ -13,8 +14,51 @@ import { ERROR_MESSAGES, type ProxyContext } from "./proxy-types";
 
 const log = new Logger("TokenManager");
 
-// Track refresh failures for backoff
+// Track refresh failures for backoff with TTL cleanup
 const refreshFailures = new Map<string, number>();
+const FAILURE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+// Cleanup old failures periodically
+let cleanupInterval: Timer | null = null;
+
+export const startTokenCleanupInterval = () => {
+	if (!cleanupInterval) {
+		cleanupInterval = setInterval(() => {
+			const now = Date.now();
+			const toDelete: string[] = [];
+
+			for (const [accountId, failureTime] of refreshFailures.entries()) {
+				if (now - failureTime > FAILURE_TTL_MS) {
+					toDelete.push(accountId);
+				}
+			}
+
+			toDelete.forEach((accountId) => refreshFailures.delete(accountId));
+
+			if (toDelete.length > 0) {
+				log.debug(`Cleaned up ${toDelete.length} expired failure records`);
+			}
+		}, FAILURE_TTL_MS);
+	}
+};
+
+export const stopTokenCleanupInterval = () => {
+	if (cleanupInterval) {
+		clearInterval(cleanupInterval);
+		cleanupInterval = null;
+	}
+};
+
+// Start cleanup interval and register for shutdown
+startTokenCleanupInterval();
+
+// Register cleanup as disposable for proper shutdown
+registerDisposable({
+	dispose: () => {
+		stopTokenCleanupInterval();
+		refreshFailures.clear();
+	},
+});
 
 /**
  * Safely refreshes an access token with deduplication

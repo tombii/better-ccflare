@@ -14,10 +14,11 @@ https://github.com/user-attachments/assets/c859872f-ca5e-4f8b-b6a0-7cc7461fe62a
 
 - **🚀 Zero Rate Limit Errors** - Automatically distribute requests across multiple accounts
 - **🤖 Supports z.ai coder plan** - Setup Claude and z.ai coder accounts and prioritize in which order they are used
+- **🔗 Custom API Endpoints** - Configure custom endpoints for Anthropic and Zai accounts for enterprise deployments
 - **🔄 Smart Auto-Fallback** - Automatically switch back to preferred accounts when their rate limits reset
-- **📊 Request-Level Analytics** - Track latency, token usage, and costs in real-time
+- **📊 Request-Level Analytics** - Track latency, token usage, and costs in real-time with optimized batch processing
 - **🔍 Deep Debugging** - Full request/response logging and error traces
-- **⚡ <10ms Overhead** - Minimal performance impact on your API calls
+- **⚡ <10ms Overhead** - Minimal performance impact with lazy loading and request deduplication
 - **💸 Free & Open Source** - Run it yourself, modify it, own your infrastructure
 
 ## Quick Start
@@ -42,6 +43,11 @@ better-ccflare --add-account secondary --mode max --tier 20 --priority 10
 curl -X POST http://localhost:8080/api/accounts/$(curl -s http://localhost:8080/api/accounts | jq -r '.[0].id')/auto-fallback \
   -H "Content-Type: application/json" \
   -d '{"enabled": 1}'
+
+# Configure custom endpoint for an account (via API)
+curl -X POST http://localhost:8080/api/accounts/$(curl -s http://localhost:8080/api/accounts | jq -r '.[0].id')/custom-endpoint \
+  -H "Content-Type: application/json" \
+  -d '{"customEndpoint": "https://your-custom-api.anthropic.com"}'
 ```
 
 ## Features
@@ -51,10 +57,12 @@ curl -X POST http://localhost:8080/api/accounts/$(curl -s http://localhost:8080/
 - **Auto-fallback** - Automatically switch back to higher priority accounts when their usage windows reset
 
 ### 📈 Real-Time Analytics
-- Token usage tracking per request
-- Response time monitoring
+- Token usage tracking per request with optimized batch processing
+- Response time monitoring with intelligent caching
 - Rate limit detection and warnings
 - Cost estimation and budgeting
+- Request deduplication for improved performance
+- Lazy-loaded analytics components for faster initial load
 
 ### 🛠️ Developer Tools
 - Interactive TUI (`bun run better-ccflare`)
@@ -67,6 +75,8 @@ curl -X POST http://localhost:8080/api/accounts/$(curl -s http://localhost:8080/
 - OAuth token refresh handling
 - SQLite database for persistence
 - Configurable retry logic
+- Custom endpoint support for enterprise deployments
+- Enhanced performance with request batching and caching
 
 ## Documentation
 
@@ -123,4 +133,3 @@ MIT - See [LICENSE](LICENSE) for details
 [![Mentioned in Awesome Claude Code](https://awesome.re/mentioned-badge-flat.svg)](https://github.com/hesreallyhim/awesome-claude-code)
 
 [![Mentioned in Awesome Claude Code](https://awesome.re/mentioned-badge.svg)](https://github.com/hesreallyhim/awesome-claude-code)
-# Pre-push hook test

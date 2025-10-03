@@ -8,12 +8,13 @@ const log = new Logger("LogsHandler");
  * Create a logs stream handler using Server-Sent Events
  */
 export function createLogsStreamHandler() {
-	return (): Response => {
+	return (req: Request): Response => {
 		// Use TransformStream for better Bun compatibility
 		const { readable, writable } = new TransformStream();
 		const writer = writable.getWriter();
 		const encoder = new TextEncoder();
 		let closed = false;
+		let handleLogEvent: ((event: LogEvent) => Promise<void>) | null = null;
 
 		// Send initial connection message
 		(async () => {
@@ -26,7 +27,7 @@ export function createLogsStreamHandler() {
 		})();
 
 		// Listen for log events
-		const handleLogEvent = async (event: LogEvent) => {
+		handleLogEvent = async (event: LogEvent) => {
 			if (closed) return;
 
 			try {
@@ -35,7 +36,10 @@ export function createLogsStreamHandler() {
 			} catch (_error) {
 				// Stream closed
 				closed = true;
-				logBus.off("log", handleLogEvent);
+				if (handleLogEvent) {
+					logBus.off("log", handleLogEvent);
+					handleLogEvent = null;
+				}
 				try {
 					await writer.close();
 				} catch {}
@@ -45,15 +49,19 @@ export function createLogsStreamHandler() {
 		// Subscribe to log events
 		logBus.on("log", handleLogEvent);
 
-		// Clean up on request abort
-		setTimeout(() => {
-			// ReadableStream doesn't have a standard 'closed' property
-			// This is a workaround for stream closure detection
+		// Clean up on abort signal
+		req.signal?.addEventListener("abort", () => {
 			if (!closed) {
-				// Just rely on the error handling in handleLogEvent
-				// to detect when the stream is closed
+				closed = true;
+				if (handleLogEvent) {
+					logBus.off("log", handleLogEvent);
+					handleLogEvent = null;
+				}
+				try {
+					writer.close();
+				} catch {}
 			}
-		}, 0);
+		});
 
 		return sseResponse(readable);
 	};

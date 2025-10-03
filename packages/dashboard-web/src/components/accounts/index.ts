@@ -1,4 +1,5 @@
 export { AccountAddForm } from "./AccountAddForm";
+export { AccountCustomEndpointDialog } from "./AccountCustomEndpointDialog";
 export { AccountList } from "./AccountList";
 export { AccountListItem } from "./AccountListItem";
 export { AccountPriorityDialog } from "./AccountPriorityDialog";

@@ -20,7 +20,10 @@ function isRetryableError(error: unknown): boolean {
 	if (!error) return false;
 
 	const errorMessage = error instanceof Error ? error.message : String(error);
-	const errorCode = (error as any)?.code;
+	const errorCode =
+		typeof error === "object" && error !== null && "code" in error
+			? error.code
+			: undefined;
 
 	return RETRYABLE_SQLITE_ERRORS.some(
 		(retryableError) =>

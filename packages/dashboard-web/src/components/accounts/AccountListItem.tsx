@@ -3,6 +3,7 @@ import {
 	AlertCircle,
 	CheckCircle,
 	Edit2,
+	Globe,
 	Pause,
 	Play,
 	Trash2,
@@ -21,6 +22,7 @@ interface AccountListItemProps {
 	onRename: (account: Account) => void;
 	onPriorityChange: (account: Account) => void;
 	onAutoFallbackToggle: (account: Account) => void;
+	onCustomEndpointChange?: (account: Account) => void;
 }
 
 export function AccountListItem({
@@ -31,6 +33,7 @@ export function AccountListItem({
 	onRename,
 	onPriorityChange,
 	onAutoFallbackToggle,
+	onCustomEndpointChange,
 }: AccountListItemProps) {
 	const presenter = new AccountPresenter(account);
 
@@ -107,6 +110,24 @@ export function AccountListItem({
 					>
 						<Zap className="h-4 w-4" />
 					</Button>
+					{onCustomEndpointChange && (
+						<Button
+							variant="ghost"
+							size="sm"
+							onClick={() => onCustomEndpointChange(account)}
+							title={
+								account.customEndpoint
+									? `Custom endpoint: ${account.customEndpoint}`
+									: "Set custom endpoint"
+							}
+						>
+							<Globe
+								className={`h-4 w-4 ${
+									account.customEndpoint ? "text-primary" : ""
+								}`}
+							/>
+						</Button>
+					)}
 					<Button
 						variant="ghost"
 						size="sm"

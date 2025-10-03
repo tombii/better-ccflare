@@ -55,9 +55,10 @@ export class HttpClient {
 		let lastError: Error | null = null;
 
 		for (let attempt = 0; attempt <= retries; attempt++) {
+			let timeoutId: Timer | undefined;
 			try {
 				const controller = new AbortController();
-				const timeoutId = setTimeout(() => controller.abort(), timeout);
+				timeoutId = setTimeout(() => controller.abort(), timeout);
 
 				const response = await fetch(fullUrl, {
 					...fetchOptions,
@@ -66,6 +67,7 @@ export class HttpClient {
 				});
 
 				clearTimeout(timeoutId);
+				timeoutId = undefined;
 
 				if (!response.ok) {
 					const error = await parseHttpError(response);
@@ -79,6 +81,11 @@ export class HttpClient {
 
 				return (await response.text()) as T;
 			} catch (error) {
+				// Ensure timeout is cleared on error
+				if (timeoutId !== undefined) {
+					clearTimeout(timeoutId);
+				}
+
 				lastError = error as Error;
 
 				// Don't retry on client errors (4xx)

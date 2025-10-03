@@ -382,6 +382,7 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		verifier: string,
 		mode: "console" | "max",
 		tier: number,
+		customEndpoint?: string,
 		ttlMinutes = 10,
 	): void {
 		this.oauth.createSession(
@@ -390,6 +391,7 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 			verifier,
 			mode,
 			tier,
+			customEndpoint,
 			ttlMinutes,
 		);
 	}
@@ -399,6 +401,7 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		verifier: string;
 		mode: "console" | "max";
 		tier: number;
+		customEndpoint?: string;
 	} | null {
 		return this.oauth.getSession(sessionId);
 	}

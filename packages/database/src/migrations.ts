@@ -203,6 +203,29 @@ export function runMigrations(db: Database): void {
 		log.info("Added custom_endpoint column to accounts table");
 	}
 
+	// Check columns in oauth_sessions table
+	const oauthSessionsInfo = db
+		.prepare("PRAGMA table_info(oauth_sessions)")
+		.all() as Array<{
+		cid: number;
+		name: string;
+		type: string;
+		notnull: number;
+		// biome-ignore lint/suspicious/noExplicitAny: SQLite pragma can return various default value types
+		dflt_value: any;
+		pk: number;
+	}>;
+
+	const oauthSessionsColumnNames = oauthSessionsInfo.map((col) => col.name);
+
+	// Add custom_endpoint column to oauth_sessions if it doesn't exist
+	if (!oauthSessionsColumnNames.includes("custom_endpoint")) {
+		db.prepare(
+			"ALTER TABLE oauth_sessions ADD COLUMN custom_endpoint TEXT",
+		).run();
+		log.info("Added custom_endpoint column to oauth_sessions table");
+	}
+
 	// Check columns in requests table
 	const requestsInfo = db
 		.prepare("PRAGMA table_info(requests)")

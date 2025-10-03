@@ -73,9 +73,9 @@ export function parseRequestMessages(body: string | null): MessageData[] {
 									input: item.input,
 								});
 							} else if (item.type === "tool_result") {
-								const resultContent = Array.isArray((item as any).content)
+								const resultContent = Array.isArray(item.content)
 									? (
-											(item as any).content as Array<{
+											item.content as Array<{
 												type: string;
 												text?: string;
 											}>
@@ -84,20 +84,20 @@ export function parseRequestMessages(body: string | null): MessageData[] {
 												normalizeText(typeof c.text === "string" ? c.text : ""),
 											)
 											.join("")
-									: typeof (item as any).content === "string"
-										? normalizeText((item as any).content as string)
+									: typeof item.content === "string"
+										? normalizeText(item.content as string)
 										: "";
 								message.toolResults?.push({
-									tool_use_id: (item as any).tool_use_id || "",
+									tool_use_id: item.tool_use_id || "",
 									content: resultContent,
 								});
 								message.contentBlocks?.push({
 									type: ContentBlockType.ToolResult,
-									tool_use_id: (item as any).tool_use_id,
+									tool_use_id: item.tool_use_id,
 									content: resultContent,
 								});
 							} else if (item.type === "thinking") {
-								const thinking = normalizeText((item as any).thinking || "");
+								const thinking = normalizeText(item.thinking || "");
 								if (thinking) {
 									message.contentBlocks?.push({
 										type: ContentBlockType.Thinking,
@@ -251,7 +251,7 @@ export function parseAssistantMessage(body: string | null): MessageData | null {
 									...item,
 								});
 							} else if (item.type === "thinking") {
-								const thinking = normalizeText((item as any).thinking || "");
+								const thinking = normalizeText(item.thinking || "");
 								if (thinking) {
 									message.contentBlocks?.push({
 										type: ContentBlockType.Thinking,
@@ -259,9 +259,9 @@ export function parseAssistantMessage(body: string | null): MessageData | null {
 									});
 								}
 							} else if (item.type === "tool_result") {
-								const resultContent = Array.isArray((item as any).content)
+								const resultContent = Array.isArray(item.content)
 									? (
-											(item as any).content as Array<{
+											item.content as Array<{
 												type: string;
 												text?: string;
 											}>
@@ -270,16 +270,16 @@ export function parseAssistantMessage(body: string | null): MessageData | null {
 												normalizeText(typeof c.text === "string" ? c.text : ""),
 											)
 											.join("")
-									: typeof (item as any).content === "string"
-										? normalizeText((item as any).content as string)
+									: typeof item.content === "string"
+										? normalizeText(item.content as string)
 										: "";
 								message.toolResults?.push({
-									tool_use_id: (item as any).tool_use_id || "",
+									tool_use_id: item.tool_use_id || "",
 									content: resultContent,
 								});
 								message.contentBlocks?.push({
 									type: ContentBlockType.ToolResult,
-									tool_use_id: (item as any).tool_use_id,
+									tool_use_id: item.tool_use_id,
 									content: resultContent,
 								});
 							}

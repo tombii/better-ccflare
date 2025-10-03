@@ -100,8 +100,14 @@ class UsageCache {
 	 * Start polling for an account's usage data
 	 */
 	startPolling(accountId: string, accessToken: string, intervalMs?: number) {
-		// Stop existing polling if any
-		this.stopPolling(accountId);
+		// Stop existing polling if any to prevent leaks
+		const existing = this.polling.get(accountId);
+		if (existing) {
+			clearInterval(existing);
+			log.warn(
+				`Clearing existing polling interval for account ${accountId} before starting new one`,
+			);
+		}
 
 		// Immediate fetch
 		this.fetchAndCache(accountId, accessToken);
