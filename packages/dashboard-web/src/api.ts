@@ -280,6 +280,22 @@ class API extends HttpClient {
 		}
 	}
 
+	async updateAccountAutoRefresh(
+		accountId: string,
+		enabled: boolean,
+	): Promise<void> {
+		try {
+			await this.post(`/api/accounts/${accountId}/auto-refresh`, {
+				enabled: enabled ? 1 : 0,
+			});
+		} catch (error) {
+			if (error instanceof HttpError) {
+				throw new Error(error.message);
+			}
+			throw error;
+		}
+	}
+
 	async updateAccountCustomEndpoint(
 		accountId: string,
 		customEndpoint: string | null,

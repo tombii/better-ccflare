@@ -55,6 +55,7 @@ export function createAccountsListHandler(db: Database) {
 					COALESCE(paused, 0) as paused,
 					COALESCE(priority, 0) as priority,
 					COALESCE(auto_fallback_enabled, 0) as auto_fallback_enabled,
+					COALESCE(auto_refresh_enabled, 0) as auto_refresh_enabled,
 					custom_endpoint,
 					CASE
 						WHEN expires_at > ?1 THEN 1
@@ -95,6 +96,7 @@ export function createAccountsListHandler(db: Database) {
 			rate_limited: 0 | 1;
 			session_info: string | null;
 			auto_fallback_enabled: 0 | 1;
+			auto_refresh_enabled: 0 | 1;
 			custom_endpoint: string | null;
 		}>;
 
@@ -154,6 +156,7 @@ export function createAccountsListHandler(db: Database) {
 				rateLimitRemaining: account.rate_limit_remaining,
 				sessionInfo: account.session_info || "",
 				autoFallbackEnabled: account.auto_fallback_enabled === 1,
+				autoRefreshEnabled: account.auto_refresh_enabled === 1,
 				customEndpoint: account.custom_endpoint,
 				usageUtilization,
 				usageWindow,
@@ -755,6 +758,67 @@ export function createAccountAutoFallbackHandler(dbOps: DatabaseOperations) {
 				error instanceof Error
 					? error
 					: new Error("Failed to toggle auto-fallback"),
+			);
+		}
+	};
+}
+
+/**
+ * Create an account auto-refresh toggle handler
+ */
+export function createAccountAutoRefreshHandler(dbOps: DatabaseOperations) {
+	return async (req: Request, accountId: string): Promise<Response> => {
+		try {
+			const body = await req.json();
+
+			// Validate enabled parameter
+			const enabled = validateNumber(body.enabled, "enabled", {
+				required: true,
+				allowedValues: [0, 1] as const,
+			});
+
+			if (enabled === undefined) {
+				return errorResponse(BadRequest("Enabled field is required (0 or 1)"));
+			}
+
+			// Check if account exists
+			const db = dbOps.getDatabase();
+			const account = db
+				.query<{ name: string; provider: string }, [string]>(
+					"SELECT name, provider FROM accounts WHERE id = ?",
+				)
+				.get(accountId);
+
+			if (!account) {
+				return errorResponse(NotFound("Account not found"));
+			}
+
+			// Check if account is Anthropic provider (only Anthropic accounts have rate limit windows)
+			if (account.provider !== "anthropic") {
+				return errorResponse(
+					BadRequest("Auto-refresh is only available for Anthropic accounts"),
+				);
+			}
+
+			// Update auto-refresh setting
+			db.run("UPDATE accounts SET auto_refresh_enabled = ? WHERE id = ?", [
+				enabled,
+				accountId,
+			]);
+
+			const action = enabled === 1 ? "enabled" : "disabled";
+
+			return jsonResponse({
+				success: true,
+				message: `Auto-refresh ${action} for account '${account.name}'`,
+				autoRefreshEnabled: enabled === 1,
+			});
+		} catch (error) {
+			log.error("Account auto-refresh toggle error:", error);
+			return errorResponse(
+				error instanceof Error
+					? error
+					: new Error("Failed to toggle auto-refresh"),
 			);
 		}
 	};

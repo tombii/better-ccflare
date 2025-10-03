@@ -203,6 +203,14 @@ export function runMigrations(db: Database): void {
 		log.info("Added custom_endpoint column to accounts table");
 	}
 
+	// Add auto_refresh_enabled column if it doesn't exist
+	if (!accountsColumnNames.includes("auto_refresh_enabled")) {
+		db.prepare(
+			"ALTER TABLE accounts ADD COLUMN auto_refresh_enabled INTEGER DEFAULT 0",
+		).run();
+		log.info("Added auto_refresh_enabled column to accounts table");
+	}
+
 	// Check columns in oauth_sessions table
 	const oauthSessionsInfo = db
 		.prepare("PRAGMA table_info(oauth_sessions)")

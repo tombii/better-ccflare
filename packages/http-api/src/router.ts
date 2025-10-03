@@ -2,6 +2,7 @@ import { validateNumber } from "@better-ccflare/core";
 import {
 	createAccountAddHandler,
 	createAccountAutoFallbackHandler,
+	createAccountAutoRefreshHandler,
 	createAccountCustomEndpointUpdateHandler,
 	createAccountPauseHandler,
 	createAccountPriorityUpdateHandler,
@@ -259,6 +260,16 @@ export class APIRouter {
 				);
 				return await this.wrapHandler((req) =>
 					autoFallbackHandler(req, accountId),
+				)(req, url);
+			}
+
+			// Account auto-refresh toggle
+			if (path.endsWith("/auto-refresh") && method === "POST") {
+				const autoRefreshHandler = createAccountAutoRefreshHandler(
+					this.context.dbOps,
+				);
+				return await this.wrapHandler((req) =>
+					autoRefreshHandler(req, accountId),
 				)(req, url);
 			}
 
