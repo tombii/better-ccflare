@@ -18,7 +18,7 @@
 	"type": "module",
 	"scripts": {
 		"dev": "bun run src/main.ts",
-		"build": "bun build src/main.ts --compile --outfile dist/better-ccflare --target=bun --minify",
+		"build": "BETTER_CCFLARE_VERSION=$(node -p \"require('./package.json').version\") bun build src/main.ts --compile --outfile dist/better-ccflare --target=bun --minify --define process.env.BETTER_CCFLARE_VERSION='\"'$BETTER_CCFLARE_VERSION'\"'",
 		"prepublishOnly": "cp ../../README.md . && bun run build && jq 'del(.devDependencies[\"@better-ccflare/tui-core\", \"@better-ccflare/ui-common\", \"@better-ccflare/database\", \"@better-ccflare/core-di\", \"@better-ccflare/config\", \"@better-ccflare/logger\", \"@better-ccflare/server\"])' package.json > package.json.tmp && mv package.json.tmp package.json",
 		"postpublish": "chmod +x dist/better-ccflare"
 	},
