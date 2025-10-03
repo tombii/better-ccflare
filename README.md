@@ -33,6 +33,15 @@ npm install -g better-ccflare
 better-ccflare
 ```
 
+### Install via bun
+
+```bash
+bun install -g better-ccflare
+
+# Start better-ccflare (TUI + Server)
+better-ccflare
+```
+
 ### Install from source
 
 ```bash
@@ -43,8 +52,12 @@ bun install
 
 # Start better-ccflare (TUI + Server)
 bun run better-ccflare
+```
 
-# Configure Claude SDK
+## Configure Claude SDK
+
+```bash
+# Set the base URL to point to better-ccflare
 export ANTHROPIC_BASE_URL=http://localhost:8080
 
 # Add multiple accounts with priorities
