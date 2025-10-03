@@ -18,7 +18,7 @@
 	"type": "module",
 	"scripts": {
 		"dev": "bun run src/main.ts",
-		"build": "bun build src/main.ts --compile --outfile dist/better-ccflare --target=bun --minify --tree-shaking --external @bun-plugins/* --external @biomejs/biome --external typescript --external @types/bun --external @types/node --external @types/react",
+		"build": "bun build src/main.ts --compile --outfile dist/better-ccflare --target=bun --minify",
 		"prepublishOnly": "cp ../../README.md . && bun run build",
 		"postpublish": "chmod +x dist/better-ccflare"
 	},
