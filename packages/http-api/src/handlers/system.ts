@@ -25,8 +25,11 @@ export function createSystemInfoHandler() {
 			};
 
 			return jsonResponse(systemInfo);
-		} catch (error) {
-			return errorResponse("Failed to get system information", "INTERNAL_SERVER_ERROR");
+		} catch (_error) {
+			return errorResponse(
+				"Failed to get system information",
+				"INTERNAL_SERVER_ERROR",
+			);
 		}
 	};
 }

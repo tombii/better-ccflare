@@ -301,7 +301,7 @@ export default function startServer(options?: {
 
 	// Log server startup
 	console.log(`
-🎯 better-ccflare Server v${process.env.npm_package_version || "1.0.0"}
+🎯 better-ccflare Server v${process.env.npm_package_version || "1.1.16"}
 🌐 Port: ${serverInstance.port}
 📊 Dashboard: ${withDashboard ? `http://localhost:${serverInstance.port}` : "disabled"}
 🔗 API Base: http://localhost:${serverInstance.port}/api
