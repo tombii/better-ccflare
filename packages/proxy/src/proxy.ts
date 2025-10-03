@@ -30,27 +30,45 @@ let shutdownTimerId: Timer | null = null;
  */
 export function getUsageWorker(): Worker {
 	if (!usageWorkerInstance) {
-		usageWorkerInstance = new Worker(
-			new URL("./post-processor.worker.ts", import.meta.url).href,
-			{ smol: true },
-		);
-		// Bun extends Worker with unref method
-		if (
-			"unref" in usageWorkerInstance &&
-			typeof usageWorkerInstance.unref === "function"
-		) {
-			usageWorkerInstance.unref(); // Don't keep process alive
-		}
-
-		// Listen for summary messages from worker
-		usageWorkerInstance.onmessage = (ev) => {
-			const data = ev.data as OutgoingWorkerMessage;
-			if (data.type === "summary") {
-				requestEvents.emit("event", { type: "summary", payload: data.summary });
-			} else if (data.type === "payload") {
-				requestEvents.emit("event", { type: "payload", payload: data.payload });
+		try {
+			usageWorkerInstance = new Worker(
+				new URL("./post-processor.worker.ts", import.meta.url).href,
+				{ smol: true },
+			);
+			// Bun extends Worker with unref method
+			if (
+				"unref" in usageWorkerInstance &&
+				typeof usageWorkerInstance.unref === "function"
+			) {
+				usageWorkerInstance.unref(); // Don't keep process alive
 			}
-		};
+
+			// Listen for summary messages from worker
+			usageWorkerInstance.onmessage = (ev) => {
+				const data = ev.data as OutgoingWorkerMessage;
+				if (data.type === "summary") {
+					requestEvents.emit("event", {
+						type: "summary",
+						payload: data.summary,
+					});
+				} else if (data.type === "payload") {
+					requestEvents.emit("event", {
+						type: "payload",
+						payload: data.payload,
+					});
+				}
+			};
+
+			// Handle worker errors
+			usageWorkerInstance.onerror = (error) => {
+				log.error("Worker error:", error);
+				// Reset worker instance on error to allow recreation
+				usageWorkerInstance = null;
+			};
+		} catch (error) {
+			log.error("Failed to create worker:", error);
+			throw error;
+		}
 	}
 	return usageWorkerInstance;
 }
@@ -68,12 +86,22 @@ export function terminateUsageWorker(): void {
 
 		// Send shutdown message to allow worker to flush
 		const shutdownMsg: ControlMessage = { type: "shutdown" };
-		usageWorkerInstance.postMessage(shutdownMsg);
+		try {
+			usageWorkerInstance.postMessage(shutdownMsg);
+		} catch (_error) {
+			// Worker already terminated, just clean up
+			usageWorkerInstance = null;
+			return;
+		}
 
 		// Give worker time to flush before terminating
 		shutdownTimerId = setTimeout(() => {
 			if (usageWorkerInstance) {
-				usageWorkerInstance.terminate();
+				try {
+					usageWorkerInstance.terminate();
+				} catch (_error) {
+					// Ignore errors during termination
+				}
 				usageWorkerInstance = null;
 			}
 			shutdownTimerId = null;

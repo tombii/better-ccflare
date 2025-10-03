@@ -116,6 +116,7 @@ export class AutoRefreshScheduler {
 
 				if (!lastResetTime) {
 					// Never refreshed this account before - refresh it
+					log.info(`First-time refresh for account: ${account.name}`);
 					return true;
 				}
 
@@ -124,18 +125,20 @@ export class AutoRefreshScheduler {
 					return false;
 				}
 
-				// If the stored rate_limit_reset is in the PAST (meaning that window has expired),
-				// and we found this account in our query (rate_limit_reset <= now),
-				// then this is a new window that needs refreshing
-				if (lastResetTime <= now) {
-					// The window we last refreshed has now expired - time to refresh again
+				// Check if the current rate_limit_reset from the database is NEWER than the one we stored when we last refreshed
+				// This indicates that the usage window has renewed since our last refresh
+				if (account.rate_limit_reset > lastResetTime) {
+					// The window has renewed - time to refresh again
 					log.info(
-						`Window expired for account ${account.name}: last refresh was for window ending at ${new Date(lastResetTime).toISOString()}`,
+						`New window detected for account ${account.name}: current reset ${new Date(account.rate_limit_reset).toISOString()} > last refresh ${new Date(lastResetTime).toISOString()}`,
 					);
 					return true;
 				}
 
-				// The window hasn't expired yet - skip
+				// The window hasn't renewed yet - skip
+				log.debug(
+					`No new window for account ${account.name}: current reset ${new Date(account.rate_limit_reset).toISOString()} <= last refresh ${new Date(lastResetTime).toISOString()}`,
+				);
 				return false;
 			});
 
