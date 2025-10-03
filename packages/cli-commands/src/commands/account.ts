@@ -197,6 +197,7 @@ export function getAccountsList(dbOps: DatabaseOperations): AccountListItem[] {
 						: "console",
 			priority: account.priority || 0,
 			autoFallbackEnabled: account.auto_fallback_enabled,
+			autoRefreshEnabled: account.auto_refresh_enabled,
 		};
 	});
 }

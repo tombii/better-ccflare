@@ -9,6 +9,7 @@ export {
 	listProviders,
 	registerProvider,
 } from "@better-ccflare/providers";
+export { AutoRefreshScheduler } from "./auto-refresh-scheduler";
 export {
 	getUsageWorker,
 	handleProxy,

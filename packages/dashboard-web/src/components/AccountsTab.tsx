@@ -196,6 +196,18 @@ export function AccountsTab() {
 		}
 	};
 
+	const handleAutoRefreshToggle = async (account: Account) => {
+		try {
+			await api.updateAccountAutoRefresh(
+				account.id,
+				!account.autoRefreshEnabled,
+			);
+			await loadAccounts();
+		} catch (err) {
+			setActionError(formatError(err));
+		}
+	};
+
 	const handleCustomEndpointChange = (account: Account) => {
 		setCustomEndpointDialog({ isOpen: true, account });
 	};
@@ -277,6 +289,7 @@ export function AccountsTab() {
 						onRename={handleRename}
 						onPriorityChange={handlePriorityChange}
 						onAutoFallbackToggle={handleAutoFallbackToggle}
+						onAutoRefreshToggle={handleAutoRefreshToggle}
 						onCustomEndpointChange={handleCustomEndpointChange}
 					/>
 				</CardContent>

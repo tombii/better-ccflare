@@ -20,6 +20,7 @@ import { SessionStrategy } from "@better-ccflare/load-balancer";
 import { Logger } from "@better-ccflare/logger";
 import { getProvider, usageCache } from "@better-ccflare/providers";
 import {
+	AutoRefreshScheduler,
 	getUsageWorker,
 	handleProxy,
 	type ProxyContext,
@@ -81,6 +82,7 @@ function serveDashboardFile(
 let serverInstance: ReturnType<typeof serve> | null = null;
 let stopRetentionJob: (() => void) | null = null;
 let stopOAuthCleanupJob: (() => void) | null = null;
+let autoRefreshScheduler: AutoRefreshScheduler | null = null;
 
 // Startup maintenance (one-shot): cleanup + compact
 async function runStartupMaintenance(
@@ -198,6 +200,10 @@ export default function startServer(options?: {
 	}, TIME_CONSTANTS.HOUR);
 
 	stopOAuthCleanupJob = () => clearInterval(oauthCleanupInterval);
+
+	// Initialize auto-refresh scheduler
+	autoRefreshScheduler = new AutoRefreshScheduler(db);
+	autoRefreshScheduler.start();
 
 	// Initialize load balancing strategy (will be created after runtime config)
 
@@ -365,6 +371,10 @@ async function handleGracefulShutdown(signal: string) {
 		if (stopOAuthCleanupJob) {
 			stopOAuthCleanupJob();
 			stopOAuthCleanupJob = null;
+		}
+		if (autoRefreshScheduler) {
+			autoRefreshScheduler.stop();
+			autoRefreshScheduler = null;
 		}
 		usageCache.clear(); // Stop all usage polling
 		terminateUsageWorker();
