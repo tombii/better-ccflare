@@ -3,6 +3,7 @@ import { Config, type RuntimeConfig } from "@better-ccflare/config";
 import {
 	CACHE,
 	DEFAULT_STRATEGY,
+	getVersion,
 	HTTP_STATUS,
 	NETWORK,
 	registerDisposable,
@@ -11,8 +12,6 @@ import {
 	TIME_CONSTANTS,
 } from "@better-ccflare/core";
 import { container, SERVICE_KEYS } from "@better-ccflare/core-di";
-// Import React dashboard assets
-import dashboardManifest from "@better-ccflare/dashboard-web/dist/manifest.json";
 import type { DatabaseOperations } from "@better-ccflare/database";
 import { AsyncDbWriter, DatabaseFactory } from "@better-ccflare/database";
 import { APIRouter } from "@better-ccflare/http-api";
@@ -27,6 +26,30 @@ import {
 	terminateUsageWorker,
 } from "@better-ccflare/proxy";
 import { serve } from "bun";
+
+// Import embedded dashboard assets (will be bundled in compiled binary)
+let embeddedDashboard: Record<
+	string,
+	{ content: string; contentType: string }
+> | null = null;
+let dashboardManifest: Record<string, string> | null = null;
+
+// Try to load embedded dashboard (will exist in production build)
+try {
+	const embedded = await import("@better-ccflare/dashboard-web/dist/embedded");
+	embeddedDashboard = embedded.embeddedDashboard;
+	dashboardManifest = embedded.dashboardManifest;
+} catch {
+	// Fallback: try loading from file system (development)
+	try {
+		const manifestModule = await import(
+			"@better-ccflare/dashboard-web/dist/manifest.json"
+		);
+		dashboardManifest = manifestModule.default as Record<string, string>;
+	} catch {
+		console.warn("⚠️  Dashboard assets not found - dashboard will be disabled");
+	}
+}
 
 // Helper function to resolve dashboard assets with fallback
 function resolveDashboardAsset(assetPath: string): string | null {
@@ -55,6 +78,19 @@ function serveDashboardFile(
 	contentType?: string,
 	cacheControl?: string,
 ): Response {
+	// First, try to serve from embedded assets (production)
+	if (embeddedDashboard?.[assetPath]) {
+		const asset = embeddedDashboard[assetPath];
+		const buffer = Buffer.from(asset.content, "base64");
+		return new Response(buffer, {
+			headers: {
+				"Content-Type": contentType || asset.contentType,
+				"Cache-Control": cacheControl || CACHE.CACHE_CONTROL_NO_CACHE,
+			},
+		});
+	}
+
+	// Fallback: try file system (development)
 	const fullPath = resolveDashboardAsset(assetPath);
 	if (!fullPath) {
 		return new Response("Not Found", { status: HTTP_STATUS.NOT_FOUND });
@@ -273,10 +309,10 @@ export default function startServer(options?: {
 				return apiResponse;
 			}
 
-			// Dashboard routes (only if enabled)
-			if (withDashboard) {
+			// Dashboard routes (only if enabled and assets are available)
+			if (withDashboard && dashboardManifest) {
 				// Serve dashboard static assets
-				if ((dashboardManifest as Record<string, string>)[url.pathname]) {
+				if (dashboardManifest[url.pathname]) {
 					return serveDashboardFile(
 						url.pathname,
 						undefined,
@@ -299,11 +335,19 @@ export default function startServer(options?: {
 		},
 	});
 
-	// Log server startup
-	console.log(`
-🎯 better-ccflare Server v${process.env.npm_package_version || "1.1.16"}
+	// Log server startup (async)
+	getVersion().then((version) => {
+		if (!serverInstance) return;
+		const dashboardStatus =
+			withDashboard && dashboardManifest
+				? `http://localhost:${serverInstance.port}`
+				: withDashboard && !dashboardManifest
+					? "unavailable (assets not found)"
+					: "disabled";
+		console.log(`
+🎯 better-ccflare Server v${version}
 🌐 Port: ${serverInstance.port}
-📊 Dashboard: ${withDashboard ? `http://localhost:${serverInstance.port}` : "disabled"}
+📊 Dashboard: ${dashboardStatus}
 🔗 API Base: http://localhost:${serverInstance.port}/api
 
 Available endpoints:
@@ -318,6 +362,7 @@ Available endpoints:
 
 ⚡ Ready to proxy requests...
 `);
+	});
 
 	// Log configuration
 	console.log(
