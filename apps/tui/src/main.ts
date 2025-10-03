@@ -10,6 +10,8 @@ import * as tuiCore from "@better-ccflare/tui-core";
 import { parseArgs } from "@better-ccflare/tui-core";
 import { render } from "ink";
 import React from "react";
+import updateNotifier from "update-notifier";
+import pkg from "../package.json";
 import { App } from "./App";
 
 // Global singleton for auto-started server
@@ -23,6 +25,12 @@ async function ensureServer(port: number) {
 }
 
 async function main() {
+	// Check for updates
+	updateNotifier({
+		pkg,
+		updateCheckInterval: 1000 * 60 * 60 * 24, // Check once per day
+	}).notify({ isGlobal: true });
+
 	// Initialize DI container and services
 	container.registerInstance(SERVICE_KEYS.Config, new Config());
 	container.registerInstance(SERVICE_KEYS.Logger, new Logger("TUI"));

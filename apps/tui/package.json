@@ -1,7 +1,17 @@
 {
 	"name": "better-ccflare",
 	"version": "1.1.6",
-	"description": "TUI for better-ccflare load balancer",
+	"description": "Load balancer proxy for Claude API with intelligent distribution across multiple OAuth accounts to avoid rate limiting",
+	"author": "snipeship",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/tombii/better-ccflare.git"
+	},
+	"homepage": "https://github.com/tombii/better-ccflare#readme",
+	"bugs": {
+		"url": "https://github.com/tombii/better-ccflare/issues"
+	},
 	"bin": {
 		"better-ccflare": "./dist/better-ccflare"
 	},
@@ -11,6 +21,9 @@
 		"build": "bun build src/main.ts --compile --outfile dist/better-ccflare --target=bun",
 		"prepublishOnly": "bun run build",
 		"postpublish": "chmod +x dist/better-ccflare"
+	},
+	"engines": {
+		"bun": ">=1.2.8"
 	},
 	"dependencies": {
 		"@better-ccflare/tui-core": "workspace:*",
@@ -35,10 +48,17 @@
 		"dist"
 	],
 	"keywords": [
-		"better-ccflare",
+		"claude",
+		"anthropic",
+		"api",
+		"proxy",
 		"load-balancer",
+		"rate-limiting",
+		"oauth",
+		"cli",
 		"tui",
-		"cli"
+		"analytics",
+		"monitoring"
 	],
 	"publishConfig": {
 		"access": "public"

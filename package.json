@@ -26,12 +26,16 @@
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.1.2",
-		"bun-types": "latest",
 		"@types/bun": "latest",
+		"@types/update-notifier": "^6.0.8",
+		"bun-types": "latest",
 		"typescript": "^5.0.0"
 	},
 	"overrides": {
 		"react": "^19.0.0",
 		"@types/react": "^19.0.0"
+	},
+	"dependencies": {
+		"update-notifier": "^7.3.1"
 	}
 }

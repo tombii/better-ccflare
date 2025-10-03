@@ -6,6 +6,7 @@
 		"target": "ESNext",
 		"moduleResolution": "bundler",
 		"allowImportingTsExtensions": true,
+		"resolveJsonModule": true,
 		"types": ["react", "node"]
 	},
 	"include": ["src/**/*"],
