@@ -10,7 +10,10 @@ import type { ChunkMessage, EndMessage, StartMessage } from "./worker-messages";
 /**
  * Safely post a message to the worker, handling terminated workers
  */
-function safePostMessage(worker: Worker, message: StartMessage | ChunkMessage | EndMessage): void {
+function safePostMessage(
+	worker: Worker,
+	message: StartMessage | ChunkMessage | EndMessage,
+): void {
 	try {
 		worker.postMessage(message);
 	} catch (_error) {
