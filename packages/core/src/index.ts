@@ -43,3 +43,4 @@ export {
 	validateNumber,
 	validateString,
 } from "./validation";
+export { getVersion, getVersionSync } from "./version";
