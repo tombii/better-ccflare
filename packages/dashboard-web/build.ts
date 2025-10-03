@@ -52,3 +52,10 @@ console.log(`📦 Output files:`);
 result.outputs.forEach((output) => {
 	console.log(`   - ${path.relative(process.cwd(), output.path)}`);
 });
+
+// Generate embedded assets TypeScript file
+console.log(`\n📦 Generating embedded assets...`);
+const { embedAssets } = await import("./embed.ts");
+const embeddedCode = await embedAssets();
+await writeFile(path.join(process.cwd(), "dist", "embedded.ts"), embeddedCode);
+console.log(`✅ Embedded assets generated at dist/embedded.ts`);
