@@ -22,6 +22,36 @@ https://github.com/user-attachments/assets/c859872f-ca5e-4f8b-b6a0-7cc7461fe62a
 - **⚡ <10ms Overhead** - Minimal performance impact with lazy loading and request deduplication
 - **💸 Free & Open Source** - Run it yourself, modify it, own your infrastructure
 
+### Why this fork?
+
+This project builds upon the excellent foundation of [snipeship/ccflare](https://github.com/snipeship/ccflare) with significant enhancements:
+
+**🎯 Core Improvements:**
+- **Enhanced Load Balancing** - Session-based load balancing with intelligent failover
+- **Real-time Analytics Dashboard** - Beautiful web UI for monitoring usage and performance
+- **Smart Rate Limit Management** - Auto-refresh and auto-fallback mechanisms
+- **Multi-Provider Support** - Claude API, z.ai coder, and custom endpoints
+- **Package Distribution** - Available via npm and bun for easy installation
+
+**🛠️ Developer Experience:**
+- **TUI Interface** - Interactive terminal-based account management
+- **REST API** - Complete API for automation and integration
+- **Cross-Platform Binary** - Pre-compiled binary works with Node.js or Bun
+- **Comprehensive Logging** - Request/response tracking with searchable history
+- **Database Integration** - SQLite for persistent storage and analytics
+
+**📦 Distribution & Updates:**
+- **npm/bun Registry** - Install with `npm install -g better-ccflare` or `bun install -g better-ccflare`
+- **npx/bunx Support** - Run without installation: `npx better-ccflare` or `bunx better-ccflare`
+- **Smart Update Detection** - Web UI detects package manager and shows appropriate update commands
+- **Version Management** - Semantic versioning with automatic update notifications
+
+**🏢 Production Ready:**
+- **Enterprise Features** - Custom API endpoints, session management, advanced analytics
+- **Performance Optimized** - <10ms overhead with request deduplication and caching
+- **Reliability** - Automatic error recovery, circuit breakers, and health monitoring
+- **Scalability** - Built for high-throughput production environments
+
 ## Quick Start
 
 ### Install via npm
@@ -40,6 +70,16 @@ bun install -g better-ccflare
 
 # Start better-ccflare (TUI + Server)
 better-ccflare
+```
+
+### Run without installation (npx/bunx)
+
+```bash
+# Run with npx (downloads and executes latest version)
+npx better-ccflare@latest
+
+# Run with bunx (faster for bun users)
+bunx better-ccflare@latest
 ```
 
 ### Install from source
