@@ -9,9 +9,20 @@ A load balancer proxy for Claude and Claude Code that distributes requests acros
 ## Important: After making code changes
 
 Always run:
-- `bun run lint` - Fix linting issues  
+- `bun run lint` - Fix linting issues
 - `bun run typecheck` - Check for type errors
 - `bun run format` - Format code
+
+## Publishing to npm
+
+When publishing the package to npm, always use bun (not npm):
+
+```bash
+cd apps/tui
+bun publish
+```
+
+Using bun avoids workspace dependency errors that occur with npm commands. The package is pre-compiled into a binary, so users can install it with either npm or bun.
 
 ## Commands
 

@@ -18,8 +18,8 @@ export function AnalyticsLoadingSkeleton() {
 
 			{/* Metrics Grid */}
 			<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-				{Array.from({ length: 4 }, (_, i) => (
-					<div key={`metric-${i}`} className="p-4 border rounded-lg">
+				{Array.from({ length: 4 }).map(() => (
+					<div key={crypto.randomUUID()} className="p-4 border rounded-lg">
 						<Skeleton className="h-6 w-24 mb-2" />
 						<Skeleton className="h-8 w-16 mb-1" />
 						<Skeleton className="h-4 w-20" />
