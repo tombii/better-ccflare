@@ -24,6 +24,7 @@ export interface AccountRow {
 	rate_limit_remaining?: number | null;
 	priority?: number;
 	auto_fallback_enabled?: 0 | 1;
+	auto_refresh_enabled?: 0 | 1;
 	custom_endpoint?: string | null;
 }
 
@@ -50,6 +51,7 @@ export interface Account {
 	rate_limit_remaining: number | null;
 	priority: number;
 	auto_fallback_enabled: boolean;
+	auto_refresh_enabled: boolean;
 	custom_endpoint: string | null;
 }
 
@@ -72,6 +74,7 @@ export interface AccountResponse {
 	sessionInfo: string;
 	priority: number;
 	autoFallbackEnabled: boolean;
+	autoRefreshEnabled: boolean;
 	customEndpoint: string | null;
 	usageUtilization: number | null; // Percentage utilization (0-100) from API
 	usageWindow: string | null; // Most restrictive window (e.g., "five_hour")
@@ -100,6 +103,7 @@ export interface AccountDisplay {
 	access_token?: string | null;
 	priority: number;
 	autoFallbackEnabled: boolean;
+	autoRefreshEnabled: boolean;
 }
 
 // CLI list item type
@@ -120,6 +124,7 @@ export interface AccountListItem {
 	mode: "max" | "console" | "zai";
 	priority: number;
 	autoFallbackEnabled: boolean;
+	autoRefreshEnabled: boolean;
 }
 
 // Account creation types
@@ -159,6 +164,7 @@ export function toAccount(row: AccountRow): Account {
 		rate_limit_remaining: row.rate_limit_remaining || null,
 		priority: row.priority || 0,
 		auto_fallback_enabled: row.auto_fallback_enabled === 1,
+		auto_refresh_enabled: row.auto_refresh_enabled === 1,
 		custom_endpoint: row.custom_endpoint || null,
 	};
 }
@@ -200,6 +206,7 @@ export function toAccountResponse(account: Account): AccountResponse {
 		sessionInfo,
 		priority: account.priority,
 		autoFallbackEnabled: account.auto_fallback_enabled,
+		autoRefreshEnabled: account.auto_refresh_enabled,
 		customEndpoint: account.custom_endpoint,
 		usageUtilization: null, // Will be filled in by API handler from cache
 		usageWindow: null, // Will be filled in by API handler from cache
@@ -241,5 +248,6 @@ export function toAccountDisplay(account: Account): AccountDisplay {
 		access_token: account.access_token,
 		priority: account.priority,
 		autoFallbackEnabled: account.auto_fallback_enabled,
+		autoRefreshEnabled: account.auto_refresh_enabled,
 	};
 }

@@ -22,6 +22,7 @@ interface AccountListItemProps {
 	onRename: (account: Account) => void;
 	onPriorityChange: (account: Account) => void;
 	onAutoFallbackToggle: (account: Account) => void;
+	onAutoRefreshToggle: (account: Account) => void;
 	onCustomEndpointChange?: (account: Account) => void;
 }
 
@@ -33,6 +34,7 @@ export function AccountListItem({
 	onRename,
 	onPriorityChange,
 	onAutoFallbackToggle,
+	onAutoRefreshToggle,
 	onCustomEndpointChange,
 }: AccountListItemProps) {
 	const presenter = new AccountPresenter(account);
@@ -60,16 +62,28 @@ export function AccountListItem({
 								Priority: {account.priority}
 							</span>
 							{account.provider === "anthropic" && (
-								<div className="flex items-center gap-2">
-									<span className="text-xs text-muted-foreground">
-										Auto-fallback:
-									</span>
-									<Switch
-										checked={account.autoFallbackEnabled}
-										onCheckedChange={() => onAutoFallbackToggle(account)}
-										title="Toggle auto-fallback for this account"
-									/>
-								</div>
+								<>
+									<div className="flex items-center gap-2">
+										<span className="text-xs text-muted-foreground">
+											Auto-fallback:
+										</span>
+										<Switch
+											checked={account.autoFallbackEnabled}
+											onCheckedChange={() => onAutoFallbackToggle(account)}
+											title="Toggle auto-fallback for this account"
+										/>
+									</div>
+									<div className="flex items-center gap-2">
+										<span className="text-xs text-muted-foreground">
+											Auto-refresh:
+										</span>
+										<Switch
+											checked={account.autoRefreshEnabled}
+											onCheckedChange={() => onAutoRefreshToggle(account)}
+											title="Toggle auto-refresh for this account"
+										/>
+									</div>
+								</>
 							)}
 						</div>
 						<p className="text-sm text-muted-foreground">

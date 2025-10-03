@@ -16,6 +16,7 @@ https://github.com/user-attachments/assets/c859872f-ca5e-4f8b-b6a0-7cc7461fe62a
 - **🤖 Supports z.ai coder plan** - Setup Claude and z.ai coder accounts and prioritize in which order they are used
 - **🔗 Custom API Endpoints** - Configure custom endpoints for Anthropic and Zai accounts for enterprise deployments
 - **🔄 Smart Auto-Fallback** - Automatically switch back to preferred accounts when their rate limits reset
+- **⚡ Auto-Refresh** - Automatically start new usage windows when rate limits reset
 - **📊 Request-Level Analytics** - Track latency, token usage, and costs in real-time with optimized batch processing
 - **🔍 Deep Debugging** - Full request/response logging and error traces
 - **⚡ <10ms Overhead** - Minimal performance impact with lazy loading and request deduplication
@@ -55,6 +56,7 @@ curl -X POST http://localhost:8080/api/accounts/$(curl -s http://localhost:8080/
 ### 🎯 Intelligent Load Balancing
 - **Session-based** - Maintain conversation context (5hr sessions)
 - **Auto-fallback** - Automatically switch back to higher priority accounts when their usage windows reset
+- **Auto-refresh** - Automatically start new usage windows when they reset
 
 ### 📈 Real-Time Analytics
 - Token usage tracking per request with optimized batch processing
@@ -87,6 +89,7 @@ Full documentation available in [`docs/`](docs/):
 - [Configuration](docs/configuration.md)
 - [Load Balancing Strategies](docs/load-balancing.md)
 - [Auto-Fallback Guide](docs/auto-fallback.md)
+- [Auto-Refresh Guide](docs/auto-refresh.md)
 
 ## Screenshots
 
