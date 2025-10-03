@@ -136,7 +136,12 @@ Full documentation available in [`docs/`](docs/):
 
 ## Requirements
 
-- [Bun](https://bun.sh) >= 1.2.8
+**For installation:**
+- **npm** or **bun** package manager
+- **Node.js** >= 18.0.0 (when installed via npm)
+- **Bun** >= 1.2.8 (when installed via bun or running from source)
+
+**For usage:**
 - Claude API accounts (Free, Pro, or Team) or z.ai code plan accounts
 
 ## Acknowledgments
