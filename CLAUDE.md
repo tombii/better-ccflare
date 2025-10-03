@@ -28,6 +28,7 @@ Using bun avoids workspace dependency errors that occur with npm commands. The p
 
 ### Running the server
 - `bun start` - Start the load balancer (port 8080)
+- **For testing**: Use port 8081 to avoid conflicts: `better-ccflare --serve --port 8081`
 
 ### Managing accounts
 - `better-ccflare --add-account <name>` - Add a new account

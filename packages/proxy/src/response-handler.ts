@@ -8,6 +8,18 @@ import type { ProxyContext } from "./handlers";
 import type { ChunkMessage, EndMessage, StartMessage } from "./worker-messages";
 
 /**
+ * Safely post a message to the worker, handling terminated workers
+ */
+function safePostMessage(worker: Worker, message: StartMessage | ChunkMessage | EndMessage): void {
+	try {
+		worker.postMessage(message);
+	} catch (_error) {
+		// Worker has been terminated, silently ignore
+		// The error will be logged by the worker error handler in proxy.ts
+	}
+}
+
+/**
  * Check if a response should be considered successful/expected
  * Treats certain well-known paths that return 404 as expected
  */
@@ -89,7 +101,7 @@ export async function forwardToClient(
 		retryAttempt,
 		failoverAttempts,
 	};
-	ctx.usageWorker.postMessage(startMessage);
+	safePostMessage(ctx.usageWorker, startMessage);
 
 	// Emit request start event for real-time dashboard
 	requestEvents.emit("event", {
@@ -173,7 +185,7 @@ export async function forwardToClient(
 								requestId,
 								data: value,
 							};
-							ctx.usageWorker.postMessage(chunkMsg);
+							safePostMessage(ctx.usageWorker, chunkMsg);
 						}
 					} catch (error) {
 						// Ensure timeout is cleared on error
@@ -190,7 +202,7 @@ export async function forwardToClient(
 					requestId,
 					success: isExpectedResponse(path, analyticsClone),
 				};
-				ctx.usageWorker.postMessage(endMsg);
+				safePostMessage(ctx.usageWorker, endMsg);
 			} catch (err) {
 				const endMsg: EndMessage = {
 					type: "end",
@@ -198,7 +210,7 @@ export async function forwardToClient(
 					success: false,
 					error: (err as Error).message,
 				};
-				ctx.usageWorker.postMessage(endMsg);
+				safePostMessage(ctx.usageWorker, endMsg);
 			}
 		})();
 
@@ -222,7 +234,7 @@ export async function forwardToClient(
 						: null,
 				success: isExpectedResponse(path, clone),
 			};
-			ctx.usageWorker.postMessage(endMsg);
+			safePostMessage(ctx.usageWorker, endMsg);
 		} catch (err) {
 			const endMsg: EndMessage = {
 				type: "end",
@@ -230,7 +242,7 @@ export async function forwardToClient(
 				success: false,
 				error: (err as Error).message,
 			};
-			ctx.usageWorker.postMessage(endMsg);
+			safePostMessage(ctx.usageWorker, endMsg);
 		}
 	})();
 
