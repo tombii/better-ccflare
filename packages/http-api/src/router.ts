@@ -40,6 +40,7 @@ import {
 } from "./handlers/requests";
 import { createRequestsStreamHandler } from "./handlers/requests-stream";
 import { createStatsHandler, createStatsResetHandler } from "./handlers/stats";
+import { createSystemInfoHandler } from "./handlers/system";
 import type { APIContext } from "./types";
 import { errorResponse } from "./utils/http-error";
 
@@ -84,6 +85,7 @@ export class APIRouter {
 		const requestsStreamHandler = createRequestsStreamHandler();
 		const cleanupHandler = createCleanupHandler(dbOps, config);
 		const compactHandler = createCompactHandler(dbOps);
+		const systemInfoHandler = createSystemInfoHandler();
 
 		// Register routes
 		this.handlers.set("GET:/health", () => healthHandler());
@@ -145,6 +147,7 @@ export class APIRouter {
 		);
 		this.handlers.set("POST:/api/maintenance/cleanup", () => cleanupHandler());
 		this.handlers.set("POST:/api/maintenance/compact", () => compactHandler());
+		this.handlers.set("GET:/api/system/info", () => systemInfoHandler());
 		this.handlers.set("GET:/api/logs/stream", (req) => logsStreamHandler(req));
 		this.handlers.set("GET:/api/logs/history", () => logsHistoryHandler());
 		this.handlers.set("GET:/api/analytics", (_req, url) => {
