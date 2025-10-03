@@ -68,6 +68,12 @@ export class AutoRefreshScheduler {
 
 		this.isRefreshing = true;
 		try {
+			// Check if database is available
+			if (!this.db) {
+				log.warn("Database not available for auto-refresh check");
+				return;
+			}
+
 			const now = Date.now();
 
 			// Periodically clean up the tracking map - remove entries for accounts that no longer exist
@@ -75,22 +81,21 @@ export class AutoRefreshScheduler {
 			this.cleanupTracking();
 
 			// Get all accounts with auto-refresh enabled that have reset windows
-			const accounts = this.db
-				.query<
-					{
-						id: string;
-						name: string;
-						provider: string;
-						refresh_token: string;
-						access_token: string | null;
-						expires_at: number | null;
-						rate_limit_reset: number | null;
-						account_tier: number;
-						custom_endpoint: string | null;
-					},
-					[number]
-				>(
-					`
+			const query = this.db.query<
+				{
+					id: string;
+					name: string;
+					provider: string;
+					refresh_token: string;
+					access_token: string | null;
+					expires_at: number | null;
+					rate_limit_reset: number | null;
+					account_tier: number;
+					custom_endpoint: string | null;
+				},
+				[number]
+			>(
+				`
 				SELECT
 					id, name, provider, refresh_token, access_token,
 					expires_at, rate_limit_reset, account_tier, custom_endpoint
@@ -101,9 +106,10 @@ export class AutoRefreshScheduler {
 					AND provider = 'anthropic'
 					AND rate_limit_reset IS NOT NULL
 					AND rate_limit_reset <= ?
-				`,
-				)
-				.all(now);
+			`,
+			);
+
+			const accounts = query.all(now);
 
 			if (accounts.length === 0) {
 				return;
@@ -304,18 +310,18 @@ export class AutoRefreshScheduler {
 	 */
 	private cleanupTracking(): void {
 		try {
-			// Get all account IDs that have auto-refresh enabled
-			const activeAccountIds = this.db
-				.query<{ id: string }, []>(
-					`
-				SELECT id
-				FROM accounts
-				WHERE auto_refresh_enabled = 1 AND provider = 'anthropic'
-			`,
-				)
-				.all()
-				.map((row) => row.id);
+			// Check if database is available
+			if (!this.db) {
+				log.warn("Database not available for cleanup tracking");
+				return;
+			}
 
+			// Get all account IDs that have auto-refresh enabled
+			const query = this.db.query<{ id: string }, []>(
+				`SELECT id FROM accounts WHERE auto_refresh_enabled = 1 AND provider = 'anthropic'`,
+			);
+
+			const activeAccountIds = query.all().map((row) => row.id);
 			const activeAccountIdSet = new Set(activeAccountIds);
 
 			// Remove entries from the map that are not in the active set
@@ -329,6 +335,7 @@ export class AutoRefreshScheduler {
 			}
 		} catch (error) {
 			log.error("Error cleaning up tracking map:", error);
+			// Don't throw - this is a non-critical cleanup operation
 		}
 	}
 }
