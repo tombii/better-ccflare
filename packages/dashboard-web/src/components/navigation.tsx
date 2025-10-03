@@ -20,6 +20,10 @@ import { ThemeToggle } from "./theme-toggle";
 import { Button } from "./ui/button";
 import { Separator } from "./ui/separator";
 
+// Store update command globally
+const updateCommand: string = "npm install -g better-ccflare@latest";
+let detectedPackageManager: "npm" | "bun" | "unknown" = "npm";
+
 interface NavItem {
 	label: string;
 	icon: React.ComponentType<{ className?: string }>;
@@ -52,14 +56,68 @@ export function Navigation() {
 		};
 	}, []);
 
+	const detectPackageManager = async (): Promise<"npm" | "bun" | "unknown"> => {
+		try {
+			// Try to detect by checking common global installation paths
+			const _homeDir = process.env.HOME || "";
+
+			// Check if the binary exists in bun's global path
+			try {
+				const response = await fetch("/api/system/package-manager");
+				if (response.ok) {
+					const data = await response.json();
+					return data.packageManager;
+				}
+			} catch {
+				// Fallback to client-side detection
+			}
+
+			// Fallback: check if user agent indicates bun (this is a weak signal)
+			const userAgent = navigator.userAgent;
+			if (userAgent.includes("Bun")) {
+				return "bun";
+			}
+
+			// Default to npm as it's more common
+			return "npm";
+		} catch (error) {
+			console.error("Error detecting package manager:", error);
+			return "npm"; // Default fallback
+		}
+	};
+
+	const getUpdateCommand = (
+		packageManager: "npm" | "bun" | "unknown",
+	): string => {
+		switch (packageManager) {
+			case "bun":
+				return "bun install -g better-ccflare@latest";
+			default:
+				return "npm install -g better-ccflare@latest";
+		}
+	};
+
+	const copyToClipboard = async (text: string) => {
+		try {
+			await navigator.clipboard.writeText(text);
+			// Show success feedback (could add a toast here)
+			return true;
+		} catch (error) {
+			console.error("Failed to copy to clipboard:", error);
+			return false;
+		}
+	};
+
 	const checkForUpdates = async () => {
 		if (!isMountedRef.current) return;
 
 		setUpdateStatus("checking");
 		try {
-			const response = await fetch(
-				"https://registry.npmjs.org/better-ccflare/latest",
-			);
+			const [response, packageManager] = await Promise.all([
+				fetch("https://registry.npmjs.org/better-ccflare/latest"),
+				detectPackageManager(),
+			]);
+
 			const data = await response.json();
 			const latest = data.version;
 
@@ -73,9 +131,14 @@ export function Navigation() {
 
 			if (latest !== currentVersion) {
 				setUpdateStatus("available");
+				let updateCommand = getUpdateCommand(packageManager);
 				console.log(
-					`🚀 Update available: ${currentVersion} → ${latest}\nRun: npm install -g better-ccflare`,
+					`🚀 Update available: ${currentVersion} → ${latest}\nDetected package manager: ${packageManager}\nRun: ${updateCommand}`,
 				);
+
+				// Store the update command for later use
+				updateCommand = getUpdateCommand(packageManager);
+				detectedPackageManager = packageManager;
 			} else {
 				setUpdateStatus("current");
 				console.log(`✅ You're on the latest version (${currentVersion})`);
@@ -197,44 +260,80 @@ export function Navigation() {
 						</div>
 
 						{/* Update Check */}
-						<button
-							type="button"
-							onClick={checkForUpdates}
-							disabled={updateStatus === "checking"}
+						<div
 							className={cn(
-								"w-full rounded-lg bg-muted/50 p-3 transition-colors hover:bg-muted",
-								updateStatus === "checking" && "opacity-50 cursor-wait",
+								"rounded-lg bg-muted/50 p-3",
+								updateStatus === "checking" && "opacity-50",
 							)}
 						>
-							<div className="flex items-center gap-2 text-sm">
-								<RefreshCw
-									className={cn(
-										"h-4 w-4",
-										updateStatus === "checking" && "animate-spin",
-										updateStatus === "available" && "text-green-500",
-										updateStatus === "current" && "text-primary",
-										updateStatus === "error" && "text-red-500",
-									)}
-								/>
-								<span className="font-medium">
-									{updateStatus === "idle" && "Check for Updates"}
-									{updateStatus === "checking" && "Checking..."}
-									{updateStatus === "available" && "Update Available"}
-									{updateStatus === "current" && "Up to Date"}
-									{updateStatus === "error" && "Check Failed"}
-								</span>
-							</div>
+							<button
+								type="button"
+								onClick={checkForUpdates}
+								disabled={updateStatus === "checking"}
+								className="w-full transition-colors hover:bg-muted/50 -m-3 p-3 rounded-lg"
+							>
+								<div className="flex items-center gap-2 text-sm">
+									<RefreshCw
+										className={cn(
+											"h-4 w-4",
+											updateStatus === "checking" && "animate-spin",
+											updateStatus === "available" && "text-green-500",
+											updateStatus === "current" && "text-primary",
+											updateStatus === "error" && "text-red-500",
+										)}
+									/>
+									<span className="font-medium">
+										{updateStatus === "idle" && "Check for Updates"}
+										{updateStatus === "checking" && "Checking..."}
+										{updateStatus === "available" && "Update Available"}
+										{updateStatus === "current" && "Up to Date"}
+										{updateStatus === "error" && "Check Failed"}
+									</span>
+								</div>
+							</button>
 							{updateStatus === "available" && (
-								<p className="mt-1 text-xs text-muted-foreground text-left">
-									{version.replace(/^v/, "")} → {latestVersion}
-								</p>
+								<div className="mt-2 space-y-1">
+									<p className="text-xs text-muted-foreground text-left">
+										{version.replace(/^v/, "")} → {latestVersion}
+									</p>
+									<div className="flex items-center gap-1">
+										<code className="text-xs bg-background px-1 py-0.5 rounded font-mono flex-1 truncate">
+											{updateCommand}
+										</code>
+										<button
+											type="button"
+											onClick={() => copyToClipboard(updateCommand)}
+											className="text-xs text-muted-foreground hover:text-foreground transition-colors p-1 hover:bg-background rounded"
+											title="Copy update command"
+										>
+											<svg
+												className="h-3 w-3"
+												fill="none"
+												stroke="currentColor"
+												viewBox="0 0 24 24"
+												role="img"
+												aria-label="Copy to clipboard"
+											>
+												<path
+													strokeLinecap="round"
+													strokeLinejoin="round"
+													strokeWidth={2}
+													d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+												/>
+											</svg>
+										</button>
+									</div>
+									<p className="text-xs text-muted-foreground text-left">
+										Detected: {detectedPackageManager} 📦
+									</p>
+								</div>
 							)}
 							{updateStatus === "current" && (
 								<p className="mt-1 text-xs text-muted-foreground text-left">
 									Version {version.replace(/^v/, "")}
 								</p>
 							)}
-						</button>
+						</div>
 
 						<div className="hidden lg:flex items-center justify-between">
 							<div className="flex items-center gap-2 text-xs text-muted-foreground">
