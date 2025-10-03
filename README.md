@@ -24,6 +24,17 @@ https://github.com/user-attachments/assets/c859872f-ca5e-4f8b-b6a0-7cc7461fe62a
 
 ## Quick Start
 
+### Install via npm
+
+```bash
+npm install -g better-ccflare
+
+# Start better-ccflare (TUI + Server)
+better-ccflare
+```
+
+### Install from source
+
 ```bash
 # Clone and install
 git clone https://github.com/tombii/better-ccflare
