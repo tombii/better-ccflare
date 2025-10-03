@@ -19,7 +19,7 @@
 	"scripts": {
 		"dev": "bun run src/main.ts",
 		"build": "bun build src/main.ts --compile --outfile dist/better-ccflare --target=bun",
-		"prepublishOnly": "bun run build",
+		"prepublishOnly": "cp ../../README.md . && bun run build",
 		"postpublish": "chmod +x dist/better-ccflare"
 	},
 	"engines": {
