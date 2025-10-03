@@ -7,7 +7,8 @@ ccflare.db-shm
 better-ccflare.db
 better-ccflare.db-wal
 better-ccflare.db-shm
-dist/
+apps/tui/dist/
+packages/dashboard-web/dist/
 .DS_Store
 *.log
 tsconfig.tsbuildinfo
