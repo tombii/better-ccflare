@@ -287,15 +287,15 @@ class PriceCatalogue {
 			const modelEntries = Object.entries(providerData.models);
 			if (modelEntries.length > 0) {
 				const allZeroCost = modelEntries.every(([, model]) => {
-					if (!model || !('cost' in model)) return true;
-					const cost = (model as any).cost;
-					if (!cost) return true;
+					if (!model || typeof model !== "object" || !("cost" in model)) return true;
+					const cost = (model as { cost?: unknown }).cost;
+					if (!cost || typeof cost !== "object") return true;
 					const {
 						input = 0,
 						output = 0,
 						cache_read = 0,
 						cache_write = 0,
-					} = cost;
+					} = cost as Record<string, unknown>;
 					return (
 						input === 0 && output === 0 && cache_read === 0 && cache_write === 0
 					);
