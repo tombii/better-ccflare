@@ -1,6 +1,11 @@
 #!/usr/bin/env bun
 import { Config } from "@better-ccflare/config";
-import { CLAUDE_MODEL_IDS, NETWORK, shutdown } from "@better-ccflare/core";
+import {
+	CLAUDE_MODEL_IDS,
+	getVersion,
+	NETWORK,
+	shutdown,
+} from "@better-ccflare/core";
 import { container, SERVICE_KEYS } from "@better-ccflare/core-di";
 import { DatabaseFactory } from "@better-ccflare/database";
 import { Logger } from "@better-ccflare/logger";
@@ -43,14 +48,25 @@ async function main() {
 	const args = process.argv.slice(2);
 	const parsed = parseArgs(args);
 
+	// Handle version
+	if (parsed.version) {
+		getVersion().then((version) => {
+			console.log(`better-ccflare v${version}`);
+			process.exit(0);
+		});
+		return;
+	}
+
 	// Handle help
 	if (parsed.help) {
-		console.log(`
-🎯 ccflare - Load Balancer for Claude
+		getVersion().then((version) => {
+			console.log(`
+🎯 better-ccflare v${version} - Load Balancer for Claude
 
-Usage: ccflare [options]
+Usage: better-ccflare [options]
 
 Options:
+  --version, -v       Show version number
   --serve              Start API server with dashboard
   --port <number>      Server port (default: 8080, or PORT env var)
   --logs [N]           Stream latest N lines then follow
@@ -72,17 +88,19 @@ Options:
   --help, -h           Show this help message
 
 Interactive Mode:
-  ccflare          Launch interactive TUI (default)
+  better-ccflare          Launch interactive TUI (default)
 
 Examples:
-  ccflare                        # Interactive mode
-  ccflare --serve                # Start server
-  ccflare --add-account work     # Add account
-  ccflare --pause work           # Pause account
-  ccflare --analyze              # Run performance analysis
-  ccflare --stats                # View stats
+  better-ccflare                        # Interactive mode
+  better-ccflare --serve                # Start server
+  better-ccflare --add-account work     # Add account
+  better-ccflare --pause work           # Pause account
+  better-ccflare --analyze              # Run performance analysis
+  better-ccflare --stats                # View stats
 `);
-		process.exit(0);
+			process.exit(0);
+		});
+		return;
 	}
 
 	// Handle non-interactive commands
