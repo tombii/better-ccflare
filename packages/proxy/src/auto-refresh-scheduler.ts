@@ -247,14 +247,20 @@ export class AutoRefreshScheduler {
 				],
 			};
 
+			// Use provider's prepareHeaders method for consistent authentication
+			const headers = provider.prepareHeaders(
+				new Headers({
+					"Content-Type": "application/json",
+					"anthropic-version": "2023-06-01",
+				}),
+				account.access_token || undefined,
+				account.api_key || undefined,
+			);
+
 			// Send the request
 			const response = await fetch(endpoint, {
 				method: "POST",
-				headers: {
-					"Content-Type": "application/json",
-					Authorization: `Bearer ${account.access_token}`,
-					"anthropic-version": "2023-06-01",
-				},
+				headers,
 				body: JSON.stringify(requestBody),
 			});
 
