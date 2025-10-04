@@ -6,6 +6,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A load balancer proxy for Claude and Claude Code that distributes requests across multiple OAuth accounts to avoid rate limiting.
 
+## Important: Dashboard vs TUI
+
+Unless specifically mentioned as "TUI", when referring to "dashboard" or "analytics", I mean the **web dashboard** (the React-based web UI), not the terminal-based TUI interface.
+
 ## Important: After making code changes
 
 Always run:
