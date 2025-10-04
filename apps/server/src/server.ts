@@ -21,10 +21,12 @@ import { getProvider, usageCache } from "@better-ccflare/providers";
 import {
 	AutoRefreshScheduler,
 	getUsageWorker,
+	getValidAccessToken,
 	handleProxy,
 	type ProxyContext,
 	terminateUsageWorker,
 } from "@better-ccflare/proxy";
+import type { Account } from "@better-ccflare/types";
 import { serve } from "bun";
 
 // Import embedded dashboard assets (will be bundled in compiled binary)
@@ -168,6 +170,77 @@ async function runStartupMaintenance(
 	return () => {};
 }
 
+/**
+ * Start usage polling for an account with automatic token refresh
+ * Temporarily resumes paused accounts for token refresh, then restores original state
+ */
+function startUsagePollingWithRefresh(
+	account: Account,
+	proxyContext: ProxyContext,
+) {
+	const logger = new Logger("UsagePolling");
+
+	// Store original paused state to restore it later
+	const wasOriginallyPaused = account.paused;
+
+	// Initial polling with token refresh
+	const pollWithRefresh = async () => {
+		try {
+			// If account was paused, temporarily resume it for token refresh
+			if (wasOriginallyPaused && account.paused) {
+				logger.info(
+					`Temporarily resuming account ${account.name} for token refresh`,
+				);
+				proxyContext.dbOps.updateAccountPaused(account.id, false);
+				account.paused = false;
+			}
+
+			// Get a valid access token (refreshes if necessary)
+			const accessToken = await getValidAccessToken(account, proxyContext);
+
+			// Restore original paused state if we temporarily resumed it
+			if (wasOriginallyPaused && !account.paused) {
+				logger.info(`Restoring paused state for account ${account.name}`);
+				proxyContext.dbOps.updateAccountPaused(account.id, true);
+				account.paused = true;
+			}
+
+			if (accessToken) {
+				// Use the refreshed token for usage polling
+				usageCache.startPolling(account.id, accessToken, 30000); // Poll every 30s
+			} else {
+				logger.warn(
+					`Unable to get valid access token for account ${account.name}`,
+				);
+			}
+		} catch (error) {
+			logger.error(
+				`Error starting usage polling for account ${account.name}:`,
+				error,
+			);
+			// Restore original paused state in case of error
+			if (wasOriginallyPaused && !account.paused) {
+				logger.info(
+					`Restoring paused state for account ${account.name} after error`,
+				);
+				proxyContext.dbOps.updateAccountPaused(account.id, true);
+				account.paused = true;
+			}
+			// Retry in 5 minutes if there was an error
+			setTimeout(
+				() => {
+					logger.info(`Retrying usage polling for account ${account.name}`);
+					pollWithRefresh();
+				},
+				5 * 60 * 1000,
+			);
+		}
+	};
+
+	// Start the polling
+	pollWithRefresh();
+}
+
 // Export for programmatic use
 export default function startServer(options?: {
 	port?: number;
@@ -237,10 +310,6 @@ export default function startServer(options?: {
 
 	stopOAuthCleanupJob = () => clearInterval(oauthCleanupInterval);
 
-	// Initialize auto-refresh scheduler
-	autoRefreshScheduler = new AutoRefreshScheduler(db);
-	autoRefreshScheduler.start();
-
 	// Initialize load balancing strategy (will be created after runtime config)
 
 	// Get the provider
@@ -281,6 +350,10 @@ export default function startServer(options?: {
 		asyncWriter,
 		usageWorker: getUsageWorker(),
 	};
+
+	// Initialize auto-refresh scheduler (now that proxyContext is available)
+	autoRefreshScheduler = new AutoRefreshScheduler(db, proxyContext);
+	autoRefreshScheduler.start();
 
 	// Hot reload strategy configuration
 	config.on("change", (changeType, fieldName) => {
@@ -402,12 +475,14 @@ Available endpoints:
 		);
 	}
 
-	// Start usage polling for Anthropic accounts
+	// Start usage polling for Anthropic accounts with token refresh (regardless of paused status)
 	const anthropicAccounts = accounts.filter((a) => a.provider === "anthropic");
 	if (anthropicAccounts.length > 0) {
 		for (const account of anthropicAccounts) {
-			if (account.access_token) {
-				usageCache.startPolling(account.id, account.access_token, 30000); // Poll every 30s
+			if (account.access_token || account.refresh_token) {
+				// Start usage polling with token refresh capability
+				// Usage data fetching should work independently of account paused status
+				startUsagePollingWithRefresh(account, proxyContext);
 				log.info(`Started usage polling for account ${account.name}`);
 			}
 		}
