@@ -3,6 +3,7 @@ import { Config } from "@better-ccflare/config";
 import {
 	CLAUDE_MODEL_IDS,
 	getVersion,
+	getVersionSync,
 	NETWORK,
 	shutdown,
 } from "@better-ccflare/core";
@@ -41,38 +42,31 @@ async function exitGracefully(code: 0 | 1 = 0): Promise<never> {
 	process.exit(code);
 }
 
+/**
+ * Fast exit function for simple commands that don't need full cleanup
+ */
+function fastExit(code: 0 | 1 = 0): never {
+	process.exit(code);
+}
+
 async function main() {
-	// Check for updates
-	updateNotifier({
-		pkg,
-		updateCheckInterval: 1000 * 60 * 60 * 24, // Check once per day
-	}).notify({ isGlobal: true });
-
-	// Initialize DI container and services
-	container.registerInstance(SERVICE_KEYS.Config, new Config());
-	container.registerInstance(SERVICE_KEYS.Logger, new Logger("TUI"));
-
-	// Initialize database factory
-	DatabaseFactory.initialize();
-	const dbOps = DatabaseFactory.getInstance();
-	container.registerInstance(SERVICE_KEYS.Database, dbOps);
-
 	const args = process.argv.slice(2);
 	const parsed = parseArgs(args);
 
-	// Handle version
+	// Handle version - check before any expensive initializations
 	if (parsed.version) {
-		getVersion().then(async (version) => {
-			console.log(`better-ccflare v${version}`);
-			await exitGracefully(0);
-		});
+		// Use sync version to avoid async overhead
+		const version = getVersionSync();
+		console.log(`better-ccflare v${version}`);
+		fastExit(0);
 		return;
 	}
 
-	// Handle help
+	// Handle help - check before any expensive initializations
 	if (parsed.help) {
-		getVersion().then(async (version) => {
-			console.log(`
+		// Use sync version to avoid async overhead
+		const version = getVersionSync();
+		console.log(`
 🎯 better-ccflare v${version} - Load Balancer for Claude
 
 Usage: better-ccflare [options]
@@ -110,11 +104,62 @@ Examples:
   better-ccflare --analyze              # Run performance analysis
   better-ccflare --stats                # View stats
 `);
-			await exitGracefully(0);
-		});
+		fastExit(0);
 		return;
 	}
 
+	// Skip update notifier to avoid forking and slow exit issues
+	// updateNotifier({
+	// 	pkg,
+	// 	updateCheckInterval: 1000 * 60 * 60 * 24, // Check once per day
+	// }).notify({ isGlobal: true });
+
+	// Handle commands that don't need database or DI initialization
+	if (parsed.getModel || parsed.setModel) {
+		// Initialize only config for these simple commands
+		const config = new Config();
+
+		if (parsed.getModel) {
+			const model = config.getDefaultAgentModel();
+			console.log(`Current default agent model: ${model}`);
+			fastExit(0);
+			return;
+		}
+
+		if (parsed.setModel) {
+			// Validate the model
+			const modelMap: Record<string, string> = {
+				"opus-4": CLAUDE_MODEL_IDS.OPUS_4,
+				"sonnet-4": CLAUDE_MODEL_IDS.SONNET_4,
+				"opus-4.1": CLAUDE_MODEL_IDS.OPUS_4_1,
+				"sonnet-4.5": CLAUDE_MODEL_IDS.SONNET_4_5,
+			};
+
+			const fullModel = modelMap[parsed.setModel];
+			if (!fullModel) {
+				console.error(`❌ Invalid model: ${parsed.setModel}`);
+				console.error("Valid models: opus-4, sonnet-4");
+				fastExit(1);
+				return;
+			}
+
+			config.setDefaultAgentModel(fullModel);
+			console.log(`✅ Default agent model set to: ${fullModel}`);
+			fastExit(0);
+			return;
+		}
+	}
+
+	// Initialize DI container and services for commands that need them
+	container.registerInstance(SERVICE_KEYS.Config, new Config());
+	container.registerInstance(SERVICE_KEYS.Logger, new Logger("TUI"));
+
+	// Initialize database factory
+	DatabaseFactory.initialize();
+	const dbOps = DatabaseFactory.getInstance();
+	container.registerInstance(SERVICE_KEYS.Database, dbOps);
+
+	
 	// Handle non-interactive commands
 	if (parsed.serve) {
 		const config = new Config();
@@ -235,35 +280,7 @@ Examples:
 		await exitGracefully(0);
 	}
 
-	if (parsed.getModel) {
-		const config = new Config();
-		const model = config.getDefaultAgentModel();
-		console.log(`Current default agent model: ${model}`);
-		await exitGracefully(0);
-	}
-
-	if (parsed.setModel) {
-		const config = new Config();
-		// Validate the model
-		const modelMap: Record<string, string> = {
-			"opus-4": CLAUDE_MODEL_IDS.OPUS_4,
-			"sonnet-4": CLAUDE_MODEL_IDS.SONNET_4,
-			"opus-4.1": CLAUDE_MODEL_IDS.OPUS_4_1,
-			"sonnet-4.5": CLAUDE_MODEL_IDS.SONNET_4_5,
-		};
-
-		const fullModel = modelMap[parsed.setModel];
-		if (!fullModel) {
-			console.error(`❌ Invalid model: ${parsed.setModel}`);
-			console.error("Valid models: opus-4, sonnet-4");
-			await exitGracefully(1);
-		}
-
-		config.setDefaultAgentModel(fullModel);
-		console.log(`✅ Default agent model set to: ${fullModel}`);
-		await exitGracefully(0);
-	}
-
+	
 	// Default: Launch interactive TUI with auto-started server
 	const config = new Config();
 	const port = parsed.port || config.getRuntime().port || NETWORK.DEFAULT_PORT;
