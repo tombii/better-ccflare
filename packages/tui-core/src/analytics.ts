@@ -17,9 +17,18 @@ export interface ModelDistribution {
 	percentage: number;
 }
 
+export interface TokenBreakdown {
+	inputTokens: number;
+	cacheReadInputTokens: number;
+	cacheCreationInputTokens: number;
+	outputTokens: number;
+	totalTokens: number;
+}
+
 export interface Analytics {
 	timeSeries: TimeSeriesDataPoint[];
 	modelDistribution: ModelDistribution[];
+	tokenBreakdown: TokenBreakdown;
 }
 
 function getRangeConfig(range: string): {
@@ -124,6 +133,41 @@ export async function getAnalytics(timeRange: string): Promise<Analytics> {
 	// Finalize to prevent memory leak
 	modelDistQuery.finalize();
 
+	// Get token breakdown for the time range
+	const tokenBreakdownQuery = db.prepare(`
+		SELECT
+			SUM(COALESCE(input_tokens, 0)) as inputTokens,
+			SUM(COALESCE(cache_read_input_tokens, 0)) as cacheReadInputTokens,
+			SUM(COALESCE(cache_creation_input_tokens, 0)) as cacheCreationInputTokens,
+			SUM(COALESCE(output_tokens, 0)) as outputTokens
+		FROM requests
+		WHERE timestamp > ?
+	`);
+
+	const tokenData = tokenBreakdownQuery.get(startMs) as {
+		inputTokens: number;
+		cacheReadInputTokens: number;
+		cacheCreationInputTokens: number;
+		outputTokens: number;
+	};
+
+	// Finalize to prevent memory leak
+	tokenBreakdownQuery.finalize();
+
+	const totalTokens =
+		(tokenData.inputTokens || 0) +
+		(tokenData.cacheReadInputTokens || 0) +
+		(tokenData.cacheCreationInputTokens || 0) +
+		(tokenData.outputTokens || 0);
+
+	const tokenBreakdown: TokenBreakdown = {
+		inputTokens: tokenData.inputTokens || 0,
+		cacheReadInputTokens: tokenData.cacheReadInputTokens || 0,
+		cacheCreationInputTokens: tokenData.cacheCreationInputTokens || 0,
+		outputTokens: tokenData.outputTokens || 0,
+		totalTokens,
+	};
+
 	return {
 		timeSeries: timeSeries.map((point) => ({
 			time: point.ts,
@@ -136,5 +180,6 @@ export async function getAnalytics(timeRange: string): Promise<Analytics> {
 			successRate: point.success_rate || 0,
 		})),
 		modelDistribution,
+		tokenBreakdown,
 	};
 }

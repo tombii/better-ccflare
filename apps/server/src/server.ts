@@ -297,43 +297,62 @@ export default function startServer(options?: {
 	});
 
 	// Main server
-	serverInstance = serve({
-		port: runtime.port,
-		idleTimeout: NETWORK.IDLE_TIMEOUT_MAX, // Max allowed by Bun
-		async fetch(req) {
-			const url = new URL(req.url);
+	try {
+		serverInstance = serve({
+			port: runtime.port,
+			idleTimeout: NETWORK.IDLE_TIMEOUT_MAX, // Max allowed by Bun
+			async fetch(req) {
+				const url = new URL(req.url);
 
-			// Try API routes first
-			const apiResponse = await apiRouter.handleRequest(url, req);
-			if (apiResponse) {
-				return apiResponse;
-			}
-
-			// Dashboard routes (only if enabled and assets are available)
-			if (withDashboard && dashboardManifest) {
-				// Serve dashboard static assets
-				if (dashboardManifest[url.pathname]) {
-					return serveDashboardFile(
-						url.pathname,
-						undefined,
-						CACHE.CACHE_CONTROL_STATIC,
-					);
+				// Try API routes first
+				const apiResponse = await apiRouter.handleRequest(url, req);
+				if (apiResponse) {
+					return apiResponse;
 				}
 
-				// For all non-API routes, serve the dashboard index.html (client-side routing)
-				// This allows React Router to handle all dashboard routes without maintaining a list
-				if (
-					!url.pathname.startsWith("/api/") &&
-					!url.pathname.startsWith("/v1/")
-				) {
-					return serveDashboardFile("/index.html", "text/html");
-				}
-			}
+				// Dashboard routes (only if enabled and assets are available)
+				if (withDashboard && dashboardManifest) {
+					// Serve dashboard static assets
+					if (dashboardManifest[url.pathname]) {
+						return serveDashboardFile(
+							url.pathname,
+							undefined,
+							CACHE.CACHE_CONTROL_STATIC,
+						);
+					}
 
-			// All other paths go to proxy
-			return handleProxy(req, url, proxyContext);
-		},
-	});
+					// For all non-API routes, serve the dashboard index.html (client-side routing)
+					// This allows React Router to handle all dashboard routes without maintaining a list
+					if (
+						!url.pathname.startsWith("/api/") &&
+						!url.pathname.startsWith("/v1/")
+					) {
+						return serveDashboardFile("/index.html", "text/html");
+					}
+				}
+
+				// All other paths go to proxy
+				return handleProxy(req, url, proxyContext);
+			},
+		});
+	} catch (error) {
+		if (
+			typeof error === "object" &&
+			error !== null &&
+			"code" in error &&
+			error.code === "EADDRINUSE"
+		) {
+			console.error(
+				`❌ Port ${runtime.port} is already in use. Please use a different port.`,
+			);
+			console.error(
+				`   You can specify a different port with: --port <number>`,
+			);
+			void shutdown(); // Don't await to avoid async issues in catch
+			process.exit(1);
+		}
+		throw error;
+	}
 
 	// Log server startup (async)
 	getVersion().then((version) => {

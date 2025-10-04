@@ -29,6 +29,18 @@ async function ensureServer(port: number) {
 	return runningServer;
 }
 
+/**
+ * Helper function to exit gracefully with proper cleanup
+ */
+async function exitGracefully(code: 0 | 1 = 0): Promise<never> {
+	try {
+		await shutdown();
+	} catch (error) {
+		console.error("Error during shutdown:", error);
+	}
+	process.exit(code);
+}
+
 async function main() {
 	// Check for updates
 	updateNotifier({
@@ -50,16 +62,16 @@ async function main() {
 
 	// Handle version
 	if (parsed.version) {
-		getVersion().then((version) => {
+		getVersion().then(async (version) => {
 			console.log(`better-ccflare v${version}`);
-			process.exit(0);
+			await exitGracefully(0);
 		});
 		return;
 	}
 
 	// Handle help
 	if (parsed.help) {
-		getVersion().then((version) => {
+		getVersion().then(async (version) => {
 			console.log(`
 🎯 better-ccflare v${version} - Load Balancer for Claude
 
@@ -98,7 +110,7 @@ Examples:
   better-ccflare --analyze              # Run performance analysis
   better-ccflare --stats                # View stats
 `);
-			process.exit(0);
+			await exitGracefully(0);
 		});
 		return;
 	}
@@ -136,7 +148,7 @@ Examples:
 	if (parsed.stats) {
 		const stats = await tuiCore.getStats();
 		console.log(JSON.stringify(stats, null, 2));
-		return;
+		await exitGracefully(0);
 	}
 
 	if (parsed.addAccount) {
@@ -147,7 +159,7 @@ Examples:
 			priority: parsed.priority || 0,
 		});
 		console.log(`✅ Account "${parsed.addAccount}" added successfully`);
-		return;
+		await exitGracefully(0);
 	}
 
 	if (parsed.list) {
@@ -162,43 +174,43 @@ Examples:
 				);
 			});
 		}
-		return;
+		await exitGracefully(0);
 	}
 
 	if (parsed.remove) {
 		await tuiCore.removeAccount(parsed.remove);
 		console.log(`✅ Account "${parsed.remove}" removed successfully`);
-		return;
+		await exitGracefully(0);
 	}
 
 	if (parsed.resetStats) {
 		await tuiCore.resetStats();
 		console.log("✅ Statistics reset successfully");
-		return;
+		await exitGracefully(0);
 	}
 
 	if (parsed.clearHistory) {
 		await tuiCore.clearHistory();
 		console.log("✅ Request history cleared successfully");
-		return;
+		await exitGracefully(0);
 	}
 
 	if (parsed.pause) {
 		const result = await tuiCore.pauseAccount(parsed.pause);
 		console.log(result.message);
 		if (!result.success) {
-			process.exit(1);
+			await exitGracefully(1);
 		}
-		return;
+		await exitGracefully(0);
 	}
 
 	if (parsed.resume) {
 		const result = await tuiCore.resumeAccount(parsed.resume);
 		console.log(result.message);
 		if (!result.success) {
-			process.exit(1);
+			await exitGracefully(1);
 		}
-		return;
+		await exitGracefully(0);
 	}
 
 	if (parsed.setPriority) {
@@ -207,27 +219,27 @@ Examples:
 
 		if (Number.isNaN(priority)) {
 			console.error(`❌ Invalid priority value: ${priorityStr}`);
-			process.exit(1);
+			await exitGracefully(1);
 		}
 
 		const result = await tuiCore.updateAccountPriority(name, priority);
 		console.log(result.message);
 		if (!result.success) {
-			process.exit(1);
+			await exitGracefully(1);
 		}
-		return;
+		await exitGracefully(0);
 	}
 
 	if (parsed.analyze) {
 		await tuiCore.analyzePerformance();
-		return;
+		await exitGracefully(0);
 	}
 
 	if (parsed.getModel) {
 		const config = new Config();
 		const model = config.getDefaultAgentModel();
 		console.log(`Current default agent model: ${model}`);
-		return;
+		await exitGracefully(0);
 	}
 
 	if (parsed.setModel) {
@@ -244,12 +256,12 @@ Examples:
 		if (!fullModel) {
 			console.error(`❌ Invalid model: ${parsed.setModel}`);
 			console.error("Valid models: opus-4, sonnet-4");
-			process.exit(1);
+			await exitGracefully(1);
 		}
 
 		config.setDefaultAgentModel(fullModel);
 		console.log(`✅ Default agent model set to: ${fullModel}`);
-		return;
+		await exitGracefully(0);
 	}
 
 	// Default: Launch interactive TUI with auto-started server
@@ -259,9 +271,10 @@ Examples:
 	const { waitUntilExit } = render(React.createElement(App));
 	await waitUntilExit();
 
-	// Cleanup server when TUI exits
+	// Cleanup server when TUI exits - do this first to stop accepting new connections
 	if (runningServer) {
 		runningServer.stop();
+		runningServer = null;
 	}
 
 	// Shutdown all resources
@@ -271,29 +284,14 @@ Examples:
 // Run main and handle errors
 main().catch(async (error) => {
 	console.error("Error:", error.message);
-	try {
-		await shutdown();
-	} catch (shutdownError) {
-		console.error("Error during shutdown:", shutdownError);
-	}
-	process.exit(1);
+	await exitGracefully(1);
 });
 
 // Handle process termination
 process.on("SIGINT", async () => {
-	try {
-		await shutdown();
-	} catch (error) {
-		console.error("Error during shutdown:", error);
-	}
-	process.exit(0);
+	await exitGracefully(0);
 });
 
 process.on("SIGTERM", async () => {
-	try {
-		await shutdown();
-	} catch (error) {
-		console.error("Error during shutdown:", error);
-	}
-	process.exit(0);
+	await exitGracefully(0);
 });
