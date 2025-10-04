@@ -2,6 +2,8 @@ import type { Database } from "bun:sqlite";
 import { Logger } from "@better-ccflare/logger";
 import { getProvider } from "@better-ccflare/providers";
 import type { Account } from "@better-ccflare/types";
+import { getValidAccessToken } from "./handlers";
+import type { ProxyContext } from "./proxy";
 
 const log = new Logger("AutoRefreshScheduler");
 
@@ -11,6 +13,7 @@ const log = new Logger("AutoRefreshScheduler");
  */
 export class AutoRefreshScheduler {
 	private db: Database;
+	private proxyContext: ProxyContext;
 	private intervalId: Timer | null = null;
 	private checkInterval = 60000; // Check every minute
 	// Track the rate_limit_reset timestamp for each account when we last refreshed it
@@ -19,8 +22,9 @@ export class AutoRefreshScheduler {
 	// Prevent concurrent refresh operations
 	private isRefreshing = false;
 
-	constructor(db: Database) {
+	constructor(db: Database, proxyContext: ProxyContext) {
 		this.db = db;
+		this.proxyContext = proxyContext;
 	}
 
 	/**
@@ -247,13 +251,16 @@ export class AutoRefreshScheduler {
 				],
 			};
 
+			// Get a valid access token (refreshes if necessary)
+			const accessToken = await getValidAccessToken(account, this.proxyContext);
+
 			// Use provider's prepareHeaders method for consistent authentication
 			const headers = provider.prepareHeaders(
 				new Headers({
 					"Content-Type": "application/json",
 					"anthropic-version": "2023-06-01",
 				}),
-				account.access_token || undefined,
+				accessToken || undefined,
 				account.api_key || undefined,
 			);
 
