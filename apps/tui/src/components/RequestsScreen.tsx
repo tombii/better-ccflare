@@ -54,28 +54,31 @@ export function RequestsScreen({ onBack }: RequestsScreenProps) {
 				}
 			}
 			if (input === "r") {
-				loadRequests();
+				loadRequests(); // Manual refresh
 			}
 		}
 	});
 
 	const loadRequests = useCallback(async () => {
 		try {
+			setLoading(true);
 			const [requestData, summaryData] = await Promise.all([
 				tuiCore.getRequests(100),
 				tuiCore.getRequestSummaries(100),
 			]);
 			setRequests(requestData);
 			setSummaries(summaryData);
-			setLoading(false);
 		} catch (_error) {
+			// Keep existing data on error, don't clear it
+			console.error("Failed to load requests:", _error);
+		} finally {
 			setLoading(false);
 		}
 	}, []);
 
 	useEffect(() => {
 		loadRequests();
-		const interval = setInterval(loadRequests, 10000); // Auto-refresh every 10 seconds
+		const interval = setInterval(loadRequests, 15000); // Refresh every 15 seconds
 		return () => clearInterval(interval);
 	}, [loadRequests]);
 

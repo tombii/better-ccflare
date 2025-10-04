@@ -48,6 +48,8 @@ export function AnalyticsScreen({ onBack }: AnalyticsScreenProps) {
 	const [modelDistribution, setModelDistribution] = useState<
 		tuiCore.ModelDistribution[]
 	>([]);
+	const [tokenBreakdown, setTokenBreakdown] =
+		useState<tuiCore.TokenBreakdown | null>(null);
 
 	useInput((input, key) => {
 		if (key.escape) {
@@ -84,11 +86,11 @@ export function AnalyticsScreen({ onBack }: AnalyticsScreenProps) {
 	const loadData = useCallback(async () => {
 		try {
 			setLoading(true);
-			// Get basic stats
+			// Get basic stats first (faster query)
 			const data = await tuiCore.getStats();
 			setStats(data);
 
-			// Get analytics with time series data
+			// Get analytics with time series data (slower query)
 			const analytics = await tuiCore.getAnalytics(timeRange);
 
 			// Transform time series data for display
@@ -113,25 +115,23 @@ export function AnalyticsScreen({ onBack }: AnalyticsScreenProps) {
 			});
 
 			setTimeSeriesData(transformedTimeSeries);
-			setLoading(false);
+			setModelDistribution(analytics.modelDistribution);
+			setTokenBreakdown(analytics.tokenBreakdown);
 		} catch (_error) {
+			// Keep existing data on error, don't clear it
+			console.error("Failed to load analytics:", _error);
+		} finally {
 			setLoading(false);
 		}
 	}, [timeRange]);
 
 	useEffect(() => {
 		loadData();
-		const interval = setInterval(loadData, 30000); // Refresh every 30 seconds
+		const interval = setInterval(loadData, 45000); // Reduced frequency to every 45 seconds
 		return () => clearInterval(interval);
 	}, [loadData]);
 
-	useEffect(() => {
-		if (!loading) {
-			tuiCore.getAnalytics(timeRange).then((analytics) => {
-				setModelDistribution(analytics.modelDistribution);
-			});
-		}
-	}, [timeRange, loading]);
+	// Removed separate model distribution loading since it's now loaded in main loadData
 
 	if (loading || !stats) {
 		return (
@@ -261,28 +261,28 @@ export function AnalyticsScreen({ onBack }: AnalyticsScreenProps) {
 				return (
 					<Box flexDirection="column">
 						{/* Token breakdown bar chart */}
-						{stats.tokenDetails && (
+						{tokenBreakdown && (
 							<BarChart
-								title="Token Usage Breakdown"
+								title={`Token Usage Breakdown (${TIME_RANGE_LABELS[timeRange]})`}
 								data={[
 									{
 										label: "Input",
-										value: stats.tokenDetails.inputTokens,
+										value: tokenBreakdown.inputTokens,
 										color: "yellow",
 									},
 									{
 										label: "Cache Read",
-										value: stats.tokenDetails.cacheReadInputTokens,
+										value: tokenBreakdown.cacheReadInputTokens,
 										color: "cyan",
 									},
 									{
 										label: "Cache Create",
-										value: stats.tokenDetails.cacheCreationInputTokens,
+										value: tokenBreakdown.cacheCreationInputTokens,
 										color: "blue",
 									},
 									{
 										label: "Output",
-										value: stats.tokenDetails.outputTokens,
+										value: tokenBreakdown.outputTokens,
 										color: "green",
 									},
 								]}
@@ -294,11 +294,20 @@ export function AnalyticsScreen({ onBack }: AnalyticsScreenProps) {
 						<Box marginTop={2}>
 							<Text bold>Token Efficiency Metrics</Text>
 							<Box marginTop={1}>
+								<Text>Total tokens: </Text>
+								<Text color="yellow" bold>
+									{formatNumber(tokenBreakdown?.totalTokens || 0)}
+								</Text>
+							</Box>
+							<Box>
 								<Text>Avg tokens/request: </Text>
 								<Text color="yellow" bold>
 									{formatNumber(
 										stats.totalRequests > 0
-											? Math.round(stats.totalTokens / stats.totalRequests)
+											? Math.round(
+													(tokenBreakdown?.totalTokens || 0) /
+														stats.totalRequests,
+												)
 											: 0,
 									)}
 								</Text>
@@ -307,9 +316,9 @@ export function AnalyticsScreen({ onBack }: AnalyticsScreenProps) {
 								<Text>Cache hit rate: </Text>
 								<Text color="cyan" bold>
 									{formatPercentage(
-										stats.tokenDetails
-											? (stats.tokenDetails.cacheReadInputTokens /
-													stats.tokenDetails.inputTokens) *
+										tokenBreakdown && tokenBreakdown.inputTokens > 0
+											? (tokenBreakdown.cacheReadInputTokens /
+													tokenBreakdown.inputTokens) *
 													100
 											: 0,
 									)}
