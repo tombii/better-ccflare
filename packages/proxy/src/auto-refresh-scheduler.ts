@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { Logger } from "@better-ccflare/logger";
-import { getProvider } from "@better-ccflare/providers";
+import { fetchUsageData, getProvider } from "@better-ccflare/providers";
 import type { Account } from "@better-ccflare/types";
 import { getValidAccessToken } from "./handlers";
 import type { ProxyContext } from "./proxy";
@@ -276,23 +276,62 @@ export class AutoRefreshScheduler {
 					`Auto-refresh message sent successfully for account: ${accountRow.name}`,
 				);
 
-				// Update the rate_limit_reset timestamp by reading response headers
-				const rateLimitReset = response.headers.get("x-ratelimit-reset");
-				if (rateLimitReset) {
-					const resetTimestamp = new Date(rateLimitReset).getTime();
+				// Use the provider's parseRateLimit method to get unified rate limit info
+				const rateLimitInfo = provider.parseRateLimit(response);
+
+				// Update rate limit fields from unified headers
+				if (rateLimitInfo.resetTime) {
 					this.db.run("UPDATE accounts SET rate_limit_reset = ? WHERE id = ?", [
-						resetTimestamp,
+						rateLimitInfo.resetTime,
 						accountRow.id,
 					]);
 
 					// Update our tracking with the NEW rate_limit_reset from the API
-					// This is the reset time for the window we just started
-					this.lastRefreshResetTime.set(accountRow.id, resetTimestamp);
+					this.lastRefreshResetTime.set(accountRow.id, rateLimitInfo.resetTime);
 
 					log.info(
-						`Updated rate_limit_reset for ${accountRow.name} to ${rateLimitReset}`,
+						`Updated rate_limit_reset for ${accountRow.name} to ${new Date(rateLimitInfo.resetTime).toISOString()}`,
 					);
 				}
+
+				if (rateLimitInfo.statusHeader) {
+					this.db.run(
+						"UPDATE accounts SET rate_limit_status = ? WHERE id = ?",
+						[rateLimitInfo.statusHeader, accountRow.id],
+					);
+					log.info(
+						`Updated rate_limit_status for ${accountRow.name} to ${rateLimitInfo.statusHeader}`,
+					);
+				}
+
+				if (rateLimitInfo.remaining !== undefined) {
+					this.db.run(
+						"UPDATE accounts SET rate_limit_remaining = ? WHERE id = ?",
+						[rateLimitInfo.remaining, accountRow.id],
+					);
+					log.info(
+						`Updated rate_limit_remaining for ${accountRow.name} to ${rateLimitInfo.remaining}`,
+					);
+				}
+
+				// Fetch usage data from the OAuth usage endpoint to get 5h window info
+				const accessToken = await getValidAccessToken(
+					account,
+					this.proxyContext,
+				);
+				if (accessToken) {
+					const usageData = await fetchUsageData(accessToken);
+					if (usageData) {
+						log.info(
+							`Fetched usage data for ${accountRow.name}: 5h=${usageData.five_hour.utilization}%, 7d=${usageData.seven_day.utilization}%`,
+						);
+					} else {
+						log.warn(
+							`Failed to fetch usage data for ${accountRow.name} after auto-refresh`,
+						);
+					}
+				}
+
 				return true;
 			}
 

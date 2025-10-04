@@ -532,5 +532,21 @@ process.on("SIGTERM", () => handleGracefulShutdown("SIGTERM"));
 
 // Run server if this is the main entry point
 if (import.meta.main) {
-	startServer();
+	// Parse command line arguments
+	const args = process.argv.slice(2);
+	let port: number | undefined;
+
+	for (let i = 0; i < args.length; i++) {
+		if (args[i] === "--port" && args[i + 1]) {
+			port = Number.parseInt(args[i + 1]);
+			i++; // Skip next arg
+		}
+	}
+
+	// Use PORT env var if no command line argument
+	if (!port && process.env.PORT) {
+		port = Number.parseInt(process.env.PORT);
+	}
+
+	startServer({ port });
 }

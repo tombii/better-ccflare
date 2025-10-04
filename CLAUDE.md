@@ -34,6 +34,13 @@ Using bun avoids workspace dependency errors that occur with npm commands. The p
 - `bun start` - Start the load balancer (port 8080)
 - **For testing**: Use port 8081 to avoid conflicts: `better-ccflare --serve --port 8081`
 
+### Important: Production Server Management
+The production server runs as a systemd service using the npm version, not the local code. When testing code changes:
+
+1. **DO NOT use `sudo systemctl restart better-ccflare`** - this will restart the npm version, not your local changes
+2. **DO use a different port** to test your local code: `better-ccflare --serve --port 8081`
+3. The systemd service uses the published npm package, so local code changes require running on a different port
+
 ### Managing accounts
 - `better-ccflare --add-account <name>` - Add a new account
 - `better-ccflare --list` - List all accounts
