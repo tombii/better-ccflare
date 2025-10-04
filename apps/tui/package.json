@@ -1,57 +1,57 @@
 {
-	"name": "better-ccflare",
-	"version": "1.1.24",
-	"description": "Load balancer proxy for Claude API with intelligent distribution across multiple OAuth accounts to avoid rate limiting",
-	"author": "snipeship",
-	"license": "MIT",
-	"repository": {
-		"type": "git",
-		"url": "git+https://github.com/tombii/better-ccflare.git"
-	},
-	"homepage": "https://github.com/tombii/better-ccflare#readme",
-	"bugs": {
-		"url": "https://github.com/tombii/better-ccflare/issues"
-	},
-	"bin": {
-		"better-ccflare": "dist/better-ccflare"
-	},
-	"type": "module",
-	"scripts": {
-		"dev": "bun run src/main.ts",
-		"build": "BETTER_CCFLARE_VERSION=$(node -p \"require('./package.json').version\") bun build src/main.ts --compile --outfile dist/better-ccflare --target=bun --minify --define process.env.BETTER_CCFLARE_VERSION='\"'$BETTER_CCFLARE_VERSION'\"'",
-		"prepublishOnly": "cp ../../README.md . && bun run build && jq 'del(.devDependencies[\"@better-ccflare/tui-core\", \"@better-ccflare/ui-common\", \"@better-ccflare/database\", \"@better-ccflare/core-di\", \"@better-ccflare/config\", \"@better-ccflare/logger\", \"@better-ccflare/server\"])' package.json > package.json.tmp && mv package.json.tmp package.json",
-		"postpublish": "chmod +x dist/better-ccflare"
-	},
-	"engines": {
-		"node": ">=18.0.0"
-	},
-	"devDependencies": {
-		"ink": "^6.0.0",
-		"ink-select-input": "^6.0.0",
-		"ink-spinner": "^5.0.0",
-		"ink-text-input": "^6.0.0",
-		"react": "^19.0.0",
-		"@types/react": "^19.0.0",
-		"@types/node": "^20.0.0"
-	},
-	"files": [
-		"dist",
-		"README.md"
-	],
-	"keywords": [
-		"claude",
-		"anthropic",
-		"api",
-		"proxy",
-		"load-balancer",
-		"rate-limiting",
-		"oauth",
-		"cli",
-		"tui",
-		"analytics",
-		"monitoring"
-	],
-	"publishConfig": {
-		"access": "public"
-	}
+  "name": "better-ccflare",
+  "version": "1.1.24",
+  "description": "Load balancer proxy for Claude API with intelligent distribution across multiple OAuth accounts to avoid rate limiting",
+  "author": "snipeship",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tombii/better-ccflare.git"
+  },
+  "homepage": "https://github.com/tombii/better-ccflare#readme",
+  "bugs": {
+    "url": "https://github.com/tombii/better-ccflare/issues"
+  },
+  "bin": {
+    "better-ccflare": "dist/better-ccflare"
+  },
+  "type": "module",
+  "scripts": {
+    "dev": "bun run src/main.ts",
+    "build": "BETTER_CCFLARE_VERSION=$(node -p \"require('./package.json').version\") bun build src/main.ts --compile --outfile dist/better-ccflare --target=bun --minify --define process.env.BETTER_CCFLARE_VERSION='\"'$BETTER_CCFLARE_VERSION'\"'",
+    "prepublishOnly": "cp ../../README.md . && bun run build && jq 'del(.devDependencies[\"@better-ccflare/tui-core\", \"@better-ccflare/ui-common\", \"@better-ccflare/database\", \"@better-ccflare/core-di\", \"@better-ccflare/config\", \"@better-ccflare/logger\", \"@better-ccflare/server\"])' package.json > package.json.tmp && mv package.json.tmp package.json",
+    "postpublish": "chmod +x dist/better-ccflare"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "devDependencies": {
+    "ink": "^6.0.0",
+    "ink-select-input": "^6.0.0",
+    "ink-spinner": "^5.0.0",
+    "ink-text-input": "^6.0.0",
+    "react": "^19.0.0",
+    "@types/react": "^19.0.0",
+    "@types/node": "^20.0.0"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "keywords": [
+    "claude",
+    "anthropic",
+    "api",
+    "proxy",
+    "load-balancer",
+    "rate-limiting",
+    "oauth",
+    "cli",
+    "tui",
+    "analytics",
+    "monitoring"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
 }
