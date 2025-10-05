@@ -32,20 +32,30 @@ export async function fetchUsageData(
 
 		if (!response.ok) {
 			const errorMessage = response.statusText;
+			const responseHeaders = Object.fromEntries(response.headers.entries());
 			try {
 				const errorBody = await response.text();
-				if (errorBody) {
-					log.error(
-						`Failed to fetch usage data: ${response.status} ${errorMessage} - ${errorBody}`,
-					);
-				} else {
-					log.error(
-						`Failed to fetch usage data: ${response.status} ${errorMessage}`,
-					);
-				}
+				log.error(
+					`Failed to fetch usage data: ${response.status} ${errorMessage}`,
+					{
+						status: response.status,
+						statusText: errorMessage,
+						url: "https://api.anthropic.com/api/oauth/usage",
+						headers: responseHeaders,
+						errorBody: errorBody,
+						timestamp: new Date().toISOString(),
+					},
+				);
 			} catch {
 				log.error(
 					`Failed to fetch usage data: ${response.status} ${errorMessage}`,
+					{
+						status: response.status,
+						statusText: errorMessage,
+						url: "https://api.anthropic.com/api/oauth/usage",
+						headers: responseHeaders,
+						timestamp: new Date().toISOString(),
+					},
 				);
 			}
 			return null;
@@ -159,8 +169,10 @@ class UsageCache {
 		const data = await fetchUsageData(accessToken);
 		if (data) {
 			this.cache.set(accountId, { data, timestamp: Date.now() });
-			log.debug(
-				`Updated usage data for account ${accountId}: ${getRepresentativeUtilization(data)}%`,
+			const utilization = getRepresentativeUtilization(data);
+			const window = getRepresentativeWindow(data);
+			log.info(
+				`Successfully fetched usage data for account ${accountId}: ${utilization}% (${window} window)`,
 			);
 		}
 	}

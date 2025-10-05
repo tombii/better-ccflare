@@ -246,7 +246,7 @@ class PriceCatalogue {
 				}
 
 				if (addedModels > 0) {
-					this.logger?.warn(
+					this.logger?.info(
 						"Added %d missing models for provider %s from bundled pricing",
 						addedModels,
 						providerName,
@@ -275,7 +275,7 @@ class PriceCatalogue {
 		];
 
 		if (problematicPatterns.some((pattern) => pattern.test(providerName))) {
-			this.logger?.warn(
+			this.logger?.debug(
 				"Filtering out provider %s due to problematic name pattern",
 				providerName,
 			);
@@ -303,7 +303,7 @@ class PriceCatalogue {
 				});
 
 				if (allZeroCost) {
-					this.logger?.warn(
+					this.logger?.debug(
 						"Filtering out provider %s because all models have zero cost",
 						providerName,
 					);
