@@ -31,9 +31,23 @@ export async function fetchUsageData(
 		});
 
 		if (!response.ok) {
-			log.error(
-				`Failed to fetch usage data: ${response.status} ${response.statusText}`,
-			);
+			const errorMessage = response.statusText;
+			try {
+				const errorBody = await response.text();
+				if (errorBody) {
+					log.error(
+						`Failed to fetch usage data: ${response.status} ${errorMessage} - ${errorBody}`,
+					);
+				} else {
+					log.error(
+						`Failed to fetch usage data: ${response.status} ${errorMessage}`,
+					);
+				}
+			} catch {
+				log.error(
+					`Failed to fetch usage data: ${response.status} ${errorMessage}`,
+				);
+			}
 			return null;
 		}
 
