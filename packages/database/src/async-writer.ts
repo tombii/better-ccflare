@@ -43,14 +43,20 @@ export class AsyncDbWriter implements Disposable {
 		this.running = true;
 
 		try {
+			let jobsProcessed = 0;
 			while (this.queue.length > 0) {
 				const job = this.queue.shift();
 				if (!job) continue;
 				try {
 					await job();
+					jobsProcessed++;
 				} catch (error) {
 					logger.error("Failed to execute DB job", error);
 				}
+			}
+			// Log jobs processed for debugging
+			if (jobsProcessed > 0) {
+				logger.debug(`Processed ${jobsProcessed} database jobs`);
 			}
 		} finally {
 			this.running = false;

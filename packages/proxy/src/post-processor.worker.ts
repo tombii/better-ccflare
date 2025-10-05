@@ -50,6 +50,9 @@ interface RequestState {
 const log = new Logger("PostProcessor");
 const requests = new Map<string, RequestState>();
 
+console.log("[WORKER] Post-processor worker started");
+log.info("Post-processor worker started");
+
 // Limit to prevent unbounded growth
 const MAX_REQUESTS_MAP_SIZE = 10000;
 
@@ -322,16 +325,25 @@ async function handleStart(msg: StartMessage): Promise<void> {
 	}
 
 	// Save minimal request info immediately
-	asyncWriter.enqueue(() =>
-		dbOps.saveRequestMeta(
-			msg.requestId,
-			msg.method,
-			msg.path,
-			msg.accountId,
-			msg.responseStatus,
-			msg.timestamp,
-		),
+	console.log(`[WORKER] Saving request meta for ${msg.requestId}`);
+	log.info(
+		`Saving request meta for ${msg.requestId} (${msg.method} ${msg.path})`,
 	);
+	asyncWriter.enqueue(() => {
+		try {
+			dbOps.saveRequestMeta(
+				msg.requestId,
+				msg.method,
+				msg.path,
+				msg.accountId,
+				msg.responseStatus,
+				msg.timestamp,
+			);
+			log.info(`Successfully saved request meta for ${msg.requestId}`);
+		} catch (error) {
+			log.error(`Failed to save request meta for ${msg.requestId}:`, error);
+		}
+	});
 
 	// Update account usage if authenticated
 	if (msg.accountId && msg.accountId !== NO_ACCOUNT_ID) {
@@ -463,6 +475,7 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 	}
 
 	// Update request with final data
+	log.info(`Saving final request data for ${startMessage.requestId}`);
 	asyncWriter.enqueue(() =>
 		dbOps.saveRequest(
 			startMessage.requestId,
@@ -653,6 +666,7 @@ startCleanupInterval();
 // Message handler
 self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
 	const msg = event.data;
+	console.log(`[WORKER] Received message type: ${msg.type}`);
 
 	switch (msg.type) {
 		case "start":
