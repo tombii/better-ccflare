@@ -2,7 +2,6 @@
 import { Config } from "@better-ccflare/config";
 import {
 	CLAUDE_MODEL_IDS,
-	getVersion,
 	getVersionSync,
 	NETWORK,
 	shutdown,
@@ -16,8 +15,6 @@ import * as tuiCore from "@better-ccflare/tui-core";
 import { parseArgs } from "@better-ccflare/tui-core";
 import { render } from "ink";
 import React from "react";
-import updateNotifier from "update-notifier";
-import pkg from "../package.json";
 import { App } from "./App";
 
 // Global singleton for auto-started server
@@ -159,7 +156,6 @@ Examples:
 	const dbOps = DatabaseFactory.getInstance();
 	container.registerInstance(SERVICE_KEYS.Database, dbOps);
 
-	
 	// Handle non-interactive commands
 	if (parsed.serve) {
 		const config = new Config();
@@ -280,7 +276,6 @@ Examples:
 		await exitGracefully(0);
 	}
 
-	
 	// Default: Launch interactive TUI with auto-started server
 	const config = new Config();
 	const port = parsed.port || config.getRuntime().port || NETWORK.DEFAULT_PORT;

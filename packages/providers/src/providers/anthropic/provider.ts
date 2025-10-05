@@ -58,10 +58,41 @@ export class AnthropicProvider extends BaseProvider {
 			let errorData: unknown = null;
 			try {
 				errorData = await response.json();
-				const errorObj = errorData as { error?: string; message?: string };
-				errorMessage = errorObj.error || errorObj.message || errorMessage;
+				const errorObj = errorData as {
+					error?: string;
+					error_description?: string;
+					message?: string;
+				};
+				errorMessage =
+					errorObj.error_description ||
+					errorObj.error ||
+					errorObj.message ||
+					errorMessage;
+
+				// Log specific OAuth authentication errors
+				if (response.status === 401 && typeof errorMessage === "string") {
+					if (
+						errorMessage.includes(
+							"OAuth authentication is currently not supported",
+						)
+					) {
+						log.error(
+							`OAuth authentication not supported for ${account.name} - the refresh token may be revoked or invalid. Account may need re-authentication.`,
+						);
+					} else if (
+						errorMessage.includes("invalid_grant") ||
+						errorMessage.includes("invalid_refresh_token")
+					) {
+						log.error(
+							`Refresh token invalid or expired for ${account.name} - account needs re-authentication`,
+						);
+					}
+				}
 			} catch {
 				// If we can't parse the error response, use the status text
+				log.error(
+					`Failed to parse token refresh error response for ${account.name}: ${response.statusText}`,
+				);
 			}
 			log.error(
 				`Token refresh failed for ${account.name}: Status ${response.status}, Error: ${errorMessage}`,
