@@ -61,7 +61,14 @@ export function getUsageWorker(): Worker {
 
 			// Handle worker errors
 			usageWorkerInstance.onerror = (error) => {
-				log.error("Worker error:", error);
+				log.error("Worker error:", {
+					message: error.message,
+					filename: error.filename,
+					lineno: error.lineno,
+					colno: error.colno,
+					stack: error.stack,
+					error: error.error,
+				});
 				// Reset worker instance on error to allow recreation
 				usageWorkerInstance = null;
 			};

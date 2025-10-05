@@ -315,13 +315,18 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		statusCode: number | null,
 		timestamp?: number,
 	): void {
-		this.requests.saveMeta(
-			id,
-			method,
-			path,
-			accountUsed,
-			statusCode,
-			timestamp,
+		withDatabaseRetrySync(
+			() =>
+				this.requests.saveMeta(
+					id,
+					method,
+					path,
+					accountUsed,
+					statusCode,
+					timestamp,
+				),
+			this.retryConfig,
+			"saveRequestMeta",
 		);
 	}
 
@@ -338,27 +343,40 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		usage?: RequestData["usage"],
 		agentUsed?: string,
 	): void {
-		this.requests.save({
-			id,
-			method,
-			path,
-			accountUsed,
-			statusCode,
-			success,
-			errorMessage,
-			responseTime,
-			failoverAttempts,
-			usage,
-			agentUsed,
-		});
+		withDatabaseRetrySync(
+			() =>
+				this.requests.save({
+					id,
+					method,
+					path,
+					accountUsed,
+					statusCode,
+					success,
+					errorMessage,
+					responseTime,
+					failoverAttempts,
+					usage,
+					agentUsed,
+				}),
+			this.retryConfig,
+			"saveRequest",
+		);
 	}
 
 	updateRequestUsage(requestId: string, usage: RequestData["usage"]): void {
-		this.requests.updateUsage(requestId, usage);
+		withDatabaseRetrySync(
+			() => this.requests.updateUsage(requestId, usage),
+			this.retryConfig,
+			"updateRequestUsage",
+		);
 	}
 
 	saveRequestPayload(id: string, data: unknown): void {
-		this.requests.savePayload(id, data);
+		withDatabaseRetrySync(
+			() => this.requests.savePayload(id, data),
+			this.retryConfig,
+			"saveRequestPayload",
+		);
 	}
 
 	getRequestPayload(id: string): unknown | null {
