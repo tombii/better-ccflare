@@ -3,6 +3,7 @@ import { lazy, Suspense } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { AccountsTab } from "./components/AccountsTab";
 import { AgentsTab } from "./components/AgentsTab";
+import { DebugPanel } from "./components/DebugPanel";
 import { LogsTab } from "./components/LogsTab";
 import { Navigation } from "./components/navigation";
 import { OverviewTab } from "./components/OverviewTab";
@@ -131,6 +132,7 @@ export function App() {
 						</div>
 					</main>
 				</div>
+				<DebugPanel />
 			</ThemeProvider>
 		</QueryClientProvider>
 	);

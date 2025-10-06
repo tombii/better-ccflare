@@ -191,7 +191,7 @@ function startUsagePollingWithRefresh(
 				logger.info(
 					`Temporarily resuming account ${account.name} for token refresh`,
 				);
-				proxyContext.dbOps.updateAccountPaused(account.id, false);
+				proxyContext.dbOps.resumeAccount(account.id);
 				account.paused = false;
 			}
 
@@ -201,7 +201,7 @@ function startUsagePollingWithRefresh(
 			// Restore original paused state if we temporarily resumed it
 			if (wasOriginallyPaused && !account.paused) {
 				logger.info(`Restoring paused state for account ${account.name}`);
-				proxyContext.dbOps.updateAccountPaused(account.id, true);
+				proxyContext.dbOps.pauseAccount(account.id);
 				account.paused = true;
 			}
 
@@ -216,14 +216,60 @@ function startUsagePollingWithRefresh(
 		} catch (error) {
 			logger.error(
 				`Error starting usage polling for account ${account.name}:`,
-				error,
+				{
+					error: error instanceof Error ? error.message : String(error),
+					stack: error instanceof Error ? error.stack : undefined,
+					accountId: account.id,
+					provider: account.provider,
+					timestamp: new Date().toISOString(),
+					hasAccessToken: !!account.access_token,
+					hasRefreshToken: !!account.refresh_token,
+					expiresAt: account.expires_at
+						? new Date(account.expires_at).toISOString()
+						: null,
+				},
 			);
+
+			// Log additional context for common error types
+			if (error instanceof Error) {
+				if (
+					error.message.includes("401") ||
+					error.message.includes("Unauthorized")
+				) {
+					logger.error(
+						`Authentication failed for account ${account.name} - check API credentials`,
+						{
+							accountId: account.id,
+							error: error.message,
+						},
+					);
+				} else if (
+					error.message.includes("network") ||
+					error.message.includes("fetch")
+				) {
+					logger.error(
+						`Network error for account ${account.name} - check connectivity`,
+						{
+							accountId: account.id,
+							error: error.message,
+						},
+					);
+				} else if (error.message.includes("rate limit")) {
+					logger.error(
+						`Rate limited for account ${account.name} - backing off`,
+						{
+							accountId: account.id,
+							error: error.message,
+						},
+					);
+				}
+			}
 			// Restore original paused state in case of error
 			if (wasOriginallyPaused && !account.paused) {
 				logger.info(
 					`Restoring paused state for account ${account.name} after error`,
 				);
-				proxyContext.dbOps.updateAccountPaused(account.id, true);
+				proxyContext.dbOps.pauseAccount(account.id);
 				account.paused = true;
 			}
 			// Retry in 5 minutes if there was an error
@@ -478,14 +524,33 @@ Available endpoints:
 	// Start usage polling for Anthropic accounts with token refresh (regardless of paused status)
 	const anthropicAccounts = accounts.filter((a) => a.provider === "anthropic");
 	if (anthropicAccounts.length > 0) {
+		log.info(
+			`Found ${anthropicAccounts.length} Anthropic accounts, starting usage polling...`,
+		);
 		for (const account of anthropicAccounts) {
+			log.debug(`Processing account: ${account.name}`, {
+				accountId: account.id,
+				hasAccessToken: !!account.access_token,
+				hasRefreshToken: !!account.refresh_token,
+				paused: account.paused,
+				expiresAt: account.expires_at
+					? new Date(account.expires_at).toISOString()
+					: null,
+			});
+
 			if (account.access_token || account.refresh_token) {
 				// Start usage polling with token refresh capability
 				// Usage data fetching should work independently of account paused status
 				startUsagePollingWithRefresh(account, proxyContext);
 				log.info(`Started usage polling for account ${account.name}`);
+			} else {
+				log.warn(
+					`Account ${account.name} has no access token or refresh token, skipping usage polling`,
+				);
 			}
 		}
+	} else {
+		log.info(`No Anthropic accounts found, usage polling will not start`);
 	}
 
 	return {
