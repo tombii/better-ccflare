@@ -72,7 +72,7 @@ export function useApiError(
 				...formatOptions.errorMap,
 				// Override auth error message for dashboard context
 				unauthorized: "Authentication failed. Please re-add your account.",
-				401: "Authentication failed. Please re-add your account.",
+				401: "Authentication failed (401 Unauthorized). The server rejected the request - likely due to expired or invalid API credentials.",
 			},
 		}),
 		// biome-ignore lint/correctness/useExhaustiveDependencies: formatOptions is destructured from options

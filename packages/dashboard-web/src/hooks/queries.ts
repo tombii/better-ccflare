@@ -46,15 +46,68 @@ export const useAnalytics = (
 	viewMode: "normal" | "cumulative",
 	modelBreakdown?: boolean,
 ) => {
+	const logger = {
+		debug: (message: string, ...args: any[]) => {
+			console.debug(`[Analytics Query] ${message}`, ...args);
+		},
+		error: (message: string, ...args: any[]) => {
+			console.error(`[Analytics Query] ${message}`, ...args);
+		},
+	};
+
 	return useQuery({
 		queryKey: queryKeys.analytics(timeRange, filters, viewMode, modelBreakdown),
-		queryFn: () =>
-			api.getAnalytics(timeRange, filters, viewMode, modelBreakdown),
-		staleTime: 45000, // Consider data fresh for 45 seconds
-		refetchInterval: 60000, // Refresh every minute
-		refetchIntervalInBackground: false, // Don't refresh when tab is not focused
-		gcTime: 15 * 60 * 1000, // Keep in cache for 15 minutes
-		enabled: !!timeRange, // Only fetch if timeRange is provided
+		queryFn: async () => {
+			logger.debug(`Starting analytics query`, {
+				timeRange,
+				filters,
+				viewMode,
+				modelBreakdown,
+				timestamp: new Date().toISOString(),
+			});
+
+			try {
+				const result = await api.getAnalytics(
+					timeRange,
+					filters,
+					viewMode,
+					modelBreakdown,
+				);
+				logger.debug(`Analytics query completed successfully`, {
+					timeRange,
+					filters,
+					viewMode,
+					modelBreakdown,
+					resultType: Array.isArray(result) ? "array" : "object",
+					timestamp: new Date().toISOString(),
+				});
+				return result;
+			} catch (error) {
+				logger.error(`Analytics query failed`, {
+					timeRange,
+					filters,
+					viewMode,
+					modelBreakdown,
+					error: error instanceof Error ? error.message : String(error),
+					errorStack: error instanceof Error ? error.stack : undefined,
+					timestamp: new Date().toISOString(),
+				});
+				throw error;
+			}
+		},
+		staleTime: 45000,
+		refetchInterval: 60000,
+		refetchIntervalInBackground: false,
+		gcTime: 15 * 60 * 1000,
+		enabled: !!timeRange,
+		retry: (failureCount, error) => {
+			logger.debug(`Analytics query retry attempt ${failureCount + 1}`, {
+				error: error instanceof Error ? error.message : String(error),
+				willRetry: failureCount < 3, // Retry up to 3 times
+				timestamp: new Date().toISOString(),
+			});
+			return failureCount < 3;
+		},
 	});
 };
 
