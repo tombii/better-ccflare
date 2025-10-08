@@ -47,10 +47,10 @@ export const useAnalytics = (
 	modelBreakdown?: boolean,
 ) => {
 	const logger = {
-		debug: (message: string, ...args: any[]) => {
+		debug: (message: string, ...args: unknown[]) => {
 			console.debug(`[Analytics Query] ${message}`, ...args);
 		},
-		error: (message: string, ...args: any[]) => {
+		error: (message: string, ...args: unknown[]) => {
 			console.error(`[Analytics Query] ${message}`, ...args);
 		},
 	};

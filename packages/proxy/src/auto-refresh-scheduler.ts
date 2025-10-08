@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { registerHeartbeat, requestEvents } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import { fetchUsageData, getProvider } from "@better-ccflare/providers";
 import type { Account } from "@better-ccflare/types";
@@ -14,7 +15,7 @@ const log = new Logger("AutoRefreshScheduler");
 export class AutoRefreshScheduler {
 	private db: Database;
 	private proxyContext: ProxyContext;
-	private intervalId: Timer | null = null;
+	private unregisterInterval: (() => void) | null = null;
 	private checkInterval = 60000; // Check every minute
 	// Track the rate_limit_reset timestamp for each account when we last refreshed it
 	// This allows us to detect when a new window has started (different rate_limit_reset)
@@ -31,15 +32,18 @@ export class AutoRefreshScheduler {
 	 * Start the auto-refresh scheduler
 	 */
 	start(): void {
-		if (this.intervalId) {
+		if (this.unregisterInterval) {
 			log.warn("Auto-refresh scheduler already running");
 			return;
 		}
 
 		log.info("Starting auto-refresh scheduler");
-		this.intervalId = setInterval(() => {
-			this.checkAndRefresh();
-		}, this.checkInterval);
+		this.unregisterInterval = registerHeartbeat({
+			id: "auto-refresh-scheduler",
+			callback: () => this.checkAndRefresh(),
+			seconds: Math.floor(this.checkInterval / 1000),
+			description: "Auto-refresh scheduler for account usage windows",
+		});
 
 		// Run immediately on start
 		this.checkAndRefresh();
@@ -49,9 +53,9 @@ export class AutoRefreshScheduler {
 	 * Stop the auto-refresh scheduler
 	 */
 	stop(): void {
-		if (this.intervalId) {
-			clearInterval(this.intervalId);
-			this.intervalId = null;
+		if (this.unregisterInterval) {
+			this.unregisterInterval();
+			this.unregisterInterval = null;
 			log.info("Auto-refresh scheduler stopped");
 		}
 		// Clear the tracking map to free memory
@@ -106,7 +110,6 @@ export class AutoRefreshScheduler {
 				FROM accounts
 				WHERE
 					auto_refresh_enabled = 1
-					AND paused = 0
 					AND provider = 'anthropic'
 					AND (
 						(rate_limit_reset IS NOT NULL AND rate_limit_reset <= ?)
@@ -253,7 +256,22 @@ export class AutoRefreshScheduler {
 				auto_fallback_enabled: false,
 				auto_refresh_enabled: true,
 				custom_endpoint: accountRow.custom_endpoint,
+				model_mappings: null,
 			};
+
+			// Emit request start event for analytics
+			const requestId = crypto.randomUUID();
+			const timestamp = Date.now();
+			requestEvents.emit("event", {
+				type: "start",
+				id: requestId,
+				timestamp,
+				method: "POST",
+				path: "/v1/messages",
+				accountId: account.id,
+				statusCode: 0, // Will be updated later
+				agentUsed: null,
+			});
 
 			// Prepare dummy message request
 			const dummyMessages = [
@@ -267,12 +285,12 @@ export class AutoRefreshScheduler {
 			const randomMessage =
 				dummyMessages[Math.floor(Math.random() * dummyMessages.length)];
 
-			// Send through the proxy instead of directly to Anthropic
-			// This ensures it goes through the same code path as normal requests
+			// Send request through proxy with special header to force specific account usage
+			// This ensures proper request handling and analytics while using the correct account
 			const proxyPort = this.proxyContext.runtime.port;
 			const endpoint = `http://localhost:${proxyPort}/v1/messages`;
 
-			// Use simple headers like a normal client would - the proxy will handle authentication
+			// Use same headers as normal Claude Code CLI requests, plus the special account ID header
 			const headers = new Headers({
 				accept: "application/json",
 				"accept-language": "*",
@@ -294,11 +312,16 @@ export class AutoRefreshScheduler {
 				"x-stainless-runtime": "node",
 				"x-stainless-runtime-version": "v24.9.0",
 				"x-stainless-timeout": "600",
+				// CRITICAL: Force the proxy to use this specific account
+				"x-better-ccflare-account-id": account.id,
+				// CRITICAL: Bypass session tracking for auto-refresh messages
+				"x-better-ccflare-bypass-session": "true",
 			});
 
 			// Try sending with multiple models if needed
 			let response: Response | null = null;
 			let lastError: Error | null = null;
+			let modelToTry = "claude-3-5-haiku-20241022"; // Default model
 			const models = [
 				"claude-3-5-haiku-20241022",
 				"claude-3-haiku-20240307",
@@ -306,8 +329,9 @@ export class AutoRefreshScheduler {
 				"claude-3-sonnet-20240229",
 			];
 
-			for (const modelToTry of models) {
+			for (const model of models) {
 				try {
+					modelToTry = model; // Update the model being tried
 					log.info(
 						`Attempting auto-refresh for ${accountRow.name} with model: ${modelToTry} to endpoint: ${endpoint}`,
 					);
@@ -376,8 +400,9 @@ export class AutoRefreshScheduler {
 				);
 
 				// Try to parse the error response for more details
+				let errorBody = "";
 				try {
-					const errorBody = await response.text();
+					errorBody = await response.text();
 					log.error(`Authentication error response: ${errorBody}`);
 
 					// Check if it's the specific OAuth error mentioned in the logs
@@ -387,7 +412,7 @@ export class AutoRefreshScheduler {
 						)
 					) {
 						log.error(
-							`OAuth authentication not supported for account ${accountRow.name} - refresh token may be invalid`,
+							`OAuth authentication not supported for account ${accountRow.name} - refresh token may be invalid. Account needs re-authentication.`,
 						);
 					}
 				} catch {
@@ -403,6 +428,17 @@ export class AutoRefreshScheduler {
 				log.info(
 					`Auto-refresh message sent successfully for account: ${accountRow.name}`,
 				);
+
+				// Log the response for debugging
+				let responseText = "";
+				try {
+					responseText = await response.text();
+					log.info(
+						`Auto-refresh response for ${accountRow.name}: ${responseText}`,
+					);
+				} catch (e) {
+					log.warn(`Could not read response body for ${accountRow.name}: ${e}`);
+				}
 
 				// Use the provider's parseRateLimit method to get unified rate limit info
 				const rateLimitInfo = provider.parseRateLimit(response);
@@ -443,6 +479,7 @@ export class AutoRefreshScheduler {
 				}
 
 				// Fetch usage data from the OAuth usage endpoint to get 5h window info
+				// Get the access token for this account
 				const accessToken = await getValidAccessToken(
 					account,
 					this.proxyContext,

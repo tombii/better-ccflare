@@ -6,10 +6,15 @@ export function getHelpText(): string {
 Usage: better-ccflare <command> [options]
 
 Commands:
-  add <name> [--mode <max|console>] [--tier <1|5|20>] [--priority <number>]
-    Add a new account using OAuth
+  add <name> [--mode <max|console|zai|openai-compatible>] [--tier <1|5|20>] [--priority <number>]
+    Add a new account using OAuth or API key
     --mode: Account type (optional, will prompt if not provided)
-    --tier: Account tier (1, 5, or 20) (optional, will prompt for Max accounts)
+      max: Claude CLI account (OAuth)
+      console: Claude API account (OAuth)
+      zai: z.ai account (API key)
+      openai-compatible: OpenAI-compatible provider (API key)
+    --tier: Account tier (1, 5, or 20) (optional, defaults to 1)
+      Note: Tier is automatically set to 1 for OpenAI-compatible providers
     --priority: Account priority (0-100, default 0, lower numbers = higher priority)
 
   list

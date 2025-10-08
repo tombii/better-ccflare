@@ -83,7 +83,7 @@ export async function proxyUnauthenticated(
  * @param account - The account to use
  * @param requestMeta - Request metadata
  * @param requestBodyBuffer - Buffered request body
- * @param createBodyStream - Function to create body stream
+ * @param createBodyStream - Function to create body stream (buffered earlier)
  * @param failoverAttempts - Number of failover attempts
  * @param ctx - The proxy context
  * @returns Promise resolving to response or null if failed
@@ -94,7 +94,7 @@ export async function proxyWithAccount(
 	account: Account,
 	requestMeta: RequestMeta,
 	requestBodyBuffer: ArrayBuffer | null,
-	createBodyStream: () => ReadableStream<Uint8Array> | undefined,
+	_createBodyStream: () => ReadableStream<Uint8Array> | undefined,
 	failoverAttempts: number,
 	ctx: ProxyContext,
 ): Promise<Response | null> {
@@ -117,16 +117,27 @@ export async function proxyWithAccount(
 		);
 		const targetUrl = provider.buildUrl(url.pathname, url.search, account);
 
-		// Make the request
-		const response = await makeProxyRequest(
-			targetUrl,
-			req.method,
+		const requestInit: RequestInit & { duplex?: "half" } = {
+			method: req.method,
 			headers,
-			createBodyStream,
-			!!req.body,
-		);
+		};
+		if (requestBodyBuffer) {
+			requestInit.body = new Uint8Array(requestBodyBuffer);
+			requestInit.duplex = "half";
+		}
 
-		// Process response and check for rate limit using account-specific provider
+		const providerRequest = new Request(targetUrl, requestInit);
+		const transformedRequest = provider.transformRequestBody
+			? await provider.transformRequestBody(providerRequest, account)
+			: providerRequest;
+
+		// Make the request
+		const rawResponse = await makeProxyRequest(transformedRequest);
+
+		// Process response (transform format, sanitize headers, etc.) using account-specific provider
+		const response = await provider.processResponse(rawResponse, account);
+
+		// Check for rate limit using account-specific provider
 		const isRateLimited = await processProxyResponse(
 			response,
 			account,
@@ -135,6 +146,7 @@ export async function proxyWithAccount(
 				provider,
 			},
 			requestMeta.id,
+			requestMeta,
 		);
 		if (isRateLimited) {
 			return null; // Signal to try next account

@@ -1,7 +1,14 @@
 import type { Config } from "@better-ccflare/config";
+import type { ModelMapping } from "@better-ccflare/core";
+import {
+	validateAndSanitizeModelMappings,
+	validateApiKey,
+	validateEndpointUrl,
+	validatePriority,
+} from "@better-ccflare/core";
 import type { DatabaseOperations } from "@better-ccflare/database";
 import { createOAuthFlow } from "@better-ccflare/oauth-flow";
-import type { AccountListItem } from "@better-ccflare/types";
+import type { AccountListItem, AccountTier } from "@better-ccflare/types";
 import {
 	type PromptAdapter,
 	promptAccountRemovalConfirmation,
@@ -12,10 +19,11 @@ import { openBrowser } from "../utils/browser";
 // Re-export types with adapter extension for CLI-specific options
 export interface AddAccountOptions {
 	name: string;
-	mode?: "max" | "console" | "zai";
+	mode?: "max" | "console" | "zai" | "openai-compatible";
 	tier?: 1 | 5 | 20;
 	priority?: number;
 	customEndpoint?: string;
+	modelMappings?: { [key: string]: string };
 	adapter?: PromptAdapter;
 }
 
@@ -24,7 +32,172 @@ export type { AccountListItem } from "@better-ccflare/types";
 
 // Add mode property to AccountListItem for CLI display
 export interface AccountListItemWithMode extends AccountListItem {
-	mode: "max" | "console" | "zai";
+	mode: "max" | "console" | "zai" | "openai-compatible";
+}
+
+/**
+ * Create a z.ai account in the database
+ */
+async function createZaiAccount(
+	dbOps: DatabaseOperations,
+	name: string,
+	apiKey: string,
+	tier: number,
+	priority: number,
+): Promise<void> {
+	const accountId = crypto.randomUUID();
+	const now = Date.now();
+
+	// Validate inputs
+	const validatedApiKey = validateApiKey(apiKey, "z.ai API key");
+	const validatedPriority = validatePriority(priority, "priority");
+
+	dbOps.getDatabase().run(
+		`INSERT INTO accounts (
+			id, name, provider, api_key, refresh_token, access_token,
+			expires_at, created_at, account_tier, request_count, total_requests, priority, custom_endpoint
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		[
+			accountId,
+			name,
+			"zai",
+			validatedApiKey,
+			validatedApiKey, // Store API key as refresh_token for consistency
+			validatedApiKey, // Store API key as access_token
+			now + 365 * 24 * 60 * 60 * 1000, // 1 year expiry
+			now,
+			tier,
+			0,
+			0,
+			validatedPriority,
+			null,
+		],
+	);
+
+	console.log(`\nAccount '${name}' added successfully!`);
+	console.log("Type: z.ai (API key)");
+	console.log(`Tier: ${tier}x`);
+}
+
+/**
+ * Prompt user for model mappings
+ */
+async function promptModelMappings(
+	adapter: PromptAdapter,
+	existingMappings?: ModelMapping,
+): Promise<ModelMapping | null> {
+	const wantsCustomMappings = await adapter.select(
+		"\nDo you want to configure custom model mappings?",
+		[
+			{
+				label: "No, use defaults (opus/sonnet→gpt-5, haiku→gpt-5-mini)",
+				value: "no",
+			},
+			{ label: "Yes, configure custom mappings", value: "yes" },
+		],
+	);
+
+	if (wantsCustomMappings === "no" || existingMappings) {
+		return existingMappings || null;
+	}
+
+	console.log(
+		"\nEnter model mappings (press Enter with empty value to finish):",
+	);
+	const mappings: ModelMapping = {};
+
+	// Get opus mapping
+	const opusModel = await adapter.input("Opus model (default: openai/gpt-5): ");
+	if (opusModel.trim()) {
+		mappings.opus = opusModel.trim();
+	}
+
+	// Get sonnet mapping
+	const sonnetModel = await adapter.input(
+		"Sonnet model (default: openai/gpt-5): ",
+	);
+	if (sonnetModel.trim()) {
+		mappings.sonnet = sonnetModel.trim();
+	}
+
+	// Get haiku mapping
+	const haikuModel = await adapter.input(
+		"Haiku model (default: openai/gpt-5-mini): ",
+	);
+	if (haikuModel.trim()) {
+		mappings.haiku = haikuModel.trim();
+	}
+
+	return Object.keys(mappings).length > 0 ? mappings : null;
+}
+
+/**
+ * Create an OpenAI-compatible account in the database
+ */
+async function createOpenAIAccount(
+	dbOps: DatabaseOperations,
+	name: string,
+	apiKey: string,
+	endpoint: string,
+	priority: number,
+	modelMappings: ModelMapping | null,
+	providedTier: number | undefined,
+): Promise<void> {
+	const accountId = crypto.randomUUID();
+	const now = Date.now();
+
+	// Validate inputs
+	const validatedApiKey = validateApiKey(apiKey, "API key");
+	const validatedEndpoint = validateEndpointUrl(endpoint, "endpoint");
+	const validatedPriority = validatePriority(priority, "priority");
+
+	// Validate and sanitize model mappings
+	const validatedModelMappings =
+		validateAndSanitizeModelMappings(modelMappings);
+
+	// Store model mappings in dedicated field if provided
+	const modelMappingsJson = validatedModelMappings
+		? JSON.stringify(validatedModelMappings)
+		: null;
+
+	dbOps.getDatabase().run(
+		`INSERT INTO accounts (
+			id, name, provider, api_key, refresh_token, access_token,
+			expires_at, created_at, account_tier, request_count, total_requests, priority, custom_endpoint, model_mappings
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		[
+			accountId,
+			name,
+			"openai-compatible",
+			validatedApiKey,
+			validatedApiKey, // Store API key as refresh_token for consistency
+			validatedApiKey, // Store API key as access_token
+			null, // No expiry for OpenAI-compatible providers (API keys don't expire)
+			now,
+			providedTier || 1, // Default to tier 1 (doesn't matter for OpenAI-compatible)
+			0,
+			0,
+			validatedPriority,
+			validatedEndpoint,
+			modelMappingsJson,
+		],
+	);
+
+	console.log(`\nAccount '${name}' added successfully!`);
+	console.log("Type: OpenAI-compatible (API key)");
+	console.log(`Endpoint: ${validatedEndpoint}`);
+	console.log("Tier: 1 (default for OpenAI-compatible providers)");
+	console.log(`Priority: ${validatedPriority}`);
+
+	if (
+		validatedModelMappings &&
+		Object.keys(validatedModelMappings).length > 0
+	) {
+		console.log("Model mappings:");
+		for (const [key, value] of Object.entries(validatedModelMappings)) {
+			console.log(`  ${key} → ${value}`);
+		}
+	}
 }
 
 /**
@@ -41,6 +214,7 @@ export async function addAccount(
 		tier: providedTier,
 		priority: providedPriority,
 		customEndpoint,
+		modelMappings,
 		adapter = stdPromptAdapter,
 	} = options;
 
@@ -51,9 +225,13 @@ export async function addAccount(
 	const mode =
 		providedMode ||
 		(await adapter.select("What type of account would you like to add?", [
-			{ label: "Claude Max account", value: "max" },
-			{ label: "Claude Console account", value: "console" },
+			{ label: "Claude CLI account", value: "max" },
+			{ label: "Claude API account", value: "console" },
 			{ label: "z.ai account (API key)", value: "zai" },
+			{
+				label: "OpenAI-compatible provider (API key)",
+				value: "openai-compatible",
+			},
 		]));
 
 	if (mode === "zai") {
@@ -63,44 +241,46 @@ export async function addAccount(
 		// Get tier for z.ai accounts
 		const tier =
 			providedTier ||
-			(await adapter.select(
-				"Select the tier for this account (used for weighted load balancing):",
-				[
-					{ label: "1x tier (default)", value: 1 },
-					{ label: "5x tier (higher priority)", value: 5 },
-					{ label: "20x tier (highest priority)", value: 20 },
-				],
+			(await adapter.select("Select the tier for this account:", [
+				{ label: "1x tier (z.ai Lite)", value: 1 },
+				{ label: "5x tier (z.ai Pro)", value: 5 },
+				{ label: "20x tier (z.ai Max)", value: 20 },
+			]));
+
+		await createZaiAccount(dbOps, name, apiKey, tier, providedPriority || 0);
+	} else if (mode === "openai-compatible") {
+		// Handle OpenAI-compatible accounts with API keys
+		const apiKey = await adapter.input("\nEnter your API key: ");
+
+		// Get custom endpoint
+		const endpoint =
+			customEndpoint ||
+			(await adapter.input(
+				"\nEnter API endpoint URL (e.g., https://api.openrouter.ai/api/v1): ",
 			));
 
-		// Create z.ai account directly in database
-		const accountId = crypto.randomUUID();
-		const now = Date.now();
+		// Get priority
+		const priority =
+			providedPriority ??
+			(await adapter.input(
+				"\nEnter priority (0 = highest, lower number = higher priority, default 0): ",
+			));
 
-		dbOps.getDatabase().run(
-			`INSERT INTO accounts (
-				id, name, provider, api_key, refresh_token, access_token,
-				expires_at, created_at, account_tier, request_count, total_requests, priority, custom_endpoint
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			[
-				accountId,
-				name,
-				"zai",
-				apiKey,
-				apiKey, // Store API key as refresh_token for consistency
-				apiKey, // Store API key as access_token
-				now + 365 * 24 * 60 * 60 * 1000, // 1 year expiry
-				now,
-				tier,
-				0,
-				0,
-				providedPriority || 0,
-				customEndpoint || null,
-			],
+		// Get model mappings
+		const finalModelMappings = await promptModelMappings(
+			adapter,
+			modelMappings,
 		);
 
-		console.log(`\nAccount '${name}' added successfully!`);
-		console.log("Type: z.ai (API key)");
-		console.log(`Tier: ${tier}x`);
+		await createOpenAIAccount(
+			dbOps,
+			name,
+			apiKey,
+			endpoint,
+			typeof priority === "string" ? parseInt(priority) || 0 : priority || 0,
+			finalModelMappings,
+			providedTier,
+		);
 	} else {
 		// Handle OAuth accounts (Anthropic)
 		const flowResult = await oauthFlow.begin({
@@ -122,29 +302,30 @@ export async function addAccount(
 		// Get authorization code
 		const code = await adapter.input("\nEnter the authorization code: ");
 
-		// Get tier for Max accounts
+		// Get tier for Claude accounts (both CLI and API)
 		const tier =
-			mode === "max"
-				? providedTier ||
-					(await adapter.select(
-						"Select the tier for this account (used for weighted load balancing):",
-						[
-							{ label: "1x tier (default free account)", value: 1 },
-							{ label: "5x tier (paid account)", value: 5 },
-							{ label: "20x tier (enterprise account)", value: 20 },
-						],
-					))
-				: 1;
+			providedTier ||
+			(await adapter.select("Select the tier for this account:", [
+				{ label: "1x tier (Pro)", value: 1 },
+				{ label: "5x tier (Max 5x)", value: 5 },
+				{ label: "20x tier (Max 20x)", value: 20 },
+			]));
 
 		// Complete OAuth flow
 		console.log("\nExchanging code for tokens...");
 		const _account = await oauthFlow.complete(
-			{ sessionId, code, tier, name, priority: providedPriority || 0 },
+			{
+				sessionId,
+				code,
+				tier: tier as AccountTier,
+				name,
+				priority: providedPriority || 0,
+			},
 			flowResult,
 		);
 
 		console.log(`\nAccount '${name}' added successfully!`);
-		console.log(`Type: ${mode === "max" ? "Claude Max" : "Claude Console"}`);
+		console.log(`Type: ${mode === "max" ? "Claude CLI" : "Claude API"}`);
 		console.log(`Tier: ${tier}x`);
 	}
 }

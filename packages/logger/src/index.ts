@@ -23,21 +23,42 @@ export class Logger {
 	constructor(prefix: string = "", level: LogLevel = LogLevel.INFO) {
 		this.prefix = prefix;
 		this.level = this.getLogLevelFromEnv() || level;
-		this.format = (process.env.LOG_FORMAT as LogFormat) || "pretty";
+		this.format = this.getFormatFromEnv();
 		// Only show console output in debug mode or if BETTER_CCFLARE_DEBUG or legacy ccflare_DEBUG is set
 		this.silentConsole = !(
-			process.env.BETTER_CCFLARE_DEBUG === "1" ||
-			process.env.ccflare_DEBUG === "1" ||
-			this.level === LogLevel.DEBUG
+			this.isDebugEnabled() || this.level === LogLevel.DEBUG
 		);
 	}
 
 	private getLogLevelFromEnv(): LogLevel | null {
+		// Check if we're in a Node.js environment
+		if (typeof process === "undefined" || !process.env) {
+			return null;
+		}
 		const envLevel = process.env.LOG_LEVEL?.toUpperCase();
 		if (envLevel && envLevel in LogLevel) {
 			return LogLevel[envLevel as keyof typeof LogLevel];
 		}
 		return null;
+	}
+
+	private getFormatFromEnv(): LogFormat {
+		// Check if we're in a Node.js environment
+		if (typeof process === "undefined" || !process.env) {
+			return "pretty";
+		}
+		return (process.env.LOG_FORMAT as LogFormat) || "pretty";
+	}
+
+	private isDebugEnabled(): boolean {
+		// Check if we're in a Node.js environment
+		if (typeof process === "undefined" || !process.env) {
+			return false;
+		}
+		return (
+			process.env.BETTER_CCFLARE_DEBUG === "1" ||
+			process.env.ccflare_DEBUG === "1"
+		);
 	}
 
 	// biome-ignore lint/suspicious/noExplicitAny: Logger needs to accept any data type
@@ -70,7 +91,7 @@ export class Logger {
 				msg: message,
 			};
 			logBus.emit("log", event);
-			logFileWriter.write(event);
+			logFileWriter?.write(event);
 			if (!this.silentConsole) console.log(msg);
 		}
 	}
@@ -85,7 +106,7 @@ export class Logger {
 				msg: message,
 			};
 			logBus.emit("log", event);
-			logFileWriter.write(event);
+			logFileWriter?.write(event);
 			if (!this.silentConsole) console.log(msg);
 		}
 	}
@@ -100,7 +121,7 @@ export class Logger {
 				msg: message,
 			};
 			logBus.emit("log", event);
-			logFileWriter.write(event);
+			logFileWriter?.write(event);
 			if (!this.silentConsole) console.warn(msg);
 		}
 	}
@@ -115,7 +136,7 @@ export class Logger {
 				msg: message,
 			};
 			logBus.emit("log", event);
-			logFileWriter.write(event);
+			logFileWriter?.write(event);
 			if (!this.silentConsole) console.error(msg);
 		}
 	}
@@ -124,9 +145,7 @@ export class Logger {
 		this.level = level;
 		// Update silentConsole when level changes
 		this.silentConsole = !(
-			process.env.BETTER_CCFLARE_DEBUG === "1" ||
-			process.env.ccflare_DEBUG === "1" ||
-			this.level === LogLevel.DEBUG
+			this.isDebugEnabled() || this.level === LogLevel.DEBUG
 		);
 	}
 

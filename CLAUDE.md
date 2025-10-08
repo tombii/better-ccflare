@@ -10,6 +10,16 @@ A load balancer proxy for Claude and Claude Code that distributes requests acros
 
 Unless specifically mentioned as "TUI", when referring to "dashboard" or "analytics", I mean the **web dashboard** (the React-based web UI), not the terminal-based TUI interface.
 
+## Database Location
+
+The production database is located at:
+- `/home/tom/.config/better-ccflare/better-ccflare.db`
+
+You can query it directly:
+```bash
+sqlite3 /home/tom/.config/better-ccflare/better-ccflare.db "SELECT name, provider, custom_endpoint FROM accounts;"
+```
+
 ## Important: After making code changes
 
 Always run:
@@ -45,6 +55,29 @@ The production server runs as a systemd service using the npm version, not the l
 - `better-ccflare --add-account <name>` - Add a new account
 - `better-ccflare --list` - List all accounts
 - `better-ccflare --remove <name>` - Remove an account
+- `better-ccflare --set-priority <name> <priority>` - Set account priority
+
+#### Account Priority System
+**Important**: Lower priority numbers are tried first (0 = highest priority). The load balancer will attempt accounts in ascending order of priority number.
+- Priority 0: Tried first
+- Priority 5: Tried second
+- Priority 10: Tried third
+- etc.
+
+Use `better-ccflare --list` to see current priorities and adjust accordingly.
+
+### Testing OpenRouter Configuration
+When testing OpenRouter accounts, use the following models to verify functionality:
+- For mapping to `z-ai/glm-4.5-air:free`: Use model `claude-3-haiku-20240307`
+- For direct model testing: Use model `z-ai/glm-4.5-air:free` directly
+
+Example curl command:
+```bash
+curl -X POST http://localhost:8081/v1/messages \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer test" \
+  -d '{"model": "claude-3-haiku-20240307", "messages": [{"role": "user", "content": "test"}], "max_tokens": 10}'
+```
 
 ### Maintenance
 - `better-ccflare --reset-stats` - Reset usage statistics

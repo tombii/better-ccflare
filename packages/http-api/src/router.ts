@@ -11,6 +11,7 @@ import {
 	createAccountResumeHandler,
 	createAccountsListHandler,
 	createAccountTierUpdateHandler,
+	createOpenAIAccountAddHandler,
 	createZaiAccountAddHandler,
 } from "./handlers/accounts";
 import {
@@ -70,6 +71,7 @@ export class APIRouter {
 		const accountsHandler = createAccountsListHandler(db);
 		const accountAddHandler = createAccountAddHandler(dbOps, config);
 		const zaiAccountAddHandler = createZaiAccountAddHandler(dbOps);
+		const openaiAccountAddHandler = createOpenAIAccountAddHandler(dbOps);
 		const _accountRemoveHandler = createAccountRemoveHandler(dbOps);
 		const _accountTierHandler = createAccountTierUpdateHandler(dbOps);
 		const requestsSummaryHandler = createRequestsSummaryHandler(db);
@@ -95,6 +97,9 @@ export class APIRouter {
 		this.handlers.set("POST:/api/accounts", (req) => accountAddHandler(req));
 		this.handlers.set("POST:/api/accounts/zai", (req) =>
 			zaiAccountAddHandler(req),
+		);
+		this.handlers.set("POST:/api/accounts/openai-compatible", (req) =>
+			openaiAccountAddHandler(req),
 		);
 		this.handlers.set("POST:/api/oauth/init", (req) => oauthInitHandler(req));
 		this.handlers.set("POST:/api/oauth/callback", (req) =>

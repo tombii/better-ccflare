@@ -65,7 +65,7 @@ export function AccountsTab() {
 
 	const handleAddAccount = async (params: {
 		name: string;
-		mode: "max" | "console" | "zai";
+		mode: "max" | "console" | "zai" | "openai-compatible";
 		tier: number;
 		priority: number;
 		customEndpoint?: string;
@@ -104,6 +104,25 @@ export function AccountsTab() {
 	}) => {
 		try {
 			await api.addZaiAccount(params);
+			await loadAccounts();
+			setAdding(false);
+			setActionError(null);
+		} catch (err) {
+			setActionError(formatError(err));
+			throw err;
+		}
+	};
+
+	const handleAddOpenAIAccount = async (params: {
+		name: string;
+		apiKey: string;
+		tier: number;
+		priority: number;
+		customEndpoint: string;
+		modelMappings?: { [key: string]: string };
+	}) => {
+		try {
+			await api.addOpenAIAccount(params);
 			await loadAccounts();
 			setAdding(false);
 			setActionError(null);
@@ -271,6 +290,7 @@ export function AccountsTab() {
 							onAddAccount={handleAddAccount}
 							onCompleteAccount={handleCompleteAccount}
 							onAddZaiAccount={handleAddZaiAccount}
+							onAddOpenAIAccount={handleAddOpenAIAccount}
 							onCancel={() => {
 								setAdding(false);
 								setActionError(null);

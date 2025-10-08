@@ -109,6 +109,17 @@ export abstract class BaseProvider implements Provider {
 	}
 
 	/**
+	 * Transform the request body before sending to the provider
+	 * Default implementation: return original request
+	 */
+	async transformRequestBody(
+		request: Request,
+		_account?: Account,
+	): Promise<Request> {
+		return request;
+	}
+
+	/**
 	 * Extract tier information from response if available
 	 * Default implementation: Return null (no tier info)
 	 */

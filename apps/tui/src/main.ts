@@ -75,8 +75,13 @@ Options:
   --logs [N]           Stream latest N lines then follow
   --stats              Show statistics (JSON output)
   --add-account <name> Add a new account
-    --mode <max|console|zai>  Account mode (default: max)
+    --mode <max|console|zai|openai-compatible>  Account mode (default: max)
+      max: Claude CLI account (OAuth)
+      console: Claude API account (OAuth)
+      zai: z.ai account (API key)
+      openai-compatible: OpenAI-compatible provider (API key)
     --tier <1|5|20>       Account tier (default: 1)
+      Note: Tier is automatically set to 1 for OpenAI-compatible providers
     --priority <number>   Account priority (default: 0)
   --list               List all accounts
   --remove <name>      Remove an account

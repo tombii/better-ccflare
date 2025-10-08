@@ -12,6 +12,11 @@ export function createLogsHistoryHandler() {
 	return async (): Promise<Response> => {
 		try {
 			// Get the last 1000 logs by default
+			if (!logFileWriter) {
+				return errorResponse(
+					InternalServerError("Log file writer not available"),
+				);
+			}
 			const logs = await logFileWriter.readLogs(1000);
 
 			return jsonResponse(logs);

@@ -26,5 +26,20 @@ export function selectAccountsForRequest(
 	meta: RequestMeta,
 	ctx: ProxyContext,
 ): Account[] {
+	// Check if a specific account is requested via special header
+	if (meta.headers) {
+		const forcedAccountId = meta.headers.get("x-better-ccflare-account-id");
+		if (forcedAccountId) {
+			const allAccounts = ctx.dbOps.getAllAccounts();
+			const forcedAccount = allAccounts.find(
+				(acc) => acc.id === forcedAccountId,
+			);
+			if (forcedAccount) {
+				return [forcedAccount];
+			}
+			// If forced account not found, fall back to normal selection
+		}
+	}
+
 	return getOrderedAccounts(meta, ctx);
 }
