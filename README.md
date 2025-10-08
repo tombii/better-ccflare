@@ -15,6 +15,7 @@ https://github.com/user-attachments/assets/c859872f-ca5e-4f8b-b6a0-7cc7461fe62a
 - **🚀 Zero Rate Limit Errors** - Automatically distribute requests across multiple accounts
 - **🤖 Supports z.ai coder plan** - Setup Claude and z.ai coder accounts and prioritize in which order they are used
 - **🔗 Custom API Endpoints** - Configure custom endpoints for Anthropic and Zai accounts for enterprise deployments
+- **☁️ OpenAI-Compatible Support** - Use OpenAI-compatible providers like OpenRouter, Together AI, and more with Claude API format
 - **🔄 Smart Auto-Fallback** - Automatically switch back to preferred accounts when their rate limits reset
 - **⚡ Auto-Refresh** - Automatically start new usage windows when rate limits reset
 - **📊 Request-Level Analytics** - Track latency, token usage, and costs in real-time with optimized batch processing
@@ -104,6 +105,9 @@ export ANTHROPIC_BASE_URL=http://localhost:8080
 better-ccflare --add-account primary --mode max --tier 20 --priority 0
 better-ccflare --add-account secondary --mode max --tier 20 --priority 10
 
+# Add OpenAI-compatible provider (like OpenRouter)
+better-ccflare --add-account openrouter --mode openai-compatible --priority 5
+
 # Enable auto-fallback on your primary account (via API)
 curl -X POST http://localhost:8080/api/accounts/$(curl -s http://localhost:8080/api/accounts | jq -r '.[0].id')/auto-fallback \
   -H "Content-Type: application/json" \
@@ -144,6 +148,14 @@ curl -X POST http://localhost:8080/api/accounts/$(curl -s http://localhost:8080/
 - Custom endpoint support for enterprise deployments
 - Enhanced performance with request batching and caching
 
+### ☁️ OpenAI-Compatible Support
+- **Universal API Format** - Use OpenAI-compatible providers (OpenRouter, Together AI, etc.) with Claude API format
+- **Automatic Format Conversion** - Seamless conversion between Anthropic and OpenAI request/response formats
+- **Model Mapping** - Map Claude models (opus, sonnet, haiku) to equivalent OpenAI models
+- **Streaming Support** - Full support for streaming responses from OpenAI-compatible providers
+- **API Key Authentication** - Secure API key management for OpenAI-compatible providers
+- **Cost Tracking** - Automatic cost calculation for usage monitoring and budgeting
+
 ## Documentation
 
 Full documentation available in [`docs/`](docs/):
@@ -154,6 +166,7 @@ Full documentation available in [`docs/`](docs/):
 - [Load Balancing Strategies](docs/load-balancing.md)
 - [Auto-Fallback Guide](docs/auto-fallback.md)
 - [Auto-Refresh Guide](docs/auto-refresh.md)
+- [OpenAI-Compatible Providers](docs/providers.md)
 
 ## Screenshots
 
