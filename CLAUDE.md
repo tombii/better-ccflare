@@ -43,6 +43,7 @@ Using bun avoids workspace dependency errors that occur with npm commands. The p
 ### Running the server
 - `bun start` - Start the load balancer (port 8080)
 - **For testing**: Use port 8081 to avoid conflicts: `bun start --serve --port 8081`
+- **Important**: The application takes ~15 seconds to start. When testing with curl, always wait at least 15 seconds after starting the server before making requests.
 
 ### Important: Production Server Management
 The production server runs as a systemd service using the npm version, not the local code. When testing code changes:
