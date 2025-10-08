@@ -16,6 +16,7 @@ export function createRequestMetadata(req: Request, url: URL): RequestMeta {
 		method: req.method,
 		path: url.pathname,
 		timestamp: Date.now(),
+		headers: req.headers,
 	};
 }
 
@@ -72,16 +73,20 @@ export async function prepareRequestBody(req: Request): Promise<{
  * @returns Promise resolving to the response
  */
 export async function makeProxyRequest(
-	targetUrl: string,
-	method: string,
-	headers: Headers,
-	createBodyStream: () => ReadableStream<Uint8Array> | undefined,
-	hasBody: boolean,
+	target: string | Request,
+	method?: string,
+	headers?: Headers,
+	createBodyStream?: () => ReadableStream<Uint8Array> | undefined,
+	hasBody?: boolean,
 ): Promise<Response> {
-	return fetch(targetUrl, {
+	if (target instanceof Request) {
+		return fetch(target);
+	}
+
+	return fetch(target, {
 		method,
 		headers,
-		body: createBodyStream(),
+		body: createBodyStream ? createBodyStream() : undefined,
 		...(hasBody ? ({ duplex: "half" } as RequestInit) : {}),
 	});
 }

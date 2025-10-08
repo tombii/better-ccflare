@@ -47,7 +47,7 @@ class API extends HttpClient {
 		},
 		debug: (message: string, ...args: unknown[]) => {
 			console.debug(`[API] ${message}`, ...args);
-		}
+		},
 	};
 
 	constructor() {
@@ -64,9 +64,9 @@ class API extends HttpClient {
 	async getStats(): Promise<Stats> {
 		const startTime = Date.now();
 		const url = "/api/stats";
-		
+
 		this.logger.debug(`→ GET ${url}`);
-		
+
 		try {
 			const response = await this.get<Stats>(url);
 			const duration = Date.now() - startTime;
@@ -76,7 +76,7 @@ class API extends HttpClient {
 			const duration = Date.now() - startTime;
 			this.logger.error(`✗ GET ${url} - ERROR (${duration}ms)`, {
 				error: error instanceof Error ? error.message : String(error),
-				stack: error instanceof Error ? error.stack : undefined
+				stack: error instanceof Error ? error.stack : undefined,
 			});
 			throw error;
 		}
@@ -85,9 +85,9 @@ class API extends HttpClient {
 	async getAccounts(): Promise<Account[]> {
 		const startTime = Date.now();
 		const url = "/api/accounts";
-		
+
 		this.logger.debug(`→ GET ${url}`);
-		
+
 		try {
 			const response = await this.get<Account[]>(url);
 			const duration = Date.now() - startTime;
@@ -97,7 +97,7 @@ class API extends HttpClient {
 			const duration = Date.now() - startTime;
 			this.logger.error(`✗ GET ${url} - ERROR (${duration}ms)`, {
 				error: error instanceof Error ? error.message : String(error),
-				stack: error instanceof Error ? error.stack : undefined
+				stack: error instanceof Error ? error.stack : undefined,
 			});
 			throw error;
 		}
@@ -105,7 +105,7 @@ class API extends HttpClient {
 
 	async initAddAccount(data: {
 		name: string;
-		mode: "max" | "console" | "zai";
+		mode: "max" | "console" | "zai" | "openai-compatible";
 		apiKey?: string;
 		tier: number;
 		priority: number;
@@ -113,11 +113,14 @@ class API extends HttpClient {
 	}): Promise<{ authUrl: string; sessionId: string }> {
 		const startTime = Date.now();
 		const url = "/api/oauth/init";
-		
+
 		this.logger.debug(`→ POST ${url}`, { data });
-		
+
 		try {
-			const response = await this.post<{ authUrl: string; sessionId: string }>(url, data);
+			const response = await this.post<{ authUrl: string; sessionId: string }>(
+				url,
+				data,
+			);
 			const duration = Date.now() - startTime;
 			this.logger.debug(`← POST ${url} - 200 (${duration}ms)`);
 			return response;
@@ -125,7 +128,7 @@ class API extends HttpClient {
 			const duration = Date.now() - startTime;
 			this.logger.error(`✗ POST ${url} - ERROR (${duration}ms)`, {
 				error: error instanceof Error ? error.message : String(error),
-				stack: error instanceof Error ? error.stack : undefined
+				stack: error instanceof Error ? error.stack : undefined,
 			});
 			if (error instanceof HttpError) {
 				throw new Error(error.message);
@@ -140,11 +143,15 @@ class API extends HttpClient {
 	}): Promise<{ message: string; mode: string; tier: number }> {
 		const startTime = Date.now();
 		const url = "/api/oauth/callback";
-		
+
 		this.logger.debug(`→ POST ${url}`, { data });
-		
+
 		try {
-			const response = await this.post<{ message: string; mode: string; tier: number }>(url, data);
+			const response = await this.post<{
+				message: string;
+				mode: string;
+				tier: number;
+			}>(url, data);
 			const duration = Date.now() - startTime;
 			this.logger.debug(`← POST ${url} - 200 (${duration}ms)`);
 			return response;
@@ -152,7 +159,7 @@ class API extends HttpClient {
 			const duration = Date.now() - startTime;
 			this.logger.error(`✗ POST ${url} - ERROR (${duration}ms)`, {
 				error: error instanceof Error ? error.message : String(error),
-				stack: error instanceof Error ? error.stack : undefined
+				stack: error instanceof Error ? error.stack : undefined,
 			});
 			if (error instanceof HttpError) {
 				throw new Error(error.message);
@@ -170,11 +177,14 @@ class API extends HttpClient {
 	}): Promise<{ message: string; account: Account }> {
 		const startTime = Date.now();
 		const url = "/api/accounts/zai";
-		
+
 		this.logger.debug(`→ POST ${url}`, { data });
-		
+
 		try {
-			const response = await this.post<{ message: string; account: Account }>(url, data);
+			const response = await this.post<{ message: string; account: Account }>(
+				url,
+				data,
+			);
 			const duration = Date.now() - startTime;
 			this.logger.debug(`← POST ${url} - 200 (${duration}ms)`);
 			return response;
@@ -182,7 +192,41 @@ class API extends HttpClient {
 			const duration = Date.now() - startTime;
 			this.logger.error(`✗ POST ${url} - ERROR (${duration}ms)`, {
 				error: error instanceof Error ? error.message : String(error),
-				stack: error instanceof Error ? error.stack : undefined
+				stack: error instanceof Error ? error.stack : undefined,
+			});
+			if (error instanceof HttpError) {
+				throw new Error(error.message);
+			}
+			throw error;
+		}
+	}
+
+	async addOpenAIAccount(data: {
+		name: string;
+		apiKey: string;
+		tier: number;
+		priority: number;
+		customEndpoint: string;
+		modelMappings?: { [key: string]: string };
+	}): Promise<{ message: string; account: Account }> {
+		const startTime = Date.now();
+		const url = "/api/accounts/openai-compatible";
+
+		this.logger.debug(`→ POST ${url}`, { data });
+
+		try {
+			const response = await this.post<{ message: string; account: Account }>(
+				url,
+				data,
+			);
+			const duration = Date.now() - startTime;
+			this.logger.debug(`← POST ${url} - 200 (${duration}ms)`);
+			return response;
+		} catch (error) {
+			const duration = Date.now() - startTime;
+			this.logger.error(`✗ POST ${url} - ERROR (${duration}ms)`, {
+				error: error instanceof Error ? error.message : String(error),
+				stack: error instanceof Error ? error.stack : undefined,
 			});
 			if (error instanceof HttpError) {
 				throw new Error(error.message);
@@ -194,9 +238,9 @@ class API extends HttpClient {
 	async removeAccount(name: string, confirm: string): Promise<void> {
 		const startTime = Date.now();
 		const url = `/api/accounts/${name}`;
-		
+
 		this.logger.debug(`→ DELETE ${url}`, { confirm });
-		
+
 		try {
 			await this.delete(url, {
 				body: JSON.stringify({ confirm }),
@@ -207,7 +251,7 @@ class API extends HttpClient {
 			const duration = Date.now() - startTime;
 			this.logger.error(`✗ DELETE ${url} - ERROR (${duration}ms)`, {
 				error: error instanceof Error ? error.message : String(error),
-				stack: error instanceof Error ? error.stack : undefined
+				stack: error instanceof Error ? error.stack : undefined,
 			});
 			if (error instanceof HttpError) {
 				throw new Error(error.message);
@@ -219,9 +263,9 @@ class API extends HttpClient {
 	async resetStats(): Promise<void> {
 		const startTime = Date.now();
 		const url = "/api/stats/reset";
-		
+
 		this.logger.debug(`→ POST ${url}`);
-		
+
 		try {
 			await this.post(url);
 			const duration = Date.now() - startTime;
@@ -230,7 +274,7 @@ class API extends HttpClient {
 			const duration = Date.now() - startTime;
 			this.logger.error(`✗ POST ${url} - ERROR (${duration}ms)`, {
 				error: error instanceof Error ? error.message : String(error),
-				stack: error instanceof Error ? error.stack : undefined
+				stack: error instanceof Error ? error.stack : undefined,
 			});
 			throw error;
 		}
@@ -239,9 +283,9 @@ class API extends HttpClient {
 	async getLogHistory(): Promise<LogEntry[]> {
 		const startTime = Date.now();
 		const url = "/api/logs/history";
-		
+
 		this.logger.debug(`→ GET ${url}`);
-		
+
 		try {
 			const response = await this.get<LogEntry[]>(url);
 			const duration = Date.now() - startTime;
@@ -251,7 +295,7 @@ class API extends HttpClient {
 			const duration = Date.now() - startTime;
 			this.logger.error(`✗ GET ${url} - ERROR (${duration}ms)`, {
 				error: error instanceof Error ? error.message : String(error),
-				stack: error instanceof Error ? error.stack : undefined
+				stack: error instanceof Error ? error.stack : undefined,
 			});
 			throw error;
 		}
@@ -279,9 +323,9 @@ class API extends HttpClient {
 	): Promise<RequestPayload[]> {
 		const startTime = Date.now();
 		const url = `/api/requests/detail?limit=${limit}`;
-		
+
 		this.logger.debug(`→ GET ${url}`);
-		
+
 		try {
 			const response = await this.get<RequestPayload[]>(url);
 			const duration = Date.now() - startTime;
@@ -291,7 +335,7 @@ class API extends HttpClient {
 			const duration = Date.now() - startTime;
 			this.logger.error(`✗ GET ${url} - ERROR (${duration}ms)`, {
 				error: error instanceof Error ? error.message : String(error),
-				stack: error instanceof Error ? error.stack : undefined
+				stack: error instanceof Error ? error.stack : undefined,
 			});
 			throw error;
 		}
@@ -302,9 +346,9 @@ class API extends HttpClient {
 	): Promise<RequestSummary[]> {
 		const startTime = Date.now();
 		const url = `/api/requests?limit=${limit}`;
-		
+
 		this.logger.debug(`→ GET ${url}`);
-		
+
 		try {
 			const response = await this.get<RequestSummary[]>(url);
 			const duration = Date.now() - startTime;
@@ -314,7 +358,7 @@ class API extends HttpClient {
 			const duration = Date.now() - startTime;
 			this.logger.error(`✗ GET ${url} - ERROR (${duration}ms)`, {
 				error: error instanceof Error ? error.message : String(error),
-				stack: error instanceof Error ? error.stack : undefined
+				stack: error instanceof Error ? error.stack : undefined,
 			});
 			throw error;
 		}
@@ -350,48 +394,53 @@ class API extends HttpClient {
 
 		const queryString = params.toString();
 		const url = `/api/analytics?${queryString}`;
-		
+
 		this.logger.info(`Fetching analytics data: ${url}`, {
 			range,
 			filters,
 			mode,
 			modelBreakdown,
-			timestamp: new Date().toISOString()
+			timestamp: new Date().toISOString(),
 		});
 
 		const startTime = Date.now();
-		
+
 		try {
 			const response = await this.get<AnalyticsResponse>(url);
 			const duration = Date.now() - startTime;
 			this.logger.info(`Analytics data fetched successfully (${duration}ms)`, {
-				dataPoints: Array.isArray(response) ? response.length : 'single response',
+				dataPoints: Array.isArray(response)
+					? response.length
+					: "single response",
 				url,
-				timestamp: new Date().toISOString()
+				timestamp: new Date().toISOString(),
 			});
 			return response;
 		} catch (error) {
 			const duration = Date.now() - startTime;
-			this.logger.error(`Failed to fetch analytics data: ${error instanceof Error ? error.message : String(error)} (${duration}ms)`, {
-				url,
-				range,
-				filters,
-				mode,
-				modelBreakdown,
-				errorDetails: error,
-				timestamp: new Date().toISOString()
-			});
-			
+			this.logger.error(
+				`Failed to fetch analytics data: ${error instanceof Error ? error.message : String(error)} (${duration}ms)`,
+				{
+					url,
+					range,
+					filters,
+					mode,
+					modelBreakdown,
+					errorDetails: error,
+					timestamp: new Date().toISOString(),
+				},
+			);
+
 			// Log additional context for 401 errors
 			if (error instanceof HttpError && error.status === 401) {
 				this.logger.error(`Authentication failed for analytics request`, {
 					url,
 					error: error.message,
 					status: error.status,
-					timestamp: new Date().toISOString()
+					timestamp: new Date().toISOString(),
 				});
 			}
-			
+
 			throw error;
 		}
 	}
@@ -411,19 +460,21 @@ class API extends HttpClient {
 	): Promise<AnalyticsResponse[]> {
 		const startTime = Date.now();
 		const url = "/api/analytics/batch";
-		
+
 		this.logger.debug(`→ POST ${url}`, { requestCount: requests.length });
-		
+
 		try {
 			const response = await this.post<AnalyticsResponse[]>(url, { requests });
 			const duration = Date.now() - startTime;
-			this.logger.debug(`← POST ${url} - 200 (${duration}ms)`, { responseCount: response.length });
+			this.logger.debug(`← POST ${url} - 200 (${duration}ms)`, {
+				responseCount: response.length,
+			});
 			return response;
 		} catch (error) {
 			const duration = Date.now() - startTime;
 			this.logger.error(`✗ POST ${url} - ERROR (${duration}ms)`, {
 				error: error instanceof Error ? error.message : String(error),
-				stack: error instanceof Error ? error.stack : undefined
+				stack: error instanceof Error ? error.stack : undefined,
 			});
 			throw error;
 		}
@@ -432,9 +483,9 @@ class API extends HttpClient {
 	async pauseAccount(accountId: string): Promise<void> {
 		const startTime = Date.now();
 		const url = `/api/accounts/${accountId}/pause`;
-		
+
 		this.logger.debug(`→ POST ${url}`);
-		
+
 		try {
 			await this.post(url);
 			const duration = Date.now() - startTime;
@@ -443,7 +494,7 @@ class API extends HttpClient {
 			const duration = Date.now() - startTime;
 			this.logger.error(`✗ POST ${url} - ERROR (${duration}ms)`, {
 				error: error instanceof Error ? error.message : String(error),
-				stack: error instanceof Error ? error.stack : undefined
+				stack: error instanceof Error ? error.stack : undefined,
 			});
 			if (error instanceof HttpError) {
 				throw new Error(error.message);
@@ -455,9 +506,9 @@ class API extends HttpClient {
 	async resumeAccount(accountId: string): Promise<void> {
 		const startTime = Date.now();
 		const url = `/api/accounts/${accountId}/resume`;
-		
+
 		this.logger.debug(`→ POST ${url}`);
-		
+
 		try {
 			await this.post(url);
 			const duration = Date.now() - startTime;
@@ -466,7 +517,7 @@ class API extends HttpClient {
 			const duration = Date.now() - startTime;
 			this.logger.error(`✗ POST ${url} - ERROR (${duration}ms)`, {
 				error: error instanceof Error ? error.message : String(error),
-				stack: error instanceof Error ? error.stack : undefined
+				stack: error instanceof Error ? error.stack : undefined,
 			});
 			if (error instanceof HttpError) {
 				throw new Error(error.message);
@@ -481,9 +532,9 @@ class API extends HttpClient {
 	): Promise<{ newName: string }> {
 		const startTime = Date.now();
 		const url = `/api/accounts/${accountId}/rename`;
-		
+
 		this.logger.debug(`→ POST ${url}`, { newName });
-		
+
 		try {
 			const response = await this.post<{
 				success: boolean;
@@ -497,7 +548,7 @@ class API extends HttpClient {
 			const duration = Date.now() - startTime;
 			this.logger.error(`✗ POST ${url} - ERROR (${duration}ms)`, {
 				error: error instanceof Error ? error.message : String(error),
-				stack: error instanceof Error ? error.stack : undefined
+				stack: error instanceof Error ? error.stack : undefined,
 			});
 			if (error instanceof HttpError) {
 				throw new Error(error.message);
@@ -512,9 +563,9 @@ class API extends HttpClient {
 	): Promise<void> {
 		const startTime = Date.now();
 		const url = `/api/accounts/${accountId}/priority`;
-		
+
 		this.logger.debug(`→ POST ${url}`, { priority });
-		
+
 		try {
 			await this.post(url, { priority });
 			const duration = Date.now() - startTime;
@@ -523,7 +574,7 @@ class API extends HttpClient {
 			const duration = Date.now() - startTime;
 			this.logger.error(`✗ POST ${url} - ERROR (${duration}ms)`, {
 				error: error instanceof Error ? error.message : String(error),
-				stack: error instanceof Error ? error.stack : undefined
+				stack: error instanceof Error ? error.stack : undefined,
 			});
 			if (error instanceof HttpError) {
 				throw new Error(error.message);
@@ -538,9 +589,9 @@ class API extends HttpClient {
 	): Promise<void> {
 		const startTime = Date.now();
 		const url = `/api/accounts/${accountId}/auto-fallback`;
-		
+
 		this.logger.debug(`→ POST ${url}`, { enabled });
-		
+
 		try {
 			await this.post(url, {
 				enabled: enabled ? 1 : 0,
@@ -551,7 +602,7 @@ class API extends HttpClient {
 			const duration = Date.now() - startTime;
 			this.logger.error(`✗ POST ${url} - ERROR (${duration}ms)`, {
 				error: error instanceof Error ? error.message : String(error),
-				stack: error instanceof Error ? error.stack : undefined
+				stack: error instanceof Error ? error.stack : undefined,
 			});
 			if (error instanceof HttpError) {
 				throw new Error(error.message);
@@ -566,9 +617,9 @@ class API extends HttpClient {
 	): Promise<void> {
 		const startTime = Date.now();
 		const url = `/api/accounts/${accountId}/auto-refresh`;
-		
+
 		this.logger.debug(`→ POST ${url}`, { enabled });
-		
+
 		try {
 			await this.post(url, {
 				enabled: enabled ? 1 : 0,
@@ -579,7 +630,7 @@ class API extends HttpClient {
 			const duration = Date.now() - startTime;
 			this.logger.error(`✗ POST ${url} - ERROR (${duration}ms)`, {
 				error: error instanceof Error ? error.message : String(error),
-				stack: error instanceof Error ? error.stack : undefined
+				stack: error instanceof Error ? error.stack : undefined,
 			});
 			if (error instanceof HttpError) {
 				throw new Error(error.message);
@@ -594,9 +645,9 @@ class API extends HttpClient {
 	): Promise<void> {
 		const startTime = Date.now();
 		const url = `/api/accounts/${accountId}/custom-endpoint`;
-		
+
 		this.logger.debug(`→ POST ${url}`, { customEndpoint });
-		
+
 		try {
 			await this.post(url, {
 				customEndpoint,
@@ -607,7 +658,7 @@ class API extends HttpClient {
 			const duration = Date.now() - startTime;
 			this.logger.error(`✗ POST ${url} - ERROR (${duration}ms)`, {
 				error: error instanceof Error ? error.message : String(error),
-				stack: error instanceof Error ? error.stack : undefined
+				stack: error instanceof Error ? error.stack : undefined,
 			});
 			if (error instanceof HttpError) {
 				throw new Error(error.message);
@@ -619,9 +670,9 @@ class API extends HttpClient {
 	async getStrategy(): Promise<string> {
 		const startTime = Date.now();
 		const url = "/api/config/strategy";
-		
+
 		this.logger.debug(`→ GET ${url}`);
-		
+
 		try {
 			const data = await this.get<{ strategy: string }>(url);
 			const duration = Date.now() - startTime;
@@ -631,7 +682,7 @@ class API extends HttpClient {
 			const duration = Date.now() - startTime;
 			this.logger.error(`✗ GET ${url} - ERROR (${duration}ms)`, {
 				error: error instanceof Error ? error.message : String(error),
-				stack: error instanceof Error ? error.stack : undefined
+				stack: error instanceof Error ? error.stack : undefined,
 			});
 			throw error;
 		}
@@ -640,9 +691,9 @@ class API extends HttpClient {
 	async listStrategies(): Promise<string[]> {
 		const startTime = Date.now();
 		const url = "/api/strategies";
-		
+
 		this.logger.debug(`→ GET ${url}`);
-		
+
 		try {
 			const response = await this.get<string[]>(url);
 			const duration = Date.now() - startTime;
@@ -652,7 +703,7 @@ class API extends HttpClient {
 			const duration = Date.now() - startTime;
 			this.logger.error(`✗ GET ${url} - ERROR (${duration}ms)`, {
 				error: error instanceof Error ? error.message : String(error),
-				stack: error instanceof Error ? error.stack : undefined
+				stack: error instanceof Error ? error.stack : undefined,
 			});
 			throw error;
 		}
@@ -661,9 +712,9 @@ class API extends HttpClient {
 	async setStrategy(strategy: string): Promise<void> {
 		const startTime = Date.now();
 		const url = "/api/config/strategy";
-		
+
 		this.logger.debug(`→ POST ${url}`, { strategy });
-		
+
 		try {
 			await this.post(url, { strategy });
 			const duration = Date.now() - startTime;
@@ -672,7 +723,7 @@ class API extends HttpClient {
 			const duration = Date.now() - startTime;
 			this.logger.error(`✗ POST ${url} - ERROR (${duration}ms)`, {
 				error: error instanceof Error ? error.message : String(error),
-				stack: error instanceof Error ? error.stack : undefined
+				stack: error instanceof Error ? error.stack : undefined,
 			});
 			if (error instanceof HttpError) {
 				throw new Error(error.message);
@@ -684,9 +735,9 @@ class API extends HttpClient {
 	async getAgents(): Promise<AgentsResponse> {
 		const startTime = Date.now();
 		const url = "/api/agents";
-		
+
 		this.logger.debug(`→ GET ${url}`);
-		
+
 		try {
 			const response = await this.get<AgentsResponse>(url);
 			const duration = Date.now() - startTime;
@@ -696,7 +747,7 @@ class API extends HttpClient {
 			const duration = Date.now() - startTime;
 			this.logger.error(`✗ GET ${url} - ERROR (${duration}ms)`, {
 				error: error instanceof Error ? error.message : String(error),
-				stack: error instanceof Error ? error.stack : undefined
+				stack: error instanceof Error ? error.stack : undefined,
 			});
 			throw error;
 		}
@@ -705,9 +756,9 @@ class API extends HttpClient {
 	async updateAgentPreference(agentId: string, model: string): Promise<void> {
 		const startTime = Date.now();
 		const url = `/api/agents/${agentId}/preference`;
-		
+
 		this.logger.debug(`→ POST ${url}`, { agentId, model });
-		
+
 		try {
 			await this.post(url, { model });
 			const duration = Date.now() - startTime;
@@ -716,7 +767,7 @@ class API extends HttpClient {
 			const duration = Date.now() - startTime;
 			this.logger.error(`✗ POST ${url} - ERROR (${duration}ms)`, {
 				error: error instanceof Error ? error.message : String(error),
-				stack: error instanceof Error ? error.stack : undefined
+				stack: error instanceof Error ? error.stack : undefined,
 			});
 			if (error instanceof HttpError) {
 				throw new Error(error.message);
@@ -731,11 +782,14 @@ class API extends HttpClient {
 	): Promise<Agent> {
 		const startTime = Date.now();
 		const url = `/api/agents/${agentId}`;
-		
+
 		this.logger.debug(`→ PATCH ${url}`, { agentId, payload });
-		
+
 		try {
-			const response = await this.patch<{ success: boolean; agent: Agent }>(url, payload);
+			const response = await this.patch<{ success: boolean; agent: Agent }>(
+				url,
+				payload,
+			);
 			const duration = Date.now() - startTime;
 			this.logger.debug(`← PATCH ${url} - 200 (${duration}ms)`);
 			return response.agent;
@@ -743,7 +797,7 @@ class API extends HttpClient {
 			const duration = Date.now() - startTime;
 			this.logger.error(`✗ PATCH ${url} - ERROR (${duration}ms)`, {
 				error: error instanceof Error ? error.message : String(error),
-				stack: error instanceof Error ? error.stack : undefined
+				stack: error instanceof Error ? error.stack : undefined,
 			});
 			if (error instanceof HttpError) {
 				throw new Error(error.message);
@@ -755,9 +809,9 @@ class API extends HttpClient {
 	async getDefaultAgentModel(): Promise<string> {
 		const startTime = Date.now();
 		const url = "/api/config/model";
-		
+
 		this.logger.debug(`→ GET ${url}`);
-		
+
 		try {
 			const data = await this.get<{ model: string }>(url);
 			const duration = Date.now() - startTime;
@@ -767,7 +821,7 @@ class API extends HttpClient {
 			const duration = Date.now() - startTime;
 			this.logger.error(`✗ GET ${url} - ERROR (${duration}ms)`, {
 				error: error instanceof Error ? error.message : String(error),
-				stack: error instanceof Error ? error.stack : undefined
+				stack: error instanceof Error ? error.stack : undefined,
 			});
 			throw error;
 		}
@@ -776,9 +830,9 @@ class API extends HttpClient {
 	async setDefaultAgentModel(model: string): Promise<void> {
 		const startTime = Date.now();
 		const url = "/api/config/model";
-		
+
 		this.logger.debug(`→ POST ${url}`, { model });
-		
+
 		try {
 			await this.post(url, { model });
 			const duration = Date.now() - startTime;
@@ -787,7 +841,7 @@ class API extends HttpClient {
 			const duration = Date.now() - startTime;
 			this.logger.error(`✗ POST ${url} - ERROR (${duration}ms)`, {
 				error: error instanceof Error ? error.message : String(error),
-				stack: error instanceof Error ? error.stack : undefined
+				stack: error instanceof Error ? error.stack : undefined,
 			});
 			if (error instanceof HttpError) {
 				throw new Error(error.message);
@@ -801,9 +855,9 @@ class API extends HttpClient {
 	): Promise<{ updatedCount: number }> {
 		const startTime = Date.now();
 		const url = "/api/agents/bulk-preference";
-		
+
 		this.logger.debug(`→ POST ${url}`, { model });
-		
+
 		try {
 			const response = await this.post<{
 				success: boolean;
@@ -817,7 +871,7 @@ class API extends HttpClient {
 			const duration = Date.now() - startTime;
 			this.logger.error(`✗ POST ${url} - ERROR (${duration}ms)`, {
 				error: error instanceof Error ? error.message : String(error),
-				stack: error instanceof Error ? error.stack : undefined
+				stack: error instanceof Error ? error.stack : undefined,
 			});
 			if (error instanceof HttpError) {
 				throw new Error(error.message);
@@ -830,11 +884,14 @@ class API extends HttpClient {
 	async getRetention(): Promise<{ payloadDays: number; requestDays: number }> {
 		const startTime = Date.now();
 		const url = "/api/config/retention";
-		
+
 		this.logger.debug(`→ GET ${url}`);
-		
+
 		try {
-			const response = await this.get<{ payloadDays: number; requestDays: number }>(url);
+			const response = await this.get<{
+				payloadDays: number;
+				requestDays: number;
+			}>(url);
 			const duration = Date.now() - startTime;
 			this.logger.debug(`← GET ${url} - 200 (${duration}ms)`);
 			return response;
@@ -842,7 +899,7 @@ class API extends HttpClient {
 			const duration = Date.now() - startTime;
 			this.logger.error(`✗ GET ${url} - ERROR (${duration}ms)`, {
 				error: error instanceof Error ? error.message : String(error),
-				stack: error instanceof Error ? error.stack : undefined
+				stack: error instanceof Error ? error.stack : undefined,
 			});
 			throw error;
 		}
@@ -854,9 +911,9 @@ class API extends HttpClient {
 	}): Promise<void> {
 		const startTime = Date.now();
 		const url = "/api/config/retention";
-		
+
 		this.logger.debug(`→ POST ${url}`, { partial });
-		
+
 		try {
 			await this.post(url, partial);
 			const duration = Date.now() - startTime;
@@ -865,7 +922,7 @@ class API extends HttpClient {
 			const duration = Date.now() - startTime;
 			this.logger.error(`✗ POST ${url} - ERROR (${duration}ms)`, {
 				error: error instanceof Error ? error.message : String(error),
-				stack: error instanceof Error ? error.stack : undefined
+				stack: error instanceof Error ? error.stack : undefined,
 			});
 			throw error;
 		}
@@ -878,9 +935,9 @@ class API extends HttpClient {
 	}> {
 		const startTime = Date.now();
 		const url = "/api/maintenance/cleanup";
-		
+
 		this.logger.debug(`→ POST ${url}`);
-		
+
 		try {
 			const response = await this.post<{
 				removedRequests: number;
@@ -894,7 +951,7 @@ class API extends HttpClient {
 			const duration = Date.now() - startTime;
 			this.logger.error(`✗ POST ${url} - ERROR (${duration}ms)`, {
 				error: error instanceof Error ? error.message : String(error),
-				stack: error instanceof Error ? error.stack : undefined
+				stack: error instanceof Error ? error.stack : undefined,
 			});
 			throw error;
 		}
@@ -903,9 +960,9 @@ class API extends HttpClient {
 	async compactDb(): Promise<{ ok: boolean }> {
 		const startTime = Date.now();
 		const url = "/api/maintenance/compact";
-		
+
 		this.logger.debug(`→ POST ${url}`);
-		
+
 		try {
 			const response = await this.post<{ ok: boolean }>(url);
 			const duration = Date.now() - startTime;
@@ -915,7 +972,7 @@ class API extends HttpClient {
 			const duration = Date.now() - startTime;
 			this.logger.error(`✗ POST ${url} - ERROR (${duration}ms)`, {
 				error: error instanceof Error ? error.message : String(error),
-				stack: error instanceof Error ? error.stack : undefined
+				stack: error instanceof Error ? error.stack : undefined,
 			});
 			throw error;
 		}

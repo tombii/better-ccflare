@@ -46,8 +46,20 @@ export class SessionStrategy implements LoadBalancingStrategy {
 		}
 	}
 
-	select(accounts: Account[], _meta: RequestMeta): Account[] {
+	select(accounts: Account[], meta: RequestMeta): Account[] {
 		const now = Date.now();
+
+		// Check if session tracking should be bypassed (for auto-refresh messages)
+		const bypassHeader = meta.headers?.get("x-better-ccflare-bypass-session");
+		const bypassSession = bypassHeader === "true";
+
+		this.log.info(
+			`Bypass header: ${bypassHeader}, bypassSession: ${bypassSession}`,
+		);
+
+		if (bypassSession) {
+			this.log.info("Session tracking bypassed due to bypass header");
+		}
 
 		// Cache availability checks within this request lifecycle
 		const availabilityCache = new Map<string, boolean>();
@@ -62,7 +74,9 @@ export class SessionStrategy implements LoadBalancingStrategy {
 		const fallbackCandidates = this.checkForAutoFallbackAccounts(accounts, now);
 		if (fallbackCandidates.length > 0) {
 			const chosenFallback = fallbackCandidates[0];
-			this.resetSessionIfExpired(chosenFallback);
+			if (!bypassSession) {
+				this.resetSessionIfExpired(chosenFallback);
+			}
 			this.log.info(
 				`Auto-fallback triggered to account ${chosenFallback.name} (priority: ${chosenFallback.priority}, auto-fallback enabled)`,
 			);
@@ -92,7 +106,9 @@ export class SessionStrategy implements LoadBalancingStrategy {
 		// If we have an active account and it's available, use it exclusively
 		if (activeAccount && getCachedAvailability(activeAccount)) {
 			// Reset session if expired (shouldn't happen but just in case)
-			this.resetSessionIfExpired(activeAccount);
+			if (!bypassSession) {
+				this.resetSessionIfExpired(activeAccount);
+			}
 			this.log.info(
 				`Continuing session for account ${activeAccount.name} (${activeAccount.session_request_count} requests in session)`,
 			);
@@ -113,7 +129,9 @@ export class SessionStrategy implements LoadBalancingStrategy {
 
 		// Pick the highest priority account (first in sorted list) and start a new session with it
 		const chosenAccount = available[0];
-		this.resetSessionIfExpired(chosenAccount);
+		if (!bypassSession) {
+			this.resetSessionIfExpired(chosenAccount);
+		}
 
 		// Return chosen account first, then others as fallback (already sorted by priority)
 		const others = available.filter((a) => a.id !== chosenAccount.id);

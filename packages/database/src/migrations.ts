@@ -211,6 +211,12 @@ export function runMigrations(db: Database): void {
 		log.info("Added auto_refresh_enabled column to accounts table");
 	}
 
+	// Add model_mappings column for OpenAI-compatible providers
+	if (!accountsColumnNames.includes("model_mappings")) {
+		db.prepare("ALTER TABLE accounts ADD COLUMN model_mappings TEXT").run();
+		log.info("Added model_mappings column to accounts table");
+	}
+
 	// Check columns in oauth_sessions table
 	const oauthSessionsInfo = db
 		.prepare("PRAGMA table_info(oauth_sessions)")

@@ -148,6 +148,7 @@ BUNDLED_PRICING.zai = {
 
 interface Logger {
 	warn(message: string, ...args: unknown[]): void;
+	debug(message: string, ...args: unknown[]): void;
 }
 
 class PriceCatalogue {
@@ -246,7 +247,7 @@ class PriceCatalogue {
 				}
 
 				if (addedModels > 0) {
-					this.logger?.info(
+					this.logger?.debug(
 						"Added %d missing models for provider %s from bundled pricing",
 						addedModels,
 						providerName,

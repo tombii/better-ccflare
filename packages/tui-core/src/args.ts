@@ -8,7 +8,7 @@ export interface ParsedArgs {
 	logs?: boolean | number;
 	stats?: boolean;
 	addAccount?: string;
-	mode?: "max" | "console" | "zai";
+	mode?: "max" | "console" | "zai" | "openai-compatible";
 	tier?: 1 | 5 | 20;
 	priority?: number;
 	list?: boolean;
@@ -63,7 +63,12 @@ export function parseArgs(args: string[]): ParsedArgs {
 		}
 		if (values.stats) result.stats = true;
 		if (values["add-account"]) result.addAccount = values["add-account"];
-		if (values.mode) result.mode = values.mode as "max" | "console" | "zai";
+		if (values.mode)
+			result.mode = values.mode as
+				| "max"
+				| "console"
+				| "zai"
+				| "openai-compatible";
 		if (values.tier) result.tier = parseInt(values.tier, 10) as 1 | 5 | 20;
 		if (values.priority) result.priority = parseInt(values.priority, 10);
 		if (values.list) result.list = true;

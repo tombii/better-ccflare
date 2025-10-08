@@ -148,6 +148,18 @@ export async function getValidAccessToken(
 	account: Account,
 	ctx: ProxyContext,
 ): Promise<string> {
+	// For OpenAI-compatible providers, the refresh_token field contains the API key
+	// Return it directly without any OAuth token refresh logic
+	if (account.provider === "openai-compatible" || account.provider === "zai") {
+		if (account.refresh_token) {
+			return account.refresh_token;
+		}
+		if (account.api_key) {
+			return account.api_key;
+		}
+		throw new Error(`No API key available for account ${account.name}`);
+	}
+
 	// API key accounts don't use access tokens
 	if (!account.refresh_token && account.api_key) {
 		// Return empty string - the API key will be used in prepareHeaders

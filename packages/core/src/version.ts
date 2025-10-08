@@ -29,7 +29,7 @@ export async function getVersion(): Promise<string> {
 			// In production, the package.json should be in the same directory as the executable
 			const packageJsonPath = new URL("../package.json", import.meta.url);
 			const packageJson = await fetch(packageJsonPath);
-			const pkg = await packageJson.json();
+			const pkg = (await packageJson.json()) as { version?: string };
 			if (pkg.version) {
 				cachedVersion = pkg.version;
 				return cachedVersion;
@@ -45,7 +45,7 @@ export async function getVersion(): Promise<string> {
 				import.meta.url,
 			);
 			const packageJson = await fetch(packageJsonPath);
-			const pkg = await packageJson.json();
+			const pkg = (await packageJson.json()) as { version?: string };
 			if (pkg.version) {
 				cachedVersion = pkg.version;
 				return cachedVersion;
@@ -58,7 +58,7 @@ export async function getVersion(): Promise<string> {
 		try {
 			const packageJsonPath = new URL("../../package.json", import.meta.url);
 			const packageJson = await fetch(packageJsonPath);
-			const pkg = await packageJson.json();
+			const pkg = (await packageJson.json()) as { version?: string };
 			if (pkg.version) {
 				cachedVersion = pkg.version;
 				return cachedVersion;

@@ -47,7 +47,7 @@ export async function runCli(argv: string[]): Promise<void> {
 				if (!name) {
 					console.error("Error: Account name is required");
 					console.log(
-						"Usage: ccflare-cli add <name> [--mode <max|console>] [--tier <1|5|20>] [--priority <number>]",
+						"Usage: ccflare-cli add <name> [--mode <max|console|zai|openai-compatible>] [--tier <1|5|20>] [--priority <number>]",
 					);
 					process.exit(1);
 				}

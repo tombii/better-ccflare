@@ -9,6 +9,7 @@ import {
 } from "@better-ccflare/http-common";
 import { Logger } from "@better-ccflare/logger";
 import { createOAuthFlow } from "@better-ccflare/oauth-flow";
+import type { AccountTier } from "@better-ccflare/types";
 
 const log = new Logger("OAuthHandler");
 
@@ -184,7 +185,7 @@ export function createOAuthCallbackHandler(dbOps: DatabaseOperations) {
 					{
 						sessionId,
 						code,
-						tier: savedTier,
+						tier: savedTier as AccountTier,
 						name,
 						customEndpoint: savedCustomEndpoint,
 					},

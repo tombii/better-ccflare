@@ -13,7 +13,7 @@ import {
 interface AccountAddFormProps {
 	onAddAccount: (params: {
 		name: string;
-		mode: "max" | "console" | "zai";
+		mode: "max" | "console" | "zai" | "openai-compatible";
 		tier: number;
 		priority: number;
 		customEndpoint?: string;
@@ -29,6 +29,14 @@ interface AccountAddFormProps {
 		priority: number;
 		customEndpoint?: string;
 	}) => Promise<void>;
+	onAddOpenAIAccount: (params: {
+		name: string;
+		apiKey: string;
+		tier: number;
+		priority: number;
+		customEndpoint: string;
+		modelMappings?: { [key: string]: string };
+	}) => Promise<void>;
 	onCancel: () => void;
 	onSuccess: () => void;
 	onError: (error: string) => void;
@@ -38,6 +46,7 @@ export function AccountAddForm({
 	onAddAccount,
 	onCompleteAccount,
 	onAddZaiAccount,
+	onAddOpenAIAccount,
 	onCancel,
 	onSuccess,
 	onError,
@@ -47,11 +56,14 @@ export function AccountAddForm({
 	const [sessionId, setSessionId] = useState("");
 	const [newAccount, setNewAccount] = useState({
 		name: "",
-		mode: "max" as "max" | "console" | "zai",
+		mode: "max" as "max" | "console" | "zai" | "openai-compatible",
 		tier: 1,
 		priority: 0,
 		apiKey: "",
 		customEndpoint: "",
+		opusModel: "",
+		sonnetModel: "",
+		haikuModel: "",
 	});
 
 	const validateCustomEndpoint = (endpoint: string): boolean => {
@@ -83,7 +95,7 @@ export function AccountAddForm({
 
 		const accountParams = {
 			name: newAccount.name,
-			mode: newAccount.mode as "max" | "console" | "zai",
+			mode: newAccount.mode as "max" | "console" | "zai" | "openai-compatible",
 			tier: newAccount.tier,
 			priority: newAccount.priority,
 			...(newAccount.customEndpoint && {
@@ -109,6 +121,52 @@ export function AccountAddForm({
 				priority: 0,
 				apiKey: "",
 				customEndpoint: "",
+				opusModel: "",
+				sonnetModel: "",
+				haikuModel: "",
+			});
+			onSuccess();
+			return;
+		}
+
+		if (newAccount.mode === "openai-compatible") {
+			if (!newAccount.apiKey) {
+				onError("API key is required for OpenAI-compatible accounts");
+				return;
+			}
+			if (!newAccount.customEndpoint) {
+				onError("Endpoint URL is required for OpenAI-compatible accounts");
+				return;
+			}
+
+			// Build model mappings object
+			const modelMappings: { [key: string]: string } = {};
+			if (newAccount.opusModel) modelMappings.opus = newAccount.opusModel;
+			if (newAccount.sonnetModel) modelMappings.sonnet = newAccount.sonnetModel;
+			if (newAccount.haikuModel) modelMappings.haiku = newAccount.haikuModel;
+
+			// For OpenAI-compatible accounts, we don't need OAuth flow
+			await onAddOpenAIAccount({
+				name: newAccount.name,
+				apiKey: newAccount.apiKey,
+				tier: newAccount.tier,
+				priority: newAccount.priority,
+				customEndpoint: newAccount.customEndpoint.trim(),
+				modelMappings:
+					Object.keys(modelMappings).length > 0 ? modelMappings : undefined,
+			});
+
+			// Reset form and signal success
+			setNewAccount({
+				name: "",
+				mode: "max",
+				tier: 1,
+				priority: 0,
+				apiKey: "",
+				customEndpoint: "",
+				opusModel: "",
+				sonnetModel: "",
+				haikuModel: "",
 			});
 			onSuccess();
 			return;
@@ -149,6 +207,9 @@ export function AccountAddForm({
 			priority: 0,
 			apiKey: "",
 			customEndpoint: "",
+			opusModel: "",
+			sonnetModel: "",
+			haikuModel: "",
 		});
 		onSuccess();
 	};
@@ -164,6 +225,9 @@ export function AccountAddForm({
 			priority: 0,
 			apiKey: "",
 			customEndpoint: "",
+			opusModel: "",
+			sonnetModel: "",
+			haikuModel: "",
 		});
 		onCancel();
 	};
@@ -193,17 +257,20 @@ export function AccountAddForm({
 						<Label htmlFor="mode">Mode</Label>
 						<Select
 							value={newAccount.mode}
-							onValueChange={(value: "max" | "console" | "zai") =>
-								setNewAccount({ ...newAccount, mode: value })
-							}
+							onValueChange={(
+								value: "max" | "console" | "zai" | "openai-compatible",
+							) => setNewAccount({ ...newAccount, mode: value })}
 						>
 							<SelectTrigger id="mode">
 								<SelectValue />
 							</SelectTrigger>
 							<SelectContent>
-								<SelectItem value="max">Max (Recommended)</SelectItem>
-								<SelectItem value="console">Console</SelectItem>
+								<SelectItem value="max">Claude CLI (Recommended)</SelectItem>
+								<SelectItem value="console">Claude API</SelectItem>
 								<SelectItem value="zai">z.ai (API Key)</SelectItem>
+								<SelectItem value="openai-compatible">
+									OpenAI-Compatible (API Key)
+								</SelectItem>
 							</SelectContent>
 						</Select>
 					</div>
@@ -223,6 +290,102 @@ export function AccountAddForm({
 								placeholder="Enter your z.ai API key"
 							/>
 						</div>
+					)}
+					{newAccount.mode === "openai-compatible" && (
+						<>
+							<div className="space-y-2">
+								<Label htmlFor="apiKey">API Key</Label>
+								<Input
+									id="apiKey"
+									type="password"
+									value={newAccount.apiKey}
+									onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+										setNewAccount({
+											...newAccount,
+											apiKey: (e.target as HTMLInputElement).value,
+										})
+									}
+									placeholder="Enter your API key"
+								/>
+							</div>
+							<div className="space-y-2">
+								<Label htmlFor="endpoint">Endpoint URL</Label>
+								<Input
+									id="endpoint"
+									value={newAccount.customEndpoint}
+									onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+										setNewAccount({
+											...newAccount,
+											customEndpoint: (e.target as HTMLInputElement).value,
+										})
+									}
+									placeholder="https://api.openrouter.ai/api/v1"
+								/>
+								<p className="text-xs text-muted-foreground">
+									Enter the base URL for the OpenAI-compatible API
+								</p>
+							</div>
+							<div className="space-y-2">
+								<Label>Model Mappings (Optional)</Label>
+								<p className="text-xs text-muted-foreground mb-2">
+									Map Anthropic model names to provider-specific models. Leave
+									empty to use defaults.
+								</p>
+								<div className="space-y-2 pl-4">
+									<div>
+										<Label htmlFor="opusModel" className="text-sm">
+											Opus Model
+										</Label>
+										<Input
+											id="opusModel"
+											value={newAccount.opusModel}
+											onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+												setNewAccount({
+													...newAccount,
+													opusModel: (e.target as HTMLInputElement).value,
+												})
+											}
+											placeholder="openai/gpt-5 (default)"
+											className="mt-1"
+										/>
+									</div>
+									<div>
+										<Label htmlFor="sonnetModel" className="text-sm">
+											Sonnet Model
+										</Label>
+										<Input
+											id="sonnetModel"
+											value={newAccount.sonnetModel}
+											onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+												setNewAccount({
+													...newAccount,
+													sonnetModel: (e.target as HTMLInputElement).value,
+												})
+											}
+											placeholder="openai/gpt-5 (default)"
+											className="mt-1"
+										/>
+									</div>
+									<div>
+										<Label htmlFor="haikuModel" className="text-sm">
+											Haiku Model
+										</Label>
+										<Input
+											id="haikuModel"
+											value={newAccount.haikuModel}
+											onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+												setNewAccount({
+													...newAccount,
+													haikuModel: (e.target as HTMLInputElement).value,
+												})
+											}
+											placeholder="openai/gpt-5-mini (default)"
+											className="mt-1"
+										/>
+									</div>
+								</div>
+							</div>
+						</>
 					)}
 					{(newAccount.mode === "max" ||
 						newAccount.mode === "console" ||
@@ -249,24 +412,26 @@ export function AccountAddForm({
 							</p>
 						</div>
 					)}
-					<div className="space-y-2">
-						<Label htmlFor="tier">Tier</Label>
-						<Select
-							value={String(newAccount.tier)}
-							onValueChange={(value: string) =>
-								setNewAccount({ ...newAccount, tier: parseInt(value) })
-							}
-						>
-							<SelectTrigger id="tier">
-								<SelectValue />
-							</SelectTrigger>
-							<SelectContent>
-								<SelectItem value="1">Tier 1 (Default)</SelectItem>
-								<SelectItem value="5">Tier 5</SelectItem>
-								<SelectItem value="20">Tier 20</SelectItem>
-							</SelectContent>
-						</Select>
-					</div>
+					{newAccount.mode !== "openai-compatible" && (
+						<div className="space-y-2">
+							<Label htmlFor="tier">Tier</Label>
+							<Select
+								value={String(newAccount.tier)}
+								onValueChange={(value: string) =>
+									setNewAccount({ ...newAccount, tier: parseInt(value) })
+								}
+							>
+								<SelectTrigger id="tier">
+									<SelectValue />
+								</SelectTrigger>
+								<SelectContent>
+									<SelectItem value="1">Tier 1 (Pro)</SelectItem>
+									<SelectItem value="5">Tier 5 (Max 5x)</SelectItem>
+									<SelectItem value="20">Tier 20 (Max 20x)</SelectItem>
+								</SelectContent>
+							</Select>
+						</div>
+					)}
 					<div className="space-y-2">
 						<Label htmlFor="priority">Priority</Label>
 						<Select

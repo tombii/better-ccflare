@@ -1,3 +1,5 @@
+import { registerUIRefresh } from "@better-ccflare/core";
+import type { FullUsageData } from "@better-ccflare/types";
 import { useEffect, useState } from "react";
 import { cn } from "../../lib/utils";
 import { Progress } from "../ui/progress";
@@ -6,7 +8,7 @@ interface RateLimitProgressProps {
 	resetIso: string | null;
 	usageUtilization?: number | null; // Actual utilization from API (0-100)
 	usageWindow?: string | null; // Window name (e.g., "five_hour")
-	usageData?: unknown | null; // Full usage data from API
+	usageData?: FullUsageData | null; // Full usage data from API
 	provider: string;
 	className?: string;
 	showWeekly?: boolean; // Whether to show weekly usage as well
@@ -45,8 +47,13 @@ export function RateLimitProgress({
 	const [now, setNow] = useState(Date.now());
 
 	useEffect(() => {
-		const interval = setInterval(() => setNow(Date.now()), 30000); // Update every 30 seconds
-		return () => clearInterval(interval);
+		const unregisterInterval = registerUIRefresh({
+			id: "rate-limit-progress-update",
+			callback: () => setNow(Date.now()),
+			seconds: 30,
+			description: "Rate limit progress UI update",
+		});
+		return unregisterInterval;
 	}, []);
 
 	if (!resetIso) return null;

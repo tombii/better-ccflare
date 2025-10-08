@@ -57,6 +57,11 @@ export interface Provider {
 	): Promise<Response>;
 
 	/**
+	 * Transform the request body before sending to the provider
+	 */
+	transformRequestBody?(request: Request, account?: Account): Promise<Request>;
+
+	/**
 	 * Extract tier information from response if available
 	 */
 	extractTierInfo?(response: Response): Promise<number | null>;

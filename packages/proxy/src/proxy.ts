@@ -60,14 +60,19 @@ export function getUsageWorker(): Worker {
 			};
 
 			// Handle worker errors
-			usageWorkerInstance.onerror = (error) => {
-				log.error("Worker error:", {
+			usageWorkerInstance.onerror = (error: ErrorEvent) => {
+				log.error("Worker error occurred in usage tracking system", {
 					message: error.message,
 					filename: error.filename,
 					lineno: error.lineno,
 					colno: error.colno,
-					stack: error.stack,
+					stack:
+						error.error?.stack ||
+						(error as ErrorEvent & { stack?: string }).stack,
 					error: error.error,
+					timestamp: new Date().toISOString(),
+					workerType: "usage-worker",
+					impact: "Usage statistics collection temporarily unavailable",
 				});
 				// Reset worker instance on error to allow recreation
 				usageWorkerInstance = null;

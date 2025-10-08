@@ -9,12 +9,18 @@
 - **Z.ai** - Claude proxy service with API key authentication:
   - Lite, Pro, and Max plans with higher rate limits than direct Claude API
   - Uses API key authentication (no OAuth support)
+- **OpenAI-Compatible** - Generic provider for any OpenAI-compatible API:
+  - Supports custom endpoints (OpenRouter, Together AI, local models, etc.)
+  - API key authentication only
+  - Automatic format conversion between Anthropic and OpenAI APIs
 
 ### Key Points
-- All API requests route to `https://api.anthropic.com`
-- OAuth is the preferred authentication method with PKCE security
+- Anthropic requests route to `https://api.anthropic.com`
+- OpenAI-compatible requests route to custom endpoints (default: `https://api.openai.com`)
+- OAuth is the preferred authentication method with PKCE security (Anthropic only)
+- API key authentication for Z.ai and OpenAI-compatible providers
 - Recent updates include enhanced streaming response capture for analytics
-- Provider system is extensible for future providers (OpenAI, Gemini, etc.)
+- Provider system supports format conversion between different API standards
 - Default OAuth client ID: `9d1c250a-e61b-44d9-88ed-5944d1962f5e` (configurable via environment or config file)
 
 ## Table of Contents
@@ -43,15 +49,22 @@ The better-ccflare providers system is a modular architecture designed to suppor
    - Uses API key authentication instead of OAuth
    - Supports Lite, Pro, and Max plans with ~3× the usage quota of equivalent Claude plans
 
+3. **OpenAI-Compatible Provider** - Provides access to:
+   - **Any OpenAI-compatible API** - OpenRouter, Together AI, local models, etc.
+   - Uses API key authentication
+   - Automatic format conversion between Anthropic and OpenAI API formats
+   - Supports custom endpoints for maximum flexibility
+
 The providers system handles:
 - OAuth authentication flows with PKCE security (Anthropic)
-- API key authentication (Z.ai)
+- API key authentication (Z.ai, OpenAI-Compatible)
 - Token lifecycle management (refresh, expiration)
 - Provider-specific request routing and header management
 - Rate limit detection and handling
 - Usage tracking and tier detection
 - Response processing and transformation
 - Streaming response capture for analytics
+- Format conversion between different API standards (Anthropic ↔ OpenAI)
 
 ## Provider Registry Pattern
 
@@ -231,6 +244,164 @@ prepareHeaders(headers: Headers, accessToken?: string, apiKey?: string): Headers
 
 The API key is stored in the `refresh_token` field of the account record for consistency with the authentication system.
 
+## OpenAI-Compatible Provider Implementation
+
+The OpenAI-Compatible provider extends the BaseProvider class and enables better-ccflare to work with any OpenAI-compatible API endpoint.
+
+### Key Features
+
+1. **Format Conversion**: Automatically converts between Anthropic and OpenAI API formats
+   - **Request conversion**: Anthropic format → OpenAI format
+   - **Response conversion**: OpenAI format → Anthropic format
+   - **Streaming support**: Real-time stream format conversion
+
+2. **Custom Endpoints**: Supports any OpenAI-compatible endpoint
+   - Default: `https://api.openai.com`
+   - Custom: Any user-specified endpoint (OpenRouter, Together AI, etc.)
+
+3. **Authentication**: Uses API key authentication via Bearer token
+
+### Format Conversion Details
+
+**Request Conversion (Anthropic → OpenAI):**
+```typescript
+// Anthropic format
+{
+  "model": "claude-3-sonnet-20240229",
+  "max_tokens": 1000,
+  "messages": [{"role": "user", "content": "Hello"}],
+  "system": "You are helpful"
+}
+
+// OpenAI format
+{
+  "model": "gpt-4",
+  "max_tokens": 1000,
+  "messages": [
+    {"role": "system", "content": "You are helpful"},
+    {"role": "user", "content": "Hello"}
+  ]
+}
+```
+
+**Response Conversion (OpenAI → Anthropic):**
+```typescript
+// OpenAI format
+{
+  "id": "chatcmpl-123",
+  "choices": [{
+    "message": {"role": "assistant", "content": "Hello!"},
+    "finish_reason": "stop"
+  }],
+  "usage": {"prompt_tokens": 10, "completion_tokens": 5}
+}
+
+// Anthropic format
+{
+  "id": "msg_123",
+  "type": "message",
+  "role": "assistant",
+  "content": [{"type": "text", "text": "Hello!"}],
+  "stop_reason": "end_turn",
+  "usage": {
+    "input_tokens": 10,
+    "output_tokens": 5
+  }
+}
+```
+
+### Model Mapping
+
+The OpenAI-Compatible provider automatically maps Anthropic model names to provider-specific models using wildcard matching:
+
+**Default Mappings:**
+- **Opus models** (containing "opus"): `openai/gpt-5`
+- **Sonnet models** (containing "sonnet"): `openai/gpt-5`
+- **Haiku models** (containing "haiku"): `openai/gpt-5-mini`
+
+**Example Mappings:**
+- `claude-3-opus-20240229` → `openai/gpt-5`
+- `claude-3-5-sonnet-20241022` → `openai/gpt-5`
+- `claude-3-5-haiku-20241022` → `openai/gpt-5-mini`
+
+**Custom Mappings:**
+You can override default mappings using environment variables:
+
+```bash
+export OPENAI_COMPATIBLE_MODEL_MAPPINGS='{
+  "opus": "google/gemini-2.0-pro-exp-02-05:free",
+  "sonnet": "meta-llama/llama-3.1-70b-instruct:free",
+  "haiku": "meta-llama/llama-3.1-8b-instruct:free"
+}'
+```
+
+### Usage Examples
+
+**OpenRouter:**
+```bash
+better-ccflare --add-account openrouter-account \
+  --provider openai-compatible \
+  --api-key sk-or-v1-... \
+  --endpoint https://openrouter.ai/api/v1 \
+  --tier 1  # Tier doesn't matter for OpenAI-compatible providers
+  --priority 10  # Lower priority = higher preference
+```
+
+**Together AI:**
+```bash
+better-ccflare --add-account together-account \
+  --provider openai-compatible \
+  --api-key ... \
+  --endpoint https://api.together.xyz/v1 \
+  --tier 1 \
+  --priority 20  # Higher number = lower preference
+```
+
+**Local Models (Ollama/LM Studio):**
+```bash
+better-ccflare --add-account local-models \
+  --provider openai-compatible \
+  --api-key dummy-key \
+  --endpoint http://localhost:11434/v1 \
+  --tier 1 \
+  --priority 99  # Use as last resort
+```
+
+**Custom Model Mappings via JSON Configuration:**
+```bash
+# Store custom mappings in custom_endpoint as JSON
+better-ccflare --add-account custom-provider \
+  --provider openai-compatible \
+  --api-key sk-... \
+  --endpoint '{"modelMappings": {"opus": "gpt-4-turbo", "haiku": "gpt-3.5-turbo"}}'
+```
+
+### Rate Limit Handling
+
+The provider detects rate limits from OpenAI-compatible headers:
+- `x-ratelimit-reset-requests`: Reset time for requests
+- `x-ratelimit-remaining-requests`: Remaining requests
+- `x-ratelimit-limit-requests`: Request limit
+- `retry-after`: Fallback retry timing
+
+### Tier Configuration
+
+OpenAI-compatible providers don't support automatic tier detection. The tier field is **not used** for OpenAI-compatible accounts:
+
+- Load balancing is controlled by the **priority** field, not tier
+- Tier is only used for Anthropic accounts (auto-detected from API responses)
+- **Tier defaults to 1 automatically** for OpenAI-compatible accounts and is hidden in the UI
+- The tier question is skipped for OpenAI-compatible providers in both CLI and web UI
+
+**Important**: OpenAI-compatible providers always use tier 1 by default. Use the **priority** field to control request routing order (lower priority = higher preference).
+
+### Limitations
+
+1. **No OAuth Support**: Only API key authentication is supported
+2. **No Automatic Tier Detection**: Tier must be set manually (used for load balancing only)
+3. **Format Conversion**: May not support all advanced features (tools, vision, etc.)
+4. **Streaming**: Basic streaming support with text content only
+
 ## Anthropic Request Routing
 
 The Anthropic provider handles all request paths and routes them to the standard Anthropic API endpoint:
@@ -360,8 +531,8 @@ Z.ai plans map to better-ccflare tiers as follows:
 | Z.ai Plan | better-ccflare Tier | Usage Limit | Description |
 |-----------|--------------|-------------|-------------|
 | Lite | 1 | ~120 prompts/5hrs | ~3× Claude Pro usage quota |
-| Pro | 5 | ~600 prompts/5hrs | ~3× Claude Max (5×) usage quota |
-| Max | 20 | ~2400 prompts/5hrs | ~3× Claude Max (20×) usage quota |
+| Pro | 5 | ~600 prompts/5hrs | ~3× Claude CLI (5×) usage quota |
+| Max | 20 | ~2400 prompts/5hrs | ~3× Claude CLI (20×) usage quota |
 
 **Important**: Z.ai does not provide automatic tier detection. You must manually specify the tier when adding z.ai accounts:
 

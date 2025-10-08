@@ -331,4 +331,153 @@ export const patterns = {
 	accountName: /^[a-zA-Z0-9\s\-_@.+]+$/,
 	// Path pattern for API endpoints
 	apiPath: /^\/v1\/[a-zA-Z0-9\-_/]*$/,
+	// URL pattern
+	url: /^https?:\/\/.+$/i,
 };
+
+/**
+ * Validate and sanitize a URL endpoint
+ */
+export function validateEndpointUrl(url: unknown, field = "endpoint"): string {
+	const urlStr = validateString(url, field, {
+		required: true,
+		pattern: patterns.url,
+		transform: (value) => value.trim().replace(/\/$/, ""), // Remove trailing slash
+	});
+
+	if (!urlStr) {
+		throw new ValidationError(`${field} is required`, field);
+	}
+
+	try {
+		const parsed = new URL(urlStr);
+
+		// Validate protocol
+		if (!["http:", "https:"].includes(parsed.protocol)) {
+			throw new ValidationError(
+				`${field} protocol must be http or https`,
+				field,
+				url,
+			);
+		}
+
+		// Validate hostname exists
+		if (!parsed.hostname) {
+			throw new ValidationError(
+				`${field} must have a valid hostname`,
+				field,
+				url,
+			);
+		}
+
+		return urlStr;
+	} catch (error) {
+		if (error instanceof ValidationError) {
+			throw error;
+		}
+		throw new ValidationError(
+			`${field} has invalid URL format: ${error instanceof Error ? error.message : String(error)}`,
+			field,
+			url,
+		);
+	}
+}
+
+/**
+ * Validate API key format (basic check)
+ */
+export function validateApiKey(apiKey: unknown, field = "apiKey"): string {
+	const key = validateString(apiKey, field, {
+		required: true,
+		minLength: 10,
+		transform: (value) => value.trim(),
+	});
+
+	if (!key) {
+		throw new ValidationError(`${field} is required`, field);
+	}
+
+	return key;
+}
+
+/**
+ * Safely parse JSON with error handling and validation
+ */
+export function safeJsonParse<T = unknown>(json: unknown, field = "json"): T {
+	if (typeof json !== "string") {
+		throw new ValidationError(`${field} must be a string`, field, json);
+	}
+
+	const trimmed = json.trim();
+	if (!trimmed) {
+		throw new ValidationError(`${field} cannot be empty`, field, json);
+	}
+
+	try {
+		return JSON.parse(trimmed) as T;
+	} catch (error) {
+		throw new ValidationError(
+			`${field} contains invalid JSON: ${error instanceof Error ? error.message : String(error)}`,
+			field,
+			json,
+		);
+	}
+}
+
+/**
+ * Validate model mappings object
+ */
+export function validateModelMappings(
+	mappings: unknown,
+	field = "modelMappings",
+): Record<string, string> {
+	if (!mappings) {
+		throw new ValidationError(`${field} cannot be null or undefined`, field);
+	}
+
+	if (typeof mappings !== "object" || Array.isArray(mappings)) {
+		throw new ValidationError(`${field} must be an object`, field, mappings);
+	}
+
+	const obj = mappings as Record<string, unknown>;
+
+	// Validate all keys and values are strings
+	const result: Record<string, string> = {};
+	for (const [key, value] of Object.entries(obj)) {
+		if (!key || typeof key !== "string" || !key.trim()) {
+			throw new ValidationError(
+				`${field} keys must be non-empty strings`,
+				field,
+				mappings,
+			);
+		}
+
+		if (!value || typeof value !== "string" || !(value as string).trim()) {
+			throw new ValidationError(
+				`${field} value for key '${key}' must be a non-empty string`,
+				field,
+				mappings,
+			);
+		}
+
+		result[key.trim()] = (value as string).trim();
+	}
+
+	return result;
+}
+
+/**
+ * Validate account priority (0-100)
+ */
+export function validatePriority(
+	priority: unknown,
+	field = "priority",
+): number {
+	return (
+		validateNumber(priority, field, {
+			min: 0,
+			max: 100,
+			integer: true,
+		}) ?? 0
+	); // Default to 0 if undefined
+}

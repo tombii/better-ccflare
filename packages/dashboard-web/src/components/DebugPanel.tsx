@@ -29,7 +29,8 @@ export function DebugPanel() {
 		];
 
 		logLevels.forEach((level) => {
-			(console as any)[level] = (...args: unknown[]) => {
+			const originalMethod = console[level] as (...args: unknown[]) => void;
+			console[level] = (...args: unknown[]) => {
 				const logEntry: DebugLog = {
 					id: Math.random().toString(36).substr(2, 9),
 					timestamp: new Date().toISOString(),
@@ -38,7 +39,9 @@ export function DebugPanel() {
 					details: args.length > 1 ? args : undefined,
 				};
 				setLogs((prev) => [logEntry, ...prev.slice(0, 99)]); // Keep last 100 logs
-				originalConsole[level](...args);
+				if (originalMethod) {
+					originalMethod(...args);
+				}
 			};
 		});
 

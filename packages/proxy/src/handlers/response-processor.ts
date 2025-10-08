@@ -44,15 +44,32 @@ export function handleRateLimitResponse(
  * @param response - The response to extract metadata from
  * @param ctx - The proxy context
  * @param requestId - The request ID for usage tracking
+ * @param bypassSession - Whether to bypass session tracking (for auto-refresh)
  */
 export function updateAccountMetadata(
 	account: Account,
 	response: Response,
 	ctx: ProxyContext,
 	requestId?: string,
+	bypassSession = false,
 ): void {
-	// Update basic usage
-	ctx.asyncWriter.enqueue(() => ctx.dbOps.updateAccountUsage(account.id));
+	// Update basic usage (with optional bypass)
+	if (bypassSession) {
+		// Increment request count without updating session tracking
+		ctx.asyncWriter.enqueue(() => {
+			// Manually increment request count and total requests without touching session
+			const db = ctx.dbOps.getDatabase();
+			const now = Date.now();
+			db.run(
+				`UPDATE accounts 
+				 SET last_used = ?, request_count = request_count + 1, total_requests = total_requests + 1
+				 WHERE id = ?`,
+				[now, account.id],
+			);
+		});
+	} else {
+		ctx.asyncWriter.enqueue(() => ctx.dbOps.updateAccountUsage(account.id));
+	}
 
 	// Extract and update rate limit info for every response
 	const rateLimitInfo = ctx.provider.parseRateLimit(response);
@@ -116,6 +133,7 @@ export async function processProxyResponse(
 	account: Account,
 	ctx: ProxyContext,
 	requestId?: string,
+	requestMeta?: { headers?: Headers },
 ): Promise<boolean> {
 	const isStream = ctx.provider.isStreamingResponse?.(response) ?? false;
 	let rateLimitInfo = ctx.provider.parseRateLimit(response);
@@ -163,12 +181,16 @@ export async function processProxyResponse(
 			); // Default to 5 hours for Zai
 		}
 		// Also update metadata for rate-limited responses
-		updateAccountMetadata(account, response, ctx, requestId);
+		const bypassSession =
+			requestMeta?.headers?.get("x-better-ccflare-bypass-session") === "true";
+		updateAccountMetadata(account, response, ctx, requestId, bypassSession);
 		return true; // Signal rate limit
 	}
 
 	// Update account metadata in background
-	updateAccountMetadata(account, response, ctx, requestId);
+	const bypassSession =
+		requestMeta?.headers?.get("x-better-ccflare-bypass-session") === "true";
+	updateAccountMetadata(account, response, ctx, requestId, bypassSession);
 	return false;
 }
 

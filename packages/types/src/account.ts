@@ -1,5 +1,15 @@
-// AccountTier represents the tier level (1, 5, or 20)
-export type AccountTier = number;
+// Usage data types for Anthropic accounts
+export interface UsageWindowData {
+	utilization: number | null;
+	resets_at: string | null;
+}
+
+export interface FullUsageData {
+	five_hour?: UsageWindowData;
+	seven_day?: UsageWindowData;
+	seven_day_oauth_apps?: UsageWindowData;
+	seven_day_opus?: UsageWindowData;
+}
 
 // Database row types that match the actual database schema
 export interface AccountRow {
@@ -26,6 +36,7 @@ export interface AccountRow {
 	auto_fallback_enabled?: 0 | 1;
 	auto_refresh_enabled?: 0 | 1;
 	custom_endpoint?: string | null;
+	model_mappings?: string | null; // JSON string for OpenAI-compatible providers
 }
 
 // Domain model - used throughout the application
@@ -53,6 +64,7 @@ export interface Account {
 	auto_fallback_enabled: boolean;
 	auto_refresh_enabled: boolean;
 	custom_endpoint: string | null;
+	model_mappings: string | null; // JSON string for OpenAI-compatible providers
 }
 
 // API response type - what clients receive
@@ -78,7 +90,7 @@ export interface AccountResponse {
 	customEndpoint: string | null;
 	usageUtilization: number | null; // Percentage utilization (0-100) from API
 	usageWindow: string | null; // Most restrictive window (e.g., "five_hour")
-	usageData: unknown | null; // Full usage data for Anthropic accounts
+	usageData: FullUsageData | null; // Full usage data for Anthropic accounts
 }
 
 // UI display type - used in TUI and web dashboard
@@ -121,7 +133,7 @@ export interface AccountListItem {
 	tokenStatus: "valid" | "expired";
 	rateLimitStatus: string;
 	sessionInfo: string;
-	mode: "max" | "console" | "zai";
+	mode: "max" | "console" | "zai" | "openai-compatible";
 	priority: number;
 	autoFallbackEnabled: boolean;
 	autoRefreshEnabled: boolean;
@@ -130,7 +142,7 @@ export interface AccountListItem {
 // Account creation types
 export interface AddAccountOptions {
 	name: string;
-	mode?: "max" | "console" | "zai";
+	mode?: "max" | "console" | "zai" | "openai-compatible";
 	tier?: 1 | 5 | 20;
 	priority?: number;
 	customEndpoint?: string;
@@ -166,6 +178,7 @@ export function toAccount(row: AccountRow): Account {
 		auto_fallback_enabled: row.auto_fallback_enabled === 1,
 		auto_refresh_enabled: row.auto_refresh_enabled === 1,
 		custom_endpoint: row.custom_endpoint || null,
+		model_mappings: row.model_mappings || null,
 	};
 }
 

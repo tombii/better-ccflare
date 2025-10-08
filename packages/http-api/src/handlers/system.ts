@@ -1,4 +1,8 @@
-import { errorResponse, jsonResponse } from "../utils/http-error";
+import {
+	errorResponse,
+	InternalServerError,
+	jsonResponse,
+} from "../utils/http-error";
 
 export function createSystemInfoHandler() {
 	return async (): Promise<Response> => {
@@ -27,8 +31,7 @@ export function createSystemInfoHandler() {
 			return jsonResponse(systemInfo);
 		} catch (_error) {
 			return errorResponse(
-				"Failed to get system information",
-				"INTERNAL_SERVER_ERROR",
+				InternalServerError("Failed to get system information"),
 			);
 		}
 	};
