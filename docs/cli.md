@@ -120,12 +120,15 @@ better-ccflare --add-account <name> [--mode <max|console>] [--tier <1|5|20>] [--
 
 **Options:**
 - `--mode`: Account type (optional, defaults to "max")
-  - `max`: Claude Max account
-  - `console`: Console account
-- `--tier`: Account tier (optional, defaults to 1, Max accounts only)
+  - `max`: Claude CLI account
+  - `console`: Claude API account
+  - `zai`: z.ai account (API key)
+  - `openai-compatible`: OpenAI-compatible provider (API key)
+- `--tier`: Account tier (optional, defaults to 1)
   - `1`: Tier 1 account
   - `5`: Tier 5 account
   - `20`: Tier 20 account
+  - **Note**: Tier is automatically set to 1 for OpenAI-compatible providers and hidden from prompts
 - `--priority`: Account priority (optional, defaults to 0)
   - Range: 0-100
   - Lower numbers indicate higher priority in load balancing
@@ -341,7 +344,7 @@ better-ccflare --logs 50
 ### Basic Account Setup
 
 ```bash
-# Add a Claude Max account with tier 5 and high priority (low number)
+# Add a Claude CLI account with tier 5 and high priority (low number)
 better-ccflare --add-account work-account --mode max --tier 5 --priority 10
 
 # Add a Console account with medium priority

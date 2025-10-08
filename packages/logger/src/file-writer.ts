@@ -1,13 +1,28 @@
 import { createWriteStream, existsSync, mkdirSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-	BUFFER_SIZES,
-	type Disposable,
-	LIMITS,
-	registerDisposable,
-} from "@better-ccflare/core";
 import type { LogEvent } from "@better-ccflare/types";
+
+// Local constants to avoid circular dependency with core
+const BUFFER_SIZES = {
+	LOG_FILE_MAX_SIZE: 10 * 1024 * 1024, // 10MB
+} as const;
+
+const LIMITS = {
+	LOG_MESSAGE_MAX_LENGTH: 10000,
+	LOG_READ_DEFAULT: 1000,
+} as const;
+
+// Simple disposable interface to avoid circular dependency
+interface Disposable {
+	dispose(): void;
+}
+
+const disposables = new Set<Disposable>();
+
+function registerDisposable(disposable: Disposable): void {
+	disposables.add(disposable);
+}
 
 export class LogFileWriter implements Disposable {
 	private logDir: string;
@@ -112,8 +127,18 @@ export class LogFileWriter implements Disposable {
 	}
 }
 
-// Singleton instance
-export const logFileWriter = new LogFileWriter();
+// Check if we're in a Node.js/Bun environment (not browser)
+const isNodeEnvironment =
+	typeof process !== "undefined" &&
+	process.versions != null &&
+	process.versions.node != null;
 
-// Register with lifecycle manager
-registerDisposable(logFileWriter);
+// Singleton instance - only create in Node.js environments
+export const logFileWriter: LogFileWriter | null = isNodeEnvironment
+	? new LogFileWriter()
+	: null;
+
+// Register with lifecycle manager (only in Node.js)
+if (logFileWriter) {
+	registerDisposable(logFileWriter);
+}

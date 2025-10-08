@@ -6,6 +6,7 @@ import {
 	getVersion,
 	HTTP_STATUS,
 	NETWORK,
+	registerCleanup,
 	registerDisposable,
 	setPricingLogger,
 	shutdown,
@@ -207,7 +208,12 @@ function startUsagePollingWithRefresh(
 
 			if (accessToken) {
 				// Use the refreshed token for usage polling
-				usageCache.startPolling(account.id, accessToken, 30000); // Poll every 30s
+				usageCache.startPolling(
+					account.id,
+					accessToken,
+					account.provider,
+					30000,
+				); // Poll every 30s
 			} else {
 				logger.warn(
 					`Unable to get valid access token for account ${account.name}`,
@@ -343,18 +349,23 @@ export default function startServer(options?: {
 	stopRetentionJob = () => {}; // No-op stopper
 
 	// Set up periodic OAuth session cleanup (every hour)
-	const oauthCleanupInterval = setInterval(() => {
-		try {
-			const removedSessions = dbOps.cleanupExpiredOAuthSessions();
-			if (removedSessions > 0) {
-				log.debug(`Cleaned up ${removedSessions} expired OAuth sessions`);
+	const unregisterOAuthCleanup = registerCleanup({
+		id: "oauth-session-cleanup",
+		callback: () => {
+			try {
+				const removedSessions = dbOps.cleanupExpiredOAuthSessions();
+				if (removedSessions > 0) {
+					log.debug(`Cleaned up ${removedSessions} expired OAuth sessions`);
+				}
+			} catch (err) {
+				log.error(`OAuth session cleanup error: ${err}`);
 			}
-		} catch (err) {
-			log.error(`OAuth session cleanup error: ${err}`);
-		}
-	}, TIME_CONSTANTS.HOUR);
+		},
+		minutes: 60,
+		description: "OAuth session cleanup",
+	});
 
-	stopOAuthCleanupJob = () => clearInterval(oauthCleanupInterval);
+	stopOAuthCleanupJob = unregisterOAuthCleanup;
 
 	// Initialize load balancing strategy (will be created after runtime config)
 

@@ -1,3 +1,4 @@
+import { registerUIRefresh } from "@better-ccflare/core";
 import * as tuiCore from "@better-ccflare/tui-core";
 import { formatCost, formatTokens } from "@better-ccflare/ui-common";
 import { Box, Text, useInput } from "ink";
@@ -78,8 +79,13 @@ export function RequestsScreen({ onBack }: RequestsScreenProps) {
 
 	useEffect(() => {
 		loadRequests();
-		const interval = setInterval(loadRequests, 15000); // Refresh every 15 seconds
-		return () => clearInterval(interval);
+		const unregisterInterval = registerUIRefresh({
+			id: "requests-screen-refresh",
+			callback: loadRequests,
+			seconds: 15,
+			description: "Requests screen auto-refresh",
+		});
+		return unregisterInterval;
 	}, [loadRequests]);
 
 	// For TUI, we want to show just time not full timestamp for space reasons

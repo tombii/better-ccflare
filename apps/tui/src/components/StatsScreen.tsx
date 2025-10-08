@@ -1,3 +1,4 @@
+import { registerUIRefresh } from "@better-ccflare/core";
 import * as tuiCore from "@better-ccflare/tui-core";
 import {
 	formatCost,
@@ -44,8 +45,13 @@ export function StatsScreen({ onBack }: StatsScreenProps) {
 
 	useEffect(() => {
 		loadStats();
-		const interval = setInterval(loadStats, 5000); // Auto-refresh every 5 seconds
-		return () => clearInterval(interval);
+		const unregisterInterval = registerUIRefresh({
+			id: "stats-screen-refresh",
+			callback: loadStats,
+			seconds: 5,
+			description: "Stats screen auto-refresh",
+		});
+		return unregisterInterval;
 	}, [loadStats]);
 
 	// For TUI, we want to show just time not full timestamp for space reasons

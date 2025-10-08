@@ -22,5 +22,6 @@
 			"@better-ccflare/dashboard-web/dist/*": ["packages/dashboard-web/dist/*"]
 		}
 	},
-	"include": ["packages/*/src/**/*", "apps/*/src/**/*"]
+	"include": ["packages/*/src/**/*", "apps/*/src/**/*"],
+	"exclude": ["**/__tests__", "**/*.test.ts", "**/*.test.tsx"]
 }

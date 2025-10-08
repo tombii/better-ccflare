@@ -204,7 +204,7 @@ bun run apps/tui/src/main.ts --stats                  # Show statistics (JSON)
 bun run apps/tui/src/main.ts --help                   # Show help
 
 # Add account with options
-bun run apps/tui/src/main.ts --add-account <name> --mode <max|console> --tier <1|5|20>
+bun run apps/tui/src/main.ts --add-account <name> --mode <max|console|zai|openai-compatible> --tier <1|5|20>
 ```
 
 For more detailed CLI documentation, see [CLI Commands](./cli.md).

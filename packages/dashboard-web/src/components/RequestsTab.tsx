@@ -73,16 +73,22 @@ export function RequestsTab() {
 	useRequestStream(200);
 
 	// Transform the data to match the expected structure
-	const data = requestsData
+	const data: {
+		requests: RequestPayload[];
+		summaries: Map<string, RequestSummary>;
+	} | null = requestsData
 		? {
 				requests: requestsData.requests,
-				summaries: new Map(
+				summaries:
 					requestsData.detailsMap instanceof Map
-						? requestsData.detailsMap
-						: requestsData.detailsMap.map(
-								(s: RequestSummary) => [s.id, s] as [string, RequestSummary],
+						? (requestsData.detailsMap as Map<string, RequestSummary>)
+						: new Map<string, RequestSummary>(
+								Array.isArray(requestsData.detailsMap)
+									? (requestsData.detailsMap as RequestSummary[]).map(
+											(s) => [s.id, s] as [string, RequestSummary],
+										)
+									: [],
 							),
-				),
 			}
 		: null;
 
@@ -618,7 +624,7 @@ export function RequestsTab() {
 							const isExpanded = expandedRequests.has(request.id);
 							const isError = request.error || !request.meta.success;
 							const statusCode = request.response?.status;
-							const summary = data.summaries.get(request.id);
+							const summary = data?.summaries.get(request.id);
 
 							return (
 								<div

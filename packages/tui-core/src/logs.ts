@@ -16,6 +16,10 @@ export function streamLogs(callback: (log: LogEvent) => void): () => void {
 
 export async function getLogHistory(limit = 1000): Promise<LogEvent[]> {
 	try {
+		if (!logFileWriter) {
+			console.warn("Log file writer not available");
+			return [];
+		}
 		return await logFileWriter.readLogs(limit);
 	} catch (error) {
 		console.error("Failed to read log history:", error);

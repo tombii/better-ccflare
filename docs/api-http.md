@@ -189,7 +189,7 @@ Complete OAuth flow after user authorization.
 {
   "success": true,
   "message": "Account 'myaccount' added successfully!",
-  "mode": "Claude Max",
+  "mode": "Claude CLI",
   "tier": 5,
   "priority": 50
 }

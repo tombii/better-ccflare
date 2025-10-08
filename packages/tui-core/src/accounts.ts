@@ -18,10 +18,15 @@ export async function beginAddAccount(
 ): Promise<OAuthFlowResult> {
 	const { name, mode = "max" } = options;
 
-	// z.ai accounts don't use OAuth flow
+	// z.ai and openai-compatible accounts don't use OAuth flow
 	if (mode === "zai") {
 		throw new Error(
 			"z.ai accounts should be added directly with API key, not via OAuth flow",
+		);
+	}
+	if (mode === "openai-compatible") {
+		throw new Error(
+			"OpenAI-compatible accounts should be added directly with API key, not via OAuth flow",
 		);
 	}
 

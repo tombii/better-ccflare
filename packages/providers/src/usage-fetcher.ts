@@ -1,4 +1,5 @@
 import { Logger } from "@better-ccflare/logger";
+import { supportsUsageTracking } from "@better-ccflare/types";
 
 const log = new Logger("UsageFetcher");
 
@@ -123,7 +124,20 @@ class UsageCache {
 	/**
 	 * Start polling for an account's usage data
 	 */
-	startPolling(accountId: string, accessToken: string, intervalMs?: number) {
+	startPolling(
+		accountId: string,
+		accessToken: string,
+		provider?: string,
+		intervalMs?: number,
+	) {
+		// Check if provider supports usage tracking
+		if (provider && !supportsUsageTracking(provider)) {
+			log.info(
+				`Skipping usage polling for account ${accountId} - provider ${provider} does not support usage tracking`,
+			);
+			return;
+		}
+
 		// Stop existing polling if any to prevent leaks
 		const existing = this.polling.get(accountId);
 		if (existing) {
@@ -171,7 +185,7 @@ class UsageCache {
 			this.cache.set(accountId, { data, timestamp: Date.now() });
 			const utilization = getRepresentativeUtilization(data);
 			const window = getRepresentativeWindow(data);
-			log.info(
+			log.debug(
 				`Successfully fetched usage data for account ${accountId}: ${utilization}% (${window} window)`,
 			);
 		}

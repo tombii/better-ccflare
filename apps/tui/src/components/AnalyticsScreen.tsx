@@ -1,4 +1,4 @@
-import { getModelShortName } from "@better-ccflare/core";
+import { getModelShortName, registerUIRefresh } from "@better-ccflare/core";
 import * as tuiCore from "@better-ccflare/tui-core";
 import {
 	formatCost,
@@ -127,8 +127,13 @@ export function AnalyticsScreen({ onBack }: AnalyticsScreenProps) {
 
 	useEffect(() => {
 		loadData();
-		const interval = setInterval(loadData, 45000); // Reduced frequency to every 45 seconds
-		return () => clearInterval(interval);
+		const unregisterInterval = registerUIRefresh({
+			id: "analytics-screen-refresh",
+			callback: loadData,
+			seconds: 45,
+			description: "Analytics screen auto-refresh",
+		});
+		return unregisterInterval;
 	}, [loadData]);
 
 	// Removed separate model distribution loading since it's now loaded in main loadData
