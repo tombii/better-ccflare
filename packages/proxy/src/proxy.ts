@@ -12,6 +12,7 @@ import {
 	TIMING,
 	validateProviderPath,
 } from "./handlers";
+import { EMBEDDED_WORKER_CODE } from "./inline-worker";
 import type { ControlMessage, OutgoingWorkerMessage } from "./worker-messages";
 
 export type { ProxyContext } from "./handlers";
@@ -31,10 +32,29 @@ let shutdownTimerId: Timer | null = null;
 export function getUsageWorker(): Worker {
 	if (!usageWorkerInstance) {
 		try {
-			usageWorkerInstance = new Worker(
-				new URL("./post-processor.worker.ts", import.meta.url).href,
-				{ smol: true },
-			);
+			// Check if we have embedded worker code (production build)
+			if (EMBEDDED_WORKER_CODE) {
+				// Decode the base64-encoded worker code
+				const workerCode = Buffer.from(EMBEDDED_WORKER_CODE, "base64").toString(
+					"utf8",
+				);
+				// Create a blob URL from the worker code
+				const blob = new Blob([workerCode], { type: "text/javascript" });
+				const workerUrl = URL.createObjectURL(blob);
+				log.info("Post-processor worker starting from embedded code");
+				usageWorkerInstance = new Worker(workerUrl, { smol: true });
+				log.info("Post-processor worker started");
+			} else {
+				// Development: use TypeScript file
+				const workerPath = new URL(
+					"./post-processor.worker.ts",
+					import.meta.url,
+				).href;
+				log.info(`Post-processor worker starting from: ${workerPath}`);
+				usageWorkerInstance = new Worker(workerPath, { smol: true });
+				log.info("Post-processor worker started");
+			}
+
 			// Bun extends Worker with unref method
 			if (
 				"unref" in usageWorkerInstance &&
