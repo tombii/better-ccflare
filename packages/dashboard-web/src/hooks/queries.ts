@@ -125,11 +125,9 @@ export const useRequests = (limit: number, _refetchInterval?: number) => {
 			);
 			return { requests: requestsDetail, detailsMap };
 		},
-		staleTime: 5000, // Consider data fresh for 5 seconds
-		refetchInterval: 10000, // Refetch every 10 seconds for updates
-		refetchIntervalInBackground: false, // Don't refresh when tab is not focused
-		gcTime: 5 * 60 * 1000, // Keep in cache for 5 minutes
-		// Remove initialData - let it fetch on first mount
+		staleTime: Infinity, // Consider data fresh until manually refetched
+		gcTime: 10 * 60 * 1000, // Keep in cache for 10 minutes
+		// Remove refetchInterval - SSE stream handles real-time updates
 	});
 };
 
