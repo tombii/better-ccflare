@@ -115,18 +115,24 @@ export function getRepresentativeWindow(
 }
 
 /**
+ * Type for a function that retrieves a fresh access token
+ */
+export type AccessTokenProvider = () => Promise<string>;
+
+/**
  * In-memory cache for usage data per account
  */
 class UsageCache {
 	private cache = new Map<string, { data: UsageData; timestamp: number }>();
 	private polling = new Map<string, NodeJS.Timeout>();
+	private tokenProviders = new Map<string, AccessTokenProvider>();
 
 	/**
 	 * Start polling for an account's usage data
 	 */
 	startPolling(
 		accountId: string,
-		accessToken: string,
+		accessTokenOrProvider: string | AccessTokenProvider,
 		provider?: string,
 		intervalMs?: number,
 	) {
@@ -147,15 +153,22 @@ class UsageCache {
 			);
 		}
 
+		// Store the token provider (either a static token or a function)
+		const tokenProvider: AccessTokenProvider =
+			typeof accessTokenOrProvider === "string"
+				? async () => accessTokenOrProvider
+				: accessTokenOrProvider;
+		this.tokenProviders.set(accountId, tokenProvider);
+
 		// Immediate fetch
-		this.fetchAndCache(accountId, accessToken);
+		this.fetchAndCache(accountId, tokenProvider);
 
 		// Default to 90 seconds ± 5 seconds with randomization if not provided
 		const pollingInterval = intervalMs ?? 90000 + Math.random() * 10000;
 
 		// Start interval
 		const interval = setInterval(() => {
-			this.fetchAndCache(accountId, accessToken);
+			this.fetchAndCache(accountId, tokenProvider);
 		}, pollingInterval);
 
 		this.polling.set(accountId, interval);
@@ -172,6 +185,7 @@ class UsageCache {
 		if (interval) {
 			clearInterval(interval);
 			this.polling.delete(accountId);
+			this.tokenProviders.delete(accountId);
 			log.info(`Stopped usage polling for account ${accountId}`);
 		}
 	}
@@ -179,14 +193,26 @@ class UsageCache {
 	/**
 	 * Fetch and cache usage data
 	 */
-	private async fetchAndCache(accountId: string, accessToken: string) {
-		const data = await fetchUsageData(accessToken);
-		if (data) {
-			this.cache.set(accountId, { data, timestamp: Date.now() });
-			const utilization = getRepresentativeUtilization(data);
-			const window = getRepresentativeWindow(data);
-			log.debug(
-				`Successfully fetched usage data for account ${accountId}: ${utilization}% (${window} window)`,
+	private async fetchAndCache(
+		accountId: string,
+		tokenProvider: AccessTokenProvider,
+	) {
+		try {
+			// Get a fresh access token on each fetch
+			const accessToken = await tokenProvider();
+			const data = await fetchUsageData(accessToken);
+			if (data) {
+				this.cache.set(accountId, { data, timestamp: Date.now() });
+				const utilization = getRepresentativeUtilization(data);
+				const window = getRepresentativeWindow(data);
+				log.debug(
+					`Successfully fetched usage data for account ${accountId}: ${utilization}% (${window} window)`,
+				);
+			}
+		} catch (error) {
+			log.error(
+				`Error fetching usage data for account ${accountId}:`,
+				error instanceof Error ? error.message : String(error),
 			);
 		}
 	}
