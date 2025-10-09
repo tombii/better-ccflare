@@ -4,6 +4,7 @@ import {
 	CheckCircle,
 	Edit2,
 	Globe,
+	Hash,
 	Pause,
 	Play,
 	Trash2,
@@ -24,6 +25,7 @@ interface AccountListItemProps {
 	onAutoFallbackToggle: (account: Account) => void;
 	onAutoRefreshToggle: (account: Account) => void;
 	onCustomEndpointChange?: (account: Account) => void;
+	onModelMappingsChange?: (account: Account) => void;
 }
 
 export function AccountListItem({
@@ -36,6 +38,7 @@ export function AccountListItem({
 	onAutoFallbackToggle,
 	onAutoRefreshToggle,
 	onCustomEndpointChange,
+	onModelMappingsChange,
 }: AccountListItemProps) {
 	const presenter = new AccountPresenter(account);
 
@@ -142,6 +145,25 @@ export function AccountListItem({
 							/>
 						</Button>
 					)}
+					{onModelMappingsChange &&
+						account.provider === "openai-compatible" && (
+							<Button
+								variant="ghost"
+								size="sm"
+								onClick={() => onModelMappingsChange(account)}
+								title={
+									account.modelMappings
+										? `Model mappings configured (${Object.keys(account.modelMappings).length} mappings)`
+										: "Configure model mappings"
+								}
+							>
+								<Hash
+									className={`h-4 w-4 ${
+										account.modelMappings ? "text-primary" : ""
+									}`}
+								/>
+							</Button>
+						)}
 					<Button
 						variant="ghost"
 						size="sm"

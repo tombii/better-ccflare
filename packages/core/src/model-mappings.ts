@@ -120,9 +120,15 @@ export function mapModelName(anthropicModel: string, account: Account): string {
 
 	// First try exact match
 	if (mappings[anthropicModel]) {
-		log.info(
-			`Exact model mapping: ${anthropicModel} -> ${mappings[anthropicModel]}`,
-		);
+		if (
+			process.env.DEBUG?.includes("model") ||
+			process.env.DEBUG === "true" ||
+			process.env.NODE_ENV === "development"
+		) {
+			log.info(
+				`Exact model mapping: ${anthropicModel} -> ${mappings[anthropicModel]}`,
+			);
+		}
 		return mappings[anthropicModel];
 	}
 
@@ -131,9 +137,15 @@ export function mapModelName(anthropicModel: string, account: Account): string {
 
 	for (const key of modelKeys) {
 		if (anthropicModel.includes(key)) {
-			log.info(
-				`Wildcard model mapping: ${anthropicModel} (contains '${key}') -> ${mappings[key]}`,
-			);
+			if (
+				process.env.DEBUG?.includes("model") ||
+				process.env.DEBUG === "true" ||
+				process.env.NODE_ENV === "development"
+			) {
+				log.info(
+					`Wildcard model mapping: ${anthropicModel} (contains '${key}') -> ${mappings[key]}`,
+				);
+			}
 			return mappings[key];
 		}
 	}
@@ -141,23 +153,47 @@ export function mapModelName(anthropicModel: string, account: Account): string {
 	// Default pattern matching as fallback
 	if (anthropicModel.includes("opus")) {
 		const mappedModel = mappings.opus || "openai/gpt-5";
-		log.info(`Default opus mapping: ${anthropicModel} -> ${mappedModel}`);
+		if (
+			process.env.DEBUG?.includes("model") ||
+			process.env.DEBUG === "true" ||
+			process.env.NODE_ENV === "development"
+		) {
+			log.info(`Default opus mapping: ${anthropicModel} -> ${mappedModel}`);
+		}
 		return mappedModel;
 	}
 	if (anthropicModel.includes("sonnet")) {
 		const mappedModel = mappings.sonnet || "openai/gpt-5";
-		log.info(`Default sonnet mapping: ${anthropicModel} -> ${mappedModel}`);
+		if (
+			process.env.DEBUG?.includes("model") ||
+			process.env.DEBUG === "true" ||
+			process.env.NODE_ENV === "development"
+		) {
+			log.info(`Default sonnet mapping: ${anthropicModel} -> ${mappedModel}`);
+		}
 		return mappedModel;
 	}
 	if (anthropicModel.includes("haiku")) {
 		const mappedModel = mappings.haiku || "openai/gpt-5-mini";
-		log.info(`Default haiku mapping: ${anthropicModel} -> ${mappedModel}`);
+		if (
+			process.env.DEBUG?.includes("model") ||
+			process.env.DEBUG === "true" ||
+			process.env.NODE_ENV === "development"
+		) {
+			log.info(`Default haiku mapping: ${anthropicModel} -> ${mappedModel}`);
+		}
 		return mappedModel;
 	}
 
 	// Default fallback - use a mid-tier model
 	const fallbackModel = mappings.sonnet || "openai/gpt-5";
-	log.info(`Fallback model mapping: ${anthropicModel} -> ${fallbackModel}`);
+	if (
+		process.env.DEBUG?.includes("model") ||
+		process.env.DEBUG === "true" ||
+		process.env.NODE_ENV === "development"
+	) {
+		log.info(`Fallback model mapping: ${anthropicModel} -> ${fallbackModel}`);
+	}
 	return fallbackModel;
 }
 

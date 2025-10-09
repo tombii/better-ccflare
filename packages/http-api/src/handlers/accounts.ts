@@ -57,6 +57,7 @@ export function createAccountsListHandler(db: Database) {
 					COALESCE(auto_fallback_enabled, 0) as auto_fallback_enabled,
 					COALESCE(auto_refresh_enabled, 0) as auto_refresh_enabled,
 					custom_endpoint,
+					model_mappings,
 					CASE
 						WHEN expires_at > ?1 THEN 1
 						ELSE 0
@@ -98,6 +99,7 @@ export function createAccountsListHandler(db: Database) {
 			auto_fallback_enabled: 0 | 1;
 			auto_refresh_enabled: 0 | 1;
 			custom_endpoint: string | null;
+			model_mappings: string | null;
 		}>;
 
 		const response: AccountResponse[] = accounts.map((account) => {
@@ -132,6 +134,33 @@ export function createAccountsListHandler(db: Database) {
 			// Include full usage data for Anthropic accounts to show multiple windows
 			const fullUsageData = account.provider === "anthropic" ? usageData : null;
 
+			// Parse model mappings for OpenAI-compatible providers
+			let modelMappings: { [key: string]: string } | null = null;
+			if (account.provider === "openai-compatible" && account.model_mappings) {
+				try {
+					const parsed = JSON.parse(account.model_mappings);
+					// Handle both formats: direct mappings or wrapped in modelMappings
+					modelMappings = parsed.modelMappings || parsed || null;
+				} catch {
+					// If parsing fails, ignore model mappings
+					modelMappings = null;
+				}
+			} else if (
+				account.provider === "openai-compatible" &&
+				account.custom_endpoint
+			) {
+				// Also try parsing from custom_endpoint for backwards compatibility
+				try {
+					const parsed = JSON.parse(account.custom_endpoint);
+					if (parsed.modelMappings) {
+						modelMappings = parsed.modelMappings;
+					}
+				} catch {
+					// If parsing fails, ignore model mappings
+					modelMappings = null;
+				}
+			}
+
 			return {
 				id: account.id,
 				name: account.name,
@@ -158,6 +187,7 @@ export function createAccountsListHandler(db: Database) {
 				autoFallbackEnabled: account.auto_fallback_enabled === 1,
 				autoRefreshEnabled: account.auto_refresh_enabled === 1,
 				customEndpoint: account.custom_endpoint,
+				modelMappings,
 				usageUtilization,
 				usageWindow,
 				usageData: fullUsageData, // Full usage data for UI
@@ -774,18 +804,10 @@ export function createOpenAIAccountAddHandler(dbOps: DatabaseOperations) {
 
 			// Handle model mappings
 			const modelMappings = body.modelMappings || {};
-			let finalCustomEndpoint = customEndpoint;
-
-			// If model mappings are provided, store them in custom_endpoint as JSON
-			if (
-				typeof modelMappings === "object" &&
+			const finalModelMappings =
 				Object.keys(modelMappings).length > 0
-			) {
-				finalCustomEndpoint = JSON.stringify({
-					endpoint: customEndpoint,
-					modelMappings,
-				});
-			}
+					? JSON.stringify(modelMappings)
+					: null;
 
 			// Create account
 			const accountId = crypto.randomUUID();
@@ -795,8 +817,8 @@ export function createOpenAIAccountAddHandler(dbOps: DatabaseOperations) {
 			db.run(
 				`INSERT INTO accounts (
 					id, name, provider, api_key, refresh_token, access_token,
-					expires_at, created_at, account_tier, request_count, total_requests, priority, custom_endpoint
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+					expires_at, created_at, account_tier, request_count, total_requests, priority, custom_endpoint, model_mappings
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 				[
 					accountId,
 					name,
@@ -810,7 +832,8 @@ export function createOpenAIAccountAddHandler(dbOps: DatabaseOperations) {
 					0,
 					0,
 					priority,
-					finalCustomEndpoint,
+					customEndpoint,
+					finalModelMappings,
 				],
 			);
 
@@ -1051,6 +1074,118 @@ export function createAccountCustomEndpointUpdateHandler(
 				error instanceof Error
 					? error
 					: new Error("Failed to update custom endpoint"),
+			);
+		}
+	};
+}
+
+/**
+ * Create an account model mappings update handler
+ */
+export function createAccountModelMappingsUpdateHandler(
+	dbOps: DatabaseOperations,
+) {
+	return async (req: Request, accountId: string): Promise<Response> => {
+		try {
+			const body = await req.json();
+
+			// Get account to verify it's OpenAI-compatible
+			const db = dbOps.getDatabase();
+			const account = db
+				.query<{ provider: string; custom_endpoint: string | null }, [string]>(
+					"SELECT provider, custom_endpoint FROM accounts WHERE id = ?",
+				)
+				.get(accountId);
+
+			if (!account) {
+				return errorResponse(NotFound("Account not found"));
+			}
+
+			if (account.provider !== "openai-compatible") {
+				return errorResponse(
+					BadRequest(
+						"Model mappings are only available for OpenAI-compatible accounts",
+					),
+				);
+			}
+
+			// Handle model mappings update
+			const modelMappings: { [key: string]: string } = (body.modelMappings ||
+				{}) as { [key: string]: string };
+
+			// Validate model mappings
+			if (typeof modelMappings !== "object" || Array.isArray(modelMappings)) {
+				return errorResponse(BadRequest("Model mappings must be an object"));
+			}
+
+			// Ensure modelMappings is a record with string values
+			if (modelMappings) {
+				for (const [_key, value] of Object.entries(modelMappings)) {
+					if (typeof value !== "string") {
+						return errorResponse(
+							BadRequest("All model mapping values must be strings"),
+						);
+					}
+				}
+			}
+
+			// Get existing model mappings from the dedicated field
+			let existingModelMappings: { [key: string]: string } = {};
+			const existingModelMappingsStr = db
+				.query<{ model_mappings: string | null }, [string]>(
+					"SELECT model_mappings FROM accounts WHERE id = ?",
+				)
+				.get(accountId)?.model_mappings;
+
+			if (existingModelMappingsStr) {
+				try {
+					const parsed = JSON.parse(existingModelMappingsStr);
+					// Handle both formats: direct mappings or wrapped in modelMappings
+					existingModelMappings = parsed.modelMappings || parsed || {};
+				} catch {
+					// If parsing fails, ignore existing mappings
+					existingModelMappings = {};
+				}
+			}
+
+			// Merge new model mappings with existing ones
+			const mergedModelMappings = { ...existingModelMappings };
+
+			// Update or remove model mappings based on the input
+			for (const [modelType, modelValue] of Object.entries(modelMappings)) {
+				if (!modelValue || modelValue.trim() === "") {
+					// Remove the mapping if value is empty
+					delete mergedModelMappings[modelType];
+				} else {
+					// Update the mapping
+					mergedModelMappings[modelType] = modelValue.trim();
+				}
+			}
+
+			// Update the model_mappings field
+			const finalModelMappings =
+				Object.keys(mergedModelMappings).length > 0
+					? JSON.stringify(mergedModelMappings)
+					: null;
+
+			db.run("UPDATE accounts SET model_mappings = ? WHERE id = ?", [
+				finalModelMappings,
+				accountId,
+			]);
+
+			log.info(`Updated model mappings for account ${accountId}`);
+
+			return jsonResponse({
+				success: true,
+				message: "Model mappings updated successfully",
+				modelMappings: mergedModelMappings,
+			});
+		} catch (error) {
+			log.error("Account model mappings update error:", error);
+			return errorResponse(
+				error instanceof Error
+					? error
+					: new Error("Failed to update model mappings"),
 			);
 		}
 	};
