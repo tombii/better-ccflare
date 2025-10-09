@@ -213,7 +213,13 @@ export async function handleProxy(
 	log.info(
 		`Selected ${accounts.length} accounts: ${accounts.map((a) => a.name).join(", ")}`,
 	);
-	log.info(`Request: ${req.method} ${url.pathname}`);
+	if (
+		process.env.DEBUG?.includes("proxy") ||
+		process.env.DEBUG === "true" ||
+		process.env.NODE_ENV === "development"
+	) {
+		log.info(`Request: ${req.method} ${url.pathname}`);
+	}
 
 	// 8. Try each account
 	for (let i = 0; i < accounts.length; i++) {

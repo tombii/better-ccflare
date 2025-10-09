@@ -4,6 +4,7 @@ import {
 	createAccountAutoFallbackHandler,
 	createAccountAutoRefreshHandler,
 	createAccountCustomEndpointUpdateHandler,
+	createAccountModelMappingsUpdateHandler,
 	createAccountPauseHandler,
 	createAccountPriorityUpdateHandler,
 	createAccountRemoveHandler,
@@ -288,6 +289,16 @@ export class APIRouter {
 				);
 				return await this.wrapHandler((req) =>
 					customEndpointHandler(req, accountId),
+				)(req, url);
+			}
+
+			// Account model mappings update
+			if (path.endsWith("/model-mappings") && method === "POST") {
+				const modelMappingsHandler = createAccountModelMappingsUpdateHandler(
+					this.context.dbOps,
+				);
+				return await this.wrapHandler((req) =>
+					modelMappingsHandler(req, accountId),
 				)(req, url);
 			}
 

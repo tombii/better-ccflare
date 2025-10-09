@@ -99,9 +99,15 @@ export async function proxyWithAccount(
 	ctx: ProxyContext,
 ): Promise<Response | null> {
 	try {
-		log.info(
-			`Attempting request with account: ${account.name} (provider: ${account.provider})`,
-		);
+		if (
+			process.env.DEBUG?.includes("proxy") ||
+			process.env.DEBUG === "true" ||
+			process.env.NODE_ENV === "development"
+		) {
+			log.info(
+				`Attempting request with account: ${account.name} (provider: ${account.provider})`,
+			);
+		}
 
 		// Get the provider for this account
 		const provider = getProvider(account.provider) || ctx.provider;

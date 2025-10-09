@@ -7,6 +7,7 @@ import {
 	AccountAddForm,
 	AccountCustomEndpointDialog,
 	AccountList,
+	AccountModelMappingsDialog,
 	AccountPriorityDialog,
 	DeleteConfirmationDialog,
 	RenameAccountDialog,
@@ -55,6 +56,13 @@ export function AccountsTab() {
 		account: null,
 	});
 	const [customEndpointDialog, setCustomEndpointDialog] = useState<{
+		isOpen: boolean;
+		account: Account | null;
+	}>({
+		isOpen: false,
+		account: null,
+	});
+	const [modelMappingsDialog, setModelMappingsDialog] = useState<{
 		isOpen: boolean;
 		account: Account | null;
 	}>({
@@ -231,12 +239,29 @@ export function AccountsTab() {
 		setCustomEndpointDialog({ isOpen: true, account });
 	};
 
+	const handleModelMappingsChange = (account: Account) => {
+		setModelMappingsDialog({ isOpen: true, account });
+	};
+
 	const handleUpdateCustomEndpoint = async (
 		accountId: string,
 		customEndpoint: string | null,
 	) => {
 		try {
 			await api.updateAccountCustomEndpoint(accountId, customEndpoint);
+			await loadAccounts();
+		} catch (err) {
+			setActionError(formatError(err));
+			throw err;
+		}
+	};
+
+	const handleUpdateModelMappings = async (
+		accountId: string,
+		modelMappings: { [key: string]: string },
+	) => {
+		try {
+			await api.updateAccountModelMappings(accountId, modelMappings);
 			await loadAccounts();
 		} catch (err) {
 			setActionError(formatError(err));
@@ -311,6 +336,7 @@ export function AccountsTab() {
 						onAutoFallbackToggle={handleAutoFallbackToggle}
 						onAutoRefreshToggle={handleAutoRefreshToggle}
 						onCustomEndpointChange={handleCustomEndpointChange}
+						onModelMappingsChange={handleModelMappingsChange}
 					/>
 				</CardContent>
 			</Card>
@@ -372,6 +398,19 @@ export function AccountsTab() {
 						})
 					}
 					onUpdateEndpoint={handleUpdateCustomEndpoint}
+				/>
+			)}
+			{modelMappingsDialog.isOpen && modelMappingsDialog.account && (
+				<AccountModelMappingsDialog
+					isOpen={modelMappingsDialog.isOpen}
+					account={modelMappingsDialog.account}
+					onOpenChange={(open) =>
+						setModelMappingsDialog({
+							isOpen: open,
+							account: open ? modelMappingsDialog.account : null,
+						})
+					}
+					onUpdateModelMappings={handleUpdateModelMappings}
 				/>
 			)}
 		</div>

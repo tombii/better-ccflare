@@ -10,6 +10,7 @@ interface AccountListProps {
 	onAutoFallbackToggle: (account: Account) => void;
 	onAutoRefreshToggle: (account: Account) => void;
 	onCustomEndpointChange?: (account: Account) => void;
+	onModelMappingsChange?: (account: Account) => void;
 }
 
 export function AccountList({
@@ -21,6 +22,7 @@ export function AccountList({
 	onAutoFallbackToggle,
 	onAutoRefreshToggle,
 	onCustomEndpointChange,
+	onModelMappingsChange,
 }: AccountListProps) {
 	if (!accounts || accounts.length === 0) {
 		return <p className="text-muted-foreground">No accounts configured</p>;
@@ -57,6 +59,7 @@ export function AccountList({
 					onAutoFallbackToggle={onAutoFallbackToggle}
 					onAutoRefreshToggle={onAutoRefreshToggle}
 					onCustomEndpointChange={onCustomEndpointChange}
+					onModelMappingsChange={onModelMappingsChange}
 				/>
 			))}
 		</div>

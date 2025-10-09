@@ -325,10 +325,16 @@ async function handleStart(msg: StartMessage): Promise<void> {
 	}
 
 	// Save minimal request info immediately
-	console.log(`[WORKER] Saving request meta for ${msg.requestId}`);
-	log.info(
-		`Saving request meta for ${msg.requestId} (${msg.method} ${msg.path})`,
-	);
+	if (
+		process.env.DEBUG?.includes("worker") ||
+		process.env.DEBUG === "true" ||
+		process.env.NODE_ENV === "development"
+	) {
+		console.log(`[WORKER] Saving request meta for ${msg.requestId}`);
+		log.info(
+			`Saving request meta for ${msg.requestId} (${msg.method} ${msg.path})`,
+		);
+	}
 	asyncWriter.enqueue(() => {
 		try {
 			dbOps.saveRequestMeta(
@@ -339,7 +345,13 @@ async function handleStart(msg: StartMessage): Promise<void> {
 				msg.responseStatus,
 				msg.timestamp,
 			);
-			log.info(`Successfully saved request meta for ${msg.requestId}`);
+			if (
+				process.env.DEBUG?.includes("worker") ||
+				process.env.DEBUG === "true" ||
+				process.env.NODE_ENV === "development"
+			) {
+				log.info(`Successfully saved request meta for ${msg.requestId}`);
+			}
 		} catch (error) {
 			log.error(`Failed to save request meta for ${msg.requestId}:`, error);
 		}
@@ -431,9 +443,15 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 				if (isZaiModel) {
 					// For zai models, use total response time (more intuitive for users)
 					state.usage.tokensPerSecond = finalOutputTokens / totalDurationSec;
-					log.info(
-						`ZAI token/s calculation: ${finalOutputTokens} tokens / ${totalDurationSec}s = ${state.usage.tokensPerSecond} tok/s (using total response time: ${responseTime}ms)`,
-					);
+					if (
+						process.env.DEBUG?.includes("worker") ||
+						process.env.DEBUG === "true" ||
+						process.env.NODE_ENV === "development"
+					) {
+						log.info(
+							`ZAI token/s calculation: ${finalOutputTokens} tokens / ${totalDurationSec}s = ${state.usage.tokensPerSecond} tok/s (using total response time: ${responseTime}ms)`,
+						);
+					}
 				} else {
 					// For other providers (like Anthropic), use streaming duration if available
 					if (state.firstTokenTimestamp && state.lastTokenTimestamp) {
@@ -445,37 +463,67 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 							// Use streaming duration for generation speed
 							state.usage.tokensPerSecond =
 								finalOutputTokens / streamingDurationSec;
-							log.info(
-								`Token/s calculation (streaming): ${finalOutputTokens} tokens / ${streamingDurationSec}s = ${state.usage.tokensPerSecond} tok/s (streaming duration: ${streamingDurationMs}ms)`,
-							);
+							if (
+								process.env.DEBUG?.includes("worker") ||
+								process.env.DEBUG === "true" ||
+								process.env.NODE_ENV === "development"
+							) {
+								log.info(
+									`Token/s calculation (streaming): ${finalOutputTokens} tokens / ${streamingDurationSec}s = ${state.usage.tokensPerSecond} tok/s (streaming duration: ${streamingDurationMs}ms)`,
+								);
+							}
 						} else {
 							// Fallback to total response time
 							state.usage.tokensPerSecond =
 								finalOutputTokens / totalDurationSec;
-							log.info(
-								`Token/s calculation (fallback): ${finalOutputTokens} tokens / ${totalDurationSec}s = ${state.usage.tokensPerSecond} tok/s (total response time: ${responseTime}ms)`,
-							);
+							if (
+								process.env.DEBUG?.includes("worker") ||
+								process.env.DEBUG === "true" ||
+								process.env.NODE_ENV === "development"
+							) {
+								log.info(
+									`Token/s calculation (fallback): ${finalOutputTokens} tokens / ${totalDurationSec}s = ${state.usage.tokensPerSecond} tok/s (total response time: ${responseTime}ms)`,
+								);
+							}
 						}
 					} else {
 						// No streaming timestamps available, use total response time
 						state.usage.tokensPerSecond = finalOutputTokens / totalDurationSec;
-						log.info(
-							`Token/s calculation (no timestamps): ${finalOutputTokens} tokens / ${totalDurationSec}s = ${state.usage.tokensPerSecond} tok/s (total response time: ${responseTime}ms)`,
-						);
+						if (
+							process.env.DEBUG?.includes("worker") ||
+							process.env.DEBUG === "true" ||
+							process.env.NODE_ENV === "development"
+						) {
+							log.info(
+								`Token/s calculation (no timestamps): ${finalOutputTokens} tokens / ${totalDurationSec}s = ${state.usage.tokensPerSecond} tok/s (total response time: ${responseTime}ms)`,
+							);
+						}
 					}
 				}
 			} else {
 				// If response time is 0, use a very small duration
 				state.usage.tokensPerSecond = finalOutputTokens / 0.001;
-				log.info(
-					`Token/s calculation (instant): ${finalOutputTokens} tokens / 0.001s = ${state.usage.tokensPerSecond} tok/s`,
-				);
+				if (
+					process.env.DEBUG?.includes("worker") ||
+					process.env.DEBUG === "true" ||
+					process.env.NODE_ENV === "development"
+				) {
+					log.info(
+						`Token/s calculation (instant): ${finalOutputTokens} tokens / 0.001s = ${state.usage.tokensPerSecond} tok/s`,
+					);
+				}
 			}
 		}
 	}
 
 	// Update request with final data
-	log.info(`Saving final request data for ${startMessage.requestId}`);
+	if (
+		process.env.DEBUG?.includes("worker") ||
+		process.env.DEBUG === "true" ||
+		process.env.NODE_ENV === "development"
+	) {
+		log.info(`Saving final request data for ${startMessage.requestId}`);
+	}
 	asyncWriter.enqueue(() =>
 		dbOps.saveRequest(
 			startMessage.requestId,
@@ -548,10 +596,16 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 
 	// Log if we have usage
 	if (state.usage.model && startMessage.accountId !== NO_ACCOUNT_ID) {
-		log.info(
-			`Usage for request ${startMessage.requestId}: Model: ${state.usage.model}, ` +
-				`Tokens: ${state.usage.totalTokens || 0}, Cost: ${formatCost(state.usage.costUsd)}`,
-		);
+		if (
+			process.env.DEBUG?.includes("worker") ||
+			process.env.DEBUG === "true" ||
+			process.env.NODE_ENV === "development"
+		) {
+			log.info(
+				`Usage for request ${startMessage.requestId}: Model: ${state.usage.model}, ` +
+					`Tokens: ${state.usage.totalTokens || 0}, Cost: ${formatCost(state.usage.costUsd)}`,
+			);
+		}
 	}
 
 	// Post summary to main thread for real-time updates

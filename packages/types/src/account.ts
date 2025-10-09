@@ -88,6 +88,7 @@ export interface AccountResponse {
 	autoFallbackEnabled: boolean;
 	autoRefreshEnabled: boolean;
 	customEndpoint: string | null;
+	modelMappings: { [key: string]: string } | null; // Parsed model mappings for OpenAI-compatible providers
 	usageUtilization: number | null; // Percentage utilization (0-100) from API
 	usageWindow: string | null; // Most restrictive window (e.g., "five_hour")
 	usageData: FullUsageData | null; // Full usage data for Anthropic accounts
@@ -195,6 +196,32 @@ export function toAccountResponse(account: Account): AccountResponse {
 		? `Session: ${account.session_request_count} requests`
 		: "No active session";
 
+	// Parse model mappings for OpenAI-compatible providers
+	let modelMappings: { [key: string]: string } | null = null;
+	if (account.provider === "openai-compatible" && account.model_mappings) {
+		try {
+			const parsed = JSON.parse(account.model_mappings);
+			modelMappings = parsed.modelMappings || null;
+		} catch {
+			// If parsing fails, ignore model mappings
+			modelMappings = null;
+		}
+	} else if (
+		account.provider === "openai-compatible" &&
+		account.custom_endpoint
+	) {
+		// Also try parsing from custom_endpoint for backwards compatibility
+		try {
+			const parsed = JSON.parse(account.custom_endpoint);
+			if (parsed.modelMappings) {
+				modelMappings = parsed.modelMappings;
+			}
+		} catch {
+			// If parsing fails, ignore model mappings
+			modelMappings = null;
+		}
+	}
+
 	return {
 		id: account.id,
 		name: account.name,
@@ -221,6 +248,7 @@ export function toAccountResponse(account: Account): AccountResponse {
 		autoFallbackEnabled: account.auto_fallback_enabled,
 		autoRefreshEnabled: account.auto_refresh_enabled,
 		customEndpoint: account.custom_endpoint,
+		modelMappings,
 		usageUtilization: null, // Will be filled in by API handler from cache
 		usageWindow: null, // Will be filled in by API handler from cache
 		usageData: null, // Will be filled in by API handler from cache
