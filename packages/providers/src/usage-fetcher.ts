@@ -172,7 +172,7 @@ class UsageCache {
 		}, pollingInterval);
 
 		this.polling.set(accountId, interval);
-		log.info(
+		log.debug(
 			`Started usage polling for account ${accountId} with interval ${Math.round(pollingInterval / 1000)}s`,
 		);
 	}
