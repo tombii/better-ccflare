@@ -187,38 +187,38 @@ function startUsagePollingWithRefresh(
 	// Initial polling with token refresh
 	const pollWithRefresh = async () => {
 		try {
-			// If account was paused, temporarily resume it for token refresh
-			if (wasOriginallyPaused && account.paused) {
-				logger.info(
-					`Temporarily resuming account ${account.name} for token refresh`,
-				);
-				proxyContext.dbOps.resumeAccount(account.id);
-				account.paused = false;
-			}
+			// Create a token provider function that gets a fresh token each time
+			const tokenProvider = async () => {
+				// If account was paused, temporarily resume it for token refresh
+				if (wasOriginallyPaused && account.paused) {
+					logger.debug(
+						`Temporarily resuming account ${account.name} for token refresh`,
+					);
+					proxyContext.dbOps.resumeAccount(account.id);
+					account.paused = false;
+				}
 
-			// Get a valid access token (refreshes if necessary)
-			const accessToken = await getValidAccessToken(account, proxyContext);
+				try {
+					// Get a valid access token (refreshes if necessary)
+					const accessToken = await getValidAccessToken(account, proxyContext);
+					return accessToken;
+				} finally {
+					// Restore original paused state if we temporarily resumed it
+					if (wasOriginallyPaused && !account.paused) {
+						logger.debug(`Restoring paused state for account ${account.name}`);
+						proxyContext.dbOps.pauseAccount(account.id);
+						account.paused = true;
+					}
+				}
+			};
 
-			// Restore original paused state if we temporarily resumed it
-			if (wasOriginallyPaused && !account.paused) {
-				logger.info(`Restoring paused state for account ${account.name}`);
-				proxyContext.dbOps.pauseAccount(account.id);
-				account.paused = true;
-			}
-
-			if (accessToken) {
-				// Use the refreshed token for usage polling
-				usageCache.startPolling(
-					account.id,
-					accessToken,
-					account.provider,
-					30000,
-				); // Poll every 30s
-			} else {
-				logger.warn(
-					`Unable to get valid access token for account ${account.name}`,
-				);
-			}
+			// Start usage polling with the token provider
+			usageCache.startPolling(
+				account.id,
+				tokenProvider,
+				account.provider,
+				30000,
+			); // Poll every 30s
 		} catch (error) {
 			logger.error(
 				`Error starting usage polling for account ${account.name}:`,
