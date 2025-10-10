@@ -12,3 +12,4 @@ packages/dashboard-web/dist/
 .DS_Store
 *.log
 tsconfig.tsbuildinfo
+packages/proxy/src/inline-worker.ts

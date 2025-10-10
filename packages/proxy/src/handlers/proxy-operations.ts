@@ -4,7 +4,7 @@ import { getProvider } from "@better-ccflare/providers";
 import type { Account, RequestMeta } from "@better-ccflare/types";
 import { forwardToClient } from "../response-handler";
 import { ERROR_MESSAGES, type ProxyContext } from "./proxy-types";
-import { makeProxyRequest } from "./request-handler";
+import { makeProxyRequest, validateProviderPath } from "./request-handler";
 import { handleProxyError, processProxyResponse } from "./response-processor";
 import { getValidAccessToken } from "./token-manager";
 
@@ -111,6 +111,9 @@ export async function proxyWithAccount(
 
 		// Get the provider for this account
 		const provider = getProvider(account.provider) || ctx.provider;
+
+		// Validate that the account-specific provider can handle this path
+		validateProviderPath(provider, url.pathname);
 
 		// Get valid access token
 		const accessToken = await getValidAccessToken(account, ctx);
