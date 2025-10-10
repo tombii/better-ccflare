@@ -29,5 +29,6 @@ export type RequestEvt =
 class RequestEventBus extends EventEmitter {}
 export const requestEvents = new RequestEventBus();
 
-// Set a reasonable max listeners limit for SSE connections
-requestEvents.setMaxListeners(50);
+// Set a more generous max listeners limit for SSE connections
+// This allows for more concurrent SSE connections while still providing protection
+requestEvents.setMaxListeners(200); // Increased from 50 to allow more concurrent SSE connections

@@ -17,6 +17,7 @@ const log = new Logger("TokenManager");
 // Track refresh failures for backoff with TTL cleanup
 const refreshFailures = new Map<string, number>();
 const FAILURE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const MAX_FAILURE_RECORDS = 1000; // Prevent unbounded growth
 
 // Cleanup old failures periodically
 let cleanupInterval: Timer | null = null;
@@ -38,7 +39,7 @@ export const startTokenCleanupInterval = () => {
 			if (toDelete.length > 0) {
 				log.debug(`Cleaned up ${toDelete.length} expired failure records`);
 			}
-		}, FAILURE_TTL_MS);
+		}, FAILURE_TTL_MS / 10); // Run cleanup more frequently (every 30 seconds)
 	}
 };
 
@@ -61,6 +62,55 @@ registerDisposable({
 });
 
 /**
+ * Helper function to clean expired entries from refreshFailures Map
+ */
+function cleanupExpiredFailures(): void {
+	const now = Date.now();
+	const toDelete: string[] = [];
+
+	for (const [accountId, failureTime] of refreshFailures.entries()) {
+		if (now - failureTime > FAILURE_TTL_MS) {
+			toDelete.push(accountId);
+		}
+	}
+
+	toDelete.forEach((accountId) => refreshFailures.delete(accountId));
+
+	if (toDelete.length > 0) {
+		log.debug(
+			`Cleaned up ${toDelete.length} expired failure records during proactive cleanup`,
+		);
+	}
+}
+
+/**
+ * Helper function to enforce maximum size limit on refreshFailures Map
+ */
+function enforceMaxSize(): void {
+	if (refreshFailures.size > MAX_FAILURE_RECORDS) {
+		// Remove oldest entries if we exceed the max size
+		const _now = Date.now();
+		const entries = Array.from(refreshFailures.entries()).sort(
+			(a, b) => a[1] - b[1], // Sort by timestamp (oldest first)
+		);
+
+		const toRemove = entries.slice(
+			0,
+			refreshFailures.size - MAX_FAILURE_RECORDS + 1,
+		);
+		for (const [accountId] of toRemove) {
+			refreshFailures.delete(accountId);
+		}
+
+		if (toRemove.length > 0) {
+			log.warn(
+				`Removed ${toRemove.length} oldest failure records to maintain max size limit`,
+			);
+		}
+	}
+}
+
+/**
  * Safely refreshes an access token with deduplication
  * @param account - The account to refresh token for
  * @param ctx - The proxy context
@@ -72,6 +122,9 @@ export async function refreshAccessTokenSafe(
 	account: Account,
 	ctx: ProxyContext,
 ): Promise<string> {
+	// Proactively clean expired entries before checking
+	cleanupExpiredFailures();
+
 	// Check for recent refresh failures and implement backoff
 	const lastFailure = refreshFailures.get(account.id);
 	if (lastFailure && Date.now() - lastFailure < TOKEN_REFRESH_BACKOFF_MS) {
@@ -118,6 +171,8 @@ export async function refreshAccessTokenSafe(
 			.catch((error) => {
 				// Record the failure timestamp for backoff
 				refreshFailures.set(account.id, Date.now());
+				// Enforce size limit after adding a new entry
+				enforceMaxSize();
 				log.error(`Token refresh failed for account ${account.name}`, error);
 				throw new TokenRefreshError(account.id, error as Error);
 			})
