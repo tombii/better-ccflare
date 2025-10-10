@@ -153,9 +153,26 @@ export class AutoRefreshScheduler {
 				}
 
 				// Check if the current rate_limit_reset from the database is NEWER than the one we stored when we last refreshed
+				// OR if the reset time has passed and we're now in a new window (reset time is in the past relative to now)
 				// This indicates that the usage window has renewed since our last refresh
-				if (account.rate_limit_reset > lastResetTime) {
-					// The window has renewed - time to refresh again
+				const resetTimeHasPassed = account.rate_limit_reset <= now;
+				const isNewerThanLastRefresh = account.rate_limit_reset > lastResetTime;
+
+				// If the reset time has passed, we need to refresh to get the NEXT window's reset time
+				// This covers two cases:
+				// 1. The reset time passed and we haven't refreshed yet (account.rate_limit_reset !== lastResetTime)
+				// 2. The reset time passed and it equals lastResetTime (meaning we already refreshed for this window,
+				//    but now the window has renewed and we need to refresh again to get the NEXT reset time)
+				if (resetTimeHasPassed) {
+					log.info(
+						`New window detected for account ${account.name}: reset time ${new Date(account.rate_limit_reset).toISOString()} has passed (now: ${new Date(now).toISOString()}), last refresh was at ${new Date(lastResetTime).toISOString()}`,
+					);
+					return true;
+				}
+
+				// Also check if the database has a NEWER reset time than what we last refreshed
+				// This handles the case where an external request updated the reset time
+				if (isNewerThanLastRefresh) {
 					log.info(
 						`New window detected for account ${account.name}: current reset ${new Date(account.rate_limit_reset).toISOString()} > last refresh ${new Date(lastResetTime).toISOString()}`,
 					);
@@ -173,7 +190,7 @@ export class AutoRefreshScheduler {
 
 				// The window hasn't renewed yet - skip
 				log.debug(
-					`No new window for account ${account.name}: current reset ${new Date(account.rate_limit_reset).toISOString()} <= last refresh ${new Date(lastResetTime).toISOString()}`,
+					`No new window for account ${account.name}: current reset ${new Date(account.rate_limit_reset).toISOString()}, last refresh ${new Date(lastResetTime).toISOString()}, now ${new Date(now).toISOString()}`,
 				);
 				return false;
 			});
