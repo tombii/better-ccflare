@@ -84,39 +84,49 @@ export async function forwardToClient(
 
 	const isStream = ctx.provider.isStreamingResponse?.(response) ?? false;
 
-	// Send START message immediately
-	const startMessage: StartMessage = {
-		type: "start",
-		requestId,
-		accountId: account?.id || null,
-		method,
-		path,
-		timestamp,
-		requestHeaders: requestHeadersObj,
-		requestBody: requestBody
-			? Buffer.from(requestBody).toString("base64")
-			: null,
-		responseStatus: response.status,
-		responseHeaders: responseHeadersObj,
-		isStream,
-		providerName: ctx.provider.name,
-		agentUsed: agentUsed || null,
-		retryAttempt,
-		failoverAttempts,
-	};
-	safePostMessage(ctx.usageWorker, startMessage);
+	// Filter out count_tokens requests for OpenAI-compatible providers from request logs and worker
+	const shouldProcessRequest = !(
+		ctx.provider.name === "openai-compatible" &&
+		path === "/v1/messages/count_tokens"
+	);
+
+	// Send START message immediately if not filtered
+	if (shouldProcessRequest) {
+		const startMessage: StartMessage = {
+			type: "start",
+			requestId,
+			accountId: account?.id || null,
+			method,
+			path,
+			timestamp,
+			requestHeaders: requestHeadersObj,
+			requestBody: requestBody
+				? Buffer.from(requestBody).toString("base64")
+				: null,
+			responseStatus: response.status,
+			responseHeaders: responseHeadersObj,
+			isStream,
+			providerName: ctx.provider.name,
+			agentUsed: agentUsed || null,
+			retryAttempt,
+			failoverAttempts,
+		};
+		safePostMessage(ctx.usageWorker, startMessage);
+	}
 
 	// Emit request start event for real-time dashboard
-	requestEvents.emit("event", {
-		type: "start",
-		id: requestId,
-		timestamp,
-		method,
-		path,
-		accountId: account?.id || null,
-		statusCode: response.status,
-		agentUsed: agentUsed || null,
-	});
+	if (shouldProcessRequest) {
+		requestEvents.emit("event", {
+			type: "start",
+			id: requestId,
+			timestamp,
+			method,
+			path,
+			accountId: account?.id || null,
+			statusCode: response.status,
+			agentUsed: agentUsed || null,
+		});
+	}
 
 	/*********************************************************************
 	 *  STREAMING RESPONSES — tee with Response.clone() and send chunks
