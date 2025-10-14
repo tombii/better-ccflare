@@ -84,6 +84,29 @@ export function updateAccountMetadata(
 				rateLimitInfo.remaining,
 			),
 		);
+	} else {
+		// If there's no rate limit status header (meaning request was successful),
+		// clear the rate_limited_until field if it has expired
+		ctx.asyncWriter.enqueue(() => {
+			const db = ctx.dbOps.getDatabase();
+			const result = db
+				.query<{ rate_limited_until: number | null }, [string]>(
+					"SELECT rate_limited_until FROM accounts WHERE id = ?",
+				)
+				.get(account.id);
+
+			if (
+				result?.rate_limited_until &&
+				result.rate_limited_until < Date.now()
+			) {
+				db.run("UPDATE accounts SET rate_limited_until = NULL WHERE id = ?", [
+					account.id,
+				]);
+				log.debug(
+					`Cleared expired rate_limited_until for account ${account.name} on successful response`,
+				);
+			}
+		});
 	}
 
 	// Extract tier info if supported
@@ -191,6 +214,34 @@ export async function processProxyResponse(
 	const bypassSession =
 		requestMeta?.headers?.get("x-better-ccflare-bypass-session") === "true";
 	updateAccountMetadata(account, response, ctx, requestId, bypassSession);
+
+	// Clear rate_limited_until if the account was previously rate-limited but is now successful
+	if (!rateLimitInfo.isRateLimited) {
+		// Check if the account had a rate_limited_until value and clear it
+		ctx.asyncWriter.enqueue(() => {
+			const db = ctx.dbOps.getDatabase();
+			// Only clear rate_limited_until if it's in the past or null (meaning it was rate-limited before)
+			const result = db
+				.query<{ rate_limited_until: number | null }, [string]>(
+					"SELECT rate_limited_until FROM accounts WHERE id = ?",
+				)
+				.get(account.id);
+
+			if (result?.rate_limited_until) {
+				const now = Date.now();
+				// If the rate limit was in the past (already expired) or if we're just clearing it after success
+				if (result.rate_limited_until < now) {
+					db.run("UPDATE accounts SET rate_limited_until = NULL WHERE id = ?", [
+						account.id,
+					]);
+					log.debug(
+						`Cleared expired rate_limited_until for account ${account.name}`,
+					);
+				}
+			}
+		});
+	}
+
 	return false;
 }
 
