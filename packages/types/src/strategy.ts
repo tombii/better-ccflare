@@ -29,4 +29,14 @@ export interface StrategyStore {
 	 * Get account by ID
 	 */
 	getAccount?(accountId: string): Account | null;
+
+	/**
+	 * Pause an account
+	 */
+	pauseAccount?(accountId: string): void;
+
+	/**
+	 * Resume a paused account
+	 */
+	resumeAccount?(accountId: string): void;
 }

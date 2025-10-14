@@ -462,16 +462,28 @@ export class AutoRefreshScheduler {
 
 				// Update rate limit fields from unified headers
 				if (rateLimitInfo.resetTime) {
-					this.db.run("UPDATE accounts SET rate_limit_reset = ? WHERE id = ?", [
-						rateLimitInfo.resetTime,
-						accountRow.id,
-					]);
+					this.db.run(
+						"UPDATE accounts SET rate_limit_reset = ?, rate_limited_until = NULL WHERE id = ?",
+						[rateLimitInfo.resetTime, accountRow.id],
+					);
 
 					// Update our tracking with the NEW rate_limit_reset from the API
 					this.lastRefreshResetTime.set(accountRow.id, rateLimitInfo.resetTime);
 
 					log.info(
 						`Updated rate_limit_reset for ${accountRow.name} to ${new Date(rateLimitInfo.resetTime).toISOString()}`,
+					);
+					log.info(
+						`Cleared rate_limited_until for ${accountRow.name} as account has been refreshed`,
+					);
+				} else {
+					// Even if no reset time is provided, clear rate_limited_until as the refresh was successful
+					this.db.run(
+						"UPDATE accounts SET rate_limited_until = NULL WHERE id = ?",
+						[accountRow.id],
+					);
+					log.info(
+						`Cleared rate_limited_until for ${accountRow.name} as account has been refreshed (no new reset time)`,
 					);
 				}
 
