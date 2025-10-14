@@ -81,6 +81,15 @@ export class SessionStrategy implements LoadBalancingStrategy {
 				`Auto-fallback triggered to account ${chosenFallback.name} (priority: ${chosenFallback.priority}, auto-fallback enabled)`,
 			);
 
+			// If the chosen fallback account was paused, unpause it since we're reactivating it
+			if (chosenFallback.paused && this.store?.resumeAccount) {
+				this.log.info(
+					`Unpausing account ${chosenFallback.name} due to auto-fallback reactivation`,
+				);
+				this.store.resumeAccount(chosenFallback.id);
+				chosenFallback.paused = false;
+			}
+
 			// Return fallback account first, then others sorted by priority
 			const others = accounts
 				.filter((a) => a.id !== chosenFallback.id && getCachedAvailability(a))
@@ -152,7 +161,8 @@ export class SessionStrategy implements LoadBalancingStrategy {
 		// 3. Are not currently in a rate limited state (rate_limited_until is in the past or null)
 		const resetAccounts = accounts.filter((account) => {
 			if (!account.auto_fallback_enabled) return false;
-			if (account.paused) return false;
+			// Note: We check paused status AFTER filtering for auto-fallback enabled accounts
+			// This allows paused accounts with auto-fallback to be considered for reactivation
 
 			// Check if the API usage window has reset
 			const windowReset =
