@@ -230,7 +230,8 @@ export async function processProxyResponse(
 			if (result?.rate_limited_until) {
 				const now = Date.now();
 				// If the rate limit was in the past (already expired) or if we're just clearing it after success
-				if (result.rate_limited_until < now) {
+				// We clear it regardless if it's expired to ensure the account is no longer marked as rate-limited
+				if (result.rate_limited_until <= now) {
 					db.run("UPDATE accounts SET rate_limited_until = NULL WHERE id = ?", [
 						account.id,
 					]);

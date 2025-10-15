@@ -157,4 +157,16 @@ export class AccountRepository extends BaseRepository<Account> {
 			accountId,
 		]);
 	}
+
+	/**
+	 * Clear expired rate_limited_until values from all accounts
+	 * @param now The current timestamp to compare against
+	 * @returns Number of accounts that had their rate_limited_until cleared
+	 */
+	clearExpiredRateLimits(now: number): number {
+		return this.runWithChanges(
+			`UPDATE accounts SET rate_limited_until = NULL WHERE rate_limited_until <= ?`,
+			[now],
+		);
+	}
 }
