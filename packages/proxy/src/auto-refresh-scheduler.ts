@@ -478,6 +478,7 @@ export class AutoRefreshScheduler {
 					);
 				} else {
 					// Even if no reset time is provided, clear rate_limited_until as the refresh was successful
+					// Also make sure to clear any existing rate_limited_until value to ensure the account is not stuck
 					this.db.run(
 						"UPDATE accounts SET rate_limited_until = NULL WHERE id = ?",
 						[accountRow.id],

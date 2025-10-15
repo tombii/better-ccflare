@@ -265,6 +265,21 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		);
 	}
 
+	/**
+	 * Clear expired rate_limited_until values from all accounts
+	 * @param now The current timestamp to compare against
+	 * @returns Number of accounts that had their rate_limited_until cleared
+	 */
+	clearExpiredRateLimits(now: number): number {
+		return withDatabaseRetrySync(
+			() => {
+				return this.accounts.clearExpiredRateLimits(now);
+			},
+			this.retryConfig,
+			"clearExpiredRateLimits",
+		);
+	}
+
 	updateAccountRateLimitMeta(
 		accountId: string,
 		status: string,

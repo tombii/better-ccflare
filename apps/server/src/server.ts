@@ -154,6 +154,18 @@ async function runStartupMaintenance(
 		log.error(`OAuth session cleanup error: ${err}`);
 	}
 	try {
+		// Clear expired rate_limited_until values
+		const now = Date.now();
+		const clearedCount = dbOps.clearExpiredRateLimits(now);
+		if (clearedCount > 0) {
+			log.info(`Cleared ${clearedCount} expired rate_limited_until entries`);
+		} else {
+			log.info("No expired rate_limited_until entries found to clear");
+		}
+	} catch (err) {
+		log.error(`Rate limit cleanup error: ${err}`);
+	}
+	try {
 		// Prune old agent workspaces (not seen in 7 days)
 		const { agentRegistry } = await import("@better-ccflare/agents");
 		await agentRegistry.pruneOldWorkspaces();
