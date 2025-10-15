@@ -121,6 +121,7 @@ function serveDashboardFile(
 let serverInstance: ReturnType<typeof serve> | null = null;
 let stopRetentionJob: (() => void) | null = null;
 let stopOAuthCleanupJob: (() => void) | null = null;
+let stopRateLimitCleanupJob: (() => void) | null = null;
 let autoRefreshScheduler: AutoRefreshScheduler | null = null;
 
 // Startup maintenance (one-shot): cleanup + compact
@@ -379,6 +380,28 @@ export default function startServer(options?: {
 
 	stopOAuthCleanupJob = unregisterOAuthCleanup;
 
+	// Set up periodic rate limit cleanup (every hour)
+	const unregisterRateLimitCleanup = registerCleanup({
+		id: "rate-limit-cleanup",
+		callback: () => {
+			try {
+				const now = Date.now();
+				const clearedCount = dbOps.clearExpiredRateLimits(now);
+				if (clearedCount > 0) {
+					log.debug(
+						`Cleared ${clearedCount} expired rate_limited_until entries`,
+					);
+				}
+			} catch (err) {
+				log.error(`Rate limit cleanup error: ${err}`);
+			}
+		},
+		minutes: 60,
+		description: "Rate limit cleanup",
+	});
+
+	stopRateLimitCleanupJob = unregisterRateLimitCleanup;
+
 	// Initialize load balancing strategy (will be created after runtime config)
 
 	// Get the provider
@@ -598,6 +621,10 @@ async function handleGracefulShutdown(signal: string) {
 		if (stopOAuthCleanupJob) {
 			stopOAuthCleanupJob();
 			stopOAuthCleanupJob = null;
+		}
+		if (stopRateLimitCleanupJob) {
+			stopRateLimitCleanupJob();
+			stopRateLimitCleanupJob = null;
 		}
 		if (autoRefreshScheduler) {
 			autoRefreshScheduler.stop();
