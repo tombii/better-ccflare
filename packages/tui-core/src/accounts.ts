@@ -44,6 +44,7 @@ export async function beginAddAccount(
 
 	// Open browser
 	console.log(`\nOpening browser to authenticate...`);
+	console.log(`URL: ${flowResult.authUrl}`);
 	const browserOpened = await openBrowser(flowResult.authUrl);
 	if (!browserOpened) {
 		console.log(
