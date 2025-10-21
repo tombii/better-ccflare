@@ -400,25 +400,31 @@ export function createAnalyticsHandler(context: APIContext) {
 			// Finalize prepared statement
 			modelPerfQuery.finalize();
 
-			// Prepare p95 query ONCE, outside the loop to prevent memory leak
+			// Prepare p95 query once, outside the loop to prevent memory overhead
 			const p95Query = db.prepare(`
-				WITH sampled_data AS (
-					SELECT response_time_ms
+				WITH ranked AS (
+					SELECT
+						response_time_ms,
+						ROW_NUMBER() OVER (ORDER BY response_time_ms) AS row_num,
+						COUNT(*) OVER () AS total_rows
 					FROM requests r
 					WHERE ${whereClause} AND model = ? AND response_time_ms IS NOT NULL
-					ORDER BY RANDOM()
-					LIMIT 1000
 				)
 				SELECT response_time_ms as p95_response_time
-				FROM sampled_data
-				ORDER BY response_time_ms
-				LIMIT 1 OFFSET CAST((SELECT COUNT(*) FROM sampled_data) * 0.95 AS INTEGER)
+				FROM ranked
+				WHERE row_num = (
+					SELECT
+						CASE
+							WHEN MAX(total_rows) = 0 THEN NULL
+							ELSE CAST(((MAX(total_rows) - 1) * 95) / 100 AS INTEGER) + 1
+						END
+					FROM ranked
+				)
+				LIMIT 1
 			`);
 
-			// Calculate p95 for each model using approximate percentile algorithm
+			// Calculate p95 for each model using windowed percentile calculation
 			const modelPerformance = modelPerfData.map((modelData) => {
-				// Use approximate percentile calculation with sampling for better performance
-				// Sample 1000 records instead of full dataset to get ~95% accurate p95
 				const p95Result = p95Query.get(...queryParams, modelData.model) as
 					| { p95_response_time: number }
 					| undefined;

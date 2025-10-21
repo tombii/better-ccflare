@@ -79,11 +79,13 @@ export interface RequestPayload {
 	request: {
 		headers: Record<string, string>;
 		body: string | null;
+		truncated?: boolean;
 	};
 	response: {
 		status: number;
 		headers: Record<string, string>;
 		body: string | null;
+		truncated?: boolean;
 	} | null;
 	error?: string;
 	meta: {
@@ -98,6 +100,8 @@ export interface RequestPayload {
 		path?: string;
 		method?: string;
 		agentUsed?: string;
+		requestBodyTruncated?: boolean;
+		responseBodyTruncated?: boolean;
 	};
 }
 
