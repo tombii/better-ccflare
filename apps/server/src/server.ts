@@ -194,16 +194,18 @@ function startUsagePollingWithRefresh(
 ) {
 	const logger = new Logger("UsagePolling");
 
-	// Store original paused state to restore it later
-	const wasOriginallyPaused = account.paused;
-
 	// Initial polling with token refresh
 	const pollWithRefresh = async () => {
 		try {
 			// Create a token provider function that gets a fresh token each time
 			const tokenProvider = async () => {
-				// If account was paused, temporarily resume it for token refresh
-				if (wasOriginallyPaused && account.paused) {
+				// Get the current paused state from the database to avoid stale state issues
+				// This is important because the account might be paused/resumed via API during runtime
+				const currentAccount = proxyContext.dbOps.getAccount(account.id);
+				const wasTemporarilyResumed = currentAccount?.paused === true;
+
+				// If account is currently paused, temporarily resume it for token refresh
+				if (wasTemporarilyResumed) {
 					logger.debug(
 						`Temporarily resuming account ${account.name} for token refresh`,
 					);
@@ -216,8 +218,8 @@ function startUsagePollingWithRefresh(
 					const accessToken = await getValidAccessToken(account, proxyContext);
 					return accessToken;
 				} finally {
-					// Restore original paused state if we temporarily resumed it
-					if (wasOriginallyPaused && !account.paused) {
+					// Restore paused state ONLY if we temporarily resumed it above
+					if (wasTemporarilyResumed) {
 						logger.debug(`Restoring paused state for account ${account.name}`);
 						proxyContext.dbOps.pauseAccount(account.id);
 						account.paused = true;
@@ -283,14 +285,7 @@ function startUsagePollingWithRefresh(
 					);
 				}
 			}
-			// Restore original paused state in case of error
-			if (wasOriginallyPaused && !account.paused) {
-				logger.info(
-					`Restoring paused state for account ${account.name} after error`,
-				);
-				proxyContext.dbOps.pauseAccount(account.id);
-				account.paused = true;
-			}
+			// Don't restore paused state on error - let the user control pause/resume via API
 			// Retry in 5 minutes if there was an error
 			setTimeout(
 				() => {
