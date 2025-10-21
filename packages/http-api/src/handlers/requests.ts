@@ -3,6 +3,30 @@ import type { DatabaseOperations } from "@better-ccflare/database";
 import { jsonResponse } from "@better-ccflare/http-common";
 import type { RequestResponse } from "../types";
 
+const MAX_BODY_PREVIEW_BYTES = 32 * 1024; // 32KB preview to keep responses lightweight
+
+function truncateBase64(body: unknown): {
+	body: string | null;
+	truncated: boolean;
+} {
+	if (!body || typeof body !== "string") {
+		return { body: body as string | null, truncated: false };
+	}
+
+	try {
+		const decoded = Buffer.from(body, "base64");
+		if (decoded.length <= MAX_BODY_PREVIEW_BYTES) {
+			return { body, truncated: false };
+		}
+
+		const sliced = decoded.subarray(0, MAX_BODY_PREVIEW_BYTES);
+		return { body: sliced.toString("base64"), truncated: true };
+	} catch {
+		// If the payload is not valid base64, return null to avoid blowing up the response
+		return { body: null, truncated: true };
+	}
+}
+
 /**
  * Create a requests summary handler (existing functionality)
  */
@@ -80,10 +104,47 @@ export function createRequestsDetailHandler(dbOps: DatabaseOperations) {
 		const rows = dbOps.listRequestPayloadsWithAccountNames(limit);
 		const parsed = rows.map((r) => {
 			try {
-				const data = JSON.parse(r.json);
+				const data = JSON.parse(r.json) as Record<string, unknown>;
+
+				const request = data.request as
+					| { body?: string | null; truncated?: boolean }
+					| undefined;
+				const response = data.response as
+					| { body?: string | null; truncated?: boolean }
+					| undefined;
+				let meta = data.meta as Record<string, unknown> | undefined;
+				if (!meta) {
+					meta = {};
+				}
+
+				if (request?.body) {
+					const { body, truncated } = truncateBase64(request.body);
+					request.body = body;
+					if (truncated) {
+						request.truncated = true;
+						meta.requestBodyTruncated = true;
+					}
+				}
+
+				if (response?.body) {
+					const { body, truncated } = truncateBase64(response.body);
+					response.body = body;
+					if (truncated) {
+						response.truncated = true;
+						meta.responseBodyTruncated = true;
+					}
+				}
+
+				data.request = request;
+				data.response = response;
+				data.meta = meta;
+
+				// Ensure meta object reflects any truncation flags
+				data.meta = meta;
+
 				// Add account name to the meta field if available
-				if (r.account_name && data.meta) {
-					data.meta.accountName = r.account_name;
+				if (r.account_name) {
+					meta.accountName = r.account_name;
 				}
 				return { id: r.id, ...data };
 			} catch {
