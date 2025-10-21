@@ -16,8 +16,11 @@ const log = new Logger("TokenManager");
 
 // Track refresh failures for backoff with TTL cleanup
 const refreshFailures = new Map<string, number>();
+// Track consecutive backoff hits per account
+const backoffCounters = new Map<string, number>();
 const FAILURE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const MAX_FAILURE_RECORDS = 1000; // Prevent unbounded growth
+const MAX_BACKOFF_RETRIES = 10; // After 10 backoff hits, check DB
 
 // Cleanup old failures periodically
 let cleanupInterval: Timer | null = null;
@@ -58,6 +61,7 @@ registerDisposable({
 	dispose: () => {
 		stopTokenCleanupInterval();
 		refreshFailures.clear();
+		backoffCounters.clear();
 	},
 });
 
@@ -74,7 +78,10 @@ function cleanupExpiredFailures(): void {
 		}
 	}
 
-	toDelete.forEach((accountId) => refreshFailures.delete(accountId));
+	toDelete.forEach((accountId) => {
+		refreshFailures.delete(accountId);
+		backoffCounters.delete(accountId); // Also clean up backoff counters
+	});
 
 	if (toDelete.length > 0) {
 		log.debug(
@@ -100,6 +107,7 @@ function enforceMaxSize(): void {
 		);
 		for (const [accountId] of toRemove) {
 			refreshFailures.delete(accountId);
+			backoffCounters.delete(accountId); // Also clean up backoff counters
 		}
 
 		if (toRemove.length > 0) {
@@ -128,10 +136,79 @@ export async function refreshAccessTokenSafe(
 	// Check for recent refresh failures and implement backoff
 	const lastFailure = refreshFailures.get(account.id);
 	if (lastFailure && Date.now() - lastFailure < TOKEN_REFRESH_BACKOFF_MS) {
-		log.warn(`Account ${account.name} is in refresh backoff period`);
+		// Increment backoff counter
+		const currentCount = backoffCounters.get(account.id) || 0;
+		const newCount = currentCount + 1;
+		backoffCounters.set(account.id, newCount);
+
+		log.warn(
+			`Account ${account.name} is in refresh backoff period (attempt ${newCount})`,
+		);
+
+		// After MAX_BACKOFF_RETRIES consecutive backoff hits, check DB for updated tokens
+		if (newCount >= MAX_BACKOFF_RETRIES) {
+			log.info(
+				`Account ${account.name} has hit ${newCount} backoff attempts, checking DB for updated tokens`,
+			);
+
+			try {
+				// Reload account from database
+				const dbAccount = ctx.dbOps.getAccount(account.id);
+				if (dbAccount) {
+					// Check if DB has a valid token that we don't have in memory
+					const hasValidToken =
+						dbAccount.access_token &&
+						dbAccount.expires_at &&
+						dbAccount.expires_at - Date.now() > TOKEN_SAFETY_WINDOW_MS;
+
+					if (
+						hasValidToken &&
+						dbAccount.access_token !== account.access_token
+					) {
+						log.info(
+							`Found updated token in DB for account ${account.name}, updating in-memory account`,
+						);
+
+						// Update in-memory account with DB data
+						account.access_token = dbAccount.access_token;
+						account.expires_at = dbAccount.expires_at;
+						if (dbAccount.refresh_token) {
+							account.refresh_token = dbAccount.refresh_token;
+						}
+						account.last_used = Date.now();
+
+						// Clear failure records and backoff counter
+						refreshFailures.delete(account.id);
+						backoffCounters.delete(account.id);
+
+						log.info(
+							`Successfully recovered token for account ${account.name} from DB`,
+						);
+						return dbAccount.access_token;
+					} else {
+						log.warn(
+							`DB token for account ${account.name} is not valid or same as in-memory`,
+						);
+					}
+				} else {
+					log.warn(
+						`Account ${account.name} not found in DB during backoff recovery`,
+					);
+				}
+			} catch (error) {
+				log.error(
+					`Failed to check DB for account ${account.name} during backoff recovery`,
+					error,
+				);
+			}
+		}
+
 		throw new ServiceUnavailableError(
 			`Token refresh for account ${account.name} is in backoff period after recent failure`,
 		);
+	} else {
+		// Not in backoff, reset counter
+		backoffCounters.delete(account.id);
 	}
 
 	// Check if a refresh is already in progress for this account
