@@ -102,6 +102,7 @@ export interface RequestPayload {
 		agentUsed?: string;
 		requestBodyTruncated?: boolean;
 		responseBodyTruncated?: boolean;
+		limitApplied?: number;
 	};
 }
 

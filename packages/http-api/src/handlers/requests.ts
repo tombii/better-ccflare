@@ -4,6 +4,7 @@ import { jsonResponse } from "@better-ccflare/http-common";
 import type { RequestResponse } from "../types";
 
 const MAX_BODY_PREVIEW_BYTES = 32 * 1024; // 32KB preview to keep responses lightweight
+const MAX_REQUEST_DETAILS_LIMIT = 50;
 
 function truncateBase64(body: unknown): {
 	body: string | null;
@@ -101,7 +102,11 @@ export function createRequestsSummaryHandler(db: Database) {
  */
 export function createRequestsDetailHandler(dbOps: DatabaseOperations) {
 	return (limit = 100): Response => {
-		const rows = dbOps.listRequestPayloadsWithAccountNames(limit);
+		const safeLimit = Math.min(
+			Math.max(Number.isFinite(limit) ? limit : 1, 1),
+			MAX_REQUEST_DETAILS_LIMIT,
+		);
+		const rows = dbOps.listRequestPayloadsWithAccountNames(safeLimit);
 		const parsed = rows.map((r) => {
 			try {
 				const data = JSON.parse(r.json) as Record<string, unknown>;
@@ -116,6 +121,7 @@ export function createRequestsDetailHandler(dbOps: DatabaseOperations) {
 				if (!meta) {
 					meta = {};
 				}
+				meta.limitApplied = safeLimit;
 
 				if (request?.body) {
 					const { body, truncated } = truncateBase64(request.body);
@@ -137,15 +143,12 @@ export function createRequestsDetailHandler(dbOps: DatabaseOperations) {
 
 				data.request = request;
 				data.response = response;
-				data.meta = meta;
 
-				// Ensure meta object reflects any truncation flags
-				data.meta = meta;
-
-				// Add account name to the meta field if available
 				if (r.account_name) {
 					meta.accountName = r.account_name;
 				}
+				data.meta = meta;
+
 				return { id: r.id, ...data };
 			} catch {
 				return { id: r.id, error: "Failed to parse payload" };
