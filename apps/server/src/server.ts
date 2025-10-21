@@ -174,14 +174,25 @@ async function runStartupMaintenance(
 	} catch (err) {
 		log.error(`Agent workspace pruning error: ${err}`);
 	}
-	try {
-		dbOps.compact();
-		log.info("Database compacted at startup");
-	} catch (err) {
-		log.error(`Database compaction error: ${err}`);
-	}
 	// Return a no-op stopper for compatibility
 	return () => {};
+}
+
+/**
+ * Run database compaction in the background (async, non-blocking)
+ * Uses incremental vacuum for better performance on large databases
+ */
+async function runBackgroundCompaction(dbOps: DatabaseOperations) {
+	const log = new Logger("BackgroundCompaction");
+	try {
+		log.info("Starting background database compaction (incremental vacuum)...");
+		// Use incremental vacuum instead of full VACUUM for better performance
+		// Reclaim up to 1000 pages at a time to avoid blocking
+		dbOps.incrementalVacuum(1000);
+		log.info("Background database compaction completed");
+	} catch (err) {
+		log.error(`Background compaction error: ${err}`);
+	}
 }
 
 /**
@@ -350,11 +361,19 @@ export default function startServer(options?: {
 
 	const apiRouter = new APIRouter({ db, config, dbOps });
 
-	// Run startup maintenance once (cleanup + compact) - fire and forget
+	// Run startup maintenance once (cleanup only) - fire and forget
 	runStartupMaintenance(config, dbOps).catch((err) => {
 		log.error("Startup maintenance failed:", err);
 	});
 	stopRetentionJob = () => {}; // No-op stopper
+
+	// Run database compaction in background after server starts (non-blocking)
+	// Delay by 10 seconds to allow server to fully start first
+	setTimeout(() => {
+		runBackgroundCompaction(dbOps).catch((err) => {
+			log.error("Background compaction failed:", err);
+		});
+	}, 10000);
 
 	// Set up periodic OAuth session cleanup (every hour)
 	const unregisterOAuthCleanup = registerCleanup({
