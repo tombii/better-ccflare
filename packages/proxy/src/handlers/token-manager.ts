@@ -156,22 +156,21 @@ export async function refreshAccessTokenSafe(
 				const dbAccount = ctx.dbOps.getAccount(account.id);
 				if (dbAccount) {
 					// Check if DB has a valid token that we don't have in memory
+					const accessTokenFromDb = dbAccount.access_token;
+					const expiresAtFromDb = dbAccount.expires_at;
 					const hasValidToken =
-						dbAccount.access_token &&
-						dbAccount.expires_at &&
-						dbAccount.expires_at - Date.now() > TOKEN_SAFETY_WINDOW_MS;
+						typeof accessTokenFromDb === "string" &&
+						typeof expiresAtFromDb === "number" &&
+						expiresAtFromDb - Date.now() > TOKEN_SAFETY_WINDOW_MS;
 
-					if (
-						hasValidToken &&
-						dbAccount.access_token !== account.access_token
-					) {
+					if (hasValidToken && accessTokenFromDb !== account.access_token) {
 						log.info(
 							`Found updated token in DB for account ${account.name}, updating in-memory account`,
 						);
 
 						// Update in-memory account with DB data
-						account.access_token = dbAccount.access_token;
-						account.expires_at = dbAccount.expires_at;
+						account.access_token = accessTokenFromDb;
+						account.expires_at = expiresAtFromDb;
 						if (dbAccount.refresh_token) {
 							account.refresh_token = dbAccount.refresh_token;
 						}
@@ -184,7 +183,7 @@ export async function refreshAccessTokenSafe(
 						log.info(
 							`Successfully recovered token for account ${account.name} from DB`,
 						);
-						return dbAccount.access_token;
+						return accessTokenFromDb;
 					} else {
 						log.warn(
 							`DB token for account ${account.name} is not valid or same as in-memory`,
