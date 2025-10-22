@@ -110,12 +110,6 @@ Examples:
 		return;
 	}
 
-	// Skip update notifier to avoid forking and slow exit issues
-	// updateNotifier({
-	// 	pkg,
-	// 	updateCheckInterval: 1000 * 60 * 60 * 24, // Check once per day
-	// }).notify({ isGlobal: true });
-
 	// Handle commands that don't need database or DI initialization
 	if (parsed.getModel || parsed.setModel) {
 		// Initialize only config for these simple commands
