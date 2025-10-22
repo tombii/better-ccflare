@@ -306,7 +306,10 @@ export class AutoRefreshScheduler {
 			// This ensures proper request handling and analytics while using the correct account
 			const proxyPort = this.proxyContext.runtime.port;
 			// Determine protocol based on SSL configuration
-			const protocol = (process.env.SSL_KEY_PATH && process.env.SSL_CERT_PATH) ? "https" : "http";
+			const protocol =
+				process.env.SSL_KEY_PATH && process.env.SSL_CERT_PATH
+					? "https"
+					: "http";
 			const endpoint = `${protocol}://localhost:${proxyPort}/v1/messages`;
 
 			// Use same headers as normal Claude Code CLI requests, plus the special account ID header

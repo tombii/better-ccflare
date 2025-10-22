@@ -8,7 +8,9 @@ async function getPort(): Promise<number> {
 
 function getProtocol(): string {
 	// Determine protocol based on SSL configuration
-	return (process.env.SSL_KEY_PATH && process.env.SSL_CERT_PATH) ? "https" : "http";
+	return process.env.SSL_KEY_PATH && process.env.SSL_CERT_PATH
+		? "https"
+		: "http";
 }
 
 export async function getStrategy(): Promise<string> {

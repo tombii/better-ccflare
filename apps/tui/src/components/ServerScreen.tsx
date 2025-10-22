@@ -12,7 +12,8 @@ export function ServerScreen({ onBack }: ServerScreenProps) {
 	const config = new Config();
 	const port = config.getRuntime().port || NETWORK.DEFAULT_PORT;
 	// Determine protocol based on SSL configuration
-	const protocol = (process.env.SSL_KEY_PATH && process.env.SSL_CERT_PATH) ? "https" : "http";
+	const protocol =
+		process.env.SSL_KEY_PATH && process.env.SSL_CERT_PATH ? "https" : "http";
 	const url = `${protocol}://localhost:${port}`;
 
 	useInput((input, key) => {

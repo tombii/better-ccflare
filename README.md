@@ -197,6 +197,59 @@ export ANTHROPIC_BASE_URL=https://yourdomain.com:8080
 
 With production certificates from trusted CAs, you don't need `NODE_OPTIONS="--use-system-ca"` as they are already trusted.
 
+#### Option 3: Docker with Traefik (Recommended for Production)
+
+For Docker deployments, we recommend using [Traefik](https://traefik.io/) as a reverse proxy to handle TLS automatically with Let's Encrypt:
+
+```yaml
+# docker-compose.yml
+version: '3.8'
+
+services:
+  traefik:
+    image: traefik:v3.0
+    command:
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--certificatesresolvers.myresolver.acme.tlschallenge=true"
+      - "--certificatesresolvers.myresolver.acme.email=your-email@example.com"
+      - "--certificatesresolvers.myresolver.acme.storage=/letsencrypt/acme.json"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./letsencrypt:/letsencrypt
+    restart: unless-stopped
+
+  better-ccflare:
+    image: ghcr.io/tombii/better-ccflare:latest
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.ccflare.rule=Host(`your-domain.com`)"
+      - "traefik.http.routers.ccflare.entrypoints=websecure"
+      - "traefik.http.routers.ccflare.tls.certresolver=myresolver"
+      - "traefik.http.services.ccflare.loadbalancer.server.port=8080"
+    volumes:
+      - ~/.config/better-ccflare:/root/.config/better-ccflare
+    restart: unless-stopped
+```
+
+**Benefits:**
+- Automatic TLS certificate generation and renewal via Let's Encrypt
+- No need to manually manage SSL certificates
+- Built-in HTTP to HTTPS redirection
+- Dashboard for monitoring (port 8080 on Traefik)
+
+**Client Configuration:**
+```bash
+export ANTHROPIC_BASE_URL=https://your-domain.com
+```
+
+No `NODE_OPTIONS` needed - Traefik provides trusted certificates automatically!
+
 #### Troubleshooting SSL Issues
 
 **Problem:** "Unable to connect to API due to poor internet connection" error even with `ANTHROPIC_BASE_URL` set
@@ -319,6 +372,7 @@ Full documentation available in [`docs/`](docs/):
 Inspired by [snipeship/ccflare](https://github.com/snipeship/ccflare) - thanks for the original idea and implementation!
 
 **Special thanks to our contributors:**
+- [@bitcoin4cashqc](https://github.com/bitcoin4cashqc) - SSL/HTTPS support implementation with comprehensive documentation
 - [@anonym-uz](https://github.com/anonym-uz) - Critical auto-pause bug fix, analytics performance optimizations, request body truncation, and incremental vacuum implementation
 - [@makhweeb](https://github.com/makhweeb) - Enhanced request handling and analytics improvements
 
