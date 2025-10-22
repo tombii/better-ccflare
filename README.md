@@ -201,6 +201,10 @@ Full documentation available in [`docs/`](docs/):
 
 Inspired by [snipeship/ccflare](https://github.com/snipeship/ccflare) - thanks for the original idea and implementation!
 
+**Special thanks to our contributors:**
+- [@anonym-uz](https://github.com/anonym-uz) - Critical auto-pause bug fix, analytics performance optimizations, request body truncation, and incremental vacuum implementation
+- [@makhweeb](https://github.com/makhweeb) - Enhanced request handling and analytics improvements
+
 ## Contributing
 
 We welcome contributions! See [CONTRIBUTING.md](docs/contributing.md) for guidelines.
