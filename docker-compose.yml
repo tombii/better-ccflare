@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  better-ccflare:
+    image: ghcr.io/tombii/better-ccflare:latest
+    container_name: better-ccflare
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      # Persist database
+      - better-ccflare-data:/data
+      # Optional: mount custom config
+      # - ./config:/app/config:ro
+    environment:
+      - NODE_ENV=production
+      - BETTER_CCFLARE_DB_PATH=/data/better-ccflare.db
+      # Optional: configure logging
+      # - LOG_LEVEL=info
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    # Resource limits (adjust as needed)
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+
+volumes:
+  better-ccflare-data:
+    driver: local
