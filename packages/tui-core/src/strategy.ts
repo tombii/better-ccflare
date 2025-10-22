@@ -6,9 +6,15 @@ async function getPort(): Promise<number> {
 	return runtime.port || 8080;
 }
 
+function getProtocol(): string {
+	// Determine protocol based on SSL configuration
+	return (process.env.SSL_KEY_PATH && process.env.SSL_CERT_PATH) ? "https" : "http";
+}
+
 export async function getStrategy(): Promise<string> {
 	const port = await getPort();
-	const baseUrl = `http://localhost:${port}`;
+	const protocol = getProtocol();
+	const baseUrl = `${protocol}://localhost:${port}`;
 	const res = await fetch(`${baseUrl}/api/config/strategy`);
 	if (!res.ok) throw new Error("Failed to fetch strategy");
 	const data = (await res.json()) as { strategy: string };
@@ -17,7 +23,8 @@ export async function getStrategy(): Promise<string> {
 
 export async function listStrategies(): Promise<string[]> {
 	const port = await getPort();
-	const baseUrl = `http://localhost:${port}`;
+	const protocol = getProtocol();
+	const baseUrl = `${protocol}://localhost:${port}`;
 	const res = await fetch(`${baseUrl}/api/strategies`);
 	if (!res.ok) throw new Error("Failed to list strategies");
 	return res.json() as Promise<string[]>;
@@ -25,7 +32,8 @@ export async function listStrategies(): Promise<string[]> {
 
 export async function setStrategy(strategy: string): Promise<void> {
 	const port = await getPort();
-	const baseUrl = `http://localhost:${port}`;
+	const protocol = getProtocol();
+	const baseUrl = `${protocol}://localhost:${port}`;
 	const res = await fetch(`${baseUrl}/api/config/strategy`, {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },

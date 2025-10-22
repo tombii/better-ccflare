@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { Config, type RuntimeConfig } from "@better-ccflare/config";
 import {
@@ -123,6 +124,9 @@ let stopRetentionJob: (() => void) | null = null;
 let stopOAuthCleanupJob: (() => void) | null = null;
 let stopRateLimitCleanupJob: (() => void) | null = null;
 let autoRefreshScheduler: AutoRefreshScheduler | null = null;
+
+// SSL/TLS configuration
+let tlsEnabled = false;
 
 // Startup maintenance (one-shot): cleanup only (compaction available via API endpoint)
 async function runStartupMaintenance(
@@ -299,6 +303,8 @@ function startUsagePollingWithRefresh(
 export default function startServer(options?: {
 	port?: number;
 	withDashboard?: boolean;
+	sslKeyPath?: string;
+	sslCertPath?: string;
 }) {
 	// Return existing server if already running
 	if (serverInstance) {
@@ -313,7 +319,10 @@ export default function startServer(options?: {
 		};
 	}
 
-	const { port = NETWORK.DEFAULT_PORT, withDashboard = true } = options || {};
+	const { port = NETWORK.DEFAULT_PORT, withDashboard = true, sslKeyPath, sslCertPath } = options || {};
+
+	// Enable TLS if both certificate paths are provided
+	tlsEnabled = !!(sslKeyPath && sslCertPath);
 
 	// Initialize DI container
 	container.registerInstance(SERVICE_KEYS.Config, new Config());
@@ -452,10 +461,19 @@ export default function startServer(options?: {
 
 	// Main server
 	try {
-		serverInstance = serve({
+		// Build server configuration with optional TLS
+		const serverConfig = {
 			port: runtime.port,
 			idleTimeout: NETWORK.IDLE_TIMEOUT_MAX, // Max allowed by Bun
-			async fetch(req) {
+			...(tlsEnabled && sslKeyPath && sslCertPath
+				? {
+						tls: {
+							key: readFileSync(sslKeyPath),
+							cert: readFileSync(sslCertPath),
+						},
+				  }
+				: {}),
+			async fetch(req: Request) {
 				const url = new URL(req.url);
 
 				// Try API routes first
@@ -488,7 +506,9 @@ export default function startServer(options?: {
 				// All other paths go to proxy
 				return handleProxy(req, url, proxyContext);
 			},
-		});
+		};
+
+		serverInstance = serve(serverConfig);
 	} catch (error) {
 		if (
 			typeof error === "object" &&
@@ -511,27 +531,29 @@ export default function startServer(options?: {
 	// Log server startup (async)
 	getVersion().then((version) => {
 		if (!serverInstance) return;
+		const protocol = tlsEnabled ? "https" : "http";
 		const dashboardStatus =
 			withDashboard && dashboardManifest
-				? `http://localhost:${serverInstance.port}`
+				? `${protocol}://localhost:${serverInstance.port}`
 				: withDashboard && !dashboardManifest
 					? "unavailable (assets not found)"
 					: "disabled";
 		console.log(`
 🎯 better-ccflare Server v${version}
 🌐 Port: ${serverInstance.port}
+${tlsEnabled ? "🔒 TLS: enabled" : ""}
 📊 Dashboard: ${dashboardStatus}
-🔗 API Base: http://localhost:${serverInstance.port}/api
+🔗 API Base: ${protocol}://localhost:${serverInstance.port}/api
 
 Available endpoints:
-- POST   http://localhost:${serverInstance.port}/v1/*            → Proxy to Claude API
-- GET    http://localhost:${serverInstance.port}/api/accounts    → List accounts
-- POST   http://localhost:${serverInstance.port}/api/accounts    → Add account
-- DELETE http://localhost:${serverInstance.port}/api/accounts/:id → Remove account
-- GET    http://localhost:${serverInstance.port}/api/stats       → View statistics
-- POST   http://localhost:${serverInstance.port}/api/stats/reset → Reset statistics
-- GET    http://localhost:${serverInstance.port}/api/config      → View configuration
-- PATCH  http://localhost:${serverInstance.port}/api/config      → Update configuration
+- POST   ${protocol}://localhost:${serverInstance.port}/v1/*            → Proxy to Claude API
+- GET    ${protocol}://localhost:${serverInstance.port}/api/accounts    → List accounts
+- POST   ${protocol}://localhost:${serverInstance.port}/api/accounts    → Add account
+- DELETE ${protocol}://localhost:${serverInstance.port}/api/accounts/:id → Remove account
+- GET    ${protocol}://localhost:${serverInstance.port}/api/stats       → View statistics
+- POST   ${protocol}://localhost:${serverInstance.port}/api/stats/reset → Reset statistics
+- GET    ${protocol}://localhost:${serverInstance.port}/api/config      → View configuration
+- PATCH  ${protocol}://localhost:${serverInstance.port}/api/config      → Update configuration
 
 ⚡ Ready to proxy requests...
 `);
@@ -634,23 +656,42 @@ async function handleGracefulShutdown(signal: string) {
 process.on("SIGINT", () => handleGracefulShutdown("SIGINT"));
 process.on("SIGTERM", () => handleGracefulShutdown("SIGTERM"));
 
+// Export helper to get the current protocol
+export function getProtocol(): string {
+	return tlsEnabled ? "https" : "http";
+}
+
 // Run server if this is the main entry point
 if (import.meta.main) {
 	// Parse command line arguments
 	const args = process.argv.slice(2);
 	let port: number | undefined;
+	let sslKeyPath: string | undefined;
+	let sslCertPath: string | undefined;
 
 	for (let i = 0; i < args.length; i++) {
 		if (args[i] === "--port" && args[i + 1]) {
 			port = Number.parseInt(args[i + 1]);
 			i++; // Skip next arg
+		} else if (args[i] === "--ssl-key" && args[i + 1]) {
+			sslKeyPath = args[i + 1];
+			i++; // Skip next arg
+		} else if (args[i] === "--ssl-cert" && args[i + 1]) {
+			sslCertPath = args[i + 1];
+			i++; // Skip next arg
 		}
 	}
 
-	// Use PORT env var if no command line argument
+	// Use environment variables if no command line arguments
 	if (!port && process.env.PORT) {
 		port = Number.parseInt(process.env.PORT);
 	}
+	if (!sslKeyPath && process.env.SSL_KEY_PATH) {
+		sslKeyPath = process.env.SSL_KEY_PATH;
+	}
+	if (!sslCertPath && process.env.SSL_CERT_PATH) {
+		sslCertPath = process.env.SSL_CERT_PATH;
+	}
 
-	startServer({ port });
+	startServer({ port, sslKeyPath, sslCertPath });
 }
