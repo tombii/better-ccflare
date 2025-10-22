@@ -130,6 +130,36 @@ bun install
 bun run better-ccflare
 ```
 
+### Docker (Multi-Platform: linux/amd64, linux/arm64)
+
+```bash
+# Quick start with docker-compose
+curl -O https://raw.githubusercontent.com/tombii/better-ccflare/main/docker-compose.yml
+docker-compose up -d
+
+# Or use docker run
+docker run -d \
+  --name better-ccflare \
+  -p 8080:8080 \
+  -v better-ccflare-data:/data \
+  ghcr.io/tombii/better-ccflare:latest
+
+# View logs
+docker logs -f better-ccflare
+
+# Manage accounts
+docker exec -it better-ccflare better-ccflare --add-account myaccount
+docker exec -it better-ccflare better-ccflare --list
+```
+
+**Available Docker tags:**
+- `latest` - Latest stable release
+- `main` - Latest build from main branch
+- `1.2.28`, `1.2`, `1` - Specific version tags
+- `sha-abc123` - Commit-specific tags
+
+See [DOCKER.md](DOCKER.md) for detailed Docker documentation.
+
 ## Configure Claude SDK
 
 ```bash
