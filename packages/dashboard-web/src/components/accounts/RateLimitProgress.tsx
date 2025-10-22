@@ -24,6 +24,8 @@ function formatWindowName(window: string | null): string {
 			return "5-hour";
 		case "seven_day":
 			return "Weekly";
+		case "seven_day_opus":
+			return "Opus (Weekly)";
 		default:
 			return window.replace("_", " ");
 	}
@@ -104,6 +106,27 @@ export function RateLimitProgress({
 				resetTime: null,
 			});
 		}
+
+		// Check if seven_day_opus data exists and has valid utilization
+		if (
+			usageData &&
+			usageData.seven_day_opus &&
+			usageData.seven_day_opus.utilization !== null &&
+			usageData.seven_day_opus.utilization !== undefined
+		) {
+			usages.push({
+				utilization: usageData.seven_day_opus.utilization,
+				window: "seven_day_opus",
+				resetTime: usageData.seven_day_opus.resets_at,
+			});
+		} else {
+			// Add weekly opus usage as placeholder if data is not available
+			usages.push({
+				utilization: null,
+				window: "seven_day_opus",
+				resetTime: null,
+			});
+		}
 	} else if (
 		provider === "anthropic" &&
 		usageUtilization !== null &&
@@ -154,6 +177,9 @@ export function RateLimitProgress({
 				} else if (usage.window === "seven_day") {
 					// Special handling for weekly data when reset time is not available
 					windowTimeText = "Data unavailable";
+				} else if (usage.window === "seven_day_opus") {
+					// Special handling for weekly opus data when reset time is not available
+					windowTimeText = "Data unavailable";
 				}
 
 				return (
@@ -177,7 +203,8 @@ export function RateLimitProgress({
 										: `${windowTimeText} until refresh`}
 								</span>
 								<span className="text-xs text-muted-foreground">
-									{usage.window === "seven_day"
+									{usage.window === "seven_day" ||
+									usage.window === "seven_day_opus"
 										? `Resets ${new Date(usage.resetTime).toLocaleString(
 												undefined,
 												{
@@ -197,16 +224,18 @@ export function RateLimitProgress({
 								</span>
 							</div>
 						)}
-						{!usage.resetTime && usage.window === "seven_day" && (
-							<div className="flex items-center justify-between">
-								<span className="text-xs text-muted-foreground">
-									{windowTimeText}
-								</span>
-								<span className="text-xs text-muted-foreground">
-									No reset data available
-								</span>
-							</div>
-						)}
+						{!usage.resetTime &&
+							(usage.window === "seven_day" ||
+								usage.window === "seven_day_opus") && (
+								<div className="flex items-center justify-between">
+									<span className="text-xs text-muted-foreground">
+										{windowTimeText}
+									</span>
+									<span className="text-xs text-muted-foreground">
+										No reset data available
+									</span>
+								</div>
+							)}
 					</div>
 				);
 			})}
