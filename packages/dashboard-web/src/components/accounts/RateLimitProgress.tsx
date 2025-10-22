@@ -107,24 +107,18 @@ export function RateLimitProgress({
 			});
 		}
 
-		// Check if seven_day_opus data exists and has valid utilization
+		// Check if seven_day_opus data exists, has valid utilization, and resets_at is not null
 		if (
 			usageData &&
 			usageData.seven_day_opus &&
 			usageData.seven_day_opus.utilization !== null &&
-			usageData.seven_day_opus.utilization !== undefined
+			usageData.seven_day_opus.utilization !== undefined &&
+			usageData.seven_day_opus.resets_at !== null
 		) {
 			usages.push({
 				utilization: usageData.seven_day_opus.utilization,
 				window: "seven_day_opus",
 				resetTime: usageData.seven_day_opus.resets_at,
-			});
-		} else {
-			// Add weekly opus usage as placeholder if data is not available
-			usages.push({
-				utilization: null,
-				window: "seven_day_opus",
-				resetTime: null,
 			});
 		}
 	} else if (
