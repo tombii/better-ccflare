@@ -55,7 +55,7 @@ This project builds upon the excellent foundation of [snipeship/ccflare](https:/
 
 ## Quick Start
 
-### Install via npm
+### Install via npm (Linux x86_64)
 
 ```bash
 npm install -g better-ccflare
@@ -72,6 +72,41 @@ bun install -g better-ccflare
 # Start better-ccflare (TUI + Server)
 better-ccflare
 ```
+
+### Install Pre-compiled Binary (All Architectures)
+
+Download the appropriate binary for your platform from [GitHub Releases](https://github.com/tombii/better-ccflare/releases/latest):
+
+#### Linux x86_64
+```bash
+wget https://github.com/tombii/better-ccflare/releases/latest/download/better-ccflare-linux-x64
+chmod +x better-ccflare-linux-x64
+./better-ccflare-linux-x64
+```
+
+#### Linux ARM64 (Raspberry Pi 3/4/5, Oracle Cloud ARM, AWS Graviton)
+```bash
+wget https://github.com/tombii/better-ccflare/releases/latest/download/better-ccflare-linux-arm64
+chmod +x better-ccflare-linux-arm64
+./better-ccflare-linux-arm64
+```
+
+#### macOS Intel
+```bash
+curl -L -o better-ccflare-macos-x64 https://github.com/tombii/better-ccflare/releases/latest/download/better-ccflare-macos-x64
+chmod +x better-ccflare-macos-x64
+./better-ccflare-macos-x64
+```
+
+#### macOS Apple Silicon
+```bash
+curl -L -o better-ccflare-macos-arm64 https://github.com/tombii/better-ccflare/releases/latest/download/better-ccflare-macos-arm64
+chmod +x better-ccflare-macos-arm64
+./better-ccflare-macos-arm64
+```
+
+#### Windows x86_64
+Download [`better-ccflare-windows-x64.exe`](https://github.com/tombii/better-ccflare/releases/latest/download/better-ccflare-windows-x64.exe) and run it.
 
 ### Run without installation (npx/bunx)
 
@@ -190,12 +225,32 @@ Full documentation available in [`docs/`](docs/):
 ## Requirements
 
 **For installation:**
-- **npm** or **bun** package manager
+- **npm** or **bun** package manager (for npm/bun installation)
 - **Node.js** >= 18.0.0 (when installed via npm)
 - **Bun** >= 1.2.8 (when installed via bun or running from source)
+- **Or download pre-compiled binary** - No runtime dependencies required!
 
 **For usage:**
 - Claude API accounts (Free, Pro, or Team) or z.ai code plan accounts
+
+## Platform Support
+
+| Platform | Architecture | Status |
+|----------|-------------|--------|
+| Linux | x86_64 | ✅ Supported (npm + binary) |
+| Linux | ARM64 (aarch64) | ✅ Supported (binary only) |
+| macOS | Intel (x64) | ✅ Supported (npm + binary) |
+| macOS | Apple Silicon (ARM64) | ✅ Supported (binary only) |
+| Windows | x86_64 | ✅ Supported (binary only) |
+
+**Works on:**
+- Oracle Cloud ARM instances (Ampere Altra)
+- AWS Graviton instances
+- Raspberry Pi 3/4/5 (with 64-bit OS)
+- Any x86_64 or ARM64 Linux/macOS/Windows system
+
+**Not supported:**
+- ARM32 devices (Raspberry Pi Zero, Pi 1, Pi 2, or 32-bit OS)
 
 ## Acknowledgments
 
