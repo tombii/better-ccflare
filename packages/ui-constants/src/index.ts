@@ -82,6 +82,6 @@ export const QUERY_CONFIG = {
 
 // API default limits
 export const API_LIMITS = {
-	requestsDetail: 100,
+	requestsDetail: 50,
 	requestsSummary: 50,
 } as const;
