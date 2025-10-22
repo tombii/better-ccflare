@@ -1,7 +1,6 @@
 #!/usr/bin/env bun
-import { execSync } from "child_process";
-import { mkdirSync, writeFileSync } from "fs";
-import { join } from "path";
+import { execSync } from "node:child_process";
+import { mkdirSync, writeFileSync } from "node:fs";
 
 interface Platform {
 	target: string;
