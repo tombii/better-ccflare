@@ -21,7 +21,7 @@ import { Button } from "./ui/button";
 import { Separator } from "./ui/separator";
 
 // Store update command globally
-const updateCommand: string = "npm install -g better-ccflare@latest";
+let updateCommand: string = "npm install -g better-ccflare@latest";
 let detectedPackageManager: "npm" | "bun" | "unknown" = "npm";
 
 interface NavItem {
@@ -145,24 +145,34 @@ export function Navigation() {
 		const now = Date.now();
 		const oneHour = 60 * 60 * 1000;
 
-		// If we checked within the last hour, skip the network request
-		// This prevents excessive checks when navigating between pages
+		// Check cache to avoid excessive npm registry requests
+		// Recheck every hour regardless of status to keep version info fresh
 		if (lastCheckTime && now - Number.parseInt(lastCheckTime, 10) < oneHour) {
-			// Load cached result if available and update UI state
 			const cachedStatus = localStorage.getItem("updateCheckStatus");
 			const cachedVersion = localStorage.getItem("updateCheckVersion");
-			if (cachedStatus && cachedVersion) {
-				setUpdateStatus(
-					cachedStatus as
-						| "idle"
-						| "checking"
-						| "available"
-						| "current"
-						| "error",
-				);
-				setLatestVersion(cachedVersion);
+
+			// Remove 'v' prefix from version for comparison
+			const currentVersion = version.replace(/^v/, "");
+
+			if (cachedStatus === "available" && cachedVersion) {
+				// Check if user has updated since cache was created
+				// If cached version <= current version, they've updated, so clear cache
+				if (!compareVersions(cachedVersion, currentVersion)) {
+					localStorage.removeItem("updateCheckStatus");
+					localStorage.removeItem("updateCheckVersion");
+					localStorage.removeItem("updateCheckLastTime");
+					// Fall through to do a fresh check
+				} else {
+					setUpdateStatus("available");
+					setLatestVersion(cachedVersion);
+					return;
+				}
 			}
-			return;
+
+			if (cachedStatus === "current") {
+				setUpdateStatus("current");
+				return;
+			}
 		}
 
 		setUpdateStatus("checking");
@@ -186,16 +196,13 @@ export function Navigation() {
 			// Use semantic version comparison: only show update if latest > current
 			if (compareVersions(latest, currentVersion)) {
 				setUpdateStatus("available");
-				let updateCommand = getUpdateCommand(packageManager);
+				updateCommand = getUpdateCommand(packageManager);
+				detectedPackageManager = packageManager;
 				console.log(
 					`🚀 Update available: ${currentVersion} → ${latest}\nDetected package manager: ${packageManager}\nRun: ${updateCommand}`,
 				);
 
-				// Store the update command for later use
-				updateCommand = getUpdateCommand(packageManager);
-				detectedPackageManager = packageManager;
-
-				// Cache the result
+				// Cache "available" status - will recheck after 1 hour for newer versions
 				localStorage.setItem("updateCheckStatus", "available");
 				localStorage.setItem("updateCheckVersion", latest);
 				localStorage.setItem("updateCheckLastTime", now.toString());
@@ -203,9 +210,8 @@ export function Navigation() {
 				setUpdateStatus("current");
 				console.log(`✅ You're on the latest version (${currentVersion})`);
 
-				// Cache the result
+				// Cache "current" status - will recheck after 1 hour
 				localStorage.setItem("updateCheckStatus", "current");
-				localStorage.setItem("updateCheckVersion", latest);
 				localStorage.setItem("updateCheckLastTime", now.toString());
 			}
 		} catch (error) {
