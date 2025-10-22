@@ -11,7 +11,10 @@ export function ServerScreen({ onBack }: ServerScreenProps) {
 	// Use the same logic as main.ts line 208
 	const config = new Config();
 	const port = config.getRuntime().port || NETWORK.DEFAULT_PORT;
-	const url = `http://localhost:${port}`;
+	// Determine protocol based on SSL configuration
+	const protocol =
+		process.env.SSL_KEY_PATH && process.env.SSL_CERT_PATH ? "https" : "http";
+	const url = `${protocol}://localhost:${port}`;
 
 	useInput((input, key) => {
 		if (key.escape || input === "q") {
