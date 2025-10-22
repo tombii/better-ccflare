@@ -29,7 +29,7 @@ Always run:
 
 ## Publishing to npm
 
-When publishing the package to npm, always use bun (not npm): 
+When publishing the package to npm, always use bun (not npm):
 
 ```bash
 cd apps/tui
@@ -37,7 +37,13 @@ bun publish
 ```
 
 Using bun avoids workspace dependency errors that occur with npm commands. The package is pre-compiled into a binary, so users can install it with either npm or bun.
-Always show the URL for the authentication to npmjs.com.
+
+**IMPORTANT**: When pushing to git (which triggers automatic build and publish via pre-push hook), ALWAYS show the complete output including the npmjs.com authentication URL. The URL looks like:
+```
+https://www.npmjs.com/auth/cli/[uuid]
+```
+
+To ensure you see this URL, when running `git push`, do NOT limit the output. Always show all lines from the background process.
 
 ## Commands
 
