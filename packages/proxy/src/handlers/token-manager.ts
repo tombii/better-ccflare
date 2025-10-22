@@ -183,7 +183,13 @@ export async function refreshAccessTokenSafe(
 						log.info(
 							`Successfully recovered token for account ${account.name} from DB`,
 						);
-						return accessTokenFromDb;
+						if (!dbAccount.access_token) {
+							throw new TokenRefreshError(
+								account.id,
+								new Error("DB account has no access token"),
+							);
+						}
+						return dbAccount.access_token;
 					} else {
 						log.warn(
 							`DB token for account ${account.name} is not valid or same as in-memory`,
