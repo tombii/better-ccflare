@@ -13,3 +13,4 @@ packages/dashboard-web/dist/
 *.log
 tsconfig.tsbuildinfo
 packages/proxy/src/inline-worker.ts
+CLAUDE.md
