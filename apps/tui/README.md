@@ -130,6 +130,36 @@ bun install
 bun run better-ccflare
 ```
 
+### Docker (Multi-Platform: linux/amd64, linux/arm64)
+
+```bash
+# Quick start with docker-compose
+curl -O https://raw.githubusercontent.com/tombii/better-ccflare/main/docker-compose.yml
+docker-compose up -d
+
+# Or use docker run
+docker run -d \
+  --name better-ccflare \
+  -p 8080:8080 \
+  -v better-ccflare-data:/data \
+  ghcr.io/tombii/better-ccflare:latest
+
+# View logs
+docker logs -f better-ccflare
+
+# Manage accounts
+docker exec -it better-ccflare better-ccflare --add-account myaccount
+docker exec -it better-ccflare better-ccflare --list
+```
+
+**Available Docker tags:**
+- `latest` - Latest stable release
+- `main` - Latest build from main branch
+- `1.2.28`, `1.2`, `1` - Specific version tags
+- `sha-abc123` - Commit-specific tags
+
+See [DOCKER.md](DOCKER.md) for detailed Docker documentation.
+
 ## Configure Claude SDK
 
 ```bash
@@ -153,6 +183,176 @@ curl -X POST http://localhost:8080/api/accounts/$(curl -s http://localhost:8080/
   -H "Content-Type: application/json" \
   -d '{"customEndpoint": "https://your-custom-api.anthropic.com"}'
 ```
+
+### SSL/HTTPS Configuration
+
+To enable HTTPS with better-ccflare, you'll need SSL certificates. Here are your options:
+
+#### Option 1: Generate Self-Signed Certificates (Development/Local Use)
+
+```bash
+# Generate a self-signed certificate on the better-ccflare host
+openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365 -nodes \
+  -subj "/C=US/ST=State/L=City/O=Organization/CN=yourhostname"
+
+# Start better-ccflare with SSL
+export SSL_KEY_PATH=/path/to/key.pem
+export SSL_CERT_PATH=/path/to/cert.pem
+better-ccflare
+
+# Or use command line flags
+better-ccflare --ssl-key /path/to/key.pem --ssl-cert /path/to/cert.pem
+```
+
+**Trust the self-signed certificate on client machines:**
+
+For self-signed certificates, you need to add the certificate to your system's trusted certificates:
+
+- **Linux (Ubuntu/Debian):**
+  ```bash
+  # Copy cert.pem from the better-ccflare host to your client machine
+  sudo cp cert.pem /usr/local/share/ca-certificates/better-ccflare.crt
+  sudo update-ca-certificates
+  ```
+
+- **Linux (Arch/Manjaro):**
+  ```bash
+  # Copy cert.pem from the better-ccflare host to your client machine
+  sudo cp cert.pem /etc/ca-certificates/trust-source/anchors/better-ccflare.crt
+  sudo trust extract-compat
+  ```
+
+- **macOS:**
+  ```bash
+  # Copy cert.pem from the better-ccflare host to your client machine
+  sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain cert.pem
+  ```
+
+- **Windows (PowerShell as Administrator):**
+  ```powershell
+  # Copy cert.pem from the better-ccflare host to your client machine
+  Import-Certificate -FilePath cert.pem -CertStoreLocation Cert:\LocalMachine\Root
+  ```
+
+**Configure Claude Code to use the trusted certificate:**
+
+After adding the certificate to your system's trusted store, configure your environment:
+
+```bash
+# Add to your ~/.bashrc or ~/.zshrc
+export NODE_OPTIONS="--use-system-ca"
+export ANTHROPIC_BASE_URL=https://yourhostname:8080
+```
+
+The `NODE_OPTIONS="--use-system-ca"` is **required** for Claude Code and other Node.js-based clients to use the system certificate store. Without this, Node.js will not trust your self-signed certificate even if it's in the system store.
+
+#### Option 2: Use Production Certificates (Production/Remote Access)
+
+If you're running better-ccflare on a server with a domain name, use Let's Encrypt or your certificate provider:
+
+```bash
+# Using Let's Encrypt certificates
+export SSL_KEY_PATH=/etc/letsencrypt/live/yourdomain.com/privkey.pem
+export SSL_CERT_PATH=/etc/letsencrypt/live/yourdomain.com/fullchain.pem
+better-ccflare
+
+# Set the base URL to use HTTPS
+export ANTHROPIC_BASE_URL=https://yourdomain.com:8080
+```
+
+With production certificates from trusted CAs, you don't need `NODE_OPTIONS="--use-system-ca"` as they are already trusted.
+
+#### Option 3: Docker with Traefik (Recommended for Production)
+
+For Docker deployments, we recommend using [Traefik](https://traefik.io/) as a reverse proxy to handle TLS automatically with Let's Encrypt:
+
+```yaml
+# docker-compose.yml
+version: '3.8'
+
+services:
+  traefik:
+    image: traefik:v3.0
+    command:
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--certificatesresolvers.myresolver.acme.tlschallenge=true"
+      - "--certificatesresolvers.myresolver.acme.email=your-email@example.com"
+      - "--certificatesresolvers.myresolver.acme.storage=/letsencrypt/acme.json"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./letsencrypt:/letsencrypt
+    restart: unless-stopped
+
+  better-ccflare:
+    image: ghcr.io/tombii/better-ccflare:latest
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.ccflare.rule=Host(`your-domain.com`)"
+      - "traefik.http.routers.ccflare.entrypoints=websecure"
+      - "traefik.http.routers.ccflare.tls.certresolver=myresolver"
+      - "traefik.http.services.ccflare.loadbalancer.server.port=8080"
+    volumes:
+      - ~/.config/better-ccflare:/root/.config/better-ccflare
+    restart: unless-stopped
+```
+
+**Benefits:**
+- Automatic TLS certificate generation and renewal via Let's Encrypt
+- No need to manually manage SSL certificates
+- Built-in HTTP to HTTPS redirection
+- Dashboard for monitoring (port 8080 on Traefik)
+
+**Client Configuration:**
+```bash
+export ANTHROPIC_BASE_URL=https://your-domain.com
+```
+
+No `NODE_OPTIONS` needed - Traefik provides trusted certificates automatically!
+
+#### Troubleshooting SSL Issues
+
+**Problem:** "Unable to connect to API due to poor internet connection" error even with `ANTHROPIC_BASE_URL` set
+
+**Solutions:**
+1. Verify the environment variable is set in the same shell/session:
+   ```bash
+   echo $ANTHROPIC_BASE_URL
+   echo $NODE_OPTIONS
+   ```
+
+2. Test the SSL connection manually:
+   ```bash
+   # Should succeed without errors
+   curl https://yourhostname:8080/health
+
+   # If you see certificate errors, the cert isn't trusted yet
+   curl -k https://yourhostname:8080/health  # -k bypasses cert check for testing
+   ```
+
+3. Verify the certificate is in the system store:
+   ```bash
+   # Linux
+   ls -la /etc/ssl/certs/ | grep better-ccflare
+
+   # macOS
+   security find-certificate -a -c yourhostname -p /Library/Keychains/System.keychain
+   ```
+
+4. Ensure the hostname resolves correctly:
+   ```bash
+   ping yourhostname
+   ```
+
+5. Check that the server is actually running:
+   ```bash
+   curl -k https://yourhostname:8080/health
+   ```
 
 ## Features
 
@@ -257,6 +457,7 @@ Full documentation available in [`docs/`](docs/):
 Inspired by [snipeship/ccflare](https://github.com/snipeship/ccflare) - thanks for the original idea and implementation!
 
 **Special thanks to our contributors:**
+- [@bitcoin4cashqc](https://github.com/bitcoin4cashqc) - SSL/HTTPS support implementation with comprehensive documentation
 - [@anonym-uz](https://github.com/anonym-uz) - Critical auto-pause bug fix, analytics performance optimizations, request body truncation, and incremental vacuum implementation
 - [@makhweeb](https://github.com/makhweeb) - Enhanced request handling and analytics improvements
 
