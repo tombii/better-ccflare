@@ -585,6 +585,27 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		this.db.exec("VACUUM");
 	}
 
+	/** Incremental vacuum - reclaims space without blocking (non-blocking alternative to VACUUM) */
+	incrementalVacuum(pages?: number): void {
+		// Set auto_vacuum to incremental if not already set
+		const autoVacuumMode = this.db.query("PRAGMA auto_vacuum").get() as {
+			auto_vacuum: number;
+		};
+
+		if (autoVacuumMode.auto_vacuum !== 2) {
+			// Enable incremental vacuum mode (requires VACUUM to take effect)
+			this.db.exec("PRAGMA auto_vacuum = INCREMENTAL");
+			this.db.exec("VACUUM"); // One-time full vacuum to enable incremental mode
+		}
+
+		// Run incremental vacuum (reclaims up to N pages, or all free pages if not specified)
+		if (pages) {
+			this.db.exec(`PRAGMA incremental_vacuum(${pages})`);
+		} else {
+			this.db.exec("PRAGMA incremental_vacuum");
+		}
+	}
+
 	/**
 	 * Get the stats repository for consolidated stats access
 	 */
