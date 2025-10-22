@@ -29,6 +29,7 @@
 		"@types/bun": "latest",
 		"@types/update-notifier": "^6.0.8",
 		"bun-types": "latest",
+		"react-devtools-core": "^7.0.0",
 		"typescript": "^5.0.0"
 	},
 	"overrides": {

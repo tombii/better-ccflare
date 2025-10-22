@@ -369,6 +369,29 @@ export function createAnalyticsHandler(context: APIContext) {
 
 			// Get model performance metrics
 			const modelPerfQuery = db.prepare(`
+				WITH filtered AS (
+					SELECT
+						model,
+						response_time_ms,
+						output_tokens_per_second,
+						success
+					FROM requests r
+					WHERE ${whereClause}
+						AND model IS NOT NULL
+						AND response_time_ms IS NOT NULL
+				),
+				ranked AS (
+					SELECT
+						model,
+						response_time_ms,
+						output_tokens_per_second,
+						success,
+						PERCENT_RANK() OVER (
+							PARTITION BY model
+							ORDER BY response_time_ms
+						) AS pr
+					FROM filtered
+				)
 				SELECT
 					model,
 					AVG(response_time_ms) as avg_response_time,
@@ -377,10 +400,10 @@ export function createAnalyticsHandler(context: APIContext) {
 					SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) as error_count,
 					SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0) as error_rate,
 					AVG(output_tokens_per_second) as avg_tokens_per_second,
+					MIN(CASE WHEN pr >= 0.95 THEN response_time_ms END) as p95_response_time,
 					MIN(CASE WHEN output_tokens_per_second > 0 THEN output_tokens_per_second ELSE NULL END) as min_tokens_per_second,
-					MAX(output_tokens_per_second) as max_tokens_per_second
-				FROM requests r
-				WHERE ${whereClause} AND model IS NOT NULL
+					MAX(CASE WHEN output_tokens_per_second > 0 THEN output_tokens_per_second ELSE NULL END) as max_tokens_per_second
+				FROM ranked
 				GROUP BY model
 				ORDER BY total_requests DESC
 				LIMIT 10
@@ -393,50 +416,26 @@ export function createAnalyticsHandler(context: APIContext) {
 				error_count: number;
 				error_rate: number;
 				avg_tokens_per_second: number | null;
+				p95_response_time: number | null;
 				min_tokens_per_second: number | null;
 				max_tokens_per_second: number | null;
 			}>;
 
-			// Finalize prepared statement
 			modelPerfQuery.finalize();
 
-			// Prepare p95 query ONCE, outside the loop to prevent memory leak
-			const p95Query = db.prepare(`
-				WITH sampled_data AS (
-					SELECT response_time_ms
-					FROM requests r
-					WHERE ${whereClause} AND model = ? AND response_time_ms IS NOT NULL
-					ORDER BY RANDOM()
-					LIMIT 1000
-				)
-				SELECT response_time_ms as p95_response_time
-				FROM sampled_data
-				ORDER BY response_time_ms
-				LIMIT 1 OFFSET CAST((SELECT COUNT(*) FROM sampled_data) * 0.95 AS INTEGER)
-			`);
-
-			// Calculate p95 for each model using approximate percentile algorithm
-			const modelPerformance = modelPerfData.map((modelData) => {
-				// Use approximate percentile calculation with sampling for better performance
-				// Sample 1000 records instead of full dataset to get ~95% accurate p95
-				const p95Result = p95Query.get(...queryParams, modelData.model) as
-					| { p95_response_time: number }
-					| undefined;
-
-				return {
-					model: modelData.model,
-					avgResponseTime: modelData.avg_response_time || 0,
-					p95ResponseTime:
-						p95Result?.p95_response_time || modelData.avg_response_time || 0,
-					errorRate: modelData.error_rate || 0,
-					avgTokensPerSecond: modelData.avg_tokens_per_second || null,
-					minTokensPerSecond: modelData.min_tokens_per_second || null,
-					maxTokensPerSecond: modelData.max_tokens_per_second || null,
-				};
-			});
-
-			// Finalize p95 query after use
-			p95Query.finalize();
+			const modelPerformance = modelPerfData.map((modelData) => ({
+				model: modelData.model,
+				avgResponseTime: modelData.avg_response_time || 0,
+				p95ResponseTime:
+					modelData.p95_response_time ||
+					modelData.max_response_time ||
+					modelData.avg_response_time ||
+					0,
+				errorRate: modelData.error_rate || 0,
+				avgTokensPerSecond: modelData.avg_tokens_per_second || null,
+				minTokensPerSecond: modelData.min_tokens_per_second || null,
+				maxTokensPerSecond: modelData.max_tokens_per_second || null,
+			}));
 
 			// Transform timeSeries data
 			let transformedTimeSeries = timeSeries.map((point) => ({
