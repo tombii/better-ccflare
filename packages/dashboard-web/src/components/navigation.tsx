@@ -59,9 +59,6 @@ export function Navigation() {
 
 	const detectPackageManager = async (): Promise<"npm" | "bun" | "unknown"> => {
 		try {
-			// Try to detect by checking common global installation paths
-			const _homeDir = process.env.HOME || "";
-
 			// Check if the binary exists in bun's global path
 			try {
 				const response = await fetch("/api/system/package-manager");
