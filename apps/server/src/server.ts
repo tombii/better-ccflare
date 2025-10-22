@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { Config, type RuntimeConfig } from "@better-ccflare/config";
 import {
@@ -319,10 +319,25 @@ export default function startServer(options?: {
 		};
 	}
 
-	const { port = NETWORK.DEFAULT_PORT, withDashboard = true, sslKeyPath, sslCertPath } = options || {};
+	const {
+		port = NETWORK.DEFAULT_PORT,
+		withDashboard = true,
+		sslKeyPath,
+		sslCertPath,
+	} = options || {};
 
 	// Enable TLS if both certificate paths are provided
 	tlsEnabled = !!(sslKeyPath && sslCertPath);
+
+	// Validate SSL certificate files if TLS is enabled
+	if (tlsEnabled && sslKeyPath && sslCertPath) {
+		if (!existsSync(sslKeyPath)) {
+			throw new Error(`SSL key file not found: ${sslKeyPath}`);
+		}
+		if (!existsSync(sslCertPath)) {
+			throw new Error(`SSL certificate file not found: ${sslCertPath}`);
+		}
+	}
 
 	// Initialize DI container
 	container.registerInstance(SERVICE_KEYS.Config, new Config());
@@ -471,7 +486,7 @@ export default function startServer(options?: {
 							key: readFileSync(sslKeyPath),
 							cert: readFileSync(sslCertPath),
 						},
-				  }
+					}
 				: {}),
 			async fetch(req: Request) {
 				const url = new URL(req.url);
@@ -691,6 +706,14 @@ if (import.meta.main) {
 	}
 	if (!sslCertPath && process.env.SSL_CERT_PATH) {
 		sslCertPath = process.env.SSL_CERT_PATH;
+	}
+
+	// Set env vars if CLI flags were used (ensures consistency across modules)
+	if (sslKeyPath) {
+		process.env.SSL_KEY_PATH = sslKeyPath;
+	}
+	if (sslCertPath) {
+		process.env.SSL_CERT_PATH = sslCertPath;
 	}
 
 	startServer({ port, sslKeyPath, sslCertPath });
