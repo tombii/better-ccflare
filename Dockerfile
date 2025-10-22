@@ -9,7 +9,7 @@ FROM oven/bun:${BUN_VERSION} AS builder
 WORKDIR /app
 
 # Copy package files
-COPY package.json bun.lockb ./
+COPY package.json bun.lock ./
 COPY apps/tui/package.json ./apps/tui/
 COPY apps/server/package.json ./apps/server/
 COPY packages/*/package.json ./packages/*/
