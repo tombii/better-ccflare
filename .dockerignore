@@ -1,0 +1,59 @@
+# Dependencies
+node_modules
+**/node_modules
+
+# Build outputs
+dist
+**/dist
+build
+**/build
+
+# Development
+.git
+.github
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+bun-debug.log*
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing
+coverage
+.nyc_output
+
+# Documentation
+docs
+*.md
+!README.md
+
+# CI/CD
+.github/workflows
+.gitlab-ci.yml
+azure-pipelines.yml
+
+# Database (use volume mounts instead)
+*.db
+*.db-shm
+*.db-wal
+
+# Temporary files
+tmp
+temp
+*.tmp
