@@ -318,7 +318,7 @@ export class AutoRefreshScheduler {
 				connection: "keep-alive",
 				"content-type": "application/json",
 				"sec-fetch-mode": "cors",
-				"user-agent": "claude-cli/2.0.5 (external, cli)",
+				"user-agent": "claude-cli/2.0.21 (external, cli)",
 				"x-app": "cli",
 				"x-stainless-arch": "x64",
 				"x-stainless-helper-method": "stream",
@@ -338,8 +338,9 @@ export class AutoRefreshScheduler {
 			// Try sending with multiple models if needed
 			let response: Response | null = null;
 			let lastError: Error | null = null;
-			let modelToTry = "claude-3-5-haiku-20241022"; // Default model
+			let modelToTry = "claude-haiku-4-5-20251001"; // Default model
 			const models = [
+				"claude-haiku-4-5-20251001",
 				"claude-3-5-haiku-20241022",
 				"claude-3-haiku-20240307",
 				"claude-3-5-sonnet-20241022",

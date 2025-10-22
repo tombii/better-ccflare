@@ -82,7 +82,7 @@ export function getRepresentativeUtilization(
 	const utilizations = [
 		usage.five_hour.utilization,
 		usage.seven_day.utilization,
-		usage.seven_day_oauth_apps.utilization,
+		usage.seven_day_oauth_apps?.utilization ?? 0,
 		usage.seven_day_opus.utilization,
 	];
 
@@ -102,7 +102,7 @@ export function getRepresentativeWindow(
 		{ name: "seven_day", util: usage.seven_day.utilization },
 		{
 			name: "seven_day_oauth_apps",
-			util: usage.seven_day_oauth_apps.utilization,
+			util: usage.seven_day_oauth_apps?.utilization ?? 0,
 		},
 		{ name: "seven_day_opus", util: usage.seven_day_opus.utilization },
 	];
