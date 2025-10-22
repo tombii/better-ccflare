@@ -32,7 +32,7 @@
     },
     "apps/tui": {
       "name": "better-ccflare",
-      "version": "1.2.23",
+      "version": "1.2.28",
       "bin": {
         "better-ccflare": "dist/better-ccflare",
       },
@@ -44,6 +44,7 @@
         "ink-spinner": "^5.0.0",
         "ink-text-input": "^6.0.0",
         "react": "^19.0.0",
+        "react-devtools-core": "^7.0.1",
       },
     },
     "packages/agents": {
