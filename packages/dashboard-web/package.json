@@ -9,7 +9,10 @@
 		"typecheck": "tsc --noEmit"
 	},
 	"dependencies": {
+		"@better-ccflare/core": "workspace:*",
 		"@better-ccflare/errors": "workspace:*",
+		"@better-ccflare/http-common": "workspace:*",
+		"@better-ccflare/types": "workspace:*",
 		"@better-ccflare/ui-common": "workspace:*",
 		"@better-ccflare/ui-constants": "workspace:*",
 		"@radix-ui/react-dialog": "^1.1.14",
