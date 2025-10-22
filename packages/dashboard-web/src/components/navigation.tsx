@@ -16,6 +16,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { cn } from "../lib/utils";
 import { version } from "../lib/version";
+import { CopyButton } from "./CopyButton";
 import { ThemeToggle } from "./theme-toggle";
 import { Button } from "./ui/button";
 import { Separator } from "./ui/separator";
@@ -94,17 +95,6 @@ export function Navigation() {
 				return "bun install -g better-ccflare@latest";
 			default:
 				return "npm install -g better-ccflare@latest";
-		}
-	};
-
-	const copyToClipboard = async (text: string) => {
-		try {
-			await navigator.clipboard.writeText(text);
-			// Show success feedback (could add a toast here)
-			return true;
-		} catch (error) {
-			console.error("Failed to copy to clipboard:", error);
-			return false;
 		}
 	};
 
@@ -391,28 +381,13 @@ export function Navigation() {
 										<code className="text-xs bg-background px-1 py-0.5 rounded font-mono flex-1 truncate">
 											{updateCommand}
 										</code>
-										<button
-											type="button"
-											onClick={() => copyToClipboard(updateCommand)}
-											className="text-xs text-muted-foreground hover:text-foreground transition-colors p-1 hover:bg-background rounded"
+										<CopyButton
+											value={updateCommand}
+											size="sm"
+											variant="ghost"
+											className="h-6 w-6 p-0"
 											title="Copy update command"
-										>
-											<svg
-												className="h-3 w-3"
-												fill="none"
-												stroke="currentColor"
-												viewBox="0 0 24 24"
-												role="img"
-												aria-label="Copy to clipboard"
-											>
-												<path
-													strokeLinecap="round"
-													strokeLinejoin="round"
-													strokeWidth={2}
-													d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
-												/>
-											</svg>
-										</button>
+										/>
 									</div>
 									<p className="text-xs text-muted-foreground text-left">
 										Detected: {detectedPackageManager} 📦
