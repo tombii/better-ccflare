@@ -109,6 +109,29 @@ export function Navigation() {
 	};
 
 	/**
+	 * Compare two semantic versions
+	 * @returns true if latest > current (update available), false otherwise
+	 */
+	const compareVersions = (latest: string, current: string): boolean => {
+		const latestParts = latest.split(".").map(Number);
+		const currentParts = current.split(".").map(Number);
+
+		for (
+			let i = 0;
+			i < Math.max(latestParts.length, currentParts.length);
+			i++
+		) {
+			const latestPart = latestParts[i] || 0;
+			const currentPart = currentParts[i] || 0;
+
+			if (latestPart > currentPart) return true;
+			if (latestPart < currentPart) return false;
+		}
+
+		return false; // Versions are equal
+	};
+
+	/**
 	 * Check for available updates from npm registry
 	 * Uses localStorage to cache results and prevent excessive checks (max once per hour)
 	 * This function is called on component mount and then every hour via setInterval
@@ -160,7 +183,8 @@ export function Navigation() {
 			// Remove 'v' prefix from version for comparison
 			const currentVersion = version.replace(/^v/, "");
 
-			if (latest !== currentVersion) {
+			// Use semantic version comparison: only show update if latest > current
+			if (compareVersions(latest, currentVersion)) {
 				setUpdateStatus("available");
 				let updateCommand = getUpdateCommand(packageManager);
 				console.log(
