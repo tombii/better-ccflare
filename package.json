@@ -27,17 +27,12 @@
 	"devDependencies": {
 		"@biomejs/biome": "2.1.2",
 		"@types/bun": "latest",
-		"@types/update-notifier": "^6.0.8",
 		"bun-types": "latest",
-		"react-devtools-core": "^7.0.0",
 		"typescript": "^5.0.0"
 	},
 	"overrides": {
 		"react": "^19.0.0",
 		"@types/react": "^19.0.0"
-	},
-	"dependencies": {
-		"update-notifier": "^7.3.1"
 	},
 	"version": "1.2.18"
 }

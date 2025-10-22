@@ -12,7 +12,7 @@ import {
 	X,
 	Zap,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { cn } from "../lib/utils";
 import { version } from "../lib/version";
@@ -108,8 +108,39 @@ export function Navigation() {
 		}
 	};
 
-	const checkForUpdates = async () => {
+	/**
+	 * Check for available updates from npm registry
+	 * Uses localStorage to cache results and prevent excessive checks (max once per hour)
+	 * This function is called on component mount and then every hour via setInterval
+	 */
+	// biome-ignore lint/correctness/useExhaustiveDependencies: helper functions are stable and don't need to be dependencies
+	const checkForUpdates = useCallback(async () => {
 		if (!isMountedRef.current) return;
+
+		// Check localStorage for last check time to avoid excessive checks
+		const lastCheckTime = localStorage.getItem("updateCheckLastTime");
+		const now = Date.now();
+		const oneHour = 60 * 60 * 1000;
+
+		// If we checked within the last hour, skip the network request
+		// This prevents excessive checks when navigating between pages
+		if (lastCheckTime && now - Number.parseInt(lastCheckTime, 10) < oneHour) {
+			// Load cached result if available and update UI state
+			const cachedStatus = localStorage.getItem("updateCheckStatus");
+			const cachedVersion = localStorage.getItem("updateCheckVersion");
+			if (cachedStatus && cachedVersion) {
+				setUpdateStatus(
+					cachedStatus as
+						| "idle"
+						| "checking"
+						| "available"
+						| "current"
+						| "error",
+				);
+				setLatestVersion(cachedVersion);
+			}
+			return;
+		}
 
 		setUpdateStatus("checking");
 		try {
@@ -139,9 +170,19 @@ export function Navigation() {
 				// Store the update command for later use
 				updateCommand = getUpdateCommand(packageManager);
 				detectedPackageManager = packageManager;
+
+				// Cache the result
+				localStorage.setItem("updateCheckStatus", "available");
+				localStorage.setItem("updateCheckVersion", latest);
+				localStorage.setItem("updateCheckLastTime", now.toString());
 			} else {
 				setUpdateStatus("current");
 				console.log(`✅ You're on the latest version (${currentVersion})`);
+
+				// Cache the result
+				localStorage.setItem("updateCheckStatus", "current");
+				localStorage.setItem("updateCheckVersion", latest);
+				localStorage.setItem("updateCheckLastTime", now.toString());
 			}
 		} catch (error) {
 			// Only update state if component is still mounted
@@ -150,7 +191,27 @@ export function Navigation() {
 			setUpdateStatus("error");
 			console.error("❌ Failed to check for updates:", error);
 		}
-	};
+	}, []);
+
+	// Automatic update check: run on mount and every hour
+	// biome-ignore lint/correctness/useExhaustiveDependencies: checkForUpdates is stable via useCallback
+	useEffect(() => {
+		// Check immediately on mount (when dashboard loads)
+		checkForUpdates();
+
+		// Set up hourly check
+		const intervalId = setInterval(
+			() => {
+				checkForUpdates();
+			},
+			60 * 60 * 1000,
+		); // 1 hour in milliseconds
+
+		// Cleanup interval on unmount
+		return () => {
+			clearInterval(intervalId);
+		};
+	}, []);
 
 	return (
 		<>
