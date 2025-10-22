@@ -14,3 +14,4 @@ packages/dashboard-web/dist/
 tsconfig.tsbuildinfo
 packages/proxy/src/inline-worker.ts
 CLAUDE.md
+AGENTS.md
