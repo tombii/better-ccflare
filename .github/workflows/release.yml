@@ -79,7 +79,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./apps/tui/dist/better-ccflare-linux-x64
+          asset_path: ./apps/tui/dist/better-ccflare-linux-amd64
           asset_name: better-ccflare-linux-amd64
           asset_content_type: application/octet-stream
 
@@ -93,7 +93,7 @@ jobs:
           asset_name: better-ccflare-linux-arm64
           asset_content_type: application/octet-stream
 
-      - name: Upload macOS x64
+      - name: Upload macOS x86_64
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
