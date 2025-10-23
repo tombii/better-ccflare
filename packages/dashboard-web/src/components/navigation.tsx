@@ -24,6 +24,8 @@ import { Separator } from "./ui/separator";
 // Store update command globally
 let updateCommand: string = "npm install -g better-ccflare@latest";
 let detectedPackageManager: "npm" | "bun" | "unknown" = "npm";
+let isBinaryInstallation: boolean = false;
+let isDockerInstallation: boolean = false;
 
 interface NavItem {
 	label: string;
@@ -57,14 +59,24 @@ export function Navigation() {
 		};
 	}, []);
 
-	const detectPackageManager = async (): Promise<"npm" | "bun" | "unknown"> => {
+	const detectPackageManager = async (): Promise<{
+		packageManager: "npm" | "bun" | "unknown";
+		isBinary: boolean;
+		isDocker: boolean;
+	}> => {
 		try {
 			// Check if the binary exists in bun's global path
 			try {
 				const response = await fetch("/api/system/package-manager");
 				if (response.ok) {
 					const data = await response.json();
-					return data.packageManager;
+					isBinaryInstallation = data.isBinary || false;
+					isDockerInstallation = data.isDocker || false;
+					return {
+						packageManager: data.packageManager,
+						isBinary: data.isBinary || false,
+						isDocker: data.isDocker || false,
+					};
 				}
 			} catch {
 				// Fallback to client-side detection
@@ -73,20 +85,48 @@ export function Navigation() {
 			// Fallback: check if user agent indicates bun (this is a weak signal)
 			const userAgent = navigator.userAgent;
 			if (userAgent.includes("Bun")) {
-				return "bun";
+				return { packageManager: "bun", isBinary: false, isDocker: false };
 			}
 
 			// Default to npm as it's more common
-			return "npm";
+			return { packageManager: "npm", isBinary: false, isDocker: false };
 		} catch (error) {
 			console.error("Error detecting package manager:", error);
-			return "npm"; // Default fallback
+			return { packageManager: "npm", isBinary: false, isDocker: false }; // Default fallback
 		}
 	};
 
 	const getUpdateCommand = (
 		packageManager: "npm" | "bun" | "unknown",
+		isBinary: boolean = false,
+		isDocker: boolean = false,
 	): string => {
+		if (isDocker) {
+			// For Docker installations, provide instructions to pull latest image
+			return "docker pull ghcr.io/tombii/better-ccflare:latest";
+		}
+
+		if (isBinary) {
+			// For binary installations, provide instructions to download from GitHub releases
+			const platform = navigator.platform.toLowerCase();
+			let _arch = "x64";
+
+			// Detect architecture
+			if (platform.includes("arm") || platform.includes("aarch64")) {
+				_arch = "arm64";
+			}
+
+			let _os = "linux";
+			if (platform.includes("win")) {
+				_os = "windows";
+			} else if (platform.includes("mac")) {
+				_os = "darwin";
+			}
+
+			// Return GitHub releases URL instead of a command
+			return "Download latest binary from GitHub releases";
+		}
+
 		switch (packageManager) {
 			case "bun":
 				return "bun install -g better-ccflare@latest";
@@ -164,7 +204,7 @@ export function Navigation() {
 
 		setUpdateStatus("checking");
 		try {
-			const [response, packageManager] = await Promise.all([
+			const [response, packageInfo] = await Promise.all([
 				fetch("https://registry.npmjs.org/better-ccflare/latest"),
 				detectPackageManager(),
 			]);
@@ -183,10 +223,14 @@ export function Navigation() {
 			// Use semantic version comparison: only show update if latest > current
 			if (compareVersions(latest, currentVersion)) {
 				setUpdateStatus("available");
-				updateCommand = getUpdateCommand(packageManager);
-				detectedPackageManager = packageManager;
+				updateCommand = getUpdateCommand(
+					packageInfo.packageManager,
+					packageInfo.isBinary,
+					packageInfo.isDocker,
+				);
+				detectedPackageManager = packageInfo.packageManager;
 				console.log(
-					`🚀 Update available: ${currentVersion} → ${latest}\nDetected package manager: ${packageManager}\nRun: ${updateCommand}`,
+					`🚀 Update available: ${currentVersion} → ${latest}\nDetected package manager: ${packageInfo.packageManager}\nRun: ${updateCommand}`,
 				);
 
 				// Cache "available" status - will recheck after 1 hour for newer versions
@@ -387,7 +431,11 @@ export function Navigation() {
 										/>
 									</div>
 									<p className="text-xs text-muted-foreground text-left">
-										Detected: {detectedPackageManager} 📦
+										{isDockerInstallation
+											? "Detected: Docker 🐳"
+											: isBinaryInstallation
+												? "Detected: Binary Installation 📦"
+												: `Detected: ${detectedPackageManager} 📦`}
 									</p>
 								</div>
 							)}
