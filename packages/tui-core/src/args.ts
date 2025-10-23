@@ -21,6 +21,8 @@ export interface ParsedArgs {
 	clearHistory?: boolean;
 	getModel?: boolean;
 	setModel?: string;
+	sslKey?: string;
+	sslCert?: string;
 }
 
 export function parseArgs(args: string[]): ParsedArgs {
@@ -48,6 +50,8 @@ export function parseArgs(args: string[]): ParsedArgs {
 				"clear-history": { type: "boolean" },
 				"get-model": { type: "boolean" },
 				"set-model": { type: "string" },
+				"ssl-key": { type: "string" },
+				"ssl-cert": { type: "string" },
 			},
 			allowPositionals: true,
 		});
@@ -83,6 +87,8 @@ export function parseArgs(args: string[]): ParsedArgs {
 		if (values["clear-history"]) result.clearHistory = true;
 		if (values["get-model"]) result.getModel = true;
 		if (values["set-model"]) result.setModel = values["set-model"];
+		if (values["ssl-key"]) result.sslKey = values["ssl-key"];
+		if (values["ssl-cert"]) result.sslCert = values["ssl-cert"];
 
 		return result;
 	} catch (error) {

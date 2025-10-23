@@ -72,6 +72,8 @@ Options:
   --version, -v       Show version number
   --serve              Start API server with dashboard
   --port <number>      Server port (default: 8080, or PORT env var)
+  --ssl-key <path>     Path to SSL private key file (enables HTTPS)
+  --ssl-cert <path>    Path to SSL certificate file (enables HTTPS)
   --logs [N]           Stream latest N lines then follow
   --stats              Show statistics (JSON output)
   --add-account <name> Add a new account
@@ -101,6 +103,7 @@ Interactive Mode:
 Examples:
   better-ccflare                        # Interactive mode
   better-ccflare --serve                # Start server
+  better-ccflare --serve --ssl-key /path/to/key.pem --ssl-cert /path/to/cert.pem  # Start server with HTTPS
   better-ccflare --add-account work     # Add account
   better-ccflare --pause work           # Pause account
   better-ccflare --analyze              # Run performance analysis
@@ -160,7 +163,12 @@ Examples:
 		const config = new Config();
 		const port =
 			parsed.port || config.getRuntime().port || NETWORK.DEFAULT_PORT;
-		startServer({ port, withDashboard: true });
+		startServer({
+			port,
+			withDashboard: true,
+			sslKeyPath: parsed.sslKey,
+			sslCertPath: parsed.sslCert,
+		});
 		// Keep process alive
 		await new Promise(() => {});
 		return;
