@@ -14,7 +14,8 @@ COPY . .
 # Install dependencies
 RUN bun install --frozen-lockfile
 
-# Build the dashboard and TUI
+# Build workspace packages (agents), dashboard, and TUI
+RUN bun run --cwd packages/agents build
 RUN bun run build
 
 # Stage 2: Runtime
