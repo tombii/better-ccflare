@@ -1,17 +1,13 @@
 name: Build and Publish Docker Images
 
 on:
-  push:
-    branches:
-      - main
-  pull_request:
-    branches:
-      - main
   workflow_dispatch:
   workflow_run:
     workflows: ["Release Multi-Architecture Binaries"]
     types:
       - completed
+    branches:
+      - main
 
 env:
   REGISTRY: ghcr.io
