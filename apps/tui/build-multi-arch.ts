@@ -59,6 +59,19 @@ async function buildWorker() {
 		`export const EMBEDDED_WORKER_CODE = "${encoded}";`,
 	);
 
+	// Encode tiktoken WASM
+	const wasmFile = await Bun.file(
+		"../../node_modules/@dqbd/tiktoken/lite/tiktoken_bg.wasm",
+	);
+	const wasmBuffer = await wasmFile.arrayBuffer();
+	const wasmEncoded = Buffer.from(wasmBuffer).toString("base64");
+
+	// Write embedded WASM
+	writeFileSync(
+		"../../packages/proxy/src/embedded-tiktoken-wasm.ts",
+		`export const EMBEDDED_TIKTOKEN_WASM = "${wasmEncoded}";`,
+	);
+
 	console.log("✅ Worker built and encoded\n");
 }
 
