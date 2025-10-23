@@ -48,19 +48,33 @@ async function buildWorker() {
 	const version = packageJson.version;
 
 	// Encode tiktoken WASM FIRST (before building worker, since worker imports it)
-	const wasmPath = join(
-		projectRoot,
-		"node_modules/@dqbd/tiktoken/lite/tiktoken_bg.wasm",
-	);
-	console.log(`Looking for tiktoken WASM at: ${wasmPath}`);
+	// Try multiple possible locations for the WASM file
+	const possiblePaths = [
+		join(projectRoot, "node_modules/@dqbd/tiktoken/lite/tiktoken_bg.wasm"),
+		join(projectRoot, "packages/proxy/node_modules/@dqbd/tiktoken/lite/tiktoken_bg.wasm"),
+	];
 
-	const wasmFile = await Bun.file(wasmPath);
-	if (!(await wasmFile.exists())) {
-		console.error(`❌ tiktoken WASM file not found at: ${wasmPath}`);
+	let wasmPath: string | null = null;
+	for (const path of possiblePaths) {
+		const file = await Bun.file(path);
+		if (await file.exists()) {
+			wasmPath = path;
+			console.log(`✓ Found tiktoken WASM at: ${path}`);
+			break;
+		}
+	}
+
+	if (!wasmPath) {
+		console.error(`❌ tiktoken WASM file not found in any of these locations:`);
+		for (const path of possiblePaths) {
+			console.error(`  - ${path}`);
+		}
 		console.error("This likely means dependencies weren't installed properly.");
 		console.error("Try running: bun install");
 		throw new Error("Missing tiktoken WASM file");
 	}
+
+	const wasmFile = await Bun.file(wasmPath);
 
 	const wasmBuffer = await wasmFile.arrayBuffer();
 	const wasmEncoded = Buffer.from(wasmBuffer).toString("base64");
