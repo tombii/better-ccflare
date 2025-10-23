@@ -23,6 +23,17 @@ jobs:
       - name: Install dependencies
         run: bun install
 
+      - name: Verify dependencies
+        run: |
+          echo "Checking for tiktoken WASM file..."
+          if [ ! -f "node_modules/@dqbd/tiktoken/lite/tiktoken_bg.wasm" ]; then
+            echo "ERROR: tiktoken WASM file not found!"
+            echo "Listing node_modules/@dqbd/tiktoken contents:"
+            ls -R node_modules/@dqbd/tiktoken/ || echo "tiktoken package not found"
+            exit 1
+          fi
+          echo "✓ tiktoken WASM file found"
+
       - name: Build dashboard
         run: bun run build:dashboard
 

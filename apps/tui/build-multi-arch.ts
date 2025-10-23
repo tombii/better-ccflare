@@ -52,7 +52,16 @@ async function buildWorker() {
 		projectRoot,
 		"node_modules/@dqbd/tiktoken/lite/tiktoken_bg.wasm",
 	);
+	console.log(`Looking for tiktoken WASM at: ${wasmPath}`);
+
 	const wasmFile = await Bun.file(wasmPath);
+	if (!(await wasmFile.exists())) {
+		console.error(`❌ tiktoken WASM file not found at: ${wasmPath}`);
+		console.error("This likely means dependencies weren't installed properly.");
+		console.error("Try running: bun install");
+		throw new Error("Missing tiktoken WASM file");
+	}
+
 	const wasmBuffer = await wasmFile.arrayBuffer();
 	const wasmEncoded = Buffer.from(wasmBuffer).toString("base64");
 
