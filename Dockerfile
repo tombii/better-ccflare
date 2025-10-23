@@ -1,49 +1,33 @@
-# Multi-stage Dockerfile for better-ccflare
+# Simplified Dockerfile using pre-built binaries from GitHub Releases
 # Supports: linux/amd64, linux/arm64
 
-ARG BUN_VERSION=1.2.8
+ARG VERSION=latest
 
-# Stage 1: Builder
-FROM oven/bun:${BUN_VERSION} AS builder
+FROM debian:bookworm-slim
 
-WORKDIR /app
-
-# Copy everything (monorepo needs all code for workspace dependencies)
-COPY . .
-
-# Install dependencies
-RUN bun install --frozen-lockfile
-
-# Build workspace packages (agents), dashboard, and TUI
-RUN bun run --cwd packages/agents build
-RUN bun run build
-
-# Stage 2: Runtime
-FROM oven/bun:${BUN_VERSION}-slim AS runtime
-
-WORKDIR /app
-
-# Install SQLite (needed for database operations)
+# Install required dependencies
 RUN apt-get update && \
-    apt-get install -y sqlite3 && \
-    rm -rf /var/lib/apt/lists/*
+    apt-get install -y \
+      sqlite3 \
+      ca-certificates \
+      curl \
+      && rm -rf /var/lib/apt/lists/*
 
-# Copy built artifacts from builder
-COPY --from=builder /app/apps/tui/dist/better-ccflare /usr/local/bin/better-ccflare
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/package.json ./
-COPY --from=builder /app/apps ./apps
-COPY --from=builder /app/packages ./packages
+WORKDIR /app
 
-# Add labels for version tracking (will be overridden by GitHub Actions metadata)
+# Download the appropriate binary based on architecture
+# TARGETARCH is automatically set by Docker buildx (amd64 or arm64)
+ARG TARGETARCH
 ARG VERSION
-LABEL org.opencontainers.image.version="${VERSION}"
-LABEL org.opencontainers.image.title="better-ccflare"
-LABEL org.opencontainers.image.description="Load balancer proxy for Claude API with intelligent distribution across multiple OAuth accounts"
-LABEL org.opencontainers.image.source="https://github.com/tombii/better-ccflare"
-
-# Make the binary executable
-RUN chmod +x /usr/local/bin/better-ccflare
+RUN echo "Downloading binary for architecture: ${TARGETARCH}" && \
+    if [ "${VERSION}" = "latest" ]; then \
+      DOWNLOAD_URL="https://github.com/tombii/better-ccflare/releases/latest/download/better-ccflare-linux-${TARGETARCH}"; \
+    else \
+      DOWNLOAD_URL="https://github.com/tombii/better-ccflare/releases/download/v${VERSION}/better-ccflare-linux-${TARGETARCH}"; \
+    fi && \
+    echo "Downloading from: ${DOWNLOAD_URL}" && \
+    curl -L -o /usr/local/bin/better-ccflare "${DOWNLOAD_URL}" && \
+    chmod +x /usr/local/bin/better-ccflare
 
 # Create data directory for database
 RUN mkdir -p /data
@@ -59,5 +43,12 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD curl -f http://localhost:8080/health || exit 1
 
+# Add labels for version tracking (will be overridden by GitHub Actions metadata)
+ARG VERSION
+LABEL org.opencontainers.image.version="${VERSION}"
+LABEL org.opencontainers.image.title="better-ccflare"
+LABEL org.opencontainers.image.description="Load balancer proxy for Claude API with intelligent distribution across multiple OAuth accounts"
+LABEL org.opencontainers.image.source="https://github.com/tombii/better-ccflare"
+
 # Default command: start the server
-CMD ["bun", "run", "apps/server/src/server.ts", "--serve"]
+CMD ["better-ccflare", "--serve", "--port", "8080"]

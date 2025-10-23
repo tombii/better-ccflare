@@ -4,12 +4,14 @@ on:
   push:
     branches:
       - main
-    tags:
-      - 'v*'
   pull_request:
     branches:
       - main
   workflow_dispatch:
+  workflow_run:
+    workflows: ["Release Multi-Architecture Binaries"]
+    types:
+      - completed
 
 env:
   REGISTRY: ghcr.io
