@@ -43,7 +43,20 @@ async function buildWorker() {
 	const packageJson = await Bun.file("./package.json").json();
 	const version = packageJson.version;
 
-	// Build worker
+	// Encode tiktoken WASM FIRST (before building worker, since worker imports it)
+	const wasmFile = await Bun.file(
+		"../../node_modules/@dqbd/tiktoken/lite/tiktoken_bg.wasm",
+	);
+	const wasmBuffer = await wasmFile.arrayBuffer();
+	const wasmEncoded = Buffer.from(wasmBuffer).toString("base64");
+
+	// Write embedded WASM
+	writeFileSync(
+		"../../packages/proxy/src/embedded-tiktoken-wasm.ts",
+		`export const EMBEDDED_TIKTOKEN_WASM = "${wasmEncoded}";`,
+	);
+
+	// Build worker (now that embedded-tiktoken-wasm.ts exists)
 	execSync(
 		`BETTER_CCFLARE_VERSION=${version} bun build ../../packages/proxy/src/post-processor.worker.ts --outfile dist/post-processor.worker.js --target=bun --minify`,
 		{ stdio: "inherit" },
@@ -57,19 +70,6 @@ async function buildWorker() {
 	writeFileSync(
 		"../../packages/proxy/src/inline-worker.ts",
 		`export const EMBEDDED_WORKER_CODE = "${encoded}";`,
-	);
-
-	// Encode tiktoken WASM
-	const wasmFile = await Bun.file(
-		"../../node_modules/@dqbd/tiktoken/lite/tiktoken_bg.wasm",
-	);
-	const wasmBuffer = await wasmFile.arrayBuffer();
-	const wasmEncoded = Buffer.from(wasmBuffer).toString("base64");
-
-	// Write embedded WASM
-	writeFileSync(
-		"../../packages/proxy/src/embedded-tiktoken-wasm.ts",
-		`export const EMBEDDED_TIKTOKEN_WASM = "${wasmEncoded}";`,
 	);
 
 	console.log("✅ Worker built and encoded\n");
