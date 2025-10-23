@@ -6,8 +6,6 @@ on:
     workflows: ["Release Multi-Architecture Binaries"]
     types:
       - completed
-    branches:
-      - main
 
 env:
   REGISTRY: ghcr.io
@@ -40,6 +38,27 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Extract version from tag or event
+        id: version
+        run: |
+          # For workflow_run events triggered by release workflow
+          if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
+            # Get the head branch which contains the tag name
+            REF="${{ github.event.workflow_run.head_branch }}"
+            if [[ "$REF" == v* ]]; then
+              VERSION="${REF#v}"
+              echo "version=${VERSION}" >> $GITHUB_OUTPUT
+            else
+              echo "version=latest" >> $GITHUB_OUTPUT
+            fi
+          # For direct tag pushes
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+            echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          else
+            echo "version=latest" >> $GITHUB_OUTPUT
+          fi
+
       - name: Extract metadata
         id: meta
         uses: docker/metadata-action@v5
@@ -67,7 +86,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           build-args: |
-            BUN_VERSION=1.2.8
+            VERSION=${{ steps.version.outputs.version }}
 
       - name: Generate artifact attestation
         if: github.event_name != 'pull_request'
