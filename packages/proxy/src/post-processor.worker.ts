@@ -13,7 +13,9 @@ import {
 	type RequestResponse,
 } from "@better-ccflare/types";
 import { formatCost } from "@better-ccflare/ui-common";
-import { get_encoding } from "@dqbd/tiktoken";
+import { init, Tiktoken } from "@dqbd/tiktoken/lite/init";
+import model from "@dqbd/tiktoken/encoders/cl100k_base.json";
+import { EMBEDDED_TIKTOKEN_WASM } from "./embedded-tiktoken-wasm";
 import { combineChunks } from "./stream-tee";
 import type {
 	ChunkMessage,
@@ -57,7 +59,30 @@ log.info("Post-processor worker started");
 const MAX_REQUESTS_MAP_SIZE = 10000;
 
 // Initialize tiktoken encoder (cl100k_base is used for Claude models)
-const tokenEncoder = get_encoding("cl100k_base");
+// Using embedded WASM to avoid "Missing tiktoken_bg.wasm" errors in bunx
+let tokenEncoder: Tiktoken | null = null;
+
+(async () => {
+	try {
+		// Decode embedded WASM from base64
+		const wasmBuffer = Buffer.from(EMBEDDED_TIKTOKEN_WASM, "base64");
+
+		// Initialize tiktoken with embedded WASM
+		await init((imports) => WebAssembly.instantiate(wasmBuffer, imports));
+
+		// Create encoder with cl100k_base model
+		tokenEncoder = new Tiktoken(
+			model.bpe_ranks,
+			model.special_tokens,
+			model.pat_str
+		);
+
+		log.info("Tiktoken encoder initialized successfully with embedded WASM");
+	} catch (error) {
+		log.error("Failed to initialize tiktoken encoder:", error);
+		console.error("[WORKER] Tiktoken initialization failed:", error);
+	}
+})();
 
 // Initialize database connection for worker
 const dbOps = new DatabaseOperations();
@@ -222,7 +247,7 @@ function extractUsageFromData(data: string, state: RequestState): void {
 				textToCount = parsed.delta.thinking;
 			}
 
-			if (textToCount) {
+			if (textToCount && tokenEncoder) {
 				// Count tokens using tiktoken
 				try {
 					const tokens = tokenEncoder.encode(textToCount);
