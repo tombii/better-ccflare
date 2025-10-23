@@ -126,9 +126,14 @@ git clone https://github.com/tombii/better-ccflare
 cd better-ccflare
 bun install
 
+# Build dashboard and TUI (required before first run)
+bun run build
+
 # Start better-ccflare (TUI + Server)
 bun run better-ccflare
 ```
+
+**Note**: You must run `bun run build` at least once to build the dashboard files before starting the server. This can also be done by running `bun run better-ccflare` which includes the build step.
 
 ### Docker (Multi-Platform: linux/amd64, linux/arm64)
 

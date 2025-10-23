@@ -78,14 +78,21 @@ Before you begin, ensure you have the following installed:
    bun install
    ```
 
-5. **Verify the installation**:
+5. **Build the dashboard and TUI** (required before first run):
+   ```bash
+   bun run build
+   ```
+
+   **Important**: You must run this build step at least once before starting the server. The `bun run build` command builds both the web dashboard and TUI components. Without this step, the dashboard files won't be available when you start the server.
+
+6. **Verify the installation**:
    ```bash
    # Run type checking
    bun run typecheck
-   
+
    # Run linting
    bun run lint
-   
+
    # Run formatting
    bun run format
    ```
@@ -103,6 +110,8 @@ The following environment variables can be used during development:
 
 ### Running the Development Environment
 
+**First time setup**: Make sure you've run `bun run build` at least once (see step 5 above).
+
 ```bash
 # Start the server in development mode with hot reload
 bun run dev:server
@@ -113,9 +122,11 @@ bun run dev:cli
 # Or start the TUI interface
 bun run dev
 
-# Or work on the dashboard
+# Or work on the dashboard (rebuilds on changes)
 bun run dev:dashboard
 ```
+
+**Note**: If you're making changes to the dashboard, use `bun run dev:dashboard` for hot reloading. For other changes, you may need to run `bun run build:dashboard` or `bun run build:tui` to see your changes reflected.
 
 ### Running Tests
 
