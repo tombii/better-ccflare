@@ -10,8 +10,8 @@ interface Platform {
 
 const platforms: Platform[] = [
 	{
-		target: "bun-linux-x64",
-		outfile: "better-ccflare-linux-x64",
+		target: "bun-linux-amd64",
+		outfile: "better-ccflare-linux-amd64",
 		description: "Linux x86_64",
 	},
 	{
@@ -21,7 +21,7 @@ const platforms: Platform[] = [
 	},
 	{
 		target: "bun-darwin-x64",
-		outfile: "better-ccflare-macos-x64",
+		outfile: "better-ccflare-macos-x86_64",
 		description: "macOS Intel",
 	},
 	{
