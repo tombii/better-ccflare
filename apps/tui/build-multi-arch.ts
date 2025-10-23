@@ -1,12 +1,16 @@
 #!/usr/bin/env bun
 import { execSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 interface Platform {
 	target: string;
 	outfile: string;
 	description: string;
 }
+
+// Get project root directory (two levels up from this script)
+const projectRoot = join(import.meta.dir, "../..");
 
 const platforms: Platform[] = [
 	{
@@ -44,15 +48,21 @@ async function buildWorker() {
 	const version = packageJson.version;
 
 	// Encode tiktoken WASM FIRST (before building worker, since worker imports it)
-	const wasmFile = await Bun.file(
-		"../../node_modules/@dqbd/tiktoken/lite/tiktoken_bg.wasm",
+	const wasmPath = join(
+		projectRoot,
+		"node_modules/@dqbd/tiktoken/lite/tiktoken_bg.wasm",
 	);
+	const wasmFile = await Bun.file(wasmPath);
 	const wasmBuffer = await wasmFile.arrayBuffer();
 	const wasmEncoded = Buffer.from(wasmBuffer).toString("base64");
 
 	// Write embedded WASM
+	const embeddedWasmPath = join(
+		projectRoot,
+		"packages/proxy/src/embedded-tiktoken-wasm.ts",
+	);
 	writeFileSync(
-		"../../packages/proxy/src/embedded-tiktoken-wasm.ts",
+		embeddedWasmPath,
 		`export const EMBEDDED_TIKTOKEN_WASM = "${wasmEncoded}";`,
 	);
 
@@ -67,8 +77,12 @@ async function buildWorker() {
 	const encoded = Buffer.from(workerCode).toString("base64");
 
 	// Write inline worker
+	const inlineWorkerPath = join(
+		projectRoot,
+		"packages/proxy/src/inline-worker.ts",
+	);
 	writeFileSync(
-		"../../packages/proxy/src/inline-worker.ts",
+		inlineWorkerPath,
 		`export const EMBEDDED_WORKER_CODE = "${encoded}";`,
 	);
 
