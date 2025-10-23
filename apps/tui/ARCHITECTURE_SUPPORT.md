@@ -6,9 +6,9 @@ The following pre-compiled binaries are available:
 
 | Platform | Architecture | Binary | Status |
 |----------|-------------|--------|--------|
-| Linux | x86_64 | `better-ccflare-linux-x64` | ✅ Supported |
+| Linux | x86_64 | `better-ccflare-linux-amd64` | ✅ Supported |
 | Linux | ARM64 (aarch64) | `better-ccflare-linux-arm64` | ✅ Supported |
-| macOS | Intel (x64) | `better-ccflare-macos-x64` | ✅ Supported |
+| macOS | Intel (x64) | `better-ccflare-macos-x86_64` | ✅ Supported |
 | macOS | Apple Silicon (ARM64) | `better-ccflare-macos-arm64` | ✅ Supported |
 | Windows | x86_64 | `better-ccflare-windows-x64.exe` | ✅ Supported |
 
@@ -79,9 +79,9 @@ bun run build:multi
 Or build for specific platforms:
 
 ```bash
-bun run build:linux-x64      # Linux x86_64
+bun run build:linux-amd64      # Linux x86_64
 bun run build:linux-arm64    # Linux ARM64 (Oracle Cloud, Pi 3/4/5)
-bun run build:macos-x64      # macOS Intel
+bun run build:macos-x86_64      # macOS Intel
 bun run build:macos-arm64    # macOS Apple Silicon
 bun run build:windows-x64    # Windows x86_64
 ```

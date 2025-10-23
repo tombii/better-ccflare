@@ -79,9 +79,9 @@ Download the appropriate binary for your platform from [GitHub Releases](https:/
 
 #### Linux x86_64
 ```bash
-wget https://github.com/tombii/better-ccflare/releases/latest/download/better-ccflare-linux-x64
-chmod +x better-ccflare-linux-x64
-./better-ccflare-linux-x64
+wget https://github.com/tombii/better-ccflare/releases/latest/download/better-ccflare-linux-amd64
+chmod +x better-ccflare-linux-amd64
+./better-ccflare-linux-amd64
 ```
 
 #### Linux ARM64 (Raspberry Pi 3/4/5, Oracle Cloud ARM, AWS Graviton)
@@ -93,9 +93,9 @@ chmod +x better-ccflare-linux-arm64
 
 #### macOS Intel
 ```bash
-curl -L -o better-ccflare-macos-x64 https://github.com/tombii/better-ccflare/releases/latest/download/better-ccflare-macos-x64
-chmod +x better-ccflare-macos-x64
-./better-ccflare-macos-x64
+curl -L -o better-ccflare-macos-x86_64 https://github.com/tombii/better-ccflare/releases/latest/download/better-ccflare-macos-x86_64
+chmod +x better-ccflare-macos-x86_64
+./better-ccflare-macos-x86_64
 ```
 
 #### macOS Apple Silicon
