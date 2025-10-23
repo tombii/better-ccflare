@@ -149,9 +149,9 @@ npm install -g better-ccflare
 ### 2. Direct Binary Download
 ```bash
 # Linux x64
-wget https://github.com/tombii/better-ccflare/releases/latest/download/better-ccflare-linux-x64
-chmod +x better-ccflare-linux-x64
-./better-ccflare-linux-x64
+wget https://github.com/tombii/better-ccflare/releases/latest/download/better-ccflare-linux-amd64
+chmod +x better-ccflare-linux-amd64
+./better-ccflare-linux-amd64
 
 # Linux ARM64
 wget https://github.com/tombii/better-ccflare/releases/latest/download/better-ccflare-linux-arm64

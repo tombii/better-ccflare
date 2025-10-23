@@ -73,9 +73,9 @@ The version number is defined in:
 
 **Where it appears**:
 - GitHub Release: `v1.2.28`
-- Binary filenames: `better-ccflare-linux-x64` (version in release tag)
+- Binary filenames: `better-ccflare-linux-amd64` (version in release tag)
 - Runtime: `better-ccflare --version` → `1.2.28`
-- Download URL: `https://github.com/tombii/better-ccflare/releases/download/v1.2.28/better-ccflare-linux-x64`
+- Download URL: `https://github.com/tombii/better-ccflare/releases/download/v1.2.28/better-ccflare-linux-amd64`
 
 **How it's set**:
 - Release tag: From git tag (`v1.2.28`)
