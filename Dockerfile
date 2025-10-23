@@ -11,6 +11,7 @@ RUN apt-get update && \
       sqlite3 \
       ca-certificates \
       curl \
+      file \
       && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -19,15 +20,36 @@ WORKDIR /app
 # TARGETARCH is automatically set by Docker buildx (amd64 or arm64)
 ARG TARGETARCH
 ARG VERSION
-RUN echo "Downloading binary for architecture: ${TARGETARCH}" && \
-    if [ "${VERSION}" = "latest" ]; then \
-      DOWNLOAD_URL="https://github.com/tombii/better-ccflare/releases/latest/download/better-ccflare-linux-${TARGETARCH}"; \
+
+# Determine correct architecture and download binary
+RUN echo "=== Binary Download Information ===" && \
+    echo "TARGETARCH from buildx: ${TARGETARCH}" && \
+    echo "System uname -m: $(uname -m)" && \
+    echo "Version: ${VERSION}" && \
+    # Use TARGETARCH if set, otherwise detect from system
+    if [ -z "${TARGETARCH}" ]; then \
+      case "$(uname -m)" in \
+        x86_64) ARCH=amd64 ;; \
+        aarch64) ARCH=arm64 ;; \
+        *) echo "Unsupported architecture: $(uname -m)"; exit 1 ;; \
+      esac; \
     else \
-      DOWNLOAD_URL="https://github.com/tombii/better-ccflare/releases/download/v${VERSION}/better-ccflare-linux-${TARGETARCH}"; \
+      ARCH="${TARGETARCH}"; \
+    fi && \
+    echo "Using architecture: ${ARCH}" && \
+    if [ "${VERSION}" = "latest" ]; then \
+      DOWNLOAD_URL="https://github.com/tombii/better-ccflare/releases/latest/download/better-ccflare-linux-${ARCH}"; \
+    else \
+      DOWNLOAD_URL="https://github.com/tombii/better-ccflare/releases/download/v${VERSION}/better-ccflare-linux-${ARCH}"; \
     fi && \
     echo "Downloading from: ${DOWNLOAD_URL}" && \
-    curl -L -o /usr/local/bin/better-ccflare "${DOWNLOAD_URL}" && \
-    chmod +x /usr/local/bin/better-ccflare
+    curl -L -f -o /usr/local/bin/better-ccflare "${DOWNLOAD_URL}" || (echo "Failed to download binary from ${DOWNLOAD_URL}"; exit 1) && \
+    chmod +x /usr/local/bin/better-ccflare && \
+    echo "Binary downloaded successfully" && \
+    file /usr/local/bin/better-ccflare && \
+    # Verify the binary can execute (basic sanity check)
+    /usr/local/bin/better-ccflare --version || (echo "Binary verification failed - exec format error"; exit 1) && \
+    echo "==================================="
 
 # Create data directory for database
 RUN mkdir -p /data
@@ -50,5 +72,19 @@ LABEL org.opencontainers.image.title="better-ccflare"
 LABEL org.opencontainers.image.description="Load balancer proxy for Claude API with intelligent distribution across multiple OAuth accounts"
 LABEL org.opencontainers.image.source="https://github.com/tombii/better-ccflare"
 
-# Default command: start the server
-CMD ["better-ccflare", "--serve", "--port", "8080"]
+# Create startup script that shows version
+RUN echo '#!/bin/bash\n\
+echo "================================="\n\
+echo "better-ccflare Docker Container"\n\
+echo "================================="\n\
+echo "Architecture: $(uname -m)"\n\
+echo ""\n\
+/usr/local/bin/better-ccflare --version\n\
+echo "================================="\n\
+echo ""\n\
+exec /usr/local/bin/better-ccflare "$@"\n\
+' > /usr/local/bin/entrypoint.sh && chmod +x /usr/local/bin/entrypoint.sh
+
+# Use the startup script as entrypoint
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+CMD ["--serve", "--port", "8080"]
