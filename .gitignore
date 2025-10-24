@@ -7,9 +7,8 @@ ccflare.db-shm
 better-ccflare.db
 better-ccflare.db-wal
 better-ccflare.db-shm
-apps/tui/dist/
+packages/dashboard-web/.DS_Store
 packages/dashboard-web/dist/
-.DS_Store
 *.log
 tsconfig.tsbuildinfo
 packages/proxy/src/inline-worker.ts
