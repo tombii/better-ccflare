@@ -70,24 +70,20 @@ cd better-ccflare
 # Install dependencies
 bun install
 
-# Build the project (dashboard and TUI)
+# Build the project (dashboard and CLI)
 bun run build
 
-# Start better-ccflare (TUI + Server combined)
+# Start better-ccflare (Server + Dashboard)
 bun run better-ccflare
 
-# Or start components separately:
-# Terminal UI only
-bun run tui
-
-# Server only (without TUI)
-bun run server
+# Or use CLI commands:
+bun run cli --serve
 
 # Server with hot-reload (development)
 bun run dev:server
 
 # In another terminal, add Claude accounts
-bun run better-ccflare --add-account myaccount
+bun run cli --add-account myaccount --mode max --tier 1 --priority 0
 ```
 
 ### Development Configuration
