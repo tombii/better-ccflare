@@ -51,7 +51,10 @@ async function buildWorker() {
 	// Try multiple possible locations for the WASM file
 	const possiblePaths = [
 		join(projectRoot, "node_modules/@dqbd/tiktoken/lite/tiktoken_bg.wasm"),
-		join(projectRoot, "packages/proxy/node_modules/@dqbd/tiktoken/lite/tiktoken_bg.wasm"),
+		join(
+			projectRoot,
+			"packages/proxy/node_modules/@dqbd/tiktoken/lite/tiktoken_bg.wasm",
+		),
 	];
 
 	let wasmPath: string | null = null;
