@@ -13,8 +13,8 @@ import {
 	type RequestResponse,
 } from "@better-ccflare/types";
 import { formatCost } from "@better-ccflare/ui-common";
-import { init, Tiktoken } from "@dqbd/tiktoken/lite/init";
 import model from "@dqbd/tiktoken/encoders/cl100k_base.json";
+import { init, Tiktoken } from "@dqbd/tiktoken/lite/init";
 import { EMBEDDED_TIKTOKEN_WASM } from "./embedded-tiktoken-wasm";
 import { combineChunks } from "./stream-tee";
 import type {
@@ -74,7 +74,7 @@ let tokenEncoder: Tiktoken | null = null;
 		tokenEncoder = new Tiktoken(
 			model.bpe_ranks,
 			model.special_tokens,
-			model.pat_str
+			model.pat_str,
 		);
 
 		log.info("Tiktoken encoder initialized successfully with embedded WASM");
