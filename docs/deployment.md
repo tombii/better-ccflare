@@ -4,9 +4,7 @@
 
 better-ccflare is a load balancer proxy for Claude API accounts that can be deployed in various configurations, from simple local development to production-grade distributed systems. This document covers all deployment options, from single-instance setups to scalable architectures.
 
-> **Recent Updates**: better-ccflare now includes a Terminal User Interface (TUI) for interactive monitoring and management, alongside the web dashboard. The async database writer improves performance for high-throughput scenarios.
-> 
-> **Important**: better-ccflare uses an integrated binary that combines the TUI, CLI commands, and server functionality. The main executable `better-ccflare` provides all functionality through command-line flags.
+> **Important**: better-ccflare provides a powerful CLI interface and web dashboard for monitoring and management. The main executable `better-ccflare` provides all functionality through command-line flags.
 
 ## Table of Contents
 

@@ -44,19 +44,23 @@ bun run build
 
 4. Run the CLI:
 ```bash
-better-ccflare [options]
+bun run cli [command]
+# or if globally installed:
+better-ccflare [command]
 ```
 
 ### First-time Setup
 
 1. Add your first OAuth account:
 ```bash
-better-ccflare --add-account myaccount
+bun run cli --add-account myaccount --mode max --tier 1 --priority 0
 ```
 
 2. Start the load balancer server:
 ```bash
-better-ccflare --serve
+bun run cli --serve
+# or just:
+bun start
 ```
 
 ## Global Options and Help
@@ -66,13 +70,13 @@ better-ccflare --serve
 Display all available commands and options:
 
 ```bash
-better-ccflare --help
+bun run cli --help
 ```
 
 Or use the short form:
 
 ```bash
-better-ccflare -h
+bun run cli -h
 ```
 
 ### Help Output Format
@@ -101,8 +105,8 @@ Options:
   --clear-history      Clear request history
   --help, -h           Show this help message
 
-Interactive Mode:
-  better-ccflare          Launch interactive TUI (default)
+Default Mode:
+  bun run cli             Start server (default behavior)
 ```
 
 ## Command Reference
@@ -115,32 +119,32 @@ Add a new OAuth account to the load balancer pool.
 
 **Syntax:**
 ```bash
-better-ccflare --add-account <name> [--mode <max|console>] [--tier <1|5|20>] [--priority <number>]
+bun run cli --add-account <name> --mode <max|console|zai|openai-compatible> --tier <1|5|20> --priority <number>
 ```
 
-**Options:**
-- `--mode`: Account type (optional, defaults to "max")
+**Note:** All flags must be provided explicitly as the CLI requires explicit parameters.
+
+**Required Options:**
+- `--mode`: Account type (required)
   - `max`: Claude CLI account
   - `console`: Claude API account
   - `zai`: z.ai account (API key)
   - `openai-compatible`: OpenAI-compatible provider (API key)
-- `--tier`: Account tier (optional, defaults to 1)
+- `--tier`: Account tier (required for max/console modes)
   - `1`: Tier 1 account
   - `5`: Tier 5 account
   - `20`: Tier 20 account
-  - **Note**: Tier is automatically set to 1 for OpenAI-compatible providers and hidden from prompts
+  - **Note**: Tier is automatically set to 1 for OpenAI-compatible providers
 - `--priority`: Account priority (optional, defaults to 0)
   - Range: 0-100
   - Lower numbers indicate higher priority in load balancing
-  - If not specified, defaults to 0 (highest priority)
 
-**Interactive Flow:**
-1. If mode not provided, defaults to "max"
-2. If tier not provided (Max accounts only), defaults to 1
-3. If priority not provided, defaults to 0
-4. Opens browser for OAuth authentication
-5. Waits for OAuth callback on localhost:7856
-6. Stores account credentials securely in the database
+**Account Setup Process:**
+1. Execute command with all required flags
+2. For OAuth accounts (max/console), opens browser for authentication
+3. Waits for OAuth callback on localhost:7856
+4. For API key accounts (zai/openai-compatible), prompts for API key
+5. Stores account credentials securely in the database
 
 #### `--list`
 
@@ -148,7 +152,7 @@ Display all configured accounts with their current status.
 
 **Syntax:**
 ```bash
-better-ccflare --list
+bun run cli --list
 ```
 
 **Output Format:**
@@ -164,13 +168,13 @@ Remove an account from the configuration.
 
 **Syntax:**
 ```bash
-better-ccflare --remove <name>
+bun run cli --remove <name>
 ```
 
 **Behavior:**
 - Removes account from database immediately
 - Cleans up associated session data
-- For confirmation prompts, use the older `better-ccflare-cli remove <name>` command
+- Account removal is immediate with no confirmation prompts
 
 #### `--pause <name>`
 
@@ -178,7 +182,7 @@ Temporarily exclude an account from the load balancer rotation.
 
 **Syntax:**
 ```bash
-better-ccflare --pause <name>
+bun run cli --pause <name>
 ```
 
 **Use Cases:**
@@ -192,7 +196,7 @@ Re-enable a paused account for load balancing.
 
 **Syntax:**
 ```bash
-better-ccflare --resume <name>
+bun run cli --resume <name>
 ```
 
 ### Account Priorities
@@ -203,7 +207,7 @@ Set or update the priority of an account. Accounts with lower priority numbers a
 
 **Syntax:**
 ```bash
-better-ccflare --set-priority <name> <priority>
+bun run cli --set-priority <name> <priority>
 ```
 
 **Parameters:**
@@ -219,13 +223,13 @@ better-ccflare --set-priority <name> <priority>
 **Example:**
 ```bash
 # Set account to high priority (low number)
-better-ccflare --set-priority production-account 10
+bun run cli --set-priority production-account 10
 
 # Set account to medium priority
-better-ccflare --set-priority development-account 50
+bun run cli --set-priority development-account 50
 
 # Set account to low priority (high number)
-better-ccflare --set-priority backup-account 90
+bun run cli --set-priority backup-account 90
 ```
 
 ### Statistics and History
@@ -236,7 +240,7 @@ Display current statistics in JSON format.
 
 **Syntax:**
 ```bash
-better-ccflare --stats
+bun run cli --stats
 ```
 
 **Output:**
@@ -248,7 +252,7 @@ Reset request counters for all accounts.
 
 **Syntax:**
 ```bash
-better-ccflare --reset-stats
+bun run cli --reset-stats
 ```
 
 **Effects:**
@@ -262,7 +266,7 @@ Remove all request history records.
 
 **Syntax:**
 ```bash
-better-ccflare --clear-history
+bun run cli --clear-history
 ```
 
 **Effects:**
@@ -278,7 +282,7 @@ Analyze database performance and index usage.
 
 **Syntax:**
 ```bash
-better-ccflare --analyze
+bun run cli --analyze
 ```
 
 **Output:**
@@ -286,19 +290,15 @@ better-ccflare --analyze
 - Index usage statistics
 - Query optimization suggestions
 
-#### Interactive Terminal UI (TUI)
+#### Default Behavior
 
-Launch the interactive terminal interface (default mode):
+When no command is specified, the CLI starts the server by default:
 
 ```bash
-better-ccflare
+bun run cli
+# Equivalent to:
+bun run cli --serve
 ```
-
-**Features:**
-- Real-time account monitoring
-- Request logs viewing
-- Performance analytics
-- Interactive account management
 
 ### Server and Monitoring
 
@@ -308,7 +308,7 @@ Start the API server with dashboard.
 
 **Syntax:**
 ```bash
-better-ccflare --serve [--port <number>]
+bun run cli --serve [--port <number>]
 ```
 
 **Options:**
@@ -316,7 +316,7 @@ better-ccflare --serve [--port <number>]
 
 **Access:**
 - API endpoint: `http://localhost:8080`
-- Dashboard: `http://localhost:8080/_dashboard`
+- Dashboard: `http://localhost:8080/dashboard`
 
 #### `--logs [N]`
 
@@ -324,7 +324,7 @@ Stream request logs in real-time.
 
 **Syntax:**
 ```bash
-better-ccflare --logs [N]
+bun run cli --logs [N]
 ```
 
 **Options:**
@@ -333,10 +333,10 @@ better-ccflare --logs [N]
 **Examples:**
 ```bash
 # Stream live logs only
-better-ccflare --logs
+bun run cli --logs
 
 # Show last 50 lines then stream
-better-ccflare --logs 50
+bun run cli --logs 50
 ```
 
 ## Usage Examples
@@ -345,97 +345,89 @@ better-ccflare --logs 50
 
 ```bash
 # Add a Claude CLI account with tier 5 and high priority (low number)
-better-ccflare --add-account work-account --mode max --tier 5 --priority 10
+bun run cli --add-account work-account --mode max --tier 5 --priority 10
 
 # Add a Console account with medium priority
-better-ccflare --add-account personal-account --mode console --priority 50
+bun run cli --add-account personal-account --mode console --tier 1 --priority 50
 
 # Add a backup account with low priority (high number)
-better-ccflare --add-account backup-account --mode max --tier 1 --priority 90
+bun run cli --add-account backup-account --mode max --tier 1 --priority 90
 
 # List all accounts
-better-ccflare --list
+bun run cli --list
 
 # Update account priority
-better-ccflare --set-priority backup-account 20
+bun run cli --set-priority backup-account 20
 
 # View statistics
-better-ccflare --stats
+bun run cli --stats
 ```
 
 ### Server Operations
 
 ```bash
 # Start server on default port
-better-ccflare --serve
+bun run cli --serve
+# or simply:
+bun start
 
 # Start server on custom port
-better-ccflare --serve --port 3000
+bun run cli --serve --port 3000
 
 # Stream logs
-better-ccflare --logs
+bun run cli --logs
 
 # View last 100 lines then stream
-better-ccflare --logs 100
+bun run cli --logs 100
 ```
 
 ### Managing Rate Limits
 
 ```bash
 # Pause account hitting rate limits
-better-ccflare --pause work-account
+bun run cli --pause work-account
 
 # Resume after cooldown
-better-ccflare --resume work-account
+bun run cli --resume work-account
 
 # Reset statistics for fresh start
-better-ccflare --reset-stats
+bun run cli --reset-stats
 ```
 
 ### Maintenance Operations
 
 ```bash
 # Remove account
-better-ccflare --remove old-account
+bun run cli --remove old-account
 
 # Clear old request logs
-better-ccflare --clear-history
+bun run cli --clear-history
 
 # Analyze database performance
-better-ccflare --analyze
-```
-
-### Interactive Mode
-
-```bash
-# Launch interactive TUI (default)
-better-ccflare
-
-# TUI launches with auto-started server
-# Navigate with arrow keys, tab between sections
+bun run cli --analyze
 ```
 
 ### Automation Examples
 
 ```bash
 # Add multiple accounts with different priorities
-better-ccflare --add-account "primary-account" --mode max --tier 20 --priority 10
-better-ccflare --add-account "secondary-account" --mode max --tier 5 --priority 50
-better-ccflare --add-account "backup-account" --mode max --tier 1 --priority 90
+bun run cli --add-account "primary-account" --mode max --tier 20 --priority 10
+bun run cli --add-account "secondary-account" --mode max --tier 5 --priority 50
+bun run cli --add-account "backup-account" --mode max --tier 1 --priority 90
 
 # Monitor account status
-watch -n 5 'better-ccflare --list'
+watch -n 5 'bun run cli --list'
 
 # Automated cleanup
-better-ccflare --clear-history && better-ccflare --reset-stats
+bun run cli --clear-history && bun run cli --reset-stats
 
 # Export statistics for monitoring
-better-ccflare --stats > stats.json
+bun run cli --stats > stats.json
 
 # Prioritize specific account temporarily
-better-ccflare --set-priority primary-account 5
+bun run cli --set-priority primary-account 5
 # ... run important workload ...
-better-ccflare --set-priority primary-account 10  # Restore normal priority
+bun run cli --set-priority primary-account 10  # Restore normal priority
 ```
 
 ## Configuration
@@ -582,14 +574,14 @@ Enable detailed logging for troubleshooting:
 
 ```bash
 # Enable debug logging
-export better-ccflare_DEBUG=1
+export BETTER_CCFLARE_DEBUG=1
 export LOG_LEVEL=DEBUG
 
 # Run with verbose output
-better-ccflare --list
+bun run cli --list
 
 # Stream debug logs
-better-ccflare --logs
+bun run cli --logs
 ```
 
 ### Getting Support
@@ -604,8 +596,8 @@ better-ccflare --logs
 1. **Regular Maintenance**
    - Clear history periodically to manage database size
    - Reset stats monthly for accurate metrics
-   - Monitor account health with regular `better-ccflare --list` commands
-   - Use `better-ccflare --analyze` to optimize database performance
+   - Monitor account health with regular `bun run cli --list` commands
+   - Use `bun run cli --analyze` to optimize database performance
 
 2. **Account Management**
    - Use descriptive account names
@@ -621,10 +613,10 @@ better-ccflare --logs
    - Protect configuration directory permissions
    - Don't share OAuth tokens or session data
    - Rotate accounts periodically
-   - Monitor logs with `better-ccflare --logs` for suspicious activity
+   - Monitor logs with `bun run cli --logs` for suspicious activity
 
 4. **Performance**
    - Use higher-tier accounts for heavy workloads
    - Implement client-side retry logic
-   - Monitor rate limit patterns with `better-ccflare --stats`
-   - Run server with `better-ccflare --serve` for production use
+   - Monitor rate limit patterns with `bun run cli --stats`
+   - Run server with `bun run cli --serve` for production use
