@@ -4,6 +4,8 @@
 
 The ultimate Claude API proxy with intelligent load balancing across multiple accounts. Full visibility into every request, response, and rate limit.
 
+**🚨 Major Update:** As of v2.0.0, the Terminal UI (TUI) has been removed to focus on a more powerful CLI interface and web dashboard. All TUI functionality is now available through comprehensive CLI commands and the enhanced web dashboard.
+
 
 https://github.com/user-attachments/assets/c859872f-ca5e-4f8b-b6a0-7cc7461fe62a
 
@@ -35,7 +37,7 @@ This project builds upon the excellent foundation of [snipeship/ccflare](https:/
 - **Package Distribution** - Available via npm and bun for easy installation
 
 **🛠️ Developer Experience:**
-- **TUI Interface** - Interactive terminal-based account management
+- **Powerful CLI** - Complete command-line interface for account management and configuration
 - **REST API** - Complete API for automation and integration
 - **Cross-Platform Binary** - Pre-compiled binary works with Node.js or Bun
 - **Comprehensive Logging** - Request/response tracking with searchable history
@@ -60,7 +62,7 @@ This project builds upon the excellent foundation of [snipeship/ccflare](https:/
 ```bash
 npm install -g better-ccflare
 
-# Start better-ccflare (TUI + Server)
+# Start better-ccflare (Server + Dashboard)
 better-ccflare
 ```
 
@@ -69,7 +71,7 @@ better-ccflare
 ```bash
 bun install -g better-ccflare
 
-# Start better-ccflare (TUI + Server)
+# Start better-ccflare (Server + Dashboard)
 better-ccflare
 ```
 
@@ -126,7 +128,7 @@ git clone https://github.com/tombii/better-ccflare
 cd better-ccflare
 bun install
 
-# Build dashboard and TUI (required before first run)
+# Build dashboard (required before first run)
 bun run build
 
 # Start better-ccflare (TUI + Server)
@@ -375,7 +377,7 @@ No `NODE_OPTIONS` needed - Traefik provides trusted certificates automatically!
 - Lazy-loaded analytics components for faster initial load
 
 ### 🛠️ Developer Tools
-- Interactive TUI (`bun run better-ccflare`)
+- Powerful CLI (`better-ccflare`)
 - Web dashboard (`http://localhost:8080/dashboard`)
 - CLI for account management
 - REST API for automation
