@@ -1,4 +1,15 @@
 #!/usr/bin/env bun
+import {
+	addAccount,
+	analyzePerformance,
+	clearRequestHistory,
+	getAccountsList,
+	pauseAccount,
+	removeAccount,
+	resetAllStats,
+	resumeAccount,
+	setAccountPriority,
+} from "@better-ccflare/cli-commands";
 import { Config } from "@better-ccflare/config";
 import {
 	CLAUDE_MODEL_IDS,
@@ -11,16 +22,6 @@ import { DatabaseFactory } from "@better-ccflare/database";
 import { Logger } from "@better-ccflare/logger";
 // Import server
 import startServer from "@better-ccflare/server";
-import {
-	addAccount,
-	getAccountsList,
-	removeAccount,
-	pauseAccount,
-	resumeAccount,
-	setAccountPriority,
-} from "@better-ccflare/cli-commands";
-import { resetAllStats, clearRequestHistory } from "@better-ccflare/cli-commands";
-import { analyzePerformance } from "@better-ccflare/cli-commands";
 
 /**
  * Helper function to exit gracefully with proper cleanup
@@ -95,7 +96,10 @@ function parseArgs(args: string[]) {
 				parsed.sslCert = args[++i];
 				break;
 			case "--logs":
-				parsed.logs = args[i + 1] && !args[i + 1].startsWith("--") ? parseInt(args[++i], 10) : 100;
+				parsed.logs =
+					args[i + 1] && !args[i + 1].startsWith("--")
+						? parseInt(args[++i], 10)
+						: 100;
 				break;
 			case "--stats":
 				parsed.stats = true;
@@ -124,11 +128,12 @@ function parseArgs(args: string[]) {
 			case "--resume":
 				parsed.resume = args[++i];
 				break;
-			case "--set-priority":
+			case "--set-priority": {
 				const name = args[++i];
 				const priority = args[++i];
 				parsed.setPriority = [name, priority];
 				break;
+			}
 			case "--analyze":
 				parsed.analyze = true;
 				break;
@@ -285,11 +290,14 @@ Examples:
 		const accounts = getAccountsList(dbOps);
 		const stats = {
 			totalAccounts: accounts.length,
-			activeAccounts: accounts.filter(acc => !acc.paused && acc.tokenStatus === 'valid').length,
-			pausedAccounts: accounts.filter(acc => acc.paused).length,
-			expiredAccounts: accounts.filter(acc => acc.tokenStatus === 'expired').length,
+			activeAccounts: accounts.filter(
+				(acc) => !acc.paused && acc.tokenStatus === "valid",
+			).length,
+			pausedAccounts: accounts.filter((acc) => acc.paused).length,
+			expiredAccounts: accounts.filter((acc) => acc.tokenStatus === "expired")
+				.length,
 			totalRequests: accounts.reduce((sum, acc) => sum + acc.requestCount, 0),
-			accounts: accounts.map(acc => ({
+			accounts: accounts.map((acc) => ({
 				name: acc.name,
 				provider: acc.provider,
 				mode: acc.mode,
@@ -299,7 +307,7 @@ Examples:
 				paused: acc.paused,
 				tokenStatus: acc.tokenStatus,
 				rateLimitStatus: acc.rateLimitStatus,
-			}))
+			})),
 		};
 		console.log(JSON.stringify(stats, null, 2));
 		await exitGracefully(0);
@@ -320,7 +328,7 @@ Examples:
 						input: async (_prompt: string) => "", // Will need to be provided
 						multiselect: async (_prompt: string, _options: any[]) => [],
 						confirm: async (_prompt: string) => true,
-					}
+					},
 				});
 				console.log(`✅ Account "${parsed.addAccount}" added successfully`);
 			} catch (error: any) {
@@ -328,13 +336,17 @@ Examples:
 				await exitGracefully(1);
 			}
 		} else {
-			console.error("❌ Interactive account setup is not available in CLI mode");
+			console.error(
+				"❌ Interactive account setup is not available in CLI mode",
+			);
 			console.error("Please provide the required flags:");
 			console.error("  --mode <max|console|zai|openai-compatible>");
 			console.error("  --tier <1|5|20>");
 			console.error("  --priority <number>");
 			console.error("\nExample:");
-			console.error("  better-ccflare --add-account work --mode max --tier 1 --priority 0");
+			console.error(
+				"  better-ccflare --add-account work --mode max --tier 1 --priority 0",
+			);
 			await exitGracefully(1);
 		}
 		await exitGracefully(0);
@@ -372,7 +384,9 @@ Examples:
 
 	if (parsed.clearHistory) {
 		const result = clearRequestHistory(dbOps.getDatabase());
-		console.log(`✅ Request history cleared successfully (${result.count} records removed)`);
+		console.log(
+			`✅ Request history cleared successfully (${result.count} records removed)`,
+		);
 		await exitGracefully(0);
 	}
 
@@ -421,7 +435,9 @@ Examples:
 	const config = new Config();
 	const port = parsed.port || config.getRuntime().port || NETWORK.DEFAULT_PORT;
 	console.log(`Server will be available at http://localhost:${port}`);
-	console.log("Dashboard will be available at http://localhost:" + port + "/dashboard");
+	console.log(
+		`Dashboard will be available at http://localhost:${port}/dashboard`,
+	);
 
 	startServer({
 		port,
