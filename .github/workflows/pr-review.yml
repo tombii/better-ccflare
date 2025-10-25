@@ -20,14 +20,19 @@ jobs:
           fetch-depth: 0
 
       - name: Fetch base branch
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: |
-          git fetch origin ${{ github.event.pull_request.base.ref }}
+          git fetch origin $BASE_REF
 
       - name: Generate diff
         id: diff
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: |
-          echo "Generating diff for PR #${{ github.event.pull_request.number }}"
-          DIFF=$(git diff origin/${{ github.event.pull_request.base.ref }}...HEAD)
+          echo "Generating diff for PR #$PR_NUMBER"
+          DIFF=$(git diff origin/$BASE_REF...HEAD)
           DIFF_SIZE=$(echo "$DIFF" | wc -c)
           echo "Diff size: $DIFF_SIZE bytes"
 
