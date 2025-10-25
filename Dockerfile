@@ -51,8 +51,10 @@ RUN echo "=== Binary Download Information ===" && \
     /usr/local/bin/better-ccflare --version || (echo "Binary verification failed - exec format error"; exit 1) && \
     echo "==================================="
 
-# Create data directory for database
-RUN mkdir -p /data
+# Create a non-root user to run the application
+RUN useradd -r -u 1000 -m -s /bin/bash ccflare && \
+    mkdir -p /data && \
+    chown -R ccflare:ccflare /data /app
 
 # Set environment variables
 ENV NODE_ENV=production
@@ -84,6 +86,9 @@ echo "================================="\n\
 echo ""\n\
 exec /usr/local/bin/better-ccflare "$@"\n\
 ' > /usr/local/bin/entrypoint.sh && chmod +x /usr/local/bin/entrypoint.sh
+
+# Switch to non-root user
+USER ccflare
 
 # Use the startup script as entrypoint
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
