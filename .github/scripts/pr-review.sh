@@ -3,10 +3,11 @@ set -euo pipefail
 
 # Configuration
 API_URL="https://openrouter.ai/api/v1/chat/completions"
-MODEL="${AI_MODEL:-z-ai/glm-4.5-air:free}"
-TEMPERATURE="${AI_TEMPERATURE:-0.2}"
-MAX_TOKENS="${AI_MAX_TOKENS:-8000}"
-MAX_DIFF_SIZE="${MAX_DIFF_SIZE:-600000}"
+# AI_MODELS should be set in workflow YAML as comma-separated list: "model1,model2,model3"
+MODELS="${AI_MODELS}"
+TEMPERATURE="${AI_TEMPERATURE}"
+MAX_TOKENS="${AI_MAX_TOKENS}"
+MAX_DIFF_SIZE="${MAX_DIFF_SIZE}"
 
 # Validate required environment variables
 if [[ -z "${OPENROUTER_API_KEY:-}" ]]; then
@@ -16,6 +17,26 @@ fi
 
 if [[ -z "${GITHUB_TOKEN:-}" ]]; then
     echo "Error: GITHUB_TOKEN is not set"
+    exit 1
+fi
+
+if [[ -z "${AI_MODELS:-}" ]]; then
+    echo "Error: AI_MODELS is not set"
+    exit 1
+fi
+
+if [[ -z "${AI_TEMPERATURE:-}" ]]; then
+    echo "Error: AI_TEMPERATURE is not set"
+    exit 1
+fi
+
+if [[ -z "${AI_MAX_TOKENS:-}" ]]; then
+    echo "Error: AI_MAX_TOKENS is not set"
+    exit 1
+fi
+
+if [[ -z "${MAX_DIFF_SIZE:-}" ]]; then
+    echo "Error: MAX_DIFF_SIZE is not set"
     exit 1
 fi
 
@@ -121,51 +142,92 @@ Remember: Be constructive, specific, and helpful. Focus on important issues rath
 
 echo "Sending diff to OpenRouter for review..."
 
-# Call OpenRouter API
-API_RESPONSE=$(curl -s -X POST "${API_URL}" \
-    -H "Authorization: Bearer ${OPENROUTER_API_KEY}" \
-    -H "Content-Type: application/json" \
-    -H "HTTP-Referer: https://github.com/${REPO_NAME}" \
-    -H "X-Title: better-ccflare PR Review" \
-    -d "$(jq -n \
-        --arg model "${MODEL}" \
-        --argjson temperature "${TEMPERATURE}" \
-        --argjson max_tokens "${MAX_TOKENS}" \
-        --arg prompt "${REVIEW_PROMPT}" \
-        '{
-            model: $model,
-            temperature: $temperature,
-            max_tokens: $max_tokens,
-            messages: [
-                {
-                    role: "system",
-                    content: "You are an expert code reviewer specializing in TypeScript, Node.js/Bun, and web security. Provide thorough, constructive code reviews."
-                },
-                {
-                    role: "user",
-                    content: $prompt
-                }
-            ]
-        }')")
+# Convert comma-separated models string to array
+IFS=',' read -ra MODEL_ARRAY <<< "$MODELS"
+echo "Configured models: ${MODELS}"
+echo "Will try ${#MODEL_ARRAY[@]} model(s)"
 
-# Check for API errors
-if echo "${API_RESPONSE}" | jq -e '.error' > /dev/null 2>&1; then
-    echo "Error from OpenRouter API:"
-    echo "${API_RESPONSE}" | jq -r '.error.message // .error'
-    exit 1
-fi
+# Function to call OpenRouter API with a specific model
+call_openrouter_api() {
+    local model=$1
+    echo "Attempting with model: ${model}"
 
-# Extract the review content
-REVIEW_CONTENT=$(echo "${API_RESPONSE}" | jq -r '.choices[0].message.content // empty')
+    curl -s -X POST "${API_URL}" \
+        -H "Authorization: Bearer ${OPENROUTER_API_KEY}" \
+        -H "Content-Type: application/json" \
+        -H "HTTP-Referer: https://github.com/${REPO_NAME}" \
+        -H "X-Title: better-ccflare PR Review" \
+        -d "$(jq -n \
+            --arg model "${model}" \
+            --argjson temperature "${TEMPERATURE}" \
+            --argjson max_tokens "${MAX_TOKENS}" \
+            --arg prompt "${REVIEW_PROMPT}" \
+            '{
+                model: $model,
+                temperature: $temperature,
+                max_tokens: $max_tokens,
+                messages: [
+                    {
+                        role: "system",
+                        content: "You are an expert code reviewer specializing in TypeScript, Node.js/Bun, and web security. Provide thorough, constructive code reviews."
+                    },
+                    {
+                        role: "user",
+                        content: $prompt
+                    }
+                ]
+            }')"
+}
 
+# Try each model in sequence until one succeeds
+REVIEW_CONTENT=""
+USED_MODEL=""
+LAST_ERROR=""
+
+for MODEL in "${MODEL_ARRAY[@]}"; do
+    # Trim whitespace from model name
+    MODEL=$(echo "$MODEL" | xargs)
+
+    API_RESPONSE=$(call_openrouter_api "${MODEL}")
+
+    # Check for API errors
+    if echo "${API_RESPONSE}" | jq -e '.error' > /dev/null 2>&1; then
+        LAST_ERROR=$(echo "${API_RESPONSE}" | jq -r '.error.message // .error')
+        echo "Error from model ${MODEL}: ${LAST_ERROR}"
+
+        # If this is not the last model, try the next one
+        if [[ "${MODEL}" != "${MODEL_ARRAY[-1]}" ]]; then
+            echo "Trying next fallback model..."
+            continue
+        fi
+    else
+        # Try to extract review content
+        REVIEW_CONTENT=$(echo "${API_RESPONSE}" | jq -r '.choices[0].message.content // empty')
+
+        if [[ -n "$REVIEW_CONTENT" ]]; then
+            USED_MODEL="${MODEL}"
+            echo "Review received successfully from model: ${USED_MODEL}"
+            break
+        else
+            echo "Warning: No content received from model ${MODEL}"
+            LAST_ERROR="No content in API response"
+
+            # If this is not the last model, try the next one
+            if [[ "${MODEL}" != "${MODEL_ARRAY[-1]}" ]]; then
+                echo "Trying next fallback model..."
+                continue
+            fi
+        fi
+    fi
+done
+
+# If we exhausted all models without success, exit with error
 if [[ -z "$REVIEW_CONTENT" ]]; then
-    echo "Error: No review content received from API"
-    echo "Full API response:"
+    echo "Error: All models failed. Last error: ${LAST_ERROR}"
+    echo "Full last API response:"
     echo "${API_RESPONSE}"
     exit 1
 fi
-
-echo "Review received successfully!"
 
 # Format the final comment
 COMMENT_BODY=$(cat <<EOF
@@ -177,7 +239,7 @@ ${REVIEW_CONTENT}
 
 **Stats:**
 - Diff size: ${DIFF_SIZE} bytes
-- Model: \`${MODEL}\`
+- Model: \`${USED_MODEL}\`
 - Review generated at: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
 
 ---
