@@ -13,6 +13,17 @@ jobs:
     # Only run when the ai_code_review label is present
     if: contains(github.event.pull_request.labels.*.name, 'ai_code_review')
     runs-on: ubuntu-latest
+
+    # Define environment variables at job level to avoid redundancy
+    env:
+      BASE_REF: ${{ github.event.pull_request.base.ref }}
+      HEAD_REF: ${{ github.event.pull_request.head.ref }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      PR_TITLE: ${{ github.event.pull_request.title }}
+      PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+      PR_DESCRIPTION: ${{ github.event.pull_request.body }}
+      REPO_NAME: ${{ github.repository }}
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -20,19 +31,14 @@ jobs:
           fetch-depth: 0
 
       - name: Fetch base branch
-        env:
-          BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: |
-          git fetch origin $BASE_REF
+          git fetch origin "$BASE_REF"
 
       - name: Generate diff
         id: diff
-        env:
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: |
           echo "Generating diff for PR #$PR_NUMBER"
-          DIFF=$(git diff origin/$BASE_REF...HEAD)
+          DIFF=$(git diff "origin/$BASE_REF...HEAD")
           DIFF_SIZE=$(echo "$DIFF" | wc -c)
           echo "Diff size: $DIFF_SIZE bytes"
 
@@ -61,13 +67,8 @@ jobs:
           AI_TEMPERATURE: "0.2"
           AI_MAX_TOKENS: "8000"
           MAX_DIFF_SIZE: "600000"
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          PR_TITLE: ${{ github.event.pull_request.title }}
-          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
-          PR_DESCRIPTION: ${{ github.event.pull_request.body }}
-          REPO_NAME: ${{ github.repository }}
-          BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
-          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+          BASE_BRANCH: ${{ env.BASE_REF }}
+          HEAD_BRANCH: ${{ env.HEAD_REF }}
         run: |
           cat /tmp/pr-diff.txt | bash .github/scripts/pr-review.sh
 
