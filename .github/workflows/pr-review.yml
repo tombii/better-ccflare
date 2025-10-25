@@ -10,8 +10,8 @@ permissions:
 
 jobs:
   review:
-    # Only run when the ai_code_review label is present
-    if: contains(github.event.pull_request.labels.*.name, 'ai_code_review')
+    # Run on all pull requests
+    # if: contains(github.event.pull_request.labels.*.name, 'ai_code_review')
     runs-on: ubuntu-latest
 
     # Define environment variables at job level to avoid redundancy
