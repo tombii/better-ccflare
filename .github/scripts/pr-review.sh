@@ -190,9 +190,9 @@ for MODEL in "${MODEL_ARRAY[@]}"; do
 
     API_RESPONSE=$(call_openrouter_api "${MODEL}")
 
-    # Check for API errors
-    if echo "${API_RESPONSE}" | jq -e '.error' > /dev/null 2>&1; then
-        LAST_ERROR=$(echo "${API_RESPONSE}" | jq -r '.error.message // .error')
+    # Check if response is valid JSON first
+    if ! echo "${API_RESPONSE}" | jq empty > /dev/null 2>&1; then
+        LAST_ERROR="Invalid JSON response from API: $(echo "${API_RESPONSE}" | head -c 200)..."
         echo "Error from model ${MODEL}: ${LAST_ERROR}"
 
         # If this is not the last model, try the next one
@@ -201,21 +201,33 @@ for MODEL in "${MODEL_ARRAY[@]}"; do
             continue
         fi
     else
-        # Try to extract review content
-        REVIEW_CONTENT=$(echo "${API_RESPONSE}" | jq -r '.choices[0].message.content // empty')
-
-        if [[ -n "$REVIEW_CONTENT" ]]; then
-            USED_MODEL="${MODEL}"
-            echo "Review received successfully from model: ${USED_MODEL}"
-            break
-        else
-            echo "Warning: No content received from model ${MODEL}"
-            LAST_ERROR="No content in API response"
+        # Check for API errors (now that we know it's valid JSON)
+        if echo "${API_RESPONSE}" | jq -e '.error' > /dev/null 2>&1; then
+            LAST_ERROR=$(echo "${API_RESPONSE}" | jq -r '.error.message // .error')
+            echo "Error from model ${MODEL}: ${LAST_ERROR}"
 
             # If this is not the last model, try the next one
             if [[ "${MODEL}" != "${MODEL_ARRAY[-1]}" ]]; then
                 echo "Trying next fallback model..."
                 continue
+            fi
+        else
+            # Try to extract review content
+            REVIEW_CONTENT=$(echo "${API_RESPONSE}" | jq -r '.choices[0].message.content // empty')
+
+            if [[ -n "$REVIEW_CONTENT" ]]; then
+                USED_MODEL="${MODEL}"
+                echo "Review received successfully from model: ${USED_MODEL}"
+                break
+            else
+                echo "Warning: No content received from model ${MODEL}"
+                LAST_ERROR="No content in API response"
+
+                # If this is not the last model, try the next one
+                if [[ "${MODEL}" != "${MODEL_ARRAY[-1]}" ]]; then
+                    echo "Trying next fallback model..."
+                    continue
+                fi
             fi
         fi
     fi
