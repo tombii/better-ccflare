@@ -223,22 +223,48 @@ for MODEL in "${MODEL_ARRAY[@]}"; do
                 continue
             fi
         else
-            # Try to extract review content
-            REVIEW_CONTENT=$(echo "${API_RESPONSE}" | jq -r '.choices[0].message.content // empty')
+            # Try to extract review content with better error handling
+            echo "Attempting to extract content from API response..."
 
-            if [[ -n "$REVIEW_CONTENT" ]]; then
-                USED_MODEL="${MODEL}"
-                echo "Review received successfully from model: ${USED_MODEL}"
-                break
-            else
-                echo "Warning: No content received from model ${MODEL}"
-                LAST_ERROR="No content in API response"
+            # Save API response to temp file for debugging
+            response_file=$(mktemp)
+            echo "${API_RESPONSE}" > "${response_file}"
 
-                # If this is not the last model, try the next one
-                if [[ "${MODEL}" != "${MODEL_ARRAY[-1]}" ]]; then
-                    echo "Trying next fallback model..."
-                    continue
+            # Check if the response file starts with JSON (not HTML or other content)
+            if head -c 1 "${response_file}" | grep -q '{'; then
+                # Try to extract content with error handling
+                if REVIEW_CONTENT=$(jq -r '.choices[0].message.content // empty' "${response_file}" 2>/dev/null); then
+                    echo "Successfully extracted content from model: ${MODEL}"
+                    rm -f "${response_file}"
+
+                    if [[ -n "$REVIEW_CONTENT" ]]; then
+                        USED_MODEL="${MODEL}"
+                        echo "Review received successfully from model: ${USED_MODEL}"
+                        break
+                    else
+                        echo "Warning: Empty content received from model ${MODEL}"
+                        LAST_ERROR="Empty content in API response"
+                    fi
+                else
+                    echo "Error: Failed to parse JSON response from model ${MODEL}"
+                    LAST_ERROR="JSON parsing error in content extraction"
+                    # Show first 200 chars of response for debugging
+                    echo "Response preview: $(head -c 200 "${response_file}")..."
                 fi
+            else
+                echo "Error: Non-JSON response received from model ${MODEL}"
+                LAST_ERROR="Non-JSON API response"
+                # Show first 200 chars of response for debugging
+                echo "Response preview: $(head -c 200 "${response_file}")..."
+            fi
+
+            # Clean up temp file
+            rm -f "${response_file}"
+
+            # If this is not the last model, try the next one
+            if [[ "${MODEL}" != "${MODEL_ARRAY[-1]}" ]]; then
+                echo "Trying next fallback model..."
+                continue
             fi
         fi
     fi
