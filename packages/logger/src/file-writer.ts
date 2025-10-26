@@ -31,8 +31,10 @@ export class LogFileWriter implements Disposable {
 	private maxFileSize = BUFFER_SIZES.LOG_FILE_MAX_SIZE;
 
 	constructor() {
-		// Create log directory in tmp folder
-		this.logDir = join(tmpdir(), "better-ccflare-logs");
+		// Use environment variable if set, otherwise use tmp folder
+		this.logDir =
+			process.env.BETTER_CCFLARE_LOG_DIR ||
+			join(tmpdir(), "better-ccflare-logs");
 		if (!existsSync(this.logDir)) {
 			mkdirSync(this.logDir, { recursive: true });
 		}
