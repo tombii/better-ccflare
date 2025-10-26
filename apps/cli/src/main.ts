@@ -87,12 +87,29 @@ function parseArgs(args: string[]) {
 				parsed.serve = true;
 				break;
 			case "--port":
+				if (i + 1 >= args.length || args[i + 1].startsWith("--")) {
+					console.error("❌ --port requires a value");
+					fastExit(1);
+				}
 				parsed.port = parseInt(args[++i], 10);
+				if (isNaN(parsed.port) || parsed.port < 1 || parsed.port > 65535) {
+					console.error(`❌ Invalid port: ${args[i]}`);
+					console.error("Port must be a number between 1 and 65535");
+					fastExit(1);
+				}
 				break;
 			case "--ssl-key":
+				if (i + 1 >= args.length || args[i + 1].startsWith("--")) {
+					console.error("❌ --ssl-key requires a path");
+					fastExit(1);
+				}
 				parsed.sslKey = args[++i];
 				break;
 			case "--ssl-cert":
+				if (i + 1 >= args.length || args[i + 1].startsWith("--")) {
+					console.error("❌ --ssl-cert requires a path");
+					fastExit(1);
+				}
 				parsed.sslCert = args[++i];
 				break;
 			case "--logs":
@@ -100,35 +117,88 @@ function parseArgs(args: string[]) {
 					args[i + 1] && !args[i + 1].startsWith("--")
 						? parseInt(args[++i], 10)
 						: 100;
+				if (parsed.logs < 0 || isNaN(parsed.logs)) {
+					console.error(`❌ Invalid log count: ${args[i] || "100"}`);
+					console.error("Log count must be a non-negative number");
+					fastExit(1);
+				}
 				break;
 			case "--stats":
 				parsed.stats = true;
 				break;
 			case "--add-account":
+				if (i + 1 >= args.length || args[i + 1].startsWith("--")) {
+					console.error("❌ --add-account requires an account name");
+					fastExit(1);
+				}
 				parsed.addAccount = args[++i];
 				break;
 			case "--mode":
+				if (i + 1 >= args.length || args[i + 1].startsWith("--")) {
+					console.error("❌ --mode requires a value");
+					fastExit(1);
+				}
 				parsed.mode = args[++i];
+				const validModes = ["max", "console", "zai", "openai-compatible"];
+				if (!validModes.includes(parsed.mode)) {
+					console.error(`❌ Invalid mode: ${parsed.mode}`);
+					console.error(`Valid modes: ${validModes.join(", ")}`);
+					fastExit(1);
+				}
 				break;
 			case "--tier":
+				if (i + 1 >= args.length || args[i + 1].startsWith("--")) {
+					console.error("❌ --tier requires a value");
+					fastExit(1);
+				}
 				parsed.tier = parseInt(args[++i], 10);
+				if (isNaN(parsed.tier) || ![1, 5, 20].includes(parsed.tier)) {
+					console.error(`❌ Invalid tier: ${args[i]}`);
+					console.error("Tier must be 1, 5, or 20");
+					fastExit(1);
+				}
 				break;
 			case "--priority":
+				if (i + 1 >= args.length || args[i + 1].startsWith("--")) {
+					console.error("❌ --priority requires a value");
+					fastExit(1);
+				}
 				parsed.priority = parseInt(args[++i], 10);
+				if (isNaN(parsed.priority)) {
+					console.error(`❌ Invalid priority: ${args[i]}`);
+					console.error("Priority must be a number");
+					fastExit(1);
+				}
 				break;
 			case "--list":
 				parsed.list = true;
 				break;
 			case "--remove":
+				if (i + 1 >= args.length || args[i + 1].startsWith("--")) {
+					console.error("❌ --remove requires an account name");
+					fastExit(1);
+				}
 				parsed.remove = args[++i];
 				break;
 			case "--pause":
+				if (i + 1 >= args.length || args[i + 1].startsWith("--")) {
+					console.error("❌ --pause requires an account name");
+					fastExit(1);
+				}
 				parsed.pause = args[++i];
 				break;
 			case "--resume":
+				if (i + 1 >= args.length || args[i + 1].startsWith("--")) {
+					console.error("❌ --resume requires an account name");
+					fastExit(1);
+				}
 				parsed.resume = args[++i];
 				break;
 			case "--set-priority": {
+				if (i + 2 >= args.length || args[i + 1].startsWith("--") || args[i + 2].startsWith("--")) {
+					console.error("❌ --set-priority requires an account name and priority");
+					fastExit(1);
+				}
 				const name = args[++i];
 				const priority = args[++i];
 				parsed.setPriority = [name, priority];
@@ -147,6 +217,10 @@ function parseArgs(args: string[]) {
 				parsed.getModel = true;
 				break;
 			case "--set-model":
+				if (i + 1 >= args.length || args[i + 1].startsWith("--")) {
+					console.error("❌ --set-model requires a model name");
+					fastExit(1);
+				}
 				parsed.setModel = args[++i];
 				break;
 		}
