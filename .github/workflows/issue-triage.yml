@@ -19,7 +19,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-          AI_MODEL: "z-ai/glm-4.5-air:free"
+          # Comma-separated list of models to try in order (fallback support)
+          AI_MODELS: "minimax/minimax-m2:free,qwen/qwen3-coder:free,z-ai/glm-4.5-air:free"
           AI_TEMPERATURE: "0.3"
           AI_MAX_TOKENS: "4000"
           ISSUE_NUMBER: ${{ github.event.issue.number }}
