@@ -39,7 +39,33 @@ export function errorResponse(error: unknown): Response {
 	// In browser context, we can't log to files
 	// Server-side code should handle logging before calling errorResponse
 	if (typeof console !== "undefined" && console.error) {
-		console.error("Unhandled error:", error);
+		// Redact sensitive user input from errors before logging
+		if (error && typeof error === "object") {
+			const redact = (obj: any) => {
+				if (!obj || typeof obj !== "object") return obj;
+				const clone: any = Array.isArray(obj) ? [...obj] : { ...obj };
+				for (const key of Object.keys(clone)) {
+					// Redact fields named 'value', 'apiKey', or other known sensitive keys
+					if (
+						typeof key === "string" &&
+						(key === "value" || key === "apiKey" || key === "password" || key === "token")
+					) {
+						clone[key] = "[REDACTED]";
+					} else if (typeof clone[key] === "object" && clone[key] !== null) {
+						clone[key] = redact(clone[key]);
+					}
+				}
+				return clone;
+			};
+			// If the error has a 'context', redact it
+			const safeError =
+				"context" in error && typeof error.context === "object"
+					? { ...error, context: redact(error.context) }
+					: redact(error);
+			console.error("Unhandled error:", safeError);
+		} else {
+			console.error("Unhandled error:", error);
+		}
 	}
 
 	return jsonResponse({ error: message }, status);
