@@ -152,31 +152,42 @@ call_openrouter_api() {
     local model=$1
     echo "Attempting with model: ${model}"
 
-    curl -s -X POST "${API_URL}" \
+    # Create a temporary JSON file for the request payload to avoid jq parsing issues
+    local temp_json_file=$(mktemp)
+
+    # Use base64 encoding for the prompt to avoid JSON escaping issues
+    local encoded_prompt=$(echo "${REVIEW_PROMPT}" | base64 -w 0)
+
+    cat > "${temp_json_file}" <<EOF
+{
+    "model": "${model}",
+    "temperature": ${TEMPERATURE},
+    "max_tokens": ${MAX_TOKENS},
+    "messages": [
+        {
+            "role": "system",
+            "content": "You are an expert code reviewer specializing in TypeScript, Node.js/Bun, and web security. Provide thorough, constructive code reviews."
+        },
+        {
+            "role": "user",
+            "content": "$(echo "${REVIEW_PROMPT}" | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')"
+        }
+    ]
+}
+EOF
+
+    local api_response
+    api_response=$(curl -s -X POST "${API_URL}" \
         -H "Authorization: Bearer ${OPENROUTER_API_KEY}" \
         -H "Content-Type: application/json" \
         -H "HTTP-Referer: https://github.com/${REPO_NAME}" \
         -H "X-Title: better-ccflare PR Review" \
-        -d "$(jq -n \
-            --arg model "${model}" \
-            --argjson temperature "${TEMPERATURE}" \
-            --argjson max_tokens "${MAX_TOKENS}" \
-            --arg prompt "${REVIEW_PROMPT}" \
-            '{
-                model: $model,
-                temperature: $temperature,
-                max_tokens: $max_tokens,
-                messages: [
-                    {
-                        role: "system",
-                        content: "You are an expert code reviewer specializing in TypeScript, Node.js/Bun, and web security. Provide thorough, constructive code reviews."
-                    },
-                    {
-                        role: "user",
-                        content: $prompt
-                    }
-                ]
-            }')"
+        -d @"${temp_json_file}")
+
+    # Clean up temp file
+    rm -f "${temp_json_file}"
+
+    echo "${api_response}"
 }
 
 # Try each model in sequence until one succeeds
@@ -264,10 +275,23 @@ EOF
 
 # Post the review comment
 echo "Posting review comment to PR..."
+# Create a temporary JSON file for GitHub comment to avoid jq parsing issues
+temp_comment_file=$(mktemp)
+
+# Properly escape the comment body for JSON
+cat > "${temp_comment_file}" <<EOF
+{
+    "body": $(echo "${COMMENT_BODY}" | jq -Rs .)
+}
+EOF
+
 curl -s -X POST \
     -H "Authorization: token ${GITHUB_TOKEN}" \
     -H "Accept: application/vnd.github.v3+json" \
     "https://api.github.com/repos/${REPO_NAME}/issues/${PR_NUMBER}/comments" \
-    -d "$(jq -n --arg body "${COMMENT_BODY}" '{body: $body}')" > /dev/null
+    -d @"${temp_comment_file}" > /dev/null
+
+# Clean up temp file
+rm -f "${temp_comment_file}"
 
 echo "PR review completed successfully!"
