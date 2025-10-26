@@ -40,11 +40,12 @@ jobs:
 
       - name: Extract version from tag or event
         id: version
+        env:
+          REF: ${{ github.event.workflow_run.head_branch }}
         run: |
           # For workflow_run events triggered by release workflow
           if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
             # Get the head branch which contains the tag name
-            REF="${{ github.event.workflow_run.head_branch }}"
             if [[ "$REF" == v* ]]; then
               VERSION="${REF#v}"
               echo "version=${VERSION}" >> $GITHUB_OUTPUT
