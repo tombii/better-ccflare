@@ -1,6 +1,6 @@
 {
 	"name": "better-ccflare",
-	"version": "2.0.2",
+	"version": "2.0.3",
 	"description": "Load balancer proxy for Claude API with intelligent distribution across multiple OAuth accounts to avoid rate limiting",
 	"author": "snipeship",
 	"license": "MIT",
@@ -34,15 +34,7 @@
 	"devDependencies": {
 		"@types/node": "^20.0.0"
 	},
-	"dependencies": {
-		"@better-ccflare/cli-commands": "workspace:*",
-		"@better-ccflare/config": "workspace:*",
-		"@better-ccflare/core": "workspace:*",
-		"@better-ccflare/core-di": "workspace:*",
-		"@better-ccflare/database": "workspace:*",
-		"@better-ccflare/logger": "workspace:*",
-		"@better-ccflare/server": "workspace:*"
-	},
+	"dependencies": {},
 	"files": [
 		"dist/better-ccflare",
 		"README.md"
