@@ -6,17 +6,19 @@
 		"packages/*"
 	],
 	"scripts": {
-		"better-ccflare": "bun run build && bun run tui",
-		"tui": "bun run apps/tui/src/main.ts",
-		"dev": "bun run tui",
+		"better-ccflare": "bun run build && bun run cli",
+		"cli": "bun run apps/cli/src/main.ts",
+		"dev": "bun run cli",
 		"start": "bun run apps/server/src/server.ts",
 		"server": "bun run apps/server/src/server.ts",
 		"dev:server": "bun run --hot apps/server/src/server.ts",
 		"dev:dashboard": "bun --hot packages/dashboard-web/src/index.tsx",
 		"typecheck": "bunx tsc --noEmit",
-		"build": "bun run build:dashboard && bun run build:tui",
+		"test": "bun test",
+		"test:cli": "bun test apps/cli/__tests__",
+		"build": "bun run build:dashboard && bun run build:cli",
 		"build:dashboard": "bun run --cwd packages/dashboard-web build",
-		"build:tui": "bun run --cwd apps/tui build",
+		"build:cli": "bun run --cwd apps/cli build",
 		"build:lander": "bun run --cwd apps/lander build",
 		"format": "bunx biome format --write .",
 		"lint": "bunx --bun biome check --write --unsafe ."
@@ -30,9 +32,5 @@
 		"bun-types": "latest",
 		"typescript": "^5.0.0"
 	},
-	"overrides": {
-		"react": "^19.0.0",
-		"@types/react": "^19.0.0"
-	},
-	"version": "1.2.39"
+		"version": "2.0.0"
 }

@@ -38,10 +38,10 @@ export async function getVersion(): Promise<string> {
 			// Continue to next method
 		}
 
-		// 4. Try development environment - reading from apps/tui/package.json
+		// 4. Try development environment - reading from apps/cli/package.json
 		try {
 			const packageJsonPath = new URL(
-				"../../apps/tui/package.json",
+				"../../apps/cli/package.json",
 				import.meta.url,
 			);
 			const packageJson = await fetch(packageJsonPath);

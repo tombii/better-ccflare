@@ -94,7 +94,7 @@ export interface AccountResponse {
 	usageData: FullUsageData | null; // Full usage data for Anthropic accounts
 }
 
-// UI display type - used in TUI and web dashboard
+// UI display type - used in CLI and web dashboard
 export interface AccountDisplay {
 	id: string;
 	name: string;

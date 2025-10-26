@@ -38,7 +38,7 @@ export interface TokenUsageInfo {
 
 /**
  * Process token usage data for display
- * This contains the shared business logic for both dashboard and TUI
+ * This contains the shared business logic for both dashboard and CLI
  */
 export function processTokenUsage(
 	data: TokenUsageData | undefined,

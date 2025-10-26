@@ -12,7 +12,7 @@ The system is built with a modular, microservices-inspired architecture using Ty
 graph LR
     subgraph "User Interfaces"
         UI1[Web Dashboard]
-        UI2[TUI/CLI]
+        UI2[CLI]
         UI3[API Clients]
     end
     
@@ -61,7 +61,7 @@ graph TB
     %% Client Layer
     subgraph "Client Applications"
         CA[Client Apps]
-        TUI[TUI/CLI Tool<br/>apps/tui]
+        CLI[CLI Tool<br/>apps/cli]
         WEB[Web Dashboard<br/>packages/dashboard-web]
     end
 
@@ -112,7 +112,7 @@ graph TB
 
     %% Connections
     CA -->|HTTP/HTTPS| SERVER
-    TUI -->|Commands/API| SERVER
+    CLI -->|Commands/API| SERVER
     WEB -->|Embedded in| SERVER
     
     SERVER --> ROUTER
@@ -148,9 +148,9 @@ The project is organized as a Bun monorepo with clear separation of concerns:
 ```
 better-ccflare/
 ├── apps/                    # Deployable applications
+│   ├── cli/               # Command-line interface
 │   ├── lander/            # Static landing page
-│   ├── server/            # Main HTTP server
-│   └── tui/               # Terminal UI with integrated CLI
+│   └── server/            # Main HTTP server
 ├── packages/              # Shared libraries
 │   ├── agents/            # Agent discovery and workspace management
 │   ├── cli-commands/      # CLI command implementations
@@ -167,7 +167,6 @@ better-ccflare/
 │   ├── oauth-flow/        # OAuth authentication flow
 │   ├── providers/         # AI provider integrations
 │   ├── proxy/             # Request proxy logic with agent interceptor
-│   ├── tui-core/          # TUI screen components
 │   ├── types/             # Shared TypeScript types
 │   ├── ui-common/         # Shared UI components and formatters
 │   └── ui-constants/      # UI constants and configuration
@@ -224,14 +223,14 @@ graph LR
 - Strategy hot-reloading based on configuration changes
 - Agent registry initialization
 
-### 2. TUI Application with Integrated CLI (`apps/tui`)
+### 2. CLI Application (`apps/cli`)
 
-The Terminal User Interface application that also serves as the CLI:
+The Command Line Interface application provides explicit commands:
 
 ```mermaid
 graph TB
     %% Entry Point
-    subgraph "TUI/CLI Entry Point"
+    subgraph "CLI Entry Point"
         MAIN[main.ts]
         ARGS[Parse Arguments]
 
@@ -253,26 +252,16 @@ graph TB
             CLI_CMDS --> LOGS
             CLI_CMDS --> ANALYZE
         end
-
-        %% Interactive Mode group
-        subgraph "Interactive Mode"
-            INT_MODE[Interactive Mode]
-            TUI[TUI Interface]
-            AUTO_SERVER[Auto-start Server]
-            INT_MODE --> TUI
-            TUI --> AUTO_SERVER
-        end
     end
 
     MAIN --> ARGS
     ARGS -->|CLI Command| CLI_CMDS
-    ARGS -->|No Command| INT_MODE
 ```
 
 **Features:**
-- Unified binary for both CLI and TUI functionality
-- Auto-starts server when launching interactive TUI
-- Account management commands
+- Explicit command-line interface requiring specific flags
+- Default server startup when no command specified
+- Account management commands with explicit parameters
 - Statistics viewing
 - Log streaming
 - Performance analysis
@@ -1041,13 +1030,13 @@ The main HTTP server application that:
 - Manages WebSocket connections for real-time updates
 - Initializes agent registry
 
-### 2. TUI App with Integrated CLI (`apps/tui`)
+### 2. CLI Application (`apps/cli`)
 
-Unified terminal application built with Ink (React for CLI):
-- **Interactive Mode**: 
-  - Real-time monitoring dashboard in the terminal
-  - Auto-starts server if not running
-  - Interactive account management
+Command-line interface application with explicit commands:
+- **CLI Mode**:
+  - Explicit command structure with required flags
+  - Server startup as default behavior
+  - Account management with specific parameters
   - Log streaming
   - Request monitoring
 - **CLI Mode**: 
@@ -1058,7 +1047,7 @@ Unified terminal application built with Ink (React for CLI):
   - Server startup with `--serve`
   - Configuration updates
 
-**Note**: There is no separate CLI app - all CLI functionality is integrated into the TUI binary.
+**Note**: The CLI app provides all functionality through explicit command-line flags with server startup as the default behavior.
 
 ### 3. Landing Page (`apps/lander`)
 
@@ -1270,9 +1259,9 @@ graph TB
 - **Rationale**: Transparent model switching without client changes
 - **Trade-offs**: Request inspection overhead vs. flexibility
 
-### 11. Unified TUI/CLI Binary
-- **Decision**: Combine TUI and CLI into single binary
-- **Rationale**: Simpler distribution, shared codebase, consistent behavior
+### 11. CLI-First Architecture
+- **Decision**: Focus on explicit CLI commands with server as default
+- **Rationale**: Clear command structure, better automation support, consistent behavior
 - **Trade-offs**: Larger binary size vs. deployment simplicity
 
 ## Technology Stack
@@ -1281,7 +1270,6 @@ graph TB
 - **Bun**: High-performance JavaScript runtime
 - **TypeScript**: Type-safe development
 - **React**: Dashboard UI framework
-- **Ink**: Terminal UI framework
 - **Tailwind CSS**: Utility-first styling
 
 ### Data Storage
@@ -1491,9 +1479,9 @@ graph TB
    - Per-agent model preferences
    - Workspace persistence and management
 
-7. **Unified TUI/CLI**
-   - Single binary for all terminal interactions
-   - Auto-server startup in interactive mode
+7. **CLI-First Design**
+   - Explicit command structure with required flags
+   - Server startup as default behavior
    - Comprehensive CLI commands
    - Performance analysis tools
 
