@@ -150,7 +150,7 @@ echo "Will try ${#MODEL_ARRAY[@]} model(s)"
 # Function to call OpenRouter API with a specific model
 call_openrouter_api() {
     local model=$1
-    echo "Attempting with model: ${model}"
+    echo "Attempting with model: ${model}" >&2
 
     # Create a temporary JSON file for the request payload to avoid jq parsing issues
     local temp_json_file=$(mktemp)
@@ -199,7 +199,7 @@ for MODEL in "${MODEL_ARRAY[@]}"; do
     # Trim whitespace from model name
     MODEL=$(echo "$MODEL" | xargs)
 
-    API_RESPONSE=$(call_openrouter_api "${MODEL}")
+    API_RESPONSE=$(call_openrouter_api "${MODEL}" 2>/dev/null)
 
     # Check if response is valid JSON first
     if ! echo "${API_RESPONSE}" | jq empty > /dev/null 2>&1; then
@@ -231,9 +231,11 @@ for MODEL in "${MODEL_ARRAY[@]}"; do
             echo "${API_RESPONSE}" > "${response_file}"
 
             # Check if the response file starts with JSON (not HTML or other content)
-            if head -c 1 "${response_file}" | grep -q '{'; then
+            # Remove leading whitespace and check first character
+            if sed 's/^[[:space:]]*//' "${response_file}" | head -c 1 | grep -q '{'; then
                 # Try to extract content with error handling
-                if REVIEW_CONTENT=$(jq -r '.choices[0].message.content // empty' "${response_file}" 2>/dev/null); then
+                # Use sed to strip leading whitespace before jq
+                if REVIEW_CONTENT=$(sed 's/^[[:space:]]*//' "${response_file}" | jq -r '.choices[0].message.content // empty' 2>/dev/null); then
                     echo "Successfully extracted content from model: ${MODEL}"
                     rm -f "${response_file}"
 
@@ -248,8 +250,8 @@ for MODEL in "${MODEL_ARRAY[@]}"; do
                 else
                     echo "Error: Failed to parse JSON response from model ${MODEL}"
                     LAST_ERROR="JSON parsing error in content extraction"
-                    # Show first 200 chars of response for debugging
-                    echo "Response preview: $(head -c 200 "${response_file}")..."
+                    # Show first 200 chars of response for debugging (stripping leading whitespace)
+                    echo "Response preview: $(sed 's/^[[:space:]]*//' "${response_file}" | head -c 200)..."
                 fi
             else
                 echo "Error: Non-JSON response received from model ${MODEL}"
