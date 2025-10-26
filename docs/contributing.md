@@ -78,12 +78,12 @@ Before you begin, ensure you have the following installed:
    bun install
    ```
 
-5. **Build the dashboard and TUI** (required before first run):
+5. **Build the dashboard and CLI** (required before first run):
    ```bash
    bun run build
    ```
 
-   **Important**: You must run this build step at least once before starting the server. The `bun run build` command builds both the web dashboard and TUI components. Without this step, the dashboard files won't be available when you start the server.
+   **Important**: You must run this build step at least once before starting the server. The `bun run build` command builds the web dashboard and CLI components. Without this step, the dashboard files won't be available when you start the server.
 
 6. **Verify the installation**:
    ```bash
@@ -119,14 +119,14 @@ bun run dev:server
 # In another terminal, start the CLI
 bun run dev:cli
 
-# Or start the TUI interface
-bun run dev
+# Or start the CLI interface
+bun run cli
 
 # Or work on the dashboard (rebuilds on changes)
 bun run dev:dashboard
 ```
 
-**Note**: If you're making changes to the dashboard, use `bun run dev:dashboard` for hot reloading. For other changes, you may need to run `bun run build:dashboard` or `bun run build:tui` to see your changes reflected.
+**Note**: If you're making changes to the dashboard, use `bun run dev:dashboard` for hot reloading. For other changes, you may need to run `bun run build:dashboard` or `bun run build:cli` to see your changes reflected.
 
 ### Running Tests
 
@@ -180,7 +180,6 @@ better-ccflare/
 │   ├── cli/                # Command-line interface
 │   ├── lander/            # Static landing page
 │   ├── server/            # Main HTTP server
-│   └── tui/               # Terminal UI (Ink-based)
 ├── packages/              # Shared libraries
 │   ├── cli-commands/      # CLI command implementations
 │   ├── config/            # Configuration management
@@ -193,7 +192,6 @@ better-ccflare/
 │   ├── logger/            # Logging utilities
 │   ├── providers/         # AI provider integrations
 │   ├── proxy/             # Request proxy logic
-│   ├── tui-core/          # TUI screen components
 │   └── types/             # Shared TypeScript types
 ├── docs/                  # Documentation
 ├── biome.json            # Linting and formatting config
@@ -209,7 +207,7 @@ better-ccflare/
 
 ### Package Naming Convention
 
-- Apps: Simple names (e.g., `server`, `cli`, `tui`)
+- Apps: Simple names (e.g., `server`, `cli`, `lander`)
 - Packages: Prefixed with `@better-ccflare/` (e.g., `@better-ccflare/core`, `@better-ccflare/database`)
 
 ## Coding Standards
@@ -355,7 +353,7 @@ We follow the [Conventional Commits](https://www.conventionalcommits.org/) speci
 ### Scope
 
 The scope should be the package or app name:
-- `server`, `cli`, `tui`, `lander`
+- `server`, `cli`, `lander`
 - `core`, `database`, `proxy`, `load-balancer`, etc.
 
 ### Examples
@@ -700,48 +698,48 @@ Contributors are recognized in:
 
 ### Working with the CLI
 
-The CLI functionality is integrated into the TUI application. Use `better-ccflare` with command-line flags:
+The CLI functionality provides explicit commands for all operations. Use `bun run cli` with command-line flags:
 
 ```bash
 # If better-ccflare is not installed globally, use:
-# bun run tui [options]
+# bun run cli [options]
 # or build and run with: bun run better-ccflare
 
 # Add a new account
-better-ccflare --add-account <name>
-# With options:
-better-ccflare --add-account <name> --mode <max|console> --tier <1|5|20>
+bun run cli --add-account <name> --mode <max|console|zai|openai-compatible> --tier <1|5|20> --priority <number>
 
 # List all accounts
-better-ccflare --list
+bun run cli --list
 
 # Remove an account
-better-ccflare --remove <name>
+bun run cli --remove <name>
 
 # Pause/resume accounts
-better-ccflare --pause <name>
-better-ccflare --resume <name>
+bun run cli --pause <name>
+bun run cli --resume <name>
 
 # Reset usage statistics
-better-ccflare --reset-stats
+bun run cli --reset-stats
 
 # Clear request history
-better-ccflare --clear-history
+bun run cli --clear-history
 
 # View statistics (JSON output)
-better-ccflare --stats
+bun run cli --stats
 
 # Stream logs
-better-ccflare --logs [N]  # Show N lines of history then follow
+bun run cli --logs [N]  # Show N lines of history then follow
 
 # Analyze database performance
-better-ccflare --analyze
+bun run cli --analyze
 
 # Start server with dashboard
-better-ccflare --serve --port 8080
+bun run cli --serve --port 8080
+# or simply:
+bun start
 
 # Show help
-better-ccflare --help
+bun run cli --help
 ```
 
 ### Running the Server
@@ -768,18 +766,16 @@ bun run build:dashboard
 bun run dev:dashboard
 ```
 
-### Working with the TUI
+### Working with the CLI
 
 ```bash
-# Run the TUI application
-bun run tui
-# or
-bun run dev
+# Run the CLI application
+bun run cli
 # or (builds first, then runs)
 bun run better-ccflare
 
-# Build the TUI
-bun run build:tui
+# Build the CLI
+bun run build:cli
 ```
 
 ### Building for Production
@@ -790,7 +786,7 @@ bun run build
 
 # Build specific applications
 bun run build:dashboard
-bun run build:tui
+bun run build:cli
 bun run build:lander
 ```
 

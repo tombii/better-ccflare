@@ -3,7 +3,7 @@
 ## Track Every Request. Go Low-Level. Never Hit Rate Limits Again.
 
 ![Build Status](https://img.shields.io/badge/build-passing-brightgreen)
-![Version](https://img.shields.io/badge/version-1.0.0-blue)
+![Version](https://img.shields.io/badge/version-2.0.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Bun](https://img.shields.io/badge/bun-%3E%3D1.2.8-f472b6)
 
@@ -29,7 +29,7 @@ When working with Claude API at scale, rate limits can become a significant bott
 
 ### 📈 Real-Time Monitoring & Analytics
 - **Web Dashboard**: Interactive UI at `/dashboard` with live metrics
-- **Terminal UI**: Built-in TUI for server management and monitoring
+- **Powerful CLI**: Comprehensive command-line interface for management and monitoring
 - **Request Tracking**: Complete history with token usage and costs
 - **Performance Metrics**: Response times, success rates, and error tracking
 
@@ -60,8 +60,7 @@ When working with Claude API at scale, rate limits can become a significant bott
 
 ### User Interfaces
 - [HTTP API Reference](./api-http.md) - Complete REST API documentation
-- [CLI Commands](./cli.md) - Command-line interface reference
-- [Terminal UI Guide](./tui.md) - Interactive terminal interface documentation
+- [CLI Commands](./cli.md) - Comprehensive command-line interface reference
 
 ### Operations
 - [Deployment Guide](./deployment.md) - Production deployment with Docker, systemd, PM2, and Kubernetes
@@ -82,20 +81,23 @@ cd better-ccflare
 bun install
 ```
 
-### 2. Start better-ccflare (TUI + Server)
+### 2. Start better-ccflare (CLI + Server)
 
 ```bash
-# Start better-ccflare with interactive TUI (automatically starts server)
-bun run better-ccflare
+# Start better-ccflare with CLI (automatically starts server if no command specified)
+bun run cli
 
-# Or start just the server without TUI
+# Or start just the server
 bun run server
+
+# Start server on specific port
+bun run server --port 8081
 
 # Specify session duration (default: 5 hours)
 SESSION_DURATION_MS=21600000 bun run server  # 6 hours
 
-# Run TUI directly with Bun (if not using npm scripts)
-bun run apps/tui/src/main.ts
+# Run CLI directly with Bun (if not using npm scripts)
+bun run apps/cli/src/main.ts
 ```
 
 ### 3. Add Your Claude Accounts
@@ -103,17 +105,17 @@ bun run apps/tui/src/main.ts
 ```bash
 # In another terminal, add your accounts
 # Add a work account
-bun run apps/tui/src/main.ts --add-account work-account
+bun run apps/cli/src/main.ts --add-account work-account --mode max --tier 1
 
-# Add a personal account  
-bun run apps/tui/src/main.ts --add-account personal-account
+# Add a personal account
+bun run apps/cli/src/main.ts --add-account personal-account --mode max --tier 1
 
 # Add accounts with specific tiers
-bun run apps/tui/src/main.ts --add-account pro-account --mode max --tier 1
-bun run apps/tui/src/main.ts --add-account max-account --mode max --tier 5
+bun run apps/cli/src/main.ts --add-account pro-account --mode max --tier 1
+bun run apps/cli/src/main.ts --add-account max-account --mode max --tier 5
 
 # Or if you have better-ccflare command available globally
-better-ccflare --add-account work-account
+better-ccflare --add-account work-account --mode max --tier 1
 ```
 
 ### 4. Configure Your Claude Client
@@ -126,8 +128,8 @@ export ANTHROPIC_BASE_URL=http://localhost:8080
 ### 5. Monitor Your Usage
 
 - **Web Dashboard**: Open [http://localhost:8080/dashboard](http://localhost:8080/dashboard) for real-time analytics
-- **Terminal UI**: Use the interactive TUI started with `bun run better-ccflare`
-- **CLI**: Check status with `bun run apps/tui/src/main.ts --list`
+- **CLI**: Check status with `bun run apps/cli/src/main.ts --list`
+- **Stats**: View detailed statistics with `bun run apps/cli/src/main.ts --stats`
 
 ## Project Structure
 
@@ -135,7 +137,7 @@ export ANTHROPIC_BASE_URL=http://localhost:8080
 better-ccflare/
 ├── apps/               # Application packages
 │   ├── server/        # Main proxy server
-│   ├── tui/           # Terminal UI with integrated CLI
+│   ├── cli/           # CLI application
 │   └── lander/        # Landing page
 ├── packages/          # Core packages
 │   ├── core/          # Core business logic
@@ -155,20 +157,19 @@ better-ccflare/
 
 ```bash
 # Main commands
-bun run better-ccflare        # Start TUI (builds dashboard first)
+bun run cli            # Start CLI (builds dashboard first)
 bun run server         # Start server only
-bun run tui            # Start TUI only
 bun run start          # Alias for bun run server
 
 # Development
-bun run dev            # Start TUI in development mode
+bun run dev            # Start CLI in development mode
 bun run dev:server     # Server with hot reload
 bun run dev:dashboard  # Dashboard development
 
 # Build & Quality
-bun run build          # Build dashboard and TUI
+bun run build          # Build dashboard and CLI
 bun run build:dashboard # Build web dashboard
-bun run build:tui      # Build TUI
+bun run build:cli      # Build CLI
 bun run build:lander   # Build landing page
 bun run typecheck      # Check TypeScript types
 bun run lint           # Fix linting issues
@@ -177,34 +178,35 @@ bun run format         # Format code
 
 ## CLI Commands
 
-The better-ccflare CLI is integrated into the TUI application. All CLI functionality is accessed through the same executable:
+The better-ccflare CLI provides comprehensive command-line interface for management and monitoring:
 
 ```bash
 # If running without global install, use the full path:
-bun run apps/tui/src/main.ts [command]
-
-# The commands below assume you're using the full path
+bun run apps/cli/src/main.ts [command]
 
 # Account management
-bun run apps/tui/src/main.ts --add-account <name>     # Add account
-bun run apps/tui/src/main.ts --list                   # List accounts
-bun run apps/tui/src/main.ts --remove <name>          # Remove account
-bun run apps/tui/src/main.ts --pause <name>           # Pause account
-bun run apps/tui/src/main.ts --resume <name>          # Resume account
+bun run apps/cli/src/main.ts --add-account <name> --mode <max|console|zai|openai-compatible> --tier <1|5|20> --priority <number>  # Add account
+bun run apps/cli/src/main.ts --list                   # List accounts
+bun run apps/cli/src/main.ts --remove <name>          # Remove account
+bun run apps/cli/src/main.ts --pause <name>           # Pause account
+bun run apps/cli/src/main.ts --resume <name>          # Resume account
+bun run apps/cli/src/main.ts --set-priority <name> <priority>  # Set account priority
+
+# Server management
+bun run apps/cli/src/main.ts --serve                  # Start server
+bun run apps/cli/src/main.ts --serve --port 8081    # Start on specific port
+bun run apps/cli/src/main.ts --logs [N]               # Stream logs
+bun run apps/cli/src/main.ts --stats                  # Show statistics (JSON)
 
 # Maintenance
-bun run apps/tui/src/main.ts --reset-stats            # Reset statistics
-bun run apps/tui/src/main.ts --clear-history          # Clear request history
-bun run apps/tui/src/main.ts --analyze                # Analyze database performance
+bun run apps/cli/src/main.ts --reset-stats            # Reset statistics
+bun run apps/cli/src/main.ts --clear-history          # Clear request history
+bun run apps/cli/src/main.ts --analyze                # Analyze database performance
 
-# Other options
-bun run apps/tui/src/main.ts --serve                  # Start server only
-bun run apps/tui/src/main.ts --logs [N]               # Stream logs (optionally show last N lines)
-bun run apps/tui/src/main.ts --stats                  # Show statistics (JSON)
-bun run apps/tui/src/main.ts --help                   # Show help
-
-# Add account with options
-bun run apps/tui/src/main.ts --add-account <name> --mode <max|console|zai|openai-compatible> --tier <1|5|20>
+# Configuration
+bun run apps/cli/src/main.ts --get-model               # Show current model
+bun run apps/cli/src/main.ts --set-model <model>       # Set default model
+bun run apps/cli/src/main.ts --help                   # Show help
 ```
 
 For more detailed CLI documentation, see [CLI Commands](./cli.md).
