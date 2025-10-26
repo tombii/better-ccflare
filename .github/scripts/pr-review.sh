@@ -176,6 +176,11 @@ call_openrouter_api() {
 }
 EOF
 
+    # Debug: Show what we're sending
+    echo "=== Request JSON being sent to ${API_URL} ===" >&2
+    cat "${temp_json_file}" >&2
+    echo "=== End Request JSON ===" >&2
+
     local api_response
     api_response=$(curl -s -X POST "${API_URL}" \
         -H "Authorization: Bearer ${OPENROUTER_API_KEY}" \
@@ -183,6 +188,12 @@ EOF
         -H "HTTP-Referer: https://github.com/${REPO_NAME}" \
         -H "X-Title: better-ccflare PR Review" \
         -d @"${temp_json_file}")
+
+    # Debug: Show raw response length and content
+    echo "=== Raw API Response ===" >&2
+    echo "Response length: $(echo "${api_response}" | wc -c)" >&2
+    echo "Response first 200 chars: $(echo "${api_response}" | head -c 200)" >&2
+    echo "=== End Raw Response ===" >&2
 
     # Clean up temp file
     rm -f "${temp_json_file}"
