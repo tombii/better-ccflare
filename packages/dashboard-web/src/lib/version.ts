@@ -1,5 +1,5 @@
 // Read version directly from package.json at build time
-import packageJson from "../../../../apps/tui/package.json";
+import packageJson from "../../../../apps/cli/package.json";
 
 export function getVersion(): string {
 	const version = packageJson.version;

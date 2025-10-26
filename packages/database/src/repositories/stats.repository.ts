@@ -1,5 +1,5 @@
 /**
- * Consolidated stats repository to eliminate duplication between tui-core and http-api
+ * Consolidated stats repository to eliminate duplication between cli-commands and http-api
  */
 import type { Database } from "bun:sqlite";
 import { NO_ACCOUNT_ID } from "@better-ccflare/types";
@@ -64,7 +64,7 @@ export class StatsRepository {
 
 	/**
 	 * Get account statistics with success rates
-	 * This consolidates the duplicated logic between tui-core and http-api
+	 * This consolidates the duplicated logic between cli-commands and http-api
 	 */
 	getAccountStats(limit = 10, includeUnauthenticated = true): AccountStats[] {
 		// Get account request counts

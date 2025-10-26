@@ -745,7 +745,6 @@ startCleanupInterval();
 // Message handler
 self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
 	const msg = event.data;
-	console.log(`[WORKER] Received message type: ${msg.type}`);
 
 	switch (msg.type) {
 		case "start":

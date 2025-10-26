@@ -7,7 +7,7 @@ ccflare.db-shm
 better-ccflare.db
 better-ccflare.db-wal
 better-ccflare.db-shm
-apps/tui/dist/
+apps/*/dist/
 packages/dashboard-web/dist/
 .DS_Store
 *.log
