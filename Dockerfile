@@ -59,6 +59,10 @@ RUN useradd -r -u 1000 -m -s /bin/bash ccflare && \
 # Set environment variables
 ENV NODE_ENV=production
 ENV BETTER_CCFLARE_DB_PATH=/data/better-ccflare.db
+ENV BETTER_CCFLARE_LOG_DIR=/app/logs
+
+# Create logs directory with proper permissions
+RUN mkdir -p /app/logs /data && chown -R ccflare:ccflare /app/logs /data
 
 # Expose default port
 EXPOSE 8080
@@ -89,6 +93,9 @@ exec /usr/local/bin/better-ccflare "$@"\n\
 
 # Switch to non-root user
 USER ccflare
+
+# Add volume mount for persistent data only
+VOLUME ["/data"]
 
 # Use the startup script as entrypoint
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
