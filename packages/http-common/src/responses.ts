@@ -48,7 +48,10 @@ export function errorResponse(error: unknown): Response {
 					// Redact fields named 'value', 'apiKey', or other known sensitive keys
 					if (
 						typeof key === "string" &&
-						(key === "value" || key === "apiKey" || key === "password" || key === "token")
+						(key === "value" ||
+							key === "apiKey" ||
+							key === "password" ||
+							key === "token")
 					) {
 						clone[key] = "[REDACTED]";
 					} else if (typeof clone[key] === "object" && clone[key] !== null) {
@@ -64,7 +67,18 @@ export function errorResponse(error: unknown): Response {
 					: redact(error);
 			console.error("Unhandled error:", safeError);
 		} else {
-			console.error("Unhandled error:", error);
+			// If not an object, avoid logging the raw error which may contain sensitive input.
+			let safeError: string;
+			if (typeof error === "string") {
+				// Redact sensitive string patterns
+				const sensitivePattern =
+					/(apiKey|token|password)(\s*[:=]\s*)([^,\s]+)/gi;
+				safeError = error.replace(sensitivePattern, "$1$2[REDACTED]");
+			} else {
+				// For number, boolean, symbol, etc. just log type info.
+				safeError = `[Non-object error of type ${typeof error}]`;
+			}
+			console.error("Unhandled error:", safeError);
 		}
 	}
 
