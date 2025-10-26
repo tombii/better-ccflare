@@ -176,11 +176,6 @@ call_openrouter_api() {
 }
 EOF
 
-    # Debug: Show what we're sending
-    echo "=== Request JSON being sent to ${API_URL} ===" >&2
-    cat "${temp_json_file}" >&2
-    echo "=== End Request JSON ===" >&2
-
     local api_response
     api_response=$(curl -s -X POST "${API_URL}" \
         -H "Authorization: Bearer ${OPENROUTER_API_KEY}" \
@@ -188,12 +183,6 @@ EOF
         -H "HTTP-Referer: https://github.com/${REPO_NAME}" \
         -H "X-Title: better-ccflare PR Review" \
         -d @"${temp_json_file}")
-
-    # Debug: Show raw response length and content
-    echo "=== Raw API Response ===" >&2
-    echo "Response length: $(echo "${api_response}" | wc -c)" >&2
-    echo "Response first 200 chars: $(echo "${api_response}" | head -c 200)" >&2
-    echo "=== End Raw Response ===" >&2
 
     # Clean up temp file
     rm -f "${temp_json_file}"
@@ -212,44 +201,40 @@ for MODEL in "${MODEL_ARRAY[@]}"; do
 
     API_RESPONSE=$(call_openrouter_api "${MODEL}" 2>/dev/null)
 
-    # Debug: Show exactly what was captured
-    echo "API_RESPONSE length: $(echo "${API_RESPONSE}" | wc -c)"
-    echo "API_RESPONSE first 200 chars:"
-    echo "$(echo "${API_RESPONSE}" | head -c 200)"
-    echo "--- End of response preview ---"
-
     # Check if response is valid JSON first
-    if ! echo "${API_RESPONSE}" | jq empty > /dev/null 2>&1; then
-        LAST_ERROR="Invalid JSON response from API: $(echo "${API_RESPONSE}" | head -c 200)..."
-        echo "Error from model ${MODEL}: ${LAST_ERROR}"
+    # The API response has leading whitespace, so try to extract content directly
+    # Save API response to temp file for processing
+    response_file=$(mktemp)
+    echo "${API_RESPONSE}" > "${response_file}"
 
-        # If this is not the last model, try the next one
-        if [[ "${MODEL}" != "${MODEL_ARRAY[-1]}" ]]; then
-            echo "Trying next fallback model..."
-            continue
-        fi
-    else
-        # Check for API errors (now that we know it's valid JSON)
-        if echo "${API_RESPONSE}" | jq -e '.error' > /dev/null 2>&1; then
-            LAST_ERROR=$(echo "${API_RESPONSE}" | jq -r '.error.message // .error')
+    # Use Python to safely strip leading whitespace while preserving JSON
+    trimmed_response=$(python3 -c "
+import sys
+content = sys.stdin.read()
+# Remove leading whitespace until we hit {
+while content and content[0] in ' \t\n\r':
+    content = content[1:]
+print(content, end='')
+" <<< "${API_RESPONSE}")
+
+    if echo "${trimmed_response}" | head -c 1 | grep -q '{'; then
+        # Valid JSON detected, check for API errors first
+        if echo "${trimmed_response}" | jq -e '.error' > /dev/null 2>&1; then
+            LAST_ERROR=$(echo "${trimmed_response}" | jq -r '.error.message // .error')
             echo "Error from model ${MODEL}: ${LAST_ERROR}"
 
             # If this is not the last model, try the next one
             if [[ "${MODEL}" != "${MODEL_ARRAY[-1]}" ]]; then
                 echo "Trying next fallback model..."
+                rm -f "${response_file}"
                 continue
             fi
         else
-            # Try to extract review content with better error handling
-            echo "Attempting to extract content from API response..."
-
-            # Save API response to temp file for debugging
+            # Try to extract review content
             response_file=$(mktemp)
             echo "${API_RESPONSE}" > "${response_file}"
 
             # Check if the response file starts with JSON (not HTML or other content)
-            # Remove leading whitespace but preserve JSON structure
-            echo "Original response has $(echo "${API_RESPONSE}" | wc -l) lines"
             # Use Python to safely strip leading whitespace while preserving JSON
             trimmed_response=$(python3 -c "
 import sys
@@ -259,11 +244,9 @@ while content and content[0] in ' \t\n\r':
     content = content[1:]
 print(content, end='')
 " <<< "${API_RESPONSE}")
-            echo "Trimmed response (first 100 chars): $(echo "${trimmed_response}" | head -c 100)..."
 
             if echo "${trimmed_response}" | head -c 1 | grep -q '{'; then
-                # Try to extract content with error handling
-                # Use same Python approach for jq parsing
+                # Extract review content using Python
                 if REVIEW_CONTENT=$(python3 -c "
 import sys
 content = sys.stdin.read()
@@ -272,7 +255,6 @@ while content and content[0] in ' \t\n\r':
     content = content[1:]
 print(content, end='')
 " <<< "${API_RESPONSE}" | jq -r '.choices[0].message.content // empty' 2>/dev/null); then
-                    echo "Successfully extracted content from model: ${MODEL}"
                     rm -f "${response_file}"
 
                     if [[ -n "$REVIEW_CONTENT" ]]; then
@@ -280,7 +262,6 @@ print(content, end='')
                         echo "Review received successfully from model: ${USED_MODEL}"
                         break
                     else
-                        echo "Warning: Empty content received from model ${MODEL}"
                         LAST_ERROR="Empty content in API response"
                     fi
                 else
