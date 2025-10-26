@@ -248,14 +248,30 @@ for MODEL in "${MODEL_ARRAY[@]}"; do
             echo "${API_RESPONSE}" > "${response_file}"
 
             # Check if the response file starts with JSON (not HTML or other content)
-            # Remove leading whitespace more robustly using awk
-            trimmed_response=$(awk '{sub(/^[ \t\n\r]+/, ""); print; exit}' "${response_file}")
+            # Remove leading whitespace but preserve JSON structure
+            echo "Original response has $(echo "${API_RESPONSE}" | wc -l) lines"
+            # Use Python to safely strip leading whitespace while preserving JSON
+            trimmed_response=$(python3 -c "
+import sys
+content = sys.stdin.read()
+# Remove leading whitespace until we hit {
+while content and content[0] in ' \t\n\r':
+    content = content[1:]
+print(content, end='')
+" <<< "${API_RESPONSE}")
             echo "Trimmed response (first 100 chars): $(echo "${trimmed_response}" | head -c 100)..."
 
             if echo "${trimmed_response}" | head -c 1 | grep -q '{'; then
                 # Try to extract content with error handling
-                # Use awk to strip leading whitespace before jq
-                if REVIEW_CONTENT=$(awk '{sub(/^[ \t\n\r]+/, ""); print}' "${response_file}" | jq -r '.choices[0].message.content // empty' 2>/dev/null); then
+                # Use same Python approach for jq parsing
+                if REVIEW_CONTENT=$(python3 -c "
+import sys
+content = sys.stdin.read()
+# Remove leading whitespace until we hit {
+while content and content[0] in ' \t\n\r':
+    content = content[1:]
+print(content, end='')
+" <<< "${API_RESPONSE}" | jq -r '.choices[0].message.content // empty' 2>/dev/null); then
                     echo "Successfully extracted content from model: ${MODEL}"
                     rm -f "${response_file}"
 
