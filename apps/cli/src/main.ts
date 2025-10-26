@@ -318,17 +318,36 @@ Examples:
 		if (parsed.mode || parsed.tier || parsed.priority) {
 			// CLI mode - use flags provided
 			try {
+				const mode = parsed.mode || "max";
+				const tier = parsed.tier || 1;
+				const priority = parsed.priority || 0;
+
+				// For API key accounts, we need to get the API key from environment or user
+				let apiKey = "";
+				if (mode === "zai" || mode === "openai-compatible") {
+					apiKey = process.env[`BETTER_CCFLARE_API_KEY_${parsed.addAccount.toUpperCase()}`] ||
+							   process.env[`API_KEY_${parsed.addAccount.toUpperCase()}`] ||
+							   "";
+
+					if (!apiKey) {
+						console.error(`❌ API key required for ${mode} accounts`);
+						console.error(`Set environment variable: BETTER_CCFLARE_API_KEY_${parsed.addAccount.toUpperCase()}`);
+						console.error(`Or: API_KEY_${parsed.addAccount.toUpperCase()}`);
+						await exitGracefully(1);
+					}
+				}
+
 				await addAccount(dbOps, new Config(), {
 					name: parsed.addAccount,
-					mode: parsed.mode || "max",
-					tier: parsed.tier || 1,
-					priority: parsed.priority || 0,
+					mode,
+					tier,
+					priority,
 					adapter: {
 						select: async <T extends string | number>(
 							_prompt: string,
 							_options: Array<{ label: string; value: T }>,
 						) => (_options[0]?.value as T) || ("yes" as T), // Auto-select first option
-						input: async (_prompt: string) => "", // Will need to be provided
+						input: async (_prompt: string) => apiKey, // Use the provided API key
 						confirm: async (_prompt: string) => true,
 					},
 				});
@@ -347,9 +366,14 @@ Examples:
 			console.error("  --mode <max|console|zai|openai-compatible>");
 			console.error("  --tier <1|5|20>");
 			console.error("  --priority <number>");
+			console.error("\nFor API key accounts, also set:");
+			console.error("  export BETTER_CCFLARE_API_KEY_<ACCOUNT_NAME>");
 			console.error("\nExample:");
 			console.error(
 				"  better-ccflare --add-account work --mode max --tier 1 --priority 0",
+			);
+			console.error(
+				"  export BETTER_CCFLARE_API_KEY_WORK=your-api-key-here",
 			);
 			await exitGracefully(1);
 		}
