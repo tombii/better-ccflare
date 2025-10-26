@@ -48,10 +48,33 @@ export function parseRequestMessages(body: string | null): MessageData[] {
 								// Filter out system reminders
 								let text = normalizeText(item.text || "");
 								if (text.includes("<system-reminder>")) {
-									text = text
-										.split(/<system-reminder>[\s\S]*?<\/system-reminder>/g)
-										.join("")
-										.trim();
+									// Use a more efficient approach to avoid ReDoS
+									const startTag = "<system-reminder>";
+									const endTag = "</system-reminder>";
+									let result = "";
+									let pos = 0;
+
+									while (true) {
+										const startIndex = text.indexOf(startTag, pos);
+										if (startIndex === -1) {
+											result += text.slice(pos);
+											break;
+										}
+
+										const endIndex = text.indexOf(
+											endTag,
+											startIndex + startTag.length,
+										);
+										if (endIndex === -1) {
+											result += text.slice(pos);
+											break;
+										}
+
+										result += text.slice(pos, startIndex);
+										pos = endIndex + endTag.length;
+									}
+
+									text = result.trim();
 								}
 								if (text) {
 									textContents.push(text);

@@ -9,6 +9,8 @@ on:
 jobs:
   build:
     name: Build Multi-Architecture Binaries
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
 
     steps:
