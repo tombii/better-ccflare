@@ -201,6 +201,12 @@ for MODEL in "${MODEL_ARRAY[@]}"; do
 
     API_RESPONSE=$(call_openrouter_api "${MODEL}" 2>/dev/null)
 
+    # Debug: Show exactly what was captured
+    echo "API_RESPONSE length: $(echo "${API_RESPONSE}" | wc -c)"
+    echo "API_RESPONSE first 200 chars:"
+    echo "$(echo "${API_RESPONSE}" | head -c 200)"
+    echo "--- End of response preview ---"
+
     # Check if response is valid JSON first
     if ! echo "${API_RESPONSE}" | jq empty > /dev/null 2>&1; then
         LAST_ERROR="Invalid JSON response from API: $(echo "${API_RESPONSE}" | head -c 200)..."
@@ -231,11 +237,14 @@ for MODEL in "${MODEL_ARRAY[@]}"; do
             echo "${API_RESPONSE}" > "${response_file}"
 
             # Check if the response file starts with JSON (not HTML or other content)
-            # Remove leading whitespace and check first character
-            if sed 's/^[[:space:]]*//' "${response_file}" | head -c 1 | grep -q '{'; then
+            # Remove leading whitespace more robustly using awk
+            trimmed_response=$(awk '{sub(/^[ \t\n\r]+/, ""); print; exit}' "${response_file}")
+            echo "Trimmed response (first 100 chars): $(echo "${trimmed_response}" | head -c 100)..."
+
+            if echo "${trimmed_response}" | head -c 1 | grep -q '{'; then
                 # Try to extract content with error handling
-                # Use sed to strip leading whitespace before jq
-                if REVIEW_CONTENT=$(sed 's/^[[:space:]]*//' "${response_file}" | jq -r '.choices[0].message.content // empty' 2>/dev/null); then
+                # Use awk to strip leading whitespace before jq
+                if REVIEW_CONTENT=$(awk '{sub(/^[ \t\n\r]+/, ""); print}' "${response_file}" | jq -r '.choices[0].message.content // empty' 2>/dev/null); then
                     echo "Successfully extracted content from model: ${MODEL}"
                     rm -f "${response_file}"
 
