@@ -3,9 +3,10 @@ set -euo pipefail
 
 # Configuration
 API_URL="https://openrouter.ai/api/v1/chat/completions"
-MODEL="${AI_MODEL:-z-ai/glm-4.5-air:free}"
-TEMPERATURE="${AI_TEMPERATURE:-0.3}"
-MAX_TOKENS="${AI_MAX_TOKENS:-4000}"
+# AI_MODELS should be set in workflow YAML as comma-separated list: "model1,model2,model3"
+MODELS="${AI_MODELS}"
+TEMPERATURE="${AI_TEMPERATURE}"
+MAX_TOKENS="${AI_MAX_TOKENS}"
 
 # Validate required environment variables
 if [[ -z "${OPENROUTER_API_KEY:-}" ]]; then
@@ -18,17 +19,60 @@ if [[ -z "${GITHUB_TOKEN:-}" ]]; then
     exit 1
 fi
 
+if [[ -z "${AI_MODELS:-}" ]]; then
+    echo "Error: AI_MODELS is not set"
+    exit 1
+fi
+
+if [[ -z "${AI_TEMPERATURE:-}" ]]; then
+    echo "Error: AI_TEMPERATURE is not set"
+    exit 1
+fi
+
+if [[ -z "${AI_MAX_TOKENS:-}" ]]; then
+    echo "Error: AI_MAX_TOKENS is not set"
+    exit 1
+fi
+
+if [[ -z "${ISSUE_NUMBER:-}" ]]; then
+    echo "Error: ISSUE_NUMBER is not set"
+    exit 1
+fi
+
+if [[ -z "${ISSUE_TITLE:-}" ]]; then
+    echo "Error: ISSUE_TITLE is not set"
+    exit 1
+fi
+
+if [[ -z "${ISSUE_AUTHOR:-}" ]]; then
+    echo "Error: ISSUE_AUTHOR is not set"
+    exit 1
+fi
+
+if [[ -z "${REPO_NAME:-}" ]]; then
+    echo "Error: REPO_NAME is not set"
+    exit 1
+fi
+
 # Read repository structure for context
 echo "Gathering repository context..."
 REPO_CONTEXT=$(cat <<EOF
 Repository: ${REPO_NAME}
+Project: better-ccflare - Load balancer proxy for Claude AI
 
-Key components:
-- Load balancer proxy for Claude AI with OAuth account pooling
-- Monorepo structure with apps (TUI, server, lander) and packages (proxy, dashboard-web, etc.)
-- Supports multiple AI providers: Claude (OAuth), OpenRouter, Anthropic API
-- TypeScript/Bun-based project
-- Includes Docker deployment and multi-architecture binaries
+Key technologies:
+- TypeScript/Bun runtime
+- Monorepo structure (apps: TUI, server, lander; packages: proxy, dashboard-web, etc.)
+- SQLite database for account and request tracking
+- Multiple AI providers: Claude OAuth, OpenRouter, Anthropic API
+- Hono web framework for server
+- React for dashboard UI
+
+Important patterns:
+- Dependency injection via core-di
+- Structured logging via logger package
+- Database migrations in packages/database
+- Token counting and streaming in proxy package
 
 Main directories:
 $(ls -d */ 2>/dev/null | head -10 || echo "Unable to list directories")
@@ -44,7 +88,7 @@ Issue Details:
 Title: ${ISSUE_TITLE}
 Author: ${ISSUE_AUTHOR}
 Body:
-${ISSUE_BODY}
+${ISSUE_BODY:-"No description provided"}
 EOF
 )
 
@@ -70,65 +114,227 @@ ${ISSUE_CONTENT}"
 
 echo "Sending issue to OpenRouter for triage..."
 
-# Call OpenRouter API
-API_RESPONSE=$(curl -s -X POST "${API_URL}" \
-    -H "Authorization: Bearer ${OPENROUTER_API_KEY}" \
-    -H "Content-Type: application/json" \
-    -H "HTTP-Referer: https://github.com/${REPO_NAME}" \
-    -H "X-Title: better-ccflare Issue Triage" \
-    -d "$(jq -n \
-        --arg model "${MODEL}" \
-        --argjson temperature "${TEMPERATURE}" \
-        --argjson max_tokens "${MAX_TOKENS}" \
-        --arg prompt "${TRIAGE_PROMPT}" \
-        '{
-            model: $model,
-            temperature: $temperature,
-            max_tokens: $max_tokens,
-            messages: [
-                {
-                    role: "user",
-                    content: $prompt
-                }
-            ]
-        }')")
+# Convert comma-separated models string to array
+IFS=',' read -ra MODEL_ARRAY <<< "$MODELS"
+echo "Configured models: ${MODELS}"
+echo "Will try ${#MODEL_ARRAY[@]} model(s)"
 
-# Check for API errors
-if echo "${API_RESPONSE}" | jq -e '.error' > /dev/null 2>&1; then
-    echo "Error from OpenRouter API:"
-    echo "${API_RESPONSE}" | jq -r '.error.message // .error'
+# Function to call OpenRouter API with a specific model
+call_openrouter_api() {
+    local model=$1
+    echo "Attempting with model: ${model}" >&2
+
+    # Create a temporary JSON file for the request payload to avoid jq parsing issues
+    local temp_json_file=$(mktemp)
+
+    cat > "${temp_json_file}" <<EOF
+{
+    "model": "${model}",
+    "temperature": ${TEMPERATURE},
+    "max_tokens": ${MAX_TOKENS},
+    "messages": [
+        {
+            "role": "system",
+            "content": "You are an expert GitHub issue triaging agent specializing in load balancer proxies, TypeScript, and web security. Provide thorough, constructive issue analysis."
+        },
+        {
+            "role": "user",
+            "content": "$(echo "${TRIAGE_PROMPT}" | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')"
+        }
+    ]
+}
+EOF
+
+    local api_response
+    api_response=$(curl -s -X POST "${API_URL}" \
+        -H "Authorization: Bearer ${OPENROUTER_API_KEY}" \
+        -H "Content-Type: application/json" \
+        -H "HTTP-Referer: https://github.com/${REPO_NAME}" \
+        -H "X-Title: better-ccflare Issue Triage" \
+        -d @"${temp_json_file}")
+
+    # Clean up temp file
+    rm -f "${temp_json_file}"
+
+    echo "${api_response}"
+}
+
+# Try each model in sequence until one succeeds
+TRIAGE_RESULT=""
+USED_MODEL=""
+LAST_ERROR=""
+
+for MODEL in "${MODEL_ARRAY[@]}"; do
+    # Trim whitespace from model name
+    MODEL=$(echo "$MODEL" | xargs)
+
+    API_RESPONSE=$(call_openrouter_api "${MODEL}" 2>/dev/null)
+
+    # Check if response is valid JSON first
+    # Use Python to safely strip leading whitespace while preserving JSON
+    trimmed_response=$(python3 -c "
+import sys
+content = sys.stdin.read()
+# Remove leading whitespace until we hit {
+while content and content[0] in ' \t\n\r':
+    content = content[1:]
+print(content, end='')
+" <<< "${API_RESPONSE}")
+
+    if echo "${trimmed_response}" | head -c 1 | grep -q '{'; then
+        # Valid JSON detected, check for API errors first
+        if echo "${trimmed_response}" | jq -e '.error' > /dev/null 2>&1; then
+            LAST_ERROR=$(echo "${trimmed_response}" | jq -r '.error.message // .error')
+            echo "Error from model ${MODEL}: ${LAST_ERROR}"
+
+            # If this is not the last model, try the next one
+            if [[ "${MODEL}" != "${MODEL_ARRAY[-1]}" ]]; then
+                echo "Trying next fallback model..."
+                continue
+            fi
+        else
+            # Try to extract triage result content
+            response_file=$(mktemp)
+            echo "${API_RESPONSE}" > "${response_file}"
+
+            # Check if the response file starts with JSON (not HTML or other content)
+            # Use Python to safely strip leading whitespace while preserving JSON
+            trimmed_response=$(python3 -c "
+import sys
+content = sys.stdin.read()
+# Remove leading whitespace until we hit {
+while content and content[0] in ' \t\n\r':
+    content = content[1:]
+print(content, end='')
+" <<< "${API_RESPONSE}")
+
+            if echo "${trimmed_response}" | head -c 1 | grep -q '{'; then
+                # Extract triage result using Python
+                if TRIAGE_RESULT=$(python3 -c "
+import sys, json
+content = sys.stdin.read()
+# Remove leading whitespace until we hit {
+while content and content[0] in ' \t\n\r':
+    content = content[1:]
+try:
+    data = json.loads(content)
+    if 'choices' in data and len(data['choices']) > 0:
+        print(data['choices'][0]['message']['content'])
+except:
+    pass
+" <<< "${API_RESPONSE}" 2>/dev/null); then
+                    rm -f "${response_file}"
+
+                    if [[ -n "$TRIAGE_RESULT" ]]; then
+                        USED_MODEL="${MODEL}"
+                        echo "Triage result received successfully from model: ${USED_MODEL}"
+                        echo "Triage result:"
+                        echo "${TRIAGE_RESULT}"
+                        break
+                    else
+                        LAST_ERROR="Empty content in API response"
+                    fi
+                else
+                    echo "Error: Failed to parse JSON response from model ${MODEL}"
+                    LAST_ERROR="JSON parsing error in content extraction"
+                    # Show first 200 chars of response for debugging (stripping leading whitespace)
+                    echo "Response preview: $(sed 's/^[[:space:]]*//' "${response_file}" | head -c 200)..."
+                fi
+            else
+                echo "Error: Non-JSON response received from model ${MODEL}"
+                LAST_ERROR="Non-JSON API response"
+                # Show first 200 chars of response for debugging
+                echo "Response preview: $(head -c 200 "${response_file}")..."
+            fi
+
+            # Clean up temp file
+            rm -f "${response_file}"
+
+            # If this is not the last model, try the next one
+            if [[ "${MODEL}" != "${MODEL_ARRAY[-1]}" ]]; then
+                echo "Trying next fallback model..."
+                continue
+            fi
+        fi
+    fi
+done
+
+# If we exhausted all models without success, exit with error
+if [[ -z "$TRIAGE_RESULT" ]]; then
+    echo "Error: All models failed. Last error: ${LAST_ERROR}"
+    echo "Full last API response:"
+    echo "${API_RESPONSE}"
     exit 1
 fi
 
-# Extract the triage result
-TRIAGE_RESULT=$(echo "${API_RESPONSE}" | jq -r '.choices[0].message.content')
+# Parse the JSON response from the AI content
+# Extract JSON from AI response that might be wrapped in markdown or text
+JSON_CONTENT=$(echo "${TRIAGE_RESULT}" | python3 -c "
+import sys, json, re
+content = sys.stdin.read()
 
-echo "Triage result received:"
-echo "${TRIAGE_RESULT}"
+# Try to extract JSON from markdown code blocks
+json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', content, re.DOTALL)
+if json_match:
+    json_str = json_match.group(1)
+else:
+    # Try to find JSON object directly in the text
+    json_match = re.search(r'\{.*?\}', content, re.DOTALL)
+    if json_match:
+        json_str = json_match.group(1)
+    else:
+        # If no JSON found, assume the whole content is the response
+        json_str = '{}'
 
-# Parse the JSON response
-LABELS=$(echo "${TRIAGE_RESULT}" | jq -r '.labels // [] | .[]' | tr '\n' ',')
-SEVERITY=$(echo "${TRIAGE_RESULT}" | jq -r '.severity // "medium"')
-ANALYSIS=$(echo "${TRIAGE_RESULT}" | jq -r '.analysis // "No analysis provided"')
-RESPONSE=$(echo "${TRIAGE_RESULT}" | jq -r '.response // "Thank you for opening this issue!"')
+try:
+    data = json.loads(json_str)
+    print(json.dumps(data))
+except:
+    # If parsing fails, return empty JSON object
+    print('{}')
+")
+
+# Parse the extracted JSON safely
+LABELS=$(echo "${JSON_CONTENT}" | jq -r '.labels // [] | .[]' | tr '\n' ',' | sed 's/,$//')
+SEVERITY=$(echo "${JSON_CONTENT}" | jq -r '.severity // "medium"')
+ANALYSIS=$(echo "${JSON_CONTENT}" | jq -r '.analysis // "No analysis provided"')
+RESPONSE=$(echo "${JSON_CONTENT}" | jq -r '.response // "Thank you for opening this issue!"')
+
+# If no labels were found, use the AI response to infer them
+if [[ -z "${LABELS}" ]]; then
+    # Simple label inference from the AI response
+    LABELS=""
+    if echo "${TRIAGE_RESULT}" | grep -i -E "(bug|error|crash|fail)" > /dev/null; then
+        LABELS="bug"
+    fi
+    if echo "${TRIAGE_RESULT}" | grep -i -E "(feature|enhancement|add)" > /dev/null; then
+        LABELS="${LABELS:+$LABELS,}enhancement"
+    fi
+    if echo "${TRIAGE_RESULT}" | grep -i -E "(doc|readme|guide)" > /dev/null; then
+        LABELS="${LABELS:+$LABELS,}documentation"
+    fi
+    if echo "${TRIAGE_RESULT}" | grep -i -E "(question|help|how)" > /dev/null; then
+        LABELS="${LABELS:+$LABELS,}question"
+    fi
+fi
 
 # Add severity as a label
 if [[ ! "${LABELS}" =~ "priority-" ]]; then
     case "${SEVERITY}" in
         critical|high)
-            LABELS="${LABELS},priority-high"
+            LABELS="${LABELS:+$LABELS,}priority-high"
             ;;
         medium)
-            LABELS="${LABELS},priority-medium"
+            LABELS="${LABELS:+$LABELS,}priority-medium"
             ;;
         low)
-            LABELS="${LABELS},priority-low"
+            LABELS="${LABELS:+$LABELS,}priority-low"
             ;;
     esac
 fi
 
 # Remove trailing comma
-LABELS=$(echo "${LABELS}" | sed 's/,$//')
+LABELS=$(echo "${LABELS}" | sed 's/^,*//;s/,*$//')
 
 # Apply labels to the issue
 if [[ -n "${LABELS}" ]]; then
@@ -157,15 +363,28 @@ ${ANALYSIS}
 ${RESPONSE}
 
 ---
-*This automated triage was performed by the better-ccflare Issue Triage Agent using Claude via OpenRouter.*
+*This automated triage was performed by the better-ccflare Issue Triage Agent using ${USED_MODEL} via OpenRouter.*
 EOF
 )
 
 echo "Posting triage comment..."
+# Create a temporary JSON file for GitHub comment to avoid jq parsing issues
+temp_comment_file=$(mktemp)
+
+# Properly escape the comment body for JSON
+cat > "${temp_comment_file}" <<EOF
+{
+    "body": $(echo "${COMMENT_BODY}" | jq -Rs .)
+}
+EOF
+
 curl -s -X POST \
     -H "Authorization: token ${GITHUB_TOKEN}" \
     -H "Accept: application/vnd.github.v3+json" \
     "https://api.github.com/repos/${REPO_NAME}/issues/${ISSUE_NUMBER}/comments" \
-    -d "$(jq -n --arg body "${COMMENT_BODY}" '{body: $body}')"
+    -d @"${temp_comment_file}" > /dev/null
+
+# Clean up temp file
+rm -f "${temp_comment_file}"
 
 echo "Issue triage completed successfully!"
