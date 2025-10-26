@@ -1,6 +1,7 @@
 {
 	"private": true,
 	"name": "better-ccflare",
+	"description": "A load balancer proxy for Claude Code with intelligent load balancing across multiple accounts",
 	"workspaces": [
 		"apps/*",
 		"packages/*"
