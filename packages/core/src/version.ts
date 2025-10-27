@@ -68,11 +68,11 @@ export async function getVersion(): Promise<string> {
 		}
 
 		// 6. Fallback to a default version
-		cachedVersion = "2.0.10";
+		cachedVersion = "2.0.11";
 		return cachedVersion;
 	} catch (_error) {
 		// Ultimate fallback
-		cachedVersion = "2.0.10";
+		cachedVersion = "2.0.11";
 		return cachedVersion;
 	}
 }
@@ -97,6 +97,6 @@ export function getVersionSync(): string {
 
 	// For other cases, we'll use the fallback
 	// The async version will be called later to update the cache
-	cachedVersion = "2.0.10";
+	cachedVersion = "2.0.11";
 	return cachedVersion;
 }
