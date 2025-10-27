@@ -120,19 +120,15 @@ bun run better-ccflare
 Compile better-ccflare into a single executable for easy deployment:
 
 ```bash
-# Build all components (dashboard and TUI)
+# Build all components (dashboard and CLI)
 bun run build
 
-# Build the main better-ccflare binary (includes TUI, CLI, and server)
-cd apps/tui
+# Build the main better-ccflare binary (includes CLI and server)
+cd apps/cli
 bun build src/main.ts --compile --outfile dist/better-ccflare --target=bun
 
-# Build standalone server binary (optional, server-only deployment)
-cd ../server
-bun build src/server.ts --compile --outfile dist/better-ccflare-server
-
 # Copy binary to deployment location
-cp apps/tui/dist/better-ccflare /opt/better-ccflare/
+cp apps/cli/dist/better-ccflare /opt/better-ccflare/
 # Make it executable
 chmod +x /opt/better-ccflare/better-ccflare
 ```
@@ -141,7 +137,7 @@ chmod +x /opt/better-ccflare/better-ccflare
 
 ```
 /opt/better-ccflare/
-├── better-ccflare             # Main binary (TUI + CLI + Server)
+├── better-ccflare             # Main binary (CLI + Server)
 ├── config/
 │   └── config.json     # Configuration (optional)
 └── data/
@@ -292,7 +288,7 @@ RUN apt-get update && apt-get install -y \
 RUN useradd -r -s /bin/false better-ccflare
 
 # Copy binary and dashboard
-COPY --from=builder /app/apps/tui/dist/better-ccflare /usr/local/bin/better-ccflare
+COPY --from=builder /app/apps/cli/dist/better-ccflare /usr/local/bin/better-ccflare
 COPY --from=builder /app/packages/dashboard-web/dist /opt/better-ccflare/dashboard
 
 # Set permissions
@@ -1198,9 +1194,8 @@ better-ccflare is designed to be flexible and scalable, supporting everything fr
 
 ### Key Features Summary
 
-- **Integrated Binary**: Single executable combining TUI, CLI, and server functionality
-- **Interactive TUI**: Monitor and manage your deployment in real-time
-- **Web Dashboard**: Access analytics and logs through a modern web interface  
+- **Integrated Binary**: Single executable combining CLI and server functionality
+- **Web Dashboard**: Access analytics and logs through a modern web interface
 - **Async Database Writer**: Improved performance for high-throughput scenarios
 - **Session-based Load Balancing**: Maintains session affinity for optimal performance
 - **Binary Compilation**: Deploy as standalone executable without runtime dependencies
@@ -1213,82 +1208,49 @@ better-ccflare is designed to be flexible and scalable, supporting everything fr
 - [API Reference](./api-http.md)
 - [GitHub Repository](https://github.com/snipeship/better-ccflare)
 
-## Terminal User Interface (TUI)
+## Web Dashboard
 
-better-ccflare includes a powerful Terminal User Interface for interactive monitoring and management.
+better-ccflare includes a powerful web-based dashboard for monitoring and management.
 
-### Starting the TUI
+### Accessing the Dashboard
 
 ```bash
-# Start better-ccflare in interactive mode (TUI + Server)
-better-ccflare
+# Start better-ccflare server with embedded dashboard
+better-ccflare --serve
 
 # Or from source:
 bun run better-ccflare
 
-# Start server only (no TUI)
-better-ccflare --serve
-
-# View help for all available commands
-better-ccflare --help
+# Dashboard will be available at:
+# http://localhost:8080 (or your configured port)
 ```
 
-### TUI Features
+### Dashboard Features
 
-- **Real-time Dashboard**: Live system status and metrics
+- **Real-time Metrics**: Live system status and request analytics
 - **Account Management**: View and manage Claude accounts
   - Account status and rate limits
   - Pause/unpause accounts
   - View usage statistics
-- **Request Monitor**: Track requests as they happen
+  - Re-authenticate accounts
+- **Request History**: Track requests with detailed information
   - Request details and timing
   - Success/failure status
   - Token usage per request
-- **Log Viewer**: Browse historical logs
-  - Filter by level and time
-  - Search functionality
-  - Export capabilities
-- **Statistics Screen**: Comprehensive analytics
-  - Usage patterns
+- **Analytics**: Comprehensive analytics and visualizations
+  - Usage patterns over time
   - Cost breakdown
   - Performance metrics
-
-### Keyboard Navigation
-
-| Key | Action |
-|-----|--------|
-| `Tab` / `Shift+Tab` | Navigate between screens |
-| `↑` / `↓` | Navigate within lists |
-| `←` / `→` | Switch between tabs |
-| `Enter` | Select/view details |
-| `Space` | Toggle selection |
-| `r` | Refresh current view |
-| `f` | Focus search/filter |
-| `Esc` | Close dialog/cancel |
-| `q` / `Ctrl+C` | Quit TUI |
+  - Account distribution
 
 ### Remote API Connection
 
-The better-ccflare binary can connect to a remote API server for distributed deployments:
+The better-ccflare CLI can connect to a remote API server for distributed deployments:
 
 ```bash
 # Set API URL for remote connection
-export better-ccflare_API_URL=https://better-ccflare.example.com
+export BETTER_CCFLARE_API_URL=https://better-ccflare.example.com
 better-ccflare --list  # Will query the remote server
-```
-
-### TUI Configuration
-
-Customize TUI behavior through environment variables:
-
-```bash
-# Refresh intervals (milliseconds)
-export TUI_REFRESH_INTERVAL=1000      # Dashboard refresh
-export TUI_LOG_POLL_INTERVAL=500      # Log updates
-
-# Display options
-export TUI_THEME=dark                 # dark or light
-export TUI_COMPACT_MODE=false         # Compact display
 ```
 
 For support and updates, check the project repository and documentation.

@@ -204,7 +204,7 @@ Potential improvements to consider:
 
 1. **Browser Not Opening**: Manual URL copy-paste required
 2. **OAuth Errors**: Verify account mode and URL format
-3. **Server Cache**: Restart server if tokens don't update immediately
+3. **Stale Tokens After Server Restart**: Fixed in v2.0.11+ - the server now automatically syncs fresh DB tokens to in-memory account objects during usage polling
 4. **Database Locks**: Ensure no other processes are modifying account data
 
 ### Debug Information
