@@ -24,16 +24,39 @@ export class AnthropicOAuthProvider implements OAuthProvider {
 	}
 
 	generateAuthUrl(config: OAuthProviderConfig, pkce: PKCEChallenge): string {
-		const url = new URL(config.authorizeUrl);
-		url.searchParams.set("code", "true");
-		url.searchParams.set("client_id", config.clientId);
-		url.searchParams.set("response_type", "code");
-		url.searchParams.set("redirect_uri", config.redirectUri);
-		url.searchParams.set("scope", config.scopes.join(" "));
-		url.searchParams.set("code_challenge", pkce.challenge);
-		url.searchParams.set("code_challenge_method", "S256");
-		url.searchParams.set("state", pkce.verifier);
-		return url.toString();
+		// For max mode (Claude CLI), use the login flow that redirects to OAuth
+		if (config.mode === "max") {
+			const baseUrl = config.authorizeUrl.split("/oauth/authorize")[0];
+			const oauthParams = new URLSearchParams();
+			oauthParams.set("code", "true");
+			oauthParams.set("client_id", config.clientId);
+			oauthParams.set("response_type", "code");
+			oauthParams.set("redirect_uri", config.redirectUri);
+			oauthParams.set("scope", config.scopes.join(" "));
+			oauthParams.set("code_challenge", pkce.challenge);
+			oauthParams.set("code_challenge_method", "S256");
+			oauthParams.set("state", pkce.verifier);
+
+			const returnTo = `/oauth/authorize?${oauthParams.toString()}`;
+
+			const loginUrl = new URL(`${baseUrl}/login`);
+			loginUrl.searchParams.set("selectAccount", "true");
+			loginUrl.searchParams.set("returnTo", returnTo);
+
+			return loginUrl.toString();
+		} else {
+			// For console mode, use direct OAuth flow
+			const url = new URL(config.authorizeUrl);
+			url.searchParams.set("code", "true");
+			url.searchParams.set("client_id", config.clientId);
+			url.searchParams.set("response_type", "code");
+			url.searchParams.set("redirect_uri", config.redirectUri);
+			url.searchParams.set("scope", config.scopes.join(" "));
+			url.searchParams.set("code_challenge", pkce.challenge);
+			url.searchParams.set("code_challenge_method", "S256");
+			url.searchParams.set("state", pkce.verifier);
+			return url.toString();
+		}
 	}
 
 	async exchangeCode(

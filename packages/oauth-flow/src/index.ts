@@ -12,6 +12,7 @@ import type { AccountTier } from "@better-ccflare/types";
 export interface BeginOptions {
 	name: string;
 	mode: "max" | "console";
+	skipAccountCheck?: boolean; // Skip account existence check for re-authentication
 }
 
 export interface BeginResult {
@@ -73,12 +74,14 @@ export class OAuthFlow {
 	 * @throws {Error} If account name already exists
 	 */
 	async begin(opts: BeginOptions): Promise<BeginResult> {
-		const { name, mode } = opts;
+		const { name, mode, skipAccountCheck = false } = opts;
 
-		// Check if account already exists
-		const existingAccounts = this.dbOps.getAllAccounts();
-		if (existingAccounts.some((a) => a.name === name)) {
-			throw new Error(`Account with name '${name}' already exists`);
+		// Check if account already exists (unless skipAccountCheck is true for re-authentication)
+		if (!skipAccountCheck) {
+			const existingAccounts = this.dbOps.getAllAccounts();
+			if (existingAccounts.some((a) => a.name === name)) {
+				throw new Error(`Account with name '${name}' already exists`);
+			}
 		}
 
 		// Get OAuth provider
