@@ -475,10 +475,12 @@ export default function startServer(options?: {
 	});
 
 	// Main server
+	// Build server configuration with optional TLS and hostname binding
+	const hostname = process.env.BETTER_CCFLARE_HOST || "0.0.0.0"; // Allow binding configuration
 	try {
-		// Build server configuration with optional TLS
 		const serverConfig = {
 			port: runtime.port,
+			hostname,
 			idleTimeout: NETWORK.IDLE_TIMEOUT_MAX, // Max allowed by Bun
 			...(tlsEnabled && sslKeyPath && sslCertPath
 				? {
@@ -547,18 +549,20 @@ export default function startServer(options?: {
 	getVersion().then((version) => {
 		if (!serverInstance) return;
 		const protocol = tlsEnabled ? "https" : "http";
+		const displayHost = hostname === "0.0.0.0" ? "localhost" : hostname;
 		const dashboardStatus =
 			withDashboard && dashboardManifest
-				? `${protocol}://localhost:${serverInstance.port}`
+				? `${protocol}://${displayHost}:${serverInstance.port}`
 				: withDashboard && !dashboardManifest
 					? "unavailable (assets not found)"
 					: "disabled";
 		console.log(`
 🎯 better-ccflare Server v${version}
 🌐 Port: ${serverInstance.port}
+🌍 Host: ${hostname}
 ${tlsEnabled ? "🔒 TLS: enabled" : ""}
 📊 Dashboard: ${dashboardStatus}
-🔗 API Base: ${protocol}://localhost:${serverInstance.port}/api
+🔗 API Base: ${protocol}://${displayHost}:${serverInstance.port}/api
 
 Available endpoints:
 - POST   ${protocol}://localhost:${serverInstance.port}/v1/*            → Proxy to Claude API
