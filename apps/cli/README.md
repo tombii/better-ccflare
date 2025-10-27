@@ -22,6 +22,7 @@ https://github.com/user-attachments/assets/c859872f-ca5e-4f8b-b6a0-7cc7461fe62a
 - **⚡ Auto-Refresh** - Automatically start new usage windows when rate limits reset
 - **📊 Request-Level Analytics** - Track latency, token usage, and costs in real-time with optimized batch processing
 - **🔍 Deep Debugging** - Full request/response logging and error traces
+- **🔐 API Authentication** - Optional API key authentication with secure key management
 - **⚡ <10ms Overhead** - Minimal performance impact with lazy loading and request deduplication
 - **💸 Free & Open Source** - Run it yourself, modify it, own your infrastructure
 
@@ -147,6 +148,12 @@ PORT=8080                              # Server port (default: 8080)
 BETTER_CCFLARE_HOST=0.0.0.0           # Server binding host (default: 0.0.0.0, use 127.0.0.1 for localhost-only)
 CLIENT_ID=your-client-id              # OAuth client ID
 BETTER_CCFLARE_CONFIG_PATH=/path/to/config.json  # Custom config location
+BETTER_CCFLARE_DB_PATH=/path/to/database.db  # Custom database path (default: config dir/better-ccflare.db)
+
+# Development Environment
+NODE_ENV=development                   # Set to 'development' to use separate dev database
+DEV=true                               # Alternative way to enable development mode
+                                       # When in development, uses 'better-ccflare-dev.db' instead of production
 
 # Logging and Debugging
 LOG_LEVEL=INFO                         # Log level (ERROR, WARN, INFO, DEBUG)
