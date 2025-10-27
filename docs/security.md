@@ -1,6 +1,6 @@
 # Security Documentation
 
-**Last Security Review**: July 30, 2025
+**Last Security Review**: October 27, 2025
 
 This document outlines the security considerations, practices, and recommendations for the better-ccflare load balancer system.
 
@@ -251,16 +251,31 @@ iptables -A INPUT -p tcp --dport 8080 -s 127.0.0.1 -j ACCEPT
 iptables -A INPUT -p tcp --dport 8080 -j DROP
 ```
 
-**Recommended Enhancement**: Modify the server to support a HOST environment variable:
+**✅ Implemented**: Server now supports the `BETTER_CCFLARE_HOST` environment variable for binding configuration:
 ```typescript
-// Proposed server.ts modification
-const server = serve({
+// Implemented in apps/server/src/server.ts:480
+const hostname = process.env.BETTER_CCFLARE_HOST || "0.0.0.0"; // Allow binding configuration
+const serverConfig = {
     port: runtime.port,
-    hostname: process.env.HOST || "0.0.0.0", // Allow binding configuration
-    async fetch(req) {
-        // Handle requests
-    }
-});
+    hostname,
+    idleTimeout: NETWORK.IDLE_TIMEOUT_MAX,
+    // ... rest of configuration
+};
+```
+
+**Usage Examples**:
+```bash
+# Bind to localhost only (secure)
+export BETTER_CCFLARE_HOST=127.0.0.1
+bun start
+
+# Bind to all interfaces (default - insecure)
+export BETTER_CCFLARE_HOST=0.0.0.0
+bun start
+
+# Bind to specific network interface
+export BETTER_CCFLARE_HOST=192.168.1.100
+bun start
 ```
 
 #### 2. Reverse Proxy Setup
@@ -348,13 +363,18 @@ if (isStream && response.body) {
 }
 ```
 
-**Privacy Concerns**: 
+**Privacy Concerns**:
 - Full request/response bodies are stored, potentially containing sensitive information
 - Streaming responses are cloned and processed chunk by chunk in background workers
 - Chunks are accumulated in memory without explicit size limits in the worker process
 - Request bodies are encoded as base64 in logs
 - Error payloads include full error details and request metadata
 - Asynchronous writes may delay data persistence
+
+**Recent Improvements (October 2025)**:
+- **Sensitive Data Redaction**: Error logging now automatically redacts API keys, tokens, passwords, and other sensitive patterns before logging
+- **Object Redaction**: Recursive redaction of objects with sensitive fields (value, apiKey, password, token)
+- **Pattern-based Redaction**: String-based redaction using regex patterns for sensitive data in error messages
 
 ### Storage Security Considerations
 
@@ -461,7 +481,7 @@ interface User {
 ### Deployment Checklist
 
 - [ ] **Network Configuration**
-  - [ ] Bind server to localhost only
+  - [ ] ✅ Bind server to localhost only using `BETTER_CCFLARE_HOST=127.0.0.1`
   - [ ] Configure firewall rules
   - [ ] Set up reverse proxy with TLS
   - [ ] Disable unnecessary network services
@@ -544,7 +564,7 @@ interface User {
 
 ### 2. Token in Logs
 **Risk**: OAuth tokens appearing in debug logs
-**Mitigation**: Implement log sanitization, never log full tokens
+**Mitigation**: ✅ **FIXED** - Implemented comprehensive log sanitization with automatic redaction of sensitive patterns (API keys, tokens, passwords) in `packages/http-common/src/responses.ts`
 
 ### 3. Shared Database Access
 **Risk**: Multiple users accessing the same SQLite database
@@ -590,15 +610,25 @@ function addSecurityHeaders(response: Response): Response {
 **Risk**: Predictable IDs or tokens
 **Mitigation**: Use crypto.randomUUID() and crypto.getRandomValues()
 
-### 9. Streaming Response Capture
+### 9. Regular Expression Denial of Service (ReDoS)
+**Risk**: Complex regex patterns causing catastrophic backtracking on malicious inputs
+**Mitigation**: ✅ **FIXED** - Replaced polynomial regex with deterministic string-based parsing for system reminder removal in `packages/ui-common/src/parsers/parse-conversation.ts:50-78`
+
+### 10. Streaming Response Capture
 **Risk**: Large streaming responses consuming excessive memory/storage
 **Mitigation**: Implement size limits in worker chunk accumulation; monitor memory usage for large streams
 
-### 10. Asynchronous Database Writes
+### 11. Asynchronous Database Writes
 **Risk**: Data loss if application crashes before async writes complete
 **Mitigation**: Graceful shutdown handlers ensure queue is flushed
 
 ## Recent Security Updates
+
+### Critical Security Fixes (October 27, 2025)
+- **ReDoS Vulnerability Fix**: Replaced polynomial regex with deterministic string-based approach for system reminder parsing in `packages/ui-common/src/parsers/parse-conversation.ts:50-78`
+- **Sensitive Data Logging Fix**: Added comprehensive redaction for API keys, tokens, passwords, and other sensitive patterns in error logs (`packages/http-common/src/responses.ts:42-83`)
+- **GitHub Actions Security**: Implemented principle of least privilege in workflow permissions (`.github/workflows/release.yml`, `.github/workflows/docker-publish.yml`)
+- **Code Injection Prevention**: Fixed potential code injection vulnerabilities in Docker publishing workflow
 
 ### Response Header Sanitization (July 2025)
 - **Change**: Added `sanitizeProxyHeaders` utility function
@@ -633,8 +663,8 @@ function addSecurityHeaders(response: Response): Response {
 
 ## Security Roadmap
 
-### Phase 1: Authentication & Access Control (Priority: CRITICAL)
-- Implement API key authentication middleware
+### ✅ Phase 1: Authentication & Access Control (Priority: CRITICAL)
+- ~~Implement API key authentication middleware~~
 - Add rate limiting per client/IP
 - Implement CORS headers with proper origin restrictions
 - Add audit logging for all API access
@@ -679,6 +709,7 @@ CLIENT_ID=your-client-id       # OAuth client ID
 
 # Server Configuration
 PORT=8080                      # Server port
+BETTER_CCFLARE_HOST=0.0.0.0   # Server binding host (use 127.0.0.1 for localhost-only)
 LB_STRATEGY=session           # Load balancing strategy
 
 # Retry Configuration
