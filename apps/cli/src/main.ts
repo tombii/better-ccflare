@@ -13,6 +13,7 @@ import {
 	getApiKeyStats,
 	listApiKeys,
 	pauseAccount,
+	reauthenticateAccount,
 	removeAccount,
 	resetAllStats,
 	resumeAccount,
@@ -72,6 +73,7 @@ function parseArgs(args: string[]) {
 		pause: null,
 		resume: null,
 		setPriority: null,
+		reauthenticate: null,
 		analyze: false,
 		resetStats: false,
 		clearHistory: false,
@@ -278,6 +280,13 @@ function parseArgs(args: string[]) {
 				}
 				parsed.deleteApiKey = args[++i];
 				break;
+			case "--reauthenticate":
+				if (i + 1 >= args.length || args[i + 1].startsWith("--")) {
+					console.error("❌ --reauthenticate requires an account name");
+					fastExit(1);
+				}
+				parsed.reauthenticate = args[++i];
+				break;
 		}
 	}
 
@@ -325,6 +334,7 @@ Options:
     --priority <number>   Account priority (default: 0)
   --list               List all accounts
   --remove <name>      Remove an account
+  --reauthenticate <name> Re-authenticate an account (preserves metadata)
   --pause <name>       Pause an account
   --resume <name>      Resume an account
   --set-priority <name> <priority>  Set account priority
@@ -346,6 +356,7 @@ Examples:
   better-ccflare --serve                # Start server
   better-ccflare --serve --ssl-key /path/to/key.pem --ssl-cert /path/to/cert.pem  # Start server with HTTPS
   better-ccflare --add-account work     # Add account
+  better-ccflare --reauthenticate work  # Re-authenticate account (preserves metadata)
   better-ccflare --pause work           # Pause account
   better-ccflare --analyze              # Run performance analysis
   better-ccflare --stats                # View stats
@@ -544,6 +555,26 @@ Examples:
 			await exitGracefully(1);
 		}
 		await exitGracefully(0);
+	}
+
+	if (parsed.reauthenticate) {
+		try {
+			const result = await reauthenticateAccount(
+				dbOps,
+				new Config(),
+				parsed.reauthenticate,
+			);
+			console.log(result.message);
+			if (!result.success) {
+				await exitGracefully(1);
+			}
+			await exitGracefully(0);
+		} catch (error: unknown) {
+			const errorMessage =
+				error instanceof Error ? error.message : String(error);
+			console.error(`❌ Failed to reauthenticate account: ${errorMessage}`);
+			await exitGracefully(1);
+		}
 	}
 
 	if (parsed.resetStats) {

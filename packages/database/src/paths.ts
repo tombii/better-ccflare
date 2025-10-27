@@ -1,5 +1,5 @@
-import { join } from "node:path";
 import { copyFileSync, existsSync } from "node:fs";
+import { join } from "node:path";
 import { getPlatformConfigDir } from "@better-ccflare/config";
 
 export function resolveDbPath(): string {
