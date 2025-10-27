@@ -61,6 +61,138 @@ jobs:
           ls -lh apps/cli/dist/
           echo "Binaries built successfully!"
 
+      - name: Generate Changelog
+        id: changelog
+        run: |
+          # Get previous tag
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+
+          # Generate changelog content
+          CHANGELOG="## Multi-Architecture Binaries
+
+          Download the appropriate binary for your platform:
+
+          - **Linux x86_64**: \`better-ccflare-linux-amd64\`
+          - **Linux ARM64** (Raspberry Pi 3/4/5, Oracle Cloud ARM, AWS Graviton): \`better-ccflare-linux-arm64\`
+          - **macOS Intel**: \`better-ccflare-macos-x86_64\`
+          - **macOS Apple Silicon**: \`better-ccflare-macos-arm64\`
+          - **Windows x86_64**: \`better-ccflare-windows-x64.exe\`
+
+          ### Installation
+
+          \`\`\`bash
+          # Linux x86_64
+          wget https://github.com/tombii/better-ccflare/releases/download/${{ github.ref_name }}/better-ccflare-linux-amd64
+          chmod +x better-ccflare-linux-amd64
+          ./better-ccflare-linux-amd64
+          \`\`\`
+
+          Or install via npm: \`npm install -g better-ccflare\`
+
+          ---"
+
+          if [ -n "$PREV_TAG" ]; then
+            # Get commits since previous tag
+            COMMITS=$(git log --pretty=format:"%h %s" $PREV_TAG..HEAD)
+
+            if [ -n "$COMMITS" ]; then
+              CHANGELOG="$CHANGELOG
+
+          ## What's Changed
+
+          "
+              # Categorize commits (include all commits, even [skip-version] ones)
+              FEATURES=$(echo "$COMMITS" | grep -E "feat|add|new" | head -5)
+              FIXES=$(echo "$COMMITS" | grep -E "fix|bug|resolve" | head -5)
+              SECURITY=$(echo "$COMMITS" | grep -E "security|vulnerabilit|redact|ReDoS" | head -5)
+              IMPROVEMENTS=$(echo "$COMMITS" | grep -E "improve|enhance|update|refactor" | head -5)
+
+              if [ -n "$FEATURES" ]; then
+                CHANGELOG="$CHANGELOG
+          ### 🚀 Features
+          "
+                while IFS= read -r commit; do
+                  if [ -n "$commit" ]; then
+                    HASH=$(echo "$commit" | cut -d' ' -f1)
+                    MSG=$(echo "$commit" | cut -d' ' -f2-)
+                    CHANGELOG="$CHANGELOG
+          - $MSG ([\`$HASH\`](https://github.com/tombii/better-ccflare/commit/$HASH))"
+                  fi
+                done <<< "$FEATURES"
+              fi
+
+              if [ -n "$FIXES" ]; then
+                CHANGELOG="$CHANGELOG
+
+          ### 🐛 Bug Fixes
+          "
+                while IFS= read -r commit; do
+                  if [ -n "$commit" ]; then
+                    HASH=$(echo "$commit" | cut -d' ' -f1)
+                    MSG=$(echo "$commit" | cut -d' ' -f2-)
+                    CHANGELOG="$CHANGELOG
+          - $MSG ([\`$HASH\`](https://github.com/tombii/better-ccflare/commit/$HASH))"
+                  fi
+                done <<< "$FIXES"
+              fi
+
+              if [ -n "$SECURITY" ]; then
+                CHANGELOG="$CHANGELOG
+
+          ### 🔒 Security
+          "
+                while IFS= read -r commit; do
+                  if [ -n "$commit" ]; then
+                    HASH=$(echo "$commit" | cut -d' ' -f1)
+                    MSG=$(echo "$commit" | cut -d' ' -f2-)
+                    CHANGELOG="$CHANGELOG
+          - $MSG ([\`$HASH\`](https://github.com/tombii/better-ccflare/commit/$HASH))"
+                  fi
+                done <<< "$SECURITY"
+              fi
+
+              if [ -n "$IMPROVEMENTS" ]; then
+                CHANGELOG="$CHANGELOG
+
+          ### 🔧 Improvements
+          "
+                while IFS= read -r commit; do
+                  if [ -n "$commit" ]; then
+                    HASH=$(echo "$commit" | cut -d' ' -f1)
+                    MSG=$(echo "$commit" | cut -d' ' -f2-)
+                    CHANGELOG="$CHANGELOG
+          - $MSG ([\`$HASH\`](https://github.com/tombii/better-ccflare/commit/$HASH))"
+                  fi
+                done <<< "$IMPROVEMENTS"
+              fi
+
+              # Get contributors for this release
+              CONTRIBUTORS=$(git log --pretty=format:"%an" $PREV_TAG..HEAD | sort -u)
+              if [ -n "$CONTRIBUTORS" ]; then
+                CHANGELOG="$CHANGELOG
+
+          ### 🤝 New Contributors
+          "
+                while IFS= read -r contributor; do
+                  if [ -n "$contributor" ] && [ "$contributor" != "github-actions[bot]" ]; then
+                    CHANGELOG="$CHANGELOG
+          - @$contributor made their first contribution"
+                  fi
+                done <<< "$CONTRIBUTORS"
+              fi
+            fi
+
+            # Add comparison link
+            CHANGELOG="$CHANGELOG
+
+          ## Full Changelog
+          📋 [Compare with previous version](https://github.com/tombii/better-ccflare/compare/$PREV_TAG...${{ github.ref_name }})"
+          fi
+
+          echo "changelog<<EOF" >> $GITHUB_OUTPUT
+          echo "$CHANGELOG" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
       - name: Create Release
         id: create_release
         uses: actions/create-release@v1
@@ -71,32 +203,7 @@ jobs:
           release_name: Release ${{ github.ref_name }}
           draft: false
           prerelease: false
-          body: |
-            ## Multi-Architecture Binaries
-
-            Download the appropriate binary for your platform:
-
-            - **Linux x86_64**: `better-ccflare-linux-amd64`
-            - **Linux ARM64** (Raspberry Pi 3/4/5, Oracle Cloud ARM, AWS Graviton): `better-ccflare-linux-arm64`
-            - **macOS Intel**: `better-ccflare-macos-x86_64`
-            - **macOS Apple Silicon**: `better-ccflare-macos-arm64`
-            - **Windows x86_64**: `better-ccflare-windows-x64.exe`
-
-            ### Installation
-
-            ```bash
-            # Linux x86_64
-            wget https://github.com/tombii/better-ccflare/releases/download/${{ github.ref_name }}/better-ccflare-linux-amd64
-            chmod +x better-ccflare-linux-amd64
-            ./better-ccflare-linux-amd64
-
-            # Linux ARM64
-            wget https://github.com/tombii/better-ccflare/releases/download/${{ github.ref_name }}/better-ccflare-linux-arm64
-            chmod +x better-ccflare-linux-arm64
-            ./better-ccflare-linux-arm64
-            ```
-
-            Or install via npm: `npm install -g better-ccflare`
+          body: ${{ steps.changelog.outputs.changelog }}
 
       - name: Upload Linux amd64
         uses: actions/upload-release-asset@v1

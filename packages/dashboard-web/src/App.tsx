@@ -3,6 +3,7 @@ import { lazy, Suspense } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { AccountsTab } from "./components/AccountsTab";
 import { AgentsTab } from "./components/AgentsTab";
+import { ApiKeysTab } from "./components/ApiKeysTab";
 import { DebugPanel } from "./components/DebugPanel";
 import { LogsTab } from "./components/LogsTab";
 import { Navigation } from "./components/navigation";
@@ -83,6 +84,12 @@ const routes = [
 		element: <AgentsTab />,
 		title: "Agent Management",
 		subtitle: "Discover and manage Claude Code agents",
+	},
+	{
+		path: "/api-keys",
+		element: <ApiKeysTab />,
+		title: "API Key Management",
+		subtitle: "Generate and manage API keys for authentication",
 	},
 	{
 		path: "/logs",
