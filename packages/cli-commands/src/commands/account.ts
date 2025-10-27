@@ -642,18 +642,35 @@ export async function reauthenticateAccount(
 	console.log(`Authorization code received: ${code.substring(0, 20)}...`);
 	console.log(`PKCE verifier: ${flowResult.pkce.verifier.substring(0, 10)}...`);
 
+	let tokens;
+
 	try {
-		const tokens = await oauthProvider.exchangeCode(
-			code,
-			flowResult.pkce.verifier,
+		// Extract state from the authorization code (format: code#state)
+		const codeParts = code.split('#');
+		const actualCode = codeParts[0];
+		const stateFromAuth = codeParts[1];
+
+		console.log(`Code parts: ${codeParts.length}, State from auth: ${stateFromAuth ? stateFromAuth.substring(0, 10) + '...' : 'not found'}`);
+
+		// Use the state from the authorization code as the PKCE verifier
+		// This is needed because the OAuth provider expects the state to match the original PKCE verifier
+		const verifierToUse = stateFromAuth || flowResult.pkce.verifier;
+
+		tokens = await oauthProvider.exchangeCode(
+			code, // Pass the full code with #state so exchangeCode can split it correctly
+			verifierToUse, // Use the state from auth as PKCE verifier
 			flowResult.oauthConfig,
 		);
 		console.log(`Token exchange successful! New tokens received.`);
 	} catch (error) {
-		console.error(`Token exchange failed: ${error instanceof Error ? error.message : String(error)}`);
+		console.error(`Token exchange failed:`, error);
+		if (error instanceof Error) {
+			console.error(`Error message: ${error.message}`);
+			console.error(`Error stack: ${error.stack}`);
+		}
 		return {
 			success: false,
-			message: `Failed to exchange authorization code for tokens: ${error instanceof Error ? error.message : String(error)}`,
+			message: `Failed to exchange authorization code for tokens: ${error instanceof Error ? error.message : JSON.stringify(error)}`,
 		};
 	}
 
