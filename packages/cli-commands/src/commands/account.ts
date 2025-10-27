@@ -696,7 +696,7 @@ export async function reauthenticateAccount(
 		);
 
 		console.log("API key created and updated.");
-		return showSuccessMessage(name, "API key");
+		return await showSuccessMessage(name, "API key", account.id);
 	}
 
 	// Handle max mode - update with OAuth tokens
@@ -712,24 +712,53 @@ export async function reauthenticateAccount(
 	);
 
 	console.log("OAuth tokens updated.");
-	return showSuccessMessage(name, "OAuth tokens");
+	return await showSuccessMessage(name, "OAuth tokens", account.id);
 
 	/**
 	 * Helper function to show consistent success message
 	 */
-	function showSuccessMessage(name: string, updatedType: string) {
+	async function showSuccessMessage(name: string, updatedType: string, accountId: string) {
 		console.log(`\nAccount '${name}' re-authenticated successfully!`);
 		console.log(
 			"All account metadata (usage stats, priority, settings) has been preserved.",
 		);
 		console.log(`${updatedType} have been updated.`);
-		console.log(
-			"\nIMPORTANT: If you have a running server, please restart it to use the new tokens.",
-		);
+
+		// Trigger token reload for running servers
+		console.log("\nNotifying running servers to reload tokens...");
+		await notifyServersToReload(accountId);
 
 		return {
 			success: true,
 			message: `Account '${name}' re-authenticated successfully. All metadata preserved.`,
 		};
+	}
+
+	/**
+	 * Notify running servers to reload tokens for an account
+	 */
+	async function notifyServersToReload(accountId: string): Promise<void> {
+		const defaultPort = 8080;
+		const testPort = 8081;
+
+		for (const port of [defaultPort, testPort]) {
+			try {
+				const response = await fetch(
+					`http://localhost:${port}/api/accounts/${accountId}/reload`,
+					{
+						method: "POST",
+						headers: { "Content-Type": "application/json" },
+					},
+				);
+
+				if (response.ok) {
+					console.log(`✓ Token reload successful on port ${port}`);
+				} else {
+					console.log(`✗ Server not responding on port ${port} (${response.status})`);
+				}
+			} catch (error) {
+				console.log(`✗ No server running on port ${port}`);
+			}
+		}
 	}
 }

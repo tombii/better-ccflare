@@ -25,6 +25,7 @@ import {
 	getUsageWorker,
 	getValidAccessToken,
 	handleProxy,
+	registerRefreshClearer,
 	type ProxyContext,
 	terminateUsageWorker,
 } from "@better-ccflare/proxy";
@@ -455,6 +456,14 @@ export default function startServer(options?: {
 		asyncWriter,
 		usageWorker: getUsageWorker(),
 	};
+
+	// Register this server's refresh clearing capability
+	const serverId = `server-${runtime.port}`;
+	registerRefreshClearer(serverId, (accountId: string) => {
+		// Clear refresh cache for this account in this server's context
+		proxyContext.refreshInFlight.delete(accountId);
+		log.info(`Cleared refresh cache for account ${accountId} on ${serverId}`);
+	});
 
 	// Initialize auto-refresh scheduler (now that proxyContext is available)
 	autoRefreshScheduler = new AutoRefreshScheduler(db, proxyContext);

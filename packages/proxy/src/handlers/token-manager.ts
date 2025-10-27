@@ -275,6 +275,49 @@ export async function refreshAccessTokenSafe(
 	return promise;
 }
 
+// Global registry for account refresh clearing functions
+let refreshClearers: Map<string, (accountId: string) => void> = new Map();
+
+/**
+ * Register a function to clear refresh cache for a specific account
+ * Used by the server to register its refresh clearing capability
+ */
+export function registerRefreshClearer(serverId: string, clearer: (accountId: string) => void): void {
+	refreshClearers.set(serverId, clearer);
+}
+
+/**
+ * Clear refresh cache for an account across all registered servers
+ */
+export function clearAccountRefreshCache(accountId: string): void {
+	for (const [serverId, clearer] of refreshClearers) {
+		try {
+			clearer(accountId);
+			log.info(`Cleared refresh cache for account ${accountId} on server ${serverId}`);
+		} catch (error) {
+			log.error(`Failed to clear refresh cache for account ${accountId} on server ${serverId}:`, error);
+		}
+	}
+}
+
+/**
+ * Internal function to clear refresh cache with specific context
+ * This is what the server registers as its clearer function
+ */
+function clearAccountRefreshCacheWithContext(
+	accountId: string,
+	ctx: ProxyContext,
+): void {
+	// Clear any in-flight refresh for this account
+	ctx.refreshInFlight.delete(accountId);
+
+	// Clear refresh failure records and backoff
+	refreshFailures.delete(accountId);
+	backoffCounters.delete(accountId);
+
+	log.info(`Cleared refresh cache for account ${accountId}`);
+}
+
 /**
  * Gets a valid access token for an account, refreshing if necessary
  * @param account - The account to get token for

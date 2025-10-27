@@ -8,6 +8,7 @@ import {
 	createAccountModelMappingsUpdateHandler,
 	createAccountPauseHandler,
 	createAccountPriorityUpdateHandler,
+	createAccountReloadHandler,
 	createAccountRemoveHandler,
 	createAccountRenameHandler,
 	createAccountResumeHandler,
@@ -279,7 +280,16 @@ export class APIRouter {
 				);
 			}
 
-			// Account rename
+			// Account reload
+			if (path.endsWith("/reload") && method === "POST") {
+				const reloadHandler = createAccountReloadHandler(this.context.dbOps);
+				return await this.wrapHandler((req) => reloadHandler(req, accountId))(
+					req,
+					url,
+				);
+			}
+
+		// Account rename
 			if (path.endsWith("/rename") && method === "POST") {
 				const renameHandler = createAccountRenameHandler(this.context.dbOps);
 				return await this.wrapHandler((req) => renameHandler(req, accountId))(

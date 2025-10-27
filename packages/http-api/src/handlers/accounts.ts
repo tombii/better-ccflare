@@ -21,6 +21,7 @@ import {
 	getRepresentativeWindow,
 	usageCache,
 } from "@better-ccflare/providers";
+import { clearAccountRefreshCache } from "@better-ccflare/proxy";
 import type { AccountResponse } from "../types";
 
 const log = new Logger("AccountsHandler");
@@ -1186,6 +1187,52 @@ export function createAccountModelMappingsUpdateHandler(
 				error instanceof Error
 					? error
 					: new Error("Failed to update model mappings"),
+			);
+		}
+	};
+}
+
+/**
+ * Create an account reload handler
+ * Clears refresh cache for an account after re-authentication
+ */
+export function createAccountReloadHandler(dbOps: DatabaseOperations) {
+	return async (_req: Request, accountId: string): Promise<Response> => {
+		try {
+			// Check if account exists
+			const db = dbOps.getDatabase();
+			const account = db
+				.query<{ name: string; provider: string }, [string]>(
+					"SELECT name, provider FROM accounts WHERE id = ?",
+				)
+				.get(accountId);
+
+			if (!account) {
+				return errorResponse(NotFound("Account not found"));
+			}
+
+			// Check if account is Anthropic provider (only OAuth accounts need token reload)
+			if (account.provider !== "anthropic") {
+				return errorResponse(
+					BadRequest("Token reload is only available for Anthropic accounts"),
+				);
+			}
+
+			// Clear refresh cache for this account
+			clearAccountRefreshCache(accountId);
+
+			log.info(`Token reload triggered for account '${account.name}'`);
+
+			return jsonResponse({
+				success: true,
+				message: `Token reload triggered for account '${account.name}'. The next request will use the updated tokens from the database.`,
+			});
+		} catch (error) {
+			log.error("Account reload error:", error);
+			return errorResponse(
+				error instanceof Error
+					? error
+					: new Error("Failed to reload account tokens"),
 			);
 		}
 	};
