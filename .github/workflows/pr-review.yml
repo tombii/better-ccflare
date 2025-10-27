@@ -64,7 +64,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           # Comma-separated list of models to try in order (fallback support)
-          AI_MODELS: "minimax/minimax-m2:free,qwen/qwen3-coder:free,z-ai/glm-4.5-air:free"
+          AI_MODELS: "minimax/minimax-m2:free,qwen/qwen3-coder:free,deepseek/deepseek-chat-v3.1:free,z-ai/glm-4.5-air:free"
           AI_TEMPERATURE: "0.2"
           AI_MAX_TOKENS: "8000"
           MAX_DIFF_SIZE: "600000"

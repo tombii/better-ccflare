@@ -8,6 +8,7 @@ import {
 } from "@better-ccflare/core";
 import type { DatabaseOperations } from "@better-ccflare/database";
 import { createOAuthFlow } from "@better-ccflare/oauth-flow";
+import { getOAuthProvider } from "@better-ccflare/providers";
 import type { AccountListItem, AccountTier } from "@better-ccflare/types";
 import {
 	type PromptAdapter,
@@ -537,5 +538,166 @@ export function setAccountPriority(
 	return {
 		success: true,
 		message: `Account '${name}' priority set to ${priority}`,
+	};
+}
+
+/**
+ * Re-authenticate an account by name (preserves all metadata)
+ * This performs soft re-authentication: only updates OAuth tokens, keeps all other data
+ */
+export async function reauthenticateAccount(
+	dbOps: DatabaseOperations,
+	config: Config,
+	name: string,
+): Promise<{ success: boolean; message: string }> {
+	const db = dbOps.getDatabase();
+
+	// Get account by name
+	const account = db
+		.query<
+			{
+				id: string;
+				provider: string;
+				account_tier: number;
+				priority: number;
+				custom_endpoint: string | null;
+			},
+			[string]
+		>(
+			"SELECT id, provider, account_tier, priority, custom_endpoint FROM accounts WHERE name = ?",
+		)
+		.get(name);
+
+	if (!account) {
+		return {
+			success: false,
+			message: `Account '${name}' not found`,
+		};
+	}
+
+	// Check if account supports OAuth (only anthropic provider)
+	if (account.provider !== "anthropic") {
+		return {
+			success: false,
+			message: `Account '${name}' (${account.provider}) does not support OAuth re-authentication. Only Anthropic accounts can be re-authenticated.`,
+		};
+	}
+
+	// Create OAuth flow instance
+	const oauthFlow = await createOAuthFlow(dbOps, config);
+
+	console.log(`\nRe-authenticating account '${name}'...`);
+	console.log(
+		"This will preserve all your account metadata (usage stats, priority, etc.)",
+	);
+
+	// Determine account mode based on tier and provider
+	const mode = account.account_tier > 1 ? "max" : "console";
+
+	// Start OAuth flow
+	const flowResult = await oauthFlow.begin({
+		name,
+		mode,
+	});
+	const { authUrl, sessionId } = flowResult;
+
+	// Open browser and prompt for code
+	console.log(`\nOpening browser to re-authenticate...`);
+	console.log(`URL: ${authUrl}`);
+	const browserOpened = await openBrowser(authUrl);
+	if (!browserOpened) {
+		console.log(
+			`\nFailed to open browser automatically. Please manually open the URL above.`,
+		);
+	}
+
+	// Import prompt adapter for code input
+	const { stdPromptAdapter } = await import("../prompts/index");
+
+	// Get authorization code
+	const code = await stdPromptAdapter.input("\nEnter the authorization code: ");
+
+	// Get OAuth provider and exchange code for tokens manually
+	console.log("\nExchanging code for new tokens...");
+	const oauthProvider = getOAuthProvider("anthropic");
+	if (!oauthProvider) {
+		return {
+			success: false,
+			message: "Anthropic OAuth provider not found",
+		};
+	}
+
+	const tokens = await oauthProvider.exchangeCode(
+		code,
+		flowResult.pkce.verifier,
+		flowResult.oauthConfig,
+	);
+
+	// Handle console mode - create API key and store as api_key
+	if (mode === "console" || !tokens.refreshToken) {
+		// Create API key using same method as OAuth flow
+		const response = await fetch(
+			"https://api.anthropic.com/api/oauth/claude_cli/create_api_key",
+			{
+				method: "POST",
+				headers: {
+					Authorization: `Bearer ${tokens.accessToken}`,
+					"Content-Type": "application/x-www-form-urlencoded",
+					Accept: "application/json, text/plain, */*",
+				},
+			},
+		);
+
+		if (!response.ok) {
+			throw new Error(`Failed to create API key: ${response.statusText}`);
+		}
+
+		const json = (await response.json()) as { raw_key: string };
+		const apiKey = json.raw_key;
+
+		// Update existing account with new API key (preserving all other metadata)
+		db.run(
+			`UPDATE accounts SET
+				api_key = ?,
+				refresh_token = ?,
+				access_token = NULL,
+				expires_at = NULL
+			WHERE id = ?`,
+			[apiKey, apiKey, account.id],
+		);
+
+		console.log(`\n✅ Account '${name}' re-authenticated successfully!`);
+		console.log(`📊 All account metadata (usage stats, priority, settings) has been preserved.`);
+		console.log(`🔑 API key has been updated.`);
+
+		return {
+			success: true,
+			message: `Account '${name}' re-authenticated successfully. All metadata preserved.`,
+		};
+	}
+
+	// Handle max mode - update with OAuth tokens
+	// Update existing account with new tokens (preserving all other metadata)
+	db.run(
+		`UPDATE accounts SET
+			refresh_token = ?,
+			access_token = ?,
+			expires_at = ?
+		WHERE id = ?`,
+		[
+			tokens.refreshToken,
+			tokens.accessToken,
+			tokens.expiresAt,
+			account.id,
+		],
+	);
+
+	console.log(`\n✅ Account '${name}' re-authenticated successfully!`);
+	console.log(`📊 All account metadata (usage stats, priority, settings) has been preserved.`);
+	console.log(`🔄 OAuth tokens have been updated.`);
+
+	return {
+		success: true,
+		message: `Account '${name}' re-authenticated successfully. All metadata preserved.`,
 	};
 }
