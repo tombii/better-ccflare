@@ -137,6 +137,41 @@ bun run better-ccflare
 
 **Note**: You must run `bun run build` at least once to build the dashboard files before starting the server. This can also be done by running `bun run better-ccflare` which includes the build step.
 
+### Environment Variables
+
+better-ccflare supports several environment variables for configuration:
+
+```bash
+# Server Configuration
+PORT=8080                              # Server port (default: 8080)
+BETTER_CCFLARE_HOST=0.0.0.0           # Server binding host (default: 0.0.0.0, use 127.0.0.1 for localhost-only)
+CLIENT_ID=your-client-id              # OAuth client ID
+BETTER_CCFLARE_CONFIG_PATH=/path/to/config.json  # Custom config location
+
+# Logging and Debugging
+LOG_LEVEL=INFO                         # Log level (ERROR, WARN, INFO, DEBUG)
+LOG_FORMAT=json                        # Log format (json or text)
+better-ccflare_DEBUG=0                  # Enable debug mode (1 for enabled)
+
+# SSL/TLS Configuration
+SSL_KEY_PATH=/path/to/key.pem          # SSL private key path (for HTTPS)
+SSL_CERT_PATH=/path/to/cert.pem        # SSL certificate path (for HTTPS)
+
+# Load Balancing
+LB_STRATEGY=session                    # Load balancing strategy (default: session)
+SESSION_DURATION_MS=18000000           # Session duration in milliseconds (5 hours)
+
+# Retry Configuration
+RETRY_ATTEMPTS=3                       # Number of retry attempts
+RETRY_DELAY_MS=1000                   # Initial retry delay in milliseconds
+RETRY_BACKOFF=2                        # Retry backoff multiplier
+```
+
+**Security Notes**:
+- Use `BETTER_CCFLARE_HOST=127.0.0.1` to bind only to localhost for better security
+- Never commit `.env` files containing sensitive values to version control
+- Use environment-specific configuration for production deployments
+
 ### Docker (Multi-Platform: linux/amd64, linux/arm64)
 
 ```bash
