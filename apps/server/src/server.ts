@@ -25,8 +25,8 @@ import {
 	getUsageWorker,
 	getValidAccessToken,
 	handleProxy,
-	registerRefreshClearer,
 	type ProxyContext,
+	registerRefreshClearer,
 	terminateUsageWorker,
 } from "@better-ccflare/proxy";
 import type { Account } from "@better-ccflare/types";

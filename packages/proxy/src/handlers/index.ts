@@ -11,4 +11,8 @@ export {
 	validateProviderPath,
 } from "./request-handler";
 export { handleProxyError } from "./response-processor";
-export { clearAccountRefreshCache, registerRefreshClearer, getValidAccessToken } from "./token-manager";
+export {
+	clearAccountRefreshCache,
+	getValidAccessToken,
+	registerRefreshClearer,
+} from "./token-manager";
