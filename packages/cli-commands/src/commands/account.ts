@@ -642,46 +642,29 @@ export async function reauthenticateAccount(
 		};
 	}
 
-	console.log(`Authorization code received: ${code.substring(0, 20)}...`);
-	console.log(`PKCE verifier: ${flowResult.pkce.verifier.substring(0, 10)}...`);
+	console.log("Exchanging authorization code for tokens...");
 
 	let tokens: TokenResult;
 
 	try {
-		// Extract state from the authorization code (format: code#state)
-		const codeParts = code.split("#");
-		const _actualCode = codeParts[0];
-		const stateFromAuth = codeParts[1];
-
-		console.log(
-			`Code parts: ${codeParts.length}, State from auth: ${stateFromAuth ? `${stateFromAuth.substring(0, 10)}...` : "not found"}`,
-		);
-
-		// Use the state from the authorization code as the PKCE verifier
-		// This is needed because the OAuth provider expects the state to match the original PKCE verifier
-		const verifierToUse = stateFromAuth || flowResult.pkce.verifier;
-
 		tokens = await oauthProvider.exchangeCode(
-			code, // Pass the full code with #state so exchangeCode can split it correctly
-			verifierToUse, // Use the state from auth as PKCE verifier
+			code,
+			flowResult.pkce.verifier,
 			flowResult.oauthConfig,
 		);
-		console.log(`Token exchange successful! New tokens received.`);
+		console.log("Token exchange successful!");
 	} catch (error) {
-		console.error(`Token exchange failed:`, error);
-		if (error instanceof Error) {
-			console.error(`Error message: ${error.message}`);
-			console.error(`Error stack: ${error.stack}`);
-		}
+		console.error("Token exchange failed:", error);
 		return {
 			success: false,
-			message: `Failed to exchange authorization code for tokens: ${error instanceof Error ? error.message : JSON.stringify(error)}`,
+			message: `Failed to exchange authorization code: ${error instanceof Error ? error.message : String(error)}`,
 		};
 	}
 
 	// Handle console mode - create API key and store as api_key
 	if (mode === "console" || !tokens.refreshToken) {
-		// Create API key using same method as OAuth flow
+		console.log("Creating API key for console mode...");
+
 		const response = await fetch(
 			"https://api.anthropic.com/api/oauth/claude_cli/create_api_key",
 			{
@@ -712,20 +695,13 @@ export async function reauthenticateAccount(
 			[apiKey, apiKey, account.id],
 		);
 
-		console.log(`\nAccount '${name}' re-authenticated successfully!`);
-		console.log(
-			"All account metadata (usage stats, priority, settings) has been preserved.",
-		);
-		console.log("API key has been updated.");
-
-		return {
-			success: true,
-			message: `Account '${name}' re-authenticated successfully. All metadata preserved.`,
-		};
+		console.log("API key created and updated.");
+		return showSuccessMessage(name, "API key");
 	}
 
 	// Handle max mode - update with OAuth tokens
-	// Update existing account with new tokens (preserving all other metadata)
+	console.log("Updating OAuth tokens...");
+
 	db.run(
 		`UPDATE accounts SET
 			refresh_token = ?,
@@ -735,17 +711,25 @@ export async function reauthenticateAccount(
 		[tokens.refreshToken, tokens.accessToken, tokens.expiresAt, account.id],
 	);
 
-	console.log(`\nAccount '${name}' re-authenticated successfully!`);
-	console.log(
-		"All account metadata (usage stats, priority, settings) has been preserved.",
-	);
-	console.log("OAuth tokens have been updated.");
-	console.log(
-		"\nIMPORTANT: If you have a running server, please restart it to use the new tokens.",
-	);
+	console.log("OAuth tokens updated.");
+	return showSuccessMessage(name, "OAuth tokens");
 
-	return {
-		success: true,
-		message: `Account '${name}' re-authenticated successfully. All metadata preserved.`,
-	};
+	/**
+	 * Helper function to show consistent success message
+	 */
+	function showSuccessMessage(name: string, updatedType: string) {
+		console.log(`\nAccount '${name}' re-authenticated successfully!`);
+		console.log(
+			"All account metadata (usage stats, priority, settings) has been preserved.",
+		);
+		console.log(`${updatedType} have been updated.`);
+		console.log(
+			"\nIMPORTANT: If you have a running server, please restart it to use the new tokens.",
+		);
+
+		return {
+			success: true,
+			message: `Account '${name}' re-authenticated successfully. All metadata preserved.`,
+		};
+	}
 }

@@ -1190,4 +1190,3 @@ export function createAccountModelMappingsUpdateHandler(
 		}
 	};
 }
-
