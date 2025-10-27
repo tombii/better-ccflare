@@ -279,7 +279,7 @@ if json_match:
     json_str = json_match.group(1)
 else:
     # Try to find JSON object directly in the text
-    json_match = re.search(r'\{.*?\}', content, re.DOTALL)
+    json_match = re.search(r'(\{.*?\})', content, re.DOTALL)
     if json_match:
         json_str = json_match.group(1)
     else:
