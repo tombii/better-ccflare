@@ -53,9 +53,13 @@ export class AnthropicProvider extends BaseProvider {
 
 		// Debug: Log the refresh attempt details
 		console.log(`[DEBUG] Token refresh attempt for ${account.name}:`);
-		console.log(`[DEBUG] Refresh token: ${account.refresh_token ? account.refresh_token.substring(0, 30) + '...' : 'null/undefined'}`);
+		console.log(
+			`[DEBUG] Refresh token: ${account.refresh_token ? `${account.refresh_token.substring(0, 30)}...` : "null/undefined"}`,
+		);
 		console.log(`[DEBUG] Client ID: ${clientId}`);
-		console.log(`[DEBUG] Refresh token length: ${account.refresh_token?.length || 0}`);
+		console.log(
+			`[DEBUG] Refresh token length: ${account.refresh_token?.length || 0}`,
+		);
 
 		const requestBody = {
 			grant_type: "refresh_token",
@@ -76,8 +80,13 @@ export class AnthropicProvider extends BaseProvider {
 			},
 		);
 
-		console.log(`[DEBUG] Response status: ${response.status} ${response.statusText}`);
-		console.log(`[DEBUG] Response headers:`, Object.fromEntries(response.headers.entries()));
+		console.log(
+			`[DEBUG] Response status: ${response.status} ${response.statusText}`,
+		);
+		console.log(
+			`[DEBUG] Response headers:`,
+			Object.fromEntries(response.headers.entries()),
+		);
 
 		if (!response.ok) {
 			let errorMessage = response.statusText;

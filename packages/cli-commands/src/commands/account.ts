@@ -8,7 +8,10 @@ import {
 } from "@better-ccflare/core";
 import type { DatabaseOperations } from "@better-ccflare/database";
 import { createOAuthFlow } from "@better-ccflare/oauth-flow";
-import { getOAuthProvider } from "@better-ccflare/providers";
+import {
+	getOAuthProvider,
+	type TokenRefreshResult as TokenResult,
+} from "@better-ccflare/providers";
 import type { AccountListItem, AccountTier } from "@better-ccflare/types";
 import {
 	type PromptAdapter,
@@ -603,7 +606,7 @@ export async function reauthenticateAccount(
 		mode,
 		skipAccountCheck: true,
 	});
-	const { authUrl, sessionId } = flowResult;
+	const { authUrl } = flowResult;
 
 	// Open browser and prompt for code
 	console.log(`\nOpening browser to re-authenticate...`);
@@ -642,15 +645,17 @@ export async function reauthenticateAccount(
 	console.log(`Authorization code received: ${code.substring(0, 20)}...`);
 	console.log(`PKCE verifier: ${flowResult.pkce.verifier.substring(0, 10)}...`);
 
-	let tokens;
+	let tokens: TokenResult;
 
 	try {
 		// Extract state from the authorization code (format: code#state)
-		const codeParts = code.split('#');
-		const actualCode = codeParts[0];
+		const codeParts = code.split("#");
+		const _actualCode = codeParts[0];
 		const stateFromAuth = codeParts[1];
 
-		console.log(`Code parts: ${codeParts.length}, State from auth: ${stateFromAuth ? stateFromAuth.substring(0, 10) + '...' : 'not found'}`);
+		console.log(
+			`Code parts: ${codeParts.length}, State from auth: ${stateFromAuth ? `${stateFromAuth.substring(0, 10)}...` : "not found"}`,
+		);
 
 		// Use the state from the authorization code as the PKCE verifier
 		// This is needed because the OAuth provider expects the state to match the original PKCE verifier
@@ -708,7 +713,9 @@ export async function reauthenticateAccount(
 		);
 
 		console.log(`\nAccount '${name}' re-authenticated successfully!`);
-		console.log("All account metadata (usage stats, priority, settings) has been preserved.");
+		console.log(
+			"All account metadata (usage stats, priority, settings) has been preserved.",
+		);
 		console.log("API key has been updated.");
 
 		return {
@@ -725,17 +732,17 @@ export async function reauthenticateAccount(
 			access_token = ?,
 			expires_at = ?
 		WHERE id = ?`,
-		[
-			tokens.refreshToken,
-			tokens.accessToken,
-			tokens.expiresAt,
-			account.id,
-		],
+		[tokens.refreshToken, tokens.accessToken, tokens.expiresAt, account.id],
 	);
 
 	console.log(`\nAccount '${name}' re-authenticated successfully!`);
-	console.log("All account metadata (usage stats, priority, settings) has been preserved.");
+	console.log(
+		"All account metadata (usage stats, priority, settings) has been preserved.",
+	);
 	console.log("OAuth tokens have been updated.");
+	console.log(
+		"\nIMPORTANT: If you have a running server, please restart it to use the new tokens.",
+	);
 
 	return {
 		success: true,
