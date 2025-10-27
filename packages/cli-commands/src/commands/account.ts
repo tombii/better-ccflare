@@ -561,10 +561,11 @@ export async function reauthenticateAccount(
 				account_tier: number;
 				priority: number;
 				custom_endpoint: string | null;
+				api_key: string | null;
 			},
 			[string]
 		>(
-			"SELECT id, provider, account_tier, priority, custom_endpoint FROM accounts WHERE name = ?",
+			"SELECT id, provider, account_tier, priority, custom_endpoint, api_key FROM accounts WHERE name = ?",
 		)
 		.get(name);
 
@@ -591,13 +592,16 @@ export async function reauthenticateAccount(
 		"This will preserve all your account metadata (usage stats, priority, etc.)",
 	);
 
-	// Determine account mode based on tier and provider
-	const mode = account.account_tier > 1 ? "max" : "console";
+	// Determine account mode based on token presence (not tier)
+	// OAuth accounts have access_token + refresh_token but no api_key
+	// Console accounts have api_key but no access_token/refresh_token
+	const mode = account.api_key ? "console" : "max";
 
-	// Start OAuth flow
+	// Start OAuth flow with skipAccountCheck for re-authentication
 	const flowResult = await oauthFlow.begin({
 		name,
 		mode,
+		skipAccountCheck: true,
 	});
 	const { authUrl, sessionId } = flowResult;
 
@@ -627,11 +631,31 @@ export async function reauthenticateAccount(
 		};
 	}
 
-	const tokens = await oauthProvider.exchangeCode(
-		code,
-		flowResult.pkce.verifier,
-		flowResult.oauthConfig,
-	);
+	// Validate authorization code format
+	if (!code || code.trim().length === 0) {
+		return {
+			success: false,
+			message: "Authorization code is required",
+		};
+	}
+
+	console.log(`Authorization code received: ${code.substring(0, 20)}...`);
+	console.log(`PKCE verifier: ${flowResult.pkce.verifier.substring(0, 10)}...`);
+
+	try {
+		const tokens = await oauthProvider.exchangeCode(
+			code,
+			flowResult.pkce.verifier,
+			flowResult.oauthConfig,
+		);
+		console.log(`Token exchange successful! New tokens received.`);
+	} catch (error) {
+		console.error(`Token exchange failed: ${error instanceof Error ? error.message : String(error)}`);
+		return {
+			success: false,
+			message: `Failed to exchange authorization code for tokens: ${error instanceof Error ? error.message : String(error)}`,
+		};
+	}
 
 	// Handle console mode - create API key and store as api_key
 	if (mode === "console" || !tokens.refreshToken) {
@@ -666,9 +690,9 @@ export async function reauthenticateAccount(
 			[apiKey, apiKey, account.id],
 		);
 
-		console.log(`\n✅ Account '${name}' re-authenticated successfully!`);
-		console.log(`📊 All account metadata (usage stats, priority, settings) has been preserved.`);
-		console.log(`🔑 API key has been updated.`);
+		console.log(`\nAccount '${name}' re-authenticated successfully!`);
+		console.log("All account metadata (usage stats, priority, settings) has been preserved.");
+		console.log("API key has been updated.");
 
 		return {
 			success: true,
@@ -692,9 +716,9 @@ export async function reauthenticateAccount(
 		],
 	);
 
-	console.log(`\n✅ Account '${name}' re-authenticated successfully!`);
-	console.log(`📊 All account metadata (usage stats, priority, settings) has been preserved.`);
-	console.log(`🔄 OAuth tokens have been updated.`);
+	console.log(`\nAccount '${name}' re-authenticated successfully!`);
+	console.log("All account metadata (usage stats, priority, settings) has been preserved.");
+	console.log("OAuth tokens have been updated.");
 
 	return {
 		success: true,
