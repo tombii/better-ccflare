@@ -203,6 +203,14 @@ function startUsagePollingWithRefresh(
 				const currentAccount = proxyContext.dbOps.getAccount(account.id);
 				const wasTemporarilyResumed = currentAccount?.paused === true;
 
+				// Update in-memory account with fresh token data from DB
+				// This prevents using stale tokens after re-authentication
+				if (currentAccount) {
+					account.access_token = currentAccount.access_token;
+					account.refresh_token = currentAccount.refresh_token;
+					account.expires_at = currentAccount.expires_at;
+				}
+
 				// If account is currently paused, temporarily resume it for token refresh
 				if (wasTemporarilyResumed) {
 					logger.debug(
