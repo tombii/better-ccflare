@@ -8,6 +8,7 @@ import { ensureSchema, runMigrations } from "./migrations";
 import { resolveDbPath } from "./paths";
 import { AccountRepository } from "./repositories/account.repository";
 import { AgentPreferenceRepository } from "./repositories/agent-preference.repository";
+import { ApiKeyRepository } from "./repositories/api-key.repository";
 import { OAuthRepository } from "./repositories/oauth.repository";
 import {
 	type RequestData,
@@ -130,6 +131,7 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 	private strategy: StrategyRepository;
 	private stats: StatsRepository;
 	private agentPreferences: AgentPreferenceRepository;
+	private apiKeys: ApiKeyRepository;
 
 	constructor(
 		dbPath?: string,
@@ -177,6 +179,7 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		this.strategy = new StrategyRepository(this.db);
 		this.stats = new StatsRepository(this.db);
 		this.agentPreferences = new AgentPreferenceRepository(this.db);
+		this.apiKeys = new ApiKeyRepository(this.db);
 	}
 
 	setRuntimeConfig(runtime: RuntimeConfig): void {
@@ -604,6 +607,173 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		} else {
 			this.db.exec("PRAGMA incremental_vacuum");
 		}
+	}
+
+	// API Key operations delegated to repository
+	getApiKeys() {
+		return withDatabaseRetrySync(
+			() => {
+				return this.apiKeys.findAll();
+			},
+			this.retryConfig,
+			"getApiKeys",
+		);
+	}
+
+	getActiveApiKeys() {
+		return withDatabaseRetrySync(
+			() => {
+				return this.apiKeys.findActive();
+			},
+			this.retryConfig,
+			"getActiveApiKeys",
+		);
+	}
+
+	getApiKey(id: string) {
+		return withDatabaseRetrySync(
+			() => {
+				return this.apiKeys.findById(id);
+			},
+			this.retryConfig,
+			"getApiKey",
+		);
+	}
+
+	getApiKeyByHashedKey(hashedKey: string) {
+		return withDatabaseRetrySync(
+			() => {
+				return this.apiKeys.findByHashedKey(hashedKey);
+			},
+			this.retryConfig,
+			"getApiKeyByHashedKey",
+		);
+	}
+
+	getApiKeyByName(name: string) {
+		return withDatabaseRetrySync(
+			() => {
+				return this.apiKeys.findByName(name);
+			},
+			this.retryConfig,
+			"getApiKeyByName",
+		);
+	}
+
+	apiKeyNameExists(name: string): boolean {
+		return withDatabaseRetrySync(
+			() => {
+				return this.apiKeys.nameExists(name);
+			},
+			this.retryConfig,
+			"apiKeyNameExists",
+		);
+	}
+
+	createApiKey(apiKey: {
+		id: string;
+		name: string;
+		hashedKey: string;
+		prefixLast8: string;
+		createdAt: number;
+		lastUsed?: number | null;
+		isActive: boolean;
+	}): void {
+		withDatabaseRetrySync(
+			() => {
+				this.apiKeys.create({
+					id: apiKey.id,
+					name: apiKey.name,
+					hashed_key: apiKey.hashedKey,
+					prefix_last_8: apiKey.prefixLast8,
+					created_at: apiKey.createdAt,
+					last_used: apiKey.lastUsed || null,
+					is_active: apiKey.isActive ? 1 : 0,
+				});
+			},
+			this.retryConfig,
+			"createApiKey",
+		);
+	}
+
+	updateApiKeyUsage(id: string, timestamp: number): void {
+		withDatabaseRetrySync(
+			() => {
+				this.apiKeys.updateUsage(id, timestamp);
+			},
+			this.retryConfig,
+			"updateApiKeyUsage",
+		);
+	}
+
+	disableApiKey(id: string): boolean {
+		return withDatabaseRetrySync(
+			() => {
+				return this.apiKeys.disable(id);
+			},
+			this.retryConfig,
+			"disableApiKey",
+		);
+	}
+
+	enableApiKey(id: string): boolean {
+		return withDatabaseRetrySync(
+			() => {
+				return this.apiKeys.enable(id);
+			},
+			this.retryConfig,
+			"enableApiKey",
+		);
+	}
+
+	deleteApiKey(id: string): boolean {
+		return withDatabaseRetrySync(
+			() => {
+				return this.apiKeys.delete(id);
+			},
+			this.retryConfig,
+			"deleteApiKey",
+		);
+	}
+
+	countActiveApiKeys(): number {
+		return withDatabaseRetrySync(
+			() => {
+				return this.apiKeys.countActive();
+			},
+			this.retryConfig,
+			"countActiveApiKeys",
+		);
+	}
+
+	countAllApiKeys(): number {
+		return withDatabaseRetrySync(
+			() => {
+				return this.apiKeys.countAll();
+			},
+			this.retryConfig,
+			"countAllApiKeys",
+		);
+	}
+
+	/**
+	 * Clear all API keys (for testing purposes)
+	 */
+	clearApiKeys(): void {
+		return withDatabaseRetrySync(
+			() => {
+				this.apiKeys.clearAll();
+			},
+			this.retryConfig,
+			"clearApiKeys",
+		);
+	}
+
+	/**
+	 * Get the API key repository for direct access
+	 */
+	getApiKeyRepository(): ApiKeyRepository {
+		return this.apiKeys;
 	}
 
 	/**

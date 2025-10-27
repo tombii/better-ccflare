@@ -101,6 +101,30 @@ export function ensureSchema(db: Database): void {
 			updated_at INTEGER NOT NULL
 		)
 	`);
+
+	// Create api_keys table for optional API authentication
+	db.run(`
+		CREATE TABLE IF NOT EXISTS api_keys (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL UNIQUE,
+			hashed_key TEXT NOT NULL UNIQUE,
+			prefix_last_8 TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			last_used INTEGER,
+			usage_count INTEGER DEFAULT 0,
+			is_active INTEGER DEFAULT 1
+		)
+	`);
+
+	// Create index for faster API key lookups
+	db.run(
+		`CREATE INDEX IF NOT EXISTS idx_api_keys_hashed_key ON api_keys(hashed_key)`,
+	);
+
+	// Create index for active API keys
+	db.run(
+		`CREATE INDEX IF NOT EXISTS idx_api_keys_active ON api_keys(is_active)`,
+	);
 }
 
 export function runMigrations(db: Database): void {

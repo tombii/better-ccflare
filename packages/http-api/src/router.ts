@@ -1,4 +1,5 @@
 import { validateNumber } from "@better-ccflare/core";
+import { Unauthorized } from "@better-ccflare/errors";
 import {
 	createAccountAddHandler,
 	createAccountAutoFallbackHandler,
@@ -23,6 +24,14 @@ import {
 } from "./handlers/agents";
 import { createAgentUpdateHandler } from "./handlers/agents-update";
 import { createAnalyticsHandler } from "./handlers/analytics";
+import {
+	createApiKeyDeleteHandler,
+	createApiKeyDisableHandler,
+	createApiKeyEnableHandler,
+	createApiKeysGenerateHandler,
+	createApiKeysListHandler,
+	createApiKeysStatsHandler,
+} from "./handlers/api-keys";
 import { createConfigHandlers } from "./handlers/config";
 import { createHealthHandler } from "./handlers/health";
 import { createLogsStreamHandler } from "./handlers/logs";
@@ -43,6 +52,7 @@ import {
 import { createRequestsStreamHandler } from "./handlers/requests-stream";
 import { createStatsHandler, createStatsResetHandler } from "./handlers/stats";
 import { createSystemInfoHandler } from "./handlers/system";
+import { AuthService } from "./services/auth-service";
 import type { APIContext } from "./types";
 import { errorResponse } from "./utils/http-error";
 
@@ -55,10 +65,12 @@ export class APIRouter {
 		string,
 		(req: Request, url: URL) => Response | Promise<Response>
 	>;
+	private authService: AuthService;
 
 	constructor(context: APIContext) {
 		this.context = context;
 		this.handlers = new Map();
+		this.authService = new AuthService(context.dbOps);
 		this.registerHandlers();
 	}
 
@@ -89,6 +101,11 @@ export class APIRouter {
 		const cleanupHandler = createCleanupHandler(dbOps, config);
 		const compactHandler = createCompactHandler(dbOps);
 		const systemInfoHandler = createSystemInfoHandler();
+
+		// API Key handlers
+		const apiKeysListHandler = createApiKeysListHandler(dbOps);
+		const apiKeysGenerateHandler = createApiKeysGenerateHandler(dbOps);
+		const apiKeysStatsHandler = createApiKeysStatsHandler(dbOps);
 
 		// Register routes
 		this.handlers.set("GET:/health", () => healthHandler());
@@ -167,6 +184,13 @@ export class APIRouter {
 			return bulkHandler(req);
 		});
 		this.handlers.set("GET:/api/workspaces", () => workspacesHandler());
+
+		// API Key routes
+		this.handlers.set("GET:/api/api-keys", () => apiKeysListHandler());
+		this.handlers.set("POST:/api/api-keys", (req) =>
+			apiKeysGenerateHandler(req),
+		);
+		this.handlers.set("GET:/api/api-keys/stats", () => apiKeysStatsHandler());
 	}
 
 	/**
@@ -191,6 +215,18 @@ export class APIRouter {
 		const path = url.pathname;
 		const method = req.method;
 		const key = `${method}:${path}`;
+
+		// Authenticate the request
+		const authResult = await this.authService.authenticateRequest(
+			req,
+			path,
+			method,
+		);
+		if (!authResult.isAuthenticated) {
+			return errorResponse(
+				Unauthorized(authResult.error || "Authentication failed"),
+			);
+		}
 
 		// Check for exact match
 		const handler = this.handlers.get(key);
@@ -332,6 +368,39 @@ export class APIRouter {
 			if (parts.length === 4 && method === "PATCH") {
 				const updateHandler = createAgentUpdateHandler(this.context.dbOps);
 				return await this.wrapHandler((req) => updateHandler(req, agentId))(
+					req,
+					url,
+				);
+			}
+		}
+
+		// Check for dynamic API key endpoints
+		if (path.startsWith("/api/api-keys/")) {
+			const parts = path.split("/");
+			const keyName = decodeURIComponent(parts[3]); // Decode URL-encoded names
+
+			// API key disable
+			if (path.endsWith("/disable") && method === "POST") {
+				const disableHandler = createApiKeyDisableHandler(this.context.dbOps);
+				return await this.wrapHandler((req) => disableHandler(req, keyName))(
+					req,
+					url,
+				);
+			}
+
+			// API key enable
+			if (path.endsWith("/enable") && method === "POST") {
+				const enableHandler = createApiKeyEnableHandler(this.context.dbOps);
+				return await this.wrapHandler((req) => enableHandler(req, keyName))(
+					req,
+					url,
+				);
+			}
+
+			// API key delete
+			if (parts.length === 4 && method === "DELETE") {
+				const deleteHandler = createApiKeyDeleteHandler(this.context.dbOps);
+				return await this.wrapHandler((req) => deleteHandler(req, keyName))(
 					req,
 					url,
 				);

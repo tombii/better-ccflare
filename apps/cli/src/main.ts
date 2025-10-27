@@ -3,7 +3,15 @@ import {
 	addAccount,
 	analyzePerformance,
 	clearRequestHistory,
+	deleteApiKey,
+	disableApiKey,
+	enableApiKey,
+	formatApiKeyForDisplay,
+	formatApiKeyGenerationResult,
+	generateApiKey,
 	getAccountsList,
+	getApiKeyStats,
+	listApiKeys,
 	pauseAccount,
 	removeAccount,
 	resetAllStats,
@@ -69,6 +77,11 @@ function parseArgs(args: string[]) {
 		clearHistory: false,
 		getModel: false,
 		setModel: null,
+		generateApiKey: null,
+		listApiKeys: false,
+		disableApiKey: null,
+		enableApiKey: null,
+		deleteApiKey: null,
 	};
 
 	for (let i = 0; i < args.length; i++) {
@@ -234,6 +247,37 @@ function parseArgs(args: string[]) {
 				}
 				parsed.setModel = args[++i];
 				break;
+			case "--generate-api-key":
+				if (i + 1 >= args.length || args[i + 1].startsWith("--")) {
+					console.error("❌ --generate-api-key requires a name");
+					fastExit(1);
+				}
+				parsed.generateApiKey = args[++i];
+				break;
+			case "--list-api-keys":
+				parsed.listApiKeys = true;
+				break;
+			case "--disable-api-key":
+				if (i + 1 >= args.length || args[i + 1].startsWith("--")) {
+					console.error("❌ --disable-api-key requires an API key name");
+					fastExit(1);
+				}
+				parsed.disableApiKey = args[++i];
+				break;
+			case "--enable-api-key":
+				if (i + 1 >= args.length || args[i + 1].startsWith("--")) {
+					console.error("❌ --enable-api-key requires an API key name");
+					fastExit(1);
+				}
+				parsed.enableApiKey = args[++i];
+				break;
+			case "--delete-api-key":
+				if (i + 1 >= args.length || args[i + 1].startsWith("--")) {
+					console.error("❌ --delete-api-key requires an API key name");
+					fastExit(1);
+				}
+				parsed.deleteApiKey = args[++i];
+				break;
 		}
 	}
 
@@ -289,7 +333,14 @@ Options:
   --clear-history      Clear request history
   --get-model          Show current default agent model
   --set-model <model>  Set default agent model (opus-4 or sonnet-4)
-  --help, -h           Show this help message
+
+API Key Management:
+  --generate-api-key <name>  Generate a new API key
+  --list-api-keys            List all API keys
+  --disable-api-key <name>   Disable an API key
+  --enable-api-key <name>    Enable a disabled API key
+  --delete-api-key <name>    Delete an API key permanently
+  --help, -h                 Show this help message
 
 Examples:
   better-ccflare --serve                # Start server
@@ -298,6 +349,9 @@ Examples:
   better-ccflare --pause work           # Pause account
   better-ccflare --analyze              # Run performance analysis
   better-ccflare --stats                # View stats
+  better-ccflare --generate-api-key "My App"  # Generate new API key
+  better-ccflare --list-api-keys               # List all API keys
+  better-ccflare --disable-api-key "My App"    # Disable an API key
 `);
 		fastExit(0);
 		return;
@@ -539,6 +593,79 @@ Examples:
 			await exitGracefully(1);
 		}
 		await exitGracefully(0);
+	}
+
+	// API Key management commands
+	if (parsed.generateApiKey) {
+		try {
+			const result = await generateApiKey(dbOps, parsed.generateApiKey);
+			console.log(formatApiKeyGenerationResult(result));
+			await exitGracefully(0);
+		} catch (error: unknown) {
+			const errorMessage =
+				error instanceof Error ? error.message : String(error);
+			console.error(`❌ Failed to generate API key: ${errorMessage}`);
+			await exitGracefully(1);
+		}
+	}
+
+	if (parsed.listApiKeys) {
+		const apiKeys = listApiKeys(dbOps);
+		if (apiKeys.length === 0) {
+			console.log("No API keys configured");
+		} else {
+			console.log("\nAPI Keys:");
+			apiKeys.forEach((apiKey) => {
+				console.log(formatApiKeyForDisplay(apiKey));
+			});
+
+			// Show statistics
+			const stats = getApiKeyStats(dbOps);
+			console.log(`\nStatistics:`);
+			console.log(`  Total: ${stats.total}`);
+			console.log(`  Active: ${stats.active}`);
+			console.log(`  Inactive: ${stats.inactive}`);
+		}
+		await exitGracefully(0);
+	}
+
+	if (parsed.disableApiKey) {
+		try {
+			await disableApiKey(dbOps, parsed.disableApiKey);
+			console.log(`✅ API key '${parsed.disableApiKey}' disabled successfully`);
+			await exitGracefully(0);
+		} catch (error: unknown) {
+			const errorMessage =
+				error instanceof Error ? error.message : String(error);
+			console.error(`❌ Failed to disable API key: ${errorMessage}`);
+			await exitGracefully(1);
+		}
+	}
+
+	if (parsed.enableApiKey) {
+		try {
+			await enableApiKey(dbOps, parsed.enableApiKey);
+			console.log(`✅ API key '${parsed.enableApiKey}' enabled successfully`);
+			await exitGracefully(0);
+		} catch (error: unknown) {
+			const errorMessage =
+				error instanceof Error ? error.message : String(error);
+			console.error(`❌ Failed to enable API key: ${errorMessage}`);
+			await exitGracefully(1);
+		}
+	}
+
+	if (parsed.deleteApiKey) {
+		try {
+			await deleteApiKey(dbOps, parsed.deleteApiKey);
+			console.log(`✅ API key '${parsed.deleteApiKey}' deleted successfully`);
+			await exitGracefully(0);
+		} catch (error: unknown) {
+			const errorMessage =
+				error instanceof Error ? error.message : String(error);
+			console.error(`❌ Failed to delete API key: ${errorMessage}`);
+			await exitGracefully(1);
+		}
 	}
 
 	if (parsed.analyze) {

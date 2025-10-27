@@ -4,6 +4,7 @@ import {
 	Bot,
 	FileText,
 	GitBranch,
+	Key,
 	LayoutDashboard,
 	Menu,
 	RefreshCw,
@@ -40,6 +41,7 @@ const navItems: NavItem[] = [
 	{ label: "Requests", icon: Activity, path: "/requests" },
 	{ label: "Accounts", icon: Users, path: "/accounts" },
 	{ label: "Agents", icon: Bot, path: "/agents" },
+	{ label: "API Keys", icon: Key, path: "/api-keys" },
 	{ label: "Logs", icon: FileText, path: "/logs" },
 ];
 
