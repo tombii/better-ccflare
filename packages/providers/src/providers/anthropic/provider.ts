@@ -31,17 +31,18 @@ export class AnthropicProvider extends BaseProvider {
 		clientId: string,
 	): Promise<TokenRefreshResult> {
 		// Debug: Log account classification
-		console.log(`[DEBUG] Account classification for ${account.name}:`);
-		console.log(`[DEBUG] - Has API key: ${!!account.api_key}`);
-		console.log(`[DEBUG] - Has access token: ${!!account.access_token}`);
-		console.log(`[DEBUG] - Has refresh token: ${!!account.refresh_token}`);
-		console.log(`[DEBUG] - Account tier: ${account.account_tier}`);
-		console.log(`[DEBUG] - Provider: ${account.provider}`);
+		log.debug(`Account classification for ${account.name}:`, {
+			hasApiKey: !!account.api_key,
+			hasAccessToken: !!account.access_token,
+			hasRefreshToken: !!account.refresh_token,
+			accountTier: account.account_tier,
+			provider: account.provider,
+		});
 
 		// Determine account type based on token presence (same logic as re-authentication)
 		const isConsoleMode = !!account.api_key;
 		const accountType = isConsoleMode ? "Console (API key)" : "CLI (OAuth)";
-		console.log(`[DEBUG] - Account type: ${accountType}`);
+		log.debug(`Account type: ${accountType}`);
 
 		if (!account.refresh_token) {
 			throw new Error(`No refresh token available for account ${account.name}`);
@@ -52,14 +53,13 @@ export class AnthropicProvider extends BaseProvider {
 		);
 
 		// Debug: Log the refresh attempt details
-		console.log(`[DEBUG] Token refresh attempt for ${account.name}:`);
-		console.log(
-			`[DEBUG] Refresh token: ${account.refresh_token ? `${account.refresh_token.substring(0, 30)}...` : "null/undefined"}`,
-		);
-		console.log(`[DEBUG] Client ID: ${clientId}`);
-		console.log(
-			`[DEBUG] Refresh token length: ${account.refresh_token?.length || 0}`,
-		);
+		log.debug(`Token refresh attempt for ${account.name}:`, {
+			refreshTokenPreview: account.refresh_token
+				? `${account.refresh_token.substring(0, 30)}...`
+				: "null/undefined",
+			clientId,
+			refreshTokenLength: account.refresh_token?.length || 0,
+		});
 
 		const requestBody = {
 			grant_type: "refresh_token",
@@ -67,7 +67,7 @@ export class AnthropicProvider extends BaseProvider {
 			client_id: clientId,
 		};
 
-		console.log(`[DEBUG] Request body:`, JSON.stringify(requestBody, null, 2));
+		log.debug("Request body:", requestBody);
 
 		const response = await fetch(
 			"https://console.anthropic.com/v1/oauth/token",
@@ -80,20 +80,16 @@ export class AnthropicProvider extends BaseProvider {
 			},
 		);
 
-		console.log(
-			`[DEBUG] Response status: ${response.status} ${response.statusText}`,
-		);
-		console.log(
-			`[DEBUG] Response headers:`,
-			Object.fromEntries(response.headers.entries()),
-		);
+		log.debug(`Response status: ${response.status} ${response.statusText}`, {
+			headers: Object.fromEntries(response.headers.entries()),
+		});
 
 		if (!response.ok) {
 			let errorMessage = response.statusText;
 			let errorData: unknown = null;
 			try {
 				const responseText = await response.text();
-				console.log(`[DEBUG] Error response body:`, responseText);
+				log.debug("Error response body:", responseText);
 				errorData = JSON.parse(responseText);
 				const errorObj = errorData as {
 					error?: string;

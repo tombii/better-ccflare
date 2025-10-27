@@ -1,10 +1,13 @@
 import { OAuthError } from "@better-ccflare/core";
+import { Logger } from "@better-ccflare/logger";
 import type {
 	OAuthProvider,
 	OAuthProviderConfig,
 	PKCEChallenge,
 	TokenResult,
 } from "../../types";
+
+const oauthLog = new Logger("AnthropicOAuthProvider");
 
 export class AnthropicOAuthProvider implements OAuthProvider {
 	getOAuthConfig(mode: "console" | "max" = "console"): OAuthProviderConfig {
@@ -66,17 +69,14 @@ export class AnthropicOAuthProvider implements OAuthProvider {
 	): Promise<TokenResult> {
 		const splits = code.split("#");
 
-		console.log(`[DEBUG] OAuth exchangeCode called:`);
-		console.log(`[DEBUG] - Full code: ${code.substring(0, 30)}...`);
-		console.log(
-			`[DEBUG] - Code part (splits[0]): ${splits[0]?.substring(0, 20)}...`,
-		);
-		console.log(
-			`[DEBUG] - State part (splits[1]): ${splits[1]?.substring(0, 20)}...`,
-		);
-		console.log(`[DEBUG] - Verifier param: ${verifier.substring(0, 20)}...`);
-		console.log(`[DEBUG] - Client ID: ${config.clientId}`);
-		console.log(`[DEBUG] - Mode: ${config.mode}`);
+		oauthLog.debug(`OAuth exchangeCode called:`, {
+			fullCodePreview: `${code.substring(0, 30)}...`,
+			codePart: splits[0]?.substring(0, 20),
+			statePart: splits[1]?.substring(0, 20),
+			verifierPreview: `${verifier.substring(0, 20)}...`,
+			clientId: config.clientId,
+			mode: config.mode,
+		});
 
 		const requestBody = {
 			code: splits[0],
@@ -87,10 +87,7 @@ export class AnthropicOAuthProvider implements OAuthProvider {
 			code_verifier: verifier,
 		};
 
-		console.log(
-			`[DEBUG] Exchange request body:`,
-			JSON.stringify(requestBody, null, 2),
-		);
+		oauthLog.debug("Exchange request body:", requestBody);
 
 		const response = await fetch(config.tokenUrl, {
 			method: "POST",
@@ -98,8 +95,8 @@ export class AnthropicOAuthProvider implements OAuthProvider {
 			body: JSON.stringify(requestBody),
 		});
 
-		console.log(
-			`[DEBUG] Exchange response status: ${response.status} ${response.statusText}`,
+		oauthLog.debug(
+			`Exchange response status: ${response.status} ${response.statusText}`,
 		);
 
 		if (!response.ok) {
