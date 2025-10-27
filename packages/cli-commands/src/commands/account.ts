@@ -377,7 +377,7 @@ export function getAccountsList(dbOps: DatabaseOperations): AccountListItem[] {
 			mode:
 				account.provider === "zai"
 					? "zai"
-					: account.account_tier > 1
+					: account.access_token
 						? "max"
 						: "console",
 			priority: account.priority || 0,
@@ -665,68 +665,99 @@ export async function reauthenticateAccount(
 	if (mode === "console" || !tokens.refreshToken) {
 		console.log("Creating API key for console mode...");
 
-		const response = await fetch(
-			"https://api.anthropic.com/api/oauth/claude_cli/create_api_key",
-			{
-				method: "POST",
-				headers: {
-					Authorization: `Bearer ${tokens.accessToken}`,
-					"Content-Type": "application/x-www-form-urlencoded",
-					Accept: "application/json, text/plain, */*",
+		try {
+			const response = await fetch(
+				"https://api.anthropic.com/api/oauth/claude_cli/create_api_key",
+				{
+					method: "POST",
+					headers: {
+						Authorization: `Bearer ${tokens.accessToken}`,
+						"Content-Type": "application/x-www-form-urlencoded",
+						Accept: "application/json, text/plain, */*",
+					},
 				},
-			},
-		);
+			);
 
-		if (!response.ok) {
-			throw new Error(`Failed to create API key: ${response.statusText}`);
+			if (!response.ok) {
+				return {
+					success: false,
+					message: `Failed to create API key: ${response.statusText}`,
+				};
+			}
+
+			const json = (await response.json()) as { raw_key: string };
+			const apiKey = json.raw_key;
+
+			// Update existing account with new API key (preserving all other metadata)
+			// Use transaction for atomic update
+			try {
+				db.run(
+					`UPDATE accounts SET
+						api_key = ?,
+						refresh_token = ?,
+						access_token = NULL,
+						expires_at = NULL
+					WHERE id = ?`,
+					[apiKey, apiKey, account.id],
+				);
+
+				console.log("API key created and updated.");
+				return await showSuccessMessage(name, "API key", account.id);
+			} catch (dbError) {
+				return {
+					success: false,
+					message: `Database error while updating account: ${dbError instanceof Error ? dbError.message : String(dbError)}`,
+				};
+			}
+		} catch (error) {
+			return {
+				success: false,
+				message: `Failed to create API key: ${error instanceof Error ? error.message : String(error)}`,
+			};
 		}
-
-		const json = (await response.json()) as { raw_key: string };
-		const apiKey = json.raw_key;
-
-		// Update existing account with new API key (preserving all other metadata)
-		db.run(
-			`UPDATE accounts SET
-				api_key = ?,
-				refresh_token = ?,
-				access_token = NULL,
-				expires_at = NULL
-			WHERE id = ?`,
-			[apiKey, apiKey, account.id],
-		);
-
-		console.log("API key created and updated.");
-		return await showSuccessMessage(name, "API key", account.id);
 	}
 
 	// Handle max mode - update with OAuth tokens
 	console.log("Updating OAuth tokens...");
 
-	db.run(
-		`UPDATE accounts SET
-			refresh_token = ?,
-			access_token = ?,
-			expires_at = ?
-		WHERE id = ?`,
-		[tokens.refreshToken, tokens.accessToken, tokens.expiresAt, account.id],
-	);
+	try {
+		db.run(
+			`UPDATE accounts SET
+				refresh_token = ?,
+				access_token = ?,
+				expires_at = ?
+			WHERE id = ?`,
+			[tokens.refreshToken, tokens.accessToken, tokens.expiresAt, account.id],
+		);
 
-	console.log("OAuth tokens updated.");
-	return await showSuccessMessage(name, "OAuth tokens", account.id);
+		console.log("OAuth tokens updated.");
+		return await showSuccessMessage(name, "OAuth tokens", account.id);
+	} catch (dbError) {
+		return {
+			success: false,
+			message: `Database error while updating tokens: ${dbError instanceof Error ? dbError.message : String(dbError)}`,
+		};
+	}
 
 	/**
 	 * Helper function to show consistent success message
 	 */
-	async function showSuccessMessage(name: string, updatedType: string, accountId: string) {
+	async function showSuccessMessage(
+		name: string,
+		updatedType: string,
+		accountId: string,
+	) {
 		console.log(`\nAccount '${name}' re-authenticated successfully!`);
 		console.log(
 			"All account metadata (usage stats, priority, settings) has been preserved.",
 		);
 		console.log(`${updatedType} have been updated.`);
 
-		// Trigger token reload for running servers
+		// Trigger token reload for running servers (non-blocking)
 		console.log("\nNotifying running servers to reload tokens...");
-		await notifyServersToReload(accountId);
+		notifyServersToReload(accountId).catch(() => {
+			// Ignore errors - server notification is best-effort
+		});
 
 		return {
 			success: true,
@@ -741,6 +772,23 @@ export async function reauthenticateAccount(
 		const defaultPort = 8080;
 		const testPort = 8081;
 
+		// Check if API authentication is enabled
+		const activeApiKeys = dbOps.getActiveApiKeys();
+		const requiresAuth = activeApiKeys.length > 0;
+
+		if (requiresAuth) {
+			console.log(
+				"⚠️  API authentication is enabled - automatic server reload not supported",
+			);
+			console.log(
+				"   Please restart the server manually to use the new tokens:",
+			);
+			console.log("   - Stop the running server");
+			console.log("   - Start it again with: bun start");
+			return;
+		}
+
+		// If no API authentication, proceed with unauthenticated requests
 		for (const port of [defaultPort, testPort]) {
 			try {
 				const response = await fetch(
@@ -754,9 +802,11 @@ export async function reauthenticateAccount(
 				if (response.ok) {
 					console.log(`✓ Token reload successful on port ${port}`);
 				} else {
-					console.log(`✗ Server not responding on port ${port} (${response.status})`);
+					console.log(
+						`✗ Server not responding on port ${port} (${response.status})`,
+					);
 				}
-			} catch (error) {
+			} catch (_error) {
 				console.log(`✗ No server running on port ${port}`);
 			}
 		}

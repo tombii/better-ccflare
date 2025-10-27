@@ -276,13 +276,16 @@ export async function refreshAccessTokenSafe(
 }
 
 // Global registry for account refresh clearing functions
-let refreshClearers: Map<string, (accountId: string) => void> = new Map();
+const refreshClearers: Map<string, (accountId: string) => void> = new Map();
 
 /**
  * Register a function to clear refresh cache for a specific account
  * Used by the server to register its refresh clearing capability
  */
-export function registerRefreshClearer(serverId: string, clearer: (accountId: string) => void): void {
+export function registerRefreshClearer(
+	serverId: string,
+	clearer: (accountId: string) => void,
+): void {
 	refreshClearers.set(serverId, clearer);
 }
 
@@ -293,9 +296,14 @@ export function clearAccountRefreshCache(accountId: string): void {
 	for (const [serverId, clearer] of refreshClearers) {
 		try {
 			clearer(accountId);
-			log.info(`Cleared refresh cache for account ${accountId} on server ${serverId}`);
+			log.info(
+				`Cleared refresh cache for account ${accountId} on server ${serverId}`,
+			);
 		} catch (error) {
-			log.error(`Failed to clear refresh cache for account ${accountId} on server ${serverId}:`, error);
+			log.error(
+				`Failed to clear refresh cache for account ${accountId} on server ${serverId}:`,
+				error,
+			);
 		}
 	}
 }
@@ -304,7 +312,7 @@ export function clearAccountRefreshCache(accountId: string): void {
  * Internal function to clear refresh cache with specific context
  * This is what the server registers as its clearer function
  */
-function clearAccountRefreshCacheWithContext(
+function _clearAccountRefreshCacheWithContext(
 	accountId: string,
 	ctx: ProxyContext,
 ): void {

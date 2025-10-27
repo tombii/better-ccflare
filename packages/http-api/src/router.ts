@@ -289,7 +289,7 @@ export class APIRouter {
 				);
 			}
 
-		// Account rename
+			// Account rename
 			if (path.endsWith("/rename") && method === "POST") {
 				const renameHandler = createAccountRenameHandler(this.context.dbOps);
 				return await this.wrapHandler((req) => renameHandler(req, accountId))(

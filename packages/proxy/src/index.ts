@@ -10,7 +10,11 @@ export {
 	registerProvider,
 } from "@better-ccflare/providers";
 export { AutoRefreshScheduler } from "./auto-refresh-scheduler";
-export { clearAccountRefreshCache, registerRefreshClearer, getValidAccessToken } from "./handlers";
+export {
+	clearAccountRefreshCache,
+	getValidAccessToken,
+	registerRefreshClearer,
+} from "./handlers";
 export {
 	getUsageWorker,
 	handleProxy,
