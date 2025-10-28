@@ -13,7 +13,7 @@ export interface SecurityConfig {
 	allowedBasePaths?: string[];
 	/** Maximum number of URL decoding iterations (default: 2) */
 	maxUrlDecodeIterations?: number;
-	/** Whether to block symbolic links (default: false - warn only) */
+	/** Whether to block symbolic links (default: true - block for security) */
 	blockSymlinks?: boolean;
 	/** Whether to check for symbolic links at all (default: true) */
 	checkSymlinks?: boolean;
@@ -53,8 +53,8 @@ export interface PathValidationOptions {
 	 * Whether to block symbolic links (default: false - warn only)
 	 *
 	 * **Security Consideration:**
-	 * The default is `false` to maintain backward compatibility and avoid breaking
-	 * legitimate use cases where symlinks are intentional (e.g., npm link, pnpm).
+	 * The default is `true` to prevent symlink attacks which can bypass path validation
+	 * through TOCTOU (Time-of-Check-Time-of-Use) vulnerabilities.
 	 *
 	 * **Recommendation for production:**
 	 * Set `blockSymlinks: true` if your threat model requires preventing symlink attacks.
@@ -154,7 +154,7 @@ export function validatePath(
 ): PathValidationResult {
 	const description = options.description || "path";
 	const checkSymlinks = options.checkSymlinks !== false;
-	const blockSymlinks = options.blockSymlinks === true;
+	const blockSymlinks = options.blockSymlinks !== false;
 	const maxDecodeIterations =
 		options.maxUrlDecodeIterations || MAX_DECODE_ITERATIONS;
 
@@ -168,7 +168,7 @@ export function validatePath(
 		} catch {
 			// Decoding failed - path is malformed
 			const reason = `Malformed URL encoding in ${description}: ${rawPath}`;
-			log.warn(reason);
+			log.debug(reason);
 			return { isValid: false, decodedPath: "", resolvedPath: "", reason };
 		}
 	}
@@ -210,7 +210,7 @@ export function validatePath(
 		resolvedPath = resolve(decodedPath);
 	} catch {
 		const reason = `Path resolution failed for ${description}: ${decodedPath}`;
-		log.warn(reason);
+		log.debug(reason);
 		return { isValid: false, decodedPath, resolvedPath: "", reason };
 	}
 
@@ -299,7 +299,7 @@ export function validatePath(
 			}
 		} catch (_error) {
 			// lstatSync can fail for various reasons - don't block, just log
-			log.info(
+			log.debug(
 				`Could not check for symlinks in ${description}: ${resolvedPath}`,
 			);
 		}
