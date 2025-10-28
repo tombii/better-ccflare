@@ -181,8 +181,7 @@ jobs:
                     if [ -z "$NEW_CONTRIBUTORS" ]; then
                       NEW_CONTRIBUTORS="$contributor"
                     else
-                      NEW_CONTRIBUTORS="$NEW_CONTRIBUTORS
-$contributor"
+                      NEW_CONTRIBUTORS="$NEW_CONTRIBUTORS"$'\n'"$contributor"
                     fi
                   fi
                 fi
@@ -206,7 +205,7 @@ $contributor"
             CHANGELOG="$CHANGELOG
 
           ## Full Changelog
-          📋 [Compare with previous version](https://github.com/tombii/better-ccflare/compare/$PREV_TAG...${{ github.ref_name }})"
+          📋 [Compare with previous version](https://github.com/tombii/better-ccflare/compare/$PREV_TAG..${{ github.ref_name }})"
           fi
 
           echo "changelog<<EOF" >> $GITHUB_OUTPUT
