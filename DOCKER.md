@@ -46,6 +46,63 @@ Docker will automatically pull the correct image for your architecture.
 - `BETTER_CCFLARE_DB_PATH` - Database file path (default: `/data/better-ccflare.db`)
 - `NODE_ENV` - Environment mode (default: `production`)
 - `LOG_LEVEL` - Logging level (optional)
+- `PORT` - Server port (default: `8080`)
+- `SSL_KEY_PATH` - SSL private key path (for HTTPS)
+- `SSL_CERT_PATH` - SSL certificate path (for HTTPS)
+- `LB_STRATEGY` - Load balancing strategy (default: `session`)
+
+### Using .env Files
+
+better-ccflare Docker containers now support `.env` files for easy configuration management:
+
+#### Docker Compose (Recommended)
+
+Create a `.env` file in the same directory as your `docker-compose.yml`:
+
+```bash
+# Copy the example .env file
+curl -O https://raw.githubusercontent.com/tombii/better-ccflare/main/.env.example
+mv .env.example .env
+
+# Edit with your configuration
+nano .env
+```
+
+Docker Compose will automatically load the `.env` file and pass the environment variables to the container.
+
+#### Docker CLI
+
+You can mount a `.env` file into the container:
+
+```bash
+docker run -d \
+  --name better-ccflare \
+  -p 8080:8080 \
+  -v better-ccflare-data:/data \
+  -v $(pwd)/.env:/app/.env:ro \
+  ghcr.io/tombii/better-ccflare:latest
+```
+
+**Example `.env` file**:
+```bash
+# Server Configuration
+PORT=8080
+
+# SSL/TLS Configuration (optional)
+SSL_KEY_PATH=/path/to/ssl/key.pem
+SSL_CERT_PATH=/path/to/ssl/cert.pem
+
+# Load Balancing
+LB_STRATEGY=session
+
+# Logging and Debugging
+LOG_LEVEL=INFO
+LOG_FORMAT=pretty
+
+# Database configuration
+DATA_RETENTION_DAYS=7
+REQUEST_RETENTION_DAYS=365
+```
 
 ### Volume Mounts
 
