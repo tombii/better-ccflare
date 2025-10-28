@@ -34,7 +34,9 @@
 	"devDependencies": {
 		"@types/node": "^20.0.0"
 	},
-	"dependencies": {},
+	"dependencies": {
+		"dotenv": "^17.2.3"
+	},
 	"files": [
 		"dist/better-ccflare",
 		"README.md"
