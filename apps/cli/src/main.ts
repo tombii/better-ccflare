@@ -1,4 +1,9 @@
 #!/usr/bin/env bun
+// Load .env file to ensure environment variables are available
+import { config } from "dotenv";
+
+config();
+
 import {
 	addAccount,
 	analyzePerformance,

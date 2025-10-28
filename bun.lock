@@ -12,18 +12,12 @@
     },
     "apps/cli": {
       "name": "better-ccflare",
-      "version": "2.0.1",
+      "version": "2.0.11",
       "bin": {
         "better-ccflare": "dist/better-ccflare",
       },
       "dependencies": {
-        "@better-ccflare/cli-commands": "workspace:*",
-        "@better-ccflare/config": "workspace:*",
-        "@better-ccflare/core": "workspace:*",
-        "@better-ccflare/core-di": "workspace:*",
-        "@better-ccflare/database": "workspace:*",
-        "@better-ccflare/logger": "workspace:*",
-        "@better-ccflare/server": "workspace:*",
+        "dotenv": "^17.2.3",
       },
       "devDependencies": {
         "@types/node": "^20.0.0",
@@ -487,6 +481,8 @@
     "define-lazy-prop": ["define-lazy-prop@3.0.0", "", {}, "sha512-N+MeXYoqr3pOgn8xfyRPREN7gHakLYjhsHhWGT3fWAiL4IkAt0iDw14QiiEm2bE30c5XX5q0FtAA3CK5f9/BUg=="],
 
     "detect-node-es": ["detect-node-es@1.1.0", "", {}, "sha512-ypdmJU/TbBby2Dxibuv7ZLW3Bs1QEmM7nHjEANfohJLvE0XVujisn1qPJcZxg+qDucsr+bP6fLD1rPS3AhJ7EQ=="],
+
+    "dotenv": ["dotenv@17.2.3", "", {}, "sha512-JVUnt+DUIzu87TABbhPmNfVdBDt18BLOWjMUFJMSi/Qqg7NTYtabbvSNJGOJ7afbRuv9D/lngizHtP7QyLQ+9w=="],
 
     "es-toolkit": ["es-toolkit@1.39.8", "", {}, "sha512-A8QO9TfF+rltS8BXpdu8OS+rpGgEdnRhqIVxO/ZmNvnXBYgOdSsxukT55ELyP94gZIntWJ+Li9QRrT2u1Kitpg=="],
 
