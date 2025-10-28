@@ -89,7 +89,7 @@ export class NodeCryptoUtils implements CryptoUtils {
 		const candidateHash = this.crypto
 			.scryptSync(apiKey, salt, 64)
 			.toString("hex");
-		return candidateHash === hash;
+		return this.crypto.timingSafeEqual(Buffer.from(candidateHash), Buffer.from(hash));
 	}
 }
 
