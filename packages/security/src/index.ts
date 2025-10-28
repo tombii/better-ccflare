@@ -13,4 +13,5 @@ export {
 	getDefaultAllowedBasePaths,
 	type PathValidationResult,
 	type PathValidationOptions,
+	type SecurityConfig,
 } from "./path-validator";

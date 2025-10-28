@@ -1,15 +1,35 @@
 import { existsSync, lstatSync } from "node:fs";
 import { homedir } from "node:os";
-import { resolve } from "node:path";
+import { relative, resolve, sep } from "node:path";
 import { Logger } from "@better-ccflare/logger";
 
 const log = new Logger("PathValidator");
+
+/**
+ * Security configuration for path validation
+ */
+export interface SecurityConfig {
+	/** Additional allowed base directories beyond the defaults */
+	allowedBasePaths?: string[];
+	/** Maximum number of URL decoding iterations (default: 2) */
+	maxUrlDecodeIterations?: number;
+	/** Whether to block symbolic links (default: false - warn only) */
+	blockSymlinks?: boolean;
+	/** Whether to check for symbolic links at all (default: true) */
+	checkSymlinks?: boolean;
+}
 
 /**
  * Maximum number of URL decoding iterations to prevent double-encoded attacks
  * Example: %252e%252e -> %2e%2e -> ..
  */
 const MAX_DECODE_ITERATIONS = 2;
+
+/**
+ * Cached default allowed paths for performance
+ * Computed once and reused across validations
+ */
+let cachedDefaultAllowedPaths: string[] | null = null;
 
 /**
  * Result of path validation
@@ -27,7 +47,11 @@ export interface PathValidationResult {
 export interface PathValidationOptions {
 	/** Additional allowed base directories beyond the defaults */
 	additionalAllowedPaths?: string[];
-	/** Whether to check for symbolic links (default: true) */
+	/** Maximum number of URL decoding iterations (default: 2) */
+	maxUrlDecodeIterations?: number;
+	/** Whether to block symbolic links (default: false - warn only) */
+	blockSymlinks?: boolean;
+	/** Whether to check for symbolic links at all (default: true) */
 	checkSymlinks?: boolean;
 	/** Description for logging purposes */
 	description?: string;
@@ -35,10 +59,17 @@ export interface PathValidationOptions {
 
 /**
  * Get default allowed base directories for path validation
+ * Results are cached for performance
  *
+ * @param forceRefresh - Force recomputation of cached paths
  * @returns Array of allowed base directory paths
  */
-export function getDefaultAllowedBasePaths(): string[] {
+export function getDefaultAllowedBasePaths(forceRefresh = false): string[] {
+	// Return cached value if available
+	if (cachedDefaultAllowedPaths && !forceRefresh) {
+		return cachedDefaultAllowedPaths;
+	}
+
 	const paths: string[] = [];
 
 	// User's home directory
@@ -60,7 +91,8 @@ export function getDefaultAllowedBasePaths(): string[] {
 	// Temp directory for testing purposes
 	paths.push("/tmp");
 
-	return paths.map((p) => resolve(p));
+	cachedDefaultAllowedPaths = paths.map((p) => resolve(p));
+	return cachedDefaultAllowedPaths;
 }
 
 /**
@@ -103,10 +135,12 @@ export function validatePath(
 ): PathValidationResult {
 	const description = options.description || "path";
 	const checkSymlinks = options.checkSymlinks !== false;
+	const blockSymlinks = options.blockSymlinks === true;
+	const maxDecodeIterations = options.maxUrlDecodeIterations || MAX_DECODE_ITERATIONS;
 
 	// Step 1: Decode URL-encoded sequences (with iteration limit)
 	let decodedPath = rawPath;
-	for (let i = 0; i < MAX_DECODE_ITERATIONS; i++) {
+	for (let i = 0; i < maxDecodeIterations; i++) {
 		try {
 			const decoded = decodeURIComponent(decodedPath);
 			if (decoded === decodedPath) break; // No more decoding needed
@@ -119,10 +153,33 @@ export function validatePath(
 		}
 	}
 
-	// Step 2: Check for directory traversal in raw and decoded paths
-	if (rawPath.includes("..") || decodedPath.includes("..")) {
+	// Step 2: Check for null bytes (security bypass attempt)
+	if (rawPath.includes("\0") || decodedPath.includes("\0")) {
+		const reason = `Null byte detected in ${description}: ${rawPath}`;
+		log.warn(reason, {
+			source: description,
+			path: rawPath,
+			attack_type: "null_byte_injection",
+			timestamp: new Date().toISOString(),
+		});
+		return { isValid: false, decodedPath, resolvedPath: "", reason };
+	}
+
+	// Step 3: Check for directory traversal in raw and decoded paths
+	// Check both Unix (..) and Windows (..\ or ../) patterns
+	if (
+		rawPath.includes("..") ||
+		decodedPath.includes("..") ||
+		rawPath.includes("..\\") ||
+		decodedPath.includes("..\\")
+	) {
 		const reason = `Directory traversal detected in ${description}: ${rawPath}`;
-		log.warn(reason);
+		log.warn(reason, {
+			source: description,
+			path: rawPath,
+			attack_type: "directory_traversal",
+			timestamp: new Date().toISOString(),
+		});
 		return { isValid: false, decodedPath, resolvedPath: "", reason };
 	}
 
@@ -137,31 +194,73 @@ export function validatePath(
 	}
 
 	// Step 4: Validate against allowed base directories (whitelist approach)
+	// SECURITY: Use path.relative() to prevent prefix bypass attacks
+	// BAD: /home/user-evil starts with /home/user (VULNERABLE!)
+	// GOOD: Use relative() to ensure path is truly within base directory
 	const allowedBasePaths = [
 		...getDefaultAllowedBasePaths(),
 		...(options.additionalAllowedPaths || []).map((p) => resolve(p)),
 	];
 
-	const isWithinAllowedPaths = allowedBasePaths.some((basePath) =>
-		resolvedPath.startsWith(basePath),
-	);
+	let isWithinAllowedPaths = false;
+	for (const basePath of allowedBasePaths) {
+		const rel = relative(basePath, resolvedPath);
+		// Path is within basePath if:
+		// 1. relative path doesn't start with '..' (not escaping upward)
+		// 2. relative path doesn't start with absolute path separator (not absolute)
+		if (rel && !rel.startsWith("..") && !rel.startsWith(sep)) {
+			isWithinAllowedPaths = true;
+			break;
+		}
+		// Also allow exact match (rel === '')
+		if (rel === "") {
+			isWithinAllowedPaths = true;
+			break;
+		}
+	}
 
 	if (!isWithinAllowedPaths) {
 		const reason = `Path outside allowed directories in ${description}: ${resolvedPath} (allowed: ${allowedBasePaths.join(", ")})`;
-		log.warn(reason);
+		log.warn(reason, {
+			source: description,
+			path: rawPath,
+			resolved_path: resolvedPath,
+			attack_type: "whitelist_bypass",
+			timestamp: new Date().toISOString(),
+		});
 		return { isValid: false, decodedPath, resolvedPath, reason };
 	}
 
-	// Step 5: Check for symbolic links (warn but don't block - document limitation)
+	// Step 5: Check for symbolic links
 	if (checkSymlinks) {
 		try {
 			if (existsSync(resolvedPath)) {
 				const stats = lstatSync(resolvedPath);
 				if (stats.isSymbolicLink()) {
+					if (blockSymlinks) {
+						// Block symlinks if configured
+						const reason = `Symbolic link not allowed in ${description}: ${resolvedPath}`;
+						log.warn(reason, {
+							source: description,
+							path: rawPath,
+							resolved_path: resolvedPath,
+							attack_type: "symlink_attack",
+							timestamp: new Date().toISOString(),
+						});
+						return { isValid: false, decodedPath, resolvedPath, reason };
+					}
+					// Otherwise just warn
 					log.warn(
 						`Warning: ${description} contains symbolic link: ${resolvedPath}. ` +
 							`Symlink-based traversal attacks are not fully prevented. ` +
 							`Ensure symlinks point to safe locations.`,
+						{
+							source: description,
+							path: rawPath,
+							resolved_path: resolvedPath,
+							warning_type: "symlink_detected",
+							timestamp: new Date().toISOString(),
+						},
 					);
 				}
 			}
