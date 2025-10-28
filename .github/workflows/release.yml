@@ -168,19 +168,37 @@ jobs:
                 done <<< "$IMPROVEMENTS"
               fi
 
-              # Get contributors for this release
-              CONTRIBUTORS=$(git log --pretty=format:"%an" $PREV_TAG..HEAD | sort -u)
-              if [ -n "$CONTRIBUTORS" ]; then
+              # Get NEW contributors (those who haven't contributed before this release)
+              CURRENT_CONTRIBUTORS=$(git log --pretty=format:"%an" $PREV_TAG..HEAD | sort -u)
+              NEW_CONTRIBUTORS=""
+
+              while IFS= read -r contributor; do
+                if [ -n "$contributor" ] && [ "$contributor" != "github-actions[bot]" ]; then
+                  # Check if this contributor has any commits before the previous tag
+                  PREV_COMMITS=$(git log --all --author="$contributor" --before="$(git log -1 --format=%ai $PREV_TAG)" --pretty=format:"%H" | wc -l)
+                  if [ "$PREV_COMMITS" -eq 0 ]; then
+                    # This is their first contribution
+                    if [ -z "$NEW_CONTRIBUTORS" ]; then
+                      NEW_CONTRIBUTORS="$contributor"
+                    else
+                      NEW_CONTRIBUTORS="$NEW_CONTRIBUTORS
+$contributor"
+                    fi
+                  fi
+                fi
+              done <<< "$CURRENT_CONTRIBUTORS"
+
+              if [ -n "$NEW_CONTRIBUTORS" ]; then
                 CHANGELOG="$CHANGELOG
 
           ### 🤝 New Contributors
           "
                 while IFS= read -r contributor; do
-                  if [ -n "$contributor" ] && [ "$contributor" != "github-actions[bot]" ]; then
+                  if [ -n "$contributor" ]; then
                     CHANGELOG="$CHANGELOG
           - @$contributor made their first contribution"
                   fi
-                done <<< "$CONTRIBUTORS"
+                done <<< "$NEW_CONTRIBUTORS"
               fi
             fi
 
