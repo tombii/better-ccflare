@@ -338,7 +338,10 @@ function extractAgentDirectories(systemPrompt: string): string[] {
 		// Validate path using comprehensive security checks
 		const validation = validatePath(rawPath, { description: "agent path" });
 		if (!validation.isValid) {
-			// Validation failed - path was logged by validatePath()
+			// Log rejection with reason for debugging and security monitoring
+			extractDirLog.warn(
+				`Rejected invalid agent path: ${rawPath} - ${validation.reason}`,
+			);
 			continue;
 		}
 
@@ -366,7 +369,10 @@ function extractAgentDirectories(systemPrompt: string): string[] {
 			description: "CLAUDE.md repo root",
 		});
 		if (!validation.isValid) {
-			// Validation failed - path was logged by validatePath()
+			// Log rejection with reason for debugging and security monitoring
+			extractDirLog.warn(
+				`Rejected invalid repo root path: ${repoRoot} - ${validation.reason}`,
+			);
 			continue;
 		}
 

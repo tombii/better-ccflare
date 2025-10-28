@@ -8,10 +8,10 @@
  */
 
 export {
+	getDefaultAllowedBasePaths,
+	type PathValidationOptions,
+	type PathValidationResult,
+	type SecurityConfig,
 	validatePath,
 	validatePathOrThrow,
-	getDefaultAllowedBasePaths,
-	type PathValidationResult,
-	type PathValidationOptions,
-	type SecurityConfig,
 } from "./path-validator";

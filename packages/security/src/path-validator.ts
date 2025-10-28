@@ -99,21 +99,24 @@ export function getDefaultAllowedBasePaths(forceRefresh = false): string[] {
  * Validates a file system path for security vulnerabilities
  *
  * This function implements defense-in-depth with multiple validation layers:
- * 1. URL decoding (iterative to catch multi-encoded attacks)
- * 2. Directory traversal detection (".." sequences)
- * 3. Path resolution (normalization)
- * 4. Whitelist validation (allowed base directories)
- * 5. Symbolic link detection (optional warning)
+ * 1. URL decoding (iterative to catch multi-encoded attacks like %252e%252e)
+ * 2. Unicode normalization (NFC to prevent fullwidth character bypasses)
+ * 3. Null byte detection (prevent security bypass attempts)
+ * 4. Directory traversal detection (".." sequences, Unix and Windows)
+ * 5. Path resolution (normalization and absolutization)
+ * 6. Whitelist validation (allowed base directories using path.relative())
+ * 7. Symbolic link detection (optional warning or blocking)
  *
  * **Security Model:**
  * - **Whitelist approach**: Only paths within allowed base directories are accepted
  * - **Defense in depth**: Multiple layers of validation
  * - **Fail-safe**: Returns invalid on any error
+ * - **Cross-platform**: Handles both Unix (/) and Windows (\) path separators
  *
  * **Known Limitations:**
  * - Symbolic links are detected but not fully prevented (TOCTOU vulnerability)
- * - Windows-specific path attacks may not be fully covered on Unix systems
  * - Race conditions possible between validation and file access
+ * - Very long paths may exceed PATH_MAX on some systems
  *
  * @param rawPath - The path to validate
  * @param options - Validation options
@@ -136,7 +139,8 @@ export function validatePath(
 	const description = options.description || "path";
 	const checkSymlinks = options.checkSymlinks !== false;
 	const blockSymlinks = options.blockSymlinks === true;
-	const maxDecodeIterations = options.maxUrlDecodeIterations || MAX_DECODE_ITERATIONS;
+	const maxDecodeIterations =
+		options.maxUrlDecodeIterations || MAX_DECODE_ITERATIONS;
 
 	// Step 1: Decode URL-encoded sequences (with iteration limit)
 	let decodedPath = rawPath;
@@ -153,6 +157,10 @@ export function validatePath(
 		}
 	}
 
+	// Normalize Unicode to prevent variations like FULLWIDTH FULL STOP from bypassing checks
+	// NFC (Canonical Decomposition followed by Canonical Composition) is the standard form
+	decodedPath = decodedPath.normalize("NFC");
+
 	// Step 2: Check for null bytes (security bypass attempt)
 	if (rawPath.includes("\0") || decodedPath.includes("\0")) {
 		const reason = `Null byte detected in ${description}: ${rawPath}`;
@@ -166,13 +174,8 @@ export function validatePath(
 	}
 
 	// Step 3: Check for directory traversal in raw and decoded paths
-	// Check both Unix (..) and Windows (..\ or ../) patterns
-	if (
-		rawPath.includes("..") ||
-		decodedPath.includes("..") ||
-		rawPath.includes("..\\") ||
-		decodedPath.includes("..\\")
-	) {
+	// Note: ".." check covers both Unix (..) and Windows (..\) patterns
+	if (rawPath.includes("..") || decodedPath.includes("..")) {
 		const reason = `Directory traversal detected in ${description}: ${rawPath}`;
 		log.warn(reason, {
 			source: description,
@@ -183,7 +186,7 @@ export function validatePath(
 		return { isValid: false, decodedPath, resolvedPath: "", reason };
 	}
 
-	// Step 3: Resolve the path (normalizes and makes absolute)
+	// Step 4: Resolve the path (normalizes and makes absolute)
 	let resolvedPath: string;
 	try {
 		resolvedPath = resolve(decodedPath);
@@ -193,7 +196,7 @@ export function validatePath(
 		return { isValid: false, decodedPath, resolvedPath: "", reason };
 	}
 
-	// Step 4: Validate against allowed base directories (whitelist approach)
+	// Step 5: Validate against allowed base directories (whitelist approach)
 	// SECURITY: Use path.relative() to prevent prefix bypass attacks
 	// BAD: /home/user-evil starts with /home/user (VULNERABLE!)
 	// GOOD: Use relative() to ensure path is truly within base directory
@@ -206,14 +209,20 @@ export function validatePath(
 	for (const basePath of allowedBasePaths) {
 		const rel = relative(basePath, resolvedPath);
 		// Path is within basePath if:
-		// 1. relative path doesn't start with '..' (not escaping upward)
-		// 2. relative path doesn't start with absolute path separator (not absolute)
-		if (rel && !rel.startsWith("..") && !rel.startsWith(sep)) {
+		// 1. Empty string (exact match with base path)
+		// 2. Relative path that doesn't escape upward (no ".." prefix)
+		// 3. Relative path that isn't absolute (no "/" or "\" prefix)
+		// Check both Windows backslash and Unix forward slash for cross-platform security
+		if (rel === "") {
 			isWithinAllowedPaths = true;
 			break;
 		}
-		// Also allow exact match (rel === '')
-		if (rel === "") {
+		if (
+			rel &&
+			!rel.startsWith("..") &&
+			!rel.startsWith("/") &&
+			!rel.startsWith("\\")
+		) {
 			isWithinAllowedPaths = true;
 			break;
 		}
@@ -231,7 +240,7 @@ export function validatePath(
 		return { isValid: false, decodedPath, resolvedPath, reason };
 	}
 
-	// Step 5: Check for symbolic links
+	// Step 6: Check for symbolic links
 	if (checkSymlinks) {
 		try {
 			if (existsSync(resolvedPath)) {

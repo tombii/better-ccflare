@@ -1,7 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { Config, type RuntimeConfig } from "@better-ccflare/config";
-import { validatePathOrThrow } from "@better-ccflare/security";
 import {
 	CACHE,
 	DEFAULT_STRATEGY,
@@ -30,6 +29,7 @@ import {
 	registerRefreshClearer,
 	terminateUsageWorker,
 } from "@better-ccflare/proxy";
+import { validatePathOrThrow } from "@better-ccflare/security";
 import type { Account } from "@better-ccflare/types";
 import { serve } from "bun";
 
@@ -362,7 +362,9 @@ export default function startServer(options?: {
 			throw new Error(`SSL key file not found: ${validatedSslKeyPath}`);
 		}
 		if (!existsSync(validatedSslCertPath)) {
-			throw new Error(`SSL certificate file not found: ${validatedSslCertPath}`);
+			throw new Error(
+				`SSL certificate file not found: ${validatedSslCertPath}`,
+			);
 		}
 	}
 

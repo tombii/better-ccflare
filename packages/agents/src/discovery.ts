@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { readdir, readFile, writeFile } from "node:fs/promises";
-import { basename, join, resolve } from "node:path";
+import { basename, join } from "node:path";
 import { Config } from "@better-ccflare/config";
 import { Logger } from "@better-ccflare/logger";
 import { validatePathOrThrow } from "@better-ccflare/security";

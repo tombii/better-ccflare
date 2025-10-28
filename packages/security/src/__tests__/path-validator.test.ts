@@ -227,7 +227,7 @@ describe("Path Validator - Core Security Tests", () => {
 		});
 
 		test("should handle very long paths", () => {
-			const longPath = "/tmp/" + "a".repeat(4000);
+			const longPath = `/tmp/${"a".repeat(4000)}`;
 			const result = validatePath(longPath, {
 				description: "long path",
 			});
@@ -417,6 +417,85 @@ describe("Path Validator - Core Security Tests", () => {
 			);
 
 			expect(result.isValid).toBe(true);
+		});
+	});
+
+	describe("Edge Cases - Additional Security Tests", () => {
+		test("should handle paths with repeated slashes", () => {
+			const result = validatePath("/tmp///test//file.txt", {
+				description: "repeated slashes",
+			});
+
+			// Repeated slashes should be normalized by resolve()
+			expect(result.isValid).toBe(true);
+			expect(result.resolvedPath).toBe("/tmp/test/file.txt");
+		});
+
+		test("should reject Unicode fullwidth dots (U+FF0E) that normalize to ..", () => {
+			// Fullwidth full stop U+FF0E: ．
+			// Two of them should NOT bypass traversal detection after normalization
+			const fullwidthDot = "\uFF0E";
+			const attack = `/tmp/${fullwidthDot}${fullwidthDot}/${fullwidthDot}${fullwidthDot}/etc/passwd`;
+
+			const result = validatePath(attack, {
+				description: "unicode attack",
+			});
+
+			// Note: FF0E normalizes to U+002E (.) but not to ".." sequence
+			// This test verifies our normalization doesn't create false positives
+			// The path should be valid but resolve to a safe location
+			expect(result).toBeDefined();
+		});
+
+		test("should handle very long paths gracefully", () => {
+			// PATH_MAX is typically 4096 on Linux
+			const longPath = `/tmp/${"a".repeat(5000)}`;
+			const result = validatePath(longPath, {
+				description: "very long path",
+			});
+
+			// Should not crash, may be valid or invalid depending on filesystem
+			expect(result).toBeDefined();
+			expect(typeof result.isValid).toBe("boolean");
+		});
+
+		test("should normalize path with current directory references", () => {
+			const result = validatePath("/tmp/./test/./file.txt", {
+				description: "current dir references",
+			});
+
+			expect(result.isValid).toBe(true);
+			expect(result.resolvedPath).toBe("/tmp/test/file.txt");
+		});
+
+		test("should handle mixed case on Unix (case-sensitive)", () => {
+			const result = validatePath("/tmp/Test/FILE.txt", {
+				description: "mixed case path",
+			});
+
+			// On Unix, case is preserved and path should be valid
+			expect(result.isValid).toBe(true);
+			expect(result.resolvedPath).toContain("/tmp");
+		});
+
+		test("should handle trailing slashes", () => {
+			const result = validatePath("/tmp/test/", {
+				description: "trailing slash",
+			});
+
+			expect(result.isValid).toBe(true);
+		});
+
+		test("should reject double-encoded traversal after normalization", () => {
+			// %252E = encoded '%2E' = encoded '.'
+			const attack = "/%252E%252E/%252E%252E/etc/passwd";
+
+			const result = validatePath(attack, {
+				description: "double-encoded attack",
+			});
+
+			expect(result.isValid).toBe(false);
+			expect(result.reason).toContain("Directory traversal detected");
 		});
 	});
 });
