@@ -60,6 +60,7 @@ export interface CryptoUtils {
 
 // Default implementation using Node.js crypto
 export class NodeCryptoUtils implements CryptoUtils {
+	// biome-ignore lint/suspicious/noExplicitAny: Dynamic require for Node.js crypto module compatibility
 	private crypto: any;
 
 	constructor() {
@@ -83,13 +84,34 @@ export class NodeCryptoUtils implements CryptoUtils {
 	}
 
 	async verifyApiKey(apiKey: string, hashedKey: string): Promise<boolean> {
-		const [salt, hash] = hashedKey.split(":");
-		if (!salt || !hash) return false;
+		try {
+			const [salt, hash] = hashedKey.split(":");
+			if (!salt || !hash) {
+				return false;
+			}
 
-		const candidateHash = this.crypto
-			.scryptSync(apiKey, salt, 64)
-			.toString("hex");
-		return candidateHash === hash;
+			const candidateHash = this.crypto
+				.scryptSync(apiKey, salt, 64)
+				.toString("hex");
+
+			// Length validation before timing-safe comparison
+			if (candidateHash.length !== hash.length) {
+				return false;
+			}
+
+			// Constant-time comparison to prevent timing attacks
+			const candidateBuffer = Buffer.from(candidateHash, "utf8");
+			const storedBuffer = Buffer.from(hash, "utf8");
+
+			return this.crypto.timingSafeEqual(candidateBuffer, storedBuffer);
+		} catch (error) {
+			// Log error for debugging but don't expose details to caller
+			console.error(
+				"API key verification error:",
+				error instanceof Error ? error.message : "Unknown error",
+			);
+			return false;
+		}
 	}
 }
 
