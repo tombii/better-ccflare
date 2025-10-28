@@ -1,4 +1,5 @@
-import { existsSync } from "node:fs";
+import { existsSync, lstatSync } from "node:fs";
+import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { agentRegistry } from "@better-ccflare/agents";
 import type { DatabaseOperations } from "@better-ccflare/database";
@@ -318,6 +319,128 @@ function extractSystemPrompt(requestBody: RequestBody): string | null {
 }
 
 /**
+ * Maximum number of URL decoding iterations to prevent double-encoded attacks
+ * Example: %252e%252e -> %2e%2e -> ..
+ */
+const MAX_DECODE_ITERATIONS = 2;
+
+/**
+ * Allowed base directories for agent paths
+ * Only paths within these directories will be accepted
+ */
+function getAllowedBasePaths(): string[] {
+	const paths: string[] = [];
+
+	// User's home directory
+	try {
+		const home = homedir();
+		if (home) paths.push(home);
+	} catch {
+		// homedir() can fail in some environments
+	}
+
+	// Current working directory
+	try {
+		const cwd = process.cwd();
+		if (cwd) paths.push(cwd);
+	} catch {
+		// process.cwd() can fail if directory was deleted
+	}
+
+	// Temp directory for testing purposes
+	paths.push("/tmp");
+
+	return paths.map((p) => resolve(p));
+}
+
+interface PathValidationResult {
+	isValid: boolean;
+	decodedPath: string;
+	resolvedPath: string;
+	reason?: string;
+}
+
+/**
+ * Validates a path for security vulnerabilities
+ * Implements defense-in-depth with multiple validation layers
+ *
+ * @param rawPath - The raw path to validate
+ * @param description - Description for logging purposes
+ * @returns Validation result with decoded and resolved paths
+ */
+function validatePath(
+	rawPath: string,
+	description: string,
+): PathValidationResult {
+	const extractDirLog = new Logger("PathValidation");
+
+	// Step 1: Decode URL-encoded sequences (with iteration limit)
+	let decodedPath = rawPath;
+	for (let i = 0; i < MAX_DECODE_ITERATIONS; i++) {
+		try {
+			const decoded = decodeURIComponent(decodedPath);
+			if (decoded === decodedPath) break; // No more decoding needed
+			decodedPath = decoded;
+		} catch {
+			// Decoding failed - path is malformed
+			const reason = `Malformed URL encoding in ${description}: ${rawPath}`;
+			extractDirLog.warn(reason);
+			return { isValid: false, decodedPath: "", resolvedPath: "", reason };
+		}
+	}
+
+	// Step 2: Check for directory traversal in raw and decoded paths
+	if (rawPath.includes("..") || decodedPath.includes("..")) {
+		const reason = `Directory traversal detected in ${description}: ${rawPath}`;
+		extractDirLog.warn(reason);
+		return { isValid: false, decodedPath, resolvedPath: "", reason };
+	}
+
+	// Step 3: Resolve the path (normalizes and makes absolute)
+	let resolvedPath: string;
+	try {
+		resolvedPath = resolve(decodedPath);
+	} catch {
+		const reason = `Path resolution failed for ${description}: ${decodedPath}`;
+		extractDirLog.warn(reason);
+		return { isValid: false, decodedPath, resolvedPath: "", reason };
+	}
+
+	// Step 4: Validate against allowed base directories (whitelist approach)
+	const allowedBasePaths = getAllowedBasePaths();
+	const isWithinAllowedPaths = allowedBasePaths.some((basePath) =>
+		resolvedPath.startsWith(basePath),
+	);
+
+	if (!isWithinAllowedPaths) {
+		const reason = `Path outside allowed directories in ${description}: ${resolvedPath} (allowed: ${allowedBasePaths.join(", ")})`;
+		extractDirLog.warn(reason);
+		return { isValid: false, decodedPath, resolvedPath, reason };
+	}
+
+	// Step 5: Check for symbolic links (warn but don't block - document limitation)
+	try {
+		if (existsSync(resolvedPath)) {
+			const stats = lstatSync(resolvedPath);
+			if (stats.isSymbolicLink()) {
+				extractDirLog.warn(
+					`Warning: ${description} contains symbolic link: ${resolvedPath}. ` +
+						`Symlink-based traversal attacks are not fully prevented. ` +
+						`Ensure symlinks point to safe locations.`,
+				);
+			}
+		}
+	} catch (_error) {
+		// lstatSync can fail for various reasons - don't block, just log
+		extractDirLog.info(
+			`Could not check for symlinks in ${description}: ${resolvedPath}`,
+		);
+	}
+
+	return { isValid: true, decodedPath, resolvedPath };
+}
+
+/**
  * Extracts agent directories from system prompt
  * @param systemPrompt - The system prompt text
  * @returns Array of agent directory paths
@@ -334,37 +457,16 @@ function extractAgentDirectories(systemPrompt: string): string[] {
 	for (const match of agentPathMatches) {
 		const rawPath = match[1];
 
-		// Decode URL-encoded sequences to detect obfuscated traversal attempts
-		let decodedPath = rawPath;
-		try {
-			// Double decode to catch double-encoded attempts (%252e -> %2e -> .)
-			decodedPath = decodeURIComponent(decodeURIComponent(rawPath));
-		} catch {
-			// If decoding fails, path is malformed - skip it
-			extractDirLog.warn(`Skipping malformed path (decode failed): ${rawPath}`);
+		// Validate path using comprehensive security checks
+		const validation = validatePath(rawPath, "agent path");
+		if (!validation.isValid) {
+			// Validation failed - path was logged by validatePath()
 			continue;
 		}
 
-		// Check for directory traversal before and after resolution
-		if (rawPath.includes("..") || decodedPath.includes("..")) {
-			extractDirLog.warn(
-				`Blocked directory traversal attempt (pre-resolve): ${rawPath}`,
-			);
-			continue;
-		}
-
-		const resolvedPath = resolve(decodedPath);
-
-		// Check if the resolved path still contains traversal sequences
-		// This catches cases where normalization reveals hidden traversal
-		if (resolvedPath.includes("..")) {
-			extractDirLog.warn(
-				`Blocked directory traversal attempt (post-resolve): ${rawPath} -> ${resolvedPath}`,
-			);
-			continue;
-		}
-
-		directories.add(resolvedPath);
+		// Path is valid - add to directories
+		extractDirLog.info(`Validated agent path: ${validation.resolvedPath}`);
+		directories.add(validation.resolvedPath);
 	}
 
 	// Regex #2: Look for repo root pattern "Contents of (.*?)/CLAUDE.md"
@@ -376,47 +478,36 @@ function extractAgentDirectories(systemPrompt: string): string[] {
 		matchCount++;
 		const repoRoot = match[1];
 
-		// Decode URL-encoded sequences to detect obfuscated traversal attempts
-		let decodedRoot = repoRoot;
-		try {
-			// Double decode to catch double-encoded attempts (%252e -> %2e -> .)
-			decodedRoot = decodeURIComponent(decodeURIComponent(repoRoot));
-		} catch {
-			// If decoding fails, path is malformed - skip it
-			extractDirLog.warn(
-				`Skipping malformed repo root (decode failed): ${repoRoot}`,
-			);
-			continue;
-		}
-
-		// Check for directory traversal before resolution
-		if (repoRoot.includes("..") || decodedRoot.includes("..")) {
-			extractDirLog.warn(
-				`Blocked directory traversal attempt in repo root (pre-resolve): ${repoRoot}`,
-			);
-			continue;
-		}
-
 		extractDirLog.info(
 			`Found CLAUDE.md path match ${matchCount}: "${match[0]}"`,
 		);
 		extractDirLog.info(`Extracted repo root: "${repoRoot}"`);
 
-		// Clean up any escaped slashes
-		const cleanedRoot = decodedRoot.replace(/\\\//g, "/");
-		const agentsDir = join(cleanedRoot, ".claude", "agents");
-		const resolvedDir = resolve(agentsDir);
-
-		// Check if the resolved path contains traversal sequences after normalization
-		if (resolvedDir.includes("..")) {
-			extractDirLog.warn(
-				`Blocked directory traversal attempt in repo root (post-resolve): ${repoRoot} -> ${resolvedDir}`,
-			);
+		// Validate repo root path using comprehensive security checks
+		const validation = validatePath(repoRoot, "CLAUDE.md repo root");
+		if (!validation.isValid) {
+			// Validation failed - path was logged by validatePath()
 			continue;
 		}
 
-		extractDirLog.info(`Resolved agents dir: "${resolvedDir}"`);
-		directories.add(resolvedDir);
+		// Clean up any escaped slashes
+		const cleanedRoot = validation.decodedPath.replace(/\\\//g, "/");
+		const agentsDir = join(cleanedRoot, ".claude", "agents");
+
+		// Validate the constructed agents directory path
+		const agentsDirValidation = validatePath(
+			agentsDir,
+			"constructed agents directory",
+		);
+		if (!agentsDirValidation.isValid) {
+			// Validation failed - path was logged by validatePath()
+			continue;
+		}
+
+		extractDirLog.info(
+			`Validated agents dir: "${agentsDirValidation.resolvedPath}"`,
+		);
+		directories.add(agentsDirValidation.resolvedPath);
 	}
 
 	if (matchCount === 0 && systemPrompt.includes("CLAUDE.md")) {

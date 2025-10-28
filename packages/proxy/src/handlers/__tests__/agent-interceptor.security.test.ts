@@ -70,7 +70,10 @@ describe("Agent Interceptor - Directory Traversal Security", () => {
 			// This should not throw and should handle the malicious path safely
 			const result = await interceptAndModifyRequest(buffer, dbOps);
 			expect(result).toBeDefined();
-			// The request should be processed without using the malicious path
+			// Verify no agent was detected from the malicious path
+			expect(result.agentUsed).toBeNull();
+			// The original request should be returned unmodified
+			expect(result.modifiedBody).toBe(buffer);
 		});
 
 		test("should block URL-encoded .. traversal (%2e%2e)", async () => {
@@ -81,6 +84,8 @@ describe("Agent Interceptor - Directory Traversal Security", () => {
 
 			const result = await interceptAndModifyRequest(buffer, dbOps);
 			expect(result).toBeDefined();
+			expect(result.agentUsed).toBeNull();
+			expect(result.modifiedBody).toBe(buffer);
 		});
 
 		test("should block double URL-encoded traversal (%252e%252e)", async () => {
@@ -91,6 +96,8 @@ describe("Agent Interceptor - Directory Traversal Security", () => {
 
 			const result = await interceptAndModifyRequest(buffer, dbOps);
 			expect(result).toBeDefined();
+			expect(result.agentUsed).toBeNull();
+			expect(result.modifiedBody).toBe(buffer);
 		});
 
 		test("should allow legitimate paths without traversal", async () => {
@@ -101,6 +108,8 @@ describe("Agent Interceptor - Directory Traversal Security", () => {
 
 			const result = await interceptAndModifyRequest(buffer, dbOps);
 			expect(result).toBeDefined();
+			// Legitimate path should still be processed (no agent found is OK)
+			// We're just verifying it doesn't crash or throw errors
 		});
 
 		test("should block paths with mixed encoding", async () => {
@@ -110,6 +119,8 @@ describe("Agent Interceptor - Directory Traversal Security", () => {
 
 			const result = await interceptAndModifyRequest(buffer, dbOps);
 			expect(result).toBeDefined();
+			expect(result.agentUsed).toBeNull();
+			expect(result.modifiedBody).toBe(buffer);
 		});
 	});
 
@@ -121,6 +132,8 @@ describe("Agent Interceptor - Directory Traversal Security", () => {
 
 			const result = await interceptAndModifyRequest(buffer, dbOps);
 			expect(result).toBeDefined();
+			expect(result.agentUsed).toBeNull();
+			expect(result.modifiedBody).toBe(buffer);
 		});
 
 		test("should block URL-encoded .. in CLAUDE.md paths", async () => {
@@ -130,6 +143,8 @@ describe("Agent Interceptor - Directory Traversal Security", () => {
 
 			const result = await interceptAndModifyRequest(buffer, dbOps);
 			expect(result).toBeDefined();
+			expect(result.agentUsed).toBeNull();
+			expect(result.modifiedBody).toBe(buffer);
 		});
 
 		test("should block double URL-encoded .. in CLAUDE.md paths", async () => {
@@ -140,6 +155,8 @@ describe("Agent Interceptor - Directory Traversal Security", () => {
 
 			const result = await interceptAndModifyRequest(buffer, dbOps);
 			expect(result).toBeDefined();
+			expect(result.agentUsed).toBeNull();
+			expect(result.modifiedBody).toBe(buffer);
 		});
 
 		test("should allow legitimate CLAUDE.md paths", async () => {
