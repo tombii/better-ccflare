@@ -15,6 +15,10 @@ services:
       - BETTER_CCFLARE_DB_PATH=/data/better-ccflare.db
       # Optional: configure logging
       # - LOG_LEVEL=info
+    # Load environment variables from .env file (optional)
+    # Create a .env file in the same directory as docker-compose.yml
+    env_file:
+      - .env  # Optional: load from .env file
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 30s
