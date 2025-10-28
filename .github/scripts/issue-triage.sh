@@ -106,6 +106,11 @@ Your task is to analyze the following issue and provide:
 3. Brief analysis of the issue
 4. Initial response or guidance for the issue author
 
+For bug reports, if the issue doesn't include the user's better-ccflare version and installation method, specifically request this information in your response:
+- better-ccflare version (e.g., v2.1.0, or commit hash if built from source)
+- Installation method (npm, bun, pre-compiled binary, built from source, Docker/Docker Compose)
+- Operating system and architecture
+
 Respond in the following JSON format:
 {
   \"labels\": [\"label1\", \"label2\"],
