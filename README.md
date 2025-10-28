@@ -179,18 +179,76 @@ RETRY_BACKOFF=2                        # Retry backoff multiplier
 - Never commit `.env` files containing sensitive values to version control
 - Use environment-specific configuration for production deployments
 
+### Using .env Files
+
+better-ccflare automatically supports `.env` files for easy configuration management. You can create a `.env` file in your project directory:
+
+```bash
+# Copy the example .env file
+cp .env.example .env
+# Edit with your configuration
+nano .env
+```
+
+**Supported across all deployment methods**:
+- **CLI Binary**: Automatically loads `.env` from current working directory
+- **Docker Compose**: Automatically loads `.env` from the same directory as `docker-compose.yml`
+- **Docker**: Mount your `.env` file or pass variables directly
+
+**Example `.env` file**:
+```bash
+# Server Configuration
+PORT=8080
+
+# SSL/TLS Configuration (optional)
+SSL_KEY_PATH=/path/to/ssl/key.pem
+SSL_CERT_PATH=/path/to/ssl/cert.pem
+
+# Load Balancing
+LB_STRATEGY=session
+
+# Logging and Debugging
+LOG_LEVEL=INFO
+LOG_FORMAT=pretty
+
+# Database configuration
+DATA_RETENTION_DAYS=7
+REQUEST_RETENTION_DAYS=365
+```
+
+**Usage with different deployment methods**:
+```bash
+# CLI (binary or local development)
+better-ccflare --serve
+
+# Docker Compose (place .env alongside docker-compose.yml)
+docker-compose up
+
+# Docker (mount .env file)
+docker run -v $(pwd)/.env:/app/.env:ro -p 8080:8080 ghcr.io/tombii/better-ccflare:latest
+```
+
 ### Docker (Multi-Platform: linux/amd64, linux/arm64)
 
 ```bash
 # Quick start with docker-compose
 curl -O https://raw.githubusercontent.com/tombii/better-ccflare/main/docker-compose.yml
+
+# Optional: Create and configure .env file
+cp .env.example .env
+# Edit .env with your settings (SSL, port, etc.)
+nano .env
+
+# Start with docker-compose (automatically loads .env file)
 docker-compose up -d
 
-# Or use docker run
+# Or use docker run with environment variables
 docker run -d \
   --name better-ccflare \
   -p 8080:8080 \
   -v better-ccflare-data:/data \
+  -e SSL_KEY_PATH=/path/to/ssl/key.pem \
+  -e SSL_CERT_PATH=/path/to/ssl/cert.pem \
   ghcr.io/tombii/better-ccflare:latest
 
 # View logs
@@ -200,6 +258,8 @@ docker logs -f better-ccflare
 docker exec -it better-ccflare better-ccflare --add-account myaccount
 docker exec -it better-ccflare better-ccflare --list
 ```
+
+**🆕 Environment Variable Support**: Docker Compose now automatically loads `.env` files from the same directory as `docker-compose.yml`. Simply create a `.env` file alongside your `docker-compose.yml` file and the container will use those settings.
 
 **Available Docker tags:**
 - `latest` - Latest stable release
