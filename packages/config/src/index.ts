@@ -13,6 +13,7 @@ import {
 	validateString,
 } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
+import { validatePathOrThrow } from "@better-ccflare/security";
 import { resolveConfigPath } from "./paths";
 
 const log = new Logger("Config");
@@ -154,7 +155,11 @@ export class Config extends EventEmitter {
 
 	constructor(configPath?: string) {
 		super();
-		this.configPath = configPath ?? resolveConfigPath();
+		const rawPath = configPath ?? resolveConfigPath();
+		// Validate config path for security
+		this.configPath = validatePathOrThrow(rawPath, {
+			description: "config file",
+		});
 		this.loadConfig();
 	}
 

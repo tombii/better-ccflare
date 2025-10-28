@@ -16,6 +16,7 @@
 		"@better-ccflare/database": "workspace:*",
 		"@better-ccflare/logger": "workspace:*",
 		"@better-ccflare/providers": "workspace:*",
+		"@better-ccflare/security": "workspace:*",
 		"@better-ccflare/ui-common": "workspace:*",
 		"@dqbd/tiktoken": "^1.0.21"
 	}

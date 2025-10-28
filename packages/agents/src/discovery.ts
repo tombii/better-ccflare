@@ -3,6 +3,7 @@ import { readdir, readFile, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { Config } from "@better-ccflare/config";
 import { Logger } from "@better-ccflare/logger";
+import { validatePathOrThrow } from "@better-ccflare/security";
 import {
 	type Agent,
 	type AgentTool,
@@ -67,7 +68,11 @@ export class AgentRegistry {
 		workspace?: string,
 	): Promise<Agent | null> {
 		try {
-			const content = await readFile(filePath, "utf-8");
+			// Validate file path for security
+			const safePath = validatePathOrThrow(filePath, {
+				description: "agent file",
+			});
+			const content = await readFile(safePath, "utf-8");
 
 			// Extract frontmatter manually
 			const frontmatterMatch = content.match(
@@ -292,7 +297,10 @@ export class AgentRegistry {
 
 	// Register a workspace
 	async registerWorkspace(workspacePath: string): Promise<void> {
-		const normalizedPath = resolve(workspacePath);
+		// Validate and normalize workspace path for security
+		const normalizedPath = validatePathOrThrow(workspacePath, {
+			description: "workspace path",
+		});
 
 		// Check if this workspace is already registered
 		if (this.workspaces.has(normalizedPath)) {

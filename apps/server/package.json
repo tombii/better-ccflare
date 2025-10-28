@@ -19,6 +19,7 @@
 		"@better-ccflare/proxy": "workspace:*",
 		"@better-ccflare/dashboard-web": "workspace:*",
 		"@better-ccflare/http-api": "workspace:*",
+		"@better-ccflare/security": "workspace:*",
 		"@better-ccflare/types": "workspace:*"
 	}
 }
