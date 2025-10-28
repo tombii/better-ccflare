@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
 	getDefaultAllowedBasePaths,
@@ -7,10 +8,10 @@ import {
 	validatePathOrThrow,
 } from "../path-validator";
 
-// Test directory setup
-const TEST_DIR = "/tmp/better-ccflare-security-tests";
+// Test directory setup - using os.tmpdir() for cross-platform compatibility
+const TEST_DIR = join(tmpdir(), "better-ccflare-security-tests");
 const SAFE_DIR = join(TEST_DIR, "safe");
-const UNSAFE_DIR = "/tmp/unsafe-dir";
+const UNSAFE_DIR = join(tmpdir(), "unsafe-dir");
 
 describe("Path Validator - Core Security Tests", () => {
 	beforeAll(() => {
@@ -354,10 +355,11 @@ describe("Path Validator - Core Security Tests", () => {
 			expect(paths.length).toBeGreaterThan(0);
 		});
 
-		test("should include /tmp", () => {
+		test("should include temp directory", () => {
 			const paths = getDefaultAllowedBasePaths();
+			const systemTmp = tmpdir();
 
-			expect(paths).toContain("/tmp");
+			expect(paths).toContain(systemTmp);
 		});
 
 		test("should include current working directory", () => {

@@ -320,6 +320,18 @@ function extractSystemPrompt(requestBody: RequestBody): string | null {
 
 /**
  * Extracts agent directories from system prompt
+ *
+ * **Performance Note:**
+ * This function runs on every request and performs:
+ * - Multiple regex pattern matches
+ * - 7-layer security validation per path (URL decode, normalize, traversal check, etc.)
+ * - Extensive structured logging for security monitoring
+ *
+ * For high-traffic production deployments, consider:
+ * - Implementing validation result caching (keyed by resolved path)
+ * - Changing log level from `info` to `debug` for successful validations
+ * - Monitoring performance impact with APM tools
+ *
  * @param systemPrompt - The system prompt text
  * @returns Array of agent directory paths
  */

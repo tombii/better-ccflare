@@ -1,5 +1,5 @@
 import { existsSync, lstatSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { relative, resolve, sep } from "node:path";
 import { Logger } from "@better-ccflare/logger";
 
@@ -49,7 +49,18 @@ export interface PathValidationOptions {
 	additionalAllowedPaths?: string[];
 	/** Maximum number of URL decoding iterations (default: 2) */
 	maxUrlDecodeIterations?: number;
-	/** Whether to block symbolic links (default: false - warn only) */
+	/**
+	 * Whether to block symbolic links (default: false - warn only)
+	 *
+	 * **Security Consideration:**
+	 * The default is `false` to maintain backward compatibility and avoid breaking
+	 * legitimate use cases where symlinks are intentional (e.g., npm link, pnpm).
+	 *
+	 * **Recommendation for production:**
+	 * Set `blockSymlinks: true` if your threat model requires preventing symlink attacks.
+	 * Symlinks can potentially bypass path validation through TOCTOU vulnerabilities.
+	 * See README.md for detailed security considerations.
+	 */
 	blockSymlinks?: boolean;
 	/** Whether to check for symbolic links at all (default: true) */
 	checkSymlinks?: boolean;
@@ -88,8 +99,13 @@ export function getDefaultAllowedBasePaths(forceRefresh = false): string[] {
 		// process.cwd() can fail if directory was deleted
 	}
 
-	// Temp directory for testing purposes
-	paths.push("/tmp");
+	// Temp directory for testing purposes (cross-platform)
+	try {
+		const temp = tmpdir();
+		if (temp) paths.push(temp);
+	} catch {
+		// tmpdir() should not fail, but handle gracefully
+	}
 
 	cachedDefaultAllowedPaths = paths.map((p) => resolve(p));
 	return cachedDefaultAllowedPaths;
@@ -163,10 +179,11 @@ export function validatePath(
 
 	// Step 2: Check for null bytes (security bypass attempt)
 	if (rawPath.includes("\0") || decodedPath.includes("\0")) {
-		const reason = `Null byte detected in ${description}: ${rawPath}`;
+		const reason = `Null byte detected in ${description}: ${rawPath}${rawPath !== decodedPath ? ` (decoded: ${decodedPath})` : ""}`;
 		log.warn(reason, {
 			source: description,
 			path: rawPath,
+			decoded_path: decodedPath,
 			attack_type: "null_byte_injection",
 			timestamp: new Date().toISOString(),
 		});
@@ -176,10 +193,11 @@ export function validatePath(
 	// Step 3: Check for directory traversal in raw and decoded paths
 	// Note: ".." check covers both Unix (..) and Windows (..\) patterns
 	if (rawPath.includes("..") || decodedPath.includes("..")) {
-		const reason = `Directory traversal detected in ${description}: ${rawPath}`;
+		const reason = `Directory traversal detected in ${description}: ${rawPath}${rawPath !== decodedPath ? ` (decoded: ${decodedPath})` : ""}`;
 		log.warn(reason, {
 			source: description,
 			path: rawPath,
+			decoded_path: decodedPath,
 			attack_type: "directory_traversal",
 			timestamp: new Date().toISOString(),
 		});
@@ -212,7 +230,11 @@ export function validatePath(
 		// 1. Empty string (exact match with base path)
 		// 2. Relative path that doesn't escape upward (no ".." prefix)
 		// 3. Relative path that isn't absolute (no "/" or "\" prefix)
-		// Check both Windows backslash and Unix forward slash for cross-platform security
+		//
+		// Note: Explicitly checking both "/" and "\" instead of using path.sep
+		// for defense-in-depth. While Node.js path.relative() normalizes separators,
+		// we check both to guard against potential edge cases and ensure cross-platform
+		// security regardless of the platform where validation runs.
 		if (rel === "") {
 			isWithinAllowedPaths = true;
 			break;
@@ -229,10 +251,11 @@ export function validatePath(
 	}
 
 	if (!isWithinAllowedPaths) {
-		const reason = `Path outside allowed directories in ${description}: ${resolvedPath} (allowed: ${allowedBasePaths.join(", ")})`;
+		const reason = `Path outside allowed directories in ${description}: ${rawPath} → ${resolvedPath} (allowed: ${allowedBasePaths.join(", ")})`;
 		log.warn(reason, {
 			source: description,
 			path: rawPath,
+			decoded_path: decodedPath,
 			resolved_path: resolvedPath,
 			attack_type: "whitelist_bypass",
 			timestamp: new Date().toISOString(),
@@ -248,10 +271,11 @@ export function validatePath(
 				if (stats.isSymbolicLink()) {
 					if (blockSymlinks) {
 						// Block symlinks if configured
-						const reason = `Symbolic link not allowed in ${description}: ${resolvedPath}`;
+						const reason = `Symbolic link not allowed in ${description}: ${rawPath} → ${resolvedPath}`;
 						log.warn(reason, {
 							source: description,
 							path: rawPath,
+							decoded_path: decodedPath,
 							resolved_path: resolvedPath,
 							attack_type: "symlink_attack",
 							timestamp: new Date().toISOString(),
