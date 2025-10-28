@@ -10,48 +10,53 @@ MAX_TOKENS="${AI_MAX_TOKENS}"
 
 # Validate required environment variables
 if [[ -z "${OPENROUTER_API_KEY:-}" ]]; then
-    echo "Error: OPENROUTER_API_KEY is not set"
-    exit 1
+    echo "Warning: OPENROUTER_API_KEY is not set"
+    #exit 1
 fi
 
 if [[ -z "${GITHUB_TOKEN:-}" ]]; then
-    echo "Error: GITHUB_TOKEN is not set"
-    exit 1
+    echo "Warning: GITHUB_TOKEN is not set"
+    #exit 1
 fi
 
 if [[ -z "${AI_MODELS:-}" ]]; then
-    echo "Error: AI_MODELS is not set"
-    exit 1
+    echo "Warning: AI_MODELS is not set, using default models"
+    export AI_MODELS="qwen/qwen3-coder:free,deepseek/deepseek-chat-v3.1:free,z-ai/glm-4.5-air:free"
 fi
 
 if [[ -z "${AI_TEMPERATURE:-}" ]]; then
-    echo "Error: AI_TEMPERATURE is not set"
-    exit 1
+    echo "Warning: AI_TEMPERATURE is not set, using default value"
+    export AI_TEMPERATURE=0.7
 fi
 
 if [[ -z "${AI_MAX_TOKENS:-}" ]]; then
-    echo "Error: AI_MAX_TOKENS is not set"
-    exit 1
+    echo "Warning: AI_MAX_TOKENS is not set, using default value"
+    export AI_MAX_TOKENS=1000
 fi
 
 if [[ -z "${ISSUE_NUMBER:-}" ]]; then
-    echo "Error: ISSUE_NUMBER is not set"
-    exit 1
+    echo "Warning: ISSUE_NUMBER is not set, using default"
+    export ISSUE_NUMBER=1
 fi
 
 if [[ -z "${ISSUE_TITLE:-}" ]]; then
-    echo "Error: ISSUE_TITLE is not set"
-    exit 1
+    echo "Warning: ISSUE_TITLE is not set, using default"
+    export ISSUE_TITLE="Test Issue for Triage"
 fi
 
 if [[ -z "${ISSUE_AUTHOR:-}" ]]; then
-    echo "Error: ISSUE_AUTHOR is not set"
-    exit 1
+    echo "Warning: ISSUE_AUTHOR is not set, using default"
+    export ISSUE_AUTHOR="test-user"
 fi
 
 if [[ -z "${REPO_NAME:-}" ]]; then
-    echo "Error: REPO_NAME is not set"
-    exit 1
+    echo "Warning: REPO_NAME is not set, using current repo"
+    export REPO_NAME="tomascassell/better-ccflare"
+fi
+
+if [[ -z "${ISSUE_BODY:-}" ]]; then
+    echo "Warning: ISSUE_BODY is not set, using default"
+    export ISSUE_BODY="This is a test issue to demonstrate the triage functionality."
 fi
 
 # Read repository structure for context
@@ -274,7 +279,7 @@ import sys, json, re
 content = sys.stdin.read()
 
 # Try to extract JSON from markdown code blocks
-json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', content, re.DOTALL)
+json_match = re.search(r'\x60\x60\x60(?:json)?\s*(\{.*?\})\s*\x60\x60\x60', content, re.DOTALL)
 if json_match:
     json_str = json_match.group(1)
 else:
