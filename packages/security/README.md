@@ -229,7 +229,7 @@ interface PathValidationOptions {
   // Max URL decoding iterations (default: 2)
   maxUrlDecodeIterations?: number;
 
-  // Block symlinks instead of warning (default: false)
+  // Block symlinks instead of warning (default: true)
   blockSymlinks?: boolean;
 
   // Check for symlinks at all (default: true)

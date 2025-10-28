@@ -50,7 +50,7 @@ export interface PathValidationOptions {
 	/** Maximum number of URL decoding iterations (default: 2) */
 	maxUrlDecodeIterations?: number;
 	/**
-	 * Whether to block symbolic links (default: false - warn only)
+	 * Whether to block symbolic links (default: true - block for security)
 	 *
 	 * **Security Consideration:**
 	 * The default is `true` to prevent symlink attacks which can bypass path validation
@@ -229,12 +229,14 @@ export function validatePath(
 		// Path is within basePath if:
 		// 1. Empty string (exact match with base path)
 		// 2. Relative path that doesn't escape upward (no ".." prefix)
-		// 3. Relative path that isn't absolute (no "/" or "\" prefix)
+		// 3. Relative path that isn't absolute (no path separator prefix)
 		//
-		// Note: Explicitly checking both "/" and "\" instead of using path.sep
-		// for defense-in-depth. While Node.js path.relative() normalizes separators,
-		// we check both to guard against potential edge cases and ensure cross-platform
-		// security regardless of the platform where validation runs.
+		// Check both native and alternative separators for cross-platform security:
+		// - On Unix: check "/" and "\" (Windows-style attacks)
+		// - On Windows: check "\" and "/" (Unix-style attacks)
+		const nativeSep = sep; // Platform's native separator
+		const altSep = nativeSep === "/" ? "\\" : "/"; // Alternative separator
+
 		if (rel === "") {
 			isWithinAllowedPaths = true;
 			break;
@@ -242,8 +244,8 @@ export function validatePath(
 		if (
 			rel &&
 			!rel.startsWith("..") &&
-			!rel.startsWith("/") &&
-			!rel.startsWith("\\")
+			!rel.startsWith(nativeSep) &&
+			!rel.startsWith(altSep)
 		) {
 			isWithinAllowedPaths = true;
 			break;
