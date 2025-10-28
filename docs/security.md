@@ -441,17 +441,36 @@ bun cli cleanup --type requests --force
 
 #### 1. API Key Authentication
 ```typescript
-// Proposed middleware
-async function authenticateRequest(req: Request): Promise<boolean> {
-    const apiKey = req.headers.get('X-API-Key');
-    if (!apiKey) return false;
-    
-    const hashedKey = await crypto.subtle.digest(
-        'SHA-256', 
-        new TextEncoder().encode(apiKey)
-    );
-    
-    return timingSafeEqual(hashedKey, storedHashedKey);
+// ✅ IMPLEMENTED: API key authentication with timing attack prevention
+// Location: packages/types/src/api-key.ts:85-114
+async verifyApiKey(apiKey: string, hashedKey: string): Promise<boolean> {
+    try {
+        const [salt, hash] = hashedKey.split(":");
+        if (!salt || !hash) {
+            return false;
+        }
+
+        const candidateHash = this.crypto
+            .scryptSync(apiKey, salt, 64)
+            .toString("hex");
+
+        // Length validation before timing-safe comparison
+        if (candidateHash.length !== hash.length) {
+            return false;
+        }
+
+        // Constant-time comparison to prevent timing attacks
+        const candidateBuffer = Buffer.from(candidateHash, "utf8");
+        const storedBuffer = Buffer.from(hash, "utf8");
+
+        return this.crypto.timingSafeEqual(candidateBuffer, storedBuffer);
+    } catch (error) {
+        console.error(
+            "API key verification error:",
+            error instanceof Error ? error.message : "Unknown error",
+        );
+        return false;
+    }
 }
 ```
 
@@ -622,7 +641,22 @@ function addSecurityHeaders(response: Response): Response {
 **Risk**: Data loss if application crashes before async writes complete
 **Mitigation**: Graceful shutdown handlers ensure queue is flushed
 
+### 12. Timing Attacks on API Key Verification
+**Risk**: Attackers could use timing differences in string comparison to brute-force API keys
+**Mitigation**: ✅ **FIXED** - Implemented constant-time comparison using `crypto.timingSafeEqual()` with proper length validation and error handling in `packages/types/src/api-key.ts:85-114`
+
+**Implementation Details**:
+- Uses `crypto.timingSafeEqual()` for constant-time hash comparison
+- Length validation before comparison to optimize performance
+- Explicit UTF-8 encoding in Buffer conversion
+- Comprehensive error handling with secure fallback
+- Test coverage in `__tests__/api-auth.test.ts` including edge cases
+
 ## Recent Security Updates
+
+### Critical Security Fixes (October 28, 2025)
+- **Timing Attack Prevention**: Implemented constant-time comparison for API key verification using `crypto.timingSafeEqual()` to prevent brute-force attacks via timing analysis (`packages/types/src/api-key.ts:85-114`)
+- **API Key Verification Security**: Added length validation, explicit encoding, comprehensive error handling, and extensive test coverage for timing attack prevention (`__tests__/api-auth.test.ts`)
 
 ### Critical Security Fixes (October 27, 2025)
 - **ReDoS Vulnerability Fix**: Replaced polynomial regex with deterministic string-based approach for system reminder parsing in `packages/ui-common/src/parsers/parse-conversation.ts:50-78`

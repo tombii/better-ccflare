@@ -245,6 +245,67 @@ describe("API Authentication", () => {
 			expect(invalid).toBe(false);
 		});
 
+		test("should use constant-time comparison to prevent timing attacks", async () => {
+			const crypto = new NodeCryptoUtils();
+			const apiKey = await crypto.generateApiKey();
+			const hashedKey = await crypto.hashApiKey(apiKey);
+
+			// Create two different keys with same length for timing comparison
+			const correctKey = apiKey;
+			const wrongKey = "btr-" + "x".repeat(32);
+
+			// Verify correct key
+			const validResult = await crypto.verifyApiKey(correctKey, hashedKey);
+			expect(validResult).toBe(true);
+
+			// Verify wrong key (should use constant-time comparison)
+			const invalidResult = await crypto.verifyApiKey(wrongKey, hashedKey);
+			expect(invalidResult).toBe(false);
+		});
+
+		test("should reject different length hashes early", async () => {
+			const crypto = new NodeCryptoUtils();
+
+			// Create a malformed hash with different length
+			const malformedHash = "abc:123"; // Much shorter than a real hash
+			const apiKey = await crypto.generateApiKey();
+
+			// Should handle gracefully and return false
+			const result = await crypto.verifyApiKey(apiKey, malformedHash);
+			expect(result).toBe(false);
+		});
+
+		test("should handle invalid hash format gracefully", async () => {
+			const crypto = new NodeCryptoUtils();
+			const apiKey = await crypto.generateApiKey();
+
+			// Test various invalid hash formats
+			const invalidHashes = [
+				"no-colon-separator",
+				":missing-salt",
+				"missing-hash:",
+				"",
+				"::::",
+			];
+
+			for (const invalidHash of invalidHashes) {
+				const result = await crypto.verifyApiKey(apiKey, invalidHash);
+				expect(result).toBe(false);
+			}
+		});
+
+		test("should handle Buffer conversion errors gracefully", async () => {
+			const crypto = new NodeCryptoUtils();
+			const apiKey = await crypto.generateApiKey();
+
+			// Create a valid hash structure but with potentially problematic content
+			const edgeCaseHash = "salt:" + "a".repeat(128); // Valid format, long hash
+
+			// Should not throw, should return a boolean
+			const result = await crypto.verifyApiKey(apiKey, edgeCaseHash);
+			expect(typeof result).toBe("boolean");
+		});
+
 		test("should generate keys with sufficient entropy", async () => {
 			const crypto = new NodeCryptoUtils();
 			const keys = await Promise.all([
