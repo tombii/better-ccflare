@@ -332,9 +332,39 @@ function extractAgentDirectories(systemPrompt: string): string[] {
 	// Use matchAll to avoid infinite loop issues with exec()
 	const agentPathMatches = systemPrompt.matchAll(agentPathRegex);
 	for (const match of agentPathMatches) {
-		if (match[1].includes('..')) continue; // Skip paths with potential directory traversal
-		const dir = resolve(match[1]);
-		directories.add(dir);
+		const rawPath = match[1];
+
+		// Decode URL-encoded sequences to detect obfuscated traversal attempts
+		let decodedPath = rawPath;
+		try {
+			// Double decode to catch double-encoded attempts (%252e -> %2e -> .)
+			decodedPath = decodeURIComponent(decodeURIComponent(rawPath));
+		} catch {
+			// If decoding fails, path is malformed - skip it
+			extractDirLog.warn(`Skipping malformed path (decode failed): ${rawPath}`);
+			continue;
+		}
+
+		// Check for directory traversal before and after resolution
+		if (rawPath.includes("..") || decodedPath.includes("..")) {
+			extractDirLog.warn(
+				`Blocked directory traversal attempt (pre-resolve): ${rawPath}`,
+			);
+			continue;
+		}
+
+		const resolvedPath = resolve(decodedPath);
+
+		// Check if the resolved path still contains traversal sequences
+		// This catches cases where normalization reveals hidden traversal
+		if (resolvedPath.includes("..")) {
+			extractDirLog.warn(
+				`Blocked directory traversal attempt (post-resolve): ${rawPath} -> ${resolvedPath}`,
+			);
+			continue;
+		}
+
+		directories.add(resolvedPath);
 	}
 
 	// Regex #2: Look for repo root pattern "Contents of (.*?)/CLAUDE.md"
@@ -345,15 +375,45 @@ function extractAgentDirectories(systemPrompt: string): string[] {
 	for (const match of repoRootMatches) {
 		matchCount++;
 		const repoRoot = match[1];
+
+		// Decode URL-encoded sequences to detect obfuscated traversal attempts
+		let decodedRoot = repoRoot;
+		try {
+			// Double decode to catch double-encoded attempts (%252e -> %2e -> .)
+			decodedRoot = decodeURIComponent(decodeURIComponent(repoRoot));
+		} catch {
+			// If decoding fails, path is malformed - skip it
+			extractDirLog.warn(
+				`Skipping malformed repo root (decode failed): ${repoRoot}`,
+			);
+			continue;
+		}
+
+		// Check for directory traversal before resolution
+		if (repoRoot.includes("..") || decodedRoot.includes("..")) {
+			extractDirLog.warn(
+				`Blocked directory traversal attempt in repo root (pre-resolve): ${repoRoot}`,
+			);
+			continue;
+		}
+
 		extractDirLog.info(
 			`Found CLAUDE.md path match ${matchCount}: "${match[0]}"`,
 		);
 		extractDirLog.info(`Extracted repo root: "${repoRoot}"`);
 
 		// Clean up any escaped slashes
-		const cleanedRoot = repoRoot.replace(/\\\//g, "/");
+		const cleanedRoot = decodedRoot.replace(/\\\//g, "/");
 		const agentsDir = join(cleanedRoot, ".claude", "agents");
 		const resolvedDir = resolve(agentsDir);
+
+		// Check if the resolved path contains traversal sequences after normalization
+		if (resolvedDir.includes("..")) {
+			extractDirLog.warn(
+				`Blocked directory traversal attempt in repo root (post-resolve): ${repoRoot} -> ${resolvedDir}`,
+			);
+			continue;
+		}
 
 		extractDirLog.info(`Resolved agents dir: "${resolvedDir}"`);
 		directories.add(resolvedDir);
