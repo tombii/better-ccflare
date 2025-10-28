@@ -332,6 +332,7 @@ function extractAgentDirectories(systemPrompt: string): string[] {
 	// Use matchAll to avoid infinite loop issues with exec()
 	const agentPathMatches = systemPrompt.matchAll(agentPathRegex);
 	for (const match of agentPathMatches) {
+		if (match[1].includes('..')) continue; // Skip paths with potential directory traversal
 		const dir = resolve(match[1]);
 		directories.add(dir);
 	}
