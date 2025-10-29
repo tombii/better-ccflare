@@ -27,7 +27,6 @@ interface AccountAddFormProps {
 		apiKey: string;
 		tier: number;
 		priority: number;
-		customEndpoint?: string;
 	}) => Promise<void>;
 	onAddMinimaxAccount: (params: {
 		name: string;
@@ -438,26 +437,7 @@ export function AccountAddForm({
 							</div>
 						</>
 					)}
-					{newAccount.mode === "zai" && (
-						<div className="space-y-2">
-							<Label htmlFor="customEndpoint">Custom Endpoint (Optional)</Label>
-							<Input
-								id="customEndpoint"
-								value={newAccount.customEndpoint}
-								onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-									setNewAccount({
-										...newAccount,
-										customEndpoint: (e.target as HTMLInputElement).value,
-									})
-								}
-								placeholder="https://api.z.ai/api/anthropic"
-							/>
-							<p className="text-xs text-muted-foreground">
-								Leave empty to use default endpoint. Must be a valid URL.
-							</p>
-						</div>
-					)}
-					{newAccount.mode !== "openai-compatible" && newAccount.mode !== "minimax" && (
+										{newAccount.mode !== "openai-compatible" && newAccount.mode !== "minimax" && (
 						<div className="space-y-2">
 							<Label htmlFor="tier">Tier</Label>
 							<Select

@@ -15,7 +15,7 @@ https://github.com/user-attachments/assets/c859872f-ca5e-4f8b-b6a0-7cc7461fe62a
 ## Why better-ccflare?
 
 - **🚀 Zero Rate Limit Errors** - Automatically distribute requests across multiple accounts
-- **🤖 Supports z.ai coder plan** - Setup Claude and z.ai coder accounts and prioritize in which order they are used
+- **🤖 Multi-Provider Support** - Setup Claude, z.ai coder, and Minimax accounts and prioritize in which order they are used
 - **🔗 Custom API Endpoints** - Configure custom endpoints for Anthropic and Zai accounts for enterprise deployments
 - **☁️ OpenAI-Compatible Support** - Use OpenAI-compatible providers like OpenRouter, Together AI, and more with Claude API format
 - **🔄 Smart Auto-Fallback** - Automatically switch back to preferred accounts when their rate limits reset
@@ -34,7 +34,7 @@ This project builds upon the excellent foundation of [snipeship/ccflare](https:/
 - **Enhanced Load Balancing** - Session-based load balancing with intelligent failover
 - **Real-time Analytics Dashboard** - Beautiful web UI for monitoring usage and performance
 - **Smart Rate Limit Management** - Auto-refresh and auto-fallback mechanisms
-- **Multi-Provider Support** - Claude API, z.ai coder, and custom endpoints
+- **Multi-Provider Support** - Claude API, z.ai coder, Minimax, and custom endpoints
 - **Package Distribution** - Available via npm and bun for easy installation
 
 **🛠️ Developer Experience:**
@@ -536,7 +536,7 @@ Full documentation available in [`docs/`](docs/):
 - **Or download pre-compiled binary** - No runtime dependencies required!
 
 **For usage:**
-- Claude API accounts (Free, Pro, or Team) or z.ai code plan accounts
+- Claude API accounts (Free, Pro, or Team), z.ai code plan accounts, or Minimax accounts
 
 ## Platform Support
 
