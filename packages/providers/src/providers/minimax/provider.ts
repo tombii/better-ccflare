@@ -2,7 +2,6 @@ import {
 	BUFFER_SIZES,
 	estimateCostUSD,
 	TIME_CONSTANTS,
-	validateEndpointUrl,
 } from "@better-ccflare/core";
 import { sanitizeProxyHeaders } from "@better-ccflare/http-common";
 import { Logger } from "@better-ccflare/logger";
@@ -43,23 +42,9 @@ export class MinimaxProvider extends BaseProvider {
 	}
 
 	buildUrl(path: string, query: string, account?: Account): string {
-		const defaultEndpoint = "https://api.minimax.io/anthropic";
-
-		if (account?.custom_endpoint) {
-			try {
-				// Validate and sanitize the custom endpoint
-				const validatedEndpoint = validateEndpointUrl(account.custom_endpoint, "custom_endpoint");
-				return `${validatedEndpoint}${path}${query}`;
-			} catch (error) {
-				log.warn(
-					`Invalid custom endpoint for account ${account.name}: ${account.custom_endpoint}. Using default.`,
-					error,
-				);
-				return `${defaultEndpoint}${path}${query}`;
-			}
-		}
-
-		return `${defaultEndpoint}${path}${query}`;
+		// Minimax provider only supports the official API endpoint
+		const endpoint = "https://api.minimax.io/anthropic";
+		return `${endpoint}${path}${query}`;
 	}
 
 	prepareHeaders(
