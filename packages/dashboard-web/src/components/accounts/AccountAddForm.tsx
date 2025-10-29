@@ -33,7 +33,6 @@ interface AccountAddFormProps {
 		name: string;
 		apiKey: string;
 		priority: number;
-		customEndpoint?: string;
 	}) => Promise<void>;
 	onAddOpenAIAccount: (params: {
 		name: string;
@@ -146,9 +145,6 @@ export function AccountAddForm({
 				name: newAccount.name,
 				apiKey: newAccount.apiKey,
 				priority: newAccount.priority,
-				...(newAccount.customEndpoint && {
-					customEndpoint: newAccount.customEndpoint.trim(),
-				}),
 			});
 			// Reset form and signal success
 			setNewAccount({
@@ -442,7 +438,7 @@ export function AccountAddForm({
 							</div>
 						</>
 					)}
-					{(newAccount.mode === "zai" || newAccount.mode === "minimax") && (
+					{newAccount.mode === "zai" && (
 						<div className="space-y-2">
 							<Label htmlFor="customEndpoint">Custom Endpoint (Optional)</Label>
 							<Input
@@ -454,11 +450,7 @@ export function AccountAddForm({
 										customEndpoint: (e.target as HTMLInputElement).value,
 									})
 								}
-								placeholder={
-									newAccount.mode === "zai"
-										? "https://api.z.ai/api/anthropic"
-										: "https://api.minimax.io/anthropic"
-								}
+								placeholder="https://api.z.ai/api/anthropic"
 							/>
 							<p className="text-xs text-muted-foreground">
 								Leave empty to use default endpoint. Must be a valid URL.
