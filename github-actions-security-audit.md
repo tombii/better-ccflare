@@ -45,7 +45,7 @@ Based on the [GitHub Security Lab guidelines](https://securitylab.github.com/res
 - **Triggers**: `pull_request` (labeled, opened, synchronize) - **With label-based protection**
 - **Risk Level**: LOW
 - **Assessment**: Safe - uses `pull_request` + requires 'ai_code_review' label for added security
-- **Secrets Used**: `GITHUB_TOKEN`, `OPENROUTER_API_KEY`
+- **Secrets Used**: `GITHUB_TOKEN`, `LLM_API_KEY`, `LLM_URL`
 - **Code Execution**: Runs AI review script with PR diff content
 
 ### 5. `release.yml` - ✅ SECURE
@@ -59,7 +59,7 @@ Based on the [GitHub Security Lab guidelines](https://securitylab.github.com/res
 - **Triggers**: `issues` (opened)
 - **Risk Level**: LOW
 - **Assessment**: Safe - no PR processing, only issue triage
-- **Secrets Used**: `GITHUB_TOKEN`, `OPENROUTER_API_KEY`
+- **Secrets Used**: `GITHUB_TOKEN`, `LLM_API_KEY`, `LLM_URL`
 - **Code Execution**: Processes issue content safely
 
 ## Supporting Scripts Analysis
@@ -125,7 +125,7 @@ For workflows that don't need to modify the repository, you can be extra explici
 ```
 
 ### 2. Regular Secret Rotation
-- Ensure `CLAUDE_CODE_OAUTH_TOKEN` and `OPENROUTER_API_KEY` are rotated regularly
+- Ensure `CLAUDE_CODE_OAUTH_TOKEN`, `LLM_API_KEY`, and `LLM_URL` are rotated regularly
 - Consider using GitHub's environment protection rules for sensitive workflows
 
 ### 3. Monitor Workflow Execution

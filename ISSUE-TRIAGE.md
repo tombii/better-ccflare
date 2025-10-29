@@ -52,8 +52,12 @@ The triage agent can apply the following labels:
    - Go to your repository Settings
    - Navigate to Secrets and variables → Actions
    - Click "New repository secret"
-   - Name: `OPENROUTER_API_KEY`
-   - Value: Your OpenRouter API key
+   - Name: `LLM_API_KEY`
+   - Value: Your API key
+   - Click "Add secret"
+   - Click "New repository secret"
+   - Name: `LLM_URL`
+   - Value: https://api.provider.com/v1/chat/completions
    - Click "Add secret"
 
 2. **Verify Workflow Permissions**:
@@ -121,7 +125,8 @@ To test the triage agent:
 You can test the script locally:
 
 ```bash
-export OPENROUTER_API_KEY="your-key-here"
+export LLM_API_KEY="your-key-here"
+export LLM_URL="https://api.provider.com/v1/chat/completions"
 export GITHUB_TOKEN="your-github-token"
 export ISSUE_NUMBER="1"
 export ISSUE_TITLE="Test Issue"
@@ -142,7 +147,8 @@ bash .github/scripts/issue-triage.sh
 
 ### API Errors
 
-- **"OPENROUTER_API_KEY is not set"**: Add the secret to repository settings
+- **"LLM_API_KEY is not set"**: Add the secret to repository settings
+- **"LLM_URL is not set"**: Add the LLM_URL secret to repository settings
 - **"Unauthorized"**: Check that your API key is valid and has credits
 - **"Model not found"**: Verify the model name in the workflow environment variables
 
