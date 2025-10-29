@@ -1,4 +1,4 @@
-import { estimateCostUSD } from "@better-ccflare/core";
+import { BUFFER_SIZES, estimateCostUSD } from "@better-ccflare/core";
 import { sanitizeProxyHeaders } from "@better-ccflare/http-common";
 import { Logger } from "@better-ccflare/logger";
 import type { Account } from "@better-ccflare/types";
@@ -60,8 +60,8 @@ export class ZaiProvider extends BaseProvider {
 			newHeaders.set("x-api-key", apiKey);
 		}
 
-		// Remove authorization header since z.ai uses x-api-key
-		newHeaders.delete("authorization");
+		// Remove Authorization header since z.ai uses x-api-key
+		newHeaders.delete("Authorization");
 
 		// Remove host header
 		newHeaders.delete("host");
@@ -199,8 +199,10 @@ export class ZaiProvider extends BaseProvider {
 				if (!reader) return null;
 
 				let buffered = "";
-				const maxBytes = 100000; // Larger buffer to capture more of the stream
+				const maxBytes = BUFFER_SIZES.ANTHROPIC_STREAM_CAP_BYTES;
 				const decoder = new TextDecoder();
+				const READ_TIMEOUT_MS = 10000; // 10 second timeout for stream reads
+				const startTime = Date.now();
 
 				// Track usage from both message_start and message_delta
 				let messageStartUsage: {
@@ -219,7 +221,31 @@ export class ZaiProvider extends BaseProvider {
 
 				try {
 					while (buffered.length < maxBytes) {
-						const { value, done } = await reader.read();
+						// Check for timeout
+						if (Date.now() - startTime > READ_TIMEOUT_MS) {
+							await reader.cancel();
+							throw new Error(
+								"Stream read timeout while extracting usage info",
+							);
+						}
+
+						// Read with timeout
+						const readPromise = reader.read();
+						const timeoutPromise = new Promise<{
+							value?: Uint8Array;
+							done: boolean;
+						}>((_, reject) =>
+							setTimeout(
+								() => reject(new Error("Read operation timeout")),
+								5000,
+							),
+						);
+
+						const { value, done } = await Promise.race([
+							readPromise,
+							timeoutPromise,
+						]);
+
 						if (done) break;
 
 						buffered += decoder.decode(value, { stream: true });

@@ -1,4 +1,4 @@
-import { estimateCostUSD } from "@better-ccflare/core";
+import { BUFFER_SIZES, estimateCostUSD } from "@better-ccflare/core";
 import { sanitizeProxyHeaders } from "@better-ccflare/http-common";
 import { Logger } from "@better-ccflare/logger";
 import type { Account } from "@better-ccflare/types";
@@ -55,9 +55,9 @@ export class MinimaxProvider extends BaseProvider {
 
 		// Minimax uses Bearer token for API key
 		if (accessToken) {
-			newHeaders.set("authorization", `Bearer ${accessToken}`);
+			newHeaders.set("Authorization", `Bearer ${accessToken}`);
 		} else if (apiKey) {
-			newHeaders.set("authorization", `Bearer ${apiKey}`);
+			newHeaders.set("Authorization", `Bearer ${apiKey}`);
 		}
 
 		// Remove host header
@@ -113,8 +113,10 @@ export class MinimaxProvider extends BaseProvider {
 				if (!reader) return null;
 
 				let buffered = "";
-				const maxBytes = 100000; // Larger buffer to capture more of the stream
+				const maxBytes = BUFFER_SIZES.ANTHROPIC_STREAM_CAP_BYTES;
 				const decoder = new TextDecoder();
+				const READ_TIMEOUT_MS = 10000; // 10 second timeout for stream reads
+				const startTime = Date.now();
 
 				// Track usage from both message_start and message_delta
 				let messageStartUsage: {
@@ -133,7 +135,31 @@ export class MinimaxProvider extends BaseProvider {
 
 				try {
 					while (buffered.length < maxBytes) {
-						const { value, done } = await reader.read();
+						// Check for timeout
+						if (Date.now() - startTime > READ_TIMEOUT_MS) {
+							await reader.cancel();
+							throw new Error(
+								"Stream read timeout while extracting usage info",
+							);
+						}
+
+						// Read with timeout
+						const readPromise = reader.read();
+						const timeoutPromise = new Promise<{
+							value?: Uint8Array;
+							done: boolean;
+						}>((_, reject) =>
+							setTimeout(
+								() => reject(new Error("Read operation timeout")),
+								5000,
+							),
+						);
+
+						const { value, done } = await Promise.race([
+							readPromise,
+							timeoutPromise,
+						]);
+
 						if (done) break;
 
 						buffered += decoder.decode(value, { stream: true });
