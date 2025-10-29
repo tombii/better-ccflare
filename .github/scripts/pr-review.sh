@@ -9,6 +9,90 @@ TEMPERATURE="${AI_TEMPERATURE}"
 MAX_TOKENS="${AI_MAX_TOKENS}"
 MAX_DIFF_SIZE="${MAX_DIFF_SIZE}"
 
+# Input validation and sanitization
+MAX_TITLE_LENGTH=200
+MAX_BODY_LENGTH=10000
+MAX_AUTHOR_LENGTH=50
+MAX_BRANCH_LENGTH=100
+
+# Function to sanitize potentially dangerous inputs
+sanitize_input() {
+    local input="$1"
+    local input_name="$2"
+    
+    # Remove dangerous shell metacharacters
+    input=$(echo "$input" | sed 's/[;&|`$(){}[\]\\!<>?*]//g')
+    
+    # Remove newlines and control characters
+    input=$(echo "$input" | tr -d '\n\r' | sed 's/[[:cntrl:]]//g')
+    
+    # Remove potential SQL injection patterns (case-insensitive)
+    input=$(echo "$input" | tr '[:upper:]' '[:lower:]' | sed 's/union\|select\|insert\|delete\|update\|drop\|create\|alter\|exec//g')
+    
+    # Remove potential XSS patterns (case-insensitive)
+    input=$(echo "$input" | tr '[:upper:]' '[:lower:]' | sed 's/javascript:\|data:\|vbscript:\|onload=\|onerror=//g')
+    
+    echo "$input"
+}
+
+# Function to validate branch reference format
+validate_branch_ref() {
+    local ref="$1"
+    local ref_name="$2"
+    
+    # Only allow alphanumeric, hyphens, underscores, slashes, and dots
+    if [[ ! "$ref" =~ ^[a-zA-Z0-9._/-]+$ ]]; then
+        echo "Error: $ref_name contains invalid characters: $ref"
+        exit 1
+    fi
+    
+    # Check length
+    if [[ ${#ref} -gt $MAX_BRANCH_LENGTH ]]; then
+        echo "Error: $ref_name is too long (max $MAX_BRANCH_LENGTH characters)"
+        exit 1
+    fi
+    
+    # Check for common attack patterns
+    if echo "$ref" | grep -qE '\.\./|\.\.\\|~'; then
+        echo "Error: $ref_name contains suspicious patterns"
+        exit 1
+    fi
+}
+
+# Function to validate and sanitize environment variables
+validate_and_sanitize_env() {
+    local var_name="$1"
+    local var_value="${!var_name}"
+    local max_length="${2:-1000}"
+    local allow_special_chars="${3:-false}"
+    
+    # Check if required variable is set
+    if [[ -z "$var_value" ]]; then
+        echo "Error: $var_name is required but not set"
+        exit 1
+    fi
+    
+    # Check for obvious injection patterns
+    if [[ "$allow_special_chars" != "true" ]]; then
+        if echo "$var_value" | grep -qE '[;&|`$(){}[\]\\!<>?*]'; then
+            echo "Error: $var_name contains potentially dangerous characters"
+            exit 1
+        fi
+    fi
+    
+    # Check length
+    if [[ ${#var_value} -gt $max_length ]]; then
+        echo "Error: $var_name exceeds maximum length of $max_length characters"
+        exit 1
+    fi
+    
+    # Sanitize the input
+    sanitized_value=$(sanitize_input "$var_value" "$var_name")
+    
+    # Update the environment variable
+    export "$var_name"="$sanitized_value"
+}
+
 # Validate required environment variables
 if [[ -z "${OPENROUTER_API_KEY:-}" ]]; then
     echo "Error: OPENROUTER_API_KEY is not set"
@@ -39,6 +123,17 @@ if [[ -z "${MAX_DIFF_SIZE:-}" ]]; then
     echo "Error: MAX_DIFF_SIZE is not set"
     exit 1
 fi
+
+# Validate and sanitize untrusted input variables
+validate_and_sanitize_env "PR_TITLE" $MAX_TITLE_LENGTH
+validate_and_sanitize_env "PR_AUTHOR" $MAX_AUTHOR_LENGTH
+validate_and_sanitize_env "PR_DESCRIPTION" $MAX_BODY_LENGTH
+validate_and_sanitize_env "BASE_BRANCH" $MAX_BRANCH_LENGTH
+validate_and_sanitize_env "HEAD_BRANCH" $MAX_BRANCH_LENGTH
+
+# Validate branch references
+validate_branch_ref "${BASE_BRANCH}" "BASE_BRANCH"
+validate_branch_ref "${HEAD_BRANCH}" "HEAD_BRANCH"
 
 # Read diff from stdin
 echo "Reading diff from stdin..."
