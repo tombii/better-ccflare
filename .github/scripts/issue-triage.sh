@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Configuration
-API_URL="https://openrouter.ai/api/v1/chat/completions"
+API_URL="${LLM_URL}"
 # AI_MODELS should be set in workflow YAML as comma-separated list: "model1,model2,model3"
 MODELS="${AI_MODELS}"
 TEMPERATURE="${AI_TEMPERATURE}"
@@ -75,8 +75,8 @@ validate_and_sanitize_env() {
 }
 
 # Validate required environment variables
-if [[ -z "${OPENROUTER_API_KEY:-}" ]]; then
-    echo "Warning: OPENROUTER_API_KEY is not set"
+if [[ -z "${LLM_API_KEY:-}" ]]; then
+    echo "Warning: LLM_API_KEY is not set"
     #exit 1
 fi
 
@@ -88,7 +88,7 @@ fi
 # Set defaults if not provided, then validate and sanitize
 if [[ -z "${AI_MODELS:-}" ]]; then
     echo "Warning: AI_MODELS is not set, using default models"
-    export AI_MODELS="qwen/qwen3-coder:free,deepseek/deepseek-chat-v3.1:free,z-ai/glm-4.5-air:free"
+    export AI_MODELS="minimax-m2,qwen3-coder-plus,glm-4.6,glm-4.5-air"
 fi
 
 if [[ -z "${AI_TEMPERATURE:-}" ]]; then
@@ -231,7 +231,7 @@ EOF
 
     local api_response
     api_response=$(curl -s -X POST "${API_URL}" \
-        -H "Authorization: Bearer ${OPENROUTER_API_KEY}" \
+        -H "Authorization: Bearer ${LLM_API_KEY}" \
         -H "Content-Type: application/json" \
         -H "HTTP-Referer: https://github.com/${REPO_NAME}" \
         -H "X-Title: better-ccflare Issue Triage" \

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Configuration
-API_URL="https://openrouter.ai/api/v1/chat/completions"
+API_URL="${LLM_URL}"
 # AI_MODELS should be set in workflow YAML as comma-separated list: "model1,model2,model3"
 MODELS="${AI_MODELS}"
 TEMPERATURE="${AI_TEMPERATURE}"
@@ -94,8 +94,8 @@ validate_and_sanitize_env() {
 }
 
 # Validate required environment variables
-if [[ -z "${OPENROUTER_API_KEY:-}" ]]; then
-    echo "Error: OPENROUTER_API_KEY is not set"
+if [[ -z "${LLM_API_KEY:-}" ]]; then
+    echo "Error: LLM_API_KEY is not set"
     exit 1
 fi
 
@@ -273,7 +273,7 @@ EOF
 
     local api_response
     api_response=$(curl -s -X POST "${API_URL}" \
-        -H "Authorization: Bearer ${OPENROUTER_API_KEY}" \
+        -H "Authorization: Bearer ${LLM_API_KEY}" \
         -H "Content-Type: application/json" \
         -H "HTTP-Referer: https://github.com/${REPO_NAME}" \
         -H "X-Title: better-ccflare PR Review" \

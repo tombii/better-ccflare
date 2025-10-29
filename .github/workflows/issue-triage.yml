@@ -18,9 +18,10 @@ jobs:
       - name: Triage issue
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          LLM_URL: ${{ secrets.LLM_URL }}
           # Comma-separated list of models to try in order (fallback support)
-          AI_MODELS: "minimax/minimax-m2:free,qwen/qwen3-coder:free,deepseek/deepseek-chat-v3.1:free,z-ai/glm-4.5-air:free"
+          AI_MODELS: "minimax-m2,qwen3-coder-plus,glm-4.6,glm-4.5-air"
           AI_TEMPERATURE: "0.3"
           AI_MAX_TOKENS: "4000"
           ISSUE_NUMBER: ${{ github.event.issue.number }}

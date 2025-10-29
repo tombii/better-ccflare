@@ -81,8 +81,12 @@ The AI reviewer analyzes:
    - Go to your repository Settings
    - Navigate to Secrets and variables → Actions
    - Click "New repository secret"
-   - Name: `OPENROUTER_API_KEY`
-   - Value: Your OpenRouter API key
+   - Name: `LLM_API_KEY`
+   - Value: Your API key
+   - Click "Add secret"
+   - Click "New repository secret"
+   - Name: `LLM_URL`
+   - Value: https://api.provider.com/v1/chat/completions
    - Click "Add secret"
 
 2. **Verify Workflow Permissions**:
@@ -227,7 +231,8 @@ You can test the script locally:
 
 ```bash
 # Set up environment
-export OPENROUTER_API_KEY="your-key-here"
+export LLM_API_KEY="your-key-here"
+export LLM_URL="https://api.provider.com/v1/chat/completions"
 export GITHUB_TOKEN="your-github-token"
 export PR_NUMBER="1"
 export PR_TITLE="Test PR"
@@ -252,7 +257,8 @@ git diff main...your-branch | bash .github/scripts/pr-review.sh
 
 ### API Errors
 
-- **"OPENROUTER_API_KEY is not set"**: Add the secret in repository settings
+- **"LLM_API_KEY is not set"**: Add the secret in repository settings
+- **"LLM_URL is not set"**: Add the LLM_URL secret in repository settings
 - **"Unauthorized"**: Verify your API key is correct and active
 - **"Model not found"**: Check the model name in the workflow environment variables
 - **"Rate limit exceeded"**: Wait a few minutes or upgrade OpenRouter plan
