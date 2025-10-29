@@ -90,7 +90,7 @@ export class APIRouter {
 		const _accountTierHandler = createAccountTierUpdateHandler(dbOps);
 		const requestsSummaryHandler = createRequestsSummaryHandler(db);
 		const requestsDetailHandler = createRequestsDetailHandler(dbOps);
-		const configHandlers = createConfigHandlers(config);
+		const configHandlers = createConfigHandlers(config, this.context.runtime);
 		const logsStreamHandler = createLogsStreamHandler();
 		const logsHistoryHandler = createLogsHistoryHandler();
 		const analyticsHandler = createAnalyticsHandler(this.context);

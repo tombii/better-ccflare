@@ -16,3 +16,9 @@ packages/proxy/src/inline-worker.ts
 packages/proxy/src/embedded-tiktoken-wasm.ts
 CLAUDE.md
 AGENTS.md
+
+# Build artifacts and test files
+better-ccflare
+config.json
+ssl-cert-snakeoil.key
+ssl-cert-snakeoil.pem

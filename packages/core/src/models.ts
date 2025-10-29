@@ -48,8 +48,8 @@ export const MODEL_SHORT_NAMES: Record<string, string> = {
 };
 
 // Default model for various contexts
-export const DEFAULT_MODEL = CLAUDE_MODEL_IDS.SONNET_4;
-export const DEFAULT_AGENT_MODEL = CLAUDE_MODEL_IDS.SONNET_4;
+export const DEFAULT_MODEL = CLAUDE_MODEL_IDS.SONNET_4_5;
+export const DEFAULT_AGENT_MODEL = CLAUDE_MODEL_IDS.SONNET_4_5;
 
 // Type for all valid model IDs
 export type ClaudeModelId =

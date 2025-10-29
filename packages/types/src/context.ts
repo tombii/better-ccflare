@@ -15,6 +15,10 @@ export interface APIContext {
 		isAuthenticated: boolean;
 		apiKey?: ApiKey;
 	};
+	runtime?: {
+		port: number;
+		tlsEnabled: boolean;
+	};
 }
 
 // Load balancing strategy interface
