@@ -361,6 +361,10 @@ export default function startServer(options?: {
 	}
 	DatabaseFactory.initialize(undefined, runtime);
 	const dbOps = DatabaseFactory.getInstance();
+
+	// Run integrity check if database was initialized in fast mode
+	dbOps.runIntegrityCheck();
+
 	const db = dbOps.getDatabase();
 	const log = container.resolve<Logger>(SERVICE_KEYS.Logger);
 	container.registerInstance(SERVICE_KEYS.Database, dbOps);

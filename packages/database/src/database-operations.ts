@@ -48,16 +48,22 @@ export interface DatabaseRetryConfig {
  * Apply SQLite pragmas for optimal performance on distributed filesystems
  * Integrates your performance improvements with the new architecture
  */
-function configureSqlite(db: Database, config: DatabaseConfig): void {
+function configureSqlite(
+	db: Database,
+	config: DatabaseConfig,
+	skipIntegrityCheck = false,
+): void {
 	try {
-		// Check database integrity first
-		const integrityResult = db.query("PRAGMA integrity_check").get() as {
-			integrity_check: string;
-		};
-		if (integrityResult.integrity_check !== "ok") {
-			throw new Error(
-				`Database integrity check failed: ${integrityResult.integrity_check}`,
-			);
+		// Check database integrity first (skip in fast mode for CLI commands)
+		if (!skipIntegrityCheck) {
+			const integrityResult = db.query("PRAGMA integrity_check").get() as {
+				integrity_check: string;
+			};
+			if (integrityResult.integrity_check !== "ok") {
+				throw new Error(
+					`Database integrity check failed: ${integrityResult.integrity_check}`,
+				);
+			}
 		}
 
 		// Enable WAL mode for better concurrency (with error handling)
@@ -123,6 +129,7 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 	private runtime?: RuntimeConfig;
 	private dbConfig: DatabaseConfig;
 	private retryConfig: DatabaseRetryConfig;
+	private fastMode: boolean;
 
 	// Repositories
 	private accounts: AccountRepository;
@@ -137,7 +144,9 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		dbPath?: string,
 		dbConfig?: DatabaseConfig,
 		retryConfig?: DatabaseRetryConfig,
+		fastMode = false,
 	) {
+		this.fastMode = fastMode;
 		const resolvedPath = dbPath ?? resolveDbPath();
 
 		// Default database configuration optimized for distributed filesystems
@@ -167,7 +176,8 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		this.db = new Database(resolvedPath, { create: true });
 
 		// Apply SQLite configuration for distributed filesystem optimization
-		configureSqlite(this.db, this.dbConfig);
+		// Skip expensive integrity checks in fast mode for CLI commands
+		configureSqlite(this.db, this.dbConfig, fastMode);
 
 		ensureSchema(this.db);
 		runMigrations(this.db);
@@ -196,6 +206,24 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 
 	getDatabase(): Database {
 		return this.db;
+	}
+
+	/**
+	 * Run database integrity check if it was skipped during initialization
+	 * This is useful for server startup where we want to ensure database integrity
+	 */
+	runIntegrityCheck(): void {
+		if (this.fastMode) {
+			// Database was initialized in fast mode, run integrity check now
+			const integrityResult = this.db.query("PRAGMA integrity_check").get() as {
+				integrity_check: string;
+			};
+			if (integrityResult.integrity_check !== "ok") {
+				throw new Error(
+					`Database integrity check failed: ${integrityResult.integrity_check}`,
+				);
+			}
+		}
 	}
 
 	/**
@@ -760,7 +788,7 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 	 * Clear all API keys (for testing purposes)
 	 */
 	clearApiKeys(): void {
-		return withDatabaseRetrySync(
+		withDatabaseRetrySync(
 			() => {
 				this.apiKeys.clearAll();
 			},

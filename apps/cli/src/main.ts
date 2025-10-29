@@ -13,8 +13,10 @@ const possibleEnvPaths = [
 
 // For deployed binaries, also check the executable's directory
 if (process.argv[1]) {
-	const execPath = require('path').dirname(require('path').resolve(process.argv[1]));
-	possibleEnvPaths.push(require('path').join(execPath, '.env'));
+	const execPath = require("node:path").dirname(
+		require("node:path").resolve(process.argv[1]),
+	);
+	possibleEnvPaths.push(require("node:path").join(execPath, ".env"));
 }
 
 // Try each possible .env location
@@ -58,10 +60,40 @@ import { Logger } from "@better-ccflare/logger";
 // Import server
 import startServer from "@better-ccflare/server";
 
+interface ParsedArgs {
+	version: boolean;
+	help: boolean;
+	serve: boolean;
+	port: number | null;
+	sslKey: string | null;
+	sslCert: string | null;
+	stats: boolean;
+	addAccount: string | null;
+	mode: "max" | "console" | "zai" | "openai-compatible" | null;
+	tier: 1 | 5 | 20 | null;
+	priority: number | null;
+	list: boolean;
+	remove: string | null;
+	pause: string | null;
+	resume: string | null;
+	setPriority: [string, number] | null;
+	reauthenticate: string | null;
+	analyze: boolean;
+	resetStats: boolean;
+	clearHistory: boolean;
+	getModel: boolean;
+	setModel: string | null;
+	generateApiKey: string | null;
+	listApiKeys: boolean;
+	disableApiKey: string | null;
+	enableApiKey: string | null;
+	deleteApiKey: string | null;
+}
+
 /**
  * Helper function to start server with unified environment variable handling
  */
-function startServerWithConfig(args: any, config: Config) {
+function startServerWithConfig(args: ParsedArgs, config: Config) {
 	const runtime = config.getRuntime();
 
 	// Proper precedence: command line args > environment variables > config defaults
@@ -106,8 +138,8 @@ function fastExit(code: 0 | 1 = 0): never {
 /**
  * Parse command line arguments
  */
-function parseArgs(args: string[]) {
-	const parsed: Record<string, any> = {
+function parseArgs(args: string[]): ParsedArgs {
+	const parsed: ParsedArgs = {
 		version: false,
 		help: false,
 		serve: false, // Keep for backwards compatibility but treat as no-op
@@ -197,27 +229,36 @@ function parseArgs(args: string[]) {
 					console.error("❌ --mode requires a value");
 					fastExit(1);
 				}
-				parsed.mode = args[++i];
-				const validModes = ["max", "console", "zai", "openai-compatible"];
-				if (!validModes.includes(parsed.mode)) {
-					console.error(`❌ Invalid mode: ${parsed.mode}`);
+				const modeValue = args[++i] as
+					| "max"
+					| "console"
+					| "zai"
+					| "openai-compatible";
+				parsed.mode = modeValue;
+				const validModes: Array<
+					"max" | "console" | "zai" | "openai-compatible"
+				> = ["max", "console", "zai", "openai-compatible"];
+				if (!validModes.includes(modeValue)) {
+					console.error(`❌ Invalid mode: ${modeValue}`);
 					console.error(`Valid modes: ${validModes.join(", ")}`);
 					fastExit(1);
 				}
 				break;
 			}
-			case "--tier":
+			case "--tier": {
 				if (i + 1 >= args.length || args[i + 1].startsWith("--")) {
 					console.error("❌ --tier requires a value");
 					fastExit(1);
 				}
-				parsed.tier = parseInt(args[++i], 10);
-				if (Number.isNaN(parsed.tier) || ![1, 5, 20].includes(parsed.tier)) {
+				const tierValue = parseInt(args[++i], 10) as 1 | 5 | 20;
+				parsed.tier = tierValue;
+				if (Number.isNaN(tierValue) || ![1, 5, 20].includes(tierValue)) {
 					console.error(`❌ Invalid tier: ${args[i]}`);
 					console.error("Tier must be 1, 5, or 20");
 					fastExit(1);
 				}
 				break;
+			}
 			case "--priority":
 				if (i + 1 >= args.length || args[i + 1].startsWith("--")) {
 					console.error("❌ --priority requires a value");
@@ -266,7 +307,7 @@ function parseArgs(args: string[]) {
 					fastExit(1);
 				}
 				const name = args[++i];
-				const priority = args[++i];
+				const priority = parseInt(args[++i], 10);
 				parsed.setPriority = [name, priority];
 				break;
 			}
@@ -447,9 +488,10 @@ Examples:
 	container.registerInstance(SERVICE_KEYS.Config, new Config());
 	container.registerInstance(SERVICE_KEYS.Logger, new Logger("CLI"));
 
-	// Initialize database factory
-	DatabaseFactory.initialize();
-	const dbOps = DatabaseFactory.getInstance();
+	// Initialize database factory with minimal configuration for CLI commands
+	// CLI commands don't need expensive integrity checks
+	DatabaseFactory.initialize(undefined, undefined, false);
+	const dbOps = DatabaseFactory.getInstance(false);
 	container.registerInstance(SERVICE_KEYS.Database, dbOps);
 
 	// Handle non-interactive commands
@@ -461,7 +503,6 @@ Examples:
 		return;
 	}
 
-	
 	if (parsed.stats) {
 		const accounts = getAccountsList(dbOps);
 		const stats = {
@@ -636,11 +677,10 @@ Examples:
 	}
 
 	if (parsed.setPriority) {
-		const [name, priorityStr] = parsed.setPriority;
-		const priority = parseInt(priorityStr, 10);
+		const [name, priority] = parsed.setPriority;
 
 		if (Number.isNaN(priority)) {
-			console.error(`❌ Invalid priority value: ${priorityStr}`);
+			console.error(`❌ Invalid priority value: ${priority}`);
 			await exitGracefully(1);
 		}
 

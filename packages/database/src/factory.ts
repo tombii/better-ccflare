@@ -12,15 +12,22 @@ let dbPath: string | undefined;
 let runtimeConfig: RuntimeConfig | undefined;
 let migrationChecked = false;
 
+let fastModeEnabled = false;
+
 export function initialize(
 	dbPathParam?: string,
 	runtimeConfigParam?: RuntimeConfig,
+	fastMode = false,
 ): void {
 	dbPath = dbPathParam;
 	runtimeConfig = runtimeConfigParam;
+	// Store fast mode setting for database operations
+	fastModeEnabled = fastMode;
 }
 
-export function getInstance(): DatabaseOperations {
+export function getInstance(fastMode?: boolean): DatabaseOperations {
+	// Use provided fastMode or the stored value from initialize()
+	const useFastMode = fastMode ?? fastModeEnabled;
 	if (!instance) {
 		// Perform one-time migration check from legacy ccflare
 		if (!migrationChecked) {
@@ -51,7 +58,12 @@ export function getInstance(): DatabaseOperations {
 		const retryConfig: DatabaseRetryConfig | undefined =
 			runtimeConfig?.database?.retry;
 
-		instance = new DatabaseOperations(dbPath, dbConfig, retryConfig);
+		instance = new DatabaseOperations(
+			dbPath,
+			dbConfig,
+			retryConfig,
+			useFastMode,
+		);
 		if (runtimeConfig) {
 			instance.setRuntimeConfig(runtimeConfig);
 		}
