@@ -321,16 +321,20 @@ function extractSystemPrompt(requestBody: RequestBody): string | null {
 /**
  * Extracts agent directories from system prompt
  *
+ * **Performance Optimizations:**
+ * - Reduced redundant log calls for successful validations
+ * - Production-optimized logging (debug level for success cases)
+ * - Leverages security package caching for repeated validations
+ * - Early returns for invalid paths to avoid unnecessary processing
+ *
  * **Performance Note:**
  * This function runs on every request and performs:
- * - Multiple regex pattern matches
- * - 7-layer security validation per path (URL decode, normalize, traversal check, etc.)
- * - Extensive structured logging for security monitoring
+ * - Two regex pattern matches (optimized for typical prompt sizes)
+ * - 7-layer security validation per path (cached via security package)
+ * - Minimal structured logging for security monitoring
  *
- * For high-traffic production deployments, consider:
- * - Implementing validation result caching (keyed by resolved path)
- * - Changing log level from `info` to `debug` for successful validations
- * - Monitoring performance impact with APM tools
+ * For high-traffic production deployments, monitor cache hit rates via
+ * security.getValidationCacheSize() to ensure effectiveness.
  *
  * @param systemPrompt - The system prompt text
  * @returns Array of agent directory paths
@@ -338,79 +342,54 @@ function extractSystemPrompt(requestBody: RequestBody): string | null {
 function extractAgentDirectories(systemPrompt: string): string[] {
 	const extractDirLog = new Logger("ExtractAgentDirs");
 	const directories = new Set<string>();
+	const isProduction = process.env.NODE_ENV === "production";
+
+	// PERFORMANCE: Process both patterns with optimized logging
+	const processPath = (rawPath: string, description: string, finalPath?: string) => {
+		const pathToValidate = finalPath || rawPath;
+
+		// Validate path using comprehensive security checks (cached)
+		const validation = validatePath(pathToValidate, { description });
+		if (!validation.isValid) {
+			extractDirLog.warn(`Rejected invalid ${description}: ${pathToValidate} - ${validation.reason}`);
+			return;
+		}
+
+		// PERFORMANCE: Minimal logging in production
+		if (isProduction) {
+			extractDirLog.debug(`Validated ${description}: ${validation.resolvedPath}`);
+		} else {
+			extractDirLog.info(`Validated ${description}: ${validation.resolvedPath}`);
+		}
+
+		directories.add(validation.resolvedPath);
+	};
 
 	// Regex #1: Look for explicit /.claude/agents paths
 	const agentPathRegex = /([\\/][\w\-. ]*?\/.claude\/agents)(?=[\s"'\]])/g;
-
-	// Use matchAll to avoid infinite loop issues with exec()
 	const agentPathMatches = systemPrompt.matchAll(agentPathRegex);
 	for (const match of agentPathMatches) {
-		const rawPath = match[1];
-
-		// Validate path using comprehensive security checks
-		const validation = validatePath(rawPath, { description: "agent path" });
-		if (!validation.isValid) {
-			// Log rejection with reason for debugging and security monitoring
-			extractDirLog.warn(
-				`Rejected invalid agent path: ${rawPath} - ${validation.reason}`,
-			);
-			continue;
-		}
-
-		// Path is valid - add to directories
-		extractDirLog.info(`Validated agent path: ${validation.resolvedPath}`);
-		directories.add(validation.resolvedPath);
+		processPath(match[1], "agent path");
 	}
 
 	// Regex #2: Look for repo root pattern "Contents of (.*?)/CLAUDE.md"
 	const repoRootRegex = /Contents of ([^\n]+?)\/CLAUDE\.md/g;
-
-	let matchCount = 0;
 	const repoRootMatches = systemPrompt.matchAll(repoRootRegex);
 	for (const match of repoRootMatches) {
-		matchCount++;
 		const repoRoot = match[1];
 
-		extractDirLog.info(
-			`Found CLAUDE.md path match ${matchCount}: "${match[0]}"`,
-		);
-		extractDirLog.info(`Extracted repo root: "${repoRoot}"`);
-
-		// Validate repo root path using comprehensive security checks
-		const validation = validatePath(repoRoot, {
-			description: "CLAUDE.md repo root",
-		});
+		// Validate repo root first, then construct agents directory
+		const validation = validatePath(repoRoot, { description: "CLAUDE.md repo root" });
 		if (!validation.isValid) {
-			// Log rejection with reason for debugging and security monitoring
-			extractDirLog.warn(
-				`Rejected invalid repo root path: ${repoRoot} - ${validation.reason}`,
-			);
+			extractDirLog.warn(`Rejected invalid repo root: ${repoRoot} - ${validation.reason}`);
 			continue;
 		}
 
-		// Clean up any escaped slashes
+		// Clean up any escaped slashes and construct agents directory
 		const cleanedRoot = validation.decodedPath.replace(/\\\//g, "/");
 		const agentsDir = join(cleanedRoot, ".claude", "agents");
 
-		// Validate the constructed agents directory path
-		const agentsDirValidation = validatePath(agentsDir, {
-			description: "constructed agents directory",
-		});
-		if (!agentsDirValidation.isValid) {
-			// Validation failed - path was logged by validatePath()
-			continue;
-		}
-
-		extractDirLog.info(
-			`Validated agents dir: "${agentsDirValidation.resolvedPath}"`,
-		);
-		directories.add(agentsDirValidation.resolvedPath);
-	}
-
-	if (matchCount === 0 && systemPrompt.includes("CLAUDE.md")) {
-		extractDirLog.info(
-			"No CLAUDE.md path matches found despite CLAUDE.md being in prompt",
-		);
+		processPath(repoRoot, "constructed agents directory", agentsDir);
 	}
 
 	return Array.from(directories);

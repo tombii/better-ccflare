@@ -276,9 +276,10 @@ Path validation adds overhead to file operations. For high-traffic applications:
 
 The security package includes built-in performance optimizations:
 
-1. **LRU Caching**: Validation results are cached (1000 entries) to avoid repeated validation
+1. **LRU Caching**: Validation results are cached (`DEFAULT_CACHE_SIZE = 1000` entries) to avoid repeated validation
 2. **Production Logging**: Successful validations log at `debug` level in production, `info` in development
 3. **Cached Default Paths**: Default allowed paths are computed once and reused
+4. **Optimized Cache Keys**: Minimal string operations for cache key construction
 
 ### Monitoring Cache Performance
 

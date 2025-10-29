@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { existsSync, unlinkSync } from "node:fs";
 
 /**
  * Security tests for agent-interceptor.ts
@@ -45,8 +46,8 @@ describe("Agent Interceptor - Directory Traversal Security", () => {
 
 	beforeAll(() => {
 		// Setup database before tests
-		if (require("node:fs").existsSync(TEST_DB_PATH)) {
-			require("node:fs").unlinkSync(TEST_DB_PATH);
+		if (existsSync(TEST_DB_PATH)) {
+			unlinkSync(TEST_DB_PATH);
 		}
 		DatabaseFactory.initialize(TEST_DB_PATH);
 		dbOps = DatabaseFactory.getInstance();
@@ -54,8 +55,8 @@ describe("Agent Interceptor - Directory Traversal Security", () => {
 
 	afterAll(() => {
 		// Cleanup test database
-		if (require("node:fs").existsSync(TEST_DB_PATH)) {
-			require("node:fs").unlinkSync(TEST_DB_PATH);
+		if (existsSync(TEST_DB_PATH)) {
+			unlinkSync(TEST_DB_PATH);
 		}
 		DatabaseFactory.reset();
 	});

@@ -26,6 +26,12 @@ export interface SecurityConfig {
 const MAX_DECODE_ITERATIONS = 2;
 
 /**
+ * Default cache size for validation results
+ * Tuned for typical workloads while limiting memory usage
+ */
+const DEFAULT_CACHE_SIZE = 1000;
+
+/**
  * Cached default allowed paths for performance
  * Computed once and reused across validations
  */
@@ -37,7 +43,7 @@ let cachedDefaultAllowedPaths: string[] | null = null;
  */
 class ValidationCache {
 	private cache = new Map<string, PathValidationResult>();
-	private maxSize = 1000; // Limit cache size to prevent memory issues
+	private maxSize = DEFAULT_CACHE_SIZE; // Use documented constant
 
 	get(key: string): PathValidationResult | undefined {
 		const result = this.cache.get(key);
@@ -71,6 +77,24 @@ class ValidationCache {
 
 // Global validation cache instance
 const validationCache = new ValidationCache();
+
+/**
+ * Performance-optimized structured logging helper
+ * Only creates expensive objects when not in production (for security events)
+ */
+function logSecurityEvent(event: string, details: () => Record<string, unknown>) {
+	// In production, only log critical security events with minimal details
+	if (process.env.NODE_ENV === 'production') {
+		const minimalDetails = {
+			source: details().source,
+			attack_type: details().attack_type,
+		};
+		log.warn(event, minimalDetails);
+	} else {
+		// In development, log full details for debugging
+		log.warn(event, details());
+	}
+}
 
 /**
  * Result of path validation
@@ -198,14 +222,31 @@ export function validatePath(
 	options: PathValidationOptions = {},
 ): PathValidationResult {
 	const description = options.description || "path";
+
+	// Input validation: reject null, undefined, or non-string paths
+	// Note: empty strings are allowed as they resolve to current working directory
+	if (rawPath === null || rawPath === undefined || typeof rawPath !== 'string') {
+		const reason = `Invalid input: path must be a string, received ${rawPath === null ? 'null' : rawPath === undefined ? 'undefined' : typeof rawPath}`;
+		log.debug(`${description} validation failed: ${reason}`);
+		return {
+			isValid: false,
+			decodedPath: "",
+			resolvedPath: "",
+			reason,
+		};
+	}
+
 	const checkSymlinks = options.checkSymlinks !== false;
 	const blockSymlinks = options.blockSymlinks === true;
 	const maxDecodeIterations =
 		options.maxUrlDecodeIterations || MAX_DECODE_ITERATIONS;
 
 	// PERFORMANCE: Check cache first for successful validations
-	// Create cache key from raw path and relevant options
-	const cacheKey = `${rawPath}|${checkSymlinks ? "1" : "0"}|${blockSymlinks ? "1" : "0"}|${(options.additionalAllowedPaths || []).join(",")}|${description}`;
+	// Create cache key from raw path and relevant options (optimized to minimize string operations)
+	const symlinkFlag = checkSymlinks ? "1" : "0";
+	const blockFlag = blockSymlinks ? "1" : "0";
+	const additionalPaths = (options.additionalAllowedPaths || []).join(",");
+	const cacheKey = `${rawPath}|${symlinkFlag}|${blockFlag}|${additionalPaths}|${description}`;
 	const cached = validationCache.get(cacheKey);
 	if (cached) {
 		// Log cache hit at debug level to avoid performance impact in production
@@ -242,13 +283,13 @@ export function validatePath(
 	// Step 2: Check for null bytes (security bypass attempt)
 	if (rawPath.includes("\0") || decodedPath.includes("\0")) {
 		const reason = `Null byte detected in ${description}: ${rawPath}${rawPath !== decodedPath ? ` (decoded: ${decodedPath})` : ""}`;
-		log.warn(reason, {
+		logSecurityEvent(reason, () => ({
 			source: description,
 			path: rawPath,
 			decoded_path: decodedPath,
 			attack_type: "null_byte_injection",
 			timestamp: new Date().toISOString(),
-		});
+		}));
 		const result = { isValid: false, decodedPath, resolvedPath: "", reason };
 		validationCache.set(cacheKey, result);
 		return result;
@@ -258,13 +299,13 @@ export function validatePath(
 	// Note: ".." check covers both Unix (..) and Windows (..\) patterns
 	if (rawPath.includes("..") || decodedPath.includes("..")) {
 		const reason = `Directory traversal detected in ${description}: ${rawPath}${rawPath !== decodedPath ? ` (decoded: ${decodedPath})` : ""}`;
-		log.warn(reason, {
+		logSecurityEvent(reason, () => ({
 			source: description,
 			path: rawPath,
 			decoded_path: decodedPath,
 			attack_type: "directory_traversal",
 			timestamp: new Date().toISOString(),
-		});
+		}));
 		const result = { isValid: false, decodedPath, resolvedPath: "", reason };
 		validationCache.set(cacheKey, result);
 		return result;
@@ -291,18 +332,15 @@ export function validatePath(
 		...(options.additionalAllowedPaths || []).map((p) => resolve(p)),
 	];
 
-	// PRODUCTION WARNING: Log if using default paths in production
-	if (
-		!options.additionalAllowedPaths?.length &&
-		process.env.NODE_ENV === "production"
-	) {
+	// PRODUCTION WARNING: Log if using default paths in production (cache the check)
+	const isProduction = process.env.NODE_ENV === "production";
+	if (!options.additionalAllowedPaths?.length && isProduction) {
 		log.warn(
 			`SECURITY WARNING: Using default allowed paths in production environment. ` +
 				`This may be too permissive. Consider specifying explicit additionalAllowedPaths.`,
 			{
 				description,
 				environment: "production",
-				default_paths: getDefaultAllowedBasePaths(),
 				recommendation:
 					"Add additionalAllowedPaths option for production security",
 			},
@@ -340,14 +378,14 @@ export function validatePath(
 
 	if (!isWithinAllowedPaths) {
 		const reason = `Path outside allowed directories in ${description}: ${rawPath} → ${resolvedPath} (allowed: ${allowedBasePaths.join(", ")})`;
-		log.warn(reason, {
+		logSecurityEvent(reason, () => ({
 			source: description,
 			path: rawPath,
 			decoded_path: decodedPath,
 			resolved_path: resolvedPath,
 			attack_type: "whitelist_bypass",
 			timestamp: new Date().toISOString(),
-		});
+		}));
 		const result = { isValid: false, decodedPath, resolvedPath, reason };
 		validationCache.set(cacheKey, result);
 		return result;
@@ -362,14 +400,14 @@ export function validatePath(
 					if (blockSymlinks) {
 						// Block symlinks if configured
 						const reason = `Symbolic link not allowed in ${description}: ${rawPath} → ${resolvedPath}`;
-						log.warn(reason, {
+						logSecurityEvent(reason, () => ({
 							source: description,
 							path: rawPath,
 							decoded_path: decodedPath,
 							resolved_path: resolvedPath,
 							attack_type: "symlink_attack",
 							timestamp: new Date().toISOString(),
-						});
+						}));
 						const result = {
 							isValid: false,
 							decodedPath,
@@ -394,10 +432,15 @@ export function validatePath(
 					);
 				}
 			}
-		} catch (_error) {
-			// lstatSync can fail for various reasons - don't block, just log
+		} catch (error) {
+			// lstatSync can fail for various reasons - log with details for debugging
 			log.debug(
 				`Could not check for symlinks in ${description}: ${resolvedPath}`,
+				{
+					error: error instanceof Error ? error.message : String(error),
+					path: resolvedPath,
+					description,
+				},
 			);
 		}
 	}
@@ -407,7 +450,7 @@ export function validatePath(
 	validationCache.set(cacheKey, result);
 
 	// PERFORMANCE: Log successful validation at debug level in production
-	if (process.env.NODE_ENV === "production") {
+	if (isProduction) {
 		log.debug(`Path validation successful: ${description} → ${resolvedPath}`);
 	} else {
 		log.info(`Path validation successful: ${description} → ${resolvedPath}`);
