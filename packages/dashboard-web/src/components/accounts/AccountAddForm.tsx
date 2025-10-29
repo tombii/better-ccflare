@@ -27,6 +27,7 @@ interface AccountAddFormProps {
 		apiKey: string;
 		tier: number;
 		priority: number;
+		customEndpoint?: string;
 	}) => Promise<void>;
 	onAddMinimaxAccount: (params: {
 		name: string;
@@ -124,6 +125,9 @@ export function AccountAddForm({
 			await onAddZaiAccount({
 				...accountParams,
 				apiKey: newAccount.apiKey,
+				...(newAccount.customEndpoint && {
+					customEndpoint: newAccount.customEndpoint.trim(),
+				}),
 			});
 			// Reset form and signal success
 			setNewAccount({
@@ -511,7 +515,29 @@ export function AccountAddForm({
 							</div>
 						</>
 					)}
-										{newAccount.mode !== "openai-compatible" && newAccount.mode !== "minimax" && newAccount.mode !== "anthropic-compatible" && (
+										{(newAccount.mode === "max" || newAccount.mode === "console") && (
+						<div className="space-y-2">
+							<Label htmlFor="customEndpoint">
+								Custom Endpoint URL (Optional)
+							</Label>
+							<Input
+								id="customEndpoint"
+								type="url"
+								value={newAccount.customEndpoint}
+								onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+									setNewAccount({
+										...newAccount,
+										customEndpoint: (e.target as HTMLInputElement).value,
+									})
+								}
+								placeholder="https://api.anthropic.com"
+							/>
+							<p className="text-xs text-muted-foreground">
+								Leave empty to use default Anthropic endpoint. Must be a valid URL.
+							</p>
+						</div>
+					)}
+					{newAccount.mode !== "openai-compatible" && newAccount.mode !== "minimax" && newAccount.mode !== "anthropic-compatible" && (
 						<div className="space-y-2">
 							<Label htmlFor="tier">Tier</Label>
 							<Select
