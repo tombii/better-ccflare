@@ -1,4 +1,7 @@
-import { BUFFER_SIZES } from "@better-ccflare/core";
+import {
+	BUFFER_SIZES,
+	validateEndpointUrl,
+} from "@better-ccflare/core";
 import { sanitizeProxyHeaders } from "@better-ccflare/http-common";
 import { Logger } from "@better-ccflare/logger";
 import type { Account } from "@better-ccflare/types";
@@ -163,9 +166,23 @@ export class AnthropicProvider extends BaseProvider {
 	}
 
 	buildUrl(path: string, query: string, account?: Account): string {
-		// Anthropic provider only supports the official API endpoint
-		const endpoint = "https://api.anthropic.com";
-		return `${endpoint}${path}${query}`;
+		const defaultEndpoint = "https://api.anthropic.com";
+
+		if (account?.custom_endpoint) {
+			try {
+				// Validate and sanitize the custom endpoint
+				const validatedEndpoint = validateEndpointUrl(account.custom_endpoint, "custom_endpoint");
+				return `${validatedEndpoint}${path}${query}`;
+			} catch (error) {
+				log.warn(
+					`Invalid custom endpoint for account ${account.name}: ${account.custom_endpoint}. Using default.`,
+					error,
+				);
+				return `${defaultEndpoint}${path}${query}`;
+			}
+		}
+
+		return `${defaultEndpoint}${path}${query}`;
 	}
 
 	prepareHeaders(
