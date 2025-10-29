@@ -377,7 +377,16 @@ export abstract class BaseAnthropicCompatibleProvider extends BaseProvider {
 					),
 				);
 
-				const { value, done } = await Promise.race([readPromise, timeoutPromise]);
+				let value, done;
+				try {
+					({ value, done } = await Promise.race([readPromise, timeoutPromise]));
+				} catch (error) {
+					if (error instanceof Error && error.message === "Read operation timeout") {
+						log.warn("Stream read operation timed out while extracting usage info - continuing without usage data");
+						return null;
+					}
+					throw error; // Re-throw other errors
+				}
 
 				if (done) break;
 

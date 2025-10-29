@@ -17,8 +17,8 @@ export const TIME_CONSTANTS = {
 
 	// Timeouts
 	STREAM_TIMEOUT_DEFAULT: 1000 * 60 * 1, // 1 minute
-	STREAM_READ_TIMEOUT_MS: 10000, // 10 seconds - overall timeout for stream reads
-	STREAM_OPERATION_TIMEOUT_MS: 5000, // 5 seconds - timeout per read operation
+	STREAM_READ_TIMEOUT_MS: 60000, // 60 seconds - overall timeout for stream reads
+	STREAM_OPERATION_TIMEOUT_MS: 30000, // 30 seconds - timeout per read operation
 	OAUTH_STATE_TTL: 10, // 10 minutes (stored separately as minutes)
 	RETRY_DELAY_DEFAULT: 1000, // 1 second
 

@@ -49,27 +49,19 @@ describe("MinimaxProvider", () => {
 	});
 
 	describe("buildUrl", () => {
-		it("should use default endpoint when no custom endpoint is provided", () => {
+		it("should always use the fixed Minimax endpoint", () => {
 			const url = provider.buildUrl("/v1/messages", "?stream=true", mockAccount);
 			expect(url).toBe("https://api.minimax.io/anthropic/v1/messages?stream=true");
 		});
 
-		it("should use custom endpoint when provided", () => {
+		it("should ignore custom endpoint in account (fixed endpoint)", () => {
 			const accountWithCustomEndpoint = {
 				...mockAccount,
 				custom_endpoint: "https://custom.minimax.example.com",
 			};
 			const url = provider.buildUrl("/v1/messages", "", accountWithCustomEndpoint);
-			expect(url).toBe("https://custom.minimax.example.com/v1/messages");
-		});
-
-		it("should handle trailing slashes in custom endpoint", () => {
-			const accountWithTrailingSlash = {
-				...mockAccount,
-				custom_endpoint: "https://custom.minimax.example.com/",
-			};
-			const url = provider.buildUrl("/v1/messages", "?stream=true", accountWithTrailingSlash);
-			expect(url).toBe("https://custom.minimax.example.com/v1/messages?stream=true");
+			// Should still use the fixed endpoint, ignoring the custom one
+			expect(url).toBe("https://api.minimax.io/anthropic/v1/messages");
 		});
 
 		it("should handle empty query parameters", () => {
@@ -79,19 +71,21 @@ describe("MinimaxProvider", () => {
 	});
 
 	describe("prepareHeaders", () => {
-		it("should use access token when provided", () => {
+		it("should use x-api-key header when access token provided", () => {
 			const headers = new Headers({ "content-type": "application/json" });
 			const preparedHeaders = provider.prepareHeaders(headers, "access-token-123");
 
-			expect(preparedHeaders.get("authorization")).toBe("Bearer access-token-123");
+			expect(preparedHeaders.get("x-api-key")).toBe("access-token-123");
+			expect(preparedHeaders.get("authorization")).toBeNull(); // Should be removed
 			expect(preparedHeaders.get("content-type")).toBe("application/json");
 		});
 
-		it("should use API key when provided", () => {
+		it("should use x-api-key header when API key provided", () => {
 			const headers = new Headers({ "content-type": "application/json" });
 			const preparedHeaders = provider.prepareHeaders(headers, undefined, "api-key-456");
 
-			expect(preparedHeaders.get("authorization")).toBe("Bearer api-key-456");
+			expect(preparedHeaders.get("x-api-key")).toBe("api-key-456");
+			expect(preparedHeaders.get("authorization")).toBeNull(); // Should be removed
 			expect(preparedHeaders.get("content-type")).toBe("application/json");
 		});
 
@@ -99,12 +93,14 @@ describe("MinimaxProvider", () => {
 			const headers = new Headers({ "content-type": "application/json" });
 			const preparedHeaders = provider.prepareHeaders(headers, "access-token-123", "api-key-456");
 
-			expect(preparedHeaders.get("authorization")).toBe("Bearer access-token-123");
+			expect(preparedHeaders.get("x-api-key")).toBe("access-token-123");
+			expect(preparedHeaders.get("authorization")).toBeNull(); // Should be removed
 		});
 
-		it("should remove hop-by-hop headers", () => {
+		it("should remove hop-by-hop headers and set x-api-key", () => {
 			const headers = new Headers({
-				"authorization": "Bearer old-token",
+				"authorization": "Bearer old-token", // Should be removed
+				"x-api-key": "old-key", // Should be replaced
 				"host": "api.minimax.io",
 				"accept-encoding": "gzip, deflate",
 				"content-encoding": "gzip",
@@ -113,18 +109,20 @@ describe("MinimaxProvider", () => {
 
 			const preparedHeaders = provider.prepareHeaders(headers, "new-token");
 
-			expect(preparedHeaders.get("authorization")).toBe("Bearer new-token");
+			expect(preparedHeaders.get("x-api-key")).toBe("new-token");
+			expect(preparedHeaders.get("authorization")).toBeNull(); // Should be removed
 			expect(preparedHeaders.get("host")).toBeNull();
 			expect(preparedHeaders.get("accept-encoding")).toBeNull();
 			expect(preparedHeaders.get("content-encoding")).toBeNull();
 			expect(preparedHeaders.get("user-agent")).toBe("test-agent");
 		});
 
-		it("should handle empty headers", () => {
+		it("should handle empty headers with x-api-key", () => {
 			const headers = new Headers();
 			const preparedHeaders = provider.prepareHeaders(headers, "test-token");
 
-			expect(preparedHeaders.get("authorization")).toBe("Bearer test-token");
+			expect(preparedHeaders.get("x-api-key")).toBe("test-token");
+			expect(preparedHeaders.get("authorization")).toBeNull();
 		});
 	});
 

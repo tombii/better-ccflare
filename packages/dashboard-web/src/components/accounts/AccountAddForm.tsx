@@ -13,7 +13,7 @@ import {
 interface AccountAddFormProps {
 	onAddAccount: (params: {
 		name: string;
-		mode: "max" | "console" | "zai" | "minimax" | "openai-compatible";
+		mode: "max" | "console" | "zai" | "minimax" | "anthropic-compatible" | "openai-compatible";
 		tier: number;
 		priority: number;
 		customEndpoint?: string;
@@ -33,6 +33,12 @@ interface AccountAddFormProps {
 		apiKey: string;
 		priority: number;
 	}) => Promise<void>;
+	onAddAnthropicCompatibleAccount: (params: {
+		name: string;
+		apiKey: string;
+		priority: number;
+		customEndpoint?: string;
+	}) => Promise<void>;
 	onAddOpenAIAccount: (params: {
 		name: string;
 		apiKey: string;
@@ -51,6 +57,7 @@ export function AccountAddForm({
 	onCompleteAccount,
 	onAddZaiAccount,
 	onAddMinimaxAccount,
+	onAddAnthropicCompatibleAccount,
 	onAddOpenAIAccount,
 	onCancel,
 	onSuccess,
@@ -61,7 +68,7 @@ export function AccountAddForm({
 	const [sessionId, setSessionId] = useState("");
 	const [newAccount, setNewAccount] = useState({
 		name: "",
-		mode: "max" as "max" | "console" | "zai" | "minimax" | "openai-compatible",
+		mode: "max" as "max" | "console" | "zai" | "minimax" | "anthropic-compatible" | "openai-compatible",
 		tier: 1,
 		priority: 0,
 		apiKey: "",
@@ -100,7 +107,7 @@ export function AccountAddForm({
 
 		const accountParams = {
 			name: newAccount.name,
-			mode: newAccount.mode as "max" | "console" | "zai" | "minimax" | "openai-compatible",
+			mode: newAccount.mode as "max" | "console" | "zai" | "minimax" | "anthropic-compatible" | "openai-compatible",
 			tier: newAccount.tier,
 			priority: newAccount.priority,
 			...(newAccount.customEndpoint && {
@@ -144,6 +151,34 @@ export function AccountAddForm({
 				name: newAccount.name,
 				apiKey: newAccount.apiKey,
 				priority: newAccount.priority,
+			});
+			// Reset form and signal success
+			setNewAccount({
+				name: "",
+				mode: "max",
+				tier: 1,
+				priority: 0,
+				apiKey: "",
+				customEndpoint: "",
+				opusModel: "",
+				sonnetModel: "",
+				haikuModel: "",
+			});
+			onSuccess();
+			return;
+		}
+
+		if (newAccount.mode === "anthropic-compatible") {
+			if (!newAccount.apiKey) {
+				onError("API key is required for Anthropic-compatible accounts");
+				return;
+			}
+			// For Anthropic-compatible accounts, we don't need OAuth flow and use default tier
+			await onAddAnthropicCompatibleAccount({
+				name: newAccount.name,
+				apiKey: newAccount.apiKey,
+				priority: newAccount.priority,
+				customEndpoint: newAccount.customEndpoint || undefined,
 			});
 			// Reset form and signal success
 			setNewAccount({
@@ -301,6 +336,9 @@ export function AccountAddForm({
 								<SelectItem value="console">Claude API</SelectItem>
 								<SelectItem value="zai">z.ai (API Key)</SelectItem>
 								<SelectItem value="minimax">Minimax (API Key)</SelectItem>
+								<SelectItem value="anthropic-compatible">
+									Anthropic-Compatible (API Key)
+								</SelectItem>
 								<SelectItem value="openai-compatible">
 									OpenAI-Compatible (API Key)
 								</SelectItem>
@@ -340,6 +378,42 @@ export function AccountAddForm({
 								placeholder="Enter your Minimax API key"
 							/>
 						</div>
+					)}
+					{newAccount.mode === "anthropic-compatible" && (
+						<>
+							<div className="space-y-2">
+								<Label htmlFor="apiKey">Anthropic-Compatible API Key</Label>
+								<Input
+									id="apiKey"
+									type="password"
+									value={newAccount.apiKey}
+									onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+										setNewAccount({
+											...newAccount,
+											apiKey: (e.target as HTMLInputElement).value,
+										})
+									}
+									placeholder="Enter your Anthropic-Compatible API key"
+								/>
+							</div>
+							<div className="space-y-2">
+								<Label htmlFor="customEndpoint">
+									Custom Endpoint URL (Optional)
+								</Label>
+								<Input
+									id="customEndpoint"
+									type="url"
+									value={newAccount.customEndpoint}
+									onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+										setNewAccount({
+											...newAccount,
+											customEndpoint: (e.target as HTMLInputElement).value,
+										})
+									}
+									placeholder="https://api.anthropic-compatible.com"
+								/>
+							</div>
+						</>
 					)}
 					{newAccount.mode === "openai-compatible" && (
 						<>
@@ -437,7 +511,7 @@ export function AccountAddForm({
 							</div>
 						</>
 					)}
-										{newAccount.mode !== "openai-compatible" && newAccount.mode !== "minimax" && (
+										{newAccount.mode !== "openai-compatible" && newAccount.mode !== "minimax" && newAccount.mode !== "anthropic-compatible" && (
 						<div className="space-y-2">
 							<Label htmlFor="tier">Tier</Label>
 							<Select

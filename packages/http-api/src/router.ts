@@ -14,6 +14,8 @@ import {
 	createAccountResumeHandler,
 	createAccountsListHandler,
 	createAccountTierUpdateHandler,
+	createAnthropicCompatibleAccountAddHandler,
+	createMinimaxAccountAddHandler,
 	createOpenAIAccountAddHandler,
 	createZaiAccountAddHandler,
 } from "./handlers/accounts";
@@ -85,6 +87,8 @@ export class APIRouter {
 		const accountsHandler = createAccountsListHandler(db);
 		const accountAddHandler = createAccountAddHandler(dbOps, config);
 		const zaiAccountAddHandler = createZaiAccountAddHandler(dbOps);
+		const minimaxAccountAddHandler = createMinimaxAccountAddHandler(dbOps);
+		const anthropicCompatibleAccountAddHandler = createAnthropicCompatibleAccountAddHandler(dbOps);
 		const openaiAccountAddHandler = createOpenAIAccountAddHandler(dbOps);
 		const _accountRemoveHandler = createAccountRemoveHandler(dbOps);
 		const _accountTierHandler = createAccountTierUpdateHandler(dbOps);
@@ -116,6 +120,12 @@ export class APIRouter {
 		this.handlers.set("POST:/api/accounts", (req) => accountAddHandler(req));
 		this.handlers.set("POST:/api/accounts/zai", (req) =>
 			zaiAccountAddHandler(req),
+		);
+		this.handlers.set("POST:/api/accounts/minimax", (req) =>
+			minimaxAccountAddHandler(req),
+		);
+		this.handlers.set("POST:/api/accounts/anthropic-compatible", (req) =>
+			anthropicCompatibleAccountAddHandler(req),
 		);
 		this.handlers.set("POST:/api/accounts/openai-compatible", (req) =>
 			openaiAccountAddHandler(req),
