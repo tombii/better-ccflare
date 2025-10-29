@@ -88,7 +88,8 @@ export class APIRouter {
 		const accountAddHandler = createAccountAddHandler(dbOps, config);
 		const zaiAccountAddHandler = createZaiAccountAddHandler(dbOps);
 		const minimaxAccountAddHandler = createMinimaxAccountAddHandler(dbOps);
-		const anthropicCompatibleAccountAddHandler = createAnthropicCompatibleAccountAddHandler(dbOps);
+		const anthropicCompatibleAccountAddHandler =
+			createAnthropicCompatibleAccountAddHandler(dbOps);
 		const openaiAccountAddHandler = createOpenAIAccountAddHandler(dbOps);
 		const _accountRemoveHandler = createAccountRemoveHandler(dbOps);
 		const _accountTierHandler = createAccountTierUpdateHandler(dbOps);

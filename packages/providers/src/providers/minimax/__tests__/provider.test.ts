@@ -50,8 +50,14 @@ describe("MinimaxProvider", () => {
 
 	describe("buildUrl", () => {
 		it("should always use the fixed Minimax endpoint", () => {
-			const url = provider.buildUrl("/v1/messages", "?stream=true", mockAccount);
-			expect(url).toBe("https://api.minimax.io/anthropic/v1/messages?stream=true");
+			const url = provider.buildUrl(
+				"/v1/messages",
+				"?stream=true",
+				mockAccount,
+			);
+			expect(url).toBe(
+				"https://api.minimax.io/anthropic/v1/messages?stream=true",
+			);
 		});
 
 		it("should ignore custom endpoint in account (fixed endpoint)", () => {
@@ -59,7 +65,11 @@ describe("MinimaxProvider", () => {
 				...mockAccount,
 				custom_endpoint: "https://custom.minimax.example.com",
 			};
-			const url = provider.buildUrl("/v1/messages", "", accountWithCustomEndpoint);
+			const url = provider.buildUrl(
+				"/v1/messages",
+				"",
+				accountWithCustomEndpoint,
+			);
 			// Should still use the fixed endpoint, ignoring the custom one
 			expect(url).toBe("https://api.minimax.io/anthropic/v1/messages");
 		});
@@ -73,7 +83,10 @@ describe("MinimaxProvider", () => {
 	describe("prepareHeaders", () => {
 		it("should use x-api-key header when access token provided", () => {
 			const headers = new Headers({ "content-type": "application/json" });
-			const preparedHeaders = provider.prepareHeaders(headers, "access-token-123");
+			const preparedHeaders = provider.prepareHeaders(
+				headers,
+				"access-token-123",
+			);
 
 			expect(preparedHeaders.get("x-api-key")).toBe("access-token-123");
 			expect(preparedHeaders.get("authorization")).toBeNull(); // Should be removed
@@ -82,7 +95,11 @@ describe("MinimaxProvider", () => {
 
 		it("should use x-api-key header when API key provided", () => {
 			const headers = new Headers({ "content-type": "application/json" });
-			const preparedHeaders = provider.prepareHeaders(headers, undefined, "api-key-456");
+			const preparedHeaders = provider.prepareHeaders(
+				headers,
+				undefined,
+				"api-key-456",
+			);
 
 			expect(preparedHeaders.get("x-api-key")).toBe("api-key-456");
 			expect(preparedHeaders.get("authorization")).toBeNull(); // Should be removed
@@ -91,7 +108,11 @@ describe("MinimaxProvider", () => {
 
 		it("should prefer access token over API key when both are provided", () => {
 			const headers = new Headers({ "content-type": "application/json" });
-			const preparedHeaders = provider.prepareHeaders(headers, "access-token-123", "api-key-456");
+			const preparedHeaders = provider.prepareHeaders(
+				headers,
+				"access-token-123",
+				"api-key-456",
+			);
 
 			expect(preparedHeaders.get("x-api-key")).toBe("access-token-123");
 			expect(preparedHeaders.get("authorization")).toBeNull(); // Should be removed
@@ -99,9 +120,9 @@ describe("MinimaxProvider", () => {
 
 		it("should remove hop-by-hop headers and set x-api-key", () => {
 			const headers = new Headers({
-				"authorization": "Bearer old-token", // Should be removed
+				authorization: "Bearer old-token", // Should be removed
 				"x-api-key": "old-key", // Should be replaced
-				"host": "api.minimax.io",
+				host: "api.minimax.io",
 				"accept-encoding": "gzip, deflate",
 				"content-encoding": "gzip",
 				"user-agent": "test-agent",
@@ -141,8 +162,11 @@ describe("MinimaxProvider", () => {
 				refresh_token: null,
 			};
 
-			await expect(provider.refreshToken(accountWithoutApiKey, "test-client-id"))
-				.rejects.toThrow("No API key available for account test-minimax-account");
+			await expect(
+				provider.refreshToken(accountWithoutApiKey, "test-client-id"),
+			).rejects.toThrow(
+				"No API key available for account test-minimax-account",
+			);
 		});
 	});
 
@@ -192,18 +216,23 @@ describe("MinimaxProvider", () => {
 				statusText: "OK",
 				headers: {
 					"content-type": "application/json",
-					"connection": "keep-alive", // This should remain
+					connection: "keep-alive", // This should remain
 					"content-encoding": "gzip", // This should be removed
 					"transfer-encoding": "chunked", // This should be removed
 					"content-length": "123", // This should be removed
 				},
 			});
 
-			const processedResponse = await provider.processResponse(originalResponse, mockAccount);
+			const processedResponse = await provider.processResponse(
+				originalResponse,
+				mockAccount,
+			);
 
 			expect(processedResponse.status).toBe(200);
 			expect(processedResponse.statusText).toBe("OK");
-			expect(processedResponse.headers.get("content-type")).toBe("application/json");
+			expect(processedResponse.headers.get("content-type")).toBe(
+				"application/json",
+			);
 			expect(processedResponse.headers.get("connection")).toBe("keep-alive"); // Should remain
 			expect(processedResponse.headers.get("content-encoding")).toBeNull(); // Should be removed
 			expect(processedResponse.headers.get("transfer-encoding")).toBeNull(); // Should be removed

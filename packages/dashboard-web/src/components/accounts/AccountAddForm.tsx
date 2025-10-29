@@ -13,7 +13,13 @@ import {
 interface AccountAddFormProps {
 	onAddAccount: (params: {
 		name: string;
-		mode: "max" | "console" | "zai" | "minimax" | "anthropic-compatible" | "openai-compatible";
+		mode:
+			| "max"
+			| "console"
+			| "zai"
+			| "minimax"
+			| "anthropic-compatible"
+			| "openai-compatible";
 		tier: number;
 		priority: number;
 		customEndpoint?: string;
@@ -39,6 +45,7 @@ interface AccountAddFormProps {
 		apiKey: string;
 		priority: number;
 		customEndpoint?: string;
+		modelMappings?: { [key: string]: string };
 	}) => Promise<void>;
 	onAddOpenAIAccount: (params: {
 		name: string;
@@ -69,7 +76,13 @@ export function AccountAddForm({
 	const [sessionId, setSessionId] = useState("");
 	const [newAccount, setNewAccount] = useState({
 		name: "",
-		mode: "max" as "max" | "console" | "zai" | "minimax" | "anthropic-compatible" | "openai-compatible",
+		mode: "max" as
+			| "max"
+			| "console"
+			| "zai"
+			| "minimax"
+			| "anthropic-compatible"
+			| "openai-compatible",
 		tier: 1,
 		priority: 0,
 		apiKey: "",
@@ -108,7 +121,13 @@ export function AccountAddForm({
 
 		const accountParams = {
 			name: newAccount.name,
-			mode: newAccount.mode as "max" | "console" | "zai" | "minimax" | "anthropic-compatible" | "openai-compatible",
+			mode: newAccount.mode as
+				| "max"
+				| "console"
+				| "zai"
+				| "minimax"
+				| "anthropic-compatible"
+				| "openai-compatible",
 			tier: newAccount.tier,
 			priority: newAccount.priority,
 			...(newAccount.customEndpoint && {
@@ -177,12 +196,20 @@ export function AccountAddForm({
 				onError("API key is required for Anthropic-compatible accounts");
 				return;
 			}
+			// Build model mappings object
+			const modelMappings: { [key: string]: string } = {};
+			if (newAccount.opusModel) modelMappings.opus = newAccount.opusModel;
+			if (newAccount.sonnetModel) modelMappings.sonnet = newAccount.sonnetModel;
+			if (newAccount.haikuModel) modelMappings.haiku = newAccount.haikuModel;
+
 			// For Anthropic-compatible accounts, we don't need OAuth flow and use default tier
 			await onAddAnthropicCompatibleAccount({
 				name: newAccount.name,
 				apiKey: newAccount.apiKey,
 				priority: newAccount.priority,
 				customEndpoint: newAccount.customEndpoint || undefined,
+				modelMappings:
+					Object.keys(modelMappings).length > 0 ? modelMappings : undefined,
 			});
 			// Reset form and signal success
 			setNewAccount({
@@ -417,6 +444,66 @@ export function AccountAddForm({
 									placeholder="https://api.anthropic-compatible.com"
 								/>
 							</div>
+							<div className="space-y-2">
+								<Label>Model Mappings (Optional)</Label>
+								<p className="text-xs text-muted-foreground mb-2">
+									Map Anthropic model names to provider-specific models. Leave
+									empty to use defaults.
+								</p>
+								<div className="space-y-2 pl-4">
+									<div>
+										<Label htmlFor="opusModel" className="text-sm">
+											Opus Model
+										</Label>
+										<Input
+											id="opusModel"
+											value={newAccount.opusModel}
+											onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+												setNewAccount({
+													...newAccount,
+													opusModel: (e.target as HTMLInputElement).value,
+												})
+											}
+											placeholder="claude-3-opus-20240229 (default)"
+											className="mt-1"
+										/>
+									</div>
+									<div>
+										<Label htmlFor="sonnetModel" className="text-sm">
+											Sonnet Model
+										</Label>
+										<Input
+											id="sonnetModel"
+											value={newAccount.sonnetModel}
+											onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+												setNewAccount({
+													...newAccount,
+													sonnetModel: (e.target as HTMLInputElement).value,
+												})
+											}
+											placeholder="claude-3-sonnet-20240229 (default)"
+											className="mt-1"
+										/>
+									</div>
+									<div>
+										<Label htmlFor="haikuModel" className="text-sm">
+											Haiku Model
+										</Label>
+										<Input
+											id="haikuModel"
+											value={newAccount.haikuModel}
+											onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+												setNewAccount({
+													...newAccount,
+													haikuModel: (e.target as HTMLInputElement).value,
+												})
+											}
+											placeholder="claude-3-haiku-20240307 (default)"
+											className="mt-1"
+										/>
+									</div>
+								</div>
+							</div>
 						</>
 					)}
 					{newAccount.mode === "openai-compatible" && (
@@ -515,7 +602,7 @@ export function AccountAddForm({
 							</div>
 						</>
 					)}
-										{(newAccount.mode === "max" || newAccount.mode === "console") && (
+					{(newAccount.mode === "max" || newAccount.mode === "console") && (
 						<div className="space-y-2">
 							<Label htmlFor="customEndpoint">
 								Custom Endpoint URL (Optional)
@@ -533,30 +620,33 @@ export function AccountAddForm({
 								placeholder="https://api.anthropic.com"
 							/>
 							<p className="text-xs text-muted-foreground">
-								Leave empty to use default Anthropic endpoint. Must be a valid URL.
+								Leave empty to use default Anthropic endpoint. Must be a valid
+								URL.
 							</p>
 						</div>
 					)}
-					{newAccount.mode !== "openai-compatible" && newAccount.mode !== "minimax" && newAccount.mode !== "anthropic-compatible" && (
-						<div className="space-y-2">
-							<Label htmlFor="tier">Tier</Label>
-							<Select
-								value={String(newAccount.tier)}
-								onValueChange={(value: string) =>
-									setNewAccount({ ...newAccount, tier: parseInt(value) })
-								}
-							>
-								<SelectTrigger id="tier">
-									<SelectValue />
-								</SelectTrigger>
-								<SelectContent>
-									<SelectItem value="1">Tier 1 (Pro)</SelectItem>
-									<SelectItem value="5">Tier 5 (Max 5x)</SelectItem>
-									<SelectItem value="20">Tier 20 (Max 20x)</SelectItem>
-								</SelectContent>
-							</Select>
-						</div>
-					)}
+					{newAccount.mode !== "openai-compatible" &&
+						newAccount.mode !== "minimax" &&
+						newAccount.mode !== "anthropic-compatible" && (
+							<div className="space-y-2">
+								<Label htmlFor="tier">Tier</Label>
+								<Select
+									value={String(newAccount.tier)}
+									onValueChange={(value: string) =>
+										setNewAccount({ ...newAccount, tier: parseInt(value) })
+									}
+								>
+									<SelectTrigger id="tier">
+										<SelectValue />
+									</SelectTrigger>
+									<SelectContent>
+										<SelectItem value="1">Tier 1 (Pro)</SelectItem>
+										<SelectItem value="5">Tier 5 (Max 5x)</SelectItem>
+										<SelectItem value="20">Tier 20 (Max 20x)</SelectItem>
+									</SelectContent>
+								</Select>
+							</div>
+						)}
 					<div className="space-y-2">
 						<Label htmlFor="priority">Priority</Label>
 						<Select

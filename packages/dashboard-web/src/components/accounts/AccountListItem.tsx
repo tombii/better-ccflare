@@ -146,7 +146,7 @@ export function AccountListItem({
 						</Button>
 					)}
 					{onModelMappingsChange &&
-						account.provider === "openai-compatible" && (
+						(account.provider === "openai-compatible" || account.provider === "anthropic-compatible") && (
 							<Button
 								variant="ghost"
 								size="sm"

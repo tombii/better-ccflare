@@ -105,7 +105,13 @@ class API extends HttpClient {
 
 	async initAddAccount(data: {
 		name: string;
-		mode: "max" | "console" | "zai" | "minimax" | "anthropic-compatible" | "openai-compatible";
+		mode:
+			| "max"
+			| "console"
+			| "zai"
+			| "minimax"
+			| "anthropic-compatible"
+			| "openai-compatible";
 		apiKey?: string;
 		tier: number;
 		priority: number;
@@ -271,6 +277,7 @@ class API extends HttpClient {
 		apiKey: string;
 		priority: number;
 		customEndpoint?: string;
+		modelMappings?: { [key: string]: string };
 	}): Promise<{ message: string; account: Account }> {
 		const startTime = Date.now();
 		const url = "/api/accounts/anthropic-compatible";

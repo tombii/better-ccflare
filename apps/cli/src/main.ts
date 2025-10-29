@@ -69,7 +69,7 @@ interface ParsedArgs {
 	sslCert: string | null;
 	stats: boolean;
 	addAccount: string | null;
-	mode: "max" | "console" | "zai" | "openai-compatible" | null;
+	mode: "max" | "console" | "zai" | "minimax" | "anthropic-compatible" | "openai-compatible" | null;
 	tier: 1 | 5 | 20 | null;
 	priority: number | null;
 	list: boolean;
@@ -646,10 +646,12 @@ Options:
   --ssl-cert <path>    Path to SSL certificate file (enables HTTPS)
   --stats              Show statistics (JSON output)
   --add-account <name> Add a new account
-    --mode <max|console|zai|openai-compatible>  Account mode (default: max)
+    --mode <max|console|zai|minimax|anthropic-compatible|openai-compatible>  Account mode (default: max)
       max: Claude CLI account (OAuth)
       console: Claude API account (OAuth)
       zai: z.ai account (API key)
+      minimax: Minimax account (API key)
+      anthropic-compatible: Anthropic-compatible provider (API key)
       openai-compatible: OpenAI-compatible provider (API key)
     --tier <1|5|20>       Account tier (default: 1)
       Note: Tier is automatically set to 1 for OpenAI-compatible providers
@@ -830,7 +832,7 @@ Examples:
 				"❌ Interactive account setup is not available in CLI mode",
 			);
 			console.error("Please provide the required flags:");
-			console.error("  --mode <max|console|zai|openai-compatible>");
+			console.error("  --mode <max|console|zai|minimax|anthropic-compatible|openai-compatible>");
 			console.error("  --tier <1|5|20>");
 			console.error("  --priority <number>");
 			console.error("\nFor API key accounts, also set:");

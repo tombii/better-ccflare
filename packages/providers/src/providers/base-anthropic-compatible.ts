@@ -86,9 +86,7 @@ export abstract class BaseAnthropicCompatibleProvider extends BaseProvider {
 	): Promise<TokenRefreshResult> {
 		// Anthropic-compatible providers use API keys
 		if (!account.refresh_token) {
-			throw new Error(
-				`No API key available for account ${account.name}`,
-			);
+			throw new Error(`No API key available for account ${account.name}`);
 		}
 
 		log.info(`Using API key for ${this.name} account ${account.name}`);
@@ -321,7 +319,7 @@ export abstract class BaseAnthropicCompatibleProvider extends BaseProvider {
 	 */
 	protected async extractStreamingUsage(
 		clone: Response,
-		originalHeaders: Headers,
+		_originalHeaders: Headers,
 	): Promise<{
 		model?: string;
 		promptTokens?: number;
@@ -361,9 +359,7 @@ export abstract class BaseAnthropicCompatibleProvider extends BaseProvider {
 			while (buffered.length < maxBytes) {
 				if (Date.now() - startTime > READ_TIMEOUT_MS) {
 					await reader.cancel();
-					throw new Error(
-						"Stream read timeout while extracting usage info",
-					);
+					throw new Error("Stream read timeout while extracting usage info");
 				}
 
 				const readPromise = reader.read();
@@ -381,8 +377,13 @@ export abstract class BaseAnthropicCompatibleProvider extends BaseProvider {
 				try {
 					({ value, done } = await Promise.race([readPromise, timeoutPromise]));
 				} catch (error) {
-					if (error instanceof Error && error.message === "Read operation timeout") {
-						log.warn("Stream read operation timed out while extracting usage info - continuing without usage data");
+					if (
+						error instanceof Error &&
+						error.message === "Read operation timeout"
+					) {
+						log.warn(
+							"Stream read operation timed out while extracting usage info - continuing without usage data",
+						);
 						return null;
 					}
 					throw error; // Re-throw other errors
@@ -474,8 +475,7 @@ export abstract class BaseAnthropicCompatibleProvider extends BaseProvider {
 									messageDeltaUsage = {
 										input_tokens: data.usage.input_tokens,
 										output_tokens: data.usage.output_tokens,
-										cache_read_input_tokens:
-											data.usage.cache_read_input_tokens,
+										cache_read_input_tokens: data.usage.cache_read_input_tokens,
 									};
 								}
 							} catch {
@@ -517,9 +517,7 @@ export abstract class BaseAnthropicCompatibleProvider extends BaseProvider {
 			finalUsage.output_tokens || messageStartUsage?.output_tokens || 0;
 
 		const promptTokens =
-			(inputTokens || 0) +
-			cacheReadInputTokens +
-			cacheCreationInputTokens;
+			(inputTokens || 0) + cacheReadInputTokens + cacheCreationInputTokens;
 		const completionTokens = outputTokens;
 		const totalTokens = promptTokens + completionTokens;
 

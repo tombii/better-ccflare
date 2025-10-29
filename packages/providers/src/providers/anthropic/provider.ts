@@ -1,7 +1,4 @@
-import {
-	BUFFER_SIZES,
-	validateEndpointUrl,
-} from "@better-ccflare/core";
+import { BUFFER_SIZES, validateEndpointUrl } from "@better-ccflare/core";
 import { sanitizeProxyHeaders } from "@better-ccflare/http-common";
 import { Logger } from "@better-ccflare/logger";
 import type { Account } from "@better-ccflare/types";
@@ -171,7 +168,10 @@ export class AnthropicProvider extends BaseProvider {
 		if (account?.custom_endpoint) {
 			try {
 				// Validate and sanitize the custom endpoint
-				const validatedEndpoint = validateEndpointUrl(account.custom_endpoint, "custom_endpoint");
+				const validatedEndpoint = validateEndpointUrl(
+					account.custom_endpoint,
+					"custom_endpoint",
+				);
 				return `${validatedEndpoint}${path}${query}`;
 			} catch (error) {
 				log.warn(

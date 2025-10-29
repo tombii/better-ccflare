@@ -4,6 +4,7 @@ import type { Config } from "@better-ccflare/config";
 import {
 	patterns,
 	sanitizers,
+	validateAndSanitizeModelMappings,
 	validateNumber,
 	validateString,
 } from "@better-ccflare/core";
@@ -1045,7 +1046,9 @@ export function createMinimaxAccountAddHandler(dbOps: DatabaseOperations) {
 /**
  * Create an Anthropic-compatible account add handler
  */
-export function createAnthropicCompatibleAccountAddHandler(dbOps: DatabaseOperations) {
+export function createAnthropicCompatibleAccountAddHandler(
+	dbOps: DatabaseOperations,
+) {
 	return async (req: Request): Promise<Response> => {
 		try {
 			const body = await req.json();
@@ -1102,6 +1105,13 @@ export function createAnthropicCompatibleAccountAddHandler(dbOps: DatabaseOperat
 				},
 			);
 
+			// Validate and sanitize model mappings (optional)
+			let modelMappings = null;
+			if (body.modelMappings && typeof body.modelMappings === "object") {
+				const validatedMappings = validateAndSanitizeModelMappings(body.modelMappings);
+				modelMappings = JSON.stringify(validatedMappings);
+			}
+
 			// Create Anthropic-compatible account directly in database
 			const accountId = crypto.randomUUID();
 			const now = Date.now();
@@ -1109,8 +1119,8 @@ export function createAnthropicCompatibleAccountAddHandler(dbOps: DatabaseOperat
 			db.run(
 				`INSERT INTO accounts (
 					id, name, provider, api_key, refresh_token, access_token,
-					expires_at, created_at, account_tier, request_count, total_requests, priority, custom_endpoint
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+					expires_at, created_at, account_tier, request_count, total_requests, priority, custom_endpoint, model_mappings
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 				[
 					accountId,
 					name,
@@ -1125,6 +1135,7 @@ export function createAnthropicCompatibleAccountAddHandler(dbOps: DatabaseOperat
 					0,
 					priority,
 					customEndpoint || null,
+					modelMappings,
 				],
 			);
 
@@ -1381,7 +1392,7 @@ export function createAccountModelMappingsUpdateHandler(
 		try {
 			const body = await req.json();
 
-			// Get account to verify it's OpenAI-compatible
+			// Get account to verify it supports model mappings
 			const db = dbOps.getDatabase();
 			const account = db
 				.query<{ provider: string; custom_endpoint: string | null }, [string]>(
@@ -1393,10 +1404,10 @@ export function createAccountModelMappingsUpdateHandler(
 				return errorResponse(NotFound("Account not found"));
 			}
 
-			if (account.provider !== "openai-compatible") {
+			if (account.provider !== "openai-compatible" && account.provider !== "anthropic-compatible") {
 				return errorResponse(
 					BadRequest(
-						"Model mappings are only available for OpenAI-compatible accounts",
+						"Model mappings are only available for OpenAI-compatible and Anthropic-compatible accounts",
 					),
 				);
 			}
