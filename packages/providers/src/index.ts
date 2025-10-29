@@ -17,6 +17,13 @@ export {
 export * from "./types";
 // Export usage fetcher
 export * from "./usage-fetcher";
+// Factory functions for creating providers
+export {
+	createAnthropicCompatibleProvider,
+	createProviderForService,
+	PresetProviders,
+	type AnthropicCompatibleConfig,
+} from "./providers/anthropic-compatible/factory";
 
 import { AnthropicProvider } from "./providers/anthropic/provider";
 import { MinimaxProvider } from "./providers/minimax/provider";
@@ -29,3 +36,6 @@ registry.registerProvider(new AnthropicProvider());
 registry.registerProvider(new MinimaxProvider());
 registry.registerProvider(new ZaiProvider());
 registry.registerProvider(new OpenAICompatibleProvider());
+
+// Note: AnthropicCompatibleProvider is not auto-registered
+// because it requires configuration. Use the factory functions to create instances.
