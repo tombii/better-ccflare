@@ -2,7 +2,28 @@
 // Load .env file to ensure environment variables are available
 import { config } from "dotenv";
 
-config();
+// Load .env with robust path resolution for different deployment scenarios:
+// 1. Current directory (when binary is in project root)
+// 2. Project root (when running from source with bun run)
+// 3. Executable directory (when binary is deployed elsewhere)
+const possibleEnvPaths = [
+	".env", // Current directory
+	"../../.env", // Project root from apps/cli/src
+];
+
+// For deployed binaries, also check the executable's directory
+if (process.argv[1]) {
+	const execPath = require('path').dirname(require('path').resolve(process.argv[1]));
+	possibleEnvPaths.push(require('path').join(execPath, '.env'));
+}
+
+// Try each possible .env location
+for (const envPath of possibleEnvPaths) {
+	const result = config({ path: envPath });
+	if (result.parsed && Object.keys(result.parsed).length > 0) {
+		break; // Stop after finding the first .env with variables
+	}
+}
 
 import {
 	addAccount,
@@ -38,6 +59,32 @@ import { Logger } from "@better-ccflare/logger";
 import startServer from "@better-ccflare/server";
 
 /**
+ * Helper function to start server with unified environment variable handling
+ */
+function startServerWithConfig(args: any, config: Config) {
+	const runtime = config.getRuntime();
+
+	// Proper precedence: command line args > environment variables > config defaults
+	const port = args.port || runtime.port || NETWORK.DEFAULT_PORT;
+	const sslKeyPath = args.sslKey || process.env.SSL_KEY_PATH;
+	const sslCertPath = args.sslCert || process.env.SSL_CERT_PATH;
+
+	// Update URL display based on whether SSL is enabled
+	const protocol = sslKeyPath && sslCertPath ? "https" : "http";
+	console.log(`Server will be available at ${protocol}://localhost:${port}`);
+	console.log(
+		`Dashboard will be available at ${protocol}://localhost:${port}/dashboard`,
+	);
+
+	startServer({
+		port,
+		withDashboard: true,
+		sslKeyPath,
+		sslCertPath,
+	});
+}
+
+/**
  * Helper function to exit gracefully with proper cleanup
  */
 async function exitGracefully(code: 0 | 1 = 0): Promise<never> {
@@ -63,11 +110,10 @@ function parseArgs(args: string[]) {
 	const parsed: Record<string, any> = {
 		version: false,
 		help: false,
-		serve: false,
+		serve: false, // Keep for backwards compatibility but treat as no-op
 		port: null,
 		sslKey: null,
 		sslCert: null,
-		logs: undefined,
 		stats: false,
 		addAccount: null,
 		mode: null,
@@ -135,17 +181,6 @@ function parseArgs(args: string[]) {
 					fastExit(1);
 				}
 				parsed.sslCert = args[++i];
-				break;
-			case "--logs":
-				parsed.logs =
-					args[i + 1] && !args[i + 1].startsWith("--")
-						? parseInt(args[++i], 10)
-						: 100;
-				if (parsed.logs < 0 || Number.isNaN(parsed.logs)) {
-					console.error(`❌ Invalid log count: ${args[i] || "100"}`);
-					console.error("Log count must be a non-negative number");
-					fastExit(1);
-				}
 				break;
 			case "--stats":
 				parsed.stats = true;
@@ -326,7 +361,6 @@ Options:
   --port <number>      Server port (default: 8080, or PORT env var)
   --ssl-key <path>     Path to SSL private key file (enables HTTPS)
   --ssl-cert <path>    Path to SSL certificate file (enables HTTPS)
-  --logs [N]           Stream latest N lines then follow
   --stats              Show statistics (JSON output)
   --add-account <name> Add a new account
     --mode <max|console|zai|openai-compatible>  Account mode (default: max)
@@ -421,26 +455,13 @@ Examples:
 	// Handle non-interactive commands
 	if (parsed.serve) {
 		const config = new Config();
-		const port =
-			parsed.port || config.getRuntime().port || NETWORK.DEFAULT_PORT;
-		startServer({
-			port,
-			withDashboard: true,
-			sslKeyPath: parsed.sslKey,
-			sslCertPath: parsed.sslCert,
-		});
+		startServerWithConfig(parsed, config);
 		// Keep process alive
 		await new Promise(() => {});
 		return;
 	}
 
-	if (parsed.logs !== undefined) {
-		console.error("❌ --logs command is not yet implemented in CLI mode");
-		console.error("Use the web dashboard to view logs instead.");
-		await exitGracefully(1);
-		return;
-	}
-
+	
 	if (parsed.stats) {
 		const accounts = getAccountsList(dbOps);
 		const stats = {
@@ -712,18 +733,7 @@ Examples:
 	// Default: Start server if no command specified
 	console.log("Starting better-ccflare server...");
 	const config = new Config();
-	const port = parsed.port || config.getRuntime().port || NETWORK.DEFAULT_PORT;
-	console.log(`Server will be available at http://localhost:${port}`);
-	console.log(
-		`Dashboard will be available at http://localhost:${port}/dashboard`,
-	);
-
-	startServer({
-		port,
-		withDashboard: true,
-		sslKeyPath: parsed.sslKey,
-		sslCertPath: parsed.sslCert,
-	});
+	startServerWithConfig(parsed, config);
 
 	// Keep process alive
 	await new Promise(() => {});
