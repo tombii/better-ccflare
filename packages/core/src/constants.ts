@@ -17,11 +17,16 @@ export const TIME_CONSTANTS = {
 
 	// Timeouts
 	STREAM_TIMEOUT_DEFAULT: 1000 * 60 * 1, // 1 minute
+	STREAM_READ_TIMEOUT_MS: 10000, // 10 seconds - overall timeout for stream reads
+	STREAM_OPERATION_TIMEOUT_MS: 5000, // 5 seconds - timeout per read operation
 	OAUTH_STATE_TTL: 10, // 10 minutes (stored separately as minutes)
 	RETRY_DELAY_DEFAULT: 1000, // 1 second
 
 	// Cache durations
 	CACHE_YEAR: 31536000, // 365 days in seconds for HTTP cache headers
+
+	// Token expiration durations
+	API_KEY_TOKEN_EXPIRY_MS: 365 * 24 * 60 * 60 * 1000, // 1 year - for API keys that don't expire
 } as const;
 
 // Buffer sizes (in bytes unless specified)

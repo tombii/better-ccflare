@@ -146,6 +146,21 @@ BUNDLED_PRICING.zai = {
 	},
 };
 
+// Pricing for Minimax models (dollars per 1M tokens)
+BUNDLED_PRICING.minimax = {
+	models: {
+		"MiniMax-M2": {
+			id: "MiniMax-M2",
+			name: "MiniMax-M2",
+			cost: {
+				input: 0.3,
+				output: 1.2,
+				// Cache pricing not available for Minimax models
+			},
+		},
+	},
+};
+
 interface Logger {
 	warn(message: string, ...args: unknown[]): void;
 	debug(message: string, ...args: unknown[]): void;
