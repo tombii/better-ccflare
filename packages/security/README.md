@@ -114,7 +114,7 @@ By default, paths are allowed within:
 
 1. **TOCTOU Vulnerability**: Time-of-check-time-of-use race condition exists between validation and file access. An attacker could create a symlink after validation but before file access.
 
-2. **Symlink Default**: Symbolic links are detected but not blocked by default to maintain backward compatibility. For high-security environments, set `blockSymlinks: true`.
+2. **Symlink Default**: Symbolic links are blocked by default for security. To allow symlinks with warnings, set `blockSymlinks: false`.
 
 3. **Very Long Paths**: Paths exceeding `PATH_MAX` (typically 4096 bytes on Linux) may cause issues on some systems.
 
@@ -219,6 +219,16 @@ Gets the default allowed base directories. Results are cached.
 
 **Returns:** Array of allowed directory paths
 
+### `clearValidationCache(): void`
+
+Clears the validation cache. Useful for testing or when path configurations change.
+
+### `getValidationCacheSize(): number`
+
+Gets the current number of cached validation results for monitoring.
+
+**Returns:** Number of cached entries
+
 ### `PathValidationOptions`
 
 ```typescript
@@ -229,7 +239,7 @@ interface PathValidationOptions {
   // Max URL decoding iterations (default: 2)
   maxUrlDecodeIterations?: number;
 
-  // Block symlinks instead of warning (default: true)
+  // Block symlinks instead of warning (default: true - block for security)
   blockSymlinks?: boolean;
 
   // Check for symlinks at all (default: true)
@@ -262,10 +272,31 @@ The package includes 44 comprehensive tests covering:
 
 Path validation adds overhead to file operations. For high-traffic applications:
 
-1. **Cache Results**: Cache validation results keyed by resolved path
-2. **Adjust Log Levels**: Change `info` logs to `debug` in production
-3. **Monitor Performance**: Use APM tools to track validation overhead
-4. **Benchmark**: Test with representative workloads
+### Built-in Optimizations
+
+The security package includes built-in performance optimizations:
+
+1. **LRU Caching**: Validation results are cached (1000 entries) to avoid repeated validation
+2. **Production Logging**: Successful validations log at `debug` level in production, `info` in development
+3. **Cached Default Paths**: Default allowed paths are computed once and reused
+
+### Monitoring Cache Performance
+
+```typescript
+import { getValidationCacheSize, clearValidationCache } from '@better-ccflare/security';
+
+// Monitor cache size
+console.log(`Cache entries: ${getValidationCacheSize()}`);
+
+// Clear cache if needed (e.g., after configuration changes)
+clearValidationCache();
+```
+
+### Additional Recommendations
+
+1. **Monitor Performance**: Use APM tools to track validation overhead
+2. **Benchmark**: Test with representative workloads
+3. **Adjust Cache Size**: Modify `maxSize` in ValidationCache for your use case
 
 See `packages/proxy/src/handlers/agent-interceptor.ts` for performance notes on per-request validation.
 

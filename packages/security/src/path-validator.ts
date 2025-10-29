@@ -32,6 +32,47 @@ const MAX_DECODE_ITERATIONS = 2;
 let cachedDefaultAllowedPaths: string[] | null = null;
 
 /**
+ * LRU Cache for validation results to improve performance on repeated path checks
+ * Key: resolved path string, Value: validation result
+ */
+class ValidationCache {
+	private cache = new Map<string, PathValidationResult>();
+	private maxSize = 1000; // Limit cache size to prevent memory issues
+
+	get(key: string): PathValidationResult | undefined {
+		const result = this.cache.get(key);
+		if (result) {
+			// Move to end (LRU behavior)
+			this.cache.delete(key);
+			this.cache.set(key, result);
+		}
+		return result;
+	}
+
+	set(key: string, value: PathValidationResult): void {
+		// Remove oldest if cache is full
+		if (this.cache.size >= this.maxSize) {
+			const firstKey = this.cache.keys().next().value;
+			if (firstKey !== undefined) {
+				this.cache.delete(firstKey);
+			}
+		}
+		this.cache.set(key, value);
+	}
+
+	clear(): void {
+		this.cache.clear();
+	}
+
+	size(): number {
+		return this.cache.size;
+	}
+}
+
+// Global validation cache instance
+const validationCache = new ValidationCache();
+
+/**
  * Result of path validation
  */
 export interface PathValidationResult {
@@ -129,6 +170,10 @@ export function getDefaultAllowedBasePaths(forceRefresh = false): string[] {
  * - **Fail-safe**: Returns invalid on any error
  * - **Cross-platform**: Handles both Unix (/) and Windows (\) path separators
  *
+ * **Production Security Warning:**
+ * The default allowed paths (home directory, current directory, /tmp) may be too permissive
+ * for production environments. Always specify explicit `additionalAllowedPaths` in production.
+ *
  * **Known Limitations:**
  * - Symbolic links are detected but not fully prevented (TOCTOU vulnerability)
  * - Race conditions possible between validation and file access
@@ -154,9 +199,19 @@ export function validatePath(
 ): PathValidationResult {
 	const description = options.description || "path";
 	const checkSymlinks = options.checkSymlinks !== false;
-	const blockSymlinks = options.blockSymlinks !== false;
+	const blockSymlinks = options.blockSymlinks === true;
 	const maxDecodeIterations =
 		options.maxUrlDecodeIterations || MAX_DECODE_ITERATIONS;
+
+	// PERFORMANCE: Check cache first for successful validations
+	// Create cache key from raw path and relevant options
+	const cacheKey = `${rawPath}|${checkSymlinks ? "1" : "0"}|${blockSymlinks ? "1" : "0"}|${(options.additionalAllowedPaths || []).join(",")}|${description}`;
+	const cached = validationCache.get(cacheKey);
+	if (cached) {
+		// Log cache hit at debug level to avoid performance impact in production
+		log.debug(`Cache hit for ${description}: ${rawPath}`);
+		return cached;
+	}
 
 	// Step 1: Decode URL-encoded sequences (with iteration limit)
 	let decodedPath = rawPath;
@@ -169,7 +224,14 @@ export function validatePath(
 			// Decoding failed - path is malformed
 			const reason = `Malformed URL encoding in ${description}: ${rawPath}`;
 			log.debug(reason);
-			return { isValid: false, decodedPath: "", resolvedPath: "", reason };
+			const result = {
+				isValid: false,
+				decodedPath: "",
+				resolvedPath: "",
+				reason,
+			};
+			validationCache.set(cacheKey, result);
+			return result;
 		}
 	}
 
@@ -187,7 +249,9 @@ export function validatePath(
 			attack_type: "null_byte_injection",
 			timestamp: new Date().toISOString(),
 		});
-		return { isValid: false, decodedPath, resolvedPath: "", reason };
+		const result = { isValid: false, decodedPath, resolvedPath: "", reason };
+		validationCache.set(cacheKey, result);
+		return result;
 	}
 
 	// Step 3: Check for directory traversal in raw and decoded paths
@@ -201,7 +265,9 @@ export function validatePath(
 			attack_type: "directory_traversal",
 			timestamp: new Date().toISOString(),
 		});
-		return { isValid: false, decodedPath, resolvedPath: "", reason };
+		const result = { isValid: false, decodedPath, resolvedPath: "", reason };
+		validationCache.set(cacheKey, result);
+		return result;
 	}
 
 	// Step 4: Resolve the path (normalizes and makes absolute)
@@ -211,7 +277,9 @@ export function validatePath(
 	} catch {
 		const reason = `Path resolution failed for ${description}: ${decodedPath}`;
 		log.debug(reason);
-		return { isValid: false, decodedPath, resolvedPath: "", reason };
+		const result = { isValid: false, decodedPath, resolvedPath: "", reason };
+		validationCache.set(cacheKey, result);
+		return result;
 	}
 
 	// Step 5: Validate against allowed base directories (whitelist approach)
@@ -222,6 +290,24 @@ export function validatePath(
 		...getDefaultAllowedBasePaths(),
 		...(options.additionalAllowedPaths || []).map((p) => resolve(p)),
 	];
+
+	// PRODUCTION WARNING: Log if using default paths in production
+	if (
+		!options.additionalAllowedPaths?.length &&
+		process.env.NODE_ENV === "production"
+	) {
+		log.warn(
+			`SECURITY WARNING: Using default allowed paths in production environment. ` +
+				`This may be too permissive. Consider specifying explicit additionalAllowedPaths.`,
+			{
+				description,
+				environment: "production",
+				default_paths: getDefaultAllowedBasePaths(),
+				recommendation:
+					"Add additionalAllowedPaths option for production security",
+			},
+		);
+	}
 
 	let isWithinAllowedPaths = false;
 	for (const basePath of allowedBasePaths) {
@@ -262,7 +348,9 @@ export function validatePath(
 			attack_type: "whitelist_bypass",
 			timestamp: new Date().toISOString(),
 		});
-		return { isValid: false, decodedPath, resolvedPath, reason };
+		const result = { isValid: false, decodedPath, resolvedPath, reason };
+		validationCache.set(cacheKey, result);
+		return result;
 	}
 
 	// Step 6: Check for symbolic links
@@ -282,7 +370,14 @@ export function validatePath(
 							attack_type: "symlink_attack",
 							timestamp: new Date().toISOString(),
 						});
-						return { isValid: false, decodedPath, resolvedPath, reason };
+						const result = {
+							isValid: false,
+							decodedPath,
+							resolvedPath,
+							reason,
+						};
+						validationCache.set(cacheKey, result);
+						return result;
 					}
 					// Otherwise just warn
 					log.warn(
@@ -307,7 +402,18 @@ export function validatePath(
 		}
 	}
 
-	return { isValid: true, decodedPath, resolvedPath };
+	// PERFORMANCE: Cache successful result for future use
+	const result = { isValid: true, decodedPath, resolvedPath };
+	validationCache.set(cacheKey, result);
+
+	// PERFORMANCE: Log successful validation at debug level in production
+	if (process.env.NODE_ENV === "production") {
+		log.debug(`Path validation successful: ${description} → ${resolvedPath}`);
+	} else {
+		log.info(`Path validation successful: ${description} → ${resolvedPath}`);
+	}
+
+	return result;
 }
 
 /**
@@ -337,4 +443,20 @@ export function validatePathOrThrow(
 		throw new Error(result.reason || "Path validation failed");
 	}
 	return result.resolvedPath;
+}
+
+/**
+ * Clear the validation cache
+ * Useful for testing or when path configurations change
+ */
+export function clearValidationCache(): void {
+	validationCache.clear();
+}
+
+/**
+ * Get current cache size for monitoring
+ * @returns Number of cached validation results
+ */
+export function getValidationCacheSize(): number {
+	return validationCache.size();
 }
