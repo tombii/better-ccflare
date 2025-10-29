@@ -8,6 +8,72 @@ MODELS="${AI_MODELS}"
 TEMPERATURE="${AI_TEMPERATURE}"
 MAX_TOKENS="${AI_MAX_TOKENS}"
 
+# Input validation and sanitization
+MAX_TITLE_LENGTH=200
+MAX_BODY_LENGTH=10000
+MAX_AUTHOR_LENGTH=50
+MAX_NUMBER_LENGTH=10
+
+# Function to sanitize potentially dangerous inputs
+sanitize_input() {
+    local input="$1"
+    local input_name="$2"
+    
+    # Remove dangerous shell metacharacters
+    input=$(echo "$input" | sed 's/[;&|`$(){}[\]\\!<>?*]//g')
+    
+    # Remove newlines and control characters
+    input=$(echo "$input" | tr -d '\n\r' | sed 's/[[:cntrl:]]//g')
+    
+    # Remove potential SQL injection patterns (case-insensitive)
+    input=$(echo "$input" | tr '[:upper:]' '[:lower:]' | sed 's/union\|select\|insert\|delete\|update\|drop\|create\|alter\|exec//g')
+    
+    # Remove potential XSS patterns (case-insensitive)
+    input=$(echo "$input" | tr '[:upper:]' '[:lower:]' | sed 's/javascript:\|data:\|vbscript:\|onload=\|onerror=//g')
+    
+    echo "$input"
+}
+
+# Function to validate and sanitize environment variables
+validate_and_sanitize_env() {
+    local var_name="$1"
+    local var_value="${!var_name}"
+    local max_length="${2:-1000}"
+    local allow_special_chars="${3:-false}"
+    local required="${4:-false}"
+    
+    # Check if required variable is set
+    if [[ "$required" == "true" ]] && [[ -z "$var_value" ]]; then
+        echo "Error: $var_name is required but not set"
+        exit 1
+    fi
+    
+    # Skip validation if not required and not set
+    if [[ "$required" != "true" ]] && [[ -z "$var_value" ]]; then
+        return 0
+    fi
+    
+    # Check for obvious injection patterns
+    if [[ "$allow_special_chars" != "true" ]]; then
+        if echo "$var_value" | grep -qE '[;&|`$(){}[\]\\!<>?*]'; then
+            echo "Error: $var_name contains potentially dangerous characters"
+            exit 1
+        fi
+    fi
+    
+    # Check length
+    if [[ ${#var_value} -gt $max_length ]]; then
+        echo "Error: $var_name exceeds maximum length of $max_length characters"
+        exit 1
+    fi
+    
+    # Sanitize the input
+    sanitized_value=$(sanitize_input "$var_value" "$var_name")
+    
+    # Update the environment variable
+    export "$var_name"="$sanitized_value"
+}
+
 # Validate required environment variables
 if [[ -z "${OPENROUTER_API_KEY:-}" ]]; then
     echo "Warning: OPENROUTER_API_KEY is not set"
@@ -19,6 +85,7 @@ if [[ -z "${GITHUB_TOKEN:-}" ]]; then
     #exit 1
 fi
 
+# Set defaults if not provided, then validate and sanitize
 if [[ -z "${AI_MODELS:-}" ]]; then
     echo "Warning: AI_MODELS is not set, using default models"
     export AI_MODELS="qwen/qwen3-coder:free,deepseek/deepseek-chat-v3.1:free,z-ai/glm-4.5-air:free"
@@ -58,6 +125,13 @@ if [[ -z "${ISSUE_BODY:-}" ]]; then
     echo "Warning: ISSUE_BODY is not set, using default"
     export ISSUE_BODY="This is a test issue to demonstrate the triage functionality."
 fi
+
+# Validate and sanitize untrusted input variables
+validate_and_sanitize_env "ISSUE_TITLE" $MAX_TITLE_LENGTH
+validate_and_sanitize_env "ISSUE_AUTHOR" $MAX_AUTHOR_LENGTH
+validate_and_sanitize_env "ISSUE_BODY" $MAX_BODY_LENGTH
+validate_and_sanitize_env "ISSUE_NUMBER" $MAX_NUMBER_LENGTH true
+validate_and_sanitize_env "REPO_NAME" 100
 
 # Read repository structure for context
 echo "Gathering repository context..."
