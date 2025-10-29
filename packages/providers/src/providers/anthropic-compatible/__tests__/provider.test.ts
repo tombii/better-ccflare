@@ -22,12 +22,13 @@ describe("AnthropicCompatibleProvider", () => {
 				name: "custom-provider",
 				baseUrl: "https://custom.api.com",
 				authHeader: "authorization",
+				authType: "direct",
 				supportsStreaming: false,
 				defaultModel: "custom-model",
 			};
 
 			const provider = new AnthropicCompatibleProvider(config);
-			
+
 			expect(provider.name).toBe("custom-provider");
 			expect(provider.supportsOAuth()).toBe(false);
 			expect(provider.getConfig()).toEqual(config);
@@ -318,11 +319,9 @@ describe("AnthropicCompatibleProvider", () => {
 		test("should create preset providers", () => {
 			const zaiProvider = PresetProviders.createZaiCompatible();
 			const minimaxProvider = PresetProviders.createMinimaxCompatible();
-			const openaiProvider = PresetProviders.createOpenAICompatible();
-			
+
 			expect(zaiProvider.name).toBe("anthropic-zai");
 			expect(minimaxProvider.name).toBe("anthropic-minimax");
-			expect(openaiProvider.name).toBe("anthropic-openai");
 		});
 
 		test("should create provider with model mapping", () => {

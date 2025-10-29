@@ -332,6 +332,8 @@ export function createAccountAddHandler(
 				}) || 0;
 
 			// Validate custom endpoint
+			// TODO: Support custom endpoints for Claude API (console) accounts for enterprise users
+			// This is needed for enterprises that have their own Anthropic API deployments
 			const customEndpoint = validateString(
 				body.customEndpoint || null,
 				"customEndpoint",
@@ -901,6 +903,295 @@ export function createOpenAIAccountAddHandler(dbOps: DatabaseOperations) {
 				error instanceof Error
 					? error
 					: new Error("Failed to create OpenAI-compatible account"),
+			);
+		}
+	};
+}
+
+/**
+ * Create a Minimax account add handler
+ */
+export function createMinimaxAccountAddHandler(dbOps: DatabaseOperations) {
+	return async (req: Request): Promise<Response> => {
+		try {
+			const body = await req.json();
+
+			// Validate account name
+			const name = validateString(body.name, "name", {
+				required: true,
+				minLength: 1,
+				maxLength: 100,
+				pattern: patterns.accountName,
+				transform: sanitizers.trim,
+			});
+
+			if (!name) {
+				return errorResponse(BadRequest("Account name is required"));
+			}
+
+			// Validate API key
+			const apiKey = validateString(body.apiKey, "apiKey", {
+				required: true,
+				minLength: 1,
+			});
+
+			if (!apiKey) {
+				return errorResponse(BadRequest("API key is required"));
+			}
+
+			// Validate priority
+			const priority =
+				validateNumber(body.priority, "priority", {
+					min: 0,
+					max: 100,
+					integer: true,
+				}) || 0;
+
+			// Create Minimax account directly in database
+			const accountId = crypto.randomUUID();
+			const now = Date.now();
+			const db = dbOps.getDatabase();
+			db.run(
+				`INSERT INTO accounts (
+					id, name, provider, api_key, refresh_token, access_token,
+					expires_at, created_at, account_tier, request_count, total_requests, priority, custom_endpoint
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				[
+					accountId,
+					name,
+					"minimax",
+					apiKey,
+					apiKey, // Use API key as refresh token for consistency with CLI
+					apiKey, // Use API key as access token
+					now + 365 * 24 * 60 * 60 * 1000, // 1 year from now
+					now,
+					1, // Default tier for Minimax accounts
+					0,
+					0,
+					priority,
+					null, // No custom endpoint for Minimax
+				],
+			);
+
+			log.info(
+				`Successfully added Minimax account: ${name} (Priority ${priority})`,
+			);
+
+			// Get the created account for response
+			const account = db
+				.query<
+					{
+						id: string;
+						name: string;
+						provider: string;
+						request_count: number;
+						total_requests: number;
+						last_used: number | null;
+						created_at: number;
+						expires_at: number;
+						account_tier: number;
+						paused: number;
+					},
+					[string]
+				>(
+					`SELECT
+						id, name, provider, request_count, total_requests,
+						last_used, created_at, expires_at, account_tier,
+						COALESCE(paused, 0) as paused
+					FROM accounts WHERE id = ?`,
+				)
+				.get(accountId);
+
+			if (!account) {
+				return errorResponse(
+					InternalServerError("Failed to retrieve created account"),
+				);
+			}
+
+			return jsonResponse({
+				message: `Minimax account '${name}' added successfully`,
+				account: {
+					id: account.id,
+					name: account.name,
+					provider: account.provider,
+					requestCount: account.request_count,
+					totalRequests: account.total_requests,
+					lastUsed: account.last_used
+						? new Date(account.last_used).toISOString()
+						: null,
+					created: new Date(account.created_at).toISOString(),
+					tier: account.account_tier,
+					paused: account.paused === 1,
+					priority: priority,
+					tokenStatus: "valid" as const,
+					tokenExpiresAt: new Date(account.expires_at).toISOString(),
+					rateLimitStatus: "OK",
+					rateLimitReset: null,
+					rateLimitRemaining: null,
+					sessionInfo: "No active session",
+				},
+			});
+		} catch (error) {
+			log.error("Minimax account creation error:", error);
+			return errorResponse(
+				error instanceof Error
+					? error
+					: new Error("Failed to create Minimax account"),
+			);
+		}
+	};
+}
+
+/**
+ * Create an Anthropic-compatible account add handler
+ */
+export function createAnthropicCompatibleAccountAddHandler(dbOps: DatabaseOperations) {
+	return async (req: Request): Promise<Response> => {
+		try {
+			const body = await req.json();
+
+			// Validate account name
+			const name = validateString(body.name, "name", {
+				required: true,
+				minLength: 1,
+				maxLength: 100,
+				pattern: patterns.accountName,
+				transform: sanitizers.trim,
+			});
+
+			if (!name) {
+				return errorResponse(BadRequest("Account name is required"));
+			}
+
+			// Validate API key
+			const apiKey = validateString(body.apiKey, "apiKey", {
+				required: true,
+				minLength: 1,
+			});
+
+			if (!apiKey) {
+				return errorResponse(BadRequest("API key is required"));
+			}
+
+			// Validate priority
+			const priority =
+				validateNumber(body.priority, "priority", {
+					min: 0,
+					max: 100,
+					integer: true,
+				}) || 0;
+
+			// Validate custom endpoint (optional for Anthropic-compatible)
+			const customEndpoint = validateString(
+				body.customEndpoint || null,
+				"customEndpoint",
+				{
+					required: false,
+					transform: (value: string) => {
+						if (!value) return "";
+						const trimmed = value.trim();
+						if (!trimmed) return "";
+						// Validate URL format
+						try {
+							new URL(trimmed);
+							return trimmed;
+						} catch {
+							throw new Error("Invalid URL format");
+						}
+					},
+				},
+			);
+
+			// Create Anthropic-compatible account directly in database
+			const accountId = crypto.randomUUID();
+			const now = Date.now();
+			const db = dbOps.getDatabase();
+			db.run(
+				`INSERT INTO accounts (
+					id, name, provider, api_key, refresh_token, access_token,
+					expires_at, created_at, account_tier, request_count, total_requests, priority, custom_endpoint
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				[
+					accountId,
+					name,
+					"anthropic-compatible",
+					apiKey,
+					apiKey, // Use API key as refresh token for consistency with CLI
+					apiKey, // Use API key as access token
+					now + 365 * 24 * 60 * 60 * 1000, // 1 year from now
+					now,
+					1, // Default tier for Anthropic-compatible accounts
+					0,
+					0,
+					priority,
+					customEndpoint || null,
+				],
+			);
+
+			log.info(
+				`Successfully added Anthropic-compatible account: ${name} (Priority ${priority})`,
+			);
+
+			// Get the created account for response
+			const account = db
+				.query<
+					{
+						id: string;
+						name: string;
+						provider: string;
+						request_count: number;
+						total_requests: number;
+						last_used: number | null;
+						created_at: number;
+						expires_at: number;
+						account_tier: number;
+						paused: number;
+					},
+					[string]
+				>(
+					`SELECT
+						id, name, provider, request_count, total_requests,
+						last_used, created_at, expires_at, account_tier,
+						COALESCE(paused, 0) as paused
+					FROM accounts WHERE id = ?`,
+				)
+				.get(accountId);
+
+			if (!account) {
+				return errorResponse(
+					InternalServerError("Failed to retrieve created account"),
+				);
+			}
+
+			return jsonResponse({
+				message: `Anthropic-compatible account '${name}' added successfully`,
+				account: {
+					id: account.id,
+					name: account.name,
+					provider: account.provider,
+					requestCount: account.request_count,
+					totalRequests: account.total_requests,
+					lastUsed: account.last_used
+						? new Date(account.last_used).toISOString()
+						: null,
+					created: new Date(account.created_at).toISOString(),
+					tier: account.account_tier,
+					paused: account.paused === 1,
+					priority: priority,
+					tokenStatus: "valid" as const,
+					tokenExpiresAt: new Date(account.expires_at).toISOString(),
+					rateLimitStatus: "OK",
+					rateLimitReset: null,
+					rateLimitRemaining: null,
+					sessionInfo: "No active session",
+				},
+			});
+		} catch (error) {
+			log.error("Anthropic-compatible account creation error:", error);
+			return errorResponse(
+				error instanceof Error
+					? error
+					: new Error("Failed to create Anthropic-compatible account"),
 			);
 		}
 	};

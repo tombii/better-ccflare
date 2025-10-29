@@ -355,8 +355,7 @@ async function handleStart(msg: StartMessage): Promise<void> {
 		process.env.DEBUG === "true" ||
 		process.env.NODE_ENV === "development"
 	) {
-		console.log(`[WORKER] Saving request meta for ${msg.requestId}`);
-		log.info(
+		log.debug(
 			`Saving request meta for ${msg.requestId} (${msg.method} ${msg.path})`,
 		);
 	}
@@ -375,7 +374,7 @@ async function handleStart(msg: StartMessage): Promise<void> {
 				process.env.DEBUG === "true" ||
 				process.env.NODE_ENV === "development"
 			) {
-				log.info(`Successfully saved request meta for ${msg.requestId}`);
+				log.debug(`Successfully saved request meta for ${msg.requestId}`);
 			}
 		} catch (error) {
 			log.error(`Failed to save request meta for ${msg.requestId}:`, error);
@@ -473,7 +472,7 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 						process.env.DEBUG === "true" ||
 						process.env.NODE_ENV === "development"
 					) {
-						log.info(
+						log.debug(
 							`ZAI token/s calculation: ${finalOutputTokens} tokens / ${totalDurationSec}s = ${state.usage.tokensPerSecond} tok/s (using total response time: ${responseTime}ms)`,
 						);
 					}
@@ -547,7 +546,7 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 		process.env.DEBUG === "true" ||
 		process.env.NODE_ENV === "development"
 	) {
-		log.info(`Saving final request data for ${startMessage.requestId}`);
+		log.debug(`Saving final request data for ${startMessage.requestId}`);
 	}
 	asyncWriter.enqueue(() =>
 		dbOps.saveRequest(
@@ -626,7 +625,7 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 			process.env.DEBUG === "true" ||
 			process.env.NODE_ENV === "development"
 		) {
-			log.info(
+			log.debug(
 				`Usage for request ${startMessage.requestId}: Model: ${state.usage.model}, ` +
 					`Tokens: ${state.usage.totalTokens || 0}, Cost: ${formatCost(state.usage.costUsd)}`,
 			);
