@@ -88,7 +88,7 @@ interface ParsedArgs {
 	disableApiKey: string | null;
 	enableApiKey: string | null;
 	deleteApiKey: string | null;
-	debug: boolean;
+	showConfig: boolean;
 }
 
 /**
@@ -139,7 +139,7 @@ function fastExit(code: 0 | 1 = 0): never {
 /**
  * Display all configuration variables with their sources and precedence
  */
-function displayDebugInfo(parsed: ParsedArgs, config: Config): void {
+function displayConfigInfo(parsed: ParsedArgs, config: Config): void {
 	const runtime = config.getRuntime();
 	const { getPlatformConfigDir } = require("@better-ccflare/config");
 	const { resolveDbPath } = require("@better-ccflare/database");
@@ -329,7 +329,7 @@ function displayDebugInfo(parsed: ParsedArgs, config: Config): void {
 	// Print configuration
 	const version = getVersionSync();
 	console.log(`
-🐛 better-ccflare v${version} - Debug Configuration
+⚙️  better-ccflare v${version} - Configuration
 
 Configuration Precedence: CLI arguments > Environment variables > Config file > Defaults
 
@@ -397,7 +397,7 @@ function parseArgs(args: string[]): ParsedArgs {
 		disableApiKey: null,
 		enableApiKey: null,
 		deleteApiKey: null,
-		debug: false,
+		showConfig: false,
 	};
 
 	for (let i = 0; i < args.length; i++) {
@@ -599,8 +599,8 @@ function parseArgs(args: string[]): ParsedArgs {
 				}
 				parsed.reauthenticate = args[++i];
 				break;
-			case "--debug":
-				parsed.debug = true;
+			case "--show-config":
+				parsed.showConfig = true;
 				break;
 		}
 	}
@@ -621,10 +621,10 @@ async function main() {
 		return;
 	}
 
-	// Handle debug - check before full DI initialization but after config
-	if (parsed.debug) {
+	// Handle show-config - check before full DI initialization but after config
+	if (parsed.showConfig) {
 		const config = new Config();
-		displayDebugInfo(parsed, config);
+		displayConfigInfo(parsed, config);
 		fastExit(0);
 		return;
 	}
@@ -674,7 +674,7 @@ API Key Management:
   --delete-api-key <name>    Delete an API key permanently
 
 Debugging:
-  --debug                    Show all configuration variables with their sources
+  --show-config              Show all configuration variables with their sources
   --help, -h                 Show this help message
 
 Examples:
