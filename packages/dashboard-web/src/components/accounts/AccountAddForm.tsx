@@ -13,7 +13,7 @@ import {
 interface AccountAddFormProps {
 	onAddAccount: (params: {
 		name: string;
-		mode: "max" | "console" | "zai" | "openai-compatible";
+		mode: "max" | "console" | "zai" | "minimax" | "openai-compatible";
 		tier: number;
 		priority: number;
 		customEndpoint?: string;
@@ -26,6 +26,12 @@ interface AccountAddFormProps {
 		name: string;
 		apiKey: string;
 		tier: number;
+		priority: number;
+		customEndpoint?: string;
+	}) => Promise<void>;
+	onAddMinimaxAccount: (params: {
+		name: string;
+		apiKey: string;
 		priority: number;
 		customEndpoint?: string;
 	}) => Promise<void>;
@@ -46,6 +52,7 @@ export function AccountAddForm({
 	onAddAccount,
 	onCompleteAccount,
 	onAddZaiAccount,
+	onAddMinimaxAccount,
 	onAddOpenAIAccount,
 	onCancel,
 	onSuccess,
@@ -56,7 +63,7 @@ export function AccountAddForm({
 	const [sessionId, setSessionId] = useState("");
 	const [newAccount, setNewAccount] = useState({
 		name: "",
-		mode: "max" as "max" | "console" | "zai" | "openai-compatible",
+		mode: "max" as "max" | "console" | "zai" | "minimax" | "openai-compatible",
 		tier: 1,
 		priority: 0,
 		apiKey: "",
@@ -95,7 +102,7 @@ export function AccountAddForm({
 
 		const accountParams = {
 			name: newAccount.name,
-			mode: newAccount.mode as "max" | "console" | "zai" | "openai-compatible",
+			mode: newAccount.mode as "max" | "console" | "zai" | "minimax" | "openai-compatible",
 			tier: newAccount.tier,
 			priority: newAccount.priority,
 			...(newAccount.customEndpoint && {
@@ -112,6 +119,36 @@ export function AccountAddForm({
 			await onAddZaiAccount({
 				...accountParams,
 				apiKey: newAccount.apiKey,
+			});
+			// Reset form and signal success
+			setNewAccount({
+				name: "",
+				mode: "max",
+				tier: 1,
+				priority: 0,
+				apiKey: "",
+				customEndpoint: "",
+				opusModel: "",
+				sonnetModel: "",
+				haikuModel: "",
+			});
+			onSuccess();
+			return;
+		}
+
+		if (newAccount.mode === "minimax") {
+			if (!newAccount.apiKey) {
+				onError("API key is required for Minimax accounts");
+				return;
+			}
+			// For Minimax accounts, we don't need OAuth flow and use default tier
+			await onAddMinimaxAccount({
+				name: newAccount.name,
+				apiKey: newAccount.apiKey,
+				priority: newAccount.priority,
+				...(newAccount.customEndpoint && {
+					customEndpoint: newAccount.customEndpoint.trim(),
+				}),
 			});
 			// Reset form and signal success
 			setNewAccount({
@@ -268,6 +305,7 @@ export function AccountAddForm({
 								<SelectItem value="max">Claude CLI (Recommended)</SelectItem>
 								<SelectItem value="console">Claude API</SelectItem>
 								<SelectItem value="zai">z.ai (API Key)</SelectItem>
+								<SelectItem value="minimax">Minimax (API Key)</SelectItem>
 								<SelectItem value="openai-compatible">
 									OpenAI-Compatible (API Key)
 								</SelectItem>
@@ -288,6 +326,23 @@ export function AccountAddForm({
 									})
 								}
 								placeholder="Enter your z.ai API key"
+							/>
+						</div>
+					)}
+					{newAccount.mode === "minimax" && (
+						<div className="space-y-2">
+							<Label htmlFor="apiKey">Minimax API Key</Label>
+							<Input
+								id="apiKey"
+								type="password"
+								value={newAccount.apiKey}
+								onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+									setNewAccount({
+										...newAccount,
+										apiKey: (e.target as HTMLInputElement).value,
+									})
+								}
+								placeholder="Enter your Minimax API key"
 							/>
 						</div>
 					)}
@@ -387,9 +442,7 @@ export function AccountAddForm({
 							</div>
 						</>
 					)}
-					{(newAccount.mode === "max" ||
-						newAccount.mode === "console" ||
-						newAccount.mode === "zai") && (
+					{(newAccount.mode === "zai" || newAccount.mode === "minimax") && (
 						<div className="space-y-2">
 							<Label htmlFor="customEndpoint">Custom Endpoint (Optional)</Label>
 							<Input
@@ -404,7 +457,7 @@ export function AccountAddForm({
 								placeholder={
 									newAccount.mode === "zai"
 										? "https://api.z.ai/api/anthropic"
-										: "https://api.anthropic.com"
+										: "https://api.minimax.io/anthropic"
 								}
 							/>
 							<p className="text-xs text-muted-foreground">
@@ -412,7 +465,7 @@ export function AccountAddForm({
 							</p>
 						</div>
 					)}
-					{newAccount.mode !== "openai-compatible" && (
+					{newAccount.mode !== "openai-compatible" && newAccount.mode !== "minimax" && (
 						<div className="space-y-2">
 							<Label htmlFor="tier">Tier</Label>
 							<Select

@@ -10,13 +10,13 @@ import type { Account } from "@better-ccflare/types";
 import { BaseProvider } from "../../base";
 import type { RateLimitInfo, TokenRefreshResult } from "../../types";
 
-const log = new Logger("ZaiProvider");
+const log = new Logger("MinimaxProvider");
 
-export class ZaiProvider extends BaseProvider {
-	name = "zai";
+export class MinimaxProvider extends BaseProvider {
+	name = "minimax";
 
 	canHandle(_path: string): boolean {
-		// Handle all paths for z.ai endpoints
+		// Handle all paths for minimax endpoints
 		return true;
 	}
 
@@ -24,13 +24,13 @@ export class ZaiProvider extends BaseProvider {
 		account: Account,
 		_clientId: string,
 	): Promise<TokenRefreshResult> {
-		// z.ai uses API keys, not OAuth tokens
+		// Minimax uses API keys, not OAuth tokens
 		// If refresh_token is actually an API key, return it as the access token
 		if (!account.refresh_token) {
 			throw new Error(`No API key available for account ${account.name}`);
 		}
 
-		log.info(`Using API key for z.ai account ${account.name}`);
+		log.info(`Using API key for minimax account ${account.name}`);
 
 		// For API key based authentication, we don't have token refresh
 		// The "refresh_token" field stores the API key
@@ -43,7 +43,7 @@ export class ZaiProvider extends BaseProvider {
 	}
 
 	buildUrl(path: string, query: string, account?: Account): string {
-		const defaultEndpoint = "https://api.z.ai/api/anthropic";
+		const defaultEndpoint = "https://api.minimax.io/anthropic";
 
 		if (account?.custom_endpoint) {
 			try {
@@ -69,15 +69,12 @@ export class ZaiProvider extends BaseProvider {
 	): Headers {
 		const newHeaders = new Headers(headers);
 
-		// z.ai expects the API key in x-api-key header
+		// Minimax uses Bearer token for API key
 		if (accessToken) {
-			newHeaders.set("x-api-key", accessToken);
+			newHeaders.set("authorization", `Bearer ${accessToken}`);
 		} else if (apiKey) {
-			newHeaders.set("x-api-key", apiKey);
+			newHeaders.set("authorization", `Bearer ${apiKey}`);
 		}
-
-		// Remove authorization header since z.ai uses x-api-key
-		newHeaders.delete("authorization");
 
 		// Remove host header
 		newHeaders.delete("host");
@@ -87,89 +84,6 @@ export class ZaiProvider extends BaseProvider {
 		newHeaders.delete("content-encoding");
 
 		return newHeaders;
-	}
-
-	async parseRateLimitFromBody(
-		response: Response,
-	): Promise<number | undefined> {
-		try {
-			const clone = response.clone();
-			const body = await clone.json();
-
-			// Check for Zai rate limit error format
-			// {
-			//   "type": "error",
-			//   "error": {
-			//     "type": "1308",
-			//     "message": "Usage limit reached for 5 hour. Your limit will reset at 2025-10-03 08:23:14"
-			//   }
-			// }
-			if (
-				body?.type === "error" &&
-				body?.error?.type === "1308" &&
-				body?.error?.message
-			) {
-				const message = body.error.message as string;
-				// Extract timestamp from message like "Your limit will reset at 2025-10-03 08:23:14"
-				const match = message.match(
-					/reset at (\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})/,
-				);
-				if (match) {
-					const resetTimeStr = match[1];
-					// Parse as Singapore time (UTC+8) and convert to UTC
-					const [datePart, timePart] = resetTimeStr.split(" ");
-					const [year, month, day] = datePart.split("-").map(Number);
-					const [hour, minute, second] = timePart.split(":").map(Number);
-
-					// Create date in Singapore time (UTC+8)
-					// We need to subtract 8 hours to get UTC
-					const singaporeDate = new Date(
-						Date.UTC(year, month - 1, day, hour, minute, second),
-					);
-					const utcTime = singaporeDate.getTime() - 8 * 60 * 60 * 1000;
-
-					log.info(
-						`Parsed Zai rate limit reset time: ${resetTimeStr} Singapore time -> ${new Date(utcTime).toISOString()} UTC`,
-					);
-
-					return utcTime;
-				}
-			}
-		} catch (error) {
-			log.debug("Failed to parse rate limit from response body:", error);
-		}
-		return undefined;
-	}
-
-	parseRateLimit(response: Response): RateLimitInfo {
-		// Check for standard rate limit headers
-		if (response.status !== 429) {
-			return { isRateLimited: false };
-		}
-
-		// Try to extract reset time from headers first
-		const retryAfter = response.headers.get("retry-after");
-		let resetTime: number | undefined;
-
-		if (retryAfter) {
-			// Retry-After can be seconds or HTTP date
-			const seconds = Number(retryAfter);
-			if (!Number.isNaN(seconds)) {
-				resetTime = Date.now() + seconds * 1000;
-			} else {
-				resetTime = new Date(retryAfter).getTime();
-			}
-		}
-
-		// If no header-based reset time and this is a 429, we need to parse the body
-		// We'll return a promise-based result for async body parsing
-		if (!resetTime) {
-			// Parse body asynchronously and return the reset time
-			// Note: This needs to be handled by the caller since parseRateLimit is sync
-			// We'll add a separate async method for body parsing
-		}
-
-		return { isRateLimited: true, resetTime };
 	}
 
 	async processResponse(
@@ -187,7 +101,7 @@ export class ZaiProvider extends BaseProvider {
 	}
 
 	async extractTierInfo(_response: Response): Promise<number | null> {
-		// z.ai doesn't provide tier information in responses
+		// Minimax doesn't provide tier information in responses
 		// We'll rely on the account tier set during account creation
 		return null;
 	}
@@ -368,13 +282,13 @@ export class ZaiProvider extends BaseProvider {
 					reader.cancel().catch(() => {});
 				}
 
-				// For ZAI streaming responses, message_delta always contains the final authoritative token counts
+				// For Minimax streaming responses, message_delta always contains the final authoritative token counts
 				// We should always prefer message_delta when available, regardless of whether tokens are zero
 				const finalUsage = messageDeltaUsage || messageStartUsage;
 
 				if (finalUsage) {
-					// Use the model from message_start (z.ai returns GLM model names directly)
-					const model = messageStartUsage?.model;
+					// Use the model from message_start (Minimax returns MiniMax-M2 model names directly)
+					const model = messageStartUsage?.model || "MiniMax-M2";
 
 					// For message_delta, input_tokens and cache_read_input_tokens may be the final counts
 					// For message_start, we have all the detailed breakdown
@@ -449,8 +363,8 @@ export class ZaiProvider extends BaseProvider {
 				const completionTokens = outputTokens;
 				const totalTokens = promptTokens + completionTokens;
 
-				// Calculate cost if we have a model (z.ai returns GLM model names directly)
-				const model = json.model;
+				// Calculate cost if we have a model (Minimax returns MiniMax-M2 model names directly)
+				const model = json.model || "MiniMax-M2";
 				let costUsd: number | undefined;
 				if (model) {
 					try {
@@ -491,7 +405,7 @@ export class ZaiProvider extends BaseProvider {
 	}
 
 	/**
-	 * z.ai doesn't support OAuth - uses API keys instead
+	 * Minimax doesn't support OAuth - uses API keys instead
 	 */
 	supportsOAuth(): boolean {
 		return false;
