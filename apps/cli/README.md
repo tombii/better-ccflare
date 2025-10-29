@@ -148,12 +148,8 @@ PORT=8080                              # Server port (default: 8080)
 BETTER_CCFLARE_HOST=0.0.0.0           # Server binding host (default: 0.0.0.0, use 127.0.0.1 for localhost-only)
 CLIENT_ID=your-client-id              # OAuth client ID
 BETTER_CCFLARE_CONFIG_PATH=/path/to/config.json  # Custom config location
-BETTER_CCFLARE_DB_PATH=/path/to/database.db  # Custom database path (default: config dir/better-ccflare.db)
-
-# Development Environment
-NODE_ENV=development                   # Set to 'development' to use separate dev database
-DEV=true                               # Alternative way to enable development mode
-                                       # When in development, uses 'better-ccflare-dev.db' instead of production
+BETTER_CCFLARE_DB_PATH=/path/to/database.db  # Custom database path (default: ~/.config/better-ccflare/better-ccflare.db)
+                                       # Use this for development/testing with a separate database
 
 # Logging and Debugging
 LOG_LEVEL=INFO                         # Log level (ERROR, WARN, INFO, DEBUG)

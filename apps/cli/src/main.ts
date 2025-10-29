@@ -88,6 +88,7 @@ interface ParsedArgs {
 	disableApiKey: string | null;
 	enableApiKey: string | null;
 	deleteApiKey: string | null;
+	debug: boolean;
 }
 
 /**
@@ -136,6 +137,235 @@ function fastExit(code: 0 | 1 = 0): never {
 }
 
 /**
+ * Display all configuration variables with their sources and precedence
+ */
+function displayDebugInfo(parsed: ParsedArgs, config: Config): void {
+	const runtime = config.getRuntime();
+	const { getPlatformConfigDir } = require("@better-ccflare/config");
+	const { resolveDbPath } = require("@better-ccflare/database");
+
+	interface ConfigItem {
+		name: string;
+		value: string | number | boolean | undefined;
+		source: string;
+		description: string;
+	}
+
+	const configItems: ConfigItem[] = [];
+
+	// Helper to determine source with precedence
+	const getSource = (
+		cliValue: unknown,
+		envVarName: string,
+		configValue: unknown,
+	): string => {
+		if (cliValue !== null && cliValue !== undefined) {
+			return "CLI argument";
+		}
+		if (process.env[envVarName]) {
+			return `Environment (${envVarName})`;
+		}
+		if (configValue !== undefined) {
+			return "Config file";
+		}
+		return "Default";
+	};
+
+	// Server Configuration
+	configItems.push({
+		name: "Port",
+		value: parsed.port || process.env.PORT || runtime.port,
+		source: getSource(parsed.port, "PORT", undefined),
+		description: "Server port",
+	});
+
+	configItems.push({
+		name: "Host",
+		value: process.env.BETTER_CCFLARE_HOST || "0.0.0.0",
+		source: process.env.BETTER_CCFLARE_HOST
+			? "Environment (BETTER_CCFLARE_HOST)"
+			: "Default",
+		description: "Server binding host",
+	});
+
+	configItems.push({
+		name: "SSL Key Path",
+		value: parsed.sslKey || process.env.SSL_KEY_PATH || "(not set)",
+		source: getSource(parsed.sslKey, "SSL_KEY_PATH", undefined),
+		description: "SSL private key path",
+	});
+
+	configItems.push({
+		name: "SSL Cert Path",
+		value: parsed.sslCert || process.env.SSL_CERT_PATH || "(not set)",
+		source: getSource(parsed.sslCert, "SSL_CERT_PATH", undefined),
+		description: "SSL certificate path",
+	});
+
+	// OAuth Configuration
+	configItems.push({
+		name: "OAuth Client ID",
+		value: process.env.CLIENT_ID || runtime.clientId,
+		source: process.env.CLIENT_ID ? "Environment (CLIENT_ID)" : "Default",
+		description: "OAuth client ID",
+	});
+
+	// Database Configuration
+	configItems.push({
+		name: "Database Path",
+		value: process.env.BETTER_CCFLARE_DB_PATH || resolveDbPath(),
+		source: process.env.BETTER_CCFLARE_DB_PATH
+			? "Environment (BETTER_CCFLARE_DB_PATH)"
+			: "Default",
+		description: "SQLite database file path",
+	});
+
+	configItems.push({
+		name: "Config Directory",
+		value: getPlatformConfigDir(),
+		source: "System",
+		description: "Configuration directory",
+	});
+
+	// Load Balancing
+	configItems.push({
+		name: "Load Balancing Strategy",
+		value: config.getStrategy(),
+		source: process.env.LB_STRATEGY
+			? "Environment (LB_STRATEGY)"
+			: config.get("lb_strategy")
+				? "Config file"
+				: "Default",
+		description: "Load balancing algorithm",
+	});
+
+	configItems.push({
+		name: "Session Duration",
+		value: `${runtime.sessionDurationMs}ms`,
+		source: process.env.SESSION_DURATION_MS
+			? "Environment (SESSION_DURATION_MS)"
+			: "Default",
+		description: "Session persistence duration",
+	});
+
+	// Retry Configuration
+	configItems.push({
+		name: "Retry Attempts",
+		value: runtime.retry.attempts,
+		source: process.env.RETRY_ATTEMPTS
+			? "Environment (RETRY_ATTEMPTS)"
+			: "Default",
+		description: "Number of retry attempts",
+	});
+
+	configItems.push({
+		name: "Retry Delay",
+		value: `${runtime.retry.delayMs}ms`,
+		source: process.env.RETRY_DELAY_MS
+			? "Environment (RETRY_DELAY_MS)"
+			: "Default",
+		description: "Initial retry delay",
+	});
+
+	configItems.push({
+		name: "Retry Backoff",
+		value: runtime.retry.backoff,
+		source: process.env.RETRY_BACKOFF
+			? "Environment (RETRY_BACKOFF)"
+			: "Default",
+		description: "Retry backoff multiplier",
+	});
+
+	// Agent Configuration
+	configItems.push({
+		name: "Default Agent Model",
+		value: config.getDefaultAgentModel(),
+		source: process.env.DEFAULT_AGENT_MODEL
+			? "Environment (DEFAULT_AGENT_MODEL)"
+			: config.get("default_agent_model")
+				? "Config file"
+				: "Default",
+		description: "Default Claude model for agents",
+	});
+
+	// Data Retention
+	configItems.push({
+		name: "Data Retention",
+		value: `${config.getDataRetentionDays()} days`,
+		source: process.env.DATA_RETENTION_DAYS
+			? "Environment (DATA_RETENTION_DAYS)"
+			: config.get("data_retention_days")
+				? "Config file"
+				: "Default",
+		description: "Payload data retention period",
+	});
+
+	configItems.push({
+		name: "Request Retention",
+		value: `${config.getRequestRetentionDays()} days`,
+		source: process.env.REQUEST_RETENTION_DAYS
+			? "Environment (REQUEST_RETENTION_DAYS)"
+			: config.get("request_retention_days")
+				? "Config file"
+				: "Default",
+		description: "Request metadata retention period",
+	});
+
+	// Logging Configuration
+	configItems.push({
+		name: "Log Level",
+		value: process.env.LOG_LEVEL || "INFO",
+		source: process.env.LOG_LEVEL ? "Environment (LOG_LEVEL)" : "Default",
+		description: "Logging verbosity level",
+	});
+
+	configItems.push({
+		name: "Log Format",
+		value: process.env.LOG_FORMAT || "text",
+		source: process.env.LOG_FORMAT ? "Environment (LOG_FORMAT)" : "Default",
+		description: "Log output format",
+	});
+
+	// Print configuration
+	const version = getVersionSync();
+	console.log(`
+🐛 better-ccflare v${version} - Debug Configuration
+
+Configuration Precedence: CLI arguments > Environment variables > Config file > Defaults
+
+`);
+
+	// Find the longest name for padding
+	const maxNameLength = Math.max(
+		...configItems.map((item) => item.name.length),
+	);
+	const maxValueLength = Math.max(
+		...configItems.map((item) => String(item.value).length),
+	);
+
+	for (const item of configItems) {
+		const namePadded = item.name.padEnd(maxNameLength);
+		const valuePadded = String(item.value).padEnd(maxValueLength);
+		const sourceIndicator =
+			item.source.startsWith("CLI") || item.source.startsWith("Environment")
+				? "✓"
+				: item.source === "Config file"
+					? "📄"
+					: "⚙️";
+		console.log(
+			`${sourceIndicator} ${namePadded}  ${valuePadded}  [${item.source}]`,
+		);
+	}
+
+	console.log(`
+Legend:
+  ✓  Overridden (CLI argument or environment variable)
+  📄 Config file setting
+  ⚙️  Default value
+`);
+}
+
+/**
  * Parse command line arguments
  */
 function parseArgs(args: string[]): ParsedArgs {
@@ -167,6 +397,7 @@ function parseArgs(args: string[]): ParsedArgs {
 		disableApiKey: null,
 		enableApiKey: null,
 		deleteApiKey: null,
+		debug: false,
 	};
 
 	for (let i = 0; i < args.length; i++) {
@@ -368,6 +599,9 @@ function parseArgs(args: string[]): ParsedArgs {
 				}
 				parsed.reauthenticate = args[++i];
 				break;
+			case "--debug":
+				parsed.debug = true;
+				break;
 		}
 	}
 
@@ -383,6 +617,14 @@ async function main() {
 		// Use sync version to avoid async overhead
 		const version = getVersionSync();
 		console.log(`better-ccflare v${version}`);
+		fastExit(0);
+		return;
+	}
+
+	// Handle debug - check before full DI initialization but after config
+	if (parsed.debug) {
+		const config = new Config();
+		displayDebugInfo(parsed, config);
 		fastExit(0);
 		return;
 	}
@@ -430,6 +672,9 @@ API Key Management:
   --disable-api-key <name>   Disable an API key
   --enable-api-key <name>    Enable a disabled API key
   --delete-api-key <name>    Delete an API key permanently
+
+Debugging:
+  --debug                    Show all configuration variables with their sources
   --help, -h                 Show this help message
 
 Examples:
