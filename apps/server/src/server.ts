@@ -379,7 +379,15 @@ export default function startServer(options?: {
 	container.registerInstance(SERVICE_KEYS.PricingLogger, pricingLogger);
 	setPricingLogger(pricingLogger);
 
-	const apiRouter = new APIRouter({ db, config, dbOps });
+	const apiRouter = new APIRouter({
+		db,
+		config,
+		dbOps,
+		runtime: {
+			port,
+			tlsEnabled,
+		},
+	});
 
 	// Run startup maintenance once (cleanup only) - fire and forget
 	runStartupMaintenance(config, dbOps).catch((err) => {

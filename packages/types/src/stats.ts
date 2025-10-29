@@ -107,6 +107,7 @@ export interface ConfigResponse {
 	port: number;
 	sessionDurationMs: number;
 	default_agent_model: string;
+	tls_enabled: boolean;
 }
 
 export interface StrategyUpdateRequest {
