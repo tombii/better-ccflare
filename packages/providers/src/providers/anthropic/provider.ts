@@ -163,13 +163,9 @@ export class AnthropicProvider extends BaseProvider {
 	}
 
 	buildUrl(path: string, query: string, account?: Account): string {
-		const defaultEndpoint = "https://api.anthropic.com";
-		const endpoint = account?.custom_endpoint || defaultEndpoint;
-
-		// Validate and sanitize the custom endpoint
-		const sanitizedEndpoint = endpoint.trim().replace(/\/$/, ""); // Remove trailing slash
-
-		return `${sanitizedEndpoint}${path}${query}`;
+		// Anthropic provider only supports the official API endpoint
+		const endpoint = "https://api.anthropic.com";
+		return `${endpoint}${path}${query}`;
 	}
 
 	prepareHeaders(

@@ -1,4 +1,9 @@
-import { BUFFER_SIZES, estimateCostUSD } from "@better-ccflare/core";
+import {
+	BUFFER_SIZES,
+	estimateCostUSD,
+	TIME_CONSTANTS,
+	validateEndpointUrl,
+} from "@better-ccflare/core";
 import { sanitizeProxyHeaders } from "@better-ccflare/http-common";
 import { Logger } from "@better-ccflare/logger";
 import type { Account } from "@better-ccflare/types";
@@ -29,21 +34,32 @@ export class ZaiProvider extends BaseProvider {
 
 		// For API key based authentication, we don't have token refresh
 		// The "refresh_token" field stores the API key
+		// TODO: When we switch to using api_key field, consider if API keys should expire
 		return {
 			accessToken: account.refresh_token,
-			expiresAt: Date.now() + 365 * 24 * 60 * 60 * 1000, // 1 year from now
+			expiresAt: Date.now() + TIME_CONSTANTS.API_KEY_TOKEN_EXPIRY_MS,
 			refreshToken: account.refresh_token,
 		};
 	}
 
 	buildUrl(path: string, query: string, account?: Account): string {
 		const defaultEndpoint = "https://api.z.ai/api/anthropic";
-		const endpoint = account?.custom_endpoint || defaultEndpoint;
 
-		// Validate and sanitize the custom endpoint
-		const sanitizedEndpoint = endpoint.trim().replace(/\/$/, ""); // Remove trailing slash
+		if (account?.custom_endpoint) {
+			try {
+				// Validate and sanitize the custom endpoint
+				const validatedEndpoint = validateEndpointUrl(account.custom_endpoint, "custom_endpoint");
+				return `${validatedEndpoint}${path}${query}`;
+			} catch (error) {
+				log.warn(
+					`Invalid custom endpoint for account ${account.name}: ${account.custom_endpoint}. Using default.`,
+					error,
+				);
+				return `${defaultEndpoint}${path}${query}`;
+			}
+		}
 
-		return `${sanitizedEndpoint}${path}${query}`;
+		return `${defaultEndpoint}${path}${query}`;
 	}
 
 	prepareHeaders(
@@ -60,8 +76,8 @@ export class ZaiProvider extends BaseProvider {
 			newHeaders.set("x-api-key", apiKey);
 		}
 
-		// Remove Authorization header since z.ai uses x-api-key
-		newHeaders.delete("Authorization");
+		// Remove authorization header since z.ai uses x-api-key
+		newHeaders.delete("authorization");
 
 		// Remove host header
 		newHeaders.delete("host");
@@ -201,7 +217,7 @@ export class ZaiProvider extends BaseProvider {
 				let buffered = "";
 				const maxBytes = BUFFER_SIZES.ANTHROPIC_STREAM_CAP_BYTES;
 				const decoder = new TextDecoder();
-				const READ_TIMEOUT_MS = 10000; // 10 second timeout for stream reads
+				const READ_TIMEOUT_MS = TIME_CONSTANTS.STREAM_READ_TIMEOUT_MS;
 				const startTime = Date.now();
 
 				// Track usage from both message_start and message_delta
@@ -237,7 +253,7 @@ export class ZaiProvider extends BaseProvider {
 						}>((_, reject) =>
 							setTimeout(
 								() => reject(new Error("Read operation timeout")),
-								5000,
+								TIME_CONSTANTS.STREAM_OPERATION_TIMEOUT_MS,
 							),
 						);
 
