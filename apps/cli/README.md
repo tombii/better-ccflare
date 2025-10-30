@@ -272,8 +272,8 @@ See [DOCKER.md](DOCKER.md) for detailed Docker documentation.
 export ANTHROPIC_BASE_URL=http://localhost:8080
 
 # Add multiple accounts with priorities
-better-ccflare --add-account primary --mode max --priority 0
-better-ccflare --add-account secondary --mode max --priority 10
+better-ccflare --add-account primary --mode claude-oauth --priority 0
+better-ccflare --add-account secondary --mode claude-oauth --priority 10
 
 # Add OpenAI-compatible provider (like OpenRouter)
 better-ccflare --add-account openrouter --mode openai-compatible --priority 5

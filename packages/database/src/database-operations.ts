@@ -440,7 +440,7 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		sessionId: string,
 		accountName: string,
 		verifier: string,
-		mode: "console" | "max",
+		mode: "console" | "claude-oauth",
 		customEndpoint?: string,
 		ttlMinutes = 10,
 	): void {
@@ -457,7 +457,7 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 	getOAuthSession(sessionId: string): {
 		accountName: string;
 		verifier: string;
-		mode: "console" | "max";
+		mode: "console" | "claude-oauth";
 		customEndpoint?: string;
 	} | null {
 		return this.oauth.getSession(sessionId);

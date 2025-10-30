@@ -115,7 +115,7 @@ describe("Database Migrations - Tier Column Removal", () => {
 			"session-id",
 			"test-account",
 			"test-verifier",
-			"max",
+			"claude-oauth",
 			Date.now(),
 			Date.now() + 3600000,
 			"pro",
@@ -149,7 +149,7 @@ describe("Database Migrations - Tier Column Removal", () => {
 		expect(session.id).toBe("session-id");
 		expect(session.account_name).toBe("test-account");
 		expect(session.verifier).toBe("test-verifier");
-		expect(session.mode).toBe("max");
+		expect(session.mode).toBe("claude-oauth");
 	});
 
 	it("should preserve data integrity during tier column removal", () => {

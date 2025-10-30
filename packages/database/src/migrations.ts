@@ -497,4 +497,16 @@ export function runMigrations(db: Database, dbPath?: string): void {
 
 		log.info("Removed tier column from oauth_sessions table");
 	}
+
+	// Update existing "max" mode values to "claude-oauth" in oauth_sessions table
+	try {
+		const updateCount = db.prepare(
+			`UPDATE oauth_sessions SET mode = 'claude-oauth' WHERE mode = 'max'`
+		).run().changes;
+		if (updateCount > 0) {
+			log.info(`Updated ${updateCount} oauth_sessions records from 'max' to 'claude-oauth'`);
+		}
+	} catch (error) {
+		log.warn(`Error updating oauth_sessions mode values: ${(error as Error).message}`);
+	}
 }

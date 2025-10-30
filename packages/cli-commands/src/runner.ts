@@ -47,13 +47,13 @@ export async function runCli(argv: string[]): Promise<void> {
 				if (!name) {
 					console.error("Error: Account name is required");
 					console.log(
-						"Usage: ccflare-cli add <name> [--mode <max|console|zai|openai-compatible>] [--priority <number>] [--modelMappings <JSON>]",
+						"Usage: ccflare-cli add <name> [--mode <claude-oauth|console|zai|openai-compatible>] [--priority <number>] [--modelMappings <JSON>]",
 					);
 					process.exit(1);
 				}
 
 				// Parse options
-				const mode = values.mode as "max" | "console" | undefined;
+				const mode = values.mode as "claude-oauth" | "console" | undefined;
 				const priorityValue = values.priority
 					? parseInt(values.priority as string)
 					: undefined;

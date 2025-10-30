@@ -143,7 +143,7 @@ describe("CLI Integration Tests", () => {
 		it("should show account mode options", async () => {
 			const result = await runCLI(["--help"]);
 
-			expect(result.stdout).toContain("max");
+			expect(result.stdout).toContain("claude-oauth");
 			expect(result.stdout).toContain("console");
 			expect(result.stdout).toContain("zai");
 			expect(result.stdout).toContain("openai-compatible");
@@ -260,7 +260,7 @@ describe("CLI Integration Tests", () => {
 				"--add-account",
 				"test",
 				"--mode",
-				"max",
+				"claude-oauth",
 				"--priority",
 				"not-a-number",
 			]);

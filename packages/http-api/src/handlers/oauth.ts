@@ -34,8 +34,8 @@ export function createOAuthInitHandler(dbOps: DatabaseOperations) {
 
 			// Validate mode
 			const mode = (validateString(body.mode, "mode", {
-				allowedValues: ["max", "console"] as const,
-			}) || "max") as "max" | "console";
+				allowedValues: ["claude-oauth", "console"] as const,
+			}) || "claude-oauth") as "claude-oauth" | "console";
 
 			// Validate custom endpoint
 			const customEndpoint = validateString(
@@ -169,7 +169,7 @@ export function createOAuthCallbackHandler(dbOps: DatabaseOperations) {
 					authUrl: "", // Not needed for complete
 					pkce: { verifier, challenge: "" }, // Only verifier is needed
 					oauthConfig,
-					mode: savedMode || "max", // Add mode to match BeginResult type
+					mode: savedMode || "claude-oauth", // Add mode to match BeginResult type
 				};
 
 				await oauthFlow.complete(
@@ -188,7 +188,7 @@ export function createOAuthCallbackHandler(dbOps: DatabaseOperations) {
 				return jsonResponse({
 					success: true,
 					message: `Account '${name}' added successfully!`,
-					mode: savedMode === "max" ? "Claude Max" : "Claude Console",
+					mode: savedMode === "claude-oauth" ? "Claude CLI OAuth" : "Claude Console",
 				});
 			} catch (error) {
 				return errorResponse(
