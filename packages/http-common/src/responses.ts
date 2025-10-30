@@ -41,24 +41,30 @@ export function errorResponse(error: unknown): Response {
 	if (typeof console !== "undefined" && console.error) {
 		// Redact sensitive user input from errors before logging
 		if (error && typeof error === "object") {
-			const redact = (obj: any) => {
+			const redact = (obj: unknown): unknown => {
 				if (!obj || typeof obj !== "object") return obj;
-				const clone: any = Array.isArray(obj) ? [...obj] : { ...obj };
-				for (const key of Object.keys(clone)) {
-					// Redact fields named 'value', 'apiKey', or other known sensitive keys
-					if (
-						typeof key === "string" &&
-						(key === "value" ||
-							key === "apiKey" ||
-							key === "password" ||
-							key === "token")
-					) {
-						clone[key] = "[REDACTED]";
-					} else if (typeof clone[key] === "object" && clone[key] !== null) {
-						clone[key] = redact(clone[key]);
+				if (Array.isArray(obj)) {
+					// Handle arrays
+					return obj.map((item) => redact(item));
+				} else {
+					// Handle objects
+					const clone = { ...(obj as Record<string, unknown>) };
+					for (const key of Object.keys(clone)) {
+						// Redact fields named 'value', 'apiKey', or other known sensitive keys
+						if (
+							typeof key === "string" &&
+							(key === "value" ||
+								key === "apiKey" ||
+								key === "password" ||
+								key === "token")
+						) {
+							clone[key] = "[REDACTED]";
+						} else if (typeof clone[key] === "object" && clone[key] !== null) {
+							clone[key] = redact(clone[key]);
+						}
 					}
+					return clone;
 				}
-				return clone;
 			};
 			// If the error has a 'context', redact it
 			const safeError =

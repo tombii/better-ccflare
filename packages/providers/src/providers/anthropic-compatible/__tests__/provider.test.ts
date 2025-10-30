@@ -1,17 +1,17 @@
+import { BaseProvider } from "../../../base";
 import {
-	AnthropicCompatibleProvider,
 	type AnthropicCompatibleConfig,
+	AnthropicCompatibleProvider,
 	createAnthropicCompatibleProvider,
 	createProviderForService,
 	PresetProviders,
 } from "../factory";
-import { BaseProvider } from "../../../base";
 
 describe("AnthropicCompatibleProvider", () => {
 	describe("Basic Configuration", () => {
 		test("should create provider with default config", () => {
 			const provider = new AnthropicCompatibleProvider();
-			
+
 			expect(provider.name).toBe("anthropic-compatible");
 			expect(provider.canHandle("/v1/messages")).toBe(true);
 			expect(provider.supportsOAuth()).toBe(false);
@@ -36,12 +36,12 @@ describe("AnthropicCompatibleProvider", () => {
 
 		test("should update configuration dynamically", () => {
 			const provider = new AnthropicCompatibleProvider();
-			
+
 			provider.updateConfig({
 				name: "updated-provider",
 				baseUrl: "https://updated.api.com",
 			});
-			
+
 			expect(provider.name).toBe("updated-provider");
 			expect(provider.getConfig().baseUrl).toBe("https://updated.api.com");
 		});
@@ -50,33 +50,34 @@ describe("AnthropicCompatibleProvider", () => {
 	describe("Authentication Methods", () => {
 		test("should handle API key authentication", async () => {
 			const provider = new AnthropicCompatibleProvider();
-			
+
 			const mockAccount = {
 				name: "test-account",
 				refresh_token: "test-api-key",
 			} as any;
 
 			const result = await provider.refreshToken(mockAccount, "test-client");
-			
+
 			expect(result.accessToken).toBe("test-api-key");
 			expect(result.refreshToken).toBe("test-api-key");
 		});
 
 		test("should throw error when no API key available", async () => {
 			const provider = new AnthropicCompatibleProvider();
-			
+
 			const mockAccount = {
 				name: "test-account",
 				refresh_token: "",
 			} as any;
 
-			await expect(provider.refreshToken(mockAccount, "test-client"))
-				.rejects.toThrow("No API key available for account test-account");
+			await expect(
+				provider.refreshToken(mockAccount, "test-client"),
+			).rejects.toThrow("No API key available for account test-account");
 		});
 
 		test("should not support OAuth", () => {
 			const provider = new AnthropicCompatibleProvider();
-			
+
 			expect(provider.supportsOAuth()).toBe(false);
 		});
 	});
@@ -88,7 +89,7 @@ describe("AnthropicCompatibleProvider", () => {
 			};
 
 			const provider = new AnthropicCompatibleProvider(config);
-			
+
 			const url = provider.buildUrl("/messages", "?test=value");
 			expect(url).toBe("https://custom.api.com/v1/messages?test=value");
 		});
@@ -99,7 +100,7 @@ describe("AnthropicCompatibleProvider", () => {
 			};
 
 			const provider = new AnthropicCompatibleProvider(config);
-			
+
 			const url = provider.buildUrl("/messages", "?test=value");
 			expect(url).toBe("https://custom.api.com/messages?test=value");
 		});
@@ -112,10 +113,10 @@ describe("AnthropicCompatibleProvider", () => {
 			};
 
 			const provider = new AnthropicCompatibleProvider(config);
-			
+
 			const headers = new Headers();
 			const result = provider.prepareHeaders(headers, "test-api-key");
-			
+
 			expect(result.get("x-api-key")).toBe("test-api-key");
 			expect(result.has("authorization")).toBe(false);
 		});
@@ -126,23 +127,23 @@ describe("AnthropicCompatibleProvider", () => {
 			};
 
 			const provider = new AnthropicCompatibleProvider(config);
-			
+
 			const headers = new Headers();
 			const result = provider.prepareHeaders(headers, "test-token");
-			
+
 			expect(result.get("authorization")).toBe("test-token");
 		});
 
 		test("should remove host and compression headers", () => {
 			const provider = new AnthropicCompatibleProvider();
-			
+
 			const headers = new Headers();
 			headers.set("host", "example.com");
 			headers.set("accept-encoding", "gzip");
 			headers.set("content-encoding", "gzip");
-			
+
 			const result = provider.prepareHeaders(headers, "test-token");
-			
+
 			expect(result.has("host")).toBe(false);
 			expect(result.has("accept-encoding")).toBe(false);
 			expect(result.has("content-encoding")).toBe(false);
@@ -159,7 +160,7 @@ describe("AnthropicCompatibleProvider", () => {
 			};
 
 			const provider = new AnthropicCompatibleProvider(config);
-			
+
 			const mockRequest = new Request("http://example.com", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
@@ -169,9 +170,10 @@ describe("AnthropicCompatibleProvider", () => {
 				}),
 			});
 
-			const transformedRequest = await provider.transformRequestBody(mockRequest);
+			const transformedRequest =
+				await provider.transformRequestBody(mockRequest);
 			const body = await transformedRequest.json();
-			
+
 			expect(body.model).toBe("custom-model-v1");
 		});
 
@@ -183,7 +185,7 @@ describe("AnthropicCompatibleProvider", () => {
 			};
 
 			const provider = new AnthropicCompatibleProvider(config);
-			
+
 			const mockRequest = new Request("http://example.com", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
@@ -193,9 +195,10 @@ describe("AnthropicCompatibleProvider", () => {
 				}),
 			});
 
-			const transformedRequest = await provider.transformRequestBody(mockRequest);
+			const transformedRequest =
+				await provider.transformRequestBody(mockRequest);
 			const body = await transformedRequest.json();
-			
+
 			expect(body.model).toBe("claude-3-opus");
 		});
 
@@ -207,15 +210,16 @@ describe("AnthropicCompatibleProvider", () => {
 			};
 
 			const provider = new AnthropicCompatibleProvider(config);
-			
+
 			const mockRequest = new Request("http://example.com", {
 				method: "POST",
 				headers: { "Content-Type": "text/plain" },
 				body: "plain text",
 			});
 
-			const transformedRequest = await provider.transformRequestBody(mockRequest);
-			
+			const transformedRequest =
+				await provider.transformRequestBody(mockRequest);
+
 			expect(transformedRequest).toBe(mockRequest);
 		});
 	});
@@ -223,7 +227,7 @@ describe("AnthropicCompatibleProvider", () => {
 	describe("Rate Limit Parsing", () => {
 		test("should parse unified rate limit headers", () => {
 			const provider = new AnthropicCompatibleProvider();
-			
+
 			const mockResponse = new Response("{}", {
 				headers: {
 					"anthropic-ratelimit-unified-status": "rate_limited",
@@ -233,7 +237,7 @@ describe("AnthropicCompatibleProvider", () => {
 			});
 
 			const rateLimitInfo = provider.parseRateLimit(mockResponse);
-			
+
 			expect(rateLimitInfo.isRateLimited).toBe(true);
 			expect(rateLimitInfo.resetTime).toBe(1609459200000);
 			expect(rateLimitInfo.statusHeader).toBe("rate_limited");
@@ -242,21 +246,21 @@ describe("AnthropicCompatibleProvider", () => {
 
 		test("should handle 429 status without headers", () => {
 			const provider = new AnthropicCompatibleProvider();
-			
+
 			const mockResponse = new Response("{}", { status: 429 });
 
 			const rateLimitInfo = provider.parseRateLimit(mockResponse);
-			
+
 			expect(rateLimitInfo.isRateLimited).toBe(true);
 		});
 
 		test("should handle non-rate-limited responses", () => {
 			const provider = new AnthropicCompatibleProvider();
-			
+
 			const mockResponse = new Response("{}", { status: 200 });
 
 			const rateLimitInfo = provider.parseRateLimit(mockResponse);
-			
+
 			expect(rateLimitInfo.isRateLimited).toBe(false);
 		});
 	});
@@ -268,7 +272,7 @@ describe("AnthropicCompatibleProvider", () => {
 			};
 
 			const provider = new AnthropicCompatibleProvider(config);
-			
+
 			const streamingResponse = new Response("{}", {
 				headers: { "content-type": "text/event-stream" },
 			});
@@ -282,7 +286,7 @@ describe("AnthropicCompatibleProvider", () => {
 			};
 
 			const provider = new AnthropicCompatibleProvider(config);
-			
+
 			const streamingResponse = new Response("{}", {
 				headers: { "content-type": "text/event-stream" },
 			});
@@ -299,7 +303,7 @@ describe("AnthropicCompatibleProvider", () => {
 			};
 
 			const provider = createAnthropicCompatibleProvider(config);
-			
+
 			expect(provider.name).toBe("factory-provider");
 			expect(provider.getConfig().baseUrl).toBe("https://factory.api.com");
 		});
@@ -310,7 +314,7 @@ describe("AnthropicCompatibleProvider", () => {
 				"https://test.api.com",
 				"x-test-key",
 			);
-			
+
 			expect(provider.name).toBe("anthropic-test-service");
 			expect(provider.getConfig().baseUrl).toBe("https://test.api.com");
 			expect(provider.getConfig().authHeader).toBe("x-test-key");
@@ -334,7 +338,7 @@ describe("AnthropicCompatibleProvider", () => {
 				mappings,
 				"authorization",
 			);
-			
+
 			expect(provider.getConfig().modelMappings).toEqual(mappings);
 			expect(provider.getConfig().authHeader).toBe("authorization");
 		});
@@ -343,7 +347,7 @@ describe("AnthropicCompatibleProvider", () => {
 	describe("Usage Information Extraction", () => {
 		test("should extract usage info from JSON response", async () => {
 			const provider = new AnthropicCompatibleProvider();
-			
+
 			const mockResponse = new Response(
 				JSON.stringify({
 					model: "custom-model",
@@ -359,7 +363,7 @@ describe("AnthropicCompatibleProvider", () => {
 			);
 
 			const usageInfo = await provider.extractUsageInfo(mockResponse);
-			
+
 			expect(usageInfo?.model).toBe("custom-model");
 			expect(usageInfo?.inputTokens).toBe(100);
 			expect(usageInfo?.outputTokens).toBe(200);
@@ -371,7 +375,7 @@ describe("AnthropicCompatibleProvider", () => {
 
 		test("should return null for responses without usage", async () => {
 			const provider = new AnthropicCompatibleProvider();
-			
+
 			const mockResponse = new Response(
 				JSON.stringify({
 					model: "custom-model",
@@ -382,19 +386,19 @@ describe("AnthropicCompatibleProvider", () => {
 			);
 
 			const usageInfo = await provider.extractUsageInfo(mockResponse);
-			
+
 			expect(usageInfo).toBeNull();
 		});
 
 		test("should handle invalid JSON", async () => {
 			const provider = new AnthropicCompatibleProvider();
-			
+
 			const mockResponse = new Response("invalid json", {
 				headers: { "content-type": "application/json" },
 			});
 
 			const usageInfo = await provider.extractUsageInfo(mockResponse);
-			
+
 			expect(usageInfo).toBeNull();
 		});
 	});
@@ -406,7 +410,7 @@ describe("AnthropicCompatibleProvider", () => {
 			};
 
 			const provider = new AnthropicCompatibleProvider(config);
-			
+
 			const mockRequest = new Request("http://example.com", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
@@ -416,9 +420,10 @@ describe("AnthropicCompatibleProvider", () => {
 				}),
 			});
 
-			const transformedRequest = await provider.transformRequestBody(mockRequest);
+			const transformedRequest =
+				await provider.transformRequestBody(mockRequest);
 			const body = await transformedRequest.json();
-			
+
 			expect(body.model).toBe("claude-3-sonnet"); // Should remain unchanged
 		});
 
@@ -427,7 +432,7 @@ describe("AnthropicCompatibleProvider", () => {
 				name: undefined,
 				baseUrl: null as any,
 			});
-			
+
 			expect(provider.name).toBe("anthropic-compatible"); // Default name
 		});
 	});

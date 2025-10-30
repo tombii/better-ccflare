@@ -14,7 +14,6 @@ export type {
 	RetentionSetRequest,
 	StatsResponse,
 	StrategyUpdateRequest,
-	TierUpdateRequest,
 	TimePoint,
 	TokenBreakdown,
 } from "@better-ccflare/types";

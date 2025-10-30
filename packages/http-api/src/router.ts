@@ -13,7 +13,6 @@ import {
 	createAccountRenameHandler,
 	createAccountResumeHandler,
 	createAccountsListHandler,
-	createAccountTierUpdateHandler,
 	createAnthropicCompatibleAccountAddHandler,
 	createMinimaxAccountAddHandler,
 	createOpenAIAccountAddHandler,
@@ -88,10 +87,10 @@ export class APIRouter {
 		const accountAddHandler = createAccountAddHandler(dbOps, config);
 		const zaiAccountAddHandler = createZaiAccountAddHandler(dbOps);
 		const minimaxAccountAddHandler = createMinimaxAccountAddHandler(dbOps);
-		const anthropicCompatibleAccountAddHandler = createAnthropicCompatibleAccountAddHandler(dbOps);
+		const anthropicCompatibleAccountAddHandler =
+			createAnthropicCompatibleAccountAddHandler(dbOps);
 		const openaiAccountAddHandler = createOpenAIAccountAddHandler(dbOps);
 		const _accountRemoveHandler = createAccountRemoveHandler(dbOps);
-		const _accountTierHandler = createAccountTierUpdateHandler(dbOps);
 		const requestsSummaryHandler = createRequestsSummaryHandler(db);
 		const requestsDetailHandler = createRequestsDetailHandler(dbOps);
 		const configHandlers = createConfigHandlers(config, this.context.runtime);
@@ -262,15 +261,6 @@ export class APIRouter {
 		if (path.startsWith("/api/accounts/")) {
 			const parts = path.split("/");
 			const accountId = parts[3];
-
-			// Account tier update
-			if (path.endsWith("/tier") && method === "POST") {
-				const tierHandler = createAccountTierUpdateHandler(this.context.dbOps);
-				return await this.wrapHandler((req) => tierHandler(req, accountId))(
-					req,
-					url,
-				);
-			}
 
 			// Account pause
 			if (path.endsWith("/pause") && method === "POST") {

@@ -63,7 +63,7 @@ better-ccflare is a load balancer proxy that manages multiple OAuth accounts to 
 1. **OAuth Tokens**: Refresh tokens and access tokens for Claude API access
 2. **Request Data**: User prompts and API request payloads
 3. **Response Data**: Claude's responses containing potentially sensitive information
-4. **Account Metadata**: Usage statistics, rate limit information, and tier data
+4. **Account Metadata**: Usage statistics, rate limit information, and priority data
 
 ### Threat Actors
 
@@ -114,7 +114,6 @@ CREATE TABLE IF NOT EXISTS oauth_sessions (
     account_name TEXT NOT NULL,
     verifier TEXT NOT NULL,  // PKCE verifier stored securely
     mode TEXT NOT NULL,
-    tier INTEGER DEFAULT 1,
     created_at INTEGER NOT NULL,
     expires_at INTEGER NOT NULL  // Auto-cleanup of expired sessions
 )

@@ -227,7 +227,7 @@ We use Biome for both linting and formatting to maintain consistent code quality
    interface Account {
      id: string;
      name: string;
-     tier: 1 | 5 | 20;
+     priority: number;
    }
    
    function getAccount(id: string): Account | null {
@@ -461,6 +461,25 @@ Add screenshots for UI changes.
 Closes #(issue number)
 ```
 
+### Claude Code Review
+
+This repository includes an automated Claude code review system that can be triggered in two ways:
+
+1. **Automatic Review**: Runs automatically when a new pull request is opened
+2. **Manual Review**: Can be manually triggered by contributors by commenting `/claude-review` on the PR
+
+The manual trigger is only available to:
+- Repository members and collaborators
+- Users who are organization members
+- The pull request author
+
+Example manual trigger comment:
+```
+/claude-review
+```
+
+This will initiate a Claude code review of your pull request changes.
+
 ### Review Process
 
 1. **Manual Checks**: Run `bun run lint`, `bun run typecheck`, and `bun run format` locally
@@ -507,15 +526,15 @@ packages/core/
    import { describe, it, expect, mock } from 'bun:test';
    import { calculateAccountWeight } from './utils';
    
-   describe('calculateAccountWeight', () => {
-     it('should return 1 for pro tier accounts', () => {
-       const account = { tier: 1, name: 'pro-account' };
-       expect(calculateAccountWeight(account)).toBe(1);
+   describe('calculateAccountPriority', () => {
+     it('should return priority 0 for primary accounts', () => {
+       const account = { priority: 0, name: 'primary-account' };
+       expect(calculateAccountPriority(account)).toBe(0);
      });
-     
-     it('should return 5 for max 5x tier accounts', () => {
-       const account = { tier: 5, name: 'max-5x-account' };
-       expect(calculateAccountWeight(account)).toBe(5);
+
+     it('should return priority 50 for medium priority accounts', () => {
+       const account = { priority: 50, name: 'medium-priority-account' };
+       expect(calculateAccountPriority(account)).toBe(50);
      });
    });
    ```
@@ -706,7 +725,7 @@ The CLI functionality provides explicit commands for all operations. Use `bun ru
 # or build and run with: bun run better-ccflare
 
 # Add a new account
-bun run cli --add-account <name> --mode <max|console|zai|openai-compatible> --tier <1|5|20> --priority <number>
+bun run cli --add-account <name> --mode <max|console|zai|openai-compatible> --priority <number>
 
 # List all accounts
 bun run cli --list

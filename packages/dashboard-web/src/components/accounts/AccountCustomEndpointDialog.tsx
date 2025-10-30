@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "../ui/button";
 import {
 	Dialog,
@@ -37,6 +37,17 @@ export function AccountCustomEndpointDialog({
 	const [customEndpoint, setCustomEndpoint] = useState("");
 	const [error, setError] = useState<string | null>(null);
 
+	// Initialize custom endpoint when dialog opens or account changes
+	useEffect(() => {
+		if (isOpen && account) {
+			setCustomEndpoint(account.customEndpoint || "");
+		} else if (!isOpen) {
+			// Reset when dialog closes
+			setCustomEndpoint("");
+			setError(null);
+		}
+	}, [isOpen, account]);
+
 	const validateEndpoint = (endpoint: string): boolean => {
 		if (!endpoint) return true; // Empty is fine (use default)
 		try {
@@ -69,23 +80,13 @@ export function AccountCustomEndpointDialog({
 		}
 	};
 
-	const handleOpenChange = (open: boolean) => {
-		if (!open) {
-			setCustomEndpoint("");
-			setError(null);
-		} else if (account) {
-			setCustomEndpoint(account.customEndpoint || "");
-		}
-		onOpenChange(open);
-	};
-
 	const defaultPlaceholder =
 		account?.provider === "zai"
 			? "https://api.z.ai/api/anthropic"
 			: "https://api.anthropic.com";
 
 	return (
-		<Dialog open={isOpen} onOpenChange={handleOpenChange}>
+		<Dialog open={isOpen} onOpenChange={onOpenChange}>
 			<DialogContent className="sm:max-w-[425px]">
 				<DialogHeader>
 					<DialogTitle>Custom Endpoint</DialogTitle>

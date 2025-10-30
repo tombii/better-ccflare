@@ -1,10 +1,10 @@
 import { Logger } from "@better-ccflare/logger";
 import {
+	type AnthropicCompatibleConfig,
 	BaseAnthropicCompatibleProvider,
-	type AnthropicCompatibleConfig
 } from "../base-anthropic-compatible";
 
-const log = new Logger("AnthropicCompatibleProvider");
+const _log = new Logger("AnthropicCompatibleProvider");
 
 // Re-export the config type
 export type { AnthropicCompatibleConfig };
@@ -12,7 +12,8 @@ export type { AnthropicCompatibleConfig };
 // Default configuration
 const DEFAULT_CONFIG: Partial<AnthropicCompatibleConfig> = {
 	name: "anthropic-compatible",
-	baseUrl: process.env.ANTHROPIC_COMPATIBLE_BASE_URL || "https://api.anthropic.com",
+	baseUrl:
+		process.env.ANTHROPIC_COMPATIBLE_BASE_URL || "https://api.anthropic.com",
 	authHeader: "x-api-key",
 	authType: "direct",
 	supportsStreaming: true,

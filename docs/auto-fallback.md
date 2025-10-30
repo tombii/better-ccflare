@@ -25,7 +25,7 @@ The auto-fallback feature provides intelligent automatic account management by:
 ### Key Benefits
 
 1. **Cost Optimization**: Automatically use free or lower-cost accounts when available
-2. **Performance Maximization**: Ensure highest-tier accounts are used whenever possible
+2. **Performance Maximization**: Ensure highest-priority accounts are used whenever possible
 3. **Reduced Manual Intervention**: No need to manually switch accounts when rate limits reset
 4. **Intelligent Load Balancing**: Accounts are used according to your priority preferences
 
@@ -86,9 +86,9 @@ Auto-fallback integrates seamlessly with the existing session-based load balanci
 
 ```bash
 # Add accounts with different priorities
-better-ccflare --add-account primary --mode max --tier 20 --priority 0
-better-ccflare --add-account secondary --mode max --tier 20 --priority 10
-better-ccflare --add-account backup --mode console --tier 5 --priority 50
+better-ccflare --add-account primary --mode max --priority 0
+better-ccflare --add-account secondary --mode max --priority 10
+better-ccflare --add-account backup --mode console --priority 50
 ```
 
 #### 2. Enable Auto-Fallback on Preferred Accounts
@@ -129,9 +129,9 @@ API_BASE="http://localhost:8080/api"
 echo "Setting up auto-fallback configuration..."
 
 # Add accounts (if they don't exist)
-better-ccflare --add-account primary --mode max --tier 20 --priority 0 || true
-better-ccflare --add-account secondary --mode max --tier 20 --priority 10 || true
-better-ccflare --add-account backup --mode console --tier 5 --priority 50 || true
+better-ccflare --add-account primary --mode max --priority 0 || true
+better-ccflare --add-account secondary --mode max --priority 10 || true
+better-ccflare --add-account backup --mode console --priority 50 || true
 
 # Get account IDs
 PRIMARY_ID=$(curl -s "$API_BASE/accounts" | jq -r '.[] | select(.name=="primary") | .id')
@@ -155,41 +155,41 @@ echo "- Backup (priority 50): emergency use"
 
 ### Example 1: Cost Optimization
 
-Setup to minimize costs by preferring free tier accounts:
+Setup to minimize costs by preferring free accounts:
 
 ```bash
-# Free tier account (highest priority, auto-fallback enabled)
-better-ccflare --add-account free-tier --mode console --tier 1 --priority 0
+# High priority account (auto-fallback enabled)
+better-ccflare --add-account high-priority --mode console --priority 0
 
-# Paid accounts (lower priorities)
-better-ccflare --add-account paid-basic --mode max --tier 5 --priority 10
-better-ccflare --add-account paid-premium --mode max --tier 20 --priority 20
+# Lower priority accounts
+better-ccflare --add-account medium-priority --mode max --priority 10
+better-ccflare --add-account low-priority --mode max --priority 20
 
-# Enable auto-fallback on free tier
-ACCOUNT_ID=$(curl -s http://localhost:8080/api/accounts | jq -r '.[] | select(.name=="free-tier") | .id')
+# Enable auto-fallback on high priority account
+ACCOUNT_ID=$(curl -s http://localhost:8080/api/accounts | jq -r '.[] | select(.name=="high-priority") | .id')
 curl -X POST http://localhost:8080/api/accounts/$ACCOUNT_ID/auto-fallback \
   -H "Content-Type: application/json" \
   -d '{"enabled": 1}'
 ```
 
 **Behavior:**
-- Free tier account is used whenever available
-- Automatically switches back to free tier when its rate limit resets
-- Paid accounts only used when free tier is rate limited
+- High priority account is used whenever available
+- Automatically switches back to high priority account when its rate limit resets
+- Lower priority accounts only used when high priority account is rate limited
 
 ### Example 2: Performance Maximization
 
 Setup to prioritize highest performance accounts:
 
 ```bash
-# Premium account (highest performance, priority 0)
-better-ccflare --add-account premium --mode max --tier 20 --priority 0
+# High priority account (highest performance, priority 0)
+better-ccflare --add-account premium --mode max --priority 0
 
-# Standard account (good performance, priority 10)
-better-ccflare --add-account standard --mode max --tier 20 --priority 10
+# Medium priority account (good performance, priority 10)
+better-ccflare --add-account standard --mode max --priority 10
 
-# Basic account (lower performance, priority 20)
-better-ccflare --add-account basic --mode console --tier 5 --priority 20
+# Low priority account (lower performance, priority 20)
+better-ccflare --add-account basic --mode console --priority 20
 
 # Enable auto-fallback on premium account
 ACCOUNT_ID=$(curl -s http://localhost:8080/api/accounts | jq -r '.[] | select(.name=="premium") | .id')
@@ -208,14 +208,14 @@ curl -X POST http://localhost:8080/api/accounts/$ACCOUNT_ID/auto-fallback \
 Setup for different usage patterns during business vs after hours:
 
 ```bash
-# Business hours account (priority 0)
-better-ccflare --add-account business --mode max --tier 20 --priority 0
+# High priority account (priority 0)
+better-ccflare --add-account business --mode max --priority 0
 
-# After hours account (priority 10)
-better-ccflare --add-account after-hours --mode max --tier 20 --priority 10
+# Medium priority account (priority 10)
+better-ccflare --add-account after-hours --mode max --priority 10
 
-# Weekend account (priority 20)
-better-ccflare --add-account weekend --mode console --tier 5 --priority 20
+# Low priority account (priority 20)
+better-ccflare --add-account weekend --mode console --priority 20
 
 # Enable auto-fallback on business account
 ACCOUNT_ID=$(curl -s http://localhost:8080/api/accounts | jq -r '.[] | select(.name=="business") | .id')
@@ -253,7 +253,7 @@ watch -n 30 'curl -s http://localhost:8080/api/accounts | jq ".[] | select(.auto
 
 - **Enable on High-Value Accounts**: Only enable auto-fallback on accounts you want to prioritize
 - **Consider Rate Limits**: Accounts with lower rate limits may trigger frequent fallbacks
-- **Monitor Costs**: Auto-fallback may increase usage of higher-tier accounts
+- **Monitor Costs**: Auto-fallback may increase usage of higher-priority accounts
 
 ### 4. Safety Considerations
 
@@ -301,7 +301,7 @@ curl -s http://localhost:8080/api/accounts | jq '.[] | {name, priority}'
 - Auto-fallback not preventing rate limits
 
 **Solutions:**
-- Check account tiers and rate limits
+- Check account priorities and rate limits
 - Distribute load more evenly across accounts
 - Consider disabling auto-fallback on frequently rate-limited accounts
 
@@ -435,7 +435,7 @@ done
 The auto-fallback feature provides intelligent account management that automatically optimizes your Claude API usage according to your priorities. By carefully configuring account priorities and enabling auto-fallback on preferred accounts, you can achieve:
 
 - **Cost Optimization** through automatic use of preferred accounts
-- **Performance Maximization** by prioritizing higher-tier accounts
+- **Performance Maximization** by prioritizing higher-priority accounts
 - **Reduced Manual Intervention** with automatic recovery from rate limits
 - **Intelligent Load Balancing** that respects your business requirements
 

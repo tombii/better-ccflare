@@ -1,5 +1,5 @@
 import { Config } from "@better-ccflare/config";
-import { patterns, validateNumber, validateString } from "@better-ccflare/core";
+import { patterns, validateString } from "@better-ccflare/core";
 import type { DatabaseOperations } from "@better-ccflare/database";
 import {
 	BadRequest,
@@ -9,7 +9,6 @@ import {
 } from "@better-ccflare/http-common";
 import { Logger } from "@better-ccflare/logger";
 import { createOAuthFlow } from "@better-ccflare/oauth-flow";
-import type { AccountTier } from "@better-ccflare/types";
 
 const log = new Logger("OAuthHandler");
 
@@ -37,12 +36,6 @@ export function createOAuthInitHandler(dbOps: DatabaseOperations) {
 			const mode = (validateString(body.mode, "mode", {
 				allowedValues: ["max", "console"] as const,
 			}) || "max") as "max" | "console";
-
-			// Validate tier
-			const tier =
-				validateNumber(body.tier, "tier", {
-					allowedValues: [1, 5, 20] as const,
-				}) || 1;
 
 			// Validate custom endpoint
 			const customEndpoint = validateString(
@@ -75,13 +68,12 @@ export function createOAuthInitHandler(dbOps: DatabaseOperations) {
 					mode,
 				});
 
-				// Store tier and custom endpoint in session for later use
+				// Store custom endpoint in session for later use
 				dbOps.createOAuthSession(
 					flowResult.sessionId,
 					name,
 					flowResult.pkce.verifier,
 					mode,
-					tier,
 					customEndpoint,
 					10, // 10 minute TTL
 				);
@@ -152,7 +144,6 @@ export function createOAuthCallbackHandler(dbOps: DatabaseOperations) {
 				accountName: name,
 				verifier,
 				mode: savedMode,
-				tier: savedTier,
 				customEndpoint: savedCustomEndpoint,
 			} = oauthSession;
 
@@ -185,7 +176,6 @@ export function createOAuthCallbackHandler(dbOps: DatabaseOperations) {
 					{
 						sessionId,
 						code,
-						tier: savedTier as AccountTier,
 						name,
 						customEndpoint: savedCustomEndpoint,
 					},
@@ -199,7 +189,6 @@ export function createOAuthCallbackHandler(dbOps: DatabaseOperations) {
 					success: true,
 					message: `Account '${name}' added successfully!`,
 					mode: savedMode === "max" ? "Claude Max" : "Claude Console",
-					tier: savedTier,
 				});
 			} catch (error) {
 				return errorResponse(

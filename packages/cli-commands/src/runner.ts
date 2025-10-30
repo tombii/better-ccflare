@@ -33,8 +33,8 @@ export async function runCli(argv: string[]): Promise<void> {
 			strict: false,
 			options: {
 				mode: { type: "string" },
-				tier: { type: "string" },
 				priority: { type: "string" },
+				modelMappings: { type: "string" },
 				force: { type: "boolean" },
 			},
 		});
@@ -47,20 +47,13 @@ export async function runCli(argv: string[]): Promise<void> {
 				if (!name) {
 					console.error("Error: Account name is required");
 					console.log(
-						"Usage: ccflare-cli add <name> [--mode <max|console|zai|openai-compatible>] [--tier <1|5|20>] [--priority <number>]",
+						"Usage: ccflare-cli add <name> [--mode <max|console|zai|openai-compatible>] [--priority <number>] [--modelMappings <JSON>]",
 					);
 					process.exit(1);
 				}
 
 				// Parse options
 				const mode = values.mode as "max" | "console" | undefined;
-				const tierValue = values.tier
-					? parseInt(values.tier as string)
-					: undefined;
-				const tier =
-					tierValue === 1 || tierValue === 5 || tierValue === 20
-						? tierValue
-						: undefined;
 				const priorityValue = values.priority
 					? parseInt(values.priority as string)
 					: undefined;
@@ -68,8 +61,25 @@ export async function runCli(argv: string[]): Promise<void> {
 					typeof priorityValue === "number" && !Number.isNaN(priorityValue)
 						? priorityValue
 						: undefined;
+				const modelMappingsValue = values.modelMappings as string | undefined;
+				let modelMappings: Record<string, string> | undefined;
+				if (modelMappingsValue) {
+					try {
+						modelMappings = JSON.parse(modelMappingsValue);
+					} catch (error) {
+						console.error(
+							`Error parsing model mappings: ${error instanceof Error ? error.message : String(error)}`,
+						);
+						process.exit(1);
+					}
+				}
 
-				await addAccount(dbOps, config, { name, mode, tier, priority });
+				await addAccount(dbOps, config, {
+					name,
+					mode,
+					priority,
+					modelMappings,
+				});
 				break;
 			}
 
@@ -86,21 +96,19 @@ export async function runCli(argv: string[]): Promise<void> {
 					console.log(
 						"Name".padEnd(20) +
 							"Type".padEnd(10) +
-							"Tier".padEnd(6) +
 							"Priority".padEnd(9) +
 							"Requests".padEnd(12) +
 							"Token".padEnd(10) +
 							"Status".padEnd(20) +
 							"Session",
 					);
-					console.log("─".repeat(100));
+					console.log("─".repeat(94));
 
 					// Rows
 					for (const account of accounts) {
 						console.log(
 							account.name.padEnd(20) +
 								account.provider.padEnd(10) +
-								account.tierDisplay.padEnd(6) +
 								account.priority.toString().padEnd(9) +
 								`${account.requestCount}/${account.totalRequests}`.padEnd(12) +
 								account.tokenStatus.padEnd(10) +

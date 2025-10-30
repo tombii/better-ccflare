@@ -1,4 +1,7 @@
-import { AnthropicCompatibleProvider, type AnthropicCompatibleConfig } from "./provider";
+import {
+	type AnthropicCompatibleConfig,
+	AnthropicCompatibleProvider,
+} from "./provider";
 
 /**
  * Factory function to create a new AnthropicCompatibleProvider with proper configuration
@@ -37,13 +40,21 @@ export const PresetProviders = {
 	 * Zai-compatible provider (based on z.ai API)
 	 */
 	createZaiCompatible: () =>
-		createProviderForService("zai", "https://api.z.ai/api/anthropic", "x-api-key"),
+		createProviderForService(
+			"zai",
+			"https://api.z.ai/api/anthropic",
+			"x-api-key",
+		),
 
 	/**
 	 * Minimax-compatible provider (based on MiniMax API) - uses x-api-key now
 	 */
 	createMinimaxCompatible: () =>
-		createProviderForService("minimax", "https://api.minimax.io/anthropic", "x-api-key"),
+		createProviderForService(
+			"minimax",
+			"https://api.minimax.io/anthropic",
+			"x-api-key",
+		),
 
 	/**
 	 * Generic Anthropic-compatible provider with model mapping
@@ -65,4 +76,7 @@ export const PresetProviders = {
 };
 
 // Re-export the main class and config for convenience
-export { AnthropicCompatibleProvider, type AnthropicCompatibleConfig } from "./provider";
+export {
+	type AnthropicCompatibleConfig,
+	AnthropicCompatibleProvider,
+} from "./provider";

@@ -84,7 +84,6 @@ export const LIMITS = {
 	CONSOLE_COLUMN_PADDING: {
 		NAME: 20,
 		TYPE: 10,
-		TIER: 6,
 		REQUESTS: 12,
 		TOKEN: 10,
 		STATUS: 20,

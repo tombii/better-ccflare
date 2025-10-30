@@ -73,8 +73,13 @@ export function AccountsTab() {
 
 	const handleAddAccount = async (params: {
 		name: string;
-		mode: "max" | "console" | "zai" | "minimax" | "anthropic-compatible" | "openai-compatible";
-		tier: number;
+		mode:
+			| "max"
+			| "console"
+			| "zai"
+			| "minimax"
+			| "anthropic-compatible"
+			| "openai-compatible";
 		priority: number;
 		customEndpoint?: string;
 	}) => {
@@ -106,7 +111,6 @@ export function AccountsTab() {
 	const handleAddZaiAccount = async (params: {
 		name: string;
 		apiKey: string;
-		tier: number;
 		priority: number;
 		customEndpoint?: string;
 	}) => {
@@ -124,7 +128,6 @@ export function AccountsTab() {
 	const handleAddOpenAIAccount = async (params: {
 		name: string;
 		apiKey: string;
-		tier: number;
 		priority: number;
 		customEndpoint: string;
 		modelMappings?: { [key: string]: string };
@@ -161,6 +164,7 @@ export function AccountsTab() {
 		apiKey: string;
 		priority: number;
 		customEndpoint?: string;
+		modelMappings?: { [key: string]: string };
 	}) => {
 		try {
 			await api.addAnthropicCompatibleAccount(params);
@@ -349,7 +353,9 @@ export function AccountsTab() {
 							onCompleteAccount={handleCompleteAccount}
 							onAddZaiAccount={handleAddZaiAccount}
 							onAddMinimaxAccount={handleAddMinimaxAccount}
-							onAddAnthropicCompatibleAccount={handleAddAnthropicCompatibleAccount}
+							onAddAnthropicCompatibleAccount={
+								handleAddAnthropicCompatibleAccount
+							}
 							onAddOpenAIAccount={handleAddOpenAIAccount}
 							onCancel={() => {
 								setAdding(false);

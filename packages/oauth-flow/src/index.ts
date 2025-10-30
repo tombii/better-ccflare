@@ -7,7 +7,6 @@ import {
 	type OAuthTokens,
 	type PKCEChallenge,
 } from "@better-ccflare/providers";
-import type { AccountTier } from "@better-ccflare/types";
 
 export interface BeginOptions {
 	name: string;
@@ -26,7 +25,6 @@ export interface BeginResult {
 export interface CompleteOptions {
 	sessionId: string;
 	code: string;
-	tier?: AccountTier;
 	name: string; // Required to properly create the account
 	priority?: number;
 	customEndpoint?: string; // Custom API endpoint
@@ -35,7 +33,6 @@ export interface CompleteOptions {
 export interface AccountCreated {
 	id: string;
 	name: string;
-	tier: number;
 	provider: "anthropic";
 	authType: "oauth" | "api_key"; // Track authentication type
 }
@@ -137,7 +134,7 @@ export class OAuthFlow {
 		opts: CompleteOptions,
 		flowData: BeginResult,
 	): Promise<AccountCreated> {
-		const { code, tier = 1, name, priority = 0, customEndpoint } = opts;
+		const { code, name, priority = 0, customEndpoint } = opts;
 
 		// Get OAuth provider
 		const oauthProvider = getOAuthProvider("anthropic");
@@ -161,7 +158,6 @@ export class OAuthFlow {
 				accountId,
 				name,
 				apiKey,
-				tier,
 				priority,
 				customEndpoint,
 			);
@@ -172,7 +168,6 @@ export class OAuthFlow {
 			accountId,
 			name,
 			tokens,
-			tier,
 			priority,
 			customEndpoint,
 		);
@@ -226,7 +221,6 @@ export class OAuthFlow {
 		id: string,
 		name: string,
 		tokens: OAuthTokens,
-		tier: AccountTier,
 		priority: number,
 		customEndpoint?: string,
 	): AccountCreated {
@@ -236,8 +230,8 @@ export class OAuthFlow {
 			`
 			INSERT INTO accounts (
 				id, name, provider, api_key, refresh_token, access_token, expires_at,
-				created_at, request_count, total_requests, account_tier, priority, custom_endpoint
-			) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, 0, 0, ?, ?, ?)
+				created_at, request_count, total_requests, priority, custom_endpoint
+			) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, 0, 0, ?, ?)
 			`,
 			[
 				id,
@@ -247,7 +241,6 @@ export class OAuthFlow {
 				tokens.accessToken,
 				tokens.expiresAt,
 				Date.now(),
-				tier,
 				priority,
 				customEndpoint || null,
 			],
@@ -256,7 +249,6 @@ export class OAuthFlow {
 		return {
 			id,
 			name,
-			tier,
 			provider: "anthropic",
 			authType: "oauth",
 		};
@@ -280,7 +272,6 @@ export class OAuthFlow {
 		id: string,
 		name: string,
 		apiKey: string,
-		tier: AccountTier,
 		priority: number,
 		customEndpoint?: string,
 	): AccountCreated {
@@ -290,8 +281,8 @@ export class OAuthFlow {
 			`
 			INSERT INTO accounts (
 				id, name, provider, api_key, refresh_token, access_token, expires_at,
-				created_at, request_count, total_requests, account_tier, priority, custom_endpoint
-			) VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, 0, 0, ?, ?, ?)
+				created_at, request_count, total_requests, priority, custom_endpoint
+			) VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, 0, 0, ?, ?)
 			`,
 			[
 				id,
@@ -299,7 +290,6 @@ export class OAuthFlow {
 				"anthropic",
 				apiKey,
 				Date.now(),
-				tier,
 				priority,
 				customEndpoint || null,
 			],
@@ -308,7 +298,6 @@ export class OAuthFlow {
 		return {
 			id,
 			name,
-			tier,
 			provider: "anthropic",
 			authType: "api_key",
 		};

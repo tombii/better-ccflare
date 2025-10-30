@@ -113,7 +113,3 @@ export interface ConfigResponse {
 export interface StrategyUpdateRequest {
 	strategy: string;
 }
-
-export interface TierUpdateRequest {
-	tier: number;
-}
