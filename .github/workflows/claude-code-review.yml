@@ -3,22 +3,9 @@ name: Claude Code Review
 on:
   pull_request:
     types: [opened]
-  issue_comment:
-    types: [created]
-    # Optional: Only run on specific file changes
-    # paths:
-    #   - "src/**/*.ts"
-    #   - "src/**/*.tsx"
-    #   - "src/**/*.js"
-    #   - "src/**/*.jsx"
 
 jobs:
   claude-review:
-    if: |
-      (github.event_name == 'pull_request' && github.event.action == 'opened') ||
-      (github.event_name == 'issue_comment' &&
-       contains(github.event.comment.body, '/claude-review') &&
-       (github.event.comment.user.type == 'User' || github.event.comment.user.type == 'OrganizationMember'))
 
     runs-on: ubuntu-latest
     permissions:
@@ -28,32 +15,6 @@ jobs:
       id-token: write
 
     steps:
-      - name: Install jq
-        if: github.event_name == 'issue_comment'
-        run: sudo apt-get update && sudo apt-get install -y jq
-
-      - name: Check if user has write permissions (for issue comments)
-        id: check_permissions
-        if: github.event_name == 'issue_comment'
-        run: |
-          # Check if the commenting user has write permissions to the repository
-          response=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/${{ github.repository }}/collaborators/${{ github.event.comment.user.login }}/permission")
-          permission=$(echo "$response" | jq -r '.permission')
-          if [[ "$permission" == "admin" || "$permission" == "write" ]]; then
-            echo "has_permission=true" >> $GITHUB_OUTPUT
-          else
-            echo "has_permission=false" >> $GITHUB_OUTPUT
-          fi
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Verify user permissions for comment-triggered reviews
-        if: github.event_name == 'issue_comment' && steps.check_permissions.outputs.has_permission == 'false'
-        run: |
-          echo "User does not have write permissions. Skipping Claude Code Review."
-          exit 1
-
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
@@ -66,7 +27,7 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: |
             REPO: ${{ github.repository }}
-            PR NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
 
             Please review this pull request and provide feedback on:
             - Code quality and best practices
