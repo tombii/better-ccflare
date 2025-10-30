@@ -70,7 +70,6 @@ interface ParsedArgs {
 	stats: boolean;
 	addAccount: string | null;
 	mode: "max" | "console" | "zai" | "minimax" | "anthropic-compatible" | "openai-compatible" | null;
-	tier: 1 | 5 | 20 | null;
 	priority: number | null;
 	list: boolean;
 	remove: string | null;
@@ -379,7 +378,6 @@ function parseArgs(args: string[]): ParsedArgs {
 		stats: false,
 		addAccount: null,
 		mode: null,
-		tier: null,
 		priority: null,
 		list: false,
 		remove: null,
@@ -472,20 +470,6 @@ function parseArgs(args: string[]): ParsedArgs {
 				if (!validModes.includes(modeValue)) {
 					console.error(`❌ Invalid mode: ${modeValue}`);
 					console.error(`Valid modes: ${validModes.join(", ")}`);
-					fastExit(1);
-				}
-				break;
-			}
-			case "--tier": {
-				if (i + 1 >= args.length || args[i + 1].startsWith("--")) {
-					console.error("❌ --tier requires a value");
-					fastExit(1);
-				}
-				const tierValue = parseInt(args[++i], 10) as 1 | 5 | 20;
-				parsed.tier = tierValue;
-				if (Number.isNaN(tierValue) || ![1, 5, 20].includes(tierValue)) {
-					console.error(`❌ Invalid tier: ${args[i]}`);
-					console.error("Tier must be 1, 5, or 20");
 					fastExit(1);
 				}
 				break;
@@ -765,7 +749,6 @@ Examples:
 				name: acc.name,
 				provider: acc.provider,
 				mode: acc.mode,
-				tier: acc.tier,
 				priority: acc.priority,
 				requestCount: acc.requestCount,
 				paused: acc.paused,
@@ -779,11 +762,10 @@ Examples:
 
 	if (parsed.addAccount) {
 		// Check if we're in interactive mode or using CLI flags
-		if (parsed.mode || parsed.tier || parsed.priority) {
+		if (parsed.mode || parsed.priority) {
 			// CLI mode - use flags provided
 			try {
 				const mode = parsed.mode || "max";
-				const tier = parsed.tier || 1;
 				const priority = parsed.priority || 0;
 
 				// For API key accounts, we need to get the API key from environment or user
@@ -809,7 +791,6 @@ Examples:
 				await addAccount(dbOps, new Config(), {
 					name: parsed.addAccount,
 					mode,
-					tier,
 					priority,
 					adapter: {
 						select: async <T extends string | number>(
@@ -833,13 +814,12 @@ Examples:
 			);
 			console.error("Please provide the required flags:");
 			console.error("  --mode <max|console|zai|minimax|anthropic-compatible|openai-compatible>");
-			console.error("  --tier <1|5|20>");
 			console.error("  --priority <number>");
 			console.error("\nFor API key accounts, also set:");
 			console.error("  export BETTER_CCFLARE_API_KEY_<ACCOUNT_NAME>");
 			console.error("\nExample:");
 			console.error(
-				"  better-ccflare --add-account work --mode max --tier 1 --priority 0",
+				"  better-ccflare --add-account work --mode max --priority 0",
 			);
 			console.error("  export BETTER_CCFLARE_API_KEY_WORK=your-api-key-here");
 			await exitGracefully(1);
@@ -855,7 +835,7 @@ Examples:
 			console.log("\nAccounts:");
 			accounts.forEach((acc) => {
 				console.log(
-					`  - ${acc.name} (${acc.mode} mode, tier ${acc.tier}, priority ${acc.priority})`,
+					`  - ${acc.name} (${acc.mode} mode, priority ${acc.priority})`,
 				);
 			});
 		}

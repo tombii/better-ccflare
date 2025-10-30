@@ -22,17 +22,6 @@ export const ACCOUNT_MODES = {
 export type AccountMode = (typeof ACCOUNT_MODES)[keyof typeof ACCOUNT_MODES];
 
 /**
- * Account tiers for weighted load balancing
- */
-export const ACCOUNT_TIERS = {
-	TIER_1: 1,
-	TIER_5: 5,
-	TIER_20: 20,
-} as const;
-
-export type AccountTier = (typeof ACCOUNT_TIERS)[keyof typeof ACCOUNT_TIERS];
-
-/**
  * Providers that support OAuth authentication
  */
 export const OAUTH_PROVIDERS: ReadonlySet<ProviderName> = new Set([

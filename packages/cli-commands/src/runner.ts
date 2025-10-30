@@ -69,7 +69,7 @@ export async function runCli(argv: string[]): Promise<void> {
 						? priorityValue
 						: undefined;
 
-				await addAccount(dbOps, config, { name, mode, tier, priority });
+				await addAccount(dbOps, config, { name, mode, priority });
 				break;
 			}
 
@@ -86,21 +86,19 @@ export async function runCli(argv: string[]): Promise<void> {
 					console.log(
 						"Name".padEnd(20) +
 							"Type".padEnd(10) +
-							"Tier".padEnd(6) +
 							"Priority".padEnd(9) +
 							"Requests".padEnd(12) +
 							"Token".padEnd(10) +
 							"Status".padEnd(20) +
 							"Session",
 					);
-					console.log("─".repeat(100));
+					console.log("─".repeat(94));
 
 					// Rows
 					for (const account of accounts) {
 						console.log(
 							account.name.padEnd(20) +
 								account.provider.padEnd(10) +
-								account.tierDisplay.padEnd(6) +
 								account.priority.toString().padEnd(9) +
 								`${account.requestCount}/${account.totalRequests}`.padEnd(12) +
 								account.tokenStatus.padEnd(10) +

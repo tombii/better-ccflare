@@ -12,7 +12,7 @@ import {
 	getOAuthProvider,
 	type TokenRefreshResult as TokenResult,
 } from "@better-ccflare/providers";
-import type { AccountListItem, AccountTier } from "@better-ccflare/types";
+import type { AccountListItem } from "@better-ccflare/types";
 import {
 	type PromptAdapter,
 	promptAccountRemovalConfirmation,
@@ -30,7 +30,6 @@ export interface AddAccountOptions {
 		| "minimax"
 		| "anthropic-compatible"
 		| "openai-compatible";
-	tier?: 1 | 5 | 20;
 	priority?: number;
 	customEndpoint?: string;
 	modelMappings?: { [key: string]: string };
@@ -52,7 +51,6 @@ async function createConsoleAccountWithApiKey(
 	dbOps: DatabaseOperations,
 	name: string,
 	apiKey: string,
-	tier: number,
 	priority: number,
 	customEndpoint?: string,
 ): Promise<void> {
@@ -66,7 +64,7 @@ async function createConsoleAccountWithApiKey(
 	dbOps.getDatabase().run(
 		`INSERT INTO accounts (
 			id, name, provider, api_key, refresh_token, access_token,
-			expires_at, created_at, account_tier, request_count, total_requests, priority, custom_endpoint
+			expires_at, created_at, request_count, total_requests, priority, custom_endpoint
 		) VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, 0, 0, ?, ?)`,
 		[
 			accountId,
@@ -74,7 +72,6 @@ async function createConsoleAccountWithApiKey(
 			"anthropic",
 			validatedApiKey,
 			now,
-			tier,
 			validatedPriority,
 			customEndpoint || null,
 		],
@@ -82,7 +79,6 @@ async function createConsoleAccountWithApiKey(
 
 	console.log(`\nAccount '${name}' added successfully!`);
 	console.log("Type: Claude Console (API key)");
-	console.log(`Tier: ${tier}x`);
 }
 
 /**
@@ -179,7 +175,6 @@ async function createZaiAccount(
 	dbOps: DatabaseOperations,
 	name: string,
 	apiKey: string,
-	tier: number,
 	priority: number,
 ): Promise<void> {
 	const accountId = crypto.randomUUID();
@@ -192,8 +187,8 @@ async function createZaiAccount(
 	dbOps.getDatabase().run(
 		`INSERT INTO accounts (
 			id, name, provider, api_key, refresh_token, access_token,
-			expires_at, created_at, account_tier, request_count, total_requests, priority, custom_endpoint
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			expires_at, created_at, request_count, total_requests, priority, custom_endpoint
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		[
 			accountId,
 			name,
@@ -203,7 +198,6 @@ async function createZaiAccount(
 			validatedApiKey, // Store API key as access_token
 			now + 365 * 24 * 60 * 60 * 1000, // 1 year expiry
 			now,
-			tier,
 			0,
 			0,
 			validatedPriority,
@@ -213,7 +207,6 @@ async function createZaiAccount(
 
 	console.log(`\nAccount '${name}' added successfully!`);
 	console.log("Type: z.ai (API key)");
-	console.log(`Tier: ${tier}x`);
 }
 
 /**
@@ -347,7 +340,6 @@ export async function addAccount(
 	const {
 		name,
 		mode: providedMode,
-		tier: providedTier,
 		priority: providedPriority,
 		customEndpoint,
 		modelMappings,

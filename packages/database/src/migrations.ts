@@ -19,7 +19,6 @@ export function ensureSchema(db: Database): void {
 			last_used INTEGER,
 			request_count INTEGER DEFAULT 0,
 			total_requests INTEGER DEFAULT 0,
-			account_tier INTEGER DEFAULT 1,
 			priority INTEGER DEFAULT 0
 		)
 	`);
@@ -82,7 +81,6 @@ export function ensureSchema(db: Database): void {
 			account_name TEXT NOT NULL,
 			verifier TEXT NOT NULL,
 			mode TEXT NOT NULL,
-			tier INTEGER DEFAULT 1,
 			created_at INTEGER NOT NULL,
 			expires_at INTEGER NOT NULL
 		)
@@ -167,14 +165,7 @@ export function runMigrations(db: Database): void {
 		log.info("Added session_request_count column to accounts table");
 	}
 
-	// Add account_tier column if it doesn't exist
-	if (!accountsColumnNames.includes("account_tier")) {
-		db.prepare(
-			"ALTER TABLE accounts ADD COLUMN account_tier INTEGER DEFAULT 1",
-		).run();
-		log.info("Added account_tier column to accounts table");
-	}
-
+	
 	// Add paused column if it doesn't exist
 	if (!accountsColumnNames.includes("paused")) {
 		db.prepare(
@@ -363,4 +354,78 @@ export function runMigrations(db: Database): void {
 
 	// Add performance indexes
 	addPerformanceIndexes(db);
+
+	// Remove tier columns if they exist (cleanup migration)
+	const finalAccountsColumns = db
+		.prepare("PRAGMA table_info(accounts)")
+		.all() as Array<{
+		cid: number;
+		name: string;
+		type: string;
+		notnull: number;
+		// biome-ignore lint/suspicious/noExplicitAny: SQLite pragma can return various default value types
+		dflt_value: any;
+		pk: number;
+	}>;
+
+	const finalAccountsColumnNames = finalAccountsColumns.map((col) => col.name);
+
+	// Drop account_tier column from accounts table if it exists
+	if (finalAccountsColumnNames.includes("account_tier")) {
+		// SQLite doesn't support DROP COLUMN directly, so we need to recreate the table
+		db.prepare(`
+			CREATE TABLE accounts_new AS
+			SELECT id, name, provider, api_key, refresh_token, access_token, expires_at,
+			       created_at, last_used, request_count, total_requests, priority,
+			       rate_limited_until, session_start, session_request_count, paused,
+			       rate_limit_reset, rate_limit_status, rate_limit_remaining,
+			       auto_fallback_enabled, custom_endpoint, auto_refresh_enabled, model_mappings
+			FROM accounts
+		`).run();
+
+		db.prepare(`DROP TABLE accounts`).run();
+		db.prepare(`ALTER TABLE accounts_new RENAME TO accounts`).run();
+
+		// Recreate indexes
+		db.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_id ON accounts(id)`).run();
+		db.prepare(`CREATE INDEX IF NOT EXISTS idx_accounts_name ON accounts(name)`).run();
+		db.prepare(`CREATE INDEX IF NOT EXISTS idx_accounts_provider ON accounts(provider)`).run();
+		db.prepare(`CREATE INDEX IF NOT EXISTS idx_accounts_priority ON accounts(priority)`).run();
+		db.prepare(`CREATE INDEX IF NOT EXISTS idx_accounts_last_used ON accounts(last_used)`).run();
+
+		log.info("Removed account_tier column from accounts table");
+	}
+
+	// Check and remove tier column from oauth_sessions table
+	const finalOAuthColumns = db
+		.prepare("PRAGMA table_info(oauth_sessions)")
+		.all() as Array<{
+		cid: number;
+		name: string;
+		type: string;
+		notnull: number;
+		// biome-ignore lint/suspicious/noExplicitAny: SQLite pragma can return various default value types
+		dflt_value: any;
+		pk: number;
+	}>;
+
+	const finalOAuthColumnNames = finalOAuthColumns.map((col) => col.name);
+
+	// Drop tier column from oauth_sessions table if it exists
+	if (finalOAuthColumnNames.includes("tier")) {
+		db.prepare(`
+			CREATE TABLE oauth_sessions_new AS
+			SELECT id, account_name, verifier, mode, created_at, expires_at, custom_endpoint
+			FROM oauth_sessions
+		`).run();
+
+		db.prepare(`DROP TABLE oauth_sessions`).run();
+		db.prepare(`ALTER TABLE oauth_sessions_new RENAME TO oauth_sessions`).run();
+
+		// Recreate indexes
+		db.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS idx_oauth_sessions_id ON oauth_sessions(id)`).run();
+		db.prepare(`CREATE INDEX IF NOT EXISTS idx_oauth_sessions_expires ON oauth_sessions(expires_at)`).run();
+
+		log.info("Removed tier column from oauth_sessions table");
+	}
 }
