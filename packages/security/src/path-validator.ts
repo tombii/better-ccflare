@@ -77,6 +77,18 @@ class ValidationCache {
 	size(): number {
 		return this.cache.size;
 	}
+
+	setMaxSize(size: number): void {
+		this.maxSize = size;
+		// If current cache is larger than new size, remove excess items
+		if (this.cache.size > this.maxSize) {
+			const keys = Array.from(this.cache.keys());
+			const keysToRemove = keys.slice(0, this.cache.size - this.maxSize);
+			for (const key of keysToRemove) {
+				this.cache.delete(key);
+			}
+		}
+	}
 }
 
 // Global validation cache instance
@@ -361,7 +373,7 @@ export function validatePath(
 	const blockFlag = blockSymlinks ? "1" : "0";
 	const additionalPaths = (options.additionalAllowedPaths || [])
 		.sort()
-		.join(",");
+		.join("\0"); // Null byte separator (safe since paths can't contain null bytes)
 	const cacheKey = `${rawPath}|${symlinkFlag}|${blockFlag}|${additionalPaths}|${description}`;
 	const cached = validationCache.get(cacheKey);
 	if (cached) {
@@ -617,4 +629,12 @@ export function clearValidationCache(): void {
  */
 export function getValidationCacheSize(): number {
 	return validationCache.size();
+}
+
+/**
+ * Set the maximum size of the validation cache
+ * @param size - New maximum cache size
+ */
+export function setValidationCacheSize(size: number): void {
+	validationCache.setMaxSize(size);
 }
