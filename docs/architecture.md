@@ -380,7 +380,6 @@ graph TB
         PARSE["parseRateLimit()"]
         PROC["processResponse()"]
         USAGE["extractUsageInfo()"]
-        TIER["extractTierInfo()"]
     end
 
     REG -->|Manages| BASE
@@ -392,7 +391,6 @@ graph TB
     ANTH --> PARSE
     ANTH --> PROC
     ANTH --> USAGE
-    ANTH --> TIER
 ```
 
 **Provider Features:**
