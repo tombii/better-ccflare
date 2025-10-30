@@ -227,6 +227,40 @@ describe("CLI Integration Tests", () => {
 				/better-ccflare.*--add-account.*--mode.*--priority/,
 			);
 		});
+
+		it('should accept deprecated "max" mode with warning', async () => {
+			const result = await runCLI([
+				"--add-account",
+				"test-account",
+				"--mode",
+				"max",
+				"--priority",
+				"0",
+			]);
+
+			const output = result.stdout + result.stderr;
+			// Should show deprecation warning
+			expect(output).toContain('Mode "max" is deprecated');
+			expect(output).toContain("claude-oauth");
+			// The command will fail because we don't provide OAuth credentials,
+			// but that's expected - we're just testing the mode conversion happens
+		});
+
+		it("should reject invalid mode value", async () => {
+			const result = await runCLI([
+				"--add-account",
+				"test-account",
+				"--mode",
+				"invalid-mode",
+				"--priority",
+				"0",
+			]);
+
+			expect(result.exitCode).toBe(1);
+			const output = result.stdout + result.stderr;
+			expect(output).toContain("Invalid mode");
+			expect(output).toContain("Valid modes:");
+		});
 	});
 
 	describe("Argument Parsing", () => {

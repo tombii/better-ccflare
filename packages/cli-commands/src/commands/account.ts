@@ -41,7 +41,13 @@ export type { AccountListItem } from "@better-ccflare/types";
 
 // Add mode property to AccountListItem for CLI display
 export interface AccountListItemWithMode extends AccountListItem {
-	mode: "claude-oauth" | "console" | "zai" | "openai-compatible";
+	mode:
+		| "claude-oauth"
+		| "console"
+		| "zai"
+		| "minimax"
+		| "anthropic-compatible"
+		| "openai-compatible";
 }
 
 /**
@@ -554,7 +560,9 @@ export async function addAccount(
 		);
 
 		console.log(`\nAccount '${name}' added successfully!`);
-		console.log(`Type: ${mode === "claude-oauth" ? "Claude CLI OAuth" : "Claude API"}`);
+		console.log(
+			`Type: ${mode === "claude-oauth" ? "Claude CLI OAuth" : "Claude API"}`,
+		);
 	}
 }
 
@@ -598,9 +606,13 @@ export function getAccountsList(dbOps: DatabaseOperations): AccountListItem[] {
 			mode:
 				account.provider === "zai"
 					? "zai"
-					: account.access_token
-						? "claude-oauth"
-						: "console",
+					: account.provider === "minimax"
+						? "minimax"
+						: account.provider === "anthropic-compatible"
+							? "anthropic-compatible"
+							: account.access_token
+								? "claude-oauth"
+								: "console",
 			priority: account.priority || 0,
 			autoFallbackEnabled: account.auto_fallback_enabled,
 			autoRefreshEnabled: account.auto_refresh_enabled,

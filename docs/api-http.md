@@ -148,7 +148,7 @@ Initialize OAuth flow for adding a new account.
 ```json
 {
   "name": "myaccount",
-  "mode": "max",  // "max" or "console" (default: "max")
+  "mode": "claude-oauth",  // "claude-oauth" or "console" (default: "claude-oauth")
   "priority": 50  // 0-100, lower value = higher priority (optional, defaults: 0)
 }
 ```
@@ -167,7 +167,7 @@ Initialize OAuth flow for adding a new account.
 ```bash
 curl -X POST http://localhost:8080/api/oauth/init \
   -H "Content-Type: application/json" \
-  -d '{"name": "myaccount", "mode": "max"}'
+  -d '{"name": "myaccount", "mode": "claude-oauth"}'
 ```
 
 #### POST /api/oauth/callback

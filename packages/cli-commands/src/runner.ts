@@ -47,13 +47,29 @@ export async function runCli(argv: string[]): Promise<void> {
 				if (!name) {
 					console.error("Error: Account name is required");
 					console.log(
-						"Usage: ccflare-cli add <name> [--mode <claude-oauth|console|zai|openai-compatible>] [--priority <number>] [--modelMappings <JSON>]",
+						"Usage: ccflare-cli add <name> [--mode <claude-oauth|console|zai|minimax|anthropic-compatible|openai-compatible>] [--priority <number>] [--modelMappings <JSON>]",
 					);
 					process.exit(1);
 				}
 
 				// Parse options
-				const mode = values.mode as "claude-oauth" | "console" | undefined;
+				let mode = values.mode as
+					| "claude-oauth"
+					| "console"
+					| "zai"
+					| "minimax"
+					| "anthropic-compatible"
+					| "openai-compatible"
+					| "max"
+					| undefined;
+
+				// Handle deprecated "max" mode with warning
+				if (mode === "max") {
+					console.warn(
+						'⚠️  Mode "max" is deprecated. Please use "claude-oauth" instead.',
+					);
+					mode = "claude-oauth";
+				}
 				const priorityValue = values.priority
 					? parseInt(values.priority as string)
 					: undefined;

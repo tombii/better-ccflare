@@ -126,7 +126,13 @@ export interface AccountListItem {
 	tokenStatus: "valid" | "expired";
 	rateLimitStatus: string;
 	sessionInfo: string;
-	mode: "claude-oauth" | "console" | "zai" | "openai-compatible";
+	mode:
+		| "claude-oauth"
+		| "console"
+		| "zai"
+		| "minimax"
+		| "anthropic-compatible"
+		| "openai-compatible";
 	priority: number;
 	autoFallbackEnabled: boolean;
 	autoRefreshEnabled: boolean;
@@ -135,7 +141,13 @@ export interface AccountListItem {
 // Account creation types
 export interface AddAccountOptions {
 	name: string;
-	mode?: "claude-oauth" | "console" | "zai" | "openai-compatible";
+	mode?:
+		| "claude-oauth"
+		| "console"
+		| "zai"
+		| "minimax"
+		| "anthropic-compatible"
+		| "openai-compatible";
 	priority?: number;
 	customEndpoint?: string;
 }

@@ -344,14 +344,22 @@ export function AccountAddForm({
 						<Select
 							value={newAccount.mode}
 							onValueChange={(
-								value: "claude-oauth" | "console" | "zai" | "openai-compatible",
+								value:
+									| "claude-oauth"
+									| "console"
+									| "zai"
+									| "minimax"
+									| "anthropic-compatible"
+									| "openai-compatible",
 							) => setNewAccount({ ...newAccount, mode: value })}
 						>
 							<SelectTrigger id="mode">
 								<SelectValue />
 							</SelectTrigger>
 							<SelectContent>
-								<SelectItem value="claude-oauth">Claude CLI OAuth (Recommended)</SelectItem>
+								<SelectItem value="claude-oauth">
+									Claude CLI OAuth (Recommended)
+								</SelectItem>
 								<SelectItem value="console">Claude API</SelectItem>
 								<SelectItem value="zai">z.ai (API Key)</SelectItem>
 								<SelectItem value="minimax">Minimax (API Key)</SelectItem>
@@ -590,7 +598,8 @@ export function AccountAddForm({
 							</div>
 						</>
 					)}
-					{(newAccount.mode === "claude-oauth" || newAccount.mode === "console") && (
+					{(newAccount.mode === "claude-oauth" ||
+						newAccount.mode === "console") && (
 						<div className="space-y-2">
 							<Label htmlFor="customEndpoint">
 								Custom Endpoint URL (Optional)
