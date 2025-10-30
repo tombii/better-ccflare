@@ -12,7 +12,7 @@
     },
     "apps/cli": {
       "name": "better-ccflare",
-      "version": "2.0.11",
+      "version": "2.0.13",
       "bin": {
         "better-ccflare": "dist/better-ccflare",
       },
@@ -40,6 +40,7 @@
         "@better-ccflare/load-balancer": "workspace:*",
         "@better-ccflare/logger": "workspace:*",
         "@better-ccflare/proxy": "workspace:*",
+        "@better-ccflare/security": "workspace:*",
         "@better-ccflare/types": "workspace:*",
       },
     },
@@ -49,6 +50,7 @@
       "dependencies": {
         "@better-ccflare/config": "workspace:*",
         "@better-ccflare/logger": "workspace:*",
+        "@better-ccflare/security": "workspace:*",
         "@better-ccflare/types": "workspace:*",
       },
       "devDependencies": {
@@ -75,6 +77,7 @@
       "dependencies": {
         "@better-ccflare/core": "workspace:*",
         "@better-ccflare/logger": "workspace:*",
+        "@better-ccflare/security": "workspace:*",
       },
     },
     "packages/core": {
@@ -217,8 +220,16 @@
         "@better-ccflare/database": "workspace:*",
         "@better-ccflare/logger": "workspace:*",
         "@better-ccflare/providers": "workspace:*",
+        "@better-ccflare/security": "workspace:*",
         "@better-ccflare/ui-common": "workspace:*",
         "@dqbd/tiktoken": "^1.0.21",
+      },
+    },
+    "packages/security": {
+      "name": "@better-ccflare/security",
+      "version": "0.1.0",
+      "dependencies": {
+        "@better-ccflare/logger": "workspace:*",
       },
     },
     "packages/types": {
@@ -277,6 +288,8 @@
     "@better-ccflare/providers": ["@better-ccflare/providers@workspace:packages/providers"],
 
     "@better-ccflare/proxy": ["@better-ccflare/proxy@workspace:packages/proxy"],
+
+    "@better-ccflare/security": ["@better-ccflare/security@workspace:packages/security"],
 
     "@better-ccflare/server": ["@better-ccflare/server@workspace:apps/server"],
 
