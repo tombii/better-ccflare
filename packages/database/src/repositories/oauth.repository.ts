@@ -3,7 +3,7 @@ import { BaseRepository } from "./base.repository";
 export interface OAuthSession {
 	accountName: string;
 	verifier: string;
-	mode: "console" | "max";
+	mode: "console" | "claude-oauth";
 	customEndpoint?: string;
 }
 
@@ -12,7 +12,7 @@ export class OAuthRepository extends BaseRepository<OAuthSession> {
 		sessionId: string,
 		accountName: string,
 		verifier: string,
-		mode: "console" | "max",
+		mode: "console" | "claude-oauth",
 		customEndpoint?: string,
 		ttlMinutes = 10,
 	): void {
@@ -40,7 +40,7 @@ export class OAuthRepository extends BaseRepository<OAuthSession> {
 		const row = this.get<{
 			account_name: string;
 			verifier: string;
-			mode: "console" | "max";
+			mode: "console" | "claude-oauth";
 			custom_endpoint: string | null;
 			expires_at: number;
 		}>(

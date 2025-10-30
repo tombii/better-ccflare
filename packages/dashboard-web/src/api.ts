@@ -106,7 +106,7 @@ class API extends HttpClient {
 	async initAddAccount(data: {
 		name: string;
 		mode:
-			| "max"
+			| "claude-oauth"
 			| "console"
 			| "zai"
 			| "minimax"

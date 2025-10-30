@@ -71,7 +71,7 @@ interface ParsedArgs {
 	stats: boolean;
 	addAccount: string | null;
 	mode:
-		| "max"
+		| "claude-oauth"
 		| "console"
 		| "zai"
 		| "minimax"
@@ -489,23 +489,39 @@ function parseArgs(args: string[]): ParsedArgs {
 					console.error("❌ --mode requires a value");
 					fastExit(1);
 				}
-				const modeValue = args[++i] as
-					| "max"
+				let modeValue = args[++i] as
+					| "claude-oauth"
+					| "console"
+					| "zai"
+					| "minimax"
+					| "anthropic-compatible"
+					| "openai-compatible"
+					| "max";
+
+				// Handle deprecated "max" mode with warning
+				if (modeValue === "max") {
+					console.warn(
+						'⚠️  Mode "max" is deprecated. Please use "claude-oauth" instead.',
+					);
+					modeValue = "claude-oauth";
+				}
+
+				parsed.mode = modeValue as
+					| "claude-oauth"
 					| "console"
 					| "zai"
 					| "minimax"
 					| "anthropic-compatible"
 					| "openai-compatible";
-				parsed.mode = modeValue;
 				const validModes: Array<
-					| "max"
+					| "claude-oauth"
 					| "console"
 					| "zai"
 					| "minimax"
 					| "anthropic-compatible"
 					| "openai-compatible"
 				> = [
-					"max",
+					"claude-oauth",
 					"console",
 					"zai",
 					"minimax",
@@ -524,7 +540,7 @@ function parseArgs(args: string[]): ParsedArgs {
 
 					console.error("\nExamples:");
 					console.error(
-						"  bun run cli --add-account my-account --mode max --priority 0",
+						"  bun run cli --add-account my-account --mode claude-oauth --priority 0",
 					);
 					console.error(
 						"  bun run cli --add-account api-key-account --mode console --priority 10",
@@ -702,8 +718,8 @@ Options:
   --ssl-cert <path>    Path to SSL certificate file (enables HTTPS)
   --stats              Show statistics (JSON output)
   --add-account <name> Add a new account
-    --mode <max|console|zai|minimax|anthropic-compatible|openai-compatible>  Account mode (default: max)
-      max: Claude CLI account (OAuth)
+    --mode <claude-oauth|console|zai|minimax|anthropic-compatible|openai-compatible>  Account mode (default: claude-oauth)
+      claude-oauth: Claude CLI account (OAuth)
       console: Claude API account (OAuth)
       zai: z.ai account (API key)
       minimax: Minimax account (API key)
@@ -835,7 +851,7 @@ Examples:
 		if (parsed.mode || parsed.priority) {
 			// CLI mode - use flags provided
 			try {
-				const mode = parsed.mode || "max";
+				const mode = parsed.mode || "claude-oauth";
 				const priority = parsed.priority || 0;
 
 				// For API key accounts, we need to get the API key from environment or user
@@ -884,14 +900,14 @@ Examples:
 			);
 			console.error("Please provide the required flags:");
 			console.error(
-				"  --mode <max|console|zai|minimax|anthropic-compatible|openai-compatible>",
+				"  --mode <claude-oauth|console|zai|minimax|anthropic-compatible|openai-compatible>",
 			);
 			console.error("  --priority <number>");
 			console.error("\nFor API key accounts, also set:");
 			console.error("  export BETTER_CCFLARE_API_KEY_<ACCOUNT_NAME>");
 			console.error("\nExample:");
 			console.error(
-				"  better-ccflare --add-account work --mode max --priority 0",
+				"  better-ccflare --add-account work --mode claude-oauth --priority 0",
 			);
 			console.error("  export BETTER_CCFLARE_API_KEY_WORK=your-api-key-here");
 			await exitGracefully(1);

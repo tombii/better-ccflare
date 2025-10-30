@@ -20,11 +20,11 @@ import {
 } from "../prompts/index";
 import { openBrowser } from "../utils/browser";
 
-// Re-export types with adapter extension for CLI-specific options
-export interface AddAccountOptions {
+// Extended type for CLI-specific options that includes adapter functionality
+export interface AddAccountOptionsWithAdapter {
 	name: string;
 	mode?:
-		| "max"
+		| "claude-oauth"
 		| "console"
 		| "zai"
 		| "minimax"
@@ -41,7 +41,13 @@ export type { AccountListItem } from "@better-ccflare/types";
 
 // Add mode property to AccountListItem for CLI display
 export interface AccountListItemWithMode extends AccountListItem {
-	mode: "max" | "console" | "zai" | "openai-compatible";
+	mode:
+		| "claude-oauth"
+		| "console"
+		| "zai"
+		| "minimax"
+		| "anthropic-compatible"
+		| "openai-compatible";
 }
 
 /**
@@ -331,7 +337,7 @@ async function createOpenAIAccount(
 export async function addAccount(
 	dbOps: DatabaseOperations,
 	config: Config,
-	options: AddAccountOptions,
+	options: AddAccountOptionsWithAdapter,
 ): Promise<void> {
 	const {
 		name,
@@ -349,7 +355,7 @@ export async function addAccount(
 	const mode =
 		providedMode ||
 		(await adapter.select("What type of account would you like to add?", [
-			{ label: "Claude CLI account", value: "max" },
+			{ label: "Claude CLI OAuth account", value: "claude-oauth" },
 			{ label: "Claude API account", value: "console" },
 			{ label: "z.ai account (API key)", value: "zai" },
 			{ label: "Minimax account (API key)", value: "minimax" },
@@ -505,7 +511,7 @@ export async function addAccount(
 		// Handle OAuth accounts (Anthropic)
 		const flowResult = await oauthFlow.begin({
 			name,
-			mode: mode as "max" | "console",
+			mode: mode as "claude-oauth" | "console",
 		});
 		const { authUrl, sessionId } = flowResult;
 
@@ -524,9 +530,9 @@ export async function addAccount(
 
 		// Get custom endpoint for Max/Console modes if not provided
 		let endpointForOAuth = customEndpoint;
-		if ((mode === "max" || mode === "console") && !customEndpoint) {
+		if ((mode === "claude-oauth" || mode === "console") && !customEndpoint) {
 			const wantsCustomEndpoint = await adapter.select(
-				`\nDo you want to use a custom endpoint for this ${mode === "max" ? "CLI" : "Console"} account?`,
+				`\nDo you want to use a custom endpoint for this ${mode === "claude-oauth" ? "OAuth" : "Console"} account?`,
 				[
 					{ label: "No, use default endpoint", value: "no" },
 					{ label: "Yes, use custom endpoint", value: "yes" },
@@ -554,7 +560,9 @@ export async function addAccount(
 		);
 
 		console.log(`\nAccount '${name}' added successfully!`);
-		console.log(`Type: ${mode === "max" ? "Claude CLI" : "Claude API"}`);
+		console.log(
+			`Type: ${mode === "claude-oauth" ? "Claude CLI OAuth" : "Claude API"}`,
+		);
 	}
 }
 
@@ -595,12 +603,18 @@ export function getAccountsList(dbOps: DatabaseOperations): AccountListItem[] {
 			tokenStatus,
 			rateLimitStatus,
 			sessionInfo,
-			mode:
-				account.provider === "zai"
-					? "zai"
-					: account.access_token
-						? "max"
-						: "console",
+			mode: (() => {
+				// Direct mapping: if provider matches specific account types, use same mode name
+				if (
+					account.provider === "zai" ||
+					account.provider === "minimax" ||
+					account.provider === "anthropic-compatible"
+				) {
+					return account.provider;
+				}
+				// For Anthropic accounts: OAuth vs Console determined by presence of access_token
+				return account.access_token ? "claude-oauth" : "console";
+			})(),
 			priority: account.priority || 0,
 			autoFallbackEnabled: account.auto_fallback_enabled,
 			autoRefreshEnabled: account.auto_refresh_enabled,
@@ -821,7 +835,7 @@ export async function reauthenticateAccount(
 	// Determine account mode based on token presence (not tier)
 	// OAuth accounts have access_token + refresh_token but no api_key
 	// Console accounts have api_key but no access_token/refresh_token
-	const mode = account.api_key ? "console" : "max";
+	const mode = account.api_key ? "console" : "claude-oauth";
 
 	// Start OAuth flow with skipAccountCheck for re-authentication
 	const flowResult = await oauthFlow.begin({

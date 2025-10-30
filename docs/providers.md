@@ -170,8 +170,8 @@ export async function generatePKCE(): Promise<PKCEChallenge> {
 The Anthropic provider supports two OAuth modes with different authorization endpoints:
 
 ```typescript
-getOAuthConfig(mode: "console" | "max" = "console"): OAuthConfig {
-  const baseUrl = mode === "console" 
+getOAuthConfig(mode: "console" | "claude-oauth" = "console"): OAuthConfig {
+  const baseUrl = mode === "console"
     ? "https://console.anthropic.com"  // Standard Claude API
     : "https://claude.ai";              // Claude Code
     

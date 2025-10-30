@@ -16,7 +16,9 @@ packages/proxy/src/inline-worker.ts
 packages/proxy/src/embedded-tiktoken-wasm.ts
 CLAUDE.md
 AGENTS.md
-test-*.sh
+# Disallow .sh files except in .github/scripts/
+**/*.sh
+!.github/scripts/*.sh
 
 # Build artifacts and test files
 better-ccflare-*

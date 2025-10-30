@@ -71,7 +71,7 @@ describe("Levenshtein Distance Utility", () => {
 describe("Levenshtein Distance in CLI Context", () => {
 	it("should work for CLI mode suggestions", () => {
 		// Test typical CLI command scenarios
-		expect(levenshteinDistance("max", "maz")).toBe(1); // Simple typo
+		expect(levenshteinDistance("claude-oauth", "claude-oaut")).toBe(1); // Simple typo
 		expect(levenshteinDistance("console", "consle")).toBe(1); // Missing character
 		expect(levenshteinDistance("zai", "z.ai")).toBe(1); // Extra character
 		expect(levenshteinDistance("openai-compatible", "openai-compat")).toBe(4); // Missing characters
@@ -80,7 +80,7 @@ describe("Levenshtein Distance in CLI Context", () => {
 	it("should detect typos within threshold for CLI suggestions", () => {
 		// Simulate the CLI's typo detection (threshold of 2)
 		const _validModes = [
-			"max",
+			"claude-oauth",
 			"console",
 			"zai",
 			"minimax",
@@ -88,11 +88,13 @@ describe("Levenshtein Distance in CLI Context", () => {
 		];
 
 		// Test cases that should be within the 2-character threshold
-		expect(levenshteinDistance("max", "maz")).toBeLessThanOrEqual(2);
+		expect(
+			levenshteinDistance("claude-oauth", "claude-oaut"),
+		).toBeLessThanOrEqual(2);
 		expect(levenshteinDistance("console", "consle")).toBeLessThanOrEqual(2);
 		expect(levenshteinDistance("zai", "azi")).toBeLessThanOrEqual(2);
 
 		// Test cases that should be outside the threshold
-		expect(levenshteinDistance("max", "xyz")).toBeGreaterThan(2);
+		expect(levenshteinDistance("claude-oauth", "xyz")).toBeGreaterThan(2);
 	});
 });

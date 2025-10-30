@@ -74,7 +74,7 @@ export function AccountsTab() {
 	const handleAddAccount = async (params: {
 		name: string;
 		mode:
-			| "max"
+			| "claude-oauth"
 			| "console"
 			| "zai"
 			| "minimax"

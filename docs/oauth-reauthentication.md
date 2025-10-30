@@ -47,7 +47,7 @@ The implementation consists of several coordinated components:
 ```typescript
 export interface BeginOptions {
     name: string;
-    mode: "max" | "console";
+    mode: "claude-oauth" | "console";
     skipAccountCheck?: boolean; // Skip account existence check for re-authentication
 }
 ```
@@ -57,7 +57,7 @@ export interface BeginOptions {
 - **Function**: `generateAuthUrl()`
 - **Purpose**: Generate correct OAuth URLs for different account types
 - **Key Logic**:
-  - Claude CLI (max mode): Uses `claude.ai/login` with returnTo parameter
+  - Claude CLI OAuth (claude-oauth mode): Uses `claude.ai/login` with returnTo parameter
   - Console mode: Uses direct OAuth flow
 
 #### 4. Token Manager Cache Management (`packages/proxy/src/handlers/token-manager.ts`)
@@ -124,7 +124,7 @@ bun run cli --reauthenticate claude
 ### Example Output
 
 ```bash
-# For Claude CLI (OAuth) account
+# For Claude CLI OAuth (OAuth) account
 bun run cli --reauthenticate claude
 > Re-authenticating account: claude
 > Opening browser for OAuth authorization...

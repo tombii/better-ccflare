@@ -10,7 +10,7 @@ import {
 
 export interface BeginOptions {
 	name: string;
-	mode: "max" | "console";
+	mode: "claude-oauth" | "console";
 	skipAccountCheck?: boolean; // Skip account existence check for re-authentication
 }
 
@@ -19,7 +19,7 @@ export interface BeginResult {
 	authUrl: string;
 	pkce: PKCEChallenge;
 	oauthConfig: OAuthProviderConfig;
-	mode: "max" | "console"; // Track mode to handle differently in complete()
+	mode: "claude-oauth" | "console"; // Track mode to handle differently in complete()
 }
 
 export interface CompleteOptions {
@@ -44,9 +44,9 @@ export interface OAuthFlowResult {
 }
 
 /**
- * Handles the Anthropic OAuth flow for both "max" and "console" authentication modes.
+ * Handles the Anthropic OAuth flow for both "claude-oauth" and "console" authentication modes.
  *
- * - "max" mode: Standard OAuth with refresh tokens for Claude Max accounts
+ * - "claude-oauth" mode: Standard OAuth with refresh tokens for Claude CLI OAuth accounts
  * - "console" mode: OAuth flow that creates a static API key
  *
  * This class does not persist session data. The caller must handle storage
@@ -66,7 +66,7 @@ export class OAuthFlow {
 	 *
 	 * @param opts - OAuth flow options
 	 * @param opts.name - Unique account name
-	 * @param opts.mode - Authentication mode ("max" for Claude Max, "console" for API key)
+	 * @param opts.mode - Authentication mode ("claude-oauth" for Claude CLI OAuth, "console" for API key)
 	 * @returns OAuth flow data including auth URL and session info
 	 * @throws {Error} If account name already exists
 	 */
@@ -163,7 +163,7 @@ export class OAuthFlow {
 			);
 		}
 
-		// Handle max mode - standard OAuth flow
+		// Handle claude-oauth mode - standard OAuth flow
 		return this.createAccountWithOAuth(
 			accountId,
 			name,
@@ -205,14 +205,13 @@ export class OAuthFlow {
 	}
 
 	/**
-	 * Creates an account with OAuth tokens (max mode).
+	 * Creates an account with OAuth tokens (claude-oauth mode).
 	 *
 	 * Stores refresh token, access token, and expiration for automatic token refresh.
 	 *
 	 * @param id - Unique account ID
 	 * @param name - Account name
 	 * @param tokens - OAuth tokens from token exchange
-	 * @param tier - Account tier (1, 5, or 20)
 	 * @param priority - Account priority
 	 * @param customEndpoint - Custom API endpoint (optional)
 	 * @returns Created account information

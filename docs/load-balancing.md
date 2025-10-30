@@ -11,7 +11,7 @@
 
 ## Overview
 
-better-ccflare implements a session-based load balancing system to distribute requests across multiple Claude OAuth accounts, avoiding rate limits and ensuring high availability. The system maintains configurable sessions (default: 5 hours) with individual accounts to minimize rate limit issues.
+better-ccflare implements a session-based load balancing system to distribute requests across multiple Claude CLI OAuth accounts, avoiding rate limits and ensuring high availability. The system maintains configurable sessions (default: 5 hours) with individual accounts to minimize rate limit issues.
 
 ### Key Features
 - **Account Health Monitoring**: Automatically filters out rate-limited or paused accounts
@@ -105,7 +105,7 @@ Priorities can be set when adding an account or updated later:
 
 ```bash
 # Add account with priority
-better-ccflare --add-account myaccount --mode max --priority 10
+better-ccflare --add-account myaccount --mode claude-oauth --priority 10
 
 # Update account priority
 better-ccflare set-priority myaccount 20

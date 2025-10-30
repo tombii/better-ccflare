@@ -13,7 +13,7 @@ export type ProviderName = (typeof PROVIDER_NAMES)[keyof typeof PROVIDER_NAMES];
  * Account modes for adding new accounts
  */
 export const ACCOUNT_MODES = {
-	MAX: "max", // Claude CLI account
+	CLAUDE_OAUTH: "claude-oauth", // Claude CLI OAuth account
 	CONSOLE: "console", // Claude API account
 	ZAI: "zai", // z.ai account (API key)
 	OPENAI_COMPATIBLE: "openai-compatible", // OpenAI-compatible provider (API key)
@@ -69,7 +69,7 @@ export function usesApiKey(provider: string): boolean {
  */
 export function getProviderFromMode(mode: AccountMode): ProviderName {
 	switch (mode) {
-		case ACCOUNT_MODES.MAX:
+		case ACCOUNT_MODES.CLAUDE_OAUTH:
 		case ACCOUNT_MODES.CONSOLE:
 			return PROVIDER_NAMES.ANTHROPIC;
 		case ACCOUNT_MODES.ZAI:
