@@ -224,4 +224,88 @@ describe("Database Migrations - Tier Column Removal", () => {
 		expect(accounts[2].provider).toBe("zai");
 		expect(accounts[2].priority).toBe(20);
 	});
+
+	it("should migrate existing 'max' mode values to 'claude-oauth' in oauth_sessions table", () => {
+		// Create schema with mode column (simulate old schema)
+		db.exec(`
+      CREATE TABLE oauth_sessions (
+        id TEXT PRIMARY KEY,
+        account_name TEXT NOT NULL,
+        verifier TEXT NOT NULL,
+        mode TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL
+      )
+    `);
+
+		// Insert test data with 'max' mode (legacy)
+		db.prepare(`
+      INSERT INTO oauth_sessions (id, account_name, verifier, mode, created_at, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(
+			"session-max",
+			"test-account-max",
+			"test-verifier-max",
+			"max",  // This is the legacy value that should be converted
+			Date.now(),
+			Date.now() + 3600000,
+		);
+
+		// Insert another record with 'console' mode (should remain unchanged)
+		db.prepare(`
+      INSERT INTO oauth_sessions (id, account_name, verifier, mode, created_at, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(
+			"session-console",
+			"test-account-console",
+			"test-verifier-console",
+			"console",  // This should remain unchanged
+			Date.now(),
+			Date.now() + 3600000,
+		);
+
+		// Insert another record with 'claude-oauth' mode (should remain unchanged)
+		db.prepare(`
+      INSERT INTO oauth_sessions (id, account_name, verifier, mode, created_at, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(
+			"session-claude",
+			"test-account-claude",
+			"test-verifier-claude",
+			"claude-oauth",  // This should remain unchanged
+			Date.now(),
+			Date.now() + 3600000,
+		);
+
+		// Run migrations (should convert 'max' to 'claude-oauth')
+		runMigrations(db);
+
+		// Verify that 'max' was converted to 'claude-oauth' while others remain unchanged
+		const sessions = db
+			.prepare(
+				"SELECT id, account_name, mode FROM oauth_sessions ORDER BY account_name",
+			)
+			.all() as Array<{
+			id: string;
+			account_name: string;
+			mode: string;
+		}>;
+
+		expect(sessions).toHaveLength(3);
+
+		// Find the specific session that had 'max' mode
+		const maxSession = sessions.find(s => s.id === "session-max");
+		expect(maxSession).toBeDefined();
+		expect(maxSession!.mode).toBe("claude-oauth"); // Should be converted
+
+		// Find the console session (should be unchanged)
+		const consoleSession = sessions.find(s => s.id === "session-console");
+		expect(consoleSession).toBeDefined();
+		expect(consoleSession!.mode).toBe("console"); // Should remain unchanged
+
+		// Find the claude-oauth session (should be unchanged)
+		const claudeSession = sessions.find(s => s.id === "session-claude");
+		expect(claudeSession).toBeDefined();
+		expect(claudeSession!.mode).toBe("claude-oauth"); // Should remain unchanged
+	});
 });
