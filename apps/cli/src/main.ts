@@ -469,11 +469,25 @@ function parseArgs(args: string[]): ParsedArgs {
 					| "max"
 					| "console"
 					| "zai"
+					| "minimax"
+					| "anthropic-compatible"
 					| "openai-compatible";
 				parsed.mode = modeValue;
 				const validModes: Array<
-					"max" | "console" | "zai" | "openai-compatible"
-				> = ["max", "console", "zai", "openai-compatible"];
+					| "max"
+					| "console"
+					| "zai"
+					| "minimax"
+					| "anthropic-compatible"
+					| "openai-compatible"
+				> = [
+					"max",
+					"console",
+					"zai",
+					"minimax",
+					"anthropic-compatible",
+					"openai-compatible",
+				];
 				if (!validModes.includes(modeValue)) {
 					console.error(`❌ Invalid mode: ${modeValue}`);
 					console.error(`Valid modes: ${validModes.join(", ")}`);

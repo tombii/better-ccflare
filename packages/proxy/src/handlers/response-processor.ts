@@ -109,12 +109,6 @@ export function updateAccountMetadata(
 		});
 	}
 
-	// Extract tier info if supported
-	if (ctx.provider.extractTierInfo) {
-		const _extractTierInfo = ctx.provider.extractTierInfo.bind(ctx.provider);
-		(async () => {})();
-	}
-
 	// Extract usage info if supported
 	if (ctx.provider.extractUsageInfo && requestId) {
 		const extractUsageInfo = ctx.provider.extractUsageInfo.bind(ctx.provider);

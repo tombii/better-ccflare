@@ -1,4 +1,6 @@
 import type { Database } from "bun:sqlite";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { Logger } from "@better-ccflare/logger";
 import { addPerformanceIndexes } from "./performance-indexes";
 
@@ -141,10 +143,10 @@ export function runMigrations(db: Database, dbPath?: string): void {
 		pk: number;
 	}>;
 
-	const _accountsColumnNames = accountsInfo.map((col) => col.name);
+	const initialAccountsColumnNames = accountsInfo.map((col) => col.name);
 
 	// Add rate_limited_until column if it doesn't exist
-	if (!_accountsColumnNames.includes("rate_limited_until")) {
+	if (!initialAccountsColumnNames.includes("rate_limited_until")) {
 		db.prepare(
 			"ALTER TABLE accounts ADD COLUMN rate_limited_until INTEGER",
 		).run();
@@ -152,13 +154,13 @@ export function runMigrations(db: Database, dbPath?: string): void {
 	}
 
 	// Add session_start column if it doesn't exist
-	if (!_accountsColumnNames.includes("session_start")) {
+	if (!initialAccountsColumnNames.includes("session_start")) {
 		db.prepare("ALTER TABLE accounts ADD COLUMN session_start INTEGER").run();
 		log.info("Added session_start column to accounts table");
 	}
 
 	// Add session_request_count column if it doesn't exist
-	if (!_accountsColumnNames.includes("session_request_count")) {
+	if (!initialAccountsColumnNames.includes("session_request_count")) {
 		db.prepare(
 			"ALTER TABLE accounts ADD COLUMN session_request_count INTEGER DEFAULT 0",
 		).run();
@@ -166,7 +168,7 @@ export function runMigrations(db: Database, dbPath?: string): void {
 	}
 
 	// Add paused column if it doesn't exist
-	if (!_accountsColumnNames.includes("paused")) {
+	if (!initialAccountsColumnNames.includes("paused")) {
 		db.prepare(
 			"ALTER TABLE accounts ADD COLUMN paused INTEGER DEFAULT 0",
 		).run();
@@ -174,7 +176,7 @@ export function runMigrations(db: Database, dbPath?: string): void {
 	}
 
 	// Add rate_limit_reset column if it doesn't exist
-	if (!_accountsColumnNames.includes("rate_limit_reset")) {
+	if (!initialAccountsColumnNames.includes("rate_limit_reset")) {
 		db.prepare(
 			"ALTER TABLE accounts ADD COLUMN rate_limit_reset INTEGER",
 		).run();
@@ -182,13 +184,13 @@ export function runMigrations(db: Database, dbPath?: string): void {
 	}
 
 	// Add rate_limit_status column if it doesn't exist
-	if (!_accountsColumnNames.includes("rate_limit_status")) {
+	if (!initialAccountsColumnNames.includes("rate_limit_status")) {
 		db.prepare("ALTER TABLE accounts ADD COLUMN rate_limit_status TEXT").run();
 		log.info("Added rate_limit_status column to accounts table");
 	}
 
 	// Add rate_limit_remaining column if it doesn't exist
-	if (!_accountsColumnNames.includes("rate_limit_remaining")) {
+	if (!initialAccountsColumnNames.includes("rate_limit_remaining")) {
 		db.prepare(
 			"ALTER TABLE accounts ADD COLUMN rate_limit_remaining INTEGER",
 		).run();
@@ -196,7 +198,7 @@ export function runMigrations(db: Database, dbPath?: string): void {
 	}
 
 	// Add priority column if it doesn't exist
-	if (!_accountsColumnNames.includes("priority")) {
+	if (!initialAccountsColumnNames.includes("priority")) {
 		db.prepare(
 			"ALTER TABLE accounts ADD COLUMN priority INTEGER DEFAULT 0",
 		).run();
@@ -204,7 +206,7 @@ export function runMigrations(db: Database, dbPath?: string): void {
 	}
 
 	// Add auto_fallback_enabled column if it doesn't exist
-	if (!_accountsColumnNames.includes("auto_fallback_enabled")) {
+	if (!initialAccountsColumnNames.includes("auto_fallback_enabled")) {
 		db.prepare(
 			"ALTER TABLE accounts ADD COLUMN auto_fallback_enabled INTEGER DEFAULT 0",
 		).run();
@@ -212,13 +214,13 @@ export function runMigrations(db: Database, dbPath?: string): void {
 	}
 
 	// Add custom_endpoint column if it doesn't exist
-	if (!_accountsColumnNames.includes("custom_endpoint")) {
+	if (!initialAccountsColumnNames.includes("custom_endpoint")) {
 		db.prepare("ALTER TABLE accounts ADD COLUMN custom_endpoint TEXT").run();
 		log.info("Added custom_endpoint column to accounts table");
 	}
 
 	// Add auto_refresh_enabled column if it doesn't exist
-	if (!_accountsColumnNames.includes("auto_refresh_enabled")) {
+	if (!initialAccountsColumnNames.includes("auto_refresh_enabled")) {
 		db.prepare(
 			"ALTER TABLE accounts ADD COLUMN auto_refresh_enabled INTEGER DEFAULT 0",
 		).run();
@@ -226,7 +228,7 @@ export function runMigrations(db: Database, dbPath?: string): void {
 	}
 
 	// Add model_mappings column for OpenAI-compatible providers
-	if (!_accountsColumnNames.includes("model_mappings")) {
+	if (!initialAccountsColumnNames.includes("model_mappings")) {
 		db.prepare("ALTER TABLE accounts ADD COLUMN model_mappings TEXT").run();
 		log.info("Added model_mappings column to accounts table");
 	}
@@ -244,10 +246,12 @@ export function runMigrations(db: Database, dbPath?: string): void {
 		pk: number;
 	}>;
 
-	const _oauthSessionsColumnNames = oauthSessionsInfo.map((col) => col.name);
+	const initialOauthSessionsColumnNames = oauthSessionsInfo.map(
+		(col) => col.name,
+	);
 
 	// Add custom_endpoint column to oauth_sessions if it doesn't exist
-	if (!_oauthSessionsColumnNames.includes("custom_endpoint")) {
+	if (!initialOauthSessionsColumnNames.includes("custom_endpoint")) {
 		db.prepare(
 			"ALTER TABLE oauth_sessions ADD COLUMN custom_endpoint TEXT",
 		).run();
@@ -391,11 +395,47 @@ export function runMigrations(db: Database, dbPath?: string): void {
 
 	if (hasTierColumns) {
 		// Create backup before removing tier columns using file copy
-		const fs = require("node:fs");
-		// Use the provided database path for backup
-		const backupPath = `${dbPath || "better-ccflare.db"}.backup.${Date.now()}`;
-		fs.copyFileSync(dbPath || "better-ccflare.db", backupPath);
-		log.info(`Database backup created at: ${backupPath}`);
+		// Validate dbPath and use a proper default
+		const sourcePath = dbPath && dbPath !== "" ? dbPath : "better-ccflare.db";
+
+		try {
+			// Resolve to absolute path to prevent directory traversal attacks
+			const absoluteSourcePath = path.resolve(sourcePath);
+
+			// Additional security validation - check for unsafe path patterns that could indicate directory traversal
+			// This prevents potential security issues if dbPath comes from untrusted sources in the future
+			if (
+				absoluteSourcePath.includes("../") ||
+				absoluteSourcePath.includes("..\\") ||
+				absoluteSourcePath.endsWith("..") ||
+				absoluteSourcePath.startsWith("..")
+			) {
+				log.warn(`Unsafe path detected: ${sourcePath}. Skipping backup.`);
+				// Continue with the rest of the migration to ensure database schema updates still occur
+			} else if (fs.existsSync(absoluteSourcePath)) {
+				// Check if it's actually a file (not a directory) to prevent backup errors
+				const stats = fs.statSync(absoluteSourcePath);
+				if (stats.isFile()) {
+					// Use the validated database path for backup
+					const backupPath = `${absoluteSourcePath}.backup.${Date.now()}`;
+					fs.copyFileSync(absoluteSourcePath, backupPath);
+					log.info(`Database backup created at: ${backupPath}`);
+				} else {
+					log.warn(
+						`Database path is not a file: ${absoluteSourcePath}. Skipping backup.`,
+					);
+				}
+			} else {
+				log.warn(
+					`Database file does not exist at path: ${absoluteSourcePath}. Skipping backup.`,
+				);
+			}
+		} catch (error) {
+			// Catch any errors during backup process to ensure migrations continue
+			log.warn(
+				`Error during database backup validation: ${(error as Error).message}. Skipping backup.`,
+			);
+		}
 	}
 
 	// Remove tier columns if they exist (cleanup migration)
