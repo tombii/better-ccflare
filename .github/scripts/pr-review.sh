@@ -139,15 +139,25 @@ validate_branch_ref "${HEAD_BRANCH}" "HEAD_BRANCH"
 echo "Reading diff from stdin..."
 DIFF=$(cat)
 
+# Sanitize the diff to remove problematic control characters
+echo "Sanitizing diff content to remove control characters..." >&2
+DIFF=$(python3 -c "
+import sys
+content = sys.stdin.read()
+# Remove control characters except \t, \n, \r
+sanitized = ''.join(c for c in content if ord(c) >= 32 or c in '\t\n\r')
+print(sanitized, end='')
+")
+
 # Validate diff is not empty
 if [[ -z "$DIFF" ]]; then
     echo "Error: No diff content provided"
     exit 1
 fi
 
-# Check diff size
+# Check diff size after sanitization
 DIFF_SIZE=$(echo "$DIFF" | wc -c)
-echo "Diff size: $DIFF_SIZE bytes"
+echo "Diff size after sanitization: $DIFF_SIZE bytes"
 
 if [[ "$DIFF_SIZE" -gt "$MAX_DIFF_SIZE" ]]; then
     echo "Error: Diff size ($DIFF_SIZE bytes) exceeds maximum allowed size ($MAX_DIFF_SIZE bytes)"
@@ -250,10 +260,65 @@ call_openrouter_api() {
     # Create a temporary JSON file for the request payload to avoid jq parsing issues
     local temp_json_file=$(mktemp)
 
-    # Use base64 encoding for the prompt to avoid JSON escaping issues
-    local encoded_prompt=$(echo "${REVIEW_PROMPT}" | base64 -w 0)
+    # Debug: Check for control characters in the REVIEW_PROMPT before JSON encoding
+    echo "Debug: Checking for control characters in REVIEW_PROMPT..." >&2
+    local control_chars_found
+    control_chars_found=$(echo "${REVIEW_PROMPT}" | grep -P '\p{C}' || true)
+    if [[ -n "$control_chars_found" ]]; then
+        echo "Debug: Found control characters in REVIEW_PROMPT (first 100 chars): $(echo "${REVIEW_PROMPT}" | grep -P '\p{C}' | head -c 100)" >&2
+    fi
 
-    cat > "${temp_json_file}" <<EOF
+    # Debug: Find specific control character positions
+    local problematic_pos
+    problematic_pos=$(python3 -c "
+import sys
+content = sys.stdin.read()
+for i, c in enumerate(content):
+    if ord(c) < 32 and c != '\n' and c != '\t' and c != '\r':  # Control chars except common whitespace
+        print(f'Control char at position {i}: {ord(c)} (0x{ord(c):02x})')
+        break
+" <<< "${REVIEW_PROMPT}" || true)
+
+    if [[ -n "$problematic_pos" ]]; then
+        echo "Debug: $problematic_pos" >&2
+        # Show context around the problematic character
+        local pos_num
+        pos_num=$(echo "$problematic_pos" | grep -o 'position [0-9]*' | cut -d' ' -f2)
+        if [[ -n "$pos_num" ]]; then
+            echo "Debug: Context around position $pos_num (50 chars before and after):" >&2
+            echo "${REVIEW_PROMPT}" | cut -c $((pos_num > 50 ? pos_num-50 : 1))-$((pos_num+50)) >&2
+        fi
+    fi
+
+    # Use jq to properly escape JSON content instead of sed
+    # Create a temporary file with the raw content
+    local temp_content_file=$(mktemp)
+    echo "${REVIEW_PROMPT}" > "${temp_content_file}"
+
+    # Use jq to safely encode the content
+    local json_safe_content
+    json_safe_content=$(jq -Rs . "${temp_content_file}" 2>/dev/null || echo "\"Error: Could not JSON encode content\"")
+
+    # Clean up temp file
+    rm -f "${temp_content_file}"
+
+    # Debug: Check if jq encoding was successful
+    if [[ "$json_safe_content" == "\"Error: Could not JSON encode content\"" ]]; then
+        echo "Debug: jq failed to encode content, falling back to manual escaping" >&2
+
+        # Fallback: manually sanitize the content by removing control characters
+        local sanitized_content
+        sanitized_content=$(python3 -c "
+import json
+import sys
+content = sys.stdin.read()
+# Remove control characters except \t, \n, \r
+sanitized = ''.join(c for c in content if ord(c) >= 32 or c in '\t\n\r')
+print(json.dumps(sanitized))
+" <<< "${REVIEW_PROMPT}")
+
+        # Use the sanitized content
+        cat > "${temp_json_file}" <<EOF
 {
     "model": "${model}",
     "temperature": ${TEMPERATURE},
@@ -265,11 +330,31 @@ call_openrouter_api() {
         },
         {
             "role": "user",
-            "content": "$(echo "${REVIEW_PROMPT}" | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')"
+            "content": ${sanitized_content}
         }
     ]
 }
 EOF
+    else
+        # Use jq-escaped content
+        cat > "${temp_json_file}" <<EOF
+{
+    "model": "${model}",
+    "temperature": ${TEMPERATURE},
+    "max_tokens": ${MAX_TOKENS},
+    "messages": [
+        {
+            "role": "system",
+            "content": "You are an expert code reviewer specializing in TypeScript, Node.js/Bun, and web security. Provide thorough, constructive code reviews."
+        },
+        {
+            "role": "user",
+            "content": ${json_safe_content}
+        }
+    ]
+}
+EOF
+    fi
 
     local api_response
     api_response=$(curl -s -X POST "${API_URL}" \
