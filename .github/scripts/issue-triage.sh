@@ -143,7 +143,7 @@ Key technologies:
 - TypeScript/Bun runtime
 - Monorepo structure (apps: TUI, server, lander; packages: proxy, dashboard-web, etc.)
 - SQLite database for account and request tracking
-- Multiple AI providers: Claude OAuth, OpenRouter, Anthropic API
+- Multiple AI providers: Claude CLI OAuth, OpenRouter, Anthropic API
 - Hono web framework for server
 - React for dashboard UI
 

@@ -53,7 +53,7 @@ better-ccflare [command]
 
 1. Add your first OAuth account:
 ```bash
-bun run cli --add-account myaccount --mode max --priority 0
+bun run cli --add-account myaccount --mode claude-oauth --priority 0
 ```
 
 2. Start the load balancer server:
@@ -92,7 +92,7 @@ Options:
   --logs [N]           Stream latest N lines then follow
   --stats              Show statistics (JSON output)
   --add-account <name> Add a new account
-    --mode <max|console>  Account mode (default: max)
+    --mode <claude-oauth|console>  Account mode (default: claude-oauth)
     --priority <number>    Account priority (0-100, default: 0)
   --list               List all accounts
   --remove <name>      Remove an account
@@ -118,14 +118,14 @@ Add a new OAuth account to the load balancer pool.
 
 **Syntax:**
 ```bash
-bun run cli --add-account <name> --mode <max|console|zai|openai-compatible> --priority <number>
+bun run cli --add-account <name> --mode <claude-oauth|console|zai|minimax|anthropic-compatible|openai-compatible> --priority <number>
 ```
 
 **Note:** All flags must be provided explicitly as the CLI requires explicit parameters.
 
 **Required Options:**
 - `--mode`: Account type (required)
-  - `max`: Claude CLI account
+  - `claude-oauth`: Claude CLI OAuth account
   - `console`: Claude API account
   - `zai`: z.ai account (API key)
   - `openai-compatible`: OpenAI-compatible provider (API key)
@@ -135,7 +135,7 @@ bun run cli --add-account <name> --mode <max|console|zai|openai-compatible> --pr
 
 **Account Setup Process:**
 1. Execute command with all required flags
-2. For OAuth accounts (max/console), opens browser for authentication
+2. For OAuth accounts (claude-oauth/console), opens browser for authentication
 3. Waits for OAuth callback on localhost:7856
 4. For API key accounts (zai/openai-compatible), prompts for API key
 5. Stores account credentials securely in the database
@@ -152,7 +152,7 @@ bun run cli --list
 **Output Format:**
 ```
 Accounts:
-  - account1 (max mode, priority 10)
+  - account1 (claude-oauth mode, priority 10)
   - account2 (console mode, priority 5)
 ```
 
@@ -338,14 +338,14 @@ bun run cli --logs 50
 ### Basic Account Setup
 
 ```bash
-# Add a Claude CLI account with high priority (low number)
-bun run cli --add-account work-account --mode max --priority 10
+# Add a Claude CLI OAuth account with high priority (low number)
+bun run cli --add-account work-account --mode claude-oauth --priority 10
 
 # Add a Console account with medium priority
 bun run cli --add-account personal-account --mode console --priority 50
 
 # Add a backup account with low priority (high number)
-bun run cli --add-account backup-account --mode max --priority 90
+bun run cli --add-account backup-account --mode claude-oauth --priority 90
 
 # List all accounts
 bun run cli --list

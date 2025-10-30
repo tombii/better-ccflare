@@ -14,7 +14,7 @@ interface AccountAddFormProps {
 	onAddAccount: (params: {
 		name: string;
 		mode:
-			| "max"
+			| "claude-oauth"
 			| "console"
 			| "zai"
 			| "minimax"
@@ -73,8 +73,8 @@ export function AccountAddForm({
 	const [sessionId, setSessionId] = useState("");
 	const [newAccount, setNewAccount] = useState({
 		name: "",
-		mode: "max" as
-			| "max"
+		mode: "claude-oauth" as
+			| "claude-oauth"
 			| "console"
 			| "zai"
 			| "minimax"
@@ -118,7 +118,7 @@ export function AccountAddForm({
 		const accountParams = {
 			name: newAccount.name,
 			mode: newAccount.mode as
-				| "max"
+				| "claude-oauth"
 				| "console"
 				| "zai"
 				| "minimax"
@@ -146,7 +146,7 @@ export function AccountAddForm({
 			// Reset form and signal success
 			setNewAccount({
 				name: "",
-				mode: "max",
+				mode: "claude-oauth",
 				priority: 0,
 				apiKey: "",
 				customEndpoint: "",
@@ -172,7 +172,7 @@ export function AccountAddForm({
 			// Reset form and signal success
 			setNewAccount({
 				name: "",
-				mode: "max",
+				mode: "claude-oauth",
 				priority: 0,
 				apiKey: "",
 				customEndpoint: "",
@@ -207,7 +207,7 @@ export function AccountAddForm({
 			// Reset form and signal success
 			setNewAccount({
 				name: "",
-				mode: "max",
+				mode: "claude-oauth",
 				priority: 0,
 				apiKey: "",
 				customEndpoint: "",
@@ -248,7 +248,7 @@ export function AccountAddForm({
 			// Reset form and signal success
 			setNewAccount({
 				name: "",
-				mode: "max",
+				mode: "claude-oauth",
 				priority: 0,
 				apiKey: "",
 				customEndpoint: "",
@@ -290,7 +290,7 @@ export function AccountAddForm({
 		setSessionId("");
 		setNewAccount({
 			name: "",
-			mode: "max",
+			mode: "claude-oauth",
 			priority: 0,
 			apiKey: "",
 			customEndpoint: "",
@@ -307,7 +307,7 @@ export function AccountAddForm({
 		setSessionId("");
 		setNewAccount({
 			name: "",
-			mode: "max",
+			mode: "claude-oauth",
 			priority: 0,
 			apiKey: "",
 			customEndpoint: "",
@@ -344,14 +344,22 @@ export function AccountAddForm({
 						<Select
 							value={newAccount.mode}
 							onValueChange={(
-								value: "max" | "console" | "zai" | "openai-compatible",
+								value:
+									| "claude-oauth"
+									| "console"
+									| "zai"
+									| "minimax"
+									| "anthropic-compatible"
+									| "openai-compatible",
 							) => setNewAccount({ ...newAccount, mode: value })}
 						>
 							<SelectTrigger id="mode">
 								<SelectValue />
 							</SelectTrigger>
 							<SelectContent>
-								<SelectItem value="max">Claude CLI (Recommended)</SelectItem>
+								<SelectItem value="claude-oauth">
+									Claude CLI OAuth (Recommended)
+								</SelectItem>
 								<SelectItem value="console">Claude API</SelectItem>
 								<SelectItem value="zai">z.ai (API Key)</SelectItem>
 								<SelectItem value="minimax">Minimax (API Key)</SelectItem>
@@ -590,7 +598,8 @@ export function AccountAddForm({
 							</div>
 						</>
 					)}
-					{(newAccount.mode === "max" || newAccount.mode === "console") && (
+					{(newAccount.mode === "claude-oauth" ||
+						newAccount.mode === "console") && (
 						<div className="space-y-2">
 							<Label htmlFor="customEndpoint">
 								Custom Endpoint URL (Optional)

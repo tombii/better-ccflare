@@ -178,7 +178,7 @@ The `oauth_sessions` table stores temporary OAuth PKCE (Proof Key for Code Excha
 | `id` | TEXT | PRIMARY KEY | Session identifier (UUID) |
 | `account_name` | TEXT | NOT NULL | Name for the account being created |
 | `verifier` | TEXT | NOT NULL | PKCE code verifier for security |
-| `mode` | TEXT | NOT NULL | OAuth mode ('console' or 'max') |
+| `mode` | TEXT | NOT NULL | OAuth mode ('console' or 'claude-oauth') |
 | `created_at` | INTEGER | NOT NULL | Unix timestamp when session was created |
 | `expires_at` | INTEGER | NOT NULL | Unix timestamp when session expires |
 
