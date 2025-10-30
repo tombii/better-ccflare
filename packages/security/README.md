@@ -86,6 +86,26 @@ const result = validatePath('/home/user/link', {
 });
 ```
 
+### Control Empty String Handling
+
+By default, empty strings are allowed and resolve to the current working directory. Use `allowEmpty: false` to reject empty paths:
+
+```typescript
+import { validatePath } from '@better-ccflare/security';
+
+// For user uploads: disallow empty paths to prevent security issues
+const result = validatePath(userPath, {
+  description: 'user upload',
+  allowEmpty: false
+});
+
+// For optional config: allow empty (default behavior)
+const configResult = validatePath(configPath, {
+  description: 'config file'
+  // allowEmpty defaults to true
+});
+```
+
 ## Security Model
 
 ### Validation Layers
@@ -247,6 +267,9 @@ interface PathValidationOptions {
 
   // Description for logging
   description?: string;
+
+  // Whether to allow empty strings (resolves to CWD). Default: true
+  allowEmpty?: boolean;
 }
 ```
 
