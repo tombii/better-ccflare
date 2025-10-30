@@ -104,9 +104,9 @@ The `validatePath()` function implements 7 validation layers:
 
 By default, paths are allowed within:
 
-- User's home directory (`os.homedir()`)
+- Better-ccflare config directory (`~/.config/better-ccflare` on Linux/macOS, `AppData/Local/better-ccflare` on Windows)
 - Current working directory (`process.cwd()`)
-- `/tmp` directory (for testing)
+- Temp directory (cross-platform: `/tmp` on Unix, `C:\temp` on Windows)
 
 **Important**: This default may be too permissive for some deployments. Always specify `additionalAllowedPaths` explicitly for production use.
 
