@@ -25,16 +25,27 @@ export class SessionStrategy implements LoadBalancingStrategy {
 	private resetSessionIfExpired(account: Account): void {
 		const now = Date.now();
 
-		if (
+		// Check if session has exceeded the fixed duration OR if the usage window has reset
+		const fixedDurationExpired =
 			!account.session_start ||
-			now - account.session_start >= this.sessionDurationMs
-		) {
+			now - account.session_start >= this.sessionDurationMs;
+
+		// Check if the account's rate limit window has reset (for accounts with rate limit reset info)
+		// This is primarily for anthropic OAuth accounts that have usage tracking
+		// In the future, other providers might support similar functionality
+		const rateLimitWindowReset =
+			account.rate_limit_reset && account.rate_limit_reset <= now;
+
+		if (fixedDurationExpired || rateLimitWindowReset) {
 			// Reset session
 			if (this.store) {
 				const wasExpired = account.session_start !== null;
+				const resetReason = rateLimitWindowReset
+					? "rate limit window reset"
+					: "fixed duration expired";
 				this.log.info(
 					wasExpired
-						? `Session expired for account ${account.name}, starting new session`
+						? `Session expired for account ${account.name} due to ${resetReason}, starting new session`
 						: `Starting new session for account ${account.name}`,
 				);
 				this.store.resetAccountSession(account.id, now);

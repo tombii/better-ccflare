@@ -19,6 +19,7 @@ better-ccflare implements a session-based load balancing system to distribute re
 - **Session Persistence**: Maintains configurable sessions on specific accounts
 - **Account Priorities**: Supports prioritized account selection for better control over load distribution
 - **Auto-Fallback**: Automatically switches back to higher priority accounts when their usage windows reset
+- **Usage Window Alignment**: Sessions automatically align with Anthropic OAuth usage window resets for optimal resource utilization
 - **Real-time Configuration**: Change settings without restarting the server
 - **Provider Filtering**: Accounts are filtered by provider compatibility
 
