@@ -345,21 +345,31 @@ function extractAgentDirectories(systemPrompt: string): string[] {
 	const isProduction = process.env.NODE_ENV === "production";
 
 	// PERFORMANCE: Process both patterns with optimized logging
-	const processPath = (rawPath: string, description: string, finalPath?: string) => {
+	const processPath = (
+		rawPath: string,
+		description: string,
+		finalPath?: string,
+	) => {
 		const pathToValidate = finalPath || rawPath;
 
 		// Validate path using comprehensive security checks (cached)
 		const validation = validatePath(pathToValidate, { description });
 		if (!validation.isValid) {
-			extractDirLog.warn(`Rejected invalid ${description}: ${pathToValidate} - ${validation.reason}`);
+			extractDirLog.warn(
+				`Rejected invalid ${description}: ${pathToValidate} - ${validation.reason}`,
+			);
 			return;
 		}
 
 		// PERFORMANCE: Minimal logging in production
 		if (isProduction) {
-			extractDirLog.debug(`Validated ${description}: ${validation.resolvedPath}`);
+			extractDirLog.debug(
+				`Validated ${description}: ${validation.resolvedPath}`,
+			);
 		} else {
-			extractDirLog.info(`Validated ${description}: ${validation.resolvedPath}`);
+			extractDirLog.info(
+				`Validated ${description}: ${validation.resolvedPath}`,
+			);
 		}
 
 		directories.add(validation.resolvedPath);
@@ -378,18 +388,12 @@ function extractAgentDirectories(systemPrompt: string): string[] {
 	for (const match of repoRootMatches) {
 		const repoRoot = match[1];
 
-		// Validate repo root first, then construct agents directory
-		const validation = validatePath(repoRoot, { description: "CLAUDE.md repo root" });
-		if (!validation.isValid) {
-			extractDirLog.warn(`Rejected invalid repo root: ${repoRoot} - ${validation.reason}`);
-			continue;
-		}
-
-		// Clean up any escaped slashes and construct agents directory
-		const cleanedRoot = validation.decodedPath.replace(/\\\//g, "/");
+		// Clean up any escaped slashes and construct agents directory first
+		const cleanedRoot = repoRoot.replace(/\\\//g, "/");
 		const agentsDir = join(cleanedRoot, ".claude", "agents");
 
-		processPath(repoRoot, "constructed agents directory", agentsDir);
+		// Validate the constructed agents directory directly
+		processPath(agentsDir, "constructed agents directory from CLAUDE.md");
 	}
 
 	return Array.from(directories);

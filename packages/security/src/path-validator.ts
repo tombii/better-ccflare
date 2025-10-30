@@ -1,9 +1,13 @@
 import { existsSync, lstatSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { relative, resolve, sep } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
+import { platform } from "node:process";
 import { Logger } from "@better-ccflare/logger";
 
 const log = new Logger("PathValidator");
+
+// Cache NODE_ENV check for performance
+const IS_PRODUCTION = process.env.NODE_ENV === "production";
 
 /**
  * Security configuration for path validation
@@ -78,21 +82,77 @@ class ValidationCache {
 // Global validation cache instance
 const validationCache = new ValidationCache();
 
+// Track if we've warned about using default paths in production
+let hasWarnedAboutDefaults = false;
+
+// Rate limiting for attack detection
+interface AttackAttempt {
+	timestamp: number;
+	source: string;
+	attackType: string;
+}
+
+// Store attack attempts for rate limiting (simple sliding window)
+const attackAttempts: AttackAttempt[] = [];
+const MAX_ATTACK_ATTEMPTS = 10; // Max attempts to track
+const RATE_LIMIT_WINDOW_MS = 60000; // 1 minute window
+
 /**
  * Performance-optimized structured logging helper
  * Only creates expensive objects when not in production (for security events)
  */
-function logSecurityEvent(event: string, details: () => Record<string, unknown>) {
+/**
+ * Check if there are too many attack attempts from the same source within the time window
+ */
+function isRateLimited(source: string, attackType: string): boolean {
+	const now = Date.now();
+
+	// Clean up old attempts outside the time window
+	const cutoffTime = now - RATE_LIMIT_WINDOW_MS;
+	const _initialLength = attackAttempts.length;
+	attackAttempts.splice(0, attackAttempts.length - MAX_ATTACK_ATTEMPTS); // Keep only recent attempts
+	attackAttempts.push({
+		timestamp: now,
+		source,
+		attackType,
+	});
+
+	// Count attempts in the current window
+	const recentAttempts = attackAttempts.filter(
+		(attempt) =>
+			attempt.timestamp >= cutoffTime &&
+			attempt.source === source &&
+			attempt.attackType === attackType,
+	);
+
+	// If we have more than 5 attempts in the window, consider it rate limited
+	return recentAttempts.length > 5;
+}
+
+function logSecurityEvent(
+	event: string,
+	details: () => Record<string, unknown>,
+) {
+	// Check for rate limiting before logging
+	const detailsObj = details();
+	const source = (detailsObj.source as string) || "unknown";
+	const attackType = (detailsObj.attack_type as string) || "unknown";
+
+	if (isRateLimited(source, attackType)) {
+		// Skip logging if rate limited to prevent log flooding
+		return;
+	}
+
 	// In production, only log critical security events with minimal details
-	if (process.env.NODE_ENV === 'production') {
+	if (IS_PRODUCTION) {
 		const minimalDetails = {
-			source: details().source,
-			attack_type: details().attack_type,
+			source: detailsObj.source,
+			attack_type: detailsObj.attack_type,
 		};
 		log.warn(event, minimalDetails);
 	} else {
 		// In development, log full details for debugging
-		log.warn(event, details());
+		log.warn(event, detailsObj);
 	}
 }
 
@@ -131,6 +191,8 @@ export interface PathValidationOptions {
 	checkSymlinks?: boolean;
 	/** Description for logging purposes */
 	description?: string;
+	/** Whether to allow empty strings (resolves to CWD). Default: true */
+	allowEmpty?: boolean;
 }
 
 /**
@@ -148,10 +210,26 @@ export function getDefaultAllowedBasePaths(forceRefresh = false): string[] {
 
 	const paths: string[] = [];
 
-	// User's home directory
+	// Better-ccflare config directory (OS-independent)
 	try {
 		const home = homedir();
-		if (home) paths.push(home);
+		if (home) {
+			let configDir: string;
+			if (platform === "win32") {
+				// Windows: Use LOCALAPPDATA or APPDATA
+				const baseDir =
+					process.env.LOCALAPPDATA ??
+					process.env.APPDATA ??
+					join(home, "AppData", "Local");
+				configDir = join(baseDir, "better-ccflare");
+			} else {
+				// Linux/macOS: Follow XDG Base Directory specification
+				const xdgConfig = process.env.XDG_CONFIG_HOME;
+				const baseDir = xdgConfig ?? join(home, ".config");
+				configDir = join(baseDir, "better-ccflare");
+			}
+			paths.push(configDir);
+		}
 	} catch {
 		// homedir() can fail in some environments
 	}
@@ -195,8 +273,9 @@ export function getDefaultAllowedBasePaths(forceRefresh = false): string[] {
  * - **Cross-platform**: Handles both Unix (/) and Windows (\) path separators
  *
  * **Production Security Warning:**
- * The default allowed paths (home directory, current directory, /tmp) may be too permissive
- * for production environments. Always specify explicit `additionalAllowedPaths` in production.
+ * The default allowed paths (better-ccflare config directory, current directory, temp directory)
+ * may still be too permissive for some production environments. Always specify explicit
+ * `additionalAllowedPaths` in production for maximum security.
  *
  * **Known Limitations:**
  * - Symbolic links are detected but not fully prevented (TOCTOU vulnerability)
@@ -224,9 +303,25 @@ export function validatePath(
 	const description = options.description || "path";
 
 	// Input validation: reject null, undefined, or non-string paths
-	// Note: empty strings are allowed as they resolve to current working directory
-	if (rawPath === null || rawPath === undefined || typeof rawPath !== 'string') {
-		const reason = `Invalid input: path must be a string, received ${rawPath === null ? 'null' : rawPath === undefined ? 'undefined' : typeof rawPath}`;
+	if (
+		rawPath === null ||
+		rawPath === undefined ||
+		typeof rawPath !== "string"
+	) {
+		const reason = `Invalid input: path must be a string, received ${rawPath === null ? "null" : rawPath === undefined ? "undefined" : typeof rawPath}`;
+		log.debug(`${description} validation failed: ${reason}`);
+		return {
+			isValid: false,
+			decodedPath: "",
+			resolvedPath: "",
+			reason,
+		};
+	}
+
+	// Check for empty strings if allowEmpty is explicitly set to false
+	const allowEmpty = options.allowEmpty !== false; // Default to true if not specified
+	if (!allowEmpty && rawPath === "") {
+		const reason = `Empty string not allowed for ${description}`;
 		log.debug(`${description} validation failed: ${reason}`);
 		return {
 			isValid: false,
@@ -241,11 +336,32 @@ export function validatePath(
 	const maxDecodeIterations =
 		options.maxUrlDecodeIterations || MAX_DECODE_ITERATIONS;
 
+	// PRODUCTION WARNING: Log if using default paths in production (before caching)
+	if (
+		!options.additionalAllowedPaths?.length &&
+		IS_PRODUCTION &&
+		!hasWarnedAboutDefaults
+	) {
+		hasWarnedAboutDefaults = true;
+		log.warn(
+			`SECURITY WARNING: Using default allowed paths in production environment. ` +
+				`This may be too permissive. Consider specifying explicit additionalAllowedPaths.`,
+			{
+				description,
+				environment: "production",
+				recommendation:
+					"Add additionalAllowedPaths option for production security",
+			},
+		);
+	}
+
 	// PERFORMANCE: Check cache first for successful validations
 	// Create cache key from raw path and relevant options (optimized to minimize string operations)
 	const symlinkFlag = checkSymlinks ? "1" : "0";
 	const blockFlag = blockSymlinks ? "1" : "0";
-	const additionalPaths = (options.additionalAllowedPaths || []).join(",");
+	const additionalPaths = (options.additionalAllowedPaths || [])
+		.sort()
+		.join(",");
 	const cacheKey = `${rawPath}|${symlinkFlag}|${blockFlag}|${additionalPaths}|${description}`;
 	const cached = validationCache.get(cacheKey);
 	if (cached) {
@@ -277,8 +393,9 @@ export function validatePath(
 	}
 
 	// Normalize Unicode to prevent variations like FULLWIDTH FULL STOP from bypassing checks
-	// NFC (Canonical Decomposition followed by Canonical Composition) is the standard form
-	decodedPath = decodedPath.normalize("NFC");
+	// NFKC (Compatibility Decomposition followed by Canonical Composition) is more aggressive
+	// and handles compatibility characters (like fullwidth forms) better
+	decodedPath = decodedPath.normalize("NFKC");
 
 	// Step 2: Check for null bytes (security bypass attempt)
 	if (rawPath.includes("\0") || decodedPath.includes("\0")) {
@@ -332,21 +449,6 @@ export function validatePath(
 		...(options.additionalAllowedPaths || []).map((p) => resolve(p)),
 	];
 
-	// PRODUCTION WARNING: Log if using default paths in production (cache the check)
-	const isProduction = process.env.NODE_ENV === "production";
-	if (!options.additionalAllowedPaths?.length && isProduction) {
-		log.warn(
-			`SECURITY WARNING: Using default allowed paths in production environment. ` +
-				`This may be too permissive. Consider specifying explicit additionalAllowedPaths.`,
-			{
-				description,
-				environment: "production",
-				recommendation:
-					"Add additionalAllowedPaths option for production security",
-			},
-		);
-	}
-
 	let isWithinAllowedPaths = false;
 	for (const basePath of allowedBasePaths) {
 		const rel = relative(basePath, resolvedPath);
@@ -377,7 +479,7 @@ export function validatePath(
 	}
 
 	if (!isWithinAllowedPaths) {
-		const reason = `Path outside allowed directories in ${description}: ${rawPath} → ${resolvedPath} (allowed: ${allowedBasePaths.join(", ")})`;
+		const reason = `Path outside allowed directories in ${description}: ${rawPath} → ${resolvedPath} (allowed: ${allowedBasePaths.join(", ")}). To allow this path, add it to additionalAllowedPaths option.`;
 		logSecurityEvent(reason, () => ({
 			source: description,
 			path: rawPath,
@@ -433,15 +535,28 @@ export function validatePath(
 				}
 			}
 		} catch (error) {
-			// lstatSync can fail for various reasons - log with details for debugging
-			log.debug(
-				`Could not check for symlinks in ${description}: ${resolvedPath}`,
-				{
-					error: error instanceof Error ? error.message : String(error),
-					path: resolvedPath,
-					description,
-				},
-			);
+			// Type guard for Node.js system errors
+			const isErrorWithCode = (err: unknown): err is { code: string } => {
+				return (
+					err !== null &&
+					typeof err === "object" &&
+					"code" in err &&
+					typeof (err as { code: unknown }).code === "string"
+				);
+			};
+
+			// ENOENT is expected for non-existent files, don't log as debug in that case
+			if (isErrorWithCode(error) && error.code !== "ENOENT") {
+				log.debug(
+					`Could not check for symlinks in ${description}: ${resolvedPath}`,
+					{
+						error: error instanceof Error ? error.message : String(error),
+						path: resolvedPath,
+						description,
+						error_code: error.code,
+					},
+				);
+			}
 		}
 	}
 
@@ -450,7 +565,7 @@ export function validatePath(
 	validationCache.set(cacheKey, result);
 
 	// PERFORMANCE: Log successful validation at debug level in production
-	if (isProduction) {
+	if (IS_PRODUCTION) {
 		log.debug(`Path validation successful: ${description} → ${resolvedPath}`);
 	} else {
 		log.info(`Path validation successful: ${description} → ${resolvedPath}`);

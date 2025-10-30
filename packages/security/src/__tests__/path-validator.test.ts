@@ -423,52 +423,52 @@ describe("Path Validator - Core Security Tests", () => {
 	});
 
 	describe("Edge Cases - Additional Security Tests", () => {
-	test("should reject null input", () => {
-		// @ts-expect-error - Testing invalid input
-		const result = validatePath(null, {
-			description: "null input",
+		test("should reject null input", () => {
+			// @ts-expect-error - Testing invalid input
+			const result = validatePath(null, {
+				description: "null input",
+			});
+
+			expect(result.isValid).toBe(false);
+			expect(result.reason).toContain("Invalid input");
+			expect(result.reason).toContain("string");
+			expect(result.reason).toContain("null");
 		});
 
-		expect(result.isValid).toBe(false);
-		expect(result.reason).toContain("Invalid input");
-		expect(result.reason).toContain("string");
-		expect(result.reason).toContain("null");
-	});
+		test("should reject undefined input", () => {
+			// @ts-expect-error - Testing invalid input
+			const result = validatePath(undefined, {
+				description: "undefined input",
+			});
 
-	test("should reject undefined input", () => {
-		// @ts-expect-error - Testing invalid input
-		const result = validatePath(undefined, {
-			description: "undefined input",
+			expect(result.isValid).toBe(false);
+			expect(result.reason).toContain("Invalid input");
+			expect(result.reason).toContain("string");
+			expect(result.reason).toContain("undefined");
 		});
 
-		expect(result.isValid).toBe(false);
-		expect(result.reason).toContain("Invalid input");
-		expect(result.reason).toContain("string");
-		expect(result.reason).toContain("undefined");
-	});
+		test("should accept empty string input (resolves to cwd)", () => {
+			const result = validatePath("", {
+				description: "empty string",
+			});
 
-	test("should accept empty string input (resolves to cwd)", () => {
-		const result = validatePath("", {
-			description: "empty string",
+			// Empty string should resolve to current working directory
+			expect(result.isValid).toBe(true);
+			expect(result.resolvedPath).toBe(process.cwd());
 		});
 
-		// Empty string should resolve to current working directory
-		expect(result.isValid).toBe(true);
-		expect(result.resolvedPath).toBe(process.cwd());
-	});
+		test("should reject non-string input", () => {
+			// @ts-expect-error - Testing invalid input
+			const result = validatePath(123, {
+				description: "number input",
+			});
 
-	test("should reject non-string input", () => {
-		// @ts-expect-error - Testing invalid input
-		const result = validatePath(123, {
-			description: "number input",
+			expect(result.isValid).toBe(false);
+			expect(result.reason).toContain("Invalid input");
+			expect(result.reason).toContain("number");
 		});
 
-		expect(result.isValid).toBe(false);
-		expect(result.reason).toContain("Invalid input");
-		expect(result.reason).toContain("number");
-	});
-
-	test("should handle paths with repeated slashes", () => {
+		test("should handle paths with repeated slashes", () => {
 			const result = validatePath("/tmp///test//file.txt", {
 				description: "repeated slashes",
 			});
