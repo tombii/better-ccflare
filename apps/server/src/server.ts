@@ -29,6 +29,7 @@ import {
 	registerRefreshClearer,
 	terminateUsageWorker,
 } from "@better-ccflare/proxy";
+import { validatePathOrThrow } from "@better-ccflare/security";
 import type { Account } from "@better-ccflare/types";
 import { serve } from "bun";
 
@@ -339,12 +340,31 @@ export default function startServer(options?: {
 	tlsEnabled = !!(sslKeyPath && sslCertPath);
 
 	// Validate SSL certificate files if TLS is enabled
+	let validatedSslKeyPath: string | undefined;
+	let validatedSslCertPath: string | undefined;
+
 	if (tlsEnabled && sslKeyPath && sslCertPath) {
-		if (!existsSync(sslKeyPath)) {
-			throw new Error(`SSL key file not found: ${sslKeyPath}`);
+		// Validate paths for security (prevent path traversal)
+		try {
+			validatedSslKeyPath = validatePathOrThrow(sslKeyPath, {
+				description: "SSL key file",
+			});
+			validatedSslCertPath = validatePathOrThrow(sslCertPath, {
+				description: "SSL certificate file",
+			});
+		} catch (error) {
+			throw new Error(
+				`SSL file path validation failed: ${error instanceof Error ? error.message : String(error)}`,
+			);
 		}
-		if (!existsSync(sslCertPath)) {
-			throw new Error(`SSL certificate file not found: ${sslCertPath}`);
+
+		if (!existsSync(validatedSslKeyPath)) {
+			throw new Error(`SSL key file not found: ${validatedSslKeyPath}`);
+		}
+		if (!existsSync(validatedSslCertPath)) {
+			throw new Error(
+				`SSL certificate file not found: ${validatedSslCertPath}`,
+			);
 		}
 	}
 
@@ -511,11 +531,11 @@ export default function startServer(options?: {
 			port: runtime.port,
 			hostname,
 			idleTimeout: NETWORK.IDLE_TIMEOUT_MAX, // Max allowed by Bun
-			...(tlsEnabled && sslKeyPath && sslCertPath
+			...(tlsEnabled && validatedSslKeyPath && validatedSslCertPath
 				? {
 						tls: {
-							key: readFileSync(sslKeyPath),
-							cert: readFileSync(sslCertPath),
+							key: readFileSync(validatedSslKeyPath),
+							cert: readFileSync(validatedSslCertPath),
 						},
 					}
 				: {}),
