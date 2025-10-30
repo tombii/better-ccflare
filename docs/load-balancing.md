@@ -129,6 +129,42 @@ if (fixedDurationExpired || rateLimitWindowReset) {
 
 **Race Condition Prevention**: The implementation uses strict `<` comparisons instead of `<=` to prevent race conditions where sessions might reset prematurely at the exact moment the usage window resets.
 
+### Future Extensibility for API-Based Providers
+
+**Current Implementation**: The usage window alignment is currently optimized for Anthropic OAuth accounts, which provide explicit `rate_limit_reset` timestamps via their API.
+
+**Future Enhancement Needed**: For API-based providers (like OpenAI-compatible, custom endpoints), the system currently relies on fixed-duration session logic since these providers typically don't expose usage window information. However, some API-based providers may implement their own usage windows (5-hour, daily, or custom intervals) that could be leveraged for better resource utilization.
+
+**Proposed Architecture for Future Implementation**:
+
+```typescript
+// Future extension for provider-specific usage window handling
+interface ProviderUsageWindow {
+    duration: number;        // Window duration in milliseconds
+    resetStrategy: 'fixed' | 'api-based' | 'hybrid';
+    resetField?: string;     // API field containing reset timestamp
+    calculateReset?: (account: Account) => number | null;
+}
+
+// Enhanced session reset logic for multiple providers
+const resetConditions = [
+    fixedDurationExpired,
+    ...getProviderSpecificResetConditions(account, providerConfig)
+];
+```
+
+**Implementation Roadmap**:
+1. **Provider Configuration**: Add usage window configuration to provider settings
+2. **Reset Detection**: Implement provider-specific reset timestamp detection logic
+3. **Hybrid Strategy**: Combine fixed-duration and provider-specific window alignment
+4. **Backward Compatibility**: Ensure existing API-based providers continue working with fixed durations
+
+**Benefits of Future Implementation**:
+- **Consistent Optimization**: All providers with usage windows can benefit from alignment
+- **Resource Efficiency**: Better utilization of rate limits across all provider types
+- **Flexible Configuration**: Provider-specific usage window configurations
+- **Unified Architecture**: Single session strategy handling multiple reset patterns
+
 ## Account Priorities
 
 Account priorities allow you to control which accounts are preferred when multiple accounts are available. This feature gives you fine-grained control over load distribution and account selection.
