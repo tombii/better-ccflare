@@ -34,7 +34,7 @@ export class SessionStrategy implements LoadBalancingStrategy {
 		// This is primarily for anthropic OAuth accounts that have usage tracking
 		// In the future, other providers might support similar functionality
 		const rateLimitWindowReset =
-			account.rate_limit_reset && account.rate_limit_reset <= now;
+			account.rate_limit_reset && account.rate_limit_reset < now;
 
 		if (fixedDurationExpired || rateLimitWindowReset) {
 			// Reset session
@@ -177,7 +177,7 @@ export class SessionStrategy implements LoadBalancingStrategy {
 
 			// Check if the API usage window has reset
 			const windowReset =
-				account.rate_limit_reset && account.rate_limit_reset <= now;
+				account.rate_limit_reset && account.rate_limit_reset < now;
 
 			// Check if the account is not currently rate limited by our system
 			const notRateLimited =
