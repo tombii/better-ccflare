@@ -22,6 +22,10 @@ export class AutoRefreshScheduler {
 	private lastRefreshResetTime: Map<string, number> = new Map();
 	// Prevent concurrent refresh operations
 	private isRefreshing = false;
+	// Track consecutive failure counts for accounts to identify consistently failing ones
+	private consecutiveFailures: Map<string, number> = new Map();
+	// Threshold for marking an account as needing re-authentication
+	private readonly FAILURE_THRESHOLD = 5;
 
 	constructor(db: Database, proxyContext: ProxyContext) {
 		this.db = db;
@@ -58,8 +62,9 @@ export class AutoRefreshScheduler {
 			this.unregisterInterval = null;
 			log.info("Auto-refresh scheduler stopped");
 		}
-		// Clear the tracking map to free memory
+		// Clear the tracking maps to free memory
 		this.lastRefreshResetTime.clear();
+		this.consecutiveFailures.clear();
 	}
 
 	/**
@@ -454,6 +459,23 @@ export class AutoRefreshScheduler {
 					);
 				}
 
+				// Track consecutive failures for this account
+				const currentFailures =
+					this.consecutiveFailures.get(accountRow.id) || 0;
+				const newFailures = currentFailures + 1;
+				this.consecutiveFailures.set(accountRow.id, newFailures);
+
+				log.warn(
+					`Account ${accountRow.name} has failed ${newFailures} consecutive auto-refresh attempts. Threshold is ${this.FAILURE_THRESHOLD}.`,
+				);
+
+				// If failure threshold is reached, log a special message to alert admins
+				if (newFailures >= this.FAILURE_THRESHOLD) {
+					log.error(
+						`Account ${accountRow.name} has failed ${newFailures} consecutive auto-refresh attempts - this account needs re-authentication! Please run: bun run cli --reauthenticate ${accountRow.name}`,
+					);
+				}
+
 				return false;
 			}
 
@@ -543,6 +565,14 @@ export class AutoRefreshScheduler {
 					}
 				}
 
+				// Reset consecutive failure counter on successful refresh
+				if (this.consecutiveFailures.has(accountRow.id)) {
+					this.consecutiveFailures.delete(accountRow.id);
+					log.debug(
+						`Reset consecutive failure counter for account ${accountRow.name} after successful auto-refresh`,
+					);
+				}
+
 				return true;
 			}
 
@@ -557,6 +587,23 @@ export class AutoRefreshScheduler {
 			} catch {
 				// Ignore error reading body
 			}
+
+			// Track consecutive failures for this account (for non-401 errors too)
+			const currentFailures = this.consecutiveFailures.get(accountRow.id) || 0;
+			const newFailures = currentFailures + 1;
+			this.consecutiveFailures.set(accountRow.id, newFailures);
+
+			log.warn(
+				`Account ${accountRow.name} has failed ${newFailures} consecutive auto-refresh attempts (non-401 error). Threshold is ${this.FAILURE_THRESHOLD}.`,
+			);
+
+			// If failure threshold is reached, log a special message to alert admins
+			if (newFailures >= this.FAILURE_THRESHOLD) {
+				log.error(
+					`Account ${accountRow.name} has failed ${newFailures} consecutive auto-refresh attempts - this account may need attention! Please check account status.`,
+				);
+			}
+
 			return false;
 		} catch (error) {
 			if (error instanceof Error) {
@@ -577,6 +624,23 @@ export class AutoRefreshScheduler {
 					`Error sending auto-refresh message to account ${accountRow.name}: Unknown error (possibly undefined or null)`,
 				);
 			}
+
+			// Track consecutive failures for this account (for exceptions too)
+			const currentFailures = this.consecutiveFailures.get(accountRow.id) || 0;
+			const newFailures = currentFailures + 1;
+			this.consecutiveFailures.set(accountRow.id, newFailures);
+
+			log.warn(
+				`Account ${accountRow.name} has failed ${newFailures} consecutive auto-refresh attempts (exception). Threshold is ${this.FAILURE_THRESHOLD}.`,
+			);
+
+			// If failure threshold is reached, log a special message to alert admins
+			if (newFailures >= this.FAILURE_THRESHOLD) {
+				log.error(
+					`Account ${accountRow.name} has failed ${newFailures} consecutive auto-refresh attempts - this account may need attention! Please check account status.`,
+				);
+			}
+
 			return false;
 		}
 	}
@@ -601,12 +665,22 @@ export class AutoRefreshScheduler {
 			const activeAccountIds = query.all().map((row) => row.id);
 			const activeAccountIdSet = new Set(activeAccountIds);
 
-			// Remove entries from the map that are not in the active set
+			// Remove entries from the maps that are not in the active set
 			for (const accountId of this.lastRefreshResetTime.keys()) {
 				if (!activeAccountIdSet.has(accountId)) {
 					this.lastRefreshResetTime.delete(accountId);
 					log.debug(
 						`Removed tracking entry for account ${accountId} (no longer exists or auto-refresh disabled)`,
+					);
+				}
+			}
+
+			// Also clean up consecutive failures for non-active accounts
+			for (const accountId of this.consecutiveFailures.keys()) {
+				if (!activeAccountIdSet.has(accountId)) {
+					this.consecutiveFailures.delete(accountId);
+					log.debug(
+						`Removed consecutive failure tracking for account ${accountId} (no longer exists or auto-refresh disabled)`,
 					);
 				}
 			}

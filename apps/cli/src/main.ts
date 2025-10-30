@@ -143,6 +143,59 @@ function fastExit(code: 0 | 1 = 0): never {
 }
 
 /**
+ * Helper function to suggest similar mode values for common typos
+ */
+function getModeSuggestions(input: string, validModes: string[]): string[] {
+	const suggestions: string[] = [];
+
+	for (const mode of validModes) {
+		// Check for exact case-insensitive match
+		if (mode.toLowerCase() === input.toLowerCase()) {
+			continue; // Skip if it's the same (case-insensitive)
+		}
+
+		// Check for simple typos using edit distance
+		const distance = levenshteinDistance(input, mode);
+		if (distance <= 2) {
+			// Allow up to 2 character differences
+			suggestions.push(mode);
+		}
+	}
+
+	return suggestions.slice(0, 3); // Return up to 3 suggestions
+}
+
+/**
+ * Calculate Levenshtein distance between two strings
+ */
+function levenshteinDistance(str1: string, str2: string): number {
+	const matrix = Array(str2.length + 1)
+		.fill(null)
+		.map(() => Array(str1.length + 1).fill(null));
+
+	for (let i = 0; i <= str1.length; i++) {
+		matrix[0][i] = i;
+	}
+
+	for (let j = 0; j <= str2.length; j++) {
+		matrix[j][0] = j;
+	}
+
+	for (let j = 1; j <= str2.length; j++) {
+		for (let i = 1; i <= str1.length; i++) {
+			const cost = str1[i - 1] === str2[j - 1] ? 0 : 1;
+			matrix[j][i] = Math.min(
+				matrix[j][i - 1] + 1, // deletion
+				matrix[j - 1][i] + 1, // insertion
+				matrix[j - 1][i - 1] + cost, // substitution
+			);
+		}
+	}
+
+	return matrix[str2.length][str1.length];
+}
+
+/**
  * Display all configuration variables with their sources and precedence
  */
 function displayConfigInfo(parsed: ParsedArgs, config: Config): void {
@@ -491,6 +544,33 @@ function parseArgs(args: string[]): ParsedArgs {
 				if (!validModes.includes(modeValue)) {
 					console.error(`❌ Invalid mode: ${modeValue}`);
 					console.error(`Valid modes: ${validModes.join(", ")}`);
+
+					// Provide suggestions for common typos
+					const suggestions = getModeSuggestions(modeValue, validModes);
+					if (suggestions.length > 0) {
+						console.error(`Did you mean: ${suggestions.join(", ")}?`);
+					}
+
+					console.error("\nExamples:");
+					console.error(
+						"  bun run cli --add-account my-account --mode max --priority 0",
+					);
+					console.error(
+						"  bun run cli --add-account api-key-account --mode console --priority 10",
+					);
+					console.error(
+						"  bun run cli --add-account zai-account --mode zai --priority 20",
+					);
+					console.error(
+						"  bun run cli --add-account minimax-account --mode minimax --priority 30",
+					);
+					console.error(
+						"  bun run cli --add-account openai-account --mode openai-compatible --priority 40",
+					);
+					console.error(
+						"  bun run cli --add-account anthropic-account --mode anthropic-compatible --priority 50",
+					);
+
 					fastExit(1);
 				}
 				break;

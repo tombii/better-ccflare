@@ -753,15 +753,18 @@ export function setAccountPriority(
 		};
 	}
 
+	// Validate the priority before updating
+	const validatedPriority = validatePriority(priority, "priority");
+
 	// Update the account priority
 	db.run("UPDATE accounts SET priority = ? WHERE id = ?", [
-		priority,
+		validatedPriority,
 		account.id,
 	]);
 
 	return {
 		success: true,
-		message: `Account '${name}' priority set to ${priority}`,
+		message: `Account '${name}' priority set to ${validatedPriority}`,
 	};
 }
 

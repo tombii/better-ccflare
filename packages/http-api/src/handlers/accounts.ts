@@ -6,6 +6,7 @@ import {
 	sanitizers,
 	validateAndSanitizeModelMappings,
 	validateNumber,
+	validatePriority,
 	validateString,
 } from "@better-ccflare/core";
 import type { DatabaseOperations } from "@better-ccflare/database";
@@ -205,17 +206,12 @@ export function createAccountPriorityUpdateHandler(dbOps: DatabaseOperations) {
 		try {
 			const body = await req.json();
 
-			// Validate priority input
-			const priority = validateNumber(body.priority, "priority", {
-				required: true,
-				min: 0,
-				max: 100,
-				integer: true,
-			});
-
-			if (priority === undefined) {
+			// Validate priority input using the centralized validation function
+			// Check if priority is provided (required)
+			if (body.priority === undefined || body.priority === null) {
 				return errorResponse(BadRequest("Priority is required"));
 			}
+			const priority = validatePriority(body.priority, "priority");
 
 			// Check if account exists
 			const db = dbOps.getDatabase();
