@@ -804,14 +804,13 @@ export function createOpenAIAccountAddHandler(dbOps: DatabaseOperations) {
 						last_used: number | null;
 						created_at: number;
 						expires_at: number;
-						account_tier: number;
 						paused: number;
 					},
 					[string]
 				>(
 					`SELECT
 						id, name, provider, request_count, total_requests,
-						last_used, created_at, expires_at, account_tier,
+						last_used, created_at, expires_at,
 						COALESCE(paused, 0) as paused
 					FROM accounts WHERE id = ?`,
 				)
@@ -833,7 +832,6 @@ export function createOpenAIAccountAddHandler(dbOps: DatabaseOperations) {
 						? new Date(account.last_used).toISOString()
 						: null,
 					created: new Date(account.created_at).toISOString(),
-					tier: account.account_tier,
 					paused: account.paused === 1,
 					priority: priority,
 					tokenStatus: "valid" as const,
@@ -902,8 +900,8 @@ export function createMinimaxAccountAddHandler(dbOps: DatabaseOperations) {
 			db.run(
 				`INSERT INTO accounts (
 					id, name, provider, api_key, refresh_token, access_token,
-					expires_at, created_at, account_tier, request_count, total_requests, priority, custom_endpoint
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+					expires_at, created_at, request_count, total_requests, priority, custom_endpoint
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 				[
 					accountId,
 					name,
@@ -913,7 +911,6 @@ export function createMinimaxAccountAddHandler(dbOps: DatabaseOperations) {
 					apiKey, // Use API key as access token
 					now + 365 * 24 * 60 * 60 * 1000, // 1 year from now
 					now,
-					1, // Default tier for Minimax accounts
 					0,
 					0,
 					priority,
@@ -1066,8 +1063,8 @@ export function createAnthropicCompatibleAccountAddHandler(
 			db.run(
 				`INSERT INTO accounts (
 					id, name, provider, api_key, refresh_token, access_token,
-					expires_at, created_at, account_tier, request_count, total_requests, priority, custom_endpoint, model_mappings
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+					expires_at, created_at, request_count, total_requests, priority, custom_endpoint, model_mappings
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 				[
 					accountId,
 					name,
@@ -1077,7 +1074,6 @@ export function createAnthropicCompatibleAccountAddHandler(
 					apiKey, // Use API key as access token
 					now + 365 * 24 * 60 * 60 * 1000, // 1 year from now
 					now,
-					1, // Default tier for Anthropic-compatible accounts
 					0,
 					0,
 					priority,

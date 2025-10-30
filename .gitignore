@@ -18,7 +18,7 @@ CLAUDE.md
 AGENTS.md
 
 # Build artifacts and test files
-better-ccflare
+better-ccflare-*
 config.json
 ssl-cert-snakeoil.key
 ssl-cert-snakeoil.pem

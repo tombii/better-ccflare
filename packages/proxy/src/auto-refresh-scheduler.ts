@@ -98,7 +98,6 @@ export class AutoRefreshScheduler {
 					access_token: string | null;
 					expires_at: number | null;
 					rate_limit_reset: number | null;
-					account_tier: number;
 					custom_endpoint: string | null;
 				},
 				[number, number]
@@ -106,7 +105,7 @@ export class AutoRefreshScheduler {
 				`
 				SELECT
 					id, name, provider, refresh_token, access_token,
-					expires_at, rate_limit_reset, account_tier, custom_endpoint
+					expires_at, rate_limit_reset, custom_endpoint
 				FROM accounts
 				WHERE
 					auto_refresh_enabled = 1
@@ -209,7 +208,20 @@ export class AutoRefreshScheduler {
 				await this.sendDummyMessage(accountRow);
 			}
 		} catch (error) {
-			log.error("Error in auto-refresh check:", error);
+			if (error instanceof Error) {
+				const errorMessage = `Error in auto-refresh check: ${error.name}: ${error.message}`;
+				log.error(errorMessage);
+				if (error.stack) {
+					// Log the stack trace separately to ensure it's visible
+					console.error(`Auto-refresh stack trace: ${error.stack}`);
+				}
+			} else if (error !== undefined && error !== null) {
+				log.error(`Error in auto-refresh check: ${JSON.stringify(error)}`);
+			} else {
+				log.error(
+					"Error in auto-refresh check: Unknown error (possibly undefined or null)",
+				);
+			}
 		} finally {
 			this.isRefreshing = false;
 		}
@@ -227,7 +239,6 @@ export class AutoRefreshScheduler {
 		access_token: string | null;
 		expires_at: number | null;
 		rate_limit_reset: number | null;
-		account_tier: number;
 		custom_endpoint: string | null;
 	}): Promise<boolean> {
 		try {
@@ -548,10 +559,24 @@ export class AutoRefreshScheduler {
 			}
 			return false;
 		} catch (error) {
-			log.error(
-				`Error sending auto-refresh message to account ${accountRow.name}:`,
-				error,
-			);
+			if (error instanceof Error) {
+				const errorMessage = `Error sending auto-refresh message to account ${accountRow.name}: ${error.name}: ${error.message}`;
+				log.error(errorMessage);
+				if (error.stack) {
+					// Log the stack trace separately to ensure it's visible
+					console.error(
+						`Auto-refresh stack trace for ${accountRow.name}: ${error.stack}`,
+					);
+				}
+			} else if (error !== undefined && error !== null) {
+				log.error(
+					`Error sending auto-refresh message to account ${accountRow.name}: ${JSON.stringify(error)}`,
+				);
+			} else {
+				log.error(
+					`Error sending auto-refresh message to account ${accountRow.name}: Unknown error (possibly undefined or null)`,
+				);
+			}
 			return false;
 		}
 	}
@@ -586,7 +611,20 @@ export class AutoRefreshScheduler {
 				}
 			}
 		} catch (error) {
-			log.error("Error cleaning up tracking map:", error);
+			if (error instanceof Error) {
+				const errorMessage = `Error cleaning up tracking map: ${error.name}: ${error.message}`;
+				log.error(errorMessage);
+				if (error.stack) {
+					// Log the stack trace separately to ensure it's visible
+					console.error(`Tracking map cleanup stack trace: ${error.stack}`);
+				}
+			} else if (error !== undefined && error !== null) {
+				log.error(`Error cleaning up tracking map: ${JSON.stringify(error)}`);
+			} else {
+				log.error(
+					"Error cleaning up tracking map: Unknown error (possibly undefined or null)",
+				);
+			}
 			// Don't throw - this is a non-critical cleanup operation
 		}
 	}

@@ -15,7 +15,6 @@ describe("MinimaxProvider", () => {
 			access_token: null,
 			expires_at: null,
 			api_key: null,
-			account_tier: 5,
 			custom_endpoint: null,
 			rate_limited_until: null,
 			rate_limit_status: null,

@@ -15,7 +15,6 @@ describe("OpenAICompatibleProvider", () => {
 			access_token: null,
 			expires_at: null,
 			api_key: null,
-			account_tier: 5,
 			custom_endpoint: JSON.stringify({
 				endpoint: "https://api.openrouter.ai/api/v1",
 			}),
