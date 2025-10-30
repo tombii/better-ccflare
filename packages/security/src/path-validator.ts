@@ -203,7 +203,17 @@ export interface PathValidationOptions {
 	checkSymlinks?: boolean;
 	/** Description for logging purposes */
 	description?: string;
-	/** Whether to allow empty strings (resolves to CWD). Default: true */
+	/**
+	 * Whether to allow empty strings (resolves to CWD). Default: true
+	 *
+	 * @example
+	 * // For user uploads: disallow empty paths to prevent security issues
+	 * validatePath(userPath, { allowEmpty: false });
+	 *
+	 * @example
+	 * // For optional config: allow empty (default behavior)
+	 * validatePath(configPath); // allowEmpty defaults to true
+	 */
 	allowEmpty?: boolean;
 }
 
