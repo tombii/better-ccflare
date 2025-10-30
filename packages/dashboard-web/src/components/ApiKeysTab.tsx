@@ -92,20 +92,17 @@ export function ApiKeysTab() {
 	});
 
 	// Fetch API key statistics
-	const {
-		data: statsResponse,
-		isLoading: isLoadingStats,
-		error: statsError,
-	} = useQuery<ApiKeyStatsResponse>({
-		queryKey: ["api-keys-stats"],
-		queryFn: async () => {
-			const response = await fetch("/api/api-keys/stats");
-			if (!response.ok) {
-				throw new Error("Failed to fetch API key statistics");
-			}
-			return response.json();
-		},
-	});
+	const { data: statsResponse, error: statsError } =
+		useQuery<ApiKeyStatsResponse>({
+			queryKey: ["api-keys-stats"],
+			queryFn: async () => {
+				const response = await fetch("/api/api-keys/stats");
+				if (!response.ok) {
+					throw new Error("Failed to fetch API key statistics");
+				}
+				return response.json();
+			},
+		});
 
 	// Generate API key mutation
 	const generateKeyMutation = useMutation({
@@ -435,7 +432,7 @@ export function ApiKeysTab() {
 								<Button
 									variant="outline"
 									size="sm"
-									onClick={() => copyToClipboard(generatedKey!)}
+									onClick={() => generatedKey && copyToClipboard(generatedKey)}
 								>
 									<Copy className="h-4 w-4" />
 								</Button>

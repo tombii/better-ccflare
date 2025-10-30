@@ -1374,11 +1374,12 @@ export function createAccountModelMappingsUpdateHandler(
 
 			// Get existing model mappings from the dedicated field
 			let existingModelMappings: { [key: string]: string } = {};
-			const existingModelMappingsStr = db
+			const result = db
 				.query<{ model_mappings: string | null }, [string]>(
 					"SELECT model_mappings FROM accounts WHERE id = ?",
 				)
-				.get(accountId)?.model_mappings;
+				.get(accountId);
+			const existingModelMappingsStr = result?.model_mappings || null;
 
 			if (existingModelMappingsStr) {
 				try {

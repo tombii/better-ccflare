@@ -570,6 +570,12 @@ Inspired by [snipeship/ccflare](https://github.com/snipeship/ccflare) - thanks f
 
 We welcome contributions! See [CONTRIBUTING.md](docs/contributing.md) for guidelines.
 
+### Code Review Process
+
+This repository includes an automated Claude code review system:
+- **Automatic Review**: Runs automatically when a new pull request is opened
+- **Manual Review**: Can be manually triggered by contributors by commenting `/claude-review` on the PR
+
 ## License
 
 MIT - See [LICENSE](LICENSE) for details

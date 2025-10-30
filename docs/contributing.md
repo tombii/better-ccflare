@@ -461,6 +461,25 @@ Add screenshots for UI changes.
 Closes #(issue number)
 ```
 
+### Claude Code Review
+
+This repository includes an automated Claude code review system that can be triggered in two ways:
+
+1. **Automatic Review**: Runs automatically when a new pull request is opened
+2. **Manual Review**: Can be manually triggered by contributors by commenting `/claude-review` on the PR
+
+The manual trigger is only available to:
+- Repository members and collaborators
+- Users who are organization members
+- The pull request author
+
+Example manual trigger comment:
+```
+/claude-review
+```
+
+This will initiate a Claude code review of your pull request changes.
+
 ### Review Process
 
 1. **Manual Checks**: Run `bun run lint`, `bun run typecheck`, and `bun run format` locally

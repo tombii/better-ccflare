@@ -20,8 +20,9 @@ export class AutoRefreshScheduler {
 	// Track the rate_limit_reset timestamp for each account when we last refreshed it
 	// This allows us to detect when a new window has started (different rate_limit_reset)
 	private lastRefreshResetTime: Map<string, number> = new Map();
-	// Prevent concurrent refresh operations
-	private isRefreshing = false;
+	// Prevent concurrent refresh operations using a Promise-based mutex
+	private refreshMutex: Promise<void> | null = null;
+	private refreshMutexResolver: (() => void) | null = null;
 	// Track consecutive failure counts for accounts to identify consistently failing ones
 	private consecutiveFailures: Map<string, number> = new Map();
 	// Threshold for marking an account as needing re-authentication
@@ -71,15 +72,20 @@ export class AutoRefreshScheduler {
 	 * Check for accounts that need auto-refresh and send dummy messages
 	 */
 	private async checkAndRefresh(): Promise<void> {
-		// Prevent concurrent refresh operations
-		if (this.isRefreshing) {
+		// Use a mutex to prevent concurrent refresh operations
+		if (this.refreshMutex) {
 			log.debug(
 				"Auto-refresh check skipped - previous check still in progress",
 			);
 			return;
 		}
 
-		this.isRefreshing = true;
+		// Create a new mutex promise to indicate we're currently refreshing
+		const mutexPromise = new Promise<void>((resolve) => {
+			this.refreshMutexResolver = resolve;
+		});
+		this.refreshMutex = mutexPromise;
+
 		try {
 			// Check if database is available
 			if (!this.db) {
@@ -142,62 +148,9 @@ export class AutoRefreshScheduler {
 
 			// Filter accounts: only refresh if this is a NEW window
 			// We detect a new window by comparing the current rate_limit_reset with the one we stored when we last refreshed
-			const accountsToRefresh = accounts.filter((account) => {
-				const lastResetTime = this.lastRefreshResetTime.get(account.id);
-
-				if (!lastResetTime) {
-					// Never refreshed this account before - refresh it
-					log.info(`First-time refresh for account: ${account.name}`);
-					return true;
-				}
-
-				if (!account.rate_limit_reset) {
-					// No rate_limit_reset available - skip
-					return false;
-				}
-
-				// Check if the current rate_limit_reset from the database is NEWER than the one we stored when we last refreshed
-				// OR if the reset time has passed and we're now in a new window (reset time is in the past relative to now)
-				// This indicates that the usage window has renewed since our last refresh
-				const resetTimeHasPassed = account.rate_limit_reset <= now;
-				const isNewerThanLastRefresh = account.rate_limit_reset > lastResetTime;
-
-				// If the reset time has passed, we need to refresh to get the NEXT window's reset time
-				// This covers two cases:
-				// 1. The reset time passed and we haven't refreshed yet (account.rate_limit_reset !== lastResetTime)
-				// 2. The reset time passed and it equals lastResetTime (meaning we already refreshed for this window,
-				//    but now the window has renewed and we need to refresh again to get the NEXT reset time)
-				if (resetTimeHasPassed) {
-					log.info(
-						`New window detected for account ${account.name}: reset time ${new Date(account.rate_limit_reset).toISOString()} has passed (now: ${new Date(now).toISOString()}), last refresh was at ${new Date(lastResetTime).toISOString()}`,
-					);
-					return true;
-				}
-
-				// Also check if the database has a NEWER reset time than what we last refreshed
-				// This handles the case where an external request updated the reset time
-				if (isNewerThanLastRefresh) {
-					log.info(
-						`New window detected for account ${account.name}: current reset ${new Date(account.rate_limit_reset).toISOString()} > last refresh ${new Date(lastResetTime).toISOString()}`,
-					);
-					return true;
-				}
-
-				// Check if the reset time is very old (more than 24 hours) - this indicates a stale reset time that needs refresh
-				const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
-				if (account.rate_limit_reset < oneDayAgo) {
-					log.info(
-						`Stale reset time detected for account ${account.name}: ${new Date(account.rate_limit_reset).toISOString()} is more than 24h old, forcing refresh`,
-					);
-					return true;
-				}
-
-				// The window hasn't renewed yet - skip
-				log.debug(
-					`No new window for account ${account.name}: current reset ${new Date(account.rate_limit_reset).toISOString()}, last refresh ${new Date(lastResetTime).toISOString()}, now ${new Date(now).toISOString()}`,
-				);
-				return false;
-			});
+			const accountsToRefresh = accounts.filter((account) =>
+				this.shouldRefreshAccount(account, now),
+			);
 
 			if (accountsToRefresh.length === 0) {
 				return;
@@ -228,7 +181,12 @@ export class AutoRefreshScheduler {
 				);
 			}
 		} finally {
-			this.isRefreshing = false;
+			// Resolve the mutex to indicate the refresh operation is complete
+			if (this.refreshMutexResolver) {
+				this.refreshMutexResolver();
+				this.refreshMutexResolver = null;
+			}
+			this.refreshMutex = null;
 		}
 	}
 
@@ -701,5 +659,72 @@ export class AutoRefreshScheduler {
 			}
 			// Don't throw - this is a non-critical cleanup operation
 		}
+	}
+
+	/**
+	 * Determine if an account should be refreshed based on its reset time and tracking state
+	 * @param account - The account to check
+	 * @param now - The current timestamp
+	 * @returns true if the account should be refreshed, false otherwise
+	 */
+	private shouldRefreshAccount(
+		account: {
+			id: string;
+			name: string;
+			provider: string;
+			refresh_token: string;
+			access_token: string | null;
+			expires_at: number | null;
+			rate_limit_reset: number | null;
+			custom_endpoint: string | null;
+		},
+		now: number,
+	): boolean {
+		const lastResetTime = this.lastRefreshResetTime.get(account.id);
+
+		// If we've never refreshed this account before, refresh it
+		if (!lastResetTime) {
+			log.info(`First-time refresh for account: ${account.name}`);
+			return true;
+		}
+
+		// If no rate_limit_reset is available, skip
+		if (!account.rate_limit_reset) {
+			return false;
+		}
+
+		// Check if the reset time has passed - we need to refresh to get the next window's reset time
+		const resetTimeHasPassed = account.rate_limit_reset <= now;
+		if (resetTimeHasPassed) {
+			log.info(
+				`New window detected for account ${account.name}: reset time ${new Date(account.rate_limit_reset).toISOString()} has passed (now: ${new Date(now).toISOString()}), last refresh was at ${new Date(lastResetTime).toISOString()}`,
+			);
+			return true;
+		}
+
+		// Check if the database has a newer reset time than what we last refreshed
+		// This handles the case where an external request updated the reset time
+		const isNewerThanLastRefresh = account.rate_limit_reset > lastResetTime;
+		if (isNewerThanLastRefresh) {
+			log.info(
+				`New window detected for account ${account.name}: current reset ${new Date(account.rate_limit_reset).toISOString()} > last refresh ${new Date(lastResetTime).toISOString()}`,
+			);
+			return true;
+		}
+
+		// Check if the reset time is very old (more than 24 hours) - this indicates a stale reset time that needs refresh
+		const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
+		if (account.rate_limit_reset < oneDayAgo) {
+			log.info(
+				`Stale reset time detected for account ${account.name}: ${new Date(account.rate_limit_reset).toISOString()} is more than 24h old, forcing refresh`,
+			);
+			return true;
+		}
+
+		// The window hasn't renewed yet - skip
+		log.debug(
+			`No new window for account ${account.name}: current reset ${new Date(account.rate_limit_reset).toISOString()}, last refresh ${new Date(lastResetTime).toISOString()}, now ${new Date(now).toISOString()}`,
+		);
+		return false;
 	}
 }
