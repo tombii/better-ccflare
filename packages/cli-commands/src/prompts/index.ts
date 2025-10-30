@@ -18,20 +18,6 @@ export async function promptAccountMode(): Promise<"max" | "console"> {
 }
 
 /**
- * Prompt user to select account tier
- */
-export async function promptAccountTier(): Promise<1 | 5 | 20> {
-	return stdPromptAdapter.select(
-		"Select the tier for this account (used for weighted load balancing):",
-		[
-			{ label: "1x tier (default free account)", value: 1 },
-			{ label: "5x tier (paid account)", value: 5 },
-			{ label: "20x tier (enterprise account)", value: 20 },
-		],
-	);
-}
-
-/**
  * Prompt user to enter authorization code
  */
 export async function promptAuthorizationCode(): Promise<string> {

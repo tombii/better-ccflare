@@ -53,7 +53,7 @@ better-ccflare [command]
 
 1. Add your first OAuth account:
 ```bash
-bun run cli --add-account myaccount --mode max --tier 1 --priority 0
+bun run cli --add-account myaccount --mode max --priority 0
 ```
 
 2. Start the load balancer server:
@@ -93,7 +93,6 @@ Options:
   --stats              Show statistics (JSON output)
   --add-account <name> Add a new account
     --mode <max|console>  Account mode (default: max)
-    --tier <1|5|20>       Account tier (default: 1)
     --priority <number>    Account priority (0-100, default: 0)
   --list               List all accounts
   --remove <name>      Remove an account
@@ -119,7 +118,7 @@ Add a new OAuth account to the load balancer pool.
 
 **Syntax:**
 ```bash
-bun run cli --add-account <name> --mode <max|console|zai|openai-compatible> --tier <1|5|20> --priority <number>
+bun run cli --add-account <name> --mode <max|console|zai|openai-compatible> --priority <number>
 ```
 
 **Note:** All flags must be provided explicitly as the CLI requires explicit parameters.
@@ -130,11 +129,6 @@ bun run cli --add-account <name> --mode <max|console|zai|openai-compatible> --ti
   - `console`: Claude API account
   - `zai`: z.ai account (API key)
   - `openai-compatible`: OpenAI-compatible provider (API key)
-- `--tier`: Account tier (required for max/console modes)
-  - `1`: Tier 1 account
-  - `5`: Tier 5 account
-  - `20`: Tier 20 account
-  - **Note**: Tier is automatically set to 1 for OpenAI-compatible providers
 - `--priority`: Account priority (optional, defaults to 0)
   - Range: 0-100
   - Lower numbers indicate higher priority in load balancing
@@ -158,8 +152,8 @@ bun run cli --list
 **Output Format:**
 ```
 Accounts:
-  - account1 (max mode, tier 5, priority 10)
-  - account2 (console mode, tier 1, priority 5)
+  - account1 (max mode, priority 10)
+  - account2 (console mode, priority 5)
 ```
 
 #### `--remove <name>`
@@ -344,14 +338,14 @@ bun run cli --logs 50
 ### Basic Account Setup
 
 ```bash
-# Add a Claude CLI account with tier 5 and high priority (low number)
-bun run cli --add-account work-account --mode max --tier 5 --priority 10
+# Add a Claude CLI account with high priority (low number)
+bun run cli --add-account work-account --mode max --priority 10
 
 # Add a Console account with medium priority
-bun run cli --add-account personal-account --mode console --tier 1 --priority 50
+bun run cli --add-account personal-account --mode console --priority 50
 
 # Add a backup account with low priority (high number)
-bun run cli --add-account backup-account --mode max --tier 1 --priority 90
+bun run cli --add-account backup-account --mode max --priority 90
 
 # List all accounts
 bun run cli --list
@@ -411,9 +405,9 @@ bun run cli --analyze
 
 ```bash
 # Add multiple accounts with different priorities
-bun run cli --add-account "primary-account" --mode max --tier 20 --priority 10
-bun run cli --add-account "secondary-account" --mode max --tier 5 --priority 50
-bun run cli --add-account "backup-account" --mode max --tier 1 --priority 90
+bun run cli --add-account "primary-account" --mode max --priority 10
+bun run cli --add-account "secondary-account" --mode max --priority 50
+bun run cli --add-account "backup-account" --mode max --priority 90
 
 # Monitor account status
 watch -n 5 'bun run cli --list'
@@ -602,7 +596,6 @@ bun run cli --logs
 2. **Account Management**
    - Use descriptive account names
    - Distribute load across multiple accounts
-   - Keep accounts of similar tiers for consistent performance
    - Use account priorities to control load distribution:
      - Set lower priority numbers for premium or preferred accounts
      - Use higher priority numbers for backup or development accounts
@@ -616,7 +609,7 @@ bun run cli --logs
    - Monitor logs with `bun run cli --logs` for suspicious activity
 
 4. **Performance**
-   - Use higher-tier accounts for heavy workloads
+   - Use accounts with higher rate limits for heavy workloads
    - Implement client-side retry logic
    - Monitor rate limit patterns with `bun run cli --stats`
    - Run server with `bun run cli --serve` for production use

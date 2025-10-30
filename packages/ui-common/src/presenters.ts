@@ -21,16 +21,6 @@ import {
 export class AccountPresenter {
 	constructor(private account: Account | AccountResponse | AccountDisplay) {}
 
-	get tierDisplay(): string {
-		let tier: number | undefined;
-		if ("tier" in this.account) {
-			tier = this.account.tier;
-		} else if ("account_tier" in this.account) {
-			tier = this.account.account_tier;
-		}
-		return `Tier ${tier || 1}`;
-	}
-
 	get tokenStatus(): "valid" | "expired" {
 		if ("tokenStatus" in this.account) {
 			return this.account.tokenStatus;

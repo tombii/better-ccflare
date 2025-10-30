@@ -119,7 +119,6 @@ List all configured accounts with their current status.
     "totalRequests": 1500,
     "lastUsed": "2024-12-17T10:25:30.123Z",
     "created": "2024-12-01T08:00:00.000Z",
-    "tier": 5,
     "priority": 50,
     "paused": false,
     "tokenStatus": "valid",
@@ -150,7 +149,6 @@ Initialize OAuth flow for adding a new account.
 {
   "name": "myaccount",
   "mode": "max",  // "max" or "console" (default: "max")
-  "tier": 5,      // 1, 5, or 20 (default: 1)
   "priority": 50  // 0-100, lower value = higher priority (optional, defaults: 0)
 }
 ```
@@ -169,7 +167,7 @@ Initialize OAuth flow for adding a new account.
 ```bash
 curl -X POST http://localhost:8080/api/oauth/init \
   -H "Content-Type: application/json" \
-  -d '{"name": "myaccount", "mode": "max", "tier": 5}'
+  -d '{"name": "myaccount", "mode": "max"}'
 ```
 
 #### POST /api/oauth/callback
@@ -190,7 +188,6 @@ Complete OAuth flow after user authorization.
   "success": true,
   "message": "Account 'myaccount' added successfully!",
   "mode": "Claude CLI",
-  "tier": 5,
   "priority": 50
 }
 ```
@@ -232,31 +229,6 @@ curl -X DELETE http://localhost:8080/api/accounts/uuid-here \
   -d '{"confirm": "myaccount"}'
 ```
 
-#### POST /api/accounts/:accountId/tier
-
-Update account tier.
-
-**Request:**
-```json
-{
-  "tier": 5  // 1, 5, or 20
-}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "tier": 5
-}
-```
-
-**Example:**
-```bash
-curl -X POST http://localhost:8080/api/accounts/uuid-here/tier \
-  -H "Content-Type: application/json" \
-  -d '{"tier": 20}'
-```
 
 #### POST /api/accounts/:accountId/priority
 
@@ -946,7 +918,7 @@ The following strategy is available:
 
 4. **Request Logging**: All requests are logged with detailed metrics including tokens used, cost, and response times. Database writes are performed asynchronously to avoid blocking request processing.
 
-5. **Account Tiers**: Accounts can have different tiers (1, 5, or 20) which affect their weight in certain load balancing strategies.
+5. **Account Priority System**: Accounts can have different priority values (0-100) which determine their order in load balancing.
 
 6. **Session Affinity**: The "session" strategy maintains sticky sessions for consistent routing within a time window.
 

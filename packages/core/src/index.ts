@@ -61,6 +61,7 @@ export {
 } from "./pricing";
 export * from "./request-events";
 export * from "./strategy";
+export { levenshteinDistance } from "./utils";
 export {
 	patterns,
 	sanitizers,

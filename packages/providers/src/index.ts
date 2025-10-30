@@ -4,6 +4,13 @@
 export { BaseProvider } from "./base";
 // Export OAuth utilities
 export * from "./oauth";
+// Factory functions for creating providers
+export {
+	type AnthropicCompatibleConfig,
+	createAnthropicCompatibleProvider,
+	createProviderForService,
+	PresetProviders,
+} from "./providers/anthropic-compatible/factory";
 // Export providers
 export * from "./providers/index";
 // Export registry functions
@@ -17,13 +24,6 @@ export {
 export * from "./types";
 // Export usage fetcher
 export * from "./usage-fetcher";
-// Factory functions for creating providers
-export {
-	createAnthropicCompatibleProvider,
-	createProviderForService,
-	PresetProviders,
-	type AnthropicCompatibleConfig,
-} from "./providers/anthropic-compatible/factory";
 
 import { AnthropicProvider } from "./providers/anthropic/provider";
 import { MinimaxProvider } from "./providers/minimax/provider";

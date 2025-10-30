@@ -34,7 +34,6 @@ erDiagram
         INTEGER rate_limited_until "Rate limit expiration timestamp"
         INTEGER session_start "Current session start timestamp"
         INTEGER session_request_count "Requests in current session"
-        INTEGER account_tier "Account tier (1, 5, or 20)"
         INTEGER paused "Account pause status (0 or 1)"
         INTEGER rate_limit_reset "Next rate limit reset timestamp"
         TEXT rate_limit_status "Current rate limit status"
@@ -75,7 +74,6 @@ erDiagram
         TEXT account_name "Account name for OAuth flow"
         TEXT verifier "PKCE verifier for security"
         TEXT mode "OAuth mode (console or max)"
-        INTEGER tier "Account tier (1, 5, or 20)"
         INTEGER created_at "Session creation timestamp"
         INTEGER expires_at "Session expiration timestamp"
     }
@@ -112,7 +110,6 @@ The `accounts` table stores OAuth account information and usage statistics for l
 | `rate_limited_until` | INTEGER | NULL* | Unix timestamp when rate limit expires |
 | `session_start` | INTEGER | NULL* | Start of current usage session |
 | `session_request_count` | INTEGER | DEFAULT 0* | Requests in current session |
-| `account_tier` | INTEGER | DEFAULT 1* | Account tier (1=Free, 5=Pro, 20=Team) |
 | `paused` | INTEGER | DEFAULT 0* | 1 if account is paused, 0 if active |
 | `rate_limit_reset` | INTEGER | NULL* | Next rate limit window reset time |
 | `rate_limit_status` | TEXT | NULL* | Current rate limit status message |
@@ -182,7 +179,6 @@ The `oauth_sessions` table stores temporary OAuth PKCE (Proof Key for Code Excha
 | `account_name` | TEXT | NOT NULL | Name for the account being created |
 | `verifier` | TEXT | NOT NULL | PKCE code verifier for security |
 | `mode` | TEXT | NOT NULL | OAuth mode ('console' or 'max') |
-| `tier` | INTEGER | DEFAULT 1 | Account tier (1=Free, 5=Pro, 20=Team) |
 | `created_at` | INTEGER | NOT NULL | Unix timestamp when session was created |
 | `expires_at` | INTEGER | NOT NULL | Unix timestamp when session expires |
 
@@ -231,7 +227,7 @@ The database uses an incremental migration system that:
 Key migrations include:
 - Rate limiting columns (`rate_limited_until`, `rate_limit_status`, etc.)
 - Session tracking (`session_start`, `session_request_count`)
-- Account tiers and pausing
+- Account priorities and pausing
 - Token usage tracking for cost analysis
 - Output tokens per second tracking
 - Agent usage tracking
@@ -468,7 +464,6 @@ The dashboard exposes a "Compact database" button that runs these for you. Expec
 - `getAccount(accountId: string)`: Get a specific account by ID
 - `updateAccountTokens(accountId, accessToken, expiresAt)`: Update OAuth tokens
 - `updateAccountUsage(accountId)`: Increment usage counters and manage sessions
-- `updateAccountTier(accountId, tier)`: Set account tier (1, 5, or 20)
 - `pauseAccount(accountId)` / `resumeAccount(accountId)`: Toggle account availability
 
 #### Rate Limiting
@@ -486,7 +481,7 @@ The dashboard exposes a "Compact database" button that runs these for you. Expec
 - `listRequestPayloadsWithAccountNames(limit?)`: List payloads with account names
 
 #### OAuth Session Management
-- `createOAuthSession(sessionId, accountName, verifier, mode, tier, ttlMinutes?)`: Create OAuth session
+- `createOAuthSession(sessionId, accountName, verifier, mode, ttlMinutes?)`: Create OAuth session
 - `getOAuthSession(sessionId)`: Retrieve session data
 - `deleteOAuthSession(sessionId)`: Delete specific session
 - `cleanupExpiredOAuthSessions()`: Remove expired sessions
@@ -512,7 +507,7 @@ The database can be managed through CLI commands:
 ### Account Management
 ```bash
 # Add a new account
-bun cli add <name> [--mode <max|console>] [--tier <1|5|20>]
+bun cli add <name> [--mode <max|console>] [--priority <0-100>]
 
 # List all accounts with status
 bun cli list

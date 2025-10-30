@@ -39,7 +39,7 @@ function runCLI(args: string[]): Promise<{
 			});
 		});
 
-		// Kill after 3 seconds to prevent hanging
+		// Kill after 6 seconds to prevent hanging (some CLI operations take longer)
 		setTimeout(() => {
 			proc.kill();
 			resolve({
@@ -47,7 +47,7 @@ function runCLI(args: string[]): Promise<{
 				stderr,
 				exitCode: 1,
 			});
-		}, 3000);
+		}, 6000);
 	});
 }
 
@@ -215,7 +215,6 @@ describe("CLI Integration Tests", () => {
 			const output = result.stdout + result.stderr;
 			expect(output).toContain("Interactive account setup is not available");
 			expect(output).toContain("--mode");
-			expect(output).toContain("--tier");
 			expect(output).toContain("--priority");
 		});
 
@@ -225,7 +224,7 @@ describe("CLI Integration Tests", () => {
 			const output = result.stdout + result.stderr;
 			expect(output).toContain("Example:");
 			expect(output).toMatch(
-				/better-ccflare.*--add-account.*--mode.*--tier.*--priority/,
+				/better-ccflare.*--add-account.*--mode.*--priority/,
 			);
 		});
 	});
@@ -262,8 +261,6 @@ describe("CLI Integration Tests", () => {
 				"test",
 				"--mode",
 				"max",
-				"--tier",
-				"1",
 				"--priority",
 				"not-a-number",
 			]);

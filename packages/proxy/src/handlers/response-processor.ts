@@ -109,22 +109,6 @@ export function updateAccountMetadata(
 		});
 	}
 
-	// Extract tier info if supported
-	if (ctx.provider.extractTierInfo) {
-		const extractTierInfo = ctx.provider.extractTierInfo.bind(ctx.provider);
-		(async () => {
-			const tier = await extractTierInfo(response.clone() as Response);
-			if (tier && tier !== account.account_tier) {
-				log.info(
-					`Updating account ${account.name} tier from ${account.account_tier} to ${tier}`,
-				);
-				ctx.asyncWriter.enqueue(() =>
-					ctx.dbOps.updateAccountTier(account.id, tier),
-				);
-			}
-		})();
-	}
-
 	// Extract usage info if supported
 	if (ctx.provider.extractUsageInfo && requestId) {
 		const extractUsageInfo = ctx.provider.extractUsageInfo.bind(ctx.provider);

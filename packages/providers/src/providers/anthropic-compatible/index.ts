@@ -1,1 +1,4 @@
-export { AnthropicCompatibleProvider, type AnthropicCompatibleConfig } from "./provider";
+export {
+	type AnthropicCompatibleConfig,
+	AnthropicCompatibleProvider,
+} from "./provider";

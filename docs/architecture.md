@@ -380,7 +380,6 @@ graph TB
         PARSE["parseRateLimit()"]
         PROC["processResponse()"]
         USAGE["extractUsageInfo()"]
-        TIER["extractTierInfo()"]
     end
 
     REG -->|Manages| BASE
@@ -392,7 +391,6 @@ graph TB
     ANTH --> PARSE
     ANTH --> PROC
     ANTH --> USAGE
-    ANTH --> TIER
 ```
 
 **Provider Features:**
@@ -400,7 +398,6 @@ graph TB
 - OAuth token management with PKCE flow
 - Rate limit parsing and tracking
 - Usage metrics extraction
-- Account tier detection
 - Extensible for additional AI providers
 
 ### 6. Database Package (`packages/database`)
@@ -421,7 +418,7 @@ erDiagram
         integer last_used
         integer request_count
         integer total_requests
-        integer account_tier
+        integer priority
         integer rate_limited_until
         integer session_start
         integer session_request_count
@@ -635,7 +632,7 @@ sequenceDiagram
 - PKCE (Proof Key for Code Exchange) support
 - Session management
 - Token exchange
-- Account creation with tier support
+- Account creation with priority support
 
 ### 9. HTTP API Package (`packages/http-api`)
 
@@ -656,7 +653,6 @@ graph LR
             DEL_ACC[DELETE /api/accounts/:id]
             PAUSE_ACC[POST /api/accounts/:id/pause]
             RESUME_ACC[POST /api/accounts/:id/resume]
-            TIER_ACC[POST /api/accounts/:id/tier]
         end
         
         subgraph "Agent Management"

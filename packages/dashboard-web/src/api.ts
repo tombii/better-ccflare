@@ -105,9 +105,14 @@ class API extends HttpClient {
 
 	async initAddAccount(data: {
 		name: string;
-		mode: "max" | "console" | "zai" | "minimax" | "anthropic-compatible" | "openai-compatible";
+		mode:
+			| "max"
+			| "console"
+			| "zai"
+			| "minimax"
+			| "anthropic-compatible"
+			| "openai-compatible";
 		apiKey?: string;
-		tier: number;
 		priority: number;
 		customEndpoint?: string;
 	}): Promise<{ authUrl: string; sessionId: string }> {
@@ -140,7 +145,7 @@ class API extends HttpClient {
 	async completeAddAccount(data: {
 		sessionId: string;
 		code: string;
-	}): Promise<{ message: string; mode: string; tier: number }> {
+	}): Promise<{ message: string; mode: string }> {
 		const startTime = Date.now();
 		const url = "/api/oauth/callback";
 
@@ -150,7 +155,6 @@ class API extends HttpClient {
 			const response = await this.post<{
 				message: string;
 				mode: string;
-				tier: number;
 			}>(url, data);
 			const duration = Date.now() - startTime;
 			this.logger.debug(`← POST ${url} - 200 (${duration}ms)`);
@@ -171,7 +175,6 @@ class API extends HttpClient {
 	async addZaiAccount(data: {
 		name: string;
 		apiKey: string;
-		tier: number;
 		priority: number;
 		customEndpoint?: string;
 	}): Promise<{ message: string; account: Account }> {
@@ -204,7 +207,6 @@ class API extends HttpClient {
 	async addOpenAIAccount(data: {
 		name: string;
 		apiKey: string;
-		tier: number;
 		priority: number;
 		customEndpoint: string;
 		modelMappings?: { [key: string]: string };
@@ -271,6 +273,7 @@ class API extends HttpClient {
 		apiKey: string;
 		priority: number;
 		customEndpoint?: string;
+		modelMappings?: { [key: string]: string };
 	}): Promise<{ message: string; account: Account }> {
 		const startTime = Date.now();
 		const url = "/api/accounts/anthropic-compatible";

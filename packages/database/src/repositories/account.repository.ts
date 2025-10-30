@@ -12,7 +12,6 @@ export class AccountRepository extends BaseRepository<Account> {
 				id, name, provider, api_key, refresh_token, access_token,
 				expires_at, created_at, last_used, request_count, total_requests,
 				rate_limited_until, session_start, session_request_count,
-				COALESCE(account_tier, 1) as account_tier,
 				COALESCE(paused, 0) as paused,
 				rate_limit_reset, rate_limit_status, rate_limit_remaining,
 				COALESCE(priority, 0) as priority,
@@ -33,7 +32,6 @@ export class AccountRepository extends BaseRepository<Account> {
 				id, name, provider, api_key, refresh_token, access_token,
 				expires_at, created_at, last_used, request_count, total_requests,
 				rate_limited_until, session_start, session_request_count,
-				COALESCE(account_tier, 1) as account_tier,
 				COALESCE(paused, 0) as paused,
 				rate_limit_reset, rate_limit_status, rate_limit_remaining,
 				COALESCE(priority, 0) as priority,
@@ -109,13 +107,6 @@ export class AccountRepository extends BaseRepository<Account> {
 			`UPDATE accounts SET rate_limit_status = ?, rate_limit_reset = ?, rate_limit_remaining = ? WHERE id = ?`,
 			[status, reset, remaining ?? null, accountId],
 		);
-	}
-
-	updateTier(accountId: string, tier: number): void {
-		this.run(`UPDATE accounts SET account_tier = ? WHERE id = ?`, [
-			tier,
-			accountId,
-		]);
 	}
 
 	pause(accountId: string): void {

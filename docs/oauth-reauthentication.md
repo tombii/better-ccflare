@@ -91,7 +91,6 @@ The re-authentication feature updates the following fields in the `accounts` tab
 All other fields remain unchanged:
 - `name`: Account name
 - `provider`: Provider type
-- `account_tier`: Account tier
 - `priority`: Priority settings
 - `custom_endpoint`: Custom endpoint configuration
 - `usage_statistics`: Usage metrics
@@ -184,7 +183,7 @@ FROM accounts
 WHERE name = 'claude';
 
 -- Verify metadata preservation
-SELECT name, priority, account_tier, usage_statistics
+SELECT name, priority, usage_statistics
 FROM accounts
 WHERE name = 'claude';
 ```

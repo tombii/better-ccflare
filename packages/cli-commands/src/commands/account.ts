@@ -12,7 +12,7 @@ import {
 	getOAuthProvider,
 	type TokenRefreshResult as TokenResult,
 } from "@better-ccflare/providers";
-import type { AccountListItem, AccountTier } from "@better-ccflare/types";
+import type { AccountListItem } from "@better-ccflare/types";
 import {
 	type PromptAdapter,
 	promptAccountRemovalConfirmation,
@@ -23,8 +23,13 @@ import { openBrowser } from "../utils/browser";
 // Re-export types with adapter extension for CLI-specific options
 export interface AddAccountOptions {
 	name: string;
-	mode?: "max" | "console" | "zai" | "openai-compatible";
-	tier?: 1 | 5 | 20;
+	mode?:
+		| "max"
+		| "console"
+		| "zai"
+		| "minimax"
+		| "anthropic-compatible"
+		| "openai-compatible";
 	priority?: number;
 	customEndpoint?: string;
 	modelMappings?: { [key: string]: string };
@@ -40,13 +45,134 @@ export interface AccountListItemWithMode extends AccountListItem {
 }
 
 /**
+ * Create a Console account with direct API key in the database
+ */
+async function createConsoleAccountWithApiKey(
+	dbOps: DatabaseOperations,
+	name: string,
+	apiKey: string,
+	priority: number,
+	customEndpoint?: string,
+): Promise<void> {
+	const accountId = crypto.randomUUID();
+	const now = Date.now();
+
+	// Validate inputs
+	const validatedApiKey = validateApiKey(apiKey, "Claude API key");
+	const validatedPriority = validatePriority(priority, "priority");
+
+	dbOps.getDatabase().run(
+		`INSERT INTO accounts (
+			id, name, provider, api_key, refresh_token, access_token,
+			expires_at, created_at, request_count, total_requests, priority, custom_endpoint
+		) VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, 0, 0, ?, ?)`,
+		[
+			accountId,
+			name,
+			"anthropic",
+			validatedApiKey,
+			now,
+			validatedPriority,
+			customEndpoint || null,
+		],
+	);
+
+	console.log(`\nAccount '${name}' added successfully!`);
+	console.log("Type: Claude Console (API key)");
+}
+
+/**
+ * Create a Minimax account in the database
+ */
+async function createMinimaxAccount(
+	dbOps: DatabaseOperations,
+	name: string,
+	apiKey: string,
+	priority: number,
+): Promise<void> {
+	const accountId = crypto.randomUUID();
+	const now = Date.now();
+
+	// Validate inputs
+	const validatedApiKey = validateApiKey(apiKey, "Minimax API key");
+	const validatedPriority = validatePriority(priority, "priority");
+
+	dbOps.getDatabase().run(
+		`INSERT INTO accounts (
+			id, name, provider, api_key, refresh_token, access_token,
+			expires_at, created_at, request_count, total_requests, priority, custom_endpoint
+		) VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, 0, 0, ?, ?)`,
+		[
+			accountId,
+			name,
+			"minimax",
+			validatedApiKey,
+			now,
+			validatedPriority,
+			null, // No custom endpoint for minimax
+		],
+	);
+}
+
+/**
+ * Create an Anthropic-compatible account in the database
+ */
+async function createAnthropicCompatibleAccount(
+	dbOps: DatabaseOperations,
+	name: string,
+	apiKey: string,
+	priority: number,
+	customEndpoint?: string,
+	modelMappings?: { [key: string]: string } | null,
+): Promise<void> {
+	const accountId = crypto.randomUUID();
+	const now = Date.now();
+
+	// Validate inputs
+	const validatedApiKey = validateApiKey(
+		apiKey,
+		"Anthropic-compatible API key",
+	);
+	const validatedPriority = validatePriority(priority, "priority");
+
+	// Validate and sanitize custom endpoint if provided
+	let validatedEndpoint = null;
+	if (customEndpoint) {
+		validatedEndpoint = validateEndpointUrl(customEndpoint, "custom endpoint");
+	}
+
+	// Validate and sanitize model mappings if provided
+	let validatedModelMappings = null;
+	if (modelMappings && Object.keys(modelMappings).length > 0) {
+		const validatedMappings = validateAndSanitizeModelMappings(modelMappings);
+		validatedModelMappings = JSON.stringify(validatedMappings);
+	}
+
+	dbOps.getDatabase().run(
+		`INSERT INTO accounts (
+			id, name, provider, api_key, refresh_token, access_token,
+			expires_at, created_at, request_count, total_requests, priority, custom_endpoint, model_mappings
+		) VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, 0, 0, ?, ?, ?)`,
+		[
+			accountId,
+			name,
+			"anthropic-compatible",
+			validatedApiKey,
+			now,
+			validatedPriority,
+			validatedEndpoint,
+			validatedModelMappings,
+		],
+	);
+}
+
+/**
  * Create a z.ai account in the database
  */
 async function createZaiAccount(
 	dbOps: DatabaseOperations,
 	name: string,
 	apiKey: string,
-	tier: number,
 	priority: number,
 ): Promise<void> {
 	const accountId = crypto.randomUUID();
@@ -59,8 +185,8 @@ async function createZaiAccount(
 	dbOps.getDatabase().run(
 		`INSERT INTO accounts (
 			id, name, provider, api_key, refresh_token, access_token,
-			expires_at, created_at, account_tier, request_count, total_requests, priority, custom_endpoint
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			expires_at, created_at, request_count, total_requests, priority, custom_endpoint
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		[
 			accountId,
 			name,
@@ -70,7 +196,6 @@ async function createZaiAccount(
 			validatedApiKey, // Store API key as access_token
 			now + 365 * 24 * 60 * 60 * 1000, // 1 year expiry
 			now,
-			tier,
 			0,
 			0,
 			validatedPriority,
@@ -80,7 +205,6 @@ async function createZaiAccount(
 
 	console.log(`\nAccount '${name}' added successfully!`);
 	console.log("Type: z.ai (API key)");
-	console.log(`Tier: ${tier}x`);
 }
 
 /**
@@ -145,7 +269,6 @@ async function createOpenAIAccount(
 	endpoint: string,
 	priority: number,
 	modelMappings: ModelMapping | null,
-	providedTier: number | undefined,
 ): Promise<void> {
 	const accountId = crypto.randomUUID();
 	const now = Date.now();
@@ -167,8 +290,8 @@ async function createOpenAIAccount(
 	dbOps.getDatabase().run(
 		`INSERT INTO accounts (
 			id, name, provider, api_key, refresh_token, access_token,
-			expires_at, created_at, account_tier, request_count, total_requests, priority, custom_endpoint, model_mappings
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			expires_at, created_at, request_count, total_requests, priority, custom_endpoint, model_mappings
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		[
 			accountId,
 			name,
@@ -178,7 +301,6 @@ async function createOpenAIAccount(
 			validatedApiKey, // Store API key as access_token
 			null, // No expiry for OpenAI-compatible providers (API keys don't expire)
 			now,
-			providedTier || 1, // Default to tier 1 (doesn't matter for OpenAI-compatible)
 			0,
 			0,
 			validatedPriority,
@@ -190,7 +312,6 @@ async function createOpenAIAccount(
 	console.log(`\nAccount '${name}' added successfully!`);
 	console.log("Type: OpenAI-compatible (API key)");
 	console.log(`Endpoint: ${validatedEndpoint}`);
-	console.log("Tier: 1 (default for OpenAI-compatible providers)");
 	console.log(`Priority: ${validatedPriority}`);
 
 	if (
@@ -215,7 +336,6 @@ export async function addAccount(
 	const {
 		name,
 		mode: providedMode,
-		tier: providedTier,
 		priority: providedPriority,
 		customEndpoint,
 		modelMappings,
@@ -232,6 +352,11 @@ export async function addAccount(
 			{ label: "Claude CLI account", value: "max" },
 			{ label: "Claude API account", value: "console" },
 			{ label: "z.ai account (API key)", value: "zai" },
+			{ label: "Minimax account (API key)", value: "minimax" },
+			{
+				label: "Anthropic-compatible provider (API key)",
+				value: "anthropic-compatible",
+			},
 			{
 				label: "OpenAI-compatible provider (API key)",
 				value: "openai-compatible",
@@ -242,16 +367,64 @@ export async function addAccount(
 		// Handle z.ai accounts with API keys
 		const apiKey = await adapter.input("\nEnter your z.ai API key: ");
 
-		// Get tier for z.ai accounts
-		const tier =
-			providedTier ||
-			(await adapter.select("Select the tier for this account:", [
-				{ label: "1x tier (z.ai Lite)", value: 1 },
-				{ label: "5x tier (z.ai Pro)", value: 5 },
-				{ label: "20x tier (z.ai Max)", value: 20 },
-			]));
+		await createZaiAccount(dbOps, name, apiKey, providedPriority || 0);
+	} else if (mode === "console") {
+		// Handle Console accounts - offer choice between OAuth and direct API key
+		const consoleMethod = await adapter.select(
+			"\nHow would you like to set up your Console account?",
+			[
+				{
+					label: "OAuth (recommended) - Automatically creates API key",
+					value: "oauth",
+				},
+				{
+					label: "Direct API key - Enter your existing x-api-key",
+					value: "apikey",
+				},
+			],
+		);
 
-		await createZaiAccount(dbOps, name, apiKey, tier, providedPriority || 0);
+		if (consoleMethod === "apikey") {
+			// Direct API key approach
+			const apiKey = await adapter.input(
+				"\nEnter your Claude API key (x-api-key): ",
+			);
+
+			// Get custom endpoint
+			let endpointForConsole = customEndpoint;
+			if (!customEndpoint) {
+				const wantsCustomEndpoint = await adapter.select(
+					"\nDo you want to use a custom endpoint for this Console account?",
+					[
+						{ label: "No, use default endpoint", value: "no" },
+						{ label: "Yes, use custom endpoint", value: "yes" },
+					],
+				);
+
+				if (wantsCustomEndpoint === "yes") {
+					endpointForConsole = await adapter.input(
+						"Enter custom endpoint URL (e.g., https://api.anthropic.com): ",
+					);
+				}
+			}
+
+			// Create console account with direct API key
+			await createConsoleAccountWithApiKey(
+				dbOps,
+				name,
+				apiKey,
+				providedPriority || 0,
+				endpointForConsole,
+			);
+
+			console.log(`\nAccount '${name}' added successfully!`);
+			console.log("Type: Claude Console (API key)");
+			if (endpointForConsole) {
+				console.log(`Endpoint: ${endpointForConsole}`);
+			}
+			return; // Exit early for direct API key approach
+		}
+		// Fall through to OAuth flow for consoleMethod === "oauth"
 	} else if (mode === "openai-compatible") {
 		// Handle OpenAI-compatible accounts with API keys
 		const apiKey = await adapter.input("\nEnter your API key: ");
@@ -283,8 +456,51 @@ export async function addAccount(
 			endpoint,
 			typeof priority === "string" ? parseInt(priority) || 0 : priority || 0,
 			finalModelMappings,
-			providedTier,
 		);
+	} else if (mode === "minimax") {
+		// Handle Minimax accounts with API keys
+		const apiKey = await adapter.input("\nEnter your Minimax API key: ");
+
+		await createMinimaxAccount(dbOps, name, apiKey, providedPriority || 0);
+		console.log(`\nAccount '${name}' added successfully!`);
+		console.log("Type: Minimax (API key)");
+	} else if (mode === "anthropic-compatible") {
+		// Handle Anthropic-compatible accounts with API keys
+		const apiKey = await adapter.input(
+			"\nEnter your Anthropic-compatible API key: ",
+		);
+
+		// Get custom endpoint
+		const endpoint =
+			customEndpoint ||
+			(await adapter.input(
+				"\nEnter API endpoint URL (e.g., https://api.anthropic-compatible.com): ",
+			));
+
+		// Get priority
+		const priority =
+			providedPriority ??
+			(await adapter.input(
+				"\nEnter priority (0 = highest, lower number = higher priority, default 0): ",
+			));
+
+		// Get model mappings
+		const finalModelMappings = await promptModelMappings(
+			adapter,
+			modelMappings,
+		);
+
+		await createAnthropicCompatibleAccount(
+			dbOps,
+			name,
+			apiKey,
+			typeof priority === "string" ? parseInt(priority) || 0 : priority || 0,
+			endpoint,
+			finalModelMappings,
+		);
+		console.log(`\nAccount '${name}' added successfully!`);
+		console.log("Type: Anthropic-compatible (API key)");
+		console.log(`Endpoint: ${endpoint}`);
 	} else {
 		// Handle OAuth accounts (Anthropic)
 		const flowResult = await oauthFlow.begin({
@@ -306,14 +522,23 @@ export async function addAccount(
 		// Get authorization code
 		const code = await adapter.input("\nEnter the authorization code: ");
 
-		// Get tier for Claude accounts (both CLI and API)
-		const tier =
-			providedTier ||
-			(await adapter.select("Select the tier for this account:", [
-				{ label: "1x tier (Pro)", value: 1 },
-				{ label: "5x tier (Max 5x)", value: 5 },
-				{ label: "20x tier (Max 20x)", value: 20 },
-			]));
+		// Get custom endpoint for Max/Console modes if not provided
+		let endpointForOAuth = customEndpoint;
+		if ((mode === "max" || mode === "console") && !customEndpoint) {
+			const wantsCustomEndpoint = await adapter.select(
+				`\nDo you want to use a custom endpoint for this ${mode === "max" ? "CLI" : "Console"} account?`,
+				[
+					{ label: "No, use default endpoint", value: "no" },
+					{ label: "Yes, use custom endpoint", value: "yes" },
+				],
+			);
+
+			if (wantsCustomEndpoint === "yes") {
+				endpointForOAuth = await adapter.input(
+					"Enter custom endpoint URL (e.g., https://api.anthropic.com): ",
+				);
+			}
+		}
 
 		// Complete OAuth flow
 		console.log("\nExchanging code for tokens...");
@@ -321,16 +546,15 @@ export async function addAccount(
 			{
 				sessionId,
 				code,
-				tier: tier as AccountTier,
 				name,
 				priority: providedPriority || 0,
+				customEndpoint: endpointForOAuth,
 			},
 			flowResult,
 		);
 
 		console.log(`\nAccount '${name}' added successfully!`);
 		console.log(`Type: ${mode === "max" ? "Claude CLI" : "Claude API"}`);
-		console.log(`Tier: ${tier}x`);
 	}
 }
 
@@ -342,7 +566,6 @@ export function getAccountsList(dbOps: DatabaseOperations): AccountListItem[] {
 	const now = Date.now();
 
 	return accounts.map((account) => {
-		const tierDisplay = `${account.account_tier}x`;
 		const tokenStatus =
 			account.expires_at && account.expires_at > now ? "valid" : "expired";
 
@@ -364,7 +587,6 @@ export function getAccountsList(dbOps: DatabaseOperations): AccountListItem[] {
 			id: account.id,
 			name: account.name,
 			provider: account.provider,
-			tierDisplay,
 			created: new Date(account.created_at),
 			lastUsed: account.last_used ? new Date(account.last_used) : null,
 			requestCount: account.request_count,
@@ -373,7 +595,6 @@ export function getAccountsList(dbOps: DatabaseOperations): AccountListItem[] {
 			tokenStatus,
 			rateLimitStatus,
 			sessionInfo,
-			tier: account.account_tier || 1,
 			mode:
 				account.provider === "zai"
 					? "zai"
@@ -532,15 +753,18 @@ export function setAccountPriority(
 		};
 	}
 
+	// Validate the priority before updating
+	const validatedPriority = validatePriority(priority, "priority");
+
 	// Update the account priority
 	db.run("UPDATE accounts SET priority = ? WHERE id = ?", [
-		priority,
+		validatedPriority,
 		account.id,
 	]);
 
 	return {
 		success: true,
-		message: `Account '${name}' priority set to ${priority}`,
+		message: `Account '${name}' priority set to ${validatedPriority}`,
 	};
 }
 
@@ -561,14 +785,13 @@ export async function reauthenticateAccount(
 			{
 				id: string;
 				provider: string;
-				account_tier: number;
 				priority: number;
 				custom_endpoint: string | null;
 				api_key: string | null;
 			},
 			[string]
 		>(
-			"SELECT id, provider, account_tier, priority, custom_endpoint, api_key FROM accounts WHERE name = ?",
+			"SELECT id, provider, priority, custom_endpoint, api_key FROM accounts WHERE name = ?",
 		)
 		.get(name);
 

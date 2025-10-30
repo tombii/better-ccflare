@@ -1,4 +1,6 @@
 import type { Database } from "bun:sqlite";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { Logger } from "@better-ccflare/logger";
 import { addPerformanceIndexes } from "./performance-indexes";
 
@@ -19,7 +21,6 @@ export function ensureSchema(db: Database): void {
 			last_used INTEGER,
 			request_count INTEGER DEFAULT 0,
 			total_requests INTEGER DEFAULT 0,
-			account_tier INTEGER DEFAULT 1,
 			priority INTEGER DEFAULT 0
 		)
 	`);
@@ -82,7 +83,6 @@ export function ensureSchema(db: Database): void {
 			account_name TEXT NOT NULL,
 			verifier TEXT NOT NULL,
 			mode TEXT NOT NULL,
-			tier INTEGER DEFAULT 1,
 			created_at INTEGER NOT NULL,
 			expires_at INTEGER NOT NULL
 		)
@@ -127,7 +127,7 @@ export function ensureSchema(db: Database): void {
 	);
 }
 
-export function runMigrations(db: Database): void {
+export function runMigrations(db: Database, dbPath?: string): void {
 	// Ensure base schema exists first
 	ensureSchema(db);
 	// Check if columns exist before adding them
@@ -143,10 +143,10 @@ export function runMigrations(db: Database): void {
 		pk: number;
 	}>;
 
-	const accountsColumnNames = accountsInfo.map((col) => col.name);
+	const initialAccountsColumnNames = accountsInfo.map((col) => col.name);
 
 	// Add rate_limited_until column if it doesn't exist
-	if (!accountsColumnNames.includes("rate_limited_until")) {
+	if (!initialAccountsColumnNames.includes("rate_limited_until")) {
 		db.prepare(
 			"ALTER TABLE accounts ADD COLUMN rate_limited_until INTEGER",
 		).run();
@@ -154,29 +154,21 @@ export function runMigrations(db: Database): void {
 	}
 
 	// Add session_start column if it doesn't exist
-	if (!accountsColumnNames.includes("session_start")) {
+	if (!initialAccountsColumnNames.includes("session_start")) {
 		db.prepare("ALTER TABLE accounts ADD COLUMN session_start INTEGER").run();
 		log.info("Added session_start column to accounts table");
 	}
 
 	// Add session_request_count column if it doesn't exist
-	if (!accountsColumnNames.includes("session_request_count")) {
+	if (!initialAccountsColumnNames.includes("session_request_count")) {
 		db.prepare(
 			"ALTER TABLE accounts ADD COLUMN session_request_count INTEGER DEFAULT 0",
 		).run();
 		log.info("Added session_request_count column to accounts table");
 	}
 
-	// Add account_tier column if it doesn't exist
-	if (!accountsColumnNames.includes("account_tier")) {
-		db.prepare(
-			"ALTER TABLE accounts ADD COLUMN account_tier INTEGER DEFAULT 1",
-		).run();
-		log.info("Added account_tier column to accounts table");
-	}
-
 	// Add paused column if it doesn't exist
-	if (!accountsColumnNames.includes("paused")) {
+	if (!initialAccountsColumnNames.includes("paused")) {
 		db.prepare(
 			"ALTER TABLE accounts ADD COLUMN paused INTEGER DEFAULT 0",
 		).run();
@@ -184,7 +176,7 @@ export function runMigrations(db: Database): void {
 	}
 
 	// Add rate_limit_reset column if it doesn't exist
-	if (!accountsColumnNames.includes("rate_limit_reset")) {
+	if (!initialAccountsColumnNames.includes("rate_limit_reset")) {
 		db.prepare(
 			"ALTER TABLE accounts ADD COLUMN rate_limit_reset INTEGER",
 		).run();
@@ -192,13 +184,13 @@ export function runMigrations(db: Database): void {
 	}
 
 	// Add rate_limit_status column if it doesn't exist
-	if (!accountsColumnNames.includes("rate_limit_status")) {
+	if (!initialAccountsColumnNames.includes("rate_limit_status")) {
 		db.prepare("ALTER TABLE accounts ADD COLUMN rate_limit_status TEXT").run();
 		log.info("Added rate_limit_status column to accounts table");
 	}
 
 	// Add rate_limit_remaining column if it doesn't exist
-	if (!accountsColumnNames.includes("rate_limit_remaining")) {
+	if (!initialAccountsColumnNames.includes("rate_limit_remaining")) {
 		db.prepare(
 			"ALTER TABLE accounts ADD COLUMN rate_limit_remaining INTEGER",
 		).run();
@@ -206,7 +198,7 @@ export function runMigrations(db: Database): void {
 	}
 
 	// Add priority column if it doesn't exist
-	if (!accountsColumnNames.includes("priority")) {
+	if (!initialAccountsColumnNames.includes("priority")) {
 		db.prepare(
 			"ALTER TABLE accounts ADD COLUMN priority INTEGER DEFAULT 0",
 		).run();
@@ -214,7 +206,7 @@ export function runMigrations(db: Database): void {
 	}
 
 	// Add auto_fallback_enabled column if it doesn't exist
-	if (!accountsColumnNames.includes("auto_fallback_enabled")) {
+	if (!initialAccountsColumnNames.includes("auto_fallback_enabled")) {
 		db.prepare(
 			"ALTER TABLE accounts ADD COLUMN auto_fallback_enabled INTEGER DEFAULT 0",
 		).run();
@@ -222,13 +214,13 @@ export function runMigrations(db: Database): void {
 	}
 
 	// Add custom_endpoint column if it doesn't exist
-	if (!accountsColumnNames.includes("custom_endpoint")) {
+	if (!initialAccountsColumnNames.includes("custom_endpoint")) {
 		db.prepare("ALTER TABLE accounts ADD COLUMN custom_endpoint TEXT").run();
 		log.info("Added custom_endpoint column to accounts table");
 	}
 
 	// Add auto_refresh_enabled column if it doesn't exist
-	if (!accountsColumnNames.includes("auto_refresh_enabled")) {
+	if (!initialAccountsColumnNames.includes("auto_refresh_enabled")) {
 		db.prepare(
 			"ALTER TABLE accounts ADD COLUMN auto_refresh_enabled INTEGER DEFAULT 0",
 		).run();
@@ -236,7 +228,7 @@ export function runMigrations(db: Database): void {
 	}
 
 	// Add model_mappings column for OpenAI-compatible providers
-	if (!accountsColumnNames.includes("model_mappings")) {
+	if (!initialAccountsColumnNames.includes("model_mappings")) {
 		db.prepare("ALTER TABLE accounts ADD COLUMN model_mappings TEXT").run();
 		log.info("Added model_mappings column to accounts table");
 	}
@@ -254,10 +246,12 @@ export function runMigrations(db: Database): void {
 		pk: number;
 	}>;
 
-	const oauthSessionsColumnNames = oauthSessionsInfo.map((col) => col.name);
+	const initialOauthSessionsColumnNames = oauthSessionsInfo.map(
+		(col) => col.name,
+	);
 
 	// Add custom_endpoint column to oauth_sessions if it doesn't exist
-	if (!oauthSessionsColumnNames.includes("custom_endpoint")) {
+	if (!initialOauthSessionsColumnNames.includes("custom_endpoint")) {
 		db.prepare(
 			"ALTER TABLE oauth_sessions ADD COLUMN custom_endpoint TEXT",
 		).run();
@@ -363,4 +357,144 @@ export function runMigrations(db: Database): void {
 
 	// Add performance indexes
 	addPerformanceIndexes(db);
+
+	// Check if tier columns exist and create backup if they do
+	const finalAccountsColumns = db
+		.prepare("PRAGMA table_info(accounts)")
+		.all() as Array<{
+		cid: number;
+		name: string;
+		type: string;
+		notnull: number;
+		// biome-ignore lint/suspicious/noExplicitAny: SQLite pragma can return various default value types
+		dflt_value: any;
+		pk: number;
+	}>;
+
+	const finalAccountsColumnNames = finalAccountsColumns.map((col) => col.name);
+
+	// Check oauth_sessions table as well
+	const finalOAuthColumns = db
+		.prepare("PRAGMA table_info(oauth_sessions)")
+		.all() as Array<{
+		cid: number;
+		name: string;
+		type: string;
+		notnull: number;
+		// biome-ignore lint/suspicious/noExplicitAny: SQLite pragma can return various default value types
+		dflt_value: any;
+		pk: number;
+	}>;
+
+	const finalOAuthColumnNames = finalOAuthColumns.map((col) => col.name);
+
+	// Check if tier columns exist in either table
+	const hasTierColumns =
+		finalAccountsColumnNames.includes("account_tier") ||
+		finalOAuthColumnNames.includes("tier");
+
+	if (hasTierColumns) {
+		// Create backup before removing tier columns using file copy
+		// Validate dbPath and use a proper default
+		const sourcePath = dbPath && dbPath !== "" ? dbPath : "better-ccflare.db";
+
+		try {
+			// Resolve to absolute path to prevent directory traversal attacks
+			const absoluteSourcePath = path.resolve(sourcePath);
+
+			// Additional security validation - check for unsafe path patterns that could indicate directory traversal
+			// This prevents potential security issues if dbPath comes from untrusted sources in the future
+			if (
+				absoluteSourcePath.includes("../") ||
+				absoluteSourcePath.includes("..\\") ||
+				absoluteSourcePath.endsWith("..") ||
+				absoluteSourcePath.startsWith("..")
+			) {
+				log.warn(`Unsafe path detected: ${sourcePath}. Skipping backup.`);
+				// Continue with the rest of the migration to ensure database schema updates still occur
+			} else if (fs.existsSync(absoluteSourcePath)) {
+				// Check if it's actually a file (not a directory) to prevent backup errors
+				const stats = fs.statSync(absoluteSourcePath);
+				if (stats.isFile()) {
+					// Use the validated database path for backup
+					const backupPath = `${absoluteSourcePath}.backup.${Date.now()}`;
+					fs.copyFileSync(absoluteSourcePath, backupPath);
+					log.info(`Database backup created at: ${backupPath}`);
+				} else {
+					log.warn(
+						`Database path is not a file: ${absoluteSourcePath}. Skipping backup.`,
+					);
+				}
+			} else {
+				log.warn(
+					`Database file does not exist at path: ${absoluteSourcePath}. Skipping backup.`,
+				);
+			}
+		} catch (error) {
+			// Catch any errors during backup process to ensure migrations continue
+			log.warn(
+				`Error during database backup validation: ${(error as Error).message}. Skipping backup.`,
+			);
+		}
+	}
+
+	// Remove tier columns if they exist (cleanup migration)
+	// Use the column names we already defined above
+	// Drop account_tier column from accounts table if it exists
+	if (finalAccountsColumnNames.includes("account_tier")) {
+		// SQLite doesn't support DROP COLUMN directly, so we need to recreate the table
+		db.prepare(`
+			CREATE TABLE accounts_new AS
+			SELECT id, name, provider, api_key, refresh_token, access_token, expires_at,
+			       created_at, last_used, request_count, total_requests, priority,
+			       rate_limited_until, session_start, session_request_count, paused,
+			       rate_limit_reset, rate_limit_status, rate_limit_remaining,
+			       auto_fallback_enabled, custom_endpoint, auto_refresh_enabled, model_mappings
+			FROM accounts
+		`).run();
+
+		db.prepare(`DROP TABLE accounts`).run();
+		db.prepare(`ALTER TABLE accounts_new RENAME TO accounts`).run();
+
+		// Recreate indexes
+		db.prepare(
+			`CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_id ON accounts(id)`,
+		).run();
+		db.prepare(
+			`CREATE INDEX IF NOT EXISTS idx_accounts_name ON accounts(name)`,
+		).run();
+		db.prepare(
+			`CREATE INDEX IF NOT EXISTS idx_accounts_provider ON accounts(provider)`,
+		).run();
+		db.prepare(
+			`CREATE INDEX IF NOT EXISTS idx_accounts_priority ON accounts(priority)`,
+		).run();
+		db.prepare(
+			`CREATE INDEX IF NOT EXISTS idx_accounts_last_used ON accounts(last_used)`,
+		).run();
+
+		log.info("Removed account_tier column from accounts table");
+	}
+
+	// Drop tier column from oauth_sessions table if it exists
+	if (finalOAuthColumnNames.includes("tier")) {
+		db.prepare(`
+			CREATE TABLE oauth_sessions_new AS
+			SELECT id, account_name, verifier, mode, created_at, expires_at, custom_endpoint
+			FROM oauth_sessions
+		`).run();
+
+		db.prepare(`DROP TABLE oauth_sessions`).run();
+		db.prepare(`ALTER TABLE oauth_sessions_new RENAME TO oauth_sessions`).run();
+
+		// Recreate indexes
+		db.prepare(
+			`CREATE UNIQUE INDEX IF NOT EXISTS idx_oauth_sessions_id ON oauth_sessions(id)`,
+		).run();
+		db.prepare(
+			`CREATE INDEX IF NOT EXISTS idx_oauth_sessions_expires ON oauth_sessions(expires_at)`,
+		).run();
+
+		log.info("Removed tier column from oauth_sessions table");
+	}
 }

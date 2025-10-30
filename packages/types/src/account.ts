@@ -27,7 +27,6 @@ export interface AccountRow {
 	rate_limited_until?: number | null;
 	session_start?: number | null;
 	session_request_count?: number;
-	account_tier: number;
 	paused?: 0 | 1;
 	rate_limit_reset?: number | null;
 	rate_limit_status?: string | null;
@@ -55,7 +54,6 @@ export interface Account {
 	rate_limited_until: number | null;
 	session_start: number | null;
 	session_request_count: number;
-	account_tier: number; // 1, 5, or 20
 	paused: boolean;
 	rate_limit_reset: number | null;
 	rate_limit_status: string | null;
@@ -76,7 +74,6 @@ export interface AccountResponse {
 	totalRequests: number;
 	lastUsed: string | null;
 	created: string;
-	tier: number;
 	paused: boolean;
 	tokenStatus: "valid" | "expired";
 	tokenExpiresAt: string | null; // ISO timestamp of token expiration
@@ -99,7 +96,6 @@ export interface AccountDisplay {
 	id: string;
 	name: string;
 	provider: string;
-	tierDisplay: string;
 	created: Date;
 	lastUsed: Date | null;
 	requestCount: number;
@@ -108,8 +104,6 @@ export interface AccountDisplay {
 	rateLimitStatus: string;
 	sessionInfo: string;
 	paused: boolean;
-	tier?: number;
-	account_tier?: number;
 	rate_limited_until?: number | null;
 	session_start?: number | null;
 	session_request_count?: number;
@@ -124,8 +118,6 @@ export interface AccountListItem {
 	id: string;
 	name: string;
 	provider: string;
-	tier: number;
-	tierDisplay: string;
 	created: Date;
 	lastUsed: Date | null;
 	requestCount: number;
@@ -144,7 +136,6 @@ export interface AccountListItem {
 export interface AddAccountOptions {
 	name: string;
 	mode?: "max" | "console" | "zai" | "openai-compatible";
-	tier?: 1 | 5 | 20;
 	priority?: number;
 	customEndpoint?: string;
 }
@@ -170,7 +161,6 @@ export function toAccount(row: AccountRow): Account {
 		rate_limited_until: row.rate_limited_until || null,
 		session_start: row.session_start || null,
 		session_request_count: row.session_request_count || 0,
-		account_tier: row.account_tier || 1,
 		paused: row.paused === 1,
 		rate_limit_reset: row.rate_limit_reset || null,
 		rate_limit_status: row.rate_limit_status || null,
@@ -232,7 +222,6 @@ export function toAccountResponse(account: Account): AccountResponse {
 			? new Date(account.last_used).toISOString()
 			: null,
 		created: new Date(account.created_at).toISOString(),
-		tier: account.account_tier,
 		paused: account.paused,
 		tokenStatus,
 		tokenExpiresAt: account.expires_at
@@ -272,7 +261,6 @@ export function toAccountDisplay(account: Account): AccountDisplay {
 		id: account.id,
 		name: account.name,
 		provider: account.provider,
-		tierDisplay: `Tier ${account.account_tier}`,
 		created: new Date(account.created_at),
 		lastUsed: account.last_used ? new Date(account.last_used) : null,
 		requestCount: account.request_count,
@@ -281,8 +269,6 @@ export function toAccountDisplay(account: Account): AccountDisplay {
 		rateLimitStatus,
 		sessionInfo,
 		paused: account.paused,
-		tier: account.account_tier,
-		account_tier: account.account_tier,
 		rate_limited_until: account.rate_limited_until,
 		session_start: account.session_start,
 		session_request_count: account.session_request_count,

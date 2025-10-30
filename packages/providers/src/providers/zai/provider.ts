@@ -1,6 +1,6 @@
 import { Logger } from "@better-ccflare/logger";
-import { BaseAnthropicCompatibleProvider } from "../base-anthropic-compatible";
 import type { RateLimitInfo } from "../../types";
+import { BaseAnthropicCompatibleProvider } from "../base-anthropic-compatible";
 
 const log = new Logger("ZaiProvider");
 

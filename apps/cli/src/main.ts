@@ -51,6 +51,7 @@ import { Config } from "@better-ccflare/config";
 import {
 	CLAUDE_MODEL_IDS,
 	getVersionSync,
+	levenshteinDistance,
 	NETWORK,
 	shutdown,
 } from "@better-ccflare/core";
@@ -69,8 +70,14 @@ interface ParsedArgs {
 	sslCert: string | null;
 	stats: boolean;
 	addAccount: string | null;
-	mode: "max" | "console" | "zai" | "openai-compatible" | null;
-	tier: 1 | 5 | 20 | null;
+	mode:
+		| "max"
+		| "console"
+		| "zai"
+		| "minimax"
+		| "anthropic-compatible"
+		| "openai-compatible"
+		| null;
 	priority: number | null;
 	list: boolean;
 	remove: string | null;
@@ -134,6 +141,29 @@ async function exitGracefully(code: 0 | 1 = 0): Promise<never> {
  */
 function fastExit(code: 0 | 1 = 0): never {
 	process.exit(code);
+}
+
+/**
+ * Helper function to suggest similar mode values for common typos
+ */
+function getModeSuggestions(input: string, validModes: string[]): string[] {
+	const suggestions: string[] = [];
+
+	for (const mode of validModes) {
+		// Check for exact case-insensitive match
+		if (mode.toLowerCase() === input.toLowerCase()) {
+			continue; // Skip if it's the same (case-insensitive)
+		}
+
+		// Check for simple typos using edit distance
+		const distance = levenshteinDistance(input, mode);
+		if (distance <= 2) {
+			// Allow up to 2 character differences
+			suggestions.push(mode);
+		}
+	}
+
+	return suggestions.slice(0, 3); // Return up to 3 suggestions
 }
 
 /**
@@ -379,7 +409,6 @@ function parseArgs(args: string[]): ParsedArgs {
 		stats: false,
 		addAccount: null,
 		mode: null,
-		tier: null,
 		priority: null,
 		list: false,
 		remove: null,
@@ -464,28 +493,55 @@ function parseArgs(args: string[]): ParsedArgs {
 					| "max"
 					| "console"
 					| "zai"
+					| "minimax"
+					| "anthropic-compatible"
 					| "openai-compatible";
 				parsed.mode = modeValue;
 				const validModes: Array<
-					"max" | "console" | "zai" | "openai-compatible"
-				> = ["max", "console", "zai", "openai-compatible"];
+					| "max"
+					| "console"
+					| "zai"
+					| "minimax"
+					| "anthropic-compatible"
+					| "openai-compatible"
+				> = [
+					"max",
+					"console",
+					"zai",
+					"minimax",
+					"anthropic-compatible",
+					"openai-compatible",
+				];
 				if (!validModes.includes(modeValue)) {
 					console.error(`❌ Invalid mode: ${modeValue}`);
 					console.error(`Valid modes: ${validModes.join(", ")}`);
-					fastExit(1);
-				}
-				break;
-			}
-			case "--tier": {
-				if (i + 1 >= args.length || args[i + 1].startsWith("--")) {
-					console.error("❌ --tier requires a value");
-					fastExit(1);
-				}
-				const tierValue = parseInt(args[++i], 10) as 1 | 5 | 20;
-				parsed.tier = tierValue;
-				if (Number.isNaN(tierValue) || ![1, 5, 20].includes(tierValue)) {
-					console.error(`❌ Invalid tier: ${args[i]}`);
-					console.error("Tier must be 1, 5, or 20");
+
+					// Provide suggestions for common typos
+					const suggestions = getModeSuggestions(modeValue, validModes);
+					if (suggestions.length > 0) {
+						console.error(`Did you mean: ${suggestions.join(", ")}?`);
+					}
+
+					console.error("\nExamples:");
+					console.error(
+						"  bun run cli --add-account my-account --mode max --priority 0",
+					);
+					console.error(
+						"  bun run cli --add-account api-key-account --mode console --priority 10",
+					);
+					console.error(
+						"  bun run cli --add-account zai-account --mode zai --priority 20",
+					);
+					console.error(
+						"  bun run cli --add-account minimax-account --mode minimax --priority 30",
+					);
+					console.error(
+						"  bun run cli --add-account openai-account --mode openai-compatible --priority 40",
+					);
+					console.error(
+						"  bun run cli --add-account anthropic-account --mode anthropic-compatible --priority 50",
+					);
+
 					fastExit(1);
 				}
 				break;
@@ -646,13 +702,13 @@ Options:
   --ssl-cert <path>    Path to SSL certificate file (enables HTTPS)
   --stats              Show statistics (JSON output)
   --add-account <name> Add a new account
-    --mode <max|console|zai|openai-compatible>  Account mode (default: max)
+    --mode <max|console|zai|minimax|anthropic-compatible|openai-compatible>  Account mode (default: max)
       max: Claude CLI account (OAuth)
       console: Claude API account (OAuth)
       zai: z.ai account (API key)
+      minimax: Minimax account (API key)
+      anthropic-compatible: Anthropic-compatible provider (API key)
       openai-compatible: OpenAI-compatible provider (API key)
-    --tier <1|5|20>       Account tier (default: 1)
-      Note: Tier is automatically set to 1 for OpenAI-compatible providers
     --priority <number>   Account priority (default: 0)
   --list               List all accounts
   --remove <name>      Remove an account
@@ -763,7 +819,6 @@ Examples:
 				name: acc.name,
 				provider: acc.provider,
 				mode: acc.mode,
-				tier: acc.tier,
 				priority: acc.priority,
 				requestCount: acc.requestCount,
 				paused: acc.paused,
@@ -777,11 +832,10 @@ Examples:
 
 	if (parsed.addAccount) {
 		// Check if we're in interactive mode or using CLI flags
-		if (parsed.mode || parsed.tier || parsed.priority) {
+		if (parsed.mode || parsed.priority) {
 			// CLI mode - use flags provided
 			try {
 				const mode = parsed.mode || "max";
-				const tier = parsed.tier || 1;
 				const priority = parsed.priority || 0;
 
 				// For API key accounts, we need to get the API key from environment or user
@@ -807,7 +861,6 @@ Examples:
 				await addAccount(dbOps, new Config(), {
 					name: parsed.addAccount,
 					mode,
-					tier,
 					priority,
 					adapter: {
 						select: async <T extends string | number>(
@@ -830,14 +883,15 @@ Examples:
 				"❌ Interactive account setup is not available in CLI mode",
 			);
 			console.error("Please provide the required flags:");
-			console.error("  --mode <max|console|zai|openai-compatible>");
-			console.error("  --tier <1|5|20>");
+			console.error(
+				"  --mode <max|console|zai|minimax|anthropic-compatible|openai-compatible>",
+			);
 			console.error("  --priority <number>");
 			console.error("\nFor API key accounts, also set:");
 			console.error("  export BETTER_CCFLARE_API_KEY_<ACCOUNT_NAME>");
 			console.error("\nExample:");
 			console.error(
-				"  better-ccflare --add-account work --mode max --tier 1 --priority 0",
+				"  better-ccflare --add-account work --mode max --priority 0",
 			);
 			console.error("  export BETTER_CCFLARE_API_KEY_WORK=your-api-key-here");
 			await exitGracefully(1);
@@ -853,7 +907,7 @@ Examples:
 			console.log("\nAccounts:");
 			accounts.forEach((acc) => {
 				console.log(
-					`  - ${acc.name} (${acc.mode} mode, tier ${acc.tier}, priority ${acc.priority})`,
+					`  - ${acc.name} (${acc.mode} mode, priority ${acc.priority})`,
 				);
 			});
 		}

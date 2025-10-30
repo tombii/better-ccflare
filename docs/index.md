@@ -42,7 +42,7 @@ When working with Claude API at scale, rate limits can become a significant bott
 ### 🏗️ Production Ready
 - **SQLite Persistence**: Reliable data storage with migrations
 - **Configurable Retry Logic**: Smart exponential backoff
-- **Account Tiers**: Support for Pro (1x), Max 5x, and Max 20x
+- **Account Priority System**: Support for priority-based load balancing
 - **Extensible Architecture**: Provider-based design for future AI services
 
 ## Documentation
@@ -105,17 +105,17 @@ bun run apps/cli/src/main.ts
 ```bash
 # In another terminal, add your accounts
 # Add a work account
-bun run apps/cli/src/main.ts --add-account work-account --mode max --tier 1
+bun run apps/cli/src/main.ts --add-account work-account --mode max --priority 0
 
 # Add a personal account
-bun run apps/cli/src/main.ts --add-account personal-account --mode max --tier 1
+bun run apps/cli/src/main.ts --add-account personal-account --mode max --priority 10
 
-# Add accounts with specific tiers
-bun run apps/cli/src/main.ts --add-account pro-account --mode max --tier 1
-bun run apps/cli/src/main.ts --add-account max-account --mode max --tier 5
+# Add accounts with specific priorities
+bun run apps/cli/src/main.ts --add-account pro-account --mode max --priority 0
+bun run apps/cli/src/main.ts --add-account max-account --mode max --priority 10
 
 # Or if you have better-ccflare command available globally
-better-ccflare --add-account work-account --mode max --tier 1
+better-ccflare --add-account work-account --mode max --priority 0
 ```
 
 ### 4. Configure Your Claude Client
@@ -185,7 +185,7 @@ The better-ccflare CLI provides comprehensive command-line interface for managem
 bun run apps/cli/src/main.ts [command]
 
 # Account management
-bun run apps/cli/src/main.ts --add-account <name> --mode <max|console|zai|openai-compatible> --tier <1|5|20> --priority <number>  # Add account
+bun run apps/cli/src/main.ts --add-account <name> --mode <max|console|zai|openai-compatible> --priority <number>  # Add account
 bun run apps/cli/src/main.ts --list                   # List accounts
 bun run apps/cli/src/main.ts --remove <name>          # Remove account
 bun run apps/cli/src/main.ts --pause <name>           # Pause account
