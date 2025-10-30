@@ -357,7 +357,7 @@ function extractAgentDirectories(systemPrompt: string): string[] {
 		// Validate path using comprehensive security checks (cached)
 		const validationOptions = {
 			description,
-			...(options || {})
+			...(options || {}),
 		};
 		const validation = validatePath(pathToValidate, validationOptions);
 		if (!validation.isValid) {
@@ -403,8 +403,13 @@ function extractAgentDirectories(systemPrompt: string): string[] {
 		// SECURITY NOTE: This is a deliberate decision to allow Claude Code to access agents in ~/.claude directory.
 		// The path validation system was restricting access to ~/.claude/.claude/agents which is needed for proper agent functionality.
 		// This addition maintains security by only allowing this specific path while keeping all other restrictions in place.
-		const additionalAllowedPaths = [join(homedir(), '.claude')];
-		processPath(agentsDir, "constructed agents directory from CLAUDE.md", undefined, { additionalAllowedPaths });
+		const additionalAllowedPaths = [join(homedir(), ".claude")];
+		processPath(
+			agentsDir,
+			"constructed agents directory from CLAUDE.md",
+			undefined,
+			{ additionalAllowedPaths },
+		);
 	}
 
 	return Array.from(directories);

@@ -25,16 +25,17 @@ export class SessionStrategy implements LoadBalancingStrategy {
 	private resetSessionIfExpired(account: Account): void {
 		const now = Date.now();
 
-		// Check if session has exceeded the fixed duration OR if the usage window has reset
+		// Check if session has exceeded the fixed duration
 		const fixedDurationExpired =
 			!account.session_start ||
 			now - account.session_start >= this.sessionDurationMs;
 
-		// Check if the account's rate limit window has reset (for accounts with rate limit reset info)
-		// This is primarily for anthropic OAuth accounts that have usage tracking
-		// In the future, other providers might support similar functionality
+		// Check if the account's rate limit window has reset (only computed if needed for efficiency)
+		// This optimization helps Anthropic OAuth accounts better utilize their 5-hour usage windows
 		const rateLimitWindowReset =
-			account.rate_limit_reset && account.rate_limit_reset < now;
+			!fixedDurationExpired &&
+			account.rate_limit_reset &&
+			account.rate_limit_reset < now;
 
 		if (fixedDurationExpired || rateLimitWindowReset) {
 			// Reset session

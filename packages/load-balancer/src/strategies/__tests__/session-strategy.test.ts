@@ -248,4 +248,51 @@ describe("SessionStrategy", () => {
 		expect(account.session_start).toBeGreaterThan(originalSessionStart);
 		expect(account.session_request_count).toBe(0);
 	});
+
+	it("should work normally when rate_limit_reset is explicitly null", () => {
+		const account: Account = {
+			id: "test-account-5",
+			name: "test-account-5",
+			provider: "anthropic",
+			api_key: null,
+			refresh_token: "test",
+			access_token: "test",
+			expires_at: Date.now() + 3600000,
+			request_count: 0,
+			total_requests: 0,
+			last_used: null,
+			created_at: Date.now(),
+			rate_limited_until: null,
+			session_start: Date.now() - 2 * 60 * 60 * 1000, // 2 hours ago
+			session_request_count: 5,
+			paused: false,
+			rate_limit_reset: null, // Explicitly null (different from undefined)
+			rate_limit_status: null,
+			rate_limit_remaining: null,
+			priority: 0,
+			auto_fallback_enabled: false,
+			auto_refresh_enabled: false,
+			custom_endpoint: null,
+			model_mappings: null,
+		};
+
+		// Store original session values
+		const originalSessionStart = account.session_start;
+		const originalRequestCount = account.session_request_count;
+
+		// The account should be selected normally since rate_limit_reset is null
+		const result = strategy.select([account], meta);
+
+		// Verify the account is selected as the first (highest priority) result
+		expect(result[0]).toBe(account);
+		expect(result).toHaveLength(1);
+
+		// Verify session was NOT reset (null rate_limit_reset should not trigger reset)
+		const resetCall = mockStore.getResetCall(account.id);
+		expect(resetCall).toBeUndefined();
+
+		// Verify account session values remain unchanged
+		expect(account.session_start).toBe(originalSessionStart);
+		expect(account.session_request_count).toBe(originalRequestCount);
+	});
 });
