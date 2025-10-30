@@ -312,14 +312,14 @@ Configuration for optimizing account usage with automatic fallback to higher pri
 # Setup accounts with auto-fallback for optimal usage
 
 # Add primary account with highest priority and auto-fallback enabled
-better-ccflare --add-account primary-account --mode max --tier 20 --priority 0
+better-ccflare --add-account primary-account --mode max --priority 0
 
 # Add secondary accounts with lower priorities
-better-ccflare --add-account secondary-1 --mode max --tier 20 --priority 10
-better-ccflare --add-account secondary-2 --mode max --tier 20 --priority 20
+better-ccflare --add-account secondary-1 --mode max --priority 10
+better-ccflare --add-account secondary-2 --mode max --priority 20
 
 # Add backup account with lowest priority
-better-ccflare --add-account backup --mode console --tier 5 --priority 50
+better-ccflare --add-account backup --mode console --priority 50
 
 # Enable auto-fallback on primary account (API call)
 ACCOUNT_ID=$(better-ccflare --list | grep "primary-account" | jq -r '.id')
@@ -335,24 +335,24 @@ echo "Backup account (priority 50): emergency fallback"
 
 **Use Case Scenarios:**
 
-1. **Cost Optimization**: Configure free tier accounts with auto-fallback to automatically use them when available:
+1. **Cost Optimization**: Configure free accounts with auto-fallback to automatically use them when available:
    ```bash
    # Free account (priority 0) - auto-fallback enabled
    # Paid accounts (priorities 10+) - used when free account is rate limited
    ```
 
-2. **Performance Prioritization**: Configure highest-tier accounts with auto-fallback:
+2. **Performance Prioritization**: Configure highest-priority accounts with auto-fallback:
    ```bash
-   # Tier 20 account (priority 0) - auto-fallback enabled for best performance
-   # Tier 5 account (priority 10) - fallback when Tier 20 is rate limited
-   # Tier 1 account (priority 20) - emergency backup
+   # High priority account (priority 0) - auto-fallback enabled for best performance
+   # Medium priority account (priority 10) - fallback when high priority is rate limited
+   # Low priority account (priority 20) - emergency backup
    ```
 
-3. **Mixed Tier Strategy**: Combine different account tiers for optimal performance:
+3. **Mixed Priority Strategy**: Combine different account priorities for optimal performance:
    ```bash
-   # Tier 20 account (priority 0) - auto-fallback enabled for maximum performance
-   # Tier 5 account (priority 10) - balanced performance and cost
-   # Tier 1 account (priority 20) - cost-effective backup
+   # High priority account (priority 0) - auto-fallback enabled for maximum performance
+   # Medium priority account (priority 10) - balanced performance and cost
+   # Low priority account (priority 20) - cost-effective backup
    ```
 
 **Monitoring Auto-Fallback:**

@@ -264,7 +264,6 @@ export class AutoRefreshScheduler {
 				rate_limited_until: null,
 				session_start: null,
 				session_request_count: 0,
-				account_tier: accountRow.account_tier,
 				paused: false,
 				rate_limit_reset: accountRow.rate_limit_reset,
 				rate_limit_status: null,

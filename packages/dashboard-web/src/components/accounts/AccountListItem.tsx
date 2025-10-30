@@ -89,9 +89,7 @@ export function AccountListItem({
 								</>
 							)}
 						</div>
-						<p className="text-sm text-muted-foreground">
-							{account.provider} • {presenter.tierDisplay}
-						</p>
+						<p className="text-sm text-muted-foreground">{account.provider}</p>
 					</div>
 					<div className="flex items-center gap-2">
 						{presenter.isRateLimited ? (
@@ -146,7 +144,8 @@ export function AccountListItem({
 						</Button>
 					)}
 					{onModelMappingsChange &&
-						(account.provider === "openai-compatible" || account.provider === "anthropic-compatible") && (
+						(account.provider === "openai-compatible" ||
+							account.provider === "anthropic-compatible") && (
 							<Button
 								variant="ghost"
 								size="sm"

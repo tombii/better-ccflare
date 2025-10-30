@@ -105,7 +105,7 @@ Priorities can be set when adding an account or updated later:
 
 ```bash
 # Add account with priority
-better-ccflare --add-account myaccount --mode max --tier 5 --priority 10
+better-ccflare --add-account myaccount --mode max --priority 10
 
 # Update account priority
 better-ccflare set-priority myaccount 20

@@ -80,7 +80,6 @@ export function AccountsTab() {
 			| "minimax"
 			| "anthropic-compatible"
 			| "openai-compatible";
-		tier: number;
 		priority: number;
 		customEndpoint?: string;
 	}) => {
@@ -112,7 +111,6 @@ export function AccountsTab() {
 	const handleAddZaiAccount = async (params: {
 		name: string;
 		apiKey: string;
-		tier: number;
 		priority: number;
 		customEndpoint?: string;
 	}) => {
@@ -130,7 +128,6 @@ export function AccountsTab() {
 	const handleAddOpenAIAccount = async (params: {
 		name: string;
 		apiKey: string;
-		tier: number;
 		priority: number;
 		customEndpoint: string;
 		modelMappings?: { [key: string]: string };

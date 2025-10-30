@@ -35,7 +35,6 @@ export class AnthropicProvider extends BaseProvider {
 			hasApiKey: !!account.api_key,
 			hasAccessToken: !!account.access_token,
 			hasRefreshToken: !!account.refresh_token,
-			accountTier: account.account_tier,
 			provider: account.provider,
 		});
 

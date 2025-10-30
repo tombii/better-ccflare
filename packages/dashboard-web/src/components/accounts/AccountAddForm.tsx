@@ -20,7 +20,6 @@ interface AccountAddFormProps {
 			| "minimax"
 			| "anthropic-compatible"
 			| "openai-compatible";
-		tier: number;
 		priority: number;
 		customEndpoint?: string;
 	}) => Promise<{ authUrl: string; sessionId: string }>;
@@ -31,7 +30,6 @@ interface AccountAddFormProps {
 	onAddZaiAccount: (params: {
 		name: string;
 		apiKey: string;
-		tier: number;
 		priority: number;
 		customEndpoint?: string;
 	}) => Promise<void>;
@@ -50,7 +48,6 @@ interface AccountAddFormProps {
 	onAddOpenAIAccount: (params: {
 		name: string;
 		apiKey: string;
-		tier: number;
 		priority: number;
 		customEndpoint: string;
 		modelMappings?: { [key: string]: string };
@@ -83,7 +80,6 @@ export function AccountAddForm({
 			| "minimax"
 			| "anthropic-compatible"
 			| "openai-compatible",
-		tier: 1,
 		priority: 0,
 		apiKey: "",
 		customEndpoint: "",
@@ -128,7 +124,6 @@ export function AccountAddForm({
 				| "minimax"
 				| "anthropic-compatible"
 				| "openai-compatible",
-			tier: newAccount.tier,
 			priority: newAccount.priority,
 			...(newAccount.customEndpoint && {
 				customEndpoint: newAccount.customEndpoint.trim(),
@@ -152,7 +147,6 @@ export function AccountAddForm({
 			setNewAccount({
 				name: "",
 				mode: "max",
-				tier: 1,
 				priority: 0,
 				apiKey: "",
 				customEndpoint: "",
@@ -179,7 +173,6 @@ export function AccountAddForm({
 			setNewAccount({
 				name: "",
 				mode: "max",
-				tier: 1,
 				priority: 0,
 				apiKey: "",
 				customEndpoint: "",
@@ -215,7 +208,6 @@ export function AccountAddForm({
 			setNewAccount({
 				name: "",
 				mode: "max",
-				tier: 1,
 				priority: 0,
 				apiKey: "",
 				customEndpoint: "",
@@ -247,7 +239,6 @@ export function AccountAddForm({
 			await onAddOpenAIAccount({
 				name: newAccount.name,
 				apiKey: newAccount.apiKey,
-				tier: newAccount.tier,
 				priority: newAccount.priority,
 				customEndpoint: newAccount.customEndpoint.trim(),
 				modelMappings:
@@ -258,7 +249,6 @@ export function AccountAddForm({
 			setNewAccount({
 				name: "",
 				mode: "max",
-				tier: 1,
 				priority: 0,
 				apiKey: "",
 				customEndpoint: "",
@@ -301,7 +291,6 @@ export function AccountAddForm({
 		setNewAccount({
 			name: "",
 			mode: "max",
-			tier: 1,
 			priority: 0,
 			apiKey: "",
 			customEndpoint: "",
@@ -319,7 +308,6 @@ export function AccountAddForm({
 		setNewAccount({
 			name: "",
 			mode: "max",
-			tier: 1,
 			priority: 0,
 			apiKey: "",
 			customEndpoint: "",
@@ -625,28 +613,6 @@ export function AccountAddForm({
 							</p>
 						</div>
 					)}
-					{newAccount.mode !== "openai-compatible" &&
-						newAccount.mode !== "minimax" &&
-						newAccount.mode !== "anthropic-compatible" && (
-							<div className="space-y-2">
-								<Label htmlFor="tier">Tier</Label>
-								<Select
-									value={String(newAccount.tier)}
-									onValueChange={(value: string) =>
-										setNewAccount({ ...newAccount, tier: parseInt(value) })
-									}
-								>
-									<SelectTrigger id="tier">
-										<SelectValue />
-									</SelectTrigger>
-									<SelectContent>
-										<SelectItem value="1">Tier 1 (Pro)</SelectItem>
-										<SelectItem value="5">Tier 5 (Max 5x)</SelectItem>
-										<SelectItem value="20">Tier 20 (Max 20x)</SelectItem>
-									</SelectContent>
-								</Select>
-							</div>
-						)}
 					<div className="space-y-2">
 						<Label htmlFor="priority">Priority</Label>
 						<Select

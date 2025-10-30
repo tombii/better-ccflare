@@ -83,7 +83,7 @@ bun run cli --serve
 bun run dev:server
 
 # In another terminal, add Claude accounts
-bun run cli --add-account myaccount --mode max --tier 1 --priority 0
+bun run cli --add-account myaccount --mode max --priority 0
 ```
 
 ### Development Configuration
@@ -626,7 +626,7 @@ export const metrics = {
   activeAccounts: new Gauge({
     name: 'better-ccflare_active_accounts',
     help: 'Number of active accounts',
-    labelNames: ['tier']
+    labelNames: ['priority']
   }),
   
   rateLimitedAccounts: new Gauge({
@@ -831,7 +831,7 @@ CREATE TABLE accounts (
     last_used TIMESTAMPTZ,
     request_count INTEGER DEFAULT 0,
     total_requests INTEGER DEFAULT 0,
-    account_tier INTEGER DEFAULT 1,
+    priority INTEGER DEFAULT 0,
     rate_limited_until TIMESTAMPTZ,
     session_start TIMESTAMPTZ,
     session_request_count INTEGER DEFAULT 0,

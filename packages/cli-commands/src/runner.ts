@@ -33,7 +33,6 @@ export async function runCli(argv: string[]): Promise<void> {
 			strict: false,
 			options: {
 				mode: { type: "string" },
-				tier: { type: "string" },
 				priority: { type: "string" },
 				force: { type: "boolean" },
 			},
@@ -47,20 +46,13 @@ export async function runCli(argv: string[]): Promise<void> {
 				if (!name) {
 					console.error("Error: Account name is required");
 					console.log(
-						"Usage: ccflare-cli add <name> [--mode <max|console|zai|openai-compatible>] [--tier <1|5|20>] [--priority <number>]",
+						"Usage: ccflare-cli add <name> [--mode <max|console|zai|openai-compatible>] [--priority <number>]",
 					);
 					process.exit(1);
 				}
 
 				// Parse options
 				const mode = values.mode as "max" | "console" | undefined;
-				const tierValue = values.tier
-					? parseInt(values.tier as string)
-					: undefined;
-				const tier =
-					tierValue === 1 || tierValue === 5 || tierValue === 20
-						? tierValue
-						: undefined;
 				const priorityValue = values.priority
 					? parseInt(values.priority as string)
 					: undefined;

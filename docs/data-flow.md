@@ -626,7 +626,6 @@ flowchart TD
    - `total_requests`: Lifetime counter
    - `rate_limited_until`: Set when rate limited
    - `access_token` & `expires_at`: Updated on token refresh
-   - `account_tier`: Updated when detected from response
    - `session_start` & `session_request_count`: For session strategy
    - `rate_limit_status`, `rate_limit_reset`, `rate_limit_remaining`: Rate limit metadata
    - `provider`: Provider type (e.g., "anthropic")

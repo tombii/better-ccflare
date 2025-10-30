@@ -69,7 +69,14 @@ interface ParsedArgs {
 	sslCert: string | null;
 	stats: boolean;
 	addAccount: string | null;
-	mode: "max" | "console" | "zai" | "minimax" | "anthropic-compatible" | "openai-compatible" | null;
+	mode:
+		| "max"
+		| "console"
+		| "zai"
+		| "minimax"
+		| "anthropic-compatible"
+		| "openai-compatible"
+		| null;
 	priority: number | null;
 	list: boolean;
 	remove: string | null;
@@ -637,8 +644,6 @@ Options:
       minimax: Minimax account (API key)
       anthropic-compatible: Anthropic-compatible provider (API key)
       openai-compatible: OpenAI-compatible provider (API key)
-    --tier <1|5|20>       Account tier (default: 1)
-      Note: Tier is automatically set to 1 for OpenAI-compatible providers
     --priority <number>   Account priority (default: 0)
   --list               List all accounts
   --remove <name>      Remove an account
@@ -813,7 +818,9 @@ Examples:
 				"❌ Interactive account setup is not available in CLI mode",
 			);
 			console.error("Please provide the required flags:");
-			console.error("  --mode <max|console|zai|minimax|anthropic-compatible|openai-compatible>");
+			console.error(
+				"  --mode <max|console|zai|minimax|anthropic-compatible|openai-compatible>",
+			);
 			console.error("  --priority <number>");
 			console.error("\nFor API key accounts, also set:");
 			console.error("  export BETTER_CCFLARE_API_KEY_<ACCOUNT_NAME>");

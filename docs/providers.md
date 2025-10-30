@@ -29,7 +29,7 @@
 - [OAuth Authentication Flow](#oauth-authentication-flow)
 - [AnthropicProvider Implementation](#anthropicprovider-implementation)
 - [Provider Interface](#provider-interface)
-- [Account Tier System](#account-tier-system)
+- [Account Priority System](#account-priority-system)
 - [Rate Limit Handling](#rate-limit-handling)
 - [Token Storage and Security](#token-storage-and-security)
 - [Adding New Providers](#adding-new-providers)
@@ -61,7 +61,7 @@ The providers system handles:
 - Token lifecycle management (refresh, expiration)
 - Provider-specific request routing and header management
 - Rate limit detection and handling
-- Usage tracking and tier detection
+- Usage tracking
 - Response processing and transformation
 - Streaming response capture for analytics
 - Format conversion between different API standards (Anthropic ↔ OpenAI)
@@ -208,7 +208,7 @@ The ZaiProvider extends the BaseProvider class and implements Z.ai-specific func
 ### Key Features
 
 1. **API Key Authentication**: Uses `x-api-key` header instead of OAuth
-2. **No Tier Detection**: Returns null from `extractTierInfo()` - tiers must be set manually
+2. **No Tier Information**: Returns null from `extractTierInfo()` - no tier information is used
 3. **Usage Extraction**: Parses token usage from both streaming and non-streaming responses (similar to Anthropic)
 4. **Request Routing**: Routes all requests to `https://api.z.ai/api/anthropic`
 5. **Compatible Response Format**: Z.ai responses follow the same format as Anthropic's API
@@ -343,7 +343,6 @@ better-ccflare --add-account openrouter-account \
   --provider openai-compatible \
   --api-key sk-or-v1-... \
   --endpoint https://openrouter.ai/api/v1 \
-  --tier 1  # Tier doesn't matter for OpenAI-compatible providers
   --priority 10  # Lower priority = higher preference
 ```
 
@@ -353,7 +352,6 @@ better-ccflare --add-account together-account \
   --provider openai-compatible \
   --api-key ... \
   --endpoint https://api.together.xyz/v1 \
-  --tier 1 \
   --priority 20  # Higher number = lower preference
 ```
 
@@ -363,7 +361,6 @@ better-ccflare --add-account local-models \
   --provider openai-compatible \
   --api-key dummy-key \
   --endpoint http://localhost:11434/v1 \
-  --tier 1 \
   --priority 99  # Use as last resort
 ```
 
@@ -384,23 +381,22 @@ The provider detects rate limits from OpenAI-compatible headers:
 - `x-ratelimit-limit-requests`: Request limit
 - `retry-after`: Fallback retry timing
 
-### Tier Configuration
+### Priority Configuration
 
-OpenAI-compatible providers don't support automatic tier detection. The tier field is **not used** for OpenAI-compatible accounts:
+OpenAI-compatible providers use the priority system for load balancing:
 
-- Load balancing is controlled by the **priority** field, not tier
-- Tier is only used for Anthropic accounts (auto-detected from API responses)
-- **Tier defaults to 1 automatically** for OpenAI-compatible accounts and is hidden in the UI
-- The tier question is skipped for OpenAI-compatible providers in both CLI and web UI
+- Load balancing is controlled by the **priority** field
+- Priority determines the order in which accounts are attempted (lower numbers = higher priority)
+- The priority field is used for all account types (Anthropic, OpenAI-compatible, etc.)
+- The priority question is included for all providers in both CLI and web UI
 
-**Important**: OpenAI-compatible providers always use tier 1 by default. Use the **priority** field to control request routing order (lower priority = higher preference).
+**Important**: Use the **priority** field to control request routing order (lower priority = higher preference).
 
 ### Limitations
 
 1. **No OAuth Support**: Only API key authentication is supported
-2. **No Automatic Tier Detection**: Tier must be set manually (used for load balancing only)
-3. **Format Conversion**: May not support all advanced features (tools, vision, etc.)
-4. **Streaming**: Basic streaming support with text content only
+2. **Format Conversion**: May not support all advanced features (tools, vision, etc.)
+3. **Streaming**: Basic streaming support with text content only
 
 ## Anthropic Request Routing
 
@@ -419,7 +415,7 @@ buildUrl(path: string, query: string): string {
 
 **Important**: Both console and max modes use the same API endpoint. The mode only affects:
 - OAuth authorization flow (which frontend to use)
-- Account tier capabilities
+- Account priority configuration
 - Rate limits based on subscription type
 
 ### Key Features
@@ -430,7 +426,7 @@ buildUrl(path: string, query: string): string {
    - For streaming: Captures initial usage from `message_start` event (capped at 64KB)
    - For non-streaming: Extracts complete usage from JSON response
    - Includes cache token breakdown (cache read, cache creation)
-4. **Tier Detection**: Automatically detects account tier based on rate limit tokens
+4. **Rate Limit Status**: Automatically detects rate limit status from response headers
 5. **Header Management**: 
    - Removes compression headers (`accept-encoding`, `content-encoding`)
    - Sanitizes proxy headers using `sanitizeProxyHeaders` utility
@@ -511,60 +507,37 @@ The BaseProvider abstract class provides default implementations for common func
 - **Rate limit parsing**: Checks unified headers first, then falls back to 429 status with retry-after header
 - **Response processing**: Default pass-through implementation
 - **Streaming detection**: Checks for `text/event-stream` or `stream` in content-type header
-- **Tier extraction**: Default returns null (no tier info)
 - **Usage extraction**: Default returns null (no usage info)
 
-## Account Tier System
+## Account Priority System
 
-better-ccflare supports three account tiers based on Anthropic's subscription levels:
+better-ccflare uses an account priority system to control request routing order:
 
-| Tier | Value | Rate Limit | Description |
-|------|-------|------------|-------------|
-| Free | 1 | 40,000 tokens/min | Free tier accounts |
-| Pro | 5 | 200,000 tokens/min | Individual pro subscriptions |
-| Team | 20 | 800,000+ tokens/min | Team/enterprise accounts |
+| Priority | Value | Description |
+|----------|-------|-------------|
+| Highest | 0 | Accounts with priority 0 are tried first |
+| High | 1-25 | Higher priority accounts (lower numbers) are tried first |
+| Medium | 50 | Default priority level |
+| Low | 75-99 | Lower priority accounts (higher numbers) are tried later |
+| Lowest | 100 | Accounts with priority 100 are tried last |
 
-### Z.ai Tier Mapping
+### Priority Configuration
 
-Z.ai plans map to better-ccflare tiers as follows:
-
-| Z.ai Plan | better-ccflare Tier | Usage Limit | Description |
-|-----------|--------------|-------------|-------------|
-| Lite | 1 | ~120 prompts/5hrs | ~3× Claude Pro usage quota |
-| Pro | 5 | ~600 prompts/5hrs | ~3× Claude CLI (5×) usage quota |
-| Max | 20 | ~2400 prompts/5hrs | ~3× Claude CLI (20×) usage quota |
-
-**Important**: Z.ai does not provide automatic tier detection. You must manually specify the tier when adding z.ai accounts:
+Accounts are selected based on their priority value (lower numbers = higher priority). The priority system works with the session-based load balancing strategy:
 
 ```bash
-better-ccflare --add-account my-zai-account --tier 1  # For Lite plan
-better-ccflare --add-account my-zai-account --tier 5  # For Pro plan
-better-ccflare --add-account my-zai-account --tier 20 # For Max plan
+better-ccflare --add-account primary-account --mode max --priority 0
+better-ccflare --add-account secondary-account --mode max --priority 10
+better-ccflare --add-account backup-account --mode max --priority 50
 ```
 
-### Automatic Tier Detection (Anthropic Only)
+### Priority-Based Load Balancing
 
-The system automatically detects account tiers from Anthropic API responses:
-
-```typescript
-async extractTierInfo(response: Response): Promise<number | null> {
-  const json = await response.clone().json();
-  if (json.usage?.rate_limit_tokens) {
-    const rateLimit = json.usage.rate_limit_tokens;
-    if (rateLimit >= 800000) return 20;  // Team tier
-    if (rateLimit >= 200000) return 5;   // Pro tier
-    return 1;  // Free tier
-  }
-  return null;
-}
-```
-
-### Tier-Based Load Balancing
-
-Higher tier accounts receive proportionally more requests:
-- Free accounts: 1x weight
-- Pro accounts: 5x weight  
-- Team accounts: 20x weight
+Accounts are ordered by priority (ascending) for load balancing:
+- Lower priority numbers (0-25) are selected first
+- Higher priority numbers (75-100) are used as fallbacks
+- Priority only affects the order in which accounts are attempted
+- The session-based strategy maintains sticky sessions with individual accounts
 
 ## Rate Limit Handling
 

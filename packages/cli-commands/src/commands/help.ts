@@ -6,15 +6,13 @@ export function getHelpText(): string {
 Usage: better-ccflare <command> [options]
 
 Commands:
-  add <name> [--mode <max|console|zai|openai-compatible>] [--tier <1|5|20>] [--priority <number>]
+  add <name> [--mode <max|console|zai|openai-compatible>] [--priority <number>]
     Add a new account using OAuth or API key
     --mode: Account type (optional, will prompt if not provided)
       max: Claude CLI account (OAuth)
       console: Claude API account (OAuth)
       zai: z.ai account (API key)
       openai-compatible: OpenAI-compatible provider (API key)
-    --tier: Account tier (1, 5, or 20) (optional, defaults to 1)
-      Note: Tier is automatically set to 1 for OpenAI-compatible providers
     --priority: Account priority (0-100, default 0, lower numbers = higher priority)
 
   list
@@ -47,7 +45,7 @@ Commands:
     Show this help message
 
 Examples:
-  better-ccflare add myaccount --mode max --tier 5 --priority 10
+  better-ccflare add myaccount --mode max --priority 10
   better-ccflare list
   better-ccflare remove myaccount
   better-ccflare pause myaccount

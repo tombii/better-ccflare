@@ -100,7 +100,7 @@ async function createMinimaxAccount(
 	dbOps.getDatabase().run(
 		`INSERT INTO accounts (
 			id, name, provider, api_key, refresh_token, access_token,
-			expires_at, created_at, account_tier, request_count, total_requests, priority, custom_endpoint
+			expires_at, created_at, request_count, total_requests, priority, custom_endpoint
 		) VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, 0, 0, ?, ?)`,
 		[
 			accountId,
@@ -108,7 +108,6 @@ async function createMinimaxAccount(
 			"minimax",
 			validatedApiKey,
 			now,
-			1, // Default tier 1 for minimax
 			validatedPriority,
 			null, // No custom endpoint for minimax
 		],
@@ -152,7 +151,7 @@ async function createAnthropicCompatibleAccount(
 	dbOps.getDatabase().run(
 		`INSERT INTO accounts (
 			id, name, provider, api_key, refresh_token, access_token,
-			expires_at, created_at, account_tier, request_count, total_requests, priority, custom_endpoint, model_mappings
+			expires_at, created_at, request_count, total_requests, priority, custom_endpoint, model_mappings
 		) VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, 0, 0, ?, ?, ?)`,
 		[
 			accountId,
@@ -160,7 +159,6 @@ async function createAnthropicCompatibleAccount(
 			"anthropic-compatible",
 			validatedApiKey,
 			now,
-			1, // Default tier 1 for anthropic-compatible
 			validatedPriority,
 			validatedEndpoint,
 			validatedModelMappings,
@@ -292,8 +290,8 @@ async function createOpenAIAccount(
 	dbOps.getDatabase().run(
 		`INSERT INTO accounts (
 			id, name, provider, api_key, refresh_token, access_token,
-			expires_at, created_at, account_tier, request_count, total_requests, priority, custom_endpoint, model_mappings
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			expires_at, created_at, request_count, total_requests, priority, custom_endpoint, model_mappings
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		[
 			accountId,
 			name,
@@ -303,7 +301,6 @@ async function createOpenAIAccount(
 			validatedApiKey, // Store API key as access_token
 			null, // No expiry for OpenAI-compatible providers (API keys don't expire)
 			now,
-			1, // Always tier 1 for OpenAI-compatible providers (tier is not applicable)
 			0,
 			0,
 			validatedPriority,
@@ -315,7 +312,6 @@ async function createOpenAIAccount(
 	console.log(`\nAccount '${name}' added successfully!`);
 	console.log("Type: OpenAI-compatible (API key)");
 	console.log(`Endpoint: ${validatedEndpoint}`);
-	console.log("Tier: 1 (default for OpenAI-compatible providers)");
 	console.log(`Priority: ${validatedPriority}`);
 
 	if (
@@ -371,16 +367,7 @@ export async function addAccount(
 		// Handle z.ai accounts with API keys
 		const apiKey = await adapter.input("\nEnter your z.ai API key: ");
 
-		// Get tier for z.ai accounts
-		const tier =
-			providedTier ||
-			(await adapter.select("Select the tier for this account:", [
-				{ label: "1x tier (z.ai Lite)", value: 1 },
-				{ label: "5x tier (z.ai Pro)", value: 5 },
-				{ label: "20x tier (z.ai Max)", value: 20 },
-			]));
-
-		await createZaiAccount(dbOps, name, apiKey, tier, providedPriority || 0);
+		await createZaiAccount(dbOps, name, apiKey, providedPriority || 0);
 	} else if (mode === "console") {
 		// Handle Console accounts - offer choice between OAuth and direct API key
 		const consoleMethod = await adapter.select(
@@ -421,28 +408,17 @@ export async function addAccount(
 				}
 			}
 
-			// Get tier for Console accounts
-			const tier =
-				providedTier ||
-				(await adapter.select("Select the tier for this account:", [
-					{ label: "1x tier (Pro)", value: 1 },
-					{ label: "5x tier (Max 5x)", value: 5 },
-					{ label: "20x tier (Max 20x)", value: 20 },
-				]));
-
 			// Create console account with direct API key
 			await createConsoleAccountWithApiKey(
 				dbOps,
 				name,
 				apiKey,
-				tier,
 				providedPriority || 0,
 				endpointForConsole,
 			);
 
 			console.log(`\nAccount '${name}' added successfully!`);
 			console.log("Type: Claude Console (API key)");
-			console.log(`Tier: ${tier}x`);
 			if (endpointForConsole) {
 				console.log(`Endpoint: ${endpointForConsole}`);
 			}
@@ -546,15 +522,6 @@ export async function addAccount(
 		// Get authorization code
 		const code = await adapter.input("\nEnter the authorization code: ");
 
-		// Get tier for Claude accounts (both CLI and API)
-		const tier =
-			providedTier ||
-			(await adapter.select("Select the tier for this account:", [
-				{ label: "1x tier (Pro)", value: 1 },
-				{ label: "5x tier (Max 5x)", value: 5 },
-				{ label: "20x tier (Max 20x)", value: 20 },
-			]));
-
 		// Get custom endpoint for Max/Console modes if not provided
 		let endpointForOAuth = customEndpoint;
 		if ((mode === "max" || mode === "console") && !customEndpoint) {
@@ -579,7 +546,6 @@ export async function addAccount(
 			{
 				sessionId,
 				code,
-				tier: tier as AccountTier,
 				name,
 				priority: providedPriority || 0,
 				customEndpoint: endpointForOAuth,
@@ -589,7 +555,6 @@ export async function addAccount(
 
 		console.log(`\nAccount '${name}' added successfully!`);
 		console.log(`Type: ${mode === "max" ? "Claude CLI" : "Claude API"}`);
-		console.log(`Tier: ${tier}x`);
 	}
 }
 
@@ -601,7 +566,6 @@ export function getAccountsList(dbOps: DatabaseOperations): AccountListItem[] {
 	const now = Date.now();
 
 	return accounts.map((account) => {
-		const tierDisplay = `${account.account_tier}x`;
 		const tokenStatus =
 			account.expires_at && account.expires_at > now ? "valid" : "expired";
 
@@ -623,7 +587,6 @@ export function getAccountsList(dbOps: DatabaseOperations): AccountListItem[] {
 			id: account.id,
 			name: account.name,
 			provider: account.provider,
-			tierDisplay,
 			created: new Date(account.created_at),
 			lastUsed: account.last_used ? new Date(account.last_used) : null,
 			requestCount: account.request_count,
@@ -632,7 +595,6 @@ export function getAccountsList(dbOps: DatabaseOperations): AccountListItem[] {
 			tokenStatus,
 			rateLimitStatus,
 			sessionInfo,
-			tier: account.account_tier || 1,
 			mode:
 				account.provider === "zai"
 					? "zai"
@@ -820,14 +782,13 @@ export async function reauthenticateAccount(
 			{
 				id: string;
 				provider: string;
-				account_tier: number;
 				priority: number;
 				custom_endpoint: string | null;
 				api_key: string | null;
 			},
 			[string]
 		>(
-			"SELECT id, provider, account_tier, priority, custom_endpoint, api_key FROM accounts WHERE name = ?",
+			"SELECT id, provider, priority, custom_endpoint, api_key FROM accounts WHERE name = ?",
 		)
 		.get(name);
 

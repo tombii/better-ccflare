@@ -53,7 +53,6 @@ export function createAccountsListHandler(db: Database) {
 					rate_limit_remaining,
 					session_start,
 					session_request_count,
-					COALESCE(account_tier, 1) as account_tier,
 					COALESCE(paused, 0) as paused,
 					COALESCE(priority, 0) as priority,
 					COALESCE(auto_fallback_enabled, 0) as auto_fallback_enabled,
@@ -92,7 +91,6 @@ export function createAccountsListHandler(db: Database) {
 			rate_limit_remaining: number | null;
 			session_start: number | null;
 			session_request_count: number;
-			account_tier: number;
 			paused: 0 | 1;
 			priority: number;
 			token_valid: 0 | 1;
@@ -173,7 +171,6 @@ export function createAccountsListHandler(db: Database) {
 					? new Date(account.last_used).toISOString()
 					: null,
 				created: new Date(account.created_at).toISOString(),
-				tier: account.account_tier,
 				paused: account.paused === 1,
 				priority: account.priority,
 				tokenStatus: account.token_valid ? "valid" : "expired",
@@ -197,35 +194,6 @@ export function createAccountsListHandler(db: Database) {
 		});
 
 		return jsonResponse(response);
-	};
-}
-
-/**
- * Create an account tier update handler
- */
-export function createAccountTierUpdateHandler(dbOps: DatabaseOperations) {
-	return async (req: Request, accountId: string): Promise<Response> => {
-		try {
-			const body = await req.json();
-
-			// Validate tier input
-			const tier = validateNumber(body.tier, "tier", {
-				required: true,
-				allowedValues: [1, 5, 20] as const,
-			});
-
-			if (tier === undefined) {
-				return errorResponse(BadRequest("Tier is required"));
-			}
-
-			dbOps.updateAccountTier(accountId, tier);
-
-			return jsonResponse({ success: true, tier });
-		} catch (_error) {
-			return errorResponse(
-				InternalServerError("Failed to update account tier"),
-			);
-		}
 	};
 }
 
@@ -319,11 +287,6 @@ export function createAccountAddHandler(
 					allowedValues: ["anthropic"] as const,
 				}) || "anthropic";
 
-			// Validate tier
-			const tier = (validateNumber(body.tier, "tier", {
-				allowedValues: [1, 5, 20] as const,
-			}) || 1) as 1 | 5 | 20;
-
 			// Validate priority
 			const priority =
 				validateNumber(body.priority, "priority", {
@@ -363,8 +326,8 @@ export function createAccountAddHandler(
 				dbOps.getDatabase().run(
 					`INSERT INTO accounts (
 						id, name, provider, refresh_token, access_token,
-						created_at, request_count, total_requests, account_tier, priority, custom_endpoint
-					) VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?)`,
+						created_at, request_count, total_requests, priority, custom_endpoint
+					) VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, ?)`,
 					[
 						accountId,
 						name,
@@ -372,7 +335,6 @@ export function createAccountAddHandler(
 						refreshToken,
 						accessToken,
 						now,
-						tier,
 						priority,
 						customEndpoint || null,
 					],
@@ -381,7 +343,6 @@ export function createAccountAddHandler(
 				return jsonResponse({
 					success: true,
 					message: `Account ${name} added successfully`,
-					tier,
 					priority,
 					accountId,
 				});
@@ -609,11 +570,6 @@ export function createZaiAccountAddHandler(dbOps: DatabaseOperations) {
 				return errorResponse(BadRequest("API key is required"));
 			}
 
-			// Validate tier
-			const tier = (validateNumber(body.tier, "tier", {
-				allowedValues: [1, 5, 20] as const,
-			}) || 1) as 1 | 5 | 20;
-
 			// Validate priority
 			const priority =
 				validateNumber(body.priority, "priority", {
@@ -651,8 +607,8 @@ export function createZaiAccountAddHandler(dbOps: DatabaseOperations) {
 			db.run(
 				`INSERT INTO accounts (
 					id, name, provider, api_key, refresh_token, access_token,
-					expires_at, created_at, account_tier, request_count, total_requests, priority, custom_endpoint
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+					expires_at, created_at, request_count, total_requests, priority, custom_endpoint
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 				[
 					accountId,
 					name,
@@ -662,7 +618,6 @@ export function createZaiAccountAddHandler(dbOps: DatabaseOperations) {
 					apiKey, // Use API key as access token
 					now + 365 * 24 * 60 * 60 * 1000, // 1 year from now
 					now,
-					tier,
 					0,
 					0,
 					priority,
@@ -671,7 +626,7 @@ export function createZaiAccountAddHandler(dbOps: DatabaseOperations) {
 			);
 
 			log.info(
-				`Successfully added z.ai account: ${name} (Tier ${tier}, Priority ${priority})`,
+				`Successfully added z.ai account: ${name} (Priority ${priority})`,
 			);
 
 			// Get the created account for response
@@ -686,14 +641,13 @@ export function createZaiAccountAddHandler(dbOps: DatabaseOperations) {
 						last_used: number | null;
 						created_at: number;
 						expires_at: number;
-						account_tier: number;
 						paused: number;
 					},
 					[string]
 				>(
 					`SELECT
 						id, name, provider, request_count, total_requests,
-						last_used, created_at, expires_at, account_tier,
+						last_used, created_at, expires_at,
 						COALESCE(paused, 0) as paused
 					FROM accounts WHERE id = ?`,
 				)
@@ -717,7 +671,6 @@ export function createZaiAccountAddHandler(dbOps: DatabaseOperations) {
 						? new Date(account.last_used).toISOString()
 						: null,
 					created: new Date(account.created_at).toISOString(),
-					tier: account.account_tier,
 					paused: account.paused === 1,
 					priority: priority,
 					tokenStatus: "valid" as const,
@@ -793,11 +746,6 @@ export function createOpenAIAccountAddHandler(dbOps: DatabaseOperations) {
 				return errorResponse(BadRequest("Endpoint URL is required"));
 			}
 
-			// Validate tier
-			const tier = (validateNumber(body.tier, "tier", {
-				allowedValues: [1, 5, 20] as const,
-			}) || 1) as 1 | 5 | 20;
-
 			// Validate priority
 			const priority =
 				validateNumber(body.priority, "priority", {
@@ -821,8 +769,8 @@ export function createOpenAIAccountAddHandler(dbOps: DatabaseOperations) {
 			db.run(
 				`INSERT INTO accounts (
 					id, name, provider, api_key, refresh_token, access_token,
-					expires_at, created_at, account_tier, request_count, total_requests, priority, custom_endpoint, model_mappings
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+					expires_at, created_at, request_count, total_requests, priority, custom_endpoint, model_mappings
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 				[
 					accountId,
 					name,
@@ -832,7 +780,6 @@ export function createOpenAIAccountAddHandler(dbOps: DatabaseOperations) {
 					apiKey, // Use API key as access token
 					now + 365 * 24 * 60 * 60 * 1000, // 1 year from now
 					now,
-					tier,
 					0,
 					0,
 					priority,
@@ -990,14 +937,13 @@ export function createMinimaxAccountAddHandler(dbOps: DatabaseOperations) {
 						last_used: number | null;
 						created_at: number;
 						expires_at: number;
-						account_tier: number;
 						paused: number;
 					},
 					[string]
 				>(
 					`SELECT
 						id, name, provider, request_count, total_requests,
-						last_used, created_at, expires_at, account_tier,
+						last_used, created_at, expires_at,
 						COALESCE(paused, 0) as paused
 					FROM accounts WHERE id = ?`,
 				)
@@ -1021,7 +967,6 @@ export function createMinimaxAccountAddHandler(dbOps: DatabaseOperations) {
 						? new Date(account.last_used).toISOString()
 						: null,
 					created: new Date(account.created_at).toISOString(),
-					tier: account.account_tier,
 					paused: account.paused === 1,
 					priority: priority,
 					tokenStatus: "valid" as const,
@@ -1108,7 +1053,9 @@ export function createAnthropicCompatibleAccountAddHandler(
 			// Validate and sanitize model mappings (optional)
 			let modelMappings = null;
 			if (body.modelMappings && typeof body.modelMappings === "object") {
-				const validatedMappings = validateAndSanitizeModelMappings(body.modelMappings);
+				const validatedMappings = validateAndSanitizeModelMappings(
+					body.modelMappings,
+				);
 				modelMappings = JSON.stringify(validatedMappings);
 			}
 
@@ -1155,14 +1102,13 @@ export function createAnthropicCompatibleAccountAddHandler(
 						last_used: number | null;
 						created_at: number;
 						expires_at: number;
-						account_tier: number;
 						paused: number;
 					},
 					[string]
 				>(
 					`SELECT
 						id, name, provider, request_count, total_requests,
-						last_used, created_at, expires_at, account_tier,
+						last_used, created_at, expires_at,
 						COALESCE(paused, 0) as paused
 					FROM accounts WHERE id = ?`,
 				)
@@ -1186,7 +1132,6 @@ export function createAnthropicCompatibleAccountAddHandler(
 						? new Date(account.last_used).toISOString()
 						: null,
 					created: new Date(account.created_at).toISOString(),
-					tier: account.account_tier,
 					paused: account.paused === 1,
 					priority: priority,
 					tokenStatus: "valid" as const,
@@ -1404,7 +1349,10 @@ export function createAccountModelMappingsUpdateHandler(
 				return errorResponse(NotFound("Account not found"));
 			}
 
-			if (account.provider !== "openai-compatible" && account.provider !== "anthropic-compatible") {
+			if (
+				account.provider !== "openai-compatible" &&
+				account.provider !== "anthropic-compatible"
+			) {
 				return errorResponse(
 					BadRequest(
 						"Model mappings are only available for OpenAI-compatible and Anthropic-compatible accounts",

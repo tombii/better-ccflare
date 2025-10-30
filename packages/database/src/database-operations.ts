@@ -180,7 +180,7 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		configureSqlite(this.db, this.dbConfig, fastMode);
 
 		ensureSchema(this.db);
-		runMigrations(this.db);
+		runMigrations(this.db, resolvedPath);
 
 		// Initialize repositories
 		this.accounts = new AccountRepository(this.db);
@@ -320,10 +320,6 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		this.accounts.updateRateLimitMeta(accountId, status, reset, remaining);
 	}
 
-	updateAccountTier(accountId: string, tier: number): void {
-		this.accounts.updateTier(accountId, tier);
-	}
-
 	pauseAccount(accountId: string): void {
 		this.accounts.pause(accountId);
 	}
@@ -445,7 +441,6 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		accountName: string,
 		verifier: string,
 		mode: "console" | "max",
-		tier: number,
 		customEndpoint?: string,
 		ttlMinutes = 10,
 	): void {
@@ -454,7 +449,6 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 			accountName,
 			verifier,
 			mode,
-			tier,
 			customEndpoint,
 			ttlMinutes,
 		);
@@ -464,7 +458,6 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		accountName: string;
 		verifier: string;
 		mode: "console" | "max";
-		tier: number;
 		customEndpoint?: string;
 	} | null {
 		return this.oauth.getSession(sessionId);
