@@ -34,6 +34,7 @@ export async function runCli(argv: string[]): Promise<void> {
 			options: {
 				mode: { type: "string" },
 				priority: { type: "string" },
+				modelMappings: { type: "string" },
 				force: { type: "boolean" },
 			},
 		});
@@ -46,7 +47,7 @@ export async function runCli(argv: string[]): Promise<void> {
 				if (!name) {
 					console.error("Error: Account name is required");
 					console.log(
-						"Usage: ccflare-cli add <name> [--mode <max|console|zai|openai-compatible>] [--priority <number>]",
+						"Usage: ccflare-cli add <name> [--mode <max|console|zai|openai-compatible>] [--priority <number>] [--modelMappings <JSON>]",
 					);
 					process.exit(1);
 				}
@@ -60,8 +61,25 @@ export async function runCli(argv: string[]): Promise<void> {
 					typeof priorityValue === "number" && !Number.isNaN(priorityValue)
 						? priorityValue
 						: undefined;
+				const modelMappingsValue = values.modelMappings as string | undefined;
+				let modelMappings: Record<string, string> | undefined;
+				if (modelMappingsValue) {
+					try {
+						modelMappings = JSON.parse(modelMappingsValue);
+					} catch (error) {
+						console.error(
+							`Error parsing model mappings: ${error instanceof Error ? error.message : String(error)}`,
+						);
+						process.exit(1);
+					}
+				}
 
-				await addAccount(dbOps, config, { name, mode, priority });
+				await addAccount(dbOps, config, {
+					name,
+					mode,
+					priority,
+					modelMappings,
+				});
 				break;
 			}
 
