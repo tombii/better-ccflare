@@ -20,8 +20,8 @@ import {
 } from "../prompts/index";
 import { openBrowser } from "../utils/browser";
 
-// Re-export types with adapter extension for CLI-specific options
-export interface AddAccountOptions {
+// Extended type for CLI-specific options that includes adapter functionality
+export interface AddAccountOptionsWithAdapter {
 	name: string;
 	mode?:
 		| "claude-oauth"
@@ -337,7 +337,7 @@ async function createOpenAIAccount(
 export async function addAccount(
 	dbOps: DatabaseOperations,
 	config: Config,
-	options: AddAccountOptions,
+	options: AddAccountOptionsWithAdapter,
 ): Promise<void> {
 	const {
 		name,
@@ -603,16 +603,18 @@ export function getAccountsList(dbOps: DatabaseOperations): AccountListItem[] {
 			tokenStatus,
 			rateLimitStatus,
 			sessionInfo,
-			mode:
-				account.provider === "zai"
-					? "zai"
-					: account.provider === "minimax"
-						? "minimax"
-						: account.provider === "anthropic-compatible"
-							? "anthropic-compatible"
-							: account.access_token
-								? "claude-oauth"
-								: "console",
+			mode: (() => {
+				// Direct mapping: if provider matches specific account types, use same mode name
+				if (
+					account.provider === "zai" ||
+					account.provider === "minimax" ||
+					account.provider === "anthropic-compatible"
+				) {
+					return account.provider;
+				}
+				// For Anthropic accounts: OAuth vs Console determined by presence of access_token
+				return account.access_token ? "claude-oauth" : "console";
+			})(),
 			priority: account.priority || 0,
 			autoFallbackEnabled: account.auto_fallback_enabled,
 			autoRefreshEnabled: account.auto_refresh_enabled,
