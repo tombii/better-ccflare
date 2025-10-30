@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { agentRegistry } from "@better-ccflare/agents";
 import type { DatabaseOperations } from "@better-ccflare/database";
@@ -349,11 +350,16 @@ function extractAgentDirectories(systemPrompt: string): string[] {
 		rawPath: string,
 		description: string,
 		finalPath?: string,
+		options?: { additionalAllowedPaths?: string[] },
 	) => {
 		const pathToValidate = finalPath || rawPath;
 
 		// Validate path using comprehensive security checks (cached)
-		const validation = validatePath(pathToValidate, { description });
+		const validationOptions = {
+			description,
+			...(options || {})
+		};
+		const validation = validatePath(pathToValidate, validationOptions);
 		if (!validation.isValid) {
 			extractDirLog.warn(
 				`Rejected invalid ${description}: ${pathToValidate} - ${validation.reason}`,
@@ -379,7 +385,7 @@ function extractAgentDirectories(systemPrompt: string): string[] {
 	const agentPathRegex = /([\\/][\w\-. ]*?\/.claude\/agents)(?=[\s"'\]])/g;
 	const agentPathMatches = systemPrompt.matchAll(agentPathRegex);
 	for (const match of agentPathMatches) {
-		processPath(match[1], "agent path");
+		processPath(match[1], "agent path", undefined, undefined);
 	}
 
 	// Regex #2: Look for repo root pattern "Contents of (.*?)/CLAUDE.md"
@@ -393,7 +399,12 @@ function extractAgentDirectories(systemPrompt: string): string[] {
 		const agentsDir = join(cleanedRoot, ".claude", "agents");
 
 		// Validate the constructed agents directory directly
-		processPath(agentsDir, "constructed agents directory from CLAUDE.md");
+		// Allow the home .claude directory path for agent functionality (consciously decided to support Claude AI agents)
+		// SECURITY NOTE: This is a deliberate decision to allow Claude Code to access agents in ~/.claude directory.
+		// The path validation system was restricting access to ~/.claude/.claude/agents which is needed for proper agent functionality.
+		// This addition maintains security by only allowing this specific path while keeping all other restrictions in place.
+		const additionalAllowedPaths = [join(homedir(), '.claude')];
+		processPath(agentsDir, "constructed agents directory from CLAUDE.md", undefined, { additionalAllowedPaths });
 	}
 
 	return Array.from(directories);
