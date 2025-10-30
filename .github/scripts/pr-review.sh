@@ -141,7 +141,7 @@ DIFF=$(cat)
 
 # Sanitize the diff to remove problematic control characters
 echo "Sanitizing diff content to remove control characters..." >&2
-DIFF=$(python3 -c "
+DIFF=$(echo "$DIFF" | python3 -c "
 import sys
 content = sys.stdin.read()
 # Remove control characters except \t, \n, \r
