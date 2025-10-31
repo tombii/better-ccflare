@@ -67,6 +67,7 @@ export function usesApiKey(provider: string): boolean {
 /**
  * Provider-specific session duration tracking configuration
  * Maps provider names to whether they require session duration tracking
+ * NOTE: All provider names from PROVIDER_NAMES should be included in this configuration
  */
 const PROVIDER_SESSION_TRACKING_CONFIG: Record<ProviderName, boolean> = {
 	[PROVIDER_NAMES.ANTHROPIC]: true, // Anthropic has 5-hour usage windows

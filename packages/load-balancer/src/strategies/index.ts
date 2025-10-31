@@ -64,12 +64,14 @@ export class SessionStrategy implements LoadBalancingStrategy {
 	}
 
 	private hasActiveSession(account: Account, now: number): boolean {
-		// Only Anthropic providers should have persistent sessions with duration tracking
 		// Non-Anthropic providers (API-key-based, etc.) should not have persistent sessions
 		// since they're pay-as-you-go and don't benefit from session stickiness
-		return requiresSessionDurationTracking(account.provider)
-			&& !!account.session_start
-			&& now - account.session_start < this.sessionDurationMs;
+		if (!requiresSessionDurationTracking(account.provider)) {
+			return false;
+		}
+
+		// For Anthropic providers: check if session is active (within duration window)
+		return !!account.session_start && now - account.session_start < this.sessionDurationMs;
 	}
 
 	select(accounts: Account[], meta: RequestMeta): Account[] {
