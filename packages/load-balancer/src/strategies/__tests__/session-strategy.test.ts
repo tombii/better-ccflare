@@ -295,4 +295,276 @@ describe("SessionStrategy", () => {
 		expect(account.session_start).toBe(originalSessionStart);
 		expect(account.session_request_count).toBe(originalRequestCount);
 	});
+
+	it("should not reset session when rate_limit_reset equals current time (boundary condition)", () => {
+		const now = Date.now();
+		const account: Account = {
+			id: "test-account-boundary",
+			name: "test-account-boundary",
+			provider: "anthropic",
+			api_key: null,
+			refresh_token: "test",
+			access_token: "test",
+			expires_at: now + 3600000,
+			request_count: 0,
+			total_requests: 0,
+			last_used: null,
+			created_at: now,
+			rate_limited_until: null,
+			session_start: now - 2 * 60 * 60 * 1000, // 2 hours ago
+			session_request_count: 5,
+			paused: false,
+			rate_limit_reset: now, // Equal to current time (boundary condition)
+			rate_limit_status: null,
+			rate_limit_remaining: null,
+			priority: 0,
+			auto_fallback_enabled: false,
+			auto_refresh_enabled: false,
+			custom_endpoint: null,
+			model_mappings: null,
+		};
+
+		// Store original session values
+		const originalSessionStart = account.session_start;
+		const originalRequestCount = account.session_request_count;
+
+		// The account should be selected normally since rate_limit_reset equals now (not less than now - 1000)
+		const result = strategy.select([account], meta);
+
+		// Verify the account is selected as the first (highest priority) result
+		expect(result[0]).toBe(account);
+		expect(result).toHaveLength(1);
+
+		// Verify session was NOT reset (rate_limit_reset equals now, so condition rate_limit_reset < now - 1000 is false)
+		const resetCall = mockStore.getResetCall(account.id);
+		expect(resetCall).toBeUndefined();
+
+		// Verify account session values remain unchanged
+		expect(account.session_start).toBe(originalSessionStart);
+		expect(account.session_request_count).toBe(originalRequestCount);
+	});
+
+	it("should reset session when rate_limit_reset is just less than now - 1000 (boundary condition)", () => {
+		const now = Date.now();
+		const account: Account = {
+			id: "test-account-boundary-just-expired",
+			name: "test-account-boundary-just-expired",
+			provider: "anthropic",
+			api_key: null,
+			refresh_token: "test",
+			access_token: "test",
+			expires_at: now + 3600000,
+			request_count: 0,
+			total_requests: 0,
+			last_used: null,
+			created_at: now,
+			rate_limited_until: null,
+			session_start: now - 2 * 60 * 60 * 1000, // 2 hours ago
+			session_request_count: 5,
+			paused: false,
+			rate_limit_reset: now - 1001, // Just less than now - 1000 (1001ms ago)
+			rate_limit_status: null,
+			rate_limit_remaining: null,
+			priority: 0,
+			auto_fallback_enabled: false,
+			auto_refresh_enabled: false,
+			custom_endpoint: null,
+			model_mappings: null,
+		};
+
+		// Store original session values
+		const originalSessionStart = account.session_start;
+		const _originalRequestCount = account.session_request_count;
+
+		// The account should be selected and session should be reset since rate_limit_reset < now - 1000
+		const result = strategy.select([account], meta);
+
+		// Verify the account is selected as the first (highest priority) result
+		expect(result[0]).toBe(account);
+		expect(result).toHaveLength(1);
+
+		// Verify session was reset (rate_limit_reset is just less than now - 1000)
+		const resetCall = mockStore.getResetCall(account.id);
+		expect(resetCall).toBeDefined();
+		expect(resetCall?.accountId).toBe(account.id);
+		expect(resetCall?.timestamp).toBeGreaterThan(0);
+
+		// Verify account object was updated
+		expect(account.session_start).toBeGreaterThan(originalSessionStart);
+		expect(account.session_request_count).toBe(0);
+	});
+
+	it("should handle multiple accounts with different rate limit reset scenarios", () => {
+		const now = Date.now();
+		// Reset all sessions to ensure no active sessions exist
+		const account1: Account = {
+			id: "test-account-1-reset",
+			name: "test-account-1-reset",
+			provider: "anthropic",
+			api_key: null,
+			refresh_token: "test",
+			access_token: "test",
+			expires_at: now + 3600000,
+			request_count: 0,
+			total_requests: 0,
+			last_used: null,
+			created_at: now,
+			rate_limited_until: null,
+			session_start: null, // No active session to start with
+			session_request_count: 0,
+			paused: false,
+			rate_limit_reset: now - 2000, // Reset 2 seconds ago (should trigger reset when selected)
+			rate_limit_status: null,
+			rate_limit_remaining: null,
+			priority: 0, // Highest priority
+			auto_fallback_enabled: false,
+			auto_refresh_enabled: false,
+			custom_endpoint: null,
+			model_mappings: null,
+		};
+
+		const account2: Account = {
+			id: "test-account-2-no-reset",
+			name: "test-account-2-no-reset",
+			provider: "anthropic",
+			api_key: null,
+			refresh_token: "test",
+			access_token: "test",
+			expires_at: now + 3600000,
+			request_count: 0,
+			total_requests: 0,
+			last_used: null,
+			created_at: now,
+			rate_limited_until: null,
+			session_start: null, // No active session
+			session_request_count: 0,
+			paused: false,
+			rate_limit_reset: now, // Equal to current time (should NOT trigger reset)
+			rate_limit_status: null,
+			rate_limit_remaining: null,
+			priority: 1, // Lower priority
+			auto_fallback_enabled: false,
+			auto_refresh_enabled: false,
+			custom_endpoint: null,
+			model_mappings: null,
+		};
+
+		const account3: Account = {
+			id: "test-account-3-future-reset",
+			name: "test-account-3-future-reset",
+			provider: "anthropic",
+			api_key: null,
+			refresh_token: "test",
+			access_token: "test",
+			expires_at: now + 3600000,
+			request_count: 0,
+			total_requests: 0,
+			last_used: null,
+			created_at: now,
+			rate_limited_until: null,
+			session_start: null, // No active session
+			session_request_count: 0,
+			paused: false,
+			rate_limit_reset: now + 5000, // Reset 5 seconds in the future (should NOT trigger reset)
+			rate_limit_status: null,
+			rate_limit_remaining: null,
+			priority: 2, // Lowest priority
+			auto_fallback_enabled: false,
+			auto_refresh_enabled: false,
+			custom_endpoint: null,
+			model_mappings: null,
+		};
+
+		// All accounts have no active sessions, so priority 0 (account1) should be selected
+		// Since account1 has rate_limit_reset < now - 1000, its session should be reset
+		const result = strategy.select([account2, account3, account1], meta);
+
+		// Verify the highest priority account (account1) is selected as the first result
+		expect(result[0]).toBe(account1);
+		expect(result).toHaveLength(3);
+
+		// Verify session was reset only for account1 (the one with rate_limit_reset < now - 1000)
+		const resetCall1 = mockStore.getResetCall(account1.id);
+		const resetCall2 = mockStore.getResetCall(account2.id);
+		const resetCall3 = mockStore.getResetCall(account3.id);
+
+		expect(resetCall1).toBeDefined();
+		expect(resetCall2).toBeUndefined();
+		expect(resetCall3).toBeUndefined();
+
+		// Verify account1 object was updated with new session start time and zero request count
+		expect(account1.session_start).toBeGreaterThan(0); // Should be set to current time
+		expect(account1.session_request_count).toBe(0);
+		expect(account2.session_start).toBe(null);
+		expect(account2.session_request_count).toBe(0);
+		expect(account3.session_start).toBe(null);
+		expect(account3.session_request_count).toBe(0);
+	});
+
+	it("should handle auto-fallback with multiple accounts at boundary conditions", () => {
+		const now = Date.now();
+		const account1: Account = {
+			id: "test-account-auto-fallback-reset",
+			name: "test-account-auto-fallback-reset",
+			provider: "anthropic",
+			api_key: null,
+			refresh_token: "test",
+			access_token: "test",
+			expires_at: now + 3600000,
+			request_count: 0,
+			total_requests: 0,
+			last_used: null,
+			created_at: now,
+			rate_limited_until: null,
+			session_start: null, // No active session
+			session_request_count: 0,
+			paused: true, // Paused account that should be auto-fallback eligible
+			rate_limit_reset: now - 2000, // Reset 2 seconds ago (should trigger auto-fallback)
+			rate_limit_status: null,
+			rate_limit_remaining: null,
+			priority: 0, // Highest priority
+			auto_fallback_enabled: true, // Auto-fallback enabled
+			auto_refresh_enabled: false,
+			custom_endpoint: null,
+			model_mappings: null,
+		};
+
+		const account2: Account = {
+			id: "test-account-no-auto-fallback",
+			name: "test-account-no-auto-fallback",
+			provider: "anthropic",
+			api_key: null,
+			refresh_token: "test",
+			access_token: "test",
+			expires_at: now + 3600000,
+			request_count: 0,
+			total_requests: 0,
+			last_used: null,
+			created_at: now,
+			rate_limited_until: null,
+			session_start: null, // No active session
+			session_request_count: 0,
+			paused: true, // Paused account
+			rate_limit_reset: now, // Equal to current time (should NOT trigger auto-fallback)
+			rate_limit_status: null,
+			rate_limit_remaining: null,
+			priority: 1, // Lower priority
+			auto_fallback_enabled: true, // Auto-fallback enabled but reset not expired
+			auto_refresh_enabled: false,
+			custom_endpoint: null,
+			model_mappings: null,
+		};
+
+		// The account with expired reset should be selected via auto-fallback
+		const result = strategy.select([account2, account1], meta);
+
+		// Verify the account with expired reset and higher priority (account1) is selected first due to auto-fallback
+		expect(result[0]).toBe(account1);
+		expect(result).toHaveLength(1); // Only account1 should be in result since account2 doesn't qualify for auto-fallback
+
+		// Verify the paused account was resumed due to auto-fallback
+		expect(account1.paused).toBe(false);
+		expect(mockStore.hasResumeCall(account1.id)).toBe(true);
+		expect(account2.paused).toBe(true); // Should remain paused
+	});
 });
