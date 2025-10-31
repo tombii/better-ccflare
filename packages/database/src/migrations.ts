@@ -146,7 +146,7 @@ export function runMigrations(db: Database, dbPath?: string): void {
 
 	const initialAccountsColumnNames = accountsInfo.map((col) => col.name);
 
-// Check final column structure to determine if backup is needed
+	// Check final column structure to determine if backup is needed
 	const finalAccountsColumns = db
 		.prepare("PRAGMA table_info(accounts)")
 		.all() as Array<{
@@ -616,6 +616,13 @@ function runApiKeyStorageMigration(db: Database): void {
 				AND refresh_token IS NOT NULL
 				AND refresh_token != ''
 				AND access_token IS NULL  -- OAuth accounts have access_token, console accounts don't
+				AND (
+					expires_at IS NULL  -- Console accounts don't have token expiration
+					OR expires_at = 0   -- Or have invalid/zero expiration
+					OR expires_at < ${Date.now() - 24 * 60 * 60 * 1000}  -- Or expired more than 24h ago (likely not a valid OAuth token)
+				)
+				AND refresh_token NOT LIKE 'sk-ant-api03-%'  -- Exclude actual Anthropic OAuth refresh tokens
+				AND refresh_token NOT LIKE 'sk-ant-%'        -- Exclude newer Anthropic token formats
 		`;
 
 		const consoleResult = db.prepare(consoleUpdateSql).run();
@@ -638,7 +645,7 @@ function runApiKeyStorageMigration(db: Database): void {
 			}
 			if (consoleCount > 0) {
 				log.debug(
-					`  - ${consoleCount} console accounts had API key moved from refresh_token to api_key`,
+					`  - ${consoleCount} console accounts had API key moved from refresh_token to api_key (using enhanced detection)`,
 				);
 			}
 		}
