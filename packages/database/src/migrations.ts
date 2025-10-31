@@ -318,6 +318,17 @@ export function runMigrations(db: Database, dbPath?: string): void {
 			log.info("Added model_mappings column to accounts table");
 		}
 
+		// Run API key storage migration to move API keys from refresh_token to api_key field
+		// This is a data migration that should happen after all schema changes
+		try {
+			runApiKeyStorageMigration(db);
+		} catch (error) {
+			log.error(
+				`API key storage migration failed: ${(error as Error).message}`,
+			);
+			throw error;
+		}
+
 		// Check columns in oauth_sessions table
 		const oauthSessionsInfo = db
 			.prepare("PRAGMA table_info(oauth_sessions)")
@@ -552,5 +563,121 @@ export function runMigrations(db: Database, dbPath?: string): void {
 	} catch (error) {
 		log.error(`Database migration failed: ${(error as Error).message}`);
 		throw error; // Re-throw to allow calling code to handle the failure
+	}
+}
+
+/**
+ * Run API key storage migration to move API keys from refresh_token to api_key field
+ * This ensures API keys are stored in the correct field while preserving OAuth tokens
+ *
+ * Migration approach: Using separate focused queries instead of a single consolidated query
+ * for better maintainability, clearer logic separation, and easier debugging. Each migration
+ * type (API key providers, duplicate cleanup, console accounts) has distinct criteria and purpose.
+ */
+export function runApiKeyStorageMigration(db: Database): void {
+	try {
+		// Update API-key providers to move API key from refresh_token to api_key field
+		// Only if api_key is null/undefined and refresh_token contains a value
+		// This handles zai, openai-compatible, minimax, and anthropic-compatible providers
+		const updateSql = `
+			UPDATE accounts
+			SET
+				api_key = refresh_token,
+				refresh_token = '',
+				access_token = '',
+				expires_at = NULL
+			WHERE
+				provider IN ('zai', 'openai-compatible', 'minimax', 'anthropic-compatible')
+				AND api_key IS NULL
+				AND refresh_token IS NOT NULL
+				AND refresh_token != ''
+				AND LENGTH(refresh_token) > 0
+		`;
+
+		const result = db.prepare(updateSql).run();
+		const updatedCount = (result.changes as number) || 0;
+		log.debug(
+			`API Key Migration: Updated ${updatedCount} API-key provider accounts from refresh_token to api_key field`,
+		);
+
+		// Also handle accounts where both api_key and refresh_token have the same value (duplicate storage)
+		const cleanupSql = `
+			UPDATE accounts
+			SET
+				refresh_token = '',
+				access_token = '',
+				expires_at = NULL
+			WHERE
+				provider IN ('zai', 'openai-compatible', 'minimax', 'anthropic-compatible')
+				AND api_key IS NOT NULL
+				AND refresh_token = api_key
+		`;
+
+		const cleanupResult = db.prepare(cleanupSql).run();
+		const cleanupCount = (cleanupResult.changes as number) || 0;
+
+		// Handle console accounts separately - these are anthropic provider accounts that use API keys
+		// Console accounts have api_key but no access_token/refresh_token normally, but older ones might have been stored in refresh_token
+		// Note: Using separate focused queries instead of a single consolidated query for better maintainability,
+		// clearer logic separation, and easier debugging. Each migration type has distinct criteria and purpose.
+		const consoleUpdateSql = `
+			UPDATE accounts
+			SET
+				api_key = refresh_token,
+				refresh_token = '',
+				access_token = '',
+				expires_at = NULL
+			WHERE
+				provider = 'anthropic'
+				AND api_key IS NULL  -- Console accounts should have api_key, but if missing and refresh_token has value, it's likely a console account
+				AND refresh_token IS NOT NULL
+				AND refresh_token != ''
+				AND access_token IS NULL  -- OAuth accounts have access_token, console accounts don't
+				AND (
+					expires_at IS NULL  -- Console accounts don't have token expiration
+					OR expires_at = 0   -- Or have invalid/zero expiration
+					OR expires_at < ?   -- Or expired more than 24h ago (likely not a valid OAuth token)
+				)
+				AND refresh_token NOT LIKE 'sk-ant-api03-%'  -- Exclude actual Anthropic OAuth refresh tokens
+				AND refresh_token NOT LIKE 'sk-ant-%'        -- Exclude newer Anthropic token formats
+		`;
+
+		const cutoffTime = Date.now() - 24 * 60 * 60 * 1000;
+		const consoleResult = db.prepare(consoleUpdateSql).run(cutoffTime);
+		const consoleCount = (consoleResult.changes as number) || 0;
+
+		const totalCount = updatedCount + cleanupCount + consoleCount;
+		if (totalCount > 0) {
+			log.info(
+				`Migrated ${totalCount} accounts to API key storage v2 (moved from refresh_token to api_key)`,
+				{
+					migrationVersion: 2,
+					timestamp: new Date().toISOString(),
+					updatedAccounts: updatedCount,
+					cleanupAccounts: cleanupCount,
+					consoleAccounts: consoleCount,
+				},
+			);
+			if (updatedCount > 0) {
+				log.debug(
+					`  - ${updatedCount} accounts had API key moved from refresh_token to api_key`,
+				);
+			}
+			if (cleanupCount > 0) {
+				log.debug(
+					`  - ${cleanupCount} accounts had duplicate API key storage cleaned up`,
+				);
+			}
+			if (consoleCount > 0) {
+				log.debug(
+					`  - ${consoleCount} console accounts had API key moved from refresh_token to api_key (using enhanced detection)`,
+				);
+			}
+		}
+	} catch (error) {
+		log.warn(
+			`Error during API key storage migration: ${(error as Error).message}`,
+		);
+		// Continue with other migrations even if this one fails
 	}
 }

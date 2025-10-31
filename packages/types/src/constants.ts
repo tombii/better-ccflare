@@ -1,11 +1,11 @@
 // Import provider definitions from the centralized provider-config module
 // This avoids circular dependencies
 import {
+	getDefaultEndpoint,
+	isKnownProvider,
+	PROVIDER_CONFIG,
 	PROVIDER_NAMES,
 	type ProviderName,
-	isKnownProvider,
-	getDefaultEndpoint,
-	PROVIDER_CONFIG,
 	requiresSessionDurationTracking,
 	supportsOAuth,
 	supportsUsageTracking,

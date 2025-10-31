@@ -208,7 +208,7 @@ describe("OpenAICompatibleProvider", () => {
 			const result = await provider.refreshToken(mockAccount, "client-id");
 
 			expect(result.accessToken).toBe("test-api-key");
-			expect(result.refreshToken).toBe("test-api-key");
+			expect(result.refreshToken).toBe("");
 			expect(result.expiresAt).toBeGreaterThan(Date.now());
 		});
 
