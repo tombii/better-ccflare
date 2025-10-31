@@ -87,6 +87,10 @@ const PROVIDER_SESSION_TRACKING_CONFIG = {
  */
 export function requiresSessionDurationTracking(provider: string): boolean {
 	const providerName = provider as ProviderName;
+	// Validate that the provider is known to prevent typos
+	if (!Object.values(PROVIDER_NAMES).includes(providerName as any)) {
+		console.warn(`Unknown provider: ${provider}. Defaulting to no session tracking.`);
+	}
 	if (providerName in PROVIDER_SESSION_TRACKING_CONFIG) {
 		return PROVIDER_SESSION_TRACKING_CONFIG[providerName];
 	}
