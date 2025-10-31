@@ -89,18 +89,33 @@ const PROVIDER_SESSION_TRACKING_CONFIG = {
  * Check if a provider should have session duration tracking
  * Currently only Anthropic providers have usage windows that benefit from session tracking
  * This can be extended for other providers with similar usage window systems (OpenAI-compatible, Anthropic-compatible, etc.)
+ *
+ * @param provider - The provider name to check
+ * @returns boolean - True if the provider requires session duration tracking, false otherwise
+ *                    Unknown providers default to false (security through default denial)
  */
 export function requiresSessionDurationTracking(provider: string): boolean {
-	const providerName = provider as ProviderName;
-	// Validate that the provider is known to prevent typos
-	if (!Object.values(PROVIDER_NAMES).includes(providerName as any)) {
+	// Type-safe check to see if provider is a valid ProviderName
+	const isValidProvider = Object.values(PROVIDER_NAMES).some(
+		(validProvider) => validProvider === provider
+	);
+
+	if (!isValidProvider) {
+		// Log warning for unknown providers - defaults to no session tracking (security through default denial)
 		console.warn(
-			`Unknown provider: ${provider}. Defaulting to no session tracking.`,
+			`Unknown provider: ${provider}. Defaulting to no session tracking (security through default denial).`,
 		);
+		return false;
 	}
+
+	// At this point, we know provider is a valid ProviderName due to the check above
+	const providerName = provider as ProviderName;
+
 	if (providerName in PROVIDER_SESSION_TRACKING_CONFIG) {
 		return PROVIDER_SESSION_TRACKING_CONFIG[providerName];
 	}
+
+	// Default to false for any provider not explicitly configured (security through default denial)
 	return false;
 }
 
