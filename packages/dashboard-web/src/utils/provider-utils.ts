@@ -1,13 +1,19 @@
 /**
  * Utility functions for provider-specific logic in the web UI
  */
+import {
+	PROVIDER_NAMES,
+	supportsOAuth,
+	getDefaultEndpoint,
+	isKnownProvider
+} from "@better-ccflare/types";
 
 /**
  * Check if a provider supports auto-fallback and auto-refresh features
  * Currently only Anthropic OAuth accounts support these features
  */
 export function providerSupportsAutoFeatures(provider: string): boolean {
-	return provider === "anthropic";
+	return provider === PROVIDER_NAMES.ANTHROPIC;
 }
 
 /**
@@ -15,8 +21,8 @@ export function providerSupportsAutoFeatures(provider: string): boolean {
  */
 export function providerSupportsModelMappings(provider: string): boolean {
 	return (
-		provider === "openai-compatible" ||
-		provider === "anthropic-compatible"
+		provider === PROVIDER_NAMES.OPENAI_COMPATIBLE ||
+		provider === PROVIDER_NAMES.ANTHROPIC_COMPATIBLE
 	);
 }
 
@@ -24,7 +30,7 @@ export function providerSupportsModelMappings(provider: string): boolean {
  * Check if a provider shows weekly usage information
  */
 export function providerShowsWeeklyUsage(provider: string): boolean {
-	return provider === "anthropic";
+	return provider === PROVIDER_NAMES.ANTHROPIC;
 }
 
 /**
@@ -32,21 +38,12 @@ export function providerShowsWeeklyUsage(provider: string): boolean {
  */
 export function providerSupportsCustomEndpoints(provider: string): boolean {
 	// Most providers support custom endpoints, but we can add specific logic if needed
-	return true;
+	return isKnownProvider(provider);
 }
 
 /**
  * Get the default endpoint for a provider
  */
 export function getDefaultEndpointForProvider(provider: string): string {
-	switch (provider) {
-		case "zai":
-			return "https://api.z.ai/api/anthropic";
-		case "minimax":
-			return "https://api.minimax.io/anthropic";
-		case "anthropic-compatible":
-			return "https://api.anthropic.com"; // Default, but can be overridden via custom endpoint
-		default:
-			return "https://api.anthropic.com";
-	}
+	return getDefaultEndpoint(provider);
 }

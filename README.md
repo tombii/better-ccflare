@@ -462,10 +462,10 @@ No `NODE_OPTIONS` needed - Traefik provides trusted certificates automatically!
 ## Features
 
 ### 🎯 Intelligent Load Balancing
-- **Session-based** - Maintain conversation context (5hr sessions)
-- **Auto-fallback** - Automatically switch back to higher priority accounts when their usage windows reset
+- **Session-based** - Maintain conversation context for Claude OAuth accounts (5hr usage windows), pay-as-you-go for other providers
+- **Auto-fallback** - Automatically switch back to higher priority Claude OAuth accounts when their usage windows reset
 - **Auto-refresh** - Automatically start new usage windows when they reset
-- **Usage Window Alignment** - Sessions automatically align with Anthropic OAuth usage window resets for optimal resource utilization
+- **Usage Window Alignment** - Sessions automatically align with Claude OAuth usage window resets for optimal resource utilization
 
 ### 📈 Real-Time Analytics
 - Token usage tracking per request with optimized batch processing
@@ -490,7 +490,7 @@ No `NODE_OPTIONS` needed - Traefik provides trusted certificates automatically!
 - Enhanced performance with request batching and caching
 
 ### ☁️ Multi-Provider Support
-- **Claude OAuth** - Anthropic OAuth accounts with 5-hour usage windows and session tracking
+- **Claude OAuth** - Anthropic OAuth accounts with 5-hour usage windows and session tracking (rate limit window based)
 - **Claude Console API** - Anthropic API key accounts with pay-as-you-go model (no session tracking)
 - **z.ai, Minimax** - API key based providers with pay-as-you-go model
 - **Anthropic-Compatible** - Custom Anthropic-compatible providers with pay-as-you-go model

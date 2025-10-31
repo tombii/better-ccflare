@@ -6,7 +6,7 @@ import type {
 	RequestMeta,
 	StrategyStore,
 } from "@better-ccflare/types";
-import { requiresSessionDurationTracking } from "@better-ccflare/types";
+import { requiresSessionDurationTracking, PROVIDER_NAMES } from "@better-ccflare/types";
 
 export class SessionStrategy implements LoadBalancingStrategy {
 	private sessionDurationMs: number;
@@ -37,7 +37,7 @@ export class SessionStrategy implements LoadBalancingStrategy {
 		// Usage windows: Anthropic accounts with proactive rate limit headers (usage-based accounts)
 		// No usage windows: Other account types or Anthropic console keys without usage windows
 		const rateLimitWindowReset =
-			account.provider === "anthropic" && // Explicit provider check for Anthropic usage windows
+			account.provider === PROVIDER_NAMES.ANTHROPIC && // Explicit provider check for Anthropic usage windows
 			account.rate_limit_reset &&
 			account.rate_limit_reset < now - 1000; // 1 second buffer for clock skew protection
 
@@ -216,7 +216,7 @@ export class SessionStrategy implements LoadBalancingStrategy {
 			// Usage windows: Anthropic accounts with proactive rate limit headers (usage-based accounts)
 			// No usage windows: Other account types or Anthropic console keys without usage windows
 			const anthropicWindowReset =
-				account.provider === "anthropic" && // Only for Anthropic accounts with usage windows
+				account.provider === PROVIDER_NAMES.ANTHROPIC && // Only for Anthropic accounts with usage windows
 				account.rate_limit_reset &&
 				account.rate_limit_reset < now - 1000; // 1 second buffer for clock skew protection
 

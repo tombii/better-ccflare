@@ -26,68 +26,8 @@ export const ACCOUNT_MODES = {
 
 export type AccountMode = (typeof ACCOUNT_MODES)[keyof typeof ACCOUNT_MODES];
 
-/**
- * Providers that support OAuth authentication
- */
-export const OAUTH_PROVIDERS: ReadonlySet<ProviderName> = new Set([
-	PROVIDER_NAMES.ANTHROPIC,
-	// CLAUDE_CONSOLE_API is API key based, not OAuth
-	// MINIMAX is API key based, not OAuth
-	// ANTHROPIC_COMPATIBLE is API key based, not OAuth
-	// OPENAI_COMPATIBLE is API key based, not OAuth
-]);
-
-/**
- * Providers that support usage tracking (via OAuth usage endpoint)
- */
-export const USAGE_TRACKING_PROVIDERS: ReadonlySet<ProviderName> = new Set([
-	PROVIDER_NAMES.ANTHROPIC,
-	// CLAUDE_CONSOLE_API doesn't support usage tracking (pay-as-you-go)
-	// MINIMAX doesn't support usage tracking (pay-as-you-go)
-	// ANTHROPIC_COMPATIBLE doesn't support usage tracking (pay-as-you-go)
-	// OPENAI_COMPATIBLE doesn't support usage tracking (pay-as-you-go)
-]);
-
-/**
- * Providers that use API key authentication
- */
-export const API_KEY_PROVIDERS: ReadonlySet<ProviderName> = new Set([
-	PROVIDER_NAMES.ZAI,
-	PROVIDER_NAMES.MINIMAX,
-	PROVIDER_NAMES.ANTHROPIC_COMPATIBLE,
-	PROVIDER_NAMES.OPENAI_COMPATIBLE,
-	PROVIDER_NAMES.CLAUDE_CONSOLE_API, // Claude console API uses API key authentication
-]);
-
-/**
- * Check if a provider supports OAuth authentication
- */
-export function supportsOAuth(provider: string): boolean {
-	if (!isKnownProvider(provider)) {
-		return false; // Unknown providers don't support OAuth
-	}
-	return OAUTH_PROVIDERS.has(provider as ProviderName);
-}
-
-/**
- * Check if a provider supports usage tracking
- */
-export function supportsUsageTracking(provider: string): boolean {
-	if (!isKnownProvider(provider)) {
-		return false; // Unknown providers don't support usage tracking
-	}
-	return USAGE_TRACKING_PROVIDERS.has(provider as ProviderName);
-}
-
-/**
- * Check if a provider uses API key authentication
- */
-export function usesApiKey(provider: string): boolean {
-	if (!isKnownProvider(provider)) {
-		return false; // Unknown providers don't use API key authentication by default
-	}
-	return API_KEY_PROVIDERS.has(provider as ProviderName);
-}
+// Functions are now imported from provider-config.ts to avoid duplication
+// See the exports at the bottom of this file
 
 /**
  * Type guard to check if a provider string is a known ProviderName
@@ -99,8 +39,22 @@ export function isKnownProvider(provider: string): provider is ProviderName {
 // Import provider configuration functions from the dedicated module
 export {
 	requiresSessionDurationTracking,
-	PROVIDER_SESSION_TRACKING_CONFIG
+	PROVIDER_CONFIG,
+	supportsUsageTracking,
+	supportsOAuth,
+	getDefaultEndpoint
 } from "./provider-config";
+
+// The usesApiKey function needs to be defined here to avoid circular dependencies
+// since it depends on both isKnownProvider and the supportsOAuth function
+// For now, we'll implement it directly based on our knowledge of which providers use API keys
+export function usesApiKey(provider: string): boolean {
+	if (!isKnownProvider(provider)) {
+		return false; // Unknown providers don't use API key authentication by default
+	}
+	// API key providers are all providers except Anthropic OAuth
+	return provider !== PROVIDER_NAMES.ANTHROPIC;
+}
 
 /**
  * Get provider name from account mode
