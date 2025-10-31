@@ -36,7 +36,7 @@ export class SessionStrategy implements LoadBalancingStrategy {
 			!fixedDurationExpired &&
 			account.provider === "anthropic" && // Explicit provider check for Anthropic usage windows
 			account.rate_limit_reset &&
-			account.rate_limit_reset < now;
+			account.rate_limit_reset < now - 1000; // 1 second buffer for clock skew protection
 
 		if (fixedDurationExpired || rateLimitWindowReset) {
 			// Reset session
@@ -178,16 +178,16 @@ export class SessionStrategy implements LoadBalancingStrategy {
 			// This allows paused accounts with auto-fallback to be considered for reactivation
 
 			// Check if the API usage window has reset
-			const windowReset =
+			const anthropicWindowReset =
 				account.provider === "anthropic" && // Only for Anthropic accounts with usage windows
 				account.rate_limit_reset &&
-				account.rate_limit_reset < now;
+				account.rate_limit_reset < now - 1000; // 1 second buffer for clock skew protection
 
 			// Check if the account is not currently rate limited by our system
 			const notRateLimited =
 				!account.rate_limited_until || account.rate_limited_until <= now;
 
-			return windowReset && notRateLimited;
+			return anthropicWindowReset && notRateLimited;
 		});
 
 		if (resetAccounts.length === 0) return [];
