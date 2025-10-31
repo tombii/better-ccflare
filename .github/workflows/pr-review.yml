@@ -38,7 +38,8 @@ jobs:
         id: diff
         run: |
           echo "Generating diff for PR #$PR_NUMBER"
-          DIFF=$(git diff "origin/$BASE_REF...HEAD")
+          # Generate diff excluding generated files like inline-worker.ts
+          DIFF=$(git diff "origin/$BASE_REF...HEAD" -- . ":(exclude)packages/proxy/src/inline-worker.ts" ":(exclude)packages/proxy/src/embedded-tiktoken-wasm.ts")
           DIFF_SIZE=$(echo "$DIFF" | wc -c)
           echo "Diff size: $DIFF_SIZE bytes"
 
@@ -115,7 +116,8 @@ jobs:
         id: diff
         run: |
           echo "Generating diff for PR #$PR_NUMBER"
-          DIFF=$(git diff "origin/$BASE_REF...HEAD")
+          # Generate diff excluding generated files like inline-worker.ts
+          DIFF=$(git diff "origin/$BASE_REF...HEAD" -- . ":(exclude)packages/proxy/src/inline-worker.ts" ":(exclude)packages/proxy/src/embedded-tiktoken-wasm.ts")
           DIFF_SIZE=$(echo "$DIFF" | wc -c)
           echo "Diff size: $DIFF_SIZE bytes"
 

@@ -59,7 +59,7 @@ describe("AnthropicCompatibleProvider", () => {
 			const result = await provider.refreshToken(mockAccount, "test-client");
 
 			expect(result.accessToken).toBe("test-api-key");
-			expect(result.refreshToken).toBe("test-api-key");
+			expect(result.refreshToken).toBe("");
 		});
 
 		test("should throw error when no API key available", async () => {

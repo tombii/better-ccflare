@@ -61,14 +61,7 @@ describe("Database Migrations - Tier Column Removal", () => {
 		db.prepare(`
       INSERT INTO accounts (id, name, provider, refresh_token, created_at, account_tier)
       VALUES (?, ?, ?, ?, ?, ?)
-    `).run(
-			"test-id",
-			"test-account",
-			"anthropic",
-			"test-token",
-			Date.now(),
-			"pro",
-		);
+    `).run("test-id", "test-account", "anthropic", "", Date.now(), "pro");
 
 		// Run migrations (should remove the tier column)
 		runMigrations(db);
@@ -189,9 +182,9 @@ describe("Database Migrations - Tier Column Removal", () => {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
-		stmt.run("id1", "account1", "anthropic", "token1", 1000, 2000, 0, "free");
-		stmt.run("id2", "account2", "anthropic", "token2", 1001, 2001, 10, "pro");
-		stmt.run("id3", "account3", "zai", "token3", 1002, 2002, 20, "enterprise");
+		stmt.run("id1", "account1", "anthropic", "", 1000, 2000, 0, "free");
+		stmt.run("id2", "account2", "anthropic", "", 1001, 2001, 10, "pro");
+		stmt.run("id3", "account3", "zai", "", 1002, 2002, 20, "enterprise");
 
 		// Run migrations
 		runMigrations(db);
@@ -307,5 +300,385 @@ describe("Database Migrations - Tier Column Removal", () => {
 		const claudeSession = sessions.find((s) => s.id === "session-claude");
 		expect(claudeSession).toBeDefined();
 		expect(claudeSession?.mode).toBe("claude-oauth"); // Should remain unchanged
+	});
+
+	describe("API Key Storage Migration", () => {
+		it("should migrate API keys from refresh_token to api_key field for API-key providers", () => {
+			// Initialize the schema
+			ensureSchema(db);
+
+			// Insert test data with API keys stored in refresh_token field (old pattern)
+			const stmt = db.prepare(`
+				INSERT INTO accounts (id, name, provider, refresh_token, created_at, priority)
+				VALUES (?, ?, ?, ?, ?, ?)
+			`);
+
+			// Insert API-key providers with keys in refresh_token field
+			stmt.run(
+				"zai-account",
+				"zai-account",
+				"zai",
+				"sk-zai-key-12345",
+				Date.now(),
+				10,
+			);
+			stmt.run(
+				"minimax-account",
+				"minimax-account",
+				"minimax",
+				"sk-minimax-key-67890",
+				Date.now(),
+				20,
+			);
+			stmt.run(
+				"openai-account",
+				"openai-account",
+				"openai-compatible",
+				"sk-openai-key-abcde",
+				Date.now(),
+				30,
+			);
+			stmt.run(
+				"anthropic-compatible-account",
+				"anthropic-compatible-account",
+				"anthropic-compatible",
+				"sk-anthropic-key-fghij",
+				Date.now(),
+				40,
+			);
+
+			// Debug: Check initial state
+			const initialZaiAccount = db
+				.prepare(
+					"SELECT id, name, provider, api_key, refresh_token FROM accounts WHERE id = ?",
+				)
+				.get("zai-account") as {
+				id: string;
+				name: string;
+				provider: string;
+				api_key: string | null;
+				refresh_token: string | null;
+			};
+			console.log("Initial zai account:", initialZaiAccount);
+
+			// Run migrations
+			runMigrations(db);
+
+			// Debug: Check final state
+			const finalZaiAccount = db
+				.prepare(
+					"SELECT id, name, provider, api_key, refresh_token FROM accounts WHERE id = ?",
+				)
+				.get("zai-account") as {
+				id: string;
+				name: string;
+				provider: string;
+				api_key: string | null;
+				refresh_token: string | null;
+			};
+			console.log("Final zai account:", finalZaiAccount);
+
+			// Verify that API keys were moved from refresh_token to api_key field
+			const zaiAccount = finalZaiAccount;
+
+			expect(zaiAccount.api_key).toBe("sk-zai-key-12345");
+			expect(zaiAccount.refresh_token).toBe("");
+
+			const minimaxAccount = db
+				.prepare(
+					"SELECT id, name, provider, api_key, refresh_token FROM accounts WHERE id = ?",
+				)
+				.get("minimax-account") as {
+				id: string;
+				name: string;
+				provider: string;
+				api_key: string | null;
+				refresh_token: string | null;
+			};
+
+			expect(minimaxAccount.api_key).toBe("sk-minimax-key-67890");
+			expect(minimaxAccount.refresh_token).toBe("");
+
+			const openaiAccount = db
+				.prepare(
+					"SELECT id, name, provider, api_key, refresh_token FROM accounts WHERE id = ?",
+				)
+				.get("openai-account") as {
+				id: string;
+				name: string;
+				provider: string;
+				api_key: string | null;
+				refresh_token: string | null;
+			};
+
+			expect(openaiAccount.api_key).toBe("sk-openai-key-abcde");
+			expect(openaiAccount.refresh_token).toBe("");
+
+			const anthropicCompatibleAccount = db
+				.prepare(
+					"SELECT id, name, provider, api_key, refresh_token FROM accounts WHERE id = ?",
+				)
+				.get("anthropic-compatible-account") as {
+				id: string;
+				name: string;
+				provider: string;
+				api_key: string | null;
+				refresh_token: string | null;
+			};
+
+			expect(anthropicCompatibleAccount.api_key).toBe("sk-anthropic-key-fghij");
+			expect(anthropicCompatibleAccount.refresh_token).toBe("");
+		});
+
+		it("should clean up duplicate API key storage", () => {
+			// Initialize the schema
+			ensureSchema(db);
+
+			// Insert test data with duplicate API key storage
+			db.prepare(`
+				INSERT INTO accounts (id, name, provider, api_key, refresh_token, access_token, created_at, priority)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			`).run(
+				"duplicate-account",
+				"duplicate-account",
+				"zai",
+				"sk-duplicate-key", // api_key field
+				"sk-duplicate-key", // refresh_token field (duplicate)
+				"sk-duplicate-key", // access_token field (duplicate)
+				Date.now(),
+				10,
+			);
+
+			// Run migrations
+			runMigrations(db);
+
+			// Verify that duplicates were cleaned up
+			const account = db
+				.prepare(
+					"SELECT id, name, provider, api_key, refresh_token, access_token FROM accounts WHERE id = ?",
+				)
+				.get("duplicate-account") as {
+				id: string;
+				name: string;
+				provider: string;
+				api_key: string | null;
+				refresh_token: string | null;
+				access_token: string | null;
+			};
+
+			expect(account.api_key).toBe("sk-duplicate-key"); // Should remain
+			expect(account.refresh_token).toBe(""); // Should be cleared to empty string
+			expect(account.access_token).toBe(""); // Should be cleared to empty string
+		});
+
+		it("should detect and migrate console accounts with enhanced logic", () => {
+			// Initialize the schema
+			ensureSchema(db);
+
+			// Insert test data for console account detection
+			db.prepare(`
+				INSERT INTO accounts (id, name, provider, refresh_token, access_token, expires_at, created_at, priority)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			`).run(
+				"console-account",
+				"console-account",
+				"anthropic",
+				"sk-console-api-key-12345", // API key in refresh_token field
+				null, // No access token
+				null, // No expiration
+				Date.now(),
+				10,
+			);
+
+			// Run migrations
+			runMigrations(db);
+
+			// Verify that console account was detected and migrated
+			const account = db
+				.prepare(
+					"SELECT id, name, provider, api_key, refresh_token, access_token FROM accounts WHERE id = ?",
+				)
+				.get("console-account") as {
+				id: string;
+				name: string;
+				provider: string;
+				api_key: string | null;
+				refresh_token: string | null;
+				access_token: string | null;
+			};
+
+			expect(account.api_key).toBe("sk-console-api-key-12345");
+			expect(account.refresh_token).toBe("");
+			expect(account.access_token).toBe("");
+		});
+
+		it("should not migrate OAuth accounts that match console detection patterns", () => {
+			// Initialize the schema
+			ensureSchema(db);
+
+			const futureTime = Date.now() + 24 * 60 * 60 * 1000; // 24 hours from now
+
+			// Insert OAuth account that might match some patterns but has valid OAuth characteristics
+			db.prepare(`
+				INSERT INTO accounts (id, name, provider, refresh_token, access_token, expires_at, created_at, priority)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			`).run(
+				"oauth-account",
+				"oauth-account",
+				"anthropic",
+				"sk-ant-api03-12345", // OAuth refresh token pattern
+				"sk-ant-api03-67890", // Has access token
+				futureTime, // Valid future expiration
+				Date.now(),
+				10,
+			);
+
+			// Run migrations
+			runMigrations(db);
+
+			// Verify that OAuth account was NOT migrated (should keep refresh_token)
+			const account = db
+				.prepare(
+					"SELECT id, name, provider, api_key, refresh_token, access_token FROM accounts WHERE id = ?",
+				)
+				.get("oauth-account") as {
+				id: string;
+				name: string;
+				provider: string;
+				api_key: string | null;
+				refresh_token: string | null;
+				access_token: string | null;
+			};
+
+			expect(account.api_key).toBeNull(); // Should not have api_key
+			expect(account.refresh_token).toBe("sk-ant-api03-12345"); // Should keep refresh_token
+			expect(account.access_token).toBe("sk-ant-api03-67890"); // Should keep access_token
+		});
+
+		it("should handle expired OAuth tokens correctly", () => {
+			// Initialize the schema
+			ensureSchema(db);
+
+			const now = Date.now();
+			const pastTime = now - 48 * 60 * 60 * 1000; // 48 hours ago (expired - more than 24h)
+
+			// Insert expired OAuth account
+			db.prepare(`
+				INSERT INTO accounts (id, name, provider, refresh_token, access_token, expires_at, created_at, priority)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			`).run(
+				"expired-oauth-account",
+				"expired-oauth-account",
+				"anthropic",
+				"sk-custom-token-12345", // Non-OAuth pattern
+				null, // No access token
+				pastTime, // Expired timestamp (more than 24h ago)
+				now,
+				10,
+			);
+
+			// Run migrations
+			runMigrations(db);
+
+			// Verify that expired OAuth account was migrated to console
+			const account = db
+				.prepare(
+					"SELECT id, name, provider, api_key, refresh_token, access_token FROM accounts WHERE id = ?",
+				)
+				.get("expired-oauth-account") as {
+				id: string;
+				name: string;
+				provider: string;
+				api_key: string | null;
+				refresh_token: string | null;
+				access_token: string | null;
+			};
+
+			expect(account.api_key).toBe("sk-custom-token-12345");
+			expect(account.refresh_token).toBe("");
+			expect(account.access_token).toBe("");
+		});
+
+		it("should not affect OAuth accounts with valid characteristics", () => {
+			// Initialize the schema
+			ensureSchema(db);
+
+			// Insert valid OAuth account
+			db.prepare(`
+				INSERT INTO accounts (id, name, provider, refresh_token, access_token, expires_at, created_at, priority)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			`).run(
+				"valid-oauth-account",
+				"valid-oauth-account",
+				"anthropic",
+				"sk-ant-api03-oauth-refresh",
+				"sk-ant-api03-oauth-access",
+				Date.now() + 3600000, // Valid expiration (1 hour from now)
+				Date.now(),
+				10,
+			);
+
+			// Run migrations
+			runMigrations(db);
+
+			// Verify that valid OAuth account was NOT migrated
+			const account = db
+				.prepare(
+					"SELECT id, name, provider, api_key, refresh_token, access_token FROM accounts WHERE id = ?",
+				)
+				.get("valid-oauth-account") as {
+				id: string;
+				name: string;
+				provider: string;
+				api_key: string | null;
+				refresh_token: string | null;
+				access_token: string | null;
+			};
+
+			expect(account.api_key).toBeNull();
+			expect(account.refresh_token).toBe("sk-ant-api03-oauth-refresh");
+			expect(account.access_token).toBe("sk-ant-api03-oauth-access");
+		});
+
+		it("should preserve OAuth accounts with claude-oauth provider", () => {
+			// Initialize the schema
+			ensureSchema(db);
+
+			// Insert valid OAuth account with claude-oauth provider
+			db.prepare(`
+				INSERT INTO accounts (id, name, provider, refresh_token, access_token, expires_at, created_at, priority)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			`).run(
+				"claude-oauth-account",
+				"claude-oauth-account",
+				"anthropic",
+				"sk-ant-api03-claude-refresh",
+				"sk-ant-api03-claude-access",
+				Date.now() + 3600000,
+				Date.now(),
+				10,
+			);
+
+			// Run migrations
+			runMigrations(db);
+
+			// Verify that claude-oauth account was NOT migrated
+			const account = db
+				.prepare(
+					"SELECT id, name, provider, api_key, refresh_token, access_token FROM accounts WHERE id = ?",
+				)
+				.get("claude-oauth-account") as {
+				id: string;
+				name: string;
+				provider: string;
+				api_key: string | null;
+				refresh_token: string | null;
+				access_token: string | null;
+			};
+
+			expect(account.api_key).toBeNull();
+			expect(account.refresh_token).toBe("sk-ant-api03-claude-refresh");
+			expect(account.access_token).toBe("sk-ant-api03-claude-access");
+		});
 	});
 });

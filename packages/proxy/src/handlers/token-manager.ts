@@ -336,14 +336,21 @@ export async function getValidAccessToken(
 	account: Account,
 	ctx: ProxyContext,
 ): Promise<string> {
-	// For OpenAI-compatible providers, the refresh_token field contains the API key
-	// Return it directly without any OAuth token refresh logic
-	if (account.provider === "openai-compatible" || account.provider === "zai") {
-		if (account.refresh_token) {
-			return account.refresh_token;
-		}
+	// For API key providers, return the API key directly without OAuth token refresh logic
+	// Prioritize api_key field, but maintain fallback to refresh_token for backward compatibility
+	if (
+		account.provider === "openai-compatible" ||
+		account.provider === "zai" ||
+		account.provider === "claude-console-api" ||
+		account.provider === "anthropic-compatible" ||
+		account.provider === "minimax"
+	) {
 		if (account.api_key) {
 			return account.api_key;
+		}
+		// Fallback to refresh_token for backward compatibility with existing accounts
+		if (account.refresh_token) {
+			return account.refresh_token;
 		}
 		throw new Error(`No API key available for account ${account.name}`);
 	}

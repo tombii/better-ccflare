@@ -85,16 +85,24 @@ export abstract class BaseAnthropicCompatibleProvider extends BaseProvider {
 		_clientId: string,
 	): Promise<TokenRefreshResult> {
 		// Anthropic-compatible providers use API keys
-		if (!account.refresh_token) {
+		// Prioritize api_key field, but maintain fallback to refresh_token for backward compatibility
+		let apiKey: string | undefined;
+		if (account.api_key) {
+			apiKey = account.api_key;
+		} else if (account.refresh_token) {
+			apiKey = account.refresh_token;
+		}
+
+		if (!apiKey) {
 			throw new Error(`No API key available for account ${account.name}`);
 		}
 
 		log.info(`Using API key for ${this.name} account ${account.name}`);
 
 		return {
-			accessToken: account.refresh_token,
+			accessToken: apiKey,
 			expiresAt: Date.now() + TIME_CONSTANTS.API_KEY_TOKEN_EXPIRY_MS,
-			refreshToken: account.refresh_token,
+			refreshToken: "", // Empty string prevents DB update for API key accounts
 		};
 	}
 

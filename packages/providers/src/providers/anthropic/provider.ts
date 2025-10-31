@@ -43,12 +43,30 @@ export class AnthropicProvider extends BaseProvider {
 		const accountType = isConsoleMode ? "Console (API key)" : "CLI (OAuth)";
 		log.debug(`Account type: ${accountType}`);
 
+		if (isConsoleMode) {
+			// For console API key accounts, return the API key directly
+			if (!account.api_key) {
+				throw new Error(
+					`No API key available for console account ${account.name}`,
+				);
+			}
+
+			log.info(`Using API key for console account ${account.name}`);
+
+			return {
+				accessToken: account.api_key,
+				expiresAt: Date.now() + 24 * 60 * 60 * 1000, // API keys don't expire, but set a reasonable time
+				refreshToken: "", // Empty string prevents DB update for console mode
+			};
+		}
+
+		// For OAuth accounts (claude-oauth), use the OAuth refresh flow
 		if (!account.refresh_token) {
 			throw new Error(`No refresh token available for account ${account.name}`);
 		}
 
 		log.info(
-			`Refreshing token for account ${account.name} with client ID: ${clientId}`,
+			`Refreshing OAuth token for account ${account.name} with client ID: ${clientId}`,
 		);
 
 		// Debug: Log the refresh attempt details
