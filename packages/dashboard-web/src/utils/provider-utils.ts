@@ -2,10 +2,9 @@
  * Utility functions for provider-specific logic in the web UI
  */
 import {
-	PROVIDER_NAMES,
-	supportsOAuth,
 	getDefaultEndpoint,
-	isKnownProvider
+	isKnownProvider,
+	PROVIDER_NAMES,
 } from "@better-ccflare/types";
 
 /**

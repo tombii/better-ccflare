@@ -11,7 +11,11 @@ import {
 	Zap,
 } from "lucide-react";
 import type { Account } from "../../api";
-import { providerSupportsAutoFeatures, providerSupportsModelMappings, providerShowsWeeklyUsage } from "../../utils/provider-utils";
+import {
+	providerShowsWeeklyUsage,
+	providerSupportsAutoFeatures,
+	providerSupportsModelMappings,
+} from "../../utils/provider-utils";
 import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
 import { RateLimitProgress } from "./RateLimitProgress";

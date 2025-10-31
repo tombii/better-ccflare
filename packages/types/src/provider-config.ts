@@ -1,4 +1,23 @@
-import { PROVIDER_NAMES, type ProviderName, isKnownProvider } from "./constants";
+/**
+ * Provider names - duplicated here to avoid circular dependencies
+ */
+export const PROVIDER_NAMES = {
+	ANTHROPIC: "anthropic", // Claude OAuth accounts
+	CLAUDE_CONSOLE_API: "claude-console-api", // Claude API console accounts
+	ZAI: "zai",
+	MINIMAX: "minimax",
+	ANTHROPIC_COMPATIBLE: "anthropic-compatible",
+	OPENAI_COMPATIBLE: "openai-compatible",
+} as const;
+
+export type ProviderName = (typeof PROVIDER_NAMES)[keyof typeof PROVIDER_NAMES];
+
+/**
+ * Type guard to check if a provider string is a known ProviderName
+ */
+export function isKnownProvider(provider: string): provider is ProviderName {
+	return (Object.values(PROVIDER_NAMES) as string[]).includes(provider);
+}
 
 /**
  * Detailed provider configuration interface
@@ -139,14 +158,14 @@ export function supportsOAuth(provider: string): boolean {
 export function getDefaultEndpoint(provider: string): string {
 	if (!isKnownProvider(provider)) {
 		// Log warning for unknown providers - return a default fallback
-		console.warn(
-			`Unknown provider: ${provider}. Using fallback endpoint.`,
-		);
+		console.warn(`Unknown provider: ${provider}. Using fallback endpoint.`);
 		return "https://api.anthropic.com";
 	}
 
 	if (provider in PROVIDER_CONFIG) {
-		return PROVIDER_CONFIG[provider].defaultEndpoint || "https://api.anthropic.com";
+		return (
+			PROVIDER_CONFIG[provider].defaultEndpoint || "https://api.anthropic.com"
+		);
 	}
 
 	// Default to Anthropic API endpoint for any provider not explicitly configured

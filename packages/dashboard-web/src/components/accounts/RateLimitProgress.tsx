@@ -1,8 +1,8 @@
 import { registerUIRefresh } from "@better-ccflare/core";
 import type { FullUsageData } from "@better-ccflare/types";
-import { providerShowsWeeklyUsage } from "../../utils/provider-utils";
 import { useEffect, useState } from "react";
 import { cn } from "../../lib/utils";
+import { providerShowsWeeklyUsage } from "../../utils/provider-utils";
 import { Progress } from "../ui/progress";
 
 interface RateLimitProgressProps {

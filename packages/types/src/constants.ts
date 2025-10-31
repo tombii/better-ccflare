@@ -1,16 +1,27 @@
-/**
- * Provider names used throughout the application
- */
-export const PROVIDER_NAMES = {
-	ANTHROPIC: "anthropic", // Claude OAuth accounts
-	CLAUDE_CONSOLE_API: "claude-console-api", // Claude API console accounts
-	ZAI: "zai",
-	MINIMAX: "minimax",
-	ANTHROPIC_COMPATIBLE: "anthropic-compatible",
-	OPENAI_COMPATIBLE: "openai-compatible",
-} as const;
+// Import provider definitions from the centralized provider-config module
+// This avoids circular dependencies
+import {
+	PROVIDER_NAMES,
+	type ProviderName,
+	isKnownProvider,
+	getDefaultEndpoint,
+	PROVIDER_CONFIG,
+	requiresSessionDurationTracking,
+	supportsOAuth,
+	supportsUsageTracking,
+} from "./provider-config";
 
-export type ProviderName = (typeof PROVIDER_NAMES)[keyof typeof PROVIDER_NAMES];
+// Re-export the imported types and constants
+export {
+	PROVIDER_NAMES,
+	type ProviderName,
+	isKnownProvider,
+	getDefaultEndpoint,
+	PROVIDER_CONFIG,
+	requiresSessionDurationTracking,
+	supportsOAuth,
+	supportsUsageTracking,
+};
 
 /**
  * Account modes for adding new accounts
@@ -25,25 +36,6 @@ export const ACCOUNT_MODES = {
 } as const;
 
 export type AccountMode = (typeof ACCOUNT_MODES)[keyof typeof ACCOUNT_MODES];
-
-// Functions are now imported from provider-config.ts to avoid duplication
-// See the exports at the bottom of this file
-
-/**
- * Type guard to check if a provider string is a known ProviderName
- */
-export function isKnownProvider(provider: string): provider is ProviderName {
-	return (Object.values(PROVIDER_NAMES) as string[]).includes(provider);
-}
-
-// Import provider configuration functions from the dedicated module
-export {
-	requiresSessionDurationTracking,
-	PROVIDER_CONFIG,
-	supportsUsageTracking,
-	supportsOAuth,
-	getDefaultEndpoint
-} from "./provider-config";
 
 // The usesApiKey function needs to be defined here to avoid circular dependencies
 // since it depends on both isKnownProvider and the supportsOAuth function

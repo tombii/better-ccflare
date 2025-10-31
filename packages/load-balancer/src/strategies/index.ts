@@ -6,7 +6,10 @@ import type {
 	RequestMeta,
 	StrategyStore,
 } from "@better-ccflare/types";
-import { requiresSessionDurationTracking, PROVIDER_NAMES } from "@better-ccflare/types";
+import {
+	PROVIDER_NAMES,
+	requiresSessionDurationTracking,
+} from "@better-ccflare/types";
 
 export class SessionStrategy implements LoadBalancingStrategy {
 	private sessionDurationMs: number;
