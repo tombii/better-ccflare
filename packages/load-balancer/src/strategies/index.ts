@@ -6,6 +6,7 @@ import type {
 	RequestMeta,
 	StrategyStore,
 } from "@better-ccflare/types";
+import { requiresSessionDurationTracking } from "@better-ccflare/types";
 
 export class SessionStrategy implements LoadBalancingStrategy {
 	private sessionDurationMs: number;
@@ -13,7 +14,7 @@ export class SessionStrategy implements LoadBalancingStrategy {
 	private log = new Logger("SessionStrategy");
 
 	constructor(
-		sessionDurationMs: number = TIME_CONSTANTS.SESSION_DURATION_DEFAULT,
+		sessionDurationMs: number = TIME_CONSTANTS.ANTHROPIC_SESSION_DURATION_DEFAULT,
 	) {
 		this.sessionDurationMs = sessionDurationMs;
 	}
@@ -25,10 +26,11 @@ export class SessionStrategy implements LoadBalancingStrategy {
 	private resetSessionIfExpired(account: Account): void {
 		const now = Date.now();
 
-		// Check if session has exceeded the fixed duration
+		// Check if session has exceeded the fixed duration (only for providers that require session duration tracking)
 		const fixedDurationExpired =
-			!account.session_start ||
-			now - account.session_start >= this.sessionDurationMs;
+			requiresSessionDurationTracking(account.provider) &&
+			(!account.session_start ||
+				now - account.session_start >= this.sessionDurationMs);
 
 		// Check if the account's rate limit window has reset (only computed if needed for efficiency)
 		// This optimization helps Anthropic OAuth accounts better utilize their 5-hour usage windows
@@ -113,13 +115,19 @@ export class SessionStrategy implements LoadBalancingStrategy {
 		}
 
 		// Find account with active session (most recent session_start within window)
+		// Only for providers that require session duration tracking
 		let activeAccount: Account | null = null;
 		let mostRecentSessionStart = 0;
 
 		for (const account of accounts) {
+			const hasActiveSession = requiresSessionDurationTracking(account.provider)
+				? account.session_start &&
+					now - account.session_start < this.sessionDurationMs
+				: !!account.session_start; // For other providers, any session_start is considered active
+
 			if (
+				hasActiveSession &&
 				account.session_start &&
-				now - account.session_start < this.sessionDurationMs &&
 				account.session_start > mostRecentSessionStart
 			) {
 				activeAccount = account;

@@ -65,6 +65,30 @@ export function usesApiKey(provider: string): boolean {
 }
 
 /**
+ * Provider-specific session duration tracking configuration
+ * Maps provider names to whether they require session duration tracking
+ */
+const PROVIDER_SESSION_TRACKING_CONFIG: Record<ProviderName, boolean> = {
+	[PROVIDER_NAMES.ANTHROPIC]: true, // Anthropic has 5-hour usage windows
+	[PROVIDER_NAMES.ZAI]: false, // Zai is typically pay-as-you-go
+	[PROVIDER_NAMES.OPENAI_COMPATIBLE]: false, // OpenAI-compatible is typically pay-as-you-go
+} as const;
+
+/**
+ * Check if a provider should have session duration tracking
+ * Currently only Anthropic providers have usage windows that benefit from session tracking
+ * This can be extended for other providers with similar usage window systems (OpenAI-compatible, Anthropic-compatible, etc.)
+ */
+export function requiresSessionDurationTracking(provider: string): boolean {
+	const providerName = provider as ProviderName;
+	if (providerName in PROVIDER_SESSION_TRACKING_CONFIG) {
+		return PROVIDER_SESSION_TRACKING_CONFIG[providerName];
+	}
+	// For unknown providers, default to false (no session duration tracking)
+	return false;
+}
+
+/**
  * Get provider name from account mode
  */
 export function getProviderFromMode(mode: AccountMode): ProviderName {
