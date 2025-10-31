@@ -63,13 +63,21 @@ export class SessionStrategy implements LoadBalancingStrategy {
 		}
 	}
 
+	/**
+	 * Determines if an account has an active session based on provider requirements
+	 * @param account The account to check
+	 * @param now Current timestamp
+	 * @returns true if session is active, false otherwise
+	 */
 	private hasActiveSession(account: Account, now: number): boolean {
 		// Non-Anthropic providers (API-key-based, etc.) should not have persistent sessions
 		// since they're pay-as-you-go and don't benefit from session stickiness
 		if (!requiresSessionDurationTracking(account.provider)) {
+			this.log.debug(`Session tracking disabled for provider: ${account.provider}, account: ${account.name}`);
 			return false;
 		}
 
+		this.log.debug(`Session tracking enabled for provider: ${account.provider}, account: ${account.name}`);
 		// For Anthropic providers: check if session is active (within duration window)
 		return !!account.session_start && now - account.session_start < this.sessionDurationMs;
 	}

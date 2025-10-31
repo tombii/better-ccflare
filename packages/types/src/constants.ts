@@ -74,11 +74,11 @@ export function usesApiKey(provider: string): boolean {
  * NOTE: When adding new providers, update this configuration
  * Unknown providers default to `false` (no session duration tracking)
  */
-const PROVIDER_SESSION_TRACKING_CONFIG: Record<ProviderName, boolean> = {
+const PROVIDER_SESSION_TRACKING_CONFIG = {
 	[PROVIDER_NAMES.ANTHROPIC]: true, // Anthropic has 5-hour usage windows
 	[PROVIDER_NAMES.ZAI]: false, // Zai is typically pay-as-you-go
 	[PROVIDER_NAMES.OPENAI_COMPATIBLE]: false, // OpenAI-compatible is typically pay-as-you-go
-};
+} as const satisfies Record<ProviderName, boolean>;
 
 /**
  * Check if a provider should have session duration tracking

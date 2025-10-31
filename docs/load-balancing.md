@@ -102,9 +102,9 @@ The system implements provider-specific session reset logic:
 
 ```typescript
 // Provider-specific session duration tracking
-const requiresSessionTracking = requiresSessionDurationTracking(account.provider);
+const needsSessionTracking = requiresSessionDurationTracking(account.provider);
 
-const fixedDurationExpired = requiresSessionTracking &&
+const fixedDurationExpired = needsSessionTracking &&
     ( !account.session_start ||
     now - account.session_start >= this.sessionDurationMs );
 
