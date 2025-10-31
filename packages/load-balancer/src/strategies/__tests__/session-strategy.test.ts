@@ -712,4 +712,51 @@ describe("SessionStrategy", () => {
 		expect(account.session_start).toBe(originalSessionStart);
 		expect(account.session_request_count).toBe(originalRequestCount);
 	});
+
+	it("should not reset session for Claude console API accounts (pay-as-you-go, no session tracking)", () => {
+		const account: Account = {
+			id: "test-account-console-api",
+			name: "test-account-console-api",
+			provider: "claude-console-api", // New provider for console API accounts
+			api_key: "test-api-key", // Console API accounts have API keys
+			refresh_token: "",
+			access_token: null,
+			expires_at: null,
+			request_count: 0,
+			total_requests: 0,
+			last_used: null,
+			created_at: Date.now(),
+			rate_limited_until: null,
+			session_start: Date.now() - 6 * 60 * 60 * 1000, // 6 hours ago (beyond 5 hour limit)
+			session_request_count: 10,
+			paused: false,
+			rate_limit_reset: Date.now() - 1000, // Rate limit reset in the past (should be ignored for console API)
+			rate_limit_status: null,
+			rate_limit_remaining: null,
+			priority: 0,
+			auto_fallback_enabled: false,
+			auto_refresh_enabled: false,
+			custom_endpoint: null,
+			model_mappings: null,
+		};
+
+		// Store original session values
+		const originalSessionStart = account.session_start;
+		const originalRequestCount = account.session_request_count;
+
+		// The account should be selected, but session should NOT be reset (console API accounts have no session tracking)
+		const result = strategy.select([account], meta);
+
+		// Verify the account is selected as the first (highest priority) result
+		expect(result[0]).toBe(account);
+		expect(result).toHaveLength(1);
+
+		// Verify session was NOT reset (console API accounts have no session tracking)
+		const resetCall = mockStore.getResetCall(account.id);
+		expect(resetCall).toBeUndefined();
+
+		// Verify account session values remain unchanged
+		expect(account.session_start).toBe(originalSessionStart);
+		expect(account.session_request_count).toBe(originalRequestCount);
+	});
 });

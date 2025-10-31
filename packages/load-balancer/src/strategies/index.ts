@@ -32,12 +32,11 @@ export class SessionStrategy implements LoadBalancingStrategy {
 			(!account.session_start ||
 				now - account.session_start >= this.sessionDurationMs);
 
-		// Check if the account's rate limit window has reset (only computed if needed for efficiency)
-		// This optimization helps Anthropic OAuth accounts better utilize their 5-hour usage windows
+		// Check if the account's rate limit window has reset
+		// This helps Anthropic accounts better utilize their usage windows
 		// Usage windows: Anthropic accounts with proactive rate limit headers (usage-based accounts)
 		// No usage windows: Other account types or Anthropic console keys without usage windows
 		const rateLimitWindowReset =
-			!fixedDurationExpired &&
 			account.provider === "anthropic" && // Explicit provider check for Anthropic usage windows
 			account.rate_limit_reset &&
 			account.rate_limit_reset < now - 1000; // 1 second buffer for clock skew protection
@@ -77,7 +76,10 @@ export class SessionStrategy implements LoadBalancingStrategy {
 		}
 
 		// For Anthropic providers: check if session is active (within duration window)
-		return !!account.session_start && now - account.session_start < this.sessionDurationMs;
+		return (
+			!!account.session_start &&
+			now - account.session_start < this.sessionDurationMs
+		);
 	}
 
 	select(accounts: Account[], meta: RequestMeta): Account[] {
@@ -137,7 +139,11 @@ export class SessionStrategy implements LoadBalancingStrategy {
 		let mostRecentSessionStart = 0;
 
 		for (const account of accounts) {
-			if (this.hasActiveSession(account, now) && account.session_start && account.session_start > mostRecentSessionStart) {
+			if (
+				this.hasActiveSession(account, now) &&
+				account.session_start &&
+				account.session_start > mostRecentSessionStart
+			) {
 				activeAccount = account;
 				mostRecentSessionStart = account.session_start;
 			}
@@ -145,9 +151,13 @@ export class SessionStrategy implements LoadBalancingStrategy {
 
 		// Log session tracking decisions for debugging
 		if (activeAccount) {
-			this.log.debug(`Active session found for account ${activeAccount.name} (provider: ${activeAccount.provider})`);
+			this.log.debug(
+				`Active session found for account ${activeAccount.name} (provider: ${activeAccount.provider})`,
+			);
 		} else {
-			this.log.debug(`No active sessions found, will select from available accounts`);
+			this.log.debug(
+				`No active sessions found, will select from available accounts`,
+			);
 		}
 
 		// If we have an active account and it's available, use it exclusively

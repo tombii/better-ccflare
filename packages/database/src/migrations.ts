@@ -515,4 +515,23 @@ export function runMigrations(db: Database, dbPath?: string): void {
 			`Error updating oauth_sessions mode values: ${(error as Error).message}`,
 		);
 	}
+
+	// Migrate existing Claude console accounts from 'anthropic' to 'claude-console-api' provider
+	// Console accounts are identified by having an api_key (as opposed to OAuth accounts which have access_token/refresh_token)
+	try {
+		const updateCount = db
+			.prepare(
+				`UPDATE accounts SET provider = 'claude-console-api' WHERE provider = 'anthropic' AND api_key IS NOT NULL AND api_key != ''`,
+			)
+			.run().changes;
+		if (updateCount > 0) {
+			log.info(
+				`Updated ${updateCount} accounts from 'anthropic' to 'claude-console-api' provider (console accounts)`,
+			);
+		}
+	} catch (error) {
+		log.warn(
+			`Error updating account provider values: ${(error as Error).message}`,
+		);
+	}
 }

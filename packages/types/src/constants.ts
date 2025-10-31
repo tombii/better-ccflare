@@ -2,7 +2,8 @@
  * Provider names used throughout the application
  */
 export const PROVIDER_NAMES = {
-	ANTHROPIC: "anthropic",
+	ANTHROPIC: "anthropic", // Claude OAuth accounts
+	CLAUDE_CONSOLE_API: "claude-console-api", // Claude API console accounts
 	ZAI: "zai",
 	OPENAI_COMPATIBLE: "openai-compatible",
 } as const;
@@ -26,6 +27,7 @@ export type AccountMode = (typeof ACCOUNT_MODES)[keyof typeof ACCOUNT_MODES];
  */
 export const OAUTH_PROVIDERS: ReadonlySet<ProviderName> = new Set([
 	PROVIDER_NAMES.ANTHROPIC,
+	// CLAUDE_CONSOLE_API is API key based, not OAuth
 ]);
 
 /**
@@ -33,6 +35,7 @@ export const OAUTH_PROVIDERS: ReadonlySet<ProviderName> = new Set([
  */
 export const USAGE_TRACKING_PROVIDERS: ReadonlySet<ProviderName> = new Set([
 	PROVIDER_NAMES.ANTHROPIC,
+	// CLAUDE_CONSOLE_API doesn't support usage tracking (pay-as-you-go)
 ]);
 
 /**
@@ -41,6 +44,7 @@ export const USAGE_TRACKING_PROVIDERS: ReadonlySet<ProviderName> = new Set([
 export const API_KEY_PROVIDERS: ReadonlySet<ProviderName> = new Set([
 	PROVIDER_NAMES.ZAI,
 	PROVIDER_NAMES.OPENAI_COMPATIBLE,
+	PROVIDER_NAMES.CLAUDE_CONSOLE_API, // Claude console API uses API key authentication
 ]);
 
 /**
@@ -75,7 +79,8 @@ export function usesApiKey(provider: string): boolean {
  * Unknown providers default to `false` (no session duration tracking)
  */
 const PROVIDER_SESSION_TRACKING_CONFIG = {
-	[PROVIDER_NAMES.ANTHROPIC]: true, // Anthropic has 5-hour usage windows
+	[PROVIDER_NAMES.ANTHROPIC]: true, // Anthropic OAuth has 5-hour usage windows
+	[PROVIDER_NAMES.CLAUDE_CONSOLE_API]: false, // Claude console API is pay-as-you-go
 	[PROVIDER_NAMES.ZAI]: false, // Zai is typically pay-as-you-go
 	[PROVIDER_NAMES.OPENAI_COMPATIBLE]: false, // OpenAI-compatible is typically pay-as-you-go
 } as const satisfies Record<ProviderName, boolean>;
@@ -89,7 +94,9 @@ export function requiresSessionDurationTracking(provider: string): boolean {
 	const providerName = provider as ProviderName;
 	// Validate that the provider is known to prevent typos
 	if (!Object.values(PROVIDER_NAMES).includes(providerName as any)) {
-		console.warn(`Unknown provider: ${provider}. Defaulting to no session tracking.`);
+		console.warn(
+			`Unknown provider: ${provider}. Defaulting to no session tracking.`,
+		);
 	}
 	if (providerName in PROVIDER_SESSION_TRACKING_CONFIG) {
 		return PROVIDER_SESSION_TRACKING_CONFIG[providerName];
@@ -103,8 +110,9 @@ export function requiresSessionDurationTracking(provider: string): boolean {
 export function getProviderFromMode(mode: AccountMode): ProviderName {
 	switch (mode) {
 		case ACCOUNT_MODES.CLAUDE_OAUTH:
-		case ACCOUNT_MODES.CONSOLE:
 			return PROVIDER_NAMES.ANTHROPIC;
+		case ACCOUNT_MODES.CONSOLE:
+			return PROVIDER_NAMES.CLAUDE_CONSOLE_API;
 		case ACCOUNT_MODES.ZAI:
 			return PROVIDER_NAMES.ZAI;
 		case ACCOUNT_MODES.OPENAI_COMPATIBLE:

@@ -75,7 +75,7 @@ async function createConsoleAccountWithApiKey(
 		[
 			accountId,
 			name,
-			"anthropic",
+			"claude-console-api",
 			validatedApiKey,
 			now,
 			validatedPriority,
