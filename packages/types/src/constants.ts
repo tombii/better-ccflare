@@ -67,7 +67,12 @@ export function usesApiKey(provider: string): boolean {
 /**
  * Provider-specific session duration tracking configuration
  * Maps provider names to whether they require session duration tracking
- * NOTE: All provider names from PROVIDER_NAMES should be included in this configuration
+ *
+ * Usage windows = providers that have fixed-duration rate limits (e.g., Anthropic's 5-hour windows)
+ * Pay-as-you-go = providers that operate without fixed duration windows (e.g., API-key-based providers)
+ *
+ * NOTE: When adding new providers, update this configuration
+ * Unknown providers default to `false` (no session duration tracking)
  */
 const PROVIDER_SESSION_TRACKING_CONFIG: Record<ProviderName, boolean> = {
 	[PROVIDER_NAMES.ANTHROPIC]: true, // Anthropic has 5-hour usage windows
@@ -82,9 +87,10 @@ const PROVIDER_SESSION_TRACKING_CONFIG: Record<ProviderName, boolean> = {
  */
 export function requiresSessionDurationTracking(provider: string): boolean {
 	const providerName = provider as ProviderName;
-	return Object.hasOwn(PROVIDER_SESSION_TRACKING_CONFIG, providerName)
-		? PROVIDER_SESSION_TRACKING_CONFIG[providerName]
-		: false;
+	if (providerName in PROVIDER_SESSION_TRACKING_CONFIG) {
+		return PROVIDER_SESSION_TRACKING_CONFIG[providerName];
+	}
+	return false;
 }
 
 /**
