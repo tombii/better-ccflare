@@ -356,6 +356,7 @@ classDiagram
 - Minimizes account switching to avoid triggering Claude's anti-abuse systems
 - Automatically handles failover when the active session account becomes unavailable
 - Tracks session start time and request count per session
+- **Usage Window Alignment**: Sessions automatically align with Anthropic OAuth usage window resets for optimal resource utilization
 
 **Note:** Other strategies (round-robin, least-requests, weighted) were removed from the codebase as they could trigger account bans.
 

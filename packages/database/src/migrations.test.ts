@@ -246,7 +246,7 @@ describe("Database Migrations - Tier Column Removal", () => {
 			"session-max",
 			"test-account-max",
 			"test-verifier-max",
-			"max",  // This is the legacy value that should be converted
+			"max", // This is the legacy value that should be converted
 			Date.now(),
 			Date.now() + 3600000,
 		);
@@ -259,7 +259,7 @@ describe("Database Migrations - Tier Column Removal", () => {
 			"session-console",
 			"test-account-console",
 			"test-verifier-console",
-			"console",  // This should remain unchanged
+			"console", // This should remain unchanged
 			Date.now(),
 			Date.now() + 3600000,
 		);
@@ -272,7 +272,7 @@ describe("Database Migrations - Tier Column Removal", () => {
 			"session-claude",
 			"test-account-claude",
 			"test-verifier-claude",
-			"claude-oauth",  // This should remain unchanged
+			"claude-oauth", // This should remain unchanged
 			Date.now(),
 			Date.now() + 3600000,
 		);
@@ -294,18 +294,18 @@ describe("Database Migrations - Tier Column Removal", () => {
 		expect(sessions).toHaveLength(3);
 
 		// Find the specific session that had 'max' mode
-		const maxSession = sessions.find(s => s.id === "session-max");
+		const maxSession = sessions.find((s) => s.id === "session-max");
 		expect(maxSession).toBeDefined();
-		expect(maxSession!.mode).toBe("claude-oauth"); // Should be converted
+		expect(maxSession?.mode).toBe("claude-oauth"); // Should be converted
 
 		// Find the console session (should be unchanged)
-		const consoleSession = sessions.find(s => s.id === "session-console");
+		const consoleSession = sessions.find((s) => s.id === "session-console");
 		expect(consoleSession).toBeDefined();
-		expect(consoleSession!.mode).toBe("console"); // Should remain unchanged
+		expect(consoleSession?.mode).toBe("console"); // Should remain unchanged
 
 		// Find the claude-oauth session (should be unchanged)
-		const claudeSession = sessions.find(s => s.id === "session-claude");
+		const claudeSession = sessions.find((s) => s.id === "session-claude");
 		expect(claudeSession).toBeDefined();
-		expect(claudeSession!.mode).toBe("claude-oauth"); // Should remain unchanged
+		expect(claudeSession?.mode).toBe("claude-oauth"); // Should remain unchanged
 	});
 });
