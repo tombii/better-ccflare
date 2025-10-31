@@ -14,7 +14,7 @@ export const TIME_CONSTANTS = {
 	// Session durations - specifically for Anthropic usage windows
 	ANTHROPIC_SESSION_DURATION_DEFAULT: 5 * 60 * 60 * 1000, // 5 hours - default for Anthropic provider session tracking
 	ANTHROPIC_SESSION_DURATION_FALLBACK: 3600000, // 1 hour - fallback for Anthropic provider
-	SESSION_DURATION_DEFAULT: 5 * 60 * 60 * 1000, // 5 hours - kept for backward compatibility (only used by Anthropic providers in current implementation)
+	SESSION_DURATION_DEFAULT: 5 * 60 * 60 * 1000, // 5 hours - kept for backward compatibility - new code should use ANTHROPIC_SESSION_DURATION_DEFAULT
 
 	// Timeouts
 	STREAM_TIMEOUT_DEFAULT: 1000 * 60 * 1, // 1 minute

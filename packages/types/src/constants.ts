@@ -72,7 +72,7 @@ const PROVIDER_SESSION_TRACKING_CONFIG: Record<ProviderName, boolean> = {
 	[PROVIDER_NAMES.ANTHROPIC]: true, // Anthropic has 5-hour usage windows
 	[PROVIDER_NAMES.ZAI]: false, // Zai is typically pay-as-you-go
 	[PROVIDER_NAMES.OPENAI_COMPATIBLE]: false, // OpenAI-compatible is typically pay-as-you-go
-} as const;
+};
 
 /**
  * Check if a provider should have session duration tracking
