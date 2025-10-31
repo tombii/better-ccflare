@@ -630,19 +630,27 @@ export function runApiKeyStorageMigration(db: Database): void {
 				AND (
 					expires_at IS NULL  -- Console accounts don't have token expiration
 					OR expires_at = 0   -- Or have invalid/zero expiration
-					OR expires_at < ${Date.now() - 24 * 60 * 60 * 1000}  -- Or expired more than 24h ago (likely not a valid OAuth token)
+					OR expires_at < ?   -- Or expired more than 24h ago (likely not a valid OAuth token)
 				)
 				AND refresh_token NOT LIKE 'sk-ant-api03-%'  -- Exclude actual Anthropic OAuth refresh tokens
 				AND refresh_token NOT LIKE 'sk-ant-%'        -- Exclude newer Anthropic token formats
 		`;
 
-		const consoleResult = db.prepare(consoleUpdateSql).run();
+		const cutoffTime = Date.now() - 24 * 60 * 60 * 1000;
+		const consoleResult = db.prepare(consoleUpdateSql).run(cutoffTime);
 		const consoleCount = (consoleResult.changes as number) || 0;
 
 		const totalCount = updatedCount + cleanupCount + consoleCount;
 		if (totalCount > 0) {
 			log.info(
-				`Migrated ${totalCount} accounts to use proper API key storage (moved from refresh_token to api_key)`,
+				`Migrated ${totalCount} accounts to API key storage v2 (moved from refresh_token to api_key)`,
+				{
+					migrationVersion: 2,
+					timestamp: new Date().toISOString(),
+					updatedAccounts: updatedCount,
+					cleanupAccounts: cleanupCount,
+					consoleAccounts: consoleCount,
+				},
 			);
 			if (updatedCount > 0) {
 				log.debug(
