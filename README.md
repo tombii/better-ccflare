@@ -465,6 +465,7 @@ No `NODE_OPTIONS` needed - Traefik provides trusted certificates automatically!
 - **Session-based** - Maintain conversation context (5hr sessions)
 - **Auto-fallback** - Automatically switch back to higher priority accounts when their usage windows reset
 - **Auto-refresh** - Automatically start new usage windows when they reset
+- **Usage Window Alignment** - Sessions automatically align with Anthropic OAuth usage window resets for optimal resource utilization
 
 ### 📈 Real-Time Analytics
 - Token usage tracking per request with optimized batch processing

@@ -1,7 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { Config } from "@better-ccflare/config";
-import { DatabaseFactory } from "@better-ccflare/database";
 import type { DatabaseOperations } from "@better-ccflare/database";
+import { DatabaseFactory } from "@better-ccflare/database";
 import { createOAuthInitHandler } from "../oauth";
 
 // Test database path
@@ -13,8 +12,8 @@ describe("OAuth Handler - Backward Compatibility", () => {
 
 	beforeAll(async () => {
 		// Clean up any existing test database
-		if (require("fs").existsSync(TEST_DB_PATH)) {
-			require("fs").unlinkSync(TEST_DB_PATH);
+		if (require("node:fs").existsSync(TEST_DB_PATH)) {
+			require("node:fs").unlinkSync(TEST_DB_PATH);
 		}
 
 		// Initialize test database
@@ -27,8 +26,8 @@ describe("OAuth Handler - Backward Compatibility", () => {
 
 	afterAll(() => {
 		// Clean up test database
-		if (require("fs").existsSync(TEST_DB_PATH)) {
-			require("fs").unlinkSync(TEST_DB_PATH);
+		if (require("node:fs").existsSync(TEST_DB_PATH)) {
+			require("node:fs").unlinkSync(TEST_DB_PATH);
 		}
 		DatabaseFactory.reset();
 	});

@@ -80,7 +80,7 @@ The configuration file is stored at:
 
 | Strategy | Description | Use Case |
 |----------|-------------|----------|
-| `session` | Maintains client-account affinity for session duration | Only supported strategy - mimics natural usage patterns |
+| `session` | Maintains client-account affinity for session duration, with automatic alignment to Anthropic OAuth usage window resets | Only supported strategy - mimics natural usage patterns and optimizes resource utilization |
 
 ### Logging Configuration (Environment Only)
 

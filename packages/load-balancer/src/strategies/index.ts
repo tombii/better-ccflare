@@ -25,16 +25,31 @@ export class SessionStrategy implements LoadBalancingStrategy {
 	private resetSessionIfExpired(account: Account): void {
 		const now = Date.now();
 
-		if (
+		// Check if session has exceeded the fixed duration
+		const fixedDurationExpired =
 			!account.session_start ||
-			now - account.session_start >= this.sessionDurationMs
-		) {
+			now - account.session_start >= this.sessionDurationMs;
+
+		// Check if the account's rate limit window has reset (only computed if needed for efficiency)
+		// This optimization helps Anthropic OAuth accounts better utilize their 5-hour usage windows
+		// Usage windows: Anthropic accounts with proactive rate limit headers (usage-based accounts)
+		// No usage windows: Other account types or Anthropic console keys without usage windows
+		const rateLimitWindowReset =
+			!fixedDurationExpired &&
+			account.provider === "anthropic" && // Explicit provider check for Anthropic usage windows
+			account.rate_limit_reset &&
+			account.rate_limit_reset < now - 1000; // 1 second buffer for clock skew protection
+
+		if (fixedDurationExpired || rateLimitWindowReset) {
 			// Reset session
 			if (this.store) {
 				const wasExpired = account.session_start !== null;
+				const resetReason = rateLimitWindowReset
+					? "rate limit window reset"
+					: "fixed duration expired";
 				this.log.info(
 					wasExpired
-						? `Session expired for account ${account.name}, starting new session`
+						? `Session expired for account ${account.name} due to ${resetReason}, starting new session`
 						: `Starting new session for account ${account.name}`,
 				);
 				this.store.resetAccountSession(account.id, now);
@@ -164,15 +179,19 @@ export class SessionStrategy implements LoadBalancingStrategy {
 			// Note: We check paused status AFTER filtering for auto-fallback enabled accounts
 			// This allows paused accounts with auto-fallback to be considered for reactivation
 
-			// Check if the API usage window has reset
-			const windowReset =
-				account.rate_limit_reset && account.rate_limit_reset <= now;
+			// Check if the API usage window has reset for auto-fallback
+			// Usage windows: Anthropic accounts with proactive rate limit headers (usage-based accounts)
+			// No usage windows: Other account types or Anthropic console keys without usage windows
+			const anthropicWindowReset =
+				account.provider === "anthropic" && // Only for Anthropic accounts with usage windows
+				account.rate_limit_reset &&
+				account.rate_limit_reset < now - 1000; // 1 second buffer for clock skew protection
 
 			// Check if the account is not currently rate limited by our system
 			const notRateLimited =
 				!account.rate_limited_until || account.rate_limited_until <= now;
 
-			return windowReset && notRateLimited;
+			return anthropicWindowReset && notRateLimited;
 		});
 
 		if (resetAccounts.length === 0) return [];

@@ -19,6 +19,7 @@ better-ccflare implements a session-based load balancing system to distribute re
 - **Session Persistence**: Maintains configurable sessions on specific accounts
 - **Account Priorities**: Supports prioritized account selection for better control over load distribution
 - **Auto-Fallback**: Automatically switches back to higher priority accounts when their usage windows reset
+- **Usage Window Alignment**: Sessions automatically align with Anthropic OAuth 5-hour usage window resets for optimal resource utilization
 - **Real-time Configuration**: Change settings without restarting the server
 - **Provider Filtering**: Accounts are filtered by provider compatibility
 
@@ -86,6 +87,83 @@ export class SessionStrategy implements LoadBalancingStrategy {
 - ✅ **Good for Long Sessions**: Ideal for extended AI conversations
 - ⚠️ **Uneven Load Distribution**: May concentrate load on fewer accounts
 - ⚠️ **Session Dependency**: Performance tied to specific account availability
+
+## Usage Window Alignment for Anthropic OAuth
+
+**Description**: For Anthropic OAuth accounts, the session strategy includes intelligent optimization that aligns session resets with the actual 5-hour usage windows provided by Anthropic's API, ensuring optimal resource utilization.
+
+**How It Works**:
+
+The system implements a dual-condition session reset logic:
+
+1. **Fixed Duration Check**: Sessions reset after the configured duration (default: 5 hours)
+2. **Usage Window Reset Check**: For Anthropic OAuth accounts only, sessions also reset when the API's usage window expires (based on `rate_limit_reset` timestamp)
+
+```typescript
+// Optimized logic that computes rate limit check only when needed
+const fixedDurationExpired = !account.session_start ||
+    now - account.session_start >= this.sessionDurationMs;
+
+const rateLimitWindowReset = !fixedDurationExpired &&
+    account.rate_limit_reset &&
+    account.rate_limit_reset < now;
+
+if (fixedDurationExpired || rateLimitWindowReset) {
+    // Reset session for optimal resource utilization
+    this.store.resetAccountSession(account.id, now);
+}
+```
+
+**Benefits**:
+
+- **Optimal Resource Utilization**: Sessions align perfectly with Anthropic's actual usage windows
+- **Reduced Waste**: No premature session resets when usage windows are still active
+- **Backward Compatibility**: Non-Anthropic accounts continue using fixed-duration logic
+- **Performance Optimized**: Rate limit checks only occur when needed (when fixed duration hasn't expired)
+
+**Provider Compatibility**:
+
+- ✅ **Anthropic OAuth**: Full usage window alignment support
+- ✅ **Other Providers**: Maintain fixed-duration session logic for compatibility
+- ✅ **Mixed Environments**: Works seamlessly with accounts from different providers
+
+**Race Condition Prevention**: The implementation uses strict `<` comparisons instead of `<=` to prevent race conditions where sessions might reset prematurely at the exact moment the usage window resets.
+
+### Future Extensibility for API-Based Providers
+
+**Current Implementation**: The usage window alignment is currently optimized for Anthropic OAuth accounts, which provide explicit `rate_limit_reset` timestamps via their API.
+
+**Future Enhancement Needed**: For API-based providers (like OpenAI-compatible, custom endpoints), the system currently relies on fixed-duration session logic since these providers typically don't expose usage window information. However, some API-based providers may implement their own usage windows (5-hour, daily, or custom intervals) that could be leveraged for better resource utilization.
+
+**Proposed Architecture for Future Implementation**:
+
+```typescript
+// Future extension for provider-specific usage window handling
+interface ProviderUsageWindow {
+    duration: number;        // Window duration in milliseconds
+    resetStrategy: 'fixed' | 'api-based' | 'hybrid';
+    resetField?: string;     // API field containing reset timestamp
+    calculateReset?: (account: Account) => number | null;
+}
+
+// Enhanced session reset logic for multiple providers
+const resetConditions = [
+    fixedDurationExpired,
+    ...getProviderSpecificResetConditions(account, providerConfig)
+];
+```
+
+**Implementation Roadmap**:
+1. **Provider Configuration**: Add usage window configuration to provider settings
+2. **Reset Detection**: Implement provider-specific reset timestamp detection logic
+3. **Hybrid Strategy**: Combine fixed-duration and provider-specific window alignment
+4. **Backward Compatibility**: Ensure existing API-based providers continue working with fixed durations
+
+**Benefits of Future Implementation**:
+- **Consistent Optimization**: All providers with usage windows can benefit from alignment
+- **Resource Efficiency**: Better utilization of rate limits across all provider types
+- **Flexible Configuration**: Provider-specific usage window configurations
+- **Unified Architecture**: Single session strategy handling multiple reset patterns
 
 ## Account Priorities
 
