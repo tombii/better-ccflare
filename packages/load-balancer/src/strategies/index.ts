@@ -63,6 +63,14 @@ export class SessionStrategy implements LoadBalancingStrategy {
 		}
 	}
 
+	private hasActiveSession(account: Account, now: number): boolean {
+		if (requiresSessionDurationTracking(account.provider)) {
+			return !!account.session_start && now - account.session_start < this.sessionDurationMs;
+		} else {
+			return !!account.session_start; // For other providers, any session_start is considered active
+		}
+	}
+
 	select(accounts: Account[], meta: RequestMeta): Account[] {
 		const now = Date.now();
 
@@ -120,16 +128,7 @@ export class SessionStrategy implements LoadBalancingStrategy {
 		let mostRecentSessionStart = 0;
 
 		for (const account of accounts) {
-			const hasActiveSession = requiresSessionDurationTracking(account.provider)
-				? account.session_start &&
-					now - account.session_start < this.sessionDurationMs
-				: !!account.session_start; // For other providers, any session_start is considered active
-
-			if (
-				hasActiveSession &&
-				account.session_start &&
-				account.session_start > mostRecentSessionStart
-			) {
+			if (this.hasActiveSession(account, now) && account.session_start && account.session_start > mostRecentSessionStart) {
 				activeAccount = account;
 				mostRecentSessionStart = account.session_start;
 			}

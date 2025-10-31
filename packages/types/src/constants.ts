@@ -81,11 +81,9 @@ const PROVIDER_SESSION_TRACKING_CONFIG: Record<ProviderName, boolean> = {
  */
 export function requiresSessionDurationTracking(provider: string): boolean {
 	const providerName = provider as ProviderName;
-	if (providerName in PROVIDER_SESSION_TRACKING_CONFIG) {
-		return PROVIDER_SESSION_TRACKING_CONFIG[providerName];
-	}
-	// For unknown providers, default to false (no session duration tracking)
-	return false;
+	return Object.hasOwn(PROVIDER_SESSION_TRACKING_CONFIG, providerName)
+		? PROVIDER_SESSION_TRACKING_CONFIG[providerName]
+		: false;
 }
 
 /**
