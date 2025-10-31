@@ -33,7 +33,7 @@ export interface CompleteOptions {
 export interface AccountCreated {
 	id: string;
 	name: string;
-	provider: "anthropic";
+	provider: "anthropic" | "claude-console-api";
 	authType: "oauth" | "api_key"; // Track authentication type
 }
 
@@ -286,7 +286,7 @@ export class OAuthFlow {
 			[
 				id,
 				name,
-				"anthropic",
+				"claude-console-api",
 				apiKey,
 				Date.now(),
 				priority,
@@ -297,7 +297,7 @@ export class OAuthFlow {
 		return {
 			id,
 			name,
-			provider: "anthropic",
+			provider: "claude-console-api",
 			authType: "api_key",
 		};
 	}

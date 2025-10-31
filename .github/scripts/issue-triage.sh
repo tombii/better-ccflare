@@ -196,7 +196,7 @@ Respond in the following JSON format:
 Issue to triage:
 ${ISSUE_CONTENT}"
 
-echo "Sending issue to OpenRouter for triage..."
+echo "Sending issue for triage..."
 
 # Convert comma-separated models string to array
 IFS=',' read -ra MODEL_ARRAY <<< "$MODELS"
@@ -447,7 +447,7 @@ ${ANALYSIS}
 ${RESPONSE}
 
 ---
-*This automated triage was performed by the better-ccflare Issue Triage Agent using ${USED_MODEL} via OpenRouter.*
+*This automated triage was performed by the better-ccflare Issue Triage Agent using ${USED_MODEL}.*
 EOF
 )
 

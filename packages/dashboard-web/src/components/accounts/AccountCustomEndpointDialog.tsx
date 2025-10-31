@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { getDefaultEndpointForProvider } from "../../utils/provider-utils";
 import { Button } from "../ui/button";
 import {
 	Dialog,
@@ -80,10 +81,9 @@ export function AccountCustomEndpointDialog({
 		}
 	};
 
-	const defaultPlaceholder =
-		account?.provider === "zai"
-			? "https://api.z.ai/api/anthropic"
-			: "https://api.anthropic.com";
+	const defaultPlaceholder = account?.provider
+		? getDefaultEndpointForProvider(account.provider)
+		: "https://api.anthropic.com";
 
 	return (
 		<Dialog open={isOpen} onOpenChange={onOpenChange}>

@@ -11,6 +11,11 @@ import {
 	Zap,
 } from "lucide-react";
 import type { Account } from "../../api";
+import {
+	providerShowsWeeklyUsage,
+	providerSupportsAutoFeatures,
+	providerSupportsModelMappings,
+} from "../../utils/provider-utils";
 import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
 import { RateLimitProgress } from "./RateLimitProgress";
@@ -64,7 +69,7 @@ export function AccountListItem({
 							<span className="px-2 py-0.5 text-xs font-medium bg-secondary text-secondary-foreground rounded-full">
 								Priority: {account.priority}
 							</span>
-							{account.provider === "anthropic" && (
+							{providerSupportsAutoFeatures(account.provider) && (
 								<>
 									<div className="flex items-center gap-2">
 										<span className="text-xs text-muted-foreground">
@@ -144,8 +149,7 @@ export function AccountListItem({
 						</Button>
 					)}
 					{onModelMappingsChange &&
-						(account.provider === "openai-compatible" ||
-							account.provider === "anthropic-compatible") && (
+						providerSupportsModelMappings(account.provider) && (
 							<Button
 								variant="ghost"
 								size="sm"
@@ -191,7 +195,7 @@ export function AccountListItem({
 					usageWindow={account.usageWindow}
 					usageData={account.usageData}
 					provider={account.provider}
-					showWeekly={account.provider === "anthropic"}
+					showWeekly={providerShowsWeeklyUsage(account.provider)}
 				/>
 			)}
 		</div>

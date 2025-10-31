@@ -1,13 +1,27 @@
-/**
- * Provider names used throughout the application
- */
-export const PROVIDER_NAMES = {
-	ANTHROPIC: "anthropic",
-	ZAI: "zai",
-	OPENAI_COMPATIBLE: "openai-compatible",
-} as const;
+// Import provider definitions from the centralized provider-config module
+// This avoids circular dependencies
+import {
+	PROVIDER_NAMES,
+	type ProviderName,
+	isKnownProvider,
+	getDefaultEndpoint,
+	PROVIDER_CONFIG,
+	requiresSessionDurationTracking,
+	supportsOAuth,
+	supportsUsageTracking,
+} from "./provider-config";
 
-export type ProviderName = (typeof PROVIDER_NAMES)[keyof typeof PROVIDER_NAMES];
+// Re-export the imported types and constants
+export {
+	PROVIDER_NAMES,
+	type ProviderName,
+	isKnownProvider,
+	getDefaultEndpoint,
+	PROVIDER_CONFIG,
+	requiresSessionDurationTracking,
+	supportsOAuth,
+	supportsUsageTracking,
+};
 
 /**
  * Account modes for adding new accounts
@@ -16,52 +30,22 @@ export const ACCOUNT_MODES = {
 	CLAUDE_OAUTH: "claude-oauth", // Claude CLI OAuth account
 	CONSOLE: "console", // Claude API account
 	ZAI: "zai", // z.ai account (API key)
+	MINIMAX: "minimax", // Minimax account (API key)
+	ANTHROPIC_COMPATIBLE: "anthropic-compatible", // Anthropic-compatible provider (API key)
 	OPENAI_COMPATIBLE: "openai-compatible", // OpenAI-compatible provider (API key)
 } as const;
 
 export type AccountMode = (typeof ACCOUNT_MODES)[keyof typeof ACCOUNT_MODES];
 
-/**
- * Providers that support OAuth authentication
- */
-export const OAUTH_PROVIDERS: ReadonlySet<ProviderName> = new Set([
-	PROVIDER_NAMES.ANTHROPIC,
-]);
-
-/**
- * Providers that support usage tracking (via OAuth usage endpoint)
- */
-export const USAGE_TRACKING_PROVIDERS: ReadonlySet<ProviderName> = new Set([
-	PROVIDER_NAMES.ANTHROPIC,
-]);
-
-/**
- * Providers that use API key authentication
- */
-export const API_KEY_PROVIDERS: ReadonlySet<ProviderName> = new Set([
-	PROVIDER_NAMES.ZAI,
-	PROVIDER_NAMES.OPENAI_COMPATIBLE,
-]);
-
-/**
- * Check if a provider supports OAuth authentication
- */
-export function supportsOAuth(provider: string): boolean {
-	return OAUTH_PROVIDERS.has(provider as ProviderName);
-}
-
-/**
- * Check if a provider supports usage tracking
- */
-export function supportsUsageTracking(provider: string): boolean {
-	return USAGE_TRACKING_PROVIDERS.has(provider as ProviderName);
-}
-
-/**
- * Check if a provider uses API key authentication
- */
+// The usesApiKey function needs to be defined here to avoid circular dependencies
+// since it depends on both isKnownProvider and the supportsOAuth function
+// For now, we'll implement it directly based on our knowledge of which providers use API keys
 export function usesApiKey(provider: string): boolean {
-	return API_KEY_PROVIDERS.has(provider as ProviderName);
+	if (!isKnownProvider(provider)) {
+		return false; // Unknown providers don't use API key authentication by default
+	}
+	// API key providers are all providers except Anthropic OAuth
+	return provider !== PROVIDER_NAMES.ANTHROPIC;
 }
 
 /**
@@ -70,10 +54,15 @@ export function usesApiKey(provider: string): boolean {
 export function getProviderFromMode(mode: AccountMode): ProviderName {
 	switch (mode) {
 		case ACCOUNT_MODES.CLAUDE_OAUTH:
-		case ACCOUNT_MODES.CONSOLE:
 			return PROVIDER_NAMES.ANTHROPIC;
+		case ACCOUNT_MODES.CONSOLE:
+			return PROVIDER_NAMES.CLAUDE_CONSOLE_API;
 		case ACCOUNT_MODES.ZAI:
 			return PROVIDER_NAMES.ZAI;
+		case ACCOUNT_MODES.MINIMAX:
+			return PROVIDER_NAMES.MINIMAX;
+		case ACCOUNT_MODES.ANTHROPIC_COMPATIBLE:
+			return PROVIDER_NAMES.ANTHROPIC_COMPATIBLE;
 		case ACCOUNT_MODES.OPENAI_COMPATIBLE:
 			return PROVIDER_NAMES.OPENAI_COMPATIBLE;
 		default:

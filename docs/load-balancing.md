@@ -90,21 +90,26 @@ export class SessionStrategy implements LoadBalancingStrategy {
 
 ## Usage Window Alignment for Anthropic OAuth
 
-**Description**: For Anthropic OAuth accounts, the session strategy includes intelligent optimization that aligns session resets with the actual 5-hour usage windows provided by Anthropic's API, ensuring optimal resource utilization.
+**Description**: For Anthropic OAuth accounts, the session strategy includes intelligent optimization that aligns session resets with the actual 5-hour usage windows provided by Anthropic's API, ensuring optimal resource utilization. Other providers (like API-key-based accounts) do not use fixed-duration session tracking and instead operate on a pay-as-you-go basis without session windows.
 
 **How It Works**:
 
-The system implements a dual-condition session reset logic:
+The system implements provider-specific session reset logic:
 
-1. **Fixed Duration Check**: Sessions reset after the configured duration (default: 5 hours)
-2. **Usage Window Reset Check**: For Anthropic OAuth accounts only, sessions also reset when the API's usage window expires (based on `rate_limit_reset` timestamp)
+1. **Provider Check**: First determines if the account's provider requires session duration tracking (currently only Anthropic providers do)
+2. **Fixed Duration Check**: For providers that require session duration tracking (like Anthropic), sessions reset after the configured duration (default: 5 hours)
+3. **Usage Window Reset Check**: For Anthropic OAuth accounts only, sessions also reset when the API's usage window expires (based on `rate_limit_reset` timestamp)
 
 ```typescript
-// Optimized logic that computes rate limit check only when needed
-const fixedDurationExpired = !account.session_start ||
-    now - account.session_start >= this.sessionDurationMs;
+// Provider-specific session duration tracking
+const needsSessionTracking = requiresSessionDurationTracking(account.provider);
+
+const fixedDurationExpired = needsSessionTracking &&
+    ( !account.session_start ||
+    now - account.session_start >= this.sessionDurationMs );
 
 const rateLimitWindowReset = !fixedDurationExpired &&
+    account.provider === "anthropic" &&
     account.rate_limit_reset &&
     account.rate_limit_reset < now;
 
@@ -118,52 +123,58 @@ if (fixedDurationExpired || rateLimitWindowReset) {
 
 - **Optimal Resource Utilization**: Sessions align perfectly with Anthropic's actual usage windows
 - **Reduced Waste**: No premature session resets when usage windows are still active
-- **Backward Compatibility**: Non-Anthropic accounts continue using fixed-duration logic
 - **Performance Optimized**: Rate limit checks only occur when needed (when fixed duration hasn't expired)
 
 **Provider Compatibility**:
 
-- ✅ **Anthropic OAuth**: Full usage window alignment support
-- ✅ **Other Providers**: Maintain fixed-duration session logic for compatibility
+- ✅ **Anthropic OAuth**: Full usage window alignment support with 5-hour session tracking
+- ✅ **Other Providers** (API-key-based, OpenAI-compatible, etc.): No fixed-duration session tracking - operate on pay-as-you-go basis
 - ✅ **Mixed Environments**: Works seamlessly with accounts from different providers
 
 **Race Condition Prevention**: The implementation uses strict `<` comparisons instead of `<=` to prevent race conditions where sessions might reset prematurely at the exact moment the usage window resets.
 
 ### Future Extensibility for API-Based Providers
 
-**Current Implementation**: The usage window alignment is currently optimized for Anthropic OAuth accounts, which provide explicit `rate_limit_reset` timestamps via their API.
+**Current Implementation**: The usage window alignment is currently optimized for Anthropic OAuth accounts, which provide explicit `rate_limit_reset` timestamps via their API. Other providers (API-key-based, OpenAI-compatible, etc.) operate on a pay-as-you-go basis without fixed-duration session tracking.
 
-**Future Enhancement Needed**: For API-based providers (like OpenAI-compatible, custom endpoints), the system currently relies on fixed-duration session logic since these providers typically don't expose usage window information. However, some API-based providers may implement their own usage windows (5-hour, daily, or custom intervals) that could be leveraged for better resource utilization.
-
-**Proposed Architecture for Future Implementation**:
+**Current Extensible Architecture**: The system includes a provider-specific configuration system that allows easy extension for future providers with usage windows:
 
 ```typescript
-// Future extension for provider-specific usage window handling
-interface ProviderUsageWindow {
-    duration: number;        // Window duration in milliseconds
-    resetStrategy: 'fixed' | 'api-based' | 'hybrid';
-    resetField?: string;     // API field containing reset timestamp
-    calculateReset?: (account: Account) => number | null;
-}
+// Current implementation in types/constants.ts
+const PROVIDER_SESSION_TRACKING_CONFIG: Record<ProviderName, boolean> = {
+    [PROVIDER_NAMES.ANTHROPIC]: true,   // Anthropic has 5-hour usage windows
+    [PROVIDER_NAMES.ZAI]: false,        // Zai is typically pay-as-you-go
+    [PROVIDER_NAMES.OPENAI_COMPATIBLE]: false, // OpenAI-compatible is typically pay-as-you-go
+} as const;
 
-// Enhanced session reset logic for multiple providers
-const resetConditions = [
-    fixedDurationExpired,
-    ...getProviderSpecificResetConditions(account, providerConfig)
-];
+// Function to check if a provider requires session duration tracking
+export function requiresSessionDurationTracking(provider: string): boolean {
+    const providerName = provider as ProviderName;
+    if (providerName in PROVIDER_SESSION_TRACKING_CONFIG) {
+        return PROVIDER_SESSION_TRACKING_CONFIG[providerName];
+    }
+    // For unknown providers, default to false (no session duration tracking)
+    return false;
+}
 ```
 
-**Implementation Roadmap**:
-1. **Provider Configuration**: Add usage window configuration to provider settings
-2. **Reset Detection**: Implement provider-specific reset timestamp detection logic
-3. **Hybrid Strategy**: Combine fixed-duration and provider-specific window alignment
-4. **Backward Compatibility**: Ensure existing API-based providers continue working with fixed durations
+**Future Enhancement Path**: For API-based providers that implement their own usage windows (5-hour, daily, or custom intervals), you can simply update the configuration:
 
-**Benefits of Future Implementation**:
-- **Consistent Optimization**: All providers with usage windows can benefit from alignment
-- **Resource Efficiency**: Better utilization of rate limits across all provider types
-- **Flexible Configuration**: Provider-specific usage window configurations
-- **Unified Architecture**: Single session strategy handling multiple reset patterns
+```typescript
+// Example: Adding support for a new provider with usage windows
+const PROVIDER_SESSION_TRACKING_CONFIG: Record<ProviderName, boolean> = {
+    [PROVIDER_NAMES.ANTHROPIC]: true,           // Anthropic has 5-hour usage windows
+    [PROVIDER_NAMES.ZAI]: false,                // Zai is typically pay-as-you-go
+    [PROVIDER_NAMES.OPENAI_COMPATIBLE]: false,  // OpenAI-compatible is typically pay-as-you-go
+    [PROVIDER_NAMES.NEW_PROVIDER]: true,        // New provider has usage windows
+} as const;
+```
+
+**Implementation Benefits**:
+1. **Simple Extension**: New providers can be added by updating the configuration
+2. **Backward Compatibility**: Existing providers continue working as expected
+3. **Provider-Specific Logic**: Each provider can have tailored session handling
+4. **Future-Proof**: Ready for any new providers with usage window systems
 
 ## Account Priorities
 
@@ -544,3 +555,10 @@ The `RequestMeta` object contains:
 - `agentUsed`: Optional agent identifier
 
 Currently, only the `SessionStrategy` implementation exists in the codebase at `/packages/load-balancer/src/strategies/index.ts`.
+
+## Migration Notes
+
+When upgrading to this version, non-Anthropic providers (Zai, Minimax, OpenAI-compatible, Claude console API)
+will no longer have 5-hour session windows. This is expected behavior as these providers operate on a
+pay-as-you-go model without usage windows. Existing Claude console accounts will be automatically migrated
+to the new `claude-console-api` provider type. No manual configuration changes are required.
