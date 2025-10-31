@@ -32,6 +32,8 @@ export class SessionStrategy implements LoadBalancingStrategy {
 
 		// Check if the account's rate limit window has reset (only computed if needed for efficiency)
 		// This optimization helps Anthropic OAuth accounts better utilize their 5-hour usage windows
+		// Usage windows: Anthropic accounts with proactive rate limit headers (usage-based accounts)
+		// No usage windows: Other account types or Anthropic console keys without usage windows
 		const rateLimitWindowReset =
 			!fixedDurationExpired &&
 			account.provider === "anthropic" && // Explicit provider check for Anthropic usage windows
@@ -177,7 +179,9 @@ export class SessionStrategy implements LoadBalancingStrategy {
 			// Note: We check paused status AFTER filtering for auto-fallback enabled accounts
 			// This allows paused accounts with auto-fallback to be considered for reactivation
 
-			// Check if the API usage window has reset
+			// Check if the API usage window has reset for auto-fallback
+			// Usage windows: Anthropic accounts with proactive rate limit headers (usage-based accounts)
+			// No usage windows: Other account types or Anthropic console keys without usage windows
 			const anthropicWindowReset =
 				account.provider === "anthropic" && // Only for Anthropic accounts with usage windows
 				account.rate_limit_reset &&
