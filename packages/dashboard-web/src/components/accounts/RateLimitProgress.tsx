@@ -1,5 +1,6 @@
 import { registerUIRefresh } from "@better-ccflare/core";
 import type { FullUsageData } from "@better-ccflare/types";
+import { providerShowsWeeklyUsage } from "../../utils/provider-utils";
 import { useEffect, useState } from "react";
 import { cn } from "../../lib/utils";
 import { Progress } from "../ui/progress";
@@ -69,7 +70,7 @@ export function RateLimitProgress({
 	// Determine which usage windows to display
 	const usages: UsageDisplay[] = [];
 
-	if (provider === "anthropic" && showWeekly) {
+	if (providerShowsWeeklyUsage(provider) && showWeekly) {
 		// Always show both 5-hour and weekly usage for Anthropic accounts
 		if (usageData?.five_hour) {
 			usages.push({
@@ -122,7 +123,7 @@ export function RateLimitProgress({
 			});
 		}
 	} else if (
-		provider === "anthropic" &&
+		providerShowsWeeklyUsage(provider) &&
 		usageUtilization !== null &&
 		usageUtilization !== undefined &&
 		usageWindow
@@ -180,7 +181,7 @@ export function RateLimitProgress({
 					<div key={usage.window || "default"} className="space-y-2">
 						<div className="flex items-center justify-between">
 							<span className="text-xs text-muted-foreground">
-								{provider === "anthropic" && usage.window
+								{providerShowsWeeklyUsage(provider) && usage.window
 									? `Usage (${formatWindowName(usage.window)})`
 									: "Rate limit window"}
 							</span>
