@@ -569,6 +569,10 @@ export function runMigrations(db: Database, dbPath?: string): void {
 /**
  * Run API key storage migration to move API keys from refresh_token to api_key field
  * This ensures API keys are stored in the correct field while preserving OAuth tokens
+ *
+ * Migration approach: Using separate focused queries instead of a single consolidated query
+ * for better maintainability, clearer logic separation, and easier debugging. Each migration
+ * type (API key providers, duplicate cleanup, console accounts) has distinct criteria and purpose.
  */
 export function runApiKeyStorageMigration(db: Database): void {
 	try {
@@ -614,6 +618,8 @@ export function runApiKeyStorageMigration(db: Database): void {
 
 		// Handle console accounts separately - these are anthropic provider accounts that use API keys
 		// Console accounts have api_key but no access_token/refresh_token normally, but older ones might have been stored in refresh_token
+		// Note: Using separate focused queries instead of a single consolidated query for better maintainability,
+		// clearer logic separation, and easier debugging. Each migration type has distinct criteria and purpose.
 		const consoleUpdateSql = `
 			UPDATE accounts
 			SET
