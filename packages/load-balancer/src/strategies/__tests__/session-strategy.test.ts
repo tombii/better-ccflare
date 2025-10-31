@@ -106,7 +106,7 @@ describe("SessionStrategy", () => {
 		expect(account.session_request_count).toBe(0);
 	});
 
-	it("should work normally for accounts without rate_limit_reset", () => {
+	it("should work normally for non-Anthropic providers without session duration tracking", () => {
 		const account: Account = {
 			id: "test-account-2",
 			name: "test-account-2",
@@ -137,14 +137,14 @@ describe("SessionStrategy", () => {
 		const originalSessionStart = account.session_start;
 		const originalRequestCount = account.session_request_count;
 
-		// The account should be selected normally, using only fixed duration logic
+		// The account should be selected normally, session duration tracking doesn't apply to non-Anthropic
 		const result = strategy.select([account], meta);
 
 		// Verify the account is selected as the first (highest priority) result
 		expect(result[0]).toBe(account);
 		expect(result).toHaveLength(1);
 
-		// Verify session was NOT reset (no rate limit reset logic for non-anthropic)
+		// Verify session was NOT reset due to fixed duration (no session duration tracking for non-Anthropic)
 		const resetCall = mockStore.getResetCall(account.id);
 		expect(resetCall).toBeUndefined();
 
@@ -200,7 +200,7 @@ describe("SessionStrategy", () => {
 		expect(account.session_request_count).toBe(originalRequestCount);
 	});
 
-	it("should reset session when both fixed duration and rate limit have expired", () => {
+	it("should reset session when both fixed duration and rate limit have expired for Anthropic accounts", () => {
 		const account: Account = {
 			id: "test-account-4",
 			name: "test-account-4",
@@ -247,6 +247,102 @@ describe("SessionStrategy", () => {
 		// Verify account object was updated
 		expect(account.session_start).toBeGreaterThan(originalSessionStart);
 		expect(account.session_request_count).toBe(0);
+	});
+
+	it("should reset session when fixed duration expired for Anthropic accounts", () => {
+		const account: Account = {
+			id: "test-account-5-anthropic",
+			name: "test-account-5-anthropic",
+			provider: "anthropic",
+			api_key: null,
+			refresh_token: "test",
+			access_token: "test",
+			expires_at: Date.now() + 3600000,
+			request_count: 0,
+			total_requests: 0,
+			last_used: null,
+			created_at: Date.now(),
+			rate_limited_until: null,
+			session_start: Date.now() - 6 * 60 * 60 * 1000, // 6 hours ago (beyond 5 hour limit)
+			session_request_count: 10,
+			paused: false,
+			rate_limit_reset: null, // No rate limit reset info
+			rate_limit_status: null,
+			rate_limit_remaining: null,
+			priority: 0,
+			auto_fallback_enabled: false,
+			auto_refresh_enabled: false,
+			custom_endpoint: null,
+			model_mappings: null,
+		};
+
+		// Store original session values
+		const originalSessionStart = account.session_start;
+		const _originalRequestCount = account.session_request_count;
+
+		// The account should be selected and session should be reset (fixed duration expired for Anthropic)
+		const result = strategy.select([account], meta);
+
+		// Verify the account is selected as the first (highest priority) result
+		expect(result[0]).toBe(account);
+		expect(result).toHaveLength(1);
+
+		// Verify session was reset
+		const resetCall = mockStore.getResetCall(account.id);
+		expect(resetCall).toBeDefined();
+		expect(resetCall?.accountId).toBe(account.id);
+		expect(resetCall?.timestamp).toBeGreaterThan(0);
+
+		// Verify account object was updated
+		expect(account.session_start).toBeGreaterThan(originalSessionStart);
+		expect(account.session_request_count).toBe(0);
+	});
+
+	it("should not reset session when fixed duration expired for non-Anthropic accounts", () => {
+		const account: Account = {
+			id: "test-account-6-non-anthropic",
+			name: "test-account-6-non-anthropic",
+			provider: "zai", // Non-anthropic provider
+			api_key: "test-key",
+			refresh_token: "",
+			access_token: null,
+			expires_at: null,
+			request_count: 0,
+			total_requests: 0,
+			last_used: null,
+			created_at: Date.now(),
+			rate_limited_until: null,
+			session_start: Date.now() - 6 * 60 * 60 * 1000, // 6 hours ago (beyond 5 hour limit)
+			session_request_count: 10,
+			paused: false,
+			rate_limit_reset: null,
+			rate_limit_status: null,
+			rate_limit_remaining: null,
+			priority: 0,
+			auto_fallback_enabled: false,
+			auto_refresh_enabled: false,
+			custom_endpoint: null,
+			model_mappings: null,
+		};
+
+		// Store original session values
+		const originalSessionStart = account.session_start;
+		const originalRequestCount = account.session_request_count;
+
+		// The account should be selected, but session should NOT be reset (no duration tracking for non-Anthropic)
+		const result = strategy.select([account], meta);
+
+		// Verify the account is selected as the first (highest priority) result
+		expect(result[0]).toBe(account);
+		expect(result).toHaveLength(1);
+
+		// Verify session was NOT reset (no duration tracking for non-Anthropic providers)
+		const resetCall = mockStore.getResetCall(account.id);
+		expect(resetCall).toBeUndefined();
+
+		// Verify account session values remain unchanged
+		expect(account.session_start).toBe(originalSessionStart);
+		expect(account.session_request_count).toBe(originalRequestCount);
 	});
 
 	it("should work normally when rate_limit_reset is explicitly null", () => {

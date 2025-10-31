@@ -35,7 +35,7 @@ export function createConfigHandlers(
 					runtime?.port || (settings.port as number) || NETWORK.DEFAULT_PORT,
 				sessionDurationMs:
 					(settings.sessionDurationMs as number) ||
-					TIME_CONSTANTS.SESSION_DURATION_FALLBACK,
+					TIME_CONSTANTS.ANTHROPIC_SESSION_DURATION_FALLBACK,
 				default_agent_model:
 					(settings.default_agent_model as string) || DEFAULT_AGENT_MODEL,
 				// Include actual TLS status
