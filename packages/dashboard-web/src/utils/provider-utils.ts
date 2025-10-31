@@ -42,6 +42,10 @@ export function getDefaultEndpointForProvider(provider: string): string {
 	switch (provider) {
 		case "zai":
 			return "https://api.z.ai/api/anthropic";
+		case "minimax":
+			return "https://api.minimax.io/anthropic";
+		case "anthropic-compatible":
+			return "https://api.anthropic.com"; // Default, but can be overridden via custom endpoint
 		default:
 			return "https://api.anthropic.com";
 	}

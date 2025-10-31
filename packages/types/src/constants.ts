@@ -5,6 +5,8 @@ export const PROVIDER_NAMES = {
 	ANTHROPIC: "anthropic", // Claude OAuth accounts
 	CLAUDE_CONSOLE_API: "claude-console-api", // Claude API console accounts
 	ZAI: "zai",
+	MINIMAX: "minimax",
+	ANTHROPIC_COMPATIBLE: "anthropic-compatible",
 	OPENAI_COMPATIBLE: "openai-compatible",
 } as const;
 
@@ -17,6 +19,8 @@ export const ACCOUNT_MODES = {
 	CLAUDE_OAUTH: "claude-oauth", // Claude CLI OAuth account
 	CONSOLE: "console", // Claude API account
 	ZAI: "zai", // z.ai account (API key)
+	MINIMAX: "minimax", // Minimax account (API key)
+	ANTHROPIC_COMPATIBLE: "anthropic-compatible", // Anthropic-compatible provider (API key)
 	OPENAI_COMPATIBLE: "openai-compatible", // OpenAI-compatible provider (API key)
 } as const;
 
@@ -28,6 +32,9 @@ export type AccountMode = (typeof ACCOUNT_MODES)[keyof typeof ACCOUNT_MODES];
 export const OAUTH_PROVIDERS: ReadonlySet<ProviderName> = new Set([
 	PROVIDER_NAMES.ANTHROPIC,
 	// CLAUDE_CONSOLE_API is API key based, not OAuth
+	// MINIMAX is API key based, not OAuth
+	// ANTHROPIC_COMPATIBLE is API key based, not OAuth
+	// OPENAI_COMPATIBLE is API key based, not OAuth
 ]);
 
 /**
@@ -36,6 +43,9 @@ export const OAUTH_PROVIDERS: ReadonlySet<ProviderName> = new Set([
 export const USAGE_TRACKING_PROVIDERS: ReadonlySet<ProviderName> = new Set([
 	PROVIDER_NAMES.ANTHROPIC,
 	// CLAUDE_CONSOLE_API doesn't support usage tracking (pay-as-you-go)
+	// MINIMAX doesn't support usage tracking (pay-as-you-go)
+	// ANTHROPIC_COMPATIBLE doesn't support usage tracking (pay-as-you-go)
+	// OPENAI_COMPATIBLE doesn't support usage tracking (pay-as-you-go)
 ]);
 
 /**
@@ -43,6 +53,8 @@ export const USAGE_TRACKING_PROVIDERS: ReadonlySet<ProviderName> = new Set([
  */
 export const API_KEY_PROVIDERS: ReadonlySet<ProviderName> = new Set([
 	PROVIDER_NAMES.ZAI,
+	PROVIDER_NAMES.MINIMAX,
+	PROVIDER_NAMES.ANTHROPIC_COMPATIBLE,
 	PROVIDER_NAMES.OPENAI_COMPATIBLE,
 	PROVIDER_NAMES.CLAUDE_CONSOLE_API, // Claude console API uses API key authentication
 ]);
@@ -51,21 +63,30 @@ export const API_KEY_PROVIDERS: ReadonlySet<ProviderName> = new Set([
  * Check if a provider supports OAuth authentication
  */
 export function supportsOAuth(provider: string): boolean {
-	return OAUTH_PROVIDERS.has(provider as ProviderName);
+	if (!isKnownProvider(provider)) {
+		return false; // Unknown providers don't support OAuth
+	}
+	return OAUTH_PROVIDERS.has(provider);
 }
 
 /**
  * Check if a provider supports usage tracking
  */
 export function supportsUsageTracking(provider: string): boolean {
-	return USAGE_TRACKING_PROVIDERS.has(provider as ProviderName);
+	if (!isKnownProvider(provider)) {
+		return false; // Unknown providers don't support usage tracking
+	}
+	return USAGE_TRACKING_PROVIDERS.has(provider);
 }
 
 /**
  * Check if a provider uses API key authentication
  */
 export function usesApiKey(provider: string): boolean {
-	return API_KEY_PROVIDERS.has(provider as ProviderName);
+	if (!isKnownProvider(provider)) {
+		return false; // Unknown providers don't use API key authentication by default
+	}
+	return API_KEY_PROVIDERS.has(provider);
 }
 
 /**
@@ -82,6 +103,8 @@ const PROVIDER_SESSION_TRACKING_CONFIG = {
 	[PROVIDER_NAMES.ANTHROPIC]: true, // Anthropic OAuth has 5-hour usage windows
 	[PROVIDER_NAMES.CLAUDE_CONSOLE_API]: false, // Claude console API is pay-as-you-go
 	[PROVIDER_NAMES.ZAI]: false, // Zai is typically pay-as-you-go
+	[PROVIDER_NAMES.MINIMAX]: false, // Minimax is pay-as-you-go
+	[PROVIDER_NAMES.ANTHROPIC_COMPATIBLE]: false, // Anthropic-compatible is pay-as-you-go
 	[PROVIDER_NAMES.OPENAI_COMPATIBLE]: false, // OpenAI-compatible is typically pay-as-you-go
 } as const satisfies Record<ProviderName, boolean>;
 
@@ -89,7 +112,7 @@ const PROVIDER_SESSION_TRACKING_CONFIG = {
  * Type guard to check if a provider string is a known ProviderName
  */
 export function isKnownProvider(provider: string): provider is ProviderName {
-	return Object.values(PROVIDER_NAMES).includes(provider as ProviderName);
+	return (Object.values(PROVIDER_NAMES) as string[]).includes(provider);
 }
 
 /**
@@ -129,6 +152,10 @@ export function getProviderFromMode(mode: AccountMode): ProviderName {
 			return PROVIDER_NAMES.CLAUDE_CONSOLE_API;
 		case ACCOUNT_MODES.ZAI:
 			return PROVIDER_NAMES.ZAI;
+		case ACCOUNT_MODES.MINIMAX:
+			return PROVIDER_NAMES.MINIMAX;
+		case ACCOUNT_MODES.ANTHROPIC_COMPATIBLE:
+			return PROVIDER_NAMES.ANTHROPIC_COMPATIBLE;
 		case ACCOUNT_MODES.OPENAI_COMPATIBLE:
 			return PROVIDER_NAMES.OPENAI_COMPATIBLE;
 		default:
