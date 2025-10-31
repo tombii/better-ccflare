@@ -341,7 +341,7 @@ export async function getValidAccessToken(
 	if (
 		account.provider === "openai-compatible" ||
 		account.provider === "zai" ||
-		account.provider === "console" ||
+		account.provider === "claude-console-api" ||
 		account.provider === "anthropic-compatible" ||
 		account.provider === "minimax"
 	) {
