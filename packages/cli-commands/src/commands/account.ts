@@ -192,15 +192,12 @@ async function createZaiAccount(
 		`INSERT INTO accounts (
 			id, name, provider, api_key, refresh_token, access_token,
 			expires_at, created_at, request_count, total_requests, priority, custom_endpoint
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		) VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?)`,
 		[
 			accountId,
 			name,
 			"zai",
 			validatedApiKey,
-			validatedApiKey, // Store API key as refresh_token for consistency
-			validatedApiKey, // Store API key as access_token
-			now + 365 * 24 * 60 * 60 * 1000, // 1 year expiry
 			now,
 			0,
 			0,
@@ -297,15 +294,12 @@ async function createOpenAIAccount(
 		`INSERT INTO accounts (
 			id, name, provider, api_key, refresh_token, access_token,
 			expires_at, created_at, request_count, total_requests, priority, custom_endpoint, model_mappings
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		) VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?)`,
 		[
 			accountId,
 			name,
 			"openai-compatible",
 			validatedApiKey,
-			validatedApiKey, // Store API key as refresh_token for consistency
-			validatedApiKey, // Store API key as access_token
-			null, // No expiry for OpenAI-compatible providers (API keys don't expire)
 			now,
 			0,
 			0,

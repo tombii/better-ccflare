@@ -233,6 +233,10 @@ export function runMigrations(db: Database, dbPath?: string): void {
 		log.info("Added model_mappings column to accounts table");
 	}
 
+	// Run API key storage migration to move API keys from refresh_token to api_key field
+	// This is a data migration that should happen after all schema changes
+	runApiKeyStorageMigration(db);
+
 	// Check columns in oauth_sessions table
 	const oauthSessionsInfo = db
 		.prepare("PRAGMA table_info(oauth_sessions)")
@@ -514,5 +518,96 @@ export function runMigrations(db: Database, dbPath?: string): void {
 		log.warn(
 			`Error updating oauth_sessions mode values: ${(error as Error).message}`,
 		);
+	}
+}
+
+/**
+ * Run API key storage migration to move API keys from refresh_token to api_key field
+ * This ensures API keys are stored in the correct field while preserving OAuth tokens
+ */
+function runApiKeyStorageMigration(db: Database): void {
+	try {
+		// Update API-key providers to move API key from refresh_token to api_key field
+		// Only if api_key is null/undefined and refresh_token contains a value
+		// This handles zai, openai-compatible, minimax, and anthropic-compatible providers
+		const updateSql = `
+			UPDATE accounts
+			SET
+				api_key = refresh_token,
+				refresh_token = NULL,
+				access_token = NULL,
+				expires_at = NULL
+			WHERE
+				provider IN ('zai', 'openai-compatible', 'minimax', 'anthropic-compatible')
+				AND api_key IS NULL
+				AND refresh_token IS NOT NULL
+				AND refresh_token != ''
+		`;
+
+		const result = db.prepare(updateSql).run();
+		const updatedCount = (result.changes as number) || 0;
+
+		// Also handle accounts where both api_key and refresh_token have the same value (duplicate storage)
+		const cleanupSql = `
+			UPDATE accounts
+			SET
+				refresh_token = NULL,
+				access_token = NULL,
+				expires_at = NULL
+			WHERE
+				provider IN ('zai', 'openai-compatible', 'minimax', 'anthropic-compatible')
+				AND api_key IS NOT NULL
+				AND refresh_token = api_key
+		`;
+
+		const cleanupResult = db.prepare(cleanupSql).run();
+		const cleanupCount = (cleanupResult.changes as number) || 0;
+
+		// Handle console accounts separately - these are anthropic provider accounts that use API keys
+		// Console accounts have api_key but no access_token/refresh_token normally, but older ones might have been stored in refresh_token
+		const consoleUpdateSql = `
+			UPDATE accounts
+			SET
+				api_key = refresh_token,
+				refresh_token = NULL,
+				access_token = NULL,
+				expires_at = NULL
+			WHERE
+				provider = 'anthropic'
+				AND api_key IS NULL  -- Console accounts should have api_key, but if missing and refresh_token has value, it's likely a console account
+				AND refresh_token IS NOT NULL
+				AND refresh_token != ''
+				AND access_token IS NULL  -- OAuth accounts have access_token, console accounts don't
+		`;
+
+		const consoleResult = db.prepare(consoleUpdateSql).run();
+		const consoleCount = (consoleResult.changes as number) || 0;
+
+		const totalCount = updatedCount + cleanupCount + consoleCount;
+		if (totalCount > 0) {
+			log.info(
+				`Migrated ${totalCount} accounts to use proper API key storage (moved from refresh_token to api_key)`,
+			);
+			if (updatedCount > 0) {
+				log.debug(
+					`  - ${updatedCount} accounts had API key moved from refresh_token to api_key`,
+				);
+			}
+			if (cleanupCount > 0) {
+				log.debug(
+					`  - ${cleanupCount} accounts had duplicate API key storage cleaned up`,
+				);
+			}
+			if (consoleCount > 0) {
+				log.debug(
+					`  - ${consoleCount} console accounts had API key moved from refresh_token to api_key`,
+				);
+			}
+		}
+	} catch (error) {
+		log.warn(
+			`Error during API key storage migration: ${(error as Error).message}`,
+		);
+		// Continue with other migrations even if this one fails
 	}
 }
