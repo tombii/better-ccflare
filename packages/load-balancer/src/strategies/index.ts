@@ -67,9 +67,11 @@ export class SessionStrategy implements LoadBalancingStrategy {
 
 	/**
 	 * Determines if an account has an active session based on provider requirements
+	 * For Anthropic providers: checks if session is within the 5-hour window
+	 * For other providers: always returns false (no session stickiness for pay-as-you-go)
 	 * @param account The account to check
 	 * @param now Current timestamp
-	 * @returns true if session is active, false otherwise
+	 * @returns true if session is active (Anthropic only), false otherwise
 	 */
 	private hasActiveSession(account: Account, now: number): boolean {
 		// Non-Anthropic providers (API-key-based, etc.) should not have persistent sessions

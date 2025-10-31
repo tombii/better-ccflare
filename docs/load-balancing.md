@@ -555,3 +555,10 @@ The `RequestMeta` object contains:
 - `agentUsed`: Optional agent identifier
 
 Currently, only the `SessionStrategy` implementation exists in the codebase at `/packages/load-balancer/src/strategies/index.ts`.
+
+## Migration Notes
+
+When upgrading to this version, non-Anthropic providers (Zai, Minimax, OpenAI-compatible, Claude console API)
+will no longer have 5-hour session windows. This is expected behavior as these providers operate on a
+pay-as-you-go model without usage windows. Existing Claude console accounts will be automatically migrated
+to the new `claude-console-api` provider type. No manual configuration changes are required.
