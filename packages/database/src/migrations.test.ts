@@ -1,10 +1,6 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import {
-	ensureSchema,
-	runMigrations,
-	runApiKeyStorageMigration,
-} from "../src/migrations";
+import { ensureSchema, runMigrations } from "../src/migrations";
 
 describe("Database Migrations - Tier Column Removal", () => {
 	let db: Database;

@@ -102,7 +102,7 @@ export abstract class BaseAnthropicCompatibleProvider extends BaseProvider {
 		return {
 			accessToken: apiKey,
 			expiresAt: Date.now() + TIME_CONSTANTS.API_KEY_TOKEN_EXPIRY_MS,
-			refreshToken: apiKey,
+			refreshToken: "", // Empty string prevents DB update for API key accounts
 		};
 	}
 
