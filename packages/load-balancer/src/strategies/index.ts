@@ -6,6 +6,10 @@ import type {
 	RequestMeta,
 	StrategyStore,
 } from "@better-ccflare/types";
+import {
+	PROVIDER_NAMES,
+	requiresSessionDurationTracking,
+} from "@better-ccflare/types";
 
 export class SessionStrategy implements LoadBalancingStrategy {
 	private sessionDurationMs: number;
@@ -13,7 +17,7 @@ export class SessionStrategy implements LoadBalancingStrategy {
 	private log = new Logger("SessionStrategy");
 
 	constructor(
-		sessionDurationMs: number = TIME_CONSTANTS.SESSION_DURATION_DEFAULT,
+		sessionDurationMs: number = TIME_CONSTANTS.ANTHROPIC_SESSION_DURATION_DEFAULT,
 	) {
 		this.sessionDurationMs = sessionDurationMs;
 	}
@@ -25,18 +29,18 @@ export class SessionStrategy implements LoadBalancingStrategy {
 	private resetSessionIfExpired(account: Account): void {
 		const now = Date.now();
 
-		// Check if session has exceeded the fixed duration
+		// Check if session has exceeded the fixed duration (only for providers that require session duration tracking)
 		const fixedDurationExpired =
-			!account.session_start ||
-			now - account.session_start >= this.sessionDurationMs;
+			requiresSessionDurationTracking(account.provider) &&
+			(!account.session_start ||
+				now - account.session_start >= this.sessionDurationMs);
 
-		// Check if the account's rate limit window has reset (only computed if needed for efficiency)
-		// This optimization helps Anthropic OAuth accounts better utilize their 5-hour usage windows
+		// Check if the account's rate limit window has reset
+		// This helps Anthropic accounts better utilize their usage windows
 		// Usage windows: Anthropic accounts with proactive rate limit headers (usage-based accounts)
 		// No usage windows: Other account types or Anthropic console keys without usage windows
 		const rateLimitWindowReset =
-			!fixedDurationExpired &&
-			account.provider === "anthropic" && // Explicit provider check for Anthropic usage windows
+			account.provider === PROVIDER_NAMES.ANTHROPIC && // Explicit provider check for Anthropic usage windows
 			account.rate_limit_reset &&
 			account.rate_limit_reset < now - 1000; // 1 second buffer for clock skew protection
 
@@ -59,6 +63,28 @@ export class SessionStrategy implements LoadBalancingStrategy {
 				account.session_request_count = 0;
 			}
 		}
+	}
+
+	/**
+	 * Determines if an account has an active session based on provider requirements
+	 * For Anthropic providers: checks if session is within the 5-hour window
+	 * For other providers: always returns false (no session stickiness for pay-as-you-go)
+	 * @param account The account to check
+	 * @param now Current timestamp
+	 * @returns true if session is active (Anthropic only), false otherwise
+	 */
+	private hasActiveSession(account: Account, now: number): boolean {
+		// Non-Anthropic providers (API-key-based, etc.) should not have persistent sessions
+		// since they're pay-as-you-go and don't benefit from session stickiness
+		if (!requiresSessionDurationTracking(account.provider)) {
+			return false;
+		}
+
+		// For Anthropic providers: check if session is active (within duration window)
+		return (
+			!!account.session_start &&
+			now - account.session_start < this.sessionDurationMs
+		);
 	}
 
 	select(accounts: Account[], meta: RequestMeta): Account[] {
@@ -113,18 +139,30 @@ export class SessionStrategy implements LoadBalancingStrategy {
 		}
 
 		// Find account with active session (most recent session_start within window)
+		// Only for providers that require session duration tracking
 		let activeAccount: Account | null = null;
 		let mostRecentSessionStart = 0;
 
 		for (const account of accounts) {
 			if (
+				this.hasActiveSession(account, now) &&
 				account.session_start &&
-				now - account.session_start < this.sessionDurationMs &&
 				account.session_start > mostRecentSessionStart
 			) {
 				activeAccount = account;
 				mostRecentSessionStart = account.session_start;
 			}
+		}
+
+		// Log session tracking decisions for debugging
+		if (activeAccount) {
+			this.log.debug(
+				`Active session found for account ${activeAccount.name} (provider: ${activeAccount.provider})`,
+			);
+		} else {
+			this.log.debug(
+				`No active sessions found, will select from available accounts`,
+			);
 		}
 
 		// If we have an active account and it's available, use it exclusively
@@ -183,7 +221,7 @@ export class SessionStrategy implements LoadBalancingStrategy {
 			// Usage windows: Anthropic accounts with proactive rate limit headers (usage-based accounts)
 			// No usage windows: Other account types or Anthropic console keys without usage windows
 			const anthropicWindowReset =
-				account.provider === "anthropic" && // Only for Anthropic accounts with usage windows
+				account.provider === PROVIDER_NAMES.ANTHROPIC && // Only for Anthropic accounts with usage windows
 				account.rate_limit_reset &&
 				account.rate_limit_reset < now - 1000; // 1 second buffer for clock skew protection
 

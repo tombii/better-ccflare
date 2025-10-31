@@ -63,6 +63,7 @@ When working with Claude API at scale, rate limits can become a significant bott
 - [CLI Commands](./cli.md) - Comprehensive command-line interface reference
 
 ### Operations
+- [Migration Guide: v2 to v3](./migration-v2-to-v3.md) - Upgrading from version 2.x to 3.x
 - [Deployment Guide](./deployment.md) - Production deployment with Docker, systemd, PM2, and Kubernetes
 - [Security Considerations](./security.md) - Authentication, encryption, and best practices
 - [Troubleshooting](./troubleshooting.md) - Common issues and solutions
