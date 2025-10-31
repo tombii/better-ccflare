@@ -73,11 +73,9 @@ export class SessionStrategy implements LoadBalancingStrategy {
 		// Non-Anthropic providers (API-key-based, etc.) should not have persistent sessions
 		// since they're pay-as-you-go and don't benefit from session stickiness
 		if (!requiresSessionDurationTracking(account.provider)) {
-			this.log.debug(`Session tracking disabled for provider: ${account.provider}, account: ${account.name}`);
 			return false;
 		}
 
-		this.log.debug(`Session tracking enabled for provider: ${account.provider}, account: ${account.name}`);
 		// For Anthropic providers: check if session is active (within duration window)
 		return !!account.session_start && now - account.session_start < this.sessionDurationMs;
 	}
@@ -143,6 +141,13 @@ export class SessionStrategy implements LoadBalancingStrategy {
 				activeAccount = account;
 				mostRecentSessionStart = account.session_start;
 			}
+		}
+
+		// Log session tracking decisions for debugging
+		if (activeAccount) {
+			this.log.debug(`Active session found for account ${activeAccount.name} (provider: ${activeAccount.provider})`);
+		} else {
+			this.log.debug(`No active sessions found, will select from available accounts`);
 		}
 
 		// If we have an active account and it's available, use it exclusively
