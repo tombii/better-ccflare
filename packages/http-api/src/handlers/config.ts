@@ -33,9 +33,11 @@ export function createConfigHandlers(
 				// Use actual running port from runtime, fall back to config
 				port:
 					runtime?.port || (settings.port as number) || NETWORK.DEFAULT_PORT,
+				// Use Anthropic fallback as default since it's the only provider that uses session duration tracking
+				// Non-Anthropic providers don't use fixed-duration sessions but still need a default value
 				sessionDurationMs:
 					(settings.sessionDurationMs as number) ||
-					TIME_CONSTANTS.SESSION_DURATION_FALLBACK,
+					TIME_CONSTANTS.ANTHROPIC_SESSION_DURATION_FALLBACK,
 				default_agent_model:
 					(settings.default_agent_model as string) || DEFAULT_AGENT_MODEL,
 				// Include actual TLS status
