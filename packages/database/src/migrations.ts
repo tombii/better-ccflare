@@ -320,7 +320,14 @@ export function runMigrations(db: Database, dbPath?: string): void {
 
 		// Run API key storage migration to move API keys from refresh_token to api_key field
 		// This is a data migration that should happen after all schema changes
-		runApiKeyStorageMigration(db);
+		try {
+			runApiKeyStorageMigration(db);
+		} catch (error) {
+			log.error(
+				`API key storage migration failed: ${(error as Error).message}`,
+			);
+			throw error;
+		}
 
 		// Check columns in oauth_sessions table
 		const oauthSessionsInfo = db
@@ -563,7 +570,7 @@ export function runMigrations(db: Database, dbPath?: string): void {
  * Run API key storage migration to move API keys from refresh_token to api_key field
  * This ensures API keys are stored in the correct field while preserving OAuth tokens
  */
-function runApiKeyStorageMigration(db: Database): void {
+export function runApiKeyStorageMigration(db: Database): void {
 	try {
 		// Update API-key providers to move API key from refresh_token to api_key field
 		// Only if api_key is null/undefined and refresh_token contains a value
@@ -572,25 +579,29 @@ function runApiKeyStorageMigration(db: Database): void {
 			UPDATE accounts
 			SET
 				api_key = refresh_token,
-				refresh_token = NULL,
-				access_token = NULL,
+				refresh_token = '',
+				access_token = '',
 				expires_at = NULL
 			WHERE
 				provider IN ('zai', 'openai-compatible', 'minimax', 'anthropic-compatible')
 				AND api_key IS NULL
 				AND refresh_token IS NOT NULL
 				AND refresh_token != ''
+				AND LENGTH(refresh_token) > 0
 		`;
 
 		const result = db.prepare(updateSql).run();
 		const updatedCount = (result.changes as number) || 0;
+		log.debug(
+			`API Key Migration: Updated ${updatedCount} API-key provider accounts from refresh_token to api_key field`,
+		);
 
 		// Also handle accounts where both api_key and refresh_token have the same value (duplicate storage)
 		const cleanupSql = `
 			UPDATE accounts
 			SET
-				refresh_token = NULL,
-				access_token = NULL,
+				refresh_token = '',
+				access_token = '',
 				expires_at = NULL
 			WHERE
 				provider IN ('zai', 'openai-compatible', 'minimax', 'anthropic-compatible')
@@ -607,8 +618,8 @@ function runApiKeyStorageMigration(db: Database): void {
 			UPDATE accounts
 			SET
 				api_key = refresh_token,
-				refresh_token = NULL,
-				access_token = NULL,
+				refresh_token = '',
+				access_token = '',
 				expires_at = NULL
 			WHERE
 				provider = 'anthropic'
