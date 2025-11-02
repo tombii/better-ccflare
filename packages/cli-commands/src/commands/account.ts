@@ -29,7 +29,8 @@ export interface AddAccountOptionsWithAdapter {
 		| "zai"
 		| "minimax"
 		| "anthropic-compatible"
-		| "openai-compatible";
+		| "openai-compatible"
+		| "nanogpt";
 	priority?: number;
 	customEndpoint?: string;
 	modelMappings?: { [key: string]: string };
@@ -47,7 +48,8 @@ export interface AccountListItemWithMode extends AccountListItem {
 		| "zai"
 		| "minimax"
 		| "anthropic-compatible"
-		| "openai-compatible";
+		| "openai-compatible"
+		| "nanogpt";
 }
 
 /**
@@ -211,6 +213,55 @@ async function createZaiAccount(
 }
 
 /**
+ * Create a NanoGPT account in the database
+ */
+async function createNanoGPTAccount(
+	dbOps: DatabaseOperations,
+	name: string,
+	apiKey: string,
+	priority: number,
+	customEndpoint?: string,
+): Promise<void> {
+	const accountId = crypto.randomUUID();
+	const now = Date.now();
+
+	// Validate inputs
+	const validatedApiKey = validateApiKey(apiKey, "NanoGPT API key");
+	const validatedPriority = validatePriority(priority, "priority");
+
+	// Validate and sanitize custom endpoint if provided
+	let validatedEndpoint = null;
+	if (customEndpoint) {
+		validatedEndpoint = validateEndpointUrl(customEndpoint, "custom endpoint");
+	}
+
+	dbOps.getDatabase().run(
+		`INSERT INTO accounts (
+			id, name, provider, api_key, refresh_token, access_token,
+			expires_at, created_at, request_count, total_requests, priority, custom_endpoint
+		) VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?)`,
+		[
+			accountId,
+			name,
+			"nanogpt",
+			validatedApiKey,
+			now,
+			0,
+			0,
+			validatedPriority,
+			validatedEndpoint,
+		],
+	);
+
+	console.log(`\nAccount '${name}' added successfully!`);
+	console.log("Type: NanoGPT (API key with subscription tracking)");
+	if (validatedEndpoint) {
+		console.log(`Endpoint: ${validatedEndpoint}`);
+	}
+	console.log(`Priority: ${validatedPriority}`);
+}
+
+/**
  * Prompt user for model mappings
  */
 async function promptModelMappings(
@@ -354,6 +405,10 @@ export async function addAccount(
 			{ label: "z.ai account (API key)", value: "zai" },
 			{ label: "Minimax account (API key)", value: "minimax" },
 			{
+				label: "NanoGPT account (API key with subscription)",
+				value: "nanogpt",
+			},
+			{
 				label: "Anthropic-compatible provider (API key)",
 				value: "anthropic-compatible",
 			},
@@ -368,6 +423,42 @@ export async function addAccount(
 		const apiKey = await adapter.input("\nEnter your z.ai API key: ");
 
 		await createZaiAccount(dbOps, name, apiKey, providedPriority || 0);
+	} else if (mode === "nanogpt") {
+		// Handle NanoGPT accounts with API keys
+		const apiKey = await adapter.input("\nEnter your NanoGPT API key: ");
+
+		// Get custom endpoint
+		let endpoint = customEndpoint;
+		if (!customEndpoint) {
+			const wantsCustomEndpoint = await adapter.select(
+				"\nDo you want to use a custom endpoint for this NanoGPT account?",
+				[
+					{ label: "No, use default endpoint", value: "no" },
+					{ label: "Yes, use custom endpoint", value: "yes" },
+				],
+			);
+
+			if (wantsCustomEndpoint === "yes") {
+				endpoint = await adapter.input(
+					"Enter custom endpoint URL (e.g., https://nano-gpt.com/api): ",
+				);
+			}
+		}
+
+		// Get priority
+		const priority =
+			providedPriority ??
+			(await adapter.input(
+				"\nEnter priority (0 = highest, lower number = higher priority, default 0): ",
+			));
+
+		await createNanoGPTAccount(
+			dbOps,
+			name,
+			apiKey,
+			typeof priority === "string" ? parseInt(priority) || 0 : priority || 0,
+			endpoint,
+		);
 	} else if (mode === "console") {
 		// Handle Console accounts - offer choice between OAuth and direct API key
 		const consoleMethod = await adapter.select(
@@ -602,7 +693,8 @@ export function getAccountsList(dbOps: DatabaseOperations): AccountListItem[] {
 				if (
 					account.provider === "zai" ||
 					account.provider === "minimax" ||
-					account.provider === "anthropic-compatible"
+					account.provider === "anthropic-compatible" ||
+					account.provider === "nanogpt"
 				) {
 					return account.provider;
 				}

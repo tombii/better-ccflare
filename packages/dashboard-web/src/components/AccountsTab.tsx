@@ -78,6 +78,7 @@ export function AccountsTab() {
 			| "console"
 			| "zai"
 			| "minimax"
+			| "nanogpt"
 			| "anthropic-compatible"
 			| "openai-compatible";
 		priority: number;
@@ -168,6 +169,23 @@ export function AccountsTab() {
 	}) => {
 		try {
 			await api.addAnthropicCompatibleAccount(params);
+			await loadAccounts();
+			setAdding(false);
+			setActionError(null);
+		} catch (err) {
+			setActionError(formatError(err));
+			throw err;
+		}
+	};
+
+	const handleAddNanoGPTAccount = async (params: {
+		name: string;
+		apiKey: string;
+		priority: number;
+		modelMappings?: { [key: string]: string };
+	}) => {
+		try {
+			await api.addNanoGPTAccount(params);
 			await loadAccounts();
 			setAdding(false);
 			setActionError(null);
@@ -357,6 +375,7 @@ export function AccountsTab() {
 								handleAddAnthropicCompatibleAccount
 							}
 							onAddOpenAIAccount={handleAddOpenAIAccount}
+							onAddNanoGPTAccount={handleAddNanoGPTAccount}
 							onCancel={() => {
 								setAdding(false);
 								setActionError(null);

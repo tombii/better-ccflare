@@ -131,6 +131,7 @@ export interface AccountListItem {
 		| "console"
 		| "zai"
 		| "minimax"
+		| "nanogpt"
 		| "anthropic-compatible"
 		| "openai-compatible";
 	priority: number;
@@ -146,6 +147,7 @@ export interface AddAccountOptions {
 		| "console"
 		| "zai"
 		| "minimax"
+		| "nanogpt"
 		| "anthropic-compatible"
 		| "openai-compatible";
 	priority?: number;

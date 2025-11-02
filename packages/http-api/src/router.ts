@@ -15,6 +15,7 @@ import {
 	createAccountsListHandler,
 	createAnthropicCompatibleAccountAddHandler,
 	createMinimaxAccountAddHandler,
+	createNanoGPTAccountAddHandler,
 	createOpenAIAccountAddHandler,
 	createZaiAccountAddHandler,
 } from "./handlers/accounts";
@@ -89,6 +90,7 @@ export class APIRouter {
 		const minimaxAccountAddHandler = createMinimaxAccountAddHandler(dbOps);
 		const anthropicCompatibleAccountAddHandler =
 			createAnthropicCompatibleAccountAddHandler(dbOps);
+		const nanoGPTAccountAddHandler = createNanoGPTAccountAddHandler(dbOps);
 		const openaiAccountAddHandler = createOpenAIAccountAddHandler(dbOps);
 		const _accountRemoveHandler = createAccountRemoveHandler(dbOps);
 		const requestsSummaryHandler = createRequestsSummaryHandler(db);
@@ -125,6 +127,9 @@ export class APIRouter {
 		);
 		this.handlers.set("POST:/api/accounts/anthropic-compatible", (req) =>
 			anthropicCompatibleAccountAddHandler(req),
+		);
+		this.handlers.set("POST:/api/accounts/nanogpt", (req) =>
+			nanoGPTAccountAddHandler(req),
 		);
 		this.handlers.set("POST:/api/accounts/openai-compatible", (req) =>
 			openaiAccountAddHandler(req),

@@ -109,15 +109,16 @@ export class OpenAICompatibleProvider extends BaseProvider {
 		_clientId: string,
 	): Promise<TokenRefreshResult> {
 		// OpenAI-compatible providers use API keys, not OAuth tokens
-		// Store the API key in refresh_token field for consistency
-		if (!account.refresh_token) {
+		// Prioritize api_key field, fall back to refresh_token for backward compatibility
+		const apiKey = account.api_key || account.refresh_token;
+		if (!apiKey) {
 			throw new Error(`No API key available for account ${account.name}`);
 		}
 
 		// For API key based providers, we don't need to refresh tokens
 		// Just return the existing API key as both access and refresh token
 		return {
-			accessToken: account.refresh_token,
+			accessToken: apiKey,
 			expiresAt: Date.now() + 365 * 24 * 60 * 60 * 1000, // 1 year from now
 			refreshToken: "", // Empty string prevents DB update for API key accounts
 		};
