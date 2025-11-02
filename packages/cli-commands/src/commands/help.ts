@@ -10,7 +10,7 @@ Commands:
     Add a new account using OAuth or API key
     --mode: Account type (optional, will prompt if not provided)
       claude-oauth: Claude CLI OAuth account (OAuth)
-      console: Claude API account (OAuth)
+      console: Claude API account (API key)
       zai: z.ai account (API key)
       minimax: Minimax account (API key)
       anthropic-compatible: Anthropic-compatible provider (API key)

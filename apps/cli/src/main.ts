@@ -723,7 +723,7 @@ Options:
   --add-account <name> Add a new account
     --mode <claude-oauth|console|zai|minimax|nanogpt|anthropic-compatible|openai-compatible>  Account mode (default: claude-oauth)
       claude-oauth: Claude CLI account (OAuth)
-      console: Claude API account (OAuth)
+      console: Claude API account (API key)
       zai: z.ai account (API key)
       minimax: Minimax account (API key)
       nanogpt: NanoGPT account (API key with subscription tracking)
