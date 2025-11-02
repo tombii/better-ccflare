@@ -221,7 +221,6 @@ async function createNanoGPTAccount(
 	name: string,
 	apiKey: string,
 	priority: number,
-	customEndpoint?: string,
 ): Promise<void> {
 	const accountId = crypto.randomUUID();
 	const now = Date.now();
@@ -230,17 +229,11 @@ async function createNanoGPTAccount(
 	const validatedApiKey = validateApiKey(apiKey, "NanoGPT API key");
 	const validatedPriority = validatePriority(priority, "priority");
 
-	// Validate and sanitize custom endpoint if provided
-	let validatedEndpoint = null;
-	if (customEndpoint) {
-		validatedEndpoint = validateEndpointUrl(customEndpoint, "custom endpoint");
-	}
-
 	dbOps.getDatabase().run(
 		`INSERT INTO accounts (
 			id, name, provider, api_key, refresh_token, access_token,
 			expires_at, created_at, request_count, total_requests, priority, custom_endpoint
-		) VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?)`,
+		) VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, NULL)`,
 		[
 			accountId,
 			name,
@@ -250,15 +243,11 @@ async function createNanoGPTAccount(
 			0,
 			0,
 			validatedPriority,
-			validatedEndpoint,
 		],
 	);
 
 	console.log(`\nAccount '${name}' added successfully!`);
 	console.log("Type: NanoGPT (API key with subscription tracking)");
-	if (validatedEndpoint) {
-		console.log(`Endpoint: ${validatedEndpoint}`);
-	}
 	console.log(`Priority: ${validatedPriority}`);
 }
 
@@ -458,7 +447,6 @@ export async function addAccount(
 			name,
 			apiKey,
 			Number(priority) || 0,
-			endpoint,
 		);
 	} else if (mode === "console") {
 		// Handle Console accounts - offer choice between OAuth and direct API key
@@ -717,6 +705,14 @@ export function removeAccount(
 	name: string,
 ): { success: boolean; message: string } {
 	const db = dbOps.getDatabase();
+
+	// Validate account name to prevent SQL injection
+	if (name.includes('%') || name.includes('_') || name.includes('*') || name.includes('?')) {
+		return {
+			success: false,
+			message: `Invalid account name: contains SQL wildcard characters`,
+		};
+	}
 
 	// Get the account ID before deletion to clear the cache
 	const existingAccount = db

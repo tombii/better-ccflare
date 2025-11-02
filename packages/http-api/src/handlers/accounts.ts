@@ -1186,6 +1186,11 @@ export function createNanoGPTAccountAddHandler(dbOps: DatabaseOperations) {
 		try {
 			const body = await req.json();
 
+			// Reject OAuth-based account creation for NanoGPT accounts
+			if (body.oauthFlow || body.authCode) {
+				return errorResponse(BadRequest("OAuth is not supported for NanoGPT accounts"));
+			}
+
 			// Validate account name
 			const name = validateString(body.name, "name", {
 				required: true,

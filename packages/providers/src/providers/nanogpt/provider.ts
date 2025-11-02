@@ -93,7 +93,10 @@ export class NanoGPTProvider extends OpenAICompatibleProvider {
 
 		// Start polling with the usage cache system using the same interval as Anthropic (~90 seconds)
 		// Note: We're using the provider name "nanogpt" which will be checked by the cache system
-		usageCache.startPolling(account.id, tokenProvider, this.name, intervalMs);
+		// Prevent duplicate polling by checking if already polling
+		if (!usageCache.isPolling(account.id)) {
+			usageCache.startPolling(account.id, tokenProvider, this.name, intervalMs);
+		}
 	}
 
 	/**
@@ -185,7 +188,10 @@ export class NanoGPTProvider extends OpenAICompatibleProvider {
 		}
 
 		// Start polling for usage data with 90-second interval (like Anthropic)
-		this.startPolling(account, 90000);
+		// Prevent duplicate polling by checking if already polling
+		if (!usageCache.isPolling(account.id)) {
+			this.startPolling(account, 90000);
+		}
 
 		// Call parent implementation for API key handling
 		return super.refreshToken(account, clientId);
@@ -212,6 +218,22 @@ export class NanoGPTProvider extends OpenAICompatibleProvider {
 		}
 
 		return `${defaultEndpoint}${nanoGPTPath}${query}`;
+	}
+
+	/**
+	 * Override prepareHeaders to handle model mapping for NanoGPT
+	 */
+	prepareHeaders(
+		headers: Headers,
+		accessToken?: string,
+		apiKey?: string,
+	): Headers {
+		const newHeaders = super.prepareHeaders(headers, accessToken, apiKey);
+
+		// Add required OpenAI-compatible headers for NanoGPT
+		newHeaders.set("Content-Type", "application/json");
+
+		return newHeaders;
 	}
 
 	/**

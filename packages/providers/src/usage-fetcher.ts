@@ -128,6 +128,13 @@ class UsageCache {
 	private tokenProviders = new Map<string, AccessTokenProvider>();
 
 	/**
+	 * Check if an account is currently being polled
+	 */
+	isPolling(accountId: string): boolean {
+		return this.polling.has(accountId);
+	}
+
+	/**
 	 * Start polling for an account's usage data
 	 */
 	startPolling(
