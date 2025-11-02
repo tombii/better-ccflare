@@ -15,7 +15,7 @@ https://github.com/user-attachments/assets/c859872f-ca5e-4f8b-b6a0-7cc7461fe62a
 ## Why better-ccflare?
 
 - **🚀 Zero Rate Limit Errors** - Automatically distribute requests across multiple accounts
-- **🤖 Multi-Provider Support** - Setup Claude OAuth, Claude API console, z.ai, Minimax, Anthropic-compatible, and OpenAI-compatible accounts and prioritize in which order they are used
+- **🤖 Multi-Provider Support** - Setup Claude OAuth, Claude API console, z.ai, Minimax, NanoGPT, Anthropic-compatible, and OpenAI-compatible accounts and prioritize in which order they are used
 - **🔗 Custom API Endpoints** - Configure custom endpoints for Anthropic and Zai accounts for enterprise deployments
 - **☁️ OpenAI-Compatible Support** - Use OpenAI-compatible providers like OpenRouter, Together AI, and more with Claude API format
 - **🔄 Smart Auto-Fallback** - Automatically switch back to preferred accounts when their rate limits reset
@@ -492,7 +492,7 @@ No `NODE_OPTIONS` needed - Traefik provides trusted certificates automatically!
 ### ☁️ Multi-Provider Support
 - **Claude OAuth** - Anthropic OAuth accounts with 5-hour usage windows and session tracking (rate limit window based)
 - **Claude Console API** - Anthropic API key accounts with pay-as-you-go model (no session tracking)
-- **z.ai, Minimax** - API key based providers with pay-as-you-go model
+- **z.ai, Minimax, NanoGPT** - API key based providers with pay-as-you-go model (NanoGPT includes subscription tracking)
 - **Anthropic-Compatible** - Custom Anthropic-compatible providers with pay-as-you-go model
 - **OpenAI-Compatible** - OpenAI-compatible providers (OpenRouter, Together AI, etc.) with Claude API format
 - **Universal API Format** - Use OpenAI-compatible providers (OpenRouter, Together AI, etc.) with Claude API format

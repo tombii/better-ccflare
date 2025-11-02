@@ -863,6 +863,8 @@ Examples:
 				if (
 					mode === "zai" ||
 					mode === "nanogpt" ||
+					mode === "minimax" ||
+					mode === "anthropic-compatible" ||
 					mode === "openai-compatible"
 				) {
 					apiKey =

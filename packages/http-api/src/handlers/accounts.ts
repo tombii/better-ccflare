@@ -129,11 +129,44 @@ export function createAccountsListHandler(db: Database) {
 
 			// Get usage data from cache for Anthropic accounts
 			const usageData = usageCache.get(account.id);
-			const usageUtilization = getRepresentativeUtilization(usageData);
-			const usageWindow = getRepresentativeWindow(usageData);
+			let usageUtilization = getRepresentativeUtilization(usageData);
+			let usageWindow = getRepresentativeWindow(usageData);
+
+			// For NanoGPT accounts, calculate utilization from subscription data
+			if (account.provider === "nanogpt" && usageData) {
+				try {
+					const nanoGPTUsage =
+						typeof usageData === "string" ? JSON.parse(usageData) : usageData;
+					if (nanoGPTUsage && typeof nanoGPTUsage === "object") {
+						// Use the higher of daily or monthly utilization percentage
+						const dailyUtilization = nanoGPTUsage.daily?.percentUsed || 0;
+						const monthlyUtilization = nanoGPTUsage.monthly?.percentUsed || 0;
+						usageUtilization = Math.max(dailyUtilization, monthlyUtilization);
+						usageWindow =
+							dailyUtilization > monthlyUtilization ? "daily" : "monthly";
+					}
+				} catch (_error) {
+					// If parsing fails, keep the original utilization values
+				}
+			}
 
 			// Include full usage data for Anthropic accounts to show multiple windows
-			const fullUsageData = account.provider === "anthropic" ? usageData : null;
+			// For NanoGPT accounts, include subscription usage data if available
+			let fullUsageData = null;
+			if (account.provider === "anthropic") {
+				fullUsageData = usageData;
+			} else if (account.provider === "nanogpt" && usageData) {
+				// NanoGPT subscription data is stored as JSON string in the cache
+				// Parse it to make it available to the UI
+				try {
+					const nanoGPTUsage =
+						typeof usageData === "string" ? JSON.parse(usageData) : usageData;
+					fullUsageData = nanoGPTUsage;
+				} catch (_error) {
+					// If parsing fails, don't include the data
+					fullUsageData = null;
+				}
+			}
 
 			// Parse model mappings for OpenAI-compatible providers
 			let modelMappings: { [key: string]: string } | null = null;

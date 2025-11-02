@@ -456,7 +456,7 @@ export async function addAccount(
 			dbOps,
 			name,
 			apiKey,
-			typeof priority === "string" ? parseInt(priority) || 0 : priority || 0,
+			Number(priority) || 0,
 			endpoint,
 		);
 	} else if (mode === "console") {
@@ -545,7 +545,7 @@ export async function addAccount(
 			name,
 			apiKey,
 			endpoint,
-			typeof priority === "string" ? parseInt(priority) || 0 : priority || 0,
+			Number(priority) || 0,
 			finalModelMappings,
 		);
 	} else if (mode === "minimax") {
@@ -585,7 +585,7 @@ export async function addAccount(
 			dbOps,
 			name,
 			apiKey,
-			typeof priority === "string" ? parseInt(priority) || 0 : priority || 0,
+			Number(priority) || 0,
 			endpoint,
 			finalModelMappings,
 		);

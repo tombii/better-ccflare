@@ -8,6 +8,7 @@ export const PROVIDER_NAMES = {
 	MINIMAX: "minimax",
 	ANTHROPIC_COMPATIBLE: "anthropic-compatible",
 	OPENAI_COMPATIBLE: "openai-compatible",
+	NANOGPT: "nanogpt",
 } as const;
 
 export type ProviderName = (typeof PROVIDER_NAMES)[keyof typeof PROVIDER_NAMES];
@@ -72,6 +73,12 @@ export const PROVIDER_CONFIG: Record<ProviderName, ProviderConfig> = {
 		supportsUsageTracking: false, // OpenAI-compatible providers typically don't support usage tracking
 		supportsOAuth: false, // OpenAI-compatible uses API key authentication
 		defaultEndpoint: "https://api.anthropic.com", // Default, can be overridden via custom endpoint
+	},
+	[PROVIDER_NAMES.NANOGPT]: {
+		requiresSessionTracking: false, // NanoGPT is pay-as-you-go with subscription tracking
+		supportsUsageTracking: true, // NanoGPT supports usage tracking via subscription API
+		supportsOAuth: false, // NanoGPT uses API key authentication
+		defaultEndpoint: "https://nano-gpt.com", // Fixed endpoint for NanoGPT
 	},
 } as const satisfies Record<ProviderName, ProviderConfig>;
 

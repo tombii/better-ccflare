@@ -15,7 +15,6 @@ describe("NanoGPTProvider", () => {
 			access_token: null,
 			expires_at: null,
 			api_key: "test-api-key",
-			account_tier: 5,
 			custom_endpoint: "https://nano-gpt.com/api",
 			rate_limited_until: null,
 			rate_limit_status: null,

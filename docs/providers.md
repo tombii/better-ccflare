@@ -4,11 +4,21 @@
 
 ### Currently Supported Providers
 - **Anthropic** - Single provider with two modes:
-  - **console mode**: Standard Claude API (console.anthropic.com)
-  - **max mode**: Claude Code (claude.ai)
+  - **claude-oauth mode**: Claude OAuth accounts (OAuth authentication)
+  - **console mode**: Claude API key accounts (API key authentication)
 - **Z.ai** - Claude proxy service with API key authentication:
   - Lite, Pro, and Max plans with higher rate limits than direct Claude API
   - Uses API key authentication (no OAuth support)
+- **NanoGPT** - OpenAI-compatible service with subscription tracking:
+  - API key authentication with detailed usage tracking
+  - Subscription-based daily/monthly limits
+  - Fixed endpoint at https://nano-gpt.com (no custom endpoints)
+- **Minimax** - API key provider:
+  - Uses API key authentication (no OAuth support)
+- **Anthropic-Compatible** - Generic provider for Anthropic-compatible APIs:
+  - Supports custom endpoints for Anthropic-compatible services
+  - API key authentication only
+  - Automatic format conversion between different API standards
 - **OpenAI-Compatible** - Generic provider for any OpenAI-compatible API:
   - Supports custom endpoints (OpenRouter, Together AI, local models, etc.)
   - API key authentication only
@@ -41,15 +51,31 @@ The better-ccflare providers system is a modular architecture designed to suppor
 ### Supported Providers
 
 1. **Anthropic Provider** - Provides access to:
-   - **Claude API** (console mode) - Standard API access via console.anthropic.com
-   - **Claude Code** (max mode) - Enhanced access via claude.ai
+   - **Claude OAuth** (claude-oauth mode) - OAuth-based Claude accounts with session management
+   - **Claude API** (console mode) - API key-based Claude accounts with pay-as-you-go model
 
 2. **Z.ai Provider** - Provides access to:
    - **Z.ai API** - Claude proxy service with enhanced rate limits
    - Uses API key authentication instead of OAuth
    - Supports Lite, Pro, and Max plans with ~3× the usage quota of equivalent Claude plans
 
-3. **OpenAI-Compatible Provider** - Provides access to:
+3. **NanoGPT Provider** - Provides access to:
+   - **NanoGPT API** - OpenAI-compatible service with subscription tracking
+   - Uses API key authentication with daily/monthly usage limits
+   - Subscription-based rate limiting with detailed usage tracking
+   - Fixed endpoint (no custom endpoints allowed)
+
+4. **Minimax Provider** - Provides access to:
+   - **Minimax API** - API key-based service
+   - Uses API key authentication instead of OAuth
+
+5. **Anthropic-Compatible Provider** - Provides access to:
+   - **Any Anthropic-compatible API** - Services that implement Anthropic API format
+   - Uses API key authentication
+   - Automatic format conversion between different API standards
+   - Supports custom endpoints for maximum flexibility
+
+6. **OpenAI-Compatible Provider** - Provides access to:
    - **Any OpenAI-compatible API** - OpenRouter, Together AI, local models, etc.
    - Uses API key authentication
    - Automatic format conversion between Anthropic and OpenAI API formats
@@ -187,8 +213,8 @@ getOAuthConfig(mode: "console" | "claude-oauth" = "console"): OAuthConfig {
 ```
 
 **Mode Differences:**
-- **console mode**: Uses the standard Claude API via console.anthropic.com
-- **max mode**: Uses Claude Code via claude.ai for enhanced capabilities
+- **console mode**: API key-based Claude accounts (uses console.anthropic.com for API keys, pay-as-you-go model)
+- **claude-oauth mode**: OAuth-based Claude accounts (uses claude.ai for OAuth authentication, session-based model)
 - Both modes use the same API endpoint (api.anthropic.com) for actual requests
 
 **Client ID Configuration:**
@@ -413,10 +439,10 @@ buildUrl(path: string, query: string): string {
 }
 ```
 
-**Important**: Both console and max modes use the same API endpoint. The mode only affects:
-- OAuth authorization flow (which frontend to use)
+**Important**: Both console and claude-oauth modes use the same API endpoint. The mode only affects:
+- Authentication method (API key vs OAuth)
+- Account management (session-based for OAuth vs pay-as-you-go for API key)
 - Account priority configuration
-- Rate limits based on subscription type
 
 ### Key Features
 
@@ -599,7 +625,7 @@ When rate limited, accounts are temporarily blocked:
 The system supports two authentication methods:
 
 1. **OAuth Authentication** (Recommended)
-   - Used for both console and max modes
+   - Used for claude-oauth mode (OAuth-based Claude accounts)
    - Provides automatic token refresh
    - Better security with short-lived access tokens
    - Supports PKCE for enhanced security
