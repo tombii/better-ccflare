@@ -12,6 +12,7 @@ import {
 	getOAuthProvider,
 	type TokenRefreshResult as TokenResult,
 } from "@better-ccflare/providers";
+import { usageCache } from "@better-ccflare/providers";
 import type { AccountListItem } from "@better-ccflare/types";
 import {
 	type PromptAdapter,
@@ -716,6 +717,12 @@ export function removeAccount(
 	name: string,
 ): { success: boolean; message: string } {
 	const db = dbOps.getDatabase();
+
+	// Get the account ID before deletion to clear the cache
+	const existingAccount = db
+		.prepare("SELECT id FROM accounts WHERE name = ?")
+		.get(name) as { id: string } | undefined;
+
 	const result = db.run("DELETE FROM accounts WHERE name = ?", [name]);
 
 	if (result.changes === 0) {
@@ -723,6 +730,11 @@ export function removeAccount(
 			success: false,
 			message: `Account '${name}' not found`,
 		};
+	}
+
+	// Clear usage cache for the deleted account if it existed
+	if (existingAccount) {
+		usageCache.delete(existingAccount.id);
 	}
 
 	return {

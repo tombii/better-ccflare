@@ -235,6 +235,17 @@ class UsageCache {
 	}
 
 	/**
+	 * Delete cached data for a specific account (e.g., when account is deleted)
+	 */
+	delete(accountId: string) {
+		// Stop polling for this account if it exists
+		this.stopPolling(accountId);
+		// Remove from cache
+		this.cache.delete(accountId);
+		log.info(`Cleared usage cache for account ${accountId}`);
+	}
+
+	/**
 	 * Clear all cached data and stop all polling
 	 */
 	clear() {
