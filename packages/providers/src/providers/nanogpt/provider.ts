@@ -188,10 +188,8 @@ export class NanoGPTProvider extends OpenAICompatibleProvider {
 		}
 
 		// Start polling for usage data with 90-second interval (like Anthropic)
-		// Prevent duplicate polling by checking if already polling
-		if (!usageCache.isPolling(account.id)) {
-			this.startPolling(account, 90000);
-		}
+		// The startPolling method handles duplicate polling prevention internally
+		this.startPolling(account, 90000);
 
 		// Call parent implementation for API key handling
 		return super.refreshToken(account, clientId);
@@ -243,10 +241,31 @@ export class NanoGPTProvider extends OpenAICompatibleProvider {
 		response: Response,
 		account: Account | null,
 	): Promise<Response> {
-		// Check if this is a subscription usage request
+		// Check if this is a NanoGPT account
 		if (account && account.provider === "nanogpt") {
-			// Check if we need to validate subscription status
-			// For now, just pass through the response
+			// Check if the response indicates subscription-related issues
+			if (response.status === 401 || response.status === 403) {
+				// Unauthorized or Forbidden - could indicate subscription issues
+				log.warn(
+					`NanoGPT account ${account.name} returned status ${response.status}, may need subscription check`,
+				);
+			} else if (response.status === 429) {
+				// Rate limited - check if it's related to subscription limits
+				log.info(
+					`NanoGPT account ${account.name} is rate limited, checking subscription status`,
+				);
+			} else if (response.status >= 400) {
+				// For other error statuses, we might want to check subscription status
+				const responseBody = await response.clone().text();
+				if (
+					responseBody.includes("subscription") ||
+					responseBody.includes("limit")
+				) {
+					log.warn(
+						`NanoGPT account ${account.name} returned error related to subscription: ${responseBody}`,
+					);
+				}
+			}
 		}
 
 		return super.processResponse(response, account);

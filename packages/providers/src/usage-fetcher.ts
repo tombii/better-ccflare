@@ -225,11 +225,22 @@ class UsageCache {
 	}
 
 	/**
-	 * Get cached usage data for an account
+	 * Get cached usage data for an account with automatic cleanup of stale entries
 	 */
 	get(accountId: string): UsageData | null {
 		const cached = this.cache.get(accountId);
-		return cached?.data ?? null;
+		if (!cached) return null;
+
+		// Check if the cached data is stale (older than 5 minutes) and clean it up
+		const age = Date.now() - cached.timestamp;
+		const MAX_AGE = 5 * 60 * 1000; // 5 minutes in milliseconds
+
+		if (age > MAX_AGE) {
+			this.cache.delete(accountId);
+			return null;
+		}
+
+		return cached.data;
 	}
 
 	/**
@@ -239,6 +250,26 @@ class UsageCache {
 		const cached = this.cache.get(accountId);
 		if (!cached) return null;
 		return Date.now() - cached.timestamp;
+	}
+
+	/**
+	 * Clean up all stale entries from the cache
+	 */
+	cleanupStaleEntries(maxAgeMs: number = 5 * 60 * 1000) {
+		// Default to 5 minutes
+		const now = Date.now();
+		let cleanedCount = 0;
+
+		for (const [accountId, cached] of this.cache.entries()) {
+			if (now - cached.timestamp > maxAgeMs) {
+				this.cache.delete(accountId);
+				cleanedCount++;
+			}
+		}
+
+		if (cleanedCount > 0) {
+			log.debug(`Cleaned up ${cleanedCount} stale entries from usage cache`);
+		}
 	}
 
 	/**
@@ -266,3 +297,11 @@ class UsageCache {
 
 // Export singleton instance
 export const usageCache = new UsageCache();
+
+// Start periodic cleanup of stale entries every 10 minutes
+setInterval(
+	() => {
+		usageCache.cleanupStaleEntries();
+	},
+	10 * 60 * 1000,
+); // 10 minutes

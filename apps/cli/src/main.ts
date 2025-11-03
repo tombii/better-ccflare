@@ -61,6 +61,15 @@ import { Logger } from "@better-ccflare/logger";
 // Import server
 import startServer from "@better-ccflare/server";
 
+// Define API key modes for reuse to avoid duplication
+const API_KEY_MODES = new Set([
+	"zai",
+	"nanogpt",
+	"minimax",
+	"anthropic-compatible",
+	"openai-compatible",
+]);
+
 interface ParsedArgs {
 	version: boolean;
 	help: boolean;
@@ -860,13 +869,7 @@ Examples:
 
 				// For API key accounts, we need to get the API key from environment or user
 				let apiKey = "";
-				if (
-					mode === "zai" ||
-					mode === "nanogpt" ||
-					mode === "minimax" ||
-					mode === "anthropic-compatible" ||
-					mode === "openai-compatible"
-				) {
+				if (API_KEY_MODES.has(mode)) {
 					apiKey =
 						process.env[
 							`BETTER_CCFLARE_API_KEY_${parsed.addAccount.toUpperCase()}`

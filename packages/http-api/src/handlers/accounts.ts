@@ -1188,7 +1188,9 @@ export function createNanoGPTAccountAddHandler(dbOps: DatabaseOperations) {
 
 			// Reject OAuth-based account creation for NanoGPT accounts
 			if (body.oauthFlow || body.authCode) {
-				return errorResponse(BadRequest("OAuth is not supported for NanoGPT accounts"));
+				return errorResponse(
+					BadRequest("OAuth is not supported for NanoGPT accounts"),
+				);
 			}
 
 			// Validate account name
@@ -1222,6 +1224,13 @@ export function createNanoGPTAccountAddHandler(dbOps: DatabaseOperations) {
 					integer: true,
 				}) || 0;
 
+			// Validate that no custom endpoint is provided for NanoGPT accounts (it's not supported)
+			if (body.customEndpoint) {
+				return errorResponse(
+					BadRequest("NanoGPT accounts do not support custom endpoints"),
+				);
+			}
+
 			// Validate and sanitize model mappings (optional)
 			let modelMappings = null;
 			if (body.modelMappings && typeof body.modelMappings === "object") {
@@ -1245,14 +1254,14 @@ export function createNanoGPTAccountAddHandler(dbOps: DatabaseOperations) {
 					name,
 					"nanogpt",
 					apiKey,
-					apiKey, // Use API key as refresh token for consistency with CLI
-					apiKey, // Use API key as access token
+					null, // No refresh token for API key accounts
+					null, // No access token for API key accounts
 					now + 365 * 24 * 60 * 60 * 1000, // 1 year from now
 					now,
 					0,
 					0,
 					priority,
-					null, // No custom endpoint for NanoGPT
+					null, // No custom endpoint for NanoGPT - always null
 					modelMappings,
 				],
 			);

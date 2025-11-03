@@ -11,8 +11,8 @@ import { createOAuthFlow } from "@better-ccflare/oauth-flow";
 import {
 	getOAuthProvider,
 	type TokenRefreshResult as TokenResult,
+	usageCache,
 } from "@better-ccflare/providers";
-import { usageCache } from "@better-ccflare/providers";
 import type { AccountListItem } from "@better-ccflare/types";
 import {
 	type PromptAdapter,
@@ -243,6 +243,7 @@ async function createNanoGPTAccount(
 			0,
 			0,
 			validatedPriority,
+			null, // custom_endpoint is always null for NanoGPT
 		],
 	);
 
@@ -417,24 +418,6 @@ export async function addAccount(
 		// Handle NanoGPT accounts with API keys
 		const apiKey = await adapter.input("\nEnter your NanoGPT API key: ");
 
-		// Get custom endpoint
-		let endpoint = customEndpoint;
-		if (!customEndpoint) {
-			const wantsCustomEndpoint = await adapter.select(
-				"\nDo you want to use a custom endpoint for this NanoGPT account?",
-				[
-					{ label: "No, use default endpoint", value: "no" },
-					{ label: "Yes, use custom endpoint", value: "yes" },
-				],
-			);
-
-			if (wantsCustomEndpoint === "yes") {
-				endpoint = await adapter.input(
-					"Enter custom endpoint URL (e.g., https://nano-gpt.com/api): ",
-				);
-			}
-		}
-
 		// Get priority
 		const priority =
 			providedPriority ??
@@ -442,12 +425,7 @@ export async function addAccount(
 				"\nEnter priority (0 = highest, lower number = higher priority, default 0): ",
 			));
 
-		await createNanoGPTAccount(
-			dbOps,
-			name,
-			apiKey,
-			Number(priority) || 0,
-		);
+		await createNanoGPTAccount(dbOps, name, apiKey, Number(priority) || 0);
 	} else if (mode === "console") {
 		// Handle Console accounts - offer choice between OAuth and direct API key
 		const consoleMethod = await adapter.select(
@@ -707,7 +685,12 @@ export function removeAccount(
 	const db = dbOps.getDatabase();
 
 	// Validate account name to prevent SQL injection
-	if (name.includes('%') || name.includes('_') || name.includes('*') || name.includes('?')) {
+	if (
+		name.includes("%") ||
+		name.includes("_") ||
+		name.includes("*") ||
+		name.includes("?")
+	) {
 		return {
 			success: false,
 			message: `Invalid account name: contains SQL wildcard characters`,
