@@ -37,7 +37,19 @@ export class NanoGPTProvider extends OpenAICompatibleProvider {
 	name = "nanogpt";
 
 	// Cache for active fetch promises to prevent duplicate API calls for the same account
-	private activeFetchPromises = new Map<string, Promise<NanoGPTSubscriptionUsage | null>>();
+	private activeFetchPromises = new Map<
+		string,
+		Promise<NanoGPTSubscriptionUsage | null>
+	>();
+
+	/**
+	 * Cleanup method to clear active fetch promises and prevent memory leaks
+	 */
+	cleanup() {
+		// Clear all active fetch promises to prevent memory leaks
+		this.activeFetchPromises.clear();
+		log.debug("NanoGPT provider cleanup completed");
+	}
 
 	/**
 	 * Fetch NanoGPT subscription usage data with promise pooling to prevent duplicate requests
@@ -49,6 +61,14 @@ export class NanoGPTProvider extends OpenAICompatibleProvider {
 		// Let's create a hash of the API key to use as an identifier
 		// However, this approach has limitations as we can't easily identify which account this is for
 		// Instead, we'll handle the promise pooling in the checkSubscriptionUsage method where we have the account ID
+
+		// Add timeout handling to prevent hanging requests
+		const controller = new AbortController();
+		const timeoutId = setTimeout(() => {
+			controller.abort();
+			log.warn("NanoGPT API request timed out after 10 seconds");
+		}, 10000); // 10 second timeout
+
 		try {
 			const response = await fetch(
 				"https://nano-gpt.com/api/subscription/v1/usage",
@@ -56,6 +76,7 @@ export class NanoGPTProvider extends OpenAICompatibleProvider {
 					headers: {
 						Authorization: `Bearer ${apiKey}`,
 					},
+					signal: controller.signal,
 				},
 			);
 
@@ -69,8 +90,14 @@ export class NanoGPTProvider extends OpenAICompatibleProvider {
 			const subscriptionData = await response.json();
 			return subscriptionData as NanoGPTSubscriptionUsage;
 		} catch (error) {
-			log.error(`Error fetching NanoGPT subscription usage:`, error);
+			if (error instanceof Error && error.name === "AbortError") {
+				log.error("NanoGPT API request was aborted due to timeout");
+			} else {
+				log.error(`Error fetching NanoGPT subscription usage:`, error);
+			}
 			return null;
+		} finally {
+			clearTimeout(timeoutId);
 		}
 	}
 
@@ -150,7 +177,8 @@ export class NanoGPTProvider extends OpenAICompatibleProvider {
 		const existingPromise = this.activeFetchPromises.get(account.id);
 		if (existingPromise) {
 			// Return the existing promise if one is already in flight for this account
-			return existingPromise.then(subscriptionData => {
+			try {
+				const subscriptionData = await existingPromise;
 				if (subscriptionData) {
 					return {
 						subscription: subscriptionData,
@@ -158,7 +186,15 @@ export class NanoGPTProvider extends OpenAICompatibleProvider {
 					};
 				}
 				return null;
-			});
+			} catch (error) {
+				// If the existing promise fails, log and continue with a new request
+				log.warn(
+					`Existing fetch promise failed for account ${account.name}, retrying:`,
+					error,
+				);
+				// Clean up the failed promise from the map
+				this.activeFetchPromises.delete(account.id);
+			}
 		}
 
 		// Create a new promise for this fetch operation
@@ -177,6 +213,12 @@ export class NanoGPTProvider extends OpenAICompatibleProvider {
 				subscription: subscriptionData,
 				lastChecked: Date.now(),
 			};
+		} catch (error) {
+			log.error(
+				`Failed to fetch NanoGPT usage data for account ${account.name}:`,
+				error,
+			);
+			return null;
 		} finally {
 			// Clean up the promise from the map when the operation completes (success or failure)
 			this.activeFetchPromises.delete(account.id);

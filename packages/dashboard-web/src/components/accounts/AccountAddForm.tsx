@@ -383,6 +383,10 @@ export function AccountAddForm({
 							}
 							placeholder="e.g., work-account or user@example.com"
 						/>
+						<p className="text-xs text-muted-foreground">
+							Valid characters: letters, numbers, spaces, hyphens (-),
+							underscores (_), dots (.), and @ symbols. Maximum 100 characters.
+						</p>
 					</div>
 					<div className="space-y-2">
 						<Label htmlFor="mode">Mode</Label>

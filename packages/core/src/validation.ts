@@ -327,8 +327,10 @@ export const patterns = {
 	uuid: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
 	alphanumeric: /^[a-zA-Z0-9]+$/,
 	alphanumericWithSpaces: /^[a-zA-Z0-9\s]+$/,
-	// Account name: alphanumeric with spaces, hyphens, underscores, plus @ and . for email addresses
-	accountName: /^[a-zA-Z0-9\s\-_@.+]+$/,
+	// Account name: more restrictive pattern to prevent SQL injection and other attacks
+	// Allows only alphanumeric characters, spaces, hyphens, underscores, @, and . (1-100 chars)
+	// Excludes special characters that could be used in SQL injection attacks
+	accountName: /^[a-zA-Z0-9\s\-_@.]{1,100}$/,
 	// Path pattern for API endpoints
 	apiPath: /^\/v1\/[a-zA-Z0-9\-_/]*$/,
 	// URL pattern
