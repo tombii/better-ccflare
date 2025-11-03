@@ -36,12 +36,19 @@ interface NanoGPTSubscriptionUsage {
 export class NanoGPTProvider extends OpenAICompatibleProvider {
 	name = "nanogpt";
 
+	// Cache for active fetch promises to prevent duplicate API calls for the same account
+	private activeFetchPromises = new Map<string, Promise<NanoGPTSubscriptionUsage | null>>();
+
 	/**
-	 * Fetch NanoGPT subscription usage data
+	 * Fetch NanoGPT subscription usage data with promise pooling to prevent duplicate requests
 	 */
 	private async fetchNanoGPTUsageData(
 		apiKey: string,
 	): Promise<NanoGPTSubscriptionUsage | null> {
+		// We need an account identifier to implement the promise pooling, but we only have the API key here
+		// Let's create a hash of the API key to use as an identifier
+		// However, this approach has limitations as we can't easily identify which account this is for
+		// Instead, we'll handle the promise pooling in the checkSubscriptionUsage method where we have the account ID
 		try {
 			const response = await fetch(
 				"https://nano-gpt.com/api/subscription/v1/usage",
@@ -139,34 +146,39 @@ export class NanoGPTProvider extends OpenAICompatibleProvider {
 			return null;
 		}
 
-		try {
-			const response = await fetch(
-				"https://nano-gpt.com/api/subscription/v1/usage",
-				{
-					headers: {
-						Authorization: `Bearer ${apiKey}`,
-					},
-				},
-			);
-
-			if (!response.ok) {
-				log.error(
-					`Failed to fetch NanoGPT subscription usage: ${response.status} ${response.statusText}`,
-				);
+		// Implement promise pooling to prevent duplicate API calls for the same account
+		const existingPromise = this.activeFetchPromises.get(account.id);
+		if (existingPromise) {
+			// Return the existing promise if one is already in flight for this account
+			return existingPromise.then(subscriptionData => {
+				if (subscriptionData) {
+					return {
+						subscription: subscriptionData,
+						lastChecked: Date.now(),
+					};
+				}
 				return null;
-			}
+			});
+		}
 
-			const subscriptionData =
-				(await response.json()) as NanoGPTSubscriptionUsage;
+		// Create a new promise for this fetch operation
+		const fetchPromise = this.fetchNanoGPTUsageData(apiKey).finally(() => {
+			// Clean up the promise from the map when the operation completes
+			this.activeFetchPromises.delete(account.id);
+		});
 
-			return {
-				subscription: subscriptionData,
-				lastChecked: Date.now(),
-			};
-		} catch (error) {
-			log.error(`Error fetching NanoGPT subscription usage:`, error);
+		// Store the promise in the map
+		this.activeFetchPromises.set(account.id, fetchPromise);
+
+		const subscriptionData = await fetchPromise;
+		if (!subscriptionData) {
 			return null;
 		}
+
+		return {
+			subscription: subscriptionData,
+			lastChecked: Date.now(),
+		};
 	}
 
 	/**
