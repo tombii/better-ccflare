@@ -162,23 +162,25 @@ export class NanoGPTProvider extends OpenAICompatibleProvider {
 		}
 
 		// Create a new promise for this fetch operation
-		const fetchPromise = this.fetchNanoGPTUsageData(apiKey).finally(() => {
-			// Clean up the promise from the map when the operation completes
-			this.activeFetchPromises.delete(account.id);
-		});
+		const fetchPromise = this.fetchNanoGPTUsageData(apiKey);
 
 		// Store the promise in the map BEFORE awaiting it to prevent race conditions
 		this.activeFetchPromises.set(account.id, fetchPromise);
 
-		const subscriptionData = await fetchPromise;
-		if (!subscriptionData) {
-			return null;
-		}
+		try {
+			const subscriptionData = await fetchPromise;
+			if (!subscriptionData) {
+				return null;
+			}
 
-		return {
-			subscription: subscriptionData,
-			lastChecked: Date.now(),
-		};
+			return {
+				subscription: subscriptionData,
+				lastChecked: Date.now(),
+			};
+		} finally {
+			// Clean up the promise from the map when the operation completes (success or failure)
+			this.activeFetchPromises.delete(account.id);
+		}
 	}
 
 	/**
@@ -343,8 +345,10 @@ export class NanoGPTProvider extends OpenAICompatibleProvider {
 		const usageData = await this.checkSubscriptionUsage(account);
 
 		if (!usageData) {
-			// If we can't check the subscription, assume it's not usable
-			return false;
+			// If we can't check the subscription (e.g., network error),
+			// assume the account is usable to avoid blocking requests unnecessarily
+			// The actual API call will fail if there's a real issue
+			return true;
 		}
 
 		// Use the cached usage data to determine rate limit info instead of making another call
