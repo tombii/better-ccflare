@@ -162,12 +162,16 @@ export class NanoGPTProvider extends OpenAICompatibleProvider {
 		}
 
 		// Create a new promise for this fetch operation
-		const fetchPromise = this.fetchNanoGPTUsageData(apiKey).finally(() => {
-			// Clean up the promise from the map when the operation completes
-			this.activeFetchPromises.delete(account.id);
-		});
+		const fetchPromise = (async () => {
+			try {
+				return await this.fetchNanoGPTUsageData(apiKey);
+			} finally {
+				// Clean up the promise from the map when the operation completes
+				this.activeFetchPromises.delete(account.id);
+			}
+		})();
 
-		// Store the promise in the map
+		// Store the promise in the map BEFORE awaiting it to prevent race conditions
 		this.activeFetchPromises.set(account.id, fetchPromise);
 
 		const subscriptionData = await fetchPromise;
