@@ -5,6 +5,7 @@ export interface RequestOptions extends RequestInit {
 	retries?: number;
 	retryDelay?: number;
 	baseUrl?: string;
+	disableAbortController?: boolean; // For providers with SSL certificate issues (e.g., NanoGPT with Bun)
 }
 
 export interface ClientOptions {
@@ -43,6 +44,7 @@ export class HttpClient {
 			retries = this.options.retries,
 			retryDelay = this.options.retryDelay,
 			baseUrl = this.options.baseUrl,
+			disableAbortController = false,
 			...fetchOptions
 		} = options;
 
@@ -57,14 +59,23 @@ export class HttpClient {
 		for (let attempt = 0; attempt <= retries; attempt++) {
 			let timeoutId: Timer | undefined;
 			try {
-				const controller = new AbortController();
-				timeoutId = setTimeout(() => controller.abort(), timeout);
+				let fetchOptionsWithSignal = { ...fetchOptions, headers };
 
-				const response = await fetch(fullUrl, {
-					...fetchOptions,
-					headers,
-					signal: controller.signal,
-				});
+				// Only use AbortController if not disabled (for providers with SSL certificate issues)
+				if (!disableAbortController) {
+					const controller = new AbortController();
+					timeoutId = setTimeout(() => controller.abort(), timeout);
+					fetchOptionsWithSignal = {
+						...fetchOptionsWithSignal,
+						signal: controller.signal,
+					};
+				} else {
+					console.log(
+						`[HttpClient] AbortController disabled for SSL compatibility: ${fullUrl.replace(/\/api\/.*$/, "/api/...")}`,
+					);
+				}
+
+				const response = await fetch(fullUrl, fetchOptionsWithSignal);
 
 				clearTimeout(timeoutId);
 				timeoutId = undefined;

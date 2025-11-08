@@ -168,9 +168,14 @@ export function createAccountsListHandler(db: Database) {
 				}
 			}
 
-			// Parse model mappings for OpenAI-compatible providers
+			// Parse model mappings for OpenAI-compatible, Anthropic-compatible, and NanoGPT providers
 			let modelMappings: { [key: string]: string } | null = null;
-			if (account.provider === "openai-compatible" && account.model_mappings) {
+			if (
+				(account.provider === "openai-compatible" ||
+					account.provider === "anthropic-compatible" ||
+					account.provider === "nanogpt") &&
+				account.model_mappings
+			) {
 				try {
 					const parsed = JSON.parse(account.model_mappings);
 					// Handle both formats: direct mappings or wrapped in modelMappings
@@ -1483,8 +1488,21 @@ export function createAccountCustomEndpointUpdateHandler(
 				},
 			);
 
-			// Update account custom endpoint
+			// Check if the account is a nanogpt provider and prevent custom endpoints
 			const db = dbOps.getDatabase();
+			const account = db
+				.query<{ provider: string }, [string]>(
+					"SELECT provider FROM accounts WHERE id = ?",
+				)
+				.get(accountId);
+
+			if (account?.provider === "nanogpt" && customEndpoint) {
+				return errorResponse(
+					BadRequest("NanoGPT accounts do not support custom endpoints"),
+				);
+			}
+
+			// Update account custom endpoint
 			db.run("UPDATE accounts SET custom_endpoint = ? WHERE id = ?", [
 				customEndpoint || null,
 				accountId,
@@ -1531,11 +1549,12 @@ export function createAccountModelMappingsUpdateHandler(
 
 			if (
 				account.provider !== "openai-compatible" &&
-				account.provider !== "anthropic-compatible"
+				account.provider !== "anthropic-compatible" &&
+				account.provider !== "nanogpt"
 			) {
 				return errorResponse(
 					BadRequest(
-						"Model mappings are only available for OpenAI-compatible and Anthropic-compatible accounts",
+						"Model mappings are only available for OpenAI-compatible, Anthropic-compatible, and NanoGPT accounts",
 					),
 				);
 			}

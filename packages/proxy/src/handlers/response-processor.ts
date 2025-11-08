@@ -122,6 +122,23 @@ export function updateAccountMetadata(
 				ctx.asyncWriter.enqueue(() =>
 					ctx.dbOps.updateRequestUsage(requestId, usageInfo),
 				);
+			} else {
+				// For streaming responses, check if usage info was extracted from the stream
+				// This handles cases where the provider processes the stream separately
+				if (typeof (ctx.provider as any).getStreamingUsageInfo === "function") {
+					const streamingUsageInfo = (
+						ctx.provider as any
+					).getStreamingUsageInfo(requestId);
+					if (streamingUsageInfo) {
+						log.debug(
+							`Extracted streaming usage info for account ${account.name}: ${JSON.stringify(streamingUsageInfo)}`,
+						);
+						// Store streaming usage info in database
+						ctx.asyncWriter.enqueue(() =>
+							ctx.dbOps.updateRequestUsage(requestId, streamingUsageInfo),
+						);
+					}
+				}
 			}
 		})();
 	}
@@ -242,6 +259,63 @@ export function handleProxyError(
 	logger: Logger,
 ): void {
 	logError(error, logger);
+
+	// Enhanced certificate error logging
+	if (
+		error instanceof Error &&
+		(error.message.includes("certificate") ||
+			error.message.includes("CERT") ||
+			error.message.includes("TLS") ||
+			error.message.includes("SSL") ||
+			error.message.includes("unknown certificate verification error"))
+	) {
+		const errorInfo = {
+			error: error.message,
+			stack: error.stack,
+			code: (error as any).code,
+			errno: (error as any).errno,
+			syscall: (error as any).syscall,
+			accountName: account?.name,
+			provider: account?.provider,
+		};
+
+		console.error(
+			`[Proxy] Certificate verification failed for account ${account?.name || "unknown"}:`,
+			errorInfo,
+		);
+		logger.error(
+			`Certificate verification failed for account ${account?.name || "unknown"}:`,
+			errorInfo,
+		);
+
+		// Provide helpful suggestions for certificate errors
+		const suggestions = {
+			possibleCauses: [
+				"Provider SSL certificate is expired or invalid",
+				"Network interception (proxy, firewall, antivirus)",
+				"System time/date is incorrect",
+				"Corporate SSL inspection",
+				"DNS issues or man-in-the-middle attacks",
+			],
+			suggestions: [
+				"Check if provider service is accessible directly",
+				"Verify system time and date are correct",
+				"Try disabling VPN/proxy temporarily",
+				"Check antivirus SSL scanning settings",
+				"Contact provider support if the issue persists",
+			],
+		};
+
+		console.warn(
+			`[Proxy] Certificate error suggestions for ${account?.provider}:`,
+			suggestions,
+		);
+		logger.warn(
+			`Certificate verification error suggestions for ${account?.provider}:`,
+			suggestions,
+		);
+	}
+
 	if (account) {
 		logger.error(`Failed to proxy request with account ${account.name}`);
 	} else {

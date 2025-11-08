@@ -62,9 +62,9 @@ export function parseModelMappings(
 			"model_mappings",
 		);
 	} catch (error) {
-		log.warn(
-			`Failed to parse model_mappings JSON: ${error instanceof Error ? error.message : String(error)}`,
-		);
+		const errorMsg = `Failed to parse model_mappings JSON: ${error instanceof Error ? error.message : String(error)}`;
+		console.warn(`[ModelMappings] ${errorMsg}`, { modelMappings });
+		log.warn(errorMsg);
 		return null;
 	}
 }
@@ -116,20 +116,38 @@ export function getModelMappings(account: Account): Record<string, string> {
  * Map Anthropic model name to provider-specific model name
  */
 export function mapModelName(anthropicModel: string, account: Account): string {
+	console.log(
+		`[ModelMappings] Mapping model for account ${account.name} (${account.provider}):`,
+		{
+			anthropicModel,
+			hasModelMappings: !!account.model_mappings,
+			modelMappingsPreview: account.model_mappings
+				? account.model_mappings.substring(0, 100)
+				: null,
+		},
+	);
+
 	const mappings = getModelMappings(account);
+
+	console.log(
+		`[ModelMappings] Final mappings for account ${account.name}:`,
+		mappings,
+	);
 
 	// First try exact match
 	if (mappings[anthropicModel]) {
+		const mapping = mappings[anthropicModel];
+		console.log(
+			`[ModelMappings] Exact model mapping: ${anthropicModel} -> ${mapping}`,
+		);
 		if (
 			process.env.DEBUG?.includes("model") ||
 			process.env.DEBUG === "true" ||
 			process.env.NODE_ENV === "development"
 		) {
-			log.info(
-				`Exact model mapping: ${anthropicModel} -> ${mappings[anthropicModel]}`,
-			);
+			log.info(`Exact model mapping: ${anthropicModel} -> ${mapping}`);
 		}
-		return mappings[anthropicModel];
+		return mapping;
 	}
 
 	// Try partial matches (wildcard-style matching)

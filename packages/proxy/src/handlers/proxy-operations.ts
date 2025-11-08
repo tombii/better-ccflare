@@ -39,13 +39,30 @@ export async function proxyUnauthenticated(
 	);
 
 	try {
-		const response = await makeProxyRequest(
-			targetUrl,
-			req.method,
-			headers,
-			createBodyStream,
-			!!req.body,
-		);
+		// Make the request - try provider's custom makeRequest method if available, otherwise use default
+		let response: Response;
+		if (
+			"makeRequest" in ctx.provider &&
+			typeof ctx.provider.makeRequest === "function"
+		) {
+			const requestInit: RequestInit & { duplex?: "half" } = {
+				method: req.method,
+				headers,
+			};
+			if (requestBodyBuffer) {
+				requestInit.body = new Uint8Array(requestBodyBuffer);
+				requestInit.duplex = "half";
+			}
+			response = await ctx.provider.makeRequest(targetUrl, requestInit);
+		} else {
+			response = await makeProxyRequest(
+				targetUrl,
+				req.method,
+				headers,
+				createBodyStream,
+				!!req.body,
+			);
+		}
 
 		return forwardToClient(
 			{
@@ -140,8 +157,20 @@ export async function proxyWithAccount(
 			? await provider.transformRequestBody(providerRequest, account)
 			: providerRequest;
 
-		// Make the request
-		const rawResponse = await makeProxyRequest(transformedRequest);
+		// Make the request - try provider's custom makeRequest method if available, otherwise use default
+		let rawResponse: Response;
+		if (
+			"makeRequest" in provider &&
+			typeof provider.makeRequest === "function"
+		) {
+			rawResponse = await provider.makeRequest(transformedRequest.url, {
+				method: transformedRequest.method,
+				headers: transformedRequest.headers,
+				body: transformedRequest.body,
+			});
+		} else {
+			rawResponse = await makeProxyRequest(transformedRequest);
+		}
 
 		// Process response (transform format, sanitize headers, etc.) using account-specific provider
 		const response = await provider.processResponse(rawResponse, account);

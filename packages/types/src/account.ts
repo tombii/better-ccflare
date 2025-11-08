@@ -188,6 +188,11 @@ export function toAccount(row: AccountRow): Account {
 }
 
 export function toAccountResponse(account: Account): AccountResponse {
+	console.log(
+		`[DEBUG toAccountResponse] Provider: ${account.provider}, model_mappings value:`,
+		account.model_mappings,
+	);
+
 	const tokenStatus = account.access_token ? "valid" : "expired";
 	const isRateLimited =
 		account.rate_limited_until && account.rate_limited_until > Date.now();
@@ -200,14 +205,26 @@ export function toAccountResponse(account: Account): AccountResponse {
 		? `Session: ${account.session_request_count} requests`
 		: "No active session";
 
-	// Parse model mappings for OpenAI-compatible providers
+	// Parse model mappings for OpenAI-compatible, Anthropic-compatible, and NanoGPT providers
 	let modelMappings: { [key: string]: string } | null = null;
-	if (account.provider === "openai-compatible" && account.model_mappings) {
+	if (
+		(account.provider === "openai-compatible" ||
+			account.provider === "anthropic-compatible" ||
+			account.provider === "nanogpt") &&
+		account.model_mappings
+	) {
 		try {
+			console.log(
+				`[DEBUG] Parsing model_mappings for ${account.provider}:`,
+				account.model_mappings,
+			);
 			const parsed = JSON.parse(account.model_mappings);
-			modelMappings = parsed.modelMappings || null;
-		} catch {
+			console.log(`[DEBUG] Parsed result:`, parsed);
+			modelMappings = parsed.modelMappings || parsed || null;
+			console.log(`[DEBUG] Final modelMappings:`, modelMappings);
+		} catch (error) {
 			// If parsing fails, ignore model mappings
+			console.log(`[DEBUG] Failed to parse model_mappings:`, error);
 			modelMappings = null;
 		}
 	} else if (

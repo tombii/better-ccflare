@@ -156,7 +156,76 @@ export async function interceptAndModifyRequest(
 			appliedModel: preferredModel,
 		};
 	} catch (error) {
-		log.error("Failed to intercept/modify request:", error);
+		const errorDetails = {
+			message: error instanceof Error ? error.message : String(error),
+			stack: error instanceof Error ? error.stack : undefined,
+			name: error instanceof Error ? error.name : typeof error,
+		};
+
+		log.error(
+			"[AGENT/CLAUDE-READ] Failed to intercept/modify request for agent processing:",
+			error,
+		);
+		log.error("[AGENT/CLAUDE-READ] Error details:", errorDetails);
+
+		// Also log directly to console for more visibility
+		console.error(
+			"12:38:59 AM[ERROR][AGENT/CLAUDE-READ] Failed to intercept/modify request for agent processing:",
+		);
+		console.error(
+			"12:38:59 AM[ERROR][AGENT/CLAUDE-READ] Error details:",
+			errorDetails,
+		);
+
+		if (!(error instanceof Error)) {
+			log.error("[AGENT/CLAUDE-READ] Unknown error type:", {
+				type: typeof error,
+				error,
+			});
+			console.error(
+				"12:38:59 AM[ERROR][AGENT/CLAUDE-READ] Unknown error type:",
+				typeof error,
+				error,
+			);
+		}
+
+		// Add minimal debugging information for agent context
+		if (requestBodyBuffer) {
+			const bodyText = new TextDecoder().decode(requestBodyBuffer);
+			try {
+				const parsedBody = JSON.parse(bodyText);
+				const hasAgentContext =
+					(typeof parsedBody.system === "string" &&
+						parsedBody.system.includes("CLAUDE.md")) ||
+					(Array.isArray(parsedBody.system) &&
+						parsedBody.system.some((s: any) =>
+							s.text?.includes("CLAUDE.md"),
+						)) ||
+					(Array.isArray(parsedBody.messages) &&
+						parsedBody.messages.some(
+							(msg: any) =>
+								msg.role === "user" &&
+								(typeof msg.content === "string"
+									? msg.content.includes("CLAUDE.md")
+									: Array.isArray(msg.content) &&
+										msg.content.some((c: any) =>
+											c.text?.includes("CLAUDE.md"),
+										)),
+						));
+
+				if (hasAgentContext) {
+					log.error(
+						"[AGENT/CLAUDE-READ] Error occurred during Claude Read/agent processing with CLAUDE.md context",
+					);
+					console.error(
+						"12:38:59 AM[ERROR][AGENT/CLAUDE-READ] Error occurred during Claude Read/agent processing with CLAUDE.md context",
+					);
+				}
+			} catch (_parseError) {
+				// Skip detailed parsing on error to keep verbosity low
+			}
+		}
+
 		// On error, return original body unmodified
 		return {
 			modifiedBody: requestBodyBuffer,

@@ -21,7 +21,8 @@ export function providerSupportsAutoFeatures(provider: string): boolean {
 export function providerSupportsModelMappings(provider: string): boolean {
 	return (
 		provider === PROVIDER_NAMES.OPENAI_COMPATIBLE ||
-		provider === PROVIDER_NAMES.ANTHROPIC_COMPATIBLE
+		provider === PROVIDER_NAMES.ANTHROPIC_COMPATIBLE ||
+		provider === PROVIDER_NAMES.NANOGPT
 	);
 }
 
@@ -36,8 +37,8 @@ export function providerShowsWeeklyUsage(provider: string): boolean {
  * Check if a provider supports custom endpoints
  */
 export function providerSupportsCustomEndpoints(provider: string): boolean {
-	// Most providers support custom endpoints, but we can add specific logic if needed
-	return isKnownProvider(provider);
+	// Most providers support custom endpoints, but some like nanogpt do not
+	return isKnownProvider(provider) && provider !== PROVIDER_NAMES.NANOGPT;
 }
 
 /**

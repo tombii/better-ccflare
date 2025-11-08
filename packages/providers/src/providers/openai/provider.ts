@@ -96,10 +96,38 @@ export class OpenAICompatibleProvider extends BaseProvider {
 	name = "openai-compatible";
 
 	canHandle(path: string): boolean {
+		// Reject system endpoints that shouldn't go to external APIs
+		if (path.startsWith("/api/system/")) {
+			console.log(`[OpenAI] Rejecting system endpoint: ${path}`);
+			return false;
+		}
+
+		// Reject health check endpoints
+		if (path === "/health" || path === "/ping" || path === "/status") {
+			console.log(`[OpenAI] Rejecting health endpoint: ${path}`);
+			return false;
+		}
+
+		// Reject administrative endpoints
+		if (path.startsWith("/admin/") || path.startsWith("/api/admin/")) {
+			console.log(`[OpenAI] Rejecting admin endpoint: ${path}`);
+			return false;
+		}
+
+		// Reject proxy management endpoints
+		if (
+			path.startsWith("/api/accounts/") ||
+			path.startsWith("/api/analytics")
+		) {
+			console.log(`[OpenAI] Rejecting management endpoint: ${path}`);
+			return false;
+		}
+
 		// Reject Anthropic-specific endpoints that don't exist in OpenAI API
 		if (path === "/v1/messages/count_tokens") {
 			return false;
 		}
+
 		// Handle all other paths for OpenAI-compatible providers
 		return true;
 	}
@@ -139,13 +167,36 @@ export class OpenAICompatibleProvider extends BaseProvider {
 		}
 
 		// Convert Anthropic paths to OpenAI-compatible paths
-		// Anthropic: /v1/messages → OpenAI: /v1/chat/completions
-		let openaiPath = this.convertAnthropicPathToOpenAI(path);
-		if (endpoint.endsWith("/v1") && openaiPath.startsWith("/v1/")) {
-			openaiPath = openaiPath.replace(/^\/v1/, "");
+		// Anthropic: /v1/messages → OpenAI: /chat/completions (no /v1 prefix)
+		const openaiPath = this.convertAnthropicPathToOpenAI(path);
+
+		// Remove beta=true parameter from query string for OpenAI-compatible providers
+		let cleanQuery = query;
+		if (query) {
+			try {
+				const url = new URL(`https://dummy.com${openaiPath}${query}`);
+				const searchParams = url.searchParams;
+
+				// Remove beta parameter if present
+				if (searchParams.has("beta")) {
+					searchParams.delete("beta");
+					cleanQuery = searchParams.toString();
+					if (cleanQuery) {
+						cleanQuery = `?${cleanQuery}`;
+					}
+					log.debug(
+						`Removed beta parameter from query string for OpenAI-compatible provider`,
+					);
+				}
+			} catch (error) {
+				log.warn(
+					`Failed to parse query string for beta removal: ${query}`,
+					error,
+				);
+			}
 		}
 
-		return `${endpoint}${openaiPath}${query}`;
+		return `${endpoint}${openaiPath}${cleanQuery}`;
 	}
 
 	prepareHeaders(
@@ -155,19 +206,23 @@ export class OpenAICompatibleProvider extends BaseProvider {
 	): Headers {
 		const newHeaders = new Headers(headers);
 
+		// Remove host header
+		newHeaders.delete("host");
+
+		// Remove Anthropic-specific headers to prevent credential leaks to non-Anthropic providers
+		newHeaders.delete("anthropic-version");
+		newHeaders.delete("anthropic-dangerous-direct-browser-access");
+
+		// Remove original authorization header to prevent credential leaks
+		// The system will add its own authentication (API key) for the target provider
+		newHeaders.delete("authorization");
+
 		// OpenAI uses Bearer token authentication with API key
 		if (apiKey) {
 			newHeaders.set("Authorization", `Bearer ${apiKey}`);
 		} else if (_accessToken) {
 			newHeaders.set("Authorization", `Bearer ${_accessToken}`);
 		}
-
-		// Remove host header
-		newHeaders.delete("host");
-
-		// Remove Anthropic-specific headers
-		newHeaders.delete("anthropic-version");
-		newHeaders.delete("anthropic-dangerous-direct-browser-access");
 
 		return newHeaders;
 	}
@@ -250,6 +305,14 @@ export class OpenAICompatibleProvider extends BaseProvider {
 
 		try {
 			const body = await request.json();
+			log.debug(
+				`Transforming request body for account ${account?.name || "unknown"}`,
+				{
+					provider: account?.provider,
+					hasModelMappings: !!account?.model_mappings,
+					modelMappingsLength: account?.model_mappings?.length || 0,
+				},
+			);
 			const openaiBody = this.convertAnthropicRequestToOpenAI(body, account);
 			const newHeaders = new Headers(request.headers);
 			newHeaders.set("content-type", "application/json");
@@ -261,10 +324,48 @@ export class OpenAICompatibleProvider extends BaseProvider {
 				body: JSON.stringify(openaiBody),
 			});
 		} catch (error) {
+			const errorInfo = {
+				error: error instanceof Error ? error.message : String(error),
+				stack: error instanceof Error ? error.stack : undefined,
+				contentType,
+				url: request.url,
+				method: request.method,
+				accountName: account?.name,
+				provider: account?.provider,
+				hasModelMappings: !!account?.model_mappings,
+				modelMappingsPreview: account?.model_mappings
+					? account.model_mappings.substring(0, 100)
+					: null,
+			};
+
+			console.error(
+				`[OpenAI] Failed to transform Anthropic request to OpenAI format:`,
+				errorInfo,
+			);
 			log.error(
 				"Failed to transform Anthropic request to OpenAI format:",
-				error,
+				errorInfo,
 			);
+
+			// If it's a JSON parsing error, try to get more details
+			if (error instanceof Error && error.message.includes("JSON")) {
+				try {
+					const text = await request.text();
+					const bodyPreview = text.substring(0, 500);
+					console.error(
+						`[OpenAI] Request body preview (first 500 chars):`,
+						bodyPreview,
+					);
+					log.error(`Request body preview (first 500 chars):`, bodyPreview);
+				} catch (textError) {
+					console.error(
+						`[OpenAI] Could not read request body for debugging:`,
+						textError,
+					);
+					log.error(`Could not read request body for debugging:`, textError);
+				}
+			}
+
 			return request; // Return original request if transformation fails
 		}
 	}
@@ -389,9 +490,9 @@ export class OpenAICompatibleProvider extends BaseProvider {
 	 * Convert Anthropic API paths to OpenAI-compatible paths
 	 */
 	private convertAnthropicPathToOpenAI(anthropicPath: string): string {
-		// Anthropic /v1/messages → OpenAI /v1/chat/completions
+		// Anthropic /v1/messages → OpenAI /chat/completions (no /v1 prefix)
 		if (anthropicPath === "/v1/messages") {
-			return "/v1/chat/completions";
+			return "/chat/completions";
 		}
 
 		// For other paths, keep them as-is for now
@@ -406,71 +507,104 @@ export class OpenAICompatibleProvider extends BaseProvider {
 		anthropicData: AnthropicRequest,
 		account?: Account,
 	): OpenAIRequest {
-		// Map the model name from Anthropic to provider-specific
-		const mappedModel = account
-			? mapModelName(anthropicData.model, account)
-			: "openai/gpt-5";
+		try {
+			log.debug(
+				`Converting Anthropic request for provider ${account?.provider || "unknown"}`,
+				{
+					originalModel: anthropicData.model,
+					accountName: account?.name,
+				},
+			);
 
-		const openaiRequest: OpenAIRequest = {
-			model: mappedModel,
-			messages: [],
-		};
+			// Map the model name from Anthropic to provider-specific
+			const mappedModel = account
+				? mapModelName(anthropicData.model, account)
+				: "openai/gpt-5";
 
-		// Map parameters
-		if (anthropicData.max_tokens !== undefined) {
-			openaiRequest.max_tokens = anthropicData.max_tokens;
-		}
-		if (anthropicData.temperature !== undefined) {
-			openaiRequest.temperature = anthropicData.temperature;
-		}
-		if (anthropicData.top_p !== undefined) {
-			openaiRequest.top_p = anthropicData.top_p;
-		}
-		if (anthropicData.stop_sequences !== undefined) {
-			openaiRequest.stop = anthropicData.stop_sequences;
-		}
-		if (anthropicData.stream !== undefined) {
-			openaiRequest.stream = anthropicData.stream;
-		}
+			log.debug(
+				`Model mapping result: ${anthropicData.model} -> ${mappedModel}`,
+			);
 
-		// Handle system message (Anthropic has it as top-level, OpenAI has it in messages array)
-		const messages: OpenAIMessage[] = [];
-		if (anthropicData.system) {
-			messages.push({
-				role: "system",
-				content: anthropicData.system,
-			});
-		}
+			const openaiRequest: OpenAIRequest = {
+				model: mappedModel,
+				messages: [],
+			};
 
-		// Add user/assistant messages
-		if (anthropicData.messages && Array.isArray(anthropicData.messages)) {
-			for (const message of anthropicData.messages) {
-				const openaiMessage: OpenAIMessage = {
-					role: message.role,
-					content: Array.isArray(message.content)
-						? message.content
-								.filter((part) => part.type === "text")
-								.map((part) => part.text)
-								.join("")
-						: message.content,
-				};
-
-				// Handle content arrays (Anthropic supports rich content)
-				if (Array.isArray(message.content)) {
-					// Convert Anthropic content array to OpenAI string format
-					const textParts = message.content
-						.filter((part: { type: string }) => part.type === "text")
-						.map((part: { text: string }) => part.text)
-						.join("");
-					openaiMessage.content = textParts;
-				}
-
-				messages.push(openaiMessage);
+			// Map parameters
+			if (anthropicData.max_tokens !== undefined) {
+				openaiRequest.max_tokens = anthropicData.max_tokens;
 			}
-		}
+			if (anthropicData.temperature !== undefined) {
+				openaiRequest.temperature = anthropicData.temperature;
+			}
+			if (anthropicData.top_p !== undefined) {
+				openaiRequest.top_p = anthropicData.top_p;
+			}
+			if (anthropicData.stop_sequences !== undefined) {
+				openaiRequest.stop = anthropicData.stop_sequences;
+			}
+			if (anthropicData.stream !== undefined) {
+				openaiRequest.stream = anthropicData.stream;
+			}
 
-		openaiRequest.messages = messages;
-		return openaiRequest;
+			// Handle system message (Anthropic has it as top-level, OpenAI has it in messages array)
+			const messages: OpenAIMessage[] = [];
+			if (anthropicData.system) {
+				messages.push({
+					role: "system",
+					content: anthropicData.system,
+				});
+			}
+
+			// Add user/assistant messages
+			if (anthropicData.messages && Array.isArray(anthropicData.messages)) {
+				for (const message of anthropicData.messages) {
+					const openaiMessage: OpenAIMessage = {
+						role: message.role,
+						content: Array.isArray(message.content)
+							? message.content
+									.filter((part) => part.type === "text")
+									.map((part) => part.text)
+									.join("")
+							: message.content,
+					};
+
+					// Handle content arrays (Anthropic supports rich content)
+					if (Array.isArray(message.content)) {
+						// Convert Anthropic content array to OpenAI string format
+						const textParts = message.content
+							.filter((part: { type: string }) => part.type === "text")
+							.map((part: { text: string }) => part.text)
+							.join("");
+						openaiMessage.content = textParts;
+					}
+
+					messages.push(openaiMessage);
+				}
+			}
+
+			openaiRequest.messages = messages;
+			return openaiRequest;
+		} catch (error) {
+			const errorInfo = {
+				error: error instanceof Error ? error.message : String(error),
+				stack: error instanceof Error ? error.stack : undefined,
+				accountName: account?.name,
+				originalModel: anthropicData.model,
+				hasSystem: !!anthropicData.system,
+				messagesCount: anthropicData.messages?.length || 0,
+			};
+
+			console.error(
+				`[OpenAI] Error in convertAnthropicRequestToOpenAI for provider ${account?.provider || "unknown"}:`,
+				errorInfo,
+			);
+			log.error(
+				`Error in convertAnthropicRequestToOpenAI for provider ${account?.provider || "unknown"}:`,
+				errorInfo,
+			);
+			throw error;
+		}
 	}
 
 	/**

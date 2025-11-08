@@ -12,9 +12,7 @@ const SafeStrategyName = StrategyName || LOCAL_STRATEGIES;
 export const STRATEGIES = Object.values(SafeStrategyName);
 
 export function isValidStrategy(strategy: string): strategy is StrategyName {
-	return Object.values(SafeStrategyName).includes(
-		strategy as keyof typeof SafeStrategyName,
-	);
+	return Object.values(SafeStrategyName).includes(strategy as StrategyName);
 }
 
 // Default load balancing strategy

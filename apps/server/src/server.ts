@@ -570,7 +570,51 @@ export default function startServer(options?: {
 				}
 
 				// All other paths go to proxy
-				return handleProxy(req, url, proxyContext);
+				try {
+					return await handleProxy(req, url, proxyContext);
+				} catch (error) {
+					// Handle service errors and return proper JSON response instead of HTML fallback
+					if (error && typeof error === "object" && "statusCode" in error) {
+						const appError = error as {
+							statusCode: number;
+							message: string;
+							code?: string;
+						};
+						return new Response(
+							JSON.stringify({
+								error: {
+									message: appError.message,
+									code: appError.code || "SERVICE_ERROR",
+									type: "api_error",
+								},
+							}),
+							{
+								status: appError.statusCode,
+								headers: {
+									"Content-Type": "application/json",
+								},
+							},
+						);
+					}
+
+					// Fallback for any other errors
+					log.error("Unexpected proxy error:", error);
+					return new Response(
+						JSON.stringify({
+							error: {
+								message: "Internal server error",
+								code: "INTERNAL_ERROR",
+								type: "api_error",
+							},
+						}),
+						{
+							status: HTTP_STATUS.INTERNAL_SERVER_ERROR,
+							headers: {
+								"Content-Type": "application/json",
+							},
+						},
+					);
+				}
 			},
 		};
 

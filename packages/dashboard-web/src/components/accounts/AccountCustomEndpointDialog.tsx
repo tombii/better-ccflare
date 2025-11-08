@@ -62,6 +62,12 @@ export function AccountCustomEndpointDialog({
 	const handleSave = async () => {
 		if (!account) return;
 
+		// Prevent saving if provider is nanogpt
+		if (account.provider === "nanogpt") {
+			setError("Custom endpoints are not supported for NanoGPT provider");
+			return;
+		}
+
 		if (customEndpoint && !validateEndpoint(customEndpoint)) {
 			setError(
 				"Custom endpoint must be a valid URL (e.g., https://api.anthropic.com)",
@@ -91,13 +97,23 @@ export function AccountCustomEndpointDialog({
 				<DialogHeader>
 					<DialogTitle>Custom Endpoint</DialogTitle>
 					<DialogDescription>
-						Configure a custom API endpoint for{" "}
-						<span className="font-medium">{account?.name}</span>
-						{account?.provider && (
-							<span className="text-muted-foreground">
-								{" "}
-								(Provider: {account.provider})
-							</span>
+						{account?.provider === "nanogpt" ? (
+							<>
+								Custom endpoints are not supported for NanoGPT provider.{" "}
+								<span className="font-medium">{account?.name}</span> always uses
+								the default endpoint.
+							</>
+						) : (
+							<>
+								Configure a custom API endpoint for{" "}
+								<span className="font-medium">{account?.name}</span>
+								{account?.provider && (
+									<span className="text-muted-foreground">
+										{" "}
+										(Provider: {account.provider})
+									</span>
+								)}
+							</>
 						)}
 					</DialogDescription>
 				</DialogHeader>
@@ -108,15 +124,26 @@ export function AccountCustomEndpointDialog({
 							id="customEndpoint"
 							value={customEndpoint}
 							onChange={(e) => {
-								setCustomEndpoint(e.target.value);
-								setError(null);
+								// Prevent changes if provider is nanogpt
+								if (account?.provider !== "nanogpt") {
+									setCustomEndpoint(e.target.value);
+									setError(null);
+								}
 							}}
 							placeholder={defaultPlaceholder}
 							className={error ? "border-red-500" : ""}
+							disabled={account?.provider === "nanogpt"}
 						/>
-						<p className="text-xs text-muted-foreground">
-							Leave empty to use default endpoint ({defaultPlaceholder})
-						</p>
+						{account?.provider === "nanogpt" ? (
+							<p className="text-xs text-muted-foreground">
+								NanoGPT uses a fixed endpoint and does not support custom
+								endpoints.
+							</p>
+						) : (
+							<p className="text-xs text-muted-foreground">
+								Leave empty to use default endpoint ({defaultPlaceholder})
+							</p>
+						)}
 						{error && <p className="text-xs text-red-500">{error}</p>}
 					</div>
 				</div>
@@ -129,8 +156,16 @@ export function AccountCustomEndpointDialog({
 					>
 						Cancel
 					</Button>
-					<Button type="button" onClick={handleSave} disabled={isLoading}>
-						{isLoading ? "Saving..." : "Save"}
+					<Button
+						type="button"
+						onClick={handleSave}
+						disabled={isLoading || account?.provider === "nanogpt"}
+					>
+						{isLoading
+							? "Saving..."
+							: account?.provider === "nanogpt"
+								? "Not Supported"
+								: "Save"}
 					</Button>
 				</DialogFooter>
 			</DialogContent>

@@ -85,6 +85,12 @@ export interface Provider {
 	 * Check if the response is a streaming response
 	 */
 	isStreamingResponse?(response: Response): boolean;
+
+	/**
+	 * Make the actual HTTP request to the provider (optional)
+	 * If not implemented, the default fetch mechanism will be used
+	 */
+	makeRequest?(url: string, options: RequestInit): Promise<Response>;
 }
 
 // OAuth-specific types

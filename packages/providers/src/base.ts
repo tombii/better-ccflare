@@ -152,4 +152,12 @@ export abstract class BaseProvider implements Provider {
 			contentType.includes("stream")
 		);
 	}
+
+	/**
+	 * Make the actual HTTP request to the provider
+	 * Default implementation: Use standard fetch
+	 */
+	async makeRequest?(url: string, options: RequestInit): Promise<Response> {
+		return fetch(url, options);
+	}
 }
