@@ -1,3 +1,5 @@
+import type { Account } from "@better-ccflare/types";
+import { transformRequestBodyModelForce } from "../../utils/model-mapping";
 import { BaseAnthropicCompatibleProvider } from "../base-anthropic-compatible";
 
 export class MinimaxProvider extends BaseAnthropicCompatibleProvider {
@@ -19,24 +21,13 @@ export class MinimaxProvider extends BaseAnthropicCompatibleProvider {
 	/**
 	 * Override model transformation - Minimax maps ALL models to MiniMax-M2
 	 * This ensures consistent behavior regardless of input model name
+	 * Uses optimized direct body mutation approach for better performance
 	 */
-	async transformRequestBody(body: any, account: any): Promise<any> {
-		const transformed = await super.transformRequestBody(body, account);
-
-		// Force all models to MiniMax-M2 regardless of input
-		// Create a new object to avoid race conditions with concurrent requests
-		if (
-			transformed &&
-			typeof transformed === "object" &&
-			transformed !== null &&
-			"model" in transformed
-		) {
-			return {
-				...transformed,
-				model: "MiniMax-M2",
-			};
-		}
-
-		return transformed;
+	async transformRequestBody(
+		request: Request,
+		_account?: Account,
+	): Promise<Request> {
+		// Force all models to MiniMax-M2 for Minimax provider
+		return transformRequestBodyModelForce(request, "MiniMax-M2");
 	}
 }

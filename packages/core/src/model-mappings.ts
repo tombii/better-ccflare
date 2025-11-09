@@ -156,7 +156,9 @@ export function mapModelName(anthropicModel: string, account: Account): string {
 				process.env.DEBUG === "true" ||
 				process.env.NODE_ENV === "development"
 			) {
-				log.info(`${pattern.charAt(0).toUpperCase() + pattern.slice(1)} model mapping: ${anthropicModel} -> ${mappedModel}`);
+				log.info(
+					`${pattern.charAt(0).toUpperCase() + pattern.slice(1)} model mapping: ${anthropicModel} -> ${mappedModel}`,
+				);
 			}
 			return mappedModel;
 		}

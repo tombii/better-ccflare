@@ -1,6 +1,8 @@
 import {
 	BUFFER_SIZES,
 	estimateCostUSD,
+	KNOWN_PATTERNS,
+	parseModelMappings,
 	TIME_CONSTANTS,
 } from "@better-ccflare/core";
 import { sanitizeProxyHeaders } from "@better-ccflare/http-common";
@@ -8,6 +10,7 @@ import { Logger } from "@better-ccflare/logger";
 import type { Account } from "@better-ccflare/types";
 import { BaseProvider } from "../base";
 import type { RateLimitInfo, TokenRefreshResult } from "../types";
+import { transformRequestBodyModel } from "../utils/model-mapping";
 
 // Configuration interface for Anthropic-compatible providers
 export interface AnthropicCompatibleConfig {
@@ -47,10 +50,11 @@ export abstract class BaseAnthropicCompatibleProvider extends BaseProvider {
 		super();
 		this.config = { ...DEFAULT_CONFIG, ...config };
 		// Set name from config, ensuring we always have a valid name
-		const providerName = this.config.name || DEFAULT_CONFIG.name;
-		this.name = providerName!;
+		const providerName =
+			this.config.name || DEFAULT_CONFIG.name || "base-anthropic-compatible";
+		this.name = providerName;
 		if (!this.config.name) {
-			this.config.name = providerName!;
+			this.config.name = providerName;
 		}
 	}
 
@@ -65,7 +69,7 @@ export abstract class BaseAnthropicCompatibleProvider extends BaseProvider {
 	 * Defaults to config.authHeader but can be overridden
 	 */
 	getAuthHeader(): string {
-		return this.config.authHeader!;
+		return this.config.authHeader || "x-api-key";
 	}
 
 	/**
@@ -73,7 +77,11 @@ export abstract class BaseAnthropicCompatibleProvider extends BaseProvider {
 	 * Defaults to config.authType but can be overridden
 	 */
 	getAuthType(): "bearer" | "direct" {
-		return this.config.authType as "bearer" | "direct";
+		const authType = this.config.authType;
+		if (authType !== "bearer" && authType !== "direct") {
+			return "direct"; // sensible default
+		}
+		return authType;
 	}
 
 	canHandle(_path: string): boolean {
@@ -160,63 +168,53 @@ export abstract class BaseAnthropicCompatibleProvider extends BaseProvider {
 			return request;
 		}
 
-		try {
-			const clonedRequest = request.clone();
-			const body = await clonedRequest.json();
+		// Use the shared utility for model mapping
+		return transformRequestBodyModel(request, account, (model, acc) => {
+			// Provider-specific mapping logic
+			let mappedModel = model;
 
-			// Check if we need to transform the model
-			if (body.model) {
-				const originalModel = body.model;
-				let mappedModel = originalModel;
-
-				// First try account-specific mappings if account has model_mappings defined
-				if (account?.model_mappings) {
-					const { parseModelMappings } = await import("@better-ccflare/core");
-					const accountMappings = parseModelMappings(account.model_mappings);
-
-					if (accountMappings) {
-						// First try exact match
-						if (accountMappings[originalModel]) {
-							mappedModel = accountMappings[originalModel];
-						} else {
-							// Direct pattern matching for known model families (O(1) constant time)
-							// Use shared KNOWN_PATTERNS to ensure consistent order across codebase
-							const { KNOWN_PATTERNS } = await import("@better-ccflare/core");
-							const normalizedModel = originalModel.toLowerCase();
-
-							for (const pattern of KNOWN_PATTERNS) {
-								if (normalizedModel.includes(pattern)) {
-									mappedModel = accountMappings[pattern];
-									break;
-								}
-							}
-						}
-					}
-				}
-				// Fall back to static config mappings for backward compatibility
-				else if (this.config.modelMappings?.[originalModel]) {
-					mappedModel = this.config.modelMappings[originalModel];
-				}
-
-				if (mappedModel !== originalModel) {
-					body.model = mappedModel;
-					log.debug(`Mapped model: ${originalModel} -> ${mappedModel}`);
-
-					// Create new request with transformed body
-					const transformedRequest = new Request(request.url, {
-						method: request.method,
-						headers: request.headers,
-						body: JSON.stringify(body),
-					});
-
-					return transformedRequest;
-				}
+			// First try account-specific mappings
+			if (acc?.model_mappings) {
+				mappedModel = this.mapAccountModel(model, acc);
 			}
-		} catch (error) {
-			log.debug("Failed to transform request body:", error);
+			// Fall back to static config mappings for backward compatibility
+			else if (this.config.modelMappings?.[model]) {
+				mappedModel = this.config.modelMappings[model];
+			}
+
+			return mappedModel;
+		});
+	}
+
+	/**
+	 * Helper method to map models using account-specific mappings
+	 */
+	private mapAccountModel(originalModel: string, account: Account): string {
+		if (!account.model_mappings) {
+			return originalModel;
 		}
 
-		return request;
+		const accountMappings = parseModelMappings(account.model_mappings);
+
+		if (!accountMappings) {
+			return originalModel;
+		}
+
+		// First try exact match
+		if (accountMappings[originalModel]) {
+			return accountMappings[originalModel];
+		}
+
+		// Try pattern matching for known model families (more efficient)
+		const modelLower = originalModel.toLowerCase();
+
+		for (const pattern of KNOWN_PATTERNS) {
+			if (modelLower.includes(pattern) && accountMappings[pattern]) {
+				return accountMappings[pattern];
+			}
+		}
+
+		return originalModel;
 	}
 
 	parseRateLimit(response: Response): RateLimitInfo {
@@ -416,7 +414,7 @@ export abstract class BaseAnthropicCompatibleProvider extends BaseProvider {
 					),
 				);
 
-				let value, done;
+				let value: Uint8Array | undefined, done: boolean;
 				try {
 					({ value, done } = await Promise.race([readPromise, timeoutPromise]));
 				} catch (error) {

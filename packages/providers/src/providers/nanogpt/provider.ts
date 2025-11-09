@@ -15,7 +15,7 @@ export class NanoGPTProvider extends BaseAnthropicCompatibleProvider {
 
 	getEndpoint(): string {
 		// Return the configured base URL
-		return this.config.baseUrl!;
+		return this.config.baseUrl || "https://nano-gpt.com/api";
 	}
 
 	buildUrl(path: string, query: string, account?: Account): string {

@@ -241,13 +241,6 @@ describe("MinimaxProvider", () => {
 
 	describe("transformRequest", () => {
 		it("should force all models to MiniMax-M2", async () => {
-			const mockAccount = {
-				id: "test-id",
-				name: "test-minimax-account",
-				provider: "minimax",
-				api_key: "test-key",
-			};
-
 			// Test different input models - all should be forced to MiniMax-M2
 			const testModels = [
 				"claude-sonnet-4-5-20250929",
@@ -258,23 +251,26 @@ describe("MinimaxProvider", () => {
 			];
 
 			for (const model of testModels) {
-				const request = {
-					method: "POST",
-					headers: {},
-					body: {
-						model: model,
-						messages: [{ role: "user", content: "test" }],
-					},
+				const requestBody = {
+					model: model,
+					messages: [{ role: "user", content: "test" }],
 				};
 
-				const transformed = await provider.transformRequestBody(
-					request.body,
+				const request = new Request("http://test.com", {
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify(requestBody),
+				});
+
+				const transformedRequest = await provider.transformRequestBody(
+					request,
 					mockAccount,
 				);
 
-				expect(transformed.model).toBe("MiniMax-M2");
+				const transformedBody = await transformedRequest.json();
+				expect(transformedBody.model).toBe("MiniMax-M2");
 				// Other properties should be preserved
-				expect(transformed.messages).toEqual([
+				expect(transformedBody.messages).toEqual([
 					{ role: "user", content: "test" },
 				]);
 			}
