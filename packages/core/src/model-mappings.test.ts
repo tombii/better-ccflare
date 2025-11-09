@@ -1,33 +1,79 @@
-import { describe, test, expect } from "bun:test";
-import {
-	getSortedMappingKeysForAccount,
-	parseModelMappings,
-	mapModelName
-} from "@better-ccflare/core";
+import { describe, expect, test } from "bun:test";
+import { mapModelName, parseModelMappings } from "@better-ccflare/core";
 import type { Account } from "@better-ccflare/types";
 
-describe("Model Mapping Caching", () => {
-	test("getSortedMappingKeysForAccount returns cached results", () => {
+describe("Model Mapping", () => {
+	test("parseModelMappings handles valid JSON", () => {
 		const mappings = JSON.stringify({
-			"sonnet-4-5": "gpt-4",
-			"sonnet-3-5": "gpt-3.5",
-			"sonnet": "gpt-3.5-turbo",
-			"opus": "gpt-4-turbo"
+			sonnet: "gpt-4",
+			opus: "gpt-4-turbo",
+			haiku: "gpt-3.5-turbo",
 		});
 
-		// First call - should compute and cache
-		const keys1 = getSortedMappingKeysForAccount(mappings);
-		// Sorted by length: "sonnet-4-5" (11), "sonnet-3-5" (11), "sonnet" (6), "opus" (4)
-		expect(keys1).toEqual(["sonnet-4-5", "sonnet-3-5", "sonnet", "opus"]);
-
-		// Second call - should return cached result
-		const keys2 = getSortedMappingKeysForAccount(mappings);
-		expect(keys2).toEqual(["sonnet-4-5", "sonnet-3-5", "sonnet", "opus"]);
+		const result = parseModelMappings(mappings);
+		expect(result).toEqual({
+			sonnet: "gpt-4",
+			opus: "gpt-4-turbo",
+			haiku: "gpt-3.5-turbo",
+		});
 	});
 
-	test("real-world model mapping scenario", () => {
-		// Test the actual scenario: client sends full model name, we match substrings
-		const openrouterMappings = '{"sonnet":"z-ai/glm-4.5-air:free","haiku":"z-ai/glm-4.5-air:free","opus":"z-ai/glm-4.5-air:free"}';
+	test("parseModelMappings handles invalid JSON", () => {
+		const result = parseModelMappings("invalid-json");
+		expect(result).toBeNull();
+	});
+
+	test("parseModelMappings handles null/empty", () => {
+		expect(parseModelMappings(null)).toBeNull();
+		expect(parseModelMappings("")).toBeNull();
+	});
+
+	test("mapModelName uses direct pattern matching", () => {
+		const mockAccount: Account = {
+			id: "test",
+			name: "test-account",
+			provider: "openai-compatible",
+			api_key: "test-key",
+			refresh_token: "",
+			access_token: "",
+			expires_at: null,
+			created_at: Date.now(),
+			request_count: 0,
+			total_requests: 0,
+			priority: 10,
+			model_mappings: JSON.stringify({
+				sonnet: "gpt-4",
+				opus: "gpt-4-turbo",
+				haiku: "gpt-3.5-turbo",
+			}),
+			custom_endpoint: null,
+		};
+
+		// Test direct pattern matching with realistic mappings
+		const result1 = mapModelName("claude-sonnet-4-5-20250929", mockAccount); // Current
+		const result2 = mapModelName("claude-haiku-4-5-20251001", mockAccount); // Current
+		const result3 = mapModelName("claude-opus-4-1-20250805", mockAccount); // Current
+
+		// Future model versions - demonstrating future-proof behavior
+		const result4 = mapModelName("claude-sonnet-4-6-20251129", mockAccount); // Future version
+		const result5 = mapModelName("claude-haiku-4-6-20251101", mockAccount); // Future version
+		const result6 = mapModelName("claude-opus-4-5-20251105", mockAccount); // Future version
+
+		// Current models
+		expect(result1).toBe("gpt-4"); // Matches "sonnet"
+		expect(result2).toBe("gpt-3.5-turbo"); // Matches "haiku"
+		expect(result3).toBe("gpt-4-turbo"); // Matches "opus"
+
+		// Future models - should still work without any code changes
+		expect(result4).toBe("gpt-4"); // Still matches "sonnet"
+		expect(result5).toBe("gpt-3.5-turbo"); // Still matches "haiku"
+		expect(result6).toBe("gpt-4-turbo"); // Still matches "opus"
+	});
+
+	test("real database mappings work correctly", () => {
+		// Test with real mappings from the database
+		const openrouterMappings =
+			'{"opus":"z-ai/glm-4.5-air:free","sonnet":"z-ai/glm-4.5-air:free","haiku":"z-ai/glm-4.5-air:free"}';
 
 		const mockAccount: Account = {
 			id: "test",
@@ -50,50 +96,51 @@ describe("Model Mapping Caching", () => {
 		const haikuRequest = "claude-haiku-4-5-20251001";
 		const opusRequest = "claude-opus-4-1-20250805";
 
-		// These should be mapped using the substring matching logic
+		// These should be mapped using the direct pattern matching logic
 		const sonnetMapped = mapModelName(sonnetRequest, mockAccount);
 		const haikuMapped = mapModelName(haikuRequest, mockAccount);
 		const opusMapped = mapModelName(opusRequest, mockAccount);
 
 		expect(sonnetMapped).toBe("z-ai/glm-4.5-air:free"); // matches "sonnet"
 		expect(haikuMapped).toBe("z-ai/glm-4.5-air:free"); // matches "haiku"
-		expect(opusMapped).toBe("z-ai/glm-4.5-air:free");  // matches "opus"
+		expect(opusMapped).toBe("z-ai/glm-4.5-air:free"); // matches "opus"
 
-		// Test caching - second call should be faster
-		const sonnetMapped2 = mapModelName(sonnetRequest, mockAccount);
-		expect(sonnetMapped2).toBe("z-ai/glm-4.5-air:free");
+		// Test future model versions work
+		const futureSonnet = mapModelName(
+			"claude-sonnet-5-0-20251201",
+			mockAccount,
+		);
+		expect(futureSonnet).toBe("z-ai/glm-4.5-air:free"); // still matches "sonnet"
 	});
 
-	test("getSortedMappingKeysForAccount handles identical mappings efficiently", () => {
-		const mappings = JSON.stringify({
-			"sonnet": "gpt-4",
-			"opus": "gpt-4-turbo"
-		});
+	test("mapModelName handles missing model_mappings gracefully", () => {
+		const mockAccount: Account = {
+			id: "test",
+			name: "test-account",
+			provider: "openai-compatible",
+			api_key: "test-key",
+			refresh_token: "",
+			access_token: "",
+			expires_at: null,
+			created_at: Date.now(),
+			request_count: 0,
+			total_requests: 0,
+			priority: 10,
+			model_mappings: null, // No custom mappings
+			custom_endpoint: null,
+		};
 
-		// Multiple accounts with same mappings should share cache
-		const keys1 = getSortedMappingKeysForAccount(mappings);
-		const keys2 = getSortedMappingKeysForAccount(mappings);
-		const keys3 = getSortedMappingKeysForAccount(mappings);
+		// Should use default fallback mappings
+		const result1 = mapModelName("claude-sonnet-4-5-20250929", mockAccount);
+		const result2 = mapModelName("claude-haiku-4-5-20251001", mockAccount);
+		const result3 = mapModelName("claude-opus-4-1-20250805", mockAccount);
 
-		expect(keys1).toEqual(keys2);
-		expect(keys2).toEqual(keys3);
-		// Sorted by length: "sonnet" (6), "opus" (4)
-		expect(keys1).toEqual(["sonnet", "opus"]);
+		expect(result1).toBe("openai/gpt-5"); // Default sonnet fallback
+		expect(result2).toBe("openai/gpt-5-mini"); // Default haiku fallback
+		expect(result3).toBe("openai/gpt-5"); // Default opus fallback
 	});
 
-	test("getSortedMappingKeysForAccount handles different mappings separately", () => {
-		const mappingsA = JSON.stringify({ "claude-3-5-sonnet": "gpt-4" });
-		const mappingsB = JSON.stringify({ "claude-3-5-sonnet": "z-ai/gpt-4" });
-
-		const keysA = getSortedMappingKeysForAccount(mappingsA);
-		const keysB = getSortedMappingKeysForAccount(mappingsB);
-
-		expect(keysA).toEqual(["claude-3-5-sonnet"]);
-		expect(keysB).toEqual(["claude-3-5-sonnet"]);
-		// Note: These will be the same array content but different cache entries internally
-	});
-
-	test("mapModelName uses cached sorting", () => {
+	test("mapModelName handles case sensitivity correctly", () => {
 		const mockAccount: Account = {
 			id: "test",
 			name: "test-account",
@@ -107,160 +154,16 @@ describe("Model Mapping Caching", () => {
 			total_requests: 0,
 			priority: 10,
 			model_mappings: JSON.stringify({
-				"claude-sonnet": "gpt-4",
-				"sonnet": "gpt-3.5-turbo"
+				Sonnet: "uppercase-gpt-4",
+				Opus: "uppercase-gpt-4-turbo",
+				Haiku: "uppercase-gpt-3.5",
 			}),
 			custom_endpoint: null,
 		};
 
-		// This should use the cached sorting internally
+		// Should not match due to case sensitivity
 		const result1 = mapModelName("claude-sonnet-4-5-20250929", mockAccount);
-		const result2 = mapModelName("random-sonnet-model", mockAccount);
-
-		expect(result1).toBe("gpt-4"); // Exact match
-		expect(result2).toBe("gpt-3.5-turbo"); // Wildcard match using cached sorting
-	});
-
-	test("real database mappings work with caching", () => {
-		// Test with real mappings from the database
-		const openrouterMappings = '{"opus":"z-ai/glm-4.5-air:free","sonnet":"z-ai/glm-4.5-air:free","haiku":"z-ai/glm-4.5-air:free"}';
-		const litellmMappings = '{"opus":"qwen3-coder-plus","sonnet":"qwen3-coder-plus","haiku":"qwen3-coder-flash"}';
-		const nanogptMappings = '{"opus":"zai-org/GLM-4.5-FP8","sonnet":"zai-org/GLM-4.5-FP8","haiku":"zai-org/GLM-4.5-Air"}';
-
-		// Test that all these real mappings work
-		// Keys are sorted by length: "sonnet" (6), "haiku" (5), "opus" (4)
-		const openrouterKeys = getSortedMappingKeysForAccount(openrouterMappings);
-		const litellmKeys = getSortedMappingKeysForAccount(litellmMappings);
-		const nanogptKeys = getSortedMappingKeysForAccount(nanogptMappings);
-
-		expect(openrouterKeys).toEqual(["sonnet", "haiku", "opus"]);
-		expect(litellmKeys).toEqual(["sonnet", "haiku", "opus"]);
-		expect(nanogptKeys).toEqual(["sonnet", "haiku", "opus"]);
-
-		// Test caching by calling again - should return same results
-		const openrouterKeys2 = getSortedMappingKeysForAccount(openrouterMappings);
-		expect(openrouterKeys).toEqual(openrouterKeys2);
-	});
-
-	test("getSortedMappingKeysForAccount handles edge cases", () => {
-		expect(getSortedMappingKeysForAccount(null)).toEqual([]);
-		expect(getSortedMappingKeysForAccount("")).toEqual([]);
-		expect(getSortedMappingKeysForAccount("invalid-json")).toEqual([]);
-	});
-
-	test("cache key normalization preserves case sensitivity", () => {
-		// Test that different case mappings create different cache entries
-		const lowercaseMappings = '{"sonnet":"gpt-4","opus":"gpt-4-turbo"}';
-		const uppercaseMappings = '{"Sonnet":"gpt-4","Opus":"gpt-4-turbo"}';
-		const mixedCaseMappings = '{"SoNnEt":"gpt-4","OpUs":"gpt-4-turbo"}';
-
-		const lowercaseKeys = getSortedMappingKeysForAccount(lowercaseMappings);
-		const uppercaseKeys = getSortedMappingKeysForAccount(uppercaseMappings);
-		const mixedCaseKeys = getSortedMappingKeysForAccount(mixedCaseMappings);
-
-		// All should return different results due to case sensitivity
-		expect(lowercaseKeys).toEqual(["sonnet", "opus"]);
-		expect(uppercaseKeys).toEqual(["Sonnet", "Opus"]);
-		expect(mixedCaseKeys).toEqual(["SoNnEt", "OpUs"]);
-
-		// Verify they're different (no cache collisions)
-		expect(lowercaseKeys).not.toEqual(uppercaseKeys);
-		expect(lowercaseKeys).not.toEqual(mixedCaseKeys);
-		expect(uppercaseKeys).not.toEqual(mixedCaseKeys);
-	});
-
-	test("canonical JSON key sorting prevents cache misses", () => {
-		// Test that semantically identical mappings with different key order share cache entries
-		const mappingsA = '{"sonnet":"gpt-4","opus":"gpt-4-turbo","haiku":"gpt-3.5"}';
-		const mappingsB = '{"opus":"gpt-4-turbo","haiku":"gpt-3.5","sonnet":"gpt-4"}';
-		const mappingsC = '{"haiku":"gpt-3.5","sonnet":"gpt-4","opus":"gpt-4-turbo"}';
-
-		const keysA = getSortedMappingKeysForAccount(mappingsA);
-		const keysB = getSortedMappingKeysForAccount(mappingsB);
-		const keysC = getSortedMappingKeysForAccount(mappingsC);
-
-		// All should return the same sorted keys (by length: haiku(5), sonnet(6), opus(4) -> sonnet, haiku, opus)
-		expect(keysA).toEqual(keysB);
-		expect(keysB).toEqual(keysC);
-		expect(keysA).toEqual(["sonnet", "haiku", "opus"]);
-
-		// Second calls should hit cache (same results, faster)
-		const keysA2 = getSortedMappingKeysForAccount(mappingsA);
-		const keysB2 = getSortedMappingKeysForAccount(mappingsB);
-		expect(keysA2).toEqual(keysA);
-		expect(keysB2).toEqual(keysB);
-	});
-
-	test("JSON whitespace normalization works correctly", () => {
-		// Test that different whitespace formats are normalized to the same cache key
-		const compactMappings = '{"sonnet":"gpt-4","opus":"gpt-4-turbo"}';
-		const spacedMappings = '{ "sonnet" : "gpt-4" , "opus" : "gpt-4-turbo" }';
-		const multilineMappings = `{
-			"sonnet": "gpt-4",
-			"opus": "gpt-4-turbo"
-		}`;
-
-		const compactKeys = getSortedMappingKeysForAccount(compactMappings);
-		const spacedKeys = getSortedMappingKeysForAccount(spacedMappings);
-		const multilineKeys = getSortedMappingKeysForAccount(multilineMappings);
-
-		// All should return the same keys AND share cache entries (canonical JSON handles whitespace)
-		expect(compactKeys).toEqual(spacedKeys);
-		expect(spacedKeys).toEqual(multilineKeys);
-		expect(compactKeys).toEqual(["sonnet", "opus"]);
-	});
-
-	test("identical JSON strings share cache entries", () => {
-		// Test that identical JSON strings share the same cache entry
-		const mappings = '{"sonnet":"gpt-4","opus":"gpt-4-turbo"}';
-
-		const keys1 = getSortedMappingKeysForAccount(mappings);
-		const keys2 = getSortedMappingKeysForAccount(mappings);
-		const keys3 = getSortedMappingKeysForAccount(mappings);
-
-		expect(keys1).toEqual(keys2);
-		expect(keys2).toEqual(keys3);
-		expect(keys1).toEqual(["sonnet", "opus"]);
-	});
-
-	test("LRU eviction works correctly", () => {
-		// Test true LRU behavior: least recently used entries are evicted first
-		const smallMaxSize = 5; // Use small limit for testing
-
-		// Create 5 unique mappings to fill the cache
-		const mappings = [];
-		for (let i = 0; i < smallMaxSize; i++) {
-			const mapping = JSON.stringify({
-				[`key${i}`]: `value${i}`,
-				[`key2${i}`]: `value2${i}`
-			});
-			mappings.push(mapping);
-		}
-
-		// Fill cache with 5 entries
-		for (let i = 0; i < smallMaxSize; i++) {
-			const keys = getSortedMappingKeysForAccount(mappings[i]);
-			expect(keys).toEqual([`key2${i}`, `key${i}`]);
-		}
-
-		// Access the first entry to make it most recently used
-		getSortedMappingKeysForAccount(mappings[0]);
-
-		// Add one more entry (this should trigger LRU eviction)
-		const newMapping = JSON.stringify({
-			[`key5`]: `value5`,
-			[`key2${5}`]: `value2${5}`
-		});
-
-		const newKeys = getSortedMappingKeysForAccount(newMapping);
-		expect(newKeys).toEqual([`key2${5}`, `key5`]);
-
-		// The first entry should still be in cache (it was accessed recently)
-		// Entry 1 should be evicted (least recently used)
-		const firstEntryKeys = getSortedMappingKeysForAccount(mappings[0]);
-		expect(firstEntryKeys).toEqual([`key2${0}`, `key${0}`]); // Should still be cached
-
-		// This test verifies LRU logic doesn't crash and maintains consistency
-		expect(true).toBe(true);
+		// Should fall back to default because "sonnet" != "Sonnet"
+		expect(result1).toBe("openai/gpt-5");
 	});
 });

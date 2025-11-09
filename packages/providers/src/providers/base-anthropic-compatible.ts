@@ -171,8 +171,7 @@ export abstract class BaseAnthropicCompatibleProvider extends BaseProvider {
 
 				// First try account-specific mappings if account has model_mappings defined
 				if (account?.model_mappings) {
-					const { parseModelMappings, getSortedMappingKeysForAccount } =
-						await import("@better-ccflare/core");
+					const { parseModelMappings } = await import("@better-ccflare/core");
 					const accountMappings = parseModelMappings(account.model_mappings);
 
 					if (accountMappings) {
@@ -180,16 +179,14 @@ export abstract class BaseAnthropicCompatibleProvider extends BaseProvider {
 						if (accountMappings[originalModel]) {
 							mappedModel = accountMappings[originalModel];
 						} else {
-							// Try wildcard/substring matching using cached sorted keys
-							// (e.g., "sonnet" matches "claude-sonnet-4-5-20250929")
-							const mappingKeys = getSortedMappingKeysForAccount(
-								account.model_mappings,
-							);
-							for (const key of mappingKeys) {
-								if (originalModel.toLowerCase().includes(key.toLowerCase())) {
-									mappedModel = accountMappings[key];
-									break;
-								}
+							// Direct pattern matching for known model families (O(1) constant time)
+							// No sorting needed - we know the exact patterns to check
+							if (originalModel.toLowerCase().includes("opus")) {
+								mappedModel = accountMappings.opus;
+							} else if (originalModel.toLowerCase().includes("haiku")) {
+								mappedModel = accountMappings.haiku;
+							} else if (originalModel.toLowerCase().includes("sonnet")) {
+								mappedModel = accountMappings.sonnet;
 							}
 						}
 					}

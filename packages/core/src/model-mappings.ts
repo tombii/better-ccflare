@@ -4,26 +4,6 @@ import { safeJsonParse, validateModelMappings } from "./validation";
 
 const log = new Logger("ModelMappings");
 
-// Centralized cache for sorted model mapping keys
-// Shared across all providers to avoid redundant sorting
-const MODEL_MAPPING_CACHE = new Map<string, string[]>();
-const MAX_CACHE_SIZE = 1000; // Prevent memory leaks
-
-/**
- * Create a canonical cache key for model mappings
- * Sorts object keys to ensure identical mappings always produce the same cache key
- * This eliminates cache misses from JSON key order differences
- */
-function createCacheKey(mappings: Record<string, string>): string {
-	// Create a canonical representation by sorting keys
-	const canonicalObject = Object.fromEntries(
-		Object.entries(mappings).sort(([keyA], [keyB]) => keyA.localeCompare(keyB))
-	);
-
-	// Stringify the canonical object (no need for additional whitespace normalization)
-	return JSON.stringify(canonicalObject);
-}
-
 // Inline types to avoid Bun import issues
 // Types are now defined in index.ts and exported from there
 
@@ -64,54 +44,6 @@ export function parseCustomEndpointData(
 		);
 		return { endpoint: trimmed };
 	}
-}
-
-/**
- * Get sorted model mapping keys with caching
- * This eliminates redundant sorting operations across all providers
- */
-function getSortedModelMappingKeys(mappings: Record<string, string>): string[] {
-	// Create canonical cache key from mappings (sorted keys for consistent cache hits)
-	const cacheKey = createCacheKey(mappings);
-
-	// Check cache first
-	if (MODEL_MAPPING_CACHE.has(cacheKey)) {
-		const cachedKeys = MODEL_MAPPING_CACHE.get(cacheKey)!;
-		// Implement true LRU: move accessed entry to the end (most recently used)
-		MODEL_MAPPING_CACHE.delete(cacheKey);
-		MODEL_MAPPING_CACHE.set(cacheKey, cachedKeys);
-		return cachedKeys;
-	}
-
-	// Cache miss - sort and cache
-	// Sort by length (longest first) to prioritize more specific matches
-	// Example: "claude-sonnet" should match before "sonnet" when both exist
-	const sortedKeys = Object.keys(mappings).sort((a, b) => b.length - a.length);
-
-	// Implement LRU eviction to prevent memory leaks
-	// True LRU: least recently used entry is evicted (first entry in Map)
-	if (MODEL_MAPPING_CACHE.size >= MAX_CACHE_SIZE) {
-		const firstKey = MODEL_MAPPING_CACHE.keys().next().value;
-		if (firstKey) {
-			MODEL_MAPPING_CACHE.delete(firstKey);
-		}
-
-		if (process.env.DEBUG?.includes("model") || process.env.DEBUG === "true") {
-			log.debug(
-				`Model mapping cache: Evicted least recently used entry (cache size: ${MODEL_MAPPING_CACHE.size})`,
-			);
-		}
-	}
-
-	MODEL_MAPPING_CACHE.set(cacheKey, sortedKeys);
-
-	if (process.env.DEBUG?.includes("model") || process.env.DEBUG === "true") {
-		log.debug(
-			`Model mapping cache: Cached new entry (cache size: ${MODEL_MAPPING_CACHE.size})`,
-		);
-	}
-
-	return sortedKeys;
 }
 
 /**
@@ -181,26 +113,8 @@ export function getModelMappings(account: Account): Record<string, string> {
 }
 
 /**
- * Get sorted keys for model mappings with caching (for external use)
- * This function provides the cached sorting capability to other providers
- */
-export function getSortedMappingKeysForAccount(
-	modelMappings: string | null,
-): string[] {
-	if (!modelMappings) {
-		return [];
-	}
-
-	const parsedMappings = parseModelMappings(modelMappings);
-	if (!parsedMappings) {
-		return [];
-	}
-
-	return getSortedModelMappingKeys(parsedMappings);
-}
-
-/**
  * Map Anthropic model name to provider-specific model name
+ * Optimized for known model patterns with direct matching (O(1) vs O(n log n))
  */
 export function mapModelName(anthropicModel: string, account: Account): string {
 	const mappings = getModelMappings(account);
@@ -219,25 +133,8 @@ export function mapModelName(anthropicModel: string, account: Account): string {
 		return mappings[anthropicModel];
 	}
 
-	// Try partial matches (wildcard-style matching)
-	const modelKeys = getSortedModelMappingKeys(mappings); // Use cached sorted keys
-
-	for (const key of modelKeys) {
-		if (anthropicModel.includes(key)) {
-			if (
-				process.env.DEBUG?.includes("model") ||
-				process.env.DEBUG === "true" ||
-				process.env.NODE_ENV === "development"
-			) {
-				log.info(
-					`Wildcard model mapping: ${anthropicModel} (contains '${key}') -> ${mappings[key]}`,
-				);
-			}
-			return mappings[key];
-		}
-	}
-
-	// Default pattern matching as fallback
+	// Direct pattern matching for known model families (O(1) constant time)
+	// No sorting needed - we know the exact patterns to check
 	if (anthropicModel.includes("opus")) {
 		const mappedModel = mappings.opus || "openai/gpt-5";
 		if (
@@ -245,21 +142,11 @@ export function mapModelName(anthropicModel: string, account: Account): string {
 			process.env.DEBUG === "true" ||
 			process.env.NODE_ENV === "development"
 		) {
-			log.info(`Default opus mapping: ${anthropicModel} -> ${mappedModel}`);
+			log.info(`Opus model mapping: ${anthropicModel} -> ${mappedModel}`);
 		}
 		return mappedModel;
 	}
-	if (anthropicModel.includes("sonnet")) {
-		const mappedModel = mappings.sonnet || "openai/gpt-5";
-		if (
-			process.env.DEBUG?.includes("model") ||
-			process.env.DEBUG === "true" ||
-			process.env.NODE_ENV === "development"
-		) {
-			log.info(`Default sonnet mapping: ${anthropicModel} -> ${mappedModel}`);
-		}
-		return mappedModel;
-	}
+
 	if (anthropicModel.includes("haiku")) {
 		const mappedModel = mappings.haiku || "openai/gpt-5-mini";
 		if (
@@ -267,12 +154,24 @@ export function mapModelName(anthropicModel: string, account: Account): string {
 			process.env.DEBUG === "true" ||
 			process.env.NODE_ENV === "development"
 		) {
-			log.info(`Default haiku mapping: ${anthropicModel} -> ${mappedModel}`);
+			log.info(`Haiku model mapping: ${anthropicModel} -> ${mappedModel}`);
 		}
 		return mappedModel;
 	}
 
-	// Default fallback - use a mid-tier model
+	if (anthropicModel.includes("sonnet")) {
+		const mappedModel = mappings.sonnet || "openai/gpt-5";
+		if (
+			process.env.DEBUG?.includes("model") ||
+			process.env.DEBUG === "true" ||
+			process.env.NODE_ENV === "development"
+		) {
+			log.info(`Sonnet model mapping: ${anthropicModel} -> ${mappedModel}`);
+		}
+		return mappedModel;
+	}
+
+	// Default fallback - use sonnet as the mid-tier default
 	const fallbackModel = mappings.sonnet || "openai/gpt-5";
 	if (
 		process.env.DEBUG?.includes("model") ||
