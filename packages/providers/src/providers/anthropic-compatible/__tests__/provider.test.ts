@@ -149,7 +149,7 @@ describe("AnthropicCompatibleProvider", () => {
 			expect(result.has("content-encoding")).toBe(false);
 		});
 
-		test("SECURITY: should always sanitize client authorization header to prevent credential leakage", () => {
+		test("SECURITY: should sanitize client authorization header to prevent credential leakage", () => {
 			const provider = new AnthropicCompatibleProvider();
 
 			const headers = new Headers();
@@ -181,6 +181,34 @@ describe("AnthropicCompatibleProvider", () => {
 			expect(result.get("authorization")).not.toBe(
 				"Bearer client-secret-token",
 			);
+		});
+
+		test("SECURITY: should handle case-insensitive authorization header deletion", () => {
+			const provider = new AnthropicCompatibleProvider();
+
+			const headers = new Headers();
+			headers.set("Authorization", "Bearer client-secret-token"); // Capital A
+
+			const result = provider.prepareHeaders(headers, "test-api-key");
+
+			// Should remove regardless of casing
+			expect(result.get("authorization")).toBeNull();
+			expect(result.get("Authorization")).toBeNull();
+			expect(result.get("AUTHORIZATION")).toBeNull();
+			expect(result.get("x-api-key")).toBe("test-api-key");
+		});
+
+		test("SECURITY: should preserve client authorization in passthrough mode (no credentials)", () => {
+			const provider = new AnthropicCompatibleProvider();
+
+			const headers = new Headers();
+			headers.set("authorization", "Bearer client-own-key");
+
+			// Call without providing any credentials (passthrough mode)
+			const result = provider.prepareHeaders(headers, undefined, undefined);
+
+			// Client's authorization should be preserved for direct API access
+			expect(result.get("authorization")).toBe("Bearer client-own-key");
 		});
 	});
 

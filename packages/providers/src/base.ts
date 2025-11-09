@@ -41,8 +41,12 @@ export abstract class BaseProvider implements Provider {
 	): Headers {
 		const newHeaders = new Headers(headers);
 
-		// SECURITY: Always remove client's authorization header to prevent credential leakage
-		newHeaders.delete("authorization");
+		// SECURITY: Remove client's authorization header when we have provider credentials
+		// to prevent credential leakage. If no credentials provided (passthrough mode),
+		// preserve client's authorization for direct API access.
+		if (accessToken || _apiKey) {
+			newHeaders.delete("authorization");
+		}
 
 		// Set provider-specific authorization
 		if (accessToken) {

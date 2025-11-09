@@ -157,6 +157,35 @@ describe("OpenAICompatibleProvider", () => {
 				"Bearer client-secret-token",
 			);
 		});
+
+		it("SECURITY: should handle case-insensitive authorization header deletion", () => {
+			const headers = new Headers();
+			headers.set("Authorization", "Bearer client-secret-token"); // Capital A
+
+			const prepared = provider.prepareHeaders(
+				headers,
+				undefined,
+				"server-api-key",
+			);
+
+			// Should remove client's header regardless of casing and set server's
+			expect(prepared.get("authorization")).toBe("Bearer server-api-key");
+			expect(prepared.get("Authorization")).toBe("Bearer server-api-key");
+			expect(prepared.get("authorization")).not.toBe(
+				"Bearer client-secret-token",
+			);
+		});
+
+		it("SECURITY: should preserve client authorization in passthrough mode (no credentials)", () => {
+			const headers = new Headers();
+			headers.set("authorization", "Bearer client-own-key");
+
+			// Call without providing any credentials (passthrough mode)
+			const prepared = provider.prepareHeaders(headers, undefined, undefined);
+
+			// Client's authorization should be preserved for direct API access
+			expect(prepared.get("authorization")).toBe("Bearer client-own-key");
+		});
 	});
 
 	describe("parseRateLimit", () => {

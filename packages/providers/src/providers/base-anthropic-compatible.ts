@@ -118,12 +118,14 @@ export abstract class BaseAnthropicCompatibleProvider extends BaseProvider {
 	): Headers {
 		const newHeaders = new Headers(headers);
 
-		// SECURITY: Always remove client's authorization header to prevent credential leakage
-		newHeaders.delete("authorization");
-
-		// Set authentication header for API key
+		// SECURITY: Remove client's authorization header when we have provider credentials
+		// to prevent credential leakage. If no credentials provided (passthrough mode),
+		// preserve client's authorization for direct API access.
 		const token = accessToken || apiKey;
 		if (token) {
+			newHeaders.delete("authorization");
+
+			// Set authentication header for API key
 			const headerName = this.getAuthHeader();
 			const authType = this.getAuthType();
 
