@@ -135,7 +135,7 @@ export function mapModelName(anthropicModel: string, account: Account): string {
 
 	// Direct pattern matching for known model families (O(1) constant time)
 	// No sorting needed - we know the exact patterns to check
-	if (anthropicModel.includes("opus")) {
+	if (anthropicModel.toLowerCase().includes("opus")) {
 		const mappedModel = mappings.opus || "openai/gpt-5";
 		if (
 			process.env.DEBUG?.includes("model") ||
@@ -147,7 +147,7 @@ export function mapModelName(anthropicModel: string, account: Account): string {
 		return mappedModel;
 	}
 
-	if (anthropicModel.includes("haiku")) {
+	if (anthropicModel.toLowerCase().includes("haiku")) {
 		const mappedModel = mappings.haiku || "openai/gpt-5-mini";
 		if (
 			process.env.DEBUG?.includes("model") ||
@@ -159,7 +159,7 @@ export function mapModelName(anthropicModel: string, account: Account): string {
 		return mappedModel;
 	}
 
-	if (anthropicModel.includes("sonnet")) {
+	if (anthropicModel.toLowerCase().includes("sonnet")) {
 		const mappedModel = mappings.sonnet || "openai/gpt-5";
 		if (
 			process.env.DEBUG?.includes("model") ||

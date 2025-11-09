@@ -24,12 +24,16 @@ export class MinimaxProvider extends BaseAnthropicCompatibleProvider {
 		const transformed = await super.transformRequestBody(body, account);
 
 		// Force all models to MiniMax-M2 regardless of input
+		// Create a new object to avoid race conditions with concurrent requests
 		if (
 			transformed &&
 			typeof transformed === "object" &&
 			"model" in transformed
 		) {
-			transformed.model = "MiniMax-M2";
+			return {
+				...transformed,
+				model: "MiniMax-M2",
+			};
 		}
 
 		return transformed;

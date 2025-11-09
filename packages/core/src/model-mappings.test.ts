@@ -140,7 +140,7 @@ describe("Model Mapping", () => {
 		expect(result3).toBe("openai/gpt-5"); // Default opus fallback
 	});
 
-	test("mapModelName handles case sensitivity correctly", () => {
+	test("mapModelName handles case insensitive pattern matching correctly", () => {
 		const mockAccount: Account = {
 			id: "test",
 			name: "test-account",
@@ -154,16 +154,21 @@ describe("Model Mapping", () => {
 			total_requests: 0,
 			priority: 10,
 			model_mappings: JSON.stringify({
-				Sonnet: "uppercase-gpt-4",
-				Opus: "uppercase-gpt-4-turbo",
-				Haiku: "uppercase-gpt-3.5",
+				sonnet: "lowercase-gpt-4",
+				opus: "lowercase-gpt-4-turbo",
+				haiku: "lowercase-gpt-3.5",
 			}),
 			custom_endpoint: null,
 		};
 
-		// Should not match due to case sensitivity
-		const result1 = mapModelName("claude-sonnet-4-5-20250929", mockAccount);
-		// Should fall back to default because "sonnet" != "Sonnet"
-		expect(result1).toBe("openai/gpt-5");
+		// Should match using case-insensitive pattern matching
+		const sonnetResult = mapModelName("claude-sonnet-4-5-20250929", mockAccount);
+		const haikuResult = mapModelName("claude-haiku-4-5-20251001", mockAccount);
+		const opusResult = mapModelName("claude-opus-4-1-20250805", mockAccount);
+
+		// Should match the lowercase mappings due to case-insensitive pattern matching
+		expect(sonnetResult).toBe("lowercase-gpt-4");
+		expect(haikuResult).toBe("lowercase-gpt-3.5");
+		expect(opusResult).toBe("lowercase-gpt-4-turbo");
 	});
 });
