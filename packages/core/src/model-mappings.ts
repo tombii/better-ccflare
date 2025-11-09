@@ -76,8 +76,11 @@ function getSortedModelMappingKeys(mappings: Record<string, string>): string[] {
 
 	// Check cache first
 	if (MODEL_MAPPING_CACHE.has(cacheKey)) {
-		const cachedKeys = MODEL_MAPPING_CACHE.get(cacheKey);
-		return cachedKeys || [];
+		const cachedKeys = MODEL_MAPPING_CACHE.get(cacheKey)!;
+		// Implement true LRU: move accessed entry to the end (most recently used)
+		MODEL_MAPPING_CACHE.delete(cacheKey);
+		MODEL_MAPPING_CACHE.set(cacheKey, cachedKeys);
+		return cachedKeys;
 	}
 
 	// Cache miss - sort and cache
@@ -85,8 +88,8 @@ function getSortedModelMappingKeys(mappings: Record<string, string>): string[] {
 	// Example: "claude-sonnet" should match before "sonnet" when both exist
 	const sortedKeys = Object.keys(mappings).sort((a, b) => b.length - a.length);
 
-	// Implement FIFO eviction to prevent memory leaks
-	// Note: This is FIFO eviction, not true LRU (frequently accessed entries are not promoted)
+	// Implement LRU eviction to prevent memory leaks
+	// True LRU: least recently used entry is evicted (first entry in Map)
 	if (MODEL_MAPPING_CACHE.size >= MAX_CACHE_SIZE) {
 		const firstKey = MODEL_MAPPING_CACHE.keys().next().value;
 		if (firstKey) {
@@ -95,7 +98,7 @@ function getSortedModelMappingKeys(mappings: Record<string, string>): string[] {
 
 		if (process.env.DEBUG?.includes("model") || process.env.DEBUG === "true") {
 			log.debug(
-				`Model mapping cache: Evicted oldest entry (cache size: ${MODEL_MAPPING_CACHE.size})`,
+				`Model mapping cache: Evicted least recently used entry (cache size: ${MODEL_MAPPING_CACHE.size})`,
 			);
 		}
 	}
