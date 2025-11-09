@@ -51,10 +51,10 @@ describe("AnthropicCompatibleProvider", () => {
 		test("should handle API key authentication", async () => {
 			const provider = new AnthropicCompatibleProvider();
 
-			const mockAccount = {
+			const mockAccount: Partial<Account> = {
 				name: "test-account",
 				refresh_token: "test-api-key",
-			} as any;
+			};
 
 			const result = await provider.refreshToken(mockAccount, "test-client");
 
@@ -65,10 +65,10 @@ describe("AnthropicCompatibleProvider", () => {
 		test("should throw error when no API key available", async () => {
 			const provider = new AnthropicCompatibleProvider();
 
-			const mockAccount = {
+			const mockAccount: Partial<Account> = {
 				name: "test-account",
 				refresh_token: "",
-			} as any;
+			};
 
 			await expect(
 				provider.refreshToken(mockAccount, "test-client"),
@@ -519,7 +519,7 @@ describe("AnthropicCompatibleProvider", () => {
 		test("should handle null/undefined configuration values", () => {
 			const provider = new AnthropicCompatibleProvider({
 				name: undefined,
-				baseUrl: null as any,
+				baseUrl: undefined,
 			});
 
 			expect(provider.name).toBe("anthropic-compatible"); // Default name
