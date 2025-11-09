@@ -42,6 +42,7 @@ export {
 	parseCustomEndpointData,
 	parseModelMappings,
 	validateAndSanitizeModelMappings,
+	KNOWN_PATTERNS,
 } from "./model-mappings";
 export {
 	CLAUDE_MODEL_IDS,

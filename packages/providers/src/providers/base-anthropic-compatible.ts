@@ -179,13 +179,14 @@ export abstract class BaseAnthropicCompatibleProvider extends BaseProvider {
 						if (accountMappings[originalModel]) {
 							mappedModel = accountMappings[originalModel];
 						} else {
-							// Try wildcard/substring matching (e.g., "sonnet" matches "claude-sonnet-4-5-20250929")
-							const mappingKeys = Object.keys(accountMappings).sort(
-								(a, b) => b.length - a.length,
-							); // Longest first
-							for (const key of mappingKeys) {
-								if (originalModel.toLowerCase().includes(key.toLowerCase())) {
-									mappedModel = accountMappings[key];
+							// Direct pattern matching for known model families (O(1) constant time)
+							// Use shared KNOWN_PATTERNS to ensure consistent order across codebase
+							const { KNOWN_PATTERNS } = await import("@better-ccflare/core");
+							const normalizedModel = originalModel.toLowerCase();
+
+							for (const pattern of KNOWN_PATTERNS) {
+								if (normalizedModel.includes(pattern)) {
+									mappedModel = accountMappings[pattern];
 									break;
 								}
 							}
