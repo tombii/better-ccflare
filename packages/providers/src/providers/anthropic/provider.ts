@@ -212,7 +212,8 @@ export class AnthropicProvider extends BaseProvider {
 		// SECURITY: Remove client's authorization header when we have provider credentials
 		// to prevent credential leakage. If no credentials provided (passthrough mode),
 		// preserve client's authorization for direct API access.
-		if (accessToken || apiKey) {
+		// Use explicit undefined checks to handle empty strings correctly.
+		if (accessToken !== undefined || apiKey !== undefined) {
 			newHeaders.delete("authorization");
 		}
 

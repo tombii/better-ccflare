@@ -121,18 +121,21 @@ export abstract class BaseAnthropicCompatibleProvider extends BaseProvider {
 		// SECURITY: Remove client's authorization header when we have provider credentials
 		// to prevent credential leakage. If no credentials provided (passthrough mode),
 		// preserve client's authorization for direct API access.
-		const token = accessToken || apiKey;
-		if (token) {
+		// Use explicit undefined checks to handle empty strings correctly.
+		if (accessToken !== undefined || apiKey !== undefined) {
 			newHeaders.delete("authorization");
 
 			// Set authentication header for API key
-			const headerName = this.getAuthHeader();
-			const authType = this.getAuthType();
+			const token = accessToken || apiKey;
+			if (token) {
+				const headerName = this.getAuthHeader();
+				const authType = this.getAuthType();
 
-			if (headerName === "authorization" && authType === "bearer") {
-				newHeaders.set(headerName, `Bearer ${token}`);
-			} else {
-				newHeaders.set(headerName, token);
+				if (headerName === "authorization" && authType === "bearer") {
+					newHeaders.set(headerName, `Bearer ${token}`);
+				} else {
+					newHeaders.set(headerName, token);
+				}
 			}
 		}
 

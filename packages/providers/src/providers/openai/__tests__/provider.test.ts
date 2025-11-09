@@ -186,6 +186,28 @@ describe("OpenAICompatibleProvider", () => {
 			// Client's authorization should be preserved for direct API access
 			expect(prepared.get("authorization")).toBe("Bearer client-own-key");
 		});
+
+		it("SECURITY: should sanitize client auth even with empty string credentials", () => {
+			const headers = new Headers();
+			headers.set("authorization", "Bearer client-secret-token");
+
+			// Empty string is still a defined value (not undefined)
+			const prepared = provider.prepareHeaders(headers, "", undefined);
+
+			// Client's authorization should be removed even with empty accessToken
+			expect(prepared.get("authorization")).toBeNull();
+		});
+
+		it("SECURITY: should sanitize client auth with empty string apiKey", () => {
+			const headers = new Headers();
+			headers.set("authorization", "Bearer client-secret-token");
+
+			// Empty string apiKey should still trigger sanitization
+			const prepared = provider.prepareHeaders(headers, undefined, "");
+
+			// Client's authorization should be removed
+			expect(prepared.get("authorization")).toBeNull();
+		});
 	});
 
 	describe("parseRateLimit", () => {

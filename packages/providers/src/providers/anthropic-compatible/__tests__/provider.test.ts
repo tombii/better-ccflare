@@ -210,6 +210,33 @@ describe("AnthropicCompatibleProvider", () => {
 			// Client's authorization should be preserved for direct API access
 			expect(result.get("authorization")).toBe("Bearer client-own-key");
 		});
+
+		test("SECURITY: should sanitize client auth even with empty string credentials", () => {
+			const provider = new AnthropicCompatibleProvider();
+
+			const headers = new Headers();
+			headers.set("authorization", "Bearer client-secret-token");
+
+			// Empty string is still a defined value (not undefined)
+			const result = provider.prepareHeaders(headers, "", undefined);
+
+			// Client's authorization should be removed even with empty accessToken
+			expect(result.get("authorization")).toBeNull();
+			expect(result.get("x-api-key")).toBeNull();
+		});
+
+		test("SECURITY: should sanitize client auth with empty string apiKey", () => {
+			const provider = new AnthropicCompatibleProvider();
+
+			const headers = new Headers();
+			headers.set("authorization", "Bearer client-secret-token");
+
+			// Empty string apiKey should still trigger sanitization
+			const result = provider.prepareHeaders(headers, undefined, "");
+
+			// Client's authorization should be removed
+			expect(result.get("authorization")).toBeNull();
+		});
 	});
 
 	describe("Model Mapping", () => {
