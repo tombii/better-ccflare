@@ -1,6 +1,7 @@
 import {
 	BUFFER_SIZES,
 	estimateCostUSD,
+	KNOWN_PATTERNS,
 	TIME_CONSTANTS,
 } from "@better-ccflare/core";
 import { sanitizeProxyHeaders } from "@better-ccflare/http-common";
@@ -75,7 +76,11 @@ export abstract class BaseAnthropicCompatibleProvider extends BaseProvider {
 	 * Defaults to config.authType but can be overridden
 	 */
 	getAuthType(): "bearer" | "direct" {
-		return this.config.authType as "bearer" | "direct";
+		const authType = this.config.authType;
+		if (authType !== "bearer" && authType !== "direct") {
+			return "direct"; // sensible default
+		}
+		return authType;
 	}
 
 	canHandle(_path: string): boolean {
@@ -201,7 +206,6 @@ export abstract class BaseAnthropicCompatibleProvider extends BaseProvider {
 		}
 
 		// Try pattern matching for known model families
-		const { KNOWN_PATTERNS } = require("@better-ccflare/core");
 		const normalizedModel = originalModel.toLowerCase();
 
 		for (const pattern of KNOWN_PATTERNS) {

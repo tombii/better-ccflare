@@ -1,4 +1,4 @@
-import { parseModelMappings } from "@better-ccflare/core";
+import { KNOWN_PATTERNS, parseModelMappings } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import type { Account } from "@better-ccflare/types";
 
@@ -37,6 +37,14 @@ export interface TransformRequestBody {
 /**
  * Standardized model mapping utility for all providers
  * Ensures consistent behavior across different provider implementations
+ *
+ * @param anthropicModel - The original Anthropic model name
+ * @param account - The account containing model_mappings configuration
+ * @returns The mapped model name or the original if no mapping exists
+ *
+ * @example
+ * const mapped = getModelName("claude-sonnet-4-5", account);
+ * // Returns "custom-sonnet" if account has mapping: {"claude-sonnet-4-5": "custom-sonnet"}
  */
 export function getModelName(
 	anthropicModel: string,
@@ -59,7 +67,6 @@ export function getModelName(
 	}
 
 	// Try pattern matching for known model families
-	const { KNOWN_PATTERNS } = require("@better-ccflare/core");
 	const normalizedModel = anthropicModel.toLowerCase();
 
 	for (const pattern of KNOWN_PATTERNS) {
@@ -79,6 +86,15 @@ export function getModelName(
 /**
  * Generic model transformation function that can be used by all providers
  * Handles the common pattern of transforming request body models
+ *
+ * @param request - The incoming request object to transform
+ * @param account - The account containing model_mappings configuration
+ * @param providerSpecificMapping - Optional provider-specific mapping function
+ * @returns A new Request object with transformed body, or the original if no changes needed
+ *
+ * @example
+ * const transformed = await transformRequestBodyModel(request, account);
+ * // Transforms the request body model based on account mappings
  */
 export async function transformRequestBodyModel<T extends TransformRequestBody>(
 	request: Request,
@@ -129,13 +145,22 @@ export async function transformRequestBodyModel<T extends TransformRequestBody>(
 /**
  * Optimized model transformation for providers that need to force all models to a specific one
  * Uses direct object mutation instead of creating new objects for better performance
+ *
+ * @param request - The incoming request object to transform
+ * @param targetModel - The target model name to force all requests to
+ * @returns A new Request object with the model forced to targetModel, or the original if no changes needed
+ *
+ * @example
+ * const transformed = await transformRequestBodyModelForce(request, "MiniMax-M2");
+ * // Forces all models in the request to "MiniMax-M2"
  */
-export async function transformRequestBodyModelForce<
-	T extends TransformRequestBody,
->(request: Request, targetModel: string): Promise<Request> {
+export async function transformRequestBodyModelForce(
+	request: Request,
+	targetModel: string,
+): Promise<Request> {
 	try {
 		const clonedRequest = request.clone();
-		const body: T = await clonedRequest.json();
+		const body = await clonedRequest.json();
 
 		// Direct mutation for performance - avoid creating new objects
 		if (body && typeof body === "object" && body.model) {

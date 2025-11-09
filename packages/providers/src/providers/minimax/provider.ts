@@ -1,5 +1,4 @@
 import type { Account } from "@better-ccflare/types";
-import type { TransformRequestBody } from "../../utils/model-mapping";
 import { transformRequestBodyModelForce } from "../../utils/model-mapping";
 import { BaseAnthropicCompatibleProvider } from "../base-anthropic-compatible";
 
@@ -29,9 +28,6 @@ export class MinimaxProvider extends BaseAnthropicCompatibleProvider {
 		_account?: Account,
 	): Promise<Request> {
 		// Force all models to MiniMax-M2 for Minimax provider
-		return transformRequestBodyModelForce<TransformRequestBody>(
-			request,
-			"MiniMax-M2",
-		);
+		return transformRequestBodyModelForce(request, "MiniMax-M2");
 	}
 }
