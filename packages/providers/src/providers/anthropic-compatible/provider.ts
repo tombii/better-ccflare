@@ -26,7 +26,7 @@ export class AnthropicCompatibleProvider extends BaseAnthropicCompatibleProvider
 
 	getEndpoint(): string {
 		// Use the configured base URL for this generic provider
-		return this.config.baseUrl!;
+		return this.config.baseUrl || "https://api.anthropic.com";
 	}
 
 	/**
@@ -34,9 +34,10 @@ export class AnthropicCompatibleProvider extends BaseAnthropicCompatibleProvider
 	 */
 	updateConfig(newConfig: Partial<AnthropicCompatibleConfig>): void {
 		this.config = { ...this.config, ...newConfig };
-		this.name = this.config.name! || DEFAULT_CONFIG.name!;
+		this.name =
+			this.config.name || DEFAULT_CONFIG.name || "anthropic-compatible";
 		if (!this.config.name) {
-			this.config.name = DEFAULT_CONFIG.name!;
+			this.config.name = DEFAULT_CONFIG.name || "anthropic-compatible";
 		}
 	}
 

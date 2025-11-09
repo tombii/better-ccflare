@@ -246,6 +246,25 @@ describe("MinimaxProvider", () => {
 				name: "test-minimax-account",
 				provider: "minimax",
 				api_key: "test-key",
+				refresh_token: "test-key",
+				access_token: null,
+				expires_at: null,
+				custom_endpoint: null,
+				rate_limited_until: null,
+				rate_limit_status: null,
+				rate_limit_reset: null,
+				rate_limit_remaining: null,
+				created_at: Date.now(),
+				last_used: null,
+				request_count: 0,
+				total_requests: 0,
+				session_start: null,
+				session_request_count: 0,
+				paused: false,
+				priority: 0,
+				auto_fallback_enabled: false,
+				auto_refresh_enabled: false,
+				model_mappings: null,
 			};
 
 			// Test different input models - all should be forced to MiniMax-M2
@@ -258,23 +277,26 @@ describe("MinimaxProvider", () => {
 			];
 
 			for (const model of testModels) {
-				const request = {
-					method: "POST",
-					headers: {},
-					body: {
-						model: model,
-						messages: [{ role: "user", content: "test" }],
-					},
+				const requestBody = {
+					model: model,
+					messages: [{ role: "user", content: "test" }],
 				};
 
-				const transformed = await provider.transformRequestBody(
-					request.body,
+				const request = new Request("http://test.com", {
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify(requestBody),
+				});
+
+				const transformedRequest = await provider.transformRequestBody(
+					request,
 					mockAccount,
 				);
 
-				expect(transformed.model).toBe("MiniMax-M2");
+				const transformedBody = await transformedRequest.json();
+				expect(transformedBody.model).toBe("MiniMax-M2");
 				// Other properties should be preserved
-				expect(transformed.messages).toEqual([
+				expect(transformedBody.messages).toEqual([
 					{ role: "user", content: "test" },
 				]);
 			}
