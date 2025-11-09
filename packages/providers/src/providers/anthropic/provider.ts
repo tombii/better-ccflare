@@ -209,6 +209,9 @@ export class AnthropicProvider extends BaseProvider {
 	): Headers {
 		const newHeaders = new Headers(headers);
 
+		// SECURITY: Always remove client's authorization header to prevent credential leakage
+		newHeaders.delete("authorization");
+
 		// Set authentication header
 		if (accessToken) {
 			newHeaders.set("Authorization", `Bearer ${accessToken}`);

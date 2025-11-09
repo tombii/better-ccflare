@@ -140,6 +140,23 @@ describe("OpenAICompatibleProvider", () => {
 
 			expect(prepared.get("authorization")).toBe("Bearer api-key");
 		});
+
+		it("SECURITY: should sanitize client authorization header to prevent credential leakage", () => {
+			const headers = new Headers();
+			headers.set("authorization", "Bearer client-secret-token");
+
+			const prepared = provider.prepareHeaders(
+				headers,
+				undefined,
+				"server-api-key",
+			);
+
+			// Client's authorization should be replaced with server's
+			expect(prepared.get("authorization")).toBe("Bearer server-api-key");
+			expect(prepared.get("authorization")).not.toBe(
+				"Bearer client-secret-token",
+			);
+		});
 	});
 
 	describe("parseRateLimit", () => {

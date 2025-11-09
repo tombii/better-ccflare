@@ -40,6 +40,11 @@ export abstract class BaseProvider implements Provider {
 		_apiKey?: string,
 	): Headers {
 		const newHeaders = new Headers(headers);
+
+		// SECURITY: Always remove client's authorization header to prevent credential leakage
+		newHeaders.delete("authorization");
+
+		// Set provider-specific authorization
 		if (accessToken) {
 			newHeaders.set("Authorization", `Bearer ${accessToken}`);
 		}

@@ -118,6 +118,9 @@ export abstract class BaseAnthropicCompatibleProvider extends BaseProvider {
 	): Headers {
 		const newHeaders = new Headers(headers);
 
+		// SECURITY: Always remove client's authorization header to prevent credential leakage
+		newHeaders.delete("authorization");
+
 		// Set authentication header for API key
 		const token = accessToken || apiKey;
 		if (token) {
@@ -129,11 +132,6 @@ export abstract class BaseAnthropicCompatibleProvider extends BaseProvider {
 			} else {
 				newHeaders.set(headerName, token);
 			}
-		}
-
-		// Remove authorization header if we're using a different auth header
-		if (this.getAuthHeader() !== "authorization") {
-			newHeaders.delete("authorization");
 		}
 
 		// Remove host header

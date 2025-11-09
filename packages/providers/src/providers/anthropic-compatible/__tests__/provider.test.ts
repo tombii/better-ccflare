@@ -148,6 +148,40 @@ describe("AnthropicCompatibleProvider", () => {
 			expect(result.has("accept-encoding")).toBe(false);
 			expect(result.has("content-encoding")).toBe(false);
 		});
+
+		test("SECURITY: should always sanitize client authorization header to prevent credential leakage", () => {
+			const provider = new AnthropicCompatibleProvider();
+
+			const headers = new Headers();
+			headers.set("authorization", "Bearer client-secret-token");
+
+			const result = provider.prepareHeaders(headers, "test-api-key");
+
+			// Client's authorization header should be removed
+			expect(result.get("authorization")).toBeNull();
+			// Our x-api-key should be set instead
+			expect(result.get("x-api-key")).toBe("test-api-key");
+		});
+
+		test("SECURITY: should sanitize client authorization even when using authorization header", () => {
+			const config: AnthropicCompatibleConfig = {
+				authHeader: "authorization",
+				authType: "bearer",
+			};
+
+			const provider = new AnthropicCompatibleProvider(config);
+
+			const headers = new Headers();
+			headers.set("authorization", "Bearer client-secret-token");
+
+			const result = provider.prepareHeaders(headers, "server-token");
+
+			// Client's authorization should be replaced with server's
+			expect(result.get("authorization")).toBe("Bearer server-token");
+			expect(result.get("authorization")).not.toBe(
+				"Bearer client-secret-token",
+			);
+		});
 	});
 
 	describe("Model Mapping", () => {
