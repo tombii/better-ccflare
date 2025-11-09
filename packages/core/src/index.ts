@@ -38,6 +38,7 @@ export {
 	DEFAULT_MODEL_MAPPINGS,
 	getEndpointUrl,
 	getModelMappings,
+	getSortedMappingKeysForAccount,
 	mapModelName,
 	parseCustomEndpointData,
 	parseModelMappings,

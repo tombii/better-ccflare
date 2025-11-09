@@ -4,6 +4,11 @@ import { safeJsonParse, validateModelMappings } from "./validation";
 
 const log = new Logger("ModelMappings");
 
+// Centralized cache for sorted model mapping keys
+// Shared across all providers to avoid redundant sorting
+const MODEL_MAPPING_CACHE = new Map<string, string[]>();
+const MAX_CACHE_SIZE = 1000; // Prevent memory leaks
+
 // Inline types to avoid Bun import issues
 // Types are now defined in index.ts and exported from there
 
@@ -44,6 +49,61 @@ export function parseCustomEndpointData(
 		);
 		return { endpoint: trimmed };
 	}
+}
+
+/**
+ * Normalize model mappings string for consistent cache keys
+ */
+function normalizeModelMappings(modelMappings: string): string {
+	return modelMappings
+		.trim()
+		.replace(/\r\n/g, "\n") // Normalize line endings
+		.replace(/\n\s+/g, "\n") // Remove leading spaces
+		.replace(/\s+\n/g, "\n") // Remove trailing spaces
+		.toLowerCase(); // Case insensitive
+}
+
+/**
+ * Get sorted model mapping keys with caching
+ * This eliminates redundant sorting operations across all providers
+ */
+function getSortedModelMappingKeys(mappings: Record<string, string>): string[] {
+	// Create cache key from mappings content
+	const mappingsString = JSON.stringify(mappings);
+	const normalizedKey = normalizeModelMappings(mappingsString);
+
+	// Check cache first
+	if (MODEL_MAPPING_CACHE.has(normalizedKey)) {
+		const cachedKeys = MODEL_MAPPING_CACHE.get(normalizedKey);
+		return cachedKeys || [];
+	}
+
+	// Cache miss - sort and cache
+	const sortedKeys = Object.keys(mappings).sort((a, b) => b.length - a.length); // Longest first
+
+	// Implement LRU eviction to prevent memory leaks
+	if (MODEL_MAPPING_CACHE.size >= MAX_CACHE_SIZE) {
+		const firstKey = MODEL_MAPPING_CACHE.keys().next().value;
+		if (firstKey) {
+			MODEL_MAPPING_CACHE.delete(firstKey);
+		}
+
+		if (process.env.DEBUG?.includes("model") || process.env.DEBUG === "true") {
+			log.debug(
+				`Model mapping cache: Evicted oldest entry (cache size: ${MODEL_MAPPING_CACHE.size})`,
+			);
+		}
+	}
+
+	MODEL_MAPPING_CACHE.set(normalizedKey, sortedKeys);
+
+	if (process.env.DEBUG?.includes("model") || process.env.DEBUG === "true") {
+		log.debug(
+			`Model mapping cache: Cached new entry (cache size: ${MODEL_MAPPING_CACHE.size})`,
+		);
+	}
+
+	return sortedKeys;
 }
 
 /**
@@ -113,6 +173,25 @@ export function getModelMappings(account: Account): Record<string, string> {
 }
 
 /**
+ * Get sorted keys for model mappings with caching (for external use)
+ * This function provides the cached sorting capability to other providers
+ */
+export function getSortedMappingKeysForAccount(
+	modelMappings: string | null,
+): string[] {
+	if (!modelMappings) {
+		return [];
+	}
+
+	const parsedMappings = parseModelMappings(modelMappings);
+	if (!parsedMappings) {
+		return [];
+	}
+
+	return getSortedModelMappingKeys(parsedMappings);
+}
+
+/**
  * Map Anthropic model name to provider-specific model name
  */
 export function mapModelName(anthropicModel: string, account: Account): string {
@@ -133,7 +212,7 @@ export function mapModelName(anthropicModel: string, account: Account): string {
 	}
 
 	// Try partial matches (wildcard-style matching)
-	const modelKeys = Object.keys(mappings).sort((a, b) => b.length - a.length); // Sort by length, longest first
+	const modelKeys = getSortedModelMappingKeys(mappings); // Use cached sorted keys
 
 	for (const key of modelKeys) {
 		if (anthropicModel.includes(key)) {
