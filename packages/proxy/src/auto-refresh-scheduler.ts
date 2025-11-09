@@ -13,6 +13,45 @@ import type { Account } from "@better-ccflare/types";
 import { getValidAccessToken } from "./handlers";
 import type { ProxyContext } from "./proxy";
 
+/**
+ * Try to open the user's default browser with the given URL.
+ * Returns true on success, false otherwise.
+ */
+async function openBrowser(url: string): Promise<boolean> {
+	try {
+		// Try to use the open package if available
+		const { default: open } = await import("open");
+		await open(url, { wait: false });
+		return true;
+	} catch (_err) {
+		// Fallback – platform-specific browser opening
+		try {
+			if (process.platform === "win32") {
+				// Use powershell -Command Start-Process 'url'
+				const { spawn } = await import("node:child_process");
+				spawn(
+					"powershell.exe",
+					["-NoProfile", "-Command", "Start-Process", `'${url}'`],
+					{
+						detached: true,
+						stdio: "ignore",
+					},
+				).unref();
+			} else if (process.platform === "darwin") {
+				const { spawn } = await import("node:child_process");
+				spawn("open", [url], { detached: true, stdio: "ignore" }).unref();
+			} else {
+				// Linux generic fallback
+				const { spawn } = await import("node:child_process");
+				spawn("xdg-open", [url], { detached: true, stdio: "ignore" }).unref();
+			}
+			return true;
+		} catch {
+			return false;
+		}
+	}
+}
+
 const log = new Logger("AutoRefreshScheduler");
 
 /**
@@ -111,22 +150,8 @@ export class AutoRefreshScheduler {
 			);
 			log.info(`Please authorize the request in your browser.`);
 
-			// Simple browser opening implementation
-			let browserOpened = false;
-			try {
-				// Try to open with xdg-open (Linux)
-				const process = Bun.spawn(["xdg-open", authUrl]);
-				browserOpened = (await process.exited) === 0;
-			} catch (error) {
-				log.debug(`Failed to open browser with xdg-open:`, error);
-				try {
-					// Fallback to open command (macOS)
-					const process = Bun.spawn(["open", authUrl]);
-					browserOpened = (await process.exited) === 0;
-				} catch (error2) {
-					log.debug(`Failed to open browser with open:`, error2);
-				}
-			}
+			// Try to open browser using cross-platform utility
+			const browserOpened = await openBrowser(authUrl);
 			if (!browserOpened) {
 				log.warn(
 					`Failed to open browser automatically. Please manually visit: ${authUrl}`,
@@ -215,12 +240,66 @@ export class AutoRefreshScheduler {
 			}
 
 			const now = Date.now();
+			const nowStr = new Date(now).toISOString();
+			log.info(`Starting auto-refresh check at ${nowStr}`);
+			console.log(`[${nowStr}] Starting auto-refresh check`);
 
 			// Periodically clean up the tracking map - remove entries for accounts that no longer exist
 			// or have auto-refresh disabled
 			this.cleanupTracking();
 
-			// Get all accounts with auto-refresh enabled that have reset windows OR expired tokens
+			// Get all accounts with auto-refresh enabled
+			const allAccountsQuery = this.db.query<
+				{
+					id: string;
+					name: string;
+					provider: string;
+					refresh_token: string;
+					access_token: string | null;
+					expires_at: number | null;
+					rate_limit_reset: number | null;
+					custom_endpoint: string | null;
+					auto_refresh_enabled: number;
+				},
+				[]
+			>(
+				`
+				SELECT
+					id, name, provider, refresh_token, access_token,
+					expires_at, rate_limit_reset, custom_endpoint, auto_refresh_enabled
+				FROM accounts
+				WHERE provider = 'anthropic'
+				ORDER BY name
+			`,
+			);
+
+			const allAccounts = allAccountsQuery.all();
+			log.info(`Found ${allAccounts.length} total Anthropic accounts`);
+			console.log(`[${nowStr}] Found ${allAccounts.length} total Anthropic accounts`);
+
+			// Log status of all accounts
+			allAccounts.forEach((account) => {
+				const minutesUntilExpiry = account.expires_at ? (account.expires_at - now) / (1000 * 60) : null;
+				const minutesUntilReset = account.rate_limit_reset ? (account.rate_limit_reset - now) / (1000 * 60) : null;
+				const autoRefreshEnabled = account.auto_refresh_enabled === 1;
+
+				log.info(
+					`Account ${account.name}: ` +
+					`auto_refresh=${autoRefreshEnabled}, ` +
+					`token=${account.access_token ? 'valid' : 'null'}, ` +
+					`expires_in=${minutesUntilExpiry ? minutesUntilExpiry.toFixed(1) : 'null'}min, ` +
+					`rate_reset_in=${minutesUntilReset ? minutesUntilReset.toFixed(1) : 'null'}min`
+				);
+				console.log(
+					`[${nowStr}] Account ${account.name}: ` +
+					`auto_refresh=${autoRefreshEnabled}, ` +
+					`token=${account.access_token ? 'valid' : 'null'}, ` +
+					`expires_in=${minutesUntilExpiry ? minutesUntilExpiry.toFixed(1) : 'null'}min, ` +
+					`rate_reset_in=${minutesUntilReset ? minutesUntilReset.toFixed(1) : 'null'}min`
+				);
+			});
+
+			// Get accounts that meet refresh criteria
 			const query = this.db.query<
 				{
 					id: string;
@@ -254,18 +333,25 @@ export class AutoRefreshScheduler {
 
 			const accounts = query.all(now, now, now);
 
-			log.debug(
-				`Auto-refresh check found ${accounts.length} account(s) to consider`,
+			log.info(
+				`Auto-refresh check found ${accounts.length} account(s) meeting refresh criteria`,
 			);
 
 			if (accounts.length === 0) {
+				log.info("No accounts require refresh at this time");
 				return;
 			}
 
-			// Log accounts being considered
+			// Log detailed information about accounts being considered
 			accounts.forEach((account) => {
-				log.debug(
-					`Considering account: ${account.name}, reset_time: ${account.rate_limit_reset ? new Date(account.rate_limit_reset).toISOString() : "null"}`,
+				const minutesUntilExpiry = account.expires_at ? (account.expires_at - now) / (1000 * 60) : null;
+				const minutesUntilReset = account.rate_limit_reset ? (account.rate_limit_reset - now) / (1000 * 60) : null;
+
+				log.info(
+					`Considering account ${account.name}: ` +
+					`expires_in=${minutesUntilExpiry ? minutesUntilExpiry.toFixed(1) : 'null'}min, ` +
+					`rate_reset_in=${minutesUntilReset ? minutesUntilReset.toFixed(1) : 'null'}min, ` +
+					`reset_time=${account.rate_limit_reset ? new Date(account.rate_limit_reset).toISOString() : "null"}`
 				);
 			});
 
@@ -277,11 +363,21 @@ export class AutoRefreshScheduler {
 				this.isTokenExpired(account, now),
 			);
 
+			log.info(
+				`Account categorization: ${accountsForWindowRefresh.length} for window refresh, ` +
+				`${accountsWithExpiredTokens.length} for token reauthentication`
+			);
+			console.log(
+				`[${nowStr}] Account categorization: ${accountsForWindowRefresh.length} for window refresh, ` +
+				`${accountsWithExpiredTokens.length} for token reauthentication`
+			);
+
 			// Handle window refresh accounts
 			if (accountsForWindowRefresh.length > 0) {
 				log.info(
-					`Found ${accountsForWindowRefresh.length} account(s) with new windows for auto-refresh`,
+					`Processing ${accountsForWindowRefresh.length} account(s) for window refresh`,
 				);
+				log.info(`Accounts: ${accountsForWindowRefresh.map(a => a.name).join(', ')}`);
 
 				// Send dummy message to each account
 				// The sendDummyMessage method will update lastRefreshResetTime with the NEW rate_limit_reset from the API
@@ -293,8 +389,9 @@ export class AutoRefreshScheduler {
 			// Handle expired token accounts
 			if (accountsWithExpiredTokens.length > 0) {
 				log.info(
-					`Found ${accountsWithExpiredTokens.length} account(s) with expired tokens for OAuth reauthentication`,
+					`Processing ${accountsWithExpiredTokens.length} account(s) for OAuth reauthentication`,
 				);
+				log.info(`Accounts: ${accountsWithExpiredTokens.map(a => a.name).join(', ')}`);
 
 				// Initiate OAuth reauthentication for each account with expired tokens
 				for (const accountRow of accountsWithExpiredTokens) {
@@ -306,8 +403,11 @@ export class AutoRefreshScheduler {
 				accountsForWindowRefresh.length === 0 &&
 				accountsWithExpiredTokens.length === 0
 			) {
+				log.info("Auto-refresh check completed - no actions required");
 				return;
 			}
+
+			log.info("Auto-refresh check completed successfully");
 		} catch (error) {
 			if (error instanceof Error) {
 				const errorMessage = `Error in auto-refresh check: ${error.name}: ${error.message}`;
@@ -898,16 +998,36 @@ export class AutoRefreshScheduler {
 	): boolean {
 		// If no expires_at is set, assume token is valid
 		if (!account.expires_at) {
+			log.debug(`Account ${account.name}: No expiration time set, assuming valid token`);
 			return false;
 		}
 
 		// Check if token is expired (with 5-minute buffer to refresh before actual expiration)
 		const expirationBuffer = 5 * 60 * 1000; // 5 minutes
 		const isExpired = account.expires_at <= now + expirationBuffer;
+		const minutesUntilExpiry = (account.expires_at - now) / (1000 * 60);
+		const minutesUntilBuffer = (account.expires_at - (now + expirationBuffer)) / (1000 * 60);
+
+		log.info(
+			`Account ${account.name}: Token expires at ${new Date(account.expires_at).toISOString()}, ` +
+			`currently ${new Date(now).toISOString()}, ` +
+			`${minutesUntilExpiry.toFixed(1)} minutes until expiry, ` +
+			`${minutesUntilBuffer.toFixed(1)} minutes until buffer expiry`
+		);
+
+		// Also log to console for immediate visibility
+		console.log(
+			`[${new Date().toISOString()}] Account ${account.name}: ` +
+			`Token expires in ${minutesUntilExpiry.toFixed(1)}min, ` +
+			`buffer expires in ${minutesUntilBuffer.toFixed(1)}min`
+		);
 
 		if (isExpired) {
-			log.info(
-				`Token expired for account ${account.name}: expires at ${new Date(account.expires_at).toISOString()}, now ${new Date(now).toISOString()}`,
+			log.warn(
+				`Token expired or expiring soon for account ${account.name}: ` +
+				`expires at ${new Date(account.expires_at).toISOString()}, ` +
+				`now ${new Date(now).toISOString()}, ` +
+				`buffer: ${expirationBuffer / (1000 * 60)} minutes`
 			);
 		}
 
