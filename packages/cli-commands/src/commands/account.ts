@@ -29,7 +29,8 @@ export interface AddAccountOptionsWithAdapter {
 		| "zai"
 		| "minimax"
 		| "anthropic-compatible"
-		| "openai-compatible";
+		| "openai-compatible"
+		| "nanogpt";
 	priority?: number;
 	customEndpoint?: string;
 	modelMappings?: { [key: string]: string };
@@ -47,7 +48,8 @@ export interface AccountListItemWithMode extends AccountListItem {
 		| "zai"
 		| "minimax"
 		| "anthropic-compatible"
-		| "openai-compatible";
+		| "openai-compatible"
+		| "nanogpt";
 }
 
 /**
@@ -116,6 +118,56 @@ async function createMinimaxAccount(
 			now,
 			validatedPriority,
 			null, // No custom endpoint for minimax
+		],
+	);
+}
+
+/**
+ * Create a NanoGPT account in the database
+ */
+export async function createNanoGPTAccount(
+	dbOps: DatabaseOperations,
+	name: string,
+	apiKey: string,
+	priority: number,
+	customEndpoint?: string,
+	modelMappings?: { [key: string]: string } | null,
+): Promise<void> {
+	const accountId = crypto.randomUUID();
+	const now = Date.now();
+	// Validate inputs
+	const validatedApiKey = validateApiKey(apiKey, "NanoGPT API key");
+	const validatedPriority = validatePriority(priority, "priority");
+	// Validate and sanitize custom endpoint if provided
+	let validatedEndpoint = null;
+	if (customEndpoint) {
+		validatedEndpoint = validateEndpointUrl(customEndpoint, "custom endpoint");
+	}
+	// Validate and sanitize model mappings if provided
+	let validatedModelMappings = null;
+	if (modelMappings && Object.keys(modelMappings).length > 0) {
+		const validatedMappings = validateAndSanitizeModelMappings(modelMappings);
+		validatedModelMappings = JSON.stringify(validatedMappings);
+	}
+	dbOps.getDatabase().run(
+		`INSERT INTO accounts (
+			id, name, provider, api_key, refresh_token, access_token,
+			expires_at, created_at, request_count, total_requests, priority, custom_endpoint, model_mappings
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		[
+			accountId,
+			name,
+			"nanogpt",
+			validatedApiKey,
+			validatedApiKey, // Use API key as refresh token for consistency with HTTP API
+			validatedApiKey, // Use API key as access token
+			now + 365 * 24 * 60 * 60 * 1000, // 1 year from now
+			now,
+			0,
+			0,
+			validatedPriority,
+			validatedEndpoint,
+			validatedModelMappings,
 		],
 	);
 }
@@ -464,6 +516,37 @@ export async function addAccount(
 		await createMinimaxAccount(dbOps, name, apiKey, providedPriority || 0);
 		console.log(`\nAccount '${name}' added successfully!`);
 		console.log("Type: Minimax (API key)");
+	} else if (mode === "nanogpt") {
+		// Handle NanoGPT accounts with API keys
+		const apiKey = await adapter.input("\nEnter your NanoGPT API key: ");
+		// Get custom endpoint
+		const endpoint =
+			customEndpoint ||
+			(await adapter.input(
+				"\nEnter API endpoint URL (press Enter for default https://nano-gpt.com/api): ",
+			)) ||
+			undefined;
+		// Get priority
+		const priority =
+			providedPriority ??
+			(await adapter.input(
+				"\nEnter priority (0 = highest, lower number = higher priority, default 0): ",
+			));
+		// Get model mappings
+		const finalModelMappings = await promptModelMappings(
+			adapter,
+			modelMappings,
+		);
+		await createNanoGPTAccount(
+			dbOps,
+			name,
+			apiKey,
+			typeof priority === "string" ? parseInt(priority) || 0 : priority || 0,
+			endpoint,
+			finalModelMappings,
+		);
+		console.log(`\nAccount '${name}' added successfully!`);
+		console.log("Type: NanoGPT (API key)");
 	} else if (mode === "anthropic-compatible") {
 		// Handle Anthropic-compatible accounts with API keys
 		const apiKey = await adapter.input(

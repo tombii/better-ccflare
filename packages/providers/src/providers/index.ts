@@ -7,5 +7,6 @@ export {
 	AnthropicCompatibleProvider,
 } from "./anthropic-compatible/index";
 export { MinimaxProvider } from "./minimax/index";
+export { NanoGPTProvider } from "./nanogpt/index";
 export { OpenAICompatibleProvider } from "./openai/index";
 export { ZaiProvider } from "./zai/index";

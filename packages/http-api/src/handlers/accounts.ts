@@ -10,6 +10,7 @@ import {
 	validateString,
 } from "@better-ccflare/core";
 import type { DatabaseOperations } from "@better-ccflare/database";
+import { ValidationError } from "@better-ccflare/errors";
 import {
 	BadRequest,
 	errorResponse,
@@ -21,9 +22,11 @@ import { Logger } from "@better-ccflare/logger";
 import {
 	getRepresentativeUtilization,
 	getRepresentativeWindow,
+	type UsageData,
 	usageCache,
 } from "@better-ccflare/providers";
 import { clearAccountRefreshCache } from "@better-ccflare/proxy";
+import type { FullUsageData } from "@better-ccflare/types";
 import type { AccountResponse } from "../types";
 
 const log = new Logger("AccountsHandler");
@@ -127,17 +130,55 @@ export function createAccountsListHandler(db: Database) {
 				rateLimitStatus = `Rate limited (${minutesLeft}m)`;
 			}
 
-			// Get usage data from cache for Anthropic accounts
+			// Get usage data from cache for Anthropic and NanoGPT accounts
 			const usageData = usageCache.get(account.id);
-			const usageUtilization = getRepresentativeUtilization(usageData);
-			const usageWindow = getRepresentativeWindow(usageData);
+			let usageUtilization: number | null = null;
+			let usageWindow: string | null = null;
+			let fullUsageData: FullUsageData | null = null;
 
-			// Include full usage data for Anthropic accounts to show multiple windows
-			const fullUsageData = account.provider === "anthropic" ? usageData : null;
+			if (account.provider === "anthropic" && usageData) {
+				// Anthropic usage data - type guard to check it's UsageData
+				const isAnthropicData =
+					"five_hour" in usageData && "seven_day" in usageData;
+				if (isAnthropicData) {
+					usageUtilization = getRepresentativeUtilization(
+						usageData as UsageData,
+					);
+					usageWindow = getRepresentativeWindow(usageData as UsageData);
+					fullUsageData = usageData as FullUsageData;
+				}
+			} else if (account.provider === "nanogpt" && usageData) {
+				// NanoGPT usage data - type guard to check it's NanoGPTUsageData
+				const isNanoGPTData =
+					"active" in usageData &&
+					"daily" in usageData &&
+					"monthly" in usageData;
+				if (isNanoGPTData) {
+					try {
+						const {
+							getRepresentativeNanoGPTUtilization,
+							getRepresentativeNanoGPTWindow,
+						} = require("@better-ccflare/providers");
+						usageUtilization = getRepresentativeNanoGPTUtilization(usageData);
+						usageWindow = getRepresentativeNanoGPTWindow(usageData);
+						fullUsageData = usageData as FullUsageData;
+					} catch (error) {
+						log.warn(
+							`Failed to process NanoGPT usage data for account ${account.name}:`,
+							error,
+						);
+					}
+				}
+			}
 
-			// Parse model mappings for OpenAI-compatible providers
+			// Parse model mappings for OpenAI-compatible, Anthropic-compatible, and NanoGPT providers
 			let modelMappings: { [key: string]: string } | null = null;
-			if (account.provider === "openai-compatible" && account.model_mappings) {
+			if (
+				(account.provider === "openai-compatible" ||
+					account.provider === "anthropic-compatible" ||
+					account.provider === "nanogpt") &&
+				account.model_mappings
+			) {
 				try {
 					const parsed = JSON.parse(account.model_mappings);
 					// Handle both formats: direct mappings or wrapped in modelMappings
@@ -982,6 +1023,172 @@ export function createMinimaxAccountAddHandler(dbOps: DatabaseOperations) {
 }
 
 /**
+ * Create a NanoGPT account add handler
+ */
+export function createNanoGPTAccountAddHandler(dbOps: DatabaseOperations) {
+	return async (req: Request): Promise<Response> => {
+		try {
+			const body = await req.json();
+			// Validate account name
+			const name = validateString(body.name, "name", {
+				required: true,
+				minLength: 1,
+				maxLength: 100,
+				pattern: patterns.accountName,
+				transform: sanitizers.trim,
+			});
+			if (!name) {
+				return errorResponse(BadRequest("Account name is required"));
+			}
+			// Validate API key
+			const apiKey = validateString(body.apiKey, "apiKey", {
+				required: true,
+				minLength: 1,
+			});
+			if (!apiKey) {
+				return errorResponse(BadRequest("API key is required"));
+			}
+			// Validate priority
+			const priority =
+				validateNumber(body.priority, "priority", {
+					min: 0,
+					max: 100,
+					integer: true,
+				}) || 0;
+			// Validate custom endpoint (optional for NanoGPT)
+			const customEndpoint = validateString(
+				body.customEndpoint || null,
+				"customEndpoint",
+				{
+					required: false,
+					transform: (value: string) => {
+						if (!value) return "";
+						const trimmed = value.trim();
+						if (!trimmed) return "";
+						// Validate URL format
+						try {
+							new URL(trimmed);
+							return trimmed;
+						} catch {
+							throw new ValidationError("Invalid URL format");
+						}
+					},
+				},
+			);
+			// Validate and sanitize model mappings (optional)
+			let modelMappings = null;
+			if (body.modelMappings) {
+				if (typeof body.modelMappings !== "object") {
+					throw new ValidationError("Model mappings must be an object");
+				}
+				try {
+					const validatedMappings = validateAndSanitizeModelMappings(
+						body.modelMappings,
+					);
+					// Only store if there are actual mappings (non-empty object)
+					if (validatedMappings && Object.keys(validatedMappings).length > 0) {
+						modelMappings = JSON.stringify(validatedMappings);
+					}
+				} catch (error) {
+					if (error instanceof ValidationError) {
+						throw error;
+					}
+					throw new ValidationError("Invalid model mappings format");
+				}
+			}
+			// Create NanoGPT account directly in database
+			const accountId = crypto.randomUUID();
+			const now = Date.now();
+			const db = dbOps.getDatabase();
+			db.run(
+				`INSERT INTO accounts (
+					id, name, provider, api_key, refresh_token, access_token,
+					expires_at, created_at, request_count, total_requests, priority, custom_endpoint, model_mappings
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				[
+					accountId,
+					name,
+					"nanogpt",
+					apiKey,
+					apiKey, // Use API key as refresh token for consistency with CLI
+					apiKey, // Use API key as access token
+					now + 365 * 24 * 60 * 60 * 1000, // 1 year from now
+					now,
+					0,
+					0,
+					priority,
+					customEndpoint || null,
+					modelMappings,
+				],
+			);
+			log.info(
+				`Successfully added NanoGPT account: ${name} (Priority ${priority})`,
+			);
+			// Get the created account for response
+			const account = db
+				.query<
+					{
+						id: string;
+						name: string;
+						provider: string;
+						request_count: number;
+						total_requests: number;
+						last_used: number | null;
+						created_at: number;
+						expires_at: number;
+						paused: number;
+					},
+					[string]
+				>(
+					`SELECT
+						id, name, provider, request_count, total_requests,
+						last_used, created_at, expires_at,
+						COALESCE(paused, 0) as paused
+					FROM accounts WHERE id = ?`,
+				)
+				.get(accountId);
+			if (!account) {
+				return errorResponse(
+					InternalServerError("Failed to retrieve created account"),
+				);
+			}
+			return jsonResponse({
+				message: `NanoGPT account '${name}' added successfully`,
+				account: {
+					id: account.id,
+					name: account.name,
+					provider: account.provider,
+					requestCount: account.request_count,
+					totalRequests: account.total_requests,
+					lastUsed: account.last_used
+						? new Date(account.last_used).toISOString()
+						: null,
+					created: new Date(account.created_at).toISOString(),
+					paused: account.paused === 1,
+					priority: priority,
+					tokenStatus: "valid" as const,
+					tokenExpiresAt: new Date(account.expires_at).toISOString(),
+					rateLimitStatus: "OK",
+					rateLimitReset: null,
+					rateLimitRemaining: null,
+					sessionInfo: "No active session",
+				},
+			});
+		} catch (error) {
+			log.error("NanoGPT account creation error:", error);
+			if (error instanceof ValidationError) {
+				return errorResponse(BadRequest(error.message));
+			}
+			return errorResponse(
+				error instanceof Error
+					? error
+					: new Error("Failed to create NanoGPT account"),
+			);
+		}
+	};
+}
+
+/**
  * Create an Anthropic-compatible account add handler
  */
 export function createAnthropicCompatibleAccountAddHandler(
@@ -1343,11 +1550,12 @@ export function createAccountModelMappingsUpdateHandler(
 
 			if (
 				account.provider !== "openai-compatible" &&
-				account.provider !== "anthropic-compatible"
+				account.provider !== "anthropic-compatible" &&
+				account.provider !== "nanogpt"
 			) {
 				return errorResponse(
 					BadRequest(
-						"Model mappings are only available for OpenAI-compatible and Anthropic-compatible accounts",
+						"Model mappings are only available for OpenAI-compatible, Anthropic-compatible, and NanoGPT accounts",
 					),
 				);
 			}
