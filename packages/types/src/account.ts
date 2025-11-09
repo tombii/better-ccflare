@@ -4,12 +4,36 @@ export interface UsageWindowData {
 	resets_at: string | null;
 }
 
-export interface FullUsageData {
+export interface AnthropicUsageData {
 	five_hour?: UsageWindowData;
 	seven_day?: UsageWindowData;
 	seven_day_oauth_apps?: UsageWindowData;
 	seven_day_opus?: UsageWindowData;
 }
+
+// Usage data types for NanoGPT accounts
+export interface NanoGPTUsageWindow {
+	used: number;
+	remaining: number;
+	percentUsed: number; // 0-1 decimal range from API, displayed as 0-100%
+	resetAt: number; // Unix timestamp in milliseconds
+}
+
+export interface NanoGPTUsageData {
+	active: boolean; // true = subscription active, false = PayG mode
+	limits: {
+		daily: number;
+		monthly: number;
+	};
+	enforceDailyLimit: boolean;
+	daily: NanoGPTUsageWindow;
+	monthly: NanoGPTUsageWindow;
+	state: "active" | "grace" | "inactive";
+	graceUntil: string | null;
+}
+
+// Combined usage data type that supports both providers
+export type FullUsageData = AnthropicUsageData | NanoGPTUsageData;
 
 // Database row types that match the actual database schema
 export interface AccountRow {

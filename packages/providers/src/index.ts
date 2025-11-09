@@ -2,6 +2,8 @@
 
 // Export base provider class
 export { BaseProvider } from "./base";
+// Export NanoGPT usage fetcher
+export * from "./nanogpt-usage-fetcher";
 // Export OAuth utilities
 export * from "./oauth";
 // Factory functions for creating providers

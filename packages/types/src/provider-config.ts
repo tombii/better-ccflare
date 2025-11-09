@@ -75,8 +75,8 @@ export const PROVIDER_CONFIG: Record<ProviderName, ProviderConfig> = {
 		defaultEndpoint: "https://api.anthropic.com", // Default, can be overridden via custom endpoint
 	},
 	[PROVIDER_NAMES.NANOGPT]: {
-		requiresSessionTracking: false, // NanoGPT is pay-as-you-go
-		supportsUsageTracking: false, // NanoGPT doesn't support usage tracking
+		requiresSessionTracking: false, // NanoGPT is pay-as-you-go (no session stickiness)
+		supportsUsageTracking: true, // NanoGPT supports subscription usage tracking via API
 		supportsOAuth: false, // NanoGPT uses API key authentication
 		defaultEndpoint: "https://nano-gpt.com/api", // Default, can be overridden via custom endpoint
 	},

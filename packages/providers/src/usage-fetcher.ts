@@ -1,5 +1,9 @@
 import { Logger } from "@better-ccflare/logger";
 import { supportsUsageTracking } from "@better-ccflare/types";
+import {
+	fetchNanoGPTUsageData,
+	type NanoGPTUsageData,
+} from "./nanogpt-usage-fetcher";
 
 const log = new Logger("UsageFetcher");
 
@@ -14,6 +18,9 @@ export interface UsageData {
 	seven_day_oauth_apps: UsageWindow;
 	seven_day_opus: UsageWindow;
 }
+
+// Union type for all provider usage data
+export type AnyUsageData = UsageData | NanoGPTUsageData;
 
 /**
  * Fetch usage data from Anthropic's OAuth usage endpoint
@@ -115,7 +122,7 @@ export function getRepresentativeWindow(
 }
 
 /**
- * Type for a function that retrieves a fresh access token
+ * Type for a function that retrieves a fresh access token or API key
  */
 export type AccessTokenProvider = () => Promise<string>;
 
@@ -123,9 +130,11 @@ export type AccessTokenProvider = () => Promise<string>;
  * In-memory cache for usage data per account
  */
 class UsageCache {
-	private cache = new Map<string, { data: UsageData; timestamp: number }>();
+	private cache = new Map<string, { data: AnyUsageData; timestamp: number }>();
 	private polling = new Map<string, NodeJS.Timeout>();
 	private tokenProviders = new Map<string, AccessTokenProvider>();
+	private providerTypes = new Map<string, string>(); // Track provider type for each account
+	private customEndpoints = new Map<string, string | null>(); // Track custom endpoints
 
 	/**
 	 * Start polling for an account's usage data
@@ -135,6 +144,7 @@ class UsageCache {
 		accessTokenOrProvider: string | AccessTokenProvider,
 		provider?: string,
 		intervalMs?: number,
+		customEndpoint?: string | null,
 	) {
 		// Check if provider supports usage tracking
 		if (provider && !supportsUsageTracking(provider)) {
@@ -160,20 +170,28 @@ class UsageCache {
 				: accessTokenOrProvider;
 		this.tokenProviders.set(accountId, tokenProvider);
 
+		// Store provider type and custom endpoint for this account
+		if (provider) {
+			this.providerTypes.set(accountId, provider);
+		}
+		if (customEndpoint !== undefined) {
+			this.customEndpoints.set(accountId, customEndpoint);
+		}
+
 		// Immediate fetch
-		this.fetchAndCache(accountId, tokenProvider);
+		this.fetchAndCache(accountId, tokenProvider, provider, customEndpoint);
 
 		// Default to 90 seconds ± 5 seconds with randomization if not provided
 		const pollingInterval = intervalMs ?? 90000 + Math.random() * 10000;
 
 		// Start interval
 		const interval = setInterval(() => {
-			this.fetchAndCache(accountId, tokenProvider);
+			this.fetchAndCache(accountId, tokenProvider, provider, customEndpoint);
 		}, pollingInterval);
 
 		this.polling.set(accountId, interval);
 		log.debug(
-			`Started usage polling for account ${accountId} with interval ${Math.round(pollingInterval / 1000)}s`,
+			`Started usage polling for account ${accountId} (provider: ${provider}) with interval ${Math.round(pollingInterval / 1000)}s`,
 		);
 	}
 
@@ -196,18 +214,48 @@ class UsageCache {
 	private async fetchAndCache(
 		accountId: string,
 		tokenProvider: AccessTokenProvider,
+		provider?: string,
+		customEndpoint?: string | null,
 	) {
 		try {
-			// Get a fresh access token on each fetch
-			const accessToken = await tokenProvider();
-			const data = await fetchUsageData(accessToken);
-			if (data) {
-				this.cache.set(accountId, { data, timestamp: Date.now() });
-				const utilization = getRepresentativeUtilization(data);
-				const window = getRepresentativeWindow(data);
-				log.debug(
-					`Successfully fetched usage data for account ${accountId}: ${utilization}% (${window} window)`,
-				);
+			// Get a fresh access token or API key on each fetch
+			const token = await tokenProvider();
+
+			// Fetch data based on provider type
+			let data: AnyUsageData | null = null;
+
+			if (provider === "nanogpt") {
+				// Fetch NanoGPT usage data
+				data = await fetchNanoGPTUsageData(token, customEndpoint);
+				if (data) {
+					// Import NanoGPT helper functions
+					const {
+						getRepresentativeNanoGPTUtilization,
+						getRepresentativeNanoGPTWindow,
+					} = await import("./nanogpt-usage-fetcher");
+
+					this.cache.set(accountId, { data, timestamp: Date.now() });
+					const utilization = getRepresentativeNanoGPTUtilization(
+						data as NanoGPTUsageData,
+					);
+					const window = getRepresentativeNanoGPTWindow(
+						data as NanoGPTUsageData,
+					);
+					log.debug(
+						`Successfully fetched NanoGPT usage data for account ${accountId}: ${utilization}% (${window} window)`,
+					);
+				}
+			} else {
+				// Default to Anthropic usage data
+				data = await fetchUsageData(token);
+				if (data) {
+					this.cache.set(accountId, { data, timestamp: Date.now() });
+					const utilization = getRepresentativeUtilization(data as UsageData);
+					const window = getRepresentativeWindow(data as UsageData);
+					log.debug(
+						`Successfully fetched usage data for account ${accountId}: ${utilization}% (${window} window)`,
+					);
+				}
 			}
 		} catch (error) {
 			log.error(
@@ -220,7 +268,7 @@ class UsageCache {
 	/**
 	 * Get cached usage data for an account
 	 */
-	get(accountId: string): UsageData | null {
+	get(accountId: string): AnyUsageData | null {
 		const cached = this.cache.get(accountId);
 		return cached?.data ?? null;
 	}

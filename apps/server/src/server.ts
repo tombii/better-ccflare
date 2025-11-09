@@ -678,6 +678,44 @@ Available endpoints:
 		log.info(`No Anthropic accounts found, usage polling will not start`);
 	}
 
+	// Start usage polling for NanoGPT accounts (PayG with optional subscription tracking)
+	const nanogptAccounts = accounts.filter((a) => a.provider === "nanogpt");
+	if (nanogptAccounts.length > 0) {
+		log.info(
+			`Found ${nanogptAccounts.length} NanoGPT accounts, starting usage polling...`,
+		);
+		for (const account of nanogptAccounts) {
+			log.debug(`Processing NanoGPT account: ${account.name}`, {
+				accountId: account.id,
+				hasApiKey: !!account.api_key,
+				paused: account.paused,
+				customEndpoint: account.custom_endpoint,
+			});
+
+			if (account.api_key) {
+				// NanoGPT uses API key authentication, no token refresh needed
+				// Create a simple token provider that returns the API key
+				const apiKeyProvider = async () => account.api_key || "";
+
+				// Start usage polling with the API key
+				usageCache.startPolling(
+					account.id,
+					apiKeyProvider,
+					account.provider,
+					90000, // Poll every 90 seconds (same as Anthropic)
+					account.custom_endpoint,
+				);
+				log.info(`Started usage polling for NanoGPT account ${account.name}`);
+			} else {
+				log.warn(
+					`NanoGPT account ${account.name} has no API key, skipping usage polling`,
+				);
+			}
+		}
+	} else {
+		log.info(`No NanoGPT accounts found, usage polling will not start`);
+	}
+
 	return {
 		port: serverInstance.port,
 		stop: () => {

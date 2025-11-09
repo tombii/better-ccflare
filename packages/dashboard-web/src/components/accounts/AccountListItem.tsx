@@ -188,7 +188,8 @@ export function AccountListItem({
 					</Button>
 				</div>
 			</div>
-			{account.rateLimitReset && (
+			{(account.rateLimitReset ||
+				providerShowsWeeklyUsage(account.provider)) && (
 				<RateLimitProgress
 					resetIso={account.rateLimitReset}
 					usageUtilization={account.usageUtilization}

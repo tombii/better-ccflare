@@ -22,9 +22,11 @@ import { Logger } from "@better-ccflare/logger";
 import {
 	getRepresentativeUtilization,
 	getRepresentativeWindow,
+	type UsageData,
 	usageCache,
 } from "@better-ccflare/providers";
 import { clearAccountRefreshCache } from "@better-ccflare/proxy";
+import type { FullUsageData } from "@better-ccflare/types";
 import type { AccountResponse } from "../types";
 
 const log = new Logger("AccountsHandler");
@@ -128,20 +130,53 @@ export function createAccountsListHandler(db: Database) {
 				rateLimitStatus = `Rate limited (${minutesLeft}m)`;
 			}
 
-			// Get usage data from cache for Anthropic accounts
+			// Get usage data from cache for Anthropic and NanoGPT accounts
 			const usageData = usageCache.get(account.id);
-			const usageUtilization = getRepresentativeUtilization(usageData);
-			const usageWindow = getRepresentativeWindow(usageData);
+			let usageUtilization: number | null = null;
+			let usageWindow: string | null = null;
+			let fullUsageData: FullUsageData | null = null;
 
-			// Include full usage data for Anthropic accounts to show multiple windows
-			const fullUsageData = account.provider === "anthropic" ? usageData : null;
+			if (account.provider === "anthropic" && usageData) {
+				// Anthropic usage data - type guard to check it's UsageData
+				const isAnthropicData =
+					"five_hour" in usageData && "seven_day" in usageData;
+				if (isAnthropicData) {
+					usageUtilization = getRepresentativeUtilization(
+						usageData as UsageData,
+					);
+					usageWindow = getRepresentativeWindow(usageData as UsageData);
+					fullUsageData = usageData as FullUsageData;
+				}
+			} else if (account.provider === "nanogpt" && usageData) {
+				// NanoGPT usage data - type guard to check it's NanoGPTUsageData
+				const isNanoGPTData =
+					"active" in usageData &&
+					"daily" in usageData &&
+					"monthly" in usageData;
+				if (isNanoGPTData) {
+					try {
+						const {
+							getRepresentativeNanoGPTUtilization,
+							getRepresentativeNanoGPTWindow,
+						} = require("@better-ccflare/providers");
+						usageUtilization = getRepresentativeNanoGPTUtilization(usageData);
+						usageWindow = getRepresentativeNanoGPTWindow(usageData);
+						fullUsageData = usageData as FullUsageData;
+					} catch (error) {
+						log.warn(
+							`Failed to process NanoGPT usage data for account ${account.name}:`,
+							error,
+						);
+					}
+				}
+			}
 
 			// Parse model mappings for OpenAI-compatible, Anthropic-compatible, and NanoGPT providers
 			let modelMappings: { [key: string]: string } | null = null;
 			if (
 				(account.provider === "openai-compatible" ||
-				 account.provider === "anthropic-compatible" ||
-				 account.provider === "nanogpt") &&
+					account.provider === "anthropic-compatible" ||
+					account.provider === "nanogpt") &&
 				account.model_mappings
 			) {
 				try {

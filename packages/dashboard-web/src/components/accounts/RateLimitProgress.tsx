@@ -27,6 +27,10 @@ function formatWindowName(window: string | null): string {
 			return "Weekly";
 		case "seven_day_opus":
 			return "Opus (Weekly)";
+		case "daily":
+			return "Daily";
+		case "monthly":
+			return "Monthly";
 		default:
 			return window.replace("_", " ");
 	}
@@ -59,9 +63,11 @@ export function RateLimitProgress({
 		return unregisterInterval;
 	}, []);
 
-	if (!resetIso) return null;
+	// Allow null resetIso for providers that show usage data (like NanoGPT in PayG mode)
+	// but still render null if there's no resetIso and no usage data to show
+	if (!resetIso && !usageData) return null;
 
-	const resetTime = new Date(resetIso).getTime();
+	const resetTime = resetIso ? new Date(resetIso).getTime() : Date.now();
 	const remainingMs = Math.max(0, resetTime - now);
 	const remainingMinutes = Math.ceil(remainingMs / 60000);
 	const _remainingHours = Math.floor(remainingMinutes / 60);
@@ -70,13 +76,60 @@ export function RateLimitProgress({
 	// Determine which usage windows to display
 	const usages: UsageDisplay[] = [];
 
-	if (providerShowsWeeklyUsage(provider) && showWeekly) {
-		// Always show both 5-hour and weekly usage for Anthropic accounts
-		if (usageData?.five_hour) {
+	// Check if this is NanoGPT usage data (has 'active' and 'daily' properties)
+	const isNanoGPTData =
+		usageData &&
+		"active" in usageData &&
+		"daily" in usageData &&
+		"monthly" in usageData;
+
+	if (isNanoGPTData && showWeekly) {
+		// NanoGPT usage data - show daily and monthly windows
+		const nanogptData = usageData as {
+			active: boolean;
+			daily: { percentUsed: number; resetAt: number };
+			monthly: { percentUsed: number; resetAt: number };
+		};
+
+		// Only show usage if subscription is active
+		if (nanogptData.active) {
+			// Daily usage
+			if (nanogptData.daily) {
+				usages.push({
+					utilization: nanogptData.daily.percentUsed * 100, // Convert 0-1 to 0-100
+					window: "daily",
+					resetTime: new Date(nanogptData.daily.resetAt).toISOString(),
+				});
+			}
+
+			// Monthly usage
+			if (nanogptData.monthly) {
+				usages.push({
+					utilization: nanogptData.monthly.percentUsed * 100, // Convert 0-1 to 0-100
+					window: "monthly",
+					resetTime: new Date(nanogptData.monthly.resetAt).toISOString(),
+				});
+			}
+		} else {
+			// PayG mode - show that no subscription is active
 			usages.push({
-				utilization: usageData.five_hour.utilization,
+				utilization: null,
+				window: "daily",
+				resetTime: null,
+			});
+		}
+	} else if (providerShowsWeeklyUsage(provider) && showWeekly) {
+		// Anthropic usage data - show 5-hour and weekly usage
+		const anthropicData = usageData as {
+			five_hour?: { utilization: number | null; resets_at: string | null };
+			seven_day?: { utilization: number | null; resets_at: string | null };
+			seven_day_opus?: { utilization: number | null; resets_at: string | null };
+		};
+		if (anthropicData?.five_hour) {
+			usages.push({
+				utilization: anthropicData.five_hour.utilization,
 				window: "five_hour",
-				resetTime: usageData.five_hour.resets_at,
+				resetTime: anthropicData.five_hour.resets_at,
 			});
 		} else {
 			// Fallback: use the most restrictive window data for 5-hour display
@@ -89,15 +142,15 @@ export function RateLimitProgress({
 
 		// Check if seven_day data exists and has valid utilization
 		if (
-			usageData &&
-			usageData.seven_day &&
-			usageData.seven_day.utilization !== null &&
-			usageData.seven_day.utilization !== undefined
+			anthropicData &&
+			anthropicData.seven_day &&
+			anthropicData.seven_day.utilization !== null &&
+			anthropicData.seven_day.utilization !== undefined
 		) {
 			usages.push({
-				utilization: usageData.seven_day.utilization,
+				utilization: anthropicData.seven_day.utilization,
 				window: "seven_day",
-				resetTime: usageData.seven_day.resets_at,
+				resetTime: anthropicData.seven_day.resets_at,
 			});
 		} else {
 			// Add weekly usage as placeholder if data is not available
@@ -110,16 +163,16 @@ export function RateLimitProgress({
 
 		// Check if seven_day_opus data exists, has valid utilization, and resets_at is not null
 		if (
-			usageData &&
-			usageData.seven_day_opus &&
-			usageData.seven_day_opus.utilization !== null &&
-			usageData.seven_day_opus.utilization !== undefined &&
-			usageData.seven_day_opus.resets_at !== null
+			anthropicData &&
+			anthropicData.seven_day_opus &&
+			anthropicData.seven_day_opus.utilization !== null &&
+			anthropicData.seven_day_opus.utilization !== undefined &&
+			anthropicData.seven_day_opus.resets_at !== null
 		) {
 			usages.push({
-				utilization: usageData.seven_day_opus.utilization,
+				utilization: anthropicData.seven_day_opus.utilization,
 				window: "seven_day_opus",
-				resetTime: usageData.seven_day_opus.resets_at,
+				resetTime: anthropicData.seven_day_opus.resets_at,
 			});
 		}
 	} else if (
@@ -175,6 +228,25 @@ export function RateLimitProgress({
 				} else if (usage.window === "seven_day_opus") {
 					// Special handling for weekly opus data when reset time is not available
 					windowTimeText = "Data unavailable";
+				} else if (usage.window === "daily" || usage.window === "monthly") {
+					// Special handling for NanoGPT when no subscription is active (PayG mode)
+					windowTimeText = "No subscription (PayG mode)";
+				}
+
+				// Special rendering for PayG mode - just show message without progress bar
+				if (
+					(usage.window === "daily" || usage.window === "monthly") &&
+					!usage.resetTime
+				) {
+					return (
+						<div key={usage.window || "default"} className="space-y-2">
+							<div className="flex items-center justify-between">
+								<span className="text-xs text-muted-foreground">
+									No subscription (PayG mode)
+								</span>
+							</div>
+						</div>
+					);
 				}
 
 				return (
@@ -199,7 +271,8 @@ export function RateLimitProgress({
 								</span>
 								<span className="text-xs text-muted-foreground">
 									{usage.window === "seven_day" ||
-									usage.window === "seven_day_opus"
+									usage.window === "seven_day_opus" ||
+									usage.window === "monthly"
 										? `Resets ${new Date(usage.resetTime).toLocaleString(
 												undefined,
 												{
@@ -221,13 +294,17 @@ export function RateLimitProgress({
 						)}
 						{!usage.resetTime &&
 							(usage.window === "seven_day" ||
-								usage.window === "seven_day_opus") && (
+								usage.window === "seven_day_opus" ||
+								usage.window === "daily" ||
+								usage.window === "monthly") && (
 								<div className="flex items-center justify-between">
 									<span className="text-xs text-muted-foreground">
 										{windowTimeText}
 									</span>
 									<span className="text-xs text-muted-foreground">
-										No reset data available
+										{usage.window === "daily" || usage.window === "monthly"
+											? "Using pay-as-you-go"
+											: "No reset data available"}
 									</span>
 								</div>
 							)}

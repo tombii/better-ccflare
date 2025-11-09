@@ -167,7 +167,7 @@ export abstract class BaseAnthropicCompatibleProvider extends BaseProvider {
 				let mappedModel = originalModel;
 
 				// First try account-specific mappings if account has model_mappings defined
-				if (account && account.model_mappings) {
+				if (account?.model_mappings) {
 					const { parseModelMappings } = await import("@better-ccflare/core");
 					const accountMappings = parseModelMappings(account.model_mappings);
 
@@ -177,7 +177,9 @@ export abstract class BaseAnthropicCompatibleProvider extends BaseProvider {
 							mappedModel = accountMappings[originalModel];
 						} else {
 							// Try wildcard/substring matching (e.g., "sonnet" matches "claude-sonnet-4-5-20250929")
-							const mappingKeys = Object.keys(accountMappings).sort((a, b) => b.length - a.length); // Longest first
+							const mappingKeys = Object.keys(accountMappings).sort(
+								(a, b) => b.length - a.length,
+							); // Longest first
 							for (const key of mappingKeys) {
 								if (originalModel.toLowerCase().includes(key.toLowerCase())) {
 									mappedModel = accountMappings[key];
@@ -188,7 +190,7 @@ export abstract class BaseAnthropicCompatibleProvider extends BaseProvider {
 					}
 				}
 				// Fall back to static config mappings for backward compatibility
-				else if (this.config.modelMappings && this.config.modelMappings[originalModel]) {
+				else if (this.config.modelMappings?.[originalModel]) {
 					mappedModel = this.config.modelMappings[originalModel];
 				}
 
