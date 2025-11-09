@@ -162,7 +162,10 @@ describe("Model Mapping", () => {
 		};
 
 		// Should match using case-insensitive pattern matching
-		const sonnetResult = mapModelName("claude-sonnet-4-5-20250929", mockAccount);
+		const sonnetResult = mapModelName(
+			"claude-sonnet-4-5-20250929",
+			mockAccount,
+		);
 		const haikuResult = mapModelName("claude-haiku-4-5-20251001", mockAccount);
 		const opusResult = mapModelName("claude-opus-4-1-20250805", mockAccount);
 
