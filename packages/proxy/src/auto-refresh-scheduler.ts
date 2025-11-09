@@ -1,7 +1,14 @@
 import type { Database } from "bun:sqlite";
+import { Config } from "@better-ccflare/config";
 import { registerHeartbeat, requestEvents } from "@better-ccflare/core";
+import { DatabaseOperations } from "@better-ccflare/database";
 import { Logger } from "@better-ccflare/logger";
-import { fetchUsageData, getProvider } from "@better-ccflare/providers";
+import { createOAuthFlow } from "@better-ccflare/oauth-flow";
+import {
+	fetchUsageData,
+	generatePKCE,
+	getProvider,
+} from "@better-ccflare/providers";
 import type { Account } from "@better-ccflare/types";
 import { getValidAccessToken } from "./handlers";
 import type { ProxyContext } from "./proxy";
@@ -31,6 +38,120 @@ export class AutoRefreshScheduler {
 	constructor(db: Database, proxyContext: ProxyContext) {
 		this.db = db;
 		this.proxyContext = proxyContext;
+	}
+
+	/**
+	 * Initiate OAuth reauthentication for an expired token
+	 * @returns true if reauthentication was initiated successfully, false otherwise
+	 */
+	private async initiateOAuthReauth(accountRow: {
+		id: string;
+		name: string;
+		provider: string;
+		refresh_token: string;
+		access_token: string | null;
+		expires_at: number | null;
+		rate_limit_reset: number | null;
+		custom_endpoint: string | null;
+	}): Promise<boolean> {
+		try {
+			log.info(
+				`Initiating OAuth reauthentication for account: ${accountRow.name}`,
+			);
+
+			// Create a local callback URL using the server's port
+			const protocol =
+				process.env.SSL_KEY_PATH && process.env.SSL_CERT_PATH
+					? "https"
+					: "http";
+			const port = this.proxyContext.runtime.port;
+			const redirectUri = `${protocol}://localhost:${port}/oauth/callback`;
+
+			// Initialize OAuth flow
+			const config = new Config();
+			const dbOps = new DatabaseOperations();
+			const _oauthFlow = await createOAuthFlow(dbOps, config);
+
+			// Generate PKCE challenge
+			const pkce = await generatePKCE();
+
+			// Get OAuth provider with local redirect URI
+			const oauthProvider = await import("@better-ccflare/providers").then(
+				(m) => m.getOAuthProvider("anthropic"),
+			);
+			if (!oauthProvider) {
+				log.error(`OAuth provider not found for account ${accountRow.name}`);
+				return false;
+			}
+
+			const runtime = config.getRuntime();
+			const oauthConfig = oauthProvider.getOAuthConfig(
+				"claude-oauth",
+				redirectUri,
+			);
+			oauthConfig.clientId = runtime.clientId;
+
+			// Generate authorization URL
+			const authUrl = oauthProvider.generateAuthUrl(oauthConfig, pkce);
+
+			// Create OAuth session in database
+			const sessionId = crypto.randomUUID();
+			dbOps.createOAuthSession(
+				sessionId,
+				accountRow.name,
+				pkce.verifier,
+				"claude-oauth",
+				accountRow.custom_endpoint || "",
+				10, // 10 minute TTL
+			);
+
+			// Open browser for user authorization
+			log.info(
+				`Opening browser for OAuth reauthentication of account: ${accountRow.name}`,
+			);
+			log.info(`Please authorize the request in your browser.`);
+
+			// Simple browser opening implementation
+			let browserOpened = false;
+			try {
+				// Try to open with xdg-open (Linux)
+				const process = Bun.spawn(["xdg-open", authUrl]);
+				browserOpened = (await process.exited) === 0;
+			} catch (error) {
+				log.debug(`Failed to open browser with xdg-open:`, error);
+				try {
+					// Fallback to open command (macOS)
+					const process = Bun.spawn(["open", authUrl]);
+					browserOpened = (await process.exited) === 0;
+				} catch (error2) {
+					log.debug(`Failed to open browser with open:`, error2);
+				}
+			}
+			if (!browserOpened) {
+				log.warn(
+					`Failed to open browser automatically. Please manually visit: ${authUrl}`,
+				);
+				log.info(
+					`After authorizing, you'll be redirected to the local callback endpoint automatically.`,
+				);
+			}
+
+			log.info(
+				`OAuth reauthentication initiated for account: ${accountRow.name}`,
+			);
+			log.info(`The browser will redirect to: ${redirectUri}`);
+			log.info(
+				`After successful authorization, the tokens will be updated automatically.`,
+			);
+
+			return true;
+		} catch (error) {
+			log.error(
+				`Failed to initiate OAuth reauthentication for account ${accountRow.name}:`,
+				error,
+			);
+			return false;
+		}
 	}
 
 	/**
@@ -99,7 +220,7 @@ export class AutoRefreshScheduler {
 			// or have auto-refresh disabled
 			this.cleanupTracking();
 
-			// Get all accounts with auto-refresh enabled that have reset windows OR need immediate refresh
+			// Get all accounts with auto-refresh enabled that have reset windows OR expired tokens
 			const query = this.db.query<
 				{
 					id: string;
@@ -111,7 +232,7 @@ export class AutoRefreshScheduler {
 					rate_limit_reset: number | null;
 					custom_endpoint: string | null;
 				},
-				[number, number]
+				[number, number, number]
 			>(
 				`
 				SELECT
@@ -122,14 +243,16 @@ export class AutoRefreshScheduler {
 					auto_refresh_enabled = 1
 					AND provider = 'anthropic'
 					AND (
+						-- Usage window reset
 						(rate_limit_reset IS NOT NULL AND rate_limit_reset <= ?)
 						OR rate_limit_reset IS NULL
 						OR rate_limit_reset < (? - 24 * 60 * 60 * 1000) -- Reset time is more than 24h old (stale)
+						OR (expires_at IS NOT NULL AND expires_at <= ?) -- Token expired or will expire within buffer
 					)
 			`,
 			);
 
-			const accounts = query.all(now, now);
+			const accounts = query.all(now, now, now);
 
 			log.debug(
 				`Auto-refresh check found ${accounts.length} account(s) to consider`,
@@ -146,24 +269,44 @@ export class AutoRefreshScheduler {
 				);
 			});
 
-			// Filter accounts: only refresh if this is a NEW window
-			// We detect a new window by comparing the current rate_limit_reset with the one we stored when we last refreshed
-			const accountsToRefresh = accounts.filter((account) =>
-				this.shouldRefreshAccount(account, now),
+			// Separate accounts into two categories: window refresh and token expiration
+			const accountsForWindowRefresh = accounts.filter((account) =>
+				this.shouldRefreshWindow(account, now),
+			);
+			const accountsWithExpiredTokens = accounts.filter((account) =>
+				this.isTokenExpired(account, now),
 			);
 
-			if (accountsToRefresh.length === 0) {
-				return;
+			// Handle window refresh accounts
+			if (accountsForWindowRefresh.length > 0) {
+				log.info(
+					`Found ${accountsForWindowRefresh.length} account(s) with new windows for auto-refresh`,
+				);
+
+				// Send dummy message to each account
+				// The sendDummyMessage method will update lastRefreshResetTime with the NEW rate_limit_reset from the API
+				for (const accountRow of accountsForWindowRefresh) {
+					await this.sendDummyMessage(accountRow);
+				}
 			}
 
-			log.info(
-				`Found ${accountsToRefresh.length} account(s) with new windows for auto-refresh`,
-			);
+			// Handle expired token accounts
+			if (accountsWithExpiredTokens.length > 0) {
+				log.info(
+					`Found ${accountsWithExpiredTokens.length} account(s) with expired tokens for OAuth reauthentication`,
+				);
 
-			// Send dummy message to each account
-			// The sendDummyMessage method will update lastRefreshResetTime with the NEW rate_limit_reset from the API
-			for (const accountRow of accountsToRefresh) {
-				await this.sendDummyMessage(accountRow);
+				// Initiate OAuth reauthentication for each account with expired tokens
+				for (const accountRow of accountsWithExpiredTokens) {
+					await this.initiateOAuthReauth(accountRow);
+				}
+			}
+
+			if (
+				accountsForWindowRefresh.length === 0 &&
+				accountsWithExpiredTokens.length === 0
+			) {
+				return;
 			}
 		} catch (error) {
 			if (error instanceof Error) {
@@ -391,50 +534,56 @@ export class AutoRefreshScheduler {
 
 			// Handle authentication errors specifically
 			if (response.status === 401) {
-				log.error(
-					`Authentication failed for account ${accountRow.name} - token may be invalid or expired`,
+				log.warn(
+					`Authentication failed for account ${accountRow.name} - token expired, initiating OAuth reauthentication`,
 				);
 
 				// Try to parse the error response for more details
 				let errorBody = "";
 				try {
 					errorBody = await response.text();
-					log.error(`Authentication error response: ${errorBody}`);
-
-					// Check if it's the specific OAuth error mentioned in the logs
-					if (
-						errorBody.includes(
-							"OAuth authentication is currently not supported",
-						)
-					) {
-						log.error(
-							`OAuth authentication not supported for account ${accountRow.name} - refresh token may be invalid. Account needs re-authentication.`,
-						);
-					}
+					log.debug(`Authentication error response: ${errorBody}`);
 				} catch {
-					log.error(
+					log.debug(
 						`Could not read error response body for ${accountRow.name}`,
 					);
 				}
 
-				// Track consecutive failures for this account
+				// Check if we should initiate OAuth reauthentication (only for Anthropic OAuth accounts)
 				const currentFailures =
 					this.consecutiveFailures.get(accountRow.id) || 0;
-				const newFailures = currentFailures + 1;
-				this.consecutiveFailures.set(accountRow.id, newFailures);
 
-				log.warn(
-					`Account ${accountRow.name} has failed ${newFailures} consecutive auto-refresh attempts. Threshold is ${this.FAILURE_THRESHOLD}.`,
+				// Initiate OAuth reauthentication immediately for expired tokens
+				log.info(
+					`Initiating automatic OAuth reauthentication for account ${accountRow.name} (failure count: ${currentFailures + 1})`,
 				);
 
-				// If failure threshold is reached, log a special message to alert admins
-				if (newFailures >= this.FAILURE_THRESHOLD) {
-					log.error(
-						`Account ${accountRow.name} has failed ${newFailures} consecutive auto-refresh attempts - this account needs re-authentication! Please run: bun run cli --reauthenticate ${accountRow.name}`,
+				const reauthSuccess = await this.initiateOAuthReauth(accountRow);
+
+				if (reauthSuccess) {
+					// Reset failure counter on successful reauthentication initiation
+					this.consecutiveFailures.delete(accountRow.id);
+					log.info(
+						`OAuth reauthentication initiated successfully for account ${accountRow.name}`,
 					);
+				} else {
+					// Track failures if reauthentication failed to start
+					const newFailures = currentFailures + 1;
+					this.consecutiveFailures.set(accountRow.id, newFailures);
+
+					log.error(
+						`Failed to initiate OAuth reauthentication for account ${accountRow.name} (${newFailures}/${this.FAILURE_THRESHOLD} failures)`,
+					);
+
+					// If failure threshold is reached, log a special message to alert admins
+					if (newFailures >= this.FAILURE_THRESHOLD) {
+						log.error(
+							`Account ${accountRow.name} has failed ${newFailures} consecutive OAuth reauthentication attempts - manual intervention required! Please run: bun run cli --reauthenticate ${accountRow.name}`,
+						);
+					}
 				}
 
-				return false;
+				return false; // Return false since the dummy message failed, but reauthentication may be in progress
 			}
 
 			if (response.ok) {
@@ -667,7 +816,7 @@ export class AutoRefreshScheduler {
 	 * @param now - The current timestamp
 	 * @returns true if the account should be refreshed, false otherwise
 	 */
-	private shouldRefreshAccount(
+	private shouldRefreshWindow(
 		account: {
 			id: string;
 			name: string;
@@ -726,5 +875,42 @@ export class AutoRefreshScheduler {
 			`No new window for account ${account.name}: current reset ${new Date(account.rate_limit_reset).toISOString()}, last refresh ${new Date(lastResetTime).toISOString()}, now ${new Date(now).toISOString()}`,
 		);
 		return false;
+	}
+
+	/**
+	 * Determine if an account's OAuth token is expired or needs reauthentication
+	 * @param account - The account to check
+	 * @param now - The current timestamp
+	 * @returns true if the token is expired and needs reauthentication, false otherwise
+	 */
+	private isTokenExpired(
+		account: {
+			id: string;
+			name: string;
+			provider: string;
+			refresh_token: string;
+			access_token: string | null;
+			expires_at: number | null;
+			rate_limit_reset: number | null;
+			custom_endpoint: string | null;
+		},
+		now: number,
+	): boolean {
+		// If no expires_at is set, assume token is valid
+		if (!account.expires_at) {
+			return false;
+		}
+
+		// Check if token is expired (with 5-minute buffer to refresh before actual expiration)
+		const expirationBuffer = 5 * 60 * 1000; // 5 minutes
+		const isExpired = account.expires_at <= now + expirationBuffer;
+
+		if (isExpired) {
+			log.info(
+				`Token expired for account ${account.name}: expires at ${new Date(account.expires_at).toISOString()}, now ${new Date(now).toISOString()}`,
+			);
+		}
+
+		return isExpired;
 	}
 }
