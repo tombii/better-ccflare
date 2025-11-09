@@ -147,4 +147,44 @@ describe("Model Mapping Caching", () => {
 		expect(getSortedMappingKeysForAccount("")).toEqual([]);
 		expect(getSortedMappingKeysForAccount("invalid-json")).toEqual([]);
 	});
+
+	test("preserves case sensitivity in cache keys", () => {
+		// Test that different case mappings create different cache entries
+		const lowercaseMappings = '{"sonnet":"gpt-4","opus":"gpt-4-turbo"}';
+		const uppercaseMappings = '{"Sonnet":"gpt-4","Opus":"gpt-4-turbo"}';
+		const mixedCaseMappings = '{"SoNnEt":"gpt-4","OpUs":"gpt-4-turbo"}';
+
+		const lowercaseKeys = getSortedMappingKeysForAccount(lowercaseMappings);
+		const uppercaseKeys = getSortedMappingKeysForAccount(uppercaseMappings);
+		const mixedCaseKeys = getSortedMappingKeysForAccount(mixedCaseMappings);
+
+		// All should return different results due to case sensitivity
+		expect(lowercaseKeys).toEqual(["sonnet", "opus"]);
+		expect(uppercaseKeys).toEqual(["Sonnet", "Opus"]);
+		expect(mixedCaseKeys).toEqual(["SoNnEt", "OpUs"]);
+
+		// Verify they're different (no cache collisions)
+		expect(lowercaseKeys).not.toEqual(uppercaseKeys);
+		expect(lowercaseKeys).not.toEqual(mixedCaseKeys);
+		expect(uppercaseKeys).not.toEqual(mixedCaseKeys);
+	});
+
+	test("whitespace normalization works correctly", () => {
+		// Test that different whitespace formats are normalized correctly
+		const compactMappings = '{"sonnet":"gpt-4","opus":"gpt-4-turbo"}';
+		const spacedMappings = '{ "sonnet" : "gpt-4" , "opus" : "gpt-4-turbo" }';
+		const multilineMappings = `{
+			"sonnet": "gpt-4",
+			"opus": "gpt-4-turbo"
+		}`;
+
+		const compactKeys = getSortedMappingKeysForAccount(compactMappings);
+		const spacedKeys = getSortedMappingKeysForAccount(spacedMappings);
+		const multilineKeys = getSortedMappingKeysForAccount(multilineMappings);
+
+		// All should return the same keys (whitespace normalized)
+		expect(compactKeys).toEqual(spacedKeys);
+		expect(spacedKeys).toEqual(multilineKeys);
+		expect(compactKeys).toEqual(["sonnet", "opus"]);
+	});
 });

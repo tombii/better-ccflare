@@ -53,6 +53,7 @@ export function parseCustomEndpointData(
 
 /**
  * Normalize model mappings string for consistent cache keys
+ * Only normalizes whitespace/formatting, preserves case sensitivity for JSON keys
  */
 function normalizeModelMappings(modelMappings: string): string {
 	return modelMappings
@@ -60,7 +61,8 @@ function normalizeModelMappings(modelMappings: string): string {
 		.replace(/\r\n/g, "\n") // Normalize line endings
 		.replace(/\n\s+/g, "\n") // Remove leading spaces
 		.replace(/\s+\n/g, "\n") // Remove trailing spaces
-		.toLowerCase(); // Case insensitive
+		.replace(/\s+/g, " ")    // Normalize multiple spaces to single space
+		.replace(/\s*([{}:,])\s*/g, "$1"); // Remove spaces around JSON syntax
 }
 
 /**
