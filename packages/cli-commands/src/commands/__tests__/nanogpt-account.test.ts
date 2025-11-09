@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { existsSync, unlinkSync } from "node:fs";
 import type { DatabaseOperations } from "@better-ccflare/database";
 import { DatabaseFactory } from "@better-ccflare/database";
 import { createNanoGPTAccount } from "../account";
@@ -11,8 +12,12 @@ describe("CLI NanoGPT Account Creation", () => {
 
 	beforeAll(async () => {
 		// Clean up any existing test database
-		if (require("node:fs").existsSync(TEST_DB_PATH)) {
-			require("node:fs").unlinkSync(TEST_DB_PATH);
+		try {
+			if (existsSync(TEST_DB_PATH)) {
+				unlinkSync(TEST_DB_PATH);
+			}
+		} catch (error) {
+			console.warn("Failed to clean up existing test database:", error);
 		}
 
 		// Initialize test database
@@ -22,8 +27,12 @@ describe("CLI NanoGPT Account Creation", () => {
 
 	afterAll(() => {
 		// Clean up test database
-		if (require("node:fs").existsSync(TEST_DB_PATH)) {
-			require("node:fs").unlinkSync(TEST_DB_PATH);
+		try {
+			if (existsSync(TEST_DB_PATH)) {
+				unlinkSync(TEST_DB_PATH);
+			}
+		} catch (error) {
+			console.warn("Failed to clean up test database:", error);
 		}
 		DatabaseFactory.reset();
 	});
