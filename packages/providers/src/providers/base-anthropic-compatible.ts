@@ -2,6 +2,7 @@ import {
 	BUFFER_SIZES,
 	estimateCostUSD,
 	KNOWN_PATTERNS,
+	parseModelMappings,
 	TIME_CONSTANTS,
 } from "@better-ccflare/core";
 import { sanitizeProxyHeaders } from "@better-ccflare/http-common";
@@ -193,7 +194,6 @@ export abstract class BaseAnthropicCompatibleProvider extends BaseProvider {
 			return originalModel;
 		}
 
-		const { parseModelMappings } = require("@better-ccflare/core");
 		const accountMappings = parseModelMappings(account.model_mappings);
 
 		if (!accountMappings) {
