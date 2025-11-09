@@ -28,6 +28,7 @@ export class MinimaxProvider extends BaseAnthropicCompatibleProvider {
 		if (
 			transformed &&
 			typeof transformed === "object" &&
+			transformed !== null &&
 			"model" in transformed
 		) {
 			return {
