@@ -111,7 +111,8 @@ class API extends HttpClient {
 			| "zai"
 			| "minimax"
 			| "anthropic-compatible"
-			| "openai-compatible";
+			| "openai-compatible"
+			| "nanogpt";
 		apiKey?: string;
 		priority: number;
 		customEndpoint?: string;
@@ -216,6 +217,37 @@ class API extends HttpClient {
 
 		this.logger.debug(`→ POST ${url}`, { data });
 
+		try {
+			const response = await this.post<{ message: string; account: Account }>(
+				url,
+				data,
+			);
+			const duration = Date.now() - startTime;
+			this.logger.debug(`← POST ${url} - 200 (${duration}ms)`);
+			return response;
+		} catch (error) {
+			const duration = Date.now() - startTime;
+			this.logger.error(`✗ POST ${url} - ERROR (${duration}ms)`, {
+				error: error instanceof Error ? error.message : String(error),
+				stack: error instanceof Error ? error.stack : undefined,
+			});
+			if (error instanceof HttpError) {
+				throw new Error(error.message);
+			}
+			throw error;
+		}
+	}
+
+	async addNanoGPTAccount(data: {
+		name: string;
+		apiKey: string;
+		priority: number;
+		customEndpoint?: string;
+		modelMappings?: { [key: string]: string };
+	}): Promise<{ message: string; account: Account }> {
+		const startTime = Date.now();
+		const url = "/api/accounts/nanogpt";
+		this.logger.debug(`→ POST ${url}`, { data });
 		try {
 			const response = await this.post<{ message: string; account: Account }>(
 				url,

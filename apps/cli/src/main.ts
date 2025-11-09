@@ -77,6 +77,7 @@ interface ParsedArgs {
 		| "minimax"
 		| "anthropic-compatible"
 		| "openai-compatible"
+		| "nanogpt"
 		| null;
 	priority: number | null;
 	list: boolean;
@@ -496,6 +497,7 @@ function parseArgs(args: string[]): ParsedArgs {
 					| "minimax"
 					| "anthropic-compatible"
 					| "openai-compatible"
+					| "nanogpt"
 					| "max";
 
 				// Handle deprecated "max" mode with warning
@@ -518,6 +520,7 @@ function parseArgs(args: string[]): ParsedArgs {
 					| "console"
 					| "zai"
 					| "minimax"
+					| "nanogpt"
 					| "anthropic-compatible"
 					| "openai-compatible"
 				> = [
@@ -525,6 +528,7 @@ function parseArgs(args: string[]): ParsedArgs {
 					"console",
 					"zai",
 					"minimax",
+					"nanogpt",
 					"anthropic-compatible",
 					"openai-compatible",
 				];
@@ -718,11 +722,12 @@ Options:
   --ssl-cert <path>    Path to SSL certificate file (enables HTTPS)
   --stats              Show statistics (JSON output)
   --add-account <name> Add a new account
-    --mode <claude-oauth|console|zai|minimax|anthropic-compatible|openai-compatible>  Account mode (default: claude-oauth)
+    --mode <claude-oauth|console|zai|minimax|nanogpt|anthropic-compatible|openai-compatible>  Account mode (default: claude-oauth)
       claude-oauth: Claude CLI account (OAuth)
       console: Claude API account (OAuth)
       zai: z.ai account (API key)
       minimax: Minimax account (API key)
+      nanogpt: NanoGPT provider (API key)
       anthropic-compatible: Anthropic-compatible provider (API key)
       openai-compatible: OpenAI-compatible provider (API key)
     --priority <number>   Account priority (default: 0)
@@ -900,7 +905,7 @@ Examples:
 			);
 			console.error("Please provide the required flags:");
 			console.error(
-				"  --mode <claude-oauth|console|zai|minimax|anthropic-compatible|openai-compatible>",
+				"  --mode <claude-oauth|console|zai|minimax|nanogpt|anthropic-compatible|openai-compatible>",
 			);
 			console.error("  --priority <number>");
 			console.error("\nFor API key accounts, also set:");

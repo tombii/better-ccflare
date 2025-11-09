@@ -21,7 +21,8 @@ export function providerSupportsAutoFeatures(provider: string): boolean {
 export function providerSupportsModelMappings(provider: string): boolean {
 	return (
 		provider === PROVIDER_NAMES.OPENAI_COMPATIBLE ||
-		provider === PROVIDER_NAMES.ANTHROPIC_COMPATIBLE
+		provider === PROVIDER_NAMES.ANTHROPIC_COMPATIBLE ||
+		provider === PROVIDER_NAMES.NANOGPT
 	);
 }
 

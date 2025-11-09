@@ -151,9 +151,9 @@ export abstract class BaseAnthropicCompatibleProvider extends BaseProvider {
 	 */
 	async transformRequestBody(
 		request: Request,
-		_account?: Account,
+		account?: Account,
 	): Promise<Request> {
-		if (!this.config.modelMappings || !this.config.supportsStreaming) {
+		if (!this.config.supportsStreaming) {
 			return request;
 		}
 
@@ -162,20 +162,49 @@ export abstract class BaseAnthropicCompatibleProvider extends BaseProvider {
 			const body = await clonedRequest.json();
 
 			// Check if we need to transform the model
-			if (body.model && this.config.modelMappings[body.model]) {
+			if (body.model) {
 				const originalModel = body.model;
-				body.model = this.config.modelMappings[body.model];
+				let mappedModel = originalModel;
 
-				log.debug(`Mapped model: ${originalModel} -> ${body.model}`);
+				// First try account-specific mappings if account has model_mappings defined
+				if (account && account.model_mappings) {
+					const { parseModelMappings } = await import("@better-ccflare/core");
+					const accountMappings = parseModelMappings(account.model_mappings);
 
-				// Create new request with transformed body
-				const transformedRequest = new Request(request.url, {
-					method: request.method,
-					headers: request.headers,
-					body: JSON.stringify(body),
-				});
+					if (accountMappings) {
+						// First try exact match
+						if (accountMappings[originalModel]) {
+							mappedModel = accountMappings[originalModel];
+						} else {
+							// Try wildcard/substring matching (e.g., "sonnet" matches "claude-sonnet-4-5-20250929")
+							const mappingKeys = Object.keys(accountMappings).sort((a, b) => b.length - a.length); // Longest first
+							for (const key of mappingKeys) {
+								if (originalModel.toLowerCase().includes(key.toLowerCase())) {
+									mappedModel = accountMappings[key];
+									break;
+								}
+							}
+						}
+					}
+				}
+				// Fall back to static config mappings for backward compatibility
+				else if (this.config.modelMappings && this.config.modelMappings[originalModel]) {
+					mappedModel = this.config.modelMappings[originalModel];
+				}
 
-				return transformedRequest;
+				if (mappedModel !== originalModel) {
+					body.model = mappedModel;
+					log.debug(`Mapped model: ${originalModel} -> ${mappedModel}`);
+
+					// Create new request with transformed body
+					const transformedRequest = new Request(request.url, {
+						method: request.method,
+						headers: request.headers,
+						body: JSON.stringify(body),
+					});
+
+					return transformedRequest;
+				}
 			}
 		} catch (error) {
 			log.debug("Failed to transform request body:", error);
