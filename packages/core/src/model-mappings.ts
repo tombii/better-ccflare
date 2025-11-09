@@ -9,6 +9,21 @@ const log = new Logger("ModelMappings");
 const MODEL_MAPPING_CACHE = new Map<string, string[]>();
 const MAX_CACHE_SIZE = 1000; // Prevent memory leaks
 
+/**
+ * Create a canonical cache key for model mappings
+ * Sorts object keys to ensure identical mappings always produce the same cache key
+ * This eliminates cache misses from JSON key order differences
+ */
+function createCacheKey(mappings: Record<string, string>): string {
+	// Create a canonical representation by sorting keys
+	const canonicalObject = Object.fromEntries(
+		Object.entries(mappings).sort(([keyA], [keyB]) => keyA.localeCompare(keyB))
+	);
+
+	// Stringify the canonical object (no need for additional whitespace normalization)
+	return JSON.stringify(canonicalObject);
+}
+
 // Inline types to avoid Bun import issues
 // Types are now defined in index.ts and exported from there
 
@@ -52,38 +67,26 @@ export function parseCustomEndpointData(
 }
 
 /**
- * Normalize model mappings string for consistent cache keys
- * Only normalizes whitespace/formatting, preserves case sensitivity for JSON keys
- */
-function normalizeModelMappings(modelMappings: string): string {
-	return modelMappings
-		.trim()
-		.replace(/\r\n/g, "\n") // Normalize line endings
-		.replace(/\n\s+/g, "\n") // Remove leading spaces
-		.replace(/\s+\n/g, "\n") // Remove trailing spaces
-		.replace(/\s+/g, " ")    // Normalize multiple spaces to single space
-		.replace(/\s*([{}:,])\s*/g, "$1"); // Remove spaces around JSON syntax
-}
-
-/**
  * Get sorted model mapping keys with caching
  * This eliminates redundant sorting operations across all providers
  */
 function getSortedModelMappingKeys(mappings: Record<string, string>): string[] {
-	// Create cache key from mappings content
-	const mappingsString = JSON.stringify(mappings);
-	const normalizedKey = normalizeModelMappings(mappingsString);
+	// Create canonical cache key from mappings (sorted keys for consistent cache hits)
+	const cacheKey = createCacheKey(mappings);
 
 	// Check cache first
-	if (MODEL_MAPPING_CACHE.has(normalizedKey)) {
-		const cachedKeys = MODEL_MAPPING_CACHE.get(normalizedKey);
+	if (MODEL_MAPPING_CACHE.has(cacheKey)) {
+		const cachedKeys = MODEL_MAPPING_CACHE.get(cacheKey);
 		return cachedKeys || [];
 	}
 
 	// Cache miss - sort and cache
-	const sortedKeys = Object.keys(mappings).sort((a, b) => b.length - a.length); // Longest first
+	// Sort by length (longest first) to prioritize more specific matches
+	// Example: "claude-sonnet" should match before "sonnet" when both exist
+	const sortedKeys = Object.keys(mappings).sort((a, b) => b.length - a.length);
 
-	// Implement LRU eviction to prevent memory leaks
+	// Implement FIFO eviction to prevent memory leaks
+	// Note: This is FIFO eviction, not true LRU (frequently accessed entries are not promoted)
 	if (MODEL_MAPPING_CACHE.size >= MAX_CACHE_SIZE) {
 		const firstKey = MODEL_MAPPING_CACHE.keys().next().value;
 		if (firstKey) {
@@ -97,7 +100,7 @@ function getSortedModelMappingKeys(mappings: Record<string, string>): string[] {
 		}
 	}
 
-	MODEL_MAPPING_CACHE.set(normalizedKey, sortedKeys);
+	MODEL_MAPPING_CACHE.set(cacheKey, sortedKeys);
 
 	if (process.env.DEBUG?.includes("model") || process.env.DEBUG === "true") {
 		log.debug(
