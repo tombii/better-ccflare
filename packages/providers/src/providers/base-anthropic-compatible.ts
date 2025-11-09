@@ -180,13 +180,15 @@ export abstract class BaseAnthropicCompatibleProvider extends BaseProvider {
 							mappedModel = accountMappings[originalModel];
 						} else {
 							// Direct pattern matching for known model families (O(1) constant time)
-							// No sorting needed - we know the exact patterns to check
-							if (originalModel.toLowerCase().includes("opus")) {
-								mappedModel = accountMappings.opus;
-							} else if (originalModel.toLowerCase().includes("haiku")) {
-								mappedModel = accountMappings.haiku;
-							} else if (originalModel.toLowerCase().includes("sonnet")) {
-								mappedModel = accountMappings.sonnet;
+							// Use shared KNOWN_PATTERNS to ensure consistent order across codebase
+							const { KNOWN_PATTERNS } = await import("@better-ccflare/core");
+							const normalizedModel = originalModel.toLowerCase();
+
+							for (const pattern of KNOWN_PATTERNS) {
+								if (normalizedModel.includes(pattern)) {
+									mappedModel = accountMappings[pattern];
+									break;
+								}
 							}
 						}
 					}

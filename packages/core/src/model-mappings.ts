@@ -7,6 +7,11 @@ const log = new Logger("ModelMappings");
 // Inline types to avoid Bun import issues
 // Types are now defined in index.ts and exported from there
 
+// Known model family patterns for O(1) direct matching
+// Pattern order: Check "opus" before "haiku" before "sonnet" to avoid substring collisions
+// in edge cases like "claude-opus-haiku-test" (though we would never see this pattern from the client)
+export const KNOWN_PATTERNS = ["opus", "haiku", "sonnet"] as const;
+
 /**
  * Default model mappings for OpenAI-compatible providers
  */
@@ -134,45 +139,31 @@ export function mapModelName(anthropicModel: string, account: Account): string {
 	}
 
 	// Direct pattern matching for known model families (O(1) constant time)
-	// No sorting needed - we know the exact patterns to check
-	if (anthropicModel.toLowerCase().includes("opus")) {
-		const mappedModel = mappings.opus || "openai/gpt-5";
-		if (
-			process.env.DEBUG?.includes("model") ||
-			process.env.DEBUG === "true" ||
-			process.env.NODE_ENV === "development"
-		) {
-			log.info(`Opus model mapping: ${anthropicModel} -> ${mappedModel}`);
+	// Use KNOWN_PATTERNS to ensure consistent order and avoid magic strings
+	const normalizedModel = anthropicModel.toLowerCase();
+
+	for (const pattern of KNOWN_PATTERNS) {
+		if (normalizedModel.includes(pattern)) {
+			const defaultModels = {
+				opus: "openai/gpt-5",
+				haiku: "openai/gpt-5-mini",
+				sonnet: "openai/gpt-5",
+			};
+			const mappedModel = mappings[pattern] || defaultModels[pattern];
+
+			if (
+				process.env.DEBUG?.includes("model") ||
+				process.env.DEBUG === "true" ||
+				process.env.NODE_ENV === "development"
+			) {
+				log.info(`${pattern.charAt(0).toUpperCase() + pattern.slice(1)} model mapping: ${anthropicModel} -> ${mappedModel}`);
+			}
+			return mappedModel;
 		}
-		return mappedModel;
 	}
 
-	if (anthropicModel.toLowerCase().includes("haiku")) {
-		const mappedModel = mappings.haiku || "openai/gpt-5-mini";
-		if (
-			process.env.DEBUG?.includes("model") ||
-			process.env.DEBUG === "true" ||
-			process.env.NODE_ENV === "development"
-		) {
-			log.info(`Haiku model mapping: ${anthropicModel} -> ${mappedModel}`);
-		}
-		return mappedModel;
-	}
-
-	if (anthropicModel.toLowerCase().includes("sonnet")) {
-		const mappedModel = mappings.sonnet || "openai/gpt-5";
-		if (
-			process.env.DEBUG?.includes("model") ||
-			process.env.DEBUG === "true" ||
-			process.env.NODE_ENV === "development"
-		) {
-			log.info(`Sonnet model mapping: ${anthropicModel} -> ${mappedModel}`);
-		}
-		return mappedModel;
-	}
-
-	// Default fallback - use sonnet as the mid-tier default
-	const fallbackModel = mappings.sonnet || "openai/gpt-5";
+	// Default fallback - use sonnet as the mid-tier default (from KNOWN_PATTERNS)
+	const fallbackModel = mappings[KNOWN_PATTERNS[2]] || "openai/gpt-5"; // KNOWN_PATTERNS[2] = "sonnet"
 	if (
 		process.env.DEBUG?.includes("model") ||
 		process.env.DEBUG === "true" ||

@@ -38,11 +38,11 @@ export {
 	DEFAULT_MODEL_MAPPINGS,
 	getEndpointUrl,
 	getModelMappings,
-	getSortedMappingKeysForAccount,
 	mapModelName,
 	parseCustomEndpointData,
 	parseModelMappings,
 	validateAndSanitizeModelMappings,
+	KNOWN_PATTERNS,
 } from "./model-mappings";
 export {
 	CLAUDE_MODEL_IDS,
