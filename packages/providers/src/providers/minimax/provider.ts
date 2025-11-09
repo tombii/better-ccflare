@@ -21,7 +21,7 @@ export class MinimaxProvider extends BaseAnthropicCompatibleProvider {
 	/**
 	 * Override model transformation - Minimax maps ALL models to MiniMax-M2
 	 * This ensures consistent behavior regardless of input model name
-	 * Uses optimized direct mutation approach instead of creating new objects
+	 * Uses optimized direct body mutation approach for better performance
 	 */
 	async transformRequestBody(
 		request: Request,

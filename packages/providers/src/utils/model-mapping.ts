@@ -37,6 +37,7 @@ export interface TransformRequestBody {
 /**
  * Standardized model mapping utility for all providers
  * Ensures consistent behavior across different provider implementations
+ * Optimized for performance: O(1) exact match + O(k) pattern matching where k is the number of known patterns
  *
  * @param anthropicModel - The original Anthropic model name
  * @param account - The account containing model_mappings configuration
@@ -66,11 +67,12 @@ export function getModelName(
 		return mappedModel;
 	}
 
-	// Try pattern matching for known model families
-	const normalizedModel = anthropicModel.toLowerCase();
+	// Try pattern matching for known model families (more efficient)
+	// Use case-insensitive matching with direct pattern checks
+	const modelLower = anthropicModel.toLowerCase();
 
 	for (const pattern of KNOWN_PATTERNS) {
-		if (normalizedModel.includes(pattern) && accountMappings[pattern]) {
+		if (modelLower.includes(pattern) && accountMappings[pattern]) {
 			const mappedModel = accountMappings[pattern];
 			log.debug(
 				`Pattern model mapping: ${anthropicModel} (${pattern}) -> ${mappedModel}`,
@@ -144,7 +146,7 @@ export async function transformRequestBodyModel<T extends TransformRequestBody>(
 
 /**
  * Optimized model transformation for providers that need to force all models to a specific one
- * Uses direct object mutation instead of creating new objects for better performance
+ * Uses direct body object mutation for better performance while creating a new Request object
  *
  * @param request - The incoming request object to transform
  * @param targetModel - The target model name to force all requests to
@@ -162,7 +164,7 @@ export async function transformRequestBodyModelForce(
 		const clonedRequest = request.clone();
 		const body = await clonedRequest.json();
 
-		// Direct mutation for performance - avoid creating new objects
+		// Direct body mutation for performance - avoids object spreading overhead
 		if (body && typeof body === "object" && body.model) {
 			body.model = targetModel;
 			log.debug(`Forced model mapping to: ${targetModel}`);

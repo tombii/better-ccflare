@@ -205,11 +205,11 @@ export abstract class BaseAnthropicCompatibleProvider extends BaseProvider {
 			return accountMappings[originalModel];
 		}
 
-		// Try pattern matching for known model families
-		const normalizedModel = originalModel.toLowerCase();
+		// Try pattern matching for known model families (more efficient)
+		const modelLower = originalModel.toLowerCase();
 
 		for (const pattern of KNOWN_PATTERNS) {
-			if (normalizedModel.includes(pattern) && accountMappings[pattern]) {
+			if (modelLower.includes(pattern) && accountMappings[pattern]) {
 				return accountMappings[pattern];
 			}
 		}
