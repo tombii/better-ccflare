@@ -28,6 +28,7 @@ export * from "./types";
 export * from "./usage-fetcher";
 
 import { AnthropicProvider } from "./providers/anthropic/provider";
+import { AnthropicCompatibleProvider } from "./providers/anthropic-compatible/provider";
 import { MinimaxProvider } from "./providers/minimax/provider";
 import { NanoGPTProvider } from "./providers/nanogpt/provider";
 import { OpenAICompatibleProvider } from "./providers/openai/provider";
@@ -40,6 +41,4 @@ registry.registerProvider(new MinimaxProvider());
 registry.registerProvider(new NanoGPTProvider());
 registry.registerProvider(new ZaiProvider());
 registry.registerProvider(new OpenAICompatibleProvider());
-
-// Note: AnthropicCompatibleProvider is not auto-registered
-// because it requires configuration. Use the factory functions to create instances.
+registry.registerProvider(new AnthropicCompatibleProvider());

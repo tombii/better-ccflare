@@ -85,11 +85,12 @@ describe("Auto-Refresh Token Hierarchy", () => {
 			};
 
 			// Access private method for testing
-			const isExpired20Min = (scheduler as any).isTokenExpired(
-				tokenExpiringSoon,
-				now,
-			);
-			const isExpired40Min = (scheduler as any).isTokenExpired(tokenValid, now);
+			const isExpired20Min = (
+				scheduler as { isTokenExpired: unknown }
+			).isTokenExpired(tokenExpiringSoon, now);
+			const isExpired40Min = (
+				scheduler as { isTokenExpired: unknown }
+			).isTokenExpired(tokenValid, now);
 
 			expect(isExpired20Min).toBe(true); // Should be expired (within 30-min buffer)
 			expect(isExpired40Min).toBe(false); // Should be valid (outside 30-min buffer)
@@ -133,7 +134,7 @@ describe("Auto-Refresh Token Hierarchy", () => {
 				const mockContextGetValidAccessToken = mock(() =>
 					Promise.resolve("new-access-token"),
 				);
-				(globalThis as any).getValidAccessToken =
+				(globalThis as { getValidAccessToken: unknown }).getValidAccessToken =
 					mockContextGetValidAccessToken;
 
 				// Simulate the new token refresh hierarchy
@@ -145,7 +146,8 @@ describe("Auto-Refresh Token Hierarchy", () => {
 					browserReauthCalled = true;
 					return Promise.resolve(true);
 				});
-				(scheduler as any).initiateOAuthReauth = mockInitiateOAuthReauth;
+				(scheduler as { initiateOAuthReauth: unknown }).initiateOAuthReauth =
+					mockInitiateOAuthReauth;
 
 				// Attempt background refresh (this simulates the new logic)
 				try {

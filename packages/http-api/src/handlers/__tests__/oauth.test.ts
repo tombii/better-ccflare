@@ -117,9 +117,9 @@ describe("OAuth Handler - Backward Compatibility", () => {
 
 			const response = await handler(request);
 
-			// Validation errors currently return 500 (caught by outer try/catch)
-			// This is consistent with current error handling in the handler
-			expect(response.status).toBe(500);
+			expect(response.status).toBe(400);
+			const data = await response.json();
+			expect(data.error).toContain("mode");
 		});
 
 		it("should default to claude-oauth when mode is omitted", async () => {
@@ -153,8 +153,9 @@ describe("OAuth Handler - Backward Compatibility", () => {
 
 			const response = await handler(request);
 
-			// Validation errors currently return 500 (caught by outer try/catch)
-			expect(response.status).toBe(500);
+			expect(response.status).toBe(400);
+			const data = await response.json();
+			expect(data.error).toContain("name");
 		});
 
 		it("should accept custom endpoint", async () => {

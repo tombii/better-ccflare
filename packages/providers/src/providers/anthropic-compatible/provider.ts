@@ -1,4 +1,5 @@
 import { Logger } from "@better-ccflare/logger";
+import type { Account } from "@better-ccflare/types";
 import {
 	type AnthropicCompatibleConfig,
 	BaseAnthropicCompatibleProvider,
@@ -27,6 +28,20 @@ export class AnthropicCompatibleProvider extends BaseAnthropicCompatibleProvider
 	getEndpoint(): string {
 		// Use the configured base URL for this generic provider
 		return this.config.baseUrl || "https://api.anthropic.com";
+	}
+
+	/**
+	 * Build target URL for Anthropic-compatible endpoint
+	 * @param pathname - The pathname from the original request
+	 * @param search - The search string from the original request
+	 * @param account - The account configuration (for custom endpoints)
+	 * @returns The complete target URL
+	 */
+	buildUrl(pathname: string, search: string, account?: Account): string {
+		// Use custom endpoint from account if available, otherwise fall back to config
+		const baseUrl = account?.custom_endpoint || this.getEndpoint();
+		const cleanBaseUrl = baseUrl.replace(/\/$/, ""); // Remove trailing slash
+		return `${cleanBaseUrl}${pathname}${search}`;
 	}
 
 	/**

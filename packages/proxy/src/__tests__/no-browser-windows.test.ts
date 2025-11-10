@@ -78,7 +78,7 @@ describe("No Browser Windows Tests", () => {
 
 		// Mock the browser opening function
 		browserOpenCount = 0;
-		(scheduler as any).openBrowser = mock(async () => {
+		(scheduler as { openBrowser: unknown }).openBrowser = mock(async () => {
 			browserOpenCount++;
 			return true;
 		});
@@ -193,7 +193,8 @@ describe("No Browser Windows Tests", () => {
 
 				// Mock the OAuth reauth to not actually open browser (just track the call)
 				const mockInitiateOAuthReauth = mock(() => Promise.resolve(true));
-				(scheduler as any).initiateOAuthReauth = mockInitiateOAuthReauth;
+				(scheduler as { initiateOAuthReauth: unknown }).initiateOAuthReauth =
+					mockInitiateOAuthReauth;
 
 				// Simulate the new token refresh logic with failed background refresh
 				try {
@@ -214,7 +215,7 @@ describe("No Browser Windows Tests", () => {
 
 		it("should verify browser opening function is properly mocked", async () => {
 			// Test that our mock is working
-			const result = await (scheduler as any).openBrowser(
+			const result = await (scheduler as { openBrowser: unknown }).openBrowser(
 				"https://example.com",
 			);
 			expect(result).toBe(true);
