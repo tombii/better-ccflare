@@ -1,4 +1,12 @@
-import { afterAll, beforeAll, describe, expect, it, mock } from "bun:test";
+import {
+	afterAll,
+	afterEach,
+	beforeAll,
+	describe,
+	expect,
+	it,
+	mock,
+} from "bun:test";
 import { existsSync, unlinkSync } from "node:fs";
 import {
 	DatabaseFactory,
@@ -35,8 +43,12 @@ describe("No Browser Windows Tests", () => {
 	let scheduler: AutoRefreshScheduler;
 	let mockProxyContext: ProxyContext;
 	let browserOpenCount = 0;
+	let originalGetValidAccessToken: typeof globalThis.getValidAccessToken;
 
 	beforeAll(async () => {
+		// Store original getValidAccessToken to restore later
+		originalGetValidAccessToken = globalThis.getValidAccessToken;
+
 		// Clean up any existing test database
 		try {
 			if (existsSync(TEST_DB_PATH)) {
@@ -70,6 +82,11 @@ describe("No Browser Windows Tests", () => {
 			browserOpenCount++;
 			return true;
 		});
+	});
+
+	afterEach(() => {
+		// Reset global modifications between tests to prevent state leakage
+		globalThis.getValidAccessToken = originalGetValidAccessToken;
 	});
 
 	afterAll(() => {
@@ -134,7 +151,6 @@ describe("No Browser Windows Tests", () => {
 			} finally {
 				// Clean up test data
 				db.run("DELETE FROM accounts WHERE id = 'test-no-browser'");
-				globalThis.getValidAccessToken = undefined;
 			}
 		});
 
@@ -193,7 +209,6 @@ describe("No Browser Windows Tests", () => {
 			} finally {
 				// Clean up test data
 				db.run("DELETE FROM accounts WHERE id = 'test-browser-fallback'");
-				globalThis.getValidAccessToken = undefined;
 			}
 		});
 
