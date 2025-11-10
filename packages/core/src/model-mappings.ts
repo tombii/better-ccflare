@@ -164,8 +164,8 @@ export function mapModelName(anthropicModel: string, account: Account): string {
 		}
 	}
 
-	// Default fallback - use sonnet as the mid-tier default (from KNOWN_PATTERNS)
-	const fallbackModel = mappings[KNOWN_PATTERNS[2]] || "openai/gpt-5"; // KNOWN_PATTERNS[2] = "sonnet"
+	// Default fallback - use sonnet as the mid-tier default
+	const fallbackModel = mappings.sonnet || DEFAULT_MODEL_MAPPINGS.sonnet;
 	if (
 		process.env.DEBUG?.includes("model") ||
 		process.env.DEBUG === "true" ||

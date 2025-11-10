@@ -219,7 +219,7 @@ export function createOAuthCallbackHandler(dbOps: DatabaseOperations) {
 				// Clean up OAuth session from database
 				dbOps.deleteOAuthSession(sessionId);
 
-				const successMessage = `Account '${name}' re-authenticated successfully!`;
+				const successMessage = `Account '${name}' authenticated successfully!`;
 				const modeDescription =
 					savedMode === "claude-oauth" ? "Claude CLI OAuth" : "Claude Console";
 

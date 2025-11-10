@@ -10,6 +10,7 @@ import {
 	getProvider,
 } from "@better-ccflare/providers";
 import type { Account } from "@better-ccflare/types";
+import { TOKEN_SAFETY_WINDOW_MS } from "./constants";
 import { getValidAccessToken } from "./handlers";
 import type { ProxyContext } from "./proxy";
 
@@ -17,6 +18,21 @@ import type { ProxyContext } from "./proxy";
  * Try to open the user's default browser with the given URL.
  * Returns true on success, false otherwise.
  */
+/**
+ * Sanitize URL for safe use in PowerShell commands
+ * Escapes single quotes and removes dangerous PowerShell metacharacters
+ */
+function sanitizeUrlForPowerShell(url: string): string {
+	// Escape single quotes by replacing ' with ''
+	let sanitized = url.replace(/'/g, "''");
+
+	// Remove potentially dangerous PowerShell metacharacters
+	// These could be used for command injection
+	sanitized = sanitized.replace(/[`;\\$]/g, "");
+
+	return sanitized;
+}
+
 async function openBrowser(url: string): Promise<boolean> {
 	try {
 		// Try to use the open package if available
@@ -27,11 +43,12 @@ async function openBrowser(url: string): Promise<boolean> {
 		// Fallback – platform-specific browser opening
 		try {
 			if (process.platform === "win32") {
-				// Use powershell -Command Start-Process 'url'
+				// Use powershell -Command Start-Process with sanitized URL to prevent injection
 				const { spawn } = await import("node:child_process");
+				const sanitizedUrl = sanitizeUrlForPowerShell(url);
 				spawn(
 					"powershell.exe",
-					["-NoProfile", "-Command", "Start-Process", `'${url}'`],
+					["-NoProfile", "-Command", "Start-Process", `'${sanitizedUrl}'`],
 					{
 						detached: true,
 						stdio: "ignore",
@@ -171,7 +188,7 @@ export class AutoRefreshScheduler {
 			return true;
 		} catch (error) {
 			log.error(
-				`Failed to initiate OAuth reauthentication for account ${accountRow.name}:`,
+				`Failed to initiate OAuth reauthentication for account ${accountRow.name} (ID: ${accountRow.id}, provider: ${accountRow.provider}):`,
 				error,
 			);
 			return false;
@@ -1073,11 +1090,11 @@ export class AutoRefreshScheduler {
 		}
 
 		// Check if token is expired (with 30-minute buffer to refresh before actual expiration)
-		const expirationBuffer = 30 * 60 * 1000; // 30 minutes (updated from 5 minutes for 41-day OAuth tokens)
+		const expirationBuffer = TOKEN_SAFETY_WINDOW_MS; // 30 minutes (updated from 5 minutes for 8 hour OAuth tokens)
 		const isExpired = account.expires_at <= now + expirationBuffer;
 		const minutesUntilExpiry = (account.expires_at - now) / (1000 * 60);
 		const minutesUntilBuffer =
-			(account.expires_at - (now + expirationBuffer)) / (1000 * 60);
+			(now + expirationBuffer - account.expires_at) / (1000 * 60);
 
 		log.info(
 			`Account ${account.name}: Token expires at ${new Date(account.expires_at).toISOString()}, ` +
