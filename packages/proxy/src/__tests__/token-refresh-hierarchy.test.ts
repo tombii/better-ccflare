@@ -106,21 +106,8 @@ describe("Auto-Refresh Token Hierarchy", () => {
         INSERT INTO accounts (
           id, name, provider, refresh_token, access_token, expires_at,
           created_at, request_count, total_requests, auto_refresh_enabled
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `)
-				.bind(
-					"test-hierarchy",
-					"hierarchy-test-account",
-					"anthropic",
-					"valid-refresh-token",
-					"expiring-access-token",
-					expiresIn20Minutes, // Will trigger token refresh
-					now,
-					0,
-					0,
-					1, // auto_refresh_enabled = true
-				)
-				.run();
+        ) VALUES ('test-hierarchy', 'hierarchy-test-account', 'anthropic', 'valid-refresh-token', 'expiring-access-token', ${expiresIn20Minutes}, ${now}, 0, 0, 1)
+      `);
 
 			// Mock getValidAccessToken to succeed (background refresh success)
 			const mockGetValidAccessToken = mock(() =>
