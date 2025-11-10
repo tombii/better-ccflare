@@ -35,7 +35,7 @@ export async function fetchNanoGPTUsageData(
 ): Promise<NanoGPTUsageData | null> {
 	try {
 		const baseUrl = customEndpoint || "https://nano-gpt.com/api";
-		const url = `${baseUrl}/subscription/v1/usage`;
+		const url = new URL("/subscription/v1/usage", baseUrl).toString();
 
 		const response = await fetch(url, {
 			method: "GET",

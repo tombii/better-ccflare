@@ -10,6 +10,7 @@ import {
 	getProvider,
 } from "@better-ccflare/providers";
 import type { Account } from "@better-ccflare/types";
+import { TOKEN_SAFETY_WINDOW_MS } from "./constants";
 import { getValidAccessToken } from "./handlers";
 import type { ProxyContext } from "./proxy";
 
@@ -17,6 +18,21 @@ import type { ProxyContext } from "./proxy";
  * Try to open the user's default browser with the given URL.
  * Returns true on success, false otherwise.
  */
+/**
+ * Sanitize URL for safe use in PowerShell commands
+ * Escapes single quotes and removes dangerous PowerShell metacharacters
+ */
+function sanitizeUrlForPowerShell(url: string): string {
+	// Escape single quotes by replacing ' with ''
+	let sanitized = url.replace(/'/g, "''");
+
+	// Remove potentially dangerous PowerShell metacharacters
+	// These could be used for command injection
+	sanitized = sanitized.replace(/[`;\\$]/g, "");
+
+	return sanitized;
+}
+
 async function openBrowser(url: string): Promise<boolean> {
 	try {
 		// Try to use the open package if available
@@ -27,11 +43,12 @@ async function openBrowser(url: string): Promise<boolean> {
 		// Fallback – platform-specific browser opening
 		try {
 			if (process.platform === "win32") {
-				// Use powershell -Command Start-Process 'url'
+				// Use powershell -Command Start-Process with sanitized URL to prevent injection
 				const { spawn } = await import("node:child_process");
+				const sanitizedUrl = sanitizeUrlForPowerShell(url);
 				spawn(
 					"powershell.exe",
-					["-NoProfile", "-Command", "Start-Process", `'${url}'`],
+					["-NoProfile", "-Command", "Start-Process", `'${sanitizedUrl}'`],
 					{
 						detached: true,
 						stdio: "ignore",
@@ -119,7 +136,6 @@ export class AutoRefreshScheduler {
 				(m) => m.getOAuthProvider("anthropic"),
 			);
 			if (!oauthProvider) {
-				log.error(`OAuth provider not found for account ${accountRow.name}`);
 				return false;
 			}
 
@@ -172,7 +188,7 @@ export class AutoRefreshScheduler {
 			return true;
 		} catch (error) {
 			log.error(
-				`Failed to initiate OAuth reauthentication for account ${accountRow.name}:`,
+				`Failed to initiate OAuth reauthentication for account ${accountRow.name} (ID: ${accountRow.id}, provider: ${accountRow.provider}):`,
 				error,
 			);
 			return false;
@@ -242,7 +258,6 @@ export class AutoRefreshScheduler {
 			const now = Date.now();
 			const nowStr = new Date(now).toISOString();
 			log.info(`Starting auto-refresh check at ${nowStr}`);
-			console.log(`[${nowStr}] Starting auto-refresh check`);
 
 			// Periodically clean up the tracking map - remove entries for accounts that no longer exist
 			// or have auto-refresh disabled
@@ -275,27 +290,23 @@ export class AutoRefreshScheduler {
 
 			const allAccounts = allAccountsQuery.all();
 			log.info(`Found ${allAccounts.length} total Anthropic accounts`);
-			console.log(`[${nowStr}] Found ${allAccounts.length} total Anthropic accounts`);
 
 			// Log status of all accounts
 			allAccounts.forEach((account) => {
-				const minutesUntilExpiry = account.expires_at ? (account.expires_at - now) / (1000 * 60) : null;
-				const minutesUntilReset = account.rate_limit_reset ? (account.rate_limit_reset - now) / (1000 * 60) : null;
+				const minutesUntilExpiry = account.expires_at
+					? (account.expires_at - now) / (1000 * 60)
+					: null;
+				const minutesUntilReset = account.rate_limit_reset
+					? (account.rate_limit_reset - now) / (1000 * 60)
+					: null;
 				const autoRefreshEnabled = account.auto_refresh_enabled === 1;
 
 				log.info(
 					`Account ${account.name}: ` +
-					`auto_refresh=${autoRefreshEnabled}, ` +
-					`token=${account.access_token ? 'valid' : 'null'}, ` +
-					`expires_in=${minutesUntilExpiry ? minutesUntilExpiry.toFixed(1) : 'null'}min, ` +
-					`rate_reset_in=${minutesUntilReset ? minutesUntilReset.toFixed(1) : 'null'}min`
-				);
-				console.log(
-					`[${nowStr}] Account ${account.name}: ` +
-					`auto_refresh=${autoRefreshEnabled}, ` +
-					`token=${account.access_token ? 'valid' : 'null'}, ` +
-					`expires_in=${minutesUntilExpiry ? minutesUntilExpiry.toFixed(1) : 'null'}min, ` +
-					`rate_reset_in=${minutesUntilReset ? minutesUntilReset.toFixed(1) : 'null'}min`
+						`auto_refresh=${autoRefreshEnabled}, ` +
+						`token=${account.access_token ? "valid" : "null"}, ` +
+						`expires_in=${minutesUntilExpiry ? minutesUntilExpiry.toFixed(1) : "null"}min, ` +
+						`rate_reset_in=${minutesUntilReset ? minutesUntilReset.toFixed(1) : "null"}min`,
 				);
 			});
 
@@ -326,7 +337,7 @@ export class AutoRefreshScheduler {
 						(rate_limit_reset IS NOT NULL AND rate_limit_reset <= ?)
 						OR rate_limit_reset IS NULL
 						OR rate_limit_reset < (? - 24 * 60 * 60 * 1000) -- Reset time is more than 24h old (stale)
-						OR (expires_at IS NOT NULL AND expires_at <= ?) -- Token expired or will expire within buffer
+						OR (expires_at IS NOT NULL AND expires_at <= ?) -- Token expired or will expire within buffer (30 min buffer applied in isTokenExpired method)
 					)
 			`,
 			);
@@ -344,14 +355,18 @@ export class AutoRefreshScheduler {
 
 			// Log detailed information about accounts being considered
 			accounts.forEach((account) => {
-				const minutesUntilExpiry = account.expires_at ? (account.expires_at - now) / (1000 * 60) : null;
-				const minutesUntilReset = account.rate_limit_reset ? (account.rate_limit_reset - now) / (1000 * 60) : null;
+				const minutesUntilExpiry = account.expires_at
+					? (account.expires_at - now) / (1000 * 60)
+					: null;
+				const minutesUntilReset = account.rate_limit_reset
+					? (account.rate_limit_reset - now) / (1000 * 60)
+					: null;
 
 				log.info(
 					`Considering account ${account.name}: ` +
-					`expires_in=${minutesUntilExpiry ? minutesUntilExpiry.toFixed(1) : 'null'}min, ` +
-					`rate_reset_in=${minutesUntilReset ? minutesUntilReset.toFixed(1) : 'null'}min, ` +
-					`reset_time=${account.rate_limit_reset ? new Date(account.rate_limit_reset).toISOString() : "null"}`
+						`expires_in=${minutesUntilExpiry ? minutesUntilExpiry.toFixed(1) : "null"}min, ` +
+						`rate_reset_in=${minutesUntilReset ? minutesUntilReset.toFixed(1) : "null"}min, ` +
+						`reset_time=${account.rate_limit_reset ? new Date(account.rate_limit_reset).toISOString() : "null"}`,
 				);
 			});
 
@@ -365,11 +380,7 @@ export class AutoRefreshScheduler {
 
 			log.info(
 				`Account categorization: ${accountsForWindowRefresh.length} for window refresh, ` +
-				`${accountsWithExpiredTokens.length} for token reauthentication`
-			);
-			console.log(
-				`[${nowStr}] Account categorization: ${accountsForWindowRefresh.length} for window refresh, ` +
-				`${accountsWithExpiredTokens.length} for token reauthentication`
+					`${accountsWithExpiredTokens.length} for token reauthentication`,
 			);
 
 			// Handle window refresh accounts
@@ -377,7 +388,9 @@ export class AutoRefreshScheduler {
 				log.info(
 					`Processing ${accountsForWindowRefresh.length} account(s) for window refresh`,
 				);
-				log.info(`Accounts: ${accountsForWindowRefresh.map(a => a.name).join(', ')}`);
+				log.info(
+					`Accounts: ${accountsForWindowRefresh.map((a) => a.name).join(", ")}`,
+				);
 
 				// Send dummy message to each account
 				// The sendDummyMessage method will update lastRefreshResetTime with the NEW rate_limit_reset from the API
@@ -389,13 +402,99 @@ export class AutoRefreshScheduler {
 			// Handle expired token accounts
 			if (accountsWithExpiredTokens.length > 0) {
 				log.info(
-					`Processing ${accountsWithExpiredTokens.length} account(s) for OAuth reauthentication`,
+					`Processing ${accountsWithExpiredTokens.length} account(s) for token refresh`,
 				);
-				log.info(`Accounts: ${accountsWithExpiredTokens.map(a => a.name).join(', ')}`);
+				log.info(
+					`Accounts: ${accountsWithExpiredTokens.map((a) => a.name).join(", ")}`,
+				);
 
-				// Initiate OAuth reauthentication for each account with expired tokens
+				const accountsNeedingBrowserReauth = [];
+
+				// Attempt background refresh first for each expired token account
 				for (const accountRow of accountsWithExpiredTokens) {
-					await this.initiateOAuthReauth(accountRow);
+					try {
+						log.info(
+							`Account ${accountRow.name}: Attempting background token refresh`,
+						);
+
+						// Create a minimal account object for token manager
+						const account: Account = {
+							id: accountRow.id,
+							name: accountRow.name,
+							provider: accountRow.provider,
+							api_key: null,
+							refresh_token: accountRow.refresh_token,
+							access_token: accountRow.access_token,
+							expires_at: accountRow.expires_at,
+							request_count: 0,
+							total_requests: 0,
+							last_used: null,
+							created_at: Date.now(),
+							rate_limited_until: null,
+							session_start: null,
+							session_request_count: 0,
+							paused: false,
+							priority: 0,
+							auto_fallback_enabled: false,
+							auto_refresh_enabled: true,
+							custom_endpoint: accountRow.custom_endpoint,
+							model_mappings: null,
+							rate_limit_reset: accountRow.rate_limit_reset,
+							rate_limit_status: null,
+							rate_limit_remaining: null,
+						};
+
+						// Try to get a valid access token (this will trigger background refresh if needed)
+						const accessToken = await getValidAccessToken(
+							account,
+							this.proxyContext,
+						);
+
+						if (accessToken) {
+							log.info(
+								`Account ${accountRow.name}: Background token refresh successful`,
+							);
+						} else {
+							log.warn(
+								`Account ${accountRow.name}: Background refresh returned null access token`,
+							);
+							accountsNeedingBrowserReauth.push(accountRow);
+						}
+					} catch (error) {
+						log.warn(
+							`Account ${accountRow.name}: Background token refresh failed, attempting browser reauthentication`,
+						);
+
+						// Check if it's a refresh failure (vs other errors)
+						if (
+							error instanceof Error &&
+							error.message.includes("Token refresh failed")
+						) {
+							log.error(
+								`Account ${accountRow.name}: Refresh token appears to be invalid, requiring full OAuth reauthentication`,
+							);
+						}
+
+						accountsNeedingBrowserReauth.push(accountRow);
+					}
+				}
+
+				// Only initiate browser reauthentication for accounts that failed background refresh
+				if (accountsNeedingBrowserReauth.length > 0) {
+					log.info(
+						`Initiating browser reauthentication for ${accountsNeedingBrowserReauth.length} account(s)`,
+					);
+					log.info(
+						`Accounts: ${accountsNeedingBrowserReauth.map((a) => a.name).join(", ")}`,
+					);
+
+					for (const accountRow of accountsNeedingBrowserReauth) {
+						await this.initiateOAuthReauth(accountRow);
+					}
+				} else {
+					log.info(
+						`All token refreshes completed successfully - no browser reauthentication needed`,
+					);
 				}
 			}
 
@@ -412,10 +511,6 @@ export class AutoRefreshScheduler {
 			if (error instanceof Error) {
 				const errorMessage = `Error in auto-refresh check: ${error.name}: ${error.message}`;
 				log.error(errorMessage);
-				if (error.stack) {
-					// Log the stack trace separately to ensure it's visible
-					console.error(`Auto-refresh stack trace: ${error.stack}`);
-				}
 			} else if (error !== undefined && error !== null) {
 				log.error(`Error in auto-refresh check: ${JSON.stringify(error)}`);
 			} else {
@@ -816,12 +911,6 @@ export class AutoRefreshScheduler {
 			if (error instanceof Error) {
 				const errorMessage = `Error sending auto-refresh message to account ${accountRow.name}: ${error.name}: ${error.message}`;
 				log.error(errorMessage);
-				if (error.stack) {
-					// Log the stack trace separately to ensure it's visible
-					console.error(
-						`Auto-refresh stack trace for ${accountRow.name}: ${error.stack}`,
-					);
-				}
 			} else if (error !== undefined && error !== null) {
 				log.error(
 					`Error sending auto-refresh message to account ${accountRow.name}: ${JSON.stringify(error)}`,
@@ -895,10 +984,6 @@ export class AutoRefreshScheduler {
 			if (error instanceof Error) {
 				const errorMessage = `Error cleaning up tracking map: ${error.name}: ${error.message}`;
 				log.error(errorMessage);
-				if (error.stack) {
-					// Log the stack trace separately to ensure it's visible
-					console.error(`Tracking map cleanup stack trace: ${error.stack}`);
-				}
 			} else if (error !== undefined && error !== null) {
 				log.error(`Error cleaning up tracking map: ${JSON.stringify(error)}`);
 			} else {
@@ -998,38 +1083,25 @@ export class AutoRefreshScheduler {
 	): boolean {
 		// If no expires_at is set, assume token is valid
 		if (!account.expires_at) {
-			log.debug(`Account ${account.name}: No expiration time set, assuming valid token`);
+			log.debug(
+				`Account ${account.name}: No expiration time set, assuming valid token`,
+			);
 			return false;
 		}
 
-		// Check if token is expired (with 5-minute buffer to refresh before actual expiration)
-		const expirationBuffer = 5 * 60 * 1000; // 5 minutes
+		// Check if token is expired (with 30-minute buffer to refresh before actual expiration)
+		const expirationBuffer = TOKEN_SAFETY_WINDOW_MS; // 30 minutes (updated from 5 minutes for 8 hour OAuth tokens)
 		const isExpired = account.expires_at <= now + expirationBuffer;
 		const minutesUntilExpiry = (account.expires_at - now) / (1000 * 60);
-		const minutesUntilBuffer = (account.expires_at - (now + expirationBuffer)) / (1000 * 60);
+		const minutesUntilBuffer =
+			(now + expirationBuffer - account.expires_at) / (1000 * 60);
 
 		log.info(
 			`Account ${account.name}: Token expires at ${new Date(account.expires_at).toISOString()}, ` +
-			`currently ${new Date(now).toISOString()}, ` +
-			`${minutesUntilExpiry.toFixed(1)} minutes until expiry, ` +
-			`${minutesUntilBuffer.toFixed(1)} minutes until buffer expiry`
+				`currently ${new Date(now).toISOString()}, ` +
+				`${minutesUntilExpiry.toFixed(1)} minutes until expiry, ` +
+				`${minutesUntilBuffer.toFixed(1)} minutes until buffer expiry`,
 		);
-
-		// Also log to console for immediate visibility
-		console.log(
-			`[${new Date().toISOString()}] Account ${account.name}: ` +
-			`Token expires in ${minutesUntilExpiry.toFixed(1)}min, ` +
-			`buffer expires in ${minutesUntilBuffer.toFixed(1)}min`
-		);
-
-		if (isExpired) {
-			log.warn(
-				`Token expired or expiring soon for account ${account.name}: ` +
-				`expires at ${new Date(account.expires_at).toISOString()}, ` +
-				`now ${new Date(now).toISOString()}, ` +
-				`buffer: ${expirationBuffer / (1000 * 60)} minutes`
-			);
-		}
 
 		return isExpired;
 	}
