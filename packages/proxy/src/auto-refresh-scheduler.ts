@@ -119,7 +119,6 @@ export class AutoRefreshScheduler {
 				(m) => m.getOAuthProvider("anthropic"),
 			);
 			if (!oauthProvider) {
-				log.error(`OAuth provider not found for account ${accountRow.name}`);
 				return false;
 			}
 
@@ -242,7 +241,6 @@ export class AutoRefreshScheduler {
 			const now = Date.now();
 			const nowStr = new Date(now).toISOString();
 			log.info(`Starting auto-refresh check at ${nowStr}`);
-			console.log(`[${nowStr}] Starting auto-refresh check`);
 
 			// Periodically clean up the tracking map - remove entries for accounts that no longer exist
 			// or have auto-refresh disabled
@@ -275,9 +273,6 @@ export class AutoRefreshScheduler {
 
 			const allAccounts = allAccountsQuery.all();
 			log.info(`Found ${allAccounts.length} total Anthropic accounts`);
-			console.log(
-				`[${nowStr}] Found ${allAccounts.length} total Anthropic accounts`,
-			);
 
 			// Log status of all accounts
 			allAccounts.forEach((account) => {
@@ -291,13 +286,6 @@ export class AutoRefreshScheduler {
 
 				log.info(
 					`Account ${account.name}: ` +
-						`auto_refresh=${autoRefreshEnabled}, ` +
-						`token=${account.access_token ? "valid" : "null"}, ` +
-						`expires_in=${minutesUntilExpiry ? minutesUntilExpiry.toFixed(1) : "null"}min, ` +
-						`rate_reset_in=${minutesUntilReset ? minutesUntilReset.toFixed(1) : "null"}min`,
-				);
-				console.log(
-					`[${nowStr}] Account ${account.name}: ` +
 						`auto_refresh=${autoRefreshEnabled}, ` +
 						`token=${account.access_token ? "valid" : "null"}, ` +
 						`expires_in=${minutesUntilExpiry ? minutesUntilExpiry.toFixed(1) : "null"}min, ` +
@@ -377,10 +365,6 @@ export class AutoRefreshScheduler {
 				`Account categorization: ${accountsForWindowRefresh.length} for window refresh, ` +
 					`${accountsWithExpiredTokens.length} for token reauthentication`,
 			);
-			console.log(
-				`[${nowStr}] Account categorization: ${accountsForWindowRefresh.length} for window refresh, ` +
-					`${accountsWithExpiredTokens.length} for token reauthentication`,
-			);
 
 			// Handle window refresh accounts
 			if (accountsForWindowRefresh.length > 0) {
@@ -453,9 +437,6 @@ export class AutoRefreshScheduler {
 							log.info(
 								`Account ${accountRow.name}: Background token refresh successful`,
 							);
-							console.log(
-								`[${new Date().toISOString()}] Account ${accountRow.name}: Background refresh successful`,
-							);
 						} else {
 							log.warn(
 								`Account ${accountRow.name}: Background refresh returned null access token`,
@@ -465,9 +446,6 @@ export class AutoRefreshScheduler {
 					} catch (error) {
 						log.warn(
 							`Account ${accountRow.name}: Background token refresh failed, attempting browser reauthentication`,
-						);
-						console.log(
-							`[${new Date().toISOString()}] Account ${accountRow.name}: Background refresh failed, initiating browser reauth`,
 						);
 
 						// Check if it's a refresh failure (vs other errors)
@@ -516,10 +494,6 @@ export class AutoRefreshScheduler {
 			if (error instanceof Error) {
 				const errorMessage = `Error in auto-refresh check: ${error.name}: ${error.message}`;
 				log.error(errorMessage);
-				if (error.stack) {
-					// Log the stack trace separately to ensure it's visible
-					console.error(`Auto-refresh stack trace: ${error.stack}`);
-				}
 			} else if (error !== undefined && error !== null) {
 				log.error(`Error in auto-refresh check: ${JSON.stringify(error)}`);
 			} else {
@@ -920,12 +894,6 @@ export class AutoRefreshScheduler {
 			if (error instanceof Error) {
 				const errorMessage = `Error sending auto-refresh message to account ${accountRow.name}: ${error.name}: ${error.message}`;
 				log.error(errorMessage);
-				if (error.stack) {
-					// Log the stack trace separately to ensure it's visible
-					console.error(
-						`Auto-refresh stack trace for ${accountRow.name}: ${error.stack}`,
-					);
-				}
 			} else if (error !== undefined && error !== null) {
 				log.error(
 					`Error sending auto-refresh message to account ${accountRow.name}: ${JSON.stringify(error)}`,
@@ -999,10 +967,6 @@ export class AutoRefreshScheduler {
 			if (error instanceof Error) {
 				const errorMessage = `Error cleaning up tracking map: ${error.name}: ${error.message}`;
 				log.error(errorMessage);
-				if (error.stack) {
-					// Log the stack trace separately to ensure it's visible
-					console.error(`Tracking map cleanup stack trace: ${error.stack}`);
-				}
 			} else if (error !== undefined && error !== null) {
 				log.error(`Error cleaning up tracking map: ${JSON.stringify(error)}`);
 			} else {
@@ -1121,22 +1085,6 @@ export class AutoRefreshScheduler {
 				`${minutesUntilExpiry.toFixed(1)} minutes until expiry, ` +
 				`${minutesUntilBuffer.toFixed(1)} minutes until buffer expiry`,
 		);
-
-		// Also log to console for immediate visibility
-		console.log(
-			`[${new Date().toISOString()}] Account ${account.name}: ` +
-				`Token expires in ${minutesUntilExpiry.toFixed(1)}min, ` +
-				`buffer expires in ${minutesUntilBuffer.toFixed(1)}min`,
-		);
-
-		if (isExpired) {
-			log.warn(
-				`Token expired or expiring soon for account ${account.name}: ` +
-					`expires at ${new Date(account.expires_at).toISOString()}, ` +
-					`now ${new Date(now).toISOString()}, ` +
-					`buffer: ${expirationBuffer / (1000 * 60)} minutes`,
-			);
-		}
 
 		return isExpired;
 	}
