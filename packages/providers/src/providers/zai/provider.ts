@@ -53,21 +53,15 @@ export class ZaiProvider extends BaseProvider {
 	): Headers {
 		const newHeaders = new Headers(headers);
 
-		// SECURITY: Remove client's authorization header when we have provider credentials
-		// to prevent credential leakage. If no credentials provided (passthrough mode),
-		// preserve client's authorization for direct API access.
-		// Use explicit undefined checks to handle empty strings correctly.
-		if (accessToken !== undefined || apiKey !== undefined) {
-			// Remove authorization header since z.ai uses x-api-key
-			newHeaders.delete("authorization");
-
-			// z.ai expects the API key in x-api-key header
-			if (accessToken) {
-				newHeaders.set("x-api-key", accessToken);
-			} else if (apiKey) {
-				newHeaders.set("x-api-key", apiKey);
-			}
+		// z.ai expects the API key in x-api-key header
+		if (accessToken) {
+			newHeaders.set("x-api-key", accessToken);
+		} else if (apiKey) {
+			newHeaders.set("x-api-key", apiKey);
 		}
+
+		// Remove authorization header since z.ai uses x-api-key
+		newHeaders.delete("authorization");
 
 		// Remove host header
 		newHeaders.delete("host");
