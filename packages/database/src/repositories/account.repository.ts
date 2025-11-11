@@ -160,4 +160,15 @@ export class AccountRepository extends BaseRepository<Account> {
 			[now],
 		);
 	}
+
+	/**
+	 * Check if there are any accounts for a specific provider
+	 */
+	hasAccountsForProvider(provider: string): boolean {
+		const result = this.get<{ count: number }>(
+			`SELECT COUNT(*) as count FROM accounts WHERE provider = ?`,
+			[provider],
+		);
+		return result ? result.count > 0 : false;
+	}
 }
