@@ -154,14 +154,6 @@ export class OpenAICompatibleProvider extends BaseProvider {
 	): Headers {
 		const newHeaders = new Headers(headers);
 
-		// SECURITY: Remove client's authorization header when we have provider credentials
-		// to prevent credential leakage. If no credentials provided (passthrough mode),
-		// preserve client's authorization for direct API access.
-		// Use explicit undefined checks to handle empty strings correctly.
-		if (_accessToken !== undefined || apiKey !== undefined) {
-			newHeaders.delete("authorization");
-		}
-
 		// OpenAI uses Bearer token authentication with API key
 		if (apiKey) {
 			newHeaders.set("Authorization", `Bearer ${apiKey}`);
