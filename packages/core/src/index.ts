@@ -57,6 +57,8 @@ export {
 } from "./models";
 export {
 	estimateCostUSD,
+	initializeNanoGPTPricingIfAccountsExist,
+	resetNanoGPTPricingCacheForTest,
 	setPricingLogger,
 	type TokenBreakdown,
 } from "./pricing";

@@ -6,6 +6,7 @@ import {
 	DEFAULT_STRATEGY,
 	getVersion,
 	HTTP_STATUS,
+	initializeNanoGPTPricingIfAccountsExist,
 	NETWORK,
 	registerCleanup,
 	registerDisposable,
@@ -319,7 +320,7 @@ export default function startServer(options?: {
 	// Return existing server if already running
 	if (serverInstance) {
 		return {
-			port: serverInstance.port,
+			port: serverInstance.port as number, // Type assertion since Bun server instance should have a port
 			stop: () => {
 				if (serverInstance) {
 					serverInstance.stop();
@@ -716,8 +717,11 @@ Available endpoints:
 		log.info(`No NanoGPT accounts found, usage polling will not start`);
 	}
 
+	// Initialize NanoGPT pricing refresh if there are NanoGPT accounts (non-blocking)
+	void initializeNanoGPTPricingIfAccountsExist(dbOps, pricingLogger);
+
 	return {
-		port: serverInstance.port,
+		port: serverInstance.port as number, // Type assertion since Bun server instance should have a port
 		stop: () => {
 			if (serverInstance) {
 				serverInstance.stop();
@@ -807,5 +811,6 @@ if (import.meta.main) {
 		process.env.SSL_CERT_PATH = sslCertPath;
 	}
 
-	startServer({ port, sslKeyPath, sslCertPath });
+	// Start the server asynchronously
+	void startServer({ port, sslKeyPath, sslCertPath });
 }
