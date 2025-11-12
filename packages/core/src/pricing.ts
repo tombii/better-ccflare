@@ -318,12 +318,27 @@ class PriceCatalogue {
 			return JSON.parse(JSON.stringify(data));
 		}
 
-		// Create a shallow copy with proper nesting to avoid mutating the original data
-		const merged = { ...data } as ApiResponse;
+		// Create a deep copy to avoid mutating the original cached data
+		// We need to copy all providers to avoid reference sharing with cached data
+		const merged = {} as ApiResponse;
+		if (data) {
+			for (const [providerName, providerData] of Object.entries(data)) {
+				// Copy the models object to prevent reference sharing
+				const modelsCopy = providerData.models
+					? { ...providerData.models }
+					: undefined;
+				merged[providerName] = {
+					models: modelsCopy,
+				};
+			}
+		}
+		// For nanogpt, merge the models properly without sharing references
+		const existingNanogptModels = merged.nanogpt?.models
+			? { ...merged.nanogpt.models }
+			: {};
 		merged.nanogpt = {
-			...data?.nanogpt,
 			models: {
-				...data?.nanogpt?.models,
+				...existingNanogptModels,
 				...nanogptPricing.nanogpt.models,
 			},
 		};
