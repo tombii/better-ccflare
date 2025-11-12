@@ -536,7 +536,7 @@ export async function fetchNanoGPTPricingData(
 		if ((error as Error).name === "AbortError") {
 			logger?.warn("NanoGPT pricing fetch timed out after 10 seconds");
 		} else {
-			logger?.warn("Failed to fetch NanoGPT pricing data: %s", error);
+			logger?.warn("Failed to fetch NanoGPT pricing data", error);
 		}
 		return null;
 	} finally {
