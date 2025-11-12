@@ -185,9 +185,14 @@ interface NanoGPTApiResponse {
 	data: NanoGPTModel[];
 }
 
+// Cache constants for NanoGPT pricing
+export const NANOGPT_CACHE_DURATION_MS = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+
 // In-memory cache for nanogpt pricing
 let nanogptPricingCache: ApiResponse | null = null;
 let nanogptPricingLastFetch = 0;
+// Promise to prevent multiple concurrent fetches
+let nanogptPricingFetchPromise: Promise<ApiResponse | null> | null = null;
 
 class PriceCatalogue {
 	private static instance: PriceCatalogue;
@@ -294,6 +299,34 @@ class PriceCatalogue {
 			}
 		}
 
+		return merged;
+	}
+
+	/**
+	 * Merge nanogpt pricing data into the main pricing data
+	 */
+	private mergeNanoGPTPricing(
+		data: ApiResponse | null,
+		nanogptPricing: ApiResponse | null,
+	): ApiResponse {
+		if (!nanogptPricing?.nanogpt?.models) {
+			// Return a deep copy to avoid potential mutation of original data
+			if (!data) {
+				// If data is null, return the bundled pricing as fallback
+				return JSON.parse(JSON.stringify(BUNDLED_PRICING));
+			}
+			return JSON.parse(JSON.stringify(data));
+		}
+
+		// Create a deep copy to avoid mutating the original data
+		const merged = JSON.parse(JSON.stringify(data || {}));
+		if (!merged.nanogpt) {
+			merged.nanogpt = { models: {} };
+		}
+		if (!merged.nanogpt.models) {
+			merged.nanogpt.models = {};
+		}
+		Object.assign(merged.nanogpt.models, nanogptPricing.nanogpt.models);
 		return merged;
 	}
 
@@ -408,21 +441,7 @@ class PriceCatalogue {
 			// Check if we have nanogpt pricing to merge
 			const nanogptPricing = await getCachedNanoGPTPricing(this.logger || null);
 			if (nanogptPricing?.nanogpt?.models) {
-				// Merge nanogpt pricing with existing data
-				const mergedData = { ...this.priceData };
-				if (!mergedData.nanogpt) {
-					mergedData.nanogpt = { models: {} };
-				}
-				// Add nanogpt models to the merged data
-				for (const [modelId, modelData] of Object.entries(
-					nanogptPricing.nanogpt.models,
-				)) {
-					if (!mergedData.nanogpt.models) {
-						mergedData.nanogpt.models = {};
-					}
-					mergedData.nanogpt.models[modelId] = modelData;
-				}
-				return mergedData;
+				return this.mergeNanoGPTPricing(this.priceData, nanogptPricing);
 			}
 			return this.priceData;
 		}
@@ -439,30 +458,22 @@ class PriceCatalogue {
 		if (data) {
 			data = this.mergePricingData(data, BUNDLED_PRICING);
 		} else {
-			// Fall back to bundled pricing
-			data = BUNDLED_PRICING;
+			// Fall back to bundled pricing - create a deep copy to avoid mutation
+			data = JSON.parse(JSON.stringify(BUNDLED_PRICING));
 		}
 
 		// Check if we have nanogpt pricing to merge
 		const nanogptPricing = await getCachedNanoGPTPricing(this.logger || null);
+		let finalData = data;
 		if (nanogptPricing?.nanogpt?.models) {
-			// Add nanogpt models to the data
-			if (!data.nanogpt) {
-				data.nanogpt = { models: {} };
-			}
-			for (const [modelId, modelData] of Object.entries(
-				nanogptPricing.nanogpt.models,
-			)) {
-				if (!data.nanogpt.models) {
-					data.nanogpt.models = {};
-				}
-				data.nanogpt.models[modelId] = modelData;
-			}
+			finalData = this.mergeNanoGPTPricing(finalData, nanogptPricing);
 		}
 
-		this.priceData = data;
+		// Ensure finalData is not null before assigning and returning
+		const resultData = finalData || JSON.parse(JSON.stringify(BUNDLED_PRICING));
+		this.priceData = resultData;
 		this.lastFetch = Date.now();
-		return data;
+		return resultData;
 	}
 
 	warnOnce(modelId: string, error?: Error | string): void {
@@ -508,20 +519,23 @@ export async function fetchNanoGPTPricingData(
 
 		for (const model of data.data) {
 			// Since we initialized nanogptPricing.nanogpt.models as an empty object,
-			// we can safely assign to it without a null check
-			const models = nanogptPricing.nanogpt.models;
-			if (models) {
-				// This check ensures type safety
-				models[model.id] = {
-					id: model.id,
-					name: model.name,
-					cost: {
-						input: model.pricing.prompt, // prompt cost per million tokens
-						output: model.pricing.completion, // completion cost per million tokens
-						// Note: cache_read and cache_write are not provided by NanoGPT API
-					},
-				};
+			// we can safely assign to it
+			if (!nanogptPricing.nanogpt) {
+				nanogptPricing.nanogpt = { models: {} };
 			}
+			if (!nanogptPricing.nanogpt.models) {
+				nanogptPricing.nanogpt.models = {};
+			}
+			const models = nanogptPricing.nanogpt.models;
+			models[model.id] = {
+				id: model.id,
+				name: model.name,
+				cost: {
+					input: model.pricing.prompt, // prompt cost per million tokens
+					output: model.pricing.completion, // completion cost per million tokens
+					// Note: cache_read and cache_write are not provided by NanoGPT API
+				},
+			};
 		}
 
 		logger?.debug(
@@ -541,7 +555,7 @@ export async function fetchNanoGPTPricingData(
 export async function getCachedNanoGPTPricing(
 	logger: Logger | null = null,
 ): Promise<ApiResponse | null> {
-	const cacheDurationMs = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+	const cacheDurationMs = NANOGPT_CACHE_DURATION_MS; // 24 hours in milliseconds
 
 	// Check if we have cached data and it's still fresh
 	if (
@@ -552,26 +566,38 @@ export async function getCachedNanoGPTPricing(
 		return nanogptPricingCache;
 	}
 
-	// Fetch fresh data
-	logger?.debug("Fetching fresh NanoGPT pricing data");
-	const freshData = await fetchNanoGPTPricingData(logger);
-
-	if (freshData) {
-		nanogptPricingCache = freshData;
-		nanogptPricingLastFetch = Date.now();
-		logger?.debug("Successfully updated NanoGPT pricing cache");
-	} else if (nanogptPricingCache) {
-		// If fetch failed but we have cached data, use the old cached data
-		logger?.warn(
-			"Failed to fetch fresh NanoGPT pricing data, using stale cache",
-		);
-	} else {
-		logger?.warn(
-			"Failed to fetch fresh NanoGPT pricing data and no cache available",
-		);
+	// If there's already a fetch in progress, return the same promise
+	if (nanogptPricingFetchPromise) {
+		logger?.debug("Waiting for ongoing NanoGPT pricing fetch to complete");
+		return nanogptPricingFetchPromise;
 	}
 
-	return nanogptPricingCache;
+	// Start a new fetch and store the promise to prevent duplicate requests
+	logger?.debug("Fetching fresh NanoGPT pricing data");
+	nanogptPricingFetchPromise = fetchNanoGPTPricingData(logger)
+		.then((freshData) => {
+			if (freshData) {
+				nanogptPricingCache = freshData;
+				nanogptPricingLastFetch = Date.now();
+				logger?.debug("Successfully updated NanoGPT pricing cache");
+			} else if (nanogptPricingCache) {
+				// If fetch failed but we have cached data, use the old cached data
+				logger?.warn(
+					"Failed to fetch fresh NanoGPT pricing data, using stale cache",
+				);
+			} else {
+				logger?.warn(
+					"Failed to fetch fresh NanoGPT pricing data and no cache available",
+				);
+			}
+			return nanogptPricingCache;
+		})
+		.finally(() => {
+			// Clear the fetch promise after completion
+			nanogptPricingFetchPromise = null;
+		});
+
+	return nanogptPricingFetchPromise;
 }
 
 // Variable to store the refresh interval timer
@@ -594,14 +620,30 @@ export async function initializeNanoGPTPricingRefresh(
 	// Fetch initial pricing data
 	await getCachedNanoGPTPricing(logger);
 
-	// Set up periodic refresh every 24 hours
-	const refreshIntervalMs = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
-	nanogptRefreshInterval = setInterval(async () => {
-		logger?.debug("Running scheduled NanoGPT pricing refresh");
-		await getCachedNanoGPTPricing(logger);
-	}, refreshIntervalMs);
+	// Schedule the refresh to happen just before cache expires to avoid stale data windows
+	// We'll use a timeout that recalculates the delay each time based on the actual cache last fetch time
+	const scheduleNextRefresh = () => {
+		// Calculate how long until the cache expires
+		const timeUntilExpiration =
+			nanogptPricingLastFetch + NANOGPT_CACHE_DURATION_MS - Date.now();
 
-	logger?.debug("NanoGPT pricing refresh scheduled every 24 hours");
+		// If the time until expiration is in the past or less than 1 minute, refresh immediately
+		const delay = Math.max(timeUntilExpiration, 60 * 1000); // Minimum 1 minute delay
+
+		nanogptRefreshInterval = setTimeout(async () => {
+			logger?.debug("Running scheduled NanoGPT pricing refresh");
+			await getCachedNanoGPTPricing(logger);
+			// Schedule the next refresh after this one completes
+			scheduleNextRefresh();
+		}, delay);
+	};
+
+	// Schedule the first refresh
+	scheduleNextRefresh();
+
+	logger?.debug(
+		"NanoGPT pricing refresh scheduled to align with cache expiration",
+	);
 }
 
 /**
@@ -609,9 +651,25 @@ export async function initializeNanoGPTPricingRefresh(
  */
 export function stopNanoGPTPricingRefresh(): void {
 	if (nanogptRefreshInterval) {
+		// Clear either setTimeout or setInterval depending on what's currently set
+		clearTimeout(nanogptRefreshInterval);
 		clearInterval(nanogptRefreshInterval);
 		nanogptRefreshInterval = null;
 	}
+}
+
+/**
+ * Reset the internal cache state for testing purposes
+ * This function is intended for test cleanup only
+ */
+export function resetNanoGPTPricingCacheForTest(): void {
+	nanogptPricingCache = null;
+	nanogptPricingLastFetch = 0;
+	nanogptPricingFetchPromise = null;
+
+	// Reset the PriceCatalogue instance by clearing the singleton instance
+	// This is done by accessing the private static property through the class
+	(PriceCatalogue as any).instance = undefined;
 }
 
 /**
