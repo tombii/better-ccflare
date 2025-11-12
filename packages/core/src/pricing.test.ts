@@ -11,10 +11,6 @@ import {
 	type TokenBreakdown,
 } from "./pricing";
 
-// Create aliases for lifecycle functions using vitest
-const _beforeAll = vi.beforeAll;
-const _afterAll = vi.afterAll;
-
 // Mock logger for testing
 const mockLogger = {
 	warn: vi.fn(),
@@ -42,6 +38,8 @@ describe("NanoGPT Pricing", () => {
 		stopNanoGPTPricingRefresh();
 		// Reset the global cache state to ensure test isolation
 		resetNanoGPTPricingCacheForTest();
+		// Restore all mocks to clean up between tests
+		vi.restoreAllMocks();
 	});
 
 	it("should fetch NanoGPT pricing data successfully", async () => {
@@ -71,6 +69,9 @@ describe("NanoGPT Pricing", () => {
 
 		expect(fetch).toHaveBeenCalledWith(
 			"https://nano-gpt.com/api/v1/models?detailed=true",
+			expect.objectContaining({
+				signal: expect.any(AbortSignal),
+			}),
 		);
 		expect(result).toHaveProperty("nanogpt");
 		expect(result?.nanogpt?.models).toHaveProperty("test-model");
@@ -146,38 +147,42 @@ describe("NanoGPT Pricing", () => {
 			],
 		};
 
-		// Mock the global fetch function
 		const originalFetch = global.fetch;
-		global.fetch = vi.fn().mockResolvedValue({
-			ok: true,
-			json: async () => mockResponse,
-		} as Response);
+		const fetchMock = vi.fn();
+		global.fetch = fetchMock
+			.mockResolvedValueOnce({
+				// First call
+				ok: true,
+				json: async () => mockResponse,
+			} as Response)
+			.mockResolvedValueOnce({
+				// Second call (would use cache if not expired)
+				ok: true,
+				json: async () => ({
+					...mockResponse,
+					data: [
+						{
+							...mockResponse.data[0],
+							pricing: {
+								...mockResponse.data[0].pricing,
+								prompt: 4.0, // Different price to verify it was refreshed
+							},
+						},
+					],
+				}),
+			} as Response);
 
 		// First call should fetch
 		await getCachedNanoGPTPricing(mockLogger);
-		expect(global.fetch).toHaveBeenCalledTimes(1);
+		expect(fetchMock).toHaveBeenCalledTimes(1);
 
-		// Simulate cache expiration by clearing internal cache state
-		// We'll import the module and manually reset the cache
-		const _pricingModule = await import("./pricing");
+		// Reset the internal cache to simulate expiration
+		// This tests the cache expiration behavior by clearing the cache manually
+		resetNanoGPTPricingCacheForTest();
 
-		// Access the internal state and force expiration by setting last fetch time far in the past
-		// Since we can't directly access the private variables, we'll test the behavior differently
-		// by temporarily changing the cache duration to a very small value
-
-		// Since we can't easily manipulate the internal state in a test,
-		// let's test the caching behavior by resetting the internal state via module reload
-		// Actually, let's just test that the cache works by clearing it manually
-		// For this, we'll just make sure we're testing the right behavior:
-		// 1. First call fetches
-		// 2. Second call uses cache (if not expired)
-		// 3. We'll test expiration by making sure the function can be called again after cache is cleared
-
-		// For this test, we'll test that the function can be called multiple times
-		// and that it properly handles the caching logic
+		// Second call should fetch again since cache was cleared
 		await getCachedNanoGPTPricing(mockLogger);
-		// This should still be 1 call since it uses cache
-		expect(global.fetch).toHaveBeenCalledTimes(1);
+		expect(fetchMock).toHaveBeenCalledTimes(2);
 
 		// Restore original functions
 		global.fetch = originalFetch;
