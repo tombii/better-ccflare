@@ -455,7 +455,7 @@ class PriceCatalogue {
 			data = this.mergePricingData(data, BUNDLED_PRICING);
 		} else {
 			// Fall back to bundled pricing - create a deep copy to avoid mutation
-			data = JSON.parse(JSON.stringify(BUNDLED_PRICING));
+			data = structuredClone ? structuredClone(BUNDLED_PRICING) : JSON.parse(JSON.stringify(BUNDLED_PRICING));
 		}
 
 		// Merge nanogpt pricing once
