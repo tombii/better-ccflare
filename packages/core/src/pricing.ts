@@ -313,9 +313,9 @@ class PriceCatalogue {
 			// Return a deep copy to avoid potential mutation of original data
 			if (!data) {
 				// If data is null, return the bundled pricing as fallback
-				return JSON.parse(JSON.stringify(BUNDLED_PRICING));
+				return structuredClone ? structuredClone(BUNDLED_PRICING) : JSON.parse(JSON.stringify(BUNDLED_PRICING));
 			}
-			return JSON.parse(JSON.stringify(data));
+			return structuredClone ? structuredClone(data) : JSON.parse(JSON.stringify(data));
 		}
 
 		return {
@@ -512,9 +512,10 @@ export async function fetchNanoGPTPricingData(
 				models: {},
 			},
 		};
+		const nanogptModels = nanogptPricing.nanogpt.models!;
 
 		for (const model of data.data) {
-			nanogptPricing.nanogpt.models![model.id] = {
+			nanogptModels[model.id] = {
 				id: model.id,
 				name: model.name,
 				cost: {
