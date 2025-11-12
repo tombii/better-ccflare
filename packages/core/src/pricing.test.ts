@@ -156,7 +156,7 @@ describe("NanoGPT Pricing", () => {
 				json: async () => mockResponse,
 			} as Response)
 			.mockResolvedValueOnce({
-				// Second call (would use cache if not expired)
+				// Second call after cache reset (simulating expiration)
 				ok: true,
 				json: async () => ({
 					...mockResponse,
@@ -176,11 +176,11 @@ describe("NanoGPT Pricing", () => {
 		await getCachedNanoGPTPricing(mockLogger);
 		expect(fetchMock).toHaveBeenCalledTimes(1);
 
-		// Reset the internal cache to simulate expiration
-		// This tests the cache expiration behavior by clearing the cache manually
+		// Reset the internal cache to simulate time-based expiration
+		// This tests the cache expiration behavior by clearing the cache and ensuring it fetches again
 		resetNanoGPTPricingCacheForTest();
 
-		// Second call should fetch again since cache was cleared
+		// Second call should fetch again since cache was cleared (simulating expiration)
 		await getCachedNanoGPTPricing(mockLogger);
 		expect(fetchMock).toHaveBeenCalledTimes(2);
 
