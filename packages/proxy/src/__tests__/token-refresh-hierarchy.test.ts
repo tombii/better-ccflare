@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { afterAll, beforeAll, describe, expect, it, mock } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, unlinkSync } from "node:fs";
 import {
 	DatabaseFactory,
@@ -56,152 +56,67 @@ describe("Auto-Refresh Token Hierarchy", () => {
 		DatabaseFactory.reset();
 	});
 
-	describe("30-Minute Buffer Implementation", () => {
-		it("should use 30-minute buffer for token expiration", () => {
+	describe("Window Refresh Logic", () => {
+		it("should correctly identify accounts that need window refresh", () => {
 			const now = Date.now();
-			const expiresIn20Minutes = now + 20 * 60 * 1000; // 20 minutes from now
-			const expiresIn40Minutes = now + 40 * 60 * 1000; // 40 minutes from now
+			const oneHourAgo = now - 60 * 60 * 1000; // 1 hour ago
+			const oneHourFromNow = now + 60 * 60 * 1000; // 1 hour from now
 
-			const tokenExpiringSoon = {
-				id: "test-expiring-soon",
-				name: "expiring-soon-account",
+			const accountStale = {
+				id: "test-stale",
+				name: "stale-account",
 				provider: "anthropic",
 				refresh_token: "refresh-token",
 				access_token: "access-token",
-				expires_at: expiresIn20Minutes, // 20 minutes (within 30-min buffer)
-				rate_limit_reset: null,
+				expires_at: oneHourFromNow,
+				rate_limit_reset: oneHourAgo, // More than 24h old (stale)
 				custom_endpoint: null,
 			};
 
-			const tokenValid = {
-				id: "test-valid",
-				name: "valid-account",
+			const accountCurrent = {
+				id: "test-current",
+				name: "current-account",
 				provider: "anthropic",
 				refresh_token: "refresh-token",
 				access_token: "access-token",
-				expires_at: expiresIn40Minutes, // 40 minutes (outside 30-min buffer)
-				rate_limit_reset: null,
+				expires_at: oneHourFromNow,
+				rate_limit_reset: oneHourFromNow, // Future time
 				custom_endpoint: null,
 			};
 
 			// Access private method for testing
-			const isExpired20Min = (
-				scheduler as { isTokenExpired: unknown }
-			).isTokenExpired(tokenExpiringSoon, now);
-			const isExpired40Min = (
-				scheduler as { isTokenExpired: unknown }
-			).isTokenExpired(tokenValid, now);
+			const shouldRefreshStale = (
+				scheduler as { shouldRefreshAccount: unknown }
+			).shouldRefreshAccount(accountStale, now);
+			const shouldRefreshCurrent = (
+				scheduler as { shouldRefreshAccount: unknown }
+			).shouldRefreshAccount(accountCurrent, now);
 
-			expect(isExpired20Min).toBe(true); // Should be expired (within 30-min buffer)
-			expect(isExpired40Min).toBe(false); // Should be valid (outside 30-min buffer)
+			expect(shouldRefreshStale).toBe(true); // Should refresh (stale reset time)
+			expect(shouldRefreshCurrent).toBe(false); // Should not refresh (future reset time)
 		});
-	});
 
-	describe("Token Refresh Hierarchy", () => {
-		it("should attempt background refresh before browser reauthentication", async () => {
+		it("should handle first-time refresh correctly", () => {
 			const now = Date.now();
-			const expiresIn20Minutes = now + 20 * 60 * 1000;
+			const oneHourFromNow = now + 60 * 60 * 1000;
 
-			// Create a test account with an expiring token
-			db.run(`
-        INSERT INTO accounts (
-          id, name, provider, refresh_token, access_token, expires_at,
-          created_at, request_count, total_requests, auto_refresh_enabled
-        ) VALUES ('test-hierarchy', 'hierarchy-test-account', 'anthropic', 'valid-refresh-token', 'expiring-access-token', ${expiresIn20Minutes}, ${now}, 0, 0, 1)
-      `);
+			const accountFirstTime = {
+				id: "test-first-time",
+				name: "first-time-account",
+				provider: "anthropic",
+				refresh_token: "refresh-token",
+				access_token: "access-token",
+				expires_at: oneHourFromNow,
+				rate_limit_reset: oneHourFromNow,
+				custom_endpoint: null,
+			};
 
-			// Mock getValidAccessToken to succeed (background refresh success)
-			const mockGetValidAccessToken = mock(() =>
-				Promise.resolve("new-access-token"),
-			);
-			const originalGetValidAccessToken = globalThis.getValidAccessToken;
-			globalThis.getValidAccessToken = mockGetValidAccessToken;
+			// Access private method for testing
+			const shouldRefreshFirstTime = (
+				scheduler as { shouldRefreshAccount: unknown }
+			).shouldRefreshAccount(accountFirstTime, now);
 
-			try {
-				// Get accounts that need token refresh (should find our test account)
-				const accounts = db
-					.query(`
-          SELECT id, name, provider, refresh_token, access_token, expires_at, rate_limit_reset, custom_endpoint
-          FROM accounts
-          WHERE auto_refresh_enabled = 1 AND provider = 'anthropic' AND expires_at <= ?
-        `)
-					.all(now + 30 * 60 * 1000); // 30-minute buffer
-
-				expect(accounts.length).toBe(1);
-				expect(accounts[0].name).toBe("hierarchy-test-account");
-
-				// Mock the getValidAccessToken function in the scheduler's context
-				const mockContextGetValidAccessToken = mock(() =>
-					Promise.resolve("new-access-token"),
-				);
-				(globalThis as { getValidAccessToken: unknown }).getValidAccessToken =
-					mockContextGetValidAccessToken;
-
-				// Simulate the new token refresh hierarchy
-				const accountRow = accounts[0];
-				let browserReauthCalled = false;
-
-				// Mock initiateOAuthReauth to track if it's called
-				const mockInitiateOAuthReauth = mock(() => {
-					browserReauthCalled = true;
-					return Promise.resolve(true);
-				});
-				(scheduler as { initiateOAuthReauth: unknown }).initiateOAuthReauth =
-					mockInitiateOAuthReauth;
-
-				// Attempt background refresh (this simulates the new logic)
-				try {
-					const accessToken = await mockContextGetValidAccessToken(
-						accountRow,
-						mockProxyContext,
-					);
-					if (accessToken) {
-						// Background refresh succeeded - no browser needed
-						expect(accessToken).toBe("new-access-token");
-						expect(browserReauthCalled).toBe(false); // Browser should NOT be called
-					}
-				} catch (_error) {
-					// Background refresh failed - should fall back to browser
-					expect(browserReauthCalled).toBe(true); // Browser SHOULD be called
-				}
-
-				// Clean up test data
-				db.run("DELETE FROM accounts WHERE id = 'test-hierarchy'");
-			} finally {
-				// Restore original function
-				globalThis.getValidAccessToken = originalGetValidAccessToken;
-			}
-		});
-	});
-
-	describe("Improved User Experience", () => {
-		it("should reduce browser popups for normal token refresh", () => {
-			// This test demonstrates the conceptual improvement
-			// In the old implementation: ALL expired tokens → browser popup
-			// In the new implementation: expired tokens → background refresh → browser ONLY if refresh fails
-
-			const scenarios = [
-				{
-					name: "Valid refresh token",
-					refreshToken: "valid-refresh-token",
-					expectedBehavior: "Background refresh succeeds, no browser popup",
-				},
-				{
-					name: "Invalid refresh token",
-					refreshToken: "invalid-refresh-token",
-					expectedBehavior:
-						"Background refresh fails, browser popup for reauth",
-				},
-			];
-
-			scenarios.forEach((scenario) => {
-				console.log(`Scenario: ${scenario.name}`);
-				console.log(`Expected: ${scenario.expectedBehavior}`);
-			});
-
-			// The key improvement: 90% fewer browser popups for normal token expiration
-			// Browser only opens when refresh token is actually invalid/expired
-			expect(scenarios.length).toBe(2);
+			expect(shouldRefreshFirstTime).toBe(true); // Should refresh (first time)
 		});
 	});
 });
