@@ -10,10 +10,7 @@ import type {
 const oauthLog = new Logger("AnthropicOAuthProvider");
 
 export class AnthropicOAuthProvider implements OAuthProvider {
-	getOAuthConfig(
-		mode: "console" | "claude-oauth" = "console",
-		redirectUri?: string,
-	): OAuthProviderConfig {
+	getOAuthConfig(mode: "console" | "claude-oauth" = "console"): OAuthProviderConfig {
 		const baseUrl =
 			mode === "console"
 				? "https://console.anthropic.com"
@@ -24,8 +21,7 @@ export class AnthropicOAuthProvider implements OAuthProvider {
 			tokenUrl: "https://console.anthropic.com/v1/oauth/token",
 			clientId: "", // Will be passed from config
 			scopes: ["org:create_api_key", "user:profile", "user:inference"],
-			redirectUri:
-				redirectUri || "https://console.anthropic.com/oauth/code/callback",
+			redirectUri: "https://console.anthropic.com/oauth/code/callback",
 			mode,
 		};
 	}

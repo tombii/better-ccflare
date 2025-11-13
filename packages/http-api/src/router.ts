@@ -138,9 +138,6 @@ export class APIRouter {
 		this.handlers.set("POST:/api/oauth/callback", (req) =>
 			oauthCallbackHandler(req),
 		);
-		this.handlers.set("GET:/oauth/callback", (req, url) =>
-			oauthCallbackHandler(req, url),
-		);
 		this.handlers.set("GET:/api/requests", (_req, url) => {
 			const limitParam = url.searchParams.get("limit");
 			const limit =

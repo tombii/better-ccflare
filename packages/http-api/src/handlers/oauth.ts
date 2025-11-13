@@ -116,55 +116,28 @@ export function createOAuthInitHandler(dbOps: DatabaseOperations) {
  * Create an OAuth callback handler
  */
 export function createOAuthCallbackHandler(dbOps: DatabaseOperations) {
-	return async (req: Request, url?: URL): Promise<Response> => {
+	return async (req: Request): Promise<Response> => {
+		// Validate HTTP method - only POST is supported
+		if (req.method !== "POST") {
+			return errorResponse(
+				BadRequest("Only POST requests are supported for OAuth callback"),
+			);
+		}
+
 		try {
-			// Handle both GET (browser) and POST (API) requests
-			let sessionId: string;
-			let code: string;
+			const body = await req.json();
 
-			if (req.method === "GET") {
-				// Browser redirect - extract params from URL query string
-				if (!url) {
-					return errorResponse(BadRequest("URL required for GET requests"));
-				}
+			// Validate session ID - validateString throws ValidationError if invalid
+			const sessionId = validateString(body.sessionId, "sessionId", {
+				required: true,
+				pattern: patterns.uuid,
+			})!;
 
-				sessionId =
-					validateString(url.searchParams.get("state"), "state", {
-						required: true,
-						pattern: patterns.uuid,
-					}) ||
-					url.searchParams.get("sessionId") ||
-					"";
-
-				code =
-					validateString(url.searchParams.get("code"), "code", {
-						required: true,
-						minLength: 1,
-					}) || "";
-			} else {
-				// API request - extract from JSON body
-				const body = await req.json();
-
-				sessionId =
-					validateString(body.sessionId, "sessionId", {
-						required: true,
-						pattern: patterns.uuid,
-					}) || "";
-
-				code =
-					validateString(body.code, "code", {
-						required: true,
-						minLength: 1,
-					}) || "";
-			}
-
-			if (!sessionId) {
-				return errorResponse(BadRequest("Session ID is required"));
-			}
-
-			if (!code) {
-				return errorResponse(BadRequest("Authorization code is required"));
-			}
+			// Validate code - validateString throws ValidationError if invalid
+			const code = validateString(body.code, "code", {
+				required: true,
+				minLength: 1,
+			})!;
 
 			// Get stored PKCE verifier from database
 			const oauthSession = dbOps.getOAuthSession(sessionId);
@@ -219,48 +192,14 @@ export function createOAuthCallbackHandler(dbOps: DatabaseOperations) {
 				// Clean up OAuth session from database
 				dbOps.deleteOAuthSession(sessionId);
 
-				const successMessage = `Account '${name}' authenticated successfully!`;
-				const modeDescription =
-					savedMode === "claude-oauth" ? "Claude CLI OAuth" : "Claude Console";
-
-				// Return HTML for browser requests, JSON for API requests
-				if (req.method === "GET") {
-					const html = `
-<!DOCTYPE html>
-<html>
-<head>
-	<title>Authentication Successful</title>
-	<style>
-		body { font-family: system-ui, sans-serif; text-align: center; padding: 2rem; }
-		.success { color: #16a34a; font-size: 1.5rem; margin: 1rem 0; }
-		.info { color: #6b7280; margin: 0.5rem 0; }
-		.close { margin-top: 2rem; }
-	</style>
-</head>
-<body>
-	<h1>✅ Authentication Successful</h1>
-	<div class="success">${successMessage}</div>
-	<div class="info">Type: ${modeDescription}</div>
-	<div class="info">You can now close this window and return to the application.</div>
-	<div class="close">
-		<button onclick="window.close()">Close Window</button>
-	</div>
-	<script>
-		// Auto-close after 3 seconds
-		setTimeout(() => window.close(), 3000);
-	</script>
-</body>
-</html>`;
-					return new Response(html, {
-						headers: { "Content-Type": "text/html" },
-					});
-				} else {
-					return jsonResponse({
-						success: true,
-						message: successMessage,
-						mode: modeDescription,
-					});
-				}
+				return jsonResponse({
+					success: true,
+					message: `Account '${name}' added successfully!`,
+					mode:
+						savedMode === "claude-oauth"
+							? "Claude CLI OAuth"
+							: "Claude Console",
+				});
 			} catch (error) {
 				return errorResponse(
 					error instanceof Error
