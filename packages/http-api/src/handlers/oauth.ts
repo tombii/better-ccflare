@@ -137,7 +137,7 @@ export function createOAuthCallbackHandler(dbOps: DatabaseOperations) {
 			const code = validateString(body.code, "code", {
 				required: true,
 				minLength: 1,
-			})!
+			})!;
 
 			// Get stored PKCE verifier from database
 			const oauthSession = dbOps.getOAuthSession(sessionId);

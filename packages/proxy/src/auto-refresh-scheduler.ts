@@ -171,7 +171,7 @@ export class AutoRefreshScheduler {
 				log.error(errorMessage);
 				if (error.stack) {
 					// Log the stack trace separately to ensure it's visible
-					console.error(`Auto-refresh stack trace: ${error.stack}`);
+					log.error(`Auto-refresh stack trace: ${error.stack}`);
 				}
 			} else if (error !== undefined && error !== null) {
 				log.error(`Error in auto-refresh check: ${JSON.stringify(error)}`);
@@ -556,7 +556,7 @@ export class AutoRefreshScheduler {
 				log.error(errorMessage);
 				if (error.stack) {
 					// Log the stack trace separately to ensure it's visible
-					console.error(
+					log.error(
 						`Auto-refresh stack trace for ${accountRow.name}: ${error.stack}`,
 					);
 				}
