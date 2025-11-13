@@ -42,6 +42,17 @@ describe("OAuth Callback Handler - POST API", () => {
 	});
 
 	describe("POST request handling (API)", () => {
+		it("should reject GET requests with clear error", async () => {
+			const url = new URL("http://localhost/api/oauth/callback?code=test&sessionId=test");
+			const request = new Request(url, { method: "GET" });
+
+			const response = await handler(request);
+
+			expect(response.status).toBe(400);
+			const data = await response.json();
+			expect(data.error).toContain("Only POST requests are supported");
+		});
+
 		it("should still handle POST requests (backward compatibility)", async () => {
 			const sessionId = "62345678-1234-5678-9012-123456789017";
 			const code = "test-auth-code-post";

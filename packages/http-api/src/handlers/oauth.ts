@@ -117,28 +117,27 @@ export function createOAuthInitHandler(dbOps: DatabaseOperations) {
  */
 export function createOAuthCallbackHandler(dbOps: DatabaseOperations) {
 	return async (req: Request): Promise<Response> => {
+		// Validate HTTP method - only POST is supported
+		if (req.method !== "POST") {
+			return errorResponse(
+				BadRequest("Only POST requests are supported for OAuth callback"),
+			);
+		}
+
 		try {
 			const body = await req.json();
 
-			// Validate session ID
+			// Validate session ID - validateString throws ValidationError if invalid
 			const sessionId = validateString(body.sessionId, "sessionId", {
 				required: true,
 				pattern: patterns.uuid,
-			});
+			})!;
 
-			if (!sessionId) {
-				return errorResponse(BadRequest("Session ID is required"));
-			}
-
-			// Validate code
+			// Validate code - validateString throws ValidationError if invalid
 			const code = validateString(body.code, "code", {
 				required: true,
 				minLength: 1,
-			});
-
-			if (!code) {
-				return errorResponse(BadRequest("Authorization code is required"));
-			}
+			})!
 
 			// Get stored PKCE verifier from database
 			const oauthSession = dbOps.getOAuthSession(sessionId);
