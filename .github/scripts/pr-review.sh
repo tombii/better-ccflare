@@ -124,11 +124,6 @@ if [[ -z "${MAX_DIFF_SIZE:-}" ]]; then
     exit 1
 fi
 
-# Add debugging information for API configuration
-echo "Debug: API URL is set to: $(echo "${API_URL}" | sed 's|https://[^/]*|https://[MASKED_API_HOST]|')" >&2
-echo "Debug: API key is set to: $(if [[ -n "${LLM_API_KEY}" ]]; then echo "Yes (length: ${#LLM_API_KEY})"; else echo "No"; fi)" >&2
-echo "Debug: Models configured: ${MODELS}" >&2
-
 # Validate and sanitize untrusted input variables
 validate_and_sanitize_env "PR_TITLE" $MAX_TITLE_LENGTH
 validate_and_sanitize_env "PR_AUTHOR" $MAX_AUTHOR_LENGTH
@@ -361,10 +356,6 @@ EOF
 EOF
     fi
 
-    # Debug: Show the JSON payload (without sensitive data)
-    echo "Debug: Request payload size: $(wc -c < "${temp_json_file}") bytes" >&2
-    echo "Debug: Request payload (first 200 chars): $(head -c 200 "${temp_json_file}" | sed 's/'${LLM_API_KEY}'/[MASKED_API_KEY]/g')" >&2
-
     local api_response
     api_response=$(curl -s -X POST "${API_URL}" \
         -H "Authorization: Bearer ${LLM_API_KEY}" \
@@ -375,11 +366,6 @@ EOF
 
     # Clean up temp file
     rm -f "${temp_json_file}"
-
-    # Debug: Show response (masking sensitive data)
-    echo "Debug: API response size: $(echo "${api_response}" | wc -c) bytes" >&2
-    local masked_response=$(echo "${api_response}" | sed 's/'${LLM_API_KEY}'/[MASKED_API_KEY]/g')
-    echo "Debug: API response (first 500 chars): $(echo "${masked_response}" | head -c 500)" >&2
 
     echo "${api_response}"
 }
@@ -487,17 +473,7 @@ done
 if [[ -z "$REVIEW_CONTENT" ]]; then
     echo "Error: All models failed. Last error: ${LAST_ERROR}"
     echo "Full last API response:"
-    # Mask sensitive information in the API response
-    local masked_full_response=$(echo "${API_RESPONSE}" | sed 's/'${LLM_API_KEY}'/[MASKED_API_KEY]/g')
-    echo "${masked_full_response}"
-
-    # Additional debugging information
-    echo "Debug: Available models: ${MODELS}"
-    echo "Debug: API URL: $(echo "${API_URL}" | sed 's|https://[^/]*|https://[MASKED_API_HOST]|')"
-    echo "Debug: Temperature: ${TEMPERATURE}"
-    echo "Debug: Max tokens: ${MAX_TOKENS}"
-    echo "Debug: API key set: $(if [[ -n "${LLM_API_KEY}" ]]; then echo "Yes"; else echo "No"; fi)"
-    echo "Debug: Diff size: ${DIFF_SIZE} bytes"
+    echo "${API_RESPONSE}"
     exit 1
 fi
 
