@@ -76,19 +76,14 @@ validate_and_sanitize_env() {
 
 # Validate required environment variables
 if [[ -z "${LLM_API_KEY:-}" ]]; then
-    echo "Error: LLM_API_KEY is not set"
-    exit 1
+    echo "Warning: LLM_API_KEY is not set"
+    #exit 1
 fi
 
 if [[ -z "${GITHUB_TOKEN:-}" ]]; then
-    echo "Error: GITHUB_TOKEN is not set"
-    exit 1
+    echo "Warning: GITHUB_TOKEN is not set"
+    #exit 1
 fi
-
-# Add debugging information for API configuration
-echo "Debug: API URL is set to: $(echo "${API_URL}" | sed 's|https://[^/]*|https://[MASKED_API_HOST]|')" >&2
-echo "Debug: API key is set to: $(if [[ -n "${LLM_API_KEY}" ]]; then echo "Yes (length: ${#LLM_API_KEY})"; else echo "No"; fi)" >&2
-echo "Debug: Models configured: ${MODELS}" >&2
 
 # Set defaults if not provided, then validate and sanitize
 if [[ -z "${AI_MODELS:-}" ]]; then
@@ -213,11 +208,6 @@ call_openrouter_api() {
     local model=$1
     echo "Attempting with model: ${model}" >&2
 
-    # Add more verbosity for debugging
-    echo "Debug: API URL is set to: $(echo "${API_URL}" | sed 's|https://[^/]*|https://[MASKED_API_HOST]|')" >&2
-    echo "Debug: API key is set to: $(if [[ -n "${LLM_API_KEY}" ]]; then echo "Yes (length: ${#LLM_API_KEY})"; else echo "No"; fi)" >&2
-    echo "Debug: Temperature: ${TEMPERATURE}, Max tokens: ${MAX_TOKENS}" >&2
-
     # Create a temporary JSON file for the request payload to avoid jq parsing issues
     local temp_json_file=$(mktemp)
 
@@ -239,10 +229,6 @@ call_openrouter_api() {
 }
 EOF
 
-    # Debug: Show the JSON payload (without sensitive data)
-    echo "Debug: Request payload size: $(wc -c < "${temp_json_file}") bytes" >&2
-    echo "Debug: Request payload (first 200 chars): $(head -c 200 "${temp_json_file}" | sed 's/'${LLM_API_KEY}'/[MASKED_API_KEY]/g')" >&2
-
     local api_response
     api_response=$(curl -s -X POST "${API_URL}" \
         -H "Authorization: Bearer ${LLM_API_KEY}" \
@@ -253,11 +239,6 @@ EOF
 
     # Clean up temp file
     rm -f "${temp_json_file}"
-
-    # Debug: Show response (masking sensitive data)
-    echo "Debug: API response size: $(echo "${api_response}" | wc -c) bytes" >&2
-    local masked_response=$(echo "${api_response}" | sed 's/'${LLM_API_KEY}'/[MASKED_API_KEY]/g')
-    echo "Debug: API response (first 500 chars): $(echo "${masked_response}" | head -c 500)" >&2
 
     echo "${api_response}"
 }
@@ -366,16 +347,7 @@ done
 if [[ -z "$TRIAGE_RESULT" ]]; then
     echo "Error: All models failed. Last error: ${LAST_ERROR}"
     echo "Full last API response:"
-    # Mask sensitive information in the API response
-    local masked_full_response=$(echo "${API_RESPONSE}" | sed 's/'${LLM_API_KEY}'/[MASKED_API_KEY]/g')
-    echo "${masked_full_response}"
-
-    # Additional debugging information
-    echo "Debug: Available models: ${MODELS}"
-    echo "Debug: API URL: $(echo "${API_URL}" | sed 's|https://[^/]*|https://[MASKED_API_HOST]|')"
-    echo "Debug: Temperature: ${TEMPERATURE}"
-    echo "Debug: Max tokens: ${MAX_TOKENS}"
-    echo "Debug: API key set: $(if [[ -n "${LLM_API_KEY}" ]]; then echo "Yes"; else echo "No"; fi)"
+    echo "${API_RESPONSE}"
     exit 1
 fi
 
