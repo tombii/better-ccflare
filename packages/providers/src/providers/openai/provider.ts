@@ -414,6 +414,12 @@ export class OpenAICompatibleProvider extends BaseProvider {
 	}
 
 	/**
+	 * Streaming limits to prevent memory exhaustion attacks
+	 */
+	private readonly MAX_TOOL_CALL_LENGTH = 1_000_000; // 1MB max args per tool call
+	private readonly MAX_TOOL_CALL_INDEX = 100; // Max 100 parallel tool calls
+
+	/**
 	 * Safely parse JSON with error handling
 	 */
 	private safeParseJSON(jsonString: string): any {
@@ -921,9 +927,9 @@ export class OpenAICompatibleProvider extends BaseProvider {
 										context.encounteredToolCall = true;
 										const idx = toolCall.index;
 
-										// Validate tool call index
-										if (typeof idx !== "number" || idx < 0) {
-											log.warn(`Invalid tool call index: ${idx}`);
+										// Validate tool call index bounds
+										if (typeof idx !== "number" || idx < 0 || idx > this.MAX_TOOL_CALL_INDEX) {
+											log.warn(`Invalid tool call index: ${idx} (max: ${this.MAX_TOOL_CALL_INDEX})`);
 											continue;
 										}
 
@@ -958,6 +964,10 @@ export class OpenAICompatibleProvider extends BaseProvider {
 
 										// Accumulate and send argument deltas with validation
 										const newArgs = toolCall.function?.arguments || "";
+										if (newArgs.length > this.MAX_TOOL_CALL_LENGTH) {
+											log.warn(`Tool call arguments exceed max length for index ${idx} (${newArgs.length}/${this.MAX_TOOL_CALL_LENGTH})`);
+											continue;
+										}
 										const oldArgs = context.toolCallAccumulators[idx] || "";
 
 										// Validate that new arguments start with old arguments (streaming consistency)
