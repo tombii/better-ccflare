@@ -100,6 +100,18 @@ interface OpenAIUsage {
 	prompt_tokens_details?: Record<string, unknown>;
 }
 
+interface TransformStreamContext {
+	buffer: string;
+	hasStarted: boolean;
+	extractedModel: string;
+	hasSentStart: boolean;
+	hasSentContentBlockStart: boolean;
+	promptTokens: number;
+	completionTokens: number;
+	encounteredToolCall: boolean;
+	toolCallAccumulators: Record<number, string>;
+}
+
 interface OpenAIStreamDelta {
 	content?: string;
 	tool_calls?: Array<{
@@ -402,6 +414,18 @@ export class OpenAICompatibleProvider extends BaseProvider {
 	}
 
 	/**
+	 * Safely parse JSON with error handling
+	 */
+	private safeParseJSON(jsonString: string): any {
+		try {
+			return JSON.parse(jsonString);
+		} catch (error) {
+			log.warn(`Failed to parse JSON: ${jsonString}`, error);
+			return {};
+		}
+	}
+
+	/**
 	 * Calculate cost based on model and token usage
 	 */
 	private calculateCost(
@@ -470,49 +494,26 @@ export class OpenAICompatibleProvider extends BaseProvider {
 	 * Helper to remove format: 'uri' from JSON schemas (some providers reject it)
 	 */
 	private removeUriFormat(schema: unknown): unknown {
-		if (!schema || typeof schema !== "object") return schema;
-
-		// If this is a string type with uri format, remove the format
-		if (
-			typeof schema === "object" &&
-			schema !== null &&
-			"type" in schema &&
-			schema.type === "string" &&
-			"format" in schema &&
-			schema.format === "uri"
-		) {
-			// biome-ignore lint/correctness/noUnusedVariables: format is intentionally extracted and not used
-			const { format, ...rest } = schema as Record<string, unknown>;
-			return rest;
-		}
-
-		// Handle array of schemas (like in anyOf, allOf, oneOf)
 		if (Array.isArray(schema)) {
 			return schema.map((item) => this.removeUriFormat(item));
 		}
 
-		// Recursively process all properties
+		if (schema === null || typeof schema !== "object") {
+			return schema;
+		}
+
+		const obj = schema as Record<string, unknown>;
+
+		if (obj.type === "string" && obj.format === "uri") {
+			// biome-ignore lint/correctness/noUnusedVariables: format is intentionally extracted and not used
+			const { format, ...rest } = obj;
+			// Recursively process remaining properties
+			return this.removeUriFormat(rest);
+		}
+
 		const result: Record<string, unknown> = {};
-		for (const key in schema as Record<string, unknown>) {
-			const value = (schema as Record<string, unknown>)[key];
-			if (key === "properties" && typeof value === "object" && value !== null) {
-				result[key] = {};
-				for (const propKey in value as Record<string, unknown>) {
-					(result[key] as Record<string, unknown>)[propKey] =
-						this.removeUriFormat((value as Record<string, unknown>)[propKey]);
-				}
-			} else if (key === "items" && typeof value === "object") {
-				result[key] = this.removeUriFormat(value);
-			} else if (key === "additionalProperties" && typeof value === "object") {
-				result[key] = this.removeUriFormat(value);
-			} else if (
-				["anyOf", "allOf", "oneOf"].includes(key) &&
-				Array.isArray(value)
-			) {
-				result[key] = value.map((item) => this.removeUriFormat(item));
-			} else {
-				result[key] = this.removeUriFormat(value);
-			}
+		for (const key of Object.keys(obj)) {
+			result[key] = this.removeUriFormat(obj[key]);
 		}
 		return result;
 	}
@@ -686,7 +687,7 @@ export class OpenAICompatibleProvider extends BaseProvider {
 				type: "tool_use",
 				id: toolCall.id,
 				name: toolCall.function.name,
-				input: JSON.parse(toolCall.function.arguments || "{}"),
+				input: this.safeParseJSON(toolCall.function.arguments || "{}"),
 			});
 		}
 
@@ -725,7 +726,32 @@ export class OpenAICompatibleProvider extends BaseProvider {
 	}
 
 	/**
-	 * Transform streaming response from OpenAI to Anthropic format
+	 * Transform OpenAI Server-Sent Events (SSE) streaming response to Anthropic SSE format
+	 *
+	 * ## Transformation Flow:
+	 * 1. **Input**: OpenAI SSE chunks (`data: {...choices[0].delta...}`)
+	 * 2. **Buffering**: Accumulates incomplete lines across chunks
+	 * 3. **Parsing**: Extracts JSON from `data:` lines, ignores malformed chunks
+	 * 4. **Event Mapping**:
+	 *    - `message_start` + `ping` (first chunk)
+	 *    - `content_block_start` (text/tool_use)
+	 *    - `content_block_delta` (text deltas, tool arg accumulation)
+	 *    - `content_block_stop` + `message_stop` (`[DONE]`)
+	 * 5. **State Management**: Tracks context via TransformStreamContext
+	 * 6. **Stream Tee**: Splits into client + analytics streams for usage extraction
+	 *
+	 * ## State Machine:
+	 * ```
+	 * [START] → buffer chunks → parse lines → [JSON delta]
+	 *                                    ↓
+	 *                           text? → content_block_start(0) → text_delta
+	 *                           tool? → content_block_start(N) → input_json_delta
+	 *                                    ↓
+	 *                              [DONE] → content_block_stop → message_delta → message_stop
+	 * ```
+	 *
+	 * @param response - Original OpenAI streaming response
+	 * @returns Transformed Anthropic-compatible streaming Response
 	 */
 	private transformStreamingResponse(response: Response): Response {
 		if (!response.body) {
@@ -739,29 +765,26 @@ export class OpenAICompatibleProvider extends BaseProvider {
 		const transformedBody = response.body.pipeThrough(
 			new TransformStream<Uint8Array, Uint8Array>({
 				start(_controller) {
-					// biome-ignore lint/suspicious/noExplicitAny: TransformStream doesn't support custom context properties
-					(this as any).buffer = "";
-					// biome-ignore lint/suspicious/noExplicitAny: TransformStream doesn't support custom context properties
-					(this as any).hasStarted = false;
-					// biome-ignore lint/suspicious/noExplicitAny: TransformStream doesn't support custom context properties
-					(this as any).extractedModel = "unknown";
-					// biome-ignore lint/suspicious/noExplicitAny: TransformStream doesn't support custom context properties
-					(this as any).hasSentStart = false;
-					// biome-ignore lint/suspicious/noExplicitAny: TransformStream doesn't support custom context properties
-					(this as any).hasSentContentBlockStart = false;
-					// biome-ignore lint/suspicious/noExplicitAny: TransformStream doesn't support custom context properties
-					(this as any).promptTokens = 0;
-					// biome-ignore lint/suspicious/noExplicitAny: TransformStream doesn't support custom context properties
-					(this as any).completionTokens = 0;
-					// biome-ignore lint/suspicious/noExplicitAny: TransformStream doesn't support custom context properties
-					(this as any).encounteredToolCall = false;
-					// biome-ignore lint/suspicious/noExplicitAny: TransformStream doesn't support custom context properties
-					(this as any).toolCallAccumulators = {}; // key: index, value: accumulated arguments
+					// Initialize context object for streaming state
+					(this as any).context = {
+						buffer: "",
+						hasStarted: false,
+						extractedModel: "unknown",
+						hasSentStart: false,
+						hasSentContentBlockStart: false,
+						promptTokens: 0,
+						completionTokens: 0,
+						encounteredToolCall: false,
+						toolCallAccumulators: {},
+					} as TransformStreamContext;
 				},
 				transform(chunk, controller) {
 					try {
-						// biome-ignore lint/suspicious/noExplicitAny: TransformStream doesn't support custom context properties
-						const context = this as any;
+						const context = (this as any).context as TransformStreamContext;
+						if (!context) {
+							log.error("TransformStream context not initialized");
+							return;
+						}
 						// Decode the chunk and add to buffer
 						context.buffer += decoder.decode(chunk, { stream: true });
 						const lines = context.buffer.split("\n");
@@ -898,8 +921,20 @@ export class OpenAICompatibleProvider extends BaseProvider {
 										context.encounteredToolCall = true;
 										const idx = toolCall.index;
 
+										// Validate tool call index
+										if (typeof idx !== "number" || idx < 0) {
+											log.warn(`Invalid tool call index: ${idx}`);
+											continue;
+										}
+
 										// Send content_block_start on first tool call chunk
 										if (context.toolCallAccumulators[idx] === undefined) {
+											if (!toolCall.id || !toolCall.function?.name) {
+												log.warn(
+													`Missing tool call id or name for index: ${idx}`,
+												);
+												continue;
+											}
 											context.toolCallAccumulators[idx] = "";
 											const contentBlockStart = {
 												type: "content_block_start",
@@ -907,7 +942,7 @@ export class OpenAICompatibleProvider extends BaseProvider {
 												content_block: {
 													type: "tool_use",
 													id: toolCall.id,
-													name: toolCall.function?.name,
+													name: toolCall.function.name,
 													input: {},
 												},
 											};
@@ -921,10 +956,15 @@ export class OpenAICompatibleProvider extends BaseProvider {
 											);
 										}
 
-										// Accumulate and send argument deltas
+										// Accumulate and send argument deltas with validation
 										const newArgs = toolCall.function?.arguments || "";
-										const oldArgs = context.toolCallAccumulators[idx];
-										if (newArgs.length > oldArgs.length) {
+										const oldArgs = context.toolCallAccumulators[idx] || "";
+
+										// Validate that new arguments start with old arguments (streaming consistency)
+										if (
+											newArgs.startsWith(oldArgs) &&
+											newArgs.length > oldArgs.length
+										) {
 											const deltaText = newArgs.substring(oldArgs.length);
 											const contentBlockDelta = {
 												type: "content_block_delta",
@@ -942,6 +982,10 @@ export class OpenAICompatibleProvider extends BaseProvider {
 													`data: ${JSON.stringify(contentBlockDelta)}\n\n`,
 												),
 											);
+											context.toolCallAccumulators[idx] = newArgs;
+										} else if (newArgs.length < oldArgs.length) {
+											// Handle case where arguments are reset (rare but possible)
+											log.debug(`Tool call arguments reset for index ${idx}`);
 											context.toolCallAccumulators[idx] = newArgs;
 										}
 									}
