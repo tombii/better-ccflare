@@ -135,7 +135,7 @@ export async function forwardToClient(
 		// For OpenAI providers, use pre-teed analytics stream if available
 		// Otherwise clone the response
 		const preTeedStream = (response as any).__analyticsStream;
-		const analyticsClone = preTeedStream
+		const analyticsClone = preTeedStream && preTeedStream instanceof ReadableStream
 			? new Response(preTeedStream, {
 					status: response.status,
 					statusText: response.statusText,

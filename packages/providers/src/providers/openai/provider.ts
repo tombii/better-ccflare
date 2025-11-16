@@ -110,6 +110,8 @@ interface TransformStreamContext {
 	completionTokens: number;
 	encounteredToolCall: boolean;
 	toolCallAccumulators: Record<number, string>;
+	maxToolCallLength: number;
+	maxToolCallIndex: number;
 }
 
 interface OpenAIStreamDelta {
@@ -782,9 +784,22 @@ export class OpenAICompatibleProvider extends BaseProvider {
 						completionTokens: 0,
 						encounteredToolCall: false,
 						toolCallAccumulators: {},
+						maxToolCallLength: 1_000_000,
+						maxToolCallIndex: 100,
 					} as TransformStreamContext;
 				},
 				transform(chunk, controller) {
+				},
+				flush(controller) {
+					const context = (this as any).context as TransformStreamContext;
+					if (context && Object.keys(context.toolCallAccumulators).length > 0) {
+						log.warn("Stream terminated with unprocessed tool calls", {
+							remainingAccumulators: Object.keys(context.toolCallAccumulators).length
+						});
+						// Clean up any remaining state
+						(this as any).context = null;
+					}
+				},
 					try {
 						const context = (this as any).context as TransformStreamContext;
 						if (!context) {
@@ -933,8 +948,14 @@ export class OpenAICompatibleProvider extends BaseProvider {
 										const idx = toolCall.index;
 
 										// Validate tool call index bounds
-										if (typeof idx !== "number" || idx < 0 || idx >= this.MAX_TOOL_CALL_INDEX) {
-											log.warn(`Invalid tool call index: ${idx} (max: ${this.MAX_TOOL_CALL_INDEX})`);
+										if (
+											typeof idx !== "number" ||
+											idx < 0 ||
+											idx >= this.MAX_TOOL_CALL_INDEX
+										) {
+											log.warn(
+												`Invalid tool call index: ${idx} (max: ${this.MAX_TOOL_CALL_INDEX})`,
+											);
 											continue;
 										}
 
@@ -970,7 +991,9 @@ export class OpenAICompatibleProvider extends BaseProvider {
 										// Accumulate and send argument deltas with validation
 										const newArgs = toolCall.function?.arguments || "";
 										if (newArgs.length > this.MAX_TOOL_CALL_LENGTH) {
-											log.warn(`Tool call arguments exceed max length for index ${idx} (${newArgs.length}/${this.MAX_TOOL_CALL_LENGTH})`);
+											log.warn(
+												`Tool call arguments exceed max length for index ${idx} (${newArgs.length}/${this.MAX_TOOL_CALL_LENGTH})`,
+											);
 											continue;
 										}
 										const oldArgs = context.toolCallAccumulators[idx] || "";
