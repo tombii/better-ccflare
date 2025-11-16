@@ -11,9 +11,29 @@ import type { RateLimitInfo, TokenRefreshResult } from "../../types";
 const log = new Logger("OpenAICompatibleProvider");
 
 // OpenAI API Request/Response Types
+interface OpenAIToolCall {
+	id: string;
+	type: "function";
+	function: {
+		name: string;
+		arguments: string;
+	};
+}
+
 interface OpenAIMessage {
-	role: "system" | "user" | "assistant";
-	content: string;
+	role: "system" | "user" | "assistant" | "tool";
+	content: string | null;
+	tool_calls?: OpenAIToolCall[];
+	tool_call_id?: string;
+}
+
+interface OpenAITool {
+	type: "function";
+	function: {
+		name: string;
+		description?: string;
+		parameters?: Record<string, unknown>;
+	};
 }
 
 interface OpenAIRequest {
@@ -24,11 +44,41 @@ interface OpenAIRequest {
 	top_p?: number;
 	stop?: string | string[];
 	stream?: boolean;
+	tools?: OpenAITool[];
 }
+
+interface AnthropicToolUse {
+	type: "tool_use";
+	id: string;
+	name: string;
+	input?: Record<string, unknown>;
+}
+
+interface AnthropicToolResult {
+	type: "tool_result";
+	tool_use_id: string;
+	content: string;
+}
+
+interface AnthropicTextContent {
+	type: "text";
+	text: string;
+}
+
+type AnthropicContentBlock =
+	| AnthropicTextContent
+	| AnthropicToolUse
+	| AnthropicToolResult;
 
 interface AnthropicMessage {
 	role: "user" | "assistant";
-	content: string | Array<{ type: "text"; text: string }>;
+	content: string | AnthropicContentBlock[];
+}
+
+interface AnthropicTool {
+	name: string;
+	description?: string;
+	input_schema?: Record<string, unknown>;
 }
 
 interface AnthropicRequest {
@@ -40,6 +90,7 @@ interface AnthropicRequest {
 	top_p?: number;
 	stop_sequences?: string[];
 	stream?: boolean;
+	tools?: AnthropicTool[];
 }
 
 interface OpenAIUsage {
@@ -49,18 +100,30 @@ interface OpenAIUsage {
 	prompt_tokens_details?: Record<string, unknown>;
 }
 
+interface OpenAIStreamDelta {
+	content?: string;
+	tool_calls?: Array<{
+		index: number;
+		id?: string;
+		type?: "function";
+		function?: {
+			name?: string;
+			arguments?: string;
+		};
+	}>;
+}
+
 interface OpenAIResponse {
 	id?: string;
 	object?: string;
 	model?: string;
 	choices?: Array<{
 		message?: {
-			content?: string;
+			content?: string | null;
 			role?: string;
+			tool_calls?: OpenAIToolCall[];
 		};
-		delta?: {
-			content?: string;
-		};
+		delta?: OpenAIStreamDelta;
 		finish_reason?: string;
 	}>;
 	usage?: OpenAIUsage;
@@ -75,10 +138,7 @@ interface AnthropicResponse {
 	type: "message" | "error";
 	id?: string;
 	role?: string;
-	content?: Array<{
-		type: "text";
-		text: string;
-	}>;
+	content?: AnthropicContentBlock[];
 	model?: string;
 	stop_reason?: string;
 	stop_sequence?: string;
@@ -407,6 +467,57 @@ export class OpenAICompatibleProvider extends BaseProvider {
 	}
 
 	/**
+	 * Helper to remove format: 'uri' from JSON schemas (some providers reject it)
+	 */
+	private removeUriFormat(schema: unknown): unknown {
+		if (!schema || typeof schema !== "object") return schema;
+
+		// If this is a string type with uri format, remove the format
+		if (
+			typeof schema === "object" &&
+			schema !== null &&
+			"type" in schema &&
+			schema.type === "string" &&
+			"format" in schema &&
+			schema.format === "uri"
+		) {
+			// biome-ignore lint/correctness/noUnusedVariables: format is intentionally extracted and not used
+			const { format, ...rest } = schema as Record<string, unknown>;
+			return rest;
+		}
+
+		// Handle array of schemas (like in anyOf, allOf, oneOf)
+		if (Array.isArray(schema)) {
+			return schema.map((item) => this.removeUriFormat(item));
+		}
+
+		// Recursively process all properties
+		const result: Record<string, unknown> = {};
+		for (const key in schema as Record<string, unknown>) {
+			const value = (schema as Record<string, unknown>)[key];
+			if (key === "properties" && typeof value === "object" && value !== null) {
+				result[key] = {};
+				for (const propKey in value as Record<string, unknown>) {
+					(result[key] as Record<string, unknown>)[propKey] =
+						this.removeUriFormat((value as Record<string, unknown>)[propKey]);
+				}
+			} else if (key === "items" && typeof value === "object") {
+				result[key] = this.removeUriFormat(value);
+			} else if (key === "additionalProperties" && typeof value === "object") {
+				result[key] = this.removeUriFormat(value);
+			} else if (
+				["anyOf", "allOf", "oneOf"].includes(key) &&
+				Array.isArray(value)
+			) {
+				result[key] = value.map((item) => this.removeUriFormat(item));
+			} else {
+				result[key] = this.removeUriFormat(value);
+			}
+		}
+		return result;
+	}
+
+	/**
 	 * Convert Anthropic request format to OpenAI format
 	 */
 	private convertAnthropicRequestToOpenAI(
@@ -440,6 +551,21 @@ export class OpenAICompatibleProvider extends BaseProvider {
 			openaiRequest.stream = anthropicData.stream;
 		}
 
+		// Convert tools
+		if (anthropicData.tools && Array.isArray(anthropicData.tools)) {
+			openaiRequest.tools = anthropicData.tools.map((tool) => ({
+				type: "function",
+				function: {
+					name: tool.name,
+					description: tool.description,
+					parameters: this.removeUriFormat(tool.input_schema) as Record<
+						string,
+						unknown
+					>,
+				},
+			}));
+		}
+
 		// Handle system message (Anthropic has it as top-level, OpenAI has it in messages array)
 		const messages: OpenAIMessage[] = [];
 		if (anthropicData.system) {
@@ -452,27 +578,60 @@ export class OpenAICompatibleProvider extends BaseProvider {
 		// Add user/assistant messages
 		if (anthropicData.messages && Array.isArray(anthropicData.messages)) {
 			for (const message of anthropicData.messages) {
-				const openaiMessage: OpenAIMessage = {
-					role: message.role,
-					content: Array.isArray(message.content)
-						? message.content
-								.filter((part) => part.type === "text")
-								.map((part) => part.text)
-								.join("")
-						: message.content,
-				};
-
 				// Handle content arrays (Anthropic supports rich content)
 				if (Array.isArray(message.content)) {
-					// Convert Anthropic content array to OpenAI string format
-					const textParts = message.content
-						.filter((part: { type: string }) => part.type === "text")
-						.map((part: { text: string }) => part.text)
-						.join("");
-					openaiMessage.content = textParts;
-				}
+					// Extract tool_use blocks
+					const toolUseBlocks = message.content.filter(
+						(item): item is AnthropicToolUse => item.type === "tool_use",
+					);
 
-				messages.push(openaiMessage);
+					// Extract text content
+					const textParts = message.content
+						.filter(
+							(part): part is AnthropicTextContent => part.type === "text",
+						)
+						.map((part) => part.text)
+						.join("");
+
+					// Create OpenAI message with tool calls if present
+					const openaiMessage: OpenAIMessage = {
+						role: message.role,
+						content: textParts || null,
+					};
+
+					if (toolUseBlocks.length > 0) {
+						openaiMessage.tool_calls = toolUseBlocks.map((toolCall) => ({
+							id: toolCall.id,
+							type: "function",
+							function: {
+								name: toolCall.name,
+								arguments: JSON.stringify(toolCall.input || {}),
+							},
+						}));
+					}
+
+					if (openaiMessage.content || openaiMessage.tool_calls) {
+						messages.push(openaiMessage);
+					}
+
+					// Handle tool_result blocks as separate 'tool' role messages
+					const toolResults = message.content.filter(
+						(item): item is AnthropicToolResult => item.type === "tool_result",
+					);
+					for (const toolResult of toolResults) {
+						messages.push({
+							role: "tool",
+							content: toolResult.content,
+							tool_call_id: toolResult.tool_use_id,
+						});
+					}
+				} else {
+					// Simple string content
+					messages.push({
+						role: message.role,
+						content: message.content,
+					});
+				}
 			}
 		}
 
@@ -509,16 +668,33 @@ export class OpenAICompatibleProvider extends BaseProvider {
 			};
 		}
 
+		// Build content array with text and tool calls
+		const content: AnthropicContentBlock[] = [];
+
+		// Add text content if present
+		if (choice.message?.content) {
+			content.push({
+				type: "text",
+				text: choice.message.content,
+			});
+		}
+
+		// Add tool calls if present
+		const toolCalls = choice.message?.tool_calls || [];
+		for (const toolCall of toolCalls) {
+			content.push({
+				type: "tool_use",
+				id: toolCall.id,
+				name: toolCall.function.name,
+				input: JSON.parse(toolCall.function.arguments || "{}"),
+			});
+		}
+
 		return {
 			id: openaiData.id || `msg_${Date.now()}`,
 			type: "message",
 			role: "assistant",
-			content: [
-				{
-					type: "text",
-					text: choice.message?.content || "",
-				},
-			],
+			content,
 			model: openaiData.model,
 			stop_reason: this.mapOpenAIFinishReason(choice.finish_reason),
 			stop_sequence: undefined,
@@ -577,6 +753,10 @@ export class OpenAICompatibleProvider extends BaseProvider {
 					(this as any).promptTokens = 0;
 					// biome-ignore lint/suspicious/noExplicitAny: TransformStream doesn't support custom context properties
 					(this as any).completionTokens = 0;
+					// biome-ignore lint/suspicious/noExplicitAny: TransformStream doesn't support custom context properties
+					(this as any).encounteredToolCall = false;
+					// biome-ignore lint/suspicious/noExplicitAny: TransformStream doesn't support custom context properties
+					(this as any).toolCallAccumulators = {}; // key: index, value: accumulated arguments
 				},
 				transform(chunk, controller) {
 					try {
@@ -596,8 +776,24 @@ export class OpenAICompatibleProvider extends BaseProvider {
 
 							// Handle [DONE] marker
 							if (dataStr === "[DONE]") {
-								// Send content_block_stop
-								if (context.hasSentContentBlockStart) {
+								// Send content_block_stop for tool calls or text
+								if (context.encounteredToolCall) {
+									// Stop all tool call blocks
+									for (const idx in context.toolCallAccumulators) {
+										const contentBlockStop = {
+											type: "content_block_stop",
+											index: Number.parseInt(idx, 10),
+										};
+										controller.enqueue(
+											encoder.encode(`event: content_block_stop\n`),
+										);
+										controller.enqueue(
+											encoder.encode(
+												`data: ${JSON.stringify(contentBlockStop)}\n\n`,
+											),
+										);
+									}
+								} else if (context.hasSentContentBlockStart) {
 									const contentBlockStop = {
 										type: "content_block_stop",
 										index: 0,
@@ -612,15 +808,17 @@ export class OpenAICompatibleProvider extends BaseProvider {
 									);
 								}
 
-								// Send message_delta
+								// Send message_delta with appropriate stop_reason
 								const messageDelta = {
 									type: "message_delta",
 									delta: {
-										stop_reason: "end_turn",
+										stop_reason: context.encounteredToolCall
+											? "tool_use"
+											: "end_turn",
 										stop_sequence: null,
 									},
 									usage: {
-								input_tokens: context.promptTokens,
+										input_tokens: context.promptTokens,
 										output_tokens: context.completionTokens,
 									},
 								};
@@ -693,7 +891,61 @@ export class OpenAICompatibleProvider extends BaseProvider {
 								}
 
 								const delta = data.choices?.[0]?.delta;
-								if (delta?.content) {
+
+								// Handle tool call deltas
+								if (delta?.tool_calls) {
+									for (const toolCall of delta.tool_calls) {
+										context.encounteredToolCall = true;
+										const idx = toolCall.index;
+
+										// Send content_block_start on first tool call chunk
+										if (context.toolCallAccumulators[idx] === undefined) {
+											context.toolCallAccumulators[idx] = "";
+											const contentBlockStart = {
+												type: "content_block_start",
+												index: idx,
+												content_block: {
+													type: "tool_use",
+													id: toolCall.id,
+													name: toolCall.function?.name,
+													input: {},
+												},
+											};
+											controller.enqueue(
+												encoder.encode(`event: content_block_start\n`),
+											);
+											controller.enqueue(
+												encoder.encode(
+													`data: ${JSON.stringify(contentBlockStart)}\n\n`,
+												),
+											);
+										}
+
+										// Accumulate and send argument deltas
+										const newArgs = toolCall.function?.arguments || "";
+										const oldArgs = context.toolCallAccumulators[idx];
+										if (newArgs.length > oldArgs.length) {
+											const deltaText = newArgs.substring(oldArgs.length);
+											const contentBlockDelta = {
+												type: "content_block_delta",
+												index: idx,
+												delta: {
+													type: "input_json_delta",
+													partial_json: deltaText,
+												},
+											};
+											controller.enqueue(
+												encoder.encode(`event: content_block_delta\n`),
+											);
+											controller.enqueue(
+												encoder.encode(
+													`data: ${JSON.stringify(contentBlockDelta)}\n\n`,
+												),
+											);
+											context.toolCallAccumulators[idx] = newArgs;
+										}
+									}
+								} else if (delta?.content) {
 									// Send content_block_start on first content
 									if (!context.hasSentContentBlockStart) {
 										context.hasSentContentBlockStart = true;
