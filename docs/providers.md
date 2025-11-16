@@ -246,6 +246,85 @@ The API key is stored in the `refresh_token` field of the account record for con
 
 ## OpenAI-Compatible Provider Implementation
 
+The `OpenAICompatibleProvider` (registered as `"openai-compatible"`) enables full bidirectional proxying between Anthropic `/v1/messages` and OpenAI `/v1/chat/completions` APIs.
+
+### Core Files
+- `packages/providers/src/providers/openai/provider.ts` (~1010 lines) - Main class extending `BaseProvider`
+- `packages/providers/src/providers/openai/index.ts` - Exports
+- `packages/providers/src/registry.ts` - Auto-registration
+- `packages/providers/src/providers/openai/__tests__/provider.test.ts` - 200+ tests
+- `packages/types/src/provider-config.ts` - Config: `{ requiresSessionTracking: false, supportsOAuth: false }`
+
+### Architecture
+```
+Anthropic Client → better-ccflare Proxy → OpenAI Provider (OpenRouter, etc.) → Transformed Response → Client
+```
+- **Path conversion**: `/v1/messages` → `/v1/chat/completions`
+- **Model mapping**: `claude-3-haiku` → `openai/gpt-5-mini` (via `model-mapping.ts`)
+- **Body transform**: Anthropic `{system, messages}` → OpenAI `{messages: [{role:"system"}, ...]}`
+- **Streaming**: OpenAI SSE → Anthropic SSE via `TransformStream` + state machine
+- **Auth**: API keys (stored in `refresh_token`), no OAuth
+
+### Streaming Transformation (Key Innovation)
+Uses `TransformStream` with state tracking across chunks:
+
+**State:**
+```
+{
+  buffer: "",
+  extractedModel: "unknown",
+  promptTokens: 0,
+  completionTokens: 0,
+  toolCallAccumulators: {},
+  hasSentStart: false
+}
+```
+
+**Flow:**
+```
+OpenAI: data: {"choices":[{"delta":{"content":"Hello"}}]}
+↓ pipeThrough
+Anthropic:
+event: message_start
+event: content_block_delta → {"delta":{"type":"text_delta","text":"Hello"}}
+...
+data: {"usage":{"prompt_tokens":170,"completion_tokens":2}}
+event: message_stop
+```
+
+**Recent Fix:** `tee()` for stream cloning + `__analyticsStream` for worker analytics (commits `a0ef749`, `b1fd2b7`)
+
+### Authentication & Security
+```typescript
+refreshToken(account): { accessToken: apiKey, expiresAt: +1yr }
+```
+- Sanitizes client `Authorization` if server creds provided
+- Case-insensitive header removal
+
+### Error Handling
+- `parseRateLimit()`: Always `isRateLimited: false` (handles 429 inline)
+- Usage extraction from final chunk
+
+### Tool Calling
+Full support: Anthropic `tools` ↔ OpenAI `tools`, streaming args accumulated.
+
+### CLI Testing (OpenRouter free model)
+```bash
+curl -X POST http://localhost:8081/v1/messages \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer test" \
+  -d '{"model":"z-ai/glm-4.5-air:free","messages":[{"role":"user","content":"test"}],"max_tokens":10}'
+```
+
+### Testing Coverage
+- Path/header conversion
+- Streaming (incl. `tee()` fixes)
+- Model mapping
+- Tools
+- Custom endpoints (OpenRouter JSON)
+
+**Limitations:** Advanced vision/tools may need endpoint-specific tweaks.
+
 The OpenAI-Compatible provider extends the BaseProvider class and enables better-ccflare to work with any OpenAI-compatible API endpoint.
 
 ### Key Features

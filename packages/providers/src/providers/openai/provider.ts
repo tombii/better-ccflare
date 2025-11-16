@@ -822,6 +822,8 @@ export class OpenAICompatibleProvider extends BaseProvider {
 											),
 										);
 									}
+									// Cleanup accumulators after processing
+									context.toolCallAccumulators = {};
 								} else if (context.hasSentContentBlockStart) {
 									const contentBlockStop = {
 										type: "content_block_stop",
@@ -864,6 +866,9 @@ export class OpenAICompatibleProvider extends BaseProvider {
 								controller.enqueue(
 									encoder.encode(`data: ${JSON.stringify(messageStop)}\n\n`),
 								);
+
+								// Cleanup entire context after stream completion to prevent memory leaks
+								(this as any).context = null;
 								continue;
 							}
 
@@ -928,7 +933,7 @@ export class OpenAICompatibleProvider extends BaseProvider {
 										const idx = toolCall.index;
 
 										// Validate tool call index bounds
-										if (typeof idx !== "number" || idx < 0 || idx > this.MAX_TOOL_CALL_INDEX) {
+										if (typeof idx !== "number" || idx < 0 || idx >= this.MAX_TOOL_CALL_INDEX) {
 											log.warn(`Invalid tool call index: ${idx} (max: ${this.MAX_TOOL_CALL_INDEX})`);
 											continue;
 										}
