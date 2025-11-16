@@ -729,11 +729,30 @@ export class OpenAICompatibleProvider extends BaseProvider {
 			}),
 		);
 
-		return new Response(transformedBody, {
+		// The issue: response.clone() on a pipeThrough'd Response returns the original
+		// untransformed body in some environments. Solution: Manually tee the stream
+		// and attach the analytics stream as a property for response-handler to use.
+
+		// Tee the transformed stream into two independent streams
+		const [clientStream, analyticsStream] = transformedBody.tee();
+
+		// Create the response that will be returned to the client
+		const clientResponse = new Response(clientStream, {
 			status: response.status,
 			statusText: response.statusText,
 			headers: this.sanitizeHeaders(response.headers),
 		});
+
+		// Attach the analytics stream as a non-enumerable property
+		// The response-handler will check for this and use it instead of calling clone()
+		Object.defineProperty(clientResponse, "__analyticsStream", {
+			value: analyticsStream,
+			writable: false,
+			enumerable: false,
+			configurable: false,
+		});
+
+		return clientResponse;
 	}
 
 	/**

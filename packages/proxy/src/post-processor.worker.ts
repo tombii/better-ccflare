@@ -47,6 +47,7 @@ interface RequestState {
 	lastTokenTimestamp?: number;
 	providerFinalOutputTokens?: number;
 	shouldSkipLogging?: boolean;
+	currentEvent?: string; // Track SSE event type across chunks
 }
 
 const log = new Logger("PostProcessor");
@@ -190,13 +191,15 @@ function extractUsageFromData(data: string, state: RequestState): void {
 		const parsed = JSON.parse(data);
 
 		// Handle message_start
-		if (parsed.type === "message_start" && parsed.message?.usage) {
-			const usage = parsed.message.usage;
-			state.usage.inputTokens = usage.input_tokens || 0;
-			state.usage.cacheReadInputTokens = usage.cache_read_input_tokens || 0;
-			state.usage.cacheCreationInputTokens =
-				usage.cache_creation_input_tokens || 0;
-			state.usage.outputTokens = usage.output_tokens || 0;
+		if (parsed.type === "message_start") {
+			if (parsed.message?.usage) {
+				const usage = parsed.message.usage;
+				state.usage.inputTokens = usage.input_tokens || 0;
+				state.usage.cacheReadInputTokens = usage.cache_read_input_tokens || 0;
+				state.usage.cacheCreationInputTokens =
+					usage.cache_creation_input_tokens || 0;
+				state.usage.outputTokens = usage.output_tokens || 0;
+			}
 			if (parsed.message?.model) {
 				state.usage.model = parsed.message.model;
 			}
@@ -294,15 +297,15 @@ function processStreamChunk(chunk: Uint8Array, state: RequestState): void {
 	const lines = state.buffer.split("\n");
 	state.buffer = lines.pop() || "";
 
-	let currentEvent = "";
+	// Use state.currentEvent to persist event type across chunks
 	for (const line of lines) {
 		const trimmed = line.trim();
 		if (!trimmed) continue;
 
 		const parsed = parseSSELine(trimmed);
 		if (parsed.event) {
-			currentEvent = parsed.event;
-		} else if (parsed.data && currentEvent) {
+			state.currentEvent = parsed.event;
+		} else if (parsed.data && state.currentEvent) {
 			extractUsageFromData(parsed.data, state);
 		}
 	}

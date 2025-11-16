@@ -132,8 +132,16 @@ export async function forwardToClient(
 	 *  STREAMING RESPONSES — tee with Response.clone() and send chunks
 	 *********************************************************************/
 	if (isStream && response.body) {
-		// Clone response once for background consumption.
-		const analyticsClone = response.clone();
+		// For OpenAI providers, use pre-teed analytics stream if available
+		// Otherwise clone the response
+		const preTeedStream = (response as any).__analyticsStream;
+		const analyticsClone = preTeedStream
+			? new Response(preTeedStream, {
+					status: response.status,
+					statusText: response.statusText,
+					headers: response.headers,
+				})
+			: response.clone();
 
 		(async () => {
 			const STREAM_TIMEOUT_MS = 300000; // 5 minutes max stream duration
