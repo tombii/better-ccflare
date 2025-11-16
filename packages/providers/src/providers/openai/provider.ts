@@ -573,6 +573,10 @@ export class OpenAICompatibleProvider extends BaseProvider {
 					(this as any).hasSentStart = false;
 					// biome-ignore lint/suspicious/noExplicitAny: TransformStream doesn't support custom context properties
 					(this as any).hasSentContentBlockStart = false;
+					// biome-ignore lint/suspicious/noExplicitAny: TransformStream doesn't support custom context properties
+					(this as any).promptTokens = 0;
+					// biome-ignore lint/suspicious/noExplicitAny: TransformStream doesn't support custom context properties
+					(this as any).completionTokens = 0;
 				},
 				transform(chunk, controller) {
 					try {
@@ -616,7 +620,8 @@ export class OpenAICompatibleProvider extends BaseProvider {
 										stop_sequence: null,
 									},
 									usage: {
-										output_tokens: 0,
+								input_tokens: context.promptTokens,
+										output_tokens: context.completionTokens,
 									},
 								};
 								controller.enqueue(encoder.encode(`event: message_delta\n`));
@@ -643,6 +648,16 @@ export class OpenAICompatibleProvider extends BaseProvider {
 								if (!context.hasStarted && data.model) {
 									context.extractedModel = data.model;
 									context.hasStarted = true;
+								}
+
+								// Extract usage data if present (typically in last chunk before [DONE])
+								if (data.usage) {
+									if (data.usage.prompt_tokens) {
+										context.promptTokens = data.usage.prompt_tokens;
+									}
+									if (data.usage.completion_tokens) {
+										context.completionTokens = data.usage.completion_tokens;
+									}
 								}
 
 								// Send message_start on first chunk
