@@ -551,131 +551,185 @@ export class OpenAICompatibleProvider extends BaseProvider {
 	/**
 	 * Transform streaming response from OpenAI to Anthropic format
 	 */
-	private async transformStreamingResponse(
-		response: Response,
-	): Promise<Response> {
-		const reader = response.body?.getReader();
-		if (!reader) {
+	private transformStreamingResponse(response: Response): Response {
+		if (!response.body) {
 			return response;
 		}
 
 		const encoder = new TextEncoder();
 		const decoder = new TextDecoder();
 
-		const stream = new ReadableStream({
-			async start(controller) {
-				try {
-					// Send initial message_start event
-					const messageStart = {
-						type: "message_start",
-						message: {
-							id: `msg_${Date.now()}`,
-							type: "message",
-							role: "assistant",
-							content: [],
-							model: "unknown",
-							stop_reason: null,
-							stop_sequence: undefined,
-							usage: {
-								input_tokens: 0,
-								output_tokens: 0,
-								cache_creation_input_tokens: 0,
-								cache_read_input_tokens: 0,
-							},
-						},
-					};
-
-					controller.enqueue(encoder.encode(`event: message_start\n`));
-					controller.enqueue(
-						encoder.encode(`data: ${JSON.stringify(messageStart)}\n\n`),
-					);
-
-					// Send content_block_start event
-					const contentBlockStart = {
-						type: "content_block_start",
-						index: 0,
-						content_block: {
-							type: "text",
-							text: "",
-						},
-					};
-
-					controller.enqueue(encoder.encode(`event: content_block_start\n`));
-					controller.enqueue(
-						encoder.encode(`data: ${JSON.stringify(contentBlockStart)}\n\n`),
-					);
-
-					// Process OpenAI streaming chunks
-					let buffer = "";
-					while (true) {
-						const { done, value } = await reader.read();
-						if (done) break;
-
-						buffer += decoder.decode(value, { stream: true });
-						const lines = buffer.split("\n");
-						buffer = lines.pop() || ""; // Keep incomplete line in buffer
+		// Use pipeThrough to transform the stream while preserving clonability
+		const transformedBody = response.body.pipeThrough(
+			new TransformStream<Uint8Array, Uint8Array>({
+				start(_controller) {
+					// biome-ignore lint/suspicious/noExplicitAny: TransformStream doesn't support custom context properties
+					(this as any).buffer = "";
+					// biome-ignore lint/suspicious/noExplicitAny: TransformStream doesn't support custom context properties
+					(this as any).hasStarted = false;
+					// biome-ignore lint/suspicious/noExplicitAny: TransformStream doesn't support custom context properties
+					(this as any).extractedModel = "unknown";
+					// biome-ignore lint/suspicious/noExplicitAny: TransformStream doesn't support custom context properties
+					(this as any).hasSentStart = false;
+					// biome-ignore lint/suspicious/noExplicitAny: TransformStream doesn't support custom context properties
+					(this as any).hasSentContentBlockStart = false;
+				},
+				transform(chunk, controller) {
+					try {
+						// biome-ignore lint/suspicious/noExplicitAny: TransformStream doesn't support custom context properties
+						const context = this as any;
+						// Decode the chunk and add to buffer
+						context.buffer += decoder.decode(chunk, { stream: true });
+						const lines = context.buffer.split("\n");
+						// Keep incomplete line in buffer
+						context.buffer = lines.pop() || "";
 
 						for (const line of lines) {
-							if (line.startsWith("data: ") && line !== "data: [DONE]") {
-								try {
-									const data = JSON.parse(line.slice(6));
-									const delta = data.choices?.[0]?.delta;
+							const trimmed = line.trim();
+							if (!trimmed || !trimmed.startsWith("data:")) continue;
 
-									if (delta?.content) {
-										const contentBlockDelta = {
-											type: "content_block_delta",
+							const dataStr = trimmed.slice(5).trim();
+
+							// Handle [DONE] marker
+							if (dataStr === "[DONE]") {
+								// Send content_block_stop
+								if (context.hasSentContentBlockStart) {
+									const contentBlockStop = {
+										type: "content_block_stop",
+										index: 0,
+									};
+									controller.enqueue(
+										encoder.encode(`event: content_block_stop\n`),
+									);
+									controller.enqueue(
+										encoder.encode(
+											`data: ${JSON.stringify(contentBlockStop)}\n\n`,
+										),
+									);
+								}
+
+								// Send message_delta
+								const messageDelta = {
+									type: "message_delta",
+									delta: {
+										stop_reason: "end_turn",
+										stop_sequence: null,
+									},
+									usage: {
+										output_tokens: 0,
+									},
+								};
+								controller.enqueue(encoder.encode(`event: message_delta\n`));
+								controller.enqueue(
+									encoder.encode(`data: ${JSON.stringify(messageDelta)}\n\n`),
+								);
+
+								// Send message_stop
+								const messageStop = {
+									type: "message_stop",
+								};
+								controller.enqueue(encoder.encode(`event: message_stop\n`));
+								controller.enqueue(
+									encoder.encode(`data: ${JSON.stringify(messageStop)}\n\n`),
+								);
+								continue;
+							}
+
+							// Parse OpenAI chunk
+							try {
+								const data = JSON.parse(dataStr);
+
+								// Extract model from first chunk
+								if (!context.hasStarted && data.model) {
+									context.extractedModel = data.model;
+									context.hasStarted = true;
+								}
+
+								// Send message_start on first chunk
+								if (!context.hasSentStart) {
+									context.hasSentStart = true;
+									const messageStart = {
+										type: "message_start",
+										message: {
+											id: `msg_${Date.now()}`,
+											type: "message",
+											role: "assistant",
+											content: [],
+											model: context.extractedModel,
+											stop_reason: null,
+											stop_sequence: null,
+											usage: {
+												input_tokens: 0,
+												output_tokens: 0,
+											},
+										},
+									};
+									controller.enqueue(encoder.encode(`event: message_start\n`));
+									controller.enqueue(
+										encoder.encode(`data: ${JSON.stringify(messageStart)}\n\n`),
+									);
+
+									// Send ping
+									const ping = { type: "ping" };
+									controller.enqueue(encoder.encode(`event: ping\n`));
+									controller.enqueue(
+										encoder.encode(`data: ${JSON.stringify(ping)}\n\n`),
+									);
+								}
+
+								const delta = data.choices?.[0]?.delta;
+								if (delta?.content) {
+									// Send content_block_start on first content
+									if (!context.hasSentContentBlockStart) {
+										context.hasSentContentBlockStart = true;
+										const contentBlockStart = {
+											type: "content_block_start",
 											index: 0,
-											delta: {
-												type: "text_delta",
-												text: delta.content,
+											content_block: {
+												type: "text",
+												text: "",
 											},
 										};
-
 										controller.enqueue(
-											encoder.encode(`event: content_block_delta\n`),
+											encoder.encode(`event: content_block_start\n`),
 										);
 										controller.enqueue(
 											encoder.encode(
-												`data: ${JSON.stringify(contentBlockDelta)}\n\n`,
+												`data: ${JSON.stringify(contentBlockStart)}\n\n`,
 											),
 										);
 									}
-								} catch {
-									// Ignore JSON parse errors
+
+									// Send content delta
+									const contentBlockDelta = {
+										type: "content_block_delta",
+										index: 0,
+										delta: {
+											type: "text_delta",
+											text: delta.content,
+										},
+									};
+									controller.enqueue(
+										encoder.encode(`event: content_block_delta\n`),
+									);
+									controller.enqueue(
+										encoder.encode(
+											`data: ${JSON.stringify(contentBlockDelta)}\n\n`,
+										),
+									);
 								}
+							} catch (_parseError) {
+								// Ignore JSON parse errors for malformed chunks
 							}
 						}
+					} catch (error) {
+						log.error("Error in transform:", error);
 					}
+				},
+			}),
+		);
 
-					// Send content_block_stop event
-					const contentBlockStop = {
-						type: "content_block_stop",
-						index: 0,
-					};
-
-					controller.enqueue(encoder.encode(`event: content_block_stop\n`));
-					controller.enqueue(
-						encoder.encode(`data: ${JSON.stringify(contentBlockStop)}\n\n`),
-					);
-
-					// Send message_stop event
-					const messageStop = {
-						type: "message_stop",
-					};
-
-					controller.enqueue(encoder.encode(`event: message_stop\n`));
-					controller.enqueue(
-						encoder.encode(`data: ${JSON.stringify(messageStop)}\n\n`),
-					);
-				} catch (error) {
-					log.error("Error transforming streaming response:", error);
-				} finally {
-					controller.close();
-				}
-			},
-		});
-
-		return new Response(stream, {
+		return new Response(transformedBody, {
 			status: response.status,
 			statusText: response.statusText,
 			headers: this.sanitizeHeaders(response.headers),
