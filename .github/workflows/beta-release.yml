@@ -1,0 +1,248 @@
+name: Beta Release Multi-Architecture Binaries
+
+on:
+  push:
+    tags:
+      - 'v*-*'  # Matches v3.0.0-beta, v3.0.0-rc1, v3.1.0-alpha, etc.
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Beta Multi-Architecture Binaries
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Verify dependencies
+        run: |
+          echo "Checking workspace packages..."
+          ls -d packages/* | head -5
+          echo ""
+          echo "Checking for tiktoken in node_modules..."
+          ls -la node_modules/@dqbd/ 2>/dev/null || echo "No @dqbd packages found"
+          echo ""
+          echo "Checking for tiktoken in packages/proxy/node_modules..."
+          ls -la packages/proxy/node_modules/@dqbd/ 2>/dev/null || echo "No @dqbd packages in packages/proxy/node_modules"
+          echo ""
+          echo "Checking workspace node_modules structure..."
+          find packages/proxy/node_modules -name "tiktoken*" -type d 2>/dev/null | head -5 || echo "No tiktoken found"
+          echo ""
+          echo "Final check for tiktoken WASM file..."
+          if [ ! -f "node_modules/@dqbd/tiktoken/lite/tiktoken_bg.wasm" ]; then
+            echo "ERROR: tiktoken WASM file not found at root node_modules!"
+            echo "This is expected in a workspace - dependencies are installed per package."
+            echo "We'll need to adjust our build script to handle this."
+          else
+            echo "✓ tiktoken WASM file found at root node_modules"
+          fi
+
+      - name: Build dashboard
+        run: bun run build:dashboard
+
+      - name: Build all architectures
+        run: |
+          cd apps/cli
+          bun run build:multi
+
+      - name: Verify binaries
+        run: |
+          ls -lh apps/cli/dist/
+          echo "Beta binaries built successfully!"
+
+      - name: Generate Beta Changelog
+        id: changelog
+        run: |
+          # Get previous tag
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+
+          # Generate changelog content
+          CHANGELOG="## 🧪 Beta Release ${{ github.ref_name }}
+
+          ### ⚠️ Beta Notice
+          This is a beta release intended for testing purposes. It may contain bugs and unstable features.
+
+          ## Multi-Architecture Binaries
+
+          Download the appropriate binary for your platform:
+
+          - **Linux x86_64**: \`better-ccflare-linux-amd64\`
+          - **Linux ARM64** (Raspberry Pi 3/4/5, Oracle Cloud ARM, AWS Graviton): \`better-ccflare-linux-arm64\`
+          - **macOS Intel**: \`better-ccflare-macos-x86_64\`
+          - **macOS Apple Silicon**: \`better-ccflare-macos-arm64\`
+          - **Windows x86_64**: \`better-ccflare-windows-x64.exe\`
+
+          ### Installation
+
+          \`\`\`bash
+          # Linux x86_64
+          wget https://github.com/tombii/better-ccflare/releases/download/${{ github.ref_name }}/better-ccflare-linux-amd64
+          chmod +x better-ccflare-linux-amd64
+          ./better-ccflare-linux-amd64
+          \`\`\`
+
+          Or install via npm: \`npm install -g better-ccflare@${{ github.ref_name }}\`
+
+          ---"
+
+          if [ -n "$PREV_TAG" ]; then
+            # Get commits since previous tag
+            COMMITS=$(git log --pretty=format:"%h %s" $PREV_TAG..HEAD)
+
+            if [ -n "$COMMITS" ]; then
+              CHANGELOG="$CHANGELOG
+
+          ## What's Changed
+
+          "
+              # Categorize commits (include all commits, even [skip-version] ones)
+              FEATURES=$(echo "$COMMITS" | grep -E "feat|add|new" | head -5)
+              FIXES=$(echo "$COMMITS" | grep -E "fix|bug|resolve" | head -5)
+              SECURITY=$(echo "$COMMITS" | grep -E "security|vulnerabilit|redact|ReDoS" | head -5)
+              IMPROVEMENTS=$(echo "$COMMITS" | grep -E "improve|enhance|update|refactor" | head -5)
+
+              if [ -n "$FEATURES" ]; then
+                CHANGELOG="$CHANGELOG
+          ### 🚀 Features
+          "
+                while IFS= read -r commit; do
+                  if [ -n "$commit" ]; then
+                    HASH=$(echo "$commit" | cut -d' ' -f1)
+                    MSG=$(echo "$commit" | cut -d' ' -f2-)
+                    CHANGELOG="$CHANGELOG
+          - $MSG ([\`$HASH\`](https://github.com/tombii/better-ccflare/commit/$HASH))"
+                  fi
+                done <<< "$FEATURES"
+              fi
+
+              if [ -n "$FIXES" ]; then
+                CHANGELOG="$CHANGELOG
+
+          ### 🐛 Bug Fixes
+          "
+                while IFS= read -r commit; do
+                  if [ -n "$commit" ]; then
+                    HASH=$(echo "$commit" | cut -d' ' -f1)
+                    MSG=$(echo "$commit" | cut -d' ' -f2-)
+                    CHANGELOG="$CHANGELOG
+          - $MSG ([\`$HASH\`](https://github.com/tombii/better-ccflare/commit/$HASH))"
+                  fi
+                done <<< "$FIXES"
+              fi
+
+              if [ -n "$SECURITY" ]; then
+                CHANGELOG="$CHANGELOG
+
+          ### 🔒 Security
+          "
+                while IFS= read -r commit; do
+                  if [ -n "$commit" ]; then
+                    HASH=$(echo "$commit" | cut -d' ' -f1)
+                    MSG=$(echo "$commit" | cut -d' ' -f2-)
+                    CHANGELOG="$CHANGELOG
+          - $MSG ([\`$HASH\`](https://github.com/tombii/better-ccflare/commit/$HASH))"
+                  fi
+                done <<< "$SECURITY"
+              fi
+
+              if [ -n "$IMPROVEMENTS" ]; then
+                CHANGELOG="$CHANGELOG
+
+          ### 🔧 Improvements
+          "
+                while IFS= read -r commit; do
+                  if [ -n "$commit" ]; then
+                    HASH=$(echo "$commit" | cut -d' ' -f1)
+                    MSG=$(echo "$commit" | cut -d' ' -f2-)
+                    CHANGELOG="$CHANGELOG
+          - $MSG ([\`$HASH\`](https://github.com/tombii/better-ccflare/commit/$HASH))"
+                  fi
+                done <<< "$IMPROVEMENTS"
+              fi
+
+              # Add comparison link
+              CHANGELOG="$CHANGELOG
+
+          ## Full Changelog
+          📋 [Compare with previous version](https://github.com/tombii/better-ccflare/compare/$PREV_TAG..${{ github.ref_name }})"
+            fi
+          fi
+
+          echo "changelog<<EOF" >> $GITHUB_OUTPUT
+          echo "$CHANGELOG" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Create Beta Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref_name }}
+          release_name: Beta Release ${{ github.ref_name }}
+          draft: false
+          prerelease: true
+          body: ${{ steps.changelog.outputs.changelog }}
+
+      - name: Upload Linux amd64 (Beta)
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./apps/cli/dist/better-ccflare-linux-amd64
+          asset_name: better-ccflare-linux-amd64
+          asset_content_type: application/octet-stream
+
+      - name: Upload Linux ARM64 (Beta)
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./apps/cli/dist/better-ccflare-linux-arm64
+          asset_name: better-ccflare-linux-arm64
+          asset_content_type: application/octet-stream
+
+      - name: Upload macOS x86_64 (Beta)
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./apps/cli/dist/better-ccflare-macos-x86_64
+          asset_name: better-ccflare-macos-x86_64
+          asset_content_type: application/octet-stream
+
+      - name: Upload macOS ARM64 (Beta)
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./apps/cli/dist/better-ccflare-macos-arm64
+          asset_name: better-ccflare-macos-arm64
+          asset_content_type: application/octet-stream
+
+      - name: Upload Windows x64 (Beta)
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./apps/cli/dist/better-ccflare-windows-x64.exe
+          asset_name: better-ccflare-windows-x64.exe
+          asset_content_type: application/octet-stream

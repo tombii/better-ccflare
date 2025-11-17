@@ -1,13 +1,11 @@
-name: Build and Publish Docker Images
+name: Build and Publish Beta Docker Images
 
 on:
   workflow_dispatch:
   workflow_run:
-    workflows: ["Release Multi-Architecture Binaries"]
+    workflows: ["Beta Release Multi-Architecture Binaries"]
     types:
       - completed
-    # Only run for non-beta releases
-    if: github.event.workflow_run.head_branch != 'refs/tags/v*-*'
 
 env:
   REGISTRY: ghcr.io
@@ -40,26 +38,17 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract version from tag or event
+      - name: Extract version from tag
         id: version
         env:
           REF: ${{ github.event.workflow_run.head_branch }}
         run: |
-          # For workflow_run events triggered by release workflow
-          if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
-            # Get the head branch which contains the tag name
-            if [[ "$REF" == v* ]]; then
-              VERSION="${REF#v}"
-              echo "version=${VERSION}" >> $GITHUB_OUTPUT
-            else
-              echo "version=latest" >> $GITHUB_OUTPUT
-            fi
-          # For direct tag pushes
-          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            VERSION="${GITHUB_REF#refs/tags/v}"
+          # Get the tag name from the workflow run
+          if [[ "$REF" == refs/tags/v* ]]; then
+            VERSION="${REF#refs/tags/v}"
             echo "version=${VERSION}" >> $GITHUB_OUTPUT
           else
-            echo "version=latest" >> $GITHUB_OUTPUT
+            echo "version=beta" >> $GITHUB_OUTPUT
           fi
 
       - name: Extract metadata
@@ -69,13 +58,12 @@ jobs:
           images: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=ref,event=branch
-            type=ref,event=pr
+            type=ref,event=branch,suffix=-beta
             type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
-            type=sha
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{major}}.{{minor}},suffix=-beta
+            type=semver,pattern={{major}},suffix=-beta
+            type=sha,suffix=-beta
+          # Note: No latest tag for beta releases
 
       - name: Build and push Docker images
         id: build
