@@ -288,9 +288,17 @@ function processStreamChunk(chunk: Uint8Array, state: RequestState): void {
 	state.buffer += text;
 	state.lastActivity = Date.now();
 
-	// Limit buffer size
+	// Limit buffer size - preserve event boundaries
 	if (state.buffer.length > MAX_BUFFER_SIZE) {
-		state.buffer = state.buffer.slice(-MAX_BUFFER_SIZE);
+		const excess = state.buffer.length - MAX_BUFFER_SIZE;
+		// Find the first newline after cutting the excess to avoid cutting mid-event
+		const firstNewlineAfterCut = state.buffer.indexOf("\n", excess);
+		if (firstNewlineAfterCut !== -1) {
+			state.buffer = state.buffer.slice(firstNewlineAfterCut + 1);
+		} else {
+			// Fallback: if no newline found, slice from end but this might cut mid-event
+			state.buffer = state.buffer.slice(-MAX_BUFFER_SIZE);
+		}
 	}
 
 	// Process complete lines

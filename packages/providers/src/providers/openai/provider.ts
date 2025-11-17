@@ -166,6 +166,9 @@ interface AnthropicResponse {
 	};
 }
 
+// Global symbol for analytics stream property - ensures same symbol across modules
+const ANALYTICS_STREAM_SYMBOL = Symbol.for("__analyticsStream");
+
 export class OpenAICompatibleProvider extends BaseProvider {
 	name = "openai-compatible";
 
@@ -1077,7 +1080,6 @@ export class OpenAICompatibleProvider extends BaseProvider {
 
 		// Attach the analytics stream as a non-enumerable Symbol property
 		// The response-handler will check for this Symbol and use it instead of calling clone()
-		const ANALYTICS_STREAM_SYMBOL = Symbol("__analyticsStream");
 		Object.defineProperty(clientResponse, ANALYTICS_STREAM_SYMBOL, {
 			value: analyticsStream,
 			writable: false,
