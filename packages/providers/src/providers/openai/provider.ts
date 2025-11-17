@@ -3,6 +3,7 @@ import {
 	mapModelName,
 	validateEndpointUrl,
 } from "@better-ccflare/core";
+import { ANALYTICS_STREAM_SYMBOL } from "@better-ccflare/http-common/symbols";
 import { Logger } from "@better-ccflare/logger";
 import type { Account } from "@better-ccflare/types";
 import { BaseProvider } from "../../base";
@@ -11,9 +12,29 @@ import type { RateLimitInfo, TokenRefreshResult } from "../../types";
 const log = new Logger("OpenAICompatibleProvider");
 
 // OpenAI API Request/Response Types
+interface OpenAIToolCall {
+	id: string;
+	type: "function";
+	function: {
+		name: string;
+		arguments: string;
+	};
+}
+
 interface OpenAIMessage {
-	role: "system" | "user" | "assistant";
-	content: string;
+	role: "system" | "user" | "assistant" | "tool";
+	content: string | null;
+	tool_calls?: OpenAIToolCall[];
+	tool_call_id?: string;
+}
+
+interface OpenAITool {
+	type: "function";
+	function: {
+		name: string;
+		description?: string;
+		parameters?: Record<string, unknown>;
+	};
 }
 
 interface OpenAIRequest {
@@ -24,11 +45,41 @@ interface OpenAIRequest {
 	top_p?: number;
 	stop?: string | string[];
 	stream?: boolean;
+	tools?: OpenAITool[];
 }
+
+interface AnthropicToolUse {
+	type: "tool_use";
+	id: string;
+	name: string;
+	input?: Record<string, unknown>;
+}
+
+interface AnthropicToolResult {
+	type: "tool_result";
+	tool_use_id: string;
+	content: string;
+}
+
+interface AnthropicTextContent {
+	type: "text";
+	text: string;
+}
+
+type AnthropicContentBlock =
+	| AnthropicTextContent
+	| AnthropicToolUse
+	| AnthropicToolResult;
 
 interface AnthropicMessage {
 	role: "user" | "assistant";
-	content: string | Array<{ type: "text"; text: string }>;
+	content: string | AnthropicContentBlock[];
+}
+
+interface AnthropicTool {
+	name: string;
+	description?: string;
+	input_schema?: Record<string, unknown>;
 }
 
 interface AnthropicRequest {
@@ -40,6 +91,7 @@ interface AnthropicRequest {
 	top_p?: number;
 	stop_sequences?: string[];
 	stream?: boolean;
+	tools?: AnthropicTool[];
 }
 
 interface OpenAIUsage {
@@ -49,18 +101,44 @@ interface OpenAIUsage {
 	prompt_tokens_details?: Record<string, unknown>;
 }
 
+interface TransformStreamContext {
+	buffer: string;
+	hasStarted: boolean;
+	extractedModel: string;
+	hasSentStart: boolean;
+	hasSentContentBlockStart: boolean;
+	promptTokens: number;
+	completionTokens: number;
+	encounteredToolCall: boolean;
+	toolCallAccumulators: Record<number, string>;
+	maxToolCallLength: number;
+	maxToolCallIndex: number;
+}
+
+interface OpenAIStreamDelta {
+	content?: string;
+	tool_calls?: Array<{
+		index: number;
+		id?: string;
+		type?: "function";
+		function?: {
+			name?: string;
+			arguments?: string;
+		};
+	}>;
+}
+
 interface OpenAIResponse {
 	id?: string;
 	object?: string;
 	model?: string;
 	choices?: Array<{
 		message?: {
-			content?: string;
+			content?: string | null;
 			role?: string;
+			tool_calls?: OpenAIToolCall[];
 		};
-		delta?: {
-			content?: string;
-		};
+		delta?: OpenAIStreamDelta;
 		finish_reason?: string;
 	}>;
 	usage?: OpenAIUsage;
@@ -75,10 +153,7 @@ interface AnthropicResponse {
 	type: "message" | "error";
 	id?: string;
 	role?: string;
-	content?: Array<{
-		type: "text";
-		text: string;
-	}>;
+	content?: AnthropicContentBlock[];
 	model?: string;
 	stop_reason?: string;
 	stop_sequence?: string;
@@ -342,6 +417,18 @@ export class OpenAICompatibleProvider extends BaseProvider {
 	}
 
 	/**
+	 * Safely parse JSON with error handling
+	 */
+	private safeParseJSON(jsonString: string): any {
+		try {
+			return JSON.parse(jsonString);
+		} catch (error) {
+			log.warn(`Failed to parse JSON: ${jsonString}`, error);
+			return {};
+		}
+	}
+
+	/**
 	 * Calculate cost based on model and token usage
 	 */
 	private calculateCost(
@@ -407,6 +494,34 @@ export class OpenAICompatibleProvider extends BaseProvider {
 	}
 
 	/**
+	 * Helper to remove format: 'uri' from JSON schemas (some providers reject it)
+	 */
+	private removeUriFormat(schema: unknown): unknown {
+		if (Array.isArray(schema)) {
+			return schema.map((item) => this.removeUriFormat(item));
+		}
+
+		if (schema === null || typeof schema !== "object") {
+			return schema;
+		}
+
+		const obj = schema as Record<string, unknown>;
+
+		if (obj.type === "string" && obj.format === "uri") {
+			// biome-ignore lint/correctness/noUnusedVariables: format is intentionally extracted and not used
+			const { format, ...rest } = obj;
+			// Recursively process remaining properties
+			return this.removeUriFormat(rest);
+		}
+
+		const result: Record<string, unknown> = {};
+		for (const key of Object.keys(obj)) {
+			result[key] = this.removeUriFormat(obj[key]);
+		}
+		return result;
+	}
+
+	/**
 	 * Convert Anthropic request format to OpenAI format
 	 */
 	private convertAnthropicRequestToOpenAI(
@@ -440,6 +555,21 @@ export class OpenAICompatibleProvider extends BaseProvider {
 			openaiRequest.stream = anthropicData.stream;
 		}
 
+		// Convert tools
+		if (anthropicData.tools && Array.isArray(anthropicData.tools)) {
+			openaiRequest.tools = anthropicData.tools.map((tool) => ({
+				type: "function",
+				function: {
+					name: tool.name,
+					description: tool.description,
+					parameters: this.removeUriFormat(tool.input_schema) as Record<
+						string,
+						unknown
+					>,
+				},
+			}));
+		}
+
 		// Handle system message (Anthropic has it as top-level, OpenAI has it in messages array)
 		const messages: OpenAIMessage[] = [];
 		if (anthropicData.system) {
@@ -452,27 +582,60 @@ export class OpenAICompatibleProvider extends BaseProvider {
 		// Add user/assistant messages
 		if (anthropicData.messages && Array.isArray(anthropicData.messages)) {
 			for (const message of anthropicData.messages) {
-				const openaiMessage: OpenAIMessage = {
-					role: message.role,
-					content: Array.isArray(message.content)
-						? message.content
-								.filter((part) => part.type === "text")
-								.map((part) => part.text)
-								.join("")
-						: message.content,
-				};
-
 				// Handle content arrays (Anthropic supports rich content)
 				if (Array.isArray(message.content)) {
-					// Convert Anthropic content array to OpenAI string format
-					const textParts = message.content
-						.filter((part: { type: string }) => part.type === "text")
-						.map((part: { text: string }) => part.text)
-						.join("");
-					openaiMessage.content = textParts;
-				}
+					// Extract tool_use blocks
+					const toolUseBlocks = message.content.filter(
+						(item): item is AnthropicToolUse => item.type === "tool_use",
+					);
 
-				messages.push(openaiMessage);
+					// Extract text content
+					const textParts = message.content
+						.filter(
+							(part): part is AnthropicTextContent => part.type === "text",
+						)
+						.map((part) => part.text)
+						.join("");
+
+					// Create OpenAI message with tool calls if present
+					const openaiMessage: OpenAIMessage = {
+						role: message.role,
+						content: textParts || null,
+					};
+
+					if (toolUseBlocks.length > 0) {
+						openaiMessage.tool_calls = toolUseBlocks.map((toolCall) => ({
+							id: toolCall.id,
+							type: "function",
+							function: {
+								name: toolCall.name,
+								arguments: JSON.stringify(toolCall.input || {}),
+							},
+						}));
+					}
+
+					if (openaiMessage.content || openaiMessage.tool_calls) {
+						messages.push(openaiMessage);
+					}
+
+					// Handle tool_result blocks as separate 'tool' role messages
+					const toolResults = message.content.filter(
+						(item): item is AnthropicToolResult => item.type === "tool_result",
+					);
+					for (const toolResult of toolResults) {
+						messages.push({
+							role: "tool",
+							content: toolResult.content,
+							tool_call_id: toolResult.tool_use_id,
+						});
+					}
+				} else {
+					// Simple string content
+					messages.push({
+						role: message.role,
+						content: message.content,
+					});
+				}
 			}
 		}
 
@@ -509,16 +672,33 @@ export class OpenAICompatibleProvider extends BaseProvider {
 			};
 		}
 
+		// Build content array with text and tool calls
+		const content: AnthropicContentBlock[] = [];
+
+		// Add text content if present
+		if (choice.message?.content) {
+			content.push({
+				type: "text",
+				text: choice.message.content,
+			});
+		}
+
+		// Add tool calls if present
+		const toolCalls = choice.message?.tool_calls || [];
+		for (const toolCall of toolCalls) {
+			content.push({
+				type: "tool_use",
+				id: toolCall.id,
+				name: toolCall.function.name,
+				input: this.safeParseJSON(toolCall.function.arguments || "{}"),
+			});
+		}
+
 		return {
 			id: openaiData.id || `msg_${Date.now()}`,
 			type: "message",
 			role: "assistant",
-			content: [
-				{
-					type: "text",
-					text: choice.message?.content || "",
-				},
-			],
+			content,
 			model: openaiData.model,
 			stop_reason: this.mapOpenAIFinishReason(choice.finish_reason),
 			stop_sequence: undefined,
@@ -549,137 +729,374 @@ export class OpenAICompatibleProvider extends BaseProvider {
 	}
 
 	/**
-	 * Transform streaming response from OpenAI to Anthropic format
+	 * Transform OpenAI Server-Sent Events (SSE) streaming response to Anthropic SSE format
+	 *
+	 * ## Transformation Flow:
+	 * 1. **Input**: OpenAI SSE chunks (`data: {...choices[0].delta...}`)
+	 * 2. **Buffering**: Accumulates incomplete lines across chunks
+	 * 3. **Parsing**: Extracts JSON from `data:` lines, ignores malformed chunks
+	 * 4. **Event Mapping**:
+	 *    - `message_start` + `ping` (first chunk)
+	 *    - `content_block_start` (text/tool_use)
+	 *    - `content_block_delta` (text deltas, tool arg accumulation)
+	 *    - `content_block_stop` + `message_stop` (`[DONE]`)
+	 * 5. **State Management**: Tracks context via TransformStreamContext
+	 * 6. **Stream Tee**: Splits into client + analytics streams for usage extraction
+	 *
+	 * ## State Machine:
+	 * ```
+	 * [START] → buffer chunks → parse lines → [JSON delta]
+	 *                                    ↓
+	 *                           text? → content_block_start(0) → text_delta
+	 *                           tool? → content_block_start(N) → input_json_delta
+	 *                                    ↓
+	 *                              [DONE] → content_block_stop → message_delta → message_stop
+	 * ```
+	 *
+	 * @param response - Original OpenAI streaming response
+	 * @returns Transformed Anthropic-compatible streaming Response
 	 */
-	private async transformStreamingResponse(
-		response: Response,
-	): Promise<Response> {
-		const reader = response.body?.getReader();
-		if (!reader) {
+	private transformStreamingResponse(response: Response): Response {
+		if (!response.body) {
 			return response;
 		}
 
 		const encoder = new TextEncoder();
 		const decoder = new TextDecoder();
 
-		const stream = new ReadableStream({
-			async start(controller) {
-				try {
-					// Send initial message_start event
-					const messageStart = {
-						type: "message_start",
-						message: {
-							id: `msg_${Date.now()}`,
-							type: "message",
-							role: "assistant",
-							content: [],
-							model: "unknown",
-							stop_reason: null,
-							stop_sequence: undefined,
-							usage: {
-								input_tokens: 0,
-								output_tokens: 0,
-								cache_creation_input_tokens: 0,
-								cache_read_input_tokens: 0,
-							},
-						},
-					};
-
-					controller.enqueue(encoder.encode(`event: message_start\n`));
-					controller.enqueue(
-						encoder.encode(`data: ${JSON.stringify(messageStart)}\n\n`),
-					);
-
-					// Send content_block_start event
-					const contentBlockStart = {
-						type: "content_block_start",
-						index: 0,
-						content_block: {
-							type: "text",
-							text: "",
-						},
-					};
-
-					controller.enqueue(encoder.encode(`event: content_block_start\n`));
-					controller.enqueue(
-						encoder.encode(`data: ${JSON.stringify(contentBlockStart)}\n\n`),
-					);
-
-					// Process OpenAI streaming chunks
-					let buffer = "";
-					while (true) {
-						const { done, value } = await reader.read();
-						if (done) break;
-
-						buffer += decoder.decode(value, { stream: true });
-						const lines = buffer.split("\n");
-						buffer = lines.pop() || ""; // Keep incomplete line in buffer
+		// Use pipeThrough to transform the stream while preserving clonability
+		const transformedBody = response.body.pipeThrough(
+			new TransformStream<Uint8Array, Uint8Array>({
+				start(_controller) {
+					// Initialize context object for streaming state
+					(this as any).context = {
+						buffer: "",
+						hasStarted: false,
+						extractedModel: "unknown",
+						hasSentStart: false,
+						hasSentContentBlockStart: false,
+						promptTokens: 0,
+						completionTokens: 0,
+						encounteredToolCall: false,
+						toolCallAccumulators: {},
+						maxToolCallLength: 1_000_000,
+						maxToolCallIndex: 100,
+					} as TransformStreamContext;
+				},
+				transform(chunk, controller) {
+					try {
+						const context = (this as any).context as TransformStreamContext;
+						if (!context) {
+							log.error("TransformStream context not initialized");
+							return;
+						}
+						// Decode the chunk and add to buffer
+						context.buffer += decoder.decode(chunk, { stream: true });
+						const lines = context.buffer.split("\n");
+						// Keep incomplete line in buffer
+						context.buffer = lines.pop() || "";
 
 						for (const line of lines) {
-							if (line.startsWith("data: ") && line !== "data: [DONE]") {
-								try {
-									const data = JSON.parse(line.slice(6));
-									const delta = data.choices?.[0]?.delta;
+							const trimmed = line.trim();
+							if (!trimmed || !trimmed.startsWith("data:")) continue;
 
-									if (delta?.content) {
-										const contentBlockDelta = {
-											type: "content_block_delta",
-											index: 0,
-											delta: {
-												type: "text_delta",
-												text: delta.content,
-											},
+							const dataStr = trimmed.slice(5).trim();
+
+							// Handle [DONE] marker
+							if (dataStr === "[DONE]") {
+								// Send content_block_stop for tool calls or text
+								if (context.encounteredToolCall) {
+									// Stop all tool call blocks
+									for (const idx in context.toolCallAccumulators) {
+										const contentBlockStop = {
+											type: "content_block_stop",
+											index: Number.parseInt(idx, 10),
 										};
-
 										controller.enqueue(
-											encoder.encode(`event: content_block_delta\n`),
+											encoder.encode(`event: content_block_stop\n`),
 										);
 										controller.enqueue(
 											encoder.encode(
-												`data: ${JSON.stringify(contentBlockDelta)}\n\n`,
+												`data: ${JSON.stringify(contentBlockStop)}\n\n`,
 											),
 										);
 									}
-								} catch {
-									// Ignore JSON parse errors
+									// Cleanup accumulators after processing
+									context.toolCallAccumulators = {};
+								} else if (context.hasSentContentBlockStart) {
+									const contentBlockStop = {
+										type: "content_block_stop",
+										index: 0,
+									};
+									controller.enqueue(
+										encoder.encode(`event: content_block_stop\n`),
+									);
+									controller.enqueue(
+										encoder.encode(
+											`data: ${JSON.stringify(contentBlockStop)}\n\n`,
+										),
+									);
 								}
+
+								// Send message_delta with appropriate stop_reason
+								const messageDelta = {
+									type: "message_delta",
+									delta: {
+										stop_reason: context.encounteredToolCall
+											? "tool_use"
+											: "end_turn",
+										stop_sequence: null,
+									},
+									usage: {
+										input_tokens: context.promptTokens,
+										output_tokens: context.completionTokens,
+									},
+								};
+								controller.enqueue(encoder.encode(`event: message_delta\n`));
+								controller.enqueue(
+									encoder.encode(`data: ${JSON.stringify(messageDelta)}\n\n`),
+								);
+
+								// Send message_stop
+								const messageStop = {
+									type: "message_stop",
+								};
+								controller.enqueue(encoder.encode(`event: message_stop\n`));
+								controller.enqueue(
+									encoder.encode(`data: ${JSON.stringify(messageStop)}\n\n`),
+								);
+
+								// Cleanup entire context after stream completion to prevent memory leaks
+								(this as any).context = null;
+								continue;
+							}
+
+							// Parse OpenAI chunk
+							try {
+								const data = JSON.parse(dataStr);
+
+								// Extract model from first chunk
+								if (!context.hasStarted && data.model) {
+									context.extractedModel = data.model;
+									context.hasStarted = true;
+								}
+
+								// Extract usage data if present (typically in last chunk before [DONE])
+								if (data.usage) {
+									if (data.usage.prompt_tokens) {
+										context.promptTokens = data.usage.prompt_tokens;
+									}
+									if (data.usage.completion_tokens) {
+										context.completionTokens = data.usage.completion_tokens;
+									}
+								}
+
+								// Send message_start on first chunk
+								if (!context.hasSentStart) {
+									context.hasSentStart = true;
+									const messageStart = {
+										type: "message_start",
+										message: {
+											id: `msg_${Date.now()}`,
+											type: "message",
+											role: "assistant",
+											content: [],
+											model: context.extractedModel,
+											stop_reason: null,
+											stop_sequence: null,
+											usage: {
+												input_tokens: 0,
+												output_tokens: 0,
+											},
+										},
+									};
+									controller.enqueue(encoder.encode(`event: message_start\n`));
+									controller.enqueue(
+										encoder.encode(`data: ${JSON.stringify(messageStart)}\n\n`),
+									);
+
+									// Send ping
+									const ping = { type: "ping" };
+									controller.enqueue(encoder.encode(`event: ping\n`));
+									controller.enqueue(
+										encoder.encode(`data: ${JSON.stringify(ping)}\n\n`),
+									);
+								}
+
+								const delta = data.choices?.[0]?.delta;
+
+								// Handle tool call deltas
+								if (delta?.tool_calls) {
+									for (const toolCall of delta.tool_calls) {
+										context.encounteredToolCall = true;
+										const idx = toolCall.index;
+
+										// Validate tool call index bounds
+										if (
+											typeof idx !== "number" ||
+											idx < 0 ||
+											idx >= context.maxToolCallIndex
+										) {
+											log.warn(
+												`Invalid tool call index: ${idx} (max: ${context.maxToolCallIndex})`,
+											);
+											continue;
+										}
+
+										// Send content_block_start on first tool call chunk
+										if (context.toolCallAccumulators[idx] === undefined) {
+											if (!toolCall.id || !toolCall.function?.name) {
+												log.warn(
+													`Missing tool call id or name for index: ${idx}`,
+												);
+												continue;
+											}
+											context.toolCallAccumulators[idx] = "";
+											const contentBlockStart = {
+												type: "content_block_start",
+												index: idx,
+												content_block: {
+													type: "tool_use",
+													id: toolCall.id,
+													name: toolCall.function.name,
+													input: {},
+												},
+											};
+											controller.enqueue(
+												encoder.encode(`event: content_block_start\n`),
+											);
+											controller.enqueue(
+												encoder.encode(
+													`data: ${JSON.stringify(contentBlockStart)}\n\n`,
+												),
+											);
+										}
+
+										// Accumulate and send argument deltas with validation
+										const newArgs = toolCall.function?.arguments || "";
+										if (newArgs.length > context.maxToolCallLength) {
+											log.warn(
+												`Tool call arguments exceed max length for index ${idx} (${newArgs.length}/${context.maxToolCallLength})`,
+											);
+											continue;
+										}
+										const oldArgs = context.toolCallAccumulators[idx] || "";
+
+										// Validate that new arguments start with old arguments (streaming consistency)
+										if (
+											newArgs.startsWith(oldArgs) &&
+											newArgs.length > oldArgs.length
+										) {
+											const deltaText = newArgs.substring(oldArgs.length);
+											const contentBlockDelta = {
+												type: "content_block_delta",
+												index: idx,
+												delta: {
+													type: "input_json_delta",
+													partial_json: deltaText,
+												},
+											};
+											controller.enqueue(
+												encoder.encode(`event: content_block_delta\n`),
+											);
+											controller.enqueue(
+												encoder.encode(
+													`data: ${JSON.stringify(contentBlockDelta)}\n\n`,
+												),
+											);
+											context.toolCallAccumulators[idx] = newArgs;
+										} else if (newArgs.length < oldArgs.length) {
+											// Handle case where arguments are reset (rare but possible)
+											log.debug(`Tool call arguments reset for index ${idx}`);
+											context.toolCallAccumulators[idx] = newArgs;
+										}
+									}
+								} else if (delta?.content) {
+									// Send content_block_start on first content
+									if (!context.hasSentContentBlockStart) {
+										context.hasSentContentBlockStart = true;
+										const contentBlockStart = {
+											type: "content_block_start",
+											index: 0,
+											content_block: {
+												type: "text",
+												text: "",
+											},
+										};
+										controller.enqueue(
+											encoder.encode(`event: content_block_start\n`),
+										);
+										controller.enqueue(
+											encoder.encode(
+												`data: ${JSON.stringify(contentBlockStart)}\n\n`,
+											),
+										);
+									}
+
+									// Send content delta
+									const contentBlockDelta = {
+										type: "content_block_delta",
+										index: 0,
+										delta: {
+											type: "text_delta",
+											text: delta.content,
+										},
+									};
+									controller.enqueue(
+										encoder.encode(`event: content_block_delta\n`),
+									);
+									controller.enqueue(
+										encoder.encode(
+											`data: ${JSON.stringify(contentBlockDelta)}\n\n`,
+										),
+									);
+								}
+							} catch (_parseError) {
+								// Ignore JSON parse errors for malformed chunks
 							}
 						}
+					} catch (error) {
+						log.error("Error in transform:", error);
 					}
+				},
+				flush(_controller) {
+					const context = (this as any).context as TransformStreamContext;
+					if (context && Object.keys(context.toolCallAccumulators).length > 0) {
+						log.warn("Stream terminated with unprocessed tool calls", {
+							remainingAccumulators: Object.keys(context.toolCallAccumulators)
+								.length,
+						});
+					}
+					// Clean up context
+					(this as any).context = null;
+				},
+			}),
+		);
 
-					// Send content_block_stop event
-					const contentBlockStop = {
-						type: "content_block_stop",
-						index: 0,
-					};
+		// The issue: response.clone() on a pipeThrough'd Response returns the original
+		// untransformed body in some environments. Solution: Manually tee the stream
+		// and attach the analytics stream as a property for response-handler to use.
 
-					controller.enqueue(encoder.encode(`event: content_block_stop\n`));
-					controller.enqueue(
-						encoder.encode(`data: ${JSON.stringify(contentBlockStop)}\n\n`),
-					);
+		// Tee the transformed stream into two independent streams
+		const [clientStream, analyticsStream] = transformedBody.tee();
 
-					// Send message_stop event
-					const messageStop = {
-						type: "message_stop",
-					};
-
-					controller.enqueue(encoder.encode(`event: message_stop\n`));
-					controller.enqueue(
-						encoder.encode(`data: ${JSON.stringify(messageStop)}\n\n`),
-					);
-				} catch (error) {
-					log.error("Error transforming streaming response:", error);
-				} finally {
-					controller.close();
-				}
-			},
-		});
-
-		return new Response(stream, {
+		// Create the response that will be returned to the client
+		const clientResponse = new Response(clientStream, {
 			status: response.status,
 			statusText: response.statusText,
 			headers: this.sanitizeHeaders(response.headers),
 		});
+
+		// Attach the analytics stream as a non-enumerable Symbol property
+		// The response-handler will check for this Symbol and use it instead of calling clone()
+		Object.defineProperty(clientResponse, ANALYTICS_STREAM_SYMBOL, {
+			value: analyticsStream,
+			writable: false,
+			enumerable: false,
+			configurable: false,
+		});
+
+		return clientResponse;
 	}
 
 	/**

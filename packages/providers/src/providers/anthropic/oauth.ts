@@ -10,7 +10,9 @@ import type {
 const oauthLog = new Logger("AnthropicOAuthProvider");
 
 export class AnthropicOAuthProvider implements OAuthProvider {
-	getOAuthConfig(mode: "console" | "claude-oauth" = "console"): OAuthProviderConfig {
+	getOAuthConfig(
+		mode: "console" | "claude-oauth" = "console",
+	): OAuthProviderConfig {
 		const baseUrl =
 			mode === "console"
 				? "https://console.anthropic.com"

@@ -313,9 +313,13 @@ class PriceCatalogue {
 			// Return a deep copy to avoid potential mutation of original data
 			if (!data) {
 				// If data is null, return the bundled pricing as fallback
-				return structuredClone ? structuredClone(BUNDLED_PRICING) : JSON.parse(JSON.stringify(BUNDLED_PRICING));
+				return structuredClone
+					? structuredClone(BUNDLED_PRICING)
+					: JSON.parse(JSON.stringify(BUNDLED_PRICING));
 			}
-			return structuredClone ? structuredClone(data) : JSON.parse(JSON.stringify(data));
+			return structuredClone
+				? structuredClone(data)
+				: JSON.parse(JSON.stringify(data));
 		}
 
 		return {
@@ -455,7 +459,9 @@ class PriceCatalogue {
 			data = this.mergePricingData(data, BUNDLED_PRICING);
 		} else {
 			// Fall back to bundled pricing - create a deep copy to avoid mutation
-			data = structuredClone ? structuredClone(BUNDLED_PRICING) : JSON.parse(JSON.stringify(BUNDLED_PRICING));
+			data = structuredClone
+				? structuredClone(BUNDLED_PRICING)
+				: JSON.parse(JSON.stringify(BUNDLED_PRICING));
 		}
 
 		// Merge nanogpt pricing once

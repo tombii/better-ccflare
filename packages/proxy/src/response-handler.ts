@@ -3,6 +3,7 @@ import {
 	sanitizeRequestHeaders,
 	withSanitizedProxyHeaders,
 } from "@better-ccflare/http-common";
+import { ANALYTICS_STREAM_SYMBOL } from "@better-ccflare/http-common/symbols";
 import type { Account } from "@better-ccflare/types";
 import type { ProxyContext } from "./handlers";
 import type { ChunkMessage, EndMessage, StartMessage } from "./worker-messages";
@@ -132,8 +133,17 @@ export async function forwardToClient(
 	 *  STREAMING RESPONSES — tee with Response.clone() and send chunks
 	 *********************************************************************/
 	if (isStream && response.body) {
-		// Clone response once for background consumption.
-		const analyticsClone = response.clone();
+		// For OpenAI providers, use pre-teed analytics stream if available
+		// Otherwise clone the response
+		const preTeedStream = (response as any)[ANALYTICS_STREAM_SYMBOL];
+		const analyticsClone =
+			preTeedStream && preTeedStream instanceof ReadableStream
+				? new Response(preTeedStream, {
+						status: response.status,
+						statusText: response.statusText,
+						headers: response.headers,
+					})
+				: response.clone();
 
 		(async () => {
 			const STREAM_TIMEOUT_MS = 300000; // 5 minutes max stream duration

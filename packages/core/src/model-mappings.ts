@@ -144,12 +144,7 @@ export function mapModelName(anthropicModel: string, account: Account): string {
 
 	for (const pattern of KNOWN_PATTERNS) {
 		if (normalizedModel.includes(pattern)) {
-			const defaultModels = {
-				opus: "openai/gpt-5",
-				haiku: "openai/gpt-5-mini",
-				sonnet: "openai/gpt-5",
-			};
-			const mappedModel = mappings[pattern] || defaultModels[pattern];
+			const mappedModel = mappings[pattern] || DEFAULT_MODEL_MAPPINGS[pattern];
 
 			if (
 				process.env.DEBUG?.includes("model") ||
