@@ -1059,6 +1059,17 @@ export class OpenAICompatibleProvider extends BaseProvider {
 						log.error("Error in transform:", error);
 					}
 				},
+				flush(_controller) {
+					const context = (this as any).context as TransformStreamContext;
+					if (context && Object.keys(context.toolCallAccumulators).length > 0) {
+						log.warn("Stream terminated with unprocessed tool calls", {
+							remainingAccumulators: Object.keys(context.toolCallAccumulators)
+								.length,
+						});
+					}
+					// Clean up context
+					(this as any).context = null;
+				},
 			}),
 		);
 
