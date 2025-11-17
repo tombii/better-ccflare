@@ -3,6 +3,7 @@ import {
 	mapModelName,
 	validateEndpointUrl,
 } from "@better-ccflare/core";
+import { ANALYTICS_STREAM_SYMBOL } from "@better-ccflare/http-common/symbols";
 import { Logger } from "@better-ccflare/logger";
 import type { Account } from "@better-ccflare/types";
 import { BaseProvider } from "../../base";
@@ -165,9 +166,6 @@ interface AnthropicResponse {
 		message: string;
 	};
 }
-
-// Global symbol for analytics stream property - ensures same symbol across modules
-const ANALYTICS_STREAM_SYMBOL = Symbol.for("__analyticsStream");
 
 export class OpenAICompatibleProvider extends BaseProvider {
 	name = "openai-compatible";

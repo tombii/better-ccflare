@@ -3,6 +3,7 @@ import {
 	sanitizeRequestHeaders,
 	withSanitizedProxyHeaders,
 } from "@better-ccflare/http-common";
+import { ANALYTICS_STREAM_SYMBOL } from "@better-ccflare/http-common/symbols";
 import type { Account } from "@better-ccflare/types";
 import type { ProxyContext } from "./handlers";
 import type { ChunkMessage, EndMessage, StartMessage } from "./worker-messages";
@@ -134,7 +135,6 @@ export async function forwardToClient(
 	if (isStream && response.body) {
 		// For OpenAI providers, use pre-teed analytics stream if available
 		// Otherwise clone the response
-		const ANALYTICS_STREAM_SYMBOL = Symbol.for("__analyticsStream");
 		const preTeedStream = (response as any)[ANALYTICS_STREAM_SYMBOL];
 		const analyticsClone =
 			preTeedStream && preTeedStream instanceof ReadableStream
