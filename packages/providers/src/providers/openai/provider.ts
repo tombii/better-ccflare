@@ -416,12 +416,6 @@ export class OpenAICompatibleProvider extends BaseProvider {
 	}
 
 	/**
-	 * Streaming limits to prevent memory exhaustion attacks
-	 */
-	private readonly MAX_TOOL_CALL_LENGTH = 1_000_000; // 1MB max args per tool call
-	private readonly MAX_TOOL_CALL_INDEX = 100; // Max 100 parallel tool calls
-
-	/**
 	 * Safely parse JSON with error handling
 	 */
 	private safeParseJSON(jsonString: string): any {
@@ -789,17 +783,6 @@ export class OpenAICompatibleProvider extends BaseProvider {
 					} as TransformStreamContext;
 				},
 				transform(chunk, controller) {
-				},
-				flush(controller) {
-					const context = (this as any).context as TransformStreamContext;
-					if (context && Object.keys(context.toolCallAccumulators).length > 0) {
-						log.warn("Stream terminated with unprocessed tool calls", {
-							remainingAccumulators: Object.keys(context.toolCallAccumulators).length
-						});
-						// Clean up any remaining state
-						(this as any).context = null;
-					}
-				},
 					try {
 						const context = (this as any).context as TransformStreamContext;
 						if (!context) {
@@ -951,10 +934,10 @@ export class OpenAICompatibleProvider extends BaseProvider {
 										if (
 											typeof idx !== "number" ||
 											idx < 0 ||
-											idx >= this.MAX_TOOL_CALL_INDEX
+											idx >= context.maxToolCallIndex
 										) {
 											log.warn(
-												`Invalid tool call index: ${idx} (max: ${this.MAX_TOOL_CALL_INDEX})`,
+												`Invalid tool call index: ${idx} (max: ${context.maxToolCallIndex})`,
 											);
 											continue;
 										}
@@ -990,9 +973,9 @@ export class OpenAICompatibleProvider extends BaseProvider {
 
 										// Accumulate and send argument deltas with validation
 										const newArgs = toolCall.function?.arguments || "";
-										if (newArgs.length > this.MAX_TOOL_CALL_LENGTH) {
+										if (newArgs.length > context.maxToolCallLength) {
 											log.warn(
-												`Tool call arguments exceed max length for index ${idx} (${newArgs.length}/${this.MAX_TOOL_CALL_LENGTH})`,
+												`Tool call arguments exceed max length for index ${idx} (${newArgs.length}/${context.maxToolCallLength})`,
 											);
 											continue;
 										}
@@ -1092,9 +1075,10 @@ export class OpenAICompatibleProvider extends BaseProvider {
 			headers: this.sanitizeHeaders(response.headers),
 		});
 
-		// Attach the analytics stream as a non-enumerable property
-		// The response-handler will check for this and use it instead of calling clone()
-		Object.defineProperty(clientResponse, "__analyticsStream", {
+		// Attach the analytics stream as a non-enumerable Symbol property
+		// The response-handler will check for this Symbol and use it instead of calling clone()
+		const ANALYTICS_STREAM_SYMBOL = Symbol("__analyticsStream");
+		Object.defineProperty(clientResponse, ANALYTICS_STREAM_SYMBOL, {
 			value: analyticsStream,
 			writable: false,
 			enumerable: false,
