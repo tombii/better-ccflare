@@ -1062,12 +1062,12 @@ export class OpenAICompatibleProvider extends BaseProvider {
 				flush(_controller) {
 					const context = (this as any).context as TransformStreamContext;
 					if (context && Object.keys(context.toolCallAccumulators).length > 0) {
-						log.warn("Stream terminated with unprocessed tool calls", {
-							remainingAccumulators: Object.keys(context.toolCallAccumulators)
-								.length,
-						});
+						log.warn(
+							"Stream terminated with unprocessed tool calls, cleaning up accumulators",
+						);
+						// Add logic to handle incomplete tool calls gracefully
+						context.toolCallAccumulators = {};
 					}
-					// Clean up context
 					(this as any).context = null;
 				},
 			}),
