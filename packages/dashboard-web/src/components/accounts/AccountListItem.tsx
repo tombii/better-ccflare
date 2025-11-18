@@ -72,7 +72,6 @@ export function AccountListItem({
 							<OAuthTokenStatus
 								accountName={account.name}
 								hasRefreshToken={account.hasRefreshToken}
-								provider={account.provider}
 							/>
 							{providerSupportsAutoFeatures(account.provider) && (
 								<>
