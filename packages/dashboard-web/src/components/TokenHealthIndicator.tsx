@@ -39,7 +39,11 @@ export function TokenHealthIndicator({
 				if (response?.success) {
 					setTokenHealth(response.data);
 				} else {
-					console.error("API returned error for account:", accountName, response);
+					console.error(
+						"API returned error for account:",
+						accountName,
+						response,
+					);
 					setTokenHealth(null);
 				}
 			} else {
@@ -47,7 +51,7 @@ export function TokenHealthIndicator({
 				if (response?.success && response.data?.accounts) {
 					// Filter out API key accounts (no-refresh-token) and find the worst status
 					const oauthAccounts = response.data.accounts.filter(
-						(acc: any) => acc.status !== "no-refresh-token"
+						(acc: any) => acc.status !== "no-refresh-token",
 					);
 
 					if (oauthAccounts.length === 0) {
@@ -66,7 +70,10 @@ export function TokenHealthIndicator({
 
 					setTokenHealth(worstAccount);
 				} else {
-					console.error("API returned error for global token health:", response);
+					console.error(
+						"API returned error for global token health:",
+						response,
+					);
 					setTokenHealth(null);
 				}
 			}
@@ -164,6 +171,10 @@ export function TokenHealthIndicator({
 				<span className="text-gray-600">Loading...</span>
 			</div>
 		);
+	}
+
+	if (!tokenHealth) {
+		return null;
 	}
 
 	return (

@@ -1,7 +1,6 @@
 import { AccountPresenter } from "@better-ccflare/ui-common";
 import {
 	AlertCircle,
-	CheckCircle,
 	Edit2,
 	Globe,
 	Hash,
@@ -16,8 +15,8 @@ import {
 	providerSupportsAutoFeatures,
 	providerSupportsModelMappings,
 } from "../../utils/provider-utils";
-import { Button } from "../ui/button";
 import { OAuthTokenStatus } from "../OAuthTokenStatus";
+import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
 import { RateLimitProgress } from "./RateLimitProgress";
 
@@ -72,7 +71,9 @@ export function AccountListItem({
 							</span>
 							<OAuthTokenStatus
 								accountName={account.name}
-								hasRefreshToken={!!(account.refresh_token || account.provider === "anthropic")}
+								hasRefreshToken={
+									account.provider === "anthropic" || account.tokenStatus === "valid"
+								}
 								provider={account.provider}
 							/>
 							{providerSupportsAutoFeatures(account.provider) && (
@@ -104,10 +105,11 @@ export function AccountListItem({
 					</div>
 					<div className="flex items-center gap-2">
 						{presenter.isRateLimited && (
-							<AlertCircle
-								className="h-4 w-4 text-yellow-600"
+							<span
 								title="Account is rate-limited - requests will be rejected until the limit resets"
-							/>
+							>
+								<AlertCircle className="h-4 w-4 text-yellow-600" />
+							</span>
 						)}
 						<span className="text-sm">{presenter.requestCount} requests</span>
 						{presenter.isPaused && (
