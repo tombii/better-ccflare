@@ -10,6 +10,18 @@ import type {
 const oauthLog = new Logger("AnthropicOAuthProvider");
 
 export class AnthropicOAuthProvider implements OAuthProvider {
+	/**
+	 * Generate a secure random state string for CSRF protection
+	 * This is separate from the PKCE verifier and should never contain secrets
+	 */
+	private generateSecureRandomState(): string {
+		const array = new Uint8Array(32);
+		crypto.getRandomValues(array);
+		return Array.from(array, (byte) => byte.toString(16).padStart(2, "0")).join(
+			"",
+		);
+	}
+
 	getOAuthConfig(
 		mode: "console" | "claude-oauth" = "console",
 	): OAuthProviderConfig {
@@ -29,6 +41,9 @@ export class AnthropicOAuthProvider implements OAuthProvider {
 	}
 
 	generateAuthUrl(config: OAuthProviderConfig, pkce: PKCEChallenge): string {
+		// Generate secure random state for CSRF protection (separate from PKCE verifier)
+		const state = this.generateSecureRandomState();
+
 		// For claude-oauth mode (Claude CLI), use the login flow that redirects to OAuth
 		if (config.mode === "claude-oauth") {
 			const baseUrl = config.authorizeUrl.split("/oauth/authorize")[0];
@@ -40,7 +55,7 @@ export class AnthropicOAuthProvider implements OAuthProvider {
 			oauthParams.set("scope", config.scopes.join(" "));
 			oauthParams.set("code_challenge", pkce.challenge);
 			oauthParams.set("code_challenge_method", "S256");
-			oauthParams.set("state", pkce.verifier);
+			oauthParams.set("state", state);
 
 			const returnTo = `/oauth/authorize?${oauthParams.toString()}`;
 
@@ -59,7 +74,7 @@ export class AnthropicOAuthProvider implements OAuthProvider {
 			url.searchParams.set("scope", config.scopes.join(" "));
 			url.searchParams.set("code_challenge", pkce.challenge);
 			url.searchParams.set("code_challenge_method", "S256");
-			url.searchParams.set("state", pkce.verifier);
+			url.searchParams.set("state", state);
 			return url.toString();
 		}
 	}
@@ -69,20 +84,15 @@ export class AnthropicOAuthProvider implements OAuthProvider {
 		verifier: string,
 		config: OAuthProviderConfig,
 	): Promise<TokenResult> {
-		const splits = code.split("#");
-
 		oauthLog.debug(`OAuth exchangeCode called:`, {
-			fullCodePreview: `${code.substring(0, 30)}...`,
-			codePart: splits[0]?.substring(0, 20),
-			statePart: splits[1]?.substring(0, 20),
+			codePreview: `${code.substring(0, 30)}...`,
 			verifierPreview: `${verifier.substring(0, 20)}...`,
 			clientId: config.clientId,
 			mode: config.mode,
 		});
 
 		const requestBody = {
-			code: splits[0],
-			state: splits[1],
+			code,
 			grant_type: "authorization_code",
 			client_id: config.clientId,
 			redirect_uri: config.redirectUri,
