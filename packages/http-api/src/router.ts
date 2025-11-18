@@ -145,13 +145,22 @@ export class APIRouter {
 		const reauthNeededHandler = createReauthNeededHandler(dbOps);
 
 		this.handlers.set("GET:/api/token-health", tokenHealthHandler);
-		this.handlers.set("GET:/api/token-health/reauth-needed", reauthNeededHandler);
-		this.handlers.set("GET:/api/token-health/account/:accountName", (req, url) => {
-			const pathParts = url.pathname.split("/");
-			const accountName = pathParts[pathParts.length - 1];
-			const accountTokenHealthHandler = createAccountTokenHealthHandler(dbOps, accountName);
-			return accountTokenHealthHandler();
-		});
+		this.handlers.set(
+			"GET:/api/token-health/reauth-needed",
+			reauthNeededHandler,
+		);
+		this.handlers.set(
+			"GET:/api/token-health/account/:accountName",
+			(_req, url) => {
+				const pathParts = url.pathname.split("/");
+				const accountName = pathParts[pathParts.length - 1];
+				const accountTokenHealthHandler = createAccountTokenHealthHandler(
+					dbOps,
+					accountName,
+				);
+				return accountTokenHealthHandler();
+			},
+		);
 
 		this.handlers.set("POST:/api/oauth/init", (req) => oauthInitHandler(req));
 		this.handlers.set("POST:/api/oauth/callback", (req) =>

@@ -1105,23 +1105,68 @@ class API extends HttpClient {
 	}
 
 	async getTokenHealth(): Promise<{ success: boolean; data: any }> {
+		const startTime = Date.now();
 		const url = "/api/token-health";
-		const response = await this.get(url);
-		return response.data;
+
+		this.logger.debug(`→ GET ${url}`);
+
+		try {
+			const response = await this.get<{ success: boolean; data: any }>(url);
+			const duration = Date.now() - startTime;
+			this.logger.debug(`← GET ${url} - 200 (${duration}ms)`);
+			return response;
+		} catch (error) {
+			const duration = Date.now() - startTime;
+			this.logger.error(`✗ GET ${url} - ERROR (${duration}ms)`, {
+				error: error instanceof Error ? error.message : String(error),
+				stack: error instanceof Error ? error.stack : undefined,
+			});
+			throw error;
+		}
 	}
 
 	async getReauthNeeded(): Promise<{ success: boolean; data: any }> {
+		const startTime = Date.now();
 		const url = "/api/token-health/reauth-needed";
-		const response = await this.get(url);
-		return response.data;
+
+		this.logger.debug(`→ GET ${url}`);
+
+		try {
+			const response = await this.get<{ success: boolean; data: any }>(url);
+			const duration = Date.now() - startTime;
+			this.logger.debug(`← GET ${url} - 200 (${duration}ms)`);
+			return response;
+		} catch (error) {
+			const duration = Date.now() - startTime;
+			this.logger.error(`✗ GET ${url} - ERROR (${duration}ms)`, {
+				error: error instanceof Error ? error.message : String(error),
+				stack: error instanceof Error ? error.stack : undefined,
+			});
+			throw error;
+		}
 	}
 
 	async getAccountTokenHealth(
 		accountName: string,
 	): Promise<{ success: boolean; data: any }> {
+		const startTime = Date.now();
 		const url = `/api/token-health/account/${accountName}`;
-		const response = await this.get(url);
-		return response.data;
+
+		this.logger.debug(`→ GET ${url}`);
+
+		try {
+			const response = await this.get<{ success: boolean; data: any }>(url);
+			const duration = Date.now() - startTime;
+			this.logger.debug(`← GET ${url} - 200 (${duration}ms)`);
+			return response;
+		} catch (error) {
+			const duration = Date.now() - startTime;
+			this.logger.error(`✗ GET ${url} - ERROR (${duration}ms)`, {
+				error: error instanceof Error ? error.message : String(error),
+				stack: error instanceof Error ? error.stack : undefined,
+			});
+			throw error;
+		}
 	}
 }
 

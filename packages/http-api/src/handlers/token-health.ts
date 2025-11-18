@@ -43,14 +43,20 @@ export function createReauthNeededHandler(dbOps: DatabaseOperations) {
 /**
  * Create account token health handler
  */
-export function createAccountTokenHealthHandler(dbOps: DatabaseOperations, accountName: string) {
+export function createAccountTokenHealthHandler(
+	dbOps: DatabaseOperations,
+	accountName: string,
+) {
 	return (): Response => {
 		const account = dbOps.getAccount(accountName);
 		if (!account) {
-			return jsonResponse({
-				success: false,
-				error: `Account '${accountName}' not found`,
-			}, 404);
+			return jsonResponse(
+				{
+					success: false,
+					error: `Account '${accountName}' not found`,
+				},
+				404,
+			);
 		}
 
 		const tokenHealth = checkRefreshTokenHealth(account);

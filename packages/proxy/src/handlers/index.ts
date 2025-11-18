@@ -22,11 +22,11 @@ export {
 	type TokenHealthStatus,
 } from "./token-health-monitor";
 export {
+	startGlobalTokenHealthChecks,
+	stopGlobalTokenHealthChecks,
+} from "./token-health-service";
+export {
 	clearAccountRefreshCache,
 	getValidAccessToken,
 	registerRefreshClearer,
 } from "./token-manager";
-export {
-	startGlobalTokenHealthChecks,
-	stopGlobalTokenHealthChecks,
-} from "./token-health-service";
