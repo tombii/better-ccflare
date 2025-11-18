@@ -1,5 +1,5 @@
 import { AlertTriangle, CheckCircle, RefreshCw, XCircle } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { api } from "../api";
 
 type TokenHealthStatus =
@@ -31,36 +31,56 @@ export function TokenHealthIndicator({
 	const [tokenHealth, setTokenHealth] = useState<TokenHealthData | null>(null);
 	const [loading, setLoading] = useState(true);
 
-	const loadTokenHealth = useCallback(async () => {
+	const _loadTokenHealth = useCallback(async () => {
 		setLoading(true);
 		try {
 			if (accountName) {
 				const response = await api.getAccountTokenHealth(accountName);
 				if (response.success) {
 					setTokenHealth(response.data);
+				} else {
+					console.error("API returned error for account:", accountName, response);
+					setTokenHealth(null);
 				}
 			} else {
 				const response = await api.getTokenHealth();
-				if (response.success) {
-					// Get the worst status from all accounts
-					const accounts = response.data.accounts;
+				if (response.success && response.data?.accounts) {
+					// Filter out API key accounts (no-refresh-token) and find the worst status
+					const oauthAccounts = response.data.accounts.filter(
+						(acc: any) => acc.status !== "no-refresh-token"
+					);
+
+					if (oauthAccounts.length === 0) {
+						// No OAuth accounts, don't show anything
+						setTokenHealth(null);
+						return;
+					}
+
 					const worstAccount =
-						accounts.find(
+						oauthAccounts.find(
 							(acc: any) =>
 								acc.status === "expired" || acc.status === "critical",
 						) ||
-						accounts.find((acc: any) => acc.status === "warning") ||
-						accounts[0];
+						oauthAccounts.find((acc: any) => acc.status === "warning") ||
+						oauthAccounts[0];
 
 					setTokenHealth(worstAccount);
+				} else {
+					console.error("API returned error for global token health:", response);
+					setTokenHealth(null);
 				}
 			}
 		} catch (error) {
 			console.error("Failed to load token health:", error);
+			setTokenHealth(null);
 		} finally {
 			setLoading(false);
 		}
 	}, [accountName]);
+
+	useEffect(() => {
+		_loadTokenHealth();
+	}, [_loadTokenHealth]);
 
 	const getStatusIcon = (status: TokenHealthStatus) => {
 		switch (status) {
@@ -117,7 +137,13 @@ export function TokenHealthIndicator({
 		}
 	};
 
-	if (loading || !tokenHealth) {
+	// Don't show anything if not loading and no token health data
+	// This handles API key accounts or cases with no OAuth accounts
+	if (!loading && !tokenHealth) {
+		return null;
+	}
+
+	if (loading) {
 		return (
 			<div
 				className={`flex items-center gap-2 px-3 py-1 rounded-full border text-xs font-medium ${className}`}
