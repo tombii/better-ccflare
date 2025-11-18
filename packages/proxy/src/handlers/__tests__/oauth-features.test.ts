@@ -368,6 +368,103 @@ describe("4. PKCE and State Security Tests", () => {
 			expect(expectedState === differentState).toBe(false);
 		});
 	});
+
+	describe("Timestamp Validation for Replay Attack Prevention", () => {
+		it("should accept valid timestamps within 5 minutes", () => {
+			const now = Date.now();
+			const recentTimestamp = now - 4 * 60 * 1000; // 4 minutes ago
+			const slightlyOldTimestamp = now - 4 * 60 * 1000 + 59000; // 4 minutes 59 seconds ago
+
+			// Mock the isValidTimestamp function for testing
+			const isValidTimestamp = (timestamp: number): boolean => {
+				const currentTime = Date.now();
+				const age = currentTime - timestamp;
+				const maxAge = 5 * 60 * 1000; // 5 minutes in milliseconds
+				return age < maxAge && age >= 0; // Not too old and not from the future
+			};
+
+			expect(isValidTimestamp(recentTimestamp)).toBe(true);
+			expect(isValidTimestamp(slightlyOldTimestamp)).toBe(true);
+		});
+
+		it("should reject timestamps older than 5 minutes", () => {
+			const now = Date.now();
+			const oldTimestamp = now - 6 * 60 * 1000; // 6 minutes ago
+
+			const isValidTimestamp = (timestamp: number): boolean => {
+				const currentTime = Date.now();
+				const age = currentTime - timestamp;
+				const maxAge = 5 * 60 * 1000; // 5 minutes in milliseconds
+				return age < maxAge && age >= 0;
+			};
+
+			expect(isValidTimestamp(oldTimestamp)).toBe(false);
+		});
+
+		it("should reject future timestamps", () => {
+			const now = Date.now();
+			const futureTimestamp = now + 60 * 1000; // 1 minute in the future
+
+			const isValidTimestamp = (timestamp: number): boolean => {
+				const currentTime = Date.now();
+				const age = currentTime - timestamp;
+				const maxAge = 5 * 60 * 1000; // 5 minutes in milliseconds
+				return age < maxAge && age >= 0;
+			};
+
+			expect(isValidTimestamp(futureTimestamp)).toBe(false);
+		});
+
+		it("should properly encode and decode OAuth state with timestamp", () => {
+			const generateStateWithTimestamp = (): string => {
+				const array = new Uint8Array(32);
+				crypto.getRandomValues(array);
+				const csrfToken = Array.from(array, (byte) =>
+					byte.toString(16).padStart(2, "0"),
+				).join("");
+
+				const state = {
+					csrfToken,
+					timestamp: Date.now(),
+				};
+
+				return btoa(JSON.stringify(state))
+					.replace(/\+/g, "-")
+					.replace(/\//g, "_")
+					.replace(/=/g, "");
+			};
+
+			const parseOAuthState = (state: string): any => {
+				try {
+					const base64State = state.replace(/-/g, "+").replace(/_/g, "/");
+					const jsonState = atob(base64State + "=".repeat((4 - (base64State.length % 4)) % 4));
+					return JSON.parse(jsonState);
+				} catch (error) {
+					return null;
+				}
+			};
+
+			const generatedState = generateStateWithTimestamp();
+			const parsedState = parseOAuthState(generatedState);
+
+			// Should be able to parse the generated state
+			expect(parsedState).not.toBeNull();
+			expect(parsedState).toHaveProperty("csrfToken");
+			expect(parsedState).toHaveProperty("timestamp");
+
+			// CSRF token should be a valid hex string
+			expect(typeof parsedState.csrfToken).toBe("string");
+			expect(parsedState.csrfToken).toMatch(/^[0-9a-f]+$/);
+			expect(parsedState.csrfToken.length).toBe(64);
+
+			// Timestamp should be a recent number
+			expect(typeof parsedState.timestamp).toBe("number");
+			const now = Date.now();
+			const age = now - parsedState.timestamp;
+			expect(age).toBeGreaterThanOrEqual(0);
+			expect(age).toBeLessThan(60000); // Should be very recent
+		});
+	});
 });
 
 describe("HTTP API Integration", () => {

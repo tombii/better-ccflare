@@ -34,13 +34,25 @@ export async function createOAuthRedirectUri(
 		const pkce = await generatePKCE();
 		const pkceChallenge = pkce.challenge;
 
-		// Generate secure random state for CSRF protection in server context
+		// Generate secure random state for CSRF protection with timestamp in server context
 		const generateState = (): string => {
 			const array = new Uint8Array(32);
 			crypto.getRandomValues(array);
-			return Array.from(array, (byte) =>
+			const csrfToken = Array.from(array, (byte) =>
 				byte.toString(16).padStart(2, "0"),
 			).join("");
+
+			// Create state with timestamp for replay attack protection
+			const state: OAuthState = {
+				csrfToken,
+				timestamp: Date.now(),
+			};
+
+			// Encode as base64url for safe URL transmission
+			return btoa(JSON.stringify(state))
+				.replace(/\+/g, "-")
+				.replace(/\//g, "_")
+				.replace(/=/g, "");
 		};
 		const state = generateState();
 
@@ -60,6 +72,59 @@ export async function createOAuthRedirectUri(
 }
 
 /**
+ * OAuth state interface for enhanced security
+ */
+interface OAuthState {
+	csrfToken: string;
+	timestamp: number;
+}
+
+/**
+ * Validate timestamp to prevent replay attacks
+ * @param timestamp - The timestamp from the OAuth state
+ * @returns true if timestamp is valid (within 5 minutes), false otherwise
+ */
+const isValidTimestamp = (timestamp: number): boolean => {
+	const now = Date.now();
+	const age = now - timestamp;
+	const maxAge = 5 * 60 * 1000; // 5 minutes in milliseconds
+	return age < maxAge && age >= 0; // Not too old and not from the future
+};
+
+/**
+ * Parse and validate OAuth state parameter
+ * @param state - The state parameter from OAuth callback
+ * @returns parsed OAuthState object or null if invalid
+ */
+const parseOAuthState = (state: string): OAuthState | null => {
+	try {
+		// Decode base64url state
+		const base64State = state.replace(/-/g, "+").replace(/_/g, "/");
+		const jsonState = atob(base64State + "=".repeat((4 - (base64State.length % 4)) % 4));
+		const parsedState: OAuthState = JSON.parse(jsonState);
+
+		// Validate structure
+		if (
+			!parsedState ||
+			typeof parsedState.csrfToken !== "string" ||
+			typeof parsedState.timestamp !== "number"
+		) {
+			return null;
+		}
+
+		// Validate timestamp
+		if (!isValidTimestamp(parsedState.timestamp)) {
+			return null;
+		}
+
+		return parsedState;
+	} catch (error) {
+		// Any parsing error means invalid state
+		return null;
+	}
+};
+
+/**
  * Creates a temporary HTTP server for CLI OAuth flows
  * The server handles the OAuth callback and captures the authorization code
  */
@@ -73,13 +138,23 @@ async function createTemporaryOAuthServer(
 	const pkceVerifier = pkce.verifier;
 	const pkceChallenge = pkce.challenge;
 
-	// Generate secure random state for CSRF protection
+	// Generate secure random state for CSRF protection with timestamp
 	const generateState = (): string => {
 		const array = new Uint8Array(32);
 		crypto.getRandomValues(array);
-		return Array.from(array, (byte) => byte.toString(16).padStart(2, "0")).join(
-			"",
-		);
+		const csrfToken = Array.from(array, (byte) => byte.toString(16).padStart(2, "0")).join("");
+
+		// Create state with timestamp for replay attack protection
+		const state: OAuthState = {
+			csrfToken,
+			timestamp: Date.now(),
+		};
+
+		// Encode as base64url for safe URL transmission
+		return btoa(JSON.stringify(state))
+			.replace(/\+/g, "-")
+			.replace(/\//g, "_")
+			.replace(/=/g, "");
 	};
 
 	// Generate and store expected state for CSRF validation
@@ -137,17 +212,30 @@ async function createTemporaryOAuthServer(
 					const state = url.searchParams.get("state");
 
 					if (code && pkceVerifier && state) {
-						// Validate state parameter to prevent CSRF attacks
-						if (state !== expectedState) {
+						// Parse and validate received state
+						const receivedState = parseOAuthState(state);
+						const expectedParsedState = parseOAuthState(expectedState);
+
+						if (!receivedState || !expectedParsedState) {
 							return new Response(
-								"Invalid state parameter - possible CSRF attack",
+								"Invalid state parameter format - possible CSRF attack",
 								{
 									status: 400,
 								},
 							);
 						}
 
-						// State validated, resolve the promise with authorization code
+						// Validate CSRF token
+						if (receivedState.csrfToken !== expectedParsedState.csrfToken) {
+							return new Response(
+								"Invalid CSRF token - possible CSRF attack",
+								{
+									status: 400,
+								},
+							);
+						}
+
+						// State and CSRF token validated, resolve the promise with authorization code
 						if (resolveCallback) {
 							resolveCallback({
 								code,
