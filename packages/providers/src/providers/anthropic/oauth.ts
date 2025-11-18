@@ -85,8 +85,8 @@ export class AnthropicOAuthProvider implements OAuthProvider {
 		config: OAuthProviderConfig,
 	): Promise<TokenResult> {
 		oauthLog.debug(`OAuth exchangeCode called:`, {
-			codePreview: `${code.substring(0, 30)}...`,
-			verifierPreview: `${verifier.substring(0, 20)}...`,
+			codeLength: code.length,
+			verifierLength: verifier.length,
 			clientId: config.clientId,
 			mode: config.mode,
 		});
@@ -99,7 +99,15 @@ export class AnthropicOAuthProvider implements OAuthProvider {
 			code_verifier: verifier,
 		};
 
-		oauthLog.debug("Exchange request body:", requestBody);
+		// Don't log sensitive request body in production
+		if (process.env.NODE_ENV === "development") {
+			oauthLog.debug("Exchange request body:", {
+				grant_type: requestBody.grant_type,
+				client_id: requestBody.client_id,
+				redirect_uri: requestBody.redirect_uri,
+				// Omit code and code_verifier from logs
+			});
+		}
 
 		const response = await fetch(config.tokenUrl, {
 			method: "POST",

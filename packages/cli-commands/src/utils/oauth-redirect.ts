@@ -1,9 +1,12 @@
 import type { Config } from "@better-ccflare/config";
 import type { DatabaseOperations } from "@better-ccflare/database";
 import type { OAuthFlow } from "@better-ccflare/oauth-flow";
+import { generatePKCE } from "@better-ccflare/providers";
 
 interface RedirectUriResult {
 	uri: string;
+	pkceChallenge: string; // PKCE challenge for OAuth URL
+	state: string; // CSRF state for OAuth URL
 	waitForCode: () => Promise<{ code: string; pkceVerifier: string }>;
 	cleanup?: () => void; // Function to clean up temporary server if created
 }
@@ -30,6 +33,8 @@ export async function createOAuthRedirectUri(
 		// For server context, return a dummy waitForCode that should not be called
 		return {
 			uri,
+			pkceChallenge: "", // Not used in server context
+			state: "", // Not used in server context
 			waitForCode: () => {
 				throw new Error("waitForCode should not be called in server context");
 			},
@@ -49,17 +54,22 @@ async function createTemporaryOAuthServer(
 	_config: Config,
 	_oauthFlow: OAuthFlow,
 ): Promise<RedirectUriResult> {
-	// Store PKCE verifier in server memory (never in URLs!)
-	const pkceVerifier: string | null = null;
+	// Generate PKCE challenge and store verifier in server memory (never in URLs!)
+	const pkce = await generatePKCE();
+	const pkceVerifier = pkce.verifier;
+	const pkceChallenge = pkce.challenge;
 
 	// Generate secure random state for CSRF protection
-	const _generateState = (): string => {
+	const generateState = (): string => {
 		const array = new Uint8Array(32);
 		crypto.getRandomValues(array);
 		return Array.from(array, (byte) => byte.toString(16).padStart(2, "0")).join(
 			"",
 		);
 	};
+
+	// Generate and store expected state for CSRF validation
+	const expectedState = generateState();
 
 	// Create a promise that will resolve when we receive the OAuth callback
 	let resolveCallback:
@@ -102,7 +112,17 @@ async function createTemporaryOAuthServer(
 					const state = url.searchParams.get("state");
 
 					if (code && pkceVerifier && state) {
-						// We have the authorization code, resolve the promise
+						// Validate state parameter to prevent CSRF attacks
+						if (state !== expectedState) {
+							return new Response(
+								"Invalid state parameter - possible CSRF attack",
+								{
+									status: 400,
+								},
+							);
+						}
+
+						// State validated, resolve the promise with authorization code
 						if (resolveCallback) {
 							resolveCallback({
 								code,
@@ -171,9 +191,11 @@ async function createTemporaryOAuthServer(
 	const protocol = "http"; // Temporary server is HTTP only
 	const uri = `${protocol}://localhost:${server.port}/callback`;
 
-	// Return the URI, a function to wait for the code, and a cleanup function
+	// Return the URI, PKCE challenge, state, and functions for code handling
 	return {
 		uri,
+		pkceChallenge,
+		state: expectedState,
 		waitForCode: async () => {
 			try {
 				// Wait for either the callback or the timeout
