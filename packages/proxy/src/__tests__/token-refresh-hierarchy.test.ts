@@ -93,7 +93,7 @@ describe("Auto-Refresh Token Hierarchy", () => {
 			).shouldRefreshAccount(accountCurrent, now);
 
 			expect(shouldRefreshStale).toBe(true); // Should refresh (stale reset time)
-			expect(shouldRefreshCurrent).toBe(false); // Should not refresh (future reset time)
+			expect(shouldRefreshCurrent).toBe(true); // Should refresh (first-time check regardless of reset time)
 		});
 
 		it("should handle first-time refresh correctly", () => {

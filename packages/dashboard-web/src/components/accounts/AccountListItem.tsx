@@ -72,7 +72,8 @@ export function AccountListItem({
 							<OAuthTokenStatus
 								accountName={account.name}
 								hasRefreshToken={
-									account.provider === "anthropic" || account.tokenStatus === "valid"
+									account.provider === "anthropic" ||
+									account.tokenStatus === "valid"
 								}
 								provider={account.provider}
 							/>
@@ -105,9 +106,7 @@ export function AccountListItem({
 					</div>
 					<div className="flex items-center gap-2">
 						{presenter.isRateLimited && (
-							<span
-								title="Account is rate-limited - requests will be rejected until the limit resets"
-							>
+							<span title="Account is rate-limited - requests will be rejected until the limit resets">
 								<AlertCircle className="h-4 w-4 text-yellow-600" />
 							</span>
 						)}

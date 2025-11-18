@@ -74,7 +74,7 @@ describe("SessionStrategy", () => {
 			session_start: Date.now() - 2 * 60 * 60 * 1000, // 2 hours ago
 			session_request_count: 5,
 			paused: false,
-			rate_limit_reset: Date.now() - 1000, // Reset time was 1 second ago (expired)
+			rate_limit_reset: Date.now() - 2000, // Reset time was 2 seconds ago (expired, with 1s buffer)
 			rate_limit_status: null,
 			rate_limit_remaining: null,
 			priority: 0,
@@ -217,7 +217,7 @@ describe("SessionStrategy", () => {
 			session_start: Date.now() - 6 * 60 * 60 * 1000, // 6 hours ago (beyond 5 hour limit)
 			session_request_count: 10,
 			paused: false,
-			rate_limit_reset: Date.now() - 1000, // Also expired (1 second ago)
+			rate_limit_reset: Date.now() - 2000, // Also expired (2 seconds ago, with 1s buffer)
 			rate_limit_status: null,
 			rate_limit_remaining: null,
 			priority: 0,
