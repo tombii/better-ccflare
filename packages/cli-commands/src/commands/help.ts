@@ -45,6 +45,14 @@ Commands:
   analyze
     Analyze database performance and index usage
 
+  token-health
+    Check OAuth token health and expiration status
+    Shows detailed information about access tokens and refresh tokens
+
+  reauth-needed
+    Quick check for accounts that need re-authentication
+    Shows only accounts that require immediate attention
+
   help
     Show this help message
 
@@ -56,5 +64,7 @@ Examples:
   better-ccflare pause myaccount
   better-ccflare resume myaccount
   better-ccflare set-priority myaccount 20
+  better-ccflare token-health
+  better-ccflare reauth-needed
 `;
 }

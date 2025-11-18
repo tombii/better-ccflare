@@ -4,6 +4,7 @@ import {
 	createRequestMetadata,
 	ERROR_MESSAGES,
 	interceptAndModifyRequest,
+	isRefreshTokenLikelyExpired,
 	type ProxyContext,
 	prepareRequestBody,
 	proxyUnauthenticated,
@@ -239,7 +240,22 @@ export async function handleProxy(
 		}
 	}
 
-	// 9. All accounts failed
+	// 9. All accounts failed - check if OAuth token issues are the cause
+	const oauthAccounts = accounts.filter((acc) => acc.refresh_token);
+	const needsReauth = oauthAccounts.filter((acc) =>
+		isRefreshTokenLikelyExpired(acc),
+	);
+
+	if (needsReauth.length > 0) {
+		const reauthCommands = needsReauth
+			.map((acc) => `bun run cli --reauthenticate ${acc.name}`)
+			.join("\n  ");
+		throw new ServiceUnavailableError(
+			`All accounts failed to proxy the request. OAuth tokens have expired for accounts: ${needsReauth.map((acc) => acc.name).join(", ")}.\n\nPlease re-authenticate:\n  ${reauthCommands}`,
+			ctx.provider.name,
+		);
+	}
+
 	throw new ServiceUnavailableError(
 		`${ERROR_MESSAGES.ALL_ACCOUNTS_FAILED} (${accounts.length} attempted)`,
 		ctx.provider.name,

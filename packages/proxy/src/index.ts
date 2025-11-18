@@ -11,9 +11,18 @@ export {
 } from "@better-ccflare/providers";
 export { AutoRefreshScheduler } from "./auto-refresh-scheduler";
 export {
+	checkAllAccountsHealth,
+	checkRefreshTokenHealth,
 	clearAccountRefreshCache,
+	formatTokenHealthReport,
+	getAccountsNeedingReauth,
 	getValidAccessToken,
+	isRefreshTokenLikelyExpired,
 	registerRefreshClearer,
+	startGlobalTokenHealthChecks,
+	stopGlobalTokenHealthChecks,
+	type TokenHealthReport,
+	type TokenHealthStatus,
 } from "./handlers";
 export {
 	getUsageWorker,
