@@ -1103,6 +1103,26 @@ class API extends HttpClient {
 			throw error;
 		}
 	}
+
+	async getTokenHealth(): Promise<{ success: boolean; data: any }> {
+		const url = "/api/token-health";
+		const response = await this.get(url);
+		return response.data;
+	}
+
+	async getReauthNeeded(): Promise<{ success: boolean; data: any }> {
+		const url = "/api/token-health/reauth-needed";
+		const response = await this.get(url);
+		return response.data;
+	}
+
+	async getAccountTokenHealth(
+		accountName: string,
+	): Promise<{ success: boolean; data: any }> {
+		const url = `/api/token-health/account/${accountName}`;
+		const response = await this.get(url);
+		return response.data;
+	}
 }
 
 export const api = new API();

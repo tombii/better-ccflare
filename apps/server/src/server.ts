@@ -28,6 +28,8 @@ import {
 	handleProxy,
 	type ProxyContext,
 	registerRefreshClearer,
+	startGlobalTokenHealthChecks,
+	stopGlobalTokenHealthChecks,
 	terminateUsageWorker,
 } from "@better-ccflare/proxy";
 import { validatePathOrThrow } from "@better-ccflare/security";
@@ -510,6 +512,9 @@ export default function startServer(options?: {
 	autoRefreshScheduler = new AutoRefreshScheduler(db, proxyContext);
 	autoRefreshScheduler.start();
 
+	// Initialize token health monitoring service
+	startGlobalTokenHealthChecks(() => dbOps.getAllAccounts());
+
 	// Hot reload strategy configuration
 	config.on("change", (changeType, fieldName) => {
 		if (fieldName === "strategy") {
@@ -751,6 +756,10 @@ async function handleGracefulShutdown(signal: string) {
 			autoRefreshScheduler.stop();
 			autoRefreshScheduler = null;
 		}
+
+		// Stop token health monitoring
+		stopGlobalTokenHealthChecks();
+
 		usageCache.clear(); // Stop all usage polling
 		terminateUsageWorker();
 		await shutdown();

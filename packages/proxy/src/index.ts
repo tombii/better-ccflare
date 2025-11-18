@@ -14,6 +14,8 @@ export {
 	clearAccountRefreshCache,
 	getValidAccessToken,
 	registerRefreshClearer,
+	startGlobalTokenHealthChecks,
+	stopGlobalTokenHealthChecks,
 } from "./handlers";
 export {
 	getUsageWorker,

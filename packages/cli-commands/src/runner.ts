@@ -14,6 +14,7 @@ import {
 import { analyzePerformance } from "./commands/analyze";
 import { getHelpText } from "./commands/help";
 import { clearRequestHistory, resetAllStats } from "./commands/stats";
+import { checkReauthNeeded, checkTokenHealth } from "./commands/token-health";
 
 /**
  * Main CLI runner
@@ -235,6 +236,16 @@ export async function runCli(argv: string[]): Promise<void> {
 			case "analyze": {
 				const db = dbOps.getDatabase();
 				analyzePerformance(db);
+				break;
+			}
+
+			case "token-health": {
+				checkTokenHealth(dbOps);
+				break;
+			}
+
+			case "reauth-needed": {
+				checkReauthNeeded(dbOps);
 				break;
 			}
 

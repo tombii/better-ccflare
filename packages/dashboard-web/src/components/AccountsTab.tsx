@@ -12,6 +12,7 @@ import {
 	DeleteConfirmationDialog,
 	RenameAccountDialog,
 } from "./accounts";
+import { TokenHealthIndicator } from "./TokenHealthIndicator";
 import { Button } from "./ui/button";
 import {
 	Card,
@@ -354,8 +355,13 @@ export function AccountsTab() {
 				<CardHeader>
 					<div className="flex items-center justify-between">
 						<div>
-							<CardTitle>Accounts</CardTitle>
-							<CardDescription>Manage your Claude accounts</CardDescription>
+							<div className="flex items-center gap-3">
+								<div>
+									<CardTitle>Accounts</CardTitle>
+									<CardDescription>Manage your Claude accounts</CardDescription>
+								</div>
+								<TokenHealthIndicator showDetails={false} />
+							</div>
 						</div>
 						{!adding && (
 							<Button onClick={() => setAdding(true)} size="sm">

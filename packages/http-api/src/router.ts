@@ -55,6 +55,11 @@ import {
 import { createRequestsStreamHandler } from "./handlers/requests-stream";
 import { createStatsHandler, createStatsResetHandler } from "./handlers/stats";
 import { createSystemInfoHandler } from "./handlers/system";
+import {
+	createAccountTokenHealthHandler,
+	createReauthNeededHandler,
+	createTokenHealthHandler,
+} from "./handlers/token-health";
 import { AuthService } from "./services/auth-service";
 import type { APIContext } from "./types";
 import { errorResponse } from "./utils/http-error";
@@ -134,6 +139,20 @@ export class APIRouter {
 		this.handlers.set("POST:/api/accounts/openai-compatible", (req) =>
 			openaiAccountAddHandler(req),
 		);
+
+		// Token health handlers
+		const tokenHealthHandler = createTokenHealthHandler(dbOps);
+		const reauthNeededHandler = createReauthNeededHandler(dbOps);
+
+		this.handlers.set("GET:/api/token-health", tokenHealthHandler);
+		this.handlers.set("GET:/api/token-health/reauth-needed", reauthNeededHandler);
+		this.handlers.set("GET:/api/token-health/account/:accountName", (req, url) => {
+			const pathParts = url.pathname.split("/");
+			const accountName = pathParts[pathParts.length - 1];
+			const accountTokenHealthHandler = createAccountTokenHealthHandler(dbOps, accountName);
+			return accountTokenHealthHandler();
+		});
+
 		this.handlers.set("POST:/api/oauth/init", (req) => oauthInitHandler(req));
 		this.handlers.set("POST:/api/oauth/callback", (req) =>
 			oauthCallbackHandler(req),

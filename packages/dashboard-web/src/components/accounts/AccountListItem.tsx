@@ -16,6 +16,7 @@ import {
 	providerSupportsAutoFeatures,
 	providerSupportsModelMappings,
 } from "../../utils/provider-utils";
+import { TokenHealthIndicator } from "../TokenHealthIndicator";
 import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
 import { RateLimitProgress } from "./RateLimitProgress";
@@ -69,6 +70,7 @@ export function AccountListItem({
 							<span className="px-2 py-0.5 text-xs font-medium bg-secondary text-secondary-foreground rounded-full">
 								Priority: {account.priority}
 							</span>
+							<TokenHealthIndicator accountName={account.name} />
 							{providerSupportsAutoFeatures(account.provider) && (
 								<>
 									<div className="flex items-center gap-2">

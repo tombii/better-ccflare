@@ -11,6 +11,10 @@ import {
 import type { Account } from "@better-ccflare/types";
 import { TOKEN_REFRESH_BACKOFF_MS, TOKEN_SAFETY_WINDOW_MS } from "../constants";
 import { ERROR_MESSAGES, type ProxyContext } from "./proxy-types";
+import {
+	checkRefreshTokenHealth,
+	getOAuthErrorMessage,
+} from "./token-health-monitor";
 
 const log = new Logger("TokenManager");
 
@@ -255,8 +259,16 @@ export async function refreshAccessTokenSafe(
 				refreshFailures.set(account.id, Date.now());
 				// Enforce size limit after adding a new entry
 				enforceMaxSize();
-				log.error(`Token refresh failed for account ${account.name}`, error);
-				throw new TokenRefreshError(account.id, error as Error);
+
+				const originalError =
+					error instanceof Error ? error.message : String(error);
+				const enhancedMessage = getOAuthErrorMessage(account, originalError);
+
+				log.error(
+					`Token refresh failed for account ${account.name}: ${enhancedMessage}`,
+					error,
+				);
+				throw new TokenRefreshError(account.id, new Error(enhancedMessage));
 			})
 			.finally(() => {
 				// Clean up the map when done (success or failure)
@@ -368,6 +380,18 @@ export async function getValidAccessToken(
 		account.expires_at - Date.now() > TOKEN_SAFETY_WINDOW_MS
 	) {
 		return account.access_token;
+	}
+
+	// Check refresh token health before attempting refresh
+	const tokenHealth = checkRefreshTokenHealth(account);
+
+	// Log token health warnings for OAuth accounts
+	if (tokenHealth.hasRefreshToken) {
+		if (tokenHealth.status === "expired" || tokenHealth.status === "critical") {
+			log.error(`🚨 ${tokenHealth.message}`);
+		} else if (tokenHealth.status === "warning") {
+			log.warn(`⚠️ ${tokenHealth.message}`);
+		}
 	}
 
 	// Token is expired, missing, or will expire soon

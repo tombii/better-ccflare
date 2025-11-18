@@ -12,7 +12,21 @@ export {
 } from "./request-handler";
 export { handleProxyError } from "./response-processor";
 export {
+	checkAllAccountsHealth,
+	checkRefreshTokenHealth,
+	formatTokenHealthReport,
+	getAccountsNeedingReauth,
+	getOAuthErrorMessage,
+	isRefreshTokenLikelyExpired,
+	type TokenHealthReport,
+	type TokenHealthStatus,
+} from "./token-health-monitor";
+export {
 	clearAccountRefreshCache,
 	getValidAccessToken,
 	registerRefreshClearer,
 } from "./token-manager";
+export {
+	startGlobalTokenHealthChecks,
+	stopGlobalTokenHealthChecks,
+} from "./token-health-service";
