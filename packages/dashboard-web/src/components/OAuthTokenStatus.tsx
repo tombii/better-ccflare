@@ -13,16 +13,17 @@ type TokenStatus =
 	| "warning"
 	| "critical"
 	| "expired"
+	| "no-refresh-token"
 	| "loading"
 	| "error";
 
 export function OAuthTokenStatus({
 	accountName,
 	hasRefreshToken,
-	provider,
-}: OAuthTokenStatusProps) {
+}: Omit<OAuthTokenStatusProps, 'provider'>) {
 	const [status, setStatus] = useState<TokenStatus>("loading");
 	const [message, setMessage] = useState("Loading...");
+	const [fallbackAttempted, setFallbackAttempted] = useState(false);
 
 	useEffect(() => {
 		if (!hasRefreshToken) {
@@ -62,7 +63,8 @@ export function OAuthTokenStatus({
 
 	// Fallback: if initial fetch fails, try global token health
 	useEffect(() => {
-		if (status === "error" && hasRefreshToken) {
+		if (status === "error" && hasRefreshToken && !fallbackAttempted) {
+			setFallbackAttempted(true);
 			let cancelled = false;
 
 			const checkGlobalHealth = async () => {
@@ -72,7 +74,8 @@ export function OAuthTokenStatus({
 
 					if (globalResponse?.success && globalResponse.data?.accounts) {
 						const accountData = globalResponse.data.accounts.find(
-							(acc: any) => acc.accountName === accountName,
+							(acc: { accountName: string; status: TokenStatus; message: string }) =>
+								acc.accountName === accountName,
 						);
 						if (accountData) {
 							setStatus(accountData.status);
@@ -91,7 +94,7 @@ export function OAuthTokenStatus({
 				cancelled = true;
 			};
 		}
-	}, [status, accountName, hasRefreshToken]);
+	}, [status, accountName, hasRefreshToken, fallbackAttempted]);
 
 	// Don't show anything for non-OAuth accounts
 	if (!hasRefreshToken) {

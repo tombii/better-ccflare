@@ -1,14 +1,14 @@
 import { describe, expect, it } from "bun:test";
 import type { DatabaseOperations } from "@better-ccflare/database";
 import {
+	checkAllAccountsHealth,
+	getAccountsNeedingReauth,
+} from "@better-ccflare/proxy";
+import {
 	createAccountTokenHealthHandler,
 	createReauthNeededHandler,
 	createTokenHealthHandler,
 } from "../token-health";
-import {
-	checkAllAccountsHealth,
-	getAccountsNeedingReauth,
-} from "@better-ccflare/proxy";
 
 // Mock database operations for testing
 const mockAccounts = [
@@ -148,7 +148,9 @@ describe("Token Health HTTP API Integration", () => {
 			// Should find accounts that need re-authentication
 			expect(needingReauth.length).toBeGreaterThanOrEqual(1);
 			// The specific account may vary based on implementation details
-			expect(needingReauth.some(acc => acc.name.includes("test-account"))).toBe(true);
+			expect(
+				needingReauth.some((acc) => acc.name.includes("test-account")),
+			).toBe(true);
 		});
 
 		it("should handle empty accounts list", () => {

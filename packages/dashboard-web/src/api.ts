@@ -34,6 +34,37 @@ export interface AgentsResponse {
 	workspaces: AgentWorkspace[];
 }
 
+// Token health response interfaces
+export interface TokenHealthResponse {
+	accountId: string;
+	accountName: string;
+	provider: string;
+	hasRefreshToken: boolean;
+	status: "healthy" | "warning" | "critical" | "expired" | "no-refresh-token";
+	message: string;
+	daysUntilExpiration?: number;
+	requiresReauth: boolean;
+}
+
+export interface TokenHealthGlobalResponse {
+	success: boolean;
+	data: {
+		accounts: TokenHealthResponse[];
+	};
+}
+
+export interface TokenHealthAccountResponse {
+	success: boolean;
+	data: TokenHealthResponse;
+}
+
+export interface ReauthNeededResponse {
+	success: boolean;
+	data: {
+		accounts: TokenHealthResponse[];
+	};
+}
+
 class API extends HttpClient {
 	private logger = {
 		info: (message: string, ...args: unknown[]) => {
@@ -1104,14 +1135,17 @@ class API extends HttpClient {
 		}
 	}
 
-	async getTokenHealth(): Promise<{ success: boolean; data: any }> {
+	// Helper method for token health API calls to reduce code duplication
+	private async tokenHealthRequest<T>(
+		url: string,
+		_description: string,
+	): Promise<T> {
 		const startTime = Date.now();
-		const url = "/api/token-health";
 
 		this.logger.debug(`→ GET ${url}`);
 
 		try {
-			const response = await this.get<{ success: boolean; data: any }>(url);
+			const response = await this.get<T>(url);
 			const duration = Date.now() - startTime;
 			this.logger.debug(`← GET ${url} - 200 (${duration}ms)`);
 			return response;
@@ -1125,48 +1159,27 @@ class API extends HttpClient {
 		}
 	}
 
-	async getReauthNeeded(): Promise<{ success: boolean; data: any }> {
-		const startTime = Date.now();
+	async getTokenHealth(): Promise<TokenHealthGlobalResponse> {
+		const url = "/api/token-health";
+		return this.tokenHealthRequest<TokenHealthGlobalResponse>(
+			url,
+			"token health",
+		);
+	}
+
+	async getReauthNeeded(): Promise<ReauthNeededResponse> {
 		const url = "/api/token-health/reauth-needed";
-
-		this.logger.debug(`→ GET ${url}`);
-
-		try {
-			const response = await this.get<{ success: boolean; data: any }>(url);
-			const duration = Date.now() - startTime;
-			this.logger.debug(`← GET ${url} - 200 (${duration}ms)`);
-			return response;
-		} catch (error) {
-			const duration = Date.now() - startTime;
-			this.logger.error(`✗ GET ${url} - ERROR (${duration}ms)`, {
-				error: error instanceof Error ? error.message : String(error),
-				stack: error instanceof Error ? error.stack : undefined,
-			});
-			throw error;
-		}
+		return this.tokenHealthRequest<ReauthNeededResponse>(url, "reauth needed");
 	}
 
 	async getAccountTokenHealth(
 		accountName: string,
-	): Promise<{ success: boolean; data: any }> {
-		const startTime = Date.now();
+	): Promise<TokenHealthAccountResponse> {
 		const url = `/api/token-health/account/${accountName}`;
-
-		this.logger.debug(`→ GET ${url}`);
-
-		try {
-			const response = await this.get<{ success: boolean; data: any }>(url);
-			const duration = Date.now() - startTime;
-			this.logger.debug(`← GET ${url} - 200 (${duration}ms)`);
-			return response;
-		} catch (error) {
-			const duration = Date.now() - startTime;
-			this.logger.error(`✗ GET ${url} - ERROR (${duration}ms)`, {
-				error: error instanceof Error ? error.message : String(error),
-				stack: error instanceof Error ? error.stack : undefined,
-			});
-			throw error;
-		}
+		return this.tokenHealthRequest<TokenHealthAccountResponse>(
+			url,
+			"account token health",
+		);
 	}
 }
 

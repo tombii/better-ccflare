@@ -113,6 +113,7 @@ export interface AccountResponse {
 	usageUtilization: number | null; // Percentage utilization (0-100) from API
 	usageWindow: string | null; // Most restrictive window (e.g., "five_hour")
 	usageData: FullUsageData | null; // Full usage data for Anthropic accounts
+	hasRefreshToken: boolean; // Indicates if the account has a refresh token (OAuth account)
 }
 
 // UI display type - used in CLI and web dashboard
@@ -278,6 +279,7 @@ export function toAccountResponse(account: Account): AccountResponse {
 		usageUtilization: null, // Will be filled in by API handler from cache
 		usageWindow: null, // Will be filled in by API handler from cache
 		usageData: null, // Will be filled in by API handler from cache
+		hasRefreshToken: !!account.refresh_token, // OAuth accounts have refresh tokens
 	};
 }
 

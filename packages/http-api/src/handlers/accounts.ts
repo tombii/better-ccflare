@@ -57,6 +57,7 @@ export function createAccountsListHandler(db: Database) {
 					rate_limit_remaining,
 					session_start,
 					session_request_count,
+					refresh_token,
 					COALESCE(paused, 0) as paused,
 					COALESCE(priority, 0) as priority,
 					COALESCE(auto_fallback_enabled, 0) as auto_fallback_enabled,
@@ -95,6 +96,7 @@ export function createAccountsListHandler(db: Database) {
 			rate_limit_remaining: number | null;
 			session_start: number | null;
 			session_request_count: number;
+			refresh_token: string;
 			paused: 0 | 1;
 			priority: number;
 			token_valid: 0 | 1;
@@ -232,6 +234,7 @@ export function createAccountsListHandler(db: Database) {
 				usageUtilization,
 				usageWindow,
 				usageData: fullUsageData, // Full usage data for UI
+				hasRefreshToken: !!account.refresh_token, // OAuth accounts have refresh tokens
 			};
 		});
 
@@ -678,13 +681,14 @@ export function createZaiAccountAddHandler(dbOps: DatabaseOperations) {
 						last_used: number | null;
 						created_at: number;
 						expires_at: number;
+						refresh_token: string;
 						paused: number;
 					},
 					[string]
 				>(
 					`SELECT
 						id, name, provider, request_count, total_requests,
-						last_used, created_at, expires_at,
+						last_used, created_at, expires_at, refresh_token,
 						COALESCE(paused, 0) as paused
 					FROM accounts WHERE id = ?`,
 				)
@@ -716,6 +720,7 @@ export function createZaiAccountAddHandler(dbOps: DatabaseOperations) {
 					rateLimitReset: null,
 					rateLimitRemaining: null,
 					sessionInfo: "No active session",
+					hasRefreshToken: !!account.refresh_token, // OAuth accounts have refresh tokens
 				},
 			});
 		} catch (error) {
@@ -841,13 +846,14 @@ export function createOpenAIAccountAddHandler(dbOps: DatabaseOperations) {
 						last_used: number | null;
 						created_at: number;
 						expires_at: number;
+						refresh_token: string;
 						paused: number;
 					},
 					[string]
 				>(
 					`SELECT
 						id, name, provider, request_count, total_requests,
-						last_used, created_at, expires_at,
+						last_used, created_at, expires_at, refresh_token,
 						COALESCE(paused, 0) as paused
 					FROM accounts WHERE id = ?`,
 				)
@@ -878,6 +884,7 @@ export function createOpenAIAccountAddHandler(dbOps: DatabaseOperations) {
 					rateLimitRemaining: null,
 					sessionInfo: "No active session",
 					customEndpoint: customEndpoint,
+					hasRefreshToken: !!account.refresh_token, // OAuth accounts have refresh tokens
 				},
 			});
 		} catch (error) {
@@ -971,13 +978,14 @@ export function createMinimaxAccountAddHandler(dbOps: DatabaseOperations) {
 						last_used: number | null;
 						created_at: number;
 						expires_at: number;
+						refresh_token: string;
 						paused: number;
 					},
 					[string]
 				>(
 					`SELECT
 						id, name, provider, request_count, total_requests,
-						last_used, created_at, expires_at,
+						last_used, created_at, expires_at, refresh_token,
 						COALESCE(paused, 0) as paused
 					FROM accounts WHERE id = ?`,
 				)
@@ -1009,6 +1017,7 @@ export function createMinimaxAccountAddHandler(dbOps: DatabaseOperations) {
 					rateLimitReset: null,
 					rateLimitRemaining: null,
 					sessionInfo: "No active session",
+					hasRefreshToken: !!account.refresh_token, // OAuth accounts have refresh tokens
 				},
 			});
 		} catch (error) {
@@ -1136,13 +1145,14 @@ export function createNanoGPTAccountAddHandler(dbOps: DatabaseOperations) {
 						last_used: number | null;
 						created_at: number;
 						expires_at: number;
+						refresh_token: string;
 						paused: number;
 					},
 					[string]
 				>(
 					`SELECT
 						id, name, provider, request_count, total_requests,
-						last_used, created_at, expires_at,
+						last_used, created_at, expires_at, refresh_token,
 						COALESCE(paused, 0) as paused
 					FROM accounts WHERE id = ?`,
 				)
@@ -1172,6 +1182,7 @@ export function createNanoGPTAccountAddHandler(dbOps: DatabaseOperations) {
 					rateLimitReset: null,
 					rateLimitRemaining: null,
 					sessionInfo: "No active session",
+					hasRefreshToken: !!account.refresh_token, // OAuth accounts have refresh tokens
 				},
 			});
 		} catch (error) {
@@ -1301,13 +1312,14 @@ export function createAnthropicCompatibleAccountAddHandler(
 						last_used: number | null;
 						created_at: number;
 						expires_at: number;
+						refresh_token: string;
 						paused: number;
 					},
 					[string]
 				>(
 					`SELECT
 						id, name, provider, request_count, total_requests,
-						last_used, created_at, expires_at,
+						last_used, created_at, expires_at, refresh_token,
 						COALESCE(paused, 0) as paused
 					FROM accounts WHERE id = ?`,
 				)
@@ -1339,6 +1351,7 @@ export function createAnthropicCompatibleAccountAddHandler(
 					rateLimitReset: null,
 					rateLimitRemaining: null,
 					sessionInfo: "No active session",
+					hasRefreshToken: !!account.refresh_token, // OAuth accounts have refresh tokens
 				},
 			});
 		} catch (error) {

@@ -71,10 +71,7 @@ export function AccountListItem({
 							</span>
 							<OAuthTokenStatus
 								accountName={account.name}
-								hasRefreshToken={
-									account.provider === "anthropic" ||
-									account.tokenStatus === "valid"
-								}
+								hasRefreshToken={account.hasRefreshToken}
 								provider={account.provider}
 							/>
 							{providerSupportsAutoFeatures(account.provider) && (

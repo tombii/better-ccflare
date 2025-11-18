@@ -48,6 +48,17 @@ export function createAccountTokenHealthHandler(
 	accountName: string,
 ) {
 	return (): Response => {
+		// Validate account name parameter to prevent injection
+		if (!/^[a-zA-Z0-9_-]+$/.test(accountName)) {
+			return jsonResponse(
+				{
+					success: false,
+					error: "Invalid account name. Only alphanumeric characters, hyphens, and underscores are allowed."
+				},
+				400,
+			);
+		}
+
 		const account = dbOps.getAccount(accountName);
 		if (!account) {
 			return jsonResponse(

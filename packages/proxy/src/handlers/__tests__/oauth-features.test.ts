@@ -133,14 +133,15 @@ describe("OAuth Token Health Monitoring Features", () => {
 
 			// Mock successful token response
 			const originalFetch = global.fetch;
-			global.fetch = async () => ({
-				ok: true,
-				json: async () => ({
-					refresh_token: "test-refresh-token",
-					access_token: "test-access-token",
-					expires_in: 3600,
-				}),
-			} as any);
+			global.fetch = async () =>
+				({
+					ok: true,
+					json: async () => ({
+						refresh_token: "test-refresh-token",
+						access_token: "test-access-token",
+						expires_in: 3600,
+					}),
+				}) as any;
 
 			try {
 				const result = await oauthProvider.exchangeCode(
@@ -212,15 +213,16 @@ describe("OAuth Token Health Monitoring Features", () => {
 
 			// Mock error response
 			const originalFetch = global.fetch;
-			global.fetch = async () => ({
-				ok: false,
-				status: 400,
-				statusText: "Bad Request",
-				json: async () => ({
-					error: "invalid_grant",
-					error_description: "Authorization code expired",
-				}),
-			} as any);
+			global.fetch = async () =>
+				({
+					ok: false,
+					status: 400,
+					statusText: "Bad Request",
+					json: async () => ({
+						error: "invalid_grant",
+						error_description: "Authorization code expired",
+					}),
+				}) as any;
 
 			try {
 				await oauthProvider.exchangeCode("expired-code", pkce.verifier, config);
