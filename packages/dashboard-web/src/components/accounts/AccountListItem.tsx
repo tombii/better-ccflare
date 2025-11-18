@@ -15,7 +15,7 @@ import {
 	providerSupportsAutoFeatures,
 	providerSupportsModelMappings,
 } from "../../utils/provider-utils";
-import { OAuthTokenStatus } from "../OAuthTokenStatus";
+import { OAuthTokenStatusWithBoundary } from "../OAuthTokenStatus";
 import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
 import { RateLimitProgress } from "./RateLimitProgress";
@@ -69,7 +69,7 @@ export function AccountListItem({
 							<span className="px-2 py-0.5 text-xs font-medium bg-secondary text-secondary-foreground rounded-full">
 								Priority: {account.priority}
 							</span>
-							<OAuthTokenStatus
+							<OAuthTokenStatusWithBoundary
 								accountName={account.name}
 								hasRefreshToken={account.hasRefreshToken}
 							/>

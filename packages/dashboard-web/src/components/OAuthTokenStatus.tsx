@@ -1,11 +1,12 @@
 import { AlertTriangle, CheckCircle, RefreshCw, XCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api } from "../api";
+import { APIErrorBoundary } from "./ErrorBoundary";
 
 interface OAuthTokenStatusProps {
 	accountName: string;
 	hasRefreshToken: boolean;
-	provider: string;
+	provider?: string; // Optional for backward compatibility
 }
 
 type TokenStatus =
@@ -27,12 +28,16 @@ export function OAuthTokenStatus({
 
 	useEffect(() => {
 		if (!hasRefreshToken) {
-			return; // Don't fetch for non-OAuth accounts
+			// Immediately set status for non-OAuth accounts
+			setStatus("no-refresh-token");
+			setMessage("This account type doesn't support token health monitoring");
+			return;
 		}
 
-		// Add cancellation and delay to avoid overwhelming the server
+		// Add cancellation only - no artificial delay for better UX
 		let cancelled = false;
-		const timer = setTimeout(async () => {
+
+		const fetchTokenStatus = async () => {
 			if (cancelled) return;
 
 			try {
@@ -53,11 +58,13 @@ export function OAuthTokenStatus({
 				setStatus("error");
 				setMessage("Failed to check token status");
 			}
-		}, 500); // 500ms delay
+		};
+
+		// Execute immediately without delay
+		fetchTokenStatus();
 
 		return () => {
 			cancelled = true;
-			clearTimeout(timer);
 		};
 	}, [accountName, hasRefreshToken]);
 
@@ -149,5 +156,16 @@ export function OAuthTokenStatus({
 		<span className="inline-flex items-center ml-2" title={getTooltip()}>
 			{getIcon()}
 		</span>
+	);
+}
+
+/**
+ * Wrapped OAuthTokenStatus with error boundary protection
+ */
+export function OAuthTokenStatusWithBoundary(props: OAuthTokenStatusProps) {
+	return (
+		<APIErrorBoundary>
+			<OAuthTokenStatus {...props} />
+		</APIErrorBoundary>
 	);
 }

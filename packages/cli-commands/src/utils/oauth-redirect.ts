@@ -3,18 +3,59 @@ import type { DatabaseOperations } from "@better-ccflare/database";
 import type { OAuthFlow } from "@better-ccflare/oauth-flow";
 import { generatePKCE } from "@better-ccflare/providers";
 
+/**
+ * Result interface for OAuth redirect URI creation
+ *
+ * @interface RedirectUriResult
+ */
 interface RedirectUriResult {
+	/** The complete OAuth authorization URL */
 	uri: string;
-	pkceChallenge: string; // PKCE challenge for OAuth URL
-	state: string; // CSRF state for OAuth URL
+	/** PKCE challenge to be sent to the OAuth provider */
+	pkceChallenge: string;
+	/** CSRF state parameter with embedded timestamp for replay protection */
+	state: string;
+	/** Promise that resolves with authorization code and PKCE verifier when OAuth completes */
 	waitForCode: () => Promise<{ code: string; pkceVerifier: string }>;
-	cleanup?: () => void; // Function to clean up temporary server if created
+	/** Cleanup function for temporary server (CLI context only) */
+	cleanup?: () => void;
 }
 
 /**
- * Creates a context-aware redirect URI for OAuth flows
- * - In server context: uses existing server port
- * - In CLI context: creates temporary server and returns its URL
+ * Creates a context-aware redirect URI for OAuth flows with enhanced security
+ *
+ * This function handles OAuth authorization in two different contexts:
+ * - **Server Context**: Uses existing server port for web-based OAuth flows
+ * - **CLI Context**: Creates temporary HTTP server to handle OAuth callback from command line
+ *
+ * **Security Features:**
+ * - PKCE (Proof Key for Code Exchange) for authorization code exchange security
+ * - CSRF protection with cryptographically secure random state
+ * - Timestamp validation to prevent replay attacks (5-minute window)
+ * - Base64url encoding for safe URL transmission of state
+ *
+ * **Server vs CLI Context Distinction:**
+ * - Server context: Used when the application is already running as a web server
+ * - CLI context: Used when OAuth is initiated from command line tools
+ *
+ * @param dbOps - Database operations interface (currently unused but reserved for future use)
+ * @param config - Configuration object containing runtime settings
+ * @param oauthFlow - OAuth flow configuration details
+ * @param isServerContext - Whether this is running in server context (true) or CLI context (false)
+ * @param customPort - Optional custom port for server context OAuth callback
+ * @returns Promise resolving to redirect URI result with PKCE and security parameters
+ *
+ * @example
+ * ```typescript
+ * // CLI context usage
+ * const result = await createOAuthRedirectUri(dbOps, config, oauthFlow, false);
+ * console.log(result.uri); // OAuth authorization URL to open in browser
+ * const { code, pkceVerifier } = await result.waitForCode(); // Wait for user completion
+ *
+ * // Server context usage
+ * const result = await createOAuthRedirectUri(dbOps, config, oauthFlow, true, 8080);
+ * console.log(result.uri); // OAuth URL using existing server
+ * ```
  */
 export async function createOAuthRedirectUri(
 	dbOps: DatabaseOperations,
@@ -72,17 +113,41 @@ export async function createOAuthRedirectUri(
 }
 
 /**
- * OAuth state interface for enhanced security
+ * OAuth state interface for enhanced security against replay attacks
+ *
+ * This interface defines the structure of the OAuth state parameter that is
+ * sent to the OAuth provider and returned in the callback. It provides both
+ * CSRF protection and replay attack prevention through timestamp validation.
+ *
+ * @interface OAuthState
  */
 interface OAuthState {
+	/** Cryptographically secure random token for CSRF protection (64-character hex string) */
 	csrfToken: string;
+	/** Unix timestamp in milliseconds for replay attack prevention */
 	timestamp: number;
 }
 
 /**
- * Validate timestamp to prevent replay attacks
- * @param timestamp - The timestamp from the OAuth state
- * @returns true if timestamp is valid (within 5 minutes), false otherwise
+ * Validates OAuth state timestamp to prevent replay attacks
+ *
+ * **Security Assumptions:**
+ * - Valid timestamps must be within the last 5 minutes (300,000ms)
+ * - Future timestamps are rejected to prevent time manipulation attacks
+ * - This provides a balance between security and user experience
+ *
+ * @param timestamp - The timestamp from the OAuth state parameter (Unix milliseconds)
+ * @returns true if timestamp is valid and within acceptable time window, false otherwise
+ *
+ * @example
+ * ```typescript
+ * const now = Date.now();
+ * const validTimestamp = now - 60000; // 1 minute ago
+ * const invalidTimestamp = now - 400000; // 6.6 minutes ago
+ *
+ * isValidTimestamp(validTimestamp); // true
+ * isValidTimestamp(invalidTimestamp); // false
+ * ```
  */
 const isValidTimestamp = (timestamp: number): boolean => {
 	const now = Date.now();
@@ -92,9 +157,38 @@ const isValidTimestamp = (timestamp: number): boolean => {
 };
 
 /**
- * Parse and validate OAuth state parameter
- * @param state - The state parameter from OAuth callback
- * @returns parsed OAuthState object or null if invalid
+ * Parses and validates OAuth state parameter from OAuth callback
+ *
+ * **Security Validation:**
+ * - Validates base64url encoding format
+ * - Ensures proper JSON structure
+ * - Validates CSRF token format (must be string)
+ * - Validates timestamp format and range (must be number and valid)
+ * - Calls isValidTimestamp() for replay attack prevention
+ *
+ * **Encoding Details:**
+ * - State is base64url encoded for safe URL transmission
+ * - Uses URL-safe base64 variant (replaces + with -, / with _)
+ * - Handles padding restoration for proper base64 decoding
+ *
+ * **Error Handling:**
+ * - Returns null for any parsing or validation errors
+ * - Catches JSON parsing exceptions and base64 decoding errors
+ * - Treats any malformed input as potential attack vector
+ *
+ * @param state - The base64url encoded state parameter from OAuth callback URL
+ * @returns Parsed and validated OAuthState object, or null if any validation fails
+ *
+ * @example
+ * ```typescript
+ * const validState = "eyJjc3JmVG9rZW4iOiJhYmNkZWYiLCJ0aW1lc3RhbXAiOjE2MDk0NTkyMDAwMH0";
+ * const parsed = parseOAuthState(validState);
+ * console.log(parsed?.csrfToken); // "abcdef" (if valid)
+ *
+ * const invalidState = "invalid-state";
+ * const parsed2 = parseOAuthState(invalidState);
+ * console.log(parsed2); // null
+ * ```
  */
 const parseOAuthState = (state: string): OAuthState | null => {
 	try {
