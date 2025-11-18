@@ -19,25 +19,30 @@ export function OAuthTokenStatus({ accountName, hasRefreshToken, provider }: OAu
 			return; // Don't fetch for non-OAuth accounts
 		}
 
-		const fetchTokenStatus = async () => {
-			try {
-				const response = await api.getAccountTokenHealth(accountName);
-				if (response?.success) {
-					setStatus(response.data.status);
-					setMessage(response.data.message);
-				} else {
-					console.error("API returned error:", response);
+		// Add a delay to avoid overwhelming the server
+		const timer = setTimeout(() => {
+			const fetchTokenStatus = async () => {
+				try {
+					const response = await api.getAccountTokenHealth(accountName);
+					if (response?.success) {
+						setStatus(response.data.status);
+						setMessage(response.data.message);
+					} else {
+						console.error("API returned error:", response);
+						setStatus("error");
+						setMessage("Failed to load token status");
+					}
+				} catch (error) {
+					console.error("Failed to fetch token status:", error);
 					setStatus("error");
-					setMessage("Failed to load token status");
+					setMessage("Failed to check token status");
 				}
-			} catch (error) {
-				console.error("Failed to fetch token status:", error);
-				setStatus("error");
-				setMessage("Failed to check token status");
-			}
-		};
+			};
 
-		fetchTokenStatus();
+			fetchTokenStatus();
+		}, 500); // 500ms delay
+
+		return () => clearTimeout(timer);
 	}, [accountName, hasRefreshToken]);
 
 	// Don't show anything for non-OAuth accounts
@@ -45,14 +50,35 @@ export function OAuthTokenStatus({ accountName, hasRefreshToken, provider }: OAu
 		return null;
 	}
 
-	// If API fails, show a simple checkmark for accounts that have refresh tokens
+	// If API fails, try to use global token health as fallback
 	if (status === "error") {
+		// Try to get account from global token health data
+		const checkGlobalHealth = async () => {
+			try {
+				const globalResponse = await api.getTokenHealth();
+				if (globalResponse?.success && globalResponse.data?.accounts) {
+					const accountData = globalResponse.data.accounts.find(
+						(acc: any) => acc.accountName === accountName
+					);
+					if (accountData) {
+						setStatus(accountData.status);
+						setMessage(accountData.message);
+					}
+				}
+			} catch (error) {
+				console.error("Failed to fetch global health:", error);
+			}
+		};
+
+		checkGlobalHealth();
+
+		// Show loading during fallback attempt
 		return (
 			<span
 				className="inline-flex items-center ml-2"
-				title="OAuth refresh token status unknown"
+				title="OAuth refresh token status unknown - checking..."
 			>
-				<AlertTriangle className="h-4 w-4 text-gray-500" />
+				<RefreshCw className="h-4 w-4 text-gray-400 animate-spin" />
 			</span>
 		);
 	}
