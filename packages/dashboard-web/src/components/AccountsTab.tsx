@@ -12,7 +12,6 @@ import {
 	DeleteConfirmationDialog,
 	RenameAccountDialog,
 } from "./accounts";
-import { TokenHealthIndicator } from "./TokenHealthIndicator";
 import { Button } from "./ui/button";
 import {
 	Card,

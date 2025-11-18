@@ -1,4 +1,4 @@
-import { CheckCircle, AlertTriangle, RefreshCw, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle, RefreshCw, XCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api } from "../api";
 
@@ -8,9 +8,19 @@ interface OAuthTokenStatusProps {
 	provider: string;
 }
 
-type TokenStatus = "healthy" | "warning" | "critical" | "expired" | "loading" | "error";
+type TokenStatus =
+	| "healthy"
+	| "warning"
+	| "critical"
+	| "expired"
+	| "loading"
+	| "error";
 
-export function OAuthTokenStatus({ accountName, hasRefreshToken, provider }: OAuthTokenStatusProps) {
+export function OAuthTokenStatus({
+	accountName,
+	hasRefreshToken,
+	provider,
+}: OAuthTokenStatusProps) {
 	const [status, setStatus] = useState<TokenStatus>("loading");
 	const [message, setMessage] = useState("Loading...");
 
@@ -58,7 +68,7 @@ export function OAuthTokenStatus({ accountName, hasRefreshToken, provider }: OAu
 				const globalResponse = await api.getTokenHealth();
 				if (globalResponse?.success && globalResponse.data?.accounts) {
 					const accountData = globalResponse.data.accounts.find(
-						(acc: any) => acc.accountName === accountName
+						(acc: any) => acc.accountName === accountName,
 					);
 					if (accountData) {
 						setStatus(accountData.status);
@@ -94,7 +104,6 @@ export function OAuthTokenStatus({ accountName, hasRefreshToken, provider }: OAu
 				return <XCircle className="h-4 w-4 text-red-600" />;
 			case "loading":
 				return <RefreshCw className="h-4 w-4 text-gray-400 animate-spin" />;
-			case "error":
 			default:
 				return <AlertTriangle className="h-4 w-4 text-gray-500" />;
 		}
@@ -111,17 +120,13 @@ export function OAuthTokenStatus({ accountName, hasRefreshToken, provider }: OAu
 				return `OAuth token expired - ${message} - Re-authenticate with: bun run cli --reauthenticate ${accountName}`;
 			case "loading":
 				return "Checking OAuth token status...";
-			case "error":
 			default:
 				return "OAuth token status unknown";
 		}
 	};
 
 	return (
-		<span
-			className="inline-flex items-center ml-2"
-			title={getTooltip()}
-		>
+		<span className="inline-flex items-center ml-2" title={getTooltip()}>
 			{getIcon()}
 		</span>
 	);
