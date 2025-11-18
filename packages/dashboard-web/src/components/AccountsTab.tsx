@@ -355,13 +355,8 @@ export function AccountsTab() {
 				<CardHeader>
 					<div className="flex items-center justify-between">
 						<div>
-							<div className="flex items-center gap-3">
-								<div>
-									<CardTitle>Accounts</CardTitle>
-									<CardDescription>Manage your Claude accounts</CardDescription>
-								</div>
-								<TokenHealthIndicator showDetails={false} />
-							</div>
+							<CardTitle>Accounts</CardTitle>
+							<CardDescription>Manage your Claude accounts</CardDescription>
 						</div>
 						{!adding && (
 							<Button onClick={() => setAdding(true)} size="sm">

@@ -16,8 +16,8 @@ import {
 	providerSupportsAutoFeatures,
 	providerSupportsModelMappings,
 } from "../../utils/provider-utils";
-import { TokenHealthIndicator } from "../TokenHealthIndicator";
 import { Button } from "../ui/button";
+import { OAuthTokenStatus } from "../OAuthTokenStatus";
 import { Switch } from "../ui/switch";
 import { RateLimitProgress } from "./RateLimitProgress";
 
@@ -70,7 +70,11 @@ export function AccountListItem({
 							<span className="px-2 py-0.5 text-xs font-medium bg-secondary text-secondary-foreground rounded-full">
 								Priority: {account.priority}
 							</span>
-							<TokenHealthIndicator accountName={account.name} />
+							<OAuthTokenStatus
+								accountName={account.name}
+								hasRefreshToken={!!(account.refresh_token || account.provider === "anthropic")}
+								provider={account.provider}
+							/>
 							{providerSupportsAutoFeatures(account.provider) && (
 								<>
 									<div className="flex items-center gap-2">
