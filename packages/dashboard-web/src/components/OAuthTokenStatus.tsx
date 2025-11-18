@@ -22,16 +22,18 @@ export function OAuthTokenStatus({ accountName, hasRefreshToken, provider }: OAu
 		const fetchTokenStatus = async () => {
 			try {
 				const response = await api.getAccountTokenHealth(accountName);
-				if (response.success) {
+				if (response?.success) {
 					setStatus(response.data.status);
 					setMessage(response.data.message);
 				} else {
+					console.error("API returned error:", response);
 					setStatus("error");
 					setMessage("Failed to load token status");
 				}
 			} catch (error) {
+				console.error("Failed to fetch token status:", error);
 				setStatus("error");
-				setMessage("Failed to load token status");
+				setMessage("Failed to check token status");
 			}
 		};
 
@@ -41,6 +43,18 @@ export function OAuthTokenStatus({ accountName, hasRefreshToken, provider }: OAu
 	// Don't show anything for non-OAuth accounts
 	if (!hasRefreshToken) {
 		return null;
+	}
+
+	// If API fails, show a simple checkmark for accounts that have refresh tokens
+	if (status === "error") {
+		return (
+			<span
+				className="inline-flex items-center ml-2"
+				title="OAuth refresh token status unknown"
+			>
+				<AlertTriangle className="h-4 w-4 text-gray-500" />
+			</span>
+		);
 	}
 
 	const getIcon = () => {
@@ -56,24 +70,24 @@ export function OAuthTokenStatus({ accountName, hasRefreshToken, provider }: OAu
 				return <RefreshCw className="h-4 w-4 text-gray-400 animate-spin" />;
 			case "error":
 			default:
-				return <AlertTriangle className="h-4 w-4 text-gray-400" />;
+				return <AlertTriangle className="h-4 w-4 text-gray-500" />;
 		}
 	};
 
 	const getTooltip = () => {
 		switch (status) {
 			case "healthy":
-				return "OAuth refresh token valid";
+				return "OAuth token available";
 			case "warning":
-				return `${message} - Consider re-authenticating soon`;
+				return `OAuth token expiring soon - ${message}`;
 			case "critical":
 			case "expired":
-				return `${message} - Please re-authenticate: bun run cli --reauthenticate ${accountName}`;
+				return `OAuth token expired - ${message} - Re-authenticate with: bun run cli --reauthenticate ${accountName}`;
 			case "loading":
-				return "Checking token status...";
+				return "Checking OAuth token status...";
 			case "error":
 			default:
-				return "Failed to check token status";
+				return "OAuth token status unknown";
 		}
 	};
 

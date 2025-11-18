@@ -103,10 +103,11 @@ export function AccountListItem({
 						<p className="text-sm text-muted-foreground">{account.provider}</p>
 					</div>
 					<div className="flex items-center gap-2">
-						{presenter.isRateLimited ? (
-							<AlertCircle className="h-4 w-4 text-yellow-600" />
-						) : (
-							<CheckCircle className="h-4 w-4 text-green-600" />
+						{presenter.isRateLimited && (
+							<AlertCircle
+								className="h-4 w-4 text-yellow-600"
+								title="Account is rate-limited - requests will be rejected until the limit resets"
+							/>
 						)}
 						<span className="text-sm">{presenter.requestCount} requests</span>
 						{presenter.isPaused && (
