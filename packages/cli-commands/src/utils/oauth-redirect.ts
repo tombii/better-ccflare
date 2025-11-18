@@ -180,6 +180,8 @@ async function createTemporaryOAuthServer(
 						error instanceof Error ? error : new Error(String(error)),
 					);
 				}
+				// Clean up server on error to prevent resource leaks
+				server.stop();
 				return new Response("Internal Server Error", { status: 500 });
 			}
 		},

@@ -29,60 +29,77 @@ export function OAuthTokenStatus({
 			return; // Don't fetch for non-OAuth accounts
 		}
 
-		// Add a delay to avoid overwhelming the server
-		const timer = setTimeout(() => {
-			const fetchTokenStatus = async () => {
+		// Add cancellation and delay to avoid overwhelming the server
+		let cancelled = false;
+		const timer = setTimeout(async () => {
+			if (cancelled) return;
+
+			try {
+				const response = await api.getAccountTokenHealth(accountName);
+				if (cancelled) return;
+
+				if (response?.success) {
+					setStatus(response.data.status);
+					setMessage(response.data.message);
+				} else {
+					console.error("API returned error:", response);
+					setStatus("error");
+					setMessage("Failed to load token status");
+				}
+			} catch (error) {
+				if (cancelled) return;
+				console.error("Failed to fetch token status:", error);
+				setStatus("error");
+				setMessage("Failed to check token status");
+			}
+		}, 500); // 500ms delay
+
+		return () => {
+			cancelled = true;
+			clearTimeout(timer);
+		};
+	}, [accountName, hasRefreshToken]);
+
+	// Fallback: if initial fetch fails, try global token health
+	useEffect(() => {
+		if (status === "error" && hasRefreshToken) {
+			let cancelled = false;
+
+			const checkGlobalHealth = async () => {
 				try {
-					const response = await api.getAccountTokenHealth(accountName);
-					if (response?.success) {
-						setStatus(response.data.status);
-						setMessage(response.data.message);
-					} else {
-						console.error("API returned error:", response);
-						setStatus("error");
-						setMessage("Failed to load token status");
+					const globalResponse = await api.getTokenHealth();
+					if (cancelled) return;
+
+					if (globalResponse?.success && globalResponse.data?.accounts) {
+						const accountData = globalResponse.data.accounts.find(
+							(acc: any) => acc.accountName === accountName,
+						);
+						if (accountData) {
+							setStatus(accountData.status);
+							setMessage(accountData.message);
+						}
 					}
 				} catch (error) {
-					console.error("Failed to fetch token status:", error);
-					setStatus("error");
-					setMessage("Failed to check token status");
+					if (cancelled) return;
+					console.error("Failed to fetch global health:", error);
 				}
 			};
 
-			fetchTokenStatus();
-		}, 500); // 500ms delay
+			checkGlobalHealth();
 
-		return () => clearTimeout(timer);
-	}, [accountName, hasRefreshToken]);
+			return () => {
+				cancelled = true;
+			};
+		}
+	}, [status, accountName, hasRefreshToken]);
 
 	// Don't show anything for non-OAuth accounts
 	if (!hasRefreshToken) {
 		return null;
 	}
 
-	// If API fails, try to use global token health as fallback
+	// Show loading during fallback attempt
 	if (status === "error") {
-		// Try to get account from global token health data
-		const checkGlobalHealth = async () => {
-			try {
-				const globalResponse = await api.getTokenHealth();
-				if (globalResponse?.success && globalResponse.data?.accounts) {
-					const accountData = globalResponse.data.accounts.find(
-						(acc: any) => acc.accountName === accountName,
-					);
-					if (accountData) {
-						setStatus(accountData.status);
-						setMessage(accountData.message);
-					}
-				}
-			} catch (error) {
-				console.error("Failed to fetch global health:", error);
-			}
-		};
-
-		checkGlobalHealth();
-
-		// Show loading during fallback attempt
 		return (
 			<span
 				className="inline-flex items-center ml-2"
