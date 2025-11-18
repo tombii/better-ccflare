@@ -30,11 +30,25 @@ export async function createOAuthRedirectUri(
 		const port = customPort;
 		const uri = `${protocol}://localhost:${port}/callback`;
 
+		// Generate PKCE challenge for server context (still needed for security)
+		const pkce = await generatePKCE();
+		const pkceChallenge = pkce.challenge;
+
+		// Generate secure random state for CSRF protection in server context
+		const generateState = (): string => {
+			const array = new Uint8Array(32);
+			crypto.getRandomValues(array);
+			return Array.from(array, (byte) =>
+				byte.toString(16).padStart(2, "0"),
+			).join("");
+		};
+		const state = generateState();
+
 		// For server context, return a dummy waitForCode that should not be called
 		return {
 			uri,
-			pkceChallenge: "", // Not used in server context
-			state: "", // Not used in server context
+			pkceChallenge, // PKCE challenge for OAuth URL
+			state, // CSRF state for OAuth URL
 			waitForCode: () => {
 				throw new Error("waitForCode should not be called in server context");
 			},
