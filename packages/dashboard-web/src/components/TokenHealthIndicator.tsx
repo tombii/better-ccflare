@@ -1,5 +1,5 @@
 import { AlertTriangle, CheckCircle, RefreshCw, XCircle } from "lucide-react";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
 
 type TokenHealthStatus =
@@ -36,7 +36,7 @@ export function TokenHealthIndicator({
 		try {
 			if (accountName) {
 				const response = await api.getAccountTokenHealth(accountName);
-				if (response.success) {
+				if (response?.success) {
 					setTokenHealth(response.data);
 				} else {
 					console.error("API returned error for account:", accountName, response);
@@ -44,7 +44,7 @@ export function TokenHealthIndicator({
 				}
 			} else {
 				const response = await api.getTokenHealth();
-				if (response.success && response.data?.accounts) {
+				if (response?.success && response.data?.accounts) {
 					// Filter out API key accounts (no-refresh-token) and find the worst status
 					const oauthAccounts = response.data.accounts.filter(
 						(acc: any) => acc.status !== "no-refresh-token"
@@ -137,10 +137,22 @@ export function TokenHealthIndicator({
 		}
 	};
 
-	// Don't show anything if not loading and no token health data
+	// If not loading and no token health data, show a minimal placeholder or nothing
 	// This handles API key accounts or cases with no OAuth accounts
 	if (!loading && !tokenHealth) {
-		return null;
+		// For individual account indicators, show nothing
+		if (accountName) {
+			return null;
+		}
+		// For global indicator, show minimal placeholder
+		return (
+			<div
+				className={`flex items-center gap-2 px-3 py-1 rounded-full border text-xs font-medium ${className}`}
+			>
+				<CheckCircle className="h-4 w-4 text-gray-400" />
+				<span className="text-gray-500">No OAuth accounts</span>
+			</div>
+		);
 	}
 
 	if (loading) {
