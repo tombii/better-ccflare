@@ -112,6 +112,17 @@ async function createTemporaryOAuthServer(
 		); // 5 minutes timeout
 	});
 
+	// Track if server has been stopped to prevent multiple stops
+	let serverStopped = false;
+
+	// Create a safe stop function that ensures server is only stopped once
+	const safeStopServer = () => {
+		if (!serverStopped) {
+			server.stop();
+			serverStopped = true;
+		}
+	};
+
 	// Create a temporary server using Bun.serve
 	const server = await Bun.serve({
 		port: 0, // Let the OS choose an available port
@@ -195,7 +206,7 @@ async function createTemporaryOAuthServer(
 					);
 				}
 				// Clean up server on error to prevent resource leaks
-				server.stop();
+				safeStopServer();
 				return new Response("Internal Server Error", { status: 500 });
 			}
 		},
@@ -218,11 +229,11 @@ async function createTemporaryOAuthServer(
 				return await Promise.race([callbackPromise, timeoutPromise]);
 			} finally {
 				// Always clean up the server after receiving the code or timeout
-				server.stop();
+				safeStopServer();
 			}
 		},
 		cleanup: () => {
-			server.stop();
+			safeStopServer();
 		},
 	};
 }
