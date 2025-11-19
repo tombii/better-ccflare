@@ -16,7 +16,10 @@ interface ErrorBoundaryProps {
  * Error Boundary component to catch and handle errors in React component trees
  * Prevents UI crashes and provides graceful error handling
  */
-export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
+export class ErrorBoundary extends React.Component<
+	ErrorBoundaryProps,
+	ErrorBoundaryState
+> {
 	constructor(props: ErrorBoundaryProps) {
 		super(props);
 		this.state = {
@@ -59,7 +62,9 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
 	render() {
 		if (this.state.hasError) {
 			const FallbackComponent = this.props.fallback || DefaultErrorFallback;
-			return <FallbackComponent error={this.state.error} reset={this.handleReset} />;
+			return (
+				<FallbackComponent error={this.state.error} reset={this.handleReset} />
+			);
 		}
 
 		return this.props.children;
@@ -98,7 +103,8 @@ function DefaultErrorFallback({ error, reset }: DefaultErrorFallbackProps) {
 					Something went wrong
 				</h3>
 				<p className="text-red-600 dark:text-red-300 mb-4 max-w-md">
-					{error?.message || "An unexpected error occurred while loading this component."}
+					{error?.message ||
+						"An unexpected error occurred while loading this component."}
 				</p>
 				<button
 					onClick={reset}
@@ -114,7 +120,10 @@ function DefaultErrorFallback({ error, reset }: DefaultErrorFallbackProps) {
 /**
  * Token Status Error Fallback component for OAuth token status specific errors
  */
-export function TokenStatusErrorFallback({ error, reset }: DefaultErrorFallbackProps) {
+export function TokenStatusErrorFallback({
+	error,
+	reset,
+}: DefaultErrorFallbackProps) {
 	return (
 		<span className="px-2 py-1 text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300 rounded-full">
 			Status unavailable
@@ -129,17 +138,17 @@ export function APIErrorBoundary({ children }: { children: React.ReactNode }) {
 	const handleAPIError = (error: Error, errorInfo: React.ErrorInfo) => {
 		// Log API errors with additional context
 		console.error("API Error Boundary - Error:", error);
-		console.error("API Error Boundary - Component Stack:", errorInfo.componentStack);
+		console.error(
+			"API Error Boundary - Component Stack:",
+			errorInfo.componentStack,
+		);
 
 		// You could also send errors to an error reporting service here
 		// trackError(error, { componentStack: errorInfo.componentStack, type: 'api-error' });
 	};
 
 	return (
-		<ErrorBoundary
-			fallback={TokenStatusErrorFallback}
-			onError={handleAPIError}
-		>
+		<ErrorBoundary fallback={TokenStatusErrorFallback} onError={handleAPIError}>
 			{children}
 		</ErrorBoundary>
 	);

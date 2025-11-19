@@ -437,9 +437,11 @@ describe("4. PKCE and State Security Tests", () => {
 			const parseOAuthState = (state: string): any => {
 				try {
 					const base64State = state.replace(/-/g, "+").replace(/_/g, "/");
-					const jsonState = atob(base64State + "=".repeat((4 - (base64State.length % 4)) % 4));
+					const jsonState = atob(
+						base64State + "=".repeat((4 - (base64State.length % 4)) % 4),
+					);
 					return JSON.parse(jsonState);
-				} catch (error) {
+				} catch (_error) {
 					return null;
 				}
 			};

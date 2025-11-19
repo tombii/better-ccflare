@@ -194,7 +194,9 @@ const parseOAuthState = (state: string): OAuthState | null => {
 	try {
 		// Decode base64url state
 		const base64State = state.replace(/-/g, "+").replace(/_/g, "/");
-		const jsonState = atob(base64State + "=".repeat((4 - (base64State.length % 4)) % 4));
+		const jsonState = atob(
+			base64State + "=".repeat((4 - (base64State.length % 4)) % 4),
+		);
 		const parsedState: OAuthState = JSON.parse(jsonState);
 
 		// Validate structure
@@ -212,7 +214,7 @@ const parseOAuthState = (state: string): OAuthState | null => {
 		}
 
 		return parsedState;
-	} catch (error) {
+	} catch (_error) {
 		// Any parsing error means invalid state
 		return null;
 	}
@@ -236,7 +238,9 @@ async function createTemporaryOAuthServer(
 	const generateState = (): string => {
 		const array = new Uint8Array(32);
 		crypto.getRandomValues(array);
-		const csrfToken = Array.from(array, (byte) => byte.toString(16).padStart(2, "0")).join("");
+		const csrfToken = Array.from(array, (byte) =>
+			byte.toString(16).padStart(2, "0"),
+		).join("");
 
 		// Create state with timestamp for replay attack protection
 		const state: OAuthState = {
@@ -321,12 +325,9 @@ async function createTemporaryOAuthServer(
 
 						// Validate CSRF token
 						if (receivedState.csrfToken !== expectedParsedState.csrfToken) {
-							return new Response(
-								"Invalid CSRF token - possible CSRF attack",
-								{
-									status: 400,
-								},
-							);
+							return new Response("Invalid CSRF token - possible CSRF attack", {
+								status: 400,
+							});
 						}
 
 						// State and CSRF token validated, resolve the promise with authorization code

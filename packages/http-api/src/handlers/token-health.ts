@@ -53,7 +53,8 @@ export function createAccountTokenHealthHandler(
 			return jsonResponse(
 				{
 					success: false,
-					error: "Invalid account name. Only alphanumeric characters, hyphens, and underscores are allowed."
+					error:
+						"Invalid account name. Only alphanumeric characters, hyphens, and underscores are allowed.",
 				},
 				400,
 			);

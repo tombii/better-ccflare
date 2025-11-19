@@ -21,7 +21,7 @@ type TokenStatus =
 export function OAuthTokenStatus({
 	accountName,
 	hasRefreshToken,
-}: Omit<OAuthTokenStatusProps, 'provider'>) {
+}: Omit<OAuthTokenStatusProps, "provider">) {
 	const [status, setStatus] = useState<TokenStatus>("loading");
 	const [message, setMessage] = useState("Loading...");
 	const [fallbackAttempted, setFallbackAttempted] = useState(false);
@@ -81,8 +81,11 @@ export function OAuthTokenStatus({
 
 					if (globalResponse?.success && globalResponse.data?.accounts) {
 						const accountData = globalResponse.data.accounts.find(
-							(acc: { accountName: string; status: TokenStatus; message: string }) =>
-								acc.accountName === accountName,
+							(acc: {
+								accountName: string;
+								status: TokenStatus;
+								message: string;
+							}) => acc.accountName === accountName,
 						);
 						if (accountData) {
 							setStatus(accountData.status);
