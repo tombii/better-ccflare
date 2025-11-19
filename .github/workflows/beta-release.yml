@@ -187,62 +187,29 @@ jobs:
 
       - name: Create Beta Release
         id: create_release
-        uses: actions/create-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ github.ref_name }}
-          release_name: Beta Release ${{ github.ref_name }}
-          draft: false
-          prerelease: true
-          body: ${{ steps.changelog.outputs.changelog }}
+        run: |
+          # Check if release already exists
+          if gh release view "${{ github.ref_name }}" &>/dev/null; then
+            echo "Release already exists, deleting and recreating..."
+            gh release delete "${{ github.ref_name }}" -y
+          fi
 
-      - name: Upload Linux amd64 (Beta)
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./apps/cli/dist/better-ccflare-linux-amd64
-          asset_name: better-ccflare-linux-amd64
-          asset_content_type: application/octet-stream
+          # Create new release
+          gh release create "${{ github.ref_name }}" \
+            --title "Beta Release ${{ github.ref_name }}" \
+            --notes "${{ steps.changelog.outputs.changelog }}" \
+            --prerelease
 
-      - name: Upload Linux ARM64 (Beta)
-        uses: actions/upload-release-asset@v1
+      - name: Upload Release Assets
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./apps/cli/dist/better-ccflare-linux-arm64
-          asset_name: better-ccflare-linux-arm64
-          asset_content_type: application/octet-stream
-
-      - name: Upload macOS x86_64 (Beta)
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./apps/cli/dist/better-ccflare-macos-x86_64
-          asset_name: better-ccflare-macos-x86_64
-          asset_content_type: application/octet-stream
-
-      - name: Upload macOS ARM64 (Beta)
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./apps/cli/dist/better-ccflare-macos-arm64
-          asset_name: better-ccflare-macos-arm64
-          asset_content_type: application/octet-stream
-
-      - name: Upload Windows x64 (Beta)
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./apps/cli/dist/better-ccflare-windows-x64.exe
-          asset_name: better-ccflare-windows-x64.exe
-          asset_content_type: application/octet-stream
+        run: |
+          gh release upload "${{ github.ref_name }}" \
+            ./apps/cli/dist/better-ccflare-linux-amd64 \
+            ./apps/cli/dist/better-ccflare-linux-arm64 \
+            ./apps/cli/dist/better-ccflare-macos-x86_64 \
+            ./apps/cli/dist/better-ccflare-macos-arm64 \
+            ./apps/cli/dist/better-ccflare-windows-x64.exe \
+            --clobber

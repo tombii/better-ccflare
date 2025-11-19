@@ -6,9 +6,20 @@
 - **Anthropic** - Single provider with two modes:
   - **console mode**: Standard Claude API (console.anthropic.com)
   - **max mode**: Claude Code (claude.ai)
+- **NanoGPT** - High-performance GPT provider with competitive pricing:
+  - Dynamic pricing fetch with 24-hour cache
+  - Supports GLM-4.5, GLM-4.5-Air, GLM-4.6, and GLM-4.6-Air models
+  - API key authentication only
+- **Minimax** - Chinese AI provider with Anthropic-compatible API:
+  - Supports MiniMax-M2 and other models
+  - API key authentication
+  - Automatic format conversion
 - **Z.ai** - Claude proxy service with API key authentication:
   - Lite, Pro, and Max plans with higher rate limits than direct Claude API
   - Uses API key authentication (no OAuth support)
+- **Anthropic-Compatible** - Generic provider for Anthropic-compatible APIs:
+  - Supports custom endpoints
+  - API key authentication only
 - **OpenAI-Compatible** - Generic provider for any OpenAI-compatible API:
   - Supports custom endpoints (OpenRouter, Together AI, local models, etc.)
   - API key authentication only
@@ -43,13 +54,33 @@ The better-ccflare providers system is a modular architecture designed to suppor
 1. **Anthropic Provider** - Provides access to:
    - **Claude API** (console mode) - Standard API access via console.anthropic.com
    - **Claude Code** (max mode) - Enhanced access via claude.ai
+   - OAuth authentication with PKCE security
+   - Token health monitoring with automatic refresh (30-minute buffer)
 
-2. **Z.ai Provider** - Provides access to:
+2. **NanoGPT Provider** - Provides access to:
+   - **NanoGPT API** - High-performance GPT models with competitive pricing
+   - Supports GLM-4.5, GLM-4.5-Air, GLM-4.6, and GLM-4.6-Air models
+   - Dynamic pricing fetch with 24-hour cache from nano-gpt.com API
+   - API key authentication
+   - Full Anthropic-compatible API format
+
+3. **Minimax Provider** - Provides access to:
+   - **Minimax API** - Chinese AI provider with Anthropic-compatible API
+   - Supports MiniMax-M2 and other models
+   - API key authentication
+   - Automatic format conversion
+
+4. **Z.ai Provider** - Provides access to:
    - **Z.ai API** - Claude proxy service with enhanced rate limits
    - Uses API key authentication instead of OAuth
    - Supports Lite, Pro, and Max plans with ~3× the usage quota of equivalent Claude plans
 
-3. **OpenAI-Compatible Provider** - Provides access to:
+5. **Anthropic-Compatible Provider** - Provides access to:
+   - **Any Anthropic-compatible API** - Custom endpoints, self-hosted models, etc.
+   - Uses API key authentication
+   - Supports custom endpoints for maximum flexibility
+
+6. **OpenAI-Compatible Provider** - Provides access to:
    - **Any OpenAI-compatible API** - OpenRouter, Together AI, local models, etc.
    - Uses API key authentication
    - Automatic format conversion between Anthropic and OpenAI API formats
