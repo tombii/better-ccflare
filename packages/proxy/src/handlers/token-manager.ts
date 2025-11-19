@@ -41,7 +41,14 @@ export const startTokenCleanupInterval = () => {
 				}
 			}
 
-			toDelete.forEach((accountId) => refreshFailures.delete(accountId));
+			// Clean up both maps together
+			toDelete.forEach((accountId) => {
+				refreshFailures.delete(accountId);
+				backoffCounters.delete(accountId);
+			});
+
+			// Enforce size limit during periodic cleanup to prevent memory bloat
+			enforceMaxSize();
 
 			if (toDelete.length > 0) {
 				log.debug(`Cleaned up ${toDelete.length} expired failure records`);
