@@ -96,6 +96,9 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
+            type=raw,value=v{{version}},enable=${{ github.ref_type == 'tag' }}
+            type=raw,value=v{{major}},enable=${{ github.ref_type == 'tag' }}
+            type=raw,value=v{{major}}.{{minor}},enable=${{ github.ref_type == 'tag' }}
             type=sha
             type=raw,value=${{ steps.version.outputs.docker_tag }},enable=${{ steps.version.outputs.is_prerelease == 'false' && github.ref_type == 'tag' }}
             type=raw,value=dev,enable=${{ steps.version.outputs.is_prerelease == 'true' }}
