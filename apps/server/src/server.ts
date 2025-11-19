@@ -356,17 +356,29 @@ export default function startServer(options?: {
 				description: "SSL certificate file",
 			});
 		} catch (error) {
+			// Don't expose path details in error messages - log to server only
+			console.error("SSL file path validation failed", {
+				error: error instanceof Error ? error.message : String(error),
+			});
 			throw new Error(
-				`SSL file path validation failed: ${error instanceof Error ? error.message : String(error)}`,
+				"SSL file path validation failed. Check server logs for details.",
 			);
 		}
 
 		if (!existsSync(validatedSslKeyPath)) {
-			throw new Error(`SSL key file not found: ${validatedSslKeyPath}`);
+			// Don't expose paths in error messages
+			console.error("SSL key file not found", {
+				path: validatedSslKeyPath,
+			});
+			throw new Error("SSL key file not found. Check server logs for details.");
 		}
 		if (!existsSync(validatedSslCertPath)) {
+			// Don't expose paths in error messages
+			console.error("SSL certificate file not found", {
+				path: validatedSslCertPath,
+			});
 			throw new Error(
-				`SSL certificate file not found: ${validatedSslCertPath}`,
+				"SSL certificate file not found. Check server logs for details.",
 			);
 		}
 	}
