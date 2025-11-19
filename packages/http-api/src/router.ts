@@ -149,18 +149,6 @@ export class APIRouter {
 			"GET:/api/token-health/reauth-needed",
 			reauthNeededHandler,
 		);
-		this.handlers.set(
-			"GET:/api/token-health/account/:accountName",
-			(_req, url) => {
-				const pathParts = url.pathname.split("/");
-				const accountName = pathParts[pathParts.length - 1];
-				const accountTokenHealthHandler = createAccountTokenHealthHandler(
-					dbOps,
-					accountName,
-				);
-				return accountTokenHealthHandler();
-			},
-		);
 
 		this.handlers.set("POST:/api/oauth/init", (req) => oauthInitHandler(req));
 		this.handlers.set("POST:/api/oauth/callback", (req) =>
@@ -444,6 +432,22 @@ export class APIRouter {
 			if (parts.length === 4 && method === "DELETE") {
 				const deleteHandler = createApiKeyDeleteHandler(this.context.dbOps);
 				return await this.wrapHandler((req) => deleteHandler(req, keyName))(
+					req,
+					url,
+				);
+			}
+		}
+
+		// Check for token health account endpoint
+		if (path.startsWith("/api/token-health/account/") && method === "GET") {
+			const parts = path.split("/");
+			const accountName = decodeURIComponent(parts[4]);
+			if (accountName) {
+				const accountTokenHealthHandler = createAccountTokenHealthHandler(
+					this.context.dbOps,
+					accountName,
+				);
+				return await this.wrapHandler(() => accountTokenHealthHandler())(
 					req,
 					url,
 				);

@@ -48,19 +48,22 @@ export function createAccountTokenHealthHandler(
 	accountName: string,
 ) {
 	return (): Response => {
-		// Validate account name parameter to prevent injection
-		if (!/^[a-zA-Z0-9_-]+$/.test(accountName)) {
+		// Validate account name parameter - allow common characters
+		// Account names can contain alphanumeric, spaces, hyphens, underscores, and dots
+		if (!accountName || accountName.trim().length === 0) {
 			return jsonResponse(
 				{
 					success: false,
-					error:
-						"Invalid account name. Only alphanumeric characters, hyphens, and underscores are allowed.",
+					error: "Account name cannot be empty",
 				},
 				400,
 			);
 		}
 
-		const account = dbOps.getAccount(accountName);
+		// Find account by name from all accounts
+		const accounts = dbOps.getAllAccounts();
+		const account = accounts.find((a) => a.name === accountName);
+
 		if (!account) {
 			return jsonResponse(
 				{
