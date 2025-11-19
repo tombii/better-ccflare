@@ -2,6 +2,9 @@
  * Version utility that works in both development and production environments
  */
 
+// Claude CLI version to use in user-agent headers and as fallback
+export const CLAUDE_CLI_VERSION = "2.0.46";
+
 // Cache the version to avoid repeated file reads
 let cachedVersion: string | null = null;
 
@@ -68,11 +71,11 @@ export async function getVersion(): Promise<string> {
 		}
 
 		// 6. Fallback to a default version
-		cachedVersion = "2.0.16";
+		cachedVersion = CLAUDE_CLI_VERSION;
 		return cachedVersion;
 	} catch (_error) {
 		// Ultimate fallback
-		cachedVersion = "2.0.16";
+		cachedVersion = CLAUDE_CLI_VERSION;
 		return cachedVersion;
 	}
 }
@@ -97,6 +100,6 @@ export function getVersionSync(): string {
 
 	// For other cases, we'll use the fallback
 	// The async version will be called later to update the cache
-	cachedVersion = "2.0.16";
+	cachedVersion = CLAUDE_CLI_VERSION;
 	return cachedVersion;
 }

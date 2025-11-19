@@ -74,4 +74,4 @@ export {
 	validatePriority,
 	validateString,
 } from "./validation";
-export { getVersion, getVersionSync } from "./version";
+export { CLAUDE_CLI_VERSION, getVersion, getVersionSync } from "./version";

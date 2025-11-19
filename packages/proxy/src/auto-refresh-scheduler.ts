@@ -1,5 +1,9 @@
 import type { Database } from "bun:sqlite";
-import { registerHeartbeat, requestEvents } from "@better-ccflare/core";
+import {
+	CLAUDE_CLI_VERSION,
+	registerHeartbeat,
+	requestEvents,
+} from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import { fetchUsageData, getProvider } from "@better-ccflare/providers";
 import type { Account } from "@better-ccflare/types";
@@ -296,7 +300,7 @@ export class AutoRefreshScheduler {
 				connection: "keep-alive",
 				"content-type": "application/json",
 				"sec-fetch-mode": "cors",
-				"user-agent": "claude-cli/2.0.28 (external, cli)",
+				"user-agent": `claude-cli/${CLAUDE_CLI_VERSION} (external, cli)`,
 				"x-app": "cli",
 				"x-stainless-arch": "x64",
 				"x-stainless-helper-method": "stream",
