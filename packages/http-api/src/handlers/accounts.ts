@@ -476,6 +476,19 @@ export function createAccountRemoveHandler(dbOps: DatabaseOperations) {
 				return errorResponse(NotFound(result.message));
 			}
 
+			// Find the account ID to clean up usage cache (check before deletion)
+			const db = dbOps.getDatabase();
+			const account = db
+				.query<{ id: string }, [string]>(
+					"SELECT id FROM accounts WHERE name = ?",
+				)
+				.get(accountName);
+
+			if (account) {
+				// Clear usage cache for removed account to prevent memory leaks
+				usageCache.delete(account.id);
+			}
+
 			return jsonResponse({
 				success: true,
 				message: result.message,
@@ -1728,6 +1741,9 @@ export function createAccountReloadHandler(dbOps: DatabaseOperations) {
 
 			// Clear refresh cache for this account
 			clearAccountRefreshCache(accountId);
+
+			// Clear usage cache for this account to prevent memory leaks
+			usageCache.delete(accountId);
 
 			log.info(`Token reload triggered for account '${account.name}'`);
 

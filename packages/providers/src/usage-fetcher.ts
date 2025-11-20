@@ -204,7 +204,11 @@ class UsageCache {
 			clearInterval(interval);
 			this.polling.delete(accountId);
 			this.tokenProviders.delete(accountId);
-			log.info(`Stopped usage polling for account ${accountId}`);
+			// Clean up cache entry when polling stops to prevent memory leaks
+			this.cache.delete(accountId);
+			log.info(
+				`Stopped usage polling and cleared cache for account ${accountId}`,
+			);
 		}
 	}
 
@@ -266,11 +270,43 @@ class UsageCache {
 	}
 
 	/**
+	 * Clean up stale cache entries older than maxAgeMs
+	 */
+	cleanupStaleEntries(maxAgeMs: number = 10 * 60 * 1000): void {
+		const now = Date.now();
+		let cleanedCount = 0;
+
+		for (const [accountId, cached] of this.cache.entries()) {
+			if (now - cached.timestamp > maxAgeMs) {
+				this.cache.delete(accountId);
+				cleanedCount++;
+			}
+		}
+
+		if (cleanedCount > 0) {
+			log.debug(`Cleaned up ${cleanedCount} stale usage cache entries`);
+		}
+	}
+
+	/**
 	 * Get cached usage data for an account
 	 */
 	get(accountId: string): AnyUsageData | null {
 		const cached = this.cache.get(accountId);
-		return cached?.data ?? null;
+		if (!cached) return null;
+
+		// Clean up stale entries while accessing
+		const age = Date.now() - cached.timestamp;
+		if (age > 10 * 60 * 1000) {
+			// 10 minutes max age
+			this.cache.delete(accountId);
+			log.debug(
+				`Removed stale cache entry for account ${accountId} (age: ${Math.round(age / 1000)}s)`,
+			);
+			return null;
+		}
+
+		return cached.data;
 	}
 
 	/**
@@ -278,6 +314,12 @@ class UsageCache {
 	 */
 	set(accountId: string, data: AnyUsageData): void {
 		this.cache.set(accountId, { data, timestamp: Date.now() });
+
+		// Periodic cleanup of stale entries to prevent memory bloat
+		// Run cleanup every 100 sets to balance performance and memory
+		if (this.cache.size % 100 === 0) {
+			this.cleanupStaleEntries();
+		}
 	}
 
 	/**
@@ -286,7 +328,24 @@ class UsageCache {
 	getAge(accountId: string): number | null {
 		const cached = this.cache.get(accountId);
 		if (!cached) return null;
-		return Date.now() - cached.timestamp;
+
+		const age = Date.now() - cached.timestamp;
+		// Clean up if too old
+		if (age > 10 * 60 * 1000) {
+			// 10 minutes max age
+			this.cache.delete(accountId);
+			return null;
+		}
+
+		return age;
+	}
+
+	/**
+	 * Clear cached data for a specific account
+	 */
+	delete(accountId: string): void {
+		this.cache.delete(accountId);
+		log.debug(`Cleared usage cache for account ${accountId}`);
 	}
 
 	/**
