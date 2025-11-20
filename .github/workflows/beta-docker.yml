@@ -58,12 +58,15 @@ jobs:
           images: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=ref,event=branch,suffix=-beta
             type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}},suffix=-beta
-            type=semver,pattern={{major}},suffix=-beta
-            type=sha,suffix=-beta
-          # Note: No latest tag for beta releases
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=dev
+            type=raw,value=rc,enable=${{ contains(steps.version.outputs.version, 'rc') }}
+            type=raw,value=beta,enable=${{ contains(steps.version.outputs.version, 'beta') }}
+            type=raw,value=alpha,enable=${{ contains(steps.version.outputs.version, 'alpha') }}
+            type=sha
+          # Tags: Full version (3.0.0-rc2), major.minor (3.0), major (3), dev, rc/beta/alpha, sha
 
       - name: Build and push Docker images
         id: build

@@ -6,8 +6,6 @@ on:
     workflows: ["Release Multi-Architecture Binaries"]
     types:
       - completed
-    # Only run for non-beta releases
-    if: github.event.workflow_run.head_branch != 'refs/tags/v*-*'
 
 env:
   REGISTRY: ghcr.io
@@ -16,6 +14,10 @@ env:
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
+    # Only run for stable releases (not beta/rc/alpha)
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      !contains(github.event.workflow_run.head_branch, '-')
     permissions:
       contents: read
       packages: write
