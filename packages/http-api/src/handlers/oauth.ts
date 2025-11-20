@@ -179,7 +179,9 @@ export function createOAuthCallbackHandler(dbOps: DatabaseOperations) {
 					mode: savedMode || "claude-oauth", // Add mode to match BeginResult type
 				};
 
-				log.debug(`Completing OAuth flow for account '${name}' in ${savedMode} mode`);
+				log.debug(
+					`Completing OAuth flow for account '${name}' in ${savedMode} mode`,
+				);
 
 				await oauthFlow.complete(
 					{

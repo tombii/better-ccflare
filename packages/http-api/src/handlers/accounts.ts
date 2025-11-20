@@ -20,6 +20,7 @@ import {
 } from "@better-ccflare/http-common";
 import { Logger } from "@better-ccflare/logger";
 import {
+	fetchUsageData,
 	getRepresentativeUtilization,
 	getRepresentativeWindow,
 	type UsageData,
@@ -35,7 +36,7 @@ const log = new Logger("AccountsHandler");
  * Create an accounts list handler
  */
 export function createAccountsListHandler(db: Database) {
-	return (): Response => {
+	return async (): Promise<Response> => {
 		const now = Date.now();
 		const sessionDuration = 5 * 60 * 60 * 1000; // 5 hours
 
@@ -58,6 +59,7 @@ export function createAccountsListHandler(db: Database) {
 					session_start,
 					session_request_count,
 					refresh_token,
+					access_token,
 					COALESCE(paused, 0) as paused,
 					COALESCE(priority, 0) as priority,
 					COALESCE(auto_fallback_enabled, 0) as auto_fallback_enabled,
@@ -97,6 +99,7 @@ export function createAccountsListHandler(db: Database) {
 			session_start: number | null;
 			session_request_count: number;
 			refresh_token: string;
+			access_token: string | null;
 			paused: 0 | 1;
 			priority: number;
 			token_valid: 0 | 1;
@@ -107,6 +110,47 @@ export function createAccountsListHandler(db: Database) {
 			custom_endpoint: string | null;
 			model_mappings: string | null;
 		}>;
+
+		// Fetch usage data for all Claude CLI OAuth accounts (those with refresh tokens)
+		// API key accounts don't have usage tracking available
+		const oauthAccounts = accounts.filter(
+			(acc) =>
+				acc.provider === "anthropic" &&
+				acc.access_token &&
+				acc.refresh_token &&
+				acc.refresh_token !== acc.access_token, // Exclude API key accounts where they're the same
+		);
+
+		// Fetch usage data in parallel for all OAuth accounts that don't have fresh cache data
+		// Cache is considered stale after 90 seconds (aligned with auto-refresh scheduler polling)
+		const CACHE_FRESHNESS_THRESHOLD_MS = 90000;
+		await Promise.all(
+			oauthAccounts.map(async (account) => {
+				// Check if we already have cached data and if it's still fresh
+				const cacheAge = usageCache.getAge(account.id);
+				const isCacheFresh =
+					cacheAge !== null && cacheAge < CACHE_FRESHNESS_THRESHOLD_MS;
+
+				if (!isCacheFresh && account.access_token) {
+					// Fetch usage data if cache is stale or missing
+					try {
+						const usageData = await fetchUsageData(account.access_token);
+						if (usageData) {
+							// Update the cache using the public set method
+							usageCache.set(account.id, usageData);
+							log.debug(
+								`Fetched usage data for ${account.name}: 5h=${usageData.five_hour.utilization}%, 7d=${usageData.seven_day.utilization}%`,
+							);
+						}
+					} catch (error) {
+						log.warn(
+							`Failed to fetch usage data for account ${account.name}:`,
+							error,
+						);
+					}
+				}
+			}),
+		);
 
 		const response: AccountResponse[] = accounts.map((account) => {
 			let rateLimitStatus = "OK";

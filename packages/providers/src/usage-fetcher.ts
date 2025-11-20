@@ -274,6 +274,13 @@ class UsageCache {
 	}
 
 	/**
+	 * Set cached usage data for an account
+	 */
+	set(accountId: string, data: AnyUsageData): void {
+		this.cache.set(accountId, { data, timestamp: Date.now() });
+	}
+
+	/**
 	 * Get cached data age in milliseconds
 	 */
 	getAge(accountId: string): number | null {
