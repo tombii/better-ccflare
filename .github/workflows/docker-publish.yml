@@ -93,17 +93,13 @@ jobs:
           images: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=ref,event=branch
-            type=ref,event=pr
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
-            type=raw,value=v{{version}},enable=${{ github.ref_type == 'tag' }}
-            type=raw,value=v{{major}},enable=${{ github.ref_type == 'tag' }}
-            type=raw,value=v{{major}}.{{minor}},enable=${{ github.ref_type == 'tag' }}
+            type=raw,value=latest
+            type=raw,value=main
             type=sha
-            type=raw,value=${{ steps.version.outputs.docker_tag }},enable=${{ steps.version.outputs.is_prerelease == 'false' && github.ref_type == 'tag' }}
-            type=raw,value=dev,enable=${{ steps.version.outputs.is_prerelease == 'true' }}
+          # Tags for stable releases: Full version (3.0.0), major.minor (3.0), major (3), latest, main, sha
 
       - name: Build and push Docker images
         id: build
