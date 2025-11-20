@@ -84,15 +84,20 @@ export class AnthropicOAuthProvider implements OAuthProvider {
 		verifier: string,
 		config: OAuthProviderConfig,
 	): Promise<TokenResult> {
+		// The authorization code from Anthropic contains a state parameter: code#state
+		const splits = code.split("#");
+		const actualCode = splits[0];
+		const state = splits[1];
+
 		oauthLog.debug(`OAuth exchangeCode called:`, {
-			codeLength: code.length,
-			verifierLength: verifier.length,
+			hasState: !!state,
 			clientId: config.clientId,
 			mode: config.mode,
 		});
 
 		const requestBody = {
-			code,
+			code: actualCode,
+			state: state,
 			grant_type: "authorization_code",
 			client_id: config.clientId,
 			redirect_uri: config.redirectUri,
@@ -120,21 +125,40 @@ export class AnthropicOAuthProvider implements OAuthProvider {
 		);
 
 		if (!response.ok) {
-			let errorDetails: { error?: string; error_description?: string } | null =
-				null;
+			let errorDetails: {
+				error?: string | { message?: string };
+				error_description?: string;
+			} | null = null;
 			try {
 				errorDetails = await response.json();
 			} catch {
 				// Failed to parse error response
 			}
 
+			// Handle error being either a string or an object with a message
+			let errorStr: string;
+			if (typeof errorDetails?.error === "object" && errorDetails.error) {
+				errorStr =
+					errorDetails.error.message ||
+					JSON.stringify(errorDetails.error) ||
+					"Unknown error";
+			} else {
+				errorStr = errorDetails?.error || "";
+			}
+
 			const errorMessage =
 				errorDetails?.error_description ||
-				errorDetails?.error ||
+				errorStr ||
 				response.statusText ||
 				"OAuth token exchange failed";
 
-			throw new OAuthError(errorMessage, "anthropic", errorDetails?.error);
+			throw new OAuthError(
+				errorMessage,
+				"anthropic",
+				typeof errorDetails?.error === "string"
+					? errorDetails.error
+					: undefined,
+			);
 		}
 
 		const json = (await response.json()) as {

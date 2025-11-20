@@ -324,14 +324,15 @@ export function AccountAddForm({
 	};
 
 	const handleCodeSubmit = async () => {
-		if (!authCode) {
+		const trimmedCode = authCode.trim();
+		if (!trimmedCode) {
 			onError("Authorization code is required");
 			return;
 		}
 		// Step 2: Complete OAuth flow
 		await onCompleteAccount({
 			sessionId,
-			code: authCode,
+			code: trimmedCode,
 		});
 
 		// Success! Reset form

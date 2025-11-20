@@ -179,6 +179,8 @@ export function createOAuthCallbackHandler(dbOps: DatabaseOperations) {
 					mode: savedMode || "claude-oauth", // Add mode to match BeginResult type
 				};
 
+				log.debug(`Completing OAuth flow for account '${name}' in ${savedMode} mode`);
+
 				await oauthFlow.complete(
 					{
 						sessionId,
@@ -192,6 +194,8 @@ export function createOAuthCallbackHandler(dbOps: DatabaseOperations) {
 				// Clean up OAuth session from database
 				dbOps.deleteOAuthSession(sessionId);
 
+				log.info(`Successfully added account '${name}' via OAuth`);
+
 				return jsonResponse({
 					success: true,
 					message: `Account '${name}' added successfully!`,
@@ -201,6 +205,7 @@ export function createOAuthCallbackHandler(dbOps: DatabaseOperations) {
 							: "Claude Console",
 				});
 			} catch (error) {
+				log.error(`OAuth flow completion failed for account '${name}':`, error);
 				return errorResponse(
 					error instanceof Error
 						? error
@@ -208,7 +213,8 @@ export function createOAuthCallbackHandler(dbOps: DatabaseOperations) {
 				);
 			}
 		} catch (error) {
-			log.error("OAuth callback error:", error);
+			log.error("OAuth callback validation error:", error);
+			// Return the validation error as-is to show the specific error message
 			return errorResponse(
 				error instanceof Error
 					? error
