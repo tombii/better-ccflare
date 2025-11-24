@@ -72,7 +72,15 @@ export async function fetchUsageData(
 		const data = (await response.json()) as UsageData;
 		return data;
 	} catch (error) {
-		log.error("Error fetching usage data:", error);
+		// Ensure we have a proper error object for logging
+		const errorMessage =
+			error instanceof Error
+				? error.message
+				: typeof error === "object" && error !== null
+					? JSON.stringify(error)
+					: String(error);
+
+		log.error("Error fetching usage data:", errorMessage || "Unknown error");
 		return null;
 	}
 }
@@ -90,7 +98,7 @@ export function getRepresentativeUtilization(
 		usage.five_hour.utilization,
 		usage.seven_day.utilization,
 		usage.seven_day_oauth_apps?.utilization ?? 0,
-		usage.seven_day_opus.utilization,
+		usage.seven_day_opus?.utilization ?? 0,
 	];
 
 	return Math.max(...utilizations);
@@ -111,7 +119,10 @@ export function getRepresentativeWindow(
 			name: "seven_day_oauth_apps",
 			util: usage.seven_day_oauth_apps?.utilization ?? 0,
 		},
-		{ name: "seven_day_opus", util: usage.seven_day_opus.utilization },
+		{
+			name: "seven_day_opus",
+			util: usage.seven_day_opus?.utilization ?? 0,
+		},
 	];
 
 	const max = windows.reduce((prev, current) =>
@@ -223,7 +234,31 @@ class UsageCache {
 	) {
 		try {
 			// Get a fresh access token or API key on each fetch
-			const token = await tokenProvider();
+			let token: string;
+			try {
+				token = await tokenProvider();
+			} catch (tokenError) {
+				// Handle token provider errors that might result in empty objects
+				const tokenErrorMessage =
+					tokenError instanceof Error
+						? tokenError.message
+						: typeof tokenError === "object" && tokenError !== null
+							? JSON.stringify(tokenError)
+							: String(tokenError);
+
+				log.warn(
+					`Token provider failed for account ${accountId}: ${tokenErrorMessage || "Unknown error"}`,
+				);
+				return;
+			}
+
+			// Validate token before proceeding
+			if (!token || (typeof token === "string" && token.trim() === "")) {
+				log.warn(
+					`No valid token available for account ${accountId}, skipping usage fetch`,
+				);
+				return;
+			}
 
 			// Fetch data based on provider type
 			let data: AnyUsageData | null = null;
@@ -262,9 +297,17 @@ class UsageCache {
 				}
 			}
 		} catch (error) {
+			// Ensure we have a proper error object for logging
+			const errorMessage =
+				error instanceof Error
+					? error.message
+					: typeof error === "object" && error !== null
+						? JSON.stringify(error)
+						: String(error);
+
 			log.error(
 				`Error fetching usage data for account ${accountId}:`,
-				error instanceof Error ? error.message : String(error),
+				errorMessage || "Unknown error",
 			);
 		}
 	}

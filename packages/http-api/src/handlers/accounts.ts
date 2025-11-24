@@ -187,11 +187,20 @@ export function createAccountsListHandler(db: Database) {
 				const isAnthropicData =
 					"five_hour" in usageData && "seven_day" in usageData;
 				if (isAnthropicData) {
-					usageUtilization = getRepresentativeUtilization(
-						usageData as UsageData,
-					);
-					usageWindow = getRepresentativeWindow(usageData as UsageData);
-					fullUsageData = usageData as FullUsageData;
+					try {
+						usageUtilization = getRepresentativeUtilization(
+							usageData as UsageData,
+						);
+						usageWindow = getRepresentativeWindow(usageData as UsageData);
+						fullUsageData = usageData as FullUsageData;
+					} catch (error) {
+						// Log error but don't fail the entire accounts page
+						log.warn(
+							`Failed to process usage data for account ${account.id}:`,
+							error instanceof Error ? error.message : String(error),
+						);
+						// Keep null values for usage if processing fails
+					}
 				}
 			} else if (account.provider === "nanogpt" && usageData) {
 				// NanoGPT usage data - type guard to check it's NanoGPTUsageData
