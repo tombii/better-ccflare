@@ -3,19 +3,12 @@ name: Release Multi-Architecture Binaries
 on:
   push:
     tags:
-      - 'v*'
+      - 'v*'  # Matches all v* tags (stable and pre-release)
   workflow_dispatch:
 
 jobs:
   build:
     name: Build Multi-Architecture Binaries
-    # Only run for stable releases (not rc/beta/alpha)
-    if: |
-      github.event_name == 'workflow_dispatch' ||
-      !contains(github.ref, 'beta') &&
-      !contains(github.ref, 'rc') &&
-      !contains(github.ref, 'alpha') &&
-      !contains(github.ref, 'pre')
     permissions:
       contents: write
     runs-on: ubuntu-latest
@@ -25,6 +18,24 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Detect release type
+        id: release_type
+        run: |
+          # Determine if this is a pre-release or stable release
+          REF_NAME="${{ github.ref_name }}"
+
+          if [[ "$REF_NAME" =~ (beta|rc|alpha|pre) ]]; then
+            echo "is_prerelease=true" >> $GITHUB_OUTPUT
+            echo "release_type=Beta" >> $GITHUB_OUTPUT
+            echo "release_title=Beta Release" >> $GITHUB_OUTPUT
+          else
+            echo "is_prerelease=false" >> $GITHUB_OUTPUT
+            echo "release_type=Stable" >> $GITHUB_OUTPUT
+            echo "release_title=Stable Release" >> $GITHUB_OUTPUT
+          fi
+
+          echo "Release type: ${{ steps.release_type.outputs.release_type }}"
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
@@ -68,7 +79,7 @@ jobs:
       - name: Verify binaries
         run: |
           ls -lh apps/cli/dist/
-          echo "Binaries built successfully!"
+          echo "${{ steps.release_type.outputs.release_type }} binaries built successfully!"
 
       - name: Generate Changelog
         id: changelog
@@ -77,9 +88,22 @@ jobs:
           PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
 
           # Generate changelog content
-          CHANGELOG="## Multi-Architecture Binaries
+          if [[ "${{ steps.release_type.outputs.is_prerelease }}" == "true" ]]; then
+            CHANGELOG="## 🧪 Beta Release ${{ github.ref_name }}
 
-          Download the appropriate binary for your platform:
+          ### ⚠️ Beta Notice
+          This is a beta release intended for testing purposes. It may contain bugs and unstable features.
+
+          ## Multi-Architecture Binaries
+
+          Download the appropriate binary for your platform:"
+          else
+            CHANGELOG="## 🎉 Stable Release ${{ github.ref_name }}
+
+          ## Multi-Architecture Binaries
+
+          Download the appropriate binary for your platform:"
+          fi
 
           - **Linux x86_64**: \`better-ccflare-linux-amd64\`
           - **Linux ARM64** (Raspberry Pi 3/4/5, Oracle Cloud ARM, AWS Graviton): \`better-ccflare-linux-arm64\`
@@ -96,7 +120,7 @@ jobs:
           ./better-ccflare-linux-amd64
           \`\`\`
 
-          Or install via npm: \`npm install -g better-ccflare\`
+          Or install via npm: \`npm install -g better-ccflare@${{ github.ref_name }}\`
 
           ---"
 
@@ -110,11 +134,14 @@ jobs:
           ## What's Changed
 
           "
-              # Categorize commits (include all commits, even [skip-version] ones)
-              FEATURES=$(echo "$COMMITS" | grep -E "feat|add|new" | head -5)
-              FIXES=$(echo "$COMMITS" | grep -E "fix|bug|resolve" | head -5)
-              SECURITY=$(echo "$COMMITS" | grep -E "security|vulnerabilit|redact|ReDoS" | head -5)
-              IMPROVEMENTS=$(echo "$COMMITS" | grep -E "improve|enhance|update|refactor" | head -5)
+              # Categorize commits and remove duplicates (especially CLAUDE_CLI_VERSION updates)
+              FEATURES=$(echo "$COMMITS" | grep -E "feat|add|new" | grep -v "chore: update CLAUDE_CLI_VERSION" | sort -u | head -5)
+              FIXES=$(echo "$COMMITS" | grep -E "fix|bug|resolve" | grep -v "chore: update CLAUDE_CLI_VERSION" | sort -u | head -5)
+              SECURITY=$(echo "$COMMITS" | grep -E "security|vulnerabilit|redact|ReDoS" | grep -v "chore: update CLAUDE_CLI_VERSION" | sort -u | head -5)
+              IMPROVEMENTS=$(echo "$COMMITS" | grep -E "improve|enhance|update|refactor" | grep -v "chore: update CLAUDE_CLI_VERSION" | sort -u | head -5)
+
+              # Also filter out duplicate chore messages specifically
+              CHORE_UNIQUE=$(echo "$COMMITS" | grep -E "chore" | grep -v "chore: update CLAUDE_CLI_VERSION" | sort -u | head -3)
 
               if [ -n "$FEATURES" ]; then
                 CHANGELOG="$CHANGELOG
@@ -175,108 +202,49 @@ jobs:
                 done <<< "$IMPROVEMENTS"
               fi
 
-              # Get NEW contributors (those who haven't contributed before this release)
-              CURRENT_CONTRIBUTORS=$(git log --pretty=format:"%an" $PREV_TAG..HEAD | sort -u)
-              NEW_CONTRIBUTORS=""
-
-              while IFS= read -r contributor; do
-                if [ -n "$contributor" ] && [ "$contributor" != "github-actions[bot]" ]; then
-                  # Check if this contributor has any commits before the previous tag
-                  PREV_COMMITS=$(git log --all --author="$contributor" --before="$(git log -1 --format=%ai $PREV_TAG)" --pretty=format:"%H" | wc -l)
-                  if [ "$PREV_COMMITS" -eq 0 ]; then
-                    # This is their first contribution
-                    if [ -z "$NEW_CONTRIBUTORS" ]; then
-                      NEW_CONTRIBUTORS="$contributor"
-                    else
-                      NEW_CONTRIBUTORS="$NEW_CONTRIBUTORS"$'\n'"$contributor"
-                    fi
-                  fi
-                fi
-              done <<< "$CURRENT_CONTRIBUTORS"
-
-              if [ -n "$NEW_CONTRIBUTORS" ]; then
-                CHANGELOG="$CHANGELOG
-
-          ### 🤝 New Contributors
-          "
-                while IFS= read -r contributor; do
-                  if [ -n "$contributor" ]; then
-                    CHANGELOG="$CHANGELOG
-          - @$contributor made their first contribution"
-                  fi
-                done <<< "$NEW_CONTRIBUTORS"
-              fi
-            fi
-
-            # Add comparison link
-            CHANGELOG="$CHANGELOG
+              # Add comparison link
+              CHANGELOG="$CHANGELOG
 
           ## Full Changelog
           📋 [Compare with previous version](https://github.com/tombii/better-ccflare/compare/$PREV_TAG..${{ github.ref_name }})"
+            fi
           fi
 
           echo "changelog<<EOF" >> $GITHUB_OUTPUT
           echo "$CHANGELOG" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
-      - name: Create Release
+      - name: Create Beta Release
         id: create_release
-        uses: actions/create-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ github.ref_name }}
-          release_name: Release ${{ github.ref_name }}
-          draft: false
-          prerelease: false
-          body: ${{ steps.changelog.outputs.changelog }}
+        run: |
+          # Check if release already exists
+          if gh release view "${{ github.ref_name }}" &>/dev/null; then
+            echo "Release already exists, deleting and recreating..."
+            gh release delete "${{ github.ref_name }}" -y
+          fi
 
-      - name: Upload Linux amd64
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./apps/cli/dist/better-ccflare-linux-amd64
-          asset_name: better-ccflare-linux-amd64
-          asset_content_type: application/octet-stream
+          # Create new release
+          if [[ "${{ steps.release_type.outputs.is_prerelease }}" == "true" ]]; then
+            gh release create "${{ github.ref_name }}" \
+              --title "Beta Release ${{ github.ref_name }}" \
+              --notes "${{ steps.changelog.outputs.changelog }}" \
+              --prerelease
+          else
+            gh release create "${{ github.ref_name }}" \
+              --title "Stable Release ${{ github.ref_name }}" \
+              --notes "${{ steps.changelog.outputs.changelog }}"
+          fi
 
-      - name: Upload Linux ARM64
-        uses: actions/upload-release-asset@v1
+      - name: Upload Release Assets
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./apps/cli/dist/better-ccflare-linux-arm64
-          asset_name: better-ccflare-linux-arm64
-          asset_content_type: application/octet-stream
-
-      - name: Upload macOS x86_64
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./apps/cli/dist/better-ccflare-macos-x86_64
-          asset_name: better-ccflare-macos-x86_64
-          asset_content_type: application/octet-stream
-
-      - name: Upload macOS ARM64
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./apps/cli/dist/better-ccflare-macos-arm64
-          asset_name: better-ccflare-macos-arm64
-          asset_content_type: application/octet-stream
-
-      - name: Upload Windows x64
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./apps/cli/dist/better-ccflare-windows-x64.exe
-          asset_name: better-ccflare-windows-x64.exe
-          asset_content_type: application/octet-stream
+        run: |
+          gh release upload "${{ github.ref_name }}" \
+            ./apps/cli/dist/better-ccflare-linux-amd64 \
+            ./apps/cli/dist/better-ccflare-linux-arm64 \
+            ./apps/cli/dist/better-ccflare-macos-x86_64 \
+            ./apps/cli/dist/better-ccflare-macos-arm64 \
+            ./apps/cli/dist/better-ccflare-windows-x64.exe \
+            --clobber
