@@ -15,6 +15,7 @@ export const CLAUDE_MODEL_IDS = {
 	HAIKU_4_5: "claude-haiku-4-5-20251001",
 	OPUS_4: "claude-opus-4-20250514",
 	OPUS_4_1: "claude-opus-4-1-20250805",
+	OPUS_4_5: "claude-opus-4-5-20251101",
 
 	// Legacy Claude 3 models (for documentation/API examples)
 	OPUS_3: "claude-3-opus-20240229",
@@ -30,6 +31,7 @@ export const MODEL_DISPLAY_NAMES: Record<string, string> = {
 	[CLAUDE_MODEL_IDS.HAIKU_4_5]: "Claude Haiku 4.5",
 	[CLAUDE_MODEL_IDS.OPUS_4]: "Claude Opus 4",
 	[CLAUDE_MODEL_IDS.OPUS_4_1]: "Claude Opus 4.1",
+	[CLAUDE_MODEL_IDS.OPUS_4_5]: "Claude Opus 4.5",
 	[CLAUDE_MODEL_IDS.OPUS_3]: "Claude Opus 3",
 	[CLAUDE_MODEL_IDS.SONNET_3]: "Claude Sonnet 3",
 };
@@ -43,6 +45,7 @@ export const MODEL_SHORT_NAMES: Record<string, string> = {
 	[CLAUDE_MODEL_IDS.HAIKU_4_5]: "claude-haiku-4.5",
 	[CLAUDE_MODEL_IDS.OPUS_4]: "claude-opus-4",
 	[CLAUDE_MODEL_IDS.OPUS_4_1]: "claude-opus-4.1",
+	[CLAUDE_MODEL_IDS.OPUS_4_5]: "claude-opus-4.5",
 	[CLAUDE_MODEL_IDS.OPUS_3]: "claude-3-opus",
 	[CLAUDE_MODEL_IDS.SONNET_3]: "claude-3-sonnet",
 };
