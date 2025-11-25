@@ -40,16 +40,29 @@ jobs:
 
       - name: Extract version from tag
         id: version
-        env:
-          REF: ${{ github.event.workflow_run.head_branch }}
         run: |
-          # Get the tag name from the workflow run
-          if [[ "$REF" == refs/tags/v* ]]; then
-            VERSION="${REF#refs/tags/v}"
-            echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          # For workflow_run events triggered by beta-release workflow
+          if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
+            # Get the tag name from the triggering workflow
+            HEAD_BRANCH="${{ github.event.workflow_run.head_branch }}"
+            echo "Debug: head_branch = $HEAD_BRANCH"
+
+            if [[ "$HEAD_BRANCH" == refs/tags/v* ]]; then
+              VERSION="${HEAD_BRANCH#refs/tags/v}"
+            elif [[ "$HEAD_BRANCH" == v* ]]; then
+              VERSION="${HEAD_BRANCH#v}"
+            else
+              VERSION="beta"
+            fi
+          # For direct tag pushes (backup)
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
           else
-            echo "version=beta" >> $GITHUB_OUTPUT
+            VERSION="beta"
           fi
+
+          echo "Extracted version: $VERSION"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
 
       - name: Extract metadata
         id: meta
@@ -60,13 +73,13 @@ jobs:
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
             type=raw,value=dev
             type=raw,value=rc,enable=${{ contains(steps.version.outputs.version, 'rc') }}
             type=raw,value=beta,enable=${{ contains(steps.version.outputs.version, 'beta') }}
             type=raw,value=alpha,enable=${{ contains(steps.version.outputs.version, 'alpha') }}
             type=sha
-          # Tags: Full version (3.0.0-rc2), major.minor (3.0), major (3), dev, rc/beta/alpha, sha
+            # NO latest or main tags for beta releases!
+          # Tags: Full version (3.0.0-rc2), major.minor (3.0), dev, rc/beta/alpha, sha
 
       - name: Build and push Docker images
         id: build
