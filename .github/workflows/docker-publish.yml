@@ -49,15 +49,31 @@ jobs:
             if [[ "$REF" == v* ]]; then
               VERSION="${REF#v}"
               echo "version=${VERSION}" >> $GITHUB_OUTPUT
+
+              # Check if this is a pre-release (rc, beta, alpha)
+              if [[ "$VERSION" =~ (rc|beta|alpha) ]]; then
+                echo "is_prerelease=true" >> $GITHUB_OUTPUT
+              else
+                echo "is_prerelease=false" >> $GITHUB_OUTPUT
+              fi
             else
               echo "version=latest" >> $GITHUB_OUTPUT
+              echo "is_prerelease=false" >> $GITHUB_OUTPUT
             fi
           # For direct tag pushes
           elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
             VERSION="${GITHUB_REF#refs/tags/v}"
             echo "version=${VERSION}" >> $GITHUB_OUTPUT
+
+            # Check if this is a pre-release (rc, beta, alpha)
+            if [[ "$VERSION" =~ (rc|beta|alpha) ]]; then
+              echo "is_prerelease=true" >> $GITHUB_OUTPUT
+            else
+              echo "is_prerelease=false" >> $GITHUB_OUTPUT
+            fi
           else
             echo "version=latest" >> $GITHUB_OUTPUT
+            echo "is_prerelease=false" >> $GITHUB_OUTPUT
           fi
 
       - name: Extract metadata
@@ -72,8 +88,11 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
+          type=raw,value=latest,enable=${{ steps.version.outputs.is_prerelease == 'false' }}
+            type=raw,value=main,enable=${{ steps.version.outputs.is_prerelease == 'false' }}
             type=sha
-            type=raw,value=latest,enable={{is_default_branch}}
+          # Tags: Full version (3.0.0), major.minor (3.0), major (3)
+          # Only add latest/main tags for stable releases (not pre-releases)
 
       - name: Build and push Docker images
         id: build
