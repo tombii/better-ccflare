@@ -14,10 +14,6 @@ env:
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
-    # Only run for stable releases (not beta/rc/alpha)
-    if: |
-      github.event_name == 'workflow_dispatch' ||
-      !contains(github.event.workflow_run.head_branch, '-')
     permissions:
       contents: read
       packages: write
@@ -57,15 +53,12 @@ jobs:
               # Check if this is a pre-release (rc, beta, alpha)
               if [[ "$VERSION" =~ (rc|beta|alpha) ]]; then
                 echo "is_prerelease=true" >> $GITHUB_OUTPUT
-                echo "docker_tag=dev" >> $GITHUB_OUTPUT
               else
                 echo "is_prerelease=false" >> $GITHUB_OUTPUT
-                echo "docker_tag=latest" >> $GITHUB_OUTPUT
               fi
             else
               echo "version=latest" >> $GITHUB_OUTPUT
               echo "is_prerelease=false" >> $GITHUB_OUTPUT
-              echo "docker_tag=latest" >> $GITHUB_OUTPUT
             fi
           # For direct tag pushes
           elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
@@ -75,15 +68,12 @@ jobs:
             # Check if this is a pre-release (rc, beta, alpha)
             if [[ "$VERSION" =~ (rc|beta|alpha) ]]; then
               echo "is_prerelease=true" >> $GITHUB_OUTPUT
-              echo "docker_tag=dev" >> $GITHUB_OUTPUT
             else
               echo "is_prerelease=false" >> $GITHUB_OUTPUT
-              echo "docker_tag=latest" >> $GITHUB_OUTPUT
             fi
           else
             echo "version=latest" >> $GITHUB_OUTPUT
             echo "is_prerelease=false" >> $GITHUB_OUTPUT
-            echo "docker_tag=latest" >> $GITHUB_OUTPUT
           fi
 
       - name: Extract metadata
@@ -93,10 +83,12 @@ jobs:
           images: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
+            type=ref,event=branch
+            type=ref,event=pr
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
-            type=raw,value=latest,enable=${{ steps.version.outputs.is_prerelease == 'false' }}
+          type=raw,value=latest,enable=${{ steps.version.outputs.is_prerelease == 'false' }}
             type=raw,value=main,enable=${{ steps.version.outputs.is_prerelease == 'false' }}
             type=sha
           # Tags: Full version (3.0.0), major.minor (3.0), major (3)
