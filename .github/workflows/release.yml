@@ -9,6 +9,13 @@ on:
 jobs:
   build:
     name: Build Multi-Architecture Binaries
+    # Only run for stable releases (not rc/beta/alpha)
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      !contains(github.ref, 'beta') &&
+      !contains(github.ref, 'rc') &&
+      !contains(github.ref, 'alpha') &&
+      !contains(github.ref, 'pre')
     permissions:
       contents: write
     runs-on: ubuntu-latest
