@@ -85,13 +85,13 @@ jobs:
           tags: |
             type=ref,event=branch
             type=ref,event=pr
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
+            type=semver,pattern={{version}},value=${{ steps.version.outputs.version }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ steps.version.outputs.version }}
+            type=semver,pattern={{major}},value=${{ steps.version.outputs.version }}
             type=raw,value=latest,enable=${{ steps.version.outputs.is_prerelease == 'false' }}
             type=raw,value=main,enable=${{ steps.version.outputs.is_prerelease == 'false' }}
             type=sha
-          # Tags: Full version (3.0.0), major.minor (3.0), major (3)
+          # Tags: Full version (2.0.22), major.minor (2.0), major (2)
           # Only add latest/main tags for stable releases (not pre-releases)
 
       - name: Build and push Docker images
