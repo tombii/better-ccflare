@@ -74,15 +74,6 @@ jobs:
           cd apps/cli
           bun run build:multi
 
-      - name: Ad-hoc sign macOS binaries
-        run: |
-          echo "Signing macOS binaries with ad-hoc signatures..."
-          codesign --sign - --force --preserve-metadata=entitlements,requirements,flags,runtime ./apps/cli/dist/better-ccflare-macos-x86_64 || echo "Warning: Failed to sign macOS x86_64 binary"
-          codesign --sign - --force --preserve-metadata=entitlements,requirements,flags,runtime ./apps/cli/dist/better-ccflare-macos-arm64 || echo "Warning: Failed to sign macOS ARM64 binary"
-          echo "Verifying signatures..."
-          codesign --verify --verbose ./apps/cli/dist/better-ccflare-macos-x86_64 || echo "Warning: x86_64 signature verification failed"
-          codesign --verify --verbose ./apps/cli/dist/better-ccflare-macos-arm64 || echo "Warning: ARM64 signature verification failed"
-
       - name: Verify binaries
         run: |
           ls -lh apps/cli/dist/
