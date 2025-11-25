@@ -35,8 +35,6 @@ jobs:
             echo "release_title=Stable Release" >> $GITHUB_OUTPUT
           fi
 
-          echo "Release type: ${{ steps.release_type.outputs.release_type }}"
-
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
         with:
@@ -229,9 +227,8 @@ jobs:
             fi
           fi
 
-          echo "changelog<<EOF" >> $GITHUB_OUTPUT
-          echo "$CHANGELOG" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          # Write changelog to file
+          echo "$CHANGELOG" > /tmp/release-notes.md
 
       - name: Create Beta Release
         id: create_release
@@ -248,12 +245,12 @@ jobs:
           if [[ "${{ steps.release_type.outputs.is_prerelease }}" == "true" ]]; then
             gh release create "${{ github.ref_name }}" \
               --title "Beta Release ${{ github.ref_name }}" \
-              --notes "${{ steps.changelog.outputs.changelog }}" \
+              --notes-file /tmp/release-notes.md \
               --prerelease
           else
             gh release create "${{ github.ref_name }}" \
               --title "Stable Release ${{ github.ref_name }}" \
-              --notes "${{ steps.changelog.outputs.changelog }}"
+              --notes-file /tmp/release-notes.md
           fi
 
       - name: Upload Release Assets
