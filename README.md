@@ -98,6 +98,10 @@ chmod +x better-ccflare-linux-arm64
 ```bash
 curl -L -o better-ccflare-macos-x86_64 https://github.com/tombii/better-ccflare/releases/latest/download/better-ccflare-macos-x86_64
 chmod +x better-ccflare-macos-x86_64
+
+# Remove quarantine attribute (required on macOS to run unsigned binaries)
+xattr -d com.apple.quarantine better-ccflare-macos-x86_64
+
 ./better-ccflare-macos-x86_64
 ```
 
@@ -105,8 +109,14 @@ chmod +x better-ccflare-macos-x86_64
 ```bash
 curl -L -o better-ccflare-macos-arm64 https://github.com/tombii/better-ccflare/releases/latest/download/better-ccflare-macos-arm64
 chmod +x better-ccflare-macos-arm64
+
+# Remove quarantine attribute (required on macOS to run unsigned binaries)
+xattr -d com.apple.quarantine better-ccflare-macos-arm64
+
 ./better-ccflare-macos-arm64
 ```
+
+**macOS Gatekeeper Notice:** Our macOS binaries are not notarized by Apple as this requires a paid Apple Developer subscription. After downloading, you must remove the quarantine attribute using the `xattr` command shown above to run the binary. If you prefer not to run unsigned binaries, you can [install from source](#install-from-source) instead.
 
 #### Windows x86_64
 Download [`better-ccflare-windows-x64.exe`](https://github.com/tombii/better-ccflare/releases/latest/download/better-ccflare-windows-x64.exe) and run it.

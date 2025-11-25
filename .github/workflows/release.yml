@@ -74,6 +74,15 @@ jobs:
           cd apps/cli
           bun run build:multi
 
+      - name: Ad-hoc sign macOS binaries
+        run: |
+          echo "Signing macOS binaries with ad-hoc signatures..."
+          codesign --sign - --force --preserve-metadata=entitlements,requirements,flags,runtime ./apps/cli/dist/better-ccflare-macos-x86_64 || echo "Warning: Failed to sign macOS x86_64 binary"
+          codesign --sign - --force --preserve-metadata=entitlements,requirements,flags,runtime ./apps/cli/dist/better-ccflare-macos-arm64 || echo "Warning: Failed to sign macOS ARM64 binary"
+          echo "Verifying signatures..."
+          codesign --verify --verbose ./apps/cli/dist/better-ccflare-macos-x86_64 || echo "Warning: x86_64 signature verification failed"
+          codesign --verify --verbose ./apps/cli/dist/better-ccflare-macos-arm64 || echo "Warning: ARM64 signature verification failed"
+
       - name: Verify binaries
         run: |
           ls -lh apps/cli/dist/
@@ -109,7 +118,15 @@ jobs:
           wget https://github.com/tombii/better-ccflare/releases/download/${{ github.ref_name }}/better-ccflare-linux-amd64
           chmod +x better-ccflare-linux-amd64
           ./better-ccflare-linux-amd64
+
+          # macOS Apple Silicon (ARM64)
+          curl -L -o better-ccflare-macos-arm64 https://github.com/tombii/better-ccflare/releases/download/${{ github.ref_name }}/better-ccflare-macos-arm64
+          chmod +x better-ccflare-macos-arm64
+          xattr -d com.apple.quarantine better-ccflare-macos-arm64  # Required for unsigned binaries
+          ./better-ccflare-macos-arm64
           \`\`\`
+
+          **macOS Users:** The \`xattr\` command is required to bypass Gatekeeper for unsigned binaries. If you prefer not to run unsigned binaries, [install from source](https://github.com/tombii/better-ccflare#install-from-source) instead.
 
           Or install via npm: \`npm install -g better-ccflare@${{ github.ref_name }}\`
 
@@ -134,7 +151,15 @@ jobs:
           wget https://github.com/tombii/better-ccflare/releases/download/${{ github.ref_name }}/better-ccflare-linux-amd64
           chmod +x better-ccflare-linux-amd64
           ./better-ccflare-linux-amd64
+
+          # macOS Apple Silicon (ARM64)
+          curl -L -o better-ccflare-macos-arm64 https://github.com/tombii/better-ccflare/releases/download/${{ github.ref_name }}/better-ccflare-macos-arm64
+          chmod +x better-ccflare-macos-arm64
+          xattr -d com.apple.quarantine better-ccflare-macos-arm64  # Required for unsigned binaries
+          ./better-ccflare-macos-arm64
           \`\`\`
+
+          **macOS Users:** The \`xattr\` command is required to bypass Gatekeeper for unsigned binaries. If you prefer not to run unsigned binaries, [install from source](https://github.com/tombii/better-ccflare#install-from-source) instead.
 
           Or install via npm: \`npm install -g better-ccflare@${{ github.ref_name }}\`
 
