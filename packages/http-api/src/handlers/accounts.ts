@@ -21,9 +21,11 @@ import { Logger } from "@better-ccflare/logger";
 import {
 	getRepresentativeUtilization,
 	getRepresentativeWindow,
+	type UsageData,
 	usageCache,
 } from "@better-ccflare/providers";
 import { clearAccountRefreshCache } from "@better-ccflare/proxy";
+import type { FullUsageData } from "@better-ccflare/types";
 import type { AccountResponse } from "../types";
 
 const log = new Logger("AccountsHandler");
@@ -129,11 +131,31 @@ export function createAccountsListHandler(db: Database) {
 
 			// Get usage data from cache for Anthropic accounts
 			const usageData = usageCache.get(account.id);
-			const usageUtilization = getRepresentativeUtilization(usageData);
-			const usageWindow = getRepresentativeWindow(usageData);
+			let usageUtilization: number | null = null;
+			let usageWindow: string | null = null;
+			let fullUsageData: FullUsageData | null = null;
 
-			// Include full usage data for Anthropic accounts to show multiple windows
-			const fullUsageData = account.provider === "anthropic" ? usageData : null;
+			if (account.provider === "anthropic" && usageData) {
+				// Anthropic usage data - type guard to check it's UsageData
+				const isAnthropicData =
+					"five_hour" in usageData && "seven_day" in usageData;
+				if (isAnthropicData) {
+					try {
+						usageUtilization = getRepresentativeUtilization(
+							usageData as UsageData,
+						);
+						usageWindow = getRepresentativeWindow(usageData as UsageData);
+						fullUsageData = usageData as FullUsageData;
+					} catch (error) {
+						// Log error but don't fail the entire accounts page
+						log.warn(
+							`Failed to process usage data for account ${account.id}:`,
+							error instanceof Error ? error.message : String(error),
+						);
+						// Keep null values for usage if processing fails
+					}
+				}
+			}
 
 			// Parse model mappings for OpenAI-compatible providers
 			let modelMappings: { [key: string]: string } | null = null;

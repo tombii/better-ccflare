@@ -39,39 +39,47 @@ export function errorResponse(error: unknown): Response {
 	// In browser context, we can't log to files
 	// Server-side code should handle logging before calling errorResponse
 	if (typeof console !== "undefined" && console.error) {
-		// Redact sensitive user input from errors before logging
+		// Handle empty objects separately to avoid logging "{}"
 		if (error && typeof error === "object") {
-			const redact = (obj: unknown): unknown => {
-				if (!obj || typeof obj !== "object") return obj;
-				if (Array.isArray(obj)) {
-					// Handle arrays
-					return obj.map((item) => redact(item));
-				} else {
-					// Handle objects
-					const clone = { ...(obj as Record<string, unknown>) };
-					for (const key of Object.keys(clone)) {
-						// Redact fields named 'value', 'apiKey', or other known sensitive keys
-						if (
-							typeof key === "string" &&
-							(key === "value" ||
-								key === "apiKey" ||
-								key === "password" ||
-								key === "token")
-						) {
-							clone[key] = "[REDACTED]";
-						} else if (typeof clone[key] === "object" && clone[key] !== null) {
-							clone[key] = redact(clone[key]);
+			if (Object.keys(error).length === 0) {
+				console.error("Unhandled error: [Empty error object]");
+			} else {
+				// Redact sensitive user input from errors before logging
+				const redact = (obj: unknown): unknown => {
+					if (!obj || typeof obj !== "object") return obj;
+					if (Array.isArray(obj)) {
+						// Handle arrays
+						return obj.map((item) => redact(item));
+					} else {
+						// Handle objects
+						const clone = { ...(obj as Record<string, unknown>) };
+						for (const key of Object.keys(clone)) {
+							// Redact fields named 'value', 'apiKey', or other known sensitive keys
+							if (
+								typeof key === "string" &&
+								(key === "value" ||
+									key === "apiKey" ||
+									key === "password" ||
+									key === "token")
+							) {
+								clone[key] = "[REDACTED]";
+							} else if (
+								typeof clone[key] === "object" &&
+								clone[key] !== null
+							) {
+								clone[key] = redact(clone[key]);
+							}
 						}
+						return clone;
 					}
-					return clone;
-				}
-			};
-			// If the error has a 'context', redact it
-			const safeError =
-				"context" in error && typeof error.context === "object"
-					? { ...error, context: redact(error.context) }
-					: redact(error);
-			console.error("Unhandled error:", safeError);
+				};
+				// If the error has a 'context', redact it
+				const safeError =
+					"context" in error && typeof error.context === "object"
+						? { ...error, context: redact(error.context) }
+						: redact(error);
+				console.error("Unhandled error:", safeError);
+			}
 		} else {
 			// If not an object, avoid logging the raw error which may contain sensitive input.
 			let safeError: string;
