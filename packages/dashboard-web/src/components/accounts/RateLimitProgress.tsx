@@ -27,6 +27,8 @@ function formatWindowName(window: string | null): string {
 			return "Weekly";
 		case "seven_day_opus":
 			return "Opus (Weekly)";
+		case "seven_day_sonnet":
+			return "Sonnet (Weekly)";
 		case "daily":
 			return "Daily";
 		case "monthly":
@@ -124,6 +126,10 @@ export function RateLimitProgress({
 			five_hour?: { utilization: number | null; resets_at: string | null };
 			seven_day?: { utilization: number | null; resets_at: string | null };
 			seven_day_opus?: { utilization: number | null; resets_at: string | null };
+			seven_day_sonnet?: {
+				utilization: number | null;
+				resets_at: string | null;
+			};
 		};
 		if (anthropicData?.five_hour) {
 			usages.push({
@@ -173,6 +179,21 @@ export function RateLimitProgress({
 				utilization: anthropicData.seven_day_opus.utilization,
 				window: "seven_day_opus",
 				resetTime: anthropicData.seven_day_opus.resets_at,
+			});
+		}
+
+		// Check if seven_day_sonnet data exists, has valid utilization, and resets_at is not null
+		if (
+			anthropicData &&
+			anthropicData.seven_day_sonnet &&
+			anthropicData.seven_day_sonnet.utilization !== null &&
+			anthropicData.seven_day_sonnet.utilization !== undefined &&
+			anthropicData.seven_day_sonnet.resets_at !== null
+		) {
+			usages.push({
+				utilization: anthropicData.seven_day_sonnet.utilization,
+				window: "seven_day_sonnet",
+				resetTime: anthropicData.seven_day_sonnet.resets_at,
 			});
 		}
 	} else if (
@@ -225,8 +246,11 @@ export function RateLimitProgress({
 				} else if (usage.window === "seven_day") {
 					// Special handling for weekly data when reset time is not available
 					windowTimeText = "Data unavailable";
-				} else if (usage.window === "seven_day_opus") {
-					// Special handling for weekly opus data when reset time is not available
+				} else if (
+					usage.window === "seven_day_opus" ||
+					usage.window === "seven_day_sonnet"
+				) {
+					// Special handling for weekly opus/sonnet data when reset time is not available
 					windowTimeText = "Data unavailable";
 				} else if (usage.window === "daily" || usage.window === "monthly") {
 					// Special handling for NanoGPT when no subscription is active (PayG mode)
@@ -272,6 +296,7 @@ export function RateLimitProgress({
 								<span className="text-xs text-muted-foreground">
 									{usage.window === "seven_day" ||
 									usage.window === "seven_day_opus" ||
+									usage.window === "seven_day_sonnet" ||
 									usage.window === "monthly"
 										? `Resets ${new Date(usage.resetTime).toLocaleString(
 												undefined,
@@ -295,6 +320,7 @@ export function RateLimitProgress({
 						{!usage.resetTime &&
 							(usage.window === "seven_day" ||
 								usage.window === "seven_day_opus" ||
+								usage.window === "seven_day_sonnet" ||
 								usage.window === "daily" ||
 								usage.window === "monthly") && (
 								<div className="flex items-center justify-between">

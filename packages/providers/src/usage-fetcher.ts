@@ -12,11 +12,25 @@ export interface UsageWindow {
 	resets_at: string | null;
 }
 
+export interface ExtraUsage {
+	is_enabled: boolean;
+	monthly_limit: number | null;
+	used_credits: number | null;
+	utilization: number | null;
+}
+
 export interface UsageData {
+	// Core windows (always present in older API versions)
 	five_hour: UsageWindow;
 	seven_day: UsageWindow;
-	seven_day_oauth_apps: UsageWindow;
-	seven_day_opus: UsageWindow;
+	seven_day_oauth_apps?: UsageWindow;
+	seven_day_opus?: UsageWindow | null;
+	// New fields from 2025-11 API update (all optional for backward compatibility)
+	seven_day_sonnet?: UsageWindow | null;
+	iguana_necktie?: unknown; // Unknown purpose, keep as flexible type
+	extra_usage?: ExtraUsage;
+	// Allow any additional fields Anthropic might add in the future
+	[key: string]: UsageWindow | ExtraUsage | unknown;
 }
 
 // Union type for all provider usage data
@@ -88,42 +102,76 @@ export async function fetchUsageData(
 /**
  * Get the representative utilization percentage
  * Returns the highest utilization across all windows
+ * Dynamically handles any usage window fields in the response
  */
 export function getRepresentativeUtilization(
 	usage: UsageData | null,
 ): number | null {
 	if (!usage) return null;
 
-	const utilizations = [
-		usage.five_hour.utilization,
-		usage.seven_day.utilization,
-		usage.seven_day_oauth_apps?.utilization ?? 0,
-		usage.seven_day_opus?.utilization ?? 0,
-	];
+	const utilizations: number[] = [];
 
-	return Math.max(...utilizations);
+	// Iterate through all properties to find UsageWindow objects
+	for (const [key, value] of Object.entries(usage)) {
+		// Check if this is a UsageWindow object
+		if (
+			value &&
+			typeof value === "object" &&
+			"utilization" in value &&
+			typeof value.utilization === "number"
+		) {
+			utilizations.push(value.utilization);
+		}
+		// Also check extra_usage if present
+		if (
+			key === "extra_usage" &&
+			value &&
+			typeof value === "object" &&
+			"utilization" in value &&
+			typeof value.utilization === "number"
+		) {
+			utilizations.push(value.utilization);
+		}
+	}
+
+	return utilizations.length > 0 ? Math.max(...utilizations) : 0;
 }
 
 /**
  * Determine which window is the most restrictive (highest utilization)
+ * Dynamically handles any usage window fields in the response
  */
 export function getRepresentativeWindow(
 	usage: UsageData | null,
 ): string | null {
 	if (!usage) return null;
 
-	const windows = [
-		{ name: "five_hour", util: usage.five_hour.utilization },
-		{ name: "seven_day", util: usage.seven_day.utilization },
-		{
-			name: "seven_day_oauth_apps",
-			util: usage.seven_day_oauth_apps?.utilization ?? 0,
-		},
-		{
-			name: "seven_day_opus",
-			util: usage.seven_day_opus?.utilization ?? 0,
-		},
-	];
+	const windows: Array<{ name: string; util: number }> = [];
+
+	// Iterate through all properties to find UsageWindow objects
+	for (const [key, value] of Object.entries(usage)) {
+		// Check if this is a UsageWindow object
+		if (
+			value &&
+			typeof value === "object" &&
+			"utilization" in value &&
+			typeof value.utilization === "number"
+		) {
+			windows.push({ name: key, util: value.utilization });
+		}
+		// Also check extra_usage if present
+		if (
+			key === "extra_usage" &&
+			value &&
+			typeof value === "object" &&
+			"utilization" in value &&
+			typeof value.utilization === "number"
+		) {
+			windows.push({ name: key, util: value.utilization });
+		}
+	}
+
+	if (windows.length === 0) return null;
 
 	const max = windows.reduce((prev, current) =>
 		current.util > prev.util ? current : prev,
