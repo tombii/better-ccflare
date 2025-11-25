@@ -96,14 +96,7 @@ jobs:
 
           ## Multi-Architecture Binaries
 
-          Download the appropriate binary for your platform:"
-          else
-            CHANGELOG="## 🎉 Stable Release ${{ github.ref_name }}
-
-          ## Multi-Architecture Binaries
-
-          Download the appropriate binary for your platform:"
-          fi
+          Download the appropriate binary for your platform:
 
           - **Linux x86_64**: \`better-ccflare-linux-amd64\`
           - **Linux ARM64** (Raspberry Pi 3/4/5, Oracle Cloud ARM, AWS Graviton): \`better-ccflare-linux-arm64\`
@@ -123,6 +116,32 @@ jobs:
           Or install via npm: \`npm install -g better-ccflare@${{ github.ref_name }}\`
 
           ---"
+          else
+            CHANGELOG="## 🎉 Stable Release ${{ github.ref_name }}
+
+          ## Multi-Architecture Binaries
+
+          Download the appropriate binary for your platform:
+
+          - **Linux x86_64**: \`better-ccflare-linux-amd64\`
+          - **Linux ARM64** (Raspberry Pi 3/4/5, Oracle Cloud ARM, AWS Graviton): \`better-ccflare-linux-arm64\`
+          - **macOS Intel**: \`better-ccflare-macos-x86_64\`
+          - **macOS Apple Silicon**: \`better-ccflare-macos-arm64\`
+          - **Windows x86_64**: \`better-ccflare-windows-x64.exe\`
+
+          ### Installation
+
+          \`\`\`bash
+          # Linux x86_64
+          wget https://github.com/tombii/better-ccflare/releases/download/${{ github.ref_name }}/better-ccflare-linux-amd64
+          chmod +x better-ccflare-linux-amd64
+          ./better-ccflare-linux-amd64
+          \`\`\`
+
+          Or install via npm: \`npm install -g better-ccflare@${{ github.ref_name }}\`
+
+          ---"
+          fi
 
           if [ -n "$PREV_TAG" ]; then
             # Get commits since previous tag
