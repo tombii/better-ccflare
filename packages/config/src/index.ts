@@ -341,19 +341,22 @@ export class Config extends EventEmitter {
 			defaults.clientId = process.env.CLIENT_ID;
 		}
 		if (process.env.RETRY_ATTEMPTS) {
-			defaults.retry.attempts = parseInt(process.env.RETRY_ATTEMPTS);
+			defaults.retry.attempts = parseInt(process.env.RETRY_ATTEMPTS, 10);
 		}
 		if (process.env.RETRY_DELAY_MS) {
-			defaults.retry.delayMs = parseInt(process.env.RETRY_DELAY_MS);
+			defaults.retry.delayMs = parseInt(process.env.RETRY_DELAY_MS, 10);
 		}
 		if (process.env.RETRY_BACKOFF) {
 			defaults.retry.backoff = parseFloat(process.env.RETRY_BACKOFF);
 		}
 		if (process.env.SESSION_DURATION_MS) {
-			defaults.sessionDurationMs = parseInt(process.env.SESSION_DURATION_MS);
+			defaults.sessionDurationMs = parseInt(
+				process.env.SESSION_DURATION_MS,
+				10,
+			);
 		}
 		if (process.env.PORT) {
-			defaults.port = parseInt(process.env.PORT);
+			defaults.port = parseInt(process.env.PORT, 10);
 		}
 
 		// Override with config file settings if present

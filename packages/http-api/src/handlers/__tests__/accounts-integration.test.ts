@@ -104,7 +104,9 @@ describe("Accounts Handler - Dashboard Usage Data Integration", () => {
 	describe("Proactive Usage Data Fetching", () => {
 		it("should fetch usage data for Claude CLI OAuth accounts but not API key accounts", async () => {
 			// Setup: Create accounts handler with mocked dependencies
-			const accountsHandler = createMockAccountsListHandler(CACHE_FRESHNESS_THRESHOLD_MS);
+			const accountsHandler = createMockAccountsListHandler(
+				CACHE_FRESHNESS_THRESHOLD_MS,
+			);
 
 			// Mock database response with mixed account types
 			const allAccounts = [
@@ -168,7 +170,9 @@ describe("Accounts Handler - Dashboard Usage Data Integration", () => {
 		});
 
 		it("should skip fetching when cache data is fresh (< 90 seconds)", async () => {
-			const accountsHandler = createMockAccountsListHandler(CACHE_FRESHNESS_THRESHOLD_MS);
+			const accountsHandler = createMockAccountsListHandler(
+				CACHE_FRESHNESS_THRESHOLD_MS,
+			);
 
 			// Mock database response with OAuth account
 			const oauthAccount = {
@@ -216,7 +220,9 @@ describe("Accounts Handler - Dashboard Usage Data Integration", () => {
 		});
 
 		it("should fetch when cache data is stale (> 90 seconds)", async () => {
-			const accountsHandler = createMockAccountsListHandler(CACHE_FRESHNESS_THRESHOLD_MS);
+			const accountsHandler = createMockAccountsListHandler(
+				CACHE_FRESHNESS_THRESHOLD_MS,
+			);
 
 			// Mock database response with OAuth account
 			const oauthAccount = {

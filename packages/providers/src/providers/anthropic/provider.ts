@@ -269,7 +269,7 @@ export class AnthropicProvider extends BaseProvider {
 
 		const rateLimitReset = response.headers.get("x-ratelimit-reset");
 		const resetTime = rateLimitReset
-			? parseInt(rateLimitReset) * 1000
+			? parseInt(rateLimitReset, 10) * 1000
 			: Date.now() + 60000; // Default to 1 minute
 
 		return {

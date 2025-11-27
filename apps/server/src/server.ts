@@ -802,7 +802,7 @@ if (import.meta.main) {
 
 	for (let i = 0; i < args.length; i++) {
 		if (args[i] === "--port" && args[i + 1]) {
-			port = Number.parseInt(args[i + 1]);
+			port = Number.parseInt(args[i + 1], 10);
 			i++; // Skip next arg
 		} else if (args[i] === "--ssl-key" && args[i + 1]) {
 			sslKeyPath = args[i + 1];
@@ -815,7 +815,7 @@ if (import.meta.main) {
 
 	// Use environment variables if no command line arguments
 	if (!port && process.env.PORT) {
-		port = Number.parseInt(process.env.PORT);
+		port = Number.parseInt(process.env.PORT, 10);
 	}
 	if (!sslKeyPath && process.env.SSL_KEY_PATH) {
 		sslKeyPath = process.env.SSL_KEY_PATH;

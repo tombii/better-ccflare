@@ -72,7 +72,7 @@ export async function runCli(argv: string[]): Promise<void> {
 					mode = "claude-oauth";
 				}
 				const priorityValue = values.priority
-					? parseInt(values.priority as string)
+					? parseInt(values.priority as string, 10)
 					: undefined;
 				const priority =
 					typeof priorityValue === "number" && !Number.isNaN(priorityValue)
@@ -219,7 +219,7 @@ export async function runCli(argv: string[]): Promise<void> {
 					process.exit(1);
 				}
 
-				const priority = parseInt(priorityValue);
+				const priority = parseInt(priorityValue, 10);
 				if (Number.isNaN(priority)) {
 					console.error("Error: Priority must be a number");
 					process.exit(1);

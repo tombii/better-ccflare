@@ -102,7 +102,7 @@ const BUNDLED_PRICING: ApiResponse = {
 				cost: {
 					input: 5,
 					output: 25,
-					cache_read: 0.50,
+					cache_read: 0.5,
 					cache_write: 6.25,
 				},
 			},

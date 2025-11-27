@@ -28,10 +28,10 @@
 		"bun": ">=1.2.8"
 	},
 	"devDependencies": {
-		"@biomejs/biome": "2.1.2",
+		"@biomejs/biome": "2.3.7",
 		"@types/bun": "latest",
 		"bun-types": "latest",
-		"typescript": "^5.0.0"
+		"typescript": "^5.9.3"
 	},
-	"version": "3.0.0-rc3"
+	"version": "3.0.0"
 }

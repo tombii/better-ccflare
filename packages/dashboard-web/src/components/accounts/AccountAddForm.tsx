@@ -777,7 +777,7 @@ export function AccountAddForm({
 						<Select
 							value={String(newAccount.priority)}
 							onValueChange={(value: string) =>
-								setNewAccount({ ...newAccount, priority: parseInt(value) })
+								setNewAccount({ ...newAccount, priority: parseInt(value, 10) })
 							}
 						>
 							<SelectTrigger id="priority">
