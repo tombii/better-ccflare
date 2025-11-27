@@ -93,7 +93,7 @@ export class AuthService {
 	/**
 	 * Check if a path should be exempt from authentication
 	 */
-	isPathExempt(path: string, _method: string): boolean {
+	isPathExempt(path: string, method: string): boolean {
 		// Web dashboard paths are always exempt
 		if (path.startsWith("/dashboard") || path === "/") {
 			return true;
@@ -114,9 +114,15 @@ export class AuthService {
 			return true;
 		}
 
-		// API key management endpoints are exempt (so users can create keys)
+		// API key management: Only allow initial key creation without auth if no keys exist
+		// All other operations require authentication
 		if (path.startsWith("/api/api-keys")) {
-			return true;
+			// Only allow POST (key creation) without auth if no keys exist
+			if (path === "/api/api-keys" && method === "POST") {
+				return !this.isAuthenticationEnabled(); // Only exempt if no keys exist
+			}
+			// All other API key operations require authentication
+			return false;
 		}
 
 		// Proxy endpoints (/v1/*, /messages/*, etc.) require authentication if enabled

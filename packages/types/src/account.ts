@@ -4,12 +4,36 @@ export interface UsageWindowData {
 	resets_at: string | null;
 }
 
-export interface FullUsageData {
+export interface AnthropicUsageData {
 	five_hour?: UsageWindowData;
 	seven_day?: UsageWindowData;
 	seven_day_oauth_apps?: UsageWindowData;
 	seven_day_opus?: UsageWindowData;
 }
+
+// Usage data types for NanoGPT accounts
+export interface NanoGPTUsageWindow {
+	used: number;
+	remaining: number;
+	percentUsed: number; // 0-1 decimal range from API, displayed as 0-100%
+	resetAt: number; // Unix timestamp in milliseconds
+}
+
+export interface NanoGPTUsageData {
+	active: boolean; // true = subscription active, false = PayG mode
+	limits: {
+		daily: number;
+		monthly: number;
+	};
+	enforceDailyLimit: boolean;
+	daily: NanoGPTUsageWindow;
+	monthly: NanoGPTUsageWindow;
+	state: "active" | "grace" | "inactive";
+	graceUntil: string | null;
+}
+
+// Combined usage data type that supports both providers
+export type FullUsageData = AnthropicUsageData | NanoGPTUsageData;
 
 // Database row types that match the actual database schema
 export interface AccountRow {
@@ -89,6 +113,7 @@ export interface AccountResponse {
 	usageUtilization: number | null; // Percentage utilization (0-100) from API
 	usageWindow: string | null; // Most restrictive window (e.g., "five_hour")
 	usageData: FullUsageData | null; // Full usage data for Anthropic accounts
+	hasRefreshToken: boolean; // Indicates if the account has a refresh token (OAuth account)
 }
 
 // UI display type - used in CLI and web dashboard
@@ -132,7 +157,8 @@ export interface AccountListItem {
 		| "zai"
 		| "minimax"
 		| "anthropic-compatible"
-		| "openai-compatible";
+		| "openai-compatible"
+		| "nanogpt";
 	priority: number;
 	autoFallbackEnabled: boolean;
 	autoRefreshEnabled: boolean;
@@ -253,6 +279,7 @@ export function toAccountResponse(account: Account): AccountResponse {
 		usageUtilization: null, // Will be filled in by API handler from cache
 		usageWindow: null, // Will be filled in by API handler from cache
 		usageData: null, // Will be filled in by API handler from cache
+		hasRefreshToken: !!account.refresh_token, // OAuth accounts have refresh tokens
 	};
 }
 

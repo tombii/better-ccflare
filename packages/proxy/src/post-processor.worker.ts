@@ -47,6 +47,7 @@ interface RequestState {
 	lastTokenTimestamp?: number;
 	providerFinalOutputTokens?: number;
 	shouldSkipLogging?: boolean;
+	currentEvent?: string; // Track SSE event type across chunks
 }
 
 const log = new Logger("PostProcessor");
@@ -190,13 +191,15 @@ function extractUsageFromData(data: string, state: RequestState): void {
 		const parsed = JSON.parse(data);
 
 		// Handle message_start
-		if (parsed.type === "message_start" && parsed.message?.usage) {
-			const usage = parsed.message.usage;
-			state.usage.inputTokens = usage.input_tokens || 0;
-			state.usage.cacheReadInputTokens = usage.cache_read_input_tokens || 0;
-			state.usage.cacheCreationInputTokens =
-				usage.cache_creation_input_tokens || 0;
-			state.usage.outputTokens = usage.output_tokens || 0;
+		if (parsed.type === "message_start") {
+			if (parsed.message?.usage) {
+				const usage = parsed.message.usage;
+				state.usage.inputTokens = usage.input_tokens || 0;
+				state.usage.cacheReadInputTokens = usage.cache_read_input_tokens || 0;
+				state.usage.cacheCreationInputTokens =
+					usage.cache_creation_input_tokens || 0;
+				state.usage.outputTokens = usage.output_tokens || 0;
+			}
 			if (parsed.message?.model) {
 				state.usage.model = parsed.message.model;
 			}
@@ -285,24 +288,32 @@ function processStreamChunk(chunk: Uint8Array, state: RequestState): void {
 	state.buffer += text;
 	state.lastActivity = Date.now();
 
-	// Limit buffer size
+	// Limit buffer size - preserve event boundaries
 	if (state.buffer.length > MAX_BUFFER_SIZE) {
-		state.buffer = state.buffer.slice(-MAX_BUFFER_SIZE);
+		const excess = state.buffer.length - MAX_BUFFER_SIZE;
+		// Find the first newline after cutting the excess to avoid cutting mid-event
+		const firstNewlineAfterCut = state.buffer.indexOf("\n", excess);
+		if (firstNewlineAfterCut !== -1) {
+			state.buffer = state.buffer.slice(firstNewlineAfterCut + 1);
+		} else {
+			// Fallback: if no newline found, slice from end but this might cut mid-event
+			state.buffer = state.buffer.slice(-MAX_BUFFER_SIZE);
+		}
 	}
 
 	// Process complete lines
 	const lines = state.buffer.split("\n");
 	state.buffer = lines.pop() || "";
 
-	let currentEvent = "";
+	// Use state.currentEvent to persist event type across chunks
 	for (const line of lines) {
 		const trimmed = line.trim();
 		if (!trimmed) continue;
 
 		const parsed = parseSSELine(trimmed);
 		if (parsed.event) {
-			currentEvent = parsed.event;
-		} else if (parsed.data && currentEvent) {
+			state.currentEvent = parsed.event;
+		} else if (parsed.data && state.currentEvent) {
 			extractUsageFromData(parsed.data, state);
 		}
 	}

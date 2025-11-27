@@ -239,6 +239,44 @@ describe("MinimaxProvider", () => {
 		});
 	});
 
+	describe("transformRequest", () => {
+		it("should force all models to MiniMax-M2", async () => {
+			// Test different input models - all should be forced to MiniMax-M2
+			const testModels = [
+				"claude-sonnet-4-5-20250929",
+				"claude-haiku-4-5-20251001",
+				"claude-opus-4-1-20250805",
+				"claude-sonnet-5-0-20251201", // Future model
+				"random-other-model",
+			];
+
+			for (const model of testModels) {
+				const requestBody = {
+					model: model,
+					messages: [{ role: "user", content: "test" }],
+				};
+
+				const request = new Request("http://test.com", {
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify(requestBody),
+				});
+
+				const transformedRequest = await provider.transformRequestBody(
+					request,
+					mockAccount,
+				);
+
+				const transformedBody = await transformedRequest.json();
+				expect(transformedBody.model).toBe("MiniMax-M2");
+				// Other properties should be preserved
+				expect(transformedBody.messages).toEqual([
+					{ role: "user", content: "test" },
+				]);
+			}
+		});
+	});
+
 	describe("extractUsageInfo", () => {
 		it("should extract usage from non-streaming JSON response", async () => {
 			const mockUsageData = {

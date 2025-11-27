@@ -6,6 +6,7 @@ import {
 	DEFAULT_STRATEGY,
 	getVersion,
 	HTTP_STATUS,
+	initializeNanoGPTPricingIfAccountsExist,
 	NETWORK,
 	registerCleanup,
 	registerDisposable,
@@ -27,6 +28,8 @@ import {
 	handleProxy,
 	type ProxyContext,
 	registerRefreshClearer,
+	startGlobalTokenHealthChecks,
+	stopGlobalTokenHealthChecks,
 	terminateUsageWorker,
 } from "@better-ccflare/proxy";
 import { validatePathOrThrow } from "@better-ccflare/security";
@@ -318,8 +321,12 @@ export default function startServer(options?: {
 }) {
 	// Return existing server if already running
 	if (serverInstance) {
+		const existingPort = serverInstance.port;
+		if (typeof existingPort !== "number") {
+			throw new Error("Server instance has no valid port");
+		}
 		return {
-			port: serverInstance.port,
+			port: existingPort,
 			stop: () => {
 				if (serverInstance) {
 					serverInstance.stop();
@@ -353,17 +360,29 @@ export default function startServer(options?: {
 				description: "SSL certificate file",
 			});
 		} catch (error) {
+			// Don't expose path details in error messages - log to server only
+			console.error("SSL file path validation failed", {
+				error: error instanceof Error ? error.message : String(error),
+			});
 			throw new Error(
-				`SSL file path validation failed: ${error instanceof Error ? error.message : String(error)}`,
+				"SSL file path validation failed. Check server logs for details.",
 			);
 		}
 
 		if (!existsSync(validatedSslKeyPath)) {
-			throw new Error(`SSL key file not found: ${validatedSslKeyPath}`);
+			// Don't expose paths in error messages
+			console.error("SSL key file not found", {
+				path: validatedSslKeyPath,
+			});
+			throw new Error("SSL key file not found. Check server logs for details.");
 		}
 		if (!existsSync(validatedSslCertPath)) {
+			// Don't expose paths in error messages
+			console.error("SSL certificate file not found", {
+				path: validatedSslCertPath,
+			});
 			throw new Error(
-				`SSL certificate file not found: ${validatedSslCertPath}`,
+				"SSL certificate file not found. Check server logs for details.",
 			);
 		}
 	}
@@ -508,6 +527,9 @@ export default function startServer(options?: {
 	// Initialize auto-refresh scheduler (now that proxyContext is available)
 	autoRefreshScheduler = new AutoRefreshScheduler(db, proxyContext);
 	autoRefreshScheduler.start();
+
+	// Initialize token health monitoring service
+	startGlobalTokenHealthChecks(() => dbOps.getAllAccounts());
 
 	// Hot reload strategy configuration
 	config.on("change", (changeType, fieldName) => {
@@ -678,8 +700,54 @@ Available endpoints:
 		log.info(`No Anthropic accounts found, usage polling will not start`);
 	}
 
+	// Start usage polling for NanoGPT accounts (PayG with optional subscription tracking)
+	const nanogptAccounts = accounts.filter((a) => a.provider === "nanogpt");
+	if (nanogptAccounts.length > 0) {
+		log.info(
+			`Found ${nanogptAccounts.length} NanoGPT accounts, starting usage polling...`,
+		);
+		for (const account of nanogptAccounts) {
+			log.debug(`Processing NanoGPT account: ${account.name}`, {
+				accountId: account.id,
+				hasApiKey: !!account.api_key,
+				paused: account.paused,
+				customEndpoint: account.custom_endpoint,
+			});
+
+			if (account.api_key) {
+				// NanoGPT uses API key authentication, no token refresh needed
+				// Create a simple token provider that returns the API key
+				const apiKeyProvider = async () => account.api_key || "";
+
+				// Start usage polling with the API key
+				usageCache.startPolling(
+					account.id,
+					apiKeyProvider,
+					account.provider,
+					90000, // Poll every 90 seconds (same as Anthropic)
+					account.custom_endpoint,
+				);
+				log.info(`Started usage polling for NanoGPT account ${account.name}`);
+			} else {
+				log.warn(
+					`NanoGPT account ${account.name} has no API key, skipping usage polling`,
+				);
+			}
+		}
+	} else {
+		log.info(`No NanoGPT accounts found, usage polling will not start`);
+	}
+
+	// Initialize NanoGPT pricing refresh if there are NanoGPT accounts (non-blocking)
+	void initializeNanoGPTPricingIfAccountsExist(dbOps, pricingLogger);
+
+	const serverPort = serverInstance.port;
+	if (typeof serverPort !== "number") {
+		throw new Error("Server instance has no valid port");
+	}
+
 	return {
-		port: serverInstance.port,
+		port: serverPort,
 		stop: () => {
 			if (serverInstance) {
 				serverInstance.stop();
@@ -709,6 +777,10 @@ async function handleGracefulShutdown(signal: string) {
 			autoRefreshScheduler.stop();
 			autoRefreshScheduler = null;
 		}
+
+		// Stop token health monitoring
+		stopGlobalTokenHealthChecks();
+
 		usageCache.clear(); // Stop all usage polling
 		terminateUsageWorker();
 		await shutdown();
@@ -739,7 +811,7 @@ if (import.meta.main) {
 
 	for (let i = 0; i < args.length; i++) {
 		if (args[i] === "--port" && args[i + 1]) {
-			port = Number.parseInt(args[i + 1]);
+			port = Number.parseInt(args[i + 1], 10);
 			i++; // Skip next arg
 		} else if (args[i] === "--ssl-key" && args[i + 1]) {
 			sslKeyPath = args[i + 1];
@@ -752,7 +824,7 @@ if (import.meta.main) {
 
 	// Use environment variables if no command line arguments
 	if (!port && process.env.PORT) {
-		port = Number.parseInt(process.env.PORT);
+		port = Number.parseInt(process.env.PORT, 10);
 	}
 	if (!sslKeyPath && process.env.SSL_KEY_PATH) {
 		sslKeyPath = process.env.SSL_KEY_PATH;
@@ -769,5 +841,6 @@ if (import.meta.main) {
 		process.env.SSL_CERT_PATH = sslCertPath;
 	}
 
-	startServer({ port, sslKeyPath, sslCertPath });
+	// Start the server asynchronously
+	void startServer({ port, sslKeyPath, sslCertPath });
 }

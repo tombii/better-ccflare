@@ -38,6 +38,7 @@ export {
 	DEFAULT_MODEL_MAPPINGS,
 	getEndpointUrl,
 	getModelMappings,
+	KNOWN_PATTERNS,
 	mapModelName,
 	parseCustomEndpointData,
 	parseModelMappings,
@@ -56,6 +57,8 @@ export {
 } from "./models";
 export {
 	estimateCostUSD,
+	initializeNanoGPTPricingIfAccountsExist,
+	resetNanoGPTPricingCacheForTest,
 	setPricingLogger,
 	type TokenBreakdown,
 } from "./pricing";
@@ -71,4 +74,11 @@ export {
 	validatePriority,
 	validateString,
 } from "./validation";
-export { getVersion, getVersionSync } from "./version";
+export {
+	CLAUDE_CLI_VERSION,
+	extractClaudeVersion,
+	getClientVersion,
+	getVersion,
+	getVersionSync,
+	trackClientVersion,
+} from "./version";

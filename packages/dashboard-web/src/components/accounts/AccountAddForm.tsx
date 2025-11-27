@@ -19,7 +19,8 @@ interface AccountAddFormProps {
 			| "zai"
 			| "minimax"
 			| "anthropic-compatible"
-			| "openai-compatible";
+			| "openai-compatible"
+			| "nanogpt";
 		priority: number;
 		customEndpoint?: string;
 	}) => Promise<{ authUrl: string; sessionId: string }>;
@@ -45,6 +46,13 @@ interface AccountAddFormProps {
 		customEndpoint?: string;
 		modelMappings?: { [key: string]: string };
 	}) => Promise<void>;
+	onAddNanoGPTAccount: (params: {
+		name: string;
+		apiKey: string;
+		priority: number;
+		customEndpoint?: string;
+		modelMappings?: { [key: string]: string };
+	}) => Promise<void>;
 	onAddOpenAIAccount: (params: {
 		name: string;
 		apiKey: string;
@@ -63,6 +71,7 @@ export function AccountAddForm({
 	onAddZaiAccount,
 	onAddMinimaxAccount,
 	onAddAnthropicCompatibleAccount,
+	onAddNanoGPTAccount,
 	onAddOpenAIAccount,
 	onCancel,
 	onSuccess,
@@ -79,7 +88,8 @@ export function AccountAddForm({
 			| "zai"
 			| "minimax"
 			| "anthropic-compatible"
-			| "openai-compatible",
+			| "openai-compatible"
+			| "nanogpt",
 		priority: 0,
 		apiKey: "",
 		customEndpoint: "",
@@ -168,6 +178,46 @@ export function AccountAddForm({
 				name: newAccount.name,
 				apiKey: newAccount.apiKey,
 				priority: newAccount.priority,
+			});
+			// Reset form and signal success
+			setNewAccount({
+				name: "",
+				mode: "claude-oauth",
+				priority: 0,
+				apiKey: "",
+				customEndpoint: "",
+				opusModel: "",
+				sonnetModel: "",
+				haikuModel: "",
+			});
+			onSuccess();
+			return;
+		}
+
+		if (newAccount.mode === "nanogpt") {
+			if (!newAccount.apiKey) {
+				onError("API key is required for NanoGPT accounts");
+				return;
+			}
+			// Build model mappings from form fields
+			const modelMappings: { [key: string]: string } = {};
+			if (newAccount.opusModel) {
+				modelMappings.opus = newAccount.opusModel;
+			}
+			if (newAccount.sonnetModel) {
+				modelMappings.sonnet = newAccount.sonnetModel;
+			}
+			if (newAccount.haikuModel) {
+				modelMappings.haiku = newAccount.haikuModel;
+			}
+			// For NanoGPT accounts, we don't need OAuth flow
+			await onAddNanoGPTAccount({
+				name: newAccount.name,
+				apiKey: newAccount.apiKey,
+				priority: newAccount.priority,
+				customEndpoint: newAccount.customEndpoint || undefined,
+				modelMappings:
+					Object.keys(modelMappings).length > 0 ? modelMappings : undefined,
 			});
 			// Reset form and signal success
 			setNewAccount({
@@ -274,14 +324,15 @@ export function AccountAddForm({
 	};
 
 	const handleCodeSubmit = async () => {
-		if (!authCode) {
+		const trimmedCode = authCode.trim();
+		if (!trimmedCode) {
 			onError("Authorization code is required");
 			return;
 		}
 		// Step 2: Complete OAuth flow
 		await onCompleteAccount({
 			sessionId,
-			code: authCode,
+			code: trimmedCode,
 		});
 
 		// Success! Reset form
@@ -363,6 +414,7 @@ export function AccountAddForm({
 								<SelectItem value="console">Claude API</SelectItem>
 								<SelectItem value="zai">z.ai (API Key)</SelectItem>
 								<SelectItem value="minimax">Minimax (API Key)</SelectItem>
+								<SelectItem value="nanogpt">NanoGPT (API Key)</SelectItem>
 								<SelectItem value="anthropic-compatible">
 									Anthropic-Compatible (API Key)
 								</SelectItem>
@@ -405,6 +457,104 @@ export function AccountAddForm({
 								placeholder="Enter your Minimax API key"
 							/>
 						</div>
+					)}
+					{newAccount.mode === "nanogpt" && (
+						<>
+							<div className="space-y-2">
+								<Label htmlFor="apiKey">NanoGPT API Key</Label>
+								<Input
+									id="apiKey"
+									type="password"
+									value={newAccount.apiKey}
+									onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+										setNewAccount({
+											...newAccount,
+											apiKey: (e.target as HTMLInputElement).value,
+										})
+									}
+									placeholder="Enter your NanoGPT API key"
+								/>
+							</div>
+							<div className="space-y-2">
+								<Label htmlFor="customEndpoint">
+									Custom Endpoint (Optional)
+								</Label>
+								<Input
+									id="customEndpoint"
+									type="url"
+									value={newAccount.customEndpoint}
+									onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+										setNewAccount({
+											...newAccount,
+											customEndpoint: (e.target as HTMLInputElement).value,
+										})
+									}
+									placeholder="https://nano-gpt.com/api (default)"
+								/>
+							</div>
+							<div className="space-y-2">
+								<Label className="text-sm font-medium">
+									Model Mappings (Optional)
+								</Label>
+								<p className="text-xs text-muted-foreground">
+									Map Anthropic model names to NanoGPT-specific models. Leave
+									empty to use defaults.
+								</p>
+								<div className="space-y-2 pl-4">
+									<div>
+										<Label htmlFor="opusModel" className="text-sm">
+											Opus Model
+										</Label>
+										<Input
+											id="opusModel"
+											value={newAccount.opusModel}
+											onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+												setNewAccount({
+													...newAccount,
+													opusModel: (e.target as HTMLInputElement).value,
+												})
+											}
+											placeholder="nanogpt-ultra (default)"
+											className="mt-1"
+										/>
+									</div>
+									<div>
+										<Label htmlFor="sonnetModel" className="text-sm">
+											Sonnet Model
+										</Label>
+										<Input
+											id="sonnetModel"
+											value={newAccount.sonnetModel}
+											onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+												setNewAccount({
+													...newAccount,
+													sonnetModel: (e.target as HTMLInputElement).value,
+												})
+											}
+											placeholder="nanogpt-pro (default)"
+											className="mt-1"
+										/>
+									</div>
+									<div>
+										<Label htmlFor="haikuModel" className="text-sm">
+											Haiku Model
+										</Label>
+										<Input
+											id="haikuModel"
+											value={newAccount.haikuModel}
+											onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+												setNewAccount({
+													...newAccount,
+													haikuModel: (e.target as HTMLInputElement).value,
+												})
+											}
+											placeholder="nanogpt-lite (default)"
+											className="mt-1"
+										/>
+									</div>
+								</div>
+							</div>
+						</>
 					)}
 					{newAccount.mode === "anthropic-compatible" && (
 						<>
@@ -627,7 +777,7 @@ export function AccountAddForm({
 						<Select
 							value={String(newAccount.priority)}
 							onValueChange={(value: string) =>
-								setNewAccount({ ...newAccount, priority: parseInt(value) })
+								setNewAccount({ ...newAccount, priority: parseInt(value, 10) })
 							}
 						>
 							<SelectTrigger id="priority">

@@ -554,6 +554,57 @@ export function runMigrations(db: Database, dbPath?: string): void {
 				`Error updating account provider values: ${(error as Error).message}`,
 			);
 		}
+
+		// Sanitize existing account names to prevent command injection
+		// Replace any characters not matching /^[a-zA-Z0-9\-_]+$/ with underscores
+		try {
+			const accounts = db
+				.prepare(`SELECT id, name FROM accounts`)
+				.all() as Array<{ id: string; name: string }>;
+
+			let sanitizedCount = 0;
+			for (const account of accounts) {
+				// Check if name contains any forbidden characters
+				if (!/^[a-zA-Z0-9\-_]+$/.test(account.name)) {
+					// Sanitize by replacing forbidden chars with underscores
+					const sanitizedName = account.name.replace(/[^a-zA-Z0-9\-_]/g, "_");
+
+					// Ensure name doesn't become duplicate
+					let finalName = sanitizedName;
+					let suffix = 1;
+					while (
+						accounts.some((a) => a.id !== account.id && a.name === finalName) ||
+						(
+							db
+								.prepare(
+									`SELECT COUNT(*) as count FROM accounts WHERE name = ?`,
+								)
+								.get(finalName) as { count: number }
+						).count > 0
+					) {
+						finalName = `${sanitizedName}_${suffix}`;
+						suffix++;
+					}
+
+					db.prepare(`UPDATE accounts SET name = ? WHERE id = ?`).run(
+						finalName,
+						account.id,
+					);
+					sanitizedCount++;
+					log.info(
+						`Sanitized account name: "${account.name}" -> "${finalName}"`,
+					);
+				}
+			}
+
+			if (sanitizedCount > 0) {
+				log.info(
+					`Sanitized ${sanitizedCount} account name(s) to prevent command injection`,
+				);
+			}
+		} catch (error) {
+			log.warn(`Error sanitizing account names: ${(error as Error).message}`);
+		}
 	});
 
 	// Execute the migration transaction

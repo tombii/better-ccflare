@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { existsSync, unlinkSync } from "node:fs";
 import type { DatabaseOperations } from "@better-ccflare/database";
 import { DatabaseFactory } from "@better-ccflare/database";
 import { createOAuthInitHandler } from "../oauth";
@@ -12,8 +13,12 @@ describe("OAuth Handler - Backward Compatibility", () => {
 
 	beforeAll(async () => {
 		// Clean up any existing test database
-		if (require("node:fs").existsSync(TEST_DB_PATH)) {
-			require("node:fs").unlinkSync(TEST_DB_PATH);
+		try {
+			if (existsSync(TEST_DB_PATH)) {
+				unlinkSync(TEST_DB_PATH);
+			}
+		} catch (error) {
+			console.warn("Failed to clean up existing test database:", error);
 		}
 
 		// Initialize test database
@@ -26,8 +31,12 @@ describe("OAuth Handler - Backward Compatibility", () => {
 
 	afterAll(() => {
 		// Clean up test database
-		if (require("node:fs").existsSync(TEST_DB_PATH)) {
-			require("node:fs").unlinkSync(TEST_DB_PATH);
+		try {
+			if (existsSync(TEST_DB_PATH)) {
+				unlinkSync(TEST_DB_PATH);
+			}
+		} catch (error) {
+			console.warn("Failed to clean up test database:", error);
 		}
 		DatabaseFactory.reset();
 	});
@@ -108,9 +117,9 @@ describe("OAuth Handler - Backward Compatibility", () => {
 
 			const response = await handler(request);
 
-			// Validation errors currently return 500 (caught by outer try/catch)
-			// This is consistent with current error handling in the handler
-			expect(response.status).toBe(500);
+			expect(response.status).toBe(400);
+			const data = await response.json();
+			expect(data.error).toContain("mode");
 		});
 
 		it("should default to claude-oauth when mode is omitted", async () => {
@@ -144,8 +153,9 @@ describe("OAuth Handler - Backward Compatibility", () => {
 
 			const response = await handler(request);
 
-			// Validation errors currently return 500 (caught by outer try/catch)
-			expect(response.status).toBe(500);
+			expect(response.status).toBe(400);
+			const data = await response.json();
+			expect(data.error).toContain("name");
 		});
 
 		it("should accept custom endpoint", async () => {

@@ -6,9 +6,20 @@
 - **Anthropic** - Single provider with two modes:
   - **console mode**: Standard Claude API (console.anthropic.com)
   - **max mode**: Claude Code (claude.ai)
+- **NanoGPT** - High-performance GPT provider with competitive pricing:
+  - Dynamic pricing fetch with 24-hour cache
+  - Supports GLM-4.5, GLM-4.5-Air, GLM-4.6, and GLM-4.6-Air models
+  - API key authentication only
+- **Minimax** - Chinese AI provider with Anthropic-compatible API:
+  - Supports MiniMax-M2 and other models
+  - API key authentication
+  - Automatic format conversion
 - **Z.ai** - Claude proxy service with API key authentication:
   - Lite, Pro, and Max plans with higher rate limits than direct Claude API
   - Uses API key authentication (no OAuth support)
+- **Anthropic-Compatible** - Generic provider for Anthropic-compatible APIs:
+  - Supports custom endpoints
+  - API key authentication only
 - **OpenAI-Compatible** - Generic provider for any OpenAI-compatible API:
   - Supports custom endpoints (OpenRouter, Together AI, local models, etc.)
   - API key authentication only
@@ -43,13 +54,33 @@ The better-ccflare providers system is a modular architecture designed to suppor
 1. **Anthropic Provider** - Provides access to:
    - **Claude API** (console mode) - Standard API access via console.anthropic.com
    - **Claude Code** (max mode) - Enhanced access via claude.ai
+   - OAuth authentication with PKCE security
+   - Token health monitoring with automatic refresh (30-minute buffer)
 
-2. **Z.ai Provider** - Provides access to:
+2. **NanoGPT Provider** - Provides access to:
+   - **NanoGPT API** - High-performance GPT models with competitive pricing
+   - Supports GLM-4.5, GLM-4.5-Air, GLM-4.6, and GLM-4.6-Air models
+   - Dynamic pricing fetch with 24-hour cache from nano-gpt.com API
+   - API key authentication
+   - Full Anthropic-compatible API format
+
+3. **Minimax Provider** - Provides access to:
+   - **Minimax API** - Chinese AI provider with Anthropic-compatible API
+   - Supports MiniMax-M2 and other models
+   - API key authentication
+   - Automatic format conversion
+
+4. **Z.ai Provider** - Provides access to:
    - **Z.ai API** - Claude proxy service with enhanced rate limits
    - Uses API key authentication instead of OAuth
    - Supports Lite, Pro, and Max plans with ~3× the usage quota of equivalent Claude plans
 
-3. **OpenAI-Compatible Provider** - Provides access to:
+5. **Anthropic-Compatible Provider** - Provides access to:
+   - **Any Anthropic-compatible API** - Custom endpoints, self-hosted models, etc.
+   - Uses API key authentication
+   - Supports custom endpoints for maximum flexibility
+
+6. **OpenAI-Compatible Provider** - Provides access to:
    - **Any OpenAI-compatible API** - OpenRouter, Together AI, local models, etc.
    - Uses API key authentication
    - Automatic format conversion between Anthropic and OpenAI API formats
@@ -246,22 +277,86 @@ The API key is stored in the `refresh_token` field of the account record for con
 
 ## OpenAI-Compatible Provider Implementation
 
-The OpenAI-Compatible provider extends the BaseProvider class and enables better-ccflare to work with any OpenAI-compatible API endpoint.
+The `OpenAICompatibleProvider` (registered as `"openai-compatible"`) enables full bidirectional proxying between Anthropic `/v1/messages` and OpenAI `/v1/chat/completions` APIs.
 
-### Key Features
+### Core Files
+- `packages/providers/src/providers/openai/provider.ts` (~1010 lines) - Main class extending `BaseProvider`
+- `packages/providers/src/providers/openai/index.ts` - Exports
+- `packages/providers/src/registry.ts` - Auto-registration
+- `packages/providers/src/providers/openai/__tests__/provider.test.ts` - 200+ tests
+- `packages/types/src/provider-config.ts` - Config: `{ requiresSessionTracking: false, supportsOAuth: false }`
 
-1. **Format Conversion**: Automatically converts between Anthropic and OpenAI API formats
-   - **Request conversion**: Anthropic format → OpenAI format
-   - **Response conversion**: OpenAI format → Anthropic format
-   - **Streaming support**: Real-time stream format conversion
+### Architecture
+```
+Anthropic Client → better-ccflare Proxy → OpenAI Provider (OpenRouter, etc.) → Transformed Response → Client
+```
+- **Path conversion**: `/v1/messages` → `/v1/chat/completions`
+- **Model mapping**: `claude-3-haiku` → `openai/gpt-5-mini` (via `model-mapping.ts`)
+- **Body transform**: Anthropic `{system, messages}` → OpenAI `{messages: [{role:"system"}, ...]}`
+- **Streaming**: OpenAI SSE → Anthropic SSE via `TransformStream` + state machine
+- **Auth**: API keys (stored in `refresh_token`), no OAuth
 
-2. **Custom Endpoints**: Supports any OpenAI-compatible endpoint
-   - Default: `https://api.openai.com`
-   - Custom: Any user-specified endpoint (OpenRouter, Together AI, etc.)
+### Streaming Transformation (Key Innovation)
+Uses `TransformStream` with state tracking across chunks:
 
-3. **Authentication**: Uses API key authentication via Bearer token
+**State:**
+```
+{
+  buffer: "",
+  extractedModel: "unknown",
+  promptTokens: 0,
+  completionTokens: 0,
+  toolCallAccumulators: {},
+  hasSentStart: false
+}
+```
 
-### Format Conversion Details
+**Flow:**
+```
+OpenAI: data: {"choices":[{"delta":{"content":"Hello"}}]}
+↓ pipeThrough
+Anthropic:
+event: message_start
+event: content_block_delta → {"delta":{"type":"text_delta","text":"Hello"}}
+...
+data: {"usage":{"prompt_tokens":170,"completion_tokens":2}}
+event: message_stop
+```
+
+**Recent Fix:** `tee()` for stream cloning + `__analyticsStream` for worker analytics (commits `a0ef749`, `b1fd2b7`)
+
+### Authentication & Security
+```typescript
+refreshToken(account): { accessToken: apiKey, expiresAt: +1yr }
+```
+- Sanitizes client `Authorization` if server creds provided
+- Case-insensitive header removal
+
+### Error Handling
+- `parseRateLimit()`: Always `isRateLimited: false` (handles 429 inline)
+- Usage extraction from final chunk
+
+### Tool Calling
+Full support: Anthropic `tools` ↔ OpenAI `tools`, streaming args accumulated.
+
+### CLI Testing (OpenRouter free model)
+```bash
+curl -X POST http://localhost:8081/v1/messages \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer test" \
+  -d '{"model":"z-ai/glm-4.5-air:free","messages":[{"role":"user","content":"test"}],"max_tokens":10}'
+```
+
+### Testing Coverage
+- Path/header conversion
+- Streaming (incl. `tee()` fixes)
+- Model mapping
+- Tools
+- Custom endpoints (OpenRouter JSON)
+
+**Limitations:** Advanced vision/tools may need endpoint-specific tweaks.
+
+## Format Conversion Details
 
 **Request Conversion (Anthropic → OpenAI):**
 ```typescript

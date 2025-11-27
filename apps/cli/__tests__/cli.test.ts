@@ -190,7 +190,8 @@ describe("CLI Integration Tests", () => {
 			]);
 
 			const output = result.stdout + result.stderr;
-			expect(output).toContain("SSL key file not found");
+			expect(output).toContain("SSL file path validation failed");
+			expect(output).toContain("Path outside allowed directories");
 		});
 
 		it("should reject non-existent SSL cert file", async () => {
@@ -203,7 +204,8 @@ describe("CLI Integration Tests", () => {
 			]);
 
 			const output = result.stdout + result.stderr;
-			expect(output).toContain("SSL certificate file not found");
+			expect(output).toContain("SSL file path validation failed");
+			expect(output).toContain("Path outside allowed directories");
 		});
 	});
 
@@ -399,9 +401,10 @@ describe("CLI Security Tests", () => {
 			"test.crt",
 		]);
 
-		// Should fail with file not found, not expose system paths
+		// Should fail with directory traversal detection, not expose system paths
 		const output = result.stdout + result.stderr;
-		expect(output).toContain("SSL key file not found");
+		expect(output).toContain("SSL file path validation failed");
+		expect(output).toContain("Directory traversal detected");
 	});
 
 	it("should sanitize error messages", async () => {

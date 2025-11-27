@@ -209,6 +209,14 @@ export class AnthropicProvider extends BaseProvider {
 	): Headers {
 		const newHeaders = new Headers(headers);
 
+		// SECURITY: Remove client's authorization header when we have provider credentials
+		// to prevent credential leakage. If no credentials provided (passthrough mode),
+		// preserve client's authorization for direct API access.
+		// Use explicit undefined checks to handle empty strings correctly.
+		if (accessToken !== undefined || apiKey !== undefined) {
+			newHeaders.delete("authorization");
+		}
+
 		// Set authentication header
 		if (accessToken) {
 			newHeaders.set("Authorization", `Bearer ${accessToken}`);
@@ -261,7 +269,7 @@ export class AnthropicProvider extends BaseProvider {
 
 		const rateLimitReset = response.headers.get("x-ratelimit-reset");
 		const resetTime = rateLimitReset
-			? parseInt(rateLimitReset) * 1000
+			? parseInt(rateLimitReset, 10) * 1000
 			: Date.now() + 60000; // Default to 1 minute
 
 		return {

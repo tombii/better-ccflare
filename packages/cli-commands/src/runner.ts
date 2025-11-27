@@ -14,6 +14,7 @@ import {
 import { analyzePerformance } from "./commands/analyze";
 import { getHelpText } from "./commands/help";
 import { clearRequestHistory, resetAllStats } from "./commands/stats";
+import { checkReauthNeeded, checkTokenHealth } from "./commands/token-health";
 
 /**
  * Main CLI runner
@@ -71,7 +72,7 @@ export async function runCli(argv: string[]): Promise<void> {
 					mode = "claude-oauth";
 				}
 				const priorityValue = values.priority
-					? parseInt(values.priority as string)
+					? parseInt(values.priority as string, 10)
 					: undefined;
 				const priority =
 					typeof priorityValue === "number" && !Number.isNaN(priorityValue)
@@ -218,7 +219,7 @@ export async function runCli(argv: string[]): Promise<void> {
 					process.exit(1);
 				}
 
-				const priority = parseInt(priorityValue);
+				const priority = parseInt(priorityValue, 10);
 				if (Number.isNaN(priority)) {
 					console.error("Error: Priority must be a number");
 					process.exit(1);
@@ -235,6 +236,16 @@ export async function runCli(argv: string[]): Promise<void> {
 			case "analyze": {
 				const db = dbOps.getDatabase();
 				analyzePerformance(db);
+				break;
+			}
+
+			case "token-health": {
+				checkTokenHealth(dbOps);
+				break;
+			}
+
+			case "reauth-needed": {
+				checkReauthNeeded(dbOps);
 				break;
 			}
 

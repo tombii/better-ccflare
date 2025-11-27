@@ -15,6 +15,7 @@ import {
 	createAccountsListHandler,
 	createAnthropicCompatibleAccountAddHandler,
 	createMinimaxAccountAddHandler,
+	createNanoGPTAccountAddHandler,
 	createOpenAIAccountAddHandler,
 	createZaiAccountAddHandler,
 } from "./handlers/accounts";
@@ -54,6 +55,11 @@ import {
 import { createRequestsStreamHandler } from "./handlers/requests-stream";
 import { createStatsHandler, createStatsResetHandler } from "./handlers/stats";
 import { createSystemInfoHandler } from "./handlers/system";
+import {
+	createAccountTokenHealthHandler,
+	createReauthNeededHandler,
+	createTokenHealthHandler,
+} from "./handlers/token-health";
 import { AuthService } from "./services/auth-service";
 import type { APIContext } from "./types";
 import { errorResponse } from "./utils/http-error";
@@ -87,6 +93,7 @@ export class APIRouter {
 		const accountAddHandler = createAccountAddHandler(dbOps, config);
 		const zaiAccountAddHandler = createZaiAccountAddHandler(dbOps);
 		const minimaxAccountAddHandler = createMinimaxAccountAddHandler(dbOps);
+		const nanogptAccountAddHandler = createNanoGPTAccountAddHandler(dbOps);
 		const anthropicCompatibleAccountAddHandler =
 			createAnthropicCompatibleAccountAddHandler(dbOps);
 		const openaiAccountAddHandler = createOpenAIAccountAddHandler(dbOps);
@@ -123,12 +130,26 @@ export class APIRouter {
 		this.handlers.set("POST:/api/accounts/minimax", (req) =>
 			minimaxAccountAddHandler(req),
 		);
+		this.handlers.set("POST:/api/accounts/nanogpt", (req) =>
+			nanogptAccountAddHandler(req),
+		);
 		this.handlers.set("POST:/api/accounts/anthropic-compatible", (req) =>
 			anthropicCompatibleAccountAddHandler(req),
 		);
 		this.handlers.set("POST:/api/accounts/openai-compatible", (req) =>
 			openaiAccountAddHandler(req),
 		);
+
+		// Token health handlers
+		const tokenHealthHandler = createTokenHealthHandler(dbOps);
+		const reauthNeededHandler = createReauthNeededHandler(dbOps);
+
+		this.handlers.set("GET:/api/token-health", tokenHealthHandler);
+		this.handlers.set(
+			"GET:/api/token-health/reauth-needed",
+			reauthNeededHandler,
+		);
+
 		this.handlers.set("POST:/api/oauth/init", (req) => oauthInitHandler(req));
 		this.handlers.set("POST:/api/oauth/callback", (req) =>
 			oauthCallbackHandler(req),
@@ -411,6 +432,22 @@ export class APIRouter {
 			if (parts.length === 4 && method === "DELETE") {
 				const deleteHandler = createApiKeyDeleteHandler(this.context.dbOps);
 				return await this.wrapHandler((req) => deleteHandler(req, keyName))(
+					req,
+					url,
+				);
+			}
+		}
+
+		// Check for token health account endpoint
+		if (path.startsWith("/api/token-health/account/") && method === "GET") {
+			const parts = path.split("/");
+			const accountName = decodeURIComponent(parts[4]);
+			if (accountName) {
+				const accountTokenHealthHandler = createAccountTokenHealthHandler(
+					this.context.dbOps,
+					accountName,
+				);
+				return await this.wrapHandler(() => accountTokenHealthHandler())(
 					req,
 					url,
 				);
