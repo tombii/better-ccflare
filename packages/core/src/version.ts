@@ -103,3 +103,46 @@ export function getVersionSync(): string {
 	cachedVersion = CLAUDE_CLI_VERSION;
 	return cachedVersion;
 }
+
+/**
+ * Extract Claude CLI version from a user-agent header
+ * @param userAgent - The user-agent string to parse
+ * @returns The extracted version string, or null if not found
+ * @example
+ * extractClaudeVersion("claude-cli/2.0.60 (external, cli)") // returns "2.0.60"
+ * extractClaudeVersion("Mozilla/5.0...") // returns null
+ */
+export function extractClaudeVersion(userAgent: string | null): string | null {
+	if (!userAgent) {
+		return null;
+	}
+
+	// Match claude-cli/X.Y.Z pattern (handles semver with optional prerelease/build metadata)
+	const match = userAgent.match(
+		/claude-cli\/(\d+\.\d+\.\d+(?:-[\w.]+)?(?:\+[\w.]+)?)/i,
+	);
+	return match ? match[1] : null;
+}
+
+// Track the most recent Claude CLI version seen from client requests
+// This allows auto-refresh to use newer client versions even after app restart
+let lastSeenClientVersion: string | null = null;
+
+/**
+ * Update the tracked client version from an incoming request
+ * @param userAgent - The user-agent header from the client request
+ */
+export function trackClientVersion(userAgent: string | null): void {
+	const version = extractClaudeVersion(userAgent);
+	if (version) {
+		lastSeenClientVersion = version;
+	}
+}
+
+/**
+ * Get the most recently seen client version, or fall back to the application version
+ * @returns The client version if available, otherwise CLAUDE_CLI_VERSION
+ */
+export function getClientVersion(): string {
+	return lastSeenClientVersion || CLAUDE_CLI_VERSION;
+}

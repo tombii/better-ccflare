@@ -74,4 +74,11 @@ export {
 	validatePriority,
 	validateString,
 } from "./validation";
-export { CLAUDE_CLI_VERSION, getVersion, getVersionSync } from "./version";
+export {
+	CLAUDE_CLI_VERSION,
+	extractClaudeVersion,
+	getClientVersion,
+	getVersion,
+	getVersionSync,
+	trackClientVersion,
+} from "./version";

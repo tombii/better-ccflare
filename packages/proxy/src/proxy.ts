@@ -1,4 +1,8 @@
-import { requestEvents, ServiceUnavailableError } from "@better-ccflare/core";
+import {
+	requestEvents,
+	ServiceUnavailableError,
+	trackClientVersion,
+} from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import {
 	createRequestMetadata,
@@ -168,13 +172,16 @@ export async function handleProxy(
 	url: URL,
 	ctx: ProxyContext,
 ): Promise<Response> {
-	// 1. Validate provider can handle path
+	// 1. Track client version from user-agent for use in auto-refresh
+	trackClientVersion(req.headers.get("user-agent"));
+
+	// 2. Validate provider can handle path
 	validateProviderPath(ctx.provider, url.pathname);
 
-	// 2. Prepare request body
+	// 3. Prepare request body
 	const { buffer: requestBodyBuffer } = await prepareRequestBody(req);
 
-	// 3. Intercept and modify request for agent model preferences
+	// 4. Intercept and modify request for agent model preferences
 	const { modifiedBody, agentUsed, originalModel, appliedModel } =
 		await interceptAndModifyRequest(requestBodyBuffer, ctx.dbOps);
 
@@ -191,14 +198,14 @@ export async function handleProxy(
 		);
 	}
 
-	// 4. Create request metadata with agent info
+	// 5. Create request metadata with agent info
 	const requestMeta = createRequestMetadata(req, url);
 	requestMeta.agentUsed = agentUsed;
 
-	// 5. Select accounts
+	// 6. Select accounts
 	const accounts = selectAccountsForRequest(requestMeta, ctx);
 
-	// 6. Handle no accounts case
+	// 7. Handle no accounts case
 	if (accounts.length === 0) {
 		return proxyUnauthenticated(
 			req,
@@ -210,7 +217,7 @@ export async function handleProxy(
 		);
 	}
 
-	// 7. Log selected accounts
+	// 8. Log selected accounts
 	log.info(
 		`Selected ${accounts.length} accounts: ${accounts.map((a) => a.name).join(", ")}`,
 	);
@@ -222,7 +229,7 @@ export async function handleProxy(
 		log.info(`Request: ${req.method} ${url.pathname}`);
 	}
 
-	// 8. Try each account
+	// 9. Try each account
 	for (let i = 0; i < accounts.length; i++) {
 		const response = await proxyWithAccount(
 			req,
@@ -240,7 +247,7 @@ export async function handleProxy(
 		}
 	}
 
-	// 9. All accounts failed - check if OAuth token issues are the cause
+	// 10. All accounts failed - check if OAuth token issues are the cause
 	const oauthAccounts = accounts.filter((acc) => acc.refresh_token);
 	const needsReauth = oauthAccounts.filter((acc) =>
 		isRefreshTokenLikelyExpired(acc),

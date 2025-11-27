@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import {
-	CLAUDE_CLI_VERSION,
+	getClientVersion,
 	registerHeartbeat,
 	requestEvents,
 } from "@better-ccflare/core";
@@ -300,7 +300,7 @@ export class AutoRefreshScheduler {
 				connection: "keep-alive",
 				"content-type": "application/json",
 				"sec-fetch-mode": "cors",
-				"user-agent": `claude-cli/${CLAUDE_CLI_VERSION} (external, cli)`,
+				"user-agent": `claude-cli/${getClientVersion()} (external, cli)`,
 				"x-app": "cli",
 				"x-stainless-arch": "x64",
 				"x-stainless-helper-method": "stream",
