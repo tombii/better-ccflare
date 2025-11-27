@@ -356,22 +356,7 @@ curl -X POST http://localhost:8081/v1/messages \
 
 **Limitations:** Advanced vision/tools may need endpoint-specific tweaks.
 
-The OpenAI-Compatible provider extends the BaseProvider class and enables better-ccflare to work with any OpenAI-compatible API endpoint.
-
-### Key Features
-
-1. **Format Conversion**: Automatically converts between Anthropic and OpenAI API formats
-   - **Request conversion**: Anthropic format → OpenAI format
-   - **Response conversion**: OpenAI format → Anthropic format
-   - **Streaming support**: Real-time stream format conversion
-
-2. **Custom Endpoints**: Supports any OpenAI-compatible endpoint
-   - Default: `https://api.openai.com`
-   - Custom: Any user-specified endpoint (OpenRouter, Together AI, etc.)
-
-3. **Authentication**: Uses API key authentication via Bearer token
-
-### Format Conversion Details
+## Format Conversion Details
 
 **Request Conversion (Anthropic → OpenAI):**
 ```typescript

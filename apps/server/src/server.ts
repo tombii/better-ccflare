@@ -321,8 +321,12 @@ export default function startServer(options?: {
 }) {
 	// Return existing server if already running
 	if (serverInstance) {
+		const existingPort = serverInstance.port;
+		if (typeof existingPort !== "number") {
+			throw new Error("Server instance has no valid port");
+		}
 		return {
-			port: serverInstance.port as number, // Type assertion since Bun server instance should have a port
+			port: existingPort,
 			stop: () => {
 				if (serverInstance) {
 					serverInstance.stop();
@@ -737,8 +741,13 @@ Available endpoints:
 	// Initialize NanoGPT pricing refresh if there are NanoGPT accounts (non-blocking)
 	void initializeNanoGPTPricingIfAccountsExist(dbOps, pricingLogger);
 
+	const serverPort = serverInstance.port;
+	if (typeof serverPort !== "number") {
+		throw new Error("Server instance has no valid port");
+	}
+
 	return {
-		port: serverInstance.port as number, // Type assertion since Bun server instance should have a port
+		port: serverPort,
 		stop: () => {
 			if (serverInstance) {
 				serverInstance.stop();

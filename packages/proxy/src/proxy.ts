@@ -258,7 +258,7 @@ export async function handleProxy(
 		const reauthCommands = needsReauth
 			.map(
 				(acc) =>
-					`bun run cli --reauthenticate "${acc.name.replace(/"/g, '\\"')}"`,
+					`bun run cli --reauthenticate "${acc.name.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`,
 			)
 			.join("\n  ");
 		throw new ServiceUnavailableError(
