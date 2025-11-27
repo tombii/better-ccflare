@@ -117,28 +117,27 @@ export function createOAuthInitHandler(dbOps: DatabaseOperations) {
  */
 export function createOAuthCallbackHandler(dbOps: DatabaseOperations) {
 	return async (req: Request): Promise<Response> => {
+		// Validate HTTP method - only POST is supported
+		if (req.method !== "POST") {
+			return errorResponse(
+				BadRequest("Only POST requests are supported for OAuth callback"),
+			);
+		}
+
 		try {
 			const body = await req.json();
 
-			// Validate session ID
+			// Validate session ID - validateString throws ValidationError if invalid
 			const sessionId = validateString(body.sessionId, "sessionId", {
 				required: true,
 				pattern: patterns.uuid,
-			});
+			})!;
 
-			if (!sessionId) {
-				return errorResponse(BadRequest("Session ID is required"));
-			}
-
-			// Validate code
+			// Validate code - validateString throws ValidationError if invalid
 			const code = validateString(body.code, "code", {
 				required: true,
 				minLength: 1,
-			});
-
-			if (!code) {
-				return errorResponse(BadRequest("Authorization code is required"));
-			}
+			})!;
 
 			// Get stored PKCE verifier from database
 			const oauthSession = dbOps.getOAuthSession(sessionId);
@@ -180,6 +179,10 @@ export function createOAuthCallbackHandler(dbOps: DatabaseOperations) {
 					mode: savedMode || "claude-oauth", // Add mode to match BeginResult type
 				};
 
+				log.debug(
+					`Completing OAuth flow for account '${name}' in ${savedMode} mode`,
+				);
+
 				await oauthFlow.complete(
 					{
 						sessionId,
@@ -193,6 +196,8 @@ export function createOAuthCallbackHandler(dbOps: DatabaseOperations) {
 				// Clean up OAuth session from database
 				dbOps.deleteOAuthSession(sessionId);
 
+				log.info(`Successfully added account '${name}' via OAuth`);
+
 				return jsonResponse({
 					success: true,
 					message: `Account '${name}' added successfully!`,
@@ -202,6 +207,7 @@ export function createOAuthCallbackHandler(dbOps: DatabaseOperations) {
 							: "Claude Console",
 				});
 			} catch (error) {
+				log.error(`OAuth flow completion failed for account '${name}':`, error);
 				return errorResponse(
 					error instanceof Error
 						? error
@@ -209,7 +215,8 @@ export function createOAuthCallbackHandler(dbOps: DatabaseOperations) {
 				);
 			}
 		} catch (error) {
-			log.error("OAuth callback error:", error);
+			log.error("OAuth callback validation error:", error);
+			// Return the validation error as-is to show the specific error message
 			return errorResponse(
 				error instanceof Error
 					? error

@@ -98,7 +98,7 @@ export interface OAuthProviderConfig {
 }
 
 export interface OAuthProvider {
-	getOAuthConfig(mode?: string): OAuthProviderConfig;
+	getOAuthConfig(mode?: string, redirectUri?: string): OAuthProviderConfig;
 	exchangeCode(
 		code: string,
 		verifier: string,

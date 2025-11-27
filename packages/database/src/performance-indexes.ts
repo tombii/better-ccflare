@@ -115,6 +115,13 @@ export function addPerformanceIndexes(db: Database): void {
 	`);
 	log.info("Added index: idx_accounts_priority");
 
+	// Index for OAuth session cleanup by account_name
+	db.run(`
+		CREATE INDEX IF NOT EXISTS idx_oauth_sessions_account_name
+		ON oauth_sessions(account_name, expires_at)
+	`);
+	log.info("Added index: idx_oauth_sessions_account_name");
+
 	log.info("Performance indexes added successfully");
 }
 

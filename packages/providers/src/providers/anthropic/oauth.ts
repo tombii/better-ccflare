@@ -10,7 +10,21 @@ import type {
 const oauthLog = new Logger("AnthropicOAuthProvider");
 
 export class AnthropicOAuthProvider implements OAuthProvider {
-	getOAuthConfig(mode: "console" | "max" = "console"): OAuthProviderConfig {
+	/**
+	 * Generate a secure random state string for CSRF protection
+	 * This is separate from the PKCE verifier and should never contain secrets
+	 */
+	private generateSecureRandomState(): string {
+		const array = new Uint8Array(32);
+		crypto.getRandomValues(array);
+		return Array.from(array, (byte) => byte.toString(16).padStart(2, "0")).join(
+			"",
+		);
+	}
+
+	getOAuthConfig(
+		mode: "console" | "claude-oauth" = "console",
+	): OAuthProviderConfig {
 		const baseUrl =
 			mode === "console"
 				? "https://console.anthropic.com"
@@ -27,8 +41,11 @@ export class AnthropicOAuthProvider implements OAuthProvider {
 	}
 
 	generateAuthUrl(config: OAuthProviderConfig, pkce: PKCEChallenge): string {
-		// For max mode (Claude CLI), use the login flow that redirects to OAuth
-		if (config.mode === "max") {
+		// Generate secure random state for CSRF protection (separate from PKCE verifier)
+		const state = this.generateSecureRandomState();
+
+		// For claude-oauth mode (Claude CLI), use the login flow that redirects to OAuth
+		if (config.mode === "claude-oauth") {
 			const baseUrl = config.authorizeUrl.split("/oauth/authorize")[0];
 			const oauthParams = new URLSearchParams();
 			oauthParams.set("code", "true");
@@ -38,7 +55,7 @@ export class AnthropicOAuthProvider implements OAuthProvider {
 			oauthParams.set("scope", config.scopes.join(" "));
 			oauthParams.set("code_challenge", pkce.challenge);
 			oauthParams.set("code_challenge_method", "S256");
-			oauthParams.set("state", pkce.verifier);
+			oauthParams.set("state", state);
 
 			const returnTo = `/oauth/authorize?${oauthParams.toString()}`;
 
@@ -57,7 +74,7 @@ export class AnthropicOAuthProvider implements OAuthProvider {
 			url.searchParams.set("scope", config.scopes.join(" "));
 			url.searchParams.set("code_challenge", pkce.challenge);
 			url.searchParams.set("code_challenge_method", "S256");
-			url.searchParams.set("state", pkce.verifier);
+			url.searchParams.set("state", state);
 			return url.toString();
 		}
 	}
@@ -67,27 +84,35 @@ export class AnthropicOAuthProvider implements OAuthProvider {
 		verifier: string,
 		config: OAuthProviderConfig,
 	): Promise<TokenResult> {
+		// The authorization code from Anthropic contains a state parameter: code#state
 		const splits = code.split("#");
+		const actualCode = splits[0];
+		const state = splits[1];
 
 		oauthLog.debug(`OAuth exchangeCode called:`, {
-			fullCodePreview: `${code.substring(0, 30)}...`,
-			codePart: splits[0]?.substring(0, 20),
-			statePart: splits[1]?.substring(0, 20),
-			verifierPreview: `${verifier.substring(0, 20)}...`,
+			hasState: !!state,
 			clientId: config.clientId,
 			mode: config.mode,
 		});
 
 		const requestBody = {
-			code: splits[0],
-			state: splits[1],
+			code: actualCode,
+			state: state,
 			grant_type: "authorization_code",
 			client_id: config.clientId,
 			redirect_uri: config.redirectUri,
 			code_verifier: verifier,
 		};
 
-		oauthLog.debug("Exchange request body:", requestBody);
+		// Don't log sensitive request body in production
+		if (process.env.NODE_ENV === "development") {
+			oauthLog.debug("Exchange request body:", {
+				grant_type: requestBody.grant_type,
+				client_id: requestBody.client_id,
+				redirect_uri: requestBody.redirect_uri,
+				// Omit code and code_verifier from logs
+			});
+		}
 
 		const response = await fetch(config.tokenUrl, {
 			method: "POST",
@@ -100,21 +125,40 @@ export class AnthropicOAuthProvider implements OAuthProvider {
 		);
 
 		if (!response.ok) {
-			let errorDetails: { error?: string; error_description?: string } | null =
-				null;
+			let errorDetails: {
+				error?: string | { message?: string };
+				error_description?: string;
+			} | null = null;
 			try {
 				errorDetails = await response.json();
 			} catch {
 				// Failed to parse error response
 			}
 
+			// Handle error being either a string or an object with a message
+			let errorStr: string;
+			if (typeof errorDetails?.error === "object" && errorDetails.error) {
+				errorStr =
+					errorDetails.error.message ||
+					JSON.stringify(errorDetails.error) ||
+					"Unknown error";
+			} else {
+				errorStr = errorDetails?.error || "";
+			}
+
 			const errorMessage =
 				errorDetails?.error_description ||
-				errorDetails?.error ||
+				errorStr ||
 				response.statusText ||
 				"OAuth token exchange failed";
 
-			throw new OAuthError(errorMessage, "anthropic", errorDetails?.error);
+			throw new OAuthError(
+				errorMessage,
+				"anthropic",
+				typeof errorDetails?.error === "string"
+					? errorDetails.error
+					: undefined,
+			);
 		}
 
 		const json = (await response.json()) as {

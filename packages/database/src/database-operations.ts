@@ -348,6 +348,10 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		this.accounts.setAutoFallbackEnabled(accountId, enabled);
 	}
 
+	hasAccountsForProvider(provider: string): boolean {
+		return this.accounts.hasAccountsForProvider(provider);
+	}
+
 	// Request operations delegated to repository
 	saveRequestMeta(
 		id: string,

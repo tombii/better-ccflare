@@ -10,6 +10,7 @@ import {
 	validateString,
 } from "@better-ccflare/core";
 import type { DatabaseOperations } from "@better-ccflare/database";
+import { ValidationError } from "@better-ccflare/errors";
 import {
 	BadRequest,
 	errorResponse,
@@ -19,6 +20,7 @@ import {
 } from "@better-ccflare/http-common";
 import { Logger } from "@better-ccflare/logger";
 import {
+	fetchUsageData,
 	getRepresentativeUtilization,
 	getRepresentativeWindow,
 	type UsageData,
@@ -34,7 +36,7 @@ const log = new Logger("AccountsHandler");
  * Create an accounts list handler
  */
 export function createAccountsListHandler(db: Database) {
-	return (): Response => {
+	return async (): Promise<Response> => {
 		const now = Date.now();
 		const sessionDuration = 5 * 60 * 60 * 1000; // 5 hours
 
@@ -56,6 +58,8 @@ export function createAccountsListHandler(db: Database) {
 					rate_limit_remaining,
 					session_start,
 					session_request_count,
+					refresh_token,
+					access_token,
 					COALESCE(paused, 0) as paused,
 					COALESCE(priority, 0) as priority,
 					COALESCE(auto_fallback_enabled, 0) as auto_fallback_enabled,
@@ -94,6 +98,8 @@ export function createAccountsListHandler(db: Database) {
 			rate_limit_remaining: number | null;
 			session_start: number | null;
 			session_request_count: number;
+			refresh_token: string;
+			access_token: string | null;
 			paused: 0 | 1;
 			priority: number;
 			token_valid: 0 | 1;
@@ -104,6 +110,47 @@ export function createAccountsListHandler(db: Database) {
 			custom_endpoint: string | null;
 			model_mappings: string | null;
 		}>;
+
+		// Fetch usage data for all Claude CLI OAuth accounts (those with refresh tokens)
+		// API key accounts don't have usage tracking available
+		const oauthAccounts = accounts.filter(
+			(acc) =>
+				acc.provider === "anthropic" &&
+				acc.access_token &&
+				acc.refresh_token &&
+				acc.refresh_token !== acc.access_token, // Exclude API key accounts where they're the same
+		);
+
+		// Fetch usage data in parallel for all OAuth accounts that don't have fresh cache data
+		// Cache is considered stale after 90 seconds (aligned with auto-refresh scheduler polling)
+		const CACHE_FRESHNESS_THRESHOLD_MS = 90000;
+		await Promise.all(
+			oauthAccounts.map(async (account) => {
+				// Check if we already have cached data and if it's still fresh
+				const cacheAge = usageCache.getAge(account.id);
+				const isCacheFresh =
+					cacheAge !== null && cacheAge < CACHE_FRESHNESS_THRESHOLD_MS;
+
+				if (!isCacheFresh && account.access_token) {
+					// Fetch usage data if cache is stale or missing
+					try {
+						const usageData = await fetchUsageData(account.access_token);
+						if (usageData) {
+							// Update the cache using the public set method
+							usageCache.set(account.id, usageData);
+							log.debug(
+								`Fetched usage data for ${account.name}: 5h=${usageData.five_hour.utilization}%, 7d=${usageData.seven_day.utilization}%`,
+							);
+						}
+					} catch (error) {
+						log.warn(
+							`Failed to fetch usage data for account ${account.name}:`,
+							error,
+						);
+					}
+				}
+			}),
+		);
 
 		const response: AccountResponse[] = accounts.map((account) => {
 			let rateLimitStatus = "OK";
@@ -129,7 +176,7 @@ export function createAccountsListHandler(db: Database) {
 				rateLimitStatus = `Rate limited (${minutesLeft}m)`;
 			}
 
-			// Get usage data from cache for Anthropic accounts
+			// Get usage data from cache for Anthropic and NanoGPT accounts
 			const usageData = usageCache.get(account.id);
 			let usageUtilization: number | null = null;
 			let usageWindow: string | null = null;
@@ -155,11 +202,38 @@ export function createAccountsListHandler(db: Database) {
 						// Keep null values for usage if processing fails
 					}
 				}
+			} else if (account.provider === "nanogpt" && usageData) {
+				// NanoGPT usage data - type guard to check it's NanoGPTUsageData
+				const isNanoGPTData =
+					"active" in usageData &&
+					"daily" in usageData &&
+					"monthly" in usageData;
+				if (isNanoGPTData) {
+					try {
+						const {
+							getRepresentativeNanoGPTUtilization,
+							getRepresentativeNanoGPTWindow,
+						} = require("@better-ccflare/providers");
+						usageUtilization = getRepresentativeNanoGPTUtilization(usageData);
+						usageWindow = getRepresentativeNanoGPTWindow(usageData);
+						fullUsageData = usageData as FullUsageData;
+					} catch (error) {
+						log.warn(
+							`Failed to process NanoGPT usage data for account ${account.name}:`,
+							error,
+						);
+					}
+				}
 			}
 
-			// Parse model mappings for OpenAI-compatible providers
+			// Parse model mappings for OpenAI-compatible, Anthropic-compatible, and NanoGPT providers
 			let modelMappings: { [key: string]: string } | null = null;
-			if (account.provider === "openai-compatible" && account.model_mappings) {
+			if (
+				(account.provider === "openai-compatible" ||
+					account.provider === "anthropic-compatible" ||
+					account.provider === "nanogpt") &&
+				account.model_mappings
+			) {
 				try {
 					const parsed = JSON.parse(account.model_mappings);
 					// Handle both formats: direct mappings or wrapped in modelMappings
@@ -213,6 +287,7 @@ export function createAccountsListHandler(db: Database) {
 				usageUtilization,
 				usageWindow,
 				usageData: fullUsageData, // Full usage data for UI
+				hasRefreshToken: !!account.refresh_token, // OAuth accounts have refresh tokens
 			};
 		});
 
@@ -408,6 +483,19 @@ export function createAccountRemoveHandler(dbOps: DatabaseOperations) {
 
 			if (!result.success) {
 				return errorResponse(NotFound(result.message));
+			}
+
+			// Find the account ID to clean up usage cache (check before deletion)
+			const db = dbOps.getDatabase();
+			const account = db
+				.query<{ id: string }, [string]>(
+					"SELECT id FROM accounts WHERE name = ?",
+				)
+				.get(accountName);
+
+			if (account) {
+				// Clear usage cache for removed account to prevent memory leaks
+				usageCache.delete(account.id);
 			}
 
 			return jsonResponse({
@@ -659,13 +747,14 @@ export function createZaiAccountAddHandler(dbOps: DatabaseOperations) {
 						last_used: number | null;
 						created_at: number;
 						expires_at: number;
+						refresh_token: string;
 						paused: number;
 					},
 					[string]
 				>(
 					`SELECT
 						id, name, provider, request_count, total_requests,
-						last_used, created_at, expires_at,
+						last_used, created_at, expires_at, refresh_token,
 						COALESCE(paused, 0) as paused
 					FROM accounts WHERE id = ?`,
 				)
@@ -697,6 +786,7 @@ export function createZaiAccountAddHandler(dbOps: DatabaseOperations) {
 					rateLimitReset: null,
 					rateLimitRemaining: null,
 					sessionInfo: "No active session",
+					hasRefreshToken: !!account.refresh_token, // OAuth accounts have refresh tokens
 				},
 			});
 		} catch (error) {
@@ -822,13 +912,14 @@ export function createOpenAIAccountAddHandler(dbOps: DatabaseOperations) {
 						last_used: number | null;
 						created_at: number;
 						expires_at: number;
+						refresh_token: string;
 						paused: number;
 					},
 					[string]
 				>(
 					`SELECT
 						id, name, provider, request_count, total_requests,
-						last_used, created_at, expires_at,
+						last_used, created_at, expires_at, refresh_token,
 						COALESCE(paused, 0) as paused
 					FROM accounts WHERE id = ?`,
 				)
@@ -859,6 +950,7 @@ export function createOpenAIAccountAddHandler(dbOps: DatabaseOperations) {
 					rateLimitRemaining: null,
 					sessionInfo: "No active session",
 					customEndpoint: customEndpoint,
+					hasRefreshToken: !!account.refresh_token, // OAuth accounts have refresh tokens
 				},
 			});
 		} catch (error) {
@@ -952,13 +1044,14 @@ export function createMinimaxAccountAddHandler(dbOps: DatabaseOperations) {
 						last_used: number | null;
 						created_at: number;
 						expires_at: number;
+						refresh_token: string;
 						paused: number;
 					},
 					[string]
 				>(
 					`SELECT
 						id, name, provider, request_count, total_requests,
-						last_used, created_at, expires_at,
+						last_used, created_at, expires_at, refresh_token,
 						COALESCE(paused, 0) as paused
 					FROM accounts WHERE id = ?`,
 				)
@@ -990,6 +1083,7 @@ export function createMinimaxAccountAddHandler(dbOps: DatabaseOperations) {
 					rateLimitReset: null,
 					rateLimitRemaining: null,
 					sessionInfo: "No active session",
+					hasRefreshToken: !!account.refresh_token, // OAuth accounts have refresh tokens
 				},
 			});
 		} catch (error) {
@@ -998,6 +1092,174 @@ export function createMinimaxAccountAddHandler(dbOps: DatabaseOperations) {
 				error instanceof Error
 					? error
 					: new Error("Failed to create Minimax account"),
+			);
+		}
+	};
+}
+
+/**
+ * Create a NanoGPT account add handler
+ */
+export function createNanoGPTAccountAddHandler(dbOps: DatabaseOperations) {
+	return async (req: Request): Promise<Response> => {
+		try {
+			const body = await req.json();
+			// Validate account name
+			const name = validateString(body.name, "name", {
+				required: true,
+				minLength: 1,
+				maxLength: 100,
+				pattern: patterns.accountName,
+				transform: sanitizers.trim,
+			});
+			if (!name) {
+				return errorResponse(BadRequest("Account name is required"));
+			}
+			// Validate API key
+			const apiKey = validateString(body.apiKey, "apiKey", {
+				required: true,
+				minLength: 1,
+			});
+			if (!apiKey) {
+				return errorResponse(BadRequest("API key is required"));
+			}
+			// Validate priority
+			const priority =
+				validateNumber(body.priority, "priority", {
+					min: 0,
+					max: 100,
+					integer: true,
+				}) || 0;
+			// Validate custom endpoint (optional for NanoGPT)
+			const customEndpoint = validateString(
+				body.customEndpoint || null,
+				"customEndpoint",
+				{
+					required: false,
+					transform: (value: string) => {
+						if (!value) return "";
+						const trimmed = value.trim();
+						if (!trimmed) return "";
+						// Validate URL format
+						try {
+							new URL(trimmed);
+							return trimmed;
+						} catch {
+							throw new ValidationError("Invalid URL format");
+						}
+					},
+				},
+			);
+			// Validate and sanitize model mappings (optional)
+			let modelMappings = null;
+			if (body.modelMappings) {
+				if (typeof body.modelMappings !== "object") {
+					throw new ValidationError("Model mappings must be an object");
+				}
+				try {
+					const validatedMappings = validateAndSanitizeModelMappings(
+						body.modelMappings,
+					);
+					// Only store if there are actual mappings (non-empty object)
+					if (validatedMappings && Object.keys(validatedMappings).length > 0) {
+						modelMappings = JSON.stringify(validatedMappings);
+					}
+				} catch (error) {
+					if (error instanceof ValidationError) {
+						throw error;
+					}
+					throw new ValidationError("Invalid model mappings format");
+				}
+			}
+			// Create NanoGPT account directly in database
+			const accountId = crypto.randomUUID();
+			const now = Date.now();
+			const db = dbOps.getDatabase();
+			db.run(
+				`INSERT INTO accounts (
+					id, name, provider, api_key, refresh_token, access_token,
+					expires_at, created_at, request_count, total_requests, priority, custom_endpoint, model_mappings
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				[
+					accountId,
+					name,
+					"nanogpt",
+					apiKey,
+					apiKey, // Use API key as refresh token for consistency with CLI
+					apiKey, // Use API key as access token
+					now + 365 * 24 * 60 * 60 * 1000, // 1 year from now
+					now,
+					0,
+					0,
+					priority,
+					customEndpoint || null,
+					modelMappings,
+				],
+			);
+			log.info(
+				`Successfully added NanoGPT account: ${name} (Priority ${priority})`,
+			);
+			// Get the created account for response
+			const account = db
+				.query<
+					{
+						id: string;
+						name: string;
+						provider: string;
+						request_count: number;
+						total_requests: number;
+						last_used: number | null;
+						created_at: number;
+						expires_at: number;
+						refresh_token: string;
+						paused: number;
+					},
+					[string]
+				>(
+					`SELECT
+						id, name, provider, request_count, total_requests,
+						last_used, created_at, expires_at, refresh_token,
+						COALESCE(paused, 0) as paused
+					FROM accounts WHERE id = ?`,
+				)
+				.get(accountId);
+			if (!account) {
+				return errorResponse(
+					InternalServerError("Failed to retrieve created account"),
+				);
+			}
+			return jsonResponse({
+				message: `NanoGPT account '${name}' added successfully`,
+				account: {
+					id: account.id,
+					name: account.name,
+					provider: account.provider,
+					requestCount: account.request_count,
+					totalRequests: account.total_requests,
+					lastUsed: account.last_used
+						? new Date(account.last_used).toISOString()
+						: null,
+					created: new Date(account.created_at).toISOString(),
+					paused: account.paused === 1,
+					priority: priority,
+					tokenStatus: "valid" as const,
+					tokenExpiresAt: new Date(account.expires_at).toISOString(),
+					rateLimitStatus: "OK",
+					rateLimitReset: null,
+					rateLimitRemaining: null,
+					sessionInfo: "No active session",
+					hasRefreshToken: !!account.refresh_token, // OAuth accounts have refresh tokens
+				},
+			});
+		} catch (error) {
+			log.error("NanoGPT account creation error:", error);
+			if (error instanceof ValidationError) {
+				return errorResponse(BadRequest(error.message));
+			}
+			return errorResponse(
+				error instanceof Error
+					? error
+					: new Error("Failed to create NanoGPT account"),
 			);
 		}
 	};
@@ -1116,13 +1378,14 @@ export function createAnthropicCompatibleAccountAddHandler(
 						last_used: number | null;
 						created_at: number;
 						expires_at: number;
+						refresh_token: string;
 						paused: number;
 					},
 					[string]
 				>(
 					`SELECT
 						id, name, provider, request_count, total_requests,
-						last_used, created_at, expires_at,
+						last_used, created_at, expires_at, refresh_token,
 						COALESCE(paused, 0) as paused
 					FROM accounts WHERE id = ?`,
 				)
@@ -1154,6 +1417,7 @@ export function createAnthropicCompatibleAccountAddHandler(
 					rateLimitReset: null,
 					rateLimitRemaining: null,
 					sessionInfo: "No active session",
+					hasRefreshToken: !!account.refresh_token, // OAuth accounts have refresh tokens
 				},
 			});
 		} catch (error) {
@@ -1365,11 +1629,12 @@ export function createAccountModelMappingsUpdateHandler(
 
 			if (
 				account.provider !== "openai-compatible" &&
-				account.provider !== "anthropic-compatible"
+				account.provider !== "anthropic-compatible" &&
+				account.provider !== "nanogpt"
 			) {
 				return errorResponse(
 					BadRequest(
-						"Model mappings are only available for OpenAI-compatible and Anthropic-compatible accounts",
+						"Model mappings are only available for OpenAI-compatible, Anthropic-compatible, and NanoGPT accounts",
 					),
 				);
 			}
@@ -1485,6 +1750,9 @@ export function createAccountReloadHandler(dbOps: DatabaseOperations) {
 
 			// Clear refresh cache for this account
 			clearAccountRefreshCache(accountId);
+
+			// Clear usage cache for this account to prevent memory leaks
+			usageCache.delete(accountId);
 
 			log.info(`Token reload triggered for account '${account.name}'`);
 

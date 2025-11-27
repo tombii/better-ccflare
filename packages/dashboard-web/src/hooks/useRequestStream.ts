@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useReducer, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import type { Account, RequestPayload, RequestResponse } from "../api";
 import { queryKeys } from "../lib/query-keys";
 
@@ -77,217 +77,7 @@ export function useRequestStream(limit = 200) {
 		}, HEARTBEAT_INTERVAL);
 	}, []);
 
-	// Reducer for efficient state updates
-	type StreamState = {
-		requests: RequestPayload[];
-		detailsMap: Map<string, RequestResponse>;
-	};
-
-	// Limit detailsMap size to prevent unbounded growth
-	const MAX_DETAILS_MAP_SIZE = limit * 2;
-
-	type StreamAction =
-		| {
-				type: "REQUEST_START";
-				payload: {
-					id: string;
-					method: string;
-					path: string;
-					timestamp: number;
-					accountId: string | null;
-					statusCode: number;
-					agentUsed: string | null;
-					accountName?: string;
-				};
-		  }
-		| { type: "REQUEST_PAYLOAD"; payload: RequestPayload }
-		| { type: "REQUEST_SUMMARY"; payload: RequestResponse }
-		| { type: "SET_ACCOUNTS"; payload: Account[] };
-
-	const streamReducer = (
-		state: StreamState,
-		action: StreamAction,
-	): StreamState => {
-		switch (action.type) {
-			case "REQUEST_START": {
-				const {
-					id,
-					method,
-					path,
-					timestamp,
-					accountId,
-					statusCode,
-					agentUsed,
-					accountName,
-				} = action.payload;
-
-				// Create placeholder
-				const placeholder: RequestPayload = {
-					id,
-					request: { headers: {}, body: null },
-					response: { status: statusCode, headers: {}, body: null },
-					meta: {
-						timestamp,
-						path,
-						method,
-						accountId: accountId || undefined,
-						accountName,
-						success: false,
-						pending: true,
-						agentUsed: agentUsed || undefined,
-					},
-				};
-
-				// Check if exists and update, otherwise add
-				const existingIndex = state.requests.findIndex((r) => r.id === id);
-				if (existingIndex >= 0) {
-					const newRequests = [...state.requests];
-					newRequests[existingIndex] = placeholder;
-					return { ...state, requests: newRequests };
-				}
-
-				// Add to beginning and limit
-				return {
-					...state,
-					requests: [placeholder, ...state.requests].slice(0, limit),
-				};
-			}
-
-			case "REQUEST_PAYLOAD": {
-				const payload = action.payload;
-				const newRequests = [...state.requests];
-				const idx = newRequests.findIndex((r) => r.id === payload.id);
-
-				if (idx >= 0) {
-					newRequests[idx] = payload;
-				} else {
-					newRequests.unshift(payload);
-				}
-
-				return {
-					...state,
-					requests: newRequests.slice(0, limit),
-				};
-			}
-
-			case "REQUEST_SUMMARY": {
-				const payload = action.payload;
-				const map = new Map(state.detailsMap);
-				map.set(payload.id, payload);
-
-				// Limit detailsMap size - remove oldest entries
-				if (map.size > MAX_DETAILS_MAP_SIZE) {
-					const entries = Array.from(map.entries());
-					// Remove oldest entries (first entries)
-					const toRemove = entries.slice(0, map.size - MAX_DETAILS_MAP_SIZE);
-					for (const [id] of toRemove) {
-						map.delete(id);
-					}
-				}
-
-				// Update pending status in requests if it exists
-				const requestIndex = state.requests.findIndex(
-					(r) => r.id === payload.id,
-				);
-				if (requestIndex >= 0 && state.requests[requestIndex].meta?.pending) {
-					const newRequests = [...state.requests];
-					const currentMeta = newRequests[requestIndex].meta || {};
-					newRequests[requestIndex] = {
-						...newRequests[requestIndex],
-						meta: {
-							...currentMeta,
-							pending: false,
-							success: payload.success,
-						},
-					};
-					return { ...state, requests: newRequests, detailsMap: map };
-				}
-
-				return { ...state, detailsMap: map };
-			}
-
-			case "SET_ACCOUNTS": {
-				// Update account names in existing requests
-				const accounts = action.payload;
-				const accountMap = new Map(accounts.map((a) => [a.id, a.name]));
-
-				const newRequests = state.requests.map((request) => {
-					if (request.meta?.accountId && !request.meta.accountName) {
-						const accountName = accountMap.get(request.meta.accountId);
-						if (accountName) {
-							return {
-								...request,
-								meta: {
-									...request.meta,
-									accountName,
-								},
-							};
-						}
-					}
-					return request;
-				});
-
-				return { ...state, requests: newRequests };
-			}
-
-			default:
-				return state;
-		}
-	};
-
-	// Initialize state
-	const [state, dispatch] = useReducer(streamReducer, {
-		requests: [],
-		detailsMap: new Map(),
-	});
-
-	// Sync state with React Query
-	useEffect(() => {
-		if (!isMountedRef.current) return;
-		queryClient.setQueryData(queryKeys.requests(limit), {
-			requests: state.requests,
-			detailsMap: state.detailsMap,
-		});
-	}, [state, limit, queryClient]);
-
-	// Sync accounts for account name resolution
-	useEffect(() => {
-		if (!isMountedRef.current) return;
-
-		const unsubscribe = queryClient.getQueryCache().subscribe((event) => {
-			if (
-				event.type === "updated" &&
-				event.query.queryKey === queryKeys.accounts()
-			) {
-				const accounts = event.query.state.data as Account[] | undefined;
-				if (accounts) {
-					dispatch({ type: "SET_ACCOUNTS", payload: accounts });
-				}
-			}
-		});
-
-		// Check initial accounts
-		const accounts = queryClient.getQueryData<Account[]>(queryKeys.accounts());
-		if (accounts) {
-			dispatch({ type: "SET_ACCOUNTS", payload: accounts });
-		}
-
-		return () => unsubscribe();
-	}, [queryClient]);
-
-	// Memoized account lookup
-	const getAccountName = useCallback(
-		(accountId: string | null): string | undefined => {
-			if (!accountId) return undefined;
-			const accounts = queryClient.getQueryData<Account[]>(
-				queryKeys.accounts(),
-			);
-			return accounts?.find((a) => a.id === accountId)?.name;
-		},
-		[queryClient],
-	);
-
-	// Safe message handler with try-catch
+	// Safe message handler with try-catch that directly updates React Query cache
 	const handleMessage = useCallback(
 		(ev: MessageEvent) => {
 			if (!isMountedRef.current) return;
@@ -307,31 +97,126 @@ export function useRequestStream(limit = 200) {
 					| { type: "summary"; payload: RequestResponse }
 					| { type: "payload"; payload: RequestPayload };
 
-				// Get account name for start events
-				if (evt.type === "start") {
-					dispatch({
-						type: "REQUEST_START",
-						payload: {
-							id: evt.id,
-							method: evt.method,
-							path: evt.path,
-							timestamp: evt.timestamp,
-							accountId: evt.accountId,
-							statusCode: evt.statusCode,
-							agentUsed: evt.agentUsed,
-							accountName: getAccountName(evt.accountId),
-						},
-					});
-				} else if (evt.type === "payload") {
-					dispatch({ type: "REQUEST_PAYLOAD", payload: evt.payload });
-				} else {
-					dispatch({ type: "REQUEST_SUMMARY", payload: evt.payload });
-				}
+				queryClient.setQueryData(
+					queryKeys.requests(limit),
+					(
+						current:
+							| {
+									requests: RequestPayload[];
+									detailsMap: Map<string, RequestResponse> | RequestResponse[];
+							  }
+							| undefined,
+					) => {
+						if (!current) return current;
+
+						// Ensure detailsMap is a Map
+						const currentDetailsMap =
+							current.detailsMap instanceof Map
+								? current.detailsMap
+								: new Map(
+										(current.detailsMap as RequestResponse[]).map((s) => [
+											s.id,
+											s,
+										]),
+									);
+
+						if (evt.type === "start") {
+							// Look up account name from cache
+							const accounts = queryClient.getQueryData<Account[]>(
+								queryKeys.accounts(),
+							);
+							const account = accounts?.find((a) => a.id === evt.accountId);
+
+							// Create a lightweight placeholder payload
+							const placeholder: RequestPayload = {
+								id: evt.id,
+								request: { headers: {}, body: null },
+								response: {
+									status: evt.statusCode,
+									headers: {},
+									body: null,
+								},
+								meta: {
+									timestamp: evt.timestamp,
+									path: evt.path,
+									method: evt.method,
+									accountId: evt.accountId || undefined,
+									accountName: account?.name,
+									success: false,
+									pending: true,
+									agentUsed: evt.agentUsed || undefined,
+								},
+							};
+
+							// Check if this request already exists
+							const existingIndex = current.requests.findIndex(
+								(r) => r.id === evt.id,
+							);
+							if (existingIndex >= 0) {
+								// Update existing placeholder
+								const newRequests = [...current.requests];
+								newRequests[existingIndex] = placeholder;
+								return {
+									...current,
+									requests: newRequests,
+									detailsMap: currentDetailsMap,
+								};
+							}
+
+							// Add new placeholder at the beginning
+							return {
+								...current,
+								requests: [placeholder, ...current.requests].slice(0, limit),
+								detailsMap: currentDetailsMap,
+							};
+						}
+						if (evt.type === "payload") {
+							// Replace placeholder or insert if missing
+							const newRequests = [...current.requests];
+							const idx = newRequests.findIndex((r) => r.id === evt.payload.id);
+							if (idx >= 0) {
+								newRequests[idx] = evt.payload;
+							} else {
+								newRequests.unshift(evt.payload);
+							}
+							return {
+								...current,
+								requests: newRequests.slice(0, limit),
+								detailsMap: currentDetailsMap,
+							};
+						}
+						// Update details map with summary
+						const map = new Map(currentDetailsMap);
+						map.set(evt.payload.id, evt.payload);
+
+						// Update the request if it exists
+						const requestIndex = current.requests.findIndex(
+							(r) => r.id === evt.payload.id,
+						);
+						if (requestIndex >= 0) {
+							const newRequests = [...current.requests];
+							// Update meta to remove pending status
+							if (newRequests[requestIndex].meta) {
+								newRequests[requestIndex] = {
+									...newRequests[requestIndex],
+									meta: {
+										...newRequests[requestIndex].meta,
+										pending: false,
+										success: evt.payload.success,
+									},
+								};
+							}
+							return { ...current, requests: newRequests, detailsMap: map };
+						}
+
+						return { ...current, detailsMap: map };
+					},
+				);
 			} catch (error) {
 				console.error("Error parsing SSE message:", error);
 			}
 		},
-		[getAccountName],
+		[queryClient, limit],
 	);
 
 	// Connect with connection pooling

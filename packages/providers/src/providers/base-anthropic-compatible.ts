@@ -1,6 +1,8 @@
 import {
 	BUFFER_SIZES,
 	estimateCostUSD,
+	KNOWN_PATTERNS,
+	parseModelMappings,
 	TIME_CONSTANTS,
 } from "@better-ccflare/core";
 import { sanitizeProxyHeaders } from "@better-ccflare/http-common";
@@ -8,6 +10,7 @@ import { Logger } from "@better-ccflare/logger";
 import type { Account } from "@better-ccflare/types";
 import { BaseProvider } from "../base";
 import type { RateLimitInfo, TokenRefreshResult } from "../types";
+import { transformRequestBodyModel } from "../utils/model-mapping";
 
 // Configuration interface for Anthropic-compatible providers
 export interface AnthropicCompatibleConfig {
@@ -47,10 +50,11 @@ export abstract class BaseAnthropicCompatibleProvider extends BaseProvider {
 		super();
 		this.config = { ...DEFAULT_CONFIG, ...config };
 		// Set name from config, ensuring we always have a valid name
-		const providerName = this.config.name || DEFAULT_CONFIG.name;
-		this.name = providerName!;
+		const providerName =
+			this.config.name || DEFAULT_CONFIG.name || "base-anthropic-compatible";
+		this.name = providerName;
 		if (!this.config.name) {
-			this.config.name = providerName!;
+			this.config.name = providerName;
 		}
 	}
 
@@ -65,7 +69,7 @@ export abstract class BaseAnthropicCompatibleProvider extends BaseProvider {
 	 * Defaults to config.authHeader but can be overridden
 	 */
 	getAuthHeader(): string {
-		return this.config.authHeader!;
+		return this.config.authHeader || "x-api-key";
 	}
 
 	/**
@@ -73,7 +77,11 @@ export abstract class BaseAnthropicCompatibleProvider extends BaseProvider {
 	 * Defaults to config.authType but can be overridden
 	 */
 	getAuthType(): "bearer" | "direct" {
-		return this.config.authType as "bearer" | "direct";
+		const authType = this.config.authType;
+		if (authType !== "bearer" && authType !== "direct") {
+			return "direct"; // sensible default
+		}
+		return authType;
 	}
 
 	canHandle(_path: string): boolean {
@@ -118,22 +126,25 @@ export abstract class BaseAnthropicCompatibleProvider extends BaseProvider {
 	): Headers {
 		const newHeaders = new Headers(headers);
 
-		// Set authentication header for API key
-		const token = accessToken || apiKey;
-		if (token) {
-			const headerName = this.getAuthHeader();
-			const authType = this.getAuthType();
-
-			if (headerName === "authorization" && authType === "bearer") {
-				newHeaders.set(headerName, `Bearer ${token}`);
-			} else {
-				newHeaders.set(headerName, token);
-			}
-		}
-
-		// Remove authorization header if we're using a different auth header
-		if (this.getAuthHeader() !== "authorization") {
+		// SECURITY: Remove client's authorization header when we have provider credentials
+		// to prevent credential leakage. If no credentials provided (passthrough mode),
+		// preserve client's authorization for direct API access.
+		// Use explicit undefined checks to handle empty strings correctly.
+		if (accessToken !== undefined || apiKey !== undefined) {
 			newHeaders.delete("authorization");
+
+			// Set authentication header for API key
+			const token = accessToken || apiKey;
+			if (token) {
+				const headerName = this.getAuthHeader();
+				const authType = this.getAuthType();
+
+				if (headerName === "authorization" && authType === "bearer") {
+					newHeaders.set(headerName, `Bearer ${token}`);
+				} else {
+					newHeaders.set(headerName, token);
+				}
+			}
 		}
 
 		// Remove host header
@@ -151,37 +162,59 @@ export abstract class BaseAnthropicCompatibleProvider extends BaseProvider {
 	 */
 	async transformRequestBody(
 		request: Request,
-		_account?: Account,
+		account?: Account,
 	): Promise<Request> {
-		if (!this.config.modelMappings || !this.config.supportsStreaming) {
+		if (!this.config.supportsStreaming) {
 			return request;
 		}
 
-		try {
-			const clonedRequest = request.clone();
-			const body = await clonedRequest.json();
+		// Use the shared utility for model mapping
+		return transformRequestBodyModel(request, account, (model, acc) => {
+			// Provider-specific mapping logic
+			let mappedModel = model;
 
-			// Check if we need to transform the model
-			if (body.model && this.config.modelMappings[body.model]) {
-				const originalModel = body.model;
-				body.model = this.config.modelMappings[body.model];
-
-				log.debug(`Mapped model: ${originalModel} -> ${body.model}`);
-
-				// Create new request with transformed body
-				const transformedRequest = new Request(request.url, {
-					method: request.method,
-					headers: request.headers,
-					body: JSON.stringify(body),
-				});
-
-				return transformedRequest;
+			// First try account-specific mappings
+			if (acc?.model_mappings) {
+				mappedModel = this.mapAccountModel(model, acc);
 			}
-		} catch (error) {
-			log.debug("Failed to transform request body:", error);
+			// Fall back to static config mappings for backward compatibility
+			else if (this.config.modelMappings?.[model]) {
+				mappedModel = this.config.modelMappings[model];
+			}
+
+			return mappedModel;
+		});
+	}
+
+	/**
+	 * Helper method to map models using account-specific mappings
+	 */
+	private mapAccountModel(originalModel: string, account: Account): string {
+		if (!account.model_mappings) {
+			return originalModel;
 		}
 
-		return request;
+		const accountMappings = parseModelMappings(account.model_mappings);
+
+		if (!accountMappings) {
+			return originalModel;
+		}
+
+		// First try exact match
+		if (accountMappings[originalModel]) {
+			return accountMappings[originalModel];
+		}
+
+		// Try pattern matching for known model families (more efficient)
+		const modelLower = originalModel.toLowerCase();
+
+		for (const pattern of KNOWN_PATTERNS) {
+			if (modelLower.includes(pattern) && accountMappings[pattern]) {
+				return accountMappings[pattern];
+			}
+		}
+
+		return originalModel;
 	}
 
 	parseRateLimit(response: Response): RateLimitInfo {
@@ -381,7 +414,7 @@ export abstract class BaseAnthropicCompatibleProvider extends BaseProvider {
 					),
 				);
 
-				let value, done;
+				let value: Uint8Array | undefined, done: boolean;
 				try {
 					({ value, done } = await Promise.race([readPromise, timeoutPromise]));
 				} catch (error) {

@@ -4,7 +4,7 @@
 
 The ultimate Claude API proxy with intelligent load balancing across multiple accounts. Full visibility into every request, response, and rate limit.
 
-**🚨 Major Update:** As of v2.0.0, the Terminal UI (TUI) has been removed to focus on a more powerful CLI interface and web dashboard. All TUI functionality is now available through comprehensive CLI commands and the enhanced web dashboard.
+**🚨 Major Update (v3.0.0):** This release includes critical security fixes, OAuth token health monitoring, and new provider support (NanoGPT, Minimax). All users should upgrade immediately. See [migration guide](docs/migration-v2-to-v3.md) for details.
 
 
 https://github.com/user-attachments/assets/c859872f-ca5e-4f8b-b6a0-7cc7461fe62a
@@ -15,26 +15,29 @@ https://github.com/user-attachments/assets/c859872f-ca5e-4f8b-b6a0-7cc7461fe62a
 ## Why better-ccflare?
 
 - **🚀 Zero Rate Limit Errors** - Automatically distribute requests across multiple accounts
-- **🤖 Multi-Provider Support** - Setup Claude OAuth, Claude API console, z.ai, Minimax, Anthropic-compatible, and OpenAI-compatible accounts and prioritize in which order they are used
-- **🔗 Custom API Endpoints** - Configure custom endpoints for Anthropic and Zai accounts for enterprise deployments
+- **🤖 Multi-Provider Support** - Claude OAuth, Claude API console, NanoGPT, z.ai, Minimax, Anthropic-compatible, and OpenAI-compatible providers
+- **🔒 OAuth Token Health** - Real-time monitoring of OAuth token status with automatic refresh and health indicators
+- **🔗 Custom API Endpoints** - Configure custom endpoints for Anthropic accounts for enterprise deployments
 - **☁️ OpenAI-Compatible Support** - Use OpenAI-compatible providers like OpenRouter, Together AI, and more with Claude API format
 - **🔄 Smart Auto-Fallback** - Automatically switch back to preferred accounts when their rate limits reset
-- **⚡ Auto-Refresh** - Automatically start new usage windows when rate limits reset
+- **⚡ Auto-Refresh** - Automatically start new usage windows when rate limits reset with 30-minute buffer
 - **📊 Request-Level Analytics** - Track latency, token usage, and costs in real-time with optimized batch processing
 - **🔍 Deep Debugging** - Full request/response logging and error traces
 - **🔐 API Authentication** - Optional API key authentication with secure key management
 - **⚡ <10ms Overhead** - Minimal performance impact with lazy loading and request deduplication
+- **🛡️ Security Hardened** - Critical security fixes for authentication bypass, command injection, and credential leakage
 - **💸 Free & Open Source** - Run it yourself, modify it, own your infrastructure
 
 ### Why this fork?
 
 This project builds upon the excellent foundation of [snipeship/ccflare](https://github.com/snipeship/ccflare) with significant enhancements:
 
-**🎯 Core Improvements:**
-- **Enhanced Load Balancing** - Session-based load balancing with intelligent failover
-- **Real-time Analytics Dashboard** - Beautiful web UI for monitoring usage and performance
-- **Smart Rate Limit Management** - Auto-refresh and auto-fallback mechanisms
-- **Multi-Provider Support** - Claude API, z.ai coder, Minimax, and custom endpoints
+**🎯 Core Improvements (v3.0.0):**
+- **Enhanced Security** - Critical fixes for authentication bypass, command injection, and PKCE implementation
+- **OAuth Token Health Monitoring** - Real-time status indicators and automatic token refresh with 30-minute buffer
+- **Extended Provider Support** - NanoGPT (with dynamic pricing), Minimax, Anthropic-compatible, and OpenAI-compatible providers
+- **Simplified Load Balancing** - Removed tier system for O(1) priority-based selection
+- **Real-time Analytics Dashboard** - Beautiful web UI with fixed request history (no disappearing requests)
 - **Package Distribution** - Available via npm and bun for easy installation
 
 **🛠️ Developer Experience:**

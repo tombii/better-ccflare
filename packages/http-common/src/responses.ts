@@ -31,6 +31,19 @@ export function errorResponse(error: unknown): Response {
 		return jsonResponse(body, error.status);
 	}
 
+	// Handle AppError instances (like ValidationError, ProviderError, etc.) that have statusCode
+	if (
+		error &&
+		typeof error === "object" &&
+		"statusCode" in error &&
+		typeof (error as { statusCode: unknown }).statusCode === "number"
+	) {
+		const body: { error: string; details?: unknown } = {
+			error: error instanceof Error ? error.message : "Error occurred",
+		};
+		return jsonResponse(body, (error as { statusCode: number }).statusCode);
+	}
+
 	// Handle generic errors
 	const message =
 		error instanceof Error ? error.message : "Internal server error";

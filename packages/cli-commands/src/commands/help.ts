@@ -6,7 +6,7 @@ export function getHelpText(): string {
 Usage: better-ccflare <command> [options]
 
 Commands:
-  add <name> [--mode <claude-oauth|console|zai|minimax|anthropic-compatible|openai-compatible>] [--priority <number>] [--modelMappings <JSON>]
+  add <name> [--mode <claude-oauth|console|zai|minimax|anthropic-compatible|openai-compatible|nanogpt>] [--priority <number>] [--modelMappings <JSON>]
     Add a new account using OAuth or API key
     --mode: Account type (optional, will prompt if not provided)
       claude-oauth: Claude CLI OAuth account (OAuth)
@@ -15,6 +15,7 @@ Commands:
       minimax: Minimax account (API key)
       anthropic-compatible: Anthropic-compatible provider (API key)
       openai-compatible: OpenAI-compatible provider (API key)
+      nanogpt: NanoGPT provider (API key)
     --priority: Account priority (0-100, default 0, lower numbers = higher priority)
     --modelMappings: Model mappings as JSON string (e.g., '{"opus":"my-opus-model","sonnet":"my-sonnet-model"}')
 
@@ -44,6 +45,14 @@ Commands:
   analyze
     Analyze database performance and index usage
 
+  token-health
+    Check OAuth token health and expiration status
+    Shows detailed information about access tokens and refresh tokens
+
+  reauth-needed
+    Quick check for accounts that need re-authentication
+    Shows only accounts that require immediate attention
+
   help
     Show this help message
 
@@ -55,5 +64,7 @@ Examples:
   better-ccflare pause myaccount
   better-ccflare resume myaccount
   better-ccflare set-priority myaccount 20
+  better-ccflare token-health
+  better-ccflare reauth-needed
 `;
 }

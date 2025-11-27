@@ -111,7 +111,7 @@ body {
 
 .github-link:hover {
 	border-color: var(--cf-orange);
-	color: var(--cf-orange) !important;
+	color: var(--cf-orange);
 }
 
 /* Hero Section */

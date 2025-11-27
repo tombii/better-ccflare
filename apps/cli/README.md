@@ -4,7 +4,7 @@
 
 The ultimate Claude API proxy with intelligent load balancing across multiple accounts. Full visibility into every request, response, and rate limit.
 
-**🚨 Major Update:** As of v2.0.0, the Terminal UI (TUI) has been removed to focus on a more powerful CLI interface and web dashboard. All TUI functionality is now available through comprehensive CLI commands and the enhanced web dashboard.
+**🚨 Major Update:** As of v3.0.0, the Terminal UI (TUI) has been removed to focus on a more powerful CLI interface and web dashboard. All TUI functionality is now available through comprehensive CLI commands and the enhanced web dashboard.
 
 
 https://github.com/user-attachments/assets/c859872f-ca5e-4f8b-b6a0-7cc7461fe62a

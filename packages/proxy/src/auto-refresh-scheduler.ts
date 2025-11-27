@@ -1,5 +1,9 @@
 import type { Database } from "bun:sqlite";
-import { registerHeartbeat, requestEvents } from "@better-ccflare/core";
+import {
+	getClientVersion,
+	registerHeartbeat,
+	requestEvents,
+} from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import { fetchUsageData, getProvider } from "@better-ccflare/providers";
 import type { Account } from "@better-ccflare/types";
@@ -171,7 +175,7 @@ export class AutoRefreshScheduler {
 				log.error(errorMessage);
 				if (error.stack) {
 					// Log the stack trace separately to ensure it's visible
-					console.error(`Auto-refresh stack trace: ${error.stack}`);
+					log.error(`Auto-refresh stack trace: ${error.stack}`);
 				}
 			} else if (error !== undefined && error !== null) {
 				log.error(`Error in auto-refresh check: ${JSON.stringify(error)}`);
@@ -296,7 +300,7 @@ export class AutoRefreshScheduler {
 				connection: "keep-alive",
 				"content-type": "application/json",
 				"sec-fetch-mode": "cors",
-				"user-agent": "claude-cli/2.0.28 (external, cli)",
+				"user-agent": `claude-cli/${getClientVersion()} (external, cli)`,
 				"x-app": "cli",
 				"x-stainless-arch": "x64",
 				"x-stainless-helper-method": "stream",
@@ -392,47 +396,34 @@ export class AutoRefreshScheduler {
 			// Handle authentication errors specifically
 			if (response.status === 401) {
 				log.error(
-					`Authentication failed for account ${accountRow.name} - token may be invalid or expired`,
+					`❌ AUTHENTICATION FAILED: Account "${accountRow.name}" needs manual reauthentication`,
 				);
 
-				// Try to parse the error response for more details
-				let errorBody = "";
-				try {
-					errorBody = await response.text();
-					log.error(`Authentication error response: ${errorBody}`);
-
-					// Check if it's the specific OAuth error mentioned in the logs
-					if (
-						errorBody.includes(
-							"OAuth authentication is currently not supported",
-						)
-					) {
-						log.error(
-							`OAuth authentication not supported for account ${accountRow.name} - refresh token may be invalid. Account needs re-authentication.`,
-						);
-					}
-				} catch {
-					log.error(
-						`Could not read error response body for ${accountRow.name}`,
-					);
-				}
-
-				// Track consecutive failures for this account
-				const currentFailures =
-					this.consecutiveFailures.get(accountRow.id) || 0;
-				const newFailures = currentFailures + 1;
-				this.consecutiveFailures.set(accountRow.id, newFailures);
-
-				log.warn(
-					`Account ${accountRow.name} has failed ${newFailures} consecutive auto-refresh attempts. Threshold is ${this.FAILURE_THRESHOLD}.`,
+				log.error(
+					`⚠️  Token refresh failed for account "${accountRow.name}" - both access token and refresh token are invalid`,
 				);
 
-				// If failure threshold is reached, log a special message to alert admins
-				if (newFailures >= this.FAILURE_THRESHOLD) {
-					log.error(
-						`Account ${accountRow.name} has failed ${newFailures} consecutive auto-refresh attempts - this account needs re-authentication! Please run: bun run cli --reauthenticate ${accountRow.name}`,
-					);
-				}
+				log.error(
+					`🔧 MANUAL ACTION REQUIRED: Please run the following command to reauthenticate:`,
+				);
+				log.error(`   bun run cli --reauthenticate "${accountRow.name}"`);
+
+				log.error(
+					`📋 Alternative: You can also reauthenticate through the web dashboard at http://localhost:${this.proxyContext.runtime.port}/`,
+				);
+
+				// Mark account as needing attention in database (disable auto-refresh to prevent repeated failures)
+				this.db.run(
+					`UPDATE accounts SET auto_refresh_enabled = 0 WHERE id = ?`,
+					[accountRow.id],
+				);
+
+				log.error(
+					`🚫 Auto-refresh has been DISABLED for account "${accountRow.name}" until reauthentication is completed`,
+				);
+				log.error(
+					`💡 Re-enable auto-refresh after reauthentication with: bun run cli --auto-refresh "${accountRow.name}"`,
+				);
 
 				return false;
 			}
@@ -569,7 +560,7 @@ export class AutoRefreshScheduler {
 				log.error(errorMessage);
 				if (error.stack) {
 					// Log the stack trace separately to ensure it's visible
-					console.error(
+					log.error(
 						`Auto-refresh stack trace for ${accountRow.name}: ${error.stack}`,
 					);
 				}

@@ -69,6 +69,9 @@ When working with Claude API at scale, rate limits can become a significant bott
 - [Troubleshooting](./troubleshooting.md) - Common issues and solutions
 - [Contributing](./contributing.md) - Development setup and contribution guidelines
 
+### API Reference
+- [Anthropic API Changelog](./anthropic-api-changelog.md) - Track changes to Anthropic's usage API responses
+
 ## Quick Start
 
 ### 1. Install better-ccflare
