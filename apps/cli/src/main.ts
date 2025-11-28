@@ -39,6 +39,7 @@ import {
 	generateApiKey,
 	getAccountsList,
 	getApiKeyStats,
+	handleRepairCommand,
 	listApiKeys,
 	pauseAccount,
 	reauthenticateAccount,
@@ -87,6 +88,7 @@ interface ParsedArgs {
 	setPriority: [string, number] | null;
 	reauthenticate: string | null;
 	analyze: boolean;
+	repairDb: boolean;
 	resetStats: boolean;
 	clearHistory: boolean;
 	getModel: boolean;
@@ -418,6 +420,7 @@ function parseArgs(args: string[]): ParsedArgs {
 		setPriority: null,
 		reauthenticate: null,
 		analyze: false,
+		repairDb: false,
 		resetStats: false,
 		clearHistory: false,
 		getModel: false,
@@ -621,6 +624,9 @@ function parseArgs(args: string[]): ParsedArgs {
 			case "--analyze":
 				parsed.analyze = true;
 				break;
+			case "--repair-db":
+				parsed.repairDb = true;
+				break;
 			case "--reset-stats":
 				parsed.resetStats = true;
 				break;
@@ -738,6 +744,7 @@ Options:
   --resume <name>      Resume an account
   --set-priority <name> <priority>  Set account priority
   --analyze            Analyze database performance
+  --repair-db          Check and repair database integrity
   --reset-stats        Reset usage statistics
   --clear-history      Clear request history
   --get-model          Show current default agent model
@@ -1087,6 +1094,11 @@ Examples:
 
 	if (parsed.analyze) {
 		analyzePerformance(dbOps.getDatabase());
+		await exitGracefully(0);
+	}
+
+	if (parsed.repairDb) {
+		handleRepairCommand(dbOps);
 		await exitGracefully(0);
 	}
 

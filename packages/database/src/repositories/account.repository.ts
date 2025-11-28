@@ -71,18 +71,18 @@ export class AccountRepository extends BaseRepository<Account> {
 		const now = Date.now();
 		this.run(
 			`
-			UPDATE accounts 
-			SET 
+			UPDATE accounts
+			SET
 				last_used = ?,
-				request_count = request_count + 1,
-				total_requests = total_requests + 1,
+				request_count = COALESCE(request_count, 0) + 1,
+				total_requests = COALESCE(total_requests, 0) + 1,
 				session_start = CASE
-					WHEN session_start IS NULL OR ? - session_start >= ? THEN ?
+					WHEN session_start IS NULL OR ? - COALESCE(session_start, 0) >= ? THEN ?
 					ELSE session_start
 				END,
 				session_request_count = CASE
-					WHEN session_start IS NULL OR ? - session_start >= ? THEN 1
-					ELSE session_request_count + 1
+					WHEN session_start IS NULL OR ? - COALESCE(session_start, 0) >= ? THEN 1
+					ELSE COALESCE(session_request_count, 0) + 1
 				END
 			WHERE id = ?
 		`,
