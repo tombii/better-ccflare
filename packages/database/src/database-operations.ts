@@ -60,6 +60,12 @@ function configureSqlite(
 				integrity_check: string;
 			};
 			if (integrityResult.integrity_check !== "ok") {
+				console.error("\n❌ DATABASE INTEGRITY CHECK FAILED");
+				console.error("═".repeat(50));
+				console.error(`Error: ${integrityResult.integrity_check}\n`);
+				console.error("Your database may be corrupted. To repair it, run:");
+				console.error("  bun run cli --repair-db\n");
+				console.error(`${"═".repeat(50)}\n`);
 				throw new Error(
 					`Database integrity check failed: ${integrityResult.integrity_check}`,
 				);
@@ -219,6 +225,12 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 				integrity_check: string;
 			};
 			if (integrityResult.integrity_check !== "ok") {
+				console.error("\n❌ DATABASE INTEGRITY CHECK FAILED");
+				console.error("═".repeat(50));
+				console.error(`Error: ${integrityResult.integrity_check}\n`);
+				console.error("Your database may be corrupted. To repair it, run:");
+				console.error("  bun run cli --repair-db\n");
+				console.error(`${"═".repeat(50)}\n`);
 				throw new Error(
 					`Database integrity check failed: ${integrityResult.integrity_check}`,
 				);
