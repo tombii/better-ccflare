@@ -119,6 +119,7 @@ xattr -d com.apple.quarantine better-ccflare-macos-arm64
 ./better-ccflare-macos-arm64
 ```
 Continue to [Configure Claude SDK](https://github.com/tombii/better-ccflare#configure-claude-sdk).
+
 **macOS Gatekeeper Notice:** Our macOS binaries are not notarized by Apple as this requires a paid Apple Developer subscription. After downloading, you must remove the quarantine attribute using the `xattr` command shown above to run the binary. If you prefer not to run unsigned binaries, you can [install from source](#install-from-source) instead.
 
 #### Windows x86_64
