@@ -314,6 +314,55 @@ Environment variables override config file settings:
 
 ## Database Issues
 
+### Database Corruption or Integrity Errors
+
+**Symptom**: "All accounts failed to proxy the request" or database-related errors
+
+**Error Messages**:
+- `All accounts failed to proxy the request (1 attempted)`
+- `DATABASE ERROR DETECTED`
+- `Database integrity check failed`
+- `Failed to get accounts from database`
+
+**Solutions**:
+1. Run the database repair command:
+   ```bash
+   bun run cli --repair-db
+   ```
+
+   This will:
+   - Check database integrity
+   - Fix NULL values in numeric fields
+   - Validate foreign key constraints
+   - Vacuum and optimize the database
+
+2. If repair succeeds but issues persist, backup and reset:
+   ```bash
+   # Backup existing database
+   cp ~/.config/better-ccflare/better-ccflare.db ~/.config/better-ccflare/better-ccflare.db.backup
+
+   # Reset stats (preserves accounts)
+   bun run cli --reset-stats
+   ```
+
+3. For severe corruption, recreate the database:
+   ```bash
+   # Backup first!
+   mv ~/.config/better-ccflare/better-ccflare.db ~/.config/better-ccflare/better-ccflare.db.old
+
+   # Restart server to create fresh database
+   bun start
+
+   # Re-add accounts
+   bun run cli --add-account <name> --mode <mode>
+   ```
+
+**Prevention**:
+- Database integrity is automatically checked on startup
+- Avoid killing the server process abruptly (CTRL+C is safe)
+- Ensure sufficient disk space
+- Don't manually edit the database file
+
 ### Database Path Problems
 
 **Symptom**: Server fails to start with database errors
@@ -328,7 +377,7 @@ Environment variables override config file settings:
    ```bash
    # macOS/Linux
    ls -la ~/.config/better-ccflare/better-ccflare.db
-   
+
    # Windows
    dir %LOCALAPPDATA%\better-ccflare\better-ccflare.db
    ```
@@ -337,7 +386,7 @@ Environment variables override config file settings:
    ```bash
    # macOS/Linux
    mkdir -p ~/.config/better-ccflare
-   
+
    # Windows
    mkdir %LOCALAPPDATA%\better-ccflare
    ```
