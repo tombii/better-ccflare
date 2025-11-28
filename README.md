@@ -506,10 +506,22 @@ No `NODE_OPTIONS` needed - Traefik provides trusted certificates automatically!
 - **API Key Authentication** - Secure API key management for OpenAI-compatible providers
 - **Cost Tracking** - Automatic cost calculation for usage monitoring and budgeting
 
+## Troubleshooting Database Issues
+
+If you encounter "All accounts failed" errors, the database runs integrity checks automatically on startup and will guide you to repair if needed. You can also manually run:
+
+```bash
+bun run cli --repair-db
+```
+
+This will check integrity, fix NULL values, validate constraints, and optimize the database. See the [Troubleshooting Guide](docs/troubleshooting.md#database-corruption-or-integrity-errors) for more details.
+
 ## Documentation
 
 Full documentation available in [`docs/`](docs/):
 - [Getting Started](docs/index.md)
+- [CLI Commands](docs/cli.md)
+- [Troubleshooting](docs/troubleshooting.md)
 - [Architecture](docs/architecture.md)
 - [API Reference](docs/api-http.md)
 - [Configuration](docs/configuration.md)

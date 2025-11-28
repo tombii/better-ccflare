@@ -100,6 +100,7 @@ Options:
   --resume <name>      Resume an account
   --set-priority <name> <priority> Set account priority (0-100)
   --analyze            Analyze database performance
+  --repair-db          Check and repair database integrity
   --reset-stats        Reset usage statistics
   --clear-history      Clear request history
   --help, -h           Show this help message
@@ -284,6 +285,62 @@ bun run cli --analyze
 - Index usage statistics
 - Query optimization suggestions
 
+#### `--repair-db`
+
+Check and repair database integrity issues.
+
+**Syntax:**
+```bash
+bun run cli --repair-db
+```
+
+**What it does:**
+- Runs `PRAGMA integrity_check` to verify database health
+- Detects and fixes NULL values in numeric fields
+- Validates foreign key constraints
+- Vacuums database to reclaim space and rebuild structure
+- Optimizes database with `ANALYZE` and `PRAGMA optimize`
+
+**When to use:**
+- After encountering "All accounts failed" errors
+- When you suspect database corruption
+- If you see database-related error messages
+- As part of regular maintenance
+
+**Example output:**
+```
+🔧 BETTER-CCFLARE DATABASE REPAIR
+══════════════════════════════════════════════════
+
+🔍 Checking database integrity...
+✅ Database integrity check: PASSED
+
+🔍 Checking for NULL values in account fields...
+⚠️  Found NULL values in account fields:
+   - request_count: 3
+   - total_requests: 2
+   - session_request_count: 1
+
+🔧 Fixing NULL values...
+✅ Fixed 3 account records with NULL values
+
+✅ Database vacuumed successfully
+✅ Database optimized successfully
+
+DATABASE REPAIR SUMMARY
+══════════════════════════════════════════════════
+📊 Results:
+   Integrity Check: ✅ PASSED
+   NULL Values Fixed: 3
+   Database Vacuumed: ✅ YES
+
+✅ Database is healthy!
+```
+
+**Exit codes:**
+- `0`: Success (database healthy or repaired)
+- `1`: Critical errors require manual intervention
+
 #### Default Behavior
 
 When no command is specified, the CLI starts the server by default:
@@ -399,6 +456,9 @@ bun run cli --clear-history
 
 # Analyze database performance
 bun run cli --analyze
+
+# Repair database if you encounter errors
+bun run cli --repair-db
 ```
 
 ### Automation Examples
