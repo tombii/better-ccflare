@@ -150,6 +150,7 @@ bun run build
 bun run better-ccflare
 ```
 Continue to [Configure Claude SDK](https://github.com/tombii/better-ccflare#configure-claude-sdk).
+
 **Note**: You must run `bun run build` at least once to build the dashboard files before starting the server. This can also be done by running `bun run better-ccflare` which includes the build step.
 
 ### Environment Variables
