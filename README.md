@@ -69,7 +69,7 @@ npm install -g better-ccflare
 # Start better-ccflare (Server + Dashboard)
 better-ccflare
 ```
-
+Continue to [Configure Claude SDK](https://github.com/tombii/better-ccflare#configure-claude-sdk).
 ### Install via bun
 
 ```bash
@@ -78,7 +78,7 @@ bun install -g better-ccflare
 # Start better-ccflare (Server + Dashboard)
 better-ccflare
 ```
-
+Continue to [Configure Claude SDK](https://github.com/tombii/better-ccflare#configure-claude-sdk).
 ### Install Pre-compiled Binary (All Architectures)
 
 Download the appropriate binary for your platform from [GitHub Releases](https://github.com/tombii/better-ccflare/releases/latest):
@@ -89,14 +89,14 @@ wget https://github.com/tombii/better-ccflare/releases/latest/download/better-cc
 chmod +x better-ccflare-linux-amd64
 ./better-ccflare-linux-amd64
 ```
-
+Continue to [Configure Claude SDK](https://github.com/tombii/better-ccflare#configure-claude-sdk).
 #### Linux ARM64 (Raspberry Pi 3/4/5, Oracle Cloud ARM, AWS Graviton)
 ```bash
 wget https://github.com/tombii/better-ccflare/releases/latest/download/better-ccflare-linux-arm64
 chmod +x better-ccflare-linux-arm64
 ./better-ccflare-linux-arm64
 ```
-
+Continue to [Configure Claude SDK](https://github.com/tombii/better-ccflare#configure-claude-sdk).
 #### macOS Intel
 ```bash
 curl -L -o better-ccflare-macos-x86_64 https://github.com/tombii/better-ccflare/releases/latest/download/better-ccflare-macos-x86_64
@@ -107,7 +107,7 @@ xattr -d com.apple.quarantine better-ccflare-macos-x86_64
 
 ./better-ccflare-macos-x86_64
 ```
-
+Continue to [Configure Claude SDK](https://github.com/tombii/better-ccflare#configure-claude-sdk).
 #### macOS Apple Silicon
 ```bash
 curl -L -o better-ccflare-macos-arm64 https://github.com/tombii/better-ccflare/releases/latest/download/better-ccflare-macos-arm64
@@ -118,12 +118,12 @@ xattr -d com.apple.quarantine better-ccflare-macos-arm64
 
 ./better-ccflare-macos-arm64
 ```
-
+Continue to [Configure Claude SDK](https://github.com/tombii/better-ccflare#configure-claude-sdk).
 **macOS Gatekeeper Notice:** Our macOS binaries are not notarized by Apple as this requires a paid Apple Developer subscription. After downloading, you must remove the quarantine attribute using the `xattr` command shown above to run the binary. If you prefer not to run unsigned binaries, you can [install from source](#install-from-source) instead.
 
 #### Windows x86_64
 Download [`better-ccflare-windows-x64.exe`](https://github.com/tombii/better-ccflare/releases/latest/download/better-ccflare-windows-x64.exe) and run it.
-
+Continue to [Configure Claude SDK](https://github.com/tombii/better-ccflare#configure-claude-sdk).
 ### Run without installation (npx/bunx)
 
 ```bash
@@ -133,7 +133,7 @@ npx better-ccflare@latest
 # Run with bunx (faster for bun users)
 bunx better-ccflare@latest
 ```
-
+Continue to [Configure Claude SDK](https://github.com/tombii/better-ccflare#configure-claude-sdk).
 ### Install from source
 
 ```bash
@@ -148,7 +148,7 @@ bun run build
 # Start better-ccflare (TUI + Server)
 bun run better-ccflare
 ```
-
+Continue to [Configure Claude SDK](https://github.com/tombii/better-ccflare#configure-claude-sdk).
 **Note**: You must run `bun run build` at least once to build the dashboard files before starting the server. This can also be done by running `bun run better-ccflare` which includes the build step.
 
 ### Environment Variables
@@ -283,23 +283,12 @@ See [DOCKER.md](DOCKER.md) for detailed Docker documentation.
 ```bash
 # Set the base URL to point to better-ccflare
 export ANTHROPIC_BASE_URL=http://localhost:8080
+export ANTHROPIC_API_KEY=dummy-key
 
-# Add multiple accounts with priorities
-better-ccflare --add-account primary --mode claude-oauth --priority 0
-better-ccflare --add-account secondary --mode claude-oauth --priority 10
+# Make sure to configure your accounts in the better-ccflare dashboard
 
-# Add OpenAI-compatible provider (like OpenRouter)
-better-ccflare --add-account openrouter --mode openai-compatible --priority 5
-
-# Enable auto-fallback on your primary account (via API)
-curl -X POST http://localhost:8080/api/accounts/$(curl -s http://localhost:8080/api/accounts | jq -r '.[0].id')/auto-fallback \
-  -H "Content-Type: application/json" \
-  -d '{"enabled": 1}'
-
-# Configure custom endpoint for an account (via API)
-curl -X POST http://localhost:8080/api/accounts/$(curl -s http://localhost:8080/api/accounts | jq -r '.[0].id')/custom-endpoint \
-  -H "Content-Type: application/json" \
-  -d '{"customEndpoint": "https://your-custom-api.anthropic.com"}'
+# Start claude
+claude
 ```
 
 ### SSL/HTTPS Configuration
