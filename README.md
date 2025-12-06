@@ -1,4 +1,5 @@
 # better-ccflare 🛡️
+[![Mentioned in Awesome Claude Code](https://awesome.re/mentioned-badge.svg)](https://github.com/hesreallyhim/awesome-claude-code)
 
 **Track Every Request. Go Low-Level. Never Hit Rate Limits Again.**
 
