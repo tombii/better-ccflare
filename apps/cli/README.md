@@ -1,4 +1,5 @@
 # better-ccflare 🛡️
+[![Mentioned in Awesome Claude Code](https://awesome.re/mentioned-badge.svg)](https://github.com/hesreallyhim/awesome-claude-code)
 
 **Track Every Request. Go Low-Level. Never Hit Rate Limits Again.**
 
@@ -282,16 +283,45 @@ See [DOCKER.md](DOCKER.md) for detailed Docker documentation.
 
 ## Configure Claude SDK
 
+### Option 1: Using Claude CLI with OAuth (Recommended if you have Claude Pro/Team)
+
+If you have a Claude Pro or Team subscription and are logged into Claude CLI:
+
 ```bash
-# Set the base URL to point to better-ccflare
+# Set only the base URL - no API key needed!
+export ANTHROPIC_BASE_URL=http://localhost:8080
+
+# Make sure to configure your accounts in the better-ccflare dashboard
+
+# Start Claude CLI (uses your existing login)
+claude
+```
+
+**Important:** When using Claude CLI with an active OAuth login, do **NOT** set `ANTHROPIC_API_KEY`. Setting both will trigger a warning from Claude CLI about conflicting authentication methods.
+
+### Option 2: Using API Key Authentication
+
+If you're NOT using Claude CLI's OAuth login, or prefer API key authentication:
+
+```bash
+# First, logout from Claude CLI if you're currently logged in
+claude /logout
+
+# Then set both the base URL and API key
 export ANTHROPIC_BASE_URL=http://localhost:8080
 export ANTHROPIC_API_KEY=dummy-key
 
 # Make sure to configure your accounts in the better-ccflare dashboard
 
-# Start claude
+# Start Claude CLI
 claude
 ```
+
+### Which method should I use?
+
+- **Have Claude Pro/Team?** Use Option 1 (OAuth only) - simpler and no API key needed
+- **Using only API keys in better-ccflare?** Use Option 2 (logout + API key)
+- **Getting auth conflict warnings?** You have both methods active - choose one and follow its steps above
 
 ### SSL/HTTPS Configuration
 
