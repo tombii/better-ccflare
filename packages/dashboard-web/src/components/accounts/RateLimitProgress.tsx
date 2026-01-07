@@ -33,6 +33,10 @@ function formatWindowName(window: string | null): string {
 			return "Daily";
 		case "monthly":
 			return "Monthly";
+		case "time_limit":
+			return "Time";
+		case "tokens_limit":
+			return "Tokens";
 		default:
 			return window.replace("_", " ");
 	}
@@ -85,7 +89,28 @@ export function RateLimitProgress({
 		"daily" in usageData &&
 		"monthly" in usageData;
 
-	if (isNanoGPTData && showWeekly) {
+	// Check if this is Zai usage data (has 'time_limit' and 'tokens_limit' properties)
+	const isZaiData =
+		usageData && ("time_limit" in usageData || "tokens_limit" in usageData);
+
+	if (isZaiData && showWeekly) {
+		// Zai usage data - only show tokens_limit (5-hour token quota)
+		const zaiData = usageData as {
+			time_limit?: { percentage: number; resetAt: number } | null;
+			tokens_limit?: { percentage: number; resetAt: number } | null;
+		};
+
+		// Tokens limit usage (5-hour token quota)
+		if (zaiData.tokens_limit) {
+			usages.push({
+				utilization: zaiData.tokens_limit.percentage,
+				window: "five_hour", // Map to "5-hour" to match Claude terminology
+				resetTime: zaiData.tokens_limit.resetAt
+					? new Date(zaiData.tokens_limit.resetAt).toISOString()
+					: null,
+			});
+		}
+	} else if (isNanoGPTData && showWeekly) {
 		// NanoGPT usage data - show daily and monthly windows
 		const nanogptData = usageData as {
 			active: boolean;
@@ -297,7 +322,9 @@ export function RateLimitProgress({
 									{usage.window === "seven_day" ||
 									usage.window === "seven_day_opus" ||
 									usage.window === "seven_day_sonnet" ||
-									usage.window === "monthly"
+									usage.window === "monthly" ||
+									usage.window === "time_limit" ||
+									usage.window === "tokens_limit"
 										? `Resets ${new Date(usage.resetTime).toLocaleString(
 												undefined,
 												{

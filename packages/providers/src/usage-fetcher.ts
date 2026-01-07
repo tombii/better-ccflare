@@ -4,6 +4,7 @@ import {
 	fetchNanoGPTUsageData,
 	type NanoGPTUsageData,
 } from "./nanogpt-usage-fetcher";
+import { fetchZaiUsageData, type ZaiUsageData } from "./zai-usage-fetcher";
 
 const log = new Logger("UsageFetcher");
 
@@ -34,7 +35,7 @@ export interface UsageData {
 }
 
 // Union type for all provider usage data
-export type AnyUsageData = UsageData | NanoGPTUsageData;
+export type AnyUsageData = UsageData | NanoGPTUsageData | ZaiUsageData;
 
 /**
  * Fetch usage data from Anthropic's OAuth usage endpoint
@@ -330,6 +331,25 @@ class UsageCache {
 					);
 					log.debug(
 						`Successfully fetched NanoGPT usage data for account ${accountId}: ${utilization}% (${window} window)`,
+					);
+				}
+			} else if (provider === "zai") {
+				// Fetch Zai usage data
+				data = await fetchZaiUsageData(token);
+				if (data) {
+					// Import Zai helper functions
+					const {
+						getRepresentativeZaiUtilization,
+						getRepresentativeZaiWindow,
+					} = await import("./zai-usage-fetcher");
+
+					this.cache.set(accountId, { data, timestamp: Date.now() });
+					const utilization = getRepresentativeZaiUtilization(
+						data as ZaiUsageData,
+					);
+					const window = getRepresentativeZaiWindow(data as ZaiUsageData);
+					log.debug(
+						`Successfully fetched Zai usage data for account ${accountId}: ${utilization}% (${window} window)`,
 					);
 				}
 			} else {

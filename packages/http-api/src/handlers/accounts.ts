@@ -224,6 +224,26 @@ export function createAccountsListHandler(db: Database) {
 						);
 					}
 				}
+			} else if (account.provider === "zai" && usageData) {
+				// Zai usage data - type guard to check it's ZaiUsageData
+				const isZaiData =
+					"time_limit" in usageData || "tokens_limit" in usageData;
+				if (isZaiData) {
+					try {
+						const {
+							getRepresentativeZaiUtilization,
+							getRepresentativeZaiWindow,
+						} = require("@better-ccflare/providers");
+						usageUtilization = getRepresentativeZaiUtilization(usageData);
+						usageWindow = getRepresentativeZaiWindow(usageData);
+						fullUsageData = usageData as FullUsageData;
+					} catch (error) {
+						log.warn(
+							`Failed to process Zai usage data for account ${account.name}:`,
+							error,
+						);
+					}
+				}
 			}
 
 			// Parse model mappings for OpenAI-compatible, Anthropic-compatible, and NanoGPT providers

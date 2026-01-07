@@ -32,8 +32,25 @@ export interface NanoGPTUsageData {
 	graceUntil: string | null;
 }
 
-// Combined usage data type that supports both providers
-export type FullUsageData = AnthropicUsageData | NanoGPTUsageData;
+// Usage data types for Zai accounts
+export interface ZaiUsageWindow {
+	used: number;
+	remaining: number;
+	percentage: number; // 0-100 from API
+	resetAt: number | null; // Unix timestamp in milliseconds
+	type: string;
+}
+
+export interface ZaiUsageData {
+	time_limit: ZaiUsageWindow | null;
+	tokens_limit: ZaiUsageWindow | null;
+}
+
+// Combined usage data type that supports all providers
+export type FullUsageData =
+	| AnthropicUsageData
+	| NanoGPTUsageData
+	| ZaiUsageData;
 
 // Database row types that match the actual database schema
 export interface AccountRow {

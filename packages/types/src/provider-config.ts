@@ -52,7 +52,7 @@ export const PROVIDER_CONFIG: Record<ProviderName, ProviderConfig> = {
 	},
 	[PROVIDER_NAMES.ZAI]: {
 		requiresSessionTracking: false, // Zai is typically pay-as-you-go
-		supportsUsageTracking: false, // Zai doesn't support usage tracking
+		supportsUsageTracking: true, // Zai supports usage tracking via monitoring API
 		supportsOAuth: false, // Zai uses API key authentication
 		defaultEndpoint: "https://api.z.ai/api/anthropic",
 	},
