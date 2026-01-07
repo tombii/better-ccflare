@@ -738,6 +738,42 @@ Available endpoints:
 		log.info(`No NanoGPT accounts found, usage polling will not start`);
 	}
 
+	// Start usage polling for Zai accounts
+	const zaiAccounts = accounts.filter((a) => a.provider === "zai");
+	if (zaiAccounts.length > 0) {
+		log.info(
+			`Found ${zaiAccounts.length} Zai accounts, starting usage polling...`,
+		);
+		for (const account of zaiAccounts) {
+			log.debug(`Processing Zai account: ${account.name}`, {
+				accountId: account.id,
+				hasApiKey: !!account.api_key,
+				paused: account.paused,
+			});
+
+			if (account.api_key) {
+				// Zai uses API key authentication, no token refresh needed
+				// Create a simple token provider that returns the API key
+				const apiKeyProvider = async () => account.api_key || "";
+
+				// Start usage polling with the API key
+				usageCache.startPolling(
+					account.id,
+					apiKeyProvider,
+					account.provider,
+					90000, // Poll every 90 seconds (same as Anthropic)
+				);
+				log.info(`Started usage polling for Zai account ${account.name}`);
+			} else {
+				log.warn(
+					`Zai account ${account.name} has no API key, skipping usage polling`,
+				);
+			}
+		}
+	} else {
+		log.info(`No Zai accounts found, usage polling will not start`);
+	}
+
 	// Initialize NanoGPT pricing refresh if there are NanoGPT accounts (non-blocking)
 	void initializeNanoGPTPricingIfAccountsExist(dbOps, pricingLogger);
 

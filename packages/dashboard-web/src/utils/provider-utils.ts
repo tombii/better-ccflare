@@ -30,10 +30,13 @@ export function providerSupportsModelMappings(provider: string): boolean {
  * Check if a provider shows weekly usage information
  * Anthropic shows 5-hour and 7-day windows
  * NanoGPT shows daily and monthly windows
+ * Zai shows time_limit and tokens_limit windows
  */
 export function providerShowsWeeklyUsage(provider: string): boolean {
 	return (
-		provider === PROVIDER_NAMES.ANTHROPIC || provider === PROVIDER_NAMES.NANOGPT
+		provider === PROVIDER_NAMES.ANTHROPIC ||
+		provider === PROVIDER_NAMES.NANOGPT ||
+		provider === PROVIDER_NAMES.ZAI
 	);
 }
 

@@ -26,6 +26,8 @@ export {
 export * from "./types";
 // Export usage fetcher
 export * from "./usage-fetcher";
+// Export Zai usage fetcher
+export * from "./zai-usage-fetcher";
 
 import { AnthropicProvider } from "./providers/anthropic/provider";
 import { AnthropicCompatibleProvider } from "./providers/anthropic-compatible/provider";
