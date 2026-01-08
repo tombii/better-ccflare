@@ -36,7 +36,9 @@ export async function promptAccountRemovalConfirmation(
 	console.log("This action cannot be undone.");
 	console.log("\nTo confirm, please type the account name exactly:");
 
-	const confirmation = prompt(`Type '${accountName}' to confirm deletion: `);
+	const confirmation = await stdPromptAdapter.input(
+		`Type '${accountName}' to confirm deletion: `,
+	);
 
 	if (!confirmation) {
 		return false;
