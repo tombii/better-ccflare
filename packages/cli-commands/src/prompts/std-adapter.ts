@@ -1,7 +1,24 @@
+import * as readline from "readline";
 import type { PromptAdapter } from "./adapter";
 
 /**
- * Standard prompt adapter using blocking prompt() calls
+ * Read a line from stdin using readline (works in WSL and non-TTY contexts)
+ */
+function readLine(question: string): Promise<string> {
+	return new Promise((resolve) => {
+		const rl = readline.createInterface({
+			input: process.stdin,
+			output: process.stdout,
+		});
+		rl.question(question, (answer) => {
+			rl.close();
+			resolve(answer);
+		});
+	});
+}
+
+/**
+ * Standard prompt adapter using readline (more reliable than Bun's prompt())
  */
 export class StdPromptAdapter implements PromptAdapter {
 	async select<T extends string | number>(
@@ -13,7 +30,7 @@ export class StdPromptAdapter implements PromptAdapter {
 			console.log(`${index + 1}) ${option.label}`);
 		});
 
-		const choice = prompt(`Enter your choice (${1}-${options.length}): `);
+		const choice = await readLine(`Enter your choice (1-${options.length}): `);
 		const index = parseInt(choice || "", 10) - 1;
 
 		if (index < 0 || index >= options.length || Number.isNaN(index)) {
@@ -26,8 +43,8 @@ export class StdPromptAdapter implements PromptAdapter {
 	}
 
 	async input(question: string, _mask?: boolean): Promise<string> {
-		// Note: Bun's prompt() doesn't support masking, so we ignore the mask parameter
-		const answer = prompt(question);
+		// Note: readline doesn't support masking, so we ignore the mask parameter
+		const answer = await readLine(question);
 		if (!answer) {
 			throw new Error("Input is required");
 		}
@@ -35,7 +52,7 @@ export class StdPromptAdapter implements PromptAdapter {
 	}
 
 	async confirm(question: string): Promise<boolean> {
-		const answer = prompt(`${question} (y/n): `);
+		const answer = await readLine(`${question} (y/n): `);
 		return answer?.toLowerCase().startsWith("y") || false;
 	}
 }

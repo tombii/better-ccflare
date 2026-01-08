@@ -859,31 +859,69 @@ Examples:
 	}
 
 	if (parsed.addAccount) {
-		// Check if we're in interactive mode or using CLI flags
-		if (parsed.mode || parsed.priority) {
-			// CLI mode - use flags provided
-			try {
-				const mode = parsed.mode || "claude-oauth";
-				const priority = parsed.priority || 0;
+		// Require explicit --mode flag to avoid silent defaults
+		if (!parsed.mode) {
+			console.error(
+				"❌ Please provide --mode to specify account type",
+			);
+			console.error("Available modes:");
+			console.error(
+				"  --mode claude-oauth    Claude CLI OAuth account (Max subscription)",
+			);
+			console.error(
+				"  --mode console         Claude API account (OAuth)",
+			);
+			console.error(
+				"  --mode zai             z.ai account (API key)",
+			);
+			console.error(
+				"  --mode minimax         Minimax account (API key)",
+			);
+			console.error(
+				"  --mode nanogpt         NanoGPT account (API key)",
+			);
+			console.error(
+				"  --mode anthropic-compatible  Anthropic-compatible provider",
+			);
+			console.error(
+				"  --mode openai-compatible     OpenAI-compatible provider",
+			);
+			console.error("\nExample:");
+			console.error(
+				"  better-ccflare --add-account work --mode claude-oauth --priority 0",
+			);
+			await exitGracefully(1);
+		}
 
-				// For API key accounts, we need to get the API key from environment or user
-				let apiKey = "";
-				if (mode === "zai" || mode === "openai-compatible") {
-					apiKey =
-						process.env[
-							`BETTER_CCFLARE_API_KEY_${parsed.addAccount.toUpperCase()}`
-						] ||
-						process.env[`API_KEY_${parsed.addAccount.toUpperCase()}`] ||
-						"";
+		try {
+			const mode = parsed.mode!; // Guaranteed non-null by guard above
+			const priority = parsed.priority || 0;
 
-					if (!apiKey) {
-						console.error(`❌ API key required for ${mode} accounts`);
-						console.error(
-							`Set environment variable: BETTER_CCFLARE_API_KEY_${parsed.addAccount.toUpperCase()}`,
-						);
-						console.error(`Or: API_KEY_${parsed.addAccount.toUpperCase()}`);
-						await exitGracefully(1);
-					}
+			// OAuth modes need interactive prompts for the auth code
+			const needsInteractiveAuth = mode === "claude-oauth" || mode === "console";
+
+			if (needsInteractiveAuth) {
+				// Use real prompt adapter for OAuth - needs user to paste auth code
+				const { stdPromptAdapter } = await import("@better-ccflare/cli-commands");
+				await addAccount(dbOps, new Config(), {
+					name: parsed.addAccount,
+					mode,
+					priority,
+					adapter: stdPromptAdapter,
+				});
+			} else {
+				// For API key accounts, get the API key from environment or prompt
+				let apiKey =
+					process.env[
+						`BETTER_CCFLARE_API_KEY_${parsed.addAccount.toUpperCase()}`
+					] ||
+					process.env[`API_KEY_${parsed.addAccount.toUpperCase()}`] ||
+					"";
+
+				if (!apiKey) {
+					// Prompt for API key if not in environment
+					const { stdPromptAdapter } = await import("@better-ccflare/cli-commands");
+					apiKey = await stdPromptAdapter.input(`Enter API key for ${parsed.addAccount}: `);
 				}
 
 				await addAccount(dbOps, new Config(), {
@@ -894,34 +932,17 @@ Examples:
 						select: async <T extends string | number>(
 							_prompt: string,
 							_options: Array<{ label: string; value: T }>,
-						) => (_options[0]?.value as T) || ("yes" as T), // Auto-select first option
-						input: async (_prompt: string) => apiKey, // Use the provided API key
+						) => (_options[0]?.value as T) || ("yes" as T),
+						input: async (_prompt: string) => apiKey,
 						confirm: async (_prompt: string) => true,
 					},
 				});
-				console.log(`✅ Account "${parsed.addAccount}" added successfully`);
-			} catch (error: unknown) {
-				const errorMessage =
-					error instanceof Error ? error.message : String(error);
-				console.error(`❌ Failed to add account: ${errorMessage}`);
-				await exitGracefully(1);
 			}
-		} else {
-			console.error(
-				"❌ Interactive account setup is not available in CLI mode",
-			);
-			console.error("Please provide the required flags:");
-			console.error(
-				"  --mode <claude-oauth|console|zai|minimax|nanogpt|anthropic-compatible|openai-compatible>",
-			);
-			console.error("  --priority <number>");
-			console.error("\nFor API key accounts, also set:");
-			console.error("  export BETTER_CCFLARE_API_KEY_<ACCOUNT_NAME>");
-			console.error("\nExample:");
-			console.error(
-				"  better-ccflare --add-account work --mode claude-oauth --priority 0",
-			);
-			console.error("  export BETTER_CCFLARE_API_KEY_WORK=your-api-key-here");
+			console.log(`✅ Account "${parsed.addAccount}" added successfully`);
+		} catch (error: unknown) {
+			const errorMessage =
+				error instanceof Error ? error.message : String(error);
+			console.error(`❌ Failed to add account: ${errorMessage}`);
 			await exitGracefully(1);
 		}
 		await exitGracefully(0);
