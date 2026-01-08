@@ -764,7 +764,7 @@ Debugging:
 Examples:
   better-ccflare --serve                # Start server
   better-ccflare --serve --ssl-key /path/to/key.pem --ssl-cert /path/to/cert.pem  # Start server with HTTPS
-  better-ccflare --add-account work     # Add account
+  better-ccflare --add-account work --mode claude-oauth --priority 0  # Add account
   better-ccflare --reauthenticate work  # Re-authenticate account (preserves metadata)
   better-ccflare --pause work           # Pause account
   better-ccflare --analyze              # Run performance analysis
