@@ -37,7 +37,7 @@ This guide helps you diagnose and resolve common issues with better-ccflare.
    - Remove and re-add the account:
      ```bash
      better-ccflare --remove <account-name>
-     better-ccflare --add-account <account-name>
+     better-ccflare --add-account <account-name> --mode <mode> --priority <number>
      ```
 
 3. Verify the refresh token is still valid in your Anthropic console
@@ -83,7 +83,7 @@ This guide helps you diagnose and resolve common issues with better-ccflare.
 3. Remove and re-add the account:
    ```bash
    better-ccflare --remove <account-name>
-   better-ccflare --add-account <account-name>
+   better-ccflare --add-account <account-name> --mode <mode> --priority <number>
    ```
 4. Check for multiple simultaneous refresh attempts in logs
 
@@ -120,7 +120,7 @@ curl http://localhost:8080/api/accounts | jq '.[] | {name, rate_limit_status, ra
 **Manual recovery steps**:
 1. Add more accounts to your pool:
    ```bash
-   better-ccflare --add-account account2
+   better-ccflare --add-account account2 --mode claude-oauth --priority 10
    ```
 
 2. Check rate limit reset times in the dashboard:
@@ -354,7 +354,7 @@ Environment variables override config file settings:
    bun start
 
    # Re-add accounts
-   bun run cli --add-account <name> --mode <mode>
+   bun run cli --add-account <name> --mode <mode> --priority <number>
    ```
 
 **Prevention**:
@@ -1103,8 +1103,8 @@ When experiencing issues, check these in order:
 
 | Problem | Quick Fix |
 |---------|-----------|
-| All accounts rate limited | Add more accounts: `better-ccflare --add-account newaccount` |
-| Token expired | Re-authenticate: `better-ccflare --remove account && better-ccflare --add-account account` |
+| All accounts rate limited | Add more accounts: `better-ccflare --add-account newaccount --mode claude-oauth --priority 10` |
+| Token expired | Re-authenticate: `better-ccflare --remove account && better-ccflare --add-account account --mode claude-oauth --priority 0` |
 | Database locked | Kill duplicate processes: `pkill -f "bun start"` |
 | Port in use | Use different port: `PORT=3000 bun start` |
 | Config corrupted | Reset config: `rm ~/.config/better-ccflare/better-ccflare.json` |

@@ -118,10 +118,7 @@ export function getRepresentativeZaiUtilization(
 
 	// Only consider tokens_limit (5-hour token quota)
 	// time_limit is not displayed to users
-	if (
-		usage.tokens_limit &&
-		usage.tokens_limit.percentage !== undefined
-	) {
+	if (usage.tokens_limit && usage.tokens_limit.percentage !== undefined) {
 		return usage.tokens_limit.percentage;
 	}
 

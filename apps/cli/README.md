@@ -267,7 +267,7 @@ docker run -d \
 docker logs -f better-ccflare
 
 # Manage accounts
-docker exec -it better-ccflare better-ccflare --add-account myaccount
+docker exec -it better-ccflare better-ccflare --add-account myaccount --mode claude-oauth --priority 0
 docker exec -it better-ccflare better-ccflare --list
 ```
 

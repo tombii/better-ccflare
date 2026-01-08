@@ -764,7 +764,7 @@ Debugging:
 Examples:
   better-ccflare --serve                # Start server
   better-ccflare --serve --ssl-key /path/to/key.pem --ssl-cert /path/to/cert.pem  # Start server with HTTPS
-  better-ccflare --add-account work     # Add account
+  better-ccflare --add-account work --mode claude-oauth --priority 0  # Add account
   better-ccflare --reauthenticate work  # Re-authenticate account (preserves metadata)
   better-ccflare --pause work           # Pause account
   better-ccflare --analyze              # Run performance analysis
@@ -861,25 +861,15 @@ Examples:
 	if (parsed.addAccount) {
 		// Require explicit --mode flag to avoid silent defaults
 		if (!parsed.mode) {
-			console.error(
-				"❌ Please provide --mode to specify account type",
-			);
+			console.error("❌ Please provide --mode to specify account type");
 			console.error("Available modes:");
 			console.error(
 				"  --mode claude-oauth    Claude CLI OAuth account (Max subscription)",
 			);
-			console.error(
-				"  --mode console         Claude API account (OAuth)",
-			);
-			console.error(
-				"  --mode zai             z.ai account (API key)",
-			);
-			console.error(
-				"  --mode minimax         Minimax account (API key)",
-			);
-			console.error(
-				"  --mode nanogpt         NanoGPT account (API key)",
-			);
+			console.error("  --mode console         Claude API account (OAuth)");
+			console.error("  --mode zai             z.ai account (API key)");
+			console.error("  --mode minimax         Minimax account (API key)");
+			console.error("  --mode nanogpt         NanoGPT account (API key)");
 			console.error(
 				"  --mode anthropic-compatible  Anthropic-compatible provider",
 			);
@@ -894,15 +884,19 @@ Examples:
 		}
 
 		try {
-			const mode = parsed.mode!; // Guaranteed non-null by guard above
+			// Mode is guaranteed non-null by guard above
+			const mode = parsed.mode as Exclude<typeof parsed.mode, undefined | null>;
 			const priority = parsed.priority || 0;
 
 			// OAuth modes need interactive prompts for the auth code
-			const needsInteractiveAuth = mode === "claude-oauth" || mode === "console";
+			const needsInteractiveAuth =
+				mode === "claude-oauth" || mode === "console";
 
 			if (needsInteractiveAuth) {
 				// Use real prompt adapter for OAuth - needs user to paste auth code
-				const { stdPromptAdapter } = await import("@better-ccflare/cli-commands");
+				const { stdPromptAdapter } = await import(
+					"@better-ccflare/cli-commands"
+				);
 				await addAccount(dbOps, new Config(), {
 					name: parsed.addAccount,
 					mode,
@@ -920,8 +914,17 @@ Examples:
 
 				if (!apiKey) {
 					// Prompt for API key if not in environment
-					const { stdPromptAdapter } = await import("@better-ccflare/cli-commands");
-					apiKey = await stdPromptAdapter.input(`Enter API key for ${parsed.addAccount}: `);
+					const { stdPromptAdapter } = await import(
+						"@better-ccflare/cli-commands"
+					);
+					apiKey = await stdPromptAdapter.input(
+						`Enter API key for ${parsed.addAccount}: `,
+					);
+
+					if (!apiKey || apiKey.trim() === "") {
+						console.error(`❌ API key cannot be empty for ${mode} accounts`);
+						await exitGracefully(1);
+					}
 				}
 
 				await addAccount(dbOps, new Config(), {
