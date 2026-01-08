@@ -125,7 +125,7 @@ volumes:
 
 ```bash
 # Add an account
-docker exec -it better-ccflare better-ccflare --add-account myaccount
+docker exec -it better-ccflare better-ccflare --add-account myaccount --mode claude-oauth --priority 0
 
 # List accounts
 docker exec -it better-ccflare better-ccflare --list
@@ -293,7 +293,7 @@ For production deployments with Kubernetes, see the example manifests in the `/k
 
 ## Next Steps
 
-- Configure your accounts using `docker exec -it better-ccflare better-ccflare --add-account`
+- Configure your accounts using `docker exec -it better-ccflare better-ccflare --add-account <name> --mode <mode> --priority <number>`
 - Access the web dashboard at `http://localhost:8080`
 - Monitor logs with `docker-compose logs -f`
 - Set up automated backups of the `/data` volume
