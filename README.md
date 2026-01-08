@@ -617,6 +617,7 @@ Inspired by [snipeship/ccflare](https://github.com/snipeship/ccflare) - thanks f
 - [@bitcoin4cashqc](https://github.com/bitcoin4cashqc) - SSL/HTTPS support implementation with comprehensive documentation
 - [@anonym-uz](https://github.com/anonym-uz) - Critical auto-pause bug fix, analytics performance optimizations, request body truncation, and incremental vacuum implementation
 - [@makhweeb](https://github.com/makhweeb) - Enhanced request handling and analytics improvements
+- [@jw409](https://github.com/jw409) - Fixed OAuth account addition in WSL2 and compiled binaries by replacing unreliable prompt() with readline
 
 ## Contributing
 
