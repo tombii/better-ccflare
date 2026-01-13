@@ -231,6 +231,8 @@ export function AccountAddForm({
 				opusModel: "",
 				sonnetModel: "",
 				haikuModel: "",
+				projectId: "",
+				region: "global",
 			});
 			onSuccess();
 			return;
@@ -271,6 +273,8 @@ export function AccountAddForm({
 				opusModel: "",
 				sonnetModel: "",
 				haikuModel: "",
+				projectId: "",
+				region: "global",
 			});
 			onSuccess();
 			return;
@@ -306,6 +310,8 @@ export function AccountAddForm({
 				opusModel: "",
 				sonnetModel: "",
 				haikuModel: "",
+				projectId: "",
+				region: "global",
 			});
 			onSuccess();
 			return;
@@ -347,6 +353,8 @@ export function AccountAddForm({
 				opusModel: "",
 				sonnetModel: "",
 				haikuModel: "",
+				projectId: "",
+				region: "global",
 			});
 			onSuccess();
 			return;
@@ -390,6 +398,8 @@ export function AccountAddForm({
 			opusModel: "",
 			sonnetModel: "",
 			haikuModel: "",
+			projectId: "",
+			region: "global",
 		});
 		onSuccess();
 	};
@@ -407,6 +417,8 @@ export function AccountAddForm({
 			opusModel: "",
 			sonnetModel: "",
 			haikuModel: "",
+			projectId: "",
+			region: "global",
 		});
 		onCancel();
 	};

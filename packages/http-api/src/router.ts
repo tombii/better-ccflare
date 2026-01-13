@@ -17,6 +17,7 @@ import {
 	createMinimaxAccountAddHandler,
 	createNanoGPTAccountAddHandler,
 	createOpenAIAccountAddHandler,
+	createVertexAIAccountAddHandler,
 	createZaiAccountAddHandler,
 } from "./handlers/accounts";
 import {
