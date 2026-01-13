@@ -143,7 +143,8 @@ class API extends HttpClient {
 			| "minimax"
 			| "anthropic-compatible"
 			| "openai-compatible"
-			| "nanogpt";
+			| "nanogpt"
+			| "vertex-ai";
 		apiKey?: string;
 		priority: number;
 		customEndpoint?: string;
