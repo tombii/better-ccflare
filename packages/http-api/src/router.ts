@@ -93,6 +93,7 @@ export class APIRouter {
 		const accountAddHandler = createAccountAddHandler(dbOps, config);
 		const zaiAccountAddHandler = createZaiAccountAddHandler(dbOps);
 		const minimaxAccountAddHandler = createMinimaxAccountAddHandler(dbOps);
+		const vertexAIAccountAddHandler = createVertexAIAccountAddHandler(dbOps);
 		const nanogptAccountAddHandler = createNanoGPTAccountAddHandler(dbOps);
 		const anthropicCompatibleAccountAddHandler =
 			createAnthropicCompatibleAccountAddHandler(dbOps);
@@ -129,6 +130,9 @@ export class APIRouter {
 		);
 		this.handlers.set("POST:/api/accounts/minimax", (req) =>
 			minimaxAccountAddHandler(req),
+		);
+		this.handlers.set("POST:/api/accounts/vertex-ai", (req) =>
+			vertexAIAccountAddHandler(req),
 		);
 		this.handlers.set("POST:/api/accounts/nanogpt", (req) =>
 			nanogptAccountAddHandler(req),
