@@ -32,6 +32,7 @@ export const TIME_CONSTANTS = {
 
 	// Token expiration durations
 	API_KEY_TOKEN_EXPIRY_MS: 365 * 24 * 60 * 60 * 1000, // 1 year - for API keys that don't expire
+	GOOGLE_TOKEN_EXPIRY_MS: 60 * 60 * 1000, // 1 hour - Google Cloud access tokens
 } as const;
 
 // Buffer sizes (in bytes unless specified)
