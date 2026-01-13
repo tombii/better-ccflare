@@ -6,6 +6,11 @@
 - **Anthropic** - Single provider with two modes:
   - **console mode**: Standard Claude API (console.anthropic.com)
   - **max mode**: Claude Code (claude.ai)
+- **Vertex AI** - Google Cloud's Claude on Vertex AI:
+  - Uses Google Cloud authentication (gcloud or service accounts)
+  - Supports all Claude models via Vertex AI
+  - No API key required - uses Google Cloud credentials
+  - Automatic token refresh
 - **NanoGPT** - High-performance GPT provider with competitive pricing:
   - Dynamic pricing fetch with 24-hour cache
   - Supports GLM-4.5, GLM-4.5-Air, GLM-4.6, and GLM-4.6-Air models
@@ -57,30 +62,38 @@ The better-ccflare providers system is a modular architecture designed to suppor
    - OAuth authentication with PKCE security
    - Token health monitoring with automatic refresh (30-minute buffer)
 
-2. **NanoGPT Provider** - Provides access to:
+2. **Vertex AI Provider** - Provides access to:
+   - **Claude on Vertex AI** - Google Cloud's managed Claude API
+   - Uses Google Cloud authentication (no API keys needed)
+   - Supports all Claude models (Sonnet, Opus, Haiku)
+   - Automatic token refresh (1-hour tokens)
+   - Global and regional endpoints
+   - Requires gcloud CLI or service account credentials
+
+3. **NanoGPT Provider** - Provides access to:
    - **NanoGPT API** - High-performance GPT models with competitive pricing
    - Supports GLM-4.5, GLM-4.5-Air, GLM-4.6, and GLM-4.6-Air models
    - Dynamic pricing fetch with 24-hour cache from nano-gpt.com API
    - API key authentication
    - Full Anthropic-compatible API format
 
-3. **Minimax Provider** - Provides access to:
+4. **Minimax Provider** - Provides access to:
    - **Minimax API** - Chinese AI provider with Anthropic-compatible API
    - Supports MiniMax-M2 and other models
    - API key authentication
    - Automatic format conversion
 
-4. **Z.ai Provider** - Provides access to:
+5. **Z.ai Provider** - Provides access to:
    - **Z.ai API** - Claude proxy service with enhanced rate limits
    - Uses API key authentication instead of OAuth
    - Supports Lite, Pro, and Max plans with ~3× the usage quota of equivalent Claude plans
 
-5. **Anthropic-Compatible Provider** - Provides access to:
+6. **Anthropic-Compatible Provider** - Provides access to:
    - **Any Anthropic-compatible API** - Custom endpoints, self-hosted models, etc.
    - Uses API key authentication
    - Supports custom endpoints for maximum flexibility
 
-6. **OpenAI-Compatible Provider** - Provides access to:
+7. **OpenAI-Compatible Provider** - Provides access to:
    - **Any OpenAI-compatible API** - OpenRouter, Together AI, local models, etc.
    - Uses API key authentication
    - Automatic format conversion between Anthropic and OpenAI API formats
@@ -88,7 +101,8 @@ The better-ccflare providers system is a modular architecture designed to suppor
 
 The providers system handles:
 - OAuth authentication flows with PKCE security (Anthropic)
-- API key authentication (Z.ai, OpenAI-Compatible)
+- Google Cloud authentication (Vertex AI)
+- API key authentication (Z.ai, OpenAI-Compatible, NanoGPT, Minimax)
 - Token lifecycle management (refresh, expiration)
 - Provider-specific request routing and header management
 - Rate limit detection and handling
@@ -274,6 +288,103 @@ prepareHeaders(headers: Headers, accessToken?: string, apiKey?: string): Headers
 ```
 
 The API key is stored in the `refresh_token` field of the account record for consistency with the authentication system.
+
+## VertexAIProvider Implementation
+
+The VertexAIProvider extends the BaseAnthropicCompatibleProvider class and implements Google Cloud Vertex AI-specific functionality.
+
+### Key Features
+
+1. **Google Cloud Authentication**: Uses `google-auth-library` for automatic credential discovery
+2. **No API Keys Required**: Authenticates via gcloud CLI or service account credentials
+3. **Automatic Token Refresh**: Access tokens are automatically refreshed (1-hour validity)
+4. **Model in URL**: Model name is moved from request body to URL path (Vertex AI requirement)
+5. **Global and Regional Endpoints**: Supports both global and regional Vertex AI endpoints
+6. **Full Anthropic Compatibility**: Supports all Claude models and features
+
+### Authentication Methods
+
+Vertex AI supports multiple authentication methods (in order of precedence):
+
+1. **`GOOGLE_APPLICATION_CREDENTIALS` environment variable** - Path to service account JSON key
+2. **gcloud CLI credentials** - From `gcloud auth application-default login`
+3. **Attached service account** - When running on Google Cloud resources
+
+```bash
+# Method 1: User credentials via gcloud CLI (recommended for development)
+gcloud auth application-default login
+
+# Method 2: Service account (recommended for production)
+export GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
+
+# Method 3: Attached service account (automatic on GCP resources)
+# No configuration needed - works automatically on GCE, GKE, Cloud Run, etc.
+```
+
+### Setup Instructions
+
+#### Prerequisites
+
+1. **Google Cloud Project** with Vertex AI API enabled
+2. **IAM Permissions**: `roles/aiplatform.user` or custom role with:
+   - `aiplatform.endpoints.predict`
+   - `aiplatform.endpoints.computeTokens` (optional, for token counting)
+
+#### Step 1: Authenticate with Google Cloud
+
+```bash
+# For development (user credentials)
+gcloud auth application-default login
+
+# For production (service account)
+export GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
+```
+
+#### Step 2: Add Vertex AI Account
+
+```bash
+# Using environment variables (recommended)
+export ANTHROPIC_VERTEX_PROJECT_ID=your-project-id
+export CLOUD_ML_REGION=global
+
+bun run cli --add-account vertex-claude --mode vertex-ai --priority 0
+
+# Or enter details interactively
+bun run cli --add-account vertex-claude --mode vertex-ai
+```
+
+#### Step 3: Test the Account
+
+```bash
+# Start the proxy server
+bun start
+
+# Test with curl
+curl -X POST http://localhost:8080/v1/messages \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer test" \
+  -d '{
+    "model": "claude-sonnet-4-5@20250929",
+    "max_tokens": 100,
+    "messages": [{"role": "user", "content": "Hello!"}]
+  }'
+```
+
+### Troubleshooting
+
+**Error: "Failed to authenticate with Google Cloud"**
+- Run `gcloud auth application-default login` or set `GOOGLE_APPLICATION_CREDENTIALS`
+- Ensure your account has `roles/aiplatform.user` permission
+- Verify project ID is correct
+
+**Error: "No projectId was given"**
+- Set `ANTHROPIC_VERTEX_PROJECT_ID` environment variable
+- Or provide project ID when adding the account
+
+**Error: "403 Forbidden"**
+- Check IAM permissions: need `aiplatform.endpoints.predict`
+- Verify Vertex AI API is enabled in your project
+- Ensure you're using the correct project ID
 
 ## OpenAI-Compatible Provider Implementation
 

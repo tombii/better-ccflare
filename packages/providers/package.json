@@ -10,6 +10,7 @@
 		"typecheck": "bunx tsc --noEmit"
 	},
 	"dependencies": {
-		"@better-ccflare/core": "workspace:*"
+		"@better-ccflare/core": "workspace:*",
+		"google-auth-library": "^10.5.0"
 	}
 }

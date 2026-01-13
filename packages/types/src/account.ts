@@ -175,7 +175,8 @@ export interface AccountListItem {
 		| "minimax"
 		| "anthropic-compatible"
 		| "openai-compatible"
-		| "nanogpt";
+		| "nanogpt"
+		| "vertex-ai";
 	priority: number;
 	autoFallbackEnabled: boolean;
 	autoRefreshEnabled: boolean;

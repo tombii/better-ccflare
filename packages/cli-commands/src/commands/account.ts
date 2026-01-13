@@ -30,7 +30,8 @@ export interface AddAccountOptionsWithAdapter {
 		| "minimax"
 		| "anthropic-compatible"
 		| "openai-compatible"
-		| "nanogpt";
+		| "nanogpt"
+		| "vertex-ai";
 	priority?: number;
 	customEndpoint?: string;
 	modelMappings?: { [key: string]: string };
@@ -49,7 +50,8 @@ export interface AccountListItemWithMode extends AccountListItem {
 		| "minimax"
 		| "anthropic-compatible"
 		| "openai-compatible"
-		| "nanogpt";
+		| "nanogpt"
+		| "vertex-ai";
 }
 
 /**
@@ -263,6 +265,68 @@ async function createZaiAccount(
 }
 
 /**
+ * Create a Vertex AI account in the database
+ */
+async function createVertexAIAccount(
+	dbOps: DatabaseOperations,
+	name: string,
+	projectId: string,
+	region: string,
+	priority: number,
+): Promise<void> {
+	const accountId = crypto.randomUUID();
+	const now = Date.now();
+
+	// Validate inputs
+	if (!projectId || projectId.trim().length === 0) {
+		throw new Error("Project ID is required for Vertex AI account");
+	}
+	if (!region || region.trim().length === 0) {
+		throw new Error("Region is required for Vertex AI account");
+	}
+	const validatedPriority = validatePriority(priority, "priority");
+
+	// Store project ID and region in custom_endpoint as JSON
+	const vertexConfig = JSON.stringify({
+		projectId: projectId.trim(),
+		region: region.trim(),
+	});
+
+	dbOps.getDatabase().run(
+		`INSERT INTO accounts (
+			id, name, provider, api_key, refresh_token, access_token,
+			expires_at, created_at, request_count, total_requests, priority, custom_endpoint
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		[
+			accountId,
+			name,
+			"vertex-ai",
+			null, // No API key - uses Google Cloud credentials
+			"", // Empty refresh token
+			null, // Access token will be fetched on first use
+			null, // Expiry will be set on first token refresh
+			now,
+			0,
+			0,
+			validatedPriority,
+			vertexConfig,
+		],
+	);
+
+	console.log(`\nAccount '${name}' added successfully!`);
+	console.log("Type: Vertex AI (Google Cloud credentials)");
+	console.log(`Project ID: ${projectId}`);
+	console.log(`Region: ${region}`);
+	console.log(
+		"\nMake sure you've authenticated with Google Cloud using one of:",
+	);
+	console.log("  • gcloud auth application-default login");
+	console.log(
+		"  • export GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json",
+	);
+}
+
+/**
  * Prompt user for model mappings
  */
 async function promptModelMappings(
@@ -403,6 +467,7 @@ export async function addAccount(
 		(await adapter.select("What type of account would you like to add?", [
 			{ label: "Claude CLI OAuth account", value: "claude-oauth" },
 			{ label: "Claude API account", value: "console" },
+			{ label: "Vertex AI (Google Cloud)", value: "vertex-ai" },
 			{ label: "z.ai account (API key)", value: "zai" },
 			{ label: "Minimax account (API key)", value: "minimax" },
 			{
@@ -415,7 +480,55 @@ export async function addAccount(
 			},
 		]));
 
-	if (mode === "zai") {
+	if (mode === "vertex-ai") {
+		// Handle Vertex AI accounts with Google Cloud credentials
+		console.log("\nVertex AI uses Google Cloud authentication.");
+		console.log("Make sure you have authenticated using:");
+		console.log("  • gcloud auth application-default login");
+		console.log("  OR set GOOGLE_APPLICATION_CREDENTIALS env var\n");
+
+		// Get project ID from environment or prompt
+		const envProjectId =
+			process.env.ANTHROPIC_VERTEX_PROJECT_ID ||
+			process.env.GCLOUD_PROJECT ||
+			process.env.GOOGLE_CLOUD_PROJECT;
+
+		const projectId =
+			envProjectId ||
+			(await adapter.input("\nEnter your Google Cloud Project ID: ")).trim();
+
+		if (!projectId) {
+			throw new Error("Project ID is required for Vertex AI account");
+		}
+
+		// Get region from environment or prompt
+		const envRegion = process.env.CLOUD_ML_REGION;
+		const region =
+			envRegion ||
+			(
+				await adapter.input(
+					"\nEnter region (e.g., global, us-east5, europe-west1, default: global): ",
+				)
+			).trim() ||
+			"global";
+
+		// Get priority
+		const priority =
+			providedPriority ??
+			(await adapter.input(
+				"\nEnter priority (0 = highest, lower number = higher priority, default 0): ",
+			));
+
+		await createVertexAIAccount(
+			dbOps,
+			name,
+			projectId,
+			region,
+			typeof priority === "string"
+				? parseInt(priority, 10) || 0
+				: priority || 0,
+		);
+	} else if (mode === "zai") {
 		// Handle z.ai accounts with API keys
 		const apiKey = await adapter.input("\nEnter your z.ai API key: ");
 
