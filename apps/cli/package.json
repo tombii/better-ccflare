@@ -1,6 +1,6 @@
 {
 	"name": "better-ccflare",
-	"version": "3.1.0-alpha",
+	"version": "3.1.0-beta",
 	"description": "Load balancer proxy for Claude API with intelligent distribution across multiple OAuth accounts to avoid rate limiting",
 	"license": "MIT",
 	"repository": {

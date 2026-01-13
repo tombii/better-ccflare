@@ -80,7 +80,8 @@ export function AccountsTab() {
 			| "minimax"
 			| "anthropic-compatible"
 			| "openai-compatible"
-			| "nanogpt";
+			| "nanogpt"
+			| "vertex-ai";
 		priority: number;
 		customEndpoint?: string;
 	}) => {
@@ -88,6 +89,23 @@ export function AccountsTab() {
 			const result = await api.initAddAccount(params);
 			setActionError(null);
 			return result;
+		} catch (err) {
+			setActionError(formatError(err));
+			throw err;
+		}
+	};
+
+	const handleAddVertexAIAccount = async (params: {
+		name: string;
+		projectId: string;
+		region: string;
+		priority: number;
+	}) => {
+		try {
+			await api.addVertexAIAccount(params);
+			await loadAccounts();
+			setAdding(false);
+			setActionError(null);
 		} catch (err) {
 			setActionError(formatError(err));
 			throw err;
@@ -370,6 +388,7 @@ export function AccountsTab() {
 						<AccountAddForm
 							onAddAccount={handleAddAccount}
 							onCompleteAccount={handleCompleteAccount}
+							onAddVertexAIAccount={handleAddVertexAIAccount}
 							onAddZaiAccount={handleAddZaiAccount}
 							onAddMinimaxAccount={handleAddMinimaxAccount}
 							onAddNanoGPTAccount={handleAddNanoGPTAccount}

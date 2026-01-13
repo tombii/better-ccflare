@@ -20,7 +20,8 @@ interface AccountAddFormProps {
 			| "minimax"
 			| "anthropic-compatible"
 			| "openai-compatible"
-			| "nanogpt";
+			| "nanogpt"
+			| "vertex-ai";
 		priority: number;
 		customEndpoint?: string;
 	}) => Promise<{ authUrl: string; sessionId: string }>;
@@ -60,6 +61,12 @@ interface AccountAddFormProps {
 		customEndpoint: string;
 		modelMappings?: { [key: string]: string };
 	}) => Promise<void>;
+	onAddVertexAIAccount: (params: {
+		name: string;
+		projectId: string;
+		region: string;
+		priority: number;
+	}) => Promise<void>;
 	onCancel: () => void;
 	onSuccess: () => void;
 	onError: (error: string) => void;
@@ -73,6 +80,7 @@ export function AccountAddForm({
 	onAddAnthropicCompatibleAccount,
 	onAddNanoGPTAccount,
 	onAddOpenAIAccount,
+	onAddVertexAIAccount,
 	onCancel,
 	onSuccess,
 	onError,
@@ -89,10 +97,13 @@ export function AccountAddForm({
 			| "minimax"
 			| "anthropic-compatible"
 			| "openai-compatible"
-			| "nanogpt",
+			| "nanogpt"
+			| "vertex-ai",
 		priority: 0,
 		apiKey: "",
 		customEndpoint: "",
+		projectId: "",
+		region: "global",
 		opusModel: "",
 		sonnetModel: "",
 		haikuModel: "",
@@ -140,6 +151,35 @@ export function AccountAddForm({
 			}),
 		};
 
+		if (newAccount.mode === "vertex-ai") {
+			if (!newAccount.projectId) {
+				onError("Google Cloud Project ID is required for Vertex AI accounts");
+				return;
+			}
+			// For Vertex AI accounts, we don't need OAuth flow
+			await onAddVertexAIAccount({
+				name: newAccount.name,
+				projectId: newAccount.projectId.trim(),
+				region: newAccount.region || "global",
+				priority: newAccount.priority,
+			});
+			// Reset form and signal success
+			setNewAccount({
+				name: "",
+				mode: "claude-oauth",
+				priority: 0,
+				apiKey: "",
+				customEndpoint: "",
+				projectId: "",
+				region: "global",
+				opusModel: "",
+				sonnetModel: "",
+				haikuModel: "",
+			});
+			onSuccess();
+			return;
+		}
+
 		if (newAccount.mode === "zai") {
 			if (!newAccount.apiKey) {
 				onError("API key is required for z.ai accounts");
@@ -160,6 +200,8 @@ export function AccountAddForm({
 				priority: 0,
 				apiKey: "",
 				customEndpoint: "",
+				projectId: "",
+				region: "global",
 				opusModel: "",
 				sonnetModel: "",
 				haikuModel: "",
@@ -412,6 +454,9 @@ export function AccountAddForm({
 									Claude CLI OAuth (Recommended)
 								</SelectItem>
 								<SelectItem value="console">Claude API</SelectItem>
+								<SelectItem value="vertex-ai">
+									Vertex AI (Google Cloud)
+								</SelectItem>
 								<SelectItem value="zai">z.ai (API Key)</SelectItem>
 								<SelectItem value="minimax">Minimax (API Key)</SelectItem>
 								<SelectItem value="nanogpt">NanoGPT (API Key)</SelectItem>
@@ -424,6 +469,64 @@ export function AccountAddForm({
 							</SelectContent>
 						</Select>
 					</div>
+					{newAccount.mode === "vertex-ai" && (
+						<>
+							<div className="space-y-2">
+								<Label htmlFor="projectId">Google Cloud Project ID</Label>
+								<Input
+									id="projectId"
+									value={newAccount.projectId}
+									onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+										setNewAccount({
+											...newAccount,
+											projectId: (e.target as HTMLInputElement).value,
+										})
+									}
+									placeholder="your-project-id"
+								/>
+								<p className="text-xs text-muted-foreground">
+									Your Google Cloud project ID where Vertex AI is enabled
+								</p>
+							</div>
+							<div className="space-y-2">
+								<Label htmlFor="region">Region</Label>
+								<Select
+									value={newAccount.region}
+									onValueChange={(value: string) =>
+										setNewAccount({ ...newAccount, region: value })
+									}
+								>
+									<SelectTrigger id="region">
+										<SelectValue />
+									</SelectTrigger>
+									<SelectContent>
+										<SelectItem value="global">Global (Recommended)</SelectItem>
+										<SelectItem value="us-east5">us-east5</SelectItem>
+										<SelectItem value="us-central1">us-central1</SelectItem>
+										<SelectItem value="europe-west1">europe-west1</SelectItem>
+										<SelectItem value="europe-west4">europe-west4</SelectItem>
+										<SelectItem value="asia-southeast1">
+											asia-southeast1
+										</SelectItem>
+									</SelectContent>
+								</Select>
+								<p className="text-xs text-muted-foreground">
+									Global for best availability, regional for data residency
+								</p>
+							</div>
+							<div className="bg-blue-50 dark:bg-blue-950 p-3 rounded-lg">
+								<p className="text-sm text-blue-900 dark:text-blue-100 font-medium mb-1">
+									Authentication Required
+								</p>
+								<p className="text-xs text-blue-800 dark:text-blue-200">
+									Vertex AI uses Google Cloud credentials. Ensure you've run:{" "}
+									<code className="bg-blue-100 dark:bg-blue-900 px-1 rounded">
+										gcloud auth application-default login
+									</code>
+								</p>
+							</div>
+						</>
+					)}
 					{newAccount.mode === "zai" && (
 						<div className="space-y-2">
 							<Label htmlFor="apiKey">z.ai API Key</Label>
