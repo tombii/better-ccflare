@@ -181,6 +181,42 @@ export async function handleProxy(
 	// 3. Prepare request body
 	const { buffer: requestBodyBuffer } = await prepareRequestBody(req);
 
+	// 3a. Validate request body for /v1/messages endpoint
+	if (url.pathname === "/v1/messages" && requestBodyBuffer) {
+		try {
+			const bodyText = new TextDecoder().decode(requestBodyBuffer);
+			const bodyJson = JSON.parse(bodyText);
+
+			// Reject requests without messages field (e.g., Claude Code internal events)
+			if (!bodyJson.messages || !Array.isArray(bodyJson.messages)) {
+				log.warn(
+					`Rejected invalid request to /v1/messages without messages field`,
+					{
+						event_type: bodyJson.event_type,
+						event_name: bodyJson.event_data?.event_name,
+					},
+				);
+				return new Response(
+					JSON.stringify({
+						type: "error",
+						error: {
+							type: "invalid_request_error",
+							message:
+								"messages: Field required for /v1/messages endpoint. Internal events should not be proxied.",
+						},
+					}),
+					{
+						status: 400,
+						headers: { "Content-Type": "application/json" },
+					},
+				);
+			}
+		} catch (error) {
+			// If we can't parse the body, let it through and let the provider handle it
+			log.debug("Could not parse request body for validation", error);
+		}
+	}
+
 	// 4. Intercept and modify request for agent model preferences
 	const { modifiedBody, agentUsed, originalModel, appliedModel } =
 		await interceptAndModifyRequest(requestBodyBuffer, ctx.dbOps);
