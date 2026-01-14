@@ -59,12 +59,16 @@ Commands:
 Examples:
   better-ccflare add myaccount --mode claude-oauth --priority 10
   better-ccflare add anthropic-account --mode anthropic-compatible --priority 5 --modelMappings '{"opus":"claude-3-opus","sonnet":"claude-3-sonnet"}'
+  better-ccflare add "My Account" --mode claude-oauth --priority 10  # Account names with spaces must be quoted
   better-ccflare list
   better-ccflare remove myaccount
-  better-ccflare pause myaccount
+  better-ccflare pause "My Account"  # Use quotes for names with spaces
   better-ccflare resume myaccount
   better-ccflare set-priority myaccount 20
   better-ccflare token-health
   better-ccflare reauth-needed
+
+Note: Account names can contain letters, numbers, spaces, hyphens, and underscores.
+      When using names with spaces, wrap them in quotes (e.g., "My Account").
 `;
 }
