@@ -9,6 +9,7 @@ export const PROVIDER_NAMES = {
 	ANTHROPIC_COMPATIBLE: "anthropic-compatible",
 	OPENAI_COMPATIBLE: "openai-compatible",
 	NANOGPT: "nanogpt",
+	VERTEX_AI: "vertex-ai",
 } as const;
 
 export type ProviderName = (typeof PROVIDER_NAMES)[keyof typeof PROVIDER_NAMES];
@@ -79,6 +80,12 @@ export const PROVIDER_CONFIG: Record<ProviderName, ProviderConfig> = {
 		supportsUsageTracking: true, // NanoGPT supports subscription usage tracking via API
 		supportsOAuth: false, // NanoGPT uses API key authentication
 		defaultEndpoint: "https://nano-gpt.com/api", // Default, can be overridden via custom endpoint
+	},
+	[PROVIDER_NAMES.VERTEX_AI]: {
+		requiresSessionTracking: false, // Vertex AI is pay-as-you-go via Google Cloud billing
+		supportsUsageTracking: false, // Vertex AI doesn't have a usage tracking API
+		supportsOAuth: false, // Vertex AI uses Google Cloud authentication (not Anthropic OAuth)
+		defaultEndpoint: "https://aiplatform.googleapis.com",
 	},
 } as const satisfies Record<ProviderName, ProviderConfig>;
 
