@@ -39,7 +39,7 @@ export function checkReauthNeeded(dbOps: DatabaseOperations): void {
 
 	console.log("\n🔧 Re-authentication commands:");
 	needsReauth.forEach((account) => {
-		console.log(`  bun run cli --reauthenticate ${account.name}`);
+		console.log(`  bun run cli --reauthenticate "${account.name}"`);
 	});
 
 	console.log("\n💡 Or run the health check for detailed information:");

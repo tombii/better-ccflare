@@ -26,6 +26,8 @@ export function createOAuthInitHandler(dbOps: DatabaseOperations) {
 				minLength: 1,
 				maxLength: 100,
 				pattern: patterns.accountName,
+			patternErrorMessage:
+				"can only contain letters, numbers, spaces, hyphens, and underscores",
 			});
 
 			if (!name) {
