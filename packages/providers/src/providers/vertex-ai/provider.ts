@@ -176,4 +176,25 @@ export class VertexAIProvider extends BaseAnthropicCompatibleProvider {
 	supportsOAuth(): boolean {
 		return false;
 	}
+
+	/**
+	 * Override prepareHeaders to remove anthropic-beta header
+	 * Vertex AI doesn't support this header and will reject requests with it
+	 */
+	prepareHeaders(
+		headers: Headers,
+		accessToken?: string,
+		apiKey?: string,
+	): Headers {
+		// Call parent to get base headers with authorization
+		const preparedHeaders = super.prepareHeaders(headers, accessToken, apiKey);
+
+		// Remove anthropic-beta header if present (Vertex AI doesn't support it)
+		preparedHeaders.delete("anthropic-beta");
+
+		// Remove anthropic-version header if present (Vertex AI requires it in body, not header)
+		preparedHeaders.delete("anthropic-version");
+
+		return preparedHeaders;
+	}
 }
