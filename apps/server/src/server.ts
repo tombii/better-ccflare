@@ -129,6 +129,8 @@ let stopRetentionJob: (() => void) | null = null;
 let stopOAuthCleanupJob: (() => void) | null = null;
 let stopRateLimitCleanupJob: (() => void) | null = null;
 let autoRefreshScheduler: AutoRefreshScheduler | null = null;
+// Track usage polling retry timeouts for cleanup
+const usagePollingRetryTimeouts = new Map<string, NodeJS.Timeout>();
 
 // SSL/TLS configuration
 let tlsEnabled = false;
@@ -196,6 +198,8 @@ function startUsagePollingWithRefresh(
 	proxyContext: ProxyContext,
 ) {
 	const logger = new Logger("UsagePolling");
+	const MAX_RETRY_ATTEMPTS = 10;
+	let retryCount = 0;
 
 	// Initial polling with token refresh
 	const pollWithRefresh = async () => {
@@ -245,6 +249,15 @@ function startUsagePollingWithRefresh(
 				account.provider,
 				30000,
 			); // Poll every 30s
+
+			// Reset retry count on success
+			retryCount = 0;
+			// Clear any tracked timeout since we succeeded
+			const existingTimeout = usagePollingRetryTimeouts.get(account.id);
+			if (existingTimeout) {
+				clearTimeout(existingTimeout);
+				usagePollingRetryTimeouts.delete(account.id);
+			}
 		} catch (error) {
 			logger.error(
 				`Error starting usage polling for account ${account.name}:`,
@@ -296,15 +309,44 @@ function startUsagePollingWithRefresh(
 					);
 				}
 			}
+
+			// Clear any existing retry timeout before scheduling a new one
+			const existingTimeout = usagePollingRetryTimeouts.get(account.id);
+			if (existingTimeout) {
+				clearTimeout(existingTimeout);
+				usagePollingRetryTimeouts.delete(account.id);
+			}
+
+			// Check if we've exceeded max retry attempts
+			retryCount++;
+			if (retryCount >= MAX_RETRY_ATTEMPTS) {
+				logger.error(
+					`Max retry attempts (${MAX_RETRY_ATTEMPTS}) reached for account ${account.name}. Please check the account configuration and try restarting the server after resolving issues.`,
+				);
+				return;
+			}
+
 			// Don't restore paused state on error - let the user control pause/resume via API
-			// Retry in 5 minutes if there was an error
-			setTimeout(
-				() => {
-					logger.info(`Retrying usage polling for account ${account.name}`);
-					pollWithRefresh();
-				},
-				5 * 60 * 1000,
+			// Retry with exponential backoff (5 min, 10 min, 20 min, ...)
+			const baseDelayMs = 5 * 60 * 1000; // 5 minutes
+			const delayMs = Math.min(
+				baseDelayMs * 2 ** (retryCount - 1),
+				60 * 60 * 1000, // Cap at 1 hour
 			);
+			logger.info(
+				`Scheduling retry ${retryCount}/${MAX_RETRY_ATTEMPTS} for account ${account.name} in ${Math.round(delayMs / 1000 / 60)} minutes`,
+			);
+
+			const timeoutId = setTimeout(() => {
+				logger.info(
+					`Retrying usage polling for account ${account.name} (attempt ${retryCount}/${MAX_RETRY_ATTEMPTS})`,
+				);
+				usagePollingRetryTimeouts.delete(account.id);
+				pollWithRefresh();
+			}, delayMs);
+
+			// Track the timeout for cleanup
+			usagePollingRetryTimeouts.set(account.id, timeoutId);
 		}
 	};
 
@@ -816,6 +858,20 @@ async function handleGracefulShutdown(signal: string) {
 
 		// Stop token health monitoring
 		stopGlobalTokenHealthChecks();
+
+		// Clear all pending usage polling retry timeouts
+		if (usagePollingRetryTimeouts.size > 0) {
+			console.log(
+				`Clearing ${usagePollingRetryTimeouts.size} pending usage polling retry timeout(s)...`,
+			);
+			for (const [
+				_accountId,
+				timeoutId,
+			] of usagePollingRetryTimeouts.entries()) {
+				clearTimeout(timeoutId);
+			}
+			usagePollingRetryTimeouts.clear();
+		}
 
 		usageCache.clear(); // Stop all usage polling
 		terminateUsageWorker();
