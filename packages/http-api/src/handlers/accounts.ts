@@ -370,8 +370,8 @@ export function createAccountAddHandler(
 				minLength: 1,
 				maxLength: 100,
 				pattern: patterns.accountName,
-			patternErrorMessage:
-				"can only contain letters, numbers, spaces, hyphens, and underscores",
+				patternErrorMessage:
+					"can only contain letters, numbers, spaces, hyphens, and underscores",
 				transform: sanitizers.trim,
 			});
 
@@ -618,8 +618,8 @@ export function createAccountRenameHandler(dbOps: DatabaseOperations) {
 				minLength: 1,
 				maxLength: 100,
 				pattern: patterns.accountName,
-			patternErrorMessage:
-				"can only contain letters, numbers, spaces, hyphens, and underscores",
+				patternErrorMessage:
+					"can only contain letters, numbers, spaces, hyphens, and underscores",
 				transform: sanitizers.trim,
 			});
 
@@ -683,8 +683,8 @@ export function createZaiAccountAddHandler(dbOps: DatabaseOperations) {
 				minLength: 1,
 				maxLength: 100,
 				pattern: patterns.accountName,
-			patternErrorMessage:
-				"can only contain letters, numbers, spaces, hyphens, and underscores",
+				patternErrorMessage:
+					"can only contain letters, numbers, spaces, hyphens, and underscores",
 				transform: sanitizers.trim,
 			});
 
@@ -840,8 +840,8 @@ export function createOpenAIAccountAddHandler(dbOps: DatabaseOperations) {
 				minLength: 1,
 				maxLength: 100,
 				pattern: patterns.accountName,
-			patternErrorMessage:
-				"can only contain letters, numbers, spaces, hyphens, and underscores",
+				patternErrorMessage:
+					"can only contain letters, numbers, spaces, hyphens, and underscores",
 				transform: sanitizers.trim,
 			});
 
@@ -1006,8 +1006,8 @@ export function createVertexAIAccountAddHandler(dbOps: DatabaseOperations) {
 				minLength: 1,
 				maxLength: 100,
 				pattern: patterns.accountName,
-			patternErrorMessage:
-				"can only contain letters, numbers, spaces, hyphens, and underscores",
+				patternErrorMessage:
+					"can only contain letters, numbers, spaces, hyphens, and underscores",
 				transform: sanitizers.trim,
 			});
 
@@ -1147,8 +1147,8 @@ export function createMinimaxAccountAddHandler(dbOps: DatabaseOperations) {
 				minLength: 1,
 				maxLength: 100,
 				pattern: patterns.accountName,
-			patternErrorMessage:
-				"can only contain letters, numbers, spaces, hyphens, and underscores",
+				patternErrorMessage:
+					"can only contain letters, numbers, spaces, hyphens, and underscores",
 				transform: sanitizers.trim,
 			});
 
@@ -1281,8 +1281,8 @@ export function createNanoGPTAccountAddHandler(dbOps: DatabaseOperations) {
 				minLength: 1,
 				maxLength: 100,
 				pattern: patterns.accountName,
-			patternErrorMessage:
-				"can only contain letters, numbers, spaces, hyphens, and underscores",
+				patternErrorMessage:
+					"can only contain letters, numbers, spaces, hyphens, and underscores",
 				transform: sanitizers.trim,
 			});
 			if (!name) {
@@ -1454,8 +1454,8 @@ export function createAnthropicCompatibleAccountAddHandler(
 				minLength: 1,
 				maxLength: 100,
 				pattern: patterns.accountName,
-			patternErrorMessage:
-				"can only contain letters, numbers, spaces, hyphens, and underscores",
+				patternErrorMessage:
+					"can only contain letters, numbers, spaces, hyphens, and underscores",
 				transform: sanitizers.trim,
 			});
 
