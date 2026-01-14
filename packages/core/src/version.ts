@@ -3,7 +3,7 @@
  */
 
 // Claude CLI version to use in user-agent headers and as fallback
-export const CLAUDE_CLI_VERSION = "2.1.1";
+export const CLAUDE_CLI_VERSION = "3.1.0-beta.5";
 
 // Cache the version to avoid repeated file reads
 let cachedVersion: string | null = null;
@@ -44,7 +44,7 @@ export async function getVersion(): Promise<string> {
 		// 4. Try development environment - reading from apps/cli/package.json
 		try {
 			const packageJsonPath = new URL(
-				"../../apps/cli/package.json",
+				"../../../apps/cli/package.json",
 				import.meta.url,
 			);
 			const packageJson = await fetch(packageJsonPath);
@@ -59,7 +59,7 @@ export async function getVersion(): Promise<string> {
 
 		// 5. Try reading from root package.json
 		try {
-			const packageJsonPath = new URL("../../package.json", import.meta.url);
+			const packageJsonPath = new URL("../../../package.json", import.meta.url);
 			const packageJson = await fetch(packageJsonPath);
 			const pkg = (await packageJson.json()) as { version?: string };
 			if (pkg.version) {
