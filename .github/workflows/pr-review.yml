@@ -66,7 +66,7 @@ jobs:
           LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
           LLM_URL: ${{ secrets.LLM_URL }}
           # Comma-separated list of models to try in order (fallback support)
-          AI_MODELS: "glm-4.7,qwen3-coder-plus,glm-4.5-air"
+          AI_MODELS: "claude-sonnet-4.5,glm-4.7,qwen3-coder-plus,glm-4.5-air"
           AI_TEMPERATURE: "0.2"
           AI_MAX_TOKENS: "8000"
           MAX_DIFF_SIZE: "600000"
