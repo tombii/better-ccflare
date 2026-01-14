@@ -32,10 +32,11 @@ Always run: `bun run lint && bun run typecheck && bun run format`
 - Skip version bump: Add `[skip-version]` or `[no-version]` to commit message
 
 ## Version Updates
-When bumping version, update in all three files:
+When bumping better-ccflare version, update in both files:
 - `package.json` (root)
 - `apps/cli/package.json`
-- `packages/core/src/version.ts` (CLAUDE_CLI_VERSION constant)
+
+Note: `CLAUDE_CLI_VERSION` in `packages/core/src/version.ts` tracks the official Claude Code CLI version and is auto-updated by the pre-push hook from npm registry.
 
 ## Commands
 
