@@ -88,7 +88,7 @@ fi
 # Set defaults if not provided, then validate and sanitize
 if [[ -z "${AI_MODELS:-}" ]]; then
     echo "Warning: AI_MODELS is not set, using default models"
-    export AI_MODELS="minimax-m2,qwen3-coder-plus,glm-4.6,glm-4.5-air"
+    export AI_MODELS="glm-4.7,qwen3-coder-plus,glm-4.5-air"
 fi
 
 if [[ -z "${AI_TEMPERATURE:-}" ]]; then
