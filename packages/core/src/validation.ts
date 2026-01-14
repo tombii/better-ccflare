@@ -14,6 +14,7 @@ export function validateString(
 		minLength?: number;
 		maxLength?: number;
 		pattern?: RegExp;
+		patternErrorMessage?: string;
 		allowedValues?: readonly string[];
 		transform?: (value: string) => string;
 	} = {},
@@ -53,7 +54,10 @@ export function validateString(
 
 	// Validate pattern
 	if (options.pattern && !options.pattern.test(sanitized)) {
-		throw new ValidationError(`${field} has an invalid format`, field, value);
+		const errorMessage = options.patternErrorMessage
+			? `${field} ${options.patternErrorMessage}`
+			: `${field} has an invalid format`;
+		throw new ValidationError(errorMessage, field, value);
 	}
 
 	// Validate allowed values
@@ -327,9 +331,9 @@ export const patterns = {
 	uuid: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
 	alphanumeric: /^[a-zA-Z0-9]+$/,
 	alphanumericWithSpaces: /^[a-zA-Z0-9\s]+$/,
-	// Account name: alphanumeric with hyphens and underscores only (safe for shell commands)
-	// Removed spaces, @, ., + to prevent command injection in CLI suggestions
-	accountName: /^[a-zA-Z0-9\-_]+$/,
+	// Account name: alphanumeric with spaces, hyphens, and underscores
+	// Spaces are allowed for better UX - CLI command suggestions will quote names properly
+	accountName: /^[a-zA-Z0-9\s\-_]+$/,
 	// Path pattern for API endpoints
 	apiPath: /^\/v1\/[a-zA-Z0-9\-_/]*$/,
 	// URL pattern
