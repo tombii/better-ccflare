@@ -172,6 +172,14 @@ export async function handleProxy(
 	url: URL,
 	ctx: ProxyContext,
 ): Promise<Response> {
+	// 0. Silently ignore telemetry endpoints (non-critical, not supported by all providers)
+	if (url.pathname === "/api/event_logging/batch") {
+		return new Response(JSON.stringify({ success: true }), {
+			status: 200,
+			headers: { "Content-Type": "application/json" },
+		});
+	}
+
 	// 1. Track client version from user-agent for use in auto-refresh
 	trackClientVersion(req.headers.get("user-agent"));
 

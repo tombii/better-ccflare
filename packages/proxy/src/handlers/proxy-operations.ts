@@ -112,15 +112,8 @@ export async function proxyWithAccount(
 		// Get the provider for this account
 		const provider = getProvider(account.provider) || ctx.provider;
 
-		// Check if provider can handle this path
-		if (!provider.canHandle(url.pathname)) {
-			// Silently skip for telemetry endpoints (not critical)
-			if (url.pathname === "/api/event_logging/batch") {
-				return null;
-			}
-			// For other paths, validate and throw error
-			validateProviderPath(provider, url.pathname);
-		}
+		// Validate that the account-specific provider can handle this path
+		validateProviderPath(provider, url.pathname);
 
 		// Get valid access token
 		const accessToken = await getValidAccessToken(account, ctx);
