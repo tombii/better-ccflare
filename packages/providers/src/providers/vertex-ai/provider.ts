@@ -3,6 +3,7 @@ import { Logger } from "@better-ccflare/logger";
 import type { Account } from "@better-ccflare/types";
 import { GoogleAuth } from "google-auth-library";
 import type { TokenRefreshResult } from "../../types";
+import { getModelName } from "../../utils/model-mapping";
 import {
 	type AnthropicCompatibleConfig,
 	BaseAnthropicCompatibleProvider,
@@ -14,6 +15,28 @@ const log = new Logger("VertexAIProvider");
 export interface VertexAIConfig {
 	projectId: string;
 	region: string;
+}
+
+/**
+ * Convert Anthropic model format to Vertex AI format
+ * Anthropic: claude-haiku-4-5-20251001
+ * Vertex AI: claude-haiku-4-5@20251001
+ *
+ * @param anthropicModel - Model name in Anthropic format
+ * @returns Model name in Vertex AI format (with @ before date)
+ */
+function convertToVertexAIModel(anthropicModel: string): string {
+	// Match pattern: claude-{family}-{version}-{date}
+	// Replace the last hyphen before the 8-digit date with @
+	const vertexModel = anthropicModel.replace(/-(\d{8})$/, "@$1");
+
+	if (vertexModel !== anthropicModel) {
+		log.debug(
+			`Converted Anthropic model to Vertex AI format: ${anthropicModel} -> ${vertexModel}`,
+		);
+	}
+
+	return vertexModel;
 }
 
 export class VertexAIProvider extends BaseAnthropicCompatibleProvider {
@@ -115,6 +138,7 @@ export class VertexAIProvider extends BaseAnthropicCompatibleProvider {
 		const config = this.parseVertexConfig(account);
 
 		// Get model from temporary storage (set in transformRequestBody)
+		// Fallback to sonnet in Vertex AI format if not set
 		const model =
 			(account as Account & { _vertexModel?: string })._vertexModel ||
 			"claude-sonnet-4-5@20250929";
@@ -136,8 +160,11 @@ export class VertexAIProvider extends BaseAnthropicCompatibleProvider {
 
 	/**
 	 * Transform request body for Vertex AI:
-	 * 1. Extract model from body (it goes in URL instead)
-	 * 2. Add anthropic_version field to body
+	 * 1. Extract original model from body (for history tracking)
+	 * 2. Apply custom model mappings if configured
+	 * 3. Convert to Vertex AI format (claude-*-YYYYMMDD -> claude-*@YYYYMMDD)
+	 * 4. Remove model from body (it goes in URL instead)
+	 * 5. Add anthropic_version field to body
 	 */
 	async transformRequestBody(
 		request: Request,
@@ -146,17 +173,38 @@ export class VertexAIProvider extends BaseAnthropicCompatibleProvider {
 		try {
 			const body = await request.json();
 
-			// Extract and remove model from body
-			const model = body.model;
+			// Extract original model (for history tracking)
+			const originalModel = body.model || "claude-sonnet-4-5-20250929";
+
+			// Apply custom model mappings if configured
+			let transformedModel = originalModel;
+			if (account?.model_mappings) {
+				transformedModel = getModelName(originalModel, account);
+			}
+
+			// Convert to Vertex AI format (e.g., claude-haiku-4-5-20251001 -> claude-haiku-4-5@20251001)
+			const vertexModel = convertToVertexAIModel(transformedModel);
+
+			// Remove model from body (Vertex AI requires it in URL, not body)
 			delete body.model;
 
 			// Add Vertex-specific version field (must be in body, not header)
 			body.anthropic_version = "vertex-2023-10-16";
 
-			// Temporarily store model for buildUrl
-			// This is a workaround since buildUrl is called after transformRequestBody
-			if (account && model) {
-				(account as Account & { _vertexModel?: string })._vertexModel = model;
+			// Store models for buildUrl and history tracking
+			if (account) {
+				(
+					account as Account & {
+						_vertexModel?: string;
+						_originalModel?: string;
+					}
+				)._vertexModel = vertexModel;
+				(
+					account as Account & {
+						_vertexModel?: string;
+						_originalModel?: string;
+					}
+				)._originalModel = originalModel;
 			}
 
 			return new Request(request.url, {
@@ -167,6 +215,58 @@ export class VertexAIProvider extends BaseAnthropicCompatibleProvider {
 		} catch (error) {
 			log.error("Failed to transform request body for Vertex AI:", error);
 			throw error;
+		}
+	}
+
+	/**
+	 * Override processResponse to restore original model name in response
+	 * This ensures history records the Anthropic model format, not Vertex AI format
+	 */
+	async processResponse(
+		response: Response,
+		account: Account | null,
+	): Promise<Response> {
+		const originalModel = (account as Account & { _originalModel?: string })
+			?._originalModel;
+
+		// If no original model stored, return response as-is
+		if (!originalModel) {
+			return super.processResponse(response, account);
+		}
+
+		try {
+			// Clone response to read body
+			const clonedResponse = response.clone();
+			const contentType = response.headers.get("content-type") || "";
+
+			// Only process JSON responses
+			if (!contentType.includes("application/json")) {
+				return super.processResponse(response, account);
+			}
+
+			const text = await clonedResponse.text();
+			const data = JSON.parse(text);
+
+			// Replace Vertex AI model format with original Anthropic format
+			if (data.model) {
+				data.model = originalModel;
+				log.debug(
+					`Restored original model in response: ${data.model} (was Vertex format)`,
+				);
+			}
+
+			// Create new response with updated body
+			const newResponse = new Response(JSON.stringify(data), {
+				status: response.status,
+				statusText: response.statusText,
+				headers: response.headers,
+			});
+
+			return super.processResponse(newResponse, account);
+		} catch (error) {
+			// If anything fails, return original response
+			log.debug("Failed to restore original model in response:", error);
+			return super.processResponse(response, account);
 		}
 	}
 
