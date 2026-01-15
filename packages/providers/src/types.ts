@@ -32,6 +32,17 @@ export interface Provider {
 	buildUrl(path: string, query: string, account?: Account): string;
 
 	/**
+	 * Optional: Pre-process the request before building URL
+	 * This allows providers to extract information from the request body
+	 * before buildUrl is called (e.g., for including model in URL path)
+	 */
+	prepareRequest?(
+		request: Request,
+		requestBodyBuffer: ArrayBuffer | null,
+		account: Account,
+	): void;
+
+	/**
 	 * Prepare headers for the provider request
 	 * @param headers - Original request headers
 	 * @param accessToken - OAuth access token (for Bearer authentication)
