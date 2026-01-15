@@ -337,16 +337,10 @@ export class VertexAIProvider extends BaseAnthropicCompatibleProvider {
 	}
 
 	/**
-	 * Override canHandle to block unsupported endpoints
-	 * Vertex AI only supports Anthropic API endpoints, not telemetry endpoints
+	 * Vertex AI supports all Anthropic API endpoints
+	 * Telemetry endpoints are handled globally by the proxy
 	 */
-	canHandle(path: string): boolean {
-		// Block Claude Code internal telemetry endpoint
-		// This endpoint doesn't exist on Vertex AI and causes "messages: Field required" errors
-		if (path === "/api/event_logging/batch") {
-			return false;
-		}
-		// Allow all other paths (v1/messages, v1/complete, etc.)
+	canHandle(_path: string): boolean {
 		return true;
 	}
 
