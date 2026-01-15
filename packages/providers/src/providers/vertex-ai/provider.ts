@@ -127,8 +127,69 @@ export class VertexAIProvider extends BaseAnthropicCompatibleProvider {
 	}
 
 	/**
+	 * Pre-process request to extract model information
+	 * This is called before buildUrl to ensure the model is available
+	 */
+	prepareRequest(
+		_request: Request,
+		requestBodyBuffer: ArrayBuffer | null,
+		account: Account,
+	): void {
+		try {
+			if (!requestBodyBuffer) {
+				console.log("[Vertex AI] No request body, using fallback model");
+				return;
+			}
+
+			// Extract model from request body
+			const bodyText = new TextDecoder().decode(requestBodyBuffer);
+			const body = JSON.parse(bodyText);
+			const originalModel = body.model || "claude-sonnet-4-5-20250929";
+
+			console.log(
+				`[Vertex AI] prepareRequest - extracted model: ${originalModel}`,
+			);
+
+			// Apply custom model mappings if configured
+			let transformedModel = originalModel;
+			if (account?.model_mappings) {
+				transformedModel = getModelName(originalModel, account);
+				console.log(
+					`[Vertex AI] prepareRequest - after mapping: ${transformedModel}`,
+				);
+			}
+
+			// Convert to Vertex AI format
+			const vertexModel = convertToVertexAIModel(transformedModel);
+			console.log(`[Vertex AI] prepareRequest - Vertex format: ${vertexModel}`);
+
+			// Store models in account for buildUrl to use
+			(
+				account as Account & {
+					_vertexModel?: string;
+					_originalModel?: string;
+				}
+			)._vertexModel = vertexModel;
+			(
+				account as Account & {
+					_vertexModel?: string;
+					_originalModel?: string;
+				}
+			)._originalModel = originalModel;
+		} catch (error) {
+			console.log(
+				"[Vertex AI] prepareRequest - failed to extract model:",
+				error,
+			);
+		}
+	}
+
+	/**
 	 * Build Vertex AI URL with model in path
 	 * Format: https://{region}-aiplatform.googleapis.com/v1/projects/{projectId}/locations/{region}/publishers/anthropic/models/{model}:streamRawPredict
+	 *
+	 * Note: buildUrl is called BEFORE transformRequestBody in the proxy flow,
+	 * so we use a cached model from the account object (set by transformRequestBody on previous calls)
 	 */
 	buildUrl(path: string, query: string, account?: Account): string {
 		if (!account) {
@@ -143,9 +204,7 @@ export class VertexAIProvider extends BaseAnthropicCompatibleProvider {
 			(account as Account & { _vertexModel?: string })._vertexModel ||
 			"claude-sonnet-4-5@20250929";
 
-		console.log(
-			`[Vertex AI] Building URL with model: ${model}`,
-		);
+		console.log(`[Vertex AI] buildUrl called - using model: ${model}`);
 
 		// Determine if streaming based on path
 		const isStreaming =
@@ -161,47 +220,27 @@ export class VertexAIProvider extends BaseAnthropicCompatibleProvider {
 		// Build full Vertex AI URL with model in path
 		const fullUrl = `${baseUrl}/v1/projects/${config.projectId}/locations/${config.region}/publishers/anthropic/models/${model}:${specifier}`;
 
-		console.log(
-			`[Vertex AI] Full Vertex AI URL: ${fullUrl}`,
-		);
+		console.log(`[Vertex AI] Full Vertex AI URL: ${fullUrl}`);
 
 		return fullUrl;
 	}
 
 	/**
 	 * Transform request body for Vertex AI:
-	 * 1. Extract original model from body (for history tracking)
-	 * 2. Apply custom model mappings if configured
-	 * 3. Convert to Vertex AI format (claude-*-YYYYMMDD -> claude-*@YYYYMMDD)
-	 * 4. Remove model from body (it goes in URL instead)
-	 * 5. Add anthropic_version field to body
+	 * 1. Remove model from body (it goes in URL instead, already extracted by prepareRequest)
+	 * 2. Add anthropic_version field to body
+	 *
+	 * Note: prepareRequest is called before this to extract and store the model
 	 */
 	async transformRequestBody(
 		request: Request,
-		account?: Account,
+		_account?: Account,
 	): Promise<Request> {
 		try {
 			const body = await request.json();
 
-			// Extract original model (for history tracking)
-			const originalModel = body.model || "claude-sonnet-4-5-20250929";
 			console.log(
-				`[Vertex AI] Original model from request: ${originalModel}`,
-			);
-
-			// Apply custom model mappings if configured
-			let transformedModel = originalModel;
-			if (account?.model_mappings) {
-				transformedModel = getModelName(originalModel, account);
-				console.log(
-					`[Vertex AI] After model mapping: ${transformedModel}`,
-				);
-			}
-
-			// Convert to Vertex AI format (e.g., claude-haiku-4-5-20251001 -> claude-haiku-4-5@20251001)
-			const vertexModel = convertToVertexAIModel(transformedModel);
-			console.log(
-				`[Vertex AI] Converted to Vertex format: ${vertexModel}`,
+				`[Vertex AI] transformRequestBody - removing model from body`,
 			);
 
 			// Remove model from body (Vertex AI requires it in URL, not body)
@@ -209,22 +248,6 @@ export class VertexAIProvider extends BaseAnthropicCompatibleProvider {
 
 			// Add Vertex-specific version field (must be in body, not header)
 			body.anthropic_version = "vertex-2023-10-16";
-
-			// Store models for buildUrl and history tracking
-			if (account) {
-				(
-					account as Account & {
-						_vertexModel?: string;
-						_originalModel?: string;
-					}
-				)._vertexModel = vertexModel;
-				(
-					account as Account & {
-						_vertexModel?: string;
-						_originalModel?: string;
-					}
-				)._originalModel = originalModel;
-			}
 
 			return new Request(request.url, {
 				method: request.method,
@@ -278,9 +301,7 @@ export class VertexAIProvider extends BaseAnthropicCompatibleProvider {
 			const text = await clonedResponse.text();
 			const data = JSON.parse(text);
 
-			console.log(
-				`[Vertex AI] Response model from Vertex AI: ${data.model}`,
-			);
+			console.log(`[Vertex AI] Response model from Vertex AI: ${data.model}`);
 
 			// Replace Vertex AI model format with original Anthropic format
 			if (data.model) {

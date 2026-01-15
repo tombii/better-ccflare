@@ -118,6 +118,11 @@ export async function proxyWithAccount(
 		// Get valid access token
 		const accessToken = await getValidAccessToken(account, ctx);
 
+		// Pre-process request if provider supports it (e.g., to extract model for URL)
+		if (provider.prepareRequest) {
+			provider.prepareRequest(req, requestBodyBuffer, account);
+		}
+
 		// Prepare request using account-specific provider
 		const headers = provider.prepareHeaders(
 			req.headers,
