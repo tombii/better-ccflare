@@ -32,7 +32,16 @@ function filterThinkingBlocks(
 
 		let hasChanges = false;
 
-		// Filter out thinking blocks from message content and track which messages become empty
+		// Find the index of the last assistant message
+		let lastAssistantIndex = -1;
+		for (let i = body.messages.length - 1; i >= 0; i--) {
+			if (body.messages[i].role === "assistant") {
+				lastAssistantIndex = i;
+				break;
+			}
+		}
+
+		// Filter out thinking blocks from message content and track which messages were modified
 		const processedMessages = body.messages.map(
 			(
 				msg: {
@@ -43,8 +52,13 @@ function filterThinkingBlocks(
 			) => {
 				// Only process assistant messages with array content
 				if (msg.role !== "assistant" || !Array.isArray(msg.content)) {
-					return { msg, isEmpty: false, index };
+					return { msg, isEmpty: false, hadThinking: false, index };
 				}
+
+				// Check if this message has thinking blocks
+				const hadThinkingBlock = msg.content.some(
+					(block: { type: string }) => block.type === "thinking",
+				);
 
 				// Filter out thinking blocks
 				const filteredContent = msg.content.filter(
@@ -70,12 +84,14 @@ function filterThinkingBlocks(
 						content: filteredContent.length > 0 ? filteredContent : msg.content,
 					},
 					isEmpty,
+					hadThinking: hadThinkingBlock,
 					index,
 				};
 			},
 		);
 
-		// Remove empty assistant messages (especially important for the last message when thinking is enabled)
+		// When thinking is enabled, if we filtered thinking from the last assistant message,
+		// we must remove it entirely (Claude requires last assistant message to start with thinking)
 		const filteredMessages = processedMessages
 			.filter(
 				(item: {
@@ -84,8 +100,23 @@ function filterThinkingBlocks(
 						content: string | Array<{ type: string; [key: string]: unknown }>;
 					};
 					isEmpty: boolean;
+					hadThinking: boolean;
 					index: number;
-				}) => !item.isEmpty,
+				}) => {
+					// Remove empty messages
+					if (item.isEmpty) return false;
+
+					// If this is the last assistant message and we removed its thinking block,
+					// remove the entire message (thinking mode requires last assistant to start with thinking)
+					if (item.index === lastAssistantIndex && item.hadThinking) {
+						log.info(
+							"Removing last assistant message that had thinking blocks filtered (required when thinking is enabled)",
+						);
+						return false;
+					}
+
+					return true;
+				},
 			)
 			.map(
 				(item: {
@@ -94,6 +125,7 @@ function filterThinkingBlocks(
 						content: string | Array<{ type: string; [key: string]: unknown }>;
 					};
 					isEmpty: boolean;
+					hadThinking: boolean;
 					index: number;
 				}) => item.msg,
 			);
