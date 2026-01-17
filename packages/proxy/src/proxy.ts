@@ -172,8 +172,11 @@ export async function handleProxy(
 	url: URL,
 	ctx: ProxyContext,
 ): Promise<Response> {
-	// 0. Silently ignore telemetry endpoints (non-critical, not supported by all providers)
-	if (url.pathname === "/api/event_logging/batch") {
+	// 0. Silently ignore Claude Code internal endpoints (non-critical, not supported by all providers)
+	if (
+		url.pathname === "/api/event_logging/batch" ||
+		url.pathname === "/api/system/package-manager"
+	) {
 		return new Response(JSON.stringify({ success: true }), {
 			status: 200,
 			headers: { "Content-Type": "application/json" },
