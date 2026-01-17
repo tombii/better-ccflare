@@ -11,6 +11,152 @@ import { getValidAccessToken } from "./token-manager";
 const log = new Logger("ProxyOperations");
 
 /**
+ * Filters thinking blocks from request body
+ * Used when Claude rejects thinking blocks with invalid signatures from other providers
+ * @param requestBodyBuffer - The original request body buffer
+ * @returns New buffer with thinking blocks filtered out, or null if filtering fails
+ */
+function filterThinkingBlocks(
+	requestBodyBuffer: ArrayBuffer | null,
+): ArrayBuffer | null {
+	if (!requestBodyBuffer) return null;
+
+	try {
+		const bodyText = new TextDecoder().decode(requestBodyBuffer);
+		const body = JSON.parse(bodyText);
+
+		// Only process if there are messages
+		if (!body.messages || !Array.isArray(body.messages)) {
+			return requestBodyBuffer;
+		}
+
+		let hasChanges = false;
+
+		// Filter out thinking blocks from message content and track which messages become empty
+		const processedMessages = body.messages.map(
+			(
+				msg: {
+					role: string;
+					content: string | Array<{ type: string; [key: string]: unknown }>;
+				},
+				index: number,
+			) => {
+				// Only process assistant messages with array content
+				if (msg.role !== "assistant" || !Array.isArray(msg.content)) {
+					return { msg, isEmpty: false, index };
+				}
+
+				// Filter out thinking blocks
+				const filteredContent = msg.content.filter(
+					(block: { type: string; [key: string]: unknown }) => {
+						if (block.type === "thinking") {
+							hasChanges = true;
+							return false;
+						}
+						return true;
+					},
+				);
+
+				// Check if message is now effectively empty
+				const isEmpty =
+					filteredContent.length === 0 ||
+					(filteredContent.length === 1 &&
+						filteredContent[0].type === "text" &&
+						(!filteredContent[0].text || filteredContent[0].text === ""));
+
+				return {
+					msg: {
+						...msg,
+						content: filteredContent.length > 0 ? filteredContent : msg.content,
+					},
+					isEmpty,
+					index,
+				};
+			},
+		);
+
+		// Remove empty assistant messages (especially important for the last message when thinking is enabled)
+		const filteredMessages = processedMessages
+			.filter(
+				(item: {
+					msg: {
+						role: string;
+						content: string | Array<{ type: string; [key: string]: unknown }>;
+					};
+					isEmpty: boolean;
+					index: number;
+				}) => !item.isEmpty,
+			)
+			.map(
+				(item: {
+					msg: {
+						role: string;
+						content: string | Array<{ type: string; [key: string]: unknown }>;
+					};
+					isEmpty: boolean;
+					index: number;
+				}) => item.msg,
+			);
+
+		// Only create new buffer if we made changes
+		if (hasChanges) {
+			log.info(
+				"Filtered thinking blocks from request due to invalid signature error",
+			);
+			const filteredBody = { ...body, messages: filteredMessages };
+			const filteredText = JSON.stringify(filteredBody);
+			return new TextEncoder().encode(filteredText).buffer;
+		}
+
+		return requestBodyBuffer;
+	} catch (error) {
+		log.warn("Failed to filter thinking blocks:", error);
+		return null;
+	}
+}
+
+/**
+ * Checks if a response error is due to invalid thinking block signatures or thinking-related errors
+ * @param response - The response to check
+ * @returns True if the error is about invalid thinking blocks
+ */
+async function isInvalidThinkingSignatureError(
+	response: Response,
+): Promise<boolean> {
+	if (response.status !== 400) return false;
+
+	try {
+		const clone = response.clone();
+		const contentType = response.headers.get("content-type");
+
+		if (!contentType?.includes("application/json")) return false;
+
+		const json = await clone.json();
+
+		// Check for Claude's thinking-related errors
+		if (json.error?.message && typeof json.error.message === "string") {
+			const message = json.error.message;
+			// Check for invalid signature error
+			if (message.includes("Invalid `signature` in `thinking` block")) {
+				return true;
+			}
+			// Check for final message must start with thinking block error
+			if (
+				message.includes(
+					"final `assistant` message must start with a thinking block",
+				)
+			) {
+				return true;
+			}
+		}
+	} catch {
+		// Ignore parse errors
+	}
+
+	return false;
+}
+
+/**
  * Handles proxy request without authentication
  * @param req - The incoming request
  * @param url - The parsed URL
@@ -147,7 +293,45 @@ export async function proxyWithAccount(
 			: providerRequest;
 
 		// Make the request
-		const rawResponse = await makeProxyRequest(transformedRequest);
+		let rawResponse = await makeProxyRequest(transformedRequest);
+
+		// Check if this is a Claude provider and we got an invalid thinking signature error
+		const isClaudeProvider =
+			provider.name === "anthropic" || account.provider === "claude-oauth";
+		if (
+			isClaudeProvider &&
+			(await isInvalidThinkingSignatureError(rawResponse))
+		) {
+			log.info(
+				`Detected invalid thinking block signature error for account ${account.name}, retrying with thinking blocks filtered`,
+			);
+
+			// Filter thinking blocks from the request body
+			const filteredBodyBuffer = filterThinkingBlocks(requestBodyBuffer);
+
+			if (filteredBodyBuffer && filteredBodyBuffer !== requestBodyBuffer) {
+				// Retry the request with filtered body
+				const retryRequestInit: RequestInit & { duplex?: "half" } = {
+					method: req.method,
+					headers,
+					body: new Uint8Array(filteredBodyBuffer),
+					duplex: "half",
+				};
+
+				const retryProviderRequest = new Request(targetUrl, retryRequestInit);
+
+				const retryTransformedRequest = provider.transformRequestBody
+					? await provider.transformRequestBody(retryProviderRequest, account)
+					: retryProviderRequest;
+
+				// Make the retry request
+				rawResponse = await makeProxyRequest(retryTransformedRequest);
+			} else {
+				log.warn(
+					"Failed to filter thinking blocks or no changes made, proceeding with original error response",
+				);
+			}
+		}
 
 		// Process response (transform format, sanitize headers, etc.) using account-specific provider
 		const response = await provider.processResponse(rawResponse, account);
