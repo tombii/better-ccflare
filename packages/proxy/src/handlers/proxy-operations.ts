@@ -121,9 +121,11 @@ function filterThinkingBlocks(
 
 		// Only create new buffer if we made changes
 		if (hasChanges) {
-			log.info(
-				"Filtered thinking blocks from request due to invalid signature error - disabling thinking mode",
-			);
+			const warningMessage =
+				"Disabled thinking mode due to incompatible thinking blocks from previous provider. Conversation context preserved.";
+			log.info(warningMessage);
+			console.log(`[better-ccflare] ${warningMessage}`);
+
 			const filteredBody = {
 				...body,
 				messages: filteredMessages,
