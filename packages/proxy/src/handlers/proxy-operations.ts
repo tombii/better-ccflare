@@ -90,8 +90,7 @@ function filterThinkingBlocks(
 			},
 		);
 
-		// When thinking is enabled, if we filtered thinking from the last assistant message,
-		// we must remove it entirely (Claude requires last assistant message to start with thinking)
+		// Just filter out thinking blocks and keep all messages
 		const filteredMessages = processedMessages
 			.filter(
 				(item: {
@@ -105,16 +104,6 @@ function filterThinkingBlocks(
 				}) => {
 					// Remove empty messages
 					if (item.isEmpty) return false;
-
-					// If this is the last assistant message and we removed its thinking block,
-					// remove the entire message (thinking mode requires last assistant to start with thinking)
-					if (item.index === lastAssistantIndex && item.hadThinking) {
-						log.info(
-							"Removing last assistant message that had thinking blocks filtered (required when thinking is enabled)",
-						);
-						return false;
-					}
-
 					return true;
 				},
 			)
@@ -133,9 +122,15 @@ function filterThinkingBlocks(
 		// Only create new buffer if we made changes
 		if (hasChanges) {
 			log.info(
-				"Filtered thinking blocks from request due to invalid signature error",
+				"Filtered thinking blocks from request due to invalid signature error - disabling thinking mode",
 			);
-			const filteredBody = { ...body, messages: filteredMessages };
+			const filteredBody = {
+				...body,
+				messages: filteredMessages,
+				// Disable thinking mode since we removed thinking blocks
+				// This prevents Claude from requiring the final message to start with thinking
+				thinking: undefined,
+			};
 			const filteredText = JSON.stringify(filteredBody);
 			return new TextEncoder().encode(filteredText).buffer;
 		}
