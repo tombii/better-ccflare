@@ -33,10 +33,10 @@ function filterThinkingBlocks(
 		let hasChanges = false;
 
 		// Find the index of the last assistant message
-		let lastAssistantIndex = -1;
+		let _lastAssistantIndex = -1;
 		for (let i = body.messages.length - 1; i >= 0; i--) {
 			if (body.messages[i].role === "assistant") {
-				lastAssistantIndex = i;
+				_lastAssistantIndex = i;
 				break;
 			}
 		}

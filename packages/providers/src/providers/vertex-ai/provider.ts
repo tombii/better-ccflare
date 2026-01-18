@@ -9,7 +9,7 @@ import {
 	BaseAnthropicCompatibleProvider,
 } from "../base-anthropic-compatible";
 
-const log = new Logger("VertexAIProvider");
+const _log = new Logger("VertexAIProvider");
 
 // Vertex AI configuration stored in custom_endpoint field
 export interface VertexAIConfig {
