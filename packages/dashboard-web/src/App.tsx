@@ -1,8 +1,10 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { api } from "./api";
 import { AccountsTab } from "./components/AccountsTab";
 import { AgentsTab } from "./components/AgentsTab";
+import { ApiKeyAuthDialog } from "./components/ApiKeyAuthDialog";
 import { ApiKeysTab } from "./components/ApiKeysTab";
 import { DebugPanel } from "./components/DebugPanel";
 import { LogsTab } from "./components/LogsTab";
@@ -103,6 +105,57 @@ export function App() {
 	const location = useLocation();
 	const currentRoute =
 		routes.find((route) => route.path === location.pathname) || routes[0];
+	const [showAuthDialog, setShowAuthDialog] = useState(false);
+	const [_isAuthenticated, setIsAuthenticated] = useState(false);
+	const [authError, setAuthError] = useState<string | null>(null);
+
+	// Check if authentication is required
+	useEffect(() => {
+		const checkAuth = async () => {
+			// If we already have an API key stored, assume we're authenticated
+			if (api.hasApiKey()) {
+				setIsAuthenticated(true);
+				return;
+			}
+
+			// Try to make a test request to see if auth is required
+			try {
+				await api.getStats();
+				// If successful without API key, auth is not required
+				setIsAuthenticated(true);
+			} catch (error) {
+				// If we get a 401, auth is required
+				if (error && typeof error === "object" && "status" in error) {
+					const httpError = error as { status: number };
+					if (httpError.status === 401) {
+						setShowAuthDialog(true);
+					}
+				}
+			}
+		};
+
+		checkAuth();
+	}, []);
+
+	const handleAuthenticate = async (apiKey: string): Promise<boolean> => {
+		setAuthError(null);
+
+		// Store the API key
+		api.setApiKey(apiKey);
+
+		// Try to make a request to verify the key
+		try {
+			await api.getStats();
+			setIsAuthenticated(true);
+			setShowAuthDialog(false);
+			return true;
+		} catch (_error) {
+			// Invalid API key, clear it
+			api.clearApiKey();
+			setAuthError("Invalid API key");
+			return false;
+		}
+	};
 
 	return (
 		<QueryClientProvider client={queryClient}>
@@ -144,6 +197,13 @@ export function App() {
 					</main>
 				</div>
 				<DebugPanel />
+
+				{/* API Key Authentication Dialog */}
+				<ApiKeyAuthDialog
+					isOpen={showAuthDialog}
+					onAuthenticate={handleAuthenticate}
+					error={authError}
+				/>
 			</ThemeProvider>
 		</QueryClientProvider>
 	);

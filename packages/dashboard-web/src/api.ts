@@ -66,6 +66,8 @@ export interface ReauthNeededResponse {
 }
 
 class API extends HttpClient {
+	private static readonly API_KEY_STORAGE_KEY = "better-ccflare-api-key";
+
 	private logger = {
 		info: (message: string, ...args: unknown[]) => {
 			console.log(`[API] ${message}`, ...args);
@@ -89,6 +91,57 @@ class API extends HttpClient {
 			},
 			timeout: API_TIMEOUT,
 			retries: 1,
+		});
+	}
+
+	/**
+	 * Store API key in localStorage
+	 */
+	setApiKey(apiKey: string): void {
+		localStorage.setItem(API.API_KEY_STORAGE_KEY, apiKey);
+	}
+
+	/**
+	 * Retrieve API key from localStorage
+	 */
+	getApiKey(): string | null {
+		return localStorage.getItem(API.API_KEY_STORAGE_KEY);
+	}
+
+	/**
+	 * Clear stored API key
+	 */
+	clearApiKey(): void {
+		localStorage.removeItem(API.API_KEY_STORAGE_KEY);
+	}
+
+	/**
+	 * Check if API key is stored
+	 */
+	hasApiKey(): boolean {
+		return !!this.getApiKey();
+	}
+
+	/**
+	 * Override request method to include API key if available
+	 */
+	override async request<T = unknown>(
+		url: string,
+		options: RequestInit & { timeout?: number; retries?: number } = {},
+	): Promise<T> {
+		const apiKey = this.getApiKey();
+		const headers: Record<string, string> = {
+			...((options.headers as Record<string, string>) || {}),
+		};
+
+		// Add API key to headers if available
+		if (apiKey) {
+			headers["x-api-key"] = apiKey;
+		}
+
+		return super.request<T>(url, {
+			...options,
+			headers,
 		});
 	}
 
