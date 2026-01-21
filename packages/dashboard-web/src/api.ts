@@ -1,4 +1,8 @@
-import { HttpClient, HttpError } from "@better-ccflare/http-common";
+import {
+	HttpClient,
+	HttpError,
+	type RequestOptions,
+} from "@better-ccflare/http-common";
 import type {
 	AccountResponse,
 	Agent,
@@ -123,26 +127,27 @@ class API extends HttpClient {
 	}
 
 	/**
-	 * Override request method to include API key if available
+	 * Override request method to inject API key into headers
 	 */
 	override async request<T = unknown>(
 		url: string,
-		options: RequestInit & { timeout?: number; retries?: number } = {},
+		options: RequestOptions = {},
 	): Promise<T> {
 		const apiKey = this.getApiKey();
-		const headers: Record<string, string> = {
-			...((options.headers as Record<string, string>) || {}),
-		};
 
-		// Add API key to headers if available
 		if (apiKey) {
-			headers["x-api-key"] = apiKey;
+			this.logger.debug("Including API key in request to:", url);
+			// Merge API key into headers
+			const headers = {
+				...(options.headers as Record<string, string> || {}),
+				"x-api-key": apiKey,
+			};
+			options = { ...options, headers };
+		} else {
+			this.logger.debug("No API key found for request to:", url);
 		}
 
-		return super.request<T>(url, {
-			...options,
-			headers,
-		});
+		return super.request<T>(url, options);
 	}
 
 	async getStats(): Promise<Stats> {

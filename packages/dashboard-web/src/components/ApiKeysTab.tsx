@@ -10,6 +10,7 @@ import {
 	Trash2,
 } from "lucide-react";
 import { useState } from "react";
+import { api } from "../api";
 import { Button } from "./ui/button";
 import {
 	Card,
@@ -83,11 +84,7 @@ export function ApiKeysTab() {
 	} = useQuery<ApiKeysResponse>({
 		queryKey: ["api-keys"],
 		queryFn: async () => {
-			const response = await fetch("/api/api-keys");
-			if (!response.ok) {
-				throw new Error("Failed to fetch API keys");
-			}
-			return response.json();
+			return api.get<ApiKeysResponse>("/api/api-keys");
 		},
 	});
 
@@ -96,27 +93,16 @@ export function ApiKeysTab() {
 		useQuery<ApiKeyStatsResponse>({
 			queryKey: ["api-keys-stats"],
 			queryFn: async () => {
-				const response = await fetch("/api/api-keys/stats");
-				if (!response.ok) {
-					throw new Error("Failed to fetch API key statistics");
-				}
-				return response.json();
+				return api.get<ApiKeyStatsResponse>("/api/api-keys/stats");
 			},
 		});
 
 	// Generate API key mutation
 	const generateKeyMutation = useMutation({
 		mutationFn: async (name: string) => {
-			const response = await fetch("/api/api-keys", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ name }),
+			const result = await api.post<ApiKeyGenerationResponse>("/api/api-keys", {
+				name,
 			});
-			if (!response.ok) {
-				const error = await response.json();
-				throw new Error(error.message || "Failed to generate API key");
-			}
-			const result: ApiKeyGenerationResponse = await response.json();
 			return result.data;
 		},
 		onSuccess: (data) => {
@@ -137,14 +123,7 @@ export function ApiKeysTab() {
 			const endpoint = enable
 				? `/api/api-keys/${encodeURIComponent(name)}/enable`
 				: `/api/api-keys/${encodeURIComponent(name)}/disable`;
-			const response = await fetch(endpoint, { method: "POST" });
-			if (!response.ok) {
-				const error = await response.json();
-				throw new Error(
-					error.message || `Failed to ${enable ? "enable" : "disable"} API key`,
-				);
-			}
-			return response.json();
+			return api.post(endpoint);
 		},
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ["api-keys"] });
@@ -155,17 +134,7 @@ export function ApiKeysTab() {
 	// Delete API key mutation
 	const deleteKeyMutation = useMutation({
 		mutationFn: async (name: string) => {
-			const response = await fetch(
-				`/api/api-keys/${encodeURIComponent(name)}`,
-				{
-					method: "DELETE",
-				},
-			);
-			if (!response.ok) {
-				const error = await response.json();
-				throw new Error(error.message || "Failed to delete API key");
-			}
-			return response.json();
+			return api.delete(`/api/api-keys/${encodeURIComponent(name)}`);
 		},
 		onSuccess: () => {
 			setSelectedKey(null);

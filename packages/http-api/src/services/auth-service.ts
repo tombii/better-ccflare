@@ -104,6 +104,13 @@ export class AuthService {
 			return true;
 		}
 
+		// Dashboard static files (chunks, favicon, etc.) are exempt
+		if (
+			path.match(/\.(js|css|svg|png|jpg|jpeg|gif|ico|woff|woff2|ttf|map)$/)
+		) {
+			return true;
+		}
+
 		// Health endpoint is always exempt
 		if (path === "/health") {
 			return true;
