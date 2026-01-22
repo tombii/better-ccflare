@@ -76,7 +76,7 @@ export function ApiKeysTab() {
 
 	const queryClient = useQueryClient();
 
-	// Fetch API keys
+	// Fetch API keys - only when not showing the generated key dialog
 	const {
 		data: apiKeysResponse,
 		isLoading: isLoadingKeys,
@@ -86,15 +86,17 @@ export function ApiKeysTab() {
 		queryFn: async () => {
 			return api.get<ApiKeysResponse>("/api/api-keys");
 		},
+		enabled: !generatedKey, // Don't fetch while showing generated key
 	});
 
-	// Fetch API key statistics
+	// Fetch API key statistics - only when not showing the generated key dialog
 	const { data: statsResponse, error: statsError } =
 		useQuery<ApiKeyStatsResponse>({
 			queryKey: ["api-keys-stats"],
 			queryFn: async () => {
 				return api.get<ApiKeyStatsResponse>("/api/api-keys/stats");
 			},
+			enabled: !generatedKey, // Don't fetch while showing generated key
 		});
 
 	// Generate API key mutation
@@ -109,13 +111,20 @@ export function ApiKeysTab() {
 			setGeneratedKey(data.apiKey);
 			setNewKeyName("");
 			setIsCreateDialogOpen(false);
-			queryClient.invalidateQueries({ queryKey: ["api-keys"] });
-			queryClient.invalidateQueries({ queryKey: ["api-keys-stats"] });
+			// Don't invalidate queries here - wait until user authenticates
+			// This prevents 401 errors if the stored key is invalid
 		},
 		onError: (error: Error) => {
 			console.error("Failed to generate API key:", error);
 		},
 	});
+
+	const handleSavedKey = () => {
+		// Close the dialog
+		setGeneratedKey(null);
+		// Trigger auth dialog so user can paste the key they just copied
+		window.dispatchEvent(new CustomEvent("auth-required"));
+	};
 
 	// Toggle API key status mutation
 	const toggleKeyMutation = useMutation({
@@ -380,7 +389,11 @@ export function ApiKeysTab() {
 			<Dialog
 				open={!!generatedKey}
 				onOpenChange={(open) => {
-					if (!open) setGeneratedKey(null);
+					if (!open) {
+						setGeneratedKey(null);
+						// Trigger auth dialog when closing so user can authenticate
+						window.dispatchEvent(new CustomEvent("auth-required"));
+					}
 				}}
 			>
 				<DialogContent>
@@ -419,7 +432,7 @@ export function ApiKeysTab() {
 						</div>
 					</div>
 					<DialogFooter>
-						<Button onClick={() => setGeneratedKey(null)} variant="outline">
+						<Button onClick={handleSavedKey} variant="outline">
 							I've saved the key
 						</Button>
 					</DialogFooter>

@@ -1,58 +1,58 @@
 {
-  "name": "better-ccflare",
-  "version": "3.1.2-beta.2",
-  "description": "Load balancer proxy for Claude API with intelligent distribution across multiple OAuth accounts to avoid rate limiting",
-  "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/tombii/better-ccflare.git"
-  },
-  "homepage": "https://github.com/tombii/better-ccflare#readme",
-  "bugs": {
-    "url": "https://github.com/tombii/better-ccflare/issues"
-  },
-  "bin": {
-    "better-ccflare": "dist/better-ccflare"
-  },
-  "type": "module",
-  "scripts": {
-    "dev": "bun run src/main.ts",
-    "build": "mkdir -p dist && BETTER_CCFLARE_VERSION=$(node -p \"require('./package.json').version\") bun -e \"const fs=require('fs'); if (!fs.existsSync('../../packages/proxy/src/embedded-tiktoken-wasm.ts')) { const wasm=fs.readFileSync('../../node_modules/@dqbd/tiktoken/lite/tiktoken_bg.wasm'); const wasmEncoded=wasm.toString('base64'); fs.writeFileSync('../../packages/proxy/src/embedded-tiktoken-wasm.ts', 'export const EMBEDDED_TIKTOKEN_WASM = \\\"' + wasmEncoded + '\\\";'); }\" && bun build ../../packages/proxy/src/post-processor.worker.ts --outfile dist/post-processor.worker.js --target=bun --minify && bun -e \"const fs=require('fs'); const code=fs.readFileSync('dist/post-processor.worker.js','utf8'); const encoded=Buffer.from(code).toString('base64'); fs.writeFileSync('../../packages/proxy/src/inline-worker.ts', 'export const EMBEDDED_WORKER_CODE = \\\"' + encoded + '\\\";');\" && bun build src/main.ts --compile --outfile dist/better-ccflare --target=bun --minify --define process.env.BETTER_CCFLARE_VERSION='\"'$BETTER_CCFLARE_VERSION'\"' && rm -f dist/post-processor.worker.js",
-    "build:multi": "bun run build-multi-arch.ts",
-    "build:linux-amd64": "bun run build && bun build src/main.ts --compile --outfile dist/better-ccflare-linux-amd64 --target=bun-linux-amd64 --minify",
-    "build:linux-arm64": "bun run build && bun build src/main.ts --compile --outfile dist/better-ccflare-linux-arm64 --target=bun-linux-arm64 --minify",
-    "build:macos-x86_64": "bun run build && bun build src/main.ts --compile --outfile dist/better-ccflare-macos-x86_64 --target=bun-darwin-x64 --minify",
-    "build:macos-arm64": "bun run build && bun build src/main.ts --compile --outfile dist/better-ccflare-macos-arm64 --target=bun-darwin-arm64 --minify",
-    "build:windows-x64": "bun run build && bun build src/main.ts --compile --outfile dist/better-ccflare-windows-x64.exe --target=bun-windows-x64 --minify",
-    "prepublishOnly": "cp ../../README.md . && bun run build && jq 'del(.dependencies[\"@better-ccflare/cli-commands\", \"@better-ccflare/config\", \"@better-ccflare/core\", \"@better-ccflare/core-di\", \"@better-ccflare/database\", \"@better-ccflare/logger\", \"@better-ccflare/server\"])' package.json > package.json.tmp && mv package.json.tmp package.json",
-    "postpublish": "chmod +x dist/better-ccflare"
-  },
-  "engines": {
-    "node": ">=18.0.0"
-  },
-  "devDependencies": {
-    "@types/node": "^20.0.0"
-  },
-  "dependencies": {
-    "dotenv": "^17.2.3"
-  },
-  "files": [
-    "dist/better-ccflare",
-    "README.md"
-  ],
-  "keywords": [
-    "claude",
-    "anthropic",
-    "api",
-    "proxy",
-    "load-balancer",
-    "rate-limiting",
-    "oauth",
-    "cli",
-    "analytics",
-    "monitoring"
-  ],
-  "publishConfig": {
-    "access": "public"
-  }
+	"name": "better-ccflare",
+	"version": "3.1.2-beta.3",
+	"description": "Load balancer proxy for Claude API with intelligent distribution across multiple OAuth accounts to avoid rate limiting",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/tombii/better-ccflare.git"
+	},
+	"homepage": "https://github.com/tombii/better-ccflare#readme",
+	"bugs": {
+		"url": "https://github.com/tombii/better-ccflare/issues"
+	},
+	"bin": {
+		"better-ccflare": "dist/better-ccflare"
+	},
+	"type": "module",
+	"scripts": {
+		"dev": "bun run src/main.ts",
+		"build": "mkdir -p dist && BETTER_CCFLARE_VERSION=$(node -p \"require('./package.json').version\") bun -e \"const fs=require('fs'); if (!fs.existsSync('../../packages/proxy/src/embedded-tiktoken-wasm.ts')) { const wasm=fs.readFileSync('../../node_modules/@dqbd/tiktoken/lite/tiktoken_bg.wasm'); const wasmEncoded=wasm.toString('base64'); fs.writeFileSync('../../packages/proxy/src/embedded-tiktoken-wasm.ts', 'export const EMBEDDED_TIKTOKEN_WASM = \\\"' + wasmEncoded + '\\\";'); }\" && bun build ../../packages/proxy/src/post-processor.worker.ts --outfile dist/post-processor.worker.js --target=bun --minify && bun -e \"const fs=require('fs'); const code=fs.readFileSync('dist/post-processor.worker.js','utf8'); const encoded=Buffer.from(code).toString('base64'); fs.writeFileSync('../../packages/proxy/src/inline-worker.ts', 'export const EMBEDDED_WORKER_CODE = \\\"' + encoded + '\\\";');\" && bun build src/main.ts --compile --outfile dist/better-ccflare --target=bun --minify --define process.env.BETTER_CCFLARE_VERSION='\"'$BETTER_CCFLARE_VERSION'\"' && rm -f dist/post-processor.worker.js",
+		"build:multi": "bun run build-multi-arch.ts",
+		"build:linux-amd64": "bun run build && bun build src/main.ts --compile --outfile dist/better-ccflare-linux-amd64 --target=bun-linux-amd64 --minify",
+		"build:linux-arm64": "bun run build && bun build src/main.ts --compile --outfile dist/better-ccflare-linux-arm64 --target=bun-linux-arm64 --minify",
+		"build:macos-x86_64": "bun run build && bun build src/main.ts --compile --outfile dist/better-ccflare-macos-x86_64 --target=bun-darwin-x64 --minify",
+		"build:macos-arm64": "bun run build && bun build src/main.ts --compile --outfile dist/better-ccflare-macos-arm64 --target=bun-darwin-arm64 --minify",
+		"build:windows-x64": "bun run build && bun build src/main.ts --compile --outfile dist/better-ccflare-windows-x64.exe --target=bun-windows-x64 --minify",
+		"prepublishOnly": "cp ../../README.md . && bun run build && jq 'del(.dependencies[\"@better-ccflare/cli-commands\", \"@better-ccflare/config\", \"@better-ccflare/core\", \"@better-ccflare/core-di\", \"@better-ccflare/database\", \"@better-ccflare/logger\", \"@better-ccflare/server\"])' package.json > package.json.tmp && mv package.json.tmp package.json",
+		"postpublish": "chmod +x dist/better-ccflare"
+	},
+	"engines": {
+		"node": ">=18.0.0"
+	},
+	"devDependencies": {
+		"@types/node": "^20.0.0"
+	},
+	"dependencies": {
+		"dotenv": "^17.2.3"
+	},
+	"files": [
+		"dist/better-ccflare",
+		"README.md"
+	],
+	"keywords": [
+		"claude",
+		"anthropic",
+		"api",
+		"proxy",
+		"load-balancer",
+		"rate-limiting",
+		"oauth",
+		"cli",
+		"analytics",
+		"monitoring"
+	],
+	"publishConfig": {
+		"access": "public"
+	}
 }

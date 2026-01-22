@@ -127,7 +127,7 @@ class API extends HttpClient {
 	}
 
 	/**
-	 * Override request method to inject API key into headers
+	 * Override request method to inject API key into headers and handle 401 errors
 	 */
 	override async request<T = unknown>(
 		url: string,
@@ -139,7 +139,7 @@ class API extends HttpClient {
 			this.logger.debug("Including API key in request to:", url);
 			// Merge API key into headers
 			const headers = {
-				...(options.headers as Record<string, string> || {}),
+				...((options.headers as Record<string, string>) || {}),
 				"x-api-key": apiKey,
 			};
 			options = { ...options, headers };
@@ -147,7 +147,19 @@ class API extends HttpClient {
 			this.logger.debug("No API key found for request to:", url);
 		}
 
-		return super.request<T>(url, options);
+		try {
+			return await super.request<T>(url, options);
+		} catch (error) {
+			// If we get a 401, dispatch a custom event to trigger auth dialog
+			if (error && typeof error === "object" && "status" in error) {
+				const httpError = error as { status: number };
+				if (httpError.status === 401) {
+					this.logger.warn("401 Unauthorized - dispatching auth required event");
+					window.dispatchEvent(new CustomEvent("auth-required"));
+				}
+			}
+			throw error;
+		}
 	}
 
 	async getStats(): Promise<Stats> {
