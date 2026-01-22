@@ -297,7 +297,7 @@ export ANTHROPIC_BASE_URL=http://localhost:8080
 claude
 ```
 
-**Important:** When using Claude CLI with an active OAuth login, do **NOT** set `ANTHROPIC_API_KEY`. Setting both will trigger a warning from Claude CLI about conflicting authentication methods.
+**Important:** When using Claude CLI with an active OAuth login, do **NOT** set `ANTHROPIC_AUTH_TOKEN`. Setting both will trigger a warning from Claude CLI about conflicting authentication methods.
 
 ### Option 2: Using API Key Authentication
 
@@ -311,11 +311,11 @@ claude /logout
 export ANTHROPIC_BASE_URL=http://localhost:8080
 
 # If better-ccflare has NO API keys configured (open access):
-export ANTHROPIC_API_KEY=dummy-key
+export ANTHROPIC_AUTH_TOKEN=dummy-key
 
 # If better-ccflare HAS API keys configured (protected):
 # Generate a key first: better-ccflare --generate-api-key "My VPS"
-export ANTHROPIC_API_KEY=btr-abcdef1234567890...  # Use your real better-ccflare API key
+export ANTHROPIC_AUTH_TOKEN=btr-abcdef1234567890...  # Use your real better-ccflare API key
 
 # Make sure to configure your accounts in the better-ccflare dashboard
 
@@ -344,7 +344,7 @@ better-ccflare --serve
 ```bash
 # Set the remote better-ccflare URL and API key
 export ANTHROPIC_BASE_URL=https://your-server.com:8080
-export ANTHROPIC_API_KEY=btr-abcdef1234567890...  # Your better-ccflare API key
+export ANTHROPIC_AUTH_TOKEN=btr-abcdef1234567890...  # Your better-ccflare API key
 
 # Start Claude CLI (no need to login - better-ccflare handles auth)
 claude
