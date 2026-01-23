@@ -151,12 +151,9 @@ class API extends HttpClient {
 			return await super.request<T>(url, options);
 		} catch (error) {
 			// If we get a 401, dispatch a custom event to trigger auth dialog
-			if (error && typeof error === "object" && "status" in error) {
-				const httpError = error as { status: number };
-				if (httpError.status === 401) {
-					this.logger.warn("401 Unauthorized - dispatching auth required event");
-					window.dispatchEvent(new CustomEvent("auth-required"));
-				}
+			if (error instanceof HttpError && error.status === 401) {
+				this.logger.warn("401 Unauthorized - dispatching auth required event");
+				window.dispatchEvent(new CustomEvent("auth-required"));
 			}
 			throw error;
 		}

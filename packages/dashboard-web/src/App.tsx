@@ -4,6 +4,7 @@ import {
 	QueryClient,
 	QueryClientProvider,
 } from "@tanstack/react-query";
+import { HttpError } from "@better-ccflare/http-common";
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { api } from "./api";
@@ -130,11 +131,8 @@ export function App() {
 						staleTime: QUERY_CONFIG.staleTime,
 						retry: (failureCount, error) => {
 							// Don't retry on 401 errors
-							if (error && typeof error === "object" && "status" in error) {
-								const httpError = error as { status: number };
-								if (httpError.status === 401) {
-									return false;
-								}
+							if (error instanceof HttpError && error.status === 401) {
+								return false;
 							}
 							return failureCount < 2;
 						},
@@ -146,30 +144,24 @@ export function App() {
 				queryCache: new QueryCache({
 					onError: (error) => {
 						// Show auth dialog on any 401 error
-						if (error && typeof error === "object" && "status" in error) {
-							const httpError = error as { status: number };
-							if (httpError.status === 401) {
-								console.log("[App] 401 error in query - showing auth dialog");
-								api.clearApiKey();
-								authErrorRef.current(null); // Clear any previous errors
-								isAuthenticatedRef.current(false);
-								showAuthDialogRef.current(true);
-							}
+						if (error instanceof HttpError && error.status === 401) {
+							console.log("[App] 401 error in query - showing auth dialog");
+							api.clearApiKey();
+							authErrorRef.current(null); // Clear any previous errors
+							isAuthenticatedRef.current(false);
+							showAuthDialogRef.current(true);
 						}
 					},
 				}),
 				mutationCache: new MutationCache({
 					onError: (error) => {
 						// Show auth dialog on any 401 error
-						if (error && typeof error === "object" && "status" in error) {
-							const httpError = error as { status: number };
-							if (httpError.status === 401) {
-								console.log("[App] 401 error in mutation - showing auth dialog");
-								api.clearApiKey();
-								authErrorRef.current(null); // Clear any previous errors
-								isAuthenticatedRef.current(false);
-								showAuthDialogRef.current(true);
-							}
+						if (error instanceof HttpError && error.status === 401) {
+							console.log("[App] 401 error in mutation - showing auth dialog");
+							api.clearApiKey();
+							authErrorRef.current(null); // Clear any previous errors
+							isAuthenticatedRef.current(false);
+							showAuthDialogRef.current(true);
 						}
 					},
 				}),
@@ -190,13 +182,10 @@ export function App() {
 				setIsAuthenticated(true);
 			} catch (error) {
 				// If we get a 401, auth is required
-				if (error && typeof error === "object" && "status" in error) {
-					const httpError = error as { status: number };
-					if (httpError.status === 401) {
-						// Clear any invalid stored key
-						api.clearApiKey();
-						setShowAuthDialog(true);
-					}
+				if (error instanceof HttpError && error.status === 401) {
+					// Clear any invalid stored key
+					api.clearApiKey();
+					setShowAuthDialog(true);
 				}
 			} finally {
 				setIsCheckingAuth(false);
