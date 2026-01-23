@@ -178,6 +178,15 @@ describe("API Authentication", () => {
 			expect(authService.isPathExempt("/api/oauth/init", "POST")).toBe(true);
 		});
 
+		test("should exempt static assets from authentication", () => {
+			expect(authService.isPathExempt("/chunk-abc123.js", "GET")).toBe(true);
+			expect(authService.isPathExempt("/chunk-abc123.css", "GET")).toBe(true);
+			expect(authService.isPathExempt("/favicon-abc123.svg", "GET")).toBe(true);
+			expect(authService.isPathExempt("/chunk-abc123.js.map", "GET")).toBe(true);
+			expect(authService.isPathExempt("/static/logo.png", "GET")).toBe(true);
+			expect(authService.isPathExempt("/assets/font.woff2", "GET")).toBe(true);
+		});
+
 		test("should require authentication for API paths", () => {
 			expect(authService.isPathExempt("/api/stats", "GET")).toBe(false);
 			expect(authService.isPathExempt("/v1/messages", "POST")).toBe(false);

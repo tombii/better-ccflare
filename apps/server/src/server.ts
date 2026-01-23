@@ -87,6 +87,31 @@ function serveDashboardFile(
 	contentType?: string,
 	cacheControl?: string,
 ): Response {
+	// Security headers for dashboard files
+	const securityHeaders: Record<string, string> = {
+		"X-Content-Type-Options": "nosniff",
+		"X-Frame-Options": "DENY",
+		"X-XSS-Protection": "1; mode=block",
+		"Referrer-Policy": "strict-origin-when-cross-origin",
+	};
+
+	// Add Content Security Policy for HTML files
+	const isHtml = assetPath.endsWith(".html") || contentType === "text/html";
+	if (isHtml) {
+		// Strict CSP for React apps: only bundled scripts and styles from same origin
+		securityHeaders["Content-Security-Policy"] = [
+			"default-src 'self'",
+			"script-src 'self'", // Only bundled scripts from same origin (no inline)
+			"style-src 'self' 'unsafe-inline'", // CSS-in-JS and Tailwind require inline styles
+			"img-src 'self' data:",
+			"font-src 'self' data:",
+			"connect-src 'self'", // API calls to same origin only
+			"frame-ancestors 'none'",
+			"base-uri 'self'",
+			"form-action 'self'",
+		].join("; ");
+	}
+
 	// First, try to serve from embedded assets (production)
 	if (embeddedDashboard?.[assetPath]) {
 		const asset = embeddedDashboard[assetPath];
@@ -95,6 +120,7 @@ function serveDashboardFile(
 			headers: {
 				"Content-Type": contentType || asset.contentType,
 				"Cache-Control": cacheControl || CACHE.CACHE_CONTROL_NO_CACHE,
+				...securityHeaders,
 			},
 		});
 	}
@@ -119,6 +145,7 @@ function serveDashboardFile(
 		headers: {
 			"Content-Type": contentType,
 			"Cache-Control": cacheControl || CACHE.CACHE_CONTROL_NO_CACHE,
+			...securityHeaders,
 		},
 	});
 }

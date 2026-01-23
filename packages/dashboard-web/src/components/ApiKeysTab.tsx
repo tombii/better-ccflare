@@ -10,6 +10,7 @@ import {
 	Trash2,
 } from "lucide-react";
 import { useState } from "react";
+import { api } from "../api";
 import { Button } from "./ui/button";
 import {
 	Card,
@@ -75,7 +76,7 @@ export function ApiKeysTab() {
 
 	const queryClient = useQueryClient();
 
-	// Fetch API keys
+	// Fetch API keys - only when not showing the generated key dialog
 	const {
 		data: apiKeysResponse,
 		isLoading: isLoadingKeys,
@@ -83,53 +84,47 @@ export function ApiKeysTab() {
 	} = useQuery<ApiKeysResponse>({
 		queryKey: ["api-keys"],
 		queryFn: async () => {
-			const response = await fetch("/api/api-keys");
-			if (!response.ok) {
-				throw new Error("Failed to fetch API keys");
-			}
-			return response.json();
+			return api.get<ApiKeysResponse>("/api/api-keys");
 		},
+		enabled: !generatedKey, // Don't fetch while showing generated key
 	});
 
-	// Fetch API key statistics
+	// Fetch API key statistics - only when not showing the generated key dialog
 	const { data: statsResponse, error: statsError } =
 		useQuery<ApiKeyStatsResponse>({
 			queryKey: ["api-keys-stats"],
 			queryFn: async () => {
-				const response = await fetch("/api/api-keys/stats");
-				if (!response.ok) {
-					throw new Error("Failed to fetch API key statistics");
-				}
-				return response.json();
+				return api.get<ApiKeyStatsResponse>("/api/api-keys/stats");
 			},
+			enabled: !generatedKey, // Don't fetch while showing generated key
 		});
 
 	// Generate API key mutation
 	const generateKeyMutation = useMutation({
 		mutationFn: async (name: string) => {
-			const response = await fetch("/api/api-keys", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ name }),
+			const result = await api.post<ApiKeyGenerationResponse>("/api/api-keys", {
+				name,
 			});
-			if (!response.ok) {
-				const error = await response.json();
-				throw new Error(error.message || "Failed to generate API key");
-			}
-			const result: ApiKeyGenerationResponse = await response.json();
 			return result.data;
 		},
 		onSuccess: (data) => {
 			setGeneratedKey(data.apiKey);
 			setNewKeyName("");
 			setIsCreateDialogOpen(false);
-			queryClient.invalidateQueries({ queryKey: ["api-keys"] });
-			queryClient.invalidateQueries({ queryKey: ["api-keys-stats"] });
+			// Don't invalidate queries here - wait until user authenticates
+			// This prevents 401 errors if the stored key is invalid
 		},
 		onError: (error: Error) => {
 			console.error("Failed to generate API key:", error);
 		},
 	});
+
+	const handleSavedKey = () => {
+		// Close the dialog
+		setGeneratedKey(null);
+		// Trigger auth dialog so user can paste the key they just copied
+		window.dispatchEvent(new CustomEvent("auth-required"));
+	};
 
 	// Toggle API key status mutation
 	const toggleKeyMutation = useMutation({
@@ -137,14 +132,7 @@ export function ApiKeysTab() {
 			const endpoint = enable
 				? `/api/api-keys/${encodeURIComponent(name)}/enable`
 				: `/api/api-keys/${encodeURIComponent(name)}/disable`;
-			const response = await fetch(endpoint, { method: "POST" });
-			if (!response.ok) {
-				const error = await response.json();
-				throw new Error(
-					error.message || `Failed to ${enable ? "enable" : "disable"} API key`,
-				);
-			}
-			return response.json();
+			return api.post(endpoint);
 		},
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ["api-keys"] });
@@ -155,17 +143,7 @@ export function ApiKeysTab() {
 	// Delete API key mutation
 	const deleteKeyMutation = useMutation({
 		mutationFn: async (name: string) => {
-			const response = await fetch(
-				`/api/api-keys/${encodeURIComponent(name)}`,
-				{
-					method: "DELETE",
-				},
-			);
-			if (!response.ok) {
-				const error = await response.json();
-				throw new Error(error.message || "Failed to delete API key");
-			}
-			return response.json();
+			return api.delete(`/api/api-keys/${encodeURIComponent(name)}`);
 		},
 		onSuccess: () => {
 			setSelectedKey(null);
@@ -411,7 +389,11 @@ export function ApiKeysTab() {
 			<Dialog
 				open={!!generatedKey}
 				onOpenChange={(open) => {
-					if (!open) setGeneratedKey(null);
+					if (!open) {
+						setGeneratedKey(null);
+						// Trigger auth dialog when closing so user can authenticate
+						window.dispatchEvent(new CustomEvent("auth-required"));
+					}
 				}}
 			>
 				<DialogContent>
@@ -450,7 +432,7 @@ export function ApiKeysTab() {
 						</div>
 					</div>
 					<DialogFooter>
-						<Button onClick={() => setGeneratedKey(null)} variant="outline">
+						<Button onClick={handleSavedKey} variant="outline">
 							I've saved the key
 						</Button>
 					</DialogFooter>
