@@ -98,11 +98,11 @@ function serveDashboardFile(
 	// Add Content Security Policy for HTML files
 	const isHtml = assetPath.endsWith(".html") || contentType === "text/html";
 	if (isHtml) {
-		// CSP for React apps: allows bundled scripts, inline styles, and API calls to same origin
+		// Strict CSP for React apps: only bundled scripts and styles from same origin
 		securityHeaders["Content-Security-Policy"] = [
 			"default-src 'self'",
-			"script-src 'self' 'unsafe-inline'", // React may use inline scripts
-			"style-src 'self' 'unsafe-inline'", // CSS-in-JS requires inline styles
+			"script-src 'self'", // Only bundled scripts from same origin (no inline)
+			"style-src 'self' 'unsafe-inline'", // CSS-in-JS and Tailwind require inline styles
 			"img-src 'self' data:",
 			"font-src 'self' data:",
 			"connect-src 'self'", // API calls to same origin only

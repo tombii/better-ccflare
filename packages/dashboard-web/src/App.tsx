@@ -270,7 +270,7 @@ export function App() {
 							</div>
 
 							{/* Tab Content - Only render if auth check is complete and user is authenticated */}
-							{!isCheckingAuth && (isAuthenticated || !showAuthDialog) && (
+							{!isCheckingAuth && isAuthenticated && (
 								<div className="animate-in fade-in-0 duration-200">
 									<Routes>
 										{routes.map((route) => (
