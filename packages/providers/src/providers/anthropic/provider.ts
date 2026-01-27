@@ -223,7 +223,14 @@ export class AnthropicProvider extends BaseProvider {
 			newHeaders.set("Authorization", `Bearer ${accessToken}`);
 			// Add required OAuth beta header for OAuth accounts
 			// This is needed when clients (like Claude Code with API key auth) don't include it
-			if (!newHeaders.has("anthropic-beta")) {
+			const betaHeader = newHeaders.get("anthropic-beta");
+			if (betaHeader) {
+				// Header exists, check if oauth value is already present
+				if (!betaHeader.includes("oauth-2025-04-20")) {
+					newHeaders.set("anthropic-beta", `${betaHeader},oauth-2025-04-20`);
+				}
+			} else {
+				// Header doesn't exist, create it
 				newHeaders.set("anthropic-beta", "oauth-2025-04-20");
 			}
 		} else if (apiKey) {
