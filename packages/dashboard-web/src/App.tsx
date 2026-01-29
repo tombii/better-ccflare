@@ -1,10 +1,10 @@
+import { HttpError } from "@better-ccflare/http-common";
 import {
 	MutationCache,
 	QueryCache,
 	QueryClient,
 	QueryClientProvider,
 } from "@tanstack/react-query";
-import { HttpError } from "@better-ccflare/http-common";
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { api } from "./api";
@@ -119,7 +119,7 @@ export function App() {
 		showAuthDialogRef.current = setShowAuthDialog;
 		isAuthenticatedRef.current = setIsAuthenticated;
 		authErrorRef.current = setAuthError;
-	}, [setShowAuthDialog, setIsAuthenticated, setAuthError]);
+	}, []);
 
 	// Create QueryClient with global error handler for 401 errors
 	const queryClient = useMemo(
@@ -205,7 +205,8 @@ export function App() {
 		};
 
 		window.addEventListener("auth-required", handleAuthRequired);
-		return () => window.removeEventListener("auth-required", handleAuthRequired);
+		return () =>
+			window.removeEventListener("auth-required", handleAuthRequired);
 	}, []);
 
 	const handleAuthenticate = async (apiKey: string): Promise<boolean> => {

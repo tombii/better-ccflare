@@ -23,6 +23,7 @@ export const AnalyticsTab = React.memo(() => {
 	const [filters, setFilters] = useState<FilterState>({
 		accounts: [],
 		models: [],
+		apiKeys: [],
 		status: "all",
 	});
 
@@ -41,6 +42,10 @@ export const AnalyticsTab = React.memo(() => {
 	);
 	const availableModels = useMemo(
 		() => analytics?.modelDistribution?.map((m) => m.model) || [],
+		[analytics],
+	);
+	const availableApiKeys = useMemo(
+		() => analytics?.apiKeyPerformance?.map((k) => k.name) || [],
 		[analytics],
 	);
 
@@ -151,6 +156,7 @@ export const AnalyticsTab = React.memo(() => {
 	const activeFilterCount =
 		filters.accounts.length +
 		filters.models.length +
+		filters.apiKeys.length +
 		(filters.status !== "all" ? 1 : 0);
 
 	return (
@@ -171,6 +177,7 @@ export const AnalyticsTab = React.memo(() => {
 				setFilters={setFilters}
 				availableAccounts={availableAccounts}
 				availableModels={availableModels}
+				availableApiKeys={availableApiKeys}
 				activeFilterCount={activeFilterCount}
 				filterOpen={filterOpen}
 				setFilterOpen={setFilterOpen}

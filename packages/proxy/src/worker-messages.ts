@@ -26,6 +26,10 @@ export interface StartMessage {
 	// Agent info
 	agentUsed: string | null;
 
+	// API key info
+	apiKeyId: string | null;
+	apiKeyName: string | null;
+
 	// Retry info
 	retryAttempt: number;
 	failoverAttempts: number;

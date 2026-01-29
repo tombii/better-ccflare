@@ -68,6 +68,8 @@ export function createAnalyticsHandler(context: APIContext) {
 		const accountsFilter =
 			params.get("accounts")?.split(",").filter(Boolean) || [];
 		const modelsFilter = params.get("models")?.split(",").filter(Boolean) || [];
+		const apiKeysFilter =
+			params.get("apiKeys")?.split(",").filter(Boolean) || [];
 		const statusFilter = params.get("status") || "all";
 
 		// Build filter conditions
@@ -93,6 +95,12 @@ export function createAnalyticsHandler(context: APIContext) {
 			const placeholders = modelsFilter.map(() => "?").join(",");
 			conditions.push(`model IN (${placeholders})`);
 			queryParams.push(...modelsFilter);
+		}
+
+		if (apiKeysFilter.length > 0) {
+			const placeholders = apiKeysFilter.map(() => "?").join(",");
+			conditions.push(`api_key_name IN (${placeholders})`);
+			queryParams.push(...apiKeysFilter);
 		}
 
 		if (statusFilter === "success") {
@@ -156,6 +164,19 @@ export function createAnalyticsHandler(context: APIContext) {
 					FROM filtered_requests r
 					LEFT JOIN accounts a ON a.id = r.account_used
 					GROUP BY name
+					HAVING requests > 0
+					ORDER BY requests DESC
+				),
+				-- API key performance
+				api_key_perf AS (
+					SELECT
+						api_key_id as id,
+						api_key_name as name,
+						COUNT(*) as requests,
+						SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successful_requests
+					FROM filtered_requests
+					WHERE api_key_id IS NOT NULL
+					GROUP BY api_key_id, api_key_name
 					HAVING requests > 0
 					ORDER BY requests DESC
 				),
@@ -322,13 +343,33 @@ export function createAnalyticsHandler(context: APIContext) {
 					ORDER BY cost_usd DESC
 					LIMIT 10
 				)
+
+				UNION ALL
+
+				SELECT * FROM (
+					SELECT
+						'api_key_performance' as data_type,
+						api_key_name as name,
+						NULL as count,
+						COUNT(*) as requests,
+						SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0) as success_rate,
+						NULL as cost_usd,
+						NULL as total_tokens
+					FROM requests r
+					WHERE ${whereClause} AND api_key_id IS NOT NULL
+					GROUP BY api_key_id, api_key_name
+					HAVING requests > 0
+					ORDER BY requests DESC
+					LIMIT 10
+				)
 			`);
 
 			const additionalData = additionalDataQuery.all(
 				...queryParams, // First subquery params
 				NO_ACCOUNT_ID,
 				...queryParams, // Second subquery params (account performance)
-				...queryParams, // Third subquery params
+				...queryParams, // Third subquery params (cost by model)
+				...queryParams, // Fourth subquery params (API key performance)
 			) as Array<{
 				data_type: string;
 				name: string;
@@ -362,6 +403,15 @@ export function createAnalyticsHandler(context: APIContext) {
 					costUsd: row.cost_usd || 0,
 					requests: row.requests || 0,
 					totalTokens: row.total_tokens || 0,
+				}));
+
+			const apiKeyPerformance = additionalData
+				.filter((row) => row.data_type === "api_key_performance")
+				.map((row) => ({
+					id: row.name, // API key name used as id for now
+					name: row.name,
+					requests: row.requests || 0,
+					successRate: row.success_rate || 0,
 				}));
 
 			// Finalize prepared statement
@@ -527,6 +577,7 @@ export function createAnalyticsHandler(context: APIContext) {
 				},
 				modelDistribution,
 				accountPerformance,
+				apiKeyPerformance,
 				costByModel,
 				modelPerformance,
 			};

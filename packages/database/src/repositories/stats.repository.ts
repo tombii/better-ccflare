@@ -183,7 +183,7 @@ export class StatsRepository {
 		const models = this.db
 			.query(
 				`WITH model_counts AS (
-					SELECT 
+					SELECT
 						model,
 						COUNT(*) as count
 					FROM requests
@@ -193,7 +193,7 @@ export class StatsRepository {
 				total AS (
 					SELECT COUNT(*) as total FROM requests WHERE model IS NOT NULL
 				)
-				SELECT 
+				SELECT
 					mc.model,
 					mc.count,
 					ROUND(CAST(mc.count AS REAL) / t.total * 100, 2) as percentage
@@ -208,5 +208,84 @@ export class StatsRepository {
 		}>;
 
 		return models;
+	}
+
+	/**
+	 * Get API key statistics with success rates
+	 */
+	getApiKeyStats(): Array<{
+		id: string;
+		name: string;
+		requests: number;
+		successRate: number;
+	}> {
+		// Get API key request counts
+		const apiKeyStats = this.db
+			.query(
+				`SELECT
+					api_key_id as id,
+					api_key_name as name,
+					COUNT(*) as requests
+				FROM requests
+				WHERE api_key_id IS NOT NULL
+				GROUP BY api_key_id, api_key_name
+				HAVING requests > 0
+				ORDER BY requests DESC`,
+			)
+			.all() as Array<{
+			id: string;
+			name: string;
+			requests: number;
+		}>;
+
+		if (apiKeyStats.length === 0) return [];
+
+		// Calculate success rate per API key
+		// Security: apiKeyIds are sourced directly from database query results above,
+		// ensuring they are safe strings from the api_key_id column (UUID format).
+		// The placeholder construction is safe because we validate the array is non-empty
+		// and use parameterized queries for the actual values.
+		const apiKeyIds = apiKeyStats
+			.map((a) => a.id)
+			.filter((id) => {
+				// Additional safety: ensure ID is a valid non-empty string
+				return typeof id === "string" && id.length > 0 && id.length < 256;
+			});
+
+		if (apiKeyIds.length === 0) return [];
+
+		const placeholders = apiKeyIds.map(() => "?").join(",");
+
+		const successRates = this.db
+			.query(
+				`SELECT
+					api_key_id as apiKeyId,
+					COUNT(*) as total,
+					SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successful
+				FROM requests
+				WHERE api_key_id IN (${placeholders})
+				GROUP BY api_key_id`,
+			)
+			.all(...apiKeyIds) as Array<{
+			apiKeyId: string;
+			total: number;
+			successful: number;
+		}>;
+
+		// Create a map for O(1) lookup
+		const successRateMap = new Map(
+			successRates.map((sr) => [
+				sr.apiKeyId,
+				sr.total > 0 ? Math.round((sr.successful / sr.total) * 100) : 0,
+			]),
+		);
+
+		// Combine the data
+		return apiKeyStats.map((key) => ({
+			id: key.id,
+			name: key.name,
+			requests: key.requests,
+			successRate: successRateMap.get(key.id) || 0,
+		}));
 	}
 }
