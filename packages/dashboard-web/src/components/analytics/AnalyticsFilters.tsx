@@ -15,6 +15,7 @@ import { Separator } from "../ui/separator";
 export interface FilterState {
 	accounts: string[];
 	models: string[];
+	apiKeys: string[];
 	status: "all" | "success" | "error";
 }
 
@@ -23,6 +24,7 @@ interface AnalyticsFiltersProps {
 	setFilters: (filters: FilterState) => void;
 	availableAccounts: string[];
 	availableModels: string[];
+	availableApiKeys: string[];
 	activeFilterCount: number;
 	filterOpen: boolean;
 	setFilterOpen: (open: boolean) => void;
@@ -33,6 +35,7 @@ export function AnalyticsFilters({
 	setFilters,
 	availableAccounts,
 	availableModels,
+	availableApiKeys,
 	activeFilterCount,
 	filterOpen,
 	setFilterOpen,
@@ -59,7 +62,12 @@ export function AnalyticsFilters({
 								variant="ghost"
 								size="sm"
 								onClick={() =>
-									setFilters({ accounts: [], models: [], status: "all" })
+									setFilters({
+										accounts: [],
+										models: [],
+										apiKeys: [],
+										status: "all",
+									})
 								}
 							>
 								Clear all
@@ -158,6 +166,43 @@ export function AnalyticsFilters({
 											}}
 										/>
 										<span className="text-sm truncate">{model}</span>
+									</label>
+								))}
+							</div>
+						</div>
+					)}
+
+					{/* API Key Filter */}
+					{availableApiKeys.length > 0 && (
+						<div className="space-y-2">
+							<Label>API Keys ({filters.apiKeys.length} selected)</Label>
+							<div className="border rounded-md p-2 max-h-32 overflow-y-auto space-y-1">
+								{availableApiKeys.map((apiKey) => (
+									<label
+										key={apiKey}
+										className="flex items-center space-x-2 cursor-pointer hover:bg-muted/50 p-1 rounded"
+									>
+										<input
+											type="checkbox"
+											className="rounded border-gray-300"
+											checked={filters.apiKeys.includes(apiKey)}
+											onChange={(e) => {
+												if (e.target.checked) {
+													setFilters({
+														...filters,
+														apiKeys: [...filters.apiKeys, apiKey],
+													});
+												} else {
+													setFilters({
+														...filters,
+														apiKeys: filters.apiKeys.filter(
+															(k) => k !== apiKey,
+														),
+													});
+												}
+											}}
+										/>
+										<span className="text-sm truncate">{apiKey}</span>
 									</label>
 								))}
 							</div>

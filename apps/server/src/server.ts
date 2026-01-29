@@ -17,7 +17,7 @@ import {
 import { container, SERVICE_KEYS } from "@better-ccflare/core-di";
 import type { DatabaseOperations } from "@better-ccflare/database";
 import { AsyncDbWriter, DatabaseFactory } from "@better-ccflare/database";
-import { APIRouter } from "@better-ccflare/http-api";
+import { APIRouter, AuthService } from "@better-ccflare/http-api";
 import { SessionStrategy } from "@better-ccflare/load-balancer";
 import { Logger } from "@better-ccflare/logger";
 import { getProvider, usageCache } from "@better-ccflare/providers";
@@ -497,6 +497,9 @@ export default function startServer(options?: {
 		},
 	});
 
+	// Initialize AuthService for proxy authentication
+	const authService = new AuthService(dbOps);
+
 	// Run startup maintenance once (cleanup only) - fire and forget
 	runStartupMaintenance(config, dbOps).catch((err) => {
 		log.error("Startup maintenance failed:", err);
@@ -661,7 +664,35 @@ export default function startServer(options?: {
 				}
 
 				// All other paths go to proxy
-				return handleProxy(req, url, proxyContext);
+				// Authenticate the proxy request
+				const authResult = await authService.authenticateRequest(
+					req,
+					url.pathname,
+					req.method,
+				);
+				if (!authResult.isAuthenticated) {
+					return new Response(
+						JSON.stringify({
+							type: "error",
+							error: {
+								type: "authentication_error",
+								message: authResult.error || "Authentication failed",
+							},
+						}),
+						{
+							status: 401,
+							headers: { "Content-Type": "application/json" },
+						},
+					);
+				}
+
+				return handleProxy(
+					req,
+					url,
+					proxyContext,
+					authResult.apiKeyId,
+					authResult.apiKeyName,
+				);
 			},
 		};
 

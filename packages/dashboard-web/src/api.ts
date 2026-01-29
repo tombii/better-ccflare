@@ -598,6 +598,7 @@ class API extends HttpClient {
 		filters?: {
 			accounts?: string[];
 			models?: string[];
+			apiKeys?: string[];
 			status?: "all" | "success" | "error";
 		},
 		mode: "normal" | "cumulative" = "normal",
@@ -610,6 +611,9 @@ class API extends HttpClient {
 		}
 		if (filters?.models?.length) {
 			params.append("models", filters.models.join(","));
+		}
+		if (filters?.apiKeys?.length) {
+			params.append("apiKeys", filters.apiKeys.join(","));
 		}
 		if (filters?.status && filters.status !== "all") {
 			params.append("status", filters.status);

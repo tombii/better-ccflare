@@ -4,6 +4,8 @@ import { type ApiKey, NodeCryptoUtils } from "@better-ccflare/types";
 export interface AuthenticationResult {
 	isAuthenticated: boolean;
 	apiKey?: ApiKey;
+	apiKeyId?: string;
+	apiKeyName?: string;
 	error?: string;
 }
 
@@ -58,6 +60,8 @@ export class AuthService {
 				return {
 					isAuthenticated: true,
 					apiKey: keyRecord,
+					apiKeyId: keyRecord.id,
+					apiKeyName: keyRecord.name,
 				};
 			}
 		}

@@ -379,6 +379,8 @@ async function handleStart(msg: StartMessage): Promise<void> {
 				msg.accountId,
 				msg.responseStatus,
 				msg.timestamp,
+				msg.apiKeyId || undefined,
+				msg.apiKeyName || undefined,
 			);
 			if (
 				process.env.DEBUG?.includes("worker") ||
@@ -589,6 +591,8 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 					}
 				: undefined,
 			state.agentUsed,
+			startMessage.apiKeyId || undefined,
+			startMessage.apiKeyName || undefined,
 		),
 	);
 

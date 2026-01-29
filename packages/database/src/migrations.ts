@@ -453,6 +453,18 @@ export function runMigrations(db: Database, dbPath?: string): void {
 			log.info("Added output_tokens_per_second column to requests table");
 		}
 
+		// Add api_key_id column if it doesn't exist
+		if (!requestsColumnNames.includes("api_key_id")) {
+			db.prepare("ALTER TABLE requests ADD COLUMN api_key_id TEXT").run();
+			log.info("Added api_key_id column to requests table");
+		}
+
+		// Add api_key_name column if it doesn't exist
+		if (!requestsColumnNames.includes("api_key_name")) {
+			db.prepare("ALTER TABLE requests ADD COLUMN api_key_name TEXT").run();
+			log.info("Added api_key_name column to requests table");
+		}
+
 		// Add performance indexes
 		addPerformanceIndexes(db);
 
