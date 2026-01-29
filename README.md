@@ -548,8 +548,8 @@ No `NODE_OPTIONS` needed - Traefik provides trusted certificates automatically!
 - Cost estimation and budgeting
 - Request deduplication for improved performance
 - Lazy-loaded analytics components for faster initial load
-- Advanced filtering by accounts, models, API keys, and status
-- API key performance tracking and analytics
+- Advanced filtering by accounts, models, API keys, and request status
+- API key performance tracking and detailed analytics
 
 ### 🛠️ Developer Tools
 - Powerful CLI (`better-ccflare`)
