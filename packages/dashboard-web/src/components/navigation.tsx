@@ -207,7 +207,7 @@ export function Navigation() {
 		setUpdateStatus("checking");
 		try {
 			const [response, packageInfo] = await Promise.all([
-				fetch("https://registry.npmjs.org/better-ccflare/latest"),
+				fetch("/api/version/check"),
 				detectPackageManager(),
 			]);
 
