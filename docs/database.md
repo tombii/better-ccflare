@@ -62,6 +62,8 @@ erDiagram
         INTEGER cache_creation_input_tokens "Cached input tokens created"
         INTEGER output_tokens "Detailed output tokens"
         TEXT agent_used "Agent ID if request used an agent"
+        TEXT api_key_id "API key ID used for the request"
+        TEXT api_key_name "API key name used for the request"
     }
     
     request_payloads {
@@ -144,6 +146,8 @@ The `requests` table logs all proxied requests for analytics and debugging.
 | `output_tokens` | INTEGER | DEFAULT 0* | Detailed output token count |
 | `output_tokens_per_second` | REAL | NULL* | Output generation speed (tokens/sec) |
 | `agent_used` | TEXT | NULL* | Agent ID if request used an agent |
+| `api_key_id` | TEXT | NULL* | API key ID used for the request |
+| `api_key_name` | TEXT | NULL* | API key name used for the request |
 
 *Note: Columns marked with * are added via migrations and may not exist in databases created before the migration was introduced.
 
@@ -156,6 +160,10 @@ The `requests` table logs all proxied requests for analytics and debugging.
 - `idx_requests_cost_model` on `cost_usd, model, timestamp DESC` WHERE `cost_usd > 0 AND model IS NOT NULL` for cost analysis
 - `idx_requests_response_time` on `model, response_time_ms` WHERE `response_time_ms IS NOT NULL AND model IS NOT NULL` for response time analysis
 - `idx_requests_tokens` on `timestamp DESC, total_tokens` WHERE `total_tokens > 0` for token usage analysis
+- `idx_requests_api_key` on `api_key_id` WHERE `api_key_id IS NOT NULL` for API key filtering
+- `idx_requests_api_key_timestamp` on `api_key_id, timestamp DESC` WHERE `api_key_id IS NOT NULL` for API key analytics
+- `idx_requests_api_key` on `api_key_id` WHERE `api_key_id IS NOT NULL` for API key filtering
+- `idx_requests_api_key_timestamp` on `api_key_id, timestamp DESC` WHERE `api_key_id IS NOT NULL` for API key analytics with time-based queries
 
 ### request_payloads Table
 

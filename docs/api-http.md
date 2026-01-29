@@ -579,6 +579,7 @@ Get detailed analytics data.
 - `range` - Time range: `1h`, `6h`, `24h`, `7d`, `30d` (default: `24h`)
 - `accounts` - Filter by account names (comma-separated list)
 - `models` - Filter by model names (comma-separated list)
+- `apiKeys` - Filter by API key names (comma-separated list)
 - `status` - Filter by request status: `all`, `success`, `error` (default: `all`)
 - `mode` - Display mode: `normal`, `cumulative` (default: `normal`). Cumulative mode shows running totals over time
 - `modelBreakdown` - Include per-model time series data: `true`, `false` (default: `false`)
@@ -625,6 +626,9 @@ Get detailed analytics data.
   "accountPerformance": [
     {"name": "account1", "requests": 2500, "successRate": 99}
   ],
+  "apiKeyPerformance": [
+    {"id": "key-123", "name": "Production App", "requests": 1500, "successRate": 99.5}
+  ],
   "costByModel": [
     {"model": "claude-3-opus-20240229", "costUsd": 100.50, "requests": 3000, "totalTokens": 1200000}
   ],
@@ -653,8 +657,11 @@ curl "http://localhost:8080/api/analytics?range=24h&accounts=account1,account2"
 # Analytics for specific models with success status only
 curl "http://localhost:8080/api/analytics?range=24h&models=claude-3-opus-20240229,claude-3-sonnet-20240229&status=success"
 
-# Combined filters
-curl "http://localhost:8080/api/analytics?range=7d&accounts=premium1,premium2&models=claude-3-opus-20240229&status=error"
+# Analytics filtered by API keys
+curl "http://localhost:8080/api/analytics?range=24h&apiKeys=Production%20App,Development%20App"
+
+# Combined filters (accounts, models, API keys, and status)
+curl "http://localhost:8080/api/analytics?range=7d&accounts=premium1,premium2&models=claude-3-opus-20240229&apiKeys=Production%20App&status=error"
 ```
 
 ---

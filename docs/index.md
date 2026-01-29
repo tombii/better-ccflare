@@ -31,6 +31,7 @@ When working with Claude API at scale, rate limits can become a significant bott
 - **Web Dashboard**: Interactive UI at `/dashboard` with live metrics
 - **Powerful CLI**: Comprehensive command-line interface for management and monitoring
 - **Request Tracking**: Complete history with token usage and costs
+- **Advanced Filtering**: Filter requests and analytics by accounts, models, API keys, and status
 - **Performance Metrics**: Response times, success rates, and error tracking
 
 ### 🛠️ Developer Experience
