@@ -664,19 +664,45 @@ export default function startServer(options?: {
 				}
 
 				// All other paths go to proxy
-				// Authenticate the proxy request
-				const authResult = await authService.authenticateRequest(
-					req,
-					url.pathname,
-					req.method,
-				);
-				if (!authResult.isAuthenticated) {
+				// Authenticate the proxy request with error handling to prevent bypass
+				try {
+					const authResult = await authService.authenticateRequest(
+						req,
+						url.pathname,
+						req.method,
+					);
+					if (!authResult.isAuthenticated) {
+						return new Response(
+							JSON.stringify({
+								type: "error",
+								error: {
+									type: "authentication_error",
+									message: authResult.error || "Authentication failed",
+								},
+							}),
+							{
+								status: 401,
+								headers: { "Content-Type": "application/json" },
+							},
+						);
+					}
+
+					return handleProxy(
+						req,
+						url,
+						proxyContext,
+						authResult.apiKeyId,
+						authResult.apiKeyName,
+					);
+				} catch (authError) {
+					// Log authentication errors for security monitoring
+					log.error("Authentication service error:", authError);
 					return new Response(
 						JSON.stringify({
 							type: "error",
 							error: {
 								type: "authentication_error",
-								message: authResult.error || "Authentication failed",
+								message: "Authentication service error",
 							},
 						}),
 						{
@@ -685,14 +711,6 @@ export default function startServer(options?: {
 						},
 					);
 				}
-
-				return handleProxy(
-					req,
-					url,
-					proxyContext,
-					authResult.apiKeyId,
-					authResult.apiKeyName,
-				);
 			},
 		};
 

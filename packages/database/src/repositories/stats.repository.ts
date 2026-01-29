@@ -241,7 +241,19 @@ export class StatsRepository {
 		if (apiKeyStats.length === 0) return [];
 
 		// Calculate success rate per API key
-		const apiKeyIds = apiKeyStats.map((a) => a.id);
+		// Security: apiKeyIds are sourced directly from database query results above,
+		// ensuring they are safe strings from the api_key_id column (UUID format).
+		// The placeholder construction is safe because we validate the array is non-empty
+		// and use parameterized queries for the actual values.
+		const apiKeyIds = apiKeyStats
+			.map((a) => a.id)
+			.filter((id) => {
+				// Additional safety: ensure ID is a valid non-empty string
+				return typeof id === "string" && id.length > 0 && id.length < 256;
+			});
+
+		if (apiKeyIds.length === 0) return [];
+
 		const placeholders = apiKeyIds.map(() => "?").join(",");
 
 		const successRates = this.db
