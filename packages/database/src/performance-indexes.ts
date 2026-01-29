@@ -122,6 +122,22 @@ export function addPerformanceIndexes(db: Database): void {
 	`);
 	log.info("Added index: idx_oauth_sessions_account_name");
 
+	// Index for API key filtering
+	db.run(`
+		CREATE INDEX IF NOT EXISTS idx_requests_api_key
+		ON requests(api_key_id)
+		WHERE api_key_id IS NOT NULL
+	`);
+	log.info("Added index: idx_requests_api_key");
+
+	// Composite index for API key analytics (filtering + time-based queries)
+	db.run(`
+		CREATE INDEX IF NOT EXISTS idx_requests_api_key_timestamp
+		ON requests(api_key_id, timestamp DESC)
+		WHERE api_key_id IS NOT NULL
+	`);
+	log.info("Added index: idx_requests_api_key_timestamp");
+
 	log.info("Performance indexes added successfully");
 }
 

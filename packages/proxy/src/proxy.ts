@@ -162,6 +162,8 @@ export function terminateUsageWorker(): void {
  * @param req - The incoming request
  * @param url - The parsed URL
  * @param ctx - The proxy context containing strategy, database, and provider
+ * @param apiKeyId - Optional API key ID for tracking
+ * @param apiKeyName - Optional API key name for tracking
  * @returns Promise resolving to the proxied response
  * @throws {ValidationError} If the provider cannot handle the path
  * @throws {ServiceUnavailableError} If all accounts fail to proxy the request
@@ -171,6 +173,8 @@ export async function handleProxy(
 	req: Request,
 	url: URL,
 	ctx: ProxyContext,
+	apiKeyId?: string | null,
+	apiKeyName?: string | null,
 ): Promise<Response> {
 	// 0. Silently ignore Claude Code internal endpoints (non-critical, not supported by all providers)
 	if (
@@ -261,6 +265,8 @@ export async function handleProxy(
 			finalBodyBuffer,
 			finalCreateBodyStream,
 			ctx,
+			apiKeyId,
+			apiKeyName,
 		);
 	}
 
@@ -287,6 +293,8 @@ export async function handleProxy(
 			finalCreateBodyStream,
 			i,
 			ctx,
+			apiKeyId,
+			apiKeyName,
 		);
 
 		if (response) {

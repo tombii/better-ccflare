@@ -41,6 +41,7 @@ export const useAnalytics = (
 	filters: {
 		accounts?: string[];
 		models?: string[];
+		apiKeys?: string[];
 		status?: "all" | "success" | "error";
 	},
 	viewMode: "normal" | "cumulative",

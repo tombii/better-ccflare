@@ -203,6 +203,8 @@ export async function proxyUnauthenticated(
 	requestBodyBuffer: ArrayBuffer | null,
 	createBodyStream: () => ReadableStream<Uint8Array> | undefined,
 	ctx: ProxyContext,
+	apiKeyId?: string | null,
+	apiKeyName?: string | null,
 ): Promise<Response> {
 	log.warn(ERROR_MESSAGES.NO_ACCOUNTS);
 
@@ -235,6 +237,8 @@ export async function proxyUnauthenticated(
 				retryAttempt: 0,
 				failoverAttempts: 0,
 				agentUsed: requestMeta.agentUsed,
+				apiKeyId,
+				apiKeyName,
 			},
 			ctx,
 		);
@@ -272,6 +276,8 @@ export async function proxyWithAccount(
 	_createBodyStream: () => ReadableStream<Uint8Array> | undefined,
 	failoverAttempts: number,
 	ctx: ProxyContext,
+	apiKeyId?: string | null,
+	apiKeyName?: string | null,
 ): Promise<Response | null> {
 	try {
 		if (
@@ -394,6 +400,8 @@ export async function proxyWithAccount(
 				retryAttempt: 0,
 				failoverAttempts,
 				agentUsed: requestMeta.agentUsed,
+				apiKeyId,
+				apiKeyName,
 			},
 			{ ...ctx, provider },
 		);

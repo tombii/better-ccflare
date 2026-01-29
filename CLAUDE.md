@@ -3,7 +3,15 @@
 Load balancer proxy for Claude distributing requests across multiple account providers to avoid rate limiting.
 
 ## ⚠️ CRITICAL: File Exclusions
-**ALWAYS IGNORE `inline-worker.ts`** - Never read, edit, commit, or reference this file. It's auto-generated and must never be modified or included in commits.
+**NEVER TOUCH `inline-worker.ts`** - This file is auto-generated during build and MUST be completely ignored:
+- ❌ Do NOT read it
+- ❌ Do NOT edit it
+- ❌ Do NOT stage/commit it (`git add`)
+- ❌ Do NOT reference it in any tool calls
+- ❌ Do NOT include it in search results
+- ❌ If accidentally modified, revert it immediately with `git checkout -- packages/proxy/src/inline-worker.ts`
+
+When using glob patterns or file searches, explicitly exclude this file.
 
 ## Branch Management
 - Feature branches: Create from `dev` (not main). Pull latest first: `git checkout dev && git pull origin dev && git checkout -b feature/name`

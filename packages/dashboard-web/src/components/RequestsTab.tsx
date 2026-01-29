@@ -13,6 +13,7 @@ import {
 	Eye,
 	Filter,
 	Hash,
+	Key,
 	RefreshCw,
 	User,
 	X,
@@ -55,6 +56,7 @@ export function RequestsTab() {
 	const [modalRequest, setModalRequest] = useState<RequestPayload | null>(null);
 	const [accountFilter, setAccountFilter] = useState<string>("all");
 	const [agentFilter, setAgentFilter] = useState<string>("all");
+	const [apiKeyFilter, setApiKeyFilter] = useState<string>("all");
 	const [dateFrom, setDateFrom] = useState<string>("");
 	const [dateTo, setDateTo] = useState<string>("");
 	const [showFilters, setShowFilters] = useState(false);
@@ -128,6 +130,20 @@ export function RequestsTab() {
 			).sort()
 		: [];
 
+	// Extract unique API keys for filter
+	const uniqueApiKeys = data
+		? Array.from(
+				new Set(
+					data.requests
+						.map((r) => {
+							const summary = data.summaries.get(r.id);
+							return summary?.apiKeyName;
+						})
+						.filter(Boolean),
+				),
+			).sort()
+		: [];
+
 	// Filter requests based on selected filters
 	const filteredRequests = data
 		? data.requests.filter((request) => {
@@ -143,6 +159,17 @@ export function RequestsTab() {
 					const summary = data.summaries.get(request.id);
 					const requestAgent = summary?.agentUsed || request.meta.agentUsed;
 					if (requestAgent !== agentFilter) return false;
+				}
+
+				// API key filter
+				if (apiKeyFilter !== "all") {
+					const summary = data.summaries.get(request.id);
+					const requestApiKey = summary?.apiKeyName;
+					if (apiKeyFilter === "no-api-key") {
+						if (requestApiKey) return false;
+					} else {
+						if (requestApiKey !== apiKeyFilter) return false;
+					}
 				}
 
 				// Status code filter
@@ -236,6 +263,7 @@ export function RequestsTab() {
 	const clearAllFilters = () => {
 		setAccountFilter("all");
 		setAgentFilter("all");
+		setApiKeyFilter("all");
 		setDateFrom("");
 		setDateTo("");
 		setStatusCodeFilters(new Set());
@@ -244,6 +272,7 @@ export function RequestsTab() {
 	const hasActiveFilters =
 		accountFilter !== "all" ||
 		agentFilter !== "all" ||
+		apiKeyFilter !== "all" ||
 		dateFrom ||
 		dateTo ||
 		statusCodeFilters.size > 0;
@@ -353,6 +382,19 @@ export function RequestsTab() {
 									<button
 										type="button"
 										onClick={() => setAgentFilter("all")}
+										className="ml-1 p-0.5 hover:bg-destructive/20 rounded"
+									>
+										<X className="h-3 w-3" />
+									</button>
+								</Badge>
+							)}
+							{apiKeyFilter !== "all" && (
+								<Badge variant="outline" className="gap-1.5 pr-1">
+									<Hash className="h-3 w-3" />
+									{apiKeyFilter === "no-api-key" ? "No API Key" : apiKeyFilter}
+									<button
+										type="button"
+										onClick={() => setApiKeyFilter("all")}
 										className="ml-1 p-0.5 hover:bg-destructive/20 rounded"
 									>
 										<X className="h-3 w-3" />
@@ -495,7 +537,7 @@ export function RequestsTab() {
 							<div className="h-px bg-border" />
 
 							{/* Resource Filters */}
-							<div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+							<div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
 								{/* Account Filter */}
 								<div>
 									<Label className="text-xs flex items-center gap-1 mb-2">
@@ -535,6 +577,28 @@ export function RequestsTab() {
 											{uniqueAgents.map((agent) => (
 												<SelectItem key={agent} value={agent || ""}>
 													{agent}
+												</SelectItem>
+											))}
+										</SelectContent>
+									</Select>
+								</div>
+
+								{/* API Key Filter */}
+								<div>
+									<Label className="text-xs flex items-center gap-1 mb-2">
+										<Key className="h-3 w-3" />
+										API Key
+									</Label>
+									<Select value={apiKeyFilter} onValueChange={setApiKeyFilter}>
+										<SelectTrigger className="h-9">
+											<SelectValue placeholder="All API keys" />
+										</SelectTrigger>
+										<SelectContent>
+											<SelectItem value="all">All API keys</SelectItem>
+											<SelectItem value="no-api-key">No API Key</SelectItem>
+											{uniqueApiKeys.map((key) => (
+												<SelectItem key={key} value={key || ""}>
+													{key}
 												</SelectItem>
 											))}
 										</SelectContent>
@@ -678,6 +742,12 @@ export function RequestsTab() {
 											{(summary?.agentUsed || request.meta.agentUsed) && (
 												<Badge variant="secondary" className="text-xs">
 													Agent: {summary?.agentUsed || request.meta.agentUsed}
+												</Badge>
+											)}
+											{summary?.apiKeyName && (
+												<Badge variant="outline" className="text-xs">
+													<Key className="h-3 w-3 mr-1" />
+													{summary.apiKeyName}
 												</Badge>
 											)}
 											{(summary?.totalTokens || request.meta.pending) && (
