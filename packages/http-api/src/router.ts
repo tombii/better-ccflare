@@ -61,6 +61,7 @@ import {
 	createReauthNeededHandler,
 	createTokenHealthHandler,
 } from "./handlers/token-health";
+import { createVersionCheckHandler } from "./handlers/version";
 import { AuthService } from "./services/auth-service";
 import type { APIContext } from "./types";
 import { errorResponse } from "./utils/http-error";
@@ -114,6 +115,7 @@ export class APIRouter {
 		const cleanupHandler = createCleanupHandler(dbOps, config);
 		const compactHandler = createCompactHandler(dbOps);
 		const systemInfoHandler = createSystemInfoHandler();
+		const versionCheckHandler = createVersionCheckHandler();
 
 		// API Key handlers
 		const apiKeysListHandler = createApiKeysListHandler(dbOps);
@@ -207,6 +209,7 @@ export class APIRouter {
 		this.handlers.set("POST:/api/maintenance/cleanup", () => cleanupHandler());
 		this.handlers.set("POST:/api/maintenance/compact", () => compactHandler());
 		this.handlers.set("GET:/api/system/info", () => systemInfoHandler());
+		this.handlers.set("GET:/api/version/check", () => versionCheckHandler());
 		this.handlers.set("GET:/api/logs/stream", (req) => logsStreamHandler(req));
 		this.handlers.set("GET:/api/logs/history", () => logsHistoryHandler());
 		this.handlers.set("GET:/api/analytics", (_req, url) => {
