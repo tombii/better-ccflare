@@ -670,6 +670,8 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 		costUsd: state.usage.costUsd,
 		agentUsed: state.agentUsed,
 		tokensPerSecond: state.usage.tokensPerSecond,
+		apiKeyId: startMessage.apiKeyId || undefined,
+		apiKeyName: startMessage.apiKeyName || undefined,
 	};
 
 	self.postMessage({
