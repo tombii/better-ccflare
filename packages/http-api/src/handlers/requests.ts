@@ -66,6 +66,8 @@ export function createRequestsSummaryHandler(db: Database) {
 			cost_usd: number | null;
 			agent_used: string | null;
 			output_tokens_per_second: number | null;
+			api_key_id: string | null;
+			api_key_name: string | null;
 		}>;
 
 		const response: RequestResponse[] = requests.map((request) => ({
@@ -91,6 +93,8 @@ export function createRequestsSummaryHandler(db: Database) {
 			costUsd: request.cost_usd || undefined,
 			agentUsed: request.agent_used || undefined,
 			tokensPerSecond: request.output_tokens_per_second || undefined,
+			apiKeyId: request.api_key_id || undefined,
+			apiKeyName: request.api_key_name || undefined,
 		}));
 
 		return jsonResponse(response);
