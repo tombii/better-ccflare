@@ -1,0 +1,106 @@
+name: Auto-Rerun Failed Workflows
+
+on:
+  schedule:
+    # Run every 2 hours
+    - cron: '0 */2 * * *'
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  rerun-failed:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Rerun failed workflows
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "🔍 Checking for failed workflow runs in the last 6 hours..."
+
+          # Get failed runs from the last 6 hours (to avoid rerunning old failures)
+          SIX_HOURS_AGO=$(date -u -d '6 hours ago' +%Y-%m-%dT%H:%M:%SZ)
+
+          # Get all runs for comparison (need more data to check for newer successful runs)
+          ALL_RUNS=$(gh run list \
+            --repo ${{ github.repository }} \
+            --limit 100 \
+            --json databaseId,workflowDatabaseId,workflowName,status,conclusion,createdAt,headBranch,event \
+            --jq '.')
+
+          # Filter failed runs from last 6 hours
+          FAILED_RUNS=$(echo "$ALL_RUNS" | jq -r ".[] | select(.conclusion == \"failure\" and .createdAt >= \"$SIX_HOURS_AGO\") | @json")
+
+          if [ -z "$FAILED_RUNS" ]; then
+            echo "✅ No recent failed workflows found!"
+            exit 0
+          fi
+
+          echo "Found failed workflows to check:"
+          echo "$FAILED_RUNS" | jq -r '"\(.databaseId) - \(.workflowName) (\(.headBranch))"'
+          echo ""
+
+          RERUN_COUNT=0
+          SKIP_COUNT=0
+
+          echo "$FAILED_RUNS" | while IFS= read -r run_json; do
+            RUN_ID=$(echo "$run_json" | jq -r '.databaseId')
+            WORKFLOW_ID=$(echo "$run_json" | jq -r '.workflowDatabaseId')
+            WORKFLOW=$(echo "$run_json" | jq -r '.workflowName')
+            BRANCH=$(echo "$run_json" | jq -r '.headBranch')
+            CREATED_AT=$(echo "$run_json" | jq -r '.createdAt')
+            STATUS=$(echo "$run_json" | jq -r '.status')
+
+            echo "Processing run $RUN_ID ($WORKFLOW on $BRANCH)..."
+
+            # Skip if already in progress or queued
+            if [[ "$STATUS" == "in_progress" || "$STATUS" == "queued" ]]; then
+              echo "⏭️  Skipping - already running"
+              ((SKIP_COUNT++))
+              continue
+            fi
+
+            # Skip this auto-rerun workflow to prevent infinite loops
+            if [[ "$WORKFLOW" == "Auto-Rerun Failed Workflows" ]]; then
+              echo "⏭️  Skipping - auto-rerun workflow"
+              ((SKIP_COUNT++))
+              continue
+            fi
+
+            # Check if there's a newer successful run of the same workflow on the same branch
+            NEWER_SUCCESS=$(echo "$ALL_RUNS" | jq -r ".[] | select(.workflowDatabaseId == $WORKFLOW_ID and .headBranch == \"$BRANCH\" and .createdAt > \"$CREATED_AT\" and .conclusion == \"success\") | .databaseId" | head -1)
+
+            if [ -n "$NEWER_SUCCESS" ]; then
+              echo "⏭️  Skipping - newer successful run exists (ID: $NEWER_SUCCESS)"
+              ((SKIP_COUNT++))
+              continue
+            fi
+
+            echo "🔄 Rerunning $run_id ($WORKFLOW)..."
+            if gh run rerun "$run_id" --repo ${{ github.repository }} --failed 2>&1; then
+              echo "✅ Successfully queued rerun"
+              ((RERUN_COUNT++))
+            else
+              echo "⚠️  Failed to rerun (may already be running)"
+              ((SKIP_COUNT++))
+            fi
+            echo ""
+
+            # Add a small delay to avoid rate limiting
+            sleep 2
+          done
+
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "Summary:"
+          echo "  Workflows rerun: $RERUN_COUNT"
+          echo "  Workflows skipped: $SKIP_COUNT"
+
+          if [ $RERUN_COUNT -gt 0 ]; then
+            echo ""
+            echo "✅ Auto-rerun completed successfully"
+          else
+            echo ""
+            echo "ℹ️  No workflows needed to be rerun"
+          fi
