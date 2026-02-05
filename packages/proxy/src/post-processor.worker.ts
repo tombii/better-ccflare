@@ -42,6 +42,7 @@ interface RequestState {
 		tokensPerSecond?: number;
 	};
 	lastActivity: number;
+	createdAt: number; // TTL tracking
 	agentUsed?: string;
 	firstTokenTimestamp?: number;
 	lastTokenTimestamp?: number;
@@ -56,8 +57,9 @@ const requests = new Map<string, RequestState>();
 console.log("[WORKER] Post-processor worker started");
 log.info("Post-processor worker started");
 
-// Limit to prevent unbounded growth
+// Limits to prevent unbounded growth
 const MAX_REQUESTS_MAP_SIZE = 10000;
+const REQUEST_TTL_MS = 5 * 60 * 1000; // 5 minutes - hard limit for request lifecycle
 
 // Initialize tiktoken encoder (cl100k_base is used for Claude models)
 // Using embedded WASM to avoid "Missing tiktoken_bg.wasm" errors in bunx
@@ -323,26 +325,40 @@ async function handleStart(msg: StartMessage): Promise<void> {
 	// Check if we should skip logging this request
 	const shouldSkip = !shouldLogRequest(msg.path, msg.responseStatus);
 
-	// Limit requests map size to prevent memory leak
+	// Emergency cleanup if map is at capacity (shouldn't happen with periodic cleanup)
 	if (requests.size >= MAX_REQUESTS_MAP_SIZE) {
-		log.warn(
-			`Requests map at capacity (${MAX_REQUESTS_MAP_SIZE}), cleaning up oldest entries`,
+		log.error(
+			`Requests map at capacity (${MAX_REQUESTS_MAP_SIZE})! Running emergency cleanup...`,
 		);
-		// Remove oldest 10% of entries
-		const toRemove = Math.floor(MAX_REQUESTS_MAP_SIZE * 0.1);
-		const entries = Array.from(requests.keys()).slice(0, toRemove);
-		for (const key of entries) {
-			requests.delete(key);
+		cleanupStaleRequests();
+
+		// If still at capacity after cleanup, force evict oldest 10%
+		if (requests.size >= MAX_REQUESTS_MAP_SIZE) {
+			const toRemove = Math.floor(MAX_REQUESTS_MAP_SIZE * 0.1);
+			const sortedByAge = Array.from(requests.entries()).sort(
+				(a, b) => a[1].createdAt - b[1].createdAt,
+			);
+
+			log.error(
+				`Emergency cleanup insufficient, force evicting ${toRemove} oldest entries...`,
+			);
+
+			for (let i = 0; i < toRemove; i++) {
+				const [id] = sortedByAge[i];
+				requests.delete(id);
+			}
 		}
 	}
 
 	// Create request state
+	const now = Date.now();
 	const state: RequestState = {
 		startMessage: msg,
 		buffer: "",
 		chunks: [],
 		usage: {},
-		lastActivity: Date.now(),
+		lastActivity: now,
+		createdAt: now,
 		shouldSkipLogging: shouldSkip,
 	};
 
@@ -724,27 +740,68 @@ async function handleShutdown(): Promise<void> {
 }
 
 // Periodic cleanup of stale requests (safety net for orphaned requests)
-// This should rarely trigger as the main app handles timeouts
+// Enforces both TTL and size limits to prevent memory leaks
 let cleanupInterval: Timer | null = null;
+
+const cleanupStaleRequests = () => {
+	const now = Date.now();
+	let removedCount = 0;
+
+	// 1. Remove TTL-expired requests (hard limit)
+	for (const [id, state] of requests) {
+		const age = now - state.createdAt;
+		if (age > REQUEST_TTL_MS) {
+			log.warn(
+				`Request ${id} exceeded TTL (age: ${Math.round(age / 1000)}s, limit: ${REQUEST_TTL_MS / 1000}s), removing...`,
+			);
+			requests.delete(id);
+			removedCount++;
+		}
+	}
+
+	// 2. Remove inactive requests (orphaned)
+	for (const [id, state] of requests) {
+		const inactivity = now - state.lastActivity;
+		if (inactivity > TIMEOUT_MS) {
+			log.warn(
+				`Request ${id} appears orphaned (no activity for ${Math.round(inactivity / 1000)}s), removing...`,
+			);
+			requests.delete(id);
+			removedCount++;
+		}
+	}
+
+	// 3. Enforce size limit by evicting oldest entries
+	if (requests.size > MAX_REQUESTS_MAP_SIZE) {
+		const excess = requests.size - MAX_REQUESTS_MAP_SIZE;
+		const sortedByAge = Array.from(requests.entries()).sort(
+			(a, b) => a[1].createdAt - b[1].createdAt,
+		);
+
+		log.warn(
+			`Requests map size (${requests.size}) exceeds limit (${MAX_REQUESTS_MAP_SIZE}), evicting ${excess} oldest entries...`,
+		);
+
+		for (let i = 0; i < excess; i++) {
+			const [id] = sortedByAge[i];
+			requests.delete(id);
+			removedCount++;
+		}
+	}
+
+	if (removedCount > 0) {
+		log.info(
+			`Cleanup removed ${removedCount} stale requests, map size now: ${requests.size}`,
+		);
+	}
+};
 
 const startCleanupInterval = () => {
 	if (!cleanupInterval) {
+		// Run cleanup every 30 seconds
 		cleanupInterval = setInterval(() => {
-			const now = Date.now();
-			for (const [id, state] of requests) {
-				if (now - state.lastActivity > TIMEOUT_MS) {
-					log.warn(
-						`Request ${id} appears orphaned (no activity for ${TIMEOUT_MS}ms), cleaning up...`,
-					);
-					handleEnd({
-						type: "end",
-						requestId: id,
-						success: false,
-						error: "Request orphaned - no activity",
-					});
-				}
-			}
-		}, TIMEOUT_MS); // Check every TIMEOUT_MS
+			cleanupStaleRequests();
+		}, 30000);
 	}
 };
 
