@@ -10,6 +10,7 @@
 		"typecheck": "bunx tsc --noEmit"
 	},
 	"dependencies": {
+		"@aws-sdk/client-bedrock": "^3.984.0",
 		"@aws-sdk/client-bedrock-runtime": "^3.984.0",
 		"@aws-sdk/credential-providers": "^3.984.0",
 		"@better-ccflare/core": "workspace:*",
