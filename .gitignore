@@ -2,6 +2,7 @@ node_modules/
 .env
 .env.local
 .claude/
+.planning/
 ccflare.db
 ccflare.db-wal
 ccflare.db-shm
