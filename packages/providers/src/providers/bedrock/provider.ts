@@ -558,6 +558,136 @@ export class BedrockProvider extends BaseProvider implements Provider {
 	}
 
 	/**
+	 * Parse usage from streaming SSE response (final event)
+	 *
+	 * Phase 5 implementation:
+	 * - Wait for final SSE event containing usage metadata
+	 * - Extract tokens and calculate cost immediately
+	 * - Return null on parsing errors (graceful degradation per CONTEXT.md)
+	 *
+	 * User decision (CONTEXT.md):
+	 * - "Wait for final SSE event to extract token usage (not incremental parsing)"
+	 * - "If usage extraction fails, log warning and continue (mark usage as null/zero, don't fail request)"
+	 * - "Calculate cost immediately when usage is extracted and store in database"
+	 *
+	 * @param response - Streaming SSE response
+	 * @returns Usage information or null if extraction fails
+	 */
+	async parseUsage(response: Response): Promise<{
+		model?: string;
+		promptTokens?: number;
+		completionTokens?: number;
+		totalTokens?: number;
+		inputTokens?: number;
+		outputTokens?: number;
+		costUsd?: number;
+	} | null> {
+		try {
+			const contentType = response.headers.get("content-type") || "";
+
+			// Non-streaming: delegate to extractUsageInfo
+			if (contentType.includes("application/json")) {
+				return this.extractUsageInfo(response);
+			}
+
+			// Streaming: parse SSE events to find final usage
+			if (!contentType.includes("text/event-stream")) {
+				log.warn("parseUsage called on non-SSE response, skipping");
+				return null;
+			}
+
+			// Read entire SSE stream to find final usage event
+			const reader = response.body?.getReader();
+			if (!reader) {
+				log.warn("No response body reader available");
+				return null;
+			}
+
+			const decoder = new TextDecoder();
+			let buffer = "";
+			let usage: any = null;
+
+			try {
+				while (true) {
+					const { done, value } = await reader.read();
+					if (done) break;
+
+					buffer += decoder.decode(value, { stream: true });
+					const lines = buffer.split("\n");
+					buffer = lines.pop() || ""; // Keep incomplete line in buffer
+
+					for (const line of lines) {
+						if (!line.startsWith("data: ")) continue;
+
+						const data = line.slice(6).trim();
+						if (data === "[DONE]") continue;
+
+						try {
+							const event = JSON.parse(data);
+
+							// Bedrock SSE format: look for usage in various event types
+							if (event.usage) {
+								usage = event.usage;
+							}
+							// Alternative: message_stop event with usage
+							if (event.type === "message_stop" && event.usage) {
+								usage = event.usage;
+							}
+						} catch {
+							// Ignore malformed JSON events
+						}
+					}
+				}
+			} finally {
+				reader.releaseLock();
+			}
+
+			if (!usage) {
+				log.debug("No usage found in SSE stream");
+				return null;
+			}
+
+			// Calculate token counts (same logic as extractUsageInfo)
+			const inputTokens = usage.inputTokens || usage.input_tokens || 0;
+			const cacheWriteTokens =
+				usage.cacheWriteInputTokens || usage.cache_write_input_tokens || 0;
+			const cacheReadTokens =
+				usage.cacheReadInputTokens || usage.cache_read_input_tokens || 0;
+			const outputTokens = usage.outputTokens || usage.output_tokens || 0;
+			const promptTokens = inputTokens + cacheWriteTokens + cacheReadTokens;
+			const totalTokens = promptTokens + outputTokens;
+
+			// Calculate cost immediately (per CONTEXT.md: "Calculate cost immediately when usage is extracted")
+			let costUsd: number | undefined;
+			try {
+				costUsd = await estimateCostUSD("bedrock", {
+					inputTokens,
+					outputTokens,
+					cacheReadInputTokens: cacheReadTokens,
+					cacheCreationInputTokens: cacheWriteTokens,
+				});
+			} catch (error) {
+				log.warn(`Failed to calculate Bedrock cost: ${(error as Error).message}`);
+			}
+
+			return {
+				promptTokens,
+				completionTokens: outputTokens,
+				totalTokens,
+				inputTokens,
+				outputTokens,
+				costUsd,
+			};
+		} catch (error) {
+			// Graceful degradation per CONTEXT.md: "If usage extraction fails, log warning and continue"
+			log.warn(
+				`Failed to parse usage from Bedrock SSE stream: ${(error as Error).message}`,
+			);
+			return null;
+		}
+	}
+
+	/**
 	 * Check if Bedrock response is streaming
 	 *
 	 * Stub for now - Phase 3 implements streaming detection:
