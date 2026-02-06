@@ -7,11 +7,17 @@ import {
 	parseBedrockConfig,
 	translateBedrockError,
 } from "./index";
-import { BedrockRuntimeClient, ConverseCommand } from "@aws-sdk/client-bedrock-runtime";
+import {
+	BedrockRuntimeClient,
+	ConverseCommand,
+	ConverseStreamCommand,
+} from "@aws-sdk/client-bedrock-runtime";
 import { DatabaseFactory } from "@better-ccflare/database";
 import { ModelTranslationRepository } from "@better-ccflare/database";
 import {
 	transformMessagesRequest,
+	transformStreamingRequest,
+	detectStreamingMode,
 	type ClaudeRequest,
 } from "./request-transformer";
 
@@ -205,10 +211,12 @@ export class BedrockProvider extends BaseProvider implements Provider {
 	 * Transform request body and invoke Bedrock API
 	 *
 	 * Phase 3 implementation:
+	 * - Streaming mode detection via stream parameter in request body
 	 * - Model name translation via database lookup
 	 * - Passthrough for unknown models with auto-learning
-	 * - Request body transformation to Bedrock Converse API format
+	 * - Request body transformation to Bedrock Converse/ConverseStream API format
 	 * - Bedrock API invocation with automatic SigV4 signing
+	 * - Fallback to non-streaming for models that don't support streaming
 	 *
 	 * Note: Bedrock uses AWS SDK (not HTTP fetch like other providers).
 	 * This method invokes Bedrock API directly and returns a Response object
@@ -234,11 +242,15 @@ export class BedrockProvider extends BaseProvider implements Provider {
 			);
 		}
 
-		// Step 2: Get repository
+		// Step 2: Detect streaming mode BEFORE reading body
+		const requestClone = request.clone();
+		const isStreaming = await detectStreamingMode(requestClone);
+
+		// Step 3: Get repository
 		const db = DatabaseFactory.getInstance();
 		const repo = new ModelTranslationRepository(db.getDatabase());
 
-		// Step 3-4: Extract and translate model
+		// Step 4-5: Extract and translate model
 		const bodyText = await request.text();
 		const body = JSON.parse(bodyText) as ClaudeRequest;
 		let bedrockModelId = repo.getBedrockModelId(body.model);
@@ -255,45 +267,136 @@ export class BedrockProvider extends BaseProvider implements Provider {
 		// Use type assertion since TypeScript can't track the control flow
 		const finalModelId = bedrockModelId as string;
 
-		// Step 5: Transform request
-		const converseInput = transformMessagesRequest(body);
+		// Step 6: Transform request based on streaming mode
+		const converseInput = isStreaming
+			? transformStreamingRequest(body)
+			: transformMessagesRequest(body);
 
-		// Step 6: Create client
+		// Step 7: Create client
 		const credentials = createBedrockCredentialChain(account);
 		const client = new BedrockRuntimeClient({
 			region: config.region,
 			credentials,
 		});
 
-		// Step 7: Call Bedrock API
+		// Step 8: Call Bedrock API with appropriate command
 		try {
-			const command = new ConverseCommand({
-				modelId: finalModelId,
-				...converseInput,
-			} as any); // Cast to any due to ConverseCommandInput type constraints
+			if (isStreaming) {
+				// Streaming request using ConverseStreamCommand
+				const command = new ConverseStreamCommand({
+					modelId: finalModelId,
+					...converseInput,
+				} as any); // Cast to any due to ConverseStreamCommandInput type constraints
 
-			const response = await client.send(command);
+				const response = await client.send(command);
 
-			// Step 8: Auto-learn passthrough
-			if (isPassthrough) {
-				log.info(
-					`Passthrough successful for ${body.model}, adding to translation table`,
+				// Step 9: Auto-learn passthrough
+				if (isPassthrough) {
+					log.info(
+						`Passthrough successful for ${body.model}, adding to translation table`,
+					);
+					repo.addTranslation(body.model, finalModelId, true);
+				}
+
+				// Phase 4 will handle SSE streaming properly
+				// For now, return raw Bedrock streaming response
+				// Note: response.stream is an AsyncIterable<ResponseStream>
+				// We'll need to convert this to a ReadableStream for the Response
+				// For Phase 3, we'll create a simple wrapper
+				const encoder = new TextEncoder();
+				const stream = new ReadableStream({
+					async start(controller) {
+						try {
+							// response.stream is the AsyncIterable from Bedrock
+							if (response.stream) {
+								for await (const event of response.stream) {
+									// Forward events as-is for Phase 3
+									// Phase 4 will transform to Claude Messages API format
+									const data = JSON.stringify(event);
+									controller.enqueue(encoder.encode(`data: ${data}\n\n`));
+								}
+							}
+							controller.close();
+						} catch (error) {
+							controller.error(error);
+						}
+					},
+				});
+
+				return new Request("https://bedrock.aws/response", {
+					method: "POST",
+					headers: {
+						"content-type": "text/event-stream",
+						"cache-control": "no-cache",
+						"connection": "keep-alive",
+						"x-bedrock-response": "true", // Marker for downstream handling
+					},
+					// @ts-ignore - ReadableStream is valid for Request body
+					body: stream,
+				});
+			} else {
+				// Non-streaming request using ConverseCommand
+				const command = new ConverseCommand({
+					modelId: finalModelId,
+					...converseInput,
+				} as any); // Cast to any due to ConverseCommandInput type constraints
+
+				const response = await client.send(command);
+
+				// Step 9: Auto-learn passthrough
+				if (isPassthrough) {
+					log.info(
+						`Passthrough successful for ${body.model}, adding to translation table`,
+					);
+					repo.addTranslation(body.model, finalModelId, true);
+				}
+
+				// Return Response wrapped as Request for compatibility
+				// Phase 4 will handle proper response transformation
+				const responseBody = JSON.stringify(response);
+				return new Request("https://bedrock.aws/response", {
+					method: "POST",
+					headers: {
+						"content-type": "application/json",
+						"x-bedrock-response": "true", // Marker for downstream handling
+					},
+					body: responseBody,
+				});
+			}
+		} catch (error: any) {
+			// Streaming fallback logic
+			if (isStreaming && error.name === "ValidationException" && error.message?.includes("streaming")) {
+				log.warn(
+					`Model ${finalModelId} does not support streaming, falling back to non-streaming`,
 				);
-				repo.addTranslation(body.model, finalModelId, true);
+
+				// Retry without streaming
+				const command = new ConverseCommand({
+					modelId: finalModelId,
+					...transformMessagesRequest(body),
+				} as any);
+
+				const response = await client.send(command);
+
+				// Auto-learn passthrough if applicable
+				if (isPassthrough) {
+					log.info(
+						`Passthrough successful for ${body.model}, adding to translation table`,
+					);
+					repo.addTranslation(body.model, finalModelId, true);
+				}
+
+				const responseBody = JSON.stringify(response);
+				return new Request("https://bedrock.aws/response", {
+					method: "POST",
+					headers: {
+						"content-type": "application/json",
+						"x-bedrock-response": "true",
+					},
+					body: responseBody,
+				});
 			}
 
-			// Step 9: Return Response wrapped as Request for compatibility
-			// Phase 4 will handle proper response transformation
-			const responseBody = JSON.stringify(response);
-			return new Request("https://bedrock.aws/response", {
-				method: "POST",
-				headers: {
-					"content-type": "application/json",
-					"x-bedrock-response": "true", // Marker for downstream handling
-				},
-				body: responseBody,
-			});
-		} catch (error) {
 			// Passthrough failed, suggest alternatives
 			if (isPassthrough) {
 				const similar = repo.findSimilar(body.model, 3);
