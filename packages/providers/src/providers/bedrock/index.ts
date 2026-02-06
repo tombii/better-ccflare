@@ -31,3 +31,7 @@ export {
 export {
 	translateBedrockError,
 } from "./error-handler";
+
+export {
+	BedrockProvider,
+} from "./provider";
