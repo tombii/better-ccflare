@@ -3,6 +3,7 @@ import {
 	ConverseCommand,
 	ConverseStreamCommand,
 } from "@aws-sdk/client-bedrock-runtime";
+import { estimateCostUSD } from "@better-ccflare/core";
 import {
 	DatabaseFactory,
 	ModelTranslationRepository,
@@ -22,7 +23,10 @@ import {
 	transformMessagesRequest,
 	transformStreamingRequest,
 } from "./request-transformer";
-import { transformNonStreamingResponse } from "./response-parser";
+import {
+	type BedrockConverseResponse,
+	transformNonStreamingResponse,
+} from "./response-parser";
 
 const log = new Logger("BedrockProvider");
 
@@ -107,7 +111,7 @@ export class BedrockProvider extends BaseProvider implements Provider {
 				`Bedrock credentials valid for account ${account.name} (profile: ${config.profile}, region: ${config.region})`,
 			);
 		} catch (error) {
-			const errorMsg = translateBedrockError(error);
+			const { message: errorMsg } = translateBedrockError(error);
 			throw new Error(
 				`Bedrock credential validation failed for ${account.name}: ${errorMsg}`,
 			);
@@ -194,20 +198,65 @@ export class BedrockProvider extends BaseProvider implements Provider {
 	 * Process Bedrock response before returning to client
 	 *
 	 * Phase 4 implementation:
+	 * - Error detection and status code translation
 	 * - Content-type detection (JSON vs SSE)
 	 * - Non-streaming responses transformed to Claude Messages API format
 	 * - Streaming responses forwarded unchanged (SSE events to client)
-	 * - Error handling added in Task 2
+	 *
+	 * Error handling:
+	 * - Streaming errors pass through to client (errors surface in SSE parser)
+	 * - Non-streaming errors translate to HTTP status codes with user-friendly messages
 	 *
 	 * @param response - Bedrock response
-	 * @param _account - Account configuration (for logging)
+	 * @param account - Account configuration (for logging)
 	 * @returns Processed response
 	 */
 	async processResponse(
 		response: Response,
-		_account: Account | null,
+		account: Account | null,
 	): Promise<Response> {
-		// Detect format from response headers (not request state)
+		// Check for error status codes
+		if (!response.ok) {
+			const contentType = response.headers.get("content-type") || "";
+
+			// Streaming error: forward to client (errors surface in client-side SSE parser)
+			if (contentType.includes("text/event-stream")) {
+				log.warn(
+					`Bedrock streaming error response (${account?.name || "unknown"}), forwarding to client`,
+				);
+				return response;
+			}
+
+			// Non-streaming error: parse and translate
+			if (contentType.includes("application/json")) {
+				try {
+					const clone = response.clone();
+					const json = await clone.json();
+					const errorType = json.error?.type || json.__type || "";
+					const { statusCode, message } = translateBedrockError({
+						name: errorType,
+						message: json.error?.message || json.message,
+					});
+
+					log.error(
+						`Bedrock error (${account?.name || "unknown"}): ${errorType} → ${statusCode}`,
+					);
+
+					return new Response(JSON.stringify({ error: message }), {
+						status: statusCode,
+						headers: response.headers,
+					});
+				} catch (parseError) {
+					// Failed to parse error, return original response
+					log.error(
+						`Failed to parse Bedrock error: ${(parseError as Error).message}`,
+					);
+					return response;
+				}
+			}
+		}
+
+		// Successful response: detect format from response headers (not request state)
 		const contentType = response.headers.get("content-type") || "";
 
 		// Streaming response: forward SSE unchanged to client
@@ -426,7 +475,7 @@ export class BedrockProvider extends BaseProvider implements Provider {
 				);
 			}
 			// Re-throw Bedrock errors with translation
-			const translatedError = translateBedrockError(error);
+			const { message: translatedError } = translateBedrockError(error);
 			throw new Error(translatedError);
 		}
 	}
@@ -434,24 +483,78 @@ export class BedrockProvider extends BaseProvider implements Provider {
 	/**
 	 * Extract usage information from Bedrock response
 	 *
-	 * Stub for now - Phase 5 implements token extraction from Bedrock responses:
-	 * - Parse usage block from response JSON
-	 * - Calculate costs based on model pricing
-	 * - Track cache usage (if Bedrock supports prompt caching)
+	 * Phase 4 implementation:
+	 * - Parse usage block from non-streaming JSON responses
+	 * - Calculate costs based on model pricing via estimateCostUSD
+	 * - Track cache usage (inputTokens, cacheReadInputTokens, cacheWriteInputTokens)
+	 * - Graceful degradation: returns null on errors (streaming or missing usage)
 	 *
-	 * @param _response - Bedrock response
-	 * @returns Usage information (stub implementation)
+	 * Note: Streaming usage extraction deferred to Phase 5 (requires SSE parsing)
+	 *
+	 * @param response - Bedrock response
+	 * @returns Usage information or null
 	 */
-	async extractUsageInfo(_response: Response): Promise<{
+	async extractUsageInfo(response: Response): Promise<{
 		model?: string;
 		promptTokens?: number;
 		completionTokens?: number;
 		totalTokens?: number;
 		inputTokens?: number;
 		outputTokens?: number;
+		costUsd?: number;
 	} | null> {
-		// Stub - Phase 5 implements token extraction from Bedrock responses
-		return null;
+		try {
+			const contentType = response.headers.get("content-type") || "";
+
+			// Only process JSON responses (streaming handled in Phase 5)
+			if (!contentType.includes("application/json")) {
+				return null;
+			}
+
+			const clone = response.clone();
+			const json = (await clone.json()) as BedrockConverseResponse;
+
+			if (!json.usage) {
+				return null;
+			}
+
+			// Calculate token counts
+			const inputTokens = json.usage.inputTokens || 0;
+			const cacheWriteTokens = json.usage.cacheWriteInputTokens || 0;
+			const cacheReadTokens = json.usage.cacheReadInputTokens || 0;
+			const outputTokens = json.usage.outputTokens || 0;
+			const promptTokens = inputTokens + cacheWriteTokens + cacheReadTokens;
+			const totalTokens = promptTokens + outputTokens;
+
+			// Calculate cost (graceful degradation if cost calculation fails)
+			let costUsd: number | undefined;
+			try {
+				costUsd = await estimateCostUSD("bedrock", {
+					inputTokens: inputTokens,
+					outputTokens: outputTokens,
+					cacheReadInputTokens: cacheReadTokens,
+					cacheCreationInputTokens: cacheWriteTokens,
+				});
+			} catch (error) {
+				log.warn(
+					`Failed to calculate Bedrock cost: ${(error as Error).message}`,
+				);
+			}
+
+			return {
+				promptTokens,
+				completionTokens: outputTokens,
+				totalTokens,
+				inputTokens,
+				outputTokens,
+				costUsd,
+			};
+		} catch (error) {
+			log.error(
+				`Failed to extract usage from Bedrock response: ${(error as Error).message}`,
+			);
+			return null;
+		}
 	}
 
 	/**
