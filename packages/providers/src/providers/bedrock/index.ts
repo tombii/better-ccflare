@@ -34,7 +34,9 @@ export {
 
 export {
 	transformMessagesRequest,
+	transformStreamingRequest,
 	detectStreamingMode,
+	supportsStreaming,
 } from "./request-transformer";
 
 export {
