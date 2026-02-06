@@ -1,6 +1,6 @@
 import type {
-	Message,
 	ConverseStreamCommandInput,
+	Message,
 } from "@aws-sdk/client-bedrock-runtime";
 import { Logger } from "@better-ccflare/logger";
 
@@ -104,15 +104,15 @@ export function transformMessagesRequest(
  * @param request - Request object
  * @returns true if streaming mode requested
  */
-export async function detectStreamingMode(
-	request: Request,
-): Promise<boolean> {
+export async function detectStreamingMode(request: Request): Promise<boolean> {
 	try {
 		const bodyText = await request.text();
 		const body = JSON.parse(bodyText) as { stream?: boolean };
 		return body.stream === true; // Default to false if missing
 	} catch (error) {
-		log.warn(`Failed to parse request body for streaming detection: ${(error as Error).message}`);
+		log.warn(
+			`Failed to parse request body for streaming detection: ${(error as Error).message}`,
+		);
 		return false; // Default to non-streaming on error
 	}
 }
