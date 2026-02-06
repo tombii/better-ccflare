@@ -32,3 +32,7 @@ export {
 	transformMessagesRequest,
 	transformStreamingRequest,
 } from "./request-transformer";
+export {
+	transformNonStreamingResponse,
+	type BedrockConverseResponse,
+} from "./response-parser";

@@ -22,6 +22,7 @@ import {
 	transformMessagesRequest,
 	transformStreamingRequest,
 } from "./request-transformer";
+import { transformNonStreamingResponse } from "./response-parser";
 
 const log = new Logger("BedrockProvider");
 
@@ -192,20 +193,34 @@ export class BedrockProvider extends BaseProvider implements Provider {
 	/**
 	 * Process Bedrock response before returning to client
 	 *
-	 * Stub for now - Phase 4 implements response transformation:
-	 * - Error code mapping (ThrottlingException → 429)
-	 * - Streaming event parsing (SSE format)
-	 * - Usage token extraction
+	 * Phase 4 implementation:
+	 * - Content-type detection (JSON vs SSE)
+	 * - Non-streaming responses transformed to Claude Messages API format
+	 * - Streaming responses forwarded unchanged (SSE events to client)
+	 * - Error handling added in Task 2
 	 *
 	 * @param response - Bedrock response
 	 * @param _account - Account configuration (for logging)
-	 * @returns Processed response (stub implementation)
+	 * @returns Processed response
 	 */
 	async processResponse(
 		response: Response,
 		_account: Account | null,
 	): Promise<Response> {
-		// Stub - Phase 4 implements response transformation
+		// Detect format from response headers (not request state)
+		const contentType = response.headers.get("content-type") || "";
+
+		// Streaming response: forward SSE unchanged to client
+		if (contentType.includes("text/event-stream")) {
+			return response;
+		}
+
+		// Non-streaming JSON response: transform to Claude format
+		if (contentType.includes("application/json")) {
+			return transformNonStreamingResponse(response);
+		}
+
+		// Unknown content type: pass through unchanged (shouldn't happen from Bedrock)
 		return response;
 	}
 
@@ -333,7 +348,6 @@ export class BedrockProvider extends BaseProvider implements Provider {
 						connection: "keep-alive",
 						"x-bedrock-response": "true", // Marker for downstream handling
 					},
-					// @ts-expect-error - ReadableStream is valid for Request body
 					body: stream,
 				});
 			} else {
