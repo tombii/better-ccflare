@@ -7,6 +7,13 @@ import {
 	parseBedrockConfig,
 	translateBedrockError,
 } from "./index";
+import { BedrockRuntimeClient, ConverseCommand } from "@aws-sdk/client-bedrock-runtime";
+import { DatabaseFactory } from "@better-ccflare/database";
+import { ModelTranslationRepository } from "@better-ccflare/database";
+import {
+	transformMessagesRequest,
+	type ClaudeRequest,
+} from "./request-transformer";
 
 const log = new Logger("BedrockProvider");
 
@@ -195,22 +202,110 @@ export class BedrockProvider extends BaseProvider implements Provider {
 	}
 
 	/**
-	 * Transform request body before sending to Bedrock
+	 * Transform request body and invoke Bedrock API
 	 *
-	 * Stub for now - Phase 3 implements:
-	 * - Model name translation (e.g., "claude-3-5-sonnet-20241022" → "us.anthropic.claude-3-5-sonnet-20241022-v2:0")
-	 * - Request body transformation (Messages API → Bedrock InvokeModel format)
+	 * Phase 3 implementation:
+	 * - Model name translation via database lookup
+	 * - Passthrough for unknown models with auto-learning
+	 * - Request body transformation to Bedrock Converse API format
+	 * - Bedrock API invocation with automatic SigV4 signing
+	 *
+	 * Note: Bedrock uses AWS SDK (not HTTP fetch like other providers).
+	 * This method invokes Bedrock API directly and returns a Response object
+	 * wrapped in a Request to maintain compatibility with Provider interface.
 	 *
 	 * @param request - Original request
-	 * @param _account - Account configuration (for region/profile)
-	 * @returns Transformed request (stub implementation)
+	 * @param account - Account configuration (for region/profile)
+	 * @returns Request wrapping Bedrock Response (compatibility shim)
 	 */
 	async transformRequestBody(
 		request: Request,
-		_account?: Account,
+		account?: Account,
 	): Promise<Request> {
-		// Stub - Phase 3 implements model translation
-		return request;
+		// Step 1: Parse config
+		if (!account) {
+			throw new Error("Account is required for Bedrock provider");
+		}
+
+		const config = parseBedrockConfig(account.custom_endpoint);
+		if (!config) {
+			throw new Error(
+				`Invalid Bedrock config for account ${account.name}: expected format "bedrock:profile:region"`,
+			);
+		}
+
+		// Step 2: Get repository
+		const db = DatabaseFactory.getInstance();
+		const repo = new ModelTranslationRepository(db.getDatabase());
+
+		// Step 3-4: Extract and translate model
+		const bodyText = await request.text();
+		const body = JSON.parse(bodyText) as ClaudeRequest;
+		let bedrockModelId = repo.getBedrockModelId(body.model);
+
+		const isPassthrough = bedrockModelId === null;
+		if (isPassthrough) {
+			log.info(
+				`Model ${body.model} not in translation table, attempting passthrough`,
+			);
+			bedrockModelId = body.model; // Try as-is
+		}
+
+		// bedrockModelId is now guaranteed to be a string (either from DB or passthrough)
+		// Use type assertion since TypeScript can't track the control flow
+		const finalModelId = bedrockModelId as string;
+
+		// Step 5: Transform request
+		const converseInput = transformMessagesRequest(body);
+
+		// Step 6: Create client
+		const credentials = createBedrockCredentialChain(account);
+		const client = new BedrockRuntimeClient({
+			region: config.region,
+			credentials,
+		});
+
+		// Step 7: Call Bedrock API
+		try {
+			const command = new ConverseCommand({
+				modelId: finalModelId,
+				...converseInput,
+			} as any); // Cast to any due to ConverseCommandInput type constraints
+
+			const response = await client.send(command);
+
+			// Step 8: Auto-learn passthrough
+			if (isPassthrough) {
+				log.info(
+					`Passthrough successful for ${body.model}, adding to translation table`,
+				);
+				repo.addTranslation(body.model, finalModelId, true);
+			}
+
+			// Step 9: Return Response wrapped as Request for compatibility
+			// Phase 4 will handle proper response transformation
+			const responseBody = JSON.stringify(response);
+			return new Request("https://bedrock.aws/response", {
+				method: "POST",
+				headers: {
+					"content-type": "application/json",
+					"x-bedrock-response": "true", // Marker for downstream handling
+				},
+				body: responseBody,
+			});
+		} catch (error) {
+			// Passthrough failed, suggest alternatives
+			if (isPassthrough) {
+				const similar = repo.findSimilar(body.model, 3);
+				const suggestions = similar.map((s) => s.client_name).join(", ");
+				throw new Error(
+					`Model ${body.model} not found. Did you mean: ${suggestions}?`,
+				);
+			}
+			// Re-throw Bedrock errors with translation
+			const translatedError = translateBedrockError(error);
+			throw new Error(translatedError);
+		}
 	}
 
 	/**
