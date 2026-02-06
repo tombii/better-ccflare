@@ -1,24 +1,26 @@
+import {
+	BedrockRuntimeClient,
+	ConverseCommand,
+	ConverseStreamCommand,
+} from "@aws-sdk/client-bedrock-runtime";
+import {
+	DatabaseFactory,
+	ModelTranslationRepository,
+} from "@better-ccflare/database";
 import { Logger } from "@better-ccflare/logger";
 import type { Account } from "@better-ccflare/types";
 import { BaseProvider } from "../../base";
-import type { Provider, TokenRefreshResult, RateLimitInfo } from "../../types";
+import type { Provider, RateLimitInfo, TokenRefreshResult } from "../../types";
 import {
 	createBedrockCredentialChain,
 	parseBedrockConfig,
 	translateBedrockError,
 } from "./index";
 import {
-	BedrockRuntimeClient,
-	ConverseCommand,
-	ConverseStreamCommand,
-} from "@aws-sdk/client-bedrock-runtime";
-import { DatabaseFactory } from "@better-ccflare/database";
-import { ModelTranslationRepository } from "@better-ccflare/database";
-import {
+	type ClaudeRequest,
+	detectStreamingMode,
 	transformMessagesRequest,
 	transformStreamingRequest,
-	detectStreamingMode,
-	type ClaudeRequest,
 } from "./request-transformer";
 
 const log = new Logger("BedrockProvider");
@@ -328,10 +330,10 @@ export class BedrockProvider extends BaseProvider implements Provider {
 					headers: {
 						"content-type": "text/event-stream",
 						"cache-control": "no-cache",
-						"connection": "keep-alive",
+						connection: "keep-alive",
 						"x-bedrock-response": "true", // Marker for downstream handling
 					},
-					// @ts-ignore - ReadableStream is valid for Request body
+					// @ts-expect-error - ReadableStream is valid for Request body
 					body: stream,
 				});
 			} else {
@@ -365,7 +367,11 @@ export class BedrockProvider extends BaseProvider implements Provider {
 			}
 		} catch (error: any) {
 			// Streaming fallback logic
-			if (isStreaming && error.name === "ValidationException" && error.message?.includes("streaming")) {
+			if (
+				isStreaming &&
+				error.name === "ValidationException" &&
+				error.message?.includes("streaming")
+			) {
 				log.warn(
 					`Model ${finalModelId} does not support streaming, falling back to non-streaming`,
 				);

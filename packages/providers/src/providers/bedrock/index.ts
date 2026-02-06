@@ -23,22 +23,12 @@ export {
 	createBedrockCredentialChain,
 	parseBedrockConfig,
 } from "./credentials";
-
+export { translateBedrockError } from "./error-handler";
+export { BedrockProvider } from "./provider";
+export { validateBedrockRegion } from "./region-validator";
 export {
-	validateBedrockRegion,
-} from "./region-validator";
-
-export {
-	translateBedrockError,
-} from "./error-handler";
-
-export {
-	transformMessagesRequest,
-	transformStreamingRequest,
 	detectStreamingMode,
 	supportsStreaming,
+	transformMessagesRequest,
+	transformStreamingRequest,
 } from "./request-transformer";
-
-export {
-	BedrockProvider,
-} from "./provider";
