@@ -33,5 +33,10 @@ export {
 } from "./error-handler";
 
 export {
+	transformMessagesRequest,
+	detectStreamingMode,
+} from "./request-transformer";
+
+export {
 	BedrockProvider,
 } from "./provider";
