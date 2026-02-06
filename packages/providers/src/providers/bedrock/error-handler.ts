@@ -63,5 +63,8 @@ export function translateBedrockError(error: unknown): string {
 	log.error(`Unknown Bedrock error: ${errorName} - ${errorMessage}`);
 
 	// Return original error message for unknown errors
-	return errorMessage || "An unknown error occurred with AWS Bedrock. Please try again.";
+	return (
+		errorMessage ||
+		"An unknown error occurred with AWS Bedrock. Please try again."
+	);
 }
