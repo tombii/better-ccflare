@@ -1,4 +1,7 @@
-import type { Message } from "@aws-sdk/client-bedrock-runtime";
+import type {
+	Message,
+	ConverseStreamCommandInput,
+} from "@aws-sdk/client-bedrock-runtime";
 import { Logger } from "@better-ccflare/logger";
 
 const log = new Logger("BedrockRequestTransformer");
@@ -112,4 +115,49 @@ export async function detectStreamingMode(
 		log.warn(`Failed to parse request body for streaming detection: ${(error as Error).message}`);
 		return false; // Default to non-streaming on error
 	}
+}
+
+/**
+ * Transform Claude Messages API request to Bedrock ConverseStream API format
+ *
+ * ConverseStreamCommandInput has the same structure as ConverseCommandInput:
+ * - messages
+ * - system
+ * - inferenceConfig (maxTokens, temperature, topP, stopSequences)
+ *
+ * The only difference is the command used (ConverseStreamCommand vs ConverseCommand).
+ *
+ * @param claudeRequest - Claude Messages API request
+ * @returns Bedrock ConverseStream API input (modelId added separately)
+ */
+export function transformStreamingRequest(
+	claudeRequest: ClaudeRequest,
+): ConverseStreamCommandInput {
+	// Bedrock uses same input format for streaming and non-streaming
+	// Reuse the existing transformation logic
+	const nonStreamingInput = transformMessagesRequest(claudeRequest);
+
+	// ConverseStreamCommandInput has same structure as ConverseCommandInput
+	// Cast is safe because fields are identical
+	return nonStreamingInput as ConverseStreamCommandInput;
+}
+
+/**
+ * Check if a model supports streaming
+ *
+ * Heuristic for determining if model supports streaming:
+ * - All Anthropic Claude models support streaming
+ * - Check if modelId contains "anthropic" or "claude"
+ * - Default to true (attempt streaming, fall back on error)
+ *
+ * @param modelId - Model identifier
+ * @returns true if model likely supports streaming
+ */
+export function supportsStreaming(modelId: string): boolean {
+	// All Claude models support streaming
+	if (modelId.includes("anthropic") || modelId.includes("claude")) {
+		return true;
+	}
+	// Default to true, will fall back on error
+	return true;
 }
