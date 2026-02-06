@@ -1,3 +1,7 @@
+import {
+	DatabaseFactory,
+	ModelTranslationRepository,
+} from "@better-ccflare/database";
 import { Logger } from "@better-ccflare/logger";
 
 const log = new Logger("BedrockErrorHandler");
@@ -81,6 +85,16 @@ export function translateBedrockError(error: unknown): {
 		};
 	}
 
+	// Model not found → 404
+	if (normalizedName.includes("resourcenotfound")) {
+		log.warn(`Model not found: ${errorName}`);
+		const suggestion = getModelNotFoundSuggestion(error);
+		return {
+			statusCode: 404,
+			message: `ResourceNotFoundException: ${errorMessage || "Model not found"}. ${suggestion}Failing over to next provider.`,
+		};
+	}
+
 	// Validation errors → 400
 	if (normalizedName.includes("validation")) {
 		log.warn(`Validation error: ${errorName}`);
@@ -96,4 +110,50 @@ export function translateBedrockError(error: unknown): {
 		statusCode: 500,
 		message: `AWS error: ${errorName || "Unknown"}. Failing over to next provider.`,
 	};
+}
+
+/**
+ * Get model suggestions for "Did you mean?" when model is not found
+ * Extracts model name from error message and finds similar models in database
+ * @param error - AWS error object
+ * @returns Suggestion string or empty string if no suggestions
+ */
+function getModelNotFoundSuggestion(error: unknown): string {
+	const errorMessage = (error as { message?: string }).message || "";
+
+	// Try to extract model name from error message
+	// Common patterns: "Model 'claude-3-5-sonnet' not found" or "models arn:aws:bedrock:us-east-1::foundation-model/..."
+	const modelPatterns = [
+		/model['"]\s*[:=]?\s*['"]([^'"]+)['"]/i,
+		/foundation-model\/([a-z0-9.-]+)/i,
+		/model\s+([a-z0-9.-]+)/i,
+	];
+
+	let modelName: string | undefined;
+	for (const pattern of modelPatterns) {
+		const match = errorMessage.match(pattern);
+		if (match?.[1]) {
+			modelName = match[1];
+			break;
+		}
+	}
+
+	if (!modelName) {
+		return "";
+	}
+
+	try {
+		const db = DatabaseFactory.getInstance();
+		const repo = new ModelTranslationRepository(db.getDatabase());
+		const suggestions = repo.findSimilar(modelName, 3);
+
+		if (suggestions.length > 0) {
+			const suggestedNames = suggestions.map((s) => s.client_name).join(", ");
+			return `Did you mean: ${suggestedNames}? `;
+		}
+	} catch (err) {
+		log.warn(`Failed to get model suggestions: ${(err as Error).message}`);
+	}
+
+	return "";
 }

@@ -33,6 +33,6 @@ export {
 	transformStreamingRequest,
 } from "./request-transformer";
 export {
-	transformNonStreamingResponse,
 	type BedrockConverseResponse,
+	transformNonStreamingResponse,
 } from "./response-parser";

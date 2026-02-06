@@ -100,7 +100,7 @@ export async function transformNonStreamingResponse(
 				? {
 						input_tokens: usage.inputTokens,
 						output_tokens: usage.outputTokens,
-				  }
+					}
 				: undefined,
 		};
 
