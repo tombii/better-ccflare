@@ -1,6 +1,5 @@
-import type { Database } from "bun:sqlite";
-import { BaseRepository } from "./base.repository";
 import { Logger } from "@better-ccflare/logger";
+import { BaseRepository } from "./base.repository";
 
 const log = new Logger("ModelTranslationRepository");
 
@@ -24,10 +23,6 @@ export interface SimilarModel {
  * while the proxy translates to Bedrock format (e.g., "us.anthropic.claude-3-5-sonnet-20241022-v2:0").
  */
 export class ModelTranslationRepository extends BaseRepository<ModelTranslation> {
-	constructor(db: Database) {
-		super(db);
-	}
-
 	/**
 	 * Get Bedrock model ID for a client-facing model name
 	 * @param clientName - The client-facing model name (e.g., "claude-3-5-sonnet")
@@ -40,7 +35,9 @@ export class ModelTranslationRepository extends BaseRepository<ModelTranslation>
 		);
 
 		if (result) {
-			log.debug(`Found translation: ${clientName} → ${result.bedrock_model_id}`);
+			log.debug(
+				`Found translation: ${clientName} → ${result.bedrock_model_id}`,
+			);
 			return result.bedrock_model_id;
 		}
 
@@ -80,9 +77,7 @@ export class ModelTranslationRepository extends BaseRepository<ModelTranslation>
 				`Added model translation: ${clientName} → ${bedrockModelId}${autoDiscovered ? " (auto-discovered)" : ""}`,
 			);
 		} catch (error) {
-			log.error(
-				`Failed to add model translation: ${(error as Error).message}`,
-			);
+			log.error(`Failed to add model translation: ${(error as Error).message}`);
 		}
 	}
 
