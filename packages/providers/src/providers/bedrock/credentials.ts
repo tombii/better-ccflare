@@ -1,11 +1,11 @@
 import {
+	createCredentialChain,
 	fromEnv,
 	fromIni,
-	createCredentialChain,
 } from "@aws-sdk/credential-providers";
-import type { AwsCredentialIdentity, Provider } from "@smithy/types";
-import type { Account } from "@better-ccflare/types";
 import { Logger } from "@better-ccflare/logger";
+import type { Account } from "@better-ccflare/types";
+import type { AwsCredentialIdentity, Provider } from "@smithy/types";
 
 const log = new Logger("BedrockCredentials");
 
@@ -22,10 +22,12 @@ const log = new Logger("BedrockCredentials");
  * @param customEndpoint - Value from Account.custom_endpoint field
  * @returns Object with profile and region, or undefined if invalid format
  */
-export function parseBedrockConfig(customEndpoint: string | undefined | null): {
-	profile: string;
-	region: string;
-} | undefined {
+export function parseBedrockConfig(customEndpoint: string | undefined | null):
+	| {
+			profile: string;
+			region: string;
+	  }
+	| undefined {
 	if (!customEndpoint) {
 		log.warn("No custom_endpoint configured for Bedrock account");
 		return undefined;
