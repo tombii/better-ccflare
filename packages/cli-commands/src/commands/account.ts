@@ -31,10 +31,12 @@ export interface AddAccountOptionsWithAdapter {
 		| "anthropic-compatible"
 		| "openai-compatible"
 		| "nanogpt"
-		| "vertex-ai";
+		| "vertex-ai"
+		| "bedrock";
 	priority?: number;
 	customEndpoint?: string;
 	modelMappings?: { [key: string]: string };
+	profile?: string;
 	adapter?: PromptAdapter;
 }
 
@@ -51,7 +53,8 @@ export interface AccountListItemWithMode extends AccountListItem {
 		| "anthropic-compatible"
 		| "openai-compatible"
 		| "nanogpt"
-		| "vertex-ai";
+		| "vertex-ai"
+		| "bedrock";
 }
 
 /**

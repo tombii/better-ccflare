@@ -79,8 +79,10 @@ interface ParsedArgs {
 		| "anthropic-compatible"
 		| "openai-compatible"
 		| "nanogpt"
+		| "bedrock"
 		| null;
 	priority: number | null;
+	profile: string | null;
 	list: boolean;
 	remove: string | null;
 	pause: string | null;
@@ -413,6 +415,7 @@ function parseArgs(args: string[]): ParsedArgs {
 		addAccount: null,
 		mode: null,
 		priority: null,
+		profile: null,
 		list: false,
 		remove: null,
 		pause: null,
@@ -501,6 +504,7 @@ function parseArgs(args: string[]): ParsedArgs {
 					| "anthropic-compatible"
 					| "openai-compatible"
 					| "nanogpt"
+					| "bedrock"
 					| "max";
 
 				// Handle deprecated "max" mode with warning
@@ -517,7 +521,8 @@ function parseArgs(args: string[]): ParsedArgs {
 					| "zai"
 					| "minimax"
 					| "anthropic-compatible"
-					| "openai-compatible";
+					| "openai-compatible"
+					| "bedrock";
 				const validModes: Array<
 					| "claude-oauth"
 					| "console"
@@ -526,6 +531,7 @@ function parseArgs(args: string[]): ParsedArgs {
 					| "nanogpt"
 					| "anthropic-compatible"
 					| "openai-compatible"
+					| "bedrock"
 				> = [
 					"claude-oauth",
 					"console",
@@ -534,6 +540,7 @@ function parseArgs(args: string[]): ParsedArgs {
 					"nanogpt",
 					"anthropic-compatible",
 					"openai-compatible",
+					"bedrock",
 				];
 				if (!validModes.includes(modeValue)) {
 					console.error(`❌ Invalid mode: ${modeValue}`);
@@ -564,6 +571,9 @@ function parseArgs(args: string[]): ParsedArgs {
 					console.error(
 						"  bun run cli --add-account anthropic-account --mode anthropic-compatible --priority 50",
 					);
+					console.error(
+						"  bun run cli --add-account bedrock-account --mode bedrock --profile default",
+					);
 
 					fastExit(1);
 				}
@@ -580,6 +590,13 @@ function parseArgs(args: string[]): ParsedArgs {
 					console.error("Priority must be a number");
 					fastExit(1);
 				}
+				break;
+			case "--profile":
+				if (i + 1 >= args.length || args[i + 1].startsWith("--")) {
+					console.error("❌ --profile requires a value");
+					fastExit(1);
+				}
+				parsed.profile = args[++i];
 				break;
 			case "--list":
 				parsed.list = true;

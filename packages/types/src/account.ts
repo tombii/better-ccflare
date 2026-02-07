@@ -176,7 +176,8 @@ export interface AccountListItem {
 		| "anthropic-compatible"
 		| "openai-compatible"
 		| "nanogpt"
-		| "vertex-ai";
+		| "vertex-ai"
+		| "bedrock";
 	priority: number;
 	autoFallbackEnabled: boolean;
 	autoRefreshEnabled: boolean;
@@ -191,7 +192,8 @@ export interface AddAccountOptions {
 		| "zai"
 		| "minimax"
 		| "anthropic-compatible"
-		| "openai-compatible";
+		| "openai-compatible"
+		| "bedrock";
 	priority?: number;
 	customEndpoint?: string;
 }
