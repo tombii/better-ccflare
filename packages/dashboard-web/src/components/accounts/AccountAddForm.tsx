@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { api } from "../../api";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
@@ -21,7 +22,8 @@ interface AccountAddFormProps {
 			| "anthropic-compatible"
 			| "openai-compatible"
 			| "nanogpt"
-			| "vertex-ai";
+			| "vertex-ai"
+			| "bedrock";
 		priority: number;
 		customEndpoint?: string;
 	}) => Promise<{ authUrl: string; sessionId: string }>;
@@ -67,6 +69,12 @@ interface AccountAddFormProps {
 		region: string;
 		priority: number;
 	}) => Promise<void>;
+	onAddBedrockAccount: (params: {
+		name: string;
+		profile: string;
+		region: string;
+		priority: number;
+	}) => Promise<void>;
 	onCancel: () => void;
 	onSuccess: () => void;
 	onError: (error: string) => void;
@@ -81,6 +89,7 @@ export function AccountAddForm({
 	onAddNanoGPTAccount,
 	onAddOpenAIAccount,
 	onAddVertexAIAccount,
+	onAddBedrockAccount,
 	onCancel,
 	onSuccess,
 	onError,
@@ -98,16 +107,43 @@ export function AccountAddForm({
 			| "anthropic-compatible"
 			| "openai-compatible"
 			| "nanogpt"
-			| "vertex-ai",
+			| "vertex-ai"
+			| "bedrock",
 		priority: 0,
 		apiKey: "",
 		customEndpoint: "",
 		projectId: "",
 		region: "global",
+		profile: "",
+		awsRegion: "",
 		opusModel: "",
 		sonnetModel: "",
 		haikuModel: "",
 	});
+
+	const [awsProfiles, setAwsProfiles] = useState<
+		Array<{ name: string; region: string | null }>
+	>([]);
+	const [loadingProfiles, setLoadingProfiles] = useState(false);
+
+	// Load AWS profiles when bedrock mode is selected
+	useEffect(() => {
+		if (newAccount.mode === "bedrock") {
+			setLoadingProfiles(true);
+			api
+				.getAwsProfiles()
+				.then((profiles) => {
+					setAwsProfiles(profiles);
+				})
+				.catch((error) => {
+					console.error("Failed to load AWS profiles:", error);
+					setAwsProfiles([]);
+				})
+				.finally(() => {
+					setLoadingProfiles(false);
+				});
+		}
+	}, [newAccount.mode]);
 
 	const validateCustomEndpoint = (endpoint: string): boolean => {
 		if (!endpoint) return true; // Empty is fine (use default)
@@ -144,7 +180,8 @@ export function AccountAddForm({
 				| "zai"
 				| "minimax"
 				| "anthropic-compatible"
-				| "openai-compatible",
+				| "openai-compatible"
+				| "bedrock",
 			priority: newAccount.priority,
 			...(newAccount.customEndpoint && {
 				customEndpoint: newAccount.customEndpoint.trim(),
@@ -172,6 +209,45 @@ export function AccountAddForm({
 				customEndpoint: "",
 				projectId: "",
 				region: "global",
+				profile: "",
+				awsRegion: "",
+				opusModel: "",
+				sonnetModel: "",
+				haikuModel: "",
+			});
+			onSuccess();
+			return;
+		}
+
+		if (newAccount.mode === "bedrock") {
+			if (!newAccount.profile) {
+				onError("AWS profile is required for Bedrock accounts");
+				return;
+			}
+			if (!newAccount.awsRegion) {
+				onError(
+					"Region not found for selected profile. Configure ~/.aws/config",
+				);
+				return;
+			}
+			// For Bedrock accounts, we don't need OAuth flow
+			await onAddBedrockAccount({
+				name: newAccount.name,
+				profile: newAccount.profile,
+				region: newAccount.awsRegion,
+				priority: newAccount.priority,
+			});
+			// Reset form and signal success
+			setNewAccount({
+				name: "",
+				mode: "claude-oauth",
+				priority: 0,
+				apiKey: "",
+				customEndpoint: "",
+				projectId: "",
+				region: "global",
+				profile: "",
+				awsRegion: "",
 				opusModel: "",
 				sonnetModel: "",
 				haikuModel: "",
@@ -202,6 +278,8 @@ export function AccountAddForm({
 				customEndpoint: "",
 				projectId: "",
 				region: "global",
+				profile: "",
+				awsRegion: "",
 				opusModel: "",
 				sonnetModel: "",
 				haikuModel: "",
@@ -228,11 +306,13 @@ export function AccountAddForm({
 				priority: 0,
 				apiKey: "",
 				customEndpoint: "",
+				projectId: "",
+				region: "global",
+				profile: "",
+				awsRegion: "",
 				opusModel: "",
 				sonnetModel: "",
 				haikuModel: "",
-				projectId: "",
-				region: "global",
 			});
 			onSuccess();
 			return;
@@ -270,11 +350,13 @@ export function AccountAddForm({
 				priority: 0,
 				apiKey: "",
 				customEndpoint: "",
+				projectId: "",
+				region: "global",
+				profile: "",
+				awsRegion: "",
 				opusModel: "",
 				sonnetModel: "",
 				haikuModel: "",
-				projectId: "",
-				region: "global",
 			});
 			onSuccess();
 			return;
@@ -307,11 +389,13 @@ export function AccountAddForm({
 				priority: 0,
 				apiKey: "",
 				customEndpoint: "",
+				projectId: "",
+				region: "global",
+				profile: "",
+				awsRegion: "",
 				opusModel: "",
 				sonnetModel: "",
 				haikuModel: "",
-				projectId: "",
-				region: "global",
 			});
 			onSuccess();
 			return;
@@ -350,11 +434,13 @@ export function AccountAddForm({
 				priority: 0,
 				apiKey: "",
 				customEndpoint: "",
+				projectId: "",
+				region: "global",
+				profile: "",
+				awsRegion: "",
 				opusModel: "",
 				sonnetModel: "",
 				haikuModel: "",
-				projectId: "",
-				region: "global",
 			});
 			onSuccess();
 			return;
@@ -395,11 +481,13 @@ export function AccountAddForm({
 			priority: 0,
 			apiKey: "",
 			customEndpoint: "",
+			projectId: "",
+			region: "global",
+			profile: "",
+			awsRegion: "",
 			opusModel: "",
 			sonnetModel: "",
 			haikuModel: "",
-			projectId: "",
-			region: "global",
 		});
 		onSuccess();
 	};
@@ -414,11 +502,13 @@ export function AccountAddForm({
 			priority: 0,
 			apiKey: "",
 			customEndpoint: "",
+			projectId: "",
+			region: "global",
+			profile: "",
+			awsRegion: "",
 			opusModel: "",
 			sonnetModel: "",
 			haikuModel: "",
-			projectId: "",
-			region: "global",
 		});
 		onCancel();
 	};
@@ -455,7 +545,8 @@ export function AccountAddForm({
 									| "zai"
 									| "minimax"
 									| "anthropic-compatible"
-									| "openai-compatible",
+									| "openai-compatible"
+									| "bedrock",
 							) => setNewAccount({ ...newAccount, mode: value })}
 						>
 							<SelectTrigger id="mode">
@@ -469,6 +560,7 @@ export function AccountAddForm({
 								<SelectItem value="vertex-ai">
 									Vertex AI (Google Cloud)
 								</SelectItem>
+								<SelectItem value="bedrock">AWS Bedrock</SelectItem>
 								<SelectItem value="zai">z.ai (API Key)</SelectItem>
 								<SelectItem value="minimax">Minimax (API Key)</SelectItem>
 								<SelectItem value="nanogpt">NanoGPT (API Key)</SelectItem>
@@ -537,6 +629,88 @@ export function AccountAddForm({
 									</code>
 								</p>
 							</div>
+						</>
+					)}
+					{newAccount.mode === "bedrock" && (
+						<>
+							{awsProfiles.length === 0 && !loadingProfiles && (
+								<div className="bg-blue-50 dark:bg-blue-950 p-3 rounded-lg">
+									<p className="text-sm text-blue-900 dark:text-blue-100 font-medium mb-1">
+										No AWS profiles found
+									</p>
+									<p className="text-xs text-blue-800 dark:text-blue-200">
+										Run{" "}
+										<code className="bg-blue-100 dark:bg-blue-900 px-1 rounded">
+											aws configure
+										</code>{" "}
+										to set up profiles.
+									</p>
+								</div>
+							)}
+							{awsProfiles.length > 0 && (
+								<>
+									<div className="space-y-2">
+										<Label htmlFor="awsProfile">AWS Profile</Label>
+										<Select
+											value={newAccount.profile}
+											onValueChange={(value: string) => {
+												const selectedProfile = awsProfiles.find(
+													(p) => p.name === value,
+												);
+												setNewAccount({
+													...newAccount,
+													profile: value,
+													awsRegion: selectedProfile?.region || "",
+												});
+											}}
+										>
+											<SelectTrigger id="awsProfile">
+												<SelectValue placeholder="Select AWS profile" />
+											</SelectTrigger>
+											<SelectContent>
+												{awsProfiles.map((profile) => (
+													<SelectItem key={profile.name} value={profile.name}>
+														{profile.name}
+														{profile.region && ` (${profile.region})`}
+													</SelectItem>
+												))}
+											</SelectContent>
+										</Select>
+										<p className="text-xs text-muted-foreground">
+											Your AWS profile from ~/.aws/credentials
+										</p>
+									</div>
+									<div className="space-y-2">
+										<Label htmlFor="awsRegion">Region (Auto-detected)</Label>
+										<Input
+											id="awsRegion"
+											value={newAccount.awsRegion}
+											disabled
+											placeholder="Select profile to detect region"
+										/>
+										<p className="text-xs text-muted-foreground">
+											Region from ~/.aws/config for selected profile
+										</p>
+										{newAccount.profile &&
+											!newAccount.awsRegion &&
+											!loadingProfiles && (
+												<p className="text-xs text-yellow-600 dark:text-yellow-400">
+													No default region found for this profile. Configure
+													region in ~/.aws/config
+												</p>
+											)}
+									</div>
+									<div className="bg-blue-50 dark:bg-blue-950 p-3 rounded-lg">
+										<p className="text-sm text-blue-900 dark:text-blue-100 font-medium mb-1">
+											Authentication Required
+										</p>
+										<p className="text-xs text-blue-800 dark:text-blue-200">
+											Bedrock uses AWS credentials from the selected profile.
+											Ensure your credentials are configured.
+										</p>
+									</div>
+								</>
+							)}
 						</>
 					)}
 					{newAccount.mode === "zai" && (
