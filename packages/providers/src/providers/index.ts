@@ -6,6 +6,7 @@ export {
 	type AnthropicCompatibleConfig,
 	AnthropicCompatibleProvider,
 } from "./anthropic-compatible/index";
+export { BedrockProvider, parseBedrockConfig } from "./bedrock/index";
 export { MinimaxProvider } from "./minimax/index";
 export { NanoGPTProvider } from "./nanogpt/index";
 export { OpenAICompatibleProvider } from "./openai/index";
