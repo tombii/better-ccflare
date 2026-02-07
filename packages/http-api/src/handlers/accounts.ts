@@ -1,4 +1,8 @@
 import type { Database } from "bun:sqlite";
+import crypto from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import * as cliCommands from "@better-ccflare/cli-commands";
 import type { Config } from "@better-ccflare/config";
 import {
@@ -29,10 +33,6 @@ import {
 import { clearAccountRefreshCache } from "@better-ccflare/proxy";
 import type { FullUsageData } from "@better-ccflare/types";
 import type { AccountResponse } from "../types";
-import crypto from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
 
 const log = new Logger("AccountsHandler");
 
