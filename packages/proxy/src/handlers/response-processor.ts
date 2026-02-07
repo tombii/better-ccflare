@@ -110,20 +110,40 @@ export function updateAccountMetadata(
 	}
 
 	// Extract usage info if supported
-	if (ctx.provider.extractUsageInfo && requestId) {
-		const extractUsageInfo = ctx.provider.extractUsageInfo.bind(ctx.provider);
-		(async () => {
-			const usageInfo = await extractUsageInfo(response.clone() as Response);
-			if (usageInfo) {
-				log.debug(
-					`Extracted usage info for account ${account.name}: ${JSON.stringify(usageInfo)}`,
-				);
-				// Store usage info in database
-				ctx.asyncWriter.enqueue(() =>
-					ctx.dbOps.updateRequestUsage(requestId, usageInfo),
-				);
-			}
-		})();
+	if (requestId) {
+		// For streaming responses, prefer parseUsage (handles SSE final events)
+		// For non-streaming, use extractUsageInfo (handles JSON responses)
+		const isStream = ctx.provider.isStreamingResponse?.(response) ?? false;
+
+		if (isStream && ctx.provider.parseUsage) {
+			const parseUsage = ctx.provider.parseUsage.bind(ctx.provider);
+			(async () => {
+				const usageInfo = await parseUsage(response.clone() as Response);
+				if (usageInfo) {
+					log.debug(
+						`Extracted streaming usage for account ${account.name}: ${JSON.stringify(usageInfo)}`,
+					);
+					// Store usage info in database
+					ctx.asyncWriter.enqueue(() =>
+						ctx.dbOps.updateRequestUsage(requestId, usageInfo),
+					);
+				}
+			})();
+		} else if (ctx.provider.extractUsageInfo) {
+			const extractUsageInfo = ctx.provider.extractUsageInfo.bind(ctx.provider);
+			(async () => {
+				const usageInfo = await extractUsageInfo(response.clone() as Response);
+				if (usageInfo) {
+					log.debug(
+						`Extracted usage info for account ${account.name}: ${JSON.stringify(usageInfo)}`,
+					);
+					// Store usage info in database
+					ctx.asyncWriter.enqueue(() =>
+						ctx.dbOps.updateRequestUsage(requestId, usageInfo),
+					);
+				}
+			})();
+		}
 	}
 }
 
