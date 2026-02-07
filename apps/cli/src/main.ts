@@ -59,6 +59,7 @@ import {
 import { container, SERVICE_KEYS } from "@better-ccflare/core-di";
 import { DatabaseFactory } from "@better-ccflare/database";
 import { Logger } from "@better-ccflare/logger";
+import { parseBedrockConfig } from "@better-ccflare/providers";
 // Import server
 import startServer from "@better-ccflare/server";
 
@@ -745,7 +746,7 @@ Options:
   --ssl-cert <path>    Path to SSL certificate file (enables HTTPS)
   --stats              Show statistics (JSON output)
   --add-account <name> Add a new account
-    --mode <claude-oauth|console|zai|minimax|nanogpt|anthropic-compatible|openai-compatible>  Account mode (default: claude-oauth)
+    --mode <claude-oauth|console|zai|minimax|nanogpt|anthropic-compatible|openai-compatible|bedrock>  Account mode (default: claude-oauth)
       claude-oauth: Claude CLI account (OAuth)
       console: Claude API account (OAuth)
       zai: z.ai account (API key)
@@ -753,6 +754,8 @@ Options:
       nanogpt: NanoGPT provider (API key)
       anthropic-compatible: Anthropic-compatible provider (API key)
       openai-compatible: OpenAI-compatible provider (API key)
+      bedrock: AWS Bedrock account (AWS profile credentials)
+        --profile <name>  AWS profile name from ~/.aws/credentials (required)
     --priority <number>   Account priority (default: 0)
   --list               List all accounts
   --remove <name>      Remove an account
@@ -782,6 +785,7 @@ Examples:
   better-ccflare --serve                # Start server
   better-ccflare --serve --ssl-key /path/to/key.pem --ssl-cert /path/to/cert.pem  # Start server with HTTPS
   better-ccflare --add-account work --mode claude-oauth --priority 0  # Add account
+  better-ccflare --add-account my-bedrock --mode bedrock --profile default  # Add Bedrock account
   better-ccflare --reauthenticate work  # Re-authenticate account (preserves metadata)
   better-ccflare --pause work           # Pause account
   better-ccflare --analyze              # Run performance analysis
@@ -893,6 +897,7 @@ Examples:
 			console.error(
 				"  --mode openai-compatible     OpenAI-compatible provider",
 			);
+			console.error("  --mode bedrock         AWS Bedrock (AWS profile)");
 			console.error("\nExample:");
 			console.error(
 				"  better-ccflare --add-account work --mode claude-oauth --priority 0",
@@ -998,6 +1003,15 @@ Examples:
 		} else {
 			console.log("\nAccounts:");
 			accounts.forEach((acc) => {
+				if (acc.mode === "bedrock" && acc.customEndpoint) {
+					const config = parseBedrockConfig(acc.customEndpoint);
+					if (config) {
+						console.log(
+							`  - ${acc.name} (bedrock, profile=${config.profile}, region=${config.region}, priority=${acc.priority})`,
+						);
+						return;
+					}
+				}
 				console.log(
 					`  - ${acc.name} (${acc.mode} mode, priority ${acc.priority})`,
 				);

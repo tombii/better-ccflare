@@ -181,6 +181,7 @@ export interface AccountListItem {
 	priority: number;
 	autoFallbackEnabled: boolean;
 	autoRefreshEnabled: boolean;
+	customEndpoint?: string | null;
 }
 
 // Account creation types

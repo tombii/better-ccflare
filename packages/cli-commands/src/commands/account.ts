@@ -915,7 +915,8 @@ export function getAccountsList(dbOps: DatabaseOperations): AccountListItem[] {
 				if (
 					account.provider === "zai" ||
 					account.provider === "minimax" ||
-					account.provider === "anthropic-compatible"
+					account.provider === "anthropic-compatible" ||
+					account.provider === "bedrock"
 				) {
 					return account.provider;
 				}
@@ -925,6 +926,7 @@ export function getAccountsList(dbOps: DatabaseOperations): AccountListItem[] {
 			priority: account.priority || 0,
 			autoFallbackEnabled: account.auto_fallback_enabled,
 			autoRefreshEnabled: account.auto_refresh_enabled,
+			customEndpoint: account.custom_endpoint || null,
 		};
 	});
 }
