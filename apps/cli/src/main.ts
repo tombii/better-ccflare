@@ -920,6 +920,29 @@ Examples:
 					priority,
 					adapter: stdPromptAdapter,
 				});
+			} else if (mode === "bedrock") {
+				// Bedrock uses AWS profiles, not API keys
+				if (!parsed.profile) {
+					console.error("❌ --profile flag is required for bedrock mode");
+					console.error(
+						"Example: bun run cli --add-account my-bedrock --mode bedrock --profile default",
+					);
+					await exitGracefully(1);
+				}
+				await addAccount(dbOps, new Config(), {
+					name: parsed.addAccount,
+					mode: "bedrock",
+					priority,
+					profile: parsed.profile || undefined,
+					adapter: {
+						select: async <T extends string | number>(
+							_prompt: string,
+							_options: Array<{ label: string; value: T }>,
+						) => (_options[0]?.value as T) || ("yes" as T),
+						input: async (_prompt: string) => "",
+						confirm: async (_prompt: string) => true,
+					},
+				});
 			} else {
 				// For API key accounts, get the API key from environment or prompt
 				let apiKey =

@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { Config } from "@better-ccflare/config";
 import type { ModelMapping } from "@better-ccflare/core";
 import {
@@ -268,6 +271,81 @@ async function createZaiAccount(
 }
 
 /**
+ * Check if an AWS profile exists in ~/.aws/credentials
+ */
+function checkAwsProfileExists(profile: string): boolean {
+	try {
+		const credentialsPath = join(homedir(), ".aws", "credentials");
+		const content = readFileSync(credentialsPath, "utf-8");
+		// Match [profile] section header (handles default and named profiles)
+		const profileRegex = new RegExp(`^\\[${profile}\\]`, "m");
+		return profileRegex.test(content);
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * Read region from ~/.aws/config for a given profile
+ * AWS config format: [profile <name>] for named profiles, [default] for default
+ */
+function readAwsRegion(profile: string): string | null {
+	try {
+		const configPath = join(homedir(), ".aws", "config");
+		const content = readFileSync(configPath, "utf-8");
+		// In ~/.aws/config, the default profile is [default], named profiles are [profile <name>]
+		const sectionHeader =
+			profile === "default" ? "\\[default\\]" : `\\[profile ${profile}\\]`;
+		const sectionRegex = new RegExp(`${sectionHeader}[\\s\\S]*?(?=\\[|$)`, "m");
+		const sectionMatch = content.match(sectionRegex);
+		if (!sectionMatch) return null;
+		const regionMatch = sectionMatch[0].match(/^region\s*=\s*(.+)$/m);
+		return regionMatch ? regionMatch[1].trim() : null;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Create a Bedrock account in the database
+ */
+async function createBedrockAccount(
+	dbOps: DatabaseOperations,
+	name: string,
+	profile: string,
+	region: string,
+	priority: number,
+): Promise<void> {
+	const accountId = crypto.randomUUID();
+	const now = Date.now();
+	const validatedPriority = validatePriority(priority, "priority");
+
+	// Store as "bedrock:profile:region" format
+	const customEndpoint = `bedrock:${profile}:${region}`;
+
+	dbOps.getDatabase().run(
+		`INSERT INTO accounts (
+			id, name, provider, api_key, refresh_token, access_token,
+			expires_at, created_at, request_count, total_requests, priority, custom_endpoint
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		[
+			accountId,
+			name,
+			"bedrock",
+			null, // No API key - uses AWS profiles
+			"", // Empty refresh token
+			null, // No access token
+			now + 365 * 24 * 60 * 60 * 1000, // 1 year expiry (dummy, like Vertex AI)
+			now,
+			0,
+			0,
+			validatedPriority,
+			customEndpoint,
+		],
+	);
+}
+
+/**
  * Create a Vertex AI account in the database
  */
 async function createVertexAIAccount(
@@ -471,6 +549,7 @@ export async function addAccount(
 			{ label: "Claude CLI OAuth account", value: "claude-oauth" },
 			{ label: "Claude API account", value: "console" },
 			{ label: "Vertex AI (Google Cloud)", value: "vertex-ai" },
+			{ label: "AWS Bedrock (AWS profile credentials)", value: "bedrock" },
 			{ label: "z.ai account (API key)", value: "zai" },
 			{ label: "Minimax account (API key)", value: "minimax" },
 			{
@@ -483,7 +562,36 @@ export async function addAccount(
 			},
 		]));
 
-	if (mode === "vertex-ai") {
+	if (mode === "bedrock") {
+		// Handle Bedrock accounts with AWS profile credentials
+		const profile = options.profile;
+
+		if (!profile) {
+			throw new Error("--profile flag is required for bedrock mode");
+		}
+
+		// Validate profile exists
+		if (!checkAwsProfileExists(profile)) {
+			throw new Error(
+				`Profile "${profile}" not found. Check ~/.aws/credentials or run: aws configure --profile ${profile}`,
+			);
+		}
+
+		// Read region from ~/.aws/config
+		const region = readAwsRegion(profile);
+		if (!region) {
+			throw new Error(
+				`No region configured for profile "${profile}". Set region in ~/.aws/config or run: aws configure --profile ${profile}`,
+			);
+		}
+
+		// Get priority
+		const priority = providedPriority || 0;
+
+		// Create account
+		await createBedrockAccount(dbOps, name, profile, region, priority);
+		// DO NOT print success message - main.ts handles this
+	} else if (mode === "vertex-ai") {
 		// Handle Vertex AI accounts with Google Cloud credentials
 		console.log("\nVertex AI uses Google Cloud authentication.");
 		console.log("Make sure you have authenticated using:");
