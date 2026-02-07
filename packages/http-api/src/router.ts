@@ -14,6 +14,8 @@ import {
 	createAccountResumeHandler,
 	createAccountsListHandler,
 	createAnthropicCompatibleAccountAddHandler,
+	createAwsProfilesListHandler,
+	createBedrockAccountAddHandler,
 	createMinimaxAccountAddHandler,
 	createNanoGPTAccountAddHandler,
 	createOpenAIAccountAddHandler,
@@ -96,6 +98,8 @@ export class APIRouter {
 		const zaiAccountAddHandler = createZaiAccountAddHandler(dbOps);
 		const minimaxAccountAddHandler = createMinimaxAccountAddHandler(dbOps);
 		const vertexAIAccountAddHandler = createVertexAIAccountAddHandler(dbOps);
+		const bedrockAccountAddHandler = createBedrockAccountAddHandler(dbOps);
+		const awsProfilesListHandler = createAwsProfilesListHandler();
 		const nanogptAccountAddHandler = createNanoGPTAccountAddHandler(dbOps);
 		const anthropicCompatibleAccountAddHandler =
 			createAnthropicCompatibleAccountAddHandler(dbOps);
@@ -137,6 +141,10 @@ export class APIRouter {
 		this.handlers.set("POST:/api/accounts/vertex-ai", (req) =>
 			vertexAIAccountAddHandler(req),
 		);
+		this.handlers.set("POST:/api/accounts/bedrock", (req) =>
+			bedrockAccountAddHandler(req),
+		);
+		this.handlers.set("GET:/api/aws/profiles", () => awsProfilesListHandler());
 		this.handlers.set("POST:/api/accounts/nanogpt", (req) =>
 			nanogptAccountAddHandler(req),
 		);
