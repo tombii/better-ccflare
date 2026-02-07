@@ -211,7 +211,8 @@ class API extends HttpClient {
 			| "anthropic-compatible"
 			| "openai-compatible"
 			| "nanogpt"
-			| "vertex-ai";
+			| "vertex-ai"
+			| "bedrock";
 		apiKey?: string;
 		priority: number;
 		customEndpoint?: string;
@@ -440,9 +441,8 @@ class API extends HttpClient {
 		this.logger.debug(`→ GET ${url}`);
 
 		try {
-			const response = await this.get<
-				Array<{ name: string; region: string | null }>
-			>(url);
+			const response =
+				await this.get<Array<{ name: string; region: string | null }>>(url);
 			const duration = Date.now() - startTime;
 			this.logger.debug(`← GET ${url} - 200 (${duration}ms)`);
 			return response;
