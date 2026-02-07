@@ -667,7 +667,9 @@ export class BedrockProvider extends BaseProvider implements Provider {
 					cacheCreationInputTokens: cacheWriteTokens,
 				});
 			} catch (error) {
-				log.warn(`Failed to calculate Bedrock cost: ${(error as Error).message}`);
+				log.warn(
+					`Failed to calculate Bedrock cost: ${(error as Error).message}`,
+				);
 			}
 
 			return {
