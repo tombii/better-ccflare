@@ -802,6 +802,8 @@ const startCleanupInterval = () => {
 		cleanupInterval = setInterval(() => {
 			cleanupStaleRequests();
 		}, 30000);
+		// Allow worker to exit if no other work is pending
+		cleanupInterval.unref();
 	}
 };
 
