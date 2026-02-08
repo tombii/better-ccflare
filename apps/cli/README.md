@@ -126,6 +126,8 @@ Continue to [Configure Claude SDK](https://github.com/tombii/better-ccflare#conf
 #### Windows x86_64
 Download [`better-ccflare-windows-x64.exe`](https://github.com/tombii/better-ccflare/releases/latest/download/better-ccflare-windows-x64.exe) and run it.
 Continue to [Configure Claude SDK](https://github.com/tombii/better-ccflare#configure-claude-sdk).
+
+**⚠️ Windows npm Installation Issue**: If you installed via npm and encounter a path error like `"C:\\Program Files\\nodejs\\\\node_modules\\better-ccflare\\dist\\better-ccflare" is either misspelled or could not be found`, this is a known [npm bug on Windows](https://github.com/npm/cli/issues/969) affecting how npm generates wrapper scripts. See [Windows Troubleshooting](#windows-troubleshooting) for workarounds.
 ### Run without installation (npx/bunx)
 
 ```bash
@@ -532,6 +534,75 @@ No `NODE_OPTIONS` needed - Traefik provides trusted certificates automatically!
    ```bash
    curl -k https://yourhostname:8080/health
    ```
+
+## Windows Troubleshooting
+
+### Issue: "Command is misspelled or could not be found" after npm install
+
+If you installed better-ccflare via npm on Windows and encounter an error like:
+
+```
+The command "C:\Program Files\nodejs\\node_modules\better-ccflare\dist\better-ccflare" is either
+misspelled or could not be found.
+```
+
+This is a **known npm bug on Windows** (see [npm/cli#969](https://github.com/npm/cli/issues/969) and [nodejs/node#39010](https://github.com/nodejs/node/issues/39010)) affecting how npm generates wrapper scripts with double backslashes in paths.
+
+### Workarounds
+
+**Option 1: Use `npx` (Recommended)**
+
+```powershell
+npx better-ccflare
+```
+
+This bypasses the npm wrapper script entirely and runs better-ccflare directly.
+
+**Option 2: Use the Pre-compiled Binary**
+
+Download the standalone Windows executable from [GitHub Releases](https://github.com/tombii/better-ccflare/releases/latest):
+
+```powershell
+# Download better-ccflare-windows-x64.exe and run it directly
+.\better-ccflare-windows-x64.exe
+```
+
+**Option 3: Update npm**
+
+Sometimes updating to the latest npm version fixes the issue:
+
+```powershell
+npm install -g npm@latest
+npm install -g better-ccflare
+```
+
+**Option 4: Direct Execution**
+
+If you need to use the npm-installed version, you can execute the binary directly:
+
+```powershell
+node "%APPDATA%\npm\node_modules\better-ccflare\dist\better-ccflare"
+```
+
+**Option 5: Use Bun Package Manager**
+
+Bun doesn't have this bug and works correctly on Windows:
+
+```powershell
+# Install bun from https://bun.sh
+bun install -g better-ccflare
+better-ccflare
+```
+
+### Root Cause
+
+This issue is caused by a bug in npm's wrapper script generation on Windows, where it incorrectly constructs paths with double backslashes (`\\nodejs\\\\node_modules`). This is a longstanding npm bug that affects many CLI packages, not just better-ccflare.
+
+The issue is being tracked in:
+- [npm/cli#969](https://github.com/npm/cli/issues/969) - Generated .cmd script bugs
+- [nodejs/node#39010](https://github.com/nodejs/node/issues/39010) - Double slashes in Windows paths
+
+We recommend using one of the workarounds above until the npm bug is fixed.
 
 ## Features
 
