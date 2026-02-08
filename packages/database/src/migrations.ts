@@ -341,6 +341,14 @@ export function runMigrations(db: Database, dbPath?: string): void {
 			log.info("Added model_mappings column to accounts table");
 		}
 
+		// Add cross_region_mode column for Bedrock cross-region inference configuration
+		if (!initialAccountsColumnNames.includes("cross_region_mode")) {
+			db.prepare(
+				"ALTER TABLE accounts ADD COLUMN cross_region_mode TEXT DEFAULT 'geographic'",
+			).run();
+			log.info("Added cross_region_mode column to accounts table");
+		}
+
 		// Run API key storage migration to move API keys from refresh_token to api_key field
 		// This is a data migration that should happen after all schema changes
 		try {
