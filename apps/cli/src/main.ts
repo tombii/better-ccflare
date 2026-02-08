@@ -84,6 +84,7 @@ interface ParsedArgs {
 		| null;
 	priority: number | null;
 	profile: string | null;
+	crossRegionMode?: "geographic" | "global" | "regional";
 	list: boolean;
 	remove: string | null;
 	pause: string | null;
@@ -417,6 +418,7 @@ function parseArgs(args: string[]): ParsedArgs {
 		mode: null,
 		priority: null,
 		profile: null,
+		crossRegionMode: undefined,
 		list: false,
 		remove: null,
 		pause: null,
@@ -599,6 +601,28 @@ function parseArgs(args: string[]): ParsedArgs {
 				}
 				parsed.profile = args[++i];
 				break;
+			case "--cross-region-mode": {
+				if (i + 1 >= args.length || args[i + 1].startsWith("--")) {
+					console.error("❌ --cross-region-mode requires a value");
+					fastExit(1);
+				}
+				const crossRegionValue = args[++i];
+				if (
+					crossRegionValue !== "geographic" &&
+					crossRegionValue !== "global" &&
+					crossRegionValue !== "regional"
+				) {
+					console.error(
+						"Invalid --cross-region-mode value. Must be one of: geographic, global, regional",
+					);
+					fastExit(1);
+				}
+				parsed.crossRegionMode = crossRegionValue as
+					| "geographic"
+					| "global"
+					| "regional";
+				break;
+			}
 			case "--list":
 				parsed.list = true;
 				break;
@@ -756,6 +780,7 @@ Options:
       openai-compatible: OpenAI-compatible provider (API key)
       bedrock: AWS Bedrock account (AWS profile credentials)
         --profile <name>  AWS profile name from ~/.aws/credentials (required)
+        --cross-region-mode <mode>   Cross-region inference mode: geographic (default), global, or regional
     --priority <number>   Account priority (default: 0)
   --list               List all accounts
   --remove <name>      Remove an account
@@ -939,6 +964,7 @@ Examples:
 					mode: "bedrock",
 					priority,
 					profile: parsed.profile || undefined,
+					crossRegionMode: parsed.crossRegionMode,
 					adapter: {
 						select: async <T extends string | number>(
 							_prompt: string,
@@ -1007,7 +1033,7 @@ Examples:
 					const config = parseBedrockConfig(acc.customEndpoint);
 					if (config) {
 						console.log(
-							`  - ${acc.name} (bedrock, profile=${config.profile}, region=${config.region}, priority=${acc.priority})`,
+							`  - ${acc.name} (bedrock, profile=${config.profile}, region=${config.region}, cross_region_mode=${acc.crossRegionMode ?? "geographic"}, priority=${acc.priority})`,
 						);
 						return;
 					}
