@@ -50,12 +50,14 @@ export function AccountListItem({
 	// Parse Bedrock profile and region from custom_endpoint
 	let bedrockProfile: string | null = null;
 	let bedrockRegion: string | null = null;
+	let bedrockCrossRegionMode: string | null = null;
 	if (account.provider === "bedrock" && account.customEndpoint) {
 		const match = account.customEndpoint.match(/^bedrock:([^:]+):(.+)$/);
 		if (match) {
 			bedrockProfile = match[1];
 			bedrockRegion = match[2];
 		}
+		bedrockCrossRegionMode = account.crossRegionMode || "geographic";
 	}
 
 	return (
@@ -131,6 +133,17 @@ export function AccountListItem({
 													{bedrockRegion}
 												</p>
 											</div>
+										</>
+									)}
+									{bedrockCrossRegionMode && (
+										<>
+											<span className="text-sm text-muted-foreground">•</span>
+											<p
+												className="text-sm text-muted-foreground"
+												title="Cross-region inference mode"
+											>
+												{bedrockCrossRegionMode}
+											</p>
 										</>
 									)}
 								</>
