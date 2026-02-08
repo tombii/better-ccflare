@@ -1985,7 +1985,7 @@ function readAwsRegion(profile: string): string | null {
 		// In ~/.aws/config, the default profile is [default], named profiles are [profile <name>]
 		const sectionHeader =
 			profile === "default" ? "\\[default\\]" : `\\[profile ${profile}\\]`;
-		const sectionRegex = new RegExp(`${sectionHeader}[\\s\\S]*?(?=\\[|$)`, "m");
+		const sectionRegex = new RegExp(`${sectionHeader}[\\s\\S]*?(?=\\[|$)`);
 		const sectionMatch = content.match(sectionRegex);
 		if (!sectionMatch) return null;
 		const regionMatch = sectionMatch[0].match(/^region\s*=\s*(.+)$/m);
