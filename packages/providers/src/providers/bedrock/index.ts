@@ -24,6 +24,12 @@ export {
 	parseBedrockConfig,
 } from "./credentials";
 export { translateBedrockError } from "./error-handler";
+export {
+	type CrossRegionMode,
+	canUseInferenceProfile,
+	getFallbackMode,
+	transformModelIdPrefix,
+} from "./model-transformer";
 export { BedrockProvider } from "./provider";
 export { validateBedrockRegion } from "./region-validator";
 export {
