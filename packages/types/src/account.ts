@@ -77,6 +77,7 @@ export interface AccountRow {
 	auto_refresh_enabled?: 0 | 1;
 	custom_endpoint?: string | null;
 	model_mappings?: string | null; // JSON string for OpenAI-compatible providers
+	cross_region_mode?: string | null; // Bedrock cross-region inference mode
 }
 
 // Domain model - used throughout the application
@@ -104,6 +105,7 @@ export interface Account {
 	auto_refresh_enabled: boolean;
 	custom_endpoint: string | null;
 	model_mappings: string | null; // JSON string for OpenAI-compatible providers
+	cross_region_mode: string | null; // Bedrock cross-region inference mode
 }
 
 // API response type - what clients receive
@@ -229,6 +231,7 @@ export function toAccount(row: AccountRow): Account {
 		auto_refresh_enabled: row.auto_refresh_enabled === 1,
 		custom_endpoint: row.custom_endpoint || null,
 		model_mappings: row.model_mappings || null,
+		cross_region_mode: row.cross_region_mode || null,
 	};
 }
 
