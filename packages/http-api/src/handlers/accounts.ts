@@ -2079,6 +2079,20 @@ export function createBedrockAccountAddHandler(dbOps: DatabaseOperations) {
 			// Validate priority
 			const priority = validatePriority(body.priority);
 
+			// Validate cross_region_mode
+			const crossRegionMode = body.cross_region_mode ?? "geographic";
+			if (
+				crossRegionMode !== "geographic" &&
+				crossRegionMode !== "global" &&
+				crossRegionMode !== "regional"
+			) {
+				return errorResponse(
+					BadRequest(
+						"cross_region_mode must be one of: geographic, global, regional",
+					),
+				);
+			}
+
 			// Check if AWS profile exists
 			if (!checkAwsProfileExists(profile)) {
 				return errorResponse(
@@ -2099,8 +2113,8 @@ export function createBedrockAccountAddHandler(dbOps: DatabaseOperations) {
 			db.run(
 				`INSERT INTO accounts (
 					id, name, provider, api_key, refresh_token, access_token,
-					expires_at, created_at, request_count, total_requests, priority, custom_endpoint
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+					expires_at, created_at, request_count, total_requests, priority, custom_endpoint, cross_region_mode
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 				[
 					accountId,
 					name,
@@ -2114,11 +2128,12 @@ export function createBedrockAccountAddHandler(dbOps: DatabaseOperations) {
 					0,
 					priority,
 					bedrockConfig,
+					crossRegionMode,
 				],
 			);
 
 			log.info(
-				`Successfully added Bedrock account: ${name} (Profile: ${profile}, Region: ${region}, Priority ${priority})`,
+				`Successfully added Bedrock account: ${name} (Profile: ${profile}, Region: ${region}, CrossRegionMode: ${crossRegionMode}, Priority ${priority})`,
 			);
 
 			// Get the created account for response
@@ -2166,6 +2181,7 @@ export function createBedrockAccountAddHandler(dbOps: DatabaseOperations) {
 					tokenStatus: "valid",
 					mode: "bedrock",
 					paused: account.paused === 1,
+					cross_region_mode: crossRegionMode,
 				},
 			});
 		} catch (error) {
