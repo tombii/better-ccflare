@@ -40,6 +40,7 @@ export interface AddAccountOptionsWithAdapter {
 	customEndpoint?: string;
 	modelMappings?: { [key: string]: string };
 	profile?: string;
+	crossRegionMode?: "geographic" | "global" | "regional";
 	adapter?: PromptAdapter;
 }
 
@@ -315,6 +316,7 @@ async function createBedrockAccount(
 	profile: string,
 	region: string,
 	priority: number,
+	crossRegionMode?: "geographic" | "global" | "regional",
 ): Promise<void> {
 	const accountId = crypto.randomUUID();
 	const now = Date.now();
@@ -326,8 +328,8 @@ async function createBedrockAccount(
 	dbOps.getDatabase().run(
 		`INSERT INTO accounts (
 			id, name, provider, api_key, refresh_token, access_token,
-			expires_at, created_at, request_count, total_requests, priority, custom_endpoint
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			expires_at, created_at, request_count, total_requests, priority, custom_endpoint, cross_region_mode
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		[
 			accountId,
 			name,
@@ -341,6 +343,7 @@ async function createBedrockAccount(
 			0,
 			validatedPriority,
 			customEndpoint,
+			crossRegionMode || "geographic",
 		],
 	);
 }
@@ -589,7 +592,14 @@ export async function addAccount(
 		const priority = providedPriority || 0;
 
 		// Create account
-		await createBedrockAccount(dbOps, name, profile, region, priority);
+		await createBedrockAccount(
+			dbOps,
+			name,
+			profile,
+			region,
+			priority,
+			options.crossRegionMode,
+		);
 		// DO NOT print success message - main.ts handles this
 	} else if (mode === "vertex-ai") {
 		// Handle Vertex AI accounts with Google Cloud credentials
@@ -927,6 +937,7 @@ export function getAccountsList(dbOps: DatabaseOperations): AccountListItem[] {
 			autoFallbackEnabled: account.auto_fallback_enabled,
 			autoRefreshEnabled: account.auto_refresh_enabled,
 			customEndpoint: account.custom_endpoint || null,
+			crossRegionMode: account.cross_region_mode || null,
 		};
 	});
 }

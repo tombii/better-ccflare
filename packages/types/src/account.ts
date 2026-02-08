@@ -184,6 +184,7 @@ export interface AccountListItem {
 	autoFallbackEnabled: boolean;
 	autoRefreshEnabled: boolean;
 	customEndpoint?: string | null;
+	crossRegionMode?: string | null; // Bedrock cross-region inference mode
 }
 
 // Account creation types

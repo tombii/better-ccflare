@@ -18,6 +18,12 @@ import {
 	translateBedrockError,
 } from "./index";
 import {
+	type CrossRegionMode,
+	canUseInferenceProfile,
+	getFallbackMode,
+	transformModelIdPrefix,
+} from "./model-transformer";
+import {
 	type ClaudeRequest,
 	detectStreamingMode,
 	transformMessagesRequest,
@@ -333,6 +339,30 @@ export class BedrockProvider extends BaseProvider implements Provider {
 		// Use type assertion since TypeScript can't track the control flow
 		const finalModelId = bedrockModelId as string;
 
+		// Apply cross-region mode transformation
+		const crossRegionMode =
+			(account?.cross_region_mode as CrossRegionMode) ?? "geographic";
+		let transformedModelId = transformModelIdPrefix(
+			finalModelId,
+			crossRegionMode,
+		);
+
+		// Validate model supports requested mode and fall back if needed
+		if (!canUseInferenceProfile(transformedModelId, crossRegionMode)) {
+			const fallback = getFallbackMode(transformedModelId, crossRegionMode);
+			if (fallback) {
+				log.warn(
+					`Model ${finalModelId} doesn't support ${crossRegionMode} inference mode, falling back to ${fallback}`,
+				);
+				transformedModelId = transformModelIdPrefix(finalModelId, fallback);
+			} else {
+				log.warn(
+					`Model ${finalModelId} has no supported inference mode, using regional fallback`,
+				);
+				transformedModelId = transformModelIdPrefix(finalModelId, "regional");
+			}
+		}
+
 		// Step 6: Transform request based on streaming mode
 		const converseInput = isStreaming
 			? transformStreamingRequest(body)
@@ -350,7 +380,7 @@ export class BedrockProvider extends BaseProvider implements Provider {
 			if (isStreaming) {
 				// Streaming request using ConverseStreamCommand
 				const command = new ConverseStreamCommand({
-					modelId: finalModelId,
+					modelId: transformedModelId,
 					...converseInput,
 				} as any); // Cast to any due to ConverseStreamCommandInput type constraints
 
@@ -402,7 +432,7 @@ export class BedrockProvider extends BaseProvider implements Provider {
 			} else {
 				// Non-streaming request using ConverseCommand
 				const command = new ConverseCommand({
-					modelId: finalModelId,
+					modelId: transformedModelId,
 					...converseInput,
 				} as any); // Cast to any due to ConverseCommandInput type constraints
 
@@ -441,7 +471,7 @@ export class BedrockProvider extends BaseProvider implements Provider {
 
 				// Retry without streaming
 				const command = new ConverseCommand({
-					modelId: finalModelId,
+					modelId: transformedModelId,
 					...transformMessagesRequest(body),
 				} as any);
 
