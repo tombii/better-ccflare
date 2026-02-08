@@ -133,6 +133,7 @@ export interface AccountResponse {
 	usageWindow: string | null; // Most restrictive window (e.g., "five_hour")
 	usageData: FullUsageData | null; // Full usage data for Anthropic accounts
 	hasRefreshToken: boolean; // Indicates if the account has a refresh token (OAuth account)
+	crossRegionMode?: string | null; // Cross-region inference mode for Bedrock accounts
 }
 
 // UI display type - used in CLI and web dashboard

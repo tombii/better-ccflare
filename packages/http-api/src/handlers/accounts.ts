@@ -70,6 +70,7 @@ export function createAccountsListHandler(db: Database) {
 					COALESCE(auto_refresh_enabled, 0) as auto_refresh_enabled,
 					custom_endpoint,
 					model_mappings,
+					cross_region_mode,
 					CASE
 						WHEN expires_at > ?1 THEN 1
 						ELSE 0
@@ -113,6 +114,7 @@ export function createAccountsListHandler(db: Database) {
 			auto_refresh_enabled: 0 | 1;
 			custom_endpoint: string | null;
 			model_mappings: string | null;
+			cross_region_mode: string | null;
 		}>;
 
 		// Fetch usage data for all Claude CLI OAuth accounts (those with refresh tokens)
@@ -312,6 +314,7 @@ export function createAccountsListHandler(db: Database) {
 				usageWindow,
 				usageData: fullUsageData, // Full usage data for UI
 				hasRefreshToken: !!account.refresh_token, // OAuth accounts have refresh tokens
+				crossRegionMode: account.cross_region_mode,
 			};
 		});
 

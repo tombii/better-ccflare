@@ -74,6 +74,7 @@ interface AccountAddFormProps {
 		profile: string;
 		region: string;
 		priority: number;
+		cross_region_mode?: "geographic" | "global" | "regional";
 	}) => Promise<void>;
 	onCancel: () => void;
 	onSuccess: () => void;
@@ -116,6 +117,7 @@ export function AccountAddForm({
 		region: "global",
 		profile: "",
 		awsRegion: "",
+		crossRegionMode: "geographic" as "geographic" | "global" | "regional",
 		opusModel: "",
 		sonnetModel: "",
 		haikuModel: "",
@@ -211,6 +213,7 @@ export function AccountAddForm({
 				region: "global",
 				profile: "",
 				awsRegion: "",
+				crossRegionMode: "geographic",
 				opusModel: "",
 				sonnetModel: "",
 				haikuModel: "",
@@ -236,6 +239,7 @@ export function AccountAddForm({
 				profile: newAccount.profile,
 				region: newAccount.awsRegion,
 				priority: newAccount.priority,
+				cross_region_mode: newAccount.crossRegionMode,
 			});
 			// Reset form and signal success
 			setNewAccount({
@@ -248,6 +252,7 @@ export function AccountAddForm({
 				region: "global",
 				profile: "",
 				awsRegion: "",
+				crossRegionMode: "geographic",
 				opusModel: "",
 				sonnetModel: "",
 				haikuModel: "",
@@ -280,6 +285,7 @@ export function AccountAddForm({
 				region: "global",
 				profile: "",
 				awsRegion: "",
+				crossRegionMode: "geographic",
 				opusModel: "",
 				sonnetModel: "",
 				haikuModel: "",
@@ -310,6 +316,7 @@ export function AccountAddForm({
 				region: "global",
 				profile: "",
 				awsRegion: "",
+				crossRegionMode: "geographic",
 				opusModel: "",
 				sonnetModel: "",
 				haikuModel: "",
@@ -354,6 +361,7 @@ export function AccountAddForm({
 				region: "global",
 				profile: "",
 				awsRegion: "",
+				crossRegionMode: "geographic",
 				opusModel: "",
 				sonnetModel: "",
 				haikuModel: "",
@@ -393,6 +401,7 @@ export function AccountAddForm({
 				region: "global",
 				profile: "",
 				awsRegion: "",
+				crossRegionMode: "geographic",
 				opusModel: "",
 				sonnetModel: "",
 				haikuModel: "",
@@ -438,6 +447,7 @@ export function AccountAddForm({
 				region: "global",
 				profile: "",
 				awsRegion: "",
+				crossRegionMode: "geographic",
 				opusModel: "",
 				sonnetModel: "",
 				haikuModel: "",
@@ -485,6 +495,7 @@ export function AccountAddForm({
 			region: "global",
 			profile: "",
 			awsRegion: "",
+			crossRegionMode: "geographic",
 			opusModel: "",
 			sonnetModel: "",
 			haikuModel: "",
@@ -506,6 +517,7 @@ export function AccountAddForm({
 			region: "global",
 			profile: "",
 			awsRegion: "",
+			crossRegionMode: "geographic",
 			opusModel: "",
 			sonnetModel: "",
 			haikuModel: "",
@@ -699,6 +711,38 @@ export function AccountAddForm({
 													region in ~/.aws/config
 												</p>
 											)}
+									</div>
+									<div className="space-y-2">
+										<Label htmlFor="crossRegionMode">Cross-Region Mode</Label>
+										<Select
+											value={newAccount.crossRegionMode}
+											onValueChange={(
+												value: "geographic" | "global" | "regional",
+											) =>
+												setNewAccount({ ...newAccount, crossRegionMode: value })
+											}
+										>
+											<SelectTrigger id="crossRegionMode">
+												<SelectValue />
+											</SelectTrigger>
+											<SelectContent>
+												<SelectItem value="geographic">
+													Geographic (default - routes within your region's
+													geography)
+												</SelectItem>
+												<SelectItem value="global">
+													Global (routes globally, ~10% cost savings, premium
+													models only)
+												</SelectItem>
+												<SelectItem value="regional">
+													Regional (single region, no failover)
+												</SelectItem>
+											</SelectContent>
+										</Select>
+										<p className="text-xs text-muted-foreground">
+											Controls how Bedrock routes requests for cross-region
+											inference
+										</p>
 									</div>
 									<div className="bg-blue-50 dark:bg-blue-950 p-3 rounded-lg">
 										<p className="text-sm text-blue-900 dark:text-blue-100 font-medium mb-1">
