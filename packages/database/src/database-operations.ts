@@ -723,6 +723,7 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		createdAt: number;
 		lastUsed?: number | null;
 		isActive: boolean;
+		role?: "admin" | "api-only";
 	}): void {
 		withDatabaseRetrySync(
 			() => {
@@ -734,6 +735,7 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 					created_at: apiKey.createdAt,
 					last_used: apiKey.lastUsed || null,
 					is_active: apiKey.isActive ? 1 : 0,
+					role: apiKey.role || "api-only",
 				});
 			},
 			this.retryConfig,
