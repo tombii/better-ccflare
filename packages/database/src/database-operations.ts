@@ -31,6 +31,8 @@ export interface DatabaseConfig {
 	mmapSize?: number;
 	/** Retry configuration for database operations */
 	retry?: DatabaseRetryConfig;
+	/** Page size in bytes - default 2048 (2KB), recommend 4096 (4KB) for better memory efficiency */
+	pageSize?: number;
 }
 
 export interface DatabaseRetryConfig {
@@ -109,8 +111,21 @@ function configureSqlite(
 			try {
 				db.run(`PRAGMA mmap_size = ${config.mmapSize}`);
 			} catch (error) {
-				console.warn("Memory-mapped I/O failed, disabling:", error);
-				db.run("PRAGMA mmap_size = 0");
+				console.warn("Failed to set mmap_size:", error);
+			}
+		} else {
+			// mmap_size of 0 means disabled (which is the intended default)
+		}
+
+		// Set page size (only effective before any data is written, or after VACUUM)
+		// This is mainly for new databases - existing databases keep their page size
+		if (config.pageSize !== undefined) {
+			const currentPageSize = (
+				db.query("PRAGMA page_size").get() as { page_size: number }
+			).page_size;
+			if (currentPageSize !== config.pageSize) {
+				// Try to set page size (will only work on empty database or with VACUUM)
+				db.run(`PRAGMA page_size = ${config.pageSize}`);
 			}
 		}
 
@@ -160,9 +175,10 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		this.dbConfig = {
 			walMode: true,
 			busyTimeoutMs: 10000, // Increased timeout for distributed storage
-			cacheSize: -10000, // Reduced cache size (10MB) for stability
+			cacheSize: -5000, // Reduced cache size (5MB) for lower memory footprint
 			synchronous: "FULL", // Full synchronous mode for data safety
 			mmapSize: 0, // Disable memory-mapped I/O on distributed filesystems
+			pageSize: 2048, // Use 2KB pages instead of default 4KB for better memory efficiency
 			...dbConfig,
 		};
 
