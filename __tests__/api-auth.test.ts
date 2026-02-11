@@ -194,6 +194,96 @@ describe("API Authentication", () => {
 		});
 	});
 
+	describe("RBAC Authorization", () => {
+		test("should allow admin keys to access all endpoints", async () => {
+			const crypto = new NodeCryptoUtils();
+			const apiKey = await crypto.generateApiKey();
+			const hashedKey = await crypto.hashApiKey(apiKey);
+
+			// Create admin API key
+			const id = globalThis.crypto.randomUUID();
+			dbOps.createApiKey({
+				id,
+				name: "admin-key",
+				hashedKey,
+				prefixLast8: apiKey.slice(-8),
+				createdAt: Date.now(),
+				lastUsed: null,
+				isActive: true,
+				role: "admin",
+			});
+
+			const adminKey = dbOps.getApiKeyByName("admin-key")!;
+
+			// Admin should have access to all endpoints
+			expect((await authService.authorizeEndpoint(adminKey, "/api/accounts", "GET")).authorized).toBe(true);
+			expect((await authService.authorizeEndpoint(adminKey, "/api/stats", "GET")).authorized).toBe(true);
+			expect((await authService.authorizeEndpoint(adminKey, "/v1/messages", "POST")).authorized).toBe(true);
+			expect((await authService.authorizeEndpoint(adminKey, "/api/api-keys", "GET")).authorized).toBe(true);
+		});
+
+		test("should allow api-only keys to access proxy endpoints", async () => {
+			const crypto = new NodeCryptoUtils();
+			const apiKey = await crypto.generateApiKey();
+			const hashedKey = await crypto.hashApiKey(apiKey);
+
+			// Create api-only API key
+			const id = globalThis.crypto.randomUUID();
+			dbOps.createApiKey({
+				id,
+				name: "api-only-key",
+				hashedKey,
+				prefixLast8: apiKey.slice(-8),
+				createdAt: Date.now(),
+				lastUsed: null,
+				isActive: true,
+				role: "api-only",
+			});
+
+			const apiOnlyKey = dbOps.getApiKeyByName("api-only-key")!;
+
+			// API-only keys should have access to proxy endpoints
+			expect((await authService.authorizeEndpoint(apiOnlyKey, "/v1/messages", "POST")).authorized).toBe(true);
+			expect((await authService.authorizeEndpoint(apiOnlyKey, "/v1/models", "GET")).authorized).toBe(true);
+			expect((await authService.authorizeEndpoint(apiOnlyKey, "/v1/anthropic/version", "GET")).authorized).toBe(true);
+		});
+
+		test("should block api-only keys from dashboard endpoints", async () => {
+			const crypto = new NodeCryptoUtils();
+			const apiKey = await crypto.generateApiKey();
+			const hashedKey = await crypto.hashApiKey(apiKey);
+
+			// Create api-only API key
+			const id = globalThis.crypto.randomUUID();
+			dbOps.createApiKey({
+				id,
+				name: "api-only-key",
+				hashedKey,
+				prefixLast8: apiKey.slice(-8),
+				createdAt: Date.now(),
+				lastUsed: null,
+				isActive: true,
+				role: "api-only",
+			});
+
+			const apiOnlyKey = dbOps.getApiKeyByName("api-only-key")!;
+
+			// API-only keys should NOT have access to dashboard endpoints
+			const accountsResult = await authService.authorizeEndpoint(apiOnlyKey, "/api/accounts", "GET");
+			expect(accountsResult.authorized).toBe(false);
+			expect(accountsResult.reason).toContain("API-only keys cannot access dashboard endpoints");
+
+			const statsResult = await authService.authorizeEndpoint(apiOnlyKey, "/api/stats", "GET");
+			expect(statsResult.authorized).toBe(false);
+
+			const apiKeysResult = await authService.authorizeEndpoint(apiOnlyKey, "/api/api-keys", "GET");
+			expect(apiKeysResult.authorized).toBe(false);
+
+			const analyticsResult = await authService.authorizeEndpoint(apiOnlyKey, "/api/analytics", "GET");
+			expect(analyticsResult.authorized).toBe(false);
+		});
+	});
+
 	describe("Database Operations", () => {
 		test("should track API key usage statistics", async () => {
 			const result = await generateApiKey(dbOps, "usage-test");
