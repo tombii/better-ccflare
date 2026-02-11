@@ -29,6 +29,7 @@ export interface RuntimeConfig {
 		cacheSize?: number;
 		synchronous?: "OFF" | "NORMAL" | "FULL";
 		mmapSize?: number;
+		pageSize?: number;
 		retry?: {
 			attempts?: number;
 			delayMs?: number;
@@ -55,6 +56,7 @@ export interface ConfigData {
 	db_cache_size?: number;
 	db_synchronous?: "OFF" | "NORMAL" | "FULL";
 	db_mmap_size?: number;
+	db_page_size?: number;
 	db_retry_attempts?: number;
 	db_retry_delay_ms?: number;
 	db_retry_backoff?: number;
@@ -275,7 +277,7 @@ export class Config extends EventEmitter {
 		}
 		const fromFile = this.data.data_retention_days;
 		if (typeof fromFile === "number") return this.clamp(fromFile, 1, 365);
-		return 7;
+		return 3; // Reduced from 7 to 3 days to reduce database size
 	}
 
 	setDataRetentionDays(days: number): void {
@@ -424,6 +426,12 @@ export class Config extends EventEmitter {
 		}
 		if (typeof this.data.db_mmap_size === "number") {
 			defaults.database.mmapSize = this.data.db_mmap_size;
+		}
+		// Page size: default 2048 (2KB) for better memory efficiency, recommend 4096 (4KB)
+		if (typeof this.data.db_page_size === "number") {
+			defaults.database.pageSize = this.data.db_page_size;
+		} else {
+			defaults.database.pageSize = 2048;
 		}
 		if (typeof this.data.db_retry_attempts === "number") {
 			defaults.database.retry.attempts = this.data.db_retry_attempts;
