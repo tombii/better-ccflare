@@ -496,6 +496,47 @@ export function runMigrations(db: Database, dbPath?: string): void {
 			log.info("Added api_key_name column to requests table");
 		}
 
+		// Check columns in api_keys table
+		const apiKeysInfo = db
+			.prepare("PRAGMA table_info(api_keys)")
+			.all() as Array<{
+			cid: number;
+			name: string;
+			type: string;
+			notnull: number;
+			// biome-ignore lint/suspicious/noExplicitAny: SQLite pragma can return various default value types
+			dflt_value: any;
+			pk: number;
+		}>;
+
+		const apiKeysColumnNames = apiKeysInfo.map((col) => col.name);
+
+		// Add role column to api_keys if it doesn't exist (Migration v4)
+		if (!apiKeysColumnNames.includes("role")) {
+			// Add column with default value
+			db.prepare(
+				"ALTER TABLE api_keys ADD COLUMN role TEXT NOT NULL DEFAULT 'api-only'",
+			).run();
+			log.info("Added role column to api_keys table");
+
+			// Update existing keys to 'admin' for backwards compatibility
+			const updateResult = db
+				.prepare("UPDATE api_keys SET role = 'admin' WHERE role = 'api-only'")
+				.run();
+			const updatedCount = (updateResult.changes as number) || 0;
+			if (updatedCount > 0) {
+				log.info(
+					`Updated ${updatedCount} existing API key(s) to 'admin' role for backwards compatibility`,
+				);
+			}
+
+			// Create index on role column
+			db.prepare(
+				"CREATE INDEX IF NOT EXISTS idx_api_keys_role ON api_keys(role)",
+			).run();
+			log.info("Created index on api_keys role column");
+		}
+
 		// Add performance indexes
 		addPerformanceIndexes(db);
 

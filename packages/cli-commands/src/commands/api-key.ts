@@ -2,6 +2,7 @@ import type { DatabaseOperations } from "@better-ccflare/database";
 import {
 	type ApiKeyGenerationResult,
 	type ApiKeyResponse,
+	type ApiKeyRole,
 	NodeCryptoUtils,
 	toApiKeyResponse,
 } from "@better-ccflare/types";
@@ -12,6 +13,7 @@ import {
 export async function generateApiKey(
 	dbOps: DatabaseOperations,
 	name: string,
+	role: ApiKeyRole = "api-only",
 ): Promise<ApiKeyGenerationResult> {
 	// Validate name
 	if (!name || name.trim().length === 0) {
@@ -47,6 +49,7 @@ export async function generateApiKey(
 		prefixLast8,
 		createdAt: now,
 		isActive: true,
+		role,
 	});
 
 	return {
@@ -55,6 +58,7 @@ export async function generateApiKey(
 		apiKey,
 		prefixLast8,
 		createdAt: new Date(now).toISOString(),
+		role,
 	};
 }
 
@@ -166,12 +170,14 @@ export function getApiKeyStats(dbOps: DatabaseOperations): {
  */
 export function formatApiKeyForDisplay(apiKey: ApiKeyResponse): string {
 	const status = apiKey.isActive ? "Active" : "Disabled";
+	const role = apiKey.role === "admin" ? "Admin" : "API-only";
 	const lastUsed = apiKey.lastUsed
 		? new Date(apiKey.lastUsed).toLocaleDateString()
 		: "Never";
 
 	return `  ${apiKey.name} (${apiKey.prefixLast8})
     Status: ${status}
+    Role: ${role}
     Created: ${new Date(apiKey.createdAt).toLocaleDateString()}
     Last Used: ${lastUsed}
     Usage Count: ${apiKey.usageCount}`;
@@ -183,9 +189,11 @@ export function formatApiKeyForDisplay(apiKey: ApiKeyResponse): string {
 export function formatApiKeyGenerationResult(
 	result: ApiKeyGenerationResult,
 ): string {
+	const role = result.role === "admin" ? "Admin" : "API-only";
 	return `✅ API Key Generated Successfully!
 
 Name: ${result.name}
+Role: ${role}
 Key: ${result.apiKey}  ⚠️  Save this key now - it won't be shown again
 Prefix: ${result.prefixLast8}
 Created: ${new Date(result.createdAt).toLocaleString()}

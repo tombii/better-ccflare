@@ -687,6 +687,31 @@ export default function startServer(options?: {
 						);
 					}
 
+					// Authorization check - verify API key has permission for this endpoint
+					if (authResult.apiKey) {
+						const authzResult = await authService.authorizeEndpoint(
+							authResult.apiKey,
+							url.pathname,
+							req.method,
+						);
+
+						if (!authzResult.authorized) {
+							return new Response(
+								JSON.stringify({
+									type: "error",
+									error: {
+										type: "authorization_error",
+										message: authzResult.reason || "Access denied",
+									},
+								}),
+								{
+									status: 403,
+									headers: { "Content-Type": "application/json" },
+								},
+							);
+						}
+					}
+
 					return handleProxy(
 						req,
 						url,

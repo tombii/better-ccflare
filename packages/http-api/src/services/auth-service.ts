@@ -1,11 +1,16 @@
 import type { DatabaseOperations } from "@better-ccflare/database";
-import { type ApiKey, NodeCryptoUtils } from "@better-ccflare/types";
+import {
+	type ApiKey,
+	type ApiKeyRole,
+	NodeCryptoUtils,
+} from "@better-ccflare/types";
 
 export interface AuthenticationResult {
 	isAuthenticated: boolean;
 	apiKey?: ApiKey;
 	apiKeyId?: string;
 	apiKeyName?: string;
+	role?: ApiKeyRole;
 	error?: string;
 }
 
@@ -62,6 +67,7 @@ export class AuthService {
 					apiKey: keyRecord,
 					apiKeyId: keyRecord.id,
 					apiKeyName: keyRecord.name,
+					role: keyRecord.role,
 				};
 			}
 		}
@@ -70,6 +76,33 @@ export class AuthService {
 			isAuthenticated: false,
 			error: "Invalid API key",
 		};
+	}
+
+	/**
+	 * Authorize endpoint access based on API key role
+	 */
+	async authorizeEndpoint(
+		apiKey: ApiKey,
+		path: string,
+		_method: string,
+	): Promise<{ authorized: boolean; reason?: string }> {
+		// Admin keys have full access
+		if (apiKey.role === "admin") {
+			return { authorized: true };
+		}
+
+		// API-only keys: Only allow /v1/* and /messages/* (proxy endpoints)
+		const isProxyEndpoint =
+			path.startsWith("/v1/") || path.startsWith("/messages/");
+
+		if (!isProxyEndpoint) {
+			return {
+				authorized: false,
+				reason: "API-only keys cannot access dashboard endpoints",
+			};
+		}
+
+		return { authorized: true };
 	}
 
 	/**

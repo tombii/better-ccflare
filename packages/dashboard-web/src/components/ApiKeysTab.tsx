@@ -39,6 +39,7 @@ interface ApiKey {
 	lastUsed: string | null;
 	usageCount: number;
 	isActive: boolean;
+	role: "admin" | "api-only";
 }
 
 interface ApiKeysResponse {
@@ -64,6 +65,7 @@ interface ApiKeyGenerationResponse {
 		apiKey: string; // Full API key shown only once
 		prefixLast8: string;
 		createdAt: string;
+		role: "admin" | "api-only";
 	};
 }
 
@@ -71,6 +73,7 @@ export function ApiKeysTab() {
 	const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
 	const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
 	const [newKeyName, setNewKeyName] = useState("");
+	const [isAdminKey, setIsAdminKey] = useState(false);
 	const [selectedKey, setSelectedKey] = useState<ApiKey | null>(null);
 	const [generatedKey, setGeneratedKey] = useState<string | null>(null);
 
@@ -101,15 +104,20 @@ export function ApiKeysTab() {
 
 	// Generate API key mutation
 	const generateKeyMutation = useMutation({
-		mutationFn: async (name: string) => {
+		mutationFn: async (params: {
+			name: string;
+			role: "admin" | "api-only";
+		}) => {
 			const result = await api.post<ApiKeyGenerationResponse>("/api/api-keys", {
-				name,
+				name: params.name,
+				role: params.role,
 			});
 			return result.data;
 		},
 		onSuccess: (data) => {
 			setGeneratedKey(data.apiKey);
 			setNewKeyName("");
+			setIsAdminKey(false);
 			setIsCreateDialogOpen(false);
 			// Don't invalidate queries here - wait until user authenticates
 			// This prevents 401 errors if the stored key is invalid
@@ -155,7 +163,8 @@ export function ApiKeysTab() {
 
 	const handleGenerateKey = () => {
 		if (!newKeyName.trim()) return;
-		generateKeyMutation.mutate(newKeyName.trim());
+		const role = isAdminKey ? "admin" : "api-only";
+		generateKeyMutation.mutate({ name: newKeyName.trim(), role });
 	};
 
 	const handleToggleKey = (key: ApiKey, enable: boolean) => {
@@ -263,6 +272,32 @@ export function ApiKeysTab() {
 									onChange={(e) => setNewKeyName(e.target.value)}
 								/>
 							</div>
+							<div className="flex items-center space-x-2">
+								<input
+									type="checkbox"
+									id="admin"
+									checked={isAdminKey}
+									onChange={(e) => setIsAdminKey(e.target.checked)}
+									className="h-4 w-4 rounded border-gray-300"
+								/>
+								<Label
+									htmlFor="admin"
+									className="text-sm font-normal cursor-pointer"
+								>
+									Grant admin access (dashboard management)
+								</Label>
+							</div>
+							{isAdminKey && (
+								<div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+									<div className="flex items-center gap-2 text-yellow-800">
+										<AlertTriangle className="h-4 w-4" />
+										<span className="text-sm">
+											Admin keys can manage accounts, view analytics, and modify
+											settings.
+										</span>
+									</div>
+								</div>
+							)}
 						</div>
 						<DialogFooter>
 							<Button
@@ -324,6 +359,15 @@ export function ApiKeysTab() {
 												}`}
 											>
 												{key.isActive ? "Active" : "Disabled"}
+											</div>
+											<div
+												className={`px-2 py-1 rounded text-xs font-medium ${
+													key.role === "admin"
+														? "bg-amber-100 text-amber-800"
+														: "bg-blue-100 text-blue-800"
+												}`}
+											>
+												{key.role === "admin" ? "Admin" : "API-only"}
 											</div>
 										</div>
 										<div className="text-sm text-muted-foreground mt-1">

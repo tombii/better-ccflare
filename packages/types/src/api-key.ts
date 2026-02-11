@@ -1,5 +1,8 @@
 // Crypto interface for dependency injection
 
+// API key role types
+export type ApiKeyRole = "admin" | "api-only";
+
 // Database row type that matches actual database schema
 export interface ApiKeyRow {
 	id: string;
@@ -10,6 +13,7 @@ export interface ApiKeyRow {
 	last_used: number | null;
 	usage_count: number;
 	is_active: 0 | 1;
+	role: ApiKeyRole;
 }
 
 // Domain model - used throughout the application
@@ -22,6 +26,7 @@ export interface ApiKey {
 	lastUsed: number | null;
 	usageCount: number;
 	isActive: boolean;
+	role: ApiKeyRole;
 }
 
 // API response type - what clients receive (excluding sensitive data)
@@ -33,6 +38,7 @@ export interface ApiKeyResponse {
 	lastUsed: string | null;
 	usageCount: number;
 	isActive: boolean;
+	role: ApiKeyRole;
 }
 
 // API key generation result
@@ -42,6 +48,13 @@ export interface ApiKeyGenerationResult {
 	apiKey: string; // Full API key (shown only once)
 	prefixLast8: string;
 	createdAt: string;
+	role: ApiKeyRole;
+}
+
+// Input for creating API keys
+export interface CreateApiKeyInput {
+	name: string;
+	role?: ApiKeyRole; // Optional, defaults to 'api-only'
 }
 
 // Validation result
@@ -126,6 +139,7 @@ export function toApiKey(row: ApiKeyRow): ApiKey {
 		lastUsed: row.last_used,
 		usageCount: row.usage_count,
 		isActive: row.is_active === 1,
+		role: row.role,
 	};
 }
 
@@ -138,5 +152,6 @@ export function toApiKeyResponse(apiKey: ApiKey): ApiKeyResponse {
 		lastUsed: apiKey.lastUsed ? new Date(apiKey.lastUsed).toISOString() : null,
 		usageCount: apiKey.usageCount,
 		isActive: apiKey.isActive,
+		role: apiKey.role,
 	};
 }

@@ -103,6 +103,7 @@ interface ParsedArgs {
 	enableApiKey: string | null;
 	deleteApiKey: string | null;
 	showConfig: boolean;
+	admin: boolean;
 }
 
 /**
@@ -437,6 +438,7 @@ function parseArgs(args: string[]): ParsedArgs {
 		enableApiKey: null,
 		deleteApiKey: null,
 		showConfig: false,
+		admin: false,
 	};
 
 	for (let i = 0; i < args.length; i++) {
@@ -692,6 +694,9 @@ function parseArgs(args: string[]): ParsedArgs {
 				}
 				parsed.generateApiKey = args[++i];
 				break;
+			case "--admin":
+				parsed.admin = true;
+				break;
 			case "--list-api-keys":
 				parsed.listApiKeys = true;
 				break;
@@ -797,6 +802,7 @@ Options:
 
 API Key Management:
   --generate-api-key <name>  Generate a new API key
+    --admin                  Grant admin privileges (dashboard access)
   --list-api-keys            List all API keys
   --disable-api-key <name>   Disable an API key
   --enable-api-key <name>    Enable a disabled API key
@@ -815,7 +821,8 @@ Examples:
   better-ccflare --pause work           # Pause account
   better-ccflare --analyze              # Run performance analysis
   better-ccflare --stats                # View stats
-  better-ccflare --generate-api-key "My App"  # Generate new API key
+  better-ccflare --generate-api-key "My App"  # Generate API-only key
+  better-ccflare --generate-api-key "Admin Key" --admin  # Generate admin key
   better-ccflare --list-api-keys               # List all API keys
   better-ccflare --disable-api-key "My App"    # Disable an API key
 `);
@@ -1126,7 +1133,8 @@ Examples:
 	// API Key management commands
 	if (parsed.generateApiKey) {
 		try {
-			const result = await generateApiKey(dbOps, parsed.generateApiKey);
+			const role = parsed.admin ? ("admin" as const) : ("api-only" as const);
+			const result = await generateApiKey(dbOps, parsed.generateApiKey, role);
 			console.log(formatApiKeyGenerationResult(result));
 			await exitGracefully(0);
 		} catch (error: unknown) {
