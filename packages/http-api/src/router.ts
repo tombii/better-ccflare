@@ -275,6 +275,20 @@ export class APIRouter {
 			);
 		}
 
+		// Authorize the request based on API key role
+		if (authResult.apiKey) {
+			const authzResult = await this.authService.authorizeEndpoint(
+				authResult.apiKey,
+				path,
+				method,
+			);
+			if (!authzResult.authorized) {
+				return errorResponse(
+					Unauthorized(authzResult.reason || "Authorization failed"),
+				);
+			}
+		}
+
 		// Check for exact match
 		const handler = this.handlers.get(key);
 		if (handler) {
