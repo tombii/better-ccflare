@@ -158,43 +158,36 @@ $(ls -d */ 2>/dev/null | head -10 || echo "Unable to list directories")
 EOF
 )
 
-# Prepare the issue content
-ISSUE_CONTENT=$(cat <<EOF
-Repository Context:
-${REPO_CONTEXT}
+# Prepare the issue content - use printf for safer handling
+ISSUE_CONTENT=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n' \
+    "Repository Context:" \
+    "${REPO_CONTEXT}" \
+    "" \
+    "Issue Details:" \
+    "Title: ${ISSUE_TITLE}" \
+    "Author: ${ISSUE_AUTHOR}" \
+    "Body:" \
+    "${ISSUE_BODY:-No description provided}")
 
-Issue Details:
-Title: ${ISSUE_TITLE}
-Author: ${ISSUE_AUTHOR}
-Body:
-${ISSUE_BODY:-"No description provided"}
-EOF
-)
-
-# Create the triage prompt
-TRIAGE_PROMPT="You are an expert GitHub issue triaging agent for the better-ccflare project, a load balancer proxy for Claude AI.
-
-Your task is to analyze the following issue and provide:
-1. Suggested labels (choose from: bug, enhancement, documentation, question, help-wanted, good-first-issue, priority-high, priority-medium, priority-low, backend, frontend, docker, auth, api)
-2. Severity assessment (critical, high, medium, low)
-3. Brief analysis of the issue
-4. Initial response or guidance for the issue author
-
-For bug reports, if the issue doesn't include the user's better-ccflare version and installation method, specifically request this information in your response:
-- better-ccflare version (e.g., v2.1.0, or commit hash if built from source)
-- Installation method (npm, bun, pre-compiled binary, built from source, Docker/Docker Compose)
-- Operating system and architecture
-
-Respond in the following JSON format:
-{
-  \"labels\": [\"label1\", \"label2\"],
-  \"severity\": \"medium\",
-  \"analysis\": \"Brief analysis here\",
-  \"response\": \"Helpful response to the issue author\"
-}
-
-Issue to triage:
-${ISSUE_CONTENT}"
+# Create the triage prompt - use printf for safe handling of special characters
+TRIAGE_PROMPT=$(printf '%s\n\n%s\n\n%s\n\n%s\n' \
+    "You are an expert GitHub issue triaging agent for the better-ccflare project, a load balancer proxy for Claude AI." \
+    "Your task is to analyze the following issue and provide:" \
+    "1. Suggested labels (choose from: bug, enhancement, documentation, question, help-wanted, good-first-issue, priority-high, priority-medium, priority-low, backend, frontend, docker, auth, api)" \
+    "2. Severity assessment (critical, high, medium, low)" \
+    "3. Brief analysis of the issue" \
+    "4. Initial response or guidance for the issue author" \
+    "" \
+    "For bug reports, if the issue doesn't include the user's better-ccflare version and installation method, specifically request this information in your response:" \
+    "- better-ccflare version (e.g., v2.1.0, or commit hash if built from source)" \
+    "- Installation method (npm, bun, pre-compiled binary, built from source, Docker/Docker Compose)" \
+    "- Operating system and architecture" \
+    "" \
+    "Respond in the following JSON format:" \
+    '{"labels": ["label1", "label2"], "severity": "medium", "analysis": "Brief analysis here", "response": "Helpful response to the issue author"}' \
+    "" \
+    "Issue to triage:" \
+    "${ISSUE_CONTENT}")
 
 echo "Sending issue for triage..."
 
@@ -223,7 +216,7 @@ call_openrouter_api() {
         },
         {
             "role": "user",
-            "content": "$(echo "${TRIAGE_PROMPT}" | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')"
+            "content": $(echo "${TRIAGE_PROMPT}" | jq -Rs .)
         }
     ]
 }
@@ -433,23 +426,13 @@ if [[ -n "${LABELS}" ]]; then
         -d "{\"labels\": ${LABELS_JSON}}"
 fi
 
-# Post the triage comment
-COMMENT_BODY=$(cat <<EOF
-## 🤖 Issue Triage
-
-**Severity:** \`${SEVERITY}\`
-
-**Analysis:**
-${ANALYSIS}
-
----
-
-${RESPONSE}
-
----
-*This automated triage was performed by the better-ccflare Issue Triage Agent using ${USED_MODEL}.*
-EOF
-)
+# Post the triage comment - use printf for safer handling
+COMMENT_BODY=$(printf '%s\n\n**Severity:** `%s`\n\n**Analysis:**\n%s\n\n---\n\n%s\n\n---\n*This automated triage was performed by the better-ccflare Issue Triage Agent using %s.*' \
+    "## 🤖 Issue Triage" \
+    "${SEVERITY}" \
+    "${ANALYSIS}" \
+    "${RESPONSE}" \
+    "${USED_MODEL}")
 
 echo "Posting triage comment..."
 # Create a temporary JSON file for GitHub comment to avoid jq parsing issues
