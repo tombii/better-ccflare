@@ -9,7 +9,7 @@ import {
 	ToggleRight,
 	Trash2,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "../api";
 import { Button } from "./ui/button";
 import {
@@ -73,11 +73,28 @@ export function ApiKeysTab() {
 	const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
 	const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
 	const [newKeyName, setNewKeyName] = useState("");
-	const [isAdminKey, setIsAdminKey] = useState(false);
 	const [selectedKey, setSelectedKey] = useState<ApiKey | null>(null);
 	const [generatedKey, setGeneratedKey] = useState<string | null>(null);
+	const [isAdminKey, setIsAdminKey] = useState(false);
 
 	const queryClient = useQueryClient();
+
+	// Fetch API key statistics - only when not showing the generated key dialog
+	const { data: statsResponse, error: statsError } =
+		useQuery<ApiKeyStatsResponse>({
+			queryKey: ["api-keys-stats"],
+			queryFn: async () => {
+				return api.get<ApiKeyStatsResponse>("/api/api-keys/stats");
+			},
+			enabled: !generatedKey, // Don't fetch while showing generated key
+		});
+
+	// Default to admin if this is the first key, otherwise api-only
+	useEffect(() => {
+		if (statsResponse?.data) {
+			setIsAdminKey(statsResponse.data.active === 0);
+		}
+	}, [statsResponse]);
 
 	// Fetch API keys - only when not showing the generated key dialog
 	const {
@@ -91,16 +108,6 @@ export function ApiKeysTab() {
 		},
 		enabled: !generatedKey, // Don't fetch while showing generated key
 	});
-
-	// Fetch API key statistics - only when not showing the generated key dialog
-	const { data: statsResponse, error: statsError } =
-		useQuery<ApiKeyStatsResponse>({
-			queryKey: ["api-keys-stats"],
-			queryFn: async () => {
-				return api.get<ApiKeyStatsResponse>("/api/api-keys/stats");
-			},
-			enabled: !generatedKey, // Don't fetch while showing generated key
-		});
 
 	// Generate API key mutation
 	const generateKeyMutation = useMutation({

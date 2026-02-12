@@ -32,6 +32,15 @@ export async function generateApiKey(
 		throw new Error(`API key with name '${trimmedName}' already exists`);
 	}
 
+	// Prevent creating api-only key when no other keys exist (would lock user out of dashboard)
+	if (role === "api-only" && dbOps.countActiveApiKeys() === 0) {
+		throw new Error(
+			"Cannot create an API-only key as your first key. " +
+				"API-only keys cannot access the dashboard, which would lock you out. " +
+				"Please create an Admin key first using: --role admin",
+		);
+	}
+
 	// Generate API key
 	const crypto = new NodeCryptoUtils();
 	const apiKey = await crypto.generateApiKey();
@@ -100,6 +109,31 @@ export function disableApiKey(
 		throw new Error(`API key '${name}' is already disabled`);
 	}
 
+	// Prevent disabling the last active admin key if other keys exist
+	if (apiKey.role === "admin") {
+		const activeAdminKeys = dbOps
+			.getApiKeys()
+			.filter((k) => k.isActive && k.role === "admin");
+
+		// If this is the only admin key but there are other non-admin keys
+		if (activeAdminKeys.length === 1) {
+			const otherActiveKeys = dbOps.getApiKeys().filter(
+				(k) => k.isActive && k.id !== apiKey.id
+			);
+
+			if (otherActiveKeys.length > 0) {
+				// There are other keys, so this admin key is needed for dashboard access
+				throw new Error(
+					"Cannot disable the last active admin key. " +
+						"This would lock you out of the dashboard. " +
+						"Create another admin key first, or disable an API-only key instead.",
+				);
+			}
+			// If this is the only key (last key overall), we allow disabling
+			// which will effectively disable authentication and unlock the dashboard
+		}
+	}
+
 	const success = dbOps.disableApiKey(apiKey.id);
 	if (!success) {
 		throw new Error(`Failed to disable API key '${name}'`);
@@ -136,6 +170,31 @@ export function deleteApiKey(dbOps: DatabaseOperations, name: string): boolean {
 	const apiKey = dbOps.getApiKeyByName(name);
 	if (!apiKey) {
 		throw new Error(`API key '${name}' not found`);
+	}
+
+	// Prevent deleting the last active admin key if other keys exist
+	if (apiKey.isActive && apiKey.role === "admin") {
+		const activeAdminKeys = dbOps
+			.getApiKeys()
+			.filter((k) => k.isActive && k.role === "admin");
+
+		// If this is the only admin key but there are other non-admin keys
+		if (activeAdminKeys.length === 1) {
+			const otherActiveKeys = dbOps.getApiKeys().filter(
+				(k) => k.isActive && k.id !== apiKey.id
+			);
+
+			if (otherActiveKeys.length > 0) {
+				// There are other keys, so this admin key is needed for dashboard access
+				throw new Error(
+					"Cannot delete the last active admin key. " +
+						"This would lock you out of the dashboard. " +
+						"Create another admin key first, or delete an API-only key instead.",
+				);
+			}
+			// If this is the only key (last key overall), we allow deletion
+			// which will disable authentication and unlock the dashboard
+		}
 	}
 
 	const success = dbOps.deleteApiKey(apiKey.id);
