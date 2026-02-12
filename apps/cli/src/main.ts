@@ -1133,7 +1133,10 @@ Examples:
 	// API Key management commands
 	if (parsed.generateApiKey) {
 		try {
-			const role = parsed.admin ? ("admin" as const) : ("api-only" as const);
+			// Default to admin if this is the first key, otherwise api-only
+			const defaultRole =
+				dbOps.countActiveApiKeys() === 0 ? "admin" : "api-only";
+			const role = parsed.admin ? ("admin" as const) : defaultRole;
 			const result = await generateApiKey(dbOps, parsed.generateApiKey, role);
 			console.log(formatApiKeyGenerationResult(result));
 			await exitGracefully(0);
