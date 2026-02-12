@@ -106,6 +106,16 @@ const BUNDLED_PRICING: ApiResponse = {
 					cache_write: 6.25,
 				},
 			},
+			[CLAUDE_MODEL_IDS.OPUS_4_6]: {
+				id: CLAUDE_MODEL_IDS.OPUS_4_6,
+				name: MODEL_DISPLAY_NAMES[CLAUDE_MODEL_IDS.OPUS_4_6],
+				cost: {
+					input: 5,
+					output: 25,
+					cache_read: 0.5,
+					cache_write: 6.25,
+				},
+			},
 		},
 	},
 };
