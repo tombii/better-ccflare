@@ -644,7 +644,7 @@ We recommend using one of the workarounds above until the npm bug is fixed.
 - **OpenAI-Compatible** - OpenAI-compatible providers (OpenRouter, Together AI, etc.) with Claude API format
 - **Universal API Format** - Use OpenAI-compatible providers (OpenRouter, Together AI, etc.) with Claude API format
 - **Automatic Format Conversion** - Seamless conversion between Anthropic and OpenAI request/response formats
-- **Model Mapping** - Map Claude models (opus, sonnet, haiku) to equivalent OpenAI models
+- **Model Mapping** - Map Claude models (Opus, Sonnet, Haiku) to equivalent OpenAI models
 - **Streaming Support** - Full support for streaming responses from OpenAI-compatible providers
 - **API Key Authentication** - Secure API key management for OpenAI-compatible providers
 - **Cost Tracking** - Automatic cost calculation for usage monitoring and budgeting
