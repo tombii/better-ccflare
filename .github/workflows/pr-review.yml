@@ -19,9 +19,10 @@ jobs:
       BASE_REF: ${{ github.event.pull_request.base.ref }}
       HEAD_REF: ${{ github.event.pull_request.head.ref }}
       PR_NUMBER: ${{ github.event.pull_request.number }}
-      PR_TITLE: ${{ github.event.pull_request.title }}
-      PR_AUTHOR: ${{ github.event.pull_request.user.login }}
-      PR_DESCRIPTION: ${{ github.event.pull_request.body }}
+      # Use toJSON to properly escape all user-provided content
+      PR_TITLE: ${{ toJSON(github.event.pull_request.title) }}
+      PR_AUTHOR: ${{ toJSON(github.event.pull_request.user.login) }}
+      PR_DESCRIPTION: ${{ toJSON(github.event.pull_request.body) }}
       REPO_NAME: ${{ github.repository }}
 
     steps:
@@ -97,9 +98,10 @@ jobs:
       BASE_REF: ${{ github.event.pull_request.base.ref }}
       HEAD_REF: ${{ github.event.pull_request.head.ref }}
       PR_NUMBER: ${{ github.event.pull_request.number }}
-      PR_TITLE: ${{ github.event.pull_request.title }}
-      PR_AUTHOR: ${{ github.event.pull_request.user.login }}
-      PR_DESCRIPTION: ${{ github.event.pull_request.body }}
+      # Use toJSON to properly escape all user-provided content
+      PR_TITLE: ${{ toJSON(github.event.pull_request.title) }}
+      PR_AUTHOR: ${{ toJSON(github.event.pull_request.user.login) }}
+      PR_DESCRIPTION: ${{ toJSON(github.event.pull_request.body) }}
       REPO_NAME: ${{ github.repository }}
 
     steps:

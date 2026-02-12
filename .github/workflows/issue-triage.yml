@@ -25,9 +25,10 @@ jobs:
           AI_TEMPERATURE: "0.3"
           AI_MAX_TOKENS: "5000"
           ISSUE_NUMBER: ${{ github.event.issue.number }}
-          ISSUE_TITLE: ${{ github.event.issue.title }}
-          ISSUE_BODY: ${{ github.event.issue.body }}
-          ISSUE_AUTHOR: ${{ github.event.issue.user.login }}
+          # Use toJSON to properly escape all user-provided content
+          ISSUE_TITLE: ${{ toJSON(github.event.issue.title) }}
+          ISSUE_BODY: ${{ toJSON(github.event.issue.body) }}
+          ISSUE_AUTHOR: ${{ toJSON(github.event.issue.user.login) }}
           REPO_NAME: ${{ github.repository }}
         run: |
           bash .github/scripts/issue-triage.sh

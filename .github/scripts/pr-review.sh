@@ -164,86 +164,82 @@ if [[ "$DIFF_SIZE" -gt "$MAX_DIFF_SIZE" ]]; then
     exit 1
 fi
 
-# Get repository context
+# Get repository context - use printf for safer handling
 echo "Gathering repository context..."
-REPO_CONTEXT=$(cat <<EOF
-Repository: ${REPO_NAME}
-Project: better-ccflare - Load balancer proxy for Claude AI
+REPO_CONTEXT=$(printf '%s\n%s\n%s\n\n%s\n\n%s\n' \
+    "Repository: ${REPO_NAME}" \
+    "Project: better-ccflare - Load balancer proxy for Claude AI" \
+    "" \
+    "Key technologies:" \
+    "- TypeScript/Bun runtime" \
+    "- Monorepo structure (apps: TUI, server, lander; packages: proxy, dashboard-web, etc.)" \
+    "- SQLite database for account and request tracking" \
+    "- Multiple AI providers: Claude CLI OAuth, OpenRouter, Anthropic API" \
+    "- Hono web framework for server" \
+    "- React for dashboard UI" \
+    "" \
+    "Important patterns:" \
+    "- Dependency injection via core-di" \
+    "- Structured logging via logger package" \
+    "- Database migrations in packages/database" \
+    "- Token counting and streaming in proxy package")
 
-Key technologies:
-- TypeScript/Bun runtime
-- Monorepo structure (apps: TUI, server, lander; packages: proxy, dashboard-web, etc.)
-- SQLite database for account and request tracking
-- Multiple AI providers: Claude CLI OAuth, OpenRouter, Anthropic API
-- Hono web framework for server
-- React for dashboard UI
+# Build the PR context - use printf for safer handling
+PR_CONTEXT=$(printf '%s\n%s\n%s\n' \
+    "Pull Request Details:" \
+    "Title: ${PR_TITLE}" \
+    "Author: ${PR_AUTHOR}" \
+    "Base Branch: ${BASE_BRANCH}" \
+    "Head Branch: ${HEAD_BRANCH}" \
+    "" \
+    "Description:" \
+    "${PR_DESCRIPTION}")
 
-Important patterns:
-- Dependency injection via core-di
-- Structured logging via logger package
-- Database migrations in packages/database
-- Token counting and streaming in proxy package
-EOF
-)
-
-# Build the PR context
-PR_CONTEXT=$(cat <<EOF
-Pull Request Details:
-Title: ${PR_TITLE}
-Author: ${PR_AUTHOR}
-Base Branch: ${BASE_BRANCH}
-Head Branch: ${HEAD_BRANCH}
-
-Description:
-${PR_DESCRIPTION}
-EOF
-)
-
-# Create the review prompt
-REVIEW_PROMPT="You are an expert code reviewer for the better-ccflare project, a load balancer proxy for Claude AI built with TypeScript/Bun.
-
-Your task is to review the following pull request diff and provide:
-1. **Security Issues**: Check for hardcoded secrets, API key exposure, SQL injection, XSS vulnerabilities, authentication bypasses, input validation problems
-2. **Code Quality**: Assess code structure, maintainability, adherence to TypeScript best practices, proper error handling
-3. **Performance**: Identify potential bottlenecks, inefficient algorithms, memory leaks, unnecessary computations
-4. **Logic Issues**: Find bugs, edge cases, race conditions, incorrect implementations
-5. **Best Practices**: Check for proper logging, appropriate abstractions, consistent patterns with existing codebase
-6. **Suggestions**: Provide actionable improvements and recommendations
-
-Repository Context:
-${REPO_CONTEXT}
-
-${PR_CONTEXT}
-
-Review the following diff and provide constructive feedback in markdown format. Be thorough but concise. Use the following structure:
-
-## Summary
-Brief overview of the changes and overall assessment.
-
-## 🔒 Security
-List any security concerns or confirm if none found.
-
-## 💡 Code Quality
-Comment on code structure, maintainability, and best practices.
-
-## ⚡ Performance
-Note any performance concerns or optimizations.
-
-## 🐛 Potential Issues
-Highlight bugs, logic errors, or edge cases.
-
-## ✅ Positive Aspects
-Mention good practices and well-implemented features.
-
-## 📝 Recommendations
-Provide specific, actionable suggestions for improvement.
-
-Diff to review:
-\`\`\`diff
-${DIFF}
-\`\`\`
-
-Remember: Be constructive, specific, and helpful. Focus on important issues rather than nitpicking style."
+# Create the review prompt - use printf for safer handling of special characters
+REVIEW_PROMPT=$(printf '%s\n\n%s\n\n%s\n\n%s\n\n%s\n\n%s\n\n%s\n\n%s\n\n%s\n\n%s\n\n%s\n\n%s\n\n%s\n\n%s\n\n%s\n\n%s\n\n%s\n\n%s\n\n%s\n\n%s\n' \
+    "You are an expert code reviewer for the better-ccflare project, a load balancer proxy for Claude AI built with TypeScript/Bun." \
+    "Your task is to review the following pull request diff and provide:" \
+    "1. **Security Issues**: Check for hardcoded secrets, API key exposure, SQL injection, XSS vulnerabilities, authentication bypasses, input validation problems" \
+    "2. **Code Quality**: Assess code structure, maintainability, adherence to TypeScript best practices, proper error handling" \
+    "3. **Performance**: Identify potential bottlenecks, inefficient algorithms, memory leaks, unnecessary computations" \
+    "4. **Logic Issues**: Find bugs, edge cases, race conditions, incorrect implementations" \
+    "5. **Best Practices**: Check for proper logging, appropriate abstractions, consistent patterns with existing codebase" \
+    "6. **Suggestions**: Provide actionable improvements and recommendations" \
+    "" \
+    "Repository Context:" \
+    "${REPO_CONTEXT}" \
+    "" \
+    "${PR_CONTEXT}" \
+    "" \
+    "Review the following diff and provide constructive feedback in markdown format. Be thorough but concise. Use the following structure:" \
+    "" \
+    "## Summary" \
+    "Brief overview of the changes and overall assessment." \
+    "" \
+    "## 🔒 Security" \
+    "List any security concerns or confirm if none found." \
+    "" \
+    "## 💡 Code Quality" \
+    "Comment on code structure, maintainability, and best practices." \
+    "" \
+    "## ⚡ Performance" \
+    "Note any performance concerns or optimizations." \
+    "" \
+    "## 🐛 Potential Issues" \
+    "Highlight bugs, logic errors, or edge cases." \
+    "" \
+    "## ✅ Positive Aspects" \
+    "Mention good practices and well-implemented features." \
+    "" \
+    "## 📝 Recommendations" \
+    "Provide specific, actionable suggestions for improvement." \
+    "" \
+    "Diff to review:" \
+    '```diff' \
+    "${DIFF}" \
+    '```' \
+    "" \
+    "Remember: Be constructive, specific, and helpful. Focus on important issues rather than nitpicking style.")
 
 echo "Sending diff for review..."
 
@@ -477,26 +473,16 @@ if [[ -z "$REVIEW_CONTENT" ]]; then
     exit 1
 fi
 
-# Format the final comment
-COMMENT_BODY=$(cat <<EOF
-## 🤖 AI Code Review
-
-${REVIEW_CONTENT}
-
----
-
-**Stats:**
-- Diff size: ${DIFF_SIZE} bytes
-- Model: \`${USED_MODEL}\`
-- Review generated at: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
-
----
-
-⚠️ **Note**: This is an automated review. Please verify all suggestions and use your judgment before implementing changes.
-
-*Generated by better-ccflare PR Review Agent.*
-EOF
-)
+# Format the final comment - use printf for safer handling
+COMMENT_BODY=$(printf '%s\n\n%s\n\n---\n\n%s\n- Diff size: %s bytes\n- Model: `%s`\n- Review generated at: %s\n\n---\n\n%s\n\n%s' \
+    "## 🤖 AI Code Review" \
+    "${REVIEW_CONTENT}" \
+    "**Stats:**" \
+    "${DIFF_SIZE}" \
+    "${USED_MODEL}" \
+    "$(date -u +"%Y-%m-%d %H:%M:%S UTC")" \
+    "⚠️ **Note**: This is an automated review. Please verify all suggestions and use your judgment before implementing changes." \
+    "*Generated by better-ccflare PR Review Agent.*")
 
 # Post the review comment
 echo "Posting review comment to PR..."
