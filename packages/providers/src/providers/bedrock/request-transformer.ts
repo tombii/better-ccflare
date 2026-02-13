@@ -44,7 +44,7 @@ export interface BedrockConverseInput {
  * Transform Claude Messages API request to Bedrock Converse API format
  *
  * Field mappings:
- * - messages → messages (direct mapping, same structure)
+ * - messages → messages (requires content transformation)
  * - model → NOT in ConverseCommandInput (model specified separately in invokeModel())
  * - max_tokens → inferenceConfig.maxTokens
  * - temperature → inferenceConfig.temperature
@@ -83,8 +83,35 @@ export function transformMessagesRequest(
 		}
 	}
 
+	// Transform messages to Bedrock format
+	// Bedrock requires content to be an array of { text: string } objects
+	const transformedMessages: Message[] = claudeRequest.messages.map((msg) => {
+		let content: Array<{ text: string }>;
+
+		if (typeof msg.content === "string") {
+			// Simple string content
+			content = [{ text: msg.content }];
+		} else if (Array.isArray(msg.content)) {
+			// Array of content blocks - extract text from each
+			content = msg.content
+				.filter((block) => block.type === "text" && block.text)
+				.map((block) => ({ text: block.text! }));
+		} else {
+			// Fallback - shouldn't happen but handle gracefully
+			log.warn(
+				`Unexpected message content type: ${typeof msg.content}, converting to empty text`,
+			);
+			content = [{ text: "" }];
+		}
+
+		return {
+			role: msg.role,
+			content,
+		} as Message;
+	});
+
 	return {
-		messages: claudeRequest.messages as Message[],
+		messages: transformedMessages,
 		system: systemPrompt,
 		inferenceConfig: {
 			maxTokens: claudeRequest.max_tokens,

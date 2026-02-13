@@ -319,8 +319,30 @@ export class BedrockProvider extends BaseProvider implements Provider {
 		const bodyText = await request.text();
 		const body = JSON.parse(bodyText) as ClaudeRequest;
 
-		// Step 4: Translate client model name to Bedrock model ID using fuzzy matching
-		let bedrockModelId = await translateModelName(body.model, account);
+		// Step 4: Check for custom model override first
+		let bedrockModelId: string | null = null;
+
+		// Check if account has custom model in model_mappings
+		if (account.model_mappings) {
+			try {
+				const mappings = JSON.parse(account.model_mappings);
+				if (mappings.custom && typeof mappings.custom === "string") {
+					bedrockModelId = mappings.custom;
+					log.info(
+						`Using custom Bedrock model from account settings: ${bedrockModelId}`,
+					);
+				}
+			} catch (error) {
+				log.warn(
+					`Failed to parse model_mappings for account ${account.name}: ${(error as Error).message}`,
+				);
+			}
+		}
+
+		// Step 5: If no custom model, translate client model name to Bedrock model ID using fuzzy matching
+		if (!bedrockModelId) {
+			bedrockModelId = await translateModelName(body.model, account);
+		}
 
 		if (!bedrockModelId) {
 			// No fuzzy match found, try passthrough with client model name as-is

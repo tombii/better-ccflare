@@ -75,6 +75,7 @@ interface AccountAddFormProps {
 		region: string;
 		priority: number;
 		cross_region_mode?: "geographic" | "global" | "regional";
+		customModel?: string;
 	}) => Promise<void>;
 	onCancel: () => void;
 	onSuccess: () => void;
@@ -118,6 +119,7 @@ export function AccountAddForm({
 		profile: "",
 		awsRegion: "",
 		crossRegionMode: "geographic" as "geographic" | "global" | "regional",
+		customBedrockModel: "",
 		opusModel: "",
 		sonnetModel: "",
 		haikuModel: "",
@@ -214,6 +216,7 @@ export function AccountAddForm({
 				profile: "",
 				awsRegion: "",
 				crossRegionMode: "geographic",
+				customBedrockModel: "",
 				opusModel: "",
 				sonnetModel: "",
 				haikuModel: "",
@@ -240,6 +243,7 @@ export function AccountAddForm({
 				region: newAccount.awsRegion,
 				priority: newAccount.priority,
 				cross_region_mode: newAccount.crossRegionMode,
+				customModel: newAccount.customBedrockModel || undefined,
 			});
 			// Reset form and signal success
 			setNewAccount({
@@ -253,6 +257,7 @@ export function AccountAddForm({
 				profile: "",
 				awsRegion: "",
 				crossRegionMode: "geographic",
+				customBedrockModel: "",
 				opusModel: "",
 				sonnetModel: "",
 				haikuModel: "",
@@ -286,6 +291,7 @@ export function AccountAddForm({
 				profile: "",
 				awsRegion: "",
 				crossRegionMode: "geographic",
+				customBedrockModel: "",
 				opusModel: "",
 				sonnetModel: "",
 				haikuModel: "",
@@ -317,6 +323,7 @@ export function AccountAddForm({
 				profile: "",
 				awsRegion: "",
 				crossRegionMode: "geographic",
+				customBedrockModel: "",
 				opusModel: "",
 				sonnetModel: "",
 				haikuModel: "",
@@ -362,6 +369,7 @@ export function AccountAddForm({
 				profile: "",
 				awsRegion: "",
 				crossRegionMode: "geographic",
+				customBedrockModel: "",
 				opusModel: "",
 				sonnetModel: "",
 				haikuModel: "",
@@ -402,6 +410,7 @@ export function AccountAddForm({
 				profile: "",
 				awsRegion: "",
 				crossRegionMode: "geographic",
+				customBedrockModel: "",
 				opusModel: "",
 				sonnetModel: "",
 				haikuModel: "",
@@ -448,6 +457,7 @@ export function AccountAddForm({
 				profile: "",
 				awsRegion: "",
 				crossRegionMode: "geographic",
+				customBedrockModel: "",
 				opusModel: "",
 				sonnetModel: "",
 				haikuModel: "",
@@ -742,6 +752,27 @@ export function AccountAddForm({
 										<p className="text-xs text-muted-foreground">
 											Controls how Bedrock routes requests for cross-region
 											inference
+										</p>
+									</div>
+									<div className="space-y-2">
+										<Label htmlFor="customBedrockModel">
+											Custom Model ID (Optional)
+										</Label>
+										<Input
+											id="customBedrockModel"
+											value={newAccount.customBedrockModel}
+											onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+												setNewAccount({
+													...newAccount,
+													customBedrockModel: (e.target as HTMLInputElement)
+														.value,
+												})
+											}
+											placeholder="e.g., anthropic.claude-opus-4-6-v1:0"
+										/>
+										<p className="text-xs text-muted-foreground">
+											Specify a Bedrock model ID to bypass automatic model
+											detection. Leave empty to use fuzzy matching.
 										</p>
 									</div>
 									<div className="bg-blue-50 dark:bg-blue-950 p-3 rounded-lg">
