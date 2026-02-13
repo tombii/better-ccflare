@@ -2,14 +2,14 @@ import { existsSync } from "node:fs";
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { Config } from "@better-ccflare/config";
+import { CLAUDE_MODEL_IDS, isValidClaudeModel } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import { validatePathOrThrow } from "@better-ccflare/security";
-import {
-	type Agent,
-	type AgentTool,
-	type AgentWorkspace,
-	ALLOWED_MODELS,
-	type AllowedModel,
+import type {
+	Agent,
+	AgentTool,
+	AgentWorkspace,
+	AllowedModel,
 } from "@better-ccflare/types";
 import { getAgentsDirectory } from "./paths";
 import { workspacePersistence } from "./workspace-persistence";
@@ -59,7 +59,7 @@ export class AgentRegistry {
 	}
 
 	private isValidModel(model: string): model is AllowedModel {
-		return ALLOWED_MODELS.includes(model as AllowedModel);
+		return isValidClaudeModel(model);
 	}
 
 	private async loadAgentFromFile(
@@ -129,11 +129,13 @@ export class AgentRegistry {
 			if (data.model) {
 				const modelLower = data.model.toLowerCase();
 				if (modelLower === "opus") {
-					model = ALLOWED_MODELS[0]; // claude-opus-4-20250514
+					model = CLAUDE_MODEL_IDS.OPUS_4 as AllowedModel; // Keep existing default
 				} else if (modelLower === "sonnet") {
-					model = ALLOWED_MODELS[1]; // claude-sonnet-4-20250514
+					model = CLAUDE_MODEL_IDS.SONNET_4 as AllowedModel; // Keep existing default
+				} else if (modelLower === "haiku") {
+					model = CLAUDE_MODEL_IDS.HAIKU_4_5 as AllowedModel; // Keep existing default
 				} else if (this.isValidModel(data.model)) {
-					model = data.model as AllowedModel;
+					model = data.model as AllowedModel; // Use exact model specified
 				} else {
 					log.warn(
 						`Agent file ${filePath} has invalid model: ${data.model}. Using default.`,

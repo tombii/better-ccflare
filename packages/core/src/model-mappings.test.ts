@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { mapModelName, parseModelMappings } from "@better-ccflare/core";
+import {
+	getAllowedModelsMessage,
+	getModelFamily,
+	isValidClaudeModel,
+	mapModelName,
+	parseModelMappings,
+} from "@better-ccflare/core";
 import type { Account } from "@better-ccflare/types";
 
 describe("Model Mapping", () => {
@@ -173,5 +179,49 @@ describe("Model Mapping", () => {
 		expect(sonnetResult).toBe("lowercase-gpt-4");
 		expect(haikuResult).toBe("lowercase-gpt-3.5");
 		expect(opusResult).toBe("lowercase-gpt-4-turbo");
+	});
+});
+
+describe("Model Validation Utilities", () => {
+	test("getModelFamily detects opus models", () => {
+		expect(getModelFamily("claude-opus-4-6")).toBe("opus");
+		expect(getModelFamily("claude-opus-4-20250514")).toBe("opus");
+		expect(getModelFamily("CLAUDE-OPUS-5-0")).toBe("opus"); // case insensitive
+	});
+
+	test("getModelFamily detects sonnet models", () => {
+		expect(getModelFamily("claude-sonnet-4-5-20250929")).toBe("sonnet");
+		expect(getModelFamily("claude-sonnet-5-0")).toBe("sonnet");
+	});
+
+	test("getModelFamily detects haiku models", () => {
+		expect(getModelFamily("claude-haiku-4-5-20251001")).toBe("haiku");
+		expect(getModelFamily("claude-haiku-5-0")).toBe("haiku");
+	});
+
+	test("getModelFamily returns null for invalid models", () => {
+		expect(getModelFamily("gpt-4")).toBeNull();
+		expect(getModelFamily("invalid-model")).toBeNull();
+		expect(getModelFamily("")).toBeNull();
+	});
+
+	test("isValidClaudeModel accepts valid patterns", () => {
+		expect(isValidClaudeModel("claude-opus-4-6")).toBe(true);
+		expect(isValidClaudeModel("claude-sonnet-4-5-20250929")).toBe(true);
+		expect(isValidClaudeModel("claude-haiku-4-5-20251001")).toBe(true);
+		expect(isValidClaudeModel("claude-opus-5-0-future")).toBe(true); // future models
+	});
+
+	test("isValidClaudeModel rejects invalid patterns", () => {
+		expect(isValidClaudeModel("gpt-4")).toBe(false);
+		expect(isValidClaudeModel("invalid-model")).toBe(false);
+		expect(isValidClaudeModel("")).toBe(false);
+	});
+
+	test("getAllowedModelsMessage returns user-friendly error", () => {
+		const message = getAllowedModelsMessage();
+		expect(message).toContain("opus");
+		expect(message).toContain("sonnet");
+		expect(message).toContain("haiku");
 	});
 });

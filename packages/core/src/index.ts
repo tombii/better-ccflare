@@ -36,8 +36,11 @@ export {
 export {
 	createCustomEndpointData,
 	DEFAULT_MODEL_MAPPINGS,
+	getAllowedModelsMessage,
 	getEndpointUrl,
+	getModelFamily,
 	getModelMappings,
+	isValidClaudeModel,
 	KNOWN_PATTERNS,
 	mapModelName,
 	parseCustomEndpointData,

@@ -5,7 +5,7 @@ import type {
 	AgentUpdatePayload,
 	AllowedModel,
 } from "@better-ccflare/types";
-import { ALL_TOOLS, ALLOWED_MODELS } from "@better-ccflare/types";
+import { ALL_TOOLS, COMMON_MODELS } from "@better-ccflare/types";
 import { Cpu, Edit3, FileText, Palette, Save, Shield, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { TOOL_PRESETS } from "../../constants";
@@ -427,7 +427,7 @@ export function AgentEditDialog({
 										<SelectValue />
 									</SelectTrigger>
 									<SelectContent>
-										{ALLOWED_MODELS.map((m) => (
+										{COMMON_MODELS.map((m) => (
 											<SelectItem key={m} value={m}>
 												<div className="flex items-center gap-2">
 													<Cpu className="h-4 w-4" />
