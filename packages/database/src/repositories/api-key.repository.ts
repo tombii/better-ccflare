@@ -188,6 +188,22 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 	}
 
 	/**
+	 * Update the role of an API key
+	 */
+	updateRole(id: string, role: "admin" | "api-only"): boolean {
+		const changes = this.runWithChanges(
+			`
+			UPDATE api_keys
+			SET role = ?
+			WHERE id = ?
+		`,
+			[role, id],
+		);
+
+		return changes > 0;
+	}
+
+	/**
 	 * Count the number of active API keys
 	 */
 	countActive(): number {

@@ -799,6 +799,16 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		);
 	}
 
+	updateApiKeyRole(id: string, role: "admin" | "api-only"): boolean {
+		return withDatabaseRetrySync(
+			() => {
+				return this.apiKeys.updateRole(id, role);
+			},
+			this.retryConfig,
+			"updateApiKeyRole",
+		);
+	}
+
 	countActiveApiKeys(): number {
 		return withDatabaseRetrySync(
 			() => {

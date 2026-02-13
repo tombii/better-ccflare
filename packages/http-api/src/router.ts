@@ -37,6 +37,7 @@ import {
 	createApiKeysGenerateHandler,
 	createApiKeysListHandler,
 	createApiKeysStatsHandler,
+	createApiKeyUpdateRoleHandler,
 } from "./handlers/api-keys";
 import { createConfigHandlers } from "./handlers/config";
 import { createHealthHandler } from "./handlers/health";
@@ -438,21 +439,38 @@ export class APIRouter {
 		// Check for dynamic API key endpoints
 		if (path.startsWith("/api/api-keys/")) {
 			const parts = path.split("/");
-			const keyName = decodeURIComponent(parts[3]); // Decode URL-encoded names
+			const keyIdOrName = decodeURIComponent(parts[3]); // Decode URL-encoded IDs/names
+
+			// API key role update - Only admin keys can update roles
+			if (path.endsWith("/role") && method === "PATCH") {
+				// Check if the authenticated key is an admin key
+				if (authResult.role !== "admin") {
+					return errorResponse(
+						Unauthorized(
+							"Only admin keys can update API key roles. Your key has api-only access.",
+						),
+					);
+				}
+				const updateRoleHandler = createApiKeyUpdateRoleHandler(
+					this.context.dbOps,
+				);
+				return await this.wrapHandler((req) =>
+					updateRoleHandler(req, keyIdOrName, authResult.apiKeyId),
+				)(req, url);
+			}
 
 			// API key disable
 			if (path.endsWith("/disable") && method === "POST") {
 				const disableHandler = createApiKeyDisableHandler(this.context.dbOps);
-				return await this.wrapHandler((req) => disableHandler(req, keyName))(
-					req,
-					url,
-				);
+				return await this.wrapHandler((req) =>
+					disableHandler(req, keyIdOrName),
+				)(req, url);
 			}
 
 			// API key enable
 			if (path.endsWith("/enable") && method === "POST") {
 				const enableHandler = createApiKeyEnableHandler(this.context.dbOps);
-				return await this.wrapHandler((req) => enableHandler(req, keyName))(
+				return await this.wrapHandler((req) => enableHandler(req, keyIdOrName))(
 					req,
 					url,
 				);
@@ -461,7 +479,7 @@ export class APIRouter {
 			// API key delete
 			if (parts.length === 4 && method === "DELETE") {
 				const deleteHandler = createApiKeyDeleteHandler(this.context.dbOps);
-				return await this.wrapHandler((req) => deleteHandler(req, keyName))(
+				return await this.wrapHandler((req) => deleteHandler(req, keyIdOrName))(
 					req,
 					url,
 				);

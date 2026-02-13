@@ -117,9 +117,9 @@ export function disableApiKey(
 
 		// If this is the only admin key but there are other non-admin keys
 		if (activeAdminKeys.length === 1) {
-			const otherActiveKeys = dbOps.getApiKeys().filter(
-				(k) => k.isActive && k.id !== apiKey.id
-			);
+			const otherActiveKeys = dbOps
+				.getApiKeys()
+				.filter((k) => k.isActive && k.id !== apiKey.id);
 
 			if (otherActiveKeys.length > 0) {
 				// There are other keys, so this admin key is needed for dashboard access
@@ -180,9 +180,9 @@ export function deleteApiKey(dbOps: DatabaseOperations, name: string): boolean {
 
 		// If this is the only admin key but there are other non-admin keys
 		if (activeAdminKeys.length === 1) {
-			const otherActiveKeys = dbOps.getApiKeys().filter(
-				(k) => k.isActive && k.id !== apiKey.id
-			);
+			const otherActiveKeys = dbOps
+				.getApiKeys()
+				.filter((k) => k.isActive && k.id !== apiKey.id);
 
 			if (otherActiveKeys.length > 0) {
 				// There are other keys, so this admin key is needed for dashboard access
@@ -200,6 +200,69 @@ export function deleteApiKey(dbOps: DatabaseOperations, name: string): boolean {
 	const success = dbOps.deleteApiKey(apiKey.id);
 	if (!success) {
 		throw new Error(`Failed to delete API key '${name}'`);
+	}
+
+	return true;
+}
+
+/**
+ * Update an API key's role
+ */
+export function updateApiKeyRole(
+	dbOps: DatabaseOperations,
+	id: string,
+	role: ApiKeyRole,
+	currentApiKeyId?: string,
+): boolean {
+	const apiKey = dbOps.getApiKey(id);
+	if (!apiKey) {
+		throw new Error("API key not found");
+	}
+
+	// Prevent modifying the currently authenticated key
+	if (currentApiKeyId && apiKey.id === currentApiKeyId) {
+		throw new Error(
+			"Cannot modify the role of the currently authenticated API key to prevent lockouts",
+		);
+	}
+
+	// Prevent changing the first API key from admin (it should always remain admin)
+	// Get all keys ordered by creation date
+	const allKeys = dbOps.getApiKeys();
+	const firstKey = allKeys.sort((a, b) => a.createdAt - b.createdAt)[0];
+
+	if (firstKey && apiKey.id === firstKey.id && role === "api-only") {
+		throw new Error(
+			"Cannot change the first API key to api-only. The first key must remain an admin key to prevent lockouts.",
+		);
+	}
+
+	// Prevent changing the last active admin key to api-only if other keys exist
+	if (apiKey.role === "admin" && role === "api-only") {
+		const activeAdminKeys = dbOps
+			.getApiKeys()
+			.filter((k) => k.isActive && k.role === "admin");
+
+		// If this is the only admin key but there are other non-admin keys
+		if (activeAdminKeys.length === 1) {
+			const otherActiveKeys = dbOps
+				.getApiKeys()
+				.filter((k) => k.isActive && k.id !== apiKey.id);
+
+			if (otherActiveKeys.length > 0) {
+				// There are other keys, so this admin key is needed for dashboard access
+				throw new Error(
+					"Cannot change the last active admin key to api-only. " +
+						"This would lock you out of the dashboard. " +
+						"Create another admin key first, or change an API-only key to admin instead.",
+				);
+			}
+		}
+	}
+
+	const success = dbOps.updateApiKeyRole(apiKey.id, role);
+	if (!success) {
+		throw new Error("Failed to update API key role");
 	}
 
 	return true;

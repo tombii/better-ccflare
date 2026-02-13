@@ -221,10 +221,13 @@ export function App() {
 			setIsAuthenticated(true);
 			setShowAuthDialog(false);
 			return true;
-		} catch (_error) {
-			// Invalid API key, clear it
+		} catch (error) {
+			// Invalid API key or insufficient permissions, clear it
 			api.clearApiKey();
-			setAuthError("Invalid API key");
+			// Use the actual error message from the server if available
+			const errorMessage =
+				error instanceof Error ? error.message : "Invalid API key";
+			setAuthError(errorMessage);
 			return false;
 		}
 	};

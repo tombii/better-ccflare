@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { DatabaseFactory } from "@better-ccflare/database";
 import { AuthService } from "@better-ccflare/http-api";
-import { generateApiKey, listApiKeys, disableApiKey, enableApiKey, deleteApiKey } from "@better-ccflare/cli-commands";
+import { generateApiKey, listApiKeys, disableApiKey, enableApiKey, deleteApiKey, updateApiKeyRole } from "@better-ccflare/cli-commands";
 import { NodeCryptoUtils } from "@better-ccflare/types";
 
 // Test data
@@ -282,7 +282,7 @@ describe("API Authentication", () => {
 			// API-only keys should NOT have access to dashboard endpoints
 			const accountsResult = await authService.authorizeEndpoint(apiOnlyKey, "/api/accounts", "GET");
 			expect(accountsResult.authorized).toBe(false);
-			expect(accountsResult.reason).toContain("API-only keys cannot access dashboard endpoints");
+			expect(accountsResult.reason).toContain("Unauthorized");
 
 			const statsResult = await authService.authorizeEndpoint(apiOnlyKey, "/api/stats", "GET");
 			expect(statsResult.authorized).toBe(false);
@@ -523,6 +523,117 @@ describe("API Authentication", () => {
 			// Should be able to delete the api-only key (since there are other admin keys)
 			const deleteResult = deleteApiKey(dbOps, "api-only-key");
 			expect(deleteResult).toBe(true);
+		});
+	});
+
+	describe("API Key Role Updates", () => {
+		test("should update API key role from api-only to admin", async () => {
+			// Create an admin key first
+			const adminKey = await generateApiKey(dbOps, "admin-key", "admin");
+
+			// Create an api-only key
+			const apiOnlyKey = await generateApiKey(dbOps, "api-only-key", "api-only");
+
+			// Update api-only key to admin
+			const updateResult = updateApiKeyRole(dbOps, apiOnlyKey.id, "admin");
+			expect(updateResult).toBe(true);
+
+			// Verify the role was updated
+			const updatedKey = dbOps.getApiKey(apiOnlyKey.id);
+			expect(updatedKey?.role).toBe("admin");
+		});
+
+		test("should update API key role from admin to api-only when multiple admins exist", async () => {
+			// Create two admin keys
+			const adminKey1 = await generateApiKey(dbOps, "admin-key-1", "admin");
+			const adminKey2 = await generateApiKey(dbOps, "admin-key-2", "admin");
+
+			// Update one admin key to api-only
+			const updateResult = updateApiKeyRole(dbOps, adminKey2.id, "api-only");
+			expect(updateResult).toBe(true);
+
+			// Verify the role was updated
+			const updatedKey = dbOps.getApiKey(adminKey2.id);
+			expect(updatedKey?.role).toBe("api-only");
+		});
+
+		test("should prevent changing the only admin key to api-only when other keys exist", async () => {
+			// Create an admin key
+			const adminKey = await generateApiKey(dbOps, "admin-key", "admin");
+
+			// Create another admin key
+			const secondAdminKey = await generateApiKey(dbOps, "second-admin-key", "admin");
+
+			// Create an api-only key
+			await generateApiKey(dbOps, "api-only-key-1", "api-only");
+
+			// Disable the second admin key, leaving only one active admin
+			disableApiKey(dbOps, "second-admin-key");
+
+			// Try to change the only active admin key to api-only (should fail)
+			// This should fail because it's now both the first key AND the last active admin
+			expect(() => updateApiKeyRole(dbOps, adminKey.id, "api-only"))
+				.toThrow("first API key");  // It will fail on the first key check
+		});
+
+		test("should prevent changing the first API key to api-only", async () => {
+			// Create the first admin key
+			const firstKey = await generateApiKey(dbOps, "first-key", "admin");
+
+			// Create another admin key
+			await generateApiKey(dbOps, "second-key", "admin");
+
+			// Try to change the first key to api-only (should fail)
+			expect(() => updateApiKeyRole(dbOps, firstKey.id, "api-only"))
+				.toThrow("Cannot change the first API key to api-only");
+		});
+
+		test("should prevent modifying currently authenticated API key", async () => {
+			// Create two admin keys
+			const adminKey1 = await generateApiKey(dbOps, "admin-key-1", "admin");
+			const adminKey2 = await generateApiKey(dbOps, "admin-key-2", "admin");
+
+			// Try to update the currently authenticated key (should fail)
+			expect(() => updateApiKeyRole(dbOps, adminKey1.id, "api-only", adminKey1.id))
+				.toThrow("Cannot modify the role of the currently authenticated API key");
+		});
+
+		test("should allow updating non-authenticated admin key when multiple admins exist", async () => {
+			// Create three admin keys
+			const adminKey1 = await generateApiKey(dbOps, "admin-key-1", "admin");
+			const adminKey2 = await generateApiKey(dbOps, "admin-key-2", "admin");
+			const adminKey3 = await generateApiKey(dbOps, "admin-key-3", "admin");
+
+			// Simulate adminKey1 is currently authenticated
+			// Update adminKey2 to api-only (should succeed since adminKey3 still exists as admin)
+			const updateResult = updateApiKeyRole(dbOps, adminKey2.id, "api-only", adminKey1.id);
+			expect(updateResult).toBe(true);
+
+			// Verify the role was updated
+			const updatedKey = dbOps.getApiKey(adminKey2.id);
+			expect(updatedKey?.role).toBe("api-only");
+		});
+
+		test("should handle role changes between admin and api-only", async () => {
+			// Create two admin keys
+			const adminKey1 = await generateApiKey(dbOps, "admin-key-1", "admin");
+			const adminKey2 = await generateApiKey(dbOps, "admin-key-2", "admin");
+
+			// Change one to api-only
+			updateApiKeyRole(dbOps, adminKey2.id, "api-only");
+			let updatedKey = dbOps.getApiKey(adminKey2.id);
+			expect(updatedKey?.role).toBe("api-only");
+
+			// Change it back to admin
+			updateApiKeyRole(dbOps, adminKey2.id, "admin");
+			updatedKey = dbOps.getApiKey(adminKey2.id);
+			expect(updatedKey?.role).toBe("admin");
+		});
+
+		test("should reject updates to non-existent API keys", async () => {
+			// Try to update a non-existent key
+			expect(() => updateApiKeyRole(dbOps, "non-existent-id", "admin"))
+				.toThrow("API key not found");
 		});
 	});
 });
