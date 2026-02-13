@@ -24,6 +24,13 @@ export {
 	parseBedrockConfig,
 } from "./credentials";
 export { translateBedrockError } from "./error-handler";
+export { clearModelCache, translateModelName } from "./model-cache";
+export {
+	type DiscoveredModel,
+	discoverBedrockModels,
+	generateClientModelName,
+	generateModelTranslations,
+} from "./model-discovery";
 export {
 	type CrossRegionMode,
 	canUseInferenceProfile,
