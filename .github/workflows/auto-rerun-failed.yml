@@ -58,14 +58,14 @@ jobs:
             # Skip if already in progress or queued
             if [[ "$STATUS" == "in_progress" || "$STATUS" == "queued" ]]; then
               echo "⏭️  Skipping - already running"
-              ((SKIP_COUNT++))
+              SKIP_COUNT=$((SKIP_COUNT + 1))
               continue
             fi
 
             # Skip this auto-rerun workflow to prevent infinite loops
             if [[ "$WORKFLOW" == "Auto-Rerun Failed Workflows" ]]; then
               echo "⏭️  Skipping - auto-rerun workflow"
-              ((SKIP_COUNT++))
+              SKIP_COUNT=$((SKIP_COUNT + 1))
               continue
             fi
 
@@ -74,17 +74,17 @@ jobs:
 
             if [ -n "$NEWER_SUCCESS" ]; then
               echo "⏭️  Skipping - newer successful run exists (ID: $NEWER_SUCCESS)"
-              ((SKIP_COUNT++))
+              SKIP_COUNT=$((SKIP_COUNT + 1))
               continue
             fi
 
             echo "🔄 Rerunning $RUN_ID ($WORKFLOW)..."
             if gh run rerun "$RUN_ID" --repo ${{ github.repository }} --failed 2>&1; then
               echo "✅ Successfully queued rerun"
-              ((RERUN_COUNT++))
+              RERUN_COUNT=$((RERUN_COUNT + 1))
             else
               echo "⚠️  Failed to rerun (may already be running)"
-              ((SKIP_COUNT++))
+              SKIP_COUNT=$((SKIP_COUNT + 1))
             fi
             echo ""
 
