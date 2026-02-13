@@ -45,7 +45,7 @@ jobs:
           RERUN_COUNT=0
           SKIP_COUNT=0
 
-          echo "$FAILED_RUNS" | while IFS= read -r run_json; do
+          while IFS= read -r run_json; do
             RUN_ID=$(echo "$run_json" | jq -r '.databaseId')
             WORKFLOW_ID=$(echo "$run_json" | jq -r '.workflowDatabaseId')
             WORKFLOW=$(echo "$run_json" | jq -r '.workflowName')
@@ -78,8 +78,8 @@ jobs:
               continue
             fi
 
-            echo "🔄 Rerunning $run_id ($WORKFLOW)..."
-            if gh run rerun "$run_id" --repo ${{ github.repository }} --failed 2>&1; then
+            echo "🔄 Rerunning $RUN_ID ($WORKFLOW)..."
+            if gh run rerun "$RUN_ID" --repo ${{ github.repository }} --failed 2>&1; then
               echo "✅ Successfully queued rerun"
               ((RERUN_COUNT++))
             else
@@ -90,7 +90,7 @@ jobs:
 
             # Add a small delay to avoid rate limiting
             sleep 2
-          done
+          done <<< "$FAILED_RUNS"
 
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "Summary:"
