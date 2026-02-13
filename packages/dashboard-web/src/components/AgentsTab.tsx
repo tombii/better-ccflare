@@ -1,5 +1,5 @@
 import { DEFAULT_AGENT_MODEL, getModelDisplayName } from "@better-ccflare/core";
-import { ALLOWED_MODELS } from "@better-ccflare/types";
+import { COMMON_MODELS } from "@better-ccflare/types";
 import {
 	AlertCircle,
 	Bot,
@@ -243,7 +243,7 @@ Your system prompt content here...`}
 											<SelectValue placeholder="Select a model" />
 										</SelectTrigger>
 										<SelectContent>
-											{ALLOWED_MODELS.map((model) => (
+											{COMMON_MODELS.map((model) => (
 												<SelectItem key={model} value={model}>
 													{getModelDisplayName(model)}
 												</SelectItem>
@@ -293,7 +293,7 @@ Your system prompt content here...`}
 													<SelectValue />
 												</SelectTrigger>
 												<SelectContent>
-													{ALLOWED_MODELS.map((model) => (
+													{COMMON_MODELS.map((model) => (
 														<SelectItem key={model} value={model}>
 															{getModelDisplayName(model)}
 														</SelectItem>

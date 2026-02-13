@@ -1,4 +1,4 @@
-import { CLAUDE_MODEL_IDS } from "@better-ccflare/core";
+import { CLAUDE_MODEL_IDS, isValidClaudeModel } from "@better-ccflare/core";
 
 export type AgentSource = "global" | "workspace";
 
@@ -38,11 +38,18 @@ export interface Agent {
 
 export type AgentResponse = Agent[];
 
-export const ALLOWED_MODELS = [
+// Pattern-based validation - accepts any string (validation done at runtime)
+export type AllowedModel = string;
+
+// Add validation function for backward compatibility with existing code
+export function isAllowedModel(model: string): model is AllowedModel {
+	return isValidClaudeModel(model);
+}
+
+// Export commonly used models for defaults (not for validation)
+export const COMMON_MODELS = [
 	CLAUDE_MODEL_IDS.OPUS_4,
 	CLAUDE_MODEL_IDS.OPUS_4_1,
 	CLAUDE_MODEL_IDS.SONNET_4,
 	CLAUDE_MODEL_IDS.SONNET_4_5,
 ] as const;
-
-export type AllowedModel = (typeof ALLOWED_MODELS)[number];

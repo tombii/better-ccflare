@@ -1,5 +1,9 @@
 import { agentRegistry } from "@better-ccflare/agents";
-import { validateString } from "@better-ccflare/core";
+import {
+	getAllowedModelsMessage,
+	isValidClaudeModel,
+	validateString,
+} from "@better-ccflare/core";
 import type { DatabaseOperations } from "@better-ccflare/database";
 import {
 	BadRequest,
@@ -8,7 +12,6 @@ import {
 	jsonResponse,
 } from "@better-ccflare/http-common";
 import { Logger } from "@better-ccflare/logger";
-import { ALLOWED_MODELS } from "@better-ccflare/types";
 
 const log = new Logger("AgentsHandler");
 
@@ -62,10 +65,8 @@ export function createAgentPreferenceUpdateHandler(dbOps: DatabaseOperations) {
 			}
 
 			// Validate model is in allowed list
-			if (!ALLOWED_MODELS.includes(model)) {
-				throw BadRequest(
-					`Invalid model. Allowed models: ${ALLOWED_MODELS.join(", ")}`,
-				);
+			if (!isValidClaudeModel(model)) {
+				throw BadRequest(`Invalid model. ${getAllowedModelsMessage()}`);
 			}
 
 			// Update preference
@@ -131,12 +132,9 @@ export function createBulkAgentPreferenceUpdateHandler(
 			}
 
 			// Validate model is in allowed list
-			const allowedModels = ALLOWED_MODELS as readonly string[];
-			if (!allowedModels.includes(modelValidation)) {
+			if (!isValidClaudeModel(modelValidation)) {
 				return errorResponse(
-					BadRequest(
-						`Invalid model. Allowed models: ${ALLOWED_MODELS.join(", ")}`,
-					),
+					BadRequest(`Invalid model. ${getAllowedModelsMessage()}`),
 				);
 			}
 

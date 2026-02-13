@@ -1,7 +1,7 @@
 import {
 	BedrockClient,
-	ListFoundationModelsCommand,
 	type FoundationModelSummary,
+	ListFoundationModelsCommand,
 } from "@aws-sdk/client-bedrock";
 import { Logger } from "@better-ccflare/logger";
 import type { Account } from "@better-ccflare/types";

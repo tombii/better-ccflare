@@ -23,6 +23,40 @@ export const DEFAULT_MODEL_MAPPINGS = {
 };
 
 /**
+ * Get the model family (opus/sonnet/haiku) from a model ID
+ * Uses the same pattern matching as mapModelName()
+ * @returns Model family or null if no pattern matches
+ */
+export function getModelFamily(
+	modelId: string,
+): "opus" | "sonnet" | "haiku" | null {
+	const normalized = modelId.toLowerCase();
+	for (const pattern of KNOWN_PATTERNS) {
+		if (normalized.includes(pattern)) {
+			return pattern;
+		}
+	}
+	return null;
+}
+
+/**
+ * Validate if a model ID is a valid Claude model
+ * Accepts any model containing opus, sonnet, or haiku (case-insensitive)
+ * @returns true if model matches a known pattern
+ */
+export function isValidClaudeModel(modelId: string): boolean {
+	return getModelFamily(modelId) !== null;
+}
+
+/**
+ * Get a user-friendly error message listing allowed model patterns
+ * @returns Error message string for API responses
+ */
+export function getAllowedModelsMessage(): string {
+	return "Model must contain one of: opus, sonnet, haiku (e.g., claude-opus-4-6, claude-sonnet-4-5-20250929)";
+}
+
+/**
  * Parse custom endpoint data from account's custom_endpoint field
  */
 export function parseCustomEndpointData(
@@ -138,25 +172,20 @@ export function mapModelName(anthropicModel: string, account: Account): string {
 		return mappings[anthropicModel];
 	}
 
-	// Direct pattern matching for known model families (O(1) constant time)
-	// Use KNOWN_PATTERNS to ensure consistent order and avoid magic strings
-	const normalizedModel = anthropicModel.toLowerCase();
-
-	for (const pattern of KNOWN_PATTERNS) {
-		if (normalizedModel.includes(pattern)) {
-			const mappedModel = mappings[pattern] || DEFAULT_MODEL_MAPPINGS[pattern];
-
-			if (
-				process.env.DEBUG?.includes("model") ||
-				process.env.DEBUG === "true" ||
-				process.env.NODE_ENV === "development"
-			) {
-				log.info(
-					`${pattern.charAt(0).toUpperCase() + pattern.slice(1)} model mapping: ${anthropicModel} -> ${mappedModel}`,
-				);
-			}
-			return mappedModel;
+	// Use shared pattern detection
+	const family = getModelFamily(anthropicModel);
+	if (family) {
+		const mappedModel = mappings[family] || DEFAULT_MODEL_MAPPINGS[family];
+		if (
+			process.env.DEBUG?.includes("model") ||
+			process.env.DEBUG === "true" ||
+			process.env.NODE_ENV === "development"
+		) {
+			log.info(
+				`${family.charAt(0).toUpperCase() + family.slice(1)} model mapping: ${anthropicModel} -> ${mappedModel}`,
+			);
 		}
+		return mappedModel;
 	}
 
 	// Default fallback - use sonnet as the mid-tier default

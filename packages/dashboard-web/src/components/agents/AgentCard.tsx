@@ -1,6 +1,6 @@
 import { getModelDisplayName } from "@better-ccflare/core";
 import type { Agent } from "@better-ccflare/types";
-import { ALLOWED_MODELS } from "@better-ccflare/types";
+import { COMMON_MODELS } from "@better-ccflare/types";
 import { Bot, Cpu, Edit3, Folder, Globe, Sparkles } from "lucide-react";
 import { useState } from "react";
 import { Badge } from "../ui/badge";
@@ -166,7 +166,7 @@ export function AgentCard({
 							<SelectValue />
 						</SelectTrigger>
 						<SelectContent>
-							{ALLOWED_MODELS.map((model) => (
+							{COMMON_MODELS.map((model) => (
 								<SelectItem
 									key={model}
 									value={model}
