@@ -20,6 +20,28 @@ const INFERENCE_PROFILE_SUPPORT: Record<
 		regional: boolean;
 	}
 > = {
+	// Claude 4.x models
+	"claude-opus-4-6": {
+		geographic: ["us"],
+		global: false,
+		regional: true,
+	},
+	"claude-opus-4-6-v1": {
+		geographic: ["us"],
+		global: false,
+		regional: true,
+	},
+	"claude-sonnet-4-5": {
+		geographic: ["us"],
+		global: false,
+		regional: true,
+	},
+	"claude-sonnet-4-5-v1": {
+		geographic: ["us"],
+		global: false,
+		regional: true,
+	},
+	// Claude 3.5 models
 	"claude-3-5-sonnet": {
 		geographic: ["us", "eu", "apac"],
 		global: false,
@@ -45,6 +67,7 @@ const INFERENCE_PROFILE_SUPPORT: Record<
 		global: false,
 		regional: true,
 	},
+	// Claude 3 models
 	"claude-3-opus": { geographic: ["us", "eu"], global: false, regional: true },
 	"claude-3-opus-20240229": {
 		geographic: ["us", "eu"],

@@ -4,10 +4,6 @@ import {
 	ConverseStreamCommand,
 } from "@aws-sdk/client-bedrock-runtime";
 import { estimateCostUSD } from "@better-ccflare/core";
-import {
-	DatabaseFactory,
-	ModelTranslationRepository,
-} from "@better-ccflare/database";
 import { Logger } from "@better-ccflare/logger";
 import type { Account } from "@better-ccflare/types";
 import { BaseProvider } from "../../base";
@@ -17,6 +13,7 @@ import {
 	parseBedrockConfig,
 	translateBedrockError,
 } from "./index";
+import { translateModelName } from "./model-cache";
 import {
 	type CrossRegionMode,
 	canUseInferenceProfile,
@@ -318,26 +315,22 @@ export class BedrockProvider extends BaseProvider implements Provider {
 		const requestClone = request.clone();
 		const isStreaming = await detectStreamingMode(requestClone);
 
-		// Step 3: Get repository
-		const db = DatabaseFactory.getInstance();
-		const repo = new ModelTranslationRepository(db.getDatabase());
-
-		// Step 4-5: Extract and translate model
+		// Step 3: Extract model from request
 		const bodyText = await request.text();
 		const body = JSON.parse(bodyText) as ClaudeRequest;
-		let bedrockModelId = repo.getBedrockModelId(body.model);
 
-		const isPassthrough = bedrockModelId === null;
-		if (isPassthrough) {
+		// Step 4: Translate client model name to Bedrock model ID using fuzzy matching
+		let bedrockModelId = await translateModelName(body.model, account);
+
+		if (!bedrockModelId) {
+			// No fuzzy match found, try passthrough with client model name as-is
 			log.info(
-				`Model ${body.model} not in translation table, attempting passthrough`,
+				`No fuzzy match found for model ${body.model}, attempting passthrough`,
 			);
-			bedrockModelId = body.model; // Try as-is
+			bedrockModelId = body.model;
 		}
 
-		// bedrockModelId is now guaranteed to be a string (either from DB or passthrough)
-		// Use type assertion since TypeScript can't track the control flow
-		const finalModelId = bedrockModelId as string;
+		const finalModelId = bedrockModelId;
 
 		// Apply cross-region mode transformation
 		const crossRegionMode =
@@ -386,14 +379,6 @@ export class BedrockProvider extends BaseProvider implements Provider {
 
 				const response = await client.send(command);
 
-				// Step 9: Auto-learn passthrough
-				if (isPassthrough) {
-					log.info(
-						`Passthrough successful for ${body.model}, adding to translation table`,
-					);
-					repo.addTranslation(body.model, finalModelId, true);
-				}
-
 				// Phase 4 will handle SSE streaming properly
 				// For now, return raw Bedrock streaming response
 				// Note: response.stream is an AsyncIterable<ResponseStream>
@@ -438,14 +423,6 @@ export class BedrockProvider extends BaseProvider implements Provider {
 
 				const response = await client.send(command);
 
-				// Step 9: Auto-learn passthrough
-				if (isPassthrough) {
-					log.info(
-						`Passthrough successful for ${body.model}, adding to translation table`,
-					);
-					repo.addTranslation(body.model, finalModelId, true);
-				}
-
 				// Return Response wrapped as Request for compatibility
 				// Phase 4 will handle proper response transformation
 				const responseBody = JSON.stringify(response);
@@ -477,14 +454,6 @@ export class BedrockProvider extends BaseProvider implements Provider {
 
 				const response = await client.send(command);
 
-				// Auto-learn passthrough if applicable
-				if (isPassthrough) {
-					log.info(
-						`Passthrough successful for ${body.model}, adding to translation table`,
-					);
-					repo.addTranslation(body.model, finalModelId, true);
-				}
-
 				const responseBody = JSON.stringify(response);
 				return new Request("https://bedrock.aws/response", {
 					method: "POST",
@@ -496,14 +465,6 @@ export class BedrockProvider extends BaseProvider implements Provider {
 				});
 			}
 
-			// Passthrough failed, suggest alternatives
-			if (isPassthrough) {
-				const similar = repo.findSimilar(body.model, 3);
-				const suggestions = similar.map((s) => s.client_name).join(", ");
-				throw new Error(
-					`Model ${body.model} not found. Did you mean: ${suggestions}?`,
-				);
-			}
 			// Re-throw Bedrock errors with translation
 			const { message: translatedError } = translateBedrockError(error);
 			throw new Error(translatedError);
