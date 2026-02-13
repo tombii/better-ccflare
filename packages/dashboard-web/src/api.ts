@@ -462,6 +462,7 @@ class API extends HttpClient {
 		region: string;
 		priority: number;
 		cross_region_mode?: "geographic" | "global" | "regional";
+		customModel?: string;
 	}): Promise<{ message: string; account: Account }> {
 		const startTime = Date.now();
 		const url = "/api/accounts/bedrock";

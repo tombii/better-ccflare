@@ -2096,6 +2096,22 @@ export function createBedrockAccountAddHandler(dbOps: DatabaseOperations) {
 				);
 			}
 
+			// Validate custom model (optional)
+			const customModel = body.customModel
+				? validateString(body.customModel, "customModel", {
+						required: false,
+						minLength: 1,
+						maxLength: 200,
+						transform: sanitizers.trim,
+					})
+				: undefined;
+
+			// Build model_mappings JSON if custom model specified
+			let modelMappings: string | null = null;
+			if (customModel) {
+				modelMappings = JSON.stringify({ custom: customModel });
+			}
+
 			// Check if AWS profile exists
 			if (!checkAwsProfileExists(profile)) {
 				return errorResponse(
@@ -2116,8 +2132,8 @@ export function createBedrockAccountAddHandler(dbOps: DatabaseOperations) {
 			db.run(
 				`INSERT INTO accounts (
 					id, name, provider, api_key, refresh_token, access_token,
-					expires_at, created_at, request_count, total_requests, priority, custom_endpoint, cross_region_mode
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+					expires_at, created_at, request_count, total_requests, priority, custom_endpoint, cross_region_mode, model_mappings
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 				[
 					accountId,
 					name,
@@ -2132,11 +2148,12 @@ export function createBedrockAccountAddHandler(dbOps: DatabaseOperations) {
 					priority,
 					bedrockConfig,
 					crossRegionMode,
+					modelMappings,
 				],
 			);
 
 			log.info(
-				`Successfully added Bedrock account: ${name} (Profile: ${profile}, Region: ${region}, CrossRegionMode: ${crossRegionMode}, Priority ${priority})`,
+				`Successfully added Bedrock account: ${name} (Profile: ${profile}, Region: ${region}, CrossRegionMode: ${crossRegionMode}, Priority ${priority}${customModel ? `, CustomModel: ${customModel}` : ""})`,
 			);
 
 			// Get the created account for response

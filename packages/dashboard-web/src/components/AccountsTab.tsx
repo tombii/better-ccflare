@@ -118,6 +118,8 @@ export function AccountsTab() {
 		profile: string;
 		region: string;
 		priority: number;
+		cross_region_mode?: "geographic" | "global" | "regional";
+		customModel?: string;
 	}) => {
 		try {
 			await api.addBedrockAccount(params);
