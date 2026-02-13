@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { formatDistanceToNow } from "date-fns";
 import {
 	AlertTriangle,
+	ChevronDown,
 	Copy,
 	Plus,
 	Shield,
@@ -28,6 +29,12 @@ import {
 	DialogTitle,
 	DialogTrigger,
 } from "./ui/dialog";
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuTrigger,
+} from "./ui/dropdown-menu";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 
@@ -168,6 +175,26 @@ export function ApiKeysTab() {
 		},
 	});
 
+	// Update API key role mutation
+	const updateRoleMutation = useMutation({
+		mutationFn: async ({
+			keyId,
+			role,
+		}: {
+			keyId: string;
+			role: "admin" | "api-only";
+		}) => {
+			return api.updateApiKeyRole(keyId, role);
+		},
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ["api-keys"] });
+			queryClient.invalidateQueries({ queryKey: ["api-keys-stats"] });
+		},
+		onError: (error: Error) => {
+			console.error("Failed to update API key role:", error);
+		},
+	});
+
 	const handleGenerateKey = () => {
 		if (!newKeyName.trim()) return;
 		const role = isAdminKey ? "admin" : "api-only";
@@ -187,6 +214,35 @@ export function ApiKeysTab() {
 		if (selectedKey) {
 			deleteKeyMutation.mutate(selectedKey.name);
 		}
+	};
+
+	const handleUpdateRole = (key: ApiKey, newRole: "admin" | "api-only") => {
+		if (key.role === newRole) return;
+		updateRoleMutation.mutate({ keyId: key.id, role: newRole });
+	};
+
+	// Determine if a key's role can be changed
+	const canChangeRole = (key: ApiKey) => {
+		// Cannot change the first key (oldest by creation date)
+		const sortedKeys = [...apiKeys].sort(
+			(a, b) =>
+				new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+		);
+		const firstKey = sortedKeys[0];
+		if (firstKey && key.id === firstKey.id) {
+			return false;
+		}
+
+		// Get the current authenticated key from session storage
+		const currentApiKey = api.getApiKey();
+		if (currentApiKey) {
+			// Check if this key matches the current one by comparing the last 8 chars
+			// This is a heuristic check since we don't have the full key ID on the client
+			// The server will enforce the proper check
+			// For now, we'll just show all keys as changeable except the first key
+		}
+
+		return true;
 	};
 
 	const copyToClipboard = (text: string) => {
@@ -367,15 +423,50 @@ export function ApiKeysTab() {
 											>
 												{key.isActive ? "Active" : "Disabled"}
 											</div>
-											<div
-												className={`px-2 py-1 rounded text-xs font-medium ${
-													key.role === "admin"
-														? "bg-amber-100 text-amber-800"
-														: "bg-blue-100 text-blue-800"
-												}`}
-											>
-												{key.role === "admin" ? "Admin" : "API-only"}
-											</div>
+											{canChangeRole(key) ? (
+												<DropdownMenu>
+													<DropdownMenuTrigger asChild>
+														<button
+															type="button"
+															className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium cursor-pointer hover:opacity-80 ${
+																key.role === "admin"
+																	? "bg-amber-100 text-amber-800"
+																	: "bg-blue-100 text-blue-800"
+															}`}
+															disabled={updateRoleMutation.isPending}
+														>
+															{key.role === "admin" ? "Admin" : "API-only"}
+															<ChevronDown className="h-3 w-3" />
+														</button>
+													</DropdownMenuTrigger>
+													<DropdownMenuContent align="start">
+														<DropdownMenuItem
+															onClick={() => handleUpdateRole(key, "admin")}
+															disabled={key.role === "admin"}
+														>
+															<Shield className="h-4 w-4 mr-2" />
+															Admin (dashboard access)
+														</DropdownMenuItem>
+														<DropdownMenuItem
+															onClick={() => handleUpdateRole(key, "api-only")}
+															disabled={key.role === "api-only"}
+														>
+															API-only (proxy access)
+														</DropdownMenuItem>
+													</DropdownMenuContent>
+												</DropdownMenu>
+											) : (
+												<div
+													className={`px-2 py-1 rounded text-xs font-medium ${
+														key.role === "admin"
+															? "bg-amber-100 text-amber-800"
+															: "bg-blue-100 text-blue-800"
+													}`}
+													title="First API key must remain admin"
+												>
+													{key.role === "admin" ? "Admin" : "API-only"}
+												</div>
+											)}
 										</div>
 										<div className="text-sm text-muted-foreground mt-1">
 											Key ends with:{" "}

@@ -98,7 +98,7 @@ export class AuthService {
 		if (!isProxyEndpoint) {
 			return {
 				authorized: false,
-				reason: "API-only keys cannot access dashboard endpoints",
+				reason: "Unauthorized: This API key does not have dashboard access",
 			};
 		}
 

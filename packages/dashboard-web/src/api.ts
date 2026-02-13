@@ -1343,6 +1343,32 @@ class API extends HttpClient {
 			"account token health",
 		);
 	}
+
+	async updateApiKeyRole(
+		keyId: string,
+		role: "admin" | "api-only",
+	): Promise<void> {
+		const startTime = Date.now();
+		const url = `/api/api-keys/${encodeURIComponent(keyId)}/role`;
+
+		this.logger.debug(`→ PATCH ${url}`, { role });
+
+		try {
+			await this.patch(url, { role });
+			const duration = Date.now() - startTime;
+			this.logger.debug(`← PATCH ${url} - 200 (${duration}ms)`);
+		} catch (error) {
+			const duration = Date.now() - startTime;
+			this.logger.error(`✗ PATCH ${url} - ERROR (${duration}ms)`, {
+				error: error instanceof Error ? error.message : String(error),
+				stack: error instanceof Error ? error.stack : undefined,
+			});
+			if (error instanceof HttpError) {
+				throw new Error(error.message);
+			}
+			throw error;
+		}
+	}
 }
 
 export const api = new API();
