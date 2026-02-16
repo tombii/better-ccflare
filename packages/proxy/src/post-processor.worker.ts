@@ -9,7 +9,6 @@ import { AsyncDbWriter, DatabaseOperations } from "@better-ccflare/database";
 import { Logger } from "@better-ccflare/logger";
 import {
 	NO_ACCOUNT_ID,
-	type RequestPayload,
 	type RequestResponse,
 } from "@better-ccflare/types";
 import { formatCost } from "@better-ccflare/ui-common";
@@ -20,7 +19,6 @@ import { combineChunks } from "./stream-tee";
 import type {
 	ChunkMessage,
 	EndMessage,
-	PayloadMessage,
 	StartMessage,
 	SummaryMessage,
 	WorkerMessage,
@@ -694,35 +692,6 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 		type: "summary",
 		summary,
 	} satisfies SummaryMessage);
-
-	// Post full payload to main thread
-	const fullPayload: RequestPayload = {
-		id: startMessage.requestId,
-		request: {
-			headers: startMessage.requestHeaders,
-			body: startMessage.requestBody,
-		},
-		response: {
-			status: startMessage.responseStatus,
-			headers: startMessage.responseHeaders,
-			body: responseBody,
-		},
-		error: msg.error,
-		meta: {
-			accountId: startMessage.accountId || NO_ACCOUNT_ID,
-			timestamp: startMessage.timestamp,
-			success: msg.success,
-			retry: startMessage.retryAttempt,
-			path: startMessage.path,
-			method: startMessage.method,
-			agentUsed: state.agentUsed,
-		},
-	};
-
-	self.postMessage({
-		type: "payload",
-		payload: fullPayload,
-	} satisfies PayloadMessage);
 
 	// Clean up
 	requests.delete(msg.requestId);
