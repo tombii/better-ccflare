@@ -86,7 +86,11 @@ export class LogFileWriter implements Disposable {
 					// Fallback: try truncating the file instead
 					try {
 						truncateSync(this.logFile, 0);
-					} catch (_truncErr) {
+					} catch (truncErr) {
+						console.error(
+							"Log rotation fallback to truncate failed, switching to new file:",
+							truncErr,
+						);
 						// Last resort: switch to a timestamped log file
 						this.logFile = join(this.logDir, `app-${Date.now()}.log`);
 					}
