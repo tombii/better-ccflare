@@ -9,7 +9,7 @@ export class AsyncDbWriter implements Disposable {
 	private queue: DbJob[] = [];
 	private running = false;
 	private intervalId: Timer | null = null;
-	private readonly MAX_QUEUE_SIZE = 10000; // Prevent unbounded growth
+	private readonly MAX_QUEUE_SIZE = 1000; // Prevent unbounded growth
 	private droppedJobs = 0;
 
 	constructor() {

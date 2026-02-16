@@ -7,11 +7,7 @@ import {
 } from "@better-ccflare/core";
 import { AsyncDbWriter, DatabaseOperations } from "@better-ccflare/database";
 import { Logger } from "@better-ccflare/logger";
-import {
-	NO_ACCOUNT_ID,
-	type RequestPayload,
-	type RequestResponse,
-} from "@better-ccflare/types";
+import { NO_ACCOUNT_ID, type RequestResponse } from "@better-ccflare/types";
 import { formatCost } from "@better-ccflare/ui-common";
 import model from "@dqbd/tiktoken/encoders/cl100k_base.json";
 import { init, Tiktoken } from "@dqbd/tiktoken/lite/init";
@@ -20,7 +16,6 @@ import { combineChunks } from "./stream-tee";
 import type {
 	ChunkMessage,
 	EndMessage,
-	PayloadMessage,
 	StartMessage,
 	SummaryMessage,
 	WorkerMessage,
@@ -30,6 +25,8 @@ interface RequestState {
 	startMessage: StartMessage;
 	buffer: string;
 	chunks: Uint8Array[];
+	chunksBytes: number;
+	chunksTruncated: boolean;
 	usage: {
 		model?: string;
 		inputTokens?: number;
@@ -59,7 +56,8 @@ log.info("Post-processor worker started");
 
 // Limits to prevent unbounded growth
 const MAX_REQUESTS_MAP_SIZE = 10000;
-const REQUEST_TTL_MS = 5 * 60 * 1000; // 5 minutes - hard limit for request lifecycle
+const REQUEST_TTL_MS = 2 * 60 * 1000; // 2 minutes - hard limit for request lifecycle
+const MAX_RESPONSE_BODY_BYTES = 256 * 1024; // 256KB - cap stored response body
 
 // Initialize tiktoken encoder (cl100k_base is used for Claude models)
 // Using embedded WASM to avoid "Missing tiktoken_bg.wasm" errors in bunx
@@ -356,6 +354,8 @@ async function handleStart(msg: StartMessage): Promise<void> {
 		startMessage: msg,
 		buffer: "",
 		chunks: [],
+		chunksBytes: 0,
+		chunksTruncated: false,
 		usage: {},
 		lastActivity: now,
 		createdAt: now,
@@ -424,10 +424,23 @@ function handleChunk(msg: ChunkMessage): void {
 		return;
 	}
 
-	// Store chunk for later payload saving
-	state.chunks.push(msg.data);
+	// Store chunk for later payload saving (capped at MAX_RESPONSE_BODY_BYTES)
+	if (!state.chunksTruncated) {
+		if (state.chunksBytes + msg.data.byteLength <= MAX_RESPONSE_BODY_BYTES) {
+			state.chunks.push(msg.data);
+			state.chunksBytes += msg.data.byteLength;
+		} else {
+			// Store partial chunk up to the limit
+			const remaining = MAX_RESPONSE_BODY_BYTES - state.chunksBytes;
+			if (remaining > 0) {
+				state.chunks.push(msg.data.slice(0, remaining));
+				state.chunksBytes += remaining;
+			}
+			state.chunksTruncated = true;
+		}
+	}
 
-	// Process for usage extraction
+	// Always process for usage extraction regardless of truncation
 	processStreamChunk(msg.data, state);
 }
 
@@ -612,7 +625,7 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 		),
 	);
 
-	// Save payload
+	// Save payload - eagerly serialize to break closure references
 	let responseBody: string | null = null;
 
 	if (msg.responseBody) {
@@ -626,7 +639,7 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 		}
 	}
 
-	const payload = {
+	const payloadJson = JSON.stringify({
 		request: {
 			headers: startMessage.requestHeaders,
 			body: startMessage.requestBody,
@@ -643,10 +656,17 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 			isStream: startMessage.isStream,
 			retry: startMessage.retryAttempt,
 		},
-	};
+	});
 
+	// Null out large references now that we have the serialized JSON
+	responseBody = null;
+	state.chunks.length = 0;
+	state.chunksBytes = 0;
+	state.buffer = "";
+
+	const requestId = startMessage.requestId;
 	asyncWriter.enqueue(() =>
-		dbOps.saveRequestPayload(startMessage.requestId, payload),
+		dbOps.saveRequestPayloadRaw(requestId, payloadJson),
 	);
 
 	// Log if we have usage
@@ -695,35 +715,6 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 		summary,
 	} satisfies SummaryMessage);
 
-	// Post full payload to main thread
-	const fullPayload: RequestPayload = {
-		id: startMessage.requestId,
-		request: {
-			headers: startMessage.requestHeaders,
-			body: startMessage.requestBody,
-		},
-		response: {
-			status: startMessage.responseStatus,
-			headers: startMessage.responseHeaders,
-			body: responseBody,
-		},
-		error: msg.error,
-		meta: {
-			accountId: startMessage.accountId || NO_ACCOUNT_ID,
-			timestamp: startMessage.timestamp,
-			success: msg.success,
-			retry: startMessage.retryAttempt,
-			path: startMessage.path,
-			method: startMessage.method,
-			agentUsed: state.agentUsed,
-		},
-	};
-
-	self.postMessage({
-		type: "payload",
-		payload: fullPayload,
-	} satisfies PayloadMessage);
-
 	// Clean up
 	requests.delete(msg.requestId);
 }
@@ -743,6 +734,13 @@ async function handleShutdown(): Promise<void> {
 // Enforces both TTL and size limits to prevent memory leaks
 let cleanupInterval: Timer | null = null;
 
+/** Free memory held by a request state before deletion */
+function freeRequestState(state: RequestState): void {
+	state.chunks.length = 0;
+	state.chunksBytes = 0;
+	state.buffer = "";
+}
+
 const cleanupStaleRequests = () => {
 	const now = Date.now();
 	let removedCount = 0;
@@ -754,6 +752,7 @@ const cleanupStaleRequests = () => {
 			log.warn(
 				`Request ${id} exceeded TTL (age: ${Math.round(age / 1000)}s, limit: ${REQUEST_TTL_MS / 1000}s), removing...`,
 			);
+			freeRequestState(state);
 			requests.delete(id);
 			removedCount++;
 		}
@@ -766,6 +765,7 @@ const cleanupStaleRequests = () => {
 			log.warn(
 				`Request ${id} appears orphaned (no activity for ${Math.round(inactivity / 1000)}s), removing...`,
 			);
+			freeRequestState(state);
 			requests.delete(id);
 			removedCount++;
 		}
@@ -783,7 +783,8 @@ const cleanupStaleRequests = () => {
 		);
 
 		for (let i = 0; i < excess; i++) {
-			const [id] = sortedByAge[i];
+			const [id, state] = sortedByAge[i];
+			freeRequestState(state);
 			requests.delete(id);
 			removedCount++;
 		}

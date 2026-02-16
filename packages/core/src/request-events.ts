@@ -16,15 +16,7 @@ export type RequestSummaryEvt = {
 	payload: import("@better-ccflare/types").RequestResponse;
 };
 
-export type RequestPayloadEvt = {
-	type: "payload";
-	payload: import("@better-ccflare/types").RequestPayload;
-};
-
-export type RequestEvt =
-	| RequestStartEvt
-	| RequestSummaryEvt
-	| RequestPayloadEvt;
+export type RequestEvt = RequestStartEvt | RequestSummaryEvt;
 
 class RequestEventBus extends EventEmitter {}
 export const requestEvents = new RequestEventBus();

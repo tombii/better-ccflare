@@ -145,6 +145,13 @@ export class RequestRepository extends BaseRepository<RequestData> {
 		);
 	}
 
+	savePayloadRaw(id: string, json: string): void {
+		this.run(
+			`INSERT OR REPLACE INTO request_payloads (id, json) VALUES (?, ?)`,
+			[id, json],
+		);
+	}
+
 	getPayload(id: string): unknown | null {
 		const row = this.get<{ json: string }>(
 			`SELECT json FROM request_payloads WHERE id = ?`,
