@@ -251,15 +251,21 @@ export async function forwardToClient(
 	 *  NON-STREAMING RESPONSES — read body in background, send END once
 	 *********************************************************************/
 	(async () => {
+		const MAX_NON_STREAM_BODY_BYTES = 256 * 1024; // 256KB cap for stored body
 		try {
 			const clone = response.clone();
 			const bodyBuf = await clone.arrayBuffer();
+			// Truncate large non-streaming response bodies to cap memory usage
+			const cappedBuf =
+				bodyBuf.byteLength > MAX_NON_STREAM_BODY_BYTES
+					? bodyBuf.slice(0, MAX_NON_STREAM_BODY_BYTES)
+					: bodyBuf;
 			const endMsg: EndMessage = {
 				type: "end",
 				requestId,
 				responseBody:
-					bodyBuf.byteLength > 0
-						? Buffer.from(bodyBuf).toString("base64")
+					cappedBuf.byteLength > 0
+						? Buffer.from(cappedBuf).toString("base64")
 						: null,
 				success: isExpectedResponse(path, clone),
 			};
