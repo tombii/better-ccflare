@@ -662,6 +662,7 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 	responseBody = null;
 	state.chunks.length = 0;
 	state.chunksBytes = 0;
+	state.buffer = "";
 
 	const requestId = startMessage.requestId;
 	asyncWriter.enqueue(() =>

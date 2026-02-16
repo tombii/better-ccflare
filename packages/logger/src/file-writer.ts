@@ -36,6 +36,8 @@ export class LogFileWriter implements Disposable {
 	private logFile: string;
 	private stream: ReturnType<typeof createWriteStream> | null = null;
 	private maxFileSize = BUFFER_SIZES.LOG_FILE_MAX_SIZE;
+	private writeCount = 0;
+	private static readonly SIZE_CHECK_INTERVAL = 100;
 
 	constructor() {
 		// Use environment variable if set, otherwise use tmp folder
@@ -100,17 +102,19 @@ export class LogFileWriter implements Disposable {
 			this.initStream();
 		}
 
-		// Periodic size check to trigger rotation mid-stream
-		try {
-			if (existsSync(this.logFile)) {
-				const stats = statSync(this.logFile);
-				if (stats.size > this.maxFileSize) {
-					this.rotateLog();
-					this.initStream();
+		// Periodic size check to trigger rotation mid-stream (every N writes)
+		if (++this.writeCount % LogFileWriter.SIZE_CHECK_INTERVAL === 0) {
+			try {
+				if (existsSync(this.logFile)) {
+					const stats = statSync(this.logFile);
+					if (stats.size > this.maxFileSize) {
+						this.rotateLog();
+						this.initStream();
+					}
 				}
+			} catch {
+				// Ignore stat errors, will be caught on next initStream
 			}
-		} catch {
-			// Ignore stat errors, will be caught on next initStream
 		}
 
 		const line = `${JSON.stringify(event)}\n`;
