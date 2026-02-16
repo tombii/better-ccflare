@@ -6,7 +6,7 @@ on:
 
 jobs:
   claude-review:
-
+    if: github.actor == 'tombii' || github.event.sender.site_admin || github.event.sender.permissions.write || github.event.sender.permissions.admin
     runs-on: ubuntu-latest
     permissions:
       contents: read
