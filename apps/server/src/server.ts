@@ -22,6 +22,11 @@ import { SessionStrategy } from "@better-ccflare/load-balancer";
 import { Logger } from "@better-ccflare/logger";
 import { getProvider, usageCache } from "@better-ccflare/providers";
 import {
+	canUseInferenceProfileDynamic,
+	parseBedrockConfig,
+	translateModelName,
+} from "@better-ccflare/providers/bedrock";
+import {
 	AutoRefreshScheduler,
 	getUsageWorker,
 	getValidAccessToken,
@@ -214,6 +219,31 @@ async function runStartupMaintenance(
 	}
 	// Return a no-op stopper for compatibility
 	return () => {};
+}
+
+/**
+ * Pre-warm Bedrock model and inference profile caches for faster first request
+ */
+async function prewarmBedrockCache(account: Account, region: string) {
+	const logger = new Logger("BedrockCachePrewarm");
+
+	try {
+		// Pre-warm model cache
+		await translateModelName("claude-opus-4-6", account);
+
+		// Pre-warm inference profile cache
+		await canUseInferenceProfileDynamic(
+			"claude-opus-4-6",
+			"geographic",
+			account,
+		);
+
+		logger.info(`Successfully pre-warmed Bedrock caches for region ${region}`);
+	} catch (error) {
+		logger.error(
+			`Failed to pre-warm Bedrock caches for region ${region}: ${(error as Error).message}`,
+		);
+	}
 }
 
 /**
@@ -915,6 +945,36 @@ Available endpoints:
 		}
 	} else {
 		log.info(`No Zai accounts found, usage polling will not start`);
+	}
+
+	// Pre-warm Bedrock model and inference profile caches
+	const bedrockAccounts = accounts.filter((a) => a.provider === "bedrock");
+	if (bedrockAccounts.length > 0) {
+		log.info(
+			`Found ${bedrockAccounts.length} Bedrock accounts, pre-warming caches...`,
+		);
+
+		// Group accounts by region to avoid duplicate cache loads
+		const regionMap = new Map<string, Account[]>();
+		for (const account of bedrockAccounts) {
+			const config = parseBedrockConfig(account.custom_endpoint);
+			if (config) {
+				const accounts = regionMap.get(config.region) || [];
+				accounts.push(account);
+				regionMap.set(config.region, accounts);
+			}
+		}
+
+		// Pre-warm caches per region (don't block startup)
+		for (const [region, regionAccounts] of regionMap) {
+			prewarmBedrockCache(regionAccounts[0], region).catch((err) => {
+				log.warn(
+					`Failed to pre-warm Bedrock cache for region ${region}: ${err.message}`,
+				);
+			});
+		}
+	} else {
+		log.info(`No Bedrock accounts found, cache pre-warming will not start`);
 	}
 
 	// Initialize NanoGPT pricing refresh if there are NanoGPT accounts (non-blocking)
