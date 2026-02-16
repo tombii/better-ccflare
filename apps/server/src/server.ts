@@ -60,6 +60,11 @@ try {
 	}
 }
 
+// Memory monitoring thresholds
+const MEMORY_MONITOR_INTERVAL_MS = 60 * 1000;
+const MEMORY_GROWTH_WARN_BYTES = 512 * 1024 * 1024;
+const MEMORY_GROWTH_ERROR_BYTES = 1024 * 1024 * 1024;
+
 // Helper function to resolve dashboard assets with fallback
 function resolveDashboardAsset(assetPath: string): string | null {
 	try {
@@ -742,13 +747,14 @@ export default function startServer(options?: {
 		const mem = process.memoryUsage();
 		const rssMb = Math.round(mem.rss / 1024 / 1024);
 		const heapMb = Math.round(mem.heapUsed / 1024 / 1024);
-		const growthMb = Math.round((mem.rss - baselineRss) / 1024 / 1024);
+		const growthBytes = mem.rss - baselineRss;
+		const growthMb = Math.round(growthBytes / 1024 / 1024);
 
-		if (mem.rss - baselineRss > 1024 * 1024 * 1024) {
+		if (growthBytes > MEMORY_GROWTH_ERROR_BYTES) {
 			memLog.error(
 				`RSS: ${rssMb}MB, Heap: ${heapMb}MB, Growth: +${growthMb}MB (>1GB growth - potential leak)`,
 			);
-		} else if (mem.rss - baselineRss > 512 * 1024 * 1024) {
+		} else if (growthBytes > MEMORY_GROWTH_WARN_BYTES) {
 			memLog.warn(
 				`RSS: ${rssMb}MB, Heap: ${heapMb}MB, Growth: +${growthMb}MB (>512MB growth)`,
 			);
@@ -757,7 +763,7 @@ export default function startServer(options?: {
 				`RSS: ${rssMb}MB, Heap: ${heapMb}MB, Growth: +${growthMb}MB`,
 			);
 		}
-	}, 60000);
+	}, MEMORY_MONITOR_INTERVAL_MS);
 	memoryMonitorInterval.unref();
 
 	// Log server startup (async)
