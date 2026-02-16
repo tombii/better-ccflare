@@ -59,7 +59,7 @@ log.info("Post-processor worker started");
 
 // Limits to prevent unbounded growth
 const MAX_REQUESTS_MAP_SIZE = 10000;
-const REQUEST_TTL_MS = 5 * 60 * 1000; // 5 minutes - hard limit for request lifecycle
+const REQUEST_TTL_MS = 2 * 60 * 1000; // 2 minutes - hard limit for request lifecycle
 const MAX_RESPONSE_BODY_BYTES = 256 * 1024; // 256KB - cap stored response body
 
 // Initialize tiktoken encoder (cl100k_base is used for Claude models)
@@ -736,6 +736,13 @@ async function handleShutdown(): Promise<void> {
 // Enforces both TTL and size limits to prevent memory leaks
 let cleanupInterval: Timer | null = null;
 
+/** Free memory held by a request state before deletion */
+function freeRequestState(state: RequestState): void {
+	state.chunks.length = 0;
+	state.chunksBytes = 0;
+	state.buffer = "";
+}
+
 const cleanupStaleRequests = () => {
 	const now = Date.now();
 	let removedCount = 0;
@@ -747,6 +754,7 @@ const cleanupStaleRequests = () => {
 			log.warn(
 				`Request ${id} exceeded TTL (age: ${Math.round(age / 1000)}s, limit: ${REQUEST_TTL_MS / 1000}s), removing...`,
 			);
+			freeRequestState(state);
 			requests.delete(id);
 			removedCount++;
 		}
@@ -759,6 +767,7 @@ const cleanupStaleRequests = () => {
 			log.warn(
 				`Request ${id} appears orphaned (no activity for ${Math.round(inactivity / 1000)}s), removing...`,
 			);
+			freeRequestState(state);
 			requests.delete(id);
 			removedCount++;
 		}
@@ -776,7 +785,8 @@ const cleanupStaleRequests = () => {
 		);
 
 		for (let i = 0; i < excess; i++) {
-			const [id] = sortedByAge[i];
+			const [id, state] = sortedByAge[i];
+			freeRequestState(state);
 			requests.delete(id);
 			removedCount++;
 		}
