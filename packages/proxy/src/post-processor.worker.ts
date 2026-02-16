@@ -28,6 +28,8 @@ interface RequestState {
 	startMessage: StartMessage;
 	buffer: string;
 	chunks: Uint8Array[];
+	chunksBytes: number;
+	chunksTruncated: boolean;
 	usage: {
 		model?: string;
 		inputTokens?: number;
@@ -58,6 +60,7 @@ log.info("Post-processor worker started");
 // Limits to prevent unbounded growth
 const MAX_REQUESTS_MAP_SIZE = 10000;
 const REQUEST_TTL_MS = 5 * 60 * 1000; // 5 minutes - hard limit for request lifecycle
+const MAX_RESPONSE_BODY_BYTES = 256 * 1024; // 256KB - cap stored response body
 
 // Initialize tiktoken encoder (cl100k_base is used for Claude models)
 // Using embedded WASM to avoid "Missing tiktoken_bg.wasm" errors in bunx
@@ -354,6 +357,8 @@ async function handleStart(msg: StartMessage): Promise<void> {
 		startMessage: msg,
 		buffer: "",
 		chunks: [],
+		chunksBytes: 0,
+		chunksTruncated: false,
 		usage: {},
 		lastActivity: now,
 		createdAt: now,
@@ -422,10 +427,23 @@ function handleChunk(msg: ChunkMessage): void {
 		return;
 	}
 
-	// Store chunk for later payload saving
-	state.chunks.push(msg.data);
+	// Store chunk for later payload saving (capped at MAX_RESPONSE_BODY_BYTES)
+	if (!state.chunksTruncated) {
+		if (state.chunksBytes + msg.data.byteLength <= MAX_RESPONSE_BODY_BYTES) {
+			state.chunks.push(msg.data);
+			state.chunksBytes += msg.data.byteLength;
+		} else {
+			// Store partial chunk up to the limit
+			const remaining = MAX_RESPONSE_BODY_BYTES - state.chunksBytes;
+			if (remaining > 0) {
+				state.chunks.push(msg.data.slice(0, remaining));
+				state.chunksBytes += remaining;
+			}
+			state.chunksTruncated = true;
+		}
+	}
 
-	// Process for usage extraction
+	// Always process for usage extraction regardless of truncation
 	processStreamChunk(msg.data, state);
 }
 
