@@ -13,11 +13,13 @@ import {
 	parseBedrockConfig,
 	translateBedrockError,
 } from "./index";
+import {
+	canUseInferenceProfile,
+	getFallbackMode,
+} from "./inference-profile-cache";
 import { translateModelName } from "./model-cache";
 import {
 	type CrossRegionMode,
-	canUseInferenceProfile,
-	getFallbackMode,
 	transformModelIdPrefix,
 } from "./model-transformer";
 import {
@@ -375,8 +377,18 @@ export class BedrockProvider extends BaseProvider implements Provider {
 		);
 
 		// Validate model supports requested mode and fall back if needed
-		if (!canUseInferenceProfile(transformedModelId, crossRegionMode)) {
-			const fallback = getFallbackMode(transformedModelId, crossRegionMode);
+		const supportsMode = await canUseInferenceProfile(
+			transformedModelId,
+			crossRegionMode,
+			account,
+		);
+
+		if (!supportsMode) {
+			const fallback = await getFallbackMode(
+				transformedModelId,
+				crossRegionMode,
+				account,
+			);
 			if (fallback) {
 				log.warn(
 					`Model ${finalModelId} doesn't support ${crossRegionMode} inference mode, falling back to ${fallback}`,

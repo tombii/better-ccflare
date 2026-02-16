@@ -24,6 +24,11 @@ export {
 	parseBedrockConfig,
 } from "./credentials";
 export { translateBedrockError } from "./error-handler";
+export {
+	canUseInferenceProfile as canUseInferenceProfileDynamic,
+	clearInferenceProfileCache,
+	getFallbackMode as getFallbackModeDynamic,
+} from "./inference-profile-cache";
 export { clearModelCache, translateModelName } from "./model-cache";
 export {
 	type DiscoveredModel,
@@ -33,8 +38,6 @@ export {
 } from "./model-discovery";
 export {
 	type CrossRegionMode,
-	canUseInferenceProfile,
-	getFallbackMode,
 	transformModelIdPrefix,
 } from "./model-transformer";
 export { BedrockProvider } from "./provider";
