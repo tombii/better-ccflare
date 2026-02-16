@@ -1,4 +1,11 @@
-import { createWriteStream, existsSync, mkdirSync, statSync } from "node:fs";
+import {
+	createWriteStream,
+	existsSync,
+	mkdirSync,
+	statSync,
+	truncateSync,
+	unlinkSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { LogEvent } from "@better-ccflare/types";
@@ -65,17 +72,25 @@ export class LogFileWriter implements Disposable {
 	private rotateLog(): void {
 		if (this.stream) {
 			this.stream.end();
+			this.stream = null;
 		}
 
-		// Simple rotation: just delete old log
-		// In production, you might want to keep a few rotated files
 		if (existsSync(this.logFile)) {
-			// For now, just delete the old file
-			// In a production system, you'd rename it to keep history
 			try {
-				require("node:fs").unlinkSync(this.logFile);
-			} catch (_e) {
-				console.error("Failed to rotate log:", _e);
+				unlinkSync(this.logFile);
+			} catch (e: unknown) {
+				const code = (e as NodeJS.ErrnoException).code;
+				if (code === "EACCES" || code === "EPERM") {
+					// Fallback: try truncating the file instead
+					try {
+						truncateSync(this.logFile, 0);
+					} catch (_truncErr) {
+						// Last resort: switch to a timestamped log file
+						this.logFile = join(this.logDir, `app-${Date.now()}.log`);
+					}
+				} else {
+					console.error("Failed to rotate log:", e);
+				}
 			}
 		}
 	}
@@ -83,6 +98,19 @@ export class LogFileWriter implements Disposable {
 	write(event: LogEvent): void {
 		if (!this.stream || this.stream.destroyed) {
 			this.initStream();
+		}
+
+		// Periodic size check to trigger rotation mid-stream
+		try {
+			if (existsSync(this.logFile)) {
+				const stats = statSync(this.logFile);
+				if (stats.size > this.maxFileSize) {
+					this.rotateLog();
+					this.initStream();
+				}
+			}
+		} catch {
+			// Ignore stat errors, will be caught on next initStream
 		}
 
 		const line = `${JSON.stringify(event)}\n`;
