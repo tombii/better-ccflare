@@ -628,7 +628,7 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 		),
 	);
 
-	// Save payload
+	// Save payload - eagerly serialize to break closure references
 	let responseBody: string | null = null;
 
 	if (msg.responseBody) {
@@ -642,7 +642,7 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 		}
 	}
 
-	const payload = {
+	const payloadJson = JSON.stringify({
 		request: {
 			headers: startMessage.requestHeaders,
 			body: startMessage.requestBody,
@@ -659,10 +659,16 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 			isStream: startMessage.isStream,
 			retry: startMessage.retryAttempt,
 		},
-	};
+	});
 
+	// Null out large references now that we have the serialized JSON
+	responseBody = null;
+	state.chunks.length = 0;
+	state.chunksBytes = 0;
+
+	const requestId = startMessage.requestId;
 	asyncWriter.enqueue(() =>
-		dbOps.saveRequestPayload(startMessage.requestId, payload),
+		dbOps.saveRequestPayloadRaw(requestId, payloadJson),
 	);
 
 	// Log if we have usage

@@ -445,6 +445,14 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		);
 	}
 
+	saveRequestPayloadRaw(id: string, json: string): void {
+		withDatabaseRetrySync(
+			() => this.requests.savePayloadRaw(id, json),
+			this.retryConfig,
+			"saveRequestPayloadRaw",
+		);
+	}
+
 	getRequestPayload(id: string): unknown | null {
 		return this.requests.getPayload(id);
 	}
