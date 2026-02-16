@@ -156,6 +156,7 @@ let stopRetentionJob: (() => void) | null = null;
 let stopOAuthCleanupJob: (() => void) | null = null;
 let stopRateLimitCleanupJob: (() => void) | null = null;
 let autoRefreshScheduler: AutoRefreshScheduler | null = null;
+let memoryMonitorInterval: Timer | null = null;
 // Track usage polling retry timeouts for cleanup
 const usagePollingRetryTimeouts = new Map<string, NodeJS.Timeout>();
 
@@ -734,6 +735,31 @@ export default function startServer(options?: {
 		throw error;
 	}
 
+	// Memory monitoring - log RSS every 60s with warnings at growth thresholds
+	const baselineRss = process.memoryUsage.rss();
+	const memLog = new Logger("MemoryMonitor");
+	memoryMonitorInterval = setInterval(() => {
+		const mem = process.memoryUsage();
+		const rssMb = Math.round(mem.rss / 1024 / 1024);
+		const heapMb = Math.round(mem.heapUsed / 1024 / 1024);
+		const growthMb = Math.round((mem.rss - baselineRss) / 1024 / 1024);
+
+		if (mem.rss - baselineRss > 1024 * 1024 * 1024) {
+			memLog.error(
+				`RSS: ${rssMb}MB, Heap: ${heapMb}MB, Growth: +${growthMb}MB (>1GB growth - potential leak)`,
+			);
+		} else if (mem.rss - baselineRss > 512 * 1024 * 1024) {
+			memLog.warn(
+				`RSS: ${rssMb}MB, Heap: ${heapMb}MB, Growth: +${growthMb}MB (>512MB growth)`,
+			);
+		} else {
+			memLog.debug(
+				`RSS: ${rssMb}MB, Heap: ${heapMb}MB, Growth: +${growthMb}MB`,
+			);
+		}
+	}, 60000);
+	memoryMonitorInterval.unref();
+
 	// Log server startup (async)
 	getVersion().then((version) => {
 		if (!serverInstance) return;
@@ -930,6 +956,12 @@ async function handleGracefulShutdown(signal: string) {
 		if (autoRefreshScheduler) {
 			autoRefreshScheduler.stop();
 			autoRefreshScheduler = null;
+		}
+
+		// Stop memory monitoring
+		if (memoryMonitorInterval) {
+			clearInterval(memoryMonitorInterval);
+			memoryMonitorInterval = null;
 		}
 
 		// Stop token health monitoring
