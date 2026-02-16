@@ -7,10 +7,7 @@ import {
 } from "@better-ccflare/core";
 import { AsyncDbWriter, DatabaseOperations } from "@better-ccflare/database";
 import { Logger } from "@better-ccflare/logger";
-import {
-	NO_ACCOUNT_ID,
-	type RequestResponse,
-} from "@better-ccflare/types";
+import { NO_ACCOUNT_ID, type RequestResponse } from "@better-ccflare/types";
 import { formatCost } from "@better-ccflare/ui-common";
 import model from "@dqbd/tiktoken/encoders/cl100k_base.json";
 import { init, Tiktoken } from "@dqbd/tiktoken/lite/init";
