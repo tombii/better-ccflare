@@ -251,16 +251,39 @@ export async function forwardToClient(
 	 *  NON-STREAMING RESPONSES — read body in background, send END once
 	 *********************************************************************/
 	(async () => {
+		const MAX_NON_STREAM_BODY_BYTES = 256 * 1024; // 256KB cap for stored body
 		try {
 			const clone = response.clone();
-			const bodyBuf = await clone.arrayBuffer();
+			// Read body via stream, stopping once the cap is reached to avoid
+			// loading an unbounded response into memory before truncation.
+			const reader = clone.body?.getReader();
+			let cappedBuf: Buffer;
+			if (!reader) {
+				cappedBuf = Buffer.alloc(0);
+			} else {
+				const chunks: Uint8Array[] = [];
+				let bytesRead = 0;
+				while (bytesRead < MAX_NON_STREAM_BODY_BYTES) {
+					const { value, done } = await reader.read();
+					if (done) break;
+					const remaining = MAX_NON_STREAM_BODY_BYTES - bytesRead;
+					if (value.length <= remaining) {
+						chunks.push(value);
+						bytesRead += value.length;
+					} else {
+						chunks.push(value.slice(0, remaining));
+						bytesRead += remaining;
+						await reader.cancel();
+						break;
+					}
+				}
+				cappedBuf = Buffer.concat(chunks);
+			}
 			const endMsg: EndMessage = {
 				type: "end",
 				requestId,
 				responseBody:
-					bodyBuf.byteLength > 0
-						? Buffer.from(bodyBuf).toString("base64")
-						: null,
+					cappedBuf.byteLength > 0 ? cappedBuf.toString("base64") : null,
 				success: isExpectedResponse(path, clone),
 			};
 			safePostMessage(ctx.usageWorker, endMsg);

@@ -60,6 +60,11 @@ try {
 	}
 }
 
+// Memory monitoring thresholds
+const MEMORY_MONITOR_INTERVAL_MS = 60 * 1000;
+const MEMORY_GROWTH_WARN_BYTES = 512 * 1024 * 1024;
+const MEMORY_GROWTH_ERROR_BYTES = 1024 * 1024 * 1024;
+
 // Helper function to resolve dashboard assets with fallback
 function resolveDashboardAsset(assetPath: string): string | null {
 	try {
@@ -156,6 +161,7 @@ let stopRetentionJob: (() => void) | null = null;
 let stopOAuthCleanupJob: (() => void) | null = null;
 let stopRateLimitCleanupJob: (() => void) | null = null;
 let autoRefreshScheduler: AutoRefreshScheduler | null = null;
+let memoryMonitorInterval: Timer | null = null;
 // Track usage polling retry timeouts for cleanup
 const usagePollingRetryTimeouts = new Map<string, NodeJS.Timeout>();
 
@@ -734,6 +740,32 @@ export default function startServer(options?: {
 		throw error;
 	}
 
+	// Memory monitoring - log RSS every 60s with warnings at growth thresholds
+	const baselineRss = process.memoryUsage.rss();
+	const memLog = new Logger("MemoryMonitor");
+	memoryMonitorInterval = setInterval(() => {
+		const mem = process.memoryUsage();
+		const rssMb = Math.round(mem.rss / 1024 / 1024);
+		const heapMb = Math.round(mem.heapUsed / 1024 / 1024);
+		const growthBytes = mem.rss - baselineRss;
+		const growthMb = Math.round(growthBytes / 1024 / 1024);
+
+		if (growthBytes > MEMORY_GROWTH_ERROR_BYTES) {
+			memLog.error(
+				`RSS: ${rssMb}MB, Heap: ${heapMb}MB, Growth: +${growthMb}MB (>1GB growth - potential leak)`,
+			);
+		} else if (growthBytes > MEMORY_GROWTH_WARN_BYTES) {
+			memLog.warn(
+				`RSS: ${rssMb}MB, Heap: ${heapMb}MB, Growth: +${growthMb}MB (>512MB growth)`,
+			);
+		} else {
+			memLog.debug(
+				`RSS: ${rssMb}MB, Heap: ${heapMb}MB, Growth: +${growthMb}MB`,
+			);
+		}
+	}, MEMORY_MONITOR_INTERVAL_MS);
+	memoryMonitorInterval.unref();
+
 	// Log server startup (async)
 	getVersion().then((version) => {
 		if (!serverInstance) return;
@@ -930,6 +962,12 @@ async function handleGracefulShutdown(signal: string) {
 		if (autoRefreshScheduler) {
 			autoRefreshScheduler.stop();
 			autoRefreshScheduler = null;
+		}
+
+		// Stop memory monitoring
+		if (memoryMonitorInterval) {
+			clearInterval(memoryMonitorInterval);
+			memoryMonitorInterval = null;
 		}
 
 		// Stop token health monitoring

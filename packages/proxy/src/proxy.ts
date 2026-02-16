@@ -76,11 +76,6 @@ export function getUsageWorker(): Worker {
 						type: "summary",
 						payload: data.summary,
 					});
-				} else if (data.type === "payload") {
-					requestEvents.emit("event", {
-						type: "payload",
-						payload: data.payload,
-					});
 				}
 			};
 

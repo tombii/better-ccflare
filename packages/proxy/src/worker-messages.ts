@@ -58,8 +58,7 @@ export type WorkerMessage =
 	| ChunkMessage
 	| EndMessage
 	| ControlMessage
-	| SummaryMessage
-	| PayloadMessage;
+	| SummaryMessage;
 
 // Response from worker (if needed in future)
 export interface WorkerResponse {
@@ -74,9 +73,4 @@ export interface SummaryMessage {
 	summary: import("@better-ccflare/types").RequestResponse;
 }
 
-export interface PayloadMessage {
-	type: "payload";
-	payload: import("@better-ccflare/types").RequestPayload;
-}
-
-export type OutgoingWorkerMessage = SummaryMessage | PayloadMessage;
+export type OutgoingWorkerMessage = SummaryMessage;
