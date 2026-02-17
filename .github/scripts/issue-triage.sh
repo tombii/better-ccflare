@@ -198,9 +198,9 @@ ${ISSUE_CONTENT}"
 
 echo "Sending issue for triage..."
 
-# Convert comma-separated models string to array
-IFS=',' read -ra MODEL_ARRAY <<< "$MODELS"
-echo "Configured models: ${MODELS}"
+# Convert comma-separated models string to array, with "better-ccflare-github-triage" as first option
+IFS=',' read -ra MODEL_ARRAY <<< "better-ccflare-github-triage,${MODELS}"
+echo "Configured models: better-ccflare-github-triage,${MODELS}"
 echo "Will try ${#MODEL_ARRAY[@]} model(s)"
 
 # Function to call OpenRouter API with a specific model
@@ -246,6 +246,7 @@ EOF
 # Try each model in sequence until one succeeds
 TRIAGE_RESULT=""
 USED_MODEL=""
+ACTUAL_MODEL=""
 LAST_ERROR=""
 
 for MODEL in "${MODEL_ARRAY[@]}"; do
@@ -311,7 +312,21 @@ except:
 
                     if [[ -n "$TRIAGE_RESULT" ]]; then
                         USED_MODEL="${MODEL}"
-                        echo "Triage result received successfully from model: ${USED_MODEL}"
+
+                        # Extract the actual model used from the API response
+                        ACTUAL_MODEL=$(echo "${API_RESPONSE}" | jq -r '.model // ""' 2>/dev/null)
+
+                        # Extract the part after the / if present
+                        if [[ -n "$ACTUAL_MODEL" ]] && [[ "$ACTUAL_MODEL" =~ / ]]; then
+                            ACTUAL_MODEL="${ACTUAL_MODEL#*/}"
+                        fi
+
+                        # Fallback to requested model if extraction fails
+                        if [[ -z "$ACTUAL_MODEL" ]]; then
+                            ACTUAL_MODEL="${USED_MODEL}"
+                        fi
+
+                        echo "Triage result received successfully from model: ${USED_MODEL} (actual: ${ACTUAL_MODEL})"
                         echo "Triage result:"
                         echo "${TRIAGE_RESULT}"
                         break
@@ -447,7 +462,7 @@ ${ANALYSIS}
 ${RESPONSE}
 
 ---
-*This automated triage was performed by the better-ccflare Issue Triage Agent using ${USED_MODEL}.*
+*This automated triage was performed by the better-ccflare Issue Triage Agent using ${ACTUAL_MODEL}.*
 EOF
 )
 

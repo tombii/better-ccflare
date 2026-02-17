@@ -247,9 +247,9 @@ Remember: Be constructive, specific, and helpful. Focus on important issues rath
 
 echo "Sending diff for review..."
 
-# Convert comma-separated models string to array
-IFS=',' read -ra MODEL_ARRAY <<< "$MODELS"
-echo "Configured models: ${MODELS}"
+# Convert comma-separated models string to array, with "better-ccflare-github-triage" as first option
+IFS=',' read -ra MODEL_ARRAY <<< "better-ccflare-github-triage,${MODELS}"
+echo "Configured models: better-ccflare-github-triage,${MODELS}"
 echo "Will try ${#MODEL_ARRAY[@]} model(s)"
 
 # Function to call OpenRouter API with a specific model
@@ -373,6 +373,7 @@ EOF
 # Try each model in sequence until one succeeds
 REVIEW_CONTENT=""
 USED_MODEL=""
+ACTUAL_MODEL=""
 LAST_ERROR=""
 
 for MODEL in "${MODEL_ARRAY[@]}"; do
@@ -439,7 +440,21 @@ print(content, end='')
 
                     if [[ -n "$REVIEW_CONTENT" ]]; then
                         USED_MODEL="${MODEL}"
-                        echo "Review received successfully from model: ${USED_MODEL}"
+
+                        # Extract the actual model used from the API response
+                        ACTUAL_MODEL=$(echo "${API_RESPONSE}" | jq -r '.model // ""' 2>/dev/null)
+
+                        # Extract the part after the / if present
+                        if [[ -n "$ACTUAL_MODEL" ]] && [[ "$ACTUAL_MODEL" =~ / ]]; then
+                            ACTUAL_MODEL="${ACTUAL_MODEL#*/}"
+                        fi
+
+                        # Fallback to requested model if extraction fails
+                        if [[ -z "$ACTUAL_MODEL" ]]; then
+                            ACTUAL_MODEL="${USED_MODEL}"
+                        fi
+
+                        echo "Review received successfully from model: ${USED_MODEL} (actual: ${ACTUAL_MODEL})"
                         break
                     else
                         LAST_ERROR="Empty content in API response"
@@ -487,7 +502,7 @@ ${REVIEW_CONTENT}
 
 **Stats:**
 - Diff size: ${DIFF_SIZE} bytes
-- Model: \`${USED_MODEL}\`
+- Model: \`${ACTUAL_MODEL}\`
 - Review generated at: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
 
 ---
