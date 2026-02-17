@@ -6,6 +6,7 @@ import {
 	Hash,
 	Pause,
 	Play,
+	RefreshCw,
 	Trash2,
 	Zap,
 } from "lucide-react";
@@ -24,6 +25,7 @@ interface AccountListItemProps {
 	account: Account;
 	isActive?: boolean;
 	onPauseToggle: (account: Account) => void;
+	onForceResetRateLimit: (account: Account) => void;
 	onRemove: (name: string) => void;
 	onRename: (account: Account) => void;
 	onPriorityChange: (account: Account) => void;
@@ -37,6 +39,7 @@ export function AccountListItem({
 	account,
 	isActive = false,
 	onPauseToggle,
+	onForceResetRateLimit,
 	onRemove,
 	onRename,
 	onPriorityChange,
@@ -46,6 +49,13 @@ export function AccountListItem({
 	onModelMappingsChange,
 }: AccountListItemProps) {
 	const presenter = new AccountPresenter(account);
+	const normalizedRateLimitStatus = presenter.rateLimitStatus.toLowerCase();
+	const staleLockDetected =
+		!presenter.isPaused &&
+		(normalizedRateLimitStatus.includes("rejected") ||
+			normalizedRateLimitStatus.includes("blocked")) &&
+		typeof account.usageUtilization === "number" &&
+		account.usageUtilization < 100;
 
 	return (
 		<div
@@ -115,6 +125,14 @@ export function AccountListItem({
 								{presenter.rateLimitStatus}
 							</span>
 						)}
+						{staleLockDetected && (
+							<span
+								className="text-sm text-amber-600"
+								title="Stale lock detected: usage shows available capacity while the account is still marked rejected/blocked."
+							>
+								Stale lock detected
+							</span>
+						)}
 					</div>
 				</div>
 				<div className="flex items-center gap-2">
@@ -171,6 +189,18 @@ export function AccountListItem({
 								/>
 							</Button>
 						)}
+					{presenter.rateLimitStatus !== "OK" && (
+						<Button
+							variant="outline"
+							size="sm"
+							className="h-8 gap-1 text-xs"
+							onClick={() => onForceResetRateLimit(account)}
+							title="Force reset rate-limit lock and trigger immediate usage poll"
+						>
+							<RefreshCw className="h-3.5 w-3.5" />
+							Force Reset
+						</Button>
+					)}
 					<Button
 						variant="ghost"
 						size="sm"

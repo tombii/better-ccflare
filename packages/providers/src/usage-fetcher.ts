@@ -256,6 +256,27 @@ class UsageCache {
 	}
 
 	/**
+	 * Trigger an immediate usage fetch for an account that already has polling configured.
+	 * Returns false when no polling/token provider is configured for the account.
+	 */
+	async refreshNow(accountId: string): Promise<boolean> {
+		const tokenProvider = this.tokenProviders.get(accountId);
+		if (!tokenProvider) {
+			return false;
+		}
+
+		const provider = this.providerTypes.get(accountId);
+		const customEndpoint = this.customEndpoints.get(accountId);
+		await this.fetchAndCache(
+			accountId,
+			tokenProvider,
+			provider,
+			customEndpoint,
+		);
+		return true;
+	}
+
+	/**
 	 * Stop polling for an account
 	 */
 	stopPolling(accountId: string) {

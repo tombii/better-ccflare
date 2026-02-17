@@ -332,6 +332,14 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		this.accounts.updateRateLimitMeta(accountId, status, reset, remaining);
 	}
 
+	forceResetAccountRateLimit(accountId: string): boolean {
+		return withDatabaseRetrySync(
+			() => this.accounts.clearRateLimitState(accountId) > 0,
+			this.retryConfig,
+			"forceResetAccountRateLimit",
+		);
+	}
+
 	pauseAccount(accountId: string): void {
 		this.accounts.pause(accountId);
 	}

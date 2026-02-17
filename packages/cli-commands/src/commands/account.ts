@@ -979,6 +979,86 @@ export function setAccountPriority(
 }
 
 /**
+ * Force reset account rate-limit state by account name.
+ * Clears persisted lock fields and then best-effort notifies running local servers
+ * to trigger immediate usage polling.
+ */
+export async function forceResetRateLimit(
+	dbOps: DatabaseOperations,
+	name: string,
+): Promise<{ success: boolean; message: string }> {
+	const db = dbOps.getDatabase();
+	const account = db
+		.query<{ id: string; name: string }, [string]>(
+			"SELECT id, name FROM accounts WHERE name = ?",
+		)
+		.get(name);
+
+	if (!account) {
+		return {
+			success: false,
+			message: `Account '${name}' not found`,
+		};
+	}
+
+	const updated = dbOps.forceResetAccountRateLimit(account.id);
+	if (!updated) {
+		return {
+			success: false,
+			message: `Failed to reset rate limit for account '${name}'`,
+		};
+	}
+
+	const usagePollTriggered = await notifyServersToForceResetRateLimit(
+		account.id,
+		dbOps,
+	);
+
+	return {
+		success: true,
+		message: usagePollTriggered
+			? `Rate limit state for account '${account.name}' was reset and immediate usage polling was triggered.`
+			: `Rate limit state for account '${account.name}' was reset. No running local server accepted the usage poll trigger.`,
+	};
+}
+
+async function notifyServersToForceResetRateLimit(
+	accountId: string,
+	dbOps: DatabaseOperations,
+): Promise<boolean> {
+	const defaultPort = 8080;
+	const testPort = 8081;
+	let usagePollTriggered = false;
+
+	// If API authentication is enabled, skip best-effort local notifications.
+	const activeApiKeys = dbOps.getActiveApiKeys();
+	const requiresAuth = activeApiKeys.length > 0;
+	if (requiresAuth) {
+		return false;
+	}
+
+	for (const port of [defaultPort, testPort]) {
+		try {
+			const response = await fetch(
+				`http://localhost:${port}/api/accounts/${accountId}/force-reset-rate-limit`,
+				{
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+				},
+			);
+
+			if (response.ok) {
+				usagePollTriggered = true;
+			}
+		} catch {
+			// Best-effort only: ignore unreachable local ports.
+		}
+	}
+
+	return usagePollTriggered;
+}
+
+/**
  * Re-authenticate an account by name (preserves all metadata)
  * This performs soft re-authentication: only updates OAuth tokens, keeps all other data
  */

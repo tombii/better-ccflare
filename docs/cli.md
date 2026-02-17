@@ -96,6 +96,7 @@ Options:
     --priority <number>    Account priority (0-100, default: 0)
   --list               List all accounts
   --remove <name>      Remove an account
+  --force-reset-rate-limit <name> Force-clear stale rate-limit lock fields for an account
   --pause <name>       Pause an account
   --resume <name>      Resume an account
   --set-priority <name> <priority> Set account priority (0-100)
@@ -184,6 +185,22 @@ bun run cli --pause <name>
 - Account experiencing issues
 - Manual rate limit management
 - Maintenance or debugging
+
+#### `--force-reset-rate-limit <name>`
+
+Force-clear a potentially stale account rate-limit lock.
+
+**Syntax:**
+```bash
+bun run cli --force-reset-rate-limit <name>
+```
+
+**What it does:**
+- Clears `rate_limited_until`
+- Clears `rate_limit_reset`
+- Clears `rate_limit_status`
+- Clears `rate_limit_remaining`
+- Attempts to trigger immediate usage polling on running local servers
 
 #### `--resume <name>`
 
@@ -437,6 +454,9 @@ bun run cli --logs 100
 ```bash
 # Pause account hitting rate limits
 bun run cli --pause work-account
+
+# Force-clear stale rate-limit lock
+bun run cli --force-reset-rate-limit work-account
 
 # Resume after cooldown
 bun run cli --resume work-account

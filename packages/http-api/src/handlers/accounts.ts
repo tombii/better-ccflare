@@ -1898,6 +1898,71 @@ export function createAccountModelMappingsUpdateHandler(
 }
 
 /**
+ * Create an account force-reset rate limit handler
+ * Clears rate limit lock fields and triggers immediate usage refresh when possible.
+ */
+export function createAccountForceResetRateLimitHandler(
+	dbOps: DatabaseOperations,
+) {
+	return async (_req: Request, accountId: string): Promise<Response> => {
+		try {
+			const db = dbOps.getDatabase();
+			const account = db
+				.query<
+					{
+						id: string;
+						name: string;
+						provider: string;
+						access_token: string | null;
+					},
+					[string]
+				>("SELECT id, name, provider, access_token FROM accounts WHERE id = ?")
+				.get(accountId);
+
+			if (!account) {
+				return errorResponse(NotFound("Account not found"));
+			}
+
+			dbOps.forceResetAccountRateLimit(accountId);
+			clearAccountRefreshCache(accountId);
+
+			// Trigger immediate poll if this server has a polling token provider for the account.
+			let usagePollTriggered = await usageCache.refreshNow(accountId);
+
+			// Fallback for Anthropic OAuth accounts when polling is not configured in-process.
+			if (
+				!usagePollTriggered &&
+				account.provider === "anthropic" &&
+				account.access_token
+			) {
+				const usageData = await fetchUsageData(account.access_token);
+				if (usageData) {
+					usageCache.set(account.id, usageData);
+					usagePollTriggered = true;
+				}
+			}
+
+			log.info(
+				`Force-reset rate limit for account '${account.name}' (usage poll triggered: ${usagePollTriggered})`,
+			);
+
+			return jsonResponse({
+				success: true,
+				message: `Rate limit state cleared for account '${account.name}'`,
+				usagePollTriggered,
+			});
+		} catch (error) {
+			log.error("Account force-reset rate limit error:", error);
+			return errorResponse(
+				error instanceof Error
+					? error
+					: new Error("Failed to force reset account rate limit"),
+			);
+		}
+	};
+}
+
+/**
  * Create an account reload handler
  * Clears refresh cache for an account after re-authentication
  */

@@ -26,6 +26,8 @@ const mockUsageCache = {
 		mockUsageCache.cache.delete(accountId);
 	},
 
+	refreshNow: async (_accountId: string) => true,
+
 	clear: () => {
 		mockUsageCache.cache.clear();
 		mockUsageCache.polling.clear();
@@ -65,6 +67,7 @@ const mockDbOps = {
 	updateAccountPriority: () => {},
 	renameAccount: () => {},
 	setAutoFallbackEnabled: () => {},
+	forceResetAccountRateLimit: () => true,
 };
 
 // Mock Database instance
@@ -344,6 +347,35 @@ describe("Accounts Handler - Dashboard Usage Data Integration", () => {
 			// Verify response indicates error for non-Anthropic account
 			expect(response.ok).toBe(false);
 		});
+
+		it("should force reset rate-limit state and trigger immediate usage polling", async () => {
+			const forceResetHandler = createMockAccountForceResetRateLimitHandler();
+
+			mockQuery.get = () => ({
+				id: "test-account-id",
+				name: "test-account-name",
+				provider: "anthropic",
+				access_token: "test-token",
+			});
+
+			const refreshNowSpy = spyOn(mockUsageCache, "refreshNow");
+			const forceResetSpy = spyOn(mockDbOps, "forceResetAccountRateLimit");
+
+			const response = await forceResetHandler(
+				{} as Request,
+				"test-account-id",
+			);
+			const payload = (await response.json()) as {
+				success: boolean;
+				usagePollTriggered: boolean;
+			};
+
+			expect(forceResetSpy).toHaveBeenCalledWith("test-account-id");
+			expect(refreshNowSpy).toHaveBeenCalledWith("test-account-id");
+			expect(response.ok).toBe(true);
+			expect(payload.success).toBe(true);
+			expect(payload.usagePollTriggered).toBe(true);
+		});
 	});
 });
 
@@ -483,6 +515,29 @@ function createMockAccountReloadHandler() {
 			return mockJsonResponse({
 				success: true,
 				message: `Token reload triggered for account '${account.name}'`,
+			});
+		} catch (error) {
+			return mockErrorResponse(error);
+		}
+	};
+}
+
+function createMockAccountForceResetRateLimitHandler() {
+	return async (_req: Request, accountId: string): Promise<Response> => {
+		try {
+			const account = mockQuery.get(accountId);
+			if (!account) {
+				return mockErrorResponse({ status: 404, message: "Account not found" });
+			}
+
+			mockDbOps.forceResetAccountRateLimit(accountId);
+			mockClearAccountRefreshCache(accountId);
+			const usagePollTriggered = await mockUsageCache.refreshNow(accountId);
+
+			return mockJsonResponse({
+				success: true,
+				message: `Rate limit state cleared for account '${account.name}'`,
+				usagePollTriggered,
 			});
 		} catch (error) {
 			return mockErrorResponse(error);

@@ -34,6 +34,7 @@ import {
 	deleteApiKey,
 	disableApiKey,
 	enableApiKey,
+	forceResetRateLimit,
 	formatApiKeyForDisplay,
 	formatApiKeyGenerationResult,
 	generateApiKey,
@@ -98,6 +99,7 @@ interface ParsedArgs {
 	disableApiKey: string | null;
 	enableApiKey: string | null;
 	deleteApiKey: string | null;
+	forceResetRateLimit: string | null;
 	showConfig: boolean;
 }
 
@@ -430,6 +432,7 @@ function parseArgs(args: string[]): ParsedArgs {
 		disableApiKey: null,
 		enableApiKey: null,
 		deleteApiKey: null,
+		forceResetRateLimit: null,
 		showConfig: false,
 	};
 
@@ -681,6 +684,13 @@ function parseArgs(args: string[]): ParsedArgs {
 				}
 				parsed.reauthenticate = args[++i];
 				break;
+			case "--force-reset-rate-limit":
+				if (i + 1 >= args.length || args[i + 1].startsWith("--")) {
+					console.error("❌ --force-reset-rate-limit requires an account name");
+					fastExit(1);
+				}
+				parsed.forceResetRateLimit = args[++i];
+				break;
 			case "--show-config":
 				parsed.showConfig = true;
 				break;
@@ -740,6 +750,7 @@ Options:
   --list               List all accounts
   --remove <name>      Remove an account
   --reauthenticate <name> Re-authenticate an account (preserves metadata)
+  --force-reset-rate-limit <name> Force-clear stale rate-limit lock for an account
   --pause <name>       Pause an account
   --resume <name>      Resume an account
   --set-priority <name> <priority>  Set account priority
@@ -766,6 +777,7 @@ Examples:
   better-ccflare --serve --ssl-key /path/to/key.pem --ssl-cert /path/to/cert.pem  # Start server with HTTPS
   better-ccflare --add-account work --mode claude-oauth --priority 0  # Add account
   better-ccflare --reauthenticate work  # Re-authenticate account (preserves metadata)
+  better-ccflare --force-reset-rate-limit work  # Force-clear stale rate-limit lock
   better-ccflare --pause work           # Pause account
   better-ccflare --analyze              # Run performance analysis
   better-ccflare --stats                # View stats
@@ -991,6 +1003,25 @@ Examples:
 			const errorMessage =
 				error instanceof Error ? error.message : String(error);
 			console.error(`❌ Failed to reauthenticate account: ${errorMessage}`);
+			await exitGracefully(1);
+		}
+	}
+
+	if (parsed.forceResetRateLimit) {
+		try {
+			const result = await forceResetRateLimit(
+				dbOps,
+				parsed.forceResetRateLimit,
+			);
+			console.log(result.message);
+			if (!result.success) {
+				await exitGracefully(1);
+			}
+			await exitGracefully(0);
+		} catch (error: unknown) {
+			const errorMessage =
+				error instanceof Error ? error.message : String(error);
+			console.error(`❌ Failed to force reset rate limit: ${errorMessage}`);
 			await exitGracefully(1);
 		}
 	}
