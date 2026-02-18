@@ -1923,13 +1923,24 @@ export function createAccountForceResetRateLimitHandler(
 				return errorResponse(NotFound("Account not found"));
 			}
 
-			dbOps.forceResetAccountRateLimit(accountId);
+			const resetSuccess = dbOps.forceResetAccountRateLimit(accountId);
+			if (!resetSuccess) {
+				return errorResponse(
+					new Error(
+						`Failed to reset rate limit state for account '${account.name}'`,
+					),
+				);
+			}
 			clearAccountRefreshCache(accountId);
 
 			// Trigger immediate poll if this server has a polling token provider for the account.
 			let usagePollTriggered = await usageCache.refreshNow(accountId);
 
-			// Fallback for Anthropic OAuth accounts when polling is not configured in-process.
+			// Best-effort fallback: use raw DB token for Anthropic OAuth accounts.
+			// Only Anthropic accounts support direct usage fetch via fetchUsageData();
+			// other providers (Zai, NanoGPT) use different endpoints handled by their own fetchers.
+			// This bypasses token refresh, but is acceptable since this path only runs when
+			// no active polling exists and the token is likely fresh from recent proxy requests.
 			if (
 				!usagePollTriggered &&
 				account.provider === "anthropic" &&

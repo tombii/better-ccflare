@@ -49,13 +49,17 @@ export function AccountListItem({
 	onModelMappingsChange,
 }: AccountListItemProps) {
 	const presenter = new AccountPresenter(account);
-	const normalizedRateLimitStatus = presenter.rateLimitStatus.toLowerCase();
+	const normalizedRateLimitStatus = (
+		presenter.rateLimitStatus ?? ""
+	).toLowerCase();
 	const staleLockDetected =
 		!presenter.isPaused &&
 		(normalizedRateLimitStatus.includes("rejected") ||
 			normalizedRateLimitStatus.includes("blocked")) &&
-		typeof account.usageUtilization === "number" &&
-		account.usageUtilization < 100;
+		(account.usageUtilization === null ||
+			account.usageUtilization === undefined ||
+			(typeof account.usageUtilization === "number" &&
+				account.usageUtilization < 100));
 
 	return (
 		<div
@@ -195,7 +199,11 @@ export function AccountListItem({
 							size="sm"
 							className="h-8 gap-1 text-xs"
 							onClick={() => onForceResetRateLimit(account)}
-							title="Force reset rate-limit lock and trigger immediate usage poll"
+							title={
+								staleLockDetected
+									? "Reset stale rate limit lock (usage shows capacity available)"
+									: "Force clear rate limit state from database"
+							}
 						>
 							<RefreshCw className="h-3.5 w-3.5" />
 							Force Reset
