@@ -49,8 +49,18 @@ export function AccountListItem({
 	onModelMappingsChange,
 }: AccountListItemProps) {
 	const presenter = new AccountPresenter(account);
-	const showForceReset =
-		presenter.rateLimitStatus !== "OK" && !presenter.isPaused;
+	// Only hard-limit statuses mean the account is actually blocked; soft warnings
+	// like "allowed_warning" / "queueing_soft" mean the account is still usable.
+	const HARD_LIMIT_PREFIXES = [
+		"rate_limited",
+		"blocked",
+		"queueing_hard",
+		"payment_required",
+	];
+	const isHardLimited = HARD_LIMIT_PREFIXES.some((prefix) =>
+		presenter.rateLimitStatus.toLowerCase().startsWith(prefix),
+	);
+	const showForceReset = isHardLimited && !presenter.isPaused;
 	// staleLockDetected only fires when numeric usage data exists (Anthropic accounts);
 	// Zai/NanoGPT accounts have usageUtilization === null and are correctly excluded
 	const staleLockDetected =
