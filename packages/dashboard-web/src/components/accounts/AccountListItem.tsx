@@ -6,6 +6,7 @@ import {
 	Hash,
 	Pause,
 	Play,
+	RefreshCw,
 	Trash2,
 	Zap,
 } from "lucide-react";
@@ -24,6 +25,7 @@ interface AccountListItemProps {
 	account: Account;
 	isActive?: boolean;
 	onPauseToggle: (account: Account) => void;
+	onForceResetRateLimit: (account: Account) => void;
 	onRemove: (name: string) => void;
 	onRename: (account: Account) => void;
 	onPriorityChange: (account: Account) => void;
@@ -37,6 +39,7 @@ export function AccountListItem({
 	account,
 	isActive = false,
 	onPauseToggle,
+	onForceResetRateLimit,
 	onRemove,
 	onRename,
 	onPriorityChange,
@@ -46,6 +49,14 @@ export function AccountListItem({
 	onModelMappingsChange,
 }: AccountListItemProps) {
 	const presenter = new AccountPresenter(account);
+	const showForceReset =
+		presenter.rateLimitStatus !== "OK" && !presenter.isPaused;
+	// staleLockDetected only fires when numeric usage data exists (Anthropic accounts);
+	// Zai/NanoGPT accounts have usageUtilization === null and are correctly excluded
+	const staleLockDetected =
+		showForceReset &&
+		typeof account.usageUtilization === "number" &&
+		account.usageUtilization < 100;
 
 	return (
 		<div
@@ -115,6 +126,14 @@ export function AccountListItem({
 								{presenter.rateLimitStatus}
 							</span>
 						)}
+						{staleLockDetected && (
+							<span
+								className="text-sm text-amber-600"
+								title="Stale lock detected: usage data shows available capacity but account is still rate-limited"
+							>
+								Stale lock detected
+							</span>
+						)}
 					</div>
 				</div>
 				<div className="flex items-center gap-2">
@@ -171,6 +190,22 @@ export function AccountListItem({
 								/>
 							</Button>
 						)}
+					{showForceReset && (
+						<Button
+							variant="outline"
+							size="sm"
+							className="h-8 gap-1 text-xs"
+							onClick={() => onForceResetRateLimit(account)}
+							title={
+								staleLockDetected
+									? "Reset stale rate limit lock (usage shows capacity available)"
+									: "Force clear rate limit state from database"
+							}
+						>
+							<RefreshCw className="h-3.5 w-3.5" />
+							Force Reset
+						</Button>
+					)}
 					<Button
 						variant="ghost"
 						size="sm"

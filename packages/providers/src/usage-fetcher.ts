@@ -256,6 +256,26 @@ class UsageCache {
 	}
 
 	/**
+	 * Trigger an immediate usage fetch for an account that already has polling configured.
+	 * Returns false when no polling/token provider is configured or when the fetch fails.
+	 */
+	async refreshNow(accountId: string): Promise<boolean> {
+		const tokenProvider = this.tokenProviders.get(accountId);
+		if (!tokenProvider) {
+			return false;
+		}
+
+		const provider = this.providerTypes.get(accountId);
+		const customEndpoint = this.customEndpoints.get(accountId);
+		return await this.fetchAndCache(
+			accountId,
+			tokenProvider,
+			provider,
+			customEndpoint,
+		);
+	}
+
+	/**
 	 * Stop polling for an account
 	 */
 	stopPolling(accountId: string) {
@@ -273,14 +293,15 @@ class UsageCache {
 	}
 
 	/**
-	 * Fetch and cache usage data
+	 * Fetch and cache usage data.
+	 * Returns true if data was successfully fetched and cached, false otherwise.
 	 */
 	private async fetchAndCache(
 		accountId: string,
 		tokenProvider: AccessTokenProvider,
 		provider?: string,
 		customEndpoint?: string | null,
-	) {
+	): Promise<boolean> {
 		try {
 			// Get a fresh access token or API key on each fetch
 			let token: string;
@@ -298,7 +319,7 @@ class UsageCache {
 				log.warn(
 					`Token provider failed for account ${accountId}: ${tokenErrorMessage || "Unknown error"}`,
 				);
-				return;
+				return false;
 			}
 
 			// Validate token before proceeding
@@ -306,7 +327,7 @@ class UsageCache {
 				log.warn(
 					`No valid token available for account ${accountId}, skipping usage fetch`,
 				);
-				return;
+				return false;
 			}
 
 			// Fetch data based on provider type
@@ -332,6 +353,7 @@ class UsageCache {
 					log.debug(
 						`Successfully fetched NanoGPT usage data for account ${accountId}: ${utilization}% (${window} window)`,
 					);
+					return true;
 				}
 			} else if (provider === "zai") {
 				// Fetch Zai usage data
@@ -351,6 +373,7 @@ class UsageCache {
 					log.debug(
 						`Successfully fetched Zai usage data for account ${accountId}: ${utilization}% (${window} window)`,
 					);
+					return true;
 				}
 			} else {
 				// Default to Anthropic usage data
@@ -362,8 +385,11 @@ class UsageCache {
 					log.debug(
 						`Successfully fetched usage data for account ${accountId}: ${utilization}% (${window} window)`,
 					);
+					return true;
 				}
 			}
+
+			return false;
 		} catch (error) {
 			// Ensure we have a proper error object for logging
 			const errorMessage =
@@ -377,6 +403,7 @@ class UsageCache {
 				`Error fetching usage data for account ${accountId}:`,
 				errorMessage || "Unknown error",
 			);
+			return false;
 		}
 	}
 

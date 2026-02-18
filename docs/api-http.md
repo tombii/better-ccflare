@@ -328,6 +328,31 @@ Pause an account temporarily.
 curl -X POST http://localhost:8080/api/accounts/uuid-here/pause
 ```
 
+#### POST /api/accounts/:accountId/force-reset-rate-limit
+
+Force-clear persisted rate-limit lock state for an account and trigger immediate usage polling when possible.
+
+**What it does:**
+- Clears `rate_limited_until`
+- Clears `rate_limit_reset`
+- Clears `rate_limit_status`
+- Clears `rate_limit_remaining`
+- Triggers immediate usage poll for the account (if polling is configured in-process)
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Rate limit state cleared for account 'myaccount'",
+  "usagePollTriggered": true
+}
+```
+
+**Example:**
+```bash
+curl -X POST http://localhost:8080/api/accounts/uuid-here/force-reset-rate-limit
+```
+
 #### POST /api/accounts/:accountId/resume
 
 Resume a paused account.

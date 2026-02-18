@@ -124,6 +124,7 @@ describe("CLI Integration Tests", () => {
 			expect(result.stdout).toContain("--serve");
 			expect(result.stdout).toContain("--add-account");
 			expect(result.stdout).toContain("--list");
+			expect(result.stdout).toContain("--force-reset-rate-limit");
 		});
 
 		it("should display help with -h flag", async () => {
