@@ -1,7 +1,7 @@
 name: PR Review Agent
 
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, labeled, synchronize]
 
 permissions:
@@ -30,6 +30,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: refs/pull/${{ github.event.pull_request.number }}/merge
 
       - name: Fetch base branch
         run: |
@@ -109,6 +110,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: refs/pull/${{ github.event.pull_request.number }}/merge
 
       - name: Fetch base branch
         run: |
