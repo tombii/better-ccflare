@@ -299,6 +299,7 @@ export function createAccountsListHandler(db: Database) {
 					? new Date(account.rate_limit_reset).toISOString()
 					: null,
 				rateLimitRemaining: account.rate_limit_remaining,
+				rateLimitedUntil: account.rate_limited_until || null,
 				sessionInfo: account.session_info || "",
 				autoFallbackEnabled: account.auto_fallback_enabled === 1,
 				autoRefreshEnabled: account.auto_refresh_enabled === 1,
@@ -811,6 +812,7 @@ export function createZaiAccountAddHandler(dbOps: DatabaseOperations) {
 					rateLimitStatus: "OK",
 					rateLimitReset: null,
 					rateLimitRemaining: null,
+					rateLimitedUntil: null,
 					sessionInfo: "No active session",
 					hasRefreshToken: !!account.refresh_token, // OAuth accounts have refresh tokens
 				},
@@ -976,6 +978,7 @@ export function createOpenAIAccountAddHandler(dbOps: DatabaseOperations) {
 					rateLimitStatus: "OK",
 					rateLimitReset: null,
 					rateLimitRemaining: null,
+					rateLimitedUntil: null,
 					sessionInfo: "No active session",
 					customEndpoint: customEndpoint,
 					hasRefreshToken: !!account.refresh_token, // OAuth accounts have refresh tokens
@@ -1253,6 +1256,7 @@ export function createMinimaxAccountAddHandler(dbOps: DatabaseOperations) {
 					rateLimitStatus: "OK",
 					rateLimitReset: null,
 					rateLimitRemaining: null,
+					rateLimitedUntil: null,
 					sessionInfo: "No active session",
 					hasRefreshToken: !!account.refresh_token, // OAuth accounts have refresh tokens
 				},
@@ -1420,6 +1424,7 @@ export function createNanoGPTAccountAddHandler(dbOps: DatabaseOperations) {
 					rateLimitStatus: "OK",
 					rateLimitReset: null,
 					rateLimitRemaining: null,
+					rateLimitedUntil: null,
 					sessionInfo: "No active session",
 					hasRefreshToken: !!account.refresh_token, // OAuth accounts have refresh tokens
 				},
@@ -1591,6 +1596,7 @@ export function createAnthropicCompatibleAccountAddHandler(
 					rateLimitStatus: "OK",
 					rateLimitReset: null,
 					rateLimitRemaining: null,
+					rateLimitedUntil: null,
 					sessionInfo: "No active session",
 					hasRefreshToken: !!account.refresh_token, // OAuth accounts have refresh tokens
 				},
