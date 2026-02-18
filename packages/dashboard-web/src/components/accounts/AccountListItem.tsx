@@ -51,6 +51,8 @@ export function AccountListItem({
 	const presenter = new AccountPresenter(account);
 	const showForceReset =
 		presenter.rateLimitStatus !== "OK" && !presenter.isPaused;
+	// staleLockDetected only fires when numeric usage data exists (Anthropic accounts);
+	// Zai/NanoGPT accounts have usageUtilization === null and are correctly excluded
 	const staleLockDetected =
 		showForceReset &&
 		typeof account.usageUtilization === "number" &&

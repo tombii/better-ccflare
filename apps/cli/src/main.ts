@@ -750,9 +750,9 @@ Options:
   --list               List all accounts
   --remove <name>      Remove an account
   --reauthenticate <name> Re-authenticate an account (preserves metadata)
-  --force-reset-rate-limit <name> Force-clear stale rate-limit lock for an account
   --pause <name>       Pause an account
   --resume <name>      Resume an account
+  --force-reset-rate-limit <name> Force-clear stale rate-limit lock for an account
   --set-priority <name> <priority>  Set account priority
   --analyze            Analyze database performance
   --repair-db          Check and repair database integrity

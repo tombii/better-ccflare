@@ -348,6 +348,14 @@ describe("Accounts Handler - Dashboard Usage Data Integration", () => {
 			expect(response.ok).toBe(false);
 		});
 
+		it("should return 404 when account is not found", async () => {
+			const forceResetHandler = createMockAccountForceResetRateLimitHandler();
+			mockQuery.get = () => undefined;
+
+			const response = await forceResetHandler({} as Request, "nonexistent-id");
+			expect(response.status).toBe(404);
+		});
+
 		it("should force reset rate-limit state and trigger immediate usage polling", async () => {
 			const forceResetHandler = createMockAccountForceResetRateLimitHandler();
 
@@ -375,6 +383,33 @@ describe("Accounts Handler - Dashboard Usage Data Integration", () => {
 			expect(response.ok).toBe(true);
 			expect(payload.success).toBe(true);
 			expect(payload.usagePollTriggered).toBe(true);
+		});
+
+		it("should return usagePollTriggered false when usage poll fails", async () => {
+			const forceResetHandler = createMockAccountForceResetRateLimitHandler();
+			mockQuery.get = () => ({
+				id: "test-id",
+				name: "test",
+				provider: "anthropic",
+				access_token: "tok",
+			});
+
+			const refreshNowSpy = spyOn(
+				mockUsageCache,
+				"refreshNow",
+			).mockImplementation(async () => false);
+			const forceResetSpy = spyOn(mockDbOps, "forceResetAccountRateLimit");
+
+			const response = await forceResetHandler({} as Request, "test-id");
+			const payload = (await response.json()) as {
+				success: boolean;
+				usagePollTriggered: boolean;
+			};
+
+			expect(forceResetSpy).toHaveBeenCalledWith("test-id");
+			expect(refreshNowSpy).toHaveBeenCalledWith("test-id");
+			expect(response.ok).toBe(true);
+			expect(payload.usagePollTriggered).toBe(false);
 		});
 	});
 });

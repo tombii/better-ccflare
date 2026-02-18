@@ -1039,6 +1039,10 @@ async function notifyServersToForceResetRateLimit(
 	const activeApiKeys = dbOps.getActiveApiKeys();
 	const requiresAuth = activeApiKeys.length > 0;
 	if (requiresAuth) {
+		console.warn(
+			"⚠️  API authentication is enabled — skipping server notification.\n" +
+				"   The rate limit state was cleared in the database but no usage poll was triggered.",
+		);
 		return false;
 	}
 
