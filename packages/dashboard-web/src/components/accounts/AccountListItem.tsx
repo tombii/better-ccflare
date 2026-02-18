@@ -132,7 +132,19 @@ export function AccountListItem({
 							<span className="text-sm text-muted-foreground">Paused</span>
 						)}
 						{!presenter.isPaused && presenter.rateLimitStatus !== "OK" && (
-							<span className="text-sm text-destructive">
+							<span
+								className={`text-sm ${
+									presenter.rateLimitStatus
+										.toLowerCase()
+										.startsWith("allowed_warning")
+										? "text-amber-600"
+										: presenter.rateLimitStatus
+												.toLowerCase()
+												.startsWith("allowed")
+											? "text-green-600"
+											: "text-destructive"
+								}`}
+							>
 								{presenter.rateLimitStatus}
 							</span>
 						)}
