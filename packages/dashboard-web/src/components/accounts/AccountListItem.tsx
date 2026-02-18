@@ -49,17 +49,12 @@ export function AccountListItem({
 	onModelMappingsChange,
 }: AccountListItemProps) {
 	const presenter = new AccountPresenter(account);
-	const normalizedRateLimitStatus = (
-		presenter.rateLimitStatus ?? ""
-	).toLowerCase();
+	const showForceReset =
+		presenter.rateLimitStatus !== "OK" && !presenter.isPaused;
 	const staleLockDetected =
-		!presenter.isPaused &&
-		(normalizedRateLimitStatus.includes("rejected") ||
-			normalizedRateLimitStatus.includes("blocked")) &&
-		(account.usageUtilization === null ||
-			account.usageUtilization === undefined ||
-			(typeof account.usageUtilization === "number" &&
-				account.usageUtilization < 100));
+		showForceReset &&
+		typeof account.usageUtilization === "number" &&
+		account.usageUtilization < 100;
 
 	return (
 		<div
@@ -132,7 +127,7 @@ export function AccountListItem({
 						{staleLockDetected && (
 							<span
 								className="text-sm text-amber-600"
-								title="Stale lock detected: usage shows available capacity while the account is still marked rejected/blocked."
+								title="Stale lock detected: usage data shows available capacity but account is still rate-limited"
 							>
 								Stale lock detected
 							</span>
@@ -193,7 +188,7 @@ export function AccountListItem({
 								/>
 							</Button>
 						)}
-					{presenter.rateLimitStatus !== "OK" && (
+					{showForceReset && (
 						<Button
 							variant="outline"
 							size="sm"
