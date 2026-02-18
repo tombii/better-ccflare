@@ -348,6 +348,51 @@ describe("Accounts Handler - Dashboard Usage Data Integration", () => {
 			expect(response.ok).toBe(false);
 		});
 
+		it("should include rateLimitedUntil in account list response", async () => {
+			const accountsHandler = createMockAccountsListHandler(
+				CACHE_FRESHNESS_THRESHOLD_MS,
+			);
+			const futureTimestamp = Date.now() + 86400000; // 24 hours from now
+
+			mockQuery.all = () => [
+				{
+					id: "locked-account-id",
+					name: "Locked Account",
+					provider: "anthropic",
+					access_token: "sk-ant-test",
+					refresh_token: "refresh-token",
+					request_count: 0,
+					total_requests: 0,
+					last_used: null,
+					created_at: Date.now() - 86400000,
+					expires_at: Date.now() + 86400000,
+					rate_limited_until: futureTimestamp,
+					rate_limit_reset: null,
+					rate_limit_status: "allowed_warning",
+					rate_limit_remaining: null,
+					session_start: null,
+					session_request_count: 0,
+					paused: 0,
+					priority: 0,
+					auto_fallback_enabled: 0,
+					auto_refresh_enabled: 0,
+					custom_endpoint: null,
+					model_mappings: null,
+					token_valid: 1,
+					rate_limited: 0,
+					session_info: null,
+				},
+			];
+
+			const response = await accountsHandler();
+			const payload = (await response.json()) as Array<{
+				rateLimitedUntil: number | null;
+			}>;
+
+			expect(response.ok).toBe(true);
+			expect(payload[0].rateLimitedUntil).toBe(futureTimestamp);
+		});
+
 		it("should return 404 when account is not found", async () => {
 			const forceResetHandler = createMockAccountForceResetRateLimitHandler();
 			mockQuery.get = () => undefined;
@@ -483,6 +528,7 @@ function createMockAccountsListHandler(CACHE_FRESHNESS_THRESHOLD_MS: number) {
 				usageWindow,
 				usageData,
 				hasRefreshToken: !!account.refresh_token,
+				rateLimitedUntil: account.rate_limited_until || null,
 			};
 		});
 
