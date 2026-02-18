@@ -60,7 +60,12 @@ export function AccountListItem({
 	const isHardLimited = HARD_LIMIT_PREFIXES.some((prefix) =>
 		presenter.rateLimitStatus.toLowerCase().startsWith(prefix),
 	);
-	const showForceReset = isHardLimited && !presenter.isPaused;
+	// Also show Force Reset when rate_limited_until is in the future even if
+	// rate_limit_status is soft/OK — the selector still skips the account.
+	const isBlockedByLegacyLock =
+		typeof account.rateLimitedUntil === "number" &&
+		account.rateLimitedUntil > Date.now();
+	const showForceReset = (isHardLimited || isBlockedByLegacyLock) && !presenter.isPaused;
 	// staleLockDetected only fires when numeric usage data exists (Anthropic accounts);
 	// Zai/NanoGPT accounts have usageUtilization === null and are correctly excluded
 	const staleLockDetected =

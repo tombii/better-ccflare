@@ -121,6 +121,7 @@ export interface AccountResponse {
 	rateLimitStatus: string;
 	rateLimitReset: string | null;
 	rateLimitRemaining: number | null;
+	rateLimitedUntil: number | null;
 	sessionInfo: string;
 	priority: number;
 	autoFallbackEnabled: boolean;
@@ -288,6 +289,7 @@ export function toAccountResponse(account: Account): AccountResponse {
 			? new Date(account.rate_limit_reset).toISOString()
 			: null,
 		rateLimitRemaining: account.rate_limit_remaining,
+		rateLimitedUntil: account.rate_limited_until || null,
 		sessionInfo,
 		priority: account.priority,
 		autoFallbackEnabled: account.auto_fallback_enabled,
