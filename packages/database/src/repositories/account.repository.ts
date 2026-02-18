@@ -109,6 +109,19 @@ export class AccountRepository extends BaseRepository<Account> {
 		);
 	}
 
+	clearRateLimitState(accountId: string): number {
+		return this.runWithChanges(
+			`UPDATE accounts
+			 SET
+			 	rate_limited_until = NULL,
+			 	rate_limit_reset = NULL,
+			 	rate_limit_status = NULL,
+			 	rate_limit_remaining = NULL
+			 WHERE id = ?`,
+			[accountId],
+		);
+	}
+
 	pause(accountId: string): void {
 		this.run(`UPDATE accounts SET paused = 1 WHERE id = ?`, [accountId]);
 	}

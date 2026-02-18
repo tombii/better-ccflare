@@ -5,6 +5,7 @@ import {
 	createAccountAutoFallbackHandler,
 	createAccountAutoRefreshHandler,
 	createAccountCustomEndpointUpdateHandler,
+	createAccountForceResetRateLimitHandler,
 	createAccountModelMappingsUpdateHandler,
 	createAccountPauseHandler,
 	createAccountPriorityUpdateHandler,
@@ -316,6 +317,15 @@ export class APIRouter {
 					req,
 					url,
 				);
+			}
+
+			// Account force-reset rate limit
+			if (path.endsWith("/force-reset-rate-limit") && method === "POST") {
+				const forceResetRateLimitHandler =
+					createAccountForceResetRateLimitHandler(this.context.dbOps);
+				return await this.wrapHandler((req) =>
+					forceResetRateLimitHandler(req, accountId),
+				)(req, url);
 			}
 
 			// Account rename

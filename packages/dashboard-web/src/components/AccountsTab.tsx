@@ -271,6 +271,16 @@ export function AccountsTab() {
 		}
 	};
 
+	const handleForceResetRateLimit = async (account: Account) => {
+		try {
+			await api.forceResetRateLimit(account.id);
+			await loadAccounts();
+			setActionError(null);
+		} catch (err) {
+			setActionError(formatError(err));
+		}
+	};
+
 	const handlePriorityChange = (account: Account) => {
 		setPriorityDialog({ isOpen: true, account });
 	};
@@ -410,6 +420,7 @@ export function AccountsTab() {
 					<AccountList
 						accounts={accounts}
 						onPauseToggle={handlePauseToggle}
+						onForceResetRateLimit={handleForceResetRateLimit}
 						onRemove={handleRemoveAccount}
 						onRename={handleRename}
 						onPriorityChange={handlePriorityChange}
