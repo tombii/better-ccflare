@@ -1012,6 +1012,7 @@ Examples:
 			const result = await forceResetRateLimit(
 				dbOps,
 				parsed.forceResetRateLimit,
+				new Config(),
 			);
 			console.log(result.message);
 			if (!result.success) {

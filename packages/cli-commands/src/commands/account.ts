@@ -986,6 +986,7 @@ export function setAccountPriority(
 export async function forceResetRateLimit(
 	dbOps: DatabaseOperations,
 	name: string,
+	config: Config,
 ): Promise<{ success: boolean; message: string }> {
 	const db = dbOps.getDatabase();
 	const account = db
@@ -1012,6 +1013,7 @@ export async function forceResetRateLimit(
 	const usagePollTriggered = await notifyServersToForceResetRateLimit(
 		account.id,
 		dbOps,
+		config,
 	);
 
 	return {
@@ -1025,9 +1027,12 @@ export async function forceResetRateLimit(
 async function notifyServersToForceResetRateLimit(
 	accountId: string,
 	dbOps: DatabaseOperations,
+	config: Config,
 ): Promise<boolean> {
+	const configuredPort = config.getRuntime().port || 8080;
 	const defaultPort = 8080;
 	const testPort = 8081;
+	const ports = [...new Set([configuredPort, defaultPort, testPort])];
 	let usagePollTriggered = false;
 
 	// If API authentication is enabled, skip best-effort local notifications.
@@ -1037,7 +1042,7 @@ async function notifyServersToForceResetRateLimit(
 		return false;
 	}
 
-	for (const port of [defaultPort, testPort]) {
+	for (const port of ports) {
 		try {
 			const response = await fetch(
 				`http://localhost:${port}/api/accounts/${accountId}/force-reset-rate-limit`,
@@ -1048,7 +1053,13 @@ async function notifyServersToForceResetRateLimit(
 			);
 
 			if (response.ok) {
-				usagePollTriggered = true;
+				const data = (await response.json()) as {
+					usagePollTriggered?: boolean;
+				};
+				if (data.usagePollTriggered) {
+					usagePollTriggered = true;
+					break;
+				}
 			}
 		} catch {
 			// Best-effort only: ignore unreachable local ports.
