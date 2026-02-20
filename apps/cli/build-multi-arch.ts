@@ -128,7 +128,7 @@ async function buildPlatform(platform: Platform) {
 		`--outfile dist/${platform.outfile}`,
 		`--target=${platform.target}`,
 		"--minify",
-		`--define process.env.BETTER_CCFLARE_VERSION='"${version}"'`,
+		`--define __BETTER_CCFLARE_VERSION__='"${version}"'`,
 	].join(" ");
 
 	try {

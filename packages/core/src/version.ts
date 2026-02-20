@@ -2,8 +2,12 @@
  * Version utility that works in both development and production environments
  */
 
-// Claude CLI version to use in user-agent headers and as fallback
+// Claude CLI version to use in user-agent headers
 export const CLAUDE_CLI_VERSION = "2.1.32";
+
+// Build-time injected version via --define __BETTER_CCFLARE_VERSION__="x.y.z"
+// Replaced by bun bundler with a string literal; undefined at dev/runtime.
+declare const __BETTER_CCFLARE_VERSION__: string | undefined;
 
 // Cache the version to avoid repeated file reads
 let cachedVersion: string | null = null;
@@ -13,71 +17,42 @@ export async function getVersion(): Promise<string> {
 		return cachedVersion;
 	}
 
-	// Try multiple sources for the version
-	try {
-		// 1. Try build-time injected version (for compiled binaries)
-		if (process.env.BETTER_CCFLARE_VERSION) {
-			cachedVersion = process.env.BETTER_CCFLARE_VERSION;
-			return cachedVersion;
-		}
-
-		// 2. Try environment variable (set by npm/bun during publishing)
-		if (process.env.npm_package_version) {
-			cachedVersion = process.env.npm_package_version;
-			return cachedVersion;
-		}
-
-		// 3. Try reading from the compiled package.json in production
-		try {
-			// In production, the package.json should be in the same directory as the executable
-			const packageJsonPath = new URL("../package.json", import.meta.url);
-			const packageJson = await fetch(packageJsonPath);
-			const pkg = (await packageJson.json()) as { version?: string };
-			if (pkg.version) {
-				cachedVersion = pkg.version;
-				return cachedVersion;
-			}
-		} catch {
-			// Continue to next method
-		}
-
-		// 4. Try development environment - reading from apps/cli/package.json
-		try {
-			const packageJsonPath = new URL(
-				"../../../apps/cli/package.json",
-				import.meta.url,
-			);
-			const packageJson = await fetch(packageJsonPath);
-			const pkg = (await packageJson.json()) as { version?: string };
-			if (pkg.version) {
-				cachedVersion = pkg.version;
-				return cachedVersion;
-			}
-		} catch {
-			// Continue to next method
-		}
-
-		// 5. Try reading from root package.json
-		try {
-			const packageJsonPath = new URL("../../../package.json", import.meta.url);
-			const packageJson = await fetch(packageJsonPath);
-			const pkg = (await packageJson.json()) as { version?: string };
-			if (pkg.version) {
-				cachedVersion = pkg.version;
-				return cachedVersion;
-			}
-		} catch {
-			// Continue to fallback
-		}
-
-		// 6. Fallback to a default version
-		cachedVersion = CLAUDE_CLI_VERSION;
-		return cachedVersion;
-	} catch (_error) {
-		// Ultimate fallback
-		cachedVersion = CLAUDE_CLI_VERSION;
+	// 1. Build-time injected version (reliable for compiled binaries)
+	if (typeof __BETTER_CCFLARE_VERSION__ !== "undefined" && __BETTER_CCFLARE_VERSION__) {
+		cachedVersion = __BETTER_CCFLARE_VERSION__;
 		return cachedVersion;
 	}
+
+	// 2. Runtime env var fallback (dev/test environments)
+	if (process.env.BETTER_CCFLARE_VERSION) {
+		cachedVersion = process.env.BETTER_CCFLARE_VERSION;
+		return cachedVersion;
+	}
+
+	if (process.env.npm_package_version) {
+		cachedVersion = process.env.npm_package_version;
+		return cachedVersion;
+	}
+
+	// 3. Try reading from apps/cli/package.json (dev environment)
+	try {
+		const packageJsonPath = new URL(
+			"../../../apps/cli/package.json",
+			import.meta.url,
+		);
+		const packageJson = await fetch(packageJsonPath);
+		const pkg = (await packageJson.json()) as { version?: string };
+		if (pkg.version) {
+			cachedVersion = pkg.version;
+			return cachedVersion;
+		}
+	} catch {
+		// Continue to fallback
+	}
+
+	// 4. Final fallback
+	cachedVersion = CLAUDE_CLI_VERSION;
+	return cachedVersion;
 }
 
 // Synchronous version for contexts where async is not available
@@ -86,20 +61,23 @@ export function getVersionSync(): string {
 		return cachedVersion;
 	}
 
-	// Try build-time injected version first
+	// 1. Build-time injected version (reliable for compiled binaries)
+	if (typeof __BETTER_CCFLARE_VERSION__ !== "undefined" && __BETTER_CCFLARE_VERSION__) {
+		cachedVersion = __BETTER_CCFLARE_VERSION__;
+		return cachedVersion;
+	}
+
+	// 2. Runtime env var fallback
 	if (process.env.BETTER_CCFLARE_VERSION) {
 		cachedVersion = process.env.BETTER_CCFLARE_VERSION;
 		return cachedVersion;
 	}
 
-	// Try environment variable
 	if (process.env.npm_package_version) {
 		cachedVersion = process.env.npm_package_version;
 		return cachedVersion;
 	}
 
-	// For other cases, we'll use the fallback
-	// The async version will be called later to update the cache
 	cachedVersion = CLAUDE_CLI_VERSION;
 	return cachedVersion;
 }
