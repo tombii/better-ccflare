@@ -124,7 +124,7 @@ export class APIRouter {
 
 		// Register routes
 		this.handlers.set("GET:/health", () => healthHandler());
-		this.handlers.set("GET:/api/stats", () => statsHandler());
+		this.handlers.set("GET:/api/stats", (_req, url) => statsHandler(url));
 		this.handlers.set("POST:/api/stats/reset", () => statsResetHandler());
 		this.handlers.set("GET:/api/accounts", () => accountsHandler());
 		this.handlers.set("POST:/api/accounts", (req) => accountAddHandler(req));

@@ -275,7 +275,7 @@ export class Config extends EventEmitter {
 		}
 		const fromFile = this.data.data_retention_days;
 		if (typeof fromFile === "number") return this.clamp(fromFile, 1, 365);
-		return 7;
+		return 3;
 	}
 
 	setDataRetentionDays(days: number): void {
