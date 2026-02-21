@@ -240,10 +240,6 @@ export class AnthropicProvider extends BaseProvider {
 		// Remove host header
 		newHeaders.delete("host");
 
-		// Remove compression headers to avoid decompression issues
-		newHeaders.delete("accept-encoding");
-		newHeaders.delete("content-encoding");
-
 		return newHeaders;
 	}
 
