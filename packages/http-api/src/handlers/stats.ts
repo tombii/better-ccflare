@@ -5,11 +5,17 @@ import { jsonResponse } from "@better-ccflare/http-common";
  * Create a stats handler
  */
 export function createStatsHandler(dbOps: DatabaseOperations) {
-	return (): Response => {
+	return (url: URL): Response => {
 		const statsRepository = dbOps.getStatsRepository();
 
+		// Parse optional ?since=<days> query parameter (default: 30, max: 365)
+		const sinceRaw = Number(url.searchParams.get("since") ?? 30);
+		const sinceDays =
+			Number.isFinite(sinceRaw) && sinceRaw > 0 ? Math.min(sinceRaw, 365) : 30;
+		const sinceMs = Date.now() - sinceDays * 24 * 60 * 60 * 1000;
+
 		// Get overall statistics using the consolidated repository
-		const stats = statsRepository.getAggregatedStats();
+		const stats = statsRepository.getAggregatedStats(sinceMs);
 		const activeAccounts = statsRepository.getActiveAccountCount();
 
 		const successRate =
