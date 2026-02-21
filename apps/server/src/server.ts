@@ -561,8 +561,8 @@ export default function startServer(options?: {
 			const payloadDays = config.getDataRetentionDays();
 			const requestDays = config.getRequestRetentionDays();
 			const { removedRequests, removedPayloads } = dbOps.cleanupOldRequests(
-				payloadDays * 24 * 60 * 60 * 1000,
-				requestDays * 24 * 60 * 60 * 1000,
+				payloadDays * TIME_CONSTANTS.DAY,
+				requestDays * TIME_CONSTANTS.DAY,
 			);
 			if (removedRequests > 0 || removedPayloads > 0) {
 				log.info(
