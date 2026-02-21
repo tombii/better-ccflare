@@ -160,6 +160,7 @@ let serverInstance: ReturnType<typeof serve> | null = null;
 let stopRetentionJob: (() => void) | null = null;
 let stopOAuthCleanupJob: (() => void) | null = null;
 let stopRateLimitCleanupJob: (() => void) | null = null;
+let stopDataCleanupJob: (() => void) | null = null;
 let autoRefreshScheduler: AutoRefreshScheduler | null = null;
 let memoryMonitorInterval: Timer | null = null;
 // Track usage polling retry timeouts for cleanup
@@ -552,6 +553,40 @@ export default function startServer(options?: {
 	});
 
 	stopRateLimitCleanupJob = unregisterRateLimitCleanup;
+
+	// Set up periodic data retention cleanup every 6 hours
+	const dataRetentionCleanup = async () => {
+		const startTime = Date.now();
+		try {
+			const payloadDays = config.getDataRetentionDays();
+			const requestDays = config.getRequestRetentionDays();
+			const { removedRequests, removedPayloads } = dbOps.cleanupOldRequests(
+				payloadDays * TIME_CONSTANTS.DAY,
+				requestDays * TIME_CONSTANTS.DAY,
+			);
+			if (removedRequests > 0 || removedPayloads > 0) {
+				log.info(
+					`Periodic cleanup: removed ${removedRequests} requests, ${removedPayloads} payloads in ${Date.now() - startTime}ms`,
+				);
+				// Reclaim freed SQLite pages without a full blocking VACUUM
+				dbOps.incrementalVacuum(2000); // reclaim up to 2000 pages (~8 MB)
+			}
+		} catch (err) {
+			log.error(`Periodic data retention cleanup error: ${err}`);
+		}
+	};
+
+	// Run immediately at startup (closes the 6-hour first-run gap if earlyoom
+	// kills the server before the first interval fires), then every 6 hours
+	void dataRetentionCleanup();
+	const unregisterDataCleanup = registerCleanup({
+		id: "data-retention-cleanup",
+		callback: dataRetentionCleanup,
+		minutes: 360, // every 6 hours
+		description: "Periodic data retention cleanup and incremental vacuum",
+	});
+
+	stopDataCleanupJob = unregisterDataCleanup;
 
 	// Initialize load balancing strategy (will be created after runtime config)
 
@@ -958,6 +993,10 @@ async function handleGracefulShutdown(signal: string) {
 		if (stopRateLimitCleanupJob) {
 			stopRateLimitCleanupJob();
 			stopRateLimitCleanupJob = null;
+		}
+		if (stopDataCleanupJob) {
+			stopDataCleanupJob();
+			stopDataCleanupJob = null;
 		}
 		if (autoRefreshScheduler) {
 			autoRefreshScheduler.stop();

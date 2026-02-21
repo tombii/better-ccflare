@@ -28,12 +28,15 @@ export class StatsRepository {
 	constructor(private db: Database) {}
 
 	/**
-	 * Get aggregated statistics for all requests
+	 * Get aggregated statistics for requests within a time window.
+	 * @param sinceMs - Only include requests after this timestamp (ms since epoch).
+	 *   Defaults to 30 days ago to avoid full-table scans on large deployments.
 	 */
-	getAggregatedStats(): AggregatedStats {
+	getAggregatedStats(sinceMs?: number): AggregatedStats {
+		const since = sinceMs ?? Date.now() - 30 * 24 * 60 * 60 * 1000;
 		const stats = this.db
 			.query(
-				`SELECT 
+				`SELECT
 					COUNT(*) as totalRequests,
 					SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successfulRequests,
 					AVG(response_time_ms) as avgResponseTime,
@@ -43,9 +46,10 @@ export class StatsRepository {
 					SUM(cache_read_input_tokens) as cacheReadInputTokens,
 					SUM(cost_usd) as totalCostUsd,
 					AVG(output_tokens_per_second) as avgTokensPerSecond
-				FROM requests`,
+				FROM requests
+				WHERE timestamp > ?`,
 			)
-			.get() as AggregatedStats;
+			.get(since) as AggregatedStats;
 
 		// Calculate total tokens
 		const totalTokens =
