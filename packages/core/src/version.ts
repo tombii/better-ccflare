@@ -3,7 +3,7 @@
  */
 
 // Claude CLI version to use in user-agent headers and as fallback
-export const CLAUDE_CLI_VERSION = "2.1.45";
+export const CLAUDE_CLI_VERSION = "2.1.50";
 
 // Cache the version to avoid repeated file reads
 let cachedVersion: string | null = null;
