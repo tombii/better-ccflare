@@ -556,6 +556,7 @@ export default function startServer(options?: {
 
 	// Set up periodic data retention cleanup every 6 hours
 	const dataRetentionCleanup = async () => {
+		const startTime = Date.now();
 		try {
 			const payloadDays = config.getDataRetentionDays();
 			const requestDays = config.getRequestRetentionDays();
@@ -565,7 +566,7 @@ export default function startServer(options?: {
 			);
 			if (removedRequests > 0 || removedPayloads > 0) {
 				log.info(
-					`Periodic cleanup: removed ${removedRequests} requests, ${removedPayloads} payloads`,
+					`Periodic cleanup: removed ${removedRequests} requests, ${removedPayloads} payloads in ${Date.now() - startTime}ms`,
 				);
 				// Reclaim freed SQLite pages without a full blocking VACUUM
 				dbOps.incrementalVacuum(2000); // reclaim up to 2000 pages (~8 MB)

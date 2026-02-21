@@ -582,19 +582,25 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 	} {
 		const now = Date.now();
 		const payloadCutoff = now - payloadRetentionMs;
-		let removedRequests = 0;
-		if (
-			typeof requestRetentionMs === "number" &&
-			Number.isFinite(requestRetentionMs)
-		) {
-			const requestCutoff = now - requestRetentionMs;
-			removedRequests = this.requests.deleteOlderThan(requestCutoff);
-		}
-		const removedPayloadsByAge =
-			this.requests.deletePayloadsOlderThan(payloadCutoff);
-		const removedOrphans = this.requests.deleteOrphanedPayloads();
-		const removedPayloads = removedPayloadsByAge + removedOrphans;
-		return { removedRequests, removedPayloads };
+		// Wrap all three DELETEs in one transaction for atomicity: a crash between
+		// statements would otherwise leave orphaned payloads or dangling request rows.
+		return this.db.transaction(() => {
+			let removedRequests = 0;
+			if (
+				typeof requestRetentionMs === "number" &&
+				Number.isFinite(requestRetentionMs)
+			) {
+				const requestCutoff = now - requestRetentionMs;
+				removedRequests = this.requests.deleteOlderThan(requestCutoff);
+			}
+			const removedPayloadsByAge =
+				this.requests.deletePayloadsOlderThan(payloadCutoff);
+			const removedOrphans = this.requests.deleteOrphanedPayloads();
+			return {
+				removedRequests,
+				removedPayloads: removedPayloadsByAge + removedOrphans,
+			};
+		})();
 	}
 
 	// Agent preference operations delegated to repository
