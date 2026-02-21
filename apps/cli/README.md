@@ -71,6 +71,8 @@ npm install -g better-ccflare
 better-ccflare
 ```
 Continue to [Configure Claude SDK](https://github.com/tombii/better-ccflare#configure-claude-sdk).
+
+**⚠️ Windows npm Installation Issue**: If you installed via npm on Windows and encounter a path error like `"C:\\Program Files\\nodejs\\\\node_modules\\better-ccflare\\dist\\better-ccflare" is either misspelled or could not be found`, this is a known [npm bug on Windows](https://github.com/npm/cli/issues/969) affecting how npm generates wrapper scripts. See [Windows Troubleshooting](#windows-troubleshooting) for workarounds.
 ### Install via bun
 
 ```bash
@@ -126,8 +128,6 @@ Continue to [Configure Claude SDK](https://github.com/tombii/better-ccflare#conf
 #### Windows x86_64
 Download [`better-ccflare-windows-x64.exe`](https://github.com/tombii/better-ccflare/releases/latest/download/better-ccflare-windows-x64.exe) and run it.
 Continue to [Configure Claude SDK](https://github.com/tombii/better-ccflare#configure-claude-sdk).
-
-**⚠️ Windows npm Installation Issue**: If you installed via npm and encounter a path error like `"C:\\Program Files\\nodejs\\\\node_modules\\better-ccflare\\dist\\better-ccflare" is either misspelled or could not be found`, this is a known [npm bug on Windows](https://github.com/npm/cli/issues/969) affecting how npm generates wrapper scripts. See [Windows Troubleshooting](#windows-troubleshooting) for workarounds.
 ### Run without installation (npx/bunx)
 
 ```bash
