@@ -555,27 +555,32 @@ export default function startServer(options?: {
 	stopRateLimitCleanupJob = unregisterRateLimitCleanup;
 
 	// Set up periodic data retention cleanup every 6 hours
+	const dataRetentionCleanup = async () => {
+		try {
+			const payloadDays = config.getDataRetentionDays();
+			const requestDays = config.getRequestRetentionDays();
+			const { removedRequests, removedPayloads } = dbOps.cleanupOldRequests(
+				payloadDays * 24 * 60 * 60 * 1000,
+				requestDays * 24 * 60 * 60 * 1000,
+			);
+			if (removedRequests > 0 || removedPayloads > 0) {
+				log.info(
+					`Periodic cleanup: removed ${removedRequests} requests, ${removedPayloads} payloads`,
+				);
+				// Reclaim freed SQLite pages without a full blocking VACUUM
+				dbOps.incrementalVacuum(2000); // reclaim up to 2000 pages (~8 MB)
+			}
+		} catch (err) {
+			log.error(`Periodic data retention cleanup error: ${err}`);
+		}
+	};
+
+	// Run immediately at startup (closes the 6-hour first-run gap if earlyoom
+	// kills the server before the first interval fires), then every 6 hours
+	void dataRetentionCleanup();
 	const unregisterDataCleanup = registerCleanup({
 		id: "data-retention-cleanup",
-		callback: async () => {
-			try {
-				const payloadDays = config.getDataRetentionDays();
-				const requestDays = config.getRequestRetentionDays();
-				const { removedRequests, removedPayloads } = dbOps.cleanupOldRequests(
-					payloadDays * 24 * 60 * 60 * 1000,
-					requestDays * 24 * 60 * 60 * 1000,
-				);
-				if (removedRequests > 0 || removedPayloads > 0) {
-					log.info(
-						`Periodic cleanup: removed ${removedRequests} requests, ${removedPayloads} payloads`,
-					);
-					// Reclaim freed SQLite pages without a full blocking VACUUM
-					dbOps.incrementalVacuum(2000); // reclaim up to 2000 pages (~8 MB)
-				}
-			} catch (err) {
-				log.error(`Periodic data retention cleanup error: ${err}`);
-			}
-		},
+		callback: dataRetentionCleanup,
 		minutes: 360, // every 6 hours
 		description: "Periodic data retention cleanup and incremental vacuum",
 	});
