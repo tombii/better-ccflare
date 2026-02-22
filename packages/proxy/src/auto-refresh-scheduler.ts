@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import {
+	CLAUDE_MODEL_IDS,
 	getClientVersion,
 	registerHeartbeat,
 	requestEvents,
@@ -320,13 +321,11 @@ export class AutoRefreshScheduler {
 			// Try sending with multiple models if needed
 			let response: Response | null = null;
 			let lastError: Error | null = null;
-			let modelToTry = "claude-haiku-4-5-20251001"; // Default model
+			let modelToTry: string = CLAUDE_MODEL_IDS.HAIKU_4_5; // Default model
 			const models = [
-				"claude-haiku-4-5-20251001",
-				"claude-3-5-haiku-20241022",
-				"claude-3-haiku-20240307",
-				"claude-3-5-sonnet-20241022",
-				"claude-3-sonnet-20240229",
+				CLAUDE_MODEL_IDS.HAIKU_4_5,
+				CLAUDE_MODEL_IDS.SONNET_4_5,
+				CLAUDE_MODEL_IDS.SONNET_4,
 			];
 
 			for (const model of models) {

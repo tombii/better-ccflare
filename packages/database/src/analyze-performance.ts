@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { Database } from "bun:sqlite";
+import { CLAUDE_MODEL_IDS } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import { resolveDbPath } from "./paths";
 import { analyzeIndexUsage } from "./performance-indexes";
@@ -81,7 +82,7 @@ function analyzeQueryPerformance(db: Database) {
 				WHERE row_num = CAST(CEIL(total_count * 0.95) AS INTEGER)
 				LIMIT 1
 			`,
-			params: ["claude-3-5-sonnet-20241022"],
+			params: [CLAUDE_MODEL_IDS.SONNET_4_6],
 		},
 	];
 
