@@ -81,7 +81,7 @@ function analyzeQueryPerformance(db: Database) {
 				WHERE row_num = CAST(CEIL(total_count * 0.95) AS INTEGER)
 				LIMIT 1
 			`,
-			params: ["claude-3-5-sonnet-20241022"],
+			params: ["claude-sonnet-4-6"],
 		},
 	];
 

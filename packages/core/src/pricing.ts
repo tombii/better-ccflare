@@ -36,24 +36,14 @@ interface ApiResponse {
 const BUNDLED_PRICING: ApiResponse = {
 	anthropic: {
 		models: {
-			[CLAUDE_MODEL_IDS.HAIKU_3_5]: {
-				id: CLAUDE_MODEL_IDS.HAIKU_3_5,
-				name: MODEL_DISPLAY_NAMES[CLAUDE_MODEL_IDS.HAIKU_3_5],
+			[CLAUDE_MODEL_IDS.HAIKU_4_5]: {
+				id: CLAUDE_MODEL_IDS.HAIKU_4_5,
+				name: MODEL_DISPLAY_NAMES[CLAUDE_MODEL_IDS.HAIKU_4_5],
 				cost: {
-					input: 0.8,
-					output: 4,
-					cache_read: 0.08,
-					cache_write: 1,
-				},
-			},
-			[CLAUDE_MODEL_IDS.SONNET_3_5]: {
-				id: CLAUDE_MODEL_IDS.SONNET_3_5,
-				name: MODEL_DISPLAY_NAMES[CLAUDE_MODEL_IDS.SONNET_3_5],
-				cost: {
-					input: 3,
-					output: 15,
-					cache_read: 0.3,
-					cache_write: 3.75,
+					input: 1,
+					output: 5,
+					cache_read: 0.1,
+					cache_write: 1.25,
 				},
 			},
 			[CLAUDE_MODEL_IDS.SONNET_4]: {
