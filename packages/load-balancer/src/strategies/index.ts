@@ -165,20 +165,38 @@ export class SessionStrategy implements LoadBalancingStrategy {
 			);
 		}
 
-		// If we have an active account and it's available, use it exclusively
+		// If we have an active account and it's available, use it — unless a higher-priority
+		// non-session account is available (priority is more important than stickiness).
 		if (activeAccount && getCachedAvailability(activeAccount)) {
-			// Reset session if expired (shouldn't happen but just in case)
-			if (!bypassSession) {
-				this.resetSessionIfExpired(activeAccount);
+			// Check if any available account has strictly higher priority than the active session account
+			const higherPriorityAccount = accounts
+				.filter(
+					(a) =>
+						a.id !== activeAccount.id &&
+						getCachedAvailability(a) &&
+						a.priority < activeAccount.priority,
+				)
+				.sort((a, b) => a.priority - b.priority)[0];
+
+			if (higherPriorityAccount) {
+				this.log.info(
+					`Skipping session on account ${activeAccount.name} (priority: ${activeAccount.priority}) — higher-priority account ${higherPriorityAccount.name} (priority: ${higherPriorityAccount.priority}) is available`,
+				);
+				// Fall through to normal priority-based selection below by nulling activeAccount
+			} else {
+				// Reset session if expired (shouldn't happen but just in case)
+				if (!bypassSession) {
+					this.resetSessionIfExpired(activeAccount);
+				}
+				this.log.info(
+					`Continuing session for account ${activeAccount.name} (${activeAccount.session_request_count} requests in session)`,
+				);
+				// Return active account first, then others as fallback (sorted by priority)
+				const others = accounts
+					.filter((a) => a.id !== activeAccount.id && getCachedAvailability(a))
+					.sort((a, b) => a.priority - b.priority);
+				return [activeAccount, ...others];
 			}
-			this.log.info(
-				`Continuing session for account ${activeAccount.name} (${activeAccount.session_request_count} requests in session)`,
-			);
-			// Return active account first, then others as fallback (sorted by priority)
-			const others = accounts
-				.filter((a) => a.id !== activeAccount.id && getCachedAvailability(a))
-				.sort((a, b) => a.priority - b.priority);
-			return [activeAccount, ...others];
 		}
 
 		// No active session or active account is rate limited
