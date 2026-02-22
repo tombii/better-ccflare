@@ -76,8 +76,8 @@ function normalizeModelName(modelId: string): string {
 	// Remove provider prefix (anthropic., etc.)
 	normalized = normalized.replace(/^[^.]+\./, "");
 
-	// Remove version suffix (-v1:0, -v2:0, etc.)
-	normalized = normalized.replace(/-v\d+:\d+$/, "");
+	// Remove version suffix (-v1:0, -v2:0, -v1, -v2, etc.)
+	normalized = normalized.replace(/-v\d+(:\d+)?$/, "");
 
 	return normalized.toLowerCase();
 }
