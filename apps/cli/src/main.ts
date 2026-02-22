@@ -808,12 +808,15 @@ Examples:
 				"sonnet-4": CLAUDE_MODEL_IDS.SONNET_4,
 				"opus-4.1": CLAUDE_MODEL_IDS.OPUS_4_1,
 				"sonnet-4.5": CLAUDE_MODEL_IDS.SONNET_4_5,
+				"sonnet-4.6": CLAUDE_MODEL_IDS.SONNET_4_6,
 			};
 
 			const fullModel = modelMap[parsed.setModel];
 			if (!fullModel) {
 				console.error(`❌ Invalid model: ${parsed.setModel}`);
-				console.error("Valid models: opus-4, sonnet-4, opus-4.1, sonnet-4.5");
+				console.error(
+					`Valid models: ${Object.keys(modelMap).join(", ")}`,
+				);
 				fastExit(1);
 				return;
 			}
