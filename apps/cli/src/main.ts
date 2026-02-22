@@ -815,7 +815,7 @@ Examples:
 			if (!fullModel) {
 				console.error(`❌ Invalid model: ${parsed.setModel}`);
 				console.error(
-					"Valid models: opus-4, sonnet-4, opus-4.1, sonnet-4.5, sonnet-4.6",
+					`Valid models: ${Object.keys(modelMap).join(", ")}`,
 				);
 				fastExit(1);
 				return;
