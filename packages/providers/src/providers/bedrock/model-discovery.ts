@@ -112,8 +112,8 @@ export function generateClientModelName(bedrockModelId: string): string {
 	// Remove provider prefix (e.g., "anthropic.")
 	let modelName = bedrockModelId.replace(/^[^.]+\./, "");
 
-	// Remove version suffix (e.g., "-v1:0", "-v2:0")
-	modelName = modelName.replace(/-v\d+:\d+$/, "");
+	// Remove version suffix (e.g., "-v1:0", "-v2:0", "-v1", "-v2")
+	modelName = modelName.replace(/-v\d+(:\d+)?$/, "");
 
 	return modelName;
 }
