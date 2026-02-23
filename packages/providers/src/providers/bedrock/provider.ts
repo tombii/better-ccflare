@@ -362,6 +362,7 @@ export class BedrockProvider extends BaseProvider implements Provider {
 		let transformedModelId = transformModelIdPrefix(
 			finalModelId,
 			crossRegionMode,
+			config.region,
 		);
 
 		// Validate model supports requested mode and fall back if needed
@@ -381,12 +382,20 @@ export class BedrockProvider extends BaseProvider implements Provider {
 				log.warn(
 					`Model ${finalModelId} doesn't support ${crossRegionMode} inference mode, falling back to ${fallback}`,
 				);
-				transformedModelId = transformModelIdPrefix(finalModelId, fallback);
+				transformedModelId = transformModelIdPrefix(
+					finalModelId,
+					fallback,
+					config.region,
+				);
 			} else {
 				log.warn(
 					`Model ${finalModelId} has no supported inference mode, using regional fallback`,
 				);
-				transformedModelId = transformModelIdPrefix(finalModelId, "regional");
+				transformedModelId = transformModelIdPrefix(
+					finalModelId,
+					"regional",
+					config.region,
+				);
 			}
 		}
 
