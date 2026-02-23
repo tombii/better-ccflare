@@ -2,93 +2,13 @@ name: PR Review Agent
 
 on:
   pull_request_target:
-    types: [opened, labeled, synchronize]
+    types: [labeled, synchronize]
 
 permissions:
   contents: read
   pull-requests: write
 
 jobs:
-  review-opened:
-    # Run for newly opened PRs regardless of label
-    if: github.event.action == 'opened'
-    runs-on: ubuntu-latest
-
-    # Define environment variables at job level to avoid redundancy
-    env:
-      BASE_REF: ${{ github.event.pull_request.base.ref }}
-      HEAD_REF: ${{ github.event.pull_request.head.ref }}
-      PR_NUMBER: ${{ github.event.pull_request.number }}
-      # Use toJSON to properly escape all user-provided content
-      PR_TITLE: ${{ toJSON(github.event.pull_request.title) }}
-      PR_AUTHOR: ${{ toJSON(github.event.pull_request.user.login) }}
-      PR_DESCRIPTION: ${{ toJSON(github.event.pull_request.body) }}
-      REPO_NAME: ${{ github.repository }}
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          ref: refs/pull/${{ github.event.pull_request.number }}/merge
-
-      - name: Fetch base branch
-        run: |
-          git fetch origin "$BASE_REF"
-
-      - name: Generate diff
-        id: diff
-        run: |
-          echo "Generating diff for PR #$PR_NUMBER"
-          # Generate diff excluding generated files like inline-worker.ts
-          DIFF=$(git diff "origin/$BASE_REF...HEAD" -- . ":(exclude)packages/proxy/src/inline-worker.ts" ":(exclude)packages/proxy/src/embedded-tiktoken-wasm.ts")
-          DIFF_SIZE=$(echo "$DIFF" | wc -c)
-          echo "Diff size: $DIFF_SIZE bytes"
-
-          if [ "$DIFF_SIZE" -gt 600000 ]; then
-            echo "error=Diff size ($DIFF_SIZE bytes) exceeds 600KB limit" >> $GITHUB_OUTPUT
-            exit 1
-          fi
-
-          if [ -z "$DIFF" ]; then
-            echo "error=No changes detected in this PR" >> $GITHUB_OUTPUT
-            exit 1
-          fi
-
-          # Save diff to file for the next step
-          echo "$DIFF" > /tmp/pr-diff.txt
-          echo "diff_size=$DIFF_SIZE" >> $GITHUB_OUTPUT
-
-      - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y jq
-
-      - name: Run AI Code Review
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
-          LLM_URL: ${{ secrets.LLM_URL }}
-          # Comma-separated list of models to try in order (fallback support)
-          AI_MODELS: "claude-sonnet-4.5,glm-4.7,qwen3-coder-plus,glm-4.5-air"
-          AI_TEMPERATURE: "0.2"
-          AI_MAX_TOKENS: "8000"
-          MAX_DIFF_SIZE: "600000"
-          BASE_BRANCH: ${{ env.BASE_REF }}
-          HEAD_BRANCH: ${{ env.HEAD_REF }}
-        run: |
-          cat /tmp/pr-diff.txt | bash .github/scripts/pr-review.sh
-
-      - name: Comment on failure
-        if: failure()
-        uses: actions/github-script@v7
-        with:
-          script: |
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: '❌ AI Code Review failed. Check the Actions log for details.'
-            })
-
   review-labeled-synchronize:
     # Only run when the ai_code_review label is present for labeled/synchronize events
     if: (github.event.action == 'labeled' || github.event.action == 'synchronize') && contains(github.event.pull_request.labels.*.name, 'ai_code_review')
