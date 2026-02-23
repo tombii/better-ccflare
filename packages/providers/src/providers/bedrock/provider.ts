@@ -399,6 +399,8 @@ export class BedrockProvider extends BaseProvider implements Provider {
 			}
 		}
 
+		log.info(`Using Bedrock model ID: ${transformedModelId} (region: ${config.region})`);
+
 		// Step 6: Transform request based on streaming mode
 		const converseInput = isStreaming
 			? transformStreamingRequest(body)
