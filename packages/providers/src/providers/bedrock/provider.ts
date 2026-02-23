@@ -354,19 +354,7 @@ export class BedrockProvider extends BaseProvider implements Provider {
 			bedrockModelId = body.model;
 		}
 
-		let finalModelId = bedrockModelId;
-
-		// Strip :0 version suffix if present - newer models don't use it
-		// ListFoundationModels returns IDs like "anthropic.claude-opus-4-6-v1:0"
-		// but Converse API expects "anthropic.claude-opus-4-6-v1" (without :0)
-		// Reference: https://github.com/anthropics/claude-code/issues/23499
-		if (finalModelId.endsWith(":0")) {
-			const withoutSuffix = finalModelId.slice(0, -2);
-			log.info(
-				`Stripping :0 suffix from model ID: ${finalModelId} -> ${withoutSuffix}`,
-			);
-			finalModelId = withoutSuffix;
-		}
+		const finalModelId = bedrockModelId;
 
 		// Apply cross-region mode transformation
 		const crossRegionMode =
