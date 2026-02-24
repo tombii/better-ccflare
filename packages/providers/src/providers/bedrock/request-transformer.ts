@@ -85,30 +85,46 @@ export function transformMessagesRequest(
 
 	// Transform messages to Bedrock format
 	// Bedrock requires content to be an array of { text: string } objects
-	const transformedMessages: Message[] = claudeRequest.messages.map((msg) => {
-		let content: Array<{ text: string }>;
+	const transformedMessages: Message[] = [];
+	for (const [index, msg] of claudeRequest.messages.entries()) {
+		let content: Array<{ text: string }> = [];
 
 		if (typeof msg.content === "string") {
 			// Simple string content
-			content = [{ text: msg.content }];
+			const text = msg.content.trim();
+			if (text.length > 0) {
+				content = [{ text }];
+			}
 		} else if (Array.isArray(msg.content)) {
-			// Array of content blocks - extract text from each
+			// Array of content blocks - extract non-empty text blocks only
 			content = msg.content
-				.filter((block) => block.type === "text" && block.text)
-				.map((block) => ({ text: block.text! }));
+				.filter(
+					(block) =>
+						block.type === "text" &&
+						typeof block.text === "string" &&
+						block.text.trim().length > 0,
+				)
+				.map((block) => ({ text: block.text!.trim() }));
 		} else {
-			// Fallback - shouldn't happen but handle gracefully
 			log.warn(
-				`Unexpected message content type: ${typeof msg.content}, converting to empty text`,
+				`Unexpected message content type at index ${index}: ${typeof msg.content}, dropping message`,
 			);
-			content = [{ text: "" }];
 		}
 
-		return {
+		// Bedrock rejects messages with empty content arrays.
+		// Skip empty messages to avoid ValidationException.
+		if (content.length === 0) {
+			log.warn(
+				`Dropping empty message at index ${index} (role: ${msg.role}) before Bedrock transform`,
+			);
+			continue;
+		}
+
+		transformedMessages.push({
 			role: msg.role,
 			content,
-		} as Message;
-	});
+		} as Message);
+	}
 
 	return {
 		messages: transformedMessages,
