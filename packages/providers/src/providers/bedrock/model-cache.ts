@@ -112,16 +112,36 @@ function extractFamilyVersion(
 	searchKey: string,
 	family: ModelFamily,
 ): { major: number; minor: number; date: number } {
-	// Newer format: claude-sonnet-4-6 / claude-opus-4-6 / claude-haiku-4-5
-	const directMatch = searchKey.match(
-		new RegExp(`claude-${family}-(\\d+)(?:-(\\d+))?`),
-	);
-	if (directMatch) {
-		return {
-			major: Number.parseInt(directMatch[1], 10) || 0,
-			minor: Number.parseInt(directMatch[2] || "0", 10) || 0,
-			date: 0,
-		};
+	// Newer format variants:
+	// - claude-sonnet-4
+	// - claude-sonnet-4-6
+	// - claude-sonnet-4-20250514 (date without explicit minor)
+	// - claude-sonnet-4-5-20250929
+	const directPrefix = `claude-${family}-`;
+	if (searchKey.startsWith(directPrefix)) {
+		const parts = searchKey.slice(directPrefix.length).split("-");
+		const major = Number.parseInt(parts[0] || "0", 10) || 0;
+		let minor = 0;
+		let date = 0;
+		let idx = 1;
+
+		const next = parts[idx];
+		if (next && /^\d+$/.test(next)) {
+			if (next.length === 8) {
+				// claude-sonnet-4-20250514
+				date = Number.parseInt(next, 10) || 0;
+			} else {
+				// claude-sonnet-4-6 or claude-sonnet-4-5-20250929
+				minor = Number.parseInt(next, 10) || 0;
+				idx++;
+				const maybeDate = parts[idx];
+				if (maybeDate && /^\d{8}$/.test(maybeDate)) {
+					date = Number.parseInt(maybeDate, 10) || 0;
+				}
+			}
+		}
+
+		return { major, minor, date };
 	}
 
 	// Older format: claude-3-5-sonnet-20241022 / claude-3-opus-20240229
