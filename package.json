@@ -33,5 +33,5 @@
 		"bun-types": "latest",
 		"typescript": "^5.9.3"
 	},
-	"version": "3.2.0-beta14"
+	"version": "3.2.0-beta15"
 }
