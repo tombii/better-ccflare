@@ -22,6 +22,7 @@ import {
 	type CrossRegionMode,
 	transformModelIdPrefix,
 } from "./model-transformer";
+import { generateClientModelName } from "./model-discovery";
 import {
 	type ClaudeRequest,
 	detectStreamingMode,
@@ -56,6 +57,188 @@ const log = new Logger("BedrockProvider");
  */
 export class BedrockProvider extends BaseProvider implements Provider {
 	name = "bedrock";
+
+	private createSyntheticJsonRequest(payload: unknown): Request {
+		return new Request("https://bedrock.aws/response", {
+			method: "POST",
+			headers: {
+				"content-type": "application/json",
+				"x-bedrock-response": "true",
+			},
+			body: JSON.stringify(payload),
+		});
+	}
+
+	private normalizeBedrockStopReason(bedrockReason?: string): string {
+		switch (bedrockReason) {
+			case "tool_use":
+				return "tool_use";
+			case "max_tokens":
+				return "max_tokens";
+			case "stop_sequence":
+				return "stop_sequence";
+			case "end_turn":
+			default:
+				return "end_turn";
+		}
+	}
+
+	private createAnthropicCompatibleStream(
+		bedrockStream: AsyncIterable<any> | undefined,
+		clientModelName: string,
+	): ReadableStream {
+		const encoder = new TextEncoder();
+		const normalizeStopReason = (reason?: string) =>
+			this.normalizeBedrockStopReason(reason);
+
+		return new ReadableStream({
+			async start(controller) {
+				try {
+					const startedBlocks = new Set<number>();
+					let sentMessageStart = false;
+					let stopReason: string | null = "end_turn";
+					let usage = {
+						input_tokens: 0,
+						output_tokens: 0,
+						cache_creation_input_tokens: 0,
+						cache_read_input_tokens: 0,
+					};
+
+					const emit = (event: string, payload: unknown) => {
+						controller.enqueue(encoder.encode(`event: ${event}\n`));
+						controller.enqueue(
+							encoder.encode(`data: ${JSON.stringify(payload)}\n\n`),
+						);
+					};
+
+					if (bedrockStream) {
+						for await (const event of bedrockStream) {
+							if (event.messageStart && !sentMessageStart) {
+								emit("message_start", {
+									type: "message_start",
+									message: {
+										id: `msg_${Date.now()}`,
+										type: "message",
+										role: "assistant",
+										content: [],
+										model: clientModelName,
+										stop_reason: null,
+										stop_sequence: null,
+										usage: {
+											input_tokens: 0,
+											output_tokens: 0,
+										},
+									},
+								});
+								emit("ping", { type: "ping" });
+								sentMessageStart = true;
+								continue;
+							}
+
+							if (event.contentBlockStart) {
+								const index = event.contentBlockStart.contentBlockIndex ?? 0;
+								startedBlocks.add(index);
+								const startBlock = event.contentBlockStart.start;
+								if (startBlock?.toolUse) {
+									emit("content_block_start", {
+										type: "content_block_start",
+										index,
+										content_block: {
+											type: "tool_use",
+											id: startBlock.toolUse.toolUseId,
+											name: startBlock.toolUse.name,
+											input: {},
+										},
+									});
+								} else {
+									emit("content_block_start", {
+										type: "content_block_start",
+										index,
+										content_block: { type: "text", text: "" },
+									});
+								}
+								continue;
+							}
+
+							if (event.contentBlockDelta) {
+								const index = event.contentBlockDelta.contentBlockIndex ?? 0;
+								if (!startedBlocks.has(index)) {
+									startedBlocks.add(index);
+									emit("content_block_start", {
+										type: "content_block_start",
+										index,
+										content_block: { type: "text", text: "" },
+									});
+								}
+
+								const delta = event.contentBlockDelta.delta;
+                if (delta?.text) {
+                  emit("content_block_delta", {
+                    type: "content_block_delta",
+                    index,
+                    delta: {
+                      type: "text_delta",
+                      text: delta.text,
+                    },
+                  });
+                } else if (delta?.toolUse?.inputChunk) {
+                  emit("content_block_delta", {
+                    type: "content_block_delta",
+                    index,
+                    delta: {
+                      type: "input_json_delta",
+                      partial_json: delta.toolUse.inputChunk,
+                    },
+                  });
+                }
+								continue;
+							}
+
+							if (event.contentBlockStop) {
+								emit("content_block_stop", {
+									type: "content_block_stop",
+									index: event.contentBlockStop.contentBlockIndex ?? 0,
+								});
+								continue;
+							}
+
+							if (event.messageStop) {
+								stopReason = normalizeStopReason(event.messageStop.stopReason);
+								continue;
+							}
+
+							if (event.metadata?.usage) {
+								usage = {
+									input_tokens: event.metadata.usage.inputTokens || 0,
+									output_tokens: event.metadata.usage.outputTokens || 0,
+									cache_creation_input_tokens:
+										event.metadata.usage.cacheWriteInputTokens || 0,
+									cache_read_input_tokens:
+										event.metadata.usage.cacheReadInputTokens || 0,
+								};
+							}
+						}
+					}
+
+					if (sentMessageStart) {
+						emit("message_delta", {
+							type: "message_delta",
+							delta: {
+								stop_reason: stopReason || normalizeStopReason(),
+								stop_sequence: null,
+							},
+							usage,
+						});
+						emit("message_stop", { type: "message_stop" });
+					}
+
+					controller.close();
+				} catch (error) {
+					controller.error(error);
+				}
+			},
+		});
+	}
 
 	/**
 	 * Check if this provider can handle the given request path
@@ -424,30 +607,11 @@ export class BedrockProvider extends BaseProvider implements Provider {
 
 				const response = await client.send(command);
 
-				// Phase 4 will handle SSE streaming properly
-				// For now, return raw Bedrock streaming response
-				// Note: response.stream is an AsyncIterable<ResponseStream>
-				// We'll need to convert this to a ReadableStream for the Response
-				// For Phase 3, we'll create a simple wrapper
-				const encoder = new TextEncoder();
-				const stream = new ReadableStream({
-					async start(controller) {
-						try {
-							// response.stream is the AsyncIterable from Bedrock
-							if (response.stream) {
-								for await (const event of response.stream) {
-									// Forward events as-is for Phase 3
-									// Phase 4 will transform to Claude Messages API format
-									const data = JSON.stringify(event);
-									controller.enqueue(encoder.encode(`data: ${data}\n\n`));
-								}
-							}
-							controller.close();
-						} catch (error) {
-							controller.error(error);
-						}
-					},
-				});
+				const clientModelName = generateClientModelName(transformedModelId);
+				const stream = this.createAnthropicCompatibleStream(
+					response.stream as AsyncIterable<any> | undefined,
+					clientModelName,
+				);
 
 				return new Request("https://bedrock.aws/response", {
 					method: "POST",
@@ -468,16 +632,9 @@ export class BedrockProvider extends BaseProvider implements Provider {
 
 				const response = await client.send(command);
 
-				// Return Response wrapped as Request for compatibility
-				// Phase 4 will handle proper response transformation
-				const responseBody = JSON.stringify(response);
-				return new Request("https://bedrock.aws/response", {
-					method: "POST",
-					headers: {
-						"content-type": "application/json",
-						"x-bedrock-response": "true", // Marker for downstream handling
-					},
-					body: responseBody,
+				return this.createSyntheticJsonRequest({
+					...response,
+					model: generateClientModelName(transformedModelId),
 				});
 			}
 		} catch (error: any) {
@@ -499,14 +656,9 @@ export class BedrockProvider extends BaseProvider implements Provider {
 
 				const response = await client.send(command);
 
-				const responseBody = JSON.stringify(response);
-				return new Request("https://bedrock.aws/response", {
-					method: "POST",
-					headers: {
-						"content-type": "application/json",
-						"x-bedrock-response": "true",
-					},
-					body: responseBody,
+				return this.createSyntheticJsonRequest({
+					...response,
+					model: generateClientModelName(transformedModelId),
 				});
 			}
 

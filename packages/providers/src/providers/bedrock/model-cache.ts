@@ -19,6 +19,19 @@ interface BedrockModel {
 	searchKey: string;
 }
 
+type ModelFamily = "opus" | "sonnet" | "haiku";
+
+const MODEL_FAMILY_ALIASES: Record<ModelFamily, string[]> = {
+	opus: ["opus", "claude-opus", "claude-opus-4-6", "claude-4-opus"],
+	sonnet: [
+		"sonnet",
+		"claude-sonnet",
+		"claude-sonnet-4-6",
+		"claude-4-sonnet",
+	],
+	haiku: ["haiku", "claude-haiku", "claude-haiku-4-5", "claude-4-haiku"],
+};
+
 /**
  * In-memory cache for Bedrock models per region
  * Key: region (e.g., "us-east-1")
@@ -80,6 +93,73 @@ function normalizeModelName(modelId: string): string {
 	normalized = normalized.replace(/-v\d+(:\d+)?$/, "");
 
 	return normalized.toLowerCase();
+}
+
+function detectRequestedFamily(normalizedClientModel: string): ModelFamily | null {
+	for (const [family, aliases] of Object.entries(MODEL_FAMILY_ALIASES) as [
+		ModelFamily,
+		string[],
+	][]) {
+		if (aliases.some((alias) => normalizedClientModel.includes(alias))) {
+			return family;
+		}
+	}
+
+	return null;
+}
+
+function extractFamilyVersion(
+	searchKey: string,
+	family: ModelFamily,
+): { major: number; minor: number; date: number } {
+	// Newer format: claude-sonnet-4-6 / claude-opus-4-6 / claude-haiku-4-5
+	const directMatch = searchKey.match(
+		new RegExp(`claude-${family}-(\\d+)(?:-(\\d+))?`),
+	);
+	if (directMatch) {
+		return {
+			major: Number.parseInt(directMatch[1], 10) || 0,
+			minor: Number.parseInt(directMatch[2] || "0", 10) || 0,
+			date: 0,
+		};
+	}
+
+	// Older format: claude-3-5-sonnet-20241022 / claude-3-opus-20240229
+	const legacyMatch = searchKey.match(
+		new RegExp(`claude-(\\d+)(?:-(\\d+))?-${family}(?:-(\\d{8}))?`),
+	);
+	if (legacyMatch) {
+		return {
+			major: Number.parseInt(legacyMatch[1], 10) || 0,
+			minor: Number.parseInt(legacyMatch[2] || "0", 10) || 0,
+			date: Number.parseInt(legacyMatch[3] || "0", 10) || 0,
+		};
+	}
+
+	return { major: 0, minor: 0, date: 0 };
+}
+
+function findLatestFamilyModel(
+	models: BedrockModel[],
+	family: ModelFamily,
+): BedrockModel | null {
+	const familyModels = models.filter((m) => m.searchKey.includes(family));
+	if (familyModels.length === 0) {
+		return null;
+	}
+
+	familyModels.sort((a, b) => {
+		const av = extractFamilyVersion(a.searchKey, family);
+		const bv = extractFamilyVersion(b.searchKey, family);
+
+		if (av.major !== bv.major) return bv.major - av.major;
+		if (av.minor !== bv.minor) return bv.minor - av.minor;
+		if (av.date !== bv.date) return bv.date - av.date;
+
+		return b.searchKey.localeCompare(a.searchKey);
+	});
+
+	return familyModels[0];
 }
 
 /**
@@ -300,6 +380,19 @@ export async function translateModelName(
 
 	// Normalize the client model name for matching
 	const normalizedClient = normalizeModelName(clientModelName);
+
+	// Prefer latest model in requested family before fuzzy matching.
+	// This avoids selecting legacy 3.x models when users request "opus/sonnet/haiku".
+	const requestedFamily = detectRequestedFamily(normalizedClient);
+	if (requestedFamily) {
+		const familyMatch = findLatestFamilyModel(models, requestedFamily);
+		if (familyMatch) {
+			log.info(
+				`Matched client model "${clientModelName}" to latest ${requestedFamily} Bedrock model "${familyMatch.modelId}"`,
+			);
+			return familyMatch.modelId;
+		}
+	}
 
 	// Find best match using fuzzy matching
 	let bestMatch: BedrockModel | null = null;

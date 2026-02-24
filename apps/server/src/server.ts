@@ -742,13 +742,46 @@ export default function startServer(options?: {
 						}
 					}
 
-					return handleProxy(
-						req,
-						url,
-						proxyContext,
-						authResult.apiKeyId,
-						authResult.apiKeyName,
-					);
+					try {
+						return await handleProxy(
+							req,
+							url,
+							proxyContext,
+							authResult.apiKeyId,
+							authResult.apiKeyName,
+						);
+					} catch (proxyError) {
+						const statusCode =
+							typeof proxyError === "object" &&
+							proxyError !== null &&
+							"statusCode" in proxyError &&
+							typeof (proxyError as { statusCode: unknown }).statusCode ===
+								"number"
+								? (proxyError as { statusCode: number }).statusCode
+								: HTTP_STATUS.INTERNAL_SERVER_ERROR;
+
+						log.error("Proxy request failed:", proxyError);
+
+						return new Response(
+							JSON.stringify({
+								type: "error",
+								error: {
+									type:
+										statusCode === HTTP_STATUS.SERVICE_UNAVAILABLE
+											? "service_unavailable_error"
+											: "proxy_error",
+									message:
+										proxyError instanceof Error
+											? proxyError.message
+											: "Proxy request failed",
+								},
+							}),
+							{
+								status: statusCode,
+								headers: { "Content-Type": "application/json" },
+							},
+						);
+					}
 				} catch (authError) {
 					// Log authentication errors for security monitoring
 					log.error("Authentication service error:", authError);
