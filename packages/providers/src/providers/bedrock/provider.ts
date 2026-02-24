@@ -172,16 +172,25 @@ export class BedrockProvider extends BaseProvider implements Provider {
 								}
 
 								const delta = event.contentBlockDelta.delta;
-								if (delta?.text) {
-									emit("content_block_delta", {
-										type: "content_block_delta",
-										index,
-										delta: {
-											type: "text_delta",
-											text: delta.text,
-										},
-									});
-								}
+                if (delta?.text) {
+                  emit("content_block_delta", {
+                    type: "content_block_delta",
+                    index,
+                    delta: {
+                      type: "text_delta",
+                      text: delta.text,
+                    },
+                  });
+                } else if (delta?.toolUse?.inputChunk) {
+                  emit("content_block_delta", {
+                    type: "content_block_delta",
+                    index,
+                    delta: {
+                      type: "input_json_delta",
+                      partial_json: delta.toolUse.inputChunk,
+                    },
+                  });
+                }
 								continue;
 							}
 
