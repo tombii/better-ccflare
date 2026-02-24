@@ -21,7 +21,7 @@ jobs:
           LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
           LLM_URL: ${{ secrets.LLM_URL }}
           # Comma-separated list of models to try in order (fallback support)
-          AI_MODELS: "claude-sonnet-4.5,glm-4.7,qwen3-coder-plus,glm-4.5-air"
+          AI_MODELS: "claude-sonnet-4-6,better-ccflare-github-triage,glm-4.7,qwen3-coder-plus,glm-4.5-air"
           AI_TEMPERATURE: "0.3"
           AI_MAX_TOKENS: "5000"
           ISSUE_NUMBER: ${{ github.event.issue.number }}
