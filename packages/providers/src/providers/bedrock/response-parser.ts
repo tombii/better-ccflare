@@ -90,7 +90,7 @@ export async function transformNonStreamingResponse(
 
 		// Transform to Claude Messages API format
 		const claudeResponse = {
-			id: `msg_${Date.now()}`, // Generate unique ID
+			id: `msg_${crypto.randomUUID().replace(/-/g, "")}`,
 			type: "message",
 			role: "assistant",
 			content: content, // 1:1 mapping, preserve as-is

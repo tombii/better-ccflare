@@ -126,6 +126,12 @@ export function transformMessagesRequest(
 		} as Message);
 	}
 
+	if (transformedMessages.length === 0) {
+		throw new Error(
+			"All messages were empty or contained only non-text content and were dropped. Bedrock requires at least one non-empty message.",
+		);
+	}
+
 	return {
 		messages: transformedMessages,
 		system: systemPrompt,
