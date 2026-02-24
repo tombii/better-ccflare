@@ -94,7 +94,7 @@ export async function transformNonStreamingResponse(
 			type: "message",
 			role: "assistant",
 			content: content, // 1:1 mapping, preserve as-is
-			model: json.model || "claude-3-5-sonnet-20241022", // Preserve or default
+			model: json.model || "claude-bedrock",
 			stop_reason: stopReason,
 			usage: usage
 				? {
