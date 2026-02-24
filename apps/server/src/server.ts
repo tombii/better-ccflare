@@ -762,18 +762,19 @@ export default function startServer(options?: {
 
 						log.error("Proxy request failed:", proxyError);
 
+						const isServiceUnavailable =
+							statusCode === HTTP_STATUS.SERVICE_UNAVAILABLE;
+
 						return new Response(
 							JSON.stringify({
 								type: "error",
 								error: {
-									type:
-										statusCode === HTTP_STATUS.SERVICE_UNAVAILABLE
-											? "service_unavailable_error"
-											: "proxy_error",
-									message:
-										proxyError instanceof Error
-											? proxyError.message
-											: "Proxy request failed",
+									type: isServiceUnavailable
+										? "service_unavailable_error"
+										: "proxy_error",
+									message: isServiceUnavailable
+										? "Service temporarily unavailable. Please try again later."
+										: "Proxy request failed",
 								},
 							}),
 							{

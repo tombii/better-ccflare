@@ -18,11 +18,11 @@ import {
 	getFallbackMode,
 } from "./inference-profile-cache";
 import { translateModelName } from "./model-cache";
+import { generateClientModelName } from "./model-discovery";
 import {
 	type CrossRegionMode,
 	transformModelIdPrefix,
 } from "./model-transformer";
-import { generateClientModelName } from "./model-discovery";
 import {
 	type ClaudeRequest,
 	detectStreamingMode,
@@ -77,7 +77,6 @@ export class BedrockProvider extends BaseProvider implements Provider {
 				return "max_tokens";
 			case "stop_sequence":
 				return "stop_sequence";
-			case "end_turn":
 			default:
 				return "end_turn";
 		}
@@ -117,7 +116,7 @@ export class BedrockProvider extends BaseProvider implements Provider {
 								emit("message_start", {
 									type: "message_start",
 									message: {
-										id: `msg_${Date.now()}`,
+										id: `msg_${crypto.randomUUID().replace(/-/g, "")}`,
 										type: "message",
 										role: "assistant",
 										content: [],
@@ -172,25 +171,25 @@ export class BedrockProvider extends BaseProvider implements Provider {
 								}
 
 								const delta = event.contentBlockDelta.delta;
-                if (delta?.text) {
-                  emit("content_block_delta", {
-                    type: "content_block_delta",
-                    index,
-                    delta: {
-                      type: "text_delta",
-                      text: delta.text,
-                    },
-                  });
-                } else if (delta?.toolUse?.inputChunk) {
-                  emit("content_block_delta", {
-                    type: "content_block_delta",
-                    index,
-                    delta: {
-                      type: "input_json_delta",
-                      partial_json: delta.toolUse.inputChunk,
-                    },
-                  });
-                }
+								if (delta?.text) {
+									emit("content_block_delta", {
+										type: "content_block_delta",
+										index,
+										delta: {
+											type: "text_delta",
+											text: delta.text,
+										},
+									});
+								} else if (delta?.toolUse?.inputChunk) {
+									emit("content_block_delta", {
+										type: "content_block_delta",
+										index,
+										delta: {
+											type: "input_json_delta",
+											partial_json: delta.toolUse.inputChunk,
+										},
+									});
+								}
 								continue;
 							}
 
@@ -582,7 +581,9 @@ export class BedrockProvider extends BaseProvider implements Provider {
 			}
 		}
 
-		log.info(`Using Bedrock model ID: ${transformedModelId} (region: ${config.region})`);
+		log.info(
+			`Using Bedrock model ID: ${transformedModelId} (region: ${config.region})`,
+		);
 
 		// Step 6: Transform request based on streaming mode
 		const converseInput = isStreaming
