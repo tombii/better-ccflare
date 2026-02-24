@@ -109,8 +109,13 @@ export async function discoverBedrockModels(
  * @returns Client-friendly model name
  */
 export function generateClientModelName(bedrockModelId: string): string {
+	let modelName = bedrockModelId;
+
+	// Remove geographic prefix (e.g., "us.", "eu.", "global.")
+	modelName = modelName.replace(/^(us|eu|apac|au|ca|jp|global)\./, "");
+
 	// Remove provider prefix (e.g., "anthropic.")
-	let modelName = bedrockModelId.replace(/^[^.]+\./, "");
+	modelName = modelName.replace(/^[^.]+\./, "");
 
 	// Remove version suffix (e.g., "-v1:0", "-v2:0", "-v1", "-v2")
 	modelName = modelName.replace(/-v\d+(:\d+)?$/, "");
