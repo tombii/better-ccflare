@@ -50,7 +50,7 @@ export function translateBedrockError(error: unknown): {
 	// Credential/Auth errors → 403
 	if (
 		normalizedName.includes("invalidaccesskeyid") ||
-		normalizedName.includes("signaturedonotmatch") ||
+		normalizedName.includes("signaturedoesnotmatch") ||
 		normalizedName.includes("expiredtoken") ||
 		normalizedName.includes("invalidclienttokenid") ||
 		normalizedName.includes("unrecognizedclientexception")
@@ -124,9 +124,9 @@ function getModelNotFoundSuggestion(error: unknown): string {
 	// Try to extract model name from error message
 	// Common patterns: "Model 'claude-3-5-sonnet' not found" or "models arn:aws:bedrock:us-east-1::foundation-model/..."
 	const modelPatterns = [
-		/model['"]\s*[:=]?\s*['"]([^'"]+)['"]/i,
+		/model['"][ \t]*[:=]?[ \t]*['"]([^'"]+)['"]/i,
 		/foundation-model\/([a-z0-9.-]+)/i,
-		/model\s+([a-z0-9.-]+)/i,
+		/model[ \t]+([a-z0-9.-]+)/i,
 	];
 
 	let modelName: string | undefined;
