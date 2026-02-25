@@ -17,9 +17,11 @@ import {
 	createAnthropicCompatibleAccountAddHandler,
 	createAwsProfilesListHandler,
 	createBedrockAccountAddHandler,
+	createKiloAccountAddHandler,
 	createMinimaxAccountAddHandler,
 	createNanoGPTAccountAddHandler,
 	createOpenAIAccountAddHandler,
+	createOpenRouterAccountAddHandler,
 	createVertexAIAccountAddHandler,
 	createZaiAccountAddHandler,
 } from "./handlers/accounts";
@@ -102,6 +104,9 @@ export class APIRouter {
 		const vertexAIAccountAddHandler = createVertexAIAccountAddHandler(dbOps);
 		const bedrockAccountAddHandler = createBedrockAccountAddHandler(dbOps);
 		const awsProfilesListHandler = createAwsProfilesListHandler();
+		const kiloAccountAddHandler = createKiloAccountAddHandler(dbOps);
+		const openrouterAccountAddHandler =
+			createOpenRouterAccountAddHandler(dbOps);
 		const nanogptAccountAddHandler = createNanoGPTAccountAddHandler(dbOps);
 		const anthropicCompatibleAccountAddHandler =
 			createAnthropicCompatibleAccountAddHandler(dbOps);
@@ -147,6 +152,12 @@ export class APIRouter {
 			bedrockAccountAddHandler(req),
 		);
 		this.handlers.set("GET:/api/aws/profiles", () => awsProfilesListHandler());
+		this.handlers.set("POST:/api/accounts/kilo", (req) =>
+			kiloAccountAddHandler(req),
+		);
+		this.handlers.set("POST:/api/accounts/openrouter", (req) =>
+			openrouterAccountAddHandler(req),
+		);
 		this.handlers.set("POST:/api/accounts/nanogpt", (req) =>
 			nanogptAccountAddHandler(req),
 		);

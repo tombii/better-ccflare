@@ -35,7 +35,9 @@ export interface AddAccountOptionsWithAdapter {
 		| "openai-compatible"
 		| "nanogpt"
 		| "vertex-ai"
-		| "bedrock";
+		| "bedrock"
+		| "kilo"
+		| "openrouter";
 	priority?: number;
 	customEndpoint?: string;
 	modelMappings?: { [key: string]: string };
@@ -58,7 +60,9 @@ export interface AccountListItemWithMode extends AccountListItem {
 		| "openai-compatible"
 		| "nanogpt"
 		| "vertex-ai"
-		| "bedrock";
+		| "bedrock"
+		| "kilo"
+		| "openrouter";
 }
 
 /**
@@ -176,6 +180,90 @@ export async function createNanoGPTAccount(
 			0,
 			validatedPriority,
 			validatedEndpoint,
+			validatedModelMappings,
+		],
+	);
+}
+
+/**
+ * Create a Kilo Gateway account in the database
+ */
+async function createKiloAccount(
+	dbOps: DatabaseOperations,
+	name: string,
+	apiKey: string,
+	priority: number,
+	modelMappings?: { [key: string]: string } | null,
+): Promise<void> {
+	const accountId = crypto.randomUUID();
+	const now = Date.now();
+	const validatedApiKey = validateApiKey(apiKey, "Kilo API key");
+	const validatedPriority = validatePriority(priority, "priority");
+	let validatedModelMappings = null;
+	if (modelMappings && Object.keys(modelMappings).length > 0) {
+		const validated = validateAndSanitizeModelMappings(modelMappings);
+		validatedModelMappings = JSON.stringify(validated);
+	}
+	dbOps.getDatabase().run(
+		`INSERT INTO accounts (
+			id, name, provider, api_key, refresh_token, access_token,
+			expires_at, created_at, request_count, total_requests, priority, custom_endpoint, model_mappings
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		[
+			accountId,
+			name,
+			"kilo",
+			validatedApiKey,
+			null,
+			null,
+			now + 365 * 24 * 60 * 60 * 1000,
+			now,
+			0,
+			0,
+			validatedPriority,
+			null,
+			validatedModelMappings,
+		],
+	);
+}
+
+/**
+ * Create an OpenRouter account in the database
+ */
+async function createOpenRouterAccount(
+	dbOps: DatabaseOperations,
+	name: string,
+	apiKey: string,
+	priority: number,
+	modelMappings?: { [key: string]: string } | null,
+): Promise<void> {
+	const accountId = crypto.randomUUID();
+	const now = Date.now();
+	const validatedApiKey = validateApiKey(apiKey, "OpenRouter API key");
+	const validatedPriority = validatePriority(priority, "priority");
+	let validatedModelMappings = null;
+	if (modelMappings && Object.keys(modelMappings).length > 0) {
+		const validatedMappings = validateAndSanitizeModelMappings(modelMappings);
+		validatedModelMappings = JSON.stringify(validatedMappings);
+	}
+	dbOps.getDatabase().run(
+		`INSERT INTO accounts (
+			id, name, provider, api_key, refresh_token, access_token,
+			expires_at, created_at, request_count, total_requests, priority, custom_endpoint, model_mappings
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		[
+			accountId,
+			name,
+			"openrouter",
+			validatedApiKey,
+			null,
+			null,
+			now + 365 * 24 * 60 * 60 * 1000,
+			now,
+			0,
+			0,
+			validatedPriority,
+			null,
 			validatedModelMappings,
 		],
 	);
@@ -555,6 +643,8 @@ export async function addAccount(
 			{ label: "AWS Bedrock (AWS profile credentials)", value: "bedrock" },
 			{ label: "z.ai account (API key)", value: "zai" },
 			{ label: "Minimax account (API key)", value: "minimax" },
+			{ label: "Kilo Gateway (API key)", value: "kilo" },
+			{ label: "OpenRouter (API key)", value: "openrouter" },
 			{
 				label: "Anthropic-compatible provider (API key)",
 				value: "anthropic-compatible",
@@ -785,6 +875,58 @@ export async function addAccount(
 		);
 		console.log(`\nAccount '${name}' added successfully!`);
 		console.log("Type: NanoGPT (API key)");
+	} else if (mode === "kilo") {
+		// Handle Kilo Gateway accounts with API keys
+		const apiKey = await adapter.input("\nEnter your Kilo API key: ");
+		// Get priority
+		const priority =
+			providedPriority ??
+			(await adapter.input(
+				"\nEnter priority (0 = highest, lower number = higher priority, default 0): ",
+			));
+		// Get model mappings
+		const finalModelMappings = await promptModelMappings(
+			adapter,
+			modelMappings,
+		);
+		await createKiloAccount(
+			dbOps,
+			name,
+			apiKey,
+			typeof priority === "string"
+				? parseInt(priority, 10) || 0
+				: priority || 0,
+			finalModelMappings,
+		);
+		console.log(`\nAccount '${name}' added successfully!`);
+		console.log("Type: Kilo Gateway (API key)");
+		console.log("Endpoint: https://api.kilo.ai/api/gateway");
+	} else if (mode === "openrouter") {
+		// Handle OpenRouter accounts with API keys
+		const apiKey = await adapter.input("\nEnter your OpenRouter API key: ");
+		// Get priority
+		const priority =
+			providedPriority ??
+			(await adapter.input(
+				"\nEnter priority (0 = highest, lower number = higher priority, default 0): ",
+			));
+		// Get model mappings
+		const finalModelMappings = await promptModelMappings(
+			adapter,
+			modelMappings,
+		);
+		await createOpenRouterAccount(
+			dbOps,
+			name,
+			apiKey,
+			typeof priority === "string"
+				? parseInt(priority, 10) || 0
+				: priority || 0,
+			finalModelMappings,
+		);
+		console.log(`\nAccount '${name}' added successfully!`);
+		console.log("Type: OpenRouter (API key)");
+		console.log("Endpoint: https://openrouter.ai/api/v1");
 	} else if (mode === "anthropic-compatible") {
 		// Handle Anthropic-compatible accounts with API keys
 		const apiKey = await adapter.input(
@@ -926,7 +1068,8 @@ export function getAccountsList(dbOps: DatabaseOperations): AccountListItem[] {
 					account.provider === "zai" ||
 					account.provider === "minimax" ||
 					account.provider === "anthropic-compatible" ||
-					account.provider === "bedrock"
+					account.provider === "bedrock" ||
+					account.provider === "openrouter"
 				) {
 					return account.provider;
 				}

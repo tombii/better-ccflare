@@ -40,6 +40,12 @@ export const MODEL_SHORT_NAMES: Record<string, string> = {
 	[CLAUDE_MODEL_IDS.OPUS_4_6]: "claude-opus-4.6",
 };
 
+// Latest model aliases — update these when Anthropic releases new models.
+// Check https://docs.anthropic.com/en/docs/about-claude/models for the current list.
+export const LATEST_OPUS_MODEL = CLAUDE_MODEL_IDS.OPUS_4_6;
+export const LATEST_SONNET_MODEL = CLAUDE_MODEL_IDS.SONNET_4_6;
+export const LATEST_HAIKU_MODEL = CLAUDE_MODEL_IDS.HAIKU_4_5;
+
 // Default model for various contexts
 export const DEFAULT_MODEL = CLAUDE_MODEL_IDS.SONNET_4_6;
 export const DEFAULT_AGENT_MODEL = CLAUDE_MODEL_IDS.SONNET_4_6;

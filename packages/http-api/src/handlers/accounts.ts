@@ -250,14 +250,34 @@ export function createAccountsListHandler(db: Database) {
 						);
 					}
 				}
+			} else if (account.provider === "kilo" && usageData) {
+				// Kilo usage data - type guard to check it's KiloUsageData
+				const isKiloData = "remainingUsd" in usageData;
+				if (isKiloData) {
+					try {
+						const {
+							getRepresentativeKiloUtilization,
+							getRepresentativeKiloWindow,
+						} = require("@better-ccflare/providers");
+						usageUtilization = getRepresentativeKiloUtilization(usageData);
+						usageWindow = getRepresentativeKiloWindow(usageData);
+						fullUsageData = usageData as FullUsageData;
+					} catch (error) {
+						log.warn(
+							`Failed to process Kilo usage data for account ${account.name}:`,
+							error,
+						);
+					}
+				}
 			}
 
-			// Parse model mappings for OpenAI-compatible, Anthropic-compatible, and NanoGPT providers
+			// Parse model mappings for OpenAI-compatible, Anthropic-compatible, NanoGPT, and OpenRouter providers
 			let modelMappings: { [key: string]: string } | null = null;
 			if (
 				(account.provider === "openai-compatible" ||
 					account.provider === "anthropic-compatible" ||
-					account.provider === "nanogpt") &&
+					account.provider === "nanogpt" ||
+					account.provider === "openrouter") &&
 				account.model_mappings
 			) {
 				try {
@@ -2295,6 +2315,321 @@ export function createBedrockAccountAddHandler(dbOps: DatabaseOperations) {
 				InternalServerError(
 					error instanceof Error ? error.message : "Failed to add account",
 				),
+			);
+		}
+	};
+}
+
+/**
+ * Create a Kilo Gateway account add handler
+ */
+export function createKiloAccountAddHandler(dbOps: DatabaseOperations) {
+	return async (req: Request): Promise<Response> => {
+		try {
+			const body = await req.json();
+
+			// Validate account name
+			const name = validateString(body.name, "name", {
+				required: true,
+				minLength: 1,
+				maxLength: 100,
+				pattern: patterns.accountName,
+				patternErrorMessage:
+					"can only contain letters, numbers, spaces, hyphens, and underscores",
+				transform: sanitizers.trim,
+			});
+
+			if (!name) {
+				return errorResponse(BadRequest("Account name is required"));
+			}
+
+			// Validate API key
+			const apiKey = validateString(body.apiKey, "apiKey", {
+				required: true,
+				minLength: 1,
+			});
+
+			if (!apiKey) {
+				return errorResponse(BadRequest("API key is required"));
+			}
+
+			// Validate priority
+			const priority =
+				validateNumber(body.priority, "priority", {
+					min: 0,
+					max: 100,
+					integer: true,
+				}) || 0;
+
+			// Validate and sanitize model mappings if provided
+			let validatedModelMappings = null;
+			if (body.modelMappings && typeof body.modelMappings === "object") {
+				try {
+					const sanitized = validateAndSanitizeModelMappings(
+						body.modelMappings,
+					);
+					if (sanitized && Object.keys(sanitized).length > 0) {
+						validatedModelMappings = JSON.stringify(sanitized);
+					}
+				} catch (err) {
+					return errorResponse(
+						BadRequest(
+							`Invalid model mappings: ${err instanceof Error ? err.message : String(err)}`,
+						),
+					);
+				}
+			}
+
+			// Create Kilo account in database
+			const accountId = crypto.randomUUID();
+			const now = Date.now();
+			const db = dbOps.getDatabase();
+			db.run(
+				`INSERT INTO accounts (
+					id, name, provider, api_key, refresh_token, access_token,
+					expires_at, created_at, request_count, total_requests, priority, custom_endpoint, model_mappings
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				[
+					accountId,
+					name,
+					"kilo",
+					apiKey,
+					null,
+					null,
+					now + 365 * 24 * 60 * 60 * 1000,
+					now,
+					0,
+					0,
+					priority,
+					null,
+					validatedModelMappings,
+				],
+			);
+
+			log.info(
+				`Successfully added Kilo Gateway account: ${name} (Priority ${priority})`,
+			);
+
+			const account = db
+				.query<
+					{
+						id: string;
+						name: string;
+						provider: string;
+						request_count: number;
+						total_requests: number;
+						last_used: number | null;
+						created_at: number;
+						expires_at: number;
+						refresh_token: string;
+						paused: number;
+					},
+					[string]
+				>(
+					`SELECT
+						id, name, provider, request_count, total_requests,
+						last_used, created_at, expires_at, refresh_token,
+						COALESCE(paused, 0) as paused
+					FROM accounts WHERE id = ?`,
+				)
+				.get(accountId);
+
+			if (!account) {
+				return errorResponse(
+					InternalServerError("Failed to retrieve created account"),
+				);
+			}
+
+			return jsonResponse({
+				message: `Kilo Gateway account '${name}' added successfully`,
+				account: {
+					id: account.id,
+					name: account.name,
+					provider: account.provider,
+					requestCount: account.request_count,
+					totalRequests: account.total_requests,
+					lastUsed: account.last_used
+						? new Date(account.last_used).toISOString()
+						: null,
+					created: new Date(account.created_at).toISOString(),
+					paused: account.paused === 1,
+					priority: priority,
+					tokenStatus: "valid" as const,
+					tokenExpiresAt: new Date(account.expires_at).toISOString(),
+					rateLimitStatus: "OK",
+					rateLimitReset: null,
+					rateLimitRemaining: null,
+					rateLimitedUntil: null,
+					sessionInfo: "No active session",
+					hasRefreshToken: !!account.refresh_token,
+				},
+			});
+		} catch (error) {
+			log.error("Kilo Gateway account creation error:", error);
+			return errorResponse(
+				error instanceof Error
+					? error
+					: new Error("Failed to create Kilo Gateway account"),
+			);
+		}
+	};
+}
+
+/**
+ * Create an OpenRouter account add handler
+ */
+export function createOpenRouterAccountAddHandler(dbOps: DatabaseOperations) {
+	return async (req: Request): Promise<Response> => {
+		try {
+			const body = await req.json();
+
+			// Validate account name
+			const name = validateString(body.name, "name", {
+				required: true,
+				minLength: 1,
+				maxLength: 100,
+				pattern: patterns.accountName,
+				patternErrorMessage:
+					"can only contain letters, numbers, spaces, hyphens, and underscores",
+				transform: sanitizers.trim,
+			});
+
+			if (!name) {
+				return errorResponse(BadRequest("Account name is required"));
+			}
+
+			// Validate API key
+			const apiKey = validateString(body.apiKey, "apiKey", {
+				required: true,
+				minLength: 1,
+			});
+
+			if (!apiKey) {
+				return errorResponse(BadRequest("API key is required"));
+			}
+
+			// Validate priority
+			const priority =
+				validateNumber(body.priority, "priority", {
+					min: 0,
+					max: 100,
+					integer: true,
+				}) || 0;
+
+			// Validate and sanitize model mappings (optional)
+			let modelMappings = null;
+			if (body.modelMappings) {
+				if (typeof body.modelMappings !== "object") {
+					throw new ValidationError("Model mappings must be an object");
+				}
+				try {
+					const validatedMappings = validateAndSanitizeModelMappings(
+						body.modelMappings,
+					);
+					if (validatedMappings && Object.keys(validatedMappings).length > 0) {
+						modelMappings = JSON.stringify(validatedMappings);
+					}
+				} catch (error) {
+					if (error instanceof ValidationError) {
+						throw error;
+					}
+					throw new ValidationError("Invalid model mappings format");
+				}
+			}
+
+			// Create OpenRouter account in database
+			const accountId = crypto.randomUUID();
+			const now = Date.now();
+			const db = dbOps.getDatabase();
+			db.run(
+				`INSERT INTO accounts (
+					id, name, provider, api_key, refresh_token, access_token,
+					expires_at, created_at, request_count, total_requests, priority, custom_endpoint, model_mappings
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				[
+					accountId,
+					name,
+					"openrouter",
+					apiKey,
+					null,
+					null,
+					now + 365 * 24 * 60 * 60 * 1000,
+					now,
+					0,
+					0,
+					priority,
+					null,
+					modelMappings,
+				],
+			);
+
+			log.info(
+				`Successfully added OpenRouter account: ${name} (Priority ${priority})`,
+			);
+
+			const account = db
+				.query<
+					{
+						id: string;
+						name: string;
+						provider: string;
+						request_count: number;
+						total_requests: number;
+						last_used: number | null;
+						created_at: number;
+						expires_at: number;
+						refresh_token: string;
+						paused: number;
+					},
+					[string]
+				>(
+					`SELECT
+						id, name, provider, request_count, total_requests,
+						last_used, created_at, expires_at, refresh_token,
+						COALESCE(paused, 0) as paused
+					FROM accounts WHERE id = ?`,
+				)
+				.get(accountId);
+
+			if (!account) {
+				return errorResponse(
+					InternalServerError("Failed to retrieve created account"),
+				);
+			}
+
+			return jsonResponse({
+				message: `OpenRouter account '${name}' added successfully`,
+				account: {
+					id: account.id,
+					name: account.name,
+					provider: account.provider,
+					requestCount: account.request_count,
+					totalRequests: account.total_requests,
+					lastUsed: account.last_used
+						? new Date(account.last_used).toISOString()
+						: null,
+					created: new Date(account.created_at).toISOString(),
+					paused: account.paused === 1,
+					priority: priority,
+					tokenStatus: "valid" as const,
+					tokenExpiresAt: new Date(account.expires_at).toISOString(),
+					rateLimitStatus: "OK",
+					rateLimitReset: null,
+					rateLimitRemaining: null,
+					rateLimitedUntil: null,
+					sessionInfo: "No active session",
+					hasRefreshToken: !!account.refresh_token,
+				},
+			});
+		} catch (error) {
+			log.error("OpenRouter account creation error:", error);
+			if (error instanceof ValidationError) {
+				return errorResponse(BadRequest(error.message));
+			}
+			return errorResponse(
+				error instanceof Error
+					? error
+					: new Error("Failed to create OpenRouter account"),
 			);
 		}
 	};

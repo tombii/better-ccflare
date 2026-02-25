@@ -1,3 +1,8 @@
+import {
+	LATEST_HAIKU_MODEL,
+	LATEST_OPUS_MODEL,
+	LATEST_SONNET_MODEL,
+} from "@better-ccflare/core";
 import React, { useState } from "react";
 import type { Account } from "../../api";
 import { Button } from "../ui/button";
@@ -111,7 +116,7 @@ export function AccountModelMappingsDialog({
 							id="opus"
 							value={modelMappings.opus}
 							onChange={(e) => handleInputChange("opus", e.target.value)}
-							placeholder="e.g., anthropic/claude-3-opus-20240229"
+							placeholder={`e.g., anthropic/${LATEST_OPUS_MODEL}`}
 						/>
 						<p className="text-xs text-muted-foreground">
 							Model to use when Claude requests Opus. Leave empty to use
@@ -124,7 +129,7 @@ export function AccountModelMappingsDialog({
 							id="sonnet"
 							value={modelMappings.sonnet}
 							onChange={(e) => handleInputChange("sonnet", e.target.value)}
-							placeholder="e.g., anthropic/claude-3-5-sonnet-20241022"
+							placeholder={`e.g., anthropic/${LATEST_SONNET_MODEL}`}
 						/>
 						<p className="text-xs text-muted-foreground">
 							Model to use when Claude requests Sonnet. Leave empty to use
@@ -137,7 +142,7 @@ export function AccountModelMappingsDialog({
 							id="haiku"
 							value={modelMappings.haiku}
 							onChange={(e) => handleInputChange("haiku", e.target.value)}
-							placeholder="e.g., anthropic/claude-3-haiku-20240307"
+							placeholder={`e.g., anthropic/${LATEST_HAIKU_MODEL}`}
 						/>
 						<p className="text-xs text-muted-foreground">
 							Model to use when Claude requests Haiku. Leave empty to use

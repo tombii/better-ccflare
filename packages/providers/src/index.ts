@@ -2,6 +2,8 @@
 
 // Export base provider class
 export { BaseProvider } from "./base";
+// Export Kilo usage fetcher
+export * from "./kilo-usage-fetcher";
 // Export NanoGPT usage fetcher
 export * from "./nanogpt-usage-fetcher";
 // Export OAuth utilities
@@ -32,9 +34,11 @@ export * from "./zai-usage-fetcher";
 import { AnthropicProvider } from "./providers/anthropic/provider";
 import { AnthropicCompatibleProvider } from "./providers/anthropic-compatible/provider";
 import { BedrockProvider } from "./providers/bedrock/provider";
+import { KiloProvider } from "./providers/kilo/provider";
 import { MinimaxProvider } from "./providers/minimax/provider";
 import { NanoGPTProvider } from "./providers/nanogpt/provider";
 import { OpenAICompatibleProvider } from "./providers/openai/provider";
+import { OpenRouterProvider } from "./providers/openrouter/provider";
 import { VertexAIProvider } from "./providers/vertex-ai/provider";
 import { ZaiProvider } from "./providers/zai/provider";
 // Auto-register built-in providers
@@ -42,6 +46,8 @@ import { registry } from "./registry";
 
 registry.registerProvider(new AnthropicProvider());
 registry.registerProvider(new BedrockProvider());
+registry.registerProvider(new KiloProvider());
+registry.registerProvider(new OpenRouterProvider());
 registry.registerProvider(new MinimaxProvider());
 registry.registerProvider(new NanoGPTProvider());
 registry.registerProvider(new ZaiProvider());

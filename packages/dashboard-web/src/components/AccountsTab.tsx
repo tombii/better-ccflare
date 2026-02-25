@@ -82,7 +82,9 @@ export function AccountsTab() {
 			| "openai-compatible"
 			| "nanogpt"
 			| "vertex-ai"
-			| "bedrock";
+			| "bedrock"
+			| "kilo"
+			| "openrouter";
 		priority: number;
 		customEndpoint?: string;
 	}) => {
@@ -207,6 +209,40 @@ export function AccountsTab() {
 	}) => {
 		try {
 			await api.addNanoGPTAccount(params);
+			await loadAccounts();
+			setAdding(false);
+			setActionError(null);
+		} catch (err) {
+			setActionError(formatError(err));
+			throw err;
+		}
+	};
+
+	const handleAddKiloAccount = async (params: {
+		name: string;
+		apiKey: string;
+		priority: number;
+		modelMappings?: { [key: string]: string };
+	}) => {
+		try {
+			await api.addKiloAccount(params);
+			await loadAccounts();
+			setAdding(false);
+			setActionError(null);
+		} catch (err) {
+			setActionError(formatError(err));
+			throw err;
+		}
+	};
+
+	const handleAddOpenRouterAccount = async (params: {
+		name: string;
+		apiKey: string;
+		priority: number;
+		modelMappings?: { [key: string]: string };
+	}) => {
+		try {
+			await api.addOpenRouterAccount(params);
 			await loadAccounts();
 			setAdding(false);
 			setActionError(null);
@@ -423,6 +459,8 @@ export function AccountsTab() {
 							onAddZaiAccount={handleAddZaiAccount}
 							onAddMinimaxAccount={handleAddMinimaxAccount}
 							onAddNanoGPTAccount={handleAddNanoGPTAccount}
+							onAddKiloAccount={handleAddKiloAccount}
+							onAddOpenRouterAccount={handleAddOpenRouterAccount}
 							onAddAnthropicCompatibleAccount={
 								handleAddAnthropicCompatibleAccount
 							}
