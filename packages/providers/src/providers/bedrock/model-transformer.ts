@@ -20,11 +20,7 @@ export function regionToGeographicPrefix(region: string): string {
 	if (region.startsWith("eu-")) return "eu";
 	if (region.startsWith("ca-")) return "ca";
 	if (region === "ap-northeast-1" || region === "ap-northeast-3") return "jp";
-	if (
-		region === "ap-southeast-2" ||
-		region === "ap-southeast-4"
-	)
-		return "au";
+	if (region === "ap-southeast-2" || region === "ap-southeast-4") return "au";
 	if (region.startsWith("ap-") || region.startsWith("me-")) return "apac";
 	// us-east-*, us-west-*, us-gov-* all use "us" (gov handled separately)
 	return "us";

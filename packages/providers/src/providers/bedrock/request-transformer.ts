@@ -104,7 +104,7 @@ export function transformMessagesRequest(
 						typeof block.text === "string" &&
 						block.text.trim().length > 0,
 				)
-				.map((block) => ({ text: block.text!.trim() }));
+				.map((block) => ({ text: block.text?.trim() }));
 		} else {
 			log.warn(
 				`Unexpected message content type at index ${index}: ${typeof msg.content}, dropping message`,
