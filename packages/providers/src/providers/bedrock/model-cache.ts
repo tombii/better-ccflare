@@ -23,12 +23,7 @@ type ModelFamily = "opus" | "sonnet" | "haiku";
 
 const MODEL_FAMILY_ALIASES: Record<ModelFamily, string[]> = {
 	opus: ["opus", "claude-opus", "claude-opus-4-6", "claude-4-opus"],
-	sonnet: [
-		"sonnet",
-		"claude-sonnet",
-		"claude-sonnet-4-6",
-		"claude-4-sonnet",
-	],
+	sonnet: ["sonnet", "claude-sonnet", "claude-sonnet-4-6", "claude-4-sonnet"],
 	haiku: ["haiku", "claude-haiku", "claude-haiku-4-5", "claude-4-haiku"],
 };
 
@@ -95,7 +90,9 @@ function normalizeModelName(modelId: string): string {
 	return normalized.toLowerCase();
 }
 
-function detectRequestedFamily(normalizedClientModel: string): ModelFamily | null {
+function detectRequestedFamily(
+	normalizedClientModel: string,
+): ModelFamily | null {
 	for (const [family, aliases] of Object.entries(MODEL_FAMILY_ALIASES) as [
 		ModelFamily,
 		string[],

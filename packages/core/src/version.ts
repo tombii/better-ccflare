@@ -18,7 +18,10 @@ export async function getVersion(): Promise<string> {
 	}
 
 	// 1. Build-time injected version (reliable for compiled binaries)
-	if (typeof __BETTER_CCFLARE_VERSION__ !== "undefined" && __BETTER_CCFLARE_VERSION__) {
+	if (
+		typeof __BETTER_CCFLARE_VERSION__ !== "undefined" &&
+		__BETTER_CCFLARE_VERSION__
+	) {
 		cachedVersion = __BETTER_CCFLARE_VERSION__;
 		return cachedVersion;
 	}
@@ -62,7 +65,10 @@ export function getVersionSync(): string {
 	}
 
 	// 1. Build-time injected version (reliable for compiled binaries)
-	if (typeof __BETTER_CCFLARE_VERSION__ !== "undefined" && __BETTER_CCFLARE_VERSION__) {
+	if (
+		typeof __BETTER_CCFLARE_VERSION__ !== "undefined" &&
+		__BETTER_CCFLARE_VERSION__
+	) {
 		cachedVersion = __BETTER_CCFLARE_VERSION__;
 		return cachedVersion;
 	}
