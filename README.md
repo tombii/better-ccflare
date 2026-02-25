@@ -731,7 +731,7 @@ Inspired by [snipeship/ccflare](https://github.com/snipeship/ccflare) - thanks f
 - [@anonym-uz](https://github.com/anonym-uz) - Critical auto-pause bug fix, analytics performance optimizations, request body truncation, and incremental vacuum implementation
 - [@makhweeb](https://github.com/makhweeb) - Enhanced request handling and analytics improvements
 - [@jw409](https://github.com/jw409) - Fixed OAuth account addition in WSL2 and compiled binaries by replacing unreliable prompt() with readline
-- [@materemias](https://github.com/materemias) - Testing and validation of Vertex AI provider implementation, thorough debugging of OAuth API key authentication (issue #54)
+- [@materemias](https://github.com/materemias) - Testing and validation of Vertex AI provider implementation, thorough debugging of OAuth API key authentication (issue #54), requesting and validating AWS Bedrock support (issue #49), and extensive testing of new releases and features
 - [@tqtensor](https://github.com/tqtensor) - Comprehensive memory leak fix preventing OOM kills with smart chunk capping, memory monitoring, and optimized cleanup (PR #67)
 - [@lunetics](https://github.com/lunetics) - Force-reset rate limit feature allowing manual clearing of stale rate-limit locks via API, CLI, and dashboard with immediate usage polling (PR #68), OOM kill prevention with periodic data retention cleanup, 3-day default retention, and time-scoped stats queries (PR #70), model registry sync removing retired models and adding sonnet-4.6 CLI shortcut (PR #71)
 

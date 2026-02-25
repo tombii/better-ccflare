@@ -1,8 +1,12 @@
 import { agentRegistry } from "@better-ccflare/agents";
+import {
+	getAllowedModelsMessage,
+	isValidClaudeModel,
+} from "@better-ccflare/core";
 import type { DatabaseOperations } from "@better-ccflare/database";
 import { errorResponse, jsonResponse } from "@better-ccflare/http-common";
 import type { AgentTool, AllowedModel } from "@better-ccflare/types";
-import { ALLOWED_MODELS, TOOL_PRESETS } from "@better-ccflare/types";
+import { TOOL_PRESETS } from "@better-ccflare/types";
 
 type ToolMode = keyof typeof TOOL_PRESETS | "custom";
 
@@ -37,10 +41,8 @@ export function createAgentUpdateHandler(dbOps: DatabaseOperations) {
 			}
 
 			if (body.model !== undefined) {
-				if (!ALLOWED_MODELS.includes(body.model)) {
-					return errorResponse(
-						`Model must be one of: ${ALLOWED_MODELS.join(", ")}`,
-					);
+				if (!isValidClaudeModel(body.model)) {
+					return errorResponse(`Invalid model. ${getAllowedModelsMessage()}`);
 				}
 				updates.model = body.model;
 			}

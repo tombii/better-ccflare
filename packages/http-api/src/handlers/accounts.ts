@@ -1,4 +1,8 @@
 import type { Database } from "bun:sqlite";
+import crypto from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import * as cliCommands from "@better-ccflare/cli-commands";
 import type { Config } from "@better-ccflare/config";
 import {
@@ -66,6 +70,7 @@ export function createAccountsListHandler(db: Database) {
 					COALESCE(auto_refresh_enabled, 0) as auto_refresh_enabled,
 					custom_endpoint,
 					model_mappings,
+					cross_region_mode,
 					CASE
 						WHEN expires_at > ?1 THEN 1
 						ELSE 0
@@ -109,6 +114,7 @@ export function createAccountsListHandler(db: Database) {
 			auto_refresh_enabled: 0 | 1;
 			custom_endpoint: string | null;
 			model_mappings: string | null;
+			cross_region_mode: string | null;
 		}>;
 
 		// Fetch usage data for all Claude CLI OAuth accounts (those with refresh tokens)
@@ -309,6 +315,7 @@ export function createAccountsListHandler(db: Database) {
 				usageWindow,
 				usageData: fullUsageData, // Full usage data for UI
 				hasRefreshToken: !!account.refresh_token, // OAuth accounts have refresh tokens
+				crossRegionMode: account.cross_region_mode,
 			};
 		});
 
@@ -2023,6 +2030,271 @@ export function createAccountReloadHandler(dbOps: DatabaseOperations) {
 				error instanceof Error
 					? error
 					: new Error("Failed to reload account tokens"),
+			);
+		}
+	};
+}
+
+/**
+ * Check if an AWS profile exists in ~/.aws/credentials
+ */
+function checkAwsProfileExists(profile: string): boolean {
+	try {
+		const credentialsPath = join(homedir(), ".aws", "credentials");
+		if (!existsSync(credentialsPath)) {
+			return false;
+		}
+		const content = readFileSync(credentialsPath, "utf-8");
+		// Match [profile] section header (handles default and named profiles)
+		const profileRegex = new RegExp(`^\\[${profile}\\]`, "m");
+		return profileRegex.test(content);
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * Read region from ~/.aws/config for a given profile
+ * AWS config format: [profile <name>] for named profiles, [default] for default
+ */
+function readAwsRegion(profile: string): string | null {
+	try {
+		const configPath = join(homedir(), ".aws", "config");
+		if (!existsSync(configPath)) {
+			return null;
+		}
+		const content = readFileSync(configPath, "utf-8");
+		// In ~/.aws/config, the default profile is [default], named profiles are [profile <name>]
+		const sectionHeader =
+			profile === "default" ? "\\[default\\]" : `\\[profile ${profile}\\]`;
+		const sectionRegex = new RegExp(`${sectionHeader}[\\s\\S]*?(?=\\[|$)`);
+		const sectionMatch = content.match(sectionRegex);
+		if (!sectionMatch) return null;
+		const regionMatch = sectionMatch[0].match(/^region\s*=\s*(.+)$/m);
+		return regionMatch ? regionMatch[1].trim() : null;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Create an AWS profiles list handler
+ * Returns all AWS profiles from ~/.aws/credentials with their regions
+ */
+export function createAwsProfilesListHandler() {
+	return async (): Promise<Response> => {
+		try {
+			const credentialsPath = join(homedir(), ".aws", "credentials");
+
+			// If credentials file doesn't exist, return empty array
+			if (!existsSync(credentialsPath)) {
+				log.debug("AWS credentials file not found");
+				return jsonResponse([]);
+			}
+
+			// Read and parse credentials file
+			const content = readFileSync(credentialsPath, "utf-8");
+			const profiles: Array<{ name: string; region: string | null }> = [];
+
+			// Match all profile sections [profile-name]
+			const profileMatches = content.matchAll(/^\[([^\]]+)\]/gm);
+
+			for (const match of profileMatches) {
+				const profileName = match[1];
+				// Try to read region from config
+				const region = readAwsRegion(profileName);
+				profiles.push({ name: profileName, region });
+			}
+
+			log.debug(`Found ${profiles.length} AWS profiles`);
+			return jsonResponse(profiles);
+		} catch (error) {
+			log.error("Failed to list AWS profiles:", error);
+			// Return empty array on error instead of failing
+			return jsonResponse([]);
+		}
+	};
+}
+
+/**
+ * Create a Bedrock account add handler
+ */
+export function createBedrockAccountAddHandler(dbOps: DatabaseOperations) {
+	return async (req: Request): Promise<Response> => {
+		try {
+			const body = await req.json();
+
+			// Validate account name
+			const name = validateString(body.name, "name", {
+				required: true,
+				minLength: 1,
+				maxLength: 100,
+				pattern: patterns.accountName,
+				patternErrorMessage:
+					"can only contain letters, numbers, spaces, hyphens, and underscores",
+				transform: sanitizers.trim,
+			});
+
+			if (!name) {
+				return errorResponse(BadRequest("Account name is required"));
+			}
+
+			// Validate profile
+			const profile = validateString(body.profile, "profile", {
+				required: true,
+				minLength: 1,
+				transform: sanitizers.trim,
+			});
+
+			if (!profile) {
+				return errorResponse(BadRequest("AWS profile is required"));
+			}
+
+			// Validate region
+			const region = validateString(body.region, "region", {
+				required: true,
+				minLength: 1,
+				transform: sanitizers.trim,
+			});
+
+			if (!region) {
+				return errorResponse(BadRequest("Region is required"));
+			}
+
+			// Validate priority
+			const priority = validatePriority(body.priority);
+
+			// Validate cross_region_mode
+			const crossRegionMode = body.cross_region_mode ?? "geographic";
+			if (
+				crossRegionMode !== "geographic" &&
+				crossRegionMode !== "global" &&
+				crossRegionMode !== "regional"
+			) {
+				return errorResponse(
+					BadRequest(
+						"cross_region_mode must be one of: geographic, global, regional",
+					),
+				);
+			}
+
+			// Validate custom model (optional)
+			const customModel = body.customModel
+				? validateString(body.customModel, "customModel", {
+						required: false,
+						minLength: 1,
+						maxLength: 200,
+						transform: sanitizers.trim,
+					})
+				: undefined;
+
+			// Build model_mappings JSON if custom model specified
+			let modelMappings: string | null = null;
+			if (customModel) {
+				modelMappings = JSON.stringify({ custom: customModel });
+			}
+
+			// Check if AWS profile exists
+			if (!checkAwsProfileExists(profile)) {
+				return errorResponse(
+					BadRequest(
+						`AWS profile '${profile}' not found. Check ~/.aws/credentials or run: aws configure --profile ${profile}`,
+					),
+				);
+			}
+
+			// Store profile and region in custom_endpoint as "bedrock:profile:region"
+			const bedrockConfig = `bedrock:${profile}:${region}`;
+
+			// Create Bedrock account directly in database
+			const accountId = crypto.randomUUID();
+			const now = Date.now();
+			const oneYearFromNow = now + 365 * 24 * 60 * 60 * 1000; // 1 year expiry
+			const db = dbOps.getDatabase();
+			db.run(
+				`INSERT INTO accounts (
+					id, name, provider, api_key, refresh_token, access_token,
+					expires_at, created_at, request_count, total_requests, priority, custom_endpoint, cross_region_mode, model_mappings
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				[
+					accountId,
+					name,
+					"bedrock",
+					null, // No API key - uses AWS credentials
+					"", // Empty refresh token
+					null, // No access token
+					oneYearFromNow, // Set expiry to 1 year from now
+					now,
+					0,
+					0,
+					priority,
+					bedrockConfig,
+					crossRegionMode,
+					modelMappings,
+				],
+			);
+
+			log.info(
+				`Successfully added Bedrock account: ${name} (Profile: ${profile}, Region: ${region}, CrossRegionMode: ${crossRegionMode}, Priority ${priority}${customModel ? `, CustomModel: ${customModel}` : ""})`,
+			);
+
+			// Get the created account for response
+			const account = db
+				.query<
+					{
+						id: string;
+						name: string;
+						provider: string;
+						request_count: number;
+						total_requests: number;
+						last_used: number | null;
+						created_at: number;
+						expires_at: number | null;
+						refresh_token: string;
+						paused: number;
+					},
+					[string]
+				>(
+					`SELECT
+						id, name, provider, request_count, total_requests,
+						last_used, created_at, expires_at, refresh_token,
+						COALESCE(paused, 0) as paused
+					FROM accounts WHERE id = ?`,
+				)
+				.get(accountId);
+
+			if (!account) {
+				return errorResponse(
+					InternalServerError("Failed to retrieve created account"),
+				);
+			}
+
+			return jsonResponse({
+				message: `Bedrock account '${name}' added successfully`,
+				account: {
+					id: account.id,
+					name: account.name,
+					provider: account.provider,
+					request_count: account.request_count,
+					total_requests: account.total_requests,
+					last_used: account.last_used,
+					created_at: new Date(account.created_at),
+					expires_at: account.expires_at ? new Date(account.expires_at) : null,
+					tokenStatus: "valid",
+					mode: "bedrock",
+					paused: account.paused === 1,
+					cross_region_mode: crossRegionMode,
+				},
+			});
+		} catch (error) {
+			log.error("Failed to add Bedrock account:", error);
+			if (error instanceof ValidationError) {
+				return errorResponse(BadRequest(error.message));
+			}
+			return errorResponse(
+				InternalServerError(
+					error instanceof Error ? error.message : "Failed to add account",
+				),
 			);
 		}
 	};

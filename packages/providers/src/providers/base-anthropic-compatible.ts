@@ -1,7 +1,7 @@
 import {
 	BUFFER_SIZES,
 	estimateCostUSD,
-	KNOWN_PATTERNS,
+	getModelFamily,
 	parseModelMappings,
 	TIME_CONSTANTS,
 } from "@better-ccflare/core";
@@ -206,13 +206,10 @@ export abstract class BaseAnthropicCompatibleProvider extends BaseProvider {
 			return accountMappings[originalModel];
 		}
 
-		// Try pattern matching for known model families (more efficient)
-		const modelLower = originalModel.toLowerCase();
-
-		for (const pattern of KNOWN_PATTERNS) {
-			if (modelLower.includes(pattern) && accountMappings[pattern]) {
-				return accountMappings[pattern];
-			}
+		// Use shared pattern detection
+		const family = getModelFamily(originalModel);
+		if (family && accountMappings[family]) {
+			return accountMappings[family];
 		}
 
 		return originalModel;

@@ -4,12 +4,16 @@
 	"type": "module",
 	"main": "./src/index.ts",
 	"exports": {
-		".": "./src/index.ts"
+		".": "./src/index.ts",
+		"./bedrock": "./src/providers/bedrock/index.ts"
 	},
 	"scripts": {
 		"typecheck": "bunx tsc --noEmit"
 	},
 	"dependencies": {
+		"@aws-sdk/client-bedrock": "^3.984.0",
+		"@aws-sdk/client-bedrock-runtime": "^3.984.0",
+		"@aws-sdk/credential-providers": "^3.984.0",
 		"@better-ccflare/core": "workspace:*",
 		"google-auth-library": "^10.5.0"
 	}

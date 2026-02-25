@@ -3,6 +3,9 @@
 Load balancer proxy for Claude distributing requests across multiple account providers to avoid rate limiting.
 
 ## ⚠️ CRITICAL: File Exclusions
+
+**README files** - Only modify `./README.md` (root). Do NOT modify `apps/cli/README.md`.
+
 **NEVER TOUCH `inline-worker.ts`** - This file is auto-generated during build and MUST be completely ignored:
 - ❌ Do NOT read it
 - ❌ Do NOT edit it
@@ -14,8 +17,8 @@ Load balancer proxy for Claude distributing requests across multiple account pro
 When using glob patterns or file searches, explicitly exclude this file.
 
 ## Branch Management
-- Feature branches: Create from `dev` (not main). Pull latest first: `git checkout dev && git pull origin dev && git checkout -b feature/name`
-- Hotfixes: Create from `main`. Pull latest first: `git checkout main && git pull origin main && git checkout -b feature/name`
+- Feature branches: Create from `main`. Pull latest first: `git checkout main && git pull origin main && git checkout -b feature/name`
+- Hotfixes: Create from `main`. Pull latest first: `git checkout main && git pull origin main && git checkout -b hotfix/name`
 - PRs: Use `gh pr checkout <PR_NUMBER>` or `git checkout <branch-name>`. Never make PR changes on main.
 
 ## Issue Management

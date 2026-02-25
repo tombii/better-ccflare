@@ -81,7 +81,8 @@ export function AccountsTab() {
 			| "anthropic-compatible"
 			| "openai-compatible"
 			| "nanogpt"
-			| "vertex-ai";
+			| "vertex-ai"
+			| "bedrock";
 		priority: number;
 		customEndpoint?: string;
 	}) => {
@@ -103,6 +104,25 @@ export function AccountsTab() {
 	}) => {
 		try {
 			await api.addVertexAIAccount(params);
+			await loadAccounts();
+			setAdding(false);
+			setActionError(null);
+		} catch (err) {
+			setActionError(formatError(err));
+			throw err;
+		}
+	};
+
+	const handleAddBedrockAccount = async (params: {
+		name: string;
+		profile: string;
+		region: string;
+		priority: number;
+		cross_region_mode?: "geographic" | "global" | "regional";
+		customModel?: string;
+	}) => {
+		try {
+			await api.addBedrockAccount(params);
 			await loadAccounts();
 			setAdding(false);
 			setActionError(null);
@@ -399,6 +419,7 @@ export function AccountsTab() {
 							onAddAccount={handleAddAccount}
 							onCompleteAccount={handleCompleteAccount}
 							onAddVertexAIAccount={handleAddVertexAIAccount}
+							onAddBedrockAccount={handleAddBedrockAccount}
 							onAddZaiAccount={handleAddZaiAccount}
 							onAddMinimaxAccount={handleAddMinimaxAccount}
 							onAddNanoGPTAccount={handleAddNanoGPTAccount}

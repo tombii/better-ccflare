@@ -211,7 +211,8 @@ class API extends HttpClient {
 			| "anthropic-compatible"
 			| "openai-compatible"
 			| "nanogpt"
-			| "vertex-ai";
+			| "vertex-ai"
+			| "bedrock";
 		apiKey?: string;
 		priority: number;
 		customEndpoint?: string;
@@ -407,6 +408,64 @@ class API extends HttpClient {
 	}): Promise<{ message: string; account: Account }> {
 		const startTime = Date.now();
 		const url = "/api/accounts/vertex-ai";
+
+		this.logger.debug(`→ POST ${url}`, { data });
+
+		try {
+			const response = await this.post<{ message: string; account: Account }>(
+				url,
+				data,
+			);
+			const duration = Date.now() - startTime;
+			this.logger.debug(`← POST ${url} - 200 (${duration}ms)`);
+			return response;
+		} catch (error) {
+			const duration = Date.now() - startTime;
+			this.logger.error(`✗ POST ${url} - ERROR (${duration}ms)`, {
+				error: error instanceof Error ? error.message : String(error),
+				stack: error instanceof Error ? error.stack : undefined,
+			});
+			if (error instanceof HttpError) {
+				throw new Error(error.message);
+			}
+			throw error;
+		}
+	}
+
+	async getAwsProfiles(): Promise<
+		Array<{ name: string; region: string | null }>
+	> {
+		const startTime = Date.now();
+		const url = "/api/aws/profiles";
+
+		this.logger.debug(`→ GET ${url}`);
+
+		try {
+			const response =
+				await this.get<Array<{ name: string; region: string | null }>>(url);
+			const duration = Date.now() - startTime;
+			this.logger.debug(`← GET ${url} - 200 (${duration}ms)`);
+			return response;
+		} catch (error) {
+			const duration = Date.now() - startTime;
+			this.logger.error(`✗ GET ${url} - ERROR (${duration}ms)`, {
+				error: error instanceof Error ? error.message : String(error),
+				stack: error instanceof Error ? error.stack : undefined,
+			});
+			throw error;
+		}
+	}
+
+	async addBedrockAccount(data: {
+		name: string;
+		profile: string;
+		region: string;
+		priority: number;
+		cross_region_mode?: "geographic" | "global" | "regional";
+		customModel?: string;
+	}): Promise<{ message: string; account: Account }> {
+		const startTime = Date.now();
+		const url = "/api/accounts/bedrock";
 
 		this.logger.debug(`→ POST ${url}`, { data });
 
@@ -1316,6 +1375,32 @@ class API extends HttpClient {
 			url,
 			"account token health",
 		);
+	}
+
+	async updateApiKeyRole(
+		keyId: string,
+		role: "admin" | "api-only",
+	): Promise<void> {
+		const startTime = Date.now();
+		const url = `/api/api-keys/${encodeURIComponent(keyId)}/role`;
+
+		this.logger.debug(`→ PATCH ${url}`, { role });
+
+		try {
+			await this.patch(url, { role });
+			const duration = Date.now() - startTime;
+			this.logger.debug(`← PATCH ${url} - 200 (${duration}ms)`);
+		} catch (error) {
+			const duration = Date.now() - startTime;
+			this.logger.error(`✗ PATCH ${url} - ERROR (${duration}ms)`, {
+				error: error instanceof Error ? error.message : String(error),
+				stack: error instanceof Error ? error.stack : undefined,
+			});
+			if (error instanceof HttpError) {
+				throw new Error(error.message);
+			}
+			throw error;
+		}
 	}
 }
 

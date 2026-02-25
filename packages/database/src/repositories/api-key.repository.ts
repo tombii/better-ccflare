@@ -9,7 +9,7 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 		const rows = this.query<ApiKeyRow>(`
 			SELECT
 				id, name, hashed_key, prefix_last_8, created_at,
-				last_used, usage_count, is_active
+				last_used, usage_count, is_active, role
 			FROM api_keys
 			ORDER BY created_at DESC
 		`);
@@ -23,7 +23,7 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 		const rows = this.query<ApiKeyRow>(`
 			SELECT
 				id, name, hashed_key, prefix_last_8, created_at,
-				last_used, usage_count, is_active
+				last_used, usage_count, is_active, role
 			FROM api_keys
 			WHERE is_active = 1
 			ORDER BY created_at DESC
@@ -39,7 +39,7 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 			`
 			SELECT
 				id, name, hashed_key, prefix_last_8, created_at,
-				last_used, usage_count, is_active
+				last_used, usage_count, is_active, role
 			FROM api_keys
 			WHERE id = ?
 		`,
@@ -57,7 +57,7 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 			`
 			SELECT
 				id, name, hashed_key, prefix_last_8, created_at,
-				last_used, usage_count, is_active
+				last_used, usage_count, is_active, role
 			FROM api_keys
 			WHERE hashed_key = ? AND is_active = 1
 		`,
@@ -75,7 +75,7 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 			`
 			SELECT
 				id, name, hashed_key, prefix_last_8, created_at,
-				last_used, usage_count, is_active
+				last_used, usage_count, is_active, role
 			FROM api_keys
 			WHERE name = ?
 		`,
@@ -109,8 +109,8 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 			`
 			INSERT INTO api_keys (
 				id, name, hashed_key, prefix_last_8, created_at,
-				last_used, is_active
-			) VALUES (?, ?, ?, ?, ?, ?, ?)
+				last_used, is_active, role
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		`,
 			[
 				apiKey.id,
@@ -120,6 +120,7 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 				apiKey.created_at,
 				apiKey.last_used,
 				apiKey.is_active,
+				apiKey.role,
 			],
 		);
 	}
@@ -181,6 +182,22 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 			WHERE id = ?
 		`,
 			[id],
+		);
+
+		return changes > 0;
+	}
+
+	/**
+	 * Update the role of an API key
+	 */
+	updateRole(id: string, role: "admin" | "api-only"): boolean {
+		const changes = this.runWithChanges(
+			`
+			UPDATE api_keys
+			SET role = ?
+			WHERE id = ?
+		`,
+			[role, id],
 		);
 
 		return changes > 0;

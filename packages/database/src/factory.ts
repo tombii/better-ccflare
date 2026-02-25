@@ -52,6 +52,9 @@ export function getInstance(fastMode?: boolean): DatabaseOperations {
 					...(runtimeConfig.database.mmapSize !== undefined && {
 						mmapSize: runtimeConfig.database.mmapSize,
 					}),
+					...(runtimeConfig.database.pageSize !== undefined && {
+						pageSize: runtimeConfig.database.pageSize,
+					}),
 				}
 			: undefined;
 
