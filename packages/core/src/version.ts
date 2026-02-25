@@ -3,7 +3,7 @@
  */
 
 // Claude CLI version to use in user-agent headers
-export const CLAUDE_CLI_VERSION = "2.1.32";
+export const CLAUDE_CLI_VERSION = "2.1.58";
 
 // Build-time injected version via --define __BETTER_CCFLARE_VERSION__="x.y.z"
 // Replaced by bun bundler with a string literal; undefined at dev/runtime.

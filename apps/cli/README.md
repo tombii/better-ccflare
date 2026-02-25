@@ -16,7 +16,7 @@ https://github.com/user-attachments/assets/c859872f-ca5e-4f8b-b6a0-7cc7461fe62a
 ## Why better-ccflare?
 
 - **🚀 Zero Rate Limit Errors** - Automatically distribute requests across multiple accounts
-- **🤖 Multi-Provider Support** - Claude OAuth, Claude API console, Vertex AI, NanoGPT, z.ai, Minimax, Anthropic-compatible, and OpenAI-compatible providers
+- **🤖 Multi-Provider Support** - Claude OAuth, Claude API console, Vertex AI, AWS Bedrock, NanoGPT, z.ai, Minimax, Anthropic-compatible, and OpenAI-compatible providers
 - **🔒 OAuth Token Health** - Real-time monitoring of OAuth token status with automatic refresh and health indicators
 - **🔗 Custom API Endpoints** - Configure custom endpoints for Anthropic accounts for enterprise deployments
 - **☁️ OpenAI-Compatible Support** - Use OpenAI-compatible providers like OpenRouter, Together AI, and more with Claude API format
@@ -36,7 +36,7 @@ This project builds upon the excellent foundation of [snipeship/ccflare](https:/
 **🎯 Core Improvements (v3.0.0):**
 - **Enhanced Security** - Critical fixes for authentication bypass, command injection, and PKCE implementation
 - **OAuth Token Health Monitoring** - Real-time status indicators and automatic token refresh with 30-minute buffer
-- **Extended Provider Support** - NanoGPT (with dynamic pricing), Minimax, Anthropic-compatible, and OpenAI-compatible providers
+- **Extended Provider Support** - AWS Bedrock, NanoGPT (with dynamic pricing), Minimax, Anthropic-compatible, and OpenAI-compatible providers
 - **Simplified Load Balancing** - Removed tier system for O(1) priority-based selection
 - **Real-time Analytics Dashboard** - Beautiful web UI with fixed request history (no disappearing requests)
 - **Package Distribution** - Available via npm and bun for easy installation
@@ -639,6 +639,8 @@ We recommend using one of the workarounds above until the npm bug is fixed.
 ### ☁️ Multi-Provider Support
 - **Claude OAuth** - Anthropic OAuth accounts with 5-hour usage windows and session tracking (rate limit window based)
 - **Claude Console API** - Anthropic API key accounts with pay-as-you-go model (no session tracking)
+- **AWS Bedrock** - Native AWS Bedrock integration with SigV4 authentication, inference profile support (geographic/global/regional), and automatic credential chain resolution via AWS CLI profiles
+- **Vertex AI** - Google Cloud Vertex AI integration with service account authentication
 - **z.ai, Minimax** - API key based providers with pay-as-you-go model
 - **Anthropic-Compatible** - Custom Anthropic-compatible providers with pay-as-you-go model
 - **OpenAI-Compatible** - OpenAI-compatible providers (OpenRouter, Together AI, etc.) with Claude API format
