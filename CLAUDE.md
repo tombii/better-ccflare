@@ -3,6 +3,9 @@
 Load balancer proxy for Claude distributing requests across multiple account providers to avoid rate limiting.
 
 ## ⚠️ CRITICAL: File Exclusions
+
+**README files** - Only modify `./README.md` (root). Do NOT modify `apps/cli/README.md`.
+
 **NEVER TOUCH `inline-worker.ts`** - This file is auto-generated during build and MUST be completely ignored:
 - ❌ Do NOT read it
 - ❌ Do NOT edit it
