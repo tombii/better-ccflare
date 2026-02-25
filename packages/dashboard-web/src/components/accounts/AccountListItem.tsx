@@ -73,6 +73,19 @@ export function AccountListItem({
 		typeof account.usageUtilization === "number" &&
 		account.usageUtilization < 100;
 
+	// Parse Bedrock profile and region from custom_endpoint
+	let bedrockProfile: string | null = null;
+	let bedrockRegion: string | null = null;
+	let bedrockCrossRegionMode: string | null = null;
+	if (account.provider === "bedrock" && account.customEndpoint) {
+		const match = account.customEndpoint.match(/^bedrock:([^:]+):(.+)$/);
+		if (match) {
+			bedrockProfile = match[1];
+			bedrockRegion = match[2];
+		}
+		bedrockCrossRegionMode = account.crossRegionMode || "geographic";
+	}
+
 	return (
 		<div
 			key={account.name}
@@ -124,7 +137,44 @@ export function AccountListItem({
 								</>
 							)}
 						</div>
-						<p className="text-sm text-muted-foreground">{account.provider}</p>
+						<div className="flex items-center gap-2">
+							<p className="text-sm text-muted-foreground">
+								{account.provider}
+							</p>
+							{account.provider === "bedrock" && bedrockProfile && (
+								<>
+									<span className="text-sm text-muted-foreground">•</span>
+									<p className="text-sm text-muted-foreground">
+										Profile: {bedrockProfile}
+									</p>
+									{bedrockRegion && (
+										<>
+											<span className="text-sm text-muted-foreground">•</span>
+											<div
+												className="flex items-center gap-1"
+												title={`Region: ${bedrockRegion}`}
+											>
+												<Globe className="h-3 w-3 text-muted-foreground" />
+												<p className="text-sm text-muted-foreground">
+													{bedrockRegion}
+												</p>
+											</div>
+										</>
+									)}
+									{bedrockCrossRegionMode && (
+										<>
+											<span className="text-sm text-muted-foreground">•</span>
+											<p
+												className="text-sm text-muted-foreground"
+												title="Cross-region inference mode"
+											>
+												{bedrockCrossRegionMode}
+											</p>
+										</>
+									)}
+								</>
+							)}
+						</div>
 					</div>
 					<div className="flex items-center gap-2">
 						{presenter.isRateLimited && (

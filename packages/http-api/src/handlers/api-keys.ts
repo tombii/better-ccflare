@@ -5,6 +5,7 @@ import {
 	generateApiKey,
 	getApiKey,
 	listApiKeys,
+	updateApiKeyRole,
 } from "@better-ccflare/cli-commands";
 import type { DatabaseOperations } from "@better-ccflare/database";
 import { BadRequest, NotFound } from "@better-ccflare/errors";
@@ -35,7 +36,7 @@ export function createApiKeysGenerateHandler(dbOps: DatabaseOperations) {
 	return async (req: Request): Promise<Response> => {
 		try {
 			const body = await req.json();
-			const { name } = body;
+			const { name, role = "api-only" } = body;
 
 			if (!name || typeof name !== "string" || name.trim().length === 0) {
 				return errorResponse(
@@ -43,13 +44,21 @@ export function createApiKeysGenerateHandler(dbOps: DatabaseOperations) {
 				);
 			}
 
-			const result = await generateApiKey(dbOps, name.trim());
+			// Validate role
+			if (role !== "admin" && role !== "api-only") {
+				return errorResponse(
+					BadRequest("Role must be either 'admin' or 'api-only'"),
+				);
+			}
+
+			const result = await generateApiKey(dbOps, name.trim(), role);
 			const response: ApiKeyGenerationResult = {
 				id: result.id,
 				name: result.name,
 				apiKey: result.apiKey, // Full key shown only once
 				prefixLast8: result.prefixLast8,
 				createdAt: result.createdAt,
+				role: result.role,
 			};
 
 			return new Response(JSON.stringify({ success: true, data: response }), {
@@ -156,6 +165,38 @@ export function createApiKeysStatsHandler(dbOps: DatabaseOperations) {
 					active,
 					inactive,
 				},
+			};
+
+			return new Response(JSON.stringify(response), {
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			});
+		} catch (error) {
+			return errorResponse(error);
+		}
+	};
+}
+
+export function createApiKeyUpdateRoleHandler(dbOps: DatabaseOperations) {
+	return async (
+		req: Request,
+		keyId: string,
+		currentApiKeyId?: string,
+	): Promise<Response> => {
+		try {
+			const body = await req.json();
+			const { role } = body;
+
+			if (!role || (role !== "admin" && role !== "api-only")) {
+				return errorResponse(
+					BadRequest("Role must be either 'admin' or 'api-only'"),
+				);
+			}
+
+			await updateApiKeyRole(dbOps, keyId, role, currentApiKeyId);
+			const response = {
+				success: true,
+				message: `API key role updated to '${role}' successfully`,
 			};
 
 			return new Response(JSON.stringify(response), {

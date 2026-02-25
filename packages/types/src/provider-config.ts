@@ -10,6 +10,7 @@ export const PROVIDER_NAMES = {
 	OPENAI_COMPATIBLE: "openai-compatible",
 	NANOGPT: "nanogpt",
 	VERTEX_AI: "vertex-ai",
+	BEDROCK: "bedrock",
 } as const;
 
 export type ProviderName = (typeof PROVIDER_NAMES)[keyof typeof PROVIDER_NAMES];
@@ -86,6 +87,12 @@ export const PROVIDER_CONFIG: Record<ProviderName, ProviderConfig> = {
 		supportsUsageTracking: false, // Vertex AI doesn't have a usage tracking API
 		supportsOAuth: false, // Vertex AI uses Google Cloud authentication (not Anthropic OAuth)
 		defaultEndpoint: "https://aiplatform.googleapis.com",
+	},
+	[PROVIDER_NAMES.BEDROCK]: {
+		requiresSessionTracking: false, // Pay-as-you-go, no 5-hour windows
+		supportsUsageTracking: false, // Usage extracted per-request, not via polling API
+		supportsOAuth: false, // AWS credentials, not OAuth
+		defaultEndpoint: "bedrock://aws", // Placeholder (SDK-based, not HTTP)
 	},
 } as const satisfies Record<ProviderName, ProviderConfig>;
 

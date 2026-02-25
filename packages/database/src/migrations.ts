@@ -125,6 +125,29 @@ export function ensureSchema(db: Database): void {
 	db.run(
 		`CREATE INDEX IF NOT EXISTS idx_api_keys_active ON api_keys(is_active)`,
 	);
+
+	// Create model_translations table for mapping client model names to Bedrock model IDs
+	db.run(`
+		CREATE TABLE IF NOT EXISTS model_translations (
+			id TEXT PRIMARY KEY,
+			client_name TEXT NOT NULL,
+			bedrock_model_id TEXT NOT NULL,
+			is_default INTEGER DEFAULT 1,
+			auto_discovered INTEGER DEFAULT 0,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
+		)
+	`);
+
+	// Create index for fast lookups by client name
+	db.run(
+		`CREATE INDEX IF NOT EXISTS idx_model_translations_client_name ON model_translations(client_name)`,
+	);
+
+	// Create unique index to prevent duplicate mappings
+	db.run(
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_model_translations_unique ON model_translations(client_name, bedrock_model_id)`,
+	);
 }
 
 export function runMigrations(db: Database, dbPath?: string): void {
@@ -318,6 +341,14 @@ export function runMigrations(db: Database, dbPath?: string): void {
 			log.info("Added model_mappings column to accounts table");
 		}
 
+		// Add cross_region_mode column for Bedrock cross-region inference configuration
+		if (!initialAccountsColumnNames.includes("cross_region_mode")) {
+			db.prepare(
+				"ALTER TABLE accounts ADD COLUMN cross_region_mode TEXT DEFAULT 'geographic'",
+			).run();
+			log.info("Added cross_region_mode column to accounts table");
+		}
+
 		// Run API key storage migration to move API keys from refresh_token to api_key field
 		// This is a data migration that should happen after all schema changes
 		try {
@@ -463,6 +494,47 @@ export function runMigrations(db: Database, dbPath?: string): void {
 		if (!requestsColumnNames.includes("api_key_name")) {
 			db.prepare("ALTER TABLE requests ADD COLUMN api_key_name TEXT").run();
 			log.info("Added api_key_name column to requests table");
+		}
+
+		// Check columns in api_keys table
+		const apiKeysInfo = db
+			.prepare("PRAGMA table_info(api_keys)")
+			.all() as Array<{
+			cid: number;
+			name: string;
+			type: string;
+			notnull: number;
+			// biome-ignore lint/suspicious/noExplicitAny: SQLite pragma can return various default value types
+			dflt_value: any;
+			pk: number;
+		}>;
+
+		const apiKeysColumnNames = apiKeysInfo.map((col) => col.name);
+
+		// Add role column to api_keys if it doesn't exist (Migration v4)
+		if (!apiKeysColumnNames.includes("role")) {
+			// Add column with default value
+			db.prepare(
+				"ALTER TABLE api_keys ADD COLUMN role TEXT NOT NULL DEFAULT 'api-only'",
+			).run();
+			log.info("Added role column to api_keys table");
+
+			// Update existing keys to 'admin' for backwards compatibility
+			const updateResult = db
+				.prepare("UPDATE api_keys SET role = 'admin' WHERE role = 'api-only'")
+				.run();
+			const updatedCount = (updateResult.changes as number) || 0;
+			if (updatedCount > 0) {
+				log.info(
+					`Updated ${updatedCount} existing API key(s) to 'admin' role for backwards compatibility`,
+				);
+			}
+
+			// Create index on role column
+			db.prepare(
+				"CREATE INDEX IF NOT EXISTS idx_api_keys_role ON api_keys(role)",
+			).run();
+			log.info("Created index on api_keys role column");
 		}
 
 		// Add performance indexes
@@ -617,6 +689,81 @@ export function runMigrations(db: Database, dbPath?: string): void {
 		} catch (error) {
 			log.warn(`Error sanitizing account names: ${(error as Error).message}`);
 		}
+
+		// Populate default Claude model translations for Bedrock
+		// Use INSERT OR IGNORE to allow safe re-runs
+		const now = Date.now();
+		const defaultMappings = [
+			// Dated models
+			{
+				id: "model-trans-1",
+				client: "claude-3-5-sonnet-20241022",
+				bedrock: "us.anthropic.claude-3-5-sonnet-20241022-v2:0",
+			},
+			{
+				id: "model-trans-2",
+				client: "claude-3-5-sonnet-20240620",
+				bedrock: "us.anthropic.claude-3-5-sonnet-20240620-v1:0",
+			},
+			{
+				id: "model-trans-3",
+				client: "claude-3-5-haiku-20241022",
+				bedrock: "us.anthropic.claude-3-5-haiku-20241022-v1:0",
+			},
+			{
+				id: "model-trans-4",
+				client: "claude-3-opus-20240229",
+				bedrock: "us.anthropic.claude-3-opus-20240229-v1:0",
+			},
+			{
+				id: "model-trans-5",
+				client: "claude-3-sonnet-20240229",
+				bedrock: "us.anthropic.claude-3-sonnet-20240229-v1:0",
+			},
+			{
+				id: "model-trans-6",
+				client: "claude-3-haiku-20240307",
+				bedrock: "us.anthropic.claude-3-haiku-20240307-v1:0",
+			},
+			// Convenience aliases (point to latest versions)
+			{
+				id: "model-trans-7",
+				client: "claude-3-5-sonnet",
+				bedrock: "us.anthropic.claude-3-5-sonnet-20241022-v2:0",
+			},
+			{
+				id: "model-trans-8",
+				client: "claude-3-5-haiku",
+				bedrock: "us.anthropic.claude-3-5-haiku-20241022-v1:0",
+			},
+			{
+				id: "model-trans-9",
+				client: "claude-3-opus",
+				bedrock: "us.anthropic.claude-3-opus-20240229-v1:0",
+			},
+			{
+				id: "model-trans-10",
+				client: "claude-3-sonnet",
+				bedrock: "us.anthropic.claude-3-sonnet-20240229-v1:0",
+			},
+			{
+				id: "model-trans-11",
+				client: "claude-3-haiku",
+				bedrock: "us.anthropic.claude-3-haiku-20240307-v1:0",
+			},
+		];
+
+		for (const mapping of defaultMappings) {
+			db.prepare(
+				`INSERT OR IGNORE INTO model_translations (id, client_name, bedrock_model_id, is_default, auto_discovered, created_at, updated_at)
+				 VALUES (?, ?, ?, 1, 0, ?, ?)`,
+			).run(mapping.id, mapping.client, mapping.bedrock, now, now);
+		}
+
+		const insertedCount = defaultMappings.length;
+		log.info(
+			`Populated ${insertedCount} default Claude model translations for Bedrock`,
+		);
 	});
 
 	// Execute the migration transaction

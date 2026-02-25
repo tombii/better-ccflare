@@ -60,6 +60,7 @@ import {
 import { container, SERVICE_KEYS } from "@better-ccflare/core-di";
 import { DatabaseFactory } from "@better-ccflare/database";
 import { Logger } from "@better-ccflare/logger";
+import { parseBedrockConfig } from "@better-ccflare/providers";
 // Import server
 import startServer from "@better-ccflare/server";
 
@@ -80,8 +81,11 @@ interface ParsedArgs {
 		| "anthropic-compatible"
 		| "openai-compatible"
 		| "nanogpt"
+		| "bedrock"
 		| null;
 	priority: number | null;
+	profile: string | null;
+	crossRegionMode?: "geographic" | "global" | "regional";
 	list: boolean;
 	remove: string | null;
 	pause: string | null;
@@ -101,6 +105,7 @@ interface ParsedArgs {
 	deleteApiKey: string | null;
 	forceResetRateLimit: string | null;
 	showConfig: boolean;
+	admin: boolean;
 }
 
 /**
@@ -415,6 +420,8 @@ function parseArgs(args: string[]): ParsedArgs {
 		addAccount: null,
 		mode: null,
 		priority: null,
+		profile: null,
+		crossRegionMode: undefined,
 		list: false,
 		remove: null,
 		pause: null,
@@ -434,6 +441,7 @@ function parseArgs(args: string[]): ParsedArgs {
 		deleteApiKey: null,
 		forceResetRateLimit: null,
 		showConfig: false,
+		admin: false,
 	};
 
 	for (let i = 0; i < args.length; i++) {
@@ -504,6 +512,7 @@ function parseArgs(args: string[]): ParsedArgs {
 					| "anthropic-compatible"
 					| "openai-compatible"
 					| "nanogpt"
+					| "bedrock"
 					| "max";
 
 				// Handle deprecated "max" mode with warning
@@ -520,7 +529,8 @@ function parseArgs(args: string[]): ParsedArgs {
 					| "zai"
 					| "minimax"
 					| "anthropic-compatible"
-					| "openai-compatible";
+					| "openai-compatible"
+					| "bedrock";
 				const validModes: Array<
 					| "claude-oauth"
 					| "console"
@@ -529,6 +539,7 @@ function parseArgs(args: string[]): ParsedArgs {
 					| "nanogpt"
 					| "anthropic-compatible"
 					| "openai-compatible"
+					| "bedrock"
 				> = [
 					"claude-oauth",
 					"console",
@@ -537,6 +548,7 @@ function parseArgs(args: string[]): ParsedArgs {
 					"nanogpt",
 					"anthropic-compatible",
 					"openai-compatible",
+					"bedrock",
 				];
 				if (!validModes.includes(modeValue)) {
 					console.error(`❌ Invalid mode: ${modeValue}`);
@@ -567,6 +579,9 @@ function parseArgs(args: string[]): ParsedArgs {
 					console.error(
 						"  bun run cli --add-account anthropic-account --mode anthropic-compatible --priority 50",
 					);
+					console.error(
+						"  bun run cli --add-account bedrock-account --mode bedrock --profile default",
+					);
 
 					fastExit(1);
 				}
@@ -584,6 +599,35 @@ function parseArgs(args: string[]): ParsedArgs {
 					fastExit(1);
 				}
 				break;
+			case "--profile":
+				if (i + 1 >= args.length || args[i + 1].startsWith("--")) {
+					console.error("❌ --profile requires a value");
+					fastExit(1);
+				}
+				parsed.profile = args[++i];
+				break;
+			case "--cross-region-mode": {
+				if (i + 1 >= args.length || args[i + 1].startsWith("--")) {
+					console.error("❌ --cross-region-mode requires a value");
+					fastExit(1);
+				}
+				const crossRegionValue = args[++i];
+				if (
+					crossRegionValue !== "geographic" &&
+					crossRegionValue !== "global" &&
+					crossRegionValue !== "regional"
+				) {
+					console.error(
+						"Invalid --cross-region-mode value. Must be one of: geographic, global, regional",
+					);
+					fastExit(1);
+				}
+				parsed.crossRegionMode = crossRegionValue as
+					| "geographic"
+					| "global"
+					| "regional";
+				break;
+			}
 			case "--list":
 				parsed.list = true;
 				break;
@@ -652,6 +696,9 @@ function parseArgs(args: string[]): ParsedArgs {
 					fastExit(1);
 				}
 				parsed.generateApiKey = args[++i];
+				break;
+			case "--admin":
+				parsed.admin = true;
 				break;
 			case "--list-api-keys":
 				parsed.listApiKeys = true;
@@ -738,7 +785,7 @@ Options:
   --ssl-cert <path>    Path to SSL certificate file (enables HTTPS)
   --stats              Show statistics (JSON output)
   --add-account <name> Add a new account
-    --mode <claude-oauth|console|zai|minimax|nanogpt|anthropic-compatible|openai-compatible>  Account mode (default: claude-oauth)
+    --mode <claude-oauth|console|zai|minimax|nanogpt|anthropic-compatible|openai-compatible|bedrock>  Account mode (default: claude-oauth)
       claude-oauth: Claude CLI account (OAuth)
       console: Claude API account (OAuth)
       zai: z.ai account (API key)
@@ -746,6 +793,9 @@ Options:
       nanogpt: NanoGPT provider (API key)
       anthropic-compatible: Anthropic-compatible provider (API key)
       openai-compatible: OpenAI-compatible provider (API key)
+      bedrock: AWS Bedrock account (AWS profile credentials)
+        --profile <name>  AWS profile name from ~/.aws/credentials (required)
+        --cross-region-mode <mode>   Cross-region inference mode: geographic (default), global, or regional
     --priority <number>   Account priority (default: 0)
   --list               List all accounts
   --remove <name>      Remove an account
@@ -763,6 +813,7 @@ Options:
 
 API Key Management:
   --generate-api-key <name>  Generate a new API key
+    --admin                  Grant admin privileges (dashboard access)
   --list-api-keys            List all API keys
   --disable-api-key <name>   Disable an API key
   --enable-api-key <name>    Enable a disabled API key
@@ -776,12 +827,14 @@ Examples:
   better-ccflare --serve                # Start server
   better-ccflare --serve --ssl-key /path/to/key.pem --ssl-cert /path/to/cert.pem  # Start server with HTTPS
   better-ccflare --add-account work --mode claude-oauth --priority 0  # Add account
+  better-ccflare --add-account my-bedrock --mode bedrock --profile default  # Add Bedrock account
   better-ccflare --reauthenticate work  # Re-authenticate account (preserves metadata)
   better-ccflare --force-reset-rate-limit work  # Force-clear stale rate-limit lock
   better-ccflare --pause work           # Pause account
   better-ccflare --analyze              # Run performance analysis
   better-ccflare --stats                # View stats
-  better-ccflare --generate-api-key "My App"  # Generate new API key
+  better-ccflare --generate-api-key "My App"  # Generate API-only key
+  better-ccflare --generate-api-key "Admin Key" --admin  # Generate admin key
   better-ccflare --list-api-keys               # List all API keys
   better-ccflare --disable-api-key "My App"    # Disable an API key
 `);
@@ -891,6 +944,7 @@ Examples:
 			console.error(
 				"  --mode openai-compatible     OpenAI-compatible provider",
 			);
+			console.error("  --mode bedrock         AWS Bedrock (AWS profile)");
 			console.error("\nExample:");
 			console.error(
 				"  better-ccflare --add-account work --mode claude-oauth --priority 0",
@@ -917,6 +971,30 @@ Examples:
 					mode,
 					priority,
 					adapter: stdPromptAdapter,
+				});
+			} else if (mode === "bedrock") {
+				// Bedrock uses AWS profiles, not API keys
+				if (!parsed.profile) {
+					console.error("❌ --profile flag is required for bedrock mode");
+					console.error(
+						"Example: bun run cli --add-account my-bedrock --mode bedrock --profile default",
+					);
+					await exitGracefully(1);
+				}
+				await addAccount(dbOps, new Config(), {
+					name: parsed.addAccount,
+					mode: "bedrock",
+					priority,
+					profile: parsed.profile || undefined,
+					crossRegionMode: parsed.crossRegionMode,
+					adapter: {
+						select: async <T extends string | number>(
+							_prompt: string,
+							_options: Array<{ label: string; value: T }>,
+						) => (_options[0]?.value as T) || ("yes" as T),
+						input: async (_prompt: string) => "",
+						confirm: async (_prompt: string) => true,
+					},
 				});
 			} else {
 				// For API key accounts, get the API key from environment or prompt
@@ -973,6 +1051,15 @@ Examples:
 		} else {
 			console.log("\nAccounts:");
 			accounts.forEach((acc) => {
+				if (acc.mode === "bedrock" && acc.customEndpoint) {
+					const config = parseBedrockConfig(acc.customEndpoint);
+					if (config) {
+						console.log(
+							`  - ${acc.name} (bedrock, profile=${config.profile}, region=${config.region}, cross_region_mode=${acc.crossRegionMode ?? "geographic"}, priority=${acc.priority})`,
+						);
+						return;
+					}
+				}
 				console.log(
 					`  - ${acc.name} (${acc.mode} mode, priority ${acc.priority})`,
 				);
@@ -1081,7 +1168,11 @@ Examples:
 	// API Key management commands
 	if (parsed.generateApiKey) {
 		try {
-			const result = await generateApiKey(dbOps, parsed.generateApiKey);
+			// Default to admin if this is the first key, otherwise api-only
+			const defaultRole =
+				dbOps.countActiveApiKeys() === 0 ? "admin" : "api-only";
+			const role = parsed.admin ? ("admin" as const) : defaultRole;
+			const result = await generateApiKey(dbOps, parsed.generateApiKey, role);
 			console.log(formatApiKeyGenerationResult(result));
 			await exitGracefully(0);
 		} catch (error: unknown) {

@@ -77,6 +77,7 @@ export interface AccountRow {
 	auto_refresh_enabled?: 0 | 1;
 	custom_endpoint?: string | null;
 	model_mappings?: string | null; // JSON string for OpenAI-compatible providers
+	cross_region_mode?: string | null; // Bedrock cross-region inference mode
 }
 
 // Domain model - used throughout the application
@@ -104,6 +105,7 @@ export interface Account {
 	auto_refresh_enabled: boolean;
 	custom_endpoint: string | null;
 	model_mappings: string | null; // JSON string for OpenAI-compatible providers
+	cross_region_mode: string | null; // Bedrock cross-region inference mode
 }
 
 // API response type - what clients receive
@@ -132,6 +134,7 @@ export interface AccountResponse {
 	usageWindow: string | null; // Most restrictive window (e.g., "five_hour")
 	usageData: FullUsageData | null; // Full usage data for Anthropic accounts
 	hasRefreshToken: boolean; // Indicates if the account has a refresh token (OAuth account)
+	crossRegionMode?: string | null; // Cross-region inference mode for Bedrock accounts
 }
 
 // UI display type - used in CLI and web dashboard
@@ -177,10 +180,13 @@ export interface AccountListItem {
 		| "anthropic-compatible"
 		| "openai-compatible"
 		| "nanogpt"
-		| "vertex-ai";
+		| "vertex-ai"
+		| "bedrock";
 	priority: number;
 	autoFallbackEnabled: boolean;
 	autoRefreshEnabled: boolean;
+	customEndpoint?: string | null;
+	crossRegionMode?: string | null; // Bedrock cross-region inference mode
 }
 
 // Account creation types
@@ -192,7 +198,8 @@ export interface AddAccountOptions {
 		| "zai"
 		| "minimax"
 		| "anthropic-compatible"
-		| "openai-compatible";
+		| "openai-compatible"
+		| "bedrock";
 	priority?: number;
 	customEndpoint?: string;
 }
@@ -227,6 +234,7 @@ export function toAccount(row: AccountRow): Account {
 		auto_refresh_enabled: row.auto_refresh_enabled === 1,
 		custom_endpoint: row.custom_endpoint || null,
 		model_mappings: row.model_mappings || null,
+		cross_region_mode: row.cross_region_mode || null,
 	};
 }
 

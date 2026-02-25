@@ -35,7 +35,8 @@ export function ApiKeyAuthDialog({
 		try {
 			const success = await onAuthenticate(apiKey);
 			if (!success) {
-				setError("Invalid API key. Please check and try again.");
+				// Error is already set by the parent component
+				// No need to set a generic message here
 			}
 		} catch (err) {
 			setError(err instanceof Error ? err.message : "Failed to authenticate");

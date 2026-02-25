@@ -14,7 +14,13 @@ export { migrateFromCcflare } from "./migrate-from-ccflare";
 export { ensureSchema, runMigrations } from "./migrations";
 export { getLegacyDbPath, resolveDbPath } from "./paths";
 export { analyzeIndexUsage } from "./performance-indexes";
+export type {
+	ModelTranslation,
+	SimilarModel,
+} from "./repositories/model-translation.repository";
 
+// Re-export repository classes
+export { ModelTranslationRepository } from "./repositories/model-translation.repository";
 // Re-export repository types
 export type { StatsRepository } from "./repositories/stats.repository";
 

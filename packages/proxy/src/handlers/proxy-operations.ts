@@ -11,6 +11,28 @@ import { getValidAccessToken } from "./token-manager";
 const log = new Logger("ProxyOperations");
 
 /**
+ * Bedrock provider currently returns a synthetic Request containing the
+ * provider response payload (instead of a real URL to fetch).
+ * Detect and unwrap that request so we don't try to fetch a fake host.
+ */
+function isSyntheticProviderResponse(request: Request): boolean {
+	return (
+		request.headers.get("x-bedrock-response") === "true" &&
+		request.url.startsWith("https://bedrock.aws/response")
+	);
+}
+
+function materializeSyntheticResponse(request: Request): Response {
+	const headers = new Headers(request.headers);
+	headers.delete("x-bedrock-response");
+
+	return new Response(request.body, {
+		status: 200,
+		headers,
+	});
+}
+
+/**
  * Filters thinking blocks from request body
  * Used when Claude rejects thinking blocks with invalid signatures from other providers
  * @param requestBodyBuffer - The original request body buffer
@@ -327,8 +349,10 @@ export async function proxyWithAccount(
 			? await provider.transformRequestBody(providerRequest, account)
 			: providerRequest;
 
-		// Make the request
-		let rawResponse = await makeProxyRequest(transformedRequest);
+		// Make the request (or unwrap a synthetic provider response)
+		let rawResponse = isSyntheticProviderResponse(transformedRequest)
+			? materializeSyntheticResponse(transformedRequest)
+			: await makeProxyRequest(transformedRequest);
 
 		// Check if this is a Claude provider and we got an invalid thinking signature error
 		const isClaudeProvider =
@@ -359,8 +383,10 @@ export async function proxyWithAccount(
 					? await provider.transformRequestBody(retryProviderRequest, account)
 					: retryProviderRequest;
 
-				// Make the retry request
-				rawResponse = await makeProxyRequest(retryTransformedRequest);
+				// Make the retry request (or unwrap a synthetic provider response)
+				rawResponse = isSyntheticProviderResponse(retryTransformedRequest)
+					? materializeSyntheticResponse(retryTransformedRequest)
+					: await makeProxyRequest(retryTransformedRequest);
 			} else {
 				log.warn(
 					"Failed to filter thinking blocks or no changes made, proceeding with original error response",

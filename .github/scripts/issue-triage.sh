@@ -158,42 +158,49 @@ $(ls -d */ 2>/dev/null | head -10 || echo "Unable to list directories")
 EOF
 )
 
-# Prepare the issue content - use printf for safer handling
-ISSUE_CONTENT=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n' \
-    "Repository Context:" \
-    "${REPO_CONTEXT}" \
-    "" \
-    "Issue Details:" \
-    "Title: ${ISSUE_TITLE}" \
-    "Author: ${ISSUE_AUTHOR}" \
-    "Body:" \
-    "${ISSUE_BODY:-No description provided}")
+# Prepare the issue content
+ISSUE_CONTENT=$(cat <<EOF
+Repository Context:
+${REPO_CONTEXT}
 
-# Create the triage prompt - use printf for safe handling of special characters
-TRIAGE_PROMPT=$(printf '%s\n\n%s\n\n%s\n\n%s\n' \
-    "You are an expert GitHub issue triaging agent for the better-ccflare project, a load balancer proxy for Claude AI." \
-    "Your task is to analyze the following issue and provide:" \
-    "1. Suggested labels (choose from: bug, enhancement, documentation, question, help-wanted, good-first-issue, priority-high, priority-medium, priority-low, backend, frontend, docker, auth, api)" \
-    "2. Severity assessment (critical, high, medium, low)" \
-    "3. Brief analysis of the issue" \
-    "4. Initial response or guidance for the issue author" \
-    "" \
-    "For bug reports, if the issue doesn't include the user's better-ccflare version and installation method, specifically request this information in your response:" \
-    "- better-ccflare version (e.g., v2.1.0, or commit hash if built from source)" \
-    "- Installation method (npm, bun, pre-compiled binary, built from source, Docker/Docker Compose)" \
-    "- Operating system and architecture" \
-    "" \
-    "Respond in the following JSON format:" \
-    '{"labels": ["label1", "label2"], "severity": "medium", "analysis": "Brief analysis here", "response": "Helpful response to the issue author"}' \
-    "" \
-    "Issue to triage:" \
-    "${ISSUE_CONTENT}")
+Issue Details:
+Title: ${ISSUE_TITLE}
+Author: ${ISSUE_AUTHOR}
+Body:
+${ISSUE_BODY:-"No description provided"}
+EOF
+)
+
+# Create the triage prompt
+TRIAGE_PROMPT="You are an expert GitHub issue triaging agent for the better-ccflare project, a load balancer proxy for Claude AI.
+
+Your task is to analyze the following issue and provide:
+1. Suggested labels (choose from: bug, enhancement, documentation, question, help-wanted, good-first-issue, priority-high, priority-medium, priority-low, backend, frontend, docker, auth, api)
+2. Severity assessment (critical, high, medium, low)
+3. Brief analysis of the issue
+4. Initial response or guidance for the issue author
+
+For bug reports, if the issue doesn't include the user's better-ccflare version and installation method, specifically request this information in your response:
+- better-ccflare version (e.g., v2.1.0, or commit hash if built from source)
+- Installation method (npm, bun, pre-compiled binary, built from source, Docker/Docker Compose)
+- Operating system and architecture
+
+Respond in the following JSON format:
+{
+  \"labels\": [\"label1\", \"label2\"],
+  \"severity\": \"medium\",
+  \"analysis\": \"Brief analysis here\",
+  \"response\": \"Helpful response to the issue author\"
+}
+
+Issue to triage:
+${ISSUE_CONTENT}"
 
 echo "Sending issue for triage..."
 
-# Convert comma-separated models string to array
-IFS=',' read -ra MODEL_ARRAY <<< "$MODELS"
-echo "Configured models: ${MODELS}"
+# Convert comma-separated models string to array, with "better-ccflare-github-triage" as first option
+IFS=',' read -ra MODEL_ARRAY <<< "better-ccflare-github-triage,${MODELS}"
+echo "Configured models: better-ccflare-github-triage,${MODELS}"
 echo "Will try ${#MODEL_ARRAY[@]} model(s)"
 
 # Function to call OpenRouter API with a specific model
@@ -216,7 +223,7 @@ call_openrouter_api() {
         },
         {
             "role": "user",
-            "content": $(echo "${TRIAGE_PROMPT}" | jq -Rs .)
+            "content": "$(echo "${TRIAGE_PROMPT}" | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')"
         }
     ]
 }
@@ -239,6 +246,7 @@ EOF
 # Try each model in sequence until one succeeds
 TRIAGE_RESULT=""
 USED_MODEL=""
+ACTUAL_MODEL=""
 LAST_ERROR=""
 
 for MODEL in "${MODEL_ARRAY[@]}"; do
@@ -304,7 +312,21 @@ except:
 
                     if [[ -n "$TRIAGE_RESULT" ]]; then
                         USED_MODEL="${MODEL}"
-                        echo "Triage result received successfully from model: ${USED_MODEL}"
+
+                        # Extract the actual model used from the API response
+                        ACTUAL_MODEL=$(echo "${API_RESPONSE}" | jq -r '.model // ""' 2>/dev/null)
+
+                        # Extract the part after the / if present
+                        if [[ -n "$ACTUAL_MODEL" ]] && [[ "$ACTUAL_MODEL" =~ / ]]; then
+                            ACTUAL_MODEL="${ACTUAL_MODEL#*/}"
+                        fi
+
+                        # Fallback to requested model if extraction fails
+                        if [[ -z "$ACTUAL_MODEL" ]]; then
+                            ACTUAL_MODEL="${USED_MODEL}"
+                        fi
+
+                        echo "Triage result received successfully from model: ${USED_MODEL} (actual: ${ACTUAL_MODEL})"
                         echo "Triage result:"
                         echo "${TRIAGE_RESULT}"
                         break
@@ -426,13 +448,23 @@ if [[ -n "${LABELS}" ]]; then
         -d "{\"labels\": ${LABELS_JSON}}"
 fi
 
-# Post the triage comment - use printf for safer handling
-COMMENT_BODY=$(printf '%s\n\n**Severity:** `%s`\n\n**Analysis:**\n%s\n\n---\n\n%s\n\n---\n*This automated triage was performed by the better-ccflare Issue Triage Agent using %s.*' \
-    "## 🤖 Issue Triage" \
-    "${SEVERITY}" \
-    "${ANALYSIS}" \
-    "${RESPONSE}" \
-    "${USED_MODEL}")
+# Post the triage comment
+COMMENT_BODY=$(cat <<EOF
+## 🤖 Issue Triage
+
+**Severity:** \`${SEVERITY}\`
+
+**Analysis:**
+${ANALYSIS}
+
+---
+
+${RESPONSE}
+
+---
+*This automated triage was performed by the better-ccflare Issue Triage Agent using ${ACTUAL_MODEL}.*
+EOF
+)
 
 echo "Posting triage comment..."
 # Create a temporary JSON file for GitHub comment to avoid jq parsing issues
