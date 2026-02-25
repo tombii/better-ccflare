@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import type { Account } from "../../api";
 import {
+	providerShowsCreditsBalance,
 	providerShowsWeeklyUsage,
 	providerSupportsAutoFeatures,
 	providerSupportsModelMappings,
@@ -65,7 +66,8 @@ export function AccountListItem({
 	const isBlockedByLegacyLock =
 		typeof account.rateLimitedUntil === "number" &&
 		account.rateLimitedUntil > Date.now();
-	const showForceReset = (isHardLimited || isBlockedByLegacyLock) && !presenter.isPaused;
+	const showForceReset =
+		(isHardLimited || isBlockedByLegacyLock) && !presenter.isPaused;
 	// staleLockDetected only fires when numeric usage data exists (Anthropic accounts);
 	// Zai/NanoGPT accounts have usageUtilization === null and are correctly excluded
 	const staleLockDetected =
@@ -194,8 +196,8 @@ export function AccountListItem({
 										.startsWith("allowed_warning")
 										? "text-amber-600"
 										: presenter.rateLimitStatus
-												.toLowerCase()
-												.startsWith("allowed")
+													.toLowerCase()
+													.startsWith("allowed")
 											? "text-green-600"
 											: "text-destructive"
 								}`}
@@ -305,7 +307,8 @@ export function AccountListItem({
 				</div>
 			</div>
 			{(account.rateLimitReset ||
-				providerShowsWeeklyUsage(account.provider)) && (
+				providerShowsWeeklyUsage(account.provider) ||
+				providerShowsCreditsBalance(account.provider)) && (
 				<RateLimitProgress
 					resetIso={account.rateLimitReset}
 					usageUtilization={account.usageUtilization}

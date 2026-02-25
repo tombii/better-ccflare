@@ -82,6 +82,7 @@ interface ParsedArgs {
 		| "openai-compatible"
 		| "nanogpt"
 		| "bedrock"
+		| "kilo"
 		| null;
 	priority: number | null;
 	profile: string | null;
@@ -513,6 +514,7 @@ function parseArgs(args: string[]): ParsedArgs {
 					| "openai-compatible"
 					| "nanogpt"
 					| "bedrock"
+					| "kilo"
 					| "max";
 
 				// Handle deprecated "max" mode with warning
@@ -530,7 +532,8 @@ function parseArgs(args: string[]): ParsedArgs {
 					| "minimax"
 					| "anthropic-compatible"
 					| "openai-compatible"
-					| "bedrock";
+					| "bedrock"
+					| "kilo";
 				const validModes: Array<
 					| "claude-oauth"
 					| "console"
@@ -540,6 +543,7 @@ function parseArgs(args: string[]): ParsedArgs {
 					| "anthropic-compatible"
 					| "openai-compatible"
 					| "bedrock"
+					| "kilo"
 				> = [
 					"claude-oauth",
 					"console",
@@ -549,6 +553,7 @@ function parseArgs(args: string[]): ParsedArgs {
 					"anthropic-compatible",
 					"openai-compatible",
 					"bedrock",
+					"kilo",
 				];
 				if (!validModes.includes(modeValue)) {
 					console.error(`❌ Invalid mode: ${modeValue}`);
@@ -785,7 +790,7 @@ Options:
   --ssl-cert <path>    Path to SSL certificate file (enables HTTPS)
   --stats              Show statistics (JSON output)
   --add-account <name> Add a new account
-    --mode <claude-oauth|console|zai|minimax|nanogpt|anthropic-compatible|openai-compatible|bedrock>  Account mode (default: claude-oauth)
+    --mode <claude-oauth|console|zai|minimax|nanogpt|anthropic-compatible|openai-compatible|bedrock|kilo>  Account mode (default: claude-oauth)
       claude-oauth: Claude CLI account (OAuth)
       console: Claude API account (OAuth)
       zai: z.ai account (API key)
@@ -794,6 +799,7 @@ Options:
       anthropic-compatible: Anthropic-compatible provider (API key)
       openai-compatible: OpenAI-compatible provider (API key)
       bedrock: AWS Bedrock account (AWS profile credentials)
+      kilo: Kilo Gateway provider (API key)
         --profile <name>  AWS profile name from ~/.aws/credentials (required)
         --cross-region-mode <mode>   Cross-region inference mode: geographic (default), global, or regional
     --priority <number>   Account priority (default: 0)
@@ -867,9 +873,7 @@ Examples:
 			const fullModel = modelMap[parsed.setModel];
 			if (!fullModel) {
 				console.error(`❌ Invalid model: ${parsed.setModel}`);
-				console.error(
-					`Valid models: ${Object.keys(modelMap).join(", ")}`,
-				);
+				console.error(`Valid models: ${Object.keys(modelMap).join(", ")}`);
 				fastExit(1);
 				return;
 			}
@@ -945,6 +949,7 @@ Examples:
 				"  --mode openai-compatible     OpenAI-compatible provider",
 			);
 			console.error("  --mode bedrock         AWS Bedrock (AWS profile)");
+			console.error("  --mode kilo            Kilo Gateway provider (API key)");
 			console.error("\nExample:");
 			console.error(
 				"  better-ccflare --add-account work --mode claude-oauth --priority 0",

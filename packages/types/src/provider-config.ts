@@ -11,6 +11,8 @@ export const PROVIDER_NAMES = {
 	NANOGPT: "nanogpt",
 	VERTEX_AI: "vertex-ai",
 	BEDROCK: "bedrock",
+	KILO: "kilo",
+	OPENROUTER: "openrouter",
 } as const;
 
 export type ProviderName = (typeof PROVIDER_NAMES)[keyof typeof PROVIDER_NAMES];
@@ -93,6 +95,18 @@ export const PROVIDER_CONFIG: Record<ProviderName, ProviderConfig> = {
 		supportsUsageTracking: false, // Usage extracted per-request, not via polling API
 		supportsOAuth: false, // AWS credentials, not OAuth
 		defaultEndpoint: "bedrock://aws", // Placeholder (SDK-based, not HTTP)
+	},
+	[PROVIDER_NAMES.KILO]: {
+		requiresSessionTracking: false, // Kilo is credit-based, no session windows
+		supportsUsageTracking: true, // Kilo supports credit balance via /api/user
+		supportsOAuth: false, // Kilo uses API key authentication
+		defaultEndpoint: "https://api.kilo.ai/api/gateway",
+	},
+	[PROVIDER_NAMES.OPENROUTER]: {
+		requiresSessionTracking: false, // OpenRouter is pay-as-you-go
+		supportsUsageTracking: false, // Credits endpoint requires a separate management key
+		supportsOAuth: false, // OpenRouter uses API key authentication
+		defaultEndpoint: "https://openrouter.ai/api/v1",
 	},
 } as const satisfies Record<ProviderName, ProviderConfig>;
 

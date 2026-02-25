@@ -1,6 +1,12 @@
 import { Logger } from "@better-ccflare/logger";
 import { supportsUsageTracking } from "@better-ccflare/types";
 import {
+	fetchKiloUsageData,
+	getRepresentativeKiloUtilization,
+	getRepresentativeKiloWindow,
+	type KiloUsageData,
+} from "./kilo-usage-fetcher";
+import {
 	fetchNanoGPTUsageData,
 	type NanoGPTUsageData,
 } from "./nanogpt-usage-fetcher";
@@ -35,7 +41,11 @@ export interface UsageData {
 }
 
 // Union type for all provider usage data
-export type AnyUsageData = UsageData | NanoGPTUsageData | ZaiUsageData;
+export type AnyUsageData =
+	| UsageData
+	| NanoGPTUsageData
+	| ZaiUsageData
+	| KiloUsageData;
 
 /**
  * Fetch usage data from Anthropic's OAuth usage endpoint
@@ -372,6 +382,20 @@ class UsageCache {
 					const window = getRepresentativeZaiWindow(data as ZaiUsageData);
 					log.debug(
 						`Successfully fetched Zai usage data for account ${accountId}: ${utilization}% (${window} window)`,
+					);
+					return true;
+				}
+			} else if (provider === "kilo") {
+				// Fetch Kilo usage data
+				data = await fetchKiloUsageData(token);
+				if (data) {
+					this.cache.set(accountId, { data, timestamp: Date.now() });
+					const utilization = getRepresentativeKiloUtilization(
+						data as KiloUsageData,
+					);
+					const window = getRepresentativeKiloWindow(data as KiloUsageData);
+					log.debug(
+						`Successfully fetched Kilo usage data for account ${accountId}: $${(data as KiloUsageData).remainingUsd.toFixed(2)} remaining (${utilization?.toFixed(1)}% used, ${window})`,
 					);
 					return true;
 				}

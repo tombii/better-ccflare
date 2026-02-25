@@ -23,7 +23,9 @@ interface AccountAddFormProps {
 			| "openai-compatible"
 			| "nanogpt"
 			| "vertex-ai"
-			| "bedrock";
+			| "bedrock"
+			| "kilo"
+			| "openrouter";
 		priority: number;
 		customEndpoint?: string;
 	}) => Promise<{ authUrl: string; sessionId: string }>;
@@ -77,6 +79,18 @@ interface AccountAddFormProps {
 		cross_region_mode?: "geographic" | "global" | "regional";
 		customModel?: string;
 	}) => Promise<void>;
+	onAddKiloAccount: (params: {
+		name: string;
+		apiKey: string;
+		priority: number;
+		modelMappings?: { [key: string]: string };
+	}) => Promise<void>;
+	onAddOpenRouterAccount: (params: {
+		name: string;
+		apiKey: string;
+		priority: number;
+		modelMappings?: { [key: string]: string };
+	}) => Promise<void>;
 	onCancel: () => void;
 	onSuccess: () => void;
 	onError: (error: string) => void;
@@ -92,6 +106,8 @@ export function AccountAddForm({
 	onAddOpenAIAccount,
 	onAddVertexAIAccount,
 	onAddBedrockAccount,
+	onAddKiloAccount,
+	onAddOpenRouterAccount,
 	onCancel,
 	onSuccess,
 	onError,
@@ -110,7 +126,9 @@ export function AccountAddForm({
 			| "openai-compatible"
 			| "nanogpt"
 			| "vertex-ai"
-			| "bedrock",
+			| "bedrock"
+			| "kilo"
+			| "openrouter",
 		priority: 0,
 		apiKey: "",
 		customEndpoint: "",
@@ -185,7 +203,9 @@ export function AccountAddForm({
 				| "minimax"
 				| "anthropic-compatible"
 				| "openai-compatible"
-				| "bedrock",
+				| "bedrock"
+				| "kilo"
+				| "openrouter",
 			priority: newAccount.priority,
 			...(newAccount.customEndpoint && {
 				customEndpoint: newAccount.customEndpoint.trim(),
@@ -378,6 +398,82 @@ export function AccountAddForm({
 			return;
 		}
 
+		if (newAccount.mode === "kilo") {
+			if (!newAccount.apiKey) {
+				onError("API key is required for Kilo Gateway accounts");
+				return;
+			}
+			const kiloModelMappings: { [key: string]: string } = {};
+			if (newAccount.opusModel) kiloModelMappings.opus = newAccount.opusModel;
+			if (newAccount.sonnetModel)
+				kiloModelMappings.sonnet = newAccount.sonnetModel;
+			if (newAccount.haikuModel)
+				kiloModelMappings.haiku = newAccount.haikuModel;
+			await onAddKiloAccount({
+				name: newAccount.name,
+				apiKey: newAccount.apiKey,
+				priority: newAccount.priority,
+				modelMappings:
+					Object.keys(kiloModelMappings).length > 0
+						? kiloModelMappings
+						: undefined,
+			});
+			setNewAccount({
+				name: "",
+				mode: "claude-oauth",
+				priority: 0,
+				apiKey: "",
+				customEndpoint: "",
+				projectId: "",
+				region: "global",
+				profile: "",
+				awsRegion: "",
+				crossRegionMode: "geographic",
+				customBedrockModel: "",
+				opusModel: "",
+				sonnetModel: "",
+				haikuModel: "",
+			});
+			onSuccess();
+			return;
+		}
+
+		if (newAccount.mode === "openrouter") {
+			if (!newAccount.apiKey) {
+				onError("API key is required for OpenRouter accounts");
+				return;
+			}
+			const modelMappings: { [key: string]: string } = {};
+			if (newAccount.opusModel) modelMappings.opus = newAccount.opusModel;
+			if (newAccount.sonnetModel) modelMappings.sonnet = newAccount.sonnetModel;
+			if (newAccount.haikuModel) modelMappings.haiku = newAccount.haikuModel;
+			await onAddOpenRouterAccount({
+				name: newAccount.name,
+				apiKey: newAccount.apiKey,
+				priority: newAccount.priority,
+				modelMappings:
+					Object.keys(modelMappings).length > 0 ? modelMappings : undefined,
+			});
+			setNewAccount({
+				name: "",
+				mode: "claude-oauth",
+				priority: 0,
+				apiKey: "",
+				customEndpoint: "",
+				projectId: "",
+				region: "global",
+				profile: "",
+				awsRegion: "",
+				crossRegionMode: "geographic",
+				customBedrockModel: "",
+				opusModel: "",
+				sonnetModel: "",
+				haikuModel: "",
+			});
+			onSuccess();
+			return;
+		}
+
 		if (newAccount.mode === "anthropic-compatible") {
 			if (!newAccount.apiKey) {
 				onError("API key is required for Anthropic-compatible accounts");
@@ -506,6 +602,7 @@ export function AccountAddForm({
 			profile: "",
 			awsRegion: "",
 			crossRegionMode: "geographic",
+			customBedrockModel: "",
 			opusModel: "",
 			sonnetModel: "",
 			haikuModel: "",
@@ -528,6 +625,7 @@ export function AccountAddForm({
 			profile: "",
 			awsRegion: "",
 			crossRegionMode: "geographic",
+			customBedrockModel: "",
 			opusModel: "",
 			sonnetModel: "",
 			haikuModel: "",
@@ -568,7 +666,9 @@ export function AccountAddForm({
 									| "minimax"
 									| "anthropic-compatible"
 									| "openai-compatible"
-									| "bedrock",
+									| "bedrock"
+									| "kilo"
+									| "openrouter",
 							) => setNewAccount({ ...newAccount, mode: value })}
 						>
 							<SelectTrigger id="mode">
@@ -592,6 +692,8 @@ export function AccountAddForm({
 								<SelectItem value="openai-compatible">
 									OpenAI-Compatible (API Key)
 								</SelectItem>
+								<SelectItem value="kilo">Kilo Gateway (API Key)</SelectItem>
+								<SelectItem value="openrouter">OpenRouter (API Key)</SelectItem>
 							</SelectContent>
 						</Select>
 					</div>
@@ -913,6 +1015,174 @@ export function AccountAddForm({
 												})
 											}
 											placeholder="nanogpt-lite (default)"
+											className="mt-1"
+										/>
+									</div>
+								</div>
+							</div>
+						</>
+					)}
+					{newAccount.mode === "kilo" && (
+						<>
+							<div className="space-y-2">
+								<Label htmlFor="apiKey">Kilo API Key</Label>
+								<Input
+									id="apiKey"
+									type="password"
+									value={newAccount.apiKey}
+									onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+										setNewAccount({
+											...newAccount,
+											apiKey: (e.target as HTMLInputElement).value,
+										})
+									}
+									placeholder="Enter your Kilo API key"
+								/>
+								<p className="text-xs text-muted-foreground">
+									Endpoint: https://api.kilo.ai/api/gateway
+								</p>
+							</div>
+							<div className="space-y-2">
+								<Label className="text-sm font-medium">
+									Model Mappings (Optional)
+								</Label>
+								<p className="text-xs text-muted-foreground">
+									Map Anthropic model names to Kilo-specific models. Leave empty
+									to use defaults.
+								</p>
+								<div className="space-y-2 pl-4">
+									<div>
+										<Label htmlFor="kiloOpusModel" className="text-sm">
+											Opus Model
+										</Label>
+										<Input
+											id="kiloOpusModel"
+											value={newAccount.opusModel}
+											onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+												setNewAccount({
+													...newAccount,
+													opusModel: (e.target as HTMLInputElement).value,
+												})
+											}
+											placeholder="e.g., anthropic/claude-opus-4-6 (default)"
+											className="mt-1"
+										/>
+									</div>
+									<div>
+										<Label htmlFor="kiloSonnetModel" className="text-sm">
+											Sonnet Model
+										</Label>
+										<Input
+											id="kiloSonnetModel"
+											value={newAccount.sonnetModel}
+											onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+												setNewAccount({
+													...newAccount,
+													sonnetModel: (e.target as HTMLInputElement).value,
+												})
+											}
+											placeholder="e.g., anthropic/claude-sonnet-4-6 (default)"
+											className="mt-1"
+										/>
+									</div>
+									<div>
+										<Label htmlFor="kiloHaikuModel" className="text-sm">
+											Haiku Model
+										</Label>
+										<Input
+											id="kiloHaikuModel"
+											value={newAccount.haikuModel}
+											onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+												setNewAccount({
+													...newAccount,
+													haikuModel: (e.target as HTMLInputElement).value,
+												})
+											}
+											placeholder="e.g., anthropic/claude-haiku-4-5 (default)"
+											className="mt-1"
+										/>
+									</div>
+								</div>
+							</div>
+						</>
+					)}
+					{newAccount.mode === "openrouter" && (
+						<>
+							<div className="space-y-2">
+								<Label htmlFor="apiKey">OpenRouter API Key</Label>
+								<Input
+									id="apiKey"
+									type="password"
+									value={newAccount.apiKey}
+									onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+										setNewAccount({
+											...newAccount,
+											apiKey: (e.target as HTMLInputElement).value,
+										})
+									}
+									placeholder="Enter your OpenRouter API key"
+								/>
+								<p className="text-xs text-muted-foreground">
+									Endpoint: https://openrouter.ai/api/v1
+								</p>
+							</div>
+							<div className="space-y-2">
+								<Label className="text-sm font-medium">
+									Model Mappings (Optional)
+								</Label>
+								<p className="text-xs text-muted-foreground">
+									Map Anthropic model names to OpenRouter-specific models. Leave
+									empty to pass model names through unchanged.
+								</p>
+								<div className="space-y-2 pl-4">
+									<div>
+										<Label htmlFor="opusModel" className="text-sm">
+											Opus Model
+										</Label>
+										<Input
+											id="opusModel"
+											value={newAccount.opusModel}
+											onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+												setNewAccount({
+													...newAccount,
+													opusModel: (e.target as HTMLInputElement).value,
+												})
+											}
+											placeholder="e.g., anthropic/claude-opus-4-5"
+											className="mt-1"
+										/>
+									</div>
+									<div>
+										<Label htmlFor="sonnetModel" className="text-sm">
+											Sonnet Model
+										</Label>
+										<Input
+											id="sonnetModel"
+											value={newAccount.sonnetModel}
+											onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+												setNewAccount({
+													...newAccount,
+													sonnetModel: (e.target as HTMLInputElement).value,
+												})
+											}
+											placeholder="e.g., anthropic/claude-sonnet-4-5"
+											className="mt-1"
+										/>
+									</div>
+									<div>
+										<Label htmlFor="haikuModel" className="text-sm">
+											Haiku Model
+										</Label>
+										<Input
+											id="haikuModel"
+											value={newAccount.haikuModel}
+											onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+												setNewAccount({
+													...newAccount,
+													haikuModel: (e.target as HTMLInputElement).value,
+												})
+											}
+											placeholder="e.g., anthropic/claude-haiku-4-5"
 											className="mt-1"
 										/>
 									</div>

@@ -2,7 +2,10 @@ import { registerUIRefresh } from "@better-ccflare/core";
 import type { FullUsageData } from "@better-ccflare/types";
 import { useEffect, useState } from "react";
 import { cn } from "../../lib/utils";
-import { providerShowsWeeklyUsage } from "../../utils/provider-utils";
+import {
+	providerShowsCreditsBalance,
+	providerShowsWeeklyUsage,
+} from "../../utils/provider-utils";
 import { Progress } from "../ui/progress";
 
 interface RateLimitProgressProps {
@@ -72,6 +75,31 @@ export function RateLimitProgress({
 	// Allow null resetIso for providers that show usage data (like NanoGPT in PayG mode)
 	// but still render null if there's no resetIso and no usage data to show
 	if (!resetIso && !usageData) return null;
+
+	// Kilo Gateway: show credit balance in USD instead of a utilization window
+	if (providerShowsCreditsBalance(provider) && usageData) {
+		const kiloData = usageData as {
+			remainingUsd?: number;
+			totalMicrodollarsAcquired?: number;
+		};
+		if (typeof kiloData.remainingUsd === "number") {
+			const hasCredits = (kiloData.totalMicrodollarsAcquired ?? 0) > 0;
+			return (
+				<div className={cn("space-y-2", className)}>
+					<div className="flex items-center justify-between">
+						<span className="text-xs text-muted-foreground">
+							Kilo Gateway credits
+						</span>
+						<span className="text-xs font-medium text-muted-foreground">
+							{hasCredits
+								? `$${kiloData.remainingUsd.toFixed(2)} remaining`
+								: "No credits"}
+						</span>
+					</div>
+				</div>
+			);
+		}
+	}
 
 	const resetTime = resetIso ? new Date(resetIso).getTime() : Date.now();
 	const remainingMs = Math.max(0, resetTime - now);

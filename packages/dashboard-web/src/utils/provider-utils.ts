@@ -22,7 +22,9 @@ export function providerSupportsModelMappings(provider: string): boolean {
 	return (
 		provider === PROVIDER_NAMES.OPENAI_COMPATIBLE ||
 		provider === PROVIDER_NAMES.ANTHROPIC_COMPATIBLE ||
-		provider === PROVIDER_NAMES.NANOGPT
+		provider === PROVIDER_NAMES.NANOGPT ||
+		provider === PROVIDER_NAMES.OPENROUTER ||
+		provider === PROVIDER_NAMES.KILO
 	);
 }
 
@@ -38,6 +40,13 @@ export function providerShowsWeeklyUsage(provider: string): boolean {
 		provider === PROVIDER_NAMES.NANOGPT ||
 		provider === PROVIDER_NAMES.ZAI
 	);
+}
+
+/**
+ * Check if a provider shows a credit balance (USD remaining) instead of utilization windows
+ */
+export function providerShowsCreditsBalance(provider: string): boolean {
+	return provider === PROVIDER_NAMES.KILO;
 }
 
 /**

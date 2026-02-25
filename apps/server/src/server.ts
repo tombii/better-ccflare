@@ -1048,6 +1048,34 @@ Available endpoints:
 		log.info(`No Zai accounts found, usage polling will not start`);
 	}
 
+	// Start usage polling for Kilo Gateway accounts
+	const kiloAccounts = accounts.filter((a) => a.provider === "kilo");
+	if (kiloAccounts.length > 0) {
+		log.info(
+			`Found ${kiloAccounts.length} Kilo Gateway accounts, starting usage polling...`,
+		);
+		for (const account of kiloAccounts) {
+			if (account.api_key) {
+				const apiKeyProvider = async () => account.api_key || "";
+				usageCache.startPolling(
+					account.id,
+					apiKeyProvider,
+					account.provider,
+					90000,
+				);
+				log.info(
+					`Started usage polling for Kilo Gateway account ${account.name}`,
+				);
+			} else {
+				log.warn(
+					`Kilo Gateway account ${account.name} has no API key, skipping usage polling`,
+				);
+			}
+		}
+	} else {
+		log.info(`No Kilo Gateway accounts found, usage polling will not start`);
+	}
+
 	// Pre-warm Bedrock model and inference profile caches
 	const bedrockAccounts = accounts.filter((a) => a.provider === "bedrock");
 	if (bedrockAccounts.length > 0) {

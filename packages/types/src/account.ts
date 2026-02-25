@@ -46,11 +46,20 @@ export interface ZaiUsageData {
 	tokens_limit: ZaiUsageWindow | null;
 }
 
+// Usage data types for Kilo accounts
+export interface KiloUsageData {
+	remainingUsd: number; // Remaining credits in USD
+	microdollarsUsed: number;
+	totalMicrodollarsAcquired: number;
+	utilizationPercent: number; // 0-100
+}
+
 // Combined usage data type that supports all providers
 export type FullUsageData =
 	| AnthropicUsageData
 	| NanoGPTUsageData
-	| ZaiUsageData;
+	| ZaiUsageData
+	| KiloUsageData;
 
 // Database row types that match the actual database schema
 export interface AccountRow {
@@ -181,7 +190,9 @@ export interface AccountListItem {
 		| "openai-compatible"
 		| "nanogpt"
 		| "vertex-ai"
-		| "bedrock";
+		| "bedrock"
+		| "kilo"
+		| "openrouter";
 	priority: number;
 	autoFallbackEnabled: boolean;
 	autoRefreshEnabled: boolean;
@@ -199,7 +210,8 @@ export interface AddAccountOptions {
 		| "minimax"
 		| "anthropic-compatible"
 		| "openai-compatible"
-		| "bedrock";
+		| "bedrock"
+		| "openrouter";
 	priority?: number;
 	customEndpoint?: string;
 }
