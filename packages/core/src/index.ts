@@ -55,6 +55,9 @@ export {
 	getModelDisplayName,
 	getModelShortName,
 	isValidModelId,
+	LATEST_HAIKU_MODEL,
+	LATEST_OPUS_MODEL,
+	LATEST_SONNET_MODEL,
 	MODEL_DISPLAY_NAMES,
 	MODEL_SHORT_NAMES,
 } from "./models";
