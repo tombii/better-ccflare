@@ -152,6 +152,15 @@ export class AuthService {
 			return false;
 		}
 
+		// Dashboard-internal endpoints used by the UI itself — exempt from auth
+		if (
+			path === "/api/version/check" ||
+			path === "/api/system/info" ||
+			path === "/api/system/package-manager"
+		) {
+			return true;
+		}
+
 		// Proxy endpoints (/v1/*, /messages/*, etc.) require authentication if enabled
 		if (path.startsWith("/v1") || path.startsWith("/messages")) {
 			return false;
