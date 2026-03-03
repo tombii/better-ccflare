@@ -2,12 +2,25 @@
 
 ## Overview
 
-better-ccflare uses SQLite as its database engine, providing a lightweight, serverless, and efficient storage solution for managing OAuth accounts, request history, and usage statistics. The database is designed to support high-performance load balancing operations while maintaining detailed audit trails and rate limit tracking.
+better-ccflare supports two database backends:
+
+- **SQLite** (default) — zero-configuration, embedded, great for single-node deployments
+- **PostgreSQL** — set `DATABASE_URL` to a `postgresql://` connection string; required for Kubernetes / multi-pod deployments where pods cannot safely share a SQLite file
+
+Both backends use [Bun's built-in SQL client (`Bun.SQL`)](https://bun.sh/docs/api/sql) — a zero-dependency, first-party unified API that covers SQLite and PostgreSQL with the same interface. No external npm database drivers are required.
+
+### Backend Selection
+
+| Backend | Trigger | Notes |
+|---------|---------|-------|
+| SQLite | `DATABASE_URL` not set (or starts with `sqlite://`) | Default; database file at `~/.config/better-ccflare/better-ccflare.db` or `BETTER_CCFLARE_DB_PATH` |
+| PostgreSQL | `DATABASE_URL` starts with `postgres://` or `postgresql://` | Shared database for multi-pod; full schema created on first start |
 
 ### Key Features
 - **Zero-configuration** deployment with SQLite
-- **Automatic migrations** to handle schema evolution
-- **Thread-safe operations** using Bun's SQLite bindings
+- **PostgreSQL support** for Kubernetes multi-pod deployments
+- **Automatic migrations** to handle schema evolution on both backends
+- **Unified async API** using `Bun.SQL` — same code path for SQLite and PostgreSQL
 - **Comprehensive indexing** for fast query performance
 - **Foreign key constraints** for data integrity
 - **Asynchronous write operations** for improved performance
@@ -226,11 +239,21 @@ The database uses an incremental migration system that:
 
 ### Migration Process
 
+**SQLite:**
 ```typescript
-// Migration execution order:
-1. ensureSchema(db)      // Creates base tables
-2. runMigrations(db)     // Applies incremental changes
+// Migration execution order (sync, at startup):
+1. ensureSchema(adapter)      // Creates base tables via bun:sqlite
+2. runMigrations(adapter)     // Applies incremental column additions
 ```
+
+**PostgreSQL:**
+```typescript
+// Migration execution order (async, at startup via getInstanceAsync()):
+1. ensureSchemaPg(adapter)    // CREATE TABLE IF NOT EXISTS for all tables
+2. runMigrationsPg(adapter)   // information_schema column checks + ALTER TABLE
+```
+
+Schema inspection for PostgreSQL uses `information_schema.columns` (ANSI standard) rather than SQLite's `PRAGMA table_info`, so the migration code is completely separate and portable.
 
 Key migrations include:
 - Rate limiting columns (`rate_limited_until`, `rate_limit_status`, etc.)
@@ -245,18 +268,29 @@ Key migrations include:
 
 ### Core Components
 
+#### BunSqlAdapter
+Thin wrapper around `Bun.SQL` (for PostgreSQL) and `bun:sqlite` (for SQLite) that provides a unified async interface:
+- `query<R>(sql, params)` — SELECT returning multiple rows
+- `get<R>(sql, params)` — SELECT returning one row or `null`
+- `run(sql, params)` — INSERT/UPDATE/DELETE with no return value
+- `runWithChanges(sql, params)` — INSERT/UPDATE/DELETE returning affected-row count
+- `transaction(fn)` — wraps `fn` in a database transaction (async for both backends)
+- `unsafe(sql)` — raw DDL / PRAGMA execution
+- `isSQLite: boolean` — flag for backend-specific conditional logic
+
 #### DatabaseOperations
 The main database access layer that implements both `StrategyStore` and `Disposable` interfaces:
 - Uses Repository Pattern for clean separation of concerns
-- Manages direct SQLite connections via Bun's native SQLite bindings
-- Handles all CRUD operations for accounts and requests
+- All public methods are `async` and return Promises
+- `getAdapter()` — returns the `BunSqlAdapter` for direct SQL access
 - Supports runtime configuration injection for session management
-- Thread-safe for concurrent operations
+- Works with both SQLite and PostgreSQL via `BunSqlAdapter`
 
 #### DatabaseFactory
 Singleton pattern implementation for global database instance management:
-- Ensures a single database connection throughout the application
-- Provides `initialize()` and `getInstance()` methods
+- `getInstance()` — synchronous (SQLite only, for CLI usage)
+- `getInstanceAsync()` — async factory that also runs PostgreSQL schema initialization
+- Detects `DATABASE_URL` env var to select backend
 - Integrates with the dependency injection container
 
 #### AsyncDbWriter
@@ -293,7 +327,7 @@ const db = container.resolve<DatabaseOperations>(SERVICE_KEYS.Database);
 
 ## Database Location and Configuration
 
-### Default Location
+### SQLite (default)
 
 The database file is stored in a platform-specific configuration directory:
 
@@ -301,13 +335,26 @@ The database file is stored in a platform-specific configuration directory:
 - **Linux**: `~/.config/better-ccflare/better-ccflare.db`
 - **Windows**: `%APPDATA%\better-ccflare\better-ccflare.db`
 
-### Custom Location
-
-You can override the default location using the `better-ccflare_DB_PATH` environment variable:
+You can override the default location using the `BETTER_CCFLARE_DB_PATH` environment variable:
 
 ```bash
-export better-ccflare_DB_PATH=/custom/path/to/database.db
+export BETTER_CCFLARE_DB_PATH=/custom/path/to/database.db
 ```
+
+### PostgreSQL
+
+Set `DATABASE_URL` to use PostgreSQL instead of SQLite:
+
+```bash
+export DATABASE_URL=postgresql://ccflare_user:secret@localhost:5432/ccflare
+```
+
+The full schema is created automatically on first startup (`CREATE TABLE IF NOT EXISTS ...`). Column migrations are applied automatically using `information_schema` checks, so upgrading an existing deployment is seamless.
+
+**When to use PostgreSQL:**
+- Kubernetes deployments with multiple replicas (pods cannot share a SQLite file)
+- Environments where you already operate a PostgreSQL cluster
+- High-write-concurrency scenarios benefiting from PostgreSQL connection pooling
 
 ### Runtime Configuration
 
@@ -400,6 +447,10 @@ The database includes comprehensive performance indexes that are automatically a
 - `idx_oauth_sessions_expires` on `expires_at` - For efficient cleanup of expired sessions
 
 ## Performance Considerations
+
+### PostgreSQL
+
+When using `DATABASE_URL`, Bun.SQL manages a built-in connection pool automatically. No additional configuration is required. PostgreSQL is well-suited for high-concurrency write loads and Kubernetes deployments where multiple pods share a single database.
 
 ### SQLite Optimization
 
@@ -645,7 +696,7 @@ chmod 600 better-ccflare.db
    - Custom routing rules
    - Performance tuning parameters
 
-10. **Connection Pooling**: Implement connection pooling for high-concurrency scenarios.
+10. **Connection Pooling**: Built-in for PostgreSQL via `Bun.SQL`; not applicable for SQLite.
 
 11. **Streaming Backups**: Implement streaming backups to cloud storage providers.
 

@@ -46,7 +46,7 @@ This project builds upon the excellent foundation of [snipeship/ccflare](https:/
 - **REST API** - Complete API for automation and integration
 - **Cross-Platform Binary** - Pre-compiled binary works with Node.js or Bun
 - **Comprehensive Logging** - Request/response tracking with searchable history
-- **Database Integration** - SQLite for persistent storage and analytics
+- **Database Integration** - SQLite (default) or PostgreSQL for persistent storage and analytics, supporting Kubernetes multi-pod deployments
 
 **📦 Distribution & Updates:**
 - **npm/bun Registry** - Install with `npm install -g better-ccflare` or `bun install -g better-ccflare`
@@ -59,6 +59,7 @@ This project builds upon the excellent foundation of [snipeship/ccflare](https:/
 - **Performance Optimized** - <10ms overhead with request deduplication and caching
 - **Reliability** - Automatic error recovery, circuit breakers, and health monitoring
 - **Scalability** - Built for high-throughput production environments
+- **PostgreSQL Support** - Set `DATABASE_URL=postgresql://...` to use PostgreSQL for Kubernetes multi-pod deployments where SQLite file-sharing is not feasible
 
 ## Quick Start
 
