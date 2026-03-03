@@ -249,7 +249,7 @@ export async function handleProxy(
 	requestMeta.agentUsed = agentUsed;
 
 	// 6. Select accounts
-	const accounts = selectAccountsForRequest(requestMeta, ctx);
+	const accounts = await selectAccountsForRequest(requestMeta, ctx);
 
 	// 7. Handle no accounts case
 	if (accounts.length === 0) {

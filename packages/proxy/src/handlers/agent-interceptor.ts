@@ -125,7 +125,7 @@ export async function interceptAndModifyRequest(
 		);
 
 		// Look up model preference
-		const preference = dbOps.getAgentPreference(detectedAgent.id);
+		const preference = await dbOps.getAgentPreference(detectedAgent.id);
 		const preferredModel = preference?.model || detectedAgent.model;
 
 		// If the preferred model is the same as original, no modification needed

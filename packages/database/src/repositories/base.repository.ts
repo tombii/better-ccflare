@@ -1,25 +1,27 @@
-import type { Database } from "bun:sqlite";
-
-type QueryParams = Array<string | number | boolean | null | Buffer>;
+import type { BunSqlAdapter } from "../adapters/bun-sql-adapter";
 
 export abstract class BaseRepository<_T> {
-	constructor(protected db: Database) {}
+	constructor(protected adapter: BunSqlAdapter) {}
 
-	protected query<R>(sql: string, params: QueryParams = []): R[] {
-		return this.db.query<R, QueryParams>(sql).all(...params) as R[];
+	protected async query<R>(sql: string, params: unknown[] = []): Promise<R[]> {
+		return this.adapter.query<R>(sql, params);
 	}
 
-	protected get<R>(sql: string, params: QueryParams = []): R | null {
-		const result = this.db.query<R, QueryParams>(sql).get(...params);
-		return result as R | null;
+	protected async get<R>(
+		sql: string,
+		params: unknown[] = [],
+	): Promise<R | null> {
+		return this.adapter.get<R>(sql, params);
 	}
 
-	protected run(sql: string, params: QueryParams = []): void {
-		this.db.run(sql, params);
+	protected async run(sql: string, params: unknown[] = []): Promise<void> {
+		return this.adapter.run(sql, params);
 	}
 
-	protected runWithChanges(sql: string, params: QueryParams = []): number {
-		const result = this.db.run(sql, params);
-		return result.changes;
+	protected async runWithChanges(
+		sql: string,
+		params: unknown[] = [],
+	): Promise<number> {
+		return this.adapter.runWithChanges(sql, params);
 	}
 }

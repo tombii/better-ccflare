@@ -183,7 +183,7 @@ async function runStartupMaintenance(
 	try {
 		const payloadDays = config.getDataRetentionDays();
 		const requestDays = config.getRequestRetentionDays();
-		const { removedRequests, removedPayloads } = dbOps.cleanupOldRequests(
+		const { removedRequests, removedPayloads } = await dbOps.cleanupOldRequests(
 			payloadDays * 24 * 60 * 60 * 1000,
 			requestDays * 24 * 60 * 60 * 1000,
 		);
@@ -195,7 +195,7 @@ async function runStartupMaintenance(
 	}
 	try {
 		// Clean up expired OAuth sessions
-		const removedSessions = dbOps.cleanupExpiredOAuthSessions();
+		const removedSessions = await dbOps.cleanupExpiredOAuthSessions();
 		if (removedSessions > 0) {
 			log.info(
 				`Startup cleanup removed ${removedSessions} expired OAuth sessions`,
@@ -207,7 +207,7 @@ async function runStartupMaintenance(
 	try {
 		// Clear expired rate_limited_until values
 		const now = Date.now();
-		const clearedCount = dbOps.clearExpiredRateLimits(now);
+		const clearedCount = await dbOps.clearExpiredRateLimits(now);
 		if (clearedCount > 0) {
 			log.info(`Cleared ${clearedCount} expired rate_limited_until entries`);
 		} else {
@@ -272,7 +272,7 @@ function startUsagePollingWithRefresh(
 			const tokenProvider = async () => {
 				// Get the current paused state from the database to avoid stale state issues
 				// This is important because the account might be paused/resumed via API during runtime
-				const currentAccount = proxyContext.dbOps.getAccount(account.id);
+				const currentAccount = await proxyContext.dbOps.getAccount(account.id);
 				const wasTemporarilyResumed = currentAccount?.paused === true;
 
 				// Update in-memory account with fresh token data from DB
@@ -419,7 +419,7 @@ function startUsagePollingWithRefresh(
 }
 
 // Export for programmatic use
-export default function startServer(options?: {
+export default async function startServer(options?: {
 	port?: number;
 	withDashboard?: boolean;
 	sslKeyPath?: string;
@@ -546,9 +546,9 @@ export default function startServer(options?: {
 	// Set up periodic OAuth session cleanup (every hour)
 	const unregisterOAuthCleanup = registerCleanup({
 		id: "oauth-session-cleanup",
-		callback: () => {
+		callback: async () => {
 			try {
-				const removedSessions = dbOps.cleanupExpiredOAuthSessions();
+				const removedSessions = await dbOps.cleanupExpiredOAuthSessions();
 				if (removedSessions > 0) {
 					log.debug(`Cleaned up ${removedSessions} expired OAuth sessions`);
 				}
@@ -565,10 +565,10 @@ export default function startServer(options?: {
 	// Set up periodic rate limit cleanup (every hour)
 	const unregisterRateLimitCleanup = registerCleanup({
 		id: "rate-limit-cleanup",
-		callback: () => {
+		callback: async () => {
 			try {
 				const now = Date.now();
-				const clearedCount = dbOps.clearExpiredRateLimits(now);
+				const clearedCount = await dbOps.clearExpiredRateLimits(now);
 				if (clearedCount > 0) {
 					log.debug(
 						`Cleared ${clearedCount} expired rate_limited_until entries`,
@@ -590,10 +590,11 @@ export default function startServer(options?: {
 		try {
 			const payloadDays = config.getDataRetentionDays();
 			const requestDays = config.getRequestRetentionDays();
-			const { removedRequests, removedPayloads } = dbOps.cleanupOldRequests(
-				payloadDays * TIME_CONSTANTS.DAY,
-				requestDays * TIME_CONSTANTS.DAY,
-			);
+			const { removedRequests, removedPayloads } =
+				await dbOps.cleanupOldRequests(
+					payloadDays * TIME_CONSTANTS.DAY,
+					requestDays * TIME_CONSTANTS.DAY,
+				);
 			if (removedRequests > 0 || removedPayloads > 0) {
 				log.info(
 					`Periodic cleanup: removed ${removedRequests} requests, ${removedPayloads} payloads in ${Date.now() - startTime}ms`,
@@ -929,7 +930,7 @@ Available endpoints:
 	);
 
 	// Log initial account status
-	const accounts = dbOps.getAllAccounts();
+	const accounts = await dbOps.getAllAccounts();
 	const activeAccounts = accounts.filter(
 		(a) => !a.paused && (!a.expires_at || a.expires_at > Date.now()),
 	);

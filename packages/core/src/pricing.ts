@@ -698,11 +698,13 @@ export function resetNanoGPTPricingCacheForTest(): void {
  * This function should be called with access to the AccountRepository
  */
 export async function initializeNanoGPTPricingIfAccountsExist(
-	accountRepository: { hasAccountsForProvider: (provider: string) => boolean },
+	accountRepository: {
+		hasAccountsForProvider: (provider: string) => boolean | Promise<boolean>;
+	},
 	logger: Logger | null = null,
 ): Promise<void> {
 	const hasNanoGPTAccounts =
-		accountRepository.hasAccountsForProvider("nanogpt");
+		await accountRepository.hasAccountsForProvider("nanogpt");
 
 	if (hasNanoGPTAccounts) {
 		logger?.debug("NanoGPT accounts detected, initializing pricing refresh");

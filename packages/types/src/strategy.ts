@@ -18,7 +18,7 @@ export interface StrategyStore {
 	/**
 	 * Get all accounts (optional method for strategies that need full account list)
 	 */
-	getAllAccounts?(): Account[];
+	getAllAccounts?(): Account[] | Promise<Account[]>;
 
 	/**
 	 * Update account request count
@@ -28,7 +28,7 @@ export interface StrategyStore {
 	/**
 	 * Get account by ID
 	 */
-	getAccount?(accountId: string): Account | null;
+	getAccount?(accountId: string): Account | null | Promise<Account | null>;
 
 	/**
 	 * Pause an account

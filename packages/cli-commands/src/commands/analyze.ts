@@ -1,11 +1,17 @@
-import type { Database } from "bun:sqlite";
 import { TIME_CONSTANTS } from "@better-ccflare/core";
+import type { DatabaseOperations } from "@better-ccflare/database";
 import { analyzeIndexUsage } from "@better-ccflare/database";
 
 /**
  * Analyze query performance and index usage
  */
-export function analyzePerformance(db: Database): void {
+export async function analyzePerformance(
+	dbOps: DatabaseOperations,
+): Promise<void> {
+	const adapter = dbOps.getAdapter();
+	// analyzeIndexUsage requires the raw sqlite db
+	const db = adapter.getSQLiteDb();
+
 	console.log("\n=== Database Performance Analysis ===\n");
 
 	// Basic index usage analysis
@@ -18,8 +24,8 @@ export function analyzePerformance(db: Database): void {
 		{
 			name: "Recent requests (last 24h)",
 			query: `
-				SELECT COUNT(*) as count 
-				FROM requests 
+				SELECT COUNT(*) as count
+				FROM requests
 				WHERE timestamp > ?
 			`,
 			params: [Date.now() - TIME_CONSTANTS.DAY],
@@ -27,8 +33,8 @@ export function analyzePerformance(db: Database): void {
 		{
 			name: "Active accounts",
 			query: `
-				SELECT COUNT(*) as count 
-				FROM accounts 
+				SELECT COUNT(*) as count
+				FROM accounts
 				WHERE paused = 0
 			`,
 			params: [],
@@ -36,11 +42,11 @@ export function analyzePerformance(db: Database): void {
 		{
 			name: "Model usage distribution",
 			query: `
-				SELECT model, COUNT(*) as count 
-				FROM requests 
-				WHERE model IS NOT NULL AND timestamp > ? 
-				GROUP BY model 
-				ORDER BY count DESC 
+				SELECT model, COUNT(*) as count
+				FROM requests
+				WHERE model IS NOT NULL AND timestamp > ?
+				GROUP BY model
+				ORDER BY count DESC
 				LIMIT 5
 			`,
 			params: [Date.now() - TIME_CONSTANTS.DAY],
@@ -73,21 +79,21 @@ export function analyzePerformance(db: Database): void {
 		.get();
 
 	if (!lastAnalyze) {
-		console.log("⚠️  No index statistics found. Running ANALYZE...");
+		console.log("No index statistics found. Running ANALYZE...");
 		db.exec("ANALYZE");
-		console.log("✓ Index statistics updated");
+		console.log("Index statistics updated");
 	} else {
-		console.log("✓ Index statistics are available");
+		console.log("Index statistics are available");
 	}
 
 	// Show index coverage
 	const indexedColumns = db
 		.prepare(`
-		SELECT 
+		SELECT
 			m.tbl_name as table_name,
 			COUNT(DISTINCT m.name) as index_count
 		FROM sqlite_master m
-		WHERE m.type = 'index' 
+		WHERE m.type = 'index'
 			AND m.name NOT LIKE 'sqlite_%'
 			AND m.sql IS NOT NULL
 		GROUP BY m.tbl_name
@@ -99,5 +105,5 @@ export function analyzePerformance(db: Database): void {
 		console.log(`${table.table_name}: ${table.index_count} indexes`);
 	}
 
-	console.log("\n✓ Analysis complete");
+	console.log("\nAnalysis complete");
 }

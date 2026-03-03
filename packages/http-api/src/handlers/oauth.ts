@@ -142,7 +142,7 @@ export function createOAuthCallbackHandler(dbOps: DatabaseOperations) {
 			})!;
 
 			// Get stored PKCE verifier from database
-			const oauthSession = dbOps.getOAuthSession(sessionId);
+			const oauthSession = await dbOps.getOAuthSession(sessionId);
 			if (!oauthSession) {
 				return errorResponse(
 					BadRequest("OAuth session expired or invalid. Please try again."),

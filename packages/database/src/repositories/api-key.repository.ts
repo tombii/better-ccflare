@@ -5,8 +5,8 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 	/**
 	 * Find all API keys, ordered by creation date (newest first)
 	 */
-	findAll(): ApiKey[] {
-		const rows = this.query<ApiKeyRow>(`
+	async findAll(): Promise<ApiKey[]> {
+		const rows = await this.query<ApiKeyRow>(`
 			SELECT
 				id, name, hashed_key, prefix_last_8, created_at,
 				last_used, usage_count, is_active, role
@@ -19,8 +19,8 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 	/**
 	 * Find only active API keys
 	 */
-	findActive(): ApiKey[] {
-		const rows = this.query<ApiKeyRow>(`
+	async findActive(): Promise<ApiKey[]> {
+		const rows = await this.query<ApiKeyRow>(`
 			SELECT
 				id, name, hashed_key, prefix_last_8, created_at,
 				last_used, usage_count, is_active, role
@@ -34,8 +34,8 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 	/**
 	 * Find API key by ID
 	 */
-	findById(id: string): ApiKey | null {
-		const row = this.get<ApiKeyRow>(
+	async findById(id: string): Promise<ApiKey | null> {
+		const row = await this.get<ApiKeyRow>(
 			`
 			SELECT
 				id, name, hashed_key, prefix_last_8, created_at,
@@ -52,8 +52,8 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 	/**
 	 * Find API key by hashed key (for authentication)
 	 */
-	findByHashedKey(hashedKey: string): ApiKey | null {
-		const row = this.get<ApiKeyRow>(
+	async findByHashedKey(hashedKey: string): Promise<ApiKey | null> {
+		const row = await this.get<ApiKeyRow>(
 			`
 			SELECT
 				id, name, hashed_key, prefix_last_8, created_at,
@@ -70,8 +70,8 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 	/**
 	 * Find API key by name
 	 */
-	findByName(name: string): ApiKey | null {
-		const row = this.get<ApiKeyRow>(
+	async findByName(name: string): Promise<ApiKey | null> {
+		const row = await this.get<ApiKeyRow>(
 			`
 			SELECT
 				id, name, hashed_key, prefix_last_8, created_at,
@@ -88,8 +88,8 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 	/**
 	 * Check if an API key name already exists
 	 */
-	nameExists(name: string): boolean {
-		const row = this.get<{ count: number }>(
+	async nameExists(name: string): Promise<boolean> {
+		const row = await this.get<{ count: number }>(
 			`
 			SELECT COUNT(*) as count
 			FROM api_keys
@@ -104,8 +104,8 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 	/**
 	 * Create a new API key
 	 */
-	create(apiKey: Omit<ApiKeyRow, "usage_count">): void {
-		this.run(
+	async create(apiKey: Omit<ApiKeyRow, "usage_count">): Promise<void> {
+		await this.run(
 			`
 			INSERT INTO api_keys (
 				id, name, hashed_key, prefix_last_8, created_at,
@@ -128,8 +128,8 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 	/**
 	 * Update the last used timestamp and increment usage count
 	 */
-	updateUsage(id: string, timestamp: number): void {
-		this.run(
+	async updateUsage(id: string, timestamp: number): Promise<void> {
+		await this.run(
 			`
 			UPDATE api_keys
 			SET last_used = ?,
@@ -143,8 +143,8 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 	/**
 	 * Disable (soft delete) an API key
 	 */
-	disable(id: string): boolean {
-		const changes = this.runWithChanges(
+	async disable(id: string): Promise<boolean> {
+		const changes = await this.runWithChanges(
 			`
 			UPDATE api_keys
 			SET is_active = 0
@@ -159,8 +159,8 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 	/**
 	 * Enable (reactivate) a disabled API key
 	 */
-	enable(id: string): boolean {
-		const changes = this.runWithChanges(
+	async enable(id: string): Promise<boolean> {
+		const changes = await this.runWithChanges(
 			`
 			UPDATE api_keys
 			SET is_active = 1
@@ -175,8 +175,8 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 	/**
 	 * Permanently delete an API key
 	 */
-	delete(id: string): boolean {
-		const changes = this.runWithChanges(
+	async delete(id: string): Promise<boolean> {
+		const changes = await this.runWithChanges(
 			`
 			DELETE FROM api_keys
 			WHERE id = ?
@@ -190,8 +190,8 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 	/**
 	 * Update the role of an API key
 	 */
-	updateRole(id: string, role: "admin" | "api-only"): boolean {
-		const changes = this.runWithChanges(
+	async updateRole(id: string, role: "admin" | "api-only"): Promise<boolean> {
+		const changes = await this.runWithChanges(
 			`
 			UPDATE api_keys
 			SET role = ?
@@ -206,8 +206,8 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 	/**
 	 * Count the number of active API keys
 	 */
-	countActive(): number {
-		const row = this.get<{ count: number }>(`
+	async countActive(): Promise<number> {
+		const row = await this.get<{ count: number }>(`
 			SELECT COUNT(*) as count
 			FROM api_keys
 			WHERE is_active = 1
@@ -219,8 +219,8 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 	/**
 	 * Count the total number of API keys (active and inactive)
 	 */
-	countAll(): number {
-		const row = this.get<{ count: number }>(`
+	async countAll(): Promise<number> {
+		const row = await this.get<{ count: number }>(`
 			SELECT COUNT(*) as count
 			FROM api_keys
 		`);
@@ -231,7 +231,7 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 	/**
 	 * Clear all API keys (for testing purposes)
 	 */
-	clearAll(): void {
-		this.run("DELETE FROM api_keys");
+	async clearAll(): Promise<void> {
+		await this.run("DELETE FROM api_keys");
 	}
 }

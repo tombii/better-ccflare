@@ -8,18 +8,18 @@ export interface OAuthSession {
 }
 
 export class OAuthRepository extends BaseRepository<OAuthSession> {
-	createSession(
+	async createSession(
 		sessionId: string,
 		accountName: string,
 		verifier: string,
 		mode: "console" | "claude-oauth",
 		customEndpoint?: string,
 		ttlMinutes = 10,
-	): void {
+	): Promise<void> {
 		const now = Date.now();
 		const expiresAt = now + ttlMinutes * 60 * 1000;
 
-		this.run(
+		await this.run(
 			`
 			INSERT INTO oauth_sessions (id, account_name, verifier, mode, custom_endpoint, created_at, expires_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -36,8 +36,8 @@ export class OAuthRepository extends BaseRepository<OAuthSession> {
 		);
 	}
 
-	getSession(sessionId: string): OAuthSession | null {
-		const row = this.get<{
+	async getSession(sessionId: string): Promise<OAuthSession | null> {
+		const row = await this.get<{
 			account_name: string;
 			verifier: string;
 			mode: "console" | "claude-oauth";
@@ -62,11 +62,11 @@ export class OAuthRepository extends BaseRepository<OAuthSession> {
 		};
 	}
 
-	deleteSession(sessionId: string): void {
-		this.run(`DELETE FROM oauth_sessions WHERE id = ?`, [sessionId]);
+	async deleteSession(sessionId: string): Promise<void> {
+		await this.run(`DELETE FROM oauth_sessions WHERE id = ?`, [sessionId]);
 	}
 
-	cleanupExpiredSessions(): number {
+	async cleanupExpiredSessions(): Promise<number> {
 		return this.runWithChanges(
 			`DELETE FROM oauth_sessions WHERE expires_at <= ?`,
 			[Date.now()],

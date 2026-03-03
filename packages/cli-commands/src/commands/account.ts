@@ -1028,8 +1028,10 @@ export async function addAccount(
 /**
  * Get list of all accounts with formatted information
  */
-export function getAccountsList(dbOps: DatabaseOperations): AccountListItem[] {
-	const accounts = dbOps.getAllAccounts();
+export async function getAccountsList(
+	dbOps: DatabaseOperations,
+): Promise<AccountListItem[]> {
+	const accounts = await dbOps.getAllAccounts();
 	const now = Date.now();
 
 	return accounts.map((account) => {
@@ -1088,14 +1090,17 @@ export function getAccountsList(dbOps: DatabaseOperations): AccountListItem[] {
 /**
  * Remove an account by name
  */
-export function removeAccount(
+export async function removeAccount(
 	dbOps: DatabaseOperations,
 	name: string,
-): { success: boolean; message: string } {
-	const db = dbOps.getDatabase();
-	const result = db.run("DELETE FROM accounts WHERE name = ?", [name]);
+): Promise<{ success: boolean; message: string }> {
+	const adapter = dbOps.getAdapter();
+	const changes = await adapter.runWithChanges(
+		"DELETE FROM accounts WHERE name = ?",
+		[name],
+	);
 
-	if (result.changes === 0) {
+	if (changes === 0) {
 		return {
 			success: false,
 			message: `Account '${name}' not found`,
@@ -1117,7 +1122,7 @@ export async function removeAccountWithConfirmation(
 	force?: boolean,
 ): Promise<{ success: boolean; message: string }> {
 	// Check if account exists first
-	const accounts = dbOps.getAllAccounts();
+	const accounts = await dbOps.getAllAccounts();
 	const exists = accounts.some((a) => a.name === name);
 
 	if (!exists) {
@@ -1144,19 +1149,18 @@ export async function removeAccountWithConfirmation(
 /**
  * Toggle account pause state (shared logic for pause/resume)
  */
-function toggleAccountPause(
+async function toggleAccountPause(
 	dbOps: DatabaseOperations,
 	name: string,
 	shouldPause: boolean,
-): { success: boolean; message: string } {
-	const db = dbOps.getDatabase();
+): Promise<{ success: boolean; message: string }> {
+	const adapter = dbOps.getAdapter();
 
 	// Get account ID by name
-	const account = db
-		.query<{ id: string; paused: 0 | 1 }, [string]>(
-			"SELECT id, COALESCE(paused, 0) as paused FROM accounts WHERE name = ?",
-		)
-		.get(name);
+	const account = await adapter.get<{ id: string; paused: number }>(
+		"SELECT id, COALESCE(paused, 0) as paused FROM accounts WHERE name = ?",
+		[name],
+	);
 
 	if (!account) {
 		return {
@@ -1166,7 +1170,6 @@ function toggleAccountPause(
 	}
 
 	const isPaused = account.paused === 1;
-	const _action = shouldPause ? "pause" : "resume";
 	const actionPast = shouldPause ? "paused" : "resumed";
 
 	if (isPaused === shouldPause) {
@@ -1177,9 +1180,9 @@ function toggleAccountPause(
 	}
 
 	if (shouldPause) {
-		dbOps.pauseAccount(account.id);
+		await dbOps.pauseAccount(account.id);
 	} else {
-		dbOps.resumeAccount(account.id);
+		await dbOps.resumeAccount(account.id);
 	}
 
 	return {
@@ -1191,37 +1194,38 @@ function toggleAccountPause(
 /**
  * Pause an account by name
  */
-export function pauseAccount(
+export async function pauseAccount(
 	dbOps: DatabaseOperations,
 	name: string,
-): { success: boolean; message: string } {
+): Promise<{ success: boolean; message: string }> {
 	return toggleAccountPause(dbOps, name, true);
 }
 
 /**
  * Resume a paused account by name
  */
-export function resumeAccount(
+export async function resumeAccount(
 	dbOps: DatabaseOperations,
 	name: string,
-): { success: boolean; message: string } {
+): Promise<{ success: boolean; message: string }> {
 	return toggleAccountPause(dbOps, name, false);
 }
 
 /**
  * Set the priority of an account by name
  */
-export function setAccountPriority(
+export async function setAccountPriority(
 	dbOps: DatabaseOperations,
 	name: string,
 	priority: number,
-): { success: boolean; message: string } {
-	const db = dbOps.getDatabase();
+): Promise<{ success: boolean; message: string }> {
+	const adapter = dbOps.getAdapter();
 
 	// Get account ID by name
-	const account = db
-		.query<{ id: string }, [string]>("SELECT id FROM accounts WHERE name = ?")
-		.get(name);
+	const account = await adapter.get<{ id: string }>(
+		"SELECT id FROM accounts WHERE name = ?",
+		[name],
+	);
 
 	if (!account) {
 		return {
@@ -1234,7 +1238,7 @@ export function setAccountPriority(
 	const validatedPriority = validatePriority(priority, "priority");
 
 	// Update the account priority
-	db.run("UPDATE accounts SET priority = ? WHERE id = ?", [
+	await adapter.run("UPDATE accounts SET priority = ? WHERE id = ?", [
 		validatedPriority,
 		account.id,
 	]);
@@ -1303,7 +1307,7 @@ async function notifyServersToForceResetRateLimit(
 	let usagePollTriggered = false;
 
 	// If API authentication is enabled, skip best-effort local notifications.
-	const activeApiKeys = dbOps.getActiveApiKeys();
+	const activeApiKeys = await dbOps.getActiveApiKeys();
 	const requiresAuth = activeApiKeys.length > 0;
 	if (requiresAuth) {
 		console.warn(
@@ -1568,7 +1572,7 @@ export async function reauthenticateAccount(
 		const testPort = 8081;
 
 		// Check if API authentication is enabled
-		const activeApiKeys = dbOps.getActiveApiKeys();
+		const activeApiKeys = await dbOps.getActiveApiKeys();
 		const requiresAuth = activeApiKeys.length > 0;
 
 		if (requiresAuth) {

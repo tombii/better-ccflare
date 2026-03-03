@@ -164,7 +164,7 @@ export async function refreshAccessTokenSafe(
 
 			try {
 				// Reload account from database
-				const dbAccount = ctx.dbOps.getAccount(account.id);
+				const dbAccount = await ctx.dbOps.getAccount(account.id);
 				if (dbAccount) {
 					// Check if DB has a valid token that we don't have in memory
 					const accessTokenFromDb = dbAccount.access_token;

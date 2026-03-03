@@ -36,10 +36,10 @@ const log = new Logger("BedrockErrorHandler");
  * }
  * ```
  */
-export function translateBedrockError(error: unknown): {
+export async function translateBedrockError(error: unknown): Promise<{
 	statusCode: number;
 	message: string;
-} {
+}> {
 	const errorName = (error as { name?: string }).name;
 	const errorMessage = (error as { message?: string }).message;
 	const requestId = (error as { requestId?: string }).requestId || "unknown";
@@ -88,7 +88,7 @@ export function translateBedrockError(error: unknown): {
 	// Model not found → 404
 	if (normalizedName.includes("resourcenotfound")) {
 		log.warn(`Model not found: ${errorName}`);
-		const suggestion = getModelNotFoundSuggestion(error);
+		const suggestion = await getModelNotFoundSuggestion(error);
 		return {
 			statusCode: 404,
 			message: `ResourceNotFoundException: ${errorMessage || "Model not found"}. ${suggestion}Failing over to next provider.`,
@@ -118,7 +118,7 @@ export function translateBedrockError(error: unknown): {
  * @param error - AWS error object
  * @returns Suggestion string or empty string if no suggestions
  */
-function getModelNotFoundSuggestion(error: unknown): string {
+async function getModelNotFoundSuggestion(error: unknown): Promise<string> {
 	const errorMessage = (error as { message?: string }).message || "";
 
 	// Try to extract model name from error message
@@ -144,8 +144,8 @@ function getModelNotFoundSuggestion(error: unknown): string {
 
 	try {
 		const db = DatabaseFactory.getInstance();
-		const repo = new ModelTranslationRepository(db.getDatabase());
-		const suggestions = repo.findSimilar(modelName, 3);
+		const repo = new ModelTranslationRepository(db.getAdapter());
+		const suggestions = await repo.findSimilar(modelName, 3);
 
 		if (suggestions.length > 0) {
 			const suggestedNames = suggestions.map((s) => s.client_name).join(", ");

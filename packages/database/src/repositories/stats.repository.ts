@@ -1,8 +1,9 @@
 /**
  * Consolidated stats repository to eliminate duplication between cli-commands and http-api
  */
-import type { Database } from "bun:sqlite";
+
 import { NO_ACCOUNT_ID } from "@better-ccflare/types";
+import type { BunSqlAdapter } from "../adapters/bun-sql-adapter";
 
 export interface AccountStats {
 	name: string;
@@ -25,44 +26,45 @@ export interface AggregatedStats {
 }
 
 export class StatsRepository {
-	constructor(private db: Database) {}
+	constructor(private adapter: BunSqlAdapter) {}
 
 	/**
 	 * Get aggregated statistics for requests within a time window.
 	 * @param sinceMs - Only include requests after this timestamp (ms since epoch).
 	 *   Defaults to 30 days ago to avoid full-table scans on large deployments.
 	 */
-	getAggregatedStats(sinceMs?: number): AggregatedStats {
+	async getAggregatedStats(sinceMs?: number): Promise<AggregatedStats> {
 		const since = sinceMs ?? Date.now() - 30 * 24 * 60 * 60 * 1000;
-		const stats = this.db
-			.query(
-				`SELECT
-					COUNT(*) as totalRequests,
-					SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successfulRequests,
-					AVG(response_time_ms) as avgResponseTime,
-					SUM(input_tokens) as inputTokens,
-					SUM(output_tokens) as outputTokens,
-					SUM(cache_creation_input_tokens) as cacheCreationInputTokens,
-					SUM(cache_read_input_tokens) as cacheReadInputTokens,
-					SUM(cost_usd) as totalCostUsd,
-					AVG(output_tokens_per_second) as avgTokensPerSecond
-				FROM requests
-				WHERE timestamp > ?`,
-			)
-			.get(since) as AggregatedStats;
+		const stats = await this.adapter.get<AggregatedStats>(
+			`SELECT
+				COUNT(*) as totalRequests,
+				SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successfulRequests,
+				AVG(response_time_ms) as avgResponseTime,
+				SUM(input_tokens) as inputTokens,
+				SUM(output_tokens) as outputTokens,
+				SUM(cache_creation_input_tokens) as cacheCreationInputTokens,
+				SUM(cache_read_input_tokens) as cacheReadInputTokens,
+				SUM(cost_usd) as totalCostUsd,
+				AVG(output_tokens_per_second) as avgTokensPerSecond
+			FROM requests
+			WHERE timestamp > ?`,
+			[since],
+		);
+
+		const s = stats as AggregatedStats;
 
 		// Calculate total tokens
 		const totalTokens =
-			(stats.inputTokens || 0) +
-			(stats.outputTokens || 0) +
-			(stats.cacheCreationInputTokens || 0) +
-			(stats.cacheReadInputTokens || 0);
+			(s.inputTokens || 0) +
+			(s.outputTokens || 0) +
+			(s.cacheCreationInputTokens || 0) +
+			(s.cacheReadInputTokens || 0);
 
 		return {
-			...stats,
+			...s,
 			totalTokens,
-			avgResponseTime: stats.avgResponseTime || 0,
-			totalCostUsd: stats.totalCostUsd || 0,
+			avgResponseTime: s.avgResponseTime || 0,
+			totalCostUsd: s.totalCostUsd || 0,
 		};
 	}
 
@@ -70,11 +72,27 @@ export class StatsRepository {
 	 * Get account statistics with success rates
 	 * This consolidates the duplicated logic between cli-commands and http-api
 	 */
-	getAccountStats(limit = 10, includeUnauthenticated = true): AccountStats[] {
+	async getAccountStats(
+		limit = 10,
+		includeUnauthenticated = true,
+	): Promise<AccountStats[]> {
 		// Get account request counts
-		const accountStatsQuery = includeUnauthenticated
-			? `
-				SELECT 
+		let accountStats: Array<{
+			id: string;
+			name: string;
+			requestCount: number;
+			totalRequests: number;
+		}>;
+
+		if (includeUnauthenticated) {
+			accountStats = await this.adapter.query<{
+				id: string;
+				name: string;
+				requestCount: number;
+				totalRequests: number;
+			}>(
+				`
+				SELECT
 					COALESCE(a.id, ?) as id,
 					COALESCE(a.name, ?) as name,
 					COUNT(r.id) as requestCount,
@@ -82,12 +100,21 @@ export class StatsRepository {
 				FROM requests r
 				LEFT JOIN accounts a ON a.id = r.account_used
 				GROUP BY COALESCE(a.id, ?), COALESCE(a.name, ?)
-				HAVING requestCount > 0
+				HAVING COUNT(r.id) > 0
 				ORDER BY requestCount DESC
 				LIMIT ?
-			`
-			: `
-				SELECT 
+			`,
+				[NO_ACCOUNT_ID, NO_ACCOUNT_ID, NO_ACCOUNT_ID, NO_ACCOUNT_ID, limit],
+			);
+		} else {
+			accountStats = await this.adapter.query<{
+				id: string;
+				name: string;
+				requestCount: number;
+				totalRequests: number;
+			}>(
+				`
+				SELECT
 					a.id,
 					a.name,
 					a.request_count as requestCount,
@@ -96,20 +123,10 @@ export class StatsRepository {
 				WHERE a.request_count > 0
 				ORDER BY a.request_count DESC
 				LIMIT ?
-			`;
-
-		const params = includeUnauthenticated
-			? [NO_ACCOUNT_ID, NO_ACCOUNT_ID, NO_ACCOUNT_ID, NO_ACCOUNT_ID, limit]
-			: [limit];
-
-		const accountStats = this.db
-			.query(accountStatsQuery)
-			.all(...params) as Array<{
-			id: string;
-			name: string;
-			requestCount: number;
-			totalRequests: number;
-		}>;
+			`,
+				[limit],
+			);
+		}
 
 		// Calculate success rate per account using a batch query
 		if (accountStats.length === 0) return [];
@@ -117,21 +134,20 @@ export class StatsRepository {
 		const accountIds = accountStats.map((a) => a.id);
 		const placeholders = accountIds.map(() => "?").join(",");
 
-		const successRates = this.db
-			.query(
-				`SELECT 
-					account_used as accountId,
-					COUNT(*) as total,
-					SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successful
-				FROM requests
-				WHERE account_used IN (${placeholders})
-				GROUP BY account_used`,
-			)
-			.all(...accountIds) as Array<{
+		const successRates = await this.adapter.query<{
 			accountId: string;
 			total: number;
 			successful: number;
-		}>;
+		}>(
+			`SELECT
+				account_used as accountId,
+				COUNT(*) as total,
+				SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successful
+			FROM requests
+			WHERE account_used IN (${placeholders})
+			GROUP BY account_used`,
+			accountIds,
+		);
 
 		// Create a map for O(1) lookup
 		const successRateMap = new Map(
@@ -153,27 +169,26 @@ export class StatsRepository {
 	/**
 	 * Get count of active accounts
 	 */
-	getActiveAccountCount(): number {
-		const result = this.db
-			.query("SELECT COUNT(*) as count FROM accounts WHERE request_count > 0")
-			.get() as { count: number };
-		return result.count;
+	async getActiveAccountCount(): Promise<number> {
+		const result = await this.adapter.get<{ count: number }>(
+			"SELECT COUNT(*) as count FROM accounts WHERE request_count > 0",
+		);
+		return result?.count || 0;
 	}
 
 	/**
 	 * Get recent errors (already exists in request.repository, but adding for completeness)
 	 */
-	getRecentErrors(limit = 10): string[] {
-		const errors = this.db
-			.query(
-				`SELECT DISTINCT error_message
-				FROM requests
-				WHERE error_message IS NOT NULL
-					AND error_message != ''
-				ORDER BY timestamp DESC
-				LIMIT ?`,
-			)
-			.all(limit) as Array<{ error_message: string }>;
+	async getRecentErrors(limit = 10): Promise<string[]> {
+		const errors = await this.adapter.query<{ error_message: string }>(
+			`SELECT DISTINCT error_message
+			FROM requests
+			WHERE error_message IS NOT NULL
+				AND error_message != ''
+			ORDER BY timestamp DESC
+			LIMIT ?`,
+			[limit],
+		);
 
 		return errors.map((e) => e.error_message);
 	}
@@ -181,66 +196,63 @@ export class StatsRepository {
 	/**
 	 * Get top models by usage
 	 */
-	getTopModels(
+	async getTopModels(
 		limit = 5,
-	): Array<{ model: string; count: number; percentage: number }> {
-		const models = this.db
-			.query(
-				`WITH model_counts AS (
-					SELECT
-						model,
-						COUNT(*) as count
-					FROM requests
-					WHERE model IS NOT NULL
-					GROUP BY model
-				),
-				total AS (
-					SELECT COUNT(*) as total FROM requests WHERE model IS NOT NULL
-				)
-				SELECT
-					mc.model,
-					mc.count,
-					ROUND(CAST(mc.count AS REAL) / t.total * 100, 2) as percentage
-				FROM model_counts mc, total t
-				ORDER BY mc.count DESC
-				LIMIT ?`,
-			)
-			.all(limit) as Array<{
+	): Promise<Array<{ model: string; count: number; percentage: number }>> {
+		return this.adapter.query<{
 			model: string;
 			count: number;
 			percentage: number;
-		}>;
-
-		return models;
+		}>(
+			`WITH model_counts AS (
+				SELECT
+					model,
+					COUNT(*) as count
+				FROM requests
+				WHERE model IS NOT NULL
+				GROUP BY model
+			),
+			total AS (
+				SELECT COUNT(*) as total FROM requests WHERE model IS NOT NULL
+			)
+			SELECT
+				mc.model,
+				mc.count,
+				ROUND(CAST(mc.count AS REAL) / t.total * 100, 2) as percentage
+			FROM model_counts mc, total t
+			ORDER BY mc.count DESC
+			LIMIT ?`,
+			[limit],
+		);
 	}
 
 	/**
 	 * Get API key statistics with success rates
 	 */
-	getApiKeyStats(): Array<{
-		id: string;
-		name: string;
-		requests: number;
-		successRate: number;
-	}> {
-		// Get API key request counts
-		const apiKeyStats = this.db
-			.query(
-				`SELECT
-					api_key_id as id,
-					api_key_name as name,
-					COUNT(*) as requests
-				FROM requests
-				WHERE api_key_id IS NOT NULL
-				GROUP BY api_key_id, api_key_name
-				HAVING requests > 0
-				ORDER BY requests DESC`,
-			)
-			.all() as Array<{
+	async getApiKeyStats(): Promise<
+		Array<{
 			id: string;
 			name: string;
 			requests: number;
-		}>;
+			successRate: number;
+		}>
+	> {
+		// Get API key request counts
+		const apiKeyStats = await this.adapter.query<{
+			id: string;
+			name: string;
+			requests: number;
+		}>(
+			`SELECT
+				api_key_id as id,
+				api_key_name as name,
+				COUNT(*) as requests
+			FROM requests
+			WHERE api_key_id IS NOT NULL
+			GROUP BY api_key_id, api_key_name
+			HAVING COUNT(*) > 0
+			ORDER BY requests DESC`,
+		);
 
 		if (apiKeyStats.length === 0) return [];
 
@@ -260,21 +272,20 @@ export class StatsRepository {
 
 		const placeholders = apiKeyIds.map(() => "?").join(",");
 
-		const successRates = this.db
-			.query(
-				`SELECT
-					api_key_id as apiKeyId,
-					COUNT(*) as total,
-					SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successful
-				FROM requests
-				WHERE api_key_id IN (${placeholders})
-				GROUP BY api_key_id`,
-			)
-			.all(...apiKeyIds) as Array<{
+		const successRates = await this.adapter.query<{
 			apiKeyId: string;
 			total: number;
 			successful: number;
-		}>;
+		}>(
+			`SELECT
+				api_key_id as apiKeyId,
+				COUNT(*) as total,
+				SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successful
+			FROM requests
+			WHERE api_key_id IN (${placeholders})
+			GROUP BY api_key_id`,
+			apiKeyIds,
+		);
 
 		// Create a map for O(1) lookup
 		const successRateMap = new Map(

@@ -101,7 +101,7 @@ export async function runCli(argv: string[]): Promise<void> {
 			}
 
 			case "list": {
-				const accounts = getAccountsList(dbOps);
+				const accounts = await getAccountsList(dbOps);
 
 				if (accounts.length === 0) {
 					console.log("No accounts found");
@@ -158,15 +158,13 @@ export async function runCli(argv: string[]): Promise<void> {
 			}
 
 			case "reset-stats": {
-				const db = dbOps.getDatabase();
-				resetAllStats(db);
+				await resetAllStats(dbOps);
 				console.log("Account statistics reset successfully");
 				break;
 			}
 
 			case "clear-history": {
-				const db = dbOps.getDatabase();
-				const result = clearRequestHistory(db);
+				const result = await clearRequestHistory(dbOps);
 				console.log(`Cleared ${result.count} request records`);
 				break;
 			}
@@ -179,7 +177,7 @@ export async function runCli(argv: string[]): Promise<void> {
 					process.exit(1);
 				}
 
-				const result = pauseAccount(dbOps, name);
+				const result = await pauseAccount(dbOps, name);
 				console.log(result.message);
 				if (!result.success) {
 					process.exit(1);
@@ -195,7 +193,7 @@ export async function runCli(argv: string[]): Promise<void> {
 					process.exit(1);
 				}
 
-				const result = resumeAccount(dbOps, name);
+				const result = await resumeAccount(dbOps, name);
 				console.log(result.message);
 				if (!result.success) {
 					process.exit(1);
@@ -225,7 +223,7 @@ export async function runCli(argv: string[]): Promise<void> {
 					process.exit(1);
 				}
 
-				const result = setAccountPriority(dbOps, name, priority);
+				const result = await setAccountPriority(dbOps, name, priority);
 				console.log(result.message);
 				if (!result.success) {
 					process.exit(1);
@@ -234,18 +232,17 @@ export async function runCli(argv: string[]): Promise<void> {
 			}
 
 			case "analyze": {
-				const db = dbOps.getDatabase();
-				analyzePerformance(db);
+				await analyzePerformance(dbOps);
 				break;
 			}
 
 			case "token-health": {
-				checkTokenHealth(dbOps);
+				await checkTokenHealth(dbOps);
 				break;
 			}
 
 			case "reauth-needed": {
-				checkReauthNeeded(dbOps);
+				await checkReauthNeeded(dbOps);
 				break;
 			}
 

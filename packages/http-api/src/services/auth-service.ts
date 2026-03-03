@@ -26,8 +26,8 @@ export class AuthService {
 	/**
 	 * Check if API authentication is enabled (has at least one active API key)
 	 */
-	isAuthenticationEnabled(): boolean {
-		return this.dbOps.countActiveApiKeys() > 0;
+	async isAuthenticationEnabled(): Promise<boolean> {
+		return (await this.dbOps.countActiveApiKeys()) > 0;
 	}
 
 	/**
@@ -42,7 +42,7 @@ export class AuthService {
 		}
 
 		// If no API keys are configured, authentication is disabled
-		if (!this.isAuthenticationEnabled()) {
+		if (!(await this.isAuthenticationEnabled())) {
 			return {
 				isAuthenticated: true,
 				error: undefined,
@@ -50,7 +50,7 @@ export class AuthService {
 		}
 
 		// Get all active API keys
-		const activeApiKeys = this.dbOps.getActiveApiKeys();
+		const activeApiKeys = await this.dbOps.getActiveApiKeys();
 
 		// Check each API key
 		for (const keyRecord of activeApiKeys) {
@@ -128,9 +128,10 @@ export class AuthService {
 	}
 
 	/**
-	 * Check if a path should be exempt from authentication
+	 * Check if a path is statically exempt from authentication
+	 * (does not require async DB check)
 	 */
-	isPathExempt(path: string, method: string): boolean {
+	isStaticPathExempt(path: string): boolean {
 		// Health endpoint is always exempt
 		if (path === "/health") {
 			return true;
@@ -141,12 +142,35 @@ export class AuthService {
 			return true;
 		}
 
+		// All other paths are dashboard routes (client-side routing) or static assets
+		// These should be exempt to allow serving the dashboard HTML and assets
+		// This matches the server logic that serves index.html for non-API routes
+		if (
+			!path.startsWith("/api") &&
+			!path.startsWith("/v1") &&
+			!path.startsWith("/messages")
+		) {
+			return true;
+		}
+
+		return false;
+	}
+
+	/**
+	 * Check if a path should be exempt from authentication
+	 */
+	async isPathExempt(path: string, method: string): Promise<boolean> {
+		// Static exemptions first (no DB hit)
+		if (this.isStaticPathExempt(path)) {
+			return true;
+		}
+
 		// API key management: Only allow initial key creation without auth if no keys exist
 		// All other operations require authentication
 		if (path.startsWith("/api/api-keys")) {
 			// Only allow POST (key creation) without auth if no keys exist
 			if (path === "/api/api-keys" && method === "POST") {
-				return !this.isAuthenticationEnabled(); // Only exempt if no keys exist
+				return !(await this.isAuthenticationEnabled()); // Only exempt if no keys exist
 			}
 			// All other API key operations require authentication
 			return false;
@@ -162,10 +186,7 @@ export class AuthService {
 			return false;
 		}
 
-		// All other paths are dashboard routes (client-side routing) or static assets
-		// These should be exempt to allow serving the dashboard HTML and assets
-		// This matches the server logic that serves index.html for non-API routes
-		return true;
+		return false;
 	}
 
 	/**
@@ -177,14 +198,14 @@ export class AuthService {
 		method: string,
 	): Promise<AuthenticationResult> {
 		// If path is exempt, allow without authentication
-		if (this.isPathExempt(path, method)) {
+		if (await this.isPathExempt(path, method)) {
 			return {
 				isAuthenticated: true,
 			};
 		}
 
 		// If authentication is not enabled (no API keys), allow
-		if (!this.isAuthenticationEnabled()) {
+		if (!(await this.isAuthenticationEnabled())) {
 			return {
 				isAuthenticated: true,
 			};

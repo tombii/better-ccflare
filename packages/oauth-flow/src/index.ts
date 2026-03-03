@@ -75,7 +75,7 @@ export class OAuthFlow {
 
 		// Check if account already exists (unless skipAccountCheck is true for re-authentication)
 		if (!skipAccountCheck) {
-			const existingAccounts = this.dbOps.getAllAccounts();
+			const existingAccounts = await this.dbOps.getAllAccounts();
 			if (existingAccounts.some((a) => a.name === name)) {
 				throw new Error(`Account with name '${name}' already exists`);
 			}
@@ -154,7 +154,7 @@ export class OAuthFlow {
 		// Handle console mode - create API key
 		if (flowData.mode === "console" || !tokens.refreshToken) {
 			const apiKey = await this.createAnthropicApiKey(tokens.accessToken);
-			return this.createAccountWithApiKey(
+			return await this.createAccountWithApiKey(
 				accountId,
 				name,
 				apiKey,
@@ -164,7 +164,7 @@ export class OAuthFlow {
 		}
 
 		// Handle claude-oauth mode - standard OAuth flow
-		return this.createAccountWithOAuth(
+		return await this.createAccountWithOAuth(
 			accountId,
 			name,
 			tokens,
@@ -216,16 +216,16 @@ export class OAuthFlow {
 	 * @param customEndpoint - Custom API endpoint (optional)
 	 * @returns Created account information
 	 */
-	private createAccountWithOAuth(
+	private async createAccountWithOAuth(
 		id: string,
 		name: string,
 		tokens: OAuthTokens,
 		priority: number,
 		customEndpoint?: string,
-	): AccountCreated {
-		const db = this.dbOps.getDatabase();
+	): Promise<AccountCreated> {
+		const adapter = this.dbOps.getAdapter();
 
-		db.run(
+		await adapter.run(
 			`
 			INSERT INTO accounts (
 				id, name, provider, api_key, refresh_token, access_token, expires_at,
@@ -267,16 +267,16 @@ export class OAuthFlow {
 	 * @param customEndpoint - Custom API endpoint (optional)
 	 * @returns Created account information
 	 */
-	private createAccountWithApiKey(
+	private async createAccountWithApiKey(
 		id: string,
 		name: string,
 		apiKey: string,
 		priority: number,
 		customEndpoint?: string,
-	): AccountCreated {
-		const db = this.dbOps.getDatabase();
+	): Promise<AccountCreated> {
+		const adapter = this.dbOps.getAdapter();
 
-		db.run(
+		await adapter.run(
 			`
 			INSERT INTO accounts (
 				id, name, provider, api_key, refresh_token, access_token, expires_at,

@@ -387,7 +387,9 @@ export class AgentRegistry {
 		updates: Partial<
 			Pick<Agent, "description" | "model" | "tools" | "color" | "systemPrompt">
 		>,
-		dbOps?: { deleteAgentPreference: (agentId: string) => boolean },
+		dbOps?: {
+			deleteAgentPreference: (agentId: string) => boolean | Promise<boolean>;
+		},
 	): Promise<Agent> {
 		// Ensure we're initialized
 		await this.initialize();
@@ -489,7 +491,7 @@ export class AgentRegistry {
 		// If model was updated, clear any database preference to avoid conflicts
 		if (updates.model && dbOps?.deleteAgentPreference) {
 			try {
-				dbOps.deleteAgentPreference(agentId);
+				await dbOps.deleteAgentPreference(agentId);
 			} catch (error) {
 				log.warn(`Failed to clear agent preference for ${agentId}:`, error);
 			}
