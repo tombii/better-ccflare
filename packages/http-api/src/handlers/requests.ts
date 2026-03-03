@@ -105,12 +105,12 @@ export function createRequestsSummaryHandler(db: Database) {
  * Create a detailed requests handler with full payload data
  */
 export function createRequestsDetailHandler(dbOps: DatabaseOperations) {
-	return (limit = 100): Response => {
+	return async (limit = 100): Promise<Response> => {
 		const safeLimit = Math.min(
 			Math.max(Number.isFinite(limit) ? limit : 1, 1),
 			MAX_REQUEST_DETAILS_LIMIT,
 		);
-		const rows = dbOps.listRequestPayloadsWithAccountNames(safeLimit);
+		const rows = await dbOps.listRequestPayloadsWithAccountNames(safeLimit);
 		const parsed = rows.map((r) => {
 			try {
 				const data = JSON.parse(r.json) as Record<string, unknown>;

@@ -905,7 +905,7 @@ Examples:
 	}
 
 	if (parsed.stats) {
-		const accounts = getAccountsList(dbOps);
+		const accounts = await getAccountsList(dbOps);
 		const stats = {
 			totalAccounts: accounts.length,
 			activeAccounts: accounts.filter(
@@ -1050,7 +1050,7 @@ Examples:
 	}
 
 	if (parsed.list) {
-		const accounts = getAccountsList(dbOps);
+		const accounts = await getAccountsList(dbOps);
 		if (accounts.length === 0) {
 			console.log("No accounts configured");
 		} else {
@@ -1074,7 +1074,7 @@ Examples:
 	}
 
 	if (parsed.remove) {
-		const result = removeAccount(dbOps, parsed.remove);
+		const result = await removeAccount(dbOps, parsed.remove);
 		console.log(result.message);
 		if (!result.success) {
 			await exitGracefully(1);
@@ -1123,13 +1123,13 @@ Examples:
 	}
 
 	if (parsed.resetStats) {
-		resetAllStats(dbOps.getDatabase());
+		await resetAllStats(dbOps);
 		console.log("✅ Statistics reset successfully");
 		await exitGracefully(0);
 	}
 
 	if (parsed.clearHistory) {
-		const result = clearRequestHistory(dbOps.getDatabase());
+		const result = await clearRequestHistory(dbOps);
 		console.log(
 			`✅ Request history cleared successfully (${result.count} records removed)`,
 		);
@@ -1137,7 +1137,7 @@ Examples:
 	}
 
 	if (parsed.pause) {
-		const result = pauseAccount(dbOps, parsed.pause);
+		const result = await pauseAccount(dbOps, parsed.pause);
 		console.log(result.message);
 		if (!result.success) {
 			await exitGracefully(1);
@@ -1146,7 +1146,7 @@ Examples:
 	}
 
 	if (parsed.resume) {
-		const result = resumeAccount(dbOps, parsed.resume);
+		const result = await resumeAccount(dbOps, parsed.resume);
 		console.log(result.message);
 		if (!result.success) {
 			await exitGracefully(1);
@@ -1162,7 +1162,7 @@ Examples:
 			await exitGracefully(1);
 		}
 
-		const result = setAccountPriority(dbOps, name, priority);
+		const result = await setAccountPriority(dbOps, name, priority);
 		console.log(result.message);
 		if (!result.success) {
 			await exitGracefully(1);
@@ -1175,7 +1175,7 @@ Examples:
 		try {
 			// Default to admin if this is the first key, otherwise api-only
 			const defaultRole =
-				dbOps.countActiveApiKeys() === 0 ? "admin" : "api-only";
+				(await dbOps.countActiveApiKeys()) === 0 ? "admin" : "api-only";
 			const role = parsed.admin ? ("admin" as const) : defaultRole;
 			const result = await generateApiKey(dbOps, parsed.generateApiKey, role);
 			console.log(formatApiKeyGenerationResult(result));
@@ -1189,7 +1189,7 @@ Examples:
 	}
 
 	if (parsed.listApiKeys) {
-		const apiKeys = listApiKeys(dbOps);
+		const apiKeys = await listApiKeys(dbOps);
 		if (apiKeys.length === 0) {
 			console.log("No API keys configured");
 		} else {
@@ -1199,7 +1199,7 @@ Examples:
 			});
 
 			// Show statistics
-			const stats = getApiKeyStats(dbOps);
+			const stats = await getApiKeyStats(dbOps);
 			console.log(`\nStatistics:`);
 			console.log(`  Total: ${stats.total}`);
 			console.log(`  Active: ${stats.active}`);
@@ -1248,7 +1248,7 @@ Examples:
 	}
 
 	if (parsed.analyze) {
-		analyzePerformance(dbOps.getDatabase());
+		await analyzePerformance(dbOps);
 		await exitGracefully(0);
 	}
 

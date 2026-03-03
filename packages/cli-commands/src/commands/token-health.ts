@@ -8,8 +8,10 @@ import {
 /**
  * Check token health for all accounts
  */
-export function checkTokenHealth(dbOps: DatabaseOperations): void {
-	const accounts = dbOps.getAllAccounts();
+export async function checkTokenHealth(
+	dbOps: DatabaseOperations,
+): Promise<void> {
+	const accounts = await dbOps.getAllAccounts();
 	const healthReport = checkAllAccountsHealth(accounts);
 
 	console.log(formatTokenHealthReport(healthReport));
@@ -18,8 +20,10 @@ export function checkTokenHealth(dbOps: DatabaseOperations): void {
 /**
  * Check accounts that need re-authentication
  */
-export function checkReauthNeeded(dbOps: DatabaseOperations): void {
-	const accounts = dbOps.getAllAccounts();
+export async function checkReauthNeeded(
+	dbOps: DatabaseOperations,
+): Promise<void> {
+	const accounts = await dbOps.getAllAccounts();
 	const needsReauth = getAccountsNeedingReauth(accounts);
 
 	if (needsReauth.length === 0) {
@@ -49,12 +53,12 @@ export function checkReauthNeeded(dbOps: DatabaseOperations): void {
 /**
  * Quick status check for scripts
  */
-export function getTokenHealthStatus(dbOps: DatabaseOperations): {
+export async function getTokenHealthStatus(dbOps: DatabaseOperations): Promise<{
 	healthy: boolean;
 	needsReauth: number;
 	expired: number;
-} {
-	const accounts = dbOps.getAllAccounts();
+}> {
+	const accounts = await dbOps.getAllAccounts();
 	const healthReport = checkAllAccountsHealth(accounts);
 
 	return {

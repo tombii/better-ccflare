@@ -298,7 +298,7 @@ export class BedrockProvider extends BaseProvider implements Provider {
 				`Bedrock credentials valid for account ${account.name} (profile: ${config.profile}, region: ${config.region})`,
 			);
 		} catch (error) {
-			const { message: errorMsg } = translateBedrockError(error);
+			const { message: errorMsg } = await translateBedrockError(error);
 			throw new Error(
 				`Bedrock credential validation failed for ${account.name}: ${errorMsg}`,
 			);
@@ -420,7 +420,7 @@ export class BedrockProvider extends BaseProvider implements Provider {
 					const clone = response.clone();
 					const json = await clone.json();
 					const errorType = json.error?.type || json.__type || "";
-					const { statusCode, message } = translateBedrockError({
+					const { statusCode, message } = await translateBedrockError({
 						name: errorType,
 						message: json.error?.message || json.message,
 					});
@@ -664,7 +664,7 @@ export class BedrockProvider extends BaseProvider implements Provider {
 			}
 
 			// Re-throw Bedrock errors with translation
-			const { message: translatedError } = translateBedrockError(error);
+			const { message: translatedError } = await translateBedrockError(error);
 			throw new Error(translatedError);
 		}
 	}

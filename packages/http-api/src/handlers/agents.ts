@@ -19,7 +19,7 @@ export function createAgentsListHandler(dbOps: DatabaseOperations) {
 	return async (): Promise<Response> => {
 		try {
 			const agents = await agentRegistry.getAgents();
-			const preferences = dbOps.getAllAgentPreferences();
+			const preferences = await dbOps.getAllAgentPreferences();
 
 			// Create a map of preferences for easy lookup
 			const prefMap = new Map(preferences.map((p) => [p.agent_id, p.model]));

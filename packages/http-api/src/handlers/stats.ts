@@ -5,7 +5,7 @@ import { jsonResponse } from "@better-ccflare/http-common";
  * Create a stats handler
  */
 export function createStatsHandler(dbOps: DatabaseOperations) {
-	return (url: URL): Response => {
+	return async (url: URL): Promise<Response> => {
 		const statsRepository = dbOps.getStatsRepository();
 
 		// Parse optional ?since=<days> query parameter (default: 30, max: 365)
@@ -15,8 +15,8 @@ export function createStatsHandler(dbOps: DatabaseOperations) {
 		const sinceMs = Date.now() - sinceDays * 24 * 60 * 60 * 1000;
 
 		// Get overall statistics using the consolidated repository
-		const stats = statsRepository.getAggregatedStats(sinceMs);
-		const activeAccounts = statsRepository.getActiveAccountCount();
+		const stats = await statsRepository.getAggregatedStats(sinceMs);
+		const activeAccounts = await statsRepository.getActiveAccountCount();
 
 		const successRate =
 			stats.totalRequests > 0
@@ -24,13 +24,13 @@ export function createStatsHandler(dbOps: DatabaseOperations) {
 				: 0;
 
 		// Get per-account stats (including unauthenticated requests)
-		const accountsWithStats = statsRepository.getAccountStats(10, true);
+		const accountsWithStats = await statsRepository.getAccountStats(10, true);
 
 		// Get recent errors
-		const recentErrors = statsRepository.getRecentErrors();
+		const recentErrors = await statsRepository.getRecentErrors();
 
 		// Get top models
-		const topModels = statsRepository.getTopModels();
+		const topModels = await statsRepository.getTopModels();
 
 		const response = {
 			totalRequests: stats.totalRequests,
@@ -54,11 +54,13 @@ export function createStatsHandler(dbOps: DatabaseOperations) {
  */
 export function createStatsResetHandler(dbOps: DatabaseOperations) {
 	return async (): Promise<Response> => {
-		const db = dbOps.getDatabase();
+		const adapter = dbOps.getAdapter();
 		// Clear request history
-		db.run("DELETE FROM requests");
+		await adapter.run("DELETE FROM requests");
 		// Reset account statistics
-		db.run("UPDATE accounts SET request_count = 0, session_request_count = 0");
+		await adapter.run(
+			"UPDATE accounts SET request_count = 0, session_request_count = 0",
+		);
 
 		return jsonResponse({
 			success: true,

@@ -1,10 +1,11 @@
-import type { Database } from "bun:sqlite";
+import type { DatabaseOperations } from "@better-ccflare/database";
 
 /**
  * Reset all account statistics
  */
-export function resetAllStats(db: Database): void {
-	db.run(
+export async function resetAllStats(dbOps: DatabaseOperations): Promise<void> {
+	const adapter = dbOps.getAdapter();
+	await adapter.run(
 		"UPDATE accounts SET request_count = 0, session_start = NULL, session_request_count = 0",
 	);
 }
@@ -12,7 +13,10 @@ export function resetAllStats(db: Database): void {
 /**
  * Clear all request history
  */
-export function clearRequestHistory(db: Database): { count: number } {
-	const result = db.run("DELETE FROM requests");
-	return { count: result.changes };
+export async function clearRequestHistory(
+	dbOps: DatabaseOperations,
+): Promise<{ count: number }> {
+	const adapter = dbOps.getAdapter();
+	const changes = await adapter.runWithChanges("DELETE FROM requests");
+	return { count: changes };
 }

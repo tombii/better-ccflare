@@ -10,8 +10,8 @@ import {
  * Create a token health handler for all accounts
  */
 export function createTokenHealthHandler(dbOps: DatabaseOperations) {
-	return (): Response => {
-		const accounts = dbOps.getAllAccounts();
+	return async (): Promise<Response> => {
+		const accounts = await dbOps.getAllAccounts();
 		const healthReport = checkAllAccountsHealth(accounts);
 
 		return jsonResponse({
@@ -25,8 +25,8 @@ export function createTokenHealthHandler(dbOps: DatabaseOperations) {
  * Create a re-authentication needed handler
  */
 export function createReauthNeededHandler(dbOps: DatabaseOperations) {
-	return (): Response => {
-		const accounts = dbOps.getAllAccounts();
+	return async (): Promise<Response> => {
+		const accounts = await dbOps.getAllAccounts();
 		const needsReauth = getAccountsNeedingReauth(accounts);
 
 		return jsonResponse({
@@ -47,7 +47,7 @@ export function createAccountTokenHealthHandler(
 	dbOps: DatabaseOperations,
 	accountName: string,
 ) {
-	return (): Response => {
+	return async (): Promise<Response> => {
 		// Validate account name parameter - allow common characters
 		// Account names can contain alphanumeric, spaces, hyphens, underscores, and dots
 		if (!accountName || accountName.trim().length === 0) {
@@ -61,7 +61,7 @@ export function createAccountTokenHealthHandler(
 		}
 
 		// Find account by name from all accounts
-		const accounts = dbOps.getAllAccounts();
+		const accounts = await dbOps.getAllAccounts();
 		const account = accounts.find((a) => a.name === accountName);
 
 		if (!account) {

@@ -4,13 +4,27 @@ import type { DatabaseRetryConfig } from "./database-operations";
 const logger = new Logger("db-retry");
 
 /**
- * Error codes that indicate database lock contention and should trigger retries
+ * Error codes that indicate database lock contention or transient errors and should trigger retries
  */
 const RETRYABLE_SQLITE_ERRORS = [
 	"SQLITE_BUSY",
 	"SQLITE_LOCKED",
 	"database is locked",
 	"database table is locked",
+];
+
+/**
+ * PostgreSQL error codes / messages that are transient and should trigger retries
+ */
+const RETRYABLE_PG_ERRORS = [
+	"ECONNREFUSED",
+	"ECONNRESET",
+	"connection timeout",
+	"too many connections",
+	"deadlock detected",
+	"could not connect",
+	"Connection terminated",
+	"socket hang up",
 ];
 
 /**
@@ -25,9 +39,14 @@ function isRetryableError(error: unknown): boolean {
 			? error.code
 			: undefined;
 
-	return RETRYABLE_SQLITE_ERRORS.some(
-		(retryableError) =>
-			errorMessage.includes(retryableError) || errorCode === retryableError,
+	return (
+		RETRYABLE_SQLITE_ERRORS.some(
+			(retryableError) =>
+				errorMessage.includes(retryableError) || errorCode === retryableError,
+		) ||
+		RETRYABLE_PG_ERRORS.some((retryableError) =>
+			errorMessage.includes(retryableError),
+		)
 	);
 }
 

@@ -3,6 +3,7 @@ import { DatabaseOperations } from "./database-operations";
 export { DatabaseOperations };
 
 export type { RuntimeConfig } from "@better-ccflare/config";
+export { BunSqlAdapter } from "./adapters/bun-sql-adapter";
 // Re-export other utilities
 export { AsyncDbWriter } from "./async-writer";
 export type {

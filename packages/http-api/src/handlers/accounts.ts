@@ -529,7 +529,7 @@ export function createAccountRemoveHandler(dbOps: DatabaseOperations) {
 				);
 			}
 
-			const result = cliCommands.removeAccount(dbOps, accountName);
+			const result = await cliCommands.removeAccount(dbOps, accountName);
 
 			if (!result.success) {
 				return errorResponse(NotFound(result.message));
@@ -578,7 +578,7 @@ export function createAccountPauseHandler(dbOps: DatabaseOperations) {
 				return errorResponse(NotFound("Account not found"));
 			}
 
-			const result = cliCommands.pauseAccount(dbOps, account.name);
+			const result = await cliCommands.pauseAccount(dbOps, account.name);
 
 			if (!result.success) {
 				return errorResponse(BadRequest(result.message));
@@ -614,7 +614,7 @@ export function createAccountResumeHandler(dbOps: DatabaseOperations) {
 				return errorResponse(NotFound("Account not found"));
 			}
 
-			const result = cliCommands.resumeAccount(dbOps, account.name);
+			const result = await cliCommands.resumeAccount(dbOps, account.name);
 
 			if (!result.success) {
 				return errorResponse(BadRequest(result.message));

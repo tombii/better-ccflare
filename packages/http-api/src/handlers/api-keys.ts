@@ -13,9 +13,9 @@ import type { ApiKeyGenerationResult } from "@better-ccflare/types";
 import { errorResponse } from "../utils/http-error";
 
 export function createApiKeysListHandler(dbOps: DatabaseOperations) {
-	return (): Response => {
+	return async (): Promise<Response> => {
 		try {
-			const apiKeys = listApiKeys(dbOps);
+			const apiKeys = await listApiKeys(dbOps);
 			const response = {
 				success: true,
 				data: apiKeys,
@@ -152,10 +152,10 @@ export function createApiKeyDeleteHandler(dbOps: DatabaseOperations) {
 }
 
 export function createApiKeysStatsHandler(dbOps: DatabaseOperations) {
-	return (): Response => {
+	return async (): Promise<Response> => {
 		try {
-			const total = dbOps.countAllApiKeys();
-			const active = dbOps.countActiveApiKeys();
+			const total = await dbOps.countAllApiKeys();
+			const active = await dbOps.countActiveApiKeys();
 			const inactive = total - active;
 
 			const response = {

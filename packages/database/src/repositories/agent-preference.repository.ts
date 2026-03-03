@@ -10,18 +10,19 @@ export class AgentPreferenceRepository extends BaseRepository<AgentPreference> {
 	/**
 	 * Get model preference for a specific agent
 	 */
-	getPreference(agentId: string): { model: string } | null {
-		const row = this.get<{ model: string }>(
+	async getPreference(agentId: string): Promise<{ model: string } | null> {
+		return this.get<{ model: string }>(
 			`SELECT model FROM agent_preferences WHERE agent_id = ?`,
 			[agentId],
 		);
-		return row;
 	}
 
 	/**
 	 * Get all agent preferences
 	 */
-	getAllPreferences(): Array<{ agent_id: string; model: string }> {
+	async getAllPreferences(): Promise<
+		Array<{ agent_id: string; model: string }>
+	> {
 		return this.query<{ agent_id: string; model: string }>(
 			`SELECT agent_id, model FROM agent_preferences`,
 		);
@@ -30,9 +31,10 @@ export class AgentPreferenceRepository extends BaseRepository<AgentPreference> {
 	/**
 	 * Set model preference for an agent
 	 */
-	setPreference(agentId: string, model: string): void {
-		this.run(
-			`INSERT OR REPLACE INTO agent_preferences (agent_id, model, updated_at) VALUES (?, ?, ?)`,
+	async setPreference(agentId: string, model: string): Promise<void> {
+		await this.run(
+			`INSERT INTO agent_preferences (agent_id, model, updated_at) VALUES (?, ?, ?)
+			 ON CONFLICT (agent_id) DO UPDATE SET model = EXCLUDED.model, updated_at = EXCLUDED.updated_at`,
 			[agentId, model, Date.now()],
 		);
 	}
@@ -40,8 +42,8 @@ export class AgentPreferenceRepository extends BaseRepository<AgentPreference> {
 	/**
 	 * Delete preference for an agent
 	 */
-	deletePreference(agentId: string): boolean {
-		const changes = this.runWithChanges(
+	async deletePreference(agentId: string): Promise<boolean> {
+		const changes = await this.runWithChanges(
 			`DELETE FROM agent_preferences WHERE agent_id = ?`,
 			[agentId],
 		);
@@ -51,7 +53,7 @@ export class AgentPreferenceRepository extends BaseRepository<AgentPreference> {
 	/**
 	 * Set preferences for all agents in bulk
 	 */
-	setBulkPreferences(agentIds: string[], model: string): void {
+	async setBulkPreferences(agentIds: string[], model: string): Promise<void> {
 		if (agentIds.length === 0) {
 			return;
 		}
@@ -60,8 +62,9 @@ export class AgentPreferenceRepository extends BaseRepository<AgentPreference> {
 		const placeholders = agentIds.map(() => "(?, ?, ?)").join(", ");
 		const values = agentIds.flatMap((id) => [id, model, now]);
 
-		this.run(
-			`INSERT OR REPLACE INTO agent_preferences (agent_id, model, updated_at) VALUES ${placeholders}`,
+		await this.run(
+			`INSERT INTO agent_preferences (agent_id, model, updated_at) VALUES ${placeholders}
+			 ON CONFLICT (agent_id) DO UPDATE SET model = EXCLUDED.model, updated_at = EXCLUDED.updated_at`,
 			values,
 		);
 	}

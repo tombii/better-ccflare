@@ -10,10 +10,12 @@ import {
 const log = new Logger("TokenHealthService");
 
 export interface TokenHealthService {
-	startHealthChecks(getAccounts: () => Account[]): void;
+	startHealthChecks(getAccounts: () => Account[] | Promise<Account[]>): void;
 	stopHealthChecks(): void;
 	getLastHealthReport(): TokenHealthReport | null;
-	forceHealthCheck(getAccounts: () => Account[]): Promise<TokenHealthReport>;
+	forceHealthCheck(
+		getAccounts: () => Account[] | Promise<Account[]>,
+	): Promise<TokenHealthReport>;
 }
 
 export function createTokenHealthService(): TokenHealthService {
@@ -21,10 +23,10 @@ export function createTokenHealthService(): TokenHealthService {
 	let lastHealthReport: TokenHealthReport | null = null;
 
 	const performHealthCheck = async (
-		getAccounts: () => Account[],
+		getAccounts: () => Account[] | Promise<Account[]>,
 	): Promise<void> => {
 		try {
-			const accounts = getAccounts();
+			const accounts = await getAccounts();
 			const healthReport = checkAllAccountsHealth(accounts);
 			lastHealthReport = healthReport;
 
@@ -64,7 +66,9 @@ export function createTokenHealthService(): TokenHealthService {
 		}
 	};
 
-	const startHealthChecks = (getAccounts: () => Account[]): void => {
+	const startHealthChecks = (
+		getAccounts: () => Account[] | Promise<Account[]>,
+	): void => {
 		if (healthCheckInterval) {
 			log.warn("Token health checks already running");
 			return;
@@ -96,7 +100,7 @@ export function createTokenHealthService(): TokenHealthService {
 	};
 
 	const forceHealthCheck = async (
-		getAccounts: () => Account[],
+		getAccounts: () => Account[] | Promise<Account[]>,
 	): Promise<TokenHealthReport> => {
 		await performHealthCheck(getAccounts);
 		return lastHealthReport!;
@@ -121,7 +125,7 @@ export function getGlobalTokenHealthService(): TokenHealthService {
 }
 
 export function startGlobalTokenHealthChecks(
-	getAccounts: () => Account[],
+	getAccounts: () => Account[] | Promise<Account[]>,
 ): void {
 	getGlobalTokenHealthService().startHealthChecks(getAccounts);
 }

@@ -28,7 +28,7 @@ export interface RequestData {
 }
 
 export class RequestRepository extends BaseRepository<RequestData> {
-	saveMeta(
+	async saveMeta(
 		id: string,
 		method: string,
 		path: string,
@@ -37,8 +37,8 @@ export class RequestRepository extends BaseRepository<RequestData> {
 		timestamp?: number,
 		apiKeyId?: string,
 		apiKeyName?: string,
-	): void {
-		this.run(
+	): Promise<void> {
+		await this.run(
 			`
 			INSERT INTO requests (
 				id, timestamp, method, path, account_used,
@@ -60,11 +60,11 @@ export class RequestRepository extends BaseRepository<RequestData> {
 		);
 	}
 
-	save(data: RequestData): void {
+	async save(data: RequestData): Promise<void> {
 		const { usage } = data;
-		this.run(
+		await this.run(
 			`
-			INSERT OR REPLACE INTO requests (
+			INSERT INTO requests (
 				id, timestamp, method, path, account_used,
 				status_code, success, error_message, response_time_ms, failover_attempts,
 				model, prompt_tokens, completion_tokens, total_tokens, cost_usd,
@@ -72,6 +72,29 @@ export class RequestRepository extends BaseRepository<RequestData> {
 				agent_used, output_tokens_per_second, api_key_id, api_key_name
 			)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT (id) DO UPDATE SET
+				timestamp = EXCLUDED.timestamp,
+				method = EXCLUDED.method,
+				path = EXCLUDED.path,
+				account_used = EXCLUDED.account_used,
+				status_code = EXCLUDED.status_code,
+				success = EXCLUDED.success,
+				error_message = EXCLUDED.error_message,
+				response_time_ms = EXCLUDED.response_time_ms,
+				failover_attempts = EXCLUDED.failover_attempts,
+				model = EXCLUDED.model,
+				prompt_tokens = EXCLUDED.prompt_tokens,
+				completion_tokens = EXCLUDED.completion_tokens,
+				total_tokens = EXCLUDED.total_tokens,
+				cost_usd = EXCLUDED.cost_usd,
+				input_tokens = EXCLUDED.input_tokens,
+				cache_read_input_tokens = EXCLUDED.cache_read_input_tokens,
+				cache_creation_input_tokens = EXCLUDED.cache_creation_input_tokens,
+				output_tokens = EXCLUDED.output_tokens,
+				agent_used = EXCLUDED.agent_used,
+				output_tokens_per_second = EXCLUDED.output_tokens_per_second,
+				api_key_id = EXCLUDED.api_key_id,
+				api_key_name = EXCLUDED.api_key_name
 		`,
 			[
 				data.id,
@@ -101,13 +124,16 @@ export class RequestRepository extends BaseRepository<RequestData> {
 		);
 	}
 
-	updateUsage(requestId: string, usage: RequestData["usage"]): void {
+	async updateUsage(
+		requestId: string,
+		usage: RequestData["usage"],
+	): Promise<void> {
 		if (!usage) return;
 
-		this.run(
+		await this.run(
 			`
 			UPDATE requests
-			SET 
+			SET
 				model = COALESCE(?, model),
 				prompt_tokens = COALESCE(?, prompt_tokens),
 				completion_tokens = COALESCE(?, completion_tokens),
@@ -137,23 +163,25 @@ export class RequestRepository extends BaseRepository<RequestData> {
 	}
 
 	// Payload management
-	savePayload(id: string, data: unknown): void {
+	async savePayload(id: string, data: unknown): Promise<void> {
 		const json = JSON.stringify(data);
-		this.run(
-			`INSERT OR REPLACE INTO request_payloads (id, json) VALUES (?, ?)`,
+		await this.run(
+			`INSERT INTO request_payloads (id, json) VALUES (?, ?)
+			 ON CONFLICT (id) DO UPDATE SET json = EXCLUDED.json`,
 			[id, json],
 		);
 	}
 
-	savePayloadRaw(id: string, json: string): void {
-		this.run(
-			`INSERT OR REPLACE INTO request_payloads (id, json) VALUES (?, ?)`,
+	async savePayloadRaw(id: string, json: string): Promise<void> {
+		await this.run(
+			`INSERT INTO request_payloads (id, json) VALUES (?, ?)
+			 ON CONFLICT (id) DO UPDATE SET json = EXCLUDED.json`,
 			[id, json],
 		);
 	}
 
-	getPayload(id: string): unknown | null {
-		const row = this.get<{ json: string }>(
+	async getPayload(id: string): Promise<unknown | null> {
+		const row = await this.get<{ json: string }>(
 			`SELECT json FROM request_payloads WHERE id = ?`,
 			[id],
 		);
@@ -167,10 +195,10 @@ export class RequestRepository extends BaseRepository<RequestData> {
 		}
 	}
 
-	listPayloads(limit = 50): Array<{ id: string; json: string }> {
+	async listPayloads(limit = 50): Promise<Array<{ id: string; json: string }>> {
 		return this.query<{ id: string; json: string }>(
 			`
-			SELECT rp.id, rp.json 
+			SELECT rp.id, rp.json
 			FROM request_payloads rp
 			JOIN requests r ON rp.id = r.id
 			ORDER BY r.timestamp DESC
@@ -180,9 +208,9 @@ export class RequestRepository extends BaseRepository<RequestData> {
 		);
 	}
 
-	listPayloadsWithAccountNames(
+	async listPayloadsWithAccountNames(
 		limit = 50,
-	): Array<{ id: string; json: string; account_name: string | null }> {
+	): Promise<Array<{ id: string; json: string; account_name: string | null }>> {
 		return this.query<{
 			id: string;
 			json: string;
@@ -201,17 +229,19 @@ export class RequestRepository extends BaseRepository<RequestData> {
 	}
 
 	// Analytics queries
-	getRecentRequests(limit = 100): Array<{
-		id: string;
-		timestamp: number;
-		method: string;
-		path: string;
-		account_used: string | null;
-		status_code: number | null;
-		success: boolean;
-		response_time_ms: number | null;
-	}> {
-		return this.query<{
+	async getRecentRequests(limit = 100): Promise<
+		Array<{
+			id: string;
+			timestamp: number;
+			method: string;
+			path: string;
+			account_used: string | null;
+			status_code: number | null;
+			success: boolean;
+			response_time_ms: number | null;
+		}>
+	> {
+		const rows = await this.query<{
 			id: string;
 			timestamp: number;
 			method: string;
@@ -228,29 +258,30 @@ export class RequestRepository extends BaseRepository<RequestData> {
 			LIMIT ?
 		`,
 			[limit],
-		).map((row) => ({
+		);
+		return rows.map((row) => ({
 			...row,
-			success: row.success === 1,
+			success: !!row.success,
 		}));
 	}
 
-	getRequestStats(since?: number): {
+	async getRequestStats(since?: number): Promise<{
 		totalRequests: number;
 		successfulRequests: number;
 		failedRequests: number;
 		avgResponseTime: number | null;
-	} {
+	}> {
 		const whereClause = since ? "WHERE timestamp > ?" : "";
 		const params = since ? [since] : [];
 
-		const result = this.get<{
+		const result = await this.get<{
 			total_requests: number;
 			successful_requests: number;
 			failed_requests: number;
 			avg_response_time: number | null;
 		}>(
 			`
-			SELECT 
+			SELECT
 				COUNT(*) as total_requests,
 				SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successful_requests,
 				SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) as failed_requests,
@@ -273,7 +304,7 @@ export class RequestRepository extends BaseRepository<RequestData> {
 	 * Aggregate statistics with optional time range
 	 * Consolidates duplicate SQL queries from stats handlers
 	 */
-	aggregateStats(rangeMs?: number): {
+	async aggregateStats(rangeMs?: number): Promise<{
 		totalRequests: number;
 		successfulRequests: number;
 		avgResponseTime: number | null;
@@ -284,11 +315,11 @@ export class RequestRepository extends BaseRepository<RequestData> {
 		cacheReadInputTokens: number;
 		cacheCreationInputTokens: number;
 		avgTokensPerSecond: number | null;
-	} {
+	}> {
 		const whereClause = rangeMs ? "WHERE timestamp > ?" : "";
 		const params = rangeMs ? [Date.now() - rangeMs] : [];
 
-		const result = this.get<{
+		const result = await this.get<{
 			total_requests: number;
 			successful_requests: number;
 			avg_response_time: number | null;
@@ -301,7 +332,7 @@ export class RequestRepository extends BaseRepository<RequestData> {
 			avg_tokens_per_second: number | null;
 		}>(
 			`
-			SELECT 
+			SELECT
 				COUNT(*) as total_requests,
 				SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successful_requests,
 				AVG(response_time_ms) as avg_response_time,
@@ -335,7 +366,9 @@ export class RequestRepository extends BaseRepository<RequestData> {
 	/**
 	 * Get top models by usage
 	 */
-	getTopModels(limit = 10): Array<{ model: string; count: number }> {
+	async getTopModels(
+		limit = 10,
+	): Promise<Array<{ model: string; count: number }>> {
 		return this.query<{ model: string; count: number }>(
 			`
 			SELECT model, COUNT(*) as count
@@ -352,8 +385,8 @@ export class RequestRepository extends BaseRepository<RequestData> {
 	/**
 	 * Get recent error messages
 	 */
-	getRecentErrors(limit = 10): string[] {
-		const errors = this.query<{ error_message: string }>(
+	async getRecentErrors(limit = 10): Promise<string[]> {
+		const errors = await this.query<{ error_message: string }>(
 			`
 			SELECT error_message
 			FROM requests
@@ -366,23 +399,25 @@ export class RequestRepository extends BaseRepository<RequestData> {
 		return errors.map((e: { error_message: string }) => e.error_message);
 	}
 
-	getRequestsByAccount(since?: number): Array<{
-		accountId: string;
-		accountName: string | null;
-		requestCount: number;
-		successRate: number;
-	}> {
+	async getRequestsByAccount(since?: number): Promise<
+		Array<{
+			accountId: string;
+			accountName: string | null;
+			requestCount: number;
+			successRate: number;
+		}>
+	> {
 		const whereClause = since ? "WHERE r.timestamp > ?" : "";
 		const params = since ? [since] : [];
 
-		return this.query<{
+		const rows = await this.query<{
 			account_id: string;
 			account_name: string | null;
 			request_count: number;
 			success_rate: number;
 		}>(
 			`
-			SELECT 
+			SELECT
 				r.account_used as account_id,
 				a.name as account_name,
 				COUNT(*) as request_count,
@@ -394,7 +429,8 @@ export class RequestRepository extends BaseRepository<RequestData> {
 			ORDER BY request_count DESC
 		`,
 			params,
-		).map((row) => ({
+		);
+		return rows.map((row) => ({
 			accountId: row.account_id,
 			accountName: row.account_name,
 			requestCount: row.request_count,
@@ -402,19 +438,19 @@ export class RequestRepository extends BaseRepository<RequestData> {
 		}));
 	}
 
-	deleteOlderThan(cutoffTs: number): number {
+	async deleteOlderThan(cutoffTs: number): Promise<number> {
 		return this.runWithChanges(`DELETE FROM requests WHERE timestamp < ?`, [
 			cutoffTs,
 		]);
 	}
 
-	deleteOrphanedPayloads(): number {
+	async deleteOrphanedPayloads(): Promise<number> {
 		return this.runWithChanges(
 			`DELETE FROM request_payloads WHERE id NOT IN (SELECT id FROM requests)`,
 		);
 	}
 
-	deletePayloadsOlderThan(cutoffTs: number): number {
+	async deletePayloadsOlderThan(cutoffTs: number): Promise<number> {
 		return this.runWithChanges(
 			`DELETE FROM request_payloads WHERE id IN (SELECT id FROM requests WHERE timestamp < ?)`,
 			[cutoffTs],
