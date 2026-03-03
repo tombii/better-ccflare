@@ -800,7 +800,7 @@ graph TB
 
 ### Database Considerations
 
-better-ccflare uses SQLite by default, which is suitable for most single-instance deployments. The database is automatically created and managed in the platform-specific configuration directory.
+better-ccflare uses SQLite by default, which is suitable for single-instance deployments. For Kubernetes multi-pod deployments, set `DATABASE_URL` to use PostgreSQL (see [PostgreSQL Support for Multi-Pod Deployments](#postgresql-support-for-multi-pod-deployments) above).
 
 #### SQLite Optimization (Default)
 
@@ -813,61 +813,25 @@ PRAGMA temp_store = MEMORY;
 PRAGMA mmap_size = 268435456;
 ```
 
-### Database Migration for Scale
+### PostgreSQL Support for Multi-Pod Deployments
 
-When scaling beyond a single instance, you may need to migrate from SQLite to a shared database like PostgreSQL:
+SQLite is unsuitable for Kubernetes deployments with multiple replicas because pods cannot safely share a single file. better-ccflare has first-class PostgreSQL support via `Bun.SQL` — set the `DATABASE_URL` environment variable and the schema is created automatically on startup.
 
-```sql
--- PostgreSQL schema (example for future implementation)
-CREATE TABLE accounts (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    name VARCHAR(255) UNIQUE NOT NULL,
-    provider VARCHAR(50) NOT NULL,
-    api_key TEXT,
-    refresh_token TEXT,
-    access_token TEXT,
-    expires_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    last_used TIMESTAMPTZ,
-    request_count INTEGER DEFAULT 0,
-    total_requests INTEGER DEFAULT 0,
-    priority INTEGER DEFAULT 0,
-    rate_limited_until TIMESTAMPTZ,
-    session_start TIMESTAMPTZ,
-    session_request_count INTEGER DEFAULT 0,
-    paused BOOLEAN DEFAULT FALSE,
-    rate_limit_status VARCHAR(50),
-    rate_limit_reset TIMESTAMPTZ,
-    rate_limit_remaining INTEGER
-);
+```bash
+# Create a PostgreSQL database
+psql -U postgres -c "CREATE DATABASE ccflare;"
+psql -U postgres -c "CREATE USER ccflare_user WITH PASSWORD 'secret';"
+psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE ccflare TO ccflare_user;"
 
-CREATE TABLE requests (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    timestamp TIMESTAMPTZ DEFAULT NOW(),
-    method VARCHAR(10),
-    path TEXT,
-    account_used UUID REFERENCES accounts(id),
-    status_code INTEGER,
-    success BOOLEAN,
-    error_message TEXT,
-    response_time_ms INTEGER,
-    failover_attempts INTEGER DEFAULT 0,
-    model VARCHAR(100),
-    input_tokens INTEGER,
-    output_tokens INTEGER,
-    cache_read_input_tokens INTEGER,
-    cache_creation_input_tokens INTEGER,
-    cost_usd DECIMAL(10, 6)
-);
-
--- Indexes for performance
-CREATE INDEX idx_requests_timestamp ON requests(timestamp DESC);
-CREATE INDEX idx_requests_account ON requests(account_used);
-CREATE INDEX idx_accounts_active ON accounts(paused, expires_at);
-CREATE INDEX idx_accounts_rate_limit ON accounts(rate_limited_until);
+# Set DATABASE_URL — that's all that's needed
+export DATABASE_URL=postgresql://ccflare_user:secret@postgres-host:5432/ccflare
 ```
 
+The full schema (`accounts`, `requests`, `request_payloads`, `oauth_sessions`, `agent_preferences`, `api_keys`, `model_translations`, `strategies`) is created with `CREATE TABLE IF NOT EXISTS` on first start. Column migrations use `information_schema` checks and are applied automatically on every startup.
+
 ### Kubernetes Deployment
+
+> **Important**: For multi-pod Kubernetes deployments, you **must** use PostgreSQL. Set `DATABASE_URL` to share a single database across all replicas. SQLite cannot be safely shared across pods.
 
 ```yaml
 # better-ccflare-deployment.yaml
@@ -898,11 +862,12 @@ spec:
             secretKeyRef:
               name: better-ccflare-secrets
               key: database-url
-        - name: REDIS_URL
-          valueFrom:
-            secretKeyRef:
-              name: better-ccflare-secrets
-              key: redis-url
+        - name: LB_STRATEGY
+          value: "session"
+        - name: LOG_LEVEL
+          value: "INFO"
+        - name: LOG_FORMAT
+          value: "json"
         resources:
           requests:
             memory: "512Mi"
@@ -934,6 +899,15 @@ spec:
   - port: 80
     targetPort: 8080
   type: LoadBalancer
+---
+# Store the PostgreSQL connection string as a Secret
+apiVersion: v1
+kind: Secret
+metadata:
+  name: better-ccflare-secrets
+type: Opaque
+stringData:
+  database-url: "postgresql://ccflare_user:secret@postgres-svc:5432/ccflare"
 ```
 
 ### High Availability Checklist
@@ -1166,7 +1140,8 @@ find /backup/better-ccflare -name "*.tar.gz" -mtime +30 -delete
 | `RETRY_DELAY_MS` | 1000 | Initial delay between retries in milliseconds |
 | `RETRY_BACKOFF` | 2 | Backoff multiplier for exponential retry delays |
 | `better-ccflare_CONFIG_PATH` | Platform-specific | Path to configuration file |
-| `better-ccflare_DB_PATH` | Platform-specific | Path to SQLite database file |
+| `better-ccflare_DB_PATH` | Platform-specific | Path to SQLite database file (ignored when `DATABASE_URL` is set) |
+| `DATABASE_URL` | - | PostgreSQL connection string. When set, PostgreSQL is used instead of SQLite. Required for multi-pod Kubernetes deployments. Example: `postgresql://user:pass@host:5432/db` |
 
 ### Configuration File
 

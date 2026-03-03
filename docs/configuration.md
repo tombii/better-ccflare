@@ -116,11 +116,61 @@ These environment variables are not stored in the configuration file and must be
 | `LOG_LEVEL` | Set logging verbosity (DEBUG, INFO, WARN, ERROR) | `INFO` | `LOG_LEVEL=DEBUG` |
 | `LOG_FORMAT` | Set log output format (pretty, json) | `pretty` | `LOG_FORMAT=json` |
 | `better-ccflare_DEBUG` | Enable debug mode with console output | - | `better-ccflare_DEBUG=1` |
-| `better-ccflare_DB_PATH` | Custom database file path | Platform-specific | `better-ccflare_DB_PATH=/var/lib/better-ccflare/db.sqlite` |
+| `better-ccflare_DB_PATH` | Custom database file path (SQLite only) | Platform-specific | `better-ccflare_DB_PATH=/var/lib/better-ccflare/db.sqlite` |
+| `DATABASE_URL` | Use PostgreSQL instead of SQLite. Set to a `postgresql://` or `postgres://` connection string. When set, `better-ccflare_DB_PATH` is ignored. | - | `DATABASE_URL=postgresql://user:pass@localhost:5432/ccflare` |
 | `CF_PRICING_REFRESH_HOURS` | Hours between pricing data refreshes | `24` | `CF_PRICING_REFRESH_HOURS=12` |
 | `CF_PRICING_OFFLINE` | Disable online pricing updates | - | `CF_PRICING_OFFLINE=1` |
 | `CF_STREAM_USAGE_BUFFER_KB` | Stream usage buffer size in KB | `64` | `CF_STREAM_USAGE_BUFFER_KB=128` |
 | `CF_STREAM_TIMEOUT_MS` | Stream processing timeout in milliseconds | `60000` (1 minute) | `CF_STREAM_TIMEOUT_MS=120000` |
+
+## Database Configuration
+
+better-ccflare supports two database backends:
+
+| Backend | When used | Environment variable |
+|---------|-----------|---------------------|
+| **SQLite** (default) | `DATABASE_URL` is not set, or starts with `sqlite://` | `BETTER_CCFLARE_DB_PATH` (optional path override) |
+| **PostgreSQL** | `DATABASE_URL` starts with `postgres://` or `postgresql://` | `DATABASE_URL=postgresql://user:pass@host:5432/db` |
+
+### SQLite (default)
+
+No configuration required. The database is created automatically in the platform-specific directory (`~/.config/better-ccflare/better-ccflare.db`).
+
+```bash
+# Optional: store database at a custom path
+export BETTER_CCFLARE_DB_PATH=/var/lib/better-ccflare/better-ccflare.db
+```
+
+### PostgreSQL
+
+Set `DATABASE_URL` to a PostgreSQL connection string:
+
+```bash
+export DATABASE_URL=postgresql://ccflare_user:secret@localhost:5432/ccflare
+```
+
+The schema and any missing columns are created automatically on startup. No manual migration steps are required. This backend is recommended for Kubernetes or other multi-pod deployments where multiple instances need to share the same database.
+
+```yaml
+# Kubernetes Secret example
+apiVersion: v1
+kind: Secret
+metadata:
+  name: better-ccflare-secrets
+type: Opaque
+stringData:
+  database-url: "postgresql://ccflare_user:secret@postgres-svc:5432/ccflare"
+```
+
+```yaml
+# Deployment env reference
+env:
+- name: DATABASE_URL
+  valueFrom:
+    secretKeyRef:
+      name: better-ccflare-secrets
+      key: database-url
+```
 
 ## Runtime Configuration API
 
