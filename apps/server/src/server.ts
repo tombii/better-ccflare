@@ -605,7 +605,7 @@ export default async function startServer(options?: {
 					`Periodic cleanup: removed ${removedRequests} requests, ${removedPayloads} payloads in ${Date.now() - startTime}ms`,
 				);
 				// Reclaim freed SQLite pages without a full blocking VACUUM
-				dbOps.incrementalVacuum(2000); // reclaim up to 2000 pages (~8 MB)
+				dbOps.incrementalVacuum(50000); // reclaim up to 50000 pages (~200 MB)
 			}
 		} catch (err) {
 			log.error(`Periodic data retention cleanup error: ${err}`);
