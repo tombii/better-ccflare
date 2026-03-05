@@ -260,6 +260,7 @@ async function prewarmBedrockCache(account: Account, region: string) {
 function startUsagePollingWithRefresh(
 	account: Account,
 	proxyContext: ProxyContext,
+	startupDelayMs: number = 0,
 ) {
 	const logger = new Logger("UsagePolling");
 	const MAX_RETRY_ATTEMPTS = 10;
@@ -311,8 +312,8 @@ function startUsagePollingWithRefresh(
 				account.id,
 				tokenProvider,
 				account.provider,
-				30000,
-			); // Poll every 30s
+				60000, // Poll every 60s
+			);
 
 			// Reset retry count on success
 			retryCount = 0;
@@ -414,8 +415,12 @@ function startUsagePollingWithRefresh(
 		}
 	};
 
-	// Start the polling
-	pollWithRefresh();
+	// Start the polling (with optional startup delay to stagger multiple accounts)
+	if (startupDelayMs > 0) {
+		setTimeout(() => pollWithRefresh(), startupDelayMs);
+	} else {
+		pollWithRefresh();
+	}
 }
 
 // Export for programmatic use
@@ -949,7 +954,7 @@ Available endpoints:
 		log.info(
 			`Found ${anthropicAccounts.length} Anthropic accounts, starting usage polling...`,
 		);
-		for (const account of anthropicAccounts) {
+		for (const [index, account] of anthropicAccounts.entries()) {
 			log.debug(`Processing account: ${account.name}`, {
 				accountId: account.id,
 				hasAccessToken: !!account.access_token,
@@ -963,8 +968,12 @@ Available endpoints:
 			if (account.access_token || account.refresh_token) {
 				// Start usage polling with token refresh capability
 				// Usage data fetching should work independently of account paused status
-				startUsagePollingWithRefresh(account, proxyContext);
-				log.info(`Started usage polling for account ${account.name}`);
+				// Stagger startup by 5s per account to avoid simultaneous 429s on boot
+				const startupDelayMs = index * 5000;
+				startUsagePollingWithRefresh(account, proxyContext, startupDelayMs);
+				log.info(
+					`Started usage polling for account ${account.name}${startupDelayMs > 0 ? ` (delayed ${startupDelayMs / 1000}s)` : ""}`,
+				);
 			} else {
 				log.warn(
 					`Account ${account.name} has no access token or refresh token, skipping usage polling`,
