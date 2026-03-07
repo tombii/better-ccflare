@@ -312,7 +312,7 @@ function startUsagePollingWithRefresh(
 				account.id,
 				tokenProvider,
 				account.provider,
-				60000, // Poll every 60s
+				300000, // Poll every 300s
 			);
 
 			// Reset retry count on success
