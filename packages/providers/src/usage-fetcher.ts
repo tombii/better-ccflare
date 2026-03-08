@@ -203,10 +203,66 @@ export type AccessTokenProvider = () => Promise<string>;
  */
 class UsageCache {
 	private cache = new Map<string, { data: AnyUsageData; timestamp: number }>();
-	private polling = new Map<string, NodeJS.Timeout>();
+	private pollTimeouts = new Map<string, NodeJS.Timeout>();
+	private failureCounts = new Map<string, number>();
 	private tokenProviders = new Map<string, AccessTokenProvider>();
 	private providerTypes = new Map<string, string>(); // Track provider type for each account
 	private customEndpoints = new Map<string, string | null>(); // Track custom endpoints
+
+	/**
+	 * Schedule the next poll with exponential backoff on failures
+	 */
+	private scheduleNextPoll(
+		accountId: string,
+		tokenProvider: AccessTokenProvider,
+		baseIntervalMs: number,
+		provider?: string,
+		customEndpoint?: string | null,
+	) {
+		const failures = this.failureCounts.get(accountId) ?? 0;
+		// Exponential backoff capped at 30 minutes
+		const delay =
+			failures === 0
+				? baseIntervalMs
+				: Math.min(baseIntervalMs * 2 ** failures, 30 * 60 * 1000);
+
+		if (failures > 0) {
+			log.info(
+				`Usage poll backoff for account ${accountId}: retry in ${Math.round(delay / 1000)}s (${failures} consecutive failure(s))`,
+			);
+		}
+
+		const timeoutId = setTimeout(async () => {
+			this.pollTimeouts.delete(accountId);
+			// Bail if polling was stopped
+			if (!this.tokenProviders.has(accountId)) return;
+
+			const success = await this.fetchAndCache(
+				accountId,
+				tokenProvider,
+				provider,
+				customEndpoint,
+			);
+			if (success) {
+				this.failureCounts.delete(accountId); // reset streak on success
+			} else {
+				const count = (this.failureCounts.get(accountId) ?? 0) + 1;
+				this.failureCounts.set(accountId, count);
+			}
+			// Schedule the next poll if still active
+			if (this.tokenProviders.has(accountId)) {
+				this.scheduleNextPoll(
+					accountId,
+					tokenProvider,
+					baseIntervalMs,
+					provider,
+					customEndpoint,
+				);
+			}
+		}, delay);
+
+		this.pollTimeouts.set(accountId, timeoutId);
+	}
 
 	/**
 	 * Start polling for an account's usage data
@@ -227,13 +283,16 @@ class UsageCache {
 		}
 
 		// Stop existing polling if any to prevent leaks
-		const existing = this.polling.get(accountId);
+		const existing = this.pollTimeouts.get(accountId);
 		if (existing) {
-			clearInterval(existing);
+			clearTimeout(existing);
 			log.warn(
-				`Clearing existing polling interval for account ${accountId} before starting new one`,
+				`Clearing existing polling timeout for account ${accountId} before starting new one`,
 			);
 		}
+
+		// Reset failure count for fresh start
+		this.failureCounts.delete(accountId);
 
 		// Store the token provider (either a static token or a function)
 		const tokenProvider: AccessTokenProvider =
@@ -250,20 +309,29 @@ class UsageCache {
 			this.customEndpoints.set(accountId, customEndpoint);
 		}
 
+		// Default to 60s if not provided
+		const baseIntervalMs = intervalMs ?? 60000;
+
 		// Immediate fetch
-		this.fetchAndCache(accountId, tokenProvider, provider, customEndpoint);
+		this.fetchAndCache(accountId, tokenProvider, provider, customEndpoint).then(
+			(success) => {
+				if (!success) {
+					this.failureCounts.set(accountId, 1);
+				}
+				if (this.tokenProviders.has(accountId)) {
+					this.scheduleNextPoll(
+						accountId,
+						tokenProvider,
+						baseIntervalMs,
+						provider,
+						customEndpoint,
+					);
+				}
+			},
+		);
 
-		// Default to 90 seconds ± 5 seconds with randomization if not provided
-		const pollingInterval = intervalMs ?? 90000 + Math.random() * 10000;
-
-		// Start interval
-		const interval = setInterval(() => {
-			this.fetchAndCache(accountId, tokenProvider, provider, customEndpoint);
-		}, pollingInterval);
-
-		this.polling.set(accountId, interval);
 		log.debug(
-			`Started usage polling for account ${accountId} (provider: ${provider}) with interval ${Math.round(pollingInterval / 1000)}s`,
+			`Started usage polling for account ${accountId} (provider: ${provider}) with base interval ${Math.round(baseIntervalMs / 1000)}s`,
 		);
 	}
 
@@ -291,11 +359,14 @@ class UsageCache {
 	 * Stop polling for an account
 	 */
 	stopPolling(accountId: string) {
-		const interval = this.polling.get(accountId);
-		if (interval) {
-			clearInterval(interval);
-			this.polling.delete(accountId);
+		const timeout = this.pollTimeouts.get(accountId);
+		if (timeout) {
+			clearTimeout(timeout);
+			this.pollTimeouts.delete(accountId);
+		}
+		if (this.tokenProviders.has(accountId)) {
 			this.tokenProviders.delete(accountId);
+			this.failureCounts.delete(accountId);
 			// Clean up cache entry when polling stops to prevent memory leaks
 			this.cache.delete(accountId);
 			log.info(
@@ -516,7 +587,7 @@ class UsageCache {
 	 * Clear all cached data and stop all polling
 	 */
 	clear() {
-		for (const accountId of this.polling.keys()) {
+		for (const accountId of this.tokenProviders.keys()) {
 			this.stopPolling(accountId);
 		}
 		this.cache.clear();
