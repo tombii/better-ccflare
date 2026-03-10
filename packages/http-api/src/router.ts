@@ -94,10 +94,10 @@ export class APIRouter {
 		const { db, config, dbOps } = this.context;
 
 		// Create handlers
-		const healthHandler = createHealthHandler(db, config);
+		const healthHandler = createHealthHandler(dbOps.getAdapter(), config);
 		const statsHandler = createStatsHandler(dbOps);
 		const statsResetHandler = createStatsResetHandler(dbOps);
-		const accountsHandler = createAccountsListHandler(db);
+		const accountsHandler = createAccountsListHandler(dbOps);
 		const accountAddHandler = createAccountAddHandler(dbOps, config);
 		const zaiAccountAddHandler = createZaiAccountAddHandler(dbOps);
 		const minimaxAccountAddHandler = createMinimaxAccountAddHandler(dbOps);
@@ -112,7 +112,9 @@ export class APIRouter {
 			createAnthropicCompatibleAccountAddHandler(dbOps);
 		const openaiAccountAddHandler = createOpenAIAccountAddHandler(dbOps);
 		const _accountRemoveHandler = createAccountRemoveHandler(dbOps);
-		const requestsSummaryHandler = createRequestsSummaryHandler(db);
+		const requestsSummaryHandler = createRequestsSummaryHandler(
+			dbOps.getAdapter(),
+		);
 		const requestsDetailHandler = createRequestsDetailHandler(dbOps);
 		const configHandlers = createConfigHandlers(config, this.context.runtime);
 		const logsStreamHandler = createLogsStreamHandler();

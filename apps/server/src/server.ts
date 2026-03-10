@@ -510,12 +510,14 @@ export default async function startServer(options?: {
 		runtime.port = port;
 	}
 	DatabaseFactory.initialize(undefined, runtime);
-	const dbOps = DatabaseFactory.getInstance();
+	const dbOps = await DatabaseFactory.getInstanceAsync();
 
-	// Run integrity check if database was initialized in fast mode
-	dbOps.runIntegrityCheck();
+	// Run integrity check if database was initialized in fast mode (SQLite only)
+	if (dbOps.isSQLite) {
+		dbOps.runIntegrityCheck();
+	}
 
-	const db = dbOps.getDatabase();
+	const db = dbOps.getAdapter();
 	const log = container.resolve<Logger>(SERVICE_KEYS.Logger);
 	container.registerInstance(SERVICE_KEYS.Database, dbOps);
 

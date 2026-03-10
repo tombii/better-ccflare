@@ -6,7 +6,7 @@ export interface RequestRow {
 	path: string;
 	account_used: string | null;
 	status_code: number | null;
-	success: 0 | 1;
+	success: boolean | number;
 	error_message: string | null;
 	response_time_ms: number | null;
 	failover_attempts: number;
@@ -116,26 +116,41 @@ export interface RequestPayload {
 export function toRequest(row: RequestRow): Request {
 	return {
 		id: row.id,
-		timestamp: row.timestamp,
+		timestamp: Number(row.timestamp),
 		method: row.method,
 		path: row.path,
 		accountUsed: row.account_used,
-		statusCode: row.status_code,
-		success: row.success === 1,
+		statusCode: row.status_code != null ? Number(row.status_code) : null,
+		success: !!row.success,
 		errorMessage: row.error_message,
-		responseTimeMs: row.response_time_ms,
-		failoverAttempts: row.failover_attempts,
+		responseTimeMs:
+			row.response_time_ms != null ? Number(row.response_time_ms) : null,
+		failoverAttempts: Number(row.failover_attempts) || 0,
 		model: row.model || undefined,
-		promptTokens: row.prompt_tokens || undefined,
-		completionTokens: row.completion_tokens || undefined,
-		totalTokens: row.total_tokens || undefined,
-		costUsd: row.cost_usd || undefined,
-		inputTokens: row.input_tokens || undefined,
-		cacheReadInputTokens: row.cache_read_input_tokens || undefined,
-		cacheCreationInputTokens: row.cache_creation_input_tokens || undefined,
-		outputTokens: row.output_tokens || undefined,
+		promptTokens:
+			row.prompt_tokens != null ? Number(row.prompt_tokens) : undefined,
+		completionTokens:
+			row.completion_tokens != null ? Number(row.completion_tokens) : undefined,
+		totalTokens:
+			row.total_tokens != null ? Number(row.total_tokens) : undefined,
+		costUsd: row.cost_usd != null ? Number(row.cost_usd) : undefined,
+		inputTokens:
+			row.input_tokens != null ? Number(row.input_tokens) : undefined,
+		cacheReadInputTokens:
+			row.cache_read_input_tokens != null
+				? Number(row.cache_read_input_tokens)
+				: undefined,
+		cacheCreationInputTokens:
+			row.cache_creation_input_tokens != null
+				? Number(row.cache_creation_input_tokens)
+				: undefined,
+		outputTokens:
+			row.output_tokens != null ? Number(row.output_tokens) : undefined,
 		agentUsed: row.agent_used || undefined,
-		tokensPerSecond: row.output_tokens_per_second || undefined,
+		tokensPerSecond:
+			row.output_tokens_per_second != null
+				? Number(row.output_tokens_per_second)
+				: undefined,
 		apiKeyId: row.api_key_id || undefined,
 		apiKeyName: row.api_key_name || undefined,
 	};

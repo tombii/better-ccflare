@@ -77,13 +77,13 @@ export interface AccountRow {
 	rate_limited_until?: number | null;
 	session_start?: number | null;
 	session_request_count?: number;
-	paused?: 0 | 1;
+	paused?: boolean | number | null;
 	rate_limit_reset?: number | null;
 	rate_limit_status?: string | null;
 	rate_limit_remaining?: number | null;
 	priority?: number;
-	auto_fallback_enabled?: 0 | 1;
-	auto_refresh_enabled?: 0 | 1;
+	auto_fallback_enabled?: boolean | number | null;
+	auto_refresh_enabled?: boolean | number | null;
 	custom_endpoint?: string | null;
 	model_mappings?: string | null; // JSON string for OpenAI-compatible providers
 	cross_region_mode?: string | null; // Bedrock cross-region inference mode
@@ -220,6 +220,15 @@ export interface AccountDeleteRequest {
 	confirm: string;
 }
 
+// Helper coercions for database rows (handles both SQLite integers and PostgreSQL booleans/bigints)
+function toNum(v: unknown): number {
+	return Number(v) || 0;
+}
+function toNumOrNull(v: unknown): number | null {
+	const n = Number(v);
+	return Number.isFinite(n) && n !== 0 ? n : v != null && v !== 0 ? n : null;
+}
+
 // Type mappers
 export function toAccount(row: AccountRow): Account {
 	return {
@@ -229,21 +238,21 @@ export function toAccount(row: AccountRow): Account {
 		api_key: row.api_key,
 		refresh_token: row.refresh_token,
 		access_token: row.access_token,
-		expires_at: row.expires_at,
-		created_at: row.created_at,
-		last_used: row.last_used,
-		request_count: row.request_count,
-		total_requests: row.total_requests,
-		rate_limited_until: row.rate_limited_until || null,
-		session_start: row.session_start || null,
-		session_request_count: row.session_request_count || 0,
-		paused: row.paused === 1,
-		rate_limit_reset: row.rate_limit_reset || null,
+		expires_at: toNumOrNull(row.expires_at),
+		created_at: toNum(row.created_at),
+		last_used: toNumOrNull(row.last_used),
+		request_count: toNum(row.request_count),
+		total_requests: toNum(row.total_requests),
+		rate_limited_until: toNumOrNull(row.rate_limited_until),
+		session_start: toNumOrNull(row.session_start),
+		session_request_count: toNum(row.session_request_count),
+		paused: !!row.paused,
+		rate_limit_reset: toNumOrNull(row.rate_limit_reset),
 		rate_limit_status: row.rate_limit_status || null,
-		rate_limit_remaining: row.rate_limit_remaining || null,
-		priority: row.priority || 0,
-		auto_fallback_enabled: row.auto_fallback_enabled === 1,
-		auto_refresh_enabled: row.auto_refresh_enabled === 1,
+		rate_limit_remaining: toNumOrNull(row.rate_limit_remaining),
+		priority: toNum(row.priority),
+		auto_fallback_enabled: !!row.auto_fallback_enabled,
+		auto_refresh_enabled: !!row.auto_refresh_enabled,
 		custom_endpoint: row.custom_endpoint || null,
 		model_mappings: row.model_mappings || null,
 		cross_region_mode: row.cross_region_mode || null,

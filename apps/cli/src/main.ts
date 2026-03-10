@@ -1253,7 +1253,7 @@ Examples:
 	}
 
 	if (parsed.repairDb) {
-		handleRepairCommand(dbOps);
+		await handleRepairCommand(dbOps);
 		await exitGracefully(0);
 	}
 

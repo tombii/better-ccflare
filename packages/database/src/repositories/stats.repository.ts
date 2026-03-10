@@ -35,36 +35,69 @@ export class StatsRepository {
 	 */
 	async getAggregatedStats(sinceMs?: number): Promise<AggregatedStats> {
 		const since = sinceMs ?? Date.now() - 30 * 24 * 60 * 60 * 1000;
-		const stats = await this.adapter.get<AggregatedStats>(
+		const stats = await this.adapter.get<{
+			totalRequests: unknown;
+			successfulRequests: unknown;
+			avgResponseTime: unknown;
+			inputTokens: unknown;
+			outputTokens: unknown;
+			cacheCreationInputTokens: unknown;
+			cacheReadInputTokens: unknown;
+			totalCostUsd: unknown;
+			avgTokensPerSecond: unknown;
+		}>(
 			`SELECT
-				COUNT(*) as totalRequests,
-				SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successfulRequests,
-				AVG(response_time_ms) as avgResponseTime,
-				SUM(input_tokens) as inputTokens,
-				SUM(output_tokens) as outputTokens,
-				SUM(cache_creation_input_tokens) as cacheCreationInputTokens,
-				SUM(cache_read_input_tokens) as cacheReadInputTokens,
-				SUM(cost_usd) as totalCostUsd,
-				AVG(output_tokens_per_second) as avgTokensPerSecond
+				COUNT(*) as "totalRequests",
+				SUM(CASE WHEN success = TRUE THEN 1 ELSE 0 END) as "successfulRequests",
+				AVG(response_time_ms) as "avgResponseTime",
+				SUM(input_tokens) as "inputTokens",
+				SUM(output_tokens) as "outputTokens",
+				SUM(cache_creation_input_tokens) as "cacheCreationInputTokens",
+				SUM(cache_read_input_tokens) as "cacheReadInputTokens",
+				SUM(cost_usd) as "totalCostUsd",
+				AVG(output_tokens_per_second) as "avgTokensPerSecond"
 			FROM requests
 			WHERE timestamp > ?`,
 			[since],
 		);
 
-		const s = stats as AggregatedStats;
+		const s = stats ?? {};
 
-		// Calculate total tokens
-		const totalTokens =
-			(s.inputTokens || 0) +
-			(s.outputTokens || 0) +
-			(s.cacheCreationInputTokens || 0) +
-			(s.cacheReadInputTokens || 0);
+		const totalRequests =
+			Number((s as { totalRequests: unknown }).totalRequests) || 0;
+		const successfulRequests =
+			Number((s as { successfulRequests: unknown }).successfulRequests) || 0;
+		const inputTokens =
+			Number((s as { inputTokens: unknown }).inputTokens) || 0;
+		const outputTokens =
+			Number((s as { outputTokens: unknown }).outputTokens) || 0;
+		const cacheCreationInputTokens =
+			Number(
+				(s as { cacheCreationInputTokens: unknown }).cacheCreationInputTokens,
+			) || 0;
+		const cacheReadInputTokens =
+			Number((s as { cacheReadInputTokens: unknown }).cacheReadInputTokens) ||
+			0;
 
 		return {
-			...s,
-			totalTokens,
-			avgResponseTime: s.avgResponseTime || 0,
-			totalCostUsd: s.totalCostUsd || 0,
+			totalRequests,
+			successfulRequests,
+			avgResponseTime:
+				Number((s as { avgResponseTime: unknown }).avgResponseTime) || 0,
+			totalTokens:
+				inputTokens +
+				outputTokens +
+				cacheCreationInputTokens +
+				cacheReadInputTokens,
+			totalCostUsd: Number((s as { totalCostUsd: unknown }).totalCostUsd) || 0,
+			inputTokens,
+			outputTokens,
+			cacheCreationInputTokens,
+			cacheReadInputTokens,
+			avgTokensPerSecond:
+				(s as { avgTokensPerSecond: unknown }).avgTokensPerSecond != null
+					? Number((s as { avgTokensPerSecond: unknown }).avgTokensPerSecond)
+					: null,
 		};
 	}
 
@@ -95,16 +128,16 @@ export class StatsRepository {
 				SELECT
 					COALESCE(a.id, ?) as id,
 					COALESCE(a.name, ?) as name,
-					COUNT(r.id) as requestCount,
-					COALESCE(a.total_requests, 0) as totalRequests
+					COUNT(r.id) as "requestCount",
+					COALESCE(MAX(a.total_requests), 0) as "totalRequests"
 				FROM requests r
 				LEFT JOIN accounts a ON a.id = r.account_used
-				GROUP BY COALESCE(a.id, ?), COALESCE(a.name, ?)
+				GROUP BY 1, 2
 				HAVING COUNT(r.id) > 0
-				ORDER BY requestCount DESC
+				ORDER BY "requestCount" DESC
 				LIMIT ?
 			`,
-				[NO_ACCOUNT_ID, NO_ACCOUNT_ID, NO_ACCOUNT_ID, NO_ACCOUNT_ID, limit],
+				[NO_ACCOUNT_ID, NO_ACCOUNT_ID, limit],
 			);
 		} else {
 			accountStats = await this.adapter.query<{
@@ -117,8 +150,8 @@ export class StatsRepository {
 				SELECT
 					a.id,
 					a.name,
-					a.request_count as requestCount,
-					a.total_requests as totalRequests
+					a.request_count as "requestCount",
+					a.total_requests as "totalRequests"
 				FROM accounts a
 				WHERE a.request_count > 0
 				ORDER BY a.request_count DESC
@@ -140,9 +173,9 @@ export class StatsRepository {
 			successful: number;
 		}>(
 			`SELECT
-				account_used as accountId,
+				account_used as "accountId",
 				COUNT(*) as total,
-				SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successful
+				SUM(CASE WHEN success = TRUE THEN 1 ELSE 0 END) as successful
 			FROM requests
 			WHERE account_used IN (${placeholders})
 			GROUP BY account_used`,
@@ -153,16 +186,18 @@ export class StatsRepository {
 		const successRateMap = new Map(
 			successRates.map((sr) => [
 				sr.accountId,
-				sr.total > 0 ? Math.round((sr.successful / sr.total) * 100) : 0,
+				Number(sr.total) > 0
+					? Math.round((Number(sr.successful) / Number(sr.total)) * 100)
+					: 0,
 			]),
 		);
 
 		// Combine the data
 		return accountStats.map((acc) => ({
 			name: acc.name,
-			requestCount: acc.requestCount,
+			requestCount: Number(acc.requestCount),
 			successRate: successRateMap.get(acc.id) || 0,
-			totalRequests: acc.totalRequests,
+			totalRequests: Number(acc.totalRequests),
 		}));
 	}
 
@@ -170,10 +205,10 @@ export class StatsRepository {
 	 * Get count of active accounts
 	 */
 	async getActiveAccountCount(): Promise<number> {
-		const result = await this.adapter.get<{ count: number }>(
+		const result = await this.adapter.get<{ count: unknown }>(
 			"SELECT COUNT(*) as count FROM accounts WHERE request_count > 0",
 		);
-		return result?.count || 0;
+		return Number(result?.count) || 0;
 	}
 
 	/**
@@ -181,11 +216,12 @@ export class StatsRepository {
 	 */
 	async getRecentErrors(limit = 10): Promise<string[]> {
 		const errors = await this.adapter.query<{ error_message: string }>(
-			`SELECT DISTINCT error_message
+			`SELECT error_message, MAX(timestamp) as latest
 			FROM requests
 			WHERE error_message IS NOT NULL
 				AND error_message != ''
-			ORDER BY timestamp DESC
+			GROUP BY error_message
+			ORDER BY latest DESC
 			LIMIT ?`,
 			[limit],
 		);
@@ -199,10 +235,10 @@ export class StatsRepository {
 	async getTopModels(
 		limit = 5,
 	): Promise<Array<{ model: string; count: number; percentage: number }>> {
-		return this.adapter.query<{
+		const rows = await this.adapter.query<{
 			model: string;
-			count: number;
-			percentage: number;
+			count: unknown;
+			percentage: unknown;
 		}>(
 			`WITH model_counts AS (
 				SELECT
@@ -218,12 +254,17 @@ export class StatsRepository {
 			SELECT
 				mc.model,
 				mc.count,
-				ROUND(CAST(mc.count AS REAL) / t.total * 100, 2) as percentage
+				ROUND(CAST(CAST(mc.count AS REAL) / t.total * 100 AS NUMERIC), 2) as percentage
 			FROM model_counts mc, total t
 			ORDER BY mc.count DESC
 			LIMIT ?`,
 			[limit],
 		);
+		return rows.map((r) => ({
+			model: r.model,
+			count: Number(r.count),
+			percentage: Number(r.percentage),
+		}));
 	}
 
 	/**
@@ -278,9 +319,9 @@ export class StatsRepository {
 			successful: number;
 		}>(
 			`SELECT
-				api_key_id as apiKeyId,
+				api_key_id as "apiKeyId",
 				COUNT(*) as total,
-				SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successful
+				SUM(CASE WHEN success = TRUE THEN 1 ELSE 0 END) as successful
 			FROM requests
 			WHERE api_key_id IN (${placeholders})
 			GROUP BY api_key_id`,
@@ -291,7 +332,9 @@ export class StatsRepository {
 		const successRateMap = new Map(
 			successRates.map((sr) => [
 				sr.apiKeyId,
-				sr.total > 0 ? Math.round((sr.successful / sr.total) * 100) : 0,
+				Number(sr.total) > 0
+					? Math.round((Number(sr.successful) / Number(sr.total)) * 100)
+					: 0,
 			]),
 		);
 

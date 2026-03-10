@@ -1,10 +1,10 @@
-import type { Database } from "bun:sqlite";
 import {
 	CLAUDE_MODEL_IDS,
 	getClientVersion,
 	registerHeartbeat,
 	requestEvents,
 } from "@better-ccflare/core";
+import type { BunSqlAdapter } from "@better-ccflare/database";
 import { Logger } from "@better-ccflare/logger";
 import { fetchUsageData, getProvider } from "@better-ccflare/providers";
 import type { Account } from "@better-ccflare/types";
@@ -18,7 +18,7 @@ const log = new Logger("AutoRefreshScheduler");
  * and sends dummy messages when their usage window resets
  */
 export class AutoRefreshScheduler {
-	private db: Database;
+	private db: BunSqlAdapter;
 	private proxyContext: ProxyContext;
 	private unregisterInterval: (() => void) | null = null;
 	private checkInterval = 60000; // Check every minute
@@ -33,7 +33,7 @@ export class AutoRefreshScheduler {
 	// Threshold for marking an account as needing re-authentication
 	private readonly FAILURE_THRESHOLD = 5;
 
-	constructor(db: Database, proxyContext: ProxyContext) {
+	constructor(db: BunSqlAdapter, proxyContext: ProxyContext) {
 		this.db = db;
 		this.proxyContext = proxyContext;
 	}
@@ -102,39 +102,35 @@ export class AutoRefreshScheduler {
 
 			// Periodically clean up the tracking map - remove entries for accounts that no longer exist
 			// or have auto-refresh disabled
-			this.cleanupTracking();
+			await this.cleanupTracking();
 
 			// Get all accounts with auto-refresh enabled that have reset windows OR need immediate refresh
-			const query = this.db.query<
-				{
-					id: string;
-					name: string;
-					provider: string;
-					refresh_token: string;
-					access_token: string | null;
-					expires_at: number | null;
-					rate_limit_reset: number | null;
-					custom_endpoint: string | null;
-				},
-				[number, number]
-			>(
+			const accounts = await this.db.query<{
+				id: string;
+				name: string;
+				provider: string;
+				refresh_token: string;
+				access_token: string | null;
+				expires_at: number | null;
+				rate_limit_reset: number | null;
+				custom_endpoint: string | null;
+			}>(
 				`
 				SELECT
 					id, name, provider, refresh_token, access_token,
 					expires_at, rate_limit_reset, custom_endpoint
 				FROM accounts
 				WHERE
-					auto_refresh_enabled = 1
+					auto_refresh_enabled = TRUE
 					AND provider = 'anthropic'
 					AND (
 						(rate_limit_reset IS NOT NULL AND rate_limit_reset <= ?)
 						OR rate_limit_reset IS NULL
-						OR rate_limit_reset < (? - 24 * 60 * 60 * 1000) -- Reset time is more than 24h old (stale)
+						OR rate_limit_reset < (? - 24 * 60 * 60 * 1000)
 					)
 			`,
+				[now, now],
 			);
-
-			const accounts = query.all(now, now);
 
 			log.debug(
 				`Auto-refresh check found ${accounts.length} account(s) to consider`,
@@ -413,8 +409,8 @@ export class AutoRefreshScheduler {
 				);
 
 				// Mark account as needing attention in database (disable auto-refresh to prevent repeated failures)
-				this.db.run(
-					`UPDATE accounts SET auto_refresh_enabled = 0 WHERE id = ?`,
+				await this.db.run(
+					`UPDATE accounts SET auto_refresh_enabled = FALSE WHERE id = ?`,
 					[accountRow.id],
 				);
 
@@ -449,7 +445,7 @@ export class AutoRefreshScheduler {
 
 				// Update rate limit fields from unified headers
 				if (rateLimitInfo.resetTime) {
-					this.db.run(
+					await this.db.run(
 						"UPDATE accounts SET rate_limit_reset = ?, rate_limited_until = NULL WHERE id = ?",
 						[rateLimitInfo.resetTime, accountRow.id],
 					);
@@ -466,7 +462,7 @@ export class AutoRefreshScheduler {
 				} else {
 					// Even if no reset time is provided, clear rate_limited_until as the refresh was successful
 					// Also make sure to clear any existing rate_limited_until value to ensure the account is not stuck
-					this.db.run(
+					await this.db.run(
 						"UPDATE accounts SET rate_limited_until = NULL WHERE id = ?",
 						[accountRow.id],
 					);
@@ -476,7 +472,7 @@ export class AutoRefreshScheduler {
 				}
 
 				if (rateLimitInfo.statusHeader) {
-					this.db.run(
+					await this.db.run(
 						"UPDATE accounts SET rate_limit_status = ? WHERE id = ?",
 						[rateLimitInfo.statusHeader, accountRow.id],
 					);
@@ -486,7 +482,7 @@ export class AutoRefreshScheduler {
 				}
 
 				if (rateLimitInfo.remaining !== undefined) {
-					this.db.run(
+					await this.db.run(
 						"UPDATE accounts SET rate_limit_remaining = ? WHERE id = ?",
 						[rateLimitInfo.remaining, accountRow.id],
 					);
@@ -598,7 +594,7 @@ export class AutoRefreshScheduler {
 	 * Clean up the tracking map by removing entries for accounts that no longer exist
 	 * or have auto-refresh disabled
 	 */
-	private cleanupTracking(): void {
+	private async cleanupTracking(): Promise<void> {
 		try {
 			// Check if database is available
 			if (!this.db) {
@@ -607,11 +603,11 @@ export class AutoRefreshScheduler {
 			}
 
 			// Get all account IDs that have auto-refresh enabled
-			const query = this.db.query<{ id: string }, []>(
-				`SELECT id FROM accounts WHERE auto_refresh_enabled = 1 AND provider = 'anthropic'`,
+			const rows = await this.db.query<{ id: string }>(
+				`SELECT id FROM accounts WHERE auto_refresh_enabled = TRUE AND provider = 'anthropic'`,
 			);
 
-			const activeAccountIds = query.all().map((row) => row.id);
+			const activeAccountIds = rows.map((row) => row.id);
 			const activeAccountIdSet = new Set(activeAccountIds);
 
 			// Remove entries from the maps that are not in the active set

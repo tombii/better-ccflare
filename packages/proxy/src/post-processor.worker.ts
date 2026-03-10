@@ -87,6 +87,9 @@ let tokenEncoder: Tiktoken | null = null;
 
 // Initialize database connection for worker
 const dbOps = new DatabaseOperations();
+dbOps.initializeAsync().catch((err: unknown) => {
+	log.error("Failed to initialize database async connection:", err);
+});
 const asyncWriter = new AsyncDbWriter();
 
 // Environment variables
@@ -386,9 +389,9 @@ async function handleStart(msg: StartMessage): Promise<void> {
 			`Saving request meta for ${msg.requestId} (${msg.method} ${msg.path})`,
 		);
 	}
-	asyncWriter.enqueue(() => {
+	asyncWriter.enqueue(async () => {
 		try {
-			dbOps.saveRequestMeta(
+			await dbOps.saveRequestMeta(
 				msg.requestId,
 				msg.method,
 				msg.path,
@@ -413,7 +416,7 @@ async function handleStart(msg: StartMessage): Promise<void> {
 	// Update account usage if authenticated
 	if (msg.accountId && msg.accountId !== NO_ACCOUNT_ID) {
 		const accountId = msg.accountId; // Capture for closure
-		asyncWriter.enqueue(() => dbOps.updateAccountUsage(accountId));
+		asyncWriter.enqueue(async () => dbOps.updateAccountUsage(accountId));
 	}
 }
 
@@ -590,7 +593,7 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 	) {
 		log.debug(`Saving final request data for ${startMessage.requestId}`);
 	}
-	asyncWriter.enqueue(() =>
+	asyncWriter.enqueue(async () =>
 		dbOps.saveRequest(
 			startMessage.requestId,
 			startMessage.method,
@@ -665,7 +668,7 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 	state.buffer = "";
 
 	const requestId = startMessage.requestId;
-	asyncWriter.enqueue(() =>
+	asyncWriter.enqueue(async () =>
 		dbOps.saveRequestPayloadRaw(requestId, payloadJson),
 	);
 
