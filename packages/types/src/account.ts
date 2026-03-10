@@ -54,12 +54,30 @@ export interface KiloUsageData {
 	utilizationPercent: number; // 0-100
 }
 
+// Usage data types for Alibaba Coding Plan accounts
+export interface AlibabaCodingPlanQuotaWindow {
+	used: number;
+	total: number;
+	percentUsed: number; // 0-100
+	resetAt: number | null; // Unix timestamp in milliseconds
+}
+
+export interface AlibabaCodingPlanUsageData {
+	five_hour: AlibabaCodingPlanQuotaWindow;
+	weekly: AlibabaCodingPlanQuotaWindow;
+	monthly: AlibabaCodingPlanQuotaWindow;
+	planName: string | null;
+	status: string | null;
+	remainingDays: number | null;
+}
+
 // Combined usage data type that supports all providers
 export type FullUsageData =
 	| AnthropicUsageData
 	| NanoGPTUsageData
 	| ZaiUsageData
-	| KiloUsageData;
+	| KiloUsageData
+	| AlibabaCodingPlanUsageData;
 
 // Database row types that match the actual database schema
 export interface AccountRow {
@@ -192,7 +210,8 @@ export interface AccountListItem {
 		| "vertex-ai"
 		| "bedrock"
 		| "kilo"
-		| "openrouter";
+		| "openrouter"
+		| "alibaba-coding-plan";
 	priority: number;
 	autoFallbackEnabled: boolean;
 	autoRefreshEnabled: boolean;

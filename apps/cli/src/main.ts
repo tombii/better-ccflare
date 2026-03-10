@@ -83,6 +83,7 @@ interface ParsedArgs {
 		| "nanogpt"
 		| "bedrock"
 		| "kilo"
+		| "alibaba-coding-plan"
 		| null;
 	priority: number | null;
 	profile: string | null;
@@ -515,6 +516,7 @@ function parseArgs(args: string[]): ParsedArgs {
 					| "nanogpt"
 					| "bedrock"
 					| "kilo"
+					| "alibaba-coding-plan"
 					| "max";
 
 				// Handle deprecated "max" mode with warning
@@ -533,7 +535,8 @@ function parseArgs(args: string[]): ParsedArgs {
 					| "anthropic-compatible"
 					| "openai-compatible"
 					| "bedrock"
-					| "kilo";
+					| "kilo"
+					| "alibaba-coding-plan";
 				const validModes: Array<
 					| "claude-oauth"
 					| "console"
@@ -544,6 +547,7 @@ function parseArgs(args: string[]): ParsedArgs {
 					| "openai-compatible"
 					| "bedrock"
 					| "kilo"
+					| "alibaba-coding-plan"
 				> = [
 					"claude-oauth",
 					"console",
@@ -554,6 +558,7 @@ function parseArgs(args: string[]): ParsedArgs {
 					"openai-compatible",
 					"bedrock",
 					"kilo",
+					"alibaba-coding-plan",
 				];
 				if (!validModes.includes(modeValue)) {
 					console.error(`❌ Invalid mode: ${modeValue}`);
@@ -790,7 +795,7 @@ Options:
   --ssl-cert <path>    Path to SSL certificate file (enables HTTPS)
   --stats              Show statistics (JSON output)
   --add-account <name> Add a new account
-    --mode <claude-oauth|console|zai|minimax|nanogpt|anthropic-compatible|openai-compatible|bedrock|kilo>  Account mode (default: claude-oauth)
+    --mode <claude-oauth|console|zai|minimax|nanogpt|anthropic-compatible|openai-compatible|bedrock|kilo|alibaba-coding-plan>  Account mode (default: claude-oauth)
       claude-oauth: Claude CLI account (OAuth)
       console: Claude API account (OAuth)
       zai: z.ai account (API key)
@@ -799,9 +804,10 @@ Options:
       anthropic-compatible: Anthropic-compatible provider (API key)
       openai-compatible: OpenAI-compatible provider (API key)
       bedrock: AWS Bedrock account (AWS profile credentials)
-      kilo: Kilo Gateway provider (API key)
         --profile <name>  AWS profile name from ~/.aws/credentials (required)
         --cross-region-mode <mode>   Cross-region inference mode: geographic (default), global, or regional
+      kilo: Kilo Gateway provider (API key)
+      alibaba-coding-plan: Alibaba Coding Plan provider (API key)
     --priority <number>   Account priority (default: 0)
   --list               List all accounts
   --remove <name>      Remove an account
@@ -950,6 +956,9 @@ Examples:
 			);
 			console.error("  --mode bedrock         AWS Bedrock (AWS profile)");
 			console.error("  --mode kilo            Kilo Gateway provider (API key)");
+			console.error(
+				"  --mode alibaba-coding-plan  Alibaba Coding Plan (API key)",
+			);
 			console.error("\nExample:");
 			console.error(
 				"  better-ccflare --add-account work --mode claude-oauth --priority 0",

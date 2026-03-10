@@ -25,7 +25,8 @@ interface AccountAddFormProps {
 			| "vertex-ai"
 			| "bedrock"
 			| "kilo"
-			| "openrouter";
+			| "openrouter"
+			| "alibaba-coding-plan";
 		priority: number;
 		customEndpoint?: string;
 	}) => Promise<{ authUrl: string; sessionId: string }>;
@@ -79,6 +80,12 @@ interface AccountAddFormProps {
 		cross_region_mode?: "geographic" | "global" | "regional";
 		customModel?: string;
 	}) => Promise<void>;
+	onAddAlibabaCodingPlanAccount: (params: {
+		name: string;
+		apiKey: string;
+		priority: number;
+		modelMappings?: { [key: string]: string };
+	}) => Promise<void>;
 	onAddKiloAccount: (params: {
 		name: string;
 		apiKey: string;
@@ -106,6 +113,7 @@ export function AccountAddForm({
 	onAddOpenAIAccount,
 	onAddVertexAIAccount,
 	onAddBedrockAccount,
+	onAddAlibabaCodingPlanAccount,
 	onAddKiloAccount,
 	onAddOpenRouterAccount,
 	onCancel,
@@ -128,7 +136,8 @@ export function AccountAddForm({
 			| "vertex-ai"
 			| "bedrock"
 			| "kilo"
-			| "openrouter",
+			| "openrouter"
+			| "alibaba-coding-plan",
 		priority: 0,
 		apiKey: "",
 		customEndpoint: "",
@@ -205,7 +214,8 @@ export function AccountAddForm({
 				| "openai-compatible"
 				| "bedrock"
 				| "kilo"
-				| "openrouter",
+				| "openrouter"
+				| "alibaba-coding-plan",
 			priority: newAccount.priority,
 			...(newAccount.customEndpoint && {
 				customEndpoint: newAccount.customEndpoint.trim(),
@@ -417,6 +427,42 @@ export function AccountAddForm({
 					Object.keys(kiloModelMappings).length > 0
 						? kiloModelMappings
 						: undefined,
+			});
+			setNewAccount({
+				name: "",
+				mode: "claude-oauth",
+				priority: 0,
+				apiKey: "",
+				customEndpoint: "",
+				projectId: "",
+				region: "global",
+				profile: "",
+				awsRegion: "",
+				crossRegionMode: "geographic",
+				customBedrockModel: "",
+				opusModel: "",
+				sonnetModel: "",
+				haikuModel: "",
+			});
+			onSuccess();
+			return;
+		}
+
+		if (newAccount.mode === "alibaba-coding-plan") {
+			if (!newAccount.apiKey) {
+				onError("API key is required for Alibaba Coding Plan accounts");
+				return;
+			}
+			const modelMappings: { [key: string]: string } = {};
+			if (newAccount.opusModel) modelMappings.opus = newAccount.opusModel;
+			if (newAccount.sonnetModel) modelMappings.sonnet = newAccount.sonnetModel;
+			if (newAccount.haikuModel) modelMappings.haiku = newAccount.haikuModel;
+			await onAddAlibabaCodingPlanAccount({
+				name: newAccount.name,
+				apiKey: newAccount.apiKey,
+				priority: newAccount.priority,
+				modelMappings:
+					Object.keys(modelMappings).length > 0 ? modelMappings : undefined,
 			});
 			setNewAccount({
 				name: "",
@@ -694,6 +740,9 @@ export function AccountAddForm({
 								</SelectItem>
 								<SelectItem value="kilo">Kilo Gateway (API Key)</SelectItem>
 								<SelectItem value="openrouter">OpenRouter (API Key)</SelectItem>
+								<SelectItem value="alibaba-coding-plan">
+									Alibaba Coding Plan (API Key)
+								</SelectItem>
 							</SelectContent>
 						</Select>
 					</div>
@@ -1183,6 +1232,90 @@ export function AccountAddForm({
 												})
 											}
 											placeholder="e.g., anthropic/claude-haiku-4-5"
+											className="mt-1"
+										/>
+									</div>
+								</div>
+							</div>
+						</>
+					)}
+					{newAccount.mode === "alibaba-coding-plan" && (
+						<>
+							<div className="space-y-2">
+								<Label htmlFor="apiKey">Alibaba Coding Plan API Key</Label>
+								<Input
+									id="apiKey"
+									type="password"
+									value={newAccount.apiKey}
+									onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+										setNewAccount({
+											...newAccount,
+											apiKey: (e.target as HTMLInputElement).value,
+										})
+									}
+									placeholder="Enter your Alibaba Coding Plan API key"
+								/>
+								<p className="text-xs text-muted-foreground">
+									Endpoint: https://bailian-singapore-cs.alibabacloud.com
+								</p>
+							</div>
+							<div className="space-y-2">
+								<Label className="text-sm font-medium">
+									Model Mappings (Optional)
+								</Label>
+								<p className="text-xs text-muted-foreground">
+									Map Anthropic model names to Alibaba-specific models. Leave
+									empty to use defaults.
+								</p>
+								<div className="space-y-2 pl-4">
+									<div>
+										<Label htmlFor="alibabaOpusModel" className="text-sm">
+											Opus Model
+										</Label>
+										<Input
+											id="alibabaOpusModel"
+											value={newAccount.opusModel}
+											onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+												setNewAccount({
+													...newAccount,
+													opusModel: (e.target as HTMLInputElement).value,
+												})
+											}
+											placeholder="e.g., qwen-max (default)"
+											className="mt-1"
+										/>
+									</div>
+									<div>
+										<Label htmlFor="alibabaSonnetModel" className="text-sm">
+											Sonnet Model
+										</Label>
+										<Input
+											id="alibabaSonnetModel"
+											value={newAccount.sonnetModel}
+											onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+												setNewAccount({
+													...newAccount,
+													sonnetModel: (e.target as HTMLInputElement).value,
+												})
+											}
+											placeholder="e.g., qwen-plus (default)"
+											className="mt-1"
+										/>
+									</div>
+									<div>
+										<Label htmlFor="alibabaHaikuModel" className="text-sm">
+											Haiku Model
+										</Label>
+										<Input
+											id="alibabaHaikuModel"
+											value={newAccount.haikuModel}
+											onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+												setNewAccount({
+													...newAccount,
+													haikuModel: (e.target as HTMLInputElement).value,
+												})
+											}
+											placeholder="e.g., qwen-turbo (default)"
 											className="mt-1"
 										/>
 									</div>

@@ -13,6 +13,7 @@ export const PROVIDER_NAMES = {
 	BEDROCK: "bedrock",
 	KILO: "kilo",
 	OPENROUTER: "openrouter",
+	ALIBABA_CODING_PLAN: "alibaba-coding-plan",
 } as const;
 
 export type ProviderName = (typeof PROVIDER_NAMES)[keyof typeof PROVIDER_NAMES];
@@ -107,6 +108,12 @@ export const PROVIDER_CONFIG: Record<ProviderName, ProviderConfig> = {
 		supportsUsageTracking: false, // Credits endpoint requires a separate management key
 		supportsOAuth: false, // OpenRouter uses API key authentication
 		defaultEndpoint: "https://openrouter.ai/api/v1",
+	},
+	[PROVIDER_NAMES.ALIBABA_CODING_PLAN]: {
+		requiresSessionTracking: false, // Alibaba Coding Plan uses quota windows, not session stickiness
+		supportsUsageTracking: true, // Supports 5-hour, weekly, and monthly quota polling
+		supportsOAuth: false, // Uses API key authentication
+		defaultEndpoint: "https://bailian-singapore-cs.alibabacloud.com",
 	},
 } as const satisfies Record<ProviderName, ProviderConfig>;
 

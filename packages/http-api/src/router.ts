@@ -14,6 +14,7 @@ import {
 	createAccountRenameHandler,
 	createAccountResumeHandler,
 	createAccountsListHandler,
+	createAlibabaCodingPlanAccountAddHandler,
 	createAnthropicCompatibleAccountAddHandler,
 	createAwsProfilesListHandler,
 	createBedrockAccountAddHandler,
@@ -104,6 +105,8 @@ export class APIRouter {
 		const vertexAIAccountAddHandler = createVertexAIAccountAddHandler(dbOps);
 		const bedrockAccountAddHandler = createBedrockAccountAddHandler(dbOps);
 		const awsProfilesListHandler = createAwsProfilesListHandler();
+		const alibabaCodingPlanAccountAddHandler =
+			createAlibabaCodingPlanAccountAddHandler(dbOps);
 		const kiloAccountAddHandler = createKiloAccountAddHandler(dbOps);
 		const openrouterAccountAddHandler =
 			createOpenRouterAccountAddHandler(dbOps);
@@ -154,6 +157,9 @@ export class APIRouter {
 			bedrockAccountAddHandler(req),
 		);
 		this.handlers.set("GET:/api/aws/profiles", () => awsProfilesListHandler());
+		this.handlers.set("POST:/api/accounts/alibaba-coding-plan", (req) =>
+			alibabaCodingPlanAccountAddHandler(req),
+		);
 		this.handlers.set("POST:/api/accounts/kilo", (req) =>
 			kiloAccountAddHandler(req),
 		);
