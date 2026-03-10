@@ -1,4 +1,3 @@
-import type { Database } from "bun:sqlite";
 import crypto from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -39,56 +38,13 @@ const log = new Logger("AccountsHandler");
 /**
  * Create an accounts list handler
  */
-export function createAccountsListHandler(db: Database) {
+export function createAccountsListHandler(dbOps: DatabaseOperations) {
 	return async (): Promise<Response> => {
+		const db = dbOps.getAdapter();
 		const now = Date.now();
 		const sessionDuration = 5 * 60 * 60 * 1000; // 5 hours
 
-		const accounts = db
-			.query(
-				`
-				SELECT
-					id,
-					name,
-					provider,
-					request_count,
-					total_requests,
-					last_used,
-					created_at,
-					expires_at,
-					rate_limited_until,
-					rate_limit_reset,
-					rate_limit_status,
-					rate_limit_remaining,
-					session_start,
-					session_request_count,
-					refresh_token,
-					access_token,
-					COALESCE(paused, 0) as paused,
-					COALESCE(priority, 0) as priority,
-					COALESCE(auto_fallback_enabled, 0) as auto_fallback_enabled,
-					COALESCE(auto_refresh_enabled, 0) as auto_refresh_enabled,
-					custom_endpoint,
-					model_mappings,
-					cross_region_mode,
-					CASE
-						WHEN expires_at > ?1 THEN 1
-						ELSE 0
-					END as token_valid,
-					CASE
-						WHEN rate_limited_until > ?2 THEN 1
-						ELSE 0
-					END as rate_limited,
-					CASE
-						WHEN session_start IS NOT NULL AND ?3 - session_start < ?4 THEN
-							'Active: ' || session_request_count || ' reqs'
-						ELSE '-'
-					END as session_info
-				FROM accounts
-				ORDER BY priority DESC, request_count DESC
-				`,
-			)
-			.all(now, now, now, sessionDuration) as Array<{
+		const accounts = await db.query<{
 			id: string;
 			name: string;
 			provider: string | null;
@@ -115,7 +71,50 @@ export function createAccountsListHandler(db: Database) {
 			custom_endpoint: string | null;
 			model_mappings: string | null;
 			cross_region_mode: string | null;
-		}>;
+		}>(
+			`
+				SELECT
+					id,
+					name,
+					provider,
+					request_count,
+					total_requests,
+					last_used,
+					created_at,
+					expires_at,
+					rate_limited_until,
+					rate_limit_reset,
+					rate_limit_status,
+					rate_limit_remaining,
+					session_start,
+					session_request_count,
+					refresh_token,
+					access_token,
+					COALESCE(paused, 0) as paused,
+					COALESCE(priority, 0) as priority,
+					COALESCE(auto_fallback_enabled, 0) as auto_fallback_enabled,
+					COALESCE(auto_refresh_enabled, 0) as auto_refresh_enabled,
+					custom_endpoint,
+					model_mappings,
+					cross_region_mode,
+					CASE
+						WHEN expires_at > ? THEN 1
+						ELSE 0
+					END as token_valid,
+					CASE
+						WHEN rate_limited_until > ? THEN 1
+						ELSE 0
+					END as rate_limited,
+					CASE
+						WHEN session_start IS NOT NULL AND ? - session_start < ? THEN
+							'Active: ' || session_request_count || ' reqs'
+						ELSE '-'
+					END as session_info
+				FROM accounts
+				ORDER BY priority DESC, request_count DESC
+			`,
+			[now, now, now, sessionDuration],
+		);
 
 		// Fetch usage data for all Claude CLI OAuth accounts (those with refresh tokens)
 		// API key accounts don't have usage tracking available
@@ -359,10 +358,11 @@ export function createAccountPriorityUpdateHandler(dbOps: DatabaseOperations) {
 			const priority = validatePriority(body.priority, "priority");
 
 			// Check if account exists
-			const db = dbOps.getDatabase();
-			const account = db
-				.query<{ id: string }, [string]>("SELECT id FROM accounts WHERE id = ?")
-				.get(accountId);
+			const db = dbOps.getAdapter();
+			const account = await db.get<{ id: string }>(
+				"SELECT id FROM accounts WHERE id = ?",
+				[accountId],
+			);
 
 			if (!account) {
 				return errorResponse(NotFound("Account not found"));
@@ -466,7 +466,7 @@ export function createAccountAddHandler(
 				const accountId = crypto.randomUUID();
 				const now = Date.now();
 
-				dbOps.getDatabase().run(
+				await dbOps.getAdapter().run(
 					`INSERT INTO accounts (
 						id, name, provider, refresh_token, access_token,
 						created_at, request_count, total_requests, priority, custom_endpoint
@@ -536,12 +536,11 @@ export function createAccountRemoveHandler(dbOps: DatabaseOperations) {
 			}
 
 			// Find the account ID to clean up usage cache (check before deletion)
-			const db = dbOps.getDatabase();
-			const account = db
-				.query<{ id: string }, [string]>(
-					"SELECT id FROM accounts WHERE name = ?",
-				)
-				.get(accountName);
+			const db = dbOps.getAdapter();
+			const account = await db.get<{ id: string }>(
+				"SELECT id FROM accounts WHERE name = ?",
+				[accountName],
+			);
 
 			if (account) {
 				// Clear usage cache for removed account to prevent memory leaks
@@ -567,12 +566,11 @@ export function createAccountPauseHandler(dbOps: DatabaseOperations) {
 	return async (_req: Request, accountId: string): Promise<Response> => {
 		try {
 			// Get account name by ID
-			const db = dbOps.getDatabase();
-			const account = db
-				.query<{ name: string }, [string]>(
-					"SELECT name FROM accounts WHERE id = ?",
-				)
-				.get(accountId);
+			const db = dbOps.getAdapter();
+			const account = await db.get<{ name: string }>(
+				"SELECT name FROM accounts WHERE id = ?",
+				[accountId],
+			);
 
 			if (!account) {
 				return errorResponse(NotFound("Account not found"));
@@ -603,12 +601,11 @@ export function createAccountResumeHandler(dbOps: DatabaseOperations) {
 	return async (_req: Request, accountId: string): Promise<Response> => {
 		try {
 			// Get account name by ID
-			const db = dbOps.getDatabase();
-			const account = db
-				.query<{ name: string }, [string]>(
-					"SELECT name FROM accounts WHERE id = ?",
-				)
-				.get(accountId);
+			const db = dbOps.getAdapter();
+			const account = await db.get<{ name: string }>(
+				"SELECT name FROM accounts WHERE id = ?",
+				[accountId],
+			);
 
 			if (!account) {
 				return errorResponse(NotFound("Account not found"));
@@ -656,23 +653,21 @@ export function createAccountRenameHandler(dbOps: DatabaseOperations) {
 			}
 
 			// Check if account exists
-			const db = dbOps.getDatabase();
-			const account = db
-				.query<{ name: string }, [string]>(
-					"SELECT name FROM accounts WHERE id = ?",
-				)
-				.get(accountId);
+			const db = dbOps.getAdapter();
+			const account = await db.get<{ name: string }>(
+				"SELECT name FROM accounts WHERE id = ?",
+				[accountId],
+			);
 
 			if (!account) {
 				return errorResponse(NotFound("Account not found"));
 			}
 
 			// Check if new name is already taken
-			const existingAccount = db
-				.query<{ id: string }, [string, string]>(
-					"SELECT id FROM accounts WHERE name = ? AND id != ?",
-				)
-				.get(newName, accountId);
+			const existingAccount = await db.get<{ id: string }>(
+				"SELECT id FROM accounts WHERE name = ? AND id != ?",
+				[newName, accountId],
+			);
 
 			if (existingAccount) {
 				return errorResponse(
@@ -763,8 +758,8 @@ export function createZaiAccountAddHandler(dbOps: DatabaseOperations) {
 			const accountId = crypto.randomUUID();
 			const now = Date.now();
 
-			const db = dbOps.getDatabase();
-			db.run(
+			const db = dbOps.getAdapter();
+			await db.run(
 				`INSERT INTO accounts (
 					id, name, provider, api_key, refresh_token, access_token,
 					expires_at, created_at, request_count, total_requests, priority, custom_endpoint
@@ -790,29 +785,25 @@ export function createZaiAccountAddHandler(dbOps: DatabaseOperations) {
 			);
 
 			// Get the created account for response
-			const account = db
-				.query<
-					{
-						id: string;
-						name: string;
-						provider: string;
-						request_count: number;
-						total_requests: number;
-						last_used: number | null;
-						created_at: number;
-						expires_at: number;
-						refresh_token: string;
-						paused: number;
-					},
-					[string]
-				>(
-					`SELECT
-						id, name, provider, request_count, total_requests,
-						last_used, created_at, expires_at, refresh_token,
-						COALESCE(paused, 0) as paused
-					FROM accounts WHERE id = ?`,
-				)
-				.get(accountId);
+			const account = await db.get<{
+				id: string;
+				name: string;
+				provider: string;
+				request_count: number;
+				total_requests: number;
+				last_used: number | null;
+				created_at: number;
+				expires_at: number;
+				refresh_token: string;
+				paused: number;
+			}>(
+				`SELECT
+					id, name, provider, request_count, total_requests,
+					last_used, created_at, expires_at, refresh_token,
+					COALESCE(paused, 0) as paused
+				FROM accounts WHERE id = ?`,
+				[accountId],
+			);
 
 			if (!account) {
 				return errorResponse(
@@ -930,8 +921,8 @@ export function createOpenAIAccountAddHandler(dbOps: DatabaseOperations) {
 			const accountId = crypto.randomUUID();
 			const now = Date.now();
 
-			const db = dbOps.getDatabase();
-			db.run(
+			const db = dbOps.getAdapter();
+			await db.run(
 				`INSERT INTO accounts (
 					id, name, provider, api_key, refresh_token, access_token,
 					expires_at, created_at, request_count, total_requests, priority, custom_endpoint, model_mappings
@@ -958,29 +949,25 @@ export function createOpenAIAccountAddHandler(dbOps: DatabaseOperations) {
 			);
 
 			// Get the created account for response
-			const account = db
-				.query<
-					{
-						id: string;
-						name: string;
-						provider: string;
-						request_count: number;
-						total_requests: number;
-						last_used: number | null;
-						created_at: number;
-						expires_at: number;
-						refresh_token: string;
-						paused: number;
-					},
-					[string]
-				>(
-					`SELECT
-						id, name, provider, request_count, total_requests,
-						last_used, created_at, expires_at, refresh_token,
-						COALESCE(paused, 0) as paused
-					FROM accounts WHERE id = ?`,
-				)
-				.get(accountId);
+			const account = await db.get<{
+				id: string;
+				name: string;
+				provider: string;
+				request_count: number;
+				total_requests: number;
+				last_used: number | null;
+				created_at: number;
+				expires_at: number;
+				refresh_token: string;
+				paused: number;
+			}>(
+				`SELECT
+					id, name, provider, request_count, total_requests,
+					last_used, created_at, expires_at, refresh_token,
+					COALESCE(paused, 0) as paused
+				FROM accounts WHERE id = ?`,
+				[accountId],
+			);
 
 			if (!account) {
 				throw new Error("Failed to retrieve created account");
@@ -1079,8 +1066,8 @@ export function createVertexAIAccountAddHandler(dbOps: DatabaseOperations) {
 			// Create Vertex AI account directly in database
 			const accountId = crypto.randomUUID();
 			const now = Date.now();
-			const db = dbOps.getDatabase();
-			db.run(
+			const db = dbOps.getAdapter();
+			await db.run(
 				`INSERT INTO accounts (
 					id, name, provider, api_key, refresh_token, access_token,
 					expires_at, created_at, request_count, total_requests, priority, custom_endpoint
@@ -1106,29 +1093,25 @@ export function createVertexAIAccountAddHandler(dbOps: DatabaseOperations) {
 			);
 
 			// Get the created account for response
-			const account = db
-				.query<
-					{
-						id: string;
-						name: string;
-						provider: string;
-						request_count: number;
-						total_requests: number;
-						last_used: number | null;
-						created_at: number;
-						expires_at: number | null;
-						refresh_token: string;
-						paused: number;
-					},
-					[string]
-				>(
-					`SELECT
-						id, name, provider, request_count, total_requests,
-						last_used, created_at, expires_at, refresh_token,
-						COALESCE(paused, 0) as paused
-					FROM accounts WHERE id = ?`,
-				)
-				.get(accountId);
+			const account = await db.get<{
+				id: string;
+				name: string;
+				provider: string;
+				request_count: number;
+				total_requests: number;
+				last_used: number | null;
+				created_at: number;
+				expires_at: number | null;
+				refresh_token: string;
+				paused: number;
+			}>(
+				`SELECT
+					id, name, provider, request_count, total_requests,
+					last_used, created_at, expires_at, refresh_token,
+					COALESCE(paused, 0) as paused
+				FROM accounts WHERE id = ?`,
+				[accountId],
+			);
 
 			if (!account) {
 				return errorResponse(
@@ -1207,8 +1190,8 @@ export function createMinimaxAccountAddHandler(dbOps: DatabaseOperations) {
 			// Create Minimax account directly in database
 			const accountId = crypto.randomUUID();
 			const now = Date.now();
-			const db = dbOps.getDatabase();
-			db.run(
+			const db = dbOps.getAdapter();
+			await db.run(
 				`INSERT INTO accounts (
 					id, name, provider, api_key, refresh_token, access_token,
 					expires_at, created_at, request_count, total_requests, priority, custom_endpoint
@@ -1234,29 +1217,25 @@ export function createMinimaxAccountAddHandler(dbOps: DatabaseOperations) {
 			);
 
 			// Get the created account for response
-			const account = db
-				.query<
-					{
-						id: string;
-						name: string;
-						provider: string;
-						request_count: number;
-						total_requests: number;
-						last_used: number | null;
-						created_at: number;
-						expires_at: number;
-						refresh_token: string;
-						paused: number;
-					},
-					[string]
-				>(
-					`SELECT
-						id, name, provider, request_count, total_requests,
-						last_used, created_at, expires_at, refresh_token,
-						COALESCE(paused, 0) as paused
-					FROM accounts WHERE id = ?`,
-				)
-				.get(accountId);
+			const account = await db.get<{
+				id: string;
+				name: string;
+				provider: string;
+				request_count: number;
+				total_requests: number;
+				last_used: number | null;
+				created_at: number;
+				expires_at: number;
+				refresh_token: string;
+				paused: number;
+			}>(
+				`SELECT
+					id, name, provider, request_count, total_requests,
+					last_used, created_at, expires_at, refresh_token,
+					COALESCE(paused, 0) as paused
+				FROM accounts WHERE id = ?`,
+				[accountId],
+			);
 
 			if (!account) {
 				return errorResponse(
@@ -1378,8 +1357,8 @@ export function createNanoGPTAccountAddHandler(dbOps: DatabaseOperations) {
 			// Create NanoGPT account directly in database
 			const accountId = crypto.randomUUID();
 			const now = Date.now();
-			const db = dbOps.getDatabase();
-			db.run(
+			const db = dbOps.getAdapter();
+			await db.run(
 				`INSERT INTO accounts (
 					id, name, provider, api_key, refresh_token, access_token,
 					expires_at, created_at, request_count, total_requests, priority, custom_endpoint, model_mappings
@@ -1404,29 +1383,25 @@ export function createNanoGPTAccountAddHandler(dbOps: DatabaseOperations) {
 				`Successfully added NanoGPT account: ${name} (Priority ${priority})`,
 			);
 			// Get the created account for response
-			const account = db
-				.query<
-					{
-						id: string;
-						name: string;
-						provider: string;
-						request_count: number;
-						total_requests: number;
-						last_used: number | null;
-						created_at: number;
-						expires_at: number;
-						refresh_token: string;
-						paused: number;
-					},
-					[string]
-				>(
-					`SELECT
-						id, name, provider, request_count, total_requests,
-						last_used, created_at, expires_at, refresh_token,
-						COALESCE(paused, 0) as paused
-					FROM accounts WHERE id = ?`,
-				)
-				.get(accountId);
+			const account = await db.get<{
+				id: string;
+				name: string;
+				provider: string;
+				request_count: number;
+				total_requests: number;
+				last_used: number | null;
+				created_at: number;
+				expires_at: number;
+				refresh_token: string;
+				paused: number;
+			}>(
+				`SELECT
+					id, name, provider, request_count, total_requests,
+					last_used, created_at, expires_at, refresh_token,
+					COALESCE(paused, 0) as paused
+				FROM accounts WHERE id = ?`,
+				[accountId],
+			);
 			if (!account) {
 				return errorResponse(
 					InternalServerError("Failed to retrieve created account"),
@@ -1546,8 +1521,8 @@ export function createAnthropicCompatibleAccountAddHandler(
 			// Create Anthropic-compatible account directly in database
 			const accountId = crypto.randomUUID();
 			const now = Date.now();
-			const db = dbOps.getDatabase();
-			db.run(
+			const db = dbOps.getAdapter();
+			await db.run(
 				`INSERT INTO accounts (
 					id, name, provider, api_key, refresh_token, access_token,
 					expires_at, created_at, request_count, total_requests, priority, custom_endpoint, model_mappings
@@ -1574,29 +1549,25 @@ export function createAnthropicCompatibleAccountAddHandler(
 			);
 
 			// Get the created account for response
-			const account = db
-				.query<
-					{
-						id: string;
-						name: string;
-						provider: string;
-						request_count: number;
-						total_requests: number;
-						last_used: number | null;
-						created_at: number;
-						expires_at: number;
-						refresh_token: string;
-						paused: number;
-					},
-					[string]
-				>(
-					`SELECT
-						id, name, provider, request_count, total_requests,
-						last_used, created_at, expires_at, refresh_token,
-						COALESCE(paused, 0) as paused
-					FROM accounts WHERE id = ?`,
-				)
-				.get(accountId);
+			const account = await db.get<{
+				id: string;
+				name: string;
+				provider: string;
+				request_count: number;
+				total_requests: number;
+				last_used: number | null;
+				created_at: number;
+				expires_at: number;
+				refresh_token: string;
+				paused: number;
+			}>(
+				`SELECT
+					id, name, provider, request_count, total_requests,
+					last_used, created_at, expires_at, refresh_token,
+					COALESCE(paused, 0) as paused
+				FROM accounts WHERE id = ?`,
+				[accountId],
+			);
 
 			if (!account) {
 				return errorResponse(
@@ -1658,12 +1629,11 @@ export function createAccountAutoFallbackHandler(dbOps: DatabaseOperations) {
 			}
 
 			// Check if account exists
-			const db = dbOps.getDatabase();
-			const account = db
-				.query<{ name: string; provider: string }, [string]>(
-					"SELECT name, provider FROM accounts WHERE id = ?",
-				)
-				.get(accountId);
+			const db = dbOps.getAdapter();
+			const account = await db.get<{ name: string; provider: string }>(
+				"SELECT name, provider FROM accounts WHERE id = ?",
+				[accountId],
+			);
 
 			if (!account) {
 				return errorResponse(NotFound("Account not found"));
@@ -1716,12 +1686,11 @@ export function createAccountAutoRefreshHandler(dbOps: DatabaseOperations) {
 			}
 
 			// Check if account exists
-			const db = dbOps.getDatabase();
-			const account = db
-				.query<{ name: string; provider: string }, [string]>(
-					"SELECT name, provider FROM accounts WHERE id = ?",
-				)
-				.get(accountId);
+			const db = dbOps.getAdapter();
+			const account = await db.get<{ name: string; provider: string }>(
+				"SELECT name, provider FROM accounts WHERE id = ?",
+				[accountId],
+			);
 
 			if (!account) {
 				return errorResponse(NotFound("Account not found"));
@@ -1735,10 +1704,10 @@ export function createAccountAutoRefreshHandler(dbOps: DatabaseOperations) {
 			}
 
 			// Update auto-refresh setting
-			db.run("UPDATE accounts SET auto_refresh_enabled = ? WHERE id = ?", [
-				enabled,
-				accountId,
-			]);
+			await db.run(
+				"UPDATE accounts SET auto_refresh_enabled = ? WHERE id = ?",
+				[enabled, accountId],
+			);
 
 			const action = enabled === 1 ? "enabled" : "disabled";
 
@@ -1790,11 +1759,12 @@ export function createAccountCustomEndpointUpdateHandler(
 			);
 
 			// Update account custom endpoint
-			const db = dbOps.getDatabase();
-			db.run("UPDATE accounts SET custom_endpoint = ? WHERE id = ?", [
-				customEndpoint || null,
-				accountId,
-			]);
+			await dbOps
+				.getAdapter()
+				.run("UPDATE accounts SET custom_endpoint = ? WHERE id = ?", [
+					customEndpoint || null,
+					accountId,
+				]);
 
 			log.info(`Updated custom endpoint for account ${accountId}`);
 
@@ -1824,12 +1794,13 @@ export function createAccountModelMappingsUpdateHandler(
 			const body = await req.json();
 
 			// Get account to verify it supports model mappings
-			const db = dbOps.getDatabase();
-			const account = db
-				.query<{ provider: string; custom_endpoint: string | null }, [string]>(
-					"SELECT provider, custom_endpoint FROM accounts WHERE id = ?",
-				)
-				.get(accountId);
+			const db = dbOps.getAdapter();
+			const account = await db.get<{
+				provider: string;
+				custom_endpoint: string | null;
+			}>("SELECT provider, custom_endpoint FROM accounts WHERE id = ?", [
+				accountId,
+			]);
 
 			if (!account) {
 				return errorResponse(NotFound("Account not found"));
@@ -1869,11 +1840,10 @@ export function createAccountModelMappingsUpdateHandler(
 
 			// Get existing model mappings from the dedicated field
 			let existingModelMappings: { [key: string]: string } = {};
-			const result = db
-				.query<{ model_mappings: string | null }, [string]>(
-					"SELECT model_mappings FROM accounts WHERE id = ?",
-				)
-				.get(accountId);
+			const result = await db.get<{ model_mappings: string | null }>(
+				"SELECT model_mappings FROM accounts WHERE id = ?",
+				[accountId],
+			);
 			const existingModelMappingsStr = result?.model_mappings || null;
 
 			if (existingModelMappingsStr) {
@@ -1907,7 +1877,7 @@ export function createAccountModelMappingsUpdateHandler(
 					? JSON.stringify(mergedModelMappings)
 					: null;
 
-			db.run("UPDATE accounts SET model_mappings = ? WHERE id = ?", [
+			await db.run("UPDATE accounts SET model_mappings = ? WHERE id = ?", [
 				finalModelMappings,
 				accountId,
 			]);
@@ -1939,18 +1909,15 @@ export function createAccountForceResetRateLimitHandler(
 ) {
 	return async (_req: Request, accountId: string): Promise<Response> => {
 		try {
-			const db = dbOps.getDatabase();
-			const account = db
-				.query<
-					{
-						id: string;
-						name: string;
-						provider: string;
-						access_token: string | null;
-					},
-					[string]
-				>("SELECT id, name, provider, access_token FROM accounts WHERE id = ?")
-				.get(accountId);
+			const db = dbOps.getAdapter();
+			const account = await db.get<{
+				id: string;
+				name: string;
+				provider: string;
+				access_token: string | null;
+			}>("SELECT id, name, provider, access_token FROM accounts WHERE id = ?", [
+				accountId,
+			]);
 
 			if (!account) {
 				return errorResponse(NotFound("Account not found"));
@@ -2014,12 +1981,11 @@ export function createAccountReloadHandler(dbOps: DatabaseOperations) {
 	return async (_req: Request, accountId: string): Promise<Response> => {
 		try {
 			// Check if account exists
-			const db = dbOps.getDatabase();
-			const account = db
-				.query<{ name: string; provider: string }, [string]>(
-					"SELECT name, provider FROM accounts WHERE id = ?",
-				)
-				.get(accountId);
+			const db = dbOps.getAdapter();
+			const account = await db.get<{ name: string; provider: string }>(
+				"SELECT name, provider FROM accounts WHERE id = ?",
+				[accountId],
+			);
 
 			if (!account) {
 				return errorResponse(NotFound("Account not found"));
@@ -2230,8 +2196,8 @@ export function createBedrockAccountAddHandler(dbOps: DatabaseOperations) {
 			const accountId = crypto.randomUUID();
 			const now = Date.now();
 			const oneYearFromNow = now + 365 * 24 * 60 * 60 * 1000; // 1 year expiry
-			const db = dbOps.getDatabase();
-			db.run(
+			const db = dbOps.getAdapter();
+			await db.run(
 				`INSERT INTO accounts (
 					id, name, provider, api_key, refresh_token, access_token,
 					expires_at, created_at, request_count, total_requests, priority, custom_endpoint, cross_region_mode, model_mappings
@@ -2259,29 +2225,25 @@ export function createBedrockAccountAddHandler(dbOps: DatabaseOperations) {
 			);
 
 			// Get the created account for response
-			const account = db
-				.query<
-					{
-						id: string;
-						name: string;
-						provider: string;
-						request_count: number;
-						total_requests: number;
-						last_used: number | null;
-						created_at: number;
-						expires_at: number | null;
-						refresh_token: string;
-						paused: number;
-					},
-					[string]
-				>(
-					`SELECT
-						id, name, provider, request_count, total_requests,
-						last_used, created_at, expires_at, refresh_token,
-						COALESCE(paused, 0) as paused
-					FROM accounts WHERE id = ?`,
-				)
-				.get(accountId);
+			const account = await db.get<{
+				id: string;
+				name: string;
+				provider: string;
+				request_count: number;
+				total_requests: number;
+				last_used: number | null;
+				created_at: number;
+				expires_at: number | null;
+				refresh_token: string;
+				paused: number;
+			}>(
+				`SELECT
+					id, name, provider, request_count, total_requests,
+					last_used, created_at, expires_at, refresh_token,
+					COALESCE(paused, 0) as paused
+				FROM accounts WHERE id = ?`,
+				[accountId],
+			);
 
 			if (!account) {
 				return errorResponse(
@@ -2383,8 +2345,8 @@ export function createKiloAccountAddHandler(dbOps: DatabaseOperations) {
 			// Create Kilo account in database
 			const accountId = crypto.randomUUID();
 			const now = Date.now();
-			const db = dbOps.getDatabase();
-			db.run(
+			const db = dbOps.getAdapter();
+			await db.run(
 				`INSERT INTO accounts (
 					id, name, provider, api_key, refresh_token, access_token,
 					expires_at, created_at, request_count, total_requests, priority, custom_endpoint, model_mappings
@@ -2410,29 +2372,25 @@ export function createKiloAccountAddHandler(dbOps: DatabaseOperations) {
 				`Successfully added Kilo Gateway account: ${name} (Priority ${priority})`,
 			);
 
-			const account = db
-				.query<
-					{
-						id: string;
-						name: string;
-						provider: string;
-						request_count: number;
-						total_requests: number;
-						last_used: number | null;
-						created_at: number;
-						expires_at: number;
-						refresh_token: string;
-						paused: number;
-					},
-					[string]
-				>(
-					`SELECT
-						id, name, provider, request_count, total_requests,
-						last_used, created_at, expires_at, refresh_token,
-						COALESCE(paused, 0) as paused
-					FROM accounts WHERE id = ?`,
-				)
-				.get(accountId);
+			const account = await db.get<{
+				id: string;
+				name: string;
+				provider: string;
+				request_count: number;
+				total_requests: number;
+				last_used: number | null;
+				created_at: number;
+				expires_at: number;
+				refresh_token: string;
+				paused: number;
+			}>(
+				`SELECT
+					id, name, provider, request_count, total_requests,
+					last_used, created_at, expires_at, refresh_token,
+					COALESCE(paused, 0) as paused
+				FROM accounts WHERE id = ?`,
+				[accountId],
+			);
 
 			if (!account) {
 				return errorResponse(
@@ -2540,8 +2498,8 @@ export function createOpenRouterAccountAddHandler(dbOps: DatabaseOperations) {
 			// Create OpenRouter account in database
 			const accountId = crypto.randomUUID();
 			const now = Date.now();
-			const db = dbOps.getDatabase();
-			db.run(
+			const db = dbOps.getAdapter();
+			await db.run(
 				`INSERT INTO accounts (
 					id, name, provider, api_key, refresh_token, access_token,
 					expires_at, created_at, request_count, total_requests, priority, custom_endpoint, model_mappings
@@ -2567,29 +2525,25 @@ export function createOpenRouterAccountAddHandler(dbOps: DatabaseOperations) {
 				`Successfully added OpenRouter account: ${name} (Priority ${priority})`,
 			);
 
-			const account = db
-				.query<
-					{
-						id: string;
-						name: string;
-						provider: string;
-						request_count: number;
-						total_requests: number;
-						last_used: number | null;
-						created_at: number;
-						expires_at: number;
-						refresh_token: string;
-						paused: number;
-					},
-					[string]
-				>(
-					`SELECT
-						id, name, provider, request_count, total_requests,
-						last_used, created_at, expires_at, refresh_token,
-						COALESCE(paused, 0) as paused
-					FROM accounts WHERE id = ?`,
-				)
-				.get(accountId);
+			const account = await db.get<{
+				id: string;
+				name: string;
+				provider: string;
+				request_count: number;
+				total_requests: number;
+				last_used: number | null;
+				created_at: number;
+				expires_at: number;
+				refresh_token: string;
+				paused: number;
+			}>(
+				`SELECT
+					id, name, provider, request_count, total_requests,
+					last_used, created_at, expires_at, refresh_token,
+					COALESCE(paused, 0) as paused
+				FROM accounts WHERE id = ?`,
+				[accountId],
+			);
 
 			if (!account) {
 				return errorResponse(

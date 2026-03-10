@@ -2,6 +2,56 @@ import type { Database } from "bun:sqlite";
 import type { SQL } from "bun";
 
 /**
+ * Convert SQLite-style `?` and `?N` placeholders to PostgreSQL-style `$N` placeholders.
+ * Handles both `?` (sequential) and `?1`, `?2` (positional) styles.
+ * Skips placeholders inside single-quoted string literals.
+ */
+function convertPlaceholders(sql: string): string {
+	let result = "";
+	let paramIndex = 0;
+	let inString = false;
+
+	for (let i = 0; i < sql.length; i++) {
+		const ch = sql[i];
+
+		// Toggle string literal tracking (handle escaped quotes '')
+		if (ch === "'") {
+			inString = !inString;
+			result += ch;
+			continue;
+		}
+
+		if (inString) {
+			result += ch;
+			continue;
+		}
+
+		if (ch === "?") {
+			// Check for ?N style (e.g., ?1, ?2)
+			let numStr = "";
+			let j = i + 1;
+			while (j < sql.length && sql[j] >= "0" && sql[j] <= "9") {
+				numStr += sql[j];
+				j++;
+			}
+			if (numStr.length > 0) {
+				// ?N -> $N (keep the original number)
+				result += `$${numStr}`;
+				i = j - 1; // skip the digits
+			} else {
+				// ? -> $N (sequential)
+				paramIndex++;
+				result += `$${paramIndex}`;
+			}
+		} else {
+			result += ch;
+		}
+	}
+
+	return result;
+}
+
+/**
  * Unified SQL adapter that abstracts over bun:sqlite (sync) and Bun.SQL/PostgreSQL (async).
  *
  * For SQLite: wraps the existing bun:sqlite Database for synchronous operations.
@@ -52,6 +102,13 @@ export class BunSqlAdapter {
 	}
 
 	/**
+	 * Convert SQL for PostgreSQL if needed (? -> $N placeholders).
+	 */
+	private pgSql(sqlStr: string): string {
+		return this.isSQLite ? sqlStr : convertPlaceholders(sqlStr);
+	}
+
+	/**
 	 * Execute a SELECT query returning multiple rows.
 	 */
 	async query<R>(sqlStr: string, params: unknown[] = []): Promise<R[]> {
@@ -60,8 +117,9 @@ export class BunSqlAdapter {
 			return this.sqliteDb.query<R, any[]>(sqlStr).all(...(params as any[]));
 		}
 		// PostgreSQL via Bun.SQL unsafe
+		const pgQuery = this.pgSql(sqlStr);
 		// biome-ignore lint/suspicious/noExplicitAny: Bun.SQL accepts various binding types
-		const result = await this.sql?.unsafe(sqlStr, params as any[]);
+		const result = await this.sql?.unsafe(pgQuery, params as any[]);
 		return result as unknown as R[];
 	}
 
@@ -70,14 +128,16 @@ export class BunSqlAdapter {
 	 */
 	async get<R>(sqlStr: string, params: unknown[] = []): Promise<R | null> {
 		if (this.isSQLite && this.sqliteDb) {
-			// biome-ignore lint/suspicious/noExplicitAny: SQLite params can be any binding type
 			const result = this.sqliteDb
+				// biome-ignore lint/suspicious/noExplicitAny: SQLite params can be any binding type
 				.query<R, any[]>(sqlStr)
+				// biome-ignore lint/suspicious/noExplicitAny: SQLite .get() spread params
 				.get(...(params as any[]));
 			return (result as R) ?? null;
 		}
+		const pgQuery = this.pgSql(sqlStr);
 		// biome-ignore lint/suspicious/noExplicitAny: Bun.SQL accepts various binding types
-		const rows = await this.sql?.unsafe(sqlStr, params as any[]);
+		const rows = await this.sql?.unsafe(pgQuery, params as any[]);
 		return ((rows as unknown as R[])[0] ?? null) as R | null;
 	}
 
@@ -90,8 +150,9 @@ export class BunSqlAdapter {
 			this.sqliteDb.run(sqlStr, params as any[]);
 			return;
 		}
+		const pgQuery = this.pgSql(sqlStr);
 		// biome-ignore lint/suspicious/noExplicitAny: Bun.SQL accepts various binding types
-		await this.sql?.unsafe(sqlStr, params as any[]);
+		await this.sql?.unsafe(pgQuery, params as any[]);
 	}
 
 	/**
@@ -106,8 +167,9 @@ export class BunSqlAdapter {
 			const result = this.sqliteDb.run(sqlStr, params as any[]);
 			return result.changes;
 		}
+		const pgQuery = this.pgSql(sqlStr);
 		// biome-ignore lint/suspicious/noExplicitAny: Bun.SQL accepts various binding types
-		const result = await this.sql?.unsafe(sqlStr, params as any[]);
+		const result = await this.sql?.unsafe(pgQuery, params as any[]);
 		// Bun.SQL returns an array-like with a `count` property for DML statements
 		return (result as unknown as { count: number }).count ?? 0;
 	}
@@ -155,8 +217,9 @@ export class BunSqlAdapter {
 			this.sqliteDb.exec(sqlStr);
 			return;
 		}
+		const pgQuery = params && params.length > 0 ? this.pgSql(sqlStr) : sqlStr;
 		// biome-ignore lint/suspicious/noExplicitAny: Bun.SQL accepts various binding types
-		return this.sql?.unsafe(sqlStr, params as any[]);
+		return this.sql?.unsafe(pgQuery, params as any[]);
 	}
 
 	/**

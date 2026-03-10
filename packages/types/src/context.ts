@@ -1,6 +1,8 @@
-import type { Database } from "bun:sqlite";
 import type { Config } from "@better-ccflare/config";
-import type { DatabaseOperations } from "@better-ccflare/database";
+import type {
+	BunSqlAdapter,
+	DatabaseOperations,
+} from "@better-ccflare/database";
 import type { Account } from "./account";
 import type { RequestMeta } from "./api";
 import type { ApiKey } from "./api-key";
@@ -8,7 +10,7 @@ import type { StrategyStore } from "./strategy";
 
 // API context for HTTP handlers
 export interface APIContext {
-	db: Database;
+	db: BunSqlAdapter;
 	config: Config;
 	dbOps: DatabaseOperations;
 	auth?: {

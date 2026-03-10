@@ -203,7 +203,11 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 			this.isSQLite = false;
 			// Import SQL lazily to avoid issues when not needed
 			const { SQL } = require("bun");
-			const sqlClient = new SQL(databaseUrl);
+			const sqlClient = new SQL({
+				url: databaseUrl,
+				max: 10,
+				idleTimeout: 30,
+			});
 			this.adapter = new BunSqlAdapter(sqlClient, false);
 		} else {
 			this.isSQLite = true;

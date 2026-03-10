@@ -56,12 +56,12 @@ export function updateAccountMetadata(
 	// Update basic usage (with optional bypass)
 	if (bypassSession) {
 		// Increment request count without updating session tracking
-		ctx.asyncWriter.enqueue(() => {
+		ctx.asyncWriter.enqueue(async () => {
 			// Manually increment request count and total requests without touching session
-			const db = ctx.dbOps.getDatabase();
+			const db = ctx.dbOps.getAdapter();
 			const now = Date.now();
-			db.run(
-				`UPDATE accounts 
+			await db.run(
+				`UPDATE accounts
 				 SET last_used = ?, request_count = request_count + 1, total_requests = total_requests + 1
 				 WHERE id = ?`,
 				[now, account.id],
@@ -87,21 +87,21 @@ export function updateAccountMetadata(
 	} else {
 		// If there's no rate limit status header (meaning request was successful),
 		// clear the rate_limited_until field if it has expired
-		ctx.asyncWriter.enqueue(() => {
-			const db = ctx.dbOps.getDatabase();
-			const result = db
-				.query<{ rate_limited_until: number | null }, [string]>(
-					"SELECT rate_limited_until FROM accounts WHERE id = ?",
-				)
-				.get(account.id);
+		ctx.asyncWriter.enqueue(async () => {
+			const db = ctx.dbOps.getAdapter();
+			const result = await db.get<{ rate_limited_until: number | null }>(
+				"SELECT rate_limited_until FROM accounts WHERE id = ?",
+				[account.id],
+			);
 
 			if (
 				result?.rate_limited_until &&
 				result.rate_limited_until < Date.now()
 			) {
-				db.run("UPDATE accounts SET rate_limited_until = NULL WHERE id = ?", [
-					account.id,
-				]);
+				await db.run(
+					"UPDATE accounts SET rate_limited_until = NULL WHERE id = ?",
+					[account.id],
+				);
 				log.debug(
 					`Cleared expired rate_limited_until for account ${account.name} on successful response`,
 				);
@@ -222,23 +222,23 @@ export async function processProxyResponse(
 	// Clear rate_limited_until if the account was previously rate-limited but is now successful
 	if (!rateLimitInfo.isRateLimited) {
 		// Check if the account had a rate_limited_until value and clear it
-		ctx.asyncWriter.enqueue(() => {
-			const db = ctx.dbOps.getDatabase();
+		ctx.asyncWriter.enqueue(async () => {
+			const db = ctx.dbOps.getAdapter();
 			// Only clear rate_limited_until if it's in the past or null (meaning it was rate-limited before)
-			const result = db
-				.query<{ rate_limited_until: number | null }, [string]>(
-					"SELECT rate_limited_until FROM accounts WHERE id = ?",
-				)
-				.get(account.id);
+			const result = await db.get<{ rate_limited_until: number | null }>(
+				"SELECT rate_limited_until FROM accounts WHERE id = ?",
+				[account.id],
+			);
 
 			if (result?.rate_limited_until) {
 				const now = Date.now();
 				// If the rate limit was in the past (already expired) or if we're just clearing it after success
 				// We clear it regardless if it's expired to ensure the account is no longer marked as rate-limited
 				if (result.rate_limited_until <= now) {
-					db.run("UPDATE accounts SET rate_limited_until = NULL WHERE id = ?", [
-						account.id,
-					]);
+					await db.run(
+						"UPDATE accounts SET rate_limited_until = NULL WHERE id = ?",
+						[account.id],
+					);
 					log.debug(
 						`Cleared expired rate_limited_until for account ${account.name}`,
 					);

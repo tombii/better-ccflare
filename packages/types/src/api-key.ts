@@ -12,7 +12,7 @@ export interface ApiKeyRow {
 	created_at: number;
 	last_used: number | null;
 	usage_count: number;
-	is_active: 0 | 1;
+	is_active: boolean | number;
 	role: ApiKeyRole;
 }
 
@@ -135,10 +135,10 @@ export function toApiKey(row: ApiKeyRow): ApiKey {
 		name: row.name,
 		hashedKey: row.hashed_key,
 		prefixLast8: row.prefix_last_8,
-		createdAt: row.created_at,
-		lastUsed: row.last_used,
-		usageCount: row.usage_count,
-		isActive: row.is_active === 1,
+		createdAt: Number(row.created_at),
+		lastUsed: row.last_used != null ? Number(row.last_used) : null,
+		usageCount: Number(row.usage_count) || 0,
+		isActive: !!row.is_active,
 		role: row.role,
 	};
 }

@@ -11,7 +11,9 @@ interface RepairResult {
 /**
  * Perform database integrity check and repair
  */
-export function repairDatabase(dbOps: DatabaseOperations): RepairResult {
+export async function repairDatabase(
+	dbOps: DatabaseOperations,
+): Promise<RepairResult> {
 	const result: RepairResult = {
 		integrityOk: false,
 		nullsFixed: 0,
@@ -20,36 +22,44 @@ export function repairDatabase(dbOps: DatabaseOperations): RepairResult {
 		warnings: [],
 	};
 
-	const db = dbOps.getDatabase();
+	const adapter = dbOps.getAdapter();
 
-	console.log("🔍 Checking database integrity...\n");
+	console.log("Checking database integrity...\n");
 
-	// 1. Check database integrity
-	try {
-		const integrityResult = db.query("PRAGMA integrity_check").get() as {
-			integrity_check: string;
-		};
+	// 1. Check database integrity (SQLite only - PostgreSQL uses different mechanisms)
+	if (dbOps.isSQLite) {
+		try {
+			const integrityResult = await adapter.get<{
+				integrity_check: string;
+			}>("PRAGMA integrity_check");
 
-		if (integrityResult.integrity_check === "ok") {
-			result.integrityOk = true;
-			console.log("✅ Database integrity check: PASSED\n");
-		} else {
-			result.integrityOk = false;
-			result.errors.push(
-				`Integrity check failed: ${integrityResult.integrity_check}`,
-			);
-			console.log(
-				`❌ Database integrity check: FAILED\n   ${integrityResult.integrity_check}\n`,
-			);
+			if (integrityResult?.integrity_check === "ok") {
+				result.integrityOk = true;
+				console.log("Database integrity check: PASSED\n");
+			} else {
+				result.integrityOk = false;
+				result.errors.push(
+					`Integrity check failed: ${integrityResult?.integrity_check}`,
+				);
+				console.log(
+					`Database integrity check: FAILED\n   ${integrityResult?.integrity_check}\n`,
+				);
+			}
+		} catch (error) {
+			result.errors.push(`Failed to run integrity check: ${error}`);
+			console.log(`Failed to run integrity check: ${error}\n`);
+			return result;
 		}
-	} catch (error) {
-		result.errors.push(`Failed to run integrity check: ${error}`);
-		console.log(`❌ Failed to run integrity check: ${error}\n`);
-		return result;
+	} else {
+		// PostgreSQL - assume integrity is ok (managed by PostgreSQL itself)
+		result.integrityOk = true;
+		console.log(
+			"Database integrity check: SKIPPED (PostgreSQL manages integrity internally)\n",
+		);
 	}
 
 	// 2. Check for NULL values in numeric fields
-	console.log("🔍 Checking for NULL values in account fields...\n");
+	console.log("Checking for NULL values in account fields...\n");
 	try {
 		const nullCheckQuery = `
 			SELECT
@@ -60,33 +70,34 @@ export function repairDatabase(dbOps: DatabaseOperations): RepairResult {
 			FROM accounts
 		`;
 
-		const nullStats = db.query(nullCheckQuery).get() as {
+		const nullStats = await adapter.get<{
 			total: number;
 			null_request_count: number;
 			null_total_requests: number;
 			null_session_count: number;
-		};
+		}>(nullCheckQuery);
 
-		const totalNulls =
-			nullStats.null_request_count +
-			nullStats.null_total_requests +
-			nullStats.null_session_count;
+		const totalNulls = nullStats
+			? Number(nullStats.null_request_count) +
+				Number(nullStats.null_total_requests) +
+				Number(nullStats.null_session_count)
+			: 0;
 
 		if (totalNulls > 0) {
 			result.warnings.push(
 				`Found ${totalNulls} NULL values in account numeric fields`,
 			);
-			console.log(`⚠️  Found NULL values in account fields:`);
-			console.log(`   - request_count: ${nullStats.null_request_count}`);
-			console.log(`   - total_requests: ${nullStats.null_total_requests}`);
+			console.log(`Found NULL values in account fields:`);
+			console.log(`   - request_count: ${nullStats?.null_request_count}`);
+			console.log(`   - total_requests: ${nullStats?.null_total_requests}`);
 			console.log(
-				`   - session_request_count: ${nullStats.null_session_count}`,
+				`   - session_request_count: ${nullStats?.null_session_count}`,
 			);
 			console.log("");
 
 			// Fix NULL values
-			console.log("🔧 Fixing NULL values...\n");
-			const updateResult = db.run(`
+			console.log("Fixing NULL values...\n");
+			const changesCount = await adapter.runWithChanges(`
 				UPDATE accounts
 				SET
 					request_count = COALESCE(request_count, 0),
@@ -98,60 +109,66 @@ export function repairDatabase(dbOps: DatabaseOperations): RepairResult {
 					OR session_request_count IS NULL
 			`);
 
-			result.nullsFixed = updateResult.changes;
+			result.nullsFixed = changesCount;
 			console.log(
-				`✅ Fixed ${result.nullsFixed} account records with NULL values\n`,
+				`Fixed ${result.nullsFixed} account records with NULL values\n`,
 			);
 		} else {
-			console.log("✅ No NULL values found in account fields\n");
+			console.log("No NULL values found in account fields\n");
 		}
 	} catch (error) {
 		result.errors.push(`Failed to check/fix NULL values: ${error}`);
-		console.log(`❌ Failed to check/fix NULL values: ${error}\n`);
+		console.log(`Failed to check/fix NULL values: ${error}\n`);
 	}
 
-	// 3. Check foreign key constraints
-	console.log("🔍 Checking foreign key constraints...\n");
-	try {
-		const fkCheck = db.query("PRAGMA foreign_key_check").all();
-		if (fkCheck.length === 0) {
-			console.log("✅ Foreign key constraints: PASSED\n");
-		} else {
-			result.warnings.push(`Found ${fkCheck.length} foreign key violations`);
-			console.log(`⚠️  Found ${fkCheck.length} foreign key violations:`);
-			for (const violation of fkCheck) {
-				console.log(`   ${JSON.stringify(violation)}`);
+	// 3. Check foreign key constraints (SQLite only)
+	if (dbOps.isSQLite) {
+		console.log("Checking foreign key constraints...\n");
+		try {
+			const fkCheck = await adapter.query("PRAGMA foreign_key_check");
+			if (fkCheck.length === 0) {
+				console.log("Foreign key constraints: PASSED\n");
+			} else {
+				result.warnings.push(`Found ${fkCheck.length} foreign key violations`);
+				console.log(`Found ${fkCheck.length} foreign key violations:`);
+				for (const violation of fkCheck) {
+					console.log(`   ${JSON.stringify(violation)}`);
+				}
+				console.log("");
 			}
-			console.log("");
+		} catch (error) {
+			result.warnings.push(`Failed to check foreign keys: ${error}`);
+			console.log(`Failed to check foreign keys: ${error}\n`);
 		}
-	} catch (error) {
-		result.warnings.push(`Failed to check foreign keys: ${error}`);
-		console.log(`⚠️  Failed to check foreign keys: ${error}\n`);
-	}
 
-	// 4. Vacuum database to rebuild and optimize
-	console.log("🔧 Vacuuming database (this may take a moment)...\n");
-	try {
-		// First checkpoint WAL
-		db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
-		// Then vacuum
-		db.exec("VACUUM");
-		result.vacuumed = true;
-		console.log("✅ Database vacuumed successfully\n");
-	} catch (error) {
-		result.errors.push(`Failed to vacuum database: ${error}`);
-		console.log(`❌ Failed to vacuum database: ${error}\n`);
-	}
+		// 4. Vacuum database to rebuild and optimize (SQLite only)
+		console.log("Vacuuming database (this may take a moment)...\n");
+		try {
+			await adapter.unsafe("PRAGMA wal_checkpoint(TRUNCATE)");
+			await adapter.unsafe("VACUUM");
+			result.vacuumed = true;
+			console.log("Database vacuumed successfully\n");
+		} catch (error) {
+			result.errors.push(`Failed to vacuum database: ${error}`);
+			console.log(`Failed to vacuum database: ${error}\n`);
+		}
 
-	// 5. Optimize database
-	console.log("🔧 Optimizing database...\n");
-	try {
-		db.exec("ANALYZE");
-		db.exec("PRAGMA optimize");
-		console.log("✅ Database optimized successfully\n");
-	} catch (error) {
-		result.warnings.push(`Failed to optimize database: ${error}`);
-		console.log(`⚠️  Failed to optimize database: ${error}\n`);
+		// 5. Optimize database (SQLite only)
+		console.log("Optimizing database...\n");
+		try {
+			await adapter.unsafe("ANALYZE");
+			await adapter.unsafe("PRAGMA optimize");
+			console.log("Database optimized successfully\n");
+		} catch (error) {
+			result.warnings.push(`Failed to optimize database: ${error}`);
+			console.log(`Failed to optimize database: ${error}\n`);
+		}
+	} else {
+		// PostgreSQL
+		result.vacuumed = true; // PostgreSQL autovacuums
+		console.log(
+			"Vacuum/optimize: SKIPPED (PostgreSQL handles this automatically via autovacuum)\n",
+		);
 	}
 
 	return result;
@@ -166,16 +183,16 @@ export function printRepairSummary(result: RepairResult): void {
 	console.log("=".repeat(50));
 	console.log("");
 
-	console.log("📊 Results:");
+	console.log("Results:");
 	console.log(
-		`   Integrity Check: ${result.integrityOk ? "✅ PASSED" : "❌ FAILED"}`,
+		`   Integrity Check: ${result.integrityOk ? "PASSED" : "FAILED"}`,
 	);
 	console.log(`   NULL Values Fixed: ${result.nullsFixed}`);
-	console.log(`   Database Vacuumed: ${result.vacuumed ? "✅ YES" : "❌ NO"}`);
+	console.log(`   Database Vacuumed: ${result.vacuumed ? "YES" : "NO"}`);
 	console.log("");
 
 	if (result.errors.length > 0) {
-		console.log("❌ Errors:");
+		console.log("Errors:");
 		for (const error of result.errors) {
 			console.log(`   - ${error}`);
 		}
@@ -183,7 +200,7 @@ export function printRepairSummary(result: RepairResult): void {
 	}
 
 	if (result.warnings.length > 0) {
-		console.log("⚠️  Warnings:");
+		console.log("Warnings:");
 		for (const warning of result.warnings) {
 			console.log(`   - ${warning}`);
 		}
@@ -191,9 +208,9 @@ export function printRepairSummary(result: RepairResult): void {
 	}
 
 	if (result.integrityOk && result.errors.length === 0) {
-		console.log("✅ Database is healthy!");
+		console.log("Database is healthy!");
 	} else if (result.errors.length > 0) {
-		console.log("❌ Database has errors that may require manual intervention.");
+		console.log("Database has errors that may require manual intervention.");
 		console.log(
 			"   Consider backing up and recreating the database if issues persist.",
 		);
@@ -204,13 +221,15 @@ export function printRepairSummary(result: RepairResult): void {
 /**
  * Main repair command handler
  */
-export function handleRepairCommand(dbOps: DatabaseOperations): void {
+export async function handleRepairCommand(
+	dbOps: DatabaseOperations,
+): Promise<void> {
 	console.log("");
-	console.log("🔧 BETTER-CCFLARE DATABASE REPAIR");
+	console.log("BETTER-CCFLARE DATABASE REPAIR");
 	console.log("=".repeat(50));
 	console.log("");
 
-	const result = repairDatabase(dbOps);
+	const result = await repairDatabase(dbOps);
 	printRepairSummary(result);
 
 	// Exit with appropriate code

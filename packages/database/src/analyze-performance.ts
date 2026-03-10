@@ -39,7 +39,7 @@ function analyzeQueryPerformance(db: Database) {
 			name: "Success rate calculation",
 			query: `
 				SELECT 
-					SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) * 100.0 / COUNT(*) as success_rate
+					SUM(CASE WHEN success = TRUE THEN 1 ELSE 0 END) * 100.0 / COUNT(*) as success_rate
 				FROM requests 
 				WHERE timestamp > ?
 			`,
