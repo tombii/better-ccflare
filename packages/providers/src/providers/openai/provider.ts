@@ -45,6 +45,7 @@ interface OpenAIRequest {
 	top_p?: number;
 	stop?: string | string[];
 	stream?: boolean;
+	stream_options?: { include_usage: boolean };
 	tools?: OpenAITool[];
 }
 
@@ -553,6 +554,9 @@ export class OpenAICompatibleProvider extends BaseProvider {
 		}
 		if (anthropicData.stream !== undefined) {
 			openaiRequest.stream = anthropicData.stream;
+			if (anthropicData.stream) {
+				openaiRequest.stream_options = { include_usage: true };
+			}
 		}
 
 		// Convert tools

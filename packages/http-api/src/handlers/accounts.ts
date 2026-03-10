@@ -1827,14 +1827,18 @@ export function createAccountModelMappingsUpdateHandler(
 				return errorResponse(NotFound("Account not found"));
 			}
 
-			if (
-				account.provider !== "openai-compatible" &&
-				account.provider !== "anthropic-compatible" &&
-				account.provider !== "nanogpt"
-			) {
+			const MODEL_MAPPING_PROVIDERS = [
+				"openai-compatible",
+				"anthropic-compatible",
+				"nanogpt",
+				"openrouter",
+				"kilo",
+				"alibaba-coding-plan",
+			];
+			if (!MODEL_MAPPING_PROVIDERS.includes(account.provider)) {
 				return errorResponse(
 					BadRequest(
-						"Model mappings are only available for OpenAI-compatible, Anthropic-compatible, and NanoGPT accounts",
+						"Model mappings are only available for OpenAI-compatible, Anthropic-compatible, NanoGPT, OpenRouter, Kilo, and Alibaba accounts",
 					),
 				);
 			}
