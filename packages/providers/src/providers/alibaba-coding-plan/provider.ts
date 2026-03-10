@@ -2,7 +2,7 @@ import type { Account } from "@better-ccflare/types";
 import { OpenAICompatibleProvider } from "../openai/provider";
 
 const ALIBABA_CODING_PLAN_DEFAULT_ENDPOINT =
-	"https://coding-intl.dashscope.aliyuncs.com/v1";
+	"https://coding-intl.dashscope.aliyuncs.com";
 
 export class AlibabaCodingPlanProvider extends OpenAICompatibleProvider {
 	override name = "alibaba-coding-plan";
@@ -18,6 +18,11 @@ export class AlibabaCodingPlanProvider extends OpenAICompatibleProvider {
 			openaiPath = "/v1/chat/completions";
 		} else if (path.startsWith("/v1/")) {
 			openaiPath = path; // keep /v1/ prefix for Alibaba
+		}
+
+		// Avoid double /v1 if endpoint already ends with it
+		if (endpoint.endsWith("/v1") && openaiPath.startsWith("/v1/")) {
+			openaiPath = openaiPath.replace(/^\/v1/, "");
 		}
 
 		return `${endpoint}${openaiPath}${query}`;
