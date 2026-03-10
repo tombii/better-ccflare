@@ -37,7 +37,8 @@ export interface AddAccountOptionsWithAdapter {
 		| "vertex-ai"
 		| "bedrock"
 		| "kilo"
-		| "openrouter";
+		| "openrouter"
+		| "alibaba-coding-plan";
 	priority?: number;
 	customEndpoint?: string;
 	modelMappings?: { [key: string]: string };
@@ -62,7 +63,8 @@ export interface AccountListItemWithMode extends AccountListItem {
 		| "vertex-ai"
 		| "bedrock"
 		| "kilo"
-		| "openrouter";
+		| "openrouter"
+		| "alibaba-coding-plan";
 }
 
 /**
@@ -217,6 +219,48 @@ async function createKiloAccount(
 			null,
 			null,
 			now + 365 * 24 * 60 * 60 * 1000,
+			now,
+			0,
+			0,
+			validatedPriority,
+			null,
+			validatedModelMappings,
+		],
+	);
+}
+
+/**
+ * Create an Alibaba Coding Plan account in the database
+ */
+async function createAlibabaCodingPlanAccount(
+	dbOps: DatabaseOperations,
+	name: string,
+	apiKey: string,
+	priority: number,
+	modelMappings?: { [key: string]: string } | null,
+): Promise<void> {
+	const accountId = crypto.randomUUID();
+	const now = Date.now();
+	const validatedApiKey = validateApiKey(apiKey, "Alibaba Coding Plan API key");
+	const validatedPriority = validatePriority(priority, "priority");
+	let validatedModelMappings = null;
+	if (modelMappings && Object.keys(modelMappings).length > 0) {
+		const validated = validateAndSanitizeModelMappings(modelMappings);
+		validatedModelMappings = JSON.stringify(validated);
+	}
+	await dbOps.getAdapter().run(
+		`INSERT INTO accounts (
+			id, name, provider, api_key, refresh_token, access_token,
+			expires_at, created_at, request_count, total_requests, priority, custom_endpoint, model_mappings
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		[
+			accountId,
+			name,
+			"alibaba-coding-plan",
+			validatedApiKey,
+			validatedApiKey, // Use API key as refresh token for consistency
+			validatedApiKey, // Use API key as access token
+			now + 365 * 24 * 60 * 60 * 1000, // 1 year from now
 			now,
 			0,
 			0,
@@ -645,6 +689,7 @@ export async function addAccount(
 			{ label: "Minimax account (API key)", value: "minimax" },
 			{ label: "Kilo Gateway (API key)", value: "kilo" },
 			{ label: "OpenRouter (API key)", value: "openrouter" },
+			{ label: "Alibaba Coding Plan (API key)", value: "alibaba-coding-plan" },
 			{
 				label: "Anthropic-compatible provider (API key)",
 				value: "anthropic-compatible",
@@ -927,6 +972,34 @@ export async function addAccount(
 		console.log(`\nAccount '${name}' added successfully!`);
 		console.log("Type: OpenRouter (API key)");
 		console.log("Endpoint: https://openrouter.ai/api/v1");
+	} else if (mode === "alibaba-coding-plan") {
+		// Handle Alibaba Coding Plan accounts with API keys
+		const apiKey = await adapter.input(
+			"\nEnter your Alibaba Coding Plan API key: ",
+		);
+		// Get priority
+		const priority =
+			providedPriority ??
+			(await adapter.input(
+				"\nEnter priority (0 = highest, lower number = higher priority, default 0): ",
+			));
+		// Get model mappings
+		const finalModelMappings = await promptModelMappings(
+			adapter,
+			modelMappings,
+		);
+		await createAlibabaCodingPlanAccount(
+			dbOps,
+			name,
+			apiKey,
+			typeof priority === "string"
+				? parseInt(priority, 10) || 0
+				: priority || 0,
+			finalModelMappings,
+		);
+		console.log(`\nAccount '${name}' added successfully!`);
+		console.log("Type: Alibaba Coding Plan (API key)");
+		console.log("Endpoint: https://bailian-singapore-cs.alibabacloud.com");
 	} else if (mode === "anthropic-compatible") {
 		// Handle Anthropic-compatible accounts with API keys
 		const apiKey = await adapter.input(

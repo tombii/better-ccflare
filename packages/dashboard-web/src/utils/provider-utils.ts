@@ -24,7 +24,8 @@ export function providerSupportsModelMappings(provider: string): boolean {
 		provider === PROVIDER_NAMES.ANTHROPIC_COMPATIBLE ||
 		provider === PROVIDER_NAMES.NANOGPT ||
 		provider === PROVIDER_NAMES.OPENROUTER ||
-		provider === PROVIDER_NAMES.KILO
+		provider === PROVIDER_NAMES.KILO ||
+		provider === PROVIDER_NAMES.ALIBABA_CODING_PLAN
 	);
 }
 
@@ -38,7 +39,8 @@ export function providerShowsWeeklyUsage(provider: string): boolean {
 	return (
 		provider === PROVIDER_NAMES.ANTHROPIC ||
 		provider === PROVIDER_NAMES.NANOGPT ||
-		provider === PROVIDER_NAMES.ZAI
+		provider === PROVIDER_NAMES.ZAI ||
+		provider === PROVIDER_NAMES.ALIBABA_CODING_PLAN
 	);
 }
 

@@ -2,6 +2,12 @@ import { CLAUDE_CLI_VERSION } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import { supportsUsageTracking } from "@better-ccflare/types";
 import {
+	type AlibabaCodingPlanUsageData,
+	fetchAlibabaCodingPlanUsageData,
+	getRepresentativeAlibabaCodingPlanUtilization,
+	getRepresentativeAlibabaCodingPlanWindow,
+} from "./alibaba-coding-plan-usage-fetcher";
+import {
 	fetchKiloUsageData,
 	getRepresentativeKiloUtilization,
 	getRepresentativeKiloWindow,
@@ -46,7 +52,8 @@ export type AnyUsageData =
 	| UsageData
 	| NanoGPTUsageData
 	| ZaiUsageData
-	| KiloUsageData;
+	| KiloUsageData
+	| AlibabaCodingPlanUsageData;
 
 /**
  * Fetch usage data from Anthropic's OAuth usage endpoint
@@ -469,6 +476,22 @@ class UsageCache {
 					const window = getRepresentativeKiloWindow(data as KiloUsageData);
 					log.debug(
 						`Successfully fetched Kilo usage data for account ${accountId}: $${(data as KiloUsageData).remainingUsd.toFixed(2)} remaining (${utilization?.toFixed(1)}% used, ${window})`,
+					);
+					return true;
+				}
+			} else if (provider === "alibaba-coding-plan") {
+				// Fetch Alibaba Coding Plan usage data
+				data = await fetchAlibabaCodingPlanUsageData(token);
+				if (data) {
+					this.cache.set(accountId, { data, timestamp: Date.now() });
+					const utilization = getRepresentativeAlibabaCodingPlanUtilization(
+						data as AlibabaCodingPlanUsageData,
+					);
+					const window = getRepresentativeAlibabaCodingPlanWindow(
+						data as AlibabaCodingPlanUsageData,
+					);
+					log.debug(
+						`Successfully fetched Alibaba Coding Plan usage data for account ${accountId}: ${utilization?.toFixed(1)}% used (${window} window)`,
 					);
 					return true;
 				}

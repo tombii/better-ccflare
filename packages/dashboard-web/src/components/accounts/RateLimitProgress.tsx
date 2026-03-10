@@ -34,6 +34,8 @@ function formatWindowName(window: string | null): string {
 			return "Sonnet (Weekly)";
 		case "daily":
 			return "Daily";
+		case "weekly":
+			return "Weekly";
 		case "monthly":
 			return "Monthly";
 		case "time_limit":
@@ -121,7 +123,38 @@ export function RateLimitProgress({
 	const isZaiData =
 		usageData && ("time_limit" in usageData || "tokens_limit" in usageData);
 
-	if (isZaiData && showWeekly) {
+	// Check if this is Alibaba Coding Plan usage data
+	const isAlibabaData =
+		usageData && "five_hour" in usageData && "weekly" in usageData;
+
+	if (isAlibabaData && showWeekly) {
+		const alibabaData = usageData as {
+			five_hour: { percentUsed: number; resetAt: number | null };
+			weekly: { percentUsed: number; resetAt: number | null };
+			monthly: { percentUsed: number; resetAt: number | null };
+		};
+		usages.push({
+			utilization: alibabaData.five_hour.percentUsed,
+			window: "five_hour",
+			resetTime: alibabaData.five_hour.resetAt
+				? new Date(alibabaData.five_hour.resetAt).toISOString()
+				: null,
+		});
+		usages.push({
+			utilization: alibabaData.weekly.percentUsed,
+			window: "weekly",
+			resetTime: alibabaData.weekly.resetAt
+				? new Date(alibabaData.weekly.resetAt).toISOString()
+				: null,
+		});
+		usages.push({
+			utilization: alibabaData.monthly.percentUsed,
+			window: "monthly",
+			resetTime: alibabaData.monthly.resetAt
+				? new Date(alibabaData.monthly.resetAt).toISOString()
+				: null,
+		});
+	} else if (isZaiData && showWeekly) {
 		// Zai usage data - only show tokens_limit (5-hour token quota)
 		const zaiData = usageData as {
 			time_limit?: { percentage: number; resetAt: number } | null;
@@ -350,6 +383,7 @@ export function RateLimitProgress({
 									{usage.window === "seven_day" ||
 									usage.window === "seven_day_opus" ||
 									usage.window === "seven_day_sonnet" ||
+									usage.window === "weekly" ||
 									usage.window === "monthly" ||
 									usage.window === "time_limit" ||
 									usage.window === "tokens_limit"

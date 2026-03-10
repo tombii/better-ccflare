@@ -84,7 +84,8 @@ export function AccountsTab() {
 			| "vertex-ai"
 			| "bedrock"
 			| "kilo"
-			| "openrouter";
+			| "openrouter"
+			| "alibaba-coding-plan";
 		priority: number;
 		customEndpoint?: string;
 	}) => {
@@ -209,6 +210,23 @@ export function AccountsTab() {
 	}) => {
 		try {
 			await api.addNanoGPTAccount(params);
+			await loadAccounts();
+			setAdding(false);
+			setActionError(null);
+		} catch (err) {
+			setActionError(formatError(err));
+			throw err;
+		}
+	};
+
+	const handleAddAlibabaCodingPlanAccount = async (params: {
+		name: string;
+		apiKey: string;
+		priority: number;
+		modelMappings?: { [key: string]: string };
+	}) => {
+		try {
+			await api.addAlibabaCodingPlanAccount(params);
 			await loadAccounts();
 			setAdding(false);
 			setActionError(null);
@@ -459,6 +477,7 @@ export function AccountsTab() {
 							onAddZaiAccount={handleAddZaiAccount}
 							onAddMinimaxAccount={handleAddMinimaxAccount}
 							onAddNanoGPTAccount={handleAddNanoGPTAccount}
+							onAddAlibabaCodingPlanAccount={handleAddAlibabaCodingPlanAccount}
 							onAddKiloAccount={handleAddKiloAccount}
 							onAddOpenRouterAccount={handleAddOpenRouterAccount}
 							onAddAnthropicCompatibleAccount={

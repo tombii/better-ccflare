@@ -1,3 +1,4 @@
+export { AlibabaCodingPlanProvider } from "./alibaba-coding-plan/index";
 export {
 	AnthropicOAuthProvider,
 	AnthropicProvider,
