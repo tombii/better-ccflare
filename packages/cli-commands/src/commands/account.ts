@@ -689,7 +689,10 @@ export async function addAccount(
 			{ label: "Minimax account (API key)", value: "minimax" },
 			{ label: "Kilo Gateway (API key)", value: "kilo" },
 			{ label: "OpenRouter (API key)", value: "openrouter" },
-			{ label: "Alibaba Coding Plan (API key)", value: "alibaba-coding-plan" },
+			{
+				label: "Alibaba Coding Plan International (API key)",
+				value: "alibaba-coding-plan",
+			},
 			{
 				label: "Anthropic-compatible provider (API key)",
 				value: "anthropic-compatible",
@@ -998,7 +1001,7 @@ export async function addAccount(
 			finalModelMappings,
 		);
 		console.log(`\nAccount '${name}' added successfully!`);
-		console.log("Type: Alibaba Coding Plan (API key)");
+		console.log("Type: Alibaba Coding Plan International (API key)");
 		console.log("Endpoint: https://bailian-singapore-cs.alibabacloud.com");
 	} else if (mode === "anthropic-compatible") {
 		// Handle Anthropic-compatible accounts with API keys

@@ -807,7 +807,7 @@ Options:
         --profile <name>  AWS profile name from ~/.aws/credentials (required)
         --cross-region-mode <mode>   Cross-region inference mode: geographic (default), global, or regional
       kilo: Kilo Gateway provider (API key)
-      alibaba-coding-plan: Alibaba Coding Plan provider (API key)
+      alibaba-coding-plan: Alibaba Coding Plan International provider (API key)
     --priority <number>   Account priority (default: 0)
   --list               List all accounts
   --remove <name>      Remove an account
@@ -957,7 +957,7 @@ Examples:
 			console.error("  --mode bedrock         AWS Bedrock (AWS profile)");
 			console.error("  --mode kilo            Kilo Gateway provider (API key)");
 			console.error(
-				"  --mode alibaba-coding-plan  Alibaba Coding Plan (API key)",
+				"  --mode alibaba-coding-plan  Alibaba Coding Plan International (API key)",
 			);
 			console.error("\nExample:");
 			console.error(

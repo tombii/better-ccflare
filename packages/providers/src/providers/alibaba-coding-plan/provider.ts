@@ -2,7 +2,7 @@ import type { Account } from "@better-ccflare/types";
 import { OpenAICompatibleProvider } from "../openai/provider";
 
 const ALIBABA_CODING_PLAN_DEFAULT_ENDPOINT =
-	"https://bailian-singapore-cs.alibabacloud.com";
+	"https://coding-intl.dashscope.aliyuncs.com/v1";
 
 export class AlibabaCodingPlanProvider extends OpenAICompatibleProvider {
 	override name = "alibaba-coding-plan";
