@@ -741,7 +741,7 @@ export function AccountAddForm({
 								<SelectItem value="kilo">Kilo Gateway (API Key)</SelectItem>
 								<SelectItem value="openrouter">OpenRouter (API Key)</SelectItem>
 								<SelectItem value="alibaba-coding-plan">
-									Alibaba Coding Plan (API Key)
+									Alibaba Coding Plan International (API Key)
 								</SelectItem>
 							</SelectContent>
 						</Select>

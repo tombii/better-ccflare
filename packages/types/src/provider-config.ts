@@ -113,7 +113,7 @@ export const PROVIDER_CONFIG: Record<ProviderName, ProviderConfig> = {
 		requiresSessionTracking: false, // Alibaba Coding Plan uses quota windows, not session stickiness
 		supportsUsageTracking: true, // Supports 5-hour, weekly, and monthly quota polling
 		supportsOAuth: false, // Uses API key authentication
-		defaultEndpoint: "https://bailian-singapore-cs.alibabacloud.com",
+		defaultEndpoint: "https://coding-intl.dashscope.aliyuncs.com/v1",
 	},
 } as const satisfies Record<ProviderName, ProviderConfig>;
 
