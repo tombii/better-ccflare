@@ -351,11 +351,12 @@ async function createAnthropicCompatibleAccount(
 		`INSERT INTO accounts (
 			id, name, provider, api_key, refresh_token, access_token,
 			expires_at, created_at, request_count, total_requests, priority, custom_endpoint, model_mappings
-		) VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, 0, 0, ?, ?, ?)`,
+		) VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, 0, 0, ?, ?, ?)`,
 		[
 			accountId,
 			name,
 			"anthropic-compatible",
+			validatedApiKey,
 			validatedApiKey,
 			now,
 			validatedPriority,
@@ -626,11 +627,12 @@ async function createOpenAIAccount(
 		`INSERT INTO accounts (
 			id, name, provider, api_key, refresh_token, access_token,
 			expires_at, created_at, request_count, total_requests, priority, custom_endpoint, model_mappings
-		) VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?)`,
+		) VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?)`,
 		[
 			accountId,
 			name,
 			"openai-compatible",
+			validatedApiKey,
 			validatedApiKey,
 			now,
 			0,
@@ -1002,7 +1004,7 @@ export async function addAccount(
 		);
 		console.log(`\nAccount '${name}' added successfully!`);
 		console.log("Type: Alibaba Coding Plan International (API key)");
-		console.log("Endpoint: https://bailian-singapore-cs.alibabacloud.com");
+		console.log("Endpoint: https://coding-intl.dashscope.aliyuncs.com");
 	} else if (mode === "anthropic-compatible") {
 		// Handle Anthropic-compatible accounts with API keys
 		const apiKey = await adapter.input(
