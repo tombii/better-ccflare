@@ -118,28 +118,52 @@ export function updateAccountMetadata(
 		if (isStream && ctx.provider.parseUsage) {
 			const parseUsage = ctx.provider.parseUsage.bind(ctx.provider);
 			(async () => {
-				const usageInfo = await parseUsage(response.clone() as Response);
-				if (usageInfo) {
-					log.debug(
-						`Extracted streaming usage for account ${account.name}: ${JSON.stringify(usageInfo)}`,
-					);
-					// Store usage info in database
-					ctx.asyncWriter.enqueue(() =>
-						ctx.dbOps.updateRequestUsage(requestId, usageInfo),
+				try {
+					const usageInfo = await parseUsage(response.clone() as Response);
+					if (usageInfo) {
+						log.debug(
+							`Extracted streaming usage for account ${account.name}: ${JSON.stringify(usageInfo)}`,
+						);
+						// Store usage info in database
+						try {
+							await ctx.asyncWriter.enqueue(() =>
+								ctx.dbOps.updateRequestUsage(requestId, usageInfo),
+							);
+						} catch (error) {
+							log.warn(`Failed to save usage for request ${requestId}:`, error);
+						}
+					}
+				} catch (error) {
+					log.warn(
+						`Failed to extract streaming usage for account ${account.name}:`,
+						error,
 					);
 				}
 			})();
 		} else if (ctx.provider.extractUsageInfo) {
 			const extractUsageInfo = ctx.provider.extractUsageInfo.bind(ctx.provider);
 			(async () => {
-				const usageInfo = await extractUsageInfo(response.clone() as Response);
-				if (usageInfo) {
-					log.debug(
-						`Extracted usage info for account ${account.name}: ${JSON.stringify(usageInfo)}`,
+				try {
+					const usageInfo = await extractUsageInfo(
+						response.clone() as Response,
 					);
-					// Store usage info in database
-					ctx.asyncWriter.enqueue(() =>
-						ctx.dbOps.updateRequestUsage(requestId, usageInfo),
+					if (usageInfo) {
+						log.debug(
+							`Extracted usage info for account ${account.name}: ${JSON.stringify(usageInfo)}`,
+						);
+						// Store usage info in database
+						try {
+							await ctx.asyncWriter.enqueue(() =>
+								ctx.dbOps.updateRequestUsage(requestId, usageInfo),
+							);
+						} catch (error) {
+							log.warn(`Failed to save usage for request ${requestId}:`, error);
+						}
+					}
+				} catch (error) {
+					log.warn(
+						`Failed to extract usage info for account ${account.name}:`,
+						error,
 					);
 				}
 			})();

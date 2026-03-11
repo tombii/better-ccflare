@@ -39,8 +39,7 @@ export function providerShowsWeeklyUsage(provider: string): boolean {
 	return (
 		provider === PROVIDER_NAMES.ANTHROPIC ||
 		provider === PROVIDER_NAMES.NANOGPT ||
-		provider === PROVIDER_NAMES.ZAI ||
-		provider === PROVIDER_NAMES.ALIBABA_CODING_PLAN
+		provider === PROVIDER_NAMES.ZAI
 	);
 }
 
