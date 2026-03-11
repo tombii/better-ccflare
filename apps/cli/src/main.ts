@@ -1010,6 +1010,21 @@ Examples:
 						confirm: async (_prompt: string) => true,
 					},
 				});
+			} else if (
+				mode === "anthropic-compatible" ||
+				mode === "openai-compatible"
+			) {
+				// These modes need interactive prompts for endpoint + API key
+				const { stdPromptAdapter } = await import(
+					"@better-ccflare/cli-commands"
+				);
+				await addAccount(dbOps, new Config(), {
+					name: parsed.addAccount,
+					mode,
+					priority,
+					profile: parsed.profile || undefined,
+					adapter: stdPromptAdapter,
+				});
 			} else {
 				// For API key accounts, get the API key from environment or prompt
 				let apiKey =
