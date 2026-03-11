@@ -441,12 +441,18 @@ export abstract class BaseAnthropicCompatibleProvider extends BaseProvider {
 					if (!line) continue;
 
 					// Parse SSE event
-					if (line.startsWith("event: message_start")) {
+					if (
+						line.startsWith("event: message_start") ||
+						line.startsWith("event:message_start")
+					) {
 						// Look for the next data line, skipping empty lines
 						let dataLine = null;
 						for (let j = i + 1; j < lines.length; j++) {
 							const nextLine = lines[j].trim();
-							if (nextLine.startsWith("data: ")) {
+							if (
+								nextLine.startsWith("data: ") ||
+								nextLine.startsWith("data:")
+							) {
 								dataLine = nextLine;
 								break;
 							} else if (nextLine && !nextLine.startsWith("event: ")) {
@@ -457,7 +463,10 @@ export abstract class BaseAnthropicCompatibleProvider extends BaseProvider {
 
 						if (dataLine) {
 							try {
-								const jsonStr = dataLine.slice(6);
+								// Handle both "data: {...}" and "data:{...}" formats
+								const jsonStr = dataLine.startsWith("data: ")
+									? dataLine.slice(6)
+									: dataLine.slice(5);
 								const data = JSON.parse(jsonStr) as {
 									message?: {
 										model?: string;
@@ -485,12 +494,18 @@ export abstract class BaseAnthropicCompatibleProvider extends BaseProvider {
 								// Ignore parse errors
 							}
 						}
-					} else if (line.startsWith("event: message_delta")) {
+					} else if (
+						line.startsWith("event: message_delta") ||
+						line.startsWith("event:message_delta")
+					) {
 						// Look for the next data line, skipping empty lines
 						let dataLine = null;
 						for (let j = i + 1; j < lines.length; j++) {
 							const nextLine = lines[j].trim();
-							if (nextLine.startsWith("data: ")) {
+							if (
+								nextLine.startsWith("data: ") ||
+								nextLine.startsWith("data:")
+							) {
 								dataLine = nextLine;
 								break;
 							} else if (nextLine && !nextLine.startsWith("event: ")) {
@@ -501,7 +516,10 @@ export abstract class BaseAnthropicCompatibleProvider extends BaseProvider {
 
 						if (dataLine) {
 							try {
-								const jsonStr = dataLine.slice(6);
+								// Handle both "data: {...}" and "data:{...}" formats
+								const jsonStr = dataLine.startsWith("data: ")
+									? dataLine.slice(6)
+									: dataLine.slice(5);
 								const data = JSON.parse(jsonStr) as {
 									usage?: {
 										input_tokens?: number;
