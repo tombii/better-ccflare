@@ -146,7 +146,6 @@ function filterThinkingBlocks(
 			const warningMessage =
 				"Disabled thinking mode due to incompatible thinking blocks from previous provider. Conversation context preserved.";
 			log.info(warningMessage);
-			console.log(`[better-ccflare] ${warningMessage}`);
 
 			const filteredBody = {
 				...body,
