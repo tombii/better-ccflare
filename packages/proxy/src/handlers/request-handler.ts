@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { ValidationError } from "@better-ccflare/core";
+import { TIME_CONSTANTS, ValidationError } from "@better-ccflare/core";
 import type { Provider } from "@better-ccflare/providers";
 import type { RequestMeta } from "@better-ccflare/types";
 import { ERROR_MESSAGES } from "./proxy-types";
@@ -78,15 +78,35 @@ export async function makeProxyRequest(
 	headers?: Headers,
 	createBodyStream?: () => ReadableStream<Uint8Array> | undefined,
 	hasBody?: boolean,
+	signal?: AbortSignal,
 ): Promise<Response> {
-	if (target instanceof Request) {
-		return fetch(target);
-	}
+	let timeoutId: ReturnType<typeof setTimeout> | null = null;
+	let internalController: AbortController | null = null;
 
-	return fetch(target, {
-		method,
-		headers,
-		body: createBodyStream ? createBodyStream() : undefined,
-		...(hasBody ? ({ duplex: "half" } as RequestInit) : {}),
-	});
+	const effectiveSignal =
+		signal ??
+		(() => {
+			internalController = new AbortController();
+			timeoutId = setTimeout(
+				() => internalController?.abort(),
+				TIME_CONSTANTS.PROXY_REQUEST_TIMEOUT_MS,
+			);
+			return internalController.signal;
+		})();
+
+	try {
+		if (target instanceof Request) {
+			return await fetch(new Request(target, { signal: effectiveSignal }));
+		}
+
+		return await fetch(target, {
+			method,
+			headers,
+			body: createBodyStream ? createBodyStream() : undefined,
+			signal: effectiveSignal,
+			...(hasBody ? ({ duplex: "half" } as RequestInit) : {}),
+		});
+	} finally {
+		if (timeoutId) clearTimeout(timeoutId);
+	}
 }
