@@ -38,3 +38,4 @@ test_*.sh
 *.db.backup.*
 *.db-wal
 *.db-shm
+.gitnexus
