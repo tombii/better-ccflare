@@ -56,19 +56,15 @@ describe("OAuth Token Health Monitoring Features", () => {
 			const claudeUrl = oauthProvider.generateAuthUrl(claudeConfig, pkce);
 			const consoleUrl = oauthProvider.generateAuthUrl(consoleConfig, pkce);
 
-			expect(claudeUrl).toContain("claude.ai/login");
-			expect(claudeUrl).toContain("selectAccount=true");
+			expect(claudeUrl).toContain("claude.ai/oauth/authorize");
 			expect(consoleUrl).toContain("console.anthropic.com/oauth/authorize");
 
-			// Both should have PKCE challenge (in different locations due to flow differences)
-			// For claude mode, challenge is in the returnTo parameter (URL-encoded)
-			const encodedChallenge = encodeURIComponent(pkce.challenge);
-			expect(claudeUrl).toContain(encodedChallenge);
+			// Both should have PKCE challenge directly in the URL
+			expect(claudeUrl).toContain(`code_challenge=${pkce.challenge}`);
 			expect(consoleUrl).toContain(`code_challenge=${pkce.challenge}`);
 
 			// Both should use S256 method
-			const encodedMethod = encodeURIComponent("S256");
-			expect(claudeUrl).toContain(encodedMethod); // S256 encoded in URL
+			expect(claudeUrl).toContain("code_challenge_method=S256");
 			expect(consoleUrl).toContain("code_challenge_method=S256");
 		});
 	});
@@ -80,14 +76,8 @@ describe("OAuth Token Health Monitoring Features", () => {
 
 			const authUrl = oauthProvider.generateAuthUrl(config, pkce);
 
-			// State should be present in the URL (nested in returnTo parameter for Claude OAuth)
-			// The state parameter exists in the returnTo URL-encoded parameter
-			const returnToMatch = authUrl.match(/returnTo=([^&]*)/);
-			expect(returnToMatch).toBeDefined();
-			if (returnToMatch) {
-				const decodedReturnTo = decodeURIComponent(returnToMatch[1]);
-				expect(decodedReturnTo).toContain("state=");
-			}
+			// State should be present directly in the URL
+			expect(authUrl).toContain("state=");
 			expect(authUrl).not.toContain(pkce.verifier);
 			expect(authUrl).not.toContain("verifier=");
 		});
@@ -100,22 +90,9 @@ describe("OAuth Token Health Monitoring Features", () => {
 			const authUrl1 = oauthProvider.generateAuthUrl(config, pkce1);
 			const authUrl2 = oauthProvider.generateAuthUrl(config, pkce2);
 
-			// Extract state from potentially nested URL structure (returnTo parameter)
-			let state1, state2;
-
-			// For Claude OAuth mode, state is in the returnTo parameter which is URL-encoded
-			const returnToMatch1 = authUrl1.match(/returnTo=([^&]*)/);
-			const returnToMatch2 = authUrl2.match(/returnTo=(.*)&?/);
-
-			if (returnToMatch1) {
-				const decodedReturnTo1 = decodeURIComponent(returnToMatch1[1]);
-				state1 = decodedReturnTo1.match(/state=([^&]*)/)?.[1];
-			}
-
-			if (returnToMatch2) {
-				const decodedReturnTo2 = decodeURIComponent(returnToMatch2[1]);
-				state2 = decodedReturnTo2.match(/state=([^&]*)/)?.[1];
-			}
+			// Extract state directly from the URL
+			const state1 = new URL(authUrl1).searchParams.get("state");
+			const state2 = new URL(authUrl2).searchParams.get("state");
 
 			// States should be different
 			expect(state1).toBeDefined();
