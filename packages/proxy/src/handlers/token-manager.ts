@@ -8,7 +8,7 @@ import {
 	getProvider,
 	type TokenRefreshResult,
 } from "@better-ccflare/providers";
-import type { Account } from "@better-ccflare/types";
+import { type Account, usesStaticApiKey } from "@better-ccflare/types";
 import { TOKEN_REFRESH_BACKOFF_MS, TOKEN_SAFETY_WINDOW_MS } from "../constants";
 import { ERROR_MESSAGES, type ProxyContext } from "./proxy-types";
 import {
@@ -356,14 +356,7 @@ export async function getValidAccessToken(
 	ctx: ProxyContext,
 ): Promise<string> {
 	// For API key providers, return the API key directly without OAuth token refresh logic
-	// Prioritize api_key field, but maintain fallback to refresh_token for backward compatibility
-	if (
-		account.provider === "openai-compatible" ||
-		account.provider === "zai" ||
-		account.provider === "claude-console-api" ||
-		account.provider === "anthropic-compatible" ||
-		account.provider === "minimax"
-	) {
+	if (usesStaticApiKey(account.provider)) {
 		if (account.api_key) {
 			return account.api_key;
 		}
@@ -372,12 +365,6 @@ export async function getValidAccessToken(
 			return account.refresh_token;
 		}
 		throw new Error(`No API key available for account ${account.name}`);
-	}
-
-	// API key accounts don't use access tokens
-	if (!account.refresh_token && account.api_key) {
-		// Return empty string - the API key will be used in prepareHeaders
-		return "";
 	}
 
 	// Check if token exists and won't expire within the safety window

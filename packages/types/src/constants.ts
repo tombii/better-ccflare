@@ -9,6 +9,7 @@ import {
 	requiresSessionDurationTracking,
 	supportsOAuth,
 	supportsUsageTracking,
+	usesStaticApiKey,
 } from "./provider-config";
 
 // Re-export the imported types and constants
@@ -21,6 +22,7 @@ export {
 	requiresSessionDurationTracking,
 	supportsOAuth,
 	supportsUsageTracking,
+	usesStaticApiKey,
 };
 
 /**

@@ -35,6 +35,8 @@ export interface ProviderConfig {
 	supportsUsageTracking: boolean;
 	/** Whether the provider supports OAuth authentication */
 	supportsOAuth: boolean;
+	/** Whether the provider authenticates with a static API key (vs OAuth or cloud credentials) */
+	usesStaticApiKey: boolean;
 	/** Default API endpoint for the provider */
 	defaultEndpoint?: string;
 }
@@ -47,72 +49,84 @@ export const PROVIDER_CONFIG: Record<ProviderName, ProviderConfig> = {
 		requiresSessionTracking: true, // Anthropic OAuth has 5-hour usage windows
 		supportsUsageTracking: true, // Anthropic OAuth supports usage tracking
 		supportsOAuth: true, // Anthropic OAuth uses OAuth authentication
+		usesStaticApiKey: false,
 		defaultEndpoint: "https://api.anthropic.com",
 	},
 	[PROVIDER_NAMES.CLAUDE_CONSOLE_API]: {
 		requiresSessionTracking: false, // Claude console API is pay-as-you-go
 		supportsUsageTracking: false, // Claude console API doesn't support usage tracking
 		supportsOAuth: false, // Claude console API uses API key authentication
+		usesStaticApiKey: true,
 		defaultEndpoint: "https://api.anthropic.com",
 	},
 	[PROVIDER_NAMES.ZAI]: {
 		requiresSessionTracking: false, // Zai is typically pay-as-you-go
 		supportsUsageTracking: true, // Zai supports usage tracking via monitoring API
 		supportsOAuth: false, // Zai uses API key authentication
+		usesStaticApiKey: true,
 		defaultEndpoint: "https://api.z.ai/api/anthropic",
 	},
 	[PROVIDER_NAMES.MINIMAX]: {
 		requiresSessionTracking: false, // Minimax is pay-as-you-go
 		supportsUsageTracking: false, // Minimax doesn't support usage tracking
 		supportsOAuth: false, // Minimax uses API key authentication
+		usesStaticApiKey: true,
 		defaultEndpoint: "https://api.minimax.io/anthropic",
 	},
 	[PROVIDER_NAMES.ANTHROPIC_COMPATIBLE]: {
 		requiresSessionTracking: false, // Anthropic-compatible is pay-as-you-go
 		supportsUsageTracking: false, // Anthropic-compatible providers typically don't support usage tracking
 		supportsOAuth: false, // Anthropic-compatible uses API key authentication
+		usesStaticApiKey: true,
 		defaultEndpoint: "https://api.anthropic.com", // Default, can be overridden via custom endpoint
 	},
 	[PROVIDER_NAMES.OPENAI_COMPATIBLE]: {
 		requiresSessionTracking: false, // OpenAI-compatible is typically pay-as-you-go
 		supportsUsageTracking: false, // OpenAI-compatible providers typically don't support usage tracking
 		supportsOAuth: false, // OpenAI-compatible uses API key authentication
+		usesStaticApiKey: true,
 		defaultEndpoint: "https://api.anthropic.com", // Default, can be overridden via custom endpoint
 	},
 	[PROVIDER_NAMES.NANOGPT]: {
 		requiresSessionTracking: false, // NanoGPT is pay-as-you-go (no session stickiness)
 		supportsUsageTracking: true, // NanoGPT supports subscription usage tracking via API
 		supportsOAuth: false, // NanoGPT uses API key authentication
+		usesStaticApiKey: true,
 		defaultEndpoint: "https://nano-gpt.com/api", // Default, can be overridden via custom endpoint
 	},
 	[PROVIDER_NAMES.VERTEX_AI]: {
 		requiresSessionTracking: false, // Vertex AI is pay-as-you-go via Google Cloud billing
 		supportsUsageTracking: false, // Vertex AI doesn't have a usage tracking API
 		supportsOAuth: false, // Vertex AI uses Google Cloud authentication (not Anthropic OAuth)
+		usesStaticApiKey: false, // Uses Google Cloud credentials, not a static API key
 		defaultEndpoint: "https://aiplatform.googleapis.com",
 	},
 	[PROVIDER_NAMES.BEDROCK]: {
 		requiresSessionTracking: false, // Pay-as-you-go, no 5-hour windows
 		supportsUsageTracking: false, // Usage extracted per-request, not via polling API
 		supportsOAuth: false, // AWS credentials, not OAuth
+		usesStaticApiKey: false, // Uses AWS profile credentials, not a static API key
 		defaultEndpoint: "bedrock://aws", // Placeholder (SDK-based, not HTTP)
 	},
 	[PROVIDER_NAMES.KILO]: {
 		requiresSessionTracking: false, // Kilo is credit-based, no session windows
 		supportsUsageTracking: true, // Kilo supports credit balance via /api/user
 		supportsOAuth: false, // Kilo uses API key authentication
+		usesStaticApiKey: true,
 		defaultEndpoint: "https://api.kilo.ai/api/gateway",
 	},
 	[PROVIDER_NAMES.OPENROUTER]: {
 		requiresSessionTracking: false, // OpenRouter is pay-as-you-go
 		supportsUsageTracking: false, // Credits endpoint requires a separate management key
 		supportsOAuth: false, // OpenRouter uses API key authentication
+		usesStaticApiKey: true,
 		defaultEndpoint: "https://openrouter.ai/api/v1",
 	},
 	[PROVIDER_NAMES.ALIBABA_CODING_PLAN]: {
 		requiresSessionTracking: false, // Alibaba Coding Plan uses quota windows, not session stickiness
 		supportsUsageTracking: false, // Usage endpoint requires session cookies, not API key
 		supportsOAuth: false, // Uses API key authentication
+		usesStaticApiKey: true,
 		defaultEndpoint:
 			"https://coding-intl.dashscope.aliyuncs.com/apps/anthropic",
 	},
@@ -189,6 +203,26 @@ export function supportsOAuth(provider: string): boolean {
 	}
 
 	// Default to false for any provider not explicitly configured (security through default denial)
+	return false;
+}
+
+/**
+ * Check if a provider uses a static API key for authentication
+ * (as opposed to OAuth or cloud credentials like AWS/GCP)
+ *
+ * @param provider - The provider name to check
+ * @returns boolean - True if the provider uses a static API key, false otherwise
+ *                    Unknown providers default to false
+ */
+export function usesStaticApiKey(provider: string): boolean {
+	if (!isKnownProvider(provider)) {
+		return false;
+	}
+
+	if (provider in PROVIDER_CONFIG) {
+		return PROVIDER_CONFIG[provider].usesStaticApiKey;
+	}
+
 	return false;
 }
 

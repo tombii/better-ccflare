@@ -37,6 +37,11 @@ Always run: `bun run lint && bun run typecheck && bun run format`
 - Use `git add <specific-files>` (not `git add .`) to avoid committing inline-worker.ts
 - Check `git status` before committing
 
+## Adding New Providers
+- DB schema requires `refresh_token TEXT NOT NULL` — API-key providers must store the key there too
+- Add provider to `PROVIDER_CONFIG` in `packages/types/src/provider-config.ts` with correct `usesStaticApiKey` value
+- Three auth categories: OAuth (`supportsOAuth`), static API key (`usesStaticApiKey`), cloud credentials (neither)
+
 ## Publishing to npm
 - Use `cd apps/cli && bun publish` (avoids workspace errors)
 - When pushing to git (triggers auto-publish), show complete output including npmjs.com auth URL: `https://www.npmjs.com/auth/cli/[uuid]`

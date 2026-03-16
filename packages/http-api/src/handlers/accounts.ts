@@ -139,7 +139,9 @@ export function createAccountsListHandler(dbOps: DatabaseOperations) {
 				if (!isCacheFresh && account.access_token) {
 					// Fetch usage data if cache is stale or missing
 					try {
-						const { data: usageData } = await fetchUsageData(account.access_token);
+						const { data: usageData } = await fetchUsageData(
+							account.access_token,
+						);
 						if (usageData) {
 							// Update the cache using the public set method
 							usageCache.set(account.id, usageData);
@@ -2381,7 +2383,7 @@ export function createKiloAccountAddHandler(dbOps: DatabaseOperations) {
 					name,
 					"kilo",
 					apiKey,
-					null,
+					apiKey,
 					null,
 					now + 365 * 24 * 60 * 60 * 1000,
 					now,
@@ -2682,7 +2684,7 @@ export function createOpenRouterAccountAddHandler(dbOps: DatabaseOperations) {
 					name,
 					"openrouter",
 					apiKey,
-					null,
+					apiKey,
 					null,
 					now + 365 * 24 * 60 * 60 * 1000,
 					now,

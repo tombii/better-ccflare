@@ -88,11 +88,12 @@ async function createConsoleAccountWithApiKey(
 		`INSERT INTO accounts (
 			id, name, provider, api_key, refresh_token, access_token,
 			expires_at, created_at, request_count, total_requests, priority, custom_endpoint
-		) VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, 0, 0, ?, ?)`,
+		) VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, 0, 0, ?, ?)`,
 		[
 			accountId,
 			name,
 			"claude-console-api",
+			validatedApiKey,
 			validatedApiKey,
 			now,
 			validatedPriority,
@@ -124,11 +125,12 @@ async function createMinimaxAccount(
 		`INSERT INTO accounts (
 			id, name, provider, api_key, refresh_token, access_token,
 			expires_at, created_at, request_count, total_requests, priority, custom_endpoint
-		) VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, 0, 0, ?, ?)`,
+		) VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, 0, 0, ?, ?)`,
 		[
 			accountId,
 			name,
 			"minimax",
+			validatedApiKey,
 			validatedApiKey,
 			now,
 			validatedPriority,
@@ -216,7 +218,7 @@ async function createKiloAccount(
 			name,
 			"kilo",
 			validatedApiKey,
-			null,
+			validatedApiKey,
 			null,
 			now + 365 * 24 * 60 * 60 * 1000,
 			now,
@@ -300,7 +302,7 @@ async function createOpenRouterAccount(
 			name,
 			"openrouter",
 			validatedApiKey,
-			null,
+			validatedApiKey,
 			null,
 			now + 365 * 24 * 60 * 60 * 1000,
 			now,
@@ -386,11 +388,12 @@ async function createZaiAccount(
 		`INSERT INTO accounts (
 			id, name, provider, api_key, refresh_token, access_token,
 			expires_at, created_at, request_count, total_requests, priority, custom_endpoint
-		) VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?)`,
+		) VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?)`,
 		[
 			accountId,
 			name,
 			"zai",
+			validatedApiKey,
 			validatedApiKey,
 			now,
 			0,
