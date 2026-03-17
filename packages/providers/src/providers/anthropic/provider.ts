@@ -86,16 +86,13 @@ export class AnthropicProvider extends BaseProvider {
 
 		log.debug("Request body:", requestBody);
 
-		const response = await fetch(
-			"https://console.anthropic.com/v1/oauth/token",
-			{
-				method: "POST",
-				headers: {
-					"Content-Type": "application/json",
-				},
-				body: JSON.stringify(requestBody),
+		const response = await fetch("https://platform.claude.com/v1/oauth/token", {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
 			},
-		);
+			body: JSON.stringify(requestBody),
+		});
 
 		log.debug(`Response status: ${response.status} ${response.statusText}`, {
 			headers: Object.fromEntries(response.headers.entries()),

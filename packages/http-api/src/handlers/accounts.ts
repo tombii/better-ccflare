@@ -139,7 +139,9 @@ export function createAccountsListHandler(dbOps: DatabaseOperations) {
 				if (!isCacheFresh && account.access_token) {
 					// Fetch usage data if cache is stale or missing
 					try {
-						const { data: usageData } = await fetchUsageData(account.access_token);
+						const { data: usageData } = await fetchUsageData(
+							account.access_token,
+						);
 						if (usageData) {
 							// Update the cache using the public set method
 							usageCache.set(account.id, usageData);
@@ -163,22 +165,18 @@ export function createAccountsListHandler(dbOps: DatabaseOperations) {
 			// Use unified rate limit status if available
 			if (account.rate_limit_status) {
 				rateLimitStatus = account.rate_limit_status;
-				if (account.rate_limit_reset && account.rate_limit_reset > now) {
-					const minutesLeft = Math.ceil(
-						(account.rate_limit_reset - now) / 60000,
-					);
+				const resetMs = Number(account.rate_limit_reset);
+				if (resetMs && resetMs > now) {
+					const minutesLeft = Math.ceil((resetMs - now) / 60000);
 					rateLimitStatus = `${account.rate_limit_status} (${minutesLeft}m)`;
 				}
-			} else if (
-				account.rate_limited &&
-				account.rate_limited_until &&
-				account.rate_limited_until > now
-			) {
+			} else if (account.rate_limited && account.rate_limited_until) {
 				// Fall back to legacy rate limit check
-				const minutesLeft = Math.ceil(
-					(account.rate_limited_until - now) / 60000,
-				);
-				rateLimitStatus = `Rate limited (${minutesLeft}m)`;
+				const limitedMs = Number(account.rate_limited_until);
+				if (limitedMs > now) {
+					const minutesLeft = Math.ceil((limitedMs - now) / 60000);
+					rateLimitStatus = `Rate limited (${minutesLeft}m)`;
+				}
 			}
 
 			// Get usage data from cache for Anthropic and NanoGPT accounts
@@ -328,24 +326,29 @@ export function createAccountsListHandler(dbOps: DatabaseOperations) {
 				id: account.id,
 				name: account.name,
 				provider: account.provider || "anthropic",
-				requestCount: account.request_count,
-				totalRequests: account.total_requests,
+				requestCount: Number(account.request_count) || 0,
+				totalRequests: Number(account.total_requests) || 0,
 				lastUsed: account.last_used
-					? new Date(account.last_used).toISOString()
+					? new Date(Number(account.last_used)).toISOString()
 					: null,
-				created: new Date(account.created_at).toISOString(),
+				created: new Date(Number(account.created_at)).toISOString(),
 				paused: account.paused === 1,
-				priority: account.priority,
+				priority: Number(account.priority) || 0,
 				tokenStatus: account.token_valid ? "valid" : "expired",
 				tokenExpiresAt: account.expires_at
-					? new Date(account.expires_at).toISOString()
+					? new Date(Number(account.expires_at)).toISOString()
 					: null,
 				rateLimitStatus,
 				rateLimitReset: account.rate_limit_reset
-					? new Date(account.rate_limit_reset).toISOString()
+					? new Date(Number(account.rate_limit_reset)).toISOString()
 					: null,
-				rateLimitRemaining: account.rate_limit_remaining,
-				rateLimitedUntil: account.rate_limited_until || null,
+				rateLimitRemaining:
+					account.rate_limit_remaining != null
+						? Number(account.rate_limit_remaining)
+						: null,
+				rateLimitedUntil: account.rate_limited_until
+					? Number(account.rate_limited_until)
+					: null,
 				sessionInfo: account.session_info || "",
 				autoFallbackEnabled: account.auto_fallback_enabled === 1,
 				autoRefreshEnabled: account.auto_refresh_enabled === 1,

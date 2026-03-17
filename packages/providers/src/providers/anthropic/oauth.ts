@@ -32,10 +32,17 @@ export class AnthropicOAuthProvider implements OAuthProvider {
 
 		return {
 			authorizeUrl: `${baseUrl}/oauth/authorize`,
-			tokenUrl: "https://console.anthropic.com/v1/oauth/token",
+			tokenUrl: "https://platform.claude.com/v1/oauth/token",
 			clientId: "", // Will be passed from config
-			scopes: ["org:create_api_key", "user:profile", "user:inference"],
-			redirectUri: "https://console.anthropic.com/oauth/code/callback",
+			scopes: [
+				"org:create_api_key",
+				"user:profile",
+				"user:inference",
+				"user:sessions:claude_code",
+				"user:mcp_servers",
+				"user:file_upload",
+			],
+			redirectUri: "https://platform.claude.com/oauth/code/callback",
 			mode,
 		};
 	}
