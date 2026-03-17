@@ -739,7 +739,7 @@ Inspired by [snipeship/ccflare](https://github.com/snipeship/ccflare) - thanks f
 - [@materemias](https://github.com/materemias) - Testing and validation of Vertex AI provider implementation, thorough debugging of OAuth API key authentication (issue #54), requesting and validating AWS Bedrock support (issue #49), and extensive testing of new releases and features
 - [@tqtensor](https://github.com/tqtensor) - Comprehensive memory leak fix preventing OOM kills with smart chunk capping, memory monitoring, and optimized cleanup (PR #67)
 - [@lunetics](https://github.com/lunetics) - Force-reset rate limit feature allowing manual clearing of stale rate-limit locks via API, CLI, and dashboard with immediate usage polling (PR #68), OOM kill prevention with periodic data retention cleanup, 3-day default retention, and time-scoped stats queries (PR #70), model registry sync removing retired models and adding sonnet-4.6 CLI shortcut (PR #71)
-- [@troykelly](https://github.com/troykelly) - Comprehensive PostgreSQL compatibility fixes including boolean type handling, identifier case preservation, BIGINT string coercion, UNION ALL type alignment, HAVING clause compatibility, parameter ordering corrections, worker initialization, and connection pooling (issue #81)
+- [@troykelly](https://github.com/troykelly) - Comprehensive PostgreSQL compatibility fixes including boolean type handling, identifier case preservation, BIGINT string coercion, UNION ALL type alignment, HAVING clause compatibility, parameter ordering corrections, worker initialization, and connection pooling (issue #81); detailed bug report and root cause analysis for `/api/accounts` Invalid Date error affecting PostgreSQL BIGINT columns (issue #88)
 
 ## Contributing
 
