@@ -121,7 +121,7 @@ export class AutoRefreshScheduler {
 					expires_at, rate_limit_reset, custom_endpoint
 				FROM accounts
 				WHERE
-					auto_refresh_enabled = TRUE
+					auto_refresh_enabled = 1
 					AND provider = 'anthropic'
 					AND (
 						(rate_limit_reset IS NOT NULL AND rate_limit_reset <= ?)
@@ -410,7 +410,7 @@ export class AutoRefreshScheduler {
 
 				// Mark account as needing attention in database (disable auto-refresh to prevent repeated failures)
 				await this.db.run(
-					`UPDATE accounts SET auto_refresh_enabled = FALSE WHERE id = ?`,
+					`UPDATE accounts SET auto_refresh_enabled = 0 WHERE id = ?`,
 					[accountRow.id],
 				);
 
@@ -604,7 +604,7 @@ export class AutoRefreshScheduler {
 
 			// Get all account IDs that have auto-refresh enabled
 			const rows = await this.db.query<{ id: string }>(
-				`SELECT id FROM accounts WHERE auto_refresh_enabled = TRUE AND provider = 'anthropic'`,
+				`SELECT id FROM accounts WHERE auto_refresh_enabled = 1 AND provider = 'anthropic'`,
 			);
 
 			const activeAccountIds = rows.map((row) => row.id);
