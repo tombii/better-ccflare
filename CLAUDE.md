@@ -40,10 +40,10 @@ Always run: `bun run lint && bun run typecheck && bun run format`
 ## Publishing to npm
 - Use `cd apps/cli && bun publish` (avoids workspace errors)
 - When pushing to git (triggers auto-publish), show complete output including npmjs.com auth URL: `https://www.npmjs.com/auth/cli/[uuid]`
-- Skip version bump: Add `[skip-version]` or `[no-version]` to commit message
+- **NEVER bump the version** — version bumps are handled automatically by the release system
 
 ## Version Updates
-When bumping better-ccflare version, update in both files:
+If a manual version bump is ever needed, update in both files:
 - `package.json` (root)
 - `apps/cli/package.json`
 

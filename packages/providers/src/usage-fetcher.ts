@@ -87,11 +87,9 @@ export async function fetchUsageData(
 				const retryAfter = response.headers.get("retry-after");
 				if (retryAfter) {
 					const seconds = parseInt(retryAfter, 10);
-					if (!isNaN(seconds) && seconds > 0) {
+					if (!Number.isNaN(seconds) && seconds > 0) {
 						retryAfterMs = seconds * 1000;
-						log.warn(
-							`Usage endpoint rate-limited, retry-after: ${seconds}s`,
-						);
+						log.warn(`Usage endpoint rate-limited, retry-after: ${seconds}s`);
 					}
 				}
 			}
