@@ -1,3 +1,5 @@
+import { supportsOAuth } from "./provider-config";
+
 // Usage data types for Anthropic accounts
 export interface UsageWindowData {
 	utilization: number | null;
@@ -347,7 +349,7 @@ export function toAccountResponse(account: Account): AccountResponse {
 		usageUtilization: null, // Will be filled in by API handler from cache
 		usageWindow: null, // Will be filled in by API handler from cache
 		usageData: null, // Will be filled in by API handler from cache
-		hasRefreshToken: !!account.refresh_token, // OAuth accounts have refresh tokens
+		hasRefreshToken: supportsOAuth(account.provider),
 	};
 }
 

@@ -216,14 +216,13 @@ export function supportsOAuth(provider: string): boolean {
  */
 export function usesStaticApiKey(provider: string): boolean {
 	if (!isKnownProvider(provider)) {
+		console.warn(
+			`Unknown provider: ${provider}. Defaulting to no static API key (security through default denial).`,
+		);
 		return false;
 	}
 
-	if (provider in PROVIDER_CONFIG) {
-		return PROVIDER_CONFIG[provider].usesStaticApiKey;
-	}
-
-	return false;
+	return PROVIDER_CONFIG[provider].usesStaticApiKey;
 }
 
 /**

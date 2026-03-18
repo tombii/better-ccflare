@@ -30,7 +30,7 @@ import {
 	usageCache,
 } from "@better-ccflare/providers";
 import { clearAccountRefreshCache } from "@better-ccflare/proxy";
-import type { FullUsageData } from "@better-ccflare/types";
+import { type FullUsageData, supportsOAuth } from "@better-ccflare/types";
 import type { AccountResponse } from "../types";
 
 const log = new Logger("AccountsHandler");
@@ -356,7 +356,7 @@ export function createAccountsListHandler(dbOps: DatabaseOperations) {
 				usageUtilization,
 				usageWindow,
 				usageData: fullUsageData, // Full usage data for UI
-				hasRefreshToken: !!account.refresh_token, // OAuth accounts have refresh tokens
+				hasRefreshToken: supportsOAuth(account.provider ?? ""),
 				crossRegionMode: account.cross_region_mode,
 			};
 		});
@@ -855,7 +855,7 @@ export function createZaiAccountAddHandler(dbOps: DatabaseOperations) {
 					rateLimitRemaining: null,
 					rateLimitedUntil: null,
 					sessionInfo: "No active session",
-					hasRefreshToken: !!account.refresh_token, // OAuth accounts have refresh tokens
+					hasRefreshToken: supportsOAuth(account.provider ?? ""),
 				},
 			});
 		} catch (error) {
@@ -1018,7 +1018,7 @@ export function createOpenAIAccountAddHandler(dbOps: DatabaseOperations) {
 					rateLimitedUntil: null,
 					sessionInfo: "No active session",
 					customEndpoint: customEndpoint,
-					hasRefreshToken: !!account.refresh_token, // OAuth accounts have refresh tokens
+					hasRefreshToken: supportsOAuth(account.provider ?? ""),
 				},
 			});
 		} catch (error) {
@@ -1287,7 +1287,7 @@ export function createMinimaxAccountAddHandler(dbOps: DatabaseOperations) {
 					rateLimitRemaining: null,
 					rateLimitedUntil: null,
 					sessionInfo: "No active session",
-					hasRefreshToken: !!account.refresh_token, // OAuth accounts have refresh tokens
+					hasRefreshToken: supportsOAuth(account.provider ?? ""),
 				},
 			});
 		} catch (error) {
@@ -1451,7 +1451,7 @@ export function createNanoGPTAccountAddHandler(dbOps: DatabaseOperations) {
 					rateLimitRemaining: null,
 					rateLimitedUntil: null,
 					sessionInfo: "No active session",
-					hasRefreshToken: !!account.refresh_token, // OAuth accounts have refresh tokens
+					hasRefreshToken: supportsOAuth(account.provider ?? ""),
 				},
 			});
 		} catch (error) {
@@ -1619,7 +1619,7 @@ export function createAnthropicCompatibleAccountAddHandler(
 					rateLimitRemaining: null,
 					rateLimitedUntil: null,
 					sessionInfo: "No active session",
-					hasRefreshToken: !!account.refresh_token, // OAuth accounts have refresh tokens
+					hasRefreshToken: supportsOAuth(account.provider ?? ""),
 				},
 			});
 		} catch (error) {
@@ -2384,7 +2384,7 @@ export function createKiloAccountAddHandler(dbOps: DatabaseOperations) {
 					"kilo",
 					apiKey,
 					apiKey,
-					null,
+					apiKey,
 					now + 365 * 24 * 60 * 60 * 1000,
 					now,
 					0,
@@ -2685,7 +2685,7 @@ export function createOpenRouterAccountAddHandler(dbOps: DatabaseOperations) {
 					"openrouter",
 					apiKey,
 					apiKey,
-					null,
+					apiKey,
 					now + 365 * 24 * 60 * 60 * 1000,
 					now,
 					0,

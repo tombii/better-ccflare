@@ -40,15 +40,11 @@ export const ACCOUNT_MODES = {
 
 export type AccountMode = (typeof ACCOUNT_MODES)[keyof typeof ACCOUNT_MODES];
 
-// The usesApiKey function needs to be defined here to avoid circular dependencies
-// since it depends on both isKnownProvider and the supportsOAuth function
-// For now, we'll implement it directly based on our knowledge of which providers use API keys
+/**
+ * @deprecated Use `usesStaticApiKey` instead — this incorrectly returned true for cloud credential providers (vertex-ai, bedrock).
+ */
 export function usesApiKey(provider: string): boolean {
-	if (!isKnownProvider(provider)) {
-		return false; // Unknown providers don't use API key authentication by default
-	}
-	// API key providers are all providers except Anthropic OAuth
-	return provider !== PROVIDER_NAMES.ANTHROPIC;
+	return usesStaticApiKey(provider);
 }
 
 /**
