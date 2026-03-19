@@ -47,7 +47,7 @@ export async function ensureSchemaPg(adapter: BunSqlAdapter): Promise<void> {
 			name TEXT NOT NULL,
 			provider TEXT DEFAULT 'anthropic',
 			api_key TEXT,
-			refresh_token TEXT NOT NULL,
+			refresh_token TEXT,
 			access_token TEXT,
 			expires_at BIGINT,
 			created_at BIGINT NOT NULL,
@@ -257,6 +257,23 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 			}
 		}
 	}
+
+	// Make refresh_token nullable if it currently has NOT NULL constraint
+	try {
+		await adapter.unsafe(
+			`ALTER TABLE accounts ALTER COLUMN refresh_token DROP NOT NULL`,
+		);
+		log.info("Made refresh_token nullable in accounts table");
+	} catch (_error) {
+		// Already nullable or column doesn't exist — ignore
+	}
+
+	// Clean up empty-string sentinels left by old migration
+	await adapter.unsafe(`
+		UPDATE accounts
+		SET refresh_token = NULL
+		WHERE refresh_token = ''
+	`);
 
 	// Populate default model translations if not present
 	const now = Date.now();
