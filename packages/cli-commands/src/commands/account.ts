@@ -174,9 +174,9 @@ export async function createNanoGPTAccount(
 			name,
 			"nanogpt",
 			validatedApiKey,
-			validatedApiKey, // Use API key as refresh token for consistency with HTTP API
-			validatedApiKey, // Use API key as access token
-			now + 365 * 24 * 60 * 60 * 1000, // 1 year from now
+			null,
+			null,
+			null,
 			now,
 			0,
 			0,
@@ -258,9 +258,9 @@ async function createAlibabaCodingPlanAccount(
 			name,
 			"alibaba-coding-plan",
 			validatedApiKey,
-			validatedApiKey, // Use API key as refresh token for consistency
-			validatedApiKey, // Use API key as access token
-			now + 365 * 24 * 60 * 60 * 1000, // 1 year from now
+			null,
+			null,
+			null,
 			now,
 			0,
 			0,
@@ -351,12 +351,11 @@ async function createAnthropicCompatibleAccount(
 		`INSERT INTO accounts (
 			id, name, provider, api_key, refresh_token, access_token,
 			expires_at, created_at, request_count, total_requests, priority, custom_endpoint, model_mappings
-		) VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, 0, 0, ?, ?, ?)`,
+		) VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, 0, 0, ?, ?, ?)`,
 		[
 			accountId,
 			name,
 			"anthropic-compatible",
-			validatedApiKey,
 			validatedApiKey,
 			now,
 			validatedPriority,
@@ -468,9 +467,9 @@ async function createBedrockAccount(
 			name,
 			"bedrock",
 			null, // No API key - uses AWS profiles
-			"", // Empty refresh token
+			null, // No refresh token
 			null, // No access token
-			now + 365 * 24 * 60 * 60 * 1000, // 1 year expiry (dummy, like Vertex AI)
+			null,
 			now,
 			0,
 			0,
@@ -519,7 +518,7 @@ async function createVertexAIAccount(
 			name,
 			"vertex-ai",
 			null, // No API key - uses Google Cloud credentials
-			"", // Empty refresh token
+			null, // No refresh token
 			null, // Access token will be fetched on first use
 			null, // Expiry will be set on first token refresh
 			now,
@@ -627,12 +626,11 @@ async function createOpenAIAccount(
 		`INSERT INTO accounts (
 			id, name, provider, api_key, refresh_token, access_token,
 			expires_at, created_at, request_count, total_requests, priority, custom_endpoint, model_mappings
-		) VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?)`,
+		) VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?)`,
 		[
 			accountId,
 			name,
 			"openai-compatible",
-			validatedApiKey,
 			validatedApiKey,
 			now,
 			0,

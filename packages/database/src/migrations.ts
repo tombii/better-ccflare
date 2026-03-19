@@ -14,7 +14,7 @@ export function ensureSchema(db: Database): void {
 			name TEXT NOT NULL,
 			provider TEXT DEFAULT 'anthropic',
 			api_key TEXT,
-			refresh_token TEXT NOT NULL,
+			refresh_token TEXT,
 			access_token TEXT,
 			expires_at INTEGER,
 			created_at INTEGER NOT NULL,
@@ -347,6 +347,79 @@ export function runMigrations(db: Database, dbPath?: string): void {
 				"ALTER TABLE accounts ADD COLUMN cross_region_mode TEXT DEFAULT 'geographic'",
 			).run();
 			log.info("Added cross_region_mode column to accounts table");
+		}
+
+		// Make refresh_token nullable (was NOT NULL, causing API-key providers to need workarounds)
+		const refreshTokenCol = accountsInfo.find(
+			(col) => col.name === "refresh_token",
+		);
+		if (refreshTokenCol && refreshTokenCol.notnull === 1) {
+			// Table rebuild required — SQLite doesn't support ALTER COLUMN
+			db.prepare(`
+				CREATE TABLE accounts_new (
+					id TEXT PRIMARY KEY,
+					name TEXT NOT NULL,
+					provider TEXT DEFAULT 'anthropic',
+					api_key TEXT,
+					refresh_token TEXT,
+					access_token TEXT,
+					expires_at INTEGER,
+					created_at INTEGER NOT NULL,
+					last_used INTEGER,
+					request_count INTEGER DEFAULT 0,
+					total_requests INTEGER DEFAULT 0,
+					priority INTEGER DEFAULT 0,
+					rate_limited_until INTEGER,
+					session_start INTEGER,
+					session_request_count INTEGER DEFAULT 0,
+					paused INTEGER DEFAULT 0,
+					rate_limit_reset INTEGER,
+					rate_limit_status TEXT,
+					rate_limit_remaining INTEGER,
+					auto_fallback_enabled INTEGER DEFAULT 0,
+					custom_endpoint TEXT,
+					auto_refresh_enabled INTEGER DEFAULT 0,
+					model_mappings TEXT,
+					cross_region_mode TEXT DEFAULT 'geographic'
+				)
+			`).run();
+
+			// Copy data — convert empty-string sentinels back to NULL for API-key providers
+			db.prepare(`
+				INSERT INTO accounts_new SELECT
+					id, name, provider, api_key,
+					CASE WHEN refresh_token = '' THEN NULL ELSE refresh_token END,
+					NULLIF(access_token, ''),
+					expires_at, created_at, last_used,
+					request_count, total_requests, priority,
+					rate_limited_until, session_start, session_request_count,
+					paused, rate_limit_reset, rate_limit_status, rate_limit_remaining,
+					auto_fallback_enabled, custom_endpoint, auto_refresh_enabled,
+					model_mappings, cross_region_mode
+				FROM accounts
+			`).run();
+
+			db.prepare(`DROP TABLE accounts`).run();
+			db.prepare(`ALTER TABLE accounts_new RENAME TO accounts`).run();
+
+			// Recreate indexes
+			db.prepare(
+				`CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_id ON accounts(id)`,
+			).run();
+			db.prepare(
+				`CREATE INDEX IF NOT EXISTS idx_accounts_name ON accounts(name)`,
+			).run();
+			db.prepare(
+				`CREATE INDEX IF NOT EXISTS idx_accounts_provider ON accounts(provider)`,
+			).run();
+			db.prepare(
+				`CREATE INDEX IF NOT EXISTS idx_accounts_priority ON accounts(priority)`,
+			).run();
+			db.prepare(
+				`CREATE INDEX IF NOT EXISTS idx_accounts_last_used ON accounts(last_used)`,
+			).run();
+
+			log.info("Made refresh_token nullable in accounts table");
 		}
 
 		// Run API key storage migration to move API keys from refresh_token to api_key field
@@ -793,8 +866,8 @@ export function runApiKeyStorageMigration(db: Database): void {
 			UPDATE accounts
 			SET
 				api_key = refresh_token,
-				refresh_token = '',
-				access_token = '',
+				refresh_token = NULL,
+				access_token = NULL,
 				expires_at = NULL
 			WHERE
 				provider IN ('zai', 'openai-compatible', 'minimax', 'anthropic-compatible')
@@ -814,8 +887,8 @@ export function runApiKeyStorageMigration(db: Database): void {
 		const cleanupSql = `
 			UPDATE accounts
 			SET
-				refresh_token = '',
-				access_token = '',
+				refresh_token = NULL,
+				access_token = NULL,
 				expires_at = NULL
 			WHERE
 				provider IN ('zai', 'openai-compatible', 'minimax', 'anthropic-compatible')
@@ -834,8 +907,8 @@ export function runApiKeyStorageMigration(db: Database): void {
 			UPDATE accounts
 			SET
 				api_key = refresh_token,
-				refresh_token = '',
-				access_token = '',
+				refresh_token = NULL,
+				access_token = NULL,
 				expires_at = NULL
 			WHERE
 				provider = 'anthropic'

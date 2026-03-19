@@ -356,7 +356,6 @@ export async function getValidAccessToken(
 	ctx: ProxyContext,
 ): Promise<string> {
 	// For API key providers, return the API key directly without OAuth token refresh logic
-	// Prioritize api_key field, but maintain fallback to refresh_token for backward compatibility
 	if (
 		account.provider === "openai-compatible" ||
 		account.provider === "zai" ||
@@ -366,10 +365,6 @@ export async function getValidAccessToken(
 	) {
 		if (account.api_key) {
 			return account.api_key;
-		}
-		// Fallback to refresh_token for backward compatibility with existing accounts
-		if (account.refresh_token) {
-			return account.refresh_token;
 		}
 		throw new Error(`No API key available for account ${account.name}`);
 	}
