@@ -130,8 +130,9 @@ function configureSqlite(
 		db.run("PRAGMA temp_store = MEMORY");
 		db.run("PRAGMA foreign_keys = ON");
 
-		// Add checkpoint interval for WAL mode
-		db.run("PRAGMA wal_autocheckpoint = 1000");
+		// Add checkpoint interval for WAL mode (100 pages = ~200KB with 2KB pages)
+		// Lower threshold reduces WAL file size at the cost of slightly more frequent checkpoints
+		db.run("PRAGMA wal_autocheckpoint = 100");
 	} catch (error) {
 		console.error("Database configuration failed:", error);
 		throw new Error(`Failed to configure SQLite database: ${error}`);

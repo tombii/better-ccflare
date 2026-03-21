@@ -166,6 +166,7 @@ let stopRetentionJob: (() => void) | null = null;
 let stopOAuthCleanupJob: (() => void) | null = null;
 let stopRateLimitCleanupJob: (() => void) | null = null;
 let stopDataCleanupJob: (() => void) | null = null;
+let stopWalCheckpointJob: (() => void) | null = null;
 let autoRefreshScheduler: AutoRefreshScheduler | null = null;
 let memoryMonitorInterval: Timer | null = null;
 // Track usage polling retry timeouts for cleanup
@@ -625,6 +626,21 @@ export default async function startServer(options?: {
 	});
 
 	stopDataCleanupJob = unregisterDataCleanup;
+
+	// Set up periodic WAL checkpoint every 5 minutes to prevent unbounded WAL growth
+	const unregisterWalCheckpoint = registerCleanup({
+		id: "wal-checkpoint",
+		callback: () => {
+			try {
+				dbOps.optimize(); // runs PRAGMA optimize + PRAGMA wal_checkpoint(PASSIVE)
+			} catch (err) {
+				log.error(`WAL checkpoint error: ${err}`);
+			}
+		},
+		minutes: 5,
+		description: "WAL checkpoint to prevent unbounded WAL file growth",
+	});
+	stopWalCheckpointJob = unregisterWalCheckpoint;
 
 	// Initialize load balancing strategy (will be created after runtime config)
 
@@ -1156,6 +1172,10 @@ async function handleGracefulShutdown(signal: string) {
 		if (stopDataCleanupJob) {
 			stopDataCleanupJob();
 			stopDataCleanupJob = null;
+		}
+		if (stopWalCheckpointJob) {
+			stopWalCheckpointJob();
+			stopWalCheckpointJob = null;
 		}
 		if (autoRefreshScheduler) {
 			autoRefreshScheduler.stop();
