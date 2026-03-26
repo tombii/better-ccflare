@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Config } from "@better-ccflare/config";
@@ -12,6 +13,7 @@ import {
 import type { DatabaseOperations } from "@better-ccflare/database";
 import { createOAuthFlow } from "@better-ccflare/oauth-flow";
 import {
+	generatePKCE,
 	getOAuthProvider,
 	type TokenRefreshResult as TokenResult,
 } from "@better-ccflare/providers";
@@ -38,7 +40,8 @@ export interface AddAccountOptionsWithAdapter {
 		| "bedrock"
 		| "kilo"
 		| "openrouter"
-		| "alibaba-coding-plan";
+		| "alibaba-coding-plan"
+		| "codex";
 	priority?: number;
 	customEndpoint?: string;
 	modelMappings?: { [key: string]: string };
@@ -64,7 +67,8 @@ export interface AccountListItemWithMode extends AccountListItem {
 		| "bedrock"
 		| "kilo"
 		| "openrouter"
-		| "alibaba-coding-plan";
+		| "alibaba-coding-plan"
+		| "codex";
 }
 
 /**
@@ -658,6 +662,137 @@ async function createOpenAIAccount(
 }
 
 /**
+ * Create a Codex account via OpenAI OAuth with PKCE, using a local callback server on port 1455
+ */
+async function createCodexOAuthAccount(
+	dbOps: DatabaseOperations,
+	name: string,
+	priority: number,
+	customEndpoint?: string,
+	modelMappings?: { [key: string]: string } | null,
+): Promise<void> {
+	// Get the CodexOAuthProvider
+	const oauthProvider = getOAuthProvider("codex");
+	if (!oauthProvider) {
+		throw new Error(
+			"Codex OAuth provider not found. This is a bug — please report it.",
+		);
+	}
+
+	const pkce = await generatePKCE();
+	const config = oauthProvider.getOAuthConfig();
+	const authUrl = oauthProvider.generateAuthUrl(config, pkce);
+
+	console.log("\nCodex uses OpenAI OAuth for authentication.");
+	console.log(
+		"A local server will be started on port 1455 to receive the callback.",
+	);
+	console.log("\nOpening browser to authenticate...");
+	console.log(`URL: ${authUrl}`);
+
+	const { openBrowser } = await import("../utils/browser");
+	const browserOpened = await openBrowser(authUrl);
+	if (!browserOpened) {
+		console.log(
+			"\nFailed to open browser automatically. Please manually open the URL above.",
+		);
+	}
+
+	// Start local HTTP server on port 1455 to capture the OAuth callback
+	const callbackPromise = new Promise<{ code: string; state: string }>(
+		(resolve, reject) => {
+			const timeout = setTimeout(
+				() => {
+					server.close();
+					reject(new Error("OAuth callback timed out after 5 minutes."));
+				},
+				5 * 60 * 1000,
+			);
+
+			const server = createServer((req, _res) => {
+				if (!req.url?.startsWith("/auth/callback")) return;
+
+				const url = new URL(req.url, "http://localhost:1455");
+				const code = url.searchParams.get("code");
+				const state = url.searchParams.get("state");
+
+				_res.writeHead(200, { "Content-Type": "text/html" });
+				_res.end(
+					"<html><body><h2>Authentication successful!</h2><p>You can close this tab and return to the terminal.</p></body></html>",
+				);
+
+				clearTimeout(timeout);
+				server.close();
+
+				if (!code) {
+					reject(new Error("No authorization code received in callback."));
+					return;
+				}
+				resolve({ code, state: state || "" });
+			});
+
+			server.listen(1455, "127.0.0.1", () => {
+				console.log(
+					"\nWaiting for OAuth callback on http://localhost:1455/auth/callback ...",
+				);
+			});
+
+			server.on("error", (err) => {
+				clearTimeout(timeout);
+				reject(
+					new Error(
+						`Failed to start local callback server: ${err.message}. Is port 1455 already in use?`,
+					),
+				);
+			});
+		},
+	);
+
+	const { code } = await callbackPromise;
+
+	console.log("\nExchanging code for tokens...");
+	const tokens = await oauthProvider.exchangeCode(code, pkce.verifier, config);
+
+	const accountId = crypto.randomUUID();
+	const now = Date.now();
+	const validatedPriority = validatePriority(priority, "priority");
+
+	let validatedEndpoint: string | null = null;
+	if (customEndpoint) {
+		validatedEndpoint = validateEndpointUrl(customEndpoint, "custom endpoint");
+	}
+
+	let validatedModelMappings: string | null = null;
+	if (modelMappings && Object.keys(modelMappings).length > 0) {
+		const validated = validateAndSanitizeModelMappings(modelMappings);
+		validatedModelMappings = JSON.stringify(validated);
+	}
+
+	await dbOps.getAdapter().run(
+		`INSERT INTO accounts (
+			id, name, provider, api_key, refresh_token, access_token,
+			expires_at, created_at, request_count, total_requests, priority, custom_endpoint, model_mappings
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?)`,
+		[
+			accountId,
+			name,
+			"codex",
+			null,
+			tokens.refreshToken,
+			tokens.accessToken,
+			tokens.expiresAt,
+			now,
+			validatedPriority,
+			validatedEndpoint,
+			validatedModelMappings,
+		],
+	);
+
+	console.log(`\nAccount '${name}' added successfully!`);
+	console.log("Type: Codex (OpenAI OAuth)");
+}
+
+/**
  * Add a new account using OAuth flow
  */
 export async function addAccount(
@@ -683,6 +818,7 @@ export async function addAccount(
 		(await adapter.select("What type of account would you like to add?", [
 			{ label: "Claude CLI OAuth account", value: "claude-oauth" },
 			{ label: "Claude API account", value: "console" },
+			{ label: "Codex (OpenAI OAuth)", value: "codex" },
 			{ label: "Vertex AI (Google Cloud)", value: "vertex-ai" },
 			{ label: "AWS Bedrock (AWS profile credentials)", value: "bedrock" },
 			{ label: "z.ai account (API key)", value: "zai" },
@@ -1003,6 +1139,30 @@ export async function addAccount(
 		console.log(`\nAccount '${name}' added successfully!`);
 		console.log("Type: Alibaba Coding Plan International (API key)");
 		console.log("Endpoint: https://coding-intl.dashscope.aliyuncs.com");
+	} else if (mode === "codex") {
+		// Handle Codex accounts via OpenAI OAuth (port-1455 callback server)
+		const priority =
+			providedPriority ??
+			Number(
+				(await adapter.input(
+					"\nEnter priority (0 = highest, lower number = higher priority, default 0): ",
+				)) || 0,
+			);
+
+		const finalModelMappings = await promptModelMappings(
+			adapter,
+			modelMappings,
+		);
+
+		await createCodexOAuthAccount(
+			dbOps,
+			name,
+			typeof priority === "number"
+				? priority
+				: parseInt(String(priority), 10) || 0,
+			customEndpoint,
+			finalModelMappings,
+		);
 	} else if (mode === "anthropic-compatible") {
 		// Handle Anthropic-compatible accounts with API keys
 		const apiKey = await adapter.input(
@@ -1147,7 +1307,8 @@ export async function getAccountsList(
 					account.provider === "minimax" ||
 					account.provider === "anthropic-compatible" ||
 					account.provider === "bedrock" ||
-					account.provider === "openrouter"
+					account.provider === "openrouter" ||
+					account.provider === "codex"
 				) {
 					return account.provider;
 				}

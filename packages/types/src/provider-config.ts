@@ -14,6 +14,7 @@ export const PROVIDER_NAMES = {
 	KILO: "kilo",
 	OPENROUTER: "openrouter",
 	ALIBABA_CODING_PLAN: "alibaba-coding-plan",
+	CODEX: "codex",
 } as const;
 
 export type ProviderName = (typeof PROVIDER_NAMES)[keyof typeof PROVIDER_NAMES];
@@ -115,6 +116,12 @@ export const PROVIDER_CONFIG: Record<ProviderName, ProviderConfig> = {
 		supportsOAuth: false, // Uses API key authentication
 		defaultEndpoint:
 			"https://coding-intl.dashscope.aliyuncs.com/apps/anthropic",
+	},
+	[PROVIDER_NAMES.CODEX]: {
+		requiresSessionTracking: true, // Codex has 5h/7d usage windows like Anthropic OAuth
+		supportsUsageTracking: false, // Usage tracked via response headers, not a polling API
+		supportsOAuth: true, // Codex uses OpenAI OAuth with PKCE
+		defaultEndpoint: "https://chatgpt.com/backend-api/codex/responses",
 	},
 } as const satisfies Record<ProviderName, ProviderConfig>;
 

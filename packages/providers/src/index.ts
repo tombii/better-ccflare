@@ -37,6 +37,7 @@ import { AlibabaCodingPlanProvider } from "./providers/alibaba-coding-plan/provi
 import { AnthropicProvider } from "./providers/anthropic/provider";
 import { AnthropicCompatibleProvider } from "./providers/anthropic-compatible/provider";
 import { BedrockProvider } from "./providers/bedrock/provider";
+import { CodexProvider } from "./providers/codex/provider";
 import { KiloProvider } from "./providers/kilo/provider";
 import { MinimaxProvider } from "./providers/minimax/provider";
 import { NanoGPTProvider } from "./providers/nanogpt/provider";
@@ -49,6 +50,7 @@ import { registry } from "./registry";
 
 registry.registerProvider(new AlibabaCodingPlanProvider());
 registry.registerProvider(new AnthropicProvider());
+registry.registerProvider(new CodexProvider());
 registry.registerProvider(new BedrockProvider());
 registry.registerProvider(new KiloProvider());
 registry.registerProvider(new OpenRouterProvider());

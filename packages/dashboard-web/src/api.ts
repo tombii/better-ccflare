@@ -215,7 +215,8 @@ class API extends HttpClient {
 			| "bedrock"
 			| "kilo"
 			| "openrouter"
-			| "alibaba-coding-plan";
+			| "alibaba-coding-plan"
+			| "codex";
 		apiKey?: string;
 		priority: number;
 		customEndpoint?: string;
