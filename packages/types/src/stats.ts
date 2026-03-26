@@ -96,6 +96,7 @@ export interface AnalyticsResponse {
 		requests: number;
 		totalTokens?: number;
 	}>;
+	accountModelUsage: Array<{ account: string; model: string; count: number }>;
 	modelPerformance: ModelPerformance[];
 }
 

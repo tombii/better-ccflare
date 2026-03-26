@@ -154,6 +154,8 @@ export const OverviewTab = React.memo(() => {
 	// Use analytics data for account health
 	const accountHealthData = analytics?.accountPerformance || [];
 
+	const accountModelUsageData = analytics?.accountModelUsage || [];
+
 	return (
 		<div className="space-y-6">
 			{/* Header with Time Range Selector */}
@@ -228,6 +230,7 @@ export const OverviewTab = React.memo(() => {
 				timeSeriesData={timeSeriesData}
 				modelData={modelData}
 				accountHealthData={accountHealthData}
+				accountModelUsageData={accountModelUsageData}
 				loading={loading}
 			/>
 
