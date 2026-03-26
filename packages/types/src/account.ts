@@ -211,7 +211,8 @@ export interface AccountListItem {
 		| "bedrock"
 		| "kilo"
 		| "openrouter"
-		| "alibaba-coding-plan";
+		| "alibaba-coding-plan"
+		| "codex";
 	priority: number;
 	autoFallbackEnabled: boolean;
 	autoRefreshEnabled: boolean;

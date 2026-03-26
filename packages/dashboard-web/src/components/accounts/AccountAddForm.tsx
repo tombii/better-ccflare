@@ -26,7 +26,8 @@ interface AccountAddFormProps {
 			| "bedrock"
 			| "kilo"
 			| "openrouter"
-			| "alibaba-coding-plan";
+			| "alibaba-coding-plan"
+			| "codex";
 		priority: number;
 		customEndpoint?: string;
 	}) => Promise<{ authUrl: string; sessionId: string }>;
@@ -137,7 +138,8 @@ export function AccountAddForm({
 			| "bedrock"
 			| "kilo"
 			| "openrouter"
-			| "alibaba-coding-plan",
+			| "alibaba-coding-plan"
+			| "codex",
 		priority: 0,
 		apiKey: "",
 		customEndpoint: "",
@@ -187,6 +189,13 @@ export function AccountAddForm({
 	};
 
 	const handleAddAccount = async () => {
+		if (newAccount.mode === "codex") {
+			onError(
+				"Codex accounts must be added via the CLI: bun run cli --add-account <name> --mode codex",
+			);
+			return;
+		}
+
 		if (!newAccount.name) {
 			onError("Account name is required");
 			return;
@@ -714,7 +723,8 @@ export function AccountAddForm({
 									| "openai-compatible"
 									| "bedrock"
 									| "kilo"
-									| "openrouter",
+									| "openrouter"
+									| "codex",
 							) => setNewAccount({ ...newAccount, mode: value })}
 						>
 							<SelectTrigger id="mode">
@@ -725,6 +735,7 @@ export function AccountAddForm({
 									Claude CLI OAuth (Recommended)
 								</SelectItem>
 								<SelectItem value="console">Claude API</SelectItem>
+								<SelectItem value="codex">Codex (OpenAI OAuth)</SelectItem>
 								<SelectItem value="vertex-ai">
 									Vertex AI (Google Cloud)
 								</SelectItem>
@@ -746,6 +757,20 @@ export function AccountAddForm({
 							</SelectContent>
 						</Select>
 					</div>
+					{newAccount.mode === "codex" && (
+						<div className="bg-amber-50 dark:bg-amber-950 p-3 rounded-lg">
+							<p className="text-sm text-amber-900 dark:text-amber-100 font-medium mb-1">
+								CLI Required
+							</p>
+							<p className="text-xs text-amber-800 dark:text-amber-200 mb-2">
+								Codex uses OpenAI OAuth with a local callback server on port
+								1455. This must be done from the CLI:
+							</p>
+							<code className="text-xs bg-amber-100 dark:bg-amber-900 text-amber-900 dark:text-amber-100 px-2 py-1 rounded block font-mono">
+								bun run cli --add-account &lt;name&gt; --mode codex
+							</code>
+						</div>
+					)}
 					{newAccount.mode === "vertex-ai" && (
 						<>
 							<div className="space-y-2">
