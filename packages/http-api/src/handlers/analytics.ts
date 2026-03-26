@@ -184,10 +184,11 @@ export function createAnalyticsHandler(context: APIContext) {
 				[bucket.bucketMs, bucket.bucketMs, ...queryParams],
 			);
 
-			// Get additional data (model distribution, account performance, cost by model, api key performance)
+			// Get additional data (model distribution, account performance, cost by model, api key performance, account model usage)
 			const additionalData = await db.query<{
 				data_type: string;
 				name: string;
+				secondary_name: string | null;
 				count: number | null;
 				requests: number | null;
 				success_rate: number | null;
@@ -199,6 +200,7 @@ export function createAnalyticsHandler(context: APIContext) {
 					SELECT
 						'model_distribution' as data_type,
 						model as name,
+						CAST(NULL AS TEXT) as secondary_name,
 						COUNT(*) as count,
 						CAST(NULL AS BIGINT) as requests,
 						CAST(NULL AS DOUBLE PRECISION) as success_rate,
@@ -217,6 +219,7 @@ export function createAnalyticsHandler(context: APIContext) {
 					SELECT
 						'account_performance' as data_type,
 						COALESCE(a.name, ?) as name,
+						CAST(NULL AS TEXT) as secondary_name,
 						CAST(NULL AS BIGINT) as count,
 						COUNT(r.id) as requests,
 						SUM(CASE WHEN r.success = TRUE THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(r.id), 0) as success_rate,
@@ -237,6 +240,7 @@ export function createAnalyticsHandler(context: APIContext) {
 					SELECT
 						'cost_by_model' as data_type,
 						model as name,
+						CAST(NULL AS TEXT) as secondary_name,
 						CAST(NULL AS BIGINT) as count,
 						COUNT(*) as requests,
 						CAST(NULL AS DOUBLE PRECISION) as success_rate,
@@ -255,6 +259,7 @@ export function createAnalyticsHandler(context: APIContext) {
 					SELECT
 						'api_key_performance' as data_type,
 						api_key_name as name,
+						CAST(NULL AS TEXT) as secondary_name,
 						CAST(NULL AS BIGINT) as count,
 						COUNT(*) as requests,
 						SUM(CASE WHEN success = TRUE THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0) as success_rate,
@@ -267,10 +272,32 @@ export function createAnalyticsHandler(context: APIContext) {
 					ORDER BY requests DESC
 					LIMIT 10
 				) q4
+
+				UNION ALL
+
+				SELECT * FROM (
+					SELECT
+						'account_model_usage' as data_type,
+						COALESCE(a.name, 'Unknown') as name,
+						r.model as secondary_name,
+						COUNT(*) as count,
+						CAST(NULL AS BIGINT) as requests,
+						CAST(NULL AS DOUBLE PRECISION) as success_rate,
+						CAST(NULL AS DOUBLE PRECISION) as cost_usd,
+						CAST(NULL AS BIGINT) as total_tokens
+					FROM requests r
+					LEFT JOIN accounts a ON a.id = r.account_used
+					WHERE ${whereClause} AND r.model IS NOT NULL
+					GROUP BY COALESCE(a.name, 'Unknown'), r.model
+					HAVING COUNT(*) > 0
+					ORDER BY count DESC
+					LIMIT 50
+				) q5
 			`,
 				[
 					...queryParams,
 					NO_ACCOUNT_ID,
+					...queryParams,
 					...queryParams,
 					...queryParams,
 					...queryParams,
@@ -309,6 +336,14 @@ export function createAnalyticsHandler(context: APIContext) {
 					name: row.name,
 					requests: Number(row.requests) || 0,
 					successRate: Number(row.success_rate) || 0,
+				}));
+
+			const accountModelUsage = additionalData
+				.filter((row) => row.data_type === "account_model_usage")
+				.map((row) => ({
+					account: row.name,
+					model: row.secondary_name ?? "Unknown",
+					count: Number(row.count) || 0,
 				}));
 
 			// Get model performance metrics
@@ -488,6 +523,7 @@ export function createAnalyticsHandler(context: APIContext) {
 				accountPerformance,
 				apiKeyPerformance,
 				costByModel,
+				accountModelUsage,
 				modelPerformance,
 			};
 
