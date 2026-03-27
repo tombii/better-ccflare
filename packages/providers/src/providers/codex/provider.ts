@@ -511,6 +511,7 @@ export class CodexProvider extends BaseProvider {
 		const processEvents = async () => {
 			try {
 				const reader = response.body?.getReader();
+				if (!reader) throw new Error("Response body is not readable");
 
 				while (true) {
 					const { value, done } = await reader.read();

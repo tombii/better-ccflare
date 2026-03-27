@@ -84,6 +84,7 @@ interface ParsedArgs {
 		| "bedrock"
 		| "kilo"
 		| "alibaba-coding-plan"
+		| "codex"
 		| null;
 	priority: number | null;
 	profile: string | null;
@@ -517,6 +518,7 @@ function parseArgs(args: string[]): ParsedArgs {
 					| "bedrock"
 					| "kilo"
 					| "alibaba-coding-plan"
+					| "codex"
 					| "max";
 
 				// Handle deprecated "max" mode with warning
@@ -532,11 +534,13 @@ function parseArgs(args: string[]): ParsedArgs {
 					| "console"
 					| "zai"
 					| "minimax"
+					| "nanogpt"
 					| "anthropic-compatible"
 					| "openai-compatible"
 					| "bedrock"
 					| "kilo"
-					| "alibaba-coding-plan";
+					| "alibaba-coding-plan"
+					| "codex";
 				const validModes: Array<
 					| "claude-oauth"
 					| "console"
@@ -548,6 +552,7 @@ function parseArgs(args: string[]): ParsedArgs {
 					| "bedrock"
 					| "kilo"
 					| "alibaba-coding-plan"
+					| "codex"
 				> = [
 					"claude-oauth",
 					"console",
@@ -559,6 +564,7 @@ function parseArgs(args: string[]): ParsedArgs {
 					"bedrock",
 					"kilo",
 					"alibaba-coding-plan",
+					"codex",
 				];
 				if (!validModes.includes(modeValue)) {
 					console.error(`❌ Invalid mode: ${modeValue}`);
@@ -795,7 +801,7 @@ Options:
   --ssl-cert <path>    Path to SSL certificate file (enables HTTPS)
   --stats              Show statistics (JSON output)
   --add-account <name> Add a new account
-    --mode <claude-oauth|console|zai|minimax|nanogpt|anthropic-compatible|openai-compatible|bedrock|kilo|alibaba-coding-plan>  Account mode (default: claude-oauth)
+    --mode <claude-oauth|console|zai|minimax|nanogpt|anthropic-compatible|openai-compatible|bedrock|kilo|alibaba-coding-plan|codex>  Account mode (default: claude-oauth)
       claude-oauth: Claude CLI account (OAuth)
       console: Claude API account (OAuth)
       zai: z.ai account (API key)
@@ -808,6 +814,7 @@ Options:
         --cross-region-mode <mode>   Cross-region inference mode: geographic (default), global, or regional
       kilo: Kilo Gateway provider (API key)
       alibaba-coding-plan: Alibaba Coding Plan International provider (API key)
+      codex: Codex (OpenAI OAuth) provider
     --priority <number>   Account priority (default: 0)
   --list               List all accounts
   --remove <name>      Remove an account
@@ -958,6 +965,9 @@ Examples:
 			console.error("  --mode kilo            Kilo Gateway provider (API key)");
 			console.error(
 				"  --mode alibaba-coding-plan  Alibaba Coding Plan International (API key)",
+			);
+			console.error(
+				"  --mode codex               Codex (OpenAI OAuth) provider",
 			);
 			console.error("\nExample:");
 			console.error(
