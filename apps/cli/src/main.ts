@@ -983,7 +983,7 @@ Examples:
 
 			// OAuth modes need interactive prompts for the auth code
 			const needsInteractiveAuth =
-				mode === "claude-oauth" || mode === "console";
+				mode === "claude-oauth" || mode === "console" || mode === "codex";
 
 			if (needsInteractiveAuth) {
 				// Use real prompt adapter for OAuth - needs user to paste auth code

@@ -559,12 +559,19 @@ async function createVertexAIAccount(
 async function promptModelMappings(
 	adapter: PromptAdapter,
 	existingMappings?: ModelMapping,
+	providerDefaults?: { opus: string; sonnet: string; haiku: string },
 ): Promise<ModelMapping | null> {
+	const defaults = providerDefaults ?? {
+		opus: "openai/gpt-5",
+		sonnet: "openai/gpt-5",
+		haiku: "openai/gpt-5-mini",
+	};
+
 	const wantsCustomMappings = await adapter.select(
 		"\nDo you want to configure custom model mappings?",
 		[
 			{
-				label: "No, use defaults (opus/sonnet→gpt-5, haiku→gpt-5-mini)",
+				label: `No, use defaults (opus/sonnet→${defaults.opus}, haiku→${defaults.haiku})`,
 				value: "no",
 			},
 			{ label: "Yes, configure custom mappings", value: "yes" },
@@ -581,14 +588,16 @@ async function promptModelMappings(
 	const mappings: ModelMapping = {};
 
 	// Get opus mapping
-	const opusModel = await adapter.input("Opus model (default: openai/gpt-5): ");
+	const opusModel = await adapter.input(
+		`Opus model (default: ${defaults.opus}): `,
+	);
 	if (opusModel.trim()) {
 		mappings.opus = opusModel.trim();
 	}
 
 	// Get sonnet mapping
 	const sonnetModel = await adapter.input(
-		"Sonnet model (default: openai/gpt-5): ",
+		`Sonnet model (default: ${defaults.sonnet}): `,
 	);
 	if (sonnetModel.trim()) {
 		mappings.sonnet = sonnetModel.trim();
@@ -596,7 +605,7 @@ async function promptModelMappings(
 
 	// Get haiku mapping
 	const haikuModel = await adapter.input(
-		"Haiku model (default: openai/gpt-5-mini): ",
+		`Haiku model (default: ${defaults.haiku}): `,
 	);
 	if (haikuModel.trim()) {
 		mappings.haiku = haikuModel.trim();
@@ -1171,6 +1180,7 @@ export async function addAccount(
 		const finalModelMappings = await promptModelMappings(
 			adapter,
 			modelMappings,
+			{ opus: "gpt-5.3-codex", sonnet: "gpt-5.3-codex", haiku: "gpt-5.1-codex-mini" },
 		);
 
 		await createCodexOAuthAccount(
