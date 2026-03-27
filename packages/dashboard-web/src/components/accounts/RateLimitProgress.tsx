@@ -372,9 +372,7 @@ export function RateLimitProgress({
 					<div key={usage.window || "default"} className="space-y-2">
 						<div className="flex items-center justify-between">
 							<span className="text-xs text-muted-foreground">
-								{(hasAnthropicStyleData ||
-									providerShowsWeeklyUsage(provider)) &&
-								usage.window
+								{usage.window
 									? `Usage (${formatWindowName(usage.window)})`
 									: "Rate limit window"}
 							</span>
