@@ -1847,11 +1847,12 @@ export function createAccountModelMappingsUpdateHandler(
 				"openrouter",
 				"kilo",
 				"alibaba-coding-plan",
+				"zai",
 			];
 			if (!MODEL_MAPPING_PROVIDERS.includes(account.provider)) {
 				return errorResponse(
 					BadRequest(
-						"Model mappings are only available for OpenAI-compatible, Anthropic-compatible, NanoGPT, OpenRouter, Kilo, and Alibaba accounts",
+						"Model mappings are only available for OpenAI-compatible, Anthropic-compatible, NanoGPT, OpenRouter, Kilo, Alibaba, and z.ai accounts",
 					),
 				);
 			}
