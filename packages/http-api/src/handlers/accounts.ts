@@ -26,6 +26,7 @@ import {
 	fetchUsageData,
 	getRepresentativeUtilization,
 	getRepresentativeWindow,
+	parseCodexUsageHeaders,
 	type UsageData,
 	usageCache,
 } from "@better-ccflare/providers";
@@ -34,6 +35,88 @@ import type { FullUsageData } from "@better-ccflare/types";
 import type { AccountResponse } from "../types";
 
 const log = new Logger("AccountsHandler");
+
+function normalizeCodexUsageData(usage: UsageData): UsageData | null {
+	const normalized: UsageData = {
+		five_hour: { ...usage.five_hour },
+		seven_day: { ...usage.seven_day },
+	};
+	if (
+		normalized.five_hour.resets_at &&
+		new Date(normalized.five_hour.resets_at).getTime() <= Date.now()
+	) {
+		normalized.five_hour = { utilization: 0, resets_at: null };
+	}
+	if (
+		normalized.seven_day.resets_at &&
+		new Date(normalized.seven_day.resets_at).getTime() <= Date.now()
+	) {
+		normalized.seven_day = { utilization: 0, resets_at: null };
+	}
+	return normalized.five_hour.resets_at !== null ||
+		normalized.seven_day.resets_at !== null
+		? normalized
+		: null;
+}
+
+async function getCachedOrPersistedCodexUsage(
+	db: ReturnType<DatabaseOperations["getAdapter"]>,
+	accountId: string,
+	accountName: string,
+	cacheData: FullUsageData | null,
+): Promise<FullUsageData | null> {
+	if (cacheData) {
+		const normalizedCache = normalizeCodexUsageData(cacheData as UsageData);
+		if (normalizedCache) {
+			return normalizedCache as FullUsageData;
+		}
+	}
+	const rows = await db.query<{ json: string; timestamp: number | null }>(
+		`SELECT rp.json, COALESCE(rp.timestamp, r.timestamp) as timestamp
+		 FROM request_payloads rp
+		 JOIN requests r ON rp.id = r.id
+		 WHERE r.account_used = ?
+		 ORDER BY r.timestamp DESC
+		 LIMIT 20`,
+		[accountId],
+	);
+
+	for (const row of rows) {
+		if (!row.json || !row.timestamp) continue;
+
+		try {
+			const payload = JSON.parse(row.json) as {
+				response?: { headers?: Record<string, string>; status?: number };
+				meta?: { timestamp?: number };
+			};
+			const headerEntries = Object.entries(payload.response?.headers ?? {});
+			if (headerEntries.length === 0) continue;
+
+			const codexStatus = payload.response?.status;
+			const payloadTimestamp = payload.meta?.timestamp ?? row.timestamp;
+			const usage = parseCodexUsageHeaders(new Headers(headerEntries), {
+				baseTimeMs: payloadTimestamp,
+				allowRelativeResetAfter: true,
+				defaultUtilization: codexStatus === 429 ? 100 : 0,
+			});
+			if (!usage) continue;
+
+			const normalizedUsage = normalizeCodexUsageData(usage);
+			if (!normalizedUsage) continue;
+
+			usageCache.set(accountId, normalizedUsage);
+			log.debug(`Recovered Codex usage from stored payload for ${accountName}`);
+			return normalizedUsage as FullUsageData;
+		} catch (error) {
+			log.warn(
+				`Failed to recover Codex usage from stored payload for ${accountName}:`,
+				error instanceof Error ? error.message : String(error),
+			);
+		}
+	}
+
+	return null;
+}
 
 /**
  * Create an accounts list handler
@@ -159,209 +242,222 @@ export function createAccountsListHandler(dbOps: DatabaseOperations) {
 			}),
 		);
 
-		const response: AccountResponse[] = accounts.map((account) => {
-			let rateLimitStatus = "OK";
+		const response: AccountResponse[] = await Promise.all(
+			accounts.map(async (account) => {
+				let rateLimitStatus = "OK";
 
-			// Use unified rate limit status if available
-			if (account.rate_limit_status) {
-				rateLimitStatus = account.rate_limit_status;
-				const resetMs = Number(account.rate_limit_reset);
-				if (resetMs && resetMs > now) {
-					const minutesLeft = Math.ceil((resetMs - now) / 60000);
-					rateLimitStatus = `${account.rate_limit_status} (${minutesLeft}m)`;
+				// Use unified rate limit status if available
+				if (account.rate_limit_status) {
+					rateLimitStatus = account.rate_limit_status;
+					const resetMs = Number(account.rate_limit_reset);
+					if (resetMs && resetMs > now) {
+						const minutesLeft = Math.ceil((resetMs - now) / 60000);
+						rateLimitStatus = `${account.rate_limit_status} (${minutesLeft}m)`;
+					}
+				} else if (account.rate_limited && account.rate_limited_until) {
+					// Fall back to legacy rate limit check
+					const limitedMs = Number(account.rate_limited_until);
+					if (limitedMs > now) {
+						const minutesLeft = Math.ceil((limitedMs - now) / 60000);
+						rateLimitStatus = `Rate limited (${minutesLeft}m)`;
+					}
 				}
-			} else if (account.rate_limited && account.rate_limited_until) {
-				// Fall back to legacy rate limit check
-				const limitedMs = Number(account.rate_limited_until);
-				if (limitedMs > now) {
-					const minutesLeft = Math.ceil((limitedMs - now) / 60000);
-					rateLimitStatus = `Rate limited (${minutesLeft}m)`;
-				}
-			}
 
-			// Get usage data from cache for Anthropic and NanoGPT accounts
-			const usageData = usageCache.get(account.id);
-			let usageUtilization: number | null = null;
-			let usageWindow: string | null = null;
-			let fullUsageData: FullUsageData | null = null;
+				// Get usage data from cache for providers that expose account-page quota or credit data
+				const cachedUsageData = usageCache.get(account.id);
+				let usageData: FullUsageData | null =
+					cachedUsageData as FullUsageData | null;
+				if (account.provider === "codex") {
+					usageData = await getCachedOrPersistedCodexUsage(
+						db,
+						account.id,
+						account.name,
+						usageData,
+					);
+				}
+				let usageUtilization: number | null = null;
+				let usageWindow: string | null = null;
+				let fullUsageData: FullUsageData | null = null;
 
-			if (account.provider === "anthropic" && usageData) {
-				// Anthropic usage data - type guard to check it's UsageData
-				const isAnthropicData =
-					"five_hour" in usageData && "seven_day" in usageData;
-				if (isAnthropicData) {
-					try {
-						usageUtilization = getRepresentativeUtilization(
-							usageData as UsageData,
-						);
-						usageWindow = getRepresentativeWindow(usageData as UsageData);
-						fullUsageData = usageData as FullUsageData;
-					} catch (error) {
-						// Log error but don't fail the entire accounts page
-						log.warn(
-							`Failed to process usage data for account ${account.id}:`,
-							error instanceof Error ? error.message : String(error),
-						);
-						// Keep null values for usage if processing fails
+				if (
+					(account.provider === "anthropic" || account.provider === "codex") &&
+					usageData
+				) {
+					const isAnthropicStyleData =
+						"five_hour" in usageData && "seven_day" in usageData;
+					if (isAnthropicStyleData) {
+						try {
+							usageUtilization = getRepresentativeUtilization(
+								usageData as UsageData,
+							);
+							usageWindow = getRepresentativeWindow(usageData as UsageData);
+							fullUsageData = usageData as FullUsageData;
+						} catch (error) {
+							log.warn(
+								`Failed to process ${account.provider} usage data for account ${account.id}:`,
+								error instanceof Error ? error.message : String(error),
+							);
+						}
+					}
+				} else if (account.provider === "nanogpt" && usageData) {
+					// NanoGPT usage data - type guard to check it's NanoGPTUsageData
+					const isNanoGPTData =
+						"active" in usageData &&
+						"daily" in usageData &&
+						"monthly" in usageData;
+					if (isNanoGPTData) {
+						try {
+							const {
+								getRepresentativeNanoGPTUtilization,
+								getRepresentativeNanoGPTWindow,
+							} = require("@better-ccflare/providers");
+							usageUtilization = getRepresentativeNanoGPTUtilization(usageData);
+							usageWindow = getRepresentativeNanoGPTWindow(usageData);
+							fullUsageData = usageData as FullUsageData;
+						} catch (error) {
+							log.warn(
+								`Failed to process NanoGPT usage data for account ${account.name}:`,
+								error,
+							);
+						}
+					}
+				} else if (account.provider === "zai" && usageData) {
+					// Zai usage data - type guard to check it's ZaiUsageData
+					const isZaiData =
+						"time_limit" in usageData || "tokens_limit" in usageData;
+					if (isZaiData) {
+						try {
+							const {
+								getRepresentativeZaiUtilization,
+								getRepresentativeZaiWindow,
+							} = require("@better-ccflare/providers");
+							usageUtilization = getRepresentativeZaiUtilization(usageData);
+							usageWindow = getRepresentativeZaiWindow(usageData);
+							fullUsageData = usageData as FullUsageData;
+						} catch (error) {
+							log.warn(
+								`Failed to process Zai usage data for account ${account.name}:`,
+								error,
+							);
+						}
+					}
+				} else if (account.provider === "kilo" && usageData) {
+					// Kilo usage data - type guard to check it's KiloUsageData
+					const isKiloData = "remainingUsd" in usageData;
+					if (isKiloData) {
+						try {
+							const {
+								getRepresentativeKiloUtilization,
+								getRepresentativeKiloWindow,
+							} = require("@better-ccflare/providers");
+							usageUtilization = getRepresentativeKiloUtilization(usageData);
+							usageWindow = getRepresentativeKiloWindow(usageData);
+							fullUsageData = usageData as FullUsageData;
+						} catch (error) {
+							log.warn(
+								`Failed to process Kilo usage data for account ${account.name}:`,
+								error,
+							);
+						}
+					}
+				} else if (account.provider === "alibaba-coding-plan" && usageData) {
+					// Alibaba Coding Plan usage data - type guard to check it's AlibabaCodingPlanUsageData
+					const isAlibabaData =
+						"five_hour" in usageData && "weekly" in usageData;
+					if (isAlibabaData) {
+						try {
+							const {
+								getRepresentativeAlibabaCodingPlanUtilization,
+								getRepresentativeAlibabaCodingPlanWindow,
+							} = require("@better-ccflare/providers");
+							usageUtilization =
+								getRepresentativeAlibabaCodingPlanUtilization(usageData);
+							usageWindow = getRepresentativeAlibabaCodingPlanWindow(usageData);
+							fullUsageData = usageData as FullUsageData;
+						} catch (error) {
+							log.warn(
+								`Failed to process Alibaba Coding Plan usage data for account ${account.name}:`,
+								error,
+							);
+						}
 					}
 				}
-			} else if (account.provider === "nanogpt" && usageData) {
-				// NanoGPT usage data - type guard to check it's NanoGPTUsageData
-				const isNanoGPTData =
-					"active" in usageData &&
-					"daily" in usageData &&
-					"monthly" in usageData;
-				if (isNanoGPTData) {
-					try {
-						const {
-							getRepresentativeNanoGPTUtilization,
-							getRepresentativeNanoGPTWindow,
-						} = require("@better-ccflare/providers");
-						usageUtilization = getRepresentativeNanoGPTUtilization(usageData);
-						usageWindow = getRepresentativeNanoGPTWindow(usageData);
-						fullUsageData = usageData as FullUsageData;
-					} catch (error) {
-						log.warn(
-							`Failed to process NanoGPT usage data for account ${account.name}:`,
-							error,
-						);
-					}
-				}
-			} else if (account.provider === "zai" && usageData) {
-				// Zai usage data - type guard to check it's ZaiUsageData
-				const isZaiData =
-					"time_limit" in usageData || "tokens_limit" in usageData;
-				if (isZaiData) {
-					try {
-						const {
-							getRepresentativeZaiUtilization,
-							getRepresentativeZaiWindow,
-						} = require("@better-ccflare/providers");
-						usageUtilization = getRepresentativeZaiUtilization(usageData);
-						usageWindow = getRepresentativeZaiWindow(usageData);
-						fullUsageData = usageData as FullUsageData;
-					} catch (error) {
-						log.warn(
-							`Failed to process Zai usage data for account ${account.name}:`,
-							error,
-						);
-					}
-				}
-			} else if (account.provider === "kilo" && usageData) {
-				// Kilo usage data - type guard to check it's KiloUsageData
-				const isKiloData = "remainingUsd" in usageData;
-				if (isKiloData) {
-					try {
-						const {
-							getRepresentativeKiloUtilization,
-							getRepresentativeKiloWindow,
-						} = require("@better-ccflare/providers");
-						usageUtilization = getRepresentativeKiloUtilization(usageData);
-						usageWindow = getRepresentativeKiloWindow(usageData);
-						fullUsageData = usageData as FullUsageData;
-					} catch (error) {
-						log.warn(
-							`Failed to process Kilo usage data for account ${account.name}:`,
-							error,
-						);
-					}
-				}
-			} else if (account.provider === "alibaba-coding-plan" && usageData) {
-				// Alibaba Coding Plan usage data - type guard to check it's AlibabaCodingPlanUsageData
-				const isAlibabaData = "five_hour" in usageData && "weekly" in usageData;
-				if (isAlibabaData) {
-					try {
-						const {
-							getRepresentativeAlibabaCodingPlanUtilization,
-							getRepresentativeAlibabaCodingPlanWindow,
-						} = require("@better-ccflare/providers");
-						usageUtilization =
-							getRepresentativeAlibabaCodingPlanUtilization(usageData);
-						usageWindow = getRepresentativeAlibabaCodingPlanWindow(usageData);
-						fullUsageData = usageData as FullUsageData;
-					} catch (error) {
-						log.warn(
-							`Failed to process Alibaba Coding Plan usage data for account ${account.name}:`,
-							error,
-						);
-					}
-				}
-			}
 
-			// Parse model mappings for OpenAI-compatible, Anthropic-compatible, NanoGPT, and OpenRouter providers
-			let modelMappings: { [key: string]: string } | null = null;
-			if (
-				(account.provider === "openai-compatible" ||
-					account.provider === "anthropic-compatible" ||
-					account.provider === "nanogpt" ||
-					account.provider === "openrouter" ||
-					account.provider === "alibaba-coding-plan" ||
-					account.provider === "zai") &&
-				account.model_mappings
-			) {
-				try {
-					const parsed = JSON.parse(account.model_mappings);
-					// Handle both formats: direct mappings or wrapped in modelMappings
-					modelMappings = parsed.modelMappings || parsed || null;
-				} catch {
-					// If parsing fails, ignore model mappings
-					modelMappings = null;
-				}
-			} else if (
-				account.provider === "openai-compatible" &&
-				account.custom_endpoint
-			) {
-				// Also try parsing from custom_endpoint for backwards compatibility
-				try {
-					const parsed = JSON.parse(account.custom_endpoint);
-					if (parsed.modelMappings) {
-						modelMappings = parsed.modelMappings;
+				// Parse model mappings for OpenAI-compatible, Anthropic-compatible, NanoGPT, and OpenRouter providers
+				let modelMappings: { [key: string]: string } | null = null;
+				if (
+					(account.provider === "openai-compatible" ||
+						account.provider === "anthropic-compatible" ||
+						account.provider === "nanogpt" ||
+						account.provider === "openrouter" ||
+						account.provider === "alibaba-coding-plan" ||
+						account.provider === "zai") &&
+					account.model_mappings
+				) {
+					try {
+						const parsed = JSON.parse(account.model_mappings);
+						// Handle both formats: direct mappings or wrapped in modelMappings
+						modelMappings = parsed.modelMappings || parsed || null;
+					} catch {
+						// If parsing fails, ignore model mappings
+						modelMappings = null;
 					}
-				} catch {
-					// If parsing fails, ignore model mappings
-					modelMappings = null;
+				} else if (
+					account.provider === "openai-compatible" &&
+					account.custom_endpoint
+				) {
+					// Also try parsing from custom_endpoint for backwards compatibility
+					try {
+						const parsed = JSON.parse(account.custom_endpoint);
+						if (parsed.modelMappings) {
+							modelMappings = parsed.modelMappings;
+						}
+					} catch {
+						// If parsing fails, ignore model mappings
+						modelMappings = null;
+					}
 				}
-			}
 
-			return {
-				id: account.id,
-				name: account.name,
-				provider: account.provider || "anthropic",
-				requestCount: Number(account.request_count) || 0,
-				totalRequests: Number(account.total_requests) || 0,
-				lastUsed: account.last_used
-					? new Date(Number(account.last_used)).toISOString()
-					: null,
-				created: new Date(Number(account.created_at)).toISOString(),
-				paused: account.paused === 1,
-				priority: Number(account.priority) || 0,
-				tokenStatus: account.token_valid ? "valid" : "expired",
-				tokenExpiresAt: account.expires_at
-					? new Date(Number(account.expires_at)).toISOString()
-					: null,
-				rateLimitStatus,
-				rateLimitReset: account.rate_limit_reset
-					? new Date(Number(account.rate_limit_reset)).toISOString()
-					: null,
-				rateLimitRemaining:
-					account.rate_limit_remaining != null
-						? Number(account.rate_limit_remaining)
+				return {
+					id: account.id,
+					name: account.name,
+					provider: account.provider || "anthropic",
+					requestCount: Number(account.request_count) || 0,
+					totalRequests: Number(account.total_requests) || 0,
+					lastUsed: account.last_used
+						? new Date(Number(account.last_used)).toISOString()
 						: null,
-				rateLimitedUntil: account.rate_limited_until
-					? Number(account.rate_limited_until)
-					: null,
-				sessionInfo: account.session_info || "",
-				autoFallbackEnabled: account.auto_fallback_enabled === 1,
-				autoRefreshEnabled: account.auto_refresh_enabled === 1,
-				customEndpoint: account.custom_endpoint,
-				modelMappings,
-				usageUtilization,
-				usageWindow,
-				usageData: fullUsageData, // Full usage data for UI
-				hasRefreshToken: !!account.refresh_token, // OAuth accounts have refresh tokens
-				crossRegionMode: account.cross_region_mode,
-			};
-		});
+					created: new Date(Number(account.created_at)).toISOString(),
+					paused: account.paused === 1,
+					priority: Number(account.priority) || 0,
+					tokenStatus: account.token_valid ? "valid" : "expired",
+					tokenExpiresAt: account.expires_at
+						? new Date(Number(account.expires_at)).toISOString()
+						: null,
+					rateLimitStatus,
+					rateLimitReset: account.rate_limit_reset
+						? new Date(Number(account.rate_limit_reset)).toISOString()
+						: null,
+					rateLimitRemaining:
+						account.rate_limit_remaining != null
+							? Number(account.rate_limit_remaining)
+							: null,
+					rateLimitedUntil: account.rate_limited_until
+						? Number(account.rate_limited_until)
+						: null,
+					sessionInfo: account.session_info || "",
+					autoFallbackEnabled: account.auto_fallback_enabled === 1,
+					autoRefreshEnabled: account.auto_refresh_enabled === 1,
+					customEndpoint: account.custom_endpoint,
+					modelMappings,
+					usageUtilization,
+					usageWindow,
+					usageData: fullUsageData, // Full usage data for UI
+					hasRefreshToken: !!account.refresh_token, // OAuth accounts have refresh tokens
+					crossRegionMode: account.cross_region_mode,
+				};
+			}),
+		);
 
 		return jsonResponse(response);
 	};

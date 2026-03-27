@@ -277,12 +277,21 @@ export class CodexProvider extends BaseProvider {
 		_account: Account | null,
 	): Promise<Response> {
 		const contentType = response.headers.get("content-type");
+		const isEventStream = contentType?.includes("text/event-stream") ?? false;
+		const shouldForceStreamingTransform =
+			response.ok && response.body !== null && !isEventStream;
 
-		if (contentType?.includes("text/event-stream")) {
+		if (shouldForceStreamingTransform) {
+			log.warn(
+				`Codex returned a successful response with unexpected content-type ${contentType ?? "<missing>"}; attempting SSE transformation`,
+			);
+		}
+
+		if (isEventStream || shouldForceStreamingTransform) {
 			return this.transformStreamingResponse(response);
 		}
 
-		// Non-streaming: pass through with sanitized headers
+		// Non-streaming errors should pass through with sanitized headers so callers see the upstream failure body.
 		const headers = sanitizeProxyHeaders(response.headers);
 		return new Response(response.body, {
 			status: response.status,
@@ -520,8 +529,10 @@ export class CodexProvider extends BaseProvider {
 					state.buffer += decoder.decode(value, { stream: true });
 
 					// Process complete SSE events in buffer
-					let newlineIdx: number;
-					while ((newlineIdx = state.buffer.indexOf("\n\n")) !== -1) {
+					while (true) {
+						const newlineIdx = state.buffer.indexOf("\n\n");
+						if (newlineIdx === -1) break;
+
 						const eventText = state.buffer.slice(0, newlineIdx);
 						state.buffer = state.buffer.slice(newlineIdx + 2);
 

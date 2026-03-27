@@ -1,6 +1,10 @@
 import { logError, RateLimitError } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
-import type { Provider } from "@better-ccflare/providers";
+import {
+	type Provider,
+	parseCodexUsageHeaders,
+	usageCache,
+} from "@better-ccflare/providers";
 import type { Account } from "@better-ccflare/types";
 import type { ProxyContext } from "./proxy-types";
 
@@ -70,7 +74,6 @@ export function updateAccountMetadata(
 	} else {
 		ctx.asyncWriter.enqueue(() => ctx.dbOps.updateAccountUsage(account.id));
 	}
-
 	// Extract and update rate limit info for every response
 	const rateLimitInfo = ctx.provider.parseRateLimit(response);
 	// Only update rate limit metadata when we have actual rate limit headers
@@ -107,6 +110,18 @@ export function updateAccountMetadata(
 				);
 			}
 		});
+	}
+
+	if (account.provider === "codex") {
+		const codexUsage = parseCodexUsageHeaders(response.headers, {
+			defaultUtilization: response.status === 429 ? 100 : 0,
+		});
+		if (codexUsage) {
+			usageCache.set(account.id, codexUsage);
+			log.debug(
+				`Updated Codex usage cache for ${account.name}: 5h=${codexUsage.five_hour.utilization}%, 7d=${codexUsage.seven_day.utilization}%`,
+			);
+		}
 	}
 
 	// Extract usage info if supported
