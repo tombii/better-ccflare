@@ -37,6 +37,71 @@ describe("Database Migrations - Tier Column Removal", () => {
 		expect(columnNames).not.toContain("account_tier"); // Should not exist initially
 	});
 
+	it("should migrate legacy request_payloads tables before creating the timestamp index", () => {
+		// Simulate an older SQLite schema where request_payloads existed before the
+		// timestamp column was introduced.
+		db.exec(`
+			CREATE TABLE requests (
+				id TEXT PRIMARY KEY,
+				timestamp INTEGER NOT NULL,
+				method TEXT NOT NULL,
+				path TEXT NOT NULL,
+				account_used TEXT,
+				status_code INTEGER,
+				success BOOLEAN,
+				error_message TEXT,
+				response_time_ms INTEGER,
+				failover_attempts INTEGER DEFAULT 0,
+				model TEXT,
+				prompt_tokens INTEGER DEFAULT 0,
+				completion_tokens INTEGER DEFAULT 0,
+				total_tokens INTEGER DEFAULT 0,
+				cost_usd REAL DEFAULT 0,
+				output_tokens_per_second REAL,
+				input_tokens INTEGER DEFAULT 0,
+				cache_read_input_tokens INTEGER DEFAULT 0,
+				cache_creation_input_tokens INTEGER DEFAULT 0,
+				output_tokens INTEGER DEFAULT 0,
+				agent_used TEXT
+			);
+			CREATE TABLE request_payloads (
+				id TEXT PRIMARY KEY,
+				json TEXT NOT NULL,
+				FOREIGN KEY (id) REFERENCES requests(id) ON DELETE CASCADE
+			);
+		`);
+
+		db.prepare(
+			`INSERT INTO requests (id, timestamp, method, path, success, failover_attempts) VALUES (?, ?, ?, ?, ?, ?)`,
+		).run("req-1", 1_700_000_000_000, "POST", "/v1/messages", 1, 0);
+		db.prepare(`INSERT INTO request_payloads (id, json) VALUES (?, ?)`).run(
+			"req-1",
+			JSON.stringify({ request: { body: "test" } }),
+		);
+
+		expect(() => {
+			ensureSchema(db);
+			runMigrations(db);
+		}).not.toThrow();
+
+		const payloadColumns = db
+			.prepare("PRAGMA table_info(request_payloads)")
+			.all() as Array<{ name: string }>;
+		expect(payloadColumns.map((col) => col.name)).toContain("timestamp");
+
+		const payload = db
+			.prepare("SELECT timestamp FROM request_payloads WHERE id = ?")
+			.get("req-1") as { timestamp: number };
+		expect(payload.timestamp).toBe(1_700_000_000_000);
+
+		const payloadIndexes = db
+			.prepare("PRAGMA index_list(request_payloads)")
+			.all() as Array<{ name: string }>;
+		expect(payloadIndexes.map((index) => index.name)).toContain(
+			"idx_request_payloads_timestamp",
+		);
+	});
+
 	it("should remove account_tier column from accounts table if it exists", () => {
 		// Create schema with tier column (simulate old schema)
 		db.exec(`

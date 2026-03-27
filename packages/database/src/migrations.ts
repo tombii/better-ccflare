@@ -77,11 +77,6 @@ export function ensureSchema(db: Database): void {
 		)
 	`);
 
-	// Index for efficient age-based payload cleanup
-	db.run(
-		`CREATE INDEX IF NOT EXISTS idx_request_payloads_timestamp ON request_payloads(timestamp)`,
-	);
-
 	// Create oauth_sessions table for secure PKCE verifier storage
 	db.run(`
 		CREATE TABLE IF NOT EXISTS oauth_sessions (
@@ -592,7 +587,9 @@ export function runMigrations(db: Database, dbPath?: string): void {
 			(col) => col.name,
 		);
 
-		if (!requestPayloadsColumnNames.includes("timestamp")) {
+		let hasRequestPayloadTimestamp =
+			requestPayloadsColumnNames.includes("timestamp");
+		if (!hasRequestPayloadTimestamp) {
 			db.prepare(
 				"ALTER TABLE request_payloads ADD COLUMN timestamp INTEGER",
 			).run();
@@ -602,13 +599,18 @@ export function runMigrations(db: Database, dbPath?: string): void {
 				SET timestamp = (SELECT timestamp FROM requests WHERE requests.id = request_payloads.id)
 				WHERE timestamp IS NULL
 			`).run();
-			// Create index for efficient age-based cleanup
-			db.prepare(
-				`CREATE INDEX IF NOT EXISTS idx_request_payloads_timestamp ON request_payloads(timestamp)`,
-			).run();
+			hasRequestPayloadTimestamp = true;
 			log.info(
 				"Added timestamp column to request_payloads table and backfilled from requests",
 			);
+		}
+
+		if (hasRequestPayloadTimestamp) {
+			// Create index only after the column exists; older SQLite databases may
+			// still have request_payloads without timestamp until this migration runs.
+			db.prepare(
+				`CREATE INDEX IF NOT EXISTS idx_request_payloads_timestamp ON request_payloads(timestamp)`,
+			).run();
 		}
 
 		// Check columns in api_keys table
