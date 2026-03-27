@@ -77,10 +77,18 @@ export function ensureSchema(db: Database): void {
 		)
 	`);
 
-	// Index for efficient age-based payload cleanup
-	db.run(
-		`CREATE INDEX IF NOT EXISTS idx_request_payloads_timestamp ON request_payloads(timestamp)`,
-	);
+	// Index for efficient age-based payload cleanup — only if column exists
+	// (may not exist if table was inherited from a legacy ccflare database)
+	const payloadCols = (
+		db.prepare("PRAGMA table_info(request_payloads)").all() as Array<{
+			name: string;
+		}>
+	).map((c) => c.name);
+	if (payloadCols.includes("timestamp")) {
+		db.run(
+			`CREATE INDEX IF NOT EXISTS idx_request_payloads_timestamp ON request_payloads(timestamp)`,
+		);
+	}
 
 	// Create oauth_sessions table for secure PKCE verifier storage
 	db.run(`
