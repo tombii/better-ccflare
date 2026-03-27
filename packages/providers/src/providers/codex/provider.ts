@@ -127,6 +127,7 @@ interface StreamState {
 	contentBlockIndex: number;
 	hasSentMessageStart: boolean;
 	hasSentContentBlockStart: boolean;
+	hasSentTerminalEvents: boolean;
 	inputTokens: number;
 	outputTokens: number;
 	// Track function_call items: output_index → content_block_index
@@ -277,12 +278,21 @@ export class CodexProvider extends BaseProvider {
 		_account: Account | null,
 	): Promise<Response> {
 		const contentType = response.headers.get("content-type");
+		const isEventStream = contentType?.includes("text/event-stream") ?? false;
+		const shouldForceStreamingTransform =
+			response.ok && response.body !== null && !isEventStream;
 
-		if (contentType?.includes("text/event-stream")) {
+		if (shouldForceStreamingTransform) {
+			log.warn(
+				`Codex returned a successful response with unexpected content-type ${contentType ?? "<missing>"}; attempting SSE transformation`,
+			);
+		}
+
+		if (isEventStream || shouldForceStreamingTransform) {
 			return this.transformStreamingResponse(response);
 		}
 
-		// Non-streaming: pass through with sanitized headers
+		// Non-streaming errors should pass through with sanitized headers so callers see the upstream failure body.
 		const headers = sanitizeProxyHeaders(response.headers);
 		return new Response(response.body, {
 			status: response.status,
@@ -487,6 +497,7 @@ export class CodexProvider extends BaseProvider {
 			contentBlockIndex: 0,
 			hasSentMessageStart: false,
 			hasSentContentBlockStart: false,
+			hasSentTerminalEvents: false,
 			inputTokens: 0,
 			outputTokens: 0,
 			functionCallBlocks: new Map(),
@@ -520,8 +531,10 @@ export class CodexProvider extends BaseProvider {
 					state.buffer += decoder.decode(value, { stream: true });
 
 					// Process complete SSE events in buffer
-					let newlineIdx: number;
-					while ((newlineIdx = state.buffer.indexOf("\n\n")) !== -1) {
+					while (true) {
+						const newlineIdx = state.buffer.indexOf("\n\n");
+						if (newlineIdx === -1) break;
+
 						const eventText = state.buffer.slice(0, newlineIdx);
 						state.buffer = state.buffer.slice(newlineIdx + 2);
 
@@ -575,13 +588,15 @@ export class CodexProvider extends BaseProvider {
 					});
 				}
 
-				// Final message_delta + message_stop
-				await writeSSE("message_delta", {
-					type: "message_delta",
-					delta: { stop_reason: "end_turn", stop_sequence: null },
-					usage: { output_tokens: state.outputTokens },
-				});
-				await writeSSE("message_stop", { type: "message_stop" });
+				// Final message_delta + message_stop if upstream never sent response.completed
+				if (!state.hasSentTerminalEvents) {
+					await writeSSE("message_delta", {
+						type: "message_delta",
+						delta: { stop_reason: "end_turn", stop_sequence: null },
+						usage: { output_tokens: state.outputTokens },
+					});
+					await writeSSE("message_stop", { type: "message_stop" });
+				}
 			} catch (error) {
 				log.error("Error processing Codex SSE stream:", error);
 			} finally {
@@ -757,6 +772,7 @@ export class CodexProvider extends BaseProvider {
 					usage: { output_tokens: state.outputTokens },
 				});
 				await writeSSE("message_stop", { type: "message_stop" });
+				state.hasSentTerminalEvents = true;
 				break;
 			}
 

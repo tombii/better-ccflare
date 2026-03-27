@@ -127,6 +127,15 @@ export function RateLimitProgress({
 	const isAlibabaData =
 		usageData && "five_hour" in usageData && "weekly" in usageData;
 
+	// Anthropic-style quota data is shared by Anthropic and Codex; detect by shape, not provider name.
+	const hasAnthropicStyleData =
+		usageData &&
+		"five_hour" in usageData &&
+		"seven_day" in usageData &&
+		!isAlibabaData &&
+		!isZaiData &&
+		!isNanoGPTData;
+
 	if (isAlibabaData && showWeekly) {
 		const alibabaData = usageData as {
 			five_hour: { percentUsed: number; resetAt: number | null };
@@ -206,7 +215,7 @@ export function RateLimitProgress({
 				resetTime: null,
 			});
 		}
-	} else if (providerShowsWeeklyUsage(provider) && showWeekly) {
+	} else if (hasAnthropicStyleData && showWeekly) {
 		// Anthropic usage data - show 5-hour and weekly usage
 		const anthropicData = usageData as {
 			five_hour?: { utilization: number | null; resets_at: string | null };
@@ -363,7 +372,9 @@ export function RateLimitProgress({
 					<div key={usage.window || "default"} className="space-y-2">
 						<div className="flex items-center justify-between">
 							<span className="text-xs text-muted-foreground">
-								{providerShowsWeeklyUsage(provider) && usage.window
+								{(hasAnthropicStyleData ||
+									providerShowsWeeklyUsage(provider)) &&
+								usage.window
 									? `Usage (${formatWindowName(usage.window)})`
 									: "Rate limit window"}
 							</span>
