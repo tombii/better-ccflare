@@ -16,10 +16,19 @@ function parseNumber(value: string | null): number | null {
 	return Number.isFinite(parsed) ? parsed : null;
 }
 
+function toIsoString(timestampMs: number | null): string | null {
+	if (timestampMs === null || !Number.isFinite(timestampMs)) return null;
+	try {
+		return new Date(timestampMs).toISOString();
+	} catch {
+		return null;
+	}
+}
+
 function parseResetAtSeconds(value: string | null): string | null {
 	const parsed = parseNumber(value);
 	if (parsed === null) return null;
-	return new Date(parsed * 1000).toISOString();
+	return toIsoString(parsed * 1000);
 }
 
 function parseResetAfterSeconds(
@@ -27,10 +36,10 @@ function parseResetAfterSeconds(
 	baseTimeMs: number,
 	allowRelativeResetAfter: boolean,
 ): string | null {
-	if (!allowRelativeResetAfter) return null;
+	if (!allowRelativeResetAfter || !Number.isFinite(baseTimeMs)) return null;
 	const parsed = parseNumber(value);
 	if (parsed === null) return null;
-	return new Date(baseTimeMs + parsed * 1000).toISOString();
+	return toIsoString(baseTimeMs + parsed * 1000);
 }
 
 function toUsageWindow(
@@ -79,7 +88,10 @@ function readWindow(
 
 	return {
 		window: pickWindowSlot(windowMinutes),
-		data: toUsageWindow(utilization ?? defaultUtilization, resetsAt),
+		data: toUsageWindow(
+			utilization ?? (resetsAt ? defaultUtilization : null),
+			resetsAt,
+		),
 	};
 }
 
@@ -107,20 +119,25 @@ export function parseCodexUsageHeaders(
 		defaultUtilization,
 	);
 
+	const legacyFiveHourReset = parseResetAtSeconds(
+		headers.get("x-codex-5h-reset-at"),
+	);
+	const legacySevenDayReset = parseResetAtSeconds(
+		headers.get("x-codex-7d-reset-at"),
+	);
+
 	const fiveHour =
 		(primary.window === "five_hour" ? primary.data : null) ??
 		(secondary.window === "five_hour" ? secondary.data : null) ??
-		toUsageWindow(
-			defaultUtilization,
-			parseResetAtSeconds(headers.get("x-codex-5h-reset-at")),
-		);
+		(legacyFiveHourReset
+			? toUsageWindow(defaultUtilization, legacyFiveHourReset)
+			: null);
 	const sevenDay =
 		(primary.window === "seven_day" ? primary.data : null) ??
 		(secondary.window === "seven_day" ? secondary.data : null) ??
-		toUsageWindow(
-			defaultUtilization,
-			parseResetAtSeconds(headers.get("x-codex-7d-reset-at")),
-		);
+		(legacySevenDayReset
+			? toUsageWindow(defaultUtilization, legacySevenDayReset)
+			: null);
 
 	if (!fiveHour && !sevenDay) {
 		return null;
