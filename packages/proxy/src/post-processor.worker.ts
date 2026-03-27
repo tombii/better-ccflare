@@ -58,6 +58,7 @@ log.info("Post-processor worker started");
 const MAX_REQUESTS_MAP_SIZE = 10000;
 const REQUEST_TTL_MS = 2 * 60 * 1000; // 2 minutes - hard limit for request lifecycle
 const MAX_RESPONSE_BODY_BYTES = 256 * 1024; // 256KB - cap stored response body
+const MAX_REQUEST_BODY_BYTES = 256 * 1024; // 256KB - cap stored request body
 
 // Initialize tiktoken encoder (cl100k_base is used for Claude models)
 // Using embedded WASM to avoid "Missing tiktoken_bg.wasm" errors in bunx
@@ -642,10 +643,21 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 		}
 	}
 
+	// Cap request body to prevent unbounded payload storage
+	let requestBody = startMessage.requestBody;
+	if (requestBody) {
+		const rawBytes = Buffer.byteLength(requestBody, "base64");
+		if (rawBytes > MAX_REQUEST_BODY_BYTES) {
+			requestBody = Buffer.from(requestBody, "base64")
+				.subarray(0, MAX_REQUEST_BODY_BYTES)
+				.toString("base64");
+		}
+	}
+
 	const payloadJson = JSON.stringify({
 		request: {
 			headers: startMessage.requestHeaders,
-			body: startMessage.requestBody,
+			body: requestBody,
 		},
 		response: {
 			status: startMessage.responseStatus,

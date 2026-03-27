@@ -72,9 +72,15 @@ export function ensureSchema(db: Database): void {
 		CREATE TABLE IF NOT EXISTS request_payloads (
 			id TEXT PRIMARY KEY,
 			json TEXT NOT NULL,
+			timestamp INTEGER,
 			FOREIGN KEY (id) REFERENCES requests(id) ON DELETE CASCADE
 		)
 	`);
+
+	// Index for efficient age-based payload cleanup
+	db.run(
+		`CREATE INDEX IF NOT EXISTS idx_request_payloads_timestamp ON request_payloads(timestamp)`,
+	);
 
 	// Create oauth_sessions table for secure PKCE verifier storage
 	db.run(`
@@ -567,6 +573,42 @@ export function runMigrations(db: Database, dbPath?: string): void {
 		if (!requestsColumnNames.includes("api_key_name")) {
 			db.prepare("ALTER TABLE requests ADD COLUMN api_key_name TEXT").run();
 			log.info("Added api_key_name column to requests table");
+		}
+
+		// Add timestamp column to request_payloads if it doesn't exist
+		const requestPayloadsInfo = db
+			.prepare("PRAGMA table_info(request_payloads)")
+			.all() as Array<{
+			cid: number;
+			name: string;
+			type: string;
+			notnull: number;
+			// biome-ignore lint/suspicious/noExplicitAny: SQLite pragma can return various default value types
+			dflt_value: any;
+			pk: number;
+		}>;
+
+		const requestPayloadsColumnNames = requestPayloadsInfo.map(
+			(col) => col.name,
+		);
+
+		if (!requestPayloadsColumnNames.includes("timestamp")) {
+			db.prepare(
+				"ALTER TABLE request_payloads ADD COLUMN timestamp INTEGER",
+			).run();
+			// Backfill timestamps from the requests table for existing rows
+			db.prepare(`
+				UPDATE request_payloads
+				SET timestamp = (SELECT timestamp FROM requests WHERE requests.id = request_payloads.id)
+				WHERE timestamp IS NULL
+			`).run();
+			// Create index for efficient age-based cleanup
+			db.prepare(
+				`CREATE INDEX IF NOT EXISTS idx_request_payloads_timestamp ON request_payloads(timestamp)`,
+			).run();
+			log.info(
+				"Added timestamp column to request_payloads table and backfilled from requests",
+			);
 		}
 
 		// Check columns in api_keys table
