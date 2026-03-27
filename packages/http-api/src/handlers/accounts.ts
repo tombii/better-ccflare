@@ -295,7 +295,8 @@ export function createAccountsListHandler(dbOps: DatabaseOperations) {
 					account.provider === "anthropic-compatible" ||
 					account.provider === "nanogpt" ||
 					account.provider === "openrouter" ||
-					account.provider === "alibaba-coding-plan") &&
+					account.provider === "alibaba-coding-plan" ||
+					account.provider === "zai") &&
 				account.model_mappings
 			) {
 				try {
