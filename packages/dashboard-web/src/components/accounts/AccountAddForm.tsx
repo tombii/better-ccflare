@@ -40,6 +40,7 @@ interface AccountAddFormProps {
 		apiKey: string;
 		priority: number;
 		customEndpoint?: string;
+		modelMappings?: { [key: string]: string };
 	}) => Promise<void>;
 	onAddMinimaxAccount: (params: {
 		name: string;
@@ -310,12 +311,21 @@ export function AccountAddForm({
 				onError("API key is required for z.ai accounts");
 				return;
 			}
+			// Build model mappings from form fields
+			const zaiModelMappings: { [key: string]: string } = {};
+			if (newAccount.opusModel) zaiModelMappings.opus = newAccount.opusModel;
+			if (newAccount.sonnetModel)
+				zaiModelMappings.sonnet = newAccount.sonnetModel;
+			if (newAccount.haikuModel) zaiModelMappings.haiku = newAccount.haikuModel;
 			// For z.ai accounts, we don't need OAuth flow
 			await onAddZaiAccount({
 				...accountParams,
 				apiKey: newAccount.apiKey,
 				...(newAccount.customEndpoint && {
 					customEndpoint: newAccount.customEndpoint.trim(),
+				}),
+				...(Object.keys(zaiModelMappings).length > 0 && {
+					modelMappings: zaiModelMappings,
 				}),
 			});
 			// Reset form and signal success
@@ -965,21 +975,85 @@ export function AccountAddForm({
 						</>
 					)}
 					{newAccount.mode === "zai" && (
-						<div className="space-y-2">
-							<Label htmlFor="apiKey">z.ai API Key</Label>
-							<Input
-								id="apiKey"
-								type="password"
-								value={newAccount.apiKey}
-								onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-									setNewAccount({
-										...newAccount,
-										apiKey: (e.target as HTMLInputElement).value,
-									})
-								}
-								placeholder="Enter your z.ai API key"
-							/>
-						</div>
+						<>
+							<div className="space-y-2">
+								<Label htmlFor="apiKey">z.ai API Key</Label>
+								<Input
+									id="apiKey"
+									type="password"
+									value={newAccount.apiKey}
+									onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+										setNewAccount({
+											...newAccount,
+											apiKey: (e.target as HTMLInputElement).value,
+										})
+									}
+									placeholder="Enter your z.ai API key"
+								/>
+							</div>
+							<div className="space-y-2">
+								<Label className="text-sm font-medium">
+									Model Mappings (Optional)
+								</Label>
+								<p className="text-xs text-muted-foreground">
+									Map Anthropic model names to z.ai-specific models. Leave empty
+									to use Claude models directly.
+								</p>
+								<div className="space-y-2 pl-4">
+									<div>
+										<Label htmlFor="opusModel" className="text-sm">
+											Opus Model
+										</Label>
+										<Input
+											id="opusModel"
+											value={newAccount.opusModel}
+											onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+												setNewAccount({
+													...newAccount,
+													opusModel: (e.target as HTMLInputElement).value,
+												})
+											}
+											placeholder="e.g. glm-4.5-flash"
+											className="mt-1"
+										/>
+									</div>
+									<div>
+										<Label htmlFor="sonnetModel" className="text-sm">
+											Sonnet Model
+										</Label>
+										<Input
+											id="sonnetModel"
+											value={newAccount.sonnetModel}
+											onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+												setNewAccount({
+													...newAccount,
+													sonnetModel: (e.target as HTMLInputElement).value,
+												})
+											}
+											placeholder="e.g. glm-4.5-flash"
+											className="mt-1"
+										/>
+									</div>
+									<div>
+										<Label htmlFor="haikuModel" className="text-sm">
+											Haiku Model
+										</Label>
+										<Input
+											id="haikuModel"
+											value={newAccount.haikuModel}
+											onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+												setNewAccount({
+													...newAccount,
+													haikuModel: (e.target as HTMLInputElement).value,
+												})
+											}
+											placeholder="e.g. glm-4.5-air"
+											className="mt-1"
+										/>
+									</div>
+								</div>
+							</div>
+						</>
 					)}
 					{newAccount.mode === "minimax" && (
 						<div className="space-y-2">

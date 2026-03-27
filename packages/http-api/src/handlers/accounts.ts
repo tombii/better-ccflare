@@ -778,6 +778,15 @@ export function createZaiAccountAddHandler(dbOps: DatabaseOperations) {
 				},
 			);
 
+			// Validate model mappings
+			let modelMappingsJson: string | null = null;
+			if (body.modelMappings && typeof body.modelMappings === "object") {
+				const validated = validateAndSanitizeModelMappings(body.modelMappings);
+				if (validated) {
+					modelMappingsJson = JSON.stringify(validated);
+				}
+			}
+
 			// Create z.ai account directly in database
 			const accountId = crypto.randomUUID();
 			const now = Date.now();
@@ -786,8 +795,8 @@ export function createZaiAccountAddHandler(dbOps: DatabaseOperations) {
 			await db.run(
 				`INSERT INTO accounts (
 					id, name, provider, api_key, refresh_token, access_token,
-					expires_at, created_at, request_count, total_requests, priority, custom_endpoint
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+					expires_at, created_at, request_count, total_requests, priority, custom_endpoint, model_mappings
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 				[
 					accountId,
 					name,
@@ -801,6 +810,7 @@ export function createZaiAccountAddHandler(dbOps: DatabaseOperations) {
 					0,
 					priority,
 					customEndpoint || null,
+					modelMappingsJson,
 				],
 			);
 

@@ -25,7 +25,8 @@ export function providerSupportsModelMappings(provider: string): boolean {
 		provider === PROVIDER_NAMES.NANOGPT ||
 		provider === PROVIDER_NAMES.OPENROUTER ||
 		provider === PROVIDER_NAMES.KILO ||
-		provider === PROVIDER_NAMES.ALIBABA_CODING_PLAN
+		provider === PROVIDER_NAMES.ALIBABA_CODING_PLAN ||
+		provider === PROVIDER_NAMES.ZAI
 	);
 }
 
