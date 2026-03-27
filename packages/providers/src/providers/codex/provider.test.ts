@@ -37,7 +37,8 @@ describe("CodexProvider.processResponse", () => {
 		expect(transformed.headers.get("content-type")).toBe("text/event-stream");
 		expect(transformedBody).toContain("event: message_start");
 		expect(transformedBody).toContain('"text":"hello"');
-		expect(transformedBody).toContain("event: message_stop");
+		expect(transformedBody.match(/event: message_stop/g)?.length ?? 0).toBe(1);
+		expect(transformedBody.match(/event: message_delta/g)?.length ?? 0).toBe(1);
 	});
 
 	it("passes through non-streaming error responses", async () => {
@@ -95,6 +96,23 @@ describe("parseCodexUsageHeaders", () => {
 				utilization: 0,
 				resets_at: new Date(1775000000 * 1000).toISOString(),
 			},
+		});
+	});
+
+	it("returns null when no Codex usage headers are present", () => {
+		expect(parseCodexUsageHeaders(new Headers())).toBeNull();
+	});
+
+	it("drops invalid reset timestamps instead of throwing", () => {
+		const headers = new Headers({
+			"x-codex-primary-used-percent": "12",
+			"x-codex-primary-window-minutes": "300",
+			"x-codex-primary-reset-at": "1e309",
+		});
+
+		expect(parseCodexUsageHeaders(headers)).toEqual({
+			five_hour: { utilization: 12, resets_at: null },
+			seven_day: { utilization: 0, resets_at: null },
 		});
 	});
 });
