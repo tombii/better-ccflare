@@ -86,12 +86,15 @@ function readWindow(
 			allowRelativeResetAfter,
 		);
 
+	// Only produce a window entry when at least one relevant header was present
+	const hasAnyHeader =
+		windowMinutes !== null || utilization !== null || resetsAt !== null;
+
 	return {
 		window: pickWindowSlot(windowMinutes),
-		data: toUsageWindow(
-			utilization ?? (resetsAt ? defaultUtilization : null),
-			resetsAt,
-		),
+		data: hasAnyHeader
+			? toUsageWindow(utilization ?? defaultUtilization, resetsAt)
+			: null,
 	};
 }
 
