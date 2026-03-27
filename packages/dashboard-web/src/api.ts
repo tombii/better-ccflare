@@ -282,6 +282,7 @@ class API extends HttpClient {
 		apiKey: string;
 		priority: number;
 		customEndpoint?: string;
+		modelMappings?: { [key: string]: string };
 	}): Promise<{ message: string; account: Account }> {
 		const startTime = Date.now();
 		const url = "/api/accounts/zai";

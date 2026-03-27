@@ -156,6 +156,7 @@ export function AccountsTab() {
 		apiKey: string;
 		priority: number;
 		customEndpoint?: string;
+		modelMappings?: { [key: string]: string };
 	}) => {
 		try {
 			await api.addZaiAccount(params);

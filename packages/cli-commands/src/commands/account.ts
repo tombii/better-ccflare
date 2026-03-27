@@ -377,6 +377,7 @@ async function createZaiAccount(
 	name: string,
 	apiKey: string,
 	priority: number,
+	modelMappings?: { [key: string]: string } | null,
 ): Promise<void> {
 	const accountId = crypto.randomUUID();
 	const now = Date.now();
@@ -384,12 +385,17 @@ async function createZaiAccount(
 	// Validate inputs
 	const validatedApiKey = validateApiKey(apiKey, "z.ai API key");
 	const validatedPriority = validatePriority(priority, "priority");
+	let validatedModelMappings = null;
+	if (modelMappings && Object.keys(modelMappings).length > 0) {
+		const validated = validateAndSanitizeModelMappings(modelMappings);
+		validatedModelMappings = JSON.stringify(validated);
+	}
 
 	await dbOps.getAdapter().run(
 		`INSERT INTO accounts (
 			id, name, provider, api_key, refresh_token, access_token,
-			expires_at, created_at, request_count, total_requests, priority, custom_endpoint
-		) VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?)`,
+			expires_at, created_at, request_count, total_requests, priority, custom_endpoint, model_mappings
+		) VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?)`,
 		[
 			accountId,
 			name,
@@ -400,6 +406,7 @@ async function createZaiAccount(
 			0,
 			validatedPriority,
 			null,
+			validatedModelMappings,
 		],
 	);
 
@@ -927,7 +934,19 @@ export async function addAccount(
 		// Handle z.ai accounts with API keys
 		const apiKey = await adapter.input("\nEnter your z.ai API key: ");
 
-		await createZaiAccount(dbOps, name, apiKey, providedPriority || 0);
+		// Get model mappings
+		const finalModelMappings = await promptModelMappings(
+			adapter,
+			modelMappings,
+		);
+
+		await createZaiAccount(
+			dbOps,
+			name,
+			apiKey,
+			providedPriority || 0,
+			finalModelMappings,
+		);
 	} else if (mode === "console") {
 		// Handle Console accounts - offer choice between OAuth and direct API key
 		const consoleMethod = await adapter.select(
