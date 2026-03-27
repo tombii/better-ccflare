@@ -165,18 +165,20 @@ export class RequestRepository extends BaseRepository<RequestData> {
 	// Payload management
 	async savePayload(id: string, data: unknown): Promise<void> {
 		const json = JSON.stringify(data);
+		const ts = Date.now();
 		await this.run(
-			`INSERT INTO request_payloads (id, json) VALUES (?, ?)
-			 ON CONFLICT (id) DO UPDATE SET json = EXCLUDED.json`,
-			[id, json],
+			`INSERT INTO request_payloads (id, json, timestamp) VALUES (?, ?, ?)
+			 ON CONFLICT (id) DO UPDATE SET json = EXCLUDED.json, timestamp = EXCLUDED.timestamp`,
+			[id, json, ts],
 		);
 	}
 
 	async savePayloadRaw(id: string, json: string): Promise<void> {
+		const ts = Date.now();
 		await this.run(
-			`INSERT INTO request_payloads (id, json) VALUES (?, ?)
-			 ON CONFLICT (id) DO UPDATE SET json = EXCLUDED.json`,
-			[id, json],
+			`INSERT INTO request_payloads (id, json, timestamp) VALUES (?, ?, ?)
+			 ON CONFLICT (id) DO UPDATE SET json = EXCLUDED.json, timestamp = EXCLUDED.timestamp`,
+			[id, json, ts],
 		);
 	}
 
@@ -439,9 +441,19 @@ export class RequestRepository extends BaseRepository<RequestData> {
 	}
 
 	async deleteOlderThan(cutoffTs: number): Promise<number> {
-		return this.runWithChanges(`DELETE FROM requests WHERE timestamp < ?`, [
-			cutoffTs,
-		]);
+		const BATCH_SIZE = 500;
+		let total = 0;
+		let deleted: number;
+		do {
+			deleted = await this.runWithChanges(
+				`DELETE FROM requests WHERE id IN (
+					SELECT id FROM requests WHERE timestamp < ? LIMIT ?
+				)`,
+				[cutoffTs, BATCH_SIZE],
+			);
+			total += deleted;
+		} while (deleted === BATCH_SIZE);
+		return total;
 	}
 
 	async deleteOrphanedPayloads(): Promise<number> {
@@ -451,9 +463,19 @@ export class RequestRepository extends BaseRepository<RequestData> {
 	}
 
 	async deletePayloadsOlderThan(cutoffTs: number): Promise<number> {
-		return this.runWithChanges(
-			`DELETE FROM request_payloads WHERE id IN (SELECT id FROM requests WHERE timestamp < ?)`,
-			[cutoffTs],
-		);
+		const BATCH_SIZE = 500;
+		let total = 0;
+		let deleted: number;
+		do {
+			// Direct timestamp-based deletion — avoids expensive subquery through requests table
+			deleted = await this.runWithChanges(
+				`DELETE FROM request_payloads WHERE id IN (
+					SELECT id FROM request_payloads WHERE timestamp IS NOT NULL AND timestamp < ? LIMIT ?
+				)`,
+				[cutoffTs, BATCH_SIZE],
+			);
+			total += deleted;
+		} while (deleted === BATCH_SIZE);
+		return total;
 	}
 }

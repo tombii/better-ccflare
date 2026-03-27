@@ -615,9 +615,10 @@ export default async function startServer(options?: {
 		}
 	};
 
-	// Run immediately at startup (closes the 6-hour first-run gap if earlyoom
-	// kills the server before the first interval fires), then every 6 hours
-	void dataRetentionCleanup();
+	// Periodic data retention cleanup every 6 hours.
+	// runStartupMaintenance() (called above) handles the initial cleanup on boot,
+	// so we don't fire dataRetentionCleanup() immediately to avoid concurrent
+	// large deletes that can spike WAL size and wedge the service.
 	const unregisterDataCleanup = registerCleanup({
 		id: "data-retention-cleanup",
 		callback: dataRetentionCleanup,
