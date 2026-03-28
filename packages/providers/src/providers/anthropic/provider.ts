@@ -284,6 +284,91 @@ export class AnthropicProvider extends BaseProvider {
 		};
 	}
 
+	/**
+	 * Transform Anthropic SSE stream to add OpenAI-compatible finish_reason.
+	 * Anthropic uses stop_reason on message_delta events; OpenAI clients expect
+	 * finish_reason. This maps between them without breaking native Anthropic clients
+	 * since both fields are present in the transformed output.
+	 */
+	private async transformStreamToOpenAIFormat(
+		response: Response,
+	): Promise<Response> {
+		const contentType = response.headers.get("content-type");
+
+		// Only transform streaming responses
+		if (!contentType?.includes("text/event-stream")) {
+			return response;
+		}
+
+		const reader = response.body?.getReader();
+		if (!reader) return response;
+
+		const encoder = new TextEncoder();
+		const decoder = new TextDecoder();
+
+		const stream = new ReadableStream({
+			async start(controller) {
+				try {
+					while (true) {
+						const { done, value } = await reader.read();
+						if (done) break;
+
+						const chunk = decoder.decode(value, { stream: true });
+						const lines = chunk.split("\n");
+
+						for (const line of lines) {
+							// Pass through non-data lines unchanged
+							if (!line.startsWith("data: ")) {
+								controller.enqueue(encoder.encode(line + "\n"));
+								continue;
+							}
+
+							const data = line.slice(6).trim();
+
+							// Pass through [DONE] marker
+							if (data === "[DONE]") {
+								controller.enqueue(encoder.encode(line + "\n"));
+								continue;
+							}
+
+							try {
+								const event = JSON.parse(data);
+
+								// Map Anthropic stop_reason -> OpenAI finish_reason on message_delta
+								if (event.type === "message_delta" && event.delta?.stop_reason) {
+									const stopReasonMap: Record<string, string> = {
+										end_turn: "stop",
+										max_tokens: "length",
+										stop_sequence: "stop",
+										tool_use: "tool_calls",
+									};
+									event.finish_reason =
+										stopReasonMap[event.delta.stop_reason] || "stop";
+								}
+
+								const transformed = `data: ${JSON.stringify(event)}\n`;
+								controller.enqueue(encoder.encode(transformed));
+							} catch {
+								// If not JSON, pass through unchanged
+								controller.enqueue(encoder.encode(line + "\n"));
+							}
+						}
+					}
+				} catch (error) {
+					controller.error(error);
+				} finally {
+					controller.close();
+				}
+			},
+		});
+
+		return new Response(stream, {
+			headers: response.headers,
+			status: response.status,
+			statusText: response.statusText,
+		});
+	}
+
 	async processResponse(
 		response: Response,
 		_account: Account | null,
@@ -291,11 +376,14 @@ export class AnthropicProvider extends BaseProvider {
 		// Sanitize headers by removing hop-by-hop headers
 		const headers = sanitizeProxyHeaders(response.headers);
 
-		return new Response(response.body, {
+		const sanitizedResponse = new Response(response.body, {
 			status: response.status,
 			statusText: response.statusText,
 			headers,
 		});
+
+		// Add OpenAI-compatible finish_reason alongside Anthropic's stop_reason
+		return this.transformStreamToOpenAIFormat(sanitizedResponse);
 	}
 
 	async extractTierInfo(response: Response): Promise<number | null> {
