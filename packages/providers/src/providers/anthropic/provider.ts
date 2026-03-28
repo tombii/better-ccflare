@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { createHash } from "node:crypto";
 import { BUFFER_SIZES, validateEndpointUrl } from "@better-ccflare/core";
 import { sanitizeProxyHeaders } from "@better-ccflare/http-common";
 import { Logger } from "@better-ccflare/logger";
@@ -240,6 +242,200 @@ export class AnthropicProvider extends BaseProvider {
 		return newHeaders;
 	}
 
+	/**
+	 * Inject billing header into system prompt if not present.
+	 * Sonnet/Opus models require this header when using OAuth tokens —
+	 * without it they return 400 "Error". Haiku works without it.
+	 * Claude Code CLI sends this automatically; other clients (OpenCode) don't.
+	 */
+	async transformRequestBody(
+		request: Request,
+		_account?: Account,
+	): Promise<Request> {
+		if (!request.url.includes("/v1/messages")) {
+			return request;
+		}
+
+		const body = await request.text();
+		if (!body) return request;
+
+		try {
+			const json = JSON.parse(body);
+
+			// Check if billing header already exists in system blocks
+			const system = json.system;
+			if (Array.isArray(system)) {
+				const hasBilling = system.some(
+					(block: { type?: string; text?: string }) =>
+						block.type === "text" &&
+						block.text?.startsWith("x-anthropic-billing-header:"),
+				);
+				if (hasBilling) {
+					return new Request(request.url, {
+						method: request.method,
+						headers: request.headers,
+						body,
+						duplex: "half",
+					} as RequestInit & { duplex: string });
+				}
+			}
+
+			// Generate billing header
+			const CC_VERSION = "2.1.77";
+			const SALT = "59cf53e54c78";
+
+			let firstUserText = "";
+			if (Array.isArray(json.messages)) {
+				for (const msg of json.messages) {
+					if (msg.role === "user") {
+						if (typeof msg.content === "string") {
+							firstUserText = msg.content;
+						} else if (Array.isArray(msg.content)) {
+							const textBlock = msg.content.find(
+								(b: { type?: string }) => b.type === "text",
+							);
+							if (textBlock) firstUserText = textBlock.text || "";
+						}
+						break;
+					}
+				}
+			}
+
+			const chars = [4, 7, 20]
+				.map((i) => firstUserText[i] || "0")
+				.join("");
+			const hash = createHash("sha256")
+				.update(SALT + chars + CC_VERSION)
+				.digest("hex")
+				.slice(0, 3);
+
+			const billingHeader = `x-anthropic-billing-header: cc_version=${CC_VERSION}.${hash}; cc_entrypoint=cli; cch=00000;`;
+
+			if (Array.isArray(json.system)) {
+				json.system.unshift({ type: "text", text: billingHeader });
+			} else if (typeof json.system === "string") {
+				json.system = [
+					{ type: "text", text: billingHeader },
+					{ type: "text", text: json.system },
+				];
+			} else if (!json.system) {
+				json.system = [{ type: "text", text: billingHeader }];
+			}
+
+			const newBody = JSON.stringify(json);
+			return new Request(request.url, {
+				method: request.method,
+				headers: request.headers,
+				body: newBody,
+				duplex: "half",
+			} as RequestInit & { duplex: string });
+		} catch {
+			return new Request(request.url, {
+				method: request.method,
+				headers: request.headers,
+				body,
+				duplex: "half",
+			} as RequestInit & { duplex: string });
+		}
+	}
+
+	/**
+	 * Inject billing header into system prompt if not present.
+	 * Sonnet/Opus models require this header when using OAuth tokens —
+	 * without it they return 400 "Error". Haiku works without it.
+	 * Claude Code CLI sends this automatically; other clients (OpenCode) don't.
+	 */
+	async transformRequestBody(
+		request: Request,
+		_account?: Account,
+	): Promise<Request> {
+		if (!request.url.includes("/v1/messages")) {
+			return request;
+		}
+
+		const body = await request.text();
+		if (!body) return request;
+
+		try {
+			const json = JSON.parse(body);
+
+			// Check if billing header already exists in system blocks
+			const system = json.system;
+			if (Array.isArray(system)) {
+				const hasBilling = system.some(
+					(block: { type?: string; text?: string }) =>
+						block.type === "text" &&
+						block.text?.startsWith("x-anthropic-billing-header:"),
+				);
+				if (hasBilling) {
+					return new Request(request.url, {
+						method: request.method,
+						headers: request.headers,
+						body,
+						duplex: "half",
+					} as RequestInit & { duplex: string });
+				}
+			}
+
+			// Generate billing header
+			const CC_VERSION = "2.1.77";
+			const SALT = "59cf53e54c78";
+
+			let firstUserText = "";
+			if (Array.isArray(json.messages)) {
+				for (const msg of json.messages) {
+					if (msg.role === "user") {
+						if (typeof msg.content === "string") {
+							firstUserText = msg.content;
+						} else if (Array.isArray(msg.content)) {
+							const textBlock = msg.content.find(
+								(b: { type?: string }) => b.type === "text",
+							);
+							if (textBlock) firstUserText = textBlock.text || "";
+						}
+						break;
+					}
+				}
+			}
+
+			const chars = [4, 7, 20]
+				.map((i) => firstUserText[i] || "0")
+				.join("");
+			const hash = createHash("sha256")
+				.update(SALT + chars + CC_VERSION)
+				.digest("hex")
+				.slice(0, 3);
+
+			const billingHeader = `x-anthropic-billing-header: cc_version=${CC_VERSION}.${hash}; cc_entrypoint=cli; cch=00000;`;
+
+			if (Array.isArray(json.system)) {
+				json.system.unshift({ type: "text", text: billingHeader });
+			} else if (typeof json.system === "string") {
+				json.system = [
+					{ type: "text", text: billingHeader },
+					{ type: "text", text: json.system },
+				];
+			} else if (!json.system) {
+				json.system = [{ type: "text", text: billingHeader }];
+			}
+
+			const newBody = JSON.stringify(json);
+			return new Request(request.url, {
+				method: request.method,
+				headers: request.headers,
+				body: newBody,
+				duplex: "half",
+			} as RequestInit & { duplex: string });
+		} catch {
+			return new Request(request.url, {
+				method: request.method,
+				headers: request.headers,
+				body,
+				duplex: "half",
+			} as RequestInit & { duplex: string });
+		}
+	}
+
 	parseRateLimit(response: Response): RateLimitInfo {
 		// Check for unified rate limit headers
 		const statusHeader = response.headers.get(
@@ -284,6 +480,91 @@ export class AnthropicProvider extends BaseProvider {
 		};
 	}
 
+	/**
+	 * Transform Anthropic SSE stream to OpenAI-compatible format
+	 * Adds finish_reason field based on Anthropic's stop_reason for OpenAI-compatible clients
+	 */
+	private async transformStreamToOpenAIFormat(
+		response: Response,
+	): Promise<Response> {
+		const contentType = response.headers.get("content-type");
+		
+		// Only transform streaming responses
+		if (!contentType?.includes("text/event-stream")) {
+			return response;
+		}
+
+		const reader = response.body?.getReader();
+		if (!reader) return response;
+
+		const encoder = new TextEncoder();
+		const decoder = new TextDecoder();
+
+		const stream = new ReadableStream({
+			async start(controller) {
+				try {
+					while (true) {
+						const { done, value } = await reader.read();
+						if (done) break;
+
+						const chunk = decoder.decode(value, { stream: true });
+						const lines = chunk.split("\n");
+
+						for (const line of lines) {
+							// Pass through non-data lines unchanged
+							if (!line.startsWith("data: ")) {
+								controller.enqueue(encoder.encode(line + "\n"));
+								continue;
+							}
+
+							const data = line.slice(6).trim();
+
+							// Pass through [DONE] marker
+							if (data === "[DONE]") {
+								controller.enqueue(encoder.encode(line + "\n"));
+								continue;
+							}
+
+							try {
+								const event = JSON.parse(data);
+
+								// Transform Anthropic message_delta to add finish_reason
+								if (event.type === "message_delta" && event.delta?.stop_reason) {
+									const stopReasonMap: Record<string, string> = {
+										end_turn: "stop",
+										max_tokens: "length",
+										stop_sequence: "stop",
+										tool_use: "tool_calls",
+									};
+									// Add OpenAI-compatible finish_reason alongside Anthropic's stop_reason
+									event.finish_reason =
+										stopReasonMap[event.delta.stop_reason] || "stop";
+								}
+
+								// Re-encode and send
+								const transformed = `data: ${JSON.stringify(event)}\n`;
+								controller.enqueue(encoder.encode(transformed));
+							} catch {
+								// If not JSON, pass through unchanged
+								controller.enqueue(encoder.encode(line + "\n"));
+							}
+						}
+					}
+				} catch (error) {
+					controller.error(error);
+				} finally {
+					controller.close();
+				}
+			},
+		});
+
+		return new Response(stream, {
+			headers: response.headers,
+			status: response.status,
+			statusText: response.statusText,
+		});
+	}
+
 	async processResponse(
 		response: Response,
 		_account: Account | null,
@@ -291,11 +572,14 @@ export class AnthropicProvider extends BaseProvider {
 		// Sanitize headers by removing hop-by-hop headers
 		const headers = sanitizeProxyHeaders(response.headers);
 
-		return new Response(response.body, {
+		const sanitizedResponse = new Response(response.body, {
 			status: response.status,
 			statusText: response.statusText,
 			headers,
 		});
+
+		// Transform streaming responses to add OpenAI-compatible finish_reason
+		return this.transformStreamToOpenAIFormat(sanitizedResponse);
 	}
 
 	async extractTierInfo(response: Response): Promise<number | null> {
