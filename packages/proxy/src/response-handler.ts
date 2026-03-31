@@ -8,6 +8,10 @@ import type { Account } from "@better-ccflare/types";
 import type { ProxyContext } from "./handlers";
 import type { ChunkMessage, EndMessage, StartMessage } from "./worker-messages";
 
+// Must match MAX_REQUEST_BODY_BYTES in post-processor.worker.ts.
+// Cap applied before postMessage to avoid multi-MB structured clones.
+const MAX_REQUEST_BODY_BYTES = 256 * 1024;
+
 /**
  * Safely post a message to the worker, handling terminated workers
  */
@@ -106,14 +110,15 @@ export async function forwardToClient(
 			timestamp,
 			requestHeaders: requestHeadersObj,
 			// Cap request body BEFORE postMessage to avoid sending multi-MB
-			// conversation contexts via structured clone. Must match
-			// MAX_REQUEST_BODY_BYTES (256KB) in post-processor.worker.ts.
-			// The worker already caps stored payloads, but the full body
-			// was being cloned across the worker boundary first. See #67.
+			// conversation contexts via structured clone. The worker already
+			// caps stored payloads, but the full body was being cloned
+			// across the worker boundary first. See #67.
 			requestBody: requestBody
-				? requestBody.byteLength <= 256 * 1024
+				? requestBody.byteLength <= MAX_REQUEST_BODY_BYTES
 					? Buffer.from(requestBody).toString("base64")
-					: Buffer.from(requestBody, 0, 256 * 1024).toString("base64")
+					: Buffer.from(requestBody, 0, MAX_REQUEST_BODY_BYTES).toString(
+							"base64",
+						)
 				: null,
 			responseStatus: response.status,
 			responseHeaders: responseHeadersObj,

@@ -675,15 +675,7 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 
 	// Null out large references now that we have the serialized JSON
 	responseBody = null;
-	state.chunks.length = 0;
-	state.chunksBytes = 0;
-	state.buffer = "";
-	// Also release startMessage body/headers — they're serialized into
-	// payloadJson and no longer needed. Without this, the state retains
-	// multi-hundred-KB request bodies until requests.delete(). See #67.
-	startMessage.requestBody = null;
-	startMessage.requestHeaders = {};
-	startMessage.responseHeaders = {};
+	freeRequestState(state);
 
 	const requestId = startMessage.requestId;
 	asyncWriter.enqueue(async () =>
