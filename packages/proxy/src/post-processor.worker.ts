@@ -678,6 +678,12 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 	state.chunks.length = 0;
 	state.chunksBytes = 0;
 	state.buffer = "";
+	// Also release startMessage body/headers — they're serialized into
+	// payloadJson and no longer needed. Without this, the state retains
+	// multi-hundred-KB request bodies until requests.delete(). See #67.
+	startMessage.requestBody = null;
+	startMessage.requestHeaders = {};
+	startMessage.responseHeaders = {};
 
 	const requestId = startMessage.requestId;
 	asyncWriter.enqueue(async () =>
@@ -754,6 +760,12 @@ function freeRequestState(state: RequestState): void {
 	state.chunks.length = 0;
 	state.chunksBytes = 0;
 	state.buffer = "";
+	// Release request body and headers held in startMessage.
+	// Without this, orphaned requests retain full request bodies
+	// for the TTL duration (up to 2 minutes). See #67.
+	state.startMessage.requestBody = null;
+	state.startMessage.requestHeaders = {};
+	state.startMessage.responseHeaders = {};
 }
 
 const cleanupStaleRequests = () => {

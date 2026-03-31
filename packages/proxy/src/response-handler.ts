@@ -105,8 +105,14 @@ export async function forwardToClient(
 			path,
 			timestamp,
 			requestHeaders: requestHeadersObj,
+			// Cap request body BEFORE postMessage to avoid sending multi-MB
+			// conversation contexts via structured clone. The worker already caps
+			// stored payloads at MAX_REQUEST_BODY_BYTES (256KB), but the full body
+			// was being cloned across the worker boundary first. See #67.
 			requestBody: requestBody
-				? Buffer.from(requestBody).toString("base64")
+				? Buffer.from(requestBody)
+						.subarray(0, 256 * 1024)
+						.toString("base64")
 				: null,
 			responseStatus: response.status,
 			responseHeaders: responseHeadersObj,
