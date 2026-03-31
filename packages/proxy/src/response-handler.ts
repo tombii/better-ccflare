@@ -113,6 +113,13 @@ export async function forwardToClient(
 			// conversation contexts via structured clone. The worker already
 			// caps stored payloads, but the full body was being cloned
 			// across the worker boundary first. See #67.
+			//
+			// TODO(future): The worker only uses requestBody for DB payload
+			// storage — _extractSystemPrompt() in the worker is dead code
+			// (agent-interceptor.ts handles that on the main thread). Consider
+			// writing the payload directly from the main thread and removing
+			// requestBody from StartMessage entirely to avoid the postMessage
+			// copy altogether.
 			requestBody: requestBody
 				? requestBody.byteLength <= MAX_REQUEST_BODY_BYTES
 					? Buffer.from(requestBody).toString("base64")

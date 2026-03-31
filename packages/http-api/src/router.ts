@@ -44,6 +44,11 @@ import {
 	createApiKeyUpdateRoleHandler,
 } from "./handlers/api-keys";
 import { createConfigHandlers } from "./handlers/config";
+import {
+	createHeapStatsHandler,
+	createHeapSnapshotHandler,
+	createRssHandler,
+} from "./handlers/debug";
 import { createHealthHandler } from "./handlers/health";
 import { createLogsStreamHandler } from "./handlers/logs";
 import { createLogsHistoryHandler } from "./handlers/logs-history";
@@ -132,6 +137,11 @@ export class APIRouter {
 		const compactHandler = createCompactHandler(dbOps);
 		const systemInfoHandler = createSystemInfoHandler();
 		const versionCheckHandler = createVersionCheckHandler();
+
+		// Debug/profiling handlers
+		const heapStatsHandler = createHeapStatsHandler();
+		const heapSnapshotHandler = createHeapSnapshotHandler();
+		const rssHandler = createRssHandler();
 
 		// API Key handlers
 		const apiKeysListHandler = createApiKeysListHandler(dbOps);
@@ -252,6 +262,11 @@ export class APIRouter {
 			return bulkHandler(req);
 		});
 		this.handlers.set("GET:/api/workspaces", () => workspacesHandler());
+
+		// Debug/profiling routes
+		this.handlers.set("GET:/api/debug/heap", () => heapStatsHandler());
+		this.handlers.set("GET:/api/debug/snapshot", () => heapSnapshotHandler());
+		this.handlers.set("GET:/api/debug/rss", () => rssHandler());
 
 		// API Key routes
 		this.handlers.set("GET:/api/api-keys", () => apiKeysListHandler());
