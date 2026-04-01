@@ -184,6 +184,10 @@ SESSION_DURATION_MS=18000000           # Session duration in milliseconds (5 hou
 RETRY_ATTEMPTS=3                       # Number of retry attempts
 RETRY_DELAY_MS=1000                   # Initial retry delay in milliseconds
 RETRY_BACKOFF=2                        # Retry backoff multiplier
+
+# Storage
+STORE_PAYLOADS=false                   # Disable storing request/response bodies (reduces DB size and memory usage)
+                                       # Token counts, costs, model, status and timing are still recorded
 ```
 
 **Security Notes**:
@@ -226,6 +230,9 @@ LOG_FORMAT=pretty
 # Database configuration
 DATA_RETENTION_DAYS=7
 REQUEST_RETENTION_DAYS=365
+
+# Storage (set to false to skip storing request/response bodies, reducing DB size and memory pressure)
+STORE_PAYLOADS=true
 ```
 
 **Usage with different deployment methods**:
