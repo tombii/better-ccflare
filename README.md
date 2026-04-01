@@ -281,6 +281,10 @@ docker exec -it better-ccflare better-ccflare --list
 
 See [DOCKER.md](DOCKER.md) for detailed Docker documentation.
 
+### Systemd Deployment
+
+For running better-ccflare as a native systemd service on Linux (without Docker), see the [Systemd Deployment Guide](docs/systemd.md). It covers unit file configuration, memory management with `--smol`, restart policies, and a preflight script that prevents `BUN_JSC_*` environment variable crashes.
+
 ## Configure Claude SDK
 
 ### Option 1: Using Claude CLI with OAuth (Recommended if you have Claude Pro/Team)
