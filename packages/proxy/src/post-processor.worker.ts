@@ -675,9 +675,7 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 
 	// Null out large references now that we have the serialized JSON
 	responseBody = null;
-	state.chunks.length = 0;
-	state.chunksBytes = 0;
-	state.buffer = "";
+	freeRequestState(state);
 
 	const requestId = startMessage.requestId;
 	asyncWriter.enqueue(async () =>
@@ -754,6 +752,12 @@ function freeRequestState(state: RequestState): void {
 	state.chunks.length = 0;
 	state.chunksBytes = 0;
 	state.buffer = "";
+	// Release request body and headers held in startMessage.
+	// Without this, orphaned requests retain full request bodies
+	// for the TTL duration (up to 2 minutes). See #67.
+	state.startMessage.requestBody = null;
+	state.startMessage.requestHeaders = {};
+	state.startMessage.responseHeaders = {};
 }
 
 const cleanupStaleRequests = () => {
