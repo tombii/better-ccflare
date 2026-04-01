@@ -91,6 +91,14 @@ export class AuthService {
 			return { authorized: true };
 		}
 
+		// Debug endpoints are admin-only (heap snapshots contain secrets)
+		if (path.startsWith("/api/debug/")) {
+			return {
+				authorized: false,
+				reason: "Unauthorized: Debug endpoints require an admin API key",
+			};
+		}
+
 		// API-only keys: Only allow /v1/* and /messages/* (proxy endpoints)
 		const isProxyEndpoint =
 			path.startsWith("/v1/") || path.startsWith("/messages/");

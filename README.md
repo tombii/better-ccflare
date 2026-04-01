@@ -5,9 +5,6 @@
 
 The ultimate Claude API proxy with intelligent load balancing across multiple accounts. Full visibility into every request, response, and rate limit.
 
-**🚨 Major Update (v3.0.0):** This release includes critical security fixes, OAuth token health monitoring, and new provider support (NanoGPT, Minimax). All users should upgrade immediately. See [migration guide](docs/migration-v2-to-v3.md) for details.
-
-
 https://github.com/user-attachments/assets/c859872f-ca5e-4f8b-b6a0-7cc7461fe62a
 
 

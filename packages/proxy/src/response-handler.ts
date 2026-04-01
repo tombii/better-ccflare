@@ -121,11 +121,11 @@ export async function forwardToClient(
 			// requestBody from StartMessage entirely to avoid the postMessage
 			// copy altogether.
 			requestBody: requestBody
-				? requestBody.byteLength <= MAX_REQUEST_BODY_BYTES
-					? Buffer.from(requestBody).toString("base64")
-					: Buffer.from(requestBody, 0, MAX_REQUEST_BODY_BYTES).toString(
-							"base64",
-						)
+				? Buffer.from(
+						requestBody.byteLength <= MAX_REQUEST_BODY_BYTES
+							? requestBody
+							: new Uint8Array(requestBody).subarray(0, MAX_REQUEST_BODY_BYTES),
+					).toString("base64")
 				: null,
 			responseStatus: response.status,
 			responseHeaders: responseHeadersObj,
