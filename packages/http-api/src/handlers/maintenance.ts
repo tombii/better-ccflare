@@ -16,6 +16,7 @@ export function createCleanupHandler(
 			payloadMs,
 			requestMs,
 		);
+		dbOps.compact();
 		const cutoffIso = new Date(
 			Date.now() - Math.min(payloadMs, requestMs),
 		).toISOString();
