@@ -33,6 +33,7 @@ import {
 	handleProxy,
 	type ProxyContext,
 	registerRefreshClearer,
+	sendWorkerConfigUpdate,
 	startGlobalTokenHealthChecks,
 	stopGlobalTokenHealthChecks,
 	terminateUsageWorker,
@@ -674,6 +675,8 @@ export default async function startServer(options?: {
 	strategy.initialize(dbOps);
 
 	// Proxy context
+	const usageWorker = getUsageWorker();
+	sendWorkerConfigUpdate(config.getStorePayloads());
 	const proxyContext: ProxyContext = {
 		strategy,
 		dbOps,
@@ -681,7 +684,7 @@ export default async function startServer(options?: {
 		provider,
 		refreshInFlight: new Map(),
 		asyncWriter,
-		usageWorker: getUsageWorker(),
+		usageWorker,
 	};
 
 	// Register this server's refresh clearing capability
@@ -710,6 +713,9 @@ export default async function startServer(options?: {
 				strategy.initialize(dbOps);
 				proxyContext.strategy = strategy;
 			}
+		}
+		if (fieldName === "store_payloads") {
+			sendWorkerConfigUpdate(config.getStorePayloads());
 		}
 	});
 

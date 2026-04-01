@@ -256,8 +256,11 @@ export const useRetention = () => {
 export const useSetRetention = () => {
 	const queryClient = useQueryClient();
 	return useMutation({
-		mutationFn: (partial: { payloadDays?: number; requestDays?: number }) =>
-			api.setRetention(partial),
+		mutationFn: (partial: {
+			payloadDays?: number;
+			requestDays?: number;
+			storePayloads?: boolean;
+		}) => api.setRetention(partial),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ["retention"] });
 		},

@@ -1328,7 +1328,11 @@ class API extends HttpClient {
 	}
 
 	// Retention settings
-	async getRetention(): Promise<{ payloadDays: number; requestDays: number }> {
+	async getRetention(): Promise<{
+		payloadDays: number;
+		requestDays: number;
+		storePayloads: boolean;
+	}> {
 		const startTime = Date.now();
 		const url = "/api/config/retention";
 
@@ -1338,6 +1342,7 @@ class API extends HttpClient {
 			const response = await this.get<{
 				payloadDays: number;
 				requestDays: number;
+				storePayloads: boolean;
 			}>(url);
 			const duration = Date.now() - startTime;
 			this.logger.debug(`← GET ${url} - 200 (${duration}ms)`);
@@ -1355,6 +1360,7 @@ class API extends HttpClient {
 	async setRetention(partial: {
 		payloadDays?: number;
 		requestDays?: number;
+		storePayloads?: boolean;
 	}): Promise<void> {
 		const startTime = Date.now();
 		const url = "/api/config/retention";

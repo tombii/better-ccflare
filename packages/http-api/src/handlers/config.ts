@@ -118,6 +118,7 @@ export function createConfigHandlers(
 			return jsonResponse({
 				payloadDays: config.getDataRetentionDays(),
 				requestDays: config.getRequestRetentionDays(),
+				storePayloads: config.getStorePayloads(),
 			});
 		},
 
@@ -149,6 +150,15 @@ export function createConfigHandlers(
 					return errorResponse(BadRequest("Invalid 'requestDays'"));
 				}
 				config.setRequestRetentionDays(requestDays);
+				updated = true;
+			}
+			if (body.storePayloads !== undefined) {
+				if (typeof body.storePayloads !== "boolean") {
+					return errorResponse(
+						BadRequest("Invalid 'storePayloads': must be boolean"),
+					);
+				}
+				config.setStorePayloads(body.storePayloads);
 				updated = true;
 			}
 			if (!updated) {

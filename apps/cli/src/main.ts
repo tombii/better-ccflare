@@ -354,6 +354,18 @@ function displayConfigInfo(parsed: ParsedArgs, config: Config): void {
 		description: "Request metadata retention period",
 	});
 
+	configItems.push({
+		name: "Store Payloads",
+		value: config.getStorePayloads(),
+		source: process.env.STORE_PAYLOADS
+			? "Environment (STORE_PAYLOADS)"
+			: config.get("store_payloads") !== undefined
+				? "Config file"
+				: "Default",
+		description:
+			"Store request/response bodies in DB (disable to reduce DB size)",
+	});
+
 	// Logging Configuration
 	configItems.push({
 		name: "Log Level",

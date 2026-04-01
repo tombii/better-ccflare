@@ -18,7 +18,11 @@ import {
 	validateProviderPath,
 } from "./handlers";
 import { EMBEDDED_WORKER_CODE } from "./inline-worker";
-import type { ControlMessage, OutgoingWorkerMessage } from "./worker-messages";
+import type {
+	ConfigUpdateMessage,
+	ControlMessage,
+	OutgoingWorkerMessage,
+} from "./worker-messages";
 
 export type { ProxyContext } from "./handlers";
 
@@ -103,6 +107,19 @@ export function getUsageWorker(): Worker {
 		}
 	}
 	return usageWorkerInstance;
+}
+
+/**
+ * Sends a config update to the usage worker
+ */
+export function sendWorkerConfigUpdate(storePayloads: boolean): void {
+	if (!usageWorkerInstance) return;
+	const msg: ConfigUpdateMessage = { type: "config-update", storePayloads };
+	try {
+		usageWorkerInstance.postMessage(msg);
+	} catch (_error) {
+		// Worker not ready yet, ignore
+	}
 }
 
 /**

@@ -50,6 +50,7 @@ export interface ConfigData {
 	default_agent_model?: string;
 	data_retention_days?: number;
 	request_retention_days?: number;
+	store_payloads?: boolean;
 	// Database configuration
 	db_wal_mode?: boolean;
 	db_busy_timeout_ms?: number;
@@ -301,6 +302,20 @@ export class Config extends EventEmitter {
 		this.set("request_retention_days", clamped);
 	}
 
+	getStorePayloads(): boolean {
+		const fromEnv = process.env.STORE_PAYLOADS;
+		if (fromEnv !== undefined) {
+			return fromEnv !== "false" && fromEnv !== "0";
+		}
+		const fromFile = this.data.store_payloads;
+		if (typeof fromFile === "boolean") return fromFile;
+		return true; // default: store payloads
+	}
+
+	setStorePayloads(value: boolean): void {
+		this.set("store_payloads", value);
+	}
+
 	getAllSettings(): Record<string, string | number | boolean | undefined> {
 		// Include current strategy (which might come from env)
 		return {
@@ -309,6 +324,7 @@ export class Config extends EventEmitter {
 			default_agent_model: this.getDefaultAgentModel(),
 			data_retention_days: this.getDataRetentionDays(),
 			request_retention_days: this.getRequestRetentionDays(),
+			store_payloads: this.getStorePayloads(),
 		};
 	}
 

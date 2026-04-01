@@ -14,6 +14,7 @@ import {
 	CardTitle,
 } from "../ui/card";
 import { Input } from "../ui/input";
+import { Switch } from "../ui/switch";
 
 export function DataRetentionCard() {
 	const { data, isLoading } = useRetention();
@@ -109,7 +110,25 @@ export function DataRetentionCard() {
 					</Button>
 				</div>
 
-				<div className="pt-2">
+				<div className="flex items-center justify-between pt-2 pb-1">
+					<div>
+						<p className="text-sm font-medium">Store message payloads</p>
+						<p className="text-xs text-muted-foreground">
+							Stores full request/response bodies (conversation text, images) in the
+							database. Disable to reduce database size and lower memory pressure —
+							token counts, costs, and analytics are always saved regardless.
+						</p>
+					</div>
+					<Switch
+						checked={data?.storePayloads ?? true}
+						disabled={isLoading || setRetention.isPending}
+						onCheckedChange={(checked) =>
+							setRetention.mutate({ storePayloads: checked })
+						}
+					/>
+				</div>
+
+				<div className="pt-1">
 					<Button
 						variant="secondary"
 						size="sm"

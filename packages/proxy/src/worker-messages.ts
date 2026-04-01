@@ -53,11 +53,17 @@ export interface ControlMessage {
 	type: "shutdown";
 }
 
+export interface ConfigUpdateMessage {
+	type: "config-update";
+	storePayloads: boolean;
+}
+
 export type WorkerMessage =
 	| StartMessage
 	| ChunkMessage
 	| EndMessage
 	| ControlMessage
+	| ConfigUpdateMessage
 	| SummaryMessage;
 
 // Response from worker (if needed in future)

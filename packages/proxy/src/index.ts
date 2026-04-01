@@ -28,6 +28,7 @@ export {
 	getUsageWorker,
 	handleProxy,
 	type ProxyContext,
+	sendWorkerConfigUpdate,
 	terminateUsageWorker,
 } from "./proxy";
 export {

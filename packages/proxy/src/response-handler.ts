@@ -122,9 +122,10 @@ export async function forwardToClient(
 			// copy altogether.
 			requestBody: requestBody
 				? Buffer.from(
-						requestBody.byteLength <= MAX_REQUEST_BODY_BYTES
-							? requestBody
-							: new Uint8Array(requestBody).subarray(0, MAX_REQUEST_BODY_BYTES),
+						new Uint8Array(requestBody).subarray(
+							0,
+							Math.min(requestBody.byteLength, MAX_REQUEST_BODY_BYTES),
+						),
 					).toString("base64")
 				: null,
 			responseStatus: response.status,

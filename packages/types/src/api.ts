@@ -20,11 +20,13 @@ export interface AgentUpdatePayload {
 export interface RetentionGetResponse {
 	payloadDays: number;
 	requestDays: number;
+	storePayloads: boolean;
 }
 
 export interface RetentionSetRequest {
 	payloadDays?: number;
 	requestDays?: number;
+	storePayloads?: boolean;
 }
 
 export interface CleanupResponse {

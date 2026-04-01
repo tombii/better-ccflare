@@ -15,6 +15,7 @@ import { EMBEDDED_TIKTOKEN_WASM } from "./embedded-tiktoken-wasm";
 import { combineChunks } from "./stream-tee";
 import type {
 	ChunkMessage,
+	ConfigUpdateMessage,
 	EndMessage,
 	StartMessage,
 	SummaryMessage,
@@ -102,6 +103,9 @@ const MAX_BUFFER_SIZE =
 const TIMEOUT_MS = Number(
 	process.env.CF_STREAM_TIMEOUT_MS || TIME_CONSTANTS.STREAM_TIMEOUT_DEFAULT,
 );
+
+// Runtime config (can be updated via config-update message)
+let storePayloads = true;
 
 // Check if a request should be logged
 function shouldLogRequest(path: string, status: number): boolean {
@@ -678,9 +682,11 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 	freeRequestState(state);
 
 	const requestId = startMessage.requestId;
-	asyncWriter.enqueue(async () =>
-		dbOps.saveRequestPayloadRaw(requestId, payloadJson),
-	);
+	if (storePayloads) {
+		asyncWriter.enqueue(async () =>
+			dbOps.saveRequestPayloadRaw(requestId, payloadJson),
+		);
+	}
 
 	// Log if we have usage
 	if (state.usage.model && startMessage.accountId !== NO_ACCOUNT_ID) {
@@ -853,6 +859,9 @@ self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
 			break;
 		case "shutdown":
 			await handleShutdown();
+			break;
+		case "config-update":
+			storePayloads = (msg as ConfigUpdateMessage).storePayloads;
 			break;
 		default:
 			log.warn(`Unknown message type: ${(msg as { type: string }).type}`);
