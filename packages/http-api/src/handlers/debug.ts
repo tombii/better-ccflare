@@ -10,7 +10,7 @@
  */
 
 // @ts-expect-error — bun:jsc types are incomplete; generateHeapSnapshotForDebugging exists at runtime
-import { heapStats, generateHeapSnapshotForDebugging } from "bun:jsc";
+import { generateHeapSnapshotForDebugging, heapStats } from "bun:jsc";
 
 /**
  * Returns JSC heap statistics — object counts by type, heap size,
@@ -33,6 +33,10 @@ export function createHeapStatsHandler() {
 /**
  * Generates a V8-compatible .heapsnapshot file. Open in Chrome DevTools
  * (Memory tab → Load) to inspect object graph. Large — typically 50-200MB.
+ *
+ * WARNING: generateHeapSnapshotForDebugging() is synchronous and blocks the
+ * event loop for several seconds. Only use on a test/staging instance, never
+ * on a production proxy under load. Admin-only endpoint.
  *
  * Usage: curl http://localhost:8889/api/debug/snapshot > before.heapsnapshot
  *        # ... run load ...

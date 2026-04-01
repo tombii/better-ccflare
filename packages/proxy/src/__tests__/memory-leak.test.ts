@@ -8,7 +8,7 @@
  *
  * Run: bun test packages/proxy/src/__tests__/memory-leak.test.ts
  */
-import { describe, it, expect } from "bun:test";
+import { describe, expect, it } from "bun:test";
 
 describe("memory leak regression", () => {
 	// Helper: build a Claude-shaped request body of a given size
@@ -36,12 +36,11 @@ describe("memory leak regression", () => {
 		const uncappedSize = Buffer.from(largeBody).toString("base64").length;
 
 		// After fix: capped to 256KB before base64 encoding
-		const cappedSize =
+		const cappedSize = Buffer.from(
 			largeBody.byteLength <= MAX_REQUEST_BODY_BYTES
-				? Buffer.from(largeBody).toString("base64").length
-				: Buffer.from(largeBody.buffer, 0, MAX_REQUEST_BODY_BYTES).toString(
-						"base64",
-					).length;
+				? largeBody
+				: largeBody.subarray(0, MAX_REQUEST_BODY_BYTES),
+		).toString("base64").length;
 
 		// Uncapped would be ~2.7MB, capped should be ~341KB (256KB * 1.33)
 		expect(uncappedSize).toBeGreaterThan(2_000_000);
@@ -113,12 +112,10 @@ describe("memory leak regression", () => {
 		const BODY_SIZE_KB = 2048; // 2MB each (typical Claude Code conversation)
 
 		// Without cap: 15 * 2MB * 1.33 (base64) * 2 (structured clone) = ~80MB
-		const uncappedMemory =
-			CONCURRENT_REQUESTS * BODY_SIZE_KB * 1024 * 1.33 * 2;
+		const uncappedMemory = CONCURRENT_REQUESTS * BODY_SIZE_KB * 1024 * 1.33 * 2;
 
 		// With cap: 15 * 256KB * 1.33 (base64) = ~5MB
-		const cappedMemory =
-			CONCURRENT_REQUESTS * MAX_REQUEST_BODY_BYTES * 1.33;
+		const cappedMemory = CONCURRENT_REQUESTS * MAX_REQUEST_BODY_BYTES * 1.33;
 
 		expect(uncappedMemory).toBeGreaterThan(70_000_000); // ~80MB without cap
 		expect(cappedMemory).toBeLessThan(6_000_000); // ~5MB with cap
