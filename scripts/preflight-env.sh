@@ -23,7 +23,7 @@
 #
 # This script always exits 0 so systemd does not abort the service start.
 #
-# POSIX sh compatible — no bashisms.
+# POSIX sh compatible — no bash-only constructs (no process substitution, no read -d '').
 
 # Known-valid BUN_JSC_* variables as of Bun 1.x.
 # Add entries here if Bun documents new stable options.
@@ -39,15 +39,17 @@ is_allowed() {
     return 1
 }
 
-# Collect invalid BUN_JSC_* variable names using null-delimited env output.
-# This handles values containing spaces, newlines, and other special characters.
-# `env -0` prints name=value pairs separated by NUL bytes (POSIX 2008+, available
-# on Linux/macOS). We extract only the names and filter for BUN_JSC_* entries.
+# Collect invalid BUN_JSC_* variable names.
+# Prefer `env -0` (NUL-delimited) to handle values containing spaces/newlines.
+# We convert NUL bytes to newlines with `tr` so we can use POSIX `read`.
+# Falls back to plain `env` for systems without `-0` support (rare).
 _invalid_vars=""
 if env -0 >/dev/null 2>&1; then
-    # env -0 is available — safe against values with embedded newlines
-    while IFS= read -r -d '' _entry; do
-        _varname="${_entry%%=*}"
+    # env -0 available — convert NUL separators to newlines and parse.
+    # This avoids process substitution (<(...)) and bash-only `read -d ''`.
+    _tmpfile="$(mktemp)"
+    env -0 | tr '\0' '\n' > "$_tmpfile"
+    while IFS='=' read -r _varname _rest; do
         case "$_varname" in
             BUN_JSC_*)
                 if ! is_allowed "$_varname"; then
@@ -55,7 +57,8 @@ if env -0 >/dev/null 2>&1; then
                 fi
                 ;;
         esac
-    done < <(env -0)
+    done < "$_tmpfile"
+    rm -f "$_tmpfile"
 else
     # Fallback: parse env line-by-line. Handles the common case where values
     # don't contain embedded newlines (rare for BUN_JSC_* vars).
