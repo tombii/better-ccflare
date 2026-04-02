@@ -429,6 +429,19 @@ export function AccountsTab() {
 		}
 	};
 
+	const handleUpdateModelFallbacks = async (
+		accountId: string,
+		modelFallbacks: { [key: string]: string },
+	) => {
+		try {
+			await api.updateAccountModelFallbacks(accountId, modelFallbacks);
+			await loadAccounts();
+		} catch (err) {
+			setActionError(formatError(err));
+			throw err;
+		}
+	};
+
 	if (loading) {
 		return (
 			<Card>
@@ -582,6 +595,7 @@ export function AccountsTab() {
 						})
 					}
 					onUpdateModelMappings={handleUpdateModelMappings}
+					onUpdateModelFallbacks={handleUpdateModelFallbacks}
 				/>
 			)}
 		</div>

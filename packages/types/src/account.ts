@@ -105,6 +105,7 @@ export interface AccountRow {
 	custom_endpoint?: string | null;
 	model_mappings?: string | null; // JSON string for OpenAI-compatible providers
 	cross_region_mode?: string | null; // Bedrock cross-region inference mode
+	model_fallbacks?: string | null; // JSON string for model family fallback mappings
 }
 
 // Domain model - used throughout the application
@@ -133,6 +134,7 @@ export interface Account {
 	custom_endpoint: string | null;
 	model_mappings: string | null; // JSON string for OpenAI-compatible providers
 	cross_region_mode: string | null; // Bedrock cross-region inference mode
+	model_fallbacks: string | null; // JSON string for model family fallback mappings
 }
 
 // API response type - what clients receive
@@ -162,6 +164,7 @@ export interface AccountResponse {
 	usageData: FullUsageData | null; // Full usage data for Anthropic accounts
 	hasRefreshToken: boolean; // Indicates if the account has a refresh token (OAuth account)
 	crossRegionMode?: string | null; // Cross-region inference mode for Bedrock accounts
+	modelFallbacks?: { [key: string]: string } | null;
 }
 
 // UI display type - used in CLI and web dashboard
@@ -276,6 +279,7 @@ export function toAccount(row: AccountRow): Account {
 		custom_endpoint: row.custom_endpoint || null,
 		model_mappings: row.model_mappings || null,
 		cross_region_mode: row.cross_region_mode || null,
+		model_fallbacks: row.model_fallbacks || null,
 	};
 }
 
@@ -318,6 +322,16 @@ export function toAccountResponse(account: Account): AccountResponse {
 		}
 	}
 
+	// Parse model fallbacks for all providers
+	let modelFallbacks: { [key: string]: string } | null = null;
+	if (account.model_fallbacks) {
+		try {
+			modelFallbacks = JSON.parse(account.model_fallbacks);
+		} catch {
+			modelFallbacks = null;
+		}
+	}
+
 	return {
 		id: account.id,
 		name: account.name,
@@ -349,6 +363,7 @@ export function toAccountResponse(account: Account): AccountResponse {
 		usageWindow: null, // Will be filled in by API handler from cache
 		usageData: null, // Will be filled in by API handler from cache
 		hasRefreshToken: !!account.refresh_token, // OAuth accounts have refresh tokens
+		modelFallbacks,
 	};
 }
 

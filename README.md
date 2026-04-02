@@ -658,6 +658,7 @@ We recommend using one of the workarounds above until the npm bug is fixed.
 - **Universal API Format** - Use OpenAI-compatible providers with Claude API format
 - **Automatic Format Conversion** - Seamless conversion between Anthropic and OpenAI request/response formats
 - **Model Mapping** - Map Claude models (Opus, Sonnet, Haiku) to equivalent OpenAI models
+- **Model Fallbacks** - Automatically retry with a fallback model when the requested model is unavailable (e.g., fallback from Opus to Sonnet on Pro subscriptions)
 - **Streaming Support** - Full support for streaming responses from OpenAI-compatible providers
 - **API Key Authentication** - Secure API key management for OpenAI-compatible providers
 - **Cost Tracking** - Automatic cost calculation for usage monitoring and budgeting

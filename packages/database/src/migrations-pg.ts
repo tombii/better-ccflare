@@ -66,6 +66,7 @@ export async function ensureSchemaPg(adapter: BunSqlAdapter): Promise<void> {
 			custom_endpoint TEXT,
 			auto_refresh_enabled INTEGER DEFAULT 0,
 			model_mappings TEXT,
+			model_fallbacks TEXT,
 			cross_region_mode TEXT DEFAULT 'geographic'
 		)
 	`);
@@ -219,6 +220,11 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 			table: "accounts",
 			column: "model_mappings",
 			definition: "ALTER TABLE accounts ADD COLUMN model_mappings TEXT",
+		},
+		{
+			table: "accounts",
+			column: "model_fallbacks",
+			definition: "ALTER TABLE accounts ADD COLUMN model_fallbacks TEXT",
 		},
 		{
 			table: "accounts",

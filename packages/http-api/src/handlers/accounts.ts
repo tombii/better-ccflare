@@ -154,6 +154,7 @@ export function createAccountsListHandler(dbOps: DatabaseOperations) {
 			custom_endpoint: string | null;
 			model_mappings: string | null;
 			cross_region_mode: string | null;
+			model_fallbacks: string | null;
 		}>(
 			`
 				SELECT
@@ -180,6 +181,7 @@ export function createAccountsListHandler(dbOps: DatabaseOperations) {
 					custom_endpoint,
 					model_mappings,
 					cross_region_mode,
+					model_fallbacks,
 					CASE
 						WHEN expires_at > ? THEN 1
 						ELSE 0
@@ -418,6 +420,17 @@ export function createAccountsListHandler(dbOps: DatabaseOperations) {
 					}
 				}
 
+				// Parse model fallbacks for all providers
+				let modelFallbacks: { [key: string]: string } | null = null;
+				if (account.model_fallbacks) {
+					try {
+						const parsed = JSON.parse(account.model_fallbacks);
+						modelFallbacks = parsed.modelFallbacks || parsed || null;
+					} catch {
+						modelFallbacks = null;
+					}
+				}
+
 				return {
 					id: account.id,
 					name: account.name,
@@ -455,6 +468,7 @@ export function createAccountsListHandler(dbOps: DatabaseOperations) {
 					usageData: fullUsageData, // Full usage data for UI
 					hasRefreshToken: !!account.refresh_token, // OAuth accounts have refresh tokens
 					crossRegionMode: account.cross_region_mode,
+					modelFallbacks,
 				};
 			}),
 		);
@@ -2031,6 +2045,109 @@ export function createAccountModelMappingsUpdateHandler(
 				error instanceof Error
 					? error
 					: new Error("Failed to update model mappings"),
+			);
+		}
+	};
+}
+
+/**
+ * Create an account model fallbacks update handler
+ */
+export function createAccountModelFallbacksUpdateHandler(
+	dbOps: DatabaseOperations,
+) {
+	return async (req: Request, accountId: string): Promise<Response> => {
+		try {
+			const body = await req.json();
+
+			// Check if account exists
+			const db = dbOps.getAdapter();
+			const account = await db.get<{ id: string }>(
+				"SELECT id FROM accounts WHERE id = ?",
+				[accountId],
+			);
+
+			if (!account) {
+				return errorResponse(NotFound("Account not found"));
+			}
+
+			// Handle model fallbacks update (works for all providers)
+			const modelFallbacks: { [key: string]: string } = (body.modelFallbacks ||
+				{}) as { [key: string]: string };
+
+			// Validate model fallbacks
+			if (typeof modelFallbacks !== "object" || Array.isArray(modelFallbacks)) {
+				return errorResponse(BadRequest("Model fallbacks must be an object"));
+			}
+
+			// Ensure modelFallbacks is a record with string values
+			if (modelFallbacks) {
+				for (const [_key, value] of Object.entries(modelFallbacks)) {
+					if (typeof value !== "string") {
+						return errorResponse(
+							BadRequest("All model fallback values must be strings"),
+						);
+					}
+				}
+			}
+
+			// Get existing model fallbacks from the dedicated field
+			let existingModelFallbacks: { [key: string]: string } = {};
+			const result = await db.get<{ model_fallbacks: string | null }>(
+				"SELECT model_fallbacks FROM accounts WHERE id = ?",
+				[accountId],
+			);
+			const existingModelFallbacksStr = result?.model_fallbacks || null;
+
+			if (existingModelFallbacksStr) {
+				try {
+					const parsed = JSON.parse(existingModelFallbacksStr);
+					// Handle both formats: direct fallbacks or wrapped in modelFallbacks
+					existingModelFallbacks = parsed.modelFallbacks || parsed || {};
+				} catch {
+					// If parsing fails, ignore existing fallbacks
+					existingModelFallbacks = {};
+				}
+			}
+
+			// Merge new model fallbacks with existing ones
+			const mergedModelFallbacks = { ...existingModelFallbacks };
+
+			// Update or remove model fallbacks based on the input
+			for (const [modelType, modelValue] of Object.entries(modelFallbacks)) {
+				if (!modelValue || modelValue.trim() === "") {
+					// Remove the fallback if value is empty
+					delete mergedModelFallbacks[modelType];
+				} else {
+					// Update the fallback
+					mergedModelFallbacks[modelType] = modelValue.trim();
+				}
+			}
+
+			// Update the model_fallbacks field
+			const finalModelFallbacks =
+				Object.keys(mergedModelFallbacks).length > 0
+					? JSON.stringify(mergedModelFallbacks)
+					: null;
+
+			await db.run("UPDATE accounts SET model_fallbacks = ? WHERE id = ?", [
+				finalModelFallbacks,
+				accountId,
+			]);
+
+			log.info(`Updated model fallbacks for account ${accountId}`);
+
+			return jsonResponse({
+				success: true,
+				message: "Model fallbacks updated successfully",
+				modelFallbacks: mergedModelFallbacks,
+			});
+		} catch (error) {
+			log.error("Account model fallbacks update error:", error);
+			return errorResponse(
+				error instanceof Error
+					? error
+					: new Error("Failed to update model fallbacks"),
 			);
 		}
 	};

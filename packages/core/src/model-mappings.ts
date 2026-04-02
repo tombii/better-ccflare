@@ -243,6 +243,50 @@ export function createCustomEndpointData(
 }
 
 /**
+ * Parse model fallbacks from account's model_fallbacks field.
+ * Model fallbacks map model family names (opus/sonnet/haiku) to fallback model names.
+ */
+export function parseModelFallbacks(
+	modelFallbacks: string | null,
+): Record<string, string> | null {
+	if (!modelFallbacks) {
+		return null;
+	}
+
+	try {
+		return safeJsonParse<Record<string, string>>(
+			modelFallbacks,
+			"model_fallbacks",
+		);
+	} catch (error) {
+		log.warn(
+			`Failed to parse model_fallbacks JSON: ${error instanceof Error ? error.message : String(error)}`,
+		);
+		return null;
+	}
+}
+
+/**
+ * Validate model fallbacks for storage.
+ */
+export function validateAndSanitizeModelFallbacks(
+	fallbacks: unknown,
+): Record<string, string> | null {
+	if (!fallbacks) {
+		return null;
+	}
+
+	try {
+		return validateModelMappings(fallbacks, "modelFallbacks");
+	} catch (error) {
+		log.warn(
+			`Invalid model fallbacks: ${error instanceof Error ? error.message : String(error)}`,
+		);
+		return null;
+	}
+}
+
+/**
  * Validate model mappings for storage
  */
 export function validateAndSanitizeModelMappings(

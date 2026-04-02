@@ -26,6 +26,7 @@ export type ModelMappingData = {
 	endpoint?: string;
 	modelMappings?: ModelMapping;
 };
+export type ModelFallback = { [modelFamily: string]: string };
 export {
 	type IntervalConfig,
 	intervalManager,
@@ -44,7 +45,9 @@ export {
 	KNOWN_PATTERNS,
 	mapModelName,
 	parseCustomEndpointData,
+	parseModelFallbacks,
 	parseModelMappings,
+	validateAndSanitizeModelFallbacks,
 	validateAndSanitizeModelMappings,
 } from "./model-mappings";
 export {

@@ -17,7 +17,9 @@ import type {
 import { API_LIMITS, API_TIMEOUT } from "./constants";
 
 // Re-export types with dashboard-specific aliases for backward compatibility
-export type Account = AccountResponse;
+export type Account = AccountResponse & {
+	modelFallbacks?: { [key: string]: string } | null;
+};
 export type Stats = StatsWithAccounts;
 export type LogEntry = LogEvent;
 export type RequestSummary = RequestResponse;
@@ -1098,6 +1100,34 @@ class API extends HttpClient {
 		try {
 			await this.post(url, {
 				modelMappings,
+			});
+			const duration = Date.now() - startTime;
+			this.logger.debug(`← POST ${url} - 200 (${duration}ms)`);
+		} catch (error) {
+			const duration = Date.now() - startTime;
+			this.logger.error(`✗ POST ${url} - ERROR (${duration}ms)`, {
+				error: error instanceof Error ? error.message : String(error),
+				stack: error instanceof Error ? error.stack : undefined,
+			});
+			if (error instanceof HttpError) {
+				throw new Error(error.message);
+			}
+			throw error;
+		}
+	}
+
+	async updateAccountModelFallbacks(
+		accountId: string,
+		modelFallbacks: { [key: string]: string },
+	): Promise<void> {
+		const startTime = Date.now();
+		const url = `/api/accounts/${accountId}/model-fallbacks`;
+
+		this.logger.debug(`→ POST ${url}`, { modelFallbacks });
+
+		try {
+			await this.post(url, {
+				modelFallbacks,
 			});
 			const duration = Date.now() - startTime;
 			this.logger.debug(`← POST ${url} - 200 (${duration}ms)`);

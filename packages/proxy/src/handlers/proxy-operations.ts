@@ -1,4 +1,9 @@
-import { logError, ProviderError } from "@better-ccflare/core";
+import {
+	getModelFamily,
+	logError,
+	ProviderError,
+	parseModelFallbacks,
+} from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import { getProvider } from "@better-ccflare/providers";
 import type { Account, RequestMeta } from "@better-ccflare/types";
@@ -207,6 +212,52 @@ async function isInvalidThinkingSignatureError(
 }
 
 /**
+ * Checks if a response error indicates the requested model is unavailable.
+ * Covers Anthropic (not_found_error), OpenAI-compat (model_not_found),
+ * generic messages, and Bedrock (ResourceNotFoundException).
+ */
+async function isModelUnavailableError(response: Response): Promise<boolean> {
+	if (response.status !== 404 && response.status !== 400) return false;
+
+	try {
+		const clone = response.clone();
+		const contentType = response.headers.get("content-type");
+		if (!contentType?.includes("application/json")) return false;
+
+		const json = await clone.json();
+
+		// Anthropic native format
+		if (json.error?.type === "not_found_error") return true;
+
+		// OpenAI-compat format
+		if (json.error?.code === "model_not_found") return true;
+
+		// Generic: message contains "model not found" or "does not exist"
+		if (
+			json.error?.message &&
+			typeof json.error.message === "string" &&
+			(json.error.message.toLowerCase().includes("model not found") ||
+				json.error.message.toLowerCase().includes("does not exist"))
+		) {
+			return true;
+		}
+
+		// Bedrock: ResourceNotFoundException
+		if (
+			json.error?.message &&
+			typeof json.error.message === "string" &&
+			json.error.message.includes("ResourceNotFoundException")
+		) {
+			return true;
+		}
+	} catch {
+		// Ignore parse errors
+	}
+
+	return false;
+}
+
+/**
  * Handles proxy request without authentication
  * @param req - The incoming request
  * @param url - The parsed URL
@@ -390,6 +441,72 @@ export async function proxyWithAccount(
 				log.warn(
 					"Failed to filter thinking blocks or no changes made, proceeding with original error response",
 				);
+			}
+		}
+
+		// Check if the model is unavailable and we have a fallback configured
+		if (await isModelUnavailableError(rawResponse)) {
+			let requestedModel: string | null = null;
+			if (requestBodyBuffer) {
+				try {
+					const bodyText = new TextDecoder().decode(requestBodyBuffer);
+					const parsed = JSON.parse(bodyText);
+					requestedModel = parsed.model || null;
+				} catch {
+					// Ignore parse errors
+				}
+			}
+
+			if (requestedModel && account.model_fallbacks) {
+				const family = getModelFamily(requestedModel);
+				const fallbacks = parseModelFallbacks(account.model_fallbacks);
+
+				if (family && fallbacks && fallbacks[family]) {
+					const fallbackModel = fallbacks[family];
+					log.info(
+						`Model '${requestedModel}' unavailable on account ${account.name}, ` +
+							`retrying with fallback: ${fallbackModel} (family: ${family})`,
+					);
+
+					let patchedBody: ArrayBuffer | null = null;
+					if (requestBodyBuffer) {
+						try {
+							const bodyText = new TextDecoder().decode(requestBodyBuffer);
+							const body = JSON.parse(bodyText);
+							body.model = fallbackModel;
+							patchedBody = new TextEncoder().encode(
+								JSON.stringify(body),
+							).buffer;
+						} catch {
+							log.warn("Failed to patch request body with fallback model");
+						}
+					}
+
+					if (patchedBody) {
+						const retryRequestInit: RequestInit & { duplex?: "half" } = {
+							method: req.method,
+							headers,
+							body: new Uint8Array(patchedBody),
+							duplex: "half",
+						};
+
+						const retryProviderRequest = new Request(
+							targetUrl,
+							retryRequestInit,
+						);
+
+						const retryTransformedRequest = provider.transformRequestBody
+							? await provider.transformRequestBody(
+									retryProviderRequest,
+									account,
+								)
+							: retryProviderRequest;
+
+						rawResponse = isSyntheticProviderResponse(retryTransformedRequest)
+							? materializeSyntheticResponse(retryTransformedRequest)
+							: await makeProxyRequest(retryTransformedRequest);
+					}
+				}
 			}
 		}
 

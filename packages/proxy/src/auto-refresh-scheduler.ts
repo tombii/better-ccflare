@@ -249,6 +249,7 @@ export class AutoRefreshScheduler {
 				custom_endpoint: accountRow.custom_endpoint,
 				model_mappings: null,
 				cross_region_mode: null,
+				model_fallbacks: null,
 			};
 
 			// Emit request start event for analytics

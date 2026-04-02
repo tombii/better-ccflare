@@ -6,6 +6,7 @@ import {
 	createAccountAutoRefreshHandler,
 	createAccountCustomEndpointUpdateHandler,
 	createAccountForceResetRateLimitHandler,
+	createAccountModelFallbacksUpdateHandler,
 	createAccountModelMappingsUpdateHandler,
 	createAccountPauseHandler,
 	createAccountPriorityUpdateHandler,
@@ -45,8 +46,8 @@ import {
 } from "./handlers/api-keys";
 import { createConfigHandlers } from "./handlers/config";
 import {
-	createHeapStatsHandler,
 	createHeapSnapshotHandler,
+	createHeapStatsHandler,
 	createRssHandler,
 } from "./handlers/debug";
 import { createHealthHandler } from "./handlers/health";
@@ -441,6 +442,16 @@ export class APIRouter {
 				);
 				return await this.wrapHandler((req) =>
 					modelMappingsHandler(req, accountId),
+				)(req, url);
+			}
+
+			// Account model fallbacks update
+			if (path.endsWith("/model-fallbacks") && method === "POST") {
+				const modelFallbacksHandler = createAccountModelFallbacksUpdateHandler(
+					this.context.dbOps,
+				);
+				return await this.wrapHandler((req) =>
+					modelFallbacksHandler(req, accountId),
 				)(req, url);
 			}
 

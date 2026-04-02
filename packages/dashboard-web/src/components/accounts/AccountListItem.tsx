@@ -15,7 +15,6 @@ import {
 	providerShowsCreditsBalance,
 	providerShowsWeeklyUsage,
 	providerSupportsAutoFeatures,
-	providerSupportsModelMappings,
 } from "../../utils/provider-utils";
 import { OAuthTokenStatusWithBoundary } from "../OAuthTokenStatus";
 import { Button } from "../ui/button";
@@ -250,25 +249,24 @@ export function AccountListItem({
 							/>
 						</Button>
 					)}
-					{onModelMappingsChange &&
-						providerSupportsModelMappings(account.provider) && (
-							<Button
-								variant="ghost"
-								size="sm"
-								onClick={() => onModelMappingsChange(account)}
-								title={
-									account.modelMappings
-										? `Model mappings configured (${Object.keys(account.modelMappings).length} mappings)`
-										: "Configure model mappings"
-								}
-							>
-								<Hash
-									className={`h-4 w-4 ${
-										account.modelMappings ? "text-primary" : ""
-									}`}
-								/>
-							</Button>
-						)}
+					{onModelMappingsChange && (
+						<Button
+							variant="ghost"
+							size="sm"
+							onClick={() => onModelMappingsChange(account)}
+							title={
+								account.modelMappings
+									? `Model mappings configured (${Object.keys(account.modelMappings).length} mappings)`
+									: "Configure model mappings"
+							}
+						>
+							<Hash
+								className={`h-4 w-4 ${
+									account.modelMappings ? "text-primary" : ""
+								}`}
+							/>
+						</Button>
+					)}
 					{showForceReset && (
 						<Button
 							variant="outline"
