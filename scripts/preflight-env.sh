@@ -25,8 +25,6 @@
 #
 # POSIX sh compatible — no bashisms.
 
-set -e
-
 # Known-valid BUN_JSC_* variables as of Bun 1.x.
 # Add entries here if Bun documents new stable options.
 ALLOWLIST="BUN_JSC_forceRAMSize BUN_JSC_useJIT BUN_JSC_forceGCSlowPaths"
@@ -41,38 +39,48 @@ is_allowed() {
     return 1
 }
 
-# Scan environment for BUN_JSC_* variables and unset any not on the allowlist.
-# `env` output is parsed line-by-line; we split on the first '=' to get the name.
-env | while IFS='=' read -r name value; do
-    case "$name" in
-        BUN_JSC_*)
-            if ! is_allowed "$name"; then
-                echo "preflight-env: WARNING: unsetting invalid variable $name (not in allowlist)" >&2
-                echo "preflight-env: hint: use --smol flag instead of BUN_JSC_* env vars for memory tuning" >&2
-                unset "$name" 2>/dev/null || true
-            fi
-            ;;
-    esac
-done
+# Collect invalid BUN_JSC_* variable names using null-delimited env output.
+# This handles values containing spaces, newlines, and other special characters.
+# `env -0` prints name=value pairs separated by NUL bytes (POSIX 2008+, available
+# on Linux/macOS). We extract only the names and filter for BUN_JSC_* entries.
+_invalid_vars=""
+if env -0 >/dev/null 2>&1; then
+    # env -0 is available — safe against values with embedded newlines
+    while IFS= read -r -d '' _entry; do
+        _varname="${_entry%%=*}"
+        case "$_varname" in
+            BUN_JSC_*)
+                if ! is_allowed "$_varname"; then
+                    _invalid_vars="$_invalid_vars $_varname"
+                fi
+                ;;
+        esac
+    done < <(env -0)
+else
+    # Fallback: parse env line-by-line. Handles the common case where values
+    # don't contain embedded newlines (rare for BUN_JSC_* vars).
+    while IFS='=' read -r _varname _rest; do
+        case "$_varname" in
+            BUN_JSC_*)
+                if ! is_allowed "$_varname"; then
+                    _invalid_vars="$_invalid_vars $_varname"
+                fi
+                ;;
+        esac
+    done <<EOF
+$(env)
+EOF
+fi
 
-# The while-read-pipe runs in a subshell, so unset does not propagate to the
-# parent. For systemd ExecStartPre= usage this is fine because systemd
-# re-reads the environment from the unit file for ExecStart=. For interactive
-# use, source this script instead:
-#
-#   . /opt/better-ccflare/scripts/preflight-env.sh
-#   exec bun run better-ccflare --smol --serve
-#
-# When sourced, we need a non-subshell approach:
-for _env_line in $(env); do
-    _name="${_env_line%%=*}"
-    case "$_name" in
-        BUN_JSC_*)
-            if ! is_allowed "$_name"; then
-                unset "$_name" 2>/dev/null || true
-            fi
-            ;;
-    esac
+# Unset invalid variables and emit warnings.
+# This works whether the script is executed directly (ExecStartPre=) or sourced.
+# For ExecStartPre= usage, systemd re-reads the environment from the unit file
+# for ExecStart=, so invalid vars set in the unit file itself won't be unset
+# here — remove them from the unit file directly.
+for _varname in $_invalid_vars; do
+    echo "preflight-env: WARNING: unsetting invalid BUN_JSC_* variable: $_varname" >&2
+    echo "preflight-env: hint: use --smol flag instead of BUN_JSC_* env vars for memory tuning" >&2
+    unset "$_varname" 2>/dev/null || true
 done
 
 exit 0
