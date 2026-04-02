@@ -184,6 +184,10 @@ SESSION_DURATION_MS=18000000           # Session duration in milliseconds (5 hou
 RETRY_ATTEMPTS=3                       # Number of retry attempts
 RETRY_DELAY_MS=1000                   # Initial retry delay in milliseconds
 RETRY_BACKOFF=2                        # Retry backoff multiplier
+
+# Storage
+STORE_PAYLOADS=false                   # Disable storing request/response bodies (reduces DB size and memory usage)
+                                       # Token counts, costs, model, status and timing are still recorded
 ```
 
 **Security Notes**:
@@ -226,6 +230,9 @@ LOG_FORMAT=pretty
 # Database configuration
 DATA_RETENTION_DAYS=7
 REQUEST_RETENTION_DAYS=365
+
+# Storage (set to false to skip storing request/response bodies, reducing DB size and memory pressure)
+STORE_PAYLOADS=true
 ```
 
 **Usage with different deployment methods**:
@@ -280,6 +287,10 @@ docker exec -it better-ccflare better-ccflare --list
 - `sha-abc123` - Commit-specific tags
 
 See [DOCKER.md](DOCKER.md) for detailed Docker documentation.
+
+### Systemd Deployment
+
+For running better-ccflare as a native systemd service on Linux (without Docker), see the [Systemd Deployment Guide](docs/systemd.md). It covers unit file configuration, memory management with `--smol`, restart policies, and a preflight script that prevents `BUN_JSC_*` environment variable crashes.
 
 ## Configure Claude SDK
 
@@ -647,6 +658,7 @@ We recommend using one of the workarounds above until the npm bug is fixed.
 - **Universal API Format** - Use OpenAI-compatible providers with Claude API format
 - **Automatic Format Conversion** - Seamless conversion between Anthropic and OpenAI request/response formats
 - **Model Mapping** - Map Claude models (Opus, Sonnet, Haiku) to equivalent OpenAI models
+- **Model Fallbacks** - Automatically retry with a fallback model when the requested model is unavailable (e.g., fallback from Opus to Sonnet on Pro subscriptions)
 - **Streaming Support** - Full support for streaming responses from OpenAI-compatible providers
 - **API Key Authentication** - Secure API key management for OpenAI-compatible providers
 - **Cost Tracking** - Automatic cost calculation for usage monitoring and budgeting
@@ -732,7 +744,7 @@ Inspired by [snipeship/ccflare](https://github.com/snipeship/ccflare) - thanks f
 - [@bitcoin4cashqc](https://github.com/bitcoin4cashqc) - SSL/HTTPS support implementation with comprehensive documentation
 - [@anonym-uz](https://github.com/anonym-uz) - Critical auto-pause bug fix, analytics performance optimizations, request body truncation, and incremental vacuum implementation
 - [@makhweeb](https://github.com/makhweeb) - Enhanced request handling and analytics improvements
-- [@jw409](https://github.com/jw409) - Fixed OAuth account addition in WSL2 and compiled binaries by replacing unreliable prompt() with readline
+- [@jw409](https://github.com/jw409) - Fixed OAuth account addition in WSL2 and compiled binaries by replacing unreliable prompt() with readline; systemd deployment guide, BUN_JSC_* crash loop analysis, and preflight environment validator (PR #106)
 - [@materemias](https://github.com/materemias) - Testing and validation of Vertex AI provider implementation, thorough debugging of OAuth API key authentication (issue #54), requesting and validating AWS Bedrock support (issue #49), and extensive testing of new releases and features
 - [@tqtensor](https://github.com/tqtensor) - Comprehensive memory leak fix preventing OOM kills with smart chunk capping, memory monitoring, and optimized cleanup (PR #67)
 - [@lunetics](https://github.com/lunetics) - Force-reset rate limit feature allowing manual clearing of stale rate-limit locks via API, CLI, and dashboard with immediate usage polling (PR #68), OOM kill prevention with periodic data retention cleanup, 3-day default retention, and time-scoped stats queries (PR #70), model registry sync removing retired models and adding sonnet-4.6 CLI shortcut (PR #71)
