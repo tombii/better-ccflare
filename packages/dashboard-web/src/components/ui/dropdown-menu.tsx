@@ -182,7 +182,7 @@ DropdownMenuShortcut.displayName = "DropdownMenuShortcut";
 
 export {
 	DropdownMenu,
-	DropdownMenuTrigger,
 	DropdownMenuContent,
 	DropdownMenuItem,
+	DropdownMenuTrigger,
 };

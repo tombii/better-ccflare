@@ -34,6 +34,7 @@ When using glob patterns or file searches, explicitly exclude this file.
 Always run: `bun run lint && bun run typecheck && bun run format`
 
 ## Git Commits
+- **Before making any changes, run `git status` to check for pre-existing uncommitted changes.** Note which files were already modified so you can distinguish your changes from theirs throughout the session.
 - Use `git add <specific-files>` (not `git add .`) to avoid committing inline-worker.ts
 - Check `git status` before committing
 

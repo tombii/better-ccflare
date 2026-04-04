@@ -461,7 +461,7 @@ export async function proxyWithAccount(
 				const family = getModelFamily(requestedModel);
 				const fallbacks = parseModelFallbacks(account.model_fallbacks);
 
-				if (family && fallbacks && fallbacks[family]) {
+				if (family && fallbacks?.[family]) {
 					const fallbackModel = fallbacks[family];
 					log.info(
 						`Model '${requestedModel}' unavailable on account ${account.name}, ` +

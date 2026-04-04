@@ -98,7 +98,7 @@ export async function fetchNanoGPTUsageData(
 export function getRepresentativeNanoGPTUtilization(
 	usage: NanoGPTUsageData | null,
 ): number | null {
-	if (!usage || !usage.active) return null;
+	if (!usage?.active) return null;
 
 	const dailyPercent = usage.daily.percentUsed * 100; // Convert 0-1 to 0-100
 	const monthlyPercent = usage.monthly.percentUsed * 100;
@@ -113,7 +113,7 @@ export function getRepresentativeNanoGPTUtilization(
 export function getRepresentativeNanoGPTWindow(
 	usage: NanoGPTUsageData | null,
 ): string | null {
-	if (!usage || !usage.active) return null;
+	if (!usage?.active) return null;
 
 	const dailyPercent = usage.daily.percentUsed;
 	const monthlyPercent = usage.monthly.percentUsed;

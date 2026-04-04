@@ -13,11 +13,11 @@ import {
 
 // Re-export the imported types and constants
 export {
+	getDefaultEndpoint,
+	isKnownProvider,
+	PROVIDER_CONFIG,
 	PROVIDER_NAMES,
 	type ProviderName,
-	isKnownProvider,
-	getDefaultEndpoint,
-	PROVIDER_CONFIG,
 	requiresSessionDurationTracking,
 	supportsOAuth,
 	supportsUsageTracking,

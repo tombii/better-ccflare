@@ -25,7 +25,7 @@ export function ChartTooltip({
 	labelFormatter,
 	style = "default",
 }: ChartTooltipProps) {
-	if (!active || !payload || !payload.length) {
+	if (!active || !payload?.length) {
 		return null;
 	}
 

@@ -167,11 +167,14 @@ export function AccountModelMappingsDialog({
 					<div>
 						<h4 className="text-sm font-medium mb-2">Model Mappings</h4>
 						<p className="text-xs text-muted-foreground mb-3">
-							Map Anthropic model names to provider-specific models (optional, leave empty to use defaults).
+							Map Anthropic model names to provider-specific models (optional,
+							leave empty to use defaults).
 						</p>
 						<div className="grid grid-cols-3 gap-3">
 							<div className="space-y-1">
-								<Label htmlFor="opus" className="text-xs">Opus</Label>
+								<Label htmlFor="opus" className="text-xs">
+									Opus
+								</Label>
 								<Input
 									id="opus"
 									value={modelMappings.opus}
@@ -181,7 +184,9 @@ export function AccountModelMappingsDialog({
 								/>
 							</div>
 							<div className="space-y-1">
-								<Label htmlFor="sonnet" className="text-xs">Sonnet</Label>
+								<Label htmlFor="sonnet" className="text-xs">
+									Sonnet
+								</Label>
 								<Input
 									id="sonnet"
 									value={modelMappings.sonnet}
@@ -191,7 +196,9 @@ export function AccountModelMappingsDialog({
 								/>
 							</div>
 							<div className="space-y-1">
-								<Label htmlFor="haiku" className="text-xs">Haiku</Label>
+								<Label htmlFor="haiku" className="text-xs">
+									Haiku
+								</Label>
 								<Input
 									id="haiku"
 									value={modelMappings.haiku}
@@ -211,7 +218,9 @@ export function AccountModelMappingsDialog({
 						</p>
 						<div className="grid grid-cols-3 gap-3">
 							<div className="space-y-1">
-								<Label htmlFor="fallback-opus" className="text-xs">Opus →</Label>
+								<Label htmlFor="fallback-opus" className="text-xs">
+									Opus →
+								</Label>
 								<Input
 									id="fallback-opus"
 									value={modelFallbacks.opus}
@@ -223,7 +232,9 @@ export function AccountModelMappingsDialog({
 								/>
 							</div>
 							<div className="space-y-1">
-								<Label htmlFor="fallback-sonnet" className="text-xs">Sonnet →</Label>
+								<Label htmlFor="fallback-sonnet" className="text-xs">
+									Sonnet →
+								</Label>
 								<Input
 									id="fallback-sonnet"
 									value={modelFallbacks.sonnet}
@@ -235,7 +246,9 @@ export function AccountModelMappingsDialog({
 								/>
 							</div>
 							<div className="space-y-1">
-								<Label htmlFor="fallback-haiku" className="text-xs">Haiku →</Label>
+								<Label htmlFor="fallback-haiku" className="text-xs">
+									Haiku →
+								</Label>
 								<Input
 									id="fallback-haiku"
 									value={modelFallbacks.haiku}
