@@ -14,7 +14,7 @@
 		"strict": true,
 		"skipLibCheck": true,
 		"noFallthroughCasesInSwitch": true,
-		"baseUrl": ".",
+		"noUncheckedSideEffectImports": false,
 		"paths": {
 			"@/*": ["./src/*"]
 		}
