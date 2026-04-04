@@ -129,13 +129,15 @@ export function ModelTokenSpeedChart({
 				/>
 				<Tooltip
 					contentStyle={getTooltipStyles("default")}
-					formatter={(value: number, name: string) => {
+					// biome-ignore lint/suspicious/noExplicitAny: recharts v3.8 widened Formatter to include undefined
+					formatter={((value: number, name: string) => {
 						if (name === "avgSpeed") {
 							return [formatTokensPerSecond(value), "Avg Speed"];
 						}
 						return [value, name];
-					}}
-					labelFormatter={(label) => `Model: ${label}`}
+					}) as any}
+					// biome-ignore lint/suspicious/noExplicitAny: recharts v3.8 widened labelFormatter label to ReactNode
+					labelFormatter={((label: string) => `Model: ${label}`) as any}
 				/>
 				<Bar dataKey="avgSpeed" name="Average Speed">
 					{chartData.map((entry) => (

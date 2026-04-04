@@ -98,8 +98,10 @@ export function BaseLineChart({
 					/>
 					<Tooltip
 						contentStyle={tooltipStyles}
-						formatter={tooltipFormatter}
-						labelFormatter={tooltipLabelFormatter}
+						// biome-ignore lint/suspicious/noExplicitAny: recharts v3.8 widened Formatter to include undefined
+						formatter={tooltipFormatter as any}
+						// biome-ignore lint/suspicious/noExplicitAny: recharts v3.8 widened labelFormatter label to ReactNode
+						labelFormatter={tooltipLabelFormatter as any}
 					/>
 					{showLegend && <Legend height={legendHeight} />}
 					{lineConfigs.map((lineConfig, _index) => (

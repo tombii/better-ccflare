@@ -120,7 +120,8 @@ export function BaseScatterChart({
 								: undefined
 						}
 					/>
-					<Tooltip contentStyle={tooltipStyles} formatter={tooltipFormatter} />
+					{/* biome-ignore lint/suspicious/noExplicitAny: recharts v3.8 widened Formatter to include undefined */}
+					<Tooltip contentStyle={tooltipStyles} formatter={tooltipFormatter as any} />
 					<Scatter
 						name="Data"
 						data={data}

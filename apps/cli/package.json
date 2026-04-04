@@ -34,7 +34,7 @@
 		"@types/node": "^20.0.0"
 	},
 	"dependencies": {
-		"dotenv": "^17.2.3"
+		"dotenv": "^17.4.0"
 	},
 	"files": [
 		"dist/better-ccflare",

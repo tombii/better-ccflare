@@ -16,6 +16,6 @@
 		"@better-ccflare/config": "workspace:*",
 		"@better-ccflare/providers": "workspace:*",
 		"@better-ccflare/oauth-flow": "workspace:*",
-		"open": "^10.0.0"
+		"open": "^11.0.0"
 	}
 }

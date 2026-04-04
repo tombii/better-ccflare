@@ -674,11 +674,12 @@ export function CumulativeGrowthChart({ data }: CumulativeGrowthChartProps) {
 								borderRadius: "8px",
 								backdropFilter: "blur(8px)",
 							}}
-							formatter={(value: number | string, name: string) => {
+							// biome-ignore lint/suspicious/noExplicitAny: recharts v3.8 widened Formatter to include undefined
+							formatter={((value: number | string, name: string) => {
 								if (name === "Total Cost")
 									return [formatCost(Number(value)), "Total Cost"];
 								return [formatTokens(value as number), "Total Tokens"];
-							}}
+							}) as any}
 						/>
 						<Legend
 							verticalAlign="top"
