@@ -8,6 +8,7 @@ import type { RateLimitInfo, TokenRefreshResult } from "../../types";
 // Hard rate limit statuses that should block account usage
 const HARD_LIMIT_STATUSES = new Set([
 	"rate_limited",
+	"rejected",
 	"blocked",
 	"queueing_hard",
 	"payment_required",
