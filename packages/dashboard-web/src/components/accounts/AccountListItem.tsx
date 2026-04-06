@@ -59,6 +59,7 @@ export function AccountListItem({
 	const HARD_LIMIT_PREFIXES = [
 		"rate_limited",
 		"rejected",
+		"allowed_warning",
 		"blocked",
 		"queueing_hard",
 		"payment_required",
