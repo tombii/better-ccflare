@@ -461,6 +461,7 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		timestamp?: number,
 		apiKeyId?: string,
 		apiKeyName?: string,
+		project?: string | null,
 	): Promise<void> {
 		await withDatabaseRetry(
 			() =>
@@ -473,6 +474,7 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 					timestamp,
 					apiKeyId,
 					apiKeyName,
+					project,
 				),
 			this.retryConfig,
 			"saveRequestMeta",
@@ -493,6 +495,7 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		agentUsed?: string,
 		apiKeyId?: string,
 		apiKeyName?: string,
+		project?: string | null,
 	): Promise<void> {
 		await withDatabaseRetry(
 			() =>
@@ -510,6 +513,7 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 					agentUsed,
 					apiKeyId,
 					apiKeyName,
+					project,
 				}),
 			this.retryConfig,
 			"saveRequest",

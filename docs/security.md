@@ -377,10 +377,35 @@ if (isStream && response.body) {
 
 ### Storage Security Considerations
 
-1. **Base64 Encoding**: Request/response bodies are Base64 encoded but not encrypted
-2. **Database File Access**: SQLite database file can be read by any process with file system access
-3. **No Data Sanitization**: Sensitive patterns (API keys, passwords, PII) are not redacted
-4. **Unlimited Retention**: No automatic cleanup of old request payloads
+1. **Base64 Encoding**: Request/response bodies are Base64 encoded; **optional AES-256-GCM encryption at rest is available** via the `PAYLOAD_ENCRYPTION_KEY` environment variable (see [Payload Encryption at Rest](#payload-encryption-at-rest) below)
+2. **Auth Header Stripping**: `authorization`, `x-api-key`, and `cookie` headers are stripped from persisted request payloads (`sanitizeRequestHeaders` in `packages/http-common/src/headers.ts`) so analytics rows never contain client credentials
+3. **Database File Access**: SQLite database file can be read by any process with file system access — encryption at rest mitigates this when enabled
+4. **No Body-Content Sanitization**: Sensitive patterns inside request/response **bodies** (API keys, passwords, PII) are not redacted
+5. **Unlimited Retention**: No automatic cleanup of old request payloads (configurable via `DATA_RETENTION_DAYS`)
+
+### Payload Encryption at Rest
+
+When `PAYLOAD_ENCRYPTION_KEY` is set to a 64-character hex string (32 bytes / AES-256), every payload row is encrypted with AES-256-GCM before being written to `request_payloads.json`.
+
+**Format**: `enc:` + base64(iv ‖ ciphertext ‖ authTag), where the 12-byte IV is generated per-encryption with `crypto.getRandomValues`.
+
+**Properties**:
+- **Authenticated**: GCM's auth tag detects tampering — wrong-key or modified-ciphertext reads throw rather than returning garbage
+- **Backward compatible**: Pre-encryption plaintext rows (no `enc:` prefix) pass through readers untouched
+- **Per-row IV**: Identical plaintexts produce different ciphertexts
+- **Loud failures**: Decrypting an encrypted row without a key configured throws (operator must notice misconfiguration)
+- **Bun worker safe**: `encryptPayload`/`decryptPayload` self-initialize, so workers (which have isolated module scopes) cannot accidentally write plaintext
+
+**Key management**:
+- Generate with `openssl rand -hex 32`
+- Back up the key alongside the database — losing it makes encrypted rows unreadable
+- Rotation requires a re-encrypt migration (not yet built)
+- The key is read from `process.env.PAYLOAD_ENCRYPTION_KEY` once per process and once per Bun worker
+
+**Threat model coverage**:
+- ✅ Stolen DB file (laptop, backup, container layer): payloads unreadable without the key
+- ✅ Read access to the SQLite file by another local user: same
+- ❌ Compromised process: the key is in process memory; encryption-at-rest is not a defense against memory dumps
 
 ### PII Considerations
 

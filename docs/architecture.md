@@ -447,11 +447,13 @@ erDiagram
         integer cache_creation_input_tokens
         real cost_usd
         text agent_used
+        text project
     }
     
     request_payloads {
         text id PK
         text json
+        integer timestamp
     }
     
     agent_preferences {

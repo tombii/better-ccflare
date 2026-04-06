@@ -96,7 +96,8 @@ export async function ensureSchemaPg(adapter: BunSqlAdapter): Promise<void> {
 			output_tokens INTEGER DEFAULT 0,
 			agent_used TEXT,
 			api_key_id TEXT,
-			api_key_name TEXT
+			api_key_name TEXT,
+			project TEXT
 		)
 	`);
 
@@ -247,6 +248,11 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 			column: "role",
 			definition:
 				"ALTER TABLE api_keys ADD COLUMN role TEXT NOT NULL DEFAULT 'api-only'",
+		},
+		{
+			table: "requests",
+			column: "project",
+			definition: "ALTER TABLE requests ADD COLUMN project TEXT",
 		},
 	];
 

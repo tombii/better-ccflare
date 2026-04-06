@@ -13,6 +13,12 @@ export { DatabaseFactory } from "./factory";
 export { migrateFromCcflare } from "./migrate-from-ccflare";
 export { ensureSchema, runMigrations } from "./migrations";
 export { getLegacyDbPath, resolveDbPath } from "./paths";
+// Public encryption API — only init/status helpers are exported.
+// `encryptPayload`/`decryptPayload` are internal to the database package.
+export {
+	initPayloadEncryption,
+	isEncryptionEnabled,
+} from "./payload-encryption";
 export { analyzeIndexUsage } from "./performance-indexes";
 export type {
 	ModelTranslation,
