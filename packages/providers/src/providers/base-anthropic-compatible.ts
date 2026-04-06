@@ -35,6 +35,7 @@ const DEFAULT_CONFIG: AnthropicCompatibleConfig = {
 // Hard rate limit statuses (similar to Anthropic)
 const HARD_LIMIT_STATUSES = new Set([
 	"rate_limited",
+	"rejected",
 	"blocked",
 	"queueing_hard",
 	"payment_required",

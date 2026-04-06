@@ -58,6 +58,7 @@ export function AccountListItem({
 	// like "allowed_warning" / "queueing_soft" mean the account is still usable.
 	const HARD_LIMIT_PREFIXES = [
 		"rate_limited",
+		"rejected",
 		"blocked",
 		"queueing_hard",
 		"payment_required",
