@@ -32,6 +32,7 @@ import {
 	getValidAccessToken,
 	handleProxy,
 	type ProxyContext,
+	registerPollingRestarter,
 	registerRefreshClearer,
 	startGlobalTokenHealthChecks,
 	stopGlobalTokenHealthChecks,
@@ -264,7 +265,6 @@ function startUsagePollingWithRefresh(
 	startupDelayMs: number = 0,
 ) {
 	const logger = new Logger("UsagePolling");
-	const MAX_RETRY_ATTEMPTS = 10;
 	let retryCount = 0;
 
 	// Initial polling with token refresh
@@ -383,17 +383,9 @@ function startUsagePollingWithRefresh(
 				usagePollingRetryTimeouts.delete(account.id);
 			}
 
-			// Check if we've exceeded max retry attempts
+			// Retry with exponential backoff (5 min, 10 min, 20 min, ...) capped at 1 hour.
+			// Never stop retrying — token may become valid again after re-authentication.
 			retryCount++;
-			if (retryCount >= MAX_RETRY_ATTEMPTS) {
-				logger.error(
-					`Max retry attempts (${MAX_RETRY_ATTEMPTS}) reached for account ${account.name}. Please check the account configuration and try restarting the server after resolving issues.`,
-				);
-				return;
-			}
-
-			// Don't restore paused state on error - let the user control pause/resume via API
-			// Retry with exponential backoff (5 min, 10 min, 20 min, ...)
 			const baseDelayMs = 5 * 60 * 1000; // 5 minutes
 			const delayMs = Math.min(
 				baseDelayMs * 2 ** (retryCount - 1),
@@ -690,6 +682,37 @@ export default async function startServer(options?: {
 		// Clear refresh cache for this account in this server's context
 		proxyContext.refreshInFlight.delete(accountId);
 		log.info(`Cleared refresh cache for account ${accountId} on ${serverId}`);
+	});
+
+	// Register this server's usage polling restart capability
+	registerPollingRestarter(serverId, async (accountId: string) => {
+		const account = dbOps.getAllAccounts().find((a) => a.id === accountId);
+		if (!account) {
+			log.warn(
+				`Cannot restart usage polling: account ${accountId} not found on ${serverId}`,
+			);
+			return false;
+		}
+		if (account.provider !== "anthropic") {
+			log.warn(
+				`Cannot restart usage polling: account ${account.name} is not an Anthropic OAuth account`,
+			);
+			return false;
+		}
+		if (!account.access_token && !account.refresh_token) {
+			log.warn(
+				`Cannot restart usage polling: account ${account.name} has no tokens`,
+			);
+			return false;
+		}
+		log.info(
+			`Restarting usage polling for account ${account.name} on ${serverId}`,
+		);
+		// Stop existing polling first (clears stale state)
+		usageCache.stopPolling(accountId);
+		// Restart with fresh token refresh capability
+		startUsagePollingWithRefresh(account, proxyContext);
+		return true;
 	});
 
 	// Initialize auto-refresh scheduler (now that proxyContext is available)

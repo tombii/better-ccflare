@@ -30,7 +30,10 @@ import {
 	type UsageData,
 	usageCache,
 } from "@better-ccflare/providers";
-import { clearAccountRefreshCache } from "@better-ccflare/proxy";
+import {
+	clearAccountRefreshCache,
+	restartUsagePollingForAccount,
+} from "@better-ccflare/proxy";
 import type { FullUsageData } from "@better-ccflare/types";
 import type { AccountResponse } from "../types";
 
@@ -2868,6 +2871,75 @@ export function createOpenRouterAccountAddHandler(dbOps: DatabaseOperations) {
 				error instanceof Error
 					? error
 					: new Error("Failed to create OpenRouter account"),
+			);
+		}
+	};
+}
+
+/**
+ * Create a handler that forces an immediate usage data refresh for an account.
+ * For Anthropic OAuth accounts: clears the refresh cache, restarts usage polling
+ * (which will refresh the token if expired), and returns the updated usage data.
+ */
+export function createAccountRefreshUsageHandler(dbOps: DatabaseOperations) {
+	return async (_req: Request, accountId: string): Promise<Response> => {
+		try {
+			const db = dbOps.getAdapter();
+			const account = await db.get<{
+				id: string;
+				name: string;
+				provider: string;
+				access_token: string | null;
+				refresh_token: string | null;
+			}>(
+				"SELECT id, name, provider, access_token, refresh_token FROM accounts WHERE id = ?",
+				[accountId],
+			);
+
+			if (!account) {
+				return errorResponse(NotFound("Account not found"));
+			}
+
+			if (account.provider !== "anthropic") {
+				return errorResponse(
+					BadRequest(
+						"Usage refresh is only available for Anthropic OAuth accounts",
+					),
+				);
+			}
+
+			if (!account.access_token && !account.refresh_token) {
+				return errorResponse(
+					BadRequest(
+						`Account '${account.name}' has no tokens - please re-authenticate`,
+					),
+				);
+			}
+
+			// Clear stale refresh cache so a fresh token refresh attempt is made
+			clearAccountRefreshCache(accountId);
+
+			// Restart usage polling - this will trigger a token refresh if expired
+			// and then immediately fetch fresh usage data
+			const pollingRestarted = await restartUsagePollingForAccount(accountId);
+
+			log.info(
+				`Usage refresh requested for account '${account.name}' (polling restarted: ${pollingRestarted})`,
+			);
+
+			return jsonResponse({
+				success: true,
+				message: pollingRestarted
+					? `Usage polling restarted for account '${account.name}'. Fresh usage data will appear within 5-10 seconds.`
+					: `Usage cache cleared for account '${account.name}'. Note: server-side polling could not be restarted - usage data may not update until a request is proxied.`,
+				pollingRestarted,
+			});
+		} catch (error) {
+			log.error("Account refresh usage error:", error);
+			return errorResponse(
+				error instanceof Error
+					? error
+					: new Error("Failed to refresh usage data"),
 			);
 		}
 	};
