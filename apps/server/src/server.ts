@@ -686,7 +686,9 @@ export default async function startServer(options?: {
 
 	// Register this server's usage polling restart capability
 	registerPollingRestarter(serverId, async (accountId: string) => {
-		const account = dbOps.getAllAccounts().find((a) => a.id === accountId);
+		const account = (await dbOps.getAllAccounts()).find(
+			(a) => a.id === accountId,
+		);
 		if (!account) {
 			log.warn(
 				`Cannot restart usage polling: account ${accountId} not found on ${serverId}`,
