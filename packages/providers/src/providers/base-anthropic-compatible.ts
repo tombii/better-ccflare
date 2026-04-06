@@ -35,6 +35,8 @@ const DEFAULT_CONFIG: AnthropicCompatibleConfig = {
 // Hard rate limit statuses (similar to Anthropic)
 const HARD_LIMIT_STATUSES = new Set([
 	"rate_limited",
+	"rejected",
+	"allowed_warning", // Base quota exhausted; extra usage is active — switch accounts rather than burn overage credits
 	"blocked",
 	"queueing_hard",
 	"payment_required",

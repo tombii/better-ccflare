@@ -10,6 +10,7 @@ import {
 	Trash2,
 	Zap,
 } from "lucide-react";
+import { useState } from "react";
 import type { Account } from "../../api";
 import {
 	providerShowsCreditsBalance,
@@ -27,6 +28,7 @@ interface AccountListItemProps {
 	isActive?: boolean;
 	onPauseToggle: (account: Account) => void;
 	onForceResetRateLimit: (account: Account) => void;
+	onRefreshUsage: (account: Account) => Promise<void>;
 	onRemove: (name: string) => void;
 	onRename: (account: Account) => void;
 	onPriorityChange: (account: Account) => void;
@@ -41,6 +43,7 @@ export function AccountListItem({
 	isActive = false,
 	onPauseToggle,
 	onForceResetRateLimit,
+	onRefreshUsage,
 	onRemove,
 	onRename,
 	onPriorityChange,
@@ -49,11 +52,14 @@ export function AccountListItem({
 	onCustomEndpointChange,
 	onModelMappingsChange,
 }: AccountListItemProps) {
+	const [isRefreshingUsage, setIsRefreshingUsage] = useState(false);
 	const presenter = new AccountPresenter(account);
 	// Only hard-limit statuses mean the account is actually blocked; soft warnings
 	// like "allowed_warning" / "queueing_soft" mean the account is still usable.
 	const HARD_LIMIT_PREFIXES = [
 		"rate_limited",
+		"rejected",
+		"allowed_warning",
 		"blocked",
 		"queueing_hard",
 		"payment_required",
@@ -269,6 +275,27 @@ export function AccountListItem({
 								/>
 							</Button>
 						)}
+					{account.provider === "anthropic" && (
+						<Button
+							variant="ghost"
+							size="sm"
+							className="h-8 gap-1 text-xs"
+							disabled={isRefreshingUsage}
+							onClick={async () => {
+								setIsRefreshingUsage(true);
+								try {
+									await onRefreshUsage(account);
+								} finally {
+									setIsRefreshingUsage(false);
+								}
+							}}
+							title="Refresh usage data (restarts usage polling and refreshes token if expired)"
+						>
+							<RefreshCw
+								className={`h-3.5 w-3.5 ${isRefreshingUsage ? "animate-spin" : ""}`}
+							/>
+						</Button>
+					)}
 					{showForceReset && (
 						<Button
 							variant="outline"

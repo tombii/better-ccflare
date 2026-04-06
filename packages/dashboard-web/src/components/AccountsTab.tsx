@@ -357,6 +357,18 @@ export function AccountsTab() {
 		}
 	};
 
+	const handleRefreshUsage = async (account: Account) => {
+		try {
+			await api.refreshUsage(account.id);
+			// Wait briefly then reload so fresh usage data has time to arrive
+			await new Promise((resolve) => setTimeout(resolve, 3000));
+			await loadAccounts();
+			setActionError(null);
+		} catch (err) {
+			setActionError(formatError(err));
+		}
+	};
+
 	const handlePriorityChange = (account: Account) => {
 		setPriorityDialog({ isOpen: true, account });
 	};
@@ -497,18 +509,19 @@ export function AccountsTab() {
 						/>
 					)}
 
-					<AccountList
-						accounts={accounts}
-						onPauseToggle={handlePauseToggle}
-						onForceResetRateLimit={handleForceResetRateLimit}
-						onRemove={handleRemoveAccount}
-						onRename={handleRename}
-						onPriorityChange={handlePriorityChange}
-						onAutoFallbackToggle={handleAutoFallbackToggle}
-						onAutoRefreshToggle={handleAutoRefreshToggle}
-						onCustomEndpointChange={handleCustomEndpointChange}
-						onModelMappingsChange={handleModelMappingsChange}
-					/>
+				<AccountList
+					accounts={accounts}
+					onPauseToggle={handlePauseToggle}
+					onForceResetRateLimit={handleForceResetRateLimit}
+					onRefreshUsage={handleRefreshUsage}
+					onRemove={handleRemoveAccount}
+					onRename={handleRename}
+					onPriorityChange={handlePriorityChange}
+					onAutoFallbackToggle={handleAutoFallbackToggle}
+					onAutoRefreshToggle={handleAutoRefreshToggle}
+					onCustomEndpointChange={handleCustomEndpointChange}
+					onModelMappingsChange={handleModelMappingsChange}
+				/>
 				</CardContent>
 			</Card>
 
