@@ -9,6 +9,7 @@ import {
 	createAccountModelMappingsUpdateHandler,
 	createAccountPauseHandler,
 	createAccountPriorityUpdateHandler,
+	createAccountRefreshUsageHandler,
 	createAccountReloadHandler,
 	createAccountRemoveHandler,
 	createAccountRenameHandler,
@@ -367,6 +368,16 @@ export class APIRouter {
 					createAccountForceResetRateLimitHandler(this.context.dbOps);
 				return await this.wrapHandler((req) =>
 					forceResetRateLimitHandler(req, accountId),
+				)(req, url);
+			}
+
+			// Account refresh usage - force restart usage polling and token refresh
+			if (path.endsWith("/refresh-usage") && method === "POST") {
+				const refreshUsageHandler = createAccountRefreshUsageHandler(
+					this.context.dbOps,
+				);
+				return await this.wrapHandler((req) =>
+					refreshUsageHandler(req, accountId),
 				)(req, url);
 			}
 
