@@ -306,24 +306,44 @@ export class AnthropicProvider extends BaseProvider {
 		const encoder = new TextEncoder();
 		const decoder = new TextDecoder();
 
+		// stopReasonMap defined once outside the loop for performance
+		const stopReasonMap: Record<string, string> = {
+			end_turn: "stop",
+			max_tokens: "length",
+			stop_sequence: "stop",
+			tool_use: "tool_calls",
+		};
+
 		const stream = new ReadableStream({
 			async start(controller) {
+				// lineBuffer carries incomplete lines across chunk boundaries
+				let lineBuffer = "";
 				try {
 					while (true) {
 						const { done, value } = await reader.read();
-						if (done) break;
+						if (done) {
+							// Flush any remaining buffered content
+							if (lineBuffer) {
+								controller.enqueue(encoder.encode(lineBuffer));
+							}
+							break;
+						}
 
-						const chunk = decoder.decode(value, { stream: true });
-						const lines = chunk.split("\n");
+						// Accumulate decoded bytes into lineBuffer, split on newlines
+						lineBuffer += decoder.decode(value, { stream: true });
+						const lines = lineBuffer.split("\n");
+						// Last element may be an incomplete line — keep it in the buffer
+						lineBuffer = lines.pop() ?? "";
 
 						for (const line of lines) {
-							// Pass through non-data lines unchanged
-							if (!line.startsWith("data: ")) {
+							// Pass through non-data lines (empty lines, event:, id:, comment:)
+							// SSE allows both "data:" and "data: " prefixes
+							if (!line.startsWith("data:")) {
 								controller.enqueue(encoder.encode(line + "\n"));
 								continue;
 							}
 
-							const data = line.slice(6).trim();
+							const data = line.replace(/^data:\s?/, "");
 
 							// Pass through [DONE] marker
 							if (data === "[DONE]") {
@@ -336,20 +356,15 @@ export class AnthropicProvider extends BaseProvider {
 
 								// Map Anthropic stop_reason -> OpenAI finish_reason on message_delta
 								if (event.type === "message_delta" && event.delta?.stop_reason) {
-									const stopReasonMap: Record<string, string> = {
-										end_turn: "stop",
-										max_tokens: "length",
-										stop_sequence: "stop",
-										tool_use: "tool_calls",
-									};
 									event.finish_reason =
-										stopReasonMap[event.delta.stop_reason] || "stop";
+										stopReasonMap[event.delta.stop_reason] ?? "stop";
 								}
 
-								const transformed = `data: ${JSON.stringify(event)}\n`;
-								controller.enqueue(encoder.encode(transformed));
+								controller.enqueue(
+									encoder.encode(`data: ${JSON.stringify(event)}\n`),
+								);
 							} catch {
-								// If not JSON, pass through unchanged
+								// Non-JSON data line — pass through unchanged
 								controller.enqueue(encoder.encode(line + "\n"));
 							}
 						}
@@ -357,8 +372,16 @@ export class AnthropicProvider extends BaseProvider {
 				} catch (error) {
 					controller.error(error);
 				} finally {
-					controller.close();
+					// Guard close() — stream may already be errored
+					try {
+						controller.close();
+					} catch {
+						// ignore: stream is already in errored state
+					}
 				}
+			},
+			cancel(reason) {
+				reader.cancel(reason);
 			},
 		});
 
