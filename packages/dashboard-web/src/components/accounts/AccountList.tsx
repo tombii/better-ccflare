@@ -5,6 +5,7 @@ interface AccountListProps {
 	accounts: Account[] | undefined;
 	onPauseToggle: (account: Account) => void;
 	onForceResetRateLimit: (account: Account) => void;
+	onRefreshUsage: (account: Account) => Promise<void>;
 	onRemove: (name: string) => void;
 	onRename: (account: Account) => void;
 	onPriorityChange: (account: Account) => void;
@@ -18,6 +19,7 @@ export function AccountList({
 	accounts,
 	onPauseToggle,
 	onForceResetRateLimit,
+	onRefreshUsage,
 	onRemove,
 	onRename,
 	onPriorityChange,
@@ -56,6 +58,7 @@ export function AccountList({
 					isActive={account.id === mostRecentAccountId}
 					onPauseToggle={onPauseToggle}
 					onForceResetRateLimit={onForceResetRateLimit}
+					onRefreshUsage={onRefreshUsage}
 					onRemove={onRemove}
 					onRename={onRename}
 					onPriorityChange={onPriorityChange}

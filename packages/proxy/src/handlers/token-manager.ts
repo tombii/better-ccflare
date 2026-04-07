@@ -297,6 +297,50 @@ export async function refreshAccessTokenSafe(
 // Global registry for account refresh clearing functions
 const refreshClearers: Map<string, (accountId: string) => void> = new Map();
 
+// Global registry for usage polling restart functions
+const pollingRestarters: Map<
+	string,
+	(accountId: string) => Promise<boolean>
+> = new Map();
+
+/**
+ * Register a function to restart usage polling for a specific account.
+ * Used by the server to expose its polling restart capability to HTTP handlers.
+ */
+export function registerPollingRestarter(
+	serverId: string,
+	restarter: (accountId: string) => Promise<boolean>,
+): void {
+	pollingRestarters.set(serverId, restarter);
+}
+
+/**
+ * Restart usage polling for an account across all registered servers.
+ * Returns true if at least one server successfully restarted polling.
+ */
+export async function restartUsagePollingForAccount(
+	accountId: string,
+): Promise<boolean> {
+	let anySuccess = false;
+	for (const [serverId, restarter] of pollingRestarters) {
+		try {
+			const ok = await restarter(accountId);
+			if (ok) {
+				anySuccess = true;
+				log.info(
+					`Restarted usage polling for account ${accountId} on server ${serverId}`,
+				);
+			}
+		} catch (error) {
+			log.error(
+				`Failed to restart usage polling for account ${accountId} on server ${serverId}:`,
+				error,
+			);
+		}
+	}
+	return anySuccess;
+}
+
 /**
  * Register a function to clear refresh cache for a specific account
  * Used by the server to register its refresh clearing capability

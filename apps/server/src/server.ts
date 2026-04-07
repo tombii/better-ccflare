@@ -36,6 +36,7 @@ import {
 	getValidAccessToken,
 	handleProxy,
 	type ProxyContext,
+	registerPollingRestarter,
 	registerRefreshClearer,
 	sendWorkerConfigUpdate,
 	startGlobalTokenHealthChecks,
@@ -704,6 +705,35 @@ export default async function startServer(options?: {
 		// Clear refresh cache for this account in this server's context
 		proxyContext.refreshInFlight.delete(accountId);
 		log.info(`Cleared refresh cache for account ${accountId} on ${serverId}`);
+	});
+
+	// Register this server's usage polling restart capability
+	registerPollingRestarter(serverId, async (accountId: string) => {
+		const account = await dbOps.getAccount(accountId);
+		if (!account) {
+			log.warn(
+				`Cannot restart usage polling: account ${accountId} not found on ${serverId}`,
+			);
+			return false;
+		}
+		if (account.provider !== "anthropic") {
+			log.warn(
+				`Cannot restart usage polling: account ${account.name} is not an Anthropic OAuth account`,
+			);
+			return false;
+		}
+		if (!account.access_token && !account.refresh_token) {
+			log.warn(
+				`Cannot restart usage polling: account ${account.name} has no tokens`,
+			);
+			return false;
+		}
+		log.info(
+			`Restarting usage polling for account ${account.name} on ${serverId}`,
+		);
+		usageCache.stopPolling(accountId);
+		startUsagePollingWithRefresh(account, proxyContext);
+		return true;
 	});
 
 	// Initialize auto-refresh scheduler (now that proxyContext is available)

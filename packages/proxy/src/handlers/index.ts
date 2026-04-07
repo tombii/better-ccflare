@@ -28,5 +28,7 @@ export {
 export {
 	clearAccountRefreshCache,
 	getValidAccessToken,
+	registerPollingRestarter,
 	registerRefreshClearer,
+	restartUsagePollingForAccount,
 } from "./token-manager";

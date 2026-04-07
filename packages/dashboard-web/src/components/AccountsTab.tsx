@@ -357,6 +357,18 @@ export function AccountsTab() {
 		}
 	};
 
+	const handleRefreshUsage = async (account: Account) => {
+		try {
+			await api.refreshUsage(account.id);
+			// Wait briefly then reload so fresh usage data has time to arrive
+			await new Promise((resolve) => setTimeout(resolve, 5000));
+			await loadAccounts();
+			setActionError(null);
+		} catch (err) {
+			setActionError(formatError(err));
+		}
+	};
+
 	const handlePriorityChange = (account: Account) => {
 		setPriorityDialog({ isOpen: true, account });
 	};
@@ -501,6 +513,7 @@ export function AccountsTab() {
 						accounts={accounts}
 						onPauseToggle={handlePauseToggle}
 						onForceResetRateLimit={handleForceResetRateLimit}
+						onRefreshUsage={handleRefreshUsage}
 						onRemove={handleRemoveAccount}
 						onRename={handleRename}
 						onPriorityChange={handlePriorityChange}
