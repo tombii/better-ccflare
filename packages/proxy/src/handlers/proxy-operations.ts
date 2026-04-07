@@ -456,8 +456,9 @@ export async function proxyWithAccount(
 			}
 		}
 
-		// Check if the model is unavailable and we have a fallback configured
+		// Check if the model is unavailable/rate-limited and we have a fallback configured
 		if (await isModelUnavailableError(rawResponse)) {
+			const is429 = rawResponse.status === 429;
 			let requestedModel: string | null = null;
 			if (requestBodyBuffer) {
 				try {
@@ -469,6 +470,7 @@ export async function proxyWithAccount(
 				}
 			}
 
+			let triedFallback = false;
 			if (requestedModel && account.model_fallbacks) {
 				const family = getModelFamily(requestedModel);
 				const fallbacks = parseModelFallbacks(account.model_fallbacks);
@@ -495,6 +497,7 @@ export async function proxyWithAccount(
 					}
 
 					if (patchedBody) {
+						triedFallback = true;
 						const retryRequestInit: RequestInit & { duplex?: "half" } = {
 							method: req.method,
 							headers,
@@ -527,6 +530,16 @@ export async function proxyWithAccount(
 						}
 					}
 				}
+			}
+
+			// For 429s with no fallback (or no matching family), escalate to next account
+			// rather than returning the error to the client. OpenAI-compatible providers
+			// never set isRateLimited:true so we must handle escalation here.
+			if (is429 && !triedFallback) {
+				log.warn(
+					`Model rate-limited (429) on account ${account.name} with no applicable fallback, failing over to next account`,
+				);
+				return null;
 			}
 		}
 
