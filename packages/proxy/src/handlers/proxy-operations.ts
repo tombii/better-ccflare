@@ -396,6 +396,13 @@ export async function proxyWithAccount(
 		// Process response (transform format, sanitize headers, etc.) using account-specific provider
 		const response = await provider.processResponse(rawResponse, account);
 
+		if (response.status === 401) {
+			log.warn(
+				`Authentication failed for account ${account.name}, trying next account`,
+			);
+			return null;
+		}
+
 		// Check for rate limit using account-specific provider
 		const isRateLimited = await processProxyResponse(
 			response,
