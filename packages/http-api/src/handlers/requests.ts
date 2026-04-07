@@ -169,8 +169,8 @@ export function createRequestsDetailHandler(dbOps: DatabaseOperations) {
  * This endpoint supports the performance optimization that eliminates JSON parsing bottleneck
  */
 export function createRequestPayloadHandler(dbOps: DatabaseOperations) {
-	return (requestId: string): Response => {
-		const payload = dbOps.getRequestPayload(requestId);
+	return async (requestId: string): Promise<Response> => {
+		const payload = await dbOps.getRequestPayload(requestId);
 
 		if (!payload) {
 			return new Response(JSON.stringify({ error: "Request not found" }), {

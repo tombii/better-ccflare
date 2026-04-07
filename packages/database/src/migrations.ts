@@ -48,7 +48,8 @@ export function ensureSchema(db: Database): void {
 			cache_read_input_tokens INTEGER DEFAULT 0,
 			cache_creation_input_tokens INTEGER DEFAULT 0,
 			output_tokens INTEGER DEFAULT 0,
-			agent_used TEXT
+			agent_used TEXT,
+			project TEXT
 		)
 	`);
 
@@ -588,6 +589,12 @@ export function runMigrations(db: Database, dbPath?: string): void {
 		if (!requestsColumnNames.includes("api_key_name")) {
 			db.prepare("ALTER TABLE requests ADD COLUMN api_key_name TEXT").run();
 			log.info("Added api_key_name column to requests table");
+		}
+
+		// Add project column if it doesn't exist
+		if (!requestsColumnNames.includes("project")) {
+			db.prepare("ALTER TABLE requests ADD COLUMN project TEXT").run();
+			log.info("Added project column to requests table");
 		}
 
 		// Add timestamp column to request_payloads if it doesn't exist

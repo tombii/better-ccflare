@@ -16,7 +16,11 @@ import {
 } from "@better-ccflare/core";
 import { container, SERVICE_KEYS } from "@better-ccflare/core-di";
 import type { DatabaseOperations } from "@better-ccflare/database";
-import { AsyncDbWriter, DatabaseFactory } from "@better-ccflare/database";
+import {
+	AsyncDbWriter,
+	DatabaseFactory,
+	initPayloadEncryption,
+} from "@better-ccflare/database";
 import { APIRouter, AuthService } from "@better-ccflare/http-api";
 import { SessionStrategy } from "@better-ccflare/load-balancer";
 import { Logger } from "@better-ccflare/logger";
@@ -503,6 +507,13 @@ export default async function startServer(options?: {
 	// Initialize DI container
 	container.registerInstance(SERVICE_KEYS.Config, new Config());
 	container.registerInstance(SERVICE_KEYS.Logger, new Logger("Server"));
+
+	// Initialize payload encryption (no-op if PAYLOAD_ENCRYPTION_KEY is unset).
+	// This must run before any database operations that read/write payloads.
+	// NOTE: this only initializes the main thread; the post-processor worker
+	// runs `initPayloadEncryption()` itself at module load — Bun workers have
+	// isolated module scopes.
+	await initPayloadEncryption();
 
 	// Initialize components
 	const config = container.resolve<Config>(SERVICE_KEYS.Config);

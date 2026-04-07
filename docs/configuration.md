@@ -122,6 +122,7 @@ These environment variables are not stored in the configuration file and must be
 | `CF_PRICING_OFFLINE` | Disable online pricing updates | - | `CF_PRICING_OFFLINE=1` |
 | `CF_STREAM_USAGE_BUFFER_KB` | Stream usage buffer size in KB | `64` | `CF_STREAM_USAGE_BUFFER_KB=128` |
 | `CF_STREAM_TIMEOUT_MS` | Stream processing timeout in milliseconds | `60000` (1 minute) | `CF_STREAM_TIMEOUT_MS=120000` |
+| `PAYLOAD_ENCRYPTION_KEY` | Optional 64-char hex key (32 bytes / AES-256) enabling AES-256-GCM encryption-at-rest for the `request_payloads` table. See [security.md](security.md#payload-encryption-at-rest). | unset (plaintext) | `PAYLOAD_ENCRYPTION_KEY=$(openssl rand -hex 32)` |
 
 ## Database Configuration
 

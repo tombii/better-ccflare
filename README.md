@@ -188,7 +188,18 @@ RETRY_BACKOFF=2                        # Retry backoff multiplier
 # Storage
 STORE_PAYLOADS=false                   # Disable storing request/response bodies (reduces DB size and memory usage)
                                        # Token counts, costs, model, status and timing are still recorded
+
+# Payload encryption at rest (optional)
+# When set, request/response payloads are encrypted with AES-256-GCM before
+# being written to `request_payloads`. Existing plaintext rows remain readable.
+# Generate with: openssl rand -hex 32
+PAYLOAD_ENCRYPTION_KEY=                # 64-character hex (32 bytes / AES-256). Unset = plaintext storage.
 ```
+
+**Encryption notes**:
+- Without a key, payloads are stored as plaintext (no behavior change from prior versions).
+- Losing the key makes encrypted rows unreadable — payload reads throw rather than silently returning garbage. Back the key up alongside the database.
+- The key is read once at process start (and once per Bun worker). Rotating it requires a re-encrypt migration; not yet built.
 
 **Security Notes**:
 - Use `BETTER_CCFLARE_HOST=127.0.0.1` to bind only to localhost for better security

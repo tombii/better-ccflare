@@ -138,6 +138,14 @@ export function addPerformanceIndexes(db: Database): void {
 	`);
 	log.info("Added index: idx_requests_api_key_timestamp");
 
+	// Composite index for project analytics (filtering + time-based queries)
+	db.run(`
+		CREATE INDEX IF NOT EXISTS idx_requests_project_timestamp
+		ON requests(project, timestamp DESC)
+		WHERE project IS NOT NULL
+	`);
+	log.info("Added index: idx_requests_project_timestamp");
+
 	log.info("Performance indexes added successfully");
 }
 

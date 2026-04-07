@@ -18,11 +18,12 @@ export function sanitizeProxyHeaders(original: Headers): Headers {
 }
 
 /**
- * Removes hop-by-hop + compression negotiation headers from the ORIGINAL
- * client request before it is persisted for analytics. Does **not** add /
- * remove auth headers.
+ * Removes hop-by-hop + compression negotiation headers and sensitive auth
+ * headers from the ORIGINAL client request before it is persisted for
+ * analytics.
  *
- * Removes: accept-encoding, content-encoding, transfer-encoding, content-length
+ * Removes: accept-encoding, content-encoding, transfer-encoding, content-length,
+ * authorization, x-api-key, cookie
  */
 export function sanitizeRequestHeaders(original: Headers): Headers {
 	const h = new Headers(original);
@@ -30,6 +31,10 @@ export function sanitizeRequestHeaders(original: Headers): Headers {
 	h.delete("content-encoding");
 	h.delete("content-length");
 	h.delete("transfer-encoding");
+	// Strip sensitive auth headers from persisted payloads
+	h.delete("authorization");
+	h.delete("x-api-key");
+	h.delete("cookie");
 	return h;
 }
 

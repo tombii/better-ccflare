@@ -161,6 +161,7 @@ The `requests` table logs all proxied requests for analytics and debugging.
 | `agent_used` | TEXT | NULL* | Agent ID if request used an agent |
 | `api_key_id` | TEXT | NULL* | API key ID used for the request |
 | `api_key_name` | TEXT | NULL* | API key name used for the request |
+| `project` | TEXT | NULL* | Project name resolved at request time (header / system-prompt path / Markdown H1) |
 
 *Note: Columns marked with * are added via migrations and may not exist in databases created before the migration was introduced.
 
@@ -177,6 +178,7 @@ The `requests` table logs all proxied requests for analytics and debugging.
 - `idx_requests_api_key_timestamp` on `api_key_id, timestamp DESC` WHERE `api_key_id IS NOT NULL` for API key analytics
 - `idx_requests_api_key` on `api_key_id` WHERE `api_key_id IS NOT NULL` for API key filtering
 - `idx_requests_api_key_timestamp` on `api_key_id, timestamp DESC` WHERE `api_key_id IS NOT NULL` for API key analytics with time-based queries
+- `idx_requests_project_timestamp` on `project, timestamp DESC` WHERE `project IS NOT NULL` for project-scoped analytics
 
 ### request_payloads Table
 
@@ -185,10 +187,13 @@ The `request_payloads` table stores full request and response bodies for detaile
 | Column | Type | Constraints | Description |
 |--------|------|-------------|-------------|
 | `id` | TEXT | PRIMARY KEY, FOREIGN KEY | References requests.id |
-| `json` | TEXT | NOT NULL | Complete request/response JSON data |
+| `json` | TEXT | NOT NULL | Complete request/response payload, optionally encrypted (see below) |
+| `timestamp` | INTEGER | NULL* | Unix timestamp for retention queries (added via migration) |
 
 **Foreign Key Constraints:**
 - `id` references `requests(id)` with `ON DELETE CASCADE`
+
+**Optional encryption at rest**: when `PAYLOAD_ENCRYPTION_KEY` is set, the `json` column stores AES-256-GCM ciphertext prefixed with `enc:` (see `docs/security.md` → Payload Encryption at Rest). Plaintext rows from before encryption was enabled remain readable.
 
 ### oauth_sessions Table
 
