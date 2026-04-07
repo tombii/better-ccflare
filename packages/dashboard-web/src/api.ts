@@ -99,24 +99,24 @@ class API extends HttpClient {
 	}
 
 	/**
-	 * Store API key in sessionStorage (cleared when tab closes)
+	 * Store API key in localStorage (persists until manually cleared)
 	 */
 	setApiKey(apiKey: string): void {
-		sessionStorage.setItem(API.API_KEY_STORAGE_KEY, apiKey);
+		localStorage.setItem(API.API_KEY_STORAGE_KEY, apiKey);
 	}
 
 	/**
-	 * Retrieve API key from sessionStorage
+	 * Retrieve API key from localStorage
 	 */
 	getApiKey(): string | null {
-		return sessionStorage.getItem(API.API_KEY_STORAGE_KEY);
+		return localStorage.getItem(API.API_KEY_STORAGE_KEY);
 	}
 
 	/**
 	 * Clear stored API key
 	 */
 	clearApiKey(): void {
-		sessionStorage.removeItem(API.API_KEY_STORAGE_KEY);
+		localStorage.removeItem(API.API_KEY_STORAGE_KEY);
 	}
 
 	/**
