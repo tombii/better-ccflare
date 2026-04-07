@@ -513,6 +513,14 @@ export async function proxyWithAccount(
 		// Process response (transform format, sanitize headers, etc.) using account-specific provider
 		const response = await provider.processResponse(rawResponse, account);
 
+		// Failover to next account on upstream 401 — credentials are invalid/expired
+		if (response.status === 401) {
+			log.warn(
+				`Authentication failed (401) for account ${account.name}, failing over to next account`,
+			);
+			return null;
+		}
+
 		// Check for rate limit using account-specific provider
 		const isRateLimited = await processProxyResponse(
 			response,
