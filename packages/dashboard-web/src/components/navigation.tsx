@@ -6,6 +6,7 @@ import {
 	GitBranch,
 	Key,
 	LayoutDashboard,
+	LogOut,
 	Menu,
 	RefreshCw,
 	Shield,
@@ -45,7 +46,11 @@ const navItems: NavItem[] = [
 	{ label: "Logs", icon: FileText, path: "/logs" },
 ];
 
-export function Navigation() {
+interface NavigationProps {
+	onLogout?: () => void;
+}
+
+export function Navigation({ onLogout }: NavigationProps = {}) {
 	const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 	const [updateStatus, setUpdateStatus] = useState<
 		"idle" | "checking" | "available" | "current" | "error"
@@ -367,6 +372,19 @@ export function Navigation() {
 								</Link>
 							);
 						})}
+						{onLogout && (
+							<Button
+								variant="ghost"
+								className="w-full justify-start gap-3 transition-all text-muted-foreground hover:text-destructive"
+								onClick={() => {
+									setIsMobileMenuOpen(false);
+									onLogout();
+								}}
+							>
+								<LogOut className="h-4 w-4" />
+								Log Out
+							</Button>
+						)}
 					</nav>
 
 					<Separator />

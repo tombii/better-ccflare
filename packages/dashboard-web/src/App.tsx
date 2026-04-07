@@ -232,6 +232,12 @@ export function App() {
 		}
 	};
 
+	const handleLogout = () => {
+		api.clearApiKey();
+		setIsAuthenticated(false);
+		setShowAuthDialog(true);
+	};
+
 	// Show loading state while checking authentication
 	if (isCheckingAuth) {
 		return (
@@ -254,7 +260,7 @@ export function App() {
 		<QueryClientProvider client={queryClient}>
 			<ThemeProvider>
 				<div className="min-h-screen bg-background">
-					<Navigation />
+					<Navigation onLogout={handleLogout} />
 
 					{/* Main Content */}
 					<main className="lg:pl-64">
