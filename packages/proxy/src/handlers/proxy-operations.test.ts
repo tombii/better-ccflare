@@ -19,14 +19,6 @@ mock.module("@better-ccflare/core", () => ({
 	ProviderError: MockProviderError,
 }));
 
-mock.module(
-	"/Users/b/git/hosting-questions/better-ccflare-fix-failover-handling/packages/core/src/index.ts",
-	() => ({
-		logError: mockLogError,
-		ProviderError: MockProviderError,
-	}),
-);
-
 mock.module("@better-ccflare/providers", () => ({
 	getProvider: mockGetProvider,
 }));
