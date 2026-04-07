@@ -970,9 +970,6 @@ class API extends HttpClient {
 				error: error instanceof Error ? error.message : String(error),
 				stack: error instanceof Error ? error.stack : undefined,
 			});
-			if (error instanceof HttpError) {
-				throw new Error(error.message);
-			}
 			throw error;
 		}
 	}

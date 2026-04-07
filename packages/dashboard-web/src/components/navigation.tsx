@@ -6,6 +6,7 @@ import {
 	GitBranch,
 	Key,
 	LayoutDashboard,
+	LogOut,
 	Menu,
 	RefreshCw,
 	Shield,
@@ -45,7 +46,11 @@ const navItems: NavItem[] = [
 	{ label: "Logs", icon: FileText, path: "/logs" },
 ];
 
-export function Navigation() {
+interface NavigationProps {
+	onLogout?: () => void;
+}
+
+export function Navigation({ onLogout }: NavigationProps = {}) {
 	const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 	const [updateStatus, setUpdateStatus] = useState<
 		"idle" | "checking" | "available" | "current" | "error"
@@ -285,6 +290,17 @@ export function Navigation() {
 					<span className="font-semibold text-lg">better-ccflare</span>
 				</div>
 				<div className="flex items-center gap-2">
+					{onLogout && (
+						<Button
+							variant="ghost"
+							size="sm"
+							onClick={onLogout}
+							className="text-muted-foreground hover:text-destructive"
+							title="Logout"
+						>
+							<LogOut className="h-4 w-4" />
+						</Button>
+					)}
 					<ThemeToggle />
 					<Button
 						variant="ghost"
@@ -453,7 +469,20 @@ export function Navigation() {
 								<GitBranch className="h-3 w-3" />
 								<span>{version}</span>
 							</div>
-							<ThemeToggle />
+							<div className="flex items-center gap-2">
+								{onLogout && (
+									<Button
+										variant="ghost"
+										size="sm"
+										onClick={onLogout}
+										className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
+										title="Logout"
+									>
+										<LogOut className="h-4 w-4" />
+									</Button>
+								)}
+								<ThemeToggle />
+							</div>
 						</div>
 					</div>
 				</div>

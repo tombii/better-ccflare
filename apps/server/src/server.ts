@@ -392,12 +392,12 @@ function startUsagePollingWithRefresh(
 				60 * 60 * 1000, // Cap at 1 hour
 			);
 			logger.info(
-				`Scheduling retry ${retryCount}/${MAX_RETRY_ATTEMPTS} for account ${account.name} in ${Math.round(delayMs / 1000 / 60)} minutes`,
+				`Scheduling retry ${retryCount} for account ${account.name} in ${Math.round(delayMs / 1000 / 60)} minutes`,
 			);
 
 			const timeoutId = setTimeout(() => {
 				logger.info(
-					`Retrying usage polling for account ${account.name} (attempt ${retryCount}/${MAX_RETRY_ATTEMPTS})`,
+					`Retrying usage polling for account ${account.name} (attempt ${retryCount})`,
 				);
 				usagePollingRetryTimeouts.delete(account.id);
 				pollWithRefresh();
@@ -686,9 +686,7 @@ export default async function startServer(options?: {
 
 	// Register this server's usage polling restart capability
 	registerPollingRestarter(serverId, async (accountId: string) => {
-		const account = (await dbOps.getAllAccounts()).find(
-			(a) => a.id === accountId,
-		);
+		const account = await dbOps.getAccount(accountId);
 		if (!account) {
 			log.warn(
 				`Cannot restart usage polling: account ${accountId} not found on ${serverId}`,

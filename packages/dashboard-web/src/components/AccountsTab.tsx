@@ -361,7 +361,7 @@ export function AccountsTab() {
 		try {
 			await api.refreshUsage(account.id);
 			// Wait briefly then reload so fresh usage data has time to arrive
-			await new Promise((resolve) => setTimeout(resolve, 3000));
+			await new Promise((resolve) => setTimeout(resolve, 5000));
 			await loadAccounts();
 			setActionError(null);
 		} catch (err) {
