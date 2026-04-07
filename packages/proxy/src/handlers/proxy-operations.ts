@@ -510,12 +510,39 @@ export async function proxyWithAccount(
 							retryRequestInit,
 						);
 
-						const retryTransformedRequest = provider.transformRequestBody
+						// Run transformRequestBody (e.g. Anthropic→OpenAI format conversion),
+						// then re-patch the model name. transformRequestBody remaps via
+						// model_mappings which would overwrite our fallback model back to the
+						// primary mapped model (since the fallback name has no Claude family match).
+						let retryTransformedRequest = provider.transformRequestBody
 							? await provider.transformRequestBody(
 									retryProviderRequest,
 									account,
 								)
 							: retryProviderRequest;
+
+						if (provider.transformRequestBody) {
+							try {
+								const transformedText = await retryTransformedRequest
+									.clone()
+									.text();
+								const transformedBody = JSON.parse(transformedText);
+								transformedBody.model = fallbackModel;
+								retryTransformedRequest = new Request(
+									retryTransformedRequest.url,
+									{
+										method: retryTransformedRequest.method,
+										headers: retryTransformedRequest.headers,
+										body: JSON.stringify(transformedBody),
+										duplex: "half",
+									} as RequestInit & { duplex?: "half" },
+								);
+							} catch {
+								log.warn(
+									"Failed to re-patch fallback model after transformRequestBody",
+								);
+							}
+						}
 
 						rawResponse = isSyntheticProviderResponse(retryTransformedRequest)
 							? materializeSyntheticResponse(retryTransformedRequest)
