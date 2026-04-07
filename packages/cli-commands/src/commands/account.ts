@@ -46,6 +46,7 @@ export interface AddAccountOptionsWithAdapter {
 	priority?: number;
 	customEndpoint?: string;
 	modelMappings?: { [key: string]: string | string[] };
+	/** @deprecated Use comma-separated values in modelMappings instead */
 	modelFallbacks?: { [key: string]: string };
 	profile?: string;
 	crossRegionMode?: "geographic" | "global" | "regional";
@@ -605,7 +606,21 @@ async function createVertexAIAccount(
 }
 
 /**
- * Prompt user for model mappings
+ * Parse a comma-separated model string into a string or string[].
+ * Trims whitespace around each value and filters empty entries.
+ */
+function parseModelInput(value: string): string | string[] | null {
+	const trimmed = value.trim();
+	if (!trimmed) return null;
+	const parts = trimmed
+		.split(",")
+		.map((s) => s.trim())
+		.filter(Boolean);
+	return parts.length === 1 ? parts[0] : parts;
+}
+
+/**
+ * Prompt user for model mappings. Supports comma-separated models for cycling.
  */
 async function promptModelMappings(
 	adapter: PromptAdapter,
@@ -634,7 +649,7 @@ async function promptModelMappings(
 	}
 
 	console.log(
-		"\nEnter model mappings (press Enter with empty value to finish):",
+		"\nEnter model mappings (comma-separated for multiple models to cycle through):",
 	);
 	const mappings: ModelMapping = {};
 
@@ -642,75 +657,24 @@ async function promptModelMappings(
 	const opusModel = await adapter.input(
 		`Opus model (default: ${defaults.opus}): `,
 	);
-	if (opusModel.trim()) {
-		mappings.opus = opusModel.trim();
-	}
+	const opus = parseModelInput(opusModel);
+	if (opus) mappings.opus = opus;
 
 	// Get sonnet mapping
 	const sonnetModel = await adapter.input(
 		`Sonnet model (default: ${defaults.sonnet}): `,
 	);
-	if (sonnetModel.trim()) {
-		mappings.sonnet = sonnetModel.trim();
-	}
+	const sonnet = parseModelInput(sonnetModel);
+	if (sonnet) mappings.sonnet = sonnet;
 
 	// Get haiku mapping
 	const haikuModel = await adapter.input(
 		`Haiku model (default: ${defaults.haiku}): `,
 	);
-	if (haikuModel.trim()) {
-		mappings.haiku = haikuModel.trim();
-	}
+	const haiku = parseModelInput(haikuModel);
+	if (haiku) mappings.haiku = haiku;
 
 	return Object.keys(mappings).length > 0 ? mappings : null;
-}
-
-/**
- * Prompt user for model fallbacks
- */
-async function promptModelFallbacks(
-	adapter: PromptAdapter,
-	existingFallbacks?: ModelMapping,
-): Promise<ModelMapping | null> {
-	const wantsFallbacks = await adapter.select(
-		"\nDo you want to configure model fallbacks? (e.g., fallback to sonnet when opus is unavailable)",
-		[
-			{ label: "No, skip fallbacks", value: "no" },
-			{ label: "Yes, configure fallback models", value: "yes" },
-		],
-	);
-
-	if (wantsFallbacks === "no" || existingFallbacks) {
-		return existingFallbacks || null;
-	}
-
-	console.log(
-		"\nEnter fallback model names (press Enter with empty value to skip):",
-	);
-	const fallbacks: ModelMapping = {};
-
-	const opusFallback = await adapter.input(
-		"Fallback when Opus is unavailable (e.g., claude-sonnet-4-6): ",
-	);
-	if (opusFallback.trim()) {
-		fallbacks.opus = opusFallback.trim();
-	}
-
-	const sonnetFallback = await adapter.input(
-		"Fallback when Sonnet is unavailable (e.g., claude-sonnet-4-5): ",
-	);
-	if (sonnetFallback.trim()) {
-		fallbacks.sonnet = sonnetFallback.trim();
-	}
-
-	const haikuFallback = await adapter.input(
-		"Fallback when Haiku is unavailable (e.g., claude-sonnet-4-5): ",
-	);
-	if (haikuFallback.trim()) {
-		fallbacks.haiku = haikuFallback.trim();
-	}
-
-	return Object.keys(fallbacks).length > 0 ? fallbacks : null;
 }
 
 /**
@@ -939,7 +903,6 @@ export async function addAccount(
 		priority: providedPriority,
 		customEndpoint,
 		modelMappings,
-		modelFallbacks,
 		adapter = stdPromptAdapter,
 	} = options;
 
@@ -1067,18 +1030,12 @@ export async function addAccount(
 			modelMappings,
 		);
 
-		const finalModelFallbacks = await promptModelFallbacks(
-			adapter,
-			modelFallbacks,
-		);
-
 		await createZaiAccount(
 			dbOps,
 			name,
 			apiKey,
 			providedPriority || 0,
 			finalModelMappings,
-			finalModelFallbacks,
 		);
 	} else if (mode === "console") {
 		// Handle Console accounts - offer choice between OAuth and direct API key
@@ -1161,11 +1118,6 @@ export async function addAccount(
 			modelMappings,
 		);
 
-		const finalModelFallbacks = await promptModelFallbacks(
-			adapter,
-			modelFallbacks,
-		);
-
 		await createOpenAIAccount(
 			dbOps,
 			name,
@@ -1175,7 +1127,6 @@ export async function addAccount(
 				? parseInt(priority, 10) || 0
 				: priority || 0,
 			finalModelMappings,
-			finalModelFallbacks,
 		);
 	} else if (mode === "minimax") {
 		// Handle Minimax accounts with API keys
@@ -1206,10 +1157,6 @@ export async function addAccount(
 			modelMappings,
 		);
 
-		const finalModelFallbacks = await promptModelFallbacks(
-			adapter,
-			modelFallbacks,
-		);
 		await createNanoGPTAccount(
 			dbOps,
 			name,
@@ -1219,7 +1166,6 @@ export async function addAccount(
 				: priority || 0,
 			endpoint,
 			finalModelMappings,
-			finalModelFallbacks,
 		);
 		console.log(`\nAccount '${name}' added successfully!`);
 		console.log("Type: NanoGPT (API key)");
@@ -1238,10 +1184,6 @@ export async function addAccount(
 			modelMappings,
 		);
 
-		const finalModelFallbacks = await promptModelFallbacks(
-			adapter,
-			modelFallbacks,
-		);
 		await createKiloAccount(
 			dbOps,
 			name,
@@ -1250,7 +1192,6 @@ export async function addAccount(
 				? parseInt(priority, 10) || 0
 				: priority || 0,
 			finalModelMappings,
-			finalModelFallbacks,
 		);
 		console.log(`\nAccount '${name}' added successfully!`);
 		console.log("Type: Kilo Gateway (API key)");
@@ -1270,10 +1211,6 @@ export async function addAccount(
 			modelMappings,
 		);
 
-		const finalModelFallbacks = await promptModelFallbacks(
-			adapter,
-			modelFallbacks,
-		);
 		await createOpenRouterAccount(
 			dbOps,
 			name,
@@ -1282,7 +1219,6 @@ export async function addAccount(
 				? parseInt(priority, 10) || 0
 				: priority || 0,
 			finalModelMappings,
-			finalModelFallbacks,
 		);
 		console.log(`\nAccount '${name}' added successfully!`);
 		console.log("Type: OpenRouter (API key)");
@@ -1304,10 +1240,6 @@ export async function addAccount(
 			modelMappings,
 		);
 
-		const finalModelFallbacks = await promptModelFallbacks(
-			adapter,
-			modelFallbacks,
-		);
 		await createAlibabaCodingPlanAccount(
 			dbOps,
 			name,
@@ -1316,7 +1248,6 @@ export async function addAccount(
 				? parseInt(priority, 10) || 0
 				: priority || 0,
 			finalModelMappings,
-			finalModelFallbacks,
 		);
 		console.log(`\nAccount '${name}' added successfully!`);
 		console.log("Type: Alibaba Coding Plan International (API key)");
@@ -1341,11 +1272,6 @@ export async function addAccount(
 			},
 		);
 
-		const finalModelFallbacks = await promptModelFallbacks(
-			adapter,
-			modelFallbacks,
-		);
-
 		await createCodexOAuthAccount(
 			dbOps,
 			name,
@@ -1354,7 +1280,6 @@ export async function addAccount(
 				: parseInt(String(priority), 10) || 0,
 			customEndpoint,
 			finalModelMappings,
-			finalModelFallbacks,
 		);
 	} else if (mode === "anthropic-compatible") {
 		// Handle Anthropic-compatible accounts with API keys
@@ -1382,11 +1307,6 @@ export async function addAccount(
 			modelMappings,
 		);
 
-		const finalModelFallbacks = await promptModelFallbacks(
-			adapter,
-			modelFallbacks,
-		);
-
 		await createAnthropicCompatibleAccount(
 			dbOps,
 			name,
@@ -1396,7 +1316,6 @@ export async function addAccount(
 				: priority || 0,
 			endpoint,
 			finalModelMappings,
-			finalModelFallbacks,
 		);
 		console.log(`\nAccount '${name}' added successfully!`);
 		console.log("Type: Anthropic-compatible (API key)");

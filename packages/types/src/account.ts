@@ -158,7 +158,7 @@ export interface AccountResponse {
 	autoFallbackEnabled: boolean;
 	autoRefreshEnabled: boolean;
 	customEndpoint: string | null;
-	modelMappings: { [key: string]: string } | null; // Parsed model mappings for OpenAI-compatible providers
+	modelMappings: { [key: string]: string | string[] } | null; // Parsed model mappings (arrays = cycling models)
 	usageUtilization: number | null; // Percentage utilization (0-100) from API
 	usageWindow: string | null; // Most restrictive window (e.g., "five_hour")
 	usageData: FullUsageData | null; // Full usage data for Anthropic accounts

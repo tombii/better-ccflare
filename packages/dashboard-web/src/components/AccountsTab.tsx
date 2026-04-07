@@ -418,23 +418,10 @@ export function AccountsTab() {
 
 	const handleUpdateModelMappings = async (
 		accountId: string,
-		modelMappings: { [key: string]: string },
+		modelMappings: { [key: string]: string | string[] },
 	) => {
 		try {
 			await api.updateAccountModelMappings(accountId, modelMappings);
-			await loadAccounts();
-		} catch (err) {
-			setActionError(formatError(err));
-			throw err;
-		}
-	};
-
-	const handleUpdateModelFallbacks = async (
-		accountId: string,
-		modelFallbacks: { [key: string]: string },
-	) => {
-		try {
-			await api.updateAccountModelFallbacks(accountId, modelFallbacks);
 			await loadAccounts();
 		} catch (err) {
 			setActionError(formatError(err));
@@ -595,7 +582,6 @@ export function AccountsTab() {
 						})
 					}
 					onUpdateModelMappings={handleUpdateModelMappings}
-					onUpdateModelFallbacks={handleUpdateModelFallbacks}
 				/>
 			)}
 		</div>

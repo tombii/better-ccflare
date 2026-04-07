@@ -18,6 +18,7 @@ import { API_LIMITS, API_TIMEOUT } from "./constants";
 
 // Re-export types with dashboard-specific aliases for backward compatibility
 export type Account = AccountResponse & {
+	/** @deprecated Fallbacks are now merged into modelMappings as arrays */
 	modelFallbacks?: { [key: string]: string } | null;
 };
 export type Stats = StatsWithAccounts;
@@ -1090,7 +1091,7 @@ class API extends HttpClient {
 
 	async updateAccountModelMappings(
 		accountId: string,
-		modelMappings: { [key: string]: string },
+		modelMappings: { [key: string]: string | string[] },
 	): Promise<void> {
 		const startTime = Date.now();
 		const url = `/api/accounts/${accountId}/model-mappings`;

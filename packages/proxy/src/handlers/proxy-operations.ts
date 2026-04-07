@@ -1,9 +1,4 @@
-import {
-	getModelFamily,
-	getModelList,
-	logError,
-	ProviderError,
-} from "@better-ccflare/core";
+import { getModelList, logError, ProviderError } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import { getProvider } from "@better-ccflare/providers";
 import type { Account, RequestMeta } from "@better-ccflare/types";
@@ -482,9 +477,11 @@ export async function proxyWithAccount(
 					);
 
 					// Patch the original request body with the next model name, then let
-					// transformRequestBody handle format conversion. Because nextModel is
-					// already the final provider model name (not a Claude alias), it won't
-					// match any family pattern in mapModelName and falls through unchanged.
+					// transformRequestBody handle format conversion (e.g. Anthropic→OpenAI).
+					// After that, re-patch the model name because transformRequestBody calls
+					// mapModelName internally which remaps non-Claude names back to the primary
+					// model (no family match → sonnet fallback). We always want nextModel to
+					// reach the upstream provider verbatim.
 					let patchedBody: ArrayBuffer | null = null;
 					try {
 						const bodyText = new TextDecoder().decode(requestBodyBuffer!);
@@ -504,9 +501,36 @@ export async function proxyWithAccount(
 					};
 
 					const retryProviderRequest = new Request(targetUrl, retryRequestInit);
-					const retryTransformedRequest = provider.transformRequestBody
+					let retryTransformedRequest = provider.transformRequestBody
 						? await provider.transformRequestBody(retryProviderRequest, account)
 						: retryProviderRequest;
+
+					// Re-patch model after transformRequestBody — the provider's conversion
+					// (e.g. convertAnthropicRequestToOpenAI) calls mapModelName which can
+					// remap nextModel back to the primary model if it has no Claude family
+					// pattern. Force nextModel into the final request body.
+					try {
+						const transformedText = await retryTransformedRequest
+							.clone()
+							.text();
+						const transformedBody = JSON.parse(transformedText);
+						if (transformedBody.model !== nextModel) {
+							transformedBody.model = nextModel;
+							const repatchedHeaders = new Headers(
+								retryTransformedRequest.headers,
+							);
+							retryTransformedRequest = new Request(
+								retryTransformedRequest.url,
+								{
+									method: retryTransformedRequest.method,
+									headers: repatchedHeaders,
+									body: JSON.stringify(transformedBody),
+								},
+							);
+						}
+					} catch {
+						// If re-patching fails, proceed with the transformed request as-is
+					}
 
 					rawResponse = isSyntheticProviderResponse(retryTransformedRequest)
 						? materializeSyntheticResponse(retryTransformedRequest)

@@ -23,12 +23,22 @@ interface AccountModelMappingsDialogProps {
 	onOpenChange: (open: boolean) => void;
 	onUpdateModelMappings: (
 		accountId: string,
-		modelMappings: { [key: string]: string },
+		modelMappings: { [key: string]: string | string[] },
 	) => Promise<void>;
-	onUpdateModelFallbacks?: (
-		accountId: string,
-		modelFallbacks: { [key: string]: string },
-	) => Promise<void>;
+}
+
+function formatMappingValue(value: string | string[]): string {
+	return Array.isArray(value) ? value.join(", ") : value || "";
+}
+
+function parseMappingValue(value: string): string | string[] | null {
+	const trimmed = value.trim();
+	if (!trimmed) return null;
+	const parts = trimmed
+		.split(",")
+		.map((s) => s.trim())
+		.filter(Boolean);
+	return parts.length === 1 ? parts[0] : parts;
 }
 
 export function AccountModelMappingsDialog({
@@ -36,18 +46,8 @@ export function AccountModelMappingsDialog({
 	account,
 	onOpenChange,
 	onUpdateModelMappings,
-	onUpdateModelFallbacks,
 }: AccountModelMappingsDialogProps) {
 	const [modelMappings, setModelMappings] = useState<{
-		opus: string;
-		sonnet: string;
-		haiku: string;
-	}>({
-		opus: "",
-		sonnet: "",
-		haiku: "",
-	});
-	const [modelFallbacks, setModelFallbacks] = useState<{
 		opus: string;
 		sonnet: string;
 		haiku: string;
@@ -62,25 +62,12 @@ export function AccountModelMappingsDialog({
 	React.useEffect(() => {
 		if (account?.modelMappings) {
 			setModelMappings({
-				opus: account.modelMappings.opus || "",
-				sonnet: account.modelMappings.sonnet || "",
-				haiku: account.modelMappings.haiku || "",
+				opus: formatMappingValue(account.modelMappings.opus || ""),
+				sonnet: formatMappingValue(account.modelMappings.sonnet || ""),
+				haiku: formatMappingValue(account.modelMappings.haiku || ""),
 			});
 		} else {
 			setModelMappings({
-				opus: "",
-				sonnet: "",
-				haiku: "",
-			});
-		}
-		if (account?.modelFallbacks) {
-			setModelFallbacks({
-				opus: account.modelFallbacks.opus || "",
-				sonnet: account.modelFallbacks.sonnet || "",
-				haiku: account.modelFallbacks.haiku || "",
-			});
-		} else {
-			setModelFallbacks({
 				opus: "",
 				sonnet: "",
 				haiku: "",
@@ -93,36 +80,16 @@ export function AccountModelMappingsDialog({
 
 		setIsLoading(true);
 		try {
-			// Only include non-empty mappings
-			const mappingsToSend: { [key: string]: string } = {};
-			if (modelMappings.opus.trim()) {
-				mappingsToSend.opus = modelMappings.opus.trim();
-			}
-			if (modelMappings.sonnet.trim()) {
-				mappingsToSend.sonnet = modelMappings.sonnet.trim();
-			}
-			if (modelMappings.haiku.trim()) {
-				mappingsToSend.haiku = modelMappings.haiku.trim();
-			}
+			const mappingsToSend: { [key: string]: string | string[] } = {};
+			const opus = parseMappingValue(modelMappings.opus);
+			const sonnet = parseMappingValue(modelMappings.sonnet);
+			const haiku = parseMappingValue(modelMappings.haiku);
+
+			if (opus) mappingsToSend.opus = opus;
+			if (sonnet) mappingsToSend.sonnet = sonnet;
+			if (haiku) mappingsToSend.haiku = haiku;
 
 			await onUpdateModelMappings(account.id, mappingsToSend);
-
-			// Save model fallbacks if handler provided
-			if (onUpdateModelFallbacks) {
-				const fallbacksToSend: { [key: string]: string } = {};
-				if (modelFallbacks.opus.trim()) {
-					fallbacksToSend.opus = modelFallbacks.opus.trim();
-				}
-				if (modelFallbacks.sonnet.trim()) {
-					fallbacksToSend.sonnet = modelFallbacks.sonnet.trim();
-				}
-				if (modelFallbacks.haiku.trim()) {
-					fallbacksToSend.haiku = modelFallbacks.haiku.trim();
-				}
-
-				await onUpdateModelFallbacks(account.id, fallbacksToSend);
-			}
-
 			onOpenChange(false);
 		} catch (error) {
 			console.error("Failed to update model mappings:", error);
@@ -141,16 +108,6 @@ export function AccountModelMappingsDialog({
 		}));
 	};
 
-	const handleFallbackInputChange = (
-		modelType: "opus" | "sonnet" | "haiku",
-		value: string,
-	) => {
-		setModelFallbacks((prev) => ({
-			...prev,
-			[modelType]: value,
-		}));
-	};
-
 	if (!account) return null;
 
 	return (
@@ -159,16 +116,20 @@ export function AccountModelMappingsDialog({
 				<DialogHeader>
 					<DialogTitle>Edit Model Configuration</DialogTitle>
 					<DialogDescription>
-						Configure model mappings and fallbacks for {account.name}.
+						Configure model mappings for {account.name}. Separate multiple
+						models with commas to cycle through them on rate limits.
 					</DialogDescription>
 				</DialogHeader>
 				<div className="space-y-4 py-2 overflow-y-auto flex-1">
-					{/* Model Mappings Section */}
 					<div>
 						<h4 className="text-sm font-medium mb-2">Model Mappings</h4>
 						<p className="text-xs text-muted-foreground mb-3">
-							Map Anthropic model names to provider-specific models (optional,
-							leave empty to use defaults).
+							Map Anthropic model names to provider-specific models. Use commas
+							for multiple models (e.g.{" "}
+							<code className="text-xs bg-muted px-1 rounded">
+								model-a, model-b
+							</code>
+							) to cycle on rate limits.
 						</p>
 						<div className="grid grid-cols-3 gap-3">
 							<div className="space-y-1">
@@ -204,58 +165,6 @@ export function AccountModelMappingsDialog({
 									value={modelMappings.haiku}
 									onChange={(e) => handleInputChange("haiku", e.target.value)}
 									placeholder={`e.g., ${LATEST_HAIKU_MODEL}`}
-									className="h-8"
-								/>
-							</div>
-						</div>
-					</div>
-
-					{/* Model Fallbacks Section */}
-					<div className="border-t pt-4">
-						<h4 className="text-sm font-medium mb-2">Model Fallbacks</h4>
-						<p className="text-xs text-muted-foreground mb-3">
-							When a model is unavailable, retry with these fallbacks.
-						</p>
-						<div className="grid grid-cols-3 gap-3">
-							<div className="space-y-1">
-								<Label htmlFor="fallback-opus" className="text-xs">
-									Opus →
-								</Label>
-								<Input
-									id="fallback-opus"
-									value={modelFallbacks.opus}
-									onChange={(e) =>
-										handleFallbackInputChange("opus", e.target.value)
-									}
-									placeholder={`e.g., ${LATEST_SONNET_MODEL}`}
-									className="h-8"
-								/>
-							</div>
-							<div className="space-y-1">
-								<Label htmlFor="fallback-sonnet" className="text-xs">
-									Sonnet →
-								</Label>
-								<Input
-									id="fallback-sonnet"
-									value={modelFallbacks.sonnet}
-									onChange={(e) =>
-										handleFallbackInputChange("sonnet", e.target.value)
-									}
-									placeholder={`e.g., ${LATEST_HAIKU_MODEL}`}
-									className="h-8"
-								/>
-							</div>
-							<div className="space-y-1">
-								<Label htmlFor="fallback-haiku" className="text-xs">
-									Haiku →
-								</Label>
-								<Input
-									id="fallback-haiku"
-									value={modelFallbacks.haiku}
-									onChange={(e) =>
-										handleFallbackInputChange("haiku", e.target.value)
-									}
-									placeholder={`e.g., ${LATEST_SONNET_MODEL}`}
 									className="h-8"
 								/>
 							</div>

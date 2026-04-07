@@ -237,6 +237,141 @@ describe("proxyWithAccount — 429 failover", () => {
 
 		expect(result).toBeNull();
 	});
+
+	it("cycles through 3-model array: first two 429, third succeeds", async () => {
+		const fetchCalls: string[] = [];
+		globalThis.fetch = mock(async (input: RequestInfo | URL) => {
+			const req = input instanceof Request ? input : new Request(String(input));
+			const bodyText = await req.text().catch(() => "{}");
+			const body = JSON.parse(bodyText);
+			fetchCalls.push(body.model ?? "unknown");
+
+			if (fetchCalls.length < 3) {
+				return jsonResponse(
+					{
+						error: {
+							type: "api_error",
+							message: "Rate limit exceeded: limit_rpm/model/abc",
+						},
+					},
+					429,
+				);
+			}
+			return jsonResponse(
+				{
+					id: "msg_1",
+					type: "message",
+					role: "assistant",
+					content: [{ type: "text", text: "hi" }],
+					model: body.model,
+					stop_reason: "end_turn",
+					usage: { input_tokens: 1, output_tokens: 1 },
+				},
+				200,
+			);
+		});
+
+		const bodyBuffer = makeRequestBody();
+		const req = makeRequest(bodyBuffer);
+		const result = await proxyWithAccount(
+			req,
+			new URL("https://proxy.local/v1/messages"),
+			makeAccount({
+				model_mappings: JSON.stringify({
+					sonnet: [
+						"qwen/qwen3.6-plus:free",
+						"bytedance-seed/dola-seed-2.0-pro:free",
+						"meta-llama/llama-3.3-70b:free",
+					],
+				}),
+			}),
+			makeRequestMeta(),
+			bodyBuffer,
+			() => undefined,
+			0,
+			makeProxyContext(),
+		);
+
+		expect(result).not.toBeNull();
+		expect(result?.status).toBe(200);
+		expect(fetchCalls).toHaveLength(3);
+		expect(fetchCalls[0]).toBe("qwen/qwen3.6-plus:free");
+		expect(fetchCalls[1]).toBe("bytedance-seed/dola-seed-2.0-pro:free");
+		expect(fetchCalls[2]).toBe("meta-llama/llama-3.3-70b:free");
+	});
+
+	it("returns null when all models in the array are exhausted", async () => {
+		globalThis.fetch = mock(async () =>
+			jsonResponse(
+				{
+					error: {
+						type: "api_error",
+						message: "Rate limit exceeded: limit_rpm/model/abc",
+					},
+				},
+				429,
+			),
+		);
+
+		const bodyBuffer = makeRequestBody();
+		const req = makeRequest(bodyBuffer);
+		const result = await proxyWithAccount(
+			req,
+			new URL("https://proxy.local/v1/messages"),
+			makeAccount({
+				model_mappings: JSON.stringify({
+					sonnet: [
+						"qwen/qwen3.6-plus:free",
+						"bytedance-seed/dola-seed-2.0-pro:free",
+					],
+				}),
+			}),
+			makeRequestMeta(),
+			bodyBuffer,
+			() => undefined,
+			0,
+			makeProxyContext(),
+		);
+
+		expect(result).toBeNull();
+	});
+});
+
+describe("getModelList — model_fallbacks merge", () => {
+	it("merges model_fallbacks into the model list", async () => {
+		const { getModelList } = await import("@better-ccflare/core");
+		const account = makeAccount({
+			model_mappings: JSON.stringify({ sonnet: "qwen/qwen3.6-plus:free" }),
+			model_fallbacks: JSON.stringify({
+				sonnet: "bytedance-seed/dola-seed-2.0-pro:free",
+			}),
+		});
+		const list = getModelList("claude-sonnet-4-5", account);
+		expect(list).toEqual([
+			"qwen/qwen3.6-plus:free",
+			"bytedance-seed/dola-seed-2.0-pro:free",
+		]);
+	});
+
+	it("returns single-element list when no fallbacks", async () => {
+		const { getModelList } = await import("@better-ccflare/core");
+		const list = getModelList("claude-sonnet-4-5", makeAccount());
+		expect(list).toEqual(["qwen/qwen3.6-plus:free"]);
+	});
+
+	it("returns array directly when model_mappings value is an array", async () => {
+		const { getModelList } = await import("@better-ccflare/core");
+		const account = makeAccount({
+			model_mappings: JSON.stringify({
+				sonnet: ["qwen/qwen3.6-plus:free", "meta-llama/llama-3.3-70b:free"],
+			}),
+		});
+		const list = getModelList("claude-sonnet-4-5", account);
+		expect(list).toEqual([
+			"qwen/qwen3.6-plus:free",
+			"meta-llama/llama-3.3-70b:free",
+		]);
+	});
 });
 
 describe("proxyWithAccount — 401 failover", () => {
