@@ -60,9 +60,11 @@ export function getModelName(
 		return anthropicModel;
 	}
 
+	const toFirst = (v: string | string[]) => (Array.isArray(v) ? v[0] : v);
+
 	// First try exact match
 	if (accountMappings[anthropicModel]) {
-		const mappedModel = accountMappings[anthropicModel];
+		const mappedModel = toFirst(accountMappings[anthropicModel]);
 		log.debug(`Exact model mapping: ${anthropicModel} -> ${mappedModel}`);
 		return mappedModel;
 	}
@@ -70,7 +72,7 @@ export function getModelName(
 	// Use shared pattern detection
 	const family = getModelFamily(anthropicModel);
 	if (family && accountMappings[family]) {
-		const mappedModel = accountMappings[family];
+		const mappedModel = toFirst(accountMappings[family]);
 		log.debug(
 			`Pattern model mapping: ${anthropicModel} (${family}) -> ${mappedModel}`,
 		);

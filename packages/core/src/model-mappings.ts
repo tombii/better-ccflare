@@ -86,17 +86,18 @@ export function parseCustomEndpointData(
 }
 
 /**
- * Parse model mappings from account's model_mappings field
+ * Parse model mappings from account's model_mappings field.
+ * Values may be a single string or an ordered array of model names to try.
  */
 export function parseModelMappings(
 	modelMappings: string | null,
-): Record<string, string> | null {
+): Record<string, string | string[]> | null {
 	if (!modelMappings) {
 		return null;
 	}
 
 	try {
-		return safeJsonParse<Record<string, string>>(
+		return safeJsonParse<Record<string, string | string[]>>(
 			modelMappings,
 			"model_mappings",
 		);
@@ -109,10 +110,22 @@ export function parseModelMappings(
 }
 
 /**
- * Get effective model mappings for an account
+ * Normalise a model mapping value to an array.
  */
-export function getModelMappings(account: Account): Record<string, string> {
-	const mappings: Record<string, string> = { ...DEFAULT_MODEL_MAPPINGS };
+function toArray(value: string | string[]): string[] {
+	return Array.isArray(value) ? value : [value];
+}
+
+/**
+ * Get effective model mappings for an account, merging model_fallbacks into
+ * the arrays so that model_fallbacks becomes the second+ entry for each family.
+ */
+export function getModelMappings(
+	account: Account,
+): Record<string, string | string[]> {
+	const mappings: Record<string, string | string[]> = {
+		...DEFAULT_MODEL_MAPPINGS,
+	};
 
 	// Check for environment variable overrides (only in Node.js)
 	if (
@@ -120,7 +133,7 @@ export function getModelMappings(account: Account): Record<string, string> {
 		process.env?.OPENAI_COMPATIBLE_MODEL_MAPPINGS
 	) {
 		try {
-			const envMappings = safeJsonParse<Record<string, string>>(
+			const envMappings = safeJsonParse<Record<string, string | string[]>>(
 				process.env.OPENAI_COMPATIBLE_MODEL_MAPPINGS,
 				"OPENAI_COMPATIBLE_MODEL_MAPPINGS environment variable",
 			);
@@ -148,56 +161,72 @@ export function getModelMappings(account: Account): Record<string, string> {
 		Object.assign(mappings, customEndpointData.modelMappings);
 	}
 
+	// Merge model_fallbacks into the arrays so they become the next models to try
+	// after the primary mapping is exhausted. model_fallbacks is now deprecated as
+	// a separate concept — the array in model_mappings supersedes it.
+	if (account.model_fallbacks) {
+		const fallbacks = parseModelFallbacks(account.model_fallbacks);
+		if (fallbacks) {
+			for (const [family, fallbackModel] of Object.entries(fallbacks)) {
+				const existing = mappings[family];
+				if (existing !== undefined) {
+					const arr = toArray(existing);
+					if (!arr.includes(fallbackModel)) {
+						mappings[family] = [...arr, fallbackModel];
+					}
+				} else {
+					mappings[family] = fallbackModel;
+				}
+			}
+		}
+	}
+
 	return mappings;
 }
 
 /**
- * Map Anthropic model name to provider-specific model name
+ * Get the ordered list of models to try for a given Anthropic model name.
+ * Returns [primaryModel, ...fallbacks] from the account's model_mappings.
+ */
+export function getModelList(
+	anthropicModel: string,
+	account: Account,
+): string[] {
+	const mappings = getModelMappings(account);
+
+	// Exact match first
+	if (mappings[anthropicModel] !== undefined) {
+		return toArray(mappings[anthropicModel]);
+	}
+
+	// Family match
+	const family = getModelFamily(anthropicModel);
+	if (family && mappings[family] !== undefined) {
+		return toArray(mappings[family]);
+	}
+
+	// Default: sonnet family
+	const defaultVal = mappings.sonnet ?? DEFAULT_MODEL_MAPPINGS.sonnet;
+	return toArray(defaultVal);
+}
+
+/**
+ * Map Anthropic model name to provider-specific model name (first in list).
  * Optimized for known model patterns with direct matching (O(1) vs O(n log n))
  */
 export function mapModelName(anthropicModel: string, account: Account): string {
-	const mappings = getModelMappings(account);
+	const list = getModelList(anthropicModel, account);
+	const mapped = list[0];
 
-	// First try exact match
-	if (mappings[anthropicModel]) {
-		if (
-			process.env.DEBUG?.includes("model") ||
-			process.env.DEBUG === "true" ||
-			process.env.NODE_ENV === "development"
-		) {
-			log.info(
-				`Exact model mapping: ${anthropicModel} -> ${mappings[anthropicModel]}`,
-			);
-		}
-		return mappings[anthropicModel];
-	}
-
-	// Use shared pattern detection
-	const family = getModelFamily(anthropicModel);
-	if (family) {
-		const mappedModel = mappings[family] || DEFAULT_MODEL_MAPPINGS[family];
-		if (
-			process.env.DEBUG?.includes("model") ||
-			process.env.DEBUG === "true" ||
-			process.env.NODE_ENV === "development"
-		) {
-			log.info(
-				`${family.charAt(0).toUpperCase() + family.slice(1)} model mapping: ${anthropicModel} -> ${mappedModel}`,
-			);
-		}
-		return mappedModel;
-	}
-
-	// Default fallback - use sonnet as the mid-tier default
-	const fallbackModel = mappings.sonnet || DEFAULT_MODEL_MAPPINGS.sonnet;
 	if (
 		process.env.DEBUG?.includes("model") ||
 		process.env.DEBUG === "true" ||
 		process.env.NODE_ENV === "development"
 	) {
-		log.info(`Fallback model mapping: ${anthropicModel} -> ${fallbackModel}`);
+		log.info(`Model mapping: ${anthropicModel} -> ${mapped}`);
 	}
-	return fallbackModel;
+
+	return mapped;
 }
 
 /**
@@ -268,6 +297,7 @@ export function parseModelFallbacks(
 
 /**
  * Validate model fallbacks for storage.
+ * @deprecated Prefer storing fallbacks as arrays in model_mappings instead.
  */
 export function validateAndSanitizeModelFallbacks(
 	fallbacks: unknown,
@@ -277,7 +307,11 @@ export function validateAndSanitizeModelFallbacks(
 	}
 
 	try {
-		return validateModelMappings(fallbacks, "modelFallbacks");
+		const result = validateModelMappings(fallbacks, "modelFallbacks");
+		// model_fallbacks only ever stored single strings — cast back
+		return Object.fromEntries(
+			Object.entries(result).map(([k, v]) => [k, Array.isArray(v) ? v[0] : v]),
+		);
 	} catch (error) {
 		log.warn(
 			`Invalid model fallbacks: ${error instanceof Error ? error.message : String(error)}`,
@@ -287,11 +321,11 @@ export function validateAndSanitizeModelFallbacks(
 }
 
 /**
- * Validate model mappings for storage
+ * Validate model mappings for storage. Values may be a string or string[].
  */
 export function validateAndSanitizeModelMappings(
 	mappings: unknown,
-): Record<string, string> | null {
+): Record<string, string | string[]> | null {
 	if (!mappings) {
 		return null;
 	}

@@ -201,15 +201,17 @@ export abstract class BaseAnthropicCompatibleProvider extends BaseProvider {
 			return originalModel;
 		}
 
+		const toFirst = (v: string | string[]) => (Array.isArray(v) ? v[0] : v);
+
 		// First try exact match
 		if (accountMappings[originalModel]) {
-			return accountMappings[originalModel];
+			return toFirst(accountMappings[originalModel]);
 		}
 
 		// Use shared pattern detection
 		const family = getModelFamily(originalModel);
 		if (family && accountMappings[family]) {
-			return accountMappings[family];
+			return toFirst(accountMappings[family]);
 		}
 
 		return originalModel;

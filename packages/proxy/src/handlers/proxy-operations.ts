@@ -1,8 +1,8 @@
 import {
 	getModelFamily,
+	getModelList,
 	logError,
 	ProviderError,
-	parseModelFallbacks,
 } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import { getProvider } from "@better-ccflare/providers";
@@ -456,115 +456,74 @@ export async function proxyWithAccount(
 			}
 		}
 
-		// Check if the model is unavailable/rate-limited and we have a fallback configured
+		// On model unavailable / rate-limited: cycle through the model list for
+		// this account. getModelList returns [primary, ...fallbacks] merged from
+		// model_mappings arrays and legacy model_fallbacks. We already tried index 0
+		// (the primary), so start at index 1.
 		if (await isModelUnavailableError(rawResponse)) {
-			const is429 = rawResponse.status === 429;
 			let requestedModel: string | null = null;
 			if (requestBodyBuffer) {
 				try {
 					const bodyText = new TextDecoder().decode(requestBodyBuffer);
-					const parsed = JSON.parse(bodyText);
-					requestedModel = parsed.model || null;
+					requestedModel = JSON.parse(bodyText).model ?? null;
 				} catch {
-					// Ignore parse errors
+					// ignore
 				}
 			}
 
-			let triedFallback = false;
-			if (requestedModel && account.model_fallbacks) {
-				const family = getModelFamily(requestedModel);
-				const fallbacks = parseModelFallbacks(account.model_fallbacks);
+			if (requestedModel) {
+				const modelList = getModelList(requestedModel, account);
 
-				if (family && fallbacks?.[family]) {
-					const fallbackModel = fallbacks[family];
+				for (let i = 1; i < modelList.length; i++) {
+					const nextModel = modelList[i];
 					log.info(
-						`Model '${requestedModel}' unavailable on account ${account.name}, ` +
-							`retrying with fallback: ${fallbackModel} (family: ${family})`,
+						`Model '${modelList[i - 1]}' unavailable/rate-limited on account ${account.name}, ` +
+							`retrying with: ${nextModel} (${i}/${modelList.length - 1})`,
 					);
 
+					// Patch the original request body with the next model name, then let
+					// transformRequestBody handle format conversion. Because nextModel is
+					// already the final provider model name (not a Claude alias), it won't
+					// match any family pattern in mapModelName and falls through unchanged.
 					let patchedBody: ArrayBuffer | null = null;
-					if (requestBodyBuffer) {
-						try {
-							const bodyText = new TextDecoder().decode(requestBodyBuffer);
-							const body = JSON.parse(bodyText);
-							body.model = fallbackModel;
-							patchedBody = new TextEncoder().encode(
-								JSON.stringify(body),
-							).buffer;
-						} catch {
-							log.warn("Failed to patch request body with fallback model");
-						}
+					try {
+						const bodyText = new TextDecoder().decode(requestBodyBuffer!);
+						const body = JSON.parse(bodyText);
+						body.model = nextModel;
+						patchedBody = new TextEncoder().encode(JSON.stringify(body)).buffer;
+					} catch {
+						log.warn("Failed to patch request body for model retry");
+						break;
 					}
 
-					if (patchedBody) {
-						triedFallback = true;
-						const retryRequestInit: RequestInit & { duplex?: "half" } = {
-							method: req.method,
-							headers,
-							body: new Uint8Array(patchedBody),
-							duplex: "half",
-						};
+					const retryRequestInit: RequestInit & { duplex?: "half" } = {
+						method: req.method,
+						headers,
+						body: new Uint8Array(patchedBody),
+						duplex: "half",
+					};
 
-						const retryProviderRequest = new Request(
-							targetUrl,
-							retryRequestInit,
-						);
+					const retryProviderRequest = new Request(targetUrl, retryRequestInit);
+					const retryTransformedRequest = provider.transformRequestBody
+						? await provider.transformRequestBody(retryProviderRequest, account)
+						: retryProviderRequest;
 
-						// Run transformRequestBody (e.g. Anthropic→OpenAI format conversion),
-						// then re-patch the model name. transformRequestBody remaps via
-						// model_mappings which would overwrite our fallback model back to the
-						// primary mapped model (since the fallback name has no Claude family match).
-						let retryTransformedRequest = provider.transformRequestBody
-							? await provider.transformRequestBody(
-									retryProviderRequest,
-									account,
-								)
-							: retryProviderRequest;
+					rawResponse = isSyntheticProviderResponse(retryTransformedRequest)
+						? materializeSyntheticResponse(retryTransformedRequest)
+						: await makeProxyRequest(retryTransformedRequest);
 
-						if (provider.transformRequestBody) {
-							try {
-								const transformedText = await retryTransformedRequest
-									.clone()
-									.text();
-								const transformedBody = JSON.parse(transformedText);
-								transformedBody.model = fallbackModel;
-								retryTransformedRequest = new Request(
-									retryTransformedRequest.url,
-									{
-										method: retryTransformedRequest.method,
-										headers: retryTransformedRequest.headers,
-										body: JSON.stringify(transformedBody),
-										duplex: "half",
-									} as RequestInit & { duplex?: "half" },
-								);
-							} catch {
-								log.warn(
-									"Failed to re-patch fallback model after transformRequestBody",
-								);
-							}
-						}
-
-						rawResponse = isSyntheticProviderResponse(retryTransformedRequest)
-							? materializeSyntheticResponse(retryTransformedRequest)
-							: await makeProxyRequest(retryTransformedRequest);
-
-						// If fallback model also rate-limited, escalate to next account
-						if (rawResponse.status === 429) {
-							log.warn(
-								`Fallback model '${fallbackModel}' also rate-limited (429) on account ${account.name}, failing over to next account`,
-							);
-							return null;
-						}
+					if (!(await isModelUnavailableError(rawResponse.clone()))) {
+						break; // Success — stop cycling
 					}
 				}
 			}
 
-			// For 429s with no fallback (or no matching family), escalate to next account
-			// rather than returning the error to the client. OpenAI-compatible providers
-			// never set isRateLimited:true so we must handle escalation here.
-			if (is429 && !triedFallback) {
+			// If still unavailable/rate-limited after exhausting the model list,
+			// failover to the next account. OpenAI-compatible providers never set
+			// isRateLimited:true in parseRateLimit, so we must handle it here.
+			if (await isModelUnavailableError(rawResponse)) {
 				log.warn(
-					`Model rate-limited (429) on account ${account.name} with no applicable fallback, failing over to next account`,
+					`All models exhausted on account ${account.name}, failing over to next account`,
 				);
 				return null;
 			}

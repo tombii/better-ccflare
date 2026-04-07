@@ -45,7 +45,7 @@ export interface AddAccountOptionsWithAdapter {
 		| "codex";
 	priority?: number;
 	customEndpoint?: string;
-	modelMappings?: { [key: string]: string };
+	modelMappings?: { [key: string]: string | string[] };
 	modelFallbacks?: { [key: string]: string };
 	profile?: string;
 	crossRegionMode?: "geographic" | "global" | "regional";
@@ -152,8 +152,8 @@ export async function createNanoGPTAccount(
 	apiKey: string,
 	priority: number,
 	customEndpoint?: string,
-	modelMappings?: { [key: string]: string } | null,
-	modelFallbacks?: { [key: string]: string } | null,
+	modelMappings?: { [key: string]: string | string[] } | null,
+	modelFallbacks?: { [key: string]: string | string[] } | null,
 ): Promise<void> {
 	const accountId = crypto.randomUUID();
 	const now = Date.now();
@@ -209,8 +209,8 @@ async function createKiloAccount(
 	name: string,
 	apiKey: string,
 	priority: number,
-	modelMappings?: { [key: string]: string } | null,
-	modelFallbacks?: { [key: string]: string } | null,
+	modelMappings?: { [key: string]: string | string[] } | null,
+	modelFallbacks?: { [key: string]: string | string[] } | null,
 ): Promise<void> {
 	const accountId = crypto.randomUUID();
 	const now = Date.now();
@@ -259,8 +259,8 @@ async function createAlibabaCodingPlanAccount(
 	name: string,
 	apiKey: string,
 	priority: number,
-	modelMappings?: { [key: string]: string } | null,
-	modelFallbacks?: { [key: string]: string } | null,
+	modelMappings?: { [key: string]: string | string[] } | null,
+	modelFallbacks?: { [key: string]: string | string[] } | null,
 ): Promise<void> {
 	const accountId = crypto.randomUUID();
 	const now = Date.now();
@@ -309,8 +309,8 @@ async function createOpenRouterAccount(
 	name: string,
 	apiKey: string,
 	priority: number,
-	modelMappings?: { [key: string]: string } | null,
-	modelFallbacks?: { [key: string]: string } | null,
+	modelMappings?: { [key: string]: string | string[] } | null,
+	modelFallbacks?: { [key: string]: string | string[] } | null,
 ): Promise<void> {
 	const accountId = crypto.randomUUID();
 	const now = Date.now();
@@ -360,8 +360,8 @@ async function createAnthropicCompatibleAccount(
 	apiKey: string,
 	priority: number,
 	customEndpoint?: string,
-	modelMappings?: { [key: string]: string } | null,
-	modelFallbacks?: { [key: string]: string } | null,
+	modelMappings?: { [key: string]: string | string[] } | null,
+	modelFallbacks?: { [key: string]: string | string[] } | null,
 ): Promise<void> {
 	const accountId = crypto.randomUUID();
 	const now = Date.now();
@@ -420,8 +420,8 @@ async function createZaiAccount(
 	name: string,
 	apiKey: string,
 	priority: number,
-	modelMappings?: { [key: string]: string } | null,
-	modelFallbacks?: { [key: string]: string } | null,
+	modelMappings?: { [key: string]: string | string[] } | null,
+	modelFallbacks?: { [key: string]: string | string[] } | null,
 ): Promise<void> {
 	const accountId = crypto.randomUUID();
 	const now = Date.now();
@@ -793,8 +793,8 @@ async function createCodexOAuthAccount(
 	name: string,
 	priority: number,
 	customEndpoint?: string,
-	modelMappings?: { [key: string]: string } | null,
-	modelFallbacks?: { [key: string]: string } | null,
+	modelMappings?: { [key: string]: string | string[] } | null,
+	modelFallbacks?: { [key: string]: string | string[] } | null,
 ): Promise<void> {
 	// Get the CodexOAuthProvider
 	const oauthProvider = getOAuthProvider("codex");
