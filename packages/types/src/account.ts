@@ -296,20 +296,19 @@ export function toAccountResponse(account: Account): AccountResponse {
 		? `Session: ${account.session_request_count} requests`
 		: "No active session";
 
-	// Parse model mappings for OpenAI-compatible providers
+	// Parse model mappings (supported for any provider)
 	let modelMappings: { [key: string]: string } | null = null;
-	if (account.provider === "openai-compatible" && account.model_mappings) {
+	if (account.model_mappings) {
 		try {
 			const parsed = JSON.parse(account.model_mappings);
-			modelMappings = parsed.modelMappings || null;
+			// Stored as flat {"model": "target"} object
+			modelMappings =
+				typeof parsed === "object" && parsed !== null ? parsed : null;
 		} catch {
 			// If parsing fails, ignore model mappings
 			modelMappings = null;
 		}
-	} else if (
-		account.provider === "openai-compatible" &&
-		account.custom_endpoint
-	) {
+	} else if (account.custom_endpoint) {
 		// Also try parsing from custom_endpoint for backwards compatibility
 		try {
 			const parsed = JSON.parse(account.custom_endpoint);

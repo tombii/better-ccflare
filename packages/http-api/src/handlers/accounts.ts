@@ -387,15 +387,7 @@ export function createAccountsListHandler(dbOps: DatabaseOperations) {
 
 				// Parse model mappings for OpenAI-compatible, Anthropic-compatible, NanoGPT, and OpenRouter providers
 				let modelMappings: { [key: string]: string } | null = null;
-				if (
-					(account.provider === "openai-compatible" ||
-						account.provider === "anthropic-compatible" ||
-						account.provider === "nanogpt" ||
-						account.provider === "openrouter" ||
-						account.provider === "alibaba-coding-plan" ||
-						account.provider === "zai") &&
-					account.model_mappings
-				) {
+				if (account.model_mappings) {
 					try {
 						const parsed = JSON.parse(account.model_mappings);
 						// Handle both formats: direct mappings or wrapped in modelMappings
