@@ -108,17 +108,20 @@ export function App() {
 	const [isAuthenticated, setIsAuthenticated] = useState(false);
 	const [isCheckingAuth, setIsCheckingAuth] = useState(true);
 	const [authError, setAuthError] = useState<string | null>(null);
+	const [authRequired, setAuthRequired] = useState(false);
 
 	// Use refs to store state setters so they can be accessed in QueryClient callbacks
 	const showAuthDialogRef = useRef(setShowAuthDialog);
 	const isAuthenticatedRef = useRef(setIsAuthenticated);
 	const authErrorRef = useRef(setAuthError);
+	const authRequiredRef = useRef(setAuthRequired);
 
 	// Update refs when setters change
 	useEffect(() => {
 		showAuthDialogRef.current = setShowAuthDialog;
 		isAuthenticatedRef.current = setIsAuthenticated;
 		authErrorRef.current = setAuthError;
+		authRequiredRef.current = setAuthRequired;
 	}, []);
 
 	// Create QueryClient with global error handler for 401 errors
@@ -149,6 +152,7 @@ export function App() {
 							api.clearApiKey();
 							authErrorRef.current(null); // Clear any previous errors
 							isAuthenticatedRef.current(false);
+							authRequiredRef.current(true);
 							showAuthDialogRef.current(true);
 						}
 					},
@@ -161,6 +165,7 @@ export function App() {
 							api.clearApiKey();
 							authErrorRef.current(null); // Clear any previous errors
 							isAuthenticatedRef.current(false);
+							authRequiredRef.current(true);
 							showAuthDialogRef.current(true);
 						}
 					},
@@ -180,11 +185,14 @@ export function App() {
 				await api.getStats();
 				// If successful, we're authenticated (either no auth required, or valid key)
 				setIsAuthenticated(true);
+				// Auth is required only if we got here with a stored key
+				setAuthRequired(!!api.getApiKey());
 			} catch (error) {
 				// If we get a 401, auth is required
 				if (error instanceof HttpError && error.status === 401) {
 					// Clear any invalid stored key
 					api.clearApiKey();
+					setAuthRequired(true);
 					setShowAuthDialog(true);
 				}
 			} finally {
@@ -201,6 +209,7 @@ export function App() {
 			api.clearApiKey();
 			setAuthError(null);
 			setIsAuthenticated(false);
+			setAuthRequired(true);
 			setShowAuthDialog(true);
 		};
 
@@ -260,7 +269,7 @@ export function App() {
 		<QueryClientProvider client={queryClient}>
 			<ThemeProvider>
 				<div className="min-h-screen bg-background">
-					<Navigation onLogout={handleLogout} />
+					<Navigation onLogout={authRequired ? handleLogout : undefined} />
 
 					{/* Main Content */}
 					<main className="lg:pl-64">
