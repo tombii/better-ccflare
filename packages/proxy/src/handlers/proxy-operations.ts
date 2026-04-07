@@ -217,7 +217,12 @@ async function isInvalidThinkingSignatureError(
  * generic messages, and Bedrock (ResourceNotFoundException).
  */
 async function isModelUnavailableError(response: Response): Promise<boolean> {
-	if (response.status !== 404 && response.status !== 400) return false;
+	if (
+		response.status !== 404 &&
+		response.status !== 400 &&
+		response.status !== 429
+	)
+		return false;
 
 	try {
 		const clone = response.clone();
@@ -248,6 +253,13 @@ async function isModelUnavailableError(response: Response): Promise<boolean> {
 			typeof json.error.message === "string" &&
 			json.error.message.includes("ResourceNotFoundException")
 		) {
+			return true;
+		}
+
+		// 429: model-specific rate limit (e.g. OpenRouter free model RPM cap).
+		// Try the fallback model — if no fallback family matches, the caller falls through
+		// and returns the 429 as-is. Single retry only, no loop risk.
+		if (response.status === 429) {
 			return true;
 		}
 	} catch {
@@ -505,6 +517,14 @@ export async function proxyWithAccount(
 						rawResponse = isSyntheticProviderResponse(retryTransformedRequest)
 							? materializeSyntheticResponse(retryTransformedRequest)
 							: await makeProxyRequest(retryTransformedRequest);
+
+						// If fallback model also rate-limited, escalate to next account
+						if (rawResponse.status === 429) {
+							log.warn(
+								`Fallback model '${fallbackModel}' also rate-limited (429) on account ${account.name}, failing over to next account`,
+							);
+							return null;
+						}
 					}
 				}
 			}
