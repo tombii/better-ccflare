@@ -130,13 +130,15 @@ export class ComboRepository extends BaseRepository<Combo> {
       params.push(fields.enabled ? 1 : 0);
     }
 
-    if (setClauses.length > 0) {
-      params.push(slotId);
-      await this.run(
-        `UPDATE combo_slots SET ${setClauses.join(", ")} WHERE id = ?`,
-        params,
-      );
+    if (setClauses.length === 0) {
+      throw new Error("updateSlot called with no fields to update");
     }
+
+    params.push(slotId);
+    await this.run(
+      `UPDATE combo_slots SET ${setClauses.join(", ")} WHERE id = ?`,
+      params,
+    );
 
     const row = await this.get<ComboSlotRow>(
       `SELECT id, combo_id, account_id, model, priority, enabled FROM combo_slots WHERE id = ?`,
