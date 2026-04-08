@@ -166,12 +166,15 @@ export class ComboRepository extends BaseRepository<Combo> {
    * slotIds must all belong to the same comboId.
    */
   async reorderSlots(comboId: string, slotIds: string[]): Promise<void> {
-    for (let i = 0; i < slotIds.length; i++) {
-      await this.run(
-        `UPDATE combo_slots SET priority = ? WHERE id = ? AND combo_id = ?`,
-        [i, slotIds[i], comboId],
-      );
-    }
+    if (slotIds.length === 0) return;
+
+    // Build a single batched UPDATE for atomicity — avoids partial state on crash
+    const cases = slotIds.map((_, i) => `WHEN ? THEN ${i}`).join(' ');
+    const placeholders = slotIds.map(() => '?').join(', ');
+    const sql = `UPDATE combo_slots
+                 SET priority = CASE id ${cases} ELSE priority END
+                 WHERE combo_id = ? AND id IN (${placeholders})`;
+    await this.run(sql, [...slotIds, comboId, ...slotIds]);
   }
 
   // ── Family assignment ────────────────────────────────────────────────────
