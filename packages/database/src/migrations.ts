@@ -163,6 +163,50 @@ export function ensureSchema(db: Database): void {
 	db.run(
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_model_translations_unique ON model_translations(client_name, bedrock_model_id)`,
 	);
+
+	// Create combos table
+	db.run(`
+		CREATE TABLE IF NOT EXISTS combos (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL UNIQUE,
+			description TEXT,
+			enabled INTEGER DEFAULT 1,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
+		)
+	`);
+
+	// Create combo_slots table
+	// account_id CASCADE: deleting an account removes its slots (REQ-17)
+	// combo_id CASCADE: deleting a combo removes all its slots (REQ-18)
+	db.run(`
+		CREATE TABLE IF NOT EXISTS combo_slots (
+			id TEXT PRIMARY KEY,
+			combo_id TEXT NOT NULL,
+			account_id TEXT NOT NULL,
+			model TEXT NOT NULL,
+			priority INTEGER NOT NULL,
+			enabled INTEGER DEFAULT 1,
+			FOREIGN KEY (combo_id) REFERENCES combos(id) ON DELETE CASCADE,
+			FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
+		)
+	`);
+
+	// Index for fast slot lookups by combo, ordered by priority
+	db.run(
+		`CREATE INDEX IF NOT EXISTS idx_combo_slots_combo_id ON combo_slots(combo_id, priority)`,
+	);
+
+	// Create combo_family_assignments table
+	// combo_id SET NULL: deleting a combo clears the family assignment without error
+	db.run(`
+		CREATE TABLE IF NOT EXISTS combo_family_assignments (
+			family TEXT PRIMARY KEY,
+			combo_id TEXT,
+			enabled INTEGER DEFAULT 0,
+			FOREIGN KEY (combo_id) REFERENCES combos(id) ON DELETE SET NULL
+		)
+	`);
 }
 
 export function runMigrations(db: Database, dbPath?: string): void {
