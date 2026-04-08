@@ -54,15 +54,6 @@ function filterThinkingBlocks(
 
 		let hasChanges = false;
 
-		// Find the index of the last assistant message
-		let _lastAssistantIndex = -1;
-		for (let i = body.messages.length - 1; i >= 0; i--) {
-			if (body.messages[i].role === "assistant") {
-				_lastAssistantIndex = i;
-				break;
-			}
-		}
-
 		// Filter out thinking blocks from message content and track which messages were modified
 		const processedMessages = body.messages.map(
 			(
