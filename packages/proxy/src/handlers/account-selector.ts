@@ -1,10 +1,9 @@
-import { isAccountAvailable, getModelFamily } from "@better-ccflare/core";
+import { getModelFamily, isAccountAvailable } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import type {
 	Account,
 	ComboFamily,
 	ComboSlotInfo,
-	ComboWithSlots,
 	RequestMeta,
 } from "@better-ccflare/types";
 import type { ProxyContext } from "./proxy-types";
@@ -15,10 +14,7 @@ const log = new Logger("AccountSelector");
 const comboSlotInfoMap = new WeakMap<RequestMeta, ComboSlotInfo>();
 
 /** Store combo slot info on a RequestMeta for downstream consumption */
-export function setComboSlotInfo(
-	meta: RequestMeta,
-	info: ComboSlotInfo,
-): void {
+export function setComboSlotInfo(meta: RequestMeta, info: ComboSlotInfo): void {
 	comboSlotInfoMap.set(meta, info);
 }
 
