@@ -41,6 +41,7 @@ const navItems: NavItem[] = [
 	{ label: "Analytics", icon: BarChart3, path: "/analytics" },
 	{ label: "Requests", icon: Activity, path: "/requests" },
 	{ label: "Accounts", icon: Users, path: "/accounts" },
+	{ label: "Combos", icon: Zap, path: "/combos" },
 	{ label: "Agents", icon: Bot, path: "/agents" },
 	{ label: "API Keys", icon: Key, path: "/api-keys" },
 	{ label: "Logs", icon: FileText, path: "/logs" },
