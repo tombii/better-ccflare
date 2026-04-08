@@ -11,8 +11,17 @@ export enum LogLevel {
 
 export type LogFormat = "pretty" | "json";
 
-// Event emitter for log streaming
+// Event emitter for log streaming — high limit since each SSE client adds one listener
 export const logBus = new EventEmitter();
+logBus.setMaxListeners(100);
+
+// biome-ignore lint/suspicious/noExplicitAny: needs to handle any error type
+function serializeData(d: any): any {
+	if (d instanceof Error) {
+		return { message: d.message, name: d.name, stack: d.stack };
+	}
+	return d;
+}
 
 export class Logger {
 	private level: LogLevel;
@@ -71,12 +80,12 @@ export class Logger {
 				level,
 				prefix: this.prefix || undefined,
 				msg: message,
-				...(data && { data }),
+				...(data && { data: serializeData(data) }),
 			};
 			return JSON.stringify(logEntry);
 		} else {
 			const prefix = this.prefix ? `[${this.prefix}] ` : "";
-			const dataStr = data ? ` ${JSON.stringify(data)}` : "";
+			const dataStr = data ? ` ${JSON.stringify(serializeData(data))}` : "";
 			return `[${timestamp}] ${level}: ${prefix}${message}${dataStr}`;
 		}
 	}
@@ -89,6 +98,7 @@ export class Logger {
 				ts: Date.now(),
 				level: "DEBUG",
 				msg: message,
+				...(data !== undefined && { data: serializeData(data) }),
 			};
 			logBus.emit("log", event);
 			logFileWriter?.write(event);
@@ -104,6 +114,7 @@ export class Logger {
 				ts: Date.now(),
 				level: "INFO",
 				msg: message,
+				...(data !== undefined && { data: serializeData(data) }),
 			};
 			logBus.emit("log", event);
 			logFileWriter?.write(event);
@@ -119,6 +130,7 @@ export class Logger {
 				ts: Date.now(),
 				level: "WARN",
 				msg: message,
+				...(data !== undefined && { data: serializeData(data) }),
 			};
 			logBus.emit("log", event);
 			logFileWriter?.write(event);
@@ -134,6 +146,7 @@ export class Logger {
 				ts: Date.now(),
 				level: "ERROR",
 				msg: message,
+				...(error !== undefined && { data: serializeData(error) }),
 			};
 			logBus.emit("log", event);
 			logFileWriter?.write(event);

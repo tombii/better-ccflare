@@ -50,7 +50,7 @@ export function createLogsStreamHandler() {
 		logBus.on("log", handleLogEvent);
 
 		// Clean up on abort signal
-		req.signal?.addEventListener("abort", () => {
+		const cleanup = () => {
 			if (!closed) {
 				closed = true;
 				if (handleLogEvent) {
@@ -61,7 +61,11 @@ export function createLogsStreamHandler() {
 					writer.close();
 				} catch {}
 			}
-		});
+		};
+
+		if (req.signal) {
+			req.signal.addEventListener("abort", cleanup);
+		}
 
 		return sseResponse(readable);
 	};
