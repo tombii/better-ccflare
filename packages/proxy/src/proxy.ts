@@ -4,6 +4,7 @@ import {
 	trackClientVersion,
 } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
+import type { Account } from "@better-ccflare/types";
 import {
 	createRequestMetadata,
 	ERROR_MESSAGES,
@@ -360,6 +361,7 @@ export async function handleProxy(
 
 	// 10. Combo fallback: if combo routing was active and all slots failed,
 	//     fall back to normal SessionStrategy routing (REQ-14)
+	let fallbackAccounts: Account[] | null = null;
 	if (comboInfo?.comboName) {
 		log.warn(
 			`All combo slots failed for combo "${comboInfo.comboName}", falling back to SessionStrategy routing`,
@@ -367,7 +369,7 @@ export async function handleProxy(
 		// Clear combo info and retry with normal routing
 		requestMeta.comboName = null;
 		requestMeta.comboSlotIndex = null;
-		const fallbackAccounts = await selectAccountsForRequest(requestMeta, ctx);
+		fallbackAccounts = await selectAccountsForRequest(requestMeta, ctx);
 
 		if (fallbackAccounts.length > 0) {
 			log.info(
@@ -396,7 +398,9 @@ export async function handleProxy(
 	}
 
 	// 11. All accounts failed - check if OAuth token issues are the cause
-	const allAttemptedAccounts = accounts;
+	const allAttemptedAccounts = comboInfo
+		? [...accounts, ...(fallbackAccounts ?? [])]
+		: accounts;
 	const oauthAccounts = allAttemptedAccounts.filter((acc) => acc.refresh_token);
 	const needsReauth = oauthAccounts.filter((acc) =>
 		isRefreshTokenLikelyExpired(acc),
