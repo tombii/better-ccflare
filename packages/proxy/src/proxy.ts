@@ -318,7 +318,14 @@ export async function handleProxy(
 		// For combo routing: enrich metadata with slot index and look up model override
 		let modelOverride: string | null = null;
 		if (comboInfo?.slots[i]) {
-			modelOverride = comboInfo.slots[i].modelOverride;
+			const slot = comboInfo.slots[i];
+			if (slot.accountId !== accounts[i].id) {
+				log.error(
+					`Combo slot/account desync: slot ${i} expects account ${slot.accountId} but got ${accounts[i].id}`,
+				);
+			} else {
+				modelOverride = slot.modelOverride;
+			}
 			requestMeta.comboSlotIndex = i;
 			log.info(
 				`Attempting combo slot ${i}/${accounts.length - 1} on account ${accounts[i].name} with model "${modelOverride}"`,
