@@ -1,7 +1,6 @@
 import type { DatabaseOperations } from "@better-ccflare/database";
 import { BadRequest, NotFound } from "@better-ccflare/errors";
 import type {
-	Combo,
 	ComboFamily,
 	ComboFamilyAssignment,
 	ComboWithSlots,
@@ -52,22 +51,13 @@ export function createComboCreateHandler(dbOps: DatabaseOperations) {
 			const body = await req.json();
 			const { name, description } = body;
 
-			if (
-				!name ||
-				typeof name !== "string" ||
-				name.trim().length === 0
-			) {
+			if (!name || typeof name !== "string" || name.trim().length === 0) {
 				return errorResponse(
-					BadRequest(
-						"name is required and must be a non-empty string",
-					),
+					BadRequest("name is required and must be a non-empty string"),
 				);
 			}
 
-			const combo = await dbOps.createCombo(
-				name.trim(),
-				description ?? null,
-			);
+			const combo = await dbOps.createCombo(name.trim(), description ?? null);
 			const response = {
 				success: true,
 				data: combo,
@@ -132,13 +122,8 @@ export function createComboUpdateHandler(dbOps: DatabaseOperations) {
 			}> = {};
 
 			if (name !== undefined) {
-				if (
-					typeof name !== "string" ||
-					name.trim().length === 0
-				) {
-					return errorResponse(
-						BadRequest("name must be a non-empty string"),
-					);
+				if (typeof name !== "string" || name.trim().length === 0) {
+					return errorResponse(BadRequest("name must be a non-empty string"));
 				}
 				fields.name = name.trim();
 			}
@@ -213,19 +198,11 @@ export function createSlotAddHandler(dbOps: DatabaseOperations) {
 				typeof account_id !== "string" ||
 				account_id.trim().length === 0
 			) {
-				return errorResponse(
-					BadRequest("account_id and model are required"),
-				);
+				return errorResponse(BadRequest("account_id and model are required"));
 			}
 
-			if (
-				!model ||
-				typeof model !== "string" ||
-				model.trim().length === 0
-			) {
-				return errorResponse(
-					BadRequest("account_id and model are required"),
-				);
+			if (!model || typeof model !== "string" || model.trim().length === 0) {
+				return errorResponse(BadRequest("account_id and model are required"));
 			}
 
 			const existingSlots = await dbOps.getComboSlots(comboId);
@@ -237,13 +214,10 @@ export function createSlotAddHandler(dbOps: DatabaseOperations) {
 				nextPriority,
 			);
 
-			return new Response(
-				JSON.stringify({ success: true, data: newSlot }),
-				{
-					status: 201,
-					headers: { "Content-Type": "application/json" },
-				},
-			);
+			return new Response(JSON.stringify({ success: true, data: newSlot }), {
+				status: 201,
+				headers: { "Content-Type": "application/json" },
+			});
 		} catch (error) {
 			return errorResponse(error);
 		}
@@ -270,9 +244,7 @@ export function createSlotUpdateHandler(dbOps: DatabaseOperations) {
 
 			if (model !== undefined) {
 				if (typeof model !== "string" || model.trim().length === 0) {
-					return errorResponse(
-						BadRequest("model must be a non-empty string"),
-					);
+					return errorResponse(BadRequest("model must be a non-empty string"));
 				}
 				fields.model = model.trim();
 			}
@@ -303,10 +275,7 @@ export function createSlotUpdateHandler(dbOps: DatabaseOperations) {
  * DELETE /api/combos/:id/slots/:slotId — Remove a slot from a combo
  */
 export function createSlotRemoveHandler(dbOps: DatabaseOperations) {
-	return async (
-		_comboId: string,
-		slotId: string,
-	): Promise<Response> => {
+	return async (_comboId: string, slotId: string): Promise<Response> => {
 		try {
 			await dbOps.removeComboSlot(slotId);
 
@@ -401,11 +370,7 @@ export function createFamilyAssignHandler(dbOps: DatabaseOperations) {
 				comboId === undefined ? null : (comboId as string | null);
 			const enabled = safeComboId !== null;
 
-			await dbOps.setFamilyCombo(
-				family as ComboFamily,
-				safeComboId,
-				enabled,
-			);
+			await dbOps.setFamilyCombo(family as ComboFamily, safeComboId, enabled);
 
 			return new Response(
 				JSON.stringify({

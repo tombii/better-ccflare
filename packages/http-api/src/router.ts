@@ -51,6 +51,12 @@ import {
 	createComboGetHandler,
 	createCombosListHandler,
 	createComboUpdateHandler,
+	createFamiliesListHandler,
+	createFamilyAssignHandler,
+	createSlotAddHandler,
+	createSlotRemoveHandler,
+	createSlotReorderHandler,
+	createSlotUpdateHandler,
 } from "./handlers/combos";
 import { createConfigHandlers } from "./handlers/config";
 import {
@@ -290,6 +296,11 @@ export class APIRouter {
 		);
 		this.handlers.set("POST:/api/combos", (req) =>
 			createComboCreateHandler(dbOps)(req),
+		);
+
+		// Family assignment routes
+		this.handlers.set("GET:/api/families", () =>
+			createFamiliesListHandler(dbOps)(),
 		);
 	}
 
@@ -572,6 +583,37 @@ export class APIRouter {
 			const parts = path.split("/");
 			const comboId = decodeURIComponent(parts[3]);
 
+			// Combo slot sub-resource routes
+			if (parts[4] === "slots" && parts[5] === "reorder" && method === "PUT") {
+				const handler = createSlotReorderHandler(this.context.dbOps);
+				return await this.wrapHandler((req) => handler(req, comboId))(req, url);
+			}
+
+			if (parts[4] === "slots" && parts.length === 5 && method === "POST") {
+				const handler = createSlotAddHandler(this.context.dbOps);
+				return await this.wrapHandler((req) => handler(req, comboId))(req, url);
+			}
+
+			if (parts[4] === "slots" && parts.length === 6) {
+				const slotId = decodeURIComponent(parts[5]);
+
+				if (method === "PUT") {
+					const handler = createSlotUpdateHandler(this.context.dbOps);
+					return await this.wrapHandler((req) => handler(req, comboId, slotId))(
+						req,
+						url,
+					);
+				}
+
+				if (method === "DELETE") {
+					const handler = createSlotRemoveHandler(this.context.dbOps);
+					return await this.wrapHandler(() => handler(comboId, slotId))(
+						req,
+						url,
+					);
+				}
+			}
+
 			// GET /api/combos/:id
 			if (parts.length === 4 && method === "GET") {
 				const handler = createComboGetHandler(this.context.dbOps);
@@ -588,6 +630,17 @@ export class APIRouter {
 			if (parts.length === 4 && method === "DELETE") {
 				const handler = createComboDeleteHandler(this.context.dbOps);
 				return await this.wrapHandler(() => handler(comboId))(req, url);
+			}
+		}
+
+		// Check for dynamic family endpoints
+		if (path.startsWith("/api/families/") && method === "PUT") {
+			const parts = path.split("/");
+			const family = decodeURIComponent(parts[3]);
+
+			if (parts.length === 4) {
+				const handler = createFamilyAssignHandler(this.context.dbOps);
+				return await this.wrapHandler((req) => handler(req, family))(req, url);
 			}
 		}
 
