@@ -197,6 +197,11 @@ export function ensureSchema(db: Database): void {
 		`CREATE INDEX IF NOT EXISTS idx_combo_slots_combo_id ON combo_slots(combo_id, priority)`,
 	);
 
+	// Unique constraint to prevent duplicate (combo_id, account_id, model) slots
+	db.run(
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_combo_slots_unique ON combo_slots(combo_id, account_id, model)`,
+	);
+
 	// Create combo_family_assignments table
 	// combo_id SET NULL: deleting a combo clears the family assignment without error
 	db.run(`
