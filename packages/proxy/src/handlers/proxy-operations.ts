@@ -377,9 +377,9 @@ export async function proxyWithAccount(
 				const bodyText = new TextDecoder().decode(requestBodyBuffer);
 				const body = JSON.parse(bodyText);
 				body.model = modelOverride;
-				effectiveBodyBuffer = new TextEncoder()
-					.encode(JSON.stringify(body))
-					.buffer;
+				effectiveBodyBuffer = new TextEncoder().encode(
+					JSON.stringify(body),
+				).buffer;
 
 				if (
 					process.env.DEBUG?.includes("proxy") ||

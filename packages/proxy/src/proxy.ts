@@ -7,6 +7,7 @@ import { Logger } from "@better-ccflare/logger";
 import {
 	createRequestMetadata,
 	ERROR_MESSAGES,
+	getComboSlotInfo,
 	interceptAndModifyRequest,
 	isRefreshTokenLikelyExpired,
 	type ProxyContext,
@@ -208,6 +209,17 @@ export async function handleProxy(
 	// 3. Prepare request body
 	const { buffer: requestBodyBuffer } = await prepareRequestBody(req);
 
+	// Extract model from request body for family detection (used by combo routing)
+	let requestModel: string | null = null;
+	if (requestBodyBuffer) {
+		try {
+			const bodyText = new TextDecoder().decode(requestBodyBuffer);
+			requestModel = JSON.parse(bodyText).model ?? null;
+		} catch {
+			// If body can't be parsed, model stays null — combo routing won't activate
+		}
+	}
+
 	// 3a. Validate request body for /v1/messages endpoint
 	if (url.pathname === "/v1/messages" && requestBodyBuffer) {
 		try {
@@ -266,7 +278,11 @@ export async function handleProxy(
 	requestMeta.agentUsed = agentUsed;
 
 	// 6. Select accounts
-	const accounts = await selectAccountsForRequest(requestMeta, ctx);
+	const accounts = await selectAccountsForRequest(
+		requestMeta,
+		ctx,
+		requestModel ?? undefined,
+	);
 
 	// 7. Handle no accounts case
 	if (accounts.length === 0) {
@@ -295,8 +311,21 @@ export async function handleProxy(
 	}
 
 	// 9. Try each account
+	const comboInfo = getComboSlotInfo(requestMeta);
+	let response: Response | null = null;
+
 	for (let i = 0; i < accounts.length; i++) {
-		const response = await proxyWithAccount(
+		// For combo routing: enrich metadata with slot index and look up model override
+		let modelOverride: string | null = null;
+		if (comboInfo?.slots[i]) {
+			modelOverride = comboInfo.slots[i].modelOverride;
+			requestMeta.comboSlotIndex = i;
+			log.info(
+				`Attempting combo slot ${i}/${accounts.length - 1} on account ${accounts[i].name} with model "${modelOverride}"`,
+			);
+		}
+
+		response = await proxyWithAccount(
 			req,
 			url,
 			accounts[i],
@@ -305,6 +334,7 @@ export async function handleProxy(
 			finalCreateBodyStream,
 			i,
 			ctx,
+			modelOverride,
 			apiKeyId,
 			apiKeyName,
 		);
@@ -312,10 +342,55 @@ export async function handleProxy(
 		if (response) {
 			return response;
 		}
+
+		// Log combo slot failure
+		if (comboInfo) {
+			log.info(
+				`Combo slot ${i} failed on account ${accounts[i].name}${i < accounts.length - 1 ? ", trying next slot" : ", all combo slots exhausted"}`,
+			);
+		}
 	}
 
-	// 10. All accounts failed - check if OAuth token issues are the cause
-	const oauthAccounts = accounts.filter((acc) => acc.refresh_token);
+	// 10. Combo fallback: if combo routing was active and all slots failed,
+	//     fall back to normal SessionStrategy routing (REQ-14)
+	if (comboInfo?.comboName) {
+		log.warn(
+			`All combo slots failed for combo "${comboInfo.comboName}", falling back to SessionStrategy routing`,
+		);
+		// Clear combo info and retry with normal routing
+		requestMeta.comboName = null;
+		requestMeta.comboSlotIndex = null;
+		const fallbackAccounts = await selectAccountsForRequest(requestMeta, ctx);
+
+		if (fallbackAccounts.length > 0) {
+			log.info(
+				`Fallback: trying ${fallbackAccounts.length} SessionStrategy accounts`,
+			);
+			for (let i = 0; i < fallbackAccounts.length; i++) {
+				response = await proxyWithAccount(
+					req,
+					url,
+					fallbackAccounts[i],
+					requestMeta,
+					finalBodyBuffer,
+					finalCreateBodyStream,
+					i,
+					ctx,
+					undefined, // No model override for fallback path
+					apiKeyId,
+					apiKeyName,
+				);
+
+				if (response) {
+					return response;
+				}
+			}
+		}
+	}
+
+	// 11. All accounts failed - check if OAuth token issues are the cause
+	const allAttemptedAccounts = accounts;
+	const oauthAccounts = allAttemptedAccounts.filter((acc) => acc.refresh_token);
 	const needsReauth = oauthAccounts.filter((acc) =>
 		isRefreshTokenLikelyExpired(acc),
 	);
@@ -335,7 +410,7 @@ export async function handleProxy(
 	}
 
 	throw new ServiceUnavailableError(
-		`${ERROR_MESSAGES.ALL_ACCOUNTS_FAILED} (${accounts.length} attempted)`,
+		`${ERROR_MESSAGES.ALL_ACCOUNTS_FAILED} (${allAttemptedAccounts.length} attempted)`,
 		ctx.provider.name,
 	);
 }
