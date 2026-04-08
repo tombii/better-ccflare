@@ -212,6 +212,14 @@ export function ensureSchema(db: Database): void {
 			FOREIGN KEY (combo_id) REFERENCES combos(id) ON DELETE SET NULL
 		)
 	`);
+
+	// Seed the three canonical families so fresh installs have assignment rows
+	db.run(`
+		INSERT OR IGNORE INTO combo_family_assignments (family, combo_id, enabled)
+		VALUES ('opus',   NULL, 0),
+		       ('sonnet', NULL, 0),
+		       ('haiku',  NULL, 0);
+	`);
 }
 
 export function runMigrations(db: Database, dbPath?: string): void {
