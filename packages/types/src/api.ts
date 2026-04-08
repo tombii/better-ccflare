@@ -1,3 +1,11 @@
+/** Combo slot routing info — maps each returned account to its slot's model override */
+export interface ComboSlotInfo {
+	/** The combo name (null when not using combo routing) */
+	comboName: string | null;
+	/** Ordered list of { accountId, modelOverride } for combo slots, indexed by position in the returned accounts array */
+	slots: Array<{ accountId: string; modelOverride: string }>;
+}
+
 export interface RequestMeta {
 	id: string;
 	method: string;
@@ -6,6 +14,10 @@ export interface RequestMeta {
 	agentUsed?: string | null;
 	project?: string | null;
 	headers?: Headers;
+	/** Active combo name (set when combo routing is used) */
+	comboName?: string | null;
+	/** Combo slot index being attempted (set per-iteration in proxy loop) */
+	comboSlotIndex?: number | null;
 }
 
 export interface AgentUpdatePayload {
