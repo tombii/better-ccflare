@@ -110,65 +110,72 @@ export async function selectAccountsForRequest(
 	if (model) {
 		const family = getModelFamily(model);
 		if (family) {
-			const combo = await ctx.dbOps.getActiveComboForFamily(
-				family as ComboFamily,
-			);
-			if (combo) {
-				log.info(
-					`Combo routing active: ${combo.name} for family ${family} (${combo.slots.length} slots)`,
-				);
-
-				const allAccounts = await ctx.dbOps.getAllAccounts();
-				const accountMap = new Map<string, Account>();
-				for (const account of allAccounts) {
-					accountMap.set(account.id, account);
-				}
-
-				const availableAccounts: Account[] = [];
-				const slotEntries: Array<{
-					accountId: string;
-					modelOverride: string;
-				}> = [];
-
-				// Slots are already ordered by priority ASC from the repository
-				for (const slot of combo.slots) {
-					if (!slot.enabled) continue;
-
-					const account = accountMap.get(slot.account_id);
-					if (!account) {
-						log.warn(
-							`Combo slot references unknown account ${slot.account_id}`,
-						);
-						continue;
-					}
-
-					if (!isAccountAvailable(account)) {
-						continue;
-					}
-
-					availableAccounts.push(account);
-					slotEntries.push({
-						accountId: slot.account_id,
-						modelOverride: slot.model,
-					});
-				}
-
-				// Store combo slot info for downstream consumption
-				const slotInfo: ComboSlotInfo = {
-					comboName: combo.name,
-					slots: slotEntries,
-				};
-				setComboSlotInfo(meta, slotInfo);
-				meta.comboName = combo.name;
-
-				if (availableAccounts.length > 0) {
-					return availableAccounts;
-				}
-
-				// All slots unavailable — fall back to normal routing
+			const validFamilies: readonly string[] = ["opus", "sonnet", "haiku"];
+			if (!validFamilies.includes(family)) {
 				log.warn(
-					`All ${combo.slots.length} combo slots unavailable for ${combo.name}, falling back to SessionStrategy`,
+					`Unknown model family "${family}", skipping combo lookup`,
 				);
+			} else {
+				const combo = await ctx.dbOps.getActiveComboForFamily(
+					family as ComboFamily,
+				);
+				if (combo) {
+					log.info(
+						`Combo routing active: ${combo.name} for family ${family} (${combo.slots.length} slots)`,
+					);
+
+					const allAccounts = await ctx.dbOps.getAllAccounts();
+					const accountMap = new Map<string, Account>();
+					for (const account of allAccounts) {
+						accountMap.set(account.id, account);
+					}
+
+					const availableAccounts: Account[] = [];
+					const slotEntries: Array<{
+						accountId: string;
+						modelOverride: string;
+					}> = [];
+
+					// Slots are already ordered by priority ASC from the repository
+					for (const slot of combo.slots) {
+						if (!slot.enabled) continue;
+
+						const account = accountMap.get(slot.account_id);
+						if (!account) {
+							log.warn(
+								`Combo slot references unknown account ${slot.account_id}`,
+							);
+							continue;
+						}
+
+						if (!isAccountAvailable(account)) {
+							continue;
+						}
+
+						availableAccounts.push(account);
+						slotEntries.push({
+							accountId: slot.account_id,
+							modelOverride: slot.model,
+						});
+					}
+
+					// Store combo slot info for downstream consumption
+					const slotInfo: ComboSlotInfo = {
+						comboName: combo.name,
+						slots: slotEntries,
+					};
+					setComboSlotInfo(meta, slotInfo);
+					meta.comboName = combo.name;
+
+					if (availableAccounts.length > 0) {
+						return availableAccounts;
+					}
+
+					// All slots unavailable — fall back to normal routing
+					log.warn(
+						`All ${combo.slots.length} combo slots unavailable for ${combo.name}, falling back to SessionStrategy`,
+					);
+				}
 			}
 		}
 	}
