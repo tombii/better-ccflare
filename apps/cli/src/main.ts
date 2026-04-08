@@ -109,6 +109,7 @@ interface ParsedArgs {
 	forceResetRateLimit: string | null;
 	showConfig: boolean;
 	admin: boolean;
+	smol: boolean;
 }
 
 /**
@@ -445,6 +446,7 @@ function parseArgs(args: string[]): ParsedArgs {
 		forceResetRateLimit: null,
 		showConfig: false,
 		admin: false,
+		smol: false,
 	};
 
 	for (let i = 0; i < args.length; i++) {
@@ -757,6 +759,9 @@ function parseArgs(args: string[]): ParsedArgs {
 			case "--show-config":
 				parsed.showConfig = true;
 				break;
+			case "--smol":
+				parsed.smol = true;
+				break;
 		}
 	}
 
@@ -796,6 +801,7 @@ Usage: better-ccflare [options]
 Options:
   --version, -v       Show version number
   --serve              Start API server with dashboard
+  --smol               Enable aggressive GC for reduced memory (Bun runtime flag)
   --port <number>      Server port (default: 8080, or PORT env var)
   --ssl-key <path>     Path to SSL private key file (enables HTTPS)
   --ssl-cert <path>    Path to SSL certificate file (enables HTTPS)
@@ -843,6 +849,7 @@ Debugging:
   --help, -h                 Show this help message
 
 Examples:
+  better-ccflare --smol --serve          # Start server with reduced memory
   better-ccflare --serve                # Start server
   better-ccflare --serve --ssl-key /path/to/key.pem --ssl-cert /path/to/cert.pem  # Start server with HTTPS
   better-ccflare --add-account work --mode claude-oauth --priority 0  # Add account
@@ -910,6 +917,9 @@ Examples:
 
 	// Handle non-interactive commands
 	if (parsed.serve) {
+		if (parsed.smol) {
+			console.log("🗜️  Smol mode: aggressive GC enabled");
+		}
 		const config = new Config();
 		startServerWithConfig(parsed, config);
 		// Keep process alive
