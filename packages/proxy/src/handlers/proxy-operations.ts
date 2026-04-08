@@ -355,6 +355,7 @@ export async function proxyWithAccount(
 	_createBodyStream: () => ReadableStream<Uint8Array> | undefined,
 	failoverAttempts: number,
 	ctx: ProxyContext,
+	modelOverride?: string | null,
 	apiKeyId?: string | null,
 	apiKeyName?: string | null,
 ): Promise<Response | null> {
@@ -369,6 +370,34 @@ export async function proxyWithAccount(
 			);
 		}
 
+		// Apply model override from combo slot (per D-04, REQ-12)
+		let effectiveBodyBuffer = requestBodyBuffer;
+		if (modelOverride && requestBodyBuffer) {
+			try {
+				const bodyText = new TextDecoder().decode(requestBodyBuffer);
+				const body = JSON.parse(bodyText);
+				body.model = modelOverride;
+				effectiveBodyBuffer = new TextEncoder()
+					.encode(JSON.stringify(body))
+					.buffer;
+
+				if (
+					process.env.DEBUG?.includes("proxy") ||
+					process.env.DEBUG === "true" ||
+					process.env.NODE_ENV === "development"
+				) {
+					log.info(
+						`Combo model override: applying model "${modelOverride}" for account ${account.name}`,
+					);
+				}
+			} catch {
+				log.warn(
+					"Failed to patch request body with model override, using original body",
+				);
+				effectiveBodyBuffer = requestBodyBuffer;
+			}
+		}
+
 		// Get the provider for this account
 		const provider = getProvider(account.provider) || ctx.provider;
 
@@ -380,7 +409,7 @@ export async function proxyWithAccount(
 
 		// Pre-process request if provider supports it (e.g., to extract model for URL)
 		if (provider.prepareRequest) {
-			provider.prepareRequest(req, requestBodyBuffer, account);
+			provider.prepareRequest(req, effectiveBodyBuffer, account);
 		}
 
 		// Prepare request using account-specific provider
@@ -395,8 +424,8 @@ export async function proxyWithAccount(
 			method: req.method,
 			headers,
 		};
-		if (requestBodyBuffer) {
-			requestInit.body = new Uint8Array(requestBodyBuffer);
+		if (effectiveBodyBuffer) {
+			requestInit.body = new Uint8Array(effectiveBodyBuffer);
 			requestInit.duplex = "half";
 		}
 
@@ -423,9 +452,9 @@ export async function proxyWithAccount(
 			);
 
 			// Filter thinking blocks from the request body
-			const filteredBodyBuffer = filterThinkingBlocks(requestBodyBuffer);
+			const filteredBodyBuffer = filterThinkingBlocks(effectiveBodyBuffer);
 
-			if (filteredBodyBuffer && filteredBodyBuffer !== requestBodyBuffer) {
+			if (filteredBodyBuffer && filteredBodyBuffer !== effectiveBodyBuffer) {
 				// Retry the request with filtered body
 				const retryRequestInit: RequestInit & { duplex?: "half" } = {
 					method: req.method,
@@ -457,9 +486,9 @@ export async function proxyWithAccount(
 		// (the primary), so start at index 1.
 		if (await isModelUnavailableError(rawResponse)) {
 			let requestedModel: string | null = null;
-			if (requestBodyBuffer) {
+			if (effectiveBodyBuffer) {
 				try {
-					const bodyText = new TextDecoder().decode(requestBodyBuffer);
+					const bodyText = new TextDecoder().decode(effectiveBodyBuffer);
 					requestedModel = JSON.parse(bodyText).model ?? null;
 				} catch {
 					// ignore
@@ -484,7 +513,7 @@ export async function proxyWithAccount(
 					// reach the upstream provider verbatim.
 					let patchedBody: ArrayBuffer | null = null;
 					try {
-						const bodyText = new TextDecoder().decode(requestBodyBuffer!);
+						const bodyText = new TextDecoder().decode(effectiveBodyBuffer!);
 						const body = JSON.parse(bodyText);
 						body.model = nextModel;
 						patchedBody = new TextEncoder().encode(JSON.stringify(body)).buffer;
@@ -587,7 +616,7 @@ export async function proxyWithAccount(
 				path: url.pathname,
 				account,
 				requestHeaders: req.headers,
-				requestBody: requestBodyBuffer,
+				requestBody: effectiveBodyBuffer,
 				response,
 				timestamp: requestMeta.timestamp,
 				retryAttempt: 0,
