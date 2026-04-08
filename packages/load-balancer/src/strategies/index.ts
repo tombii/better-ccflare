@@ -67,7 +67,8 @@ export class SessionStrategy implements LoadBalancingStrategy {
 
 	/**
 	 * Determines if an account has an active session based on provider requirements
-	 * For Anthropic providers: checks if session is within the 5-hour window
+	 * For Anthropic providers: checks if session is within the 5-hour window AND
+	 * the account is not currently rate-limited
 	 * For other providers: always returns false (no session stickiness for pay-as-you-go)
 	 * @param account The account to check
 	 * @param now Current timestamp
@@ -77,6 +78,18 @@ export class SessionStrategy implements LoadBalancingStrategy {
 		// Non-Anthropic providers (API-key-based, etc.) should not have persistent sessions
 		// since they're pay-as-you-go and don't benefit from session stickiness
 		if (!requiresSessionDurationTracking(account.provider)) {
+			return false;
+		}
+
+		// An account that is currently rate-limited has no usable session, even
+		// if its session_start is still inside the 5h Anthropic session window.
+		// Treating it as active would re-pin requests to a known-throttled
+		// upstream for the entire rate-limit window. Note we do NOT clear
+		// session_start here — when the rate-limit window elapses the session
+		// is conceptually still valid (5h Anthropic prompt-cache windows are
+		// independent of rate-limit windows), so we'll resume the cached
+		// session naturally on the next request after recovery. See issue #115.
+		if (account.rate_limited_until && account.rate_limited_until > now) {
 			return false;
 		}
 

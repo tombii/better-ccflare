@@ -759,4 +759,216 @@ describe("SessionStrategy", () => {
 		expect(account.session_start).toBe(originalSessionStart);
 		expect(account.session_request_count).toBe(originalRequestCount);
 	});
+
+	// -------------------------------------------------------------------------
+	// Issue #115 — SessionStrategy must yield to live rate-limit state.
+	//
+	// Before the fix, hasActiveSession() only consulted session_start, so a
+	// throttled active-session account would still be considered "active" for
+	// the entire 5h Anthropic session window. Combined with #114 (streaming
+	// failover bypass), this meant a primary account could be silently
+	// throttled and the load-balancer would keep selecting it until either
+	// the session expired (5h) or the rate limit window did.
+	//
+	// These tests assert the new behavior: a currently-rate-limited account
+	// has no usable session, but its session_start is preserved so we resume
+	// the cached session naturally once the rate-limit window elapses.
+	// -------------------------------------------------------------------------
+
+	it("issue #115: yields session affinity when active account is currently rate-limited", () => {
+		const now = Date.now();
+
+		// Throttled account: active session 30min in, but rate-limited for
+		// another 30min. Pre-fix this would have been picked first because
+		// of the active session.
+		const throttled: Account = {
+			id: "throttled",
+			name: "throttled",
+			provider: "anthropic",
+			api_key: null,
+			refresh_token: "test",
+			access_token: "test",
+			expires_at: now + 3600000,
+			request_count: 0,
+			total_requests: 0,
+			last_used: null,
+			created_at: now,
+			rate_limited_until: now + 30 * 60 * 1000, // 30min from now
+			session_start: now - 30 * 60 * 1000, // active session, started 30min ago
+			session_request_count: 50,
+			paused: false,
+			rate_limit_reset: null,
+			rate_limit_status: null,
+			rate_limit_remaining: null,
+			priority: 0,
+			auto_fallback_enabled: false,
+			auto_refresh_enabled: false,
+			custom_endpoint: null,
+			model_mappings: null,
+			cross_region_mode: null,
+			model_fallbacks: null,
+		};
+
+		const healthy: Account = {
+			id: "healthy",
+			name: "healthy",
+			provider: "anthropic",
+			api_key: null,
+			refresh_token: "test",
+			access_token: "test",
+			expires_at: now + 3600000,
+			request_count: 0,
+			total_requests: 0,
+			last_used: null,
+			created_at: now,
+			rate_limited_until: null,
+			session_start: null,
+			session_request_count: 0,
+			paused: false,
+			rate_limit_reset: null,
+			rate_limit_status: null,
+			rate_limit_remaining: null,
+			priority: 0, // same priority — pure availability decides the tie
+			auto_fallback_enabled: false,
+			auto_refresh_enabled: false,
+			custom_endpoint: null,
+			model_mappings: null,
+			cross_region_mode: null,
+			model_fallbacks: null,
+		};
+
+		const result = strategy.select([throttled, healthy], meta);
+
+		// Healthy account must come first. The throttled account is filtered
+		// out by isAccountAvailable() so the result list contains only the
+		// healthy one (the strategy returns [chosen, ...others] where others
+		// are also filtered to availability).
+		expect(result[0]).toBe(healthy);
+		expect(result.find((a) => a.id === throttled.id)).toBeUndefined();
+
+		// The throttled account's session_start is intentionally left intact —
+		// when its rate-limit window elapses we want to resume the same
+		// Anthropic session for prompt-cache continuity, not start fresh.
+		expect(throttled.session_start).toBe(now - 30 * 60 * 1000);
+		expect(throttled.session_request_count).toBe(50);
+	});
+
+	it("issue #115: resumes the original active session after rate-limit window elapses", () => {
+		const now = Date.now();
+
+		// Account that WAS throttled but the window has elapsed. Its
+		// session_start is still inside the 5h window. We should pick this
+		// account and resume its existing session (no resetAccountSession call,
+		// session_request_count preserved).
+		const recovered: Account = {
+			id: "recovered",
+			name: "recovered",
+			provider: "anthropic",
+			api_key: null,
+			refresh_token: "test",
+			access_token: "test",
+			expires_at: now + 3600000,
+			request_count: 0,
+			total_requests: 0,
+			last_used: null,
+			created_at: now,
+			rate_limited_until: now - 1000, // elapsed 1s ago — no longer throttled
+			session_start: now - 60 * 60 * 1000, // 1h into a 5h session
+			session_request_count: 25,
+			paused: false,
+			rate_limit_reset: null,
+			rate_limit_status: null,
+			rate_limit_remaining: null,
+			priority: 0,
+			auto_fallback_enabled: false,
+			auto_refresh_enabled: false,
+			custom_endpoint: null,
+			model_mappings: null,
+			cross_region_mode: null,
+			model_fallbacks: null,
+		};
+
+		const result = strategy.select([recovered], meta);
+
+		expect(result[0]).toBe(recovered);
+
+		// Critical: no session reset. The original session continues so
+		// Anthropic prompt caching stays warm.
+		const resetCall = mockStore.getResetCall(recovered.id);
+		expect(resetCall).toBeUndefined();
+		expect(recovered.session_start).toBe(now - 60 * 60 * 1000);
+		expect(recovered.session_request_count).toBe(25);
+	});
+
+	it("issue #115: throttled active account does not block lower-priority sibling", () => {
+		const now = Date.now();
+
+		// Higher-priority account that's currently throttled. Pre-fix, this
+		// would have been the activeAccount and the priority comparison at
+		// strategies/index.ts would have failed in awkward ways.
+		const throttledHighPriority: Account = {
+			id: "high-pri-throttled",
+			name: "high-pri-throttled",
+			provider: "anthropic",
+			api_key: null,
+			refresh_token: "test",
+			access_token: "test",
+			expires_at: now + 3600000,
+			request_count: 0,
+			total_requests: 0,
+			last_used: null,
+			created_at: now,
+			rate_limited_until: now + 30 * 60 * 1000,
+			session_start: now - 10 * 60 * 1000,
+			session_request_count: 5,
+			paused: false,
+			rate_limit_reset: null,
+			rate_limit_status: null,
+			rate_limit_remaining: null,
+			priority: 0, // higher (lower number)
+			auto_fallback_enabled: false,
+			auto_refresh_enabled: false,
+			custom_endpoint: null,
+			model_mappings: null,
+			cross_region_mode: null,
+			model_fallbacks: null,
+		};
+
+		const lowerPriority: Account = {
+			id: "lower-pri-healthy",
+			name: "lower-pri-healthy",
+			provider: "anthropic",
+			api_key: null,
+			refresh_token: "test",
+			access_token: "test",
+			expires_at: now + 3600000,
+			request_count: 0,
+			total_requests: 0,
+			last_used: null,
+			created_at: now,
+			rate_limited_until: null,
+			session_start: null,
+			session_request_count: 0,
+			paused: false,
+			rate_limit_reset: null,
+			rate_limit_status: null,
+			rate_limit_remaining: null,
+			priority: 1, // lower priority but available
+			auto_fallback_enabled: false,
+			auto_refresh_enabled: false,
+			custom_endpoint: null,
+			model_mappings: null,
+			cross_region_mode: null,
+			model_fallbacks: null,
+		};
+
+		const result = strategy.select(
+			[throttledHighPriority, lowerPriority],
+			meta,
+		);
+
+		// The lower-priority healthy account wins because the high-priority
+		// account is unavailable AND no longer claims an active session.
+		expect(result[0]).toBe(lowerPriority);
+	});
 });

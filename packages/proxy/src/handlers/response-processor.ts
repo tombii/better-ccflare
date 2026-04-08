@@ -201,7 +201,6 @@ export async function processProxyResponse(
 	requestId?: string,
 	requestMeta?: { headers?: Headers },
 ): Promise<boolean> {
-	const isStream = ctx.provider.isStreamingResponse?.(response) ?? false;
 	let rateLimitInfo = ctx.provider.parseRateLimit(response);
 
 	// For Zai provider, if we got a 429 without resetTime, try parsing the body
@@ -231,7 +230,23 @@ export async function processProxyResponse(
 	}
 
 	// Handle rate limit
-	if (!isStream && rateLimitInfo.isRateLimited) {
+	//
+	// We deliberately do NOT exclude streaming responses here. A rate-limited
+	// account is rate-limited regardless of whether the response that revealed
+	// it was a stream — and the failover decision (returning true to signal
+	// the next-account loop) is safe at this point because no response bytes
+	// have been written to the client yet. The proxy hasn't entered the
+	// `forwardToClient` path; it's still inspecting the upstream response.
+	//
+	// In practice the most common pre-stream 429 has
+	// `content-type: application/json` because Anthropic only opens an SSE
+	// stream when the request is accepted, but the historic `!isStream` guard
+	// here was a footgun: providers that emit `text/event-stream` 429s, or
+	// future provider transforms that preserve the requested content-type on
+	// errors, would silently bypass marking and failover. The mid-stream case
+	// (status 200 with an SSE `event: error` frame partway through the body)
+	// is handled separately by the streaming forwarder — see issue #114.
+	if (rateLimitInfo.isRateLimited) {
 		if (rateLimitInfo.resetTime) {
 			handleRateLimitResponse(account, rateLimitInfo, ctx);
 		} else {
