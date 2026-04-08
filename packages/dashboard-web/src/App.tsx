@@ -12,6 +12,7 @@ import { AccountsTab } from "./components/AccountsTab";
 import { AgentsTab } from "./components/AgentsTab";
 import { ApiKeyAuthDialog } from "./components/ApiKeyAuthDialog";
 import { ApiKeysTab } from "./components/ApiKeysTab";
+import { CombosTab } from "./components/combos/CombosTab";
 import { DebugPanel } from "./components/DebugPanel";
 import { LogsTab } from "./components/LogsTab";
 import { Navigation } from "./components/navigation";
@@ -80,6 +81,12 @@ const routes = [
 		title: "Account Management",
 		subtitle: "Manage your OAuth accounts and settings",
 	},
+		{
+			path: "/combos",
+			element: <CombosTab />,
+			title: "Combos Management",
+			subtitle: "Define fallback chains for model families",
+		},
 	{
 		path: "/agents",
 		element: <AgentsTab />,
