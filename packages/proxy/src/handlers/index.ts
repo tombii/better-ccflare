@@ -1,4 +1,8 @@
-export { selectAccountsForRequest } from "./account-selector";
+export {
+	getComboSlotInfo,
+	selectAccountsForRequest,
+	setComboSlotInfo,
+} from "./account-selector";
 export {
 	type AgentInterceptResult,
 	interceptAndModifyRequest,
