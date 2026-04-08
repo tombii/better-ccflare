@@ -143,7 +143,7 @@ export class AutoRefreshScheduler {
 			// Log accounts being considered
 			accounts.forEach((account) => {
 				log.debug(
-					`Considering account: ${account.name}, reset_time: ${account.rate_limit_reset ? new Date(account.rate_limit_reset).toISOString() : "null"}`,
+					`Considering account: ${account.name}, reset_time: ${account.rate_limit_reset ? new Date(Number(account.rate_limit_reset)).toISOString() : "null"}`,
 				);
 			});
 
@@ -217,7 +217,7 @@ export class AutoRefreshScheduler {
 			}
 
 			log.info(
-				`Current token expires at: ${accountRow.expires_at ? new Date(accountRow.expires_at).toISOString() : "null"}`,
+				`Current token expires at: ${accountRow.expires_at ? new Date(Number(accountRow.expires_at)).toISOString() : "null"}`,
 			);
 			log.info(`Current time: ${new Date().toISOString()}`);
 			log.info(`Access token available: ${!!accountRow.access_token}`);
@@ -231,7 +231,7 @@ export class AutoRefreshScheduler {
 				api_key: null,
 				refresh_token: accountRow.refresh_token,
 				access_token: accountRow.access_token,
-				expires_at: accountRow.expires_at,
+				expires_at: accountRow.expires_at ? Number(accountRow.expires_at) : null,
 				request_count: 0,
 				total_requests: 0,
 				last_used: null,
@@ -240,7 +240,7 @@ export class AutoRefreshScheduler {
 				session_start: null,
 				session_request_count: 0,
 				paused: false,
-				rate_limit_reset: accountRow.rate_limit_reset,
+				rate_limit_reset: accountRow.rate_limit_reset ? Number(accountRow.rate_limit_reset) : null,
 				rate_limit_status: null,
 				rate_limit_remaining: null,
 				priority: 0,
@@ -685,7 +685,7 @@ export class AutoRefreshScheduler {
 		const resetTimeHasPassed = account.rate_limit_reset <= now;
 		if (resetTimeHasPassed) {
 			log.info(
-				`New window detected for account ${account.name}: reset time ${new Date(account.rate_limit_reset).toISOString()} has passed (now: ${new Date(now).toISOString()}), last refresh was at ${new Date(lastResetTime).toISOString()}`,
+				`New window detected for account ${account.name}: reset time ${new Date(Number(account.rate_limit_reset)).toISOString()} has passed (now: ${new Date(now).toISOString()}), last refresh was at ${new Date(lastResetTime).toISOString()}`,
 			);
 			return true;
 		}
@@ -695,7 +695,7 @@ export class AutoRefreshScheduler {
 		const isNewerThanLastRefresh = account.rate_limit_reset > lastResetTime;
 		if (isNewerThanLastRefresh) {
 			log.info(
-				`New window detected for account ${account.name}: current reset ${new Date(account.rate_limit_reset).toISOString()} > last refresh ${new Date(lastResetTime).toISOString()}`,
+				`New window detected for account ${account.name}: current reset ${new Date(Number(account.rate_limit_reset)).toISOString()} > last refresh ${new Date(lastResetTime).toISOString()}`,
 			);
 			return true;
 		}
@@ -704,14 +704,14 @@ export class AutoRefreshScheduler {
 		const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
 		if (account.rate_limit_reset < oneDayAgo) {
 			log.info(
-				`Stale reset time detected for account ${account.name}: ${new Date(account.rate_limit_reset).toISOString()} is more than 24h old, forcing refresh`,
+				`Stale reset time detected for account ${account.name}: ${new Date(Number(account.rate_limit_reset)).toISOString()} is more than 24h old, forcing refresh`,
 			);
 			return true;
 		}
 
 		// The window hasn't renewed yet - skip
 		log.debug(
-			`No new window for account ${account.name}: current reset ${new Date(account.rate_limit_reset).toISOString()}, last refresh ${new Date(lastResetTime).toISOString()}, now ${new Date(now).toISOString()}`,
+			`No new window for account ${account.name}: current reset ${new Date(Number(account.rate_limit_reset)).toISOString()}, last refresh ${new Date(lastResetTime).toISOString()}, now ${new Date(now).toISOString()}`,
 		);
 		return false;
 	}
