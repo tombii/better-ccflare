@@ -45,6 +45,13 @@ import {
 	createApiKeysStatsHandler,
 	createApiKeyUpdateRoleHandler,
 } from "./handlers/api-keys";
+import {
+	createComboCreateHandler,
+	createComboDeleteHandler,
+	createComboGetHandler,
+	createCombosListHandler,
+	createComboUpdateHandler,
+} from "./handlers/combos";
 import { createConfigHandlers } from "./handlers/config";
 import {
 	createHeapSnapshotHandler,
@@ -276,6 +283,14 @@ export class APIRouter {
 			apiKeysGenerateHandler(req),
 		);
 		this.handlers.set("GET:/api/api-keys/stats", () => apiKeysStatsHandler());
+
+		// Combo routes
+		this.handlers.set("GET:/api/combos", () =>
+			createCombosListHandler(dbOps)(),
+		);
+		this.handlers.set("POST:/api/combos", (req) =>
+			createComboCreateHandler(dbOps)(req),
+		);
 	}
 
 	/**
@@ -549,6 +564,30 @@ export class APIRouter {
 					req,
 					url,
 				);
+			}
+		}
+
+		// Check for dynamic combo endpoints
+		if (path.startsWith("/api/combos/")) {
+			const parts = path.split("/");
+			const comboId = decodeURIComponent(parts[3]);
+
+			// GET /api/combos/:id
+			if (parts.length === 4 && method === "GET") {
+				const handler = createComboGetHandler(this.context.dbOps);
+				return await this.wrapHandler(() => handler(comboId))(req, url);
+			}
+
+			// PUT /api/combos/:id
+			if (parts.length === 4 && method === "PUT") {
+				const handler = createComboUpdateHandler(this.context.dbOps);
+				return await this.wrapHandler((req) => handler(req, comboId))(req, url);
+			}
+
+			// DELETE /api/combos/:id
+			if (parts.length === 4 && method === "DELETE") {
+				const handler = createComboDeleteHandler(this.context.dbOps);
+				return await this.wrapHandler(() => handler(comboId))(req, url);
 			}
 		}
 
