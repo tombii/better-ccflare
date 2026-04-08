@@ -210,11 +210,14 @@ export async function handleProxy(
 	const { buffer: requestBodyBuffer } = await prepareRequestBody(req);
 
 	// Extract model from request body for family detection (used by combo routing)
+	// and reuse parsed body for /v1/messages validation (consolidate parses)
 	let requestModel: string | null = null;
+	let parsedBody: Record<string, unknown> | null = null;
 	if (requestBodyBuffer) {
 		try {
 			const bodyText = new TextDecoder().decode(requestBodyBuffer);
-			requestModel = JSON.parse(bodyText).model ?? null;
+			parsedBody = JSON.parse(bodyText);
+			requestModel = (parsedBody as Record<string, unknown>).model as string ?? null;
 		} catch {
 			// If body can't be parsed, model stays null — combo routing won't activate
 		}
@@ -222,17 +225,14 @@ export async function handleProxy(
 
 	// 3a. Validate request body for /v1/messages endpoint
 	if (url.pathname === "/v1/messages" && requestBodyBuffer) {
-		try {
-			const bodyText = new TextDecoder().decode(requestBodyBuffer);
-			const bodyJson = JSON.parse(bodyText);
-
+		if (parsedBody) {
 			// Reject requests without messages field (e.g., Claude Code internal events)
-			if (!bodyJson.messages || !Array.isArray(bodyJson.messages)) {
+			if (!parsedBody.messages || !Array.isArray(parsedBody.messages)) {
 				log.warn(
 					`Rejected invalid request to /v1/messages without messages field`,
 					{
-						event_type: bodyJson.event_type,
-						event_name: bodyJson.event_data?.event_name,
+						event_type: parsedBody.event_type,
+						event_name: (parsedBody.event_data as Record<string, unknown> | undefined)?.event_name,
 					},
 				);
 				return new Response(
@@ -250,9 +250,9 @@ export async function handleProxy(
 					},
 				);
 			}
-		} catch (error) {
+		} else {
 			// If we can't parse the body, let it through and let the provider handle it
-			log.debug("Could not parse request body for validation", error);
+			log.debug("Could not parse request body for validation");
 		}
 	}
 
