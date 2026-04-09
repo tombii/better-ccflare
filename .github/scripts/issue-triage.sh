@@ -18,20 +18,9 @@ MAX_NUMBER_LENGTH=10
 sanitize_input() {
     local input="$1"
     local input_name="$2"
-    
-    # Remove dangerous shell metacharacters
-    input=$(echo "$input" | sed 's/[;&|`$(){}[\]\\!<>?*]//g')
-    
-    # Remove newlines and control characters
-    input=$(echo "$input" | tr -d '\n\r' | sed 's/[[:cntrl:]]//g')
-    
-    # Remove potential SQL injection patterns (case-insensitive)
-    input=$(echo "$input" | tr '[:upper:]' '[:lower:]' | sed 's/union\|select\|insert\|delete\|update\|drop\|create\|alter\|exec//g')
-    
-    # Remove potential XSS patterns (case-insensitive)
-    input=$(echo "$input" | tr '[:upper:]' '[:lower:]' | sed 's/javascript:\|data:\|vbscript:\|onload=\|onerror=//g')
-    
-    echo "$input"
+
+    # Truncate to prevent excessive payload sizes (actual JSON escaping is handled by jq)
+    echo "$input" | head -c "$MAX_BODY_LENGTH"
 }
 
 # Function to validate and sanitize environment variables
@@ -54,7 +43,8 @@ validate_and_sanitize_env() {
     fi
     
     # Check for obvious injection patterns
-    if [[ "$allow_special_chars" != "true" ]]; then
+    # Note: Special characters in issue bodies are safe because jq handles JSON escaping
+    if [[ "$allow_special_chars" != "true" ]] && [[ "$var_name" != "ISSUE_BODY" ]] && [[ "$var_name" != "ISSUE_TITLE" ]]; then
         if echo "$var_value" | grep -qE '[;&|`$(){}[\]\\!<>?*]'; then
             echo "Error: $var_name contains potentially dangerous characters"
             exit 1
@@ -208,26 +198,24 @@ call_openrouter_api() {
     local model=$1
     echo "Attempting with model: ${model}" >&2
 
-    # Create a temporary JSON file for the request payload to avoid jq parsing issues
+    # Build JSON payload using jq for proper escaping (handles backslashes, quotes, control chars, etc.)
     local temp_json_file=$(mktemp)
 
-    cat > "${temp_json_file}" <<EOF
-{
-    "model": "${model}",
-    "temperature": ${TEMPERATURE},
-    "max_tokens": ${MAX_TOKENS},
-    "messages": [
-        {
-            "role": "system",
-            "content": "You are an expert GitHub issue triaging agent specializing in load balancer proxies, TypeScript, and web security. Provide thorough, constructive issue analysis."
-        },
-        {
-            "role": "user",
-            "content": "$(echo "${TRIAGE_PROMPT}" | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')"
-        }
-    ]
-}
-EOF
+    jq -n \
+        --arg model "${model}" \
+        --argjson temperature "${TEMPERATURE}" \
+        --argjson max_tokens "${MAX_TOKENS}" \
+        --arg system_msg "You are an expert GitHub issue triaging agent specializing in load balancer proxies, TypeScript, and web security. Provide thorough, constructive issue analysis." \
+        --arg user_msg "${TRIAGE_PROMPT}" \
+        '{
+            model: $model,
+            temperature: $temperature,
+            max_tokens: $max_tokens,
+            messages: [
+                {role: "system", content: $system_msg},
+                {role: "user", content: $user_msg}
+            ]
+        }' > "${temp_json_file}"
 
     local api_response
     api_response=$(curl -s -X POST "${API_URL}" \
