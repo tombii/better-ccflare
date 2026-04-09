@@ -332,6 +332,17 @@ export const useDeleteCombo = () => {
 	});
 };
 
+export const useUpdateCombo = () => {
+	const queryClient = useQueryClient();
+	return useMutation({
+		mutationFn: (params: { id: string; name?: string; description?: string; enabled?: boolean }) =>
+			api.updateCombo(params.id, params),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.combos() });
+		},
+	});
+};
+
 export const useGetCombo = (id: string | null) => {
 	return useQuery({
 		queryKey: ["combo", id],

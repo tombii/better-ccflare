@@ -1,6 +1,6 @@
 import { Plus } from "lucide-react";
 import { useState } from "react";
-import { useCombos, useDeleteCombo } from "../../hooks/queries";
+import { useCombos, useDeleteCombo, useFamilies, useUpdateCombo } from "../../hooks/queries";
 import { Button } from "../ui/button";
 import { Separator } from "../ui/separator";
 import { ComboCard } from "./ComboCard";
@@ -11,8 +11,17 @@ export function CombosTab() {
 	const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
 	const [editDialogComboId, setEditDialogComboId] = useState<string | null>(null);
 	const combosQuery = useCombos();
+	const familiesQuery = useFamilies();
 	const deleteCombo = useDeleteCombo();
+	const updateCombo = useUpdateCombo();
 	const combos = combosQuery.data?.combos ?? [];
+	const families = familiesQuery.data?.families ?? [];
+
+	const getAssignedFamily = (comboId: string) => {
+		const assignment = families.find((f) => f.combo_id === comboId);
+		if (!assignment) return null;
+		return assignment.family.charAt(0).toUpperCase() + assignment.family.slice(1);
+	};
 
 	return (
 		<div className="space-y-6">
@@ -59,8 +68,12 @@ export function CombosTab() {
 								key={combo.id}
 								combo={combo}
 								slotCount={combo.slot_count}
+								assignedFamily={getAssignedFamily(combo.id)}
 								onEdit={() => setEditDialogComboId(combo.id)}
 								onDelete={() => deleteCombo.mutate(combo.id)}
+								onToggleEnabled={(enabled) =>
+									updateCombo.mutate({ id: combo.id, enabled })
+								}
 							/>
 						))}
 					</div>

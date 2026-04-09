@@ -3,23 +3,38 @@ import { Edit, Trash2 } from "lucide-react";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
+import { Switch } from "../ui/switch";
 
 interface ComboCardProps {
 	combo: Combo;
 	slotCount?: number;
+	assignedFamily?: string | null;
 	onEdit: () => void;
 	onDelete: () => void;
+	onToggleEnabled: (enabled: boolean) => void;
 }
 
-export function ComboCard({ combo, slotCount = 0, onEdit, onDelete }: ComboCardProps) {
+export function ComboCard({ combo, slotCount = 0, assignedFamily, onEdit, onDelete, onToggleEnabled }: ComboCardProps) {
 	return (
 		<Card>
 			<CardHeader className="pb-2">
 				<div className="flex items-center justify-between">
 					<CardTitle className="text-base">{combo.name}</CardTitle>
-					<Badge variant={combo.enabled ? "default" : "secondary"}>
-						{combo.enabled ? "Enabled" : "Disabled"}
-					</Badge>
+					<div className="flex items-center gap-2">
+						{assignedFamily && (
+							<Badge variant="default" className="text-xs">
+								{assignedFamily}
+							</Badge>
+						)}
+						<Switch
+							checked={combo.enabled}
+							onCheckedChange={onToggleEnabled}
+							className="scale-75"
+						/>
+						<Badge variant={combo.enabled ? "default" : "secondary"}>
+							{combo.enabled ? "Enabled" : "Disabled"}
+						</Badge>
+					</div>
 				</div>
 			</CardHeader>
 			<CardContent>

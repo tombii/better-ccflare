@@ -1577,6 +1577,11 @@ class API extends HttpClient {
 		await this.delete(`/api/combos/${id}`);
 	}
 
+		async updateCombo(id: string, params: { name?: string; description?: string; enabled?: boolean }): Promise<{ combo: Combo }> {
+			const res = await this.put<{ success: boolean; data: Combo }>(`/api/combos/${id}`, params);
+			return { combo: res.data };
+		}
+
 	async createCombo(params: {
 		name: string;
 		description?: string;
