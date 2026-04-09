@@ -1569,7 +1569,8 @@ class API extends HttpClient {
 	}
 
 	async getCombos(): Promise<{ combos: Combo[] }> {
-		return this.get<{ combos: Combo[] }>("/api/combos");
+		const res = await this.get<{ success: boolean; data: Combo[] }>("/api/combos");
+		return { combos: res.data };
 	}
 
 	async createCombo(params: {
@@ -1577,11 +1578,13 @@ class API extends HttpClient {
 		description?: string;
 		enabled?: boolean;
 	}): Promise<{ combo: Combo }> {
-		return this.post<{ combo: Combo }>("/api/combos", params);
+		const res = await this.post<{ success: boolean; data: Combo }>("/api/combos", params);
+		return { combo: res.data };
 	}
 
 	async getFamilies(): Promise<{ families: ComboFamilyAssignment[] }> {
-		return this.get<{ families: ComboFamilyAssignment[] }>("/api/families");
+		const res = await this.get<{ success: boolean; data: ComboFamilyAssignment[] }>("/api/families");
+		return { families: res.data };
 	}
 
 	async assignFamily(params: {
@@ -1596,14 +1599,16 @@ class API extends HttpClient {
 	}
 
 	async getCombo(id: string): Promise<{ combo: ComboWithSlots }> {
-		return this.get<{ combo: ComboWithSlots }>(`/api/combos/${id}`);
+		const res = await this.get<{ success: boolean; data: ComboWithSlots }>(`/api/combos/${id}`);
+		return { combo: res.data };
 	}
 
 	async addComboSlot(
 		comboId: string,
 		params: { account_id: string; model: string; enabled?: boolean },
 	): Promise<{ slot: ComboSlot }> {
-		return this.post<{ slot: ComboSlot }>(`/api/combos/${comboId}/slots`, params);
+		const res = await this.post<{ success: boolean; data: ComboSlot }>(`/api/combos/${comboId}/slots`, params);
+		return { slot: res.data };
 	}
 
 	async updateComboSlot(
@@ -1611,10 +1616,11 @@ class API extends HttpClient {
 		slotId: string,
 		params: { model?: string; enabled?: boolean },
 	): Promise<{ slot: ComboSlot }> {
-		return this.put<{ slot: ComboSlot }>(
+		const res = await this.put<{ success: boolean; data: ComboSlot }>(
 			`/api/combos/${comboId}/slots/${slotId}`,
 			params,
 		);
+		return { slot: res.data };
 	}
 
 	async removeComboSlot(comboId: string, slotId: string): Promise<void> {
