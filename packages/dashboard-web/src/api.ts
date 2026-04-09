@@ -1568,8 +1568,8 @@ class API extends HttpClient {
 		}
 	}
 
-	async getCombos(): Promise<{ combos: Combo[] }> {
-		const res = await this.get<{ success: boolean; data: Combo[] }>("/api/combos");
+	async getCombos(): Promise<{ combos: (Combo & { slot_count: number })[] }> {
+		const res = await this.get<{ success: boolean; data: (Combo & { slot_count: number })[] }>("/api/combos");
 		return { combos: res.data };
 	}
 

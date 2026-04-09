@@ -58,6 +58,7 @@ export function CombosTab() {
 							<ComboCard
 								key={combo.id}
 								combo={combo}
+								slotCount={combo.slot_count}
 								onEdit={() => setEditDialogComboId(combo.id)}
 								onDelete={() => deleteCombo.mutate(combo.id)}
 							/>
