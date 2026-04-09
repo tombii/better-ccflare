@@ -3,6 +3,7 @@ import type { FullUsageData } from "@better-ccflare/types";
 import { useEffect, useState } from "react";
 import { cn } from "../../lib/utils";
 import {
+	isZaiPeakHour,
 	providerShowsCreditsBalance,
 	providerShowsWeeklyUsage,
 } from "../../utils/provider-utils";
@@ -164,7 +165,7 @@ export function RateLimitProgress({
 				: null,
 		});
 	} else if (isZaiData && showWeekly) {
-		// Zai usage data - only show tokens_limit (5-hour token quota)
+		// Zai usage data - show tokens_limit (5-hour token quota) and time_limit (peak-hour limit)
 		const zaiData = usageData as {
 			time_limit?: { percentage: number; resetAt: number } | null;
 			tokens_limit?: { percentage: number; resetAt: number } | null;
@@ -177,6 +178,17 @@ export function RateLimitProgress({
 				window: "five_hour", // Map to "5-hour" to match Claude terminology
 				resetTime: zaiData.tokens_limit.resetAt
 					? new Date(zaiData.tokens_limit.resetAt).toISOString()
+					: null,
+			});
+		}
+
+		// Time limit usage (peak-hour quota)
+		if (zaiData.time_limit) {
+			usages.push({
+				utilization: zaiData.time_limit.percentage,
+				window: "time_limit",
+				resetTime: zaiData.time_limit.resetAt
+					? new Date(zaiData.time_limit.resetAt).toISOString()
 					: null,
 			});
 		}
@@ -316,8 +328,26 @@ export function RateLimitProgress({
 		});
 	}
 
+	const isPeak = provider === "zai" && isZaiPeakHour(now);
+
 	return (
 		<div className={cn("space-y-3", className)}>
+			{provider === "zai" && (
+				<div className="flex items-center gap-2">
+					<span
+						className={`inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-full ${
+							isPeak
+								? "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400"
+								: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
+						}`}
+					>
+						<span
+							className={`h-1.5 w-1.5 rounded-full ${isPeak ? "bg-orange-500" : "bg-green-500"}`}
+						/>
+						{isPeak ? "Peak hours (14:00–18:00 SGT)" : "Off-peak hours"}
+					</span>
+				</div>
+			)}
 			{usages.map((usage, _index) => {
 				const percentage = usage.utilization;
 				const isAvailable = percentage !== null;

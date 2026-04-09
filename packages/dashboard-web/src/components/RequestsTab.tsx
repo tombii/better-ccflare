@@ -20,8 +20,9 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import type { RequestPayload, RequestSummary } from "../api";
-import { useRequests } from "../hooks/queries";
+import { useAccounts, useRequests } from "../hooks/queries";
 import { useRequestStream } from "../hooks/useRequestStream";
+import { isZaiPeakHour } from "../utils/provider-utils";
 import { CopyButton } from "./CopyButton";
 import { RequestDetailsModal } from "./RequestDetailsModal";
 import { TokenUsageDisplay } from "./TokenUsageDisplay";
@@ -73,6 +74,11 @@ export function RequestsTab() {
 
 	// Enable real-time updates
 	useRequestStream(200);
+
+	const { data: accounts } = useAccounts();
+	const zaiAccountNames = new Set(
+		(accounts ?? []).filter((a) => a.provider === "zai").map((a) => a.name),
+	);
 
 	// Transform the data to match the expected structure
 	const data: {
@@ -799,6 +805,15 @@ export function RequestsTab() {
 													Rate Limited
 												</Badge>
 											)}
+											{zaiAccountNames.has(request.meta.accountName ?? "") &&
+												isZaiPeakHour(request.meta.timestamp) && (
+													<Badge
+														variant="outline"
+														className="text-xs border-orange-500 text-orange-500"
+													>
+														Peak
+													</Badge>
+												)}
 											{request.error && (
 												<span className="text-sm text-destructive">
 													Error: {request.error}
