@@ -3,6 +3,7 @@ import type { FullUsageData } from "@better-ccflare/types";
 import { useEffect, useState } from "react";
 import { cn } from "../../lib/utils";
 import {
+	isAnthropicPeakHour,
 	isZaiPeakHour,
 	providerShowsCreditsBalance,
 	providerShowsWeeklyUsage,
@@ -328,7 +329,8 @@ export function RateLimitProgress({
 		});
 	}
 
-	const isPeak = provider === "zai" && isZaiPeakHour(now);
+	const isZaiPeak = provider === "zai" && isZaiPeakHour(now);
+	const isAnthropicPeak = provider === "anthropic" && isAnthropicPeakHour(now);
 
 	return (
 		<div className={cn("space-y-3", className)}>
@@ -336,15 +338,33 @@ export function RateLimitProgress({
 				<div className="flex items-center gap-2">
 					<span
 						className={`inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-full ${
-							isPeak
+							isZaiPeak
 								? "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400"
 								: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
 						}`}
 					>
 						<span
-							className={`h-1.5 w-1.5 rounded-full ${isPeak ? "bg-orange-500" : "bg-green-500"}`}
+							className={`h-1.5 w-1.5 rounded-full ${isZaiPeak ? "bg-orange-500" : "bg-green-500"}`}
 						/>
-						{isPeak ? "Peak hours (14:00–18:00 SGT)" : "Off-peak hours"}
+						{isZaiPeak ? "Peak hours (14:00–18:00 SGT)" : "Off-peak hours"}
+					</span>
+				</div>
+			)}
+			{provider === "anthropic" && (
+				<div className="flex items-center gap-2">
+					<span
+						className={`inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-full ${
+							isAnthropicPeak
+								? "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400"
+								: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
+						}`}
+					>
+						<span
+							className={`h-1.5 w-1.5 rounded-full ${isAnthropicPeak ? "bg-orange-500" : "bg-green-500"}`}
+						/>
+						{isAnthropicPeak
+							? "Peak hours (5–11am PT, weekdays)"
+							: "Off-peak hours"}
 					</span>
 				</div>
 			)}

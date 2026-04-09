@@ -77,3 +77,17 @@ export function isZaiPeakHour(ts?: number): boolean {
 	const sgtHour = (utcHour + 8) % 24;
 	return sgtHour >= 14 && sgtHour < 18;
 }
+
+/**
+ * Check if a given timestamp (default: now) falls within Anthropic OAuth peak hours.
+ * Peak hours are weekdays 5am–11am PT (1pm–7pm UTC), Monday–Friday.
+ * During these windows, 5-hour sessions consume a larger share of the weekly budget.
+ */
+export function isAnthropicPeakHour(ts?: number): boolean {
+	const d = new Date(ts ?? Date.now());
+	const day = d.getUTCDay();
+	// Weekdays only (Mon=1 through Fri=5)
+	if (day === 0 || day === 6) return false;
+	const utcHour = d.getUTCHours() + d.getUTCMinutes() / 60;
+	return utcHour >= 13 && utcHour < 19;
+}
