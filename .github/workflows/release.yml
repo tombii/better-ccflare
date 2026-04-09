@@ -167,14 +167,15 @@ jobs:
           ## What's Changed
 
           "
-              # Categorize commits and remove duplicates (especially CLAUDE_CLI_VERSION updates)
-              FEATURES=$(echo "$COMMITS" | grep -E "feat|add|new" | grep -v "chore: update CLAUDE_CLI_VERSION" | sort -u | head -5)
-              FIXES=$(echo "$COMMITS" | grep -E "fix|bug|resolve" | grep -v "chore: update CLAUDE_CLI_VERSION" | sort -u | head -5)
-              SECURITY=$(echo "$COMMITS" | grep -E "security|vulnerabilit|redact|ReDoS" | grep -v "chore: update CLAUDE_CLI_VERSION" | sort -u | head -5)
-              IMPROVEMENTS=$(echo "$COMMITS" | grep -E "improve|enhance|update|refactor" | grep -v "chore: update CLAUDE_CLI_VERSION" | sort -u | head -5)
+              # Categorize commits and remove duplicates (especially version bump updates)
+              VERSION_SKIP='grep -v "chore: update CLAUDE_CLI_VERSION" | grep -v "chore: update CLI versions" | grep -v "chore: update CODEX_VERSION"'
+              FEATURES=$(echo "$COMMITS" | grep -E "feat|add|new" | eval "$VERSION_SKIP" | sort -u | head -5)
+              FIXES=$(echo "$COMMITS" | grep -E "fix|bug|resolve" | eval "$VERSION_SKIP" | sort -u | head -5)
+              SECURITY=$(echo "$COMMITS" | grep -E "security|vulnerabilit|redact|ReDoS" | eval "$VERSION_SKIP" | sort -u | head -5)
+              IMPROVEMENTS=$(echo "$COMMITS" | grep -E "improve|enhance|update|refactor" | eval "$VERSION_SKIP" | sort -u | head -5)
 
               # Also filter out duplicate chore messages specifically
-              CHORE_UNIQUE=$(echo "$COMMITS" | grep -E "chore" | grep -v "chore: update CLAUDE_CLI_VERSION" | sort -u | head -3)
+              CHORE_UNIQUE=$(echo "$COMMITS" | grep -E "chore" | eval "$VERSION_SKIP" | sort -u | head -3)
 
               if [ -n "$FEATURES" ]; then
                 CHANGELOG="$CHANGELOG
