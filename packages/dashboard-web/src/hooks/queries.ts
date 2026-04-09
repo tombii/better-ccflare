@@ -350,8 +350,9 @@ export const useAddComboSlot = () => {
 			comboId: string;
 			params: { account_id: string; model: string; enabled?: boolean };
 		}) => api.addComboSlot(comboId, params),
-		onSuccess: () => {
+		onSuccess: (_data, { comboId }) => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.combos() });
+			queryClient.invalidateQueries({ queryKey: ["combo", comboId] });
 		},
 	});
 };
@@ -368,8 +369,9 @@ export const useUpdateComboSlot = () => {
 			slotId: string;
 			params: { model?: string; enabled?: boolean };
 		}) => api.updateComboSlot(comboId, slotId, params),
-		onSuccess: () => {
+		onSuccess: (_data, { comboId }) => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.combos() });
+			queryClient.invalidateQueries({ queryKey: ["combo", comboId] });
 		},
 	});
 };
@@ -379,8 +381,9 @@ export const useRemoveComboSlot = () => {
 	return useMutation({
 		mutationFn: ({ comboId, slotId }: { comboId: string; slotId: string }) =>
 			api.removeComboSlot(comboId, slotId),
-		onSuccess: () => {
+		onSuccess: (_data, { comboId }) => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.combos() });
+			queryClient.invalidateQueries({ queryKey: ["combo", comboId] });
 		},
 	});
 };
@@ -390,8 +393,9 @@ export const useReorderComboSlots = () => {
 	return useMutation({
 		mutationFn: ({ comboId, slotIds }: { comboId: string; slotIds: string[] }) =>
 			api.reorderComboSlots(comboId, slotIds),
-		onSuccess: () => {
+		onSuccess: (_data, { comboId }) => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.combos() });
+			queryClient.invalidateQueries({ queryKey: ["combo", comboId] });
 		},
 	});
 };
