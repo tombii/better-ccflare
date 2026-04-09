@@ -467,7 +467,16 @@ async function handleStart(msg: StartMessage): Promise<void> {
 	) {
 		state.billingType = "plan";
 	} else {
-		state.billingType = "api";
+		// Providers with subscription plans default to "plan" billing;
+		// all others (anthropic-compatible, openai-compatible, etc.) are API
+		const planProviders = new Set([
+			"anthropic",
+			"zai",
+			"alibaba-coding-plan",
+			"qwen",
+			"codex",
+		]);
+		state.billingType = planProviders.has(msg.providerName) ? "plan" : "api";
 	}
 
 	requests.set(msg.requestId, state);
