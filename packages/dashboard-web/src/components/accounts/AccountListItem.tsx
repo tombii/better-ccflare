@@ -16,6 +16,7 @@ import {
 	providerShowsCreditsBalance,
 	providerShowsWeeklyUsage,
 	providerSupportsAutoFeatures,
+	providerSupportsCustomBilling,
 } from "../../utils/provider-utils";
 import { OAuthTokenStatusWithBoundary } from "../OAuthTokenStatus";
 import { Button } from "../ui/button";
@@ -33,6 +34,7 @@ interface AccountListItemProps {
 	onPriorityChange: (account: Account) => void;
 	onAutoFallbackToggle: (account: Account) => void;
 	onAutoRefreshToggle: (account: Account) => void;
+	onBillingTypeToggle: (account: Account) => void;
 	onCustomEndpointChange?: (account: Account) => void;
 	onModelMappingsChange?: (account: Account) => void;
 }
@@ -48,6 +50,7 @@ export function AccountListItem({
 	onPriorityChange,
 	onAutoFallbackToggle,
 	onAutoRefreshToggle,
+	onBillingTypeToggle,
 	onCustomEndpointChange,
 	onModelMappingsChange,
 }: AccountListItemProps) {
@@ -140,6 +143,18 @@ export function AccountListItem({
 										/>
 									</div>
 								</>
+							)}
+							{providerSupportsCustomBilling(account.provider) && (
+								<div className="flex items-center gap-2">
+									<span className="text-xs text-muted-foreground">
+										Plan billing:
+									</span>
+									<Switch
+										checked={account.billingType === "plan"}
+										onCheckedChange={() => onBillingTypeToggle(account)}
+										title="Toggle plan billing for this account"
+									/>
+								</div>
 							)}
 						</div>
 						<div className="flex items-center gap-2">

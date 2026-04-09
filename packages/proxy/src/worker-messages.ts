@@ -23,6 +23,9 @@ export interface StartMessage {
 	// Provider info for rate limit parsing
 	providerName: string;
 
+	// Account billing type override (null = use provider heuristic)
+	accountBillingType: string | null;
+
 	// Agent info
 	agentUsed: string | null;
 

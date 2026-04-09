@@ -229,6 +229,12 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 		},
 		{
 			table: "accounts",
+			column: "billing_type",
+			definition:
+				"ALTER TABLE accounts ADD COLUMN billing_type TEXT DEFAULT NULL",
+		},
+		{
+			table: "accounts",
 			column: "auto_refresh_enabled",
 			definition:
 				"ALTER TABLE accounts ADD COLUMN auto_refresh_enabled INTEGER DEFAULT 0",

@@ -11,6 +11,7 @@ interface AccountListProps {
 	onPriorityChange: (account: Account) => void;
 	onAutoFallbackToggle: (account: Account) => void;
 	onAutoRefreshToggle: (account: Account) => void;
+	onBillingTypeToggle: (account: Account) => void;
 	onCustomEndpointChange?: (account: Account) => void;
 	onModelMappingsChange?: (account: Account) => void;
 }
@@ -25,6 +26,7 @@ export function AccountList({
 	onPriorityChange,
 	onAutoFallbackToggle,
 	onAutoRefreshToggle,
+	onBillingTypeToggle,
 	onCustomEndpointChange,
 	onModelMappingsChange,
 }: AccountListProps) {
@@ -64,6 +66,7 @@ export function AccountList({
 					onPriorityChange={onPriorityChange}
 					onAutoFallbackToggle={onAutoFallbackToggle}
 					onAutoRefreshToggle={onAutoRefreshToggle}
+					onBillingTypeToggle={onBillingTypeToggle}
 					onCustomEndpointChange={onCustomEndpointChange}
 					onModelMappingsChange={onModelMappingsChange}
 				/>

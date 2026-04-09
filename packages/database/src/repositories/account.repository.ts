@@ -171,6 +171,16 @@ export class AccountRepository extends BaseRepository<Account> {
 		);
 	}
 
+	async setBillingType(
+		accountId: string,
+		billingType: string | null,
+	): Promise<void> {
+		await this.run(`UPDATE accounts SET billing_type = ? WHERE id = ?`, [
+			billingType,
+			accountId,
+		]);
+	}
+
 	/**
 	 * Clear expired rate_limited_until values from all accounts
 	 * @param now The current timestamp to compare against

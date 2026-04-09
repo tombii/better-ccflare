@@ -428,6 +428,14 @@ export function runMigrations(db: Database, dbPath?: string): void {
 			log.info("Added model_fallbacks column to accounts table");
 		}
 
+		// Add billing_type column for per-account billing classification
+		if (!initialAccountsColumnNames.includes("billing_type")) {
+			db.prepare(
+				"ALTER TABLE accounts ADD COLUMN billing_type TEXT DEFAULT NULL",
+			).run();
+			log.info("Added billing_type column to accounts table");
+		}
+
 		// Make refresh_token nullable (was NOT NULL, causing API-key providers to need workarounds)
 		const refreshTokenCol = accountsInfo.find(
 			(col) => col.name === "refresh_token",

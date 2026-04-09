@@ -4,6 +4,7 @@ import {
 	createAccountAddHandler,
 	createAccountAutoFallbackHandler,
 	createAccountAutoRefreshHandler,
+	createAccountBillingTypeHandler,
 	createAccountCustomEndpointUpdateHandler,
 	createAccountForceResetRateLimitHandler,
 	createAccountModelFallbacksUpdateHandler,
@@ -465,6 +466,16 @@ export class APIRouter {
 				);
 				return await this.wrapHandler((req) =>
 					autoFallbackHandler(req, accountId),
+				)(req, url);
+			}
+
+			// Account billing type
+			if (path.endsWith("/billing-type") && method === "POST") {
+				const billingTypeHandler = createAccountBillingTypeHandler(
+					this.context.dbOps,
+				);
+				return await this.wrapHandler((req) =>
+					billingTypeHandler(req, accountId),
 				)(req, url);
 			}
 

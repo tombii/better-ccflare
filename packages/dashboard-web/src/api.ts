@@ -1095,6 +1095,32 @@ class API extends HttpClient {
 		}
 	}
 
+	async updateAccountBillingType(
+		accountId: string,
+		billingType: "plan" | "api" | "auto",
+	): Promise<void> {
+		const startTime = Date.now();
+		const url = `/api/accounts/${accountId}/billing-type`;
+
+		this.logger.debug(`→ POST ${url}`, { billingType });
+
+		try {
+			await this.post(url, { billingType });
+			const duration = Date.now() - startTime;
+			this.logger.debug(`← POST ${url} - 200 (${duration}ms)`);
+		} catch (error) {
+			const duration = Date.now() - startTime;
+			this.logger.error(`✗ POST ${url} - ERROR (${duration}ms)`, {
+				error: error instanceof Error ? error.message : String(error),
+				stack: error instanceof Error ? error.stack : undefined,
+			});
+			if (error instanceof HttpError) {
+				throw new Error(error.message);
+			}
+			throw error;
+		}
+	}
+
 	async updateAccountCustomEndpoint(
 		accountId: string,
 		customEndpoint: string | null,

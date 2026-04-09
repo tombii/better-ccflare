@@ -250,6 +250,7 @@ export class AutoRefreshScheduler {
 				model_mappings: null,
 				cross_region_mode: null,
 				model_fallbacks: null,
+				billing_type: null,
 			};
 
 			// Emit request start event for analytics

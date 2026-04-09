@@ -437,6 +437,13 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		await this.accounts.resetSession(accountId, timestamp);
 	}
 
+	async setAccountBillingType(
+		accountId: string,
+		billingType: string | null,
+	): Promise<void> {
+		await this.accounts.setBillingType(accountId, billingType);
+	}
+
 	async updateAccountRequestCount(
 		accountId: string,
 		count: number,

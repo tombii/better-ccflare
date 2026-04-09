@@ -132,6 +132,7 @@ export async function forwardToClient(
 			responseHeaders: responseHeadersObj,
 			isStream,
 			providerName: ctx.provider.name,
+			accountBillingType: account?.billing_type ?? null,
 			agentUsed: agentUsed || null,
 			apiKeyId: apiKeyId || null,
 			apiKeyName: apiKeyName || null,

@@ -408,6 +408,18 @@ export function AccountsTab() {
 		}
 	};
 
+	const handleBillingTypeToggle = async (account: Account) => {
+		try {
+			await api.updateAccountBillingType(
+				account.id,
+				account.billingType === "plan" ? "api" : "plan",
+			);
+			await loadAccounts();
+		} catch (err) {
+			setActionError(formatError(err));
+		}
+	};
+
 	const handleCustomEndpointChange = (account: Account) => {
 		setCustomEndpointDialog({ isOpen: true, account });
 	};
@@ -520,6 +532,7 @@ export function AccountsTab() {
 						onPriorityChange={handlePriorityChange}
 						onAutoFallbackToggle={handleAutoFallbackToggle}
 						onAutoRefreshToggle={handleAutoRefreshToggle}
+						onBillingTypeToggle={handleBillingTypeToggle}
 						onCustomEndpointChange={handleCustomEndpointChange}
 						onModelMappingsChange={handleModelMappingsChange}
 					/>

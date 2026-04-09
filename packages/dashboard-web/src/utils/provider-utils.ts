@@ -16,6 +16,17 @@ export function providerSupportsAutoFeatures(provider: string): boolean {
 }
 
 /**
+ * Check if a provider supports custom billing type configuration
+ * (anthropic-compatible and openai-compatible providers)
+ */
+export function providerSupportsCustomBilling(provider: string): boolean {
+	return (
+		provider === PROVIDER_NAMES.ANTHROPIC_COMPATIBLE ||
+		provider === PROVIDER_NAMES.OPENAI_COMPATIBLE
+	);
+}
+
+/**
  * Check if a provider supports model mappings
  */
 export function providerSupportsModelMappings(provider: string): boolean {

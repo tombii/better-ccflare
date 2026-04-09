@@ -466,6 +466,9 @@ async function handleStart(msg: StartMessage): Promise<void> {
 		overageStatus === "org_level_disabled"
 	) {
 		state.billingType = "plan";
+	} else if (msg.accountBillingType) {
+		// Account has explicit billing type override
+		state.billingType = msg.accountBillingType;
 	} else {
 		// Providers with subscription plans default to "plan" billing;
 		// all others (anthropic-compatible, openai-compatible, etc.) are API

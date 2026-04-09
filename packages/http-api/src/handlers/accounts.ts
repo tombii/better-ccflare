@@ -1808,6 +1808,70 @@ export function createAccountAutoFallbackHandler(dbOps: DatabaseOperations) {
 }
 
 /**
+ * Create an account billing type handler
+ */
+export function createAccountBillingTypeHandler(dbOps: DatabaseOperations) {
+	return async (req: Request, accountId: string): Promise<Response> => {
+		try {
+			const body = await req.json();
+
+			const billingType = validateString(body.billingType, "billingType", {
+				required: true,
+				allowedValues: ["plan", "api", "auto"],
+			});
+
+			if (billingType === undefined) {
+				return errorResponse(
+					BadRequest("billingType must be 'plan', 'api', or 'auto'"),
+				);
+			}
+
+			// Check if account exists
+			const db = dbOps.getAdapter();
+			const account = await db.get<{ name: string; provider: string }>(
+				"SELECT name, provider FROM accounts WHERE id = ?",
+				[accountId],
+			);
+
+			if (!account) {
+				return errorResponse(NotFound("Account not found"));
+			}
+
+			// Only allow custom billing type for compatible providers
+			if (
+				!["anthropic-compatible", "openai-compatible"].includes(
+					account.provider,
+				)
+			) {
+				return errorResponse(
+					BadRequest(
+						"Custom billing type is only available for anthropic-compatible and openai-compatible providers",
+					),
+				);
+			}
+
+			dbOps.setAccountBillingType(
+				accountId,
+				billingType === "auto" ? null : billingType,
+			);
+
+			return jsonResponse({
+				success: true,
+				message: `Billing type set to '${billingType}' for account '${account.name}'`,
+				billingType,
+			});
+		} catch (error) {
+			log.error("Account billing type update error:", error);
+			return errorResponse(
+				error instanceof Error
+					? error
+					: new Error("Failed to update billing type"),
+			);
+		}
+	};
+}
+
+/**
  * Create an account auto-refresh toggle handler
  */
 export function createAccountAutoRefreshHandler(dbOps: DatabaseOperations) {
