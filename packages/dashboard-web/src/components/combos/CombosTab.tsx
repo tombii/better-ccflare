@@ -9,6 +9,7 @@ import { FamilyActivationSection } from "./FamilyActivationSection";
 
 export function CombosTab() {
 	const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
+	const [editDialogComboId, setEditDialogComboId] = useState<string | null>(null);
 	const combosQuery = useCombos();
 	const combos = combosQuery.data?.combos ?? [];
 
@@ -56,7 +57,7 @@ export function CombosTab() {
 							<ComboCard
 								key={combo.id}
 								combo={combo}
-								onEdit={() => {}}
+								onEdit={() => setEditDialogComboId(combo.id)}
 								onDelete={() => {}}
 							/>
 						))}
@@ -67,6 +68,12 @@ export function CombosTab() {
 			<ComboDialog
 				isOpen={isCreateDialogOpen}
 				onClose={() => setIsCreateDialogOpen(false)}
+			/>
+
+			<ComboDialog
+				isOpen={!!editDialogComboId}
+				comboId={editDialogComboId}
+				onClose={() => setEditDialogComboId(null)}
 			/>
 		</div>
 	);
