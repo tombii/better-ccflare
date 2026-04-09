@@ -10,8 +10,8 @@ const log = new Logger("QwenProvider");
 const DEFAULT_ENDPOINT = "https://dashscope.aliyuncs.com/compatible-mode/v1";
 const QWEN_USER_AGENT = "QwenCode/0.14.2 (darwin; arm64)";
 
-// Default model mapping: all Anthropic model tiers → Qwen coder-model
-const _DEFAULT_MODEL_MAP: Record<string, string> = {
+// All Anthropic model tiers map to coder-model (Qwen's unified coding model)
+const QWEN_MODEL_MAPPINGS = {
 	opus: "coder-model",
 	sonnet: "coder-model",
 	haiku: "coder-model",
@@ -107,7 +107,18 @@ export class QwenProvider extends OpenAICompatibleProvider {
 
 		try {
 			const body = await request.json();
-			const openaiBody = this.convertAnthropicRequestToOpenAI(body, account);
+			// Apply Qwen default model mappings if the account has no custom mappings
+			const effectiveAccount = account
+				? {
+						...account,
+						model_mappings:
+							account.model_mappings ?? JSON.stringify(QWEN_MODEL_MAPPINGS),
+					}
+				: account;
+			const openaiBody = this.convertAnthropicRequestToOpenAI(
+				body,
+				effectiveAccount,
+			);
 
 			const bodyAsRecord = openaiBody as unknown as Record<string, unknown>;
 

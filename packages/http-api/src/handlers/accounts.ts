@@ -529,7 +529,7 @@ export function createAccountAddHandler(
 				maxLength: 100,
 				pattern: patterns.accountName,
 				patternErrorMessage:
-					"can only contain letters, numbers, spaces, hyphens, and underscores",
+					"can only contain letters, numbers, spaces, hyphens, underscores, and dots",
 				transform: sanitizers.trim,
 			});
 
@@ -774,7 +774,7 @@ export function createAccountRenameHandler(dbOps: DatabaseOperations) {
 				maxLength: 100,
 				pattern: patterns.accountName,
 				patternErrorMessage:
-					"can only contain letters, numbers, spaces, hyphens, and underscores",
+					"can only contain letters, numbers, spaces, hyphens, underscores, and dots",
 				transform: sanitizers.trim,
 			});
 
@@ -837,7 +837,7 @@ export function createZaiAccountAddHandler(dbOps: DatabaseOperations) {
 				maxLength: 100,
 				pattern: patterns.accountName,
 				patternErrorMessage:
-					"can only contain letters, numbers, spaces, hyphens, and underscores",
+					"can only contain letters, numbers, spaces, hyphens, underscores, and dots",
 				transform: sanitizers.trim,
 			});
 
@@ -1001,7 +1001,7 @@ export function createOpenAIAccountAddHandler(dbOps: DatabaseOperations) {
 				maxLength: 100,
 				pattern: patterns.accountName,
 				patternErrorMessage:
-					"can only contain letters, numbers, spaces, hyphens, and underscores",
+					"can only contain letters, numbers, spaces, hyphens, underscores, and dots",
 				transform: sanitizers.trim,
 			});
 
@@ -1164,7 +1164,7 @@ export function createVertexAIAccountAddHandler(dbOps: DatabaseOperations) {
 				maxLength: 100,
 				pattern: patterns.accountName,
 				patternErrorMessage:
-					"can only contain letters, numbers, spaces, hyphens, and underscores",
+					"can only contain letters, numbers, spaces, hyphens, underscores, and dots",
 				transform: sanitizers.trim,
 			});
 
@@ -1301,7 +1301,7 @@ export function createMinimaxAccountAddHandler(dbOps: DatabaseOperations) {
 				maxLength: 100,
 				pattern: patterns.accountName,
 				patternErrorMessage:
-					"can only contain letters, numbers, spaces, hyphens, and underscores",
+					"can only contain letters, numbers, spaces, hyphens, underscores, and dots",
 				transform: sanitizers.trim,
 			});
 
@@ -1432,7 +1432,7 @@ export function createNanoGPTAccountAddHandler(dbOps: DatabaseOperations) {
 				maxLength: 100,
 				pattern: patterns.accountName,
 				patternErrorMessage:
-					"can only contain letters, numbers, spaces, hyphens, and underscores",
+					"can only contain letters, numbers, spaces, hyphens, underscores, and dots",
 				transform: sanitizers.trim,
 			});
 			if (!name) {
@@ -1602,7 +1602,7 @@ export function createAnthropicCompatibleAccountAddHandler(
 				maxLength: 100,
 				pattern: patterns.accountName,
 				patternErrorMessage:
-					"can only contain letters, numbers, spaces, hyphens, and underscores",
+					"can only contain letters, numbers, spaces, hyphens, underscores, and dots",
 				transform: sanitizers.trim,
 			});
 
@@ -2392,7 +2392,7 @@ export function createBedrockAccountAddHandler(dbOps: DatabaseOperations) {
 				maxLength: 100,
 				pattern: patterns.accountName,
 				patternErrorMessage:
-					"can only contain letters, numbers, spaces, hyphens, and underscores",
+					"can only contain letters, numbers, spaces, hyphens, underscores, and dots",
 				transform: sanitizers.trim,
 			});
 
@@ -2572,7 +2572,7 @@ export function createKiloAccountAddHandler(dbOps: DatabaseOperations) {
 				maxLength: 100,
 				pattern: patterns.accountName,
 				patternErrorMessage:
-					"can only contain letters, numbers, spaces, hyphens, and underscores",
+					"can only contain letters, numbers, spaces, hyphens, underscores, and dots",
 				transform: sanitizers.trim,
 			});
 
@@ -2724,7 +2724,7 @@ export function createAlibabaCodingPlanAccountAddHandler(
 				maxLength: 100,
 				pattern: patterns.accountName,
 				patternErrorMessage:
-					"can only contain letters, numbers, spaces, hyphens, and underscores",
+					"can only contain letters, numbers, spaces, hyphens, underscores, and dots",
 				transform: sanitizers.trim,
 			});
 
@@ -2871,7 +2871,7 @@ export function createOpenRouterAccountAddHandler(dbOps: DatabaseOperations) {
 				maxLength: 100,
 				pattern: patterns.accountName,
 				patternErrorMessage:
-					"can only contain letters, numbers, spaces, hyphens, and underscores",
+					"can only contain letters, numbers, spaces, hyphens, underscores, and dots",
 				transform: sanitizers.trim,
 			});
 

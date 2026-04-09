@@ -333,7 +333,7 @@ export const patterns = {
 	alphanumericWithSpaces: /^[a-zA-Z0-9\s]+$/,
 	// Account name: alphanumeric with spaces, hyphens, and underscores
 	// Spaces are allowed for better UX - CLI command suggestions will quote names properly
-	accountName: /^[a-zA-Z0-9\s\-_]+$/,
+	accountName: /^[a-zA-Z0-9\s\-_.]+$/,
 	// Path pattern for API endpoints
 	apiPath: /^\/v1\/[a-zA-Z0-9\-_/]*$/,
 	// URL pattern

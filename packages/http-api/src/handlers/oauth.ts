@@ -60,7 +60,7 @@ export function createQwenDeviceFlowInitHandler(dbOps: DatabaseOperations) {
 				maxLength: 100,
 				pattern: patterns.accountName,
 				patternErrorMessage:
-					"can only contain letters, numbers, spaces, hyphens, and underscores",
+					"can only contain letters, numbers, spaces, hyphens, underscores, and dots",
 			});
 
 			if (!name) {
@@ -199,7 +199,7 @@ export function createCodexDeviceFlowInitHandler(dbOps: DatabaseOperations) {
 				maxLength: 100,
 				pattern: patterns.accountName,
 				patternErrorMessage:
-					"can only contain letters, numbers, spaces, hyphens, and underscores",
+					"can only contain letters, numbers, spaces, hyphens, underscores, and dots",
 			});
 
 			if (!name) {
@@ -325,7 +325,7 @@ export function createOAuthInitHandler(dbOps: DatabaseOperations) {
 				maxLength: 100,
 				pattern: patterns.accountName,
 				patternErrorMessage:
-					"can only contain letters, numbers, spaces, hyphens, and underscores",
+					"can only contain letters, numbers, spaces, hyphens, underscores, and dots",
 			});
 
 			if (!name) {
