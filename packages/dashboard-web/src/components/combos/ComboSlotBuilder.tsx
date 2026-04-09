@@ -39,6 +39,7 @@ import { Switch } from "../ui/switch";
 interface SortableSlotRowProps {
 	slot: ComboSlot;
 	comboId: string;
+	index: number;
 	accountName: string;
 	provider: string;
 	onUpdate: (enabled: boolean) => void;
@@ -49,6 +50,7 @@ interface SortableSlotRowProps {
 
 function SortableSlotRow({
 	slot,
+	index,
 	accountName,
 	provider,
 	onUpdate,
@@ -71,6 +73,9 @@ function SortableSlotRow({
 			style={style}
 			className="flex items-center gap-2 rounded-md border p-2"
 		>
+			<span className="w-5 shrink-0 text-center text-xs font-medium text-muted-foreground">
+				{index}
+			</span>
 			<button
 				type="button"
 				className="cursor-grab text-muted-foreground hover:text-foreground active:cursor-grabbing"
@@ -257,7 +262,7 @@ export function ComboSlotBuilder({ combo }: ComboSlotBuilderProps) {
 							strategy={verticalListSortingStrategy}
 						>
 							<div className="space-y-1">
-								{combo.slots.map((slot) => {
+								{combo.slots.map((slot, index) => {
 									const { name, provider } = getAccountInfo(slot.account_id);
 									return (
 										<SortableSlotRow
@@ -266,6 +271,7 @@ export function ComboSlotBuilder({ combo }: ComboSlotBuilderProps) {
 											comboId={combo.id}
 											accountName={name}
 											provider={provider}
+											index={index + 1}
 											onUpdate={(enabled) =>
 												updateSlot.mutate({
 													comboId: combo.id,
