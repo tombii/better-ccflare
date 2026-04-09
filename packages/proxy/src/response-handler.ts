@@ -6,7 +6,15 @@ import {
 import { ANALYTICS_STREAM_SYMBOL } from "@better-ccflare/http-common/symbols";
 import type { Account } from "@better-ccflare/types";
 import type { ProxyContext } from "./handlers";
+import { handleRateLimitResponse } from "./handlers/response-processor";
+import { createSseRateLimitSniffer } from "./handlers/sse-rate-limit-sniffer";
 import type { ChunkMessage, EndMessage, StartMessage } from "./worker-messages";
+
+// Default cooldown for rate-limit errors detected mid-stream. SSE error
+// frames don't carry reset headers (HTTP headers were sent before the
+// error occurred), so we fall back to the same 5h default that
+// response-processor.ts uses for headerless 429 responses.
+const MID_STREAM_RATE_LIMIT_COOLDOWN_MS = 5 * 60 * 60 * 1000;
 
 // Must match MAX_REQUEST_BODY_BYTES in post-processor.worker.ts.
 // Cap applied before postMessage to avoid multi-MB structured clones.
@@ -171,6 +179,11 @@ export async function forwardToClient(
 					})
 				: response.clone();
 
+		// Mid-stream rate-limit detection for issue #114 Fix 1.2. Only
+		// create a sniffer when we know which account to mark — anonymous
+		// or unauthenticated requests can't be failed over.
+		const rateLimitSniffer = account ? createSseRateLimitSniffer() : null;
+
 		(async () => {
 			const STREAM_TIMEOUT_MS = 300000; // 5 minutes max stream duration
 			const CHUNK_TIMEOUT_MS = 30000; // 30 seconds between chunks
@@ -235,6 +248,19 @@ export async function forwardToClient(
 								data: value,
 							};
 							safePostMessage(ctx.usageWorker, chunkMsg);
+
+							// Mid-stream rate-limit detection. The sniffer
+							// fires exactly once; after that feed() is a no-op.
+							if (account && rateLimitSniffer?.feed(value)) {
+								handleRateLimitResponse(
+									account,
+									{
+										isRateLimited: true,
+										resetTime: Date.now() + MID_STREAM_RATE_LIMIT_COOLDOWN_MS,
+									},
+									ctx,
+								);
+							}
 						}
 					} catch (error) {
 						// Ensure timeout is cleared on error
