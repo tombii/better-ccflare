@@ -632,6 +632,14 @@ We recommend using one of the workarounds above until the npm bug is fixed.
 - **Auto-refresh** - Automatically start new usage windows when they reset
 - **Usage Window Alignment** - Sessions automatically align with Claude OAuth usage window resets for optimal resource utilization
 
+### 🔗 Combos — Cross-Provider Fallback Chains
+- **Named Combos** - Create named fallback chains with ordered (account, model) slots
+- **Family Activation** - Assign one combo per model family (Opus, Sonnet, Haiku) — independent activation toggles
+- **Auto Waterfall** - Requests automatically fall through slots top-to-bottom, skipping unavailable accounts (rate-limited, paused)
+- **Per-Slot Model Override** - Each slot can use a different model, enabling cross-model fallback (e.g., try Opus on provider A, then Sonnet on provider B)
+- **SessionStrategy Fallback** - If all combo slots fail, automatically falls back to normal session-based routing
+- **Dashboard Management** - Drag-and-drop slot builder with account provider badges, enable/disable per combo, and family assignment UI
+
 ### 📈 Real-Time Analytics
 - Token usage tracking per request with optimized batch processing
 - Response time monitoring with intelligent caching
@@ -697,6 +705,7 @@ Full documentation available in [`docs/`](docs/):
 - [Auto-Fallback Guide](docs/auto-fallback.md)
 - [Auto-Refresh Guide](docs/auto-refresh.md)
 - [OpenAI-Compatible Providers](docs/providers.md)
+- [Combos — Fallback Chains](docs/combos.md)
 
 ## Screenshots
 
