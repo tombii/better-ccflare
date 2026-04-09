@@ -296,8 +296,11 @@ export const useFamilies = () => {
 export const useCreateCombo = () => {
 	const queryClient = useQueryClient();
 	return useMutation({
-		mutationFn: (params: { name: string; description?: string; enabled?: boolean }) =>
-			api.createCombo(params),
+		mutationFn: (params: {
+			name: string;
+			description?: string;
+			enabled?: boolean;
+		}) => api.createCombo(params),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.combos() });
 		},
@@ -307,10 +310,77 @@ export const useCreateCombo = () => {
 export const useAssignFamily = () => {
 	const queryClient = useQueryClient();
 	return useMutation({
-		mutationFn: (params: { family: string; comboId: string | null; enabled: boolean }) =>
-			api.assignFamily(params),
+		mutationFn: (params: {
+			family: string;
+			comboId: string | null;
+			enabled: boolean;
+		}) => api.assignFamily(params),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.families() });
+			queryClient.invalidateQueries({ queryKey: queryKeys.combos() });
+		},
+	});
+};
+
+export const useGetCombo = (id: string | null) => {
+	return useQuery({
+		queryKey: ["combo", id],
+		queryFn: () => api.getCombo(id!),
+		enabled: !!id,
+	});
+};
+
+export const useAddComboSlot = () => {
+	const queryClient = useQueryClient();
+	return useMutation({
+		mutationFn: ({
+			comboId,
+			params,
+		}: {
+			comboId: string;
+			params: { account_id: string; model: string; enabled?: boolean };
+		}) => api.addComboSlot(comboId, params),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.combos() });
+		},
+	});
+};
+
+export const useUpdateComboSlot = () => {
+	const queryClient = useQueryClient();
+	return useMutation({
+		mutationFn: ({
+			comboId,
+			slotId,
+			params,
+		}: {
+			comboId: string;
+			slotId: string;
+			params: { model?: string; enabled?: boolean };
+		}) => api.updateComboSlot(comboId, slotId, params),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.combos() });
+		},
+	});
+};
+
+export const useRemoveComboSlot = () => {
+	const queryClient = useQueryClient();
+	return useMutation({
+		mutationFn: ({ comboId, slotId }: { comboId: string; slotId: string }) =>
+			api.removeComboSlot(comboId, slotId),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.combos() });
+		},
+	});
+};
+
+export const useReorderComboSlots = () => {
+	const queryClient = useQueryClient();
+	return useMutation({
+		mutationFn: ({ comboId, slotIds }: { comboId: string; slotIds: string[] }) =>
+			api.reorderComboSlots(comboId, slotIds),
+		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.combos() });
 		},
 	});

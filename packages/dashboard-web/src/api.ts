@@ -11,6 +11,8 @@ import type {
 	AnalyticsResponse,
 	Combo,
 	ComboFamilyAssignment,
+	ComboSlot,
+	ComboWithSlots,
 	LogEvent,
 	RequestPayload,
 	RequestResponse,
@@ -1591,6 +1593,36 @@ class API extends HttpClient {
 			combo_id: params.comboId,
 			enabled: params.enabled,
 		});
+	}
+
+	async getCombo(id: string): Promise<{ combo: ComboWithSlots }> {
+		return this.get<{ combo: ComboWithSlots }>(`/api/combos/${id}`);
+	}
+
+	async addComboSlot(
+		comboId: string,
+		params: { account_id: string; model: string; enabled?: boolean },
+	): Promise<{ slot: ComboSlot }> {
+		return this.post<{ slot: ComboSlot }>(`/api/combos/${comboId}/slots`, params);
+	}
+
+	async updateComboSlot(
+		comboId: string,
+		slotId: string,
+		params: { model?: string; enabled?: boolean },
+	): Promise<{ slot: ComboSlot }> {
+		return this.put<{ slot: ComboSlot }>(
+			`/api/combos/${comboId}/slots/${slotId}`,
+			params,
+		);
+	}
+
+	async removeComboSlot(comboId: string, slotId: string): Promise<void> {
+		await this.delete(`/api/combos/${comboId}/slots/${slotId}`);
+	}
+
+	async reorderComboSlots(comboId: string, slotIds: string[]): Promise<void> {
+		await this.put(`/api/combos/${comboId}/slots/reorder`, { slotIds });
 	}
 }
 
