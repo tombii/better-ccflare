@@ -20,7 +20,6 @@ import {
 	useAddComboSlot,
 	useRemoveComboSlot,
 	useReorderComboSlots,
-	useUpdateComboSlot,
 } from "../../hooks/queries";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -34,7 +33,6 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "../ui/select";
-import { Switch } from "../ui/switch";
 
 interface SortableSlotRowProps {
 	slot: ComboSlot;
@@ -42,9 +40,7 @@ interface SortableSlotRowProps {
 	index: number;
 	accountName: string;
 	provider: string;
-	onUpdate: (enabled: boolean) => void;
 	onRemove: () => void;
-	isUpdating: boolean;
 	isRemoving: boolean;
 }
 
@@ -53,9 +49,7 @@ function SortableSlotRow({
 	index,
 	accountName,
 	provider,
-	onUpdate,
 	onRemove,
-	isUpdating,
 	isRemoving,
 }: SortableSlotRowProps) {
 	const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
@@ -94,12 +88,9 @@ function SortableSlotRow({
 
 			<span className="shrink-0 text-sm text-muted-foreground">{slot.model}</span>
 
-			<Switch
-				checked={slot.enabled}
-				onCheckedChange={onUpdate}
-				disabled={isUpdating}
-				className="shrink-0"
-			/>
+			<Badge variant="outline" className="shrink-0 text-xs text-muted-foreground">
+				In Use
+			</Badge>
 
 			<Button
 				variant="ghost"
@@ -125,7 +116,6 @@ export function ComboSlotBuilder({ combo }: ComboSlotBuilderProps) {
 
 	const accountsQuery = useAccounts();
 	const addSlot = useAddComboSlot();
-	const updateSlot = useUpdateComboSlot();
 	const removeSlot = useRemoveComboSlot();
 	const reorderSlots = useReorderComboSlots();
 
@@ -272,20 +262,12 @@ export function ComboSlotBuilder({ combo }: ComboSlotBuilderProps) {
 											accountName={name}
 											provider={provider}
 											index={index + 1}
-											onUpdate={(enabled) =>
-												updateSlot.mutate({
-													comboId: combo.id,
-													slotId: slot.id,
-													params: { enabled },
-												})
-											}
 											onRemove={() =>
 												removeSlot.mutate({
 													comboId: combo.id,
 													slotId: slot.id,
 												})
 											}
-											isUpdating={updateSlot.isPending}
 											isRemoving={removeSlot.isPending}
 										/>
 									);
