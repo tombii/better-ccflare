@@ -1,16 +1,176 @@
+import crypto from "node:crypto";
 import { Config } from "@better-ccflare/config";
-import { patterns, validateString } from "@better-ccflare/core";
+import {
+	patterns,
+	validatePriority,
+	validateString,
+} from "@better-ccflare/core";
 import type { DatabaseOperations } from "@better-ccflare/database";
 import {
 	BadRequest,
 	errorResponse,
 	InternalServerError,
 	jsonResponse,
+	NotFound,
 } from "@better-ccflare/http-common";
 import { Logger } from "@better-ccflare/logger";
 import { createOAuthFlow } from "@better-ccflare/oauth-flow";
+import {
+	initiateDeviceFlow as initiateQwenDeviceFlow,
+	pollForToken as pollQwenForToken,
+} from "@better-ccflare/providers/qwen";
 
 const log = new Logger("OAuthHandler");
+
+// In-memory session store for Qwen device flow
+type QwenSession =
+	| { status: "pending"; accountName: string }
+	| { status: "complete"; accountName: string }
+	| { status: "error"; accountName: string; error: string };
+
+const qwenSessions = new Map<string, QwenSession>();
+
+function normalizeQwenBaseUrl(url: string): string {
+	let normalized = url.trim();
+	if (!normalized.startsWith("http")) {
+		normalized = `https://${normalized}`;
+	}
+	if (!normalized.endsWith("/v1")) {
+		normalized = `${normalized}/v1`;
+	}
+	return normalized;
+}
+
+/**
+ * Create a Qwen device flow initialization handler.
+ * Returns { authUrl, userCode, sessionId } immediately, then polls in background.
+ */
+export function createQwenDeviceFlowInitHandler(dbOps: DatabaseOperations) {
+	return async (req: Request): Promise<Response> => {
+		try {
+			const body = await req.json();
+
+			const name = validateString(body.name, "name", {
+				required: true,
+				minLength: 1,
+				maxLength: 100,
+				pattern: patterns.accountName,
+				patternErrorMessage:
+					"can only contain letters, numbers, spaces, hyphens, and underscores",
+			});
+
+			if (!name) {
+				return errorResponse(BadRequest("Valid account name is required"));
+			}
+
+			const priority = validatePriority(body.priority ?? 0, "priority");
+
+			let deviceFlow: Awaited<ReturnType<typeof initiateQwenDeviceFlow>>;
+			try {
+				deviceFlow = await initiateQwenDeviceFlow();
+			} catch (err) {
+				log.error("Qwen device flow initiation failed:", err);
+				return errorResponse(
+					InternalServerError(
+						`Failed to initiate Qwen device flow: ${(err as Error).message}`,
+					),
+				);
+			}
+
+			const sessionId = crypto.randomUUID();
+			qwenSessions.set(sessionId, { status: "pending", accountName: name });
+
+			// Poll in background — do not await
+			(async () => {
+				try {
+					const tokens = await pollQwenForToken(
+						deviceFlow.deviceCode,
+						deviceFlow.pkce,
+						deviceFlow.interval,
+						60,
+					);
+
+					const accountId = crypto.randomUUID();
+					const now = Date.now();
+					const resourceUrl = tokens.resource_url
+						? normalizeQwenBaseUrl(tokens.resource_url)
+						: null;
+
+					await dbOps.getAdapter().run(
+						`INSERT INTO accounts (
+							id, name, provider, api_key, refresh_token, access_token,
+							expires_at, created_at, request_count, total_requests, priority,
+							custom_endpoint, model_mappings, model_fallbacks
+						) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?)`,
+						[
+							accountId,
+							name,
+							"qwen",
+							null,
+							tokens.refresh_token,
+							tokens.access_token,
+							now + tokens.expires_in * 1000,
+							now,
+							priority,
+							resourceUrl,
+							null,
+							null,
+						],
+					);
+
+					qwenSessions.set(sessionId, {
+						status: "complete",
+						accountName: name,
+					});
+					log.info(`Qwen account '${name}' added via web device flow`);
+
+					// Clean up session after 10 minutes
+					setTimeout(() => qwenSessions.delete(sessionId), 10 * 60 * 1000);
+				} catch (err) {
+					log.error(`Qwen device flow polling failed for '${name}':`, err);
+					qwenSessions.set(sessionId, {
+						status: "error",
+						accountName: name,
+						error: (err as Error).message,
+					});
+					setTimeout(() => qwenSessions.delete(sessionId), 10 * 60 * 1000);
+				}
+			})();
+
+			return jsonResponse({
+				success: true,
+				sessionId,
+				authUrl:
+					deviceFlow.verificationUriComplete || deviceFlow.verificationUri,
+				userCode: deviceFlow.userCode,
+			});
+		} catch (error) {
+			log.error("Qwen device flow init error:", error);
+			return errorResponse(
+				error instanceof Error
+					? error
+					: new Error("Failed to initialize Qwen device flow"),
+			);
+		}
+	};
+}
+
+/**
+ * Create a Qwen device flow status handler.
+ * Returns { status, error? } for the given sessionId.
+ */
+export function createQwenDeviceFlowStatusHandler() {
+	return (sessionId: string): Response => {
+		const session = qwenSessions.get(sessionId);
+		if (!session) {
+			return errorResponse(NotFound("Session not found or expired"));
+		}
+		if (session.status === "error") {
+			return jsonResponse({ status: "error", error: session.error });
+		}
+		return jsonResponse({ status: session.status });
+	};
+}
 
 /**
  * Create an OAuth initialization handler

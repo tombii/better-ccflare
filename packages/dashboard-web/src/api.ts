@@ -1660,6 +1660,46 @@ class API extends HttpClient {
 	async reorderComboSlots(comboId: string, slotIds: string[]): Promise<void> {
 		await this.put(`/api/combos/${comboId}/slots/reorder`, { slotIds });
 	}
+
+	async initQwenDeviceFlow(data: {
+		name: string;
+		priority: number;
+	}): Promise<{ sessionId: string; authUrl: string; userCode: string }> {
+		const url = "/api/oauth/qwen/init";
+		this.logger.debug(`→ POST ${url}`, { data });
+		try {
+			const response = await this.post<{
+				sessionId: string;
+				authUrl: string;
+				userCode: string;
+			}>(url, data);
+			this.logger.debug(`← POST ${url} - 200`);
+			return response;
+		} catch (error) {
+			this.logger.error(`✗ POST ${url} - ERROR`, { error });
+			if (error instanceof HttpError) throw new Error(error.message);
+			throw error;
+		}
+	}
+
+	async getQwenAuthStatus(
+		sessionId: string,
+	): Promise<{ status: "pending" | "complete" | "error"; error?: string }> {
+		const url = `/api/oauth/qwen/status/${sessionId}`;
+		this.logger.debug(`→ GET ${url}`);
+		try {
+			const response = await this.get<{
+				status: "pending" | "complete" | "error";
+				error?: string;
+			}>(url);
+			this.logger.debug(`← GET ${url} - 200`);
+			return response;
+		} catch (error) {
+			this.logger.error(`✗ GET ${url} - ERROR`, { error });
+			if (error instanceof HttpError) throw new Error(error.message);
+			throw error;
+		}
+	}
 }
 
 export const api = new API();

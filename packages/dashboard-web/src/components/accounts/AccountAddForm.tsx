@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../../api";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -157,10 +157,31 @@ export function AccountAddForm({
 		haikuModel: "",
 	});
 
+	// Qwen device flow state
+	const [qwenStep, setQwenStep] = useState<
+		"idle" | "pending" | "complete" | "error"
+	>("idle");
+	const [qwenAuthUrl, setQwenAuthUrl] = useState("");
+	const [qwenUserCode, setQwenUserCode] = useState("");
+	const [qwenError, setQwenError] = useState("");
+	const qwenSessionIdRef = useRef<string>("");
+	const qwenPollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(
+		null,
+	);
+
 	const [awsProfiles, setAwsProfiles] = useState<
 		Array<{ name: string; region: string | null }>
 	>([]);
 	const [loadingProfiles, setLoadingProfiles] = useState(false);
+
+	// Cleanup Qwen polling on unmount
+	useEffect(() => {
+		return () => {
+			if (qwenPollIntervalRef.current !== null) {
+				clearInterval(qwenPollIntervalRef.current);
+			}
+		};
+	}, []);
 
 	// Load AWS profiles when bedrock mode is selected
 	useEffect(() => {
@@ -191,14 +212,81 @@ export function AccountAddForm({
 		}
 	};
 
-	const handleAddAccount = async () => {
-		if (newAccount.mode === "qwen") {
-			onError(
-				"Qwen accounts must be added via the CLI: bun run cli --add-account <name> --mode qwen",
-			);
+	const stopQwenPolling = () => {
+		if (qwenPollIntervalRef.current !== null) {
+			clearInterval(qwenPollIntervalRef.current);
+			qwenPollIntervalRef.current = null;
+		}
+	};
+
+	const handleStartQwenAuth = async () => {
+		if (!newAccount.name) {
+			onError("Account name is required");
 			return;
 		}
+		setQwenStep("pending");
+		setQwenError("");
+		try {
+			const result = await api.initQwenDeviceFlow({
+				name: newAccount.name,
+				priority: newAccount.priority,
+			});
+			qwenSessionIdRef.current = result.sessionId;
+			setQwenAuthUrl(result.authUrl);
+			setQwenUserCode(result.userCode);
 
+			// Open auth URL in new tab
+			if (typeof window !== "undefined") {
+				window.open(result.authUrl, "_blank");
+			}
+
+			// Poll for status every 3s
+			qwenPollIntervalRef.current = setInterval(async () => {
+				try {
+					const status = await api.getQwenAuthStatus(qwenSessionIdRef.current);
+					if (status.status === "complete") {
+						stopQwenPolling();
+						setQwenStep("complete");
+						setTimeout(() => {
+							setQwenStep("idle");
+							setQwenAuthUrl("");
+							setQwenUserCode("");
+							setNewAccount({
+								name: "",
+								mode: "claude-oauth",
+								priority: 0,
+								apiKey: "",
+								customEndpoint: "",
+								projectId: "",
+								region: "global",
+								profile: "",
+								awsRegion: "",
+								crossRegionMode: "geographic",
+								customBedrockModel: "",
+								opusModel: "",
+								sonnetModel: "",
+								haikuModel: "",
+							});
+							onSuccess();
+						}, 1500);
+					} else if (status.status === "error") {
+						stopQwenPolling();
+						setQwenStep("error");
+						setQwenError(status.error || "Authentication failed");
+					}
+				} catch {
+					// Network error — keep polling
+				}
+			}, 3000);
+		} catch (err) {
+			setQwenStep("error");
+			setQwenError(
+				err instanceof Error ? err.message : "Failed to start authentication",
+			);
+		}
+	};
+
+	const handleAddAccount = async () => {
 		if (newAccount.mode === "codex") {
 			onError(
 				"Codex accounts must be added via the CLI: bun run cli --add-account <name> --mode codex",
@@ -685,6 +773,11 @@ export function AccountAddForm({
 	};
 
 	const handleCancel = () => {
+		stopQwenPolling();
+		setQwenStep("idle");
+		setQwenAuthUrl("");
+		setQwenUserCode("");
+		setQwenError("");
 		setAuthStep("form");
 		setAuthCode("");
 		setSessionId("");
@@ -793,17 +886,68 @@ export function AccountAddForm({
 						</div>
 					)}
 					{newAccount.mode === "qwen" && (
-						<div className="bg-amber-50 dark:bg-amber-950 p-3 rounded-lg">
-							<p className="text-sm text-amber-900 dark:text-amber-100 font-medium mb-1">
-								CLI Required
-							</p>
-							<p className="text-xs text-amber-800 dark:text-amber-200 mb-2">
-								Qwen uses OAuth device code flow. Open the URL shown in your
-								terminal to authorize. This must be done from the CLI:
-							</p>
-							<code className="text-xs bg-amber-100 dark:bg-amber-900 text-amber-900 dark:text-amber-100 px-2 py-1 rounded block font-mono">
-								bun run cli --add-account &lt;name&gt; --mode qwen
-							</code>
+						<div className="space-y-3">
+							{qwenStep === "idle" && (
+								<div className="bg-blue-50 dark:bg-blue-950 p-3 rounded-lg">
+									<p className="text-sm text-blue-900 dark:text-blue-100 font-medium mb-1">
+										Device Code Authentication
+									</p>
+									<p className="text-xs text-blue-800 dark:text-blue-200">
+										Click the button below to start Qwen authentication. A
+										browser tab will open for you to authorize.
+									</p>
+								</div>
+							)}
+							{qwenStep === "pending" && (
+								<div className="bg-blue-50 dark:bg-blue-950 p-3 rounded-lg space-y-2">
+									<p className="text-sm text-blue-900 dark:text-blue-100 font-medium">
+										Waiting for authorization...
+									</p>
+									<p className="text-xs text-blue-800 dark:text-blue-200">
+										Enter this code in the browser tab:
+									</p>
+									<div className="flex items-center gap-2">
+										<code className="text-lg font-mono font-bold tracking-widest bg-blue-100 dark:bg-blue-900 text-blue-900 dark:text-blue-100 px-3 py-1 rounded">
+											{qwenUserCode}
+										</code>
+										<a
+											href={qwenAuthUrl}
+											target="_blank"
+											rel="noreferrer"
+											className="text-xs text-blue-700 dark:text-blue-300 underline"
+										>
+											Open browser
+										</a>
+									</div>
+								</div>
+							)}
+							{qwenStep === "complete" && (
+								<div className="bg-green-50 dark:bg-green-950 p-3 rounded-lg">
+									<p className="text-sm text-green-900 dark:text-green-100 font-medium">
+										Authorization successful! Account added.
+									</p>
+								</div>
+							)}
+							{qwenStep === "error" && (
+								<div className="bg-red-50 dark:bg-red-950 p-3 rounded-lg space-y-2">
+									<p className="text-sm text-red-900 dark:text-red-100 font-medium">
+										Authentication failed
+									</p>
+									<p className="text-xs text-red-800 dark:text-red-200">
+										{qwenError}
+									</p>
+									<Button
+										variant="outline"
+										size="sm"
+										onClick={() => {
+											setQwenStep("idle");
+											setQwenError("");
+										}}
+									>
+										Try again
+									</Button>
+								</div>
+							)}
 						</div>
 					)}
 					{newAccount.mode === "vertex-ai" && (
@@ -1687,10 +1831,25 @@ export function AccountAddForm({
 			)}
 			{authStep === "form" ? (
 				<div className="flex gap-2">
-					<Button onClick={handleAddAccount}>Continue</Button>
-					<Button variant="outline" onClick={handleCancel}>
-						Cancel
-					</Button>
+					{newAccount.mode === "qwen" ? (
+						<>
+							{(qwenStep === "idle" || qwenStep === "error") && (
+								<Button onClick={handleStartQwenAuth}>
+									Start Qwen Authentication
+								</Button>
+							)}
+							<Button variant="outline" onClick={handleCancel}>
+								Cancel
+							</Button>
+						</>
+					) : (
+						<>
+							<Button onClick={handleAddAccount}>Continue</Button>
+							<Button variant="outline" onClick={handleCancel}>
+								Cancel
+							</Button>
+						</>
+					)}
 				</div>
 			) : (
 				<>

@@ -74,6 +74,8 @@ import {
 import {
 	createOAuthCallbackHandler,
 	createOAuthInitHandler,
+	createQwenDeviceFlowInitHandler,
+	createQwenDeviceFlowStatusHandler,
 } from "./handlers/oauth";
 import {
 	createRequestPayloadHandler,
@@ -103,11 +105,13 @@ export class APIRouter {
 		(req: Request, url: URL) => Response | Promise<Response>
 	>;
 	private authService: AuthService;
+	private qwenStatusHandler: (sessionId: string) => Response;
 
 	constructor(context: APIContext) {
 		this.context = context;
 		this.handlers = new Map();
 		this.authService = new AuthService(context.dbOps);
+		this.qwenStatusHandler = createQwenDeviceFlowStatusHandler();
 		this.registerHandlers();
 	}
 
@@ -145,6 +149,7 @@ export class APIRouter {
 		const analyticsHandler = createAnalyticsHandler(this.context);
 		const oauthInitHandler = createOAuthInitHandler(dbOps);
 		const oauthCallbackHandler = createOAuthCallbackHandler(dbOps);
+		const qwenDeviceFlowInitHandler = createQwenDeviceFlowInitHandler(dbOps);
 		const agentsHandler = createAgentsListHandler(dbOps);
 		const workspacesHandler = createWorkspacesListHandler();
 		const requestsStreamHandler = createRequestsStreamHandler();
@@ -214,6 +219,9 @@ export class APIRouter {
 		this.handlers.set("POST:/api/oauth/init", (req) => oauthInitHandler(req));
 		this.handlers.set("POST:/api/oauth/callback", (req) =>
 			oauthCallbackHandler(req),
+		);
+		this.handlers.set("POST:/api/oauth/qwen/init", (req) =>
+			qwenDeviceFlowInitHandler(req),
 		);
 		this.handlers.set("GET:/api/requests", (_req, url) => {
 			const limitParam = url.searchParams.get("limit");
@@ -641,6 +649,18 @@ export class APIRouter {
 			if (parts.length === 4) {
 				const handler = createFamilyAssignHandler(this.context.dbOps);
 				return await this.wrapHandler((req) => handler(req, family))(req, url);
+			}
+		}
+
+		// Check for Qwen device flow status endpoint
+		if (path.startsWith("/api/oauth/qwen/status/") && method === "GET") {
+			const parts = path.split("/");
+			const sessionId = parts[5];
+			if (sessionId) {
+				return await this.wrapHandler(() => this.qwenStatusHandler(sessionId))(
+					req,
+					url,
+				);
 			}
 		}
 
