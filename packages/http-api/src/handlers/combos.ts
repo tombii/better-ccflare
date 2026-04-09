@@ -358,17 +358,17 @@ export function createFamilyAssignHandler(dbOps: DatabaseOperations) {
 			}
 
 			const body = await req.json();
-			const { comboId } = body;
+			const { combo_id, enabled: bodyEnabled } = body;
 
-			if (comboId !== undefined && comboId !== null) {
-				if (typeof comboId !== "string") {
-					return errorResponse(BadRequest("comboId must be a string"));
+			let safeComboId: string | null = null;
+			if (combo_id !== undefined && combo_id !== null) {
+				if (typeof combo_id !== "string") {
+					return errorResponse(BadRequest("combo_id must be a string"));
 				}
+				safeComboId = combo_id;
 			}
 
-			const safeComboId: string | null =
-				comboId === undefined ? null : (comboId as string | null);
-			const enabled = safeComboId !== null;
+			const enabled = bodyEnabled !== undefined ? !!bodyEnabled : safeComboId !== null;
 
 			await dbOps.setFamilyCombo(family as ComboFamily, safeComboId, enabled);
 
