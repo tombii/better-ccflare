@@ -81,12 +81,12 @@ const routes = [
 		title: "Account Management",
 		subtitle: "Manage your OAuth accounts and settings",
 	},
-		{
-			path: "/combos",
-			element: <CombosTab />,
-			title: "Combos Management",
-			subtitle: "Define fallback chains for model families",
-		},
+	{
+		path: "/combos",
+		element: <CombosTab />,
+		title: "Combos Management",
+		subtitle: "Define fallback chains for model families",
+	},
 	{
 		path: "/agents",
 		element: <AgentsTab />,

@@ -112,9 +112,7 @@ export async function selectAccountsForRequest(
 		if (family) {
 			const validFamilies: readonly string[] = ["opus", "sonnet", "haiku"];
 			if (!validFamilies.includes(family)) {
-				log.warn(
-					`Unknown model family "${family}", skipping combo lookup`,
-				);
+				log.warn(`Unknown model family "${family}", skipping combo lookup`);
 			} else {
 				const combo = await ctx.dbOps.getActiveComboForFamily(
 					family as ComboFamily,

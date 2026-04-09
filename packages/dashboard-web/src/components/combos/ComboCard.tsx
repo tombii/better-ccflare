@@ -14,7 +14,14 @@ interface ComboCardProps {
 	onToggleEnabled: (enabled: boolean) => void;
 }
 
-export function ComboCard({ combo, slotCount = 0, assignedFamily, onEdit, onDelete, onToggleEnabled }: ComboCardProps) {
+export function ComboCard({
+	combo,
+	slotCount = 0,
+	assignedFamily,
+	onEdit,
+	onDelete,
+	onToggleEnabled,
+}: ComboCardProps) {
 	return (
 		<Card>
 			<CardHeader className="pb-2">
@@ -39,7 +46,9 @@ export function ComboCard({ combo, slotCount = 0, assignedFamily, onEdit, onDele
 			</CardHeader>
 			<CardContent>
 				{combo.description && (
-					<p className="text-sm text-muted-foreground mb-3">{combo.description}</p>
+					<p className="text-sm text-muted-foreground mb-3">
+						{combo.description}
+					</p>
 				)}
 				<div className="flex items-center justify-between">
 					<span className="text-sm text-muted-foreground">

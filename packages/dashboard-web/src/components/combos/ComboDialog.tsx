@@ -35,7 +35,11 @@ export function ComboDialog({ isOpen, onClose, comboId }: ComboDialogProps) {
 		if (!name.trim()) return;
 
 		createCombo.mutate(
-			{ name: name.trim(), description: description.trim() || undefined, enabled },
+			{
+				name: name.trim(),
+				description: description.trim() || undefined,
+				enabled,
+			},
 			{
 				onSuccess: () => {
 					setName("");
@@ -60,7 +64,9 @@ export function ComboDialog({ isOpen, onClose, comboId }: ComboDialogProps) {
 		<Dialog open={isOpen} onOpenChange={(open) => !open && handleClose()}>
 			<DialogContent className="max-w-lg">
 				<DialogHeader>
-					<DialogTitle>{isEditMode ? "Edit Combo" : "Create Combo"}</DialogTitle>
+					<DialogTitle>
+						{isEditMode ? "Edit Combo" : "Create Combo"}
+					</DialogTitle>
 					<DialogDescription>
 						{isEditMode
 							? "Manage slots and settings for this combo"
@@ -122,7 +128,11 @@ export function ComboDialog({ isOpen, onClose, comboId }: ComboDialogProps) {
 				)}
 
 				<DialogFooter>
-					<Button variant="outline" onClick={handleClose} disabled={createCombo.isPending}>
+					<Button
+						variant="outline"
+						onClick={handleClose}
+						disabled={createCombo.isPending}
+					>
 						{isEditMode ? "Close" : "Cancel"}
 					</Button>
 					{!isEditMode && (

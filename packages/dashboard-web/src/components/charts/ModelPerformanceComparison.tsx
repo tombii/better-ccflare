@@ -165,12 +165,14 @@ export function ModelPerformanceComparison({
 								backdropFilter: "blur(8px)",
 							}}
 							// biome-ignore lint/suspicious/noExplicitAny: recharts v3.8 widened Formatter to include undefined
-							formatter={((value: number, name: string) => {
-								if (name === "Speed")
-									return [formatTokensPerSecond(value), name];
-								if (name === "Cost/1K") return [formatCost(value), name];
-								return [value, name];
-							}) as any}
+							formatter={
+								((value: number, name: string) => {
+									if (name === "Speed")
+										return [formatTokensPerSecond(value), name];
+									if (name === "Cost/1K") return [formatCost(value), name];
+									return [value, name];
+								}) as any
+							}
 						/>
 						<Legend
 							verticalAlign="top"
@@ -261,11 +263,13 @@ export function ModelPerformanceComparison({
 						<Tooltip
 							contentStyle={getTooltipStyles("dark")}
 							// biome-ignore lint/suspicious/noExplicitAny: recharts v3.8 widened Formatter to include undefined
-							formatter={((value: number, name: string) => {
-								if (name === "Response Time") return [`${value}ms`, name];
-								if (name === "Error Rate") return [`${value}%`, name];
-								return [value, name];
-							}) as any}
+							formatter={
+								((value: number, name: string) => {
+									if (name === "Response Time") return [`${value}ms`, name];
+									if (name === "Error Rate") return [`${value}%`, name];
+									return [value, name];
+								}) as any
+							}
 						/>
 						<Legend verticalAlign="top" height={36} iconType="rect" />
 						<Bar

@@ -218,7 +218,8 @@ export async function handleProxy(
 		try {
 			const bodyText = new TextDecoder().decode(requestBodyBuffer);
 			parsedBody = JSON.parse(bodyText);
-			requestModel = (parsedBody as Record<string, unknown>).model as string ?? null;
+			requestModel =
+				((parsedBody as Record<string, unknown>).model as string) ?? null;
 		} catch {
 			// If body can't be parsed, model stays null — combo routing won't activate
 		}
@@ -233,7 +234,9 @@ export async function handleProxy(
 					`Rejected invalid request to /v1/messages without messages field`,
 					{
 						event_type: parsedBody.event_type,
-						event_name: (parsedBody.event_data as Record<string, unknown> | undefined)?.event_name,
+						event_name: (
+							parsedBody.event_data as Record<string, unknown> | undefined
+						)?.event_name,
 					},
 				);
 				return new Response(

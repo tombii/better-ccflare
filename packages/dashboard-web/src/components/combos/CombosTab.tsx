@@ -1,6 +1,11 @@
 import { Plus } from "lucide-react";
 import { useState } from "react";
-import { useCombos, useDeleteCombo, useFamilies, useUpdateCombo } from "../../hooks/queries";
+import {
+	useCombos,
+	useDeleteCombo,
+	useFamilies,
+	useUpdateCombo,
+} from "../../hooks/queries";
 import { Button } from "../ui/button";
 import { Separator } from "../ui/separator";
 import { ComboCard } from "./ComboCard";
@@ -9,7 +14,9 @@ import { FamilyActivationSection } from "./FamilyActivationSection";
 
 export function CombosTab() {
 	const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
-	const [editDialogComboId, setEditDialogComboId] = useState<string | null>(null);
+	const [editDialogComboId, setEditDialogComboId] = useState<string | null>(
+		null,
+	);
 	const combosQuery = useCombos();
 	const familiesQuery = useFamilies();
 	const deleteCombo = useDeleteCombo();
@@ -20,7 +27,9 @@ export function CombosTab() {
 	const getAssignedFamily = (comboId: string) => {
 		const assignment = families.find((f) => f.combo_id === comboId);
 		if (!assignment) return null;
-		return assignment.family.charAt(0).toUpperCase() + assignment.family.slice(1);
+		return (
+			assignment.family.charAt(0).toUpperCase() + assignment.family.slice(1)
+		);
 	};
 
 	return (

@@ -1,8 +1,9 @@
+import type { ComboSlot, ComboWithSlots } from "@better-ccflare/types";
 import {
+	closestCenter,
 	DndContext,
 	type DragEndEvent,
 	PointerSensor,
-	closestCenter,
 	useSensor,
 	useSensors,
 } from "@dnd-kit/core";
@@ -12,7 +13,6 @@ import {
 	verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import type { ComboSlot, ComboWithSlots } from "@better-ccflare/types";
 import { GripVertical, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 import {
@@ -53,8 +53,14 @@ function SortableSlotRow({
 	onRemove,
 	isRemoving,
 }: SortableSlotRowProps) {
-	const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
-		useSortable({ id: slot.id });
+	const {
+		attributes,
+		listeners,
+		setNodeRef,
+		transform,
+		transition,
+		isDragging,
+	} = useSortable({ id: slot.id });
 
 	const style = {
 		transform: CSS.Transform.toString(transform),
@@ -87,9 +93,14 @@ function SortableSlotRow({
 				<span className="truncate text-sm">{accountName}</span>
 			</div>
 
-			<span className="shrink-0 text-sm text-muted-foreground">{slot.model}</span>
+			<span className="shrink-0 text-sm text-muted-foreground">
+				{slot.model}
+			</span>
 
-			<Badge variant="outline" className="shrink-0 text-xs text-muted-foreground">
+			<Badge
+				variant="outline"
+				className="shrink-0 text-xs text-muted-foreground"
+			>
 				In Use
 			</Badge>
 
@@ -158,7 +169,10 @@ export function ComboSlotBuilder({ combo }: ComboSlotBuilderProps) {
 	const handleAddSlot = () => {
 		if (!newAccountId || !newModel.trim()) return;
 		addSlot.mutate(
-			{ comboId: combo.id, params: { account_id: newAccountId, model: newModel.trim() } },
+			{
+				comboId: combo.id,
+				params: { account_id: newAccountId, model: newModel.trim() },
+			},
 			{
 				onSuccess: () => {
 					setNewAccountId("");
@@ -189,7 +203,8 @@ export function ComboSlotBuilder({ combo }: ComboSlotBuilderProps) {
 					<div className="flex items-center gap-2 text-xs text-muted-foreground">
 						<span>Assigned to:</span>
 						<Badge variant="default" className="text-xs">
-							{assignedFamily.family.charAt(0).toUpperCase() + assignedFamily.family.slice(1)}
+							{assignedFamily.family.charAt(0).toUpperCase() +
+								assignedFamily.family.slice(1)}
 						</Badge>
 					</div>
 				)}

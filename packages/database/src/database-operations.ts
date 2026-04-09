@@ -17,9 +17,9 @@ import { ensureSchema, runMigrations } from "./migrations";
 import { ensureSchemaPg, runMigrationsPg } from "./migrations-pg";
 import { resolveDbPath } from "./paths";
 import { AccountRepository } from "./repositories/account.repository";
-import { ComboRepository } from "./repositories/combo.repository";
 import { AgentPreferenceRepository } from "./repositories/agent-preference.repository";
 import { ApiKeyRepository } from "./repositories/api-key.repository";
+import { ComboRepository } from "./repositories/combo.repository";
 import { OAuthRepository } from "./repositories/oauth.repository";
 import {
 	type RequestData,
@@ -964,7 +964,11 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 
 	async updateCombo(
 		id: string,
-		fields: Partial<{ name: string; description: string | null; enabled: boolean }>,
+		fields: Partial<{
+			name: string;
+			description: string | null;
+			enabled: boolean;
+		}>,
 	): Promise<Combo> {
 		return this.combo.update(id, fields);
 	}

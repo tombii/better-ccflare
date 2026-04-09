@@ -1,4 +1,4 @@
-export type ComboFamily = 'opus' | 'sonnet' | 'haiku';
+export type ComboFamily = "opus" | "sonnet" | "haiku";
 
 // Database row types (snake_case, INTEGER booleans — match SQLite storage)
 export interface ComboRow {
@@ -78,7 +78,9 @@ export function toComboSlot(row: ComboSlotRow): ComboSlot {
 	};
 }
 
-export function toComboFamilyAssignment(row: ComboFamilyAssignmentRow): ComboFamilyAssignment {
+export function toComboFamilyAssignment(
+	row: ComboFamilyAssignmentRow,
+): ComboFamilyAssignment {
 	return {
 		family: row.family as ComboFamily,
 		combo_id: row.combo_id,

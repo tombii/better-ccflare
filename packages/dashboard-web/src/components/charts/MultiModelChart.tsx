@@ -220,8 +220,12 @@ export function MultiModelChart({
 					// biome-ignore lint/suspicious/noExplicitAny: recharts v3.8 widened Formatter to include undefined
 					formatter={((value: number) => formatValue(value, metric)) as any}
 					// biome-ignore lint/suspicious/noExplicitAny: recharts v3.8 widened labelFormatter label to ReactNode
-					labelFormatter={((label: string) =>
-						viewMode === "cumulative" ? `Cumulative at ${label}` : label) as any}
+					labelFormatter={
+						((label: string) =>
+							viewMode === "cumulative"
+								? `Cumulative at ${label}`
+								: label) as any
+					}
 				/>
 				<Legend
 					verticalAlign="top"

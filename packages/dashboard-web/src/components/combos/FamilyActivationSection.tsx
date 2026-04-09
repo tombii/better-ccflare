@@ -1,10 +1,22 @@
 import type { ComboFamily } from "@better-ccflare/types";
-import { Badge } from "../ui/badge";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
-import { Label } from "../ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
-import { Switch } from "../ui/switch";
 import { useAssignFamily, useCombos, useFamilies } from "../../hooks/queries";
+import { Badge } from "../ui/badge";
+import {
+	Card,
+	CardContent,
+	CardDescription,
+	CardHeader,
+	CardTitle,
+} from "../ui/card";
+import { Label } from "../ui/label";
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "../ui/select";
+import { Switch } from "../ui/switch";
 
 const FAMILIES: ComboFamily[] = ["opus", "sonnet", "haiku"];
 
@@ -66,7 +78,9 @@ export function FamilyActivationSection() {
 					<CardDescription>Assign combos to model families</CardDescription>
 				</CardHeader>
 				<CardContent>
-					<p className="text-sm text-destructive">Failed to load family data.</p>
+					<p className="text-sm text-destructive">
+						Failed to load family data.
+					</p>
 				</CardContent>
 			</Card>
 		);
@@ -87,7 +101,9 @@ export function FamilyActivationSection() {
 
 						return (
 							<div key={family} className="flex items-center gap-4">
-								<Label className="w-16 font-medium">{FAMILY_LABELS[family]}</Label>
+								<Label className="w-16 font-medium">
+									{FAMILY_LABELS[family]}
+								</Label>
 								<Switch
 									checked={isEnabled}
 									onCheckedChange={(checked) => handleToggle(family, checked)}

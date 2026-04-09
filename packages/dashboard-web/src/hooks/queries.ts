@@ -335,8 +335,12 @@ export const useDeleteCombo = () => {
 export const useUpdateCombo = () => {
 	const queryClient = useQueryClient();
 	return useMutation({
-		mutationFn: (params: { id: string; name?: string; description?: string; enabled?: boolean }) =>
-			api.updateCombo(params.id, params),
+		mutationFn: (params: {
+			id: string;
+			name?: string;
+			description?: string;
+			enabled?: boolean;
+		}) => api.updateCombo(params.id, params),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.combos() });
 		},
@@ -402,8 +406,13 @@ export const useRemoveComboSlot = () => {
 export const useReorderComboSlots = () => {
 	const queryClient = useQueryClient();
 	return useMutation({
-		mutationFn: ({ comboId, slotIds }: { comboId: string; slotIds: string[] }) =>
-			api.reorderComboSlots(comboId, slotIds),
+		mutationFn: ({
+			comboId,
+			slotIds,
+		}: {
+			comboId: string;
+			slotIds: string[];
+		}) => api.reorderComboSlots(comboId, slotIds),
 		onSuccess: (_data, { comboId }) => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.combos() });
 			queryClient.invalidateQueries({ queryKey: ["combo", comboId] });

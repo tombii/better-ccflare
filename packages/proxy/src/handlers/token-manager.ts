@@ -298,10 +298,8 @@ export async function refreshAccessTokenSafe(
 const refreshClearers: Map<string, (accountId: string) => void> = new Map();
 
 // Global registry for usage polling restart functions
-const pollingRestarters: Map<
-	string,
-	(accountId: string) => Promise<boolean>
-> = new Map();
+const pollingRestarters: Map<string, (accountId: string) => Promise<boolean>> =
+	new Map();
 
 /**
  * Register a function to restart usage polling for a specific account.

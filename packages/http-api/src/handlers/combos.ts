@@ -368,7 +368,8 @@ export function createFamilyAssignHandler(dbOps: DatabaseOperations) {
 				safeComboId = combo_id;
 			}
 
-			const enabled = bodyEnabled !== undefined ? !!bodyEnabled : safeComboId !== null;
+			const enabled =
+				bodyEnabled !== undefined ? !!bodyEnabled : safeComboId !== null;
 
 			await dbOps.setFamilyCombo(family as ComboFamily, safeComboId, enabled);
 

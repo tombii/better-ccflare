@@ -103,7 +103,10 @@ export function BasePieChart({
 						))}
 					</Pie>
 					{/* biome-ignore lint/suspicious/noExplicitAny: recharts v3.8 widened Formatter to include undefined */}
-					<Tooltip contentStyle={tooltipStyles} formatter={tooltipFormatter as any} />
+					<Tooltip
+						contentStyle={tooltipStyles}
+						formatter={tooltipFormatter as any}
+					/>
 					{showLegend && (
 						<Legend
 							layout={legendLayout}
