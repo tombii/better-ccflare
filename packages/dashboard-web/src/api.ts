@@ -1588,7 +1588,7 @@ class API extends HttpClient {
 
 	async getFamilies(): Promise<{ families: ComboFamilyAssignment[] }> {
 		const res = await this.get<{ success: boolean; data: ComboFamilyAssignment[] }>("/api/families");
-		return { families: res.data };
+		return { families: res.data.map((f) => ({ ...f, enabled: !!f.enabled })) };
 	}
 
 	async assignFamily(params: {
