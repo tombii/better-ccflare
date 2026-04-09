@@ -6,6 +6,7 @@
 	"exports": {
 		".": "./src/index.ts",
 		"./bedrock": "./src/providers/bedrock/index.ts",
+		"./codex": "./src/providers/codex/index.ts",
 		"./qwen": "./src/providers/qwen/index.ts"
 	},
 	"scripts": {

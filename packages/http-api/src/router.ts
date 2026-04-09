@@ -72,6 +72,8 @@ import {
 	createCompactHandler,
 } from "./handlers/maintenance";
 import {
+	createCodexDeviceFlowInitHandler,
+	createCodexDeviceFlowStatusHandler,
 	createOAuthCallbackHandler,
 	createOAuthInitHandler,
 	createQwenDeviceFlowInitHandler,
@@ -106,12 +108,14 @@ export class APIRouter {
 	>;
 	private authService: AuthService;
 	private qwenStatusHandler: (sessionId: string) => Response;
+	private codexStatusHandler: (sessionId: string) => Response;
 
 	constructor(context: APIContext) {
 		this.context = context;
 		this.handlers = new Map();
 		this.authService = new AuthService(context.dbOps);
 		this.qwenStatusHandler = createQwenDeviceFlowStatusHandler();
+		this.codexStatusHandler = createCodexDeviceFlowStatusHandler();
 		this.registerHandlers();
 	}
 
@@ -150,6 +154,7 @@ export class APIRouter {
 		const oauthInitHandler = createOAuthInitHandler(dbOps);
 		const oauthCallbackHandler = createOAuthCallbackHandler(dbOps);
 		const qwenDeviceFlowInitHandler = createQwenDeviceFlowInitHandler(dbOps);
+		const codexDeviceFlowInitHandler = createCodexDeviceFlowInitHandler(dbOps);
 		const agentsHandler = createAgentsListHandler(dbOps);
 		const workspacesHandler = createWorkspacesListHandler();
 		const requestsStreamHandler = createRequestsStreamHandler();
@@ -222,6 +227,9 @@ export class APIRouter {
 		);
 		this.handlers.set("POST:/api/oauth/qwen/init", (req) =>
 			qwenDeviceFlowInitHandler(req),
+		);
+		this.handlers.set("POST:/api/oauth/codex/init", (req) =>
+			codexDeviceFlowInitHandler(req),
 		);
 		this.handlers.set("GET:/api/requests", (_req, url) => {
 			const limitParam = url.searchParams.get("limit");
@@ -658,6 +666,18 @@ export class APIRouter {
 			const sessionId = parts[5];
 			if (sessionId) {
 				return await this.wrapHandler(() => this.qwenStatusHandler(sessionId))(
+					req,
+					url,
+				);
+			}
+		}
+
+		// Check for Codex device flow status endpoint
+		if (path.startsWith("/api/oauth/codex/status/") && method === "GET") {
+			const parts = path.split("/");
+			const sessionId = parts[5];
+			if (sessionId) {
+				return await this.wrapHandler(() => this.codexStatusHandler(sessionId))(
 					req,
 					url,
 				);

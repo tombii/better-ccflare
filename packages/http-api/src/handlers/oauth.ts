@@ -16,6 +16,10 @@ import {
 import { Logger } from "@better-ccflare/logger";
 import { createOAuthFlow } from "@better-ccflare/oauth-flow";
 import {
+	initiateCodexDeviceFlow,
+	pollCodexForToken,
+} from "@better-ccflare/providers/codex";
+import {
 	initiateDeviceFlow as initiateQwenDeviceFlow,
 	pollForToken as pollQwenForToken,
 } from "@better-ccflare/providers/qwen";
@@ -162,6 +166,140 @@ export function createQwenDeviceFlowInitHandler(dbOps: DatabaseOperations) {
 export function createQwenDeviceFlowStatusHandler() {
 	return (sessionId: string): Response => {
 		const session = qwenSessions.get(sessionId);
+		if (!session) {
+			return errorResponse(NotFound("Session not found or expired"));
+		}
+		if (session.status === "error") {
+			return jsonResponse({ status: "error", error: session.error });
+		}
+		return jsonResponse({ status: session.status });
+	};
+}
+
+// In-memory session store for Codex device flow
+type CodexSession =
+	| { status: "pending"; accountName: string }
+	| { status: "complete"; accountName: string }
+	| { status: "error"; accountName: string; error: string };
+
+const codexSessions = new Map<string, CodexSession>();
+
+/**
+ * Create a Codex device flow initialization handler.
+ * Returns { verificationUrl, userCode, sessionId } immediately, then polls in background.
+ */
+export function createCodexDeviceFlowInitHandler(dbOps: DatabaseOperations) {
+	return async (req: Request): Promise<Response> => {
+		try {
+			const body = await req.json();
+
+			const name = validateString(body.name, "name", {
+				required: true,
+				minLength: 1,
+				maxLength: 100,
+				pattern: patterns.accountName,
+				patternErrorMessage:
+					"can only contain letters, numbers, spaces, hyphens, and underscores",
+			});
+
+			if (!name) {
+				return errorResponse(BadRequest("Valid account name is required"));
+			}
+
+			const priority = validatePriority(body.priority ?? 0, "priority");
+
+			let deviceFlow: Awaited<ReturnType<typeof initiateCodexDeviceFlow>>;
+			try {
+				deviceFlow = await initiateCodexDeviceFlow();
+			} catch (err) {
+				log.error("Codex device flow initiation failed:", err);
+				return errorResponse(
+					InternalServerError(
+						`Failed to initiate Codex device flow: ${(err as Error).message}`,
+					),
+				);
+			}
+
+			const sessionId = crypto.randomUUID();
+			codexSessions.set(sessionId, { status: "pending", accountName: name });
+
+			// Poll in background — do not await
+			(async () => {
+				try {
+					const tokens = await pollCodexForToken(
+						deviceFlow.deviceAuthId,
+						deviceFlow.userCode,
+						deviceFlow.interval,
+						180,
+					);
+
+					const accountId = crypto.randomUUID();
+					const now = Date.now();
+
+					await dbOps.getAdapter().run(
+						`INSERT INTO accounts (
+							id, name, provider, api_key, refresh_token, access_token,
+							expires_at, created_at, request_count, total_requests, priority,
+							custom_endpoint, model_mappings, model_fallbacks
+						) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?)`,
+						[
+							accountId,
+							name,
+							"codex",
+							null,
+							tokens.refresh_token,
+							tokens.access_token,
+							now + tokens.expires_in * 1000,
+							now,
+							priority,
+							null,
+							null,
+							null,
+						],
+					);
+
+					codexSessions.set(sessionId, {
+						status: "complete",
+						accountName: name,
+					});
+					log.info(`Codex account '${name}' added via web device flow`);
+
+					setTimeout(() => codexSessions.delete(sessionId), 10 * 60 * 1000);
+				} catch (err) {
+					log.error(`Codex device flow polling failed for '${name}':`, err);
+					codexSessions.set(sessionId, {
+						status: "error",
+						accountName: name,
+						error: (err as Error).message,
+					});
+					setTimeout(() => codexSessions.delete(sessionId), 10 * 60 * 1000);
+				}
+			})();
+
+			return jsonResponse({
+				success: true,
+				sessionId,
+				verificationUrl: deviceFlow.verificationUrl,
+				userCode: deviceFlow.userCode,
+			});
+		} catch (error) {
+			log.error("Codex device flow init error:", error);
+			return errorResponse(
+				error instanceof Error
+					? error
+					: new Error("Failed to initialize Codex device flow"),
+			);
+		}
+	};
+}
+
+/**
+ * Create a Codex device flow status handler.
+ * Returns { status, error? } for the given sessionId.
+ */
+export function createCodexDeviceFlowStatusHandler() {
+	return (sessionId: string): Response => {
+		const session = codexSessions.get(sessionId);
 		if (!session) {
 			return errorResponse(NotFound("Session not found or expired"));
 		}

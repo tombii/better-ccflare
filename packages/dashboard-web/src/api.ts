@@ -1661,6 +1661,47 @@ class API extends HttpClient {
 		await this.put(`/api/combos/${comboId}/slots/reorder`, { slotIds });
 	}
 
+	async initCodexDeviceFlow(data: { name: string; priority: number }): Promise<{
+		sessionId: string;
+		verificationUrl: string;
+		userCode: string;
+	}> {
+		const url = "/api/oauth/codex/init";
+		this.logger.debug(`→ POST ${url}`, { data });
+		try {
+			const response = await this.post<{
+				sessionId: string;
+				verificationUrl: string;
+				userCode: string;
+			}>(url, data);
+			this.logger.debug(`← POST ${url} - 200`);
+			return response;
+		} catch (error) {
+			this.logger.error(`✗ POST ${url} - ERROR`, { error });
+			if (error instanceof HttpError) throw new Error(error.message);
+			throw error;
+		}
+	}
+
+	async getCodexAuthStatus(
+		sessionId: string,
+	): Promise<{ status: "pending" | "complete" | "error"; error?: string }> {
+		const url = `/api/oauth/codex/status/${sessionId}`;
+		this.logger.debug(`→ GET ${url}`);
+		try {
+			const response = await this.get<{
+				status: "pending" | "complete" | "error";
+				error?: string;
+			}>(url);
+			this.logger.debug(`← GET ${url} - 200`);
+			return response;
+		} catch (error) {
+			this.logger.error(`✗ GET ${url} - ERROR`, { error });
+			if (error instanceof HttpError) throw new Error(error.message);
+			throw error;
+		}
+	}
+
 	async initQwenDeviceFlow(data: {
 		name: string;
 		priority: number;
