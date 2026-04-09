@@ -18,6 +18,7 @@ import { useState } from "react";
 import {
 	useAccounts,
 	useAddComboSlot,
+	useFamilies,
 	useRemoveComboSlot,
 	useReorderComboSlots,
 } from "../../hooks/queries";
@@ -115,11 +116,14 @@ export function ComboSlotBuilder({ combo }: ComboSlotBuilderProps) {
 	const [newModel, setNewModel] = useState("");
 
 	const accountsQuery = useAccounts();
+	const familiesQuery = useFamilies();
 	const addSlot = useAddComboSlot();
 	const removeSlot = useRemoveComboSlot();
 	const reorderSlots = useReorderComboSlots();
 
 	const accounts = accountsQuery.data ?? [];
+	const families = familiesQuery.data?.families ?? [];
+	const assignedFamily = families.find((f) => f.combo_id === combo.id);
 
 	const sensors = useSensors(
 		useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -181,6 +185,14 @@ export function ComboSlotBuilder({ combo }: ComboSlotBuilderProps) {
 				</div>
 			</CardHeader>
 			<CardContent className="space-y-2">
+				{assignedFamily && (
+					<div className="flex items-center gap-2 text-xs text-muted-foreground">
+						<span>Assigned to:</span>
+						<Badge variant="default" className="text-xs">
+							{assignedFamily.family.charAt(0).toUpperCase() + assignedFamily.family.slice(1)}
+						</Badge>
+					</div>
+				)}
 				{showAddForm && (
 					<div className="flex items-end gap-2 rounded-md border border-dashed p-2">
 						<div className="flex-1 space-y-1">
