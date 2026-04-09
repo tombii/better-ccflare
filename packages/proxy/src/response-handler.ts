@@ -18,7 +18,8 @@ const MID_STREAM_RATE_LIMIT_COOLDOWN_MS = 5 * 60 * 60 * 1000;
 
 // Must match MAX_REQUEST_BODY_BYTES in post-processor.worker.ts.
 // Cap applied before postMessage to avoid multi-MB structured clones.
-const MAX_REQUEST_BODY_BYTES = 256 * 1024;
+// 4MB so afterburn can see full conversation history for friction analysis.
+const MAX_REQUEST_BODY_BYTES = 4 * 1024 * 1024;
 
 /**
  * Safely post a message to the worker, handling terminated workers

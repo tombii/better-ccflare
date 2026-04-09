@@ -64,7 +64,7 @@ log.info("Post-processor worker started");
 const MAX_REQUESTS_MAP_SIZE = 10000;
 const REQUEST_TTL_MS = 2 * 60 * 1000; // 2 minutes - hard limit for request lifecycle
 const MAX_RESPONSE_BODY_BYTES = 256 * 1024; // 256KB - cap stored response body
-const MAX_REQUEST_BODY_BYTES = 256 * 1024; // 256KB - cap stored request body
+const MAX_REQUEST_BODY_BYTES = 4 * 1024 * 1024; // 4MB - afterburn needs full conversation history
 
 // Initialize tiktoken encoder (cl100k_base is used for Claude models)
 // Using embedded WASM to avoid "Missing tiktoken_bg.wasm" errors in bunx
