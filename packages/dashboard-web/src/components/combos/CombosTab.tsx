@@ -1,6 +1,6 @@
 import { Plus } from "lucide-react";
 import { useState } from "react";
-import { useCombos } from "../../hooks/queries";
+import { useCombos, useDeleteCombo } from "../../hooks/queries";
 import { Button } from "../ui/button";
 import { Separator } from "../ui/separator";
 import { ComboCard } from "./ComboCard";
@@ -11,6 +11,7 @@ export function CombosTab() {
 	const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
 	const [editDialogComboId, setEditDialogComboId] = useState<string | null>(null);
 	const combosQuery = useCombos();
+	const deleteCombo = useDeleteCombo();
 	const combos = combosQuery.data?.combos ?? [];
 
 	return (
@@ -58,7 +59,7 @@ export function CombosTab() {
 								key={combo.id}
 								combo={combo}
 								onEdit={() => setEditDialogComboId(combo.id)}
-								onDelete={() => {}}
+								onDelete={() => deleteCombo.mutate(combo.id)}
 							/>
 						))}
 					</div>

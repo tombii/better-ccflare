@@ -322,6 +322,16 @@ export const useAssignFamily = () => {
 	});
 };
 
+export const useDeleteCombo = () => {
+	const queryClient = useQueryClient();
+	return useMutation({
+		mutationFn: (id: string) => api.deleteCombo(id),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.combos() });
+		},
+	});
+};
+
 export const useGetCombo = (id: string | null) => {
 	return useQuery({
 		queryKey: ["combo", id],

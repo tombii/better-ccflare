@@ -1573,6 +1573,10 @@ class API extends HttpClient {
 		return { combos: res.data };
 	}
 
+	async deleteCombo(id: string): Promise<void> {
+		await this.delete(`/api/combos/${id}`);
+	}
+
 	async createCombo(params: {
 		name: string;
 		description?: string;
