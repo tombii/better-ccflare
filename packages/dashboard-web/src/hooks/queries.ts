@@ -278,3 +278,40 @@ export const useCompactDb = () => {
 		mutationFn: () => api.compactDb(),
 	});
 };
+
+export const useCombos = () => {
+	return useQuery({
+		queryKey: queryKeys.combos(),
+		queryFn: () => api.getCombos(),
+	});
+};
+
+export const useFamilies = () => {
+	return useQuery({
+		queryKey: queryKeys.families(),
+		queryFn: () => api.getFamilies(),
+	});
+};
+
+export const useCreateCombo = () => {
+	const queryClient = useQueryClient();
+	return useMutation({
+		mutationFn: (params: { name: string; description?: string; enabled?: boolean }) =>
+			api.createCombo(params),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.combos() });
+		},
+	});
+};
+
+export const useAssignFamily = () => {
+	const queryClient = useQueryClient();
+	return useMutation({
+		mutationFn: (params: { family: string; comboId: string | null; enabled: boolean }) =>
+			api.assignFamily(params),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.families() });
+			queryClient.invalidateQueries({ queryKey: queryKeys.combos() });
+		},
+	});
+};

@@ -9,6 +9,8 @@ import type {
 	AgentUpdatePayload,
 	AgentWorkspace,
 	AnalyticsResponse,
+	Combo,
+	ComboFamilyAssignment,
 	LogEvent,
 	RequestPayload,
 	RequestResponse,
@@ -1562,6 +1564,33 @@ class API extends HttpClient {
 			}
 			throw error;
 		}
+	}
+
+	async getCombos(): Promise<{ combos: Combo[] }> {
+		return this.get<{ combos: Combo[] }>("/api/combos");
+	}
+
+	async createCombo(params: {
+		name: string;
+		description?: string;
+		enabled?: boolean;
+	}): Promise<{ combo: Combo }> {
+		return this.post<{ combo: Combo }>("/api/combos", params);
+	}
+
+	async getFamilies(): Promise<{ families: ComboFamilyAssignment[] }> {
+		return this.get<{ families: ComboFamilyAssignment[] }>("/api/families");
+	}
+
+	async assignFamily(params: {
+		family: string;
+		comboId: string | null;
+		enabled: boolean;
+	}): Promise<void> {
+		await this.put(`/api/families/${params.family}`, {
+			combo_id: params.comboId,
+			enabled: params.enabled,
+		});
 	}
 }
 
