@@ -31,8 +31,10 @@ function makeAccount(overrides: Partial<Account> = {}): Account {
 		auto_refresh_enabled: false,
 		custom_endpoint: null,
 		model_mappings: null,
+		cross_region_mode: null,
+		model_fallbacks: null,
 		...overrides,
-	} as Account;
+	};
 }
 
 // Spy-style ProxyContext. We don't try to construct a full DatabaseOperations
