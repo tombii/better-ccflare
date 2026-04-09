@@ -29,7 +29,6 @@ import {
 	BaseAreaChart,
 	BaseBarChart,
 	BaseLineChart,
-	CostChart,
 	ModelPerformanceChart,
 	MultiModelChart,
 	RequestVolumeChart,
@@ -60,6 +59,8 @@ interface ChartData {
 	requests: number;
 	tokens: number;
 	cost: number;
+	planCost: number;
+	apiCost: number;
 	responseTime: number;
 	errorRate: number;
 	cacheHitRate: number;
@@ -263,8 +264,118 @@ export function MainMetricsChart({
 					switch (selectedMetric) {
 						case "tokens":
 							return <TokenUsageChart {...commonProps} />;
-						case "cost":
-							return <CostChart {...commonProps} />;
+						case "cost": {
+							const isLongRange = timeRange === "7d" || timeRange === "30d";
+							const strokeW = viewMode === "cumulative" ? 3 : 2;
+							return (
+								<ResponsiveContainer width="100%" height={CHART_HEIGHTS.large}>
+									<AreaChart
+										data={data}
+										margin={{
+											top: 10,
+											right: 10,
+											left: 0,
+											bottom: isLongRange ? 60 : 30,
+										}}
+									>
+										<defs>
+											<linearGradient
+												id="colorPlanCost"
+												x1="0"
+												y1="0"
+												x2="0"
+												y2="1"
+											>
+												<stop
+													offset="0%"
+													stopColor="#14b8a6"
+													stopOpacity={0.9}
+												/>
+												<stop
+													offset="100%"
+													stopColor="#14b8a6"
+													stopOpacity={0.1}
+												/>
+											</linearGradient>
+											<linearGradient
+												id="colorApiCost"
+												x1="0"
+												y1="0"
+												x2="0"
+												y2="1"
+											>
+												<stop
+													offset="0%"
+													stopColor="#f97316"
+													stopOpacity={0.9}
+												/>
+												<stop
+													offset="100%"
+													stopColor="#f97316"
+													stopOpacity={0.1}
+												/>
+											</linearGradient>
+										</defs>
+										<CartesianGrid
+											strokeDasharray={CHART_PROPS.strokeDasharray}
+											className={CHART_PROPS.gridClassName}
+										/>
+										<XAxis
+											dataKey="time"
+											className="text-xs"
+											angle={isLongRange ? -45 : 0}
+											textAnchor={isLongRange ? "end" : "middle"}
+											height={isLongRange ? 60 : 30}
+										/>
+										<YAxis
+											className="text-xs"
+											tickFormatter={formatCompactCurrency}
+										/>
+										<Tooltip
+											// biome-ignore lint/suspicious/noExplicitAny: recharts v3.8 widened Formatter to include undefined
+											formatter={
+												((value: number, name: string) => [
+													formatCost(Number(value)),
+													name === "planCost"
+														? "Plan Cost"
+														: "API/Overage Cost",
+												]) as any
+											}
+											// biome-ignore lint/suspicious/noExplicitAny: recharts v3.8 widened labelFormatter label to ReactNode
+											labelFormatter={
+												((label: string) =>
+													viewMode === "cumulative"
+														? `Cumulative at ${label}`
+														: label) as any
+											}
+										/>
+										<Legend height={36} />
+										<Area
+											type="monotone"
+											dataKey="planCost"
+											name="Plan Cost"
+											stroke="#14b8a6"
+											strokeWidth={strokeW}
+											fillOpacity={1}
+											fill="url(#colorPlanCost)"
+											stackId="cost"
+											animationDuration={1000}
+										/>
+										<Area
+											type="monotone"
+											dataKey="apiCost"
+											name="API/Overage Cost"
+											stroke="#f97316"
+											strokeWidth={strokeW}
+											fillOpacity={1}
+											fill="url(#colorApiCost)"
+											stackId="cost"
+											animationDuration={1000}
+										/>
+									</AreaChart>
+								</ResponsiveContainer>
+							);
+						}
 						case "requests":
 							return <RequestVolumeChart {...commonProps} />;
 						case "responseTime":

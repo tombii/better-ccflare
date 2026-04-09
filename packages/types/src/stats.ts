@@ -37,6 +37,8 @@ export interface TimePoint {
 	requests: number;
 	tokens: number;
 	costUsd: number;
+	planCostUsd: number;
+	apiCostUsd: number;
 	successRate: number; // 0-100
 	errorRate: number; // 0-100
 	cacheHitRate: number; // 0-100
@@ -74,6 +76,8 @@ export interface AnalyticsResponse {
 		avgResponseTime: number;
 		totalTokens: number;
 		totalCostUsd: number;
+		planCostUsd: number;
+		apiCostUsd: number;
 		avgTokensPerSecond: number | null;
 	};
 	timeSeries: TimePoint[];

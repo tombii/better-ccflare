@@ -60,6 +60,7 @@ export function createRequestsSummaryHandler(db: BunSqlAdapter) {
 			output_tokens_per_second: number | null;
 			api_key_id: string | null;
 			api_key_name: string | null;
+			billing_type: string | null;
 		}>(
 			`
 			SELECT r.*, a.name as account_name
@@ -96,6 +97,7 @@ export function createRequestsSummaryHandler(db: BunSqlAdapter) {
 			tokensPerSecond: request.output_tokens_per_second || undefined,
 			apiKeyId: request.api_key_id || undefined,
 			apiKeyName: request.api_key_name || undefined,
+			billingType: request.billing_type || undefined,
 		}));
 
 		return jsonResponse(response);

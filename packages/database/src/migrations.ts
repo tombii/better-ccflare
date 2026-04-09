@@ -49,7 +49,8 @@ export function ensureSchema(db: Database): void {
 			cache_creation_input_tokens INTEGER DEFAULT 0,
 			output_tokens INTEGER DEFAULT 0,
 			agent_used TEXT,
-			project TEXT
+			project TEXT,
+			billing_type TEXT DEFAULT 'api'
 		)
 	`);
 
@@ -652,6 +653,14 @@ export function runMigrations(db: Database, dbPath?: string): void {
 		if (!requestsColumnNames.includes("project")) {
 			db.prepare("ALTER TABLE requests ADD COLUMN project TEXT").run();
 			log.info("Added project column to requests table");
+		}
+
+		// Add billing_type column if it doesn't exist
+		if (!requestsColumnNames.includes("billing_type")) {
+			db.prepare(
+				"ALTER TABLE requests ADD COLUMN billing_type TEXT DEFAULT 'api'",
+			).run();
+			log.info("Added billing_type column to requests table");
 		}
 
 		// Add timestamp column to request_payloads if it doesn't exist

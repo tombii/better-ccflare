@@ -134,6 +134,8 @@ export const AnalyticsTab = React.memo(() => {
 			requests: point.requests,
 			tokens: point.tokens,
 			cost: parseFloat(point.costUsd.toFixed(2)),
+			planCost: point.planCostUsd ?? 0,
+			apiCost: point.apiCostUsd ?? 0,
 			responseTime: Math.round(point.avgResponseTime),
 			errorRate: parseFloat(point.errorRate.toFixed(1)),
 			cacheHitRate: parseFloat(point.cacheHitRate.toFixed(1)),

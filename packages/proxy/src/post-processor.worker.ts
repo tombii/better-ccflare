@@ -47,6 +47,7 @@ interface RequestState {
 	createdAt: number; // TTL tracking
 	agentUsed?: string;
 	project?: string | null;
+	billingType?: string;
 	firstTokenTimestamp?: number;
 	lastTokenTimestamp?: number;
 	providerFinalOutputTokens?: number;
@@ -453,6 +454,22 @@ async function handleStart(msg: StartMessage): Promise<void> {
 		);
 	}
 
+	// Detect billing type from response headers
+	const overageInUse =
+		msg.responseHeaders["anthropic-ratelimit-unified-overage-in-use"];
+	const overageStatus =
+		msg.responseHeaders["anthropic-ratelimit-unified-overage-status"];
+	if (overageInUse === "true") {
+		state.billingType = "overage";
+	} else if (
+		overageStatus === "rejected" ||
+		overageStatus === "org_level_disabled"
+	) {
+		state.billingType = "plan";
+	} else {
+		state.billingType = "api";
+	}
+
 	requests.set(msg.requestId, state);
 
 	// Skip all database operations for ignored requests
@@ -711,6 +728,7 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 			startMessage.apiKeyId || undefined,
 			startMessage.apiKeyName || undefined,
 			projectAtEnd,
+			state.billingType,
 		),
 	);
 
@@ -810,6 +828,7 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 		apiKeyId: startMessage.apiKeyId || undefined,
 		apiKeyName: startMessage.apiKeyName || undefined,
 		project: state.project ?? undefined,
+		billingType: state.billingType,
 	};
 
 	self.postMessage({

@@ -58,3 +58,12 @@ export function formatTokensPerSecond(tokensPerSecond?: number | null): string {
 	if (!tokensPerSecond || tokensPerSecond === 0) return "0 tok/s";
 	return `${tokensPerSecond.toFixed(1)} tok/s`;
 }
+
+/**
+ * Format billing type label
+ */
+export function formatBillingType(billingType?: string): string {
+	if (billingType === "plan") return "Plan";
+	if (billingType === "overage") return "Overage";
+	return "API";
+}

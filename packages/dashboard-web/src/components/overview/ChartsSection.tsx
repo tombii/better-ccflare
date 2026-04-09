@@ -21,6 +21,8 @@ interface ChartsSectionProps {
 		successRate: number;
 		responseTime: number;
 		cost: string;
+		planCost: number;
+		apiCost: number;
 	}>;
 	modelData: Array<{ name: string; value: number }>;
 	accountHealthData: Array<{

@@ -765,6 +765,22 @@ export function RequestsTab() {
 														: "--"}
 												</Badge>
 											)}
+											{summary?.billingType === "overage" && (
+												<Badge
+													variant="outline"
+													className="text-xs border-orange-500 text-orange-500"
+												>
+													Overage
+												</Badge>
+											)}
+											{summary?.billingType === "plan" && (
+												<Badge
+													variant="outline"
+													className="text-xs border-teal-500 text-teal-500"
+												>
+													Plan
+												</Badge>
+											)}
 											{summary?.tokensPerSecond &&
 												summary.tokensPerSecond > 0 && (
 													<Badge variant="secondary" className="text-xs">
