@@ -86,7 +86,8 @@ export function AccountsTab() {
 			| "kilo"
 			| "openrouter"
 			| "alibaba-coding-plan"
-			| "codex";
+			| "codex"
+			| "qwen";
 		priority: number;
 		customEndpoint?: string;
 	}) => {

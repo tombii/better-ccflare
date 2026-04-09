@@ -1954,6 +1954,8 @@ export function createAccountModelMappingsUpdateHandler(
 				"kilo",
 				"alibaba-coding-plan",
 				"zai",
+				"codex",
+				"qwen",
 			];
 			if (!MODEL_MAPPING_PROVIDERS.includes(account.provider)) {
 				return errorResponse(

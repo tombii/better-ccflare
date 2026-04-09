@@ -420,7 +420,7 @@ export class OpenAICompatibleProvider extends BaseProvider {
 	/**
 	 * Safely parse JSON with error handling
 	 */
-	private safeParseJSON(jsonString: string): any {
+	protected safeParseJSON(jsonString: string): any {
 		try {
 			return JSON.parse(jsonString);
 		} catch (error) {
@@ -432,7 +432,7 @@ export class OpenAICompatibleProvider extends BaseProvider {
 	/**
 	 * Calculate cost based on model and token usage
 	 */
-	private calculateCost(
+	protected calculateCost(
 		model?: string,
 		promptTokens: number = 0,
 		completionTokens: number = 0,
@@ -483,7 +483,7 @@ export class OpenAICompatibleProvider extends BaseProvider {
 	/**
 	 * Convert Anthropic API paths to OpenAI-compatible paths
 	 */
-	private convertAnthropicPathToOpenAI(anthropicPath: string): string {
+	protected convertAnthropicPathToOpenAI(anthropicPath: string): string {
 		// Anthropic /v1/messages → OpenAI /v1/chat/completions
 		if (anthropicPath === "/v1/messages") {
 			return "/v1/chat/completions";
@@ -497,7 +497,7 @@ export class OpenAICompatibleProvider extends BaseProvider {
 	/**
 	 * Helper to remove format: 'uri' from JSON schemas (some providers reject it)
 	 */
-	private removeUriFormat(schema: unknown): unknown {
+	protected removeUriFormat(schema: unknown): unknown {
 		if (Array.isArray(schema)) {
 			return schema.map((item) => this.removeUriFormat(item));
 		}
@@ -525,7 +525,7 @@ export class OpenAICompatibleProvider extends BaseProvider {
 	/**
 	 * Convert Anthropic request format to OpenAI format
 	 */
-	private convertAnthropicRequestToOpenAI(
+	protected convertAnthropicRequestToOpenAI(
 		anthropicData: AnthropicRequest,
 		account?: Account,
 	): OpenAIRequest {
@@ -650,7 +650,7 @@ export class OpenAICompatibleProvider extends BaseProvider {
 	/**
 	 * Convert OpenAI response format to Anthropic format
 	 */
-	private convertOpenAIResponseToAnthropic(
+	protected convertOpenAIResponseToAnthropic(
 		openaiData: OpenAIResponse,
 	): AnthropicResponse {
 		// Handle error responses
@@ -716,7 +716,7 @@ export class OpenAICompatibleProvider extends BaseProvider {
 	/**
 	 * Map OpenAI finish_reason to Anthropic stop_reason
 	 */
-	private mapOpenAIFinishReason(openaiReason?: string): string {
+	protected mapOpenAIFinishReason(openaiReason?: string): string {
 		switch (openaiReason) {
 			case "stop":
 				return "end_turn";
@@ -760,7 +760,7 @@ export class OpenAICompatibleProvider extends BaseProvider {
 	 * @param response - Original OpenAI streaming response
 	 * @returns Transformed Anthropic-compatible streaming Response
 	 */
-	private transformStreamingResponse(response: Response): Response {
+	protected transformStreamingResponse(response: Response): Response {
 		if (!response.body) {
 			return response;
 		}
@@ -1106,7 +1106,7 @@ export class OpenAICompatibleProvider extends BaseProvider {
 	/**
 	 * Sanitize headers by removing provider-specific headers
 	 */
-	private sanitizeHeaders(headers: Headers): Headers {
+	protected sanitizeHeaders(headers: Headers): Headers {
 		const sanitized = new Headers();
 
 		for (const [key, value] of headers.entries()) {

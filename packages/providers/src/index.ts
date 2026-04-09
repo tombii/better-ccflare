@@ -43,6 +43,7 @@ import { MinimaxProvider } from "./providers/minimax/provider";
 import { NanoGPTProvider } from "./providers/nanogpt/provider";
 import { OpenAICompatibleProvider } from "./providers/openai/provider";
 import { OpenRouterProvider } from "./providers/openrouter/provider";
+import { QwenProvider } from "./providers/qwen/provider";
 import { VertexAIProvider } from "./providers/vertex-ai/provider";
 import { ZaiProvider } from "./providers/zai/provider";
 // Auto-register built-in providers
@@ -54,6 +55,7 @@ registry.registerProvider(new CodexProvider());
 registry.registerProvider(new BedrockProvider());
 registry.registerProvider(new KiloProvider());
 registry.registerProvider(new OpenRouterProvider());
+registry.registerProvider(new QwenProvider());
 registry.registerProvider(new MinimaxProvider());
 registry.registerProvider(new NanoGPTProvider());
 registry.registerProvider(new ZaiProvider());

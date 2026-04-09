@@ -223,7 +223,8 @@ class API extends HttpClient {
 			| "kilo"
 			| "openrouter"
 			| "alibaba-coding-plan"
-			| "codex";
+			| "codex"
+			| "qwen";
 		apiKey?: string;
 		priority: number;
 		customEndpoint?: string;

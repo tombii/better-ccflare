@@ -215,7 +215,8 @@ export interface AccountListItem {
 		| "kilo"
 		| "openrouter"
 		| "alibaba-coding-plan"
-		| "codex";
+		| "codex"
+		| "qwen";
 	priority: number;
 	autoFallbackEnabled: boolean;
 	autoRefreshEnabled: boolean;

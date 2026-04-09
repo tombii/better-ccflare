@@ -18,6 +18,10 @@ import {
 	getOAuthProvider,
 	type TokenRefreshResult as TokenResult,
 } from "@better-ccflare/providers";
+import {
+	initiateDeviceFlow as initiateQwenDeviceFlow,
+	pollForToken as pollQwenForToken,
+} from "@better-ccflare/providers/qwen";
 import type { AccountListItem } from "@better-ccflare/types";
 import {
 	type PromptAdapter,
@@ -42,7 +46,8 @@ export interface AddAccountOptionsWithAdapter {
 		| "kilo"
 		| "openrouter"
 		| "alibaba-coding-plan"
-		| "codex";
+		| "codex"
+		| "qwen";
 	priority?: number;
 	customEndpoint?: string;
 	modelMappings?: { [key: string]: string | string[] };
@@ -71,7 +76,8 @@ export interface AccountListItemWithMode extends AccountListItem {
 		| "kilo"
 		| "openrouter"
 		| "alibaba-coding-plan"
-		| "codex";
+		| "codex"
+		| "qwen";
 }
 
 /**
@@ -889,6 +895,117 @@ async function createCodexOAuthAccount(
 	console.log("Type: Codex (OpenAI OAuth)");
 }
 
+async function createQwenOAuthAccount(
+	dbOps: DatabaseOperations,
+	name: string,
+	priority: number,
+	modelMappings?: { [key: string]: string | string[] } | null,
+	modelFallbacks?: { [key: string]: string | string[] } | null,
+): Promise<void> {
+	console.log("\nQwen uses OAuth device code authentication.");
+	console.log("You will be given a URL and a code to enter in your browser.\n");
+
+	console.log("Initiating device flow...");
+	const deviceFlow = await initiateQwenDeviceFlow();
+
+	console.log(`\n  Verification URL: ${deviceFlow.verificationUri}`);
+	console.log(`  User code:        ${deviceFlow.userCode}`);
+	if (deviceFlow.verificationUriComplete) {
+		console.log(`\n  Quick link: ${deviceFlow.verificationUriComplete}`);
+	}
+
+	console.log(
+		"\nOpen the URL above in your browser and enter the user code to authorize.",
+	);
+
+	const browserOpened = await openBrowser(
+		deviceFlow.verificationUriComplete || deviceFlow.verificationUri,
+	);
+	if (!browserOpened) {
+		console.log(
+			"\nFailed to open browser automatically. Please manually open the URL above.",
+		);
+	}
+
+	console.log("\nWaiting for authorization...");
+
+	const tokens = await pollQwenForToken(
+		deviceFlow.deviceCode,
+		deviceFlow.pkce,
+		deviceFlow.interval,
+		60,
+		(attempt: number) => {
+			if (attempt % 6 === 0) {
+				process.stdout.write(".");
+			}
+		},
+	);
+	console.log("\n"); // newline after progress dots
+
+	console.log("Authorization successful! Saving account...");
+
+	const accountId = crypto.randomUUID();
+	const now = Date.now();
+	const validatedPriority = validatePriority(priority, "priority");
+
+	let validatedModelMappings: string | null = null;
+	if (modelMappings && Object.keys(modelMappings).length > 0) {
+		const validated = validateAndSanitizeModelMappings(modelMappings);
+		validatedModelMappings = JSON.stringify(validated);
+	}
+
+	let validatedModelFallbacks = null;
+	if (modelFallbacks && Object.keys(modelFallbacks).length > 0) {
+		const validated = validateAndSanitizeModelFallbacks(modelFallbacks);
+		validatedModelFallbacks = validated ? JSON.stringify(validated) : null;
+	}
+
+	// Store resource_url as custom_endpoint
+	const resourceUrl = tokens.resource_url
+		? normalizeQwenBaseUrl(tokens.resource_url)
+		: null;
+
+	await dbOps.getAdapter().run(
+		`INSERT INTO accounts (
+			id, name, provider, api_key, refresh_token, access_token,
+			expires_at, created_at, request_count, total_requests, priority,
+			custom_endpoint, model_mappings, model_fallbacks
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?)`,
+		[
+			accountId,
+			name,
+			"qwen",
+			null,
+			tokens.refresh_token,
+			tokens.access_token,
+			now + tokens.expires_in * 1000,
+			now,
+			validatedPriority,
+			resourceUrl,
+			validatedModelMappings,
+			validatedModelFallbacks,
+		],
+	);
+
+	console.log(`\nAccount '${name}' added successfully!`);
+	console.log("Type: Qwen (OAuth device code)");
+}
+
+/**
+ * Normalize Qwen resource_url to ensure it has https:// prefix and /v1 suffix.
+ * Verified against qwen-code: packages/core/src/qwen/qwenContentGenerator.ts
+ */
+function normalizeQwenBaseUrl(url: string): string {
+	let normalized = url.trim();
+	if (!normalized.startsWith("http")) {
+		normalized = `https://${normalized}`;
+	}
+	if (!normalized.endsWith("/v1")) {
+		normalized = `${normalized}/v1`;
+	}
+	return normalized;
+}
+
 /**
  * Add a new account using OAuth flow
  */
@@ -916,6 +1033,7 @@ export async function addAccount(
 			{ label: "Claude CLI OAuth account", value: "claude-oauth" },
 			{ label: "Claude API account", value: "console" },
 			{ label: "Codex (OpenAI OAuth)", value: "codex" },
+			{ label: "Qwen (Alibaba Cloud OAuth)", value: "qwen" },
 			{ label: "Vertex AI (Google Cloud)", value: "vertex-ai" },
 			{ label: "AWS Bedrock (AWS profile credentials)", value: "bedrock" },
 			{ label: "z.ai account (API key)", value: "zai" },
@@ -1279,6 +1397,34 @@ export async function addAccount(
 				? priority
 				: parseInt(String(priority), 10) || 0,
 			customEndpoint,
+			finalModelMappings,
+		);
+	} else if (mode === "qwen") {
+		// Handle Qwen accounts via OAuth device code flow
+		const priority =
+			providedPriority ??
+			Number(
+				(await adapter.input(
+					"\nEnter priority (0 = highest, lower number = higher priority, default 0): ",
+				)) || 0,
+			);
+
+		const finalModelMappings = await promptModelMappings(
+			adapter,
+			modelMappings,
+			{
+				opus: "coder-model",
+				sonnet: "coder-model",
+				haiku: "coder-model",
+			},
+		);
+
+		await createQwenOAuthAccount(
+			dbOps,
+			name,
+			typeof priority === "number"
+				? priority
+				: parseInt(String(priority), 10) || 0,
 			finalModelMappings,
 		);
 	} else if (mode === "anthropic-compatible") {

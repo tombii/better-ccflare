@@ -5,7 +5,8 @@
 	"main": "./src/index.ts",
 	"exports": {
 		".": "./src/index.ts",
-		"./bedrock": "./src/providers/bedrock/index.ts"
+		"./bedrock": "./src/providers/bedrock/index.ts",
+		"./qwen": "./src/providers/qwen/index.ts"
 	},
 	"scripts": {
 		"typecheck": "bunx tsc --noEmit"
