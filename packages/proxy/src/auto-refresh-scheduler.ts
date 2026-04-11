@@ -8,6 +8,7 @@ import type { BunSqlAdapter } from "@better-ccflare/database";
 import { Logger } from "@better-ccflare/logger";
 import { fetchUsageData, getProvider } from "@better-ccflare/providers";
 import type { Account } from "@better-ccflare/types";
+import { TOKEN_SAFETY_WINDOW_MS } from "./constants";
 import { getValidAccessToken } from "./handlers";
 import type { ProxyContext } from "./proxy";
 
@@ -166,6 +167,9 @@ export class AutoRefreshScheduler {
 			for (const accountRow of accountsToRefresh) {
 				await this.sendDummyMessage(accountRow);
 			}
+
+			// Proactively refresh Qwen OAuth tokens expiring within the safety window
+			await this.checkAndRefreshQwenTokens();
 		} catch (error) {
 			if (error instanceof Error) {
 				const errorMessage = `Error in auto-refresh check: ${error.name}: ${error.message}`;
@@ -589,6 +593,113 @@ export class AutoRefreshScheduler {
 			}
 
 			return false;
+		}
+	}
+
+	/**
+	 * Proactively refresh Qwen OAuth access tokens that are expiring within the safety window.
+	 * Unlike Anthropic accounts (which use dummy messages to reset rate-limit windows),
+	 * Qwen only needs the OAuth token refreshed — no dummy message required.
+	 */
+	private async checkAndRefreshQwenTokens(): Promise<void> {
+		if (!this.db) return;
+
+		const now = Date.now();
+		const expiryThreshold = now + TOKEN_SAFETY_WINDOW_MS;
+
+		const accounts = await this.db.query<{
+			id: string;
+			name: string;
+			provider: string;
+			refresh_token: string;
+			access_token: string | null;
+			expires_at: number | null;
+			custom_endpoint: string | null;
+		}>(
+			`
+			SELECT id, name, provider, refresh_token, access_token, expires_at, custom_endpoint
+			FROM accounts
+			WHERE
+				provider = 'qwen'
+				AND refresh_token IS NOT NULL
+				AND (
+					access_token IS NULL
+					OR expires_at IS NULL
+					OR expires_at <= ?
+				)
+		`,
+			[expiryThreshold],
+		);
+
+		if (accounts.length === 0) return;
+
+		log.info(
+			`Proactive Qwen token refresh: ${accounts.length} account(s) need refresh`,
+		);
+
+		for (const row of accounts) {
+			try {
+				log.info(`Refreshing Qwen token for account: ${row.name}`);
+
+				const provider = getProvider(row.provider);
+				if (!provider) {
+					log.error(`No provider found for qwen (account: ${row.name})`);
+					continue;
+				}
+
+				const account: Account = {
+					id: row.id,
+					name: row.name,
+					provider: row.provider,
+					api_key: null,
+					refresh_token: row.refresh_token,
+					access_token: row.access_token,
+					expires_at: row.expires_at,
+					request_count: 0,
+					total_requests: 0,
+					last_used: null,
+					created_at: 0,
+					rate_limited_until: null,
+					session_start: null,
+					session_request_count: 0,
+					paused: false,
+					rate_limit_reset: null,
+					rate_limit_status: null,
+					rate_limit_remaining: null,
+					priority: 0,
+					auto_fallback_enabled: false,
+					auto_refresh_enabled: true,
+					custom_endpoint: row.custom_endpoint,
+					model_mappings: null,
+					cross_region_mode: null,
+					model_fallbacks: null,
+					billing_type: null,
+				};
+
+				const result = await provider.refreshToken(
+					account,
+					this.proxyContext.runtime.clientId,
+				);
+
+				await this.db.run(
+					`UPDATE accounts SET access_token = ?, expires_at = ?, refresh_token = ? WHERE id = ?`,
+					[
+						result.accessToken,
+						result.expiresAt,
+						result.refreshToken ?? row.refresh_token,
+						row.id,
+					],
+				);
+
+				log.info(
+					`Qwen token refreshed for ${row.name}, expires at ${new Date(result.expiresAt).toISOString()}`,
+				);
+			} catch (error) {
+				log.error(
+					`Failed to proactively refresh Qwen token for ${row.name}:`,
+					error,
+				);
+			}
 		}
 	}
 
