@@ -505,25 +505,16 @@ export class OpenAICompatibleProvider extends BaseProvider {
 			JSON.parse(accumulated);
 			return ""; // already valid
 		} catch {
-			// Try closing an open string first
-			try {
-				JSON.parse(`${accumulated}"`);
-				return '"';
-			} catch {
-				// Try closing open string + object
+			// Try suffixes in order of likelihood
+			for (const suffix of ["\"}", "}", "\"", "\"}}"]) {
 				try {
-					JSON.parse(`${accumulated}"}`);
-					return '"}';
+					JSON.parse(`${accumulated}${suffix}`);
+					return suffix;
 				} catch {
-					// Try just closing the object
-					try {
-						JSON.parse(`${accumulated}}`);
-						return "}";
-					} catch {
-						return ""; // unrecoverable
-					}
+					// try next
 				}
 			}
+			return ""; // unrecoverable
 		}
 	}
 
