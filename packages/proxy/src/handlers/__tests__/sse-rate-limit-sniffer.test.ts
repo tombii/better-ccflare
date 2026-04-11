@@ -17,7 +17,9 @@ describe("SseRateLimitSniffer", () => {
 
 		// Chunk 1: partial event + partial data (the marker is split)
 		expect(
-			sniffer.feed(encode('event: error\ndata: {"type":"error","error":{"type":"rate_lim')),
+			sniffer.feed(
+				encode('event: error\ndata: {"type":"error","error":{"type":"rate_lim'),
+			),
 		).toBe(false);
 
 		// Chunk 2: the rest of the marker

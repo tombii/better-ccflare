@@ -238,7 +238,9 @@ export class AutoRefreshScheduler {
 				api_key: null,
 				refresh_token: accountRow.refresh_token,
 				access_token: accountRow.access_token,
-				expires_at: accountRow.expires_at ? Number(accountRow.expires_at) : null,
+				expires_at: accountRow.expires_at
+					? Number(accountRow.expires_at)
+					: null,
 				request_count: 0,
 				total_requests: 0,
 				last_used: null,
@@ -247,7 +249,9 @@ export class AutoRefreshScheduler {
 				session_start: null,
 				session_request_count: 0,
 				paused: false,
-				rate_limit_reset: accountRow.rate_limit_reset ? Number(accountRow.rate_limit_reset) : null,
+				rate_limit_reset: accountRow.rate_limit_reset
+					? Number(accountRow.rate_limit_reset)
+					: null,
 				rate_limit_status: null,
 				rate_limit_remaining: null,
 				priority: 0,
