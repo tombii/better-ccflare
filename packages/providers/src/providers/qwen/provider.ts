@@ -2,6 +2,7 @@ import { getEndpointUrl, validateEndpointUrl } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import type { Account } from "@better-ccflare/types";
 import type { RateLimitInfo, TokenRefreshResult } from "../../types";
+import type { OpenAIRequest } from "../openai/provider";
 import { OpenAICompatibleProvider } from "../openai/provider";
 import { refreshQwenTokens } from "./device-oauth";
 
@@ -28,6 +29,56 @@ const QWEN_MODEL_MAPPINGS = {
 	sonnet: "coder-model",
 	haiku: "coder-model",
 };
+
+// Lines in the Claude Code system prompt that are environment/model-specific
+// and should be dropped entirely when proxying to Qwen.
+const DROP_LINE_PATTERNS = [
+	/You are powered by the model named/,
+	/The most recent Claude model family is/,
+	/Claude Code is available as a CLI/,
+	/Fast mode for Claude Code/,
+	/claude\.ai\/code/,
+];
+
+/**
+ * Adapt a Claude Code system prompt block for Qwen/DashScope:
+ * - Replace Claude Code identity with Qwen Code identity
+ * - Replace CLAUDE.md references with QWEN.md
+ * - Replace /help feedback link with qwen-code's /bug command
+ * - Drop lines that reference Claude-specific model names or availability
+ */
+function sanitizeForQwen(text: string): string {
+	// Replace identity line (block [1] is exactly this string)
+	if (
+		text === "You are Claude Code, Anthropic's official CLI for Claude." ||
+		text ===
+			"You are Claude Code, Anthropic's official CLI for Claude, running within the Claude Agent SDK." ||
+		text === "You are a Claude agent, built on Anthropic's Claude Agent SDK."
+	) {
+		return "You are Qwen Code, an interactive CLI agent developed by Alibaba Group, specializing in software engineering tasks.";
+	}
+
+	// Process line-by-line for the main instructions block
+	const lines = text.split("\n");
+	const out: string[] = [];
+	for (const line of lines) {
+		// Drop Claude-specific environment/model lines entirely
+		if (DROP_LINE_PATTERNS.some((re) => re.test(line))) continue;
+
+		let l = line;
+		// CLAUDE.md → QWEN.md
+		l = l.replace(/\bCLAUDE\.md\b/g, "QWEN.md");
+		// /help feedback line
+		l = l.replace(
+			/To give feedback, users should report the issue at https:\/\/github\.com\/anthropics\/claude-code\/issues/,
+			"To report a bug or provide feedback, please use the /bug command",
+		);
+		// "Get help with using Claude Code"
+		l = l.replace(/Get help with using Claude Code/, "Get help with using Qwen Code");
+		out.push(l);
+	}
+	return out.join("\n");
+}
 
 export class QwenProvider extends OpenAICompatibleProvider {
 	override name = "qwen";
@@ -104,60 +155,6 @@ export class QwenProvider extends OpenAICompatibleProvider {
 		return newHeaders;
 	}
 
-	/**
-	 * Override request body transformation to inject Qwen-specific fields:
-	 * - Convert system message to array format with cache_control
-	 * - Add vl_high_resolution_images for vision support
-	 * - Add stream_options for streaming
-	 */
-	override async transformRequestBody(
-		request: Request,
-		account?: Account,
-	): Promise<Request> {
-		const contentType = request.headers.get("content-type");
-
-		if (!contentType?.includes("application/json")) {
-			return request;
-		}
-
-		try {
-			const body = await request.json();
-			// Apply Qwen default model mappings if the account has no custom mappings
-			const effectiveAccount = account
-				? {
-						...account,
-						model_mappings:
-							account.model_mappings ?? JSON.stringify(QWEN_MODEL_MAPPINGS),
-					}
-				: account;
-			const openaiBody = this.convertAnthropicRequestToOpenAI(
-				body,
-				effectiveAccount,
-			);
-
-			const bodyAsRecord = openaiBody as unknown as Record<string, unknown>;
-
-			// Inject Qwen system message with cache_control (DashScope requirement)
-			this.injectQwenSystemMessage(bodyAsRecord);
-
-			// Add vision support flag (coder-model supports vision)
-			bodyAsRecord.vl_high_resolution_images = true;
-
-			const newHeaders = new Headers(request.headers);
-			newHeaders.set("content-type", "application/json");
-			newHeaders.delete("content-length");
-
-			return new Request(request.url, {
-				method: request.method,
-				headers: newHeaders,
-				body: JSON.stringify(openaiBody),
-			});
-		} catch (error) {
-			log.error("Failed to transform request for Qwen:", error);
-			return request;
-		}
-	}
-
 	override parseRateLimit(_response: Response): RateLimitInfo {
 		// Qwen handles its own rate limiting — never mark as rate-limited
 		// Quota errors come as 403s and are handled inline by the API
@@ -176,35 +173,58 @@ export class QwenProvider extends OpenAICompatibleProvider {
 	}
 
 	/**
-	 * Convert system message to array format with cache_control as required by DashScope.
-	 *
-	 * Qwen requires strict message ordering. System messages must use content array format:
-	 * { role: "system", content: [{ type: "text", text: "...", cache_control: { type: "ephemeral" } }] }
+	 * Inject Qwen-specific model mappings when the account has no custom mappings.
 	 */
-	private injectQwenSystemMessage(body: Record<string, unknown>): void {
-		const messages = body.messages as Array<{
-			role: string;
-			content:
-				| string
-				| Array<{
-						type: string;
-						text?: string;
-						cache_control?: { type: string };
-				  }>;
-		}>;
+	override beforeConvert(
+		_body: Record<string, unknown>,
+		account?: Account,
+	): Account | undefined {
+		if (!account) return account;
+		return {
+			...account,
+			model_mappings:
+				account.model_mappings ?? JSON.stringify(QWEN_MODEL_MAPPINGS),
+		};
+	}
 
-		if (!Array.isArray(messages)) return;
+	/**
+	 * Inject Qwen-specific fields after converting to OpenAI format.
+	 */
+	override afterConvert(body: OpenAIRequest): void {
+		for (const msg of body.messages) {
+			if (msg.role === "system" && Array.isArray(msg.content)) {
+				msg.content = msg.content
+					// Strip Anthropic billing header blocks
+					.filter(
+						(block) =>
+							!(
+								block.type === "text" &&
+								typeof block.text === "string" &&
+								block.text.startsWith("x-anthropic-")
+							),
+					)
+					// Replace Claude-specific identity and environment blocks
+					.map((block) => {
+						if (block.type !== "text" || typeof block.text !== "string")
+							return block;
+						return { ...block, text: sanitizeForQwen(block.text) };
+					})
+					// Drop blocks that became empty after sanitization
+					.filter(
+						(block) =>
+							block.type !== "text" ||
+							typeof block.text !== "string" ||
+							block.text.trim() !== "",
+					);
 
-		for (const msg of messages) {
-			if (msg.role === "system" && typeof msg.content === "string") {
-				msg.content = [
-					{
-						type: "text",
-						text: msg.content,
-						cache_control: { type: "ephemeral" },
-					},
-				];
+				if (msg.content.length === 0) {
+					msg.content = "";
+				}
 			}
 		}
+
+		// Enable vision support (coder-model supports vision)
+		(body as unknown as Record<string, unknown>).vl_high_resolution_images =
+			true;
 	}
 }

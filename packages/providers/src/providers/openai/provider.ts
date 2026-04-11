@@ -23,7 +23,14 @@ interface OpenAIToolCall {
 
 interface OpenAIMessage {
 	role: "system" | "user" | "assistant" | "tool";
-	content: string | null;
+	content:
+		| string
+		| null
+		| Array<{
+				type: string;
+				text?: string;
+				cache_control?: { type: string };
+		  }>;
 	tool_calls?: OpenAIToolCall[];
 	tool_call_id?: string;
 }
@@ -37,7 +44,7 @@ interface OpenAITool {
 	};
 }
 
-interface OpenAIRequest {
+export interface OpenAIRequest {
 	model: string;
 	messages: OpenAIMessage[];
 	max_tokens?: number;
@@ -65,6 +72,7 @@ interface AnthropicToolResult {
 interface AnthropicTextContent {
 	type: "text";
 	text: string;
+	cache_control?: { type: string };
 }
 
 type AnthropicContentBlock =
@@ -87,7 +95,13 @@ interface AnthropicRequest {
 	model: string;
 	max_tokens: number;
 	messages: AnthropicMessage[];
-	system?: string;
+	system?:
+		| string
+		| Array<{
+				type: string;
+				text?: string;
+				cache_control?: { type: string };
+		  }>;
 	temperature?: number;
 	top_p?: number;
 	stop_sequences?: string[];
@@ -333,7 +347,12 @@ export class OpenAICompatibleProvider extends BaseProvider {
 
 		try {
 			const body = await request.json();
-			const openaiBody = this.convertAnthropicRequestToOpenAI(body, account);
+			const effectiveAccount = this.beforeConvert(body, account);
+			const openaiBody = this.convertAnthropicRequestToOpenAI(
+				body,
+				effectiveAccount,
+			);
+			this.afterConvert(openaiBody);
 			const newHeaders = new Headers(request.headers);
 			newHeaders.set("content-type", "application/json");
 			newHeaders.delete("content-length");
@@ -506,7 +525,7 @@ export class OpenAICompatibleProvider extends BaseProvider {
 			return ""; // already valid
 		} catch {
 			// Try suffixes in order of likelihood
-			for (const suffix of ["\"}", "}", "\"", "\"}}"]) {
+			for (const suffix of ['"}', "}", '"', '"}}']) {
 				try {
 					JSON.parse(`${accumulated}${suffix}`);
 					return suffix;
@@ -601,7 +620,28 @@ export class OpenAICompatibleProvider extends BaseProvider {
 		if (anthropicData.system) {
 			messages.push({
 				role: "system",
-				content: anthropicData.system,
+				content:
+					typeof anthropicData.system === "string"
+						? anthropicData.system
+						: anthropicData.system
+								.filter(
+									(
+										b,
+									): b is {
+										type: string;
+										text: string;
+										cache_control?: { type: string };
+									} => b.type === "text" && typeof b.text === "string",
+								)
+								.map((b) => {
+									const part: {
+										type: string;
+										text: string;
+										cache_control?: { type: string };
+									} = { type: "text", text: b.text };
+									if (b.cache_control) part.cache_control = b.cache_control;
+									return part;
+								}),
 			});
 		}
 
@@ -615,18 +655,31 @@ export class OpenAICompatibleProvider extends BaseProvider {
 						(item): item is AnthropicToolUse => item.type === "tool_use",
 					);
 
-					// Extract text content
-					const textParts = message.content
-						.filter(
-							(part): part is AnthropicTextContent => part.type === "text",
-						)
-						.map((part) => part.text)
-						.join("");
+					// Extract text content, preserving cache_control if present
+					const textBlocks = message.content.filter(
+						(part): part is AnthropicTextContent => part.type === "text",
+					);
+					const hasCacheControl = textBlocks.some((part) => part.cache_control);
+
+					let content: OpenAIMessage["content"];
+					if (hasCacheControl) {
+						content = textBlocks.map((part) => {
+							const block: {
+								type: string;
+								text: string;
+								cache_control?: { type: string };
+							} = { type: "text", text: part.text };
+							if (part.cache_control) block.cache_control = part.cache_control;
+							return block;
+						});
+					} else {
+						content = textBlocks.map((part) => part.text).join("") || null;
+					}
 
 					// Create OpenAI message with tool calls if present
 					const openaiMessage: OpenAIMessage = {
 						role: message.role,
-						content: textParts || null,
+						content,
 					};
 
 					if (toolUseBlocks.length > 0) {
@@ -667,6 +720,26 @@ export class OpenAICompatibleProvider extends BaseProvider {
 
 		openaiRequest.messages = messages;
 		return openaiRequest;
+	}
+
+	/**
+	 * Hook called after converting Anthropic request to OpenAI format.
+	 * Override to inject provider-specific fields (e.g., cache_control, vision flags).
+	 */
+	protected afterConvert(_body: OpenAIRequest): void {
+		// No-op by default — override in subclasses
+	}
+
+	/**
+	 * Hook called before converting Anthropic request to OpenAI format.
+	 * Override to adjust the account (e.g., inject default model mappings).
+	 * Returns the account to use for model mapping.
+	 */
+	protected beforeConvert(
+		_body: Record<string, unknown>,
+		account?: Account,
+	): Account | undefined {
+		return account;
 	}
 
 	/**
@@ -789,8 +862,7 @@ export class OpenAICompatibleProvider extends BaseProvider {
 
 		const encoder = new TextEncoder();
 		const decoder = new TextDecoder();
-		const repairTruncatedToolJson =
-			this.repairTruncatedToolJson.bind(this);
+		const repairTruncatedToolJson = this.repairTruncatedToolJson.bind(this);
 
 		// Use pipeThrough to transform the stream while preserving clonability
 		const transformedBody = response.body.pipeThrough(
@@ -841,8 +913,7 @@ export class OpenAICompatibleProvider extends BaseProvider {
 											context.toolCallAccumulators[numIdx] || "";
 
 										// Repair truncated JSON before closing the block
-										const repair =
-											repairTruncatedToolJson(accumulated);
+										const repair = repairTruncatedToolJson(accumulated);
 										if (repair) {
 											log.warn(
 												`Repairing truncated tool call JSON at index ${idx} (appending ${JSON.stringify(repair)})`,
