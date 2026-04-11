@@ -65,6 +65,7 @@ export interface Provider {
 	processResponse(
 		response: Response,
 		account: Account | null,
+		requestHeaders?: Headers,
 	): Promise<Response>;
 
 	/**

@@ -297,7 +297,13 @@ export class AnthropicProvider extends BaseProvider {
 	 */
 	private async transformStreamToOpenAIFormat(
 		response: Response,
+		requestHeaders?: Headers,
 	): Promise<Response> {
+		// Native Anthropic SDK clients always send anthropic-version; skip transform for them
+		if (requestHeaders?.has("anthropic-version")) {
+			return response;
+		}
+
 		const contentType = response.headers.get("content-type");
 
 		// Only transform streaming responses
@@ -344,7 +350,7 @@ export class AnthropicProvider extends BaseProvider {
 							// Pass through non-data lines (empty lines, event:, id:, comment:)
 							// SSE allows both "data:" and "data: " prefixes
 							if (!line.startsWith("data:")) {
-								controller.enqueue(encoder.encode(line + "\n"));
+								controller.enqueue(encoder.encode(`${line}\n`));
 								continue;
 							}
 
@@ -352,7 +358,7 @@ export class AnthropicProvider extends BaseProvider {
 
 							// Pass through [DONE] marker
 							if (data === "[DONE]") {
-								controller.enqueue(encoder.encode(line + "\n"));
+								controller.enqueue(encoder.encode(`${line}\n`));
 								continue;
 							}
 
@@ -360,7 +366,10 @@ export class AnthropicProvider extends BaseProvider {
 								const event = JSON.parse(data);
 
 								// Map Anthropic stop_reason -> OpenAI finish_reason on message_delta
-								if (event.type === "message_delta" && event.delta?.stop_reason) {
+								if (
+									event.type === "message_delta" &&
+									event.delta?.stop_reason
+								) {
 									event.finish_reason =
 										stopReasonMap[event.delta.stop_reason] ?? "stop";
 								}
@@ -370,7 +379,7 @@ export class AnthropicProvider extends BaseProvider {
 								);
 							} catch {
 								// Non-JSON data line — pass through unchanged
-								controller.enqueue(encoder.encode(line + "\n"));
+								controller.enqueue(encoder.encode(`${line}\n`));
 							}
 						}
 					}
@@ -400,6 +409,7 @@ export class AnthropicProvider extends BaseProvider {
 	async processResponse(
 		response: Response,
 		_account: Account | null,
+		requestHeaders?: Headers,
 	): Promise<Response> {
 		// Sanitize headers by removing hop-by-hop headers
 		const headers = sanitizeProxyHeaders(response.headers);
@@ -411,7 +421,10 @@ export class AnthropicProvider extends BaseProvider {
 		});
 
 		// Add OpenAI-compatible finish_reason alongside Anthropic's stop_reason
-		return this.transformStreamToOpenAIFormat(sanitizedResponse);
+		return this.transformStreamToOpenAIFormat(
+			sanitizedResponse,
+			requestHeaders,
+		);
 	}
 
 	async extractTierInfo(response: Response): Promise<number | null> {
