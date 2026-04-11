@@ -515,6 +515,7 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		apiKeyName?: string,
 		project?: string | null,
 		billingType?: string,
+		comboName?: string | null,
 	): Promise<void> {
 		await withDatabaseRetry(
 			() =>
@@ -534,6 +535,7 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 					apiKeyName,
 					project,
 					billingType,
+					comboName,
 				}),
 			this.retryConfig,
 			"saveRequest",

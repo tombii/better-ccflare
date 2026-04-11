@@ -671,6 +671,12 @@ export function runMigrations(db: Database, dbPath?: string): void {
 			log.info("Added billing_type column to requests table");
 		}
 
+		// Add combo_name column if it doesn't exist
+		if (!requestsColumnNames.includes("combo_name")) {
+			db.prepare("ALTER TABLE requests ADD COLUMN combo_name TEXT").run();
+			log.info("Added combo_name column to requests table");
+		}
+
 		// Add timestamp column to request_payloads if it doesn't exist
 		const requestPayloadsInfo = db
 			.prepare("PRAGMA table_info(request_payloads)")

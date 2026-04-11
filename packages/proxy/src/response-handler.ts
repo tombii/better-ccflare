@@ -55,6 +55,7 @@ export interface ResponseHandlerOptions {
 	agentUsed?: string | null;
 	apiKeyId?: string | null;
 	apiKeyName?: string | null;
+	comboName?: string | null;
 }
 
 /**
@@ -80,6 +81,7 @@ export async function forwardToClient(
 		agentUsed,
 		apiKeyId,
 		apiKeyName,
+		comboName,
 	} = options;
 
 	// Always strip compression headers *before* we do anything else
@@ -134,6 +136,7 @@ export async function forwardToClient(
 			providerName: ctx.provider.name,
 			accountBillingType: account?.billing_type ?? null,
 			agentUsed: agentUsed || null,
+			comboName: comboName || null,
 			apiKeyId: apiKeyId || null,
 			apiKeyName: apiKeyName || null,
 			retryAttempt,

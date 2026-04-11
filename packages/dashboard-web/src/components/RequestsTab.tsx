@@ -755,6 +755,14 @@ export function RequestsTab() {
 													Agent: {summary?.agentUsed || request.meta.agentUsed}
 												</Badge>
 											)}
+											{summary?.comboName && (
+												<Badge
+													variant="outline"
+													className="text-xs border-purple-500 text-purple-500"
+												>
+													Combo: {summary.comboName}
+												</Badge>
+											)}
 											{summary?.apiKeyName && (
 												<Badge variant="outline" className="text-xs">
 													<Key className="h-3 w-3 mr-1" />

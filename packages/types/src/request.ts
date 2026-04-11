@@ -25,6 +25,7 @@ export interface RequestRow {
 	api_key_name: string | null;
 	project: string | null;
 	billing_type: string | null;
+	combo_name: string | null;
 }
 
 // Domain model
@@ -54,6 +55,7 @@ export interface Request {
 	apiKeyName?: string;
 	project?: string;
 	billingType?: string;
+	comboName?: string;
 }
 
 // API response type
@@ -83,6 +85,7 @@ export interface RequestResponse {
 	apiKeyName?: string;
 	project?: string;
 	billingType?: string;
+	comboName?: string;
 }
 
 // Detailed request with payload
@@ -161,6 +164,7 @@ export function toRequest(row: RequestRow): Request {
 		apiKeyName: row.api_key_name || undefined,
 		project: row.project || undefined,
 		billingType: row.billing_type || undefined,
+		comboName: row.combo_name || undefined,
 	};
 }
 
@@ -191,6 +195,7 @@ export function toRequestResponse(request: Request): RequestResponse {
 		apiKeyName: request.apiKeyName,
 		project: request.project,
 		billingType: request.billingType,
+		comboName: request.comboName,
 	};
 }
 

@@ -741,6 +741,7 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 			startMessage.apiKeyName || undefined,
 			projectAtEnd,
 			state.billingType,
+			startMessage.comboName || null,
 		),
 	);
 
@@ -841,6 +842,7 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 		apiKeyName: startMessage.apiKeyName || undefined,
 		project: state.project ?? undefined,
 		billingType: state.billingType,
+		comboName: startMessage.comboName || undefined,
 	};
 
 	self.postMessage({

@@ -29,6 +29,9 @@ export interface StartMessage {
 	// Agent info
 	agentUsed: string | null;
 
+	// Combo info
+	comboName: string | null;
+
 	// API key info
 	apiKeyId: string | null;
 	apiKeyName: string | null;
