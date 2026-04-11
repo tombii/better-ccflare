@@ -62,7 +62,7 @@ export function ComboDialog({ isOpen, onClose, comboId }: ComboDialogProps) {
 
 	return (
 		<Dialog open={isOpen} onOpenChange={(open) => !open && handleClose()}>
-			<DialogContent className="max-w-lg">
+			<DialogContent className="flex max-h-[90vh] max-w-lg flex-col overflow-hidden">
 				<DialogHeader>
 					<DialogTitle>
 						{isEditMode ? "Edit Combo" : "Create Combo"}
@@ -75,7 +75,7 @@ export function ComboDialog({ isOpen, onClose, comboId }: ComboDialogProps) {
 				</DialogHeader>
 
 				{isEditMode ? (
-					<div className="space-y-4 py-2">
+					<div className="min-h-0 flex-1 space-y-4 overflow-y-auto py-2">
 						{comboQuery.isLoading && (
 							<p className="text-sm text-muted-foreground">Loading combo...</p>
 						)}

@@ -209,56 +209,70 @@ export function ComboSlotBuilder({ combo }: ComboSlotBuilderProps) {
 					</div>
 				)}
 				{showAddForm && (
-					<div className="flex items-end gap-2 rounded-md border border-dashed p-2">
-						<div className="flex-1 space-y-1">
-							<Label className="text-xs">Account</Label>
-							<Select value={newAccountId} onValueChange={setNewAccountId}>
-								<SelectTrigger className="h-8 text-xs">
-									<SelectValue placeholder="Select account..." />
-								</SelectTrigger>
-								<SelectContent>
-									{accounts.map((account) => (
-										<SelectItem key={account.id} value={account.id}>
-											<span className="flex items-center gap-2">
-												<Badge variant="secondary" className="text-xs">
-													{account.provider}
-												</Badge>
-												{account.name}
-											</span>
-										</SelectItem>
-									))}
-								</SelectContent>
-							</Select>
+					<div className="space-y-2 rounded-md border border-dashed p-2">
+						<div className="flex gap-2">
+							<div className="min-w-0 flex-1 space-y-1">
+								<Label className="text-xs">Account</Label>
+								<Select value={newAccountId} onValueChange={setNewAccountId}>
+									<SelectTrigger className="h-8 text-xs">
+										<SelectValue placeholder="Select account...">
+											{newAccountId &&
+												(() => {
+													const acc = accounts.find(
+														(a) => a.id === newAccountId,
+													);
+													return acc ? acc.name : newAccountId;
+												})()}
+										</SelectValue>
+									</SelectTrigger>
+									<SelectContent>
+										{accounts.map((account) => (
+											<SelectItem key={account.id} value={account.id}>
+												<span className="flex items-center gap-2">
+													<Badge variant="secondary" className="text-xs">
+														{account.provider}
+													</Badge>
+													{account.name}
+												</span>
+											</SelectItem>
+										))}
+									</SelectContent>
+								</Select>
+							</div>
+							<div className="min-w-0 flex-1 space-y-1">
+								<Label className="text-xs">Model</Label>
+								<Input
+									className="h-8 text-xs"
+									value={newModel}
+									onChange={(e) => setNewModel(e.target.value)}
+									placeholder="claude-3-opus"
+								/>
+							</div>
 						</div>
-						<div className="flex-1 space-y-1">
-							<Label className="text-xs">Model</Label>
-							<Input
-								className="h-8 text-xs"
-								value={newModel}
-								onChange={(e) => setNewModel(e.target.value)}
-								placeholder="claude-3-opus"
-							/>
+						<div className="flex justify-end gap-2">
+							<Button
+								variant="outline"
+								size="sm"
+								className="h-8"
+								onClick={() => {
+									setShowAddForm(false);
+									setNewAccountId("");
+									setNewModel("");
+								}}
+							>
+								Cancel
+							</Button>
+							<Button
+								size="sm"
+								className="h-8"
+								onClick={handleAddSlot}
+								disabled={
+									!newAccountId || !newModel.trim() || addSlot.isPending
+								}
+							>
+								{addSlot.isPending ? "Adding..." : "Add"}
+							</Button>
 						</div>
-						<Button
-							size="sm"
-							className="h-8"
-							onClick={handleAddSlot}
-							disabled={!newAccountId || !newModel.trim() || addSlot.isPending}
-						>
-							{addSlot.isPending ? "Adding..." : "Add"}
-						</Button>
-						<Button
-							variant="outline"
-							size="sm"
-							className="h-8"
-							onClick={() => {
-								setShowAddForm(false);
-								setNewAccountId("");
-								setNewModel("");
-							}}
-						>
-							Cancel
-						</Button>
 					</div>
 				)}
 
