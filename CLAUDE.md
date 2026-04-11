@@ -30,6 +30,9 @@ When using glob patterns or file searches, explicitly exclude this file.
 - Custom: Set `BETTER_CCFLARE_DB_PATH=/path/to/dev.db` in env or .env
 - Query: `sqlite3 ~/.config/better-ccflare/better-ccflare.db "SELECT name, provider, custom_endpoint FROM accounts;"`
 
+## Subagents for Multi-Task Work
+When a session involves multiple independent tasks, always spawn subagents rather than doing them sequentially in the main context. This conserves tokens and keeps the main context clean. Tasks don't need to run in parallel — the goal is context isolation, not speed.
+
 ## After Code Changes
 Always run: `bun run lint && bun run typecheck && bun run format`
 
@@ -88,7 +91,7 @@ Automated release system uses commit prefixes for changelog:
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **better-ccflare** (4727 symbols, 10182 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **better-ccflare** (4960 symbols, 10850 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 

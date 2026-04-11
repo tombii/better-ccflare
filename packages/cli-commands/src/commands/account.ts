@@ -1845,6 +1845,133 @@ async function notifyServersToForceResetRateLimit(
 }
 
 /**
+ * Re-authenticate a Qwen account via device code flow (preserves all metadata)
+ */
+async function reauthenticateQwenAccount(
+	dbOps: DatabaseOperations,
+	account: {
+		id: string;
+		provider: string;
+		priority: number;
+		custom_endpoint: string | null;
+		api_key: string | null;
+	},
+	name: string,
+): Promise<{ success: boolean; message: string }> {
+	const db = dbOps.getAdapter();
+
+	console.log(`\nRe-authenticating Qwen account '${name}'...`);
+	console.log(
+		"This will preserve all your account metadata (usage stats, priority, etc.)",
+	);
+	console.log("\nQwen uses OAuth device code authentication.");
+	console.log("You will be given a URL and a code to enter in your browser.\n");
+
+	console.log("Initiating device flow...");
+	const deviceFlow = await initiateQwenDeviceFlow();
+
+	console.log(`\n  Verification URL: ${deviceFlow.verificationUri}`);
+	console.log(`  User code:        ${deviceFlow.userCode}`);
+	if (deviceFlow.verificationUriComplete) {
+		console.log(`\n  Quick link: ${deviceFlow.verificationUriComplete}`);
+	}
+
+	console.log(
+		"\nOpen the URL above in your browser and enter the user code to authorize.",
+	);
+
+	const browserOpened = await openBrowser(
+		deviceFlow.verificationUriComplete || deviceFlow.verificationUri,
+	);
+	if (!browserOpened) {
+		console.log(
+			"\nFailed to open browser automatically. Please manually open the URL above.",
+		);
+	}
+
+	console.log("\nWaiting for authorization...");
+
+	let tokens: Awaited<ReturnType<typeof pollQwenForToken>>;
+	try {
+		tokens = await pollQwenForToken(
+			deviceFlow.deviceCode,
+			deviceFlow.pkce,
+			deviceFlow.interval,
+			60,
+			(attempt: number) => {
+				if (attempt % 6 === 0) {
+					process.stdout.write(".");
+				}
+			},
+		);
+	} catch (error) {
+		return {
+			success: false,
+			message: `Qwen authorization failed: ${error instanceof Error ? error.message : String(error)}`,
+		};
+	}
+	console.log("\n");
+
+	const resourceUrl = tokens.resource_url
+		? normalizeQwenBaseUrl(tokens.resource_url)
+		: account.custom_endpoint;
+
+	try {
+		await db.run(
+			`UPDATE accounts SET
+				refresh_token = ?,
+				access_token = ?,
+				expires_at = ?,
+				custom_endpoint = ?
+			WHERE id = ?`,
+			[
+				tokens.refresh_token,
+				tokens.access_token,
+				Date.now() + tokens.expires_in * 1000,
+				resourceUrl,
+				account.id,
+			],
+		);
+	} catch (dbError) {
+		return {
+			success: false,
+			message: `Database error while updating tokens: ${dbError instanceof Error ? dbError.message : String(dbError)}`,
+		};
+	}
+
+	console.log(`\nAccount '${name}' re-authenticated successfully!`);
+	console.log(
+		"All account metadata (usage stats, priority, settings) has been preserved.",
+	);
+	console.log("OAuth tokens have been updated.");
+
+	// Notify running servers to reload tokens (best-effort)
+	console.log("\nNotifying running servers to reload tokens...");
+	for (const port of [8080, 8081]) {
+		try {
+			const response = await fetch(
+				`http://localhost:${port}/api/accounts/${account.id}/reload`,
+				{ method: "POST", headers: { "Content-Type": "application/json" } },
+			);
+			if (response.ok) {
+				console.log(`✓ Token reload successful on port ${port}`);
+			} else {
+				console.log(
+					`✗ Server not responding on port ${port} (${response.status})`,
+				);
+			}
+		} catch {
+			console.log(`✗ No server running on port ${port}`);
+		}
+	}
+
+	return {
+		success: true,
+		message: `Account '${name}' re-authenticated successfully. All metadata preserved.`,
+	};
+}
+
+/**
  * Re-authenticate an account by name (preserves all metadata)
  * This performs soft re-authentication: only updates OAuth tokens, keeps all other data
  */
@@ -1874,12 +2001,17 @@ export async function reauthenticateAccount(
 		};
 	}
 
-	// Check if account supports OAuth (only anthropic provider)
-	if (account.provider !== "anthropic") {
+	// Check if account supports OAuth re-authentication
+	if (account.provider !== "anthropic" && account.provider !== "qwen") {
 		return {
 			success: false,
-			message: `Account '${name}' (${account.provider}) does not support OAuth re-authentication. Only Anthropic accounts can be re-authenticated.`,
+			message: `Account '${name}' (${account.provider}) does not support OAuth re-authentication. Only Anthropic and Qwen accounts can be re-authenticated.`,
 		};
+	}
+
+	// Handle Qwen re-authentication via device code flow
+	if (account.provider === "qwen") {
+		return reauthenticateQwenAccount(dbOps, account, name);
 	}
 
 	// Create OAuth flow instance

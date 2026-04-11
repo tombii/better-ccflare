@@ -634,7 +634,10 @@ export function TokenUsageBreakdown({
 						<div className="flex items-center justify-between">
 							<span className="text-sm font-medium">Total Tokens</span>
 							<span className="text-lg font-bold">
-								{formatTokens(tokenBreakdown.reduce((acc, item) => acc + item.value, 0))} tokens
+								{formatTokens(
+									tokenBreakdown.reduce((acc, item) => acc + item.value, 0),
+								)}{" "}
+								tokens
 							</span>
 						</div>
 					</div>

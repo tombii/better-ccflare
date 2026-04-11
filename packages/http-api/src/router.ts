@@ -79,6 +79,7 @@ import {
 	createOAuthInitHandler,
 	createQwenDeviceFlowInitHandler,
 	createQwenDeviceFlowStatusHandler,
+	createQwenReauthHandler,
 } from "./handlers/oauth";
 import {
 	createRequestPayloadHandler,
@@ -155,6 +156,7 @@ export class APIRouter {
 		const oauthInitHandler = createOAuthInitHandler(dbOps);
 		const oauthCallbackHandler = createOAuthCallbackHandler(dbOps);
 		const qwenDeviceFlowInitHandler = createQwenDeviceFlowInitHandler(dbOps);
+		const qwenReauthHandler = createQwenReauthHandler(dbOps);
 		const codexDeviceFlowInitHandler = createCodexDeviceFlowInitHandler(dbOps);
 		const agentsHandler = createAgentsListHandler(dbOps);
 		const workspacesHandler = createWorkspacesListHandler();
@@ -228,6 +230,9 @@ export class APIRouter {
 		);
 		this.handlers.set("POST:/api/oauth/qwen/init", (req) =>
 			qwenDeviceFlowInitHandler(req),
+		);
+		this.handlers.set("POST:/api/oauth/qwen/reauth", (req) =>
+			qwenReauthHandler(req),
 		);
 		this.handlers.set("POST:/api/oauth/codex/init", (req) =>
 			codexDeviceFlowInitHandler(req),

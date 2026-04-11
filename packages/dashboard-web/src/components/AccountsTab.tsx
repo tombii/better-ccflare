@@ -10,6 +10,7 @@ import {
 	AccountModelMappingsDialog,
 	AccountPriorityDialog,
 	DeleteConfirmationDialog,
+	QwenReauthDialog,
 	RenameAccountDialog,
 } from "./accounts";
 import { Button } from "./ui/button";
@@ -63,6 +64,13 @@ export function AccountsTab() {
 		account: null,
 	});
 	const [modelMappingsDialog, setModelMappingsDialog] = useState<{
+		isOpen: boolean;
+		account: Account | null;
+	}>({
+		isOpen: false,
+		account: null,
+	});
+	const [qwenReauthDialog, setQwenReauthDialog] = useState<{
 		isOpen: boolean;
 		account: Account | null;
 	}>({
@@ -428,6 +436,10 @@ export function AccountsTab() {
 		setModelMappingsDialog({ isOpen: true, account });
 	};
 
+	const handleReauth = (account: Account) => {
+		setQwenReauthDialog({ isOpen: true, account });
+	};
+
 	const handleUpdateCustomEndpoint = async (
 		accountId: string,
 		customEndpoint: string | null,
@@ -535,6 +547,7 @@ export function AccountsTab() {
 						onBillingTypeToggle={handleBillingTypeToggle}
 						onCustomEndpointChange={handleCustomEndpointChange}
 						onModelMappingsChange={handleModelMappingsChange}
+						onReauth={handleReauth}
 					/>
 				</CardContent>
 			</Card>
@@ -611,6 +624,15 @@ export function AccountsTab() {
 					onUpdateModelMappings={handleUpdateModelMappings}
 				/>
 			)}
+			<QwenReauthDialog
+				isOpen={qwenReauthDialog.isOpen}
+				account={qwenReauthDialog.account}
+				onClose={() => setQwenReauthDialog({ isOpen: false, account: null })}
+				onSuccess={() => {
+					loadAccounts();
+					setQwenReauthDialog({ isOpen: false, account: null });
+				}}
+			/>
 		</div>
 	);
 }

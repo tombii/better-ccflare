@@ -14,6 +14,7 @@ interface AccountListProps {
 	onBillingTypeToggle: (account: Account) => void;
 	onCustomEndpointChange?: (account: Account) => void;
 	onModelMappingsChange?: (account: Account) => void;
+	onReauth?: (account: Account) => void;
 }
 
 export function AccountList({
@@ -29,6 +30,7 @@ export function AccountList({
 	onBillingTypeToggle,
 	onCustomEndpointChange,
 	onModelMappingsChange,
+	onReauth,
 }: AccountListProps) {
 	if (!accounts || accounts.length === 0) {
 		return <p className="text-muted-foreground">No accounts configured</p>;
@@ -69,6 +71,7 @@ export function AccountList({
 					onBillingTypeToggle={onBillingTypeToggle}
 					onCustomEndpointChange={onCustomEndpointChange}
 					onModelMappingsChange={onModelMappingsChange}
+					onReauth={onReauth}
 				/>
 			))}
 		</div>

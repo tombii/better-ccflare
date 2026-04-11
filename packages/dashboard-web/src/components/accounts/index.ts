@@ -5,5 +5,6 @@ export { AccountListItem } from "./AccountListItem";
 export { AccountModelMappingsDialog } from "./AccountModelMappingsDialog";
 export { AccountPriorityDialog } from "./AccountPriorityDialog";
 export { DeleteConfirmationDialog } from "./DeleteConfirmationDialog";
+export { QwenReauthDialog } from "./QwenReauthDialog";
 export { RateLimitProgress } from "./RateLimitProgress";
 export { RenameAccountDialog } from "./RenameAccountDialog";

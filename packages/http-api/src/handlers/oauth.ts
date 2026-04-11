@@ -176,6 +176,135 @@ export function createQwenDeviceFlowStatusHandler() {
 	};
 }
 
+/**
+ * Create a Qwen re-authentication handler.
+ * Re-runs the device flow for an existing account, updating tokens in-place.
+ * Returns { authUrl, userCode, sessionId } immediately, then polls in background.
+ */
+export function createQwenReauthHandler(dbOps: DatabaseOperations) {
+	return async (req: Request): Promise<Response> => {
+		try {
+			const body = await req.json();
+
+			const accountId = validateString(body.accountId, "accountId", {
+				required: true,
+				minLength: 1,
+				maxLength: 100,
+			});
+
+			if (!accountId) {
+				return errorResponse(BadRequest("Valid accountId is required"));
+			}
+
+			// Look up the account
+			const account = await dbOps.getAdapter().get<{
+				id: string;
+				name: string;
+				provider: string;
+				custom_endpoint: string | null;
+			}>(
+				"SELECT id, name, provider, custom_endpoint FROM accounts WHERE id = ?",
+				[accountId],
+			);
+
+			if (!account) {
+				return errorResponse(NotFound("Account not found"));
+			}
+
+			if (account.provider !== "qwen") {
+				return errorResponse(
+					BadRequest(
+						"Re-authentication via device flow is only supported for Qwen accounts",
+					),
+				);
+			}
+
+			let deviceFlow: Awaited<ReturnType<typeof initiateQwenDeviceFlow>>;
+			try {
+				deviceFlow = await initiateQwenDeviceFlow();
+			} catch (err) {
+				log.error("Qwen reauth device flow initiation failed:", err);
+				return errorResponse(
+					InternalServerError(
+						`Failed to initiate Qwen device flow: ${(err as Error).message}`,
+					),
+				);
+			}
+
+			const sessionId = crypto.randomUUID();
+			qwenSessions.set(sessionId, {
+				status: "pending",
+				accountName: account.name,
+			});
+
+			// Poll in background — do not await
+			(async () => {
+				try {
+					const tokens = await pollQwenForToken(
+						deviceFlow.deviceCode,
+						deviceFlow.pkce,
+						deviceFlow.interval,
+						60,
+					);
+
+					const resourceUrl = tokens.resource_url
+						? normalizeQwenBaseUrl(tokens.resource_url)
+						: account.custom_endpoint;
+
+					await dbOps.getAdapter().run(
+						`UPDATE accounts SET
+							refresh_token = ?,
+							access_token = ?,
+							expires_at = ?,
+							custom_endpoint = ?
+						WHERE id = ?`,
+						[
+							tokens.refresh_token,
+							tokens.access_token,
+							Date.now() + tokens.expires_in * 1000,
+							resourceUrl,
+							account.id,
+						],
+					);
+
+					qwenSessions.set(sessionId, {
+						status: "complete",
+						accountName: account.name,
+					});
+					log.info(
+						`Qwen account '${account.name}' re-authenticated via web device flow`,
+					);
+
+					setTimeout(() => qwenSessions.delete(sessionId), 10 * 60 * 1000);
+				} catch (err) {
+					log.error(`Qwen reauth polling failed for '${account.name}':`, err);
+					qwenSessions.set(sessionId, {
+						status: "error",
+						accountName: account.name,
+						error: (err as Error).message,
+					});
+					setTimeout(() => qwenSessions.delete(sessionId), 10 * 60 * 1000);
+				}
+			})();
+
+			return jsonResponse({
+				success: true,
+				sessionId,
+				authUrl:
+					deviceFlow.verificationUriComplete || deviceFlow.verificationUri,
+				userCode: deviceFlow.userCode,
+			});
+		} catch (error) {
+			log.error("Qwen reauth error:", error);
+			return errorResponse(
+				error instanceof Error
+					? error
+					: new Error("Failed to initialize Qwen re-authentication"),
+			);
+		}
+	};
+}
+
 // In-memory session store for Codex device flow
 type CodexSession =
 	| { status: "pending"; accountName: string }

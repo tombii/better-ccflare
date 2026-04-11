@@ -4,6 +4,7 @@ import {
 	Edit2,
 	Globe,
 	Hash,
+	KeyRound,
 	Pause,
 	Play,
 	RefreshCw,
@@ -37,6 +38,7 @@ interface AccountListItemProps {
 	onBillingTypeToggle: (account: Account) => void;
 	onCustomEndpointChange?: (account: Account) => void;
 	onModelMappingsChange?: (account: Account) => void;
+	onReauth?: (account: Account) => void;
 }
 
 export function AccountListItem({
@@ -53,6 +55,7 @@ export function AccountListItem({
 	onBillingTypeToggle,
 	onCustomEndpointChange,
 	onModelMappingsChange,
+	onReauth,
 }: AccountListItemProps) {
 	const [isRefreshingUsage, setIsRefreshingUsage] = useState(false);
 	const presenter = new AccountPresenter(account);
@@ -284,6 +287,16 @@ export function AccountListItem({
 									account.modelMappings ? "text-primary" : ""
 								}`}
 							/>
+						</Button>
+					)}
+					{account.provider === "qwen" && onReauth && (
+						<Button
+							variant="ghost"
+							size="sm"
+							onClick={() => onReauth(account)}
+							title="Re-authenticate this Qwen account (preserves all metadata)"
+						>
+							<KeyRound className="h-4 w-4" />
 						</Button>
 					)}
 					{account.provider === "anthropic" && (
