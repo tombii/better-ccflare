@@ -1,8 +1,7 @@
 import {
 	BUFFER_SIZES,
 	estimateCostUSD,
-	getModelFamily,
-	parseModelMappings,
+	mapModelName,
 	TIME_CONSTANTS,
 } from "@better-ccflare/core";
 import { sanitizeProxyHeaders } from "@better-ccflare/http-common";
@@ -171,50 +170,18 @@ export abstract class BaseAnthropicCompatibleProvider extends BaseProvider {
 
 		// Use the shared utility for model mapping
 		return transformRequestBodyModel(request, account, (model, acc) => {
-			// Provider-specific mapping logic
-			let mappedModel = model;
-
-			// First try account-specific mappings
-			if (acc?.model_mappings) {
-				mappedModel = this.mapAccountModel(model, acc);
+			if (acc) {
+				// Use core mapModelName which handles arrays, fallbacks, env overrides, and defaults
+				return mapModelName(model, acc);
 			}
+
 			// Fall back to static config mappings for backward compatibility
-			else if (this.config.modelMappings?.[model]) {
-				mappedModel = this.config.modelMappings[model];
+			if (this.config.modelMappings?.[model]) {
+				return this.config.modelMappings[model];
 			}
 
-			return mappedModel;
+			return model;
 		});
-	}
-
-	/**
-	 * Helper method to map models using account-specific mappings
-	 */
-	private mapAccountModel(originalModel: string, account: Account): string {
-		if (!account.model_mappings) {
-			return originalModel;
-		}
-
-		const accountMappings = parseModelMappings(account.model_mappings);
-
-		if (!accountMappings) {
-			return originalModel;
-		}
-
-		const toFirst = (v: string | string[]) => (Array.isArray(v) ? v[0] : v);
-
-		// First try exact match
-		if (accountMappings[originalModel]) {
-			return toFirst(accountMappings[originalModel]);
-		}
-
-		// Use shared pattern detection
-		const family = getModelFamily(originalModel);
-		if (family && accountMappings[family]) {
-			return toFirst(accountMappings[family]);
-		}
-
-		return originalModel;
 	}
 
 	parseRateLimit(response: Response): RateLimitInfo {
