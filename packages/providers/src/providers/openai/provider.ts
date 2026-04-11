@@ -508,15 +508,13 @@ export class OpenAICompatibleProvider extends BaseProvider {
 
 		const obj = schema as Record<string, unknown>;
 
-		if (obj.type === "string" && obj.format === "uri") {
-			// biome-ignore lint/correctness/noUnusedVariables: format is intentionally extracted and not used
-			const { format, ...rest } = obj;
-			// Recursively process remaining properties
-			return this.removeUriFormat(rest);
-		}
-
 		const result: Record<string, unknown> = {};
 		for (const key of Object.keys(obj)) {
+			// Strip $schema — not supported by OpenAI-compatible tool calling spec
+			if (key === "$schema") continue;
+			// Strip format: uri from string fields
+			if (key === "format" && obj.type === "string" && obj[key] === "uri")
+				continue;
 			result[key] = this.removeUriFormat(obj[key]);
 		}
 		return result;
