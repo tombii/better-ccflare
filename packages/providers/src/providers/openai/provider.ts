@@ -495,6 +495,39 @@ export class OpenAICompatibleProvider extends BaseProvider {
 	}
 
 	/**
+	 * Attempt to repair truncated tool-call JSON that was cut off mid-stream.
+	 * Mirrors the recovery logic in qwen-code's StreamingToolCallParser.
+	 * Returns the repair delta to emit (empty string if no repair needed/possible).
+	 */
+	protected repairTruncatedToolJson(accumulated: string): string {
+		if (!accumulated.trim()) return "";
+		try {
+			JSON.parse(accumulated);
+			return ""; // already valid
+		} catch {
+			// Try closing an open string first
+			try {
+				JSON.parse(`${accumulated}"`);
+				return '"';
+			} catch {
+				// Try closing open string + object
+				try {
+					JSON.parse(`${accumulated}"}`);
+					return '"}';
+				} catch {
+					// Try just closing the object
+					try {
+						JSON.parse(`${accumulated}}`);
+						return "}";
+					} catch {
+						return ""; // unrecoverable
+					}
+				}
+			}
+		}
+	}
+
+	/**
 	 * Helper to remove format: 'uri' from JSON schemas (some providers reject it)
 	 */
 	protected removeUriFormat(schema: unknown): unknown {
@@ -765,6 +798,8 @@ export class OpenAICompatibleProvider extends BaseProvider {
 
 		const encoder = new TextEncoder();
 		const decoder = new TextDecoder();
+		const repairTruncatedToolJson =
+			this.repairTruncatedToolJson.bind(this);
 
 		// Use pipeThrough to transform the stream while preserving clonability
 		const transformedBody = response.body.pipeThrough(
@@ -810,9 +845,38 @@ export class OpenAICompatibleProvider extends BaseProvider {
 								if (context.encounteredToolCall) {
 									// Stop all tool call blocks
 									for (const idx in context.toolCallAccumulators) {
+										const numIdx = Number.parseInt(idx, 10);
+										const accumulated =
+											context.toolCallAccumulators[numIdx] || "";
+
+										// Repair truncated JSON before closing the block
+										const repair =
+											repairTruncatedToolJson(accumulated);
+										if (repair) {
+											log.warn(
+												`Repairing truncated tool call JSON at index ${idx} (appending ${JSON.stringify(repair)})`,
+											);
+											const repairDelta = {
+												type: "content_block_delta",
+												index: numIdx,
+												delta: {
+													type: "input_json_delta",
+													partial_json: repair,
+												},
+											};
+											controller.enqueue(
+												encoder.encode(`event: content_block_delta\n`),
+											);
+											controller.enqueue(
+												encoder.encode(
+													`data: ${JSON.stringify(repairDelta)}\n\n`,
+												),
+											);
+										}
+
 										const contentBlockStop = {
 											type: "content_block_stop",
-											index: Number.parseInt(idx, 10),
+											index: numIdx,
 										};
 										controller.enqueue(
 											encoder.encode(`event: content_block_stop\n`),
