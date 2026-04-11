@@ -259,7 +259,7 @@ export async function processProxyResponse(
 					account.id,
 					Date.now() + 5 * 60 * 60 * 1000,
 				),
-			); // Default to 5 hours for Zai
+			); // Default to 5 hours — applies to any provider without reset headers
 		}
 		// Also update metadata for rate-limited responses
 		const bypassSession =
