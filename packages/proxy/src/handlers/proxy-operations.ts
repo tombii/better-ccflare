@@ -210,6 +210,15 @@ async function isModelUnavailableError(response: Response): Promise<boolean> {
 	)
 		return false;
 
+	// 429s always trigger slot failover regardless of content-type.
+	// Providers like Qwen return 429 without application/json bodies, and
+	// the content-type guard below would otherwise short-circuit before reaching
+	// this check, causing the 429 to be forwarded to the client instead of
+	// failing over to the next combo slot.
+	if (response.status === 429) {
+		return true;
+	}
+
 	try {
 		const clone = response.clone();
 		const contentType = response.headers.get("content-type");
@@ -239,13 +248,6 @@ async function isModelUnavailableError(response: Response): Promise<boolean> {
 			typeof json.error.message === "string" &&
 			json.error.message.includes("ResourceNotFoundException")
 		) {
-			return true;
-		}
-
-		// 429: model-specific rate limit (e.g. OpenRouter free model RPM cap).
-		// Try the fallback model — if no fallback family matches, the caller falls through
-		// and returns the 429 as-is. Single retry only, no loop risk.
-		if (response.status === 429) {
 			return true;
 		}
 	} catch {
