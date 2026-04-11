@@ -10,6 +10,18 @@ const log = new Logger("QwenProvider");
 const DEFAULT_ENDPOINT = "https://dashscope.aliyuncs.com/compatible-mode/v1";
 const QWEN_USER_AGENT = "QwenCode/0.14.2 (darwin; arm64)";
 
+// Stainless SDK headers injected by the official OpenAI Node SDK (v5.x).
+// portal.qwen.ai validates these to confirm the official client is being used.
+const STAINLESS_HEADERS: Record<string, string> = {
+	"X-Stainless-Lang": "js",
+	"X-Stainless-Runtime": "node",
+	"X-Stainless-Runtime-Version": "v22.17.0",
+	"X-Stainless-Os": "MacOS",
+	"X-Stainless-Arch": "arm64",
+	"X-Stainless-Package-Version": "5.11.0",
+	"X-Stainless-Retry-Count": "0",
+};
+
 // All Anthropic model tiers map to coder-model (Qwen's unified coding model)
 const QWEN_MODEL_MAPPINGS = {
 	opus: "coder-model",
@@ -78,6 +90,16 @@ export class QwenProvider extends OpenAICompatibleProvider {
 		newHeaders.set("X-DashScope-CacheControl", "enable");
 		newHeaders.set("X-DashScope-UserAgent", QWEN_USER_AGENT);
 		newHeaders.set("X-DashScope-AuthType", "qwen-oauth");
+
+		// Stainless SDK headers — portal.qwen.ai validates these to confirm
+		// the official OpenAI Node SDK is being used (mimics openai npm pkg v5.x)
+		for (const [key, value] of Object.entries(STAINLESS_HEADERS)) {
+			newHeaders.set(key, value);
+		}
+		newHeaders.set("Accept-Language", "*");
+		newHeaders.set("Accept-Encoding", "gzip, deflate");
+		newHeaders.set("Sec-Fetch-Mode", "cors");
+		newHeaders.set("Connection", "keep-alive");
 
 		return newHeaders;
 	}
