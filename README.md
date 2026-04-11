@@ -189,6 +189,13 @@ RETRY_BACKOFF=2                        # Retry backoff multiplier
 STORE_PAYLOADS=false                   # Disable storing request/response bodies (reduces DB size and memory usage)
                                        # Token counts, costs, model, status and timing are still recorded
 
+# Streaming Timeouts
+# Agentic workloads (e.g. recursive claude-code-sdk sessions) can leave the outer
+# stream silent for minutes while sub-calls run. Increase these if long-running
+# nested calls appear failed or missing in the UI (issue #84).
+CF_STREAM_TOTAL_TIMEOUT_MS=1800000     # Max total stream duration per request (default: 30 minutes)
+CF_STREAM_CHUNK_TIMEOUT_MS=300000      # Max silence between consecutive chunks (default: 5 minutes)
+
 # Payload encryption at rest (optional)
 # When set, request/response payloads are encrypted with AES-256-GCM before
 # being written to `request_payloads`. Existing plaintext rows remain readable.

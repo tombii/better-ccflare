@@ -1,4 +1,4 @@
-import { requestEvents } from "@better-ccflare/core";
+import { requestEvents, TIME_CONSTANTS } from "@better-ccflare/core";
 import {
 	sanitizeRequestHeaders,
 	withSanitizedProxyHeaders,
@@ -190,8 +190,17 @@ export async function forwardToClient(
 		const rateLimitSniffer = account ? createSseRateLimitSniffer() : null;
 
 		(async () => {
-			const STREAM_TIMEOUT_MS = 300000; // 5 minutes max stream duration
-			const CHUNK_TIMEOUT_MS = 30000; // 30 seconds between chunks
+			// Configurable via env vars to support long agentic workloads where
+			// nested sub-calls (e.g. recursive claude-code-sdk sessions) can leave
+			// the outer stream silent for extended periods (issue #84).
+			const STREAM_TIMEOUT_MS = Number(
+				process.env.CF_STREAM_TOTAL_TIMEOUT_MS ??
+					TIME_CONSTANTS.STREAM_FORWARD_TOTAL_TIMEOUT_MS,
+			);
+			const CHUNK_TIMEOUT_MS = Number(
+				process.env.CF_STREAM_CHUNK_TIMEOUT_MS ??
+					TIME_CONSTANTS.STREAM_FORWARD_CHUNK_TIMEOUT_MS,
+			);
 
 			try {
 				const reader = analyticsClone.body?.getReader();
