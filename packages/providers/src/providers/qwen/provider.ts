@@ -59,16 +59,13 @@ export class QwenProvider extends OpenAICompatibleProvider {
 	}
 
 	override prepareHeaders(
-		headers: Headers,
+		_headers: Headers,
 		accessToken?: string,
 		_apiKey?: string,
 	): Headers {
-		const newHeaders = new Headers(headers);
-
-		// SECURITY: Remove client's authorization header
-		if (accessToken !== undefined || _apiKey !== undefined) {
-			newHeaders.delete("authorization");
-		}
+		// Start from a clean set — DashScope is sensitive to unexpected headers
+		// (e.g. x-stainless-*, anthropic-*, accept-encoding) causing 429s.
+		const newHeaders = new Headers();
 
 		// Set Qwen auth headers
 		if (accessToken) {
@@ -76,15 +73,11 @@ export class QwenProvider extends OpenAICompatibleProvider {
 		}
 
 		// Qwen/DashScope SDK headers (verified against qwen-code repo)
+		newHeaders.set("Content-Type", "application/json");
 		newHeaders.set("User-Agent", QWEN_USER_AGENT);
 		newHeaders.set("X-DashScope-CacheControl", "enable");
 		newHeaders.set("X-DashScope-UserAgent", QWEN_USER_AGENT);
 		newHeaders.set("X-DashScope-AuthType", "qwen-oauth");
-
-		// Remove Anthropic-specific headers
-		newHeaders.delete("anthropic-version");
-		newHeaders.delete("anthropic-dangerous-direct-browser-access");
-		newHeaders.delete("host");
 
 		return newHeaders;
 	}
