@@ -289,6 +289,114 @@ export class AnthropicProvider extends BaseProvider {
 		};
 	}
 
+	/**
+	 * Transform Anthropic SSE stream to add OpenAI-compatible finish_reason.
+	 * Anthropic uses stop_reason on message_delta events; OpenAI clients expect
+	 * finish_reason. This maps between them without breaking native Anthropic clients
+	 * since both fields are present in the transformed output.
+	 */
+	private async transformStreamToOpenAIFormat(
+		response: Response,
+	): Promise<Response> {
+		const contentType = response.headers.get("content-type");
+
+		// Only transform streaming responses
+		if (!contentType?.includes("text/event-stream")) {
+			return response;
+		}
+
+		const reader = response.body?.getReader();
+		if (!reader) return response;
+
+		const encoder = new TextEncoder();
+		const decoder = new TextDecoder();
+
+		// stopReasonMap defined once outside the loop for performance
+		const stopReasonMap: Record<string, string> = {
+			end_turn: "stop",
+			max_tokens: "length",
+			stop_sequence: "stop",
+			tool_use: "tool_calls",
+		};
+
+		const stream = new ReadableStream({
+			async start(controller) {
+				// lineBuffer carries incomplete lines across chunk boundaries
+				let lineBuffer = "";
+				try {
+					while (true) {
+						const { done, value } = await reader.read();
+						if (done) {
+							// Flush any remaining buffered content
+							if (lineBuffer) {
+								controller.enqueue(encoder.encode(lineBuffer));
+							}
+							break;
+						}
+
+						// Accumulate decoded bytes into lineBuffer, split on newlines
+						lineBuffer += decoder.decode(value, { stream: true });
+						const lines = lineBuffer.split("\n");
+						// Last element may be an incomplete line — keep it in the buffer
+						lineBuffer = lines.pop() ?? "";
+
+						for (const line of lines) {
+							// Pass through non-data lines (empty lines, event:, id:, comment:)
+							// SSE allows both "data:" and "data: " prefixes
+							if (!line.startsWith("data:")) {
+								controller.enqueue(encoder.encode(line + "\n"));
+								continue;
+							}
+
+							const data = line.replace(/^data:\s?/, "");
+
+							// Pass through [DONE] marker
+							if (data === "[DONE]") {
+								controller.enqueue(encoder.encode(line + "\n"));
+								continue;
+							}
+
+							try {
+								const event = JSON.parse(data);
+
+								// Map Anthropic stop_reason -> OpenAI finish_reason on message_delta
+								if (event.type === "message_delta" && event.delta?.stop_reason) {
+									event.finish_reason =
+										stopReasonMap[event.delta.stop_reason] ?? "stop";
+								}
+
+								controller.enqueue(
+									encoder.encode(`data: ${JSON.stringify(event)}\n`),
+								);
+							} catch {
+								// Non-JSON data line — pass through unchanged
+								controller.enqueue(encoder.encode(line + "\n"));
+							}
+						}
+					}
+				} catch (error) {
+					controller.error(error);
+				} finally {
+					// Guard close() — stream may already be errored
+					try {
+						controller.close();
+					} catch {
+						// ignore: stream is already in errored state
+					}
+				}
+			},
+			cancel(reason) {
+				reader.cancel(reason);
+			},
+		});
+
+		return new Response(stream, {
+			headers: response.headers,
+			status: response.status,
+			statusText: response.statusText,
+		});
+	}
+
 	async processResponse(
 		response: Response,
 		_account: Account | null,
@@ -296,11 +404,14 @@ export class AnthropicProvider extends BaseProvider {
 		// Sanitize headers by removing hop-by-hop headers
 		const headers = sanitizeProxyHeaders(response.headers);
 
-		return new Response(response.body, {
+		const sanitizedResponse = new Response(response.body, {
 			status: response.status,
 			statusText: response.statusText,
 			headers,
 		});
+
+		// Add OpenAI-compatible finish_reason alongside Anthropic's stop_reason
+		return this.transformStreamToOpenAIFormat(sanitizedResponse);
 	}
 
 	async extractTierInfo(response: Response): Promise<number | null> {
