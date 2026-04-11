@@ -41,7 +41,21 @@ export class AnthropicCompatibleProvider extends BaseAnthropicCompatibleProvider
 		// Use custom endpoint from account if available, otherwise fall back to config
 		const baseUrl = account?.custom_endpoint || this.getEndpoint();
 		const cleanBaseUrl = baseUrl.replace(/\/$/, ""); // Remove trailing slash
-		return `${cleanBaseUrl}${pathname}${search}`;
+
+		// Deduplicate path prefix: if the base URL already ends with a prefix
+		// that the pathname starts with (e.g. base="/v1", path="/v1/messages"),
+		// strip it from the pathname to avoid double segments like /v1/v1/messages.
+		try {
+			const parsed = new URL(cleanBaseUrl);
+			const basePath = parsed.pathname.replace(/\/$/, "");
+			const effectivePath =
+				basePath && pathname.startsWith(basePath)
+					? pathname.slice(basePath.length) || "/"
+					: pathname;
+			return `${cleanBaseUrl}${effectivePath}${search}`;
+		} catch {
+			return `${cleanBaseUrl}${pathname}${search}`;
+		}
 	}
 
 	/**
