@@ -1850,7 +1850,7 @@ export function createAccountBillingTypeHandler(dbOps: DatabaseOperations) {
 				);
 			}
 
-			dbOps.setAccountBillingType(
+			await dbOps.setAccountBillingType(
 				accountId,
 				billingType === "auto" ? null : billingType,
 			);

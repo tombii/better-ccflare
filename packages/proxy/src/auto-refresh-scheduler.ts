@@ -641,6 +641,14 @@ export class AutoRefreshScheduler {
 		);
 
 		for (const row of accounts) {
+			// Skip if a refresh is already in-flight for this account (deduplication)
+			if (this.proxyContext.refreshInFlight.has(row.id)) {
+				log.debug(
+					`Skipping proactive Qwen refresh for ${row.name} — refresh already in-flight`,
+				);
+				continue;
+			}
+
 			try {
 				log.info(`Refreshing Qwen token for account: ${row.name}`);
 
@@ -679,24 +687,30 @@ export class AutoRefreshScheduler {
 					billing_type: null,
 				};
 
-				const result = await provider.refreshToken(
-					account,
-					this.proxyContext.runtime.clientId,
-				);
+				// Use refreshAccessTokenSafe to get deduplication and backoff handling
+				const refreshPromise = provider
+					.refreshToken(account, this.proxyContext.runtime.clientId)
+					.then(async (result) => {
+						await this.db.run(
+							`UPDATE accounts SET access_token = ?, expires_at = ?, refresh_token = ? WHERE id = ?`,
+							[
+								result.accessToken,
+								result.expiresAt,
+								result.refreshToken ?? row.refresh_token,
+								row.id,
+							],
+						);
+						log.info(
+							`Qwen token refreshed for ${row.name}, expires at ${new Date(result.expiresAt).toISOString()}`,
+						);
+						return result.accessToken;
+					})
+					.finally(() => {
+						this.proxyContext.refreshInFlight.delete(row.id);
+					});
 
-				await this.db.run(
-					`UPDATE accounts SET access_token = ?, expires_at = ?, refresh_token = ? WHERE id = ?`,
-					[
-						result.accessToken,
-						result.expiresAt,
-						result.refreshToken ?? row.refresh_token,
-						row.id,
-					],
-				);
-
-				log.info(
-					`Qwen token refreshed for ${row.name}, expires at ${new Date(result.expiresAt).toISOString()}`,
-				);
+				this.proxyContext.refreshInFlight.set(row.id, refreshPromise);
+				await refreshPromise;
 			} catch (error) {
 				log.error(
 					`Failed to proactively refresh Qwen token for ${row.name}:`,
@@ -747,6 +761,14 @@ export class AutoRefreshScheduler {
 		);
 
 		for (const row of accounts) {
+			// Skip if a refresh is already in-flight for this account (deduplication)
+			if (this.proxyContext.refreshInFlight.has(row.id)) {
+				log.debug(
+					`Skipping proactive Codex refresh for ${row.name} — refresh already in-flight`,
+				);
+				continue;
+			}
+
 			try {
 				log.info(`Refreshing Codex token for account: ${row.name}`);
 
@@ -785,24 +807,30 @@ export class AutoRefreshScheduler {
 					billing_type: null,
 				};
 
-				const result = await provider.refreshToken(
-					account,
-					this.proxyContext.runtime.clientId,
-				);
+				// Register in refreshInFlight so concurrent request-triggered refreshes join this one
+				const refreshPromise = provider
+					.refreshToken(account, this.proxyContext.runtime.clientId)
+					.then(async (result) => {
+						await this.db.run(
+							`UPDATE accounts SET access_token = ?, expires_at = ?, refresh_token = ? WHERE id = ?`,
+							[
+								result.accessToken,
+								result.expiresAt,
+								result.refreshToken ?? row.refresh_token,
+								row.id,
+							],
+						);
+						log.info(
+							`Codex token refreshed for ${row.name}, expires at ${new Date(result.expiresAt).toISOString()}`,
+						);
+						return result.accessToken;
+					})
+					.finally(() => {
+						this.proxyContext.refreshInFlight.delete(row.id);
+					});
 
-				await this.db.run(
-					`UPDATE accounts SET access_token = ?, expires_at = ?, refresh_token = ? WHERE id = ?`,
-					[
-						result.accessToken,
-						result.expiresAt,
-						result.refreshToken ?? row.refresh_token,
-						row.id,
-					],
-				);
-
-				log.info(
-					`Codex token refreshed for ${row.name}, expires at ${new Date(result.expiresAt).toISOString()}`,
-				);
+				this.proxyContext.refreshInFlight.set(row.id, refreshPromise);
+				await refreshPromise;
 			} catch (error) {
 				log.error(
 					`Failed to proactively refresh Codex token for ${row.name}:`,
