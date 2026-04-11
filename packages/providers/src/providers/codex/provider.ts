@@ -196,9 +196,10 @@ export class CodexProvider extends BaseProvider {
 			expires_in: number;
 		};
 
-		log.info(
-			`Codex token refresh successful for ${account.name}, new refresh token received`,
-		);
+		console.log(`[CodexProvider] token refresh response for ${account.name}:`, {
+			expiresIn: json.expires_in,
+			responseKeys: Object.keys(json),
+		});
 
 		return {
 			accessToken: json.access_token,

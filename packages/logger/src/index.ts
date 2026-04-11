@@ -89,6 +89,7 @@ export class Logger {
 				ts: Date.now(),
 				level: "DEBUG",
 				msg: message,
+				...(data !== undefined && { data }),
 			};
 			logBus.emit("log", event);
 			logFileWriter?.write(event);
@@ -104,6 +105,7 @@ export class Logger {
 				ts: Date.now(),
 				level: "INFO",
 				msg: message,
+				...(data !== undefined && { data }),
 			};
 			logBus.emit("log", event);
 			logFileWriter?.write(event);
@@ -119,6 +121,7 @@ export class Logger {
 				ts: Date.now(),
 				level: "WARN",
 				msg: message,
+				...(data !== undefined && { data }),
 			};
 			logBus.emit("log", event);
 			logFileWriter?.write(event);
@@ -134,6 +137,7 @@ export class Logger {
 				ts: Date.now(),
 				level: "ERROR",
 				msg: message,
+				...(error !== undefined && { data: error }),
 			};
 			logBus.emit("log", event);
 			logFileWriter?.write(event);

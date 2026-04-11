@@ -152,6 +152,12 @@ export class AnthropicOAuthProvider implements OAuthProvider {
 			expires_in: number;
 		};
 
+		console.log("[AnthropicOAuth] exchange response:", {
+			expiresIn: json.expires_in,
+			hasRefreshToken: !!json.refresh_token,
+			responseKeys: Object.keys(json),
+		});
+
 		return {
 			refreshToken: json.refresh_token,
 			accessToken: json.access_token,

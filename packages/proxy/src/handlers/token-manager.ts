@@ -258,7 +258,13 @@ export async function refreshAccessTokenSafe(
 				// Clear any previous failure record on successful refresh
 				refreshFailures.delete(account.id);
 
+				const expiresInSec = Math.round((result.expiresAt - Date.now()) / 1000);
 				log.info(`Successfully refreshed token for account: ${account.name}`);
+				console.log(`[TokenManager] refresh for ${account.name}:`, {
+					expiresInSec,
+					newRefreshToken: result.refreshToken !== account.refresh_token,
+					provider: account.provider,
+				});
 				return result.accessToken;
 			})
 			.catch((error) => {

@@ -112,7 +112,14 @@ export async function pollForToken(
 		});
 
 		if (response.ok) {
-			return (await response.json()) as QwenTokenResponse;
+			const tokenData = (await response.json()) as QwenTokenResponse;
+			console.log("[QwenDeviceOAuth] device code token response:", {
+				expiresIn: tokenData.expires_in,
+				hasRefreshToken: !!tokenData.refresh_token,
+				hasResourceUrl: !!tokenData.resource_url,
+				responseKeys: Object.keys(tokenData),
+			});
+			return tokenData;
 		}
 
 		const data = (await response.json().catch(() => ({}))) as {
@@ -177,6 +184,13 @@ export async function refreshQwenTokens(
 		expires_in: number;
 		resource_url?: string;
 	};
+
+	console.log("[QwenDeviceOAuth] token response:", {
+		expiresIn: data.expires_in,
+		hasRefreshToken: !!data.refresh_token,
+		hasResourceUrl: !!data.resource_url,
+		responseKeys: Object.keys(data),
+	});
 
 	return {
 		accessToken: data.access_token,
