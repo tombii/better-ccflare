@@ -123,9 +123,7 @@ function toArray(value: string | string[]): string[] {
 export function getModelMappings(
 	account: Account,
 ): Record<string, string | string[]> {
-	const mappings: Record<string, string | string[]> = {
-		...DEFAULT_MODEL_MAPPINGS,
-	};
+	const mappings: Record<string, string | string[]> = {};
 
 	// Check for environment variable overrides (only in Node.js)
 	if (
@@ -185,13 +183,50 @@ export function getModelMappings(
 }
 
 /**
+ * Check whether an account has any model mapping configuration.
+ * Returns false if the account should just forward the model name unchanged.
+ */
+function hasAccountModelMappings(account: Account): boolean {
+	if (account.model_mappings) return true;
+	if (account.model_fallbacks) return true;
+
+	const customEndpointData = parseCustomEndpointData(account.custom_endpoint);
+	if (customEndpointData?.modelMappings) return true;
+
+	// Check env override
+	if (
+		typeof process !== "undefined" &&
+		process.env?.OPENAI_COMPATIBLE_MODEL_MAPPINGS
+	) {
+		try {
+			const envMappings = safeJsonParse<Record<string, string | string[]>>(
+				process.env.OPENAI_COMPATIBLE_MODEL_MAPPINGS,
+				"OPENAI_COMPATIBLE_MODEL_MAPPINGS environment variable",
+			);
+			if (envMappings && Object.keys(envMappings).length > 0) return true;
+		} catch {
+			// Ignore — treat parse error as no env override
+		}
+	}
+
+	return false;
+}
+
+/**
  * Get the ordered list of models to try for a given Anthropic model name.
  * Returns [primaryModel, ...fallbacks] from the account's model_mappings.
+ * Returns null if the account has no model mapping configuration — the model
+ * name should be forwarded unchanged to the upstream provider.
  */
 export function getModelList(
 	anthropicModel: string,
 	account: Account,
-): string[] {
+): string[] | null {
+	// No custom mappings configured — don't touch the model name
+	if (!hasAccountModelMappings(account)) {
+		return null;
+	}
+
 	const mappings = getModelMappings(account);
 
 	// Exact match first
@@ -205,9 +240,12 @@ export function getModelList(
 		return toArray(mappings[family]);
 	}
 
-	// Default: sonnet family
-	const defaultVal = mappings.sonnet ?? DEFAULT_MODEL_MAPPINGS.sonnet;
-	return toArray(defaultVal);
+	// Default: sonnet family — return original model if not mapped
+	const defaultVal = mappings.sonnet;
+	if (defaultVal) return toArray(defaultVal);
+
+	// No mapping for this model — pass through unchanged
+	return [anthropicModel];
 }
 
 /**
@@ -216,6 +254,8 @@ export function getModelList(
  */
 export function mapModelName(anthropicModel: string, account: Account): string {
 	const list = getModelList(anthropicModel, account);
+	if (!list) return anthropicModel;
+
 	const mapped = list[0];
 
 	if (

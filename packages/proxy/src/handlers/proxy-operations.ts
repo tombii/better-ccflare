@@ -491,6 +491,10 @@ export async function proxyWithAccount(
 
 			if (requestedModel) {
 				const modelList = getModelList(requestedModel, account);
+				if (!modelList || modelList.length <= 1) {
+					// No fallback models configured — return the original response
+					return rawResponse;
+				}
 
 				for (let i = 1; i < modelList.length; i++) {
 					const nextModel = modelList[i];
