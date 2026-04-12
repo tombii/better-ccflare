@@ -600,8 +600,12 @@ export class OpenAICompatibleProvider extends BaseProvider {
 			}
 		}
 
-		// Convert tools
-		if (anthropicData.tools && Array.isArray(anthropicData.tools)) {
+		// Convert tools (only if non-empty — Qwen/DashScope rejects empty tools array)
+		if (
+			anthropicData.tools &&
+			Array.isArray(anthropicData.tools) &&
+			anthropicData.tools.length > 0
+		) {
 			openaiRequest.tools = anthropicData.tools.map((tool) => ({
 				type: "function",
 				function: {
