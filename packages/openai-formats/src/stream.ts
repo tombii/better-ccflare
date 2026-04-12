@@ -79,20 +79,37 @@ function emitStreamEnd(
 	completionTokens: number,
 	toolCallAccumulators: Record<number, string> | null,
 ) {
-	// Stop all tool call blocks
-	if (toolCallAccumulators) {
-		for (const idx in toolCallAccumulators) {
-			const numIdx = Number.parseInt(idx, 10);
+		// Send content_block_stop for all blocks
+		if (toolCallAccumulators) {
+			// Tool call blocks
+			for (const idx in toolCallAccumulators) {
+				const numIdx = Number.parseInt(idx, 10);
+				const contentBlockStop = {
+					type: "content_block_stop",
+					index: numIdx,
+				};
+				controller.enqueue(encoder.encode(`event: content_block_stop
+`));
+				controller.enqueue(
+					encoder.encode(`data: ${JSON.stringify(contentBlockStop)}
+
+`),
+				);
+			}
+		} else if (stopReason === "end_turn") {
+			// Text block at index 0
 			const contentBlockStop = {
 				type: "content_block_stop",
-				index: numIdx,
+				index: 0,
 			};
-			controller.enqueue(encoder.encode(`event: content_block_stop\n`));
+			controller.enqueue(encoder.encode(`event: content_block_stop
+`));
 			controller.enqueue(
-				encoder.encode(`data: ${JSON.stringify(contentBlockStop)}\n\n`),
-			);
-		}
-	}
+				encoder.encode(`data: ${JSON.stringify(contentBlockStop)}
+
+`),
+				);
+			}
 
 	// Send message_delta with appropriate stop_reason
 	const messageDelta = {
