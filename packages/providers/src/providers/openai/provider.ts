@@ -1187,15 +1187,108 @@ export class OpenAICompatibleProvider extends BaseProvider {
 						log.error("Error in transform:", error);
 					}
 				},
-				flush(_controller) {
+				flush(controller) {
 					const context = (this as any).context as TransformStreamContext;
-					if (context && Object.keys(context.toolCallAccumulators).length > 0) {
+					if (!context) return;
+
+					// Stream ended without [DONE] (e.g. Qwen timeout/truncation).
+					// Emit repair + stop events so the client gets a valid response.
+					if (
+						context.encounteredToolCall &&
+						Object.keys(context.toolCallAccumulators).length > 0
+					) {
 						log.warn(
-							"Stream terminated with unprocessed tool calls, cleaning up accumulators",
+							"Stream terminated without [DONE] — emitting repair+stop for incomplete tool calls",
 						);
-						// Add logic to handle incomplete tool calls gracefully
-						context.toolCallAccumulators = {};
+						for (const idx in context.toolCallAccumulators) {
+							const numIdx = Number.parseInt(idx, 10);
+							const accumulated = context.toolCallAccumulators[numIdx] || "";
+
+							const repair = repairTruncatedToolJson(accumulated);
+							if (repair) {
+								log.warn(
+									`flush: Repairing truncated tool call JSON at index ${idx} (appending ${JSON.stringify(repair)})`,
+								);
+								const repairDelta = {
+									type: "content_block_delta",
+									index: numIdx,
+									delta: {
+										type: "input_json_delta",
+										partial_json: repair,
+									},
+								};
+								controller.enqueue(
+									encoder.encode(`event: content_block_delta\n`),
+								);
+								controller.enqueue(
+									encoder.encode(`data: ${JSON.stringify(repairDelta)}\n\n`),
+								);
+							}
+
+							const contentBlockStop = {
+								type: "content_block_stop",
+								index: numIdx,
+							};
+							controller.enqueue(encoder.encode(`event: content_block_stop\n`));
+							controller.enqueue(
+								encoder.encode(`data: ${JSON.stringify(contentBlockStop)}\n\n`),
+							);
+						}
+
+						// Emit message_delta + message_stop
+						const messageDelta = {
+							type: "message_delta",
+							delta: {
+								stop_reason: "tool_use",
+								stop_sequence: null,
+							},
+							usage: {
+								input_tokens: context.promptTokens,
+								output_tokens: context.completionTokens,
+							},
+						};
+						controller.enqueue(encoder.encode(`event: message_delta\n`));
+						controller.enqueue(
+							encoder.encode(`data: ${JSON.stringify(messageDelta)}\n\n`),
+						);
+						const messageStop = { type: "message_stop" };
+						controller.enqueue(encoder.encode(`event: message_stop\n`));
+						controller.enqueue(
+							encoder.encode(`data: ${JSON.stringify(messageStop)}\n\n`),
+						);
+					} else if (
+						context.hasSentContentBlockStart &&
+						!context.encounteredToolCall
+					) {
+						// Text stream ended without [DONE]
+						log.warn("Stream terminated without [DONE] — closing text block");
+						const contentBlockStop = {
+							type: "content_block_stop",
+							index: 0,
+						};
+						controller.enqueue(encoder.encode(`event: content_block_stop\n`));
+						controller.enqueue(
+							encoder.encode(`data: ${JSON.stringify(contentBlockStop)}\n\n`),
+						);
+						const messageDelta = {
+							type: "message_delta",
+							delta: { stop_reason: "end_turn", stop_sequence: null },
+							usage: {
+								input_tokens: context.promptTokens,
+								output_tokens: context.completionTokens,
+							},
+						};
+						controller.enqueue(encoder.encode(`event: message_delta\n`));
+						controller.enqueue(
+							encoder.encode(`data: ${JSON.stringify(messageDelta)}\n\n`),
+						);
+						const messageStop = { type: "message_stop" };
+						controller.enqueue(encoder.encode(`event: message_stop\n`));
+						controller.enqueue(
+							encoder.encode(`data: ${JSON.stringify(messageStop)}\n\n`),
+						);
 					}
+
 					(this as any).context = null;
 				},
 			}),
