@@ -290,11 +290,9 @@ docker run -d \
 
 # View logs
 docker logs -f better-ccflare
-
-# Manage accounts
-docker exec -it better-ccflare better-ccflare --add-account myaccount --mode claude-oauth --priority 0
-docker exec -it better-ccflare better-ccflare --list
 ```
+
+Once the container is running, **open http://localhost:8080 in your browser** to add and manage accounts through the Web UI. This is the recommended way — using `docker exec` to run CLI commands inside the container won't work for OAuth-based account modes since the container has no browser.
 
 **🆕 Environment Variable Support**: Docker Compose now automatically loads `.env` files from the same directory as `docker-compose.yml`. Simply create a `.env` file alongside your `docker-compose.yml` file and the container will use those settings.
 
