@@ -158,6 +158,7 @@ export function createAccountsListHandler(dbOps: DatabaseOperations) {
 			model_mappings: string | null;
 			cross_region_mode: string | null;
 			model_fallbacks: string | null;
+			billing_type: string | null;
 		}>(
 			`
 				SELECT
@@ -185,6 +186,7 @@ export function createAccountsListHandler(dbOps: DatabaseOperations) {
 					model_mappings,
 					cross_region_mode,
 					model_fallbacks,
+					billing_type,
 					CASE
 						WHEN expires_at > ? THEN 1
 						ELSE 0
@@ -464,6 +466,7 @@ export function createAccountsListHandler(dbOps: DatabaseOperations) {
 					hasRefreshToken: !!account.refresh_token, // OAuth accounts have refresh tokens
 					crossRegionMode: account.cross_region_mode,
 					modelFallbacks,
+					billingType: account.billing_type,
 				};
 			}),
 		);
