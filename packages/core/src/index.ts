@@ -36,7 +36,6 @@ export {
 } from "./interval-manager";
 export {
 	createCustomEndpointData,
-	DEFAULT_MODEL_MAPPINGS,
 	getAllowedModelsMessage,
 	getEndpointUrl,
 	getModelFamily,

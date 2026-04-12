@@ -13,16 +13,6 @@ const log = new Logger("ModelMappings");
 export const KNOWN_PATTERNS = ["opus", "haiku", "sonnet"] as const;
 
 /**
- * Default model mappings for OpenAI-compatible providers
- */
-export const DEFAULT_MODEL_MAPPINGS = {
-	// Generic mappings by model family - these support wildcards
-	opus: "openai/gpt-5",
-	sonnet: "openai/gpt-5",
-	haiku: "openai/gpt-5-mini",
-};
-
-/**
  * Get the model family (opus/sonnet/haiku) from a model ID
  * Uses the same pattern matching as mapModelName()
  * @returns Model family or null if no pattern matches

@@ -1,0 +1,262 @@
+import { mapModelName } from "@better-ccflare/core";
+import { Logger } from "@better-ccflare/logger";
+import type { Account } from "@better-ccflare/types";
+import type {
+	AnthropicContentBlock,
+	AnthropicRequest,
+	AnthropicResponse,
+	AnthropicTextContent,
+	AnthropicToolResult,
+	AnthropicToolUse,
+	OpenAIMessage,
+	OpenAIRequest,
+	OpenAIResponse,
+} from "./types";
+import { mapOpenAIFinishReason, removeUriFormat } from "./utils";
+
+const log = new Logger("openai-formats/converters");
+
+/**
+ * Safely parse JSON with error handling
+ */
+export function safeParseJSON(jsonString: string): any {
+	try {
+		return JSON.parse(jsonString);
+	} catch (error) {
+		log.warn(`Failed to parse JSON: ${jsonString}`, error);
+		return {};
+	}
+}
+
+/**
+ * Convert Anthropic request format to OpenAI format
+ */
+export function convertAnthropicRequestToOpenAI(
+	anthropicData: AnthropicRequest,
+	account?: Account,
+): OpenAIRequest {
+	// Map model name if account has custom mappings, otherwise forward as-is
+	const mappedModel = account
+		? mapModelName(anthropicData.model, account)
+		: anthropicData.model;
+
+	const openaiRequest: OpenAIRequest = {
+		model: mappedModel,
+		messages: [],
+	};
+
+	// Map parameters
+	if (anthropicData.max_tokens !== undefined) {
+		openaiRequest.max_tokens = anthropicData.max_tokens;
+	}
+	if (anthropicData.temperature !== undefined) {
+		openaiRequest.temperature = anthropicData.temperature;
+	}
+	if (anthropicData.top_p !== undefined) {
+		openaiRequest.top_p = anthropicData.top_p;
+	}
+	if (anthropicData.stop_sequences !== undefined) {
+		openaiRequest.stop = anthropicData.stop_sequences;
+	}
+	if (anthropicData.stream !== undefined) {
+		openaiRequest.stream = anthropicData.stream;
+		if (anthropicData.stream) {
+			openaiRequest.stream_options = { include_usage: true };
+		}
+	}
+
+	// Convert tools (only if non-empty — Qwen/DashScope rejects empty tools array)
+	if (
+		anthropicData.tools &&
+		Array.isArray(anthropicData.tools) &&
+		anthropicData.tools.length > 0
+	) {
+		openaiRequest.tools = anthropicData.tools.map((tool) => ({
+			type: "function",
+			function: {
+				name: tool.name,
+				description: tool.description,
+				parameters: removeUriFormat(tool.input_schema) as Record<
+					string,
+					unknown
+				>,
+			},
+		}));
+	}
+
+	// Handle system message (Anthropic has it as top-level, OpenAI has it in messages array)
+	const messages: OpenAIMessage[] = [];
+	if (anthropicData.system) {
+		messages.push({
+			role: "system",
+			content:
+				typeof anthropicData.system === "string"
+					? anthropicData.system
+					: anthropicData.system
+							.filter(
+								(
+									b,
+								): b is {
+									type: string;
+									text: string;
+									cache_control?: { type: string };
+								} => b.type === "text" && typeof b.text === "string",
+							)
+							.map((b) => {
+								// Preserve cache_control for prompt caching.
+								// DashScope (Qwen) uses this for ephemeral cache.
+								// Other OpenAI-compatible providers that don't
+								// support it should safely ignore the unknown field.
+								const part: {
+									type: string;
+									text: string;
+									cache_control?: { type: string };
+								} = { type: "text", text: b.text };
+								if (b.cache_control) part.cache_control = b.cache_control;
+								return part;
+							}),
+		});
+	}
+
+	// Add user/assistant messages
+	if (anthropicData.messages && Array.isArray(anthropicData.messages)) {
+		for (const message of anthropicData.messages) {
+			// Handle content arrays (Anthropic supports rich content)
+			if (Array.isArray(message.content)) {
+				// Extract tool_use blocks
+				const toolUseBlocks = message.content.filter(
+					(item): item is AnthropicToolUse => item.type === "tool_use",
+				);
+
+				// Extract text content, preserving cache_control if present
+				const textBlocks = message.content.filter(
+					(part): part is AnthropicTextContent => part.type === "text",
+				);
+				const hasCacheControl = textBlocks.some((part) => part.cache_control);
+
+				let content: OpenAIMessage["content"];
+				if (hasCacheControl) {
+					content = textBlocks.map((part) => {
+						const block: {
+							type: string;
+							text: string;
+							cache_control?: { type: string };
+						} = { type: "text", text: part.text };
+						if (part.cache_control) block.cache_control = part.cache_control;
+						return block;
+					});
+				} else {
+					content = textBlocks.map((part) => part.text).join("") || null;
+				}
+
+				// Create OpenAI message with tool calls if present
+				const openaiMessage: OpenAIMessage = {
+					role: message.role,
+					content,
+				};
+
+				if (toolUseBlocks.length > 0) {
+					openaiMessage.tool_calls = toolUseBlocks.map((toolCall) => ({
+						id: toolCall.id,
+						type: "function",
+						function: {
+							name: toolCall.name,
+							arguments: JSON.stringify(toolCall.input || {}),
+						},
+					}));
+				}
+
+				if (openaiMessage.content || openaiMessage.tool_calls) {
+					messages.push(openaiMessage);
+				}
+
+				// Handle tool_result blocks as separate 'tool' role messages
+				const toolResults = message.content.filter(
+					(item): item is AnthropicToolResult => item.type === "tool_result",
+				);
+				for (const toolResult of toolResults) {
+					messages.push({
+						role: "tool",
+						content: toolResult.content,
+						tool_call_id: toolResult.tool_use_id,
+					});
+				}
+			} else {
+				// Simple string content
+				messages.push({
+					role: message.role,
+					content: message.content,
+				});
+			}
+		}
+	}
+
+	openaiRequest.messages = messages;
+	return openaiRequest;
+}
+
+/**
+ * Convert OpenAI response format to Anthropic format
+ */
+export function convertOpenAIResponseToAnthropic(
+	openaiData: OpenAIResponse,
+): AnthropicResponse {
+	// Handle error responses
+	if (openaiData.error) {
+		return {
+			type: "error",
+			error: {
+				type: openaiData.error.type || "api_error",
+				message: openaiData.error.message || "An error occurred",
+			},
+		};
+	}
+
+	// Handle successful responses
+	const choice = openaiData.choices?.[0];
+	if (!choice) {
+		return {
+			type: "error",
+			error: {
+				type: "invalid_response",
+				message: "Invalid response format from OpenAI provider",
+			},
+		};
+	}
+
+	// Build content array with text and tool calls
+	const content: AnthropicContentBlock[] = [];
+
+	// Add text content if present
+	if (choice.message?.content) {
+		content.push({
+			type: "text",
+			text: choice.message.content,
+		});
+	}
+
+	// Add tool calls if present
+	const toolCalls = choice.message?.tool_calls || [];
+	for (const toolCall of toolCalls) {
+		content.push({
+			type: "tool_use",
+			id: toolCall.id,
+			name: toolCall.function.name,
+			input: safeParseJSON(toolCall.function.arguments || "{}"),
+		});
+	}
+
+	return {
+		id: openaiData.id || `msg_${Date.now()}`,
+		type: "message",
+		role: "assistant",
+		content,
+		model: openaiData.model,
+		stop_reason: mapOpenAIFinishReason(choice.finish_reason),
+		stop_sequence: undefined,
+		usage: {
+			input_tokens: openaiData.usage?.prompt_tokens || 0,
+			output_tokens: openaiData.usage?.completion_tokens || 0,
+		},
+	};
+}

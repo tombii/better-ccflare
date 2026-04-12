@@ -205,6 +205,16 @@
         "@better-ccflare/types": "workspace:*",
       },
     },
+    "packages/openai-formats": {
+      "name": "@better-ccflare/openai-formats",
+      "version": "0.1.0",
+      "dependencies": {
+        "@better-ccflare/core": "workspace:*",
+        "@better-ccflare/http-common": "workspace:*",
+        "@better-ccflare/logger": "workspace:*",
+        "@better-ccflare/types": "workspace:*",
+      },
+    },
     "packages/providers": {
       "name": "@better-ccflare/providers",
       "version": "0.1.0",
@@ -213,6 +223,7 @@
         "@aws-sdk/client-bedrock-runtime": "^3.1014.0",
         "@aws-sdk/credential-providers": "^3.1021.0",
         "@better-ccflare/core": "workspace:*",
+        "@better-ccflare/openai-formats": "workspace:*",
         "google-auth-library": "^10.6.2",
       },
     },
@@ -364,6 +375,8 @@
     "@better-ccflare/logger": ["@better-ccflare/logger@workspace:packages/logger"],
 
     "@better-ccflare/oauth-flow": ["@better-ccflare/oauth-flow@workspace:packages/oauth-flow"],
+
+    "@better-ccflare/openai-formats": ["@better-ccflare/openai-formats@workspace:packages/openai-formats"],
 
     "@better-ccflare/providers": ["@better-ccflare/providers@workspace:packages/providers"],
 

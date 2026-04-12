@@ -322,7 +322,7 @@ describe("OpenAICompatibleProvider", () => {
 			);
 		});
 
-		it("should convert Anthropic request to OpenAI format with model mapping", async () => {
+		it("should pass through model unchanged when no mappings configured", async () => {
 			const anthropicRequest = {
 				model: "claude-3-5-haiku-20241022",
 				max_tokens: 1000,
@@ -344,7 +344,7 @@ describe("OpenAICompatibleProvider", () => {
 			);
 			const body = await transformed.json();
 
-			expect(body.model).toBe("openai/gpt-5-mini"); // Haiku maps to gpt-5-mini
+			expect(body.model).toBe("claude-3-5-haiku-20241022");
 			expect(body.max_tokens).toBe(1000);
 			expect(body.temperature).toBe(0.7);
 			expect(body.stop).toEqual(["END"]);
@@ -359,7 +359,7 @@ describe("OpenAICompatibleProvider", () => {
 			});
 		});
 
-		it("should map opus models to openai/gpt-5", async () => {
+		it("should map models when account has model_mappings configured", async () => {
 			const anthropicRequest = {
 				model: "claude-3-opus-20240229",
 				max_tokens: 1000,
@@ -372,16 +372,25 @@ describe("OpenAICompatibleProvider", () => {
 				body: JSON.stringify(anthropicRequest),
 			});
 
+			const accountWithMappings: Account = {
+				...mockAccount,
+				model_mappings: JSON.stringify({
+					opus: "openai/gpt-5",
+					sonnet: "openai/gpt-5",
+					haiku: "openai/gpt-5-mini",
+				}),
+			};
+
 			const transformed = await provider.transformRequestBody(
 				request,
-				mockAccount,
+				accountWithMappings,
 			);
 			const body = await transformed.json();
 
 			expect(body.model).toBe("openai/gpt-5");
 		});
 
-		it("should map sonnet models to openai/gpt-5", async () => {
+		it("should map sonnet models when account has model_mappings configured", async () => {
 			const anthropicRequest = {
 				model: "claude-3-5-sonnet-20241022",
 				max_tokens: 1000,
@@ -394,16 +403,23 @@ describe("OpenAICompatibleProvider", () => {
 				body: JSON.stringify(anthropicRequest),
 			});
 
+			const accountWithMappings: Account = {
+				...mockAccount,
+				model_mappings: JSON.stringify({
+					sonnet: "openai/gpt-5",
+				}),
+			};
+
 			const transformed = await provider.transformRequestBody(
 				request,
-				mockAccount,
+				accountWithMappings,
 			);
 			const body = await transformed.json();
 
 			expect(body.model).toBe("openai/gpt-5");
 		});
 
-		it("should map haiku models to openai/gpt-5-mini", async () => {
+		it("should map haiku models when account has model_mappings configured", async () => {
 			const anthropicRequest = {
 				model: "claude-3-haiku-20240307",
 				max_tokens: 1000,
@@ -416,16 +432,23 @@ describe("OpenAICompatibleProvider", () => {
 				body: JSON.stringify(anthropicRequest),
 			});
 
+			const accountWithMappings: Account = {
+				...mockAccount,
+				model_mappings: JSON.stringify({
+					haiku: "openai/gpt-5-mini",
+				}),
+			};
+
 			const transformed = await provider.transformRequestBody(
 				request,
-				mockAccount,
+				accountWithMappings,
 			);
 			const body = await transformed.json();
 
 			expect(body.model).toBe("openai/gpt-5-mini");
 		});
 
-		it("should handle unknown models with fallback mapping", async () => {
+		it("should pass through unknown models unchanged when no mappings configured", async () => {
 			const anthropicRequest = {
 				model: "unknown-model-name",
 				max_tokens: 1000,
@@ -444,7 +467,7 @@ describe("OpenAICompatibleProvider", () => {
 			);
 			const body = await transformed.json();
 
-			expect(body.model).toBe("openai/gpt-5"); // Default fallback
+			expect(body.model).toBe("unknown-model-name");
 		});
 
 		it("should handle content arrays in Anthropic format", async () => {

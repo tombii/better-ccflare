@@ -1,8 +1,11 @@
 import { getEndpointUrl, validateEndpointUrl } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
+import {
+	convertAnthropicPathToOpenAI,
+	type OpenAIRequest,
+} from "@better-ccflare/openai-formats";
 import type { Account } from "@better-ccflare/types";
 import type { RateLimitInfo, TokenRefreshResult } from "../../types";
-import type { OpenAIRequest } from "../openai/provider";
 import { OpenAICompatibleProvider } from "../openai/provider";
 import { refreshQwenTokens } from "./device-oauth";
 
@@ -74,7 +77,10 @@ function sanitizeForQwen(text: string): string {
 			"To report a bug or provide feedback, please use the /bug command",
 		);
 		// "Get help with using Claude Code"
-		l = l.replace(/Get help with using Claude Code/, "Get help with using Qwen Code");
+		l = l.replace(
+			/Get help with using Claude Code/,
+			"Get help with using Qwen Code",
+		);
 		out.push(l);
 	}
 	return out.join("\n");
@@ -113,7 +119,7 @@ export class QwenProvider extends OpenAICompatibleProvider {
 		}
 
 		// Convert Anthropic paths to OpenAI-compatible paths (inherited logic)
-		let openaiPath = this.convertAnthropicPathToOpenAI(path);
+		let openaiPath = convertAnthropicPathToOpenAI(path);
 		if (endpoint.endsWith("/v1") && openaiPath.startsWith("/v1/")) {
 			openaiPath = openaiPath.replace(/^\/v1/, "");
 		}

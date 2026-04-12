@@ -17,6 +17,7 @@
 		"@aws-sdk/client-bedrock-runtime": "^3.1014.0",
 		"@aws-sdk/credential-providers": "^3.1021.0",
 		"@better-ccflare/core": "workspace:*",
+		"@better-ccflare/openai-formats": "workspace:*",
 		"google-auth-library": "^10.6.2"
 	}
 }
