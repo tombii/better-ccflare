@@ -762,10 +762,7 @@ export default async function startServer(options?: {
 	autoRefreshScheduler.start();
 
 	// Initialize cache keepalive scheduler
-	cacheKeepaliveScheduler = new CacheKeepaliveScheduler(
-		proxyContext,
-		config,
-	);
+	cacheKeepaliveScheduler = new CacheKeepaliveScheduler(proxyContext, config);
 	cacheKeepaliveScheduler.start();
 
 	// Initialize token health monitoring service

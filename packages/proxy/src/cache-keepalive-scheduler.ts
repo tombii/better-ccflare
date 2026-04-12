@@ -77,7 +77,9 @@ export class CacheKeepaliveScheduler {
 		const accounts = cacheBodyStore.getAllCachedAccounts();
 
 		if (accounts.length === 0) {
-			log.debug("No accounts with cached requests in memory, skipping keepalive");
+			log.debug(
+				"No accounts with cached requests in memory, skipping keepalive",
+			);
 			return;
 		}
 
