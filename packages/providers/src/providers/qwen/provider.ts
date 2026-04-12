@@ -1,8 +1,10 @@
 import { getEndpointUrl, validateEndpointUrl } from "@better-ccflare/core";
+import { sanitizeProxyHeaders as sanitizeHeaders } from "@better-ccflare/http-common";
 import { Logger } from "@better-ccflare/logger";
 import {
 	convertAnthropicPathToOpenAI,
 	type OpenAIRequest,
+	transformStreamingResponse,
 } from "@better-ccflare/openai-formats";
 import type { Account } from "@better-ccflare/types";
 import type { RateLimitInfo, TokenRefreshResult } from "../../types";
@@ -88,6 +90,62 @@ function sanitizeForQwen(text: string): string {
 
 export class QwenProvider extends OpenAICompatibleProvider {
 	override name = "qwen";
+
+	/**
+	 * Override to save raw Qwen SSE to /tmp for debugging tool call chunks.
+	 * Remove once incremental argument handling is confirmed working.
+	 */
+	override async processResponse(
+		response: Response,
+		account: Account | null,
+	): Promise<Response> {
+		const contentType = response.headers.get("content-type");
+		if (contentType?.includes("text/event-stream") && response.body) {
+			const [rawStream, passThrough] = response.body.tee();
+
+			// Dump raw SSE to /tmp in background
+			(async () => {
+				try {
+					const reader = rawStream.getReader();
+					const chunks: Uint8Array[] = [];
+					let totalSize = 0;
+					const MAX_DUMP_SIZE = 512 * 1024;
+					while (totalSize < MAX_DUMP_SIZE) {
+						const { value, done } = await reader.read();
+						if (done) break;
+						chunks.push(value);
+						totalSize += value.length;
+					}
+					reader.cancel();
+					const data = Buffer.concat(chunks).toString("utf-8");
+					const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+					const path = `/tmp/qwen-raw-${timestamp}.sse.log`;
+					const fs = await import("node:fs/promises");
+					await fs.writeFile(path, data);
+					log.info(`Saved raw Qwen SSE to ${path} (${totalSize} bytes)`);
+				} catch (err) {
+					log.debug(`Failed to save raw Qwen SSE: ${(err as Error).message}`);
+				}
+			})();
+
+			return new Response(
+				transformStreamingResponse(
+					new Response(passThrough, {
+						status: response.status,
+						statusText: response.statusText,
+						headers: response.headers,
+					}),
+				).body as ReadableStream,
+				{
+					status: response.status,
+					statusText: response.statusText,
+					headers: sanitizeHeaders(response.headers),
+				},
+			);
+		}
+
+		return super.processResponse(response, account);
+	}
 
 	override async refreshToken(
 		account: Account,

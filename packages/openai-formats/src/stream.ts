@@ -315,6 +315,31 @@ export function transformStreamingResponse(response: Response): Response {
 										// Handle case where arguments are reset (rare but possible)
 										log.debug(`Tool call arguments reset for index ${idx}`);
 										context.toolCallAccumulators[idx] = newArgs;
+									} else if (
+										!newArgs.startsWith(oldArgs) &&
+										newArgs.length > 0
+									) {
+										// Incremental mode: provider sends only the new chunk,
+										// not the full accumulated string. Some providers (e.g. Qwen
+										// via DashScope) use this mode. Append to accumulator and
+										// forward the chunk as-is.
+										const contentBlockDelta = {
+											type: "content_block_delta",
+											index: idx,
+											delta: {
+												type: "input_json_delta",
+												partial_json: newArgs,
+											},
+										};
+										controller.enqueue(
+											encoder.encode(`event: content_block_delta\n`),
+										);
+										controller.enqueue(
+											encoder.encode(
+												`data: ${JSON.stringify(contentBlockDelta)}\n\n`,
+											),
+										);
+										context.toolCallAccumulators[idx] = oldArgs + newArgs;
 									}
 								}
 							} else if (delta?.content) {
