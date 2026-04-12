@@ -18,7 +18,10 @@ export class AccountRepository extends BaseRepository<Account> {
 				COALESCE(auto_fallback_enabled, 0) as auto_fallback_enabled,
 				COALESCE(auto_refresh_enabled, 0) as auto_refresh_enabled,
 				custom_endpoint,
-				model_mappings
+				model_mappings,
+				cross_region_mode,
+				model_fallbacks,
+				billing_type
 			FROM accounts
 			ORDER BY priority DESC
 		`);
@@ -38,7 +41,10 @@ export class AccountRepository extends BaseRepository<Account> {
 				COALESCE(auto_fallback_enabled, 0) as auto_fallback_enabled,
 				COALESCE(auto_refresh_enabled, 0) as auto_refresh_enabled,
 				custom_endpoint,
-				model_mappings
+				model_mappings,
+				cross_region_mode,
+				model_fallbacks,
+				billing_type
 			FROM accounts
 			WHERE id = ?
 		`,
