@@ -479,6 +479,26 @@ export async function proxyWithAccount(
 		// model_mappings arrays and legacy model_fallbacks. We already tried index 0
 		// (the primary), so start at index 1.
 		if (await isModelUnavailableError(rawResponse)) {
+			// Log 429 response headers for debugging upstream rate-limit info
+			if (rawResponse.status === 429) {
+				const rlHeaders: Record<string, string> = {};
+				rawResponse.headers.forEach((v, k) => {
+					const lk = k.toLowerCase();
+					if (
+						lk.includes("rate") ||
+						lk.includes("retry") ||
+						lk.includes("limit") ||
+						lk.includes("reset") ||
+						lk.includes("x-") ||
+						lk.includes("quota")
+					) {
+						rlHeaders[k] = v;
+					}
+				});
+				log.warn(
+					`Account ${account.name} received 429 — headers: ${JSON.stringify(rlHeaders)}`,
+				);
+			}
 			let requestedModel: string | null = null;
 			if (effectiveBodyBuffer) {
 				try {
@@ -492,7 +512,16 @@ export async function proxyWithAccount(
 			if (requestedModel) {
 				const modelList = getModelList(requestedModel, account);
 				if (!modelList || modelList.length <= 1) {
-					// No fallback models configured — return the original response
+					// No fallback models configured — fail over to the next account.
+					// 429s should never be forwarded to the client when other
+					// accounts are available; only genuine model-not-found
+					// errors (404/400) warrant returning the upstream response.
+					if (rawResponse.status === 429) {
+						log.warn(
+							`Account ${account.name} rate-limited (429), no model fallbacks — failing over to next account`,
+						);
+						return null;
+					}
 					return rawResponse;
 				}
 
