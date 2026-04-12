@@ -57,6 +57,7 @@ export function transformStreamingResponse(response: Response): Response {
 					completionTokens: 0,
 					encounteredToolCall: false,
 					toolCallAccumulators: {},
+					toolCallBuffered: new Set<number>(),
 					maxToolCallLength: 1_000_000,
 					maxToolCallIndex: 100,
 				} as TransformStreamContext;
@@ -90,18 +91,16 @@ export function transformStreamingResponse(response: Response): Response {
 									const accumulated =
 										context.toolCallAccumulators[numIdx] || "";
 
-									// Repair truncated JSON before closing the block
-									const repair = repairTruncatedToolJson(accumulated);
-									if (repair) {
-										log.warn(
-											`Repairing truncated tool call JSON at index ${idx} (appending ${JSON.stringify(repair)})`,
-										);
-										const repairDelta = {
+									if (context.toolCallBuffered.has(numIdx)) {
+										// Incremental mode: buffered all chunks, emit complete JSON now
+										const repair = repairTruncatedToolJson(accumulated);
+										const finalJson = accumulated + repair;
+										const contentBlockDelta = {
 											type: "content_block_delta",
 											index: numIdx,
 											delta: {
 												type: "input_json_delta",
-												partial_json: repair,
+												partial_json: finalJson,
 											},
 										};
 										controller.enqueue(
@@ -109,9 +108,34 @@ export function transformStreamingResponse(response: Response): Response {
 										);
 										controller.enqueue(
 											encoder.encode(
-												`data: ${JSON.stringify(repairDelta)}\n\n`,
+												`data: ${JSON.stringify(contentBlockDelta)}\n\n`,
 											),
 										);
+									} else {
+										// Cumulative mode: deltas were already streamed,
+										// only repair if truncated
+										const repair = repairTruncatedToolJson(accumulated);
+										if (repair) {
+											log.warn(
+												`Repairing truncated tool call JSON at index ${idx} (appending ${JSON.stringify(repair)})`,
+											);
+											const repairDelta = {
+												type: "content_block_delta",
+												index: numIdx,
+												delta: {
+													type: "input_json_delta",
+													partial_json: repair,
+												},
+											};
+											controller.enqueue(
+												encoder.encode(`event: content_block_delta\n`),
+											);
+											controller.enqueue(
+												encoder.encode(
+													`data: ${JSON.stringify(repairDelta)}\n\n`,
+												),
+											);
+										}
 									}
 
 									const contentBlockStop = {
@@ -278,7 +302,7 @@ export function transformStreamingResponse(response: Response): Response {
 										);
 									}
 
-									// Accumulate and send argument deltas with validation
+									// Accumulate argument deltas
 									const newArgs = toolCall.function?.arguments || "";
 									if (newArgs.length > context.maxToolCallLength) {
 										log.warn(
@@ -288,48 +312,19 @@ export function transformStreamingResponse(response: Response): Response {
 									}
 									const oldArgs = context.toolCallAccumulators[idx] || "";
 
-									// Validate that new arguments start with old arguments (streaming consistency)
 									if (
 										newArgs.startsWith(oldArgs) &&
 										newArgs.length > oldArgs.length
 									) {
+										// Cumulative mode: standard OpenAI behavior.
+										// Emit only the incremental diff as a delta.
 										const deltaText = newArgs.substring(oldArgs.length);
 										const contentBlockDelta = {
 											type: "content_block_delta",
 											index: idx,
 											delta: {
-												type: "input_json_delta",
-												partial_json: deltaText,
-											},
-										};
-										controller.enqueue(
-											encoder.encode(`event: content_block_delta\n`),
-										);
-										controller.enqueue(
-											encoder.encode(
-												`data: ${JSON.stringify(contentBlockDelta)}\n\n`,
-											),
-										);
-										context.toolCallAccumulators[idx] = newArgs;
-									} else if (newArgs.length < oldArgs.length) {
-									} else if (
-										newArgs.startsWith(oldArgs) &&
-										newArgs.length < oldArgs.length
-									) {
-										// Reset: provider restarted arguments from a shorter prefix
-										log.debug(`Tool call arguments reset for index ${idx}`);
-										context.toolCallAccumulators[idx] = newArgs;
-									} else if (newArgs.length > 0) {
-										// Incremental mode: provider sends only the new chunk,
-										// not the full accumulated string. Some providers (e.g. Qwen
-										// via DashScope) use this mode. Append to accumulator and
-										// forward the chunk as-is.
-										const contentBlockDelta = {
-											type: "content_block_delta",
-											index: idx,
-											delta: {
 											type: "input_json_delta",
-											partial_json: newArgs,
+											partial_json: deltaText,
 											},
 										};
 										controller.enqueue(
@@ -340,8 +335,20 @@ export function transformStreamingResponse(response: Response): Response {
 											`data: ${JSON.stringify(contentBlockDelta)}\n\n`,
 											),
 										);
-										context.toolCallAccumulators[idx] =
-											oldArgs + newArgs;
+										context.toolCallAccumulators[idx] = newArgs;
+									} else if (
+										newArgs.startsWith(oldArgs) &&
+										newArgs.length < oldArgs.length
+									) {
+										// Reset: provider restarted arguments from a shorter prefix
+										log.debug(`Tool call arguments reset for index ${idx}`);
+										context.toolCallAccumulators[idx] = newArgs;
+									} else if (newArgs.length > 0) {
+										// Incremental mode (e.g. Qwen/DashScope): chunks don't
+										// align to JSON token boundaries. Buffer without emitting;
+										// the complete JSON will be sent as a single delta at [DONE].
+										context.toolCallAccumulators[idx] = oldArgs + newArgs;
+										context.toolCallBuffered.add(idx);
 									}
 								}
 							} else if (delta?.content) {
@@ -409,25 +416,45 @@ export function transformStreamingResponse(response: Response): Response {
 						const numIdx = Number.parseInt(idx, 10);
 						const accumulated = context.toolCallAccumulators[numIdx] || "";
 
-						const repair = repairTruncatedToolJson(accumulated);
-						if (repair) {
-							log.warn(
-								`flush: Repairing truncated tool call JSON at index ${idx} (appending ${JSON.stringify(repair)})`,
-							);
-							const repairDelta = {
+						if (context.toolCallBuffered.has(numIdx)) {
+							// Incremental mode: emit complete buffered JSON
+							const repair = repairTruncatedToolJson(accumulated);
+							const finalJson = accumulated + repair;
+							const contentBlockDelta = {
 								type: "content_block_delta",
 								index: numIdx,
 								delta: {
 									type: "input_json_delta",
-									partial_json: repair,
+									partial_json: finalJson,
 								},
 							};
 							controller.enqueue(
 								encoder.encode(`event: content_block_delta\n`),
 							);
 							controller.enqueue(
-								encoder.encode(`data: ${JSON.stringify(repairDelta)}\n\n`),
+								encoder.encode(`data: ${JSON.stringify(contentBlockDelta)}\n\n`),
 							);
+						} else {
+							const repair = repairTruncatedToolJson(accumulated);
+							if (repair) {
+								log.warn(
+									`flush: Repairing truncated tool call JSON at index ${idx} (appending ${JSON.stringify(repair)})`,
+								);
+								const repairDelta = {
+									type: "content_block_delta",
+									index: numIdx,
+									delta: {
+										type: "input_json_delta",
+										partial_json: repair,
+									},
+								};
+								controller.enqueue(
+									encoder.encode(`event: content_block_delta\n`),
+								);
+								controller.enqueue(
+									encoder.encode(`data: ${JSON.stringify(repairDelta)}\n\n`),
+								);
+							}
 						}
 
 						const contentBlockStop = {
