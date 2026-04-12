@@ -114,8 +114,6 @@ export interface TransformStreamContext {
 	completionTokens: number;
 	encounteredToolCall: boolean;
 	toolCallAccumulators: Record<number, string>;
-	/** Indices that were accumulated in incremental mode (no deltas emitted yet) */
-	toolCallBuffered: Set<number>;
 	maxToolCallLength: number;
 	maxToolCallIndex: number;
 }

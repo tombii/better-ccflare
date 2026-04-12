@@ -32,7 +32,101 @@ export function sanitizeHeaders(headers: Headers): Headers {
 }
 
 /**
- * Transform OpenAI Server-Sent Events (SSE) streaming response to Anthropic SSE format
+ * Emit a single content_block_delta event with the complete accumulated JSON.
+ * Mirrors qwen-code's StreamingToolCallParser: buffer all chunks, emit at stream end.
+ */
+function emitToolCallJson(
+	controller: TransformStreamDefaultController,
+	encoder: TextEncoder,
+	index: number,
+	accumulated: string,
+) {
+	const repair = repairTruncatedToolJson(accumulated);
+	const finalJson = accumulated + repair;
+
+	// Validate the result is parseable JSON
+	try {
+		JSON.parse(finalJson);
+	} catch {
+		log.warn(
+			`Tool call JSON at index ${index} still invalid after repair: ${finalJson.slice(0, 200)}`,
+		);
+	}
+
+	const contentBlockDelta = {
+		type: "content_block_delta",
+		index,
+		delta: {
+			type: "input_json_delta",
+			partial_json: finalJson,
+		},
+	};
+	controller.enqueue(encoder.encode(`event: content_block_delta\n`));
+	controller.enqueue(
+		encoder.encode(`data: ${JSON.stringify(contentBlockDelta)}\n\n`),
+	);
+}
+
+/**
+ * Emit content_block_stop, message_delta, and message_stop events.
+ * Shared between [DONE] handler and flush handler.
+ */
+function emitStreamEnd(
+	controller: TransformStreamDefaultController,
+	encoder: TextEncoder,
+	stopReason: "tool_use" | "end_turn",
+	promptTokens: number,
+	completionTokens: number,
+	toolCallAccumulators: Record<number, string> | null,
+) {
+	// Stop all tool call blocks
+	if (toolCallAccumulators) {
+		for (const idx in toolCallAccumulators) {
+			const numIdx = Number.parseInt(idx, 10);
+			const contentBlockStop = {
+				type: "content_block_stop",
+				index: numIdx,
+			};
+			controller.enqueue(encoder.encode(`event: content_block_stop\n`));
+			controller.enqueue(
+				encoder.encode(`data: ${JSON.stringify(contentBlockStop)}\n\n`),
+			);
+		}
+	}
+
+	// Send message_delta with appropriate stop_reason
+	const messageDelta = {
+		type: "message_delta",
+		delta: {
+			stop_reason: stopReason,
+			stop_sequence: null,
+		},
+		usage: {
+			input_tokens: promptTokens,
+			output_tokens: completionTokens,
+		},
+	};
+	controller.enqueue(encoder.encode(`event: message_delta\n`));
+	controller.enqueue(
+		encoder.encode(`data: ${JSON.stringify(messageDelta)}\n\n`),
+	);
+
+	// Send message_stop
+	const messageStop = {
+		type: "message_stop",
+	};
+	controller.enqueue(encoder.encode(`event: message_stop\n`));
+	controller.enqueue(
+		encoder.encode(`data: ${JSON.stringify(messageStop)}\n\n`),
+	);
+}
+
+/**
+ * Transform OpenAI Server-Sent Events (SSE) streaming response to Anthropic SSE format.
+ *
+ * Tool call handling mirrors qwen-code's StreamingToolCallParser:
+ * ALL argument chunks are buffered (appended), no deltas are emitted during streaming.
+ * The complete accumulated JSON is emitted as a single input_json_delta at [DONE] or flush.
  */
 export function transformStreamingResponse(response: Response): Response {
 	if (!response.body) {
@@ -57,7 +151,6 @@ export function transformStreamingResponse(response: Response): Response {
 					completionTokens: 0,
 					encounteredToolCall: false,
 					toolCallAccumulators: {},
-					toolCallBuffered: new Set<number>(),
 					maxToolCallLength: 1_000_000,
 					maxToolCallIndex: 100,
 				} as TransformStreamContext;
@@ -83,120 +176,34 @@ export function transformStreamingResponse(response: Response): Response {
 
 						// Handle [DONE] marker
 						if (dataStr === "[DONE]") {
-							// Send content_block_stop for tool calls or text
 							if (context.encounteredToolCall) {
-								// Stop all tool call blocks
+								// Emit buffered JSON for all tool calls, then stop events
 								for (const idx in context.toolCallAccumulators) {
 									const numIdx = Number.parseInt(idx, 10);
 									const accumulated =
 										context.toolCallAccumulators[numIdx] || "";
-
-									if (context.toolCallBuffered.has(numIdx)) {
-										// Incremental mode: buffered all chunks, emit complete JSON now
-										const repair = repairTruncatedToolJson(accumulated);
-										const finalJson = accumulated + repair;
-										const contentBlockDelta = {
-											type: "content_block_delta",
-											index: numIdx,
-											delta: {
-												type: "input_json_delta",
-												partial_json: finalJson,
-											},
-										};
-										controller.enqueue(
-											encoder.encode(`event: content_block_delta\n`),
-										);
-										controller.enqueue(
-											encoder.encode(
-												`data: ${JSON.stringify(contentBlockDelta)}\n\n`,
-											),
-										);
-									} else {
-										// Cumulative mode: deltas were already streamed,
-										// only repair if truncated
-										const repair = repairTruncatedToolJson(accumulated);
-										if (repair) {
-											log.warn(
-												`Repairing truncated tool call JSON at index ${idx} (appending ${JSON.stringify(repair)})`,
-											);
-											const repairDelta = {
-												type: "content_block_delta",
-												index: numIdx,
-												delta: {
-													type: "input_json_delta",
-													partial_json: repair,
-												},
-											};
-											controller.enqueue(
-												encoder.encode(`event: content_block_delta\n`),
-											);
-											controller.enqueue(
-												encoder.encode(
-													`data: ${JSON.stringify(repairDelta)}\n\n`,
-												),
-											);
-										}
-									}
-
-									const contentBlockStop = {
-										type: "content_block_stop",
-										index: numIdx,
-									};
-									controller.enqueue(
-										encoder.encode(`event: content_block_stop\n`),
-									);
-									controller.enqueue(
-										encoder.encode(
-											`data: ${JSON.stringify(contentBlockStop)}\n\n`,
-										),
-									);
+									emitToolCallJson(controller, encoder, numIdx, accumulated);
 								}
-								// Cleanup accumulators after processing
-								context.toolCallAccumulators = {};
-							} else if (context.hasSentContentBlockStart) {
-								const contentBlockStop = {
-									type: "content_block_stop",
-									index: 0,
-								};
-								controller.enqueue(
-									encoder.encode(`event: content_block_stop\n`),
+								emitStreamEnd(
+									controller,
+									encoder,
+									"tool_use",
+									context.promptTokens,
+									context.completionTokens,
+									context.toolCallAccumulators,
 								);
-								controller.enqueue(
-									encoder.encode(
-										`data: ${JSON.stringify(contentBlockStop)}\n\n`,
-									),
+							} else if (context.hasSentContentBlockStart) {
+								emitStreamEnd(
+									controller,
+									encoder,
+									"end_turn",
+									context.promptTokens,
+									context.completionTokens,
+									null,
 								);
 							}
 
-							// Send message_delta with appropriate stop_reason
-							const messageDelta = {
-								type: "message_delta",
-								delta: {
-									stop_reason: context.encounteredToolCall
-										? "tool_use"
-										: "end_turn",
-									stop_sequence: null,
-								},
-								usage: {
-									input_tokens: context.promptTokens,
-									output_tokens: context.completionTokens,
-								},
-							};
-							controller.enqueue(encoder.encode(`event: message_delta\n`));
-							controller.enqueue(
-								encoder.encode(`data: ${JSON.stringify(messageDelta)}\n\n`),
-							);
-
-							// Send message_stop
-							const messageStop = {
-								type: "message_stop",
-							};
-							controller.enqueue(encoder.encode(`event: message_stop\n`));
-							controller.enqueue(
-								encoder.encode(`data: ${JSON.stringify(messageStop)}\n\n`),
-							);
-
-							// Cleanup entire context after stream completion to prevent memory leaks
+							// Cleanup entire context after stream completion
 							(this as any).context = null;
 							continue;
 						}
@@ -255,7 +262,7 @@ export function transformStreamingResponse(response: Response): Response {
 
 							const delta = data.choices?.[0]?.delta;
 
-							// Handle tool call deltas
+							// Handle tool call deltas — always buffer, never emit
 							if (delta?.tool_calls) {
 								for (const toolCall of delta.tool_calls) {
 									context.encounteredToolCall = true;
@@ -302,7 +309,8 @@ export function transformStreamingResponse(response: Response): Response {
 										);
 									}
 
-									// Accumulate argument deltas
+									// Buffer argument chunk (mirrors qwen-code's StreamingToolCallParser:
+									// currentBuffer + chunk, emit complete JSON at stream end)
 									const newArgs = toolCall.function?.arguments || "";
 									if (newArgs.length > context.maxToolCallLength) {
 										log.warn(
@@ -310,46 +318,8 @@ export function transformStreamingResponse(response: Response): Response {
 										);
 										continue;
 									}
-									const oldArgs = context.toolCallAccumulators[idx] || "";
-
-									if (
-										newArgs.startsWith(oldArgs) &&
-										newArgs.length > oldArgs.length
-									) {
-										// Cumulative mode: standard OpenAI behavior.
-										// Emit only the incremental diff as a delta.
-										const deltaText = newArgs.substring(oldArgs.length);
-										const contentBlockDelta = {
-											type: "content_block_delta",
-											index: idx,
-											delta: {
-											type: "input_json_delta",
-											partial_json: deltaText,
-											},
-										};
-										controller.enqueue(
-											encoder.encode(`event: content_block_delta\n`),
-										);
-										controller.enqueue(
-											encoder.encode(
-											`data: ${JSON.stringify(contentBlockDelta)}\n\n`,
-											),
-										);
-										context.toolCallAccumulators[idx] = newArgs;
-									} else if (
-										newArgs.startsWith(oldArgs) &&
-										newArgs.length < oldArgs.length
-									) {
-										// Reset: provider restarted arguments from a shorter prefix
-										log.debug(`Tool call arguments reset for index ${idx}`);
-										context.toolCallAccumulators[idx] = newArgs;
-									} else if (newArgs.length > 0) {
-										// Incremental mode (e.g. Qwen/DashScope): chunks don't
-										// align to JSON token boundaries. Buffer without emitting;
-										// the complete JSON will be sent as a single delta at [DONE].
-										context.toolCallAccumulators[idx] = oldArgs + newArgs;
-										context.toolCallBuffered.add(idx);
-									}
+									context.toolCallAccumulators[idx] =
+										(context.toolCallAccumulators[idx] || "") + newArgs;
 								}
 							} else if (delta?.content) {
 								// Send content_block_start on first content
@@ -403,121 +373,40 @@ export function transformStreamingResponse(response: Response): Response {
 				const context = (this as any).context as TransformStreamContext;
 				if (!context) return;
 
-				// Stream ended without [DONE] (e.g. Qwen timeout/truncation).
-				// Emit repair + stop events so the client gets a valid response.
+				// Stream ended without [DONE] (e.g. timeout/truncation).
+				// Emit buffered JSON + stop events so the client gets a valid response.
 				if (
 					context.encounteredToolCall &&
 					Object.keys(context.toolCallAccumulators).length > 0
 				) {
 					log.warn(
-						"Stream terminated without [DONE] — emitting repair+stop for incomplete tool calls",
+						"Stream terminated without [DONE] — emitting buffered tool calls + stop events",
 					);
 					for (const idx in context.toolCallAccumulators) {
 						const numIdx = Number.parseInt(idx, 10);
 						const accumulated = context.toolCallAccumulators[numIdx] || "";
-
-						if (context.toolCallBuffered.has(numIdx)) {
-							// Incremental mode: emit complete buffered JSON
-							const repair = repairTruncatedToolJson(accumulated);
-							const finalJson = accumulated + repair;
-							const contentBlockDelta = {
-								type: "content_block_delta",
-								index: numIdx,
-								delta: {
-									type: "input_json_delta",
-									partial_json: finalJson,
-								},
-							};
-							controller.enqueue(
-								encoder.encode(`event: content_block_delta\n`),
-							);
-							controller.enqueue(
-								encoder.encode(`data: ${JSON.stringify(contentBlockDelta)}\n\n`),
-							);
-						} else {
-							const repair = repairTruncatedToolJson(accumulated);
-							if (repair) {
-								log.warn(
-									`flush: Repairing truncated tool call JSON at index ${idx} (appending ${JSON.stringify(repair)})`,
-								);
-								const repairDelta = {
-									type: "content_block_delta",
-									index: numIdx,
-									delta: {
-										type: "input_json_delta",
-										partial_json: repair,
-									},
-								};
-								controller.enqueue(
-									encoder.encode(`event: content_block_delta\n`),
-								);
-								controller.enqueue(
-									encoder.encode(`data: ${JSON.stringify(repairDelta)}\n\n`),
-								);
-							}
-						}
-
-						const contentBlockStop = {
-							type: "content_block_stop",
-							index: numIdx,
-						};
-						controller.enqueue(encoder.encode(`event: content_block_stop\n`));
-						controller.enqueue(
-							encoder.encode(`data: ${JSON.stringify(contentBlockStop)}\n\n`),
-						);
+						emitToolCallJson(controller, encoder, numIdx, accumulated);
 					}
-
-					// Emit message_delta + message_stop
-					const messageDelta = {
-						type: "message_delta",
-						delta: {
-							stop_reason: "tool_use",
-							stop_sequence: null,
-						},
-						usage: {
-							input_tokens: context.promptTokens,
-							output_tokens: context.completionTokens,
-						},
-					};
-					controller.enqueue(encoder.encode(`event: message_delta\n`));
-					controller.enqueue(
-						encoder.encode(`data: ${JSON.stringify(messageDelta)}\n\n`),
-					);
-					const messageStop = { type: "message_stop" };
-					controller.enqueue(encoder.encode(`event: message_stop\n`));
-					controller.enqueue(
-						encoder.encode(`data: ${JSON.stringify(messageStop)}\n\n`),
+					emitStreamEnd(
+						controller,
+						encoder,
+						"tool_use",
+						context.promptTokens,
+						context.completionTokens,
+						context.toolCallAccumulators,
 					);
 				} else if (
 					context.hasSentContentBlockStart &&
 					!context.encounteredToolCall
 				) {
-					// Text stream ended without [DONE]
 					log.warn("Stream terminated without [DONE] — closing text block");
-					const contentBlockStop = {
-						type: "content_block_stop",
-						index: 0,
-					};
-					controller.enqueue(encoder.encode(`event: content_block_stop\n`));
-					controller.enqueue(
-						encoder.encode(`data: ${JSON.stringify(contentBlockStop)}\n\n`),
-					);
-					const messageDelta = {
-						type: "message_delta",
-						delta: { stop_reason: "end_turn", stop_sequence: null },
-						usage: {
-							input_tokens: context.promptTokens,
-							output_tokens: context.completionTokens,
-						},
-					};
-					controller.enqueue(encoder.encode(`event: message_delta\n`));
-					controller.enqueue(
-						encoder.encode(`data: ${JSON.stringify(messageDelta)}\n\n`),
-					);
-					const messageStop = { type: "message_stop" };
-					controller.enqueue(encoder.encode(`event: message_stop\n`));
-					controller.enqueue(
-						encoder.encode(`data: ${JSON.stringify(messageStop)}\n\n`),
+					emitStreamEnd(
+						controller,
+						encoder,
+						"end_turn",
+						context.promptTokens,
+						context.completionTokens,
+						null,
 					);
 				}
 
@@ -525,10 +414,6 @@ export function transformStreamingResponse(response: Response): Response {
 			},
 		}),
 	);
-
-	// The issue: response.clone() on a pipeThrough'd Response returns the original
-	// untransformed body in some environments. Solution: Manually tee the stream
-	// and attach the analytics stream as a property for response-handler to use.
 
 	// Tee the transformed stream into two independent streams
 	const [clientStream, analyticsStream] = transformedBody.tee();
@@ -541,7 +426,6 @@ export function transformStreamingResponse(response: Response): Response {
 	});
 
 	// Attach the analytics stream as a non-enumerable Symbol property
-	// The response-handler will check for this Symbol and use it instead of calling clone()
 	Object.defineProperty(clientResponse, ANALYTICS_STREAM_SYMBOL, {
 		value: analyticsStream,
 		writable: false,

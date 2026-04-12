@@ -59,7 +59,7 @@ Note: `CLAUDE_CLI_VERSION` in `packages/core/src/version.ts` tracks the official
 - First run: `bun run build` (builds dashboard/CLI)
 - Start: `bun start` (port 8080) or `bun start --serve --port 8081` (testing)
 - Startup: Takes ~15 seconds, wait before testing with curl
-- Production: systemd service uses npm version. Test local changes on port 8081, NOT via `systemctl restart`
+- Production: runs on port 8082. Test local changes on port 8081.
 
 ### Account Management
 - Add: `bun run cli --add-account <name> --mode <claude-oauth|console|zai|minimax|anthropic-compatible|openai-compatible> --priority <number>`
@@ -81,6 +81,13 @@ Always use model `z-ai/glm-4.5-air:free`:
 curl -X POST http://localhost:8081/v1/messages -H "Content-Type: application/json" -H "Authorization: Bearer test" -d '{"model":"z-ai/glm-4.5-air:free","messages":[{"role":"user","content":"test"}],"max_tokens":10}'
 ```
 
+## Environment
+- OS timezone is UTC+2. Timestamps in logs and `/tmp` files are UTC — add 2 hours for local time.
+
+## Qwen Provider
+- When working on the Qwen provider or streaming transform, **always mirror the qwen-code implementation** at `/home/tom/git_repos/qwen-code/`. Check how qwen-code handles the same scenario before implementing.
+- Qwen/DashScope sends incremental tool call argument chunks (not cumulative like standard OpenAI). The streaming transform buffers all chunks and emits complete JSON at stream end, matching `StreamingToolCallParser` in qwen-code.
+
 ## Commit Message Categories
 Automated release system uses commit prefixes for changelog:
 - Features: `feat:|add:|new:`
@@ -91,7 +98,7 @@ Automated release system uses commit prefixes for changelog:
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **better-ccflare** (4977 symbols, 10882 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **better-ccflare** (5015 symbols, 11056 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 

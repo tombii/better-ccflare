@@ -102,6 +102,7 @@ export class QwenProvider extends OpenAICompatibleProvider {
 		const contentType = response.headers.get("content-type");
 		if (contentType?.includes("text/event-stream") && response.body) {
 			const [rawStream, passThrough] = response.body.tee();
+			const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
 
 			// Dump raw SSE to /tmp in background
 			(async () => {
@@ -118,7 +119,6 @@ export class QwenProvider extends OpenAICompatibleProvider {
 					}
 					reader.cancel();
 					const data = Buffer.concat(chunks).toString("utf-8");
-					const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
 					const path = `/tmp/qwen-raw-${timestamp}.sse.log`;
 					const fs = await import("node:fs/promises");
 					await fs.writeFile(path, data);
@@ -128,20 +128,52 @@ export class QwenProvider extends OpenAICompatibleProvider {
 				}
 			})();
 
-			return new Response(
-				transformStreamingResponse(
-					new Response(passThrough, {
-						status: response.status,
-						statusText: response.statusText,
-						headers: response.headers,
-					}),
-				).body as ReadableStream,
-				{
+			const transformed = transformStreamingResponse(
+				new Response(passThrough, {
+					status: response.status,
+					statusText: response.statusText,
+					headers: response.headers,
+				}),
+			);
+
+			// Dump transformed (Anthropic-format) SSE to /tmp for debugging
+			if (transformed.body) {
+				const [clientStream, dumpStream] = transformed.body.tee();
+				(async () => {
+					try {
+						const reader = dumpStream.getReader();
+						const chunks: Uint8Array[] = [];
+						let totalSize = 0;
+						while (totalSize < 512 * 1024) {
+							const { value, done } = await reader.read();
+							if (done) break;
+							chunks.push(value);
+							totalSize += value.length;
+						}
+						const data = Buffer.concat(chunks).toString("utf-8");
+						const path = `/tmp/qwen-transformed-${timestamp}.sse.log`;
+						const fs = await import("node:fs/promises");
+						await fs.writeFile(path, data);
+						log.info(`Saved transformed SSE to ${path} (${totalSize} bytes)`);
+					} catch (err) {
+						log.debug(
+							`Failed to save transformed SSE: ${(err as Error).message}`,
+						);
+					}
+				})();
+
+				return new Response(clientStream, {
 					status: response.status,
 					statusText: response.statusText,
 					headers: sanitizeHeaders(response.headers),
-				},
-			);
+				});
+			}
+
+			return new Response(transformed.body, {
+				status: response.status,
+				statusText: response.statusText,
+				headers: sanitizeHeaders(response.headers),
+			});
 		}
 
 		return super.processResponse(response, account);
