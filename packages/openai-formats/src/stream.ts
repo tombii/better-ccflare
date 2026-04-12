@@ -312,13 +312,14 @@ export function transformStreamingResponse(response: Response): Response {
 										);
 										context.toolCallAccumulators[idx] = newArgs;
 									} else if (newArgs.length < oldArgs.length) {
-										// Handle case where arguments are reset (rare but possible)
+									} else if (
+										newArgs.startsWith(oldArgs) &&
+										newArgs.length < oldArgs.length
+									) {
+										// Reset: provider restarted arguments from a shorter prefix
 										log.debug(`Tool call arguments reset for index ${idx}`);
 										context.toolCallAccumulators[idx] = newArgs;
-									} else if (
-										!newArgs.startsWith(oldArgs) &&
-										newArgs.length > 0
-									) {
+									} else if (newArgs.length > 0) {
 										// Incremental mode: provider sends only the new chunk,
 										// not the full accumulated string. Some providers (e.g. Qwen
 										// via DashScope) use this mode. Append to accumulator and
@@ -327,8 +328,8 @@ export function transformStreamingResponse(response: Response): Response {
 											type: "content_block_delta",
 											index: idx,
 											delta: {
-												type: "input_json_delta",
-												partial_json: newArgs,
+											type: "input_json_delta",
+											partial_json: newArgs,
 											},
 										};
 										controller.enqueue(
@@ -336,10 +337,11 @@ export function transformStreamingResponse(response: Response): Response {
 										);
 										controller.enqueue(
 											encoder.encode(
-												`data: ${JSON.stringify(contentBlockDelta)}\n\n`,
+											`data: ${JSON.stringify(contentBlockDelta)}\n\n`,
 											),
 										);
-										context.toolCallAccumulators[idx] = oldArgs + newArgs;
+										context.toolCallAccumulators[idx] =
+											oldArgs + newArgs;
 									}
 								}
 							} else if (delta?.content) {

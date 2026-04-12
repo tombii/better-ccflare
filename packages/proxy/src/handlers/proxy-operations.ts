@@ -495,7 +495,7 @@ export async function proxyWithAccount(
 						rlHeaders[k] = v;
 					}
 				});
-				log.warn(
+				log.debug(
 					`Account ${account.name} received 429 — headers: ${JSON.stringify(rlHeaders)}`,
 				);
 			}
