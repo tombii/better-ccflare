@@ -638,6 +638,10 @@ export class OpenAICompatibleProvider extends BaseProvider {
 									} => b.type === "text" && typeof b.text === "string",
 								)
 								.map((b) => {
+									// Preserve cache_control for prompt caching.
+									// DashScope (Qwen) uses this for ephemeral cache.
+									// Other OpenAI-compatible providers that don't
+									// support it should safely ignore the unknown field.
 									const part: {
 										type: string;
 										text: string;
