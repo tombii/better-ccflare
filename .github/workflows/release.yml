@@ -167,14 +167,14 @@ jobs:
           ## What's Changed
 
           "
-              # Categorize commits and remove duplicates (especially version bump updates)
-              # Also strip dated sub-commits like feat(04-03): or feat(02-01): used during incremental development
+              # Categorize commits by prefix only (after hash), remove duplicates and noise
+              # Dated sub-commits like feat(04-03): or feat(02-01): are filtered out
               VERSION_SKIP='grep -v "chore: update CLAUDE_CLI_VERSION" | grep -v "chore: update CLI versions" | grep -v "chore: update CODEX_VERSION"'
-              DATED_SKIP='grep -vE "\([0-9]{2}-[0-9]{2}\):"'
-              FEATURES=$(echo "$COMMITS" | grep -E "feat|add|new" | eval "$VERSION_SKIP" | eval "$DATED_SKIP" | sort -u)
-              FIXES=$(echo "$COMMITS" | grep -E "fix|bug|resolve" | eval "$VERSION_SKIP" | eval "$DATED_SKIP" | sort -u)
-              SECURITY=$(echo "$COMMITS" | grep -E "security|vulnerabilit|redact|ReDoS" | eval "$VERSION_SKIP" | eval "$DATED_SKIP" | sort -u)
-              IMPROVEMENTS=$(echo "$COMMITS" | grep -E "improve|enhance|update|refactor" | eval "$VERSION_SKIP" | eval "$DATED_SKIP" | sort -u)
+              DATED_SKIP='grep -vE "[a-f0-9]+ [a-z]+\([0-9]{2}-[0-9]{2}\):" | grep -vE "\([0-9]{2}\): (WR|CR)-[0-9]+"'
+              FEATURES=$(echo "$COMMITS" | grep -E "^[a-f0-9]+ (feat|add|new)[\(:]" | eval "$VERSION_SKIP" | eval "$DATED_SKIP" | sort -u)
+              FIXES=$(echo "$COMMITS" | grep -E "^[a-f0-9]+ (fix|bug|resolve)[\(:]" | eval "$VERSION_SKIP" | eval "$DATED_SKIP" | sort -u)
+              SECURITY=$(echo "$COMMITS" | grep -E "^[a-f0-9]+ (security|vulnerabilit|redact|ReDoS)[\(:]" | eval "$VERSION_SKIP" | eval "$DATED_SKIP" | sort -u)
+              IMPROVEMENTS=$(echo "$COMMITS" | grep -E "^[a-f0-9]+ (improve|enhance|update|refactor)[\(:]" | eval "$VERSION_SKIP" | eval "$DATED_SKIP" | sort -u)
 
               # Also filter out duplicate chore messages specifically
               CHORE_UNIQUE=$(echo "$COMMITS" | grep -E "chore" | eval "$VERSION_SKIP" | eval "$DATED_SKIP" | sort -u | head -3)
