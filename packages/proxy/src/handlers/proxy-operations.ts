@@ -2,6 +2,7 @@ import { getModelList, logError, ProviderError } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import { getProvider } from "@better-ccflare/providers";
 import type { Account, RequestMeta } from "@better-ccflare/types";
+import { cacheBodyStore } from "../cache-body-store";
 import { forwardToClient } from "../response-handler";
 import { ERROR_MESSAGES, type ProxyContext } from "./proxy-types";
 import { makeProxyRequest, validateProviderPath } from "./request-handler";
@@ -391,6 +392,20 @@ export async function proxyWithAccount(
 				effectiveBodyBuffer = requestBodyBuffer;
 			}
 		}
+
+		// Stage the original request body + headers for cache keepalive replay.
+		// Uses the pre-transform body (effectiveBodyBuffer may have a model override
+		// patched in, so use the original requestBodyBuffer for a faithful replay).
+		// Headers are stored because Anthropic's prepareHeaders() copies incoming
+		// client headers (anthropic-version, anthropic-beta, x-stainless-*, etc.)
+		// and augments them — providers that build headers from scratch ignore them.
+		cacheBodyStore.stageRequest(
+			requestMeta.id,
+			account.id,
+			requestBodyBuffer,
+			req.headers,
+			url.pathname,
+		);
 
 		// Get the provider for this account
 		const provider = getProvider(account.provider) || ctx.provider;

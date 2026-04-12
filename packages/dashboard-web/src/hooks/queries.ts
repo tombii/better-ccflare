@@ -267,6 +267,24 @@ export const useSetRetention = () => {
 	});
 };
 
+export const useKeepaliveTtl = () => {
+	return useQuery({
+		queryKey: ["keepalive"],
+		queryFn: () => api.getCacheKeepaliveTtl(),
+	});
+};
+
+export const useSetKeepaliveTtl = () => {
+	const queryClient = useQueryClient();
+	return useMutation({
+		mutationFn: (body: { ttlMinutes: number }) =>
+			api.setCacheKeepaliveTtl(body),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ["keepalive"] });
+		},
+	});
+};
+
 export const useCleanupNow = () => {
 	return useMutation({
 		mutationFn: () => api.cleanupNow(),

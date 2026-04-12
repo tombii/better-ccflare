@@ -1500,6 +1500,47 @@ class API extends HttpClient {
 		}
 	}
 
+	async getCacheKeepaliveTtl(): Promise<{ ttlMinutes: number }> {
+		const startTime = Date.now();
+		const url = "/api/config/keepalive";
+
+		this.logger.debug(`→ GET ${url}`);
+
+		try {
+			const response = await this.get<{ ttlMinutes: number }>(url);
+			const duration = Date.now() - startTime;
+			this.logger.debug(`← GET ${url} - 200 (${duration}ms)`);
+			return response;
+		} catch (error) {
+			const duration = Date.now() - startTime;
+			this.logger.error(`✗ GET ${url} - ERROR (${duration}ms)`, {
+				error: error instanceof Error ? error.message : String(error),
+				stack: error instanceof Error ? error.stack : undefined,
+			});
+			throw error;
+		}
+	}
+
+	async setCacheKeepaliveTtl(body: { ttlMinutes: number }): Promise<void> {
+		const startTime = Date.now();
+		const url = "/api/config/keepalive";
+
+		this.logger.debug(`→ POST ${url}`, { body });
+
+		try {
+			await this.post(url, body);
+			const duration = Date.now() - startTime;
+			this.logger.debug(`← POST ${url} - 200 (${duration}ms)`);
+		} catch (error) {
+			const duration = Date.now() - startTime;
+			this.logger.error(`✗ POST ${url} - ERROR (${duration}ms)`, {
+				error: error instanceof Error ? error.message : String(error),
+				stack: error instanceof Error ? error.stack : undefined,
+			});
+			throw error;
+		}
+	}
+
 	async cleanupNow(): Promise<{
 		removedRequests: number;
 		removedPayloads: number;

@@ -32,6 +32,7 @@ import {
 } from "@better-ccflare/providers/bedrock";
 import {
 	AutoRefreshScheduler,
+	CacheKeepaliveScheduler,
 	getUsageWorker,
 	getValidAccessToken,
 	handleProxy,
@@ -174,6 +175,7 @@ let stopRateLimitCleanupJob: (() => void) | null = null;
 let stopDataCleanupJob: (() => void) | null = null;
 let stopWalCheckpointJob: (() => void) | null = null;
 let autoRefreshScheduler: AutoRefreshScheduler | null = null;
+let cacheKeepaliveScheduler: CacheKeepaliveScheduler | null = null;
 let memoryMonitorInterval: Timer | null = null;
 // Track usage polling retry timeouts for cleanup
 const usagePollingRetryTimeouts = new Map<string, NodeJS.Timeout>();
@@ -759,6 +761,13 @@ export default async function startServer(options?: {
 	autoRefreshScheduler = new AutoRefreshScheduler(db, proxyContext);
 	autoRefreshScheduler.start();
 
+	// Initialize cache keepalive scheduler
+	cacheKeepaliveScheduler = new CacheKeepaliveScheduler(
+		proxyContext,
+		config,
+	);
+	cacheKeepaliveScheduler.start();
+
 	// Initialize token health monitoring service
 	startGlobalTokenHealthChecks(() => dbOps.getAllAccounts());
 
@@ -1262,6 +1271,10 @@ async function handleGracefulShutdown(signal: string) {
 		if (autoRefreshScheduler) {
 			autoRefreshScheduler.stop();
 			autoRefreshScheduler = null;
+		}
+		if (cacheKeepaliveScheduler) {
+			cacheKeepaliveScheduler.stop();
+			cacheKeepaliveScheduler = null;
 		}
 
 		// Stop memory monitoring

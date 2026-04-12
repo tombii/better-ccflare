@@ -5,6 +5,7 @@ import {
 } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import type { Account } from "@better-ccflare/types";
+import { cacheBodyStore } from "./cache-body-store";
 import {
 	createRequestMetadata,
 	ERROR_MESSAGES,
@@ -78,6 +79,11 @@ export function getUsageWorker(): Worker {
 			usageWorkerInstance.onmessage = (ev) => {
 				const data = ev.data as OutgoingWorkerMessage;
 				if (data.type === "summary") {
+					// Promote staged request body to per-account cache slot if caching was used
+					cacheBodyStore.onSummary(
+						data.summary.id,
+						data.summary.cacheCreationInputTokens,
+					);
 					requestEvents.emit("event", {
 						type: "summary",
 						payload: data.summary,

@@ -166,5 +166,23 @@ export function createConfigHandlers(
 			}
 			return new Response(null, { status: 204 });
 		},
+
+		getCacheKeepaliveTtl: (): Response => {
+			return jsonResponse({ ttlMinutes: config.getCacheKeepaliveTtlMinutes() });
+		},
+
+		setCacheKeepaliveTtl: async (req: Request): Promise<Response> => {
+			const body = await req.json();
+			const ttlMinutes = validateNumber(body.ttlMinutes, "ttlMinutes", {
+				min: 0,
+				max: 60,
+				integer: true,
+			});
+			if (typeof ttlMinutes !== "number") {
+				return errorResponse(BadRequest("Invalid 'ttlMinutes': must be 0-60"));
+			}
+			config.setCacheKeepaliveTtlMinutes(ttlMinutes);
+			return new Response(null, { status: 204 });
+		},
 	};
 }
