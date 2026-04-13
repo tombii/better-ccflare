@@ -58,12 +58,11 @@ export function CombosTab() {
 				{!combosQuery.isLoading &&
 					!combosQuery.isError &&
 					combos.length === 0 && (
-						<div className="flex flex-col items-center gap-4 rounded-lg border border-dashed p-8 text-center">
+						<div className="flex flex-col items-center gap-3 rounded-lg border border-dashed px-8 py-12 text-center">
 							<p className="text-sm text-muted-foreground">
-								No combos yet. Create your first combo to define a fallback
-								chain.
+								No combos yet. Create one to define a fallback chain.
 							</p>
-							<Button onClick={() => setIsCreateDialogOpen(true)}>
+							<Button size="sm" onClick={() => setIsCreateDialogOpen(true)}>
 								<Plus className="mr-2 h-4 w-4" />
 								Create Combo
 							</Button>

@@ -104,8 +104,10 @@ export function ComboDialog({ isOpen, onClose, comboId }: ComboDialogProps) {
 							/>
 						</div>
 
-						<div className="flex items-center gap-3">
-							<Label htmlFor="combo-enabled">Enabled</Label>
+						<div className="flex items-center justify-between rounded-md border px-3 py-2">
+							<Label htmlFor="combo-enabled" className="cursor-pointer">
+								Enabled
+							</Label>
 							<Switch
 								id="combo-enabled"
 								checked={enabled}
@@ -113,11 +115,9 @@ export function ComboDialog({ isOpen, onClose, comboId }: ComboDialogProps) {
 							/>
 						</div>
 
-						<div className="rounded-md border border-dashed p-3">
-							<p className="text-sm text-muted-foreground">
-								Slots can be added after combo creation
-							</p>
-						</div>
+						<p className="text-xs text-muted-foreground">
+							Slots can be configured after creation.
+						</p>
 					</div>
 				)}
 

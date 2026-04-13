@@ -93,44 +93,45 @@ export function FamilyActivationSection() {
 				<CardDescription>Assign combos to model families</CardDescription>
 			</CardHeader>
 			<CardContent>
-				<div className="space-y-4">
+				<div className="space-y-3">
 					{FAMILIES.map((family) => {
 						const assignment = getFamilyAssignment(family);
 						const isEnabled = assignment?.enabled ?? false;
 						const activeComboId = assignment?.combo_id ?? null;
 
 						return (
-							<div key={family} className="flex items-center gap-4">
-								<Label className="w-16 font-medium">
-									{FAMILY_LABELS[family]}
-								</Label>
+							<div
+								key={family}
+								className="grid grid-cols-[5rem_auto_1fr_auto] items-center gap-3"
+							>
+								<Label className="font-medium">{FAMILY_LABELS[family]}</Label>
 								<Switch
 									checked={isEnabled}
 									onCheckedChange={(checked) => handleToggle(family, checked)}
 									disabled={assignFamily.isPending}
 								/>
-								{isEnabled && (
-									<Select
-										value={activeComboId ?? "none"}
-										onValueChange={(value) => handleComboSelect(family, value)}
-										disabled={assignFamily.isPending}
-									>
-										<SelectTrigger className="w-48">
-											<SelectValue placeholder="Select combo..." />
-										</SelectTrigger>
-										<SelectContent>
-											<SelectItem value="none">None</SelectItem>
-											{enabledCombos.map((combo) => (
-												<SelectItem key={combo.id} value={combo.id}>
-													{combo.name}
-												</SelectItem>
-											))}
-										</SelectContent>
-									</Select>
-								)}
-								{isEnabled && activeComboId && (
-									<Badge variant="default">Active</Badge>
-								)}
+								<Select
+									value={activeComboId ?? "none"}
+									onValueChange={(value) => handleComboSelect(family, value)}
+									disabled={!isEnabled || assignFamily.isPending}
+								>
+									<SelectTrigger className={!isEnabled ? "opacity-40" : ""}>
+										<SelectValue placeholder="Select combo..." />
+									</SelectTrigger>
+									<SelectContent>
+										<SelectItem value="none">None</SelectItem>
+										{enabledCombos.map((combo) => (
+											<SelectItem key={combo.id} value={combo.id}>
+												{combo.name}
+											</SelectItem>
+										))}
+									</SelectContent>
+								</Select>
+								<div className="w-14 text-right">
+									{isEnabled && activeComboId && (
+										<Badge variant="default">Active</Badge>
+									)}
+								</div>
 							</div>
 						);
 					})}
