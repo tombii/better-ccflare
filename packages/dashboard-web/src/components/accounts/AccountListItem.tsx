@@ -244,20 +244,19 @@ export function AccountListItem({
 							</span>
 						)}
 					</div>
-					{account.sessionStats && (
-						<div className="text-xs text-muted-foreground">
-							Session: {account.sessionStats.requests} req
-							{" · "}↑{formatTokenCount(account.sessionStats.inputTokens)} in
-							{" · "}✦
-							{formatTokenCount(account.sessionStats.cacheCreationInputTokens)}{" "}
-							cache↑
-							{" · "}✦
-							{formatTokenCount(account.sessionStats.cacheReadInputTokens)}{" "}
-							cache↓
-							{" · "}↓{formatTokenCount(account.sessionStats.outputTokens)} out
-						</div>
-					)}
 				</div>
+				{account.sessionStats && (
+					<div className="text-xs text-muted-foreground">
+						Session: {account.sessionStats.requests} req
+						{" · "}↑{formatTokenCount(account.sessionStats.inputTokens)} in
+						{" · "}✦
+						{formatTokenCount(account.sessionStats.cacheCreationInputTokens)}{" "}
+						cache↑
+						{" · "}✦
+						{formatTokenCount(account.sessionStats.cacheReadInputTokens)} cache↓
+						{" · "}↓{formatTokenCount(account.sessionStats.outputTokens)} out
+					</div>
+				)}
 				<div className="flex items-center gap-2">
 					<Button
 						variant="ghost"
