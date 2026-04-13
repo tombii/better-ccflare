@@ -86,13 +86,14 @@ function readWindow(
 			allowRelativeResetAfter,
 		);
 
-	// Only produce a window entry when at least one relevant header was present
-	const hasAnyHeader =
-		windowMinutes !== null || utilization !== null || resetsAt !== null;
+	// Treat a window as present only when it has meaningful data.
+	// Mirrors codex-rs behavior for empty (0%, 0min, no reset) placeholders.
+	const hasMeaningfulWindowData =
+		utilization !== 0 || windowMinutes !== 0 || resetsAt !== null;
 
 	return {
 		window: pickWindowSlot(windowMinutes),
-		data: hasAnyHeader
+		data: hasMeaningfulWindowData
 			? toUsageWindow(utilization ?? defaultUtilization, resetsAt)
 			: null,
 	};
