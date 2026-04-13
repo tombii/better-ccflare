@@ -1,5 +1,9 @@
 import { describe, expect, it, mock } from "bun:test";
-import type { Account, ComboWithSlots, RequestMeta } from "@better-ccflare/types";
+import type {
+	Account,
+	ComboWithSlots,
+	RequestMeta,
+} from "@better-ccflare/types";
 import {
 	getComboSlotInfo,
 	selectAccountsForRequest,
@@ -63,10 +67,9 @@ function makeCombo(slots: ComboWithSlots["slots"]): ComboWithSlots {
 	};
 }
 
-function makeCtx(opts: {
-	accounts?: Account[];
-	activeCombo?: ComboWithSlots | null;
-} = {}): ProxyContext {
+function makeCtx(
+	opts: { accounts?: Account[]; activeCombo?: ComboWithSlots | null } = {},
+): ProxyContext {
 	const accounts = opts.accounts ?? [makeAccount()];
 	return {
 		strategy: {
@@ -248,7 +251,11 @@ describe("selectAccountsForRequest — combo routing", () => {
 		const ctx = makeCtx({ accounts: [acc1, acc2], activeCombo: combo });
 		const meta = makeRequestMeta();
 
-		const result = await selectAccountsForRequest(meta, ctx, "claude-sonnet-4-5");
+		const result = await selectAccountsForRequest(
+			meta,
+			ctx,
+			"claude-sonnet-4-5",
+		);
 		expect(result.map((a) => a.id)).toEqual(["acc-2"]);
 	});
 
@@ -284,7 +291,11 @@ describe("selectAccountsForRequest — combo routing", () => {
 		} as unknown as ProxyContext;
 
 		const meta = makeRequestMeta();
-		const result = await selectAccountsForRequest(meta, ctx, "claude-sonnet-4-5");
+		const result = await selectAccountsForRequest(
+			meta,
+			ctx,
+			"claude-sonnet-4-5",
+		);
 
 		// Should fall back to strategy result (fallbackAcc)
 		expect(result[0]?.id).toBe("acc-fallback");
@@ -295,7 +306,11 @@ describe("selectAccountsForRequest — combo routing", () => {
 		const ctx = makeCtx({ accounts: [acc], activeCombo: null });
 		const meta = makeRequestMeta();
 
-		const result = await selectAccountsForRequest(meta, ctx, "claude-sonnet-4-5");
+		const result = await selectAccountsForRequest(
+			meta,
+			ctx,
+			"claude-sonnet-4-5",
+		);
 		// No combo — strategy.select is used
 		expect(result[0]?.id).toBe("acc-normal");
 	});
@@ -350,7 +365,11 @@ describe("selectAccountsForRequest — combo routing", () => {
 		const ctx = makeCtx({ accounts: [acc], activeCombo: combo });
 		const meta = makeRequestMeta();
 
-		const result = await selectAccountsForRequest(meta, ctx, "claude-sonnet-4-5");
+		const result = await selectAccountsForRequest(
+			meta,
+			ctx,
+			"claude-sonnet-4-5",
+		);
 		// Ghost slot is skipped; only acc-1 is returned
 		expect(result.map((a) => a.id)).toEqual(["acc-1"]);
 	});
@@ -388,7 +407,11 @@ describe("selectAccountsForRequest — paused accounts in combo", () => {
 		});
 		const meta = makeRequestMeta();
 
-		const result = await selectAccountsForRequest(meta, ctx, "claude-sonnet-4-5");
+		const result = await selectAccountsForRequest(
+			meta,
+			ctx,
+			"claude-sonnet-4-5",
+		);
 		expect(result.map((a) => a.id)).toEqual(["acc-active"]);
 	});
 });

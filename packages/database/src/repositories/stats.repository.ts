@@ -2,8 +2,8 @@
  * Consolidated stats repository to eliminate duplication between cli-commands and http-api
  */
 
-import { NO_ACCOUNT_ID } from "@better-ccflare/types";
 import type { SessionStats } from "@better-ccflare/types";
+import { NO_ACCOUNT_ID } from "@better-ccflare/types";
 import type { BunSqlAdapter } from "../adapters/bun-sql-adapter";
 
 export interface AccountStats {
@@ -364,8 +364,13 @@ export class StatsRepository {
 		if (active.length === 0) return new Map();
 
 		// Build a WHERE clause: (account_used = ? AND timestamp >= ?) OR ...
-		const clauses = active.map(() => "(account_used = ? AND timestamp >= ?)").join(" OR ");
-		const params: (string | number)[] = active.flatMap((a) => [a.id, a.session_start]);
+		const clauses = active
+			.map(() => "(account_used = ? AND timestamp >= ?)")
+			.join(" OR ");
+		const params: (string | number)[] = active.flatMap((a) => [
+			a.id,
+			a.session_start,
+		]);
 
 		const rows = await this.adapter.query<{
 			account_used: string;
@@ -394,7 +399,8 @@ export class StatsRepository {
 				{
 					requests: Number(row.requests) || 0,
 					inputTokens: Number(row.input_tokens) || 0,
-					cacheCreationInputTokens: Number(row.cache_creation_input_tokens) || 0,
+					cacheCreationInputTokens:
+						Number(row.cache_creation_input_tokens) || 0,
 					cacheReadInputTokens: Number(row.cache_read_input_tokens) || 0,
 					outputTokens: Number(row.output_tokens) || 0,
 				},

@@ -1126,11 +1126,13 @@ Available endpoints:
 					90000, // Poll every 90 seconds (same as Anthropic)
 					undefined, // customEndpoint
 					(accountId) => {
-						dbOps.resetAccountSession(accountId, Date.now()).catch((err) =>
-							log.warn(
-								`Failed to reset session for Zai account ${accountId} on window reset: ${err}`,
-							),
-						);
+						dbOps
+							.resetAccountSession(accountId, Date.now())
+							.catch((err) =>
+								log.warn(
+									`Failed to reset session for Zai account ${accountId} on window reset: ${err}`,
+								),
+							);
 					},
 				);
 				log.info(`Started usage polling for Zai account ${account.name}`);

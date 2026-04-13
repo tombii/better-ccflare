@@ -139,7 +139,9 @@ describe("transformStreamingResponse — text responses", () => {
 			JSON.stringify({
 				id: "c1",
 				model: "gpt-4",
-				choices: [{ index: 0, delta: { content: "Hello" }, finish_reason: null }],
+				choices: [
+					{ index: 0, delta: { content: "Hello" }, finish_reason: null },
+				],
 			}),
 			"[DONE]",
 		]);
@@ -155,12 +157,16 @@ describe("transformStreamingResponse — text responses", () => {
 			JSON.stringify({
 				id: "c1",
 				model: "gpt-4",
-				choices: [{ index: 0, delta: { content: "Hello" }, finish_reason: null }],
+				choices: [
+					{ index: 0, delta: { content: "Hello" }, finish_reason: null },
+				],
 			}),
 			JSON.stringify({
 				id: "c1",
 				model: "gpt-4",
-				choices: [{ index: 0, delta: { content: " world" }, finish_reason: null }],
+				choices: [
+					{ index: 0, delta: { content: " world" }, finish_reason: null },
+				],
 			}),
 			"[DONE]",
 		]);
@@ -179,7 +185,9 @@ describe("transformStreamingResponse — text responses", () => {
 			JSON.stringify({
 				id: "c1",
 				model: "gpt-4",
-				choices: [{ index: 0, delta: { content: "Done" }, finish_reason: "stop" }],
+				choices: [
+					{ index: 0, delta: { content: "Done" }, finish_reason: "stop" },
+				],
 			}),
 			"[DONE]",
 		]);
@@ -188,7 +196,7 @@ describe("transformStreamingResponse — text responses", () => {
 		const events = parseSSEEvents(raw);
 		const msgDelta = events.find((e) => e.event === "message_delta");
 		expect(msgDelta).toBeDefined();
-		const parsed = JSON.parse(msgDelta!.data!);
+		const parsed = JSON.parse(msgDelta?.data!);
 		expect(parsed.delta.stop_reason).toBe("end_turn");
 	});
 
@@ -224,7 +232,7 @@ describe("transformStreamingResponse — text responses", () => {
 		const raw = await readStream(transformed.body!);
 		const events = parseSSEEvents(raw);
 		const msgDelta = events.find((e) => e.event === "message_delta");
-		const parsed = JSON.parse(msgDelta!.data!);
+		const parsed = JSON.parse(msgDelta?.data!);
 		expect(parsed.usage.input_tokens).toBe(20);
 		expect(parsed.usage.output_tokens).toBe(5);
 	});
@@ -297,8 +305,8 @@ describe("transformStreamingResponse — tool calls", () => {
 				JSON.parse(e.data!).content_block?.type === "tool_use",
 		);
 		expect(blockStart).toBeDefined();
-		expect(JSON.parse(blockStart!.data!).content_block.name).toBe("search");
-		expect(JSON.parse(blockStart!.data!).content_block.id).toBe("call_abc");
+		expect(JSON.parse(blockStart?.data!).content_block.name).toBe("search");
+		expect(JSON.parse(blockStart?.data!).content_block.id).toBe("call_abc");
 	});
 
 	it("buffers all argument chunks and emits a single input_json_delta at [DONE]", async () => {
@@ -348,7 +356,7 @@ describe("transformStreamingResponse — tool calls", () => {
 		);
 		// Should be exactly one buffered emission
 		expect(deltas).toHaveLength(1);
-		expect(JSON.parse(deltas[0]!.data!).delta.partial_json).toBe('{"q":"bun"}');
+		expect(JSON.parse(deltas[0]?.data!).delta.partial_json).toBe('{"q":"bun"}');
 	});
 
 	it("emits message_delta with stop_reason tool_use for tool calls", async () => {
@@ -379,7 +387,7 @@ describe("transformStreamingResponse — tool calls", () => {
 		const raw = await readStream(transformed.body!);
 		const events = parseSSEEvents(raw);
 		const msgDelta = events.find((e) => e.event === "message_delta");
-		expect(JSON.parse(msgDelta!.data!).delta.stop_reason).toBe("tool_use");
+		expect(JSON.parse(msgDelta?.data!).delta.stop_reason).toBe("tool_use");
 	});
 
 	it("handles multiple parallel tool calls (indexes 0 and 1)", async () => {
@@ -467,7 +475,9 @@ describe("transformStreamingResponse — flush path (no [DONE])", () => {
 						`data: ${JSON.stringify({
 							id: "c1",
 							model: "gpt-4",
-							choices: [{ index: 0, delta: { content: "Hello" }, finish_reason: null }],
+							choices: [
+								{ index: 0, delta: { content: "Hello" }, finish_reason: null },
+							],
 						})}\n\n`,
 					),
 				);
@@ -548,7 +558,7 @@ describe("transformStreamingResponse — model extraction", () => {
 		const raw = await readStream(transformed.body!);
 		const events = parseSSEEvents(raw);
 		const msgStart = events.find((e) => e.event === "message_start");
-		const parsed = JSON.parse(msgStart!.data!);
+		const parsed = JSON.parse(msgStart?.data!);
 		expect(parsed.message.model).toBe("claude-sonnet-4-5");
 	});
 });

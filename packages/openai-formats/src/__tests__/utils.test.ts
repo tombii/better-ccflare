@@ -147,6 +147,8 @@ describe("convertAnthropicPathToOpenAI", () => {
 
 	it("passes through unknown paths unchanged", () => {
 		expect(convertAnthropicPathToOpenAI("/v1/models")).toBe("/v1/models");
-		expect(convertAnthropicPathToOpenAI("/v1/embeddings")).toBe("/v1/embeddings");
+		expect(convertAnthropicPathToOpenAI("/v1/embeddings")).toBe(
+			"/v1/embeddings",
+		);
 	});
 });

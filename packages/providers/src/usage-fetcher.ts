@@ -95,6 +95,8 @@ export interface UsageFetchResult {
 export async function fetchUsageData(
 	accessToken: string,
 ): Promise<UsageFetchResult> {
+	const controller = new AbortController();
+	const timeoutId = setTimeout(() => controller.abort(), 5000);
 	try {
 		const response = await fetch("https://api.anthropic.com/api/oauth/usage", {
 			method: "GET",
@@ -103,7 +105,9 @@ export async function fetchUsageData(
 				"anthropic-beta": "oauth-2025-04-20",
 				"User-Agent": `claude-code/${CLAUDE_CLI_VERSION}`,
 				Accept: "application/json",
+				"Content-Type": "application/json",
 			},
+			signal: controller.signal,
 		});
 
 		if (!response.ok) {
@@ -115,10 +119,21 @@ export async function fetchUsageData(
 			if (response.status === 429) {
 				const retryAfter = response.headers.get("retry-after");
 				if (retryAfter) {
-					const seconds = parseInt(retryAfter, 10);
-					if (!Number.isNaN(seconds) && seconds > 0) {
-						retryAfterMs = seconds * 1000;
+					const seconds = Number(retryAfter);
+					if (Number.isFinite(seconds) && seconds > 0) {
+						retryAfterMs = Math.round(seconds * 1000);
 						log.warn(`Usage endpoint rate-limited, retry-after: ${seconds}s`);
+					} else {
+						const retryDateMs = new Date(retryAfter).getTime();
+						if (Number.isFinite(retryDateMs)) {
+							const deltaMs = retryDateMs - Date.now();
+							if (deltaMs > 0) {
+								retryAfterMs = deltaMs;
+								log.warn(
+									`Usage endpoint rate-limited, retry-after date: ${retryAfter}`,
+								);
+							}
+						}
 					}
 				}
 			}
@@ -164,6 +179,8 @@ export async function fetchUsageData(
 
 		log.error("Error fetching usage data:", errorMessage || "Unknown error");
 		return { data: null, retryAfterMs: null };
+	} finally {
+		clearTimeout(timeoutId);
 	}
 }
 

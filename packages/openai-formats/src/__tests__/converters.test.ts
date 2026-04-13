@@ -23,7 +23,9 @@ function anthropicRequest(
 	};
 }
 
-function openaiTextResponse(overrides: Partial<OpenAIResponse> = {}): OpenAIResponse {
+function openaiTextResponse(
+	overrides: Partial<OpenAIResponse> = {},
+): OpenAIResponse {
 	return {
 		id: "chatcmpl-abc123",
 		object: "chat.completion",
@@ -76,7 +78,9 @@ describe("convertAnthropicRequestToOpenAI — basic fields", () => {
 	});
 
 	it("passes max_tokens through", () => {
-		const result = convertAnthropicRequestToOpenAI(anthropicRequest({ max_tokens: 512 }));
+		const result = convertAnthropicRequestToOpenAI(
+			anthropicRequest({ max_tokens: 512 }),
+		);
 		expect(result.max_tokens).toBe(512);
 	});
 
@@ -88,7 +92,9 @@ describe("convertAnthropicRequestToOpenAI — basic fields", () => {
 	});
 
 	it("passes top_p through", () => {
-		const result = convertAnthropicRequestToOpenAI(anthropicRequest({ top_p: 0.9 }));
+		const result = convertAnthropicRequestToOpenAI(
+			anthropicRequest({ top_p: 0.9 }),
+		);
 		expect(result.top_p).toBe(0.9);
 	});
 
@@ -100,7 +106,9 @@ describe("convertAnthropicRequestToOpenAI — basic fields", () => {
 	});
 
 	it("enables stream_options.include_usage when stream: true", () => {
-		const result = convertAnthropicRequestToOpenAI(anthropicRequest({ stream: true }));
+		const result = convertAnthropicRequestToOpenAI(
+			anthropicRequest({ stream: true }),
+		);
 		expect(result.stream).toBe(true);
 		expect(result.stream_options).toEqual({ include_usage: true });
 	});
@@ -161,7 +169,10 @@ describe("convertAnthropicRequestToOpenAI — system message", () => {
 		const result = convertAnthropicRequestToOpenAI(
 			anthropicRequest({
 				system: [
-					{ type: "image", source: { type: "base64", media_type: "image/png", data: "abc" } } as any,
+					{
+						type: "image",
+						source: { type: "base64", media_type: "image/png", data: "abc" },
+					} as any,
 					{ type: "text", text: "Only text." },
 				],
 			}),
@@ -184,7 +195,10 @@ describe("convertAnthropicRequestToOpenAI — messages conversion", () => {
 			}),
 		);
 		expect(result.messages).toContainEqual({ role: "user", content: "Hi" });
-		expect(result.messages).toContainEqual({ role: "assistant", content: "Hello" });
+		expect(result.messages).toContainEqual({
+			role: "assistant",
+			content: "Hello",
+		});
 	});
 
 	it("converts content array with text blocks to joined string", () => {
@@ -224,7 +238,9 @@ describe("convertAnthropicRequestToOpenAI — messages conversion", () => {
 		);
 		const userMsg = result.messages.find((m) => m.role === "user");
 		expect(Array.isArray(userMsg?.content)).toBe(true);
-		const blocks = userMsg?.content as Array<{ cache_control?: { type: string } }>;
+		const blocks = userMsg?.content as Array<{
+			cache_control?: { type: string };
+		}>;
 		expect(blocks[0]?.cache_control).toEqual({ type: "ephemeral" });
 	});
 
@@ -325,7 +341,10 @@ describe("convertAnthropicRequestToOpenAI — tools", () => {
 				],
 			}),
 		);
-		const params = result.tools?.[0]?.function?.parameters as Record<string, unknown>;
+		const params = result.tools?.[0]?.function?.parameters as Record<
+			string,
+			unknown
+		>;
 		expect(params).not.toHaveProperty("$schema");
 	});
 
@@ -346,13 +365,18 @@ describe("convertAnthropicRequestToOpenAI — tools", () => {
 				],
 			}),
 		);
-		const params = result.tools?.[0]?.function?.parameters as Record<string, unknown>;
+		const params = result.tools?.[0]?.function?.parameters as Record<
+			string,
+			unknown
+		>;
 		const props = params?.properties as Record<string, Record<string, unknown>>;
 		expect(props?.url).not.toHaveProperty("format");
 	});
 
 	it("omits tools when array is empty (DashScope compatibility)", () => {
-		const result = convertAnthropicRequestToOpenAI(anthropicRequest({ tools: [] }));
+		const result = convertAnthropicRequestToOpenAI(
+			anthropicRequest({ tools: [] }),
+		);
 		expect(result.tools).toBeUndefined();
 	});
 });
@@ -364,7 +388,11 @@ describe("convertOpenAIResponseToAnthropic — success cases", () => {
 		const result = convertOpenAIResponseToAnthropic(openaiTextResponse());
 		expect(result.type).toBe("message");
 		expect(result.role).toBe("assistant");
-		const content = (result as AnthropicResponse & { content: Array<{ type: string; text: string }> }).content;
+		const content = (
+			result as AnthropicResponse & {
+				content: Array<{ type: string; text: string }>;
+			}
+		).content;
 		expect(content).toHaveLength(1);
 		expect(content[0]).toEqual({ type: "text", text: "Hello back!" });
 	});
@@ -378,7 +406,11 @@ describe("convertOpenAIResponseToAnthropic — success cases", () => {
 		const result = convertOpenAIResponseToAnthropic(
 			openaiTextResponse({
 				choices: [
-					{ index: 0, message: { role: "assistant", content: "..." }, finish_reason: "length" },
+					{
+						index: 0,
+						message: { role: "assistant", content: "..." },
+						finish_reason: "length",
+					},
 				],
 			}),
 		);
@@ -408,7 +440,12 @@ describe("convertOpenAIResponseToAnthropic — success cases", () => {
 			}),
 		);
 		expect((result as any).stop_reason).toBe("tool_use");
-		const content = (result as any).content as Array<{ type: string; id: string; name: string; input: unknown }>;
+		const content = (result as any).content as Array<{
+			type: string;
+			id: string;
+			name: string;
+			input: unknown;
+		}>;
 		const toolBlock = content.find((c) => c.type === "tool_use");
 		expect(toolBlock).toBeDefined();
 		expect(toolBlock?.name).toBe("search");
@@ -416,7 +453,9 @@ describe("convertOpenAIResponseToAnthropic — success cases", () => {
 	});
 
 	it("maps token usage to input_tokens / output_tokens", () => {
-		const result = convertOpenAIResponseToAnthropic(openaiTextResponse()) as any;
+		const result = convertOpenAIResponseToAnthropic(
+			openaiTextResponse(),
+		) as any;
 		expect(result.usage.input_tokens).toBe(10);
 		expect(result.usage.output_tokens).toBe(5);
 	});
