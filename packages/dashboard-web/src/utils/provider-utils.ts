@@ -13,7 +13,9 @@ import {
  * Currently only Anthropic OAuth accounts support these features
  */
 export function providerSupportsAutoFeatures(provider: string): boolean {
-	return provider === PROVIDER_NAMES.ANTHROPIC;
+	return (
+		provider === PROVIDER_NAMES.ANTHROPIC || provider === PROVIDER_NAMES.CODEX
+	);
 }
 
 /**

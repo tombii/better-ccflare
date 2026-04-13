@@ -1918,10 +1918,12 @@ export function createAccountAutoRefreshHandler(dbOps: DatabaseOperations) {
 				return errorResponse(NotFound("Account not found"));
 			}
 
-			// Check if account is Anthropic provider (only Anthropic accounts have rate limit windows)
-			if (account.provider !== "anthropic") {
+			// Check if account provider supports auto-refresh (session-window based providers)
+			if (account.provider !== "anthropic" && account.provider !== "codex") {
 				return errorResponse(
-					BadRequest("Auto-refresh is only available for Anthropic accounts"),
+					BadRequest(
+						"Auto-refresh is only available for Anthropic and Codex accounts",
+					),
 				);
 			}
 
