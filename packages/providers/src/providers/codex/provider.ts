@@ -303,28 +303,30 @@ export class CodexProvider extends BaseProvider {
 	}
 
 	parseRateLimit(response: Response): RateLimitInfo {
-		if (response.status !== 429) {
-			return { isRateLimited: false };
-		}
-
-		// Codex rate limit reset headers
-		const reset5h = response.headers.get("x-codex-5h-reset-at");
-		const reset7d = response.headers.get("x-codex-7d-reset-at");
-
-		// Use the sooner of the two reset times
-		let resetTime: number | undefined;
-		const parse = (v: string | null) =>
+		// Parse reset time from Codex usage headers (present on all responses)
+		const parseReset = (v: string | null) =>
 			v ? Number.parseInt(v, 10) * 1000 : undefined;
 
-		const t5h = parse(reset5h);
-		const t7d = parse(reset7d);
-		if (t5h && t7d) {
-			resetTime = Math.min(t5h, t7d);
-		} else {
-			resetTime = t5h ?? t7d ?? Date.now() + 60 * 60 * 1000;
+		// Try primary/secondary headers first, then legacy x-codex-5h/7d headers
+		const resets = [
+			parseReset(response.headers.get("x-codex-primary-reset-at")),
+			parseReset(response.headers.get("x-codex-secondary-reset-at")),
+			parseReset(response.headers.get("x-codex-5h-reset-at")),
+			parseReset(response.headers.get("x-codex-7d-reset-at")),
+		].filter((v): v is number => v !== undefined);
+
+		// Use the sooner (smallest) reset time
+		const resetTime = resets.length > 0 ? Math.min(...resets) : undefined;
+
+		if (response.status !== 429) {
+			// Return reset time for DB tracking even on successful responses
+			return { isRateLimited: false, resetTime };
 		}
 
-		return { isRateLimited: true, resetTime };
+		return {
+			isRateLimited: true,
+			resetTime: resetTime ?? Date.now() + 60 * 60 * 1000,
+		};
 	}
 
 	supportsOAuth(): boolean {
@@ -481,9 +483,7 @@ export class CodexProvider extends BaseProvider {
 			reasoning: { effort: "medium" },
 		};
 
-		if (instructions) {
-			codexRequest.instructions = instructions;
-		}
+		codexRequest.instructions = instructions || "You are a helpful assistant.";
 		if (tools) {
 			codexRequest.tools = tools;
 		}

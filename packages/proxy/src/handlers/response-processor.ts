@@ -133,6 +133,25 @@ export function updateAccountMetadata(
 				`Updated Codex usage cache for ${account.name}: 5h=${codexUsage.five_hour.utilization}%, 7d=${codexUsage.seven_day.utilization}%`,
 			);
 
+			// Update rate_limit_reset from usage headers so auto-refresh can track windows
+			const resetTimes = [
+				codexUsage.five_hour?.resets_at,
+				codexUsage.seven_day?.resets_at,
+			]
+				.filter((t): t is string => t != null)
+				.map((t) => new Date(t).getTime());
+			if (resetTimes.length > 0) {
+				const earliestReset = Math.min(...resetTimes);
+				ctx.asyncWriter.enqueue(() =>
+					ctx.dbOps
+						.getAdapter()
+						.run("UPDATE accounts SET rate_limit_reset = ? WHERE id = ?", [
+							earliestReset,
+							account.id,
+						]),
+				);
+			}
+
 			if (windowRolledOver) {
 				log.info(
 					`Codex window rolled over for ${account.name}: ${prevResetAt} → ${newResetAt}, resetting session`,
