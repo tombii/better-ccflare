@@ -213,25 +213,7 @@ export function AccountListItem({
 						)}
 						<span className="text-sm">{presenter.requestCount} requests</span>
 						<span className="text-sm text-muted-foreground">
-							{account.sessionStats ? (
-								<>
-									Session: {account.sessionStats.requests} req
-									{" · "}↑{formatTokenCount(account.sessionStats.inputTokens)}{" "}
-									in
-									{" · "}✦
-									{formatTokenCount(
-										account.sessionStats.cacheCreationInputTokens,
-									)}{" "}
-									cache↑
-									{" · "}✦
-									{formatTokenCount(account.sessionStats.cacheReadInputTokens)}{" "}
-									cache↓
-									{" · "}↓{formatTokenCount(account.sessionStats.outputTokens)}{" "}
-									out
-								</>
-							) : (
-								presenter.sessionInfo
-							)}
+							{presenter.sessionInfo}
 						</span>
 						{presenter.isPaused && (
 							<span className="text-sm text-muted-foreground">Paused</span>
@@ -262,6 +244,19 @@ export function AccountListItem({
 							</span>
 						)}
 					</div>
+					{account.sessionStats && (
+						<div className="text-xs text-muted-foreground">
+							Session: {account.sessionStats.requests} req
+							{" · "}↑{formatTokenCount(account.sessionStats.inputTokens)} in
+							{" · "}✦
+							{formatTokenCount(account.sessionStats.cacheCreationInputTokens)}{" "}
+							cache↑
+							{" · "}✦
+							{formatTokenCount(account.sessionStats.cacheReadInputTokens)}{" "}
+							cache↓
+							{" · "}↓{formatTokenCount(account.sessionStats.outputTokens)} out
+						</div>
+					)}
 				</div>
 				<div className="flex items-center gap-2">
 					<Button
