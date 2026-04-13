@@ -320,6 +320,18 @@ function startUsagePollingWithRefresh(
 				tokenProvider,
 				account.provider,
 				90000, // Poll every 90s
+				undefined, // customEndpoint
+				(accountId) => {
+					// Usage window has rolled over — reset session tracking so the
+					// dashboard reflects the new window without waiting for the next request.
+					proxyContext.dbOps
+						.resetAccountSession(accountId, Date.now())
+						.catch((err) =>
+							logger.warn(
+								`Failed to reset session for account ${accountId} on window reset: ${err}`,
+							),
+						);
+				},
 			);
 
 			// Reset retry count on success
@@ -1112,6 +1124,14 @@ Available endpoints:
 					apiKeyProvider,
 					account.provider,
 					90000, // Poll every 90 seconds (same as Anthropic)
+					undefined, // customEndpoint
+					(accountId) => {
+						dbOps.resetAccountSession(accountId, Date.now()).catch((err) =>
+							log.warn(
+								`Failed to reset session for Zai account ${accountId} on window reset: ${err}`,
+							),
+						);
+					},
 				);
 				log.info(`Started usage polling for Zai account ${account.name}`);
 			} else {
