@@ -35,6 +35,7 @@ import {
 	restartUsagePollingForAccount,
 } from "@better-ccflare/proxy";
 import type { FullUsageData } from "@better-ccflare/types";
+import { requiresSessionDurationTracking } from "@better-ccflare/types";
 import type { AccountResponse } from "../types";
 
 const log = new Logger("AccountsHandler");
@@ -249,14 +250,16 @@ export function createAccountsListHandler(dbOps: DatabaseOperations) {
 			}),
 		);
 
-		// Fetch session-window token stats for all accounts that have an active session
+		// Fetch session-window token stats only for providers with session-based limits
 		const sessionStatsMap = await dbOps
 			.getStatsRepository()
 			.getSessionStats(
-				accounts.map((a) => ({
-					id: a.id,
-					session_start: a.session_start ? Number(a.session_start) : null,
-				})),
+				accounts
+					.filter((a) => requiresSessionDurationTracking(a.provider ?? ""))
+					.map((a) => ({
+						id: a.id,
+						session_start: a.session_start ? Number(a.session_start) : null,
+					})),
 			)
 			.catch(() => new Map());
 
