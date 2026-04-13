@@ -117,10 +117,34 @@ export function updateAccountMetadata(
 			defaultUtilization: response.status === 429 ? 100 : 0,
 		});
 		if (codexUsage) {
+			const prevUsage = usageCache.get(account.id);
+			const prevResetAt = (
+				prevUsage as { five_hour?: { resets_at: string | null } } | null
+			)?.five_hour?.resets_at;
+			const newResetAt = codexUsage.five_hour?.resets_at;
+			const windowRolledOver =
+				prevResetAt != null &&
+				newResetAt != null &&
+				newResetAt !== prevResetAt &&
+				new Date(newResetAt).getTime() > new Date(prevResetAt).getTime();
+
 			usageCache.set(account.id, codexUsage);
 			log.debug(
 				`Updated Codex usage cache for ${account.name}: 5h=${codexUsage.five_hour.utilization}%, 7d=${codexUsage.seven_day.utilization}%`,
 			);
+
+			if (windowRolledOver) {
+				log.info(
+					`Codex window rolled over for ${account.name}: ${prevResetAt} → ${newResetAt}, resetting session`,
+				);
+				ctx.dbOps
+					.resetAccountSession(account.id, Date.now())
+					.catch((err) =>
+						log.warn(
+							`Failed to reset Codex session for ${account.name} on window reset: ${err}`,
+						),
+					);
+			}
 		}
 	}
 

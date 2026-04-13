@@ -74,6 +74,13 @@ export function extractWindowResetTime(
 		const ms = new Date(resetsAt).getTime();
 		return Number.isFinite(ms) ? ms : null;
 	}
+	if (provider === "codex") {
+		const codex = data as UsageData;
+		const resetsAt = codex.five_hour?.resets_at;
+		if (!resetsAt) return null;
+		const ms = new Date(resetsAt).getTime();
+		return Number.isFinite(ms) ? ms : null;
+	}
 	return null;
 }
 
@@ -515,7 +522,8 @@ class UsageCache {
 					} = await import("./zai-usage-fetcher");
 
 					const callback = this.windowResetCallbacks.get(accountId);
-					if (callback) this.notifyWindowReset(accountId, data, "zai", callback);
+					if (callback)
+						this.notifyWindowReset(accountId, data, "zai", callback);
 					this.cache.set(accountId, { data, timestamp: Date.now() });
 					const utilization = getRepresentativeZaiUtilization(
 						data as ZaiUsageData,
@@ -561,7 +569,13 @@ class UsageCache {
 				const result = await fetchUsageData(token);
 				if (result.data) {
 					const callback = this.windowResetCallbacks.get(accountId);
-					if (callback) this.notifyWindowReset(accountId, result.data, "anthropic", callback);
+					if (callback)
+						this.notifyWindowReset(
+							accountId,
+							result.data,
+							"anthropic",
+							callback,
+						);
 					this.cache.set(accountId, {
 						data: result.data,
 						timestamp: Date.now(),
