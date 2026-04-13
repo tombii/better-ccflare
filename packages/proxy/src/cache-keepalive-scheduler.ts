@@ -1,3 +1,4 @@
+import https from "node:https";
 import type { Config } from "@better-ccflare/config";
 import { registerHeartbeat } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
@@ -11,6 +12,9 @@ export class CacheKeepaliveScheduler {
 	private config: Config;
 	private unregisterInterval: (() => void) | null = null;
 	private currentTtlMinutes = 0;
+	private boundConfigChangeHandler:
+		| ((event: { key: string; newValue: unknown }) => void)
+		| null = null;
 
 	constructor(proxyContext: ProxyContext, config: Config) {
 		this.proxyContext = proxyContext;
@@ -22,19 +26,23 @@ export class CacheKeepaliveScheduler {
 		cacheBodyStore.setEnabled(this.currentTtlMinutes > 0);
 
 		// Adjust dynamically when TTL config changes
-		this.config.on(
-			"change",
-			({ key, newValue }: { key: string; newValue: unknown }) => {
-				if (key === "cache_keepalive_ttl_minutes") {
-					const newTtl = typeof newValue === "number" ? newValue : 0;
-					if (newTtl !== this.currentTtlMinutes) {
-						this.currentTtlMinutes = newTtl;
-						cacheBodyStore.setEnabled(newTtl > 0);
-						this.restart();
-					}
+		this.boundConfigChangeHandler = ({
+			key,
+			newValue,
+		}: {
+			key: string;
+			newValue: unknown;
+		}) => {
+			if (key === "cache_keepalive_ttl_minutes") {
+				const newTtl = typeof newValue === "number" ? newValue : 0;
+				if (newTtl !== this.currentTtlMinutes) {
+					this.currentTtlMinutes = newTtl;
+					cacheBodyStore.setEnabled(newTtl > 0);
+					this.restart();
 				}
-			},
-		);
+			}
+		};
+		this.config.on("change", this.boundConfigChangeHandler);
 
 		this.startInterval();
 	}
@@ -43,6 +51,10 @@ export class CacheKeepaliveScheduler {
 		if (this.unregisterInterval) {
 			this.unregisterInterval();
 			this.unregisterInterval = null;
+		}
+		if (this.boundConfigChangeHandler) {
+			this.config.off("change", this.boundConfigChangeHandler);
+			this.boundConfigChangeHandler = null;
 		}
 	}
 
@@ -74,6 +86,11 @@ export class CacheKeepaliveScheduler {
 	}
 
 	private async sendKeepalives(): Promise<void> {
+		// Evict stale cached requests before sending keepalives.
+		// This prevents replaying requests that are clearly no longer warm
+		// (e.g., from days ago when the underlying prompt cache has long expired).
+		cacheBodyStore.evictStaleEntries(this.currentTtlMinutes);
+
 		const accounts = cacheBodyStore.getAllCachedAccounts();
 
 		if (accounts.length === 0) {
@@ -106,6 +123,10 @@ export class CacheKeepaliveScheduler {
 			replayHeaders.set("x-better-ccflare-account-id", accountId);
 			replayHeaders.set("x-better-ccflare-bypass-session", "true");
 
+			// Tag as keepalive for dual purpose:
+			//  1. Visibility: request logger can identify synthetic requests
+			//  2. Loop prevention: proxy skips staging to avoid infinite replay cycle
+			replayHeaders.set("x-better-ccflare-keepalive", "true");
 			const proxyPort = this.proxyContext.runtime.port;
 			const protocol =
 				process.env.SSL_KEY_PATH && process.env.SSL_CERT_PATH
@@ -117,10 +138,35 @@ export class CacheKeepaliveScheduler {
 				`Replaying cached request for account ${accountId} (${cached.body.length} bytes, recorded ${Math.round((Date.now() - cached.timestamp) / 1000)}s ago)`,
 			);
 
+			// Patch max_tokens to 1 to minimize quota consumption.
+			// The keepalive only needs to warm the cache, not generate a full completion.
+			// Parsing errors are handled gracefully - if body isn't valid JSON, we skip
+			// the patching and use the original body as-is.
+			let bodyToSend: BodyInit = new Uint8Array(cached.body);
+			try {
+				const bodyJson = JSON.parse(new TextDecoder().decode(cached.body));
+				if (typeof bodyJson === "object" && bodyJson !== null) {
+					bodyJson.max_tokens = 1;
+					bodyToSend = JSON.stringify(bodyJson);
+				}
+			} catch {
+				// Body isn't valid JSON - skip patching and use original
+			}
+
+			// For HTTPS localhost requests, use an agent that accepts self-signed certificates.
+			// This is needed when SSL_KEY_PATH + SSL_CERT_PATH are configured with self-signed certs.
+			// The self-loop request goes through the proxy again, so certificate validation would fail.
+			const agent =
+				protocol === "https"
+					? new https.Agent({ rejectUnauthorized: false })
+					: undefined;
+
 			const response = await fetch(endpoint, {
 				method: "POST",
 				headers: replayHeaders,
-				body: new Uint8Array(cached.body),
+				body: bodyToSend,
+				// @ts-expect-error Node.js fetch accepts agent option but it's not in standard Fetch API types
+				agent,
 			});
 
 			// Drain the response so the connection is released

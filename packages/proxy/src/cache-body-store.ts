@@ -1,3 +1,7 @@
+import { Logger } from "@better-ccflare/logger";
+
+const log = new Logger("CacheBodyStore");
+
 /**
  * In-memory store for the last request body per account that created a cache entry.
  *
@@ -44,6 +48,7 @@ const STRIP_HEADERS = new Set([
 	"x-better-ccflare-account-id",
 	"x-better-ccflare-bypass-session",
 	"x-better-ccflare-skip-cache",
+	"x-better-ccflare-keepalive",
 	"content-length",
 	"transfer-encoding",
 	"accept-encoding",
@@ -142,6 +147,35 @@ class CacheBodyStore {
 	/** Remove a specific account's cached entry (e.g. account deleted). */
 	evict(accountId: string): void {
 		this.lastCachedRequest.delete(accountId);
+	}
+
+	/**
+	 * Evicts cached request entries older than the specified age threshold.
+	 * Called at keepalive tick time to prevent replaying stale requests whose
+	 * underlying prompt cache has long expired.
+	 *
+	 * @param ttlMinutes The configured cache TTL in minutes
+	 * @param ageMultiplier Multiplier for TTL to determine max age (default: 3)
+	 *                      e.g. TTL 5min with multiplier 3 = evict entries older than 15min
+	 */
+	evictStaleEntries(ttlMinutes: number, ageMultiplier = 3): void {
+		const maxAgeMs = ttlMinutes * 60_000 * ageMultiplier;
+		const cutoffTime = Date.now() - maxAgeMs;
+		let evictedCount = 0;
+
+		for (const [accountId, entry] of this.lastCachedRequest.entries()) {
+			if (entry.timestamp < cutoffTime) {
+				this.lastCachedRequest.delete(accountId);
+				evictedCount++;
+			}
+		}
+
+		if (evictedCount > 0) {
+			const maxAgeMinutes = Math.round(maxAgeMs / 60_000);
+			log.info(
+				`Evicted ${evictedCount} stale cached request(s) older than ${maxAgeMinutes}min (TTL: ${ttlMinutes}min × ${ageMultiplier})`,
+			);
+		}
 	}
 }
 

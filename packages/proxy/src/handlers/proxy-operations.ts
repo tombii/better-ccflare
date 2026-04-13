@@ -399,13 +399,16 @@ export async function proxyWithAccount(
 		// Headers are stored because Anthropic's prepareHeaders() copies incoming
 		// client headers (anthropic-version, anthropic-beta, x-stainless-*, etc.)
 		// and augments them — providers that build headers from scratch ignore them.
-		cacheBodyStore.stageRequest(
-			requestMeta.id,
-			account.id,
-			requestBodyBuffer,
-			req.headers,
-			url.pathname,
-		);
+		// Skip staging for internal keepalive replays to prevent infinite loop.
+		if (!req.headers.get("x-better-ccflare-keepalive")) {
+			cacheBodyStore.stageRequest(
+				requestMeta.id,
+				account.id,
+				requestBodyBuffer,
+				req.headers,
+				url.pathname,
+			);
+		}
 
 		// Get the provider for this account
 		const provider = getProvider(account.provider) || ctx.provider;
