@@ -249,6 +249,17 @@ export function createAccountsListHandler(dbOps: DatabaseOperations) {
 			}),
 		);
 
+		// Fetch session-window token stats for all accounts that have an active session
+		const sessionStatsMap = await dbOps
+			.getStatsRepository()
+			.getSessionStats(
+				accounts.map((a) => ({
+					id: a.id,
+					session_start: a.session_start ? Number(a.session_start) : null,
+				})),
+			)
+			.catch(() => new Map());
+
 		const response: AccountResponse[] = await Promise.all(
 			accounts.map(async (account) => {
 				let rateLimitStatus = "OK";
@@ -467,6 +478,7 @@ export function createAccountsListHandler(dbOps: DatabaseOperations) {
 					crossRegionMode: account.cross_region_mode,
 					modelFallbacks,
 					billingType: account.billing_type,
+					sessionStats: sessionStatsMap.get(account.id) ?? null,
 				};
 			}),
 		);
