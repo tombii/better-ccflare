@@ -14,7 +14,9 @@ import {
  */
 export function providerSupportsAutoFeatures(provider: string): boolean {
 	return (
-		provider === PROVIDER_NAMES.ANTHROPIC || provider === PROVIDER_NAMES.CODEX
+		provider === PROVIDER_NAMES.ANTHROPIC ||
+		provider === PROVIDER_NAMES.CODEX ||
+		provider === PROVIDER_NAMES.ZAI
 	);
 }
 

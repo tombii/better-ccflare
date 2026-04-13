@@ -123,7 +123,7 @@ export class AutoRefreshScheduler {
 				FROM accounts
 				WHERE
 					auto_refresh_enabled = 1
-					AND provider IN ('anthropic', 'codex')
+					AND provider IN ('anthropic', 'codex', 'zai')
 					AND (
 						(rate_limit_reset IS NOT NULL AND rate_limit_reset <= ?)
 						OR rate_limit_reset IS NULL
@@ -860,7 +860,7 @@ export class AutoRefreshScheduler {
 
 			// Get all account IDs that have auto-refresh enabled
 			const rows = await this.db.query<{ id: string }>(
-				`SELECT id FROM accounts WHERE auto_refresh_enabled = 1 AND provider IN ('anthropic', 'codex')`,
+				`SELECT id FROM accounts WHERE auto_refresh_enabled = 1 AND provider IN ('anthropic', 'codex', 'zai')`,
 			);
 
 			const activeAccountIds = rows.map((row) => row.id);

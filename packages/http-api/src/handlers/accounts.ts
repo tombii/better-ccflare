@@ -1919,10 +1919,14 @@ export function createAccountAutoRefreshHandler(dbOps: DatabaseOperations) {
 			}
 
 			// Check if account provider supports auto-refresh (session-window based providers)
-			if (account.provider !== "anthropic" && account.provider !== "codex") {
+			if (
+				account.provider !== "anthropic" &&
+				account.provider !== "codex" &&
+				account.provider !== "zai"
+			) {
 				return errorResponse(
 					BadRequest(
-						"Auto-refresh is only available for Anthropic and Codex accounts",
+						"Auto-refresh is only available for Anthropic, Codex, and Zai accounts",
 					),
 				);
 			}
