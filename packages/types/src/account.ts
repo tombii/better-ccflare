@@ -139,6 +139,15 @@ export interface Account {
 	billing_type: string | null;
 }
 
+// Session statistics for 5-hour token window
+export interface SessionStats {
+	requests: number;
+	inputTokens: number;
+	cacheCreationInputTokens: number;
+	cacheReadInputTokens: number;
+	outputTokens: number;
+}
+
 // API response type - what clients receive
 export interface AccountResponse {
 	id: string;
@@ -168,6 +177,7 @@ export interface AccountResponse {
 	crossRegionMode?: string | null; // Cross-region inference mode for Bedrock accounts
 	modelFallbacks?: { [key: string]: string } | null;
 	billingType?: string | null;
+	sessionStats: SessionStats | null;
 }
 
 // UI display type - used in CLI and web dashboard
@@ -369,6 +379,7 @@ export function toAccountResponse(account: Account): AccountResponse {
 		hasRefreshToken: !!account.refresh_token, // OAuth accounts have refresh tokens
 		modelFallbacks,
 		billingType: account.billing_type,
+		sessionStats: null,
 	};
 }
 
