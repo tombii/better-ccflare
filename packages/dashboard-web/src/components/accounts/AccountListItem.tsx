@@ -24,6 +24,12 @@ import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
 import { RateLimitProgress } from "./RateLimitProgress";
 
+function formatTokenCount(n: number): string {
+	if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+	if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+	return String(n);
+}
+
 interface AccountListItemProps {
 	account: Account;
 	isActive?: boolean;
@@ -206,6 +212,27 @@ export function AccountListItem({
 							</span>
 						)}
 						<span className="text-sm">{presenter.requestCount} requests</span>
+						<span className="text-sm text-muted-foreground">
+							{account.sessionStats ? (
+								<>
+									Session: {account.sessionStats.requests} req
+									{" · "}↑{formatTokenCount(account.sessionStats.inputTokens)}{" "}
+									in
+									{" · "}✦
+									{formatTokenCount(
+										account.sessionStats.cacheCreationInputTokens,
+									)}{" "}
+									cache↑
+									{" · "}✦
+									{formatTokenCount(account.sessionStats.cacheReadInputTokens)}{" "}
+									cache↓
+									{" · "}↓{formatTokenCount(account.sessionStats.outputTokens)}{" "}
+									out
+								</>
+							) : (
+								presenter.sessionInfo
+							)}
+						</span>
 						{presenter.isPaused && (
 							<span className="text-sm text-muted-foreground">Paused</span>
 						)}
