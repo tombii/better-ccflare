@@ -379,6 +379,8 @@ export class StatsRepository {
 			cache_creation_input_tokens: unknown;
 			cache_read_input_tokens: unknown;
 			output_tokens: unknown;
+			plan_cost_usd: unknown;
+			api_cost_usd: unknown;
 		}>(
 			`SELECT
 				account_used,
@@ -386,7 +388,9 @@ export class StatsRepository {
 				COALESCE(SUM(input_tokens), 0) as input_tokens,
 				COALESCE(SUM(cache_creation_input_tokens), 0) as cache_creation_input_tokens,
 				COALESCE(SUM(cache_read_input_tokens), 0) as cache_read_input_tokens,
-				COALESCE(SUM(output_tokens), 0) as output_tokens
+				COALESCE(SUM(output_tokens), 0) as output_tokens,
+				COALESCE(SUM(CASE WHEN billing_type = 'plan' THEN cost_usd ELSE 0 END), 0) as plan_cost_usd,
+				COALESCE(SUM(CASE WHEN billing_type != 'plan' OR billing_type IS NULL THEN cost_usd ELSE 0 END), 0) as api_cost_usd
 			FROM requests
 			WHERE ${clauses}
 			GROUP BY account_used`,
@@ -403,6 +407,8 @@ export class StatsRepository {
 						Number(row.cache_creation_input_tokens) || 0,
 					cacheReadInputTokens: Number(row.cache_read_input_tokens) || 0,
 					outputTokens: Number(row.output_tokens) || 0,
+					planCostUsd: Number(row.plan_cost_usd) || 0,
+					apiCostUsd: Number(row.api_cost_usd) || 0,
 				},
 			]),
 		);
