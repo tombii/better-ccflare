@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { formatCost } from "@better-ccflare/ui-common";
 import { CHART_COLORS, COLORS } from "../../constants";
 import {
 	BaseAreaChart,
@@ -13,6 +14,11 @@ import {
 	CardHeader,
 	CardTitle,
 } from "../ui/card";
+import {
+	getSortedAccountCostRows,
+	getAccountCostTotals,
+	hasAnyAccountCostData,
+} from "./account-cost-table-utils";
 
 interface ChartsSectionProps {
 	timeSeriesData: Array<{
@@ -29,6 +35,9 @@ interface ChartsSectionProps {
 		name: string;
 		requests: number;
 		successRate: number;
+		planCostUsd: number;
+		apiCostUsd: number;
+		totalCostUsd: number;
 	}>;
 	accountModelUsageData: Array<{
 		account: string;
@@ -82,6 +91,14 @@ export function ChartsSection({
 			.sort((a, b) => b.value - a.value);
 	}, [apiKeyPerformanceData]);
 
+	const sortedAccountCostRows = useMemo(
+		() => getSortedAccountCostRows(accountHealthData),
+		[accountHealthData],
+	);
+	const accountCostTotals = useMemo(
+		() => getAccountCostTotals(sortedAccountCostRows),
+		[sortedAccountCostRows],
+	);
 	return (
 		<>
 			{/* Charts Row 1 */}
@@ -292,9 +309,47 @@ export function ChartsSection({
 							secondaryYAxis={true}
 							showLegend={true}
 						/>
-					</CardContent>
-				</Card>
-			</div>
-		</>
+					<div className="mt-4 border rounded-md overflow-hidden">
+						<table aria-label="Account cost breakdown" className="w-full text-sm">
+							<thead className="bg-muted/50">
+								<tr>
+									<th scope="col" className="text-left px-3 py-2">Account</th>
+									<th scope="col" className="text-right px-3 py-2">Plan Value</th>
+									<th scope="col" className="text-right px-3 py-2">API Value</th>
+									<th scope="col" className="text-right px-3 py-2">Total</th>
+								</tr>
+							</thead>
+							<tbody>
+								{hasAnyAccountCostData(sortedAccountCostRows) ? (
+									sortedAccountCostRows.map((row) => (
+										<tr key={row.name} className="border-t">
+											<td className="px-3 py-2 text-muted-foreground">{row.name}</td>
+											<td className="px-3 py-2 text-right">{formatCost(row.planCostUsd)}</td>
+											<td className="px-3 py-2 text-right">{formatCost(row.apiCostUsd)}</td>
+											<td className="px-3 py-2 text-right font-medium">{formatCost(row.totalCostUsd)}</td>
+										</tr>
+									))
+								) : (
+									<tr className="border-t">
+										<td className="px-3 py-3 text-muted-foreground" colSpan={4}>
+											No cost data
+										</td>
+									</tr>
+								)}
+							</tbody>
+							<tfoot className="bg-muted/30 border-t">
+								<tr>
+									<th scope="row" className="px-3 py-2 font-medium text-left">Total</th>
+									<td className="px-3 py-2 text-right font-medium">{formatCost(accountCostTotals.planCostUsd)}</td>
+									<td className="px-3 py-2 text-right font-medium">{formatCost(accountCostTotals.apiCostUsd)}</td>
+									<td className="px-3 py-2 text-right font-medium">{formatCost(accountCostTotals.totalCostUsd)}</td>
+								</tr>
+							</tfoot>
+						</table>
+					</div>
+				</CardContent>
+			</Card>
+		</div>
+	</>
 	);
 }
