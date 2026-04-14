@@ -12,6 +12,7 @@ If accidentally modified: `git checkout -- packages/proxy/src/inline-worker.ts`
 ## Branch Management
 Always branch from `main` with a fresh pull. Never make changes directly on main.
 PRs: `gh pr checkout <PR_NUMBER>` or `git checkout <branch-name>`.
+- If `git push origin main` fails with `src refspec main matches more than one` (branch/tag name collision), push explicitly: `git push origin refs/heads/main:refs/heads/main`.
 
 ## Issue Management
 - Never close issues automatically
