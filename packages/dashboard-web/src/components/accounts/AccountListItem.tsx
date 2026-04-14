@@ -138,7 +138,7 @@ export function AccountListItem({
 										<Switch
 											checked={account.autoFallbackEnabled}
 											onCheckedChange={() => onAutoFallbackToggle(account)}
-											title="Toggle auto-fallback for this account"
+											title="Automatically switch back to this account from lower-priority ones when its rate limit resets. Requires multiple accounts with different priorities."
 										/>
 									</div>
 									<div className="flex items-center gap-2">
@@ -148,7 +148,7 @@ export function AccountListItem({
 										<Switch
 											checked={account.autoRefreshEnabled}
 											onCheckedChange={() => onAutoRefreshToggle(account)}
-											title="Toggle auto-refresh for this account"
+											title="Automatically sends a minimal message when the usage window resets to avoid cold-start latency. Does not affect OAuth token refreshing."
 										/>
 									</div>
 								</>
