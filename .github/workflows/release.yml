@@ -161,6 +161,21 @@ jobs:
             # Get commits since previous tag
             COMMITS=$(git log --pretty=format:"%h %s" $PREV_TAG..HEAD)
 
+            # Drop commits that only touch CLAUDE.md files
+            FILTERED_COMMITS=""
+            while IFS= read -r commit; do
+              [ -z "$commit" ] && continue
+              HASH=$(echo "$commit" | cut -d' ' -f1)
+              FILES=$(git show --name-only --pretty="" "$HASH")
+              NON_CLAUDE_FILES=$(echo "$FILES" | grep -vE '(^|/)CLAUDE\.md$' || true)
+
+              if [ -n "$NON_CLAUDE_FILES" ]; then
+                FILTERED_COMMITS="$FILTERED_COMMITS$commit
+"
+              fi
+            done <<< "$COMMITS"
+            COMMITS=$(echo "$FILTERED_COMMITS" | sed '/^$/d')
+
             if [ -n "$COMMITS" ]; then
               CHANGELOG="$CHANGELOG
 
