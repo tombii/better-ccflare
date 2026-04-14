@@ -122,7 +122,7 @@ export function AccountListItem({
 										<Switch
 											checked={account.autoFallbackEnabled}
 											onCheckedChange={() => onAutoFallbackToggle(account)}
-											title="When this account's rate-limit window resets, automatically switch back to it from lower-priority accounts. Requires multiple accounts with different priority values."
+											title="Automatically switch back to this account from lower-priority ones when its rate limit resets. Requires multiple accounts with different priorities."
 										/>
 									</div>
 									<div className="flex items-center gap-2">
