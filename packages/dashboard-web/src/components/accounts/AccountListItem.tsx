@@ -376,6 +376,12 @@ export function AccountListItem({
 					{" · "}✦{formatTokenCount(account.sessionStats.cacheReadInputTokens)}{" "}
 					cache↓
 					{" · "}↓{formatTokenCount(account.sessionStats.outputTokens)} out
+					{account.sessionStats.planCostUsd > 0 && (
+						<>{" · "}${account.sessionStats.planCostUsd.toFixed(2)} plan</>
+					)}
+					{account.sessionStats.apiCostUsd > 0 && (
+						<>{" · "}${account.sessionStats.apiCostUsd.toFixed(2)} api</>
+					)}
 				</div>
 			)}
 			{(account.rateLimitReset ||
