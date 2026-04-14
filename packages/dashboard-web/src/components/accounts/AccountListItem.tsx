@@ -122,7 +122,7 @@ export function AccountListItem({
 										<Switch
 											checked={account.autoFallbackEnabled}
 											onCheckedChange={() => onAutoFallbackToggle(account)}
-											title="Toggle auto-fallback for this account"
+											title="When this account's rate-limit window resets, automatically switch back to it from lower-priority accounts. Requires multiple accounts with different priority values."
 										/>
 									</div>
 									<div className="flex items-center gap-2">
@@ -132,7 +132,7 @@ export function AccountListItem({
 										<Switch
 											checked={account.autoRefreshEnabled}
 											onCheckedChange={() => onAutoRefreshToggle(account)}
-											title="Toggle auto-refresh for this account"
+											title="When this Anthropic account's 5-hour usage window resets, automatically send a minimal dummy message (~10 tokens) to start the new window immediately, avoiding cold-start latency on the first real request. Does not refresh OAuth tokens (those are always refreshed automatically)."
 										/>
 									</div>
 								</>
