@@ -268,6 +268,7 @@ function startUsagePollingWithRefresh(
 	account: Account,
 	proxyContext: ProxyContext,
 	startupDelayMs: number = 0,
+	intervalMs: number = 90000,
 ) {
 	const logger = new Logger("UsagePolling");
 	const MAX_RETRY_ATTEMPTS = 10;
@@ -319,7 +320,7 @@ function startUsagePollingWithRefresh(
 				account.id,
 				tokenProvider,
 				account.provider,
-				90000, // Poll every 90s
+				intervalMs,
 			);
 
 			// Reset retry count on success
@@ -732,7 +733,12 @@ export default async function startServer(options?: {
 			`Restarting usage polling for account ${account.name} on ${serverId}`,
 		);
 		usageCache.stopPolling(accountId);
-		startUsagePollingWithRefresh(account, proxyContext);
+		startUsagePollingWithRefresh(
+			account,
+			proxyContext,
+			0,
+			config.getUsagePollIntervalMs(),
+		);
 		return true;
 	});
 
@@ -1036,7 +1042,12 @@ Available endpoints:
 				// Usage data fetching should work independently of account paused status
 				// Stagger startup by 5s per account to avoid simultaneous 429s on boot
 				const startupDelayMs = index * 5000;
-				startUsagePollingWithRefresh(account, proxyContext, startupDelayMs);
+				startUsagePollingWithRefresh(
+					account,
+					proxyContext,
+					startupDelayMs,
+					config.getUsagePollIntervalMs(),
+				);
 				log.info(
 					`Started usage polling for account ${account.name}${startupDelayMs > 0 ? ` (delayed ${startupDelayMs / 1000}s)` : ""}`,
 				);
@@ -1074,7 +1085,7 @@ Available endpoints:
 					account.id,
 					apiKeyProvider,
 					account.provider,
-					90000, // Poll every 90 seconds (same as Anthropic)
+					config.getUsagePollIntervalMs(),
 					account.custom_endpoint,
 				);
 				log.info(`Started usage polling for NanoGPT account ${account.name}`);
@@ -1111,7 +1122,7 @@ Available endpoints:
 					account.id,
 					apiKeyProvider,
 					account.provider,
-					90000, // Poll every 90 seconds (same as Anthropic)
+					config.getUsagePollIntervalMs(),
 				);
 				log.info(`Started usage polling for Zai account ${account.name}`);
 			} else {
@@ -1137,7 +1148,7 @@ Available endpoints:
 					account.id,
 					apiKeyProvider,
 					account.provider,
-					90000,
+					config.getUsagePollIntervalMs(),
 				);
 				log.info(
 					`Started usage polling for Kilo Gateway account ${account.name}`,

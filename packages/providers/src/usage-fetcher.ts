@@ -249,12 +249,15 @@ class UsageCache {
 		retryAfterMs?: number | null,
 	) {
 		const failures = this.failureCounts.get(accountId) ?? 0;
+		// Add ±20% random jitter to the base interval so accounts spread out
+		// and don't lock into sync with each other over time.
+		const jitter = (Math.random() - 0.5) * 0.4 * baseIntervalMs;
 		// Use server-provided retry-after if available, otherwise exponential backoff capped at 30 minutes
 		const delay =
 			retryAfterMs != null
 				? retryAfterMs
 				: failures === 0
-					? baseIntervalMs
+					? baseIntervalMs + jitter
 					: Math.min(baseIntervalMs * 2 ** failures, 30 * 60 * 1000);
 
 		if (failures > 0) {
