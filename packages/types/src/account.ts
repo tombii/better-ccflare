@@ -146,6 +146,8 @@ export interface SessionStats {
 	cacheCreationInputTokens: number;
 	cacheReadInputTokens: number;
 	outputTokens: number;
+	planCostUsd: number;
+	apiCostUsd: number;
 }
 
 // API response type - what clients receive
