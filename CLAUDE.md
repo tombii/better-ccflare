@@ -6,20 +6,13 @@ Load balancer proxy for Claude distributing requests across multiple account pro
 
 **README files** - Only modify `./README.md` (root). Do NOT modify `apps/cli/README.md`.
 
-**NEVER TOUCH `inline-worker.ts`** - This file is auto-generated during build and MUST be completely ignored:
-- ❌ Do NOT read it
-- ❌ Do NOT edit it
-- ❌ Do NOT stage/commit it (`git add`)
-- ❌ Do NOT reference it in any tool calls
-- ❌ Do NOT include it in search results
-- ❌ If accidentally modified, revert it immediately with `git checkout -- packages/proxy/src/inline-worker.ts`
-
-When using glob patterns or file searches, explicitly exclude this file.
+**NEVER TOUCH `inline-worker.ts`** — auto-generated, must be excluded from all reads, edits, searches, and commits.
+If accidentally modified: `git checkout -- packages/proxy/src/inline-worker.ts`
 
 ## Branch Management
-- Feature branches: Create from `main`. Pull latest first: `git checkout main && git pull origin main && git checkout -b feature/name`
-- Hotfixes: Create from `main`. Pull latest first: `git checkout main && git pull origin main && git checkout -b hotfix/name`
-- PRs: Use `gh pr checkout <PR_NUMBER>` or `git checkout <branch-name>`. Never make PR changes on main.
+Always branch from `main` with a fresh pull. Never make changes directly on main.
+PRs: `gh pr checkout <PR_NUMBER>` or `git checkout <branch-name>`.
+- If `git push origin main` fails with `src refspec main matches more than one` (branch/tag name collision), push explicitly: `git push origin refs/heads/main:refs/heads/main`.
 
 ## Issue Management
 - Never close issues automatically
@@ -32,6 +25,9 @@ When using glob patterns or file searches, explicitly exclude this file.
 
 ## Subagents for Multi-Task Work
 When a session involves multiple independent tasks, always spawn subagents rather than doing them sequentially in the main context. This conserves tokens and keeps the main context clean. Tasks don't need to run in parallel — the goal is context isolation, not speed.
+
+## Plan Execution
+When executing implementation plans, always use subagent-driven development (superpowers:subagent-driven-development). Never execute plans inline in the main session. Always dispatch a fresh subagent per task.
 
 ## After Code Changes
 Always run: `bun run lint && bun run typecheck && bun run format`
@@ -47,11 +43,9 @@ Always run: `bun run lint && bun run typecheck && bun run format`
 - **NEVER bump the version** — version bumps are handled automatically by the release system
 
 ## Version Updates
-If a manual version bump is ever needed, update in both files:
-- `package.json` (root)
-- `apps/cli/package.json`
-
-Note: `CLAUDE_CLI_VERSION` in `packages/core/src/version.ts` tracks the official Claude Code CLI version and is auto-updated by the pre-push hook from npm registry.
+**NEVER bump the version** — handled automatically by the release system.
+`CLAUDE_CLI_VERSION` in `packages/core/src/version.ts` tracks Claude Code CLI version (auto-updated by pre-push hook).
+If ever needed manually: update both `package.json` (root) and `apps/cli/package.json`.
 
 ## Commands
 
@@ -98,7 +92,7 @@ Automated release system uses commit prefixes for changelog:
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **better-ccflare** (5015 symbols, 11056 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **better-ccflare** (5050 symbols, 11107 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 

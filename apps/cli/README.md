@@ -189,6 +189,13 @@ RETRY_BACKOFF=2                        # Retry backoff multiplier
 STORE_PAYLOADS=false                   # Disable storing request/response bodies (reduces DB size and memory usage)
                                        # Token counts, costs, model, status and timing are still recorded
 
+# Streaming Timeouts
+# Agentic workloads (e.g. recursive claude-code-sdk sessions) can leave the outer
+# stream silent for minutes while sub-calls run. Increase these if long-running
+# nested calls appear failed or missing in the UI (issue #84).
+CF_STREAM_TOTAL_TIMEOUT_MS=1800000     # Max total stream duration per request (default: 30 minutes)
+CF_STREAM_CHUNK_TIMEOUT_MS=300000      # Max silence between consecutive chunks (default: 5 minutes)
+
 # Payload encryption at rest (optional)
 # When set, request/response payloads are encrypted with AES-256-GCM before
 # being written to `request_payloads`. Existing plaintext rows remain readable.
@@ -283,11 +290,9 @@ docker run -d \
 
 # View logs
 docker logs -f better-ccflare
-
-# Manage accounts
-docker exec -it better-ccflare better-ccflare --add-account myaccount --mode claude-oauth --priority 0
-docker exec -it better-ccflare better-ccflare --list
 ```
+
+Once the container is running, **open http://localhost:8080 in your browser** to add and manage accounts through the Web UI. This is the recommended way — using `docker exec` to run CLI commands inside the container won't work for OAuth-based account modes since the container has no browser.
 
 **🆕 Environment Variable Support**: Docker Compose now automatically loads `.env` files from the same directory as `docker-compose.yml`. Simply create a `.env` file alongside your `docker-compose.yml` file and the container will use those settings.
 
@@ -632,6 +637,14 @@ We recommend using one of the workarounds above until the npm bug is fixed.
 - **Auto-refresh** - Automatically start new usage windows when they reset
 - **Usage Window Alignment** - Sessions automatically align with Claude OAuth usage window resets for optimal resource utilization
 
+### 🔗 Combos — Cross-Provider Fallback Chains
+- **Named Combos** - Create named fallback chains with ordered (account, model) slots
+- **Family Activation** - Assign one combo per model family (Opus, Sonnet, Haiku) — independent activation toggles
+- **Auto Waterfall** - Requests automatically fall through slots top-to-bottom, skipping unavailable accounts (rate-limited, paused)
+- **Per-Slot Model Override** - Each slot can use a different model, enabling cross-model fallback (e.g., try Opus on provider A, then Sonnet on provider B)
+- **SessionStrategy Fallback** - If all combo slots fail, automatically falls back to normal session-based routing
+- **Dashboard Management** - Drag-and-drop slot builder with account provider badges, enable/disable per combo, and family assignment UI
+
 ### 📈 Real-Time Analytics
 - Token usage tracking per request with optimized batch processing
 - Response time monitoring with intelligent caching
@@ -697,6 +710,7 @@ Full documentation available in [`docs/`](docs/):
 - [Auto-Fallback Guide](docs/auto-fallback.md)
 - [Auto-Refresh Guide](docs/auto-refresh.md)
 - [OpenAI-Compatible Providers](docs/providers.md)
+- [Combos — Fallback Chains](docs/combos.md)
 
 ## Screenshots
 

@@ -56,6 +56,35 @@ export type AnyUsageData =
 	| AlibabaCodingPlanUsageData;
 
 /**
+ * Extract the primary window reset timestamp (ms) from usage data.
+ * Returns null if the provider doesn't expose a reset time or it isn't available.
+ */
+export function extractWindowResetTime(
+	data: AnyUsageData,
+	provider: string,
+): number | null {
+	if (provider === "zai") {
+		const zai = data as ZaiUsageData;
+		return zai.tokens_limit?.resetAt ?? null;
+	}
+	if (provider === "anthropic") {
+		const anthropic = data as UsageData;
+		const resetsAt = anthropic.five_hour?.resets_at;
+		if (!resetsAt) return null;
+		const ms = new Date(resetsAt).getTime();
+		return Number.isFinite(ms) ? ms : null;
+	}
+	if (provider === "codex") {
+		const codex = data as UsageData;
+		const resetsAt = codex.five_hour?.resets_at;
+		if (!resetsAt) return null;
+		const ms = new Date(resetsAt).getTime();
+		return Number.isFinite(ms) ? ms : null;
+	}
+	return null;
+}
+
+/**
  * Fetch usage data from Anthropic's OAuth usage endpoint
  */
 export interface UsageFetchResult {
@@ -66,6 +95,8 @@ export interface UsageFetchResult {
 export async function fetchUsageData(
 	accessToken: string,
 ): Promise<UsageFetchResult> {
+	const controller = new AbortController();
+	const timeoutId = setTimeout(() => controller.abort(), 5000);
 	try {
 		const response = await fetch("https://api.anthropic.com/api/oauth/usage", {
 			method: "GET",
@@ -74,7 +105,9 @@ export async function fetchUsageData(
 				"anthropic-beta": "oauth-2025-04-20",
 				"User-Agent": `claude-code/${CLAUDE_CLI_VERSION}`,
 				Accept: "application/json",
+				"Content-Type": "application/json",
 			},
+			signal: controller.signal,
 		});
 
 		if (!response.ok) {
@@ -86,10 +119,21 @@ export async function fetchUsageData(
 			if (response.status === 429) {
 				const retryAfter = response.headers.get("retry-after");
 				if (retryAfter) {
-					const seconds = parseInt(retryAfter, 10);
-					if (!Number.isNaN(seconds) && seconds > 0) {
-						retryAfterMs = seconds * 1000;
+					const seconds = Number(retryAfter);
+					if (Number.isFinite(seconds) && seconds > 0) {
+						retryAfterMs = Math.round(seconds * 1000);
 						log.warn(`Usage endpoint rate-limited, retry-after: ${seconds}s`);
+					} else {
+						const retryDateMs = new Date(retryAfter).getTime();
+						if (Number.isFinite(retryDateMs)) {
+							const deltaMs = retryDateMs - Date.now();
+							if (deltaMs > 0) {
+								retryAfterMs = deltaMs;
+								log.warn(
+									`Usage endpoint rate-limited, retry-after date: ${retryAfter}`,
+								);
+							}
+						}
 					}
 				}
 			}
@@ -135,6 +179,8 @@ export async function fetchUsageData(
 
 		log.error("Error fetching usage data:", errorMessage || "Unknown error");
 		return { data: null, retryAfterMs: null };
+	} finally {
+		clearTimeout(timeoutId);
 	}
 }
 
@@ -234,6 +280,7 @@ class UsageCache {
 	private tokenProviders = new Map<string, AccessTokenProvider>();
 	private providerTypes = new Map<string, string>(); // Track provider type for each account
 	private customEndpoints = new Map<string, string | null>(); // Track custom endpoints
+	private windowResetCallbacks = new Map<string, (accountId: string) => void>();
 
 	/**
 	 * Schedule the next poll with exponential backoff on failures.
@@ -309,6 +356,7 @@ class UsageCache {
 		provider?: string,
 		intervalMs?: number,
 		customEndpoint?: string | null,
+		onWindowReset?: (accountId: string) => void,
 	) {
 		// Check if provider supports usage tracking
 		if (provider && !supportsUsageTracking(provider)) {
@@ -337,12 +385,17 @@ class UsageCache {
 				: accessTokenOrProvider;
 		this.tokenProviders.set(accountId, tokenProvider);
 
-		// Store provider type and custom endpoint for this account
+		// Store provider type, custom endpoint, and window-reset callback for this account
 		if (provider) {
 			this.providerTypes.set(accountId, provider);
 		}
 		if (customEndpoint !== undefined) {
 			this.customEndpoints.set(accountId, customEndpoint);
+		}
+		if (onWindowReset) {
+			this.windowResetCallbacks.set(accountId, onWindowReset);
+		} else {
+			this.windowResetCallbacks.delete(accountId);
 		}
 
 		// Default to 90s if not provided
@@ -405,6 +458,7 @@ class UsageCache {
 		if (this.tokenProviders.has(accountId)) {
 			this.tokenProviders.delete(accountId);
 			this.failureCounts.delete(accountId);
+			this.windowResetCallbacks.delete(accountId);
 			// Clean up cache entry when polling stops to prevent memory leaks
 			this.cache.delete(accountId);
 			log.info(
@@ -487,6 +541,9 @@ class UsageCache {
 						getRepresentativeZaiWindow,
 					} = await import("./zai-usage-fetcher");
 
+					const callback = this.windowResetCallbacks.get(accountId);
+					if (callback)
+						this.notifyWindowReset(accountId, data, "zai", callback);
 					this.cache.set(accountId, { data, timestamp: Date.now() });
 					const utilization = getRepresentativeZaiUtilization(
 						data as ZaiUsageData,
@@ -531,6 +588,14 @@ class UsageCache {
 				// Default to Anthropic usage data
 				const result = await fetchUsageData(token);
 				if (result.data) {
+					const callback = this.windowResetCallbacks.get(accountId);
+					if (callback)
+						this.notifyWindowReset(
+							accountId,
+							result.data,
+							"anthropic",
+							callback,
+						);
 					this.cache.set(accountId, {
 						data: result.data,
 						timestamp: Date.now(),
@@ -615,6 +680,37 @@ class UsageCache {
 		// Run cleanup every 100 sets to balance performance and memory
 		if (this.cache.size % 100 === 0) {
 			this.cleanupStaleEntries();
+		}
+	}
+
+	/**
+	 * Check if the usage window has reset by comparing the new data's reset time
+	 * against the previously cached data, and fire the callback if it has advanced.
+	 * Should be called after successfully fetching new data, before updating the cache.
+	 * No-ops on the first poll (no previous data) to avoid spurious resets.
+	 */
+	notifyWindowReset(
+		accountId: string,
+		newData: AnyUsageData,
+		provider: string,
+		callback: (accountId: string) => void,
+	): void {
+		const previous = this.cache.get(accountId);
+		if (!previous) return; // first poll — no baseline to compare against
+
+		const prevResetAt = extractWindowResetTime(previous.data, provider);
+		const newResetAt = extractWindowResetTime(newData, provider);
+
+		if (
+			prevResetAt !== null &&
+			newResetAt !== null &&
+			newResetAt > prevResetAt
+		) {
+			log.info(
+				`Usage window reset detected for account ${accountId} (${provider}): ` +
+					`${new Date(prevResetAt).toISOString()} → ${new Date(newResetAt).toISOString()}`,
+			);
+			callback(accountId);
 		}
 	}
 

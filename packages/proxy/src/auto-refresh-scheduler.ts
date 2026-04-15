@@ -123,7 +123,7 @@ export class AutoRefreshScheduler {
 				FROM accounts
 				WHERE
 					auto_refresh_enabled = 1
-					AND provider = 'anthropic'
+					AND provider IN ('anthropic', 'codex', 'zai')
 					AND (
 						(rate_limit_reset IS NOT NULL AND rate_limit_reset <= ?)
 						OR rate_limit_reset IS NULL
@@ -504,22 +504,24 @@ export class AutoRefreshScheduler {
 					);
 				}
 
-				// Fetch usage data from the OAuth usage endpoint to get 5h window info
-				// Get the access token for this account
-				const accessToken = await getValidAccessToken(
-					account,
-					this.proxyContext,
-				);
-				if (accessToken) {
-					const { data: usageData } = await fetchUsageData(accessToken);
-					if (usageData) {
-						log.info(
-							`Fetched usage data for ${accountRow.name}: 5h=${usageData.five_hour.utilization}%, 7d=${usageData.seven_day.utilization}%`,
-						);
-					} else {
-						log.warn(
-							`Failed to fetch usage data for ${accountRow.name} after auto-refresh`,
-						);
+				if (accountRow.provider === "anthropic") {
+					// Fetch usage data from the OAuth usage endpoint to get 5h window info
+					// Get the access token for this account
+					const accessToken = await getValidAccessToken(
+						account,
+						this.proxyContext,
+					);
+					if (accessToken) {
+						const { data: usageData } = await fetchUsageData(accessToken);
+						if (usageData) {
+							log.info(
+								`Fetched usage data for ${accountRow.name}: 5h=${usageData.five_hour.utilization}%, 7d=${usageData.seven_day.utilization}%`,
+							);
+						} else {
+							log.warn(
+								`Failed to fetch usage data for ${accountRow.name} after auto-refresh`,
+							);
+						}
 					}
 				}
 
@@ -858,7 +860,7 @@ export class AutoRefreshScheduler {
 
 			// Get all account IDs that have auto-refresh enabled
 			const rows = await this.db.query<{ id: string }>(
-				`SELECT id FROM accounts WHERE auto_refresh_enabled = 1 AND provider = 'anthropic'`,
+				`SELECT id FROM accounts WHERE auto_refresh_enabled = 1 AND provider IN ('anthropic', 'codex', 'zai')`,
 			);
 
 			const activeAccountIds = rows.map((row) => row.id);

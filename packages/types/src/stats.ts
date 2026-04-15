@@ -87,6 +87,9 @@ export interface AnalyticsResponse {
 		name: string;
 		requests: number;
 		successRate: number;
+		planCostUsd: number;
+		apiCostUsd: number;
+		totalCostUsd: number;
 	}>;
 	apiKeyPerformance: Array<{
 		id: string;

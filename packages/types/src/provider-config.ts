@@ -58,7 +58,7 @@ export const PROVIDER_CONFIG: Record<ProviderName, ProviderConfig> = {
 		defaultEndpoint: "https://api.anthropic.com",
 	},
 	[PROVIDER_NAMES.ZAI]: {
-		requiresSessionTracking: false, // Zai is typically pay-as-you-go
+		requiresSessionTracking: true, // Zai has 5-hour session windows
 		supportsUsageTracking: true, // Zai supports usage tracking via monitoring API
 		supportsOAuth: false, // Zai uses API key authentication
 		defaultEndpoint: "https://api.z.ai/api/anthropic",

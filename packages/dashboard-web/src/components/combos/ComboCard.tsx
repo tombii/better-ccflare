@@ -24,37 +24,34 @@ export function ComboCard({
 }: ComboCardProps) {
 	return (
 		<Card>
-			<CardHeader className="pb-2">
+			<CardHeader className="pb-3">
+				<div className="flex items-start justify-between gap-2">
+					<div className="min-w-0 flex-1">
+						<CardTitle className="text-base leading-snug">
+							{combo.name}
+						</CardTitle>
+						{combo.description && (
+							<p className="mt-1 text-sm text-muted-foreground line-clamp-2">
+								{combo.description}
+							</p>
+						)}
+					</div>
+					<Switch checked={combo.enabled} onCheckedChange={onToggleEnabled} />
+				</div>
+			</CardHeader>
+			<CardContent className="pt-0">
 				<div className="flex items-center justify-between">
-					<CardTitle className="text-base">{combo.name}</CardTitle>
 					<div className="flex items-center gap-2">
+						<span className="text-sm text-muted-foreground">
+							{slotCount} {slotCount === 1 ? "slot" : "slots"}
+						</span>
 						{assignedFamily && (
-							<Badge variant="default" className="text-xs">
+							<Badge variant="secondary" className="text-xs">
 								{assignedFamily}
 							</Badge>
 						)}
-						<Switch
-							checked={combo.enabled}
-							onCheckedChange={onToggleEnabled}
-							className="scale-75"
-						/>
-						<Badge variant={combo.enabled ? "default" : "secondary"}>
-							{combo.enabled ? "Enabled" : "Disabled"}
-						</Badge>
 					</div>
-				</div>
-			</CardHeader>
-			<CardContent>
-				{combo.description && (
-					<p className="text-sm text-muted-foreground mb-3">
-						{combo.description}
-					</p>
-				)}
-				<div className="flex items-center justify-between">
-					<span className="text-sm text-muted-foreground">
-						Slots: {slotCount}
-					</span>
-					<div className="flex gap-2">
+					<div className="flex items-center gap-1">
 						<Button variant="ghost" size="sm" onClick={onEdit}>
 							<Edit className="h-4 w-4" />
 						</Button>

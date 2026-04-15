@@ -79,6 +79,29 @@ describe("parseCodexUsageHeaders", () => {
 		});
 	});
 
+	it("ignores empty secondary placeholders when primary is seven-day usage", () => {
+		const headers = new Headers({
+			"x-codex-primary-used-percent": "11",
+			"x-codex-primary-window-minutes": "10080",
+			"x-codex-primary-reset-at": "1775000000",
+			"x-codex-secondary-used-percent": "0",
+			"x-codex-secondary-window-minutes": "0",
+		});
+
+		const usage = parseCodexUsageHeaders(headers);
+
+		expect(usage).toEqual({
+			five_hour: {
+				utilization: 0,
+				resets_at: null,
+			},
+			seven_day: {
+				utilization: 11,
+				resets_at: new Date(1775000000 * 1000).toISOString(),
+			},
+		});
+	});
+
 	it("falls back to legacy reset headers when utilization headers are missing", () => {
 		const headers = new Headers({
 			"x-codex-5h-reset-at": "1774600000",

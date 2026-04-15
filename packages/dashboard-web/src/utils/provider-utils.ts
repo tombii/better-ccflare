@@ -5,6 +5,7 @@ import {
 	getDefaultEndpoint,
 	isKnownProvider,
 	PROVIDER_NAMES,
+	requiresSessionDurationTracking,
 } from "@better-ccflare/types";
 
 /**
@@ -12,7 +13,11 @@ import {
  * Currently only Anthropic OAuth accounts support these features
  */
 export function providerSupportsAutoFeatures(provider: string): boolean {
-	return provider === PROVIDER_NAMES.ANTHROPIC;
+	return (
+		provider === PROVIDER_NAMES.ANTHROPIC ||
+		provider === PROVIDER_NAMES.CODEX ||
+		provider === PROVIDER_NAMES.ZAI
+	);
 }
 
 /**
@@ -46,6 +51,14 @@ export function providerSupportsModelMappings(provider: string): boolean {
  * Anthropic and Codex show 5-hour and 7-day windows, NanoGPT shows daily/monthly,
  * and Zai exposes time/token quota windows.
  */
+/**
+ * Check if a provider uses session-based usage windows (e.g. Anthropic 5h, Codex 5h).
+ * Only these providers should show the session token breakdown on account cards.
+ */
+export function providerHasSessionWindow(provider: string): boolean {
+	return requiresSessionDurationTracking(provider);
+}
+
 export function providerShowsWeeklyUsage(provider: string): boolean {
 	return (
 		provider === PROVIDER_NAMES.ANTHROPIC ||

@@ -24,6 +24,12 @@ import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
 import { RateLimitProgress } from "./RateLimitProgress";
 
+function formatTokenCount(n: number): string {
+	if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+	if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+	return String(n);
+}
+
 interface AccountListItemProps {
 	account: Account;
 	isActive?: boolean;
@@ -132,7 +138,7 @@ export function AccountListItem({
 										<Switch
 											checked={account.autoFallbackEnabled}
 											onCheckedChange={() => onAutoFallbackToggle(account)}
-											title="Toggle auto-fallback for this account"
+											title="Automatically switch back to this account from lower-priority ones when its rate limit resets. Requires multiple accounts with different priorities."
 										/>
 									</div>
 									<div className="flex items-center gap-2">
@@ -142,7 +148,7 @@ export function AccountListItem({
 										<Switch
 											checked={account.autoRefreshEnabled}
 											onCheckedChange={() => onAutoRefreshToggle(account)}
-											title="Toggle auto-refresh for this account"
+											title="Automatically sends a minimal message when the usage window resets to avoid cold-start latency. Does not affect OAuth token refreshing."
 										/>
 									</div>
 								</>
@@ -206,6 +212,9 @@ export function AccountListItem({
 							</span>
 						)}
 						<span className="text-sm">{presenter.requestCount} requests</span>
+						<span className="text-sm text-muted-foreground">
+							{presenter.sessionInfo}
+						</span>
 						{presenter.isPaused && (
 							<span className="text-sm text-muted-foreground">Paused</span>
 						)}
@@ -357,6 +366,24 @@ export function AccountListItem({
 					</Button>
 				</div>
 			</div>
+			{account.sessionStats && (
+				<div className="text-xs text-muted-foreground">
+					Session: {account.sessionStats.requests} req
+					{" · "}↑{formatTokenCount(account.sessionStats.inputTokens)} in
+					{" · "}✦
+					{formatTokenCount(account.sessionStats.cacheCreationInputTokens)}{" "}
+					cache↑
+					{" · "}✦{formatTokenCount(account.sessionStats.cacheReadInputTokens)}{" "}
+					cache↓
+					{" · "}↓{formatTokenCount(account.sessionStats.outputTokens)} out
+					{account.sessionStats.planCostUsd > 0 && (
+						<>{" · "}${account.sessionStats.planCostUsd.toFixed(2)} plan</>
+					)}
+					{account.sessionStats.apiCostUsd > 0 && (
+						<>{" · "}${account.sessionStats.apiCostUsd.toFixed(2)} api</>
+					)}
+				</div>
+			)}
 			{(account.rateLimitReset ||
 				account.usageData ||
 				providerShowsCreditsBalance(account.provider)) && (

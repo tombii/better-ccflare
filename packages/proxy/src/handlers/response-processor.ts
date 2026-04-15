@@ -117,10 +117,53 @@ export function updateAccountMetadata(
 			defaultUtilization: response.status === 429 ? 100 : 0,
 		});
 		if (codexUsage) {
+			const prevUsage = usageCache.get(account.id);
+			const prevResetAt = (
+				prevUsage as { five_hour?: { resets_at: string | null } } | null
+			)?.five_hour?.resets_at;
+			const newResetAt = codexUsage.five_hour?.resets_at;
+			const windowRolledOver =
+				prevResetAt != null &&
+				newResetAt != null &&
+				newResetAt !== prevResetAt &&
+				new Date(newResetAt).getTime() > new Date(prevResetAt).getTime();
+
 			usageCache.set(account.id, codexUsage);
 			log.debug(
 				`Updated Codex usage cache for ${account.name}: 5h=${codexUsage.five_hour.utilization}%, 7d=${codexUsage.seven_day.utilization}%`,
 			);
+
+			// Update rate_limit_reset from usage headers so auto-refresh can track windows
+			const resetTimes = [
+				codexUsage.five_hour?.resets_at,
+				codexUsage.seven_day?.resets_at,
+			]
+				.filter((t): t is string => t != null)
+				.map((t) => new Date(t).getTime());
+			if (resetTimes.length > 0) {
+				const earliestReset = Math.min(...resetTimes);
+				ctx.asyncWriter.enqueue(() =>
+					ctx.dbOps
+						.getAdapter()
+						.run("UPDATE accounts SET rate_limit_reset = ? WHERE id = ?", [
+							earliestReset,
+							account.id,
+						]),
+				);
+			}
+
+			if (windowRolledOver) {
+				log.info(
+					`Codex window rolled over for ${account.name}: ${prevResetAt} → ${newResetAt}, resetting session`,
+				);
+				ctx.dbOps
+					.resetAccountSession(account.id, Date.now())
+					.catch((err) =>
+						log.warn(
+							`Failed to reset Codex session for ${account.name} on window reset: ${err}`,
+						),
+					);
+			}
 		}
 	}
 

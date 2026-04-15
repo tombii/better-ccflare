@@ -2,6 +2,7 @@
  * Consolidated stats repository to eliminate duplication between cli-commands and http-api
  */
 
+import type { SessionStats } from "@better-ccflare/types";
 import { NO_ACCOUNT_ID } from "@better-ccflare/types";
 import type { BunSqlAdapter } from "../adapters/bun-sql-adapter";
 
@@ -345,5 +346,71 @@ export class StatsRepository {
 			requests: key.requests,
 			successRate: successRateMap.get(key.id) || 0,
 		}));
+	}
+
+	/**
+	 * Get aggregated token stats for each account's current session window.
+	 * Only accounts with a non-null session_start are included.
+	 * Returns a Map keyed by account ID.
+	 */
+	async getSessionStats(
+		accounts: Array<{ id: string; session_start: number | null }>,
+	): Promise<Map<string, SessionStats>> {
+		const active = accounts.filter((a) => a.session_start !== null) as Array<{
+			id: string;
+			session_start: number;
+		}>;
+
+		if (active.length === 0) return new Map();
+
+		// Build a WHERE clause: (account_used = ? AND timestamp >= ?) OR ...
+		const clauses = active
+			.map(() => "(account_used = ? AND timestamp >= ?)")
+			.join(" OR ");
+		const params: (string | number)[] = active.flatMap((a) => [
+			a.id,
+			a.session_start,
+		]);
+
+		const rows = await this.adapter.query<{
+			account_used: string;
+			requests: unknown;
+			input_tokens: unknown;
+			cache_creation_input_tokens: unknown;
+			cache_read_input_tokens: unknown;
+			output_tokens: unknown;
+			plan_cost_usd: unknown;
+			api_cost_usd: unknown;
+		}>(
+			`SELECT
+				account_used,
+				COUNT(*) as requests,
+				COALESCE(SUM(input_tokens), 0) as input_tokens,
+				COALESCE(SUM(cache_creation_input_tokens), 0) as cache_creation_input_tokens,
+				COALESCE(SUM(cache_read_input_tokens), 0) as cache_read_input_tokens,
+				COALESCE(SUM(output_tokens), 0) as output_tokens,
+				COALESCE(SUM(CASE WHEN billing_type = 'plan' THEN cost_usd ELSE 0 END), 0) as plan_cost_usd,
+				COALESCE(SUM(CASE WHEN billing_type != 'plan' OR billing_type IS NULL THEN cost_usd ELSE 0 END), 0) as api_cost_usd
+			FROM requests
+			WHERE ${clauses}
+			GROUP BY account_used`,
+			params,
+		);
+
+		return new Map(
+			rows.map((row) => [
+				row.account_used,
+				{
+					requests: Number(row.requests) || 0,
+					inputTokens: Number(row.input_tokens) || 0,
+					cacheCreationInputTokens:
+						Number(row.cache_creation_input_tokens) || 0,
+					cacheReadInputTokens: Number(row.cache_read_input_tokens) || 0,
+					outputTokens: Number(row.output_tokens) || 0,
+					planCostUsd: Number(row.plan_cost_usd) || 0,
+					apiCostUsd: Number(row.api_cost_usd) || 0,
+				},
+			]),
+		);
 	}
 }

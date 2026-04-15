@@ -72,9 +72,9 @@ function SortableSlotRow({
 		<div
 			ref={setNodeRef}
 			style={style}
-			className="flex items-center gap-2 rounded-md border p-2"
+			className="flex items-center gap-2 rounded-md border bg-card px-3 py-2"
 		>
-			<span className="w-5 shrink-0 text-center text-xs font-medium text-muted-foreground">
+			<span className="w-4 shrink-0 text-center text-xs font-medium text-muted-foreground">
 				{index}
 			</span>
 			<button
@@ -90,19 +90,12 @@ function SortableSlotRow({
 				<Badge variant="secondary" className="shrink-0 text-xs">
 					{provider}
 				</Badge>
-				<span className="truncate text-sm">{accountName}</span>
+				<span className="truncate text-sm font-medium">{accountName}</span>
 			</div>
 
-			<span className="shrink-0 text-sm text-muted-foreground">
+			<span className="shrink-0 font-mono text-xs text-muted-foreground">
 				{slot.model}
 			</span>
-
-			<Badge
-				variant="outline"
-				className="shrink-0 text-xs text-muted-foreground"
-			>
-				In Use
-			</Badge>
 
 			<Button
 				variant="ghost"
@@ -209,51 +202,45 @@ export function ComboSlotBuilder({ combo }: ComboSlotBuilderProps) {
 					</div>
 				)}
 				{showAddForm && (
-					<div className="space-y-2 rounded-md border border-dashed p-2">
-						<div className="flex gap-2">
-							<div className="min-w-0 flex-1 space-y-1">
-								<Label className="text-xs">Account</Label>
-								<Select value={newAccountId} onValueChange={setNewAccountId}>
-									<SelectTrigger className="h-8 text-xs">
-										<SelectValue placeholder="Select account...">
-											{newAccountId &&
-												(() => {
-													const acc = accounts.find(
-														(a) => a.id === newAccountId,
-													);
-													return acc ? acc.name : newAccountId;
-												})()}
-										</SelectValue>
-									</SelectTrigger>
-									<SelectContent>
-										{accounts.map((account) => (
-											<SelectItem key={account.id} value={account.id}>
-												<span className="flex items-center gap-2">
-													<Badge variant="secondary" className="text-xs">
-														{account.provider}
-													</Badge>
-													{account.name}
-												</span>
-											</SelectItem>
-										))}
-									</SelectContent>
-								</Select>
-							</div>
-							<div className="min-w-0 flex-1 space-y-1">
-								<Label className="text-xs">Model</Label>
-								<Input
-									className="h-8 text-xs"
-									value={newModel}
-									onChange={(e) => setNewModel(e.target.value)}
-									placeholder="claude-3-opus"
-								/>
-							</div>
+					<div className="space-y-3 rounded-md border border-dashed p-3">
+						<div className="space-y-1.5">
+							<Label>Account</Label>
+							<Select value={newAccountId} onValueChange={setNewAccountId}>
+								<SelectTrigger>
+									<SelectValue placeholder="Select account...">
+										{newAccountId &&
+											(() => {
+												const acc = accounts.find((a) => a.id === newAccountId);
+												return acc ? acc.name : newAccountId;
+											})()}
+									</SelectValue>
+								</SelectTrigger>
+								<SelectContent>
+									{accounts.map((account) => (
+										<SelectItem key={account.id} value={account.id}>
+											<span className="flex items-center gap-2">
+												<Badge variant="secondary" className="text-xs">
+													{account.provider}
+												</Badge>
+												{account.name}
+											</span>
+										</SelectItem>
+									))}
+								</SelectContent>
+							</Select>
+						</div>
+						<div className="space-y-1.5">
+							<Label>Model</Label>
+							<Input
+								value={newModel}
+								onChange={(e) => setNewModel(e.target.value)}
+								placeholder="claude-3-opus"
+							/>
 						</div>
 						<div className="flex justify-end gap-2">
 							<Button
 								variant="outline"
 								size="sm"
-								className="h-8"
 								onClick={() => {
 									setShowAddForm(false);
 									setNewAccountId("");
@@ -264,7 +251,6 @@ export function ComboSlotBuilder({ combo }: ComboSlotBuilderProps) {
 							</Button>
 							<Button
 								size="sm"
-								className="h-8"
 								onClick={handleAddSlot}
 								disabled={
 									!newAccountId || !newModel.trim() || addSlot.isPending

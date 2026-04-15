@@ -35,6 +35,7 @@ import {
 	restartUsagePollingForAccount,
 } from "@better-ccflare/proxy";
 import type { FullUsageData } from "@better-ccflare/types";
+import { requiresSessionDurationTracking } from "@better-ccflare/types";
 import type { AccountResponse } from "../types";
 
 const log = new Logger("AccountsHandler");
@@ -248,6 +249,19 @@ export function createAccountsListHandler(dbOps: DatabaseOperations) {
 				}
 			}),
 		);
+
+		// Fetch session-window token stats only for providers with session-based limits
+		const sessionStatsMap = await dbOps
+			.getStatsRepository()
+			.getSessionStats(
+				accounts
+					.filter((a) => requiresSessionDurationTracking(a.provider ?? ""))
+					.map((a) => ({
+						id: a.id,
+						session_start: a.session_start ? Number(a.session_start) : null,
+					})),
+			)
+			.catch(() => new Map());
 
 		const response: AccountResponse[] = await Promise.all(
 			accounts.map(async (account) => {
@@ -467,6 +481,7 @@ export function createAccountsListHandler(dbOps: DatabaseOperations) {
 					crossRegionMode: account.cross_region_mode,
 					modelFallbacks,
 					billingType: account.billing_type,
+					sessionStats: sessionStatsMap.get(account.id) ?? null,
 				};
 			}),
 		);
@@ -1903,10 +1918,16 @@ export function createAccountAutoRefreshHandler(dbOps: DatabaseOperations) {
 				return errorResponse(NotFound("Account not found"));
 			}
 
-			// Check if account is Anthropic provider (only Anthropic accounts have rate limit windows)
-			if (account.provider !== "anthropic") {
+			// Check if account provider supports auto-refresh (session-window based providers)
+			if (
+				account.provider !== "anthropic" &&
+				account.provider !== "codex" &&
+				account.provider !== "zai"
+			) {
 				return errorResponse(
-					BadRequest("Auto-refresh is only available for Anthropic accounts"),
+					BadRequest(
+						"Auto-refresh is only available for Anthropic, Codex, and Zai accounts",
+					),
 				);
 			}
 

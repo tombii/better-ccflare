@@ -1,16 +1,17 @@
 import { Logger } from "@better-ccflare/logger";
 import type { OpenAIRequest } from "@better-ccflare/openai-formats";
 import type { Account } from "@better-ccflare/types";
+import type { RateLimitInfo } from "../../types";
 import { OpenAICompatibleProvider } from "../openai/provider";
 
 const _log = new Logger("QwenProvider");
 
 const _DEFAULT_ENDPOINT = "https://dashscope.aliyuncs.com/compatible-mode/v1";
-const _QWEN_USER_AGENT = "QwenCode/0.14.3 (darwin; arm64)";
+const QWEN_USER_AGENT = "QwenCode/0.14.3 (darwin; arm64)";
 
 // Stainless SDK headers injected by the official OpenAI Node SDK (v5.x).
 // portal.qwen.ai validates these to confirm the official client is being used.
-const _STAINLESS_HEADERS: Record<string, string> = {
+const STAINLESS_HEADERS: Record<string, string> = {
 	"X-Stainless-Lang": "js",
 	"X-Stainless-Runtime": "node",
 	"X-Stainless-Runtime-Version": "v22.17.0",
@@ -83,47 +84,13 @@ function sanitizeForQwen(text: string): string {
 export class QwenProvider extends OpenAICompatibleProvider {
 	override name = "qwen";
 
-	/**
+	/*
 	 * Override to save raw Qwen SSE to /tmp for debugging tool call chunks.
 	 * Remove once incremental argument handling is confirmed working.
-
-	override async refreshToken(
-		account: Account,
-		_clientId: string,
-	): Promise<TokenRefreshResult> {
-		if (!account.refresh_token) {
-			throw new Error(`No refresh token available for account ${account.name}`);
-		}
-
-		const result = await refreshQwenTokens(account.refresh_token);
-
-		return {
-			accessToken: result.accessToken,
-			expiresAt: Date.now() + result.expiresIn * 1000,
-			refreshToken: result.refreshToken,
-		};
-	}
-
-	override buildUrl(path: string, query: string, account?: Account): string {
-		let endpoint: string;
-		try {
-			endpoint = account ? getEndpointUrl(account) : DEFAULT_ENDPOINT;
-			endpoint = validateEndpointUrl(endpoint, "endpoint");
-		} catch (error) {
-			log.error(
-				`Invalid endpoint for account ${account?.name || "unknown"}, using default: ${error instanceof Error ? error.message : String(error)}`,
-			);
-			endpoint = DEFAULT_ENDPOINT;
-		}
-
-		// Convert Anthropic paths to OpenAI-compatible paths (inherited logic)
-		let openaiPath = convertAnthropicPathToOpenAI(path);
-		if (endpoint.endsWith("/v1") && openaiPath.startsWith("/v1/")) {
-			openaiPath = openaiPath.replace(/^\/v1/, "");
-		}
-
-		return `${endpoint}${openaiPath}${query}`;
-	}
+	 *
+	 * override async refreshToken(...) { ... }
+	 * override buildUrl(...) { ... }
+	 */
 
 	override prepareHeaders(
 		_headers: Headers,
