@@ -144,6 +144,10 @@ export async function forwardToClient(
 			isStream,
 			providerName: ctx.provider.name,
 			accountBillingType: account?.billing_type ?? null,
+			accountAutoPauseOnOverageEnabled: account?.auto_pause_on_overage_enabled
+				? 1
+				: 0,
+			accountName: account?.name ?? null,
 			agentUsed: agentUsed || null,
 			comboName: comboName || null,
 			apiKeyId: apiKeyId || null,

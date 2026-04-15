@@ -39,3 +39,5 @@ test_*.sh
 *.db-wal
 *.db-shm
 .gitnexus
+.worktrees/
+docs/superpowers/

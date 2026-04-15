@@ -26,6 +26,12 @@ export interface StartMessage {
 	// Account billing type override (null = use provider heuristic)
 	accountBillingType: string | null;
 
+	// Account auto-pause-on-overage flag (1 = enabled, 0 = disabled, null = not set)
+	accountAutoPauseOnOverageEnabled: number | null;
+
+	// Account name for logging
+	accountName: string | null;
+
 	// Agent info
 	agentUsed: string | null;
 

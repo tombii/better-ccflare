@@ -465,6 +465,13 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		await this.accounts.setAutoFallbackEnabled(accountId, enabled);
 	}
 
+	async setAutoPauseOnOverageEnabled(
+		accountId: string,
+		enabled: boolean,
+	): Promise<void> {
+		await this.accounts.setAutoPauseOnOverageEnabled(accountId, enabled);
+	}
+
 	async hasAccountsForProvider(provider: string): Promise<boolean> {
 		return this.accounts.hasAccountsForProvider(provider);
 	}

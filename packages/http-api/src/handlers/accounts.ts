@@ -155,6 +155,7 @@ export function createAccountsListHandler(dbOps: DatabaseOperations) {
 			session_info: string | null;
 			auto_fallback_enabled: 0 | 1;
 			auto_refresh_enabled: 0 | 1;
+			auto_pause_on_overage_enabled: 0 | 1;
 			custom_endpoint: string | null;
 			model_mappings: string | null;
 			cross_region_mode: string | null;
@@ -184,6 +185,8 @@ export function createAccountsListHandler(dbOps: DatabaseOperations) {
 					COALESCE(auto_fallback_enabled, 0) as auto_fallback_enabled,
 					COALESCE(auto_refresh_enabled, 0) as auto_refresh_enabled,
 					custom_endpoint,
+					COALESCE(auto_pause_on_overage_enabled, 0) as auto_pause_on_overage_enabled,
+
 					model_mappings,
 					cross_region_mode,
 					model_fallbacks,
@@ -472,6 +475,8 @@ export function createAccountsListHandler(dbOps: DatabaseOperations) {
 					sessionInfo: account.session_info || "",
 					autoFallbackEnabled: account.auto_fallback_enabled === 1,
 					autoRefreshEnabled: account.auto_refresh_enabled === 1,
+					autoPauseOnOverageEnabled:
+						account.auto_pause_on_overage_enabled === 1,
 					customEndpoint: account.custom_endpoint,
 					modelMappings,
 					usageUtilization,
@@ -1820,6 +1825,67 @@ export function createAccountAutoFallbackHandler(dbOps: DatabaseOperations) {
 				error instanceof Error
 					? error
 					: new Error("Failed to toggle auto-fallback"),
+			);
+		}
+	};
+}
+
+/**
+ * Create an account auto-pause-on-overage toggle handler
+ */
+export function createAccountAutoPauseOnOverageHandler(
+	dbOps: DatabaseOperations,
+) {
+	return async (req: Request, accountId: string): Promise<Response> => {
+		try {
+			const body = await req.json();
+
+			// Validate enabled parameter
+			const enabled = validateNumber(body.enabled, "enabled", {
+				required: true,
+				allowedValues: [0, 1] as const,
+			});
+
+			if (enabled === undefined) {
+				return errorResponse(BadRequest("Enabled field is required (0 or 1)"));
+			}
+
+			// Check if account exists
+			const db = dbOps.getAdapter();
+			const account = await db.get<{ name: string; provider: string }>(
+				"SELECT name, provider FROM accounts WHERE id = ?",
+				[accountId],
+			);
+
+			if (!account) {
+				return errorResponse(NotFound("Account not found"));
+			}
+
+			// Check if account is Anthropic provider (only Anthropic accounts have overage detection)
+			if (account.provider !== "anthropic") {
+				return errorResponse(
+					BadRequest(
+						"Auto-pause on overage is only available for Anthropic accounts",
+					),
+				);
+			}
+
+			// Update auto-pause-on-overage setting
+			dbOps.setAutoPauseOnOverageEnabled(accountId, enabled === 1);
+
+			const action = enabled === 1 ? "enabled" : "disabled";
+
+			return jsonResponse({
+				success: true,
+				message: `Auto-pause on overage ${action} for account '${account.name}'`,
+				autoPauseOnOverageEnabled: enabled === 1,
+			});
+		} catch (error) {
+			log.error("Account auto-pause-on-overage toggle error:", error);
+			return errorResponse(
+				error instanceof Error
+					? error
+					: new Error("Failed to toggle auto-pause-on-overage"),
 			);
 		}
 	};
