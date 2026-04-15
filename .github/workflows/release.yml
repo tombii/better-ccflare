@@ -171,7 +171,7 @@ jobs:
 
               if [ -n "$NON_CLAUDE_FILES" ]; then
                 FILTERED_COMMITS="$FILTERED_COMMITS$commit
-"
+                "
               fi
             done <<< "$COMMITS"
             COMMITS=$(echo "$FILTERED_COMMITS" | sed '/^$/d')
