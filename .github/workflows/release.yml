@@ -170,8 +170,7 @@ jobs:
               NON_CLAUDE_FILES=$(echo "$FILES" | grep -vE '(^|/)CLAUDE\.md$' || true)
 
               if [ -n "$NON_CLAUDE_FILES" ]; then
-                FILTERED_COMMITS="$FILTERED_COMMITS$commit
-                "
+                FILTERED_COMMITS="$FILTERED_COMMITS$commit"$'\n'
               fi
             done <<< "$COMMITS"
             COMMITS=$(echo "$FILTERED_COMMITS" | sed '/^$/d')
