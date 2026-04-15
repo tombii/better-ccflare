@@ -3,6 +3,7 @@ import { Unauthorized } from "@better-ccflare/errors";
 import {
 	createAccountAddHandler,
 	createAccountAutoFallbackHandler,
+	createAccountAutoPauseOnOverageHandler,
 	createAccountAutoRefreshHandler,
 	createAccountBillingTypeHandler,
 	createAccountCustomEndpointUpdateHandler,
@@ -471,6 +472,15 @@ export class APIRouter {
 				);
 				return await this.wrapHandler((req) =>
 					autoFallbackHandler(req, accountId),
+				)(req, url);
+			}
+
+			// Account auto-pause-on-overage toggle
+			if (path.endsWith("/auto-pause-on-overage") && method === "POST") {
+				const autoPauseOnOverageHandler =
+					createAccountAutoPauseOnOverageHandler(this.context.dbOps);
+				return await this.wrapHandler((req) =>
+					autoPauseOnOverageHandler(req, accountId),
 				)(req, url);
 			}
 

@@ -428,6 +428,18 @@ export function AccountsTab() {
 		}
 	};
 
+	const handleAutoPauseOnOverageToggle = async (account: Account) => {
+		try {
+			await api.updateAccountAutoPauseOnOverage(
+				account.id,
+				!account.autoPauseOnOverageEnabled,
+			);
+			await loadAccounts();
+		} catch (err) {
+			setActionError(formatError(err));
+		}
+	};
+
 	const handleCustomEndpointChange = (account: Account) => {
 		setCustomEndpointDialog({ isOpen: true, account });
 	};
@@ -545,6 +557,7 @@ export function AccountsTab() {
 						onAutoFallbackToggle={handleAutoFallbackToggle}
 						onAutoRefreshToggle={handleAutoRefreshToggle}
 						onBillingTypeToggle={handleBillingTypeToggle}
+						onAutoPauseOnOverageToggle={handleAutoPauseOnOverageToggle}
 						onCustomEndpointChange={handleCustomEndpointChange}
 						onModelMappingsChange={handleModelMappingsChange}
 						onReauth={handleReauth}

@@ -12,6 +12,7 @@ interface AccountListProps {
 	onAutoFallbackToggle: (account: Account) => void;
 	onAutoRefreshToggle: (account: Account) => void;
 	onBillingTypeToggle: (account: Account) => void;
+	onAutoPauseOnOverageToggle?: (account: Account) => void;
 	onCustomEndpointChange?: (account: Account) => void;
 	onModelMappingsChange?: (account: Account) => void;
 	onReauth?: (account: Account) => void;
@@ -28,6 +29,7 @@ export function AccountList({
 	onAutoFallbackToggle,
 	onAutoRefreshToggle,
 	onBillingTypeToggle,
+	onAutoPauseOnOverageToggle,
 	onCustomEndpointChange,
 	onModelMappingsChange,
 	onReauth,
@@ -69,6 +71,7 @@ export function AccountList({
 					onAutoFallbackToggle={onAutoFallbackToggle}
 					onAutoRefreshToggle={onAutoRefreshToggle}
 					onBillingTypeToggle={onBillingTypeToggle}
+					onAutoPauseOnOverageToggle={onAutoPauseOnOverageToggle}
 					onCustomEndpointChange={onCustomEndpointChange}
 					onModelMappingsChange={onModelMappingsChange}
 					onReauth={onReauth}

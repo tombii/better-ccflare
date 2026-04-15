@@ -461,6 +461,19 @@ async function handleStart(msg: StartMessage): Promise<void> {
 		msg.responseHeaders["anthropic-ratelimit-unified-overage-status"];
 	if (overageInUse === "true") {
 		state.billingType = "overage";
+		// Auto-pause on overage: if the account has auto_pause_on_overage enabled and we're
+		// in overage mode, pause the account so future requests route to other accounts
+		if (msg.accountAutoPauseOnOverageEnabled === 1 && msg.accountId) {
+			const accountId = msg.accountId;
+			const accountName = msg.accountName || "unknown";
+			log.info(
+				`Auto-pausing account '${accountName}' (${accountId}) due to overage detection (auto-pause-on-overage enabled)`,
+			);
+			// Note: dbOps may not be fully initialized in the worker yet; use the asyncWriter queue
+			asyncWriter.enqueue(async () => {
+				await dbOps.pauseAccount(accountId);
+			});
+		}
 	} else if (
 		overageStatus === "rejected" ||
 		overageStatus === "org_level_disabled"

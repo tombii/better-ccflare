@@ -42,6 +42,7 @@ interface AccountListItemProps {
 	onAutoFallbackToggle: (account: Account) => void;
 	onAutoRefreshToggle: (account: Account) => void;
 	onBillingTypeToggle: (account: Account) => void;
+	onAutoPauseOnOverageToggle?: (account: Account) => void;
 	onCustomEndpointChange?: (account: Account) => void;
 	onModelMappingsChange?: (account: Account) => void;
 	onReauth?: (account: Account) => void;
@@ -59,6 +60,7 @@ export function AccountListItem({
 	onAutoFallbackToggle,
 	onAutoRefreshToggle,
 	onBillingTypeToggle,
+	onAutoPauseOnOverageToggle,
 	onCustomEndpointChange,
 	onModelMappingsChange,
 	onReauth,
@@ -165,6 +167,21 @@ export function AccountListItem({
 									/>
 								</div>
 							)}
+							{account.provider === "anthropic" &&
+								onAutoPauseOnOverageToggle && (
+									<div className="flex items-center gap-2">
+										<span className="text-xs text-muted-foreground">
+											Auto-pause on overage:
+										</span>
+										<Switch
+											checked={account.autoPauseOnOverageEnabled ?? false}
+											onCheckedChange={() =>
+												onAutoPauseOnOverageToggle(account)
+											}
+											title="Automatically pause account when overage usage is detected. Note: detection only happens when Anthropic API reports overage, so some overage usage may occur before pausing. Account resumes when usage window resets."
+										/>
+									</div>
+								)}
 						</div>
 						<div className="flex items-center gap-2">
 							<p className="text-sm text-muted-foreground">
@@ -377,10 +394,14 @@ export function AccountListItem({
 					cache↓
 					{" · "}↓{formatTokenCount(account.sessionStats.outputTokens)} out
 					{account.sessionStats.planCostUsd > 0 && (
-						<>{" · "}${account.sessionStats.planCostUsd.toFixed(2)} plan</>
+						<>
+							{" · "}${account.sessionStats.planCostUsd.toFixed(2)} plan
+						</>
 					)}
 					{account.sessionStats.apiCostUsd > 0 && (
-						<>{" · "}${account.sessionStats.apiCostUsd.toFixed(2)} api</>
+						<>
+							{" · "}${account.sessionStats.apiCostUsd.toFixed(2)} api
+						</>
 					)}
 				</div>
 			)}

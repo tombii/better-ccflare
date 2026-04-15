@@ -17,6 +17,7 @@ export class AccountRepository extends BaseRepository<Account> {
 				COALESCE(priority, 0) as priority,
 				COALESCE(auto_fallback_enabled, 0) as auto_fallback_enabled,
 				COALESCE(auto_refresh_enabled, 0) as auto_refresh_enabled,
+				COALESCE(auto_pause_on_overage_enabled, 0) as auto_pause_on_overage_enabled,
 				custom_endpoint,
 				model_mappings,
 				cross_region_mode,
@@ -40,6 +41,7 @@ export class AccountRepository extends BaseRepository<Account> {
 				COALESCE(priority, 0) as priority,
 				COALESCE(auto_fallback_enabled, 0) as auto_fallback_enabled,
 				COALESCE(auto_refresh_enabled, 0) as auto_refresh_enabled,
+				COALESCE(auto_pause_on_overage_enabled, 0) as auto_pause_on_overage_enabled,
 				custom_endpoint,
 				model_mappings,
 				cross_region_mode,
@@ -173,6 +175,16 @@ export class AccountRepository extends BaseRepository<Account> {
 	): Promise<void> {
 		await this.run(
 			`UPDATE accounts SET auto_fallback_enabled = ? WHERE id = ?`,
+			[enabled ? 1 : 0, accountId],
+		);
+	}
+
+	async setAutoPauseOnOverageEnabled(
+		accountId: string,
+		enabled: boolean,
+	): Promise<void> {
+		await this.run(
+			`UPDATE accounts SET auto_pause_on_overage_enabled = ? WHERE id = ?`,
 			[enabled ? 1 : 0, accountId],
 		);
 	}

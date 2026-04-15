@@ -115,11 +115,15 @@ export class AutoRefreshScheduler {
 				expires_at: number | null;
 				rate_limit_reset: number | null;
 				custom_endpoint: string | null;
+				paused: number;
+				auto_pause_on_overage_enabled: number;
 			}>(
 				`
 				SELECT
 					id, name, provider, refresh_token, access_token,
-					expires_at, rate_limit_reset, custom_endpoint
+					expires_at, rate_limit_reset, custom_endpoint,
+					COALESCE(paused, 0) as paused,
+					COALESCE(auto_pause_on_overage_enabled, 0) as auto_pause_on_overage_enabled
 				FROM accounts
 				WHERE
 					auto_refresh_enabled = 1
@@ -257,6 +261,7 @@ export class AutoRefreshScheduler {
 				priority: 0,
 				auto_fallback_enabled: false,
 				auto_refresh_enabled: true,
+				auto_pause_on_overage_enabled: false,
 				custom_endpoint: accountRow.custom_endpoint,
 				model_mappings: null,
 				cross_region_mode: null,
@@ -504,6 +509,22 @@ export class AutoRefreshScheduler {
 					);
 				}
 
+				// Auto-resume on window reset: if account was auto-paused due to overage, resume it now
+				const row = accountRow as unknown as {
+					auto_pause_on_overage_enabled: number;
+					paused: number;
+					id: string;
+					name: string;
+				};
+				if (row.auto_pause_on_overage_enabled === 1 && row.paused === 1) {
+					log.debug(
+						`Auto-resuming account '${accountRow.name}' after window reset (auto-pause-on-overage enabled)`,
+					);
+					await this.db.run("UPDATE accounts SET paused = 0 WHERE id = ?", [
+						accountRow.id,
+					]);
+				}
+
 				if (accountRow.provider === "anthropic") {
 					// Fetch usage data from the OAuth usage endpoint to get 5h window info
 					// Get the access token for this account
@@ -686,6 +707,7 @@ export class AutoRefreshScheduler {
 					priority: 0,
 					auto_fallback_enabled: false,
 					auto_refresh_enabled: true,
+					auto_pause_on_overage_enabled: false,
 					custom_endpoint: row.custom_endpoint,
 					model_mappings: null,
 					cross_region_mode: null,
@@ -806,6 +828,7 @@ export class AutoRefreshScheduler {
 					priority: 0,
 					auto_fallback_enabled: false,
 					auto_refresh_enabled: true,
+					auto_pause_on_overage_enabled: false,
 					custom_endpoint: row.custom_endpoint,
 					model_mappings: null,
 					cross_region_mode: null,

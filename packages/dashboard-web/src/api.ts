@@ -1121,6 +1121,34 @@ class API extends HttpClient {
 		}
 	}
 
+	async updateAccountAutoPauseOnOverage(
+		accountId: string,
+		enabled: boolean,
+	): Promise<void> {
+		const startTime = Date.now();
+		const url = `/api/accounts/${accountId}/auto-pause-on-overage`;
+
+		this.logger.debug(`→ POST ${url}`, { enabled });
+
+		try {
+			await this.post(url, {
+				enabled: enabled ? 1 : 0,
+			});
+			const duration = Date.now() - startTime;
+			this.logger.debug(`← POST ${url} - 200 (${duration}ms)`);
+		} catch (error) {
+			const duration = Date.now() - startTime;
+			this.logger.error(`✗ POST ${url} - ERROR (${duration}ms)`, {
+				error: error instanceof Error ? error.message : String(error),
+				stack: error instanceof Error ? error.stack : undefined,
+			});
+			if (error instanceof HttpError) {
+				throw new Error(error.message);
+			}
+			throw error;
+		}
+	}
+
 	async updateAccountCustomEndpoint(
 		accountId: string,
 		customEndpoint: string | null,
