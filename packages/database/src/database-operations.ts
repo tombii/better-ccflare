@@ -104,21 +104,33 @@ function configureSqlite(
 
 		// Set busy timeout for lock handling
 		if (config.busyTimeoutMs !== undefined) {
+			if (!Number.isInteger(config.busyTimeoutMs) || config.busyTimeoutMs < 0) {
+				throw new Error("Invalid input");
+			}
 			db.run(`PRAGMA busy_timeout = ${config.busyTimeoutMs}`);
 		}
 
 		// Configure cache size
 		if (config.cacheSize !== undefined) {
+			if (!Number.isInteger(config.cacheSize)) {
+				throw new Error("Invalid input");
+			}
 			db.run(`PRAGMA cache_size = ${config.cacheSize}`);
 		}
 
 		// Set synchronous mode (more conservative for distributed filesystems)
 		const syncMode = config.synchronous || "FULL"; // Default to FULL for safety
+		if (!/^(OFF|NORMAL|FULL)$/.test(syncMode)) {
+			throw new Error("Invalid input");
+		}
 		db.run(`PRAGMA synchronous = ${syncMode}`);
 
 		// Configure memory-mapped I/O (disable on distributed filesystems if problematic)
 		if (config.mmapSize !== undefined && config.mmapSize > 0) {
 			try {
+				if (!Number.isInteger(config.mmapSize) || config.mmapSize < 0) {
+					throw new Error("Invalid input");
+				}
 				db.run(`PRAGMA mmap_size = ${config.mmapSize}`);
 			} catch (error) {
 				console.warn("Failed to set mmap_size:", error);
@@ -131,6 +143,9 @@ function configureSqlite(
 				db.query("PRAGMA page_size").get() as { page_size: number }
 			).page_size;
 			if (currentPageSize !== config.pageSize) {
+				if (!Number.isInteger(config.pageSize) || config.pageSize < 0) {
+					throw new Error("Invalid input");
+				}
 				db.run(`PRAGMA page_size = ${config.pageSize}`);
 			}
 		}
@@ -800,6 +815,9 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		}
 
 		if (pages) {
+			if (!Number.isInteger(pages) || pages < 0) {
+				throw new Error("Invalid input");
+			}
 			this.sqliteDb.exec(`PRAGMA incremental_vacuum(${pages})`);
 		} else {
 			this.sqliteDb.exec("PRAGMA incremental_vacuum");
