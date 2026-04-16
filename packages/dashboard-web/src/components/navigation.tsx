@@ -14,7 +14,7 @@ import {
 	X,
 	Zap,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { cn } from "../lib/utils";
 import { version } from "../lib/version";
@@ -36,7 +36,7 @@ interface NavItem {
 	badge?: string;
 }
 
-const navItems: NavItem[] = [
+const _navItems: NavItem[] = [
 	{ label: "Overview", icon: LayoutDashboard, path: "/" },
 	{ label: "Analytics", icon: BarChart3, path: "/analytics" },
 	{ label: "Requests", icon: Activity, path: "/requests" },
@@ -49,9 +49,13 @@ const navItems: NavItem[] = [
 
 interface NavigationProps {
 	onLogout?: () => void;
+	showCombos?: boolean;
 }
 
-export function Navigation({ onLogout }: NavigationProps = {}) {
+export function Navigation({
+	onLogout,
+	showCombos = false,
+}: NavigationProps = {}) {
 	const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 	const [updateStatus, setUpdateStatus] = useState<
 		"idle" | "checking" | "available" | "current" | "error"
@@ -59,6 +63,30 @@ export function Navigation({ onLogout }: NavigationProps = {}) {
 	const [latestVersion, setLatestVersion] = useState<string>("");
 	const location = useLocation();
 	const isMountedRef = useRef(true);
+
+	// Build nav items dynamically based on feature flags
+	const navItems: NavItem[] = useMemo(() => {
+		const baseItems: NavItem[] = [
+			{ label: "Overview", icon: LayoutDashboard, path: "/" },
+			{ label: "Analytics", icon: BarChart3, path: "/analytics" },
+			{ label: "Requests", icon: Activity, path: "/requests" },
+			{ label: "Accounts", icon: Users, path: "/accounts" },
+		];
+
+		// Add combos item if feature is enabled
+		if (showCombos) {
+			baseItems.push({ label: "Combos", icon: Zap, path: "/combos" });
+		}
+
+		// Add remaining items
+		baseItems.push(
+			{ label: "Agents", icon: Bot, path: "/agents" },
+			{ label: "API Keys", icon: Key, path: "/api-keys" },
+			{ label: "Logs", icon: FileText, path: "/logs" },
+		);
+
+		return baseItems;
+	}, [showCombos]);
 
 	// Cleanup on unmount to prevent memory leaks
 	useEffect(() => {

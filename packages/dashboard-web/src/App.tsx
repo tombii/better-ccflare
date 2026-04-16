@@ -12,7 +12,7 @@ import { AccountsTab } from "./components/AccountsTab";
 import { AgentsTab } from "./components/AgentsTab";
 import { ApiKeyAuthDialog } from "./components/ApiKeyAuthDialog";
 import { ApiKeysTab } from "./components/ApiKeysTab";
-// import { CombosTab } from "./components/combos/CombosTab";
+import { CombosTab } from "./components/combos/CombosTab";
 import { DebugPanel } from "./components/DebugPanel";
 import { LogsTab } from "./components/LogsTab";
 import { Navigation } from "./components/navigation";
@@ -52,63 +52,74 @@ const LoadingSkeleton = () => (
 
 // QueryClient will be created inside App component to have access to auth state
 
-const routes = [
-	{
-		path: "/",
-		element: <OverviewTab />,
-		title: "Dashboard Overview",
-		subtitle: "Monitor your ccflare performance and usage",
-	},
-	{
-		path: "/analytics",
-		element: (
-			<Suspense fallback={<LoadingSkeleton />}>
-				<LazyAnalyticsTab />
-			</Suspense>
-		),
-		title: "Analytics",
-		subtitle: "Deep dive into your usage patterns and trends",
-	},
-	{
-		path: "/requests",
-		element: <RequestsTab />,
-		title: "Request History",
-		subtitle: "View detailed request and response data",
-	},
-	{
-		path: "/accounts",
-		element: <AccountsTab />,
-		title: "Account Management",
-		subtitle: "Manage your OAuth accounts and settings",
-	},
-	// {
-	// 	path: "/combos",
-	// 	element: <CombosTab />,
-	// 	title: "Combos Management",
-	// 	subtitle: "Define fallback chains for model families",
-	// },
-	{
-		path: "/agents",
-		element: <AgentsTab />,
-		title: "Agent Management",
-		subtitle: "Discover and manage Claude Code agents",
-	},
-	{
-		path: "/api-keys",
-		element: <ApiKeysTab />,
-		title: "API Key Management",
-		subtitle: "Generate and manage API keys for authentication",
-	},
-	{
-		path: "/logs",
-		element: <LogsTab />,
-		title: "System Logs",
-		subtitle: "Real-time system logs and debugging information",
-	},
-];
-
 export function App() {
 	const location = useLocation();
+	const [showCombos, setShowCombos] = useState(false);
+
+	// Build routes array dynamically based on feature flags
+	const routes = useMemo(() => {
+		const baseRoutes = [
+			{
+				path: "/",
+				element: <OverviewTab />,
+				title: "Dashboard Overview",
+				subtitle: "Monitor your ccflare performance and usage",
+			},
+			{
+				path: "/analytics",
+				element: (
+					<Suspense fallback={<LoadingSkeleton />}>
+						<LazyAnalyticsTab />
+					</Suspense>
+				),
+				title: "Analytics",
+				subtitle: "Deep dive into your usage patterns and trends",
+			},
+			{
+				path: "/requests",
+				element: <RequestsTab />,
+				title: "Request History",
+				subtitle: "View detailed request and response data",
+			},
+			{
+				path: "/accounts",
+				element: <AccountsTab />,
+				title: "Account Management",
+				subtitle: "Manage your OAuth accounts and settings",
+			},
+			{
+				path: "/agents",
+				element: <AgentsTab />,
+				title: "Agent Management",
+				subtitle: "Discover and manage Claude Code agents",
+			},
+			{
+				path: "/api-keys",
+				element: <ApiKeysTab />,
+				title: "API Key Management",
+				subtitle: "Generate and manage API keys for authentication",
+			},
+			{
+				path: "/logs",
+				element: <LogsTab />,
+				title: "System Logs",
+				subtitle: "Real-time system logs and debugging information",
+			},
+		];
+
+		// Add combos route if feature is enabled
+		if (showCombos) {
+			baseRoutes.splice(4, 0, {
+				path: "/combos",
+				element: <CombosTab />,
+				title: "Combos Management",
+				subtitle: "Define fallback chains for model families",
+			});
+		}
+
+		return baseRoutes;
+	}, [showCombos]);
+
 	const currentRoute =
 		routes.find((route) => route.path === location.pathname) || routes[0];
 	const [showAuthDialog, setShowAuthDialog] = useState(false);
@@ -210,6 +221,25 @@ export function App() {
 		checkAuth();
 	}, []);
 
+	// Fetch feature flags
+	useEffect(() => {
+		const fetchFeatures = async () => {
+			try {
+				const features = await api.getFeatures();
+				setShowCombos(features.showCombos);
+			} catch (error) {
+				// If features endpoint fails, default to hiding combos
+				console.error("Failed to fetch features:", error);
+				setShowCombos(false);
+			}
+		};
+
+		// Only fetch features after auth check completes
+		if (!isCheckingAuth && isAuthenticated) {
+			fetchFeatures();
+		}
+	}, [isCheckingAuth, isAuthenticated]);
+
 	// Listen for 401 errors from API client
 	useEffect(() => {
 		const handleAuthRequired = () => {
@@ -276,7 +306,10 @@ export function App() {
 		<QueryClientProvider client={queryClient}>
 			<ThemeProvider>
 				<div className="min-h-screen bg-background">
-					<Navigation onLogout={authRequired ? handleLogout : undefined} />
+					<Navigation
+						onLogout={authRequired ? handleLogout : undefined}
+						showCombos={showCombos}
+					/>
 
 					{/* Main Content */}
 					<main className="lg:pl-64">
