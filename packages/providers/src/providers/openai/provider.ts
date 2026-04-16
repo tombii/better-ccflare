@@ -243,6 +243,16 @@ export class OpenAICompatibleProvider extends BaseProvider {
 				const totalTokens =
 					json.usage.total_tokens || promptTokens + completionTokens;
 
+				// Extract cache statistics from prompt_tokens_details (Qwen/DashScope)
+				const promptTokensDetails = json.usage.prompt_tokens_details as {
+					cache_creation_input_tokens?: number;
+					cached_tokens?: number;
+				} | undefined;
+
+				const cacheCreationInputTokens =
+					promptTokensDetails?.cache_creation_input_tokens || 0;
+				const cacheReadInputTokens = promptTokensDetails?.cached_tokens || 0;
+
 				// Calculate cost using OpenAI-compatible pricing
 				const costUsd = this.calculateCost(
 					json.model,
@@ -258,8 +268,8 @@ export class OpenAICompatibleProvider extends BaseProvider {
 					costUsd,
 					inputTokens: promptTokens,
 					outputTokens: completionTokens,
-					cacheReadInputTokens: 0,
-					cacheCreationInputTokens: 0,
+					cacheReadInputTokens,
+					cacheCreationInputTokens,
 				};
 			}
 		} catch {

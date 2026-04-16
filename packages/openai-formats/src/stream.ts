@@ -78,6 +78,8 @@ function emitStreamEnd(
 	promptTokens: number,
 	completionTokens: number,
 	toolCallAccumulators: Record<number, string> | null,
+	cacheReadInputTokens: number,
+	cacheCreationInputTokens: number,
 ) {
 	// Send content_block_stop for all blocks
 	if (toolCallAccumulators) {
@@ -125,6 +127,8 @@ function emitStreamEnd(
 		usage: {
 			input_tokens: promptTokens,
 			output_tokens: completionTokens,
+		cache_read_input_tokens: cacheReadInputTokens,
+		cache_creation_input_tokens: cacheCreationInputTokens,
 		},
 	};
 	controller.enqueue(encoder.encode(`event: message_delta\n`));
@@ -170,6 +174,8 @@ export function transformStreamingResponse(response: Response): Response {
 					hasSentContentBlockStart: false,
 					promptTokens: 0,
 					completionTokens: 0,
+					cacheReadInputTokens: 0,
+					cacheCreationInputTokens: 0,
 					encounteredToolCall: false,
 					toolCallAccumulators: {},
 					maxToolCallLength: 1_000_000,
@@ -212,6 +218,8 @@ export function transformStreamingResponse(response: Response): Response {
 									context.promptTokens,
 									context.completionTokens,
 									context.toolCallAccumulators,
+									context.cacheReadInputTokens,
+									context.cacheCreationInputTokens,
 								);
 							} else if (context.hasSentContentBlockStart) {
 								emitStreamEnd(
@@ -221,6 +229,8 @@ export function transformStreamingResponse(response: Response): Response {
 									context.promptTokens,
 									context.completionTokens,
 									null,
+									context.cacheReadInputTokens,
+									context.cacheCreationInputTokens,
 								);
 							}
 
@@ -246,6 +256,19 @@ export function transformStreamingResponse(response: Response): Response {
 								}
 								if (data.usage.completion_tokens) {
 									context.completionTokens = data.usage.completion_tokens;
+								}
+								// Extract cache statistics from prompt_tokens_details (Qwen/DashScope)
+								if (data.usage.prompt_tokens_details) {
+									const details = data.usage.prompt_tokens_details as {
+										cache_creation_input_tokens?: number;
+										cached_tokens?: number;
+									};
+									if (details.cache_creation_input_tokens) {
+										context.cacheCreationInputTokens = details.cache_creation_input_tokens;
+									}
+									if (details.cached_tokens) {
+										context.cacheReadInputTokens = details.cached_tokens;
+									}
 								}
 							}
 

@@ -112,6 +112,8 @@ export interface TransformStreamContext {
 	hasSentContentBlockStart: boolean;
 	promptTokens: number;
 	completionTokens: number;
+	cacheReadInputTokens: number;
+	cacheCreationInputTokens: number;
 	encounteredToolCall: boolean;
 	toolCallAccumulators: Record<number, string>;
 	maxToolCallLength: number;
