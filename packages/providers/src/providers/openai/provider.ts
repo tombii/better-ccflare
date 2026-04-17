@@ -59,6 +59,9 @@ export class OpenAICompatibleProvider extends BaseProvider {
 			endpoint = "https://api.openai.com";
 		}
 
+		// Store endpoint for provider-specific transformations (e.g., Alibaba caching)
+		this.currentEndpoint = endpoint;
+
 		// Convert Anthropic paths to OpenAI-compatible paths
 		// Anthropic: /v1/messages → OpenAI: /v1/chat/completions
 		let openaiPath = convertAnthropicPathToOpenAI(path);
@@ -185,6 +188,10 @@ export class OpenAICompatibleProvider extends BaseProvider {
 				effectiveAccount,
 			);
 			this.afterConvert(openaiBody);
+
+			// Inject enable_thinking for reasoning models on DashScope
+			this.injectDashScopeReasoning(openaiBody, body);
+
 			const newHeaders = new Headers(request.headers);
 			newHeaders.set("content-type", "application/json");
 			newHeaders.delete("content-length");
@@ -244,10 +251,12 @@ export class OpenAICompatibleProvider extends BaseProvider {
 					json.usage.total_tokens || promptTokens + completionTokens;
 
 				// Extract cache statistics from prompt_tokens_details (Qwen/DashScope)
-				const promptTokensDetails = json.usage.prompt_tokens_details as {
-					cache_creation_input_tokens?: number;
-					cached_tokens?: number;
-				} | undefined;
+				const promptTokensDetails = json.usage.prompt_tokens_details as
+					| {
+							cache_creation_input_tokens?: number;
+							cached_tokens?: number;
+					  }
+					| undefined;
 
 				const cacheCreationInputTokens =
 					promptTokensDetails?.cache_creation_input_tokens || 0;
@@ -333,8 +342,11 @@ export class OpenAICompatibleProvider extends BaseProvider {
 	 * Hook called after converting Anthropic request to OpenAI format.
 	 * Override to inject provider-specific fields (e.g., cache_control, vision flags).
 	 */
-	protected afterConvert(_body: OpenAIRequest): void {
-		// No-op by default — override in subclasses
+	protected afterConvert(body: OpenAIRequest): void {
+		// Inject cache_control for Alibaba/DashScope endpoints
+		if (this.shouldInjectAlibabaCaching()) {
+			this.injectAlibabaCaching(body);
+		}
 	}
 
 	/**
@@ -346,6 +358,129 @@ export class OpenAICompatibleProvider extends BaseProvider {
 		_body: Record<string, unknown>,
 		account?: Account,
 	): Account | undefined {
+		// Store model for provider-specific transformations (e.g., Alibaba caching for Qwen)
+		if (_body.model && typeof _body.model === "string") {
+			this.currentModel = _body.model;
+		}
 		return account;
 	}
+
+	/**
+	 * Check if we should inject Alibaba-style prompt caching.
+	 * Only triggered for Qwen models on DashScope or OpenCode Go endpoints.
+	 * These endpoints support Alibaba's cacheControl format for Qwen models only.
+	 */
+	private shouldInjectAlibabaCaching(): boolean {
+		// Check if current request is for a DashScope or OpenCode Go endpoint
+		const endpoint = this.currentEndpoint?.toLowerCase() || "";
+		const isDashScopeEndpoint =
+			endpoint.includes("dashscope.aliyuncs.com") ||
+			endpoint.includes("opencode.ai/zen/go");
+
+		if (!isDashScopeEndpoint) return false;
+
+		// Only apply caching for Qwen models (qwen3.5-plus, qwen3.6-plus, etc.)
+		// Other models on these endpoints use different SDKs (openai-compatible, anthropic)
+		const model = this.currentModel?.toLowerCase() || "";
+		return model.includes("qwen");
+	}
+
+	/**
+	 * Inject Alibaba-style cache_control on system and final messages.
+	 * Uses OpenAI-compatible format (snake_case) since DashScope endpoint is /compatible-mode/v1.
+	 * Mirrors opencode's applyCaching logic for prompt caching.
+	 */
+	private injectAlibabaCaching(body: OpenAIRequest): void {
+		if (!body.messages || body.messages.length === 0) return;
+
+		// Find system messages (first 2) and final messages (last 2)
+		const systemMessages = body.messages
+			.filter((msg) => msg.role === "system")
+			.slice(0, 2);
+
+		const nonSystemMessages = body.messages.filter(
+			(msg) => msg.role !== "system",
+		);
+		const finalMessages = nonSystemMessages.slice(-2);
+
+		// Apply caching to these messages
+		const messagesToCache = [...systemMessages, ...finalMessages];
+
+		for (const msg of messagesToCache) {
+			// DashScope OpenAI-compatible endpoint expects snake_case cache_control
+			if (Array.isArray(msg.content)) {
+				// Find last valid content part
+				const lastPart = msg.content[msg.content.length - 1];
+				if (
+					lastPart &&
+					typeof lastPart === "object" &&
+					lastPart.type === "text"
+				) {
+					// Inject cache_control (snake_case for OpenAI-compatible API)
+					(lastPart as any).cache_control = { type: "ephemeral" };
+				}
+			} else if (typeof msg.content === "string" && msg.content.length > 0) {
+				// Convert string content to array with cache_control
+				msg.content = [
+					{
+						type: "text",
+						text: msg.content,
+						cache_control: { type: "ephemeral" },
+					},
+				];
+			}
+		}
+
+		log.debug(
+			`Injected cache_control for ${messagesToCache.length} messages on DashScope endpoint`,
+		);
+	}
+
+	/**
+	 * Inject enable_thinking for reasoning models on DashScope.
+	 * DashScope's OpenAI-compatible API requires this flag to return reasoning_content.
+	 * Without it, reasoning models like Qwen-Plus, Qwen3, qwq, etc. never output thinking tokens.
+	 */
+	private injectDashScopeReasoning(
+		openaiBody: OpenAIRequest,
+		anthropicBody: Record<string, unknown>,
+	): void {
+		// Only apply for DashScope endpoints
+		const endpoint = this.currentEndpoint?.toLowerCase() || "";
+		if (
+			!endpoint.includes("dashscope.aliyuncs.com") &&
+			!endpoint.includes("opencode.ai/zen/go")
+		)
+			return;
+
+		// Check if model is a reasoning model (has thinking/reasoning capabilities)
+		const modelId = this.currentModel?.toLowerCase() || "";
+		const isReasoningModel =
+			modelId.includes("qwen") ||
+			modelId.includes("qwq") ||
+			modelId.includes("deepseek-r1") ||
+			// Also check if anthropic request indicates thinking
+			(anthropicBody as any).thinking?.type === "enabled";
+
+		// Skip if it's kimi-k2-thinking (returns reasoning_content by default)
+		if (modelId.includes("kimi-k2-thinking")) return;
+
+		// Inject enable_thinking flag
+		if (isReasoningModel) {
+			(openaiBody as any).enable_thinking = true;
+			log.debug(
+				`Injected enable_thinking for DashScope reasoning model: ${modelId}`,
+			);
+		}
+	}
+
+	/**
+	 * Store current endpoint for provider-specific transformations
+	 */
+	private currentEndpoint?: string;
+
+	/**
+	 * Store current model for provider-specific transformations (e.g., Qwen caching)
+	 */
+	private currentModel?: string;
 }

@@ -127,8 +127,8 @@ function emitStreamEnd(
 		usage: {
 			input_tokens: promptTokens,
 			output_tokens: completionTokens,
-		cache_read_input_tokens: cacheReadInputTokens,
-		cache_creation_input_tokens: cacheCreationInputTokens,
+			cache_read_input_tokens: cacheReadInputTokens,
+			cache_creation_input_tokens: cacheCreationInputTokens,
 		},
 	};
 	controller.enqueue(encoder.encode(`event: message_delta\n`));
@@ -264,7 +264,8 @@ export function transformStreamingResponse(response: Response): Response {
 										cached_tokens?: number;
 									};
 									if (details.cache_creation_input_tokens) {
-										context.cacheCreationInputTokens = details.cache_creation_input_tokens;
+										context.cacheCreationInputTokens =
+											details.cache_creation_input_tokens;
 									}
 									if (details.cached_tokens) {
 										context.cacheReadInputTokens = details.cached_tokens;
@@ -438,6 +439,8 @@ export function transformStreamingResponse(response: Response): Response {
 						context.promptTokens,
 						context.completionTokens,
 						context.toolCallAccumulators,
+						context.cacheReadInputTokens,
+						context.cacheCreationInputTokens,
 					);
 				} else if (
 					context.hasSentContentBlockStart &&
@@ -451,6 +454,8 @@ export function transformStreamingResponse(response: Response): Response {
 						context.promptTokens,
 						context.completionTokens,
 						null,
+						context.cacheReadInputTokens,
+						context.cacheCreationInputTokens,
 					);
 				}
 
