@@ -2100,25 +2100,6 @@ export function createAccountModelMappingsUpdateHandler(
 				return errorResponse(NotFound("Account not found"));
 			}
 
-			const MODEL_MAPPING_PROVIDERS = [
-				"openai-compatible",
-				"anthropic-compatible",
-				"nanogpt",
-				"openrouter",
-				"kilo",
-				"alibaba-coding-plan",
-				"zai",
-				"codex",
-				"qwen",
-			];
-			if (!MODEL_MAPPING_PROVIDERS.includes(account.provider)) {
-				return errorResponse(
-					BadRequest(
-						"Model mappings are only available for OpenAI-compatible, Anthropic-compatible, NanoGPT, OpenRouter, Kilo, Alibaba, and z.ai accounts",
-					),
-				);
-			}
-
 			// Handle model mappings update
 			const modelMappings = body.modelMappings || {};
 

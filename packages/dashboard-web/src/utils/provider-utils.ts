@@ -32,21 +32,6 @@ export function providerSupportsCustomBilling(provider: string): boolean {
 }
 
 /**
- * Check if a provider supports model mappings
- */
-export function providerSupportsModelMappings(provider: string): boolean {
-	return (
-		provider === PROVIDER_NAMES.OPENAI_COMPATIBLE ||
-		provider === PROVIDER_NAMES.ANTHROPIC_COMPATIBLE ||
-		provider === PROVIDER_NAMES.NANOGPT ||
-		provider === PROVIDER_NAMES.OPENROUTER ||
-		provider === PROVIDER_NAMES.KILO ||
-		provider === PROVIDER_NAMES.ALIBABA_CODING_PLAN ||
-		provider === PROVIDER_NAMES.ZAI
-	);
-}
-
-/**
  * Check if a provider shows quota-window usage information on the account page.
  * Anthropic and Codex show 5-hour and 7-day windows, NanoGPT shows daily/monthly,
  * and Zai exposes time/token quota windows.
