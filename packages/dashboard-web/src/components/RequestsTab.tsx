@@ -18,8 +18,9 @@ import {
 	User,
 	X,
 } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import type { RequestPayload, RequestSummary } from "../api";
+import { API_LIMITS } from "../constants";
 import { useAccounts, useRequests } from "../hooks/queries";
 import { useRequestStream } from "../hooks/useRequestStream";
 import { isAnthropicPeakHour, isZaiPeakHour } from "../utils/provider-utils";
@@ -70,10 +71,10 @@ export function RequestsTab() {
 		isLoading: loading,
 		error,
 		refetch: loadRequests,
-	} = useRequests(200);
+	} = useRequests(API_LIMITS.requestsDetail);
 
 	// Enable real-time updates
-	useRequestStream(200);
+	useRequestStream(API_LIMITS.requestsDetail);
 
 	const { data: accounts } = useAccounts();
 	const zaiAccountNames = new Set(
@@ -85,127 +86,138 @@ export function RequestsTab() {
 			.map((a) => a.name),
 	);
 
-	// Transform the data to match the expected structure
-	const data: {
-		requests: RequestPayload[];
-		summaries: Map<string, RequestSummary>;
-	} | null = requestsData
-		? {
-				requests: requestsData.requests,
-				summaries:
-					requestsData.detailsMap instanceof Map
-						? (requestsData.detailsMap as Map<string, RequestSummary>)
-						: new Map<string, RequestSummary>(
-								Array.isArray(requestsData.detailsMap)
-									? (requestsData.detailsMap as RequestSummary[]).map(
-											(s) => [s.id, s] as [string, RequestSummary],
-										)
-									: [],
-							),
+	// Transform the data to match the expected structure - memoized to avoid recalculation on SSE updates
+	const data = useMemo(() => {
+		if (!requestsData) return null;
+		return {
+			requests: requestsData.requests,
+			summaries:
+				requestsData.detailsMap instanceof Map
+					? (requestsData.detailsMap as Map<string, RequestSummary>)
+					: new Map<string, RequestSummary>(
+							Array.isArray(requestsData.detailsMap)
+								? (requestsData.detailsMap as RequestSummary[]).map(
+										(s) => [s.id, s] as [string, RequestSummary],
+									)
+								: [],
+						),
+		};
+	}, [requestsData]);
+
+	// Extract unique accounts for filter dropdown - memoized
+	const uniqueAccounts = useMemo(() => {
+		if (!data) return [];
+		return Array.from(
+			new Set(
+				data.requests
+					.map((r) => r.meta.accountName || r.meta.accountId)
+					.filter(Boolean),
+			),
+		).sort();
+	}, [data]);
+
+	// Extract unique status codes for filter - memoized
+	const uniqueStatusCodes = useMemo(() => {
+		if (!data) return [];
+		return Array.from(
+			new Set(
+				data.requests
+					.map((r) => r.response?.status)
+					.filter((status): status is number => status !== undefined),
+			),
+		).sort((a, b) => a - b);
+	}, [data]);
+
+	// Extract unique agents for filter - memoized
+	const uniqueAgents = useMemo(() => {
+		if (!data) return [];
+		return Array.from(
+			new Set(
+				data.requests
+					.map((r) => {
+						const summary = data.summaries.get(r.id);
+						return summary?.agentUsed || r.meta.agentUsed;
+					})
+					.filter(Boolean),
+			),
+		).sort();
+	}, [data]);
+
+	// Extract unique API keys for filter - memoized
+	const uniqueApiKeys = useMemo(() => {
+		if (!data) return [];
+		return Array.from(
+			new Set(
+				data.requests
+					.map((r) => {
+						const summary = data.summaries.get(r.id);
+						return summary?.apiKeyName;
+					})
+					.filter(Boolean),
+			),
+		).sort();
+	}, [data]);
+
+	// Filter requests based on selected filters - memoized to avoid recalculation on every render
+	const filteredRequests = useMemo(() => {
+		if (!data) return [];
+		return data.requests.filter((request) => {
+			// Account filter
+			if (accountFilter !== "all") {
+				const requestAccount =
+					request.meta.accountName || request.meta.accountId;
+				if (requestAccount !== accountFilter) return false;
 			}
-		: null;
 
-	// Extract unique accounts for filter dropdown
-	const uniqueAccounts = data
-		? Array.from(
-				new Set(
-					data.requests
-						.map((r) => r.meta.accountName || r.meta.accountId)
-						.filter(Boolean),
-				),
-			).sort()
-		: [];
+			// Agent filter
+			if (agentFilter !== "all") {
+				const summary = data.summaries.get(request.id);
+				const requestAgent = summary?.agentUsed || request.meta.agentUsed;
+				if (requestAgent !== agentFilter) return false;
+			}
 
-	// Extract unique status codes for filter
-	const uniqueStatusCodes = data
-		? Array.from(
-				new Set(
-					data.requests
-						.map((r) => r.response?.status)
-						.filter((status): status is number => status !== undefined),
-				),
-			).sort((a, b) => a - b)
-		: [];
-
-	// Extract unique agents for filter
-	const uniqueAgents = data
-		? Array.from(
-				new Set(
-					data.requests
-						.map((r) => {
-							const summary = data.summaries.get(r.id);
-							return summary?.agentUsed || r.meta.agentUsed;
-						})
-						.filter(Boolean),
-				),
-			).sort()
-		: [];
-
-	// Extract unique API keys for filter
-	const uniqueApiKeys = data
-		? Array.from(
-				new Set(
-					data.requests
-						.map((r) => {
-							const summary = data.summaries.get(r.id);
-							return summary?.apiKeyName;
-						})
-						.filter(Boolean),
-				),
-			).sort()
-		: [];
-
-	// Filter requests based on selected filters
-	const filteredRequests = data
-		? data.requests.filter((request) => {
-				// Account filter
-				if (accountFilter !== "all") {
-					const requestAccount =
-						request.meta.accountName || request.meta.accountId;
-					if (requestAccount !== accountFilter) return false;
+			// API key filter
+			if (apiKeyFilter !== "all") {
+				const summary = data.summaries.get(request.id);
+				const requestApiKey = summary?.apiKeyName;
+				if (apiKeyFilter === "no-api-key") {
+					if (requestApiKey) return false;
+				} else {
+					if (requestApiKey !== apiKeyFilter) return false;
 				}
+			}
 
-				// Agent filter
-				if (agentFilter !== "all") {
-					const summary = data.summaries.get(request.id);
-					const requestAgent = summary?.agentUsed || request.meta.agentUsed;
-					if (requestAgent !== agentFilter) return false;
+			// Status code filter
+			if (statusCodeFilters.size > 0 && request.response?.status) {
+				if (!statusCodeFilters.has(request.response.status.toString())) {
+					return false;
 				}
+			}
 
-				// API key filter
-				if (apiKeyFilter !== "all") {
-					const summary = data.summaries.get(request.id);
-					const requestApiKey = summary?.apiKeyName;
-					if (apiKeyFilter === "no-api-key") {
-						if (requestApiKey) return false;
-					} else {
-						if (requestApiKey !== apiKeyFilter) return false;
-					}
-				}
+			// Date range filter
+			const requestDate = new Date(request.meta.timestamp);
+			if (dateFrom) {
+				const fromDate = new Date(dateFrom);
+				fromDate.setHours(0, 0, 0, 0);
+				if (requestDate < fromDate) return false;
+			}
+			if (dateTo) {
+				const toDate = new Date(dateTo);
+				toDate.setHours(23, 59, 59, 999);
+				if (requestDate > toDate) return false;
+			}
 
-				// Status code filter
-				if (statusCodeFilters.size > 0 && request.response?.status) {
-					if (!statusCodeFilters.has(request.response.status.toString())) {
-						return false;
-					}
-				}
-
-				// Date range filter
-				const requestDate = new Date(request.meta.timestamp);
-				if (dateFrom) {
-					const fromDate = new Date(dateFrom);
-					fromDate.setHours(0, 0, 0, 0);
-					if (requestDate < fromDate) return false;
-				}
-				if (dateTo) {
-					const toDate = new Date(dateTo);
-					toDate.setHours(23, 59, 59, 999);
-					if (requestDate > toDate) return false;
-				}
-
-				return true;
-			})
-		: [];
+			return true;
+		});
+	}, [
+		data,
+		accountFilter,
+		agentFilter,
+		apiKeyFilter,
+		statusCodeFilters,
+		dateFrom,
+		dateTo,
+	]);
 
 	const toggleExpanded = (id: string) => {
 		setExpandedRequests((prev) => {
@@ -346,7 +358,8 @@ export function RequestsTab() {
 					<div>
 						<CardTitle>Request History</CardTitle>
 						<CardDescription>
-							Detailed request and response data (last 200)
+							Detailed request and response data (last{" "}
+							{API_LIMITS.requestsDetail})
 						</CardDescription>
 					</div>
 					<div className="flex gap-2">
