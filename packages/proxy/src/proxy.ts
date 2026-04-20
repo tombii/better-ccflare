@@ -445,7 +445,7 @@ export async function handleProxy(
  * Injects `ttl: "1h"` into system-level cache_control blocks that are missing a TTL.
  * Returns a new ArrayBuffer with the modified body, or null if no changes were made.
  */
-function injectSystemCacheTtl(buf: ArrayBuffer): ArrayBuffer | null {
+export function injectSystemCacheTtl(buf: ArrayBuffer): ArrayBuffer | null {
 	try {
 		const body = JSON.parse(new TextDecoder().decode(buf));
 		if (!Array.isArray(body.system)) return null;
