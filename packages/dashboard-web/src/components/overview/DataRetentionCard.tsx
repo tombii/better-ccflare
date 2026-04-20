@@ -73,19 +73,6 @@ export function DataRetentionCard() {
 					</Button>
 				</div>
 
-				<div className="flex items-center gap-2">
-					{[7, 14, 30, 90].map((d) => (
-						<Button
-							key={d}
-							variant="outline"
-							size="sm"
-							onClick={() => setPayloadDays(d)}
-						>
-							{d}d
-						</Button>
-					))}
-				</div>
-
 				<div className="flex items-center gap-2 pt-2">
 					<div className="flex items-center gap-2">
 						<span className="text-sm font-medium w-28">Requests</span>
