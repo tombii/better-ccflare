@@ -1,9 +1,14 @@
-import { BUFFER_SIZES, validateEndpointUrl } from "@better-ccflare/core";
+import {
+	BUFFER_SIZES,
+	mapModelName,
+	validateEndpointUrl,
+} from "@better-ccflare/core";
 import { sanitizeProxyHeaders } from "@better-ccflare/http-common";
 import { Logger } from "@better-ccflare/logger";
 import type { Account } from "@better-ccflare/types";
 import { BaseProvider } from "../../base";
 import type { RateLimitInfo, TokenRefreshResult } from "../../types";
+import { transformRequestBodyModel } from "../../utils/model-mapping";
 
 // Hard rate limit statuses that should block account usage
 const HARD_LIMIT_STATUSES = new Set([
@@ -179,6 +184,18 @@ export class AnthropicProvider extends BaseProvider {
 			expiresAt: Date.now() + json.expires_in * 1000,
 			refreshToken: refreshToken,
 		};
+	}
+
+	async transformRequestBody(
+		request: Request,
+		account?: Account,
+	): Promise<Request> {
+		return transformRequestBodyModel(request, account, (model, acc) => {
+			if (acc) {
+				return mapModelName(model, acc);
+			}
+			return model;
+		});
 	}
 
 	buildUrl(path: string, query: string, account?: Account): string {
