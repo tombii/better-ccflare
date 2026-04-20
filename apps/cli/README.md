@@ -246,8 +246,8 @@ LOG_LEVEL=INFO
 LOG_FORMAT=pretty
 
 # Database configuration
-DATA_RETENTION_DAYS=7
-REQUEST_RETENTION_DAYS=365
+DATA_RETENTION_DAYS=3
+REQUEST_RETENTION_DAYS=90
 
 # Storage (set to false to skip storing request/response bodies, reducing DB size and memory pressure)
 STORE_PAYLOADS=true
