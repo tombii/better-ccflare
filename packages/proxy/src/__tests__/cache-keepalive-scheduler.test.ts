@@ -74,6 +74,12 @@ function makeConfig(initialTtl: number): {
 		on: (event: string, cb: ConfigChangeListener) => {
 			if (event === "change") listeners.push(cb);
 		},
+		off: (event: string, cb: ConfigChangeListener) => {
+			if (event === "change") {
+				const idx = listeners.indexOf(cb);
+				if (idx !== -1) listeners.splice(idx, 1);
+			}
+		},
 		// Allow tests to mutate TTL and fire the event.
 		_setTtl: (v: number) => {
 			ttl = v;
@@ -289,6 +295,7 @@ describe("CacheKeepaliveScheduler", () => {
 				on: (_event: string, cb: ConfigChangeListener) => {
 					listener = cb;
 				},
+				off: () => {},
 			} as unknown as Config;
 
 			const scheduler = new CacheKeepaliveScheduler(makeProxyContext(), config);
@@ -371,12 +378,16 @@ describe("CacheKeepaliveScheduler", () => {
 		});
 
 		it("with one cached account — body matches the stored body", async () => {
-			let capturedBody: ArrayBuffer | null = null;
+			let capturedBodyText: string | null = null;
 			const fetchMock = mock(
 				async (_input: RequestInfo | URL, init?: RequestInit) => {
 					if (init?.body) {
-						// init.body is Uint8Array per replayRequest implementation.
-						capturedBody = (init.body as Uint8Array).buffer;
+						const b = init.body;
+						if (typeof b === "string") {
+							capturedBodyText = b;
+						} else if (b instanceof Uint8Array) {
+							capturedBodyText = new TextDecoder().decode(b);
+						}
 					}
 					return new Response("", { status: 200 });
 				},
@@ -393,9 +404,12 @@ describe("CacheKeepaliveScheduler", () => {
 
 			await capturedCallback?.();
 
-			expect(capturedBody).not.toBeNull();
-			const decoded = new TextDecoder().decode(capturedBody!);
-			expect(decoded).toBe(bodyText);
+			expect(capturedBodyText).not.toBeNull();
+			const decoded = JSON.parse(capturedBodyText!);
+			// Scheduler patches max_tokens: 1 to minimise quota on replay
+			expect(decoded.model).toBe("claude-opus-4-5");
+			expect(decoded.messages).toEqual([{ role: "user", content: "hello" }]);
+			expect(decoded.max_tokens).toBe(1);
 
 			scheduler.stop();
 		});
