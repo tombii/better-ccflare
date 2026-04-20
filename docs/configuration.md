@@ -103,8 +103,8 @@ The configuration file is stored at:
 | `RETRY_BACKOFF` | `retry_backoff` | number | `RETRY_BACKOFF=1.5` |
 | `SESSION_DURATION_MS` | `session_duration_ms` | number | `SESSION_DURATION_MS=3600000` |
 | `PORT` | `port` | number | `PORT=3000` |
-| `DATA_RETENTION_DAYS` | `data_retention_days` | number | `DATA_RETENTION_DAYS=7` (payloads) |
-| `REQUEST_RETENTION_DAYS` | `request_retention_days` | number | `REQUEST_RETENTION_DAYS=365` (metadata) |
+| `DATA_RETENTION_DAYS` | `data_retention_days` | number | `DATA_RETENTION_DAYS=3` (payloads) |
+| `REQUEST_RETENTION_DAYS` | `request_retention_days` | number | `REQUEST_RETENTION_DAYS=90` (metadata) |
 | `better-ccflare_CONFIG_PATH` | - | string | `better-ccflare_CONFIG_PATH=/etc/better-ccflare.json` |
 
 ### Additional Environment Variables

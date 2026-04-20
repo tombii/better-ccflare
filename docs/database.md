@@ -490,8 +490,8 @@ PRAGMA wal_checkpoint(PASSIVE);
 ### Data Growth Management
 
 Default data retention:
-- Payloads: 7 days (configurable via `DATA_RETENTION_DAYS` / `data_retention_days`)
-- Request metadata: 365 days (configurable via `REQUEST_RETENTION_DAYS` / `request_retention_days`)
+- Payloads: 3 days (configurable via `DATA_RETENTION_DAYS` / `data_retention_days`)
+- Request metadata: 90 days (configurable via `REQUEST_RETENTION_DAYS` / `request_retention_days`)
 
 The server performs automatic cleanup at startup (one-shot), removing payloads older than the payload retention window, then removing any orphaned payloads. It also deletes request rows older than the request metadata retention window.
 
