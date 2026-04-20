@@ -2143,31 +2143,13 @@ export function createAccountModelMappingsUpdateHandler(
 				}
 			}
 
-			// Get existing model mappings from the dedicated field
-			let existingModelMappings: Record<string, string | string[]> = {};
-			const result = await db.get<{ model_mappings: string | null }>(
-				"SELECT model_mappings FROM accounts WHERE id = ?",
-				[accountId],
-			);
-			const existingModelMappingsStr = result?.model_mappings || null;
-
-			if (existingModelMappingsStr) {
-				try {
-					const parsed = JSON.parse(existingModelMappingsStr);
-					existingModelMappings = parsed.modelMappings || parsed || {};
-				} catch {
-					existingModelMappings = {};
-				}
-			}
-
-			// Merge new model mappings with existing ones
-			const mergedModelMappings = { ...existingModelMappings };
+			// Build the new model mappings as a full replacement (not a merge).
+			// This ensures that sending an empty {} correctly clears all mappings.
+			const mergedModelMappings: Record<string, string | string[]> = {};
 
 			for (const [modelType, modelValue] of Object.entries(modelMappings)) {
 				if (typeof modelValue === "string") {
-					if (!modelValue.trim()) {
-						delete mergedModelMappings[modelType];
-					} else {
+					if (modelValue.trim()) {
 						mergedModelMappings[modelType] = modelValue.trim();
 					}
 				} else if (Array.isArray(modelValue)) {
@@ -2177,8 +2159,6 @@ export function createAccountModelMappingsUpdateHandler(
 					if (trimmed.length > 0) {
 						mergedModelMappings[modelType] =
 							trimmed.length === 1 ? trimmed[0] : trimmed;
-					} else {
-						delete mergedModelMappings[modelType];
 					}
 				}
 			}
