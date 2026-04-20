@@ -31,6 +31,11 @@ describe("AnthropicProvider", () => {
 			priority: 0,
 			auto_fallback_enabled: false,
 			auto_refresh_enabled: false,
+			auto_pause_on_overage_enabled: false,
+			model_mappings: null,
+			cross_region_mode: null,
+			model_fallbacks: null,
+			billing_type: null,
 		};
 	});
 
@@ -215,6 +220,81 @@ describe("AnthropicProvider", () => {
 			const usage = await provider.extractUsageInfo(response);
 
 			expect(usage).toBeNull();
+		});
+	});
+
+	describe("transformRequestBody", () => {
+		function makeRequest(model: string): Request {
+			return new Request("https://api.anthropic.com/v1/messages", {
+				method: "POST",
+				body: JSON.stringify({ model, max_tokens: 100 }),
+				headers: { "Content-Type": "application/json" },
+			});
+		}
+
+		it("passes model through unchanged when no account provided", async () => {
+			const request = makeRequest("claude-sonnet-4-5-20250929");
+			const result = await provider.transformRequestBody(request, undefined);
+			const body = await result.json();
+			expect(body.model).toBe("claude-sonnet-4-5-20250929");
+		});
+
+		it("passes model through unchanged when account has no model_mappings", async () => {
+			const account = { ...mockAccount, model_mappings: null };
+			const request = makeRequest("claude-sonnet-4-5-20250929");
+			const result = await provider.transformRequestBody(request, account);
+			const body = await result.json();
+			expect(body.model).toBe("claude-sonnet-4-5-20250929");
+		});
+
+		it("applies matching model mapping to transform the model", async () => {
+			const account = {
+				...mockAccount,
+				model_mappings: JSON.stringify({ sonnet: "custom-model" }),
+			};
+			const request = makeRequest("claude-sonnet-4-5-20250929");
+			const result = await provider.transformRequestBody(request, account);
+			const body = await result.json();
+			expect(body.model).toBe("custom-model");
+		});
+
+		it("passes model through unchanged when mapping exists for a different family", async () => {
+			const account = {
+				...mockAccount,
+				model_mappings: JSON.stringify({ opus: "custom-opus" }),
+			};
+			const request = makeRequest("claude-sonnet-4-5-20250929");
+			const result = await provider.transformRequestBody(request, account);
+			const body = await result.json();
+			// No sonnet mapping exists; mapModelName falls back to the sonnet default
+			// which is the opus mapping only when no sonnet key exists — so model is unchanged
+			expect(body.model).toBe("claude-sonnet-4-5-20250929");
+		});
+
+		it("applies the correct mapping when multiple model families are configured", async () => {
+			const account = {
+				...mockAccount,
+				model_mappings: JSON.stringify({
+					sonnet: "mapped-sonnet",
+					opus: "mapped-opus",
+				}),
+			};
+
+			const sonnetRequest = makeRequest("claude-sonnet-4-5-20250929");
+			const sonnetResult = await provider.transformRequestBody(
+				sonnetRequest,
+				account,
+			);
+			const sonnetBody = await sonnetResult.json();
+			expect(sonnetBody.model).toBe("mapped-sonnet");
+
+			const opusRequest = makeRequest("claude-opus-4-1-20250805");
+			const opusResult = await provider.transformRequestBody(
+				opusRequest,
+				account,
+			);
+			const opusBody = await opusResult.json();
+			expect(opusBody.model).toBe("mapped-opus");
 		});
 	});
 });
