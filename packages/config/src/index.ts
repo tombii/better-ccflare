@@ -53,6 +53,7 @@ export interface ConfigData {
 	store_payloads?: boolean;
 	usage_poll_interval_ms?: number;
 	cache_keepalive_ttl_minutes?: number;
+	system_prompt_cache_ttl_1h?: boolean;
 	// Database configuration
 	db_wal_mode?: boolean;
 	db_busy_timeout_ms?: number;
@@ -351,6 +352,20 @@ export class Config extends EventEmitter {
 		this.set("cache_keepalive_ttl_minutes", clamped);
 	}
 
+	getSystemPromptCacheTtl1h(): boolean {
+		const fromEnv = process.env.SYSTEM_PROMPT_CACHE_TTL_1H;
+		if (fromEnv !== undefined) {
+			return fromEnv !== "false" && fromEnv !== "0";
+		}
+		const fromFile = this.data.system_prompt_cache_ttl_1h;
+		if (typeof fromFile === "boolean") return fromFile;
+		return false; // default: disabled
+	}
+
+	setSystemPromptCacheTtl1h(value: boolean): void {
+		this.set("system_prompt_cache_ttl_1h", value);
+	}
+
 	getAllSettings(): Record<string, string | number | boolean | undefined> {
 		// Include current strategy (which might come from env)
 		return {
@@ -362,6 +377,7 @@ export class Config extends EventEmitter {
 			store_payloads: this.getStorePayloads(),
 			usage_poll_interval_ms: this.getUsagePollIntervalMs(),
 			cache_keepalive_ttl_minutes: this.getCacheKeepaliveTtlMinutes(),
+			system_prompt_cache_ttl_1h: this.getSystemPromptCacheTtl1h(),
 		};
 	}
 

@@ -42,6 +42,7 @@ export function createConfigHandlers(
 					(settings.default_agent_model as string) || DEFAULT_AGENT_MODEL,
 				// Include actual TLS status
 				tls_enabled: runtime?.tlsEnabled || false,
+				system_prompt_cache_ttl_1h: config.getSystemPromptCacheTtl1h(),
 			};
 			return jsonResponse(response);
 		},
@@ -182,6 +183,21 @@ export function createConfigHandlers(
 				return errorResponse(BadRequest("Invalid 'ttlMinutes': must be 0-60"));
 			}
 			config.setCacheKeepaliveTtlMinutes(ttlMinutes);
+			return new Response(null, { status: 204 });
+		},
+
+		getCacheTtl: (): Response => {
+			return jsonResponse({
+				system_prompt_cache_ttl_1h: config.getSystemPromptCacheTtl1h(),
+			});
+		},
+
+		setCacheTtl: async (req: Request): Promise<Response> => {
+			const body = await req.json();
+			if (typeof body.enabled !== "boolean") {
+				return errorResponse(BadRequest("Invalid 'enabled': must be boolean"));
+			}
+			config.setSystemPromptCacheTtl1h(body.enabled);
 			return new Response(null, { status: 204 });
 		},
 	};

@@ -285,6 +285,23 @@ export const useSetKeepaliveTtl = () => {
 	});
 };
 
+export const useSystemCacheTtl = () => {
+	return useQuery({
+		queryKey: ["system-cache-ttl"],
+		queryFn: () => api.getSystemCacheTtl(),
+	});
+};
+
+export const useSetSystemCacheTtl = () => {
+	const queryClient = useQueryClient();
+	return useMutation({
+		mutationFn: (enabled: boolean) => api.setSystemCacheTtl(enabled),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ["system-cache-ttl"] });
+		},
+	});
+};
+
 export const useCleanupNow = () => {
 	return useMutation({
 		mutationFn: () => api.cleanupNow(),

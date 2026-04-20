@@ -709,6 +709,7 @@ export default async function startServer(options?: {
 		strategy,
 		dbOps,
 		runtime: runtimeConfig,
+		config,
 		provider,
 		refreshInFlight: new Map(),
 		asyncWriter,
