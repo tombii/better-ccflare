@@ -9,6 +9,7 @@ import {
 	LogOut,
 	Menu,
 	RefreshCw,
+	Settings,
 	Shield,
 	Users,
 	X,
@@ -83,6 +84,7 @@ export function Navigation({
 			{ label: "Agents", icon: Bot, path: "/agents" },
 			{ label: "API Keys", icon: Key, path: "/api-keys" },
 			{ label: "Logs", icon: FileText, path: "/logs" },
+			{ label: "Settings", icon: Settings, path: "/settings" },
 		);
 
 		return baseItems;

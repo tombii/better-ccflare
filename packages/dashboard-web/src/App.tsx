@@ -18,6 +18,7 @@ import { LogsTab } from "./components/LogsTab";
 import { Navigation } from "./components/navigation";
 import { OverviewTab } from "./components/OverviewTab";
 import { RequestsTab } from "./components/RequestsTab";
+import { SettingsTab } from "./components/SettingsTab";
 import { QUERY_CONFIG, REFRESH_INTERVALS } from "./constants";
 import { ThemeProvider } from "./contexts/theme-context";
 import "./index.css";
@@ -104,6 +105,12 @@ export function App() {
 				element: <LogsTab />,
 				title: "System Logs",
 				subtitle: "Real-time system logs and debugging information",
+			},
+			{
+				path: "/settings",
+				element: <SettingsTab />,
+				title: "Settings",
+				subtitle: "Configure system behavior and data retention",
 			},
 		];
 

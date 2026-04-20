@@ -10,13 +10,11 @@ import React, { useCallback, useMemo, useState } from "react";
 import { REFRESH_INTERVALS } from "../constants";
 import { useAccounts, useAnalytics, useStats } from "../hooks/queries";
 import { ChartsSection } from "./overview/ChartsSection";
-import { DataRetentionCard } from "./overview/DataRetentionCard";
 import { LoadingSkeleton } from "./overview/LoadingSkeleton";
 import { MetricCard } from "./overview/MetricCard";
 import { RateLimitInfo } from "./overview/RateLimitInfo";
 import { SystemStatus } from "./overview/SystemStatus";
 import { TimeRangeSelector } from "./overview/TimeRangeSelector";
-import { StrategyCard } from "./StrategyCard";
 
 export const OverviewTab = React.memo(() => {
 	// Fetch all data using React Query hooks
@@ -251,12 +249,6 @@ export const OverviewTab = React.memo(() => {
 			<SystemStatus recentErrors={stats?.recentErrors} />
 
 			{accounts && <RateLimitInfo accounts={accounts} />}
-
-			{/* Configuration Row */}
-			<div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-				<StrategyCard />
-				<DataRetentionCard />
-			</div>
 		</div>
 	);
 });
