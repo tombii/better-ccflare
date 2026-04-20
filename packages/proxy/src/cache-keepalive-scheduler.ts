@@ -102,9 +102,9 @@ export class CacheKeepaliveScheduler {
 
 		log.info(`Sending cache keepalive to ${accounts.length} account(s)`);
 
-		for (const accountId of accounts) {
-			await this.replayRequest(accountId);
-		}
+		await Promise.allSettled(
+			accounts.map((accountId) => this.replayRequest(accountId)),
+		);
 	}
 
 	private async replayRequest(accountId: string): Promise<void> {
@@ -156,8 +156,14 @@ export class CacheKeepaliveScheduler {
 			// For HTTPS localhost requests, use an agent that accepts self-signed certificates.
 			// This is needed when SSL_KEY_PATH + SSL_CERT_PATH are configured with self-signed certs.
 			// The self-loop request goes through the proxy again, so certificate validation would fail.
+			const url = new URL(endpoint);
+			const isLocalhost =
+				url.hostname === "localhost" ||
+				url.hostname === "127.0.0.1" ||
+				url.hostname === "::1";
+			// CodeQL[js/disabling-certificate-validation]: self-signed localhost self-loop only
 			const agent =
-				protocol === "https"
+				protocol === "https" && isLocalhost
 					? new https.Agent({ rejectUnauthorized: false })
 					: undefined;
 
