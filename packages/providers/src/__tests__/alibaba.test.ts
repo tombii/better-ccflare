@@ -1,6 +1,6 @@
-import { OpenAICompatibleProvider } from "../providers/openai/provider";
-import type { Account } from "@better-ccflare/types";
 import type { OpenAIRequest } from "@better-ccflare/openai-formats";
+import type { Account } from "@better-ccflare/types";
+import { OpenAICompatibleProvider } from "../providers/openai/provider";
 
 describe("OpenAICompatibleProvider Alibaba Features", () => {
 	let provider: OpenAICompatibleProvider;
@@ -23,7 +23,7 @@ describe("OpenAICompatibleProvider Alibaba Features", () => {
 	describe("Alibaba caching injection", () => {
 		it("should inject cache_control for Qwen models on DashScope endpoint", async () => {
 			// Build URL to set endpoint
-			const url = provider.buildUrl("/v1/messages", "", mockAccount);
+			const _url = provider.buildUrl("/v1/messages", "", mockAccount);
 
 			// Simulate request body
 			const anthropicBody = {
@@ -70,7 +70,7 @@ describe("OpenAICompatibleProvider Alibaba Features", () => {
 
 		it("should NOT inject cache_control for non-Qwen models", async () => {
 			// Build URL to set endpoint
-			const url = provider.buildUrl("/v1/messages", "", mockAccount);
+			const _url = provider.buildUrl("/v1/messages", "", mockAccount);
 
 			// Simulate request body with different model
 			const anthropicBody = {
@@ -103,7 +103,7 @@ describe("OpenAICompatibleProvider Alibaba Features", () => {
 		it("should NOT inject cache_control for non-DashScope endpoints", async () => {
 			// Use a regular OpenAI endpoint
 			mockAccount.custom_endpoint = "https://api.openai.com";
-			const url = provider.buildUrl("/v1/messages", "", mockAccount);
+			const _url = provider.buildUrl("/v1/messages", "", mockAccount);
 
 			const anthropicBody = {
 				model: "qwen3.5-plus",

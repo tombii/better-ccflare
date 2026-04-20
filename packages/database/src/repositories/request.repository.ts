@@ -499,7 +499,9 @@ export class RequestRepository extends BaseRepository<RequestData> {
 	}
 
 	async deleteOlderThan(cutoffTs: number): Promise<number> {
-		const BATCH_SIZE = 500;
+		// Increased from 500 to 2000 for more aggressive cleanup of large databases.
+		// The covering index idx_requests_cleanup makes each batch faster.
+		const BATCH_SIZE = 2000;
 		let total = 0;
 		let deleted: number;
 		do {
@@ -521,7 +523,9 @@ export class RequestRepository extends BaseRepository<RequestData> {
 	}
 
 	async deletePayloadsOlderThan(cutoffTs: number): Promise<number> {
-		const BATCH_SIZE = 500;
+		// Increased from 500 to 2000 for more aggressive cleanup of large databases.
+		// The covering index idx_request_payloads_cleanup makes each batch faster.
+		const BATCH_SIZE = 2000;
 		let total = 0;
 		let deleted: number;
 		do {

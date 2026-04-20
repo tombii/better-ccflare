@@ -295,7 +295,7 @@ export class Config extends EventEmitter {
 		}
 		const fromFile = this.data.request_retention_days;
 		if (typeof fromFile === "number") return this.clamp(fromFile, 1, 3650);
-		return 365; // default metadata retention
+		return 30; // default metadata retention (reduced from 365 to prevent database bloat)
 	}
 
 	setRequestRetentionDays(days: number): void {

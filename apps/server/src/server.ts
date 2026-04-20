@@ -618,7 +618,7 @@ export default async function startServer(options?: {
 
 	stopRateLimitCleanupJob = unregisterRateLimitCleanup;
 
-	// Set up periodic data retention cleanup every 6 hours
+	// Set up periodic data retention cleanup every 1 hour
 	const dataRetentionCleanup = async () => {
 		const startTime = Date.now();
 		try {
@@ -634,21 +634,22 @@ export default async function startServer(options?: {
 					`Periodic cleanup: removed ${removedRequests} requests, ${removedPayloads} payloads in ${Date.now() - startTime}ms`,
 				);
 				// Reclaim freed SQLite pages without a full blocking VACUUM
-				dbOps.incrementalVacuum(50000); // reclaim up to 50000 pages (~200 MB)
+				// Increased from 50000 to 200000 pages (~800 MB) for more aggressive cleanup
+				dbOps.incrementalVacuum(200000);
 			}
 		} catch (err) {
 			log.error(`Periodic data retention cleanup error: ${err}`);
 		}
 	};
 
-	// Periodic data retention cleanup every 6 hours.
+	// Periodic data retention cleanup every 1 hour (reduced from 6 hours for more aggressive cleanup).
 	// runStartupMaintenance() (called above) handles the initial cleanup on boot,
 	// so we don't fire dataRetentionCleanup() immediately to avoid concurrent
 	// large deletes that can spike WAL size and wedge the service.
 	const unregisterDataCleanup = registerCleanup({
 		id: "data-retention-cleanup",
 		callback: dataRetentionCleanup,
-		minutes: 360, // every 6 hours
+		minutes: 60, // every 1 hour
 		description: "Periodic data retention cleanup and incremental vacuum",
 	});
 

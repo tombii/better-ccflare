@@ -146,6 +146,33 @@ export function addPerformanceIndexes(db: Database): void {
 	`);
 	log.info("Added index: idx_requests_project_timestamp");
 
+	// 7. Covering index for DELETE cleanup operations
+	// Critical for performance of deleteOlderThan() which uses:
+	//   DELETE FROM requests WHERE id IN (SELECT id FROM requests WHERE timestamp < ? LIMIT ?)
+	// Without this covering index, SQLite must hit the table to fetch id values after finding rows by timestamp.
+	// With this covering index (timestamp ASC, id), the entire subquery is satisfied from the index alone.
+	// ASC order matches the "timestamp < cutoff" comparison used in cleanup queries.
+	db.run(`
+		CREATE INDEX IF NOT EXISTS idx_requests_cleanup
+		ON requests(timestamp ASC, id)
+	`);
+	log.info(
+		"Added index: idx_requests_cleanup (covering index for DELETE operations)",
+	);
+
+	// 8. Covering index for request_payloads cleanup
+	// Used by deletePayloadsOlderThan() which uses similar pattern:
+	//   DELETE FROM request_payloads WHERE id IN (SELECT id FROM request_payloads WHERE timestamp < ? LIMIT ?)
+	// Note: timestamp may be NULL for legacy rows, so we use partial index where timestamp IS NOT NULL
+	db.run(`
+		CREATE INDEX IF NOT EXISTS idx_request_payloads_cleanup
+		ON request_payloads(timestamp, id)
+		WHERE timestamp IS NOT NULL
+	`);
+	log.info(
+		"Added index: idx_request_payloads_cleanup (covering index for payload DELETE operations)",
+	);
+
 	log.info("Performance indexes added successfully");
 }
 
