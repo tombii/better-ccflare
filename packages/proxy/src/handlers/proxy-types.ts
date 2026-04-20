@@ -1,4 +1,4 @@
-import type { RuntimeConfig } from "@better-ccflare/config";
+import type { Config, RuntimeConfig } from "@better-ccflare/config";
 import type {
 	AsyncDbWriter,
 	DatabaseOperations,
@@ -10,6 +10,7 @@ export interface ProxyContext {
 	strategy: LoadBalancingStrategy;
 	dbOps: DatabaseOperations;
 	runtime: RuntimeConfig;
+	config: Config;
 	provider: Provider;
 	refreshInFlight: Map<string, Promise<string>>;
 	asyncWriter: AsyncDbWriter;

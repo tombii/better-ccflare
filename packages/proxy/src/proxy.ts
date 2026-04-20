@@ -5,6 +5,7 @@ import {
 } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import type { Account } from "@better-ccflare/types";
+import { cacheBodyStore } from "./cache-body-store";
 import {
 	createRequestMetadata,
 	ERROR_MESSAGES,
@@ -78,6 +79,11 @@ export function getUsageWorker(): Worker {
 			usageWorkerInstance.onmessage = (ev) => {
 				const data = ev.data as OutgoingWorkerMessage;
 				if (data.type === "summary") {
+					// Promote staged request body to per-account cache slot if caching was used
+					cacheBodyStore.onSummary(
+						data.summary.id,
+						data.summary.cacheCreationInputTokens,
+					);
 					requestEvents.emit("event", {
 						type: "summary",
 						payload: data.summary,
@@ -208,7 +214,13 @@ export async function handleProxy(
 	validateProviderPath(ctx.provider, url.pathname);
 
 	// 3. Prepare request body
-	const { buffer: requestBodyBuffer } = await prepareRequestBody(req);
+	let { buffer: requestBodyBuffer } = await prepareRequestBody(req);
+
+	// 3b. Optionally inject 1h TTL into system prompt cache_control blocks
+	if (ctx.config.getSystemPromptCacheTtl1h() && requestBodyBuffer) {
+		const injected = injectSystemCacheTtl(requestBodyBuffer);
+		if (injected) requestBodyBuffer = injected;
+	}
 
 	// Extract model from request body for family detection (used by combo routing)
 	// and reuse parsed body for /v1/messages validation (consolidate parses)
@@ -427,4 +439,29 @@ export async function handleProxy(
 		`${ERROR_MESSAGES.ALL_ACCOUNTS_FAILED} (${allAttemptedAccounts.length} attempted)`,
 		ctx.provider.name,
 	);
+}
+
+/**
+ * Injects `ttl: "1h"` into system-level cache_control blocks that are missing a TTL.
+ * Returns a new ArrayBuffer with the modified body, or null if no changes were made.
+ */
+export function injectSystemCacheTtl(buf: ArrayBuffer): ArrayBuffer | null {
+	try {
+		const body = JSON.parse(new TextDecoder().decode(buf));
+		if (!Array.isArray(body.system)) return null;
+		let changed = false;
+		for (const block of body.system) {
+			if (
+				block.cache_control?.type === "ephemeral" &&
+				!block.cache_control.ttl
+			) {
+				block.cache_control.ttl = "1h";
+				changed = true;
+			}
+		}
+		if (!changed) return null;
+		return new TextEncoder().encode(JSON.stringify(body)).buffer;
+	} catch {
+		return null;
+	}
 }

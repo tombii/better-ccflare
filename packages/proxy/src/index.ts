@@ -10,6 +10,7 @@ export {
 	registerProvider,
 } from "@better-ccflare/providers";
 export { AutoRefreshScheduler } from "./auto-refresh-scheduler";
+export { CacheKeepaliveScheduler } from "./cache-keepalive-scheduler";
 export {
 	checkAllAccountsHealth,
 	checkRefreshTokenHealth,

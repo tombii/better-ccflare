@@ -52,6 +52,8 @@ export interface ConfigData {
 	request_retention_days?: number;
 	store_payloads?: boolean;
 	usage_poll_interval_ms?: number;
+	cache_keepalive_ttl_minutes?: number;
+	system_prompt_cache_ttl_1h?: boolean;
 	// Database configuration
 	db_wal_mode?: boolean;
 	db_busy_timeout_ms?: number;
@@ -334,6 +336,36 @@ export class Config extends EventEmitter {
 		this.set("usage_poll_interval_ms", clamped);
 	}
 
+	getCacheKeepaliveTtlMinutes(): number {
+		const fromEnv = process.env.CACHE_KEEPALIVE_TTL_MINUTES;
+		if (fromEnv) {
+			const n = parseInt(fromEnv, 10);
+			if (!Number.isNaN(n)) return this.clamp(n, 0, 60);
+		}
+		const fromFile = this.data.cache_keepalive_ttl_minutes;
+		if (typeof fromFile === "number") return this.clamp(fromFile, 0, 60);
+		return 0; // default: disabled
+	}
+
+	setCacheKeepaliveTtlMinutes(minutes: number): void {
+		const clamped = this.clamp(minutes, 0, 60);
+		this.set("cache_keepalive_ttl_minutes", clamped);
+	}
+
+	getSystemPromptCacheTtl1h(): boolean {
+		const fromEnv = process.env.SYSTEM_PROMPT_CACHE_TTL_1H;
+		if (fromEnv !== undefined) {
+			return fromEnv !== "false" && fromEnv !== "0";
+		}
+		const fromFile = this.data.system_prompt_cache_ttl_1h;
+		if (typeof fromFile === "boolean") return fromFile;
+		return false; // default: disabled
+	}
+
+	setSystemPromptCacheTtl1h(value: boolean): void {
+		this.set("system_prompt_cache_ttl_1h", value);
+	}
+
 	getAllSettings(): Record<string, string | number | boolean | undefined> {
 		// Include current strategy (which might come from env)
 		return {
@@ -344,6 +376,8 @@ export class Config extends EventEmitter {
 			request_retention_days: this.getRequestRetentionDays(),
 			store_payloads: this.getStorePayloads(),
 			usage_poll_interval_ms: this.getUsagePollIntervalMs(),
+			cache_keepalive_ttl_minutes: this.getCacheKeepaliveTtlMinutes(),
+			system_prompt_cache_ttl_1h: this.getSystemPromptCacheTtl1h(),
 		};
 	}
 

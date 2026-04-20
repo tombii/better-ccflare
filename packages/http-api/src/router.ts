@@ -285,6 +285,18 @@ export class APIRouter {
 		this.handlers.set("POST:/api/config/retention", (req) =>
 			configHandlers.setRetention(req),
 		);
+		this.handlers.set("GET:/api/config/keepalive", () =>
+			configHandlers.getCacheKeepaliveTtl(),
+		);
+		this.handlers.set("POST:/api/config/keepalive", (req) =>
+			configHandlers.setCacheKeepaliveTtl(req),
+		);
+		this.handlers.set("GET:/api/config/cache-ttl", () =>
+			configHandlers.getCacheTtl(),
+		);
+		this.handlers.set("POST:/api/config/cache-ttl", (req) =>
+			configHandlers.setCacheTtl(req),
+		);
 		this.handlers.set("POST:/api/maintenance/cleanup", () => cleanupHandler());
 		this.handlers.set("POST:/api/maintenance/compact", () => compactHandler());
 		this.handlers.set("GET:/api/system/info", () => systemInfoHandler());

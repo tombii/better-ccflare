@@ -46,6 +46,7 @@ const _navItems: NavItem[] = [
 	{ label: "Agents", icon: Bot, path: "/agents" },
 	{ label: "API Keys", icon: Key, path: "/api-keys" },
 	{ label: "Logs", icon: FileText, path: "/logs" },
+	{ label: "Settings", icon: Settings, path: "/settings" },
 ];
 
 interface NavigationProps {

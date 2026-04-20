@@ -122,6 +122,7 @@ export interface ConfigResponse {
 	sessionDurationMs: number;
 	default_agent_model: string;
 	tls_enabled: boolean;
+	system_prompt_cache_ttl_1h: boolean;
 }
 
 export interface StrategyUpdateRequest {
