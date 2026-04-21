@@ -26,6 +26,7 @@ export interface CompleteOptions {
 	sessionId: string;
 	code: string;
 	name: string; // Required to properly create the account
+	id?: string; // Account ID for re-authentication (UPDATE by id instead of name)
 	priority?: number;
 	customEndpoint?: string; // Custom API endpoint
 }
@@ -170,6 +171,58 @@ export class OAuthFlow {
 			tokens,
 			priority,
 			customEndpoint,
+		);
+	}
+
+	/**
+	 * Completes re-authentication for an existing Anthropic account.
+	 *
+	 * Exchanges the authorization code for tokens and UPDATEs the existing account
+	 * in place, preserving all metadata (stats, priority, settings).
+	 *
+	 * @param opts - Completion options (sessionId, code, name — the existing account name)
+	 * @param flowData - Flow data returned from {@link begin}
+	 * @throws {Error} If OAuth provider not found or token exchange fails
+	 */
+	async completeReauth(
+		opts: CompleteOptions,
+		flowData: BeginResult,
+	): Promise<void> {
+		const { code, id } = opts;
+
+		if (!id) {
+			throw new Error("Account id is required for re-authentication");
+		}
+
+		// Get OAuth provider
+		const oauthProvider = getOAuthProvider("anthropic");
+		if (!oauthProvider) {
+			throw new Error("Anthropic OAuth provider not found");
+		}
+
+		// Exchange authorization code for tokens
+		const tokens = await oauthProvider.exchangeCode(
+			code,
+			flowData.pkce.verifier,
+			flowData.oauthConfig,
+		);
+
+		const adapter = this.dbOps.getAdapter();
+
+		// Handle console mode — create new API key and update account
+		if (flowData.mode === "console" || !tokens.refreshToken) {
+			const apiKey = await this.createAnthropicApiKey(tokens.accessToken);
+			await adapter.run(`UPDATE accounts SET api_key = ? WHERE id = ?`, [
+				apiKey,
+				id,
+			]);
+			return;
+		}
+
+		// Handle claude-oauth mode — update OAuth tokens in place
+		await adapter.run(
+			`UPDATE accounts SET refresh_token = ?, access_token = ?, expires_at = ? WHERE id = ?`,
+			[tokens.refreshToken, tokens.accessToken, tokens.expiresAt, id],
 		);
 	}
 
