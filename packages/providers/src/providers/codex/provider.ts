@@ -10,7 +10,7 @@ const log = new Logger("CodexProvider");
 const TOKEN_URL = "https://auth.openai.com/oauth/token";
 const CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const DEFAULT_ENDPOINT = "https://chatgpt.com/backend-api/codex/responses";
-const CODEX_VERSION = "0.121.0";
+const CODEX_VERSION = "0.122.0";
 const CODEX_USER_AGENT = `codex-cli/${CODEX_VERSION} (Windows 10.0.26100; x64)`;
 
 // Default model mapping: Anthropic model name prefixes → Codex model names
