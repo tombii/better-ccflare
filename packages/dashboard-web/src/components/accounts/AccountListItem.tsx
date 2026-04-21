@@ -46,6 +46,8 @@ interface AccountListItemProps {
 	onCustomEndpointChange?: (account: Account) => void;
 	onModelMappingsChange?: (account: Account) => void;
 	onReauth?: (account: Account) => void;
+	onAnthropicReauth?: (account: Account) => void;
+	onCodexReauth?: (account: Account) => void;
 }
 
 export function AccountListItem({
@@ -64,6 +66,8 @@ export function AccountListItem({
 	onCustomEndpointChange,
 	onModelMappingsChange,
 	onReauth,
+	onAnthropicReauth,
+	onCodexReauth,
 }: AccountListItemProps) {
 	const [isRefreshingUsage, setIsRefreshingUsage] = useState(false);
 	const presenter = new AccountPresenter(account);
@@ -321,6 +325,28 @@ export function AccountListItem({
 							size="sm"
 							onClick={() => onReauth(account)}
 							title="Re-authenticate this Qwen account (preserves all metadata)"
+						>
+							<KeyRound className="h-4 w-4" />
+						</Button>
+					)}
+					{account.provider === "anthropic" &&
+						account.hasRefreshToken &&
+						onAnthropicReauth && (
+							<Button
+								variant="ghost"
+								size="sm"
+								onClick={() => onAnthropicReauth(account)}
+								title="Re-authenticate this Anthropic account (preserves all metadata)"
+							>
+								<KeyRound className="h-4 w-4" />
+							</Button>
+						)}
+					{account.provider === "codex" && onCodexReauth && (
+						<Button
+							variant="ghost"
+							size="sm"
+							onClick={() => onCodexReauth(account)}
+							title="Re-authenticate this Codex account (preserves all metadata)"
 						>
 							<KeyRound className="h-4 w-4" />
 						</Button>

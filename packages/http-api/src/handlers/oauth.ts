@@ -423,6 +423,124 @@ export function createCodexDeviceFlowInitHandler(dbOps: DatabaseOperations) {
 }
 
 /**
+ * Create a Codex re-authentication handler.
+ * Re-runs the device flow for an existing Codex account, updating tokens in-place.
+ * Returns { verificationUrl, userCode, sessionId } immediately, then polls in background.
+ */
+export function createCodexReauthHandler(dbOps: DatabaseOperations) {
+	return async (req: Request): Promise<Response> => {
+		try {
+			const body = await req.json();
+
+			const accountId = validateString(body.accountId, "accountId", {
+				required: true,
+				minLength: 1,
+				maxLength: 100,
+			});
+
+			if (!accountId) {
+				return errorResponse(BadRequest("Valid accountId is required"));
+			}
+
+			// Look up the account
+			const account = await dbOps.getAdapter().get<{
+				id: string;
+				name: string;
+				provider: string;
+			}>("SELECT id, name, provider FROM accounts WHERE id = ?", [accountId]);
+
+			if (!account) {
+				return errorResponse(NotFound("Account not found"));
+			}
+
+			if (account.provider !== "codex") {
+				return errorResponse(
+					BadRequest(
+						"Re-authentication via device flow is only supported for Codex accounts",
+					),
+				);
+			}
+
+			let deviceFlow: Awaited<ReturnType<typeof initiateCodexDeviceFlow>>;
+			try {
+				deviceFlow = await initiateCodexDeviceFlow();
+			} catch (err) {
+				log.error("Codex reauth device flow initiation failed:", err);
+				return errorResponse(
+					InternalServerError(
+						`Failed to initiate Codex device flow: ${(err as Error).message}`,
+					),
+				);
+			}
+
+			const sessionId = crypto.randomUUID();
+			codexSessions.set(sessionId, {
+				status: "pending",
+				accountName: account.name,
+			});
+
+			// Poll in background — do not await
+			(async () => {
+				try {
+					const tokens = await pollCodexForToken(
+						deviceFlow.deviceAuthId,
+						deviceFlow.userCode,
+						deviceFlow.interval,
+						180,
+					);
+
+					await dbOps.getAdapter().run(
+						`UPDATE accounts SET
+							refresh_token = ?,
+							access_token = ?,
+							expires_at = ?
+						WHERE id = ?`,
+						[
+							tokens.refresh_token,
+							tokens.access_token,
+							Date.now() + tokens.expires_in * 1000,
+							account.id,
+						],
+					);
+
+					codexSessions.set(sessionId, {
+						status: "complete",
+						accountName: account.name,
+					});
+					log.info(
+						`Codex account '${account.name}' re-authenticated via web device flow`,
+					);
+
+					setTimeout(() => codexSessions.delete(sessionId), 10 * 60 * 1000);
+				} catch (err) {
+					log.error(`Codex reauth polling failed for '${account.name}':`, err);
+					codexSessions.set(sessionId, {
+						status: "error",
+						accountName: account.name,
+						error: (err as Error).message,
+					});
+					setTimeout(() => codexSessions.delete(sessionId), 10 * 60 * 1000);
+				}
+			})();
+
+			return jsonResponse({
+				success: true,
+				sessionId,
+				verificationUrl: deviceFlow.verificationUrl,
+				userCode: deviceFlow.userCode,
+			});
+		} catch (error) {
+			log.error("Codex reauth error:", error);
+			return errorResponse(
+				error instanceof Error
+					? error
+					: new Error("Failed to initialize Codex re-authentication"),
+			);
+		}
+	};
+}
+
+/**
  * Create a Codex device flow status handler.
  * Returns { status, error? } for the given sessionId.
  */
@@ -436,6 +554,181 @@ export function createCodexDeviceFlowStatusHandler() {
 			return jsonResponse({ status: "error", error: session.error });
 		}
 		return jsonResponse({ status: session.status });
+	};
+}
+
+/**
+ * Create an Anthropic re-authentication init handler.
+ * Starts an OAuth flow for an existing Anthropic (claude-oauth) account.
+ * Returns { authUrl, sessionId } immediately.
+ */
+export function createAnthropicReauthInitHandler(dbOps: DatabaseOperations) {
+	return async (req: Request): Promise<Response> => {
+		try {
+			const body = await req.json();
+
+			const accountId = validateString(body.accountId, "accountId", {
+				required: true,
+				minLength: 1,
+				maxLength: 100,
+			});
+
+			if (!accountId) {
+				return errorResponse(BadRequest("Valid accountId is required"));
+			}
+
+			// Look up the account
+			const account = await dbOps.getAdapter().get<{
+				id: string;
+				name: string;
+				provider: string;
+				refresh_token: string | null;
+			}>(
+				"SELECT id, name, provider, refresh_token FROM accounts WHERE id = ?",
+				[accountId],
+			);
+
+			if (!account) {
+				return errorResponse(NotFound("Account not found"));
+			}
+
+			if (account.provider !== "anthropic") {
+				return errorResponse(
+					BadRequest(
+						"Re-authentication is only supported for Anthropic OAuth accounts",
+					),
+				);
+			}
+
+			const config = new Config();
+			const oauthFlow = await createOAuthFlow(dbOps, config);
+
+			try {
+				const flowResult = await oauthFlow.begin({
+					name: account.name,
+					mode: "claude-oauth",
+					skipAccountCheck: true,
+				});
+
+				// Store session; use accountName field so callback can look it up by name
+				dbOps.createOAuthSession(
+					flowResult.sessionId,
+					account.name,
+					flowResult.pkce.verifier,
+					"claude-oauth",
+					undefined,
+					10,
+				);
+
+				return jsonResponse({
+					success: true,
+					authUrl: flowResult.authUrl,
+					sessionId: flowResult.sessionId,
+				});
+			} catch (error) {
+				return errorResponse(InternalServerError((error as Error).message));
+			}
+		} catch (error) {
+			log.error("Anthropic reauth init error:", error);
+			return errorResponse(
+				error instanceof Error
+					? error
+					: new Error("Failed to initialize Anthropic re-authentication"),
+			);
+		}
+	};
+}
+
+/**
+ * Create an Anthropic re-authentication callback handler.
+ * Exchanges the authorization code and UPDATEs existing account tokens in place.
+ */
+export function createAnthropicReauthCallbackHandler(
+	dbOps: DatabaseOperations,
+) {
+	return async (req: Request): Promise<Response> => {
+		if (req.method !== "POST") {
+			return errorResponse(
+				BadRequest("Only POST requests are supported for OAuth callback"),
+			);
+		}
+
+		try {
+			const body = await req.json();
+
+			const sessionId = validateString(body.sessionId, "sessionId", {
+				required: true,
+				pattern: patterns.uuid,
+			})!;
+
+			const code = validateString(body.code, "code", {
+				required: true,
+				minLength: 1,
+			})!;
+
+			// Get stored session
+			const oauthSession = await dbOps.getOAuthSession(sessionId);
+			if (!oauthSession) {
+				return errorResponse(
+					BadRequest("OAuth session expired or invalid. Please try again."),
+				);
+			}
+
+			const { accountName: name, verifier } = oauthSession;
+
+			try {
+				const config = new Config();
+				const oauthFlow = await createOAuthFlow(dbOps, config);
+
+				const oauthProvider = await import("@better-ccflare/providers").then(
+					(m) => m.getOAuthProvider("anthropic"),
+				);
+				if (!oauthProvider) {
+					throw new Error("OAuth provider not found");
+				}
+				const runtime = config.getRuntime();
+				const oauthConfig = oauthProvider.getOAuthConfig("claude-oauth");
+				oauthConfig.clientId = runtime.clientId;
+
+				const flowData = {
+					sessionId,
+					authUrl: "",
+					pkce: { verifier, challenge: "" },
+					oauthConfig,
+					mode: "claude-oauth" as const,
+				};
+
+				log.debug(`Completing Anthropic reauth for account '${name}'`);
+
+				await oauthFlow.completeReauth({ sessionId, code, name }, flowData);
+
+				dbOps.deleteOAuthSession(sessionId);
+
+				log.info(`Successfully re-authenticated Anthropic account '${name}'`);
+
+				return jsonResponse({
+					success: true,
+					message: `Account '${name}' re-authenticated successfully!`,
+				});
+			} catch (error) {
+				log.error(
+					`Anthropic reauth callback failed for account '${name}':`,
+					error,
+				);
+				return errorResponse(
+					error instanceof Error
+						? error
+						: new Error("Failed to complete Anthropic re-authentication"),
+				);
+			}
+		} catch (error) {
+			log.error("Anthropic reauth callback validation error:", error);
+			return errorResponse(
+				error instanceof Error
+					? error
+					: new Error("Failed to process Anthropic reauth callback"),
+			);
+		}
 	};
 }
 

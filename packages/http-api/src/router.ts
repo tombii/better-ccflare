@@ -75,8 +75,11 @@ import {
 	createCompactHandler,
 } from "./handlers/maintenance";
 import {
+	createAnthropicReauthCallbackHandler,
+	createAnthropicReauthInitHandler,
 	createCodexDeviceFlowInitHandler,
 	createCodexDeviceFlowStatusHandler,
+	createCodexReauthHandler,
 	createOAuthCallbackHandler,
 	createOAuthInitHandler,
 	createQwenDeviceFlowInitHandler,
@@ -160,6 +163,10 @@ export class APIRouter {
 		const qwenDeviceFlowInitHandler = createQwenDeviceFlowInitHandler(dbOps);
 		const qwenReauthHandler = createQwenReauthHandler(dbOps);
 		const codexDeviceFlowInitHandler = createCodexDeviceFlowInitHandler(dbOps);
+		const codexReauthHandler = createCodexReauthHandler(dbOps);
+		const anthropicReauthInitHandler = createAnthropicReauthInitHandler(dbOps);
+		const anthropicReauthCallbackHandler =
+			createAnthropicReauthCallbackHandler(dbOps);
 		const agentsHandler = createAgentsListHandler(dbOps);
 		const workspacesHandler = createWorkspacesListHandler();
 		const requestsStreamHandler = createRequestsStreamHandler();
@@ -237,8 +244,17 @@ export class APIRouter {
 		this.handlers.set("POST:/api/oauth/qwen/reauth", (req) =>
 			qwenReauthHandler(req),
 		);
+		this.handlers.set("POST:/api/oauth/anthropic/reauth/init", (req) =>
+			anthropicReauthInitHandler(req),
+		);
+		this.handlers.set("POST:/api/oauth/anthropic/reauth/callback", (req) =>
+			anthropicReauthCallbackHandler(req),
+		);
 		this.handlers.set("POST:/api/oauth/codex/init", (req) =>
 			codexDeviceFlowInitHandler(req),
+		);
+		this.handlers.set("POST:/api/oauth/codex/reauth", (req) =>
+			codexReauthHandler(req),
 		);
 		this.handlers.set("GET:/api/requests", (_req, url) => {
 			const limitParam = url.searchParams.get("limit");

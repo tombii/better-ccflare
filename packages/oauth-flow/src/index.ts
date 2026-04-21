@@ -174,6 +174,54 @@ export class OAuthFlow {
 	}
 
 	/**
+	 * Completes re-authentication for an existing Anthropic account.
+	 *
+	 * Exchanges the authorization code for tokens and UPDATEs the existing account
+	 * in place, preserving all metadata (stats, priority, settings).
+	 *
+	 * @param opts - Completion options (sessionId, code, name — the existing account name)
+	 * @param flowData - Flow data returned from {@link begin}
+	 * @throws {Error} If OAuth provider not found or token exchange fails
+	 */
+	async completeReauth(
+		opts: CompleteOptions,
+		flowData: BeginResult,
+	): Promise<void> {
+		const { code, name } = opts;
+
+		// Get OAuth provider
+		const oauthProvider = getOAuthProvider("anthropic");
+		if (!oauthProvider) {
+			throw new Error("Anthropic OAuth provider not found");
+		}
+
+		// Exchange authorization code for tokens
+		const tokens = await oauthProvider.exchangeCode(
+			code,
+			flowData.pkce.verifier,
+			flowData.oauthConfig,
+		);
+
+		const adapter = this.dbOps.getAdapter();
+
+		// Handle console mode — create new API key and update account
+		if (flowData.mode === "console" || !tokens.refreshToken) {
+			const apiKey = await this.createAnthropicApiKey(tokens.accessToken);
+			await adapter.run(`UPDATE accounts SET api_key = ? WHERE name = ?`, [
+				apiKey,
+				name,
+			]);
+			return;
+		}
+
+		// Handle claude-oauth mode — update OAuth tokens in place
+		await adapter.run(
+			`UPDATE accounts SET refresh_token = ?, access_token = ?, expires_at = ? WHERE name = ?`,
+			[tokens.refreshToken, tokens.accessToken, tokens.expiresAt, name],
+		);
+	}
+
+	/**
 	 * Creates an API key using the Anthropic console endpoint.
 	 *
 	 * This is used for "console" mode accounts where users want a static API key
