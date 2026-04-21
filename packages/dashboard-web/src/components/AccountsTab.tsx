@@ -9,6 +9,8 @@ import {
 	AccountList,
 	AccountModelMappingsDialog,
 	AccountPriorityDialog,
+	AnthropicReauthDialog,
+	CodexReauthDialog,
 	DeleteConfirmationDialog,
 	QwenReauthDialog,
 	RenameAccountDialog,
@@ -71,6 +73,20 @@ export function AccountsTab() {
 		account: null,
 	});
 	const [qwenReauthDialog, setQwenReauthDialog] = useState<{
+		isOpen: boolean;
+		account: Account | null;
+	}>({
+		isOpen: false,
+		account: null,
+	});
+	const [anthropicReauthDialog, setAnthropicReauthDialog] = useState<{
+		isOpen: boolean;
+		account: Account | null;
+	}>({
+		isOpen: false,
+		account: null,
+	});
+	const [codexReauthDialog, setCodexReauthDialog] = useState<{
 		isOpen: boolean;
 		account: Account | null;
 	}>({
@@ -452,6 +468,14 @@ export function AccountsTab() {
 		setQwenReauthDialog({ isOpen: true, account });
 	};
 
+	const handleAnthropicReauth = (account: Account) => {
+		setAnthropicReauthDialog({ isOpen: true, account });
+	};
+
+	const handleCodexReauth = (account: Account) => {
+		setCodexReauthDialog({ isOpen: true, account });
+	};
+
 	const handleUpdateCustomEndpoint = async (
 		accountId: string,
 		customEndpoint: string | null,
@@ -561,6 +585,8 @@ export function AccountsTab() {
 						onCustomEndpointChange={handleCustomEndpointChange}
 						onModelMappingsChange={handleModelMappingsChange}
 						onReauth={handleReauth}
+						onAnthropicReauth={handleAnthropicReauth}
+						onCodexReauth={handleCodexReauth}
 					/>
 				</CardContent>
 			</Card>
@@ -644,6 +670,26 @@ export function AccountsTab() {
 				onSuccess={() => {
 					loadAccounts();
 					setQwenReauthDialog({ isOpen: false, account: null });
+				}}
+			/>
+			<AnthropicReauthDialog
+				isOpen={anthropicReauthDialog.isOpen}
+				account={anthropicReauthDialog.account}
+				onClose={() =>
+					setAnthropicReauthDialog({ isOpen: false, account: null })
+				}
+				onSuccess={() => {
+					loadAccounts();
+					setAnthropicReauthDialog({ isOpen: false, account: null });
+				}}
+			/>
+			<CodexReauthDialog
+				isOpen={codexReauthDialog.isOpen}
+				account={codexReauthDialog.account}
+				onClose={() => setCodexReauthDialog({ isOpen: false, account: null })}
+				onSuccess={() => {
+					loadAccounts();
+					setCodexReauthDialog({ isOpen: false, account: null });
 				}}
 			/>
 		</div>

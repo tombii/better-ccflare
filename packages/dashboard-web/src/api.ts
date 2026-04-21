@@ -1881,6 +1881,67 @@ class API extends HttpClient {
 		}
 	}
 
+	async initCodexReauth(data: { accountId: string }): Promise<{
+		sessionId: string;
+		verificationUrl: string;
+		userCode: string;
+	}> {
+		const url = "/api/oauth/codex/reauth";
+		this.logger.debug(`→ POST ${url}`, { data });
+		try {
+			const response = await this.post<{
+				sessionId: string;
+				verificationUrl: string;
+				userCode: string;
+			}>(url, data);
+			this.logger.debug(`← POST ${url} - 200`);
+			return response;
+		} catch (error) {
+			this.logger.error(`✗ POST ${url} - ERROR`, { error });
+			if (error instanceof HttpError) throw new Error(error.message);
+			throw error;
+		}
+	}
+
+	async initAnthropicReauth(
+		accountId: string,
+	): Promise<{ authUrl: string; sessionId: string }> {
+		const url = "/api/oauth/anthropic/reauth/init";
+		this.logger.debug(`→ POST ${url}`, { accountId });
+		try {
+			const response = await this.post<{ authUrl: string; sessionId: string }>(
+				url,
+				{ accountId },
+			);
+			this.logger.debug(`← POST ${url} - 200`);
+			return response;
+		} catch (error) {
+			this.logger.error(`✗ POST ${url} - ERROR`, { error });
+			if (error instanceof HttpError) throw new Error(error.message);
+			throw error;
+		}
+	}
+
+	async completeAnthropicReauth(
+		sessionId: string,
+		code: string,
+	): Promise<{ success: boolean; message: string }> {
+		const url = "/api/oauth/anthropic/reauth/callback";
+		this.logger.debug(`→ POST ${url}`, { sessionId });
+		try {
+			const response = await this.post<{ success: boolean; message: string }>(
+				url,
+				{ sessionId, code },
+			);
+			this.logger.debug(`← POST ${url} - 200`);
+			return response;
+		} catch (error) {
+			this.logger.error(`✗ POST ${url} - ERROR`, { error });
+			if (error instanceof HttpError) throw new Error(error.message);
+			throw error;
+		}
+	}
+
 	async getQwenAuthStatus(
 		sessionId: string,
 	): Promise<{ status: "pending" | "complete" | "error"; error?: string }> {

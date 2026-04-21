@@ -16,6 +16,8 @@ interface AccountListProps {
 	onCustomEndpointChange?: (account: Account) => void;
 	onModelMappingsChange?: (account: Account) => void;
 	onReauth?: (account: Account) => void;
+	onAnthropicReauth?: (account: Account) => void;
+	onCodexReauth?: (account: Account) => void;
 }
 
 export function AccountList({
@@ -33,6 +35,8 @@ export function AccountList({
 	onCustomEndpointChange,
 	onModelMappingsChange,
 	onReauth,
+	onAnthropicReauth,
+	onCodexReauth,
 }: AccountListProps) {
 	if (!accounts || accounts.length === 0) {
 		return <p className="text-muted-foreground">No accounts configured</p>;
@@ -75,6 +79,8 @@ export function AccountList({
 					onCustomEndpointChange={onCustomEndpointChange}
 					onModelMappingsChange={onModelMappingsChange}
 					onReauth={onReauth}
+					onAnthropicReauth={onAnthropicReauth}
+					onCodexReauth={onCodexReauth}
 				/>
 			))}
 		</div>
