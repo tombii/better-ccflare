@@ -48,18 +48,22 @@ export class CacheKeepaliveScheduler {
 	}
 
 	stop(): void {
-		if (this.unregisterInterval) {
-			this.unregisterInterval();
-			this.unregisterInterval = null;
-		}
+		this.stopInterval();
 		if (this.boundConfigChangeHandler) {
 			this.config.off("change", this.boundConfigChangeHandler);
 			this.boundConfigChangeHandler = null;
 		}
 	}
 
+	private stopInterval(): void {
+		if (this.unregisterInterval) {
+			this.unregisterInterval();
+			this.unregisterInterval = null;
+		}
+	}
+
 	private restart(): void {
-		this.stop();
+		this.stopInterval();
 		this.startInterval();
 	}
 

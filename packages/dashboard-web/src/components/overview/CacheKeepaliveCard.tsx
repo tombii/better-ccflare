@@ -57,9 +57,9 @@ export function CacheKeepaliveCard() {
 				</Select>
 				{currentValue > 0 && (
 					<p className="text-xs text-muted-foreground mt-2">
-						Keepalive runs every {currentValue - 1} minute
-						{currentValue - 1 !== 1 ? "s" : ""}, refreshing cached prompts for
-						accounts that used caching recently.
+						Keepalive runs every {Math.max(1, currentValue - 1)} minute
+						{Math.max(1, currentValue - 1) !== 1 ? "s" : ""}, refreshing cached
+						prompts for accounts that used caching recently.
 					</p>
 				)}
 			</CardContent>

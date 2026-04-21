@@ -288,6 +288,36 @@ describe("CacheKeepaliveScheduler", () => {
 			scheduler.stop();
 		});
 
+		it("multiple sequential TTL changes — each triggers a restart without losing the listener", () => {
+			// This test would have caught the restart() listener-removal bug:
+			// the original restart() called stop() which nulled boundConfigChangeHandler,
+			// so the second config change was silently dropped.
+			const { config, fireTtlChange } = makeConfig(5);
+			const scheduler = new CacheKeepaliveScheduler(makeProxyContext(), config);
+			scheduler.start();
+
+			expect(mockRegisterHeartbeat).toHaveBeenCalledTimes(1);
+			expect(capturedSeconds).toBe(240); // (5-1)*60
+
+			// First TTL change: 5 → 10
+			fireTtlChange(10);
+
+			expect(mockUnregister).toHaveBeenCalledTimes(1);
+			expect(mockRegisterHeartbeat).toHaveBeenCalledTimes(2);
+			expect(capturedSeconds).toBe(540); // (10-1)*60
+
+			// Second TTL change: 10 → 30
+			// Before the fix, the listener was removed after the first change and
+			// this would be a no-op.
+			fireTtlChange(30);
+
+			expect(mockUnregister).toHaveBeenCalledTimes(2);
+			expect(mockRegisterHeartbeat).toHaveBeenCalledTimes(3);
+			expect(capturedSeconds).toBe(1740); // (30-1)*60
+
+			scheduler.stop();
+		});
+
 		it("unrelated config key change is ignored", () => {
 			let listener: ConfigChangeListener | null = null;
 			const config = {

@@ -485,6 +485,95 @@ describe("CacheBodyStore", () => {
 	});
 
 	// -----------------------------------------------------------------------
+	// evictStaleEntries
+	// -----------------------------------------------------------------------
+
+	describe("evictStaleEntries", () => {
+		it("evicts entries older than ttlMinutes * ageMultiplier", () => {
+			cacheBodyStore.stageRequest(
+				"req-stale",
+				"account-stale",
+				makeBody(),
+				makeHeaders(),
+				"/v1/messages",
+			);
+			cacheBodyStore.onSummary("req-stale", 5);
+
+			// Manually backdate the entry's timestamp so it appears very old.
+			const entry = cacheBodyStore.getLastCachedRequest("account-stale");
+			expect(entry).not.toBeNull();
+			// Mutate timestamp to be 1 hour in the past.
+			(entry as { timestamp: number }).timestamp = Date.now() - 60 * 60 * 1000;
+
+			// TTL=5 min, multiplier=3 → threshold = 15 min. Entry is 60 min old → evicted.
+			cacheBodyStore.evictStaleEntries(5);
+
+			expect(cacheBodyStore.getLastCachedRequest("account-stale")).toBeNull();
+			expect(cacheBodyStore.getAllCachedAccounts()).not.toContain(
+				"account-stale",
+			);
+		});
+
+		it("retains entries newer than the threshold", () => {
+			cacheBodyStore.stageRequest(
+				"req-fresh",
+				"account-fresh",
+				makeBody(),
+				makeHeaders(),
+				"/v1/messages",
+			);
+			cacheBodyStore.onSummary("req-fresh", 5);
+
+			// The entry was just created (timestamp ≈ now) — well within the 15-min window.
+			cacheBodyStore.evictStaleEntries(5);
+
+			expect(
+				cacheBodyStore.getLastCachedRequest("account-fresh"),
+			).not.toBeNull();
+		});
+
+		it("is a no-op when the map is empty", () => {
+			// Ensure map is empty.
+			expect(cacheBodyStore.getAllCachedAccounts()).toHaveLength(0);
+
+			// Should not throw.
+			expect(() => cacheBodyStore.evictStaleEntries(5)).not.toThrow();
+
+			expect(cacheBodyStore.getAllCachedAccounts()).toHaveLength(0);
+		});
+
+		it("evicts only stale entries and retains fresh ones", () => {
+			// Stale entry.
+			cacheBodyStore.stageRequest(
+				"req-old",
+				"account-old",
+				makeBody(),
+				makeHeaders(),
+				"/v1/messages",
+			);
+			cacheBodyStore.onSummary("req-old", 5);
+			const oldEntry = cacheBodyStore.getLastCachedRequest("account-old");
+			(oldEntry as { timestamp: number }).timestamp =
+				Date.now() - 60 * 60 * 1000;
+
+			// Fresh entry.
+			cacheBodyStore.stageRequest(
+				"req-new",
+				"account-new",
+				makeBody(),
+				makeHeaders(),
+				"/v1/messages",
+			);
+			cacheBodyStore.onSummary("req-new", 5);
+
+			cacheBodyStore.evictStaleEntries(5);
+
+			expect(cacheBodyStore.getLastCachedRequest("account-old")).toBeNull();
+			expect(cacheBodyStore.getLastCachedRequest("account-new")).not.toBeNull();
+		});
+	});
+
+	// -----------------------------------------------------------------------
 	// Multiple accounts
 	// -----------------------------------------------------------------------
 
