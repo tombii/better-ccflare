@@ -26,8 +26,13 @@ PRs: `gh pr checkout <PR_NUMBER>` or `git checkout <branch-name>`.
 ## Subagents for Multi-Task Work
 When a session involves multiple independent tasks, always spawn subagents rather than doing them sequentially in the main context. This conserves tokens and keeps the main context clean. Tasks don't need to run in parallel — the goal is context isolation, not speed.
 
+**Default to subagents for any task that can be handed off:** code changes, research, code review, test runs, exploration, impact analysis, and any work that doesn't require direct interaction with the user mid-task. Only work inline in the main session for short, one-off responses or when you need to ask the user something before proceeding.
+
 ## Plan Execution
 When executing implementation plans, always use subagent-driven development (superpowers:subagent-driven-development). Never execute plans inline in the main session. Always dispatch a fresh subagent per task.
+
+## Test-Driven Development
+When creating new functionality: write tests first, then implement, then run tests.
 
 ## After Code Changes
 Always run: `bun run lint && bun run typecheck && bun run format`
