@@ -164,9 +164,14 @@ export class APIRouter {
 		const qwenReauthHandler = createQwenReauthHandler(dbOps);
 		const codexDeviceFlowInitHandler = createCodexDeviceFlowInitHandler(dbOps);
 		const codexReauthHandler = createCodexReauthHandler(dbOps);
-		const anthropicReauthInitHandler = createAnthropicReauthInitHandler(dbOps);
-		const anthropicReauthCallbackHandler =
-			createAnthropicReauthCallbackHandler(dbOps);
+		const anthropicReauthInitHandler = createAnthropicReauthInitHandler(
+			dbOps,
+			config,
+		);
+		const anthropicReauthCallbackHandler = createAnthropicReauthCallbackHandler(
+			dbOps,
+			config,
+		);
 		const agentsHandler = createAgentsListHandler(dbOps);
 		const workspacesHandler = createWorkspacesListHandler();
 		const requestsStreamHandler = createRequestsStreamHandler();

@@ -562,7 +562,10 @@ export function createCodexDeviceFlowStatusHandler() {
  * Starts an OAuth flow for an existing Anthropic (claude-oauth) account.
  * Returns { authUrl, sessionId } immediately.
  */
-export function createAnthropicReauthInitHandler(dbOps: DatabaseOperations) {
+export function createAnthropicReauthInitHandler(
+	dbOps: DatabaseOperations,
+	config: Config,
+) {
 	return async (req: Request): Promise<Response> => {
 		try {
 			const body = await req.json();
@@ -600,7 +603,6 @@ export function createAnthropicReauthInitHandler(dbOps: DatabaseOperations) {
 				);
 			}
 
-			const config = new Config();
 			const oauthFlow = await createOAuthFlow(dbOps, config);
 
 			try {
@@ -645,6 +647,7 @@ export function createAnthropicReauthInitHandler(dbOps: DatabaseOperations) {
  */
 export function createAnthropicReauthCallbackHandler(
 	dbOps: DatabaseOperations,
+	config: Config,
 ) {
 	return async (req: Request): Promise<Response> => {
 		if (req.method !== "POST") {
@@ -659,12 +662,18 @@ export function createAnthropicReauthCallbackHandler(
 			const sessionId = validateString(body.sessionId, "sessionId", {
 				required: true,
 				pattern: patterns.uuid,
-			})!;
+			});
+			if (!sessionId) {
+				return errorResponse(BadRequest("Valid sessionId is required"));
+			}
 
 			const code = validateString(body.code, "code", {
 				required: true,
 				minLength: 1,
-			})!;
+			});
+			if (!code) {
+				return errorResponse(BadRequest("Valid code is required"));
+			}
 
 			// Get stored session
 			const oauthSession = await dbOps.getOAuthSession(sessionId);
@@ -676,8 +685,17 @@ export function createAnthropicReauthCallbackHandler(
 
 			const { accountName: name, verifier } = oauthSession;
 
+			// Look up the account by name to get its id for the UPDATE
+			const account = await dbOps
+				.getAdapter()
+				.get<{ id: string }>("SELECT id FROM accounts WHERE name = ?", [name]);
+			if (!account) {
+				return errorResponse(
+					BadRequest(`Account '${name}' not found. It may have been deleted.`),
+				);
+			}
+
 			try {
-				const config = new Config();
 				const oauthFlow = await createOAuthFlow(dbOps, config);
 
 				const oauthProvider = await import("@better-ccflare/providers").then(
@@ -700,7 +718,10 @@ export function createAnthropicReauthCallbackHandler(
 
 				log.debug(`Completing Anthropic reauth for account '${name}'`);
 
-				await oauthFlow.completeReauth({ sessionId, code, name }, flowData);
+				await oauthFlow.completeReauth(
+					{ sessionId, code, name, id: account.id },
+					flowData,
+				);
 
 				dbOps.deleteOAuthSession(sessionId);
 

@@ -36,13 +36,13 @@ export function AnthropicReauthDialog({
 
 	const handleStart = async () => {
 		if (!account) return;
-		setStep("awaiting-code");
 		setError("");
 
 		try {
 			const result = await api.initAnthropicReauth(account.id);
 			setAuthUrl(result.authUrl);
 			setSessionId(result.sessionId);
+			setStep("awaiting-code");
 			window.open(result.authUrl, "_blank");
 		} catch (err) {
 			setStep("error");
