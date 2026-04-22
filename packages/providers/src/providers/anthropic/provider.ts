@@ -161,7 +161,7 @@ export class AnthropicProvider extends BaseProvider {
 			refresh_token?: string;
 		};
 
-		console.log(`[AnthropicProvider] token response for ${account.name}:`, {
+		log.debug(`token response for ${account.name}:`, {
 			expiresIn: json.expires_in,
 			hasRefreshToken: !!json.refresh_token,
 			responseKeys: Object.keys(json),

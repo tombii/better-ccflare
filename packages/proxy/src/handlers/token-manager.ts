@@ -260,7 +260,7 @@ export async function refreshAccessTokenSafe(
 
 				const expiresInSec = Math.round((result.expiresAt - Date.now()) / 1000);
 				log.info(`Successfully refreshed token for account: ${account.name}`);
-				console.log(`[TokenManager] refresh for ${account.name}:`, {
+				log.debug(`refresh for ${account.name}:`, {
 					expiresInSec,
 					newRefreshToken: result.refreshToken !== account.refresh_token,
 					provider: account.provider,
