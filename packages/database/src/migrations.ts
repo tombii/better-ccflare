@@ -501,8 +501,9 @@ export function runMigrations(db: Database, dbPath?: string): void {
 					auto_refresh_enabled INTEGER DEFAULT 0,
 					model_mappings TEXT,
 					cross_region_mode TEXT DEFAULT 'geographic',
-				model_fallbacks TEXT,
-				auto_pause_on_overage_enabled INTEGER DEFAULT 0
+					model_fallbacks TEXT,
+					auto_pause_on_overage_enabled INTEGER DEFAULT 0,
+					pause_reason TEXT
 				)
 			`).run();
 
@@ -518,7 +519,7 @@ export function runMigrations(db: Database, dbPath?: string): void {
 					paused, rate_limit_reset, rate_limit_status, rate_limit_remaining,
 					auto_fallback_enabled, custom_endpoint, auto_refresh_enabled,
 					model_mappings, cross_region_mode, model_fallbacks,
-					auto_pause_on_overage_enabled
+					auto_pause_on_overage_enabled, pause_reason
 				FROM accounts
 			`).run();
 
@@ -804,7 +805,8 @@ export function runMigrations(db: Database, dbPath?: string): void {
 			       rate_limited_until, session_start, session_request_count, paused,
 			       rate_limit_reset, rate_limit_status, rate_limit_remaining,
 			       auto_fallback_enabled, custom_endpoint, auto_refresh_enabled, model_mappings,
-			       cross_region_mode, model_fallbacks, billing_type, auto_pause_on_overage_enabled
+			       cross_region_mode, model_fallbacks, billing_type, auto_pause_on_overage_enabled,
+			       pause_reason
 			FROM accounts
 		`).run();
 

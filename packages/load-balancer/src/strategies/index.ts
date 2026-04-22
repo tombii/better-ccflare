@@ -136,7 +136,8 @@ export class SessionStrategy implements LoadBalancingStrategy {
 			);
 
 			// If the chosen fallback account was paused, only auto-unpause if it was paused due to
-			// overage or rate limit window reset — never auto-unpause manual or failure_threshold pauses.
+			// overage, or `rate_limit_window` (reserved/future pause reason) — never auto-unpause
+			// manual or failure_threshold pauses.
 			if (chosenFallback.paused && this.store?.resumeAccount) {
 				const canAutoUnpause =
 					!chosenFallback.pause_reason ||

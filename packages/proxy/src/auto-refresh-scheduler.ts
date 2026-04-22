@@ -117,13 +117,15 @@ export class AutoRefreshScheduler {
 				custom_endpoint: string | null;
 				paused: number;
 				auto_pause_on_overage_enabled: number;
+				pause_reason: string | null;
 			}>(
 				`
 				SELECT
 					id, name, provider, refresh_token, access_token,
 					expires_at, rate_limit_reset, custom_endpoint,
 					COALESCE(paused, 0) as paused,
-					COALESCE(auto_pause_on_overage_enabled, 0) as auto_pause_on_overage_enabled
+					COALESCE(auto_pause_on_overage_enabled, 0) as auto_pause_on_overage_enabled,
+					pause_reason
 				FROM accounts
 				WHERE
 					auto_refresh_enabled = 1
@@ -228,6 +230,7 @@ export class AutoRefreshScheduler {
 		custom_endpoint: string | null;
 		paused: number;
 		auto_pause_on_overage_enabled: number;
+		pause_reason: string | null;
 	}): Promise<boolean> {
 		try {
 			log.info(`Sending auto-refresh message to account: ${accountRow.name}`);
@@ -527,7 +530,8 @@ export class AutoRefreshScheduler {
 				// Never auto-resume accounts paused manually or due to failure threshold.
 				if (
 					accountRow.auto_pause_on_overage_enabled === 1 &&
-					accountRow.paused === 1
+					accountRow.paused === 1 &&
+					(!accountRow.pause_reason || accountRow.pause_reason === "overage")
 				) {
 					log.debug(
 						`Auto-resuming account '${accountRow.name}' after window reset (auto-pause-on-overage enabled)`,
