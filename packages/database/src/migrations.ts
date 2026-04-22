@@ -451,20 +451,12 @@ export function runMigrations(db: Database, dbPath?: string): void {
 			db.prepare("ALTER TABLE accounts ADD COLUMN pause_reason TEXT").run();
 			log.info("Added pause_reason column to accounts table");
 
-			// Backfill existing paused accounts:
-			// - If auto_pause_on_overage_enabled = 1 and paused, assume paused for overage
-			// - Otherwise, treat as manually paused
-			db.prepare(`
-				UPDATE accounts
-				SET pause_reason = 'overage'
-				WHERE COALESCE(paused, 0) = 1
-				AND COALESCE(auto_pause_on_overage_enabled, 0) = 1
-			`).run();
+			// Backfill existing paused accounts conservatively as manual.
+			// We cannot reliably distinguish historical overage pauses from other pauses.
 			db.prepare(`
 				UPDATE accounts
 				SET pause_reason = 'manual'
 				WHERE COALESCE(paused, 0) = 1
-				AND COALESCE(auto_pause_on_overage_enabled, 0) = 0
 			`).run();
 			log.info("Backfilled pause_reason for existing paused accounts");
 		}

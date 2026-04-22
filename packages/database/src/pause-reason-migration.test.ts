@@ -2,26 +2,16 @@
  * Tests for the pause_reason migration backfill (issue #139).
  *
  * When the pause_reason column is first added by runMigrations():
- *  - Paused accounts with auto_pause_on_overage_enabled=1  → pause_reason='overage'
- *  - Paused accounts with auto_pause_on_overage_enabled=0  → pause_reason='manual'
+ *  - All pre-existing paused accounts                       → pause_reason='manual'
  *  - Unpaused accounts                                      → pause_reason=NULL
  */
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { runMigrations } from "./migrations";
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Build an in-memory database that looks like a pre-pause_reason schema:
- * the accounts table exists but the pause_reason column is absent.
- */
 function makePreMigrationDb(): Database {
 	const db = new Database(":memory:");
 
-	// Create the accounts table *without* pause_reason (simulates old schema)
 	db.run(`
 		CREATE TABLE accounts (
 			id TEXT PRIMARY KEY,
@@ -71,10 +61,6 @@ function getAccount(db: Database, id: string): PauseRow {
 		.get(id) as PauseRow;
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 describe("Database migration — pause_reason backfill (issue #139)", () => {
 	let db: Database;
 
@@ -97,28 +83,28 @@ describe("Database migration — pause_reason backfill (issue #139)", () => {
 		expect(names).toContain("pause_reason");
 	});
 
-	it("backfills pause_reason='overage' for paused accounts with auto_pause_on_overage_enabled=1", () => {
+	it("backfills paused accounts as manual when auto_pause_on_overage_enabled=1", () => {
 		db.run(`
 			INSERT INTO accounts (id, name, created_at, paused, auto_pause_on_overage_enabled)
-			VALUES ('overage-acc', 'overage-acc', ${Date.now()}, 1, 1)
+			VALUES ('paused-overage-flag', 'paused-overage-flag', ${Date.now()}, 1, 1)
 		`);
 
 		runMigrations(db);
 
-		const row = getAccount(db, "overage-acc");
+		const row = getAccount(db, "paused-overage-flag");
 		expect(row.paused).toBe(1);
-		expect(row.pause_reason).toBe("overage");
+		expect(row.pause_reason).toBe("manual");
 	});
 
-	it("backfills pause_reason='manual' for paused accounts with auto_pause_on_overage_enabled=0", () => {
+	it("backfills paused accounts as manual when auto_pause_on_overage_enabled=0", () => {
 		db.run(`
 			INSERT INTO accounts (id, name, created_at, paused, auto_pause_on_overage_enabled)
-			VALUES ('manual-acc', 'manual-acc', ${Date.now()}, 1, 0)
+			VALUES ('paused-no-overage-flag', 'paused-no-overage-flag', ${Date.now()}, 1, 0)
 		`);
 
 		runMigrations(db);
 
-		const row = getAccount(db, "manual-acc");
+		const row = getAccount(db, "paused-no-overage-flag");
 		expect(row.paused).toBe(1);
 		expect(row.pause_reason).toBe("manual");
 	});
@@ -141,49 +127,40 @@ describe("Database migration — pause_reason backfill (issue #139)", () => {
 		db.run(`
 			INSERT INTO accounts (id, name, created_at, paused, auto_pause_on_overage_enabled)
 			VALUES
-				('overage-1', 'overage-1', ${now}, 1, 1),
-				('manual-1',  'manual-1',  ${now}, 1, 0),
-				('active-1',  'active-1',  ${now}, 0, 0),
-				('active-2',  'active-2',  ${now}, 0, 1)
+				('paused-overage-flag', 'paused-overage-flag', ${now}, 1, 1),
+				('paused-no-overage-flag', 'paused-no-overage-flag', ${now}, 1, 0),
+				('active-1', 'active-1', ${now}, 0, 0),
+				('active-2', 'active-2', ${now}, 0, 1)
 		`);
 
 		runMigrations(db);
 
-		const overage1 = getAccount(db, "overage-1");
-		const manual1 = getAccount(db, "manual-1");
-		const active1 = getAccount(db, "active-1");
-		const active2 = getAccount(db, "active-2");
-
-		expect(overage1.pause_reason).toBe("overage");
-		expect(manual1.pause_reason).toBe("manual");
-		expect(active1.pause_reason).toBeNull();
-		expect(active2.pause_reason).toBeNull();
+		expect(getAccount(db, "paused-overage-flag").pause_reason).toBe("manual");
+		expect(getAccount(db, "paused-no-overage-flag").pause_reason).toBe("manual");
+		expect(getAccount(db, "active-1").pause_reason).toBeNull();
+		expect(getAccount(db, "active-2").pause_reason).toBeNull();
 	});
 
 	it("is idempotent — running migrations twice does not corrupt pause_reason", () => {
 		const now = Date.now();
 		db.run(`
 			INSERT INTO accounts (id, name, created_at, paused, auto_pause_on_overage_enabled)
-			VALUES ('overage-idem', 'overage-idem', ${now}, 1, 1)
+			VALUES ('idem-paused', 'idem-paused', ${now}, 1, 1)
 		`);
 
 		runMigrations(db);
-
-		// Second run should be a no-op since the column already exists
 		expect(() => runMigrations(db)).not.toThrow();
 
-		const row = getAccount(db, "overage-idem");
-		expect(row.pause_reason).toBe("overage");
+		const row = getAccount(db, "idem-paused");
+		expect(row.pause_reason).toBe("manual");
 	});
 
-	it("treats accounts with NULL auto_pause_on_overage_enabled as 0 (COALESCE safety)", () => {
+	it("treats accounts with NULL auto_pause_on_overage_enabled as manual when paused", () => {
 		const now = Date.now();
-		// Insert without setting auto_pause_on_overage_enabled — defaults to 0
 		db.run(`
 			INSERT INTO accounts (id, name, created_at, paused)
 			VALUES ('null-overage-acc', 'null-overage-acc', ${now}, 1)
 		`);
-		// Explicitly set to NULL to test COALESCE
 		db.run(
 			"UPDATE accounts SET auto_pause_on_overage_enabled = NULL WHERE id = 'null-overage-acc'",
 		);
@@ -192,7 +169,6 @@ describe("Database migration — pause_reason backfill (issue #139)", () => {
 
 		const row = getAccount(db, "null-overage-acc");
 		expect(row.paused).toBe(1);
-		// COALESCE(NULL, 0) = 0 → treated as no overage flag → 'manual'
 		expect(row.pause_reason).toBe("manual");
 	});
 });
