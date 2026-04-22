@@ -261,6 +261,18 @@ watch -n 30 'curl -s http://localhost:8080/api/accounts | jq ".[] | select(.auto
 - **Have Fallbacks**: Ensure you have adequate fallback accounts
 - **Monitor for Errors**: Watch for any unexpected account switching behavior
 
+### 5. Pause Reasons and Auto-Unpause Rules
+
+Auto-fallback now considers *why* an account was paused before reactivating it:
+
+- `manual` pause: never auto-unpaused
+- `failure_threshold` pause: never auto-unpaused
+- `overage` pause: eligible for auto-unpause after window reset
+- `rate_limit_window` pause: reserved for window-reset-based reactivation
+- `null` (legacy rows): treated as eligible for auto-unpause for backward compatibility
+
+This prevents broken accounts from being reactivated automatically while still allowing safe recovery for overage/window-reset cases.
+
 ## Troubleshooting
 
 ### Common Issues
