@@ -133,6 +133,13 @@ export class AutoRefreshScheduler {
 						OR rate_limit_reset IS NULL
 						OR rate_limit_reset < (? - 24 * 60 * 60 * 1000)
 					)
+					-- Exclude accounts that are paused for reasons other than overage (e.g. manually
+					-- paused zai/codex accounts, or accounts paused by the failure-threshold guard).
+					-- auto_pause_on_overage_enabled defaults to 0 for zai/codex, so a manually-paused
+					-- account of those types is correctly excluded — there is no point refreshing a
+					-- broken/manually-paused endpoint.  Overage-paused accounts (paused=1 AND
+					-- auto_pause_on_overage_enabled=1) are intentionally included so the scheduler can
+					-- probe them and auto-resume after the usage window resets.
 					AND NOT (
 						COALESCE(paused, 0) = 1
 						AND COALESCE(auto_pause_on_overage_enabled, 0) = 0
@@ -219,6 +226,8 @@ export class AutoRefreshScheduler {
 		expires_at: number | null;
 		rate_limit_reset: number | null;
 		custom_endpoint: string | null;
+		paused: number;
+		auto_pause_on_overage_enabled: number;
 	}): Promise<boolean> {
 		try {
 			log.info(`Sending auto-refresh message to account: ${accountRow.name}`);
@@ -514,13 +523,10 @@ export class AutoRefreshScheduler {
 				}
 
 				// Auto-resume on window reset: if account was auto-paused due to overage, resume it now
-				const row = accountRow as unknown as {
-					auto_pause_on_overage_enabled: number;
-					paused: number;
-					id: string;
-					name: string;
-				};
-				if (row.auto_pause_on_overage_enabled === 1 && row.paused === 1) {
+				if (
+					accountRow.auto_pause_on_overage_enabled === 1 &&
+					accountRow.paused === 1
+				) {
 					log.debug(
 						`Auto-resuming account '${accountRow.name}' after window reset (auto-pause-on-overage enabled)`,
 					);

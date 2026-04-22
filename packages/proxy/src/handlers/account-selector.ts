@@ -90,14 +90,15 @@ export async function selectAccountsForRequest(
 					// paused because their endpoint is broken, not because of overage or rate-limiting).
 					const isAutoRefreshBypass =
 						meta.headers.get("x-better-ccflare-bypass-session") === "true";
+					const available = isAccountAvailable(forcedAccount);
 					const isOveragePaused =
 						forcedAccount.paused && forcedAccount.auto_pause_on_overage_enabled;
 					const isRateLimited =
+						!available &&
 						!forcedAccount.paused &&
-						!!forcedAccount.rate_limited_until &&
-						forcedAccount.rate_limited_until >= Date.now();
+						!!forcedAccount.rate_limited_until;
 					const allowThrough =
-						isAccountAvailable(forcedAccount) ||
+						available ||
 						(isAutoRefreshBypass && (isOveragePaused || isRateLimited));
 					if (allowThrough) {
 						return [forcedAccount];

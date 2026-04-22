@@ -165,7 +165,7 @@ describe("AutoRefreshScheduler — consecutive failure threshold", () => {
 		expect(pauseCallAcc2).toBeUndefined();
 	});
 
-	it("resets consecutive failure counter on successful refresh", async () => {
+	it("consecutiveFailures.delete clears an entry (Map semantics used by success path)", async () => {
 		const db = makeDb();
 		const scheduler = await makeScheduler(db);
 
@@ -177,7 +177,8 @@ describe("AutoRefreshScheduler — consecutive failure threshold", () => {
 			scheduler.FAILURE_THRESHOLD - 1,
 		);
 
-		// Simulate a successful refresh (done by sendDummyMessage on success)
+		// Validate that Map.delete removes the entry — this is the operation
+		// sendDummyMessage performs on success to reset the failure counter.
 		scheduler.consecutiveFailures.delete("acc-1");
 		expect(scheduler.consecutiveFailures.get("acc-1")).toBeUndefined();
 	});
