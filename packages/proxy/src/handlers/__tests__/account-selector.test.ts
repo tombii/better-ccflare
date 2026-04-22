@@ -142,6 +142,62 @@ describe("selectAccountsForRequest — x-better-ccflare-account-id header", () =
 		expect(result).toHaveLength(1);
 		expect(result[0]?.id).toBe("acc-1");
 	});
+
+	it("falls through to normal selection when forced account is paused", async () => {
+		const pausedAcc = makeAccount({
+			id: "acc-paused",
+			name: "paused",
+			paused: true,
+		});
+		const activeAcc = makeAccount({ id: "acc-active", name: "active" });
+		// Strategy mock returns only the active account (simulates SessionStrategy filtering)
+		const ctx: ProxyContext = {
+			strategy: { select: mock(() => [activeAcc]) },
+			dbOps: {
+				getAllAccounts: mock(async () => [pausedAcc, activeAcc]),
+				getActiveComboForFamily: mock(async () => null),
+			},
+			refreshInFlight: new Map(),
+			asyncWriter: { enqueue: mock(() => {}) },
+			usageWorker: { postMessage: mock(() => {}) },
+		} as unknown as ProxyContext;
+		const meta = makeRequestMeta({
+			headers: new Headers({ "x-better-ccflare-account-id": "acc-paused" }),
+		});
+
+		const result = await selectAccountsForRequest(meta, ctx);
+		// Paused forced account is skipped; falls back to strategy.select which returns activeAcc
+		expect(result).toHaveLength(1);
+		expect(result[0]?.id).toBe("acc-active");
+	});
+
+	it("falls through to normal selection when forced account is rate-limited", async () => {
+		const rateLimitedAcc = makeAccount({
+			id: "acc-rl",
+			name: "rate-limited",
+			rate_limited_until: Date.now() + 3_600_000,
+		});
+		const activeAcc = makeAccount({ id: "acc-active", name: "active" });
+		// Strategy mock returns only the active account (simulates SessionStrategy filtering)
+		const ctx: ProxyContext = {
+			strategy: { select: mock(() => [activeAcc]) },
+			dbOps: {
+				getAllAccounts: mock(async () => [rateLimitedAcc, activeAcc]),
+				getActiveComboForFamily: mock(async () => null),
+			},
+			refreshInFlight: new Map(),
+			asyncWriter: { enqueue: mock(() => {}) },
+			usageWorker: { postMessage: mock(() => {}) },
+		} as unknown as ProxyContext;
+		const meta = makeRequestMeta({
+			headers: new Headers({ "x-better-ccflare-account-id": "acc-rl" }),
+		});
+
+		const result = await selectAccountsForRequest(meta, ctx);
+		// Rate-limited forced account is skipped; falls back to strategy.select which returns activeAcc
+		expect(result).toHaveLength(1);
+		expect(result[0]?.id).toBe("acc-active");
+	});
 });
 
 // ── selectAccountsForRequest — combo routing ──────────────────────────────────

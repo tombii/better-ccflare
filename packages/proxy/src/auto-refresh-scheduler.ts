@@ -570,20 +570,11 @@ export class AutoRefreshScheduler {
 			}
 
 			// Track consecutive failures for this account (for non-401 errors too)
-			const currentFailures = this.consecutiveFailures.get(accountRow.id) || 0;
-			const newFailures = currentFailures + 1;
-			this.consecutiveFailures.set(accountRow.id, newFailures);
-
-			log.warn(
-				`Account ${accountRow.name} has failed ${newFailures} consecutive auto-refresh attempts (non-401 error). Threshold is ${this.FAILURE_THRESHOLD}.`,
+			await this.recordRefreshFailure(
+				accountRow.id,
+				accountRow.name,
+				"(non-401 error)",
 			);
-
-			// If failure threshold is reached, log a special message to alert admins
-			if (newFailures >= this.FAILURE_THRESHOLD) {
-				log.error(
-					`Account ${accountRow.name} has failed ${newFailures} consecutive auto-refresh attempts - this account may need attention! Please check account status.`,
-				);
-			}
 
 			return false;
 		} catch (error) {
@@ -607,22 +598,44 @@ export class AutoRefreshScheduler {
 			}
 
 			// Track consecutive failures for this account (for exceptions too)
-			const currentFailures = this.consecutiveFailures.get(accountRow.id) || 0;
-			const newFailures = currentFailures + 1;
-			this.consecutiveFailures.set(accountRow.id, newFailures);
-
-			log.warn(
-				`Account ${accountRow.name} has failed ${newFailures} consecutive auto-refresh attempts (exception). Threshold is ${this.FAILURE_THRESHOLD}.`,
+			await this.recordRefreshFailure(
+				accountRow.id,
+				accountRow.name,
+				"(exception)",
 			);
 
-			// If failure threshold is reached, log a special message to alert admins
-			if (newFailures >= this.FAILURE_THRESHOLD) {
-				log.error(
-					`Account ${accountRow.name} has failed ${newFailures} consecutive auto-refresh attempts - this account may need attention! Please check account status.`,
-				);
-			}
-
 			return false;
+		}
+	}
+
+	/**
+	 * Records a consecutive auto-refresh failure for an account. When the
+	 * FAILURE_THRESHOLD is reached the account is paused in the database so
+	 * that the request router skips it until an operator resumes it.
+	 */
+	private async recordRefreshFailure(
+		accountId: string,
+		accountName: string,
+		context: string,
+	): Promise<void> {
+		const currentFailures = this.consecutiveFailures.get(accountId) || 0;
+		const newFailures = currentFailures + 1;
+		this.consecutiveFailures.set(accountId, newFailures);
+
+		log.warn(
+			`Account ${accountName} has failed ${newFailures} consecutive auto-refresh attempts ${context}. Threshold is ${this.FAILURE_THRESHOLD}.`,
+		);
+
+		if (newFailures >= this.FAILURE_THRESHOLD) {
+			log.error(
+				`Account ${accountName} has failed ${newFailures} consecutive auto-refresh attempts — pausing account to prevent routing to a broken endpoint.`,
+			);
+			await this.db.run(`UPDATE accounts SET paused = 1 WHERE id = ?`, [
+				accountId,
+			]);
+			log.error(
+				`Account "${accountName}" has been PAUSED. Resume with: bun run cli --resume "${accountName}"`,
+			);
 		}
 	}
 

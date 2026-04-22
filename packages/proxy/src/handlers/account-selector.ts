@@ -80,10 +80,10 @@ export async function selectAccountsForRequest(
 				const forcedAccount = allAccounts.find(
 					(acc) => acc.id === forcedAccountId,
 				);
-				if (forcedAccount) {
+				if (forcedAccount && isAccountAvailable(forcedAccount)) {
 					return [forcedAccount];
 				}
-				// If forced account not found, fall back to normal selection
+				// If forced account not found or unavailable (paused/rate-limited), fall back to normal selection
 			} catch (error) {
 				log.error(
 					"Failed to get accounts from database for forced account lookup:",
