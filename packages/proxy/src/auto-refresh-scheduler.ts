@@ -117,13 +117,15 @@ export class AutoRefreshScheduler {
 				custom_endpoint: string | null;
 				paused: number;
 				auto_pause_on_overage_enabled: number;
+				pause_reason: string | null;
 			}>(
 				`
 				SELECT
 					id, name, provider, refresh_token, access_token,
 					expires_at, rate_limit_reset, custom_endpoint,
 					COALESCE(paused, 0) as paused,
-					COALESCE(auto_pause_on_overage_enabled, 0) as auto_pause_on_overage_enabled
+					COALESCE(auto_pause_on_overage_enabled, 0) as auto_pause_on_overage_enabled,
+					pause_reason
 				FROM accounts
 				WHERE
 					auto_refresh_enabled = 1
@@ -228,6 +230,7 @@ export class AutoRefreshScheduler {
 		custom_endpoint: string | null;
 		paused: number;
 		auto_pause_on_overage_enabled: number;
+		pause_reason: string | null;
 	}): Promise<boolean> {
 		try {
 			log.info(`Sending auto-refresh message to account: ${accountRow.name}`);
@@ -280,6 +283,7 @@ export class AutoRefreshScheduler {
 				cross_region_mode: null,
 				model_fallbacks: null,
 				billing_type: null,
+				pause_reason: null,
 			};
 
 			// Emit request start event for analytics
@@ -522,17 +526,20 @@ export class AutoRefreshScheduler {
 					);
 				}
 
-				// Auto-resume on window reset: if account was auto-paused due to overage, resume it now
+				// Auto-resume on window reset: if account was auto-paused due to overage, resume it now.
+				// Never auto-resume accounts paused manually or due to failure threshold.
 				if (
 					accountRow.auto_pause_on_overage_enabled === 1 &&
-					accountRow.paused === 1
+					accountRow.paused === 1 &&
+					(!accountRow.pause_reason || accountRow.pause_reason === "overage")
 				) {
 					log.debug(
 						`Auto-resuming account '${accountRow.name}' after window reset (auto-pause-on-overage enabled)`,
 					);
-					await this.db.run("UPDATE accounts SET paused = 0 WHERE id = ?", [
-						accountRow.id,
-					]);
+					await this.db.run(
+						"UPDATE accounts SET paused = 0, pause_reason = NULL WHERE id = ?",
+						[accountRow.id],
+					);
 				}
 
 				if (accountRow.provider === "anthropic") {
@@ -641,9 +648,10 @@ export class AutoRefreshScheduler {
 				`Account ${accountName} has failed ${newFailures} consecutive auto-refresh attempts — pausing account to prevent routing to a broken endpoint.`,
 			);
 			try {
-				await this.db.run(`UPDATE accounts SET paused = 1 WHERE id = ?`, [
-					accountId,
-				]);
+				await this.db.run(
+					`UPDATE accounts SET paused = 1, pause_reason = 'failure_threshold' WHERE id = ?`,
+					[accountId],
+				);
 				// Clear the counter so subsequent scheduler cycles don't fire redundant DB
 				// writes and log entries — the account is already paused.
 				this.consecutiveFailures.delete(accountId);
@@ -743,6 +751,7 @@ export class AutoRefreshScheduler {
 					cross_region_mode: null,
 					model_fallbacks: null,
 					billing_type: null,
+					pause_reason: null,
 				};
 
 				// Use refreshAccessTokenSafe to get deduplication and backoff handling
@@ -864,6 +873,7 @@ export class AutoRefreshScheduler {
 					cross_region_mode: null,
 					model_fallbacks: null,
 					billing_type: null,
+					pause_reason: null,
 				};
 
 				// Register in refreshInFlight so concurrent request-triggered refreshes join this one

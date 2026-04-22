@@ -135,13 +135,25 @@ export class SessionStrategy implements LoadBalancingStrategy {
 				`Auto-fallback triggered to account ${chosenFallback.name} (priority: ${chosenFallback.priority}, auto-fallback enabled)`,
 			);
 
-			// If the chosen fallback account was paused, unpause it since we're reactivating it
+			// If the chosen fallback account was paused, only auto-unpause if it was paused due to
+			// overage, or `rate_limit_window` (reserved/future pause reason) — never auto-unpause
+			// manual or failure_threshold pauses.
 			if (chosenFallback.paused && this.store?.resumeAccount) {
-				this.log.info(
-					`Unpausing account ${chosenFallback.name} due to auto-fallback reactivation`,
-				);
-				this.store.resumeAccount(chosenFallback.id);
-				chosenFallback.paused = false;
+				const canAutoUnpause =
+					!chosenFallback.pause_reason ||
+					chosenFallback.pause_reason === "overage" ||
+					chosenFallback.pause_reason === "rate_limit_window";
+				if (canAutoUnpause) {
+					this.log.info(
+						`Unpausing account ${chosenFallback.name} due to auto-fallback reactivation`,
+					);
+					this.store.resumeAccount(chosenFallback.id);
+					chosenFallback.paused = false;
+				} else {
+					this.log.info(
+						`Skipping auto-unpause of account ${chosenFallback.name} — paused with reason '${chosenFallback.pause_reason}' which requires manual intervention`,
+					);
+				}
 			}
 
 			// Return fallback account first, then others sorted by priority

@@ -108,6 +108,7 @@ export interface AccountRow {
 	cross_region_mode?: string | null; // Bedrock cross-region inference mode
 	model_fallbacks?: string | null; // JSON string for model family fallback mappings
 	billing_type?: string | null; // Per-account billing override
+	pause_reason?: string | null; // null=not paused, 'manual'=user paused, 'failure_threshold'=auto-refresh failures, 'overage'=billing overage
 }
 
 // Domain model - used throughout the application
@@ -139,6 +140,7 @@ export interface Account {
 	cross_region_mode: string | null; // Bedrock cross-region inference mode
 	model_fallbacks: string | null; // JSON string for model family fallback mappings
 	billing_type: string | null;
+	pause_reason: string | null; // null=not paused, 'manual'=user paused, 'failure_threshold'=auto-refresh failures, 'overage'=billing overage
 }
 
 // Session statistics for 5-hour token window
@@ -301,6 +303,7 @@ export function toAccount(row: AccountRow): Account {
 		cross_region_mode: row.cross_region_mode || null,
 		model_fallbacks: row.model_fallbacks || null,
 		billing_type: row.billing_type || null,
+		pause_reason: row.pause_reason || null,
 	};
 }
 
