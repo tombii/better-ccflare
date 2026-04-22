@@ -22,6 +22,24 @@ function makeDb() {
 	};
 }
 
+/** Build a mock DB whose `run` throws on the first call, then succeeds. */
+function makeDbWithRunError(error: Error) {
+	const runCalls: Array<[string, unknown[]]> = [];
+	let callCount = 0;
+	return {
+		run: mock(async (sql: string, params: unknown[]) => {
+			callCount++;
+			if (callCount === 1) throw error;
+			runCalls.push([sql, params]);
+		}),
+		query: mock(async () => []),
+		runCalls,
+		get callCount() {
+			return callCount;
+		},
+	};
+}
+
 /** Build a minimal mock ProxyContext. */
 function makeProxyContext() {
 	return {
@@ -84,7 +102,7 @@ describe("AutoRefreshScheduler — consecutive failure threshold", () => {
 		expect(pauseCall).toBeDefined();
 	});
 
-	it("pauses account when threshold is exceeded (more failures after threshold)", async () => {
+	it("pauses account exactly once even when threshold is exceeded (counter cleared after pause)", async () => {
 		const db = makeDb();
 		const scheduler = await makeScheduler(db);
 
@@ -99,8 +117,22 @@ describe("AutoRefreshScheduler — consecutive failure threshold", () => {
 				Array.isArray(params) &&
 				params[0] === "acc-1",
 		);
-		// Pause is issued once per failure from threshold onwards
-		expect(pauseCalls.length).toBeGreaterThanOrEqual(1);
+		// Counter is cleared after the first pause — subsequent failures should NOT
+		// trigger further DB writes. Exactly one pause UPDATE should be issued.
+		expect(pauseCalls.length).toBe(1);
+	});
+
+	it("clears consecutive failure counter after account is paused", async () => {
+		const db = makeDb();
+		const scheduler = await makeScheduler(db);
+
+		// Drive to threshold
+		for (let i = 0; i < scheduler.FAILURE_THRESHOLD; i++) {
+			await scheduler.recordRefreshFailure("acc-1", "test-account", "(test)");
+		}
+
+		// Counter must be cleared so subsequent scheduler cycles don't re-fire the pause UPDATE
+		expect(scheduler.consecutiveFailures.get("acc-1")).toBeUndefined();
 	});
 
 	it("tracks failures independently per account", async () => {
@@ -148,5 +180,34 @@ describe("AutoRefreshScheduler — consecutive failure threshold", () => {
 		// Simulate a successful refresh (done by sendDummyMessage on success)
 		scheduler.consecutiveFailures.delete("acc-1");
 		expect(scheduler.consecutiveFailures.get("acc-1")).toBeUndefined();
+	});
+
+	it("does not propagate DB error out of recordRefreshFailure when pause UPDATE throws", async () => {
+		const dbError = new Error("SQLITE_BUSY: database is locked");
+		// Build a scheduler backed by the makeDbWithRunError helper — imported via dynamic import
+		const { AutoRefreshScheduler } = await import("../auto-refresh-scheduler");
+		const db = makeDbWithRunError(dbError);
+		const scheduler = new AutoRefreshScheduler(
+			db as never,
+			makeProxyContext() as never,
+		) as AutoRefreshScheduler & {
+			recordRefreshFailure(
+				id: string,
+				name: string,
+				ctx: string,
+			): Promise<void>;
+			consecutiveFailures: Map<string, number>;
+			FAILURE_THRESHOLD: number;
+		};
+
+		// Drive to threshold — the DB run will throw on the pause UPDATE
+		const callThreshold = async () => {
+			for (let i = 0; i < scheduler.FAILURE_THRESHOLD; i++) {
+				await scheduler.recordRefreshFailure("acc-1", "test-account", "(test)");
+			}
+		};
+
+		// Must not throw — the DB error should be caught and logged internally
+		await expect(callThreshold()).resolves.toBeUndefined();
 	});
 });

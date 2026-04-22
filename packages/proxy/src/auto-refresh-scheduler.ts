@@ -133,6 +133,10 @@ export class AutoRefreshScheduler {
 						OR rate_limit_reset IS NULL
 						OR rate_limit_reset < (? - 24 * 60 * 60 * 1000)
 					)
+					AND NOT (
+						COALESCE(paused, 0) = 1
+						AND COALESCE(auto_pause_on_overage_enabled, 0) = 0
+					)
 			`,
 				[now, now],
 			);
@@ -630,12 +634,19 @@ export class AutoRefreshScheduler {
 			log.error(
 				`Account ${accountName} has failed ${newFailures} consecutive auto-refresh attempts — pausing account to prevent routing to a broken endpoint.`,
 			);
-			await this.db.run(`UPDATE accounts SET paused = 1 WHERE id = ?`, [
-				accountId,
-			]);
-			log.error(
-				`Account "${accountName}" has been PAUSED. Resume with: bun run cli --resume "${accountName}"`,
-			);
+			try {
+				await this.db.run(`UPDATE accounts SET paused = 1 WHERE id = ?`, [
+					accountId,
+				]);
+				// Clear the counter so subsequent scheduler cycles don't fire redundant DB
+				// writes and log entries — the account is already paused.
+				this.consecutiveFailures.delete(accountId);
+				log.error(
+					`Account "${accountName}" has been PAUSED. Resume with: bun run cli --resume "${accountName}"`,
+				);
+			} catch (dbErr) {
+				log.error(`Failed to pause account ${accountName} in database:`, dbErr);
+			}
 		}
 	}
 
