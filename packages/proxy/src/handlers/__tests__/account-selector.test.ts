@@ -503,6 +503,40 @@ describe("selectAccountsForRequest — auto-refresh bypass (overage-paused accou
 		expect(result[0]?.id).toBe("acc-active");
 	});
 
+	it("allows rate-limited (non-paused) account when bypass-session header is present", async () => {
+		// The scheduler probes rate-limited accounts to detect when the window has reset.
+		// Without this fix the account selector falls through to SessionStrategy and routes
+		// to a *different* account, corrupting the intended account's rate_limit_reset row.
+		const rateLimitedAcc = makeAccount({
+			id: "acc-rl",
+			name: "rate-limited",
+			paused: false,
+			rate_limited_until: Date.now() + 3_600_000,
+		});
+		const activeAcc = makeAccount({ id: "acc-active", name: "active" });
+		const ctx: ProxyContext = {
+			strategy: { select: mock(() => [activeAcc]) },
+			dbOps: {
+				getAllAccounts: mock(async () => [rateLimitedAcc, activeAcc]),
+				getActiveComboForFamily: mock(async () => null),
+			},
+			refreshInFlight: new Map(),
+			asyncWriter: { enqueue: mock(() => {}) },
+			usageWorker: { postMessage: mock(() => {}) },
+		} as unknown as ProxyContext;
+		const meta = makeRequestMeta({
+			headers: new Headers({
+				"x-better-ccflare-account-id": "acc-rl",
+				"x-better-ccflare-bypass-session": "true",
+			}),
+		});
+
+		const result = await selectAccountsForRequest(meta, ctx);
+		// Rate-limited account must be returned directly — bypass-session overrides the guard
+		expect(result).toHaveLength(1);
+		expect(result[0]?.id).toBe("acc-rl");
+	});
+
 	it("blocks failure-paused account even with bypass-session header", async () => {
 		// A failure-paused account: paused=true, auto_pause_on_overage_enabled=false
 		const failurePausedAcc = makeAccount({
