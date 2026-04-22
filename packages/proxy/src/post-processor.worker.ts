@@ -471,7 +471,7 @@ async function handleStart(msg: StartMessage): Promise<void> {
 			);
 			// Note: dbOps may not be fully initialized in the worker yet; use the asyncWriter queue
 			asyncWriter.enqueue(async () => {
-				await dbOps.pauseAccount(accountId);
+				await dbOps.pauseAccount(accountId, "overage");
 			});
 		}
 	} else if (

@@ -22,7 +22,8 @@ export class AccountRepository extends BaseRepository<Account> {
 				model_mappings,
 				cross_region_mode,
 				model_fallbacks,
-				billing_type
+				billing_type,
+				pause_reason
 			FROM accounts
 			ORDER BY priority DESC
 		`);
@@ -46,7 +47,8 @@ export class AccountRepository extends BaseRepository<Account> {
 				model_mappings,
 				cross_region_mode,
 				model_fallbacks,
-				billing_type
+				billing_type,
+				pause_reason
 			FROM accounts
 			WHERE id = ?
 		`,
@@ -133,12 +135,18 @@ export class AccountRepository extends BaseRepository<Account> {
 		);
 	}
 
-	async pause(accountId: string): Promise<void> {
-		await this.run(`UPDATE accounts SET paused = 1 WHERE id = ?`, [accountId]);
+	async pause(accountId: string, reason = "manual"): Promise<void> {
+		await this.run(
+			`UPDATE accounts SET paused = 1, pause_reason = ? WHERE id = ?`,
+			[reason, accountId],
+		);
 	}
 
 	async resume(accountId: string): Promise<void> {
-		await this.run(`UPDATE accounts SET paused = 0 WHERE id = ?`, [accountId]);
+		await this.run(
+			`UPDATE accounts SET paused = 0, pause_reason = NULL WHERE id = ?`,
+			[accountId],
+		);
 	}
 
 	async resetSession(accountId: string, timestamp: number): Promise<void> {

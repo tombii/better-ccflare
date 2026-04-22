@@ -418,8 +418,8 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		);
 	}
 
-	async pauseAccount(accountId: string): Promise<void> {
-		await this.accounts.pause(accountId);
+	async pauseAccount(accountId: string, reason = "manual"): Promise<void> {
+		await this.accounts.pause(accountId, reason);
 	}
 
 	async resumeAccount(accountId: string): Promise<void> {
