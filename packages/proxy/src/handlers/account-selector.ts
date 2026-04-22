@@ -81,9 +81,30 @@ export async function selectAccountsForRequest(
 					(acc) => acc.id === forcedAccountId,
 				);
 				if (forcedAccount) {
-					return [forcedAccount];
+					// The auto-refresh scheduler sends dummy messages with x-better-ccflare-bypass-session
+					// to intentionally refresh accounts that are paused due to auto_pause_on_overage,
+					// or to probe accounts that are rate-limited (to detect when the window has reset).
+					// For those requests we must allow through an overage-paused or rate-limited account
+					// so the scheduler can hit the real endpoint and trigger the window-reset + auto-resume logic.
+					// We still block accounts that were paused by the failure-threshold guard (those are
+					// paused because their endpoint is broken, not because of overage or rate-limiting).
+					const isAutoRefreshBypass =
+						meta.headers.get("x-better-ccflare-bypass-session") === "true";
+					const available = isAccountAvailable(forcedAccount);
+					const isOveragePaused =
+						forcedAccount.paused && forcedAccount.auto_pause_on_overage_enabled;
+					const isRateLimited =
+						!available &&
+						!forcedAccount.paused &&
+						!!forcedAccount.rate_limited_until;
+					const allowThrough =
+						available ||
+						(isAutoRefreshBypass && (isOveragePaused || isRateLimited));
+					if (allowThrough) {
+						return [forcedAccount];
+					}
 				}
-				// If forced account not found, fall back to normal selection
+				// If forced account not found or unavailable (paused/rate-limited), fall back to normal selection
 			} catch (error) {
 				log.error(
 					"Failed to get accounts from database for forced account lookup:",

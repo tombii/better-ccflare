@@ -36,6 +36,7 @@ function makeAccount(overrides: Partial<Account> = {}): Account {
 		priority: 0,
 		auto_fallback_enabled: false,
 		auto_refresh_enabled: false,
+		auto_pause_on_overage_enabled: false,
 		custom_endpoint: null,
 		model_mappings: null,
 		cross_region_mode: null,
@@ -141,6 +142,62 @@ describe("selectAccountsForRequest — x-better-ccflare-account-id header", () =
 		// Falls back to strategy.select result
 		expect(result).toHaveLength(1);
 		expect(result[0]?.id).toBe("acc-1");
+	});
+
+	it("falls through to normal selection when forced account is paused", async () => {
+		const pausedAcc = makeAccount({
+			id: "acc-paused",
+			name: "paused",
+			paused: true,
+		});
+		const activeAcc = makeAccount({ id: "acc-active", name: "active" });
+		// Strategy mock returns only the active account (simulates SessionStrategy filtering)
+		const ctx: ProxyContext = {
+			strategy: { select: mock(() => [activeAcc]) },
+			dbOps: {
+				getAllAccounts: mock(async () => [pausedAcc, activeAcc]),
+				getActiveComboForFamily: mock(async () => null),
+			},
+			refreshInFlight: new Map(),
+			asyncWriter: { enqueue: mock(() => {}) },
+			usageWorker: { postMessage: mock(() => {}) },
+		} as unknown as ProxyContext;
+		const meta = makeRequestMeta({
+			headers: new Headers({ "x-better-ccflare-account-id": "acc-paused" }),
+		});
+
+		const result = await selectAccountsForRequest(meta, ctx);
+		// Paused forced account is skipped; falls back to strategy.select which returns activeAcc
+		expect(result).toHaveLength(1);
+		expect(result[0]?.id).toBe("acc-active");
+	});
+
+	it("falls through to normal selection when forced account is rate-limited", async () => {
+		const rateLimitedAcc = makeAccount({
+			id: "acc-rl",
+			name: "rate-limited",
+			rate_limited_until: Date.now() + 3_600_000,
+		});
+		const activeAcc = makeAccount({ id: "acc-active", name: "active" });
+		// Strategy mock returns only the active account (simulates SessionStrategy filtering)
+		const ctx: ProxyContext = {
+			strategy: { select: mock(() => [activeAcc]) },
+			dbOps: {
+				getAllAccounts: mock(async () => [rateLimitedAcc, activeAcc]),
+				getActiveComboForFamily: mock(async () => null),
+			},
+			refreshInFlight: new Map(),
+			asyncWriter: { enqueue: mock(() => {}) },
+			usageWorker: { postMessage: mock(() => {}) },
+		} as unknown as ProxyContext;
+		const meta = makeRequestMeta({
+			headers: new Headers({ "x-better-ccflare-account-id": "acc-rl" }),
+		});
+
+		const result = await selectAccountsForRequest(meta, ctx);
+		// Rate-limited forced account is skipped; falls back to strategy.select which returns activeAcc
+		expect(result).toHaveLength(1);
+		expect(result[0]?.id).toBe("acc-active");
 	});
 });
 
@@ -372,6 +429,144 @@ describe("selectAccountsForRequest — combo routing", () => {
 		);
 		// Ghost slot is skipped; only acc-1 is returned
 		expect(result.map((a) => a.id)).toEqual(["acc-1"]);
+	});
+});
+
+// ── selectAccountsForRequest — auto-refresh bypass for overage-paused accounts ─
+
+describe("selectAccountsForRequest — auto-refresh bypass (overage-paused accounts)", () => {
+	/**
+	 * The auto-refresh scheduler intentionally refreshes accounts that are paused
+	 * due to auto_pause_on_overage. It sends x-better-ccflare-bypass-session: true
+	 * alongside x-better-ccflare-account-id. The selector must allow these through
+	 * so the scheduler can hit the real endpoint and trigger auto-resume.
+	 */
+	it("allows overage-paused account when bypass-session header is present", async () => {
+		const overagePausedAcc = makeAccount({
+			id: "acc-overage",
+			name: "overage-paused",
+			paused: true,
+			auto_pause_on_overage_enabled: true,
+		});
+		const activeAcc = makeAccount({ id: "acc-active", name: "active" });
+		const ctx: ProxyContext = {
+			strategy: { select: mock(() => [activeAcc]) },
+			dbOps: {
+				getAllAccounts: mock(async () => [overagePausedAcc, activeAcc]),
+				getActiveComboForFamily: mock(async () => null),
+			},
+			refreshInFlight: new Map(),
+			asyncWriter: { enqueue: mock(() => {}) },
+			usageWorker: { postMessage: mock(() => {}) },
+		} as unknown as ProxyContext;
+		const meta = makeRequestMeta({
+			headers: new Headers({
+				"x-better-ccflare-account-id": "acc-overage",
+				"x-better-ccflare-bypass-session": "true",
+			}),
+		});
+
+		const result = await selectAccountsForRequest(meta, ctx);
+		// Overage-paused account must be returned directly — bypass-session overrides the guard
+		expect(result).toHaveLength(1);
+		expect(result[0]?.id).toBe("acc-overage");
+	});
+
+	it("still blocks overage-paused account without the bypass-session header", async () => {
+		const overagePausedAcc = makeAccount({
+			id: "acc-overage",
+			name: "overage-paused",
+			paused: true,
+			auto_pause_on_overage_enabled: true,
+		});
+		const activeAcc = makeAccount({ id: "acc-active", name: "active" });
+		const ctx: ProxyContext = {
+			strategy: { select: mock(() => [activeAcc]) },
+			dbOps: {
+				getAllAccounts: mock(async () => [overagePausedAcc, activeAcc]),
+				getActiveComboForFamily: mock(async () => null),
+			},
+			refreshInFlight: new Map(),
+			asyncWriter: { enqueue: mock(() => {}) },
+			usageWorker: { postMessage: mock(() => {}) },
+		} as unknown as ProxyContext;
+		const meta = makeRequestMeta({
+			headers: new Headers({
+				"x-better-ccflare-account-id": "acc-overage",
+				// No bypass-session header — normal user traffic should still be blocked
+			}),
+		});
+
+		const result = await selectAccountsForRequest(meta, ctx);
+		// Without bypass header the account is unavailable; falls back to strategy
+		expect(result).toHaveLength(1);
+		expect(result[0]?.id).toBe("acc-active");
+	});
+
+	it("allows rate-limited (non-paused) account when bypass-session header is present", async () => {
+		// The scheduler probes rate-limited accounts to detect when the window has reset.
+		// Without this fix the account selector falls through to SessionStrategy and routes
+		// to a *different* account, corrupting the intended account's rate_limit_reset row.
+		const rateLimitedAcc = makeAccount({
+			id: "acc-rl",
+			name: "rate-limited",
+			paused: false,
+			rate_limited_until: Date.now() + 3_600_000,
+		});
+		const activeAcc = makeAccount({ id: "acc-active", name: "active" });
+		const ctx: ProxyContext = {
+			strategy: { select: mock(() => [activeAcc]) },
+			dbOps: {
+				getAllAccounts: mock(async () => [rateLimitedAcc, activeAcc]),
+				getActiveComboForFamily: mock(async () => null),
+			},
+			refreshInFlight: new Map(),
+			asyncWriter: { enqueue: mock(() => {}) },
+			usageWorker: { postMessage: mock(() => {}) },
+		} as unknown as ProxyContext;
+		const meta = makeRequestMeta({
+			headers: new Headers({
+				"x-better-ccflare-account-id": "acc-rl",
+				"x-better-ccflare-bypass-session": "true",
+			}),
+		});
+
+		const result = await selectAccountsForRequest(meta, ctx);
+		// Rate-limited account must be returned directly — bypass-session overrides the guard
+		expect(result).toHaveLength(1);
+		expect(result[0]?.id).toBe("acc-rl");
+	});
+
+	it("blocks failure-paused account even with bypass-session header", async () => {
+		// A failure-paused account: paused=true, auto_pause_on_overage_enabled=false
+		const failurePausedAcc = makeAccount({
+			id: "acc-broken",
+			name: "failure-paused",
+			paused: true,
+			auto_pause_on_overage_enabled: false,
+		});
+		const activeAcc = makeAccount({ id: "acc-active", name: "active" });
+		const ctx: ProxyContext = {
+			strategy: { select: mock(() => [activeAcc]) },
+			dbOps: {
+				getAllAccounts: mock(async () => [failurePausedAcc, activeAcc]),
+				getActiveComboForFamily: mock(async () => null),
+			},
+			refreshInFlight: new Map(),
+			asyncWriter: { enqueue: mock(() => {}) },
+			usageWorker: { postMessage: mock(() => {}) },
+		} as unknown as ProxyContext;
+		const meta = makeRequestMeta({
+			headers: new Headers({
+				"x-better-ccflare-account-id": "acc-broken",
+				"x-better-ccflare-bypass-session": "true",
+			}),
+		});
+
+		const result = await selectAccountsForRequest(meta, ctx);
+		// Failure-paused accounts must NOT be bypassed — the endpoint is broken
+		expect(result).toHaveLength(1);
+		expect(result[0]?.id).toBe("acc-active");
 	});
 });
 
