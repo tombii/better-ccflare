@@ -2,6 +2,10 @@
 
 Load balancer proxy for Claude distributing requests across multiple account providers to avoid rate limiting.
 
+## ⚠️ CRITICAL: Testing Restrictions
+
+**NEVER curl the Anthropic endpoint** — not directly, and not via the proxy using the `claude` account. Real Anthropic accounts can get banned for automated/scripted usage. The `claude` account must only be used through real Claude Code. For testing, always use non-Anthropic accounts (ollama, litellm, omniroute, etc.) and force-route with `x-better-ccflare-account-id`.
+
 ## ⚠️ CRITICAL: File Exclusions
 
 **README files** - Only modify `./README.md` (root). Do NOT modify `apps/cli/README.md`.
