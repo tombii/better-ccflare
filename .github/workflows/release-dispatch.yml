@@ -100,9 +100,7 @@ jobs:
             fs.writeFileSync('apps/cli/package.json', JSON.stringify(pkg, null, '\t') + '\n');
           "
           git add apps/cli/package.json package.json apps/cli/README.md
-          git commit -m "🚀 chore: bump version for deployment
-
-Co-Authored-By: github-actions[bot] <github-actions[bot]@users.noreply.github.com>"
+          git commit -m $'🚀 chore: bump version for deployment\n\nCo-Authored-By: github-actions[bot] <github-actions[bot]@users.noreply.github.com>'
 
       - name: Create and push tag
         run: |
