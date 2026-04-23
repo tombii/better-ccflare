@@ -25,7 +25,7 @@ export function DataRetentionCard() {
 		data?.payloadDays ?? 3,
 	);
 	const [requestDays, setRequestDays] = useState<number>(
-		data?.requestDays ?? 365,
+		data?.requestDays ?? 90,
 	);
 
 	useEffect(() => {

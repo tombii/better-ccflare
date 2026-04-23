@@ -797,6 +797,7 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		walLog: number;
 		walCheckpointed: number;
 		vacuumed: boolean;
+		walTruncateBusy?: number;
 		error?: string;
 	}> {
 		if (!this.sqliteDb) {
@@ -807,6 +808,7 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		let walLog = 0;
 		let walCheckpointed = 0;
 		let vacuumed = false;
+		let walTruncateBusy: number | undefined;
 
 		try {
 			// Step 1: RESTART checkpoint — drains WAL into main DB and resets WAL
@@ -834,14 +836,32 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 
 			// Step 3: TRUNCATE checkpoint — resets WAL to zero bytes now that
 			// VACUUM has produced a clean main DB.
-			this.sqliteDb.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+			const truncCkpt = this.sqliteDb
+				.query("PRAGMA wal_checkpoint(TRUNCATE)")
+				.get() as { busy: number; log: number; checkpointed: number } | null;
+
+			if (truncCkpt) {
+				walTruncateBusy = truncCkpt.busy;
+				if (truncCkpt.busy > 0) {
+					console.warn(
+						`[compact] TRUNCATE checkpoint: ${truncCkpt.busy} busy reader(s) — WAL file may not be zeroed.`,
+					);
+				}
+			}
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : String(err);
 			console.error(`[compact] Database compaction failed: ${msg}`);
-			return { walBusy, walLog, walCheckpointed, vacuumed, error: msg };
+			return {
+				walBusy,
+				walLog,
+				walCheckpointed,
+				vacuumed,
+				walTruncateBusy,
+				error: msg,
+			};
 		}
 
-		return { walBusy, walLog, walCheckpointed, vacuumed };
+		return { walBusy, walLog, walCheckpointed, vacuumed, walTruncateBusy };
 	}
 
 	/** Incremental vacuum - reclaims space without blocking (SQLite only) */

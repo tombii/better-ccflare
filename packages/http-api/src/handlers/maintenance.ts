@@ -38,6 +38,7 @@ export function createCompactHandler(dbOps: DatabaseOperations) {
 			walLog: result.walLog,
 			walCheckpointed: result.walCheckpointed,
 			vacuumed: result.vacuumed,
+			...(result.walTruncateBusy !== undefined ? { walTruncateBusy: result.walTruncateBusy } : {}),
 			...(result.error ? { error: result.error } : {}),
 		};
 		return jsonResponse(payload);

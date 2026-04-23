@@ -183,7 +183,7 @@ export function addPerformanceIndexes(db: Database): void {
 		ON requests(timestamp DESC, id, account_used, status_code, success,
 		            response_time_ms, model, total_tokens, cost_usd,
 		            input_tokens, output_tokens, billing_type, combo_name,
-		            failover_attempts, error_message)
+		            failover_attempts)
 	`);
 	log.info(
 		"Added index: idx_requests_summary_covering (covering index for Requests tab list query)",
