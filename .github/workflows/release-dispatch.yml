@@ -1,0 +1,101 @@
+name: Manual Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Version bump type"
+        required: true
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+permissions:
+  contents: write
+  id-token: write  # required for npm OIDC trusted publishing
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # Use a PAT so the version-bump commit + tag push trigger downstream workflows
+          token: ${{ secrets.RELEASE_PAT }}
+
+      - name: Setup Node (for npm trusted publishing)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Bump version
+        id: bump
+        run: |
+          CURRENT=$(node -p "require('./apps/cli/package.json').version")
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+          case "${{ inputs.bump }}" in
+            major) NEW="$((MAJOR+1)).0.0" ;;
+            minor) NEW="${MAJOR}.$((MINOR+1)).0" ;;
+            patch) NEW="${MAJOR}.${MINOR}.$((PATCH+1))" ;;
+          esac
+          echo "Bumping $CURRENT → $NEW"
+          echo "version=$NEW" >> $GITHUB_OUTPUT
+
+          # Update apps/cli/package.json
+          node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('apps/cli/package.json', 'utf8'));
+            pkg.version = '$NEW';
+            fs.writeFileSync('apps/cli/package.json', JSON.stringify(pkg, null, '\t') + '\n');
+          "
+          # Sync root package.json
+          node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            pkg.version = '$NEW';
+            fs.writeFileSync('package.json', JSON.stringify(pkg, null, '\t') + '\n');
+          "
+
+      - name: Build dashboard
+        run: bun run build:dashboard
+
+      - name: Build CLI
+        run: bun run build:cli
+
+      - name: Copy README for npm
+        run: cp README.md apps/cli/README.md
+
+      - name: Commit version bump
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add apps/cli/package.json package.json apps/cli/README.md
+          git commit -m $'🚀 chore: bump version for deployment\n\nCo-Authored-By: github-actions[bot] <github-actions[bot]@users.noreply.github.com>'
+
+      - name: Create and push tag
+        run: |
+          VERSION="v${{ steps.bump.outputs.version }}"
+          git tag -a "$VERSION" -m "Release $VERSION"
+          git push origin main
+          git push origin "$VERSION"
+
+      - name: Publish to npm (OIDC trusted publishing)
+        # bun publish does not support OIDC; use npm publish --provenance which triggers
+        # trusted publishing auth via the id-token: write permission above.
+        # prepublishOnly script strips workspace deps and builds before npm hands off.
+        working-directory: apps/cli
+        run: npm publish --provenance --access public

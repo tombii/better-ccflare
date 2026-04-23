@@ -307,7 +307,7 @@ export class Config extends EventEmitter {
 
 	getStorePayloads(): boolean {
 		const fromEnv = process.env.STORE_PAYLOADS;
-		if (fromEnv !== undefined) {
+		if (fromEnv) {
 			return fromEnv !== "false" && fromEnv !== "0";
 		}
 		const fromFile = this.data.store_payloads;
@@ -354,7 +354,7 @@ export class Config extends EventEmitter {
 
 	getSystemPromptCacheTtl1h(): boolean {
 		const fromEnv = process.env.SYSTEM_PROMPT_CACHE_TTL_1H;
-		if (fromEnv !== undefined) {
+		if (fromEnv) {
 			return fromEnv !== "false" && fromEnv !== "0";
 		}
 		const fromFile = this.data.system_prompt_cache_ttl_1h;
