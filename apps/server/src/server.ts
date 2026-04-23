@@ -770,9 +770,9 @@ export default async function startServer(options?: {
 	startGlobalTokenHealthChecks(() => dbOps.getAllAccounts());
 
 	// Hot reload strategy configuration
-	config.on("change", (changeType, fieldName) => {
-		if (fieldName === "strategy") {
-			log.info(`Strategy configuration changed: ${changeType}`);
+	config.on("change", ({ key }: { key: string }) => {
+		if (key === "lb_strategy") {
+			log.info(`Strategy configuration changed to: ${config.getStrategy()}`);
 			const newStrategyName = config.getStrategy();
 			// For now, only SessionStrategy is supported
 			if (newStrategyName === "session") {
@@ -781,7 +781,7 @@ export default async function startServer(options?: {
 				proxyContext.strategy = strategy;
 			}
 		}
-		if (fieldName === "store_payloads") {
+		if (key === "store_payloads") {
 			sendWorkerConfigUpdate(config.getStorePayloads());
 		}
 	});

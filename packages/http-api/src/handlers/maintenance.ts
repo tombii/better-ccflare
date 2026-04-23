@@ -1,7 +1,7 @@
 import type { Config } from "@better-ccflare/config";
 import type { DatabaseOperations } from "@better-ccflare/database";
 import { jsonResponse } from "@better-ccflare/http-common";
-import type { CleanupResponse } from "../types";
+import type { CleanupResponse, CompactResponse } from "../types";
 
 export function createCleanupHandler(
 	dbOps: DatabaseOperations,
@@ -16,7 +16,7 @@ export function createCleanupHandler(
 			payloadMs,
 			requestMs,
 		);
-		dbOps.compact();
+		await dbOps.compact();
 		const cutoffIso = new Date(
 			Date.now() - Math.min(payloadMs, requestMs),
 		).toISOString();
@@ -30,8 +30,16 @@ export function createCleanupHandler(
 }
 
 export function createCompactHandler(dbOps: DatabaseOperations) {
-	return (): Response => {
-		dbOps.compact();
-		return jsonResponse({ ok: true });
+	return async (): Promise<Response> => {
+		const result = await dbOps.compact();
+		const payload: CompactResponse = {
+			ok: result.vacuumed && !result.error,
+			walBusy: result.walBusy,
+			walLog: result.walLog,
+			walCheckpointed: result.walCheckpointed,
+			vacuumed: result.vacuumed,
+			...(result.error ? { error: result.error } : {}),
+		};
+		return jsonResponse(payload);
 	};
 }

@@ -173,6 +173,45 @@ export function addPerformanceIndexes(db: Database): void {
 		"Added index: idx_request_payloads_cleanup (covering index for payload DELETE operations)",
 	);
 
+	// 9. Covering index for the Requests tab summary query
+	// Powers: SELECT r.*, a.name FROM requests r LEFT JOIN accounts a ON r.account_used = a.id
+	//         ORDER BY r.timestamp DESC LIMIT ?
+	// Including the most-queried scalar columns lets SQLite satisfy the query from the index
+	// without a heap lookup for every row. On a 7GB database this eliminates the full table scan.
+	db.run(`
+		CREATE INDEX IF NOT EXISTS idx_requests_summary_covering
+		ON requests(timestamp DESC, id, account_used, status_code, success,
+		            response_time_ms, model, total_tokens, cost_usd,
+		            input_tokens, output_tokens, billing_type, combo_name,
+		            failover_attempts, error_message)
+	`);
+	log.info(
+		"Added index: idx_requests_summary_covering (covering index for Requests tab list query)",
+	);
+
+	// 10. Covering index for analytics aggregate queries (timestamp range scans)
+	// Powers the analytics handler's WHERE timestamp > ? GROUP BY ts aggregate queries.
+	// Includes aggregate columns so SQLite can compute SUM/AVG/COUNT without heap lookups.
+	// Column order: timestamp first (range filter), then aggregate columns.
+	db.run(`
+		CREATE INDEX IF NOT EXISTS idx_requests_analytics_covering
+		ON requests(timestamp, success, total_tokens, cost_usd, billing_type,
+		            output_tokens, input_tokens, cache_read_input_tokens,
+		            cache_creation_input_tokens, output_tokens_per_second,
+		            response_time_ms, account_used, model)
+	`);
+	log.info(
+		"Added index: idx_requests_analytics_covering (covering index for analytics aggregate queries)",
+	);
+
+	// 11. Index for billing_type time-range queries used in analytics cost breakdown
+	db.run(`
+		CREATE INDEX IF NOT EXISTS idx_requests_billing_type_timestamp
+		ON requests(billing_type, timestamp DESC)
+		WHERE billing_type IS NOT NULL
+	`);
+	log.info("Added index: idx_requests_billing_type_timestamp");
+
 	log.info("Performance indexes added successfully");
 }
 

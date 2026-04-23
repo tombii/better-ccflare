@@ -778,12 +778,70 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		}
 	}
 
-	/** Compact and reclaim disk space (SQLite only) */
-	compact(): void {
-		if (this.sqliteDb) {
-			this.sqliteDb.exec("PRAGMA wal_checkpoint(TRUNCATE)");
-			this.sqliteDb.exec("VACUUM");
+	/** Compact and reclaim disk space (SQLite only).
+	 *
+	 * In WAL mode the sequence is:
+	 *  1. RESTART checkpoint — flushes all WAL frames back into the main file
+	 *     and resets the WAL write position.  Returns (busy, log, checkpointed).
+	 *     If busy > 0 another connection still holds a read lock; we still proceed
+	 *     so that VACUUM compacts what it can, but we log the fact.
+	 *  2. VACUUM — rewrites the main database file to reclaim free pages.
+	 *     In WAL mode this is safe to run while the WAL exists; it issues its own
+	 *     internal checkpoint before rebuilding.
+	 *  3. TRUNCATE checkpoint — resets the WAL file to zero bytes after VACUUM.
+	 *
+	 * @returns diagnostic info about the checkpoint and whether vacuum ran.
+	 */
+	async compact(): Promise<{
+		walBusy: number;
+		walLog: number;
+		walCheckpointed: number;
+		vacuumed: boolean;
+		error?: string;
+	}> {
+		if (!this.sqliteDb) {
+			return { walBusy: 0, walLog: 0, walCheckpointed: 0, vacuumed: false };
 		}
+
+		let walBusy = 0;
+		let walLog = 0;
+		let walCheckpointed = 0;
+		let vacuumed = false;
+
+		try {
+			// Step 1: RESTART checkpoint — drains WAL into main DB and resets WAL
+			// write position so the next VACUUM starts with a clean slate.
+			const ckpt = this.sqliteDb
+				.query("PRAGMA wal_checkpoint(RESTART)")
+				.get() as { busy: number; log: number; checkpointed: number } | null;
+
+			if (ckpt) {
+				walBusy = ckpt.busy;
+				walLog = ckpt.log;
+				walCheckpointed = ckpt.checkpointed;
+				if (ckpt.busy > 0) {
+					console.warn(
+						`[compact] WAL checkpoint: ${ckpt.busy} busy reader(s), ` +
+							`${ckpt.checkpointed}/${ckpt.log} frames checkpointed. ` +
+							"VACUUM will still run but WAL may not fully shrink.",
+					);
+				}
+			}
+
+			// Step 2: VACUUM — rewrites the main DB file, reclaiming free pages.
+			this.sqliteDb.exec("VACUUM");
+			vacuumed = true;
+
+			// Step 3: TRUNCATE checkpoint — resets WAL to zero bytes now that
+			// VACUUM has produced a clean main DB.
+			this.sqliteDb.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+		} catch (err) {
+			const msg = err instanceof Error ? err.message : String(err);
+			console.error(`[compact] Database compaction failed: ${msg}`);
+			return { walBusy, walLog, walCheckpointed, vacuumed, error: msg };
+		}
+
+		return { walBusy, walLog, walCheckpointed, vacuumed };
 	}
 
 	/** Incremental vacuum - reclaims space without blocking (SQLite only) */

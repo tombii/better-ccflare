@@ -22,7 +22,7 @@ export function DataRetentionCard() {
 	const cleanupNow = useCleanupNow();
 	const compactDb = useCompactDb();
 	const [payloadDays, setPayloadDays] = useState<number>(
-		data?.payloadDays ?? 7,
+		data?.payloadDays ?? 3,
 	);
 	const [requestDays, setRequestDays] = useState<number>(
 		data?.requestDays ?? 365,

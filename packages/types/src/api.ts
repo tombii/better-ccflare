@@ -50,4 +50,14 @@ export interface CleanupResponse {
 
 export interface CompactResponse {
 	ok: boolean;
+	/** Number of WAL frames still held by active readers at checkpoint time (0 = fully checkpointed) */
+	walBusy?: number;
+	/** Total WAL frames at checkpoint time */
+	walLog?: number;
+	/** WAL frames successfully written back to main DB */
+	walCheckpointed?: number;
+	/** Whether VACUUM ran successfully */
+	vacuumed?: boolean;
+	/** Error message if compaction failed */
+	error?: string;
 }

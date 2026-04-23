@@ -136,7 +136,9 @@ describe("Database migration — pause_reason backfill (issue #139)", () => {
 		runMigrations(db);
 
 		expect(getAccount(db, "paused-overage-flag").pause_reason).toBe("manual");
-		expect(getAccount(db, "paused-no-overage-flag").pause_reason).toBe("manual");
+		expect(getAccount(db, "paused-no-overage-flag").pause_reason).toBe(
+			"manual",
+		);
 		expect(getAccount(db, "active-1").pause_reason).toBeNull();
 		expect(getAccount(db, "active-2").pause_reason).toBeNull();
 	});
