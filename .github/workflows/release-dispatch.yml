@@ -90,7 +90,7 @@ jobs:
         run: |
           VERSION="v${{ steps.bump.outputs.version }}"
           git tag -a "$VERSION" -m "Release $VERSION"
-          git push origin main
+          git push origin refs/heads/main:refs/heads/main
           git push origin "$VERSION"
 
       - name: Publish to npm (OIDC trusted publishing)
