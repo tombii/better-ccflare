@@ -196,7 +196,7 @@ export class CodexProvider extends BaseProvider {
 			expires_in: number;
 		};
 
-		console.log(`[CodexProvider] token refresh response for ${account.name}:`, {
+		log.debug(`[CodexProvider] token refresh response for ${account.name}:`, {
 			expiresIn: json.expires_in,
 			responseKeys: Object.keys(json),
 		});
