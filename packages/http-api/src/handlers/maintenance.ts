@@ -1,7 +1,10 @@
 import type { Config } from "@better-ccflare/config";
 import type { DatabaseOperations } from "@better-ccflare/database";
 import { jsonResponse } from "@better-ccflare/http-common";
+import { Logger } from "@better-ccflare/logger";
 import type { CleanupResponse, CompactResponse } from "../types";
+
+const log = new Logger("MaintenanceHandler");
 
 export function createCleanupHandler(
 	dbOps: DatabaseOperations,
@@ -16,7 +19,23 @@ export function createCleanupHandler(
 			payloadMs,
 			requestMs,
 		);
-		await dbOps.compact();
+		const compactResult = await dbOps.compact();
+		if (compactResult.error || !compactResult.vacuumed) {
+			log.warn("Database compaction did not complete cleanly", {
+				vacuumed: compactResult.vacuumed,
+				error: compactResult.error,
+				walBusy: compactResult.walBusy,
+				walLog: compactResult.walLog,
+				walCheckpointed: compactResult.walCheckpointed,
+			});
+		} else {
+			log.info("Database compaction completed", {
+				walBusy: compactResult.walBusy,
+				walLog: compactResult.walLog,
+				walCheckpointed: compactResult.walCheckpointed,
+				vacuumed: compactResult.vacuumed,
+			});
+		}
 		const cutoffIso = new Date(
 			Date.now() - Math.min(payloadMs, requestMs),
 		).toISOString();
@@ -38,7 +57,9 @@ export function createCompactHandler(dbOps: DatabaseOperations) {
 			walLog: result.walLog,
 			walCheckpointed: result.walCheckpointed,
 			vacuumed: result.vacuumed,
-			...(result.walTruncateBusy !== undefined ? { walTruncateBusy: result.walTruncateBusy } : {}),
+			...(result.walTruncateBusy !== undefined
+				? { walTruncateBusy: result.walTruncateBusy }
+				: {}),
 			...(result.error ? { error: result.error } : {}),
 		};
 		return jsonResponse(payload);

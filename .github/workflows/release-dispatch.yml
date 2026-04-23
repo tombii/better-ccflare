@@ -79,26 +79,10 @@ jobs:
       - name: Copy README for npm
         run: cp README.md apps/cli/README.md
 
-      - name: Publish to npm (OIDC trusted publishing)
-        # bun publish does not support OIDC; use npm publish --provenance which triggers
-        # trusted publishing auth via the id-token: write permission above.
-        # prepublishOnly script strips workspace deps and builds before npm hands off.
-        working-directory: apps/cli
-        run: npm publish --provenance --access public
-
       - name: Commit version bump
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          # prepublishOnly strips workspace deps from apps/cli/package.json in-place;
-          # restore it so we commit the full version with deps intact, then re-apply version bump.
-          git checkout -- apps/cli/package.json
-          node -e "
-            const fs = require('fs');
-            const pkg = JSON.parse(fs.readFileSync('apps/cli/package.json', 'utf8'));
-            pkg.version = '${{ steps.bump.outputs.version }}';
-            fs.writeFileSync('apps/cli/package.json', JSON.stringify(pkg, null, '\t') + '\n');
-          "
           git add apps/cli/package.json package.json apps/cli/README.md
           git commit -m $'🚀 chore: bump version for deployment\n\nCo-Authored-By: github-actions[bot] <github-actions[bot]@users.noreply.github.com>'
 
@@ -108,3 +92,10 @@ jobs:
           git tag -a "$VERSION" -m "Release $VERSION"
           git push origin main
           git push origin "$VERSION"
+
+      - name: Publish to npm (OIDC trusted publishing)
+        # bun publish does not support OIDC; use npm publish --provenance which triggers
+        # trusted publishing auth via the id-token: write permission above.
+        # prepublishOnly script strips workspace deps and builds before npm hands off.
+        working-directory: apps/cli
+        run: npm publish --provenance --access public
