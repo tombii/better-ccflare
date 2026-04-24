@@ -17,7 +17,7 @@ const CODEX_USER_AGENT = `codex-cli/${CODEX_VERSION} (Windows 10.0.26100; x64)`;
 const DEFAULT_MODEL_MAP: Record<string, string> = {
 	opus: "gpt-5.3-codex",
 	sonnet: "gpt-5.3-codex",
-	haiku: "gpt-5.1-codex-mini",
+	haiku: "gpt-5.4-mini",
 };
 
 // ── Codex Responses API types ─────────────────────────────────────────────────

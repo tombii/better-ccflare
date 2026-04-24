@@ -1390,7 +1390,7 @@ export async function addAccount(
 			{
 				opus: "gpt-5.3-codex",
 				sonnet: "gpt-5.3-codex",
-				haiku: "gpt-5.1-codex-mini",
+				haiku: "gpt-5.4-mini",
 			},
 		);
 
