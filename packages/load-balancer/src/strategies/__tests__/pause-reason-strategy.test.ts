@@ -436,4 +436,63 @@ describe("SessionStrategy — pause_reason auto-unpause logic", () => {
 			expect(account2.paused).toBe(true);
 		});
 	});
+
+	describe("provider eligibility for auto-fallback", () => {
+		it("auto-unpauses codex account when reset window passed", () => {
+			const codex = makeAccount({
+				id: "codex",
+				name: "codex",
+				provider: "codex",
+				paused: true,
+				pause_reason: null,
+				auto_fallback_enabled: true,
+				rate_limit_reset: expiredReset,
+				priority: 0,
+			});
+
+			const result = strategy.select([codex], meta);
+
+			expect(result[0]).toBe(codex);
+			expect(mockStore.hasResumeCall("codex")).toBe(true);
+			expect(codex.paused).toBe(false);
+		});
+
+		it("auto-unpauses zai account when reset window passed", () => {
+			const zai = makeAccount({
+				id: "zai",
+				name: "zai",
+				provider: "zai",
+				paused: true,
+				pause_reason: null,
+				auto_fallback_enabled: true,
+				rate_limit_reset: expiredReset,
+				priority: 0,
+			});
+
+			const result = strategy.select([zai], meta);
+
+			expect(result[0]).toBe(zai);
+			expect(mockStore.hasResumeCall("zai")).toBe(true);
+			expect(zai.paused).toBe(false);
+		});
+
+		it("does not auto-unpause unsupported provider", () => {
+			const unsupported = makeAccount({
+				id: "openai-compatible",
+				name: "openai-compatible",
+				provider: "openai-compatible",
+				paused: true,
+				pause_reason: null,
+				auto_fallback_enabled: true,
+				rate_limit_reset: expiredReset,
+				priority: 0,
+			});
+
+			const result = strategy.select([unsupported], meta);
+
+			expect(result).toHaveLength(0);
+			expect(mockStore.hasResumeCall("openai-compatible")).toBe(false);
+			expect(unsupported.paused).toBe(true);
+		});
+	});
 });

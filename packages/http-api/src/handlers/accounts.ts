@@ -1804,10 +1804,10 @@ export function createAccountAutoFallbackHandler(dbOps: DatabaseOperations) {
 				return errorResponse(NotFound("Account not found"));
 			}
 
-			// Check if account is Anthropic provider (only Anthropic accounts have rate limit windows)
-			if (account.provider !== "anthropic") {
+			// Check if account supports session-based auto-fallback
+			if (!["anthropic", "codex", "zai"].includes(account.provider)) {
 				return errorResponse(
-					BadRequest("Auto-fallback is only available for Anthropic accounts"),
+					BadRequest("Auto-fallback is only available for supported accounts"),
 				);
 			}
 

@@ -261,10 +261,12 @@ export class SessionStrategy implements LoadBalancingStrategy {
 			// This allows paused accounts with auto-fallback to be considered for reactivation
 
 			// Check if the API usage window has reset for auto-fallback
-			// Usage windows: Anthropic accounts with proactive rate limit headers (usage-based accounts)
-			// No usage windows: Other account types or Anthropic console keys without usage windows
-			const anthropicWindowReset =
-				account.provider === PROVIDER_NAMES.ANTHROPIC && // Only for Anthropic accounts with usage windows
+			const supportsWindowReset =
+				account.provider === PROVIDER_NAMES.ANTHROPIC ||
+				account.provider === PROVIDER_NAMES.CODEX ||
+				account.provider === PROVIDER_NAMES.ZAI;
+			const providerWindowReset =
+				supportsWindowReset &&
 				account.rate_limit_reset &&
 				account.rate_limit_reset < now - 1000; // 1 second buffer for clock skew protection
 
@@ -272,7 +274,7 @@ export class SessionStrategy implements LoadBalancingStrategy {
 			const notRateLimited =
 				!account.rate_limited_until || account.rate_limited_until <= now;
 
-			return anthropicWindowReset && notRateLimited;
+			return providerWindowReset && notRateLimited;
 		});
 
 		if (resetAccounts.length === 0) return [];
