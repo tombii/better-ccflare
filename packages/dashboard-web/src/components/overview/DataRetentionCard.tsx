@@ -139,6 +139,13 @@ export function DataRetentionCard() {
 					</Button>
 				</div>
 
+				{cleanupNow.isError && (
+					<p className="text-xs text-destructive">
+						Operation timed out — for large databases this may take several
+						minutes. Check server logs.
+					</p>
+				)}
+
 				{cleanupNow.data && (
 					<p className="text-xs text-muted-foreground">
 						Removed {cleanupNow.data.removedPayloads} payloads (older than{" "}
@@ -148,7 +155,20 @@ export function DataRetentionCard() {
 					</p>
 				)}
 
-				{compactDb.isSuccess && (
+				{compactDb.isError && (
+					<p className="text-xs text-destructive">
+						Operation timed out — for large databases this may take several
+						minutes. Check server logs.
+					</p>
+				)}
+
+				{compactDb.isSuccess && !compactDb.data?.ok && (
+					<p className="text-xs text-destructive">
+						{compactDb.data?.error ?? "Compaction failed — check server logs."}
+					</p>
+				)}
+
+				{compactDb.isSuccess && compactDb.data?.ok && (
 					<p className="text-xs text-muted-foreground">
 						Database compacted. File size should reduce on disk.
 					</p>

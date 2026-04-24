@@ -222,7 +222,13 @@ export class OAuthFlow {
 		// Handle claude-oauth mode — update OAuth tokens in place
 		await adapter.run(
 			`UPDATE accounts SET refresh_token = ?, access_token = ?, expires_at = ?, refresh_token_issued_at = ? WHERE id = ?`,
-			[tokens.refreshToken, tokens.accessToken, tokens.expiresAt, Date.now(), id],
+			[
+				tokens.refreshToken,
+				tokens.accessToken,
+				tokens.expiresAt,
+				Date.now(),
+				id,
+			],
 		);
 	}
 

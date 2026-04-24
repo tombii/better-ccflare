@@ -1,10 +1,7 @@
 import type { Config } from "@better-ccflare/config";
 import type { DatabaseOperations } from "@better-ccflare/database";
 import { jsonResponse } from "@better-ccflare/http-common";
-import { Logger } from "@better-ccflare/logger";
 import type { CleanupResponse, CompactResponse } from "../types";
-
-const log = new Logger("MaintenanceHandler");
 
 export function createCleanupHandler(
 	dbOps: DatabaseOperations,
@@ -19,23 +16,6 @@ export function createCleanupHandler(
 			payloadMs,
 			requestMs,
 		);
-		const compactResult = await dbOps.compact();
-		if (compactResult.error || !compactResult.vacuumed) {
-			log.warn("Database compaction did not complete cleanly", {
-				vacuumed: compactResult.vacuumed,
-				error: compactResult.error,
-				walBusy: compactResult.walBusy,
-				walLog: compactResult.walLog,
-				walCheckpointed: compactResult.walCheckpointed,
-			});
-		} else {
-			log.info("Database compaction completed", {
-				walBusy: compactResult.walBusy,
-				walLog: compactResult.walLog,
-				walCheckpointed: compactResult.walCheckpointed,
-				vacuumed: compactResult.vacuumed,
-			});
-		}
 		const now = Date.now();
 		const payload: CleanupResponse = {
 			removedRequests,

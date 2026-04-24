@@ -1615,14 +1615,30 @@ class API extends HttpClient {
 		}
 	}
 
-	async compactDb(): Promise<{ ok: boolean }> {
+	async compactDb(): Promise<{
+		ok: boolean;
+		error?: string;
+		walCheckpointed?: number;
+		walBusy?: number;
+		walLog?: number;
+		walTruncateBusy?: number;
+		vacuumed?: boolean;
+	}> {
 		const startTime = Date.now();
 		const url = "/api/maintenance/compact";
 
 		this.logger.debug(`→ POST ${url}`);
 
 		try {
-			const response = await this.post<{ ok: boolean }>(url);
+			const response = await this.post<{
+				ok: boolean;
+				error?: string;
+				walCheckpointed?: number;
+				walBusy?: number;
+				walLog?: number;
+				walTruncateBusy?: number;
+				vacuumed?: boolean;
+			}>(url);
 			const duration = Date.now() - startTime;
 			this.logger.debug(`← POST ${url} - 200 (${duration}ms)`);
 			return response;
