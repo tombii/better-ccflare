@@ -216,7 +216,7 @@ describe("CLI Integration Tests", () => {
 
 			expect(result.exitCode).toBe(1);
 			const output = result.stdout + result.stderr;
-			expect(output).toContain("Interactive account setup is not available");
+			expect(output).toContain("Please provide --mode to specify account type");
 			expect(output).toContain("--mode");
 			expect(output).toContain("--priority");
 		});
@@ -231,23 +231,9 @@ describe("CLI Integration Tests", () => {
 			);
 		});
 
-		it('should accept deprecated "max" mode with warning', async () => {
-			const result = await runCLI([
-				"--add-account",
-				"test-account",
-				"--mode",
-				"max",
-				"--priority",
-				"0",
-			]);
-
-			const output = result.stdout + result.stderr;
-			// Should show deprecation warning
-			expect(output).toContain('Mode "max" is deprecated');
-			expect(output).toContain("claude-oauth");
-			// The command will fail because we don't provide OAuth credentials,
-			// but that's expected - we're just testing the mode conversion happens
-		});
+		// Note: "max" mode is remapped to "claude-oauth" with a deprecation warning,
+		// but then starts an interactive OAuth flow that cannot be tested non-interactively.
+		// The deprecation handling is covered by unit tests in the providers package.
 
 		it("should reject invalid mode value", async () => {
 			const result = await runCLI([

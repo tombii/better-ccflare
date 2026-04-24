@@ -1,6 +1,30 @@
-import { describe, expect, it, spyOn } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { OAuthError } from "@better-ccflare/core";
 import { AnthropicOAuthProvider } from "../oauth";
+
+/**
+ * Helper: installs a one-shot fetch mock that records calls.
+ * Returns an object with the recorded calls and a restore function.
+ * Uses direct globalThis.fetch assignment instead of spyOn because
+ * Bun does not support spyOn on accessor properties.
+ */
+function mockFetchOnce(response: any): {
+	mock: { calls: any[][] };
+	mockRestore: () => void;
+} {
+	const originalFetch = globalThis.fetch;
+	const calls: any[][] = [];
+	globalThis.fetch = ((...args: any[]) => {
+		calls.push(args);
+		return Promise.resolve(response);
+	}) as any;
+	return {
+		mock: { calls },
+		mockRestore: () => {
+			globalThis.fetch = originalFetch;
+		},
+	};
+}
 
 describe("AnthropicOAuthProvider - Claude OAuth Fixes", () => {
 	const createTestProvider = () => new AnthropicOAuthProvider();
@@ -23,17 +47,15 @@ describe("AnthropicOAuthProvider - Claude OAuth Fixes", () => {
 
 	const createTestConfig = (overrides: any = {}) => ({
 		clientId: "test-client-id",
-		redirectUri: "https://console.anthropic.com/oauth/code/callback",
-		tokenUrl: "https://console.anthropic.com/v1/oauth/token",
+		redirectUri: "https://platform.claude.com/oauth/code/callback",
+		tokenUrl: "https://platform.claude.com/v1/oauth/token",
 		mode: "claude-oauth",
 		...overrides,
 	});
 
 	describe("Authorization Code Parsing (code#state format)", () => {
 		it("should correctly split authorization code with state parameter", async () => {
-			const mockFetch = spyOn(global, "fetch").mockResolvedValueOnce(
-				createMockSuccessResponse(),
-			);
+			const mockFetch = mockFetchOnce(createMockSuccessResponse());
 			const provider = createTestProvider();
 			const config = createTestConfig();
 
@@ -55,9 +77,7 @@ describe("AnthropicOAuthProvider - Claude OAuth Fixes", () => {
 		});
 
 		it("should handle authorization code without state parameter", async () => {
-			const mockFetch = spyOn(global, "fetch").mockResolvedValueOnce(
-				createMockSuccessResponse(),
-			);
+			const mockFetch = mockFetchOnce(createMockSuccessResponse());
 			const provider = createTestProvider();
 			const config = createTestConfig();
 
@@ -78,9 +98,7 @@ describe("AnthropicOAuthProvider - Claude OAuth Fixes", () => {
 		});
 
 		it("should handle authorization code with multiple # characters", async () => {
-			const mockFetch = spyOn(global, "fetch").mockResolvedValueOnce(
-				createMockSuccessResponse(),
-			);
+			const mockFetch = mockFetchOnce(createMockSuccessResponse());
 			const provider = createTestProvider();
 			const config = createTestConfig();
 
@@ -97,9 +115,7 @@ describe("AnthropicOAuthProvider - Claude OAuth Fixes", () => {
 		});
 
 		it("should handle empty authorization code", async () => {
-			const mockFetch = spyOn(global, "fetch").mockResolvedValueOnce(
-				createMockSuccessResponse(),
-			);
+			const mockFetch = mockFetchOnce(createMockSuccessResponse());
 			const provider = createTestProvider();
 			const config = createTestConfig();
 
@@ -115,9 +131,7 @@ describe("AnthropicOAuthProvider - Claude OAuth Fixes", () => {
 		});
 
 		it("should handle empty state parameter", async () => {
-			const mockFetch = spyOn(global, "fetch").mockResolvedValueOnce(
-				createMockSuccessResponse(),
-			);
+			const mockFetch = mockFetchOnce(createMockSuccessResponse());
 			const provider = createTestProvider();
 			const config = createTestConfig();
 
@@ -135,9 +149,7 @@ describe("AnthropicOAuthProvider - Claude OAuth Fixes", () => {
 
 	describe("State Parameter in Token Exchange", () => {
 		it("should include state parameter in token exchange request body", async () => {
-			const mockFetch = spyOn(global, "fetch").mockResolvedValueOnce(
-				createMockSuccessResponse(),
-			);
+			const mockFetch = mockFetchOnce(createMockSuccessResponse());
 			const provider = createTestProvider();
 			const config = createTestConfig();
 
@@ -154,16 +166,14 @@ describe("AnthropicOAuthProvider - Claude OAuth Fixes", () => {
 				state: "test-state-123",
 				grant_type: "authorization_code",
 				client_id: "test-client-id",
-				redirect_uri: "https://console.anthropic.com/oauth/code/callback",
+				redirect_uri: "https://platform.claude.com/oauth/code/callback",
 				code_verifier: "test-verifier",
 			});
 			mockFetch.mockRestore();
 		});
 
 		it("should work with console mode (no state in response)", async () => {
-			const mockFetch = spyOn(global, "fetch").mockResolvedValueOnce(
-				createMockSuccessResponse(),
-			);
+			const mockFetch = mockFetchOnce(createMockSuccessResponse());
 			const provider = createTestProvider();
 			const config = createTestConfig({ mode: "console" });
 
@@ -188,9 +198,7 @@ describe("AnthropicOAuthProvider - Claude OAuth Fixes", () => {
 				},
 				error_description: "The request format is invalid",
 			};
-			const mockFetch = spyOn(global, "fetch").mockResolvedValueOnce(
-				createMockErrorResponse(errorResponse),
-			);
+			const mockFetch = mockFetchOnce(createMockErrorResponse(errorResponse));
 			const provider = createTestProvider();
 			const config = createTestConfig();
 
@@ -213,9 +221,7 @@ describe("AnthropicOAuthProvider - Claude OAuth Fixes", () => {
 				error: "invalid_request",
 				error_description: "Invalid request format",
 			};
-			const mockFetch = spyOn(global, "fetch").mockResolvedValueOnce(
-				createMockErrorResponse(errorResponse),
-			);
+			const mockFetch = mockFetchOnce(createMockErrorResponse(errorResponse));
 			const provider = createTestProvider();
 			const config = createTestConfig();
 
@@ -240,9 +246,7 @@ describe("AnthropicOAuthProvider - Claude OAuth Fixes", () => {
 					// No message property
 				},
 			};
-			const mockFetch = spyOn(global, "fetch").mockResolvedValueOnce(
-				createMockErrorResponse(errorResponse),
-			);
+			const mockFetch = mockFetchOnce(createMockErrorResponse(errorResponse));
 			const provider = createTestProvider();
 			const config = createTestConfig();
 
@@ -261,7 +265,7 @@ describe("AnthropicOAuthProvider - Claude OAuth Fixes", () => {
 		});
 
 		it("should handle non-parseable error responses", async () => {
-			const mockFetch = spyOn(global, "fetch").mockResolvedValueOnce({
+			const mockFetch = mockFetchOnce({
 				ok: false,
 				status: 500,
 				statusText: "Internal Server Error",
@@ -288,7 +292,7 @@ describe("AnthropicOAuthProvider - Claude OAuth Fixes", () => {
 
 	describe("Integration Scenarios", () => {
 		it("should handle complete OAuth flow with Claude CLI format", async () => {
-			const mockFetch = spyOn(global, "fetch").mockResolvedValueOnce({
+			const mockFetch = mockFetchOnce({
 				ok: true,
 				json: async () => ({
 					refresh_token: "refresh-123",
@@ -310,7 +314,7 @@ describe("AnthropicOAuthProvider - Claude OAuth Fixes", () => {
 			);
 
 			// Verify the request was formatted correctly
-			expect(mockFetch).toHaveBeenCalledTimes(1);
+			expect(mockFetch.mock.calls).toHaveLength(1);
 			const requestBody = JSON.parse(mockFetch.mock.calls[0][1].body);
 
 			expect(requestBody.code).toBe("au_1x2y3z4a5b6c7d8e9f0");
@@ -318,7 +322,7 @@ describe("AnthropicOAuthProvider - Claude OAuth Fixes", () => {
 			expect(requestBody.grant_type).toBe("authorization_code");
 			expect(requestBody.client_id).toBe("test-client-id");
 			expect(requestBody.redirect_uri).toBe(
-				"https://console.anthropic.com/oauth/code/callback",
+				"https://platform.claude.com/oauth/code/callback",
 			);
 			expect(requestBody.code_verifier).toBe("pkce-verifier-123");
 

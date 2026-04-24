@@ -45,7 +45,7 @@ describe("Database Migrations - Tier Column Removal", () => {
         name TEXT NOT NULL,
         provider TEXT DEFAULT 'anthropic',
         api_key TEXT,
-        refresh_token TEXT NOT NULL,
+        refresh_token TEXT,
         access_token TEXT,
         expires_at INTEGER,
         created_at INTEGER NOT NULL,
@@ -53,6 +53,7 @@ describe("Database Migrations - Tier Column Removal", () => {
         request_count INTEGER DEFAULT 0,
         total_requests INTEGER DEFAULT 0,
         priority INTEGER DEFAULT 0,
+        billing_type TEXT DEFAULT NULL,
         account_tier TEXT DEFAULT 'free'  -- This is the column we want to remove
       )
     `);
@@ -153,7 +154,7 @@ describe("Database Migrations - Tier Column Removal", () => {
         name TEXT NOT NULL,
         provider TEXT DEFAULT 'anthropic',
         api_key TEXT,
-        refresh_token TEXT NOT NULL,
+        refresh_token TEXT,
         access_token TEXT,
         expires_at INTEGER,
         created_at INTEGER NOT NULL,
@@ -172,6 +173,7 @@ describe("Database Migrations - Tier Column Removal", () => {
         custom_endpoint TEXT,
         auto_refresh_enabled INTEGER DEFAULT 0,
         model_mappings TEXT,
+        billing_type TEXT DEFAULT NULL,
         account_tier TEXT DEFAULT 'free'  -- This is the column we want to remove
       )
     `);
@@ -382,7 +384,7 @@ describe("Database Migrations - Tier Column Removal", () => {
 			const zaiAccount = finalZaiAccount;
 
 			expect(zaiAccount.api_key).toBe("sk-zai-key-12345");
-			expect(zaiAccount.refresh_token).toBe("");
+			expect(zaiAccount.refresh_token).toBeNull();
 
 			const minimaxAccount = db
 				.prepare(
@@ -397,7 +399,7 @@ describe("Database Migrations - Tier Column Removal", () => {
 			};
 
 			expect(minimaxAccount.api_key).toBe("sk-minimax-key-67890");
-			expect(minimaxAccount.refresh_token).toBe("");
+			expect(minimaxAccount.refresh_token).toBeNull();
 
 			const openaiAccount = db
 				.prepare(
@@ -412,7 +414,7 @@ describe("Database Migrations - Tier Column Removal", () => {
 			};
 
 			expect(openaiAccount.api_key).toBe("sk-openai-key-abcde");
-			expect(openaiAccount.refresh_token).toBe("");
+			expect(openaiAccount.refresh_token).toBeNull();
 
 			const anthropicCompatibleAccount = db
 				.prepare(
@@ -427,7 +429,7 @@ describe("Database Migrations - Tier Column Removal", () => {
 			};
 
 			expect(anthropicCompatibleAccount.api_key).toBe("sk-anthropic-key-fghij");
-			expect(anthropicCompatibleAccount.refresh_token).toBe("");
+			expect(anthropicCompatibleAccount.refresh_token).toBeNull();
 		});
 
 		it("should clean up duplicate API key storage", () => {
@@ -467,8 +469,8 @@ describe("Database Migrations - Tier Column Removal", () => {
 			};
 
 			expect(account.api_key).toBe("sk-duplicate-key"); // Should remain
-			expect(account.refresh_token).toBe(""); // Should be cleared to empty string
-			expect(account.access_token).toBe(""); // Should be cleared to empty string
+			expect(account.refresh_token).toBeNull(); // Should be cleared to null
+			expect(account.access_token).toBeNull(); // Should be cleared to null
 		});
 
 		it("should detect and migrate console accounts with enhanced logic", () => {
@@ -508,8 +510,8 @@ describe("Database Migrations - Tier Column Removal", () => {
 			};
 
 			expect(account.api_key).toBe("sk-console-api-key-12345");
-			expect(account.refresh_token).toBe("");
-			expect(account.access_token).toBe("");
+			expect(account.refresh_token).toBeNull();
+			expect(account.access_token).toBeNull();
 		});
 
 		it("should not migrate OAuth accounts that match console detection patterns", () => {
@@ -595,8 +597,8 @@ describe("Database Migrations - Tier Column Removal", () => {
 			};
 
 			expect(account.api_key).toBe("sk-custom-token-12345");
-			expect(account.refresh_token).toBe("");
-			expect(account.access_token).toBe("");
+			expect(account.refresh_token).toBeNull();
+			expect(account.access_token).toBeNull();
 		});
 
 		it("should not affect OAuth accounts with valid characteristics", () => {

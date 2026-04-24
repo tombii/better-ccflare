@@ -218,7 +218,8 @@ describe("SessionStrategy", () => {
 		expect(account.session_request_count).toBe(0);
 	});
 
-	it("should not reset session when fixed duration expired for non-Anthropic accounts", () => {
+	it("should reset session when fixed duration expired for zai accounts (zai has session tracking)", () => {
+		const sessionStart = Date.now() - 6 * 60 * 60 * 1000;
 		const account = makeAccount({
 			id: "test-account-6-non-anthropic",
 			name: "test-account-6-non-anthropic",
@@ -227,23 +228,22 @@ describe("SessionStrategy", () => {
 			refresh_token: "",
 			access_token: null,
 			expires_at: null,
-			session_start: Date.now() - 6 * 60 * 60 * 1000,
+			session_start: sessionStart,
 			session_request_count: 10,
 		});
-
-		const originalSessionStart = account.session_start;
-		const originalRequestCount = account.session_request_count;
 
 		const result = strategy.select([account], meta);
 
 		expect(result[0]).toBe(account);
 		expect(result).toHaveLength(1);
 
+		// zai has requiresSessionTracking: true, so fixed-duration expiry triggers a reset
 		const resetCall = mockStore.getResetCall(account.id);
-		expect(resetCall).toBeUndefined();
+		expect(resetCall).toBeDefined();
+		expect(resetCall?.accountId).toBe(account.id);
 
-		expect(account.session_start).toBe(originalSessionStart);
-		expect(account.session_request_count).toBe(originalRequestCount);
+		expect(account.session_start).toBeGreaterThan(sessionStart);
+		expect(account.session_request_count).toBe(0);
 	});
 
 	it("should work normally when rate_limit_reset is explicitly null", () => {

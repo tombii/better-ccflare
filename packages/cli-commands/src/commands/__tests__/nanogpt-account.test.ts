@@ -262,7 +262,7 @@ describe("CLI NanoGPT Account Creation", () => {
 			expect(account?.api_key).toBe("test-stored-api-key");
 		});
 
-		it("should store API key as access token for consistency", async () => {
+		it("should store null access_token for API-key-only accounts", async () => {
 			await createNanoGPTAccount(
 				dbOps,
 				"test-access-token",
@@ -270,16 +270,16 @@ describe("CLI NanoGPT Account Creation", () => {
 				5,
 			);
 
-			// Verify access_token stores the API key
+			// NanoGPT accounts use api_key field only; access_token is null
 			const db = dbOps.getDatabase();
 			const account = db
-				.query<{ access_token: string }, [string]>(
+				.query<{ access_token: string | null }, [string]>(
 					"SELECT access_token FROM accounts WHERE name = ?",
 				)
 				.get("test-access-token");
 
 			expect(account).toBeDefined();
-			expect(account?.access_token).toBe("test-api-key-token");
+			expect(account?.access_token).toBeNull();
 		});
 	});
 });

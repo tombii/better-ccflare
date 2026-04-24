@@ -72,10 +72,6 @@ mock.module("@better-ccflare/providers", () => ({
 		getOAuthConfig: (_mode: string) => ({ ...testOauthConfig }),
 		generateAuthUrl: mock(() => "https://example.com/oauth/authorize?mock"),
 	}),
-	generatePKCE: mock(async () => ({
-		verifier: "mock-verifier",
-		challenge: "mock-challenge",
-	})),
 }));
 
 // ---------------------------------------------------------------------------
