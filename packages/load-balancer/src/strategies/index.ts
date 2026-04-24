@@ -225,10 +225,20 @@ export class SessionStrategy implements LoadBalancingStrategy {
 		}
 
 		// No active session or active account is rate limited
-		// Filter available accounts and sort by priority (lower number = higher priority)
+		// Filter available accounts and sort by priority (lower number = higher priority).
+		// Within the same priority, break ties by utilization (ascending) so that the
+		// account with the most remaining capacity is chosen first.
 		const available = accounts
 			.filter((a) => getCachedAvailability(a))
-			.sort((a, b) => a.priority - b.priority);
+			.sort((a, b) => {
+				if (a.priority !== b.priority) return a.priority - b.priority;
+				// Treat null as 0: an account with no usage data is assumed fresh
+				// (maximum remaining capacity). This prevents newly-added accounts
+				// from being permanently sidelined until all others expire.
+				const utilA = this.store?.getAccountUtilization?.(a.id, a.provider) ?? 0;
+				const utilB = this.store?.getAccountUtilization?.(b.id, b.provider) ?? 0;
+				return utilA - utilB;
+			});
 
 		if (available.length === 0) return [];
 

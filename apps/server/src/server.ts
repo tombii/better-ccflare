@@ -24,7 +24,11 @@ import {
 import { APIRouter, AuthService } from "@better-ccflare/http-api";
 import { SessionStrategy } from "@better-ccflare/load-balancer";
 import { Logger } from "@better-ccflare/logger";
-import { getProvider, usageCache } from "@better-ccflare/providers";
+import {
+	getProvider,
+	getRepresentativeUtilizationForProvider,
+	usageCache,
+} from "@better-ccflare/providers";
 import {
 	canUseInferenceProfileDynamic,
 	parseBedrockConfig,
@@ -704,6 +708,16 @@ export default async function startServer(options?: {
 
 	// Now create the strategy with runtime config
 	const strategy = new SessionStrategy(runtimeConfig.sessionDurationMs);
+
+	// Extend dbOps with usage-based account utilization for balanced session selection
+	Object.assign(dbOps, {
+		getAccountUtilization: (accountId: string, provider: string): number | null => {
+			const data = usageCache.get(accountId);
+			if (!data) return null;
+			return getRepresentativeUtilizationForProvider(data, provider);
+		},
+	});
+
 	strategy.initialize(dbOps);
 
 	// Start usage worker eagerly (before first request)
