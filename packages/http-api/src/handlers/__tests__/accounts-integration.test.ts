@@ -527,7 +527,9 @@ function createMockAccountsListHandler(CACHE_FRESHNESS_THRESHOLD_MS: number) {
 				usageUtilization,
 				usageWindow,
 				usageData,
-				hasRefreshToken: !!account.refresh_token,
+				hasRefreshToken:
+					!!account.refresh_token &&
+					account.refresh_token !== account.access_token,
 				rateLimitedUntil: account.rate_limited_until || null,
 			};
 		});

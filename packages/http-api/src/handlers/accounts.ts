@@ -482,7 +482,9 @@ export function createAccountsListHandler(dbOps: DatabaseOperations) {
 					usageUtilization,
 					usageWindow,
 					usageData: fullUsageData, // Full usage data for UI
-					hasRefreshToken: !!account.refresh_token, // OAuth accounts have refresh tokens
+					hasRefreshToken:
+						!!account.refresh_token &&
+						account.refresh_token !== account.access_token, // API-key providers store key in both fields
 					crossRegionMode: account.cross_region_mode,
 					modelFallbacks,
 					billingType: account.billing_type,
@@ -995,7 +997,7 @@ export function createZaiAccountAddHandler(dbOps: DatabaseOperations) {
 					rateLimitRemaining: null,
 					rateLimitedUntil: null,
 					sessionInfo: "No active session",
-					hasRefreshToken: !!account.refresh_token, // OAuth accounts have refresh tokens
+					hasRefreshToken: false,
 				},
 			});
 		} catch (error) {
@@ -1158,7 +1160,7 @@ export function createOpenAIAccountAddHandler(dbOps: DatabaseOperations) {
 					rateLimitedUntil: null,
 					sessionInfo: "No active session",
 					customEndpoint: customEndpoint,
-					hasRefreshToken: !!account.refresh_token, // OAuth accounts have refresh tokens
+					hasRefreshToken: false,
 				},
 			});
 		} catch (error) {
@@ -1427,7 +1429,7 @@ export function createMinimaxAccountAddHandler(dbOps: DatabaseOperations) {
 					rateLimitRemaining: null,
 					rateLimitedUntil: null,
 					sessionInfo: "No active session",
-					hasRefreshToken: !!account.refresh_token, // OAuth accounts have refresh tokens
+					hasRefreshToken: false,
 				},
 			});
 		} catch (error) {
@@ -1591,7 +1593,7 @@ export function createNanoGPTAccountAddHandler(dbOps: DatabaseOperations) {
 					rateLimitRemaining: null,
 					rateLimitedUntil: null,
 					sessionInfo: "No active session",
-					hasRefreshToken: !!account.refresh_token, // OAuth accounts have refresh tokens
+					hasRefreshToken: false,
 				},
 			});
 		} catch (error) {
@@ -1759,7 +1761,7 @@ export function createAnthropicCompatibleAccountAddHandler(
 					rateLimitRemaining: null,
 					rateLimitedUntil: null,
 					sessionInfo: "No active session",
-					hasRefreshToken: !!account.refresh_token, // OAuth accounts have refresh tokens
+					hasRefreshToken: false,
 				},
 			});
 		} catch (error) {
@@ -2809,7 +2811,7 @@ export function createKiloAccountAddHandler(dbOps: DatabaseOperations) {
 					rateLimitRemaining: null,
 					rateLimitedUntil: null,
 					sessionInfo: "No active session",
-					hasRefreshToken: !!account.refresh_token,
+					hasRefreshToken: false,
 				},
 			});
 		} catch (error) {
@@ -2957,7 +2959,7 @@ export function createAlibabaCodingPlanAccountAddHandler(
 					rateLimitRemaining: null,
 					rateLimitedUntil: null,
 					sessionInfo: "No active session",
-					hasRefreshToken: !!account.refresh_token,
+					hasRefreshToken: false,
 				},
 			});
 		} catch (error) {
@@ -3110,7 +3112,7 @@ export function createOpenRouterAccountAddHandler(dbOps: DatabaseOperations) {
 					rateLimitRemaining: null,
 					rateLimitedUntil: null,
 					sessionInfo: "No active session",
-					hasRefreshToken: !!account.refresh_token,
+					hasRefreshToken: false,
 				},
 			});
 		} catch (error) {

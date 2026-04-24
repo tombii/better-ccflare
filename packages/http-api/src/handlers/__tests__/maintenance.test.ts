@@ -146,12 +146,14 @@ describe("createCleanupHandler", () => {
 			expect(requestMs).toBe(90 * 24 * 60 * 60 * 1000);
 		});
 
-		it("calls compact after cleanup", async () => {
+		it("does NOT call compact (cleanup and compact are separate handlers)", async () => {
 			const dbOps = makeDbOps();
 			const handler = createCleanupHandler(dbOps, makeConfig());
 			await handler();
 
-			expect(dbOps.compact).toHaveBeenCalledTimes(1);
+			// Since e2b9d07 cleanup and compact were decoupled into separate HTTP
+			// endpoints so that compact errors don't block cleanup responses.
+			expect(dbOps.compact).toHaveBeenCalledTimes(0);
 		});
 	});
 });
