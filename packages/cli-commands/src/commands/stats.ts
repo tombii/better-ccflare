@@ -24,3 +24,17 @@ export async function clearRequestHistory(
 	const requestMs = config.getRequestRetentionDays() * 24 * 60 * 60 * 1000;
 	return dbOps.cleanupOldRequests(payloadMs, requestMs);
 }
+
+/**
+ * Compact SQLite database (checkpoint + vacuum + WAL truncate)
+ */
+export async function compactDatabase(dbOps: DatabaseOperations): Promise<{
+	walBusy: number;
+	walLog: number;
+	walCheckpointed: number;
+	vacuumed: boolean;
+	walTruncateBusy?: number;
+	error?: string;
+}> {
+	return dbOps.compact();
+}

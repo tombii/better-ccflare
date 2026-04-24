@@ -141,6 +141,12 @@ describe("CLI Integration Tests", () => {
 			expect(result.stdout).toContain("--ssl-cert");
 		});
 
+		it("should show compact option in help", async () => {
+			const result = await runCLI(["--help"]);
+
+			expect(result.stdout).toContain("--compact");
+		});
+
 		it("should show account mode options", async () => {
 			const result = await runCLI(["--help"]);
 
@@ -319,12 +325,14 @@ describe("CLI Argument Parsing Logic", () => {
 	// We'll test the parsing logic by simulating what parseArgs does
 
 	it("should parse boolean flags correctly", () => {
-		const testArgs = ["--version", "--help"];
+		const testArgs = ["--version", "--help", "--compact"];
 		const hasVersion = testArgs.includes("--version");
 		const hasHelp = testArgs.includes("--help");
+		const hasCompact = testArgs.includes("--compact");
 
 		expect(hasVersion).toBe(true);
 		expect(hasHelp).toBe(true);
+		expect(hasCompact).toBe(true);
 	});
 
 	it("should parse flags with values", () => {
@@ -341,13 +349,15 @@ describe("CLI Argument Parsing Logic", () => {
 	});
 
 	it("should handle flags in any order", () => {
-		const testArgs1 = ["--serve", "--port", "8081"];
-		const testArgs2 = ["--port", "8081", "--serve"];
+		const testArgs1 = ["--serve", "--port", "8081", "--compact"];
+		const testArgs2 = ["--compact", "--port", "8081", "--serve"];
 
 		expect(testArgs1.includes("--serve")).toBe(true);
 		expect(testArgs2.includes("--serve")).toBe(true);
 		expect(testArgs1.includes("--port")).toBe(true);
 		expect(testArgs2.includes("--port")).toBe(true);
+		expect(testArgs1.includes("--compact")).toBe(true);
+		expect(testArgs2.includes("--compact")).toBe(true);
 	});
 
 	it("should parse set-priority with two arguments", () => {

@@ -5,7 +5,7 @@
  * { removedRequests, removedPayloads } — not the old { count } shape.
  */
 import { describe, expect, it, mock } from "bun:test";
-import { clearRequestHistory } from "../stats";
+import { clearRequestHistory, compactDatabase } from "../stats";
 
 // ---------------------------------------------------------------------------
 // Minimal stubs
@@ -27,8 +27,74 @@ function makeDbOps(result: {
 	} as unknown as import("@better-ccflare/database").DatabaseOperations;
 }
 
+function makeCompactDbOps(result: {
+	walBusy: number;
+	walLog: number;
+	walCheckpointed: number;
+	vacuumed: boolean;
+	walTruncateBusy?: number;
+	error?: string;
+}) {
+	return {
+		compact: mock(async () => result),
+	} as unknown as import("@better-ccflare/database").DatabaseOperations;
+}
+
+const COMPACT_RESULT = {
+	walBusy: 0,
+	walLog: 12,
+	walCheckpointed: 12,
+	vacuumed: true,
+	walTruncateBusy: 0,
+};
+
+const COMPACT_ERROR_RESULT = {
+	walBusy: 1,
+	walLog: 5,
+	walCheckpointed: 2,
+	vacuumed: false,
+	error: "busy database",
+};
+
 // ---------------------------------------------------------------------------
-// Tests
+// compactDatabase tests
+// ---------------------------------------------------------------------------
+
+describe("compactDatabase", () => {
+	it("calls dbOps.compact once", async () => {
+		const dbOps = makeCompactDbOps(COMPACT_RESULT);
+
+		await compactDatabase(dbOps);
+
+		expect(dbOps.compact).toHaveBeenCalledTimes(1);
+	});
+
+	it("returns wal/vacuum fields from dbOps.compact", async () => {
+		const dbOps = makeCompactDbOps(COMPACT_RESULT);
+
+		const result = await compactDatabase(dbOps);
+
+		expect(result.walBusy).toBe(0);
+		expect(result.walLog).toBe(12);
+		expect(result.walCheckpointed).toBe(12);
+		expect(result.vacuumed).toBe(true);
+		expect(result.walTruncateBusy).toBe(0);
+		expect(result).not.toHaveProperty("error");
+	});
+
+	it("returns error payload unchanged when compact fails", async () => {
+		const dbOps = makeCompactDbOps(COMPACT_ERROR_RESULT);
+
+		const result = await compactDatabase(dbOps);
+
+		expect(result.vacuumed).toBe(false);
+		expect(result.error).toBe("busy database");
+		expect(result.walBusy).toBe(1);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// clearRequestHistory tests
 // ---------------------------------------------------------------------------
 
 describe("clearRequestHistory", () => {

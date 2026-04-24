@@ -31,6 +31,7 @@ import {
 	addAccount,
 	analyzePerformance,
 	clearRequestHistory,
+	compactDatabase,
 	deleteApiKey,
 	disableApiKey,
 	enableApiKey,
@@ -99,6 +100,7 @@ interface ParsedArgs {
 	repairDb: boolean;
 	resetStats: boolean;
 	clearHistory: boolean;
+	compact: boolean;
 	getModel: boolean;
 	setModel: string | null;
 	generateApiKey: string | null;
@@ -447,6 +449,7 @@ function parseArgs(args: string[]): ParsedArgs {
 		repairDb: false,
 		resetStats: false,
 		clearHistory: false,
+		compact: false,
 		getModel: false,
 		setModel: null,
 		generateApiKey: null,
@@ -708,6 +711,9 @@ function parseArgs(args: string[]): ParsedArgs {
 			case "--clear-history":
 				parsed.clearHistory = true;
 				break;
+			case "--compact":
+				parsed.compact = true;
+				break;
 			case "--get-model":
 				parsed.getModel = true;
 				break;
@@ -839,6 +845,7 @@ Options:
   --repair-db          Check and repair database integrity
   --reset-stats        Reset usage statistics
   --clear-history      Clear request history
+  --compact            Compact database (WAL checkpoint + VACUUM)
   --get-model          Show current default agent model
   --set-model <model>  Set default agent model (opus-4 or sonnet-4)
 
@@ -1179,6 +1186,21 @@ Examples:
 		const result = await clearRequestHistory(dbOps, cliConfig);
 		console.log(
 			`✅ Request history cleared successfully (${result.removedPayloads} payloads, ${result.removedRequests} requests removed)`,
+		);
+		await exitGracefully(0);
+	}
+
+	if (parsed.compact) {
+		const result = await compactDatabase(dbOps);
+		if (result.error) {
+			console.error(`❌ Database compact failed: ${result.error}`);
+			console.error(
+				`WAL checkpoint: busy=${result.walBusy}, log=${result.walLog}, checkpointed=${result.walCheckpointed}${result.walTruncateBusy !== undefined ? `, truncateBusy=${result.walTruncateBusy}` : ""}`,
+			);
+			await exitGracefully(1);
+		}
+		console.log(
+			`✅ Database compact completed (vacuumed=${result.vacuumed}, walBusy=${result.walBusy}, walLog=${result.walLog}, walCheckpointed=${result.walCheckpointed}${result.walTruncateBusy !== undefined ? `, walTruncateBusy=${result.walTruncateBusy}` : ""})`,
 		);
 		await exitGracefully(0);
 	}
