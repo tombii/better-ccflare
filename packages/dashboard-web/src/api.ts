@@ -1601,7 +1601,7 @@ class API extends HttpClient {
 				removedPayloads: number;
 				payloadCutoffIso: string;
 				requestCutoffIso: string;
-			}>(url);
+			}>(url, undefined, { timeout: 10 * 60 * 1000 });
 			const duration = Date.now() - startTime;
 			this.logger.debug(`← POST ${url} - 200 (${duration}ms)`);
 			return response;
@@ -1638,7 +1638,7 @@ class API extends HttpClient {
 				walLog?: number;
 				walTruncateBusy?: number;
 				vacuumed?: boolean;
-			}>(url);
+			}>(url, undefined, { timeout: 10 * 60 * 1000 });
 			const duration = Date.now() - startTime;
 			this.logger.debug(`← POST ${url} - 200 (${duration}ms)`);
 			return response;
