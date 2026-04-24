@@ -7,7 +7,7 @@ import { OpenAICompatibleProvider } from "../openai/provider";
 const _log = new Logger("QwenProvider");
 
 const _DEFAULT_ENDPOINT = "https://dashscope.aliyuncs.com/compatible-mode/v1";
-const QWEN_USER_AGENT = "QwenCode/0.15.0 (darwin; arm64)";
+const QWEN_USER_AGENT = "QwenCode/0.15.1 (darwin; arm64)";
 
 // Stainless SDK headers injected by the official OpenAI Node SDK (v5.x).
 // portal.qwen.ai validates these to confirm the official client is being used.
