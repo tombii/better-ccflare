@@ -23,7 +23,8 @@ export class AccountRepository extends BaseRepository<Account> {
 				cross_region_mode,
 				model_fallbacks,
 				billing_type,
-				pause_reason
+				pause_reason,
+				refresh_token_issued_at
 			FROM accounts
 			ORDER BY priority DESC
 		`);
@@ -48,7 +49,8 @@ export class AccountRepository extends BaseRepository<Account> {
 				cross_region_mode,
 				model_fallbacks,
 				billing_type,
-				pause_reason
+				pause_reason,
+				refresh_token_issued_at
 			FROM accounts
 			WHERE id = ?
 		`,
@@ -64,10 +66,11 @@ export class AccountRepository extends BaseRepository<Account> {
 		expiresAt: number,
 		refreshToken?: string,
 	): Promise<void> {
+		const now = Date.now();
 		if (refreshToken) {
 			await this.run(
-				`UPDATE accounts SET access_token = ?, expires_at = ?, refresh_token = ? WHERE id = ?`,
-				[accessToken, expiresAt, refreshToken, accountId],
+				`UPDATE accounts SET access_token = ?, expires_at = ?, refresh_token = ?, refresh_token_issued_at = ? WHERE id = ?`,
+				[accessToken, expiresAt, refreshToken, now, accountId],
 			);
 		} else {
 			await this.run(

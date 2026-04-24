@@ -57,7 +57,11 @@ export function checkRefreshTokenHealth(account: Account): TokenHealthStatus {
 	}
 
 	// For OAuth accounts, check refresh token age
-	if (!account.created_at) {
+	// Prefer refresh_token_issued_at (updated on each token refresh) over created_at
+	// (which is the account creation date and never changes after initial setup)
+	const tokenIssuedAt = account.refresh_token_issued_at ?? account.created_at;
+
+	if (!tokenIssuedAt) {
 		return {
 			accountId,
 			accountName,
@@ -70,11 +74,11 @@ export function checkRefreshTokenHealth(account: Account): TokenHealthStatus {
 		};
 	}
 
-	const refreshTokenAge = now - account.created_at;
+	const refreshTokenAge = now - tokenIssuedAt;
 	const refreshTokenAgeDays = Math.floor(
 		refreshTokenAge / (24 * 60 * 60 * 1000),
 	);
-	const estimatedExpirationDate = account.created_at + REFRESH_TOKEN_MAX_AGE_MS;
+	const estimatedExpirationDate = tokenIssuedAt + REFRESH_TOKEN_MAX_AGE_MS;
 	const daysUntilExpiration = Math.ceil(
 		(estimatedExpirationDate - now) / (24 * 60 * 60 * 1000),
 	);
@@ -276,14 +280,22 @@ function getStatusIcon(status: TokenHealthStatus["status"]): string {
 }
 
 /**
- * Check if an OAuth account's refresh token is likely expired based on age
+ * Check if an OAuth account's refresh token is likely expired based on age.
+ * Uses refresh_token_issued_at when available (populated on each token refresh),
+ * falling back to created_at for accounts that predate this field.
  */
 export function isRefreshTokenLikelyExpired(account: Account): boolean {
-	if (!account.refresh_token || !account.created_at) {
-		return true; // Missing token or creation date = assume expired
+	if (!account.refresh_token) {
+		return true; // Missing token = assume expired
 	}
 
-	const age = Date.now() - account.created_at;
+	// Prefer the timestamp of the last refresh over the account creation date
+	const tokenIssuedAt = account.refresh_token_issued_at ?? account.created_at;
+	if (!tokenIssuedAt) {
+		return true; // No date available = assume expired
+	}
+
+	const age = Date.now() - tokenIssuedAt;
 	return age > REFRESH_TOKEN_MAX_AGE_MS;
 }
 

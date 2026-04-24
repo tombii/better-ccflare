@@ -3,8 +3,17 @@ import type { BunSqlAdapter } from "@better-ccflare/database";
 import { jsonResponse } from "@better-ccflare/http-common";
 import type { HealthResponse } from "../types";
 
-type AsyncWriterHealthFn = () => { healthy: boolean; failureCount: number; queuedJobs: number };
-type UsageWorkerHealthFn = () => { state: string; pendingAcks: number; lastError: string | null; startedAt: number | null };
+type AsyncWriterHealthFn = () => {
+	healthy: boolean;
+	failureCount: number;
+	queuedJobs: number;
+};
+type UsageWorkerHealthFn = () => {
+	state: string;
+	pendingAcks: number;
+	lastError: string | null;
+	startedAt: number | null;
+};
 
 export function createHealthHandler(
 	db: BunSqlAdapter,

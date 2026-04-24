@@ -402,7 +402,10 @@ function processStreamChunk(chunk: Uint8Array, state: RequestState): void {
 }
 
 async function handleStart(msg: StartMessage): Promise<void> {
-	self.postMessage({ type: "ack", messageId: msg.messageId } satisfies AckMessage);
+	self.postMessage({
+		type: "ack",
+		messageId: msg.messageId,
+	} satisfies AckMessage);
 
 	// Check if we should skip logging this request
 	const shouldSkip = !shouldLogRequest(msg.path, msg.responseStatus);
@@ -881,7 +884,9 @@ async function handleShutdown(): Promise<void> {
 
 	await asyncWriter.dispose();
 	dbOps.close();
-	self.postMessage({ type: "shutdown-complete" } satisfies ShutdownCompleteMessage);
+	self.postMessage({
+		type: "shutdown-complete",
+	} satisfies ShutdownCompleteMessage);
 	// Worker will be terminated by main thread
 }
 

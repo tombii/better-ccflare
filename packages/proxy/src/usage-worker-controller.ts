@@ -94,7 +94,7 @@ export class UsageWorkerController {
 			this.pendingAcks.set(messageId, { timer });
 		}
 
-		this.worker!.postMessage(msg);
+		this.worker?.postMessage(msg);
 	}
 
 	terminate(): Promise<void> {
@@ -174,9 +174,7 @@ export class UsageWorkerController {
 		this.destroyWorker();
 
 		if (this.restartCount >= MAX_RESTARTS) {
-			log.error(
-				`Worker failed after ${MAX_RESTARTS} restarts — giving up`,
-			);
+			log.error(`Worker failed after ${MAX_RESTARTS} restarts — giving up`);
 			this.state = "stopped";
 			return;
 		}
@@ -221,15 +219,16 @@ export class UsageWorkerController {
 			const workerUrl = URL.createObjectURL(blob);
 			w = new Worker(workerUrl, { smol: true });
 		} else {
-			const workerPath = new URL(
-				"./post-processor.worker.ts",
-				import.meta.url,
-			).href;
+			const workerPath = new URL("./post-processor.worker.ts", import.meta.url)
+				.href;
 			w = new Worker(workerPath, { smol: true });
 		}
 
 		// Bun extension — don't keep the process alive for the worker alone
-		if ("unref" in w && typeof (w as { unref?: () => void }).unref === "function") {
+		if (
+			"unref" in w &&
+			typeof (w as { unref?: () => void }).unref === "function"
+		) {
 			(w as { unref: () => void }).unref();
 		}
 

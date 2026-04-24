@@ -873,8 +873,9 @@ async function createCodexOAuthAccount(
 	await dbOps.getAdapter().run(
 		`INSERT INTO accounts (
 			id, name, provider, api_key, refresh_token, access_token,
-			expires_at, created_at, request_count, total_requests, priority, custom_endpoint, model_mappings, model_fallbacks
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?)`,
+			expires_at, created_at, request_count, total_requests, priority, custom_endpoint, model_mappings, model_fallbacks,
+			refresh_token_issued_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?)`,
 		[
 			accountId,
 			name,
@@ -888,6 +889,7 @@ async function createCodexOAuthAccount(
 			validatedEndpoint,
 			validatedModelMappings,
 			validatedModelFallbacks,
+			now,
 		],
 	);
 
@@ -969,8 +971,9 @@ async function createQwenOAuthAccount(
 		`INSERT INTO accounts (
 			id, name, provider, api_key, refresh_token, access_token,
 			expires_at, created_at, request_count, total_requests, priority,
-			custom_endpoint, model_mappings, model_fallbacks
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?)`,
+			custom_endpoint, model_mappings, model_fallbacks,
+			refresh_token_issued_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?)`,
 		[
 			accountId,
 			name,
@@ -984,6 +987,7 @@ async function createQwenOAuthAccount(
 			resourceUrl,
 			validatedModelMappings,
 			validatedModelFallbacks,
+			now,
 		],
 	);
 

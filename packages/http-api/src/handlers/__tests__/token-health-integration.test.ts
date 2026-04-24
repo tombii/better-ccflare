@@ -17,7 +17,8 @@ const mockAccounts = [
 		name: "test-account-1",
 		provider: "anthropic",
 		refresh_token: "valid-refresh-token",
-		created_at: Date.now() - 30 * 24 * 60 * 60 * 1000, // 30 days ago
+		created_at: Date.now() - 120 * 24 * 60 * 60 * 1000, // 120 days ago (account is old)
+		refresh_token_issued_at: Date.now() - 30 * 24 * 60 * 60 * 1000, // token refreshed 30 days ago (healthy)
 		expires_at: Date.now() + 14 * 24 * 60 * 60 * 1000, // 14 days from now (healthy)
 		paused: false,
 		api_key: null,
@@ -34,15 +35,21 @@ const mockAccounts = [
 		priority: 0,
 		auto_fallback_enabled: false,
 		auto_refresh_enabled: false,
+		auto_pause_on_overage_enabled: false,
 		custom_endpoint: null,
 		model_mappings: null,
+		cross_region_mode: null,
+		model_fallbacks: null,
+		billing_type: null,
+		pause_reason: null,
 	},
 	{
 		id: "2",
 		name: "test-account-2",
 		provider: "anthropic",
 		refresh_token: "expiring-soon-token",
-		created_at: Date.now() - 95 * 24 * 60 * 60 * 1000, // 95 days ago (past 90 day max, will be expired)
+		created_at: Date.now() - 95 * 24 * 60 * 60 * 1000, // 95 days ago
+		refresh_token_issued_at: null, // No refresh_token_issued_at — falls back to created_at (past 90 day max, will be expired)
 		expires_at: Date.now() - 2 * 24 * 60 * 60 * 1000, // 2 days ago (expired)
 		paused: false,
 		api_key: null,
@@ -59,8 +66,13 @@ const mockAccounts = [
 		priority: 0,
 		auto_fallback_enabled: false,
 		auto_refresh_enabled: false,
+		auto_pause_on_overage_enabled: false,
 		custom_endpoint: null,
 		model_mappings: null,
+		cross_region_mode: null,
+		model_fallbacks: null,
+		billing_type: null,
+		pause_reason: null,
 	},
 	{
 		id: "3",
@@ -68,6 +80,7 @@ const mockAccounts = [
 		provider: "anthropic",
 		refresh_token: null, // No refresh token (console mode)
 		created_at: Date.now() - 30 * 24 * 60 * 60 * 1000,
+		refresh_token_issued_at: null,
 		expires_at: null,
 		paused: false,
 		api_key: "api-key", // API key account
@@ -84,8 +97,13 @@ const mockAccounts = [
 		priority: 0,
 		auto_fallback_enabled: false,
 		auto_refresh_enabled: false,
+		auto_pause_on_overage_enabled: false,
 		custom_endpoint: null,
 		model_mappings: null,
+		cross_region_mode: null,
+		model_fallbacks: null,
+		billing_type: null,
+		pause_reason: null,
 	},
 ];
 
@@ -278,6 +296,7 @@ describe("Error Handling", () => {
 				provider: "anthropic",
 				refresh_token: "token",
 				created_at: Date.now(),
+				refresh_token_issued_at: null,
 				expires_at: Date.now(),
 				paused: false,
 				api_key: null,
@@ -294,8 +313,13 @@ describe("Error Handling", () => {
 				priority: 0,
 				auto_fallback_enabled: false,
 				auto_refresh_enabled: false,
+				auto_pause_on_overage_enabled: false,
 				custom_endpoint: null,
 				model_mappings: null,
+				cross_region_mode: null,
+				model_fallbacks: null,
+				billing_type: null,
+				pause_reason: null,
 			},
 		];
 

@@ -127,7 +127,8 @@ export class APIRouter {
 	}
 
 	private registerHandlers(): void {
-		const { db, config, dbOps, getAsyncWriterHealth, getUsageWorkerHealth } = this.context;
+		const { db, config, dbOps, getAsyncWriterHealth, getUsageWorkerHealth } =
+			this.context;
 
 		// Create handlers
 		const healthHandler = createHealthHandler(

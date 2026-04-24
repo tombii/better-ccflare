@@ -42,8 +42,8 @@ import {
 	registerRefreshClearer,
 	sendWorkerConfigUpdate,
 	startGlobalTokenHealthChecks,
-	stopGlobalTokenHealthChecks,
 	startUsageWorker,
+	stopGlobalTokenHealthChecks,
 	terminateUsageWorker,
 } from "@better-ccflare/proxy";
 import { validatePathOrThrow } from "@better-ccflare/security";

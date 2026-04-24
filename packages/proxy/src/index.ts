@@ -36,12 +36,12 @@ export {
 	startUsageWorker,
 	terminateUsageWorker,
 } from "./proxy";
-export type { UsageWorkerHealth } from "./usage-worker-controller";
 export {
 	forwardToClient,
 	type ResponseHandlerOptions,
 } from "./response-handler";
 export type { ProxyRequest, ProxyResponse } from "./types";
+export type { UsageWorkerHealth } from "./usage-worker-controller";
 export type {
 	ChunkMessage,
 	ControlMessage,

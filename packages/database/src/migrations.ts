@@ -436,6 +436,15 @@ export function runMigrations(db: Database, dbPath?: string): void {
 			log.info("Added billing_type column to accounts table");
 		}
 
+		// Add refresh_token_issued_at column to track when the current refresh token was last issued
+		// This fixes false "token expired" reports on accounts older than 90 days (created_at is not updated on refresh)
+		if (!initialAccountsColumnNames.includes("refresh_token_issued_at")) {
+			db.prepare(
+				"ALTER TABLE accounts ADD COLUMN refresh_token_issued_at INTEGER",
+			).run();
+			log.info("Added refresh_token_issued_at column to accounts table");
+		}
+
 		// Add auto_pause_on_overage_enabled column for Anthropic accounts
 		if (!initialAccountsColumnNames.includes("auto_pause_on_overage_enabled")) {
 			db.prepare(

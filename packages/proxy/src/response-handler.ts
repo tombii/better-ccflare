@@ -5,10 +5,10 @@ import {
 } from "@better-ccflare/http-common";
 import { ANALYTICS_STREAM_SYMBOL } from "@better-ccflare/http-common/symbols";
 import type { Account } from "@better-ccflare/types";
-import type { UsageWorkerController } from "./usage-worker-controller";
 import type { ProxyContext } from "./handlers";
 import { handleRateLimitResponse } from "./handlers/response-processor";
 import { createSseRateLimitSniffer } from "./handlers/sse-rate-limit-sniffer";
+import type { UsageWorkerController } from "./usage-worker-controller";
 import type { ChunkMessage, EndMessage, StartMessage } from "./worker-messages";
 
 // Default cooldown for rate-limit errors detected mid-stream. SSE error

@@ -221,8 +221,8 @@ export class OAuthFlow {
 
 		// Handle claude-oauth mode — update OAuth tokens in place
 		await adapter.run(
-			`UPDATE accounts SET refresh_token = ?, access_token = ?, expires_at = ? WHERE id = ?`,
-			[tokens.refreshToken, tokens.accessToken, tokens.expiresAt, id],
+			`UPDATE accounts SET refresh_token = ?, access_token = ?, expires_at = ?, refresh_token_issued_at = ? WHERE id = ?`,
+			[tokens.refreshToken, tokens.accessToken, tokens.expiresAt, Date.now(), id],
 		);
 	}
 
@@ -282,8 +282,9 @@ export class OAuthFlow {
 			`
 			INSERT INTO accounts (
 				id, name, provider, api_key, refresh_token, access_token, expires_at,
-				created_at, request_count, total_requests, priority, custom_endpoint
-			) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, 0, 0, ?, ?)
+				created_at, request_count, total_requests, priority, custom_endpoint,
+				refresh_token_issued_at
+			) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, 0, 0, ?, ?, ?)
 			`,
 			[
 				id,
@@ -295,6 +296,7 @@ export class OAuthFlow {
 				Date.now(),
 				priority,
 				customEndpoint || null,
+				Date.now(),
 			],
 		);
 

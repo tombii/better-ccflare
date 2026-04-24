@@ -284,6 +284,7 @@ export class AutoRefreshScheduler {
 				model_fallbacks: null,
 				billing_type: null,
 				pause_reason: null,
+				refresh_token_issued_at: null,
 			};
 
 			// Emit request start event for analytics
@@ -752,18 +753,21 @@ export class AutoRefreshScheduler {
 					model_fallbacks: null,
 					billing_type: null,
 					pause_reason: null,
+					refresh_token_issued_at: null,
 				};
 
 				// Use refreshAccessTokenSafe to get deduplication and backoff handling
 				const refreshPromise = provider
 					.refreshToken(account, this.proxyContext.runtime.clientId)
 					.then(async (result) => {
+						const newRefreshToken = result.refreshToken ?? row.refresh_token;
 						await this.db.run(
-							`UPDATE accounts SET access_token = ?, expires_at = ?, refresh_token = ? WHERE id = ?`,
+							`UPDATE accounts SET access_token = ?, expires_at = ?, refresh_token = ?, refresh_token_issued_at = ? WHERE id = ?`,
 							[
 								result.accessToken,
 								result.expiresAt,
-								result.refreshToken ?? row.refresh_token,
+								newRefreshToken,
+								Date.now(),
 								row.id,
 							],
 						);
@@ -874,18 +878,21 @@ export class AutoRefreshScheduler {
 					model_fallbacks: null,
 					billing_type: null,
 					pause_reason: null,
+					refresh_token_issued_at: null,
 				};
 
 				// Register in refreshInFlight so concurrent request-triggered refreshes join this one
 				const refreshPromise = provider
 					.refreshToken(account, this.proxyContext.runtime.clientId)
 					.then(async (result) => {
+						const newRefreshToken = result.refreshToken ?? row.refresh_token;
 						await this.db.run(
-							`UPDATE accounts SET access_token = ?, expires_at = ?, refresh_token = ? WHERE id = ?`,
+							`UPDATE accounts SET access_token = ?, expires_at = ?, refresh_token = ?, refresh_token_issued_at = ? WHERE id = ?`,
 							[
 								result.accessToken,
 								result.expiresAt,
-								result.refreshToken ?? row.refresh_token,
+								newRefreshToken,
+								Date.now(),
 								row.id,
 							],
 						);

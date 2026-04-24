@@ -109,6 +109,7 @@ export interface AccountRow {
 	model_fallbacks?: string | null; // JSON string for model family fallback mappings
 	billing_type?: string | null; // Per-account billing override
 	pause_reason?: string | null; // null=not paused, 'manual'=user paused, 'failure_threshold'=auto-refresh failures, 'overage'=billing overage
+	refresh_token_issued_at?: number | null; // Timestamp when the current refresh token was issued (updated on each token refresh)
 }
 
 // Domain model - used throughout the application
@@ -141,6 +142,7 @@ export interface Account {
 	model_fallbacks: string | null; // JSON string for model family fallback mappings
 	billing_type: string | null;
 	pause_reason: string | null; // null=not paused, 'manual'=user paused, 'failure_threshold'=auto-refresh failures, 'overage'=billing overage
+	refresh_token_issued_at: number | null; // Timestamp when the current refresh token was issued (updated on each token refresh)
 }
 
 // Session statistics for 5-hour token window
@@ -304,6 +306,7 @@ export function toAccount(row: AccountRow): Account {
 		model_fallbacks: row.model_fallbacks || null,
 		billing_type: row.billing_type || null,
 		pause_reason: row.pause_reason || null,
+		refresh_token_issued_at: toNumOrNull(row.refresh_token_issued_at),
 	};
 }
 

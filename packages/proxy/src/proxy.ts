@@ -20,10 +20,7 @@ import {
 	validateProviderPath,
 } from "./handlers";
 import { UsageWorkerController } from "./usage-worker-controller";
-import type {
-	ConfigUpdateMessage,
-	SummaryMessage,
-} from "./worker-messages";
+import type { ConfigUpdateMessage, SummaryMessage } from "./worker-messages";
 
 export type { ProxyContext } from "./handlers";
 
@@ -35,13 +32,19 @@ let pendingStorePayloads: boolean | null = null;
 
 const usageWorkerController = new UsageWorkerController(
 	(msg: SummaryMessage) => {
-		cacheBodyStore.onSummary(msg.summary.id, msg.summary.cacheCreationInputTokens);
+		cacheBodyStore.onSummary(
+			msg.summary.id,
+			msg.summary.cacheCreationInputTokens,
+		);
 		requestEvents.emit("event", { type: "summary", payload: msg.summary });
 	},
 	() => {
 		// Apply deferred config update once worker is ready
 		if (pendingStorePayloads !== null) {
-			const msg: ConfigUpdateMessage = { type: "config-update", storePayloads: pendingStorePayloads };
+			const msg: ConfigUpdateMessage = {
+				type: "config-update",
+				storePayloads: pendingStorePayloads,
+			};
 			usageWorkerController.postMessage(msg);
 			pendingStorePayloads = null;
 		}

@@ -247,6 +247,12 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 				"ALTER TABLE accounts ADD COLUMN auto_refresh_enabled INTEGER DEFAULT 0",
 		},
 		{
+			table: "accounts",
+			column: "refresh_token_issued_at",
+			definition:
+				"ALTER TABLE accounts ADD COLUMN refresh_token_issued_at BIGINT",
+		},
+		{
 			table: "requests",
 			column: "api_key_id",
 			definition: "ALTER TABLE requests ADD COLUMN api_key_id TEXT",
