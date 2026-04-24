@@ -3,8 +3,11 @@
  * Handles both streaming and non-streaming responses
  */
 
+// ===== MAIN THREAD → WORKER =====
+
 export interface StartMessage {
 	type: "start";
+	messageId: string; // envelope ID for ack tracking
 	requestId: string;
 	accountId: string | null;
 	method: string;
@@ -75,20 +78,33 @@ export type WorkerMessage =
 	| ChunkMessage
 	| EndMessage
 	| ControlMessage
-	| ConfigUpdateMessage
-	| SummaryMessage;
+	| ConfigUpdateMessage;
 
-// Response from worker (if needed in future)
-export interface WorkerResponse {
-	type: "ack" | "error";
-	requestId?: string;
-	message?: string;
+// ===== WORKER → MAIN THREAD =====
+
+/** Worker is initialized and ready to accept messages */
+export interface ReadyMessage {
+	type: "ready";
 }
 
-// Worker to main thread messages
+/** Worker acknowledges a StartMessage envelope */
+export interface AckMessage {
+	type: "ack";
+	messageId: string;
+}
+
+/** Worker has flushed all pending work and is safe to terminate */
+export interface ShutdownCompleteMessage {
+	type: "shutdown-complete";
+}
+
 export interface SummaryMessage {
 	type: "summary";
 	summary: import("@better-ccflare/types").RequestResponse;
 }
 
-export type OutgoingWorkerMessage = SummaryMessage;
+export type OutgoingWorkerMessage =
+	| ReadyMessage
+	| AckMessage
+	| ShutdownCompleteMessage
+	| SummaryMessage;

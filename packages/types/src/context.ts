@@ -21,6 +21,17 @@ export interface APIContext {
 		port: number;
 		tlsEnabled: boolean;
 	};
+	getAsyncWriterHealth?: () => {
+		healthy: boolean;
+		failureCount: number;
+		queuedJobs: number;
+	};
+	getUsageWorkerHealth?: () => {
+		state: string;
+		pendingAcks: number;
+		lastError: string | null;
+		startedAt: number | null;
+	};
 }
 
 // Load balancing strategy interface

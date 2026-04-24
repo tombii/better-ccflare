@@ -5,6 +5,7 @@ import {
 } from "@better-ccflare/http-common";
 import { ANALYTICS_STREAM_SYMBOL } from "@better-ccflare/http-common/symbols";
 import type { Account } from "@better-ccflare/types";
+import type { UsageWorkerController } from "./usage-worker-controller";
 import type { ProxyContext } from "./handlers";
 import { handleRateLimitResponse } from "./handlers/response-processor";
 import { createSseRateLimitSniffer } from "./handlers/sse-rate-limit-sniffer";
@@ -21,18 +22,14 @@ const MID_STREAM_RATE_LIMIT_COOLDOWN_MS = 5 * 60 * 60 * 1000;
 // 4MB so afterburn can see full conversation history for friction analysis.
 const MAX_REQUEST_BODY_BYTES = 4 * 1024 * 1024;
 
-/**
- * Safely post a message to the worker, handling terminated workers
- */
 function safePostMessage(
-	worker: Worker,
+	worker: UsageWorkerController,
 	message: StartMessage | ChunkMessage | EndMessage,
 ): void {
 	try {
 		worker.postMessage(message);
 	} catch (_error) {
-		// Worker has been terminated, silently ignore
-		// The error will be logged by the worker error handler in proxy.ts
+		// Worker not ready or terminated — silently ignore
 	}
 }
 
@@ -114,6 +111,7 @@ export async function forwardToClient(
 	if (shouldProcessRequest) {
 		const startMessage: StartMessage = {
 			type: "start",
+			messageId: crypto.randomUUID(),
 			requestId,
 			accountId: account?.id || null,
 			method,

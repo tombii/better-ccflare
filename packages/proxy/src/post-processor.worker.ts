@@ -18,9 +18,12 @@ import { init, Tiktoken } from "@dqbd/tiktoken/lite/init";
 import { EMBEDDED_TIKTOKEN_WASM } from "./embedded-tiktoken-wasm";
 import { combineChunks } from "./stream-tee";
 import type {
+	AckMessage,
 	ChunkMessage,
 	ConfigUpdateMessage,
 	EndMessage,
+	ReadyMessage,
+	ShutdownCompleteMessage,
 	StartMessage,
 	SummaryMessage,
 	WorkerMessage,
@@ -87,6 +90,7 @@ let tokenEncoder: Tiktoken | null = null;
 		);
 
 		log.info("Tiktoken encoder initialized successfully with embedded WASM");
+		self.postMessage({ type: "ready" } satisfies ReadyMessage);
 	} catch (error) {
 		log.error("Failed to initialize tiktoken encoder:", error);
 		console.error("[WORKER] Tiktoken initialization failed:", error);
@@ -398,6 +402,8 @@ function processStreamChunk(chunk: Uint8Array, state: RequestState): void {
 }
 
 async function handleStart(msg: StartMessage): Promise<void> {
+	self.postMessage({ type: "ack", messageId: msg.messageId } satisfies AckMessage);
+
 	// Check if we should skip logging this request
 	const shouldSkip = !shouldLogRequest(msg.path, msg.responseStatus);
 
@@ -875,6 +881,7 @@ async function handleShutdown(): Promise<void> {
 
 	await asyncWriter.dispose();
 	dbOps.close();
+	self.postMessage({ type: "shutdown-complete" } satisfies ShutdownCompleteMessage);
 	// Worker will be terminated by main thread
 }
 

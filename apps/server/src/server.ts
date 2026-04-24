@@ -34,6 +34,7 @@ import {
 	AutoRefreshScheduler,
 	CacheKeepaliveScheduler,
 	getUsageWorker,
+	getUsageWorkerHealth,
 	getValidAccessToken,
 	handleProxy,
 	type ProxyContext,
@@ -42,6 +43,7 @@ import {
 	sendWorkerConfigUpdate,
 	startGlobalTokenHealthChecks,
 	stopGlobalTokenHealthChecks,
+	startUsageWorker,
 	terminateUsageWorker,
 } from "@better-ccflare/proxy";
 import { validatePathOrThrow } from "@better-ccflare/security";
@@ -568,6 +570,8 @@ export default async function startServer(options?: {
 			port,
 			tlsEnabled,
 		},
+		getAsyncWriterHealth: () => asyncWriter.getHealth(),
+		getUsageWorkerHealth: () => getUsageWorkerHealth(),
 	});
 
 	// Initialize AuthService for proxy authentication
@@ -701,6 +705,9 @@ export default async function startServer(options?: {
 	// Now create the strategy with runtime config
 	const strategy = new SessionStrategy(runtimeConfig.sessionDurationMs);
 	strategy.initialize(dbOps);
+
+	// Start usage worker eagerly (before first request)
+	startUsageWorker();
 
 	// Proxy context
 	const usageWorker = getUsageWorker();
@@ -1299,7 +1306,7 @@ async function handleGracefulShutdown(signal: string) {
 		}
 
 		usageCache.clear(); // Stop all usage polling
-		terminateUsageWorker();
+		await terminateUsageWorker();
 		await shutdown();
 		console.log("✅ Shutdown complete");
 		process.exit(0);

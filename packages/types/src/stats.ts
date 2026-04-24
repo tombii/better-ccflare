@@ -113,6 +113,19 @@ export interface HealthResponse {
 	accounts: number;
 	timestamp: string;
 	strategy: string;
+	runtime?: {
+		asyncWriter: {
+			healthy: boolean;
+			failureCount: number;
+			queuedJobs: number;
+		};
+		usageWorker: {
+			state: string;
+			pendingAcks: number;
+			lastError: string | null;
+			startedAt: number | null;
+		};
+	};
 }
 
 // Config types

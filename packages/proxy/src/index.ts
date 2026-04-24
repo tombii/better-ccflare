@@ -29,11 +29,14 @@ export {
 } from "./handlers";
 export {
 	getUsageWorker,
+	getUsageWorkerHealth,
 	handleProxy,
 	type ProxyContext,
 	sendWorkerConfigUpdate,
+	startUsageWorker,
 	terminateUsageWorker,
 } from "./proxy";
+export type { UsageWorkerHealth } from "./usage-worker-controller";
 export {
 	forwardToClient,
 	type ResponseHandlerOptions,

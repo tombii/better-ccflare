@@ -17,14 +17,12 @@ import {
 	proxyUnauthenticated,
 	proxyWithAccount,
 	selectAccountsForRequest,
-	TIMING,
 	validateProviderPath,
 } from "./handlers";
-import { EMBEDDED_WORKER_CODE } from "./inline-worker";
+import { UsageWorkerController } from "./usage-worker-controller";
 import type {
 	ConfigUpdateMessage,
-	ControlMessage,
-	OutgoingWorkerMessage,
+	SummaryMessage,
 } from "./worker-messages";
 
 export type { ProxyContext } from "./handlers";
@@ -33,137 +31,47 @@ const log = new Logger("Proxy");
 
 // ===== WORKER MANAGEMENT =====
 
-// Create usage worker instance
-let usageWorkerInstance: Worker | null = null;
-let shutdownTimerId: Timer | null = null;
+let pendingStorePayloads: boolean | null = null;
 
-/**
- * Gets or creates the usage worker instance
- * @returns The usage worker instance
- */
-export function getUsageWorker(): Worker {
-	if (!usageWorkerInstance) {
-		try {
-			// Check if we have embedded worker code (production build)
-			if (EMBEDDED_WORKER_CODE) {
-				// Decode the base64-encoded worker code
-				const workerCode = Buffer.from(EMBEDDED_WORKER_CODE, "base64").toString(
-					"utf8",
-				);
-				// Create a blob URL from the worker code
-				const blob = new Blob([workerCode], { type: "text/javascript" });
-				const workerUrl = URL.createObjectURL(blob);
-				log.info("Post-processor worker starting from embedded code");
-				usageWorkerInstance = new Worker(workerUrl, { smol: true });
-				log.info("Post-processor worker started");
-			} else {
-				// Development: use TypeScript file
-				const workerPath = new URL(
-					"./post-processor.worker.ts",
-					import.meta.url,
-				).href;
-				log.info(`Post-processor worker starting from: ${workerPath}`);
-				usageWorkerInstance = new Worker(workerPath, { smol: true });
-				log.info("Post-processor worker started");
-			}
-
-			// Bun extends Worker with unref method
-			if (
-				"unref" in usageWorkerInstance &&
-				typeof usageWorkerInstance.unref === "function"
-			) {
-				usageWorkerInstance.unref(); // Don't keep process alive
-			}
-
-			// Listen for summary messages from worker
-			usageWorkerInstance.onmessage = (ev) => {
-				const data = ev.data as OutgoingWorkerMessage;
-				if (data.type === "summary") {
-					// Promote staged request body to per-account cache slot if caching was used
-					cacheBodyStore.onSummary(
-						data.summary.id,
-						data.summary.cacheCreationInputTokens,
-					);
-					requestEvents.emit("event", {
-						type: "summary",
-						payload: data.summary,
-					});
-				}
-			};
-
-			// Handle worker errors
-			usageWorkerInstance.onerror = (error: ErrorEvent) => {
-				log.error("Worker error occurred in usage tracking system", {
-					message: error.message,
-					filename: error.filename,
-					lineno: error.lineno,
-					colno: error.colno,
-					stack:
-						error.error?.stack ||
-						(error as ErrorEvent & { stack?: string }).stack,
-					error: error.error,
-					timestamp: new Date().toISOString(),
-					workerType: "usage-worker",
-					impact: "Usage statistics collection temporarily unavailable",
-				});
-				// Reset worker instance on error to allow recreation
-				usageWorkerInstance = null;
-			};
-		} catch (error) {
-			log.error("Failed to create worker:", error);
-			throw error;
+const usageWorkerController = new UsageWorkerController(
+	(msg: SummaryMessage) => {
+		cacheBodyStore.onSummary(msg.summary.id, msg.summary.cacheCreationInputTokens);
+		requestEvents.emit("event", { type: "summary", payload: msg.summary });
+	},
+	() => {
+		// Apply deferred config update once worker is ready
+		if (pendingStorePayloads !== null) {
+			const msg: ConfigUpdateMessage = { type: "config-update", storePayloads: pendingStorePayloads };
+			usageWorkerController.postMessage(msg);
+			pendingStorePayloads = null;
 		}
-	}
-	return usageWorkerInstance;
+	},
+);
+
+export function getUsageWorker(): UsageWorkerController {
+	return usageWorkerController;
 }
 
-/**
- * Sends a config update to the usage worker
- */
+export function startUsageWorker(): void {
+	usageWorkerController.start();
+}
+
 export function sendWorkerConfigUpdate(storePayloads: boolean): void {
-	if (!usageWorkerInstance) return;
-	const msg: ConfigUpdateMessage = { type: "config-update", storePayloads };
-	try {
-		usageWorkerInstance.postMessage(msg);
-	} catch (_error) {
-		// Worker not ready yet, ignore
+	if (!usageWorkerController.isReady()) {
+		// Defer until worker is ready
+		pendingStorePayloads = storePayloads;
+		return;
 	}
+	const msg: ConfigUpdateMessage = { type: "config-update", storePayloads };
+	usageWorkerController.postMessage(msg);
 }
 
-/**
- * Gracefully terminates the usage worker
- */
-export function terminateUsageWorker(): void {
-	if (usageWorkerInstance) {
-		// Clear any existing shutdown timer to prevent duplicate timeouts
-		if (shutdownTimerId) {
-			clearTimeout(shutdownTimerId);
-			shutdownTimerId = null;
-		}
+export function terminateUsageWorker(): Promise<void> {
+	return usageWorkerController.terminate();
+}
 
-		// Send shutdown message to allow worker to flush
-		const shutdownMsg: ControlMessage = { type: "shutdown" };
-		try {
-			usageWorkerInstance.postMessage(shutdownMsg);
-		} catch (_error) {
-			// Worker already terminated, just clean up
-			usageWorkerInstance = null;
-			return;
-		}
-
-		// Give worker time to flush before terminating
-		shutdownTimerId = setTimeout(() => {
-			if (usageWorkerInstance) {
-				try {
-					usageWorkerInstance.terminate();
-				} catch (_error) {
-					// Ignore errors during termination
-				}
-				usageWorkerInstance = null;
-			}
-			shutdownTimerId = null;
-		}, TIMING.WORKER_SHUTDOWN_DELAY);
-	}
+export function getUsageWorkerHealth() {
+	return usageWorkerController.getHealth();
 }
 
 // ===== MAIN HANDLER =====

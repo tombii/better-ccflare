@@ -127,10 +127,15 @@ export class APIRouter {
 	}
 
 	private registerHandlers(): void {
-		const { db, config, dbOps } = this.context;
+		const { db, config, dbOps, getAsyncWriterHealth, getUsageWorkerHealth } = this.context;
 
 		// Create handlers
-		const healthHandler = createHealthHandler(dbOps.getAdapter(), config);
+		const healthHandler = createHealthHandler(
+			dbOps.getAdapter(),
+			config,
+			getAsyncWriterHealth,
+			getUsageWorkerHealth,
+		);
 		const statsHandler = createStatsHandler(dbOps);
 		const statsResetHandler = createStatsResetHandler(dbOps);
 		const accountsHandler = createAccountsListHandler(dbOps);
