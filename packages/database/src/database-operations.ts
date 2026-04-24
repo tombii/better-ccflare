@@ -708,7 +708,9 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		return this.requests.getRequestsByAccount(since);
 	}
 
-	// Cleanup operations (payload by age; request metadata by age; plus orphan sweep)
+	// Cleanup operations — two explicit passes:
+	// Pass 1: delete payloads older than payloadRetentionMs (+ orphan sweep)
+	// Pass 2: delete request metadata older than requestRetentionMs
 	async cleanupOldRequests(
 		payloadRetentionMs: number,
 		requestRetentionMs?: number,
@@ -717,8 +719,14 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		removedPayloads: number;
 	}> {
 		const now = Date.now();
-		const payloadCutoff = now - payloadRetentionMs;
 
+		// Pass 1 — payloads
+		const payloadCutoff = now - payloadRetentionMs;
+		const removedPayloadsByAge =
+			await this.requests.deletePayloadsOlderThan(payloadCutoff);
+		const removedOrphans = await this.requests.deleteOrphanedPayloads();
+
+		// Pass 2 — request metadata
 		let removedRequests = 0;
 		if (
 			typeof requestRetentionMs === "number" &&
@@ -727,9 +735,7 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 			const requestCutoff = now - requestRetentionMs;
 			removedRequests = await this.requests.deleteOlderThan(requestCutoff);
 		}
-		const removedPayloadsByAge =
-			await this.requests.deletePayloadsOlderThan(payloadCutoff);
-		const removedOrphans = await this.requests.deleteOrphanedPayloads();
+
 		return {
 			removedRequests,
 			removedPayloads: removedPayloadsByAge + removedOrphans,

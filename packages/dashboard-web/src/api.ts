@@ -1587,7 +1587,8 @@ class API extends HttpClient {
 	async cleanupNow(): Promise<{
 		removedRequests: number;
 		removedPayloads: number;
-		cutoffIso: string;
+		payloadCutoffIso: string;
+		requestCutoffIso: string;
 	}> {
 		const startTime = Date.now();
 		const url = "/api/maintenance/cleanup";
@@ -1598,7 +1599,8 @@ class API extends HttpClient {
 			const response = await this.post<{
 				removedRequests: number;
 				removedPayloads: number;
-				cutoffIso: string;
+				payloadCutoffIso: string;
+				requestCutoffIso: string;
 			}>(url);
 			const duration = Date.now() - startTime;
 			this.logger.debug(`← POST ${url} - 200 (${duration}ms)`);

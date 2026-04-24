@@ -106,6 +106,10 @@ export function DataRetentionCard() {
 							pressure — token counts, costs, and analytics are always saved
 							regardless.
 						</p>
+						<p className="text-xs text-amber-500 mt-0.5">
+							Warning: storing payloads can significantly grow the database size
+							over time.
+						</p>
 					</div>
 					<Switch
 						checked={data?.storePayloads ?? true}
@@ -116,31 +120,31 @@ export function DataRetentionCard() {
 					/>
 				</div>
 
-				<div className="pt-1">
+				<div className="pt-1 flex items-center gap-2">
 					<Button
 						variant="secondary"
 						size="sm"
 						onClick={() => cleanupNow.mutate()}
 						disabled={cleanupNow.isPending}
 					>
-						Clean up now
+						{cleanupNow.isPending ? "Cleaning up…" : "Clean up now"}
 					</Button>
 					<Button
 						variant="outline"
 						size="sm"
-						className="ml-2"
 						onClick={() => compactDb.mutate()}
 						disabled={compactDb.isPending}
 					>
-						Compact database
+						{compactDb.isPending ? "Compacting…" : "Compact database"}
 					</Button>
 				</div>
 
 				{cleanupNow.data && (
 					<p className="text-xs text-muted-foreground">
-						Removed {cleanupNow.data.removedRequests} requests and{" "}
-						{cleanupNow.data.removedPayloads} payloads older than{" "}
-						{new Date(cleanupNow.data.cutoffIso).toLocaleString()}.
+						Removed {cleanupNow.data.removedPayloads} payloads (older than{" "}
+						{new Date(cleanupNow.data.payloadCutoffIso).toLocaleString()}) and{" "}
+						{cleanupNow.data.removedRequests} requests (older than{" "}
+						{new Date(cleanupNow.data.requestCutoffIso).toLocaleString()}).
 					</p>
 				)}
 

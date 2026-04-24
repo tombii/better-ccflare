@@ -1175,9 +1175,10 @@ Examples:
 	}
 
 	if (parsed.clearHistory) {
-		const result = await clearRequestHistory(dbOps);
+		const cliConfig = container.resolve<Config>(SERVICE_KEYS.Config);
+		const result = await clearRequestHistory(dbOps, cliConfig);
 		console.log(
-			`✅ Request history cleared successfully (${result.count} records removed)`,
+			`✅ Request history cleared successfully (${result.removedPayloads} payloads, ${result.removedRequests} requests removed)`,
 		);
 		await exitGracefully(0);
 	}

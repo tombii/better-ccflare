@@ -1,3 +1,4 @@
+import type { Config } from "@better-ccflare/config";
 import type { DatabaseOperations } from "@better-ccflare/database";
 
 /**
@@ -11,12 +12,15 @@ export async function resetAllStats(dbOps: DatabaseOperations): Promise<void> {
 }
 
 /**
- * Clear all request history
+ * Clear request history using the configured retention windows.
+ * Pass 1: delete payloads older than payloadDays.
+ * Pass 2: delete request metadata older than requestDays.
  */
 export async function clearRequestHistory(
 	dbOps: DatabaseOperations,
-): Promise<{ count: number }> {
-	const adapter = dbOps.getAdapter();
-	const changes = await adapter.runWithChanges("DELETE FROM requests");
-	return { count: changes };
+	config: Config,
+): Promise<{ removedRequests: number; removedPayloads: number }> {
+	const payloadMs = config.getDataRetentionDays() * 24 * 60 * 60 * 1000;
+	const requestMs = config.getRequestRetentionDays() * 24 * 60 * 60 * 1000;
+	return dbOps.cleanupOldRequests(payloadMs, requestMs);
 }

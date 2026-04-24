@@ -164,8 +164,10 @@ export async function runCli(argv: string[]): Promise<void> {
 			}
 
 			case "clear-history": {
-				const result = await clearRequestHistory(dbOps);
-				console.log(`Cleared ${result.count} request records`);
+				const result = await clearRequestHistory(dbOps, config);
+				console.log(
+					`Cleared ${result.removedPayloads} payloads and ${result.removedRequests} request records`,
+				);
 				break;
 			}
 

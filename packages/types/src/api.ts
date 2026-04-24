@@ -45,7 +45,8 @@ export interface RetentionSetRequest {
 export interface CleanupResponse {
 	removedRequests: number;
 	removedPayloads: number;
-	cutoffIso: string;
+	payloadCutoffIso: string;
+	requestCutoffIso: string;
 }
 
 export interface CompactResponse {

@@ -36,13 +36,12 @@ export function createCleanupHandler(
 				vacuumed: compactResult.vacuumed,
 			});
 		}
-		const cutoffIso = new Date(
-			Date.now() - Math.min(payloadMs, requestMs),
-		).toISOString();
+		const now = Date.now();
 		const payload: CleanupResponse = {
 			removedRequests,
 			removedPayloads,
-			cutoffIso,
+			payloadCutoffIso: new Date(now - payloadMs).toISOString(),
+			requestCutoffIso: new Date(now - requestMs).toISOString(),
 		};
 		return jsonResponse(payload);
 	};
