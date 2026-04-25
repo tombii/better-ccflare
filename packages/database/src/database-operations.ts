@@ -159,6 +159,10 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 	private adapter: BunSqlAdapter;
 	/** Raw bun:sqlite Database — only set in SQLite mode */
 	private sqliteDb?: Database;
+	/** Resolved path to the SQLite DB file — used by the vacuum worker */
+	private resolvedDbPath?: string;
+	/** Prevents concurrent compact() calls from spawning multiple vacuum workers */
+	private compacting = false;
 	private runtime?: RuntimeConfig;
 	private dbConfig: DatabaseConfig;
 	private retryConfig: DatabaseRetryConfig;
@@ -223,6 +227,7 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		} else {
 			this.isSQLite = true;
 			const resolvedPath = dbPath ?? resolveDbPath();
+			this.resolvedDbPath = resolvedPath;
 
 			// Ensure the directory exists
 			const dir = dirname(resolvedPath);
@@ -806,68 +811,69 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		walTruncateBusy?: number;
 		error?: string;
 	}> {
-		if (!this.sqliteDb) {
+		if (!this.sqliteDb || !this.resolvedDbPath) {
 			return { walBusy: 0, walLog: 0, walCheckpointed: 0, vacuumed: false };
 		}
 
-		let walBusy = 0;
-		let walLog = 0;
-		let walCheckpointed = 0;
-		let vacuumed = false;
-		let walTruncateBusy: number | undefined;
-
-		try {
-			// Step 1: RESTART checkpoint — drains WAL into main DB and resets WAL
-			// write position so the next VACUUM starts with a clean slate.
-			const ckpt = this.sqliteDb
-				.query("PRAGMA wal_checkpoint(RESTART)")
-				.get() as { busy: number; log: number; checkpointed: number } | null;
-
-			if (ckpt) {
-				walBusy = ckpt.busy;
-				walLog = ckpt.log;
-				walCheckpointed = ckpt.checkpointed;
-				if (ckpt.busy > 0) {
-					console.warn(
-						`[compact] WAL checkpoint: ${ckpt.busy} busy reader(s), ` +
-							`${ckpt.checkpointed}/${ckpt.log} frames checkpointed. ` +
-							"VACUUM will still run but WAL may not fully shrink.",
-					);
-				}
-			}
-
-			// Step 2: VACUUM — rewrites the main DB file, reclaiming free pages.
-			this.sqliteDb.exec("VACUUM");
-			vacuumed = true;
-
-			// Step 3: TRUNCATE checkpoint — resets WAL to zero bytes now that
-			// VACUUM has produced a clean main DB.
-			const truncCkpt = this.sqliteDb
-				.query("PRAGMA wal_checkpoint(TRUNCATE)")
-				.get() as { busy: number; log: number; checkpointed: number } | null;
-
-			if (truncCkpt) {
-				walTruncateBusy = truncCkpt.busy;
-				if (truncCkpt.busy > 0) {
-					console.warn(
-						`[compact] TRUNCATE checkpoint: ${truncCkpt.busy} busy reader(s) — WAL file may not be zeroed.`,
-					);
-				}
-			}
-		} catch (err) {
-			const msg = err instanceof Error ? err.message : String(err);
-			console.error(`[compact] Database compaction failed: ${msg}`);
+		if (this.compacting) {
 			return {
-				walBusy,
-				walLog,
-				walCheckpointed,
-				vacuumed,
-				walTruncateBusy,
-				error: msg,
+				walBusy: 0,
+				walLog: 0,
+				walCheckpointed: 0,
+				vacuumed: false,
+				error: "Compaction already in progress",
 			};
 		}
 
-		return { walBusy, walLog, walCheckpointed, vacuumed, walTruncateBusy };
+		// Run the WAL checkpoint + VACUUM + TRUNCATE sequence in a Worker thread
+		// so the main Bun event loop stays free to serve health checks and other
+		// requests during what can be a minutes-long exclusive DB operation.
+		const dbPath = this.resolvedDbPath;
+		const workerUrl = new URL("./vacuum-worker.ts", import.meta.url).href;
+		const worker = new Worker(workerUrl);
+		this.compacting = true;
+
+		try {
+			const result = await new Promise<{
+				ok: boolean;
+				walBusy?: number;
+				walLog?: number;
+				walCheckpointed?: number;
+				walTruncateBusy?: number;
+				error?: string;
+			}>((resolve, reject) => {
+				worker.onmessage = (event: MessageEvent) => resolve(event.data);
+				worker.onerror = (event: ErrorEvent) => reject(new Error(event.message));
+				worker.postMessage({
+					dbPath,
+					busyTimeoutMs: this.dbConfig.busyTimeoutMs ?? 10000,
+				});
+			});
+
+			if (!result.ok) {
+				const msg = result.error ?? "Unknown error in vacuum worker";
+				console.error(`[compact] Database compaction failed: ${msg}`);
+				return {
+					walBusy: result.walBusy ?? 0,
+					walLog: result.walLog ?? 0,
+					walCheckpointed: result.walCheckpointed ?? 0,
+					vacuumed: false,
+					walTruncateBusy: result.walTruncateBusy,
+					error: msg,
+				};
+			}
+
+			return {
+				walBusy: result.walBusy ?? 0,
+				walLog: result.walLog ?? 0,
+				walCheckpointed: result.walCheckpointed ?? 0,
+				vacuumed: true,
+				walTruncateBusy: result.walTruncateBusy,
+			};
+		} finally {
+			this.compacting = false;
+			worker.terminate();
+		}
 	}
 
 	/** Incremental vacuum - reclaims space without blocking (SQLite only) */
