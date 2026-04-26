@@ -16,6 +16,10 @@ type VacuumResult =
 	| {
 			ok: false;
 			error: string;
+			walBusy?: number;
+			walLog?: number;
+			walCheckpointed?: number;
+			walTruncateBusy?: number;
 	  };
 
 self.onmessage = (event: MessageEvent<VacuumRequest>) => {
@@ -28,7 +32,7 @@ self.onmessage = (event: MessageEvent<VacuumRequest>) => {
 	let db: Database | undefined;
 	try {
 		db = new Database(dbPath);
-		db.exec(`PRAGMA busy_timeout = ${busyTimeoutMs}`);
+		db.exec(`PRAGMA busy_timeout = ${Math.max(0, Math.trunc(Number(busyTimeoutMs) || 10000))}`);
 		db.exec("PRAGMA journal_mode = WAL");
 
 		const ckpt = db.query("PRAGMA wal_checkpoint(RESTART)").get() as {
@@ -82,6 +86,10 @@ self.onmessage = (event: MessageEvent<VacuumRequest>) => {
 		self.postMessage({
 			ok: false,
 			error: err instanceof Error ? err.message : String(err),
+			walBusy,
+			walLog,
+			walCheckpointed,
+			walTruncateBusy,
 		} satisfies VacuumResult);
 	}
 };

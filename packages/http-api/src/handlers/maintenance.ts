@@ -27,7 +27,11 @@ export function createCleanupHandler(
 		const payload: CleanupResponse = {
 			removedRequests,
 			removedPayloads,
-			payloadCutoffIso: new Date(now - payloadMs).toISOString(),
+			// null signals "all payloads removed" (storage disabled); avoids
+			// rendering a misleading "older than [right now]" timestamp in the UI.
+			payloadCutoffIso: config.getStorePayloads()
+				? new Date(now - payloadMs).toISOString()
+				: null,
 			requestCutoffIso: new Date(now - requestMs).toISOString(),
 			dbSizeBytes,
 			tableRowCounts,

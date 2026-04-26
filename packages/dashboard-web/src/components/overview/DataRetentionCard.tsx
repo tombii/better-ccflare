@@ -149,8 +149,11 @@ export function DataRetentionCard() {
 				{cleanupNow.data && (
 					<div className="text-xs text-muted-foreground space-y-1">
 						<p>
-							Removed {cleanupNow.data.removedPayloads} payloads (older than{" "}
-							{new Date(cleanupNow.data.payloadCutoffIso).toLocaleString()}) and{" "}
+							Removed {cleanupNow.data.removedPayloads} payloads (
+							{cleanupNow.data.payloadCutoffIso
+								? <>older than {new Date(cleanupNow.data.payloadCutoffIso).toLocaleString()}</>
+								: <>all — storage disabled</>
+							}) and{" "}
 							{cleanupNow.data.removedRequests} requests (older than{" "}
 							{new Date(cleanupNow.data.requestCutoffIso).toLocaleString()}).
 						</p>

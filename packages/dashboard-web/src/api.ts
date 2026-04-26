@@ -1587,7 +1587,7 @@ class API extends HttpClient {
 	async cleanupNow(): Promise<{
 		removedRequests: number;
 		removedPayloads: number;
-		payloadCutoffIso: string;
+		payloadCutoffIso: string | null;
 		requestCutoffIso: string;
 		dbSizeBytes: number;
 		tableRowCounts: Array<{ name: string; rowCount: number; dataBytes?: number }>;
@@ -1601,7 +1601,7 @@ class API extends HttpClient {
 			const response = await this.post<{
 				removedRequests: number;
 				removedPayloads: number;
-				payloadCutoffIso: string;
+				payloadCutoffIso: string | null;
 				requestCutoffIso: string;
 				dbSizeBytes: number;
 				tableRowCounts: Array<{ name: string; rowCount: number; dataBytes?: number }>;
