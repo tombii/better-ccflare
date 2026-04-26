@@ -261,6 +261,10 @@ export function createAccountsListHandler(dbOps: DatabaseOperations) {
 									"UPDATE accounts SET rate_limited_until = NULL WHERE id = ?",
 									[account.id],
 								);
+								// Also update the in-memory object so the API response returned
+								// by this handler immediately reflects the cleared state.
+								account.rate_limited_until = null;
+								account.rate_limited = 0;
 								log.info(
 									`Cleared stale rate_limited_until for ${account.name}: usage API shows ${utilization}% utilization (seat reassignment or early reset)`,
 								);
