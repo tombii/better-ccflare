@@ -109,12 +109,44 @@ export class BunSqlAdapter {
 	}
 
 	/**
+	 * Retry a synchronous SQLite call asynchronously when the database is
+	 * locked by another connection (SQLITE_BUSY / errno 5).
+	 *
+	 * SQLite's built-in busy_timeout retries at the C level via usleep(), which
+	 * blocks the Bun event loop for the entire wait.  This wrapper instead lets
+	 * the busy_timeout exhaust normally (giving the C layer a short chance to
+	 * self-resolve), then catches the resulting error and re-schedules with
+	 * setTimeout so the event loop stays free between attempts.  This is
+	 * necessary when a long-running exclusive operation such as VACUUM is running
+	 * on a separate Worker connection.
+	 */
+	private async withBusyRetry<T>(fn: () => T): Promise<T> {
+		const deadline = Date.now() + 10 * 60 * 1000; // retry for up to 10 minutes
+		while (true) {
+			try {
+				return fn();
+			} catch (err) {
+				const isBusy =
+					err instanceof Error &&
+					"code" in err &&
+					(err as { code?: string }).code === "SQLITE_BUSY";
+				if (isBusy && Date.now() < deadline) {
+					await new Promise<void>((resolve) => setTimeout(resolve, 500));
+					continue;
+				}
+				throw err;
+			}
+		}
+	}
+
+	/**
 	 * Execute a SELECT query returning multiple rows.
 	 */
 	async query<R>(sqlStr: string, params: unknown[] = []): Promise<R[]> {
 		if (this.isSQLite && this.sqliteDb) {
+			const db = this.sqliteDb;
 			// biome-ignore lint/suspicious/noExplicitAny: SQLite params can be any binding type
-			return this.sqliteDb.query<R, any[]>(sqlStr).all(...(params as any[]));
+			return this.withBusyRetry(() => db.query<R, any[]>(sqlStr).all(...(params as any[])));
 		}
 		// PostgreSQL via Bun.SQL unsafe
 		const pgQuery = this.pgSql(sqlStr);
@@ -128,11 +160,9 @@ export class BunSqlAdapter {
 	 */
 	async get<R>(sqlStr: string, params: unknown[] = []): Promise<R | null> {
 		if (this.isSQLite && this.sqliteDb) {
-			const result = this.sqliteDb
-				// biome-ignore lint/suspicious/noExplicitAny: SQLite params can be any binding type
-				.query<R, any[]>(sqlStr)
-				// biome-ignore lint/suspicious/noExplicitAny: SQLite .get() spread params
-				.get(...(params as any[]));
+			const db = this.sqliteDb;
+			// biome-ignore lint/suspicious/noExplicitAny: SQLite params can be any binding type
+			const result = await this.withBusyRetry(() => db.query<R, any[]>(sqlStr).get(...(params as any[])));
 			return (result as R) ?? null;
 		}
 		const pgQuery = this.pgSql(sqlStr);
@@ -146,8 +176,9 @@ export class BunSqlAdapter {
 	 */
 	async run(sqlStr: string, params: unknown[] = []): Promise<void> {
 		if (this.isSQLite && this.sqliteDb) {
+			const db = this.sqliteDb;
 			// biome-ignore lint/suspicious/noExplicitAny: SQLite params can be any binding type
-			this.sqliteDb.run(sqlStr, params as any[]);
+			await this.withBusyRetry(() => db.run(sqlStr, params as any[]));
 			return;
 		}
 		const pgQuery = this.pgSql(sqlStr);
@@ -163,8 +194,9 @@ export class BunSqlAdapter {
 		params: unknown[] = [],
 	): Promise<number> {
 		if (this.isSQLite && this.sqliteDb) {
+			const db = this.sqliteDb;
 			// biome-ignore lint/suspicious/noExplicitAny: SQLite params can be any binding type
-			const result = this.sqliteDb.run(sqlStr, params as any[]);
+			const result = await this.withBusyRetry(() => db.run(sqlStr, params as any[]));
 			return result.changes;
 		}
 		const pgQuery = this.pgSql(sqlStr);

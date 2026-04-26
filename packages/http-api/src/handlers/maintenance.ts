@@ -8,20 +8,33 @@ export function createCleanupHandler(
 	config: Config,
 ) {
 	return async (): Promise<Response> => {
-		const payloadDays = config.getDataRetentionDays();
 		const requestDays = config.getRequestRetentionDays();
-		const payloadMs = payloadDays * 24 * 60 * 60 * 1000;
 		const requestMs = requestDays * 24 * 60 * 60 * 1000;
+		// When payload storage is disabled, delete all existing payloads (cutoff = now).
+		// When enabled, honour the configured retention window.
+		const payloadMs = config.getStorePayloads()
+			? config.getDataRetentionDays() * 24 * 60 * 60 * 1000
+			: 0;
 		const { removedRequests, removedPayloads } = await dbOps.cleanupOldRequests(
 			payloadMs,
 			requestMs,
 		);
+		const [tableRowCounts, dbSizeBytes] = await Promise.all([
+			dbOps.getTableRowCounts(),
+			dbOps.getDbSizeBytes(),
+		]);
 		const now = Date.now();
 		const payload: CleanupResponse = {
 			removedRequests,
 			removedPayloads,
-			payloadCutoffIso: new Date(now - payloadMs).toISOString(),
+			// null signals "all payloads removed" (storage disabled); avoids
+			// rendering a misleading "older than [right now]" timestamp in the UI.
+			payloadCutoffIso: config.getStorePayloads()
+				? new Date(now - payloadMs).toISOString()
+				: null,
 			requestCutoffIso: new Date(now - requestMs).toISOString(),
+			dbSizeBytes,
+			tableRowCounts,
 		};
 		return jsonResponse(payload);
 	};

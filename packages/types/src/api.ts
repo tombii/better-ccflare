@@ -45,8 +45,10 @@ export interface RetentionSetRequest {
 export interface CleanupResponse {
 	removedRequests: number;
 	removedPayloads: number;
-	payloadCutoffIso: string;
+	payloadCutoffIso: string | null;
 	requestCutoffIso: string;
+	dbSizeBytes: number;
+	tableRowCounts: Array<{ name: string; rowCount: number; dataBytes?: number }>;
 }
 
 export interface CompactResponse {
