@@ -280,6 +280,134 @@ describe("Accounts Handler - Dashboard Usage Data Integration", () => {
 		});
 	});
 
+	describe("Stale rate_limited_until Clearing", () => {
+		function makeOAuthAccount(overrides: Record<string, unknown> = {}) {
+			return {
+				id: "oauth-account-1",
+				name: "Claude OAuth Account",
+				provider: "anthropic",
+				access_token: "sk-ant-test",
+				refresh_token: "refresh-token",
+				request_count: 0,
+				total_requests: 0,
+				last_used: Date.now() - 3600000,
+				created_at: Date.now() - 86400000,
+				expires_at: Date.now() + 86400000,
+				rate_limited_until: null,
+				rate_limit_reset: null,
+				rate_limit_status: null,
+				rate_limit_remaining: null,
+				session_start: null,
+				session_request_count: 0,
+				paused: 0,
+				priority: 0,
+				auto_fallback_enabled: 0,
+				auto_refresh_enabled: 0,
+				custom_endpoint: null,
+				model_mappings: null,
+				token_valid: 1,
+				rate_limited: 0,
+				session_info: null,
+				...overrides,
+			};
+		}
+
+		it("clears stale rate_limited_until when usage API shows < 100% and expiry is in the future", async () => {
+			const accountsHandler = createMockAccountsListHandler(90000);
+			const futureExpiry = Date.now() + 3 * 60 * 60 * 1000; // 3h from now
+
+			mockQuery.all = () => [
+				makeOAuthAccount({ rate_limited_until: futureExpiry, rate_limited: 1 }),
+			];
+			mockUsageCache.getAge = () => null; // stale — will fetch
+
+			let clearSqlCalled = false;
+			let clearSqlArgs: unknown[] = [];
+			mockDatabase.run = (sql: string, args: unknown[]) => {
+				if (
+					sql === "UPDATE accounts SET rate_limited_until = NULL WHERE id = ?"
+				) {
+					clearSqlCalled = true;
+					clearSqlArgs = args;
+				}
+			};
+
+			const response = await accountsHandler();
+
+			expect(clearSqlCalled).toBe(true);
+			expect(clearSqlArgs).toEqual(["oauth-account-1"]);
+			expect(response.ok).toBe(true);
+			const body = await response.json();
+			expect(body[0].rateLimitedUntil).toBeNull();
+		});
+
+		it("does NOT clear rate_limited_until when expiry is already in the past", async () => {
+			const accountsHandler = createMockAccountsListHandler(90000);
+			const pastExpiry = Date.now() - 1000; // already expired
+
+			mockQuery.all = () => [
+				makeOAuthAccount({ rate_limited_until: pastExpiry, rate_limited: 1 }),
+			];
+			mockUsageCache.getAge = () => null;
+
+			let dbRunCalledWithClear = false;
+			mockDatabase.run = (sql: string) => {
+				if (
+					sql === "UPDATE accounts SET rate_limited_until = NULL WHERE id = ?"
+				) {
+					dbRunCalledWithClear = true;
+				}
+			};
+
+			const response = await accountsHandler();
+			expect(dbRunCalledWithClear).toBe(false);
+			expect(response.ok).toBe(true);
+		});
+
+		it("does NOT clear rate_limited_until when account has no rate limit set", async () => {
+			const accountsHandler = createMockAccountsListHandler(90000);
+
+			mockQuery.all = () => [makeOAuthAccount({ rate_limited_until: null })];
+			mockUsageCache.getAge = () => null;
+
+			let dbRunCalledWithClear = false;
+			mockDatabase.run = (sql: string) => {
+				if (
+					sql === "UPDATE accounts SET rate_limited_until = NULL WHERE id = ?"
+				) {
+					dbRunCalledWithClear = true;
+				}
+			};
+
+			const response = await accountsHandler();
+			expect(dbRunCalledWithClear).toBe(false);
+			expect(response.ok).toBe(true);
+		});
+
+		it("does NOT clear rate_limited_until when cache is fresh (no usage fetch)", async () => {
+			const accountsHandler = createMockAccountsListHandler(90000);
+			const futureExpiry = Date.now() + 3 * 60 * 60 * 1000;
+
+			mockQuery.all = () => [
+				makeOAuthAccount({ rate_limited_until: futureExpiry, rate_limited: 1 }),
+			];
+			mockUsageCache.getAge = () => 30000; // fresh — skips fetch entirely
+
+			let dbRunCalledWithClear = false;
+			mockDatabase.run = (sql: string) => {
+				if (
+					sql === "UPDATE accounts SET rate_limited_until = NULL WHERE id = ?"
+				) {
+					dbRunCalledWithClear = true;
+				}
+			};
+
+			const response = await accountsHandler();
+			expect(dbRunCalledWithClear).toBe(false);
+			expect(response.ok).toBe(true);
+		});
+	});
+
 	describe("Account Management Integration", () => {
 		it("should clear usage cache when Anthropic account is removed", async () => {
 			const removeHandler = createMockAccountRemoveHandler();
@@ -498,6 +626,29 @@ function createMockAccountsListHandler(CACHE_FRESHNESS_THRESHOLD_MS: number) {
 							mockLog.debug(
 								`Fetched usage data for ${account.name}: 5h=${usageData.five_hour.utilization}%, 7d=${usageData.seven_day.utilization}%`,
 							);
+
+							// If the usage API shows available capacity but the DB still has
+							// rate_limited_until in the future, clear the stale state.
+							const utilization = mockGetRepresentativeUtilization();
+							const limitedUntil = account.rate_limited_until
+								? Number(account.rate_limited_until)
+								: null;
+							if (
+								utilization !== null &&
+								utilization < 100 &&
+								limitedUntil !== null &&
+								limitedUntil > Date.now()
+							) {
+								await mockDatabase.run(
+									"UPDATE accounts SET rate_limited_until = NULL WHERE id = ?",
+									[account.id],
+								);
+								account.rate_limited_until = null;
+								account.rate_limited = 0;
+								mockLog.info(
+									`Cleared stale rate_limited_until for ${account.name}: usage API shows ${utilization}% utilization`,
+								);
+							}
 						}
 					} catch (error) {
 						mockLog.warn(
