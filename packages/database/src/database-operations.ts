@@ -888,7 +888,7 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		if (EMBEDDED_VACUUM_WORKER_CODE) {
 			const workerCode = Buffer.from(EMBEDDED_VACUUM_WORKER_CODE, "base64").toString("utf8");
 			const blob = new Blob([workerCode], { type: "text/javascript" });
-			worker = new Worker(URL.createObjectURL(blob));
+			worker = new Worker(URL.createObjectURL(blob), { smol: true });
 		} else {
 			worker = new Worker(new URL("./vacuum-worker.ts", import.meta.url).href);
 		}
