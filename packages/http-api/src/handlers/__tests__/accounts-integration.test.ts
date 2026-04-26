@@ -105,9 +105,13 @@ const mockErrorResponse = (error: any) => ({
 describe("Accounts Handler - Dashboard Usage Data Integration", () => {
 	const CACHE_FRESHNESS_THRESHOLD_MS = 90000; // 90 seconds
 
+	const originalGetAge = mockUsageCache.getAge;
+
 	beforeEach(() => {
-		// Reset all mocks
 		mockUsageCache.clear();
+		mockUsageCache.getAge = originalGetAge;
+		mockDatabase.run = () => {};
+		mockQuery.all = () => [];
 	});
 
 	describe("Proactive Usage Data Fetching", () => {
