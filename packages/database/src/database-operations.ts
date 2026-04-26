@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import { dirname } from "node:path";
+import { EMBEDDED_VACUUM_WORKER_CODE } from "./inline-vacuum-worker";
 import type { RuntimeConfig } from "@better-ccflare/config";
 import type { Disposable } from "@better-ccflare/core";
 import type {
@@ -883,8 +884,14 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		// so the main Bun event loop stays free to serve health checks and other
 		// requests during what can be a minutes-long exclusive DB operation.
 		const dbPath = this.resolvedDbPath;
-		const workerUrl = new URL("./vacuum-worker.ts", import.meta.url).href;
-		const worker = new Worker(workerUrl);
+		let worker: Worker;
+		if (EMBEDDED_VACUUM_WORKER_CODE) {
+			const workerCode = Buffer.from(EMBEDDED_VACUUM_WORKER_CODE, "base64").toString("utf8");
+			const blob = new Blob([workerCode], { type: "text/javascript" });
+			worker = new Worker(URL.createObjectURL(blob));
+		} else {
+			worker = new Worker(new URL("./vacuum-worker.ts", import.meta.url).href);
+		}
 		this.compacting = true;
 
 		try {
