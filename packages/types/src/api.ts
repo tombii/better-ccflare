@@ -47,6 +47,8 @@ export interface CleanupResponse {
 	removedPayloads: number;
 	payloadCutoffIso: string;
 	requestCutoffIso: string;
+	dbSizeBytes: number;
+	tableRowCounts: Array<{ name: string; rowCount: number; dataBytes?: number }>;
 }
 
 export interface CompactResponse {

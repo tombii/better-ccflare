@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
+import { stat } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { RuntimeConfig } from "@better-ccflare/config";
 import type { Disposable } from "@better-ccflare/core";
@@ -593,7 +594,7 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 
 	async listRequestPayloadsWithAccountNames(
 		limit = 50,
-	): Promise<Array<{ id: string; json: string; account_name: string | null }>> {
+	): Promise<Array<{ id: string; json: string | null; timestamp: number; account_name: string | null }>> {
 		return this.requests.listPayloadsWithAccountNames(limit);
 	}
 
@@ -745,6 +746,59 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 			removedRequests,
 			removedPayloads: removedPayloadsByAge + removedOrphans,
 		};
+	}
+
+	async getTableRowCounts(): Promise<
+		Array<{ name: string; rowCount: number; dataBytes?: number }>
+	> {
+		if (!this.adapter.isSQLite) {
+			return [];
+		}
+		try {
+			const tables = await this.adapter.query<{ name: string }>(
+				"SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+			);
+			const rows = await Promise.all(
+				tables.map(async ({ name }) => {
+					const countRow = await this.adapter.get<{ rowCount: number }>(
+						`SELECT COUNT(*) AS rowCount FROM "${name}"`,
+					);
+					const rowCount = countRow?.rowCount ?? 0;
+					// Measure actual data bytes for tables with known large text/blob columns
+					if (name === "request_payloads") {
+						const sizeRow = await this.adapter.get<{ dataBytes: number }>(
+							`SELECT SUM(LENGTH(json)) AS dataBytes FROM "${name}"`,
+						);
+						return { name, rowCount, dataBytes: sizeRow?.dataBytes ?? 0 };
+					}
+					return { name, rowCount };
+				}),
+			);
+			// Sort: tables with dataBytes first (largest first), then by rowCount
+			return rows.sort((a, b) => {
+				if (a.dataBytes !== undefined && b.dataBytes !== undefined)
+					return b.dataBytes - a.dataBytes;
+				if (a.dataBytes !== undefined) return -1;
+				if (b.dataBytes !== undefined) return 1;
+				return b.rowCount - a.rowCount;
+			});
+		} catch (err) {
+			console.debug("[getTableRowCounts] query failed:", err);
+			return [];
+		}
+	}
+
+	async getDbSizeBytes(): Promise<number> {
+		if (!this.adapter.isSQLite || !this.resolvedDbPath) {
+			return 0;
+		}
+		try {
+			const { size } = await stat(this.resolvedDbPath);
+			return size;
+		} catch (err) {
+			console.debug("[getDbSizeBytes] stat failed:", err);
+			return 0;
+		}
 	}
 
 	// Agent preference operations delegated to repository
