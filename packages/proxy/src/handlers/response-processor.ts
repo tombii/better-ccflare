@@ -88,8 +88,9 @@ export function updateAccountMetadata(
 			),
 		);
 	} else {
-		// If there's no rate limit status header (meaning request was successful),
-		// clear the rate_limited_until field if it has expired
+		// Successful response with no rate-limit header: clear rate_limited_until unconditionally.
+		// A successful upstream response proves the account is usable regardless of any stored
+		// expiry timestamp — covers early resets such as seat reassignment.
 		ctx.asyncWriter.enqueue(async () => {
 			const db = ctx.dbOps.getAdapter();
 			const result = await db.get<{ rate_limited_until: number | null }>(
@@ -97,16 +98,13 @@ export function updateAccountMetadata(
 				[account.id],
 			);
 
-			if (
-				result?.rate_limited_until &&
-				result.rate_limited_until < Date.now()
-			) {
+			if (result?.rate_limited_until) {
 				await db.run(
 					"UPDATE accounts SET rate_limited_until = NULL WHERE id = ?",
 					[account.id],
 				);
 				log.debug(
-					`Cleared expired rate_limited_until for account ${account.name} on successful response`,
+					`Cleared rate_limited_until for account ${account.name} on successful response`,
 				);
 			}
 		});
@@ -316,30 +314,26 @@ export async function processProxyResponse(
 		requestMeta?.headers?.get("x-better-ccflare-bypass-session") === "true";
 	updateAccountMetadata(account, response, ctx, requestId, bypassSession);
 
-	// Clear rate_limited_until if the account was previously rate-limited but is now successful
+	// Clear rate_limited_until if the account was previously rate-limited but is now successful.
+	// We clear unconditionally (even if the timestamp is still in the future) because a successful
+	// upstream response proves the account is no longer rate-limited — e.g. after a seat reassignment
+	// that resets usage mid-window before the stored expiry fires.
 	if (!rateLimitInfo.isRateLimited) {
-		// Check if the account had a rate_limited_until value and clear it
 		ctx.asyncWriter.enqueue(async () => {
 			const db = ctx.dbOps.getAdapter();
-			// Only clear rate_limited_until if it's in the past or null (meaning it was rate-limited before)
 			const result = await db.get<{ rate_limited_until: number | null }>(
 				"SELECT rate_limited_until FROM accounts WHERE id = ?",
 				[account.id],
 			);
 
 			if (result?.rate_limited_until) {
-				const now = Date.now();
-				// If the rate limit was in the past (already expired) or if we're just clearing it after success
-				// We clear it regardless if it's expired to ensure the account is no longer marked as rate-limited
-				if (result.rate_limited_until <= now) {
-					await db.run(
-						"UPDATE accounts SET rate_limited_until = NULL WHERE id = ?",
-						[account.id],
-					);
-					log.debug(
-						`Cleared expired rate_limited_until for account ${account.name}`,
-					);
-				}
+				await db.run(
+					"UPDATE accounts SET rate_limited_until = NULL WHERE id = ?",
+					[account.id],
+				);
+				log.debug(
+					`Cleared rate_limited_until for account ${account.name} on successful response`,
+				);
 			}
 		});
 	}

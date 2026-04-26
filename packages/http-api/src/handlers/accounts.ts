@@ -242,6 +242,29 @@ export function createAccountsListHandler(dbOps: DatabaseOperations) {
 							log.debug(
 								`Fetched usage data for ${account.name}: 5h=${usageData.five_hour.utilization}%, 7d=${usageData.seven_day.utilization}%`,
 							);
+
+							// If the usage API shows available capacity but the DB still has
+							// rate_limited_until in the future, clear the stale state. This
+							// handles seat reassignment: when an org admin reassigns a seat,
+							// Anthropic resets usage mid-window before the stored expiry fires.
+							const utilization = getRepresentativeUtilization(usageData);
+							const limitedUntil = account.rate_limited_until
+								? Number(account.rate_limited_until)
+								: null;
+							if (
+								utilization !== null &&
+								utilization < 100 &&
+								limitedUntil !== null &&
+								limitedUntil > Date.now()
+							) {
+								await db.run(
+									"UPDATE accounts SET rate_limited_until = NULL WHERE id = ?",
+									[account.id],
+								);
+								log.info(
+									`Cleared stale rate_limited_until for ${account.name}: usage API shows ${utilization}% utilization (seat reassignment or early reset)`,
+								);
+							}
 						}
 					} catch (error) {
 						log.warn(
