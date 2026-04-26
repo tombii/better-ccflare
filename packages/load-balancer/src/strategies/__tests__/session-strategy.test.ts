@@ -46,6 +46,7 @@ function makeAccount(overrides: Partial<Account> = {}): Account {
 class MockStrategyStore implements StrategyStore {
 	resetCalls: Array<{ accountId: string; timestamp: number }> = [];
 	resumeCalls: string[] = [];
+	utilizationMap: Map<string, number | null> = new Map();
 
 	resetAccountSession(accountId: string, timestamp: number): void {
 		this.resetCalls.push({ accountId, timestamp });
@@ -55,10 +56,20 @@ class MockStrategyStore implements StrategyStore {
 		this.resumeCalls.push(accountId);
 	}
 
+	getAccountUtilization(accountId: string, _provider: string): number | null {
+		if (!this.utilizationMap.has(accountId)) return null;
+		return this.utilizationMap.get(accountId) ?? null;
+	}
+
+	setUtilization(accountId: string, value: number | null): void {
+		this.utilizationMap.set(accountId, value);
+	}
+
 	// Helper methods for testing
 	clear(): void {
 		this.resetCalls = [];
 		this.resumeCalls = [];
+		this.utilizationMap.clear();
 	}
 
 	getResetCall(
@@ -563,5 +574,161 @@ describe("SessionStrategy", () => {
 		);
 
 		expect(result[0]).toBe(lowerPriority);
+	});
+
+	// -------------------------------------------------------------------------
+	// Usage-balanced tiebreaking within same-priority accounts
+	//
+	// When multiple accounts share the same priority value, new sessions should
+	// start on the account with the most remaining capacity (lowest utilization).
+	// -------------------------------------------------------------------------
+
+	describe("usage-balanced tiebreaking for same-priority accounts", () => {
+		it("selects account with lower utilization when priorities are equal", () => {
+			const now = Date.now();
+
+			const highUtil = makeAccount({
+				id: "high-util",
+				name: "high-util",
+				created_at: now,
+				expires_at: now + 3600_000,
+				priority: 0,
+			});
+
+			const lowUtil = makeAccount({
+				id: "low-util",
+				name: "low-util",
+				created_at: now,
+				expires_at: now + 3600_000,
+				priority: 0,
+			});
+
+			mockStore.setUtilization("high-util", 80);
+			mockStore.setUtilization("low-util", 20);
+
+			const result = strategy.select([highUtil, lowUtil], meta);
+
+			// low-util has more headroom → should be selected first
+			expect(result[0]).toBe(lowUtil);
+			expect(result[1]).toBe(highUtil);
+		});
+
+		it("sorts null-utilization accounts first (treated as 0%, fresh account)", () => {
+			const now = Date.now();
+
+			const withData = makeAccount({
+				id: "with-data",
+				name: "with-data",
+				created_at: now,
+				expires_at: now + 3600_000,
+				priority: 0,
+			});
+
+			const noData = makeAccount({
+				id: "no-data",
+				name: "no-data",
+				created_at: now,
+				expires_at: now + 3600_000,
+				priority: 0,
+			});
+
+			mockStore.setUtilization("with-data", 50);
+			// no-data has no entry in utilizationMap → returns null → treated as 0
+
+			const result = strategy.select([withData, noData], meta);
+
+			// noData treated as 0% → selected first; withData (50%) sorts after
+			expect(result[0]).toBe(noData);
+			expect(result[1]).toBe(withData);
+		});
+
+		it("should treat null utilization as 0 (fresh account)", () => {
+			const now = Date.now();
+
+			const accountA = makeAccount({
+				id: "account-a-50pct",
+				name: "account-a-50pct",
+				created_at: now,
+				expires_at: now + 3600_000,
+				priority: 0,
+			});
+
+			const accountB = makeAccount({
+				id: "account-b-null",
+				name: "account-b-null",
+				created_at: now,
+				expires_at: now + 3600_000,
+				priority: 0,
+			});
+
+			mockStore.setUtilization("account-a-50pct", 50);
+			// account-b-null has no utilization data at all → null → treated as 0
+
+			const result = strategy.select([accountA, accountB], meta);
+
+			// account-b-null (null=0%) has more headroom than account-a-50pct (50%) → selected first
+			expect(result[0]).toBe(accountB);
+			expect(result[1]).toBe(accountA);
+		});
+
+		it("does not panic when both accounts have no utilization data", () => {
+			const now = Date.now();
+
+			const a = makeAccount({
+				id: "account-a",
+				name: "account-a",
+				created_at: now,
+				expires_at: now + 3600_000,
+				priority: 0,
+			});
+
+			const b = makeAccount({
+				id: "account-b",
+				name: "account-b",
+				created_at: now,
+				expires_at: now + 3600_000,
+				priority: 0,
+			});
+
+			// Neither account has utilization data
+
+			const result = strategy.select([a, b], meta);
+
+			// Both accounts are returned — order is stable (0 vs 0 → no swap)
+			expect(result).toHaveLength(2);
+			expect(result).toContain(a);
+			expect(result).toContain(b);
+		});
+
+		it("priority still wins over utilization for different-priority accounts", () => {
+			const now = Date.now();
+
+			// Higher priority (lower number) but higher utilization
+			const highPriorityHighUtil = makeAccount({
+				id: "high-pri-high-util",
+				name: "high-pri-high-util",
+				created_at: now,
+				expires_at: now + 3600_000,
+				priority: 0,
+			});
+
+			// Lower priority (higher number) but lower utilization
+			const lowPriorityLowUtil = makeAccount({
+				id: "low-pri-low-util",
+				name: "low-pri-low-util",
+				created_at: now,
+				expires_at: now + 3600_000,
+				priority: 1,
+			});
+
+			mockStore.setUtilization("high-pri-high-util", 90);
+			mockStore.setUtilization("low-pri-low-util", 10);
+
+			const result = strategy.select([lowPriorityLowUtil, highPriorityHighUtil], meta);
+
+			// Priority 0 wins even though it has higher utilization
+			expect(result[0]).toBe(highPriorityHighUtil);
+			expect(result[1]).toBe(lowPriorityLowUtil);
+		});
 	});
 });

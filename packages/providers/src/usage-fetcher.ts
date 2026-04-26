@@ -15,6 +15,7 @@ import {
 } from "./kilo-usage-fetcher";
 import {
 	fetchNanoGPTUsageData,
+	getRepresentativeNanoGPTUtilization,
 	type NanoGPTUsageData,
 } from "./nanogpt-usage-fetcher";
 import { fetchZaiUsageData, type ZaiUsageData } from "./zai-usage-fetcher";
@@ -263,6 +264,59 @@ export function getRepresentativeWindow(
 	);
 
 	return max.name;
+}
+
+/**
+ * Get the representative utilization for any supported provider type.
+ * Returns null if the provider is not supported or data is unavailable.
+ */
+export function getRepresentativeUtilizationForProvider(
+	data: AnyUsageData,
+	provider: string,
+): number | null {
+	switch (provider) {
+		case "anthropic":
+		case "codex": {
+			const d = data as UsageData;
+			// Only account-level windows count as hard limits. Model-specific windows
+			// (seven_day_sonnet, seven_day_opus) are excluded: they are mutual fallbacks
+			// and Anthropic never exposes both simultaneously, so neither is a hard limit.
+			const utils: number[] = [];
+			for (const key of [
+				"five_hour",
+				"seven_day",
+				"seven_day_oauth_apps",
+			] as const) {
+				const w = d[key] as UsageWindow | undefined;
+				if (w?.utilization != null) utils.push(w.utilization);
+			}
+			// extra_usage has utilization: number | null
+			if (d.extra_usage?.utilization != null)
+				utils.push(d.extra_usage.utilization);
+			return utils.length > 0 ? Math.max(...utils) : null;
+		}
+		case "nanogpt": {
+			return getRepresentativeNanoGPTUtilization(data as NanoGPTUsageData);
+		}
+		case "zai": {
+			const zai = data as ZaiUsageData;
+			const candidates = [
+				zai.time_limit?.percentage ?? null,
+				zai.tokens_limit?.percentage ?? null,
+			].filter((v): v is number => v !== null);
+			return candidates.length > 0 ? Math.max(...candidates) : null;
+		}
+		case "kilo": {
+			return getRepresentativeKiloUtilization(data as KiloUsageData);
+		}
+		case "alibaba-coding-plan": {
+			return getRepresentativeAlibabaCodingPlanUtilization(
+				data as AlibabaCodingPlanUsageData,
+			);
+		}
+		default:
+			return null;
+	}
 }
 
 /**
