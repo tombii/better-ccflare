@@ -124,50 +124,54 @@ export class SessionStrategy implements LoadBalancingStrategy {
 			return availabilityCache.get(account.id) || false;
 		};
 
-		// Check for higher priority accounts that have become available due to rate limit reset
+		// Check for higher priority accounts that have become available due to rate limit reset.
+		// Iterate through all candidates in priority order to find the first usable one.
 		const fallbackCandidates = this.checkForAutoFallbackAccounts(accounts, now);
-		if (fallbackCandidates.length > 0) {
-			const chosenFallback = fallbackCandidates[0];
+		let chosenFallback: Account | null = null;
+		for (const candidate of fallbackCandidates) {
+			// If the candidate is paused, only auto-unpause if it was paused due to
+			// overage, or `rate_limit_window` (reserved/future pause reason) — never auto-unpause
+			// manual or failure_threshold pauses.
+			if (candidate.paused && this.store?.resumeAccount) {
+				const canAutoUnpause =
+					!candidate.pause_reason ||
+					candidate.pause_reason === "overage" ||
+					candidate.pause_reason === "rate_limit_window";
+				if (canAutoUnpause) {
+					this.log.info(
+						`Unpausing account ${candidate.name} due to auto-fallback reactivation`,
+					);
+					this.store.resumeAccount(candidate.id);
+					candidate.paused = false;
+					// Invalidate the cache so getCachedAvailability reflects the unpause
+					availabilityCache.delete(candidate.id);
+				} else {
+					this.log.info(
+						`Skipping auto-unpause of account ${candidate.name} — paused with reason '${candidate.pause_reason}' which requires manual intervention`,
+					);
+					continue;
+				}
+			}
+
+			if (getCachedAvailability(candidate)) {
+				chosenFallback = candidate;
+				break;
+			}
+		}
+
+		if (chosenFallback !== null) {
 			if (!bypassSession) {
 				this.resetSessionIfExpired(chosenFallback);
 			}
 			this.log.info(
 				`Auto-fallback triggered to account ${chosenFallback.name} (priority: ${chosenFallback.priority}, auto-fallback enabled)`,
 			);
-
-			// If the chosen fallback account was paused, only auto-unpause if it was paused due to
-			// overage, or `rate_limit_window` (reserved/future pause reason) — never auto-unpause
-			// manual or failure_threshold pauses.
-			if (chosenFallback.paused && this.store?.resumeAccount) {
-				const canAutoUnpause =
-					!chosenFallback.pause_reason ||
-					chosenFallback.pause_reason === "overage" ||
-					chosenFallback.pause_reason === "rate_limit_window";
-				if (canAutoUnpause) {
-					this.log.info(
-						`Unpausing account ${chosenFallback.name} due to auto-fallback reactivation`,
-					);
-					this.store.resumeAccount(chosenFallback.id);
-					chosenFallback.paused = false;
-				} else {
-					this.log.info(
-						`Skipping auto-unpause of account ${chosenFallback.name} — paused with reason '${chosenFallback.pause_reason}' which requires manual intervention`,
-					);
-					// The account remains paused — fall through to normal selection so only
-					// genuinely available accounts are returned.
-				}
-			}
-
-			// Only use this account as the fallback if it is actually available now
-			// (i.e. it was unpaused above, or it was never paused in the first place).
-			if (!chosenFallback.paused) {
-				// Return fallback account first, then others sorted by priority
-				const others = accounts
-					.filter((a) => a.id !== chosenFallback.id && getCachedAvailability(a))
-					.sort((a, b) => a.priority - b.priority);
-				return [chosenFallback, ...others];
-			}
-			// else: fall through to normal available-accounts selection below
+			// Return all available accounts sorted by priority — chosenFallback will appear
+			// first naturally if it is the highest-priority available account, avoiding
+			// priority inversion when other accounts rank higher.
+			return accounts
+				.filter((a) => getCachedAvailability(a))
+				.sort((a, b) => a.priority - b.priority);
 		}
 
 		// Find account with active session (most recent session_start within window)
