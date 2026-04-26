@@ -12,10 +12,15 @@ import { createCleanupHandler } from "../maintenance";
 // Stubs
 // ---------------------------------------------------------------------------
 
-function makeConfig(payloadDays = 3, requestDays = 90) {
+function makeConfig(
+	payloadDays = 3,
+	requestDays = 90,
+	storePayloads?: boolean,
+) {
 	return {
 		getDataRetentionDays: () => payloadDays,
 		getRequestRetentionDays: () => requestDays,
+		getStorePayloads: () => storePayloads ?? true,
 	} as unknown as import("@better-ccflare/config").Config;
 }
 
@@ -28,10 +33,14 @@ function makeDbOps(
 		vacuumed: true,
 		error: undefined as string | undefined,
 	},
+	tableRowCounts?: Array<{ name: string; rowCount: number }>,
+	dbSizeBytes?: number,
 ) {
 	return {
 		cleanupOldRequests: mock(async () => cleanupResult),
 		compact: mock(async () => compactResult),
+		getTableRowCounts: mock(async () => tableRowCounts ?? []),
+		getDbSizeBytes: mock(async () => dbSizeBytes ?? 0),
 	} as unknown as import("@better-ccflare/database").DatabaseOperations;
 }
 
@@ -154,6 +163,84 @@ describe("createCleanupHandler", () => {
 			// Since e2b9d07 cleanup and compact were decoupled into separate HTTP
 			// endpoints so that compact errors don't block cleanup responses.
 			expect(dbOps.compact).toHaveBeenCalledTimes(0);
+		});
+	});
+
+	describe("PR-149 additions", () => {
+		it("dbSizeBytes appears in response body as a number", async () => {
+			const dbOps = makeDbOps(
+				{ removedRequests: 0, removedPayloads: 0 },
+				undefined,
+				[],
+				12345,
+			);
+			const handler = createCleanupHandler(dbOps, makeConfig());
+			const response = await handler();
+			const body = (await response.json()) as Record<string, unknown>;
+
+			expect(body).toHaveProperty("dbSizeBytes");
+			expect(typeof body.dbSizeBytes).toBe("number");
+			expect(body.dbSizeBytes).toBe(12345);
+		});
+
+		it("tableRowCounts appears in response body as an array", async () => {
+			const counts = [
+				{ name: "requests", rowCount: 42 },
+				{ name: "accounts", rowCount: 3 },
+			];
+			const dbOps = makeDbOps(
+				{ removedRequests: 0, removedPayloads: 0 },
+				undefined,
+				counts,
+				0,
+			);
+			const handler = createCleanupHandler(dbOps, makeConfig());
+			const response = await handler();
+			const body = (await response.json()) as Record<string, unknown>;
+
+			expect(Array.isArray(body.tableRowCounts)).toBe(true);
+			expect(body.tableRowCounts).toEqual(counts);
+		});
+
+		it("payloadCutoffIso is null when storePayloads=false", async () => {
+			const dbOps = makeDbOps();
+			const handler = createCleanupHandler(dbOps, makeConfig(3, 90, false));
+			const response = await handler();
+			const body = (await response.json()) as Record<string, unknown>;
+
+			expect(body.payloadCutoffIso).toBeNull();
+		});
+
+		it("cleanupOldRequests called with payloadMs=0 when storePayloads=false", async () => {
+			const dbOps = makeDbOps();
+			const handler = createCleanupHandler(dbOps, makeConfig(3, 90, false));
+			await handler();
+
+			expect(dbOps.cleanupOldRequests).toHaveBeenCalledTimes(1);
+			const [payloadMs] = (dbOps.cleanupOldRequests as ReturnType<typeof mock>)
+				.mock.calls[0];
+			expect(payloadMs).toBe(0);
+		});
+
+		it("payloadCutoffIso is a valid ISO string when storePayloads=true", async () => {
+			const dbOps = makeDbOps();
+			const handler = createCleanupHandler(dbOps, makeConfig(3, 90, true));
+			const response = await handler();
+			const body = (await response.json()) as Record<string, unknown>;
+
+			expect(typeof body.payloadCutoffIso).toBe("string");
+			expect(Number.isNaN(Date.parse(body.payloadCutoffIso as string))).toBe(
+				false,
+			);
+		});
+
+		it("getTableRowCounts and getDbSizeBytes are each called once per cleanup", async () => {
+			const dbOps = makeDbOps();
+			const handler = createCleanupHandler(dbOps, makeConfig());
+			await handler();
+
+			expect(dbOps.getTableRowCounts).toHaveBeenCalledTimes(1);
+			expect(dbOps.getDbSizeBytes).toHaveBeenCalledTimes(1);
 		});
 	});
 });
