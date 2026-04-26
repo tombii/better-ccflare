@@ -59,6 +59,7 @@ RUN useradd -r -u 1000 -m -s /bin/bash ccflare && \
 # Set environment variables
 ENV NODE_ENV=production
 ENV BETTER_CCFLARE_DB_PATH=/data/better-ccflare.db
+ENV XDG_CONFIG_HOME=/data
 ENV BETTER_CCFLARE_LOG_DIR=/app/logs
 
 # Create logs directory with proper permissions

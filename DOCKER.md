@@ -44,6 +44,7 @@ Docker will automatically pull the correct image for your architecture.
 ### Environment Variables
 
 - `BETTER_CCFLARE_DB_PATH` - Database file path (default: `/data/better-ccflare.db`)
+- `XDG_CONFIG_HOME` - Directory for config file storage (default: `/data`, persists settings across restarts)
 - `NODE_ENV` - Environment mode (default: `production`)
 - `LOG_LEVEL` - Logging level (optional)
 - `PORT` - Server port (default: `8080`)

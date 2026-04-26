@@ -13,6 +13,7 @@ services:
     environment:
       - NODE_ENV=production
       - BETTER_CCFLARE_DB_PATH=/data/better-ccflare.db
+      - XDG_CONFIG_HOME=/data
       # Optional: configure logging
       # - LOG_LEVEL=info
     # Load environment variables from .env file (optional)
