@@ -187,7 +187,7 @@ Account priorities allow you to control which accounts are preferred when multip
 - **Optional Parameter**: Priority is optional when adding accounts and defaults to 0 (highest priority)
 - **Affects Both Primary and Fallback Selection**: Priorities determine both the primary account and the order of fallback accounts
 - **Real-time Updates**: Priority changes take effect immediately without restarting the server
-- **Usage-Balanced Tiebreaking**: When multiple accounts share the same priority, new sessions start on the account with the most remaining capacity. "Most remaining capacity" is the inverse of the maximum utilization across all usage windows — so an account at 90% on its 7-day window and 20% on its 5-hour window is considered 90% utilized (the 7-day window is the binding constraint). Accounts with no usage data available are treated as lower priority than accounts with data.
+- **Usage-Balanced Tiebreaking**: When multiple accounts share the same priority, new sessions start on the account with the most remaining capacity. "Most remaining capacity" is the inverse of the maximum utilization across all usage windows — so an account at 90% on its 7-day window and 20% on its 5-hour window is considered 90% utilized (the 7-day window is the binding constraint). Accounts with no usage data available are treated as 0% utilized (fresh, maximum remaining capacity) and sort first within their priority tier.
 
 ### Setting Account Priorities
 
@@ -435,7 +435,7 @@ The SessionStrategy manages account sessions through the following process:
 3. **Account Ordering**: Returns accounts in priority order:
    - Active session account (if available) comes first
    - Other available accounts are sorted by priority (lower values first) as fallback options
-4. **No Active Session — Utilization Tiebreaking**: When no active session exists, accounts with the same priority value are further sorted by ascending utilization (lowest first = most remaining capacity). This ensures new sessions start on the account with the most headroom, draining usage evenly across same-priority accounts. Accounts without available usage data sort after accounts that have data.
+4. **No Active Session — Utilization Tiebreaking**: When no active session exists, accounts with the same priority value are further sorted by ascending utilization (lowest first = most remaining capacity). This ensures new sessions start on the account with the most headroom, draining usage evenly across same-priority accounts. Accounts without available usage data are treated as 0% utilized and sort first (most remaining capacity) within their priority tier.
 
 ### 4. Session Reset
 Sessions are reset when:
