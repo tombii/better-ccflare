@@ -147,12 +147,43 @@ export function DataRetentionCard() {
 				)}
 
 				{cleanupNow.data && (
-					<p className="text-xs text-muted-foreground">
-						Removed {cleanupNow.data.removedPayloads} payloads (older than{" "}
-						{new Date(cleanupNow.data.payloadCutoffIso).toLocaleString()}) and{" "}
-						{cleanupNow.data.removedRequests} requests (older than{" "}
-						{new Date(cleanupNow.data.requestCutoffIso).toLocaleString()}).
-					</p>
+					<div className="text-xs text-muted-foreground space-y-1">
+						<p>
+							Removed {cleanupNow.data.removedPayloads} payloads (
+							{cleanupNow.data.payloadCutoffIso
+								? <>older than {new Date(cleanupNow.data.payloadCutoffIso).toLocaleString()}</>
+								: <>all — storage disabled</>
+							}) and{" "}
+							{cleanupNow.data.removedRequests} requests (older than{" "}
+							{new Date(cleanupNow.data.requestCutoffIso).toLocaleString()}).
+						</p>
+						{(cleanupNow.data.dbSizeBytes > 0 || cleanupNow.data.tableRowCounts.length > 0) && (
+							<details>
+								<summary className="cursor-pointer select-none">
+									Space usage
+									{cleanupNow.data.dbSizeBytes > 0 && (
+										<> — {(cleanupNow.data.dbSizeBytes / 1024 / 1024).toFixed(1)} MB on disk</>
+									)}
+								</summary>
+								{cleanupNow.data.tableRowCounts.length > 0 && (
+									<table className="mt-1 w-full text-left">
+										<tbody>
+											{cleanupNow.data.tableRowCounts.map((row) => (
+												<tr key={row.name}>
+													<td className="pr-4 font-mono">{row.name}</td>
+													<td className="text-right">
+														{row.dataBytes !== undefined
+															? `${(row.dataBytes / 1024 / 1024).toFixed(1)} MB`
+															: `${row.rowCount.toLocaleString()} rows`}
+													</td>
+												</tr>
+											))}
+										</tbody>
+									</table>
+								)}
+							</details>
+						)}
+					</div>
 				)}
 
 				{compactDb.isError && (

@@ -263,16 +263,17 @@ export class RequestRepository extends BaseRepository<RequestData> {
 
 	async listPayloadsWithAccountNames(
 		limit = 50,
-	): Promise<Array<{ id: string; json: string; account_name: string | null }>> {
+	): Promise<Array<{ id: string; json: string | null; timestamp: number; account_name: string | null }>> {
 		const rows = await this.query<{
 			id: string;
-			json: string;
+			json: string | null;
+			timestamp: number;
 			account_name: string | null;
 		}>(
 			`
-			SELECT rp.id, rp.json, a.name as account_name
-			FROM request_payloads rp
-			JOIN requests r ON rp.id = r.id
+			SELECT r.id, r.timestamp, rp.json, a.name as account_name
+			FROM requests r
+			LEFT JOIN request_payloads rp ON rp.id = r.id
 			LEFT JOIN accounts a ON r.account_used = a.id
 			ORDER BY r.timestamp DESC
 			LIMIT ?
@@ -282,7 +283,8 @@ export class RequestRepository extends BaseRepository<RequestData> {
 		return Promise.all(
 			rows.map(async (row) => ({
 				id: row.id,
-				json: await decryptForList(row.id, row.json),
+				timestamp: row.timestamp,
+				json: row.json ? await decryptForList(row.id, row.json) : null,
 				account_name: row.account_name,
 			})),
 		);
