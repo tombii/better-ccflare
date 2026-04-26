@@ -153,14 +153,21 @@ export class SessionStrategy implements LoadBalancingStrategy {
 					this.log.info(
 						`Skipping auto-unpause of account ${chosenFallback.name} — paused with reason '${chosenFallback.pause_reason}' which requires manual intervention`,
 					);
+					// The account remains paused — fall through to normal selection so only
+					// genuinely available accounts are returned.
 				}
 			}
 
-			// Return fallback account first, then others sorted by priority
-			const others = accounts
-				.filter((a) => a.id !== chosenFallback.id && getCachedAvailability(a))
-				.sort((a, b) => a.priority - b.priority);
-			return [chosenFallback, ...others];
+			// Only use this account as the fallback if it is actually available now
+			// (i.e. it was unpaused above, or it was never paused in the first place).
+			if (!chosenFallback.paused) {
+				// Return fallback account first, then others sorted by priority
+				const others = accounts
+					.filter((a) => a.id !== chosenFallback.id && getCachedAvailability(a))
+					.sort((a, b) => a.priority - b.priority);
+				return [chosenFallback, ...others];
+			}
+			// else: fall through to normal available-accounts selection below
 		}
 
 		// Find account with active session (most recent session_start within window)
