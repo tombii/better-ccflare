@@ -87,30 +87,9 @@ export function updateAccountMetadata(
 				rateLimitInfo.remaining,
 			),
 		);
-	} else {
-		// If there's no rate limit status header (meaning request was successful),
-		// clear the rate_limited_until field if it has expired
-		ctx.asyncWriter.enqueue(async () => {
-			const db = ctx.dbOps.getAdapter();
-			const result = await db.get<{ rate_limited_until: number | null }>(
-				"SELECT rate_limited_until FROM accounts WHERE id = ?",
-				[account.id],
-			);
-
-			if (
-				result?.rate_limited_until &&
-				result.rate_limited_until < Date.now()
-			) {
-				await db.run(
-					"UPDATE accounts SET rate_limited_until = NULL WHERE id = ?",
-					[account.id],
-				);
-				log.debug(
-					`Cleared expired rate_limited_until for account ${account.name} on successful response`,
-				);
-			}
-		});
 	}
+	// Note: rate_limited_until is cleared unconditionally in processProxyResponse on any
+	// successful response. No need to duplicate that logic here.
 
 	if (account.provider === "codex") {
 		const codexUsage = parseCodexUsageHeaders(response.headers, {
@@ -316,31 +295,21 @@ export async function processProxyResponse(
 		requestMeta?.headers?.get("x-better-ccflare-bypass-session") === "true";
 	updateAccountMetadata(account, response, ctx, requestId, bypassSession);
 
-	// Clear rate_limited_until if the account was previously rate-limited but is now successful
-	if (!rateLimitInfo.isRateLimited) {
-		// Check if the account had a rate_limited_until value and clear it
+	// Clear rate_limited_until on any successful upstream response. We clear unconditionally
+	// (even if the timestamp is still in the future) because a successful response proves the
+	// account is usable — e.g. after a seat reassignment that resets usage mid-window before
+	// the stored expiry fires. Only enqueue the DB write when the in-memory account object
+	// already carries a rate_limited_until value to avoid overhead on every normal request.
+	if (!rateLimitInfo.isRateLimited && account.rate_limited_until) {
 		ctx.asyncWriter.enqueue(async () => {
 			const db = ctx.dbOps.getAdapter();
-			// Only clear rate_limited_until if it's in the past or null (meaning it was rate-limited before)
-			const result = await db.get<{ rate_limited_until: number | null }>(
-				"SELECT rate_limited_until FROM accounts WHERE id = ?",
+			await db.run(
+				"UPDATE accounts SET rate_limited_until = NULL WHERE id = ? AND rate_limited_until IS NOT NULL",
 				[account.id],
 			);
-
-			if (result?.rate_limited_until) {
-				const now = Date.now();
-				// If the rate limit was in the past (already expired) or if we're just clearing it after success
-				// We clear it regardless if it's expired to ensure the account is no longer marked as rate-limited
-				if (result.rate_limited_until <= now) {
-					await db.run(
-						"UPDATE accounts SET rate_limited_until = NULL WHERE id = ?",
-						[account.id],
-					);
-					log.debug(
-						`Cleared expired rate_limited_until for account ${account.name}`,
-					);
-				}
-			}
+			log.debug(
+				`Cleared rate_limited_until for account ${account.name} on successful response`,
+			);
 		});
 	}
 
