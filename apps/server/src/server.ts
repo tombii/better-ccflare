@@ -51,7 +51,7 @@ import {
 	terminateUsageWorker,
 } from "@better-ccflare/proxy";
 import { validatePathOrThrow } from "@better-ccflare/security";
-import type { Account } from "@better-ccflare/types";
+import type { Account, StrategyStore } from "@better-ccflare/types";
 import { serve } from "bun";
 
 // Import embedded dashboard assets (will be bundled in compiled binary)
@@ -709,16 +709,15 @@ export default async function startServer(options?: {
 	// Now create the strategy with runtime config
 	const strategy = new SessionStrategy(runtimeConfig.sessionDurationMs);
 
-	// Extend dbOps with usage-based account utilization for balanced session selection
-	Object.assign(dbOps, {
-		getAccountUtilization: (accountId: string, provider: string): number | null => {
+	const strategyStore: StrategyStore = Object.assign(dbOps, {
+		getAccountUtilization(accountId: string, provider: string): number | null {
 			const data = usageCache.get(accountId);
 			if (!data) return null;
 			return getRepresentativeUtilizationForProvider(data, provider);
 		},
 	});
 
-	strategy.initialize(dbOps);
+	strategy.initialize(strategyStore);
 
 	// Start usage worker eagerly (before first request)
 	startUsageWorker();
@@ -798,7 +797,7 @@ export default async function startServer(options?: {
 			// For now, only SessionStrategy is supported
 			if (newStrategyName === "session") {
 				const strategy = new SessionStrategy(runtimeConfig.sessionDurationMs);
-				strategy.initialize(dbOps);
+				strategy.initialize(strategyStore);
 				proxyContext.strategy = strategy;
 			}
 		}
