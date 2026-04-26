@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, spyOn } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 
 // Mock the usage fetcher functions directly
 const mockUsageCache = {
@@ -42,7 +42,13 @@ const mockFetchUsageData = {
 	seven_day_opus: { utilization: 80, resets_at: null },
 };
 
-const mockGetRepresentativeUtilization = () => 70;
+const mockGetRepresentativeUtilization = (usageData?: typeof mockFetchUsageData | null) => {
+	if (!usageData) return 70;
+	const utils = Object.values(usageData)
+		.filter((v): v is { utilization: number } => v != null && typeof (v as any).utilization === "number")
+		.map((v) => v.utilization);
+	return utils.length > 0 ? Math.max(...utils) : 70;
+};
 const mockGetRepresentativeWindow = () => "seven_day";
 
 const mockLog = {
@@ -281,6 +287,15 @@ describe("Accounts Handler - Dashboard Usage Data Integration", () => {
 	});
 
 	describe("Stale rate_limited_until Clearing", () => {
+		const originalGetAge = mockUsageCache.getAge;
+		const originalDbRun = mockDatabase.run;
+
+		afterEach(() => {
+			mockUsageCache.getAge = originalGetAge;
+			mockDatabase.run = originalDbRun;
+			mockQuery.all = () => [];
+		});
+
 		function makeOAuthAccount(overrides: Record<string, unknown> = {}) {
 			return {
 				id: "oauth-account-1",
@@ -406,6 +421,35 @@ describe("Accounts Handler - Dashboard Usage Data Integration", () => {
 			expect(dbRunCalledWithClear).toBe(false);
 			expect(response.ok).toBe(true);
 		});
+
+		it("does NOT clear rate_limited_until when utilization is >= 100 (account exhausted)", async () => {
+			const exhaustedData = {
+				five_hour: { utilization: 100, resets_at: null },
+				seven_day: { utilization: 100, resets_at: null },
+				seven_day_oauth_apps: { utilization: 100, resets_at: null },
+				seven_day_opus: { utilization: 100, resets_at: null },
+			};
+			const accountsHandler = createMockAccountsListHandler(90000, exhaustedData);
+			const futureExpiry = Date.now() + 3 * 60 * 60 * 1000;
+
+			mockQuery.all = () => [
+				makeOAuthAccount({ rate_limited_until: futureExpiry, rate_limited: 1 }),
+			];
+			mockUsageCache.getAge = () => null; // stale — will fetch
+
+			let dbRunCalledWithClear = false;
+			mockDatabase.run = (sql: string) => {
+				if (
+					sql === "UPDATE accounts SET rate_limited_until = NULL WHERE id = ?"
+				) {
+					dbRunCalledWithClear = true;
+				}
+			};
+
+			const response = await accountsHandler();
+			expect(dbRunCalledWithClear).toBe(false);
+			expect(response.ok).toBe(true);
+		});
 	});
 
 	describe("Account Management Integration", () => {
@@ -481,6 +525,10 @@ describe("Accounts Handler - Dashboard Usage Data Integration", () => {
 				CACHE_FRESHNESS_THRESHOLD_MS,
 			);
 			const futureTimestamp = Date.now() + 86400000; // 24 hours from now
+
+			// Use fresh cache so the usage fetch is skipped — prevents stale-clear logic
+			// from wiping rate_limited_until before the assertion.
+			mockUsageCache.getAge = () => 30000;
 
 			mockQuery.all = () => [
 				{
@@ -588,7 +636,10 @@ describe("Accounts Handler - Dashboard Usage Data Integration", () => {
 });
 
 // Mock factory functions to create handlers with our mocked dependencies
-function createMockAccountsListHandler(CACHE_FRESHNESS_THRESHOLD_MS: number) {
+function createMockAccountsListHandler(
+	CACHE_FRESHNESS_THRESHOLD_MS: number,
+	fetchData: typeof mockFetchUsageData = mockFetchUsageData,
+) {
 	return async (): Promise<Response> => {
 		const now = Date.now();
 		const sessionDuration = 5 * 60 * 60 * 1000; // 5 hours
@@ -620,7 +671,7 @@ function createMockAccountsListHandler(CACHE_FRESHNESS_THRESHOLD_MS: number) {
 				if (!isCacheFresh && account.access_token) {
 					// Fetch usage data if cache is stale or missing
 					try {
-						const usageData = mockFetchUsageData;
+						const usageData = fetchData;
 						if (usageData) {
 							mockUsageCache.set(account.id, usageData);
 							mockLog.debug(
@@ -629,7 +680,7 @@ function createMockAccountsListHandler(CACHE_FRESHNESS_THRESHOLD_MS: number) {
 
 							// If the usage API shows available capacity but the DB still has
 							// rate_limited_until in the future, clear the stale state.
-							const utilization = mockGetRepresentativeUtilization();
+							const utilization = mockGetRepresentativeUtilization(usageData);
 							const limitedUntil = account.rate_limited_until
 								? Number(account.rate_limited_until)
 								: null;
@@ -667,7 +718,7 @@ function createMockAccountsListHandler(CACHE_FRESHNESS_THRESHOLD_MS: number) {
 			let usageWindow: string | null = null;
 
 			if (account.provider === "anthropic" && usageData) {
-				usageUtilization = mockGetRepresentativeUtilization();
+				usageUtilization = mockGetRepresentativeUtilization(usageData);
 				usageWindow = mockGetRepresentativeWindow();
 			}
 
