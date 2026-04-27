@@ -22,6 +22,62 @@ interface RateLimitProgressProps {
 
 const WINDOW_MS = 5 * 60 * 60 * 1000; // 5 hours in milliseconds
 
+const WINDOW_DURATION_MS: Record<string, number> = {
+	five_hour: 5 * 60 * 60 * 1000,
+	seven_day: 7 * 24 * 60 * 60 * 1000,
+	seven_day_opus: 7 * 24 * 60 * 60 * 1000,
+	seven_day_sonnet: 7 * 24 * 60 * 60 * 1000,
+	weekly: 7 * 24 * 60 * 60 * 1000,
+	daily: 24 * 60 * 60 * 1000,
+	monthly: 30 * 24 * 60 * 60 * 1000,
+	time_limit: 5 * 60 * 60 * 1000,
+	tokens_limit: 5 * 60 * 60 * 1000,
+};
+
+function computeExpectedPct(
+	resetTime: string | null,
+	window: string | null,
+	now: number,
+): number | null {
+	if (!resetTime || !window) return null;
+	const durationMs = WINDOW_DURATION_MS[window];
+	if (!durationMs) return null;
+	const resetMs = new Date(resetTime).getTime();
+	const startMs = resetMs - durationMs;
+	const elapsed = now - startMs;
+	return Math.min(100, Math.max(0, (elapsed / durationMs) * 100));
+}
+
+function formatDuration(ms: number): string {
+	const totalMinutes = Math.round(ms / 60000);
+	const hours = Math.floor(totalMinutes / 60);
+	const minutes = totalMinutes % 60;
+	if (hours > 0) return `${hours}h ${minutes}m`;
+	return `${minutes}m`;
+}
+
+function computeProjectedMessage(
+	resetTime: string | null,
+	window: string | null,
+	percentage: number | null,
+	now: number,
+): string | null {
+	if (!resetTime || !window || percentage === null) return null;
+	const durationMs = WINDOW_DURATION_MS[window];
+	if (!durationMs) return null;
+	const resetMs = new Date(resetTime).getTime();
+	const elapsed = now - (resetMs - durationMs);
+	const remaining = resetMs - now;
+	if (elapsed <= 0 || remaining <= 0) return null;
+	const f = percentage / 100;
+	if (f <= 0) return "No usage recorded yet in this window";
+	const timeToExhaustMs = ((1 - f) / f) * elapsed;
+	if (timeToExhaustMs < remaining) {
+		return `Runs out ${formatDuration(remaining - timeToExhaustMs)} before reset`;
+	}
+	return `Resets ${formatDuration(timeToExhaustMs - remaining)} before exhaustion`;
+}
+
 // Format window name for display
 function formatWindowName(window: string | null): string {
 	if (!window) return "window";
@@ -430,7 +486,54 @@ export function RateLimitProgress({
 								{isAvailable ? `${percentage?.toFixed(0)}%` : "N/A"}
 							</span>
 						</div>
-						<Progress value={isAvailable ? percentage : 0} className="h-2" />
+						{(() => {
+							const expectedPct = computeExpectedPct(
+								usage.resetTime,
+								usage.window,
+								now,
+							);
+							const isOverPacing =
+								expectedPct !== null && (percentage ?? 0) > expectedPct;
+							const windowLabel = usage.window
+								? formatWindowName(usage.window)
+								: "Rate limit";
+							const projectedMessage = computeProjectedMessage(
+								usage.resetTime,
+								usage.window,
+								percentage ?? null,
+								now,
+							);
+							return (
+								<div className="group relative flex items-center" style={{ minHeight: "20px" }}>
+									<div className="pointer-events-none absolute bottom-full z-10 mb-2 hidden w-max max-w-xs -translate-x-1/2 rounded bg-popover px-3 py-2 text-xs text-popover-foreground shadow-md group-hover:block" style={{ left: `${expectedPct ?? 50}%` }}>
+										<div className="mb-1 font-medium">
+											{windowLabel} usage
+										</div>
+										{projectedMessage && (
+											<div className={isOverPacing ? "text-red-400" : "text-green-400"}>
+												{projectedMessage}
+											</div>
+										)}
+									</div>
+									<Progress
+										value={isAvailable ? percentage : 0}
+										className="h-2 w-full"
+									/>
+									{expectedPct !== null && (
+										<div
+											className="absolute w-0.5 pointer-events-none"
+											style={{
+												left: `${expectedPct}%`,
+												top: "-3px",
+												bottom: "-3px",
+												backgroundColor: "rgba(255,255,255,0.95)",
+												boxShadow: "1px 0 2px rgba(0,0,0,0.5), -1px 0 2px rgba(0,0,0,0.5)",
+											}}
+										/>
+									)}
+								</div>
+							);
+						})()}
 						{usage.resetTime && (
 							<div className="flex items-center justify-between">
 								<span className="text-xs text-muted-foreground">
