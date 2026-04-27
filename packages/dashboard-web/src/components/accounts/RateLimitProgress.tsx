@@ -29,7 +29,7 @@ const WINDOW_DURATION_MS: Record<string, number> = {
 	seven_day_sonnet: 7 * 24 * 60 * 60 * 1000,
 	weekly: 7 * 24 * 60 * 60 * 1000,
 	daily: 24 * 60 * 60 * 1000,
-	monthly: 30 * 24 * 60 * 60 * 1000,
+	monthly: 30 * 24 * 60 * 60 * 1000, // approximation; exact billing cycle start is unknown
 	time_limit: 5 * 60 * 60 * 1000,
 	tokens_limit: 5 * 60 * 60 * 1000,
 };
@@ -505,12 +505,12 @@ export function RateLimitProgress({
 							);
 							return (
 								<div className="group relative flex items-center" style={{ minHeight: "20px" }}>
-									<div className="pointer-events-none absolute bottom-full z-10 mb-2 hidden w-max max-w-xs -translate-x-1/2 rounded bg-popover px-3 py-2 text-xs text-popover-foreground shadow-md group-hover:block" style={{ left: `${expectedPct ?? 50}%` }}>
+									<div className="pointer-events-none absolute bottom-full z-10 mb-2 hidden w-max max-w-xs -translate-x-1/2 rounded bg-popover px-3 py-2 text-xs text-popover-foreground shadow-md group-hover:block" style={{ left: `clamp(10%, ${expectedPct ?? 50}%, 90%)` }}>
 										<div className="mb-1 font-medium">
 											{windowLabel} usage
 										</div>
 										{projectedMessage && (
-											<div className={isOverPacing ? "text-red-400" : "text-green-400"}>
+											<div className={(percentage ?? 0) <= 0 ? "text-muted-foreground" : isOverPacing ? "text-red-400" : "text-green-400"}>
 												{projectedMessage}
 											</div>
 										)}
