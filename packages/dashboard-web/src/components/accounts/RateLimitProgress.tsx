@@ -22,17 +22,33 @@ interface RateLimitProgressProps {
 
 const WINDOW_MS = 5 * 60 * 60 * 1000; // 5 hours in milliseconds
 
-const WINDOW_DURATION_MS: Record<string, number> = {
+const FIXED_WINDOW_DURATION_MS: Record<string, number> = {
 	five_hour: 5 * 60 * 60 * 1000,
 	seven_day: 7 * 24 * 60 * 60 * 1000,
 	seven_day_opus: 7 * 24 * 60 * 60 * 1000,
 	seven_day_sonnet: 7 * 24 * 60 * 60 * 1000,
 	weekly: 7 * 24 * 60 * 60 * 1000,
 	daily: 24 * 60 * 60 * 1000,
-	monthly: 30 * 24 * 60 * 60 * 1000, // approximation; exact billing cycle start is unknown
 	time_limit: 5 * 60 * 60 * 1000,
 	tokens_limit: 5 * 60 * 60 * 1000,
 };
+
+function computeWindowStartMs(
+	resetMs: number,
+	window: string,
+): number | null {
+	if (window === "monthly") {
+		const resetDate = new Date(resetMs);
+		return new Date(
+			resetDate.getFullYear(),
+			resetDate.getMonth() - 1,
+			resetDate.getDate(),
+		).getTime();
+	}
+	const durationMs = FIXED_WINDOW_DURATION_MS[window];
+	if (!durationMs) return null;
+	return resetMs - durationMs;
+}
 
 function computeExpectedPct(
 	resetTime: string | null,
@@ -40,10 +56,10 @@ function computeExpectedPct(
 	now: number,
 ): number | null {
 	if (!resetTime || !window) return null;
-	const durationMs = WINDOW_DURATION_MS[window];
-	if (!durationMs) return null;
 	const resetMs = new Date(resetTime).getTime();
-	const startMs = resetMs - durationMs;
+	const startMs = computeWindowStartMs(resetMs, window);
+	if (startMs === null) return null;
+	const durationMs = resetMs - startMs;
 	const elapsed = now - startMs;
 	return Math.min(100, Math.max(0, (elapsed / durationMs) * 100));
 }
@@ -63,10 +79,10 @@ function computeProjectedMessage(
 	now: number,
 ): string | null {
 	if (!resetTime || !window || percentage === null) return null;
-	const durationMs = WINDOW_DURATION_MS[window];
-	if (!durationMs) return null;
 	const resetMs = new Date(resetTime).getTime();
-	const elapsed = now - (resetMs - durationMs);
+	const startMs = computeWindowStartMs(resetMs, window);
+	if (startMs === null) return null;
+	const elapsed = now - startMs;
 	const remaining = resetMs - now;
 	if (elapsed <= 0 || remaining <= 0) return null;
 	const f = percentage / 100;
