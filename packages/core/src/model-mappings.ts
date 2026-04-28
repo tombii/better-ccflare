@@ -230,10 +230,6 @@ export function getModelList(
 		return toArray(mappings[family]);
 	}
 
-	// Default: sonnet family — return original model if not mapped
-	const defaultVal = mappings.sonnet;
-	if (defaultVal) return toArray(defaultVal);
-
 	// No mapping for this model — pass through unchanged
 	return [anthropicModel];
 }
