@@ -341,6 +341,33 @@ function startUsagePollingWithRefresh(
 							),
 						);
 				},
+				(accountId) => {
+					// Usage API shows available capacity (<100%). If rate_limited_until is
+					// set in the future (seat-reassignment case), clear it now rather than
+					// waiting for the natural expiry timer — the polling loop has confirmed
+					// the seat is available again.
+					proxyContext.dbOps
+						.getAccount(accountId)
+						.then((acc) => {
+							if (
+								acc?.rate_limited_until &&
+								Number(acc.rate_limited_until) > Date.now()
+							) {
+								return proxyContext.dbOps
+									.forceResetAccountRateLimit(accountId)
+									.then(() => {
+										logger.info(
+											`Cleared stale rate_limited_until for account ${acc.name} (${accountId}): usage polling shows available capacity (seat reassignment or early reset)`,
+										);
+									});
+							}
+						})
+						.catch((err) =>
+							logger.warn(
+								`Failed to check/clear rate_limited_until for account ${accountId} on capacity restore: ${err}`,
+							),
+						);
+				},
 			);
 
 			// Reset retry count on success

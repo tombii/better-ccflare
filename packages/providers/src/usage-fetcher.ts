@@ -336,6 +336,10 @@ class UsageCache {
 	private customEndpoints = new Map<string, string | null>(); // Track custom endpoints
 	private windowResetCallbacks = new Map<string, (accountId: string) => void>();
 	private usageRateLimitedUntil = new Map<string, number>(); // Tracks when usage API 429 clears
+	private capacityRestoredCallbacks = new Map<
+		string,
+		(accountId: string) => void
+	>();
 
 	/**
 	 * Schedule the next poll with exponential backoff on failures.
@@ -412,6 +416,7 @@ class UsageCache {
 		intervalMs?: number,
 		customEndpoint?: string | null,
 		onWindowReset?: (accountId: string) => void,
+		onCapacityRestored?: (accountId: string) => void,
 	) {
 		// Check if provider supports usage tracking
 		if (provider && !supportsUsageTracking(provider)) {
@@ -451,6 +456,11 @@ class UsageCache {
 			this.windowResetCallbacks.set(accountId, onWindowReset);
 		} else {
 			this.windowResetCallbacks.delete(accountId);
+		}
+		if (onCapacityRestored) {
+			this.capacityRestoredCallbacks.set(accountId, onCapacityRestored);
+		} else {
+			this.capacityRestoredCallbacks.delete(accountId);
 		}
 
 		// Default to 90s if not provided
@@ -514,6 +524,7 @@ class UsageCache {
 			this.tokenProviders.delete(accountId);
 			this.failureCounts.delete(accountId);
 			this.windowResetCallbacks.delete(accountId);
+			this.capacityRestoredCallbacks.delete(accountId);
 			// Clean up cache entry when polling stops to prevent memory leaks
 			this.cache.delete(accountId);
 			this.usageRateLimitedUntil.delete(accountId);
@@ -661,6 +672,20 @@ class UsageCache {
 					const utilization = getRepresentativeUtilization(
 						result.data as UsageData,
 					);
+					// Notify capacity-restored listener only when the account was previously
+					// rate-limited (usageRateLimitedUntil set) and usage now shows < 100%.
+					// This handles seat-reassignment: org admin reassigns a seat mid-window,
+					// Anthropic resets usage, polling detects available capacity and lets
+					// the caller clear stale rate_limited_until in the DB.
+					if (
+						utilization !== null &&
+						utilization < 100 &&
+						this.usageRateLimitedUntil.has(accountId)
+					) {
+						const capacityCallback =
+							this.capacityRestoredCallbacks.get(accountId);
+						if (capacityCallback) capacityCallback(accountId);
+					}
 					const window = getRepresentativeWindow(result.data as UsageData);
 					log.debug(
 						`Successfully fetched usage data for account ${accountId}: ${utilization}% (${window} window)`,
