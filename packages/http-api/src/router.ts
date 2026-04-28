@@ -22,11 +22,13 @@ import {
 	createAnthropicCompatibleAccountAddHandler,
 	createAwsProfilesListHandler,
 	createBedrockAccountAddHandler,
+	createGetZaiPeakHoursPauseHandler,
 	createKiloAccountAddHandler,
 	createMinimaxAccountAddHandler,
 	createNanoGPTAccountAddHandler,
 	createOpenAIAccountAddHandler,
 	createOpenRouterAccountAddHandler,
+	createSetZaiPeakHoursPauseHandler,
 	createVertexAIAccountAddHandler,
 	createZaiAccountAddHandler,
 } from "./handlers/accounts";
@@ -233,6 +235,14 @@ export class APIRouter {
 		);
 		this.handlers.set("POST:/api/accounts/openai-compatible", (req) =>
 			openaiAccountAddHandler(req),
+		);
+
+		// Zai peak hours auto-pause settings
+		this.handlers.set("GET:/api/settings/zai-peak-hours-pause", (req) =>
+			createGetZaiPeakHoursPauseHandler(dbOps)(req),
+		);
+		this.handlers.set("POST:/api/settings/zai-peak-hours-pause", (req) =>
+			createSetZaiPeakHoursPauseHandler(dbOps)(req),
 		);
 
 		// Token health handlers

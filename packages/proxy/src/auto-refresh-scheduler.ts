@@ -14,6 +14,12 @@ import type { ProxyContext } from "./proxy";
 
 const log = new Logger("AutoRefreshScheduler");
 
+function isZaiPeakHour(ts = Date.now()): boolean {
+	const d = new Date(ts);
+	const sgtHour = (d.getUTCHours() + d.getUTCMinutes() / 60 + 8) % 24;
+	return sgtHour >= 14 && sgtHour < 18;
+}
+
 /**
  * Auto-refresh scheduler that monitors accounts with auto-refresh enabled
  * and sends dummy messages when their usage window resets
@@ -98,6 +104,8 @@ export class AutoRefreshScheduler {
 				log.warn("Database not available for auto-refresh check");
 				return;
 			}
+
+			await this.checkPeakHoursPause();
 
 			const now = Date.now();
 
@@ -971,6 +979,39 @@ export class AutoRefreshScheduler {
 				);
 			}
 			// Don't throw - this is a non-critical cleanup operation
+		}
+	}
+
+	/**
+	 * Pause or resume zai accounts based on peak hours setting.
+	 * Only touches accounts with no existing pause (for peak hours pause)
+	 * or accounts specifically paused for peak hours (for resume).
+	 */
+	private async checkPeakHoursPause(): Promise<void> {
+		const settingRow = await this.db.get<{ value: string }>(
+			"SELECT value FROM settings WHERE key = ?",
+			["zai_peak_hours_pause_enabled"],
+		);
+		const enabled = settingRow?.value === "1";
+		if (!enabled) return;
+
+		const inPeak = isZaiPeakHour();
+		if (inPeak) {
+			// Pause zai accounts that aren't already paused (preserve existing manual/overage/failure pauses)
+			const changes = await this.db.runWithChanges(
+				"UPDATE accounts SET paused = 1, pause_reason = 'peak_hours' WHERE provider = 'zai' AND COALESCE(paused, 0) = 0",
+			);
+			if (changes > 0) {
+				log.info(`Peak hours: paused ${changes} zai account(s)`);
+			}
+		} else {
+			// Only resume accounts we specifically paused for peak hours
+			const changes = await this.db.runWithChanges(
+				"UPDATE accounts SET paused = 0, pause_reason = NULL WHERE provider = 'zai' AND COALESCE(paused, 0) = 1 AND pause_reason = 'peak_hours'",
+			);
+			if (changes > 0) {
+				log.info(`Peak hours ended: resumed ${changes} zai account(s)`);
+			}
 		}
 	}
 

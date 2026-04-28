@@ -2014,6 +2014,21 @@ class API extends HttpClient {
 			throw error;
 		}
 	}
+
+	async getZaiPeakHoursPauseSetting(): Promise<{
+		enabled: boolean;
+		currentlyInPeakHours: boolean;
+	}> {
+		return this.get<{ enabled: boolean; currentlyInPeakHours: boolean }>(
+			"/api/settings/zai-peak-hours-pause",
+		);
+	}
+
+	async setZaiPeakHoursPauseSetting(enabled: boolean): Promise<void> {
+		await this.post("/api/settings/zai-peak-hours-pause", {
+			enabled: enabled ? 1 : 0,
+		});
+	}
 }
 
 export const api = new API();

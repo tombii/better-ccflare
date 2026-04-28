@@ -1,3 +1,4 @@
+import { useQuery } from "@tanstack/react-query";
 import { AlertCircle, Plus } from "lucide-react";
 import { useState } from "react";
 import { type Account, api } from "../api";
@@ -23,6 +24,7 @@ import {
 	CardHeader,
 	CardTitle,
 } from "./ui/card";
+import { Switch } from "./ui/switch";
 
 export function AccountsTab() {
 	const { formatError } = useApiError();
@@ -33,6 +35,14 @@ export function AccountsTab() {
 		refetch: loadAccounts,
 	} = useAccounts();
 	const renameAccount = useRenameAccount();
+
+	const { data: zaiPeakHoursSetting, refetch: refetchPeakHoursSetting } =
+		useQuery({
+			queryKey: ["zai-peak-hours-pause"],
+			queryFn: () => api.getZaiPeakHoursPauseSetting(),
+			refetchInterval: 60_000,
+			staleTime: 30_000,
+		});
 
 	const [adding, setAdding] = useState(false);
 	const [confirmDelete, setConfirmDelete] = useState<{
@@ -500,6 +510,16 @@ export function AccountsTab() {
 		}
 	};
 
+	const handleZaiPeakHoursPauseToggle = async (enabled: boolean) => {
+		try {
+			await api.setZaiPeakHoursPauseSetting(enabled);
+			await refetchPeakHoursSetting();
+			await loadAccounts();
+		} catch (err) {
+			setActionError(formatError(err));
+		}
+	};
+
 	if (loading) {
 		return (
 			<Card>
@@ -566,6 +586,38 @@ export function AccountsTab() {
 							}}
 							onError={setActionError}
 						/>
+					)}
+
+					{accounts?.some((a) => a.provider === "zai") && (
+						<Card className="p-4 mb-4">
+							<div className="flex items-center justify-between">
+								<div>
+									<div className="font-medium text-sm">
+										Zai Peak Hours Auto-Pause
+									</div>
+									<div className="text-xs text-muted-foreground mt-0.5">
+										Pause all Zai accounts during peak hours (14:00–18:00 SGT)
+									</div>
+								</div>
+								<div className="flex items-center gap-3">
+									{zaiPeakHoursSetting?.currentlyInPeakHours ? (
+										<span className="text-xs font-medium text-amber-600 flex items-center gap-1">
+											<span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-500" />
+											Peak hours
+										</span>
+									) : (
+										<span className="text-xs font-medium text-green-600 flex items-center gap-1">
+											<span className="inline-block w-1.5 h-1.5 rounded-full bg-green-500" />
+											Off-peak
+										</span>
+									)}
+									<Switch
+										checked={zaiPeakHoursSetting?.enabled ?? false}
+										onCheckedChange={handleZaiPeakHoursPauseToggle}
+									/>
+								</div>
+							</div>
+						</Card>
 					)}
 
 					<AccountList

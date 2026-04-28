@@ -40,6 +40,12 @@ import type { AccountResponse } from "../types";
 
 const log = new Logger("AccountsHandler");
 
+function isZaiPeakHour(ts = Date.now()): boolean {
+	const d = new Date(ts);
+	const sgtHour = (d.getUTCHours() + d.getUTCMinutes() / 60 + 8) % 24;
+	return sgtHour >= 14 && sgtHour < 18;
+}
+
 function normalizeCodexUsageData(usage: UsageData): UsageData | null {
 	const normalized: UsageData = {
 		five_hour: { ...usage.five_hour },
@@ -3141,6 +3147,54 @@ export function createAccountRefreshUsageHandler(dbOps: DatabaseOperations) {
 				error instanceof Error
 					? error
 					: new Error("Failed to refresh usage data"),
+			);
+		}
+	};
+}
+
+/**
+ * Get the Zai peak hours auto-pause setting
+ */
+export function createGetZaiPeakHoursPauseHandler(dbOps: DatabaseOperations) {
+	return async (_req: Request): Promise<Response> => {
+		try {
+			const enabled = await dbOps.getZaiPeakHoursPauseEnabled();
+			return Response.json({
+				success: true,
+				enabled,
+				currentlyInPeakHours: isZaiPeakHour(),
+			});
+		} catch (error) {
+			return Response.json(
+				{ success: false, error: String(error) },
+				{ status: 500 },
+			);
+		}
+	};
+}
+
+/**
+ * Set the Zai peak hours auto-pause setting
+ */
+export function createSetZaiPeakHoursPauseHandler(dbOps: DatabaseOperations) {
+	return async (req: Request): Promise<Response> => {
+		try {
+			const body = (await req.json()) as { enabled: number };
+			const enabled = Boolean(body.enabled);
+			await dbOps.setZaiPeakHoursPauseEnabled(enabled);
+			if (!enabled) {
+				// Immediate resume — don't make users wait 60s for scheduler
+				await dbOps
+					.getAdapter()
+					.run(
+						"UPDATE accounts SET paused = 0, pause_reason = NULL WHERE provider = 'zai' AND COALESCE(paused, 0) = 1 AND pause_reason = 'peak_hours'",
+					);
+			}
+			return Response.json({ success: true });
+		} catch (error) {
+			return Response.json(
+				{ success: false, error: String(error) },
+				{ status: 500 },
 			);
 		}
 	};

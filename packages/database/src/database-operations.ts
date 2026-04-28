@@ -1200,4 +1200,21 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 	): Promise<ComboWithSlots | null> {
 		return this.combo.getActiveComboForFamily(family);
 	}
+
+	// ── Settings operations ───────────────────────────────────────────────────
+
+	async getZaiPeakHoursPauseEnabled(): Promise<boolean> {
+		const row = await this.adapter.get<{ value: string }>(
+			"SELECT value FROM settings WHERE key = ?",
+			["zai_peak_hours_pause_enabled"],
+		);
+		return row?.value === "1";
+	}
+
+	async setZaiPeakHoursPauseEnabled(enabled: boolean): Promise<void> {
+		await this.adapter.run(
+			"INSERT INTO settings(key, value, updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+			["zai_peak_hours_pause_enabled", enabled ? "1" : "0", Date.now()],
+		);
+	}
 }
