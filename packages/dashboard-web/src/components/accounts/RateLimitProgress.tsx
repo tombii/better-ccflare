@@ -29,11 +29,14 @@ const FIXED_WINDOW_DURATION_MS: Record<string, number> = {
 	seven_day_sonnet: 7 * 24 * 60 * 60 * 1000,
 	weekly: 7 * 24 * 60 * 60 * 1000,
 	daily: 24 * 60 * 60 * 1000,
+	time_limit: 5 * 60 * 60 * 1000,
 	tokens_limit: 5 * 60 * 60 * 1000,
-	// time_limit intentionally omitted — ZAI's TIME_LIMIT window duration is unknown
 };
 
-function computeWindowStartMs(resetMs: number, window: string): number | null {
+function computeWindowStartMs(
+	resetMs: number,
+	window: string,
+): number | null {
 	if (window === "monthly") {
 		const resetDate = new Date(resetMs);
 		return new Date(
@@ -110,7 +113,7 @@ function formatWindowName(window: string | null): string {
 		case "monthly":
 			return "Monthly";
 		case "time_limit":
-			return "Time Quota";
+			return "Time";
 		case "tokens_limit":
 			return "Tokens";
 		default:
@@ -517,32 +520,20 @@ export function RateLimitProgress({
 								now,
 							);
 							return (
-								<div
-									className="group relative flex items-center"
-									style={{ minHeight: "20px" }}
-								>
-									<div
-										className="pointer-events-none absolute bottom-full z-10 mb-2 hidden w-max max-w-xs -translate-x-1/2 rounded bg-popover px-3 py-2 text-xs text-popover-foreground shadow-md group-hover:block"
-										style={{ left: `clamp(10%, ${expectedPct ?? 50}%, 90%)` }}
-									>
-										<div className="mb-1 font-medium">{windowLabel} usage</div>
+								<div className="group relative">
+									<div className="pointer-events-none absolute bottom-full z-10 mb-2 hidden w-max max-w-xs -translate-x-1/2 rounded bg-popover px-3 py-2 text-xs text-popover-foreground shadow-md group-hover:block" style={{ left: `clamp(10%, ${expectedPct ?? 50}%, 90%)` }}>
+										<div className="mb-1 font-medium">
+											{windowLabel} usage
+										</div>
 										{projectedMessage && (
-											<div
-												className={
-													(percentage ?? 0) <= 0
-														? "text-muted-foreground"
-														: isOverPacing
-															? "text-red-400"
-															: "text-green-400"
-												}
-											>
+											<div className={(percentage ?? 0) <= 0 ? "text-muted-foreground" : isOverPacing ? "text-red-400" : "text-green-400"}>
 												{projectedMessage}
 											</div>
 										)}
 									</div>
 									<Progress
 										value={isAvailable ? percentage : 0}
-										className="h-2 w-full"
+										className="h-2"
 									/>
 									{expectedPct !== null && (
 										<div
@@ -550,10 +541,10 @@ export function RateLimitProgress({
 											style={{
 												left: `${expectedPct}%`,
 												top: "-3px",
-												bottom: "-3px",
+												height: "14px",
+												zIndex: 10,
 												backgroundColor: "rgba(255,255,255,0.95)",
-												boxShadow:
-													"1px 0 2px rgba(0,0,0,0.5), -1px 0 2px rgba(0,0,0,0.5)",
+												boxShadow: "1px 0 2px rgba(0,0,0,0.5), -1px 0 2px rgba(0,0,0,0.5)",
 											}}
 										/>
 									)}
