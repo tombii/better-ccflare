@@ -146,7 +146,9 @@ export class BunSqlAdapter {
 		if (this.isSQLite && this.sqliteDb) {
 			const db = this.sqliteDb;
 			// biome-ignore lint/suspicious/noExplicitAny: SQLite params can be any binding type
-			return this.withBusyRetry(() => db.query<R, any[]>(sqlStr).all(...(params as any[])));
+			return this.withBusyRetry(() =>
+				db.query<R, any[]>(sqlStr).all(...(params as any[])),
+			);
 		}
 		// PostgreSQL via Bun.SQL unsafe
 		const pgQuery = this.pgSql(sqlStr);
@@ -162,7 +164,9 @@ export class BunSqlAdapter {
 		if (this.isSQLite && this.sqliteDb) {
 			const db = this.sqliteDb;
 			// biome-ignore lint/suspicious/noExplicitAny: SQLite params can be any binding type
-			const result = await this.withBusyRetry(() => db.query<R, any[]>(sqlStr).get(...(params as any[])));
+			const result = await this.withBusyRetry(() =>
+				db.query<R, any[]>(sqlStr).get(...(params as any[])),
+			);
 			return (result as R) ?? null;
 		}
 		const pgQuery = this.pgSql(sqlStr);
@@ -196,7 +200,9 @@ export class BunSqlAdapter {
 		if (this.isSQLite && this.sqliteDb) {
 			const db = this.sqliteDb;
 			// biome-ignore lint/suspicious/noExplicitAny: SQLite params can be any binding type
-			const result = await this.withBusyRetry(() => db.run(sqlStr, params as any[]));
+			const result = await this.withBusyRetry(() =>
+				db.run(sqlStr, params as any[]),
+			);
 			return result.changes;
 		}
 		const pgQuery = this.pgSql(sqlStr);

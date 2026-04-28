@@ -118,9 +118,10 @@ export function createRequestsDetailHandler(dbOps: DatabaseOperations) {
 		const rows = await dbOps.listRequestPayloadsWithAccountNames(safeLimit);
 		const parsed = rows.map((r) => {
 			try {
-				const data = (
-					r.json ? JSON.parse(r.json) : {}
-				) as Record<string, unknown>;
+				const data = (r.json ? JSON.parse(r.json) : {}) as Record<
+					string,
+					unknown
+				>;
 
 				const request = data.request as
 					| { body?: string | null; truncated?: boolean }

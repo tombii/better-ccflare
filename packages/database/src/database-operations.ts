@@ -2,7 +2,6 @@ import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import { dirname } from "node:path";
-import { EMBEDDED_VACUUM_WORKER_CODE } from "./inline-vacuum-worker";
 import type { RuntimeConfig } from "@better-ccflare/config";
 import type { Disposable } from "@better-ccflare/core";
 import type {
@@ -15,6 +14,7 @@ import type {
 	StrategyStore,
 } from "@better-ccflare/types";
 import { BunSqlAdapter } from "./adapters/bun-sql-adapter";
+import { EMBEDDED_VACUUM_WORKER_CODE } from "./inline-vacuum-worker";
 import { ensureSchema, runMigrations } from "./migrations";
 import { ensureSchemaPg, runMigrationsPg } from "./migrations-pg";
 import { resolveDbPath } from "./paths";
@@ -593,9 +593,14 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		return this.requests.listPayloads(limit);
 	}
 
-	async listRequestPayloadsWithAccountNames(
-		limit = 50,
-	): Promise<Array<{ id: string; json: string | null; timestamp: number; account_name: string | null }>> {
+	async listRequestPayloadsWithAccountNames(limit = 50): Promise<
+		Array<{
+			id: string;
+			json: string | null;
+			timestamp: number;
+			account_name: string | null;
+		}>
+	> {
 		return this.requests.listPayloadsWithAccountNames(limit);
 	}
 
@@ -886,7 +891,10 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		const dbPath = this.resolvedDbPath;
 		let worker: Worker;
 		if (EMBEDDED_VACUUM_WORKER_CODE) {
-			const workerCode = Buffer.from(EMBEDDED_VACUUM_WORKER_CODE, "base64").toString("utf8");
+			const workerCode = Buffer.from(
+				EMBEDDED_VACUUM_WORKER_CODE,
+				"base64",
+			).toString("utf8");
 			const blob = new Blob([workerCode], { type: "text/javascript" });
 			worker = new Worker(URL.createObjectURL(blob), { smol: true });
 		} else {
@@ -904,7 +912,8 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 				error?: string;
 			}>((resolve, reject) => {
 				worker.onmessage = (event: MessageEvent) => resolve(event.data);
-				worker.onerror = (event: ErrorEvent) => reject(new Error(event.message));
+				worker.onerror = (event: ErrorEvent) =>
+					reject(new Error(event.message));
 				worker.postMessage({
 					dbPath,
 					busyTimeoutMs: this.dbConfig.busyTimeoutMs ?? 10000,

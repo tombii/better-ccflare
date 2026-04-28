@@ -246,8 +246,10 @@ export class SessionStrategy implements LoadBalancingStrategy {
 				// Treat null as 0: an account with no usage data is assumed fresh
 				// (maximum remaining capacity). This prevents newly-added accounts
 				// from being permanently sidelined until all others expire.
-				const utilA = this.store?.getAccountUtilization?.(a.id, a.provider) ?? 0;
-				const utilB = this.store?.getAccountUtilization?.(b.id, b.provider) ?? 0;
+				const utilA =
+					this.store?.getAccountUtilization?.(a.id, a.provider) ?? 0;
+				const utilB =
+					this.store?.getAccountUtilization?.(b.id, b.provider) ?? 0;
 				return utilA - utilB;
 			});
 

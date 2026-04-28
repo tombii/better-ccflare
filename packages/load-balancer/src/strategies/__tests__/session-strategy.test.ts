@@ -724,7 +724,10 @@ describe("SessionStrategy", () => {
 			mockStore.setUtilization("high-pri-high-util", 90);
 			mockStore.setUtilization("low-pri-low-util", 10);
 
-			const result = strategy.select([lowPriorityLowUtil, highPriorityHighUtil], meta);
+			const result = strategy.select(
+				[lowPriorityLowUtil, highPriorityHighUtil],
+				meta,
+			);
 
 			// Priority 0 wins even though it has higher utilization
 			expect(result[0]).toBe(highPriorityHighUtil);

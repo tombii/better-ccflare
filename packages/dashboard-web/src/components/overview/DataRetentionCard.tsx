@@ -150,19 +150,28 @@ export function DataRetentionCard() {
 					<div className="text-xs text-muted-foreground space-y-1">
 						<p>
 							Removed {cleanupNow.data.removedPayloads} payloads (
-							{cleanupNow.data.payloadCutoffIso
-								? <>older than {new Date(cleanupNow.data.payloadCutoffIso).toLocaleString()}</>
-								: <>all — storage disabled</>
-							}) and{" "}
-							{cleanupNow.data.removedRequests} requests (older than{" "}
+							{cleanupNow.data.payloadCutoffIso ? (
+								<>
+									older than{" "}
+									{new Date(cleanupNow.data.payloadCutoffIso).toLocaleString()}
+								</>
+							) : (
+								<>all — storage disabled</>
+							)}
+							) and {cleanupNow.data.removedRequests} requests (older than{" "}
 							{new Date(cleanupNow.data.requestCutoffIso).toLocaleString()}).
 						</p>
-						{(cleanupNow.data.dbSizeBytes > 0 || cleanupNow.data.tableRowCounts.length > 0) && (
+						{(cleanupNow.data.dbSizeBytes > 0 ||
+							cleanupNow.data.tableRowCounts.length > 0) && (
 							<details>
 								<summary className="cursor-pointer select-none">
 									Space usage
 									{cleanupNow.data.dbSizeBytes > 0 && (
-										<> — {(cleanupNow.data.dbSizeBytes / 1024 / 1024).toFixed(1)} MB on disk</>
+										<>
+											{" "}
+											— {(cleanupNow.data.dbSizeBytes / 1024 / 1024).toFixed(1)}{" "}
+											MB on disk
+										</>
 									)}
 								</summary>
 								{cleanupNow.data.tableRowCounts.length > 0 && (

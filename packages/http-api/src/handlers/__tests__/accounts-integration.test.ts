@@ -42,10 +42,15 @@ const mockFetchUsageData = {
 	seven_day_opus: { utilization: 80, resets_at: null },
 };
 
-const mockGetRepresentativeUtilization = (usageData?: typeof mockFetchUsageData | null) => {
+const mockGetRepresentativeUtilization = (
+	usageData?: typeof mockFetchUsageData | null,
+) => {
 	if (!usageData) return 70;
 	const utils = Object.values(usageData)
-		.filter((v): v is { utilization: number } => v != null && typeof (v as any).utilization === "number")
+		.filter(
+			(v): v is { utilization: number } =>
+				v != null && typeof (v as any).utilization === "number",
+		)
 		.map((v) => v.utilization);
 	return utils.length > 0 ? Math.max(...utils) : 70;
 };
@@ -433,7 +438,10 @@ describe("Accounts Handler - Dashboard Usage Data Integration", () => {
 				seven_day_oauth_apps: { utilization: 100, resets_at: null },
 				seven_day_opus: { utilization: 100, resets_at: null },
 			};
-			const accountsHandler = createMockAccountsListHandler(90000, exhaustedData);
+			const accountsHandler = createMockAccountsListHandler(
+				90000,
+				exhaustedData,
+			);
 			const futureExpiry = Date.now() + 3 * 60 * 60 * 1000;
 
 			mockQuery.all = () => [

@@ -261,9 +261,14 @@ export class RequestRepository extends BaseRepository<RequestData> {
 		);
 	}
 
-	async listPayloadsWithAccountNames(
-		limit = 50,
-	): Promise<Array<{ id: string; json: string | null; timestamp: number; account_name: string | null }>> {
+	async listPayloadsWithAccountNames(limit = 50): Promise<
+		Array<{
+			id: string;
+			json: string | null;
+			timestamp: number;
+			account_name: string | null;
+		}>
+	> {
 		const rows = await this.query<{
 			id: string;
 			json: string | null;

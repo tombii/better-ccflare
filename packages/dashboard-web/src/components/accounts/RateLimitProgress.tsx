@@ -34,10 +34,7 @@ const FIXED_WINDOW_DURATION_MS: Record<string, number> = {
 	tokens_limit: 5 * 60 * 60 * 1000,
 };
 
-function computeWindowStartMs(
-	resetMs: number,
-	window: string,
-): number | null {
+function computeWindowStartMs(resetMs: number, window: string): number | null {
 	if (window === "monthly") {
 		const resetDate = new Date(resetMs);
 		return new Date(
@@ -549,12 +546,21 @@ export function RateLimitProgress({
 							);
 							return (
 								<div className="group relative">
-									<div className="pointer-events-none absolute bottom-full z-10 mb-2 hidden w-max max-w-xs -translate-x-1/2 rounded bg-popover px-3 py-2 text-xs text-popover-foreground shadow-md group-hover:block" style={{ left: `clamp(10%, ${expectedPct ?? 50}%, 90%)` }}>
-										<div className="mb-1 font-medium">
-											{windowLabel} usage
-										</div>
+									<div
+										className="pointer-events-none absolute bottom-full z-10 mb-2 hidden w-max max-w-xs -translate-x-1/2 rounded bg-popover px-3 py-2 text-xs text-popover-foreground shadow-md group-hover:block"
+										style={{ left: `clamp(10%, ${expectedPct ?? 50}%, 90%)` }}
+									>
+										<div className="mb-1 font-medium">{windowLabel} usage</div>
 										{projectedMessage && (
-											<div className={(percentage ?? 0) <= 0 ? "text-muted-foreground" : isOverPacing ? "text-red-400" : "text-green-400"}>
+											<div
+												className={
+													(percentage ?? 0) <= 0
+														? "text-muted-foreground"
+														: isOverPacing
+															? "text-red-400"
+															: "text-green-400"
+												}
+											>
 												{projectedMessage}
 											</div>
 										)}
@@ -572,7 +578,8 @@ export function RateLimitProgress({
 												height: "14px",
 												zIndex: 10,
 												backgroundColor: "rgba(255,255,255,0.95)",
-												boxShadow: "1px 0 2px rgba(0,0,0,0.5), -1px 0 2px rgba(0,0,0,0.5)",
+												boxShadow:
+													"1px 0 2px rgba(0,0,0,0.5), -1px 0 2px rgba(0,0,0,0.5)",
 											}}
 										/>
 									)}
