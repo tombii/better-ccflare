@@ -519,6 +519,9 @@ class UsageCache {
 			this.windowResetCallbacks.delete(accountId);
 			// Clean up cache entry when polling stops to prevent memory leaks
 			this.cache.delete(accountId);
+			// Clear any in-flight fetch so a subsequent startPolling doesn't
+			// reuse a stale promise that was issued with the old credentials.
+			this.inFlightFetches.delete(accountId);
 			log.info(
 				`Stopped usage polling and cleared cache for account ${accountId}`,
 			);
