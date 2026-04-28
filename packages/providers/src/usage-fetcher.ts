@@ -335,6 +335,10 @@ class UsageCache {
 	private providerTypes = new Map<string, string>(); // Track provider type for each account
 	private customEndpoints = new Map<string, string | null>(); // Track custom endpoints
 	private windowResetCallbacks = new Map<string, (accountId: string) => void>();
+	private inFlightFetches = new Map<
+		string,
+		Promise<{ success: boolean; retryAfterMs: number | null }>
+	>();
 
 	/**
 	 * Schedule the next poll with exponential backoff on failures.
@@ -527,6 +531,35 @@ class UsageCache {
 	 * server returns a retry-after header on a 429 response.
 	 */
 	private async fetchAndCache(
+		accountId: string,
+		tokenProvider: AccessTokenProvider,
+		provider?: string,
+		customEndpoint?: string | null,
+	): Promise<{ success: boolean; retryAfterMs: number | null }> {
+		// Deduplicate concurrent fetches for the same account — return the
+		// existing in-flight promise rather than starting a second HTTP request.
+		const inflight = this.inFlightFetches.get(accountId);
+		if (inflight) {
+			log.debug(
+				`Reusing in-flight fetch for account ${accountId} — skipping duplicate request`,
+			);
+			return inflight;
+		}
+
+		const promise = this._doFetchAndCache(
+			accountId,
+			tokenProvider,
+			provider,
+			customEndpoint,
+		);
+		this.inFlightFetches.set(accountId, promise);
+		promise.finally(() => {
+			this.inFlightFetches.delete(accountId);
+		});
+		return promise;
+	}
+
+	private async _doFetchAndCache(
 		accountId: string,
 		tokenProvider: AccessTokenProvider,
 		provider?: string,
