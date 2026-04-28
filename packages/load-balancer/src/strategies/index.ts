@@ -128,6 +128,7 @@ export class SessionStrategy implements LoadBalancingStrategy {
 		// Iterate through all candidates in priority order to find the first usable one.
 		const fallbackCandidates = this.checkForAutoFallbackAccounts(accounts, now);
 		let chosenFallback: Account | null = null;
+		const skippedManualPause: string[] = [];
 		for (const candidate of fallbackCandidates) {
 			// If the candidate is paused, only auto-unpause if it was paused due to
 			// overage, or `rate_limit_window` (reserved/future pause reason) — never auto-unpause
@@ -146,9 +147,7 @@ export class SessionStrategy implements LoadBalancingStrategy {
 					// Invalidate the cache so getCachedAvailability reflects the unpause
 					availabilityCache.delete(candidate.id);
 				} else {
-					this.log.info(
-						`Skipping auto-unpause of account ${candidate.name} — paused with reason '${candidate.pause_reason}' which requires manual intervention`,
-					);
+					skippedManualPause.push(candidate.name);
 					continue;
 				}
 			}
@@ -157,6 +156,12 @@ export class SessionStrategy implements LoadBalancingStrategy {
 				chosenFallback = candidate;
 				break;
 			}
+		}
+
+		if (skippedManualPause.length > 0) {
+			this.log.info(
+				`Skipping auto-unpause of ${skippedManualPause.length} manually paused account(s): ${skippedManualPause.join(", ")}`,
+			);
 		}
 
 		if (chosenFallback !== null) {

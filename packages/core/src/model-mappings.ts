@@ -245,9 +245,10 @@ export function mapModelName(anthropicModel: string, account: Account): string {
 	const mapped = list[0];
 
 	if (
-		process.env.DEBUG?.includes("model") ||
-		process.env.DEBUG === "true" ||
-		process.env.NODE_ENV === "development"
+		mapped !== anthropicModel &&
+		(process.env.DEBUG?.includes("model") ||
+			process.env.DEBUG === "true" ||
+			process.env.NODE_ENV === "development")
 	) {
 		log.info(`Model mapping: ${anthropicModel} -> ${mapped}`);
 	}
