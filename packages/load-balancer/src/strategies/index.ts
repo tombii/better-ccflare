@@ -151,7 +151,7 @@ export class SessionStrategy implements LoadBalancingStrategy {
 					if (!skippedByReason.has(reason)) {
 						skippedByReason.set(reason, []);
 					}
-					skippedByReason.get(reason)!.push(candidate.name);
+					skippedByReason.get(reason)?.push(candidate.name);
 					continue;
 				}
 			}
