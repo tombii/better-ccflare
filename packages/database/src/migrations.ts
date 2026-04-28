@@ -462,6 +462,14 @@ export function runMigrations(db: Database, dbPath?: string): void {
 			log.info("Added auto_pause_on_overage_enabled column to accounts table");
 		}
 
+		// Add peak_hours_pause_enabled column for per-account Zai peak hours auto-pause
+		if (!initialAccountsColumnNames.includes("peak_hours_pause_enabled")) {
+			db.prepare(
+				"ALTER TABLE accounts ADD COLUMN peak_hours_pause_enabled INTEGER NOT NULL DEFAULT 0",
+			).run();
+			log.info("Added peak_hours_pause_enabled column to accounts table");
+		}
+
 		// Add pause_reason column to track why an account is paused (issue #139)
 		// Possible values: null (not paused), 'manual' (user paused via CLI/API),
 		// 'failure_threshold' (auto-refresh failures), 'overage' (billing overage)

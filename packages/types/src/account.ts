@@ -103,6 +103,7 @@ export interface AccountRow {
 	auto_fallback_enabled?: boolean | number | null;
 	auto_refresh_enabled?: boolean | number | null;
 	auto_pause_on_overage_enabled?: boolean | number | null;
+	peak_hours_pause_enabled?: boolean | number | null;
 	custom_endpoint?: string | null;
 	model_mappings?: string | null; // JSON string for OpenAI-compatible providers
 	cross_region_mode?: string | null; // Bedrock cross-region inference mode
@@ -136,6 +137,7 @@ export interface Account {
 	auto_fallback_enabled: boolean;
 	auto_refresh_enabled: boolean;
 	auto_pause_on_overage_enabled: boolean;
+	peak_hours_pause_enabled: boolean;
 	custom_endpoint: string | null;
 	model_mappings: string | null; // JSON string for OpenAI-compatible providers
 	cross_region_mode: string | null; // Bedrock cross-region inference mode
@@ -177,6 +179,7 @@ export interface AccountResponse {
 	autoFallbackEnabled: boolean;
 	autoRefreshEnabled: boolean;
 	autoPauseOnOverageEnabled?: boolean;
+	peakHoursPauseEnabled?: boolean;
 	customEndpoint: string | null;
 	modelMappings: { [key: string]: string | string[] } | null; // Parsed model mappings (arrays = cycling models)
 	usageUtilization: number | null; // Percentage utilization (0-100) from API
@@ -301,6 +304,7 @@ export function toAccount(row: AccountRow): Account {
 		auto_fallback_enabled: !!row.auto_fallback_enabled,
 		auto_refresh_enabled: !!row.auto_refresh_enabled,
 		auto_pause_on_overage_enabled: !!row.auto_pause_on_overage_enabled,
+		peak_hours_pause_enabled: !!row.peak_hours_pause_enabled,
 		custom_endpoint: row.custom_endpoint || null,
 		model_mappings: row.model_mappings || null,
 		cross_region_mode: row.cross_region_mode || null,

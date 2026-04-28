@@ -40,12 +40,6 @@ import type { AccountResponse } from "../types";
 
 const log = new Logger("AccountsHandler");
 
-function isZaiPeakHour(ts = Date.now()): boolean {
-	const d = new Date(ts);
-	const sgtHour = (d.getUTCHours() + d.getUTCMinutes() / 60 + 8) % 24;
-	return sgtHour >= 14 && sgtHour < 18;
-}
-
 function normalizeCodexUsageData(usage: UsageData): UsageData | null {
 	const normalized: UsageData = {
 		five_hour: { ...usage.five_hour },
@@ -162,6 +156,7 @@ export function createAccountsListHandler(dbOps: DatabaseOperations) {
 			auto_fallback_enabled: 0 | 1;
 			auto_refresh_enabled: 0 | 1;
 			auto_pause_on_overage_enabled: 0 | 1;
+			peak_hours_pause_enabled: 0 | 1;
 			custom_endpoint: string | null;
 			model_mappings: string | null;
 			cross_region_mode: string | null;
@@ -192,7 +187,7 @@ export function createAccountsListHandler(dbOps: DatabaseOperations) {
 					COALESCE(auto_refresh_enabled, 0) as auto_refresh_enabled,
 					custom_endpoint,
 					COALESCE(auto_pause_on_overage_enabled, 0) as auto_pause_on_overage_enabled,
-
+					COALESCE(peak_hours_pause_enabled, 0) as peak_hours_pause_enabled,
 					model_mappings,
 					cross_region_mode,
 					model_fallbacks,
@@ -440,6 +435,7 @@ export function createAccountsListHandler(dbOps: DatabaseOperations) {
 					autoRefreshEnabled: account.auto_refresh_enabled === 1,
 					autoPauseOnOverageEnabled:
 						account.auto_pause_on_overage_enabled === 1,
+					peakHoursPauseEnabled: account.peak_hours_pause_enabled === 1,
 					customEndpoint: account.custom_endpoint,
 					modelMappings,
 					usageUtilization,
@@ -3153,48 +3149,62 @@ export function createAccountRefreshUsageHandler(dbOps: DatabaseOperations) {
 }
 
 /**
- * Get the Zai peak hours auto-pause setting
+ * Toggle per-account Zai peak hours auto-pause
  */
-export function createGetZaiPeakHoursPauseHandler(dbOps: DatabaseOperations) {
-	return async (_req: Request): Promise<Response> => {
+export function createAccountPeakHoursPauseHandler(dbOps: DatabaseOperations) {
+	return async (req: Request, accountId: string): Promise<Response> => {
 		try {
-			const enabled = await dbOps.getZaiPeakHoursPauseEnabled();
-			return Response.json({
+			const body = await req.json();
+
+			const enabled = validateNumber(body.enabled, "enabled", {
+				required: true,
+				allowedValues: [0, 1] as const,
+			});
+
+			if (enabled === undefined) {
+				return errorResponse(BadRequest("Enabled field is required (0 or 1)"));
+			}
+
+			const db = dbOps.getAdapter();
+			const account = await db.get<{ name: string; provider: string }>(
+				"SELECT name, provider FROM accounts WHERE id = ?",
+				[accountId],
+			);
+
+			if (!account) {
+				return errorResponse(NotFound("Account not found"));
+			}
+
+			if (account.provider !== "zai") {
+				return errorResponse(
+					BadRequest(
+						"Peak hours auto-pause is only available for Zai accounts",
+					),
+				);
+			}
+
+			await dbOps.setPeakHoursPauseEnabled(accountId, enabled === 1);
+
+			if (enabled === 0) {
+				// Immediate resume — don't make users wait for the scheduler
+				await db.run(
+					"UPDATE accounts SET paused = 0, pause_reason = NULL WHERE id = ? AND COALESCE(paused, 0) = 1 AND pause_reason = 'peak_hours'",
+					[accountId],
+				);
+			}
+
+			const action = enabled === 1 ? "enabled" : "disabled";
+			return jsonResponse({
 				success: true,
-				enabled,
-				currentlyInPeakHours: isZaiPeakHour(),
+				message: `Peak hours auto-pause ${action} for account '${account.name}'`,
+				peakHoursPauseEnabled: enabled === 1,
 			});
 		} catch (error) {
-			return Response.json(
-				{ success: false, error: String(error) },
-				{ status: 500 },
-			);
-		}
-	};
-}
-
-/**
- * Set the Zai peak hours auto-pause setting
- */
-export function createSetZaiPeakHoursPauseHandler(dbOps: DatabaseOperations) {
-	return async (req: Request): Promise<Response> => {
-		try {
-			const body = (await req.json()) as { enabled: number };
-			const enabled = Boolean(body.enabled);
-			await dbOps.setZaiPeakHoursPauseEnabled(enabled);
-			if (!enabled) {
-				// Immediate resume — don't make users wait 60s for scheduler
-				await dbOps
-					.getAdapter()
-					.run(
-						"UPDATE accounts SET paused = 0, pause_reason = NULL WHERE provider = 'zai' AND COALESCE(paused, 0) = 1 AND pause_reason = 'peak_hours'",
-					);
-			}
-			return Response.json({ success: true });
-		} catch (error) {
-			return Response.json(
-				{ success: false, error: String(error) },
-				{ status: 500 },
+			log.error("Account peak-hours-pause toggle error:", error);
+			return errorResponse(
+				error instanceof Error
+					? error
+					: new Error("Failed to toggle peak-hours-pause"),
 			);
 		}
 	};

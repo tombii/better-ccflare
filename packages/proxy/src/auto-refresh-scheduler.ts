@@ -286,6 +286,7 @@ export class AutoRefreshScheduler {
 				auto_fallback_enabled: false,
 				auto_refresh_enabled: true,
 				auto_pause_on_overage_enabled: false,
+				peak_hours_pause_enabled: false,
 				custom_endpoint: accountRow.custom_endpoint,
 				model_mappings: null,
 				cross_region_mode: null,
@@ -755,6 +756,7 @@ export class AutoRefreshScheduler {
 					auto_fallback_enabled: false,
 					auto_refresh_enabled: true,
 					auto_pause_on_overage_enabled: false,
+					peak_hours_pause_enabled: false,
 					custom_endpoint: row.custom_endpoint,
 					model_mappings: null,
 					cross_region_mode: null,
@@ -880,6 +882,7 @@ export class AutoRefreshScheduler {
 					auto_fallback_enabled: false,
 					auto_refresh_enabled: true,
 					auto_pause_on_overage_enabled: false,
+					peak_hours_pause_enabled: false,
 					custom_endpoint: row.custom_endpoint,
 					model_mappings: null,
 					cross_region_mode: null,
@@ -983,23 +986,15 @@ export class AutoRefreshScheduler {
 	}
 
 	/**
-	 * Pause or resume zai accounts based on peak hours setting.
-	 * Only touches accounts with no existing pause (for peak hours pause)
-	 * or accounts specifically paused for peak hours (for resume).
+	 * Pause or resume zai accounts based on per-account peak_hours_pause_enabled flag.
+	 * Only touches accounts that have opted in to peak hours auto-pause.
 	 */
 	private async checkPeakHoursPause(): Promise<void> {
-		const settingRow = await this.db.get<{ value: string }>(
-			"SELECT value FROM settings WHERE key = ?",
-			["zai_peak_hours_pause_enabled"],
-		);
-		const enabled = settingRow?.value === "1";
-		if (!enabled) return;
-
 		const inPeak = isZaiPeakHour();
 		if (inPeak) {
-			// Pause zai accounts that aren't already paused (preserve existing manual/overage/failure pauses)
+			// Pause zai accounts that have opted in and aren't already paused
 			const changes = await this.db.runWithChanges(
-				"UPDATE accounts SET paused = 1, pause_reason = 'peak_hours' WHERE provider = 'zai' AND COALESCE(paused, 0) = 0",
+				"UPDATE accounts SET paused = 1, pause_reason = 'peak_hours' WHERE provider = 'zai' AND COALESCE(peak_hours_pause_enabled, 0) = 1 AND COALESCE(paused, 0) = 0",
 			);
 			if (changes > 0) {
 				log.info(`Peak hours: paused ${changes} zai account(s)`);
@@ -1007,7 +1002,7 @@ export class AutoRefreshScheduler {
 		} else {
 			// Only resume accounts we specifically paused for peak hours
 			const changes = await this.db.runWithChanges(
-				"UPDATE accounts SET paused = 0, pause_reason = NULL WHERE provider = 'zai' AND COALESCE(paused, 0) = 1 AND pause_reason = 'peak_hours'",
+				"UPDATE accounts SET paused = 0, pause_reason = NULL WHERE provider = 'zai' AND COALESCE(peak_hours_pause_enabled, 0) = 1 AND COALESCE(paused, 0) = 1 AND pause_reason = 'peak_hours'",
 			);
 			if (changes > 0) {
 				log.info(`Peak hours ended: resumed ${changes} zai account(s)`);

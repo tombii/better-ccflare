@@ -43,6 +43,7 @@ interface AccountListItemProps {
 	onAutoRefreshToggle: (account: Account) => void;
 	onBillingTypeToggle: (account: Account) => void;
 	onAutoPauseOnOverageToggle?: (account: Account) => void;
+	onPeakHoursPauseToggle?: (account: Account) => void;
 	onCustomEndpointChange?: (account: Account) => void;
 	onModelMappingsChange?: (account: Account) => void;
 	onReauth?: (account: Account) => void;
@@ -63,6 +64,7 @@ export function AccountListItem({
 	onAutoRefreshToggle,
 	onBillingTypeToggle,
 	onAutoPauseOnOverageToggle,
+	onPeakHoursPauseToggle,
 	onCustomEndpointChange,
 	onModelMappingsChange,
 	onReauth,
@@ -186,6 +188,18 @@ export function AccountListItem({
 										/>
 									</div>
 								)}
+							{account.provider === "zai" && onPeakHoursPauseToggle && (
+								<div className="flex items-center gap-2">
+									<span className="text-xs text-muted-foreground">
+										Peak hours pause:
+									</span>
+									<Switch
+										checked={account.peakHoursPauseEnabled ?? false}
+										onCheckedChange={() => onPeakHoursPauseToggle(account)}
+										title="Automatically pause this account during Zai peak hours (14:00–18:00 SGT)"
+									/>
+								</div>
+							)}
 						</div>
 						<div className="flex items-center gap-2">
 							<p className="text-sm text-muted-foreground">
