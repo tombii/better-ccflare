@@ -335,6 +335,10 @@ class UsageCache {
 	private providerTypes = new Map<string, string>(); // Track provider type for each account
 	private customEndpoints = new Map<string, string | null>(); // Track custom endpoints
 	private windowResetCallbacks = new Map<string, (accountId: string) => void>();
+	private capacityRestoredCallbacks = new Map<
+		string,
+		(accountId: string) => void
+	>();
 
 	/**
 	 * Schedule the next poll with exponential backoff on failures.
@@ -411,6 +415,7 @@ class UsageCache {
 		intervalMs?: number,
 		customEndpoint?: string | null,
 		onWindowReset?: (accountId: string) => void,
+		onCapacityRestored?: (accountId: string) => void,
 	) {
 		// Check if provider supports usage tracking
 		if (provider && !supportsUsageTracking(provider)) {
@@ -450,6 +455,11 @@ class UsageCache {
 			this.windowResetCallbacks.set(accountId, onWindowReset);
 		} else {
 			this.windowResetCallbacks.delete(accountId);
+		}
+		if (onCapacityRestored) {
+			this.capacityRestoredCallbacks.set(accountId, onCapacityRestored);
+		} else {
+			this.capacityRestoredCallbacks.delete(accountId);
 		}
 
 		// Default to 90s if not provided
@@ -513,6 +523,7 @@ class UsageCache {
 			this.tokenProviders.delete(accountId);
 			this.failureCounts.delete(accountId);
 			this.windowResetCallbacks.delete(accountId);
+			this.capacityRestoredCallbacks.delete(accountId);
 			// Clean up cache entry when polling stops to prevent memory leaks
 			this.cache.delete(accountId);
 			log.info(
@@ -657,6 +668,16 @@ class UsageCache {
 					const utilization = getRepresentativeUtilization(
 						result.data as UsageData,
 					);
+					// If utilization is below 100%, notify any capacity-restored listener.
+					// This handles the seat-reassignment case: when an org admin reassigns
+					// a seat, Anthropic resets usage mid-window. The polling loop detects
+					// the available capacity here and lets the caller clear any stale
+					// rate_limited_until stored in the DB.
+					if (utilization !== null && utilization < 100) {
+						const capacityCallback =
+							this.capacityRestoredCallbacks.get(accountId);
+						if (capacityCallback) capacityCallback(accountId);
+					}
 					const window = getRepresentativeWindow(result.data as UsageData);
 					log.debug(
 						`Successfully fetched usage data for account ${accountId}: ${utilization}% (${window} window)`,

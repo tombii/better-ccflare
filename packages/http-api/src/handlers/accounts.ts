@@ -3118,17 +3118,19 @@ export function createAccountRefreshUsageHandler(dbOps: DatabaseOperations) {
 
 			clearAccountRefreshCache(accountId);
 			const pollingRestarted = await restartUsagePollingForAccount(accountId);
-			await usageCache.refreshNow(accountId);
+			const cacheRefreshed = await usageCache.refreshNow(accountId);
 
 			log.info(
-				`Usage refresh requested for account '${account.name}' (polling restarted: ${pollingRestarted})`,
+				`Usage refresh requested for account '${account.name}' (polling restarted: ${pollingRestarted}, cache refreshed: ${cacheRefreshed})`,
 			);
 
 			return jsonResponse({
 				success: true,
 				message: pollingRestarted
 					? `Usage polling restarted for account '${account.name}'. Fresh usage data is now available.`
-					: `Usage cache refreshed for account '${account.name}'.`,
+					: cacheRefreshed
+						? `Usage cache refreshed for account '${account.name}'.`
+						: `Polling could not be restarted for account '${account.name}' — usage data may not update.`,
 				pollingRestarted,
 			});
 		} catch (error) {
