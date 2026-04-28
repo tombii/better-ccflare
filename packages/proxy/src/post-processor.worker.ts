@@ -224,11 +224,20 @@ function _extractSystemPrompt(requestBody: string | null): string | null {
 
 // Parse SSE lines to extract usage (reuse existing logic)
 function parseSSELine(line: string): { event?: string; data?: string } {
-	if (line.startsWith("event: ")) {
-		return { event: line.slice(7).trim() };
+	// Handle both "event: message_start" and "event:message_start" formats
+	// Some providers use no space after colon, Anthropic uses space
+	if (line.startsWith("event: ") || line.startsWith("event:")) {
+		const event = line.startsWith("event: ")
+			? line.slice(7).trim()
+			: line.slice(6).trim();
+		return { event };
 	}
-	if (line.startsWith("data: ")) {
-		return { data: line.slice(6).trim() };
+	// Handle both "data: {...}" and "data:{...}" formats
+	if (line.startsWith("data: ") || line.startsWith("data:")) {
+		const data = line.startsWith("data: ")
+			? line.slice(6).trim()
+			: line.slice(5).trim();
+		return { data };
 	}
 	return {};
 }
@@ -268,12 +277,19 @@ function extractUsageFromJson(
 	state.usage.totalTokens = prompt + completion;
 }
 
-function extractUsageFromData(data: string, state: RequestState): void {
+function extractUsageFromData(
+	data: string,
+	eventType: string,
+	state: RequestState,
+): void {
 	try {
 		const parsed = JSON.parse(data);
 
-		// Handle message_start
-		if (parsed.type === "message_start") {
+		// Handle message_start - check both parsed.type and eventType
+		// (Some providers put type in event line, Anthropic puts it in JSON)
+		const isMessageStart =
+			parsed.type === "message_start" || eventType === "message_start";
+		if (isMessageStart) {
 			if (parsed.message?.usage) {
 				const usage = parsed.message.usage;
 				state.usage.inputTokens = usage.input_tokens || 0;
@@ -292,8 +308,10 @@ function extractUsageFromData(data: string, state: RequestState): void {
 			state.firstTokenTimestamp = Date.now();
 		}
 
-		// Handle message_delta - provider's authoritative token counts AND end time
-		if (parsed.type === "message_delta") {
+		// Handle message_delta - check both parsed.type and eventType
+		const isMessageDelta =
+			parsed.type === "message_delta" || eventType === "message_delta";
+		if (isMessageDelta) {
 			state.lastTokenTimestamp = Date.now();
 
 			if (parsed.usage) {
@@ -396,7 +414,7 @@ function processStreamChunk(chunk: Uint8Array, state: RequestState): void {
 		if (parsed.event) {
 			state.currentEvent = parsed.event;
 		} else if (parsed.data && state.currentEvent) {
-			extractUsageFromData(parsed.data, state);
+			extractUsageFromData(parsed.data, state.currentEvent, state);
 		}
 	}
 }
