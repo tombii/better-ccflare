@@ -15,6 +15,7 @@ interface RateLimitProgressProps {
 	usageUtilization?: number | null; // Actual utilization from API (0-100)
 	usageWindow?: string | null; // Window name (e.g., "five_hour")
 	usageData?: FullUsageData | null; // Full usage data from API
+	usageRateLimitedUntil?: number | null; // Timestamp (ms) until usage API 429 clears
 	provider: string;
 	className?: string;
 	showWeekly?: boolean; // Whether to show weekly usage as well
@@ -129,6 +130,7 @@ export function RateLimitProgress({
 	usageUtilization,
 	usageWindow,
 	usageData,
+	usageRateLimitedUntil,
 	provider,
 	className,
 	showWeekly = false,
@@ -148,6 +150,32 @@ export function RateLimitProgress({
 	// Allow null resetIso for providers that show usage data (like NanoGPT in PayG mode)
 	// but still render null if there's no resetIso and no usage data to show
 	if (!resetIso && !usageData) return null;
+
+	// Show explicit rate-limited state when the Anthropic usage API returned 429
+	// and we have no cached data to show.
+	if (
+		usageRateLimitedUntil != null &&
+		!usageData &&
+		(provider === "anthropic" || provider === "codex")
+	) {
+		const retryAfterDate = new Date(usageRateLimitedUntil);
+		const retryTimeText = retryAfterDate.toLocaleTimeString(undefined, {
+			hour: "2-digit",
+			minute: "2-digit",
+		});
+		return (
+			<div className={cn("space-y-2", className)}>
+				<div className="flex items-center justify-between">
+					<span className="text-xs text-amber-600 dark:text-amber-400">
+						Rate limited — usage data unavailable
+					</span>
+					<span className="text-xs text-muted-foreground">
+						Retry after {retryTimeText}
+					</span>
+				</div>
+			</div>
+		);
+	}
 
 	// Kilo Gateway: show credit balance in USD instead of a utilization window
 	if (providerShowsCreditsBalance(provider) && usageData) {

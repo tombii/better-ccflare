@@ -182,6 +182,7 @@ export interface AccountResponse {
 	usageUtilization: number | null; // Percentage utilization (0-100) from API
 	usageWindow: string | null; // Most restrictive window (e.g., "five_hour")
 	usageData: FullUsageData | null; // Full usage data for Anthropic accounts
+	usageRateLimitedUntil: number | null; // Timestamp (ms) until usage API 429 clears; null if not rate-limited
 	hasRefreshToken: boolean; // Indicates if the account has a refresh token (OAuth account)
 	crossRegionMode?: string | null; // Cross-region inference mode for Bedrock accounts
 	modelFallbacks?: { [key: string]: string } | null;
@@ -389,6 +390,7 @@ export function toAccountResponse(account: Account): AccountResponse {
 		usageUtilization: null, // Will be filled in by API handler from cache
 		usageWindow: null, // Will be filled in by API handler from cache
 		usageData: null, // Will be filled in by API handler from cache
+		usageRateLimitedUntil: null, // Will be filled in by API handler from cache
 		hasRefreshToken: !!account.refresh_token, // OAuth accounts have refresh tokens
 		modelFallbacks,
 		billingType: account.billing_type,

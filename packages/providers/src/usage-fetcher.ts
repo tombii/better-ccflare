@@ -335,6 +335,7 @@ class UsageCache {
 	private providerTypes = new Map<string, string>(); // Track provider type for each account
 	private customEndpoints = new Map<string, string | null>(); // Track custom endpoints
 	private windowResetCallbacks = new Map<string, (accountId: string) => void>();
+	private usageRateLimitedUntil = new Map<string, number>(); // Tracks when usage API 429 clears
 
 	/**
 	 * Schedule the next poll with exponential backoff on failures.
@@ -515,6 +516,7 @@ class UsageCache {
 			this.windowResetCallbacks.delete(accountId);
 			// Clean up cache entry when polling stops to prevent memory leaks
 			this.cache.delete(accountId);
+			this.usageRateLimitedUntil.delete(accountId);
 			log.info(
 				`Stopped usage polling and cleared cache for account ${accountId}`,
 			);
@@ -642,6 +644,8 @@ class UsageCache {
 				// Default to Anthropic usage data
 				const result = await fetchUsageData(token);
 				if (result.data) {
+					// Clear any prior rate-limit marker on a successful fetch
+					this.usageRateLimitedUntil.delete(accountId);
 					const callback = this.windowResetCallbacks.get(accountId);
 					if (callback)
 						this.notifyWindowReset(
@@ -662,6 +666,15 @@ class UsageCache {
 						`Successfully fetched usage data for account ${accountId}: ${utilization}% (${window} window)`,
 					);
 					return { success: true, retryAfterMs: null };
+				}
+				if (result.retryAfterMs != null && result.retryAfterMs > 0) {
+					this.usageRateLimitedUntil.set(
+						accountId,
+						Date.now() + result.retryAfterMs,
+					);
+				} else if (result.retryAfterMs == null) {
+					// Non-429 failure: clear any stale rate-limit marker
+					this.usageRateLimitedUntil.delete(accountId);
 				}
 				return { success: false, retryAfterMs: result.retryAfterMs };
 			}
@@ -769,6 +782,20 @@ class UsageCache {
 	}
 
 	/**
+	 * Returns the timestamp (ms since epoch) until which the usage API is rate-limited
+	 * for this account, or null if not currently rate-limited.
+	 */
+	getRateLimitedUntil(accountId: string): number | null {
+		const until = this.usageRateLimitedUntil.get(accountId);
+		if (until === undefined) return null;
+		if (Date.now() >= until) {
+			this.usageRateLimitedUntil.delete(accountId);
+			return null;
+		}
+		return until;
+	}
+
+	/**
 	 * Get cached data age in milliseconds
 	 */
 	getAge(accountId: string): number | null {
@@ -802,6 +829,7 @@ class UsageCache {
 			this.stopPolling(accountId);
 		}
 		this.cache.clear();
+		this.usageRateLimitedUntil.clear();
 		log.info("Cleared all usage cache and stopped polling");
 	}
 }
