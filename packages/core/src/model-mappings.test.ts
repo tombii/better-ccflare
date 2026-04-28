@@ -180,6 +180,43 @@ describe("Model Mapping", () => {
 		expect(haikuResult).toBe("lowercase-gpt-3.5");
 		expect(opusResult).toBe("lowercase-gpt-4-turbo");
 	});
+
+	test("mapModelName passes through unmapped model when only sonnet is configured (regression: no implicit sonnet catch-all)", () => {
+		// Regression test: previously, if an account had a sonnet mapping but no haiku mapping,
+		// requesting a haiku model would silently remap it to the sonnet target.
+		const mockAccount: Account = {
+			id: "test",
+			name: "test-account",
+			provider: "openai-compatible",
+			api_key: "test-key",
+			refresh_token: "",
+			access_token: "",
+			expires_at: null,
+			created_at: Date.now(),
+			request_count: 0,
+			total_requests: 0,
+			priority: 10,
+			model_mappings: JSON.stringify({
+				sonnet: "claude-sonnet-4-6", // Only sonnet is mapped; haiku is NOT
+			}),
+			custom_endpoint: null,
+		};
+
+		// Sonnet should be mapped
+		expect(mapModelName("claude-sonnet-4-5", mockAccount)).toBe(
+			"claude-sonnet-4-6",
+		);
+
+		// Haiku has no mapping — must pass through unchanged, NOT remap to sonnet target
+		expect(mapModelName("claude-haiku-4-5", mockAccount)).toBe(
+			"claude-haiku-4-5",
+		);
+
+		// Opus has no mapping — must also pass through unchanged
+		expect(mapModelName("claude-opus-4-5", mockAccount)).toBe(
+			"claude-opus-4-5",
+		);
+	});
 });
 
 describe("Model Validation Utilities", () => {
