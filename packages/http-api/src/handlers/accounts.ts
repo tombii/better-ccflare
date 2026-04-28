@@ -210,76 +210,6 @@ export function createAccountsListHandler(dbOps: DatabaseOperations) {
 			[now, now, now, sessionDuration],
 		);
 
-		// Fetch usage data for all Claude CLI OAuth accounts (those with refresh tokens)
-		// API key accounts don't have usage tracking available
-		const oauthAccounts = accounts.filter(
-			(acc) =>
-				acc.provider === "anthropic" &&
-				acc.access_token &&
-				acc.refresh_token &&
-				acc.refresh_token !== acc.access_token, // Exclude API key accounts where they're the same
-		);
-
-		// Fetch usage data in parallel for all OAuth accounts that don't have fresh cache data
-		// Cache is considered stale after 90 seconds (aligned with auto-refresh scheduler polling)
-		const CACHE_FRESHNESS_THRESHOLD_MS = 90000;
-		await Promise.all(
-			oauthAccounts.map(async (account) => {
-				// Check if we already have cached data and if it's still fresh
-				const cacheAge = usageCache.getAge(account.id);
-				const isCacheFresh =
-					cacheAge !== null && cacheAge < CACHE_FRESHNESS_THRESHOLD_MS;
-
-				if (!isCacheFresh && account.access_token) {
-					// Fetch usage data if cache is stale or missing
-					try {
-						const { data: usageData } = await fetchUsageData(
-							account.access_token,
-						);
-						if (usageData) {
-							// Update the cache using the public set method
-							usageCache.set(account.id, usageData);
-							log.debug(
-								`Fetched usage data for ${account.name}: 5h=${usageData.five_hour.utilization}%, 7d=${usageData.seven_day.utilization}%`,
-							);
-
-							// If the usage API shows available capacity but the DB still has
-							// rate_limited_until in the future, clear the stale state. This
-							// handles seat reassignment: when an org admin reassigns a seat,
-							// Anthropic resets usage mid-window before the stored expiry fires.
-							const utilization = getRepresentativeUtilization(usageData);
-							const limitedUntil = account.rate_limited_until
-								? Number(account.rate_limited_until)
-								: null;
-							if (
-								utilization !== null &&
-								utilization < 100 &&
-								limitedUntil !== null &&
-								limitedUntil > Date.now()
-							) {
-								await db.run(
-									"UPDATE accounts SET rate_limited_until = NULL WHERE id = ?",
-									[account.id],
-								);
-								// Also update the in-memory object so the API response returned
-								// by this handler immediately reflects the cleared state.
-								account.rate_limited_until = null;
-								account.rate_limited = 0;
-								log.info(
-									`Cleared stale rate_limited_until for ${account.name}: usage API shows ${utilization}% utilization (seat reassignment or early reset)`,
-								);
-							}
-						}
-					} catch (error) {
-						log.warn(
-							`Failed to fetch usage data for account ${account.name}:`,
-							error,
-						);
-					}
-				}
-			}),
-		);
-
 		// Fetch session-window token stats only for providers with session-based limits
 		const sessionStatsMap = await dbOps
 			.getStatsRepository()
@@ -3189,17 +3119,21 @@ export function createAccountRefreshUsageHandler(dbOps: DatabaseOperations) {
 
 			clearAccountRefreshCache(accountId);
 			const pollingRestarted = await restartUsagePollingForAccount(accountId);
+			const cacheRefreshed = await usageCache.refreshNow(accountId);
 
 			log.info(
-				`Usage refresh requested for account '${account.name}' (polling restarted: ${pollingRestarted})`,
+				`Usage refresh requested for account '${account.name}' (polling restarted: ${pollingRestarted}, cache refreshed: ${cacheRefreshed})`,
 			);
 
 			return jsonResponse({
 				success: true,
 				message: pollingRestarted
-					? `Usage polling restarted for account '${account.name}'. Fresh usage data will appear within 5-10 seconds.`
-					: `Usage cache cleared for account '${account.name}'. Note: server-side polling could not be restarted - usage data may not update until a request is proxied.`,
+					? `Usage polling restarted for account '${account.name}'. Fresh usage data is now available.`
+					: cacheRefreshed
+						? `Usage cache refreshed for account '${account.name}'.`
+						: `Polling could not be restarted for account '${account.name}' — usage data may not update.`,
 				pollingRestarted,
+				cacheRefreshed,
 			});
 		} catch (error) {
 			log.error("Account refresh usage error:", error);
