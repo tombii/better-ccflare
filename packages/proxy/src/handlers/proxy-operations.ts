@@ -1,6 +1,6 @@
 import { getModelList, logError, ProviderError } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
-import { getProvider } from "@better-ccflare/providers";
+import { getProvider, usageCache } from "@better-ccflare/providers";
 import type { Account, RequestMeta } from "@better-ccflare/types";
 import { cacheBodyStore } from "../cache-body-store";
 import { forwardToClient } from "../response-handler";
@@ -10,6 +10,63 @@ import { handleProxyError, processProxyResponse } from "./response-processor";
 import { getValidAccessToken } from "./token-manager";
 
 const log = new Logger("ProxyOperations");
+
+/**
+ * Determines the absolute epoch timestamp (ms since epoch) until which an account
+ * should be marked rate-limited after model exhaustion. Priority:
+ *   1. retry-after / x-ratelimit-reset response header (actual upstream backoff)
+ *   2. getRateLimitedUntil — usage-window reset time if known
+ *   3. 1-hour default as last resort
+ *
+ * The result is always clamped to at least 60 seconds in the future to avoid a
+ * zero or negative value when a parsed timestamp is already in the past.
+ *
+ * NOTE: getRateLimitedUntil is injected rather than called directly on usageCache
+ * so that callers in production pass usageCache.getRateLimitedUntil.bind(usageCache)
+ * and tests pass a plain stub — avoiding module-mock symlink issues with Bun.
+ */
+export function extractCooldownUntil(
+	response: Response,
+	accountId: string,
+	getRateLimitedUntil: (accountId: string) => number | null,
+): number {
+	const MIN_COOLDOWN_MS = 60 * 1000; // 60 seconds floor
+	const DEFAULT_COOLDOWN_MS = 60 * 60 * 1000; // 1 hour
+	const now = Date.now();
+
+	// 1. Check retry-after / x-ratelimit-reset headers
+	const retryAfter =
+		response.headers.get("retry-after") ??
+		response.headers.get("x-ratelimit-reset");
+	if (retryAfter) {
+		const parsed = Number(retryAfter);
+		if (!Number.isNaN(parsed) && parsed > 0) {
+			// Unix timestamp (seconds) if value looks like an epoch (> 1 billion)
+			const isUnixTimestamp = parsed > 1_000_000_000;
+			const epochMs = isUnixTimestamp ? parsed * 1000 : now + parsed * 1000;
+			if (epochMs > now) {
+				return Math.max(epochMs, now + MIN_COOLDOWN_MS);
+			}
+			// epochMs <= now: stale/already-past timestamp — fall through to next priority
+		} else {
+			// Try HTTP-date format (RFC 7231), e.g. "Wed, 21 Oct 2026 07:28:00 GMT"
+			const dateMs = new Date(retryAfter).getTime();
+			if (!Number.isNaN(dateMs) && dateMs > now) {
+				return Math.max(dateMs, now + MIN_COOLDOWN_MS);
+			}
+			// Invalid or past date — fall through to next priority
+		}
+	}
+
+	// 2. Fall back to usage-window reset time if available
+	const rateLimitedUntil = getRateLimitedUntil(accountId);
+	if (rateLimitedUntil !== null && rateLimitedUntil > now) {
+		return Math.max(rateLimitedUntil, now + MIN_COOLDOWN_MS);
+	}
+
+	// 3. Last resort: 1 hour
+	return now + DEFAULT_COOLDOWN_MS;
+}
 
 /**
  * Bedrock provider currently returns a synthetic Request containing the
@@ -538,11 +595,13 @@ export async function proxyWithAccount(
 						log.warn(
 							`Account ${account.name} rate-limited (429), no model fallbacks — failing over to next account`,
 						);
+						const cooldownUntil = extractCooldownUntil(
+							rawResponse,
+							account.id,
+							usageCache.getRateLimitedUntil.bind(usageCache),
+						);
 						ctx.asyncWriter.enqueue(() =>
-							ctx.dbOps.markAccountRateLimited(
-								account.id,
-								Date.now() + 60 * 60 * 1000,
-							),
+							ctx.dbOps.markAccountRateLimited(account.id, cooldownUntil),
 						);
 						return null;
 					}
@@ -636,11 +695,13 @@ export async function proxyWithAccount(
 				// Only fire for genuine rate-limit responses (429); model-not-found
 				// (404/400) is a configuration issue, not account exhaustion.
 				if (rawResponse.status === 429) {
+					const cooldownUntil = extractCooldownUntil(
+						rawResponse,
+						account.id,
+						usageCache.getRateLimitedUntil.bind(usageCache),
+					);
 					ctx.asyncWriter.enqueue(() =>
-						ctx.dbOps.markAccountRateLimited(
-							account.id,
-							Date.now() + 60 * 60 * 1000,
-						),
+						ctx.dbOps.markAccountRateLimited(account.id, cooldownUntil),
 					);
 				}
 				return null;
