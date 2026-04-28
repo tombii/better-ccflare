@@ -633,12 +633,16 @@ export async function proxyWithAccount(
 				// excludes it from future requests until the cooldown expires.
 				// Without this write the DB state stays stale (rate_limited_until = null)
 				// and the same account is retried on every subsequent request.
-				ctx.asyncWriter.enqueue(() =>
-					ctx.dbOps.markAccountRateLimited(
-						account.id,
-						Date.now() + 60 * 60 * 1000,
-					),
-				);
+				// Only fire for genuine rate-limit responses (429); model-not-found
+				// (404/400) is a configuration issue, not account exhaustion.
+				if (rawResponse.status === 429) {
+					ctx.asyncWriter.enqueue(() =>
+						ctx.dbOps.markAccountRateLimited(
+							account.id,
+							Date.now() + 60 * 60 * 1000,
+						),
+					);
+				}
 				return null;
 			}
 		}
