@@ -509,6 +509,7 @@ export function createAccountsListHandler(dbOps: DatabaseOperations) {
 					usageUtilization,
 					usageWindow,
 					usageData: fullUsageData, // Full usage data for UI
+					usageRateLimitedUntil: usageCache.getRateLimitedUntil(account.id),
 					hasRefreshToken:
 						!!account.refresh_token &&
 						account.refresh_token !== account.access_token, // API-key providers store key in both fields

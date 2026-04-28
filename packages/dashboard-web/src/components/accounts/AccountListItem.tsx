@@ -433,12 +433,14 @@ export function AccountListItem({
 			)}
 			{(account.rateLimitReset ||
 				account.usageData ||
+				account.usageRateLimitedUntil ||
 				providerShowsCreditsBalance(account.provider)) && (
 				<RateLimitProgress
 					resetIso={account.rateLimitReset}
 					usageUtilization={account.usageUtilization}
 					usageWindow={account.usageWindow}
 					usageData={account.usageData}
+					usageRateLimitedUntil={account.usageRateLimitedUntil}
 					provider={account.provider}
 					showWeekly={providerShowsWeeklyUsage(account.provider)}
 				/>
