@@ -1,6 +1,6 @@
 import { getModelList, logError, ProviderError } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
-import { getProvider } from "@better-ccflare/providers";
+import { getProvider, usageCache } from "@better-ccflare/providers";
 import type { Account, RequestMeta } from "@better-ccflare/types";
 import { cacheBodyStore } from "../cache-body-store";
 import { forwardToClient } from "../response-handler";
@@ -10,6 +10,51 @@ import { handleProxyError, processProxyResponse } from "./response-processor";
 import { getValidAccessToken } from "./token-manager";
 
 const log = new Logger("ProxyOperations");
+
+/**
+ * Determines the cooldown duration (ms from now) to use when marking an account
+ * rate-limited after model exhaustion. Priority:
+ *   1. retry-after / x-ratelimit-reset response header (actual upstream backoff)
+ *   2. usageCache.getRateLimitedUntil — usage-window reset time if known
+ *   3. 1-hour default as last resort
+ *
+ * The result is always clamped to at least 60 seconds to avoid a zero or
+ * negative value when a parsed timestamp is already in the past.
+ */
+function extractCooldownMs(response: Response, accountId: string): number {
+	const MIN_COOLDOWN_MS = 60 * 1000; // 60 seconds floor
+	const DEFAULT_COOLDOWN_MS = 60 * 60 * 1000; // 1 hour
+
+	// 1. Check retry-after / x-ratelimit-reset headers
+	const retryAfter =
+		response.headers.get("retry-after") ??
+		response.headers.get("x-ratelimit-reset");
+	if (retryAfter) {
+		const parsed = Number(retryAfter);
+		if (!Number.isNaN(parsed) && parsed > 0) {
+			// Unix timestamp (seconds) if value looks like an epoch (> 1 billion)
+			const isUnixTimestamp = parsed > 1_000_000_000;
+			const cooldownMs = isUnixTimestamp
+				? parsed * 1000 - Date.now()
+				: parsed * 1000;
+			if (cooldownMs > 0) {
+				return Math.max(cooldownMs, MIN_COOLDOWN_MS);
+			}
+		}
+	}
+
+	// 2. Fall back to usage-window reset time if available
+	const rateLimitedUntil = usageCache.getRateLimitedUntil(accountId);
+	if (rateLimitedUntil !== null) {
+		const cooldownMs = rateLimitedUntil - Date.now();
+		if (cooldownMs > 0) {
+			return Math.max(cooldownMs, MIN_COOLDOWN_MS);
+		}
+	}
+
+	// 3. Last resort: 1 hour
+	return DEFAULT_COOLDOWN_MS;
+}
 
 /**
  * Bedrock provider currently returns a synthetic Request containing the
@@ -538,10 +583,11 @@ export async function proxyWithAccount(
 						log.warn(
 							`Account ${account.name} rate-limited (429), no model fallbacks — failing over to next account`,
 						);
+						const cooldownMs = extractCooldownMs(rawResponse, account.id);
 						ctx.asyncWriter.enqueue(() =>
 							ctx.dbOps.markAccountRateLimited(
 								account.id,
-								Date.now() + 60 * 60 * 1000,
+								Date.now() + cooldownMs,
 							),
 						);
 						return null;
@@ -636,10 +682,11 @@ export async function proxyWithAccount(
 				// Only fire for genuine rate-limit responses (429); model-not-found
 				// (404/400) is a configuration issue, not account exhaustion.
 				if (rawResponse.status === 429) {
+					const cooldownMs = extractCooldownMs(rawResponse, account.id);
 					ctx.asyncWriter.enqueue(() =>
 						ctx.dbOps.markAccountRateLimited(
 							account.id,
-							Date.now() + 60 * 60 * 1000,
+							Date.now() + cooldownMs,
 						),
 					);
 				}
