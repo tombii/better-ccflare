@@ -16,27 +16,39 @@ const log = new Logger("ResponseProcessor");
  * @param rateLimitInfo - Parsed rate limit information
  * @param ctx - The proxy context
  */
+// Subscription quota windows on Anthropic OAuth accounts roll over every
+// 5 hours. When the upstream signals a rate-limit (e.g. `allowed_warning`
+// status header indicating subscription quota exhausted) but doesn't
+// include an explicit reset time header, fall back to this default so the
+// account still gets marked unavailable. Without this, the early-return
+// below silently drops the rate-limit signal and the account keeps
+// receiving traffic — which is what manifests as "out of extra usage"
+// errors on subsequent requests.
+const DEFAULT_RATE_LIMIT_DURATION_MS = 5 * 60 * 60 * 1000;
+
 export function handleRateLimitResponse(
 	account: Account,
 	rateLimitInfo: ReturnType<Provider["parseRateLimit"]>,
 	ctx: ProxyContext,
 ): void {
-	if (!rateLimitInfo.resetTime) return;
+	if (!rateLimitInfo.isRateLimited) return;
+
+	const resetTime =
+		rateLimitInfo.resetTime ?? Date.now() + DEFAULT_RATE_LIMIT_DURATION_MS;
 
 	log.warn(
 		`Account ${account.name} rate-limited until ${new Date(
-			rateLimitInfo.resetTime,
-		).toISOString()}`,
+			resetTime,
+		).toISOString()}${rateLimitInfo.resetTime ? "" : " (defaulted — no reset header)"}`,
 	);
 
-	const resetTime = rateLimitInfo.resetTime;
 	ctx.asyncWriter.enqueue(() =>
 		ctx.dbOps.markAccountRateLimited(account.id, resetTime),
 	);
 
 	const rateLimitError = new RateLimitError(
 		account.id,
-		rateLimitInfo.resetTime,
+		resetTime,
 		rateLimitInfo.remaining,
 	);
 	logError(rateLimitError, log);

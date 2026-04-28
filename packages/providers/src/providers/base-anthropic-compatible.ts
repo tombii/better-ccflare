@@ -31,12 +31,15 @@ const DEFAULT_CONFIG: AnthropicCompatibleConfig = {
 	supportsStreaming: true,
 };
 
-// Hard rate limit statuses (similar to Anthropic)
+// Hard rate limit statuses (similar to Anthropic).
+// `allowed_warning` and `rejected` included — see provider.ts comment.
 const HARD_LIMIT_STATUSES = new Set([
 	"rate_limited",
 	"blocked",
 	"queueing_hard",
 	"payment_required",
+	"allowed_warning",
+	"rejected",
 ]);
 
 const log = new Logger("BaseAnthropicCompatibleProvider");
