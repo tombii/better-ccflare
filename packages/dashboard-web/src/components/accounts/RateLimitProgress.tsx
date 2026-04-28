@@ -149,7 +149,7 @@ export function RateLimitProgress({
 
 	// Allow null resetIso for providers that show usage data (like NanoGPT in PayG mode)
 	// but still render null if there's no resetIso and no usage data to show
-	if (!resetIso && !usageData) return null;
+	if (!resetIso && !usageData && !usageRateLimitedUntil) return null;
 
 	// Show explicit rate-limited state when the Anthropic usage API returned 429
 	// and we have no cached data to show.
