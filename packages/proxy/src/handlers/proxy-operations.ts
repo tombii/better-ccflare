@@ -538,6 +538,12 @@ export async function proxyWithAccount(
 						log.warn(
 							`Account ${account.name} rate-limited (429), no model fallbacks — failing over to next account`,
 						);
+						ctx.asyncWriter.enqueue(() =>
+							ctx.dbOps.markAccountRateLimited(
+								account.id,
+								Date.now() + 60 * 60 * 1000,
+							),
+						);
 						return null;
 					}
 					return rawResponse;
@@ -622,6 +628,16 @@ export async function proxyWithAccount(
 			if (await isModelUnavailableError(rawResponse)) {
 				log.warn(
 					`All models exhausted on account ${account.name}, failing over to next account`,
+				);
+				// Mark account rate-limited for 1 hour so that isAccountAvailable()
+				// excludes it from future requests until the cooldown expires.
+				// Without this write the DB state stays stale (rate_limited_until = null)
+				// and the same account is retried on every subsequent request.
+				ctx.asyncWriter.enqueue(() =>
+					ctx.dbOps.markAccountRateLimited(
+						account.id,
+						Date.now() + 60 * 60 * 1000,
+					),
 				);
 				return null;
 			}
