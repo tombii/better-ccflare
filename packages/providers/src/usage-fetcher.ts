@@ -655,7 +655,8 @@ class UsageCache {
 				// Default to Anthropic usage data
 				const result = await fetchUsageData(token);
 				if (result.data) {
-					// Clear any prior rate-limit marker on a successful fetch
+					// Snapshot before clearing — needed for the capacity-restored guard below.
+					const wasRateLimited = this.usageRateLimitedUntil.has(accountId);
 					this.usageRateLimitedUntil.delete(accountId);
 					const callback = this.windowResetCallbacks.get(accountId);
 					if (callback)
@@ -677,11 +678,7 @@ class UsageCache {
 					// This handles seat-reassignment: org admin reassigns a seat mid-window,
 					// Anthropic resets usage, polling detects available capacity and lets
 					// the caller clear stale rate_limited_until in the DB.
-					if (
-						utilization !== null &&
-						utilization < 100 &&
-						this.usageRateLimitedUntil.has(accountId)
-					) {
+					if (utilization !== null && utilization < 100 && wasRateLimited) {
 						const capacityCallback =
 							this.capacityRestoredCallbacks.get(accountId);
 						if (capacityCallback) capacityCallback(accountId);
