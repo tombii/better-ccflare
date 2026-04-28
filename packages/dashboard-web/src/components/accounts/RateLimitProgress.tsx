@@ -29,7 +29,7 @@ const FIXED_WINDOW_DURATION_MS: Record<string, number> = {
 	seven_day_sonnet: 7 * 24 * 60 * 60 * 1000,
 	weekly: 7 * 24 * 60 * 60 * 1000,
 	daily: 24 * 60 * 60 * 1000,
-	time_limit: 5 * 60 * 60 * 1000,
+	// time_limit intentionally omitted — ZAI's TIME_LIMIT window duration is unknown
 	tokens_limit: 5 * 60 * 60 * 1000,
 };
 
@@ -113,7 +113,7 @@ function formatWindowName(window: string | null): string {
 		case "monthly":
 			return "Monthly";
 		case "time_limit":
-			return "Time";
+			return "Time Quota";
 		case "tokens_limit":
 			return "Tokens";
 		default:
