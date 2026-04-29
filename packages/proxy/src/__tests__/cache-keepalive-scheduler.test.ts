@@ -100,7 +100,7 @@ function makeConfig(initialTtl: number): {
 function seedCacheEntry(
 	accountId: string,
 	path = "/v1/messages",
-	bodyText = '{"model":"claude-opus-4-5","messages":[]}',
+	bodyText = '{"model":"claude-opus-4-5","messages":[],"system":[{"type":"text","text":"hi","cache_control":{"type":"ephemeral"}}]}',
 ): void {
 	const requestId = `req-${accountId}-${Date.now()}`;
 	const bodyBuffer = new TextEncoder().encode(bodyText).buffer;
@@ -429,7 +429,7 @@ describe("CacheKeepaliveScheduler", () => {
 			scheduler.start();
 
 			const bodyText =
-				'{"model":"claude-opus-4-5","messages":[{"role":"user","content":"hello"}]}';
+				'{"model":"claude-opus-4-5","messages":[{"role":"user","content":"hello"}],"system":[{"type":"text","text":"hi","cache_control":{"type":"ephemeral"}}]}';
 			seedCacheEntry("acc-body-check", "/v1/messages", bodyText);
 
 			await capturedCallback?.();
@@ -573,11 +573,24 @@ describe("CacheKeepaliveScheduler", () => {
 			const scheduler = new CacheKeepaliveScheduler(makeProxyContext(), config);
 			scheduler.start();
 
-			// Seed a staging entry but do NOT call onSummary — so no promoted entry.
+			// Seed a staging entry (body has cache_control so stageRequest succeeds),
+			// but do NOT call onSummary — staged but never promoted → getLastCachedRequest returns null.
 			cacheBodyStore.stageRequest(
 				"req-no-promote",
 				"acc-no-promote",
-				new TextEncoder().encode("{}").buffer,
+				new TextEncoder().encode(
+					JSON.stringify({
+						model: "claude-opus-4-5",
+						messages: [],
+						system: [
+							{
+								type: "text",
+								text: "hi",
+								cache_control: { type: "ephemeral" },
+							},
+						],
+					}),
+				).buffer,
 				new Headers(),
 				"/v1/messages",
 			);

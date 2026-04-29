@@ -27,6 +27,39 @@ const log = new Logger("CacheBodyStore");
  * Sensitive and internal headers are stripped before storing.
  */
 
+/**
+ * Only cache requests to this path — other endpoints don't use prompt cache.
+ */
+const CACHEABLE_PATH = "/v1/messages";
+
+/**
+ * Byte patterns to search for in the request body to detect cache_control hints.
+ * Both quoted forms cover JSON key serialization styles.
+ */
+const CACHE_CONTROL_HINTS: Uint8Array[] = [
+	new TextEncoder().encode('"cache_control"'),
+	new TextEncoder().encode('"cache-control"'),
+];
+
+function containsBytes(haystack: Uint8Array, needle: Uint8Array): boolean {
+	const hLen = haystack.length;
+	const nLen = needle.length;
+	if (nLen === 0) return true;
+	if (nLen > hLen) return false;
+	outer: for (let i = 0; i <= hLen - nLen; i++) {
+		for (let j = 0; j < nLen; j++) {
+			if (haystack[i + j] !== needle[j]) continue outer;
+		}
+		return true;
+	}
+	return false;
+}
+
+function hasCacheControlHint(body: ArrayBuffer): boolean {
+	const bytes = new Uint8Array(body);
+	return CACHE_CONTROL_HINTS.some((hint) => containsBytes(bytes, hint));
+}
+
 export interface CachedRequestEntry {
 	/** Original client request body, as-received (pre-transform). */
 	body: Buffer;
@@ -94,6 +127,13 @@ class CacheBodyStore {
 		path: string,
 	): void {
 		if (!this.enabled || !accountId || !body || body.byteLength === 0) return;
+
+		// Only cache prompt-cache-relevant endpoint.
+		if (path !== CACHEABLE_PATH) return;
+
+		// Only stage if the body contains a cache_control hint — requests without
+		// prompt-cache markers won't create cache entries, nothing to keep alive.
+		if (!hasCacheControlHint(body)) return;
 
 		const sanitizedHeaders: Record<string, string> = {};
 		headers.forEach((value, key) => {
