@@ -38,14 +38,6 @@ export interface CachedRequestEntry {
 	timestamp: number;
 }
 
-interface StagedRequestEntry {
-	accountId: string;
-	body: ArrayBuffer;
-	headers: Record<string, string>;
-	path: string;
-	timestamp: number;
-}
-
 // Strip sensitive and internal headers before storing.
 // Auth headers are injected by prepareHeaders() from account credentials.
 // Internal x-better-ccflare-* headers are injected fresh by the scheduler.
@@ -69,42 +61,12 @@ const STRIP_HEADERS = new Set([
 	"host",
 ]);
 
-const CACHE_CONTROL_HINTS = [
-	new TextEncoder().encode("cache_control"),
-	new TextEncoder().encode("cache-control"),
-];
-
-function containsBytes(haystack: Uint8Array, needle: Uint8Array): boolean {
-	if (needle.length === 0 || needle.length > haystack.length) return false;
-
-	const first = needle[0];
-	const limit = haystack.length - needle.length;
-
-	for (let index = 0; index <= limit; index++) {
-		if (haystack[index] !== first) continue;
-
-		let matched = true;
-		for (let offset = 1; offset < needle.length; offset++) {
-			if (haystack[index + offset] !== needle[offset]) {
-				matched = false;
-				break;
-			}
-		}
-
-		if (matched) return true;
-	}
-
-	return false;
-}
-
-function hasCacheControlHint(body: ArrayBuffer): boolean {
-	const bytes = new Uint8Array(body);
-	return CACHE_CONTROL_HINTS.some((hint) => containsBytes(bytes, hint));
-}
-
 class CacheBodyStore {
 	/** requestId → { accountId, entry } while the request is in-flight. */
-	private staging = new Map<string, StagedRequestEntry>();
+	private staging = new Map<
+		string,
+		{ accountId: string; entry: CachedRequestEntry }
+	>();
 
 	/** accountId → last request that created a cache entry. */
 	private lastCachedRequest = new Map<string, CachedRequestEntry>();
@@ -122,7 +84,7 @@ class CacheBodyStore {
 
 	/**
 	 * Called when a request body has been buffered.
-	 * Only stages likely prompt-cache-creating /v1/messages bodies.
+	 * Only stages if the feature is enabled and we have a body.
 	 */
 	stageRequest(
 		requestId: string,
@@ -132,7 +94,6 @@ class CacheBodyStore {
 		path: string,
 	): void {
 		if (!this.enabled || !accountId || !body || body.byteLength === 0) return;
-		if (path !== "/v1/messages" || !hasCacheControlHint(body)) return;
 
 		const sanitizedHeaders: Record<string, string> = {};
 		headers.forEach((value, key) => {
@@ -143,10 +104,12 @@ class CacheBodyStore {
 
 		this.staging.set(requestId, {
 			accountId,
-			body,
-			headers: sanitizedHeaders,
-			path,
-			timestamp: Date.now(),
+			entry: {
+				body: Buffer.from(body),
+				headers: sanitizedHeaders,
+				path,
+				timestamp: Date.now(),
+			},
 		});
 	}
 
@@ -164,12 +127,7 @@ class CacheBodyStore {
 		if (!staged) return;
 
 		if (cacheCreationInputTokens && cacheCreationInputTokens > 0) {
-			this.lastCachedRequest.set(staged.accountId, {
-				body: Buffer.from(staged.body),
-				headers: staged.headers,
-				path: staged.path,
-				timestamp: staged.timestamp,
-			});
+			this.lastCachedRequest.set(staged.accountId, staged.entry);
 		}
 	}
 
