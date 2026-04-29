@@ -20,6 +20,12 @@ const DEFAULT_MODEL_MAP: Record<string, string> = {
 	haiku: "gpt-5.4-mini",
 };
 
+const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
+	"gpt-5.3-codex": 272_000,
+	"gpt-5.4": 272_000,
+	"gpt-5.4-mini": 272_000,
+};
+
 // ── Codex Responses API types ─────────────────────────────────────────────────
 
 interface CodexInputTextItem {
@@ -464,52 +470,35 @@ export class CodexProvider extends BaseProvider {
 		response: Record<string, unknown> | undefined,
 		usage: { input_tokens?: number } | undefined,
 	): ContextWindow | null {
-		const contextWindow = response?.context_window as
-			| Record<string, unknown>
-			| undefined;
-		if (!contextWindow) return null;
+		const model = response?.model;
+		if (typeof model !== "string") return null;
+		const contextWindowSize = MODEL_CONTEXT_WINDOWS[model];
+		if (!contextWindowSize) return null;
 
-		const contextWindowSize = contextWindow.context_window_size;
+		const inputTokens = usage?.input_tokens;
 		if (
-			typeof contextWindowSize !== "number" ||
-			!Number.isFinite(contextWindowSize) ||
-			contextWindowSize <= 0
+			typeof inputTokens !== "number" ||
+			!Number.isFinite(inputTokens) ||
+			inputTokens < 0
 		)
 			return null;
 
-		const currentUsage = contextWindow.current_usage as
+		const usageRecord = usage as Record<string, unknown> | undefined;
+		const inputTokenDetails = usageRecord?.input_tokens_details as
 			| Record<string, unknown>
 			| undefined;
-		const inputTokens = currentUsage?.input_tokens;
-		const normalizedInputTokens =
-			typeof inputTokens === "number" && Number.isFinite(inputTokens)
-				? inputTokens
-				: usage?.input_tokens;
-		if (
-			typeof normalizedInputTokens !== "number" ||
-			!Number.isFinite(normalizedInputTokens) ||
-			normalizedInputTokens < 0
-		)
-			return null;
-
-		const cacheReadInputTokens = currentUsage?.cache_read_input_tokens;
-		const cacheCreationInputTokens = currentUsage?.cache_creation_input_tokens;
+		const cachedTokens = inputTokenDetails?.cached_tokens;
 
 		return {
 			current_usage: {
-				input_tokens: normalizedInputTokens,
+				input_tokens: inputTokens,
 				cache_read_input_tokens:
-					typeof cacheReadInputTokens === "number" &&
-					Number.isFinite(cacheReadInputTokens) &&
-					cacheReadInputTokens >= 0
-						? cacheReadInputTokens
+					typeof cachedTokens === "number" &&
+					Number.isFinite(cachedTokens) &&
+					cachedTokens >= 0
+						? cachedTokens
 						: 0,
-				cache_creation_input_tokens:
-					typeof cacheCreationInputTokens === "number" &&
-					Number.isFinite(cacheCreationInputTokens) &&
-					cacheCreationInputTokens >= 0
-						? cacheCreationInputTokens
-						: 0,
+				cache_creation_input_tokens: 0,
 			},
 			context_window_size: contextWindowSize,
 		};
@@ -826,7 +815,6 @@ export class CodexProvider extends BaseProvider {
 				state.inputTokens = usage?.input_tokens || state.inputTokens;
 				state.outputTokens = usage?.output_tokens || state.outputTokens;
 				state.contextWindow = this.extractContextWindow(resp, usage);
-
 				// Close any lingering content block
 				if (state.hasSentContentBlockStart) {
 					await writeSSE("content_block_stop", {
