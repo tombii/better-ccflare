@@ -55,6 +55,44 @@ describe("CodexProvider.processResponse", () => {
 	});
 });
 
+describe("CodexProvider.transformRequestBody", () => {
+	it("maps sonnet-family models to the default Codex model", async () => {
+		const provider = new CodexProvider();
+		const request = new Request("https://example.com/v1/messages", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				model: "claude-3-7-sonnet",
+				max_tokens: 10,
+				messages: [{ role: "user", content: "hello" }],
+			}),
+		});
+
+		const transformed = await provider.transformRequestBody(request, undefined);
+		const body = await transformed.json();
+
+		expect(body.model).toBe("gpt-5.3-codex");
+	});
+
+	it("passes through unknown model names unchanged", async () => {
+		const provider = new CodexProvider();
+		const request = new Request("https://example.com/v1/messages", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				model: "gpt-5.4-mini",
+				max_tokens: 10,
+				messages: [{ role: "user", content: "hello" }],
+			}),
+		});
+
+		const transformed = await provider.transformRequestBody(request, undefined);
+		const body = await transformed.json();
+
+		expect(body.model).toBe("gpt-5.4-mini");
+	});
+});
+
 describe("parseCodexUsageHeaders", () => {
 	it("normalizes primary and secondary codex quota headers", () => {
 		const headers = new Headers({

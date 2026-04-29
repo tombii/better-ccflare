@@ -350,10 +350,10 @@ export class CodexProvider extends BaseProvider {
 						: (account.model_mappings as Record<string, string>);
 
 				const lower = anthropicModel.toLowerCase();
+				if (mappings[anthropicModel]) return mappings[anthropicModel];
 				if (lower.includes("haiku") && mappings.haiku) return mappings.haiku;
 				if (lower.includes("sonnet") && mappings.sonnet) return mappings.sonnet;
 				if (lower.includes("opus") && mappings.opus) return mappings.opus;
-				if (mappings[anthropicModel]) return mappings[anthropicModel];
 			} catch {
 				// ignore malformed mappings
 			}
@@ -364,7 +364,7 @@ export class CodexProvider extends BaseProvider {
 		if (lower.includes("haiku")) return DEFAULT_MODEL_MAP.haiku;
 		if (lower.includes("sonnet")) return DEFAULT_MODEL_MAP.sonnet;
 		if (lower.includes("opus")) return DEFAULT_MODEL_MAP.opus;
-		return DEFAULT_MODEL_MAP.sonnet; // default
+		return anthropicModel;
 	}
 
 	private extractSystemPrompt(
