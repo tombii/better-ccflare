@@ -6,6 +6,7 @@ import type { DatabaseOperations } from "@better-ccflare/database";
 import { Logger } from "@better-ccflare/logger";
 import { validatePath } from "@better-ccflare/security";
 import type { Agent } from "@better-ccflare/types";
+import { RequestBodyContext } from "../request-body-context";
 
 const log = new Logger("AgentInterceptor");
 
@@ -23,9 +24,15 @@ export interface AgentInterceptResult {
  * @returns Modified request body and agent detection information
  */
 export async function interceptAndModifyRequest(
-	requestBodyBuffer: ArrayBuffer | null,
+	requestBody: ArrayBuffer | RequestBodyContext | null,
 	dbOps: DatabaseOperations,
 ): Promise<AgentInterceptResult> {
+	const bodyContext =
+		requestBody instanceof RequestBodyContext
+			? requestBody
+			: new RequestBodyContext(requestBody);
+	const requestBodyBuffer = bodyContext.getBuffer();
+
 	// If no body, nothing to intercept
 	if (!requestBodyBuffer) {
 		return {
@@ -37,15 +44,17 @@ export async function interceptAndModifyRequest(
 	}
 
 	try {
-		// Parse the request body
-		const bodyText = new TextDecoder().decode(requestBodyBuffer);
-		const requestBody = JSON.parse(bodyText);
+		const parsedBody = bodyContext.getParsedJson();
+		if (!parsedBody) {
+			throw new Error("Request body is not valid JSON object");
+		}
 
 		// Extract original model
-		const originalModel = requestBody.model || null;
+		const originalModel =
+			typeof parsedBody.model === "string" ? parsedBody.model : null;
 
 		// Extract system prompt to detect agent usage
-		const systemPrompt = extractSystemPrompt(requestBody);
+		const systemPrompt = extractSystemPrompt(parsedBody as RequestBody);
 		if (!systemPrompt) {
 			// No system prompt, no agent detection possible
 			log.info("No system prompt found in request");
@@ -140,17 +149,10 @@ export async function interceptAndModifyRequest(
 
 		// Modify the request body with the preferred model
 		log.info(`Modifying model from ${originalModel} to ${preferredModel}`);
-		requestBody.model = preferredModel;
-
-		// Convert back to buffer
-		const modifiedBodyText = JSON.stringify(requestBody);
-		const encodedData = new TextEncoder().encode(modifiedBodyText);
-		// Create a new ArrayBuffer to ensure compatibility
-		const modifiedBody = new ArrayBuffer(encodedData.byteLength);
-		new Uint8Array(modifiedBody).set(encodedData);
+		bodyContext.setModel(preferredModel);
 
 		return {
-			modifiedBody,
+			modifiedBody: bodyContext.getBuffer(),
 			agentUsed: detectedAgent.id,
 			originalModel,
 			appliedModel: preferredModel,
