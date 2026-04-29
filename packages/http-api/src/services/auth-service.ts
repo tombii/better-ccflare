@@ -115,15 +115,18 @@ export class AuthService {
 
 	/**
 	 * Extract API key from request headers
+	 * Supports both authentication header formats:
+	 * - x-api-key header (Vercel AI SDK / Opencode / Anthropic format)
+	 * - Authorization: Bearer header (standard OAuth format)
 	 */
 	extractApiKey(req: Request): string | null {
-		// Check x-api-key header first (Anthropic format)
+		// Check x-api-key header first (Vercel AI SDK / Opencode format)
 		const apiKey = req.headers.get("x-api-key");
 		if (apiKey) {
 			return apiKey;
 		}
 
-		// Check Authorization header with Bearer token
+		// Check Authorization header with Bearer token (standard OAuth format)
 		const authHeader = req.headers.get("authorization");
 		if (authHeader) {
 			const parts = authHeader.trim().split(/\s+/);
