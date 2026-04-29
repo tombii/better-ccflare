@@ -53,6 +53,89 @@ describe("CodexProvider.processResponse", () => {
 		expect(processed.status).toBe(400);
 		expect(await processed.text()).toBe('{"error":"bad_request"}');
 	});
+
+	it("maps response.completed context usage into Claude-compatible context_window", async () => {
+		const provider = new CodexProvider();
+		const upstreamBody = [
+			"event: response.created",
+			'data: {"response":{"id":"resp_test","model":"gpt-5.3-codex"}}',
+			"",
+			"event: response.completed",
+			'data: {"response":{"usage":{"input_tokens":100,"output_tokens":50,"input_tokens_details":{"cached_tokens":25,"cache_creation_input_tokens":10}},"context_window":{"current_usage":{"input_tokens":100,"cache_read_input_tokens":25,"cache_creation_input_tokens":10},"context_window_size":200000}}}',
+			"",
+		].join("\n");
+
+		const response = new Response(upstreamBody, {
+			status: 200,
+			headers: { "content-type": "text/event-stream" },
+		});
+
+		const transformed = await provider.processResponse(response, null);
+		const transformedBody = await transformed.text();
+		const messageDeltaLine = transformedBody
+			.split("\n")
+			.find((line) => line.includes('"type":"message_delta"'));
+
+		expect(messageDeltaLine).toContain('"context_window"');
+		expect(messageDeltaLine).toContain('"input_tokens":100');
+		expect(messageDeltaLine).toContain('"cache_read_input_tokens":25');
+		expect(messageDeltaLine).toContain('"cache_creation_input_tokens":10');
+		expect(messageDeltaLine).toContain('"context_window_size":200000');
+	});
+
+	it("defaults missing cache fields to zero when context window size is present", async () => {
+		const provider = new CodexProvider();
+		const upstreamBody = [
+			"event: response.created",
+			'data: {"response":{"id":"resp_test","model":"gpt-5.3-codex"}}',
+			"",
+			"event: response.completed",
+			'data: {"response":{"usage":{"input_tokens":42,"output_tokens":7},"context_window":{"current_usage":{"input_tokens":42},"context_window_size":128000}}}',
+			"",
+		].join("\n");
+
+		const response = new Response(upstreamBody, {
+			status: 200,
+			headers: { "content-type": "text/event-stream" },
+		});
+
+		const transformed = await provider.processResponse(response, null);
+		const transformedBody = await transformed.text();
+		const messageDeltaLine = transformedBody
+			.split("\n")
+			.find((line) => line.includes('"type":"message_delta"'));
+
+		expect(messageDeltaLine).toContain('"context_window"');
+		expect(messageDeltaLine).toContain('"input_tokens":42');
+		expect(messageDeltaLine).toContain('"cache_read_input_tokens":0');
+		expect(messageDeltaLine).toContain('"cache_creation_input_tokens":0');
+	});
+
+	it("omits malformed context_window when context_window_size is missing", async () => {
+		const provider = new CodexProvider();
+		const upstreamBody = [
+			"event: response.created",
+			'data: {"response":{"id":"resp_test","model":"gpt-5.3-codex"}}',
+			"",
+			"event: response.completed",
+			'data: {"response":{"usage":{"input_tokens":12,"output_tokens":3,"input_tokens_details":{"cached_tokens":4}}}}',
+			"",
+		].join("\n");
+
+		const response = new Response(upstreamBody, {
+			status: 200,
+			headers: { "content-type": "text/event-stream" },
+		});
+
+		const transformed = await provider.processResponse(response, null);
+		const transformedBody = await transformed.text();
+		const messageDeltaLine = transformedBody
+			.split("\n")
+			.find((line) => line.includes('"type":"message_delta"'));
+
+		expect(messageDeltaLine).not.toContain('"context_window"');
+		expect(messageDeltaLine).toContain('"output_tokens":3');
+	});
 });
 
 describe("CodexProvider.transformRequestBody", () => {

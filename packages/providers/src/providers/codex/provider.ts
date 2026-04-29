@@ -121,6 +121,17 @@ interface AnthropicRequest {
 
 // ── SSE streaming state ───────────────────────────────────────────────────────
 
+interface ContextWindowUsage {
+	input_tokens: number;
+	cache_read_input_tokens: number;
+	cache_creation_input_tokens: number;
+}
+
+interface ContextWindow {
+	current_usage: ContextWindowUsage;
+	context_window_size: number;
+}
+
 interface StreamState {
 	buffer: string;
 	messageId: string;
@@ -130,6 +141,7 @@ interface StreamState {
 	hasSentTerminalEvents: boolean;
 	inputTokens: number;
 	outputTokens: number;
+	contextWindow: ContextWindow | null;
 	// Track function_call items: output_index → content_block_index
 	functionCallBlocks: Map<number, number>;
 }
@@ -448,6 +460,61 @@ export class CodexProvider extends BaseProvider {
 		return items;
 	}
 
+	private extractContextWindow(
+		response: Record<string, unknown> | undefined,
+		usage: { input_tokens?: number } | undefined,
+	): ContextWindow | null {
+		const contextWindow = response?.context_window as
+			| Record<string, unknown>
+			| undefined;
+		if (!contextWindow) return null;
+
+		const contextWindowSize = contextWindow.context_window_size;
+		if (
+			typeof contextWindowSize !== "number" ||
+			!Number.isFinite(contextWindowSize) ||
+			contextWindowSize <= 0
+		)
+			return null;
+
+		const currentUsage = contextWindow.current_usage as
+			| Record<string, unknown>
+			| undefined;
+		const inputTokens = currentUsage?.input_tokens;
+		const normalizedInputTokens =
+			typeof inputTokens === "number" && Number.isFinite(inputTokens)
+				? inputTokens
+				: usage?.input_tokens;
+		if (
+			typeof normalizedInputTokens !== "number" ||
+			!Number.isFinite(normalizedInputTokens) ||
+			normalizedInputTokens < 0
+		)
+			return null;
+
+		const cacheReadInputTokens = currentUsage?.cache_read_input_tokens;
+		const cacheCreationInputTokens = currentUsage?.cache_creation_input_tokens;
+
+		return {
+			current_usage: {
+				input_tokens: normalizedInputTokens,
+				cache_read_input_tokens:
+					typeof cacheReadInputTokens === "number" &&
+					Number.isFinite(cacheReadInputTokens) &&
+					cacheReadInputTokens >= 0
+						? cacheReadInputTokens
+						: 0,
+				cache_creation_input_tokens:
+					typeof cacheCreationInputTokens === "number" &&
+					Number.isFinite(cacheCreationInputTokens) &&
+					cacheCreationInputTokens >= 0
+						? cacheCreationInputTokens
+						: 0,
+			},
+			context_window_size: contextWindowSize,
+		};
+	}
+
 	private convertToCodexFormat(
 		body: AnthropicRequest,
 		account?: Account,
@@ -501,6 +568,7 @@ export class CodexProvider extends BaseProvider {
 			hasSentTerminalEvents: false,
 			inputTokens: 0,
 			outputTokens: 0,
+			contextWindow: null,
 			functionCallBlocks: new Map(),
 		};
 
@@ -757,6 +825,7 @@ export class CodexProvider extends BaseProvider {
 
 				state.inputTokens = usage?.input_tokens || state.inputTokens;
 				state.outputTokens = usage?.output_tokens || state.outputTokens;
+				state.contextWindow = this.extractContextWindow(resp, usage);
 
 				// Close any lingering content block
 				if (state.hasSentContentBlockStart) {
@@ -767,16 +836,25 @@ export class CodexProvider extends BaseProvider {
 					state.hasSentContentBlockStart = false;
 				}
 
-				await writeSSE("message_delta", {
+				const messageDelta: {
+					type: "message_delta";
+					delta: { stop_reason: "end_turn"; stop_sequence: null };
+					usage: { output_tokens: number };
+					context_window?: ContextWindow;
+				} = {
 					type: "message_delta",
 					delta: { stop_reason: "end_turn", stop_sequence: null },
 					usage: { output_tokens: state.outputTokens },
-				});
+				};
+				if (state.contextWindow) {
+					messageDelta.context_window = state.contextWindow;
+				}
+
+				await writeSSE("message_delta", messageDelta);
 				await writeSSE("message_stop", { type: "message_stop" });
 				state.hasSentTerminalEvents = true;
 				break;
 			}
-
 			default:
 				// Ignore unknown events
 				break;
