@@ -24,7 +24,13 @@ const log = new Logger("ResponseProcessor");
 // below silently drops the rate-limit signal and the account keeps
 // receiving traffic — which is what manifests as "out of extra usage"
 // errors on subsequent requests.
-const DEFAULT_RATE_LIMIT_DURATION_MS = 5 * 60 * 60 * 1000;
+//
+// Reduced from 5h to 1h: the 5h Anthropic usage window is independently
+// tracked via rate_limit_reset and the auto-refresh scheduler. A 5h hard
+// cooldown is too aggressive — accounts often recover far sooner
+// (seat reassignment, natural window reset), and the stale rate_limited_until
+// blocks the account long after the real limit has cleared (issue #195).
+const DEFAULT_RATE_LIMIT_DURATION_MS = 1 * 60 * 60 * 1000;
 
 export function handleRateLimitResponse(
 	account: Account,
@@ -291,9 +297,9 @@ export async function processProxyResponse(
 			ctx.asyncWriter.enqueue(() =>
 				ctx.dbOps.markAccountRateLimited(
 					account.id,
-					Date.now() + 5 * 60 * 60 * 1000,
+					Date.now() + DEFAULT_RATE_LIMIT_DURATION_MS,
 				),
-			); // Default to 5 hours — applies to any provider without reset headers
+			);
 		}
 		// Also update metadata for rate-limited responses
 		const bypassSession =

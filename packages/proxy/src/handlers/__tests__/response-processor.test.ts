@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { Account } from "@better-ccflare/types";
 import type { ProxyContext } from "../proxy-types";
-import { processProxyResponse } from "../response-processor";
+import { handleRateLimitResponse, processProxyResponse } from "../response-processor";
 
 // Minimal Account fixture used by every test in this file. Only the fields
 // the response-processor actually reads matter — the rest exist to satisfy
@@ -153,9 +153,9 @@ describe("processProxyResponse — streaming rate-limit failover (issue #114)", 
 		expect(calls.markRateLimited).toHaveLength(0);
 	});
 
-	it("falls back to a default 5h window when a streaming 429 has no resetTime", async () => {
+	it("falls back to a default 1h window when a streaming 429 has no resetTime", async () => {
 		// Some providers return 429s without rate-limit headers. The current
-		// code path defaults to a 5h cooldown — make sure that still fires
+		// code path defaults to a 1h cooldown — make sure that still fires
 		// for the streaming case after the !isStream guard removal.
 		const account = makeAccount();
 		const before = Date.now();
@@ -173,10 +173,84 @@ describe("processProxyResponse — streaming rate-limit failover (issue #114)", 
 
 		expect(result).toBe(true);
 		expect(calls.markRateLimited).toHaveLength(1);
-		// Default cooldown is Date.now() + 5h. Allow ±1s for test runtime drift.
-		const FIVE_HOURS = 5 * 60 * 60 * 1000;
+		// Default cooldown is Date.now() + 1h. Allow ±1s for test runtime drift.
+		const ONE_HOUR = 1 * 60 * 60 * 1000;
 		const reset = calls.markRateLimited[0]?.resetTime ?? 0;
-		expect(reset).toBeGreaterThanOrEqual(before + FIVE_HOURS - 1000);
-		expect(reset).toBeLessThanOrEqual(Date.now() + FIVE_HOURS + 1000);
+		expect(reset).toBeGreaterThanOrEqual(before + ONE_HOUR - 1000);
+		expect(reset).toBeLessThanOrEqual(Date.now() + ONE_HOUR + 1000);
+	});
+});
+
+describe("handleRateLimitResponse — default cooldown when resetTime absent", () => {
+	it("marks account rate-limited with 1h default when no reset header is present", () => {
+		const account = makeAccount();
+		const before = Date.now();
+		const calls: Array<{ accountId: string; until: number }> = [];
+
+		const ctx = {
+			asyncWriter: {
+				enqueue: (job: () => void | Promise<void>) => void job(),
+			},
+			dbOps: {
+				markAccountRateLimited: (id: string, until: number) => {
+					calls.push({ accountId: id, until });
+				},
+				updateAccountUsage: () => {},
+				updateAccountRateLimitMeta: () => {},
+				getAdapter: () => ({
+					get: async () => ({ rate_limited_until: null }),
+					run: async () => {},
+				}),
+			},
+			provider: {
+				parseRateLimit: () => ({
+					isRateLimited: true,
+					resetTime: undefined,
+				}),
+			},
+		} as unknown as ProxyContext;
+
+		handleRateLimitResponse(account, { isRateLimited: true, resetTime: undefined }, ctx);
+
+		expect(calls).toHaveLength(1);
+		expect(calls[0]?.accountId).toBe(account.id);
+
+		const ONE_HOUR = 1 * 60 * 60 * 1000;
+		expect(calls[0]?.until).toBeGreaterThanOrEqual(before + ONE_HOUR - 1000);
+		expect(calls[0]?.until).toBeLessThanOrEqual(Date.now() + ONE_HOUR + 1000);
+	});
+
+	it("respects explicit resetTime when provided", () => {
+		const account = makeAccount();
+		const explicitReset = Date.now() + 30 * 60 * 1000;
+		const calls: Array<{ accountId: string; until: number }> = [];
+
+		const ctx = {
+			asyncWriter: {
+				enqueue: (job: () => void | Promise<void>) => void job(),
+			},
+			dbOps: {
+				markAccountRateLimited: (id: string, until: number) => {
+					calls.push({ accountId: id, until });
+				},
+				updateAccountUsage: () => {},
+				updateAccountRateLimitMeta: () => {},
+				getAdapter: () => ({
+					get: async () => ({ rate_limited_until: null }),
+					run: async () => {},
+				}),
+			},
+			provider: {
+				parseRateLimit: () => ({
+					isRateLimited: true,
+					resetTime: explicitReset,
+				}),
+			},
+		} as unknown as ProxyContext;
+
+		handleRateLimitResponse(account, { isRateLimited: true, resetTime: explicitReset }, ctx);
+
+		expect(calls).toHaveLength(1);
+		expect(calls[0]?.until).toBe(explicitReset);
 	});
 });
