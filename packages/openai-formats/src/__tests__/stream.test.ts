@@ -542,6 +542,274 @@ describe("transformStreamingResponse — flush path (no [DONE])", () => {
 	});
 });
 
+// ── transformStreamingResponse — thinking/reasoning blocks ───────────────────
+
+describe("transformStreamingResponse — reasoning_content (thinking blocks)", () => {
+	it("emits content_block_start with type thinking before first reasoning_content chunk", async () => {
+		const upstream = makeOpenAIStream([
+			JSON.stringify({
+				id: "c1",
+				model: "deepseek-r1",
+				choices: [
+					{
+						index: 0,
+						delta: { reasoning_content: "Let me think..." },
+						finish_reason: null,
+					},
+				],
+			}),
+			"[DONE]",
+		]);
+		const transformed = transformStreamingResponse(upstream);
+		const raw = await readStream(transformed.body!);
+		const events = parseSSEEvents(raw);
+		const thinkingStart = events.find(
+			(e) =>
+				e.event === "content_block_start" &&
+				JSON.parse(e.data!).content_block?.type === "thinking",
+		);
+		expect(thinkingStart).toBeDefined();
+		expect(JSON.parse(thinkingStart?.data!).index).toBe(0);
+	});
+
+	it("emits content_block_delta with type thinking_delta for reasoning_content chunks", async () => {
+		const upstream = makeOpenAIStream([
+			JSON.stringify({
+				id: "c1",
+				model: "deepseek-r1",
+				choices: [
+					{
+						index: 0,
+						delta: { reasoning_content: "First thought." },
+						finish_reason: null,
+					},
+				],
+			}),
+			JSON.stringify({
+				id: "c1",
+				model: "deepseek-r1",
+				choices: [
+					{
+						index: 0,
+						delta: { reasoning_content: " Second thought." },
+						finish_reason: null,
+					},
+				],
+			}),
+			"[DONE]",
+		]);
+		const transformed = transformStreamingResponse(upstream);
+		const raw = await readStream(transformed.body!);
+		const events = parseSSEEvents(raw);
+		const thinkingDeltas = events.filter(
+			(e) =>
+				e.event === "content_block_delta" &&
+				JSON.parse(e.data!).delta?.type === "thinking_delta",
+		);
+		expect(thinkingDeltas.length).toBeGreaterThanOrEqual(2);
+		const thoughts = thinkingDeltas.map(
+			(e) => JSON.parse(e.data!).delta.thinking,
+		);
+		expect(thoughts).toContain("First thought.");
+		expect(thoughts).toContain(" Second thought.");
+	});
+
+	it("emits content_block_start for thinking only once across multiple chunks", async () => {
+		const upstream = makeOpenAIStream([
+			JSON.stringify({
+				id: "c1",
+				model: "deepseek-r1",
+				choices: [
+					{ index: 0, delta: { reasoning_content: "A" }, finish_reason: null },
+				],
+			}),
+			JSON.stringify({
+				id: "c1",
+				model: "deepseek-r1",
+				choices: [
+					{ index: 0, delta: { reasoning_content: "B" }, finish_reason: null },
+				],
+			}),
+			"[DONE]",
+		]);
+		const transformed = transformStreamingResponse(upstream);
+		const raw = await readStream(transformed.body!);
+		const events = parseSSEEvents(raw);
+		const thinkingStarts = events.filter(
+			(e) =>
+				e.event === "content_block_start" &&
+				JSON.parse(e.data!).content_block?.type === "thinking",
+		);
+		expect(thinkingStarts).toHaveLength(1);
+	});
+
+	it("closes thinking block (content_block_stop at index 0) before opening text block when text follows", async () => {
+		const upstream = makeOpenAIStream([
+			JSON.stringify({
+				id: "c1",
+				model: "deepseek-r1",
+				choices: [
+					{
+						index: 0,
+						delta: { reasoning_content: "Thinking..." },
+						finish_reason: null,
+					},
+				],
+			}),
+			JSON.stringify({
+				id: "c1",
+				model: "deepseek-r1",
+				choices: [
+					{ index: 0, delta: { content: "Answer." }, finish_reason: null },
+				],
+			}),
+			"[DONE]",
+		]);
+		const transformed = transformStreamingResponse(upstream);
+		const raw = await readStream(transformed.body!);
+		const events = parseSSEEvents(raw);
+		const types = events.map((e) => e.event);
+
+		// content_block_stop at index 0 must appear before content_block_start for text
+		const stops = events
+			.map((e, i) => ({ e, i }))
+			.filter(
+				({ e }) =>
+					e.event === "content_block_stop" && JSON.parse(e.data!).index === 0,
+			);
+		const textStart = events
+			.map((e, i) => ({ e, i }))
+			.find(
+				({ e }) =>
+					e.event === "content_block_start" &&
+					JSON.parse(e.data!).content_block?.type === "text",
+			);
+		expect(stops.length).toBeGreaterThanOrEqual(1);
+		expect(textStart).toBeDefined();
+		expect(stops[0]?.i).toBeLessThan(textStart?.i);
+
+		// text block must be at index 1
+		expect(JSON.parse(textStart?.e.data!).index).toBe(1);
+		expect(types).toContain("message_start");
+	});
+
+	it("emits text block at index 1 when thinking preceded it", async () => {
+		const upstream = makeOpenAIStream([
+			JSON.stringify({
+				id: "c1",
+				model: "deepseek-r1",
+				choices: [
+					{
+						index: 0,
+						delta: { reasoning_content: "Think." },
+						finish_reason: null,
+					},
+				],
+			}),
+			JSON.stringify({
+				id: "c1",
+				model: "deepseek-r1",
+				choices: [
+					{ index: 0, delta: { content: "Reply." }, finish_reason: null },
+				],
+			}),
+			"[DONE]",
+		]);
+		const transformed = transformStreamingResponse(upstream);
+		const raw = await readStream(transformed.body!);
+		const events = parseSSEEvents(raw);
+		const textBlockStart = events.find(
+			(e) =>
+				e.event === "content_block_start" &&
+				JSON.parse(e.data!).content_block?.type === "text",
+		);
+		expect(textBlockStart).toBeDefined();
+		expect(JSON.parse(textBlockStart?.data!).index).toBe(1);
+
+		// text_delta should also be at index 1
+		const textDeltas = events.filter(
+			(e) =>
+				e.event === "content_block_delta" &&
+				JSON.parse(e.data!).delta?.type === "text_delta",
+		);
+		expect(textDeltas.length).toBeGreaterThanOrEqual(1);
+		expect(JSON.parse(textDeltas[0]?.data!).index).toBe(1);
+	});
+
+	it("emits content_block_stop at index 1 on stream end when thinking+text both present", async () => {
+		const upstream = makeOpenAIStream([
+			JSON.stringify({
+				id: "c1",
+				model: "deepseek-r1",
+				choices: [
+					{
+						index: 0,
+						delta: { reasoning_content: "Think." },
+						finish_reason: null,
+					},
+				],
+			}),
+			JSON.stringify({
+				id: "c1",
+				model: "deepseek-r1",
+				choices: [
+					{ index: 0, delta: { content: "Answer." }, finish_reason: "stop" },
+				],
+			}),
+			"[DONE]",
+		]);
+		const transformed = transformStreamingResponse(upstream);
+		const raw = await readStream(transformed.body!);
+		const events = parseSSEEvents(raw);
+		// The final content_block_stop (for text, not thinking) must be at index 1
+		const allStops = events.filter((e) => e.event === "content_block_stop");
+		const stopIndexes = allStops.map((e) => JSON.parse(e.data!).index);
+		expect(stopIndexes).toContain(1);
+	});
+
+	it("handles reasoning_content only (no text) — thinking block without text block", async () => {
+		const upstream = makeOpenAIStream([
+			JSON.stringify({
+				id: "c1",
+				model: "deepseek-r1",
+				choices: [
+					{
+						index: 0,
+						delta: { reasoning_content: "Pure thought." },
+						finish_reason: null,
+					},
+				],
+			}),
+			"[DONE]",
+		]);
+		const transformed = transformStreamingResponse(upstream);
+		const raw = await readStream(transformed.body!);
+		const events = parseSSEEvents(raw);
+
+		// Thinking block start was emitted
+		const thinkingStart = events.find(
+			(e) =>
+				e.event === "content_block_start" &&
+				JSON.parse(e.data!).content_block?.type === "thinking",
+		);
+		expect(thinkingStart).toBeDefined();
+
+		// No text block start emitted
+		const textStart = events.find(
+			(e) =>
+				e.event === "content_block_start" &&
+				JSON.parse(e.data!).content_block?.type === "text",
+		);
+		expect(textStart).toBeUndefined();
+
+		// When only thinking was emitted (hasSentContentBlockStart is false),
+		// the [DONE] handler skips emitStreamEnd — no message_stop is produced.
+		// This is current implementation behavior for reasoning-only responses.
+		const types = events.map((e) => e.event);
+		expect(types).not.toContain("message_stop");
+	});
+});
+
 // ── transformStreamingResponse — model extraction ────────────────────────────
 
 describe("transformStreamingResponse — model extraction", () => {

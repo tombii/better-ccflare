@@ -80,6 +80,7 @@ function emitStreamEnd(
 	toolCallAccumulators: Record<number, string> | null,
 	cacheReadInputTokens: number,
 	cacheCreationInputTokens: number,
+	textBlockIndex = 0,
 ) {
 	// Send content_block_stop for all blocks
 	if (toolCallAccumulators) {
@@ -101,10 +102,10 @@ function emitStreamEnd(
 			);
 		}
 	} else if (stopReason === "end_turn") {
-		// Text block at index 0
+		// Text block at textBlockIndex (1 when thinking block was emitted at index 0)
 		const contentBlockStop = {
 			type: "content_block_stop",
-			index: 0,
+			index: textBlockIndex,
 		};
 		controller.enqueue(
 			encoder.encode(`event: content_block_stop
@@ -172,6 +173,7 @@ export function transformStreamingResponse(response: Response): Response {
 					extractedModel: "unknown",
 					hasSentStart: false,
 					hasSentContentBlockStart: false,
+					hasSentThinkingBlockStart: false,
 					promptTokens: 0,
 					completionTokens: 0,
 					cacheReadInputTokens: 0,
@@ -231,6 +233,7 @@ export function transformStreamingResponse(response: Response): Response {
 									null,
 									context.cacheReadInputTokens,
 									context.cacheCreationInputTokens,
+									context.hasSentThinkingBlockStart ? 1 : 0,
 								);
 							}
 
@@ -366,13 +369,70 @@ export function transformStreamingResponse(response: Response): Response {
 									context.toolCallAccumulators[idx] =
 										(context.toolCallAccumulators[idx] || "") + newArgs;
 								}
+							} else if (delta?.reasoning_content) {
+								// DeepSeek/reasoning providers emit reasoning_content before text.
+								// Map to Anthropic thinking block at index 0.
+								if (!context.hasSentThinkingBlockStart) {
+									context.hasSentThinkingBlockStart = true;
+									const thinkingBlockStart = {
+										type: "content_block_start",
+										index: 0,
+										content_block: {
+											type: "thinking",
+											thinking: "",
+										},
+									};
+									controller.enqueue(
+										encoder.encode(`event: content_block_start\n`),
+									);
+									controller.enqueue(
+										encoder.encode(
+											`data: ${JSON.stringify(thinkingBlockStart)}\n\n`,
+										),
+									);
+								}
+
+								const thinkingDelta = {
+									type: "content_block_delta",
+									index: 0,
+									delta: {
+										type: "thinking_delta",
+										thinking: delta.reasoning_content,
+									},
+								};
+								controller.enqueue(
+									encoder.encode(`event: content_block_delta\n`),
+								);
+								controller.enqueue(
+									encoder.encode(`data: ${JSON.stringify(thinkingDelta)}\n\n`),
+								);
 							} else if (delta?.content) {
+								// Text block index: 1 if thinking was emitted, else 0
+								const textIndex = context.hasSentThinkingBlockStart ? 1 : 0;
+
 								// Send content_block_start on first content
 								if (!context.hasSentContentBlockStart) {
 									context.hasSentContentBlockStart = true;
+
+									// Close thinking block first if needed
+									if (context.hasSentThinkingBlockStart) {
+										const thinkingStop = {
+											type: "content_block_stop",
+											index: 0,
+										};
+										controller.enqueue(
+											encoder.encode(`event: content_block_stop\n`),
+										);
+										controller.enqueue(
+											encoder.encode(
+												`data: ${JSON.stringify(thinkingStop)}\n\n`,
+											),
+										);
+									}
+
 									const contentBlockStart = {
 										type: "content_block_start",
-										index: 0,
+										index: textIndex,
 										content_block: {
 											type: "text",
 											text: "",
@@ -391,7 +451,7 @@ export function transformStreamingResponse(response: Response): Response {
 								// Send content delta
 								const contentBlockDelta = {
 									type: "content_block_delta",
-									index: 0,
+									index: textIndex,
 									delta: {
 										type: "text_delta",
 										text: delta.content,
@@ -456,6 +516,7 @@ export function transformStreamingResponse(response: Response): Response {
 						null,
 						context.cacheReadInputTokens,
 						context.cacheCreationInputTokens,
+						context.hasSentThinkingBlockStart ? 1 : 0,
 					);
 				}
 

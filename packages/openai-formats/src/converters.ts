@@ -6,6 +6,7 @@ import type {
 	AnthropicRequest,
 	AnthropicResponse,
 	AnthropicTextContent,
+	AnthropicThinkingContent,
 	AnthropicToolResult,
 	AnthropicToolUse,
 	OpenAIMessage,
@@ -134,6 +135,12 @@ export function convertAnthropicRequestToOpenAI(
 				);
 				const hasCacheControl = textBlocks.some((part) => part.cache_control);
 
+				// Extract thinking blocks — needed for DeepSeek/reasoning providers
+				// that require reasoning_content to be passed back in conversation history
+				const thinkingBlocks = message.content.filter(
+					(part): part is AnthropicThinkingContent => part.type === "thinking",
+				);
+
 				let content: OpenAIMessage["content"];
 				if (hasCacheControl) {
 					content = textBlocks.map((part) => {
@@ -166,11 +173,17 @@ export function convertAnthropicRequestToOpenAI(
 					}));
 				}
 
-				if (openaiMessage.content || openaiMessage.tool_calls) {
-					messages.push(openaiMessage);
+				// Pass reasoning_content back for providers that require it (e.g. DeepSeek)
+				if (thinkingBlocks.length > 0) {
+					openaiMessage.reasoning_content = thinkingBlocks
+						.map((b) => b.thinking)
+						.join("");
 				}
 
-				// Handle tool_result blocks as separate 'tool' role messages
+				// Handle tool_result blocks as separate 'tool' role messages.
+				// Must be pushed BEFORE any accompanying text content so that
+				// tool messages immediately follow the assistant's tool_calls message
+				// (required by DeepSeek and OpenAI spec).
 				const toolResults = message.content.filter(
 					(item): item is AnthropicToolResult => item.type === "tool_result",
 				);
@@ -180,6 +193,10 @@ export function convertAnthropicRequestToOpenAI(
 						content: toolResult.content,
 						tool_call_id: toolResult.tool_use_id,
 					});
+				}
+
+				if (openaiMessage.content || openaiMessage.tool_calls) {
+					messages.push(openaiMessage);
 				}
 			} else {
 				// Simple string content

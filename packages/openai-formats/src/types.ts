@@ -21,6 +21,7 @@ export interface OpenAIMessage {
 		  }>;
 	tool_calls?: OpenAIToolCall[];
 	tool_call_id?: string;
+	reasoning_content?: string;
 }
 
 export interface OpenAITool {
@@ -63,8 +64,14 @@ export interface AnthropicTextContent {
 	cache_control?: { type: string };
 }
 
+export interface AnthropicThinkingContent {
+	type: "thinking";
+	thinking: string;
+}
+
 export type AnthropicContentBlock =
 	| AnthropicTextContent
+	| AnthropicThinkingContent
 	| AnthropicToolUse
 	| AnthropicToolResult;
 
@@ -110,6 +117,7 @@ export interface TransformStreamContext {
 	extractedModel: string;
 	hasSentStart: boolean;
 	hasSentContentBlockStart: boolean;
+	hasSentThinkingBlockStart: boolean;
 	promptTokens: number;
 	completionTokens: number;
 	cacheReadInputTokens: number;
@@ -122,6 +130,7 @@ export interface TransformStreamContext {
 
 export interface OpenAIStreamDelta {
 	content?: string;
+	reasoning_content?: string;
 	tool_calls?: Array<{
 		index: number;
 		id?: string;
