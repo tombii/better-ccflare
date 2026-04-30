@@ -9,8 +9,20 @@ function makeHeaders(entries: Record<string, string> = {}): Headers {
 	return new Headers(entries);
 }
 
-function makeBody(text = '{"model":"claude-3-opus"}') {
+function makeBody(
+	text = '{"model":"claude-3-opus","system":[{"type":"text","text":"cached","cache_control":{"type":"ephemeral"}}]}',
+) {
 	return new TextEncoder().encode(text).buffer as ArrayBuffer;
+}
+
+function makeBodyWithoutCacheHint() {
+	return makeBody('{"model":"claude-3-opus"}');
+}
+
+function makeBodyWithModel(model: string) {
+	return makeBody(
+		`{"model":"${model}","system":[{"type":"text","text":"cached","cache_control":{"type":"ephemeral"}}]}`,
+	);
 }
 
 function makeEmptyBody(): ArrayBuffer {
@@ -144,6 +156,30 @@ describe("CacheBodyStore", () => {
 			expect(cacheBodyStore.getLastCachedRequest("account-a")).toBeNull();
 		});
 
+		it("skips /v1/messages bodies without cache-control hints", () => {
+			cacheBodyStore.stageRequest(
+				"req-no-cache-hint",
+				"account-a",
+				makeBodyWithoutCacheHint(),
+				makeHeaders({ "content-type": "application/json" }),
+				"/v1/messages",
+			);
+			cacheBodyStore.onSummary("req-no-cache-hint", 10);
+			expect(cacheBodyStore.getLastCachedRequest("account-a")).toBeNull();
+		});
+
+		it("skips cache-control bodies outside /v1/messages", () => {
+			cacheBodyStore.stageRequest(
+				"req-wrong-path",
+				"account-a",
+				makeBody(),
+				makeHeaders({ "content-type": "application/json" }),
+				"/v1/completions",
+			);
+			cacheBodyStore.onSummary("req-wrong-path", 10);
+			expect(cacheBodyStore.getLastCachedRequest("account-a")).toBeNull();
+		});
+
 		it("stores entry when all conditions are met", () => {
 			cacheBodyStore.stageRequest(
 				"req-ok",
@@ -153,6 +189,20 @@ describe("CacheBodyStore", () => {
 				"/v1/messages",
 			);
 			cacheBodyStore.onSummary("req-ok", 1);
+			expect(cacheBodyStore.getLastCachedRequest("account-a")).not.toBeNull();
+		});
+
+		it("stores entry when body contains a hyphenated cache-control hint", () => {
+			cacheBodyStore.stageRequest(
+				"req-hyphen-hint",
+				"account-a",
+				makeBody(
+					'{"model":"claude-3-opus","cache-control":{"type":"ephemeral"}}',
+				),
+				makeHeaders({ "content-type": "application/json" }),
+				"/v1/messages",
+			);
+			cacheBodyStore.onSummary("req-hyphen-hint", 1);
 			expect(cacheBodyStore.getLastCachedRequest("account-a")).not.toBeNull();
 		});
 	});
@@ -265,7 +315,7 @@ describe("CacheBodyStore", () => {
 		});
 
 		it("promotes to lastCachedRequest when cacheCreationInputTokens > 0", () => {
-			const body = makeBody('{"model":"claude-3"}');
+			const body = makeBodyWithModel("claude-3");
 			cacheBodyStore.stageRequest(
 				"req-promote",
 				"account-a",
@@ -322,7 +372,7 @@ describe("CacheBodyStore", () => {
 		});
 
 		it("returns the promoted entry for a known account", () => {
-			const rawBody = makeBody('{"model":"claude-opus"}');
+			const rawBody = makeBodyWithModel("claude-opus");
 			cacheBodyStore.stageRequest(
 				"req-known",
 				"account-known",
@@ -336,7 +386,7 @@ describe("CacheBodyStore", () => {
 			expect(entry).not.toBeNull();
 			expect(entry?.path).toBe("/v1/messages");
 			expect(Buffer.from(entry?.body).toString()).toBe(
-				'{"model":"claude-opus"}',
+				'{"model":"claude-opus","system":[{"type":"text","text":"cached","cache_control":{"type":"ephemeral"}}]}',
 			);
 			expect(entry?.headers["anthropic-version"]).toBe("2023-06-01");
 			expect(typeof entry?.timestamp).toBe("number");
@@ -579,8 +629,8 @@ describe("CacheBodyStore", () => {
 
 	describe("multiple accounts", () => {
 		it("two accounts can both have independent entries", () => {
-			const bodyA = makeBody('{"model":"claude-a"}');
-			const bodyB = makeBody('{"model":"claude-b"}');
+			const bodyA = makeBodyWithModel("claude-a");
+			const bodyB = makeBodyWithModel("claude-b");
 
 			cacheBodyStore.stageRequest(
 				"req-multi-a",
@@ -596,7 +646,7 @@ describe("CacheBodyStore", () => {
 				"account-beta",
 				bodyB,
 				makeHeaders({ "anthropic-version": "2024-01-01" }),
-				"/v1/completions",
+				"/v1/messages",
 			);
 			cacheBodyStore.onSummary("req-multi-b", 20);
 
@@ -606,19 +656,23 @@ describe("CacheBodyStore", () => {
 			expect(entryA).not.toBeNull();
 			expect(entryB).not.toBeNull();
 
-			expect(Buffer.from(entryA?.body).toString()).toBe('{"model":"claude-a"}');
-			expect(Buffer.from(entryB?.body).toString()).toBe('{"model":"claude-b"}');
+			expect(Buffer.from(entryA?.body).toString()).toBe(
+				'{"model":"claude-a","system":[{"type":"text","text":"cached","cache_control":{"type":"ephemeral"}}]}',
+			);
+			expect(Buffer.from(entryB?.body).toString()).toBe(
+				'{"model":"claude-b","system":[{"type":"text","text":"cached","cache_control":{"type":"ephemeral"}}]}',
+			);
 
 			expect(entryA?.path).toBe("/v1/messages");
-			expect(entryB?.path).toBe("/v1/completions");
+			expect(entryB?.path).toBe("/v1/messages");
 
 			expect(entryA?.headers["anthropic-version"]).toBe("2023-06-01");
 			expect(entryB?.headers["anthropic-version"]).toBe("2024-01-01");
 		});
 
 		it("a newer request replaces the older one for the same account", () => {
-			const firstBody = makeBody('{"model":"claude-first"}');
-			const secondBody = makeBody('{"model":"claude-second"}');
+			const firstBody = makeBodyWithModel("claude-first");
+			const secondBody = makeBodyWithModel("claude-second");
 
 			cacheBodyStore.stageRequest(
 				"req-first",
@@ -634,16 +688,16 @@ describe("CacheBodyStore", () => {
 				"account-replace",
 				secondBody,
 				makeHeaders(),
-				"/v1/completions",
+				"/v1/messages",
 			);
 			cacheBodyStore.onSummary("req-second", 8);
 
 			const entry = cacheBodyStore.getLastCachedRequest("account-replace");
 			expect(entry).not.toBeNull();
 			expect(Buffer.from(entry?.body).toString()).toBe(
-				'{"model":"claude-second"}',
+				'{"model":"claude-second","system":[{"type":"text","text":"cached","cache_control":{"type":"ephemeral"}}]}',
 			);
-			expect(entry?.path).toBe("/v1/completions");
+			expect(entry?.path).toBe("/v1/messages");
 
 			// getAllCachedAccounts should only list the account once
 			expect(
@@ -654,8 +708,8 @@ describe("CacheBodyStore", () => {
 		});
 
 		it("interleaved in-flight requests are tracked independently", () => {
-			const bodyX = makeBody('{"model":"x"}');
-			const bodyY = makeBody('{"model":"y"}');
+			const bodyX = makeBodyWithModel("x");
+			const bodyY = makeBodyWithModel("y");
 
 			// Both staged before either summary arrives
 			cacheBodyStore.stageRequest(
@@ -681,12 +735,16 @@ describe("CacheBodyStore", () => {
 				Buffer.from(
 					cacheBodyStore.getLastCachedRequest("account-x")?.body,
 				).toString(),
-			).toBe('{"model":"x"}');
+			).toBe(
+				'{"model":"x","system":[{"type":"text","text":"cached","cache_control":{"type":"ephemeral"}}]}',
+			);
 			expect(
 				Buffer.from(
 					cacheBodyStore.getLastCachedRequest("account-y")?.body,
 				).toString(),
-			).toBe('{"model":"y"}');
+			).toBe(
+				'{"model":"y","system":[{"type":"text","text":"cached","cache_control":{"type":"ephemeral"}}]}',
+			);
 		});
 	});
 });

@@ -16,6 +16,8 @@ import {
 	prepareRequestBody,
 	proxyUnauthenticated,
 	proxyWithAccount,
+	RequestBodyContext,
+	type RequestJsonBody,
 	selectAccountsForRequest,
 	validateProviderPath,
 } from "./handlers";
@@ -25,6 +27,70 @@ import type { ConfigUpdateMessage, SummaryMessage } from "./worker-messages";
 export type { ProxyContext } from "./handlers";
 
 const log = new Logger("Proxy");
+
+const PROJECT_NAME_MAX_LEN = 64;
+
+function sanitizeProjectName(raw: string | undefined | null): string | null {
+	if (!raw) return null;
+	// biome-ignore lint/suspicious/noControlCharactersInRegex: stripping them is the point
+	const cleaned = raw.replace(/[\x00-\x1F\x7F]/g, "").trim();
+	if (!cleaned) return null;
+	return cleaned.length > PROJECT_NAME_MAX_LEN
+		? cleaned.slice(0, PROJECT_NAME_MAX_LEN)
+		: cleaned;
+}
+
+function extractSystemPrompt(body: RequestJsonBody | null): string | null {
+	if (!body) return null;
+	const system = body.system;
+
+	if (typeof system === "string") {
+		return system;
+	}
+
+	if (Array.isArray(system)) {
+		return system
+			.filter(
+				(item): item is { type?: string; text: string } =>
+					typeof item === "object" &&
+					item !== null &&
+					(item as { type?: string }).type === "text" &&
+					typeof (item as { text?: unknown }).text === "string",
+			)
+			.map((item) => item.text)
+			.join("\n");
+	}
+
+	return null;
+}
+
+function extractProjectFromRequest(
+	headers: Headers,
+	body: RequestJsonBody | null,
+): string | null {
+	const headerProject = headers.get("x-project");
+	const sanitizedHeader = sanitizeProjectName(headerProject);
+	if (sanitizedHeader) return sanitizedHeader;
+
+	const systemPrompt = extractSystemPrompt(body);
+	if (!systemPrompt) return null;
+
+	const pathMatch = systemPrompt.match(
+		/\/(?:Users|home)\/[^/]+\/(?:Desktop|projects|repos|src)\/([^/]+)\//,
+	);
+	const sanitizedPath = sanitizeProjectName(pathMatch?.[1]);
+	if (sanitizedPath) return sanitizedPath;
+
+	const headingMatch = systemPrompt.match(/^#\s+([^\n\r]{1,100})/m);
+	if (headingMatch) {
+		const heading = sanitizeProjectName(headingMatch[1]);
+		if (heading && !heading.toLowerCase().startsWith("claude")) {
+			return heading;
+		}
+	}
+
+	return null;
+}
 
 // ===== WORKER MANAGEMENT =====
 
@@ -125,28 +191,19 @@ export async function handleProxy(
 	validateProviderPath(ctx.provider, url.pathname);
 
 	// 3. Prepare request body
-	let { buffer: requestBodyBuffer } = await prepareRequestBody(req);
+	const { buffer: requestBodyBuffer } = await prepareRequestBody(req);
+	const requestBodyContext = new RequestBodyContext(requestBodyBuffer);
 
 	// 3b. Optionally inject 1h TTL into system prompt cache_control blocks
 	if (ctx.config.getSystemPromptCacheTtl1h() && requestBodyBuffer) {
-		const injected = injectSystemCacheTtl(requestBodyBuffer);
-		if (injected) requestBodyBuffer = injected;
+		injectSystemCacheTtl(requestBodyContext);
 	}
 
 	// Extract model from request body for family detection (used by combo routing)
 	// and reuse parsed body for /v1/messages validation (consolidate parses)
-	let requestModel: string | null = null;
-	let parsedBody: Record<string, unknown> | null = null;
-	if (requestBodyBuffer) {
-		try {
-			const bodyText = new TextDecoder().decode(requestBodyBuffer);
-			parsedBody = JSON.parse(bodyText);
-			requestModel =
-				((parsedBody as Record<string, unknown>).model as string) ?? null;
-		} catch {
-			// If body can't be parsed, model stays null — combo routing won't activate
-		}
-	}
+	const parsedBody = requestBodyContext.getParsedJson();
+	const requestModel = requestBodyContext.getModel();
+	const project = extractProjectFromRequest(req.headers, parsedBody);
 
 	// 3a. Validate request body for /v1/messages endpoint
 	if (url.pathname === "/v1/messages" && requestBodyBuffer) {
@@ -185,10 +242,10 @@ export async function handleProxy(
 
 	// 4. Intercept and modify request for agent model preferences
 	const { modifiedBody, agentUsed, originalModel, appliedModel } =
-		await interceptAndModifyRequest(requestBodyBuffer, ctx.dbOps);
+		await interceptAndModifyRequest(requestBodyContext, ctx.dbOps);
 
 	// Use modified body if available
-	const finalBodyBuffer = modifiedBody || requestBodyBuffer;
+	const finalBodyBuffer = modifiedBody || requestBodyContext.getBuffer();
 	const finalCreateBodyStream = () => {
 		if (!finalBodyBuffer) return undefined;
 		return new Response(finalBodyBuffer).body ?? undefined;
@@ -203,6 +260,7 @@ export async function handleProxy(
 	// 5. Create request metadata with agent info
 	const requestMeta = createRequestMetadata(req, url);
 	requestMeta.agentUsed = agentUsed;
+	requestMeta.project = project;
 
 	// 6. Select accounts
 	const accounts = await selectAccountsForRequest(
@@ -271,6 +329,7 @@ export async function handleProxy(
 			modelOverride,
 			apiKeyId,
 			apiKeyName,
+			requestBodyContext,
 		);
 
 		if (response) {
@@ -314,6 +373,7 @@ export async function handleProxy(
 					undefined, // No model override for fallback path
 					apiKeyId,
 					apiKeyName,
+					requestBodyContext,
 				);
 
 				if (response) {
@@ -354,24 +414,43 @@ export async function handleProxy(
 
 /**
  * Injects `ttl: "1h"` into system-level cache_control blocks that are missing a TTL.
- * Returns a new ArrayBuffer with the modified body, or null if no changes were made.
+ * ArrayBuffer overload: returns modified buffer or null (no changes).
+ * RequestBodyContext overload: mutates in-place via markDirty(); return value unused.
  */
-export function injectSystemCacheTtl(buf: ArrayBuffer): ArrayBuffer | null {
+export function injectSystemCacheTtl(buf: ArrayBuffer): ArrayBuffer | null;
+export function injectSystemCacheTtl(context: RequestBodyContext): void;
+export function injectSystemCacheTtl(
+	input: ArrayBuffer | RequestBodyContext,
+): ArrayBuffer | null {
+	const bodyContext =
+		input instanceof RequestBodyContext ? input : new RequestBodyContext(input);
 	try {
-		const body = JSON.parse(new TextDecoder().decode(buf));
+		const body = bodyContext.getParsedJson() as
+			| (RequestJsonBody & {
+					system?: Array<{ cache_control?: { type?: string; ttl?: string } }>;
+			  })
+			| null;
+		if (!body) return null;
 		if (!Array.isArray(body.system)) return null;
-		let changed = false;
-		for (const block of body.system) {
-			if (
-				block.cache_control?.type === "ephemeral" &&
-				!block.cache_control.ttl
-			) {
-				block.cache_control.ttl = "1h";
-				changed = true;
+		const blocksToUpdate = body.system.filter(
+			(block) =>
+				block.cache_control?.type === "ephemeral" && !block.cache_control.ttl,
+		);
+		if (blocksToUpdate.length === 0) return null;
+		bodyContext.mutateParsedJson((b) => {
+			const typedBody = b as RequestJsonBody & {
+				system: Array<{ cache_control?: { type?: string; ttl?: string } }>;
+			};
+			for (const block of typedBody.system) {
+				if (
+					block.cache_control?.type === "ephemeral" &&
+					!block.cache_control.ttl
+				) {
+					block.cache_control.ttl = "1h";
+				}
 			}
-		}
-		if (!changed) return null;
-		return new TextEncoder().encode(JSON.stringify(body)).buffer;
+		});
+		return bodyContext.getBuffer();
 	} catch {
 		return null;
 	}

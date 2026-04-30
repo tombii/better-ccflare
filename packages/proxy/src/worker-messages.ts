@@ -17,6 +17,7 @@ export interface StartMessage {
 	// Request details
 	requestHeaders: Record<string, string>;
 	requestBody: string | null; // base64 encoded
+	project: string | null;
 
 	// Response details
 	responseStatus: number;

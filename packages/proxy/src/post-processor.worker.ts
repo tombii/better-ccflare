@@ -32,6 +32,7 @@ import type {
 interface RequestState {
 	startMessage: StartMessage;
 	buffer: string;
+	streamDecoder: TextDecoder;
 	chunks: Uint8Array[];
 	chunksBytes: number;
 	chunksTruncated: boolean;
@@ -160,6 +161,9 @@ function sanitizeProjectName(raw: string | undefined | null): string | null {
  * Returns null when no project can be inferred.
  */
 function extractProjectFromRequest(startMessage: StartMessage): string | null {
+	const messageProject = sanitizeProjectName(startMessage.project);
+	if (messageProject) return messageProject;
+
 	if (startMessage.requestHeaders) {
 		// The Web Headers API normalizes keys to lowercase, but defensively
 		// match case-insensitively in case the worker receives a plain object.
@@ -240,6 +244,40 @@ function parseSSELine(line: string): { event?: string; data?: string } {
 		return { data };
 	}
 	return {};
+}
+
+function shouldParseSSEData(data: string, eventType: string): boolean {
+	if (!data.startsWith("{")) return false;
+
+	switch (eventType) {
+		case "message_start":
+		case "message_delta":
+		case "content_block_start":
+		case "content_block_delta":
+			return true;
+		default:
+			return (
+				data.includes("usage") ||
+				data.includes("message") ||
+				data.includes("model")
+			);
+	}
+}
+
+function processSSELine(line: string, state: RequestState): void {
+	const trimmed = line.trim();
+	if (!trimmed) return;
+
+	const parsed = parseSSELine(trimmed);
+	if (parsed.event) {
+		state.currentEvent = parsed.event;
+	} else if (
+		parsed.data &&
+		state.currentEvent &&
+		shouldParseSSEData(parsed.data, state.currentEvent)
+	) {
+		extractUsageFromData(parsed.data, state.currentEvent, state);
+	}
 }
 
 // Extract usage data from non-stream JSON response bodies
@@ -384,7 +422,7 @@ function extractUsageFromData(
 }
 
 function processStreamChunk(chunk: Uint8Array, state: RequestState): void {
-	const text = new TextDecoder().decode(chunk);
+	const text = state.streamDecoder.decode(chunk, { stream: true });
 	state.buffer += text;
 	state.lastActivity = Date.now();
 
@@ -401,21 +439,17 @@ function processStreamChunk(chunk: Uint8Array, state: RequestState): void {
 		}
 	}
 
-	// Process complete lines
-	const lines = state.buffer.split("\n");
-	state.buffer = lines.pop() || "";
+	let lineStart = 0;
+	for (;;) {
+		const lineEnd = state.buffer.indexOf("\n", lineStart);
+		if (lineEnd === -1) break;
 
-	// Use state.currentEvent to persist event type across chunks
-	for (const line of lines) {
-		const trimmed = line.trim();
-		if (!trimmed) continue;
+		processSSELine(state.buffer.slice(lineStart, lineEnd), state);
+		lineStart = lineEnd + 1;
+	}
 
-		const parsed = parseSSELine(trimmed);
-		if (parsed.event) {
-			state.currentEvent = parsed.event;
-		} else if (parsed.data && state.currentEvent) {
-			extractUsageFromData(parsed.data, state.currentEvent, state);
-		}
+	if (lineStart > 0) {
+		state.buffer = state.buffer.slice(lineStart);
 	}
 }
 
@@ -458,6 +492,7 @@ async function handleStart(msg: StartMessage): Promise<void> {
 	const state: RequestState = {
 		startMessage: msg,
 		buffer: "",
+		streamDecoder: new TextDecoder(),
 		chunks: [],
 		chunksBytes: 0,
 		chunksTruncated: false,
@@ -581,7 +616,7 @@ function handleChunk(msg: ChunkMessage): void {
 	}
 
 	// Store chunk for later payload saving (capped at MAX_RESPONSE_BODY_BYTES)
-	if (!state.chunksTruncated) {
+	if (storePayloads && !state.chunksTruncated) {
 		if (state.chunksBytes + msg.data.byteLength <= MAX_RESPONSE_BODY_BYTES) {
 			state.chunks.push(msg.data);
 			state.chunksBytes += msg.data.byteLength;
@@ -615,6 +650,17 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 		// Clean up state without logging
 		requests.delete(msg.requestId);
 		return;
+	}
+
+	// Flush any incomplete multi-byte UTF-8 sequences held in the streaming decoder
+	const trailing = state.streamDecoder.decode();
+	if (trailing) {
+		state.buffer += trailing;
+		const lines = state.buffer.split("\n");
+		state.buffer = lines.pop() ?? "";
+		for (const line of lines) {
+			processSSELine(line, state);
+		}
 	}
 
 	// For non-stream responses, extract usage data from response body
@@ -785,61 +831,60 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 		),
 	);
 
-	// Save payload - eagerly serialize to break closure references
-	let responseBody: string | null = null;
-
-	if (msg.responseBody) {
-		// Non-streaming response
-		responseBody = msg.responseBody;
-	} else if (state.chunks.length > 0) {
-		// Streaming response - combine chunks
-		const combined = combineChunks(state.chunks);
-		if (combined.length > 0) {
-			responseBody = combined.toString("base64");
-		}
-	}
-
-	// Cap request body to prevent unbounded payload storage
-	let requestBody = startMessage.requestBody;
-	if (requestBody) {
-		const rawBytes = Buffer.byteLength(requestBody, "base64");
-		if (rawBytes > MAX_REQUEST_BODY_BYTES) {
-			requestBody = Buffer.from(requestBody, "base64")
-				.subarray(0, MAX_REQUEST_BODY_BYTES)
-				.toString("base64");
-		}
-	}
-
-	const payloadJson = JSON.stringify({
-		request: {
-			headers: startMessage.requestHeaders,
-			body: requestBody,
-		},
-		response: {
-			status: startMessage.responseStatus,
-			headers: startMessage.responseHeaders,
-			body: responseBody,
-		},
-		meta: {
-			accountId: startMessage.accountId || NO_ACCOUNT_ID,
-			timestamp: startMessage.timestamp,
-			success: msg.success,
-			isStream: startMessage.isStream,
-			retry: startMessage.retryAttempt,
-			project: state.project ?? undefined,
-		},
-	});
-
-	// Null out large references now that we have the serialized JSON
-	responseBody = null;
-	freeRequestState(state);
-
 	const requestId = startMessage.requestId;
 	if (storePayloads) {
+		// Save payload - eagerly serialize to break closure references
+		let responseBody: string | null = null;
+
+		if (msg.responseBody) {
+			// Non-streaming response
+			responseBody = msg.responseBody;
+		} else if (state.chunks.length > 0) {
+			// Streaming response - combine chunks
+			const combined = combineChunks(state.chunks);
+			if (combined.length > 0) {
+				responseBody = combined.toString("base64");
+			}
+		}
+
+		// Cap request body to prevent unbounded payload storage
+		let requestBody = startMessage.requestBody;
+		if (requestBody) {
+			const rawBytes = Buffer.byteLength(requestBody, "base64");
+			if (rawBytes > MAX_REQUEST_BODY_BYTES) {
+				requestBody = Buffer.from(requestBody, "base64")
+					.subarray(0, MAX_REQUEST_BODY_BYTES)
+					.toString("base64");
+			}
+		}
+
+		const payloadJson = JSON.stringify({
+			request: {
+				headers: startMessage.requestHeaders,
+				body: requestBody,
+			},
+			response: {
+				status: startMessage.responseStatus,
+				headers: startMessage.responseHeaders,
+				body: responseBody,
+			},
+			meta: {
+				accountId: startMessage.accountId || NO_ACCOUNT_ID,
+				timestamp: startMessage.timestamp,
+				success: msg.success,
+				isStream: startMessage.isStream,
+				retry: startMessage.retryAttempt,
+				project: state.project ?? undefined,
+			},
+		});
+
+		// Null out large references now that we have the serialized JSON
+		responseBody = null;
 		asyncWriter.enqueue(async () =>
 			dbOps.saveRequestPayloadRaw(requestId, payloadJson),
 		);
 	}
+	freeRequestState(state);
 
 	// Log if we have usage
 	if (state.usage.model && startMessage.accountId !== NO_ACCOUNT_ID) {

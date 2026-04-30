@@ -3,6 +3,7 @@ import { Logger } from "@better-ccflare/logger";
 import { getProvider, usageCache } from "@better-ccflare/providers";
 import type { Account, RequestMeta } from "@better-ccflare/types";
 import { cacheBodyStore } from "../cache-body-store";
+import { RequestBodyContext } from "../request-body-context";
 import { forwardToClient } from "../response-handler";
 import { ERROR_MESSAGES, type ProxyContext } from "./proxy-types";
 import { makeProxyRequest, validateProviderPath } from "./request-handler";
@@ -97,13 +98,18 @@ function materializeSyntheticResponse(request: Request): Response {
  * @returns New buffer with thinking blocks filtered out, or null if filtering fails
  */
 function filterThinkingBlocks(
-	requestBodyBuffer: ArrayBuffer | null,
+	requestBody: ArrayBuffer | RequestBodyContext | null,
 ): ArrayBuffer | null {
+	const bodyContext =
+		requestBody instanceof RequestBodyContext
+			? requestBody
+			: new RequestBodyContext(requestBody);
+	const requestBodyBuffer = bodyContext.getBuffer();
 	if (!requestBodyBuffer) return null;
 
 	try {
-		const bodyText = new TextDecoder().decode(requestBodyBuffer);
-		const body = JSON.parse(bodyText);
+		const body = bodyContext.getParsedJson();
+		if (!body) return null;
 
 		// Only process if there are messages
 		if (!body.messages || !Array.isArray(body.messages)) {
@@ -203,8 +209,10 @@ function filterThinkingBlocks(
 				// This prevents Claude from requiring the final message to start with thinking
 				thinking: undefined,
 			};
-			const filteredText = JSON.stringify(filteredBody);
-			return new TextEncoder().encode(filteredText).buffer;
+			return RequestBodyContext.fromParsed(
+				requestBodyBuffer,
+				filteredBody,
+			).getBuffer();
 		}
 
 		return requestBodyBuffer;
@@ -362,6 +370,7 @@ export async function proxyUnauthenticated(
 				account: null,
 				requestHeaders: req.headers,
 				requestBody: requestBodyBuffer,
+				project: requestMeta.project,
 				response,
 				timestamp: requestMeta.timestamp,
 				retryAttempt: 0,
@@ -410,6 +419,7 @@ export async function proxyWithAccount(
 	modelOverride?: string | null,
 	apiKeyId?: string | null,
 	apiKeyName?: string | null,
+	requestBodyContext?: RequestBodyContext | null,
 ): Promise<Response | null> {
 	try {
 		if (
@@ -423,15 +433,15 @@ export async function proxyWithAccount(
 		}
 
 		// Apply model override from combo slot (per D-04, REQ-12)
-		let effectiveBodyBuffer = requestBodyBuffer;
-		if (modelOverride && requestBodyBuffer) {
-			try {
-				const bodyText = new TextDecoder().decode(requestBodyBuffer);
-				const body = JSON.parse(bodyText);
-				body.model = modelOverride;
-				effectiveBodyBuffer = new TextEncoder().encode(
-					JSON.stringify(body),
-				).buffer;
+		const baseBodyContext =
+			requestBodyContext ?? new RequestBodyContext(requestBodyBuffer);
+		let effectiveBodyContext = baseBodyContext;
+		let effectiveBodyBuffer = baseBodyContext.getBuffer();
+		if (modelOverride && effectiveBodyBuffer) {
+			const overriddenContext = baseBodyContext.withPatchedModel(modelOverride);
+			if (overriddenContext) {
+				effectiveBodyContext = overriddenContext;
+				effectiveBodyBuffer = overriddenContext.getBuffer();
 
 				if (
 					process.env.DEBUG?.includes("proxy") ||
@@ -442,11 +452,11 @@ export async function proxyWithAccount(
 						`Combo model override: applying model "${modelOverride}" for account ${account.name}`,
 					);
 				}
-			} catch {
+			} else {
 				log.warn(
 					"Failed to patch request body with model override, using original body",
 				);
-				effectiveBodyBuffer = requestBodyBuffer;
+				effectiveBodyBuffer = baseBodyContext.getBuffer();
 			}
 		}
 
@@ -461,7 +471,7 @@ export async function proxyWithAccount(
 			cacheBodyStore.stageRequest(
 				requestMeta.id,
 				account.id,
-				requestBodyBuffer,
+				baseBodyContext.getBuffer(),
 				req.headers,
 				url.pathname,
 			);
@@ -521,7 +531,7 @@ export async function proxyWithAccount(
 			);
 
 			// Filter thinking blocks from the request body
-			const filteredBodyBuffer = filterThinkingBlocks(effectiveBodyBuffer);
+			const filteredBodyBuffer = filterThinkingBlocks(effectiveBodyContext);
 
 			if (filteredBodyBuffer && filteredBodyBuffer !== effectiveBodyBuffer) {
 				// Retry the request with filtered body
@@ -575,14 +585,7 @@ export async function proxyWithAccount(
 				);
 			}
 			let requestedModel: string | null = null;
-			if (effectiveBodyBuffer) {
-				try {
-					const bodyText = new TextDecoder().decode(effectiveBodyBuffer);
-					requestedModel = JSON.parse(bodyText).model ?? null;
-				} catch {
-					// ignore
-				}
-			}
+			if (effectiveBodyBuffer) requestedModel = effectiveBodyContext.getModel();
 
 			if (requestedModel) {
 				const modelList = getModelList(requestedModel, account);
@@ -621,13 +624,10 @@ export async function proxyWithAccount(
 					// mapModelName internally which remaps non-Claude names back to the primary
 					// model (no family match → sonnet fallback). We always want nextModel to
 					// reach the upstream provider verbatim.
-					let patchedBody: ArrayBuffer | null = null;
-					try {
-						const bodyText = new TextDecoder().decode(effectiveBodyBuffer!);
-						const body = JSON.parse(bodyText);
-						body.model = nextModel;
-						patchedBody = new TextEncoder().encode(JSON.stringify(body)).buffer;
-					} catch {
+					const patchedContext =
+						effectiveBodyContext.withPatchedModel(nextModel);
+					const patchedBody = patchedContext?.getBuffer() ?? null;
+					if (!patchedBody) {
 						log.warn("Failed to patch request body for model retry");
 						break;
 					}
@@ -747,6 +747,7 @@ export async function proxyWithAccount(
 				account,
 				requestHeaders: req.headers,
 				requestBody: effectiveBodyBuffer,
+				project: requestMeta.project,
 				response,
 				timestamp: requestMeta.timestamp,
 				retryAttempt: 0,

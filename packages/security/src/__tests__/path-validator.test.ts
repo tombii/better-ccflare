@@ -398,7 +398,7 @@ describe("Path Validator - Core Security Tests", () => {
 		test("should allow legitimate file operations", () => {
 			const legitimatePaths = [
 				join(TEST_DIR, "safe", "test.txt"),
-				"/tmp/my-app-cache",
+				join(tmpdir(), "my-app-cache/data.json"),
 				process.cwd(),
 			];
 
@@ -412,7 +412,10 @@ describe("Path Validator - Core Security Tests", () => {
 
 		test("should handle complex real-world paths", () => {
 			const result = validatePath(
-				"/tmp/better-ccflare-test/workspace/.claude/agents/my-agent.md",
+				join(
+					tmpdir(),
+					"better-ccflare-test/workspace/.claude/agents/my-agent.md",
+				),
 				{
 					description: "agent file path",
 				},
@@ -471,6 +474,7 @@ describe("Path Validator - Core Security Tests", () => {
 		test("should handle paths with repeated slashes", () => {
 			const result = validatePath("/tmp///test//file.txt", {
 				description: "repeated slashes",
+				additionalAllowedPaths: ["/tmp"],
 			});
 
 			// Repeated slashes should be normalized by resolve()
@@ -509,6 +513,7 @@ describe("Path Validator - Core Security Tests", () => {
 		test("should normalize path with current directory references", () => {
 			const result = validatePath("/tmp/./test/./file.txt", {
 				description: "current dir references",
+				additionalAllowedPaths: ["/tmp"],
 			});
 
 			expect(result.isValid).toBe(true);
@@ -518,6 +523,7 @@ describe("Path Validator - Core Security Tests", () => {
 		test("should handle mixed case on Unix (case-sensitive)", () => {
 			const result = validatePath("/tmp/Test/FILE.txt", {
 				description: "mixed case path",
+				additionalAllowedPaths: ["/tmp"],
 			});
 
 			// On Unix, case is preserved and path should be valid
@@ -528,6 +534,7 @@ describe("Path Validator - Core Security Tests", () => {
 		test("should handle trailing slashes", () => {
 			const result = validatePath("/tmp/test/", {
 				description: "trailing slash",
+				additionalAllowedPaths: ["/tmp"],
 			});
 
 			expect(result.isValid).toBe(true);

@@ -35,14 +35,14 @@ describe("Worker SSE parsing", () => {
 		});
 
 		it("parses data line with space", () => {
-			const result = parseSSELine("data: {\"type\":\"message_start\"}");
-			expect(result.data).toBe("{\"type\":\"message_start\"}");
+			const result = parseSSELine('data: {"type":"message_start"}');
+			expect(result.data).toBe('{"type":"message_start"}');
 			expect(result.event).toBeUndefined();
 		});
 
 		it("parses data line without space", () => {
-			const result = parseSSELine("data:{\"message\":{\"model\":\"glm-5\"}}");
-			expect(result.data).toBe("{\"message\":{\"model\":\"glm-5\"}}");
+			const result = parseSSELine('data:{"message":{"model":"glm-5"}}');
+			expect(result.data).toBe('{"message":{"model":"glm-5"}}');
 			expect(result.event).toBeUndefined();
 		});
 
