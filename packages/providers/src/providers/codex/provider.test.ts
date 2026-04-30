@@ -2,6 +2,45 @@ import { describe, expect, it } from "bun:test";
 import { CodexProvider } from "./provider";
 import { parseCodexUsageHeaders } from "./usage";
 
+describe("CodexProvider request conversion", () => {
+	it("forwards Claude reasoning effort to Codex reasoning.effort", async () => {
+		const provider = new CodexProvider();
+		const request = new Request("https://example.com/v1/messages", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				model: "claude-3-5-sonnet-20241022",
+				max_tokens: 100,
+				reasoning: { effort: "high" },
+				messages: [{ role: "user", content: "Hello" }],
+			}),
+		});
+
+		const transformed = await provider.transformRequestBody(request);
+		const body = await transformed.json();
+
+		expect(body.reasoning).toEqual({ effort: "high" });
+	});
+
+	it("keeps default Codex reasoning effort when Claude effort is absent", async () => {
+		const provider = new CodexProvider();
+		const request = new Request("https://example.com/v1/messages", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				model: "claude-3-5-sonnet-20241022",
+				max_tokens: 100,
+				messages: [{ role: "user", content: "Hello" }],
+			}),
+		});
+
+		const transformed = await provider.transformRequestBody(request);
+		const body = await transformed.json();
+
+		expect(body.reasoning).toEqual({ effort: "medium" });
+	});
+});
+
 describe("CodexProvider.processResponse", () => {
 	it("transforms streaming responses even when Codex returns the wrong content-type", async () => {
 		const provider = new CodexProvider();

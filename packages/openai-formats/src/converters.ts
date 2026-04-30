@@ -64,6 +64,9 @@ export function convertAnthropicRequestToOpenAI(
 			openaiRequest.stream_options = { include_usage: true };
 		}
 	}
+	if (anthropicData.reasoning?.effort !== undefined) {
+		openaiRequest.reasoning = { effort: anthropicData.reasoning.effort };
+	}
 
 	// Convert tools (only if non-empty — Qwen/DashScope rejects empty tools array)
 	if (

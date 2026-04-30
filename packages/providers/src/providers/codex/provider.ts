@@ -480,7 +480,7 @@ export class CodexProvider extends BaseProvider {
 			input,
 			stream: true,
 			store: false,
-			reasoning: { effort: "medium" },
+			reasoning: { effort: body.reasoning?.effort || "medium" },
 		};
 
 		codexRequest.instructions = instructions || "You are a helpful assistant.";

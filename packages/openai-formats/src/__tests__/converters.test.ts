@@ -120,6 +120,18 @@ describe("convertAnthropicRequestToOpenAI — basic fields", () => {
 		expect(result.stream).toBe(false);
 		expect(result.stream_options).toBeUndefined();
 	});
+
+	it("passes through reasoning effort when provided", () => {
+		const result = convertAnthropicRequestToOpenAI(
+			anthropicRequest({ reasoning: { effort: "high" } }),
+		);
+		expect(result.reasoning).toEqual({ effort: "high" });
+	});
+
+	it("does not include reasoning when effort is absent", () => {
+		const result = convertAnthropicRequestToOpenAI(anthropicRequest());
+		expect(result.reasoning).toBeUndefined();
+	});
 });
 
 describe("convertAnthropicRequestToOpenAI — system message", () => {
