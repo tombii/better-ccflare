@@ -498,7 +498,12 @@ export class CodexProvider extends BaseProvider {
 					cachedTokens >= 0
 						? cachedTokens
 						: 0,
-				cache_creation_input_tokens: 0,
+				cache_creation_input_tokens:
+					typeof inputTokenDetails?.cache_creation_input_tokens === "number" &&
+					Number.isFinite(inputTokenDetails.cache_creation_input_tokens) &&
+					inputTokenDetails.cache_creation_input_tokens >= 0
+						? inputTokenDetails.cache_creation_input_tokens
+						: 0,
 			},
 			context_window_size: contextWindowSize,
 		};

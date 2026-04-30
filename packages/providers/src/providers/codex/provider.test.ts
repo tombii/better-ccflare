@@ -79,7 +79,7 @@ describe("CodexProvider.processResponse", () => {
 		expect(messageDeltaLine).toContain('"context_window"');
 		expect(messageDeltaLine).toContain('"input_tokens":100');
 		expect(messageDeltaLine).toContain('"cache_read_input_tokens":25');
-		expect(messageDeltaLine).toContain('"cache_creation_input_tokens":0');
+		expect(messageDeltaLine).toContain('"cache_creation_input_tokens":10');
 		expect(messageDeltaLine).toContain('"context_window_size":272000');
 	});
 
