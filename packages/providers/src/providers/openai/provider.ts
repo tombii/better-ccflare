@@ -1,4 +1,4 @@
-import { getEndpointUrl, validateEndpointUrl } from "@better-ccflare/core";
+import { ValidationError, getEndpointUrl, validateEndpointUrl } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import {
 	convertAnthropicPathToOpenAI,
@@ -202,6 +202,9 @@ export class OpenAICompatibleProvider extends BaseProvider {
 				body: JSON.stringify(openaiBody),
 			});
 		} catch (error) {
+			if (error instanceof ValidationError) {
+				throw error;
+			}
 			log.error(
 				"Failed to transform Anthropic request to OpenAI format:",
 				error,

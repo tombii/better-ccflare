@@ -13,6 +13,7 @@ import type {
 	OpenAIResponse,
 } from "./types";
 import { mapOpenAIFinishReason, removeUriFormat } from "./utils";
+import { validateReasoningEffort } from "./reasoning";
 
 const log = new Logger("openai-formats/converters");
 
@@ -64,8 +65,12 @@ export function convertAnthropicRequestToOpenAI(
 			openaiRequest.stream_options = { include_usage: true };
 		}
 	}
-	if (anthropicData.reasoning?.effort !== undefined) {
-		openaiRequest.reasoning = { effort: anthropicData.reasoning.effort };
+	const reasoningEffort = validateReasoningEffort(anthropicData.reasoning?.effort, {
+		sourceModel: anthropicData.model,
+		targetModel: mappedModel,
+	});
+	if (reasoningEffort !== undefined) {
+		openaiRequest.reasoning = { effort: reasoningEffort };
 	}
 
 	// Convert tools (only if non-empty — Qwen/DashScope rejects empty tools array)

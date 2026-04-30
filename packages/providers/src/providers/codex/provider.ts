@@ -1,7 +1,8 @@
-import { validateEndpointUrl } from "@better-ccflare/core";
+import { ValidationError, validateEndpointUrl } from "@better-ccflare/core";
 import { sanitizeProxyHeaders } from "@better-ccflare/http-common";
 import { Logger } from "@better-ccflare/logger";
 import type { Account } from "@better-ccflare/types";
+import { validateReasoningEffort } from "@better-ccflare/openai-formats";
 import { BaseProvider } from "../../base";
 import type { RateLimitInfo, TokenRefreshResult } from "../../types";
 
@@ -269,6 +270,9 @@ export class CodexProvider extends BaseProvider {
 				body: JSON.stringify(codexBody),
 			});
 		} catch (error) {
+			if (error instanceof ValidationError) {
+				throw error;
+			}
 			log.error("Failed to transform request body to Codex format:", error);
 			return request;
 		}
@@ -475,12 +479,17 @@ export class CodexProvider extends BaseProvider {
 			}));
 		}
 
+		const reasoningEffort = validateReasoningEffort(body.reasoning?.effort, {
+			sourceModel: body.model,
+			targetModel: model,
+		});
+
 		const codexRequest: CodexRequest = {
 			model,
 			input,
 			stream: true,
 			store: false,
-			reasoning: { effort: body.reasoning?.effort || "medium" },
+			reasoning: { effort: reasoningEffort || "medium" },
 		};
 
 		codexRequest.instructions = instructions || "You are a helpful assistant.";
