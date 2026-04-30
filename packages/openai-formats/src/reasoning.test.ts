@@ -7,6 +7,7 @@
 import { describe, expect, it } from "bun:test";
 import {
 	getSupportedReasoningEfforts,
+	resolveReasoningEffort,
 	validateReasoningEffort,
 } from "./reasoning";
 
@@ -16,15 +17,19 @@ describe("reasoning effort support", () => {
 			"low",
 			"medium",
 			"high",
+			"xhigh",
+			"max",
 		]);
 		expect(getSupportedReasoningEfforts("claude-haiku-4-5")).toEqual([
 			"low",
 			"medium",
 		]);
 		expect(getSupportedReasoningEfforts("gpt-5.3-codex")).toEqual([
+			"minimal",
 			"low",
 			"medium",
 			"high",
+			"xhigh",
 		]);
 		expect(getSupportedReasoningEfforts("gpt-5.4-mini")).toEqual([
 			"low",
@@ -34,11 +39,26 @@ describe("reasoning effort support", () => {
 
 	it("accepts valid reasoning effort for supported Claude and Codex models", () => {
 		expect(
-			validateReasoningEffort("high", {
+			validateReasoningEffort("xhigh", {
 				sourceModel: "claude-sonnet-4-6",
 				targetModel: "gpt-5.3-codex",
 			}),
-		).toBe("high");
+		).toBe("xhigh");
+	});
+
+	it("downgrades unsupported effort to nearest lower supported level", () => {
+		const resolved = resolveReasoningEffort("xhigh", {
+			sourceModel: "claude-sonnet-4-6",
+			targetModel: "gpt-5.4-mini",
+		});
+		expect(resolved.effort).toBe("medium");
+		expect(resolved.downgrades).toEqual([
+			{
+				model: "gpt-5.4-mini",
+				from: "xhigh",
+				to: "medium",
+			},
+		]);
 	});
 
 	it("rejects unsupported reasoning effort values", () => {
@@ -47,15 +67,17 @@ describe("reasoning effort support", () => {
 				sourceModel: "claude-sonnet-4-6",
 				targetModel: "gpt-5.3-codex",
 			}),
-		).toThrow("reasoning.effort must be one of: low, medium, high");
+		).toThrow(
+			"reasoning.effort must be one of: minimal, low, medium, high, xhigh, max",
+		);
 	});
 
-	it("rejects reasoning effort unsupported by the selected target model", () => {
+	it("rejects reasoning effort unsupported by unknown model", () => {
 		expect(() =>
 			validateReasoningEffort("high", {
 				sourceModel: "claude-sonnet-4-6",
-				targetModel: "gpt-5.4-mini",
+				targetModel: "unknown-model",
 			}),
-		).toThrow("reasoning.effort 'high' is not supported for model gpt-5.4-mini");
+		).toThrow("reasoning.effort is not supported for model unknown-model");
 	});
 });

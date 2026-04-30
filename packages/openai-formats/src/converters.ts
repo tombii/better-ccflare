@@ -1,6 +1,7 @@
 import { mapModelName } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import type { Account } from "@better-ccflare/types";
+import { resolveReasoningEffort } from "./reasoning";
 import type {
 	AnthropicContentBlock,
 	AnthropicRequest,
@@ -13,7 +14,6 @@ import type {
 	OpenAIResponse,
 } from "./types";
 import { mapOpenAIFinishReason, removeUriFormat } from "./utils";
-import { validateReasoningEffort } from "./reasoning";
 
 const log = new Logger("openai-formats/converters");
 
@@ -65,12 +65,22 @@ export function convertAnthropicRequestToOpenAI(
 			openaiRequest.stream_options = { include_usage: true };
 		}
 	}
-	const reasoningEffort = validateReasoningEffort(anthropicData.reasoning?.effort, {
-		sourceModel: anthropicData.model,
-		targetModel: mappedModel,
-	});
-	if (reasoningEffort !== undefined) {
-		openaiRequest.reasoning = { effort: reasoningEffort };
+	const reasoningResolution = resolveReasoningEffort(
+		anthropicData.reasoning?.effort,
+		{
+			sourceModel: anthropicData.model,
+			targetModel: mappedModel,
+		},
+	);
+	if (reasoningResolution.downgrades.length > 0) {
+		for (const downgrade of reasoningResolution.downgrades) {
+			log.warn(
+				`Downgraded reasoning effort for model ${downgrade.model}: ${downgrade.from} -> ${downgrade.to}`,
+			);
+		}
+	}
+	if (reasoningResolution.effort !== undefined) {
+		openaiRequest.reasoning = { effort: reasoningResolution.effort };
 	}
 
 	// Convert tools (only if non-empty — Qwen/DashScope rejects empty tools array)

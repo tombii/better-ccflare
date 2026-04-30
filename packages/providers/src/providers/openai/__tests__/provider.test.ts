@@ -44,6 +44,7 @@ describe("OpenAICompatibleProvider", () => {
 	describe("canHandle", () => {
 		it("should handle all paths", () => {
 			expect(provider.canHandle("/v1/messages")).toBe(true);
+			expect(provider.canHandle("/v1/messages/count_tokens")).toBe(true);
 			expect(provider.canHandle("/v1/chat/completions")).toBe(true);
 			expect(provider.canHandle("/any/path")).toBe(true);
 		});

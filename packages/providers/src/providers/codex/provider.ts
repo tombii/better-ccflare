@@ -1,8 +1,8 @@
 import { ValidationError, validateEndpointUrl } from "@better-ccflare/core";
 import { sanitizeProxyHeaders } from "@better-ccflare/http-common";
 import { Logger } from "@better-ccflare/logger";
+import { resolveReasoningEffort } from "@better-ccflare/openai-formats";
 import type { Account } from "@better-ccflare/types";
-import { validateReasoningEffort } from "@better-ccflare/openai-formats";
 import { BaseProvider } from "../../base";
 import type { RateLimitInfo, TokenRefreshResult } from "../../types";
 
@@ -13,6 +13,25 @@ const CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const DEFAULT_ENDPOINT = "https://chatgpt.com/backend-api/codex/responses";
 const CODEX_VERSION = "0.125.0";
 const CODEX_USER_AGENT = `codex-cli/${CODEX_VERSION} (Windows 10.0.26100; x64)`;
+
+const _normalizeUsage = (value: unknown): Record<string, number> => {
+	const usage =
+		typeof value === "object" && value !== null
+			? (value as Record<string, unknown>)
+			: {};
+	const getNumber = (field: string) => {
+		const candidate = usage[field];
+		return typeof candidate === "number" && Number.isFinite(candidate)
+			? candidate
+			: 0;
+	};
+	return {
+		input_tokens: getNumber("input_tokens"),
+		output_tokens: getNumber("output_tokens"),
+		cache_read_input_tokens: getNumber("cache_read_input_tokens"),
+		cache_creation_input_tokens: getNumber("cache_creation_input_tokens"),
+	};
+};
 
 // Default model mapping: Anthropic model name prefixes → Codex model names
 const DEFAULT_MODEL_MAP: Record<string, string> = {
@@ -67,7 +86,7 @@ interface CodexTool {
 interface CodexRequest {
 	model: string;
 	input: (CodexMessage | CodexFunctionCallItem | CodexFunctionCallOutputItem)[];
-	stream: true;
+	stream: boolean;
 	store: false;
 	reasoning?: { effort: string };
 	instructions?: string;
@@ -117,10 +136,16 @@ interface AnthropicRequest {
 	system?: string | { type: string; text: string }[];
 	stream?: boolean;
 	tools?: AnthropicTool[];
+	reasoning?: { effort?: string };
 	[key: string]: unknown;
 }
 
 // ── SSE streaming state ───────────────────────────────────────────────────────
+
+interface FunctionCallBuffer {
+	contentBlockIndex: number;
+	arguments: string[];
+}
 
 interface StreamState {
 	buffer: string;
@@ -131,16 +156,16 @@ interface StreamState {
 	hasSentTerminalEvents: boolean;
 	inputTokens: number;
 	outputTokens: number;
-	// Track function_call items: output_index → content_block_index
-	functionCallBlocks: Map<number, number>;
+	// Track function_call items: output_index → buffered arguments and block index
+	functionCallBlocks: Map<number, FunctionCallBuffer>;
 }
 
 export class CodexProvider extends BaseProvider {
 	name = "codex";
+	private requestStreamById = new Map<string, boolean>();
 
 	canHandle(path: string): boolean {
-		// Codex only handles /v1/messages; reject token counting etc.
-		return path === "/v1/messages";
+		return path === "/v1/messages" || path === "/v1/messages/count_tokens";
 	}
 
 	async refreshToken(
@@ -258,10 +283,18 @@ export class CodexProvider extends BaseProvider {
 
 		try {
 			const body = (await request.json()) as AnthropicRequest;
+			const requestId = request.headers.get("x-better-ccflare-request-id");
+			if (requestId) {
+				this.requestStreamById.set(requestId, body.stream === true);
+			}
 			const codexBody = this.convertToCodexFormat(body, account);
 
 			const newHeaders = new Headers(request.headers);
 			newHeaders.set("content-type", "application/json");
+			newHeaders.set(
+				"x-better-ccflare-request-stream",
+				body.stream === true ? "true" : "false",
+			);
 			newHeaders.delete("content-length");
 
 			return new Request(request.url, {
@@ -283,21 +316,60 @@ export class CodexProvider extends BaseProvider {
 		_account: Account | null,
 	): Promise<Response> {
 		const contentType = response.headers.get("content-type");
+		const requestId = response.headers.get("x-better-ccflare-request-id");
+		const headerRequestedStream = response.headers.get(
+			"x-better-ccflare-request-stream",
+		);
+		const requestedStream =
+			headerRequestedStream === "true"
+				? true
+				: headerRequestedStream === "false"
+					? false
+					: requestId
+						? this.requestStreamById.get(requestId) === true
+						: true;
+		if (requestId) {
+			this.requestStreamById.delete(requestId);
+		}
 		const isEventStream = contentType?.includes("text/event-stream") ?? false;
-		const shouldForceStreamingTransform =
-			response.ok && response.body !== null && !isEventStream;
-
-		if (shouldForceStreamingTransform) {
-			log.warn(
-				`Codex returned a successful response with unexpected content-type ${contentType ?? "<missing>"}; attempting SSE transformation`,
-			);
+		if (isEventStream) {
+			if (requestedStream) {
+				return this.transformStreamingResponse(response);
+			}
+			return this.transformSseResponseToJson(response);
 		}
 
-		if (isEventStream || shouldForceStreamingTransform) {
-			return this.transformStreamingResponse(response);
+		if (response.ok && response.body !== null) {
+			const probeText = await response.text();
+			const trimmed = probeText.trimStart();
+			const isSseLike = trimmed.startsWith("event:");
+			const _isJsonLike = trimmed.startsWith("{") || trimmed.startsWith("[");
+
+			if (isSseLike) {
+				log.warn(
+					`Codex returned successful response without SSE content-type (${contentType ?? "<missing>"}); transforming as ${requestedStream ? "SSE" : "JSON"}`,
+				);
+				const headers = sanitizeProxyHeaders(response.headers);
+				headers.set("content-type", "text/event-stream");
+				const sseResponse = new Response(probeText, {
+					status: response.status,
+					statusText: response.statusText,
+					headers,
+				});
+				if (requestedStream) {
+					return this.transformStreamingResponse(sseResponse);
+				}
+				return this.transformSseResponseToJson(sseResponse);
+			}
+
+			const headers = sanitizeProxyHeaders(response.headers);
+			return new Response(probeText, {
+				status: response.status,
+				statusText: response.statusText,
+				headers,
+			});
 		}
 
-		// Non-streaming errors should pass through with sanitized headers so callers see the upstream failure body.
 		const headers = sanitizeProxyHeaders(response.headers);
 		return new Response(response.body, {
 			status: response.status,
@@ -354,10 +426,10 @@ export class CodexProvider extends BaseProvider {
 						: (account.model_mappings as Record<string, string>);
 
 				const lower = anthropicModel.toLowerCase();
+				if (mappings[anthropicModel]) return mappings[anthropicModel];
 				if (lower.includes("haiku") && mappings.haiku) return mappings.haiku;
 				if (lower.includes("sonnet") && mappings.sonnet) return mappings.sonnet;
 				if (lower.includes("opus") && mappings.opus) return mappings.opus;
-				if (mappings[anthropicModel]) return mappings[anthropicModel];
 			} catch {
 				// ignore malformed mappings
 			}
@@ -368,7 +440,7 @@ export class CodexProvider extends BaseProvider {
 		if (lower.includes("haiku")) return DEFAULT_MODEL_MAP.haiku;
 		if (lower.includes("sonnet")) return DEFAULT_MODEL_MAP.sonnet;
 		if (lower.includes("opus")) return DEFAULT_MODEL_MAP.opus;
-		return DEFAULT_MODEL_MAP.sonnet; // default
+		return anthropicModel;
 	}
 
 	private extractSystemPrompt(
@@ -479,17 +551,24 @@ export class CodexProvider extends BaseProvider {
 			}));
 		}
 
-		const reasoningEffort = validateReasoningEffort(body.reasoning?.effort, {
+		const reasoningResolution = resolveReasoningEffort(body.reasoning?.effort, {
 			sourceModel: body.model,
 			targetModel: model,
 		});
+		if (reasoningResolution.downgrades.length > 0) {
+			for (const downgrade of reasoningResolution.downgrades) {
+				log.warn(
+					`Downgraded reasoning effort for model ${downgrade.model}: ${downgrade.from} -> ${downgrade.to}`,
+				);
+			}
+		}
 
 		const codexRequest: CodexRequest = {
 			model,
 			input,
 			stream: true,
 			store: false,
-			reasoning: { effort: reasoningEffort || "medium" },
+			reasoning: { effort: reasoningResolution.effort || "medium" },
 		};
 
 		codexRequest.instructions = instructions || "You are a helpful assistant.";
@@ -498,6 +577,83 @@ export class CodexProvider extends BaseProvider {
 		}
 
 		return codexRequest;
+	}
+
+	private async transformSseResponseToJson(
+		response: Response,
+	): Promise<Response> {
+		const source = await this.transformStreamingResponse(response).text();
+		const lines = source.split("\n");
+		let messageStartPayload: Record<string, unknown> | null = null;
+		let messageDeltaPayload: Record<string, unknown> | null = null;
+		let text = "";
+		for (let i = 0; i < lines.length; i++) {
+			const line = lines[i];
+			if (!line.startsWith("event:")) continue;
+			const eventName = line.slice("event:".length).trim();
+			const dataLine = lines[i + 1];
+			if (!dataLine?.startsWith("data:")) continue;
+			let data: Record<string, unknown>;
+			try {
+				data = JSON.parse(dataLine.slice("data:".length).trim());
+			} catch {
+				continue;
+			}
+			if (eventName === "message_start") {
+				messageStartPayload = data;
+			} else if (eventName === "message_delta") {
+				messageDeltaPayload = data;
+			} else if (eventName === "content_block_delta") {
+				const delta = data.delta as Record<string, unknown> | undefined;
+				if (delta?.type === "text_delta" && typeof delta.text === "string") {
+					text += delta.text;
+				}
+			}
+		}
+		const startMessage =
+			(messageStartPayload?.message as Record<string, unknown> | undefined) ??
+			{};
+		const deltaUsage = _normalizeUsage(messageDeltaPayload?.usage);
+		const startUsage = _normalizeUsage(startMessage.usage);
+		const usage = {
+			input_tokens:
+				deltaUsage.input_tokens > 0
+					? deltaUsage.input_tokens
+					: startUsage.input_tokens,
+			output_tokens:
+				deltaUsage.output_tokens > 0
+					? deltaUsage.output_tokens
+					: startUsage.output_tokens,
+			cache_read_input_tokens:
+				deltaUsage.cache_read_input_tokens > 0
+					? deltaUsage.cache_read_input_tokens
+					: startUsage.cache_read_input_tokens,
+			cache_creation_input_tokens:
+				deltaUsage.cache_creation_input_tokens > 0
+					? deltaUsage.cache_creation_input_tokens
+					: startUsage.cache_creation_input_tokens,
+		};
+		const jsonPayload = {
+			id:
+				typeof startMessage.id === "string"
+					? startMessage.id
+					: `msg_${crypto.randomUUID().replace(/-/g, "").substring(0, 24)}`,
+			type: "message",
+			role: "assistant",
+			model:
+				typeof startMessage.model === "string" ? startMessage.model : "gpt-5.4",
+			content: [{ type: "text", text }],
+			stop_reason: "end_turn",
+			stop_sequence: null,
+			usage,
+		};
+		const headers = sanitizeProxyHeaders(response.headers);
+		headers.set("content-type", "application/json");
+		return new Response(JSON.stringify(jsonPayload), {
+			status: response.status,
+			statusText: response.statusText,
+			headers,
+		});
 	}
 
 	private transformStreamingResponse(response: Response): Response {
@@ -525,8 +681,97 @@ export class CodexProvider extends BaseProvider {
 		const decoder = new TextDecoder();
 
 		const writeSSE = async (event: string, data: unknown) => {
-			const line = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+			const payload =
+				typeof data === "object" && data !== null
+					? (data as Record<string, unknown>)
+					: null;
+			const normalizeUsage = (value: unknown): Record<string, number> => {
+				const usage =
+					typeof value === "object" && value !== null
+						? (value as Record<string, unknown>)
+						: {};
+				const getNumber = (field: string) => {
+					const candidate = usage[field];
+					return typeof candidate === "number" && Number.isFinite(candidate)
+						? candidate
+						: 0;
+				};
+				return {
+					input_tokens: getNumber("input_tokens"),
+					output_tokens: getNumber("output_tokens"),
+					cache_read_input_tokens: getNumber("cache_read_input_tokens"),
+					cache_creation_input_tokens: getNumber("cache_creation_input_tokens"),
+				};
+			};
+			if ((event === "message_start" || event === "message_delta") && payload) {
+				const normalizedUsage = normalizeUsage(payload.usage);
+				payload.usage = normalizedUsage;
+				if (event === "message_start") {
+					const message =
+						typeof payload.message === "object" && payload.message !== null
+							? (payload.message as Record<string, unknown>)
+							: {};
+					message.usage = normalizeUsage(message.usage ?? normalizedUsage);
+					payload.message = message;
+				} else {
+					const message = payload.message as
+						| Record<string, unknown>
+						| undefined;
+					if (message) {
+						message.usage = normalizeUsage(message.usage ?? normalizedUsage);
+					}
+				}
+			}
+			if (event === "message_delta" && payload) {
+				payload.usage = normalizeUsage(payload.usage);
+				const delta =
+					typeof payload.delta === "object" && payload.delta !== null
+						? (payload.delta as Record<string, unknown>)
+						: {};
+				if (!("stop_reason" in delta)) {
+					delta.stop_reason = "end_turn";
+				}
+				if (!("stop_sequence" in delta)) {
+					delta.stop_sequence = null;
+				}
+				if (!("usage" in delta)) {
+					delta.usage = payload.usage;
+				}
+				payload.delta = delta;
+			}
+			const line = `event: ${event}
+data: ${JSON.stringify(data)}
+
+`;
 			await writer.write(encoder.encode(line));
+		};
+		const ensureMessageStart = async () => {
+			if (state.hasSentMessageStart) return;
+			state.hasSentMessageStart = true;
+			await writeSSE("message_start", {
+				type: "message_start",
+				usage: {
+					input_tokens: 0,
+					output_tokens: 0,
+					cache_read_input_tokens: 0,
+					cache_creation_input_tokens: 0,
+				},
+				message: {
+					id: state.messageId,
+					type: "message",
+					role: "assistant",
+					content: [],
+					model: "gpt-5.4",
+					stop_reason: null,
+					stop_sequence: null,
+					usage: {
+						input_tokens: 0,
+						output_tokens: 0,
+						cache_read_input_tokens: 0,
+						cache_creation_input_tokens: 0,
+					},
+				},
+			});
 		};
 
 		const processEvents = async () => {
@@ -569,26 +814,18 @@ export class CodexProvider extends BaseProvider {
 							continue;
 						}
 
-						await this.handleCodexEvent(eventName, data, state, writeSSE);
+						await this.handleCodexEvent(
+							eventName,
+							data,
+							state,
+							writeSSE,
+							ensureMessageStart,
+						);
 					}
 				}
 
 				// Flush any remaining
-				if (!state.hasSentMessageStart) {
-					await writeSSE("message_start", {
-						type: "message_start",
-						message: {
-							id: state.messageId,
-							type: "message",
-							role: "assistant",
-							content: [],
-							model: "gpt-5.3-codex",
-							stop_reason: null,
-							stop_sequence: null,
-							usage: { input_tokens: 0, output_tokens: 0 },
-						},
-					});
-				}
+				await ensureMessageStart();
 
 				// Close any open content block
 				if (state.hasSentContentBlockStart) {
@@ -600,10 +837,20 @@ export class CodexProvider extends BaseProvider {
 
 				// Final message_delta + message_stop if upstream never sent response.completed
 				if (!state.hasSentTerminalEvents) {
+					const usage = {
+						input_tokens: state.inputTokens,
+						output_tokens: state.outputTokens,
+						cache_read_input_tokens: 0,
+						cache_creation_input_tokens: 0,
+					};
 					await writeSSE("message_delta", {
 						type: "message_delta",
-						delta: { stop_reason: "end_turn", stop_sequence: null },
-						usage: { output_tokens: state.outputTokens },
+						delta: {
+							stop_reason: "end_turn",
+							stop_sequence: null,
+							usage,
+						},
+						usage,
 					});
 					await writeSSE("message_stop", { type: "message_stop" });
 				}
@@ -628,32 +875,20 @@ export class CodexProvider extends BaseProvider {
 		data: Record<string, unknown>,
 		state: StreamState,
 		writeSSE: (event: string, data: unknown) => Promise<void>,
+		ensureMessageStart: () => Promise<void>,
 	): Promise<void> {
 		switch (eventName) {
 			case "response.created": {
 				const resp = data.response as Record<string, unknown> | undefined;
 				const respId = (resp?.id as string) || state.messageId;
-				const model = (resp?.model as string) || "gpt-5.3-codex";
+				const _model = (resp?.model as string) || "gpt-5.4";
 
 				state.messageId = respId;
-				state.hasSentMessageStart = true;
+				if (state.hasSentMessageStart) {
+					break;
+				}
 
-				await writeSSE("message_start", {
-					type: "message_start",
-					message: {
-						id: respId,
-						type: "message",
-						role: "assistant",
-						content: [],
-						model,
-						stop_reason: null,
-						stop_sequence: null,
-						usage: {
-							input_tokens: state.inputTokens,
-							output_tokens: 0,
-						},
-					},
-				});
+				await ensureMessageStart();
 				break;
 			}
 
@@ -666,34 +901,32 @@ export class CodexProvider extends BaseProvider {
 					// Text content block will start on content_part.added
 					// Nothing to emit yet
 				} else if (itemType === "function_call") {
-					// Start a tool_use content block
 					const callId = item?.call_id as string;
 					const name = item?.name as string;
-					const blockIdx = state.contentBlockIndex;
-
-					if (outputIndex !== undefined) {
-						state.functionCallBlocks.set(outputIndex, blockIdx);
-					}
 
 					if (state.hasSentContentBlockStart) {
 						await writeSSE("content_block_stop", {
 							type: "content_block_stop",
-							index: blockIdx,
+							index: state.contentBlockIndex,
 						});
 						state.contentBlockIndex++;
+						state.hasSentContentBlockStart = false;
 					}
 
+					const blockIdx = state.contentBlockIndex;
+					await ensureMessageStart();
 					await writeSSE("content_block_start", {
 						type: "content_block_start",
-						index: state.contentBlockIndex,
-						content_block: {
-							type: "tool_use",
-							id: callId,
-							name,
-							input: {},
-						},
+						index: blockIdx,
+						content_block: { type: "tool_use", id: callId, name, input: {} },
 					});
 					state.hasSentContentBlockStart = true;
+					if (outputIndex !== undefined) {
+						state.functionCallBlocks.set(outputIndex, {
+							contentBlockIndex: blockIdx,
+							arguments: [],
+						});
+					}
 				}
 				break;
 			}
@@ -703,6 +936,7 @@ export class CodexProvider extends BaseProvider {
 				const partType = part?.type as string | undefined;
 
 				if (partType === "output_text") {
+					await ensureMessageStart();
 					// Start a text content block
 					if (state.hasSentContentBlockStart) {
 						await writeSSE("content_block_stop", {
@@ -736,17 +970,53 @@ export class CodexProvider extends BaseProvider {
 
 			case "response.function_call_arguments.delta": {
 				const delta = data.delta as string | undefined;
-				if (delta) {
-					await writeSSE("content_block_delta", {
-						type: "content_block_delta",
-						index: state.contentBlockIndex,
-						delta: { type: "input_json_delta", partial_json: delta },
-					});
+				const outputIndex = data.output_index as number | undefined;
+				if (delta && outputIndex !== undefined) {
+					const buffer = state.functionCallBlocks.get(outputIndex);
+					if (buffer) {
+						buffer.arguments.push(delta);
+					}
 				}
 				break;
 			}
 
 			case "response.output_item.done": {
+				const item = data.item as Record<string, unknown> | undefined;
+				const itemType = item?.type as string | undefined;
+
+				if (itemType === "function_call") {
+					const outputIndex = data.output_index as number | undefined;
+					const buffer =
+						outputIndex !== undefined
+							? state.functionCallBlocks.get(outputIndex)
+							: undefined;
+					if (buffer) {
+						await writeSSE("content_block_delta", {
+							type: "content_block_delta",
+							index: buffer.contentBlockIndex,
+							delta: {
+								type: "input_json_delta",
+								partial_json: buffer.arguments.join(""),
+							},
+						});
+						await writeSSE("content_block_stop", {
+							type: "content_block_stop",
+							index: buffer.contentBlockIndex,
+						});
+						if (outputIndex !== undefined) {
+							state.functionCallBlocks.delete(outputIndex);
+						}
+						if (
+							state.hasSentContentBlockStart &&
+							state.contentBlockIndex === buffer.contentBlockIndex
+						) {
+							state.contentBlockIndex++;
+							state.hasSentContentBlockStart = false;
+						}
+					}
+					break;
+				}
+
 				if (state.hasSentContentBlockStart) {
 					await writeSSE("content_block_stop", {
 						type: "content_block_stop",
@@ -764,9 +1034,12 @@ export class CodexProvider extends BaseProvider {
 					| { input_tokens?: number; output_tokens?: number }
 					| undefined;
 
-				state.inputTokens = usage?.input_tokens || state.inputTokens;
-				state.outputTokens = usage?.output_tokens || state.outputTokens;
-
+				if (typeof usage?.input_tokens === "number") {
+					state.inputTokens = usage.input_tokens;
+				}
+				if (typeof usage?.output_tokens === "number") {
+					state.outputTokens = usage.output_tokens;
+				}
 				// Close any lingering content block
 				if (state.hasSentContentBlockStart) {
 					await writeSSE("content_block_stop", {
@@ -776,11 +1049,59 @@ export class CodexProvider extends BaseProvider {
 					state.hasSentContentBlockStart = false;
 				}
 
-				await writeSSE("message_delta", {
+				const messageDeltaUsage: {
+					input_tokens?: number;
+					output_tokens: number;
+					cache_read_input_tokens?: number;
+					cache_creation_input_tokens?: number;
+				} = { output_tokens: state.outputTokens };
+				messageDeltaUsage.input_tokens = state.inputTokens;
+				const usageRecord = usage as Record<string, unknown> | undefined;
+				const inputTokenDetails = usageRecord?.input_tokens_details as
+					| Record<string, unknown>
+					| undefined;
+				const cachedTokens = inputTokenDetails?.cached_tokens;
+				if (
+					typeof cachedTokens === "number" &&
+					Number.isFinite(cachedTokens) &&
+					cachedTokens >= 0
+				) {
+					messageDeltaUsage.cache_read_input_tokens = cachedTokens;
+				}
+				const cacheCreationTokens =
+					inputTokenDetails?.cache_creation_input_tokens;
+				if (
+					typeof cacheCreationTokens === "number" &&
+					Number.isFinite(cacheCreationTokens) &&
+					cacheCreationTokens >= 0
+				) {
+					messageDeltaUsage.cache_creation_input_tokens = cacheCreationTokens;
+				}
+				log.warn(
+					`Codex terminal response.completed messageId=${state.messageId} model=${String(resp?.model ?? "")} inputTokens=${state.inputTokens} outputTokens=${state.outputTokens}`,
+				);
+
+				const messageDelta: {
+					type: "message_delta";
+					delta: {
+						stop_reason: "end_turn";
+						stop_sequence: null;
+						usage: typeof messageDeltaUsage;
+					};
+					usage: typeof messageDeltaUsage;
+					message: { usage: typeof messageDeltaUsage };
+				} = {
 					type: "message_delta",
-					delta: { stop_reason: "end_turn", stop_sequence: null },
-					usage: { output_tokens: state.outputTokens },
-				});
+					delta: {
+						stop_reason: "end_turn",
+						stop_sequence: null,
+						usage: messageDeltaUsage,
+					},
+					usage: messageDeltaUsage,
+					message: { usage: messageDeltaUsage },
+				};
+
+				await writeSSE("message_delta", messageDelta);
 				await writeSSE("message_stop", { type: "message_stop" });
 				state.hasSentTerminalEvents = true;
 				break;

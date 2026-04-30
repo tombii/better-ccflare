@@ -4,20 +4,39 @@
  * Licensed under the CAT Commercial License.
  * See LICENSE.md in the project root for license terms.
  */
-import { ValidationError, getModelFamily } from "@better-ccflare/core";
+import { getModelFamily, ValidationError } from "@better-ccflare/core";
 
-export const REASONING_EFFORT_VALUES = ["low", "medium", "high"] as const;
+export const REASONING_EFFORT_VALUES = [
+	"minimal",
+	"low",
+	"medium",
+	"high",
+	"xhigh",
+	"max",
+] as const;
 export type ReasoningEffort = (typeof REASONING_EFFORT_VALUES)[number];
 
-const CLAUDE_REASONING_EFFORTS: Record<"opus" | "sonnet" | "haiku", readonly ReasoningEffort[]> = {
-	opus: ["low", "medium", "high"],
-	sonnet: ["low", "medium", "high"],
+const EFFORT_RANK: Record<ReasoningEffort, number> = {
+	minimal: 0,
+	low: 1,
+	medium: 2,
+	high: 3,
+	xhigh: 4,
+	max: 5,
+};
+
+const CLAUDE_REASONING_EFFORTS: Record<
+	"opus" | "sonnet" | "haiku",
+	readonly ReasoningEffort[]
+> = {
+	opus: ["low", "medium", "high", "xhigh", "max"],
+	sonnet: ["low", "medium", "high", "xhigh", "max"],
 	haiku: ["low", "medium"],
 };
 
 const TARGET_REASONING_EFFORTS: Record<string, readonly ReasoningEffort[]> = {
-	"gpt-5": ["low", "medium", "high"],
-	"gpt-5.3-codex": ["low", "medium", "high"],
+	"gpt-5": ["minimal", "low", "medium", "high", "xhigh"],
+	"gpt-5.3-codex": ["minimal", "low", "medium", "high", "xhigh"],
 	"gpt-5.4-mini": ["low", "medium"],
 };
 
@@ -49,12 +68,21 @@ export function getSupportedReasoningEfforts(
 	return null;
 }
 
-export function validateReasoningEffort(
+export interface ReasoningEffortResolution {
+	effort: ReasoningEffort | undefined;
+	downgrades: Array<{
+		model: string;
+		from: ReasoningEffort;
+		to: ReasoningEffort;
+	}>;
+}
+
+export function resolveReasoningEffort(
 	effort: unknown,
 	models: { sourceModel?: string; targetModel?: string },
-): ReasoningEffort | undefined {
+): ReasoningEffortResolution {
 	if (effort === undefined) {
-		return undefined;
+		return { effort: undefined, downgrades: [] };
 	}
 
 	if (
@@ -68,6 +96,13 @@ export function validateReasoningEffort(
 		);
 	}
 
+	let resolvedEffort = effort as ReasoningEffort;
+	const downgrades: Array<{
+		model: string;
+		from: ReasoningEffort;
+		to: ReasoningEffort;
+	}> = [];
+
 	const supportedModels = [models.sourceModel, models.targetModel].filter(
 		(model): model is string => typeof model === "string" && model.length > 0,
 	);
@@ -78,18 +113,41 @@ export function validateReasoningEffort(
 			throw new ValidationError(
 				`reasoning.effort is not supported for model ${model}`,
 				"reasoning.effort",
-				effort,
+				resolvedEffort,
 			);
 		}
 
-		if (!supportedEfforts.includes(effort as ReasoningEffort)) {
+		if (supportedEfforts.includes(resolvedEffort)) {
+			continue;
+		}
+
+		const requestedRank = EFFORT_RANK[resolvedEffort];
+		const nearestLower = [...supportedEfforts]
+			.filter((candidate) => EFFORT_RANK[candidate] <= requestedRank)
+			.sort((a, b) => EFFORT_RANK[b] - EFFORT_RANK[a])[0];
+
+		if (!nearestLower) {
 			throw new ValidationError(
-				`reasoning.effort '${effort}' is not supported for model ${model}; allowed values: ${supportedEfforts.join(", ")}`,
+				`reasoning.effort '${resolvedEffort}' is not supported for model ${model}; allowed values: ${supportedEfforts.join(", ")}`,
 				"reasoning.effort",
-				effort,
+				resolvedEffort,
 			);
 		}
+
+		downgrades.push({
+			model,
+			from: resolvedEffort,
+			to: nearestLower,
+		});
+		resolvedEffort = nearestLower;
 	}
 
-	return effort as ReasoningEffort;
+	return { effort: resolvedEffort, downgrades };
+}
+
+export function validateReasoningEffort(
+	effort: unknown,
+	models: { sourceModel?: string; targetModel?: string },
+): ReasoningEffort | undefined {
+	return resolveReasoningEffort(effort, models).effort;
 }

@@ -138,24 +138,25 @@ describe("convertAnthropicRequestToOpenAI — basic fields", () => {
 			convertAnthropicRequestToOpenAI(
 				anthropicRequest({ reasoning: { effort: "extreme" } }),
 			),
-		).toThrow("reasoning.effort must be one of: low, medium, high");
+		).toThrow(
+			"reasoning.effort must be one of: minimal, low, medium, high, xhigh, max",
+		);
 	});
 
-	it("rejects efforts unsupported by the mapped target model", () => {
-		expect(() =>
-			convertAnthropicRequestToOpenAI(
-				anthropicRequest({
-					model: "claude-sonnet-4-6",
-					reasoning: { effort: "high" },
+	it("downgrades efforts unsupported by the mapped target model", () => {
+		const result = convertAnthropicRequestToOpenAI(
+			anthropicRequest({
+				model: "claude-sonnet-4-6",
+				reasoning: { effort: "xhigh" },
+			}),
+			{
+				name: "test",
+				model_mappings: JSON.stringify({
+					sonnet: "gpt-5.4-mini",
 				}),
-				{
-					name: "test",
-					model_mappings: JSON.stringify({
-						sonnet: "gpt-5.4-mini",
-					}),
-				} as any,
-			),
-		).toThrow("reasoning.effort 'high' is not supported for model gpt-5.4-mini");
+			} as any,
+		);
+		expect(result.reasoning).toEqual({ effort: "medium" });
 	});
 });
 

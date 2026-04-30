@@ -10,6 +10,24 @@ import { handleProxyError, processProxyResponse } from "./response-processor";
 import { getValidAccessToken } from "./token-manager";
 
 const log = new Logger("ProxyOperations");
+const CONTENT_TYPE_TRACE_ENABLED = process.env.CODEX_SSE_TRACE === "1";
+
+function traceContentType(
+	phase: "upstream-received" | "provider-exit",
+	response: Response,
+	providerName: string,
+	requestId: string,
+	account?: Account,
+): void {
+	if (!CONTENT_TYPE_TRACE_ENABLED) {
+		return;
+	}
+	const contentType = response.headers.get("content-type") ?? "<missing>";
+	const accountId = account?.id ?? "<missing>";
+	log.info(
+		`[content-type-trace] phase=${phase} status=${response.status} contentType=${contentType} provider=${providerName} requestId=${requestId} accountId=${accountId}`,
+	);
+}
 
 /**
  * Determines the absolute epoch timestamp (ms since epoch) until which an account
@@ -510,6 +528,14 @@ export async function proxyWithAccount(
 			: await makeProxyRequest(transformedRequest);
 
 		// Check if this is a Claude provider and we got an invalid thinking signature error
+		traceContentType(
+			"upstream-received",
+			rawResponse,
+			provider.name,
+			requestMeta.id,
+			account,
+		);
+
 		const isClaudeProvider =
 			provider.name === "anthropic" || account.provider === "claude-oauth";
 		if (
@@ -709,13 +735,44 @@ export async function proxyWithAccount(
 		}
 
 		// Process response (transform format, sanitize headers, etc.) using account-specific provider
+		const responseHeaders = new Headers(rawResponse.headers);
+		responseHeaders.set("x-better-ccflare-request-id", requestMeta.id);
+		const internalRequestStream = transformedRequest.headers.get(
+			"x-better-ccflare-request-stream",
+		);
+		if (internalRequestStream === "true" || internalRequestStream === "false") {
+			responseHeaders.set(
+				"x-better-ccflare-request-stream",
+				internalRequestStream,
+			);
+		}
+		const taggedRawResponse = new Response(rawResponse.body, {
+			status: rawResponse.status,
+			statusText: rawResponse.statusText,
+			headers: responseHeaders,
+		});
 		const response = await provider.processResponse(
-			rawResponse,
+			taggedRawResponse,
 			account,
 			req.headers,
 		);
 
+		if (process.env.CODEX_SSE_TRACE === "1") {
+			const contentType = response.headers.get("content-type") ?? "<missing>";
+			log.info(
+				`[proxy-lifecycle] requestId=${requestMeta.id} path=${url.pathname} provider=${provider.name} status=${response.status} contentType=${contentType} isStreamGuess=${provider.isStreamingResponse?.(response) ?? false} phase=post-provider`,
+			);
+		}
+
 		// Failover to next account on upstream 401 — credentials are invalid/expired
+		traceContentType(
+			"provider-exit",
+			response,
+			provider.name,
+			requestMeta.id,
+			account,
+		);
+
 		if (response.status === 401) {
 			log.warn(
 				`Authentication failed (401) for account ${account.name}, failing over to next account`,
