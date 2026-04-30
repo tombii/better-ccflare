@@ -113,6 +113,10 @@ export class RequestBodyContext {
 		return this.currentBuffer;
 	}
 
+	// NOTE: shallow spread — nested objects (e.g. messages, system) are shared
+	// references between parent and child contexts. Mutations to nested content
+	// on the returned context will alias back into this context's parsedBody.
+	// Safe as long as callers treat the child as write-once and discard the parent.
 	withPatchedModel(model: string): RequestBodyContext | null {
 		const body = this.getParsedJson();
 		if (!body) return null;
