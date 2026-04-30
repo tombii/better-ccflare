@@ -2,6 +2,7 @@ import { mapModelName } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import type { Account } from "@better-ccflare/types";
 import type {
+	AnthropicContent,
 	AnthropicContentBlock,
 	AnthropicRequest,
 	AnthropicResponse,
@@ -83,6 +84,23 @@ export function convertAnthropicRequestToOpenAI(
 				>,
 			},
 		}));
+	}
+
+	// Convert tool_choice
+	if (anthropicData.tool_choice !== undefined) {
+		const tc = anthropicData.tool_choice;
+		if (tc.type === "auto") {
+			openaiRequest.tool_choice = "auto";
+		} else if (tc.type === "any") {
+			openaiRequest.tool_choice = "required";
+		} else if (tc.type === "none") {
+			openaiRequest.tool_choice = "none";
+		} else if (tc.type === "tool") {
+			openaiRequest.tool_choice = {
+				type: "function",
+				function: { name: tc.name },
+			};
+		}
 	}
 
 	// Handle system message (Anthropic has it as top-level, OpenAI has it in messages array)
@@ -188,9 +206,30 @@ export function convertAnthropicRequestToOpenAI(
 					(item): item is AnthropicToolResult => item.type === "tool_result",
 				);
 				for (const toolResult of toolResults) {
+					let toolContent: string;
+					if (typeof toolResult.content === "string") {
+						toolContent = toolResult.content;
+					} else {
+						// Array content: serialize non-image items; drop images (not supported in OpenAI tool messages)
+						const parts: string[] = [];
+						for (const block of toolResult.content as AnthropicContent[]) {
+							if (block.type === "text") {
+								parts.push(block.text);
+							} else if (block.type === "image") {
+								// OpenAI tool messages don't support image content — drop with placeholder
+								parts.push(
+									"[image content not supported in OpenAI tool results]",
+								);
+							} else {
+								// Other structured blocks (tool_use, tool_result, etc.) — serialize as JSON
+								parts.push(JSON.stringify(block));
+							}
+						}
+						toolContent = parts.join("\n");
+					}
 					messages.push({
 						role: "tool",
-						content: toolResult.content,
+						content: toolContent,
 						tool_call_id: toolResult.tool_use_id,
 					});
 				}

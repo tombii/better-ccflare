@@ -8,6 +8,7 @@ import type {
 	AnthropicRequest,
 	AnthropicResponse,
 	OpenAIResponse,
+	OpenAIToolChoice,
 } from "../types";
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -478,6 +479,162 @@ describe("convertAnthropicRequestToOpenAI — tools", () => {
 			anthropicRequest({ tools: [] }),
 		);
 		expect(result.tools).toBeUndefined();
+	});
+});
+
+// ── convertAnthropicRequestToOpenAI — tool_choice ────────────────────────────
+
+describe("convertAnthropicRequestToOpenAI — tool_choice", () => {
+	it('maps {type:"auto"} → "auto"', () => {
+		const result = convertAnthropicRequestToOpenAI(
+			anthropicRequest({ tool_choice: { type: "auto" } }),
+		);
+		expect(result.tool_choice).toBe("auto");
+	});
+
+	it('maps {type:"any"} → "required"', () => {
+		const result = convertAnthropicRequestToOpenAI(
+			anthropicRequest({ tool_choice: { type: "any" } }),
+		);
+		expect(result.tool_choice).toBe("required");
+	});
+
+	it('maps {type:"none"} → "none"', () => {
+		const result = convertAnthropicRequestToOpenAI(
+			anthropicRequest({ tool_choice: { type: "none" } }),
+		);
+		expect(result.tool_choice).toBe("none");
+	});
+
+	it('maps {type:"tool",name:"foo"} → {type:"function",function:{name:"foo"}}', () => {
+		const result = convertAnthropicRequestToOpenAI(
+			anthropicRequest({ tool_choice: { type: "tool", name: "foo" } }),
+		);
+		expect(result.tool_choice).toEqual({
+			type: "function",
+			function: { name: "foo" },
+		} satisfies OpenAIToolChoice);
+	});
+
+	it("omits tool_choice when not set", () => {
+		const result = convertAnthropicRequestToOpenAI(anthropicRequest());
+		expect(result.tool_choice).toBeUndefined();
+	});
+});
+
+// ── convertAnthropicRequestToOpenAI — multi-content tool results ──────────────
+
+describe("convertAnthropicRequestToOpenAI — multi-content tool results", () => {
+	it("passes through string tool result content unchanged", () => {
+		const result = convertAnthropicRequestToOpenAI(
+			anthropicRequest({
+				messages: [
+					{
+						role: "user",
+						content: [
+							{
+								type: "tool_result",
+								tool_use_id: "tool_1",
+								content: "plain string result",
+							},
+						],
+					},
+				],
+			}),
+		);
+		const toolMsg = result.messages.find((m) => m.role === "tool");
+		expect(toolMsg?.content).toBe("plain string result");
+	});
+
+	it("joins multiple text blocks in array tool result", () => {
+		const result = convertAnthropicRequestToOpenAI(
+			anthropicRequest({
+				messages: [
+					{
+						role: "user",
+						content: [
+							{
+								type: "tool_result",
+								tool_use_id: "tool_1",
+								content: [
+									{ type: "text", text: "First line." },
+									{ type: "text", text: "Second line." },
+								],
+							},
+						],
+					},
+				],
+			}),
+		);
+		const toolMsg = result.messages.find((m) => m.role === "tool");
+		expect(toolMsg?.content).toBe("First line.\nSecond line.");
+	});
+
+	it("replaces image blocks with placeholder text", () => {
+		const result = convertAnthropicRequestToOpenAI(
+			anthropicRequest({
+				messages: [
+					{
+						role: "user",
+						content: [
+							{
+								type: "tool_result",
+								tool_use_id: "tool_1",
+								content: [
+									{ type: "text", text: "Here is the image:" },
+									{
+										type: "image",
+										source: {
+											type: "base64",
+											media_type: "image/png",
+											data: "abc123",
+										},
+									},
+								],
+							},
+						],
+					},
+				],
+			}),
+		);
+		const toolMsg = result.messages.find((m) => m.role === "tool");
+		expect(toolMsg?.content).toContain("Here is the image:");
+		expect(toolMsg?.content).toContain(
+			"[image content not supported in OpenAI tool results]",
+		);
+	});
+
+	it("handles array with only an image block", () => {
+		const result = convertAnthropicRequestToOpenAI(
+			anthropicRequest({
+				messages: [
+					{
+						role: "user",
+						content: [
+							{
+								type: "tool_result",
+								tool_use_id: "tool_2",
+								content: [
+									{
+										type: "image",
+										source: {
+											type: "base64",
+											media_type: "image/jpeg",
+											data: "xyz",
+										},
+									},
+								],
+							},
+						],
+					},
+				],
+			}),
+		);
+		const toolMsg = result.messages.find((m) => m.role === "tool");
+		expect(toolMsg?.content).toBe(
+			"[image content not supported in OpenAI tool results]",
+		);
+		expect(toolMsg?.tool_call_id).toBe("tool_2");
 	});
 });
 

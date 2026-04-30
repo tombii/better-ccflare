@@ -33,6 +33,12 @@ export interface OpenAITool {
 	};
 }
 
+export type OpenAIToolChoice =
+	| "auto"
+	| "none"
+	| "required"
+	| { type: "function"; function: { name: string } };
+
 export interface OpenAIRequest {
 	model: string;
 	messages: OpenAIMessage[];
@@ -43,19 +49,7 @@ export interface OpenAIRequest {
 	stream?: boolean;
 	stream_options?: { include_usage: boolean };
 	tools?: OpenAITool[];
-}
-
-export interface AnthropicToolUse {
-	type: "tool_use";
-	id: string;
-	name: string;
-	input?: Record<string, unknown>;
-}
-
-export interface AnthropicToolResult {
-	type: "tool_result";
-	tool_use_id: string;
-	content: string;
+	tool_choice?: OpenAIToolChoice;
 }
 
 export interface AnthropicTextContent {
@@ -68,6 +62,40 @@ export interface AnthropicThinkingContent {
 	type: "thinking";
 	thinking: string;
 }
+
+export interface AnthropicImageContent {
+	type: "image";
+	source: {
+		type: "base64" | "url";
+		media_type?: string;
+		data?: string;
+		url?: string;
+	};
+}
+
+export interface AnthropicToolUse {
+	type: "tool_use";
+	id: string;
+	name: string;
+	input?: Record<string, unknown>;
+}
+
+export interface AnthropicToolResult {
+	type: "tool_result";
+	tool_use_id: string;
+	content: string | AnthropicContent[];
+}
+
+/**
+ * Union of all Anthropic content block types that can appear in tool results
+ * or message content arrays.
+ */
+export type AnthropicContent =
+	| AnthropicTextContent
+	| AnthropicImageContent
+	| AnthropicThinkingContent
+	| AnthropicToolUse
+	| AnthropicToolResult;
 
 export type AnthropicContentBlock =
 	| AnthropicTextContent
@@ -86,6 +114,12 @@ export interface AnthropicTool {
 	input_schema?: Record<string, unknown>;
 }
 
+export type AnthropicToolChoice =
+	| { type: "auto" }
+	| { type: "any" }
+	| { type: "none" }
+	| { type: "tool"; name: string };
+
 export interface AnthropicRequest {
 	model: string;
 	max_tokens: number;
@@ -102,6 +136,7 @@ export interface AnthropicRequest {
 	stop_sequences?: string[];
 	stream?: boolean;
 	tools?: AnthropicTool[];
+	tool_choice?: AnthropicToolChoice;
 }
 
 export interface OpenAIUsage {
