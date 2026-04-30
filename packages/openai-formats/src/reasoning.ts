@@ -40,12 +40,8 @@ const TARGET_REASONING_EFFORTS: Record<string, readonly ReasoningEffort[]> = {
 	"gpt-5.4-mini": ["low", "medium"],
 };
 
-function normalizeModelName(model: string): string {
-	return model.toLowerCase().trim();
-}
-
 function normalizeTargetModelName(model: string): string {
-	return normalizeModelName(model).replace(/^.*\//, "");
+	return model.toLowerCase().trim().replace(/^.*\//, "");
 }
 
 export function getSupportedReasoningEfforts(

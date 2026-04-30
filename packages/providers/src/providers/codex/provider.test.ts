@@ -377,12 +377,92 @@ describe("CodexProvider.processResponse", () => {
 		>;
 		expect(payload.type).toBe("message");
 		expect(payload.role).toBe("assistant");
+		expect(payload.content).toEqual([{ type: "text", text: "Hi" }]);
 		expect(payload.usage).toEqual({
 			input_tokens: 7,
 			output_tokens: 2,
 			cache_read_input_tokens: 0,
 			cache_creation_input_tokens: 0,
 		});
+	});
+
+	it("preserves tool_use content in non-streaming SSE->JSON conversion", async () => {
+		const provider = new CodexProvider();
+		const requestId = "req_non_stream_tool_1";
+		const originalRequest = new Request("https://example.test/v1/messages", {
+			method: "POST",
+			headers: {
+				"content-type": "application/json",
+				"x-better-ccflare-request-id": requestId,
+			},
+			body: JSON.stringify({
+				model: "claude-sonnet-4-5",
+				max_tokens: 16,
+				stream: false,
+				tools: [
+					{
+						name: "search",
+						description: "search",
+						input_schema: {
+							type: "object",
+							properties: { query: { type: "string" } },
+						},
+					},
+				],
+				messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+			}),
+		});
+		await provider.transformRequestBody(originalRequest);
+
+		const upstreamBody = sseBody([
+			...eventLine("response.created", {
+				response: { id: "resp_tool", model: "gpt-5.4" },
+			}),
+			...eventLine("response.output_item.added", {
+				item: { type: "function_call", call_id: "call_1", name: "search" },
+				output_index: 0,
+			}),
+			...eventLine("response.function_call_arguments.delta", {
+				delta: '{"query":"hel',
+				output_index: 0,
+			}),
+			...eventLine("response.function_call_arguments.delta", {
+				delta: 'lo"}',
+				output_index: 0,
+			}),
+			...eventLine("response.output_item.done", {
+				item: { type: "function_call", call_id: "call_1", name: "search" },
+				output_index: 0,
+			}),
+			...eventLine("response.completed", {
+				response: {
+					model: "gpt-5.4",
+					usage: { input_tokens: 9, output_tokens: 4 },
+				},
+			}),
+		]);
+		const response = new Response(upstreamBody, {
+			status: 200,
+			headers: {
+				"content-type": "text/event-stream",
+				"x-better-ccflare-request-id": requestId,
+				"x-better-ccflare-request-stream": "false",
+			},
+		});
+
+		const transformed = await provider.processResponse(response, null);
+		const payload = JSON.parse(await transformed.text()) as Record<
+			string,
+			unknown
+		>;
+		expect(payload.content).toEqual([
+			{
+				type: "tool_use",
+				id: "call_1",
+				name: "search",
+				input: { query: "hello" },
+			},
+		]);
 	});
 
 	it("message_start from response.created includes normalized top-level and nested usage", async () => {

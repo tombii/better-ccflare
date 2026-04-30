@@ -240,7 +240,7 @@ export class CodexProvider extends BaseProvider {
 			try {
 				return validateEndpointUrl(account.custom_endpoint, "custom_endpoint");
 			} catch (error) {
-				log.warn(
+				log.debug(
 					`Invalid custom endpoint for ${account.name}: ${account.custom_endpoint}. Using default.`,
 					error,
 				);
@@ -346,7 +346,7 @@ export class CodexProvider extends BaseProvider {
 			const _isJsonLike = trimmed.startsWith("{") || trimmed.startsWith("[");
 
 			if (isSseLike) {
-				log.warn(
+				log.debug(
 					`Codex returned successful response without SSE content-type (${contentType ?? "<missing>"}); transforming as ${requestedStream ? "SSE" : "JSON"}`,
 				);
 				const headers = sanitizeProxyHeaders(response.headers);
@@ -557,7 +557,7 @@ export class CodexProvider extends BaseProvider {
 		});
 		if (reasoningResolution.downgrades.length > 0) {
 			for (const downgrade of reasoningResolution.downgrades) {
-				log.warn(
+				log.debug(
 					`Downgraded reasoning effort for model ${downgrade.model}: ${downgrade.from} -> ${downgrade.to}`,
 				);
 			}
@@ -586,7 +586,12 @@ export class CodexProvider extends BaseProvider {
 		const lines = source.split("\n");
 		let messageStartPayload: Record<string, unknown> | null = null;
 		let messageDeltaPayload: Record<string, unknown> | null = null;
-		let text = "";
+		const content: Array<Record<string, unknown>> = [];
+		const textByIndex = new Map<number, string>();
+		const toolByIndex = new Map<
+			number,
+			{ id: string; name: string; partialJson: string }
+		>();
 		for (let i = 0; i < lines.length; i++) {
 			const line = lines[i];
 			if (!line.startsWith("event:")) continue;
@@ -601,14 +606,70 @@ export class CodexProvider extends BaseProvider {
 			}
 			if (eventName === "message_start") {
 				messageStartPayload = data;
-			} else if (eventName === "message_delta") {
+				continue;
+			}
+			if (eventName === "message_delta") {
 				messageDeltaPayload = data;
-			} else if (eventName === "content_block_delta") {
+				continue;
+			}
+			if (eventName === "content_block_delta") {
+				const index = typeof data.index === "number" ? data.index : -1;
 				const delta = data.delta as Record<string, unknown> | undefined;
-				if (delta?.type === "text_delta" && typeof delta.text === "string") {
-					text += delta.text;
+				if (index < 0 || !delta) continue;
+				if (delta.type === "text_delta" && typeof delta.text === "string") {
+					textByIndex.set(index, (textByIndex.get(index) ?? "") + delta.text);
+				} else if (
+					delta.type === "input_json_delta" &&
+					typeof delta.partial_json === "string"
+				) {
+					const existing = toolByIndex.get(index);
+					if (existing) {
+						existing.partialJson += delta.partial_json;
+					} else {
+						toolByIndex.set(index, {
+							id: "",
+							name: "",
+							partialJson: delta.partial_json,
+						});
+					}
+				}
+				continue;
+			}
+			if (eventName === "content_block_start") {
+				const index = typeof data.index === "number" ? data.index : -1;
+				const block = data.content_block as Record<string, unknown> | undefined;
+				if (index < 0 || !block) continue;
+				if (block.type === "tool_use") {
+					toolByIndex.set(index, {
+						id: typeof block.id === "string" ? block.id : "",
+						name: typeof block.name === "string" ? block.name : "",
+						partialJson: toolByIndex.get(index)?.partialJson ?? "",
+					});
 				}
 			}
+		}
+		for (const [_index, text] of [...textByIndex.entries()].sort(
+			(a, b) => a[0] - b[0],
+		)) {
+			content.push({ type: "text", text });
+		}
+		for (const [index, tool] of [...toolByIndex.entries()].sort(
+			(a, b) => a[0] - b[0],
+		)) {
+			let input: Record<string, unknown> = {};
+			if (tool.partialJson.trim().length > 0) {
+				try {
+					input = JSON.parse(tool.partialJson) as Record<string, unknown>;
+				} catch {
+					input = {};
+				}
+			}
+			content.push({
+				type: "tool_use",
+				id: tool.id || `call_${index}`,
+				name: tool.name,
+				input,
+			});
 		}
 		const startMessage =
 			(messageStartPayload?.message as Record<string, unknown> | undefined) ??
@@ -642,7 +703,7 @@ export class CodexProvider extends BaseProvider {
 			role: "assistant",
 			model:
 				typeof startMessage.model === "string" ? startMessage.model : "gpt-5.4",
-			content: [{ type: "text", text }],
+			content: content.length > 0 ? content : [{ type: "text", text: "" }],
 			stop_reason: "end_turn",
 			stop_sequence: null,
 			usage,
@@ -1077,7 +1138,7 @@ data: ${JSON.stringify(data)}
 				) {
 					messageDeltaUsage.cache_creation_input_tokens = cacheCreationTokens;
 				}
-				log.warn(
+				log.debug(
 					`Codex terminal response.completed messageId=${state.messageId} model=${String(resp?.model ?? "")} inputTokens=${state.inputTokens} outputTokens=${state.outputTokens}`,
 				);
 
