@@ -1,4 +1,5 @@
 import type { DatabaseOperations } from "@better-ccflare/database";
+import { extractApiKey } from "./extract-api-key";
 import {
 	type ApiKey,
 	type ApiKeyRole,
@@ -113,29 +114,8 @@ export class AuthService {
 		return { authorized: true };
 	}
 
-	/**
-	 * Extract API key from request headers
-	 * Supports both authentication header formats:
-	 * - x-api-key header (Vercel AI SDK / Opencode / Anthropic format)
-	 * - Authorization: Bearer header (standard OAuth format)
-	 */
 	extractApiKey(req: Request): string | null {
-		// Check x-api-key header first (Vercel AI SDK / Opencode format)
-		const apiKey = req.headers.get("x-api-key");
-		if (apiKey) {
-			return apiKey;
-		}
-
-		// Check Authorization header with Bearer token (standard OAuth format)
-		const authHeader = req.headers.get("authorization");
-		if (authHeader) {
-			const parts = authHeader.trim().split(/\s+/);
-			if (parts.length === 2 && parts[0].toLowerCase() === "bearer") {
-				return parts[1];
-			}
-		}
-
-		return null;
+		return extractApiKey(req);
 	}
 
 	/**

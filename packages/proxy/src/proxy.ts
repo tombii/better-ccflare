@@ -81,7 +81,7 @@ function extractProjectFromRequest(
 	const sanitizedPath = sanitizeProjectName(pathMatch?.[1]);
 	if (sanitizedPath) return sanitizedPath;
 
-	const headingMatch = systemPrompt.match(/^#\s+(.+?)$/m);
+	const headingMatch = systemPrompt.match(/^#\s+([^\n\r]{1,100})/m);
 	if (headingMatch) {
 		const heading = sanitizeProjectName(headingMatch[1]);
 		if (heading && !heading.toLowerCase().startsWith("claude")) {
