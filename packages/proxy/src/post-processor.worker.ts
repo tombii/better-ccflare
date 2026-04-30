@@ -259,9 +259,7 @@ function shouldParseSSEData(data: string, eventType: string): boolean {
 			return (
 				data.includes("usage") ||
 				data.includes("message") ||
-				data.includes("model") ||
-				data.includes("content_block_start") ||
-				data.includes("content_block_delta")
+				data.includes("model")
 			);
 	}
 }

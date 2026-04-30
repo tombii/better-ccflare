@@ -5,9 +5,7 @@ const encoder = new TextEncoder();
 
 function encodeJson(body: RequestJsonBody): ArrayBuffer {
 	const encoded = encoder.encode(JSON.stringify(body));
-	const buffer = new ArrayBuffer(encoded.byteLength);
-	new Uint8Array(buffer).set(encoded);
-	return buffer;
+	return encoded.buffer as ArrayBuffer;
 }
 
 export class RequestBodyContext {
@@ -45,7 +43,7 @@ export class RequestBodyContext {
 		return this.parseFailed;
 	}
 
-	getParsedJson(): RequestJsonBody | null {
+	getParsedJson(): Readonly<RequestJsonBody> | null {
 		if (this.parseAttempted) {
 			return this.parsedBody;
 		}
@@ -76,10 +74,22 @@ export class RequestBodyContext {
 	}
 
 	setModel(model: string): boolean {
-		const body = this.getParsedJson();
-		if (!body) return false;
+		if (!this.parsedBody) {
+			this.getParsedJson();
+		}
+		if (!this.parsedBody) return false;
 
-		body.model = model;
+		this.parsedBody.model = model;
+		this.markDirty();
+		return true;
+	}
+
+	/** Mutate the parsed body in-place via callback and mark dirty. */
+	mutateParsedJson(fn: (body: RequestJsonBody) => void): boolean {
+		const body =
+			this.parsedBody ?? (this.getParsedJson() as RequestJsonBody | null);
+		if (!body) return false;
+		fn(body);
 		this.markDirty();
 		return true;
 	}

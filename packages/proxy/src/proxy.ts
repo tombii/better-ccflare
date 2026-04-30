@@ -414,35 +414,42 @@ export async function handleProxy(
 
 /**
  * Injects `ttl: "1h"` into system-level cache_control blocks that are missing a TTL.
- * Returns a new ArrayBuffer with the modified body, or null if no changes were made.
+ * ArrayBuffer overload: returns modified buffer or null (no changes).
+ * RequestBodyContext overload: mutates in-place via markDirty(); return value unused.
  */
 export function injectSystemCacheTtl(buf: ArrayBuffer): ArrayBuffer | null;
-export function injectSystemCacheTtl(
-	context: RequestBodyContext,
-): ArrayBuffer | null;
+export function injectSystemCacheTtl(context: RequestBodyContext): void;
 export function injectSystemCacheTtl(
 	input: ArrayBuffer | RequestBodyContext,
 ): ArrayBuffer | null {
 	const bodyContext =
 		input instanceof RequestBodyContext ? input : new RequestBodyContext(input);
 	try {
-		const body = bodyContext.getParsedJson() as RequestJsonBody & {
-			system?: Array<{ cache_control?: { type?: string; ttl?: string } }>;
-		};
+		const body = bodyContext.getParsedJson() as
+			| (RequestJsonBody & {
+					system?: Array<{ cache_control?: { type?: string; ttl?: string } }>;
+			  })
+			| null;
 		if (!body) return null;
 		if (!Array.isArray(body.system)) return null;
-		let changed = false;
-		for (const block of body.system) {
-			if (
-				block.cache_control?.type === "ephemeral" &&
-				!block.cache_control.ttl
-			) {
-				block.cache_control.ttl = "1h";
-				changed = true;
+		const blocksToUpdate = body.system.filter(
+			(block) =>
+				block.cache_control?.type === "ephemeral" && !block.cache_control.ttl,
+		);
+		if (blocksToUpdate.length === 0) return null;
+		bodyContext.mutateParsedJson((b) => {
+			const typedBody = b as RequestJsonBody & {
+				system: Array<{ cache_control?: { type?: string; ttl?: string } }>;
+			};
+			for (const block of typedBody.system) {
+				if (
+					block.cache_control?.type === "ephemeral" &&
+					!block.cache_control.ttl
+				) {
+					block.cache_control.ttl = "1h";
+				}
 			}
-		}
-		if (!changed) return null;
-		bodyContext.markDirty();
+		});
 		return bodyContext.getBuffer();
 	} catch {
 		return null;
