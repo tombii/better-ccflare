@@ -72,12 +72,12 @@ describe("reasoning effort support", () => {
 		);
 	});
 
-	it("rejects reasoning effort unsupported by unknown model", () => {
-		expect(() =>
+	it("passes through effort when target model is unknown", () => {
+		expect(
 			validateReasoningEffort("high", {
 				sourceModel: "claude-sonnet-4-6",
 				targetModel: "unknown-model",
 			}),
-		).toThrow("reasoning.effort is not supported for model unknown-model");
+		).toBe("high");
 	});
 });

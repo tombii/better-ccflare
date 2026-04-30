@@ -99,13 +99,20 @@ export function resolveReasoningEffort(
 		to: ReasoningEffort;
 	}> = [];
 
-	const supportedModels = [models.sourceModel, models.targetModel].filter(
-		(model): model is string => typeof model === "string" && model.length > 0,
+	const modelContexts = [
+		{ model: models.sourceModel, role: "source" as const },
+		{ model: models.targetModel, role: "target" as const },
+	].filter(
+		(context): context is { model: string; role: "source" | "target" } =>
+			typeof context.model === "string" && context.model.length > 0,
 	);
 
-	for (const model of supportedModels) {
+	for (const { model, role } of modelContexts) {
 		const supportedEfforts = getSupportedReasoningEfforts(model);
 		if (!supportedEfforts) {
+			if (role === "target") {
+				continue;
+			}
 			throw new ValidationError(
 				`reasoning.effort is not supported for model ${model}`,
 				"reasoning.effort",
