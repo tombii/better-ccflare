@@ -652,6 +652,17 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 		return;
 	}
 
+	// Flush any incomplete multi-byte UTF-8 sequences held in the streaming decoder
+	const trailing = state.streamDecoder.decode();
+	if (trailing) {
+		state.buffer += trailing;
+		const lines = state.buffer.split("\n");
+		state.buffer = lines.pop() ?? "";
+		for (const line of lines) {
+			processSSELine(line, state);
+		}
+	}
+
 	// For non-stream responses, extract usage data from response body
 	if (!state.usage.model && msg.responseBody) {
 		try {

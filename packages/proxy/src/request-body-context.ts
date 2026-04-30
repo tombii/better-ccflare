@@ -5,7 +5,8 @@ const encoder = new TextEncoder();
 
 function encodeJson(body: RequestJsonBody): ArrayBuffer {
 	const encoded = encoder.encode(JSON.stringify(body));
-	return encoded.buffer as ArrayBuffer;
+	// .buffer may be shared/oversized in some runtimes; slice to exact range
+	return encoded.buffer.slice(encoded.byteOffset, encoded.byteOffset + encoded.byteLength);
 }
 
 export class RequestBodyContext {
