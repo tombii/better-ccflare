@@ -43,7 +43,6 @@ interface AccountListItemProps {
 	onAutoRefreshToggle: (account: Account) => void;
 	onBillingTypeToggle: (account: Account) => void;
 	onAutoPauseOnOverageToggle?: (account: Account) => void;
-	onPeakHoursPauseToggle?: (account: Account) => void;
 	onCustomEndpointChange?: (account: Account) => void;
 	onModelMappingsChange?: (account: Account) => void;
 	onReauth?: (account: Account) => void;
@@ -64,7 +63,6 @@ export function AccountListItem({
 	onAutoRefreshToggle,
 	onBillingTypeToggle,
 	onAutoPauseOnOverageToggle,
-	onPeakHoursPauseToggle,
 	onCustomEndpointChange,
 	onModelMappingsChange,
 	onReauth,
@@ -97,6 +95,9 @@ export function AccountListItem({
 		showForceReset &&
 		typeof account.usageUtilization === "number" &&
 		account.usageUtilization < 100;
+	const isUsageThrottled =
+		typeof account.usageThrottledUntil === "number" &&
+		account.usageThrottledUntil > Date.now();
 
 	// Parse Bedrock profile and region from custom_endpoint
 	let bedrockProfile: string | null = null;
@@ -188,18 +189,6 @@ export function AccountListItem({
 										/>
 									</div>
 								)}
-							{account.provider === "zai" && onPeakHoursPauseToggle && (
-								<div className="flex items-center gap-2">
-									<span className="text-xs text-muted-foreground">
-										Peak hours pause:
-									</span>
-									<Switch
-										checked={account.peakHoursPauseEnabled ?? false}
-										onCheckedChange={() => onPeakHoursPauseToggle(account)}
-										title="Automatically pause this account during Zai peak hours (14:00–18:00 SGT)"
-									/>
-								</div>
-							)}
 						</div>
 						<div className="flex items-center gap-2">
 							<p className="text-sm text-muted-foreground">
@@ -276,6 +265,14 @@ export function AccountListItem({
 								title="Stale lock detected: usage data shows available capacity but account is still rate-limited"
 							>
 								Stale lock detected
+							</span>
+						)}
+						{isUsageThrottled && (
+							<span
+								className="text-sm text-amber-600"
+								title="Usage throttling is delaying requests for this account until pacing catches up"
+							>
+								Usage throttled
 							</span>
 						)}
 					</div>
@@ -455,6 +452,8 @@ export function AccountListItem({
 					usageWindow={account.usageWindow}
 					usageData={account.usageData}
 					usageRateLimitedUntil={account.usageRateLimitedUntil}
+					usageThrottledUntil={account.usageThrottledUntil}
+					usageThrottledWindows={account.usageThrottledWindows}
 					provider={account.provider}
 					showWeekly={providerShowsWeeklyUsage(account.provider)}
 				/>

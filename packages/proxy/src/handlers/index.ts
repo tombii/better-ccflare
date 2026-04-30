@@ -20,6 +20,11 @@ export {
 } from "./request-handler";
 export { handleProxyError } from "./response-processor";
 export {
+	createUsageThrottledResponse,
+	getUsageThrottleStatus,
+	getUsageThrottleUntil,
+} from "./usage-throttling";
+export {
 	checkAllAccountsHealth,
 	checkRefreshTokenHealth,
 	formatTokenHealthReport,

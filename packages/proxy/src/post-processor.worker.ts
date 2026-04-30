@@ -228,20 +228,11 @@ function _extractSystemPrompt(requestBody: string | null): string | null {
 
 // Parse SSE lines to extract usage (reuse existing logic)
 function parseSSELine(line: string): { event?: string; data?: string } {
-	// Handle both "event: message_start" and "event:message_start" formats
-	// Some providers use no space after colon, Anthropic uses space
-	if (line.startsWith("event: ") || line.startsWith("event:")) {
-		const event = line.startsWith("event: ")
-			? line.slice(7).trim()
-			: line.slice(6).trim();
-		return { event };
+	if (line.startsWith("event: ")) {
+		return { event: line.slice(7).trim() };
 	}
-	// Handle both "data: {...}" and "data:{...}" formats
-	if (line.startsWith("data: ") || line.startsWith("data:")) {
-		const data = line.startsWith("data: ")
-			? line.slice(6).trim()
-			: line.slice(5).trim();
-		return { data };
+	if (line.startsWith("data: ")) {
+		return { data: line.slice(6).trim() };
 	}
 	return {};
 }

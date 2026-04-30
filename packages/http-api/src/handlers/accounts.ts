@@ -32,6 +32,7 @@ import {
 } from "@better-ccflare/providers";
 import {
 	clearAccountRefreshCache,
+	getUsageThrottleStatus,
 	restartUsagePollingForAccount,
 } from "@better-ccflare/proxy";
 import type { FullUsageData } from "@better-ccflare/types";
@@ -125,7 +126,10 @@ async function getCachedOrPersistedCodexUsage(
 /**
  * Create an accounts list handler
  */
-export function createAccountsListHandler(dbOps: DatabaseOperations) {
+export function createAccountsListHandler(
+	dbOps: DatabaseOperations,
+	config: Config,
+) {
 	return async (): Promise<Response> => {
 		const db = dbOps.getAdapter();
 		const now = Date.now();
@@ -156,7 +160,6 @@ export function createAccountsListHandler(dbOps: DatabaseOperations) {
 			auto_fallback_enabled: 0 | 1;
 			auto_refresh_enabled: 0 | 1;
 			auto_pause_on_overage_enabled: 0 | 1;
-			peak_hours_pause_enabled: 0 | 1;
 			custom_endpoint: string | null;
 			model_mappings: string | null;
 			cross_region_mode: string | null;
@@ -187,7 +190,7 @@ export function createAccountsListHandler(dbOps: DatabaseOperations) {
 					COALESCE(auto_refresh_enabled, 0) as auto_refresh_enabled,
 					custom_endpoint,
 					COALESCE(auto_pause_on_overage_enabled, 0) as auto_pause_on_overage_enabled,
-					COALESCE(peak_hours_pause_enabled, 0) as peak_hours_pause_enabled,
+
 					model_mappings,
 					cross_region_mode,
 					model_fallbacks,
@@ -260,6 +263,8 @@ export function createAccountsListHandler(dbOps: DatabaseOperations) {
 				let usageUtilization: number | null = null;
 				let usageWindow: string | null = null;
 				let fullUsageData: FullUsageData | null = null;
+				let usageThrottledUntil: number | null = null;
+				let usageThrottledWindows: string[] = [];
 
 				if (
 					(account.provider === "anthropic" || account.provider === "codex") &&
@@ -365,6 +370,24 @@ export function createAccountsListHandler(dbOps: DatabaseOperations) {
 					}
 				}
 
+				const usageThrottleSettings = {
+					fiveHourEnabled: config.getUsageThrottlingFiveHourEnabled(),
+					weeklyEnabled: config.getUsageThrottlingWeeklyEnabled(),
+				};
+				if (
+					(usageThrottleSettings.fiveHourEnabled ||
+						usageThrottleSettings.weeklyEnabled) &&
+					fullUsageData
+				) {
+					const usageThrottleStatus = getUsageThrottleStatus(
+						fullUsageData,
+						usageThrottleSettings,
+						now,
+					);
+					usageThrottledUntil = usageThrottleStatus.throttleUntil;
+					usageThrottledWindows = usageThrottleStatus.throttledWindows;
+				}
+
 				// Parse model mappings for OpenAI-compatible, Anthropic-compatible, NanoGPT, and OpenRouter providers
 				let modelMappings: { [key: string]: string } | null = null;
 				if (account.model_mappings) {
@@ -435,13 +458,14 @@ export function createAccountsListHandler(dbOps: DatabaseOperations) {
 					autoRefreshEnabled: account.auto_refresh_enabled === 1,
 					autoPauseOnOverageEnabled:
 						account.auto_pause_on_overage_enabled === 1,
-					peakHoursPauseEnabled: account.peak_hours_pause_enabled === 1,
 					customEndpoint: account.custom_endpoint,
 					modelMappings,
 					usageUtilization,
 					usageWindow,
 					usageData: fullUsageData, // Full usage data for UI
 					usageRateLimitedUntil: usageCache.getRateLimitedUntil(account.id),
+					usageThrottledUntil,
+					usageThrottledWindows,
 					hasRefreshToken:
 						!!account.refresh_token &&
 						account.refresh_token !== account.access_token, // API-key providers store key in both fields
@@ -3143,68 +3167,6 @@ export function createAccountRefreshUsageHandler(dbOps: DatabaseOperations) {
 				error instanceof Error
 					? error
 					: new Error("Failed to refresh usage data"),
-			);
-		}
-	};
-}
-
-/**
- * Toggle per-account Zai peak hours auto-pause
- */
-export function createAccountPeakHoursPauseHandler(dbOps: DatabaseOperations) {
-	return async (req: Request, accountId: string): Promise<Response> => {
-		try {
-			const body = await req.json();
-
-			const enabled = validateNumber(body.enabled, "enabled", {
-				required: true,
-				allowedValues: [0, 1] as const,
-			});
-
-			if (enabled === undefined) {
-				return errorResponse(BadRequest("Enabled field is required (0 or 1)"));
-			}
-
-			const db = dbOps.getAdapter();
-			const account = await db.get<{ name: string; provider: string }>(
-				"SELECT name, provider FROM accounts WHERE id = ?",
-				[accountId],
-			);
-
-			if (!account) {
-				return errorResponse(NotFound("Account not found"));
-			}
-
-			if (account.provider !== "zai") {
-				return errorResponse(
-					BadRequest(
-						"Peak hours auto-pause is only available for Zai accounts",
-					),
-				);
-			}
-
-			await dbOps.setPeakHoursPauseEnabled(accountId, enabled === 1);
-
-			if (enabled === 0) {
-				// Immediate resume — don't make users wait for the scheduler
-				await db.run(
-					"UPDATE accounts SET paused = 0, pause_reason = NULL WHERE id = ? AND COALESCE(paused, 0) = 1 AND pause_reason = 'peak_hours'",
-					[accountId],
-				);
-			}
-
-			const action = enabled === 1 ? "enabled" : "disabled";
-			return jsonResponse({
-				success: true,
-				message: `Peak hours auto-pause ${action} for account '${account.name}'`,
-				peakHoursPauseEnabled: enabled === 1,
-			});
-		} catch (error) {
-			log.error("Account peak-hours-pause toggle error:", error);
-			return errorResponse(
-				error instanceof Error
-					? error
-					: new Error("Failed to toggle peak-hours-pause"),
 			);
 		}
 	};

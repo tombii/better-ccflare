@@ -479,16 +479,6 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		await this.accounts.setAutoPauseOnOverageEnabled(accountId, enabled);
 	}
 
-	async setPeakHoursPauseEnabled(
-		accountId: string,
-		enabled: boolean,
-	): Promise<void> {
-		await this.adapter.run(
-			"UPDATE accounts SET peak_hours_pause_enabled = ? WHERE id = ?",
-			[enabled ? 1 : 0, accountId],
-		);
-	}
-
 	async hasAccountsForProvider(provider: string): Promise<boolean> {
 		return this.accounts.hasAccountsForProvider(provider);
 	}

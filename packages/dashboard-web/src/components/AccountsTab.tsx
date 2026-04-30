@@ -500,18 +500,6 @@ export function AccountsTab() {
 		}
 	};
 
-	const handlePeakHoursPauseToggle = async (account: Account) => {
-		try {
-			await api.updateAccountPeakHoursPause(
-				account.id,
-				!account.peakHoursPauseEnabled,
-			);
-			await loadAccounts();
-		} catch (err) {
-			setActionError(formatError(err));
-		}
-	};
-
 	if (loading) {
 		return (
 			<Card>
@@ -592,7 +580,6 @@ export function AccountsTab() {
 						onAutoRefreshToggle={handleAutoRefreshToggle}
 						onBillingTypeToggle={handleBillingTypeToggle}
 						onAutoPauseOnOverageToggle={handleAutoPauseOnOverageToggle}
-						onPeakHoursPauseToggle={handlePeakHoursPauseToggle}
 						onCustomEndpointChange={handleCustomEndpointChange}
 						onModelMappingsChange={handleModelMappingsChange}
 						onReauth={handleReauth}

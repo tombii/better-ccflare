@@ -18,6 +18,11 @@ import { resolveConfigPath } from "./paths";
 
 const log = new Logger("Config");
 
+function parseEnabledEnvFlag(value: string | undefined): boolean | undefined {
+	if (value === undefined) return undefined;
+	return value === "true" || value === "1";
+}
+
 export interface RuntimeConfig {
 	clientId: string;
 	retry: { attempts: number; delayMs: number; backoff: number };
@@ -54,6 +59,8 @@ export interface ConfigData {
 	usage_poll_interval_ms?: number;
 	cache_keepalive_ttl_minutes?: number;
 	system_prompt_cache_ttl_1h?: boolean;
+	usage_throttling_five_hour_enabled?: boolean;
+	usage_throttling_weekly_enabled?: boolean;
 	// Database configuration
 	db_wal_mode?: boolean;
 	db_busy_timeout_ms?: number;
@@ -366,6 +373,38 @@ export class Config extends EventEmitter {
 		this.set("system_prompt_cache_ttl_1h", value);
 	}
 
+	getUsageThrottlingFiveHourEnabled(): boolean {
+		const fromEnv = parseEnabledEnvFlag(
+			process.env.USAGE_THROTTLING_FIVE_HOUR_ENABLED,
+		);
+		if (fromEnv !== undefined) {
+			return fromEnv;
+		}
+		const fromFile = this.data.usage_throttling_five_hour_enabled;
+		if (typeof fromFile === "boolean") return fromFile;
+		return false;
+	}
+
+	getUsageThrottlingWeeklyEnabled(): boolean {
+		const fromEnv = parseEnabledEnvFlag(
+			process.env.USAGE_THROTTLING_WEEKLY_ENABLED,
+		);
+		if (fromEnv !== undefined) {
+			return fromEnv;
+		}
+		const fromFile = this.data.usage_throttling_weekly_enabled;
+		if (typeof fromFile === "boolean") return fromFile;
+		return false;
+	}
+
+	setUsageThrottlingFiveHourEnabled(value: boolean): void {
+		this.set("usage_throttling_five_hour_enabled", value);
+	}
+
+	setUsageThrottlingWeeklyEnabled(value: boolean): void {
+		this.set("usage_throttling_weekly_enabled", value);
+	}
+
 	getAllSettings(): Record<string, string | number | boolean | undefined> {
 		// Include current strategy (which might come from env)
 		return {
@@ -378,6 +417,10 @@ export class Config extends EventEmitter {
 			usage_poll_interval_ms: this.getUsagePollIntervalMs(),
 			cache_keepalive_ttl_minutes: this.getCacheKeepaliveTtlMinutes(),
 			system_prompt_cache_ttl_1h: this.getSystemPromptCacheTtl1h(),
+			usage_throttling_five_hour_enabled:
+				this.getUsageThrottlingFiveHourEnabled(),
+			usage_throttling_weekly_enabled:
+				this.getUsageThrottlingWeeklyEnabled(),
 		};
 	}
 

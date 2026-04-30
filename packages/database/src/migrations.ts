@@ -221,15 +221,6 @@ export function ensureSchema(db: Database): void {
 		       ('sonnet', NULL, 0),
 		       ('haiku',  NULL, 0);
 	`);
-
-	// Create settings table for global configuration values
-	db.run(`
-		CREATE TABLE IF NOT EXISTS settings (
-			key        TEXT PRIMARY KEY,
-			value      TEXT NOT NULL,
-			updated_at INTEGER NOT NULL
-		)
-	`);
 }
 
 export function runMigrations(db: Database, dbPath?: string): void {
@@ -460,14 +451,6 @@ export function runMigrations(db: Database, dbPath?: string): void {
 				"ALTER TABLE accounts ADD COLUMN auto_pause_on_overage_enabled INTEGER DEFAULT 0",
 			).run();
 			log.info("Added auto_pause_on_overage_enabled column to accounts table");
-		}
-
-		// Add peak_hours_pause_enabled column for per-account Zai peak hours auto-pause
-		if (!initialAccountsColumnNames.includes("peak_hours_pause_enabled")) {
-			db.prepare(
-				"ALTER TABLE accounts ADD COLUMN peak_hours_pause_enabled INTEGER NOT NULL DEFAULT 0",
-			).run();
-			log.info("Added peak_hours_pause_enabled column to accounts table");
 		}
 
 		// Add pause_reason column to track why an account is paused (issue #139)
@@ -1046,25 +1029,6 @@ export function runMigrations(db: Database, dbPath?: string): void {
 	} catch (error) {
 		log.error(`Database migration failed: ${(error as Error).message}`);
 		throw error; // Re-throw to allow calling code to handle the failure
-	}
-
-	// Idempotent: ensure settings table exists for databases created before this migration
-	const settingsTableExists = (
-		db
-			.prepare(
-				"SELECT name FROM sqlite_master WHERE type='table' AND name='settings'",
-			)
-			.get() as { name: string } | undefined
-	)?.name;
-	if (!settingsTableExists) {
-		db.run(`
-			CREATE TABLE IF NOT EXISTS settings (
-				key        TEXT PRIMARY KEY,
-				value      TEXT NOT NULL,
-				updated_at INTEGER NOT NULL
-			)
-		`);
-		log.info("Created settings table");
 	}
 }
 

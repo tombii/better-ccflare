@@ -103,7 +103,6 @@ export interface AccountRow {
 	auto_fallback_enabled?: boolean | number | null;
 	auto_refresh_enabled?: boolean | number | null;
 	auto_pause_on_overage_enabled?: boolean | number | null;
-	peak_hours_pause_enabled?: boolean | number | null;
 	custom_endpoint?: string | null;
 	model_mappings?: string | null; // JSON string for OpenAI-compatible providers
 	cross_region_mode?: string | null; // Bedrock cross-region inference mode
@@ -137,7 +136,6 @@ export interface Account {
 	auto_fallback_enabled: boolean;
 	auto_refresh_enabled: boolean;
 	auto_pause_on_overage_enabled: boolean;
-	peak_hours_pause_enabled: boolean;
 	custom_endpoint: string | null;
 	model_mappings: string | null; // JSON string for OpenAI-compatible providers
 	cross_region_mode: string | null; // Bedrock cross-region inference mode
@@ -179,13 +177,14 @@ export interface AccountResponse {
 	autoFallbackEnabled: boolean;
 	autoRefreshEnabled: boolean;
 	autoPauseOnOverageEnabled?: boolean;
-	peakHoursPauseEnabled?: boolean;
 	customEndpoint: string | null;
 	modelMappings: { [key: string]: string | string[] } | null; // Parsed model mappings (arrays = cycling models)
 	usageUtilization: number | null; // Percentage utilization (0-100) from API
 	usageWindow: string | null; // Most restrictive window (e.g., "five_hour")
 	usageData: FullUsageData | null; // Full usage data for Anthropic accounts
 	usageRateLimitedUntil: number | null; // Timestamp (ms) until usage API 429 clears; null if not rate-limited
+	usageThrottledUntil: number | null; // Timestamp (ms) until proactive usage throttling clears; null if not throttled
+	usageThrottledWindows: string[]; // Exact usage windows currently being throttled
 	hasRefreshToken: boolean; // Indicates if the account has a refresh token (OAuth account)
 	crossRegionMode?: string | null; // Cross-region inference mode for Bedrock accounts
 	modelFallbacks?: { [key: string]: string } | null;
@@ -304,7 +303,6 @@ export function toAccount(row: AccountRow): Account {
 		auto_fallback_enabled: !!row.auto_fallback_enabled,
 		auto_refresh_enabled: !!row.auto_refresh_enabled,
 		auto_pause_on_overage_enabled: !!row.auto_pause_on_overage_enabled,
-		peak_hours_pause_enabled: !!row.peak_hours_pause_enabled,
 		custom_endpoint: row.custom_endpoint || null,
 		model_mappings: row.model_mappings || null,
 		cross_region_mode: row.cross_region_mode || null,
@@ -395,7 +393,10 @@ export function toAccountResponse(account: Account): AccountResponse {
 		usageWindow: null, // Will be filled in by API handler from cache
 		usageData: null, // Will be filled in by API handler from cache
 		usageRateLimitedUntil: null, // Will be filled in by API handler from cache
+		usageThrottledUntil: null,
+		usageThrottledWindows: [],
 		hasRefreshToken: !!account.refresh_token, // OAuth accounts have refresh tokens
+		crossRegionMode: account.cross_region_mode,
 		modelFallbacks,
 		billingType: account.billing_type,
 		sessionStats: null,

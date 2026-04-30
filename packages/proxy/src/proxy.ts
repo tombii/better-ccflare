@@ -8,8 +8,10 @@ import type { Account } from "@better-ccflare/types";
 import { cacheBodyStore } from "./cache-body-store";
 import {
 	createRequestMetadata,
+	createUsageThrottledResponse,
 	ERROR_MESSAGES,
 	getComboSlotInfo,
+	getUsageThrottleUntil,
 	interceptAndModifyRequest,
 	isRefreshTokenLikelyExpired,
 	type ProxyContext,
@@ -23,6 +25,7 @@ import {
 } from "./handlers";
 import { UsageWorkerController } from "./usage-worker-controller";
 import type { ConfigUpdateMessage, SummaryMessage } from "./worker-messages";
+import { usageCache } from "@better-ccflare/providers";
 
 export type { ProxyContext } from "./handlers";
 
@@ -263,14 +266,57 @@ export async function handleProxy(
 	requestMeta.project = project;
 
 	// 6. Select accounts
-	const accounts = await selectAccountsForRequest(
+	const selectedAccounts = await selectAccountsForRequest(
 		requestMeta,
 		ctx,
 		requestModel ?? undefined,
 	);
 
+	const applyUsageThrottling = (accounts: Account[]) => {
+		const settings = {
+			fiveHourEnabled: ctx.config.getUsageThrottlingFiveHourEnabled(),
+			weeklyEnabled: ctx.config.getUsageThrottlingWeeklyEnabled(),
+		};
+		if (!settings.fiveHourEnabled && !settings.weeklyEnabled) {
+			return { available: accounts, throttled: [] as Account[] };
+		}
+
+		const now = Date.now();
+		const available: Account[] = [];
+		const throttled: Account[] = [];
+
+		for (const account of accounts) {
+			const throttleUntil = getUsageThrottleUntil(
+				usageCache.get(account.id),
+				settings,
+				now,
+			);
+			if (throttleUntil && throttleUntil > now) {
+				throttled.push(account);
+				continue;
+			}
+			available.push(account);
+		}
+
+		if (throttled.length > 0) {
+			log.info(
+				`Usage-throttled ${throttled.length} account(s): ${throttled.map((account) => account.name).join(", ")}`,
+			);
+		}
+
+		return { available, throttled };
+	};
+
+	const {
+		available: accounts,
+		throttled: throttledAccounts,
+	} = applyUsageThrottling(selectedAccounts);
+
 	// 7. Handle no accounts case
 	if (accounts.length === 0) {
+		if (throttledAccounts.length > 0) {
+			return createUsageThrottledResponse(throttledAccounts);
+		}
 		return proxyUnauthenticated(
 			req,
 			url,
@@ -297,13 +343,22 @@ export async function handleProxy(
 
 	// 9. Try each account
 	const comboInfo = getComboSlotInfo(requestMeta);
+	const allowedAccountIds = new Set(accounts.map((account) => account.id));
+	const filteredComboInfo = comboInfo
+		? {
+				...comboInfo,
+				slots: comboInfo.slots.filter((slot) =>
+					allowedAccountIds.has(slot.accountId),
+				),
+		  }
+		: null;
 	let response: Response | null = null;
 
 	for (let i = 0; i < accounts.length; i++) {
 		// For combo routing: enrich metadata with slot index and look up model override
 		let modelOverride: string | null = null;
-		if (comboInfo?.slots[i]) {
-			const slot = comboInfo.slots[i];
+		if (filteredComboInfo?.slots[i]) {
+			const slot = filteredComboInfo.slots[i];
 			if (slot.accountId !== accounts[i].id) {
 				log.error(
 					`Combo slot/account desync: slot ${i} expects account ${slot.accountId} but got ${accounts[i].id}`,
@@ -337,7 +392,7 @@ export async function handleProxy(
 		}
 
 		// Log combo slot failure
-		if (comboInfo) {
+		if (filteredComboInfo) {
 			log.info(
 				`Combo slot ${i} failed on account ${accounts[i].name}${i < accounts.length - 1 ? ", trying next slot" : ", all combo slots exhausted"}`,
 			);
@@ -347,14 +402,22 @@ export async function handleProxy(
 	// 10. Combo fallback: if combo routing was active and all slots failed,
 	//     fall back to normal SessionStrategy routing (REQ-14)
 	let fallbackAccounts: Account[] | null = null;
-	if (comboInfo?.comboName) {
+	if (filteredComboInfo?.comboName) {
 		log.warn(
-			`All combo slots failed for combo "${comboInfo.comboName}", falling back to SessionStrategy routing`,
+			`All combo slots failed for combo "${filteredComboInfo.comboName}", falling back to SessionStrategy routing`,
 		);
 		// Clear combo info and retry with normal routing
 		requestMeta.comboName = null;
 		requestMeta.comboSlotIndex = null;
-		fallbackAccounts = await selectAccountsForRequest(requestMeta, ctx);
+		const selectedFallbackAccounts = await selectAccountsForRequest(
+			requestMeta,
+			ctx,
+		);
+		const {
+			available: filteredFallbackAccounts,
+			throttled: throttledFallbackAccounts,
+		} = applyUsageThrottling(selectedFallbackAccounts);
+		fallbackAccounts = filteredFallbackAccounts;
 
 		if (fallbackAccounts.length > 0) {
 			log.info(
@@ -380,11 +443,13 @@ export async function handleProxy(
 					return response;
 				}
 			}
+		} else if (throttledFallbackAccounts.length > 0) {
+			return createUsageThrottledResponse(throttledFallbackAccounts);
 		}
 	}
 
 	// 11. All accounts failed - check if OAuth token issues are the cause
-	const allAttemptedAccounts = comboInfo
+	const allAttemptedAccounts = filteredComboInfo
 		? [...accounts, ...(fallbackAccounts ?? [])]
 		: accounts;
 	const oauthAccounts = allAttemptedAccounts.filter((acc) => acc.refresh_token);
