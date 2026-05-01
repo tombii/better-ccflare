@@ -178,6 +178,7 @@ export function transformStreamingResponse(response: Response): Response {
 					hasSentStart: false,
 					hasSentContentBlockStart: false,
 					hasSentThinkingBlockStart: false,
+					thinkingBlockClosed: false,
 					thinkingBlockIndex: 0,
 					textBlockIndex: 0,
 					promptTokens: 0,
@@ -368,6 +369,25 @@ export function transformStreamingResponse(response: Response): Response {
 											);
 											continue;
 										}
+										// Close thinking block before first tool block if not already closed
+										if (
+											context.hasSentThinkingBlockStart &&
+											!context.thinkingBlockClosed
+										) {
+											context.thinkingBlockClosed = true;
+											const thinkingStop = {
+												type: "content_block_stop",
+												index: context.thinkingBlockIndex,
+											};
+											controller.enqueue(
+												encoder.encode(`event: content_block_stop\n`),
+											);
+											controller.enqueue(
+												encoder.encode(
+													`data: ${JSON.stringify(thinkingStop)}\n\n`,
+												),
+											);
+										}
 										context.toolCallAccumulators[idx] = "";
 										const anthropicBlockIdx = context.nextBlockIndex++;
 										context.toolCallBlockIndices[idx] = anthropicBlockIdx;
@@ -450,7 +470,8 @@ export function transformStreamingResponse(response: Response): Response {
 									context.textBlockIndex = context.nextBlockIndex++;
 
 									// Close thinking block first if one was emitted
-									if (context.hasSentThinkingBlockStart) {
+									if (context.hasSentThinkingBlockStart && !context.thinkingBlockClosed) {
+										context.thinkingBlockClosed = true;
 										const thinkingStop = {
 											type: "content_block_stop",
 											index: context.thinkingBlockIndex,
