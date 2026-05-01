@@ -154,12 +154,25 @@ export interface TransformStreamContext {
 	hasSentStart: boolean;
 	hasSentContentBlockStart: boolean;
 	hasSentThinkingBlockStart: boolean;
+	/** Anthropic block index for the thinking block (assigned by nextBlockIndex). */
+	thinkingBlockIndex: number;
+	/** Index of the text content block in the Anthropic stream (assigned by nextBlockIndex). */
+	textBlockIndex: number;
 	promptTokens: number;
 	completionTokens: number;
 	cacheReadInputTokens: number;
 	cacheCreationInputTokens: number;
 	encounteredToolCall: boolean;
 	toolCallAccumulators: Record<number, string>;
+	/**
+	 * Monotonic counter for Anthropic content_block indices.
+	 * Each new content block (text, thinking, tool_use) gets the next value.
+	 * OpenAI tool_calls[].index is used only to identify the accumulator slot,
+	 * NOT as the Anthropic block index.
+	 */
+	nextBlockIndex: number;
+	/** Maps OpenAI tool_call delta index → Anthropic content_block index. */
+	toolCallBlockIndices: Record<number, number>;
 	maxToolCallLength: number;
 	maxToolCallIndex: number;
 }

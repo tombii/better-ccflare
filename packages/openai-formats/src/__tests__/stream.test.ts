@@ -847,3 +847,198 @@ describe("transformStreamingResponse — response metadata", () => {
 		expect(transformed.status).toBe(200);
 	});
 });
+
+// ── transformStreamingResponse — block index collision ───────────────────────
+
+describe("transformStreamingResponse — block index assignment", () => {
+	it("text-only: text block gets index 0", async () => {
+		const upstream = makeOpenAIStream([
+			JSON.stringify({
+				id: "c1",
+				model: "gpt-4",
+				choices: [
+					{ index: 0, delta: { content: "Hello" }, finish_reason: null },
+				],
+			}),
+			"[DONE]",
+		]);
+		const transformed = transformStreamingResponse(upstream);
+		const raw = await readStream(transformed.body!);
+		const events = parseSSEEvents(raw);
+		const textStart = events.find(
+			(e) =>
+				e.event === "content_block_start" &&
+				JSON.parse(e.data!).content_block?.type === "text",
+		);
+		expect(textStart).toBeDefined();
+		expect(JSON.parse(textStart?.data!).index).toBe(0);
+
+		const textDeltas = events.filter(
+			(e) =>
+				e.event === "content_block_delta" &&
+				JSON.parse(e.data!).delta?.type === "text_delta",
+		);
+		for (const d of textDeltas) {
+			expect(JSON.parse(d.data!).index).toBe(0);
+		}
+	});
+
+	it("tool-only: first tool call (OpenAI index 0) gets Anthropic block index 0", async () => {
+		const upstream = makeOpenAIStream([
+			JSON.stringify({
+				id: "c1",
+				model: "gpt-4",
+				choices: [
+					{
+						index: 0,
+						delta: {
+							tool_calls: [
+								{
+									index: 0,
+									id: "call_abc",
+									type: "function",
+									function: { name: "search", arguments: '{"q":"test"}' },
+								},
+							],
+						},
+						finish_reason: null,
+					},
+				],
+			}),
+			"[DONE]",
+		]);
+		const transformed = transformStreamingResponse(upstream);
+		const raw = await readStream(transformed.body!);
+		const events = parseSSEEvents(raw);
+		const toolStart = events.find(
+			(e) =>
+				e.event === "content_block_start" &&
+				JSON.parse(e.data!).content_block?.type === "tool_use",
+		);
+		expect(toolStart).toBeDefined();
+		expect(JSON.parse(toolStart?.data!).index).toBe(0);
+	});
+
+	it("text then tool: text gets index 0, tool gets index 1 — no collision", async () => {
+		// OpenAI sends text content first, then tool_calls[0] — both naively map to index 0.
+		// The fix ensures the tool call is assigned the next monotonic block index (1).
+		const upstream = makeOpenAIStream([
+			JSON.stringify({
+				id: "c1",
+				model: "gpt-4",
+				choices: [
+					{ index: 0, delta: { content: "thinking..." }, finish_reason: null },
+				],
+			}),
+			JSON.stringify({
+				id: "c1",
+				model: "gpt-4",
+				choices: [
+					{
+						index: 0,
+						delta: {
+							tool_calls: [
+								{
+									index: 0,
+									id: "call_xyz",
+									type: "function",
+									function: { name: "lookup", arguments: '{"id":1}' },
+								},
+							],
+						},
+						finish_reason: null,
+					},
+				],
+			}),
+			"[DONE]",
+		]);
+		const transformed = transformStreamingResponse(upstream);
+		const raw = await readStream(transformed.body!);
+		const events = parseSSEEvents(raw);
+
+		const textStart = events.find(
+			(e) =>
+				e.event === "content_block_start" &&
+				JSON.parse(e.data!).content_block?.type === "text",
+		);
+		const toolStart = events.find(
+			(e) =>
+				e.event === "content_block_start" &&
+				JSON.parse(e.data!).content_block?.type === "tool_use",
+		);
+
+		expect(textStart).toBeDefined();
+		expect(toolStart).toBeDefined();
+
+		const textIdx = JSON.parse(textStart?.data!).index;
+		const toolIdx = JSON.parse(toolStart?.data!).index;
+
+		// Indices must be distinct — no collision
+		expect(textIdx).not.toBe(toolIdx);
+		// Text block came first: index 0; tool block came second: index 1
+		expect(textIdx).toBe(0);
+		expect(toolIdx).toBe(1);
+
+		// The input_json_delta must carry the same Anthropic index as the tool block_start
+		const jsonDelta = events.find(
+			(e) =>
+				e.event === "content_block_delta" &&
+				JSON.parse(e.data!).delta?.type === "input_json_delta",
+		);
+		expect(jsonDelta).toBeDefined();
+		expect(JSON.parse(jsonDelta?.data!).index).toBe(toolIdx);
+
+		// The content_block_stop for the tool must match too
+		const stops = events.filter((e) => e.event === "content_block_stop");
+		const stopIndices = stops.map((e) => JSON.parse(e.data!).index);
+		expect(stopIndices).toContain(toolIdx);
+	});
+
+	it("multiple tool calls: each gets a distinct monotonic Anthropic block index", async () => {
+		const upstream = makeOpenAIStream([
+			JSON.stringify({
+				id: "c1",
+				model: "gpt-4",
+				choices: [
+					{
+						index: 0,
+						delta: {
+							tool_calls: [
+								{
+									index: 0,
+									id: "call_a",
+									type: "function",
+									function: { name: "search", arguments: '{"q":"a"}' },
+								},
+								{
+									index: 1,
+									id: "call_b",
+									type: "function",
+									function: { name: "lookup", arguments: '{"id":"1"}' },
+								},
+							],
+						},
+						finish_reason: null,
+					},
+				],
+			}),
+			"[DONE]",
+		]);
+		const transformed = transformStreamingResponse(upstream);
+		const raw = await readStream(transformed.body!);
+		const events = parseSSEEvents(raw);
+
+		const toolStarts = events.filter(
+			(e) =>
+				e.event === "content_block_start" &&
+				JSON.parse(e.data!).content_block?.type === "tool_use",
+		);
+		expect(toolStarts).toHaveLength(2);
+
+		const indices = toolStarts.map((e) => JSON.parse(e.data!).index);
+		// All indices must be unique
+		expect(new Set(indices).size).toBe(2);
+		// Must be 0 and 1 (monotonically assigned)
+		expect(indices.sort()).toEqual([0, 1]);
+	});
+});
