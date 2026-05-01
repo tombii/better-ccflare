@@ -242,6 +242,12 @@ export function transformStreamingResponse(response: Response): Response {
 									context.cacheCreationInputTokens,
 								);
 							} else if (context.hasSentContentBlockStart) {
+								// If text block was closed mid-stream (content→thinking transition),
+								// close the thinking block instead
+								const lastBlockIndex =
+									context.textBlockClosed
+										? context.thinkingBlockIndex
+										: context.textBlockIndex;
 								emitStreamEnd(
 									controller,
 									encoder,
@@ -251,7 +257,7 @@ export function transformStreamingResponse(response: Response): Response {
 									null,
 									context.cacheReadInputTokens,
 									context.cacheCreationInputTokens,
-									context.textBlockIndex,
+									lastBlockIndex,
 								);
 							} else if (context.hasSentThinkingBlockStart) {
 								// Reasoning-only stream: emitStreamEnd closes block via end_turn branch
@@ -448,6 +454,22 @@ export function transformStreamingResponse(response: Response): Response {
 								// Map to Anthropic thinking block using monotonic nextBlockIndex.
 								if (!context.hasSentThinkingBlockStart) {
 									context.hasSentThinkingBlockStart = true;
+									// Close text block first if one was already emitted
+									if (context.hasSentContentBlockStart && !context.textBlockClosed) {
+										context.textBlockClosed = true;
+										const textStop = {
+											type: "content_block_stop",
+											index: context.textBlockIndex,
+										};
+										controller.enqueue(
+											encoder.encode(`event: content_block_stop\n`),
+										);
+										controller.enqueue(
+											encoder.encode(
+												`data: ${JSON.stringify(textStop)}\n\n`,
+											),
+										);
+									}
 									context.thinkingBlockIndex = context.nextBlockIndex++;
 									const thinkingBlockStart = {
 										type: "content_block_start",
@@ -584,7 +606,11 @@ export function transformStreamingResponse(response: Response): Response {
 					context.hasSentContentBlockStart &&
 					!context.encounteredToolCall
 				) {
-					log.warn("Stream terminated without [DONE] — closing text block");
+					log.warn("Stream terminated without [DONE] — closing last open block");
+					const lastBlockIndex =
+						context.textBlockClosed
+							? context.thinkingBlockIndex
+							: context.textBlockIndex;
 					emitStreamEnd(
 						controller,
 						encoder,
@@ -594,7 +620,7 @@ export function transformStreamingResponse(response: Response): Response {
 						null,
 						context.cacheReadInputTokens,
 						context.cacheCreationInputTokens,
-						context.textBlockIndex,
+						lastBlockIndex,
 					);
 				} else if (context.hasSentThinkingBlockStart) {
 					log.warn(
