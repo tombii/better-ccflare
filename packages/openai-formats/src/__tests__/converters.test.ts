@@ -8,6 +8,7 @@ import type {
 	AnthropicRequest,
 	AnthropicResponse,
 	OpenAIResponse,
+	OpenAIToolChoice,
 } from "../types";
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -82,6 +83,7 @@ describe("convertAnthropicRequestToOpenAI — basic fields", () => {
 			anthropicRequest({ max_tokens: 512 }),
 		);
 		expect(result.max_tokens).toBe(512);
+		expect(result.max_completion_tokens).toBeUndefined();
 	});
 
 	it("passes temperature through", () => {
@@ -296,6 +298,103 @@ describe("convertAnthropicRequestToOpenAI — messages conversion", () => {
 		expect(toolMsg?.tool_call_id).toBe("tool_1");
 		expect(toolMsg?.content).toBe("Sunny, 22°C");
 	});
+
+	it("sets reasoning_content from a single thinking block", () => {
+		const result = convertAnthropicRequestToOpenAI(
+			anthropicRequest({
+				messages: [
+					{
+						role: "assistant",
+						content: [
+							{ type: "thinking", thinking: "Let me reason about this." },
+							{ type: "text", text: "The answer is 42." },
+						],
+					},
+				],
+			}),
+		);
+		const assistantMsg = result.messages.find((m) => m.role === "assistant");
+		expect(assistantMsg?.reasoning_content).toBe("Let me reason about this.");
+		expect(assistantMsg?.content).toBe("The answer is 42.");
+	});
+
+	it("concatenates multiple thinking blocks into reasoning_content", () => {
+		const result = convertAnthropicRequestToOpenAI(
+			anthropicRequest({
+				messages: [
+					{
+						role: "assistant",
+						content: [
+							{ type: "thinking", thinking: "Step one." },
+							{ type: "thinking", thinking: " Step two." },
+							{ type: "text", text: "Done." },
+						],
+					},
+				],
+			}),
+		);
+		const assistantMsg = result.messages.find((m) => m.role === "assistant");
+		expect(assistantMsg?.reasoning_content).toBe("Step one. Step two.");
+	});
+
+	it("omits reasoning_content when no thinking blocks present", () => {
+		const result = convertAnthropicRequestToOpenAI(
+			anthropicRequest({
+				messages: [
+					{
+						role: "assistant",
+						content: [{ type: "text", text: "Plain answer." }],
+					},
+				],
+			}),
+		);
+		const assistantMsg = result.messages.find((m) => m.role === "assistant");
+		expect(assistantMsg?.reasoning_content).toBeUndefined();
+	});
+
+	it("preserves thinking-only assistant message with empty content", () => {
+		const result = convertAnthropicRequestToOpenAI(
+			anthropicRequest({
+				messages: [
+					{
+						role: "assistant",
+						content: [
+							{ type: "thinking", thinking: "Only thinking, no text." },
+						],
+					},
+				],
+			}),
+		);
+		const assistantMsgs = result.messages.filter((m) => m.role === "assistant");
+		expect(assistantMsgs).toHaveLength(1);
+		expect(assistantMsgs[0]?.content).toBe("");
+		expect(assistantMsgs[0]?.reasoning_content).toBe("Only thinking, no text.");
+	});
+
+	it("sets reasoning_content alongside tool_calls when both are present", () => {
+		const result = convertAnthropicRequestToOpenAI(
+			anthropicRequest({
+				messages: [
+					{
+						role: "assistant",
+						content: [
+							{ type: "thinking", thinking: "I should call the tool." },
+							{
+								type: "tool_use",
+								id: "tool_2",
+								name: "calculator",
+								input: { expr: "2+2" },
+							},
+						],
+					},
+				],
+			}),
+		);
+		const assistantMsg = result.messages.find((m) => m.role === "assistant");
+		expect(assistantMsg?.reasoning_content).toBe("I should call the tool.");
+		expect(assistantMsg?.tool_calls).toHaveLength(1);
+		expect(assistantMsg?.tool_calls?.[0]?.function.name).toBe("calculator");
+	});
 });
 
 describe("convertAnthropicRequestToOpenAI — tools", () => {
@@ -381,6 +480,171 @@ describe("convertAnthropicRequestToOpenAI — tools", () => {
 	});
 });
 
+// ── convertAnthropicRequestToOpenAI — tool_choice ────────────────────────────
+
+describe("convertAnthropicRequestToOpenAI — tool_choice", () => {
+	const withTool = { tools: [{ name: "foo", description: "a tool" }] };
+
+	it('maps {type:"auto"} → "auto"', () => {
+		const result = convertAnthropicRequestToOpenAI(
+			anthropicRequest({ ...withTool, tool_choice: { type: "auto" } }),
+		);
+		expect(result.tool_choice).toBe("auto");
+	});
+
+	it('maps {type:"any"} → "required"', () => {
+		const result = convertAnthropicRequestToOpenAI(
+			anthropicRequest({ ...withTool, tool_choice: { type: "any" } }),
+		);
+		expect(result.tool_choice).toBe("required");
+	});
+
+	it('maps {type:"none"} → "none"', () => {
+		const result = convertAnthropicRequestToOpenAI(
+			anthropicRequest({ ...withTool, tool_choice: { type: "none" } }),
+		);
+		expect(result.tool_choice).toBe("none");
+	});
+
+	it('maps {type:"tool",name:"foo"} → {type:"function",function:{name:"foo"}}', () => {
+		const result = convertAnthropicRequestToOpenAI(
+			anthropicRequest({ ...withTool, tool_choice: { type: "tool", name: "foo" } }),
+		);
+		expect(result.tool_choice).toEqual({
+			type: "function",
+			function: { name: "foo" },
+		} satisfies OpenAIToolChoice);
+	});
+
+	it("omits tool_choice when not set", () => {
+		const result = convertAnthropicRequestToOpenAI(anthropicRequest());
+		expect(result.tool_choice).toBeUndefined();
+	});
+
+	it("omits tool_choice when tools array absent", () => {
+		const result = convertAnthropicRequestToOpenAI(
+			anthropicRequest({ tool_choice: { type: "any" } }),
+		);
+		expect(result.tool_choice).toBeUndefined();
+	});
+});
+
+// ── convertAnthropicRequestToOpenAI — multi-content tool results ──────────────
+
+describe("convertAnthropicRequestToOpenAI — multi-content tool results", () => {
+	it("passes through string tool result content unchanged", () => {
+		const result = convertAnthropicRequestToOpenAI(
+			anthropicRequest({
+				messages: [
+					{
+						role: "user",
+						content: [
+							{
+								type: "tool_result",
+								tool_use_id: "tool_1",
+								content: "plain string result",
+							},
+						],
+					},
+				],
+			}),
+		);
+		const toolMsg = result.messages.find((m) => m.role === "tool");
+		expect(toolMsg?.content).toBe("plain string result");
+	});
+
+	it("joins multiple text blocks in array tool result", () => {
+		const result = convertAnthropicRequestToOpenAI(
+			anthropicRequest({
+				messages: [
+					{
+						role: "user",
+						content: [
+							{
+								type: "tool_result",
+								tool_use_id: "tool_1",
+								content: [
+									{ type: "text", text: "First line." },
+									{ type: "text", text: "Second line." },
+								],
+							},
+						],
+					},
+				],
+			}),
+		);
+		const toolMsg = result.messages.find((m) => m.role === "tool");
+		expect(toolMsg?.content).toBe("First line.\nSecond line.");
+	});
+
+	it("replaces image blocks with placeholder text", () => {
+		const result = convertAnthropicRequestToOpenAI(
+			anthropicRequest({
+				messages: [
+					{
+						role: "user",
+						content: [
+							{
+								type: "tool_result",
+								tool_use_id: "tool_1",
+								content: [
+									{ type: "text", text: "Here is the image:" },
+									{
+										type: "image",
+										source: {
+											type: "base64",
+											media_type: "image/png",
+											data: "abc123",
+										},
+									},
+								],
+							},
+						],
+					},
+				],
+			}),
+		);
+		const toolMsg = result.messages.find((m) => m.role === "tool");
+		expect(toolMsg?.content).toContain("Here is the image:");
+		expect(toolMsg?.content).toContain(
+			"[image content not supported in OpenAI tool results]",
+		);
+	});
+
+	it("handles array with only an image block", () => {
+		const result = convertAnthropicRequestToOpenAI(
+			anthropicRequest({
+				messages: [
+					{
+						role: "user",
+						content: [
+							{
+								type: "tool_result",
+								tool_use_id: "tool_2",
+								content: [
+									{
+										type: "image",
+										source: {
+											type: "base64",
+											media_type: "image/jpeg",
+											data: "xyz",
+										},
+									},
+								],
+							},
+						],
+					},
+				],
+			}),
+		);
+		const toolMsg = result.messages.find((m) => m.role === "tool");
+		expect(toolMsg?.content).toBe(
+			"[image content not supported in OpenAI tool results]",
+		);
+		expect(toolMsg?.tool_call_id).toBe("tool_2");
+	});
+});
+
 // ── convertOpenAIResponseToAnthropic ─────────────────────────────────────────
 
 describe("convertOpenAIResponseToAnthropic — success cases", () => {
@@ -399,7 +663,7 @@ describe("convertOpenAIResponseToAnthropic — success cases", () => {
 
 	it("maps finish_reason stop → end_turn", () => {
 		const result = convertOpenAIResponseToAnthropic(openaiTextResponse());
-		expect((result as any).stop_reason).toBe("end_turn");
+		expect(result.stop_reason).toBe("end_turn");
 	});
 
 	it("maps finish_reason length → max_tokens", () => {
@@ -414,7 +678,7 @@ describe("convertOpenAIResponseToAnthropic — success cases", () => {
 				],
 			}),
 		);
-		expect((result as any).stop_reason).toBe("max_tokens");
+		expect(result.stop_reason).toBe("max_tokens");
 	});
 
 	it("maps finish_reason tool_calls → tool_use", () => {
@@ -439,7 +703,7 @@ describe("convertOpenAIResponseToAnthropic — success cases", () => {
 				],
 			}),
 		);
-		expect((result as any).stop_reason).toBe("tool_use");
+		expect(result.stop_reason).toBe("tool_use");
 		const content = (result as any).content as Array<{
 			type: string;
 			id: string;
@@ -450,6 +714,21 @@ describe("convertOpenAIResponseToAnthropic — success cases", () => {
 		expect(toolBlock).toBeDefined();
 		expect(toolBlock?.name).toBe("search");
 		expect(toolBlock?.input).toEqual({ q: "bun" });
+	});
+
+	it("maps finish_reason content_filter → end_turn", () => {
+		const result = convertOpenAIResponseToAnthropic(
+			openaiTextResponse({
+				choices: [
+					{
+						index: 0,
+						message: { role: "assistant", content: "Filtered" },
+						finish_reason: "content_filter",
+					},
+				],
+			}),
+		);
+		expect(result.stop_reason).toBe("end_turn");
 	});
 
 	it("maps token usage to input_tokens / output_tokens", () => {

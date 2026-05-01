@@ -2,10 +2,12 @@ import { mapModelName } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import type { Account } from "@better-ccflare/types";
 import type {
+	AnthropicContent,
 	AnthropicContentBlock,
 	AnthropicRequest,
 	AnthropicResponse,
 	AnthropicTextContent,
+	AnthropicThinkingContent,
 	AnthropicToolResult,
 	AnthropicToolUse,
 	OpenAIMessage,
@@ -84,6 +86,23 @@ export function convertAnthropicRequestToOpenAI(
 		}));
 	}
 
+	// Convert tool_choice — only emit when tools are present (OpenAI spec requirement)
+	if (anthropicData.tool_choice !== undefined && openaiRequest.tools?.length) {
+		const tc = anthropicData.tool_choice;
+		if (tc.type === "auto") {
+			openaiRequest.tool_choice = "auto";
+		} else if (tc.type === "any") {
+			openaiRequest.tool_choice = "required";
+		} else if (tc.type === "none") {
+			openaiRequest.tool_choice = "none";
+		} else if (tc.type === "tool") {
+			openaiRequest.tool_choice = {
+				type: "function",
+				function: { name: tc.name },
+			};
+		}
+	}
+
 	// Handle system message (Anthropic has it as top-level, OpenAI has it in messages array)
 	const messages: OpenAIMessage[] = [];
 	if (anthropicData.system) {
@@ -134,6 +153,12 @@ export function convertAnthropicRequestToOpenAI(
 				);
 				const hasCacheControl = textBlocks.some((part) => part.cache_control);
 
+				// Extract thinking blocks — needed for DeepSeek/reasoning providers
+				// that require reasoning_content to be passed back in conversation history
+				const thinkingBlocks = message.content.filter(
+					(part): part is AnthropicThinkingContent => part.type === "thinking",
+				);
+
 				let content: OpenAIMessage["content"];
 				if (hasCacheControl) {
 					content = textBlocks.map((part) => {
@@ -166,20 +191,67 @@ export function convertAnthropicRequestToOpenAI(
 					}));
 				}
 
-				if (openaiMessage.content || openaiMessage.tool_calls) {
-					messages.push(openaiMessage);
+				// Pass reasoning_content back for providers that require it (e.g. DeepSeek)
+				if (thinkingBlocks.length > 0) {
+					openaiMessage.reasoning_content = thinkingBlocks
+						.map((b) => b.thinking)
+						.join("");
 				}
 
-				// Handle tool_result blocks as separate 'tool' role messages
+				// Handle tool_result blocks as separate 'tool' role messages.
+				// Must be pushed BEFORE any accompanying text content so that
+				// tool messages immediately follow the assistant's tool_calls message
+				// (required by DeepSeek and OpenAI spec).
 				const toolResults = message.content.filter(
 					(item): item is AnthropicToolResult => item.type === "tool_result",
 				);
 				for (const toolResult of toolResults) {
+					let toolContent: string;
+					if (typeof toolResult.content === "string") {
+						toolContent = toolResult.content;
+					} else if (Array.isArray(toolResult.content)) {
+						// Array content: serialize non-image items; drop images (not supported in OpenAI tool messages)
+						const parts: string[] = [];
+						for (const block of toolResult.content as AnthropicContent[]) {
+							if (block.type === "text") {
+								parts.push(block.text);
+							} else if (block.type === "image") {
+								// OpenAI tool messages don't support image content — drop with placeholder
+								parts.push(
+									"[image content not supported in OpenAI tool results]",
+								);
+							} else {
+								// Other structured blocks (tool_use, tool_result, etc.) — serialize as JSON
+								parts.push(JSON.stringify(block));
+							}
+						}
+						toolContent = parts.join("\n");
+					} else {
+						toolContent = "";
+					}
 					messages.push({
 						role: "tool",
-						content: toolResult.content,
+						content: toolContent,
 						tool_call_id: toolResult.tool_use_id,
 					});
+				}
+
+				if (
+					openaiMessage.content === null &&
+					!openaiMessage.tool_calls &&
+					thinkingBlocks.length > 0
+				) {
+					// Preserve thinking-only assistant turns while keeping
+					// OpenAI assistant content non-null.
+					openaiMessage.content = "";
+				}
+
+				if (
+					(openaiMessage.content !== null &&
+						openaiMessage.content !== undefined) ||
+					openaiMessage.tool_calls
+				) {
+					messages.push(openaiMessage);
 				}
 			} else {
 				// Simple string content
