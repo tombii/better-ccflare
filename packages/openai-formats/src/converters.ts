@@ -210,7 +210,7 @@ export function convertAnthropicRequestToOpenAI(
 					let toolContent: string;
 					if (typeof toolResult.content === "string") {
 						toolContent = toolResult.content;
-					} else {
+					} else if (Array.isArray(toolResult.content)) {
 						// Array content: serialize non-image items; drop images (not supported in OpenAI tool messages)
 						const parts: string[] = [];
 						for (const block of toolResult.content as AnthropicContent[]) {
@@ -227,6 +227,8 @@ export function convertAnthropicRequestToOpenAI(
 							}
 						}
 						toolContent = parts.join("\n");
+					} else {
+						toolContent = "";
 					}
 					messages.push({
 						role: "tool",
