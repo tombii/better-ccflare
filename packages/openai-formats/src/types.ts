@@ -155,6 +155,7 @@ export interface TransformStreamContext {
 	hasSentContentBlockStart: boolean;
 	hasSentThinkingBlockStart: boolean;
 	thinkingBlockClosed: boolean;
+	textBlockClosed: boolean;
 	/** Anthropic block index for the thinking block (assigned by nextBlockIndex). */
 	thinkingBlockIndex: number;
 	/** Index of the text content block in the Anthropic stream (assigned by nextBlockIndex). */

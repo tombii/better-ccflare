@@ -179,6 +179,7 @@ export function transformStreamingResponse(response: Response): Response {
 					hasSentContentBlockStart: false,
 					hasSentThinkingBlockStart: false,
 					thinkingBlockClosed: false,
+					textBlockClosed: false,
 					thinkingBlockIndex: 0,
 					textBlockIndex: 0,
 					promptTokens: 0,
@@ -385,6 +386,25 @@ export function transformStreamingResponse(response: Response): Response {
 											controller.enqueue(
 												encoder.encode(
 													`data: ${JSON.stringify(thinkingStop)}\n\n`,
+												),
+											);
+										}
+										// Close text block before first tool block if not already closed
+										if (
+											context.hasSentContentBlockStart &&
+											!context.textBlockClosed
+										) {
+											context.textBlockClosed = true;
+											const textStop = {
+												type: "content_block_stop",
+												index: context.textBlockIndex,
+											};
+											controller.enqueue(
+												encoder.encode(`event: content_block_stop\n`),
+											);
+											controller.enqueue(
+												encoder.encode(
+													`data: ${JSON.stringify(textStop)}\n\n`,
 												),
 											);
 										}

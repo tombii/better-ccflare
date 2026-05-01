@@ -851,6 +851,46 @@ describe("transformStreamingResponse — reasoning_content (thinking blocks)", (
 		// tool block gets index 1 (thinking consumed 0)
 		expect(JSON.parse(events[toolStart]!.data!).index).toBe(1);
 	});
+
+	it("closes text block before first tool_use block when text precedes tool_calls", async () => {
+		const upstream = makeOpenAIStream([
+			JSON.stringify({
+				id: "c1",
+				model: "gpt-4o",
+				choices: [{ index: 0, delta: { content: "Let me check." }, finish_reason: null }],
+			}),
+			JSON.stringify({
+				id: "c1",
+				model: "gpt-4o",
+				choices: [{
+					index: 0,
+					delta: { tool_calls: [{ index: 0, id: "tc1", type: "function", function: { name: "search", arguments: "" } }] },
+					finish_reason: null,
+				}],
+			}),
+			JSON.stringify({
+				id: "c1",
+				model: "gpt-4o",
+				choices: [{ index: 0, delta: { tool_calls: [{ index: 0, function: { arguments: '{"q":"x"}' } }] }, finish_reason: "tool_calls" }],
+			}),
+			"[DONE]",
+		]);
+		const transformed = transformStreamingResponse(upstream);
+		const raw = await readStream(transformed.body!);
+		const events = parseSSEEvents(raw);
+
+		const textStartIdx = events.findIndex((e) => e.event === "content_block_start" && JSON.parse(e.data!).content_block?.type === "text");
+		const textStopIdx = events.findIndex((e) => e.event === "content_block_stop" && JSON.parse(e.data!).index === 0);
+		const toolStartIdx = events.findIndex((e) => e.event === "content_block_start" && JSON.parse(e.data!).content_block?.type === "tool_use");
+
+		expect(textStartIdx).toBeGreaterThanOrEqual(0);
+		expect(textStopIdx).toBeGreaterThanOrEqual(0);
+		expect(toolStartIdx).toBeGreaterThanOrEqual(0);
+		// text block (idx=0) must be closed before tool block opens
+		expect(textStopIdx).toBeLessThan(toolStartIdx);
+		// tool block gets index 1
+		expect(JSON.parse(events[toolStartIdx]!.data!).index).toBe(1);
+	});
 });
 
 // ── transformStreamingResponse — model extraction ────────────────────────────
