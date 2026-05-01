@@ -805,7 +805,7 @@ describe("transformStreamingResponse — reasoning_content (thinking blocks)", (
 		// Thinking block must be closed exactly once and message terminated
 		const stops = events.filter((e) => e.event === "content_block_stop");
 		expect(stops).toHaveLength(1);
-		expect(JSON.parse(stops[0]!.data!).index).toBe(0);
+		expect(JSON.parse(stops[0]?.data!).index).toBe(0);
 		const types = events.map((e) => e.event);
 		expect(types).toContain("message_stop");
 	});
@@ -815,23 +815,46 @@ describe("transformStreamingResponse — reasoning_content (thinking blocks)", (
 			JSON.stringify({
 				id: "c1",
 				model: "deepseek-r1",
-				choices: [{ index: 0, delta: { reasoning_content: "Thinking..." }, finish_reason: null }],
-			}),
-			JSON.stringify({
-				id: "c1",
-				model: "deepseek-r1",
-				choices: [{
-					index: 0,
-					delta: {
-						tool_calls: [{ index: 0, id: "tc1", type: "function", function: { name: "search", arguments: "" } }],
+				choices: [
+					{
+						index: 0,
+						delta: { reasoning_content: "Thinking..." },
+						finish_reason: null,
 					},
-					finish_reason: null,
-				}],
+				],
 			}),
 			JSON.stringify({
 				id: "c1",
 				model: "deepseek-r1",
-				choices: [{ index: 0, delta: { tool_calls: [{ index: 0, function: { arguments: '{"q":"hi"}' } }] }, finish_reason: "tool_calls" }],
+				choices: [
+					{
+						index: 0,
+						delta: {
+							tool_calls: [
+								{
+									index: 0,
+									id: "tc1",
+									type: "function",
+									function: { name: "search", arguments: "" },
+								},
+							],
+						},
+						finish_reason: null,
+					},
+				],
+			}),
+			JSON.stringify({
+				id: "c1",
+				model: "deepseek-r1",
+				choices: [
+					{
+						index: 0,
+						delta: {
+							tool_calls: [{ index: 0, function: { arguments: '{"q":"hi"}' } }],
+						},
+						finish_reason: "tool_calls",
+					},
+				],
 			}),
 			"[DONE]",
 		]);
@@ -839,9 +862,20 @@ describe("transformStreamingResponse — reasoning_content (thinking blocks)", (
 		const raw = await readStream(transformed.body!);
 		const events = parseSSEEvents(raw);
 
-		const thinkingStart = events.findIndex((e) => e.event === "content_block_start" && JSON.parse(e.data!).content_block?.type === "thinking");
-		const thinkingStop = events.findIndex((e) => e.event === "content_block_stop" && JSON.parse(e.data!).index === 0);
-		const toolStart = events.findIndex((e) => e.event === "content_block_start" && JSON.parse(e.data!).content_block?.type === "tool_use");
+		const thinkingStart = events.findIndex(
+			(e) =>
+				e.event === "content_block_start" &&
+				JSON.parse(e.data!).content_block?.type === "thinking",
+		);
+		const thinkingStop = events.findIndex(
+			(e) =>
+				e.event === "content_block_stop" && JSON.parse(e.data!).index === 0,
+		);
+		const toolStart = events.findIndex(
+			(e) =>
+				e.event === "content_block_start" &&
+				JSON.parse(e.data!).content_block?.type === "tool_use",
+		);
 
 		expect(thinkingStart).toBeGreaterThanOrEqual(0);
 		expect(thinkingStop).toBeGreaterThanOrEqual(0);
@@ -849,7 +883,7 @@ describe("transformStreamingResponse — reasoning_content (thinking blocks)", (
 		// thinking must be closed before tool opens
 		expect(thinkingStop).toBeLessThan(toolStart);
 		// tool block gets index 1 (thinking consumed 0)
-		expect(JSON.parse(events[toolStart]!.data!).index).toBe(1);
+		expect(JSON.parse(events[toolStart]?.data!).index).toBe(1);
 	});
 
 	it("closes text block before first tool_use block when text precedes tool_calls", async () => {
@@ -857,21 +891,46 @@ describe("transformStreamingResponse — reasoning_content (thinking blocks)", (
 			JSON.stringify({
 				id: "c1",
 				model: "gpt-4o",
-				choices: [{ index: 0, delta: { content: "Let me check." }, finish_reason: null }],
+				choices: [
+					{
+						index: 0,
+						delta: { content: "Let me check." },
+						finish_reason: null,
+					},
+				],
 			}),
 			JSON.stringify({
 				id: "c1",
 				model: "gpt-4o",
-				choices: [{
-					index: 0,
-					delta: { tool_calls: [{ index: 0, id: "tc1", type: "function", function: { name: "search", arguments: "" } }] },
-					finish_reason: null,
-				}],
+				choices: [
+					{
+						index: 0,
+						delta: {
+							tool_calls: [
+								{
+									index: 0,
+									id: "tc1",
+									type: "function",
+									function: { name: "search", arguments: "" },
+								},
+							],
+						},
+						finish_reason: null,
+					},
+				],
 			}),
 			JSON.stringify({
 				id: "c1",
 				model: "gpt-4o",
-				choices: [{ index: 0, delta: { tool_calls: [{ index: 0, function: { arguments: '{"q":"x"}' } }] }, finish_reason: "tool_calls" }],
+				choices: [
+					{
+						index: 0,
+						delta: {
+							tool_calls: [{ index: 0, function: { arguments: '{"q":"x"}' } }],
+						},
+						finish_reason: "tool_calls",
+					},
+				],
 			}),
 			"[DONE]",
 		]);
@@ -879,9 +938,20 @@ describe("transformStreamingResponse — reasoning_content (thinking blocks)", (
 		const raw = await readStream(transformed.body!);
 		const events = parseSSEEvents(raw);
 
-		const textStartIdx = events.findIndex((e) => e.event === "content_block_start" && JSON.parse(e.data!).content_block?.type === "text");
-		const textStopIdx = events.findIndex((e) => e.event === "content_block_stop" && JSON.parse(e.data!).index === 0);
-		const toolStartIdx = events.findIndex((e) => e.event === "content_block_start" && JSON.parse(e.data!).content_block?.type === "tool_use");
+		const textStartIdx = events.findIndex(
+			(e) =>
+				e.event === "content_block_start" &&
+				JSON.parse(e.data!).content_block?.type === "text",
+		);
+		const textStopIdx = events.findIndex(
+			(e) =>
+				e.event === "content_block_stop" && JSON.parse(e.data!).index === 0,
+		);
+		const toolStartIdx = events.findIndex(
+			(e) =>
+				e.event === "content_block_start" &&
+				JSON.parse(e.data!).content_block?.type === "tool_use",
+		);
 
 		expect(textStartIdx).toBeGreaterThanOrEqual(0);
 		expect(textStopIdx).toBeGreaterThanOrEqual(0);
@@ -889,7 +959,107 @@ describe("transformStreamingResponse — reasoning_content (thinking blocks)", (
 		// text block (idx=0) must be closed before tool block opens
 		expect(textStopIdx).toBeLessThan(toolStartIdx);
 		// tool block gets index 1
-		expect(JSON.parse(events[toolStartIdx]!.data!).index).toBe(1);
+		expect(JSON.parse(events[toolStartIdx]?.data!).index).toBe(1);
+	});
+
+	it("closes text block before thinking block when content precedes reasoning_content", async () => {
+		// text chunk → reasoning_content chunk → [DONE]
+		// Text block (index 0) must be closed before thinking block (index 1) opens.
+		const upstream = makeOpenAIStream([
+			JSON.stringify({
+				id: "c1",
+				model: "deepseek-r1",
+				choices: [
+					{ index: 0, delta: { content: "Intro." }, finish_reason: null },
+				],
+			}),
+			JSON.stringify({
+				id: "c1",
+				model: "deepseek-r1",
+				choices: [
+					{
+						index: 0,
+						delta: { reasoning_content: "Now thinking." },
+						finish_reason: null,
+					},
+				],
+			}),
+			"[DONE]",
+		]);
+		const transformed = transformStreamingResponse(upstream);
+		const raw = await readStream(transformed.body!);
+		const events = parseSSEEvents(raw);
+
+		const textStartIdx = events.findIndex(
+			(e) =>
+				e.event === "content_block_start" &&
+				JSON.parse(e.data!).content_block?.type === "text",
+		);
+		const textStopIdx = events.findIndex(
+			(e) =>
+				e.event === "content_block_stop" && JSON.parse(e.data!).index === 0,
+		);
+		const thinkingStartIdx = events.findIndex(
+			(e) =>
+				e.event === "content_block_start" &&
+				JSON.parse(e.data!).content_block?.type === "thinking",
+		);
+
+		expect(textStartIdx).toBeGreaterThanOrEqual(0);
+		expect(textStopIdx).toBeGreaterThanOrEqual(0);
+		expect(thinkingStartIdx).toBeGreaterThanOrEqual(0);
+		// text block (index 0) closed before thinking block opens
+		expect(textStopIdx).toBeLessThan(thinkingStartIdx);
+		// thinking block gets index 1
+		expect(JSON.parse(events[thinkingStartIdx]?.data!).index).toBe(1);
+	});
+
+	it("handles same-delta reasoning_content + content: emits thinking block then text block", async () => {
+		// Single delta chunk carries both reasoning_content and content.
+		// Thinking block (index 0) must come before text block (index 1).
+		const upstream = makeOpenAIStream([
+			JSON.stringify({
+				id: "c1",
+				model: "deepseek-r1",
+				choices: [
+					{
+						index: 0,
+						delta: { reasoning_content: "Think.", content: "Answer." },
+						finish_reason: null,
+					},
+				],
+			}),
+			"[DONE]",
+		]);
+		const transformed = transformStreamingResponse(upstream);
+		const raw = await readStream(transformed.body!);
+		const events = parseSSEEvents(raw);
+
+		const thinkingStartIdx = events.findIndex(
+			(e) =>
+				e.event === "content_block_start" &&
+				JSON.parse(e.data!).content_block?.type === "thinking",
+		);
+		const textStartIdx = events.findIndex(
+			(e) =>
+				e.event === "content_block_start" &&
+				JSON.parse(e.data!).content_block?.type === "text",
+		);
+
+		expect(thinkingStartIdx).toBeGreaterThanOrEqual(0);
+		expect(textStartIdx).toBeGreaterThanOrEqual(0);
+		// thinking block (index 0) before text block (index 1)
+		expect(thinkingStartIdx).toBeLessThan(textStartIdx);
+		expect(JSON.parse(events[thinkingStartIdx]?.data!).index).toBe(0);
+		expect(JSON.parse(events[textStartIdx]?.data!).index).toBe(1);
+
+		// thinking block closed before text block opens
+		const thinkingStopIdx = events.findIndex(
+			(e) =>
+				e.event === "content_block_stop" && JSON.parse(e.data!).index === 0,
+		);
+		expect(thinkingStopIdx).toBeGreaterThanOrEqual(0);
+		expect(thinkingStopIdx).toBeLessThan(textStartIdx);
 	});
 });
 
