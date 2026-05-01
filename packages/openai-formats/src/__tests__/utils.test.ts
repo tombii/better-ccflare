@@ -126,8 +126,8 @@ describe("mapOpenAIFinishReason", () => {
 		expect(mapOpenAIFinishReason("function_call")).toBe("tool_use");
 	});
 
-	it("maps content_filter → stop_sequence", () => {
-		expect(mapOpenAIFinishReason("content_filter")).toBe("stop_sequence");
+	it("maps content_filter → end_turn", () => {
+		expect(mapOpenAIFinishReason("content_filter")).toBe("end_turn");
 	});
 
 	it("defaults unknown values to end_turn", () => {

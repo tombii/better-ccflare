@@ -65,7 +65,7 @@ export function mapOpenAIFinishReason(openaiReason?: string): string {
 		case "tool_calls":
 			return "tool_use";
 		case "content_filter":
-			return "stop_sequence";
+			return "end_turn";
 		default:
 			return "end_turn";
 	}

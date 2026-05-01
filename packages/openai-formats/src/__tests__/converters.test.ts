@@ -716,7 +716,7 @@ describe("convertOpenAIResponseToAnthropic — success cases", () => {
 		expect(toolBlock?.input).toEqual({ q: "bun" });
 	});
 
-	it("maps finish_reason content_filter → stop", () => {
+	it("maps finish_reason content_filter → end_turn", () => {
 		const result = convertOpenAIResponseToAnthropic(
 			openaiTextResponse({
 				choices: [
@@ -728,7 +728,7 @@ describe("convertOpenAIResponseToAnthropic — success cases", () => {
 				],
 			}),
 		);
-		expect((result as any).stop_reason).toBe("stop");
+		expect((result as any).stop_reason).toBe("end_turn");
 	});
 
 	it("maps token usage to input_tokens / output_tokens", () => {
