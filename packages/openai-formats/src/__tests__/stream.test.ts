@@ -802,9 +802,11 @@ describe("transformStreamingResponse — reasoning_content (thinking blocks)", (
 		);
 		expect(textStart).toBeUndefined();
 
-		// Thinking block must be closed and message terminated
+		// Thinking block must be closed exactly once and message terminated
+		const stops = events.filter((e) => e.event === "content_block_stop");
+		expect(stops).toHaveLength(1);
+		expect(JSON.parse(stops[0]!.data!).index).toBe(0);
 		const types = events.map((e) => e.event);
-		expect(types).toContain("content_block_stop");
 		expect(types).toContain("message_stop");
 	});
 });

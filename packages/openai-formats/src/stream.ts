@@ -252,19 +252,7 @@ export function transformStreamingResponse(response: Response): Response {
 									context.textBlockIndex,
 								);
 							} else if (context.hasSentThinkingBlockStart) {
-								// Reasoning-only stream: close thinking block and terminate message
-								const thinkingStop = {
-									type: "content_block_stop",
-									index: context.thinkingBlockIndex,
-								};
-								controller.enqueue(
-									encoder.encode(`event: content_block_stop\n`),
-								);
-								controller.enqueue(
-									encoder.encode(
-										`data: ${JSON.stringify(thinkingStop)}\n\n`,
-									),
-								);
+								// Reasoning-only stream: emitStreamEnd closes block via end_turn branch
 								emitStreamEnd(
 									controller,
 									encoder,
@@ -571,16 +559,7 @@ export function transformStreamingResponse(response: Response): Response {
 					log.warn(
 						"Stream terminated without [DONE] — closing reasoning-only thinking block",
 					);
-					const thinkingStop = {
-						type: "content_block_stop",
-						index: context.thinkingBlockIndex,
-					};
-					controller.enqueue(
-						encoder.encode(`event: content_block_stop\n`),
-					);
-					controller.enqueue(
-						encoder.encode(`data: ${JSON.stringify(thinkingStop)}\n\n`),
-					);
+					// emitStreamEnd closes the block via end_turn branch — no manual emit needed
 					emitStreamEnd(
 						controller,
 						encoder,
