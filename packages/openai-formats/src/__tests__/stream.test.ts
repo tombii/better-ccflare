@@ -684,7 +684,7 @@ describe("transformStreamingResponse — reasoning_content (thinking blocks)", (
 					e.event === "content_block_start" &&
 					JSON.parse(e.data!).content_block?.type === "text",
 			);
-		expect(stops.length).toBeGreaterThanOrEqual(1);
+		expect(stops).toHaveLength(1);
 		expect(textStart).toBeDefined();
 		expect(stops[0]?.i).toBeLessThan(textStart?.i);
 
@@ -761,10 +761,10 @@ describe("transformStreamingResponse — reasoning_content (thinking blocks)", (
 		const transformed = transformStreamingResponse(upstream);
 		const raw = await readStream(transformed.body!);
 		const events = parseSSEEvents(raw);
-		// The final content_block_stop (for text, not thinking) must be at index 1
+		// Exactly 2 content_block_stop events: thinking (index 0) and text (index 1)
 		const allStops = events.filter((e) => e.event === "content_block_stop");
-		const stopIndexes = allStops.map((e) => JSON.parse(e.data!).index);
-		expect(stopIndexes).toContain(1);
+		expect(allStops).toHaveLength(2);
+		expect(allStops.map((e) => JSON.parse(e.data!).index).sort()).toEqual([0, 1]);
 	});
 
 	it("handles reasoning_content only (no text) — thinking block without text block", async () => {
