@@ -73,8 +73,8 @@ function emitToolCallJson(
  *
  * @param toolCallBlockIndices - Maps OpenAI tool_call delta index → Anthropic block index.
  *   Pass null when stopReason is "end_turn" (text-only response).
- * @param textBlockIndex - Anthropic block index used for the text content block.
- *   Only used when stopReason is "end_turn".
+ * @param endTurnBlockIndex - Anthropic block index to close when stopReason is "end_turn".
+ *   May be a text block or a thinking block depending on the stream pattern.
  */
 function emitStreamEnd(
 	controller: TransformStreamDefaultController,
@@ -85,7 +85,7 @@ function emitStreamEnd(
 	toolCallBlockIndices: Record<number, number> | null,
 	cacheReadInputTokens: number,
 	cacheCreationInputTokens: number,
-	textBlockIndex = 0,
+	endTurnBlockIndex = 0,
 ) {
 	// Send content_block_stop for all blocks
 	if (toolCallBlockIndices) {
@@ -106,10 +106,10 @@ function emitStreamEnd(
 			);
 		}
 	} else if (stopReason === "end_turn") {
-		// Text block — use the assigned Anthropic block index
+		// Text or thinking block — use the assigned Anthropic block index
 		const contentBlockStop = {
 			type: "content_block_stop",
-			index: textBlockIndex,
+			index: endTurnBlockIndex,
 		};
 		controller.enqueue(
 			encoder.encode(`event: content_block_stop
@@ -244,10 +244,9 @@ export function transformStreamingResponse(response: Response): Response {
 							} else if (context.hasSentContentBlockStart) {
 								// If text block was closed mid-stream (content→thinking transition),
 								// close the thinking block instead
-								const lastBlockIndex =
-									context.textBlockClosed
-										? context.thinkingBlockIndex
-										: context.textBlockIndex;
+								const lastBlockIndex = context.textBlockClosed
+									? context.thinkingBlockIndex
+									: context.textBlockIndex;
 								emitStreamEnd(
 									controller,
 									encoder,
@@ -409,9 +408,7 @@ export function transformStreamingResponse(response: Response): Response {
 												encoder.encode(`event: content_block_stop\n`),
 											);
 											controller.enqueue(
-												encoder.encode(
-													`data: ${JSON.stringify(textStop)}\n\n`,
-												),
+												encoder.encode(`data: ${JSON.stringify(textStop)}\n\n`),
 											);
 										}
 										context.toolCallAccumulators[idx] = "";
@@ -452,120 +449,126 @@ export function transformStreamingResponse(response: Response): Response {
 							} else {
 								// reasoning_content and content can coexist in one delta — handle both
 								if (delta?.reasoning_content) {
-								// DeepSeek/reasoning providers emit reasoning_content before text.
-								// Map to Anthropic thinking block using monotonic nextBlockIndex.
-								if (!context.hasSentThinkingBlockStart) {
-									context.hasSentThinkingBlockStart = true;
-									// Close text block first if one was already emitted
-									if (context.hasSentContentBlockStart && !context.textBlockClosed) {
-										context.textBlockClosed = true;
-										const textStop = {
-											type: "content_block_stop",
-											index: context.textBlockIndex,
+									// DeepSeek/reasoning providers emit reasoning_content before text.
+									// Map to Anthropic thinking block using monotonic nextBlockIndex.
+									if (!context.hasSentThinkingBlockStart) {
+										context.hasSentThinkingBlockStart = true;
+										// Close text block first if one was already emitted
+										if (
+											context.hasSentContentBlockStart &&
+											!context.textBlockClosed
+										) {
+											context.textBlockClosed = true;
+											const textStop = {
+												type: "content_block_stop",
+												index: context.textBlockIndex,
+											};
+											controller.enqueue(
+												encoder.encode(`event: content_block_stop\n`),
+											);
+											controller.enqueue(
+												encoder.encode(`data: ${JSON.stringify(textStop)}\n\n`),
+											);
+										}
+										context.thinkingBlockIndex = context.nextBlockIndex++;
+										const thinkingBlockStart = {
+											type: "content_block_start",
+											index: context.thinkingBlockIndex,
+											content_block: {
+												type: "thinking",
+												thinking: "",
+											},
 										};
 										controller.enqueue(
-											encoder.encode(`event: content_block_stop\n`),
+											encoder.encode(`event: content_block_start\n`),
 										);
 										controller.enqueue(
 											encoder.encode(
-												`data: ${JSON.stringify(textStop)}\n\n`,
+												`data: ${JSON.stringify(thinkingBlockStart)}\n\n`,
 											),
 										);
 									}
-									context.thinkingBlockIndex = context.nextBlockIndex++;
-									const thinkingBlockStart = {
-										type: "content_block_start",
+
+									const thinkingDelta = {
+										type: "content_block_delta",
 										index: context.thinkingBlockIndex,
-										content_block: {
-											type: "thinking",
-											thinking: "",
+										delta: {
+											type: "thinking_delta",
+											thinking: delta.reasoning_content,
 										},
 									};
 									controller.enqueue(
-										encoder.encode(`event: content_block_start\n`),
+										encoder.encode(`event: content_block_delta\n`),
 									);
 									controller.enqueue(
 										encoder.encode(
-											`data: ${JSON.stringify(thinkingBlockStart)}\n\n`,
+											`data: ${JSON.stringify(thinkingDelta)}\n\n`,
 										),
 									);
-								}
-
-								const thinkingDelta = {
-									type: "content_block_delta",
-									index: context.thinkingBlockIndex,
-									delta: {
-										type: "thinking_delta",
-										thinking: delta.reasoning_content,
-									},
-								};
-								controller.enqueue(
-									encoder.encode(`event: content_block_delta\n`),
-								);
-								controller.enqueue(
-									encoder.encode(`data: ${JSON.stringify(thinkingDelta)}\n\n`),
-								);
 								}
 								if (delta?.content) {
-								// Send content_block_start on first content.
-								// Use the monotonic nextBlockIndex so the text block index
-								// never collides with any tool_use blocks.
-								if (!context.hasSentContentBlockStart) {
-									context.hasSentContentBlockStart = true;
-									context.textBlockIndex = context.nextBlockIndex++;
+									// Send content_block_start on first content.
+									// Use the monotonic nextBlockIndex so the text block index
+									// never collides with any tool_use blocks.
+									if (!context.hasSentContentBlockStart) {
+										context.hasSentContentBlockStart = true;
+										context.textBlockIndex = context.nextBlockIndex++;
 
-									// Close thinking block first if one was emitted
-									if (context.hasSentThinkingBlockStart && !context.thinkingBlockClosed) {
-										context.thinkingBlockClosed = true;
-										const thinkingStop = {
-											type: "content_block_stop",
-											index: context.thinkingBlockIndex,
+										// Close thinking block first if one was emitted
+										if (
+											context.hasSentThinkingBlockStart &&
+											!context.thinkingBlockClosed
+										) {
+											context.thinkingBlockClosed = true;
+											const thinkingStop = {
+												type: "content_block_stop",
+												index: context.thinkingBlockIndex,
+											};
+											controller.enqueue(
+												encoder.encode(`event: content_block_stop\n`),
+											);
+											controller.enqueue(
+												encoder.encode(
+													`data: ${JSON.stringify(thinkingStop)}\n\n`,
+												),
+											);
+										}
+
+										const contentBlockStart = {
+											type: "content_block_start",
+											index: context.textBlockIndex,
+											content_block: {
+												type: "text",
+												text: "",
+											},
 										};
 										controller.enqueue(
-											encoder.encode(`event: content_block_stop\n`),
+											encoder.encode(`event: content_block_start\n`),
 										);
 										controller.enqueue(
 											encoder.encode(
-												`data: ${JSON.stringify(thinkingStop)}\n\n`,
+												`data: ${JSON.stringify(contentBlockStart)}\n\n`,
 											),
 										);
 									}
 
-									const contentBlockStart = {
-										type: "content_block_start",
+									// Send content delta
+									const contentBlockDelta = {
+										type: "content_block_delta",
 										index: context.textBlockIndex,
-										content_block: {
-											type: "text",
-											text: "",
+										delta: {
+											type: "text_delta",
+											text: delta.content,
 										},
 									};
 									controller.enqueue(
-										encoder.encode(`event: content_block_start\n`),
+										encoder.encode(`event: content_block_delta\n`),
 									);
 									controller.enqueue(
 										encoder.encode(
-											`data: ${JSON.stringify(contentBlockStart)}\n\n`,
+											`data: ${JSON.stringify(contentBlockDelta)}\n\n`,
 										),
 									);
-								}
-
-								// Send content delta
-								const contentBlockDelta = {
-									type: "content_block_delta",
-									index: context.textBlockIndex,
-									delta: {
-										type: "text_delta",
-										text: delta.content,
-									},
-								};
-								controller.enqueue(
-									encoder.encode(`event: content_block_delta\n`),
-								);
-								controller.enqueue(
-									encoder.encode(
-										`data: ${JSON.stringify(contentBlockDelta)}\n\n`,
-									),
-								);
 								}
 							}
 						} catch (_parseError) {
@@ -610,11 +613,12 @@ export function transformStreamingResponse(response: Response): Response {
 					context.hasSentContentBlockStart &&
 					!context.encounteredToolCall
 				) {
-					log.warn("Stream terminated without [DONE] — closing last open block");
-					const lastBlockIndex =
-						context.textBlockClosed
-							? context.thinkingBlockIndex
-							: context.textBlockIndex;
+					log.warn(
+						"Stream terminated without [DONE] — closing last open block",
+					);
+					const lastBlockIndex = context.textBlockClosed
+						? context.thinkingBlockIndex
+						: context.textBlockIndex;
 					emitStreamEnd(
 						controller,
 						encoder,

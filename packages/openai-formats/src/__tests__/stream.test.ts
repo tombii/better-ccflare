@@ -1012,6 +1012,10 @@ describe("transformStreamingResponse — reasoning_content (thinking blocks)", (
 		expect(textStopIdx).toBeLessThan(thinkingStartIdx);
 		// thinking block gets index 1
 		expect(JSON.parse(events[thinkingStartIdx]?.data!).index).toBe(1);
+		// exactly 2 content_block_stop events: one for text (index 0), one for thinking (index 1)
+		const stops = events.filter((e) => e.event === "content_block_stop");
+		expect(stops).toHaveLength(2);
+		expect(stops.map((e) => JSON.parse(e.data!).index).sort()).toEqual([0, 1]);
 	});
 
 	it("handles same-delta reasoning_content + content: emits thinking block then text block", async () => {
@@ -1060,6 +1064,10 @@ describe("transformStreamingResponse — reasoning_content (thinking blocks)", (
 		);
 		expect(thinkingStopIdx).toBeGreaterThanOrEqual(0);
 		expect(thinkingStopIdx).toBeLessThan(textStartIdx);
+		// exactly 2 content_block_stop events: one for thinking (index 0), one for text (index 1)
+		const stops = events.filter((e) => e.event === "content_block_stop");
+		expect(stops).toHaveLength(2);
+		expect(stops.map((e) => JSON.parse(e.data!).index).sort()).toEqual([0, 1]);
 	});
 });
 
