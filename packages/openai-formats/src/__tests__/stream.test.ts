@@ -802,11 +802,10 @@ describe("transformStreamingResponse — reasoning_content (thinking blocks)", (
 		);
 		expect(textStart).toBeUndefined();
 
-		// When only thinking was emitted (hasSentContentBlockStart is false),
-		// the [DONE] handler skips emitStreamEnd — no message_stop is produced.
-		// This is current implementation behavior for reasoning-only responses.
+		// Thinking block must be closed and message terminated
 		const types = events.map((e) => e.event);
-		expect(types).not.toContain("message_stop");
+		expect(types).toContain("content_block_stop");
+		expect(types).toContain("message_stop");
 	});
 });
 

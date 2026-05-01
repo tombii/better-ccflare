@@ -483,30 +483,32 @@ describe("convertAnthropicRequestToOpenAI — tools", () => {
 // ── convertAnthropicRequestToOpenAI — tool_choice ────────────────────────────
 
 describe("convertAnthropicRequestToOpenAI — tool_choice", () => {
+	const withTool = { tools: [{ name: "foo", description: "a tool" }] };
+
 	it('maps {type:"auto"} → "auto"', () => {
 		const result = convertAnthropicRequestToOpenAI(
-			anthropicRequest({ tool_choice: { type: "auto" } }),
+			anthropicRequest({ ...withTool, tool_choice: { type: "auto" } }),
 		);
 		expect(result.tool_choice).toBe("auto");
 	});
 
 	it('maps {type:"any"} → "required"', () => {
 		const result = convertAnthropicRequestToOpenAI(
-			anthropicRequest({ tool_choice: { type: "any" } }),
+			anthropicRequest({ ...withTool, tool_choice: { type: "any" } }),
 		);
 		expect(result.tool_choice).toBe("required");
 	});
 
 	it('maps {type:"none"} → "none"', () => {
 		const result = convertAnthropicRequestToOpenAI(
-			anthropicRequest({ tool_choice: { type: "none" } }),
+			anthropicRequest({ ...withTool, tool_choice: { type: "none" } }),
 		);
 		expect(result.tool_choice).toBe("none");
 	});
 
 	it('maps {type:"tool",name:"foo"} → {type:"function",function:{name:"foo"}}', () => {
 		const result = convertAnthropicRequestToOpenAI(
-			anthropicRequest({ tool_choice: { type: "tool", name: "foo" } }),
+			anthropicRequest({ ...withTool, tool_choice: { type: "tool", name: "foo" } }),
 		);
 		expect(result.tool_choice).toEqual({
 			type: "function",
@@ -516,6 +518,13 @@ describe("convertAnthropicRequestToOpenAI — tool_choice", () => {
 
 	it("omits tool_choice when not set", () => {
 		const result = convertAnthropicRequestToOpenAI(anthropicRequest());
+		expect(result.tool_choice).toBeUndefined();
+	});
+
+	it("omits tool_choice when tools array absent", () => {
+		const result = convertAnthropicRequestToOpenAI(
+			anthropicRequest({ tool_choice: { type: "any" } }),
+		);
 		expect(result.tool_choice).toBeUndefined();
 	});
 });

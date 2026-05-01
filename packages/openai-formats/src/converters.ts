@@ -87,8 +87,8 @@ export function convertAnthropicRequestToOpenAI(
 		}));
 	}
 
-	// Convert tool_choice
-	if (anthropicData.tool_choice !== undefined) {
+	// Convert tool_choice — only emit when tools are present (OpenAI spec requirement)
+	if (anthropicData.tool_choice !== undefined && openaiRequest.tools?.length) {
 		const tc = anthropicData.tool_choice;
 		if (tc.type === "auto") {
 			openaiRequest.tool_choice = "auto";
@@ -245,7 +245,11 @@ export function convertAnthropicRequestToOpenAI(
 					openaiMessage.content = "";
 				}
 
-				if (openaiMessage.content !== null || openaiMessage.tool_calls) {
+				if (
+					(openaiMessage.content !== null &&
+						openaiMessage.content !== undefined) ||
+					openaiMessage.tool_calls
+				) {
 					messages.push(openaiMessage);
 				}
 			} else {

@@ -251,6 +251,31 @@ export function transformStreamingResponse(response: Response): Response {
 									context.cacheCreationInputTokens,
 									context.textBlockIndex,
 								);
+							} else if (context.hasSentThinkingBlockStart) {
+								// Reasoning-only stream: close thinking block and terminate message
+								const thinkingStop = {
+									type: "content_block_stop",
+									index: context.thinkingBlockIndex,
+								};
+								controller.enqueue(
+									encoder.encode(`event: content_block_stop\n`),
+								);
+								controller.enqueue(
+									encoder.encode(
+										`data: ${JSON.stringify(thinkingStop)}\n\n`,
+									),
+								);
+								emitStreamEnd(
+									controller,
+									encoder,
+									"end_turn",
+									context.promptTokens,
+									context.completionTokens,
+									null,
+									context.cacheReadInputTokens,
+									context.cacheCreationInputTokens,
+									context.thinkingBlockIndex,
+								);
 							}
 
 							// Cleanup entire context after stream completion
@@ -541,6 +566,31 @@ export function transformStreamingResponse(response: Response): Response {
 						context.cacheReadInputTokens,
 						context.cacheCreationInputTokens,
 						context.textBlockIndex,
+					);
+				} else if (context.hasSentThinkingBlockStart) {
+					log.warn(
+						"Stream terminated without [DONE] — closing reasoning-only thinking block",
+					);
+					const thinkingStop = {
+						type: "content_block_stop",
+						index: context.thinkingBlockIndex,
+					};
+					controller.enqueue(
+						encoder.encode(`event: content_block_stop\n`),
+					);
+					controller.enqueue(
+						encoder.encode(`data: ${JSON.stringify(thinkingStop)}\n\n`),
+					);
+					emitStreamEnd(
+						controller,
+						encoder,
+						"end_turn",
+						context.promptTokens,
+						context.completionTokens,
+						null,
+						context.cacheReadInputTokens,
+						context.cacheCreationInputTokens,
+						context.thinkingBlockIndex,
 					);
 				}
 
