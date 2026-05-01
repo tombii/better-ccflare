@@ -78,12 +78,12 @@ describe("convertAnthropicRequestToOpenAI — basic fields", () => {
 		expect(result.model).toBe("claude-opus-4-5");
 	});
 
-	it("passes max_tokens through and mirrors max_completion_tokens", () => {
+	it("passes max_tokens through", () => {
 		const result = convertAnthropicRequestToOpenAI(
 			anthropicRequest({ max_tokens: 512 }),
 		);
 		expect(result.max_tokens).toBe(512);
-		expect(result.max_completion_tokens).toBe(512);
+		expect(result.max_completion_tokens).toBeUndefined();
 	});
 
 	it("passes temperature through", () => {

@@ -50,7 +50,6 @@ export function convertAnthropicRequestToOpenAI(
 	// Map parameters
 	if (anthropicData.max_tokens !== undefined) {
 		openaiRequest.max_tokens = anthropicData.max_tokens;
-		openaiRequest.max_completion_tokens = anthropicData.max_tokens;
 	}
 	if (anthropicData.temperature !== undefined) {
 		openaiRequest.temperature = anthropicData.temperature;
