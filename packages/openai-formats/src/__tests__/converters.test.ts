@@ -663,7 +663,7 @@ describe("convertOpenAIResponseToAnthropic — success cases", () => {
 
 	it("maps finish_reason stop → end_turn", () => {
 		const result = convertOpenAIResponseToAnthropic(openaiTextResponse());
-		expect((result as any).stop_reason).toBe("end_turn");
+		expect(result.stop_reason).toBe("end_turn");
 	});
 
 	it("maps finish_reason length → max_tokens", () => {
@@ -678,7 +678,7 @@ describe("convertOpenAIResponseToAnthropic — success cases", () => {
 				],
 			}),
 		);
-		expect((result as any).stop_reason).toBe("max_tokens");
+		expect(result.stop_reason).toBe("max_tokens");
 	});
 
 	it("maps finish_reason tool_calls → tool_use", () => {
@@ -703,7 +703,7 @@ describe("convertOpenAIResponseToAnthropic — success cases", () => {
 				],
 			}),
 		);
-		expect((result as any).stop_reason).toBe("tool_use");
+		expect(result.stop_reason).toBe("tool_use");
 		const content = (result as any).content as Array<{
 			type: string;
 			id: string;
@@ -728,7 +728,7 @@ describe("convertOpenAIResponseToAnthropic — success cases", () => {
 				],
 			}),
 		);
-		expect((result as any).stop_reason).toBe("end_turn");
+		expect(result.stop_reason).toBe("end_turn");
 	});
 
 	it("maps token usage to input_tokens / output_tokens", () => {

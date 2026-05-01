@@ -449,7 +449,9 @@ export function transformStreamingResponse(response: Response): Response {
 									context.toolCallAccumulators[idx] =
 										(context.toolCallAccumulators[idx] || "") + newArgs;
 								}
-							} else if (delta?.reasoning_content) {
+							} else {
+								// reasoning_content and content can coexist in one delta — handle both
+								if (delta?.reasoning_content) {
 								// DeepSeek/reasoning providers emit reasoning_content before text.
 								// Map to Anthropic thinking block using monotonic nextBlockIndex.
 								if (!context.hasSentThinkingBlockStart) {
@@ -503,7 +505,8 @@ export function transformStreamingResponse(response: Response): Response {
 								controller.enqueue(
 									encoder.encode(`data: ${JSON.stringify(thinkingDelta)}\n\n`),
 								);
-							} else if (delta?.content) {
+								}
+								if (delta?.content) {
 								// Send content_block_start on first content.
 								// Use the monotonic nextBlockIndex so the text block index
 								// never collides with any tool_use blocks.
@@ -563,6 +566,7 @@ export function transformStreamingResponse(response: Response): Response {
 										`data: ${JSON.stringify(contentBlockDelta)}\n\n`,
 									),
 								);
+								}
 							}
 						} catch (_parseError) {
 							// Ignore JSON parse errors for malformed chunks
