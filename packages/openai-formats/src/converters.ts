@@ -50,6 +50,7 @@ export function convertAnthropicRequestToOpenAI(
 	// Map parameters
 	if (anthropicData.max_tokens !== undefined) {
 		openaiRequest.max_tokens = anthropicData.max_tokens;
+		openaiRequest.max_completion_tokens = anthropicData.max_tokens;
 	}
 	if (anthropicData.temperature !== undefined) {
 		openaiRequest.temperature = anthropicData.temperature;
@@ -234,7 +235,17 @@ export function convertAnthropicRequestToOpenAI(
 					});
 				}
 
-				if (openaiMessage.content || openaiMessage.tool_calls) {
+				if (
+					openaiMessage.content === null &&
+					!openaiMessage.tool_calls &&
+					thinkingBlocks.length > 0
+				) {
+					// Preserve thinking-only assistant turns while keeping
+					// OpenAI assistant content non-null.
+					openaiMessage.content = "";
+				}
+
+				if (openaiMessage.content !== null || openaiMessage.tool_calls) {
 					messages.push(openaiMessage);
 				}
 			} else {

@@ -78,11 +78,12 @@ describe("convertAnthropicRequestToOpenAI — basic fields", () => {
 		expect(result.model).toBe("claude-opus-4-5");
 	});
 
-	it("passes max_tokens through", () => {
+	it("passes max_tokens through and mirrors max_completion_tokens", () => {
 		const result = convertAnthropicRequestToOpenAI(
 			anthropicRequest({ max_tokens: 512 }),
 		);
 		expect(result.max_tokens).toBe(512);
+		expect(result.max_completion_tokens).toBe(512);
 	});
 
 	it("passes temperature through", () => {
@@ -351,7 +352,7 @@ describe("convertAnthropicRequestToOpenAI — messages conversion", () => {
 		expect(assistantMsg?.reasoning_content).toBeUndefined();
 	});
 
-	it("sets reasoning_content even when thinking block has no accompanying text", () => {
+	it("preserves thinking-only assistant message with empty content", () => {
 		const result = convertAnthropicRequestToOpenAI(
 			anthropicRequest({
 				messages: [
@@ -364,13 +365,10 @@ describe("convertAnthropicRequestToOpenAI — messages conversion", () => {
 				],
 			}),
 		);
-		// No text content → message not pushed (content is null and no tool_calls)
-		// The message is omitted because content is null and tool_calls is absent.
-		// Verify the message is absent rather than crashing.
 		const assistantMsgs = result.messages.filter((m) => m.role === "assistant");
-		// Either omitted entirely or has reasoning_content — implementation omits it
-		// because content is null and there are no tool_calls.
-		expect(assistantMsgs).toHaveLength(0);
+		expect(assistantMsgs).toHaveLength(1);
+		expect(assistantMsgs[0]?.content).toBe("");
+		expect(assistantMsgs[0]?.reasoning_content).toBe("Only thinking, no text.");
 	});
 
 	it("sets reasoning_content alongside tool_calls when both are present", () => {
@@ -707,6 +705,21 @@ describe("convertOpenAIResponseToAnthropic — success cases", () => {
 		expect(toolBlock).toBeDefined();
 		expect(toolBlock?.name).toBe("search");
 		expect(toolBlock?.input).toEqual({ q: "bun" });
+	});
+
+	it("maps finish_reason content_filter → stop", () => {
+		const result = convertOpenAIResponseToAnthropic(
+			openaiTextResponse({
+				choices: [
+					{
+						index: 0,
+						message: { role: "assistant", content: "Filtered" },
+						finish_reason: "content_filter",
+					},
+				],
+			}),
+		);
+		expect((result as any).stop_reason).toBe("stop");
 	});
 
 	it("maps token usage to input_tokens / output_tokens", () => {
