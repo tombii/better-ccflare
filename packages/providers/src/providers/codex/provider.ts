@@ -20,6 +20,12 @@ const DEFAULT_MODEL_MAP: Record<string, string> = {
 	haiku: "gpt-5.4-mini",
 };
 
+const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
+	"gpt-5.3-codex": 272_000,
+	"gpt-5.4": 272_000,
+	"gpt-5.4-mini": 272_000,
+};
+
 // ── Codex Responses API types ─────────────────────────────────────────────────
 
 interface CodexInputTextItem {
@@ -121,6 +127,17 @@ interface AnthropicRequest {
 
 // ── SSE streaming state ───────────────────────────────────────────────────────
 
+interface ContextWindowUsage {
+	input_tokens: number;
+	cache_read_input_tokens: number;
+	cache_creation_input_tokens: number;
+}
+
+interface ContextWindow {
+	current_usage: ContextWindowUsage;
+	context_window_size: number;
+}
+
 interface StreamState {
 	buffer: string;
 	messageId: string;
@@ -130,6 +147,7 @@ interface StreamState {
 	hasSentTerminalEvents: boolean;
 	inputTokens: number;
 	outputTokens: number;
+	contextWindow: ContextWindow | null;
 	// Track function_call items: output_index → content_block_index
 	functionCallBlocks: Map<number, number>;
 }
@@ -350,10 +368,10 @@ export class CodexProvider extends BaseProvider {
 						: (account.model_mappings as Record<string, string>);
 
 				const lower = anthropicModel.toLowerCase();
+				if (mappings[anthropicModel]) return mappings[anthropicModel];
 				if (lower.includes("haiku") && mappings.haiku) return mappings.haiku;
 				if (lower.includes("sonnet") && mappings.sonnet) return mappings.sonnet;
 				if (lower.includes("opus") && mappings.opus) return mappings.opus;
-				if (mappings[anthropicModel]) return mappings[anthropicModel];
 			} catch {
 				// ignore malformed mappings
 			}
@@ -364,7 +382,7 @@ export class CodexProvider extends BaseProvider {
 		if (lower.includes("haiku")) return DEFAULT_MODEL_MAP.haiku;
 		if (lower.includes("sonnet")) return DEFAULT_MODEL_MAP.sonnet;
 		if (lower.includes("opus")) return DEFAULT_MODEL_MAP.opus;
-		return DEFAULT_MODEL_MAP.sonnet; // default
+		return anthropicModel;
 	}
 
 	private extractSystemPrompt(
@@ -448,6 +466,49 @@ export class CodexProvider extends BaseProvider {
 		return items;
 	}
 
+	private extractContextWindow(
+		response: Record<string, unknown> | undefined,
+		usage: { input_tokens?: number } | undefined,
+	): ContextWindow | null {
+		const model = response?.model;
+		if (typeof model !== "string") return null;
+		const contextWindowSize = MODEL_CONTEXT_WINDOWS[model];
+		if (!contextWindowSize) return null;
+
+		const inputTokens = usage?.input_tokens;
+		if (
+			typeof inputTokens !== "number" ||
+			!Number.isFinite(inputTokens) ||
+			inputTokens < 0
+		)
+			return null;
+
+		const usageRecord = usage as Record<string, unknown> | undefined;
+		const inputTokenDetails = usageRecord?.input_tokens_details as
+			| Record<string, unknown>
+			| undefined;
+		const cachedTokens = inputTokenDetails?.cached_tokens;
+
+		return {
+			current_usage: {
+				input_tokens: inputTokens,
+				cache_read_input_tokens:
+					typeof cachedTokens === "number" &&
+					Number.isFinite(cachedTokens) &&
+					cachedTokens >= 0
+						? cachedTokens
+						: 0,
+				cache_creation_input_tokens:
+					typeof inputTokenDetails?.cache_creation_input_tokens === "number" &&
+					Number.isFinite(inputTokenDetails.cache_creation_input_tokens) &&
+					inputTokenDetails.cache_creation_input_tokens >= 0
+						? inputTokenDetails.cache_creation_input_tokens
+						: 0,
+			},
+			context_window_size: contextWindowSize,
+		};
+	}
+
 	private convertToCodexFormat(
 		body: AnthropicRequest,
 		account?: Account,
@@ -501,6 +562,7 @@ export class CodexProvider extends BaseProvider {
 			hasSentTerminalEvents: false,
 			inputTokens: 0,
 			outputTokens: 0,
+			contextWindow: null,
 			functionCallBlocks: new Map(),
 		};
 
@@ -757,7 +819,7 @@ export class CodexProvider extends BaseProvider {
 
 				state.inputTokens = usage?.input_tokens || state.inputTokens;
 				state.outputTokens = usage?.output_tokens || state.outputTokens;
-
+				state.contextWindow = this.extractContextWindow(resp, usage);
 				// Close any lingering content block
 				if (state.hasSentContentBlockStart) {
 					await writeSSE("content_block_stop", {
@@ -767,16 +829,25 @@ export class CodexProvider extends BaseProvider {
 					state.hasSentContentBlockStart = false;
 				}
 
-				await writeSSE("message_delta", {
+				const messageDelta: {
+					type: "message_delta";
+					delta: { stop_reason: "end_turn"; stop_sequence: null };
+					usage: { output_tokens: number };
+					context_window?: ContextWindow;
+				} = {
 					type: "message_delta",
 					delta: { stop_reason: "end_turn", stop_sequence: null },
 					usage: { output_tokens: state.outputTokens },
-				});
+				};
+				if (state.contextWindow) {
+					messageDelta.context_window = state.contextWindow;
+				}
+
+				await writeSSE("message_delta", messageDelta);
 				await writeSSE("message_stop", { type: "message_stop" });
 				state.hasSentTerminalEvents = true;
 				break;
 			}
-
 			default:
 				// Ignore unknown events
 				break;

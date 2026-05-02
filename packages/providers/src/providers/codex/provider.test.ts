@@ -53,6 +53,128 @@ describe("CodexProvider.processResponse", () => {
 		expect(processed.status).toBe(400);
 		expect(await processed.text()).toBe('{"error":"bad_request"}');
 	});
+
+	it("maps response.completed usage into Claude-compatible context_window using model metadata", async () => {
+		const provider = new CodexProvider();
+		const upstreamBody = [
+			"event: response.created",
+			'data: {"response":{"id":"resp_test","model":"gpt-5.3-codex"}}',
+			"",
+			"event: response.completed",
+			'data: {"response":{"model":"gpt-5.3-codex","usage":{"input_tokens":100,"output_tokens":50,"input_tokens_details":{"cached_tokens":25,"cache_creation_input_tokens":10}}}}',
+			"",
+		].join("\n");
+
+		const response = new Response(upstreamBody, {
+			status: 200,
+			headers: { "content-type": "text/event-stream" },
+		});
+
+		const transformed = await provider.processResponse(response, null);
+		const transformedBody = await transformed.text();
+		const messageDeltaLine = transformedBody
+			.split("\n")
+			.find((line) => line.includes('"type":"message_delta"'));
+
+		expect(messageDeltaLine).toContain('"context_window"');
+		expect(messageDeltaLine).toContain('"input_tokens":100');
+		expect(messageDeltaLine).toContain('"cache_read_input_tokens":25');
+		expect(messageDeltaLine).toContain('"cache_creation_input_tokens":10');
+		expect(messageDeltaLine).toContain('"context_window_size":272000');
+	});
+
+	it("defaults missing cache fields to zero when model metadata is available", async () => {
+		const provider = new CodexProvider();
+		const upstreamBody = [
+			"event: response.created",
+			'data: {"response":{"id":"resp_test","model":"gpt-5.3-codex"}}',
+			"",
+			"event: response.completed",
+			'data: {"response":{"model":"gpt-5.3-codex","usage":{"input_tokens":42,"output_tokens":7}}}',
+			"",
+		].join("\n");
+
+		const response = new Response(upstreamBody, {
+			status: 200,
+			headers: { "content-type": "text/event-stream" },
+		});
+
+		const transformed = await provider.processResponse(response, null);
+		const transformedBody = await transformed.text();
+		const messageDeltaLine = transformedBody
+			.split("\n")
+			.find((line) => line.includes('"type":"message_delta"'));
+
+		expect(messageDeltaLine).toContain('"context_window"');
+		expect(messageDeltaLine).toContain('"input_tokens":42');
+		expect(messageDeltaLine).toContain('"cache_read_input_tokens":0');
+		expect(messageDeltaLine).toContain('"cache_creation_input_tokens":0');
+		expect(messageDeltaLine).toContain('"context_window_size":272000');
+	});
+
+	it("omits context_window when model metadata is unavailable", async () => {
+		const provider = new CodexProvider();
+		const upstreamBody = [
+			"event: response.created",
+			'data: {"response":{"id":"resp_test","model":"unknown-model"}}',
+			"",
+			"event: response.completed",
+			'data: {"response":{"model":"unknown-model","usage":{"input_tokens":12,"output_tokens":3,"input_tokens_details":{"cached_tokens":4}}}}',
+			"",
+		].join("\n");
+
+		const response = new Response(upstreamBody, {
+			status: 200,
+			headers: { "content-type": "text/event-stream" },
+		});
+
+		const transformed = await provider.processResponse(response, null);
+		const transformedBody = await transformed.text();
+		const messageDeltaLine = transformedBody
+			.split("\n")
+			.find((line) => line.includes('"type":"message_delta"'));
+
+		expect(messageDeltaLine).not.toContain('"context_window"');
+		expect(messageDeltaLine).toContain('"output_tokens":3');
+	});
+});
+
+describe("CodexProvider.transformRequestBody", () => {
+	it("maps sonnet-family models to the default Codex model", async () => {
+		const provider = new CodexProvider();
+		const request = new Request("https://example.com/v1/messages", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				model: "claude-3-7-sonnet",
+				max_tokens: 10,
+				messages: [{ role: "user", content: "hello" }],
+			}),
+		});
+
+		const transformed = await provider.transformRequestBody(request, undefined);
+		const body = await transformed.json();
+
+		expect(body.model).toBe("gpt-5.3-codex");
+	});
+
+	it("passes through unknown model names unchanged", async () => {
+		const provider = new CodexProvider();
+		const request = new Request("https://example.com/v1/messages", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				model: "gpt-5.4-mini",
+				max_tokens: 10,
+				messages: [{ role: "user", content: "hello" }],
+			}),
+		});
+
+		const transformed = await provider.transformRequestBody(request, undefined);
+		const body = await transformed.json();
+
+		expect(body.model).toBe("gpt-5.4-mini");
+	});
 });
 
 describe("parseCodexUsageHeaders", () => {
