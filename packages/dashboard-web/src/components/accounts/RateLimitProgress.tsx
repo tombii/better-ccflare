@@ -39,7 +39,7 @@ const FIXED_WINDOW_DURATION_MS: Record<string, number> = {
 function computeWindowStartMs(resetMs: number, window: string): number | null {
 	if (window === "monthly") {
 		const resetDate = new Date(resetMs);
-		// Use UTC calendar math to match server-side calculation (handles 28/29/30/31 days)
+		// Use preceding month's duration to match server-side fix (handles 28/29/30/31 days)
 		const monthStart = Date.UTC(
 			resetDate.getUTCFullYear(),
 			resetDate.getUTCMonth(),
@@ -49,16 +49,16 @@ function computeWindowStartMs(resetMs: number, window: string): number | null {
 			0,
 			0,
 		);
-		const nextMonthStart = Date.UTC(
+		const prevMonthStart = Date.UTC(
 			resetDate.getUTCFullYear(),
-			resetDate.getUTCMonth() + 1,
+			resetDate.getUTCMonth() - 1,
 			1,
 			0,
 			0,
 			0,
 			0,
 		);
-		const actualMonthDurationMs = nextMonthStart - monthStart;
+		const actualMonthDurationMs = monthStart - prevMonthStart;
 		return resetMs - actualMonthDurationMs;
 	}
 	const durationMs = FIXED_WINDOW_DURATION_MS[window];

@@ -1017,8 +1017,10 @@ export class AutoRefreshScheduler {
 				account.pause_reason === "peak_hours"
 			) {
 				// Resume account after peak hours (only if we paused it)
+				// SQL-level guard prevents race condition: if manual-pause API changed pause_reason
+				// between SELECT and UPDATE, this UPDATE will not affect that account
 				await this.db.run(
-					"UPDATE accounts SET paused = 0, pause_reason = NULL WHERE id = ?",
+					"UPDATE accounts SET paused = 0, pause_reason = NULL WHERE id = ? AND pause_reason = 'peak_hours'",
 					[account.id],
 				);
 				log.info(`Peak hours resume: resumed zai account '${account.name}'`);
