@@ -1,17 +1,11 @@
+import {
+	type SupportedWindow,
+	computeWindowStartMs,
+} from "@better-ccflare/core";
 import type { AnyUsageData } from "@better-ccflare/providers";
 import type { Account } from "@better-ccflare/types";
 
 const RETRY_AFTER_SECONDS = 60;
-
-type SupportedWindow =
-	| "five_hour"
-	| "seven_day"
-	| "seven_day_opus"
-	| "seven_day_sonnet"
-	| "weekly"
-	| "daily"
-	| "monthly"
-	| "tokens_limit";
 
 interface UsageWindowSnapshot {
 	utilization: number;
@@ -27,50 +21,6 @@ export interface UsageThrottleSettings {
 export interface UsageThrottleStatus {
 	throttleUntil: number | null;
 	throttledWindows: SupportedWindow[];
-}
-
-function computeWindowStartMs(
-	resetMs: number,
-	window: SupportedWindow,
-): number | null {
-	if (!Number.isFinite(resetMs)) return null;
-
-	if (window === "monthly") {
-		const resetDate = new Date(resetMs);
-		// Calculate preceding month's duration (handles 28/29/30/31 days)
-		const monthStart = Date.UTC(
-			resetDate.getUTCFullYear(),
-			resetDate.getUTCMonth(),
-			1,
-			0,
-			0,
-			0,
-			0,
-		);
-		const prevMonthStart = Date.UTC(
-			resetDate.getUTCFullYear(),
-			resetDate.getUTCMonth() - 1,
-			1,
-			0,
-			0,
-			0,
-			0,
-		);
-		const actualMonthDurationMs = monthStart - prevMonthStart;
-		return resetMs - actualMonthDurationMs;
-	}
-
-	const durationMs = {
-		five_hour: 5 * 60 * 60 * 1000,
-		seven_day: 7 * 24 * 60 * 60 * 1000,
-		seven_day_opus: 7 * 24 * 60 * 60 * 1000,
-		seven_day_sonnet: 7 * 24 * 60 * 60 * 1000,
-		weekly: 7 * 24 * 60 * 60 * 1000,
-		daily: 24 * 60 * 60 * 1000,
-		tokens_limit: 5 * 60 * 60 * 1000,
-	}[window];
-
-	return durationMs ? resetMs - durationMs : null;
 }
 
 function collectWindows(data: AnyUsageData | null): UsageWindowSnapshot[] {

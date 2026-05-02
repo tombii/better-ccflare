@@ -1,4 +1,7 @@
-import { registerUIRefresh } from "@better-ccflare/core";
+import {
+	computeWindowStartMs,
+	registerUIRefresh,
+} from "@better-ccflare/core";
 import type { FullUsageData } from "@better-ccflare/types";
 import { useEffect, useState } from "react";
 import { cn } from "../../lib/utils";
@@ -24,47 +27,6 @@ interface RateLimitProgressProps {
 }
 
 const WINDOW_MS = 5 * 60 * 60 * 1000; // 5 hours in milliseconds
-
-const FIXED_WINDOW_DURATION_MS: Record<string, number> = {
-	five_hour: 5 * 60 * 60 * 1000,
-	seven_day: 7 * 24 * 60 * 60 * 1000,
-	seven_day_opus: 7 * 24 * 60 * 60 * 1000,
-	seven_day_sonnet: 7 * 24 * 60 * 60 * 1000,
-	weekly: 7 * 24 * 60 * 60 * 1000,
-	daily: 24 * 60 * 60 * 1000,
-	// time_limit intentionally omitted — ZAI's TIME_LIMIT window duration is unknown
-	tokens_limit: 5 * 60 * 60 * 1000,
-};
-
-function computeWindowStartMs(resetMs: number, window: string): number | null {
-	if (window === "monthly") {
-		const resetDate = new Date(resetMs);
-		// Use preceding month's duration to match server-side fix (handles 28/29/30/31 days)
-		const monthStart = Date.UTC(
-			resetDate.getUTCFullYear(),
-			resetDate.getUTCMonth(),
-			1,
-			0,
-			0,
-			0,
-			0,
-		);
-		const prevMonthStart = Date.UTC(
-			resetDate.getUTCFullYear(),
-			resetDate.getUTCMonth() - 1,
-			1,
-			0,
-			0,
-			0,
-			0,
-		);
-		const actualMonthDurationMs = monthStart - prevMonthStart;
-		return resetMs - actualMonthDurationMs;
-	}
-	const durationMs = FIXED_WINDOW_DURATION_MS[window];
-	if (!durationMs) return null;
-	return resetMs - durationMs;
-}
 
 function computeExpectedPct(
 	resetTime: string | null,

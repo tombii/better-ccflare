@@ -91,3 +91,8 @@ export {
 	getVersionSync,
 	trackClientVersion,
 } from "./version";
+export {
+	type SupportedWindow,
+	FIXED_WINDOW_DURATION_MS,
+	computeWindowStartMs,
+} from "./throttle-utils";
