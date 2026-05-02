@@ -1006,8 +1006,10 @@ export class AutoRefreshScheduler {
 		for (const account of zaiAccounts) {
 			if (inPeak && !account.paused) {
 				// Pause account during peak hours
+				// SQL-level guard prevents race: if another actor paused the account
+				// with a different reason between SELECT and UPDATE, skip it
 				await this.db.run(
-					"UPDATE accounts SET paused = 1, pause_reason = 'peak_hours' WHERE id = ?",
+					"UPDATE accounts SET paused = 1, pause_reason = 'peak_hours' WHERE id = ? AND COALESCE(paused, 0) = 0",
 					[account.id],
 				);
 				log.info(`Peak hours pause: paused zai account '${account.name}'`);
