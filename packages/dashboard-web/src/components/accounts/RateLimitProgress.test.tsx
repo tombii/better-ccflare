@@ -29,7 +29,9 @@ describe("RateLimitProgress", () => {
 			/>,
 		);
 
-		expect(html).toContain("Usage throttling enabled; requests are being delayed");
+		expect(html).toContain(
+			"Usage throttling enabled; requests are being delayed",
+		);
 		expect(html).toContain("Usage (5-hour)");
 	});
 
@@ -55,7 +57,9 @@ describe("RateLimitProgress", () => {
 			/>,
 		);
 
-		expect(html).toContain("Usage throttling enabled; requests are being delayed");
+		expect(html).toContain(
+			"Usage throttling enabled; requests are being delayed",
+		);
 		expect(html).not.toContain("Until");
 		expect(html).toContain("Less than 1 minute");
 	});

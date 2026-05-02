@@ -229,7 +229,10 @@ export function getUsageThrottleStatus(
 		const elapsedMs = now - startMs;
 		if (elapsedMs <= 0) continue;
 
-		const expectedPct = Math.min(100, Math.max(0, (elapsedMs / durationMs) * 100));
+		const expectedPct = Math.min(
+			100,
+			Math.max(0, (elapsedMs / durationMs) * 100),
+		);
 		if (window.utilization <= expectedPct) continue;
 
 		const resumeAt = Math.min(

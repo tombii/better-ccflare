@@ -1,7 +1,4 @@
-import {
-	useSetUsageThrottling,
-	useUsageThrottling,
-} from "../../hooks/queries";
+import { useSetUsageThrottling, useUsageThrottling } from "../../hooks/queries";
 import {
 	Card,
 	CardContent,

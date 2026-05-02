@@ -6,15 +6,14 @@
  */
 import { afterEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Config } from "./index";
 
 const ORIGINAL_ENV = {
 	USAGE_THROTTLING_FIVE_HOUR_ENABLED:
 		process.env.USAGE_THROTTLING_FIVE_HOUR_ENABLED,
-	USAGE_THROTTLING_WEEKLY_ENABLED:
-		process.env.USAGE_THROTTLING_WEEKLY_ENABLED,
+	USAGE_THROTTLING_WEEKLY_ENABLED: process.env.USAGE_THROTTLING_WEEKLY_ENABLED,
 };
 
 function makeConfig(): { config: Config; cleanup: () => void } {

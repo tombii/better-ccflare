@@ -1920,6 +1920,14 @@ export function createAccountPeakHoursPauseHandler(dbOps: DatabaseOperations) {
 			// Update peak-hours-pause setting
 			await dbOps.setPeakHoursPauseEnabled(accountId, enabled === 1);
 
+			// Immediate resume when disabling — don't make users wait for scheduler
+			if (enabled === 0) {
+				await db.run(
+					"UPDATE accounts SET paused = 0, pause_reason = NULL WHERE id = ? AND COALESCE(paused, 0) = 1 AND pause_reason = 'peak_hours'",
+					[accountId],
+				);
+			}
+
 			const action = enabled === 1 ? "enabled" : "disabled";
 
 			return jsonResponse({

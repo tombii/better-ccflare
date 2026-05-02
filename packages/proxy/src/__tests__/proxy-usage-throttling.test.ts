@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, mock } from "bun:test";
 import { usageCache } from "@better-ccflare/providers";
 import type { Account } from "@better-ccflare/types";
-import { handleProxy } from "../proxy";
 import type { ProxyContext } from "../handlers";
+import { handleProxy } from "../proxy";
 
 function makeAccount(overrides: Partial<Account> = {}): Account {
 	return {
@@ -49,7 +49,6 @@ function makeContext(account: Account): ProxyContext {
 		} as never,
 		runtime: { port: 8080, clientId: "test" } as never,
 		config: {
-			getUsageThrottlingEnabled: () => true,
 			getUsageThrottlingFiveHourEnabled: () => true,
 			getUsageThrottlingWeeklyEnabled: () => true,
 			getSystemPromptCacheTtl1h: () => false,
