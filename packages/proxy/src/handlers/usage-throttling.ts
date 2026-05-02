@@ -37,15 +37,27 @@ function computeWindowStartMs(
 
 	if (window === "monthly") {
 		const resetDate = new Date(resetMs);
-		return Date.UTC(
+		// Calculate actual calendar month duration (handles 28/29/30/31 days)
+		const monthStart = Date.UTC(
 			resetDate.getUTCFullYear(),
-			resetDate.getUTCMonth() - 1,
-			resetDate.getUTCDate(),
-			resetDate.getUTCHours(),
-			resetDate.getUTCMinutes(),
-			resetDate.getUTCSeconds(),
-			resetDate.getUTCMilliseconds(),
+			resetDate.getUTCMonth(),
+			1,
+			0,
+			0,
+			0,
+			0,
 		);
+		const nextMonthStart = Date.UTC(
+			resetDate.getUTCFullYear(),
+			resetDate.getUTCMonth() + 1,
+			1,
+			0,
+			0,
+			0,
+			0,
+		);
+		const actualMonthDurationMs = nextMonthStart - monthStart;
+		return resetMs - actualMonthDurationMs;
 	}
 
 	const durationMs = {
