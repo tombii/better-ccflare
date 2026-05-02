@@ -140,7 +140,7 @@ export class APIRouter {
 		);
 		const statsHandler = createStatsHandler(dbOps);
 		const statsResetHandler = createStatsResetHandler(dbOps);
-		const accountsHandler = createAccountsListHandler(dbOps);
+		const accountsHandler = createAccountsListHandler(dbOps, config);
 		const accountAddHandler = createAccountAddHandler(dbOps, config);
 		const zaiAccountAddHandler = createZaiAccountAddHandler(dbOps);
 		const minimaxAccountAddHandler = createMinimaxAccountAddHandler(dbOps);
@@ -324,6 +324,12 @@ export class APIRouter {
 		);
 		this.handlers.set("POST:/api/config/cache-ttl", (req) =>
 			configHandlers.setCacheTtl(req),
+		);
+		this.handlers.set("GET:/api/config/usage-throttling", () =>
+			configHandlers.getUsageThrottling(),
+		);
+		this.handlers.set("POST:/api/config/usage-throttling", (req) =>
+			configHandlers.setUsageThrottling(req),
 		);
 		this.handlers.set("POST:/api/maintenance/cleanup", () => cleanupHandler());
 		this.handlers.set("POST:/api/maintenance/compact", () => compactHandler());
@@ -527,7 +533,7 @@ export class APIRouter {
 				)(req, url);
 			}
 
-			// Account peak hours auto-pause toggle
+			// Account peak-hours-pause toggle (Zai accounts only)
 			if (path.endsWith("/peak-hours-pause") && method === "POST") {
 				const peakHoursPauseHandler = createAccountPeakHoursPauseHandler(
 					this.context.dbOps,

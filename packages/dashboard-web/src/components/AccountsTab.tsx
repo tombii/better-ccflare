@@ -474,6 +474,18 @@ export function AccountsTab() {
 		setCodexReauthDialog({ isOpen: true, account });
 	};
 
+	const handlePeakHoursPauseToggle = async (account: Account) => {
+		try {
+			await api.updateAccountPeakHoursPause(
+				account.id,
+				!account.peakHoursPauseEnabled,
+			);
+			await loadAccounts();
+		} catch (err) {
+			setActionError(formatError(err));
+		}
+	};
+
 	const handleUpdateCustomEndpoint = async (
 		accountId: string,
 		customEndpoint: string | null,
@@ -497,18 +509,6 @@ export function AccountsTab() {
 		} catch (err) {
 			setActionError(formatError(err));
 			throw err;
-		}
-	};
-
-	const handlePeakHoursPauseToggle = async (account: Account) => {
-		try {
-			await api.updateAccountPeakHoursPause(
-				account.id,
-				!account.peakHoursPauseEnabled,
-			);
-			await loadAccounts();
-		} catch (err) {
-			setActionError(formatError(err));
 		}
 	};
 

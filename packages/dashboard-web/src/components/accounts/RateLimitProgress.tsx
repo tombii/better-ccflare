@@ -16,6 +16,8 @@ interface RateLimitProgressProps {
 	usageWindow?: string | null; // Window name (e.g., "five_hour")
 	usageData?: FullUsageData | null; // Full usage data from API
 	usageRateLimitedUntil?: number | null; // Timestamp (ms) until usage API 429 clears
+	usageThrottledUntil?: number | null; // Timestamp (ms) until proactive usage throttling clears
+	usageThrottledWindows?: string[]; // Exact usage windows currently being throttled
 	provider: string;
 	className?: string;
 	showWeekly?: boolean; // Whether to show weekly usage as well
@@ -62,12 +64,53 @@ function computeExpectedPct(
 	return Math.min(100, Math.max(0, (elapsed / durationMs) * 100));
 }
 
+function computeWindowThrottleUntil(
+	resetTime: string | null,
+	window: string | null,
+	percentage: number | null,
+	now: number,
+): number | null {
+	if (!resetTime || !window || percentage === null) return null;
+
+	const resetMs = new Date(resetTime).getTime();
+	if (!Number.isFinite(resetMs) || resetMs <= now) return null;
+
+	const startMs = computeWindowStartMs(resetMs, window);
+	if (startMs === null || startMs >= resetMs) return null;
+
+	const durationMs = resetMs - startMs;
+	const elapsedMs = now - startMs;
+	if (elapsedMs <= 0) return null;
+
+	const expectedPct = Math.min(
+		100,
+		Math.max(0, (elapsedMs / durationMs) * 100),
+	);
+	if (percentage <= expectedPct) return null;
+
+	const resumeAt = Math.min(startMs + (percentage / 100) * durationMs, resetMs);
+	return resumeAt > now ? resumeAt : null;
+}
+
 function formatDuration(ms: number): string {
 	const totalMinutes = Math.round(ms / 60000);
 	const hours = Math.floor(totalMinutes / 60);
 	const minutes = totalMinutes % 60;
 	if (hours > 0) return `${hours}h ${minutes}m`;
 	return `${minutes}m`;
+}
+
+function formatThrottledUntil(throttledUntilMs: number, now: number): string {
+	const remainingMs = throttledUntilMs - now;
+	if (remainingMs < 60 * 1000) {
+		return "Less than 1 minute";
+	}
+
+	const roundedUpToMinuteMs = Math.ceil(throttledUntilMs / 60000) * 60000;
+	return new Date(roundedUpToMinuteMs).toLocaleTimeString(undefined, {
+		hour: "2-digit",
+		minute: "2-digit",
+	});
 }
 
 function computeProjectedMessage(
@@ -113,7 +156,7 @@ function formatWindowName(window: string | null): string {
 		case "time_limit":
 			return "Time Quota";
 		case "tokens_limit":
-			return "Tokens";
+			return "5-hour";
 		default:
 			return window.replace("_", " ");
 	}
@@ -131,6 +174,8 @@ export function RateLimitProgress({
 	usageWindow,
 	usageData,
 	usageRateLimitedUntil,
+	usageThrottledUntil,
+	usageThrottledWindows = [],
 	provider,
 	className,
 	showWeekly = false,
@@ -273,7 +318,7 @@ export function RateLimitProgress({
 		if (zaiData.tokens_limit) {
 			usages.push({
 				utilization: zaiData.tokens_limit.percentage,
-				window: "five_hour", // Map to "5-hour" to match Claude terminology
+				window: "tokens_limit",
 				resetTime: zaiData.tokens_limit.resetAt
 					? new Date(zaiData.tokens_limit.resetAt).toISOString()
 					: null,
@@ -428,6 +473,7 @@ export function RateLimitProgress({
 
 	const isZaiPeak = provider === "zai" && isZaiPeakHour(now);
 	const isAnthropicPeak = provider === "anthropic" && isAnthropicPeakHour(now);
+	const throttledWindowSet = new Set(usageThrottledWindows);
 
 	return (
 		<div className={cn("space-y-3", className)}>
@@ -517,16 +563,6 @@ export function RateLimitProgress({
 
 				return (
 					<div key={usage.window || "default"} className="space-y-2">
-						<div className="flex items-center justify-between">
-							<span className="text-xs text-muted-foreground">
-								{usage.window
-									? `Usage (${formatWindowName(usage.window)})`
-									: "Rate limit window"}
-							</span>
-							<span className="text-xs font-medium text-muted-foreground">
-								{isAvailable ? `${percentage?.toFixed(0)}%` : "N/A"}
-							</span>
-						</div>
 						{(() => {
 							const expectedPct = computeExpectedPct(
 								usage.resetTime,
@@ -535,6 +571,19 @@ export function RateLimitProgress({
 							);
 							const isOverPacing =
 								expectedPct !== null && (percentage ?? 0) > expectedPct;
+							const isWindowThrottled = usage.window
+								? throttledWindowSet.has(usage.window)
+								: false;
+							const windowThrottleUntil = isWindowThrottled
+								? computeWindowThrottleUntil(
+										usage.resetTime,
+										usage.window,
+										percentage ?? null,
+										now,
+									)
+								: null;
+							const throttleDisplayUntil =
+								windowThrottleUntil ?? usageThrottledUntil;
 							const windowLabel = usage.window
 								? formatWindowName(usage.window)
 								: "Rate limit";
@@ -545,45 +594,88 @@ export function RateLimitProgress({
 								now,
 							);
 							return (
-								<div className="group relative">
-									<div
-										className="pointer-events-none absolute bottom-full z-10 mb-2 hidden w-max max-w-xs -translate-x-1/2 rounded bg-popover px-3 py-2 text-xs text-popover-foreground shadow-md group-hover:block"
-										style={{ left: `clamp(10%, ${expectedPct ?? 50}%, 90%)` }}
-									>
-										<div className="mb-1 font-medium">{windowLabel} usage</div>
-										{projectedMessage && (
-											<div
-												className={
-													(percentage ?? 0) <= 0
-														? "text-muted-foreground"
-														: isOverPacing
-															? "text-red-400"
-															: "text-green-400"
-												}
-											>
-												{projectedMessage}
+								<>
+									<div className="flex items-center justify-between">
+										<span className="text-xs text-muted-foreground">
+											{usage.window
+												? `Usage (${formatWindowName(usage.window)})`
+												: "Rate limit window"}
+										</span>
+										<span
+											className={cn(
+												"text-xs font-medium text-muted-foreground",
+												isWindowThrottled &&
+													"text-amber-600 dark:text-amber-400",
+											)}
+										>
+											{isAvailable ? `${percentage?.toFixed(0)}%` : "N/A"}
+										</span>
+									</div>
+									<div className="group relative">
+										<div
+											className="pointer-events-none absolute bottom-full z-10 mb-2 hidden w-max max-w-xs -translate-x-1/2 rounded bg-popover px-3 py-2 text-xs text-popover-foreground shadow-md group-hover:block"
+											style={{ left: `clamp(10%, ${expectedPct ?? 50}%, 90%)` }}
+										>
+											<div className="mb-1 font-medium">
+												{windowLabel} usage
 											</div>
+											{projectedMessage && (
+												<div
+													className={
+														(percentage ?? 0) <= 0
+															? "text-muted-foreground"
+															: isOverPacing
+																? "text-red-400"
+																: "text-green-400"
+													}
+												>
+													{projectedMessage}
+												</div>
+											)}
+										</div>
+										<Progress
+											value={isAvailable ? percentage : 0}
+											className="h-2"
+											indicatorClassName={
+												isWindowThrottled
+													? "bg-amber-500 dark:bg-amber-400"
+													: undefined
+											}
+										/>
+										{expectedPct !== null && (
+											<div
+												className="absolute w-0.5 pointer-events-none"
+												style={{
+													left: `${expectedPct}%`,
+													top: "-3px",
+													height: "14px",
+													zIndex: 10,
+													backgroundColor: "rgba(255,255,255,0.95)",
+													boxShadow:
+														"1px 0 2px rgba(0,0,0,0.5), -1px 0 2px rgba(0,0,0,0.5)",
+												}}
+											/>
 										)}
 									</div>
-									<Progress
-										value={isAvailable ? percentage : 0}
-										className="h-2"
-									/>
-									{expectedPct !== null && (
-										<div
-											className="absolute w-0.5 pointer-events-none"
-											style={{
-												left: `${expectedPct}%`,
-												top: "-3px",
-												height: "14px",
-												zIndex: 10,
-												backgroundColor: "rgba(255,255,255,0.95)",
-												boxShadow:
-													"1px 0 2px rgba(0,0,0,0.5), -1px 0 2px rgba(0,0,0,0.5)",
-											}}
-										/>
+									{isWindowThrottled && throttleDisplayUntil && (
+										<div className="flex items-center justify-between">
+											<span className="text-xs text-amber-600 dark:text-amber-400">
+												Usage throttling enabled; requests are being delayed
+											</span>
+											<span className="text-xs text-amber-600 dark:text-amber-400">
+												{(() => {
+													const throttledLabel = formatThrottledUntil(
+														throttleDisplayUntil,
+														now,
+													);
+													return throttledLabel.startsWith("Less than")
+														? throttledLabel
+														: `Until ${throttledLabel}`;
+												})()}
+											</span>
+										</div>
 									)}
-								</div>
+								</>
 							);
 						})()}
 						{usage.resetTime && (

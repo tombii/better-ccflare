@@ -508,7 +508,10 @@ describe("convertAnthropicRequestToOpenAI — tool_choice", () => {
 
 	it('maps {type:"tool",name:"foo"} → {type:"function",function:{name:"foo"}}', () => {
 		const result = convertAnthropicRequestToOpenAI(
-			anthropicRequest({ ...withTool, tool_choice: { type: "tool", name: "foo" } }),
+			anthropicRequest({
+				...withTool,
+				tool_choice: { type: "tool", name: "foo" },
+			}),
 		);
 		expect(result.tool_choice).toEqual({
 			type: "function",

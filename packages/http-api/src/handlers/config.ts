@@ -43,6 +43,10 @@ export function createConfigHandlers(
 				// Include actual TLS status
 				tls_enabled: runtime?.tlsEnabled || false,
 				system_prompt_cache_ttl_1h: config.getSystemPromptCacheTtl1h(),
+				usage_throttling_five_hour_enabled:
+					config.getUsageThrottlingFiveHourEnabled(),
+				usage_throttling_weekly_enabled:
+					config.getUsageThrottlingWeeklyEnabled(),
 			};
 			return jsonResponse(response);
 		},
@@ -198,6 +202,30 @@ export function createConfigHandlers(
 				return errorResponse(BadRequest("Invalid 'enabled': must be boolean"));
 			}
 			config.setSystemPromptCacheTtl1h(body.enabled);
+			return new Response(null, { status: 204 });
+		},
+
+		getUsageThrottling: (): Response => {
+			return jsonResponse({
+				fiveHourEnabled: config.getUsageThrottlingFiveHourEnabled(),
+				weeklyEnabled: config.getUsageThrottlingWeeklyEnabled(),
+			});
+		},
+
+		setUsageThrottling: async (req: Request): Promise<Response> => {
+			const body = await req.json();
+			if (
+				typeof body.fiveHourEnabled !== "boolean" ||
+				typeof body.weeklyEnabled !== "boolean"
+			) {
+				return errorResponse(
+					BadRequest(
+						"Invalid usage throttling payload: expected boolean 'fiveHourEnabled' and 'weeklyEnabled'",
+					),
+				);
+			}
+			config.setUsageThrottlingFiveHourEnabled(body.fiveHourEnabled);
+			config.setUsageThrottlingWeeklyEnabled(body.weeklyEnabled);
 			return new Response(null, { status: 204 });
 		},
 	};

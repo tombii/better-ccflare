@@ -40,3 +40,8 @@ export {
 	registerRefreshClearer,
 	restartUsagePollingForAccount,
 } from "./token-manager";
+export {
+	createUsageThrottledResponse,
+	getUsageThrottleStatus,
+	getUsageThrottleUntil,
+} from "./usage-throttling";

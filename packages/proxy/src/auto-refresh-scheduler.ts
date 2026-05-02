@@ -105,13 +105,13 @@ export class AutoRefreshScheduler {
 				return;
 			}
 
-			await this.checkPeakHoursPause();
-
 			const now = Date.now();
 
 			// Periodically clean up the tracking map - remove entries for accounts that no longer exist
 			// or have auto-refresh disabled
 			await this.cleanupTracking();
+
+			await this.checkPeakHoursPause();
 
 			// Get all accounts with auto-refresh enabled that have reset windows OR need immediate refresh
 			const accounts = await this.db.query<{
@@ -991,21 +991,37 @@ export class AutoRefreshScheduler {
 	 */
 	private async checkPeakHoursPause(): Promise<void> {
 		const inPeak = isZaiPeakHour();
-		if (inPeak) {
-			// Pause zai accounts that have opted in and aren't already paused
-			const changes = await this.db.runWithChanges(
-				"UPDATE accounts SET paused = 1, pause_reason = 'peak_hours' WHERE provider = 'zai' AND COALESCE(peak_hours_pause_enabled, 0) = 1 AND COALESCE(paused, 0) = 0",
-			);
-			if (changes > 0) {
-				log.info(`Peak hours: paused ${changes} zai account(s)`);
-			}
-		} else {
-			// Only resume accounts we specifically paused for peak hours
-			const changes = await this.db.runWithChanges(
-				"UPDATE accounts SET paused = 0, pause_reason = NULL WHERE provider = 'zai' AND COALESCE(peak_hours_pause_enabled, 0) = 1 AND COALESCE(paused, 0) = 1 AND pause_reason = 'peak_hours'",
-			);
-			if (changes > 0) {
-				log.info(`Peak hours ended: resumed ${changes} zai account(s)`);
+
+		const zaiAccounts = await this.db.query<{
+			id: string;
+			name: string;
+			paused: number;
+			pause_reason: string | null;
+			peak_hours_pause_enabled: number;
+		}>(
+			`SELECT id, name, COALESCE(paused, 0) as paused, pause_reason, COALESCE(peak_hours_pause_enabled, 0) as peak_hours_pause_enabled
+			 FROM accounts WHERE provider = 'zai' AND peak_hours_pause_enabled = 1`,
+		);
+
+		for (const account of zaiAccounts) {
+			if (inPeak && !account.paused) {
+				// Pause account during peak hours
+				await this.db.run(
+					"UPDATE accounts SET paused = 1, pause_reason = 'peak_hours' WHERE id = ?",
+					[account.id],
+				);
+				log.info(`Peak hours pause: paused zai account '${account.name}'`);
+			} else if (
+				!inPeak &&
+				account.paused &&
+				account.pause_reason === "peak_hours"
+			) {
+				// Resume account after peak hours (only if we paused it)
+				await this.db.run(
+					"UPDATE accounts SET paused = 0, pause_reason = NULL WHERE id = ?",
+					[account.id],
+				);
+				log.info(`Peak hours resume: resumed zai account '${account.name}'`);
 			}
 		}
 	}
