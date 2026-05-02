@@ -97,6 +97,9 @@ export function AccountListItem({
 		showForceReset &&
 		typeof account.usageUtilization === "number" &&
 		account.usageUtilization < 100;
+	const isUsageThrottled =
+		typeof account.usageThrottledUntil === "number" &&
+		account.usageThrottledUntil > Date.now();
 
 	// Parse Bedrock profile and region from custom_endpoint
 	let bedrockProfile: string | null = null;
@@ -278,6 +281,14 @@ export function AccountListItem({
 								Stale lock detected
 							</span>
 						)}
+						{isUsageThrottled && (
+							<span
+								className="text-sm text-amber-600"
+								title="Usage throttling is delaying requests for this account until pacing catches up"
+							>
+								Usage throttled
+							</span>
+						)}
 					</div>
 				</div>
 				<div className="flex items-center gap-2">
@@ -455,6 +466,8 @@ export function AccountListItem({
 					usageWindow={account.usageWindow}
 					usageData={account.usageData}
 					usageRateLimitedUntil={account.usageRateLimitedUntil}
+					usageThrottledUntil={account.usageThrottledUntil}
+					usageThrottledWindows={account.usageThrottledWindows}
 					provider={account.provider}
 					showWeekly={providerShowsWeeklyUsage(account.provider)}
 				/>

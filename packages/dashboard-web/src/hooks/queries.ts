@@ -302,6 +302,27 @@ export const useSetSystemCacheTtl = () => {
 	});
 };
 
+export const useUsageThrottling = () => {
+	return useQuery({
+		queryKey: ["usage-throttling"],
+		queryFn: () => api.getUsageThrottling(),
+	});
+};
+
+export const useSetUsageThrottling = () => {
+	const queryClient = useQueryClient();
+	return useMutation({
+		mutationFn: (settings: {
+			fiveHourEnabled: boolean;
+			weeklyEnabled: boolean;
+		}) => api.setUsageThrottling(settings),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ["usage-throttling"] });
+			queryClient.invalidateQueries({ queryKey: queryKeys.accounts() });
+		},
+	});
+};
+
 export const useCleanupNow = () => {
 	return useMutation({
 		mutationFn: () => api.cleanupNow(),

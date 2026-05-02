@@ -1,10 +1,10 @@
 import type { DatabaseOperations } from "@better-ccflare/database";
-import { extractApiKey } from "./extract-api-key";
 import {
 	type ApiKey,
 	type ApiKeyRole,
 	NodeCryptoUtils,
 } from "@better-ccflare/types";
+import { extractApiKey } from "./extract-api-key";
 
 export interface AuthenticationResult {
 	isAuthenticated: boolean;

@@ -186,6 +186,8 @@ export interface AccountResponse {
 	usageWindow: string | null; // Most restrictive window (e.g., "five_hour")
 	usageData: FullUsageData | null; // Full usage data for Anthropic accounts
 	usageRateLimitedUntil: number | null; // Timestamp (ms) until usage API 429 clears; null if not rate-limited
+	usageThrottledUntil: number | null; // Timestamp (ms) until proactive usage throttling clears; null if not throttled
+	usageThrottledWindows: string[]; // Exact usage windows currently being throttled
 	hasRefreshToken: boolean; // Indicates if the account has a refresh token (OAuth account)
 	crossRegionMode?: string | null; // Cross-region inference mode for Bedrock accounts
 	modelFallbacks?: { [key: string]: string } | null;
@@ -389,13 +391,17 @@ export function toAccountResponse(account: Account): AccountResponse {
 		autoFallbackEnabled: account.auto_fallback_enabled,
 		autoRefreshEnabled: account.auto_refresh_enabled,
 		autoPauseOnOverageEnabled: account.auto_pause_on_overage_enabled,
+		peakHoursPauseEnabled: account.peak_hours_pause_enabled,
 		customEndpoint: account.custom_endpoint,
 		modelMappings,
 		usageUtilization: null, // Will be filled in by API handler from cache
 		usageWindow: null, // Will be filled in by API handler from cache
 		usageData: null, // Will be filled in by API handler from cache
 		usageRateLimitedUntil: null, // Will be filled in by API handler from cache
+		usageThrottledUntil: null,
+		usageThrottledWindows: [],
 		hasRefreshToken: !!account.refresh_token, // OAuth accounts have refresh tokens
+		crossRegionMode: account.cross_region_mode,
 		modelFallbacks,
 		billingType: account.billing_type,
 		sessionStats: null,

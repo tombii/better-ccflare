@@ -2,6 +2,7 @@ import React from "react";
 import { CacheKeepaliveCard } from "./overview/CacheKeepaliveCard";
 import { DataRetentionCard } from "./overview/DataRetentionCard";
 import { SystemCacheTtlCard } from "./overview/SystemCacheTtlCard";
+import { UsageThrottlingCard } from "./overview/UsageThrottlingCard";
 
 export const SettingsTab = React.memo(() => {
 	return (
@@ -10,6 +11,7 @@ export const SettingsTab = React.memo(() => {
 			<div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
 				<CacheKeepaliveCard />
 				<SystemCacheTtlCard />
+				<UsageThrottlingCard />
 				<DataRetentionCard />
 			</div>
 		</div>

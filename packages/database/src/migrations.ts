@@ -221,15 +221,6 @@ export function ensureSchema(db: Database): void {
 		       ('sonnet', NULL, 0),
 		       ('haiku',  NULL, 0);
 	`);
-
-	// Create settings table for global configuration values
-	db.run(`
-		CREATE TABLE IF NOT EXISTS settings (
-			key        TEXT PRIMARY KEY,
-			value      TEXT NOT NULL,
-			updated_at INTEGER NOT NULL
-		)
-	`);
 }
 
 export function runMigrations(db: Database, dbPath?: string): void {
@@ -1046,25 +1037,6 @@ export function runMigrations(db: Database, dbPath?: string): void {
 	} catch (error) {
 		log.error(`Database migration failed: ${(error as Error).message}`);
 		throw error; // Re-throw to allow calling code to handle the failure
-	}
-
-	// Idempotent: ensure settings table exists for databases created before this migration
-	const settingsTableExists = (
-		db
-			.prepare(
-				"SELECT name FROM sqlite_master WHERE type='table' AND name='settings'",
-			)
-			.get() as { name: string } | undefined
-	)?.name;
-	if (!settingsTableExists) {
-		db.run(`
-			CREATE TABLE IF NOT EXISTS settings (
-				key        TEXT PRIMARY KEY,
-				value      TEXT NOT NULL,
-				updated_at INTEGER NOT NULL
-			)
-		`);
-		log.info("Created settings table");
 	}
 }
 
