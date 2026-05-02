@@ -13,6 +13,9 @@ Load balancer proxy for Claude distributing requests across multiple account pro
 **NEVER TOUCH `inline-worker.ts`** — auto-generated, must be excluded from all reads, edits, searches, and commits.
 If accidentally modified: `git checkout -- packages/proxy/src/inline-worker.ts`
 
+## Git Refspecs
+This repo has both a `main` branch and a `main` tag. **Always use `refs/heads/main`** (not `main`) for all git log, diff, checkout, and merge-base commands to avoid ambiguous refspec errors. Applies to: `git log refs/heads/main`, `git diff refs/heads/main...`, `git merge-base refs/heads/main`, etc.
+
 ## Branch Management
 Always branch from `main` with a fresh pull. Never make changes directly on main.
 PRs: `gh pr checkout <PR_NUMBER>` or `git checkout <branch-name>`.
