@@ -23,6 +23,7 @@ import {
 } from "@better-ccflare/http-common";
 import { Logger } from "@better-ccflare/logger";
 import {
+	type AnyUsageData,
 	fetchUsageData,
 	getRepresentativeUtilization,
 	getRepresentativeWindow,
@@ -382,7 +383,7 @@ export function createAccountsListHandler(
 					fullUsageData
 				) {
 					const usageThrottleStatus = getUsageThrottleStatus(
-						fullUsageData,
+						fullUsageData as AnyUsageData,
 						usageThrottleSettings,
 						now,
 					);
