@@ -126,7 +126,7 @@ export interface PoolStatus {
 // Account detail for ?detail=1
 export interface AccountDetail {
 	name: string;
-	status: string;
+	status: "available" | "paused" | "rate_limited";
 	rate_limited_until: number | null;
 }
 
