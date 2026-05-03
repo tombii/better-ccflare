@@ -190,8 +190,54 @@ jobs:
               SECURITY=$(echo "$COMMITS" | grep -E "^[a-f0-9]+ (security|vulnerabilit|redact|ReDoS)[\(:]" | eval "$VERSION_SKIP" | eval "$DATED_SKIP" | sort -u)
               IMPROVEMENTS=$(echo "$COMMITS" | grep -E "^[a-f0-9]+ (improve|enhance|update|refactor)[\(:]" | eval "$VERSION_SKIP" | eval "$DATED_SKIP" | sort -u)
 
+              # Breaking changes detection (check prefix and footer)
+              BREAKING=$(echo "$COMMITS" | while IFS= read -r commit; do
+                if [ -n "$commit" ]; then
+                  HASH=$(echo "$commit" | cut -d' ' -f1)
+                  MSG=$(echo "$commit" | cut -d' ' -f2-)
+                  BODY=$(git log -1 --format="%s%n%n%b" "$HASH")
+
+                  # Check prefix pattern: feat!: or fix!: etc
+                  if echo "$MSG" | grep -qE '^[a-z]+!:'; then
+                    echo "$commit"
+                  # Check footer pattern: BREAKING CHANGE:
+                  elif echo "$BODY" | grep -qi 'BREAKING[- ]CHANGE'; then
+                    echo "$commit"
+                  fi
+                fi
+              done | eval "$VERSION_SKIP" | eval "$DATED_SKIP" | sort -u)
+
               # Also filter out duplicate chore messages specifically
               CHORE_UNIQUE=$(echo "$COMMITS" | grep -E "chore" | eval "$VERSION_SKIP" | eval "$DATED_SKIP" | sort -u | head -3)
+
+              if [ -n "$BREAKING" ]; then
+                CHANGELOG="$CHANGELOG
+
+          ### ⚠️ Breaking Changes
+
+"
+                while IFS= read -r commit; do
+                  if [ -n "$commit" ]; then
+                    HASH=$(echo "$commit" | cut -d' ' -f1)
+                    MSG=$(echo "$commit" | cut -d' ' -f2-)
+
+                    # Extract breaking change explanation from footer
+                    EXPLANATION=$(git log -1 --format="%b" "$HASH" | grep -Pzo 'BREAKING[- ]CHANGE[s]?:\s*\K[^\n]+' || true)
+
+                    if [ -n "$EXPLANATION" ]; then
+                      CHANGELOG="$CHANGELOG
+- **$MSG** ([\`$HASH\`](https://github.com/tombii/better-ccflare/commit/$HASH))
+
+  $EXPLANATION
+"
+                    else
+                      CHANGELOG="$CHANGELOG
+- $MSG ([\`$HASH\`](https://github.com/tombii/better-ccflare/commit/$HASH))
+"
+                    fi
+                  fi
+                done <<< "$BREAKING"
+              fi
 
               if [ -n "$FEATURES" ]; then
                 CHANGELOG="$CHANGELOG
