@@ -6,6 +6,7 @@ import type {
 import type { Account } from "./account";
 import type { RequestMeta } from "./api";
 import type { ApiKey } from "./api-key";
+import type { IntegrityStatus } from "./stats";
 import type { StrategyStore } from "./strategy";
 
 // API context for HTTP handlers
@@ -32,6 +33,7 @@ export interface APIContext {
 		lastError: string | null;
 		startedAt: number | null;
 	};
+	getIntegrityStatus?: () => IntegrityStatus;
 }
 
 // Load balancing strategy interface

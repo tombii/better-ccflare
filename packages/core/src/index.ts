@@ -73,6 +73,11 @@ export {
 } from "./pricing";
 export * from "./request-events";
 export * from "./strategy";
+export {
+	computeWindowStartMs,
+	FIXED_WINDOW_DURATION_MS,
+	type SupportedWindow,
+} from "./throttle-utils";
 export { levenshteinDistance } from "./utils";
 export {
 	patterns,
@@ -91,8 +96,3 @@ export {
 	getVersionSync,
 	trackClientVersion,
 } from "./version";
-export {
-	type SupportedWindow,
-	FIXED_WINDOW_DURATION_MS,
-	computeWindowStartMs,
-} from "./throttle-utils";

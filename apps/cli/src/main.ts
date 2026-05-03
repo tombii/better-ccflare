@@ -48,6 +48,7 @@ import {
 	removeAccount,
 	resetAllStats,
 	resumeAccount,
+	runDoctor,
 	setAccountPriority,
 } from "@better-ccflare/cli-commands";
 import { Config } from "@better-ccflare/config";
@@ -98,6 +99,9 @@ interface ParsedArgs {
 	reauthenticate: string | null;
 	analyze: boolean;
 	repairDb: boolean;
+	doctor: boolean;
+	doctorFull: boolean;
+	doctorRecover: boolean;
 	resetStats: boolean;
 	clearHistory: boolean;
 	compact: boolean;
@@ -447,6 +451,9 @@ function parseArgs(args: string[]): ParsedArgs {
 		reauthenticate: null,
 		analyze: false,
 		repairDb: false,
+		doctor: false,
+		doctorFull: false,
+		doctorRecover: false,
 		resetStats: false,
 		clearHistory: false,
 		compact: false,
@@ -705,6 +712,17 @@ function parseArgs(args: string[]): ParsedArgs {
 			case "--repair-db":
 				parsed.repairDb = true;
 				break;
+			case "--doctor":
+				parsed.doctor = true;
+				break;
+			case "--doctor-full":
+				parsed.doctorFull = true;
+				parsed.doctor = true; // Base flag
+				break;
+			case "--doctor-recover":
+				parsed.doctorRecover = true;
+				parsed.doctor = true; // Base flag
+				break;
 			case "--reset-stats":
 				parsed.resetStats = true;
 				break;
@@ -843,6 +861,9 @@ Options:
   --set-priority <name> <priority>  Set account priority
   --analyze            Analyze database performance
   --repair-db          Check and repair database integrity
+  --doctor             Run database integrity check and storage diagnostics
+  --doctor-full        Run exhaustive integrity check (slower)
+  --doctor-recover     Generate recovery instructions for corrupted database
   --reset-stats        Reset usage statistics
   --clear-history      Clear request history
   --compact            Compact database (WAL checkpoint + VACUUM)
@@ -1324,6 +1345,14 @@ Examples:
 	if (parsed.repairDb) {
 		await handleRepairCommand(dbOps);
 		await exitGracefully(0);
+	}
+
+	if (parsed.doctor || parsed.doctorFull || parsed.doctorRecover) {
+		const { exitCode } = await runDoctor(dbOps, {
+			full: parsed.doctorFull,
+			recover: parsed.doctorRecover,
+		});
+		await exitGracefully(exitCode as 0 | 1);
 	}
 
 	// Default: Start server if no command specified

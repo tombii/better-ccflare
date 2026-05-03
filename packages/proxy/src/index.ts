@@ -30,6 +30,7 @@ export {
 	type TokenHealthReport,
 	type TokenHealthStatus,
 } from "./handlers";
+export { startIntegrityScheduler } from "./integrity-scheduler";
 export {
 	getUsageWorker,
 	getUsageWorkerHealth,

@@ -8,6 +8,7 @@ export type {
 	CompactResponse,
 	ConfigResponse,
 	HealthResponse,
+	IntegrityStatus,
 	ModelPerformance,
 	RequestResponse,
 	RetentionGetResponse,

@@ -1,7 +1,4 @@
-import {
-	computeWindowStartMs,
-	registerUIRefresh,
-} from "@better-ccflare/core";
+import { computeWindowStartMs, registerUIRefresh } from "@better-ccflare/core";
 import type { FullUsageData } from "@better-ccflare/types";
 import { useEffect, useState } from "react";
 import { cn } from "../../lib/utils";

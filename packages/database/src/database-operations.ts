@@ -4,6 +4,7 @@ import { stat } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { RuntimeConfig } from "@better-ccflare/config";
 import type { Disposable } from "@better-ccflare/core";
+import { TIME_CONSTANTS } from "@better-ccflare/core";
 import type {
 	Account,
 	Combo,
@@ -11,6 +12,7 @@ import type {
 	ComboFamilyAssignment,
 	ComboSlot,
 	ComboWithSlots,
+	IntegrityStatus,
 	StrategyStore,
 } from "@better-ccflare/types";
 import { BunSqlAdapter } from "./adapters/bun-sql-adapter";
@@ -170,6 +172,12 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 	private retryConfig: DatabaseRetryConfig;
 	private fastMode: boolean;
 	readonly isSQLite: boolean;
+	/** Cached integrity check status for doctor command */
+	private integrityStatus: IntegrityStatus = {
+		status: "unchecked",
+		lastCheckAt: null,
+		lastError: null,
+	};
 
 	// Repositories
 	private accounts: AccountRepository;
@@ -321,6 +329,160 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 				);
 			}
 		}
+	}
+
+	/**
+	 * Run quick integrity check (fast btree walk)
+	 * @returns 'ok' or first error line
+	 * @throws Error if not in SQLite mode
+	 */
+	async runQuickIntegrityCheck(): Promise<string> {
+		if (!this.sqliteDb) {
+			throw new Error(
+				"runQuickIntegrityCheck() is only available in SQLite mode",
+			);
+		}
+		const result = this.sqliteDb.query("PRAGMA quick_check").get() as {
+			quick_check: string;
+		};
+		return result.quick_check;
+	}
+
+	/**
+	 * Run full integrity check (exhaustive check)
+	 * @returns 'ok' or multi-line error report
+	 * @throws Error if not in SQLite mode
+	 */
+	async runFullIntegrityCheck(): Promise<string> {
+		if (!this.sqliteDb) {
+			throw new Error(
+				"runFullIntegrityCheck() is only available in SQLite mode",
+			);
+		}
+		// integrity_check can return multiple rows for long error reports
+		const rows = this.sqliteDb.query("PRAGMA integrity_check").all() as Array<{
+			integrity_check: string;
+		}>;
+		// Join all rows into a single string (most cases return single 'ok' row)
+		return rows.map((r) => r.integrity_check).join("\n");
+	}
+
+	/**
+	 * Get cached integrity status
+	 */
+	getIntegrityStatus(): IntegrityStatus {
+		return { ...this.integrityStatus };
+	}
+
+	/**
+	 * Update cached integrity status
+	 */
+	updateIntegrityStatus(status: "ok" | "corrupt", error?: string | null): void {
+		this.integrityStatus = {
+			status,
+			lastCheckAt: Date.now(),
+			lastError: error ?? null,
+		};
+	}
+
+	/**
+	 * Get storage metrics for database health monitoring
+	 */
+	async getStorageMetrics(): Promise<{
+		dbBytes: number;
+		walBytes: number;
+		orphanPages: number;
+		lastRetentionSweepAt: number | null;
+		nullAccountRows: number;
+	}> {
+		// Database file size
+		const dbBytes = await this.getDbSizeBytes();
+
+		// WAL file size (if exists)
+		let walBytes = 0;
+		if (this.resolvedDbPath) {
+			const walPath = `${this.resolvedDbPath}-wal`;
+			try {
+				const { size } = await stat(walPath);
+				walBytes = size;
+			} catch {
+				// WAL file doesn't exist or can't be accessed
+			}
+		}
+
+		// Orphan pages (freelist count) - only in SQLite mode
+		let orphanPages = 0;
+		if (this.sqliteDb) {
+			const result = this.sqliteDb.query("PRAGMA freelist_count").get() as {
+				freelist_count: number;
+			};
+			orphanPages = result.freelist_count;
+		}
+
+		// Last retention sweep timestamp
+		let lastRetentionSweepAt: number | null = null;
+		try {
+			const strategy = await this.getStrategy("data-retention");
+			if (strategy?.config?.lastSweepAt) {
+				lastRetentionSweepAt = strategy.config.lastSweepAt as number;
+			}
+		} catch {
+			// strategies table may not exist in SQLite mode
+		}
+
+		// Null account rows (requests with account_used IS NULL in last 24h)
+		const cutoff = Date.now() - TIME_CONSTANTS.DAY;
+		const nullAccountRow = await this.adapter.get<{ count: number }>(
+			"SELECT COUNT(*) AS count FROM requests WHERE account_used IS NULL AND timestamp >= ?",
+			[cutoff],
+		);
+		const nullAccountRows = nullAccountRow?.count ?? 0;
+
+		return {
+			dbBytes,
+			walBytes,
+			orphanPages,
+			lastRetentionSweepAt,
+			nullAccountRows,
+		};
+	}
+
+	/**
+	 * Generate manual recovery instructions for corrupted database
+	 */
+	generateRecoveryInstructions(): string {
+		const dbPath =
+			this.resolvedDbPath ?? "~/.config/better-ccflare/better-ccflare.db";
+		return `
+DATABASE RECOVERY INSTRUCTIONS
+
+If your database is corrupted, follow these steps:
+
+1. STOP THE SERVER
+   bun run cli --stop
+
+2. BACKUP CORRUPTED DATABASE
+   cp ${dbPath} ${dbPath}.corrupted.backup
+   cp ${dbPath}-wal ${dbPath}-wal.corrupted.backup 2>/dev/null || true
+   cp ${dbPath}-shm ${dbPath}-shm.corrupted.backup 2>/dev/null || true
+
+3. ATTEMPT RECOVERY (optional)
+   sqlite3 ${dbPath}.corrupted.backup ".recover" > recovered.sql
+   sqlite3 ${dbPath}.new < recovered.sql
+   # If successful, replace original:
+   mv ${dbPath}.new ${dbPath}
+
+4. START FRESH (if recovery fails)
+   rm ${dbPath} ${dbPath}-wal ${dbPath}-shm
+   # Restart server - it will create a new empty database
+   bun start
+
+5. RE-ADD ACCOUNTS
+   bun run cli --add-account <name> --mode <mode> --priority <number>
+
+NOTE: You will lose all historical request data and account configurations.
+OAuth tokens will need to be re-authenticated.
+`.trim();
 	}
 
 	/**
