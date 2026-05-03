@@ -3,6 +3,31 @@ import { AsyncDbWriter } from "@better-ccflare/database";
 import { createHealthHandler } from "../health";
 
 describe("health runtime payload", () => {
+	it("returns degraded status when no routable accounts", async () => {
+		const db = {
+			get: async (sql: string) => {
+				if (sql.includes("COUNT(*) as count FROM accounts WHERE paused = 0")) {
+					return { count: 0 };
+				}
+				if (sql.includes("COUNT(*) as count FROM accounts")) {
+					return { count: 2 };
+				}
+				return { count: 0 };
+			},
+		} as unknown as import("@better-ccflare/database").BunSqlAdapter;
+
+		const config = {
+			getStrategy: () => "session",
+		} as unknown as import("@better-ccflare/config").Config;
+
+		const handler = createHealthHandler(db, config);
+		const response = await handler();
+		const body = (await response.json()) as Record<string, unknown>;
+
+		expect(body.status).toBe("degraded");
+		expect(body.accounts).toBe(2);
+	});
+
 	it("includes runtime health when callbacks are provided", async () => {
 		const db = {
 			get: async () => ({ count: 3 }),
