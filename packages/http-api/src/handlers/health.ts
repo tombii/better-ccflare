@@ -156,7 +156,7 @@ export function createHealthHandler(
 					: a.rate_limited_until && a.rate_limited_until > now
 						? "rate_limited"
 						: "available",
-				rate_limited_until: a.rate_limited_until || null,
+				rate_limited_until: a.rate_limited_until ?? null,
 			}));
 		}
 
