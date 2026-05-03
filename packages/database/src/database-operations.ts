@@ -391,7 +391,7 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 	async getStorageMetrics(): Promise<{
 		dbBytes: number;
 		walBytes: number;
-		freePages: number;
+		orphanPages: number;
 		lastRetentionSweepAt: number | null;
 		nullAccountRows: number;
 	}> {
@@ -410,13 +410,13 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 			}
 		}
 
-		// Free pages (freelist count) - only in SQLite mode
-		let freePages = 0;
+		// Orphan pages (freelist count) - only in SQLite mode
+		let orphanPages = 0;
 		if (this.sqliteDb) {
 			const result = this.sqliteDb.query("PRAGMA freelist_count").get() as {
 				freelist_count: number;
 			};
-			freePages = result.freelist_count;
+			orphanPages = result.freelist_count;
 		}
 
 		// Last retention sweep timestamp
@@ -441,7 +441,7 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		return {
 			dbBytes,
 			walBytes,
-			freePages,
+			orphanPages,
 			lastRetentionSweepAt,
 			nullAccountRows,
 		};

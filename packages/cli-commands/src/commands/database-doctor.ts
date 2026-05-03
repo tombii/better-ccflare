@@ -40,7 +40,7 @@ export async function runDoctor(
 	const metrics = await dbOps.getStorageMetrics();
 	console.log(`DB Size: ${(metrics.dbBytes / 1024 / 1024).toFixed(2)} MB`);
 	console.log(`WAL Size: ${(metrics.walBytes / 1024 / 1024).toFixed(2)} MB`);
-	console.log(`Free Pages: ${metrics.freePages}`);
+	console.log(`Orphan Pages: ${metrics.orphanPages}`);
 	console.log(
 		`Last Retention Sweep: ${
 			metrics.lastRetentionSweepAt

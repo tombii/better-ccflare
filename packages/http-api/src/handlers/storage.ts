@@ -13,7 +13,7 @@ export function createStorageHandler(dbOps: DatabaseOperations) {
 			last_integrity_check_at: integrity.lastCheckAt
 				? new Date(integrity.lastCheckAt).toISOString()
 				: null,
-			free_pages: metrics.freePages,
+			orphan_pages: metrics.orphanPages,
 			last_retention_sweep_at: metrics.lastRetentionSweepAt
 				? new Date(metrics.lastRetentionSweepAt).toISOString()
 				: null,
