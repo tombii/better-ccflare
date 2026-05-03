@@ -8,6 +8,7 @@ import { usageCache } from "@better-ccflare/providers";
 import type { Account } from "@better-ccflare/types";
 import { cacheBodyStore } from "./cache-body-store";
 import {
+	createPoolExhaustedResponse,
 	createRequestMetadata,
 	createUsageThrottledResponse,
 	ERROR_MESSAGES,
@@ -315,16 +316,70 @@ export async function handleProxy(
 		if (throttledAccounts.length > 0) {
 			return createUsageThrottledResponse(throttledAccounts);
 		}
-		return proxyUnauthenticated(
-			req,
-			url,
-			requestMeta,
-			finalBodyBuffer,
-			finalCreateBodyStream,
-			ctx,
-			apiKeyId,
-			apiKeyName,
+
+		// Check feature flag for backwards compatibility
+		if (process.env.CCFLARE_PASSTHROUGH_ON_EMPTY_POOL === "1") {
+			log.warn(ERROR_MESSAGES.NO_ACCOUNTS);
+			return proxyUnauthenticated(
+				req,
+				url,
+				requestMeta,
+				finalBodyBuffer,
+				finalCreateBodyStream,
+				ctx,
+				apiKeyId,
+				apiKeyName,
+			);
+		}
+
+		// Return 503 pool_exhausted response (default behavior)
+		log.error(ERROR_MESSAGES.POOL_EXHAUSTED);
+
+		// Get all accounts for current provider for pool exhausted response
+		const allAccounts = (await ctx.dbOps.getAllAccounts()).filter(
+			(a) => a.provider === ctx.provider.name,
 		);
+
+		// Log to request history via worker
+		const poolExhaustedResponse = createPoolExhaustedResponse(allAccounts);
+
+		// Send error message to usage worker for request history logging
+		ctx.usageWorker.postMessage({
+			type: "start",
+			messageId: crypto.randomUUID(),
+			requestId: requestMeta.id,
+			accountId: null,
+			method: req.method,
+			path: url.pathname,
+			timestamp: requestMeta.timestamp,
+			requestHeaders: Object.fromEntries(req.headers.entries()),
+			requestBody: null,
+			project: project ?? null,
+			responseStatus: 503,
+			responseHeaders: Object.fromEntries(
+				poolExhaustedResponse.headers.entries(),
+			),
+			isStream: false,
+			providerName: ctx.provider.name,
+			accountBillingType: null,
+			accountAutoPauseOnOverageEnabled: 0,
+			accountName: null,
+			agentUsed: agentUsed || null,
+			comboName: null,
+			apiKeyId: apiKeyId || null,
+			apiKeyName: apiKeyName || null,
+			retryAttempt: 0,
+			failoverAttempts: 0,
+		});
+
+		ctx.usageWorker.postMessage({
+			type: "end",
+			requestId: requestMeta.id,
+			success: false,
+			error: "pool_exhausted",
+		});
+
+		return poolExhaustedResponse;
 	}
 
 	// 8. Log selected accounts

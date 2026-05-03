@@ -764,3 +764,83 @@ export async function proxyWithAccount(
 		return null;
 	}
 }
+
+/**
+ * Create a 503 Service Unavailable response when the account pool is exhausted.
+ * All accounts are paused, rate-limited, or filtered out.
+ * @param accounts - All accounts that were considered but are unavailable
+ * @returns 503 response with pool_exhausted error and Retry-After header
+ */
+export function createPoolExhaustedResponse(accounts: Account[]): Response {
+	const now = Date.now();
+
+	// Build account info list
+	const accountInfos = accounts.map((account) => {
+		const reason = account.paused
+			? "paused"
+			: account.rate_limited_until && account.rate_limited_until > now
+				? "rate_limited"
+				: "unavailable";
+
+		const availableAt =
+			account.rate_limited_until && account.rate_limited_until > now
+				? new Date(account.rate_limited_until).toISOString()
+				: null;
+
+		return {
+			name: account.name,
+			reason,
+			available_at: availableAt,
+		};
+	});
+
+	// Calculate next_available_at from earliest rate_limited_until
+	const rateLimitedAccounts = accounts.filter(
+		(account) => account.rate_limited_until && account.rate_limited_until > now,
+	);
+	const nextAvailableAt =
+		rateLimitedAccounts.length > 0
+			? new Date(
+					Math.min(
+						...rateLimitedAccounts.map(
+							(account) => account.rate_limited_until!,
+						),
+					),
+				).toISOString()
+			: null;
+
+	// Calculate Retry-After header (seconds) directly from numeric min
+	const retryAfterSeconds =
+		rateLimitedAccounts.length > 0
+			? Math.max(
+					1,
+					Math.round(
+						(Math.min(
+							...rateLimitedAccounts.map(
+								(account) => account.rate_limited_until!,
+							),
+						) - now) / 1000,
+					),
+				)
+			: 60; // Default 60s if no cooldown info
+
+	return new Response(
+		JSON.stringify({
+			type: "error",
+			error: {
+				type: "pool_exhausted",
+				message: ERROR_MESSAGES.POOL_EXHAUSTED,
+				next_available_at: nextAvailableAt,
+				accounts: accountInfos,
+			},
+		}),
+		{
+			status: 503,
+			headers: {
+				"Content-Type": "application/json",
+				"Retry-After": String(retryAfterSeconds),
+				"x-better-ccflare-pool-status": "exhausted",
+			},
+		},
+	);
+}

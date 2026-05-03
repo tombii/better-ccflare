@@ -28,6 +28,7 @@ export const ERROR_MESSAGES = {
 	ALL_ACCOUNTS_FAILED: "All accounts failed to proxy the request",
 	TOKEN_REFRESH_FAILED: "Failed to refresh access token",
 	PROXY_REQUEST_FAILED: "Failed to proxy request with account",
+	POOL_EXHAUSTED: "All accounts are temporarily unavailable",
 } as const;
 
 /** Timing constants */

@@ -28,8 +28,15 @@ export function createHealthHandler(
 			"SELECT COUNT(*) as count FROM accounts",
 		);
 
+		const routableCount = await db.get<{ count: number }>(
+			"SELECT COUNT(*) as count FROM accounts WHERE paused = 0 AND (rate_limited_until IS NULL OR rate_limited_until <= ?)",
+			[Date.now()],
+		);
+
+		const status = (routableCount?.count ?? 0) > 0 ? "ok" : "degraded";
+
 		const response: HealthResponse = {
-			status: "ok",
+			status,
 			accounts: accountCount?.count || 0,
 			timestamp: new Date().toISOString(),
 			strategy: config.getStrategy(),
