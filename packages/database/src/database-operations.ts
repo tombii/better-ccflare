@@ -12,6 +12,7 @@ import type {
 	ComboFamilyAssignment,
 	ComboSlot,
 	ComboWithSlots,
+	IntegrityStatus,
 	StrategyStore,
 } from "@better-ccflare/types";
 import { BunSqlAdapter } from "./adapters/bun-sql-adapter";
@@ -172,11 +173,11 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 	private fastMode: boolean;
 	readonly isSQLite: boolean;
 	/** Cached integrity check status for doctor command */
-	private integrityStatus: {
-		status: "ok" | "corrupt" | "unchecked";
-		lastCheckAt: number | null;
-		lastError: string | null;
-	} = { status: "unchecked", lastCheckAt: null, lastError: null };
+	private integrityStatus: IntegrityStatus = {
+		status: "unchecked",
+		lastCheckAt: null,
+		lastError: null,
+	};
 
 	// Repositories
 	private accounts: AccountRepository;
@@ -369,12 +370,8 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 	/**
 	 * Get cached integrity status
 	 */
-	getIntegrityStatus(): {
-		status: "ok" | "corrupt" | "unchecked";
-		lastCheckAt: number | null;
-		lastError: string | null;
-	} {
-		return this.integrityStatus;
+	getIntegrityStatus(): IntegrityStatus {
+		return { ...this.integrityStatus };
 	}
 
 	/**
@@ -394,7 +391,7 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 	async getStorageMetrics(): Promise<{
 		dbBytes: number;
 		walBytes: number;
-		orphanPages: number;
+		freePages: number;
 		lastRetentionSweepAt: number | null;
 		nullAccountRows: number;
 	}> {
@@ -413,13 +410,13 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 			}
 		}
 
-		// Orphan pages (freelist count) - only in SQLite mode
-		let orphanPages = 0;
+		// Free pages (freelist count) - only in SQLite mode
+		let freePages = 0;
 		if (this.sqliteDb) {
 			const result = this.sqliteDb.query("PRAGMA freelist_count").get() as {
 				freelist_count: number;
 			};
-			orphanPages = result.freelist_count;
+			freePages = result.freelist_count;
 		}
 
 		// Last retention sweep timestamp
@@ -444,7 +441,7 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		return {
 			dbBytes,
 			walBytes,
-			orphanPages,
+			freePages,
 			lastRetentionSweepAt,
 			nullAccountRows,
 		};

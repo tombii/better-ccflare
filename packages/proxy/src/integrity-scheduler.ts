@@ -13,18 +13,19 @@ export function startIntegrityScheduler(
 	let interval =
 		(intervalHours ?? DEFAULT_INTERVAL_HOURS) * TIME_CONSTANTS.HOUR;
 
-	// Allow disabling via env
-	if (process.env.CCFLARE_INTEGRITY_CHECK_INTERVAL === "0") {
-		logger.info(
-			"Integrity scheduler disabled (CCFLARE_INTEGRITY_CHECK_INTERVAL=0)",
-		);
-		return () => {};
-	}
-
 	const envInterval = process.env.CCFLARE_INTEGRITY_CHECK_INTERVAL;
-	if (envInterval) {
+	if (envInterval !== undefined) {
 		const parsed = parseInt(envInterval, 10);
-		if (parsed > 0) {
+		if (Number.isNaN(parsed) || parsed < 0) {
+			logger.warn(
+				`Invalid CCFLARE_INTEGRITY_CHECK_INTERVAL="${envInterval}", using default ${DEFAULT_INTERVAL_HOURS}h`,
+			);
+		} else if (parsed === 0) {
+			logger.info(
+				"Integrity scheduler disabled (CCFLARE_INTEGRITY_CHECK_INTERVAL=0)",
+			);
+			return () => {};
+		} else {
 			interval = parsed * TIME_CONSTANTS.HOUR;
 		}
 	}
@@ -51,13 +52,14 @@ export function startIntegrityScheduler(
 	};
 
 	// Run initial check after 30s startup grace period
-	setTimeout(checkIntegrity, 30 * TIME_CONSTANTS.SECOND);
+	const timeoutId = setTimeout(checkIntegrity, 30 * TIME_CONSTANTS.SECOND);
 
 	// Schedule periodic checks
 	const intervalId = setInterval(checkIntegrity, interval);
 
 	// Return cleanup function
 	return () => {
+		clearTimeout(timeoutId);
 		clearInterval(intervalId);
 		logger.info("Integrity scheduler stopped");
 	};

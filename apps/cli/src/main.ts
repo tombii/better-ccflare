@@ -1347,12 +1347,12 @@ Examples:
 		await exitGracefully(0);
 	}
 
-	if (parsed.doctor) {
-		await runDoctor(dbOps, {
+	if (parsed.doctor || parsed.doctorFull || parsed.doctorRecover) {
+		const { exitCode } = await runDoctor(dbOps, {
 			full: parsed.doctorFull,
 			recover: parsed.doctorRecover,
 		});
-		await exitGracefully((process.exitCode as 0 | 1) || 0);
+		await exitGracefully(exitCode as 0 | 1);
 	}
 
 	// Default: Start server if no command specified

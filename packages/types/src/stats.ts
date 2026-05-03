@@ -1,3 +1,10 @@
+// Integrity status type
+export interface IntegrityStatus {
+	status: "ok" | "corrupt" | "unchecked";
+	lastCheckAt: number | null;
+	lastError: string | null;
+}
+
 // Stats types
 export interface Stats {
 	totalRequests: number;
@@ -114,12 +121,12 @@ export interface HealthResponse {
 	timestamp: string;
 	strategy: string;
 	runtime?: {
-		asyncWriter: {
+		asyncWriter?: {
 			healthy: boolean;
 			failureCount: number;
 			queuedJobs: number;
 		};
-		usageWorker: {
+		usageWorker?: {
 			state: string;
 			pendingAcks: number;
 			lastError: string | null;
