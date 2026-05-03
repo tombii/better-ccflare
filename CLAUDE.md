@@ -21,6 +21,15 @@ Always branch from `main` with a fresh pull. Never make changes directly on main
 PRs: `gh pr checkout <PR_NUMBER>` or `git checkout <branch-name>`.
 - If `git push origin main` fails with `src refspec main matches more than one` (branch/tag name collision), push explicitly: `git push origin refs/heads/main:refs/heads/main`.
 
+## Merging PRs from External Contributors
+When merging PRs from external contributors (not tombii), **create a merge commit** instead of squashing or rebasing. This preserves the contributor's commit history and ensures they appear in the git log as a contributor. Use:
+```bash
+git merge --no-ff <branch-name>
+```
+The `--no-ff` flag creates a merge commit even if the branch could be fast-forwarded.
+
+After merging, update the Acknowledgements section in README.md to thank the contributor for their specific contributions.
+
 ## Issue Management
 - Never close issues automatically
 - Wait for the issue reporter to confirm that fixes work for them before closing
