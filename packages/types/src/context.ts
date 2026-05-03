@@ -32,6 +32,11 @@ export interface APIContext {
 		lastError: string | null;
 		startedAt: number | null;
 	};
+	getIntegrityStatus?: () => {
+		status: "ok" | "corrupt" | "unchecked";
+		lastCheckAt: number | null;
+		lastError: string | null;
+	};
 }
 
 // Load balancing strategy interface

@@ -46,6 +46,7 @@ import {
 	registerRefreshClearer,
 	sendWorkerConfigUpdate,
 	startGlobalTokenHealthChecks,
+	startIntegrityScheduler,
 	startUsageWorker,
 	stopGlobalTokenHealthChecks,
 	terminateUsageWorker,
@@ -180,6 +181,7 @@ let stopOAuthCleanupJob: (() => void) | null = null;
 let stopRateLimitCleanupJob: (() => void) | null = null;
 let stopDataCleanupJob: (() => void) | null = null;
 let stopWalCheckpointJob: (() => void) | null = null;
+let stopIntegritySchedulerJob: (() => void) | null = null;
 let autoRefreshScheduler: AutoRefreshScheduler | null = null;
 let cacheKeepaliveScheduler: CacheKeepaliveScheduler | null = null;
 let memoryMonitorInterval: Timer | null = null;
@@ -579,6 +581,9 @@ export default async function startServer(options?: {
 		dbOps.runIntegrityCheck();
 	}
 
+	// Start periodic integrity scheduler
+	stopIntegritySchedulerJob = startIntegrityScheduler(dbOps);
+
 	const db = dbOps.getAdapter();
 	const log = container.resolve<Logger>(SERVICE_KEYS.Logger);
 	container.registerInstance(SERVICE_KEYS.Database, dbOps);
@@ -603,6 +608,7 @@ export default async function startServer(options?: {
 		},
 		getAsyncWriterHealth: () => asyncWriter.getHealth(),
 		getUsageWorkerHealth: () => getUsageWorkerHealth(),
+		getIntegrityStatus: () => dbOps.getIntegrityStatus(),
 	});
 
 	// Initialize AuthService for proxy authentication
@@ -1312,6 +1318,10 @@ async function handleGracefulShutdown(signal: string) {
 		if (stopWalCheckpointJob) {
 			stopWalCheckpointJob();
 			stopWalCheckpointJob = null;
+		}
+		if (stopIntegritySchedulerJob) {
+			stopIntegritySchedulerJob();
+			stopIntegritySchedulerJob = null;
 		}
 		if (autoRefreshScheduler) {
 			autoRefreshScheduler.stop();

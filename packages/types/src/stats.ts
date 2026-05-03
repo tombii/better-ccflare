@@ -125,6 +125,13 @@ export interface HealthResponse {
 			lastError: string | null;
 			startedAt: number | null;
 		};
+		storage?: {
+			integrity: {
+				status: "ok" | "corrupt" | "unchecked";
+				lastCheckAt: string | null;
+				lastError: string | null;
+			};
+		};
 	};
 }
 

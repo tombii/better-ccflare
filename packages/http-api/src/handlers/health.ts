@@ -14,12 +14,18 @@ type UsageWorkerHealthFn = () => {
 	lastError: string | null;
 	startedAt: number | null;
 };
+type IntegrityStatusFn = () => {
+	status: "ok" | "corrupt" | "unchecked";
+	lastCheckAt: number | null;
+	lastError: string | null;
+};
 
 export function createHealthHandler(
 	db: BunSqlAdapter,
 	config: Config,
 	getAsyncWriterHealth?: AsyncWriterHealthFn,
 	getUsageWorkerHealth?: UsageWorkerHealthFn,
+	getIntegrityStatus?: IntegrityStatusFn,
 ) {
 	return async (): Promise<Response> => {
 		const accountCount = await db.get<{ count: number }>(
@@ -33,11 +39,26 @@ export function createHealthHandler(
 			strategy: config.getStrategy(),
 		};
 
+		// Build runtime section if any runtime health functions are provided
 		if (getAsyncWriterHealth && getUsageWorkerHealth) {
 			response.runtime = {
 				asyncWriter: getAsyncWriterHealth(),
 				usageWorker: getUsageWorkerHealth(),
 			};
+
+			// Add storage integrity if provided
+			if (getIntegrityStatus) {
+				const integrity = getIntegrityStatus();
+				response.runtime.storage = {
+					integrity: {
+						status: integrity.status,
+						lastCheckAt: integrity.lastCheckAt
+							? new Date(integrity.lastCheckAt).toISOString()
+							: null,
+						lastError: integrity.lastError,
+					},
+				};
+			}
 		}
 
 		return jsonResponse(response);
