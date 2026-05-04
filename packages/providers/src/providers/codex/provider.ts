@@ -167,6 +167,7 @@ interface ContextWindow {
 interface StreamState {
 	buffer: string;
 	messageId: string;
+	model: string;
 	contentBlockIndex: number;
 	hasSentMessageStart: boolean;
 	hasSentContentBlockStart: boolean;
@@ -379,6 +380,7 @@ export class CodexProvider extends BaseProvider {
 
 			if (isSseLike) {
 				log.warn(
+					`Codex returned successful response without SSE content-type (${contentType ?? "<missing>"}); transforming as ${requestedStream ? "SSE" : "JSON"}`,
 				);
 				const headers = sanitizeProxyHeaders(response.headers);
 				headers.set("content-type", "text/event-stream");
@@ -797,6 +799,7 @@ export class CodexProvider extends BaseProvider {
 		const state: StreamState = {
 			buffer: "",
 			messageId: `msg_${crypto.randomUUID().replace(/-/g, "").substring(0, 24)}`,
+			model: "gpt-5.4",
 			contentBlockIndex: 0,
 			hasSentMessageStart: false,
 			hasSentContentBlockStart: false,
@@ -880,7 +883,7 @@ export class CodexProvider extends BaseProvider {
 					type: "message",
 					role: "assistant",
 					content: [],
-					model: "gpt-5.4",
+					model: state.model,
 					stop_reason: null,
 					stop_sequence: null,
 					usage: {
@@ -990,9 +993,8 @@ export class CodexProvider extends BaseProvider {
 			case "response.created": {
 				const resp = data.response as Record<string, unknown> | undefined;
 				const respId = (resp?.id as string) || state.messageId;
-				const _model = (resp?.model as string) || "gpt-5.4";
-
 				state.messageId = respId;
+				state.model = (resp?.model as string) || state.model;
 				if (state.hasSentMessageStart) {
 					break;
 				}
