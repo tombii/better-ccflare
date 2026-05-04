@@ -3,7 +3,7 @@ import { AsyncDbWriter } from "@better-ccflare/database";
 import { createHealthHandler } from "../health";
 
 describe("health runtime payload", () => {
-	it("returns degraded status when no routable accounts", async () => {
+	it("returns unhealthy status when no routable accounts and no recovery time", async () => {
 		const db = {
 			getAllAccounts: async () => [
 				{ name: "paused1", paused: true, rate_limited_until: null },

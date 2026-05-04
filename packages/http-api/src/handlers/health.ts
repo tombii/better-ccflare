@@ -142,7 +142,7 @@ export function createHealthHandler(
 						? "rate_limited"
 						: "available",
 				rate_limited_until:
-					a.rate_limited_until && a.rate_limited_until >= now
+					!a.paused && a.rate_limited_until && a.rate_limited_until >= now
 						? a.rate_limited_until
 						: null,
 			}));
