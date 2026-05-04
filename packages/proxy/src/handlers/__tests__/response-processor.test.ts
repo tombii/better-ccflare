@@ -1,7 +1,10 @@
 import { describe, expect, it } from "bun:test";
 import type { Account } from "@better-ccflare/types";
 import type { ProxyContext } from "../proxy-types";
-import { processProxyResponse } from "../response-processor";
+import {
+	handleRateLimitResponse,
+	processProxyResponse,
+} from "../response-processor";
 
 // Minimal Account fixture used by every test in this file. Only the fields
 // the response-processor actually reads matter — the rest exist to satisfy
@@ -306,5 +309,129 @@ describe("processProxyResponse — streaming rate-limit failover (issue #114)", 
 		const reset = calls.markRateLimited[0]?.resetTime ?? 0;
 		expect(reset).toBeGreaterThanOrEqual(before + FIVE_HOURS - 1000);
 		expect(reset).toBeLessThanOrEqual(Date.now() + FIVE_HOURS + 1000);
+	});
+});
+
+describe("handleRateLimitResponse — in-memory cooldown mutation", () => {
+	it("sets account.rate_limited_until to resetTime when resetTime is present", () => {
+		const account = makeAccount();
+		const resetTime = Date.now() + 30 * 60_000;
+		const { ctx } = makeCtx({
+			isStream: false,
+			rateLimited: true,
+			resetTime,
+		});
+		const rateLimitInfo = {
+			isRateLimited: true,
+			resetTime,
+			statusHeader: "rate_limited",
+			remaining: undefined,
+		};
+
+		handleRateLimitResponse(account, rateLimitInfo, ctx);
+
+		// In-memory mutation should be set immediately
+		expect(account.rate_limited_until).toBe(resetTime);
+	});
+
+	it("does not mutate account.rate_limited_until when resetTime is undefined", () => {
+		const account = makeAccount();
+		const { ctx } = makeCtx({
+			isStream: false,
+			rateLimited: true,
+			resetTime: undefined,
+		});
+		const rateLimitInfo = {
+			isRateLimited: true,
+			resetTime: undefined,
+			statusHeader: "rate_limited",
+			remaining: undefined,
+		};
+
+		handleRateLimitResponse(account, rateLimitInfo, ctx);
+
+		// handleRateLimitResponse only mutates when resetTime is present
+		expect(account.rate_limited_until).toBeNull();
+	});
+});
+
+describe("processProxyResponse — in-memory cooldown mutation", () => {
+	it("sets account.rate_limited_until on 429 with resetTime", async () => {
+		const account = makeAccount();
+		const resetTime = Date.now() + 30 * 60_000;
+		const { ctx } = makeCtx({
+			isStream: false,
+			rateLimited: true,
+			resetTime,
+		});
+		const response = new Response('{"error":"rate_limit"}', {
+			status: 429,
+			headers: { "content-type": "application/json" },
+		});
+
+		await processProxyResponse(response, account, ctx);
+
+		expect(account.rate_limited_until).toBe(resetTime);
+	});
+
+	it("sets account.rate_limited_until to ~5h on 429 without resetTime", async () => {
+		const account = makeAccount();
+		const before = Date.now();
+		const { ctx } = makeCtx({
+			isStream: false,
+			rateLimited: true,
+			resetTime: undefined,
+		});
+		const response = new Response('{"error":"rate_limit"}', {
+			status: 429,
+			headers: { "content-type": "application/json" },
+		});
+
+		await processProxyResponse(response, account, ctx);
+
+		expect(account.rate_limited_until).not.toBeNull();
+		const FIVE_HOURS = 5 * 60 * 60 * 1000;
+		expect(account.rate_limited_until ?? 0).toBeGreaterThanOrEqual(
+			before + FIVE_HOURS - 1000,
+		);
+		expect(account.rate_limited_until ?? 0).toBeLessThanOrEqual(
+			Date.now() + FIVE_HOURS + 1000,
+		);
+	});
+
+	it("clears account.rate_limited_until on successful response", async () => {
+		const account = makeAccount({
+			rate_limited_until: Date.now() + 60_000, // previously rate-limited
+		});
+		const { ctx } = makeCtx({
+			isStream: false,
+			rateLimited: false,
+		});
+		const response = new Response('{"id":"msg_1"}', {
+			status: 200,
+			headers: { "content-type": "application/json" },
+		});
+
+		await processProxyResponse(response, account, ctx);
+
+		// Successful response clears cooldown
+		expect(account.rate_limited_until).toBeNull();
+	});
+
+	it("does not clear account.rate_limited_until when already null on success", async () => {
+		const account = makeAccount(); // rate_limited_until is null by default
+		const { ctx } = makeCtx({
+			isStream: false,
+			rateLimited: false,
+		});
+		const response = new Response('{"id":"msg_1"}', {
+			status: 200,
+			headers: { "content-type": "application/json" },
+		});
+
+		await processProxyResponse(response, account, ctx);
+
+		// No mutation needed — already null
+		expect(account.rate_limited_until).toBeNull();
 	});
 });

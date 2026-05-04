@@ -459,6 +459,102 @@ describe("proxyWithAccount — rate limit audit trail (issue #178)", () => {
 	});
 });
 
+describe("proxyWithAccount — in-memory cooldown mutation (issue #178 fix)", () => {
+	let originalFetch: typeof globalThis.fetch;
+
+	beforeEach(() => {
+		originalFetch = globalThis.fetch;
+	});
+
+	afterEach(() => {
+		globalThis.fetch = originalFetch;
+	});
+
+	it("sets account.rate_limited_until on model_fallback_429 path", async () => {
+		globalThis.fetch = mock(async () =>
+			jsonResponse(
+				{
+					error: {
+						type: "api_error",
+						message:
+							"Rate limit exceeded: limit_rpm/qwen/qwen3.6-plus:free/abc",
+					},
+				},
+				429,
+			),
+		);
+
+		const ctx = makeProxyContextWithAsyncExec();
+		const account = makeAccount();
+		const before = Date.now();
+		const bodyBuffer = makeRequestBody();
+		const req = makeRequest(bodyBuffer);
+
+		await proxyWithAccount(
+			req,
+			new URL("https://proxy.local/v1/messages"),
+			account,
+			makeRequestMeta(),
+			bodyBuffer,
+			() => undefined,
+			0,
+			ctx,
+		);
+
+		// In-memory mutation should be set immediately (before DB write completes)
+		expect(account.rate_limited_until).not.toBeNull();
+		expect(account.rate_limited_until ?? 0).toBeGreaterThan(before);
+		// Default cooldown from extractCooldownUntil is at least 60s
+		expect(account.rate_limited_until ?? 0).toBeGreaterThanOrEqual(
+			before + 60_000,
+		);
+	});
+
+	it("sets account.rate_limited_until on all_models_exhausted_429 path", async () => {
+		globalThis.fetch = mock(async () =>
+			jsonResponse(
+				{
+					error: {
+						type: "api_error",
+						message: "Rate limit exceeded: limit_rpm/model/abc",
+					},
+				},
+				429,
+			),
+		);
+
+		const ctx = makeProxyContextWithAsyncExec();
+		const account = makeAccount({
+			model_mappings: JSON.stringify({
+				sonnet: [
+					"qwen/qwen3.6-plus:free",
+					"bytedance-seed/dola-seed-2.0-pro:free",
+				],
+			}),
+		});
+		const before = Date.now();
+		const bodyBuffer = makeRequestBody();
+		const req = makeRequest(bodyBuffer);
+
+		await proxyWithAccount(
+			req,
+			new URL("https://proxy.local/v1/messages"),
+			account,
+			makeRequestMeta(),
+			bodyBuffer,
+			() => undefined,
+			0,
+			ctx,
+		);
+
+		expect(account.rate_limited_until).not.toBeNull();
+		expect(account.rate_limited_until ?? 0).toBeGreaterThan(before);
+		expect(account.rate_limited_until ?? 0).toBeGreaterThanOrEqual(
+			before + 60_000,
+		);
+	});
+});
+
 describe("getModelList — model_fallbacks merge", () => {
 	it("merges model_fallbacks into the model list", async () => {
 		const { getModelList } = await import("@better-ccflare/core");
