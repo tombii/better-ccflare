@@ -360,7 +360,7 @@ export class CodexProvider extends BaseProvider {
 				: headerRequestedStream === "false"
 					? false
 					: requestId
-						? (this.requestStreamById.get(requestId)?.stream === true)
+						? (this.requestStreamById.get(requestId)?.stream ?? true)
 						: true;
 		if (requestId) {
 			this.requestStreamById.delete(requestId);

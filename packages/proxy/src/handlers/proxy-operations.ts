@@ -726,9 +726,28 @@ export async function proxyWithAccount(
 			}
 		}
 
+		// Inject request metadata into response headers so providers can read
+		// stream intent and request ID without needing the original request object.
+		const responseHeaders = new Headers(rawResponse.headers);
+		responseHeaders.set("x-better-ccflare-request-id", requestMeta.id);
+		const internalRequestStream = transformedRequest.headers.get(
+			"x-better-ccflare-request-stream",
+		);
+		if (internalRequestStream === "true" || internalRequestStream === "false") {
+			responseHeaders.set(
+				"x-better-ccflare-request-stream",
+				internalRequestStream,
+			);
+		}
+		const taggedRawResponse = new Response(rawResponse.body, {
+			status: rawResponse.status,
+			statusText: rawResponse.statusText,
+			headers: responseHeaders,
+		});
+
 		// Process response (transform format, sanitize headers, etc.) using account-specific provider
 		const response = await provider.processResponse(
-			rawResponse,
+			taggedRawResponse,
 			account,
 			req.headers,
 		);
