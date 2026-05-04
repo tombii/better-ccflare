@@ -224,16 +224,11 @@ jobs:
                     EXPLANATION=$(git log -1 --format="%b" "$HASH" | grep -Pzo 'BREAKING[- ]CHANGE[s]?:\s*\K[^\n]+' || true)
 
                     if [ -n "$EXPLANATION" ]; then
-                      CHANGELOG="$CHANGELOG
-- **$MSG** ([\`$HASH\`](https://github.com/tombii/better-ccflare/commit/$HASH))
-
-  $EXPLANATION
-"
+                      ENTRY=$(printf '- **%s** ([`%s`](https://github.com/tombii/better-ccflare/commit/%s))\n\n  %s\n' "$MSG" "$HASH" "$HASH" "$EXPLANATION")
                     else
-                      CHANGELOG="$CHANGELOG
-- $MSG ([\`$HASH\`](https://github.com/tombii/better-ccflare/commit/$HASH))
-"
+                      ENTRY=$(printf '- %s ([`%s`](https://github.com/tombii/better-ccflare/commit/%s))\n' "$MSG" "$HASH" "$HASH")
                     fi
+                    CHANGELOG="${CHANGELOG}${ENTRY}"
                   fi
                 done <<< "$BREAKING"
               fi
