@@ -128,6 +128,8 @@ export interface AccountDetail {
 	name: string;
 	status: "available" | "paused" | "rate_limited";
 	rate_limited_until: number | null;
+	rate_limited_reason: string | null;
+	rate_limited_at: number | null;
 }
 
 // Health check response

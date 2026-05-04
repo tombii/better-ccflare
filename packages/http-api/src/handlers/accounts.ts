@@ -36,7 +36,7 @@ import {
 	getUsageThrottleStatus,
 	restartUsagePollingForAccount,
 } from "@better-ccflare/proxy";
-import type { FullUsageData } from "@better-ccflare/types";
+import type { FullUsageData, RateLimitReason } from "@better-ccflare/types";
 import { requiresSessionDurationTracking } from "@better-ccflare/types";
 import type { AccountResponse } from "../types";
 
@@ -460,7 +460,8 @@ export function createAccountsListHandler(
 					rateLimitedUntil: account.rate_limited_until
 						? Number(account.rate_limited_until)
 						: null,
-					rateLimitedReason: account.rate_limited_reason,
+					rateLimitedReason:
+						account.rate_limited_reason as RateLimitReason | null,
 					rateLimitedAt:
 						account.rate_limited_at != null
 							? Number(account.rate_limited_at)

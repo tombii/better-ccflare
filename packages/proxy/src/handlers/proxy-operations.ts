@@ -1,7 +1,11 @@
 import { getModelList, logError, ProviderError } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import { getProvider, usageCache } from "@better-ccflare/providers";
-import type { Account, RequestMeta } from "@better-ccflare/types";
+import type {
+	Account,
+	RateLimitReason,
+	RequestMeta,
+} from "@better-ccflare/types";
 import { cacheBodyStore } from "../cache-body-store";
 import { RequestBodyContext } from "../request-body-context";
 import { forwardToClient } from "../response-handler";
@@ -603,7 +607,7 @@ export async function proxyWithAccount(
 							account.id,
 							usageCache.getRateLimitedUntil.bind(usageCache),
 						);
-						const reason = "model_fallback_429";
+						const reason: RateLimitReason = "model_fallback_429";
 						log.warn(
 							`[ccflare] account=${account.name} cooldown_applied reason=${reason} until=${new Date(cooldownUntil).toISOString()}`,
 						);
@@ -708,7 +712,7 @@ export async function proxyWithAccount(
 						account.id,
 						usageCache.getRateLimitedUntil.bind(usageCache),
 					);
-					const reason = "all_models_exhausted_429";
+					const reason: RateLimitReason = "all_models_exhausted_429";
 					log.warn(
 						`[ccflare] account=${account.name} cooldown_applied reason=${reason} until=${new Date(cooldownUntil).toISOString()}`,
 					);

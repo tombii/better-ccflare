@@ -1,6 +1,7 @@
 import {
 	type Account,
 	type AccountRow,
+	type RateLimitReason,
 	toAccount,
 } from "@better-ccflare/types";
 import { BaseRepository } from "./base.repository";
@@ -111,7 +112,7 @@ export class AccountRepository extends BaseRepository<Account> {
 	async setRateLimited(
 		accountId: string,
 		until: number,
-		reason: string,
+		reason: RateLimitReason,
 	): Promise<void> {
 		await this.run(
 			`UPDATE accounts SET rate_limited_until = ?, rate_limited_reason = ?, rate_limited_at = ? WHERE id = ?`,
@@ -137,8 +138,8 @@ export class AccountRepository extends BaseRepository<Account> {
 			 SET
 			 	rate_limited_until = NULL,
 			 	rate_limited_reason = NULL,
-				 	rate_limited_at = NULL,
-				 	rate_limit_reset = NULL,
+			 	rate_limited_at = NULL,
+			 	rate_limit_reset = NULL,
 			 	rate_limit_status = NULL,
 			 	rate_limit_remaining = NULL
 			 WHERE id = ?`,

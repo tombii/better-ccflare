@@ -153,6 +153,14 @@ export function createHealthHandler(
 					!a.paused && a.rate_limited_until && a.rate_limited_until >= now
 						? a.rate_limited_until
 						: null,
+				rate_limited_reason:
+					!a.paused && a.rate_limited_until && a.rate_limited_until >= now
+						? a.rate_limited_reason
+						: null,
+				rate_limited_at:
+					!a.paused && a.rate_limited_until && a.rate_limited_until >= now
+						? a.rate_limited_at
+						: null,
 			}));
 		}
 

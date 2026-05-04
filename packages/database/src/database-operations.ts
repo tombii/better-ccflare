@@ -13,6 +13,7 @@ import type {
 	ComboSlot,
 	ComboWithSlots,
 	IntegrityStatus,
+	RateLimitReason,
 	StrategyStore,
 } from "@better-ccflare/types";
 import { BunSqlAdapter } from "./adapters/bun-sql-adapter";
@@ -541,7 +542,7 @@ OAuth tokens will need to be re-authenticated.
 	async markAccountRateLimited(
 		accountId: string,
 		until: number,
-		reason: string,
+		reason: RateLimitReason,
 	): Promise<void> {
 		await withDatabaseRetry(
 			() => this.accounts.setRateLimited(accountId, until, reason),

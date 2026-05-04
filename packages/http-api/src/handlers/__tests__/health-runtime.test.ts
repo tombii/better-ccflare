@@ -375,12 +375,26 @@ describe("?detail=1 parameter", () => {
 	it("includes accounts_detail array when detail=1", async () => {
 		const db = {
 			getAllAccounts: async () => [
-				{ name: "acc1", paused: false, rate_limited_until: null },
-				{ name: "acc2", paused: true, rate_limited_until: null },
+				{
+					name: "acc1",
+					paused: false,
+					rate_limited_until: null,
+					rate_limited_reason: null,
+					rate_limited_at: null,
+				},
+				{
+					name: "acc2",
+					paused: true,
+					rate_limited_until: null,
+					rate_limited_reason: null,
+					rate_limited_at: null,
+				},
 				{
 					name: "acc3",
 					paused: false,
 					rate_limited_until: Date.now() + 3600000,
+					rate_limited_reason: "upstream_429_with_reset",
+					rate_limited_at: Date.now() - 60000,
 				},
 			],
 		} as unknown as import("@better-ccflare/database").DatabaseOperations;
@@ -401,16 +415,22 @@ describe("?detail=1 parameter", () => {
 			name: "acc1",
 			status: "available",
 			rate_limited_until: null,
+			rate_limited_reason: null,
+			rate_limited_at: null,
 		});
 		expect(body.accounts_detail[1]).toEqual({
 			name: "acc2",
 			status: "paused",
 			rate_limited_until: null,
+			rate_limited_reason: null,
+			rate_limited_at: null,
 		});
 		expect(body.accounts_detail[2]).toEqual({
 			name: "acc3",
 			status: "rate_limited",
 			rate_limited_until: expect.any(Number),
+			rate_limited_reason: "upstream_429_with_reset",
+			rate_limited_at: expect.any(Number),
 		});
 	});
 
