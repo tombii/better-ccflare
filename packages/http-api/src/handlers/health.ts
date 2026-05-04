@@ -148,6 +148,7 @@ export function createHealthHandler(
 			}));
 		}
 
-		return jsonResponse(response);
+		const httpStatus = status === "ok" ? 200 : 503;
+		return jsonResponse(response, httpStatus);
 	};
 }

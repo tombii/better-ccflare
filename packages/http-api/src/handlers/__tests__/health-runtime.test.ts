@@ -20,6 +20,7 @@ describe("health runtime payload", () => {
 		const response = await handler(url);
 		const body = (await response.json()) as Record<string, unknown>;
 
+		expect(response.status).toBe(503);
 		expect(body.status).toBe("unhealthy");
 		expect(body.accounts).toBe(2);
 	});
@@ -53,6 +54,7 @@ describe("health runtime payload", () => {
 		const response = await handler(url);
 		const body = (await response.json()) as Record<string, any>;
 
+		expect(response.status).toBe(200);
 		expect(body.status).toBe("ok");
 		expect(body.accounts).toBe(3);
 		expect(body.strategy).toBe("session");
@@ -287,6 +289,57 @@ describe("computeHealthStatus three-state logic", () => {
 
 		const status = computeHealthStatus(true, pool);
 		expect(status).toBe("unhealthy");
+	});
+});
+
+describe("HTTP status codes", () => {
+	it("returns 200 when status is ok", async () => {
+		const db = {
+			getAllAccounts: async () => [
+				{ name: "acc1", paused: false, rate_limited_until: null },
+			],
+		} as unknown as import("@better-ccflare/database").DatabaseOperations;
+		const config = { getStrategy: () => "session" } as unknown as import("@better-ccflare/config").Config;
+		const response = await createHealthHandler(db, config)(new URL("http://localhost/health"));
+		expect(response.status).toBe(200);
+	});
+
+	it("returns 503 when degraded (no routable, has recovery time)", async () => {
+		const db = {
+			getAllAccounts: async () => [
+				{ name: "acc1", paused: false, rate_limited_until: Date.now() + 3600000 },
+			],
+		} as unknown as import("@better-ccflare/database").DatabaseOperations;
+		const config = { getStrategy: () => "session" } as unknown as import("@better-ccflare/config").Config;
+		const response = await createHealthHandler(db, config)(new URL("http://localhost/health"));
+		const body = (await response.json()) as Record<string, unknown>;
+		expect(body.status).toBe("degraded");
+		expect(response.status).toBe(503);
+	});
+
+	it("returns 503 when unhealthy", async () => {
+		const db = {
+			getAllAccounts: async () => [
+				{ name: "acc1", paused: true, rate_limited_until: null },
+			],
+		} as unknown as import("@better-ccflare/database").DatabaseOperations;
+		const config = { getStrategy: () => "session" } as unknown as import("@better-ccflare/config").Config;
+		const response = await createHealthHandler(db, config)(new URL("http://localhost/health"));
+		expect(response.status).toBe(503);
+	});
+
+	it("returns 200 when some accounts rate-limited but routable accounts exist", async () => {
+		const db = {
+			getAllAccounts: async () => [
+				{ name: "available", paused: false, rate_limited_until: null },
+				{ name: "limited", paused: false, rate_limited_until: Date.now() + 3600000 },
+			],
+		} as unknown as import("@better-ccflare/database").DatabaseOperations;
+		const config = { getStrategy: () => "session" } as unknown as import("@better-ccflare/config").Config;
+		const response = await createHealthHandler(db, config)(new URL("http://localhost/health"));
+		const body = (await response.json()) as Record<string, unknown>;
+		expect(body.status).toBe("ok");
+		expect(response.status).toBe(200);
 	});
 });
 
