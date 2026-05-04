@@ -151,8 +151,7 @@ export function createHealthHandler(
 		}
 
 		// Support ?detail=1 for per-account details (requires HEALTH_DETAIL_ENABLED=true)
-		const detailParam = url.searchParams.get("detail");
-		if (detailParam === "1" && config.getHealthDetailEnabled()) {
+		if (withDetail) {
 			response.accounts_detail = accounts.map((a) => ({
 				name: a.name,
 				status: a.paused

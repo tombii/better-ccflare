@@ -26,7 +26,8 @@ export class TtlCache<T> {
 	}
 
 	isStale(): boolean {
-		return this.get() === undefined;
+		if (!this.hasValue) return true;
+		return this.now() - this.timestamp > this.ttlMs;
 	}
 
 	clear(): void {
