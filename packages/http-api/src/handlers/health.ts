@@ -1,5 +1,5 @@
 import type { Config } from "@better-ccflare/config";
-import { isAccountAvailable } from "@better-ccflare/core";
+import { isAccountAvailable, TtlCache } from "@better-ccflare/core";
 import type { DatabaseOperations } from "@better-ccflare/database";
 import { jsonResponse } from "@better-ccflare/http-common";
 import type { Account } from "@better-ccflare/types";
@@ -82,7 +82,14 @@ export function createHealthHandler(
 	getUsageWorkerHealth?: UsageWorkerHealthFn,
 	getIntegrityStatus?: IntegrityStatusFn,
 ) {
+	const cache = new TtlCache<HealthResponse>(2000);
+
 	return async (url: URL): Promise<Response> => {
+		const cached = cache.get();
+		if (cached) {
+			return jsonResponse(cached, cached.status === "ok" ? 200 : 503);
+		}
+
 		const accounts = await dbOps.getAllAccounts();
 		const now = Date.now();
 		const pool = computePoolStatus(accounts, now);
@@ -165,6 +172,7 @@ export function createHealthHandler(
 		}
 
 		const httpStatus = status === "ok" ? 200 : 503;
+		cache.set(response);
 		return jsonResponse(response, httpStatus);
 	};
 }
