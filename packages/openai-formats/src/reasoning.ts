@@ -120,28 +120,32 @@ export function resolveReasoningEffort(
 			continue;
 		}
 
-		// Find nearest lower supported effort
+		// Find nearest supported effort (prefer nearest lower; fall back to minimum)
 		const currentRank = EFFORT_RANK[resolvedEffort];
-		let nearestLower: ReasoningEffort | undefined;
+		let nearest: ReasoningEffort | undefined;
 		for (const supported of supportedEfforts) {
 			const rank = EFFORT_RANK[supported];
 			if (rank <= currentRank) {
-				if (nearestLower === undefined || rank > EFFORT_RANK[nearestLower]) {
-					nearestLower = supported;
+				if (nearest === undefined || rank > EFFORT_RANK[nearest]) {
+					nearest = supported;
 				}
 			}
 		}
 
-		if (nearestLower === undefined) {
-			nearestLower = supportedEfforts[0];
+		if (nearest === undefined) {
+			// Requested effort is below model minimum — clamp up to minimum
+			nearest = supportedEfforts[0];
 		}
 
-		downgrades.push({
-			model,
-			from: resolvedEffort,
-			to: nearestLower,
-		});
-		resolvedEffort = nearestLower;
+		// Only record as a downgrade when rank actually decreases
+		if (EFFORT_RANK[nearest] < currentRank) {
+			downgrades.push({
+				model,
+				from: resolvedEffort,
+				to: nearest,
+			});
+		}
+		resolvedEffort = nearest;
 	}
 
 	return { effort: resolvedEffort, downgrades };

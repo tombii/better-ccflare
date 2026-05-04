@@ -660,8 +660,10 @@ export class CodexProvider extends BaseProvider {
 	private async transformSseResponseToJson(
 		response: Response,
 	): Promise<Response> {
-		const source = await this.transformStreamingResponse(response).text();
-		const lines = source.split("\n");
+		const transformed = this.transformStreamingResponse(response);
+		const reader = transformed.body
+			?.pipeThrough(new TextDecoderStream())
+			.getReader();
 		let messageStartPayload: Record<string, unknown> | null = null;
 		let messageDeltaPayload: Record<string, unknown> | null = null;
 		const content: Array<Record<string, unknown>> = [];
@@ -670,62 +672,82 @@ export class CodexProvider extends BaseProvider {
 			number,
 			{ id: string; name: string; partialJson: string }
 		>();
-		for (let i = 0; i < lines.length; i++) {
-			const line = lines[i];
-			if (!line.startsWith("event:")) continue;
-			const eventName = line.slice("event:".length).trim();
-			const dataLine = lines[i + 1];
-			if (!dataLine?.startsWith("data:")) continue;
-			let data: Record<string, unknown>;
-			try {
-				data = JSON.parse(dataLine.slice("data:".length).trim());
-			} catch {
-				continue;
-			}
-			if (eventName === "message_start") {
-				messageStartPayload = data;
-				continue;
-			}
-			if (eventName === "message_delta") {
-				messageDeltaPayload = data;
-				continue;
-			}
-			if (eventName === "content_block_delta") {
-				const index = typeof data.index === "number" ? data.index : -1;
-				const delta = data.delta as Record<string, unknown> | undefined;
-				if (index < 0 || !delta) continue;
-				if (delta.type === "text_delta" && typeof delta.text === "string") {
-					textByIndex.set(index, (textByIndex.get(index) ?? "") + delta.text);
-				} else if (
-					delta.type === "input_json_delta" &&
-					typeof delta.partial_json === "string"
-				) {
-					const existing = toolByIndex.get(index);
-					if (existing) {
-						existing.partialJson += delta.partial_json;
-					} else {
+
+		// Parse SSE line-pairs incrementally without buffering full body
+		let pending = "";
+		let lastEventName: string | null = null;
+		const processLine = (line: string) => {
+			if (line.startsWith("event:")) {
+				lastEventName = line.slice("event:".length).trim();
+			} else if (line.startsWith("data:") && lastEventName !== null) {
+				const eventName = lastEventName;
+				lastEventName = null;
+				let data: Record<string, unknown>;
+				try {
+					data = JSON.parse(line.slice("data:".length).trim());
+				} catch {
+					return;
+				}
+				if (eventName === "message_start") {
+					messageStartPayload = data;
+					return;
+				}
+				if (eventName === "message_delta") {
+					messageDeltaPayload = data;
+					return;
+				}
+				if (eventName === "content_block_delta") {
+					const index = typeof data.index === "number" ? data.index : -1;
+					const delta = data.delta as Record<string, unknown> | undefined;
+					if (index < 0 || !delta) return;
+					if (delta.type === "text_delta" && typeof delta.text === "string") {
+						textByIndex.set(index, (textByIndex.get(index) ?? "") + delta.text);
+					} else if (
+						delta.type === "input_json_delta" &&
+						typeof delta.partial_json === "string"
+					) {
+						const existing = toolByIndex.get(index);
+						if (existing) {
+							existing.partialJson += delta.partial_json;
+						} else {
+							toolByIndex.set(index, { id: "", name: "", partialJson: delta.partial_json });
+						}
+					}
+					return;
+				}
+				if (eventName === "content_block_start") {
+					const index = typeof data.index === "number" ? data.index : -1;
+					const block = data.content_block as Record<string, unknown> | undefined;
+					if (index < 0 || !block) return;
+					if (block.type === "tool_use") {
 						toolByIndex.set(index, {
-							id: "",
-							name: "",
-							partialJson: delta.partial_json,
+							id: typeof block.id === "string" ? block.id : "",
+							name: typeof block.name === "string" ? block.name : "",
+							partialJson: toolByIndex.get(index)?.partialJson ?? "",
 						});
 					}
 				}
-				continue;
 			}
-			if (eventName === "content_block_start") {
-				const index = typeof data.index === "number" ? data.index : -1;
-				const block = data.content_block as Record<string, unknown> | undefined;
-				if (index < 0 || !block) continue;
-				if (block.type === "tool_use") {
-					toolByIndex.set(index, {
-						id: typeof block.id === "string" ? block.id : "",
-						name: typeof block.name === "string" ? block.name : "",
-						partialJson: toolByIndex.get(index)?.partialJson ?? "",
-					});
+		};
+
+		if (reader) {
+			try {
+				while (true) {
+					const { done, value } = await reader.read();
+					if (done) break;
+					pending += value;
+					const parts = pending.split("\n");
+					pending = parts.pop() ?? "";
+					for (const line of parts) {
+						processLine(line);
+					}
 				}
+				if (pending) processLine(pending);
+			} finally {
+				reader.releaseLock();
 			}
 		}
+
 		const allIndices = new Set([...textByIndex.keys(), ...toolByIndex.keys()]);
 		for (const index of [...allIndices].sort((a, b) => a - b)) {
 			const text = textByIndex.get(index);
