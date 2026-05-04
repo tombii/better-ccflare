@@ -541,9 +541,10 @@ OAuth tokens will need to be re-authenticated.
 	async markAccountRateLimited(
 		accountId: string,
 		until: number,
+		reason: string,
 	): Promise<void> {
 		await withDatabaseRetry(
-			() => this.accounts.setRateLimited(accountId, until),
+			() => this.accounts.setRateLimited(accountId, until, reason),
 			this.retryConfig,
 			"markAccountRateLimited",
 		);

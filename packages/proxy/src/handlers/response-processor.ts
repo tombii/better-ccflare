@@ -30,8 +30,12 @@ export function handleRateLimitResponse(
 	);
 
 	const resetTime = rateLimitInfo.resetTime;
+	const reason = "upstream_429_with_reset";
+	log.warn(
+		`[ccflare] account=${account.name} cooldown_applied reason=${reason} until=${new Date(resetTime).toISOString()}`,
+	);
 	ctx.asyncWriter.enqueue(() =>
-		ctx.dbOps.markAccountRateLimited(account.id, resetTime),
+		ctx.dbOps.markAccountRateLimited(account.id, resetTime, reason),
 	);
 
 	const rateLimitError = new RateLimitError(
@@ -277,10 +281,18 @@ export async function processProxyResponse(
 				`Account ${account.name} rate-limited but no reset time available`,
 			);
 			ctx.asyncWriter.enqueue(() =>
-				ctx.dbOps.markAccountRateLimited(
-					account.id,
-					Date.now() + 5 * 60 * 60 * 1000,
-				),
+				(() => {
+					const cooldownUntil = Date.now() + 5 * 60 * 60 * 1000;
+					const reason = "upstream_429_no_reset_default_5h";
+					log.warn(
+						`[ccflare] account=${account.name} cooldown_applied reason=${reason} until=${new Date(cooldownUntil).toISOString()}`,
+					);
+					return ctx.dbOps.markAccountRateLimited(
+						account.id,
+						cooldownUntil,
+						reason,
+					);
+				})(),
 			); // Default to 5 hours — applies to any provider without reset headers
 		}
 		// Also update metadata for rate-limited responses

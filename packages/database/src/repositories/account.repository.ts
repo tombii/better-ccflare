@@ -11,7 +11,7 @@ export class AccountRepository extends BaseRepository<Account> {
 			SELECT
 				id, name, provider, api_key, refresh_token, access_token,
 				expires_at, created_at, last_used, request_count, total_requests,
-				rate_limited_until, session_start, session_request_count,
+				rate_limited_until, rate_limited_reason, rate_limited_at, session_start, session_request_count,
 				COALESCE(paused, 0) as paused,
 				rate_limit_reset, rate_limit_status, rate_limit_remaining,
 				COALESCE(priority, 0) as priority,
@@ -38,7 +38,7 @@ export class AccountRepository extends BaseRepository<Account> {
 			SELECT
 				id, name, provider, api_key, refresh_token, access_token,
 				expires_at, created_at, last_used, request_count, total_requests,
-				rate_limited_until, session_start, session_request_count,
+				rate_limited_until, rate_limited_reason, rate_limited_at, session_start, session_request_count,
 				COALESCE(paused, 0) as paused,
 				rate_limit_reset, rate_limit_status, rate_limit_remaining,
 				COALESCE(priority, 0) as priority,
@@ -108,11 +108,15 @@ export class AccountRepository extends BaseRepository<Account> {
 		);
 	}
 
-	async setRateLimited(accountId: string, until: number): Promise<void> {
-		await this.run(`UPDATE accounts SET rate_limited_until = ? WHERE id = ?`, [
-			until,
-			accountId,
-		]);
+	async setRateLimited(
+		accountId: string,
+		until: number,
+		reason: string,
+	): Promise<void> {
+		await this.run(
+			`UPDATE accounts SET rate_limited_until = ?, rate_limited_reason = ?, rate_limited_at = ? WHERE id = ?`,
+			[until, reason, Date.now(), accountId],
+		);
 	}
 
 	async updateRateLimitMeta(
@@ -132,7 +136,9 @@ export class AccountRepository extends BaseRepository<Account> {
 			`UPDATE accounts
 			 SET
 			 	rate_limited_until = NULL,
-			 	rate_limit_reset = NULL,
+			 	rate_limited_reason = NULL,
+				 	rate_limited_at = NULL,
+				 	rate_limit_reset = NULL,
 			 	rate_limit_status = NULL,
 			 	rate_limit_remaining = NULL
 			 WHERE id = ?`,

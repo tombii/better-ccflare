@@ -146,6 +146,8 @@ export function createAccountsListHandler(
 			created_at: number;
 			expires_at: number | null;
 			rate_limited_until: number | null;
+			rate_limited_reason: string | null;
+			rate_limited_at: number | null;
 			rate_limit_reset: number | null;
 			rate_limit_status: string | null;
 			rate_limit_remaining: number | null;
@@ -179,6 +181,8 @@ export function createAccountsListHandler(
 					created_at,
 					expires_at,
 					rate_limited_until,
+						rate_limited_reason,
+						rate_limited_at,
 					rate_limit_reset,
 					rate_limit_status,
 					rate_limit_remaining,
@@ -456,6 +460,11 @@ export function createAccountsListHandler(
 					rateLimitedUntil: account.rate_limited_until
 						? Number(account.rate_limited_until)
 						: null,
+					rateLimitedReason: account.rate_limited_reason,
+					rateLimitedAt:
+						account.rate_limited_at != null
+							? Number(account.rate_limited_at)
+							: null,
 					sessionInfo: account.session_info || "",
 					autoFallbackEnabled: account.auto_fallback_enabled === 1,
 					autoRefreshEnabled: account.auto_refresh_enabled === 1,

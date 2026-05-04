@@ -253,6 +253,16 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 				"ALTER TABLE accounts ADD COLUMN refresh_token_issued_at BIGINT",
 		},
 		{
+			table: "accounts",
+			column: "rate_limited_reason",
+			definition: "ALTER TABLE accounts ADD COLUMN rate_limited_reason TEXT",
+		},
+		{
+			table: "accounts",
+			column: "rate_limited_at",
+			definition: "ALTER TABLE accounts ADD COLUMN rate_limited_at BIGINT",
+		},
+		{
 			table: "requests",
 			column: "api_key_id",
 			definition: "ALTER TABLE requests ADD COLUMN api_key_id TEXT",

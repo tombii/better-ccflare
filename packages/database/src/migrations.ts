@@ -478,6 +478,20 @@ export function runMigrations(db: Database, dbPath?: string): void {
 			log.info("Backfilled pause_reason for existing paused accounts");
 		}
 
+		if (!initialAccountsColumnNames.includes("rate_limited_reason")) {
+			db.prepare(
+				"ALTER TABLE accounts ADD COLUMN rate_limited_reason TEXT",
+			).run();
+			log.info("Added rate_limited_reason column to accounts table");
+		}
+
+		if (!initialAccountsColumnNames.includes("rate_limited_at")) {
+			db.prepare(
+				"ALTER TABLE accounts ADD COLUMN rate_limited_at INTEGER",
+			).run();
+			log.info("Added rate_limited_at column to accounts table");
+		}
+
 		// Make refresh_token nullable (was NOT NULL, causing API-key providers to need workarounds)
 		const refreshTokenCol = accountsInfo.find(
 			(col) => col.name === "refresh_token",

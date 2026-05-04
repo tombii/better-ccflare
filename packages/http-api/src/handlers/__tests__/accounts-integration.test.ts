@@ -581,6 +581,112 @@ describe("Accounts Handler - Dashboard Usage Data Integration", () => {
 			expect(payload[0].rateLimitedUntil).toBe(futureTimestamp);
 		});
 
+		it("should include rateLimitedReason and rateLimitedAt in response for rate-limited accounts (issue #178)", async () => {
+			const accountsHandler = createMockAccountsListHandler(
+				CACHE_FRESHNESS_THRESHOLD_MS,
+			);
+			const futureTimestamp = Date.now() + 86400000;
+			const rateLimitedAt = Date.now() - 60_000; // marked 1 minute ago
+
+			// Use fresh cache so stale-clear logic does not wipe the rate limit state.
+			mockUsageCache.getAge = () => 30000;
+
+			mockQuery.all = () => [
+				{
+					id: "audit-account-id",
+					name: "Audit Account",
+					provider: "anthropic",
+					access_token: "sk-ant-test",
+					refresh_token: "refresh-token",
+					request_count: 0,
+					total_requests: 0,
+					last_used: null,
+					created_at: Date.now() - 86400000,
+					expires_at: Date.now() + 86400000,
+					rate_limited_until: futureTimestamp,
+					rate_limited_reason: "upstream_429_with_reset",
+					rate_limited_at: rateLimitedAt,
+					rate_limit_reset: null,
+					rate_limit_status: "allowed_warning",
+					rate_limit_remaining: null,
+					session_start: null,
+					session_request_count: 0,
+					paused: 0,
+					priority: 0,
+					auto_fallback_enabled: 0,
+					auto_refresh_enabled: 0,
+					custom_endpoint: null,
+					model_mappings: null,
+					token_valid: 1,
+					rate_limited: 0,
+					session_info: null,
+				},
+			];
+
+			const response = await accountsHandler();
+			const payload = (await response.json()) as Array<{
+				rateLimitedUntil: number | null;
+				rateLimitedReason: string | null;
+				rateLimitedAt: number | null;
+			}>;
+
+			expect(response.ok).toBe(true);
+			expect(payload[0].rateLimitedUntil).toBe(futureTimestamp);
+			expect(payload[0].rateLimitedReason).toBe("upstream_429_with_reset");
+			expect(payload[0].rateLimitedAt).toBe(rateLimitedAt);
+		});
+
+		it("should return null rateLimitedReason and rateLimitedAt for accounts that are not rate-limited (issue #178)", async () => {
+			const accountsHandler = createMockAccountsListHandler(
+				CACHE_FRESHNESS_THRESHOLD_MS,
+			);
+
+			mockUsageCache.getAge = () => 30000;
+
+			mockQuery.all = () => [
+				{
+					id: "ok-account-id",
+					name: "OK Account",
+					provider: "anthropic",
+					access_token: "sk-ant-test",
+					refresh_token: "refresh-token",
+					request_count: 0,
+					total_requests: 0,
+					last_used: null,
+					created_at: Date.now() - 86400000,
+					expires_at: Date.now() + 86400000,
+					rate_limited_until: null,
+					rate_limited_reason: null,
+					rate_limited_at: null,
+					rate_limit_reset: null,
+					rate_limit_status: null,
+					rate_limit_remaining: null,
+					session_start: null,
+					session_request_count: 0,
+					paused: 0,
+					priority: 0,
+					auto_fallback_enabled: 0,
+					auto_refresh_enabled: 0,
+					custom_endpoint: null,
+					model_mappings: null,
+					token_valid: 1,
+					rate_limited: 0,
+					session_info: null,
+				},
+			];
+
+			const response = await accountsHandler();
+			const payload = (await response.json()) as Array<{
+				rateLimitedUntil: number | null;
+				rateLimitedReason: string | null;
+				rateLimitedAt: number | null;
+			}>;
+
+			expect(response.ok).toBe(true);
+			expect(payload[0].rateLimitedReason).toBeNull();
+			expect(payload[0].rateLimitedAt).toBeNull();
+		});
+
 		it("should return 404 when account is not found", async () => {
 			const forceResetHandler = createMockAccountForceResetRateLimitHandler();
 			mockQuery.get = () => undefined;
@@ -745,6 +851,8 @@ function createMockAccountsListHandler(
 					!!account.refresh_token &&
 					account.refresh_token !== account.access_token,
 				rateLimitedUntil: account.rate_limited_until || null,
+				rateLimitedReason: account.rate_limited_reason ?? null,
+				rateLimitedAt: account.rate_limited_at ?? null,
 			};
 		});
 
