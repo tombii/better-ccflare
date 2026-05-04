@@ -335,13 +335,8 @@ export async function handleProxy(
 		// Return 503 pool_exhausted response (default behavior)
 		log.error(ERROR_MESSAGES.POOL_EXHAUSTED);
 
-		// Get all accounts for current provider for pool exhausted response
-		const allAccounts = (await ctx.dbOps.getAllAccounts()).filter(
-			(a) => a.provider === ctx.provider.name,
-		);
-
 		// Log to request history via worker
-		const poolExhaustedResponse = createPoolExhaustedResponse(allAccounts);
+		const poolExhaustedResponse = createPoolExhaustedResponse(selectedAccounts);
 
 		// Send error message to usage worker for request history logging
 		ctx.usageWorker.postMessage({
