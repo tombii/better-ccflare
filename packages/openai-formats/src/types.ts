@@ -50,6 +50,7 @@ export interface OpenAIRequest {
 	stream_options?: { include_usage: boolean };
 	tools?: OpenAITool[];
 	tool_choice?: OpenAIToolChoice;
+	reasoning?: { effort?: string };
 }
 
 export interface AnthropicTextContent {
@@ -137,6 +138,7 @@ export interface AnthropicRequest {
 	stream?: boolean;
 	tools?: AnthropicTool[];
 	tool_choice?: AnthropicToolChoice;
+	reasoning?: { effort?: string };
 }
 
 export interface OpenAIUsage {
