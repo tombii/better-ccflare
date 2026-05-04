@@ -73,7 +73,7 @@ Check the health status of the better-ccflare service.
 
 **Optional: per-account detail**
 
-Set `HEALTH_DETAIL_ENABLED=true` to enable the `?detail=1` parameter. When enabled, append `?detail=1` to get per-account breakdown (returns `403` if the setting is off):
+Set `HEALTH_DETAIL_ENABLED=true` to enable the `?detail=1` parameter. When disabled (default), `?detail=1` is silently ignored — the full health response is still returned, just without `accounts_detail`:
 
 ```bash
 curl http://localhost:8080/health?detail=1
