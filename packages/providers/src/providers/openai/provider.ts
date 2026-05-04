@@ -343,9 +343,31 @@ export class OpenAICompatibleProvider extends BaseProvider {
 	 * Override to inject provider-specific fields (e.g., cache_control, vision flags).
 	 */
 	protected afterConvert(body: OpenAIRequest): void {
-		// Inject cache_control for Alibaba/DashScope endpoints
 		if (this.shouldInjectAlibabaCaching()) {
 			this.injectAlibabaCaching(body);
+		} else {
+			this.stripCacheControlAndFlatten(body);
+		}
+	}
+
+	private stripCacheControlAndFlatten(body: OpenAIRequest): void {
+		if (!body.messages) return;
+		for (const msg of body.messages) {
+			if (!Array.isArray(msg.content)) continue;
+			const allText = msg.content.every(
+				(part) =>
+					typeof part === "object" && part !== null && part.type === "text",
+			);
+			if (allText) {
+				msg.content =
+					msg.content
+						.map((part) => (part as { text?: string }).text ?? "")
+						.join("") || null;
+			} else {
+				for (const part of msg.content as Array<Record<string, unknown>>) {
+					if (part && "cache_control" in part) delete part.cache_control;
+				}
+			}
 		}
 	}
 
