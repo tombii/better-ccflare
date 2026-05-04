@@ -21,9 +21,9 @@ describe("validateProviderPath", () => {
 		).not.toThrow();
 	});
 
-	it("accepts count_tokens for Codex provider", () => {
+	it("rejects count_tokens for Codex provider", () => {
 		expect(() =>
 			validateProviderPath(new CodexProvider(), "/v1/messages/count_tokens"),
-		).not.toThrow();
+		).toThrow();
 	});
 });

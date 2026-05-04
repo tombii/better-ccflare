@@ -195,7 +195,7 @@ export class CodexProvider extends BaseProvider {
 	}
 
 	canHandle(path: string): boolean {
-		return path === "/v1/messages" || path === "/v1/messages/count_tokens";
+		return path === "/v1/messages";
 	}
 
 	async refreshToken(
@@ -871,7 +871,6 @@ export class CodexProvider extends BaseProvider {
 				}
 			}
 			if (event === "message_delta" && payload) {
-				payload.usage = _normalizeUsage(payload.usage);
 				const delta =
 					typeof payload.delta === "object" && payload.delta !== null
 						? (payload.delta as Record<string, unknown>)

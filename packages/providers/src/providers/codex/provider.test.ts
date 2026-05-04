@@ -10,10 +10,10 @@ const eventLine = (name: string, data: unknown) => [
 ];
 
 describe("CodexProvider request conversion", () => {
-	it("handles count_tokens path", () => {
+	it("handles only /v1/messages path", () => {
 		const provider = new CodexProvider();
 		expect(provider.canHandle("/v1/messages")).toBeTrue();
-		expect(provider.canHandle("/v1/messages/count_tokens")).toBeTrue();
+		expect(provider.canHandle("/v1/messages/count_tokens")).toBeFalse();
 	});
 
 	it("forwards Claude reasoning effort to Codex reasoning.effort", async () => {
