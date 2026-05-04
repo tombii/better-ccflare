@@ -55,7 +55,7 @@ When a session involves multiple independent tasks, always spawn subagents rathe
 When executing implementation plans, always use subagent-driven development (superpowers:subagent-driven-development). Never execute plans inline in the main session. Always dispatch a fresh subagent per task.
 
 ## Test-Driven Development
-When creating new functionality: write tests first, then implement, then run tests.
+When creating new functionality: write tests first, then implement, then run tests. This ensures the implementation matches the specs/request before and after coding.
 
 ## After Code Changes
 Always run: `bun run lint && bun run typecheck && bun run format`
@@ -120,7 +120,7 @@ Automated release system uses commit prefixes for changelog:
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **better-ccflare** (8631 symbols, 15334 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **better-ccflare** (8818 symbols, 15673 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 

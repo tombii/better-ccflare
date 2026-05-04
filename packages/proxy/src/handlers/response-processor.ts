@@ -25,6 +25,7 @@ export function handleRateLimitResponse(
 
 	const resetTime = rateLimitInfo.resetTime;
 	const reason: RateLimitReason = "upstream_429_with_reset";
+	account.rate_limited_until = resetTime;
 	ctx.asyncWriter.enqueue(() => {
 		log.warn(
 			`[ccflare] account=${account.name} cooldown_applied reason=${reason} until=${new Date(resetTime).toISOString()}`,
@@ -274,8 +275,9 @@ export async function processProxyResponse(
 			log.warn(
 				`Account ${account.name} rate-limited but no reset time available`,
 			);
+			const cooldownUntil = Date.now() + 5 * 60 * 60 * 1000;
+			account.rate_limited_until = cooldownUntil;
 			ctx.asyncWriter.enqueue(() => {
-				const cooldownUntil = Date.now() + 5 * 60 * 60 * 1000;
 				const reason: RateLimitReason = "upstream_429_no_reset_default_5h";
 				log.warn(
 					`[ccflare] account=${account.name} cooldown_applied reason=${reason} until=${new Date(cooldownUntil).toISOString()}`,
@@ -305,6 +307,7 @@ export async function processProxyResponse(
 	// the stored expiry fires. Only enqueue the DB write when the in-memory account object
 	// already carries a rate_limited_until value to avoid overhead on every normal request.
 	if (!rateLimitInfo.isRateLimited && account.rate_limited_until) {
+		account.rate_limited_until = null;
 		ctx.asyncWriter.enqueue(async () => {
 			const db = ctx.dbOps.getAdapter();
 			await db.run(

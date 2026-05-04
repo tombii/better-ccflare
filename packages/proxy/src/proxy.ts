@@ -335,12 +335,14 @@ export async function handleProxy(
 		// Return 503 pool_exhausted response (default behavior)
 		log.error(ERROR_MESSAGES.POOL_EXHAUSTED);
 
-		// Get all accounts for current provider for pool exhausted response
+		// Log to request history via worker
+		// Re-fetch from DB — selectedAccounts is empty here (strategy already
+		// filtered out unavailable accounts), so we need fresh data to populate
+		// per-account cooldown info in the 503 body.
 		const allAccounts = (await ctx.dbOps.getAllAccounts()).filter(
 			(a) => a.provider === ctx.provider.name,
 		);
 
-		// Log to request history via worker
 		const poolExhaustedResponse = createPoolExhaustedResponse(allAccounts);
 
 		// Send error message to usage worker for request history logging

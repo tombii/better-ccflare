@@ -611,6 +611,7 @@ export async function proxyWithAccount(
 						log.warn(
 							`[ccflare] account=${account.name} cooldown_applied reason=${reason} until=${new Date(cooldownUntil).toISOString()}`,
 						);
+						account.rate_limited_until = cooldownUntil;
 						ctx.asyncWriter.enqueue(() =>
 							ctx.dbOps.markAccountRateLimited(
 								account.id,
@@ -716,6 +717,7 @@ export async function proxyWithAccount(
 					log.warn(
 						`[ccflare] account=${account.name} cooldown_applied reason=${reason} until=${new Date(cooldownUntil).toISOString()}`,
 					);
+					account.rate_limited_until = cooldownUntil;
 					ctx.asyncWriter.enqueue(() =>
 						ctx.dbOps.markAccountRateLimited(account.id, cooldownUntil, reason),
 					);
