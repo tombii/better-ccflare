@@ -8,6 +8,19 @@ import type { RateLimitInfo, TokenRefreshResult } from "../../types";
 
 const log = new Logger("CodexProvider");
 
+const INTERNAL_HEADERS = [
+	"x-better-ccflare-request-id",
+	"x-better-ccflare-request-stream",
+];
+
+function sanitizeResponseHeaders(headers: Headers): Headers {
+	const sanitized = sanitizeProxyHeaders(headers);
+	for (const h of INTERNAL_HEADERS) {
+		sanitized.delete(h);
+	}
+	return sanitized;
+}
+
 const TOKEN_URL = "https://auth.openai.com/oauth/token";
 const CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const DEFAULT_ENDPOINT = "https://chatgpt.com/backend-api/codex/responses";
@@ -382,7 +395,7 @@ export class CodexProvider extends BaseProvider {
 				log.warn(
 					`Codex returned successful response without SSE content-type (${contentType ?? "<missing>"}); transforming as ${requestedStream ? "SSE" : "JSON"}`,
 				);
-				const headers = sanitizeProxyHeaders(response.headers);
+				const headers = sanitizeResponseHeaders(response.headers);
 				headers.set("content-type", "text/event-stream");
 				const sseResponse = new Response(probeText, {
 					status: response.status,
@@ -395,7 +408,7 @@ export class CodexProvider extends BaseProvider {
 				return this.transformSseResponseToJson(sseResponse);
 			}
 
-			const headers = sanitizeProxyHeaders(response.headers);
+			const headers = sanitizeResponseHeaders(response.headers);
 			return new Response(probeText, {
 				status: response.status,
 				statusText: response.statusText,
@@ -403,7 +416,7 @@ export class CodexProvider extends BaseProvider {
 			});
 		}
 
-		const headers = sanitizeProxyHeaders(response.headers);
+		const headers = sanitizeResponseHeaders(response.headers);
 		return new Response(response.body, {
 			status: response.status,
 			statusText: response.statusText,
@@ -775,25 +788,14 @@ export class CodexProvider extends BaseProvider {
 		const startMessage =
 			((messageStartPayload as Record<string, unknown> | null)?.message as Record<string, unknown> | undefined) ??
 			{};
+		const hasDeltaUsage = messageDeltaPayload !== null;
 		const deltaUsage = _normalizeUsage((messageDeltaPayload as Record<string, unknown> | null)?.usage);
 		const startUsage = _normalizeUsage(startMessage.usage);
 		const usage = {
-			input_tokens:
-				deltaUsage.input_tokens > 0
-					? deltaUsage.input_tokens
-					: startUsage.input_tokens,
-			output_tokens:
-				deltaUsage.output_tokens > 0
-					? deltaUsage.output_tokens
-					: startUsage.output_tokens,
-			cache_read_input_tokens:
-				deltaUsage.cache_read_input_tokens > 0
-					? deltaUsage.cache_read_input_tokens
-					: startUsage.cache_read_input_tokens,
-			cache_creation_input_tokens:
-				deltaUsage.cache_creation_input_tokens > 0
-					? deltaUsage.cache_creation_input_tokens
-					: startUsage.cache_creation_input_tokens,
+			input_tokens: hasDeltaUsage ? deltaUsage.input_tokens : startUsage.input_tokens,
+			output_tokens: hasDeltaUsage ? deltaUsage.output_tokens : startUsage.output_tokens,
+			cache_read_input_tokens: hasDeltaUsage ? deltaUsage.cache_read_input_tokens : startUsage.cache_read_input_tokens,
+			cache_creation_input_tokens: hasDeltaUsage ? deltaUsage.cache_creation_input_tokens : startUsage.cache_creation_input_tokens,
 		};
 		const jsonPayload = {
 			id:
