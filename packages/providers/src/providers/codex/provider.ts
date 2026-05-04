@@ -726,28 +726,29 @@ export class CodexProvider extends BaseProvider {
 				}
 			}
 		}
-		for (const [_index, text] of [...textByIndex.entries()].sort(
-			(a, b) => a[0] - b[0],
-		)) {
-			content.push({ type: "text", text });
-		}
-		for (const [index, tool] of [...toolByIndex.entries()].sort(
-			(a, b) => a[0] - b[0],
-		)) {
-			let input: Record<string, unknown> = {};
-			if (tool.partialJson.trim().length > 0) {
-				try {
-					input = JSON.parse(tool.partialJson) as Record<string, unknown>;
-				} catch {
-					input = {};
-				}
+		const allIndices = new Set([...textByIndex.keys(), ...toolByIndex.keys()]);
+		for (const index of [...allIndices].sort((a, b) => a - b)) {
+			const text = textByIndex.get(index);
+			if (text !== undefined) {
+				content.push({ type: "text", text });
 			}
-			content.push({
-				type: "tool_use",
-				id: tool.id || `call_${index}`,
-				name: tool.name,
-				input,
-			});
+			const tool = toolByIndex.get(index);
+			if (tool !== undefined) {
+				let input: Record<string, unknown> = {};
+				if (tool.partialJson.trim().length > 0) {
+					try {
+						input = JSON.parse(tool.partialJson) as Record<string, unknown>;
+					} catch {
+						input = {};
+					}
+				}
+				content.push({
+					type: "tool_use",
+					id: tool.id || `call_${index}`,
+					name: tool.name,
+					input,
+				});
+			}
 		}
 		const startMessage =
 			(messageStartPayload?.message as Record<string, unknown> | undefined) ??
