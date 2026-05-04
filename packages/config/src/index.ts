@@ -61,6 +61,7 @@ export interface ConfigData {
 	system_prompt_cache_ttl_1h?: boolean;
 	usage_throttling_five_hour_enabled?: boolean;
 	usage_throttling_weekly_enabled?: boolean;
+	health_detail_enabled?: boolean;
 	// Database configuration
 	db_wal_mode?: boolean;
 	db_busy_timeout_ms?: number;
@@ -405,6 +406,16 @@ export class Config extends EventEmitter {
 		this.set("usage_throttling_weekly_enabled", value);
 	}
 
+	getHealthDetailEnabled(): boolean {
+		const fromEnv = parseEnabledEnvFlag(process.env.HEALTH_DETAIL_ENABLED);
+		if (fromEnv !== undefined) {
+			return fromEnv;
+		}
+		const fromFile = this.data.health_detail_enabled;
+		if (typeof fromFile === "boolean") return fromFile;
+		return false;
+	}
+
 	getAllSettings(): Record<string, string | number | boolean | undefined> {
 		// Include current strategy (which might come from env)
 		return {
@@ -420,6 +431,7 @@ export class Config extends EventEmitter {
 			usage_throttling_five_hour_enabled:
 				this.getUsageThrottlingFiveHourEnabled(),
 			usage_throttling_weekly_enabled: this.getUsageThrottlingWeeklyEnabled(),
+			health_detail_enabled: this.getHealthDetailEnabled(),
 		};
 	}
 

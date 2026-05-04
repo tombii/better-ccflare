@@ -299,19 +299,33 @@ describe("HTTP status codes", () => {
 				{ name: "acc1", paused: false, rate_limited_until: null },
 			],
 		} as unknown as import("@better-ccflare/database").DatabaseOperations;
-		const config = { getStrategy: () => "session" } as unknown as import("@better-ccflare/config").Config;
-		const response = await createHealthHandler(db, config)(new URL("http://localhost/health"));
+		const config = {
+			getStrategy: () => "session",
+		} as unknown as import("@better-ccflare/config").Config;
+		const response = await createHealthHandler(
+			db,
+			config,
+		)(new URL("http://localhost/health"));
 		expect(response.status).toBe(200);
 	});
 
 	it("returns 503 when degraded (no routable, has recovery time)", async () => {
 		const db = {
 			getAllAccounts: async () => [
-				{ name: "acc1", paused: false, rate_limited_until: Date.now() + 3600000 },
+				{
+					name: "acc1",
+					paused: false,
+					rate_limited_until: Date.now() + 3600000,
+				},
 			],
 		} as unknown as import("@better-ccflare/database").DatabaseOperations;
-		const config = { getStrategy: () => "session" } as unknown as import("@better-ccflare/config").Config;
-		const response = await createHealthHandler(db, config)(new URL("http://localhost/health"));
+		const config = {
+			getStrategy: () => "session",
+		} as unknown as import("@better-ccflare/config").Config;
+		const response = await createHealthHandler(
+			db,
+			config,
+		)(new URL("http://localhost/health"));
 		const body = (await response.json()) as Record<string, unknown>;
 		expect(body.status).toBe("degraded");
 		expect(response.status).toBe(503);
@@ -323,8 +337,13 @@ describe("HTTP status codes", () => {
 				{ name: "acc1", paused: true, rate_limited_until: null },
 			],
 		} as unknown as import("@better-ccflare/database").DatabaseOperations;
-		const config = { getStrategy: () => "session" } as unknown as import("@better-ccflare/config").Config;
-		const response = await createHealthHandler(db, config)(new URL("http://localhost/health"));
+		const config = {
+			getStrategy: () => "session",
+		} as unknown as import("@better-ccflare/config").Config;
+		const response = await createHealthHandler(
+			db,
+			config,
+		)(new URL("http://localhost/health"));
 		expect(response.status).toBe(503);
 	});
 
@@ -332,11 +351,20 @@ describe("HTTP status codes", () => {
 		const db = {
 			getAllAccounts: async () => [
 				{ name: "available", paused: false, rate_limited_until: null },
-				{ name: "limited", paused: false, rate_limited_until: Date.now() + 3600000 },
+				{
+					name: "limited",
+					paused: false,
+					rate_limited_until: Date.now() + 3600000,
+				},
 			],
 		} as unknown as import("@better-ccflare/database").DatabaseOperations;
-		const config = { getStrategy: () => "session" } as unknown as import("@better-ccflare/config").Config;
-		const response = await createHealthHandler(db, config)(new URL("http://localhost/health"));
+		const config = {
+			getStrategy: () => "session",
+		} as unknown as import("@better-ccflare/config").Config;
+		const response = await createHealthHandler(
+			db,
+			config,
+		)(new URL("http://localhost/health"));
 		const body = (await response.json()) as Record<string, unknown>;
 		expect(body.status).toBe("ok");
 		expect(response.status).toBe(200);
@@ -359,6 +387,7 @@ describe("?detail=1 parameter", () => {
 
 		const config = {
 			getStrategy: () => "session",
+			getHealthDetailEnabled: () => true,
 		} as unknown as import("@better-ccflare/config").Config;
 
 		const handler = createHealthHandler(db, config);
@@ -394,6 +423,7 @@ describe("?detail=1 parameter", () => {
 
 		const config = {
 			getStrategy: () => "session",
+			getHealthDetailEnabled: () => true,
 		} as unknown as import("@better-ccflare/config").Config;
 
 		const handler = createHealthHandler(db, config);
@@ -417,6 +447,7 @@ describe("?detail=1 parameter", () => {
 
 		const config = {
 			getStrategy: () => "session",
+			getHealthDetailEnabled: () => true,
 		} as unknown as import("@better-ccflare/config").Config;
 
 		const handler = createHealthHandler(db, config);
@@ -426,5 +457,26 @@ describe("?detail=1 parameter", () => {
 
 		expect(body.accounts_detail[0].status).toBe("available");
 		expect(body.accounts_detail[0].rate_limited_until).toBeNull();
+	});
+
+	it("returns 403 when detail=1 but health_detail_enabled is false", async () => {
+		const db = {
+			getAllAccounts: async () => [
+				{ name: "acc1", paused: false, rate_limited_until: null },
+			],
+		} as unknown as import("@better-ccflare/database").DatabaseOperations;
+
+		const config = {
+			getStrategy: () => "session",
+			getHealthDetailEnabled: () => false,
+		} as unknown as import("@better-ccflare/config").Config;
+
+		const handler = createHealthHandler(db, config);
+		const url = new URL("http://localhost/health?detail=1");
+		const response = await handler(url);
+		const body = (await response.json()) as Record<string, unknown>;
+
+		expect(response.status).toBe(403);
+		expect(body.error).toBe("detail mode disabled");
 	});
 });

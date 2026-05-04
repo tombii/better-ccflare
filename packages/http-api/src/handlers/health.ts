@@ -134,6 +134,9 @@ export function createHealthHandler(
 		// Support ?detail=1 for per-account details
 		const detailParam = url.searchParams.get("detail");
 		if (detailParam === "1") {
+			if (!config.getHealthDetailEnabled()) {
+				return jsonResponse({ error: "detail mode disabled" }, 403);
+			}
 			response.accounts_detail = accounts.map((a) => ({
 				name: a.name,
 				status: a.paused
