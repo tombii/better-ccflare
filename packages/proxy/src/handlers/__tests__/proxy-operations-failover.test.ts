@@ -93,11 +93,7 @@ function makeProxyContext(): ProxyContext {
 			isStreamingResponse: () => false,
 		} as never,
 		refreshInFlight: new Map(),
-		asyncWriter: {
-			enqueue: mock((job: () => void | Promise<void>) => {
-				void job();
-			}),
-		} as never,
+		asyncWriter: { enqueue: mock(() => {}) } as never,
 		usageWorker: { postMessage: mock(() => {}) } as never,
 		config: { getStorePayloads: () => true } as never,
 	};
@@ -352,6 +348,18 @@ describe("proxyWithAccount — 429 failover", () => {
 	});
 });
 
+function makeProxyContextWithAsyncExec(): ProxyContext {
+	const ctx = makeProxyContext();
+	return {
+		...ctx,
+		asyncWriter: {
+			enqueue: mock((job: () => void | Promise<void>) => {
+				void job();
+			}),
+		} as never,
+	};
+}
+
 describe("proxyWithAccount — rate limit audit trail (issue #178)", () => {
 	let originalFetch: typeof globalThis.fetch;
 
@@ -377,7 +385,7 @@ describe("proxyWithAccount — rate limit audit trail (issue #178)", () => {
 			),
 		);
 
-		const ctx = makeProxyContext();
+		const ctx = makeProxyContextWithAsyncExec();
 		const bodyBuffer = makeRequestBody();
 		const req = makeRequest(bodyBuffer);
 
@@ -418,7 +426,7 @@ describe("proxyWithAccount — rate limit audit trail (issue #178)", () => {
 			),
 		);
 
-		const ctx = makeProxyContext();
+		const ctx = makeProxyContextWithAsyncExec();
 		const bodyBuffer = makeRequestBody();
 		const req = makeRequest(bodyBuffer);
 
