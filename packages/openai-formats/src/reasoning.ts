@@ -100,10 +100,9 @@ export function resolveReasoningEffort(
 	}> = [];
 
 	const modelContexts = [
-		{ model: models.sourceModel, role: "source" as const },
-		{ model: models.targetModel, role: "target" as const },
+		{ model: models.targetModel },
 	].filter(
-		(context): context is { model: string; role: "source" | "target" } =>
+		(context): context is { model: string } =>
 			typeof context.model === "string" && context.model.length > 0,
 	);
 

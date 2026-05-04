@@ -378,8 +378,7 @@ export class CodexProvider extends BaseProvider {
 			const isSseLike = trimmed.startsWith("event:");
 
 			if (isSseLike) {
-				log.debug(
-					`Codex returned successful response without SSE content-type (${contentType ?? "<missing>"}); transforming as ${requestedStream ? "SSE" : "JSON"}`,
+				log.warn(
 				);
 				const headers = sanitizeProxyHeaders(response.headers);
 				headers.set("content-type", "text/event-stream");
@@ -632,7 +631,7 @@ export class CodexProvider extends BaseProvider {
 		});
 		if (reasoningResolution.downgrades.length > 0) {
 			for (const downgrade of reasoningResolution.downgrades) {
-				log.debug(
+				log.warn(
 					`Downgraded reasoning effort for model ${downgrade.model}: ${downgrade.from} -> ${downgrade.to}`,
 				);
 			}
@@ -645,7 +644,7 @@ export class CodexProvider extends BaseProvider {
 			input,
 			stream: true,
 			store: false,
-			reasoning: { effort: reasoningResolution.effort || "medium" },
+			reasoning: { effort: reasoningResolution.effort ?? "medium" },
 		};
 
 		codexRequest.instructions = instructions || "You are a helpful assistant.";
