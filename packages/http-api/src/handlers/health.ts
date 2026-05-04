@@ -27,15 +27,11 @@ export function computePoolStatus(
 ): PoolStatus {
 	const configured = accounts.length;
 	const paused = accounts.filter((a) => a.paused).length;
-	const rate_limited = accounts.filter(
-		(a) => !a.paused && a.rate_limited_until && a.rate_limited_until > now,
-	).length;
-	const routable = accounts.filter((a) => isAccountAvailable(a, now)).length;
-
-	// Find earliest rate_limited_until from rate-limited accounts
 	const rateLimitedAccounts = accounts.filter(
 		(a) => !a.paused && a.rate_limited_until && a.rate_limited_until > now,
 	);
+	const rate_limited = rateLimitedAccounts.length;
+	const routable = accounts.filter((a) => isAccountAvailable(a, now)).length;
 
 	const earliestRateLimit = rateLimitedAccounts.reduce<number | null>(
 		(min, account) => {
@@ -156,7 +152,10 @@ export function createHealthHandler(
 					: a.rate_limited_until && a.rate_limited_until > now
 						? "rate_limited"
 						: "available",
-				rate_limited_until: a.rate_limited_until ?? null,
+				rate_limited_until:
+					a.rate_limited_until && a.rate_limited_until > now
+						? a.rate_limited_until
+						: null,
 			}));
 		}
 
