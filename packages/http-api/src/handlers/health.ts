@@ -82,9 +82,13 @@ export function createHealthHandler(
 	getUsageWorkerHealth?: UsageWorkerHealthFn,
 	getIntegrityStatus?: IntegrityStatusFn,
 ) {
-	const cache = new TtlCache<HealthResponse>(2000);
+	const normalCache = new TtlCache<HealthResponse>(2000);
+	const detailCache = new TtlCache<HealthResponse>(2000);
 
 	return async (url: URL): Promise<Response> => {
+		const withDetail =
+			url.searchParams.get("detail") === "1" && config.getHealthDetailEnabled();
+		const cache = withDetail ? detailCache : normalCache;
 		const cached = cache.get();
 		if (cached) {
 			return jsonResponse(cached, cached.status === "ok" ? 200 : 503);

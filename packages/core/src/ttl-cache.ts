@@ -2,6 +2,7 @@ export class TtlCache<T> {
 	private ttlMs: number;
 	private value: T | undefined;
 	private timestamp: number = 0;
+	private hasValue: boolean = false;
 	private now: () => number;
 
 	constructor(ttlMs: number, now?: () => number) {
@@ -11,11 +12,12 @@ export class TtlCache<T> {
 
 	set(value: T): void {
 		this.value = value;
+		this.hasValue = true;
 		this.timestamp = this.now();
 	}
 
 	get(): T | undefined {
-		if (this.value === undefined) return undefined;
+		if (!this.hasValue) return undefined;
 		if (this.now() - this.timestamp > this.ttlMs) {
 			this.clear();
 			return undefined;
@@ -29,12 +31,11 @@ export class TtlCache<T> {
 
 	clear(): void {
 		this.value = undefined;
+		this.hasValue = false;
 		this.timestamp = 0;
 	}
 
 	get size(): number {
-		return this.value !== undefined && this.now() - this.timestamp <= this.ttlMs
-			? 1
-			: 0;
+		return this.hasValue && this.now() - this.timestamp <= this.ttlMs ? 1 : 0;
 	}
 }
