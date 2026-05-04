@@ -88,12 +88,20 @@ export function createHealthHandler(
 		const pool = computePoolStatus(accounts, now);
 
 		// Call each health function once and store results
-		const asyncWriterHealth = getAsyncWriterHealth ? getAsyncWriterHealth() : null;
-		const usageWorkerHealth = getUsageWorkerHealth ? getUsageWorkerHealth() : null;
+		const asyncWriterHealth = getAsyncWriterHealth
+			? getAsyncWriterHealth()
+			: null;
+		const usageWorkerHealth = getUsageWorkerHealth
+			? getUsageWorkerHealth()
+			: null;
 
 		// Determine runtime health from stored results
-		const asyncWriterHealthy = asyncWriterHealth ? asyncWriterHealth.healthy : true;
-		const usageWorkerHealthy = usageWorkerHealth ? usageWorkerHealth.state !== "error" : true;
+		const asyncWriterHealthy = asyncWriterHealth
+			? asyncWriterHealth.healthy
+			: true;
+		const usageWorkerHealthy = usageWorkerHealth
+			? usageWorkerHealth.state !== "error"
+			: true;
 		const runtimeHealthy = asyncWriterHealthy && usageWorkerHealthy;
 
 		const status = computeHealthStatus(runtimeHealthy, pool);
@@ -144,6 +152,14 @@ export function createHealthHandler(
 				rate_limited_until:
 					!a.paused && a.rate_limited_until && a.rate_limited_until >= now
 						? a.rate_limited_until
+						: null,
+				rate_limited_reason:
+					!a.paused && a.rate_limited_until && a.rate_limited_until >= now
+						? a.rate_limited_reason
+						: null,
+				rate_limited_at:
+					!a.paused && a.rate_limited_until && a.rate_limited_until >= now
+						? a.rate_limited_at
 						: null,
 			}));
 		}

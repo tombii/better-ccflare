@@ -304,6 +304,57 @@ describe("Database Migrations - Tier Column Removal", () => {
 		expect(claudeSession?.mode).toBe("claude-oauth"); // Should remain unchanged
 	});
 
+	describe("Rate Limit Audit Trail Migration (issue #178)", () => {
+		it("adds rate_limited_reason TEXT column to accounts table", () => {
+			ensureSchema(db);
+			runMigrations(db);
+
+			const columns = db.prepare("PRAGMA table_info(accounts)").all() as Array<{
+				name: string;
+				type: string;
+			}>;
+			const col = columns.find((c) => c.name === "rate_limited_reason");
+
+			expect(col).toBeDefined();
+			expect(col?.type.toUpperCase()).toBe("TEXT");
+		});
+
+		it("adds rate_limited_at INTEGER column to accounts table", () => {
+			ensureSchema(db);
+			runMigrations(db);
+
+			const columns = db.prepare("PRAGMA table_info(accounts)").all() as Array<{
+				name: string;
+				type: string;
+			}>;
+			const col = columns.find((c) => c.name === "rate_limited_at");
+
+			expect(col).toBeDefined();
+			expect(col?.type.toUpperCase()).toBe("INTEGER");
+		});
+
+		it("new columns default to NULL for existing rows", () => {
+			ensureSchema(db);
+			db.prepare(
+				`INSERT INTO accounts (id, name, provider, refresh_token, created_at) VALUES (?, ?, ?, ?, ?)`,
+			).run("existing-id", "existing-account", "anthropic", "", Date.now());
+
+			runMigrations(db);
+
+			const row = db
+				.prepare(
+					"SELECT rate_limited_reason, rate_limited_at FROM accounts WHERE id = ?",
+				)
+				.get("existing-id") as {
+				rate_limited_reason: string | null;
+				rate_limited_at: number | null;
+			};
+
+			expect(row.rate_limited_reason).toBeNull();
+			expect(row.rate_limited_at).toBeNull();
+		});
+	});
+
 	describe("API Key Storage Migration", () => {
 		it("should migrate API keys from refresh_token to api_key field for API-key providers", () => {
 			// Initialize the schema

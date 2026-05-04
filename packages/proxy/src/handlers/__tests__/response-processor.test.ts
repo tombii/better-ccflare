@@ -64,7 +64,11 @@ function makeCtx(opts: {
 			extractUsageInfo: undefined,
 		},
 		dbOps: {
-			markAccountRateLimited: (accountId: string, resetTime: number) => {
+			markAccountRateLimited: (
+				accountId: string,
+				resetTime: number,
+				_reason: string,
+			) => {
 				calls.markRateLimited.push({ accountId, resetTime });
 			},
 			updateAccountUsage: () => {},
@@ -89,6 +93,130 @@ function makeCtx(opts: {
 
 	return { ctx, calls };
 }
+
+// Extended spy context that captures the reason argument passed to markAccountRateLimited.
+function makeCtxWithReason(opts: {
+	isStream: boolean;
+	rateLimited: boolean;
+	resetTime?: number;
+}) {
+	const calls = {
+		markRateLimited: [] as Array<{
+			accountId: string;
+			resetTime: number;
+			reason: string;
+		}>,
+		enqueueCount: 0,
+	};
+
+	const ctx = {
+		provider: {
+			name: "anthropic",
+			isStreamingResponse: () => opts.isStream,
+			parseRateLimit: () => ({
+				isRateLimited: opts.rateLimited,
+				resetTime: opts.resetTime,
+				statusHeader: opts.rateLimited ? "rate_limited" : undefined,
+				remaining: undefined,
+			}),
+			parseUsage: undefined,
+			extractUsageInfo: undefined,
+		},
+		dbOps: {
+			markAccountRateLimited: (
+				accountId: string,
+				resetTime: number,
+				reason: string,
+			) => {
+				calls.markRateLimited.push({ accountId, resetTime, reason });
+			},
+			updateAccountUsage: () => {},
+			updateAccountRateLimitMeta: () => {},
+			getAdapter: () => ({
+				get: async () => ({ rate_limited_until: null }),
+				run: async () => {},
+			}),
+			updateRequestUsage: async () => {},
+		},
+		asyncWriter: {
+			enqueue: (job: () => void | Promise<void>) => {
+				calls.enqueueCount++;
+				void job();
+			},
+		},
+	} as unknown as ProxyContext;
+
+	return { ctx, calls };
+}
+
+describe("processProxyResponse — rate limit audit trail (issue #178)", () => {
+	it("passes reason='upstream_429_with_reset' when resetTime is present", async () => {
+		const account = makeAccount();
+		const resetTime = Date.now() + 30 * 60_000;
+		const { ctx, calls } = makeCtxWithReason({
+			isStream: false,
+			rateLimited: true,
+			resetTime,
+		});
+		const response = new Response('{"error":"rate_limit"}', {
+			status: 429,
+			headers: { "content-type": "application/json" },
+		});
+
+		await processProxyResponse(response, account, ctx);
+
+		expect(calls.markRateLimited).toHaveLength(1);
+		expect(calls.markRateLimited[0]?.accountId).toBe(account.id);
+		expect(calls.markRateLimited[0]?.resetTime).toBe(resetTime);
+		expect(calls.markRateLimited[0]?.reason).toBe("upstream_429_with_reset");
+	});
+
+	it("passes reason='upstream_429_no_reset_default_5h' when no resetTime", async () => {
+		const account = makeAccount();
+		const before = Date.now();
+		const { ctx, calls } = makeCtxWithReason({
+			isStream: false,
+			rateLimited: true,
+			resetTime: undefined,
+		});
+		const response = new Response('{"error":"rate_limit"}', {
+			status: 429,
+			headers: { "content-type": "application/json" },
+		});
+
+		await processProxyResponse(response, account, ctx);
+
+		expect(calls.markRateLimited).toHaveLength(1);
+		expect(calls.markRateLimited[0]?.accountId).toBe(account.id);
+		expect(calls.markRateLimited[0]?.reason).toBe(
+			"upstream_429_no_reset_default_5h",
+		);
+		// resetTime should be approximately now + 5h
+		const FIVE_HOURS = 5 * 60 * 60 * 1000;
+		const reset = calls.markRateLimited[0]?.resetTime ?? 0;
+		expect(reset).toBeGreaterThanOrEqual(before + FIVE_HOURS - 1000);
+		expect(reset).toBeLessThanOrEqual(Date.now() + FIVE_HOURS + 1000);
+	});
+
+	it("passes reason='upstream_429_with_reset' on streaming 429 with resetTime", async () => {
+		const account = makeAccount();
+		const resetTime = Date.now() + 60 * 60_000;
+		const { ctx, calls } = makeCtxWithReason({
+			isStream: true,
+			rateLimited: true,
+			resetTime,
+		});
+		const response = new Response("rate limited", {
+			status: 429,
+			headers: { "content-type": "text/event-stream" },
+		});
+
+		await processProxyResponse(response, account, ctx);
+
+		expect(calls.markRateLimited).toHaveLength(1);
+		expect(calls.markRateLimited[0]?.reason).toBe("upstream_429_with_reset");
+	});
+});
 
 describe("processProxyResponse — streaming rate-limit failover (issue #114)", () => {
 	it("returns true and marks the account on a streaming 429", async () => {

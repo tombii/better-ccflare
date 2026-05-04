@@ -34,6 +34,13 @@ After merging, update the Acknowledgements section in README.md to thank the con
 - Never close issues automatically
 - Wait for the issue reporter to confirm that fixes work for them before closing
 
+## Issue Staleness Check (MANDATORY before implementing)
+Before implementing any GitHub issue, always run:
+```bash
+git log refs/heads/main --since='<issue-open-date>' --oneline --no-merges -- <relevant-paths>
+```
+Check if recent commits already partially or fully address the issue. Rate limiting, health, and proxy code change frequently. Ask the user "does this issue still apply given recent changes?" before proceeding. Especially check: has the reported symptom been fixed? Does the proposal conflict with new architecture?
+
 ## Database
 - Default: `~/.config/better-ccflare/better-ccflare.db`
 - Custom: Set `BETTER_CCFLARE_DB_PATH=/path/to/dev.db` in env or .env

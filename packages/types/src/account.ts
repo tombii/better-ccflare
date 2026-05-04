@@ -1,3 +1,9 @@
+export type RateLimitReason =
+	| "upstream_429_with_reset"
+	| "upstream_429_no_reset_default_5h"
+	| "model_fallback_429"
+	| "all_models_exhausted_429";
+
 // Usage data types for Anthropic accounts
 export interface UsageWindowData {
 	utilization: number | null;
@@ -93,6 +99,8 @@ export interface AccountRow {
 	request_count: number;
 	total_requests: number;
 	rate_limited_until?: number | null;
+	rate_limited_reason?: RateLimitReason | null;
+	rate_limited_at?: number | null;
 	session_start?: number | null;
 	session_request_count?: number;
 	paused?: boolean | number | null;
@@ -127,6 +135,8 @@ export interface Account {
 	last_used: number | null;
 	created_at: number;
 	rate_limited_until: number | null;
+	rate_limited_reason: RateLimitReason | null;
+	rate_limited_at: number | null;
 	session_start: number | null;
 	session_request_count: number;
 	paused: boolean;
@@ -174,6 +184,8 @@ export interface AccountResponse {
 	rateLimitReset: string | null;
 	rateLimitRemaining: number | null;
 	rateLimitedUntil: number | null;
+	rateLimitedReason: RateLimitReason | null;
+	rateLimitedAt: number | null;
 	sessionInfo: string;
 	priority: number;
 	autoFallbackEnabled: boolean;
@@ -209,6 +221,8 @@ export interface AccountDisplay {
 	sessionInfo: string;
 	paused: boolean;
 	rate_limited_until?: number | null;
+	rate_limited_reason?: RateLimitReason | null;
+	rate_limited_at?: number | null;
 	session_start?: number | null;
 	session_request_count?: number;
 	access_token?: string | null;
@@ -230,6 +244,8 @@ export interface AccountListItem {
 	tokenStatus: "valid" | "expired";
 	rateLimitStatus: string;
 	sessionInfo: string;
+	rate_limited_reason?: RateLimitReason | null;
+	rate_limited_at?: number | null;
 	mode:
 		| "claude-oauth"
 		| "console"
@@ -296,6 +312,8 @@ export function toAccount(row: AccountRow): Account {
 		request_count: toNum(row.request_count),
 		total_requests: toNum(row.total_requests),
 		rate_limited_until: toNumOrNull(row.rate_limited_until),
+		rate_limited_reason: row.rate_limited_reason ?? null,
+		rate_limited_at: toNumOrNull(row.rate_limited_at),
 		session_start: toNumOrNull(row.session_start),
 		session_request_count: toNum(row.session_request_count),
 		paused: !!row.paused,
@@ -386,6 +404,8 @@ export function toAccountResponse(account: Account): AccountResponse {
 			: null,
 		rateLimitRemaining: account.rate_limit_remaining,
 		rateLimitedUntil: account.rate_limited_until || null,
+		rateLimitedReason: account.rate_limited_reason ?? null,
+		rateLimitedAt: account.rate_limited_at ?? null,
 		sessionInfo,
 		priority: account.priority,
 		autoFallbackEnabled: account.auto_fallback_enabled,

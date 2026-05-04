@@ -1,7 +1,11 @@
 import { getModelList, logError, ProviderError } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import { getProvider, usageCache } from "@better-ccflare/providers";
-import type { Account, RequestMeta } from "@better-ccflare/types";
+import type {
+	Account,
+	RateLimitReason,
+	RequestMeta,
+} from "@better-ccflare/types";
 import { cacheBodyStore } from "../cache-body-store";
 import { RequestBodyContext } from "../request-body-context";
 import { forwardToClient } from "../response-handler";
@@ -603,8 +607,16 @@ export async function proxyWithAccount(
 							account.id,
 							usageCache.getRateLimitedUntil.bind(usageCache),
 						);
+						const reason: RateLimitReason = "model_fallback_429";
+						log.warn(
+							`[ccflare] account=${account.name} cooldown_applied reason=${reason} until=${new Date(cooldownUntil).toISOString()}`,
+						);
 						ctx.asyncWriter.enqueue(() =>
-							ctx.dbOps.markAccountRateLimited(account.id, cooldownUntil),
+							ctx.dbOps.markAccountRateLimited(
+								account.id,
+								cooldownUntil,
+								reason,
+							),
 						);
 						return null;
 					}
@@ -700,8 +712,12 @@ export async function proxyWithAccount(
 						account.id,
 						usageCache.getRateLimitedUntil.bind(usageCache),
 					);
+					const reason: RateLimitReason = "all_models_exhausted_429";
+					log.warn(
+						`[ccflare] account=${account.name} cooldown_applied reason=${reason} until=${new Date(cooldownUntil).toISOString()}`,
+					);
 					ctx.asyncWriter.enqueue(() =>
-						ctx.dbOps.markAccountRateLimited(account.id, cooldownUntil),
+						ctx.dbOps.markAccountRateLimited(account.id, cooldownUntil, reason),
 					);
 				}
 				return null;
@@ -819,7 +835,9 @@ export function createPoolExhaustedResponse(accounts: Account[]): Response {
 							...rateLimitedAccounts.map(
 								(account) => account.rate_limited_until!,
 							),
-						) - now) / 1000,
+						) -
+							now) /
+							1000,
 					),
 				)
 			: 60; // Default 60s if no cooldown info

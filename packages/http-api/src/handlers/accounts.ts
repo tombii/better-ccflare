@@ -36,11 +36,25 @@ import {
 	getUsageThrottleStatus,
 	restartUsagePollingForAccount,
 } from "@better-ccflare/proxy";
-import type { FullUsageData } from "@better-ccflare/types";
+import type { FullUsageData, RateLimitReason } from "@better-ccflare/types";
 import { requiresSessionDurationTracking } from "@better-ccflare/types";
 import type { AccountResponse } from "../types";
 
 const log = new Logger("AccountsHandler");
+
+const RATE_LIMIT_REASONS = new Set<RateLimitReason>([
+	"upstream_429_with_reset",
+	"upstream_429_no_reset_default_5h",
+	"model_fallback_429",
+	"all_models_exhausted_429",
+]);
+
+function toRateLimitReason(v: string | null): RateLimitReason | null {
+	if (v === null) return null;
+	return RATE_LIMIT_REASONS.has(v as RateLimitReason)
+		? (v as RateLimitReason)
+		: null;
+}
 
 function normalizeCodexUsageData(usage: UsageData): UsageData | null {
 	const normalized: UsageData = {
@@ -146,6 +160,8 @@ export function createAccountsListHandler(
 			created_at: number;
 			expires_at: number | null;
 			rate_limited_until: number | null;
+			rate_limited_reason: string | null;
+			rate_limited_at: number | null;
 			rate_limit_reset: number | null;
 			rate_limit_status: string | null;
 			rate_limit_remaining: number | null;
@@ -179,6 +195,8 @@ export function createAccountsListHandler(
 					created_at,
 					expires_at,
 					rate_limited_until,
+						rate_limited_reason,
+						rate_limited_at,
 					rate_limit_reset,
 					rate_limit_status,
 					rate_limit_remaining,
@@ -456,6 +474,11 @@ export function createAccountsListHandler(
 					rateLimitedUntil: account.rate_limited_until
 						? Number(account.rate_limited_until)
 						: null,
+					rateLimitedReason: toRateLimitReason(account.rate_limited_reason),
+					rateLimitedAt:
+						account.rate_limited_at != null
+							? Number(account.rate_limited_at)
+							: null,
 					sessionInfo: account.session_info || "",
 					autoFallbackEnabled: account.auto_fallback_enabled === 1,
 					autoRefreshEnabled: account.auto_refresh_enabled === 1,
