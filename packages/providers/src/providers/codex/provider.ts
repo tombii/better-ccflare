@@ -773,9 +773,9 @@ export class CodexProvider extends BaseProvider {
 			}
 		}
 		const startMessage =
-			(messageStartPayload?.message as Record<string, unknown> | undefined) ??
+			((messageStartPayload as Record<string, unknown> | null)?.message as Record<string, unknown> | undefined) ??
 			{};
-		const deltaUsage = _normalizeUsage(messageDeltaPayload?.usage);
+		const deltaUsage = _normalizeUsage((messageDeltaPayload as Record<string, unknown> | null)?.usage);
 		const startUsage = _normalizeUsage(startMessage.usage);
 		const usage = {
 			input_tokens:
