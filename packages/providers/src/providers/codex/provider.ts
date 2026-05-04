@@ -182,7 +182,16 @@ interface StreamState {
 
 export class CodexProvider extends BaseProvider {
 	name = "codex";
-	private requestStreamById = new Map<string, boolean>();
+	private requestStreamById = new Map<string, { stream: boolean; ts: number }>();
+
+	private sweepRequestStreamById(): void {
+		const cutoff = Date.now() - 30_000;
+		for (const [id, entry] of this.requestStreamById) {
+			if (entry.ts < cutoff) {
+				this.requestStreamById.delete(id);
+			}
+		}
+	}
 
 	canHandle(path: string): boolean {
 		return path === "/v1/messages" || path === "/v1/messages/count_tokens";
@@ -302,10 +311,14 @@ export class CodexProvider extends BaseProvider {
 		}
 
 		try {
+			this.sweepRequestStreamById();
 			const body = (await request.json()) as AnthropicRequest;
 			const requestId = request.headers.get("x-better-ccflare-request-id");
 			if (requestId) {
-				this.requestStreamById.set(requestId, body.stream === true);
+				this.requestStreamById.set(requestId, {
+					stream: body.stream === true,
+					ts: Date.now(),
+				});
 			}
 			const codexBody = this.convertToCodexFormat(body, account);
 
@@ -346,7 +359,7 @@ export class CodexProvider extends BaseProvider {
 				: headerRequestedStream === "false"
 					? false
 					: requestId
-						? this.requestStreamById.get(requestId) === true
+						? (this.requestStreamById.get(requestId)?.stream === true)
 						: true;
 		if (requestId) {
 			this.requestStreamById.delete(requestId);
@@ -363,7 +376,6 @@ export class CodexProvider extends BaseProvider {
 			const probeText = await response.text();
 			const trimmed = probeText.trimStart();
 			const isSseLike = trimmed.startsWith("event:");
-			const _isJsonLike = trimmed.startsWith("{") || trimmed.startsWith("[");
 
 			if (isSseLike) {
 				log.debug(
@@ -812,45 +824,27 @@ export class CodexProvider extends BaseProvider {
 				typeof data === "object" && data !== null
 					? (data as Record<string, unknown>)
 					: null;
-			const normalizeUsage = (value: unknown): Record<string, number> => {
-				const usage =
-					typeof value === "object" && value !== null
-						? (value as Record<string, unknown>)
-						: {};
-				const getNumber = (field: string) => {
-					const candidate = usage[field];
-					return typeof candidate === "number" && Number.isFinite(candidate)
-						? candidate
-						: 0;
-				};
-				return {
-					input_tokens: getNumber("input_tokens"),
-					output_tokens: getNumber("output_tokens"),
-					cache_read_input_tokens: getNumber("cache_read_input_tokens"),
-					cache_creation_input_tokens: getNumber("cache_creation_input_tokens"),
-				};
-			};
 			if ((event === "message_start" || event === "message_delta") && payload) {
-				const normalizedUsage = normalizeUsage(payload.usage);
+				const normalizedUsage = _normalizeUsage(payload.usage);
 				payload.usage = normalizedUsage;
 				if (event === "message_start") {
 					const message =
 						typeof payload.message === "object" && payload.message !== null
 							? (payload.message as Record<string, unknown>)
 							: {};
-					message.usage = normalizeUsage(message.usage ?? normalizedUsage);
+					message.usage = _normalizeUsage(message.usage ?? normalizedUsage);
 					payload.message = message;
 				} else {
 					const message = payload.message as
 						| Record<string, unknown>
 						| undefined;
 					if (message) {
-						message.usage = normalizeUsage(message.usage ?? normalizedUsage);
+						message.usage = _normalizeUsage(message.usage ?? normalizedUsage);
 					}
 				}
 			}
 			if (event === "message_delta" && payload) {
-				payload.usage = normalizeUsage(payload.usage);
+				payload.usage = _normalizeUsage(payload.usage);
 				const delta =
 					typeof payload.delta === "object" && payload.delta !== null
 						? (payload.delta as Record<string, unknown>)

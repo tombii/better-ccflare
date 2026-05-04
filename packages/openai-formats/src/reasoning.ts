@@ -110,14 +110,8 @@ export function resolveReasoningEffort(
 	for (const { model, role } of modelContexts) {
 		const supportedEfforts = getSupportedReasoningEfforts(model);
 		if (!supportedEfforts) {
-			if (role === "target") {
-				continue;
-			}
-			throw new ValidationError(
-				`reasoning.effort is not supported for model ${model}`,
-				"reasoning.effort",
-				resolvedEffort,
-			);
+			// Unknown model (source or target) — pass through unchanged
+			continue;
 		}
 
 		if (supportedEfforts.includes(resolvedEffort)) {

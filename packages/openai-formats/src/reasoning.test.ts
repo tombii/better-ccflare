@@ -80,4 +80,13 @@ describe("reasoning effort support", () => {
 		expect(resolved.effort).toBe("xhigh");
 		expect(resolved.downgrades).toEqual([]);
 	});
+
+	it("passes through effort unchanged when source model is unknown", () => {
+		const resolved = resolveReasoningEffort("xhigh", {
+			sourceModel: "claude-future-model-99",
+			targetModel: "gpt-5.3-codex",
+		});
+		expect(resolved.effort).toBe("xhigh");
+		expect(resolved.downgrades).toEqual([]);
+	});
 });
