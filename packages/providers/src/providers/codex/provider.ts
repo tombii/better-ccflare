@@ -1073,10 +1073,20 @@ export class CodexProvider extends BaseProvider {
 					await ensureMessageStart();
 					// Start a text content block
 					if (state.hasSentContentBlockStart) {
-						await writeSSE("content_block_stop", {
-							type: "content_block_stop",
-							index: state.contentBlockIndex,
-						});
+						// Only close the current block if it's not a still-open function-call
+						// block awaiting output_item.done — closing it here would produce a
+						// premature content_block_stop that output_item.done will duplicate.
+						const isOpenFunctionCallBlock = [
+							...state.functionCallBlocks.values(),
+						].some(
+							(b) => b.contentBlockIndex === state.contentBlockIndex,
+						);
+						if (!isOpenFunctionCallBlock) {
+							await writeSSE("content_block_stop", {
+								type: "content_block_stop",
+								index: state.contentBlockIndex,
+							});
+						}
 						state.contentBlockIndex++;
 					}
 

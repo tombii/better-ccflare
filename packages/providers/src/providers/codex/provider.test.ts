@@ -223,6 +223,83 @@ describe("CodexProvider.processResponse", () => {
 		expect(deltaLine).toContain('"partial_json":"{\\"query\\":\\"hello\\"}"');
 	});
 
+	it("does not emit premature content_block_stop for function-call when text block opens concurrently", async () => {
+		const provider = new CodexProvider();
+		const upstreamBody = sseBody([
+			...eventLine("response.created", {
+				response: { id: "resp_test", model: "gpt-5.4" },
+			}),
+			...eventLine("response.output_item.added", {
+				item: { type: "function_call", call_id: "call_1", name: "search" },
+				output_index: 0,
+			}),
+			...eventLine("response.output_item.added", {
+				item: { type: "message" },
+				output_index: 1,
+			}),
+			...eventLine("response.content_part.added", {
+				part: { type: "output_text" },
+			}),
+			...eventLine("response.output_text.delta", { delta: "hello" }),
+			...eventLine("response.function_call_arguments.delta", {
+				delta: '{"q":1}',
+				output_index: 0,
+			}),
+			...eventLine("response.output_item.done", {
+				item: { type: "function_call", call_id: "call_1", name: "search" },
+				output_index: 0,
+			}),
+			...eventLine("response.completed", {
+				response: {
+					model: "gpt-5.4",
+					usage: { input_tokens: 1, output_tokens: 1 },
+				},
+			}),
+		]);
+
+		const response = new Response(upstreamBody, {
+			status: 200,
+			headers: { "content-type": "text/event-stream" },
+		});
+
+		const transformed = await provider.processResponse(response, null);
+		const transformedBody = await transformed.text();
+		const events = transformedBody
+			.split("\n")
+			.filter((l) => l.startsWith("data:"))
+			.map((l) => JSON.parse(l.slice("data:".length).trim()) as Record<string, unknown>);
+
+		// Collect events for block index 0 in order
+		const block0Events = events
+			.filter(
+				(e) =>
+					(e.type === "content_block_start" ||
+						e.type === "content_block_stop" ||
+						e.type === "content_block_delta") &&
+					(e.index === 0 ||
+						(e.type === "content_block_start" &&
+							(e.content_block as Record<string, unknown>)?.type === "tool_use")),
+			)
+			.map((e) => e.type);
+
+		// Must be: start → delta → stop (no premature stop before delta)
+		expect(block0Events).toEqual([
+			"content_block_start",
+			"content_block_delta",
+			"content_block_stop",
+		]);
+
+		// Text block (index 1) must come after function-call block opens
+		const block1Start = events.findIndex(
+			(e) => e.type === "content_block_start" && e.index === 1,
+		);
+		const block0Stop = events.findIndex(
+			(e) => e.type === "content_block_stop" && e.index === 0,
+		);
+		expect(block1Start).toBeGreaterThan(-1);
+		expect(block0Stop).toBeGreaterThan(block1Start);
+	});
+
 	it("includes input_tokens when model metadata is unavailable", async () => {
 		const provider = new CodexProvider();
 		const upstreamBody = sseBody([
