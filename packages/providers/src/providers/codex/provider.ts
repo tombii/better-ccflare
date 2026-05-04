@@ -638,6 +638,8 @@ export class CodexProvider extends BaseProvider {
 			}
 		}
 
+		// Codex always requires streaming upstream; non-streaming clients are handled
+		// on the response side via transformSseResponseToJson.
 		const codexRequest: CodexRequest = {
 			model,
 			input,

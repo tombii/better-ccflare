@@ -107,7 +107,7 @@ export function resolveReasoningEffort(
 			typeof context.model === "string" && context.model.length > 0,
 	);
 
-	for (const { model, role } of modelContexts) {
+	for (const { model } of modelContexts) {
 		const supportedEfforts = getSupportedReasoningEfforts(model);
 		if (!supportedEfforts) {
 			// Unknown model (source or target) — pass through unchanged
