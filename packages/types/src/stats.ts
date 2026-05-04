@@ -1,3 +1,5 @@
+import type { RateLimitReason } from "./account";
+
 // Integrity status type
 export interface IntegrityStatus {
 	status: "ok" | "corrupt" | "unchecked";
@@ -128,7 +130,7 @@ export interface AccountDetail {
 	name: string;
 	status: "available" | "paused" | "rate_limited";
 	rate_limited_until: number | null;
-	rate_limited_reason: string | null;
+	rate_limited_reason: RateLimitReason | null;
 	rate_limited_at: number | null;
 }
 
