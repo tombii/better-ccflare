@@ -23,12 +23,6 @@ export function handleRateLimitResponse(
 ): void {
 	if (!rateLimitInfo.resetTime) return;
 
-	log.warn(
-		`Account ${account.name} rate-limited until ${new Date(
-			rateLimitInfo.resetTime,
-		).toISOString()}`,
-	);
-
 	const resetTime = rateLimitInfo.resetTime;
 	const reason: RateLimitReason = "upstream_429_with_reset";
 	ctx.asyncWriter.enqueue(() => {

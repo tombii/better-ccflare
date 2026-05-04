@@ -42,6 +42,20 @@ import type { AccountResponse } from "../types";
 
 const log = new Logger("AccountsHandler");
 
+const RATE_LIMIT_REASONS = new Set<RateLimitReason>([
+	"upstream_429_with_reset",
+	"upstream_429_no_reset_default_5h",
+	"model_fallback_429",
+	"all_models_exhausted_429",
+]);
+
+function toRateLimitReason(v: string | null): RateLimitReason | null {
+	if (v === null) return null;
+	return RATE_LIMIT_REASONS.has(v as RateLimitReason)
+		? (v as RateLimitReason)
+		: null;
+}
+
 function normalizeCodexUsageData(usage: UsageData): UsageData | null {
 	const normalized: UsageData = {
 		five_hour: { ...usage.five_hour },
@@ -460,8 +474,7 @@ export function createAccountsListHandler(
 					rateLimitedUntil: account.rate_limited_until
 						? Number(account.rate_limited_until)
 						: null,
-					rateLimitedReason:
-						account.rate_limited_reason as RateLimitReason | null,
+					rateLimitedReason: toRateLimitReason(account.rate_limited_reason),
 					rateLimitedAt:
 						account.rate_limited_at != null
 							? Number(account.rate_limited_at)
