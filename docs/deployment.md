@@ -968,15 +968,39 @@ Response format:
   "status": "ok",
   "accounts": 5,
   "timestamp": "2025-01-27T12:00:00.000Z",
-  "strategy": "session"
+  "strategy": "session",
+  "pool": {
+    "configured": 5,
+    "routable": 3,
+    "paused": 1,
+    "rate_limited": 1,
+    "next_available_at": null
+  }
 }
 ```
+
+**HTTP status codes:** `200` for `ok`, `503` for `degraded` or `unhealthy`. Infrastructure health checkers (Kubernetes readiness probes, load balancers) gate on the HTTP status code automatically.
+
+**Status values:**
+- `ok` — runtime healthy and at least one account is routable
+- `degraded` — pool empty but accounts will recover (`next_available_at` set); k8s readiness probe marks pod NotReady until recovery
+- `unhealthy` — runtime broken or no recovery possible
+
+**Per-account detail (opt-in):** Set `HEALTH_DETAIL_ENABLED=true` to enable `GET /health?detail=1`, which returns per-account status and rate-limit timestamps. Disabled by default to prevent unauthenticated account enumeration.
 
 ### Monitoring Integration
 
 Use the health endpoint with monitoring tools:
 
 ```yaml
+# Kubernetes readiness probe — marks pod NotReady when degraded/unhealthy (503)
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 8080
+  initialDelaySeconds: 10
+  periodSeconds: 30
+
 # Kubernetes liveness probe
 livenessProbe:
   httpGet:

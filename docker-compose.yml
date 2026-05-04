@@ -16,6 +16,8 @@ services:
       - XDG_CONFIG_HOME=/data
       # Optional: configure logging
       # - LOG_LEVEL=info
+      # Optional: expose per-account detail on /health?detail=1 (default: off)
+      # - HEALTH_DETAIL_ENABLED=false
     # Load environment variables from .env file (optional)
     # Create a .env file in the same directory as docker-compose.yml
     env_file:
