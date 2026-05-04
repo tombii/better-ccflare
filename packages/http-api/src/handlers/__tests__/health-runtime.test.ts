@@ -372,5 +372,6 @@ describe("?detail=1 parameter", () => {
 		const body = (await response.json()) as Record<string, any>;
 
 		expect(body.accounts_detail[0].status).toBe("available");
+		expect(body.accounts_detail[0].rate_limited_until).toBeNull();
 	});
 });

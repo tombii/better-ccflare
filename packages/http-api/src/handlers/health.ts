@@ -18,9 +18,6 @@ type UsageWorkerHealthFn = () => {
 };
 type IntegrityStatusFn = () => IntegrityStatus;
 
-/**
- * Calculate pool status metrics for health check
- */
 export function computePoolStatus(
 	accounts: Account[],
 	now: number,
@@ -56,14 +53,6 @@ export function computePoolStatus(
 	};
 }
 
-/**
- * Computes three-state health status based on runtime health and pool status.
- *
- * Status hierarchy:
- * - 'unhealthy': Runtime broken, no configured accounts, or empty pool with no recovery
- * - 'degraded': Empty pool but will recover (has next_available_at)
- * - 'ok': Runtime healthy and routable accounts available
- */
 export function computeHealthStatus(
 	runtimeHealthy: boolean,
 	pool: PoolStatus,
