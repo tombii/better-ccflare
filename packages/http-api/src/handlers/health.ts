@@ -75,6 +75,10 @@ export function computeHealthStatus(
 	return "ok";
 }
 
+function toHttpStatus(status: HealthResponse["status"]): 200 | 503 {
+	return status === "ok" ? 200 : 503;
+}
+
 export function createHealthHandler(
 	dbOps: DatabaseOperations,
 	config: Config,
@@ -91,7 +95,7 @@ export function createHealthHandler(
 		const cache = withDetail ? detailCache : normalCache;
 		const cached = cache.get();
 		if (cached) {
-			return jsonResponse(cached, cached.status === "ok" ? 200 : 503);
+			return jsonResponse(cached, toHttpStatus(cached.status));
 		}
 
 		const accounts = await dbOps.getAllAccounts();
@@ -174,8 +178,7 @@ export function createHealthHandler(
 			}));
 		}
 
-		const httpStatus = status === "ok" ? 200 : 503;
 		cache.set(response);
-		return jsonResponse(response, httpStatus);
+		return jsonResponse(response, toHttpStatus(status));
 	};
 }
