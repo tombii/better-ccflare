@@ -73,6 +73,9 @@ export interface ReasoningEffortResolution {
 	}>;
 }
 
+// sourceModel is accepted for API symmetry but only targetModel is used for
+// downgrade resolution — the source model's effort ceiling must not further
+// constrain the value sent to a capable target.
 export function resolveReasoningEffort(
 	effort: unknown,
 	models: { sourceModel?: string; targetModel?: string },

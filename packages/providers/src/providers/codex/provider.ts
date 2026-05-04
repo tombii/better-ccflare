@@ -1048,6 +1048,7 @@ export class CodexProvider extends BaseProvider {
 				const partType = part?.type as string | undefined;
 
 				if (partType === "output_text") {
+					await ensureMessageStart();
 					// Start a text content block
 					if (state.hasSentContentBlockStart) {
 						await writeSSE("content_block_stop", {
