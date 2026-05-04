@@ -131,12 +131,9 @@ export function createHealthHandler(
 			};
 		}
 
-		// Support ?detail=1 for per-account details
+		// Support ?detail=1 for per-account details (requires HEALTH_DETAIL_ENABLED=true)
 		const detailParam = url.searchParams.get("detail");
-		if (detailParam === "1") {
-			if (!config.getHealthDetailEnabled()) {
-				return jsonResponse({ error: "detail mode disabled" }, 403);
-			}
+		if (detailParam === "1" && config.getHealthDetailEnabled()) {
 			response.accounts_detail = accounts.map((a) => ({
 				name: a.name,
 				status: a.paused

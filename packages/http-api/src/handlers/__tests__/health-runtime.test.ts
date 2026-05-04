@@ -459,7 +459,7 @@ describe("?detail=1 parameter", () => {
 		expect(body.accounts_detail[0].rate_limited_until).toBeNull();
 	});
 
-	it("returns 403 when detail=1 but health_detail_enabled is false", async () => {
+	it("returns normal health response without accounts_detail when detail=1 but HEALTH_DETAIL_ENABLED is false", async () => {
 		const db = {
 			getAllAccounts: async () => [
 				{ name: "acc1", paused: false, rate_limited_until: null },
@@ -476,7 +476,9 @@ describe("?detail=1 parameter", () => {
 		const response = await handler(url);
 		const body = (await response.json()) as Record<string, unknown>;
 
-		expect(response.status).toBe(403);
-		expect(body.error).toBe("detail mode disabled");
+		expect(response.status).toBe(200);
+		expect(body.status).toBe("ok");
+		expect(body.pool).toBeDefined();
+		expect(body.accounts_detail).toBeUndefined();
 	});
 });
