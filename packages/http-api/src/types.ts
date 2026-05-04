@@ -10,6 +10,7 @@ export type {
 	HealthResponse,
 	IntegrityStatus,
 	ModelPerformance,
+	PoolStatus,
 	RequestResponse,
 	RetentionGetResponse,
 	RetentionSetRequest,

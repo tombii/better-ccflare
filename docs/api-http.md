@@ -45,13 +45,48 @@ All API responses are in JSON format with `Content-Type: application/json`.
 
 Check the health status of the better-ccflare service.
 
+**HTTP status codes:**
+- `200` — `status: "ok"` (routable accounts available)
+- `503` — `status: "degraded"` (pool empty, accounts will recover) or `status: "unhealthy"` (runtime broken or no recovery)
+
 **Response:**
 ```json
 {
   "status": "ok",
   "accounts": 5,
   "timestamp": "2024-12-17T10:30:45.123Z",
-  "strategy": "session"
+  "strategy": "session",
+  "pool": {
+    "configured": 5,
+    "routable": 3,
+    "paused": 1,
+    "rate_limited": 1,
+    "next_available_at": "2024-12-17T11:00:00.000Z"
+  }
+}
+```
+
+**Status values:**
+- `ok` — runtime healthy and at least one account is routable
+- `degraded` — runtime healthy but pool is empty; `next_available_at` indicates when the first account recovers
+- `unhealthy` — runtime broken, no accounts configured, or pool empty with no recovery time
+
+**Optional: per-account detail**
+
+Set `HEALTH_DETAIL_ENABLED=true` to enable the `?detail=1` parameter. When disabled (default), `?detail=1` is silently ignored — the full health response is still returned, just without `accounts_detail`:
+
+```bash
+curl http://localhost:8080/health?detail=1
+```
+
+```json
+{
+  "status": "ok",
+  "pool": { ... },
+  "accounts_detail": [
+    { "name": "my-account", "status": "available", "rate_limited_until": null },
+    { "name": "other", "status": "rate_limited", "rate_limited_until": 1734429600000 }
+  ]
 }
 ```
 

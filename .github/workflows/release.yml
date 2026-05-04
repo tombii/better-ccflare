@@ -214,8 +214,7 @@ jobs:
                 CHANGELOG="$CHANGELOG
 
           ### ⚠️ Breaking Changes
-
-"
+          "
                 while IFS= read -r commit; do
                   if [ -n "$commit" ]; then
                     HASH=$(echo "$commit" | cut -d' ' -f1)

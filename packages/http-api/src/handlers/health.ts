@@ -1,7 +1,9 @@
 import type { Config } from "@better-ccflare/config";
-import type { BunSqlAdapter } from "@better-ccflare/database";
+import { isAccountAvailable } from "@better-ccflare/core";
+import type { DatabaseOperations } from "@better-ccflare/database";
 import { jsonResponse } from "@better-ccflare/http-common";
-import type { HealthResponse, IntegrityStatus } from "../types";
+import type { Account } from "@better-ccflare/types";
+import type { HealthResponse, IntegrityStatus, PoolStatus } from "../types";
 
 type AsyncWriterHealthFn = () => {
 	healthy: boolean;
@@ -16,37 +18,99 @@ type UsageWorkerHealthFn = () => {
 };
 type IntegrityStatusFn = () => IntegrityStatus;
 
+export function computePoolStatus(
+	accounts: Account[],
+	now: number,
+): PoolStatus {
+	const configured = accounts.length;
+	const paused = accounts.filter((a) => a.paused).length;
+	const rateLimitedAccounts = accounts.filter(
+		(a) => !a.paused && a.rate_limited_until && a.rate_limited_until >= now,
+	);
+	const rate_limited = rateLimitedAccounts.length;
+	const routable = accounts.filter((a) => isAccountAvailable(a, now)).length;
+
+	const earliestRateLimit = rateLimitedAccounts.reduce<number | null>(
+		(min, account) => {
+			if (!account.rate_limited_until) return min;
+			return min === null
+				? account.rate_limited_until
+				: Math.min(min, account.rate_limited_until);
+		},
+		null,
+	);
+
+	const next_available_at = earliestRateLimit
+		? new Date(earliestRateLimit).toISOString()
+		: null;
+
+	return {
+		configured,
+		paused,
+		rate_limited,
+		routable,
+		next_available_at,
+	};
+}
+
+export function computeHealthStatus(
+	runtimeHealthy: boolean,
+	pool: PoolStatus,
+): "unhealthy" | "degraded" | "ok" {
+	// Unhealthy: runtime broken OR no accounts configured OR empty pool with no recovery
+	if (
+		!runtimeHealthy ||
+		pool.configured === 0 ||
+		(pool.routable === 0 && !pool.next_available_at)
+	) {
+		return "unhealthy";
+	}
+
+	// Degraded: empty pool but will recover
+	if (pool.routable === 0 && pool.next_available_at) {
+		return "degraded";
+	}
+
+	// OK: runtime healthy and routable accounts available
+	return "ok";
+}
+
 export function createHealthHandler(
-	db: BunSqlAdapter,
+	dbOps: DatabaseOperations,
 	config: Config,
 	getAsyncWriterHealth?: AsyncWriterHealthFn,
 	getUsageWorkerHealth?: UsageWorkerHealthFn,
 	getIntegrityStatus?: IntegrityStatusFn,
 ) {
-	return async (): Promise<Response> => {
-		const accountCount = await db.get<{ count: number }>(
-			"SELECT COUNT(*) as count FROM accounts",
-		);
+	return async (url: URL): Promise<Response> => {
+		const accounts = await dbOps.getAllAccounts();
+		const now = Date.now();
+		const pool = computePoolStatus(accounts, now);
 
-		const routableCount = await db.get<{ count: number }>(
-			"SELECT COUNT(*) as count FROM accounts WHERE paused = 0 AND (rate_limited_until IS NULL OR rate_limited_until <= ?)",
-			[Date.now()],
-		);
+		// Call each health function once and store results
+		const asyncWriterHealth = getAsyncWriterHealth ? getAsyncWriterHealth() : null;
+		const usageWorkerHealth = getUsageWorkerHealth ? getUsageWorkerHealth() : null;
 
-		const status = (routableCount?.count ?? 0) > 0 ? "ok" : "degraded";
+		// Determine runtime health from stored results
+		const asyncWriterHealthy = asyncWriterHealth ? asyncWriterHealth.healthy : true;
+		const usageWorkerHealthy = usageWorkerHealth ? usageWorkerHealth.state !== "error" : true;
+		const runtimeHealthy = asyncWriterHealthy && usageWorkerHealthy;
+
+		const status = computeHealthStatus(runtimeHealthy, pool);
 
 		const response: HealthResponse = {
 			status,
-			accounts: accountCount?.count || 0,
+			accounts: pool.configured,
 			timestamp: new Date().toISOString(),
 			strategy: config.getStrategy(),
+			pool,
 		};
 
-		// Build runtime section if any runtime health functions are provided
-		if (getAsyncWriterHealth && getUsageWorkerHealth) {
+		// Build runtime section from stored results
+		if (asyncWriterHealth && usageWorkerHealth) {
 			response.runtime = {
-				asyncWriter: getAsyncWriterHealth(),
-				usageWorker: getUsageWorkerHealth(),
+				asyncWriter: asyncWriterHealth,
+				usageWorker: usageWorkerHealth,
 			};
 		}
 
@@ -67,6 +131,24 @@ export function createHealthHandler(
 			};
 		}
 
-		return jsonResponse(response);
+		// Support ?detail=1 for per-account details (requires HEALTH_DETAIL_ENABLED=true)
+		const detailParam = url.searchParams.get("detail");
+		if (detailParam === "1" && config.getHealthDetailEnabled()) {
+			response.accounts_detail = accounts.map((a) => ({
+				name: a.name,
+				status: a.paused
+					? "paused"
+					: a.rate_limited_until && a.rate_limited_until >= now
+						? "rate_limited"
+						: "available",
+				rate_limited_until:
+					!a.paused && a.rate_limited_until && a.rate_limited_until >= now
+						? a.rate_limited_until
+						: null,
+			}));
+		}
+
+		const httpStatus = status === "ok" ? 200 : 503;
+		return jsonResponse(response, httpStatus);
 	};
 }
