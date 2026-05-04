@@ -25,7 +25,7 @@ export function computePoolStatus(
 	const configured = accounts.length;
 	const paused = accounts.filter((a) => a.paused).length;
 	const rateLimitedAccounts = accounts.filter(
-		(a) => !a.paused && a.rate_limited_until && a.rate_limited_until > now,
+		(a) => !a.paused && a.rate_limited_until && a.rate_limited_until >= now,
 	);
 	const rate_limited = rateLimitedAccounts.length;
 	const routable = accounts.filter((a) => isAccountAvailable(a, now)).length;
@@ -138,11 +138,11 @@ export function createHealthHandler(
 				name: a.name,
 				status: a.paused
 					? "paused"
-					: a.rate_limited_until && a.rate_limited_until > now
+					: a.rate_limited_until && a.rate_limited_until >= now
 						? "rate_limited"
 						: "available",
 				rate_limited_until:
-					a.rate_limited_until && a.rate_limited_until > now
+					a.rate_limited_until && a.rate_limited_until >= now
 						? a.rate_limited_until
 						: null,
 			}));
