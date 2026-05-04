@@ -272,42 +272,104 @@ export function runMigrations(db: Database, dbPath?: string): void {
 
 	const finalOAuthColumnNames = finalOAuthColumns.map((col) => col.name);
 
-	// Create backup if tier columns exist (before any database operations)
-	const hasTierColumns =
+	// Query remaining tables for column existence checks needed by willModifySchema
+	const requestsInfo = db
+		.prepare("PRAGMA table_info(requests)")
+		.all() as Array<{ name: string }>;
+	const requestsColumnNames = requestsInfo.map((col) => col.name);
+
+	const requestPayloadsInfo = db
+		.prepare("PRAGMA table_info(request_payloads)")
+		.all() as Array<{ name: string }>;
+	const requestPayloadsColumnNames = requestPayloadsInfo.map((col) => col.name);
+
+	const apiKeysInfo = db.prepare("PRAGMA table_info(api_keys)").all() as Array<{
+		name: string;
+	}>;
+	const apiKeysColumnNames = apiKeysInfo.map((col) => col.name);
+
+	const oauthSessionsInfo = db
+		.prepare("PRAGMA table_info(oauth_sessions)")
+		.all() as Array<{ name: string }>;
+	const initialOauthSessionsColumnNames = oauthSessionsInfo.map(
+		(col) => col.name,
+	);
+
+	const refreshTokenCol = accountsInfo.find(
+		(col) => col.name === "refresh_token",
+	);
+
+	// Determine if any schema modifications are needed before running migrations
+	// This drives the backup decision — only backup when changes will actually occur
+	const willModifySchema =
+		!initialAccountsColumnNames.includes("rate_limited_until") ||
+		!initialAccountsColumnNames.includes("session_start") ||
+		!initialAccountsColumnNames.includes("session_request_count") ||
+		!initialAccountsColumnNames.includes("paused") ||
+		!initialAccountsColumnNames.includes("rate_limit_reset") ||
+		!initialAccountsColumnNames.includes("rate_limit_status") ||
+		!initialAccountsColumnNames.includes("rate_limit_remaining") ||
+		!initialAccountsColumnNames.includes("priority") ||
+		!initialAccountsColumnNames.includes("auto_fallback_enabled") ||
+		!initialAccountsColumnNames.includes("custom_endpoint") ||
+		!initialAccountsColumnNames.includes("auto_refresh_enabled") ||
+		!initialAccountsColumnNames.includes("model_mappings") ||
+		!initialAccountsColumnNames.includes("cross_region_mode") ||
+		!initialAccountsColumnNames.includes("model_fallbacks") ||
+		!initialAccountsColumnNames.includes("billing_type") ||
+		!initialAccountsColumnNames.includes("refresh_token_issued_at") ||
+		!initialAccountsColumnNames.includes("auto_pause_on_overage_enabled") ||
+		!initialAccountsColumnNames.includes("peak_hours_pause_enabled") ||
+		!initialAccountsColumnNames.includes("pause_reason") ||
+		!initialAccountsColumnNames.includes("rate_limited_reason") ||
+		!initialAccountsColumnNames.includes("rate_limited_at") ||
+		(refreshTokenCol && refreshTokenCol.notnull === 1) ||
+		!requestsColumnNames.includes("model") ||
+		!requestsColumnNames.includes("prompt_tokens") ||
+		!requestsColumnNames.includes("completion_tokens") ||
+		!requestsColumnNames.includes("total_tokens") ||
+		!requestsColumnNames.includes("cost_usd") ||
+		!requestsColumnNames.includes("input_tokens") ||
+		!requestsColumnNames.includes("cache_read_input_tokens") ||
+		!requestsColumnNames.includes("cache_creation_input_tokens") ||
+		!requestsColumnNames.includes("output_tokens") ||
+		!requestsColumnNames.includes("agent_used") ||
+		!requestsColumnNames.includes("output_tokens_per_second") ||
+		!requestsColumnNames.includes("api_key_id") ||
+		!requestsColumnNames.includes("api_key_name") ||
+		!requestsColumnNames.includes("project") ||
+		!requestsColumnNames.includes("billing_type") ||
+		!requestsColumnNames.includes("combo_name") ||
+		!requestPayloadsColumnNames.includes("timestamp") ||
+		!apiKeysColumnNames.includes("role") ||
+		!initialOauthSessionsColumnNames.includes("custom_endpoint") ||
 		finalAccountsColumnNames.includes("account_tier") ||
 		finalOAuthColumnNames.includes("tier");
 
-	if (hasTierColumns) {
-		// Create backup before removing tier columns using file copy
-		// Validate dbPath and use a proper default
-		const sourcePath = dbPath && dbPath !== "" ? dbPath : "better-ccflare.db";
-
+	// Create backup before schema modifications
+	if (willModifySchema && dbPath && dbPath !== "") {
 		try {
-			// Resolve to absolute path to prevent directory traversal attacks
-			const absoluteSourcePath = path.resolve(sourcePath);
+			const absoluteSourcePath = path.resolve(dbPath);
 
-			// Additional security validation - check for unsafe path patterns that could indicate directory traversal
-			// This prevents potential security issues if dbPath comes from untrusted sources in the future
 			if (
 				absoluteSourcePath.includes("../") ||
 				absoluteSourcePath.includes("..\\") ||
 				absoluteSourcePath.endsWith("..") ||
 				absoluteSourcePath.startsWith("..")
 			) {
-				log.warn(`Unsafe path detected: ${sourcePath}. Skipping backup.`);
-				// Continue with the rest of the migration to ensure database schema updates still occur
+				log.warn(`Unsafe path detected: ${dbPath}. Skipping backup.`);
 			} else if (fs.existsSync(absoluteSourcePath)) {
-				// Check if it's actually a file (not a directory) to prevent backup errors
 				const stats = fs.statSync(absoluteSourcePath);
-				if (stats.isFile()) {
-					// Use the validated database path for backup
-					const backupPath = `${absoluteSourcePath}.backup.${Date.now()}`;
-					fs.copyFileSync(absoluteSourcePath, backupPath);
-					log.info(`Database backup created at: ${backupPath}`);
-				} else {
+				if (!stats.isFile()) {
 					log.warn(
 						`Database path is not a file: ${absoluteSourcePath}. Skipping backup.`,
 					);
+				} else if (stats.size === 0) {
+					log.debug("Database file is empty, skipping backup.");
+				} else {
+					const backupPath = `${absoluteSourcePath}.backup.${Date.now()}`;
+					fs.copyFileSync(absoluteSourcePath, backupPath);
+					log.info(`Database backup created at: ${backupPath}`);
 				}
 			} else {
 				log.warn(
@@ -315,9 +377,8 @@ export function runMigrations(db: Database, dbPath?: string): void {
 				);
 			}
 		} catch (error) {
-			// Catch any errors during backup process to ensure migrations continue
 			log.warn(
-				`Error during database backup validation: ${(error as Error).message}. Skipping backup.`,
+				`Error during database backup: ${(error as Error).message}. Skipping backup.`,
 			);
 		}
 	}
@@ -580,23 +641,6 @@ export function runMigrations(db: Database, dbPath?: string): void {
 			throw error;
 		}
 
-		// Check columns in oauth_sessions table
-		const oauthSessionsInfo = db
-			.prepare("PRAGMA table_info(oauth_sessions)")
-			.all() as Array<{
-			cid: number;
-			name: string;
-			type: string;
-			notnull: number;
-			// biome-ignore lint/suspicious/noExplicitAny: SQLite pragma can return various default value types
-			dflt_value: any;
-			pk: number;
-		}>;
-
-		const initialOauthSessionsColumnNames = oauthSessionsInfo.map(
-			(col) => col.name,
-		);
-
 		// Add custom_endpoint column to oauth_sessions if it doesn't exist
 		if (!initialOauthSessionsColumnNames.includes("custom_endpoint")) {
 			db.prepare(
@@ -604,21 +648,6 @@ export function runMigrations(db: Database, dbPath?: string): void {
 			).run();
 			log.info("Added custom_endpoint column to oauth_sessions table");
 		}
-
-		// Check columns in requests table
-		const requestsInfo = db
-			.prepare("PRAGMA table_info(requests)")
-			.all() as Array<{
-			cid: number;
-			name: string;
-			type: string;
-			notnull: number;
-			// biome-ignore lint/suspicious/noExplicitAny: SQLite pragma can return various default value types
-			dflt_value: any;
-			pk: number;
-		}>;
-
-		const requestsColumnNames = requestsInfo.map((col) => col.name);
 
 		// Add model column if it doesn't exist
 		if (!requestsColumnNames.includes("model")) {
@@ -737,22 +766,6 @@ export function runMigrations(db: Database, dbPath?: string): void {
 		}
 
 		// Add timestamp column to request_payloads if it doesn't exist
-		const requestPayloadsInfo = db
-			.prepare("PRAGMA table_info(request_payloads)")
-			.all() as Array<{
-			cid: number;
-			name: string;
-			type: string;
-			notnull: number;
-			// biome-ignore lint/suspicious/noExplicitAny: SQLite pragma can return various default value types
-			dflt_value: any;
-			pk: number;
-		}>;
-
-		const requestPayloadsColumnNames = requestPayloadsInfo.map(
-			(col) => col.name,
-		);
-
 		if (!requestPayloadsColumnNames.includes("timestamp")) {
 			db.prepare(
 				"ALTER TABLE request_payloads ADD COLUMN timestamp INTEGER",
@@ -771,21 +784,6 @@ export function runMigrations(db: Database, dbPath?: string): void {
 				"Added timestamp column to request_payloads table and backfilled from requests",
 			);
 		}
-
-		// Check columns in api_keys table
-		const apiKeysInfo = db
-			.prepare("PRAGMA table_info(api_keys)")
-			.all() as Array<{
-			cid: number;
-			name: string;
-			type: string;
-			notnull: number;
-			// biome-ignore lint/suspicious/noExplicitAny: SQLite pragma can return various default value types
-			dflt_value: any;
-			pk: number;
-		}>;
-
-		const apiKeysColumnNames = apiKeysInfo.map((col) => col.name);
 
 		// Add role column to api_keys if it doesn't exist (Migration v4)
 		if (!apiKeysColumnNames.includes("role")) {

@@ -1,4 +1,7 @@
 import { Database } from "bun:sqlite";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { ensureSchema, runMigrations } from "../src/migrations";
 
@@ -733,5 +736,61 @@ describe("Database Migrations - Tier Column Removal", () => {
 			expect(account.refresh_token).toBe("sk-ant-api03-claude-refresh");
 			expect(account.access_token).toBe("sk-ant-api03-claude-access");
 		});
+	});
+});
+
+describe("Database Backup Behavior", () => {
+	let tmpDir: string;
+
+	beforeEach(() => {
+		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "migrations-backup-"));
+	});
+
+	afterEach(() => {
+		fs.rmSync(tmpDir, { recursive: true, force: true });
+	});
+
+	it("should not create backup when dbPath is undefined", () => {
+		const db = new Database(":memory:");
+		ensureSchema(db);
+		runMigrations(db);
+		expect(fs.readdirSync(tmpDir)).toHaveLength(0);
+		db.close();
+	});
+
+	it("should not create backup when dbPath is empty string", () => {
+		const dbPath = path.join(tmpDir, "test.db");
+		const db = new Database(dbPath);
+		ensureSchema(db);
+		runMigrations(db, "");
+		const backups = fs
+			.readdirSync(tmpDir)
+			.filter((f) => f.startsWith("test.db.backup"));
+		expect(backups).toHaveLength(0);
+		db.close();
+	});
+
+	it("should create backup when schema modifications are needed", () => {
+		const dbPath = path.join(tmpDir, "migrate.db");
+		const db = new Database(dbPath);
+		ensureSchema(db);
+		db.prepare(
+			`INSERT INTO accounts (id, name, provider, refresh_token, created_at) VALUES (?, ?, ?, ?, ?)`,
+		).run("mig-test-id", "mig-test", "anthropic", "some-token", Date.now());
+
+		// Simulate legacy schema that requires migration work
+		db.prepare("ALTER TABLE accounts ADD COLUMN account_tier TEXT").run();
+		db.close();
+
+		const db2 = new Database(dbPath);
+		runMigrations(db2, dbPath);
+		db2.close();
+
+		const backups = fs
+			.readdirSync(tmpDir)
+			.filter((f) => f.startsWith("migrate.db.backup"));
+		expect(backups.length).toBeGreaterThanOrEqual(1);
+		const backupSize = fs.statSync(path.join(tmpDir, backups[0])).size;
+		expect(backupSize).toBeGreaterThan(0);
 	});
 });
