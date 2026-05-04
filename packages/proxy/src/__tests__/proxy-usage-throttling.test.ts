@@ -46,6 +46,7 @@ function makeContext(account: Account): ProxyContext {
 		} as never,
 		dbOps: {
 			getAllAccounts: mock(async () => [account]),
+			getActiveComboForFamily: mock(async () => null),
 		} as never,
 		runtime: { port: 8080, clientId: "test" } as never,
 		config: {
