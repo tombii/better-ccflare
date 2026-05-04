@@ -502,3 +502,92 @@ describe("?detail=1 parameter", () => {
 		expect(body.accounts_detail).toBeUndefined();
 	});
 });
+
+describe("cache isolation between detail and non-detail", () => {
+	it("does not serve cached detail response to non-detail request", async () => {
+		let callCount = 0;
+		const db = {
+			getAllAccounts: async () => {
+				callCount++;
+				return [{ name: `acc-${callCount}`, paused: false, rate_limited_until: null }];
+			},
+		} as unknown as import("@better-ccflare/database").DatabaseOperations;
+
+		const config = {
+			getStrategy: () => "session",
+			getHealthDetailEnabled: () => true,
+		} as unknown as import("@better-ccflare/config").Config;
+
+		const handler = createHealthHandler(db, config);
+
+		// First request with detail=1
+		const detailResp = await handler(new URL("http://localhost/health?detail=1"));
+		const detailBody = (await detailResp.json()) as Record<string, any>;
+		expect(detailBody.accounts_detail).toBeDefined();
+		expect(detailBody.accounts_detail[0].name).toBe("acc-1");
+		expect(callCount).toBe(1);
+
+		// Second request without detail — should NOT hit the detail cache
+		const normalResp = await handler(new URL("http://localhost/health"));
+		const normalBody = (await normalResp.json()) as Record<string, unknown>;
+		expect(normalBody).not.toHaveProperty("accounts_detail");
+		expect(callCount).toBe(2);
+	});
+
+	it("does not serve cached non-detail response to detail request", async () => {
+		let callCount = 0;
+		const db = {
+			getAllAccounts: async () => {
+				callCount++;
+				return [{ name: `acc-${callCount}`, paused: false, rate_limited_until: null }];
+			},
+		} as unknown as import("@better-ccflare/database").DatabaseOperations;
+
+		const config = {
+			getStrategy: () => "session",
+			getHealthDetailEnabled: () => true,
+		} as unknown as import("@better-ccflare/config").Config;
+
+		const handler = createHealthHandler(db, config);
+
+		// First request without detail
+		const normalResp = await handler(new URL("http://localhost/health"));
+		const normalBody = (await normalResp.json()) as Record<string, unknown>;
+		expect(normalBody).not.toHaveProperty("accounts_detail");
+		expect(callCount).toBe(1);
+
+		// Second request with detail=1 — should NOT hit the non-detail cache
+		const detailResp = await handler(new URL("http://localhost/health?detail=1"));
+		const detailBody = (await detailResp.json()) as Record<string, any>;
+		expect(detailBody.accounts_detail).toBeDefined();
+		expect(callCount).toBe(2);
+	});
+
+	it("caches same-mode repeated requests (hits cache, no extra DB call)", async () => {
+		let callCount = 0;
+		const db = {
+			getAllAccounts: async () => {
+				callCount++;
+				return [{ name: `acc-${callCount}`, paused: false, rate_limited_until: null }];
+			},
+		} as unknown as import("@better-ccflare/database").DatabaseOperations;
+
+		const config = {
+			getStrategy: () => "session",
+			getHealthDetailEnabled: () => true,
+		} as unknown as import("@better-ccflare/config").Config;
+
+		const handler = createHealthHandler(db, config);
+
+		const resp1 = await handler(new URL("http://localhost/health"));
+		const body1 = (await resp1.json()) as Record<string, any>;
+		expect(body1.accounts_detail).toBeUndefined();
+		expect(callCount).toBe(1);
+
+		// Repeated non-detail request — should hit cache
+		const resp2 = await handler(new URL("http://localhost/health"));
+		const body2 = (await resp2.json()) as Record<string, any>;
+		expect(body2.accounts_detail).toBeUndefined();
+		expect(callCount).toBe(1); // no extra DB call
+	});
+});

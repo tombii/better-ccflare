@@ -1,5 +1,5 @@
 import type { Config } from "@better-ccflare/config";
-import { isAccountAvailable } from "@better-ccflare/core";
+import { isAccountAvailable, TtlCache } from "@better-ccflare/core";
 import type { DatabaseOperations } from "@better-ccflare/database";
 import { jsonResponse } from "@better-ccflare/http-common";
 import type { Account } from "@better-ccflare/types";
@@ -75,6 +75,10 @@ export function computeHealthStatus(
 	return "ok";
 }
 
+function toHttpStatus(status: HealthResponse["status"]): 200 | 503 {
+	return status === "ok" ? 200 : 503;
+}
+
 export function createHealthHandler(
 	dbOps: DatabaseOperations,
 	config: Config,
@@ -82,7 +86,18 @@ export function createHealthHandler(
 	getUsageWorkerHealth?: UsageWorkerHealthFn,
 	getIntegrityStatus?: IntegrityStatusFn,
 ) {
+	const normalCache = new TtlCache<HealthResponse>(2000);
+	const detailCache = new TtlCache<HealthResponse>(2000);
+
 	return async (url: URL): Promise<Response> => {
+		const withDetail =
+			url.searchParams.get("detail") === "1" && config.getHealthDetailEnabled();
+		const cache = withDetail ? detailCache : normalCache;
+		const cached = cache.get();
+		if (cached) {
+			return jsonResponse(cached, toHttpStatus(cached.status));
+		}
+
 		const accounts = await dbOps.getAllAccounts();
 		const now = Date.now();
 		const pool = computePoolStatus(accounts, now);
@@ -140,8 +155,7 @@ export function createHealthHandler(
 		}
 
 		// Support ?detail=1 for per-account details (requires HEALTH_DETAIL_ENABLED=true)
-		const detailParam = url.searchParams.get("detail");
-		if (detailParam === "1" && config.getHealthDetailEnabled()) {
+		if (withDetail) {
 			response.accounts_detail = accounts.map((a) => ({
 				name: a.name,
 				status: a.paused
@@ -164,7 +178,7 @@ export function createHealthHandler(
 			}));
 		}
 
-		const httpStatus = status === "ok" ? 200 : 503;
-		return jsonResponse(response, httpStatus);
+		cache.set(response);
+		return jsonResponse(response, toHttpStatus(status));
 	};
 }
