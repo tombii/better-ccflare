@@ -298,8 +298,6 @@ async function isCacheControlRejectionError(
 			typeof message === "string" &&
 			message.includes("cache_control") &&
 			(message.includes("Extra inputs are not permitted") ||
-				message.includes("not permitted") ||
-				message.includes("unexpected") ||
 				message.includes("unknown field"))
 		);
 	} catch {
@@ -640,6 +638,9 @@ export async function proxyWithAccount(
 		if (await isCacheControlRejectionError(rawResponse)) {
 			const rejectorKey = cacheControlRejectorKey(account.id, transformedModel);
 			if (!cacheControlRejectors.has(rejectorKey)) {
+				// Mark before retry so subsequent requests pre-strip without a round-trip.
+				// The current caller still receives the retried response (or the original
+				// 400 if the retry also fails).
 				cacheControlRejectors.add(rejectorKey);
 				log.info(
 					`Provider rejected cache_control for account=${account.name} model=${transformedModel}, retrying without it`,
