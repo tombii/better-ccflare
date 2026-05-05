@@ -658,34 +658,6 @@ OAuth tokens will need to be re-authenticated.
 	}
 
 	// Request operations delegated to repository
-	async saveRequestMeta(
-		id: string,
-		method: string,
-		path: string,
-		accountUsed: string | null,
-		statusCode: number | null,
-		timestamp?: number,
-		apiKeyId?: string,
-		apiKeyName?: string,
-		project?: string | null,
-	): Promise<void> {
-		await withDatabaseRetry(
-			() =>
-				this.requests.saveMeta(
-					id,
-					method,
-					path,
-					accountUsed,
-					statusCode,
-					timestamp,
-					apiKeyId,
-					apiKeyName,
-					project,
-				),
-			this.retryConfig,
-			"saveRequestMeta",
-		);
-	}
 
 	async saveRequest(
 		id: string,

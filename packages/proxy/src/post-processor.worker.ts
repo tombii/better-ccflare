@@ -565,42 +565,6 @@ async function handleStart(msg: StartMessage): Promise<void> {
 		return;
 	}
 
-	// Save minimal request info immediately
-	if (
-		process.env.DEBUG?.includes("worker") ||
-		process.env.DEBUG === "true" ||
-		process.env.NODE_ENV === "development"
-	) {
-		log.debug(
-			`Saving request meta for ${msg.requestId} (${msg.method} ${msg.path})`,
-		);
-	}
-	const projectAtStart = state.project ?? null;
-	asyncWriter.enqueue(async () => {
-		try {
-			await dbOps.saveRequestMeta(
-				msg.requestId,
-				msg.method,
-				msg.path,
-				msg.accountId,
-				msg.responseStatus,
-				msg.timestamp,
-				msg.apiKeyId || undefined,
-				msg.apiKeyName || undefined,
-				projectAtStart,
-			);
-			if (
-				process.env.DEBUG?.includes("worker") ||
-				process.env.DEBUG === "true" ||
-				process.env.NODE_ENV === "development"
-			) {
-				log.debug(`Successfully saved request meta for ${msg.requestId}`);
-			}
-		} catch (error) {
-			log.error(`Failed to save request meta for ${msg.requestId}:`, error);
-		}
-	});
-
 	// Update account usage if authenticated
 	if (msg.accountId && msg.accountId !== NO_ACCOUNT_ID) {
 		const accountId = msg.accountId; // Capture for closure
