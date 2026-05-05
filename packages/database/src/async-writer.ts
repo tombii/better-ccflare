@@ -18,16 +18,19 @@ export class AsyncDbWriter implements Disposable {
 	private healthInterval: Timer | null = null;
 	private readonly MAX_QUEUE_SIZE = 5000; // Prevent unbounded growth
 	private droppedJobs = 0;
+	private droppedJobsSinceLastLog = 0;
 
 	constructor() {
 		// Process queue every 100ms
 		this.intervalId = setInterval(() => void this.processQueue(), 100);
 		// Log health metrics every 60s when queue or drops are non-zero
 		this.healthInterval = setInterval(() => {
-			const { queuedJobs, failureCount } = this.getHealth();
-			if (queuedJobs > 0 || failureCount > 0) {
+			const recentDrops = this.droppedJobsSinceLastLog;
+			this.droppedJobsSinceLastLog = 0;
+			const { queuedJobs } = this.getHealth();
+			if (queuedJobs > 0 || recentDrops > 0) {
 				logger.warn(
-					`AsyncDbWriter health: queuedJobs=${queuedJobs}, droppedJobs=${failureCount}`,
+					`AsyncDbWriter health: queuedJobs=${queuedJobs}, droppedJobsThisInterval=${recentDrops}`,
 				);
 			}
 		}, 60000);
@@ -37,6 +40,7 @@ export class AsyncDbWriter implements Disposable {
 		// Check queue size limit
 		if (this.queue.length >= this.MAX_QUEUE_SIZE) {
 			this.droppedJobs++;
+			this.droppedJobsSinceLastLog++;
 			if (this.droppedJobs % 100 === 1) {
 				// Log every 100 dropped jobs to avoid log spam
 				logger.warn(
