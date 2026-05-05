@@ -22,7 +22,25 @@ import {
 	initPayloadEncryption,
 } from "@better-ccflare/database";
 import { APIRouter, AuthService } from "@better-ccflare/http-api";
-import { SessionStrategy } from "@better-ccflare/load-balancer";
+import { LeastUsedStrategy, SessionStrategy } from "@better-ccflare/load-balancer";
+import { StrategyName, type LoadBalancingStrategy } from "@better-ccflare/types";
+
+/**
+ * Build a load-balancing strategy from its enum name. Add new strategies here
+ * as additional cases. Falls back to SessionStrategy on unknown values.
+ */
+function buildStrategy(
+	name: StrategyName,
+	sessionDurationMs: number,
+): LoadBalancingStrategy {
+	switch (name) {
+		case StrategyName.LeastUsed:
+			return new LeastUsedStrategy();
+		case StrategyName.Session:
+		default:
+			return new SessionStrategy(sessionDurationMs);
+	}
+}
 import { Logger } from "@better-ccflare/logger";
 import {
 	getProvider,
@@ -740,7 +758,11 @@ export default async function startServer(options?: {
 	};
 
 	// Now create the strategy with runtime config
-	const strategy = new SessionStrategy(runtimeConfig.sessionDurationMs);
+	const strategy = buildStrategy(
+		config.getStrategy(),
+		runtimeConfig.sessionDurationMs,
+	);
+	log.info(`Load-balancing strategy: ${config.getStrategy()}`);
 
 	const strategyStore: StrategyStore = Object.assign(dbOps, {
 		getAccountUtilization(accountId: string, provider: string): number | null {
@@ -825,14 +847,14 @@ export default async function startServer(options?: {
 	// Hot reload strategy configuration
 	config.on("change", ({ key }: { key: string }) => {
 		if (key === "lb_strategy") {
-			log.info(`Strategy configuration changed to: ${config.getStrategy()}`);
 			const newStrategyName = config.getStrategy();
-			// For now, only SessionStrategy is supported
-			if (newStrategyName === "session") {
-				const strategy = new SessionStrategy(runtimeConfig.sessionDurationMs);
-				strategy.initialize(strategyStore);
-				proxyContext.strategy = strategy;
-			}
+			log.info(`Strategy configuration changed to: ${newStrategyName}`);
+			const strategy = buildStrategy(
+				newStrategyName,
+				runtimeConfig.sessionDurationMs,
+			);
+			strategy.initialize(strategyStore);
+			proxyContext.strategy = strategy;
 		}
 		if (key === "store_payloads") {
 			sendWorkerConfigUpdate(config.getStorePayloads());
