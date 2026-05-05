@@ -32,6 +32,23 @@ export function safeParseJSON(jsonString: string): any {
 }
 
 /**
+ * Strip cache_control from all system message content blocks and user/assistant
+ * message content blocks in an already-converted OpenAI request body.
+ * Used for providers that reject unknown fields (e.g. GLM-5.1).
+ */
+export function stripCacheControlFromOpenAIRequest(body: OpenAIRequest): void {
+	for (const msg of body.messages) {
+		if (Array.isArray(msg.content)) {
+			for (const part of msg.content) {
+				if (typeof part === "object" && part !== null) {
+					delete (part as Record<string, unknown>).cache_control;
+				}
+			}
+		}
+	}
+}
+
+/**
  * Convert Anthropic request format to OpenAI format
  */
 export function convertAnthropicRequestToOpenAI(
