@@ -15,12 +15,22 @@ export class AsyncDbWriter implements Disposable {
 	private queue: DbJob[] = [];
 	private running = false;
 	private intervalId: Timer | null = null;
+	private healthInterval: Timer | null = null;
 	private readonly MAX_QUEUE_SIZE = 5000; // Prevent unbounded growth
 	private droppedJobs = 0;
 
 	constructor() {
 		// Process queue every 100ms
 		this.intervalId = setInterval(() => void this.processQueue(), 100);
+		// Log health metrics every 60s when queue or drops are non-zero
+		this.healthInterval = setInterval(() => {
+			const { queuedJobs, failureCount } = this.getHealth();
+			if (queuedJobs > 0 || failureCount > 0) {
+				logger.warn(
+					`AsyncDbWriter health: queuedJobs=${queuedJobs}, droppedJobs=${failureCount}`,
+				);
+			}
+		}, 60000);
 	}
 
 	enqueue(job: DbJob): void {
@@ -80,10 +90,14 @@ export class AsyncDbWriter implements Disposable {
 	async dispose(): Promise<void> {
 		logger.info("Flushing async DB writer queue...");
 
-		// Stop the interval
+		// Stop the intervals
 		if (this.intervalId) {
 			clearInterval(this.intervalId);
 			this.intervalId = null;
+		}
+		if (this.healthInterval) {
+			clearInterval(this.healthInterval);
+			this.healthInterval = null;
 		}
 
 		// Process any remaining jobs
