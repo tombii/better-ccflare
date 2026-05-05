@@ -277,10 +277,13 @@ export async function processProxyResponse(
 			// 5h hard-ban: a reset-less 429 is more likely a transient than
 			// a real rate-limit window, and a 5h ban on every transient
 			// error chains pool exhaustion under burst load.
-			const cooldownMs = Number(
-				process.env.CCFLARE_DEFAULT_COOLDOWN_NO_RESET_MS ??
-					TIME_CONSTANTS.DEFAULT_RATE_LIMIT_NO_RESET_COOLDOWN_MS,
-			);
+			// Use `||` (not `??`) so an empty-string or non-numeric env
+			// var (Number("") === 0, Number("abc") === NaN) falls through
+			// to the default. With `??` the empty string would coalesce
+			// to 0 and silently disable the cooldown entirely.
+			const cooldownMs =
+				Number(process.env.CCFLARE_DEFAULT_COOLDOWN_NO_RESET_MS) ||
+				TIME_CONSTANTS.DEFAULT_RATE_LIMIT_NO_RESET_COOLDOWN_MS;
 			log.warn(
 				`Account ${account.name} rate-limited but no reset time available — applying ${cooldownMs}ms probe cooldown`,
 			);

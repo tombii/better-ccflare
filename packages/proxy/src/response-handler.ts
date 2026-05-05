@@ -28,9 +28,14 @@ type ResponseWithAnalyticsStream = Response & {
 // var is picked up without a server restart, matching the per-call read
 // in response-processor.ts.
 function getMidStreamRateLimitCooldownMs(): number {
-	return Number(
-		process.env.CCFLARE_DEFAULT_COOLDOWN_NO_RESET_MS ??
-			TIME_CONSTANTS.DEFAULT_RATE_LIMIT_NO_RESET_COOLDOWN_MS,
+	// Use `||` (not `??`) so empty-string and non-numeric env values
+	// (Number("") === 0, Number("abc") === NaN) fall through to the
+	// default — `??` would coalesce the empty string to 0 and silently
+	// disable the cooldown entirely. Symmetric with the per-call read
+	// in response-processor.ts.
+	return (
+		Number(process.env.CCFLARE_DEFAULT_COOLDOWN_NO_RESET_MS) ||
+		TIME_CONSTANTS.DEFAULT_RATE_LIMIT_NO_RESET_COOLDOWN_MS
 	);
 }
 
