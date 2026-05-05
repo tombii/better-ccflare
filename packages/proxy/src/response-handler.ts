@@ -23,10 +23,16 @@ type ResponseWithAnalyticsStream = Response & {
 // override via CCFLARE_DEFAULT_COOLDOWN_NO_RESET_MS). Previously 5h —
 // changed to a probe interval to avoid chaining pool exhaustion when a
 // transient SSE error trips the cooldown.
-const MID_STREAM_RATE_LIMIT_COOLDOWN_MS = Number(
-	process.env.CCFLARE_DEFAULT_COOLDOWN_NO_RESET_MS ??
-		TIME_CONSTANTS.DEFAULT_RATE_LIMIT_NO_RESET_COOLDOWN_MS,
-);
+//
+// Read on every call (not at module load) so a runtime change to the env
+// var is picked up without a server restart, matching the per-call read
+// in response-processor.ts.
+function getMidStreamRateLimitCooldownMs(): number {
+	return Number(
+		process.env.CCFLARE_DEFAULT_COOLDOWN_NO_RESET_MS ??
+			TIME_CONSTANTS.DEFAULT_RATE_LIMIT_NO_RESET_COOLDOWN_MS,
+	);
+}
 
 // Must match MAX_REQUEST_BODY_BYTES in post-processor.worker.ts.
 // Cap applied before postMessage to avoid multi-MB structured clones.
@@ -290,7 +296,7 @@ export async function forwardToClient(
 									account,
 									{
 										isRateLimited: true,
-										resetTime: Date.now() + MID_STREAM_RATE_LIMIT_COOLDOWN_MS,
+										resetTime: Date.now() + getMidStreamRateLimitCooldownMs(),
 									},
 									ctx,
 								);
