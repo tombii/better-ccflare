@@ -37,6 +37,7 @@ export function safeParseJSON(jsonString: string): any {
  * Used for providers that reject unknown fields (e.g. GLM-5.1).
  */
 export function stripCacheControlFromOpenAIRequest(body: OpenAIRequest): void {
+	if (!Array.isArray(body.messages)) return;
 	for (const msg of body.messages) {
 		if (Array.isArray(msg.content)) {
 			for (const part of msg.content) {
