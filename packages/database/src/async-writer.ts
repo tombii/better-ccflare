@@ -88,7 +88,9 @@ export class AsyncDbWriter implements Disposable {
 
 	getHealth(): AsyncWriterHealth {
 		return {
-			healthy: this.queue.length === 0 && this.lastIntervalDrops === 0,
+			healthy:
+				this.queue.length < this.MAX_QUEUE_SIZE * 0.8 &&
+				this.lastIntervalDrops === 0,
 			failureCount: this.droppedJobs,
 			recentDrops: this.lastIntervalDrops,
 			queuedJobs: this.queue.length,
