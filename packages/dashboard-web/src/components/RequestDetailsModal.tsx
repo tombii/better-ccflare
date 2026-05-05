@@ -5,6 +5,7 @@ import {
 } from "@better-ccflare/ui-common";
 import { Eye } from "lucide-react";
 import { useEffect, useState } from "react";
+import { HttpError } from "@better-ccflare/http-common";
 import { api, type RequestPayload, type RequestSummary } from "../api";
 import { ConversationView } from "./ConversationView";
 import { CopyButton } from "./CopyButton";
@@ -52,8 +53,9 @@ export function RequestDetailsModal({
 			.then((payload) => {
 				if (!cancelled) setHydrated(payload);
 			})
-			.catch(() => {
-				if (!cancelled) setFailedId(request.id);
+			.catch((err) => {
+				if (!cancelled && err instanceof HttpError && err.status === 404)
+					setFailedId(request.id);
 			});
 		return () => {
 			cancelled = true;
