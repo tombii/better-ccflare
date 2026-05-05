@@ -811,7 +811,7 @@ export class CodexProvider extends BaseProvider {
 			stop_sequence: null,
 			usage,
 		};
-		const headers = sanitizeProxyHeaders(response.headers);
+		const headers = sanitizeResponseHeaders(response.headers);
 		headers.set("content-type", "application/json");
 		return new Response(JSON.stringify(jsonPayload), {
 			status: response.status,
@@ -837,7 +837,7 @@ export class CodexProvider extends BaseProvider {
 			functionCallBlocks: new Map(),
 		};
 
-		const headers = sanitizeProxyHeaders(response.headers);
+		const headers = sanitizeResponseHeaders(response.headers);
 		headers.set("content-type", "text/event-stream");
 
 		const { readable, writable } = new TransformStream<
