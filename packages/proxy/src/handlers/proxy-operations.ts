@@ -300,8 +300,7 @@ async function isCacheControlRejectionError(
 			(message.includes("Extra inputs are not permitted") ||
 				message.includes("not permitted") ||
 				message.includes("unexpected") ||
-				message.includes("unknown field") ||
-				message.includes("invalid"))
+				message.includes("unknown field"))
 		);
 	} catch {
 		return false;
@@ -648,9 +647,7 @@ export async function proxyWithAccount(
 			}
 
 			try {
-				const retryBodyJson = JSON.parse(
-					await transformedRequest.clone().text(),
-				);
+				const retryBodyJson = JSON.parse(transformedBodyText);
 				stripCacheControlFromOpenAIRequest(retryBodyJson);
 				const retryRequest = new Request(transformedRequest.url, {
 					method: transformedRequest.method,
