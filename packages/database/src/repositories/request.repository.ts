@@ -57,40 +57,6 @@ export interface RequestData {
 }
 
 export class RequestRepository extends BaseRepository<RequestData> {
-	async saveMeta(
-		id: string,
-		method: string,
-		path: string,
-		accountUsed: string | null,
-		statusCode: number | null,
-		timestamp?: number,
-		apiKeyId?: string,
-		apiKeyName?: string,
-		project?: string | null,
-	): Promise<void> {
-		await this.run(
-			`
-			INSERT INTO requests (
-				id, timestamp, method, path, account_used,
-				status_code, success, error_message, response_time_ms, failover_attempts,
-				api_key_id, api_key_name, project
-			)
-			VALUES (?, ?, ?, ?, ?, ?, FALSE, NULL, 0, 0, ?, ?, ?)
-		`,
-			[
-				id,
-				timestamp || Date.now(),
-				method,
-				path,
-				accountUsed,
-				statusCode,
-				apiKeyId || null,
-				apiKeyName || null,
-				project || null,
-			],
-		);
-	}
-
 	async save(data: RequestData): Promise<void> {
 		const { usage } = data;
 		await this.run(

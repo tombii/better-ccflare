@@ -119,11 +119,12 @@ describe("OAuthFlow.completeReauth", () => {
 		expect(sql).toMatch(/refresh_token/i);
 		expect(sql).toMatch(/access_token/i);
 		expect(sql).toMatch(/expires_at/i);
-		// Params: [refreshToken, accessToken, expiresAt, accountId]
+		// Params: [refreshToken, accessToken, expiresAt, refreshTokenIssuedAt, accountId]
 		expect(params[0]).toBe("new-refresh-token");
 		expect(params[1]).toBe("new-access-token");
 		expect(typeof params[2]).toBe("number");
-		expect(params[3]).toBe(accountId);
+		expect(typeof params[3]).toBe("number");
+		expect(params[4]).toBe(accountId);
 	});
 
 	it("should UPDATE api_key for console mode (no refreshToken)", async () => {

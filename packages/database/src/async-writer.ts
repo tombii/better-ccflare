@@ -8,6 +8,7 @@ type DbJob = () => void | Promise<void>;
 export interface AsyncWriterHealth {
 	healthy: boolean;
 	failureCount: number;
+	recentDrops: number;
 	queuedJobs: number;
 }
 
@@ -15,18 +16,34 @@ export class AsyncDbWriter implements Disposable {
 	private queue: DbJob[] = [];
 	private running = false;
 	private intervalId: Timer | null = null;
-	private readonly MAX_QUEUE_SIZE = 1000; // Prevent unbounded growth
+	private healthInterval: Timer | null = null;
+	private readonly MAX_QUEUE_SIZE = 5000; // Prevent unbounded growth
 	private droppedJobs = 0;
+	private droppedJobsSinceLastLog = 0;
+	private lastIntervalDrops = 0;
 
 	constructor() {
 		// Process queue every 100ms
 		this.intervalId = setInterval(() => void this.processQueue(), 100);
+		// Log health metrics every 30s when queue or drops are non-zero
+		this.healthInterval = setInterval(() => {
+			const recentDrops = this.droppedJobsSinceLastLog;
+			this.droppedJobsSinceLastLog = 0;
+			this.lastIntervalDrops = recentDrops;
+			const { queuedJobs } = this.getHealth();
+			if (queuedJobs > 0 || recentDrops > 0) {
+				logger.warn(
+					`AsyncDbWriter health: queuedJobs=${queuedJobs}, droppedJobsThisInterval=${recentDrops}`,
+				);
+			}
+		}, 30000);
 	}
 
 	enqueue(job: DbJob): void {
 		// Check queue size limit
 		if (this.queue.length >= this.MAX_QUEUE_SIZE) {
 			this.droppedJobs++;
+			this.droppedJobsSinceLastLog++;
 			if (this.droppedJobs % 100 === 1) {
 				// Log every 100 dropped jobs to avoid log spam
 				logger.warn(
@@ -71,8 +88,11 @@ export class AsyncDbWriter implements Disposable {
 
 	getHealth(): AsyncWriterHealth {
 		return {
-			healthy: this.droppedJobs === 0,
+			healthy:
+				this.queue.length < this.MAX_QUEUE_SIZE * 0.8 &&
+				this.lastIntervalDrops === 0,
 			failureCount: this.droppedJobs,
+			recentDrops: this.lastIntervalDrops,
 			queuedJobs: this.queue.length,
 		};
 	}
@@ -80,10 +100,14 @@ export class AsyncDbWriter implements Disposable {
 	async dispose(): Promise<void> {
 		logger.info("Flushing async DB writer queue...");
 
-		// Stop the interval
+		// Stop the intervals
 		if (this.intervalId) {
 			clearInterval(this.intervalId);
 			this.intervalId = null;
+		}
+		if (this.healthInterval) {
+			clearInterval(this.healthInterval);
+			this.healthInterval = null;
 		}
 
 		// Process any remaining jobs

@@ -8,6 +8,7 @@ import type { HealthResponse, IntegrityStatus, PoolStatus } from "../types";
 type AsyncWriterHealthFn = () => {
 	healthy: boolean;
 	failureCount: number;
+	recentDrops: number;
 	queuedJobs: number;
 };
 type UsageWorkerHealthFn = () => {
