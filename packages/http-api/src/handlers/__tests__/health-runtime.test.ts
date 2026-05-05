@@ -509,7 +509,9 @@ describe("cache isolation between detail and non-detail", () => {
 		const db = {
 			getAllAccounts: async () => {
 				callCount++;
-				return [{ name: `acc-${callCount}`, paused: false, rate_limited_until: null }];
+				return [
+					{ name: `acc-${callCount}`, paused: false, rate_limited_until: null },
+				];
 			},
 		} as unknown as import("@better-ccflare/database").DatabaseOperations;
 
@@ -521,7 +523,9 @@ describe("cache isolation between detail and non-detail", () => {
 		const handler = createHealthHandler(db, config);
 
 		// First request with detail=1
-		const detailResp = await handler(new URL("http://localhost/health?detail=1"));
+		const detailResp = await handler(
+			new URL("http://localhost/health?detail=1"),
+		);
 		const detailBody = (await detailResp.json()) as Record<string, any>;
 		expect(detailBody.accounts_detail).toBeDefined();
 		expect(detailBody.accounts_detail[0].name).toBe("acc-1");
@@ -539,7 +543,9 @@ describe("cache isolation between detail and non-detail", () => {
 		const db = {
 			getAllAccounts: async () => {
 				callCount++;
-				return [{ name: `acc-${callCount}`, paused: false, rate_limited_until: null }];
+				return [
+					{ name: `acc-${callCount}`, paused: false, rate_limited_until: null },
+				];
 			},
 		} as unknown as import("@better-ccflare/database").DatabaseOperations;
 
@@ -557,7 +563,9 @@ describe("cache isolation between detail and non-detail", () => {
 		expect(callCount).toBe(1);
 
 		// Second request with detail=1 — should NOT hit the non-detail cache
-		const detailResp = await handler(new URL("http://localhost/health?detail=1"));
+		const detailResp = await handler(
+			new URL("http://localhost/health?detail=1"),
+		);
 		const detailBody = (await detailResp.json()) as Record<string, any>;
 		expect(detailBody.accounts_detail).toBeDefined();
 		expect(callCount).toBe(2);
@@ -568,7 +576,9 @@ describe("cache isolation between detail and non-detail", () => {
 		const db = {
 			getAllAccounts: async () => {
 				callCount++;
-				return [{ name: `acc-${callCount}`, paused: false, rate_limited_until: null }];
+				return [
+					{ name: `acc-${callCount}`, paused: false, rate_limited_until: null },
+				];
 			},
 		} as unknown as import("@better-ccflare/database").DatabaseOperations;
 

@@ -267,7 +267,10 @@ describe("CodexProvider.processResponse", () => {
 		const events = transformedBody
 			.split("\n")
 			.filter((l) => l.startsWith("data:"))
-			.map((l) => JSON.parse(l.slice("data:".length).trim()) as Record<string, unknown>);
+			.map(
+				(l) =>
+					JSON.parse(l.slice("data:".length).trim()) as Record<string, unknown>,
+			);
 
 		// Collect events for block index 0 in order
 		const block0Events = events
@@ -278,7 +281,8 @@ describe("CodexProvider.processResponse", () => {
 						e.type === "content_block_delta") &&
 					(e.index === 0 ||
 						(e.type === "content_block_start" &&
-							(e.content_block as Record<string, unknown>)?.type === "tool_use")),
+							(e.content_block as Record<string, unknown>)?.type ===
+								"tool_use")),
 			)
 			.map((e) => e.type);
 

@@ -102,9 +102,7 @@ export function resolveReasoningEffort(
 		to: ReasoningEffort;
 	}> = [];
 
-	const modelContexts = [
-		{ model: models.targetModel },
-	].filter(
+	const modelContexts = [{ model: models.targetModel }].filter(
 		(context): context is { model: string } =>
 			typeof context.model === "string" && context.model.length > 0,
 	);

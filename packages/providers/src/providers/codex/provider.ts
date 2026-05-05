@@ -200,7 +200,10 @@ export class CodexProvider extends BaseProvider {
 	// x-better-ccflare-request-stream into the upstream response before calling
 	// processResponse, so headerRequestedStream is normally set. This map covers
 	// the race where a response arrives after the 30s TTL sweep evicts the entry.
-	private requestStreamById = new Map<string, { stream: boolean; ts: number }>();
+	private requestStreamById = new Map<
+		string,
+		{ stream: boolean; ts: number }
+	>();
 
 	private sweepRequestStreamById(): void {
 		const cutoff = Date.now() - 30_000;
@@ -727,14 +730,20 @@ export class CodexProvider extends BaseProvider {
 						if (existing) {
 							existing.partialJson += delta.partial_json;
 						} else {
-							toolByIndex.set(index, { id: "", name: "", partialJson: delta.partial_json });
+							toolByIndex.set(index, {
+								id: "",
+								name: "",
+								partialJson: delta.partial_json,
+							});
 						}
 					}
 					return;
 				}
 				if (eventName === "content_block_start") {
 					const index = typeof data.index === "number" ? data.index : -1;
-					const block = data.content_block as Record<string, unknown> | undefined;
+					const block = data.content_block as
+						| Record<string, unknown>
+						| undefined;
 					if (index < 0 || !block) return;
 					if (block.type === "tool_use") {
 						toolByIndex.set(index, {
@@ -790,16 +799,27 @@ export class CodexProvider extends BaseProvider {
 			}
 		}
 		const startMessage =
-			((messageStartPayload as Record<string, unknown> | null)?.message as Record<string, unknown> | undefined) ??
-			{};
+			((messageStartPayload as Record<string, unknown> | null)?.message as
+				| Record<string, unknown>
+				| undefined) ?? {};
 		const hasDeltaUsage = messageDeltaPayload !== null;
-		const deltaUsage = _normalizeUsage((messageDeltaPayload as Record<string, unknown> | null)?.usage);
+		const deltaUsage = _normalizeUsage(
+			(messageDeltaPayload as Record<string, unknown> | null)?.usage,
+		);
 		const startUsage = _normalizeUsage(startMessage.usage);
 		const usage = {
-			input_tokens: hasDeltaUsage ? deltaUsage.input_tokens : startUsage.input_tokens,
-			output_tokens: hasDeltaUsage ? deltaUsage.output_tokens : startUsage.output_tokens,
-			cache_read_input_tokens: hasDeltaUsage ? deltaUsage.cache_read_input_tokens : startUsage.cache_read_input_tokens,
-			cache_creation_input_tokens: hasDeltaUsage ? deltaUsage.cache_creation_input_tokens : startUsage.cache_creation_input_tokens,
+			input_tokens: hasDeltaUsage
+				? deltaUsage.input_tokens
+				: startUsage.input_tokens,
+			output_tokens: hasDeltaUsage
+				? deltaUsage.output_tokens
+				: startUsage.output_tokens,
+			cache_read_input_tokens: hasDeltaUsage
+				? deltaUsage.cache_read_input_tokens
+				: startUsage.cache_read_input_tokens,
+			cache_creation_input_tokens: hasDeltaUsage
+				? deltaUsage.cache_creation_input_tokens
+				: startUsage.cache_creation_input_tokens,
 		};
 		const jsonPayload = {
 			id:
@@ -1083,9 +1103,7 @@ export class CodexProvider extends BaseProvider {
 						// premature content_block_stop that output_item.done will duplicate.
 						const isOpenFunctionCallBlock = [
 							...state.functionCallBlocks.values(),
-						].some(
-							(b) => b.contentBlockIndex === state.contentBlockIndex,
-						);
+						].some((b) => b.contentBlockIndex === state.contentBlockIndex);
 						if (!isOpenFunctionCallBlock) {
 							await writeSSE("content_block_stop", {
 								type: "content_block_stop",

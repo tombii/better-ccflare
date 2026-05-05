@@ -1,3 +1,4 @@
+import { HttpError } from "@better-ccflare/http-common";
 import {
 	formatCost,
 	formatTimestamp,
@@ -5,7 +6,6 @@ import {
 } from "@better-ccflare/ui-common";
 import { Eye } from "lucide-react";
 import { useEffect, useState } from "react";
-import { HttpError } from "@better-ccflare/http-common";
 import { api, type RequestPayload, type RequestSummary } from "../api";
 import { ConversationView } from "./ConversationView";
 import { CopyButton } from "./CopyButton";
