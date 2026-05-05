@@ -25,7 +25,7 @@ export class AsyncDbWriter implements Disposable {
 	constructor() {
 		// Process queue every 100ms
 		this.intervalId = setInterval(() => void this.processQueue(), 100);
-		// Log health metrics every 60s when queue or drops are non-zero
+		// Log health metrics every 30s when queue or drops are non-zero
 		this.healthInterval = setInterval(() => {
 			const recentDrops = this.droppedJobsSinceLastLog;
 			this.droppedJobsSinceLastLog = 0;
@@ -36,7 +36,7 @@ export class AsyncDbWriter implements Disposable {
 					`AsyncDbWriter health: queuedJobs=${queuedJobs}, droppedJobsThisInterval=${recentDrops}`,
 				);
 			}
-		}, 60000);
+		}, 30000);
 	}
 
 	enqueue(job: DbJob): void {
