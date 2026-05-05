@@ -41,7 +41,7 @@ describe("health runtime payload", () => {
 		const handler = createHealthHandler(
 			db,
 			config,
-			() => ({ healthy: true, failureCount: 0, queuedJobs: 2 }),
+			() => ({ healthy: true, failureCount: 0, recentDrops: 0, queuedJobs: 2 }),
 			() => ({
 				state: "healthy",
 				pendingAcks: 1,
@@ -62,6 +62,7 @@ describe("health runtime payload", () => {
 		expect(body.runtime.asyncWriter).toEqual({
 			healthy: true,
 			failureCount: 0,
+			recentDrops: 0,
 			queuedJobs: 2,
 		});
 		expect(body.runtime.usageWorker).toEqual({
@@ -100,6 +101,7 @@ describe("AsyncDbWriter.getHealth", () => {
 		expect(health).toEqual({
 			healthy: true,
 			failureCount: 0,
+			recentDrops: 0,
 			queuedJobs: 0,
 		});
 

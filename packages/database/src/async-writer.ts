@@ -8,6 +8,7 @@ type DbJob = () => void | Promise<void>;
 export interface AsyncWriterHealth {
 	healthy: boolean;
 	failureCount: number;
+	recentDrops: number;
 	queuedJobs: number;
 }
 
@@ -19,6 +20,7 @@ export class AsyncDbWriter implements Disposable {
 	private readonly MAX_QUEUE_SIZE = 5000; // Prevent unbounded growth
 	private droppedJobs = 0;
 	private droppedJobsSinceLastLog = 0;
+	private lastIntervalDrops = 0;
 
 	constructor() {
 		// Process queue every 100ms
@@ -27,6 +29,7 @@ export class AsyncDbWriter implements Disposable {
 		this.healthInterval = setInterval(() => {
 			const recentDrops = this.droppedJobsSinceLastLog;
 			this.droppedJobsSinceLastLog = 0;
+			this.lastIntervalDrops = recentDrops;
 			const { queuedJobs } = this.getHealth();
 			if (queuedJobs > 0 || recentDrops > 0) {
 				logger.warn(
@@ -85,8 +88,9 @@ export class AsyncDbWriter implements Disposable {
 
 	getHealth(): AsyncWriterHealth {
 		return {
-			healthy: this.droppedJobs === 0,
+			healthy: this.queue.length === 0 && this.lastIntervalDrops === 0,
 			failureCount: this.droppedJobs,
+			recentDrops: this.lastIntervalDrops,
 			queuedJobs: this.queue.length,
 		};
 	}

@@ -25,6 +25,7 @@ export interface APIContext {
 	getAsyncWriterHealth?: () => {
 		healthy: boolean;
 		failureCount: number;
+		recentDrops: number;
 		queuedJobs: number;
 	};
 	getUsageWorkerHealth?: () => {
