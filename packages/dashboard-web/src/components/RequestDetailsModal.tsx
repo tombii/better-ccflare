@@ -4,8 +4,8 @@ import {
 	formatTokens,
 } from "@better-ccflare/ui-common";
 import { Eye } from "lucide-react";
-import { useState } from "react";
-import type { RequestPayload, RequestSummary } from "../api";
+import { useEffect, useState } from "react";
+import { api, type RequestPayload, type RequestSummary } from "../api";
 import { ConversationView } from "./ConversationView";
 import { CopyButton } from "./CopyButton";
 import { TokenUsageDisplay } from "./TokenUsageDisplay";
@@ -35,6 +35,30 @@ export function RequestDetailsModal({
 	onClose,
 }: RequestDetailsModalProps) {
 	const [beautifyMode, setBeautifyMode] = useState(true);
+	const [hydrated, setHydrated] = useState<RequestPayload | null>(null);
+	const [failedId, setFailedId] = useState<string | null>(null);
+
+	const effective: RequestPayload =
+		hydrated && hydrated.id === request.id ? hydrated : request;
+
+	const needsHydration =
+		isOpen && !effective.error && !effective.request && failedId !== request.id;
+
+	useEffect(() => {
+		if (!needsHydration) return;
+		let cancelled = false;
+		api
+			.getRequestPayload(request.id)
+			.then((payload) => {
+				if (!cancelled) setHydrated(payload);
+			})
+			.catch(() => {
+				if (!cancelled) setFailedId(request.id);
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [needsHydration, request.id]);
 
 	const decodeBase64 = (str: string | null): string => {
 		if (!str) return "No data";
@@ -74,8 +98,8 @@ export function RequestDetailsModal({
 		return formatJson(decoded);
 	};
 
-	const _isError = request.error || !request.meta.success;
-	const statusCode = request.response?.status;
+	const _isError = effective.error || !request.meta.success;
+	const statusCode = effective.response?.status;
 
 	return (
 		<Dialog open={isOpen} onOpenChange={onClose}>
@@ -145,8 +169,8 @@ export function RequestDetailsModal({
 
 					<TabsContent value="conversation" className="mt-4 flex-1 min-h-0">
 						<ConversationView
-							requestBody={decodeBase64(request.request.body)}
-							responseBody={decodeBase64(request.response?.body || null)}
+							requestBody={decodeBase64(effective.request?.body ?? null)}
+							responseBody={decodeBase64(effective.response?.body || null)}
 						/>
 					</TabsContent>
 
@@ -154,37 +178,47 @@ export function RequestDetailsModal({
 						value="request"
 						className="mt-4 space-y-4 overflow-y-auto max-h-[60vh]"
 					>
-						<div>
-							<div className="flex items-center justify-between mb-2">
-								<h3 className="font-semibold">Headers</h3>
-								<CopyButton
-									variant="ghost"
-									size="sm"
-									getValue={() => formatHeaders(request.request.headers)}
-								>
-									Copy
-								</CopyButton>
-							</div>
-							<pre className="bg-muted p-4 rounded-lg overflow-x-auto text-sm font-mono">
-								{formatHeaders(request.request.headers)}
-							</pre>
-						</div>
-
-						{request.request.body && (
-							<div>
-								<div className="flex items-center justify-between mb-2">
-									<h3 className="font-semibold">Body</h3>
-									<CopyButton
-										variant="ghost"
-										size="sm"
-										getValue={() => formatBody(request.request.body)}
-									>
-										Copy
-									</CopyButton>
+						{effective.request ? (
+							<>
+								<div>
+									<div className="flex items-center justify-between mb-2">
+										<h3 className="font-semibold">Headers</h3>
+										<CopyButton
+											variant="ghost"
+											size="sm"
+											getValue={() => formatHeaders(effective.request.headers)}
+										>
+											Copy
+										</CopyButton>
+									</div>
+									<pre className="bg-muted p-4 rounded-lg overflow-x-auto text-sm font-mono">
+										{formatHeaders(effective.request.headers)}
+									</pre>
 								</div>
-								<pre className="bg-muted p-4 rounded-lg overflow-x-auto text-sm font-mono">
-									{formatBody(request.request.body)}
-								</pre>
+
+								{effective.request.body && (
+									<div>
+										<div className="flex items-center justify-between mb-2">
+											<h3 className="font-semibold">Body</h3>
+											<CopyButton
+												variant="ghost"
+												size="sm"
+												getValue={() => formatBody(effective.request.body)}
+											>
+												Copy
+											</CopyButton>
+										</div>
+										<pre className="bg-muted p-4 rounded-lg overflow-x-auto text-sm font-mono">
+											{formatBody(effective.request.body)}
+										</pre>
+									</div>
+								)}
+							</>
+						) : (
+							<div className="text-center text-muted-foreground py-8">
+								{needsHydration
+									? "Loading payload…"
+									: "No request data available"}
 							</div>
 						)}
 					</TabsContent>
@@ -193,7 +227,7 @@ export function RequestDetailsModal({
 						value="response"
 						className="mt-4 space-y-4 overflow-y-auto max-h-[60vh]"
 					>
-						{request.response ? (
+						{effective.response ? (
 							<>
 								<div>
 									<div className="flex items-center justify-between mb-2">
@@ -202,8 +236,8 @@ export function RequestDetailsModal({
 											variant="ghost"
 											size="sm"
 											getValue={() =>
-												request.response
-													? formatHeaders(request.response.headers)
+												effective.response
+													? formatHeaders(effective.response.headers)
 													: ""
 											}
 										>
@@ -211,11 +245,11 @@ export function RequestDetailsModal({
 										</CopyButton>
 									</div>
 									<pre className="bg-muted p-4 rounded-lg overflow-x-auto text-sm font-mono">
-										{formatHeaders(request.response.headers)}
+										{formatHeaders(effective.response.headers)}
 									</pre>
 								</div>
 
-								{request.response.body && (
+								{effective.response.body && (
 									<div>
 										<div className="flex items-center justify-between mb-2">
 											<h3 className="font-semibold">Body</h3>
@@ -223,8 +257,8 @@ export function RequestDetailsModal({
 												variant="ghost"
 												size="sm"
 												getValue={() =>
-													request.response
-														? formatBody(request.response.body)
+													effective.response
+														? formatBody(effective.response.body)
 														: ""
 												}
 											>
@@ -232,17 +266,17 @@ export function RequestDetailsModal({
 											</CopyButton>
 										</div>
 										<pre className="bg-muted p-4 rounded-lg overflow-x-auto text-sm font-mono">
-											{formatBody(request.response.body)}
+											{formatBody(effective.response.body)}
 										</pre>
 									</div>
 								)}
 							</>
 						) : (
 							<div className="text-center text-muted-foreground py-8">
-								{request.error ? (
+								{effective.error ? (
 									<>
 										<p className="text-destructive font-medium">
-											Error: {request.error}
+											Error: {effective.error}
 										</p>
 										<p className="mt-2">No response data available</p>
 									</>

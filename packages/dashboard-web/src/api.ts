@@ -732,6 +732,27 @@ class API extends HttpClient {
 		}
 	}
 
+	async getRequestPayload(id: string): Promise<RequestPayload> {
+		const startTime = Date.now();
+		const url = `/api/requests/payload/${encodeURIComponent(id)}`;
+
+		this.logger.debug(`→ GET ${url}`);
+
+		try {
+			const response = await this.get<Omit<RequestPayload, "id">>(url);
+			const duration = Date.now() - startTime;
+			this.logger.debug(`← GET ${url} - 200 (${duration}ms)`);
+			return { id, ...response };
+		} catch (error) {
+			const duration = Date.now() - startTime;
+			this.logger.error(`✗ GET ${url} - ERROR (${duration}ms)`, {
+				error: error instanceof Error ? error.message : String(error),
+				stack: error instanceof Error ? error.stack : undefined,
+			});
+			throw error;
+		}
+	}
+
 	async getRequestsSummary(
 		limit: number = API_LIMITS.requestsSummary,
 	): Promise<RequestSummary[]> {
