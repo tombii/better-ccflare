@@ -536,7 +536,9 @@ describe("OpenAICompatibleProvider", () => {
 			expect(body.model).toBe("custom/haiku-model");
 		});
 
-		it("flattens text-only content arrays and strips cache_control on non-Alibaba endpoints", async () => {
+		it("flattens text-only content arrays and strips cache_control for GLM models", async () => {
+			provider.buildUrl("/v1/messages", "", mockAccount);
+
 			const anthropicRequest = {
 				model: "glm-5.1",
 				messages: [
@@ -572,6 +574,73 @@ describe("OpenAICompatibleProvider", () => {
 			const body = await transformed.json();
 
 			expect(body.messages[0].content).toBe("headersystem prompt continued");
+		});
+
+		it("preserves cache_control for non-GLM models on generic OpenAI-compatible endpoints (e.g. OpenRouter, Kilo, LiteLLM)", async () => {
+			provider.buildUrl("/v1/messages", "", mockAccount);
+
+			const anthropicRequest = {
+				model: "anthropic/claude-3-5-sonnet",
+				messages: [
+					{
+						role: "user",
+						content: [
+							{
+								type: "text",
+								text: "hello",
+								cache_control: { type: "ephemeral" },
+							},
+						],
+					},
+				],
+			};
+
+			const request = new Request("https://example.com/v1/messages", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify(anthropicRequest),
+			});
+
+			const transformed = await provider.transformRequestBody(
+				request,
+				mockAccount,
+			);
+			const body = await transformed.json();
+
+			expect(Array.isArray(body.messages[0].content)).toBe(true);
+			expect(body.messages[0].content[0].cache_control).toEqual({
+				type: "ephemeral",
+			});
+		});
+
+		it("flattens to empty string (not null) when all text parts are empty", async () => {
+			provider.buildUrl("/v1/messages", "", mockAccount);
+
+			const anthropicRequest = {
+				model: "glm-5.1",
+				messages: [
+					{
+						role: "user",
+						content: [
+							{ type: "text", text: "", cache_control: { type: "ephemeral" } },
+						],
+					},
+				],
+			};
+
+			const request = new Request("https://example.com/v1/messages", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify(anthropicRequest),
+			});
+
+			const transformed = await provider.transformRequestBody(
+				request,
+				mockAccount,
+			);
+			const body = await transformed.json();
+
+			expect(body.messages[0].content).toBe("");
 		});
 
 		it("preserves cache_control on Alibaba/Qwen DashScope endpoint", async () => {

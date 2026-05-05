@@ -345,9 +345,22 @@ export class OpenAICompatibleProvider extends BaseProvider {
 	protected afterConvert(body: OpenAIRequest): void {
 		if (this.shouldInjectAlibabaCaching()) {
 			this.injectAlibabaCaching(body);
-		} else {
+		}
+		if (this.shouldStripCacheControl()) {
 			this.stripCacheControlAndFlatten(body);
 		}
+	}
+
+	// Models that reject Anthropic-style `cache_control` and array content
+	// shapes on otherwise OpenAI-compatible endpoints (e.g. GLM-5.1 on
+	// opencode.ai/zen/go responds with a 5-error pydantic validation rejection).
+	private static readonly STRICT_MODEL_PREFIXES = ["glm"];
+
+	private shouldStripCacheControl(): boolean {
+		const model = this.currentModel?.toLowerCase() || "";
+		return OpenAICompatibleProvider.STRICT_MODEL_PREFIXES.some((prefix) =>
+			model.startsWith(prefix),
+		);
 	}
 
 	private stripCacheControlAndFlatten(body: OpenAIRequest): void {
@@ -359,10 +372,9 @@ export class OpenAICompatibleProvider extends BaseProvider {
 					typeof part === "object" && part !== null && part.type === "text",
 			);
 			if (allText) {
-				msg.content =
-					msg.content
-						.map((part) => (part as { text?: string }).text ?? "")
-						.join("") || null;
+				msg.content = msg.content
+					.map((part) => (part as { text?: string }).text ?? "")
+					.join("");
 			} else {
 				for (const part of msg.content as Array<Record<string, unknown>>) {
 					if (part && "cache_control" in part) delete part.cache_control;
