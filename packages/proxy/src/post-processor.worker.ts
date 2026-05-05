@@ -758,43 +758,47 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 	}
 	const projectAtEnd = state.project ?? null;
 	// No preliminary INSERT needed — dashboard tracks pending requests via SSE events, not DB queries.
-	asyncWriter.enqueue(async () =>
-		dbOps.saveRequest(
-			startMessage.requestId,
-			startMessage.method,
-			startMessage.path,
-			startMessage.accountId,
-			startMessage.responseStatus,
-			msg.success,
-			msg.error || null,
-			responseTime,
-			startMessage.failoverAttempts,
-			state.usage.model
-				? {
-						model: state.usage.model,
-						promptTokens:
-							(state.usage.inputTokens || 0) +
-							(state.usage.cacheReadInputTokens || 0) +
-							(state.usage.cacheCreationInputTokens || 0),
-						completionTokens: state.usage.outputTokens,
-						totalTokens: state.usage.totalTokens,
-						costUsd: state.usage.costUsd,
-						// Keep original breakdown for payload
-						inputTokens: state.usage.inputTokens,
-						outputTokens: state.usage.outputTokens,
-						cacheReadInputTokens: state.usage.cacheReadInputTokens,
-						cacheCreationInputTokens: state.usage.cacheCreationInputTokens,
-						tokensPerSecond: state.usage.tokensPerSecond,
-					}
-				: undefined,
-			state.agentUsed,
-			startMessage.apiKeyId || undefined,
-			startMessage.apiKeyName || undefined,
-			projectAtEnd,
-			state.billingType,
-			startMessage.comboName || null,
-		),
-	);
+	asyncWriter.enqueue(async () => {
+		try {
+			await dbOps.saveRequest(
+				startMessage.requestId,
+				startMessage.method,
+				startMessage.path,
+				startMessage.accountId,
+				startMessage.responseStatus,
+				msg.success,
+				msg.error || null,
+				responseTime,
+				startMessage.failoverAttempts,
+				state.usage.model
+					? {
+							model: state.usage.model,
+							promptTokens:
+								(state.usage.inputTokens || 0) +
+								(state.usage.cacheReadInputTokens || 0) +
+								(state.usage.cacheCreationInputTokens || 0),
+							completionTokens: state.usage.outputTokens,
+							totalTokens: state.usage.totalTokens,
+							costUsd: state.usage.costUsd,
+							// Keep original breakdown for payload
+							inputTokens: state.usage.inputTokens,
+							outputTokens: state.usage.outputTokens,
+							cacheReadInputTokens: state.usage.cacheReadInputTokens,
+							cacheCreationInputTokens: state.usage.cacheCreationInputTokens,
+							tokensPerSecond: state.usage.tokensPerSecond,
+						}
+					: undefined,
+				state.agentUsed,
+				startMessage.apiKeyId || undefined,
+				startMessage.apiKeyName || undefined,
+				projectAtEnd,
+				state.billingType,
+				startMessage.comboName || null,
+			);
+		} catch (error) {
+			log.error(`Failed to save request for ${startMessage.requestId}:`, error);
+		}
+	});
 
 	const requestId = startMessage.requestId;
 	if (storePayloads) {
