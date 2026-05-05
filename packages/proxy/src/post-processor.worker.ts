@@ -845,9 +845,13 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 
 		// Null out large references now that we have the serialized JSON
 		responseBody = null;
-		asyncWriter.enqueue(async () =>
-			dbOps.saveRequestPayloadRaw(requestId, payloadJson),
-		);
+		asyncWriter.enqueue(async () => {
+			try {
+				await dbOps.saveRequestPayloadRaw(requestId, payloadJson);
+			} catch (error) {
+				log.error(`Failed to save payload for ${requestId}:`, error);
+			}
+		});
 	}
 	freeRequestState(state);
 
