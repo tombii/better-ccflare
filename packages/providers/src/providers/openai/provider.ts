@@ -1,4 +1,8 @@
-import { getEndpointUrl, validateEndpointUrl } from "@better-ccflare/core";
+import {
+	getEndpointUrl,
+	ValidationError,
+	validateEndpointUrl,
+} from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import {
 	convertAnthropicPathToOpenAI,
@@ -17,12 +21,7 @@ const log = new Logger("OpenAICompatibleProvider");
 export class OpenAICompatibleProvider extends BaseProvider {
 	name = "openai-compatible";
 
-	canHandle(path: string): boolean {
-		// Reject Anthropic-specific endpoints that don't exist in OpenAI API
-		if (path === "/v1/messages/count_tokens") {
-			return false;
-		}
-		// Handle all other paths for OpenAI-compatible providers
+	canHandle(_path: string): boolean {
 		return true;
 	}
 
@@ -202,6 +201,9 @@ export class OpenAICompatibleProvider extends BaseProvider {
 				body: JSON.stringify(openaiBody),
 			});
 		} catch (error) {
+			if (error instanceof ValidationError) {
+				throw error;
+			}
 			log.error(
 				"Failed to transform Anthropic request to OpenAI format:",
 				error,

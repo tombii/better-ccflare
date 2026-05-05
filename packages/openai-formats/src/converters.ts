@@ -1,6 +1,7 @@
 import { mapModelName } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import type { Account } from "@better-ccflare/types";
+import { resolveReasoningEffort } from "./reasoning";
 import type {
 	AnthropicContent,
 	AnthropicContentBlock,
@@ -65,6 +66,23 @@ export function convertAnthropicRequestToOpenAI(
 		if (anthropicData.stream) {
 			openaiRequest.stream_options = { include_usage: true };
 		}
+	}
+	const reasoningResolution = resolveReasoningEffort(
+		anthropicData.reasoning?.effort,
+		{
+			sourceModel: anthropicData.model,
+			targetModel: mappedModel,
+		},
+	);
+	if (reasoningResolution.downgrades.length > 0) {
+		for (const downgrade of reasoningResolution.downgrades) {
+			log.warn(
+				`Downgraded reasoning effort for model ${downgrade.model}: ${downgrade.from} -> ${downgrade.to}`,
+			);
+		}
+	}
+	if (reasoningResolution.effort !== undefined) {
+		openaiRequest.reasoning = { effort: reasoningResolution.effort };
 	}
 
 	// Convert tools (only if non-empty — Qwen/DashScope rejects empty tools array)
