@@ -757,6 +757,7 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 		log.debug(`Saving final request data for ${startMessage.requestId}`);
 	}
 	const projectAtEnd = state.project ?? null;
+	// No preliminary INSERT needed — dashboard tracks pending requests via SSE events, not DB queries.
 	asyncWriter.enqueue(async () =>
 		dbOps.saveRequest(
 			startMessage.requestId,
