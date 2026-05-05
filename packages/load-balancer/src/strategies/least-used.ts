@@ -1,10 +1,11 @@
 import { isAccountAvailable } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
-import type {
-	Account,
-	LoadBalancingStrategy,
-	RequestMeta,
-	StrategyStore,
+import {
+	type Account,
+	type LoadBalancingStrategy,
+	PROVIDER_NAMES,
+	type RequestMeta,
+	type StrategyStore,
 } from "@better-ccflare/types";
 
 /**
@@ -21,6 +22,9 @@ const RECENT_PICK_WINDOW_MS = 500;
  * utilization deltas (typically 0–95).
  */
 const RECENT_PICK_PENALTY = 100;
+
+/** 1-second buffer for clock-skew protection on rate_limit_reset comparisons. */
+const RATE_LIMIT_RESET_BUFFER_MS = 1000;
 
 /**
  * LeastUsedStrategy — picks the available account with the lowest effective
@@ -60,6 +64,12 @@ export class LeastUsedStrategy implements LoadBalancingStrategy {
 
 	select(accounts: Account[], _meta: RequestMeta): Account[] {
 		const now = Date.now();
+
+		// Auto-unpause eligible accounts whose upstream usage window has reset.
+		// Mirrors SessionStrategy's checkForAutoFallbackAccounts path so users
+		// who configured auto_fallback_enabled accounts get the same self-recovery
+		// behaviour regardless of which strategy they pick.
+		this.autoUnpauseElapsedAccounts(accounts, now);
 
 		const available = accounts.filter((a) => isAccountAvailable(a, now));
 		if (available.length === 0) return [];
@@ -102,5 +112,51 @@ export class LeastUsedStrategy implements LoadBalancingStrategy {
 		);
 
 		return sorted;
+	}
+
+	/**
+	 * Auto-unpause any account whose:
+	 *   - auto_fallback_enabled flag is set, AND
+	 *   - upstream rate_limit_reset window has elapsed, AND
+	 *   - pause_reason is one of the reasons we consider safe to auto-unpause
+	 *     ('overage' or 'rate_limit_window'; null is also treated as safe to
+	 *     match SessionStrategy's behavior on legacy rows).
+	 *
+	 * Mutates the in-memory account.paused flag to false on resume so the
+	 * subsequent isAccountAvailable check reflects the new state. Manual
+	 * pauses (pause_reason='manual' or 'failure_threshold') are not touched.
+	 */
+	private autoUnpauseElapsedAccounts(accounts: Account[], now: number): void {
+		if (!this.store?.resumeAccount) return;
+
+		for (const account of accounts) {
+			if (!account.paused) continue;
+			if (!account.auto_fallback_enabled) continue;
+
+			// Only providers with proactive rate-limit-reset headers are eligible
+			// (matches SessionStrategy.checkForAutoFallbackAccounts).
+			const supportsWindowReset =
+				account.provider === PROVIDER_NAMES.ANTHROPIC ||
+				account.provider === PROVIDER_NAMES.CODEX ||
+				account.provider === PROVIDER_NAMES.ZAI;
+			if (!supportsWindowReset) continue;
+
+			const windowReset =
+				account.rate_limit_reset != null &&
+				account.rate_limit_reset < now - RATE_LIMIT_RESET_BUFFER_MS;
+			if (!windowReset) continue;
+
+			// Only auto-unpause for safe reasons. Match SessionStrategy:
+			// null pause_reason is treated as legacy/safe.
+			const safeReasons = [null, "overage", "rate_limit_window"];
+			const pauseReason = account.pause_reason ?? null;
+			if (!safeReasons.includes(pauseReason as string | null)) continue;
+
+			this.log.info(
+				`Auto-unpausing ${account.name} (pause_reason=${pauseReason}) — usage window has reset`,
+			);
+			this.store.resumeAccount(account.id);
+			account.paused = false;
+		}
 	}
 }

@@ -11,6 +11,8 @@ import {
 	requiresSessionDurationTracking,
 } from "@better-ccflare/types";
 
+export { LeastUsedStrategy } from "./least-used";
+
 export class SessionStrategy implements LoadBalancingStrategy {
 	private sessionDurationMs: number;
 	private store: StrategyStore | null = null;

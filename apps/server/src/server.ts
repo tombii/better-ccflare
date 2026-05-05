@@ -23,24 +23,6 @@ import {
 } from "@better-ccflare/database";
 import { APIRouter, AuthService } from "@better-ccflare/http-api";
 import { LeastUsedStrategy, SessionStrategy } from "@better-ccflare/load-balancer";
-import { StrategyName, type LoadBalancingStrategy } from "@better-ccflare/types";
-
-/**
- * Build a load-balancing strategy from its enum name. Add new strategies here
- * as additional cases. Falls back to SessionStrategy on unknown values.
- */
-function buildStrategy(
-	name: StrategyName,
-	sessionDurationMs: number,
-): LoadBalancingStrategy {
-	switch (name) {
-		case StrategyName.LeastUsed:
-			return new LeastUsedStrategy();
-		case StrategyName.Session:
-		default:
-			return new SessionStrategy(sessionDurationMs);
-	}
-}
 import { Logger } from "@better-ccflare/logger";
 import {
 	getProvider,
@@ -70,8 +52,29 @@ import {
 	terminateUsageWorker,
 } from "@better-ccflare/proxy";
 import { validatePathOrThrow } from "@better-ccflare/security";
-import type { Account, StrategyStore } from "@better-ccflare/types";
+import {
+	type Account,
+	type LoadBalancingStrategy,
+	StrategyName,
+	type StrategyStore,
+} from "@better-ccflare/types";
 import { serve } from "bun";
+
+/**
+ * Build a load-balancing strategy from its enum name. Add new strategies here
+ * as additional cases. Falls back to SessionStrategy on unknown values.
+ */
+function buildStrategy(
+	name: StrategyName,
+	sessionDurationMs: number,
+): LoadBalancingStrategy {
+	switch (name) {
+		case StrategyName.LeastUsed:
+			return new LeastUsedStrategy();
+		default:
+			return new SessionStrategy(sessionDurationMs);
+	}
+}
 
 // Import embedded dashboard assets (will be bundled in compiled binary)
 let embeddedDashboard: Record<
