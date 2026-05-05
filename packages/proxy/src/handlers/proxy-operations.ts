@@ -1,5 +1,6 @@
 import { getModelList, logError, ProviderError } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
+import { stripCacheControlFromOpenAIRequest } from "@better-ccflare/openai-formats";
 import { getProvider, usageCache } from "@better-ccflare/providers";
 import type {
 	Account,
@@ -268,6 +269,43 @@ async function isInvalidThinkingSignatureError(
 }
 
 /**
+ * In-memory set of (accountId, model) pairs known to reject cache_control.
+ * Populated on first 400 rejection; cleared on server restart (fast re-learn).
+ */
+const cacheControlRejectors = new Set<string>();
+
+function cacheControlRejectorKey(accountId: string, model: string): string {
+	return `${accountId}:${model}`;
+}
+
+/**
+ * Checks if a 400 response is caused by an upstream provider rejecting the
+ * cache_control field (e.g. GLM-5.1 strict OpenAI-compatible validation).
+ */
+async function isCacheControlRejectionError(
+	response: Response,
+): Promise<boolean> {
+	if (response.status !== 400) return false;
+
+	try {
+		const clone = response.clone();
+		const contentType = response.headers.get("content-type");
+		if (!contentType?.includes("application/json")) return false;
+
+		const json = await clone.json();
+		const message: string = json.error?.message ?? json.message ?? "";
+		return (
+			typeof message === "string" &&
+			message.includes("cache_control") &&
+			(message.includes("Extra inputs are not permitted") ||
+				message.includes("unknown field"))
+		);
+	} catch {
+		return false;
+	}
+}
+
+/**
  * Checks if a response error indicates the requested model is unavailable.
  * Covers Anthropic (not_found_error), OpenAI-compat (model_not_found),
  * generic messages, and Bedrock (ResourceNotFoundException).
@@ -514,9 +552,41 @@ export async function proxyWithAccount(
 
 		const providerRequest = new Request(targetUrl, requestInit);
 
-		const transformedRequest = provider.transformRequestBody
+		let transformedRequest = provider.transformRequestBody
 			? await provider.transformRequestBody(providerRequest, account)
 			: providerRequest;
+
+		// Pre-strip cache_control for (account, model) pairs known to reject it
+		const transformedBodyText = await transformedRequest.clone().text();
+		let transformedBodyJson: Record<string, unknown> | null = null;
+		try {
+			transformedBodyJson = JSON.parse(transformedBodyText);
+		} catch {
+			// ignore
+		}
+		const transformedModel =
+			(transformedBodyJson?.model as string | undefined) ?? "";
+		if (
+			transformedModel &&
+			cacheControlRejectors.has(
+				cacheControlRejectorKey(account.id, transformedModel),
+			) &&
+			transformedBodyJson
+		) {
+			stripCacheControlFromOpenAIRequest(
+				transformedBodyJson as unknown as Parameters<
+					typeof stripCacheControlFromOpenAIRequest
+				>[0],
+			);
+			transformedRequest = new Request(transformedRequest.url, {
+				method: transformedRequest.method,
+				headers: transformedRequest.headers,
+				body: JSON.stringify(transformedBodyJson),
+			});
+			log.debug(
+				`Pre-stripped cache_control for known rejector: account=${account.name} model=${transformedModel}`,
+			);
+		}
 
 		// Make the request (or unwrap a synthetic provider response)
 		let rawResponse = isSyntheticProviderResponse(transformedRequest)
@@ -560,6 +630,36 @@ export async function proxyWithAccount(
 				log.warn(
 					"Failed to filter thinking blocks or no changes made, proceeding with original error response",
 				);
+			}
+		}
+
+		// Retry without cache_control if provider rejected it (e.g. GLM-5.1 strict validation).
+		// Mark (accountId, model) so subsequent requests skip cache_control immediately.
+		if (await isCacheControlRejectionError(rawResponse)) {
+			const rejectorKey = cacheControlRejectorKey(account.id, transformedModel);
+			if (!cacheControlRejectors.has(rejectorKey)) {
+				// Mark before retry so subsequent requests pre-strip without a round-trip.
+				// The current caller still receives the retried response (or the original
+				// 400 if the retry also fails).
+				cacheControlRejectors.add(rejectorKey);
+				log.info(
+					`Provider rejected cache_control for account=${account.name} model=${transformedModel}, retrying without it`,
+				);
+			}
+
+			try {
+				const retryBodyJson = JSON.parse(transformedBodyText);
+				stripCacheControlFromOpenAIRequest(retryBodyJson);
+				const retryRequest = new Request(transformedRequest.url, {
+					method: transformedRequest.method,
+					headers: transformedRequest.headers,
+					body: JSON.stringify(retryBodyJson),
+				});
+				rawResponse = isSyntheticProviderResponse(retryRequest)
+					? materializeSyntheticResponse(retryRequest)
+					: await makeProxyRequest(retryRequest);
+			} catch (err) {
+				log.warn("Failed to retry without cache_control:", err);
 			}
 		}
 
