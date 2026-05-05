@@ -196,6 +196,10 @@ interface StreamState {
 
 export class CodexProvider extends BaseProvider {
 	name = "codex";
+	// Fallback map: proxy-operations.ts injects x-better-ccflare-request-id and
+	// x-better-ccflare-request-stream into the upstream response before calling
+	// processResponse, so headerRequestedStream is normally set. This map covers
+	// the race where a response arrives after the 30s TTL sweep evicts the entry.
 	private requestStreamById = new Map<string, { stream: boolean; ts: number }>();
 
 	private sweepRequestStreamById(): void {
