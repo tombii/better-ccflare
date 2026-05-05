@@ -1,4 +1,4 @@
-import { logError, RateLimitError } from "@better-ccflare/core";
+import { logError, RateLimitError, TIME_CONSTANTS } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import {
 	type Provider,
@@ -271,11 +271,20 @@ export async function processProxyResponse(
 		if (rateLimitInfo.resetTime) {
 			handleRateLimitResponse(account, rateLimitInfo, ctx);
 		} else {
-			// Mark as rate-limited even without reset time
-			log.warn(
-				`Account ${account.name} rate-limited but no reset time available`,
+			// Mark as rate-limited even without reset time. Use a short
+			// probe-friendly cooldown (default 60s, override via
+			// CCFLARE_DEFAULT_COOLDOWN_NO_RESET_MS) instead of the previous
+			// 5h hard-ban: a reset-less 429 is more likely a transient than
+			// a real rate-limit window, and a 5h ban on every transient
+			// error chains pool exhaustion under burst load.
+			const cooldownMs = Number(
+				process.env.CCFLARE_DEFAULT_COOLDOWN_NO_RESET_MS ??
+					TIME_CONSTANTS.DEFAULT_RATE_LIMIT_NO_RESET_COOLDOWN_MS,
 			);
-			const cooldownUntil = Date.now() + 5 * 60 * 60 * 1000;
+			log.warn(
+				`Account ${account.name} rate-limited but no reset time available — applying ${cooldownMs}ms probe cooldown`,
+			);
+			const cooldownUntil = Date.now() + cooldownMs;
 			account.rate_limited_until = cooldownUntil;
 			ctx.asyncWriter.enqueue(() => {
 				const reason: RateLimitReason = "upstream_429_no_reset_default_5h";
@@ -287,7 +296,7 @@ export async function processProxyResponse(
 					cooldownUntil,
 					reason,
 				);
-			}); // Default to 5 hours — applies to any provider without reset headers
+			});
 		}
 		// Also update metadata for rate-limited responses
 		const bypassSession =

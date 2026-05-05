@@ -45,6 +45,17 @@ export const TIME_CONSTANTS = {
 	// Token expiration durations
 	API_KEY_TOKEN_EXPIRY_MS: 365 * 24 * 60 * 60 * 1000, // 1 year - for API keys that don't expire
 	GOOGLE_TOKEN_EXPIRY_MS: 60 * 60 * 1000, // 1 hour - Google Cloud access tokens
+
+	// Default cooldown applied when an upstream returns 429 *without* a
+	// reset hint (no `retry-after`, no rate-limit-reset header, no SSE
+	// reset frame). Previously 5h — pessimistic and prone to taking healthy
+	// accounts out of rotation on transient errors. The new default treats
+	// reset-less 429s as a probe interval rather than a hard ban: the
+	// account is excluded for a short window, then the next request will
+	// re-probe. Real Anthropic rate limits ship a `retry-after` and use
+	// the precise value from the header — those flows are unaffected.
+	// Override at runtime via CCFLARE_DEFAULT_COOLDOWN_NO_RESET_MS.
+	DEFAULT_RATE_LIMIT_NO_RESET_COOLDOWN_MS: 60 * 1000, // 60s
 } as const;
 
 // Buffer sizes (in bytes unless specified)

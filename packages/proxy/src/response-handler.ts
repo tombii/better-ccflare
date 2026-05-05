@@ -17,9 +17,16 @@ type ResponseWithAnalyticsStream = Response & {
 
 // Default cooldown for rate-limit errors detected mid-stream. SSE error
 // frames don't carry reset headers (HTTP headers were sent before the
-// error occurred), so we fall back to the same 5h default that
-// response-processor.ts uses for headerless 429 responses.
-const MID_STREAM_RATE_LIMIT_COOLDOWN_MS = 5 * 60 * 60 * 1000;
+// error occurred), so we fall back to the same probe-friendly default
+// that response-processor.ts uses for headerless 429 responses
+// (TIME_CONSTANTS.DEFAULT_RATE_LIMIT_NO_RESET_COOLDOWN_MS, default 60s,
+// override via CCFLARE_DEFAULT_COOLDOWN_NO_RESET_MS). Previously 5h —
+// changed to a probe interval to avoid chaining pool exhaustion when a
+// transient SSE error trips the cooldown.
+const MID_STREAM_RATE_LIMIT_COOLDOWN_MS = Number(
+	process.env.CCFLARE_DEFAULT_COOLDOWN_NO_RESET_MS ??
+		TIME_CONSTANTS.DEFAULT_RATE_LIMIT_NO_RESET_COOLDOWN_MS,
+);
 
 // Must match MAX_REQUEST_BODY_BYTES in post-processor.worker.ts.
 // Cap applied before postMessage to avoid multi-MB structured clones.
