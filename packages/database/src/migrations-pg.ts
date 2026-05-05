@@ -68,7 +68,13 @@ export async function ensureSchemaPg(adapter: BunSqlAdapter): Promise<void> {
 			model_mappings TEXT,
 			model_fallbacks TEXT,
 			cross_region_mode TEXT DEFAULT 'geographic',
-			auto_pause_on_overage_enabled INTEGER DEFAULT 0
+			auto_pause_on_overage_enabled INTEGER DEFAULT 0,
+			peak_hours_pause_enabled INTEGER NOT NULL DEFAULT 0,
+			pause_reason TEXT,
+			billing_type TEXT DEFAULT NULL,
+			refresh_token_issued_at BIGINT,
+			rate_limited_reason TEXT,
+			rate_limited_at BIGINT
 		)
 	`);
 
@@ -98,7 +104,9 @@ export async function ensureSchemaPg(adapter: BunSqlAdapter): Promise<void> {
 			agent_used TEXT,
 			api_key_id TEXT,
 			api_key_name TEXT,
-			project TEXT
+			project TEXT,
+			billing_type TEXT DEFAULT 'api',
+			combo_name TEXT
 		)
 	`);
 
@@ -118,9 +126,13 @@ export async function ensureSchemaPg(adapter: BunSqlAdapter): Promise<void> {
 		CREATE TABLE IF NOT EXISTS request_payloads (
 			id TEXT PRIMARY KEY,
 			json TEXT NOT NULL,
+			timestamp BIGINT,
 			FOREIGN KEY (id) REFERENCES requests(id) ON DELETE CASCADE
 		)
 	`);
+	await adapter.unsafe(
+		`CREATE INDEX IF NOT EXISTS idx_request_payloads_timestamp ON request_payloads(timestamp)`,
+	);
 
 	// Create oauth_sessions table
 	await adapter.unsafe(`
@@ -189,6 +201,55 @@ export async function ensureSchemaPg(adapter: BunSqlAdapter): Promise<void> {
 	await adapter.unsafe(
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_model_translations_unique ON model_translations(client_name, bedrock_model_id)`,
 	);
+
+	// Create combos table
+	await adapter.unsafe(`
+		CREATE TABLE IF NOT EXISTS combos (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL UNIQUE,
+			description TEXT,
+			enabled INTEGER DEFAULT 1,
+			created_at BIGINT NOT NULL,
+			updated_at BIGINT NOT NULL
+		)
+	`);
+
+	// Create combo_slots table
+	await adapter.unsafe(`
+		CREATE TABLE IF NOT EXISTS combo_slots (
+			id TEXT PRIMARY KEY,
+			combo_id TEXT NOT NULL,
+			account_id TEXT NOT NULL,
+			model TEXT NOT NULL,
+			priority INTEGER NOT NULL,
+			enabled INTEGER DEFAULT 1,
+			FOREIGN KEY (combo_id) REFERENCES combos(id) ON DELETE CASCADE,
+			FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
+		)
+	`);
+	await adapter.unsafe(
+		`CREATE INDEX IF NOT EXISTS idx_combo_slots_combo_id ON combo_slots(combo_id, priority)`,
+	);
+	await adapter.unsafe(
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_combo_slots_unique ON combo_slots(combo_id, account_id, model)`,
+	);
+
+	// Create combo_family_assignments table
+	await adapter.unsafe(`
+		CREATE TABLE IF NOT EXISTS combo_family_assignments (
+			family TEXT PRIMARY KEY,
+			combo_id TEXT,
+			enabled INTEGER DEFAULT 0,
+			FOREIGN KEY (combo_id) REFERENCES combos(id) ON DELETE SET NULL
+		)
+	`);
+
+	// Seed canonical families
+	await adapter.unsafe(`
+		INSERT INTO combo_family_assignments (family, combo_id, enabled)
+		VALUES ('opus', NULL, 0), ('sonnet', NULL, 0), ('haiku', NULL, 0)
+		ON CONFLICT (family) DO NOTHING
+	`);
 
 	// Create strategies table
 	await adapter.unsafe(`
@@ -283,6 +344,38 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 			column: "project",
 			definition: "ALTER TABLE requests ADD COLUMN project TEXT",
 		},
+		{
+			table: "accounts",
+			column: "peak_hours_pause_enabled",
+			definition:
+				"ALTER TABLE accounts ADD COLUMN peak_hours_pause_enabled INTEGER NOT NULL DEFAULT 0",
+		},
+		{
+			table: "accounts",
+			column: "pause_reason",
+			definition: "ALTER TABLE accounts ADD COLUMN pause_reason TEXT",
+		},
+		{
+			table: "requests",
+			column: "billing_type",
+			definition:
+				"ALTER TABLE requests ADD COLUMN billing_type TEXT DEFAULT 'api'",
+		},
+		{
+			table: "requests",
+			column: "combo_name",
+			definition: "ALTER TABLE requests ADD COLUMN combo_name TEXT",
+		},
+		{
+			table: "request_payloads",
+			column: "timestamp",
+			definition: "ALTER TABLE request_payloads ADD COLUMN timestamp BIGINT",
+		},
+		{
+			table: "oauth_sessions",
+			column: "custom_endpoint",
+			definition: "ALTER TABLE oauth_sessions ADD COLUMN custom_endpoint TEXT",
+		},
 	];
 
 	for (const col of columnsToAdd) {
@@ -297,6 +390,97 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 				);
 			}
 		}
+	}
+
+	// Backfill pause_reason for existing paused accounts (mirrors SQLite migration)
+	await adapter.unsafe(`
+		UPDATE accounts
+		SET pause_reason = 'manual'
+		WHERE COALESCE(paused, 0) = 1 AND pause_reason IS NULL
+	`);
+
+	// Backfill request_payloads.timestamp from requests table
+	await adapter.unsafe(`
+		UPDATE request_payloads rp
+		SET timestamp = r.timestamp
+		FROM requests r
+		WHERE r.id = rp.id AND rp.timestamp IS NULL
+	`);
+
+	// Ensure index on request_payloads.timestamp exists
+	try {
+		await adapter.unsafe(
+			`CREATE INDEX IF NOT EXISTS idx_request_payloads_timestamp ON request_payloads(timestamp)`,
+		);
+	} catch (_error) {
+		// Index may already exist
+	}
+
+	// Ensure combos tables exist (for upgrades from pre-combos installs)
+	await adapter.unsafe(`
+		CREATE TABLE IF NOT EXISTS combos (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL UNIQUE,
+			description TEXT,
+			enabled INTEGER DEFAULT 1,
+			created_at BIGINT NOT NULL,
+			updated_at BIGINT NOT NULL
+		)
+	`);
+	await adapter.unsafe(`
+		CREATE TABLE IF NOT EXISTS combo_slots (
+			id TEXT PRIMARY KEY,
+			combo_id TEXT NOT NULL,
+			account_id TEXT NOT NULL,
+			model TEXT NOT NULL,
+			priority INTEGER NOT NULL,
+			enabled INTEGER DEFAULT 1,
+			FOREIGN KEY (combo_id) REFERENCES combos(id) ON DELETE CASCADE,
+			FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
+		)
+	`);
+	try {
+		await adapter.unsafe(
+			`CREATE INDEX IF NOT EXISTS idx_combo_slots_combo_id ON combo_slots(combo_id, priority)`,
+		);
+		await adapter.unsafe(
+			`CREATE UNIQUE INDEX IF NOT EXISTS idx_combo_slots_unique ON combo_slots(combo_id, account_id, model)`,
+		);
+	} catch (_error) {
+		// Indexes may already exist
+	}
+	await adapter.unsafe(`
+		CREATE TABLE IF NOT EXISTS combo_family_assignments (
+			family TEXT PRIMARY KEY,
+			combo_id TEXT,
+			enabled INTEGER DEFAULT 0,
+			FOREIGN KEY (combo_id) REFERENCES combos(id) ON DELETE SET NULL
+		)
+	`);
+	await adapter.unsafe(`
+		INSERT INTO combo_family_assignments (family, combo_id, enabled)
+		VALUES ('opus', NULL, 0), ('sonnet', NULL, 0), ('haiku', NULL, 0)
+		ON CONFLICT (family) DO NOTHING
+	`);
+
+	// Rename oauth_sessions.mode 'max' → 'claude-oauth'
+	try {
+		await adapter.unsafe(
+			`UPDATE oauth_sessions SET mode = 'claude-oauth' WHERE mode = 'max'`,
+		);
+	} catch (_error) {
+		// Table may not exist yet or column missing — ignore
+	}
+
+	// Migrate console accounts: provider 'anthropic' with api_key → 'claude-console-api'
+	try {
+		await adapter.unsafe(`
+			UPDATE accounts
+			SET provider = 'claude-console-api'
+			WHERE provider = 'anthropic' AND api_key IS NOT NULL AND api_key != ''
+		`);
+	} catch (_error) {
+		// Ignore if fails
 	}
 
 	// Make refresh_token nullable if it currently has NOT NULL constraint

@@ -46,6 +46,19 @@ Check if recent commits already partially or fully address the issue. Rate limit
 - Custom: Set `BETTER_CCFLARE_DB_PATH=/path/to/dev.db` in env or .env
 - Query: `sqlite3 ~/.config/better-ccflare/better-ccflare.db "SELECT name, provider, custom_endpoint FROM accounts;"`
 
+## ⚠️ CRITICAL: Database Migrations — Port to PostgreSQL
+
+**Every migration added to `packages/database/src/migrations.ts` MUST also be ported to `packages/database/src/migrations-pg.ts`.**
+
+When adding a new column or table to SQLite:
+1. Add it to `ensureSchema()` in `migrations.ts` (SQLite CREATE TABLE)
+2. Add it to `runMigrations()` in `migrations.ts` (SQLite ALTER TABLE for existing DBs)
+3. Add it to `ensureSchemaPg()` in `migrations-pg.ts` (PG CREATE TABLE for new installs)
+4. Add an entry to the `columnsToAdd` array in `runMigrationsPg()` in `migrations-pg.ts` (PG ALTER TABLE for existing DBs)
+5. If there's a backfill/data migration in SQLite, add the equivalent `adapter.unsafe(UPDATE ...)` call in `runMigrationsPg()` as well.
+
+New tables also need to be created in `ensureSchemaPg()` AND in `runMigrationsPg()` (using `CREATE TABLE IF NOT EXISTS` so upgrades work).
+
 ## Subagents for Multi-Task Work
 When a session involves multiple independent tasks, always spawn subagents rather than doing them sequentially in the main context. This conserves tokens and keeps the main context clean. Tasks don't need to run in parallel — the goal is context isolation, not speed.
 
