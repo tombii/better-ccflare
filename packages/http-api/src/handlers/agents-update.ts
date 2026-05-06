@@ -4,7 +4,11 @@ import {
 	isValidClaudeModel,
 } from "@better-ccflare/core";
 import type { DatabaseOperations } from "@better-ccflare/database";
-import { errorResponse, jsonResponse } from "@better-ccflare/http-common";
+import {
+	errorResponse,
+	Forbidden,
+	jsonResponse,
+} from "@better-ccflare/http-common";
 import type { AgentTool, AllowedModel } from "@better-ccflare/types";
 import { TOOL_PRESETS } from "@better-ccflare/types";
 
@@ -93,6 +97,9 @@ export function createAgentUpdateHandler(dbOps: DatabaseOperations) {
 		} catch (error) {
 			if (error instanceof Error && error.message.includes("not found")) {
 				return errorResponse(`Agent with id ${agentId} not found`);
+			}
+			if (error instanceof Error && error.message.includes("plugin-managed")) {
+				return errorResponse(Forbidden(error.message));
 			}
 			console.error("Error updating agent:", error);
 			return errorResponse("Failed to update agent");

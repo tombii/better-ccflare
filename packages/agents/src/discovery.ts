@@ -528,6 +528,14 @@ export class AgentRegistry {
 			throw new Error(`Agent with id ${agentId} not found`);
 		}
 
+		// Plugin agents are managed by their owning plugin — editing would
+		// silently lose changes on the next plugin update.
+		if (agent.source === "plugin") {
+			throw new Error(
+				`Agent ${agentId} is plugin-managed and cannot be edited; modify the source plugin instead`,
+			);
+		}
+
 		// Prepare front-matter updates
 		const frontMatterUpdates: Record<string, unknown> = {};
 

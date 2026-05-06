@@ -257,6 +257,33 @@ describe("AgentRegistry plugin agent discovery", () => {
 		expect(plugin?.source).toBe("plugin");
 	});
 
+	it("updateAgent rejects plugin-managed agents to prevent overwriting plugin source files", async () => {
+		process.env.BETTER_CCFLARE_DISCOVER_PLUGIN_AGENTS = "true";
+
+		const installPath = path.join(tmpDir, "plugin-install");
+		const agentsDir = path.join(installPath, "agents");
+		fs.mkdirSync(agentsDir, { recursive: true });
+		fs.writeFileSync(
+			path.join(agentsDir, "ro-agent.md"),
+			"---\nname: RO\ndescription: read-only\n---\n\nPrompt.",
+		);
+		const manifestPath = path.join(tmpDir, "installed_plugins.json");
+		fs.writeFileSync(
+			manifestPath,
+			JSON.stringify({
+				version: 2,
+				plugins: { "myplugin@market": [{ installPath }] },
+			}),
+		);
+
+		const registry = new AgentRegistry(manifestPath);
+		await registry.getAgents();
+
+		await expect(
+			registry.updateAgent("myplugin:ro-agent", { description: "tampered" }),
+		).rejects.toThrow(/plugin-managed/);
+	});
+
 	it("two plugins with same agent basename get distinct namespaced IDs", () => {
 		const pluginA = "plugin-a";
 		const pluginB = "plugin-b";

@@ -92,6 +92,7 @@ export function AgentCard({
 
 	const colors = colorMap[agent.color] || colorMap.gray;
 	const isWorkspaceAgent = agent.source === "workspace";
+	const isPluginAgent = agent.source === "plugin";
 	const SourceIcon = isWorkspaceAgent ? Folder : Globe;
 
 	// Get clean agent name (remove workspace prefix for workspace agents)
@@ -143,7 +144,13 @@ export function AgentCard({
 							variant="ghost"
 							size="sm"
 							onClick={() => setEditDialogOpen(true)}
-							className="opacity-0 group-hover:opacity-100 transition-opacity"
+							disabled={isPluginAgent}
+							title={
+								isPluginAgent
+									? "Plugin-managed agents cannot be edited — modify the source plugin instead"
+									: undefined
+							}
+							className="opacity-0 group-hover:opacity-100 transition-opacity disabled:cursor-not-allowed"
 						>
 							<Edit3 className="h-4 w-4" />
 						</Button>
