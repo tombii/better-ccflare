@@ -188,6 +188,10 @@ RETRY_BACKOFF=2                        # Retry backoff multiplier
 # Health endpoint
 HEALTH_DETAIL_ENABLED=false            # Enable ?detail=1 on /health to expose per-account status (default: off, set true for internal monitoring)
 
+# Agent Discovery
+BETTER_CCFLARE_DISCOVER_PLUGIN_AGENTS=false  # Set to true to discover agents distributed by Claude Code plugins
+                                       # (reads ~/.claude/plugins/installed_plugins.json)
+
 # Storage
 STORE_PAYLOADS=false                   # Disable storing request/response bodies (reduces DB size and memory usage)
                                        # Token counts, costs, model, status and timing are still recorded
@@ -784,7 +788,8 @@ Inspired by [snipeship/ccflare](https://github.com/snipeship/ccflare) - thanks f
 - [@lunetics](https://github.com/lunetics) - Force-reset rate limit feature allowing manual clearing of stale rate-limit locks via API, CLI, and dashboard with immediate usage polling (PR #68), OOM kill prevention with periodic data retention cleanup, 3-day default retention, and time-scoped stats queries (PR #70), model registry sync removing retired models and adding sonnet-4.6 CLI shortcut (PR #71)
 - [@troykelly](https://github.com/troykelly) - Comprehensive PostgreSQL compatibility fixes including boolean type handling, identifier case preservation, BIGINT string coercion, UNION ALL type alignment, HAVING clause compatibility, parameter ordering corrections, worker initialization, and connection pooling (issue #81); detailed bug report and root cause analysis for `/api/accounts` Invalid Date error affecting PostgreSQL BIGINT columns (issue #88)
 - [@cowwoc](https://github.com/cowwoc) - Compact reliability fixes, space breakdown after cleanup, requests tab without payloads (PR #149); clear stale rate_limited_until when usage API shows capacity restored (PR #150); prevent manually-paused accounts from being selected as auto-fallback candidates (PR #151); balance new sessions by utilization within same-priority accounts using water-filling algorithm (PR #152); fix ModuleNotFound crash in compiled binary when using Compact Database by embedding vacuum-worker at build time (PR #155); expected usage position indicator on rate limit bars showing projected pacing vs. reset window (PR #156); show explicit rate-limited state when usage data unavailable on startup (PR #161); deduplicate concurrent fetchAndCache calls per account to prevent redundant Anthropic requests (PR #159); make GET /api/accounts cache-only and await usage fetch in refresh endpoint, eliminating blind 5s timeout (PR #162); mark account rate-limited when all models exhausted to prevent stale-state retry loops (PR #163); use retry-after header for dynamic model-exhaustion cooldown instead of hardcoded 1 hour (PR #164); remove implicit sonnet catch-all in getModelList preventing silent unexpected model remaps (PR #165); reduce log noise by aggregating auto-unpause skip messages and suppressing identity model mapping logs (PR #167); reasoning effort compatibility layer for OpenAI/Codex routes with deterministic downgrade mapping and count_tokens path support (PR #172, implemented in PR #188)
-- [@zenprocess](https://github.com/zenprocess) - LeastUsed load-balancing strategy selecting accounts by lowest utilization to prevent burst pool-exhaustion (PR #193)
+- [@zenprocess](https://github.com/zenprocess) - LeastUsed load-balancing strategy selecting accounts by lowest utilization to prevent burst pool-exhaustion (PR #193); fix keepalive 429s incorrectly cooling accounts by skipping cooldown application on synthetic keepalive replays, and shorten the no-reset fallback cooldown from 1 hour to 60 seconds (overridable via env) to prevent mass account lockout on burst contention (PR #196)
+- [@CorentinLumineau](https://github.com/CorentinLumineau) - Plugin agent discovery scanning Claude Code plugin directories for agent definitions alongside the built-in agents path, with manifest parsing, name validation, and dashboard display (PR #197)
 
 ## Contributing
 
