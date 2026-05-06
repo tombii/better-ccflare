@@ -37,6 +37,9 @@ export function createAgentsListHandler(dbOps: DatabaseOperations) {
 			const workspaceAgents = agentsWithPreferences.filter(
 				(a) => a.source === "workspace",
 			);
+			const pluginAgents = agentsWithPreferences.filter(
+				(a) => a.source === "plugin",
+			);
 
 			// Get workspaces
 			const workspaces = agentRegistry.getWorkspaces();
@@ -45,6 +48,7 @@ export function createAgentsListHandler(dbOps: DatabaseOperations) {
 				agents: agentsWithPreferences,
 				globalAgents,
 				workspaceAgents,
+				pluginAgents,
 				workspaces,
 			});
 		} catch (error) {

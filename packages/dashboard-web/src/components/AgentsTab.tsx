@@ -174,7 +174,7 @@ Your system prompt content here...`}
 		);
 	}
 
-	const { globalAgents, workspaceAgents, workspaces } = response;
+	const { globalAgents, workspaceAgents, pluginAgents, workspaces } = response;
 	const filteredWorkspaceAgents = selectedWorkspace
 		? workspaceAgents.filter((agent) => agent.workspace === selectedWorkspace)
 		: workspaceAgents;
@@ -212,6 +212,12 @@ Your system prompt content here...`}
 								<Folder className="h-3.5 w-3.5" />
 								{workspaceAgents.length} Workspace
 							</Badge>
+							{pluginAgents.length > 0 && (
+								<Badge variant="secondary" className="gap-1.5">
+									<Package className="h-3.5 w-3.5" />
+									{pluginAgents.length} Plugin
+								</Badge>
+							)}
 						</div>
 					</div>
 				</div>
@@ -416,6 +422,25 @@ Your system prompt content here...`}
 							</div>
 							<div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
 								{filteredWorkspaceAgents.map((agent) => (
+									<AgentCard
+										key={agent.id}
+										agent={agent}
+										onModelChange={handleModelChange}
+										isUpdating={updatePreference.isPending}
+									/>
+								))}
+							</div>
+						</div>
+					)}
+
+					{pluginAgents.length > 0 && (
+						<div className="space-y-4">
+							<div className="flex items-center gap-2">
+								<h3 className="text-lg font-semibold">Plugin Agents</h3>
+								<Badge variant="outline">{pluginAgents.length}</Badge>
+							</div>
+							<div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+								{pluginAgents.map((agent) => (
 									<AgentCard
 										key={agent.id}
 										agent={agent}
