@@ -118,11 +118,20 @@ export async function forwardToClient(
 	const isStream = ctx.provider.isStreamingResponse?.(response) ?? false;
 	const shouldStorePayloads = ctx.config.getStorePayloads?.() ?? true;
 
-	// Filter out count_tokens requests for OpenAI-compatible providers from request logs and worker
-	const shouldProcessRequest = !(
-		ctx.provider.name === "openai-compatible" &&
-		path === "/v1/messages/count_tokens"
-	);
+	// Filter out:
+	//   - count_tokens requests on OpenAI-compatible providers (existing
+	//     filter — these aren't billable user traffic).
+	//   - synthetic auto-refresh probes (issue #199, bug 2). Logging these
+	//     pollutes the user-visible 503/200 metrics on the dashboard with
+	//     internal scheduler activity. Header set by AutoRefreshScheduler
+	//     mirrors the existing keepalive pattern.
+	const isAutoRefreshProbe =
+		requestHeaders.get("x-better-ccflare-auto-refresh") === "true";
+	const shouldProcessRequest =
+		!(
+			ctx.provider.name === "openai-compatible" &&
+			path === "/v1/messages/count_tokens"
+		) && !isAutoRefreshProbe;
 
 	// Send START message immediately if not filtered
 	if (shouldProcessRequest) {

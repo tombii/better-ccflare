@@ -143,6 +143,14 @@ export class AutoRefreshScheduler {
 						OR rate_limit_reset IS NULL
 						OR rate_limit_reset < (? - 24 * 60 * 60 * 1000)
 					)
+					-- Skip accounts that are still inside an active per-account cooldown.
+					-- ccflare already knows upstream will reject us until rate_limited_until,
+					-- so probing during that window is a guaranteed-fail call that wastes
+					-- quota, re-applies the same cooldown, and pollutes the request log
+					-- with synthetic 503s (issue #199, bug 1).
+					AND (
+						rate_limited_until IS NULL OR rate_limited_until <= ?
+					)
 					-- Exclude accounts that are paused for reasons other than overage (e.g. manually
 					-- paused zai/codex accounts, or accounts paused by the failure-threshold guard).
 					-- auto_pause_on_overage_enabled defaults to 0 for zai/codex, so a manually-paused
@@ -155,7 +163,7 @@ export class AutoRefreshScheduler {
 						AND COALESCE(auto_pause_on_overage_enabled, 0) = 0
 					)
 			`,
-				[now, now],
+				[now, now, now],
 			);
 
 			log.debug(
@@ -360,6 +368,13 @@ export class AutoRefreshScheduler {
 				"x-better-ccflare-account-id": account.id,
 				// CRITICAL: Bypass session tracking for auto-refresh messages
 				"x-better-ccflare-bypass-session": "true",
+				// Tag the request as a synthetic auto-refresh probe so downstream
+				// pipeline layers can distinguish it from real user traffic
+				// (cache-body-store skips staging for these, request logging
+				// and pool-exhausted 503 metrics filter them out — issue #199,
+				// bug 2). Mirrors the existing x-better-ccflare-keepalive
+				// pattern used by cache-keepalive-scheduler.ts.
+				"x-better-ccflare-auto-refresh": "true",
 			});
 
 			// Try sending with multiple models if needed

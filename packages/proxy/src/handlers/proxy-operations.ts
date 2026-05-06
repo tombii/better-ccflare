@@ -525,8 +525,15 @@ export async function proxyWithAccount(
 		// Headers are stored because Anthropic's prepareHeaders() copies incoming
 		// client headers (anthropic-version, anthropic-beta, x-stainless-*, etc.)
 		// and augments them — providers that build headers from scratch ignore them.
-		// Skip staging for internal keepalive replays to prevent infinite loop.
-		if (!req.headers.get("x-better-ccflare-keepalive")) {
+		// Skip staging for internal synthetic requests:
+		//   - keepalive replays — prevent infinite loop
+		//   - auto-refresh probes — same loop-prevention concern, plus these
+		//     hit known-cooled accounts and shouldn't pollute the staged-body cache
+		//     (issue #199, bug 2).
+		const isSyntheticInternal =
+			req.headers.get("x-better-ccflare-keepalive") === "true" ||
+			req.headers.get("x-better-ccflare-auto-refresh") === "true";
+		if (!isSyntheticInternal) {
 			cacheBodyStore.stageRequest(
 				requestMeta.id,
 				account.id,
