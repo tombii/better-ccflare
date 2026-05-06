@@ -185,10 +185,11 @@ jobs:
               # Dated sub-commits like feat(04-03): or feat(02-01): are filtered out
               VERSION_SKIP='grep -v "chore: update CLAUDE_CLI_VERSION" | grep -v "chore: update CLI versions" | grep -v "chore: update CODEX_VERSION"'
               DATED_SKIP='grep -vE "[a-f0-9]+ [a-z]+\([0-9]{2}-[0-9]{2}\):" | grep -vE "\([0-9]{2}\): (WR|CR)-[0-9]+"'
-              FEATURES=$(echo "$COMMITS" | grep -E "^[a-f0-9]+ (feat|add|new)[\(:]" | eval "$VERSION_SKIP" | eval "$DATED_SKIP" | sort -u)
-              FIXES=$(echo "$COMMITS" | grep -E "^[a-f0-9]+ (fix|bug|resolve)[\(:]" | eval "$VERSION_SKIP" | eval "$DATED_SKIP" | sort -u)
-              SECURITY=$(echo "$COMMITS" | grep -E "^[a-f0-9]+ (security|vulnerabilit|redact|ReDoS)[\(:]" | eval "$VERSION_SKIP" | eval "$DATED_SKIP" | sort -u)
-              IMPROVEMENTS=$(echo "$COMMITS" | grep -E "^[a-f0-9]+ (improve|enhance|update|refactor)[\(:]" | eval "$VERSION_SKIP" | eval "$DATED_SKIP" | sort -u)
+              THANKS_SKIP='grep -viE "^[a-f0-9]+ [a-z]+:.*\bthank\b"'
+              FEATURES=$(echo "$COMMITS" | grep -E "^[a-f0-9]+ (feat|add|new)[\(:]" | eval "$VERSION_SKIP" | eval "$DATED_SKIP" | eval "$THANKS_SKIP" | sort -u)
+              FIXES=$(echo "$COMMITS" | grep -E "^[a-f0-9]+ (fix|bug|resolve)[\(:]" | eval "$VERSION_SKIP" | eval "$DATED_SKIP" | eval "$THANKS_SKIP" | sort -u)
+              SECURITY=$(echo "$COMMITS" | grep -E "^[a-f0-9]+ (security|vulnerabilit|redact|ReDoS)[\(:]" | eval "$VERSION_SKIP" | eval "$DATED_SKIP" | eval "$THANKS_SKIP" | sort -u)
+              IMPROVEMENTS=$(echo "$COMMITS" | grep -E "^[a-f0-9]+ (improve|enhance|update|refactor)[\(:]" | eval "$VERSION_SKIP" | eval "$DATED_SKIP" | eval "$THANKS_SKIP" | sort -u)
 
               # Breaking changes detection (check prefix and footer)
               BREAKING=$(echo "$COMMITS" | while IFS= read -r commit; do
