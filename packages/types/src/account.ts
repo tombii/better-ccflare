@@ -1,6 +1,11 @@
 export type RateLimitReason =
 	| "upstream_429_with_reset"
+	/** @deprecated written by ccflare ≤ v3.5.x when no-reset 429s used a 5h ban.
+	 *  v3.5.2+ emits `upstream_429_no_reset_probe_cooldown` for the same path
+	 *  with a configurable shorter default. Existing DB rows keep the old
+	 *  value for history. */
 	| "upstream_429_no_reset_default_5h"
+	| "upstream_429_no_reset_probe_cooldown"
 	| "model_fallback_429"
 	| "all_models_exhausted_429";
 

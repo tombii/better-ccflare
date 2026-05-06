@@ -1,4 +1,9 @@
-import { getModelList, logError, ProviderError } from "@better-ccflare/core";
+import {
+	getModelList,
+	logError,
+	ProviderError,
+	TIME_CONSTANTS,
+} from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import { stripCacheControlFromOpenAIRequest } from "@better-ccflare/openai-formats";
 import { getProvider, usageCache } from "@better-ccflare/providers";
@@ -22,7 +27,13 @@ const log = new Logger("ProxyOperations");
  * should be marked rate-limited after model exhaustion. Priority:
  *   1. retry-after / x-ratelimit-reset response header (actual upstream backoff)
  *   2. getRateLimitedUntil — usage-window reset time if known
- *   3. 1-hour default as last resort
+ *   3. probe-cooldown default (TIME_CONSTANTS.DEFAULT_RATE_LIMIT_NO_RESET_COOLDOWN_MS,
+ *      60s by default, overridable via CCFLARE_DEFAULT_COOLDOWN_NO_RESET_MS) as
+ *      last resort. Was a 1-hour ban prior to v3.5.x — that locked accounts
+ *      out unnecessarily when upstream returned a transient 429 without a
+ *      reset hint, draining small pools to zero routable accounts on a
+ *      single burst. Aligns with the same default used in
+ *      response-processor.ts when 429s arrive without a reset header.
  *
  * The result is always clamped to at least 60 seconds in the future to avoid a
  * zero or negative value when a parsed timestamp is already in the past.
@@ -37,7 +48,13 @@ export function extractCooldownUntil(
 	getRateLimitedUntil: (accountId: string) => number | null,
 ): number {
 	const MIN_COOLDOWN_MS = 60 * 1000; // 60 seconds floor
-	const DEFAULT_COOLDOWN_MS = 60 * 60 * 1000; // 1 hour
+	// Use `||` (not `??`) so empty-string and non-numeric env values
+	// (Number("") === 0, Number("abc") === NaN) fall through to the
+	// default — `??` would coalesce the empty string to 0 and silently
+	// disable the cooldown entirely.
+	const DEFAULT_COOLDOWN_MS =
+		Number(process.env.CCFLARE_DEFAULT_COOLDOWN_NO_RESET_MS) ||
+		TIME_CONSTANTS.DEFAULT_RATE_LIMIT_NO_RESET_COOLDOWN_MS;
 	const now = Date.now();
 
 	// 1. Check retry-after / x-ratelimit-reset headers
@@ -699,6 +716,22 @@ export async function proxyWithAccount(
 					// accounts are available; only genuine model-not-found
 					// errors (404/400) warrant returning the upstream response.
 					if (rawResponse.status === 429) {
+						// Skip cooldown on synthetic cache-keepalive replays. The
+						// keepalive scheduler fires parallel requests to every
+						// cached account; a burst of 4+ simultaneous requests
+						// trips Anthropic's per-IP burst limit and 429s every
+						// account at the same instant. Applying real cooldowns
+						// here drains the pool to zero routable accounts even
+						// though no real user-facing rate limit was hit.
+						const isKeepalive =
+							req.headers.get("x-better-ccflare-keepalive") === "true";
+						if (isKeepalive) {
+							log.warn(
+								`Keepalive replay for ${account.name} got 429 — skipping cooldown (synthetic burst, not a real per-account rate limit)`,
+							);
+							return null;
+						}
+
 						log.warn(
 							`Account ${account.name} rate-limited (429), no model fallbacks — failing over to next account`,
 						);
@@ -808,19 +841,34 @@ export async function proxyWithAccount(
 				// Only fire for genuine rate-limit responses (429); model-not-found
 				// (404/400) is a configuration issue, not account exhaustion.
 				if (rawResponse.status === 429) {
-					const cooldownUntil = extractCooldownUntil(
-						rawResponse,
-						account.id,
-						usageCache.getRateLimitedUntil.bind(usageCache),
-					);
-					const reason: RateLimitReason = "all_models_exhausted_429";
-					log.warn(
-						`[ccflare] account=${account.name} cooldown_applied reason=${reason} until=${new Date(cooldownUntil).toISOString()}`,
-					);
-					account.rate_limited_until = cooldownUntil;
-					ctx.asyncWriter.enqueue(() =>
-						ctx.dbOps.markAccountRateLimited(account.id, cooldownUntil, reason),
-					);
+					// Same keepalive-skip as the no-fallback path above: synthetic
+					// keepalive bursts can trip Anthropic's per-IP limit even when
+					// individual accounts are healthy.
+					const isKeepalive =
+						req.headers.get("x-better-ccflare-keepalive") === "true";
+					if (isKeepalive) {
+						log.warn(
+							`Keepalive replay for ${account.name} got 429 (post-model-list) — skipping cooldown`,
+						);
+					} else {
+						const cooldownUntil = extractCooldownUntil(
+							rawResponse,
+							account.id,
+							usageCache.getRateLimitedUntil.bind(usageCache),
+						);
+						const reason: RateLimitReason = "all_models_exhausted_429";
+						log.warn(
+							`[ccflare] account=${account.name} cooldown_applied reason=${reason} until=${new Date(cooldownUntil).toISOString()}`,
+						);
+						account.rate_limited_until = cooldownUntil;
+						ctx.asyncWriter.enqueue(() =>
+							ctx.dbOps.markAccountRateLimited(
+								account.id,
+								cooldownUntil,
+								reason,
+							),
+						);
+					}
 				}
 				return null;
 			}

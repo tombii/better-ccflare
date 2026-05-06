@@ -44,7 +44,10 @@ const log = new Logger("AccountsHandler");
 
 const RATE_LIMIT_REASONS = new Set<RateLimitReason>([
 	"upstream_429_with_reset",
+	// Kept for backwards-compat with DB rows written by ccflare ≤ v3.5.x;
+	// new code emits `upstream_429_no_reset_probe_cooldown` instead.
 	"upstream_429_no_reset_default_5h",
+	"upstream_429_no_reset_probe_cooldown",
 	"model_fallback_429",
 	"all_models_exhausted_429",
 ]);
