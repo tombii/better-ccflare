@@ -188,6 +188,10 @@ RETRY_BACKOFF=2                        # Retry backoff multiplier
 # Health endpoint
 HEALTH_DETAIL_ENABLED=false            # Enable ?detail=1 on /health to expose per-account status (default: off, set true for internal monitoring)
 
+# Agent Discovery
+BETTER_CCFLARE_DISCOVER_PLUGIN_AGENTS=false  # Set to true to discover agents distributed by Claude Code plugins
+                                       # (reads ~/.claude/plugins/installed_plugins.json)
+
 # Storage
 STORE_PAYLOADS=false                   # Disable storing request/response bodies (reduces DB size and memory usage)
                                        # Token counts, costs, model, status and timing are still recorded

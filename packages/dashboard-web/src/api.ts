@@ -42,6 +42,7 @@ export interface AgentsResponse {
 	agents: Agent[];
 	globalAgents: Agent[];
 	workspaceAgents: Agent[];
+	pluginAgents: Agent[];
 	workspaces: AgentWorkspace[];
 }
 

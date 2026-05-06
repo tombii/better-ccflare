@@ -1,6 +1,6 @@
 import { CLAUDE_MODEL_IDS, isValidClaudeModel } from "@better-ccflare/core";
 
-export type AgentSource = "global" | "workspace";
+export type AgentSource = "global" | "workspace" | "plugin";
 
 export type AgentTool =
 	| "Bash"
@@ -34,6 +34,7 @@ export interface Agent {
 	workspace?: string; // workspace path if source is "workspace"
 	tools?: AgentTool[]; // parsed from tools: front-matter
 	filePath: string; // absolute path of the markdown file
+	pluginName?: string; // set only when source === "plugin"; derived from the plugin manifest key
 }
 
 export type AgentResponse = Agent[];

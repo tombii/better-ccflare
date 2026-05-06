@@ -1,5 +1,6 @@
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { readdir, readFile, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { Config } from "@better-ccflare/config";
 import { CLAUDE_MODEL_IDS, isValidClaudeModel } from "@better-ccflare/core";
@@ -11,7 +12,11 @@ import type {
 	AgentWorkspace,
 	AllowedModel,
 } from "@better-ccflare/types";
-import { getAgentsDirectory } from "./paths";
+import {
+	getAgentsDirectory,
+	getPluginManifestPath,
+	parsePluginManifest,
+} from "./paths";
 import { workspacePersistence } from "./workspace-persistence";
 
 interface AgentCache {
@@ -21,6 +26,7 @@ interface AgentCache {
 
 const CACHE_TTL_MS = 30 * 1000; // 30 seconds
 const DEFAULT_COLOR = "gray";
+const PLUGIN_AGENT_DISCOVERY_ENV = "BETTER_CCFLARE_DISCOVER_PLUGIN_AGENTS";
 
 const log = new Logger("AgentRegistry");
 
@@ -29,9 +35,11 @@ export class AgentRegistry {
 	private workspaces: Map<string, AgentWorkspace> = new Map();
 	private initialized = false;
 	private config: Config;
+	private readonly manifestPathOverride?: string;
 
-	constructor() {
+	constructor(manifestPathOverride?: string) {
 		this.config = new Config();
+		this.manifestPathOverride = manifestPathOverride;
 	}
 
 	// Initialize the registry (load persisted workspaces)
@@ -62,15 +70,25 @@ export class AgentRegistry {
 		return isValidClaudeModel(model);
 	}
 
+	private safeRealPath(filePath: string): string {
+		try {
+			return realpathSync(filePath);
+		} catch {
+			return filePath;
+		}
+	}
+
 	private async loadAgentFromFile(
 		filePath: string,
-		source: "global" | "workspace",
+		source: "global" | "workspace" | "plugin",
 		workspace?: string,
+		additionalAllowedPaths?: string[],
 	): Promise<Agent | null> {
 		try {
 			// Validate file path for security
 			const safePath = validatePathOrThrow(filePath, {
 				description: "agent file",
+				...(additionalAllowedPaths && { additionalAllowedPaths }),
 			});
 			const content = await readFile(safePath, "utf-8");
 
@@ -175,6 +193,7 @@ export class AgentRegistry {
 	async loadAgents(): Promise<void> {
 		const agents: Agent[] = [];
 		const seenIds = new Set<string>();
+		const seenRealPaths = new Set<string>();
 
 		// Load global agents
 		const globalDir = getAgentsDirectory();
@@ -185,6 +204,15 @@ export class AgentRegistry {
 
 				for (const file of mdFiles) {
 					const filePath = join(globalDir, file);
+
+					// Symlink dedup
+					const realPath = this.safeRealPath(filePath);
+					if (seenRealPaths.has(realPath)) {
+						log.debug(`Skipping duplicate agent (symlink dedup): ${filePath}`);
+						continue;
+					}
+					seenRealPaths.add(realPath);
+
 					const agent = await this.loadAgentFromFile(filePath, "global");
 
 					if (agent) {
@@ -223,6 +251,15 @@ export class AgentRegistry {
 
 				for (const file of mdFiles) {
 					const filePath = join(workspaceAgentsDir, file);
+
+					// Symlink dedup
+					const realPath = this.safeRealPath(filePath);
+					if (seenRealPaths.has(realPath)) {
+						log.debug(`Skipping duplicate agent (symlink dedup): ${filePath}`);
+						continue;
+					}
+					seenRealPaths.add(realPath);
+
 					const agent = await this.loadAgentFromFile(
 						filePath,
 						"workspace",
@@ -258,10 +295,86 @@ export class AgentRegistry {
 			}
 		}
 
+		// Load plugin agents (feature-gated)
+		await this.loadPluginAgents(agents, seenIds, seenRealPaths);
+
 		this.cache = { agents, timestamp: Date.now() };
 		log.info(
-			`Total agents loaded: ${agents.length} (${agents.filter((a) => a.source === "global").length} global, ${agents.filter((a) => a.source === "workspace").length} workspace)`,
+			`Total agents loaded: ${agents.length} (${agents.filter((a) => a.source === "global").length} global, ${agents.filter((a) => a.source === "workspace").length} workspace, ${agents.filter((a) => a.source === "plugin").length} plugin)`,
 		);
+	}
+
+	private async loadPluginAgents(
+		agents: Agent[],
+		seenIds: Set<string>,
+		seenRealPaths: Set<string>,
+	): Promise<void> {
+		if (process.env[PLUGIN_AGENT_DISCOVERY_ENV] !== "true") return;
+
+		const manifestPath = this.manifestPathOverride ?? getPluginManifestPath();
+		const pluginEntries = parsePluginManifest(manifestPath);
+		const pluginAllowedPaths = [join(homedir(), ".claude", "plugins")];
+
+		let totalLoaded = 0;
+		for (const { pluginName, agentsDir } of pluginEntries) {
+			// Validate agentsDir before reading to prevent path traversal via manifest
+			try {
+				validatePathOrThrow(agentsDir, {
+					description: "plugin agents directory",
+					additionalAllowedPaths: pluginAllowedPaths,
+				});
+			} catch {
+				log.debug(
+					`Plugin agents directory failed path validation: ${agentsDir}`,
+				);
+				continue;
+			}
+
+			let files: string[];
+			try {
+				files = await readdir(agentsDir);
+			} catch {
+				continue;
+			}
+
+			for (const file of files.filter((f) => f.endsWith(".md"))) {
+				const filePath = join(agentsDir, file);
+
+				// Symlink dedup
+				const realPath = this.safeRealPath(filePath);
+				if (seenRealPaths.has(realPath)) {
+					log.debug(
+						`Skipping duplicate plugin agent (symlink dedup): ${filePath}`,
+					);
+					continue;
+				}
+				seenRealPaths.add(realPath);
+
+				const agent = await this.loadAgentFromFile(
+					filePath,
+					"plugin",
+					undefined,
+					pluginAllowedPaths,
+				);
+				if (!agent) continue;
+
+				const pluginAgentId = `${pluginName}:${agent.id}`;
+				if (seenIds.has(pluginAgentId)) {
+					log.debug(
+						`Duplicate plugin agent id ${pluginAgentId} in ${filePath} — skipping`,
+					);
+					continue;
+				}
+				seenIds.add(pluginAgentId);
+
+				agent.id = pluginAgentId;
+				agent.pluginName = pluginName;
+				agents.push(agent);
+				totalLoaded++;
+			}
+		}
+
+		log.info(`Loaded ${totalLoaded} plugin agents`);
 	}
 
 	async getAgents(): Promise<Agent[]> {
