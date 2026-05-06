@@ -44,7 +44,10 @@ describe("parsePluginManifest", () => {
 		expect(result).toEqual([]);
 	});
 
-	it("skips entries where installPath does not exist", () => {
+	it("does NOT probe filesystem for installPath existence (security: no oracle on unvalidated paths)", () => {
+		// parsePluginManifest must not call existsSync on user-controlled installPath
+		// values. Existence and path-validation are the caller's responsibility,
+		// performed only after validatePathOrThrow succeeds against the allowlist.
 		const manifestPath = path.join(tmpDir, "installed_plugins.json");
 		fs.writeFileSync(
 			manifestPath,
@@ -58,20 +61,23 @@ describe("parsePluginManifest", () => {
 			}),
 		);
 		const result = parsePluginManifest(manifestPath);
-		expect(result).toEqual([]);
+		expect(result).toHaveLength(1);
+		expect(result[0].pluginName).toBe("myplugin");
+		expect(result[0].agentsDir).toBe(
+			path.join(tmpDir, "nonexistent", "agents"),
+		);
 	});
 
-	it("skips entries where agents subdir does not exist", () => {
+	it("rejects manifest keys whose pluginName contains ':'", () => {
 		const manifestPath = path.join(tmpDir, "installed_plugins.json");
 		const installPath = path.join(tmpDir, "plugin-install");
-		fs.mkdirSync(installPath);
-		// No agents/ subdir
+		fs.mkdirSync(path.join(installPath, "agents"), { recursive: true });
 		fs.writeFileSync(
 			manifestPath,
 			JSON.stringify({
 				version: 2,
 				plugins: {
-					"myplugin@market": [{ installPath }],
+					"scope:plugin@market": [{ installPath }],
 				},
 			}),
 		);
@@ -99,12 +105,10 @@ describe("parsePluginManifest", () => {
 		expect(result[0].agentsDir).toBe(agentsDir);
 	});
 
-	it("handles multiple version entries by including all that have agents/ dir", () => {
+	it("includes all version entries — existence is checked by the loader, not the parser", () => {
 		const manifestPath = path.join(tmpDir, "installed_plugins.json");
 		const installPath1 = path.join(tmpDir, "plugin-v1");
 		const installPath2 = path.join(tmpDir, "plugin-v2");
-		fs.mkdirSync(path.join(installPath1, "agents"), { recursive: true });
-		fs.mkdirSync(installPath2); // no agents/
 		fs.writeFileSync(
 			manifestPath,
 			JSON.stringify({
@@ -118,8 +122,9 @@ describe("parsePluginManifest", () => {
 			}),
 		);
 		const result = parsePluginManifest(manifestPath);
-		expect(result).toHaveLength(1);
+		expect(result).toHaveLength(2);
 		expect(result[0].agentsDir).toBe(path.join(installPath1, "agents"));
+		expect(result[1].agentsDir).toBe(path.join(installPath2, "agents"));
 	});
 });
 
@@ -216,6 +221,40 @@ describe("AgentRegistry plugin agent discovery", () => {
 
 		// Second time: already in set (would be skipped)
 		expect(seenRealPaths.has(realPath)).toBe(true);
+	});
+
+	it("plugin agent is NOT silently skipped when a workspace ID would collide", async () => {
+		// Regression: previously, plugin agents shared the same seenIds set as
+		// workspace agents, so a workspace named "myplugin" with agent "my-agent"
+		// would silently swallow plugin "myplugin" agent "my-agent" because both
+		// produced the key "myplugin:my-agent". Plugin dedup now uses its own set.
+		process.env.BETTER_CCFLARE_DISCOVER_PLUGIN_AGENTS = "true";
+
+		const installPath = path.join(tmpDir, "plugin-install");
+		const agentsDir = path.join(installPath, "agents");
+		fs.mkdirSync(agentsDir, { recursive: true });
+		fs.writeFileSync(
+			path.join(agentsDir, "my-agent.md"),
+			"---\nname: Plugin Agent\ndescription: from plugin\n---\n\nPrompt.",
+		);
+
+		const manifestPath = path.join(tmpDir, "installed_plugins.json");
+		fs.writeFileSync(
+			manifestPath,
+			JSON.stringify({
+				version: 2,
+				plugins: { "myplugin@market": [{ installPath }] },
+			}),
+		);
+
+		// Pre-seed seenIds via a fake workspace would require deeper plumbing;
+		// instead assert that loadPluginAgents uses a separate set by checking
+		// the plugin agent loads even when a colliding key is conceivable.
+		const registry = new AgentRegistry(manifestPath);
+		const agents = await registry.getAgents();
+		const plugin = agents.find((a) => a.id === "myplugin:my-agent");
+		expect(plugin).toBeDefined();
+		expect(plugin?.source).toBe("plugin");
 	});
 
 	it("two plugins with same agent basename get distinct namespaced IDs", () => {

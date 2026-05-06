@@ -296,7 +296,7 @@ export class AgentRegistry {
 		}
 
 		// Load plugin agents (feature-gated)
-		await this.loadPluginAgents(agents, seenIds, seenRealPaths);
+		await this.loadPluginAgents(agents, seenRealPaths);
 
 		this.cache = { agents, timestamp: Date.now() };
 		log.info(
@@ -306,7 +306,6 @@ export class AgentRegistry {
 
 	private async loadPluginAgents(
 		agents: Agent[],
-		seenIds: Set<string>,
 		seenRealPaths: Set<string>,
 	): Promise<void> {
 		if (process.env[PLUGIN_AGENT_DISCOVERY_ENV] !== "true") return;
@@ -315,9 +314,15 @@ export class AgentRegistry {
 		const pluginEntries = parsePluginManifest(manifestPath);
 		const pluginAllowedPaths = [join(homedir(), ".claude", "plugins")];
 
+		// Source-scoped dedup set: prevents collisions with workspace-namespaced
+		// IDs in seenIds (a workspace named "foo" + agent "bar" would otherwise
+		// silently shadow plugin "foo" + agent "bar").
+		const seenPluginIds = new Set<string>();
+
 		let totalLoaded = 0;
 		for (const { pluginName, agentsDir } of pluginEntries) {
-			// Validate agentsDir before reading to prevent path traversal via manifest
+			// Validate agentsDir before any filesystem probe to prevent path
+			// traversal / existence oracle via manifest installPath.
 			try {
 				validatePathOrThrow(agentsDir, {
 					description: "plugin agents directory",
@@ -359,13 +364,13 @@ export class AgentRegistry {
 				if (!agent) continue;
 
 				const pluginAgentId = `${pluginName}:${agent.id}`;
-				if (seenIds.has(pluginAgentId)) {
+				if (seenPluginIds.has(pluginAgentId)) {
 					log.debug(
 						`Duplicate plugin agent id ${pluginAgentId} in ${filePath} — skipping`,
 					);
 					continue;
 				}
-				seenIds.add(pluginAgentId);
+				seenPluginIds.add(pluginAgentId);
 
 				agent.id = pluginAgentId;
 				agent.pluginName = pluginName;

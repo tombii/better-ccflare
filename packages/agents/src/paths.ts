@@ -58,15 +58,24 @@ export function parsePluginManifest(
 		const pluginName = key.split("@")[0];
 		if (!pluginName || !Array.isArray(entries)) continue;
 
+		// Reject names containing ":" — the agent ID format pluginName:basename
+		// uses ":" as a delimiter, so embedded colons would corrupt downstream parsing
+		// and could collide with workspace-prefixed IDs.
+		if (pluginName.includes(":")) {
+			log.warn(
+				`Plugin manifest key "${key}" produces a name with ":" — skipping`,
+			);
+			continue;
+		}
+
 		for (const entry of entries) {
-			if (!entry?.installPath) continue;
-
-			const agentsDir = join(entry.installPath, "agents");
-			if (!existsSync(agentsDir)) {
-				log.debug(`Plugin agents directory not found: ${agentsDir}`);
+			if (!entry?.installPath || typeof entry.installPath !== "string")
 				continue;
-			}
 
+			// Defer existsSync probe to the caller after path validation —
+			// running existsSync on unvalidated user-controlled paths leaks a
+			// filesystem oracle for arbitrary locations.
+			const agentsDir = join(entry.installPath, "agents");
 			result.push({ pluginName, agentsDir });
 		}
 	}
