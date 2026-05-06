@@ -296,7 +296,7 @@ export class AgentRegistry {
 		}
 
 		// Load plugin agents (feature-gated)
-		await this.loadPluginAgents(agents, seenRealPaths);
+		await this.loadPluginAgents(agents, seenIds, seenRealPaths);
 
 		this.cache = { agents, timestamp: Date.now() };
 		log.info(
@@ -306,6 +306,7 @@ export class AgentRegistry {
 
 	private async loadPluginAgents(
 		agents: Agent[],
+		seenIds: Set<string>,
 		seenRealPaths: Set<string>,
 	): Promise<void> {
 		if (process.env[PLUGIN_AGENT_DISCOVERY_ENV] !== "true") return;
@@ -314,9 +315,10 @@ export class AgentRegistry {
 		const pluginEntries = parsePluginManifest(manifestPath);
 		const pluginAllowedPaths = [join(homedir(), ".claude", "plugins")];
 
-		// Source-scoped dedup set: prevents collisions with workspace-namespaced
-		// IDs in seenIds (a workspace named "foo" + agent "bar" would otherwise
-		// silently shadow plugin "foo" + agent "bar").
+		// Plugin-scoped dedup avoids two plugin files with the same final ID.
+		// Cross-source collisions against seenIds are handled below with a warn,
+		// not a debug — final agent IDs in agents[] must be unique regardless of
+		// source, otherwise downstream agents.find() lookups become ambiguous.
 		const seenPluginIds = new Set<string>();
 
 		let totalLoaded = 0;
@@ -370,7 +372,14 @@ export class AgentRegistry {
 					);
 					continue;
 				}
+				if (seenIds.has(pluginAgentId)) {
+					log.warn(
+						`Plugin agent id ${pluginAgentId} (from ${filePath}) collides with an already-loaded agent — skipping plugin entry`,
+					);
+					continue;
+				}
 				seenPluginIds.add(pluginAgentId);
+				seenIds.add(pluginAgentId);
 
 				agent.id = pluginAgentId;
 				agent.pluginName = pluginName;
