@@ -9,16 +9,10 @@ export function getAgentsDirectory(): string {
 	return join(homedir(), ".claude", "agents");
 }
 
-/** Returns the path to the Claude Code plugin manifest file. */
 export function getPluginManifestPath(): string {
 	return join(homedir(), ".claude", "plugins", "installed_plugins.json");
 }
 
-/**
- * Parses the Claude Code plugin manifest to enumerate active plugin agent directories.
- * Returns an empty array when the manifest is missing, malformed, or has no valid entries.
- * Each returned entry has pluginName (derived from manifest key before "@") and agentsDir (installPath/agents).
- */
 export function parsePluginManifest(
 	manifestPath: string,
 ): Array<{ pluginName: string; agentsDir: string }> {
