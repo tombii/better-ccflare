@@ -745,17 +745,17 @@ export async function proxyWithAccount(
 							`[ccflare] account=${account.name} cooldown_applied reason=${reason} until=${new Date(cooldownUntil).toISOString()}`,
 						);
 						account.rate_limited_until = cooldownUntil;
-						const _rt1 = Date.now() - requestMeta.timestamp;
+						const responseTime = Date.now() - requestMeta.timestamp;
 						ctx.asyncWriter.enqueue(() =>
 							ctx.dbOps.saveRequest(
-								requestMeta.id,
+								crypto.randomUUID(),
 								req.method,
 								url.pathname,
 								account.id,
 								429,
 								false,
 								reason,
-								_rt1,
+								responseTime,
 								failoverAttempts,
 								undefined,
 								requestMeta.agentUsed ?? undefined,
@@ -882,17 +882,17 @@ export async function proxyWithAccount(
 							`[ccflare] account=${account.name} cooldown_applied reason=${reason} until=${new Date(cooldownUntil).toISOString()}`,
 						);
 						account.rate_limited_until = cooldownUntil;
-						const _rt2 = Date.now() - requestMeta.timestamp;
+						const responseTime = Date.now() - requestMeta.timestamp;
 						ctx.asyncWriter.enqueue(() =>
 							ctx.dbOps.saveRequest(
-								requestMeta.id,
+								crypto.randomUUID(),
 								req.method,
 								url.pathname,
 								account.id,
 								429,
 								false,
 								reason,
-								_rt2,
+								responseTime,
 								failoverAttempts,
 								undefined,
 								requestMeta.agentUsed ?? undefined,
