@@ -745,6 +745,27 @@ export async function proxyWithAccount(
 							`[ccflare] account=${account.name} cooldown_applied reason=${reason} until=${new Date(cooldownUntil).toISOString()}`,
 						);
 						account.rate_limited_until = cooldownUntil;
+						const responseTime = Date.now() - requestMeta.timestamp;
+						ctx.asyncWriter.enqueue(() =>
+							ctx.dbOps.saveRequest(
+								crypto.randomUUID(),
+								req.method,
+								url.pathname,
+								account.id,
+								429,
+								false,
+								reason,
+								responseTime,
+								failoverAttempts,
+								undefined,
+								requestMeta.agentUsed ?? undefined,
+								apiKeyId ?? undefined,
+								apiKeyName ?? undefined,
+								requestMeta.project ?? null,
+								undefined,
+								requestMeta.comboName ?? null,
+							),
+						);
 						ctx.asyncWriter.enqueue(() =>
 							ctx.dbOps.markAccountRateLimited(
 								account.id,
@@ -861,6 +882,27 @@ export async function proxyWithAccount(
 							`[ccflare] account=${account.name} cooldown_applied reason=${reason} until=${new Date(cooldownUntil).toISOString()}`,
 						);
 						account.rate_limited_until = cooldownUntil;
+						const responseTime = Date.now() - requestMeta.timestamp;
+						ctx.asyncWriter.enqueue(() =>
+							ctx.dbOps.saveRequest(
+								crypto.randomUUID(),
+								req.method,
+								url.pathname,
+								account.id,
+								429,
+								false,
+								reason,
+								responseTime,
+								failoverAttempts,
+								undefined,
+								requestMeta.agentUsed ?? undefined,
+								apiKeyId ?? undefined,
+								apiKeyName ?? undefined,
+								requestMeta.project ?? null,
+								undefined,
+								requestMeta.comboName ?? null,
+							),
+						);
 						ctx.asyncWriter.enqueue(() =>
 							ctx.dbOps.markAccountRateLimited(
 								account.id,
