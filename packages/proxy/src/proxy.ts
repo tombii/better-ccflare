@@ -345,41 +345,51 @@ export async function handleProxy(
 
 		const poolExhaustedResponse = createPoolExhaustedResponse(allAccounts);
 
-		// Send error message to usage worker for request history logging
-		ctx.usageWorker.postMessage({
-			type: "start",
-			messageId: crypto.randomUUID(),
-			requestId: requestMeta.id,
-			accountId: null,
-			method: req.method,
-			path: url.pathname,
-			timestamp: requestMeta.timestamp,
-			requestHeaders: Object.fromEntries(req.headers.entries()),
-			requestBody: null,
-			project: project ?? null,
-			responseStatus: 503,
-			responseHeaders: Object.fromEntries(
-				poolExhaustedResponse.headers.entries(),
-			),
-			isStream: false,
-			providerName: ctx.provider.name,
-			accountBillingType: null,
-			accountAutoPauseOnOverageEnabled: 0,
-			accountName: null,
-			agentUsed: agentUsed || null,
-			comboName: null,
-			apiKeyId: apiKeyId || null,
-			apiKeyName: apiKeyName || null,
-			retryAttempt: 0,
-			failoverAttempts: 0,
-		});
+		// Skip request-log staging for synthetic auto-refresh probes that
+		// 503 because their target account is on a known cooldown. Logging
+		// these as user-facing 503s inflates the dashboard fail-rate without
+		// reflecting any real client impact (issue #199, bug 2). The keepalive
+		// scheduler already gets the equivalent treatment via its loop-prevention
+		// header path; this brings auto-refresh in line.
+		const isAutoRefreshProbe =
+			req.headers.get("x-better-ccflare-auto-refresh") === "true";
+		if (!isAutoRefreshProbe) {
+			// Send error message to usage worker for request history logging
+			ctx.usageWorker.postMessage({
+				type: "start",
+				messageId: crypto.randomUUID(),
+				requestId: requestMeta.id,
+				accountId: null,
+				method: req.method,
+				path: url.pathname,
+				timestamp: requestMeta.timestamp,
+				requestHeaders: Object.fromEntries(req.headers.entries()),
+				requestBody: null,
+				project: project ?? null,
+				responseStatus: 503,
+				responseHeaders: Object.fromEntries(
+					poolExhaustedResponse.headers.entries(),
+				),
+				isStream: false,
+				providerName: ctx.provider.name,
+				accountBillingType: null,
+				accountAutoPauseOnOverageEnabled: 0,
+				accountName: null,
+				agentUsed: agentUsed || null,
+				comboName: null,
+				apiKeyId: apiKeyId || null,
+				apiKeyName: apiKeyName || null,
+				retryAttempt: 0,
+				failoverAttempts: 0,
+			});
 
-		ctx.usageWorker.postMessage({
-			type: "end",
-			requestId: requestMeta.id,
-			success: false,
-			error: "pool_exhausted",
-		});
+			ctx.usageWorker.postMessage({
+				type: "end",
+				requestId: requestMeta.id,
+				success: false,
+				error: "pool_exhausted",
+			});
+		}
 
 		return poolExhaustedResponse;
 	}

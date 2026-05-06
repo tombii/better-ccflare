@@ -118,11 +118,20 @@ export async function forwardToClient(
 	const isStream = ctx.provider.isStreamingResponse?.(response) ?? false;
 	const shouldStorePayloads = ctx.config.getStorePayloads?.() ?? true;
 
-	// Filter out count_tokens requests for OpenAI-compatible providers from request logs and worker
-	const shouldProcessRequest = !(
-		ctx.provider.name === "openai-compatible" &&
-		path === "/v1/messages/count_tokens"
-	);
+	// Filter out:
+	//   - count_tokens requests on OpenAI-compatible providers (existing
+	//     filter — these aren't billable user traffic).
+	//   - synthetic auto-refresh probes (issue #199, bug 2). Logging these
+	//     pollutes the user-visible 503/200 metrics on the dashboard with
+	//     internal scheduler activity. Header set by AutoRefreshScheduler
+	//     mirrors the existing keepalive pattern.
+	const isAutoRefreshProbe =
+		requestHeaders.get("x-better-ccflare-auto-refresh") === "true";
+	const shouldProcessRequest =
+		!(
+			ctx.provider.name === "openai-compatible" &&
+			path === "/v1/messages/count_tokens"
+		) && !isAutoRefreshProbe;
 
 	// Send START message immediately if not filtered
 	if (shouldProcessRequest) {
@@ -279,12 +288,14 @@ export async function forwardToClient(
 
 						if (value) {
 							lastChunkTime = Date.now();
-							const chunkMsg: ChunkMessage = {
-								type: "chunk",
-								requestId,
-								data: value,
-							};
-							safePostMessage(ctx.usageWorker, chunkMsg);
+							if (shouldProcessRequest) {
+								const chunkMsg: ChunkMessage = {
+									type: "chunk",
+									requestId,
+									data: value,
+								};
+								safePostMessage(ctx.usageWorker, chunkMsg);
+							}
 
 							// Mid-stream rate-limit detection. The sniffer
 							// fires exactly once; after that feed() is a no-op.
@@ -309,20 +320,24 @@ export async function forwardToClient(
 					}
 				}
 				// Finished without errors
-				const endMsg: EndMessage = {
-					type: "end",
-					requestId,
-					success: isExpectedResponse(path, analyticsResponse),
-				};
-				safePostMessage(ctx.usageWorker, endMsg);
+				if (shouldProcessRequest) {
+					const endMsg: EndMessage = {
+						type: "end",
+						requestId,
+						success: isExpectedResponse(path, analyticsResponse),
+					};
+					safePostMessage(ctx.usageWorker, endMsg);
+				}
 			} catch (err) {
-				const endMsg: EndMessage = {
-					type: "end",
-					requestId,
-					success: false,
-					error: (err as Error).message,
-				};
-				safePostMessage(ctx.usageWorker, endMsg);
+				if (shouldProcessRequest) {
+					const endMsg: EndMessage = {
+						type: "end",
+						requestId,
+						success: false,
+						error: (err as Error).message,
+					};
+					safePostMessage(ctx.usageWorker, endMsg);
+				}
 			}
 		})();
 
@@ -334,13 +349,15 @@ export async function forwardToClient(
 	 *  NON-STREAMING RESPONSES — read body in background, send END once
 	 *********************************************************************/
 	if (!response.body) {
-		const endMsg: EndMessage = {
-			type: "end",
-			requestId,
-			responseBody: null,
-			success: isExpectedResponse(path, response),
-		};
-		safePostMessage(ctx.usageWorker, endMsg);
+		if (shouldProcessRequest) {
+			const endMsg: EndMessage = {
+				type: "end",
+				requestId,
+				responseBody: null,
+				success: isExpectedResponse(path, response),
+			};
+			safePostMessage(ctx.usageWorker, endMsg);
+		}
 
 		return response;
 	}
@@ -385,22 +402,26 @@ export async function forwardToClient(
 				}
 				cappedBuf = Buffer.concat(chunks);
 			}
-			const endMsg: EndMessage = {
-				type: "end",
-				requestId,
-				responseBody:
-					cappedBuf.byteLength > 0 ? cappedBuf.toString("base64") : null,
-				success: isExpectedResponse(path, analyticsResponse),
-			};
-			safePostMessage(ctx.usageWorker, endMsg);
+			if (shouldProcessRequest) {
+				const endMsg: EndMessage = {
+					type: "end",
+					requestId,
+					responseBody:
+						cappedBuf.byteLength > 0 ? cappedBuf.toString("base64") : null,
+					success: isExpectedResponse(path, analyticsResponse),
+				};
+				safePostMessage(ctx.usageWorker, endMsg);
+			}
 		} catch (err) {
-			const endMsg: EndMessage = {
-				type: "end",
-				requestId,
-				success: false,
-				error: (err as Error).message,
-			};
-			safePostMessage(ctx.usageWorker, endMsg);
+			if (shouldProcessRequest) {
+				const endMsg: EndMessage = {
+					type: "end",
+					requestId,
+					success: false,
+					error: (err as Error).message,
+				};
+				safePostMessage(ctx.usageWorker, endMsg);
+			}
 		}
 	})();
 
