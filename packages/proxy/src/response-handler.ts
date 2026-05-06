@@ -17,9 +17,19 @@ type ResponseWithAnalyticsStream = Response & {
 
 // Default cooldown for rate-limit errors detected mid-stream. SSE error
 // frames don't carry reset headers (HTTP headers were sent before the
-// error occurred), so we fall back to the same 5h default that
-// response-processor.ts uses for headerless 429 responses.
-const MID_STREAM_RATE_LIMIT_COOLDOWN_MS = 5 * 60 * 60 * 1000;
+// error occurred), so we fall back to the same probe-friendly default
+// that response-processor.ts uses for headerless 429 responses.
+//
+// Read on every call (not module load) so a runtime change to the env
+// var is picked up without a server restart. Use `||` (not `??`) so an
+// empty-string env value (Number("") === 0) falls through to the default
+// instead of silently disabling the cooldown.
+function getMidStreamRateLimitCooldownMs(): number {
+	return (
+		Number(process.env.CCFLARE_DEFAULT_COOLDOWN_NO_RESET_MS) ||
+		TIME_CONSTANTS.DEFAULT_RATE_LIMIT_NO_RESET_COOLDOWN_MS
+	);
+}
 
 // Must match MAX_REQUEST_BODY_BYTES in post-processor.worker.ts.
 // Cap applied before postMessage to avoid multi-MB structured clones.
@@ -283,7 +293,7 @@ export async function forwardToClient(
 									account,
 									{
 										isRateLimited: true,
-										resetTime: Date.now() + MID_STREAM_RATE_LIMIT_COOLDOWN_MS,
+										resetTime: Date.now() + getMidStreamRateLimitCooldownMs(),
 									},
 									ctx,
 								);

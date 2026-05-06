@@ -1,9 +1,10 @@
 import { describe, expect, it } from "bun:test";
+import { TIME_CONSTANTS } from "@better-ccflare/core";
 import { extractCooldownUntil } from "../proxy-operations";
 
 const ACCOUNT_ID = "acct-test";
 const MIN_COOLDOWN_MS = 60 * 1000;
-const ONE_HOUR_MS = 60 * 60 * 1000;
+const PROBE_COOLDOWN_MS = TIME_CONSTANTS.DEFAULT_RATE_LIMIT_NO_RESET_COOLDOWN_MS;
 
 function makeResponse(headers: Record<string, string> = {}): Response {
 	return new Response(null, { status: 429, headers });
@@ -67,11 +68,13 @@ describe("extractCooldownUntil", () => {
 		expect(result).toBe(cacheReset);
 	});
 
-	it("falls back to 1-hour default when no headers and no cache", () => {
+	it("falls back to probe-cooldown default when no headers and no cache", () => {
 		const before = Date.now();
 		const result = extractCooldownUntil(makeResponse(), ACCOUNT_ID, noCache);
-		expect(result).toBeGreaterThanOrEqual(before + ONE_HOUR_MS);
-		expect(result).toBeLessThan(before + ONE_HOUR_MS + 5000);
+		// Floor is the larger of MIN_COOLDOWN_MS and the configured default.
+		const expected = Math.max(PROBE_COOLDOWN_MS, MIN_COOLDOWN_MS);
+		expect(result).toBeGreaterThanOrEqual(before + expected);
+		expect(result).toBeLessThan(before + expected + 5000);
 	});
 
 	it("clamps small retry-after to MIN_COOLDOWN_MS", () => {
