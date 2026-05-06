@@ -69,6 +69,7 @@ function makeProxyContext(): ProxyContext {
 				(_accountId: string, _until: number, _reason: string) =>
 					Promise.resolve(),
 			),
+			saveRequest: mock((..._args: unknown[]) => Promise.resolve()),
 			updateAccountUsage: mock(() => Promise.resolve()),
 			getAdapter: mock(() => ({
 				run: mock(() => Promise.resolve()),
@@ -353,8 +354,8 @@ function makeProxyContextWithAsyncExec(): ProxyContext {
 	return {
 		...ctx,
 		asyncWriter: {
-			enqueue: mock((job: () => void | Promise<void>) => {
-				void job();
+			enqueue: mock(async (job: () => void | Promise<void>) => {
+				await job();
 			}),
 		} as never,
 	};

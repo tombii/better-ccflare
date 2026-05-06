@@ -174,7 +174,7 @@ describe("processProxyResponse — rate limit audit trail (issue #178)", () => {
 		expect(calls.markRateLimited[0]?.reason).toBe("upstream_429_with_reset");
 	});
 
-	it("passes reason='upstream_429_no_reset_default_5h' when no resetTime", async () => {
+	it("passes reason='upstream_429_no_reset_probe_cooldown' when no resetTime", async () => {
 		const account = makeAccount();
 		const before = Date.now();
 		const { ctx, calls } = makeCtxWithReason({
@@ -192,13 +192,13 @@ describe("processProxyResponse — rate limit audit trail (issue #178)", () => {
 		expect(calls.markRateLimited).toHaveLength(1);
 		expect(calls.markRateLimited[0]?.accountId).toBe(account.id);
 		expect(calls.markRateLimited[0]?.reason).toBe(
-			"upstream_429_no_reset_default_5h",
+			"upstream_429_no_reset_probe_cooldown",
 		);
-		// resetTime should be approximately now + 5h
-		const FIVE_HOURS = 5 * 60 * 60 * 1000;
+		// Default cooldown is 60s (DEFAULT_RATE_LIMIT_NO_RESET_COOLDOWN_MS). Allow ±1s drift.
+		const SIXTY_SECONDS = 60 * 1000;
 		const reset = calls.markRateLimited[0]?.resetTime ?? 0;
-		expect(reset).toBeGreaterThanOrEqual(before + FIVE_HOURS - 1000);
-		expect(reset).toBeLessThanOrEqual(Date.now() + FIVE_HOURS + 1000);
+		expect(reset).toBeGreaterThanOrEqual(before + SIXTY_SECONDS - 1000);
+		expect(reset).toBeLessThanOrEqual(Date.now() + SIXTY_SECONDS + 1000);
 	});
 
 	it("passes reason='upstream_429_with_reset' on streaming 429 with resetTime", async () => {
@@ -284,10 +284,10 @@ describe("processProxyResponse — streaming rate-limit failover (issue #114)", 
 		expect(calls.markRateLimited).toHaveLength(0);
 	});
 
-	it("falls back to a default 5h window when a streaming 429 has no resetTime", async () => {
+	it("falls back to a default 60s probe cooldown when a streaming 429 has no resetTime", async () => {
 		// Some providers return 429s without rate-limit headers. The current
-		// code path defaults to a 5h cooldown — make sure that still fires
-		// for the streaming case after the !isStream guard removal.
+		// code path defaults to a 60s probe cooldown (DEFAULT_RATE_LIMIT_NO_RESET_COOLDOWN_MS)
+		// instead of the old 5h hard-ban, to avoid pool exhaustion on transient errors.
 		const account = makeAccount();
 		const before = Date.now();
 		const { ctx, calls } = makeCtx({
@@ -304,11 +304,11 @@ describe("processProxyResponse — streaming rate-limit failover (issue #114)", 
 
 		expect(result).toBe(true);
 		expect(calls.markRateLimited).toHaveLength(1);
-		// Default cooldown is Date.now() + 5h. Allow ±1s for test runtime drift.
-		const FIVE_HOURS = 5 * 60 * 60 * 1000;
+		// Default cooldown is 60s. Allow ±1s for test runtime drift.
+		const SIXTY_SECONDS = 60 * 1000;
 		const reset = calls.markRateLimited[0]?.resetTime ?? 0;
-		expect(reset).toBeGreaterThanOrEqual(before + FIVE_HOURS - 1000);
-		expect(reset).toBeLessThanOrEqual(Date.now() + FIVE_HOURS + 1000);
+		expect(reset).toBeGreaterThanOrEqual(before + SIXTY_SECONDS - 1000);
+		expect(reset).toBeLessThanOrEqual(Date.now() + SIXTY_SECONDS + 1000);
 	});
 });
 
@@ -374,7 +374,7 @@ describe("processProxyResponse — in-memory cooldown mutation", () => {
 		expect(account.rate_limited_until).toBe(resetTime);
 	});
 
-	it("sets account.rate_limited_until to ~5h on 429 without resetTime", async () => {
+	it("sets account.rate_limited_until to ~60s on 429 without resetTime", async () => {
 		const account = makeAccount();
 		const before = Date.now();
 		const { ctx } = makeCtx({
@@ -390,12 +390,12 @@ describe("processProxyResponse — in-memory cooldown mutation", () => {
 		await processProxyResponse(response, account, ctx);
 
 		expect(account.rate_limited_until).not.toBeNull();
-		const FIVE_HOURS = 5 * 60 * 60 * 1000;
+		const SIXTY_SECONDS = 60 * 1000;
 		expect(account.rate_limited_until ?? 0).toBeGreaterThanOrEqual(
-			before + FIVE_HOURS - 1000,
+			before + SIXTY_SECONDS - 1000,
 		);
 		expect(account.rate_limited_until ?? 0).toBeLessThanOrEqual(
-			Date.now() + FIVE_HOURS + 1000,
+			Date.now() + SIXTY_SECONDS + 1000,
 		);
 	});
 
