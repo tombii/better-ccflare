@@ -530,9 +530,12 @@ export async function proxyWithAccount(
 		//   - auto-refresh probes — same loop-prevention concern, plus these
 		//     hit known-cooled accounts and shouldn't pollute the staged-body cache
 		//     (issue #199, bug 2).
+		// Both checks are truthy (not strict-equality) to preserve the original
+		// keepalive guard's behaviour: any non-empty header value triggers the
+		// skip, matching what `!req.headers.get(...)` returned before.
 		const isSyntheticInternal =
-			req.headers.get("x-better-ccflare-keepalive") === "true" ||
-			req.headers.get("x-better-ccflare-auto-refresh") === "true";
+			!!req.headers.get("x-better-ccflare-keepalive") ||
+			!!req.headers.get("x-better-ccflare-auto-refresh");
 		if (!isSyntheticInternal) {
 			cacheBodyStore.stageRequest(
 				requestMeta.id,

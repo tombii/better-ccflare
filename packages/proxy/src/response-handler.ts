@@ -288,12 +288,14 @@ export async function forwardToClient(
 
 						if (value) {
 							lastChunkTime = Date.now();
-							const chunkMsg: ChunkMessage = {
-								type: "chunk",
-								requestId,
-								data: value,
-							};
-							safePostMessage(ctx.usageWorker, chunkMsg);
+							if (shouldProcessRequest) {
+								const chunkMsg: ChunkMessage = {
+									type: "chunk",
+									requestId,
+									data: value,
+								};
+								safePostMessage(ctx.usageWorker, chunkMsg);
+							}
 
 							// Mid-stream rate-limit detection. The sniffer
 							// fires exactly once; after that feed() is a no-op.
@@ -318,20 +320,24 @@ export async function forwardToClient(
 					}
 				}
 				// Finished without errors
-				const endMsg: EndMessage = {
-					type: "end",
-					requestId,
-					success: isExpectedResponse(path, analyticsResponse),
-				};
-				safePostMessage(ctx.usageWorker, endMsg);
+				if (shouldProcessRequest) {
+					const endMsg: EndMessage = {
+						type: "end",
+						requestId,
+						success: isExpectedResponse(path, analyticsResponse),
+					};
+					safePostMessage(ctx.usageWorker, endMsg);
+				}
 			} catch (err) {
-				const endMsg: EndMessage = {
-					type: "end",
-					requestId,
-					success: false,
-					error: (err as Error).message,
-				};
-				safePostMessage(ctx.usageWorker, endMsg);
+				if (shouldProcessRequest) {
+					const endMsg: EndMessage = {
+						type: "end",
+						requestId,
+						success: false,
+						error: (err as Error).message,
+					};
+					safePostMessage(ctx.usageWorker, endMsg);
+				}
 			}
 		})();
 
@@ -343,13 +349,15 @@ export async function forwardToClient(
 	 *  NON-STREAMING RESPONSES — read body in background, send END once
 	 *********************************************************************/
 	if (!response.body) {
-		const endMsg: EndMessage = {
-			type: "end",
-			requestId,
-			responseBody: null,
-			success: isExpectedResponse(path, response),
-		};
-		safePostMessage(ctx.usageWorker, endMsg);
+		if (shouldProcessRequest) {
+			const endMsg: EndMessage = {
+				type: "end",
+				requestId,
+				responseBody: null,
+				success: isExpectedResponse(path, response),
+			};
+			safePostMessage(ctx.usageWorker, endMsg);
+		}
 
 		return response;
 	}
@@ -394,22 +402,26 @@ export async function forwardToClient(
 				}
 				cappedBuf = Buffer.concat(chunks);
 			}
-			const endMsg: EndMessage = {
-				type: "end",
-				requestId,
-				responseBody:
-					cappedBuf.byteLength > 0 ? cappedBuf.toString("base64") : null,
-				success: isExpectedResponse(path, analyticsResponse),
-			};
-			safePostMessage(ctx.usageWorker, endMsg);
+			if (shouldProcessRequest) {
+				const endMsg: EndMessage = {
+					type: "end",
+					requestId,
+					responseBody:
+						cappedBuf.byteLength > 0 ? cappedBuf.toString("base64") : null,
+					success: isExpectedResponse(path, analyticsResponse),
+				};
+				safePostMessage(ctx.usageWorker, endMsg);
+			}
 		} catch (err) {
-			const endMsg: EndMessage = {
-				type: "end",
-				requestId,
-				success: false,
-				error: (err as Error).message,
-			};
-			safePostMessage(ctx.usageWorker, endMsg);
+			if (shouldProcessRequest) {
+				const endMsg: EndMessage = {
+					type: "end",
+					requestId,
+					success: false,
+					error: (err as Error).message,
+				};
+				safePostMessage(ctx.usageWorker, endMsg);
+			}
 		}
 	})();
 
