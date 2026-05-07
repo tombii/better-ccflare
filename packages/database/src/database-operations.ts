@@ -332,16 +332,11 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		}
 	}
 
-	/**
-	 * Run quick integrity check (fast btree walk)
-	 * @returns 'ok' or first error line
-	 * @throws Error if not in SQLite mode
-	 */
 	async runQuickIntegrityCheck(): Promise<string> {
 		if (!this.sqliteDb) {
-			throw new Error(
-				"runQuickIntegrityCheck() is only available in SQLite mode",
-			);
+			// PostgreSQL: verify connectivity with a lightweight query
+			await this.adapter.get("SELECT 1 AS ok");
+			return "ok";
 		}
 		const result = this.sqliteDb.query("PRAGMA quick_check").get() as {
 			quick_check: string;
@@ -349,16 +344,11 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		return result.quick_check;
 	}
 
-	/**
-	 * Run full integrity check (exhaustive check)
-	 * @returns 'ok' or multi-line error report
-	 * @throws Error if not in SQLite mode
-	 */
 	async runFullIntegrityCheck(): Promise<string> {
 		if (!this.sqliteDb) {
-			throw new Error(
-				"runFullIntegrityCheck() is only available in SQLite mode",
-			);
+			// PostgreSQL: verify connectivity with a lightweight query
+			await this.adapter.get("SELECT 1 AS ok");
+			return "ok";
 		}
 		// integrity_check can return multiple rows for long error reports
 		const rows = this.sqliteDb.query("PRAGMA integrity_check").all() as Array<{
