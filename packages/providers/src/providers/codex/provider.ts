@@ -625,6 +625,11 @@ export class CodexProvider extends BaseProvider {
 		account?: Account,
 	): CodexRequest {
 		const model = this.mapModel(body.model, account);
+		if (process.env.DEBUG?.includes("model") || process.env.DEBUG === "true") {
+			log.info(
+				`[codex:model-debug] request_model=${body.model} mapped_model=${model} account=${account?.name ?? "unknown"}`,
+			);
+		}
 		const instructions = this.extractSystemPrompt(body.system);
 
 		// Convert messages
@@ -821,6 +826,16 @@ export class CodexProvider extends BaseProvider {
 				? deltaUsage.cache_creation_input_tokens
 				: startUsage.cache_creation_input_tokens,
 		};
+		const resolvedModel =
+			typeof startMessage.model === "string" ? startMessage.model : "gpt-5.4";
+		if (
+			resolvedModel === "gpt-5.4" &&
+			(process.env.DEBUG?.includes("model") || process.env.DEBUG === "true")
+		) {
+			log.info(
+				"[codex:model-debug] transformSseResponseToJson used fallback model=gpt-5.4 (startMessage.model missing)",
+			);
+		}
 		const jsonPayload = {
 			id:
 				typeof startMessage.id === "string"
@@ -828,8 +843,7 @@ export class CodexProvider extends BaseProvider {
 					: `msg_${crypto.randomUUID().replace(/-/g, "").substring(0, 24)}`,
 			type: "message",
 			role: "assistant",
-			model:
-				typeof startMessage.model === "string" ? startMessage.model : "gpt-5.4",
+			model: resolvedModel,
 			content: content.length > 0 ? content : [{ type: "text", text: "" }],
 			stop_reason: "end_turn",
 			stop_sequence: null,
@@ -845,6 +859,11 @@ export class CodexProvider extends BaseProvider {
 	}
 
 	private transformStreamingResponse(response: Response): Response {
+		if (process.env.DEBUG?.includes("model") || process.env.DEBUG === "true") {
+			log.info(
+				"[codex:model-debug] transformStreamingResponse initial fallback model=gpt-5.4 until response.created arrives",
+			);
+		}
 		const state: StreamState = {
 			buffer: "",
 			messageId: `msg_${crypto.randomUUID().replace(/-/g, "").substring(0, 24)}`,
