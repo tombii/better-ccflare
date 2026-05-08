@@ -29,6 +29,11 @@
   - Supports custom endpoints (OpenRouter, Together AI, local models, etc.)
   - API key authentication only
   - Automatic format conversion between Anthropic and OpenAI APIs
+- **Ollama** - Dedicated Ollama provider (v0.14.0+):
+  - Uses Ollama's Anthropic-compatible `/v1/messages` API
+  - Default endpoint: `http://localhost:11434`
+  - Supports custom endpoints (local/LAN/self-hosted)
+  - No real API key required
 
 ### Key Points
 - Anthropic requests route to `https://api.anthropic.com`
@@ -98,6 +103,12 @@ The better-ccflare providers system is a modular architecture designed to suppor
    - Uses API key authentication
    - Automatic format conversion between Anthropic and OpenAI API formats
    - Supports custom endpoints for maximum flexibility
+
+8. **Ollama Provider** - Provides access to:
+   - **Ollama Anthropic API (v0.14.0+)** - Native `/v1/messages` compatibility
+   - Default endpoint: `http://localhost:11434`
+   - Optional custom endpoint for remote/self-hosted Ollama
+   - No real API key required for authentication
 
 The providers system handles:
 - OAuth authentication flows with PKCE security (Anthropic)
