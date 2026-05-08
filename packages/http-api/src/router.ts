@@ -26,6 +26,7 @@ import {
 	createKiloAccountAddHandler,
 	createMinimaxAccountAddHandler,
 	createNanoGPTAccountAddHandler,
+	createOllamaAccountAddHandler,
 	createOpenAIAccountAddHandler,
 	createOpenRouterAccountAddHandler,
 	createVertexAIAccountAddHandler,
@@ -163,6 +164,7 @@ export class APIRouter {
 		const nanogptAccountAddHandler = createNanoGPTAccountAddHandler(dbOps);
 		const anthropicCompatibleAccountAddHandler =
 			createAnthropicCompatibleAccountAddHandler(dbOps);
+		const ollamaAccountAddHandler = createOllamaAccountAddHandler(dbOps);
 		const openaiAccountAddHandler = createOpenAIAccountAddHandler(dbOps);
 		const _accountRemoveHandler = createAccountRemoveHandler(dbOps);
 		const requestsSummaryHandler = createRequestsSummaryHandler(
@@ -240,6 +242,9 @@ export class APIRouter {
 		);
 		this.handlers.set("POST:/api/accounts/anthropic-compatible", (req) =>
 			anthropicCompatibleAccountAddHandler(req),
+		);
+		this.handlers.set("POST:/api/accounts/ollama", (req) =>
+			ollamaAccountAddHandler(req),
 		);
 		this.handlers.set("POST:/api/accounts/openai-compatible", (req) =>
 			openaiAccountAddHandler(req),

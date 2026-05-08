@@ -691,6 +691,7 @@ We recommend using one of the workarounds above until the npm bug is fixed.
 - **OpenRouter** - OpenRouter integration with native API support and model mapping
 - **Kilo** - Kilo API integration with usage tracking
 - **Anthropic-Compatible** - Custom Anthropic-compatible providers with pay-as-you-go model
+- **Ollama** - Local Ollama instance (v0.14.0+) via native Anthropic-compatible API at `/v1/messages`, no API key required
 - **OpenAI-Compatible** - OpenAI-compatible providers (Together AI, etc.) with Claude API format
 - **Universal API Format** - Use OpenAI-compatible providers with Claude API format
 - **Automatic Format Conversion** - Seamless conversion between Anthropic and OpenAI request/response formats

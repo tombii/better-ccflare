@@ -111,7 +111,8 @@ export function AccountsTab() {
 			| "openrouter"
 			| "alibaba-coding-plan"
 			| "codex"
-			| "qwen";
+			| "qwen"
+			| "ollama";
 		priority: number;
 		customEndpoint?: string;
 	}) => {
@@ -306,6 +307,23 @@ export function AccountsTab() {
 	}) => {
 		try {
 			await api.addAnthropicCompatibleAccount(params);
+			await loadAccounts();
+			setAdding(false);
+			setActionError(null);
+		} catch (err) {
+			setActionError(formatError(err));
+			throw err;
+		}
+	};
+
+	const handleAddOllamaAccount = async (params: {
+		name: string;
+		priority: number;
+		customEndpoint?: string;
+		modelMappings?: { [key: string]: string };
+	}) => {
+		try {
+			await api.addOllamaAccount(params);
 			await loadAccounts();
 			setAdding(false);
 			setActionError(null);
@@ -569,6 +587,7 @@ export function AccountsTab() {
 								handleAddAnthropicCompatibleAccount
 							}
 							onAddOpenAIAccount={handleAddOpenAIAccount}
+							onAddOllamaAccount={handleAddOllamaAccount}
 							onCancel={() => {
 								setAdding(false);
 								setActionError(null);

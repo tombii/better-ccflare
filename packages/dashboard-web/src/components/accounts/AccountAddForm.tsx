@@ -28,7 +28,8 @@ interface AccountAddFormProps {
 			| "openrouter"
 			| "alibaba-coding-plan"
 			| "codex"
-			| "qwen";
+			| "qwen"
+			| "ollama";
 		priority: number;
 		customEndpoint?: string;
 	}) => Promise<{ authUrl: string; sessionId: string }>;
@@ -101,6 +102,12 @@ interface AccountAddFormProps {
 		priority: number;
 		modelMappings?: { [key: string]: string };
 	}) => Promise<void>;
+	onAddOllamaAccount: (params: {
+		name: string;
+		priority: number;
+		customEndpoint?: string;
+		modelMappings?: { [key: string]: string };
+	}) => Promise<void>;
 	onCancel: () => void;
 	onSuccess: () => void;
 	onError: (error: string) => void;
@@ -119,6 +126,7 @@ export function AccountAddForm({
 	onAddAlibabaCodingPlanAccount,
 	onAddKiloAccount,
 	onAddOpenRouterAccount,
+	onAddOllamaAccount,
 	onCancel,
 	onSuccess,
 	onError,
@@ -142,7 +150,8 @@ export function AccountAddForm({
 			| "openrouter"
 			| "alibaba-coding-plan"
 			| "codex"
-			| "qwen",
+			| "qwen"
+			| "ollama",
 		priority: 0,
 		apiKey: "",
 		customEndpoint: "",
@@ -814,6 +823,39 @@ export function AccountAddForm({
 			return;
 		}
 
+		if (newAccount.mode === "ollama") {
+			const modelMappings: { [key: string]: string } = {};
+			if (newAccount.opusModel) modelMappings.opus = newAccount.opusModel;
+			if (newAccount.sonnetModel) modelMappings.sonnet = newAccount.sonnetModel;
+			if (newAccount.haikuModel) modelMappings.haiku = newAccount.haikuModel;
+
+			await onAddOllamaAccount({
+				name: newAccount.name,
+				priority: newAccount.priority,
+				customEndpoint: newAccount.customEndpoint || undefined,
+				modelMappings:
+					Object.keys(modelMappings).length > 0 ? modelMappings : undefined,
+			});
+			setNewAccount({
+				name: "",
+				mode: "claude-oauth",
+				priority: 0,
+				apiKey: "",
+				customEndpoint: "",
+				projectId: "",
+				region: "global",
+				profile: "",
+				awsRegion: "",
+				crossRegionMode: "geographic",
+				customBedrockModel: "",
+				opusModel: "",
+				sonnetModel: "",
+				haikuModel: "",
+			});
+			onSuccess();
+			return;
+		}
+
 		// Step 1: Initialize OAuth flow for Max/Console accounts
 		const { authUrl, sessionId } = await onAddAccount(accountParams);
 		setSessionId(sessionId);
@@ -932,7 +974,8 @@ export function AccountAddForm({
 									| "kilo"
 									| "openrouter"
 									| "codex"
-									| "qwen",
+									| "qwen"
+									| "ollama",
 							) => setNewAccount({ ...newAccount, mode: value })}
 						>
 							<SelectTrigger id="mode">
@@ -963,6 +1006,7 @@ export function AccountAddForm({
 								<SelectItem value="alibaba-coding-plan">
 									Alibaba Coding Plan International (API Key)
 								</SelectItem>
+								<SelectItem value="ollama">Ollama (v0.14.0+)</SelectItem>
 							</SelectContent>
 						</Select>
 					</div>
@@ -1922,6 +1966,91 @@ export function AccountAddForm({
 												})
 											}
 											placeholder="openai/gpt-5-mini (default)"
+											className="mt-1"
+										/>
+									</div>
+								</div>
+							</div>
+						</>
+					)}
+					{newAccount.mode === "ollama" && (
+						<>
+							<div className="space-y-2">
+								<Label htmlFor="customEndpoint">
+									Ollama Endpoint URL (Optional)
+								</Label>
+								<Input
+									id="customEndpoint"
+									type="url"
+									value={newAccount.customEndpoint}
+									onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+										setNewAccount({
+											...newAccount,
+											customEndpoint: (e.target as HTMLInputElement).value,
+										})
+									}
+									placeholder="http://localhost:11434"
+								/>
+								<p className="text-xs text-muted-foreground">
+									Leave empty to use default http://localhost:11434. Requires
+									Ollama v0.14.0+.
+								</p>
+							</div>
+							<div className="space-y-2">
+								<Label>Model Mappings (Optional)</Label>
+								<p className="text-xs text-muted-foreground mb-2">
+									Map Anthropic model names to Ollama model names (e.g.
+									qwen3-coder, llama3.3).
+								</p>
+								<div className="space-y-2 pl-4">
+									<div>
+										<Label htmlFor="opusModel" className="text-sm">
+											Opus Model
+										</Label>
+										<Input
+											id="opusModel"
+											value={newAccount.opusModel}
+											onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+												setNewAccount({
+													...newAccount,
+													opusModel: (e.target as HTMLInputElement).value,
+												})
+											}
+											placeholder="qwen3-coder (example)"
+											className="mt-1"
+										/>
+									</div>
+									<div>
+										<Label htmlFor="sonnetModel" className="text-sm">
+											Sonnet Model
+										</Label>
+										<Input
+											id="sonnetModel"
+											value={newAccount.sonnetModel}
+											onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+												setNewAccount({
+													...newAccount,
+													sonnetModel: (e.target as HTMLInputElement).value,
+												})
+											}
+											placeholder="qwen3-coder (example)"
+											className="mt-1"
+										/>
+									</div>
+									<div>
+										<Label htmlFor="haikuModel" className="text-sm">
+											Haiku Model
+										</Label>
+										<Input
+											id="haikuModel"
+											value={newAccount.haikuModel}
+											onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+												setNewAccount({
+													...newAccount,
+													haikuModel: (e.target as HTMLInputElement).value,
+												})
+											}
+											placeholder="llama3.3 (example)"
 											className="mt-1"
 										/>
 									</div>

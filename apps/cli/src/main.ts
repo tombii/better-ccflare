@@ -87,6 +87,7 @@ interface ParsedArgs {
 		| "kilo"
 		| "alibaba-coding-plan"
 		| "codex"
+		| "ollama"
 		| null;
 	priority: number | null;
 	profile: string | null;
@@ -541,6 +542,7 @@ function parseArgs(args: string[]): ParsedArgs {
 					| "kilo"
 					| "alibaba-coding-plan"
 					| "codex"
+					| "ollama"
 					| "max";
 
 				// Handle deprecated "max" mode with warning
@@ -562,7 +564,8 @@ function parseArgs(args: string[]): ParsedArgs {
 					| "bedrock"
 					| "kilo"
 					| "alibaba-coding-plan"
-					| "codex";
+					| "codex"
+					| "ollama";
 				const validModes: Array<
 					| "claude-oauth"
 					| "console"
@@ -575,6 +578,7 @@ function parseArgs(args: string[]): ParsedArgs {
 					| "kilo"
 					| "alibaba-coding-plan"
 					| "codex"
+					| "ollama"
 				> = [
 					"claude-oauth",
 					"console",
@@ -587,6 +591,7 @@ function parseArgs(args: string[]): ParsedArgs {
 					"kilo",
 					"alibaba-coding-plan",
 					"codex",
+					"ollama",
 				];
 				if (!validModes.includes(modeValue)) {
 					console.error(`❌ Invalid mode: ${modeValue}`);
