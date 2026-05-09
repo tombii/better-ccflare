@@ -341,7 +341,7 @@ export class CodexProvider extends BaseProvider {
 					ts: Date.now(),
 				});
 			}
-			const codexBody = this.convertToCodexFormat(body, account);
+			const codexBody = this.convertToCodexFormat(body, account, requestId ?? undefined);
 
 			const newHeaders = new Headers(request.headers);
 			newHeaders.set("content-type", "application/json");
@@ -623,11 +623,12 @@ export class CodexProvider extends BaseProvider {
 	private convertToCodexFormat(
 		body: AnthropicRequest,
 		account?: Account,
+		requestId?: string,
 	): CodexRequest {
 		const model = this.mapModel(body.model, account);
 		if (process.env.DEBUG?.includes("model") || process.env.DEBUG === "true") {
 			log.info(
-				`[codex:model-debug] request_model=${body.model} mapped_model=${model} account=${account?.name ?? "unknown"}`,
+				`[codex:model-debug] request_id=${requestId ?? "unknown"} request_model=${body.model} mapped_model=${model} account=${account?.name ?? "unknown"}`,
 			);
 		}
 		const instructions = this.extractSystemPrompt(body.system);
@@ -685,6 +686,7 @@ export class CodexProvider extends BaseProvider {
 	private async transformSseResponseToJson(
 		response: Response,
 	): Promise<Response> {
+		const requestId = response.headers.get("x-better-ccflare-request-id") ?? "unknown";
 		const transformed = this.transformStreamingResponse(response);
 		const reader = transformed.body
 			?.pipeThrough(new TextDecoderStream())
@@ -833,7 +835,7 @@ export class CodexProvider extends BaseProvider {
 			(process.env.DEBUG?.includes("model") || process.env.DEBUG === "true")
 		) {
 			log.info(
-				"[codex:model-debug] transformSseResponseToJson used fallback model=gpt-5.4 (startMessage.model missing)",
+				`[codex:model-debug] request_id=${requestId} transformSseResponseToJson used fallback model=gpt-5.4 (startMessage.model missing)`,
 			);
 		}
 		const jsonPayload = {
@@ -859,9 +861,10 @@ export class CodexProvider extends BaseProvider {
 	}
 
 	private transformStreamingResponse(response: Response): Response {
+		const requestId = response.headers.get("x-better-ccflare-request-id") ?? "unknown";
 		if (process.env.DEBUG?.includes("model") || process.env.DEBUG === "true") {
 			log.info(
-				"[codex:model-debug] transformStreamingResponse initial fallback model=gpt-5.4 until response.created arrives",
+				`[codex:model-debug] request_id=${requestId} transformStreamingResponse initial fallback model=gpt-5.4 until response.created arrives`,
 			);
 		}
 		const state: StreamState = {
