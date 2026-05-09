@@ -1,5 +1,4 @@
 import type { Account } from "@better-ccflare/types";
-import { transformRequestBodyModel } from "../../utils/model-mapping";
 import { BaseAnthropicCompatibleProvider } from "../base-anthropic-compatible";
 import {
 	anthropicToOllama,
@@ -45,8 +44,8 @@ export class OllamaCloudProvider extends BaseAnthropicCompatibleProvider {
 		request: Request,
 		account?: Account,
 	): Promise<Request> {
-		// First apply model name mapping via the shared helper
-		const modelMappedRequest = await transformRequestBodyModel(
+		// Use base class for model mapping (mapModelName from core)
+		const modelMappedRequest = await super.transformRequestBody(
 			request,
 			account,
 		);
@@ -56,11 +55,12 @@ export class OllamaCloudProvider extends BaseAnthropicCompatibleProvider {
 		const ollamaReq = anthropicToOllama(body);
 		const ollamaBody = JSON.stringify(ollamaReq);
 
+		const newHeaders = new Headers(modelMappedRequest.headers);
+		newHeaders.set("content-type", "application/json");
+
 		return new Request(modelMappedRequest.url, {
 			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-			},
+			headers: newHeaders,
 			body: ollamaBody,
 		});
 	}

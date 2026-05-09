@@ -29,17 +29,24 @@
   - Supports custom endpoints (OpenRouter, Together AI, local models, etc.)
   - API key authentication only
   - Automatic format conversion between Anthropic and OpenAI APIs
-- **Ollama** - Dedicated Ollama provider (v0.14.0+):
+- **Ollama** - Local Ollama provider (v0.14.0+):
   - Uses Ollama's Anthropic-compatible `/v1/messages` API
   - Default endpoint: `http://localhost:11434`
   - Supports custom endpoints (local/LAN/self-hosted)
   - No real API key required
+- **Ollama Cloud** - Hosted Ollama at ollama.com:
+  - Uses Ollama Cloud's `/api/chat` endpoint
+  - Model mapping required (e.g., `claude-sonnet-4-6` → `deepseek-v4-flash:cloud`)
+  - Bearer token authentication via API key
+  - Converts Anthropic-format requests to Ollama native `/api/chat` format
+  - Converts NDJSON streaming responses back to Anthropic SSE
 
 ### Key Points
 - Anthropic requests route to `https://api.anthropic.com`
 - OpenAI-compatible requests route to custom endpoints (default: `https://api.openai.com`)
 - OAuth is the preferred authentication method with PKCE security (Anthropic only)
-- API key authentication for Z.ai and OpenAI-compatible providers
+- API key authentication for Z.ai, OpenAI-compatible, and Ollama Cloud providers
+- Ollama Cloud requires model mapping to translate Claude model names to Ollama models
 - Recent updates include enhanced streaming response capture for analytics
 - Provider system supports format conversion between different API standards
 - Default OAuth client ID: `9d1c250a-e61b-44d9-88ed-5944d1962f5e` (configurable via environment or config file)
@@ -109,6 +116,13 @@ The better-ccflare providers system is a modular architecture designed to suppor
    - Default endpoint: `http://localhost:11434`
    - Optional custom endpoint for remote/self-hosted Ollama
    - No real API key required for authentication
+
+9. **Ollama Cloud Provider** - Provides access to:
+   - **Ollama Cloud hosted API** at ollama.com
+   - Converts Anthropic-format requests to Ollama native `/api/chat` format
+   - NDJSON streaming responses converted back to Anthropic SSE
+   - Bearer token authentication via API key
+   - Model mapping required (configured via `model_mappings` on account)
 
 The providers system handles:
 - OAuth authentication flows with PKCE security (Anthropic)

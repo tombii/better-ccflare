@@ -17,6 +17,7 @@ export const PROVIDER_NAMES = {
 	CODEX: "codex",
 	QWEN: "qwen",
 	OLLAMA: "ollama",
+	OLLAMA_CLOUD: "ollama-cloud",
 } as const;
 
 export type ProviderName = (typeof PROVIDER_NAMES)[keyof typeof PROVIDER_NAMES];
@@ -136,6 +137,12 @@ export const PROVIDER_CONFIG: Record<ProviderName, ProviderConfig> = {
 		supportsUsageTracking: false,
 		supportsOAuth: false,
 		defaultEndpoint: "http://localhost:11434",
+	},
+	[PROVIDER_NAMES.OLLAMA_CLOUD]: {
+		requiresSessionTracking: false,
+		supportsUsageTracking: false,
+		supportsOAuth: false,
+		defaultEndpoint: "https://ollama.com",
 	},
 } as const satisfies Record<ProviderName, ProviderConfig>;
 
