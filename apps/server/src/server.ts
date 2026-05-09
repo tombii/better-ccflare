@@ -775,7 +775,7 @@ export default async function startServer(options?: {
 		},
 	});
 
-	strategy.initialize(strategyStore);
+	strategy.initialize?.(strategyStore);
 
 	// Start usage worker eagerly (before first request)
 	startUsageWorker();
@@ -856,7 +856,7 @@ export default async function startServer(options?: {
 				newStrategyName,
 				runtimeConfig.sessionDurationMs,
 			);
-			strategy.initialize(strategyStore);
+			strategy.initialize?.(strategyStore);
 			proxyContext.strategy = strategy;
 		}
 		if (key === "store_payloads") {
