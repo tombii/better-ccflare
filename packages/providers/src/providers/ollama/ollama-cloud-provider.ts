@@ -1,4 +1,5 @@
 import type { Account } from "@better-ccflare/types";
+import { transformRequestBodyModel } from "../../utils/model-mapping";
 import { BaseAnthropicCompatibleProvider } from "../base-anthropic-compatible";
 import {
 	anthropicToOllama,
@@ -29,7 +30,7 @@ export class OllamaCloudProvider extends BaseAnthropicCompatibleProvider {
 		return "bearer";
 	}
 
-	buildUrl(pathname: string, search: string, account?: Account): string {
+	buildUrl(pathname: string, search: string, _account?: Account): string {
 		const searchStr = search || "";
 
 		// Only allow /api/tags and /api/show for model management
@@ -40,12 +41,22 @@ export class OllamaCloudProvider extends BaseAnthropicCompatibleProvider {
 		return `https://ollama.com/api/chat${searchStr}`;
 	}
 
-	async transformRequestBody(request: Request): Promise<Request> {
-		const body = await request.json();
+	async transformRequestBody(
+		request: Request,
+		account?: Account,
+	): Promise<Request> {
+		// First apply model name mapping via the shared helper
+		const modelMappedRequest = await transformRequestBodyModel(
+			request,
+			account,
+		);
+
+		// Then convert the Anthropic-format body to Ollama's native /api/chat format
+		const body = await modelMappedRequest.json();
 		const ollamaReq = anthropicToOllama(body);
 		const ollamaBody = JSON.stringify(ollamaReq);
 
-		return new Request(request.url, {
+		return new Request(modelMappedRequest.url, {
 			method: "POST",
 			headers: {
 				"Content-Type": "application/json",
@@ -54,7 +65,11 @@ export class OllamaCloudProvider extends BaseAnthropicCompatibleProvider {
 		});
 	}
 
-	prepareHeaders(headers: Headers, accessToken?: string, apiKey?: string): Headers {
+	prepareHeaders(
+		headers: Headers,
+		accessToken?: string,
+		apiKey?: string,
+	): Headers {
 		const newHeaders = new Headers(headers);
 		const token = accessToken || apiKey;
 
@@ -75,7 +90,10 @@ export class OllamaCloudProvider extends BaseAnthropicCompatibleProvider {
 		const contentType = response.headers.get("content-type") || "";
 
 		// Streaming response: convert Ollama NDJSON to Anthropic SSE
-		if (contentType.includes("application/x-ndjson") || contentType.includes("text/plain")) {
+		if (
+			contentType.includes("application/x-ndjson") ||
+			contentType.includes("text/plain")
+		) {
 			const transform = new TransformStream({
 				transform(chunk, controller) {
 					const text = new TextDecoder().decode(chunk);
