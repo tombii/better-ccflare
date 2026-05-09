@@ -1,4 +1,9 @@
-import { ValidationError, validateEndpointUrl } from "@better-ccflare/core";
+import {
+	ValidationError,
+	getModelList,
+	mapModelName,
+	validateEndpointUrl,
+} from "@better-ccflare/core";
 import { sanitizeProxyHeaders } from "@better-ccflare/http-common";
 import { Logger } from "@better-ccflare/logger";
 import { resolveReasoningEffort } from "@better-ccflare/openai-formats";
@@ -470,25 +475,14 @@ export class CodexProvider extends BaseProvider {
 	// ── Private helpers ──────────────────────────────────────────────────────
 
 	private mapModel(anthropicModel: string, account?: Account): string {
-		// Account-level overrides take priority
-		if (account?.model_mappings) {
-			try {
-				const mappings =
-					typeof account.model_mappings === "string"
-						? (JSON.parse(account.model_mappings) as Record<string, string>)
-						: (account.model_mappings as Record<string, string>);
-
-				const lower = anthropicModel.toLowerCase();
-				if (mappings[anthropicModel]) return mappings[anthropicModel];
-				if (lower.includes("haiku") && mappings.haiku) return mappings.haiku;
-				if (lower.includes("sonnet") && mappings.sonnet) return mappings.sonnet;
-				if (lower.includes("opus") && mappings.opus) return mappings.opus;
-			} catch {
-				// ignore malformed mappings
+		if (account) {
+			const mapped = mapModelName(anthropicModel, account);
+			const hasSharedMappings = getModelList(anthropicModel, account) !== null;
+			if (hasSharedMappings) {
+				return mapped;
 			}
 		}
 
-		// Default mapping by model family
 		const lower = anthropicModel.toLowerCase();
 		if (lower.includes("haiku")) return DEFAULT_MODEL_MAP.haiku;
 		if (lower.includes("sonnet")) return DEFAULT_MODEL_MAP.sonnet;

@@ -779,6 +779,50 @@ describe("CodexProvider.transformRequestBody", () => {
 		expect(body.model).toBe("gpt-5.3-codex");
 	});
 
+	it("uses account sonnet mapping for sonnet-family models", async () => {
+		const provider = new CodexProvider();
+		const account = {
+			model_mappings: JSON.stringify({ sonnet: "gpt-5.3-codex" }),
+		} as Parameters<typeof provider.transformRequestBody>[1];
+		const request = new Request("https://example.com/v1/messages", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				model: "claude-3-7-sonnet",
+				max_tokens: 10,
+				messages: [{ role: "user", content: "hello" }],
+			}),
+		});
+
+		const transformed = await provider.transformRequestBody(request, account);
+		const body = await transformed.json();
+
+		expect(body.model).toBe("gpt-5.3-codex");
+	});
+
+	it("uses first model when account mapping value is an ordered array", async () => {
+		const provider = new CodexProvider();
+		const account = {
+			model_mappings: JSON.stringify({
+				sonnet: ["gpt-5.3-codex", "gpt-5.4"],
+			}),
+		} as Parameters<typeof provider.transformRequestBody>[1];
+		const request = new Request("https://example.com/v1/messages", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				model: "claude-3-7-sonnet",
+				max_tokens: 10,
+				messages: [{ role: "user", content: "hello" }],
+			}),
+		});
+
+		const transformed = await provider.transformRequestBody(request, account);
+		const body = await transformed.json();
+
+		expect(body.model).toBe("gpt-5.3-codex");
+	});
+
 	it("passes through unknown model names unchanged", async () => {
 		const provider = new CodexProvider();
 		const request = new Request("https://example.com/v1/messages", {
