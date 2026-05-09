@@ -1,7 +1,6 @@
 import {
-	ValidationError,
-	getModelList,
 	mapModelName,
+	ValidationError,
 	validateEndpointUrl,
 } from "@better-ccflare/core";
 import { sanitizeProxyHeaders } from "@better-ccflare/http-common";
@@ -477,8 +476,7 @@ export class CodexProvider extends BaseProvider {
 	private mapModel(anthropicModel: string, account?: Account): string {
 		if (account) {
 			const mapped = mapModelName(anthropicModel, account);
-			const hasSharedMappings = getModelList(anthropicModel, account) !== null;
-			if (hasSharedMappings) {
+			if (mapped !== anthropicModel) {
 				return mapped;
 			}
 		}
