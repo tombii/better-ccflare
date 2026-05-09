@@ -229,6 +229,26 @@ describe("OllamaCloudProvider", () => {
 			expect(transformed.headers.get("Authorization")).toBe("Bearer sk-test-key");
 			expect(transformed.headers.get("content-type")).toBe("application/json");
 		});
+
+		it("removes stale content-length header after body transform", async () => {
+			const account = makeAccount();
+			const request = new Request("http://localhost:8081/v1/messages", {
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					Authorization: "Bearer sk-test-key",
+					"Content-Length": "100",
+				},
+				body: JSON.stringify({
+					model: "test",
+					messages: [{ role: "user", content: "hi" }],
+				}),
+			});
+
+			const transformed = await provider.transformRequestBody(request, account);
+
+			expect(transformed.headers.has("content-length")).toBe(false);
+		});
 	});
 
 	describe("prepareHeaders", () => {

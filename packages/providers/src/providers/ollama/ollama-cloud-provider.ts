@@ -57,6 +57,7 @@ export class OllamaCloudProvider extends BaseAnthropicCompatibleProvider {
 
 		const newHeaders = new Headers(modelMappedRequest.headers);
 		newHeaders.set("content-type", "application/json");
+		newHeaders.delete("content-length");
 
 		return new Request(modelMappedRequest.url, {
 			method: "POST",
