@@ -22,7 +22,10 @@ import {
 	initPayloadEncryption,
 } from "@better-ccflare/database";
 import { APIRouter, AuthService } from "@better-ccflare/http-api";
-import { LeastUsedStrategy, SessionStrategy } from "@better-ccflare/load-balancer";
+import {
+	LeastUsedStrategy,
+	SessionStrategy,
+} from "@better-ccflare/load-balancer";
 import { Logger } from "@better-ccflare/logger";
 import {
 	getProvider,
@@ -775,7 +778,7 @@ export default async function startServer(options?: {
 		},
 	});
 
-	strategy.initialize(strategyStore);
+	strategy.initialize?.(strategyStore);
 
 	// Start usage worker eagerly (before first request)
 	startUsageWorker();
@@ -856,7 +859,7 @@ export default async function startServer(options?: {
 				newStrategyName,
 				runtimeConfig.sessionDurationMs,
 			);
-			strategy.initialize(strategyStore);
+			strategy.initialize?.(strategyStore);
 			proxyContext.strategy = strategy;
 		}
 		if (key === "store_payloads") {
