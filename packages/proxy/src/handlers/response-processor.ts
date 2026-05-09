@@ -300,8 +300,7 @@ export async function processProxyResponse(
 			const cooldownUntil = Date.now() + cooldownMs;
 			account.rate_limited_until = cooldownUntil;
 			ctx.asyncWriter.enqueue(() => {
-				const reason: RateLimitReason =
-					"upstream_429_no_reset_probe_cooldown";
+				const reason: RateLimitReason = "upstream_429_no_reset_probe_cooldown";
 				log.warn(
 					`[ccflare] account=${account.name} cooldown_applied reason=${reason} until=${new Date(cooldownUntil).toISOString()}`,
 				);

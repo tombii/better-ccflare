@@ -159,7 +159,9 @@ describe("LeastUsedStrategy", () => {
 		expect(secondPrimary).not.toBe(firstPrimary);
 		expect(thirdPrimary).not.toBe(secondPrimary);
 		// Across three selects we should have hit at least 2 distinct accounts.
-		expect(new Set([firstPrimary, secondPrimary, thirdPrimary]).size).toBeGreaterThanOrEqual(2);
+		expect(
+			new Set([firstPrimary, secondPrimary, thirdPrimary]).size,
+		).toBeGreaterThanOrEqual(2);
 	});
 
 	describe("auto-unpause", () => {

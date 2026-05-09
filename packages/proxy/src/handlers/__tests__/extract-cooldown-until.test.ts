@@ -4,7 +4,8 @@ import { extractCooldownUntil } from "../proxy-operations";
 
 const ACCOUNT_ID = "acct-test";
 const MIN_COOLDOWN_MS = 60 * 1000;
-const PROBE_COOLDOWN_MS = TIME_CONSTANTS.DEFAULT_RATE_LIMIT_NO_RESET_COOLDOWN_MS;
+const PROBE_COOLDOWN_MS =
+	TIME_CONSTANTS.DEFAULT_RATE_LIMIT_NO_RESET_COOLDOWN_MS;
 
 function makeResponse(headers: Record<string, string> = {}): Response {
 	return new Response(null, { status: 429, headers });

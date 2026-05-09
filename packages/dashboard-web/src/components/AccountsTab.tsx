@@ -605,7 +605,7 @@ export function AccountsTab() {
 							}
 							onAddOpenAIAccount={handleAddOpenAIAccount}
 							onAddOllamaAccount={handleAddOllamaAccount}
-								onAddOllamaCloudAccount={handleAddOllamaCloudAccount}
+							onAddOllamaCloudAccount={handleAddOllamaCloudAccount}
 							onCancel={() => {
 								setAdding(false);
 								setActionError(null);

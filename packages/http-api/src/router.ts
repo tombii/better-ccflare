@@ -247,9 +247,8 @@ export class APIRouter {
 		this.handlers.set("POST:/api/accounts/ollama", (req) =>
 			ollamaAccountAddHandler(req),
 		);
-		const ollamaCloudAccountAddHandler = createOllamaCloudAccountAddHandler(
-			dbOps,
-		);
+		const ollamaCloudAccountAddHandler =
+			createOllamaCloudAccountAddHandler(dbOps);
 		this.handlers.set("POST:/api/accounts/ollama-cloud", (req) =>
 			ollamaCloudAccountAddHandler(req),
 		);

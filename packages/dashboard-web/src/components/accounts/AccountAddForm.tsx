@@ -1021,7 +1021,7 @@ export function AccountAddForm({
 									| "codex"
 									| "qwen"
 									| "ollama"
-								| "ollama-cloud",
+									| "ollama-cloud",
 							) => setNewAccount({ ...newAccount, mode: value })}
 						>
 							<SelectTrigger id="mode">
@@ -1052,10 +1052,10 @@ export function AccountAddForm({
 								<SelectItem value="alibaba-coding-plan">
 									Alibaba Coding Plan International (API Key)
 								</SelectItem>
-													<SelectItem value="ollama">Ollama (v0.14.0+, local)</SelectItem>
-									<SelectItem value="ollama-cloud">
-										Ollama Cloud (ollama.com)
-									</SelectItem>
+								<SelectItem value="ollama">Ollama (v0.14.0+, local)</SelectItem>
+								<SelectItem value="ollama-cloud">
+									Ollama Cloud (ollama.com)
+								</SelectItem>
 							</SelectContent>
 						</Select>
 					</div>

@@ -1519,9 +1519,7 @@ export async function addAccount(
 		console.log("Type: Ollama (v0.14.0+)");
 		console.log(`Endpoint: ${endpoint}`);
 	} else if (mode === "ollama-cloud") {
-		const apiKey = await adapter.input(
-			"\nEnter Ollama Cloud API key: ",
-		);
+		const apiKey = await adapter.input("\nEnter Ollama Cloud API key: ");
 
 		if (!apiKey) {
 			throw new Error("API key is required for Ollama Cloud");

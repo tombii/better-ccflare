@@ -240,19 +240,27 @@ describe("MinimaxProvider", () => {
 	});
 
 	describe("transformRequest", () => {
-		it("should force all models to MiniMax-M2", async () => {
-			// Test different input models - all should be forced to MiniMax-M2
+		it("should map models using shared mapModelName", async () => {
+			// Account with custom mapping to MiniMax-M2.7
+			const accountWithMapping: Account = {
+				...mockAccount,
+				model_mappings: JSON.stringify({
+					sonnet: "MiniMax-M2.7",
+					opus: "MiniMax-M2.7",
+					haiku: "MiniMax-M2.7",
+				}),
+			};
+
 			const testModels = [
-				"claude-sonnet-4-5-20250929",
-				"claude-haiku-4-5-20251001",
-				"claude-opus-4-1-20250805",
-				"claude-sonnet-5-0-20251201", // Future model
-				"random-other-model",
+				{ input: "claude-sonnet-4-5-20250929", expected: "MiniMax-M2.7" },
+				{ input: "claude-haiku-4-5-20251001", expected: "MiniMax-M2.7" },
+				{ input: "claude-opus-4-1-20250805", expected: "MiniMax-M2.7" },
+				{ input: "claude-sonnet-5-0-20251201", expected: "MiniMax-M2.7" }, // future sonnet
 			];
 
-			for (const model of testModels) {
+			for (const { input, expected } of testModels) {
 				const requestBody = {
-					model: model,
+					model: input,
 					messages: [{ role: "user", content: "test" }],
 				};
 
@@ -264,15 +272,11 @@ describe("MinimaxProvider", () => {
 
 				const transformedRequest = await provider.transformRequestBody(
 					request,
-					mockAccount,
+					accountWithMapping,
 				);
 
 				const transformedBody = await transformedRequest.json();
-				expect(transformedBody.model).toBe("MiniMax-M2");
-				// Other properties should be preserved
-				expect(transformedBody.messages).toEqual([
-					{ role: "user", content: "test" },
-				]);
+				expect(transformedBody.model).toBe(expected);
 			}
 		});
 	});

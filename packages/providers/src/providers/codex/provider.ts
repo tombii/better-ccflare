@@ -345,7 +345,11 @@ export class CodexProvider extends BaseProvider {
 					ts: Date.now(),
 				});
 			}
-			const codexBody = this.convertToCodexFormat(body, account, requestId ?? undefined);
+			const codexBody = this.convertToCodexFormat(
+				body,
+				account,
+				requestId ?? undefined,
+			);
 
 			const newHeaders = new Headers(request.headers);
 			newHeaders.set("content-type", "application/json");
@@ -678,7 +682,8 @@ export class CodexProvider extends BaseProvider {
 	private async transformSseResponseToJson(
 		response: Response,
 	): Promise<Response> {
-		const requestId = response.headers.get("x-better-ccflare-request-id") ?? "unknown";
+		const requestId =
+			response.headers.get("x-better-ccflare-request-id") ?? "unknown";
 		const transformed = this.transformStreamingResponse(response);
 		const reader = transformed.body
 			?.pipeThrough(new TextDecoderStream())
@@ -853,7 +858,8 @@ export class CodexProvider extends BaseProvider {
 	}
 
 	private transformStreamingResponse(response: Response): Response {
-		const requestId = response.headers.get("x-better-ccflare-request-id") ?? "unknown";
+		const requestId =
+			response.headers.get("x-better-ccflare-request-id") ?? "unknown";
 		if (process.env.DEBUG?.includes("model") || process.env.DEBUG === "true") {
 			log.info(
 				`[codex:model-debug] request_id=${requestId} transformStreamingResponse initial fallback model=gpt-5.4 until response.created arrives`,
