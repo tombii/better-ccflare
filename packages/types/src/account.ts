@@ -266,7 +266,8 @@ export interface AccountListItem {
 		| "alibaba-coding-plan"
 		| "codex"
 		| "qwen"
-		| "ollama";
+		| "ollama"
+		| "ollama-cloud";
 	priority: number;
 	autoFallbackEnabled: boolean;
 	autoRefreshEnabled: boolean;

@@ -333,6 +333,23 @@ export function AccountsTab() {
 		}
 	};
 
+	const handleAddOllamaCloudAccount = async (params: {
+		name: string;
+		apiKey: string;
+		priority: number;
+		modelMappings?: { [key: string]: string };
+	}) => {
+		try {
+			await api.addOllamaCloudAccount(params);
+			await loadAccounts();
+			setAdding(false);
+			setActionError(null);
+		} catch (err) {
+			setActionError(formatError(err));
+			throw err;
+		}
+	};
+
 	const handleRemoveAccount = (name: string) => {
 		setConfirmDelete({ show: true, accountName: name, confirmInput: "" });
 	};
@@ -588,6 +605,7 @@ export function AccountsTab() {
 							}
 							onAddOpenAIAccount={handleAddOpenAIAccount}
 							onAddOllamaAccount={handleAddOllamaAccount}
+								onAddOllamaCloudAccount={handleAddOllamaCloudAccount}
 							onCancel={() => {
 								setAdding(false);
 								setActionError(null);

@@ -16,7 +16,7 @@ export {
 export { KiloProvider } from "./kilo/index";
 export { MinimaxProvider } from "./minimax/index";
 export { NanoGPTProvider } from "./nanogpt/index";
-export { OllamaProvider } from "./ollama/index";
+export { OllamaProvider, OllamaCloudProvider } from "./ollama/index";
 export { OpenAICompatibleProvider } from "./openai/index";
 export { OpenRouterProvider } from "./openrouter/index";
 export { type VertexAIConfig, VertexAIProvider } from "./vertex-ai/index";

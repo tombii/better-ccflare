@@ -1938,6 +1938,142 @@ export function createOllamaAccountAddHandler(dbOps: DatabaseOperations) {
 	};
 }
 
+export function createOllamaCloudAccountAddHandler(dbOps: DatabaseOperations) {
+	return async (req: Request): Promise<Response> => {
+		try {
+			const body = await req.json();
+
+			const name = validateString(body.name, "name", {
+				required: true,
+				minLength: 1,
+				maxLength: 100,
+				pattern: patterns.accountName,
+				patternErrorMessage:
+					"can only contain letters, numbers, spaces, hyphens, underscores, and dots",
+				transform: sanitizers.trim,
+			});
+
+			if (!name) {
+				return errorResponse(BadRequest("Account name is required"));
+			}
+
+			const apiKey = validateString(body.apiKey, "apiKey", {
+				required: true,
+				minLength: 1,
+				transform: sanitizers.trim,
+			});
+
+			if (!apiKey) {
+				return errorResponse(
+					BadRequest("API key is required for Ollama Cloud"),
+				);
+			}
+
+			const priority =
+				validateNumber(body.priority, "priority", {
+					min: 0,
+					max: 100,
+					integer: true,
+				}) || 0;
+
+			let modelMappings = null;
+			if (body.modelMappings && typeof body.modelMappings === "object") {
+				const validatedMappings = validateAndSanitizeModelMappings(
+					body.modelMappings,
+				);
+				modelMappings = JSON.stringify(validatedMappings);
+			}
+
+			const accountId = crypto.randomUUID();
+			const now = Date.now();
+			const db = dbOps.getAdapter();
+			await db.run(
+				`INSERT INTO accounts (
+					id, name, provider, api_key, refresh_token, access_token,
+					expires_at, created_at, request_count, total_requests, priority, custom_endpoint, model_mappings
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				[
+					accountId,
+					name,
+					"ollama-cloud",
+					apiKey,
+					apiKey,
+					apiKey,
+					now + 365 * 24 * 60 * 60 * 1000,
+					now,
+					0,
+					0,
+					priority,
+					"https://ollama.com",
+					modelMappings,
+				],
+			);
+
+			log.info(
+				`Successfully added Ollama Cloud account: ${name} (Priority ${priority})`,
+			);
+
+			const account = await db.get<{
+				id: string;
+				name: string;
+				provider: string;
+				request_count: number;
+				total_requests: number;
+				last_used: number | null;
+				created_at: number;
+				expires_at: number;
+				refresh_token: string;
+				paused: number;
+			}>(
+				`SELECT
+					id, name, provider, request_count, total_requests,
+					last_used, created_at, expires_at, refresh_token,
+					COALESCE(paused, 0) as paused
+				FROM accounts WHERE id = ?`,
+				[accountId],
+			);
+
+			if (!account) {
+				return errorResponse(
+					InternalServerError("Failed to retrieve created account"),
+				);
+			}
+
+			return jsonResponse({
+				message: `Ollama Cloud account '${name}' added successfully`,
+				account: {
+					id: account.id,
+					name: account.name,
+					provider: account.provider,
+					requestCount: account.request_count,
+					totalRequests: account.total_requests,
+					lastUsed: account.last_used
+						? new Date(account.last_used).toISOString()
+						: null,
+					created: new Date(account.created_at).toISOString(),
+					paused: account.paused === 1,
+					priority: priority,
+					tokenStatus: "valid" as const,
+					tokenExpiresAt: new Date(account.expires_at).toISOString(),
+					rateLimitStatus: "OK",
+					rateLimitReset: null,
+					rateLimitRemaining: null,
+					rateLimitedUntil: null,
+					sessionInfo: "No active session",
+					hasRefreshToken: false,
+				},
+			});
+		} catch (error) {
+			log.error("Ollama Cloud account creation error:", error);
+			return errorResponse(
+				error instanceof Error
+					? error
+					: new Error("Failed to create Ollama Cloud account"),
+			);
+		}
+	};
+}
+
 /**
  * Create an account auto-fallback toggle handler
  */

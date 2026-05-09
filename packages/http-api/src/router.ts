@@ -27,6 +27,7 @@ import {
 	createMinimaxAccountAddHandler,
 	createNanoGPTAccountAddHandler,
 	createOllamaAccountAddHandler,
+	createOllamaCloudAccountAddHandler,
 	createOpenAIAccountAddHandler,
 	createOpenRouterAccountAddHandler,
 	createVertexAIAccountAddHandler,
@@ -245,6 +246,12 @@ export class APIRouter {
 		);
 		this.handlers.set("POST:/api/accounts/ollama", (req) =>
 			ollamaAccountAddHandler(req),
+		);
+		const ollamaCloudAccountAddHandler = createOllamaCloudAccountAddHandler(
+			dbOps,
+		);
+		this.handlers.set("POST:/api/accounts/ollama-cloud", (req) =>
+			ollamaCloudAccountAddHandler(req),
 		);
 		this.handlers.set("POST:/api/accounts/openai-compatible", (req) =>
 			openaiAccountAddHandler(req),
