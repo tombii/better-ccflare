@@ -4,7 +4,17 @@ import {
 	isOllamaCloudEndpoint,
 	ollamaChunkToAnthropicSSE,
 	ollamaResponseToAnthropic,
+	type SSEStreamState,
 } from "../ollama-transformer";
+
+function freshState(): SSEStreamState {
+	return {
+		messageStarted: false,
+		contentBlockIndex: 0,
+		lastTextContent: "",
+		hasEmittedContentBlockStart: false,
+	};
+}
 
 describe("ollama-transformer", () => {
 	describe("anthropicToOllama", () => {
@@ -149,7 +159,8 @@ describe("ollama-transformer", () => {
 	});
 
 	describe("ollamaChunkToAnthropicSSE", () => {
-		it("converts text chunk to content_block_delta", () => {
+		it("emits message_start on first text chunk", () => {
+			const state = freshState();
 			const sse = ollamaChunkToAnthropicSSE(
 				{
 					model: "gemma3",
@@ -157,13 +168,54 @@ describe("ollama-transformer", () => {
 					done: false,
 				},
 				"test123",
+				state,
 			);
+			expect(sse).toContain("event: message_start");
+			expect(sse).toContain("event: content_block_start");
 			expect(sse).toContain("event: content_block_delta");
 			expect(sse).toContain("text_delta");
 			expect(sse).toContain("Hello");
 		});
 
-		it("converts done chunk to message_delta + message_stop", () => {
+		it("emits delta only for new text on cumulative chunks", () => {
+			const state = freshState();
+			// First chunk
+			ollamaChunkToAnthropicSSE(
+				{
+					model: "gemma3",
+					message: { role: "assistant", content: "Hel" },
+					done: false,
+				},
+				"test123",
+				state,
+			);
+			// Second chunk (cumulative)
+			const sse2 = ollamaChunkToAnthropicSSE(
+				{
+					model: "gemma3",
+					message: { role: "assistant", content: "Hello" },
+					done: false,
+				},
+				"test123",
+				state,
+			);
+			// Should only emit delta for "lo" (not "Hello" again)
+			expect(sse2).toContain("lo");
+			expect(sse2).not.toContain("Hel");
+		});
+
+		it("converts done chunk to message_delta + message_stop with content_block_stop", () => {
+			const state = freshState();
+			// First emit a text chunk to open a content block
+			ollamaChunkToAnthropicSSE(
+				{
+					model: "gemma3",
+					message: { role: "assistant", content: "Hello" },
+					done: false,
+				},
+				"test123",
+				state,
+			);
 			const sse = ollamaChunkToAnthropicSSE(
 				{
 					model: "gemma3",
@@ -172,13 +224,16 @@ describe("ollama-transformer", () => {
 					done_reason: "stop",
 				},
 				"test123",
+				state,
 			);
+			expect(sse).toContain("event: content_block_stop");
 			expect(sse).toContain("event: message_delta");
 			expect(sse).toContain("event: message_stop");
 			expect(sse).toContain("stop");
 		});
 
-		it("returns empty string for empty content", () => {
+		it("emits message_start even for empty non-done chunk", () => {
+			const state = freshState();
 			const sse = ollamaChunkToAnthropicSSE(
 				{
 					model: "gemma3",
@@ -186,8 +241,12 @@ describe("ollama-transformer", () => {
 					done: false,
 				},
 				"test123",
+				state,
 			);
-			expect(sse).toBe("");
+			// message_start should always be emitted to initialize the stream
+			expect(sse).toContain("event: message_start");
+			// No content delta for empty content
+			expect(sse).not.toContain("content_block_delta");
 		});
 	});
 

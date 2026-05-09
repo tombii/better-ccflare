@@ -30,7 +30,7 @@ type OllamaMessage = {
 		type: "function";
 		function: {
 			name: string;
-			arguments: string;
+			arguments: string | Record<string, unknown>;
 		};
 	}[];
 	tool_call_id?: string;
@@ -84,7 +84,9 @@ type OllamaResponseChunkWithContent = OllamaResponseChunk & {
 	message: {
 		role: string;
 		content: string;
-		tool_calls?: { function: { name: string; arguments: string } }[];
+		tool_calls?: {
+			function: { name: string; arguments: string | Record<string, unknown> };
+		}[];
 	};
 };
 
@@ -169,7 +171,7 @@ export function anthropicToOllama(
 								type: "function",
 								function: {
 									name: toolUse.name,
-									arguments: JSON.stringify(toolUse.input ?? {}),
+									arguments: (toolUse.input ?? {}) as Record<string, unknown>,
 								},
 							},
 						],
@@ -257,18 +259,68 @@ export function anthropicToOllama(
 }
 
 /**
- * Convert a single Ollama response chunk to Anthropic SSE event line
+ * State tracker for streaming SSE transformation.
+ * Ollama sends cumulative content chunks; we need to emit proper
+ * Anthropic SSE events with stateful indexing.
+ */
+export type SSEStreamState = {
+	messageStarted: boolean;
+	contentBlockIndex: number;
+	lastTextContent: string;
+	hasEmittedContentBlockStart: boolean;
+};
+
+/**
+ * Convert a single Ollama response chunk to Anthropic SSE event line(s).
+ * Requires a mutable state object that tracks stream position across calls.
  */
 export function ollamaChunkToAnthropicSSE(
 	chunk: OllamaResponseChunk,
 	streamId: string,
+	state: SSEStreamState,
 ): string {
+	const events: string[] = [];
+
+	// Emit message_start on first chunk
+	if (!state.messageStarted) {
+		state.messageStarted = true;
+		events.push(
+			`event: message_start`,
+			`data: ${JSON.stringify({
+				type: "message_start",
+				message: {
+					id: `msg_${streamId}`,
+					type: "message",
+					role: "assistant",
+					model: chunk.model,
+					content: [],
+					stop_reason: null,
+					stop_sequence: null,
+					usage: { input_tokens: 0, output_tokens: 0 },
+				},
+			})}`,
+			``,
+		);
+	}
+
 	if (chunk.done) {
+		// Close any open content blocks
+		if (state.hasEmittedContentBlockStart) {
+			events.push(
+				`event: content_block_stop`,
+				`data: ${JSON.stringify({
+					type: "content_block_stop",
+					index: state.contentBlockIndex - 1,
+				})}`,
+				``,
+			);
+		}
+
 		const usage = {
 			input_tokens: 0,
 			output_tokens: 0,
 		};
-		return [
+		events.push(
 			`event: message_delta`,
 			`data: ${JSON.stringify({
 				type: "message_delta",
@@ -282,47 +334,96 @@ export function ollamaChunkToAnthropicSSE(
 			`event: message_stop`,
 			`data: ${JSON.stringify({ type: "message_stop" })}`,
 			``,
-		].join("\n");
+		);
+		return `${events.join("\n")}\n`;
 	}
 
 	const content = chunk.message.content || "";
 
+	// Handle tool calls — emit as a separate content block
 	if (chunk.message.tool_calls && chunk.message.tool_calls.length > 0) {
-		const toolCalls = chunk.message.tool_calls.map((tc, idx) => ({
-			type: "tool_use",
-			id: `toolu_${streamId}_${idx}`,
-			name: tc.function.name,
-			input: (() => {
-				try {
-					return JSON.parse(tc.function.arguments);
-				} catch {
-					return {};
-				}
-			})(),
-		}));
-		return `event: content_block_start\ndata: ${JSON.stringify({
-			type: "content_block_start",
-			index: 0,
-			content_block: toolCalls[0],
-		})}\n\nevent: content_block_delta\ndata: ${JSON.stringify({
-			type: "content_block_delta",
-			index: 0,
-			delta: {
-				type: "input_json_delta",
-				partial_json: JSON.stringify(toolCalls[0].input),
-			},
-		})}\n`;
+		if (!state.hasEmittedContentBlockStart) {
+			state.hasEmittedContentBlockStart = true;
+			events.push(
+				`event: content_block_start`,
+				`data: ${JSON.stringify({
+					type: "content_block_start",
+					index: state.contentBlockIndex,
+					content_block: {
+						type: "tool_use",
+						id: `toolu_${streamId}_${state.contentBlockIndex}`,
+						name: chunk.message.tool_calls[0].function.name,
+						input: {},
+					},
+				})}`,
+				``,
+			);
+		}
+
+		const tc = chunk.message.tool_calls[0];
+		let inputObj: Record<string, unknown> = {};
+		// Ollama sends arguments as an object, not a string — use as-is
+		if (
+			typeof tc.function.arguments === "object" &&
+			tc.function.arguments !== null
+		) {
+			inputObj = tc.function.arguments as Record<string, unknown>;
+		} else if (typeof tc.function.arguments === "string") {
+			try {
+				inputObj = JSON.parse(tc.function.arguments);
+			} catch {
+				// keep empty
+			}
+		}
+
+		events.push(
+			`event: content_block_delta`,
+			`data: ${JSON.stringify({
+				type: "content_block_delta",
+				index: state.contentBlockIndex,
+				delta: {
+					type: "input_json_delta",
+					partial_json: JSON.stringify(inputObj),
+				},
+			})}`,
+			``,
+		);
+		state.contentBlockIndex++;
+		return `${events.join("\n")}\n`;
 	}
 
-	if (content) {
-		return `event: content_block_delta\ndata: ${JSON.stringify({
-			type: "content_block_delta",
-			index: 0,
-			delta: { type: "text_delta", text: content },
-		})}\n`;
+	// Handle text content — only emit delta if content is new (cumulative chunks)
+	if (content && content !== state.lastTextContent) {
+		const deltaText = content.slice(state.lastTextContent.length);
+		state.lastTextContent = content;
+
+		if (!state.hasEmittedContentBlockStart) {
+			state.hasEmittedContentBlockStart = true;
+			events.push(
+				`event: content_block_start`,
+				`data: ${JSON.stringify({
+					type: "content_block_start",
+					index: state.contentBlockIndex,
+					content_block: { type: "text", text: "" },
+				})}`,
+				``,
+			);
+		}
+
+		if (deltaText) {
+			events.push(
+				`event: content_block_delta`,
+				`data: ${JSON.stringify({
+					type: "content_block_delta",
+					index: state.contentBlockIndex,
+					delta: { type: "text_delta", text: deltaText },
+				})}`,
+				``,
+			);
+		}
 	}
 
-	return "";
+	return `${events.join("\n")}\n`;
 }
 
 /**
@@ -340,10 +441,17 @@ export function ollamaResponseToAnthropic(
 	if (chunk.message.tool_calls && chunk.message.tool_calls.length > 0) {
 		for (const [idx, tc] of chunk.message.tool_calls.entries()) {
 			let parsedInput: Record<string, unknown> = {};
-			try {
-				parsedInput = JSON.parse(tc.function.arguments);
-			} catch {
-				// keep empty
+			if (
+				typeof tc.function.arguments === "object" &&
+				tc.function.arguments !== null
+			) {
+				parsedInput = tc.function.arguments as Record<string, unknown>;
+			} else if (typeof tc.function.arguments === "string") {
+				try {
+					parsedInput = JSON.parse(tc.function.arguments);
+				} catch {
+					// keep empty
+				}
 			}
 			content.push({
 				type: "tool_use",
