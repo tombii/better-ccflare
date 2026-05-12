@@ -27,6 +27,7 @@ import {
 	SessionStrategy,
 } from "@better-ccflare/load-balancer";
 import { Logger } from "@better-ccflare/logger";
+import { handleResponsesRequest } from "@better-ccflare/openai-responses-adapter";
 import {
 	getProvider,
 	getRepresentativeUtilizationForProvider,
@@ -963,6 +964,19 @@ export default async function startServer(options?: {
 					}
 
 					try {
+						if (
+							url.pathname === "/v1/responses" ||
+							url.pathname === "/v1/responses/compact"
+						) {
+							return await handleResponsesRequest(
+								req,
+								url,
+								handleProxy as Parameters<typeof handleResponsesRequest>[2],
+								proxyContext,
+								authResult.apiKeyId,
+								authResult.apiKeyName,
+							);
+						}
 						return await handleProxy(
 							req,
 							url,
