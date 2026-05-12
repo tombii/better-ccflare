@@ -308,6 +308,105 @@ describe("translateRequestToAnthropic", () => {
 		});
 	});
 
+	test("input_image URL maps to anthropic image url source", () => {
+		const req: ResponsesRequest = {
+			model: "claude-3-5-sonnet-20241022",
+			input: [
+				{
+					type: "message",
+					role: "user",
+					content: [
+						{
+							type: "input_image",
+							image_url: "https://example.com/image.png",
+						},
+					],
+				},
+			],
+		};
+		const result = translateRequestToAnthropic(req);
+		expect(result.messages[0].content[0]).toEqual({
+			type: "image",
+			source: { type: "url", url: "https://example.com/image.png" },
+		});
+	});
+
+	test("input_image data URL maps to anthropic base64 source", () => {
+		const req: ResponsesRequest = {
+			model: "claude-3-5-sonnet-20241022",
+			input: [
+				{
+					type: "message",
+					role: "user",
+					content: [
+						{
+							type: "input_image",
+							image_url: "data:image/png;base64,abc123",
+						},
+					],
+				},
+			],
+		};
+		const result = translateRequestToAnthropic(req);
+		expect(result.messages[0].content[0]).toEqual({
+			type: "image",
+			source: {
+				type: "base64",
+				media_type: "image/png",
+				data: "abc123",
+			},
+		});
+	});
+
+	test("input_image with only file_id maps to placeholder text", () => {
+		const req: ResponsesRequest = {
+			model: "claude-3-5-sonnet-20241022",
+			input: [
+				{
+					type: "message",
+					role: "user",
+					content: [
+						{
+							type: "input_image",
+							file_id: "file_123",
+						},
+					],
+				},
+			],
+		};
+		const result = translateRequestToAnthropic(req);
+		expect(result.messages[0].content[0]).toEqual({
+			type: "text",
+			text: "[image file_id: file_123]",
+		});
+	});
+
+	test("mixed text + input_image preserves content order", () => {
+		const req: ResponsesRequest = {
+			model: "claude-3-5-sonnet-20241022",
+			input: [
+				{
+					type: "message",
+					role: "user",
+					content: [
+						{ type: "input_text", text: "Before" },
+						{ type: "input_image", image_url: "https://example.com/a.png" },
+						{ type: "input_text", text: "After" },
+					],
+				},
+			],
+		};
+		const result = translateRequestToAnthropic(req);
+		expect(result.messages[0].content).toEqual([
+			{ type: "text", text: "Before" },
+			{
+				type: "image",
+				source: { type: "url", url: "https://example.com/a.png" },
+			},
+			{ type: "text", text: "After" },
+		]);
+	});
+
 	test("function_call with invalid JSON arguments falls back to {}", () => {
 		const req: ResponsesRequest = {
 			model: "claude-3-5-sonnet-20241022",

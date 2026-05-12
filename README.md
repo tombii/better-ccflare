@@ -17,6 +17,7 @@ https://github.com/user-attachments/assets/c859872f-ca5e-4f8b-b6a0-7cc7461fe62a
 - **🔒 OAuth Token Health** - Real-time monitoring of OAuth token status with automatic refresh and health indicators
 - **🔗 Custom API Endpoints** - Configure custom endpoints for Anthropic accounts for enterprise deployments
 - **☁️ OpenAI-Compatible Support** - Use OpenAI-compatible providers like OpenRouter, Together AI, and more with Claude API format
+- **🧩 Codex / Responses API Compatibility** - `POST /v1/responses` and `POST /v1/responses/compact` are translated to Anthropic `/v1/messages`
 - **🔄 Smart Auto-Fallback** - Automatically switch back to preferred accounts when their rate limits reset
 - **⚡ Auto-Refresh** - Automatically start new usage windows when rate limits reset with 30-minute buffer
 - **📊 Request-Level Analytics** - Track latency, token usage, and costs in real-time with optimized batch processing
@@ -396,6 +397,35 @@ claude
 - **Working on untrusted/temporary machines?** Use Option 3 (Remote VPS setup) - keeps credentials secure
 - **Using only API keys in better-ccflare?** Use Option 2 (logout + API key)
 - **Getting auth conflict warnings?** You have both methods active - choose one and follow its steps above
+
+### Codex / OpenAI Responses Compatibility
+
+better-ccflare now supports OpenAI Responses API clients (for example Codex). Incoming requests to:
+
+- `POST /v1/responses`
+- `POST /v1/responses/compact`
+
+are intercepted and translated to Anthropic `POST /v1/messages` internally.
+
+Use this in `~/.codex/config.toml`:
+
+```toml
+[api]
+base_url = "http://localhost:8080"
+api_key = "dummy-key" # or your real better-ccflare API key if API auth is enabled
+```
+
+Equivalent environment variables:
+
+```bash
+export OPENAI_BASE_URL=http://localhost:8080
+export OPENAI_API_KEY=dummy-key
+```
+
+Known limitations (current):
+
+- OpenAI built-in tools are not fully mapped yet
+- Coverage is focused on Responses API compatibility paths (`/v1/responses`, `/v1/responses/compact`)
 
 ### SSL/HTTPS Configuration
 

@@ -54,6 +54,51 @@ function translateToolChoice(
 	return undefined;
 }
 
+function translateContentItem(c: {
+	type: string;
+	text?: string;
+	refusal?: string;
+	image_url?: string;
+	file_id?: string;
+}): AnthropicContent {
+	if (c.type === "input_text" || c.type === "output_text") {
+		return { type: "text", text: c.text ?? "" };
+	}
+
+	if (c.type === "refusal") {
+		return { type: "text", text: c.refusal ?? "" };
+	}
+
+	if (c.type === "input_image") {
+		const imageUrl = c.image_url;
+		if (typeof imageUrl === "string") {
+			const trimmed = imageUrl.trim();
+			const dataUrlMatch = /^data:([^;]+);base64,(.+)$/.exec(trimmed);
+			if (dataUrlMatch) {
+				return {
+					type: "image",
+					source: {
+						type: "base64",
+						media_type: dataUrlMatch[1],
+						data: dataUrlMatch[2],
+					},
+				};
+			}
+			if (trimmed.length > 0) {
+				return { type: "image", source: { type: "url", url: trimmed } };
+			}
+		}
+
+		if (typeof c.file_id === "string" && c.file_id.length > 0) {
+			return { type: "text", text: `[image file_id: ${c.file_id}]` };
+		}
+
+		return { type: "text", text: "[image content omitted]" };
+	}
+
+	return { type: "text", text: c.refusal ?? "" };
+}
+
 function mergeConsecutiveSameRole(
 	messages: AnthropicMessage[],
 ): AnthropicMessage[] {
@@ -76,13 +121,9 @@ export function translateRequestToAnthropic(
 
 	for (const item of req.input) {
 		if (item.type === "message") {
-			const content: AnthropicContent[] = item.content.map((c) => {
-				if (c.type === "input_text" || c.type === "output_text") {
-					return { type: "text", text: c.text };
-				}
-				// refusal → approximate as text
-				return { type: "text", text: c.refusal };
-			});
+			const content: AnthropicContent[] = item.content.map((c) =>
+				translateContentItem(c),
+			);
 			messages.push({ role: item.role, content });
 			continue;
 		}

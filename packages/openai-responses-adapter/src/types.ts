@@ -34,7 +34,8 @@ export interface ResponseMessageItem {
 export type ResponseContent =
 	| InputTextContent
 	| OutputTextContent
-	| RefusalContent;
+	| RefusalContent
+	| InputImageContent;
 
 export interface InputTextContent {
 	type: "input_text";
@@ -49,6 +50,12 @@ export interface OutputTextContent {
 export interface RefusalContent {
 	type: "refusal";
 	refusal: string;
+}
+
+export interface InputImageContent {
+	type: "input_image";
+	image_url?: string;
+	file_id?: string;
 }
 
 export interface FunctionCallItem {
@@ -177,11 +184,19 @@ export interface AnthropicMessage {
 export type AnthropicContent =
 	| AnthropicTextContent
 	| AnthropicToolUseContent
-	| AnthropicToolResultContent;
+	| AnthropicToolResultContent
+	| AnthropicImageContent;
 
 export interface AnthropicTextContent {
 	type: "text";
 	text: string;
+}
+
+export interface AnthropicImageContent {
+	type: "image";
+	source:
+		| { type: "url"; url: string }
+		| { type: "base64"; media_type?: string; data: string };
 }
 
 export interface AnthropicToolUseContent {
