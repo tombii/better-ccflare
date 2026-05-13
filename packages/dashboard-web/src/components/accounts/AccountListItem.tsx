@@ -108,6 +108,12 @@ export function AccountListItem({
 	const isUsageThrottled =
 		typeof account.usageThrottledUntil === "number" &&
 		account.usageThrottledUntil > Date.now();
+	const hasReauth =
+		(account.provider === "qwen" && !!onReauth) ||
+		(account.provider === "anthropic" &&
+			account.hasRefreshToken &&
+			!!onAnthropicReauth) ||
+		(account.provider === "codex" && !!onCodexReauth);
 
 	// Parse Bedrock profile and region from custom_endpoint
 	let bedrockProfile: string | null = null;
@@ -202,6 +208,11 @@ export function AccountListItem({
 							{onCustomEndpointChange && (
 								<DropdownMenuItem
 									onClick={() => onCustomEndpointChange(account)}
+									title={
+										account.customEndpoint
+											? `Custom endpoint: ${account.customEndpoint}`
+											: "Set custom endpoint"
+									}
 								>
 									<Globe
 										className={`mr-2 h-4 w-4 ${account.customEndpoint ? "text-primary" : ""}`}
@@ -217,6 +228,11 @@ export function AccountListItem({
 							{onModelMappingsChange && (
 								<DropdownMenuItem
 									onClick={() => onModelMappingsChange(account)}
+									title={
+										account.modelMappings
+											? `Model mappings configured (${Object.keys(account.modelMappings).length} mappings)`
+											: "Configure model mappings"
+									}
 								>
 									<Hash
 										className={`mr-2 h-4 w-4 ${account.modelMappings ? "text-primary" : ""}`}
@@ -229,15 +245,12 @@ export function AccountListItem({
 									)}
 								</DropdownMenuItem>
 							)}
-							{((account.provider === "qwen" && onReauth) ||
-								(account.provider === "anthropic" &&
-									account.hasRefreshToken &&
-									onAnthropicReauth) ||
-								(account.provider === "codex" && onCodexReauth)) && (
-								<DropdownMenuSeparator />
-							)}
+							{hasReauth && <DropdownMenuSeparator />}
 							{account.provider === "qwen" && onReauth && (
-								<DropdownMenuItem onClick={() => onReauth(account)}>
+								<DropdownMenuItem
+									onClick={() => onReauth(account)}
+									title="Re-authenticate this Qwen account (preserves all metadata)"
+								>
 									<KeyRound className="mr-2 h-4 w-4" />
 									Re-authenticate
 								</DropdownMenuItem>
@@ -245,13 +258,19 @@ export function AccountListItem({
 							{account.provider === "anthropic" &&
 								account.hasRefreshToken &&
 								onAnthropicReauth && (
-									<DropdownMenuItem onClick={() => onAnthropicReauth(account)}>
+									<DropdownMenuItem
+										onClick={() => onAnthropicReauth(account)}
+										title="Re-authenticate this Anthropic account (preserves all metadata)"
+									>
 										<KeyRound className="mr-2 h-4 w-4" />
 										Re-authenticate
 									</DropdownMenuItem>
 								)}
 							{account.provider === "codex" && onCodexReauth && (
-								<DropdownMenuItem onClick={() => onCodexReauth(account)}>
+								<DropdownMenuItem
+									onClick={() => onCodexReauth(account)}
+									title="Re-authenticate this Codex account (preserves all metadata)"
+								>
 									<KeyRound className="mr-2 h-4 w-4" />
 									Re-authenticate
 								</DropdownMenuItem>
