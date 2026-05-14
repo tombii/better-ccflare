@@ -1,8 +1,11 @@
+import { Logger } from "@better-ccflare/logger";
 import {
 	errorResponse,
 	InternalServerError,
 	jsonResponse,
 } from "../utils/http-error";
+
+const log = new Logger("VersionHandler");
 
 // Cache the npm registry response to avoid excessive requests
 interface VersionCacheEntry {
@@ -51,9 +54,10 @@ export function createVersionCheckHandler() {
 				cached: false,
 			});
 		} catch (error) {
-			console.error("Failed to check for updates from npm registry:", error);
+			log.error("Failed to check for updates from npm registry:", error);
+			const message = error instanceof Error ? error.message : String(error);
 			return errorResponse(
-				InternalServerError("Failed to check for updates from npm registry"),
+				InternalServerError(`Update check failed: ${message}`),
 			);
 		}
 	};
