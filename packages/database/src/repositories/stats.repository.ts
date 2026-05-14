@@ -2,7 +2,11 @@
  * Consolidated stats repository to eliminate duplication between cli-commands and http-api
  */
 
-import type { RecentErrorGroup, SessionStats } from "@better-ccflare/types";
+import type {
+	RateLimitReason,
+	RecentErrorGroup,
+	SessionStats,
+} from "@better-ccflare/types";
 import { NO_ACCOUNT_ID } from "@better-ccflare/types";
 import type { BunSqlAdapter } from "../adapters/bun-sql-adapter";
 
@@ -246,11 +250,11 @@ export class StatsRepository {
 				SELECT r.id, r.timestamp, r.error_message, r.account_used, r.model,
 				       r.status_code, r.path, r.failover_attempts,
 				       ROW_NUMBER() OVER (
-				         PARTITION BY r.error_message, COALESCE(r.account_used, '${NO_ACCOUNT_ID}')
+				         PARTITION BY r.error_message, COALESCE(r.account_used, ?)
 				         ORDER BY r.timestamp DESC
 				       ) AS rn,
-				       COUNT(*)         OVER (PARTITION BY r.error_message, COALESCE(r.account_used, '${NO_ACCOUNT_ID}')) AS occurrence_count,
-				       MIN(r.timestamp) OVER (PARTITION BY r.error_message, COALESCE(r.account_used, '${NO_ACCOUNT_ID}')) AS first_seen
+				       COUNT(*)         OVER (PARTITION BY r.error_message, COALESCE(r.account_used, ?)) AS occurrence_count,
+				       MIN(r.timestamp) OVER (PARTITION BY r.error_message, COALESCE(r.account_used, ?)) AS first_seen
 				FROM requests r
 				WHERE r.error_message IS NOT NULL
 				  AND r.error_message != ''
@@ -276,12 +280,11 @@ export class StatsRepository {
 			WHERE ranked.rn = 1
 			ORDER BY ranked.timestamp DESC
 			LIMIT ?`,
-			[sinceMs, limit],
+			[NO_ACCOUNT_ID, NO_ACCOUNT_ID, NO_ACCOUNT_ID, sinceMs, limit],
 		);
 
 		return rows.map((row) => {
-			const accountId =
-				row.account_id == null ? null : String(row.account_id);
+			const accountId = row.account_id == null ? null : String(row.account_id);
 			const accountName =
 				row.account_name == null ? null : String(row.account_name);
 			const model = row.model == null ? null : String(row.model);
@@ -289,15 +292,13 @@ export class StatsRepository {
 			const statusCode =
 				row.status_code == null ? null : Number(row.status_code);
 			const rateLimitedUntil =
-				row.rate_limited_until == null
-					? null
-					: Number(row.rate_limited_until);
+				row.rate_limited_until == null ? null : Number(row.rate_limited_until);
 			const rateLimitedAt =
 				row.rate_limited_at == null ? null : Number(row.rate_limited_at);
 			const rateLimitedReason =
 				row.rate_limited_reason == null
 					? null
-					: (String(row.rate_limited_reason) as RecentErrorGroup["rateLimitedReason"]);
+					: (String(row.rate_limited_reason) as RateLimitReason);
 
 			return {
 				errorCode: String(row.error_code ?? ""),

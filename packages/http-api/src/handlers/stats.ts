@@ -16,7 +16,9 @@ export function createStatsHandler(dbOps: DatabaseOperations) {
 
 		// Parse optional ?errorsSinceHours=<n> query parameter
 		// (default: 24, max: 8760 hours = 365 days)
-		const errorsHoursRaw = Number(url.searchParams.get("errorsSinceHours") ?? 24);
+		const errorsHoursRaw = Number(
+			url.searchParams.get("errorsSinceHours") ?? 24,
+		);
 		const errorsHours =
 			Number.isFinite(errorsHoursRaw) && errorsHoursRaw > 0
 				? Math.min(errorsHoursRaw, 8760)
