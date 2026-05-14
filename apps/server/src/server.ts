@@ -1343,9 +1343,9 @@ async function handleGracefulShutdown(signal: string) {
 	watchdog.unref();
 
 	try {
-		// 1. Stop scheduler triggers first so they don't add load while draining.
-		//    These calls only stop the recurring trigger; any in-flight task they
-		//    already kicked off continues until it finishes naturally.
+		// Stop scheduler triggers first so they don't add load while draining.
+		// These calls only stop the recurring trigger; any in-flight task they
+		// already kicked off continues until it finishes naturally.
 		if (stopRetentionJob) {
 			stopRetentionJob();
 			stopRetentionJob = null;
@@ -1404,9 +1404,9 @@ async function handleGracefulShutdown(signal: string) {
 
 		usageCache.clear(); // Stop all usage polling
 
-		// 2. Stop accepting new connections and wait for in-flight HTTP requests
-		//    (including streaming responses) to complete. stop() without args is
-		//    Bun's graceful variant; stop(true) would force-close active conns.
+		// Stop accepting new connections and wait for in-flight HTTP requests
+		// (including streaming responses) to complete. stop() without args is
+		// Bun's graceful variant; stop(true) would force-close active conns.
 		if (serverInstance) {
 			console.log("Draining in-flight HTTP requests...");
 			try {
@@ -1418,12 +1418,12 @@ async function handleGracefulShutdown(signal: string) {
 			console.log("HTTP drain complete");
 		}
 
-		// 3. Now that streams have finished, the usage worker has received all
-		//    end-of-stream analytics messages. Terminate it so its DB writes
-		//    flush into the AsyncDbWriter queue before we dispose that.
+		// Now that streams have finished, the usage worker has received all
+		// end-of-stream analytics messages. Terminate it so its DB writes
+		// flush into the AsyncDbWriter queue before we dispose that.
 		await terminateUsageWorker();
 
-		// 4. Flush AsyncDbWriter and other Disposables.
+		// Flush AsyncDbWriter and other Disposables.
 		await shutdown();
 
 		console.log("✅ Shutdown complete");
