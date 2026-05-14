@@ -99,6 +99,8 @@ export function ensureSchema(db: Database): void {
 			account_name TEXT NOT NULL,
 			verifier TEXT NOT NULL,
 			mode TEXT NOT NULL,
+			custom_endpoint TEXT,
+			priority INTEGER NOT NULL DEFAULT 0,
 			created_at INTEGER NOT NULL,
 			expires_at INTEGER NOT NULL
 		)
@@ -343,6 +345,7 @@ export function runMigrations(db: Database, dbPath?: string): void {
 		!requestPayloadsColumnNames.includes("timestamp") ||
 		!apiKeysColumnNames.includes("role") ||
 		!initialOauthSessionsColumnNames.includes("custom_endpoint") ||
+		!initialOauthSessionsColumnNames.includes("priority") ||
 		finalAccountsColumnNames.includes("account_tier") ||
 		finalOAuthColumnNames.includes("tier");
 
@@ -649,6 +652,14 @@ export function runMigrations(db: Database, dbPath?: string): void {
 			log.info("Added custom_endpoint column to oauth_sessions table");
 		}
 
+		// Add priority column to oauth_sessions if it doesn't exist
+		if (!initialOauthSessionsColumnNames.includes("priority")) {
+			db.prepare(
+				"ALTER TABLE oauth_sessions ADD COLUMN priority INTEGER NOT NULL DEFAULT 0",
+			).run();
+			log.info("Added priority column to oauth_sessions table");
+		}
+
 		// Add model column if it doesn't exist
 		if (!requestsColumnNames.includes("model")) {
 			db.prepare("ALTER TABLE requests ADD COLUMN model TEXT").run();
@@ -858,7 +869,7 @@ export function runMigrations(db: Database, dbPath?: string): void {
 		if (finalOAuthColumnNames.includes("tier")) {
 			db.prepare(`
 			CREATE TABLE oauth_sessions_new AS
-			SELECT id, account_name, verifier, mode, created_at, expires_at, custom_endpoint
+			SELECT id, account_name, verifier, mode, created_at, expires_at, custom_endpoint, priority
 			FROM oauth_sessions
 		`).run();
 
