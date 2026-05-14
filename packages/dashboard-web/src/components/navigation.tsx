@@ -1,3 +1,4 @@
+import { parseHttpError } from "@better-ccflare/errors";
 import {
 	Activity,
 	BarChart3,
@@ -251,10 +252,7 @@ export function Navigation({
 			]);
 
 			if (!response.ok) {
-				const errBody = await response
-					.json()
-					.catch(() => ({}) as { error?: string });
-				throw new Error(errBody.error || `HTTP ${response.status}`);
+				throw await parseHttpError(response);
 			}
 
 			const data = await response.json();
