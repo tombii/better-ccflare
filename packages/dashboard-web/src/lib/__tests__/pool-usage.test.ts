@@ -273,24 +273,38 @@ describe("computePoolUsage", () => {
 
 		const result = computePoolUsage(accounts, "five_hour", NOW);
 		expect(result.contributing).toEqual([]);
-		expect(result.excluded).toEqual([{ name: "p", reason: "paused" }]);
+		expect(result.exhausted).toEqual([{ name: "p", reason: "paused" }]);
+		expect(result.excluded).toEqual([]);
+		expect(result.average).toBe(100);
 	});
 
-	it("rate_limited account (rateLimitedUntil > now) → excluded reason rate_limited", () => {
+	it("rate_limited account (rateLimitedUntil > now) counts as exhausted capacity", () => {
 		const accounts: AccountResponse[] = [
+			mkAccount({
+				name: "active",
+				provider: "anthropic",
+				usageData: {
+					five_hour: { utilization: 20, resets_at: null },
+					seven_day: { utilization: 20, resets_at: null },
+				} as never,
+			}),
 			mkAccount({
 				name: "rl",
 				provider: "anthropic",
 				rateLimitedUntil: NOW + 60_000,
 				usageData: {
-					five_hour: { utilization: 50, resets_at: null },
-					seven_day: { utilization: 50, resets_at: null },
+					five_hour: { utilization: 90, resets_at: null },
+					seven_day: { utilization: 90, resets_at: null },
 				} as never,
 			}),
 		];
 
 		const result = computePoolUsage(accounts, "five_hour", NOW);
-		expect(result.excluded).toEqual([{ name: "rl", reason: "rate_limited" }]);
+		expect(result.average).toBe(60);
+		expect(result.activeAverage).toBe(20);
+		expect(result.contributing).toHaveLength(1);
+		expect(result.exhausted).toEqual([{ name: "rl", reason: "rate_limited" }]);
+		expect(result.excluded).toEqual([]);
 	});
 
 	it("token_expired requires hasRefreshToken=true and parsed time < now", () => {
@@ -308,7 +322,9 @@ describe("computePoolUsage", () => {
 		];
 
 		const result = computePoolUsage(accounts, "five_hour", NOW);
-		expect(result.excluded).toEqual([{ name: "te", reason: "token_expired" }]);
+		expect(result.exhausted).toEqual([{ name: "te", reason: "token_expired" }]);
+		expect(result.excluded).toEqual([]);
+		expect(result.average).toBe(100);
 	});
 
 	it("usage_rate_limited when usageRateLimitedUntil > now AND no usageData", () => {
@@ -322,9 +338,11 @@ describe("computePoolUsage", () => {
 		];
 
 		const result = computePoolUsage(accounts, "five_hour", NOW);
-		expect(result.excluded).toEqual([
+		expect(result.exhausted).toEqual([
 			{ name: "url", reason: "usage_rate_limited" },
 		]);
+		expect(result.excluded).toEqual([]);
+		expect(result.average).toBe(100);
 	});
 
 	it("no_usage_data when eligible provider has usageData === null and is not rate-limited", () => {

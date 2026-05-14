@@ -100,24 +100,28 @@ export function PoolMetricCard({
 }: PoolMetricCardProps) {
 	const {
 		average,
-		worst,
+		activeAverage,
 		contributing,
+		exhausted,
 		excluded,
 		fallback,
 		earliestResetMs,
 		earliestResetAccountName,
 	} = result;
 
-	const eligibleTotal = contributing.length + excluded.length;
+	const eligibleTotal =
+		contributing.length + exhausted.length + excluded.length;
 	const showChip = eligibleTotal > 0;
 	const colorClass = headlineColor(average);
 	const headline = average != null ? formatPercentage(average, 0) : "—";
-	const showSubline = contributing.length >= 2 && worst != null;
+	const showSubline = contributing.length > 0 || exhausted.length > 0;
 
 	const sortedContributing = contributing.slice().sort((a, b) => b.pct - a.pct);
+	const exhaustedGroups = groupExcluded(exhausted);
 	const excludedGroups = groupExcluded(excluded);
 
 	const hasContributing = contributing.length > 0;
+	const hasExhausted = exhausted.length > 0;
 	const hasExcluded = excluded.length > 0;
 	const hasFallback = fallback.length > 0;
 
@@ -129,12 +133,23 @@ export function PoolMetricCard({
 					className="flex items-center gap-1 text-xs text-muted-foreground cursor-help focus:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded"
 				>
 					<span className="tabular-nums">
-						({contributing.length}/{eligibleTotal})
+						({contributing.length}/{eligibleTotal} active)
 					</span>
 					<Info className="h-3 w-3" />
 				</button>
 			</PopoverTrigger>
 			<PopoverContent className="w-72 text-xs space-y-3">
+				<div>
+					<div className="font-medium mb-1">Pool usage</div>
+					<div className="text-muted-foreground">
+						Headline counts unavailable eligible accounts as 100% used.
+					</div>
+					{activeAverage != null && (
+						<div className="mt-1">
+							Active accounts average: {activeAverage.toFixed(0)}%
+						</div>
+					)}
+				</div>
 				{hasContributing && (
 					<div>
 						<div className="font-medium mb-1">
@@ -155,14 +170,37 @@ export function PoolMetricCard({
 						</ul>
 					</div>
 				)}
+				{hasExhausted && (
+					<div>
+						<div className="font-medium mb-1">
+							Unavailable ({exhausted.length})
+						</div>
+						<div className="space-y-2">
+							{exhaustedGroups.map(({ reason, items }) => (
+								<div key={reason}>
+									<div className="text-muted-foreground">
+										{REASON_LABELS[reason]} · counted as 100%
+									</div>
+									<ul className="ml-2 space-y-0.5">
+										{items.map((e) => (
+											<li key={e.name} className="truncate" title={e.name}>
+												{e.name}
+											</li>
+										))}
+									</ul>
+								</div>
+							))}
+						</div>
+					</div>
+				)}
 				{hasExcluded && (
 					<div>
-						<div className="font-medium mb-1">Excluded ({excluded.length})</div>
+						<div className="font-medium mb-1">Unknown ({excluded.length})</div>
 						<div className="space-y-2">
 							{excludedGroups.map(({ reason, items }) => (
 								<div key={reason}>
 									<div className="text-muted-foreground">
-										{REASON_LABELS[reason]}
+										{REASON_LABELS[reason]} · not counted
 									</div>
 									<ul className="ml-2 space-y-0.5">
 										{items.map((e) => (
@@ -223,12 +261,9 @@ export function PoolMetricCard({
 				<div className="space-y-1">
 					<p className="text-sm text-muted-foreground">{title}</p>
 					<p className={cn("text-2xl font-bold", colorClass)}>{headline}</p>
-					{showSubline && worst && (
-						<p
-							className="text-xs text-muted-foreground truncate"
-							title={worst.name}
-						>
-							worst: {worst.pct.toFixed(0)}% ({worst.name})
+					{showSubline && (
+						<p className="text-xs text-muted-foreground truncate">
+							capacity used
 						</p>
 					)}
 				</div>

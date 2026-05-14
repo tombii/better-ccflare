@@ -27,8 +27,10 @@ export interface PoolUsageFallback {
 
 export interface PoolUsageResult {
 	average: number | null;
+	activeAverage: number | null;
 	worst: { name: string; pct: number } | null;
 	contributing: PoolUsageContribution[];
+	exhausted: PoolUsageExclusion[];
 	excluded: PoolUsageExclusion[];
 	fallback: PoolUsageFallback[];
 	earliestResetMs: number | null;
@@ -212,6 +214,7 @@ export function computePoolUsage(
 	now: number,
 ): PoolUsageResult {
 	const contributing: PoolUsageContribution[] = [];
+	const exhausted: PoolUsageExclusion[] = [];
 	const excluded: PoolUsageExclusion[] = [];
 	const fallback: PoolUsageFallback[] = [];
 
@@ -225,7 +228,7 @@ export function computePoolUsage(
 
 		const exclusion = classifyExclusion(account, now);
 		if (exclusion) {
-			excluded.push({ name: account.name, reason: exclusion });
+			exhausted.push({ name: account.name, reason: exclusion });
 			continue;
 		}
 
@@ -256,15 +259,27 @@ export function computePoolUsage(
 		});
 	}
 
-	const average =
+	const activeAverage =
 		contributing.length === 0
 			? null
 			: contributing.reduce((sum, c) => sum + c.pct, 0) / contributing.length;
+	const capacityCount = contributing.length + exhausted.length;
+	const average =
+		capacityCount === 0
+			? null
+			: (contributing.reduce((sum, c) => sum + c.pct, 0) +
+					exhausted.length * 100) /
+				capacityCount;
 
 	let worst: { name: string; pct: number } | null = null;
 	for (const c of contributing) {
 		if (worst === null || c.pct > worst.pct) {
 			worst = { name: c.name, pct: c.pct };
+		}
+	}
+	for (const e of exhausted) {
+		if (worst === null || 100 > worst.pct) {
+			worst = { name: e.name, pct: 100 };
 		}
 	}
 
@@ -283,8 +298,10 @@ export function computePoolUsage(
 
 	return {
 		average,
+		activeAverage,
 		worst,
 		contributing,
+		exhausted,
 		excluded,
 		fallback,
 		earliestResetMs,
