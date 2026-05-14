@@ -132,7 +132,7 @@ export function StatsTab() {
 					</CardHeader>
 					<CardContent>
 						<div className="space-y-2">
-							{stats.recentErrors.map((error: RecentErrorGroup, i: number) => {
+							{stats.recentErrors.map((error: RecentErrorGroup) => {
 								const accountLabel =
 									error.accountName ??
 									(error.accountId === null
@@ -140,7 +140,7 @@ export function StatsTab() {
 										: "Deleted account");
 								return (
 									<div
-										key={`error-${i}-${error.latestRequestId}`}
+										key={error.latestRequestId}
 										className="text-sm p-2 bg-destructive/10 rounded-md flex items-start gap-2"
 									>
 										<XCircle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
@@ -150,6 +150,7 @@ export function StatsTab() {
 												{error.occurrenceCount > 1 && (
 													<span
 														className="ml-2 text-xs font-normal"
+														role="img"
 														aria-label={`${error.occurrenceCount} occurrences`}
 													>
 														×{error.occurrenceCount}
