@@ -487,4 +487,65 @@ describe("computePoolUsage", () => {
 		expect(result.average).toBe(59);
 		expect(result.worst).toEqual({ name: "high", pct: 87 });
 	});
+
+	it("counts accounts exhausted in another quota window as unavailable 5h capacity", () => {
+		const accounts: AccountResponse[] = [
+			mkAccount({
+				name: "codex",
+				provider: "codex",
+				usageData: {
+					five_hour: { utilization: 28, resets_at: null },
+					seven_day: { utilization: 35, resets_at: null },
+				} as never,
+			}),
+			mkAccount({
+				name: "weekly-exhausted",
+				provider: "anthropic",
+				usageData: {
+					five_hour: { utilization: 31, resets_at: null },
+					seven_day: { utilization: 100, resets_at: null },
+				} as never,
+			}),
+			mkAccount({
+				name: "five-hour-exhausted",
+				provider: "anthropic",
+				usageData: {
+					five_hour: { utilization: 100, resets_at: null },
+					seven_day: { utilization: 30, resets_at: null },
+				} as never,
+			}),
+			mkAccount({
+				name: "both-exhausted",
+				provider: "anthropic",
+				usageData: {
+					five_hour: { utilization: 0, resets_at: null },
+					seven_day: { utilization: 100, resets_at: null },
+				} as never,
+			}),
+		];
+
+		const fiveHour = computePoolUsage(accounts, "five_hour", NOW);
+		expect(fiveHour.average).toBe(82);
+		expect(fiveHour.activeAverage).toBe(28);
+		expect(fiveHour.contributing).toEqual([
+			{ name: "codex", pct: 28, resetMs: null },
+		]);
+		expect(fiveHour.exhausted).toEqual([
+			{ name: "weekly-exhausted", reason: "seven_day_exhausted" },
+			{ name: "five-hour-exhausted", reason: "five_hour_exhausted" },
+			{ name: "both-exhausted", reason: "seven_day_exhausted" },
+		]);
+
+		const sevenDay = computePoolUsage(accounts, "seven_day", NOW);
+		expect(sevenDay.average).toBe(83.75);
+		expect(sevenDay.activeAverage).toBe(35);
+		expect(sevenDay.contributing).toEqual([
+			{ name: "codex", pct: 35, resetMs: null },
+		]);
+		expect(sevenDay.exhausted).toEqual([
+			{ name: "weekly-exhausted", reason: "seven_day_exhausted" },
+			{ name: "five-hour-exhausted", reason: "five_hour_exhausted" },
+			{ name: "both-exhausted", reason: "seven_day_exhausted" },
+		]);
+	});
 });

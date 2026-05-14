@@ -7,6 +7,8 @@ export type ExcludedReason =
 	| "rate_limited"
 	| "token_expired"
 	| "usage_rate_limited"
+	| "five_hour_exhausted"
+	| "seven_day_exhausted"
 	| "no_usage_data";
 
 export interface PoolUsageContribution {
@@ -208,6 +210,24 @@ function classifyExclusion(
 	return null;
 }
 
+function classifyQuotaExhaustion(
+	account: AccountResponse,
+): ExcludedReason | null {
+	if (!account.usageData) return null;
+
+	const fiveHour = extractFiveHour(account.usageData);
+	if (fiveHour?.pct != null && fiveHour.pct >= 100) {
+		return "five_hour_exhausted";
+	}
+
+	const sevenDay = extractSevenDay(account.usageData);
+	if (sevenDay?.pct != null && sevenDay.pct >= 100) {
+		return "seven_day_exhausted";
+	}
+
+	return null;
+}
+
 export function computePoolUsage(
 	accounts: AccountResponse[],
 	window: PoolWindow,
@@ -226,7 +246,8 @@ export function computePoolUsage(
 			continue;
 		}
 
-		const exclusion = classifyExclusion(account, now);
+		const exclusion =
+			classifyExclusion(account, now) ?? classifyQuotaExhaustion(account);
 		if (exclusion) {
 			exhausted.push({ name: account.name, reason: exclusion });
 			continue;
