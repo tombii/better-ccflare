@@ -17,7 +17,7 @@ const WINDOW_OPTIONS: Array<{ value: ErrorWindowKey; label: string }> = [
 	{ value: "1h", label: "Last hour" },
 	{ value: "24h", label: "Last 24 hours" },
 	{ value: "7d", label: "Last 7 days" },
-	{ value: "all", label: "All time" },
+	{ value: "all", label: "Last year" },
 ];
 
 export function RecentErrorsCard() {
@@ -28,7 +28,7 @@ export function RecentErrorsCard() {
 		null,
 	);
 
-	const recentErrors = data?.recentErrors as RecentErrorGroup[] | undefined;
+	const recentErrors = data?.recentErrors;
 	const visibleErrors = recentErrors?.filter((err) => !isDismissed(err)) ?? [];
 
 	if (isLoading && !data) return null;
