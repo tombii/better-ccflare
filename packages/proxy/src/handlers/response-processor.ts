@@ -1,45 +1,15 @@
-import { logError, RateLimitError, TIME_CONSTANTS } from "@better-ccflare/core";
+import { logError, TIME_CONSTANTS } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import {
 	type Provider,
 	parseCodexUsageHeaders,
 	usageCache,
 } from "@better-ccflare/providers";
-import type { Account, RateLimitReason } from "@better-ccflare/types";
+import type { Account } from "@better-ccflare/types";
 import type { ProxyContext } from "./proxy-types";
+import { applyRateLimitCooldown } from "./rate-limit-cooldown";
 
 const log = new Logger("ResponseProcessor");
-
-/**
- * Handles rate limit response for an account
- * @param account - The rate-limited account
- * @param rateLimitInfo - Parsed rate limit information
- * @param ctx - The proxy context
- */
-export function handleRateLimitResponse(
-	account: Account,
-	rateLimitInfo: ReturnType<Provider["parseRateLimit"]>,
-	ctx: ProxyContext,
-): void {
-	if (!rateLimitInfo.resetTime) return;
-
-	const resetTime = rateLimitInfo.resetTime;
-	const reason: RateLimitReason = "upstream_429_with_reset";
-	account.rate_limited_until = resetTime;
-	ctx.asyncWriter.enqueue(() => {
-		log.warn(
-			`[ccflare] account=${account.name} cooldown_applied reason=${reason} until=${new Date(resetTime).toISOString()}`,
-		);
-		return ctx.dbOps.markAccountRateLimited(account.id, resetTime, reason);
-	});
-
-	const rateLimitError = new RateLimitError(
-		account.id,
-		rateLimitInfo.resetTime,
-		rateLimitInfo.remaining,
-	);
-	logError(rateLimitError, log);
-}
 
 /**
  * Updates account metadata in the background
@@ -282,34 +252,11 @@ export async function processProxyResponse(
 			log.warn(
 				`Keepalive replay for ${account.name} got 429 — skipping cooldown (synthetic burst, not a real per-account rate limit)`,
 			);
-		} else if (rateLimitInfo.resetTime) {
-			handleRateLimitResponse(account, rateLimitInfo, ctx);
 		} else {
-			// Mark as rate-limited even without reset time. Use a short
-			// probe-friendly cooldown (default 60s, override via
-			// CCFLARE_DEFAULT_COOLDOWN_NO_RESET_MS) instead of the previous
-			// 5h hard-ban: a reset-less 429 is more likely a transient than
-			// a real rate-limit window, and a 5h ban on every transient
-			// error chains pool exhaustion under burst load.
-			const cooldownMs =
-				Number(process.env.CCFLARE_DEFAULT_COOLDOWN_NO_RESET_MS) ||
-				TIME_CONSTANTS.DEFAULT_RATE_LIMIT_NO_RESET_COOLDOWN_MS;
-			log.warn(
-				`Account ${account.name} rate-limited but no reset time available — applying ${cooldownMs}ms probe cooldown`,
-			);
-			const cooldownUntil = Date.now() + cooldownMs;
-			account.rate_limited_until = cooldownUntil;
-			ctx.asyncWriter.enqueue(() => {
-				const reason: RateLimitReason = "upstream_429_no_reset_probe_cooldown";
-				log.warn(
-					`[ccflare] account=${account.name} cooldown_applied reason=${reason} until=${new Date(cooldownUntil).toISOString()}`,
-				);
-				return ctx.dbOps.markAccountRateLimited(
-					account.id,
-					cooldownUntil,
-					reason,
-				);
-			});
+			// Single entry point for both with-reset and no-reset 429s. The
+			// helper handles the missing-resetTime case internally (backoff-only)
+			// and the with-resetTime case via min(resetTime, now + backoff).
+			applyRateLimitCooldown(account, rateLimitInfo, ctx);
 		}
 		// Also update metadata for rate-limited responses
 		const bypassSession =
@@ -340,6 +287,24 @@ export async function processProxyResponse(
 				`Cleared rate_limited_until for account ${account.name} on successful response`,
 			);
 		});
+
+		// Stability reset: if the most recent 429 is older than the stability
+		// window, the streak counter resets to 0. This means "the account has
+		// been healthy long enough that the next 429 should be treated as a
+		// fresh streak, not the continuation of the previous one." The
+		// rate_limited_at short-circuit avoids pointless writes when there was
+		// never a prior 429.
+		if (
+			account.rate_limited_at &&
+			Date.now() - account.rate_limited_at >
+				TIME_CONSTANTS.RATE_LIMIT_RESET_STABILITY_MS
+		) {
+			account.consecutive_rate_limits = 0;
+			account.rate_limited_at = null;
+			ctx.asyncWriter.enqueue(() =>
+				ctx.dbOps.resetConsecutiveRateLimits(account.id),
+			);
+		}
 	}
 
 	return false;

@@ -20,6 +20,7 @@ function makeAccount(overrides: Partial<Account> = {}): Account {
 		rate_limited_until: null,
 		rate_limited_reason: null,
 		rate_limited_at: null,
+		consecutive_rate_limits: 0,
 		session_start: null,
 		session_request_count: 0,
 		paused: false,
@@ -505,9 +506,9 @@ describe("proxyWithAccount — in-memory cooldown mutation (issue #178 fix)", ()
 		// In-memory mutation should be set immediately (before DB write completes)
 		expect(account.rate_limited_until).not.toBeNull();
 		expect(account.rate_limited_until ?? 0).toBeGreaterThan(before);
-		// Default cooldown from extractCooldownUntil is at least 60s
+		// Adaptive backoff: first 429 in a streak = RATE_LIMIT_BACKOFF_BASE_MS (30s by default)
 		expect(account.rate_limited_until ?? 0).toBeGreaterThanOrEqual(
-			before + 60_000,
+			before + 30_000,
 		);
 	});
 
@@ -550,8 +551,9 @@ describe("proxyWithAccount — in-memory cooldown mutation (issue #178 fix)", ()
 
 		expect(account.rate_limited_until).not.toBeNull();
 		expect(account.rate_limited_until ?? 0).toBeGreaterThan(before);
+		// Adaptive backoff: first 429 in a streak = RATE_LIMIT_BACKOFF_BASE_MS (30s by default)
 		expect(account.rate_limited_until ?? 0).toBeGreaterThanOrEqual(
-			before + 60_000,
+			before + 30_000,
 		);
 	});
 });

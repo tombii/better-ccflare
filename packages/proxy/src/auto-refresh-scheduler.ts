@@ -304,6 +304,7 @@ export class AutoRefreshScheduler {
 				billing_type: null,
 				pause_reason: null,
 				refresh_token_issued_at: null,
+				consecutive_rate_limits: 0,
 			};
 
 			// Emit request start event for analytics
@@ -508,7 +509,7 @@ export class AutoRefreshScheduler {
 				// Update rate limit fields from unified headers
 				if (rateLimitInfo.resetTime) {
 					await this.db.run(
-						"UPDATE accounts SET rate_limit_reset = ?, rate_limited_until = NULL WHERE id = ?",
+						"UPDATE accounts SET rate_limit_reset = ?, rate_limited_until = NULL, consecutive_rate_limits = 0, rate_limited_at = NULL WHERE id = ?",
 						[rateLimitInfo.resetTime, accountRow.id],
 					);
 
@@ -525,7 +526,7 @@ export class AutoRefreshScheduler {
 					// Even if no reset time is provided, clear rate_limited_until as the refresh was successful
 					// Also make sure to clear any existing rate_limited_until value to ensure the account is not stuck
 					await this.db.run(
-						"UPDATE accounts SET rate_limited_until = NULL WHERE id = ?",
+						"UPDATE accounts SET rate_limited_until = NULL, consecutive_rate_limits = 0, rate_limited_at = NULL WHERE id = ?",
 						[accountRow.id],
 					);
 					log.info(
@@ -783,6 +784,7 @@ export class AutoRefreshScheduler {
 					billing_type: null,
 					pause_reason: null,
 					refresh_token_issued_at: null,
+					consecutive_rate_limits: 0,
 				};
 
 				// Use refreshAccessTokenSafe to get deduplication and backoff handling
@@ -911,6 +913,7 @@ export class AutoRefreshScheduler {
 					billing_type: null,
 					pause_reason: null,
 					refresh_token_issued_at: null,
+					consecutive_rate_limits: 0,
 				};
 
 				// Register in refreshInFlight so concurrent request-triggered refreshes join this one

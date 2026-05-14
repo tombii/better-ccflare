@@ -16,6 +16,7 @@ import { cacheBodyStore } from "../cache-body-store";
 import { RequestBodyContext } from "../request-body-context";
 import { forwardToClient } from "../response-handler";
 import { ERROR_MESSAGES, type ProxyContext } from "./proxy-types";
+import { applyRateLimitCooldown } from "./rate-limit-cooldown";
 import { makeProxyRequest, validateProviderPath } from "./request-handler";
 import { handleProxyError, processProxyResponse } from "./response-processor";
 import { getValidAccessToken } from "./token-manager";
@@ -751,10 +752,17 @@ export async function proxyWithAccount(
 							usageCache.getRateLimitedUntil.bind(usageCache),
 						);
 						const reason: RateLimitReason = "model_fallback_429";
-						log.warn(
-							`[ccflare] account=${account.name} cooldown_applied reason=${reason} until=${new Date(cooldownUntil).toISOString()}`,
+						// Route through shared helper so the consecutive_rate_limits
+						// counter and exponential backoff are applied uniformly across
+						// all 429 paths. Pass cooldownUntil as resetTime — the helper
+						// caps via min(resetTime, now + backoff). The audit reason is
+						// preserved so saveRequest + DB rate_limited_reason both record
+						// the failure-mode-specific tag.
+						applyRateLimitCooldown(
+							account,
+							{ resetTime: cooldownUntil, reason },
+							ctx,
 						);
-						account.rate_limited_until = cooldownUntil;
 						const responseTime = Date.now() - requestMeta.timestamp;
 						ctx.asyncWriter.enqueue(() =>
 							ctx.dbOps.saveRequest(
@@ -774,13 +782,6 @@ export async function proxyWithAccount(
 								requestMeta.project ?? null,
 								undefined,
 								requestMeta.comboName ?? null,
-							),
-						);
-						ctx.asyncWriter.enqueue(() =>
-							ctx.dbOps.markAccountRateLimited(
-								account.id,
-								cooldownUntil,
-								reason,
 							),
 						);
 						return null;
@@ -865,10 +866,11 @@ export async function proxyWithAccount(
 				log.warn(
 					`All models exhausted on account ${account.name}, failing over to next account`,
 				);
-				// Mark account rate-limited for 1 hour so that isAccountAvailable()
-				// excludes it from future requests until the cooldown expires.
-				// Without this write the DB state stays stale (rate_limited_until = null)
-				// and the same account is retried on every subsequent request.
+				// Mark account rate-limited so that isAccountAvailable() excludes it
+				// from future requests until the cooldown expires. The shared
+				// applyRateLimitCooldown helper computes a capped exponential-backoff
+				// cooldown and writes it to the DB; without it the same account would
+				// be retried on every subsequent request.
 				// Only fire for genuine rate-limit responses (429); model-not-found
 				// (404/400) is a configuration issue, not account exhaustion.
 				if (rawResponse.status === 429) {
@@ -888,10 +890,17 @@ export async function proxyWithAccount(
 							usageCache.getRateLimitedUntil.bind(usageCache),
 						);
 						const reason: RateLimitReason = "all_models_exhausted_429";
-						log.warn(
-							`[ccflare] account=${account.name} cooldown_applied reason=${reason} until=${new Date(cooldownUntil).toISOString()}`,
+						// Route through shared helper so the consecutive_rate_limits
+						// counter and exponential backoff are applied uniformly across
+						// all 429 paths. Pass cooldownUntil as resetTime — the helper
+						// caps via min(resetTime, now + backoff). The audit reason is
+						// preserved so saveRequest + DB rate_limited_reason both record
+						// the failure-mode-specific tag.
+						applyRateLimitCooldown(
+							account,
+							{ resetTime: cooldownUntil, reason },
+							ctx,
 						);
-						account.rate_limited_until = cooldownUntil;
 						const responseTime = Date.now() - requestMeta.timestamp;
 						ctx.asyncWriter.enqueue(() =>
 							ctx.dbOps.saveRequest(
@@ -911,13 +920,6 @@ export async function proxyWithAccount(
 								requestMeta.project ?? null,
 								undefined,
 								requestMeta.comboName ?? null,
-							),
-						);
-						ctx.asyncWriter.enqueue(() =>
-							ctx.dbOps.markAccountRateLimited(
-								account.id,
-								cooldownUntil,
-								reason,
 							),
 						);
 					}

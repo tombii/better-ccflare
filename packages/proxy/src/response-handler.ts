@@ -6,7 +6,7 @@ import {
 import { ANALYTICS_STREAM_SYMBOL } from "@better-ccflare/http-common/symbols";
 import type { Account } from "@better-ccflare/types";
 import type { ProxyContext } from "./handlers";
-import { handleRateLimitResponse } from "./handlers/response-processor";
+import { applyRateLimitCooldown } from "./handlers/rate-limit-cooldown";
 import { createSseRateLimitSniffer } from "./handlers/sse-rate-limit-sniffer";
 import type { UsageWorkerController } from "./usage-worker-controller";
 import type { ChunkMessage, EndMessage, StartMessage } from "./worker-messages";
@@ -300,10 +300,9 @@ export async function forwardToClient(
 							// Mid-stream rate-limit detection. The sniffer
 							// fires exactly once; after that feed() is a no-op.
 							if (account && rateLimitSniffer?.feed(value)) {
-								handleRateLimitResponse(
+								applyRateLimitCooldown(
 									account,
 									{
-										isRateLimited: true,
 										resetTime: Date.now() + getMidStreamRateLimitCooldownMs(),
 									},
 									ctx,

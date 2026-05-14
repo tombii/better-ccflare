@@ -2,6 +2,7 @@
 export {
 	BUFFER_SIZES,
 	CACHE,
+	computeRateLimitBackoffMs,
 	HTTP_STATUS,
 	LIMITS,
 	NETWORK,

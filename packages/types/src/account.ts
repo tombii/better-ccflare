@@ -106,6 +106,7 @@ export interface AccountRow {
 	rate_limited_until?: number | null;
 	rate_limited_reason?: RateLimitReason | null;
 	rate_limited_at?: number | null;
+	consecutive_rate_limits?: number | null;
 	session_start?: number | null;
 	session_request_count?: number;
 	paused?: boolean | number | null;
@@ -142,6 +143,7 @@ export interface Account {
 	rate_limited_until: number | null;
 	rate_limited_reason: RateLimitReason | null;
 	rate_limited_at: number | null;
+	consecutive_rate_limits: number;
 	session_start: number | null;
 	session_request_count: number;
 	paused: boolean;
@@ -321,6 +323,7 @@ export function toAccount(row: AccountRow): Account {
 		rate_limited_until: toNumOrNull(row.rate_limited_until),
 		rate_limited_reason: row.rate_limited_reason ?? null,
 		rate_limited_at: toNumOrNull(row.rate_limited_at),
+		consecutive_rate_limits: toNum(row.consecutive_rate_limits),
 		session_start: toNumOrNull(row.session_start),
 		session_request_count: toNum(row.session_request_count),
 		paused: !!row.paused,
