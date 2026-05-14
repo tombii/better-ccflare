@@ -19,6 +19,8 @@ export async function copyText(text: string): Promise<void> {
 	document.body.appendChild(textarea);
 	try {
 		textarea.select();
+		// iOS Safari doesn't reliably select via select() alone; setSelectionRange is the standard fix.
+		textarea.setSelectionRange(0, textarea.value.length);
 		if (!document.execCommand("copy")) {
 			throw new Error("execCommand copy failed");
 		}
