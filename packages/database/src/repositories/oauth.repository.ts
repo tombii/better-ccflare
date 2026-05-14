@@ -63,7 +63,7 @@ export class OAuthRepository extends BaseRepository<OAuthSession> {
 			verifier: row.verifier,
 			mode: row.mode,
 			customEndpoint: row.custom_endpoint || undefined,
-			priority: row.priority ?? 0,
+			priority: row.priority,
 		};
 	}
 

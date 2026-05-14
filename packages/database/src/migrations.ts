@@ -867,6 +867,8 @@ export function runMigrations(db: Database, dbPath?: string): void {
 
 		// Drop tier column from oauth_sessions table if it exists
 		if (finalOAuthColumnNames.includes("tier")) {
+			// Relies on the priority ADD COLUMN above having run earlier in this
+			// same transaction; do not reorder these blocks.
 			db.prepare(`
 			CREATE TABLE oauth_sessions_new AS
 			SELECT id, account_name, verifier, mode, created_at, expires_at, custom_endpoint, priority
