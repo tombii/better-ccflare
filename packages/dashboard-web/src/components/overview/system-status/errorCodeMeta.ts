@@ -21,7 +21,7 @@ const KNOWN_ERROR_META: Record<RateLimitReason, ErrorMeta> = {
 		description:
 			"The upstream provider returned 429 without a reset header; entering probe cooldown.",
 		suggestion:
-			"Cooldown defaults to 60s (configurable via CCFLARE_DEFAULT_COOLDOWN_NO_RESET_MS).",
+			"Cooldown defaults to 60s. Set `CCFLARE_DEFAULT_COOLDOWN_NO_RESET_MS` in your environment to change it.",
 		severity: "warning",
 	},
 	upstream_429_no_reset_default_5h: {
