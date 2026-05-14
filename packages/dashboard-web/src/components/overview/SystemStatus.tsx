@@ -1,4 +1,4 @@
-import { CheckCircle, XCircle } from "lucide-react";
+import { CheckCircle } from "lucide-react";
 import { Badge } from "../ui/badge";
 import {
 	Card,
@@ -7,12 +7,9 @@ import {
 	CardHeader,
 	CardTitle,
 } from "../ui/card";
+import { RecentErrorsCard } from "./system-status/RecentErrorsCard";
 
-interface SystemStatusProps {
-	recentErrors?: string[];
-}
-
-export function SystemStatus({ recentErrors }: SystemStatusProps) {
+export function SystemStatus() {
 	return (
 		<Card>
 			<CardHeader>
@@ -38,22 +35,7 @@ export function SystemStatus({ recentErrors }: SystemStatusProps) {
 						</Badge>
 					</div>
 
-					{recentErrors && recentErrors.length > 0 && (
-						<div className="space-y-2">
-							<h4 className="text-sm font-medium text-muted-foreground">
-								Recent Errors
-							</h4>
-							{recentErrors.slice(0, 3).map((error, i) => (
-								<div
-									key={`error-${error.substring(0, 20)}-${i}`}
-									className="flex items-start gap-2 p-3 rounded-lg bg-destructive/10"
-								>
-									<XCircle className="h-4 w-4 text-destructive mt-0.5" />
-									<p className="text-sm text-muted-foreground">{error}</p>
-								</div>
-							))}
-						</div>
-					)}
+					<RecentErrorsCard />
 				</div>
 			</CardContent>
 		</Card>
