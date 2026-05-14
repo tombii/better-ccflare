@@ -1328,17 +1328,31 @@ Available endpoints:
 // default TimeoutStopSec (90s) doesn't have to escalate to SIGKILL.
 const SHUTDOWN_WATCHDOG_MS = 30_000;
 
+// Deduplicates concurrent shutdown invocations (e.g. SIGINT arriving while
+// SIGTERM is still awaiting serverInstance.stop()). Without this, the second
+// invocation races on the same Bun server, worker, and DB writer.
+let isShuttingDown = false;
+
 // Graceful shutdown handler
 async function handleGracefulShutdown(signal: string) {
+	if (isShuttingDown) {
+		console.log(`Ignoring ${signal} — shutdown already in progress`);
+		return;
+	}
+	isShuttingDown = true;
+
 	console.log(`\n👋 Received ${signal}, shutting down gracefully...`);
 
 	// Hard upper bound on shutdown duration. unref'd so it doesn't itself
-	// prevent a clean exit if everything else finishes first.
+	// prevent a clean exit if everything else finishes first. Exits with 0
+	// because the watchdog only fires on an expected SIGTERM that ran long,
+	// not on a failure — code 1 would make systemd Restart=on-failure
+	// auto-restart the unit instead of treating it as a normal stop.
 	const watchdog = setTimeout(() => {
 		console.error(
 			`⚠️ Shutdown watchdog (${SHUTDOWN_WATCHDOG_MS}ms) expired, forcing exit`,
 		);
-		process.exit(1);
+		process.exit(0);
 	}, SHUTDOWN_WATCHDOG_MS);
 	watchdog.unref();
 
