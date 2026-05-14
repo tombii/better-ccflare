@@ -38,8 +38,10 @@ export function createStatsHandler(dbOps: DatabaseOperations) {
 		const accountsWithStats = await statsRepository.getAccountStats(10, true);
 
 		// Get recent errors
-		const recentErrors =
-			await statsRepository.getRecentErrorGroups(errorsSinceMs);
+		const recentErrors = await statsRepository.getRecentErrorGroups(
+			errorsSinceMs,
+			50,
+		);
 
 		// Get top models
 		const topModels = await statsRepository.getTopModels();
