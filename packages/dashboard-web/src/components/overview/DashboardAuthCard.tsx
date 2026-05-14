@@ -56,8 +56,10 @@ export function DashboardAuthCard() {
 							</svg>
 							<p className="text-xs text-amber-600 dark:text-amber-400">
 								Dashboard API authentication is disabled. Anyone with network
-								access to this server can read and modify configuration. Use
-								only on trusted networks.
+								access to this server can read and modify all dashboard data,
+								including account credentials, request history, logs, and
+								configuration. Proxy routes and debug endpoints remain
+								protected. Use only on fully trusted networks.
 							</p>
 						</div>
 					)}

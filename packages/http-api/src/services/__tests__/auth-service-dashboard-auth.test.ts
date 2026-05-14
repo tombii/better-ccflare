@@ -2,14 +2,16 @@
  * Tests for dashboard_auth_enabled bypass in AuthService.isPathExempt.
  *
  * Test cases:
- *   1. dashboard_auth_enabled=true  + keys exist + /api/stats:                NOT exempt (current behaviour preserved)
- *   2. dashboard_auth_enabled=false + keys exist + /api/stats:                IS exempt
- *   3. dashboard_auth_enabled=false + keys exist + /v1/messages:              NOT exempt (proxy still gated)
- *   4. dashboard_auth_enabled=false + keys exist + /api/debug/heap:           NOT exempt (debug carve-out)
- *   5. dashboard_auth_enabled=false + no keys   + /api/stats:                 IS exempt
- *   6. dashboard_auth_enabled=false + keys exist + /api/config/dashboard-auth POST: IS exempt
- *   7. dashboard_auth_enabled=false + no keys   + /api/api-keys POST:         IS exempt (first-key creation)
- *   8. dashboard_auth_enabled=false + keys exist + /api/api-keys POST:        NOT exempt (key management gated)
+ *   1.  dashboard_auth_enabled=true  + keys exist + /api/stats:                NOT exempt (current behaviour preserved)
+ *   2.  dashboard_auth_enabled=false + keys exist + /api/stats:                IS exempt
+ *   3.  dashboard_auth_enabled=false + keys exist + /v1/messages:              NOT exempt (proxy still gated)
+ *   4.  dashboard_auth_enabled=false + keys exist + /api/debug/heap:           NOT exempt (debug carve-out)
+ *   5.  dashboard_auth_enabled=false + no keys   + /api/stats:                 IS exempt
+ *   6.  dashboard_auth_enabled=false + keys exist + /api/config/dashboard-auth POST: NOT exempt (lockout protection — LAN adversary can't flip auth back on)
+ *   6b. dashboard_auth_enabled=false + keys exist + /api/config/dashboard-auth GET:  IS exempt  (UI reads toggle state)
+ *   6c. dashboard_auth_enabled=false + keys exist + /api-admin/foo:            NOT exempt (bypass requires /api/ slash prefix)
+ *   7.  dashboard_auth_enabled=false + no keys   + /api/api-keys POST:         IS exempt (first-key creation)
+ *   8.  dashboard_auth_enabled=false + keys exist + /api/api-keys POST:        NOT exempt (key management gated)
  */
 
 import { describe, expect, test } from "bun:test";
@@ -79,11 +81,23 @@ describe("AuthService.isPathExempt — dashboard_auth_enabled bypass", () => {
 			expect(await svc.isPathExempt("/api/stats", "GET")).toBe(true);
 		});
 
-		test("case 6: keys exist + /api/config/dashboard-auth POST IS exempt", async () => {
+		test("case 6: keys exist + /api/config/dashboard-auth POST is NOT exempt — lockout protection (LAN adversary can't flip auth back on)", async () => {
 			const svc = new AuthService(makeDbOps(true), makeConfig(false));
 			expect(await svc.isPathExempt("/api/config/dashboard-auth", "POST")).toBe(
+				false,
+			);
+		});
+
+		test("case 6b: keys exist + /api/config/dashboard-auth GET IS exempt — UI can always read toggle state", async () => {
+			const svc = new AuthService(makeDbOps(true), makeConfig(false));
+			expect(await svc.isPathExempt("/api/config/dashboard-auth", "GET")).toBe(
 				true,
 			);
+		});
+
+		test("case 6c: keys exist + /api-admin (no slash after 'api') is NOT exempt — bypass requires /api/ slash-prefix", async () => {
+			const svc = new AuthService(makeDbOps(true), makeConfig(false));
+			expect(await svc.isPathExempt("/api-admin/foo", "GET")).toBe(false);
 		});
 
 		test("case 7: no keys + /api/api-keys POST IS exempt (first-key creation)", async () => {

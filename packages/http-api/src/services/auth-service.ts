@@ -177,14 +177,26 @@ export class AuthService {
 			return false;
 		}
 
+		// Writes to the dashboard-auth toggle always require auth, even when
+		// the bypass is active. Without this, any host with network access
+		// could POST { enabled: true } to lock the legitimate owner out of
+		// the dashboard until they used an API key or edited the config
+		// file directly. GET stays bypassed below so the UI can render the
+		// toggle state.
+		if (path === "/api/config/dashboard-auth" && method === "POST") {
+			return false;
+		}
+
 		// Dashboard auth bypass: when explicitly disabled, /api/* (excluding
 		// /api/debug*) is open even when API keys exist. Proxy routes
 		// (/v1/*, /messages/*) and debug routes remain gated regardless.
 		// /api/api-keys is handled by the block above — this branch is
-		// unreachable for those paths.
+		// unreachable for those paths. The `/api/` slash is required so
+		// future routes under `/api-*` (e.g., `/api-admin`) don't get
+		// unintentionally bypassed.
 		if (
 			this.config?.getDashboardAuthEnabled() === false &&
-			path.startsWith("/api") &&
+			(path === "/api" || path.startsWith("/api/")) &&
 			!path.startsWith("/api/debug")
 		) {
 			return true;
