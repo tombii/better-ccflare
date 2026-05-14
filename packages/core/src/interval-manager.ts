@@ -252,15 +252,16 @@ export function registerHeartbeat(config: {
 	});
 }
 
-// Graceful shutdown on process exit
+// Stop intervals on signal, but defer process exit to the entry point's own
+// signal handler. Calling process.exit(0) here races with — and short-circuits
+// — async shutdown paths in the server (HTTP drain, worker termination, DB
+// flush), causing in-flight requests to be dropped and pending writes lost.
 if (typeof process !== "undefined") {
 	process.on("SIGINT", () => {
 		intervalManager.shutdown();
-		process.exit(0);
 	});
 
 	process.on("SIGTERM", () => {
 		intervalManager.shutdown();
-		process.exit(0);
 	});
 }
