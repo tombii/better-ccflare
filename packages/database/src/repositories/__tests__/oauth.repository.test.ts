@@ -75,3 +75,60 @@ describe("OAuthRepository - priority round-trip", () => {
 		expect(session?.customEndpoint).toBe("https://example.com/api");
 	});
 });
+
+describe("oauth_sessions tier-drop migration preserves constraints", () => {
+	it("rebuilds the table with PRIMARY KEY, NOT NULL, and DEFAULT 0 constraints intact", () => {
+		// Bootstrap an in-memory DB that looks like a legacy install:
+		// modern schema + an extra `tier` column to trigger the tier-drop rebuild.
+		const db = new Database(":memory:");
+		try {
+			ensureSchema(db);
+			db.prepare(`ALTER TABLE oauth_sessions ADD COLUMN tier TEXT`).run();
+
+			// Run migrations — this should detect the `tier` column and rebuild
+			// oauth_sessions via the explicit CREATE TABLE + INSERT path.
+			runMigrations(db);
+
+			const columns = db
+				.prepare("PRAGMA table_info(oauth_sessions)")
+				.all() as Array<{
+				name: string;
+				notnull: number;
+				// biome-ignore lint/suspicious/noExplicitAny: dflt_value can be string|number|null
+				dflt_value: any;
+				pk: number;
+			}>;
+
+			const byName = new Map(columns.map((c) => [c.name, c]));
+
+			// tier is gone
+			expect(byName.has("tier")).toBe(false);
+
+			// id is the primary key
+			const idCol = byName.get("id");
+			expect(idCol).toBeDefined();
+			expect(idCol?.pk).toBe(1);
+
+			// priority is NOT NULL with default 0 (SQLite returns dflt_value as a string)
+			const priorityCol = byName.get("priority");
+			expect(priorityCol).toBeDefined();
+			expect(priorityCol?.notnull).toBe(1);
+			expect(Number(priorityCol?.dflt_value)).toBe(0);
+
+			// All other constraint-bearing columns are still NOT NULL
+			for (const colName of [
+				"account_name",
+				"verifier",
+				"mode",
+				"created_at",
+				"expires_at",
+			]) {
+				const col = byName.get(colName);
+				expect(col).toBeDefined();
+				expect(col?.notnull).toBe(1);
+			}
+		} finally {
+			db.close();
+		}
+	});
+});

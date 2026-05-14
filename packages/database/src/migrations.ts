@@ -869,11 +869,29 @@ export function runMigrations(db: Database, dbPath?: string): void {
 		if (finalOAuthColumnNames.includes("tier")) {
 			// Relies on the priority ADD COLUMN above having run earlier in this
 			// same transaction; do not reorder these blocks.
+			//
+			// IMPORTANT: explicitly recreate the target schema with all constraints
+			// (PRIMARY KEY, NOT NULL, DEFAULT) — `CREATE TABLE ... AS SELECT ...`
+			// only copies column types, dropping every constraint. Keep this in
+			// sync with the oauth_sessions definition in ensureSchema().
 			db.prepare(`
-			CREATE TABLE oauth_sessions_new AS
-			SELECT id, account_name, verifier, mode, created_at, expires_at, custom_endpoint, priority
-			FROM oauth_sessions
-		`).run();
+				CREATE TABLE oauth_sessions_new (
+					id TEXT PRIMARY KEY,
+					account_name TEXT NOT NULL,
+					verifier TEXT NOT NULL,
+					mode TEXT NOT NULL,
+					custom_endpoint TEXT,
+					priority INTEGER NOT NULL DEFAULT 0,
+					created_at INTEGER NOT NULL,
+					expires_at INTEGER NOT NULL
+				)
+			`).run();
+
+			db.prepare(`
+				INSERT INTO oauth_sessions_new (id, account_name, verifier, mode, custom_endpoint, priority, created_at, expires_at)
+				SELECT id, account_name, verifier, mode, custom_endpoint, priority, created_at, expires_at
+				FROM oauth_sessions
+			`).run();
 
 			db.prepare(`DROP TABLE oauth_sessions`).run();
 			db.prepare(
