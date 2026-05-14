@@ -13,7 +13,6 @@ interface PoolMetricCardProps {
 	title: string;
 	icon: React.ComponentType<{ className?: string }>;
 	result: PoolUsageResult;
-	now: number;
 	window: PoolWindow;
 }
 
@@ -69,37 +68,37 @@ function groupExcluded(
 	return groups;
 }
 
-function nextRefreshLabel(
+function nextQuotaTimeLabel(
+	earliestResetMs: number,
+	window: PoolWindow,
+): string {
+	const date = new Date(earliestResetMs);
+	return window === "seven_day"
+		? date.toLocaleString(undefined, {
+				month: "short",
+				day: "numeric",
+				hour: "2-digit",
+				minute: "2-digit",
+			})
+		: date.toLocaleTimeString(undefined, {
+				hour: "2-digit",
+				minute: "2-digit",
+			});
+}
+
+function nextQuotaLabel(
 	earliestResetMs: number,
 	accountName: string | null,
-	now: number,
 	window: PoolWindow,
 ): string {
 	const name = accountName ?? "unknown";
-	if (earliestResetMs <= now) {
-		return `${name} ready to refresh`;
-	}
-	const date = new Date(earliestResetMs);
-	const time =
-		window === "seven_day"
-			? date.toLocaleString(undefined, {
-					month: "short",
-					day: "numeric",
-					hour: "2-digit",
-					minute: "2-digit",
-				})
-			: date.toLocaleTimeString(undefined, {
-					hour: "2-digit",
-					minute: "2-digit",
-				});
-	return `${name} at ${time}`;
+	return `${name} at ${nextQuotaTimeLabel(earliestResetMs, window)}`;
 }
 
 export function PoolMetricCard({
 	title,
 	icon: Icon,
 	result,
-	now,
 	window,
 }: PoolMetricCardProps) {
 	const {
@@ -118,7 +117,10 @@ export function PoolMetricCard({
 	const showChip = eligibleTotal > 0;
 	const colorClass = headlineColor(average);
 	const headline = average != null ? formatPercentage(average, 0) : "—";
-	const showSubline = contributing.length > 0 || exhausted.length > 0;
+	const nextQuotaText =
+		earliestResetMs == null
+			? null
+			: `more quota at ${nextQuotaTimeLabel(earliestResetMs, window)}`;
 
 	const sortedContributing = contributing.slice().sort((a, b) => b.pct - a.pct);
 	const exhaustedGroups = groupExcluded(exhausted);
@@ -240,12 +242,11 @@ export function PoolMetricCard({
 				)}
 				{earliestResetMs != null && (
 					<div>
-						<div className="font-medium mb-1">Next refresh</div>
+						<div className="font-medium mb-1">More quota</div>
 						<div>
-							{nextRefreshLabel(
+							{nextQuotaLabel(
 								earliestResetMs,
 								earliestResetAccountName,
-								now,
 								window,
 							)}
 						</div>
@@ -265,9 +266,12 @@ export function PoolMetricCard({
 				<div className="space-y-1">
 					<p className="text-sm text-muted-foreground">{title}</p>
 					<p className={cn("text-2xl font-bold", colorClass)}>{headline}</p>
-					{showSubline && (
+					<p className="text-xs text-muted-foreground truncate">
+						capacity used
+					</p>
+					{nextQuotaText && (
 						<p className="text-xs text-muted-foreground truncate">
-							capacity used
+							{nextQuotaText}
 						</p>
 					)}
 				</div>

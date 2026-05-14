@@ -20,6 +20,7 @@ export interface PoolUsageContribution {
 export interface PoolUsageExclusion {
 	name: string;
 	reason: ExcludedReason;
+	resetMs: number | null;
 }
 
 export interface PoolUsageFallback {
@@ -189,15 +190,15 @@ function eligibleProvidersFor(window: PoolWindow): ReadonlySet<string> {
 function classifyExclusion(
 	account: AccountResponse,
 	now: number,
-): ExcludedReason | null {
-	if (account.paused === true) return "paused";
+): { reason: ExcludedReason; resetMs: number | null } | null {
+	if (account.paused === true) return { reason: "paused", resetMs: null };
 	if (account.rateLimitedUntil != null && account.rateLimitedUntil > now) {
-		return "rate_limited";
+		return { reason: "rate_limited", resetMs: account.rateLimitedUntil };
 	}
 	if (account.hasRefreshToken === true && account.tokenExpiresAt) {
 		const expiresMs = Date.parse(account.tokenExpiresAt);
 		if (Number.isFinite(expiresMs) && expiresMs < now) {
-			return "token_expired";
+			return { reason: "token_expired", resetMs: null };
 		}
 	}
 	if (
@@ -205,24 +206,27 @@ function classifyExclusion(
 		account.usageRateLimitedUntil > now &&
 		!account.usageData
 	) {
-		return "usage_rate_limited";
+		return {
+			reason: "usage_rate_limited",
+			resetMs: account.usageRateLimitedUntil,
+		};
 	}
 	return null;
 }
 
 function classifyQuotaExhaustion(
 	account: AccountResponse,
-): ExcludedReason | null {
+): { reason: ExcludedReason; resetMs: number | null } | null {
 	if (!account.usageData) return null;
 
 	const fiveHour = extractFiveHour(account.usageData);
 	if (fiveHour?.pct != null && fiveHour.pct >= 100) {
-		return "five_hour_exhausted";
+		return { reason: "five_hour_exhausted", resetMs: fiveHour.resetMs };
 	}
 
 	const sevenDay = extractSevenDay(account.usageData);
 	if (sevenDay?.pct != null && sevenDay.pct >= 100) {
-		return "seven_day_exhausted";
+		return { reason: "seven_day_exhausted", resetMs: sevenDay.resetMs };
 	}
 
 	return null;
@@ -249,12 +253,20 @@ export function computePoolUsage(
 		const exclusion =
 			classifyExclusion(account, now) ?? classifyQuotaExhaustion(account);
 		if (exclusion) {
-			exhausted.push({ name: account.name, reason: exclusion });
+			exhausted.push({
+				name: account.name,
+				reason: exclusion.reason,
+				resetMs: exclusion.resetMs,
+			});
 			continue;
 		}
 
 		if (!account.usageData) {
-			excluded.push({ name: account.name, reason: "no_usage_data" });
+			excluded.push({
+				name: account.name,
+				reason: "no_usage_data",
+				resetMs: null,
+			});
 			continue;
 		}
 
@@ -269,7 +281,11 @@ export function computePoolUsage(
 		}
 
 		if (extracted.pct === null) {
-			excluded.push({ name: account.name, reason: "no_usage_data" });
+			excluded.push({
+				name: account.name,
+				reason: "no_usage_data",
+				resetMs: extracted.resetMs,
+			});
 			continue;
 		}
 
@@ -304,8 +320,9 @@ export function computePoolUsage(
 		}
 	}
 
-	const resetCandidates = contributing.filter(
-		(c): c is PoolUsageContribution & { resetMs: number } => c.resetMs != null,
+	const resetCandidates = [...contributing, ...exhausted].filter(
+		(c): (PoolUsageContribution | PoolUsageExclusion) & { resetMs: number } =>
+			c.resetMs != null && c.resetMs > now,
 	);
 	const earliestResetMs =
 		resetCandidates.length === 0

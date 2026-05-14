@@ -254,7 +254,7 @@ describe("computePoolUsage", () => {
 		const seven = computePoolUsage(accounts, "seven_day", NOW);
 		expect(seven.contributing).toEqual([]);
 		expect(seven.excluded).toEqual([
-			{ name: "anthro", reason: "no_usage_data" },
+			{ name: "anthro", reason: "no_usage_data", resetMs: null },
 		]);
 	});
 
@@ -273,7 +273,9 @@ describe("computePoolUsage", () => {
 
 		const result = computePoolUsage(accounts, "five_hour", NOW);
 		expect(result.contributing).toEqual([]);
-		expect(result.exhausted).toEqual([{ name: "p", reason: "paused" }]);
+		expect(result.exhausted).toEqual([
+			{ name: "p", reason: "paused", resetMs: null },
+		]);
 		expect(result.excluded).toEqual([]);
 		expect(result.average).toBe(100);
 	});
@@ -303,7 +305,9 @@ describe("computePoolUsage", () => {
 		expect(result.average).toBe(60);
 		expect(result.activeAverage).toBe(20);
 		expect(result.contributing).toHaveLength(1);
-		expect(result.exhausted).toEqual([{ name: "rl", reason: "rate_limited" }]);
+		expect(result.exhausted).toEqual([
+			{ name: "rl", reason: "rate_limited", resetMs: NOW + 60_000 },
+		]);
 		expect(result.excluded).toEqual([]);
 	});
 
@@ -322,7 +326,9 @@ describe("computePoolUsage", () => {
 		];
 
 		const result = computePoolUsage(accounts, "five_hour", NOW);
-		expect(result.exhausted).toEqual([{ name: "te", reason: "token_expired" }]);
+		expect(result.exhausted).toEqual([
+			{ name: "te", reason: "token_expired", resetMs: null },
+		]);
 		expect(result.excluded).toEqual([]);
 		expect(result.average).toBe(100);
 	});
@@ -339,7 +345,7 @@ describe("computePoolUsage", () => {
 
 		const result = computePoolUsage(accounts, "five_hour", NOW);
 		expect(result.exhausted).toEqual([
-			{ name: "url", reason: "usage_rate_limited" },
+			{ name: "url", reason: "usage_rate_limited", resetMs: NOW + 60_000 },
 		]);
 		expect(result.excluded).toEqual([]);
 		expect(result.average).toBe(100);
@@ -355,7 +361,9 @@ describe("computePoolUsage", () => {
 		];
 
 		const result = computePoolUsage(accounts, "five_hour", NOW);
-		expect(result.excluded).toEqual([{ name: "nud", reason: "no_usage_data" }]);
+		expect(result.excluded).toEqual([
+			{ name: "nud", reason: "no_usage_data", resetMs: null },
+		]);
 	});
 
 	it("API-key provider (hasRefreshToken=false) with tokenStatus=expired is NOT token_expired excluded", () => {
@@ -503,14 +511,20 @@ describe("computePoolUsage", () => {
 				provider: "anthropic",
 				usageData: {
 					five_hour: { utilization: 31, resets_at: null },
-					seven_day: { utilization: 100, resets_at: null },
+					seven_day: {
+						utilization: 100,
+						resets_at: new Date(NOW + 5_000_000).toISOString(),
+					},
 				} as never,
 			}),
 			mkAccount({
 				name: "five-hour-exhausted",
 				provider: "anthropic",
 				usageData: {
-					five_hour: { utilization: 100, resets_at: null },
+					five_hour: {
+						utilization: 100,
+						resets_at: new Date(NOW + 1_000_000).toISOString(),
+					},
 					seven_day: { utilization: 30, resets_at: null },
 				} as never,
 			}),
@@ -531,10 +545,20 @@ describe("computePoolUsage", () => {
 			{ name: "codex", pct: 28, resetMs: null },
 		]);
 		expect(fiveHour.exhausted).toEqual([
-			{ name: "weekly-exhausted", reason: "seven_day_exhausted" },
-			{ name: "five-hour-exhausted", reason: "five_hour_exhausted" },
-			{ name: "both-exhausted", reason: "seven_day_exhausted" },
+			{
+				name: "weekly-exhausted",
+				reason: "seven_day_exhausted",
+				resetMs: NOW + 5_000_000,
+			},
+			{
+				name: "five-hour-exhausted",
+				reason: "five_hour_exhausted",
+				resetMs: NOW + 1_000_000,
+			},
+			{ name: "both-exhausted", reason: "seven_day_exhausted", resetMs: null },
 		]);
+		expect(fiveHour.earliestResetMs).toBe(NOW + 1_000_000);
+		expect(fiveHour.earliestResetAccountName).toBe("five-hour-exhausted");
 
 		const sevenDay = computePoolUsage(accounts, "seven_day", NOW);
 		expect(sevenDay.average).toBe(83.75);
@@ -543,9 +567,19 @@ describe("computePoolUsage", () => {
 			{ name: "codex", pct: 35, resetMs: null },
 		]);
 		expect(sevenDay.exhausted).toEqual([
-			{ name: "weekly-exhausted", reason: "seven_day_exhausted" },
-			{ name: "five-hour-exhausted", reason: "five_hour_exhausted" },
-			{ name: "both-exhausted", reason: "seven_day_exhausted" },
+			{
+				name: "weekly-exhausted",
+				reason: "seven_day_exhausted",
+				resetMs: NOW + 5_000_000,
+			},
+			{
+				name: "five-hour-exhausted",
+				reason: "five_hour_exhausted",
+				resetMs: NOW + 1_000_000,
+			},
+			{ name: "both-exhausted", reason: "seven_day_exhausted", resetMs: null },
 		]);
+		expect(sevenDay.earliestResetMs).toBe(NOW + 1_000_000);
+		expect(sevenDay.earliestResetAccountName).toBe("five-hour-exhausted");
 	});
 });
