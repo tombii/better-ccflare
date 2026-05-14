@@ -15,12 +15,22 @@ export interface AuthenticationResult {
 	error?: string;
 }
 
+/**
+ * Minimal config interface required by AuthService.
+ * Using a structural type avoids adding a package dependency on @better-ccflare/config.
+ */
+interface AuthServiceConfig {
+	getDashboardAuthEnabled(): boolean;
+}
+
 export class AuthService {
 	private crypto: NodeCryptoUtils;
 	private dbOps: DatabaseOperations;
+	private config: AuthServiceConfig | null;
 
-	constructor(dbOps: DatabaseOperations) {
+	constructor(dbOps: DatabaseOperations, config?: AuthServiceConfig) {
 		this.dbOps = dbOps;
+		this.config = config ?? null;
 		this.crypto = new NodeCryptoUtils();
 	}
 
@@ -165,6 +175,19 @@ export class AuthService {
 			}
 			// All other API key operations require authentication
 			return false;
+		}
+
+		// Dashboard auth bypass: when explicitly disabled, /api/* (excluding
+		// /api/debug*) is open even when API keys exist. Proxy routes
+		// (/v1/*, /messages/*) and debug routes remain gated regardless.
+		// /api/api-keys is handled by the block above — this branch is
+		// unreachable for those paths.
+		if (
+			this.config?.getDashboardAuthEnabled() === false &&
+			path.startsWith("/api") &&
+			!path.startsWith("/api/debug")
+		) {
+			return true;
 		}
 
 		// Proxy endpoints (/v1/*, /messages/*, etc.) require authentication if enabled

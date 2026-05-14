@@ -62,6 +62,7 @@ export interface ConfigData {
 	usage_throttling_five_hour_enabled?: boolean;
 	usage_throttling_weekly_enabled?: boolean;
 	health_detail_enabled?: boolean;
+	dashboard_auth_enabled?: boolean;
 	// Database configuration
 	db_wal_mode?: boolean;
 	db_busy_timeout_ms?: number;
@@ -416,6 +417,16 @@ export class Config extends EventEmitter {
 		return false;
 	}
 
+	getDashboardAuthEnabled(): boolean {
+		const fromFile = this.data.dashboard_auth_enabled;
+		if (typeof fromFile === "boolean") return fromFile;
+		return true; // default: auth enabled when keys exist
+	}
+
+	setDashboardAuthEnabled(value: boolean): void {
+		this.set("dashboard_auth_enabled", value);
+	}
+
 	getAllSettings(): Record<string, string | number | boolean | undefined> {
 		// Include current strategy (which might come from env)
 		return {
@@ -432,6 +443,7 @@ export class Config extends EventEmitter {
 				this.getUsageThrottlingFiveHourEnabled(),
 			usage_throttling_weekly_enabled: this.getUsageThrottlingWeeklyEnabled(),
 			health_detail_enabled: this.getHealthDetailEnabled(),
+			dashboard_auth_enabled: this.getDashboardAuthEnabled(),
 		};
 	}
 

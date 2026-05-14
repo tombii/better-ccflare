@@ -47,6 +47,7 @@ export function createConfigHandlers(
 					config.getUsageThrottlingFiveHourEnabled(),
 				usage_throttling_weekly_enabled:
 					config.getUsageThrottlingWeeklyEnabled(),
+				dashboard_auth_enabled: config.getDashboardAuthEnabled(),
 			};
 			return jsonResponse(response);
 		},
@@ -226,6 +227,21 @@ export function createConfigHandlers(
 			}
 			config.setUsageThrottlingFiveHourEnabled(body.fiveHourEnabled);
 			config.setUsageThrottlingWeeklyEnabled(body.weeklyEnabled);
+			return new Response(null, { status: 204 });
+		},
+
+		getDashboardAuth: (): Response => {
+			return jsonResponse({
+				enabled: config.getDashboardAuthEnabled(),
+			});
+		},
+
+		setDashboardAuth: async (req: Request): Promise<Response> => {
+			const body = (await req.json()) as { enabled?: unknown };
+			if (typeof body.enabled !== "boolean") {
+				return errorResponse(BadRequest("Invalid 'enabled': must be boolean"));
+			}
+			config.setDashboardAuthEnabled(body.enabled);
 			return new Response(null, { status: 204 });
 		},
 	};

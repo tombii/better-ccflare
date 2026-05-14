@@ -323,6 +323,23 @@ export const useSetUsageThrottling = () => {
 	});
 };
 
+export const useDashboardAuth = () => {
+	return useQuery({
+		queryKey: ["dashboard-auth"],
+		queryFn: () => api.getDashboardAuth(),
+	});
+};
+
+export const useSetDashboardAuth = () => {
+	const queryClient = useQueryClient();
+	return useMutation({
+		mutationFn: (enabled: boolean) => api.setDashboardAuth(enabled),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ["dashboard-auth"] });
+		},
+	});
+};
+
 export const useCleanupNow = () => {
 	return useMutation({
 		mutationFn: () => api.cleanupNow(),

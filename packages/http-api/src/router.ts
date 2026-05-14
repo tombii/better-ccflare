@@ -124,7 +124,7 @@ export class APIRouter {
 	constructor(context: APIContext) {
 		this.context = context;
 		this.handlers = new Map();
-		this.authService = new AuthService(context.dbOps);
+		this.authService = new AuthService(context.dbOps, context.config);
 		this.qwenStatusHandler = createQwenDeviceFlowStatusHandler();
 		this.codexStatusHandler = createCodexDeviceFlowStatusHandler();
 		this.registerHandlers();
@@ -350,6 +350,12 @@ export class APIRouter {
 		);
 		this.handlers.set("POST:/api/config/usage-throttling", (req) =>
 			configHandlers.setUsageThrottling(req),
+		);
+		this.handlers.set("GET:/api/config/dashboard-auth", () =>
+			configHandlers.getDashboardAuth(),
+		);
+		this.handlers.set("POST:/api/config/dashboard-auth", (req) =>
+			configHandlers.setDashboardAuth(req),
 		);
 		this.handlers.set("POST:/api/maintenance/cleanup", () => cleanupHandler());
 		this.handlers.set("POST:/api/maintenance/compact", () => compactHandler());

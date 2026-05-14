@@ -636,7 +636,7 @@ export default async function startServer(options?: {
 	});
 
 	// Initialize AuthService for proxy authentication
-	const authService = new AuthService(dbOps);
+	const authService = new AuthService(dbOps, config);
 
 	// Run startup maintenance once (cleanup only) - fire and forget
 	runStartupMaintenance(config, dbOps).catch((err) => {
