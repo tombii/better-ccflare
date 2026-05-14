@@ -126,45 +126,47 @@ export function StatsTab() {
 				<Card>
 					<CardHeader>
 						<CardTitle>Recent Errors</CardTitle>
-						<CardDescription>Last 10 errors from all accounts</CardDescription>
+						<CardDescription>
+							Most recent errors from all accounts
+						</CardDescription>
 					</CardHeader>
 					<CardContent>
 						<div className="space-y-2">
-							{stats.recentErrors.map(
-								(error: RecentErrorGroup, i: number) => {
-									const accountLabel =
-										error.accountName ??
-										(error.accountId === null
-											? "Unauthenticated"
-											: "Deleted account");
-									return (
-										<div
-											key={`error-${i}-${error.latestRequestId}`}
-											className="text-sm p-2 bg-destructive/10 rounded-md flex items-start gap-2"
-										>
-											<XCircle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
-											<div className="flex-1 min-w-0">
-												<p className="text-destructive font-medium break-words">
-													{error.errorCode}
-													{error.occurrenceCount > 1 && (
-														<span className="ml-2 text-xs font-normal">
-															×{error.occurrenceCount}
-														</span>
-													)}
-												</p>
-												<p className="text-xs text-destructive/80 mt-0.5">
-													{accountLabel}
-													{" • "}
-													{formatDistanceToNow(
-														new Date(error.latestTimestamp),
-														{ addSuffix: true },
-													)}
-												</p>
-											</div>
+							{stats.recentErrors.map((error: RecentErrorGroup, i: number) => {
+								const accountLabel =
+									error.accountName ??
+									(error.accountId === null
+										? "Unauthenticated"
+										: "Deleted account");
+								return (
+									<div
+										key={`error-${i}-${error.latestRequestId}`}
+										className="text-sm p-2 bg-destructive/10 rounded-md flex items-start gap-2"
+									>
+										<XCircle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
+										<div className="flex-1 min-w-0">
+											<p className="text-destructive font-medium break-words">
+												{error.errorCode}
+												{error.occurrenceCount > 1 && (
+													<span
+														className="ml-2 text-xs font-normal"
+														aria-label={`${error.occurrenceCount} occurrences`}
+													>
+														×{error.occurrenceCount}
+													</span>
+												)}
+											</p>
+											<p className="text-xs text-destructive/80 mt-0.5">
+												{accountLabel}
+												{" • "}
+												{formatDistanceToNow(new Date(error.latestTimestamp), {
+													addSuffix: true,
+												})}
+											</p>
 										</div>
-									);
-								},
-							)}
+									</div>
+								);
+							})}
 						</div>
 					</CardContent>
 				</Card>
