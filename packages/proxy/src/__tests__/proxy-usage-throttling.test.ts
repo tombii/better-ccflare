@@ -121,6 +121,12 @@ function makeProcessCtx(opts: { rateLimited: boolean; resetTime?: number }) {
 			reason: string;
 		}>,
 		resetConsecutive: [] as string[],
+		// Captures every SQL statement passed to the adapter so tests can assert
+		// that the rate_limited_until=NULL UPDATE was (or was not) issued.
+		adapterRun: [] as Array<{
+			sql: string;
+			params?: ReadonlyArray<unknown>;
+		}>,
 	};
 	let persistedCounter = 0;
 
@@ -155,7 +161,9 @@ function makeProcessCtx(opts: { rateLimited: boolean; resetTime?: number }) {
 			updateAccountRateLimitMeta: () => {},
 			getAdapter: () => ({
 				get: async () => ({ rate_limited_until: null }),
-				run: async () => {},
+				run: async (sql: string, params?: ReadonlyArray<unknown>) => {
+					calls.adapterRun.push({ sql, params });
+				},
 			}),
 			updateRequestUsage: async () => {},
 		},
@@ -291,5 +299,45 @@ describe("processProxyResponse — stability reset on 2xx", () => {
 		expect(account.rate_limited_until).toBeNull();
 		// DB reset NOT enqueued.
 		expect(calls.resetConsecutive).toEqual([]);
+	});
+
+	// Issue #2 regression: stability reset must fire even when rate_limited_until
+	// has already been cleared by the periodic clearExpiredRateLimits job. That
+	// job nulls rate_limited_until without touching rate_limited_at; if the
+	// stability reset were gated on rate_limited_until being non-null (the old
+	// behavior), the counter would stay elevated forever for API-key accounts
+	// that have no token-refresh codepath to reset it, and the next 429 would
+	// land at an inflated backoff tier instead of restarting at BASE.
+	it("resets the counter when rate_limited_until is already null but rate_limited_at is stale", async () => {
+		const stale = Date.now() - 6 * 60 * 1000; // 6 min ago (> 5 min stability window)
+		const account = makeAccount({
+			rate_limited_until: null, // already cleared by clearExpiredRateLimits
+			rate_limited_at: stale,
+			consecutive_rate_limits: 3,
+		});
+		const { ctx, calls } = makeProcessCtx({ rateLimited: false });
+
+		await processProxyResponse(
+			new Response('{"id":"msg_ok"}', {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			}),
+			account,
+			ctx,
+		);
+
+		// In-memory counter reset.
+		expect(account.consecutive_rate_limits).toBe(0);
+		expect(account.rate_limited_at).toBeNull();
+		// resetConsecutiveRateLimits enqueued exactly once.
+		expect(calls.resetConsecutive).toEqual([account.id]);
+		// The rate_limited_until=NULL UPDATE was NOT issued — there's nothing to
+		// clear because the periodic job already nulled it. This locks in that
+		// the two side-effects are now independent: the stability reset no
+		// longer requires rate_limited_until to still be set.
+		const updates = calls.adapterRun.filter((c) =>
+			c.sql.includes("rate_limited_until = NULL"),
+		);
+		expect(updates).toEqual([]);
 	});
 });

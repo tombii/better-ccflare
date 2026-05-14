@@ -107,6 +107,25 @@ export function computeRateLimitBackoffMs(consecutiveCount: number): number {
 	return Math.min(base * 2 ** exp, max);
 }
 
+/**
+ * Read the stability-reset window (ms) for the consecutive_rate_limits counter.
+ *
+ * Behavior:
+ *   - Reads `CCFLARE_RATE_LIMIT_RESET_STABILITY_MS` from env.
+ *   - Falls back to the TIME_CONSTANTS default (5 min) when unset / non-numeric
+ *     OR when the env value is <= 0 (a 0/negative value would mean the counter
+ *     resets immediately on any success, defeating the streak detection).
+ *   - Uses `Number.isFinite(raw) && raw > 0` (not `Number(env) || DEFAULT`,
+ *     because `0` is falsy in JS — same rationale as computeRateLimitBackoffMs).
+ */
+export function getRateLimitResetStabilityMs(): number {
+	const raw = Number(process.env.CCFLARE_RATE_LIMIT_RESET_STABILITY_MS);
+	// Clamp to defend against misconfiguration (env=0/negative would never reset the counter).
+	return Number.isFinite(raw) && raw > 0
+		? raw
+		: TIME_CONSTANTS.RATE_LIMIT_RESET_STABILITY_MS;
+}
+
 // Buffer sizes (in bytes unless specified)
 export const BUFFER_SIZES = {
 	// Stream usage buffer size in KB (multiplied by 1024 to get bytes)

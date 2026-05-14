@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import {
 	computeRateLimitBackoffMs,
+	getRateLimitResetStabilityMs,
 	TIME_CONSTANTS,
 } from "@better-ccflare/core";
 
@@ -74,6 +75,40 @@ describe("computeRateLimitBackoffMs", () => {
 	it("defends against env BASE=negative (returns 1000 floor)", () => {
 		withEnv("CCFLARE_RATE_LIMIT_BACKOFF_BASE_MS", "-9999", () => {
 			expect(computeRateLimitBackoffMs(1)).toBe(1000);
+		});
+	});
+});
+
+describe("getRateLimitResetStabilityMs", () => {
+	const DEFAULT = TIME_CONSTANTS.RATE_LIMIT_RESET_STABILITY_MS; // 5 min
+
+	it("returns the default (5 min) when env var is unset", () => {
+		withEnv("CCFLARE_RATE_LIMIT_RESET_STABILITY_MS", undefined, () => {
+			expect(getRateLimitResetStabilityMs()).toBe(DEFAULT);
+		});
+	});
+
+	it("returns the env value when set to a positive number", () => {
+		withEnv("CCFLARE_RATE_LIMIT_RESET_STABILITY_MS", "60000", () => {
+			expect(getRateLimitResetStabilityMs()).toBe(60000);
+		});
+	});
+
+	it("falls back to the default when env value is 0 (would never reset)", () => {
+		withEnv("CCFLARE_RATE_LIMIT_RESET_STABILITY_MS", "0", () => {
+			expect(getRateLimitResetStabilityMs()).toBe(DEFAULT);
+		});
+	});
+
+	it("falls back to the default when env value is negative", () => {
+		withEnv("CCFLARE_RATE_LIMIT_RESET_STABILITY_MS", "-1", () => {
+			expect(getRateLimitResetStabilityMs()).toBe(DEFAULT);
+		});
+	});
+
+	it("falls back to the default when env value is non-numeric", () => {
+		withEnv("CCFLARE_RATE_LIMIT_RESET_STABILITY_MS", "not-a-number", () => {
+			expect(getRateLimitResetStabilityMs()).toBe(DEFAULT);
 		});
 	});
 });

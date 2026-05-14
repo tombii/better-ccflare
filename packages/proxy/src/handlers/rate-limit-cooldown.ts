@@ -56,9 +56,6 @@ export function applyRateLimitCooldown(
 	account.consecutive_rate_limits = nextCount;
 
 	ctx.asyncWriter.enqueue(async () => {
-		log.warn(
-			`[ccflare] account=${account.name} cooldown_applied reason=${reason} until=${new Date(cooldownUntil).toISOString()} consecutive=${nextCount}`,
-		);
 		const persistedCount = await ctx.dbOps.markAccountRateLimited(
 			account.id,
 			cooldownUntil,
@@ -67,6 +64,12 @@ export function applyRateLimitCooldown(
 		// Reconcile in-memory counter with the authoritative DB value (may differ
 		// under concurrent 429s for the same account).
 		account.consecutive_rate_limits = persistedCount;
+		// Log AFTER the DB write so the reported `consecutive=` reflects the
+		// persisted counter — not the in-memory pre-write estimate (which may
+		// be one tier short under concurrent 429s for the same account).
+		log.warn(
+			`[ccflare] account=${account.name} cooldown_applied reason=${reason} until=${new Date(cooldownUntil).toISOString()} consecutive=${persistedCount}`,
+		);
 	});
 
 	const rateLimitError = new RateLimitError(

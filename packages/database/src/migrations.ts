@@ -22,7 +22,7 @@ export function ensureSchema(db: Database): void {
 			request_count INTEGER DEFAULT 0,
 			total_requests INTEGER DEFAULT 0,
 			priority INTEGER DEFAULT 0,
-			consecutive_rate_limits INTEGER DEFAULT 0
+			consecutive_rate_limits INTEGER NOT NULL DEFAULT 0
 		)
 	`);
 
@@ -556,7 +556,7 @@ export function runMigrations(db: Database, dbPath?: string): void {
 
 		if (!initialAccountsColumnNames.includes("consecutive_rate_limits")) {
 			db.prepare(
-				"ALTER TABLE accounts ADD COLUMN consecutive_rate_limits INTEGER DEFAULT 0",
+				"ALTER TABLE accounts ADD COLUMN consecutive_rate_limits INTEGER NOT NULL DEFAULT 0",
 			).run();
 			log.info("Added consecutive_rate_limits column to accounts table");
 		}

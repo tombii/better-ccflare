@@ -1,4 +1,4 @@
-import { logError, TIME_CONSTANTS } from "@better-ccflare/core";
+import { getRateLimitResetStabilityMs, logError } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import {
 	type Provider,
@@ -270,40 +270,46 @@ export async function processProxyResponse(
 		requestMeta?.headers?.get("x-better-ccflare-bypass-session") === "true";
 	updateAccountMetadata(account, response, ctx, requestId, bypassSession);
 
-	// Clear rate_limited_until on any successful upstream response. We clear unconditionally
-	// (even if the timestamp is still in the future) because a successful response proves the
-	// account is usable — e.g. after a seat reassignment that resets usage mid-window before
-	// the stored expiry fires. Only enqueue the DB write when the in-memory account object
-	// already carries a rate_limited_until value to avoid overhead on every normal request.
-	if (!rateLimitInfo.isRateLimited && account.rate_limited_until) {
-		account.rate_limited_until = null;
-		ctx.asyncWriter.enqueue(async () => {
-			const db = ctx.dbOps.getAdapter();
-			await db.run(
-				"UPDATE accounts SET rate_limited_until = NULL WHERE id = ? AND rate_limited_until IS NOT NULL",
-				[account.id],
-			);
-			log.debug(
-				`Cleared rate_limited_until for account ${account.name} on successful response`,
-			);
-		});
-
-		// Stability reset: if the most recent 429 is older than the stability
-		// window, the streak counter resets to 0. This means "the account has
-		// been healthy long enough that the next 429 should be treated as a
-		// fresh streak, not the continuation of the previous one." The
-		// rate_limited_at short-circuit avoids pointless writes when there was
-		// never a prior 429.
+	// On any successful upstream response, run the two side-effects independently:
+	//   (a) Stability reset: if the most recent 429 is older than the stability
+	//       window, the streak counter resets to 0. Critically, this is gated on
+	//       `rate_limited_at` ALONE — NOT on `rate_limited_until`. The periodic
+	//       `clearExpiredRateLimits` job nulls `rate_limited_until` without
+	//       touching `rate_limited_at`; if we required `rate_limited_until` to
+	//       still be set, API-key accounts whose cooldown expired naturally
+	//       would never get the counter reset and the next 429 would land at an
+	//       inflated backoff tier.
+	//   (b) Clearing `rate_limited_until`: only fires when the in-memory value
+	//       is non-null (avoids a no-op DB write on the happy path). We clear
+	//       unconditionally because a successful response proves the account is
+	//       usable — e.g. after a seat reassignment resets usage mid-window
+	//       before the stored expiry fires.
+	if (!rateLimitInfo.isRateLimited) {
+		// (a) Stability reset — gated only on rate_limited_at.
 		if (
 			account.rate_limited_at &&
-			Date.now() - account.rate_limited_at >
-				TIME_CONSTANTS.RATE_LIMIT_RESET_STABILITY_MS
+			Date.now() - account.rate_limited_at > getRateLimitResetStabilityMs()
 		) {
 			account.consecutive_rate_limits = 0;
 			account.rate_limited_at = null;
 			ctx.asyncWriter.enqueue(() =>
 				ctx.dbOps.resetConsecutiveRateLimits(account.id),
 			);
+		}
+
+		// (b) Clear rate_limited_until (only if still set in-memory).
+		if (account.rate_limited_until) {
+			account.rate_limited_until = null;
+			ctx.asyncWriter.enqueue(async () => {
+				const db = ctx.dbOps.getAdapter();
+				await db.run(
+					"UPDATE accounts SET rate_limited_until = NULL WHERE id = ? AND rate_limited_until IS NOT NULL",
+					[account.id],
+				);
+				log.debug(
+					`Cleared rate_limited_until for account ${account.name} on successful response`,
+				);
+			});
 		}
 	}
 
