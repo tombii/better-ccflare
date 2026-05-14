@@ -1,5 +1,6 @@
 import { Check, Copy } from "lucide-react";
 import { type ComponentProps, useRef, useState } from "react";
+import { copyText } from "../lib/clipboard";
 import { cn } from "../lib/utils";
 import { Button } from "./ui/button";
 
@@ -45,8 +46,7 @@ export function CopyButton({
 		const text = typeof getValue === "function" ? getValue() : (value ?? "");
 		if (!text) return;
 
-		navigator.clipboard
-			.writeText(text)
+		copyText(text)
 			.then(() => {
 				setCopied(true);
 				// Reset after 1.5s

@@ -3,7 +3,6 @@ import { formatDistanceToNow } from "date-fns";
 import {
 	AlertTriangle,
 	ChevronDown,
-	Copy,
 	Plus,
 	Shield,
 	ToggleLeft,
@@ -12,6 +11,7 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api } from "../api";
+import { CopyButton } from "./CopyButton";
 import { Button } from "./ui/button";
 import {
 	Card,
@@ -243,10 +243,6 @@ export function ApiKeysTab() {
 		}
 
 		return true;
-	};
-
-	const copyToClipboard = (text: string) => {
-		navigator.clipboard.writeText(text);
 	};
 
 	const stats = statsResponse?.data;
@@ -492,13 +488,11 @@ export function ApiKeysTab() {
 										</div>
 									</div>
 									<div className="flex items-center gap-2">
-										<Button
+										<CopyButton
 											variant="outline"
 											size="sm"
-											onClick={() => copyToClipboard(key.prefixLast8)}
-										>
-											<Copy className="h-4 w-4" />
-										</Button>
+											value={key.prefixLast8}
+										/>
 										<Button
 											variant="outline"
 											size="sm"
@@ -553,13 +547,11 @@ export function ApiKeysTab() {
 								<code className="flex-1 p-3 bg-muted rounded text-sm font-mono break-all">
 									{generatedKey}
 								</code>
-								<Button
+								<CopyButton
 									variant="outline"
 									size="sm"
-									onClick={() => generatedKey && copyToClipboard(generatedKey)}
-								>
-									<Copy className="h-4 w-4" />
-								</Button>
+									value={generatedKey ?? ""}
+								/>
 							</div>
 						</div>
 						<div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
