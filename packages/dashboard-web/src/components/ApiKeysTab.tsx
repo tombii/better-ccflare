@@ -160,6 +160,9 @@ export function ApiKeysTab() {
 			queryClient.invalidateQueries({ queryKey: ["api-keys"] });
 			queryClient.invalidateQueries({ queryKey: ["api-keys-stats"] });
 		},
+		onError: (error: Error) => {
+			console.error("Failed to toggle API key:", error);
+		},
 	});
 
 	// Delete API key mutation
@@ -172,6 +175,9 @@ export function ApiKeysTab() {
 			setIsDeleteDialogOpen(false);
 			queryClient.invalidateQueries({ queryKey: ["api-keys"] });
 			queryClient.invalidateQueries({ queryKey: ["api-keys-stats"] });
+		},
+		onError: (error: Error) => {
+			console.error("Failed to delete API key:", error);
 		},
 	});
 
@@ -310,7 +316,13 @@ export function ApiKeysTab() {
 						all API requests must include a valid API key.
 					</p>
 				</div>
-				<Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
+				<Dialog
+					open={isCreateDialogOpen}
+					onOpenChange={(open) => {
+						setIsCreateDialogOpen(open);
+						if (!open) generateKeyMutation.reset();
+					}}
+				>
 					<DialogTrigger asChild>
 						<Button>
 							<Plus className="h-4 w-4 mr-2" />
@@ -335,28 +347,57 @@ export function ApiKeysTab() {
 									onChange={(e) => setNewKeyName(e.target.value)}
 								/>
 							</div>
-							<div className="flex items-center space-x-2">
-								<input
-									type="checkbox"
-									id="admin"
-									checked={isAdminKey}
-									onChange={(e) => setIsAdminKey(e.target.checked)}
-									className="h-4 w-4 rounded border-gray-300"
-								/>
-								<Label
-									htmlFor="admin"
-									className="text-sm font-normal cursor-pointer"
-								>
-									Grant admin access (dashboard management)
-								</Label>
-							</div>
-							{isAdminKey && (
-								<div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
-									<div className="flex items-center gap-2 text-yellow-800">
-										<AlertTriangle className="h-4 w-4" />
+							{(() => {
+								const isFirstKey = stats?.active === 0;
+								return (
+									<>
+										<div className="flex items-center space-x-2">
+											<input
+												type="checkbox"
+												id="admin"
+												checked={isAdminKey}
+												onChange={(e) => setIsAdminKey(e.target.checked)}
+												disabled={isFirstKey}
+												className="h-4 w-4 rounded border-gray-300 disabled:cursor-not-allowed disabled:opacity-60"
+											/>
+											<Label
+												htmlFor="admin"
+												className={`text-sm font-normal ${isFirstKey ? "cursor-not-allowed opacity-70" : "cursor-pointer"}`}
+											>
+												Grant admin access (dashboard management)
+											</Label>
+										</div>
+										{isFirstKey ? (
+											<div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+												<div className="flex items-center gap-2 text-yellow-800">
+													<AlertTriangle className="h-4 w-4" />
+													<span className="text-sm">
+														First API key must be admin to prevent lockout from
+														the dashboard.
+													</span>
+												</div>
+											</div>
+										) : isAdminKey ? (
+											<div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+												<div className="flex items-center gap-2 text-yellow-800">
+													<AlertTriangle className="h-4 w-4" />
+													<span className="text-sm">
+														Admin keys can manage accounts, view analytics, and
+														modify settings.
+													</span>
+												</div>
+											</div>
+										) : null}
+									</>
+								);
+							})()}
+							{generateKeyMutation.isError && (
+								<div className="p-3 bg-destructive/10 border border-destructive/30 rounded-lg">
+									<div className="flex items-start gap-2 text-destructive">
+										<AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
 										<span className="text-sm">
-											Admin keys can manage accounts, view analytics, and modify
-											settings.
+											{generateKeyMutation.error?.message ??
+												"Failed to generate API key."}
 										</span>
 									</div>
 								</div>
@@ -364,7 +405,10 @@ export function ApiKeysTab() {
 						</div>
 						<DialogFooter>
 							<Button
-								onClick={() => setIsCreateDialogOpen(false)}
+								onClick={() => {
+									setIsCreateDialogOpen(false);
+									generateKeyMutation.reset();
+								}}
 								variant="outline"
 							>
 								Cancel
@@ -393,6 +437,18 @@ export function ApiKeysTab() {
 					</CardDescription>
 				</CardHeader>
 				<CardContent>
+					{(updateRoleMutation.isError || toggleKeyMutation.isError) && (
+						<div className="mb-4 p-3 bg-destructive/10 border border-destructive/30 rounded-lg">
+							<div className="flex items-start gap-2 text-destructive">
+								<AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+								<span className="text-sm">
+									{updateRoleMutation.error?.message ??
+										toggleKeyMutation.error?.message ??
+										"Operation failed."}
+								</span>
+							</div>
+						</div>
+					)}
 					{isLoadingKeys ? (
 						<div className="text-center py-8">Loading API keys...</div>
 					) : apiKeys.length === 0 ? (
@@ -582,7 +638,13 @@ export function ApiKeysTab() {
 			</Dialog>
 
 			{/* Delete Confirmation Dialog */}
-			<Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+			<Dialog
+				open={isDeleteDialogOpen}
+				onOpenChange={(open) => {
+					setIsDeleteDialogOpen(open);
+					if (!open) deleteKeyMutation.reset();
+				}}
+			>
 				<DialogContent>
 					<DialogHeader>
 						<DialogTitle>Delete API Key</DialogTitle>
@@ -597,9 +659,23 @@ export function ApiKeysTab() {
 							applications using it will no longer be able to authenticate.
 						</p>
 					</div>
+					{deleteKeyMutation.isError && (
+						<div className="p-3 bg-destructive/10 border border-destructive/30 rounded-lg">
+							<div className="flex items-start gap-2 text-destructive">
+								<AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+								<span className="text-sm">
+									{deleteKeyMutation.error?.message ??
+										"Failed to delete API key."}
+								</span>
+							</div>
+						</div>
+					)}
 					<DialogFooter>
 						<Button
-							onClick={() => setIsDeleteDialogOpen(false)}
+							onClick={() => {
+								setIsDeleteDialogOpen(false);
+								deleteKeyMutation.reset();
+							}}
 							variant="outline"
 						>
 							Cancel
