@@ -104,7 +104,6 @@ export function PoolMetricCard({
 	const hasContributing = contributing.length > 0;
 	const hasExcluded = excluded.length > 0;
 	const hasFallback = fallback.length > 0;
-	const hasNextRefresh = earliestResetMs != null;
 
 	const triggerNode = showChip ? (
 		<Popover>
@@ -181,7 +180,7 @@ export function PoolMetricCard({
 						</ul>
 					</div>
 				)}
-				{hasNextRefresh && (
+				{earliestResetMs != null && (
 					<div>
 						<div className="font-medium mb-1">Next refresh</div>
 						<div>
