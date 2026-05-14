@@ -42,9 +42,9 @@ export function useDismissedErrors() {
 	});
 
 	// Persist the (possibly pruned) initial state back to storage once on mount.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: intentionally runs only on mount to persist the pruned initial state
 	useEffect(() => {
 		writeToStorage(state);
-		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, []);
 
 	const dismiss = useCallback((group: RecentErrorGroup) => {

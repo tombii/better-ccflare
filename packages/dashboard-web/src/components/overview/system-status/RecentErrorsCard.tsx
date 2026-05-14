@@ -1,4 +1,4 @@
-import type { RecentErrorGroup } from "@better-ccflare/types";
+import { NO_ACCOUNT_ID, type RecentErrorGroup } from "@better-ccflare/types";
 import { useState } from "react";
 import { useStats } from "../../../hooks/queries";
 import {
@@ -60,7 +60,7 @@ export function RecentErrorsCard() {
 			<div className="space-y-2">
 				{visibleErrors.map((error) => (
 					<RecentErrorRow
-						key={`${error.accountId ?? "no_account"}:${error.errorCode}:${error.latestRequestId}`}
+						key={`${error.accountId ?? NO_ACCOUNT_ID}:${error.errorCode}:${error.latestRequestId}`}
 						error={error}
 						onClick={() => setSelectedError(error)}
 						onDismiss={() => dismiss(error)}

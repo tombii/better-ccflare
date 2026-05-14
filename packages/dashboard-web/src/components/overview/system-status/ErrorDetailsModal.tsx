@@ -150,9 +150,8 @@ export function ErrorDetailsModal({
 						<DialogFooter>
 							<Button
 								variant="outline"
-								disabled={error === null}
 								onClick={() => {
-									if (error) onDismiss(error);
+									onDismiss(error);
 									onClose();
 								}}
 							>

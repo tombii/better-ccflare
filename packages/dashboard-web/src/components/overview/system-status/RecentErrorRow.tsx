@@ -35,9 +35,17 @@ export function RecentErrorRow({
 	const absoluteTime = formatTimestamp(error.latestTimestamp);
 
 	return (
-		<button
-			type="button"
+		// biome-ignore lint/a11y/useSemanticElements: a real <button> would nest the dismiss <Button>, which is invalid HTML and breaks stopPropagation
+		<div
+			role="button"
+			tabIndex={0}
 			onClick={onClick}
+			onKeyDown={(e) => {
+				if (e.key === "Enter" || e.key === " ") {
+					e.preventDefault();
+					onClick();
+				}
+			}}
 			className={`w-full text-left p-3 rounded-lg flex items-start gap-2 cursor-pointer transition-colors hover:bg-opacity-80 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring ${bgClass}`}
 		>
 			<Icon className={`h-4 w-4 mt-0.5 shrink-0 ${iconColor}`} />
@@ -77,6 +85,6 @@ export function RecentErrorRow({
 					<X className="h-3.5 w-3.5" />
 				</Button>
 			</div>
-		</button>
+		</div>
 	);
 }
