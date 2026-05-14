@@ -1,6 +1,10 @@
 import { formatPercentage } from "@better-ccflare/ui-common";
 import { Info } from "lucide-react";
-import type { ExcludedReason, PoolUsageResult } from "../../lib/pool-usage";
+import type {
+	ExcludedReason,
+	PoolUsageResult,
+	PoolWindow,
+} from "../../lib/pool-usage";
 import { cn } from "../../lib/utils";
 import { Card, CardContent } from "../ui/card";
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
@@ -10,6 +14,7 @@ interface PoolMetricCardProps {
 	icon: React.ComponentType<{ className?: string }>;
 	result: PoolUsageResult;
 	now: number;
+	window: PoolWindow;
 }
 
 const REASON_LABELS: Record<ExcludedReason, string> = {
@@ -64,15 +69,25 @@ function nextRefreshLabel(
 	earliestResetMs: number,
 	accountName: string | null,
 	now: number,
+	window: PoolWindow,
 ): string {
 	const name = accountName ?? "unknown";
 	if (earliestResetMs <= now) {
 		return `${name} ready to refresh`;
 	}
-	const time = new Date(earliestResetMs).toLocaleTimeString(undefined, {
-		hour: "2-digit",
-		minute: "2-digit",
-	});
+	const date = new Date(earliestResetMs);
+	const time =
+		window === "seven_day"
+			? date.toLocaleString(undefined, {
+					month: "short",
+					day: "numeric",
+					hour: "2-digit",
+					minute: "2-digit",
+				})
+			: date.toLocaleTimeString(undefined, {
+					hour: "2-digit",
+					minute: "2-digit",
+				});
 	return `${name} at ${time}`;
 }
 
@@ -81,6 +96,7 @@ export function PoolMetricCard({
 	icon: Icon,
 	result,
 	now,
+	window,
 }: PoolMetricCardProps) {
 	const {
 		average,
@@ -184,7 +200,12 @@ export function PoolMetricCard({
 					<div>
 						<div className="font-medium mb-1">Next refresh</div>
 						<div>
-							{nextRefreshLabel(earliestResetMs, earliestResetAccountName, now)}
+							{nextRefreshLabel(
+								earliestResetMs,
+								earliestResetAccountName,
+								now,
+								window,
+							)}
 						</div>
 					</div>
 				)}

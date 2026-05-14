@@ -270,12 +270,14 @@ export const OverviewTab = React.memo(() => {
 					icon={Gauge}
 					result={fiveHourPool}
 					now={now}
+					window="five_hour"
 				/>
 				<PoolMetricCard
 					title="7d Pool"
 					icon={BarChart3}
 					result={weeklyPool}
 					now={now}
+					window="seven_day"
 				/>
 			</div>
 
