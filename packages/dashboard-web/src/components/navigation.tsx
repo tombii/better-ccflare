@@ -251,7 +251,9 @@ export function Navigation({
 			]);
 
 			if (!response.ok) {
-				const errBody = await response.json().catch(() => ({}) as { error?: string });
+				const errBody = await response
+					.json()
+					.catch(() => ({}) as { error?: string });
 				throw new Error(errBody.error || `HTTP ${response.status}`);
 			}
 
