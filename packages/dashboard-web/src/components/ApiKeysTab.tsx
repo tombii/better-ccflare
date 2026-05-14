@@ -9,6 +9,7 @@ import {
 	ToggleLeft,
 	ToggleRight,
 	Trash2,
+	X,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api } from "../api";
@@ -348,7 +349,7 @@ export function ApiKeysTab() {
 								/>
 							</div>
 							{(() => {
-								const isFirstKey = stats?.active === 0;
+								const isFirstKey = !stats || stats.active === 0;
 								return (
 									<>
 										<div className="flex items-center space-x-2">
@@ -441,11 +442,22 @@ export function ApiKeysTab() {
 						<div className="mb-4 p-3 bg-destructive/10 border border-destructive/30 rounded-lg">
 							<div className="flex items-start gap-2 text-destructive">
 								<AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
-								<span className="text-sm">
+								<span className="text-sm flex-1">
 									{updateRoleMutation.error?.message ??
 										toggleKeyMutation.error?.message ??
 										"Operation failed."}
 								</span>
+								<button
+									type="button"
+									onClick={() => {
+										updateRoleMutation.reset();
+										toggleKeyMutation.reset();
+									}}
+									className="shrink-0 hover:opacity-70"
+									aria-label="Dismiss error"
+								>
+									<X className="h-4 w-4" />
+								</button>
 							</div>
 						</div>
 					)}
