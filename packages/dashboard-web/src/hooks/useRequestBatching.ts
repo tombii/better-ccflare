@@ -83,7 +83,7 @@ export function useRequestBatching<T = unknown, R = unknown>(
 	// Clean up on unmount
 	const cleanup = useCallback(() => {
 		// Clear all timeouts
-		timeoutsRef.current.forEach((timeout) => clearTimeout(timeout));
+		for (const timeout of timeoutsRef.current.values()) clearTimeout(timeout);
 		timeoutsRef.current.clear();
 
 		// Reject all pending requests

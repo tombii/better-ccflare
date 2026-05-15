@@ -151,7 +151,7 @@ export function AgentEditDialog({
 				for (const combo of combinations) {
 					const comboTools = new Set<AgentTool>();
 					for (const mode of combo) {
-						TOOL_PRESETS[mode].forEach((tool) => comboTools.add(tool));
+						for (const tool of TOOL_PRESETS[mode]) comboTools.add(tool);
 					}
 					// Check if this combination exactly matches our tools
 					if (
@@ -198,7 +198,7 @@ export function AgentEditDialog({
 		const toolSet = new Set<AgentTool>();
 		for (const mode of selectedModes) {
 			if (mode !== "all") {
-				TOOL_PRESETS[mode].forEach((tool) => toolSet.add(tool));
+				for (const tool of TOOL_PRESETS[mode]) toolSet.add(tool);
 			}
 		}
 		return Array.from(toolSet);
@@ -232,7 +232,7 @@ export function AgentEditDialog({
 		const newToolSet = new Set<AgentTool>();
 		for (const m of newModes) {
 			if (m !== "all") {
-				TOOL_PRESETS[m].forEach((tool) => newToolSet.add(tool));
+				for (const tool of TOOL_PRESETS[m]) newToolSet.add(tool);
 			}
 		}
 
@@ -275,7 +275,7 @@ export function AgentEditDialog({
 				for (const combo of combinations) {
 					const comboTools = new Set<AgentTool>();
 					for (const mode of combo) {
-						TOOL_PRESETS[mode].forEach((tool) => comboTools.add(tool));
+						for (const tool of TOOL_PRESETS[mode]) comboTools.add(tool);
 					}
 					// Check if this combination exactly matches our tools
 					if (
@@ -355,7 +355,7 @@ export function AgentEditDialog({
 			for (const combo of combinations) {
 				const comboTools = new Set<AgentTool>();
 				for (const mode of combo) {
-					TOOL_PRESETS[mode].forEach((tool) => comboTools.add(tool));
+					for (const tool of TOOL_PRESETS[mode]) comboTools.add(tool);
 				}
 				// Check if this combination exactly matches our tools
 				if (
