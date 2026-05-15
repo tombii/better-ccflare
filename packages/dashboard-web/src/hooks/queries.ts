@@ -38,6 +38,26 @@ export function summaryToPlaceholder(summary: RequestSummary): RequestPayload {
 	};
 }
 
+export const useStorageInfo = (refetchInterval?: number) => {
+	return useQuery({
+		queryKey: queryKeys.storage(),
+		queryFn: () => api.getStorageInfo(),
+		staleTime: 30_000,
+		refetchInterval: refetchInterval ?? 60_000,
+		refetchIntervalInBackground: false,
+	});
+};
+
+export const useTriggerIntegrityCheck = () => {
+	const queryClient = useQueryClient();
+	return useMutation({
+		mutationFn: (kind: "quick" | "full") => api.triggerIntegrityCheck(kind),
+		onSettled: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.storage() });
+		},
+	});
+};
+
 export const useAccounts = () => {
 	return useQuery({
 		queryKey: queryKeys.accounts(),

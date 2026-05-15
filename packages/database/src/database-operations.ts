@@ -63,32 +63,17 @@ export interface DatabaseRetryConfig {
 }
 
 /**
- * Apply SQLite pragmas for optimal performance on distributed filesystems
+ * Apply SQLite pragmas for optimal performance on distributed filesystems.
+ *
+ * Note: `PRAGMA integrity_check` is NOT run here. The check is moved to a
+ * background worker (see `packages/proxy/src/integrity-scheduler.ts`) so it
+ * doesn't gate startup — on a multi-GB DB it can block the event loop for
+ * tens of seconds. The scheduler runs `quick_check` every few hours and a
+ * full `integrity_check` daily, surfacing corruption through `/api/storage`
+ * and the dashboard "Storage Integrity" card.
  */
-function configureSqlite(
-	db: Database,
-	config: DatabaseConfig,
-	skipIntegrityCheck = false,
-): void {
+function configureSqlite(db: Database, config: DatabaseConfig): void {
 	try {
-		// Check database integrity first (skip in fast mode for CLI commands)
-		if (!skipIntegrityCheck) {
-			const integrityResult = db.query("PRAGMA integrity_check").get() as {
-				integrity_check: string;
-			};
-			if (integrityResult.integrity_check !== "ok") {
-				console.error("\n❌ DATABASE INTEGRITY CHECK FAILED");
-				console.error("═".repeat(50));
-				console.error(`Error: ${integrityResult.integrity_check}\n`);
-				console.error("Your database may be corrupted. To repair it, run:");
-				console.error("  bun run cli --repair-db\n");
-				console.error(`${"═".repeat(50)}\n`);
-				throw new Error(
-					`Database integrity check failed: ${integrityResult.integrity_check}`,
-				);
-			}
-		}
-
 		// Enable WAL mode for better concurrency (with error handling)
 		if (config.walMode !== false) {
 			try {
@@ -171,13 +156,19 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 	private runtime?: RuntimeConfig;
 	private dbConfig: DatabaseConfig;
 	private retryConfig: DatabaseRetryConfig;
-	private fastMode: boolean;
 	readonly isSQLite: boolean;
-	/** Cached integrity check status for doctor command */
+	/** Cached integrity check status; surfaced via /api/storage and /health. */
 	private integrityStatus: IntegrityStatus = {
 		status: "unchecked",
+		runningKind: null,
 		lastCheckAt: null,
 		lastError: null,
+		lastQuickCheckAt: null,
+		lastQuickResult: null,
+		lastQuickError: null,
+		lastFullCheckAt: null,
+		lastFullResult: null,
+		lastFullError: null,
 	};
 
 	// Repositories
@@ -194,10 +185,7 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		dbPath?: string,
 		dbConfig?: DatabaseConfig,
 		retryConfig?: DatabaseRetryConfig,
-		fastMode = false,
 	) {
-		this.fastMode = fastMode;
-
 		// Default database configuration optimized for distributed filesystems
 		this.dbConfig = {
 			walMode: true,
@@ -247,7 +235,7 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 			this.sqliteDb = new Database(resolvedPath, { create: true });
 
 			// Apply SQLite configuration
-			configureSqlite(this.sqliteDb, this.dbConfig, fastMode);
+			configureSqlite(this.sqliteDb, this.dbConfig);
 
 			ensureSchema(this.sqliteDb);
 			runMigrations(this.sqliteDb, resolvedPath);
@@ -310,28 +298,6 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		return this.sqliteDb;
 	}
 
-	/**
-	 * Run database integrity check if it was skipped during initialization
-	 */
-	runIntegrityCheck(): void {
-		if (this.fastMode && this.sqliteDb) {
-			const integrityResult = this.sqliteDb
-				.query("PRAGMA integrity_check")
-				.get() as { integrity_check: string };
-			if (integrityResult.integrity_check !== "ok") {
-				console.error("\n❌ DATABASE INTEGRITY CHECK FAILED");
-				console.error("═".repeat(50));
-				console.error(`Error: ${integrityResult.integrity_check}\n`);
-				console.error("Your database may be corrupted. To repair it, run:");
-				console.error("  bun run cli --repair-db\n");
-				console.error(`${"═".repeat(50)}\n`);
-				throw new Error(
-					`Database integrity check failed: ${integrityResult.integrity_check}`,
-				);
-			}
-		}
-	}
-
 	async runQuickIntegrityCheck(): Promise<string> {
 		if (!this.sqliteDb) {
 			// PostgreSQL: verify connectivity with a lightweight query
@@ -344,36 +310,131 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		return result.quick_check;
 	}
 
+	/**
+	 * Run the full integrity check. Combines `PRAGMA integrity_check` and
+	 * `PRAGMA foreign_key_check`: per SQLite docs `integrity_check` does NOT
+	 * verify foreign keys, so detecting "silent wrong results" needs both.
+	 *
+	 * Returns "ok" when both pragmas pass; otherwise a multi-line error
+	 * description combining the failing reports.
+	 *
+	 * NOTE: blocking. On a multi-GB DB this can take tens of seconds. Callers
+	 * on the proxy hot path must invoke this via the integrity-check worker
+	 * to avoid freezing the event loop.
+	 */
 	async runFullIntegrityCheck(): Promise<string> {
 		if (!this.sqliteDb) {
 			// PostgreSQL: verify connectivity with a lightweight query
 			await this.adapter.get("SELECT 1 AS ok");
 			return "ok";
 		}
-		// integrity_check can return multiple rows for long error reports
-		const rows = this.sqliteDb.query("PRAGMA integrity_check").all() as Array<{
-			integrity_check: string;
-		}>;
-		// Join all rows into a single string (most cases return single 'ok' row)
-		return rows.map((r) => r.integrity_check).join("\n");
+		// integrity_check can return multiple rows for long error reports.
+		const integrityRows = this.sqliteDb
+			.query("PRAGMA integrity_check")
+			.all() as Array<{ integrity_check: string }>;
+		const integrityMsg = integrityRows.map((r) => r.integrity_check).join("\n");
+
+		// foreign_key_check returns one row per violation (empty result = ok).
+		const fkRows = this.sqliteDb
+			.query("PRAGMA foreign_key_check")
+			.all() as Array<Record<string, unknown>>;
+		const integrityOk = integrityMsg === "ok";
+		const fkOk = fkRows.length === 0;
+		if (integrityOk && fkOk) return "ok";
+
+		const parts: string[] = [];
+		if (!integrityOk) parts.push(`integrity_check: ${integrityMsg}`);
+		if (!fkOk) {
+			parts.push(
+				`foreign_key_check: ${fkRows.length} violation(s) — ${JSON.stringify(fkRows.slice(0, 5))}${fkRows.length > 5 ? " (truncated)" : ""}`,
+			);
+		}
+		return parts.join("\n");
 	}
 
 	/**
-	 * Get cached integrity status
+	 * Get cached integrity status (copy — caller can't mutate internal state).
 	 */
 	getIntegrityStatus(): IntegrityStatus {
 		return { ...this.integrityStatus };
 	}
 
 	/**
-	 * Update cached integrity status
+	 * Path to the live SQLite file, or `undefined` when running against
+	 * PostgreSQL or before initialization. Used by the integrity-check worker
+	 * to open its own read-only handle.
 	 */
-	updateIntegrityStatus(status: "ok" | "corrupt", error?: string | null): void {
+	getResolvedDbPath(): string | undefined {
+		return this.resolvedDbPath;
+	}
+
+	/**
+	 * Mark an integrity probe as in flight. Callers must pair this with
+	 * `recordIntegrityResult()`. Returns false if a probe is already running
+	 * — used as a cheap mutex.
+	 */
+	markIntegrityCheckRunning(kind: "quick" | "full"): boolean {
+		if (this.integrityStatus.status === "running") return false;
 		this.integrityStatus = {
-			status,
-			lastCheckAt: Date.now(),
-			lastError: error ?? null,
+			...this.integrityStatus,
+			status: "running",
+			runningKind: kind,
 		};
+		return true;
+	}
+
+	/**
+	 * Record the outcome of a quick or full integrity probe and recompute the
+	 * collapsed `status` field.
+	 *
+	 * Sticky-corrupt rule:
+	 *  - A full `corrupt` result poisons `status` until another *full* probe
+	 *    returns `ok`. A subsequent quick `ok` does NOT clear it. Without
+	 *    this, the 6-hourly quick_check would mask the daily full check's
+	 *    silent-corruption findings (index/table mismatch, FK violations).
+	 *  - A quick `corrupt` is also reflected immediately, and is cleared by
+	 *    the next quick `ok` (or a full `ok` if the full result was also
+	 *    quick-detectable, which any structural corruption is).
+	 */
+	recordIntegrityResult(
+		kind: "quick" | "full",
+		result: "ok" | "corrupt",
+		error?: string | null,
+	): void {
+		const now = Date.now();
+		const next: IntegrityStatus = {
+			...this.integrityStatus,
+			runningKind: null,
+		};
+
+		if (kind === "quick") {
+			next.lastQuickCheckAt = now;
+			next.lastQuickResult = result;
+			next.lastQuickError = result === "corrupt" ? (error ?? null) : null;
+		} else {
+			next.lastFullCheckAt = now;
+			next.lastFullResult = result;
+			next.lastFullError = result === "corrupt" ? (error ?? null) : null;
+		}
+
+		next.lastCheckAt = now;
+
+		// Recompute collapsed status. Order: any corrupt result wins.
+		const fullCorrupt = next.lastFullResult === "corrupt";
+		const quickCorrupt = next.lastQuickResult === "corrupt";
+		if (fullCorrupt || quickCorrupt) {
+			next.status = "corrupt";
+			next.lastError =
+				next.lastFullError ?? next.lastQuickError ?? "integrity check failed";
+		} else if (next.lastQuickResult === "ok" || next.lastFullResult === "ok") {
+			next.status = "ok";
+			next.lastError = null;
+		} else {
+			next.status = "unchecked";
+			next.lastError = null;
+		}
+
+		this.integrityStatus = next;
 	}
 
 	/**

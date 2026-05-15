@@ -10,6 +10,7 @@ export type {
 	DatabaseRetryConfig,
 } from "./database-operations";
 export { DatabaseFactory } from "./factory";
+export { runIntegrityCheckInWorker } from "./integrity-check-runner";
 export { migrateFromCcflare } from "./migrate-from-ccflare";
 export { ensureSchema, runMigrations } from "./migrations";
 export { getLegacyDbPath, resolveDbPath } from "./paths";
