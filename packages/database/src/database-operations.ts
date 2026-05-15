@@ -415,6 +415,17 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 			next.lastFullCheckAt = now;
 			next.lastFullResult = result;
 			next.lastFullError = result === "corrupt" ? (error ?? null) : null;
+			// A passing full check is a strict superset of quick_check, so it
+			// subsumes any lingering quick-corrupt: if the structurally-more-
+			// thorough probe is clean, the structurally-less-thorough probe's
+			// stale corrupt verdict is no longer accurate. Without this clear,
+			// a quick `corrupt` recorded six hours ago would keep collapsed
+			// `status = "corrupt"` on the dashboard until the next quick tick
+			// even though a full check just returned ok.
+			if (result === "ok") {
+				next.lastQuickResult = "ok";
+				next.lastQuickError = null;
+			}
 		}
 
 		next.lastCheckAt = now;
