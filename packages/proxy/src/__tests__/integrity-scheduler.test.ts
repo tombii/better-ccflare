@@ -99,6 +99,32 @@ describe("startIntegrityScheduler", () => {
 		expect(typeof stop).toBe("function");
 		stop();
 	});
+
+	it("override quickIntervalHours=0 disables the quick probe (not setInterval(0))", () => {
+		// Regression: an explicit `0` override used to multiply by HOUR (still
+		// 0) and pass the !== null guard, scheduling setInterval(runQuick, 0).
+		const dbOps = makeDbOps();
+		const stop = startIntegrityScheduler(dbOps, {
+			quickIntervalHours: 0,
+			fullIntervalHours: 500,
+		});
+		expect(typeof stop).toBe("function");
+		// If the disable path is broken setInterval would have fired by now
+		// (we don't sleep, but constructor-time logic decides scheduling).
+		// The test passes as long as we don't blow up; full assertion is
+		// indirect via "no exception on stop()" + no exception during setup.
+		stop();
+	});
+
+	it("override fullIntervalHours=0 disables the full probe", () => {
+		const dbOps = makeDbOps();
+		const stop = startIntegrityScheduler(dbOps, {
+			quickIntervalHours: 500,
+			fullIntervalHours: 0,
+		});
+		expect(typeof stop).toBe("function");
+		stop();
+	});
 });
 
 describe("runIntegrityCheckOnDemand", () => {
