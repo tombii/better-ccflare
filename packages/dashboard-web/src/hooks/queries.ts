@@ -8,7 +8,17 @@ export const useStorageInfo = (refetchInterval?: number) => {
 		queryKey: queryKeys.storage(),
 		queryFn: () => api.getStorageInfo(),
 		staleTime: 30_000,
-		refetchInterval: refetchInterval ?? 60_000,
+		// Cadence boost while a probe is in flight: a full check on a
+		// multi-GB DB takes 25–90s, and a fixed 60s poll could miss the
+		// transition entirely. While `integrity_status === "running"` poll
+		// every 5s so the dashboard surfaces completion within seconds of
+		// the worker finishing. Idle steady-state stays at 60s.
+		refetchInterval: (query) => {
+			if (refetchInterval !== undefined) return refetchInterval;
+			const data = query.state.data;
+			if (data?.integrity_status === "running") return 5_000;
+			return 60_000;
+		},
 		refetchIntervalInBackground: false,
 	});
 };

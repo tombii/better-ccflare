@@ -183,9 +183,54 @@ export function startIntegrityScheduler(
 }
 
 /**
+ * Inner full-check coroutine, called once the caller has already claimed
+ * the mutex via `markIntegrityCheckRunning("full")`. Records the result
+ * and (implicitly) releases the mutex via `recordIntegrityResult`.
+ */
+async function runFullCheckLocked(dbOps: DatabaseOperations): Promise<{
+	result: "ok" | "corrupt";
+	error: string | null;
+}> {
+	try {
+		const dbPath = dbOps.getResolvedDbPath();
+		if (!dbPath) {
+			const out = await dbOps.runFullIntegrityCheck();
+			const result = out === "ok" ? "ok" : "corrupt";
+			dbOps.recordIntegrityResult(
+				"full",
+				result,
+				result === "corrupt" ? out : null,
+			);
+			return { result, error: result === "corrupt" ? out : null };
+		}
+		const workerResult = await runIntegrityCheckInWorker(dbPath);
+		const result = workerResult.ok ? "ok" : "corrupt";
+		dbOps.recordIntegrityResult(
+			"full",
+			result,
+			workerResult.ok ? null : workerResult.error,
+		);
+		return {
+			result,
+			error: workerResult.ok ? null : workerResult.error,
+		};
+	} catch (error) {
+		const msg = String(error);
+		dbOps.recordIntegrityResult("full", "corrupt", msg);
+		return { result: "corrupt", error: msg };
+	}
+}
+
+/**
  * Trigger an on-demand integrity probe. Used by the
  * `POST /api/storage/integrity/check` endpoint. Returns
  * `{ ok: false, reason: "already-running" }` if the mutex is held.
+ *
+ * The full check is awaited end-to-end here, so this call can take tens
+ * of seconds (or up to the worker timeout — 10 min by default). For HTTP
+ * handlers that sit behind a reverse proxy with a short read_timeout,
+ * use {@link startFullIntegrityCheckBackground} for the full kind to
+ * return 202 immediately.
  */
 export async function runIntegrityCheckOnDemand(
 	dbOps: DatabaseOperations,
@@ -208,31 +253,41 @@ export async function runIntegrityCheckOnDemand(
 			);
 			return { ok: true, result, error: result === "corrupt" ? out : null };
 		}
-		const dbPath = dbOps.getResolvedDbPath();
-		if (!dbPath) {
-			const out = await dbOps.runFullIntegrityCheck();
-			const result = out === "ok" ? "ok" : "corrupt";
-			dbOps.recordIntegrityResult(
-				"full",
-				result,
-				result === "corrupt" ? out : null,
-			);
-			return { ok: true, result, error: result === "corrupt" ? out : null };
-		}
-		const workerResult = await runIntegrityCheckInWorker(dbPath);
-		const result = workerResult.ok ? "ok" : "corrupt";
-		dbOps.recordIntegrityResult(
-			"full",
-			result,
-			workerResult.ok ? null : workerResult.error,
-		);
-		return {
-			ok: true,
-			result,
-			error: workerResult.ok ? null : workerResult.error,
-		};
+		const { result, error } = await runFullCheckLocked(dbOps);
+		return { ok: true, result, error };
 	} catch (error) {
 		dbOps.recordIntegrityResult(kind, "corrupt", String(error));
 		return { ok: true, result: "corrupt", error: String(error) };
 	}
+}
+
+/**
+ * Claim the mutex for a full integrity check and kick off the worker
+ * **without awaiting**. Intended for HTTP handlers — returning 202
+ * immediately means a reverse proxy (nginx, Caddy, ALB) with a short
+ * `proxy_read_timeout` won't drop the connection before the worker
+ * finishes, which would otherwise make the dashboard show a false-
+ * negative "Could not trigger check" even though the check is in
+ * progress and will land in `/api/storage` once the worker completes.
+ *
+ * Returns synchronously:
+ *  - `{ok: true}` — mutex claimed, worker kicked off in background. The
+ *    eventual result is visible via `/api/storage` and `/health` once
+ *    `recordIntegrityResult` releases the mutex.
+ *  - `{ok: false, reason: "already-running"}` — another probe is in
+ *    flight; nothing was started.
+ *
+ * Errors inside the background coroutine are recorded as
+ * `corrupt` with the message — same handling as the awaited path.
+ */
+export function startFullIntegrityCheckBackground(
+	dbOps: DatabaseOperations,
+): { ok: true } | { ok: false; reason: "already-running" } {
+	if (!dbOps.markIntegrityCheckRunning("full")) {
+		return { ok: false, reason: "already-running" };
+	}
+	// Fire-and-forget. `runFullCheckLocked` catches its own errors and
+	// always calls `recordIntegrityResult` to release the mutex.
+	void runFullCheckLocked(dbOps);
+	return { ok: true };
 }

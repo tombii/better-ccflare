@@ -13,6 +13,7 @@ import type { DatabaseOperations } from "@better-ccflare/database";
 
 import {
 	runIntegrityCheckOnDemand,
+	startFullIntegrityCheckBackground,
 	startIntegrityScheduler,
 } from "../integrity-scheduler";
 
@@ -203,5 +204,50 @@ describe("runIntegrityCheckOnDemand", () => {
 		expect(fullCall?.[0]).toBe("full");
 		expect(fullCall?.[1]).toBe("corrupt");
 		expect(fullCall?.[2]).toBe("index missing entry");
+	});
+});
+
+describe("startFullIntegrityCheckBackground", () => {
+	it("returns ok synchronously and kicks the worker off without awaiting", async () => {
+		const dbOps = makeDbOps({ fullResult: { ok: true }, dbPath: undefined });
+		const out = startFullIntegrityCheckBackground(dbOps);
+		expect(out.ok).toBe(true);
+
+		// The mutex must already be claimed by the time this function returns.
+		expect(dbOps.markIntegrityCheckRunning).toHaveBeenCalledWith("full");
+
+		// The background promise hasn't necessarily settled yet — drain
+		// microtasks so the test asserts on the eventual state.
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		const lastCall = (
+			dbOps.recordIntegrityResult as ReturnType<typeof mock>
+		).mock.calls.at(-1);
+		expect(lastCall?.[0]).toBe("full");
+		expect(lastCall?.[1]).toBe("ok");
+	});
+
+	it("returns 409-style { ok: false, reason: 'already-running' } when mutex held", () => {
+		const dbOps = makeDbOps({ canClaim: false });
+		const out = startFullIntegrityCheckBackground(dbOps);
+		expect(out.ok).toBe(false);
+		if (!out.ok) expect(out.reason).toBe("already-running");
+		// MUST NOT have called the worker path
+		expect(dbOps.runFullIntegrityCheck).not.toHaveBeenCalled();
+	});
+
+	it("releases the mutex via recordIntegrityResult on background failure", async () => {
+		const dbOps = makeDbOps({
+			fullResult: new Error("boom"),
+			dbPath: undefined,
+		});
+		const out = startFullIntegrityCheckBackground(dbOps);
+		expect(out.ok).toBe(true);
+
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		const lastCall = (
+			dbOps.recordIntegrityResult as ReturnType<typeof mock>
+		).mock.calls.at(-1);
+		expect(lastCall?.[0]).toBe("full");
+		expect(lastCall?.[1]).toBe("corrupt");
 	});
 });
