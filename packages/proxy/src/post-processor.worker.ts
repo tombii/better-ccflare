@@ -102,8 +102,11 @@ let tokenEncoder: Tiktoken | null = null;
 // initialized inside the worker, not just on the main thread.
 await initPayloadEncryption();
 
-// Initialize database connection for worker
-const dbOps = new DatabaseOperations();
+// Initialize database connection for worker.
+// fastMode=true skips PRAGMA integrity_check — the main thread already ran it on
+// the same file, and on large DBs (multi-GB) this PRAGMA can take minutes,
+// blowing past the worker controller's 10s startup timeout.
+const dbOps = new DatabaseOperations(undefined, undefined, undefined, true);
 dbOps.initializeAsync().catch((err: unknown) => {
 	log.error("Failed to initialize database async connection:", err);
 });
