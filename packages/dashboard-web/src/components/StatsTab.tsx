@@ -130,7 +130,10 @@ export function StatsTab() {
 						<div className="space-y-2">
 							{stats.recentErrors.map((error: string, i: number) => (
 								<div
-									key={`error-${i}-${error.substring(0, 10)}`}
+									key={
+										// biome-ignore lint/suspicious/noArrayIndexKey: recentErrors is a string list with no stable id; duplicates are allowed
+										`error-${i}-${error.substring(0, 10)}`
+									}
 									className="text-sm p-2 bg-destructive/10 rounded-md"
 								>
 									<p className="text-destructive">{error}</p>
