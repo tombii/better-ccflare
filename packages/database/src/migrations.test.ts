@@ -893,6 +893,57 @@ describe("Database Backup Behavior", () => {
 		expect(backups).toHaveLength(3);
 	});
 
+	it("should leave backup files with non-integer suffixes untouched", () => {
+		// Operators sometimes rename a backup to a hand-picked name they want
+		// to keep ("good-baseline", "before-bad-migration"). The pruner must
+		// skip those rather than treating their suffix as a partial-parse
+		// integer and deleting them.
+		const dbPath = path.join(tmpDir, "manual.db");
+		const db = new Database(dbPath);
+		ensureSchema(db);
+		db.close();
+
+		// Standard backups that DO match the convention.
+		fs.writeFileSync(path.join(tmpDir, "manual.db.backup.1000"), "x");
+		fs.writeFileSync(path.join(tmpDir, "manual.db.backup.2000"), "x");
+		fs.writeFileSync(path.join(tmpDir, "manual.db.backup.3000"), "x");
+		fs.writeFileSync(path.join(tmpDir, "manual.db.backup.4000"), "x");
+		fs.writeFileSync(path.join(tmpDir, "manual.db.backup.5000"), "x");
+		// Hand-renamed survivors that should NEVER be pruned.
+		const keepNames = [
+			"manual.db.backup.good-baseline",
+			"manual.db.backup.before-bad-migration",
+			"manual.db.backup.3abc",
+		];
+		for (const name of keepNames) {
+			fs.writeFileSync(path.join(tmpDir, name), "manual-keep");
+		}
+
+		const prev = process.env.BETTER_CCFLARE_MIGRATION_BACKUP_KEEP;
+		process.env.BETTER_CCFLARE_MIGRATION_BACKUP_KEEP = "2";
+		try {
+			const db2 = new Database(dbPath);
+			db2.prepare("ALTER TABLE accounts ADD COLUMN account_tier TEXT").run();
+			db2.close();
+
+			const db3 = new Database(dbPath);
+			runMigrations(db3, dbPath);
+			db3.close();
+		} finally {
+			if (prev === undefined) {
+				delete process.env.BETTER_CCFLARE_MIGRATION_BACKUP_KEEP;
+			} else {
+				process.env.BETTER_CCFLARE_MIGRATION_BACKUP_KEEP = prev;
+			}
+		}
+
+		// All three manually-named backups should still exist — they don't
+		// match the convention, so the pruner has no business touching them.
+		for (const name of keepNames) {
+			expect(fs.existsSync(path.join(tmpDir, name))).toBe(true);
+		}
+	});
+
 	it("should leave backups in place when BETTER_CCFLARE_MIGRATION_BACKUP_KEEP=0", () => {
 		const dbPath = path.join(tmpDir, "nokeep.db");
 		const db = new Database(dbPath);

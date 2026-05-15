@@ -55,12 +55,20 @@ function pruneOldBackups(absoluteSourcePath: string): void {
 	}
 
 	// Order by the embedded `Date.now()` suffix, not mtime — survives clock
-	// drift, `touch`, and rsync timestamps. Names that don't parse cleanly
-	// are skipped (left on disk untouched).
+	// drift, `touch`, and rsync timestamps. Names whose suffix isn't a pure
+	// integer (e.g. `db.backup.3abc`, `db.backup.notes`) are skipped — left
+	// untouched on disk — to honour an operator's manually-renamed files.
+	// `INTEGER_RE` matches before `parseInt` so trailing garbage can't
+	// silently truncate `db.backup.3abc` to timestamp 3 and prune a file
+	// that doesn't match the convention.
 	const backups = entries
 		.filter((name) => name.startsWith(prefix))
-		.map((name) => ({ name, ts: Number.parseInt(name.slice(prefix.length), 10) }))
-		.filter((entry) => Number.isFinite(entry.ts))
+		.map((name) => ({ name, suffix: name.slice(prefix.length) }))
+		.filter((entry) => INTEGER_RE.test(entry.suffix))
+		.map((entry) => ({
+			name: entry.name,
+			ts: Number.parseInt(entry.suffix, 10),
+		}))
 		.sort((a, b) => b.ts - a.ts);
 
 	const toDelete = backups.slice(keep);
