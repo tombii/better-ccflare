@@ -1,8 +1,4 @@
-import {
-	HttpClient,
-	HttpError,
-	type RequestOptions,
-} from "@better-ccflare/http-common";
+import { HttpClient, HttpError } from "@better-ccflare/http-common";
 import type {
 	AccountResponse,
 	Agent,
@@ -78,8 +74,6 @@ export interface ReauthNeededResponse {
 }
 
 class API extends HttpClient {
-	private static readonly API_KEY_STORAGE_KEY = "better-ccflare-api-key";
-
 	private logger = {
 		info: (message: string, ...args: unknown[]) => {
 			console.log(`[API] ${message}`, ...args);
@@ -104,67 +98,6 @@ class API extends HttpClient {
 			timeout: API_TIMEOUT,
 			retries: 1,
 		});
-	}
-
-	/**
-	 * Store API key in localStorage (persists until manually cleared)
-	 */
-	setApiKey(apiKey: string): void {
-		localStorage.setItem(API.API_KEY_STORAGE_KEY, apiKey);
-	}
-
-	/**
-	 * Retrieve API key from localStorage
-	 */
-	getApiKey(): string | null {
-		return localStorage.getItem(API.API_KEY_STORAGE_KEY);
-	}
-
-	/**
-	 * Clear stored API key
-	 */
-	clearApiKey(): void {
-		localStorage.removeItem(API.API_KEY_STORAGE_KEY);
-	}
-
-	/**
-	 * Check if API key is stored
-	 */
-	hasApiKey(): boolean {
-		return !!this.getApiKey();
-	}
-
-	/**
-	 * Override request method to inject API key into headers and handle 401 errors
-	 */
-	override async request<T = unknown>(
-		url: string,
-		options: RequestOptions = {},
-	): Promise<T> {
-		const apiKey = this.getApiKey();
-
-		if (apiKey) {
-			this.logger.debug("Including API key in request to:", url);
-			// Merge API key into headers
-			const headers = {
-				...((options.headers as Record<string, string>) || {}),
-				"x-api-key": apiKey,
-			};
-			options = { ...options, headers };
-		} else {
-			this.logger.debug("No API key found for request to:", url);
-		}
-
-		try {
-			return await super.request<T>(url, options);
-		} catch (error) {
-			// If we get a 401, dispatch a custom event to trigger auth dialog
-			if (error instanceof HttpError && error.status === 401) {
-				this.logger.warn("401 Unauthorized - dispatching auth required event");
-				window.dispatchEvent(new CustomEvent("auth-required"));
-			}
-			throw error;
-		}
 	}
 
 	async getStats(): Promise<Stats> {
@@ -1846,32 +1779,6 @@ class API extends HttpClient {
 			url,
 			"account token health",
 		);
-	}
-
-	async updateApiKeyRole(
-		keyId: string,
-		role: "admin" | "api-only",
-	): Promise<void> {
-		const startTime = Date.now();
-		const url = `/api/api-keys/${encodeURIComponent(keyId)}/role`;
-
-		this.logger.debug(`→ PATCH ${url}`, { role });
-
-		try {
-			await this.patch(url, { role });
-			const duration = Date.now() - startTime;
-			this.logger.debug(`← PATCH ${url} - 200 (${duration}ms)`);
-		} catch (error) {
-			const duration = Date.now() - startTime;
-			this.logger.error(`✗ PATCH ${url} - ERROR (${duration}ms)`, {
-				error: error instanceof Error ? error.message : String(error),
-				stack: error instanceof Error ? error.stack : undefined,
-			});
-			if (error instanceof HttpError) {
-				throw new Error(error.message);
-			}
-			throw error;
-		}
 	}
 
 	async getCombos(): Promise<{ combos: (Combo & { slot_count: number })[] }> {

@@ -1,8 +1,8 @@
-import https from "node:https";
 import type { Config } from "@better-ccflare/config";
 import { registerHeartbeat } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import { cacheBodyStore } from "./cache-body-store";
+import { dispatchProxyRequest } from "./dispatch";
 import type { ProxyContext } from "./proxy";
 
 const log = new Logger("CacheKeepaliveScheduler");
@@ -131,12 +131,6 @@ export class CacheKeepaliveScheduler {
 			//  1. Visibility: request logger can identify synthetic requests
 			//  2. Loop prevention: proxy skips staging to avoid infinite replay cycle
 			replayHeaders.set("x-better-ccflare-keepalive", "true");
-			const proxyPort = this.proxyContext.runtime.port;
-			const protocol =
-				process.env.SSL_KEY_PATH && process.env.SSL_CERT_PATH
-					? "https"
-					: "http";
-			const endpoint = `${protocol}://localhost:${proxyPort}${cached.path}`;
 
 			log.debug(
 				`Replaying cached request for account ${accountId} (${cached.body.length} bytes, recorded ${Math.round((Date.now() - cached.timestamp) / 1000)}s ago)`,
@@ -157,27 +151,16 @@ export class CacheKeepaliveScheduler {
 				// Body isn't valid JSON - skip patching and use original
 			}
 
-			// For HTTPS localhost requests, use an agent that accepts self-signed certificates.
-			// This is needed when SSL_KEY_PATH + SSL_CERT_PATH are configured with self-signed certs.
-			// The self-loop request goes through the proxy again, so certificate validation would fail.
-			const url = new URL(endpoint);
-			const isLocalhost =
-				url.hostname === "localhost" ||
-				url.hostname === "127.0.0.1" ||
-				url.hostname === "::1";
-			// CodeQL[js/disabling-certificate-validation]: self-signed localhost self-loop only
-			const agent =
-				protocol === "https" && isLocalhost
-					? new https.Agent({ rejectUnauthorized: false })
-					: undefined;
-
-			const response = await fetch(endpoint, {
+			// Dispatch in-process through the proxy pipeline. No HTTP self-loop,
+			// no TLS, no port. The URL is just for handleProxy's parsing — the
+			// real routing is driven by x-better-ccflare-account-id above.
+			const url = new URL(`http://internal.better-ccflare${cached.path}`);
+			const req = new Request(url, {
 				method: "POST",
 				headers: replayHeaders,
 				body: bodyToSend,
-				// @ts-expect-error Node.js fetch accepts agent option but it's not in standard Fetch API types
-				agent,
 			});
+			const response = await dispatchProxyRequest(req, url, this.proxyContext);
 
 			// Drain the response so the connection is released
 			await response.text().catch(() => {});

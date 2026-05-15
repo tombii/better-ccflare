@@ -2,7 +2,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { formatDistanceToNow } from "date-fns";
 import {
 	AlertTriangle,
-	ChevronDown,
 	Copy,
 	Plus,
 	Shield,
@@ -10,7 +9,7 @@ import {
 	ToggleRight,
 	Trash2,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { api } from "../api";
 import { Button } from "./ui/button";
 import {
@@ -29,12 +28,6 @@ import {
 	DialogTitle,
 	DialogTrigger,
 } from "./ui/dialog";
-import {
-	DropdownMenu,
-	DropdownMenuContent,
-	DropdownMenuItem,
-	DropdownMenuTrigger,
-} from "./ui/dropdown-menu";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 
@@ -46,7 +39,6 @@ interface ApiKey {
 	lastUsed: string | null;
 	usageCount: number;
 	isActive: boolean;
-	role: "admin" | "api-only";
 }
 
 interface ApiKeysResponse {
@@ -72,7 +64,6 @@ interface ApiKeyGenerationResponse {
 		apiKey: string; // Full API key shown only once
 		prefixLast8: string;
 		createdAt: string;
-		role: "admin" | "api-only";
 	};
 }
 
@@ -82,7 +73,6 @@ export function ApiKeysTab() {
 	const [newKeyName, setNewKeyName] = useState("");
 	const [selectedKey, setSelectedKey] = useState<ApiKey | null>(null);
 	const [generatedKey, setGeneratedKey] = useState<string | null>(null);
-	const [isAdminKey, setIsAdminKey] = useState(false);
 
 	const queryClient = useQueryClient();
 
@@ -95,13 +85,6 @@ export function ApiKeysTab() {
 			},
 			enabled: !generatedKey, // Don't fetch while showing generated key
 		});
-
-	// Default to admin if this is the first key, otherwise api-only
-	useEffect(() => {
-		if (statsResponse?.data) {
-			setIsAdminKey(statsResponse.data.active === 0);
-		}
-	}, [statsResponse]);
 
 	// Fetch API keys - only when not showing the generated key dialog
 	const {
@@ -118,23 +101,18 @@ export function ApiKeysTab() {
 
 	// Generate API key mutation
 	const generateKeyMutation = useMutation({
-		mutationFn: async (params: {
-			name: string;
-			role: "admin" | "api-only";
-		}) => {
+		mutationFn: async (params: { name: string }) => {
 			const result = await api.post<ApiKeyGenerationResponse>("/api/api-keys", {
 				name: params.name,
-				role: params.role,
 			});
 			return result.data;
 		},
 		onSuccess: (data) => {
 			setGeneratedKey(data.apiKey);
 			setNewKeyName("");
-			setIsAdminKey(false);
 			setIsCreateDialogOpen(false);
-			// Don't invalidate queries here - wait until user authenticates
-			// This prevents 401 errors if the stored key is invalid
+			queryClient.invalidateQueries({ queryKey: ["api-keys"] });
+			queryClient.invalidateQueries({ queryKey: ["api-keys-stats"] });
 		},
 		onError: (error: Error) => {
 			console.error("Failed to generate API key:", error);
@@ -142,10 +120,7 @@ export function ApiKeysTab() {
 	});
 
 	const handleSavedKey = () => {
-		// Close the dialog
 		setGeneratedKey(null);
-		// Trigger auth dialog so user can paste the key they just copied
-		window.dispatchEvent(new CustomEvent("auth-required"));
 	};
 
 	// Toggle API key status mutation
@@ -175,30 +150,9 @@ export function ApiKeysTab() {
 		},
 	});
 
-	// Update API key role mutation
-	const updateRoleMutation = useMutation({
-		mutationFn: async ({
-			keyId,
-			role,
-		}: {
-			keyId: string;
-			role: "admin" | "api-only";
-		}) => {
-			return api.updateApiKeyRole(keyId, role);
-		},
-		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: ["api-keys"] });
-			queryClient.invalidateQueries({ queryKey: ["api-keys-stats"] });
-		},
-		onError: (error: Error) => {
-			console.error("Failed to update API key role:", error);
-		},
-	});
-
 	const handleGenerateKey = () => {
 		if (!newKeyName.trim()) return;
-		const role = isAdminKey ? "admin" : "api-only";
-		generateKeyMutation.mutate({ name: newKeyName.trim(), role });
+		generateKeyMutation.mutate({ name: newKeyName.trim() });
 	};
 
 	const handleToggleKey = (key: ApiKey, enable: boolean) => {
@@ -214,35 +168,6 @@ export function ApiKeysTab() {
 		if (selectedKey) {
 			deleteKeyMutation.mutate(selectedKey.name);
 		}
-	};
-
-	const handleUpdateRole = (key: ApiKey, newRole: "admin" | "api-only") => {
-		if (key.role === newRole) return;
-		updateRoleMutation.mutate({ keyId: key.id, role: newRole });
-	};
-
-	// Determine if a key's role can be changed
-	const canChangeRole = (key: ApiKey) => {
-		// Cannot change the first key (oldest by creation date)
-		const sortedKeys = [...apiKeys].sort(
-			(a, b) =>
-				new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
-		);
-		const firstKey = sortedKeys[0];
-		if (firstKey && key.id === firstKey.id) {
-			return false;
-		}
-
-		// Get the current authenticated key from session storage
-		const currentApiKey = api.getApiKey();
-		if (currentApiKey) {
-			// Check if this key matches the current one by comparing the last 8 chars
-			// This is a heuristic check since we don't have the full key ID on the client
-			// The server will enforce the proper check
-			// For now, we'll just show all keys as changeable except the first key
-		}
-
-		return true;
 	};
 
 	const copyToClipboard = (text: string) => {
@@ -335,32 +260,6 @@ export function ApiKeysTab() {
 									onChange={(e) => setNewKeyName(e.target.value)}
 								/>
 							</div>
-							<div className="flex items-center space-x-2">
-								<input
-									type="checkbox"
-									id="admin"
-									checked={isAdminKey}
-									onChange={(e) => setIsAdminKey(e.target.checked)}
-									className="h-4 w-4 rounded border-gray-300"
-								/>
-								<Label
-									htmlFor="admin"
-									className="text-sm font-normal cursor-pointer"
-								>
-									Grant admin access (dashboard management)
-								</Label>
-							</div>
-							{isAdminKey && (
-								<div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
-									<div className="flex items-center gap-2 text-yellow-800">
-										<AlertTriangle className="h-4 w-4" />
-										<span className="text-sm">
-											Admin keys can manage accounts, view analytics, and modify
-											settings.
-										</span>
-									</div>
-								</div>
-							)}
 						</div>
 						<DialogFooter>
 							<Button
@@ -423,50 +322,6 @@ export function ApiKeysTab() {
 											>
 												{key.isActive ? "Active" : "Disabled"}
 											</div>
-											{canChangeRole(key) ? (
-												<DropdownMenu>
-													<DropdownMenuTrigger asChild>
-														<button
-															type="button"
-															className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium cursor-pointer hover:opacity-80 ${
-																key.role === "admin"
-																	? "bg-amber-100 text-amber-800"
-																	: "bg-blue-100 text-blue-800"
-															}`}
-															disabled={updateRoleMutation.isPending}
-														>
-															{key.role === "admin" ? "Admin" : "API-only"}
-															<ChevronDown className="h-3 w-3" />
-														</button>
-													</DropdownMenuTrigger>
-													<DropdownMenuContent align="start">
-														<DropdownMenuItem
-															onClick={() => handleUpdateRole(key, "admin")}
-															disabled={key.role === "admin"}
-														>
-															<Shield className="h-4 w-4 mr-2" />
-															Admin (dashboard access)
-														</DropdownMenuItem>
-														<DropdownMenuItem
-															onClick={() => handleUpdateRole(key, "api-only")}
-															disabled={key.role === "api-only"}
-														>
-															API-only (proxy access)
-														</DropdownMenuItem>
-													</DropdownMenuContent>
-												</DropdownMenu>
-											) : (
-												<div
-													className={`px-2 py-1 rounded text-xs font-medium ${
-														key.role === "admin"
-															? "bg-amber-100 text-amber-800"
-															: "bg-blue-100 text-blue-800"
-													}`}
-													title="First API key must remain admin"
-												>
-													{key.role === "admin" ? "Admin" : "API-only"}
-												</div>
-											)}
 										</div>
 										<div className="text-sm text-muted-foreground mt-1">
 											Key ends with:{" "}
@@ -533,8 +388,6 @@ export function ApiKeysTab() {
 				onOpenChange={(open) => {
 					if (!open) {
 						setGeneratedKey(null);
-						// Trigger auth dialog when closing so user can authenticate
-						window.dispatchEvent(new CustomEvent("auth-required"));
 					}
 				}}
 			>

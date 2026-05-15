@@ -1159,7 +1159,6 @@ OAuth tokens will need to be re-authenticated.
 		createdAt: number;
 		lastUsed?: number | null;
 		isActive: boolean;
-		role?: "admin" | "api-only";
 	}): Promise<void> {
 		await withDatabaseRetry(
 			() =>
@@ -1171,7 +1170,6 @@ OAuth tokens will need to be re-authenticated.
 					created_at: apiKey.createdAt,
 					last_used: apiKey.lastUsed || null,
 					is_active: apiKey.isActive ? 1 : 0,
-					role: apiKey.role || "api-only",
 				}),
 			this.retryConfig,
 			"createApiKey",
@@ -1207,17 +1205,6 @@ OAuth tokens will need to be re-authenticated.
 			() => this.apiKeys.delete(id),
 			this.retryConfig,
 			"deleteApiKey",
-		);
-	}
-
-	async updateApiKeyRole(
-		id: string,
-		role: "admin" | "api-only",
-	): Promise<boolean> {
-		return withDatabaseRetry(
-			() => this.apiKeys.updateRole(id, role),
-			this.retryConfig,
-			"updateApiKeyRole",
 		);
 	}
 

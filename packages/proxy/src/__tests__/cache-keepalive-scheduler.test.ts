@@ -1,18 +1,21 @@
 /**
  * Tests for CacheKeepaliveScheduler.
  *
- * Strategy: mock.module("@better-ccflare/core") so registerHeartbeat is
- * intercepted before the scheduler module is imported.  The mock stores the
- * registered callback so individual tests can invoke it directly, which lets
- * us test sendKeepalives() without relying on real timers.
+ * Strategy:
+ *   1. mock.module("@better-ccflare/core") intercepts registerHeartbeat so we
+ *      can capture the registered callback and trigger sendKeepalives() without
+ *      waiting for real timers.
+ *   2. mock.module("../dispatch") intercepts dispatchProxyRequest so we can
+ *      verify the scheduler dispatches the replay request through the in-process
+ *      proxy pipeline (and assert on the synthetic Request it constructs).
  */
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import type { Config } from "@better-ccflare/config";
 import type { ProxyContext } from "../proxy";
 
 // ---------------------------------------------------------------------------
-// Module mock — must be declared before importing the scheduler so that bun's
-// module resolution picks up the mock when it resolves @better-ccflare/core.
+// Module mocks — must be declared before importing the scheduler so that bun's
+// module resolution picks up the mock.
 // ---------------------------------------------------------------------------
 
 type HeartbeatOpts = {
@@ -46,8 +49,21 @@ mock.module("@better-ccflare/core", () => ({
 	},
 }));
 
+// Captures the synthetic Requests the scheduler builds so tests can assert on
+// the URL, headers, and body passed to dispatchProxyRequest.
+const capturedDispatchCalls: Array<{ req: Request; url: URL }> = [];
+const mockDispatchProxyRequest = mock(async (req: Request, url: URL) => {
+	capturedDispatchCalls.push({ req, url });
+	return new Response("", { status: 200 });
+});
+
+mock.module("../dispatch", () => ({
+	dispatchProxyRequest: mockDispatchProxyRequest,
+}));
+
 import { cacheBodyStore } from "../cache-body-store";
-// Import AFTER mock.module so the scheduler gets the mocked registerHeartbeat.
+// Import AFTER mock.module so the scheduler gets the mocked registerHeartbeat
+// and dispatchProxyRequest.
 import { CacheKeepaliveScheduler } from "../cache-keepalive-scheduler";
 
 // ---------------------------------------------------------------------------
@@ -117,9 +133,11 @@ function seedCacheEntry(
 function resetMocks(): void {
 	mockRegisterHeartbeat.mockClear();
 	mockUnregister.mockClear();
+	mockDispatchProxyRequest.mockClear();
 	capturedCallback = null;
 	capturedSeconds = null;
 	capturedId = null;
+	capturedDispatchCalls.length = 0;
 }
 
 function resetStore(): void {
@@ -137,14 +155,9 @@ describe("CacheKeepaliveScheduler", () => {
 	beforeEach(() => {
 		resetMocks();
 		resetStore();
-		// Restore fetch to a safe default so tests that do NOT mock fetch still work.
-		globalThis.fetch = mock(async () => new Response("ok", { status: 200 }));
 	});
 
 	afterEach(() => {
-		// Restore fetch to the real implementation.
-		// @ts-expect-error — resetting to undefined lets bun restore native fetch.
-		globalThis.fetch = undefined;
 		resetStore();
 	});
 
@@ -348,10 +361,7 @@ describe("CacheKeepaliveScheduler", () => {
 	// -------------------------------------------------------------------------
 
 	describe("sendKeepalives() (triggered via heartbeat callback)", () => {
-		it("with no cached accounts — fetch is NOT called", async () => {
-			const fetchMock = mock(async () => new Response("ok", { status: 200 }));
-			globalThis.fetch = fetchMock;
-
+		it("with no cached accounts — dispatchProxyRequest is NOT called", async () => {
 			const { config } = makeConfig(5);
 			const scheduler = new CacheKeepaliveScheduler(makeProxyContext(), config);
 			scheduler.start();
@@ -359,30 +369,14 @@ describe("CacheKeepaliveScheduler", () => {
 			// Store is enabled but no entries seeded.
 			await capturedCallback?.();
 
-			expect(fetchMock).not.toHaveBeenCalled();
+			expect(mockDispatchProxyRequest).not.toHaveBeenCalled();
 
 			scheduler.stop();
 		});
 
-		it("with one cached account — fetch called once with correct URL and headers", async () => {
-			const capturedInputs: { url: string; init?: RequestInit }[] = [];
-			const fetchMock = mock(
-				async (input: RequestInfo | URL, init?: RequestInit) => {
-					// When called with a string URL, input is the URL string.
-					const url =
-						typeof input === "string" ? input : (input as Request).url;
-					capturedInputs.push({ url, init });
-					return new Response("", { status: 200 });
-				},
-			);
-			globalThis.fetch = fetchMock;
-
+		it("with one cached account — dispatched once with correct headers", async () => {
 			const { config } = makeConfig(5);
-			const port = 8081;
-			const scheduler = new CacheKeepaliveScheduler(
-				makeProxyContext(port),
-				config,
-			);
+			const scheduler = new CacheKeepaliveScheduler(makeProxyContext(), config);
 			scheduler.start();
 
 			// cacheBodyStore is now enabled (TTL=5 > 0).
@@ -392,38 +386,22 @@ describe("CacheKeepaliveScheduler", () => {
 
 			await capturedCallback?.();
 
-			expect(fetchMock).toHaveBeenCalledTimes(1);
+			expect(mockDispatchProxyRequest).toHaveBeenCalledTimes(1);
 
-			const { url, init } = capturedInputs[0];
-			expect(url).toBe(`http://localhost:${port}${path}`);
-			expect(init?.method).toBe("POST");
+			const { req, url } = capturedDispatchCalls[0];
+			expect(req.method).toBe("POST");
+			expect(url.pathname).toBe(path);
 
 			// Verify routing headers were injected.
-			const headers = init?.headers as Headers;
-			expect(headers.get("x-better-ccflare-account-id")).toBe(accountId);
-			expect(headers.get("x-better-ccflare-bypass-session")).toBe("true");
-			expect(headers.get("content-type")).toBe("application/json");
+			expect(req.headers.get("x-better-ccflare-account-id")).toBe(accountId);
+			expect(req.headers.get("x-better-ccflare-bypass-session")).toBe("true");
+			expect(req.headers.get("x-better-ccflare-keepalive")).toBe("true");
+			expect(req.headers.get("content-type")).toBe("application/json");
 
 			scheduler.stop();
 		});
 
 		it("with one cached account — body matches the stored body", async () => {
-			let capturedBodyText: string | null = null;
-			const fetchMock = mock(
-				async (_input: RequestInfo | URL, init?: RequestInit) => {
-					if (init?.body) {
-						const b = init.body;
-						if (typeof b === "string") {
-							capturedBodyText = b;
-						} else if (b instanceof Uint8Array) {
-							capturedBodyText = new TextDecoder().decode(b);
-						}
-					}
-					return new Response("", { status: 200 });
-				},
-			);
-			globalThis.fetch = fetchMock;
-
 			const { config } = makeConfig(5);
 			const scheduler = new CacheKeepaliveScheduler(makeProxyContext(), config);
 			scheduler.start();
@@ -434,8 +412,9 @@ describe("CacheKeepaliveScheduler", () => {
 
 			await capturedCallback?.();
 
-			expect(capturedBodyText).not.toBeNull();
-			const decoded = JSON.parse(capturedBodyText!);
+			expect(capturedDispatchCalls).toHaveLength(1);
+			const dispatchedBody = await capturedDispatchCalls[0].req.text();
+			const decoded = JSON.parse(dispatchedBody);
 			// Scheduler patches max_tokens: 1 to minimise quota on replay
 			expect(decoded.model).toBe("claude-opus-4-5");
 			expect(decoded.messages).toEqual([{ role: "user", content: "hello" }]);
@@ -444,10 +423,7 @@ describe("CacheKeepaliveScheduler", () => {
 			scheduler.stop();
 		});
 
-		it("with two cached accounts — fetch called twice", async () => {
-			const fetchMock = mock(async () => new Response("", { status: 200 }));
-			globalThis.fetch = fetchMock;
-
+		it("with two cached accounts — dispatched twice", async () => {
 			const { config } = makeConfig(5);
 			const scheduler = new CacheKeepaliveScheduler(makeProxyContext(), config);
 			scheduler.start();
@@ -457,16 +433,15 @@ describe("CacheKeepaliveScheduler", () => {
 
 			await capturedCallback?.();
 
-			expect(fetchMock).toHaveBeenCalledTimes(2);
+			expect(mockDispatchProxyRequest).toHaveBeenCalledTimes(2);
 
 			scheduler.stop();
 		});
 
-		it("fetch returns non-ok status — does not throw, handles gracefully", async () => {
-			const fetchMock = mock(
+		it("dispatch returns non-ok status — does not throw, handles gracefully", async () => {
+			mockDispatchProxyRequest.mockImplementationOnce(
 				async () => new Response("Rate limited", { status: 429 }),
 			);
-			globalThis.fetch = fetchMock;
 
 			const { config } = makeConfig(5);
 			const scheduler = new CacheKeepaliveScheduler(makeProxyContext(), config);
@@ -476,16 +451,15 @@ describe("CacheKeepaliveScheduler", () => {
 
 			// Should resolve without throwing.
 			await expect(capturedCallback?.()).resolves.toBeUndefined();
-			expect(fetchMock).toHaveBeenCalledTimes(1);
+			expect(mockDispatchProxyRequest).toHaveBeenCalledTimes(1);
 
 			scheduler.stop();
 		});
 
-		it("fetch throws — error does not propagate out of the callback", async () => {
-			const fetchMock = mock(async () => {
-				throw new Error("ECONNREFUSED");
+		it("dispatch throws — error does not propagate out of the callback", async () => {
+			mockDispatchProxyRequest.mockImplementationOnce(async () => {
+				throw new Error("synthetic-dispatch-failure");
 			});
-			globalThis.fetch = fetchMock;
 
 			const { config } = makeConfig(5);
 			const scheduler = new CacheKeepaliveScheduler(makeProxyContext(), config);
@@ -495,80 +469,12 @@ describe("CacheKeepaliveScheduler", () => {
 
 			// The scheduler must swallow the error internally.
 			await expect(capturedCallback?.()).resolves.toBeUndefined();
-			expect(fetchMock).toHaveBeenCalledTimes(1);
-
-			scheduler.stop();
-		});
-
-		it("uses https when SSL env vars are set", async () => {
-			const capturedUrls: string[] = [];
-			const fetchMock = mock(async (input: RequestInfo | URL) => {
-				// When called with a string URL, input is the URL string.
-				const url = typeof input === "string" ? input : (input as Request).url;
-				capturedUrls.push(url);
-				return new Response("", { status: 200 });
-			});
-			globalThis.fetch = fetchMock;
-
-			// Set SSL env vars.
-			process.env.SSL_KEY_PATH = "/etc/ssl/key.pem";
-			process.env.SSL_CERT_PATH = "/etc/ssl/cert.pem";
-
-			try {
-				const { config } = makeConfig(5);
-				const scheduler = new CacheKeepaliveScheduler(
-					makeProxyContext(8443),
-					config,
-				);
-				scheduler.start();
-
-				seedCacheEntry("acc-ssl");
-
-				await capturedCallback?.();
-
-				expect(capturedUrls[0]).toMatch(/^https:\/\//);
-				expect(capturedUrls[0]).toContain("8443");
-
-				scheduler.stop();
-			} finally {
-				delete process.env.SSL_KEY_PATH;
-				delete process.env.SSL_CERT_PATH;
-			}
-		});
-
-		it("uses http when SSL env vars are absent", async () => {
-			delete process.env.SSL_KEY_PATH;
-			delete process.env.SSL_CERT_PATH;
-
-			const capturedUrls: string[] = [];
-			const fetchMock = mock(async (input: RequestInfo | URL) => {
-				// When called with a string URL, input is the URL string.
-				const url = typeof input === "string" ? input : (input as Request).url;
-				capturedUrls.push(url);
-				return new Response("", { status: 200 });
-			});
-			globalThis.fetch = fetchMock;
-
-			const { config } = makeConfig(5);
-			const scheduler = new CacheKeepaliveScheduler(
-				makeProxyContext(8081),
-				config,
-			);
-			scheduler.start();
-
-			seedCacheEntry("acc-no-ssl");
-
-			await capturedCallback?.();
-
-			expect(capturedUrls[0]).toMatch(/^http:\/\//);
+			expect(mockDispatchProxyRequest).toHaveBeenCalledTimes(1);
 
 			scheduler.stop();
 		});
 
 		it("skips account when getLastCachedRequest returns null", async () => {
-			const fetchMock = mock(async () => new Response("", { status: 200 }));
-			globalThis.fetch = fetchMock;
-
 			const { config } = makeConfig(5);
 			const scheduler = new CacheKeepaliveScheduler(makeProxyContext(), config);
 			scheduler.start();
@@ -598,8 +504,8 @@ describe("CacheKeepaliveScheduler", () => {
 
 			await capturedCallback?.();
 
-			// No promoted entries → fetch should not be called.
-			expect(fetchMock).not.toHaveBeenCalled();
+			// No promoted entries → dispatch should not be called.
+			expect(mockDispatchProxyRequest).not.toHaveBeenCalled();
 
 			scheduler.stop();
 		});

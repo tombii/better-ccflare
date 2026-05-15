@@ -1882,7 +1882,7 @@ export async function forceResetRateLimit(
 
 async function notifyServersToForceResetRateLimit(
 	accountId: string,
-	dbOps: DatabaseOperations,
+	_dbOps: DatabaseOperations,
 	config: Config,
 ): Promise<boolean> {
 	const configuredPort = config.getRuntime().port || 8080;
@@ -1890,17 +1890,6 @@ async function notifyServersToForceResetRateLimit(
 	const testPort = 8081;
 	const ports = [...new Set([configuredPort, defaultPort, testPort])];
 	let usagePollTriggered = false;
-
-	// If API authentication is enabled, skip best-effort local notifications.
-	const activeApiKeys = await dbOps.getActiveApiKeys();
-	const requiresAuth = activeApiKeys.length > 0;
-	if (requiresAuth) {
-		console.warn(
-			"⚠️  API authentication is enabled — skipping server notification.\n" +
-				"   The rate limit state was cleared in the database but no usage poll was triggered.",
-		);
-		return false;
-	}
 
 	for (const port of ports) {
 		try {
@@ -2284,23 +2273,6 @@ export async function reauthenticateAccount(
 		const defaultPort = 8080;
 		const testPort = 8081;
 
-		// Check if API authentication is enabled
-		const activeApiKeys = await dbOps.getActiveApiKeys();
-		const requiresAuth = activeApiKeys.length > 0;
-
-		if (requiresAuth) {
-			console.log(
-				"⚠️  API authentication is enabled - automatic server reload not supported",
-			);
-			console.log(
-				"   Please restart the server manually to use the new tokens:",
-			);
-			console.log("   - Stop the running server");
-			console.log("   - Start it again with: bun start");
-			return;
-		}
-
-		// If no API authentication, proceed with unauthenticated requests
 		for (const port of [defaultPort, testPort]) {
 			try {
 				const response = await fetch(

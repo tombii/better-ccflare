@@ -48,7 +48,6 @@ import {
 	createApiKeysGenerateHandler,
 	createApiKeysListHandler,
 	createApiKeysStatsHandler,
-	createApiKeyUpdateRoleHandler,
 } from "./handlers/api-keys";
 import {
 	createComboCreateHandler,
@@ -431,20 +430,6 @@ export class APIRouter {
 			);
 		}
 
-		// Authorize the request based on API key role
-		if (authResult.apiKey) {
-			const authzResult = await this.authService.authorizeEndpoint(
-				authResult.apiKey,
-				path,
-				method,
-			);
-			if (!authzResult.authorized) {
-				return errorResponse(
-					Unauthorized(authzResult.reason || "Authorization failed"),
-				);
-			}
-		}
-
 		// Check for exact match
 		const handler = this.handlers.get(key);
 		if (handler) {
@@ -653,24 +638,6 @@ export class APIRouter {
 		if (path.startsWith("/api/api-keys/")) {
 			const parts = path.split("/");
 			const keyIdOrName = decodeURIComponent(parts[3]); // Decode URL-encoded IDs/names
-
-			// API key role update - Only admin keys can update roles
-			if (path.endsWith("/role") && method === "PATCH") {
-				// Check if the authenticated key is an admin key
-				if (authResult.role !== "admin") {
-					return errorResponse(
-						Unauthorized(
-							"Only admin keys can update API key roles. Your key has api-only access.",
-						),
-					);
-				}
-				const updateRoleHandler = createApiKeyUpdateRoleHandler(
-					this.context.dbOps,
-				);
-				return await this.wrapHandler((req) =>
-					updateRoleHandler(req, keyIdOrName, authResult.apiKeyId),
-				)(req, url);
-			}
 
 			// API key disable
 			if (path.endsWith("/disable") && method === "POST") {

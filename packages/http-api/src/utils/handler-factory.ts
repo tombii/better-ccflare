@@ -2,7 +2,6 @@ import { errorResponse } from "@better-ccflare/http-common";
 import type { APIContext } from "../types";
 
 export interface HandlerOptions {
-	requiresAuth?: boolean;
 	method?: string;
 }
 
