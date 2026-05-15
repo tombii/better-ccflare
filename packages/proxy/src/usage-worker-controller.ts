@@ -37,8 +37,14 @@ const DEFAULT_STARTUP_TIMEOUT_MS = 60_000;
 function resolveStartupTimeoutMs(): number {
 	const raw = process.env.CF_WORKER_STARTUP_TIMEOUT_MS;
 	if (raw === undefined || raw === "") return DEFAULT_STARTUP_TIMEOUT_MS;
-	const parsed = Number.parseInt(raw, 10);
-	if (!Number.isFinite(parsed) || parsed <= 0) {
+	// Number() rejects trailing garbage that Number.parseInt would silently
+	// accept ("100ms" → 100 was a real foot-gun); isInteger catches NaN,
+	// Infinity, and fractional values in one check.
+	const parsed = Number(raw);
+	if (!Number.isInteger(parsed) || parsed <= 0) {
+		log.warn(
+			`CF_WORKER_STARTUP_TIMEOUT_MS="${raw}" is not a positive integer — falling back to default ${DEFAULT_STARTUP_TIMEOUT_MS}ms`,
+		);
 		return DEFAULT_STARTUP_TIMEOUT_MS;
 	}
 	return parsed;
