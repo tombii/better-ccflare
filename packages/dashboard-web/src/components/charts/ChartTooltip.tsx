@@ -39,12 +39,18 @@ export function ChartTooltip({
 		<div className="p-3 rounded-md shadow-lg" style={tooltipStyle}>
 			{formattedLabel && <p className="font-medium mb-2">{formattedLabel}</p>}
 			<div className="space-y-1">
-				{payload.map((entry) => {
+				{payload.map((entry, index) => {
 					const formatter = formatters[entry.dataKey] || formatters.default;
 					const value = formatter ? formatter(entry.value) : entry.value;
 
 					return (
-						<div key={entry.dataKey} className="flex items-center gap-2">
+						<div
+							key={
+								// biome-ignore lint/suspicious/noArrayIndexKey: index tiebreaks if a ComposedChart maps multiple payload entries (e.g. Line + Bar) to the same dataKey
+								`${entry.dataKey}-${index}`
+							}
+							className="flex items-center gap-2"
+						>
 							<div
 								className="w-3 h-3 rounded-full"
 								style={{ backgroundColor: entry.color }}
