@@ -6,6 +6,58 @@ import { addPerformanceIndexes } from "./performance-indexes";
 
 const log = new Logger("DatabaseMigrations");
 
+/**
+ * Keep at most this many `.backup.<timestamp>` files alongside the live DB.
+ * Each backup is a full copy of the DB (multi-GB in practice), so without a
+ * cap they accumulate quickly when rapid restarts trigger repeat migrations.
+ *
+ * Override with `BETTER_CCFLARE_MIGRATION_BACKUP_KEEP`. 0 disables pruning.
+ */
+function getBackupRetention(): number {
+	const raw = process.env.BETTER_CCFLARE_MIGRATION_BACKUP_KEEP;
+	if (raw === undefined) return 3;
+	const parsed = Number.parseInt(raw, 10);
+	if (!Number.isFinite(parsed) || parsed < 0) return 3;
+	return parsed;
+}
+
+function pruneOldBackups(absoluteSourcePath: string): void {
+	const keep = getBackupRetention();
+	if (keep === 0) return;
+
+	const dir = path.dirname(absoluteSourcePath);
+	const base = path.basename(absoluteSourcePath);
+	const prefix = `${base}.backup.`;
+
+	let entries: string[];
+	try {
+		entries = fs.readdirSync(dir);
+	} catch (error) {
+		log.warn(`Could not list backup directory for pruning: ${(error as Error).message}`);
+		return;
+	}
+
+	// Order by the embedded `Date.now()` suffix, not mtime — survives clock
+	// drift, `touch`, and rsync timestamps. Names that don't parse cleanly
+	// are skipped (left on disk untouched).
+	const backups = entries
+		.filter((name) => name.startsWith(prefix))
+		.map((name) => ({ name, ts: Number.parseInt(name.slice(prefix.length), 10) }))
+		.filter((entry) => Number.isFinite(entry.ts))
+		.sort((a, b) => b.ts - a.ts);
+
+	const toDelete = backups.slice(keep);
+	for (const entry of toDelete) {
+		const filePath = path.join(dir, entry.name);
+		try {
+			fs.unlinkSync(filePath);
+			log.info(`Pruned old DB backup: ${entry.name}`);
+		} catch (error) {
+			log.warn(`Failed to prune backup ${entry.name}: ${(error as Error).message}`);
+		}
+	}
+}
+
 export function ensureSchema(db: Database): void {
 	// Create accounts table
 	db.run(`
@@ -370,6 +422,7 @@ export function runMigrations(db: Database, dbPath?: string): void {
 					const backupPath = `${absoluteSourcePath}.backup.${Date.now()}`;
 					fs.copyFileSync(absoluteSourcePath, backupPath);
 					log.info(`Database backup created at: ${backupPath}`);
+					pruneOldBackups(absoluteSourcePath);
 				}
 			} else {
 				log.warn(

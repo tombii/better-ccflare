@@ -793,4 +793,88 @@ describe("Database Backup Behavior", () => {
 		const backupSize = fs.statSync(path.join(tmpDir, backups[0])).size;
 		expect(backupSize).toBeGreaterThan(0);
 	});
+
+	it("should prune older backups to BETTER_CCFLARE_MIGRATION_BACKUP_KEEP", () => {
+		const dbPath = path.join(tmpDir, "prune.db");
+		const db = new Database(dbPath);
+		ensureSchema(db);
+		db.close();
+
+		// Drop 5 pre-existing backups with monotonically increasing timestamps.
+		const stalePath = path.join(tmpDir, "prune.db.backup.1000");
+		fs.writeFileSync(stalePath, "old-1");
+		fs.writeFileSync(path.join(tmpDir, "prune.db.backup.2000"), "old-2");
+		fs.writeFileSync(path.join(tmpDir, "prune.db.backup.3000"), "old-3");
+		fs.writeFileSync(path.join(tmpDir, "prune.db.backup.4000"), "old-4");
+		fs.writeFileSync(path.join(tmpDir, "prune.db.backup.5000"), "old-5");
+
+		const prev = process.env.BETTER_CCFLARE_MIGRATION_BACKUP_KEEP;
+		process.env.BETTER_CCFLARE_MIGRATION_BACKUP_KEEP = "2";
+		try {
+			// Trigger a migration so a new backup gets written + prune fires.
+			const db2 = new Database(dbPath);
+			db2
+				.prepare("ALTER TABLE accounts ADD COLUMN account_tier TEXT")
+				.run();
+			db2.close();
+
+			const db3 = new Database(dbPath);
+			runMigrations(db3, dbPath);
+			db3.close();
+		} finally {
+			if (prev === undefined) {
+				delete process.env.BETTER_CCFLARE_MIGRATION_BACKUP_KEEP;
+			} else {
+				process.env.BETTER_CCFLARE_MIGRATION_BACKUP_KEEP = prev;
+			}
+		}
+
+		const backups = fs
+			.readdirSync(tmpDir)
+			.filter((f) => f.startsWith("prune.db.backup."))
+			.sort();
+		// 5 stale + 1 fresh = 6 candidates, but retention is 2.
+		expect(backups).toHaveLength(2);
+		// The freshest stale (5000) is older than the newly-created backup, so
+		// the two kept entries are: the new one, and `prune.db.backup.5000`.
+		expect(backups).toContain("prune.db.backup.5000");
+		expect(fs.existsSync(stalePath)).toBe(false);
+	});
+
+	it("should leave backups in place when BETTER_CCFLARE_MIGRATION_BACKUP_KEEP=0", () => {
+		const dbPath = path.join(tmpDir, "nokeep.db");
+		const db = new Database(dbPath);
+		ensureSchema(db);
+		db.close();
+
+		fs.writeFileSync(path.join(tmpDir, "nokeep.db.backup.100"), "old-1");
+		fs.writeFileSync(path.join(tmpDir, "nokeep.db.backup.200"), "old-2");
+		fs.writeFileSync(path.join(tmpDir, "nokeep.db.backup.300"), "old-3");
+
+		const prev = process.env.BETTER_CCFLARE_MIGRATION_BACKUP_KEEP;
+		process.env.BETTER_CCFLARE_MIGRATION_BACKUP_KEEP = "0";
+		try {
+			const db2 = new Database(dbPath);
+			db2
+				.prepare("ALTER TABLE accounts ADD COLUMN account_tier TEXT")
+				.run();
+			db2.close();
+
+			const db3 = new Database(dbPath);
+			runMigrations(db3, dbPath);
+			db3.close();
+		} finally {
+			if (prev === undefined) {
+				delete process.env.BETTER_CCFLARE_MIGRATION_BACKUP_KEEP;
+			} else {
+				process.env.BETTER_CCFLARE_MIGRATION_BACKUP_KEEP = prev;
+			}
+		}
+
+		const backups = fs
+			.readdirSync(tmpDir)
+			.filter((f) => f.startsWith("nokeep.db.backup."));
+		// All 3 pre-existing stubs + 1 fresh backup survive.
+		expect(backups.length).toBe(4);
+	});
 });
