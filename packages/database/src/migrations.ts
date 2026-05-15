@@ -368,8 +368,32 @@ export function runMigrations(db: Database, dbPath?: string): void {
 					log.debug("Database file is empty, skipping backup.");
 				} else {
 					const backupPath = `${absoluteSourcePath}.backup.${Date.now()}`;
-					fs.copyFileSync(absoluteSourcePath, backupPath);
-					log.info(`Database backup created at: ${backupPath}`);
+					// VACUUM INTO writes a defragmented copy via SQLite's pager.
+					// vs fs.copyFileSync: atomic page-by-page (no torn output mid-write
+					// across a checkpoint), produces a smaller file, and doesn't race
+					// the migration's own writes. Two-phase rename avoids leaving a
+					// half-written `.backup.<ts>` if SIGTERM hits mid-VACUUM.
+					const tempBackupPath = `${backupPath}.partial`;
+					const escapedTempPath = tempBackupPath.replace(/'/g, "''");
+					try {
+						// VACUUM INTO refuses if the target exists, and a SIGTERM during
+						// a previous attempt may have left one behind.
+						if (fs.existsSync(tempBackupPath)) {
+							fs.unlinkSync(tempBackupPath);
+						}
+						db.exec(`VACUUM INTO '${escapedTempPath}'`);
+						fs.renameSync(tempBackupPath, backupPath);
+						log.info(`Database backup created at: ${backupPath}`);
+					} catch (vacuumError) {
+						if (fs.existsSync(tempBackupPath)) {
+							try {
+								fs.unlinkSync(tempBackupPath);
+							} catch {
+								// Best-effort cleanup
+							}
+						}
+						throw vacuumError;
+					}
 				}
 			} else {
 				log.warn(
