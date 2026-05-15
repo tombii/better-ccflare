@@ -1,10 +1,9 @@
 import type { DatabaseOperations } from "@better-ccflare/database";
-import { type ApiKey, NodeCryptoUtils } from "@better-ccflare/types";
+import { NodeCryptoUtils } from "@better-ccflare/types";
 import { extractApiKey } from "./extract-api-key";
 
 export interface AuthenticationResult {
 	isAuthenticated: boolean;
-	apiKey?: ApiKey;
 	apiKeyId?: string;
 	apiKeyName?: string;
 	error?: string;
@@ -80,7 +79,6 @@ export class AuthService {
 
 				return {
 					isAuthenticated: true,
-					apiKey: keyRecord,
 					apiKeyId: keyRecord.id,
 					apiKeyName: keyRecord.name,
 				};
