@@ -14,6 +14,27 @@ export type LogFormat = "pretty" | "json";
 // Event emitter for log streaming
 export const logBus = new EventEmitter();
 
+// Error's name/message/stack are non-enumerable, so JSON.stringify(err) returns "{}".
+// Convert Errors to plain objects before they flow into formatMessage / LogEvent /
+// the file writer, which all use JSON.stringify downstream.
+// biome-ignore lint/suspicious/noExplicitAny: payload is intentionally untyped
+function normalizeLogData(data: any): any {
+	if (data === undefined || data === null) return data;
+	if (data instanceof Error) {
+		const out: Record<string, unknown> = {
+			name: data.name,
+			message: data.message,
+			stack: data.stack,
+		};
+		if (data.cause !== undefined) {
+			out.cause =
+				data.cause instanceof Error ? normalizeLogData(data.cause) : data.cause;
+		}
+		return out;
+	}
+	return data;
+}
+
 export class Logger {
 	private level: LogLevel;
 	private prefix: string;
@@ -84,12 +105,13 @@ export class Logger {
 	// biome-ignore lint/suspicious/noExplicitAny: Logger needs to accept any data type
 	debug(message: string, data?: any): void {
 		if (this.level <= LogLevel.DEBUG) {
-			const msg = this.formatMessage("DEBUG", message, data);
+			const normalized = normalizeLogData(data);
+			const msg = this.formatMessage("DEBUG", message, normalized);
 			const event: LogEvent = {
 				ts: Date.now(),
 				level: "DEBUG",
 				msg: message,
-				...(data !== undefined && { data }),
+				...(normalized !== undefined && { data: normalized }),
 			};
 			logBus.emit("log", event);
 			logFileWriter?.write(event);
@@ -100,12 +122,13 @@ export class Logger {
 	// biome-ignore lint/suspicious/noExplicitAny: Logger needs to accept any data type
 	info(message: string, data?: any): void {
 		if (this.level <= LogLevel.INFO) {
-			const msg = this.formatMessage("INFO", message, data);
+			const normalized = normalizeLogData(data);
+			const msg = this.formatMessage("INFO", message, normalized);
 			const event: LogEvent = {
 				ts: Date.now(),
 				level: "INFO",
 				msg: message,
-				...(data !== undefined && { data }),
+				...(normalized !== undefined && { data: normalized }),
 			};
 			logBus.emit("log", event);
 			logFileWriter?.write(event);
@@ -116,12 +139,13 @@ export class Logger {
 	// biome-ignore lint/suspicious/noExplicitAny: Logger needs to accept any data type
 	warn(message: string, data?: any): void {
 		if (this.level <= LogLevel.WARN) {
-			const msg = this.formatMessage("WARN", message, data);
+			const normalized = normalizeLogData(data);
+			const msg = this.formatMessage("WARN", message, normalized);
 			const event: LogEvent = {
 				ts: Date.now(),
 				level: "WARN",
 				msg: message,
-				...(data !== undefined && { data }),
+				...(normalized !== undefined && { data: normalized }),
 			};
 			logBus.emit("log", event);
 			logFileWriter?.write(event);
@@ -132,12 +156,13 @@ export class Logger {
 	// biome-ignore lint/suspicious/noExplicitAny: Logger needs to accept any error type
 	error(message: string, error?: any): void {
 		if (this.level <= LogLevel.ERROR) {
-			const msg = this.formatMessage("ERROR", message, error);
+			const normalized = normalizeLogData(error);
+			const msg = this.formatMessage("ERROR", message, normalized);
 			const event: LogEvent = {
 				ts: Date.now(),
 				level: "ERROR",
 				msg: message,
-				...(error !== undefined && { data: error }),
+				...(normalized !== undefined && { data: normalized }),
 			};
 			logBus.emit("log", event);
 			logFileWriter?.write(event);
