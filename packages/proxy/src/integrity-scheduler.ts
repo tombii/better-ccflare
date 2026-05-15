@@ -57,23 +57,33 @@ export function startIntegrityScheduler(
 ): () => void {
 	const logger = new Logger("IntegrityScheduler");
 
-	const quickInterval =
-		overrides?.quickIntervalHours !== undefined
-			? overrides.quickIntervalHours * TIME_CONSTANTS.HOUR
-			: parseIntervalEnv(
-					"CCFLARE_INTEGRITY_CHECK_INTERVAL",
-					DEFAULT_QUICK_INTERVAL_HOURS,
-					logger,
-				);
+	// Mirror the env-var convention in `parseIntervalEnv`: 0 disables the
+	// probe. Without this branch, `overrides.quickIntervalHours = 0` would
+	// multiply to 0ms and pass the `!== null` guard, scheduling
+	// `setInterval(runQuick, 0)` — a tight loop hammering the DB every tick.
+	const resolveOverrideOrEnv = (
+		override: number | undefined,
+		envVar: string,
+		defaultHours: number,
+	): number | null => {
+		if (override === undefined) {
+			return parseIntervalEnv(envVar, defaultHours, logger);
+		}
+		if (override === 0) return null;
+		return override * TIME_CONSTANTS.HOUR;
+	};
 
-	const fullInterval =
-		overrides?.fullIntervalHours !== undefined
-			? overrides.fullIntervalHours * TIME_CONSTANTS.HOUR
-			: parseIntervalEnv(
-					"CCFLARE_FULL_INTEGRITY_CHECK_INTERVAL",
-					DEFAULT_FULL_INTERVAL_HOURS,
-					logger,
-				);
+	const quickInterval = resolveOverrideOrEnv(
+		overrides?.quickIntervalHours,
+		"CCFLARE_INTEGRITY_CHECK_INTERVAL",
+		DEFAULT_QUICK_INTERVAL_HOURS,
+	);
+
+	const fullInterval = resolveOverrideOrEnv(
+		overrides?.fullIntervalHours,
+		"CCFLARE_FULL_INTEGRITY_CHECK_INTERVAL",
+		DEFAULT_FULL_INTERVAL_HOURS,
+	);
 
 	if (quickInterval === null && fullInterval === null) {
 		logger.info("Integrity scheduler fully disabled by env");

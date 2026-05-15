@@ -167,6 +167,18 @@ export function StorageIntegrityCard() {
 								Run full check
 							</Button>
 						</div>
+
+						{triggerCheck.isError ? (
+							<p
+								role="alert"
+								className="text-sm text-destructive"
+							>
+								Could not trigger check:{" "}
+								{triggerCheck.error instanceof Error
+									? triggerCheck.error.message
+									: String(triggerCheck.error)}
+							</p>
+						) : null}
 					</div>
 				)}
 			</CardContent>

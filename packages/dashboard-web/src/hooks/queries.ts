@@ -17,6 +17,14 @@ export const useTriggerIntegrityCheck = () => {
 	const queryClient = useQueryClient();
 	return useMutation({
 		mutationFn: (kind: "quick" | "full") => api.triggerIntegrityCheck(kind),
+		onError: (error) => {
+			// 409 (scheduler already running), network errors, etc. — surface
+			// via console so a misbehaving on-demand trigger is visible in
+			// devtools. The mutation's `error` field is also exposed by
+			// useMutation, so the calling component (StorageIntegrityCard)
+			// renders the message inline next to the buttons.
+			console.error("Integrity check trigger failed:", error);
+		},
 		onSettled: () => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.storage() });
 		},
