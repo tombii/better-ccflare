@@ -18,7 +18,7 @@ function tempDbPath(): string {
 // Tests: integrity status cache (no real DB needed)
 // ---------------------------------------------------------------------------
 
-describe("DatabaseOperations.getIntegrityStatus / updateIntegrityStatus", () => {
+describe("DatabaseOperations.getIntegrityStatus / recordIntegrityResult", () => {
 	let dbOps: DatabaseOperations;
 
 	beforeEach(() => {
@@ -32,44 +32,91 @@ describe("DatabaseOperations.getIntegrityStatus / updateIntegrityStatus", () => 
 	it("returns unchecked status on fresh instance", () => {
 		const s = dbOps.getIntegrityStatus();
 		expect(s.status).toBe("unchecked");
+		expect(s.runningKind).toBeNull();
 		expect(s.lastCheckAt).toBeNull();
 		expect(s.lastError).toBeNull();
+		expect(s.lastQuickCheckAt).toBeNull();
+		expect(s.lastQuickResult).toBeNull();
+		expect(s.lastFullCheckAt).toBeNull();
+		expect(s.lastFullResult).toBeNull();
 	});
 
-	it("reflects ok status after updateIntegrityStatus('ok')", () => {
+	it("reflects ok status after recording a quick ok result", () => {
 		const before = Date.now();
-		dbOps.updateIntegrityStatus("ok");
+		dbOps.recordIntegrityResult("quick", "ok");
 		const after = Date.now();
 
 		const s = dbOps.getIntegrityStatus();
 		expect(s.status).toBe("ok");
 		expect(s.lastError).toBeNull();
-		expect(s.lastCheckAt).toBeGreaterThanOrEqual(before);
-		expect(s.lastCheckAt).toBeLessThanOrEqual(after);
+		expect(s.lastQuickResult).toBe("ok");
+		expect(s.lastQuickCheckAt).toBeGreaterThanOrEqual(before);
+		expect(s.lastQuickCheckAt).toBeLessThanOrEqual(after);
 	});
 
-	it("reflects corrupt status with error message", () => {
-		dbOps.updateIntegrityStatus("corrupt", "Page 42 has wrong btree type");
+	it("reflects corrupt status with error message after a corrupt result", () => {
+		dbOps.recordIntegrityResult(
+			"quick",
+			"corrupt",
+			"Page 42 has wrong btree type",
+		);
 
 		const s = dbOps.getIntegrityStatus();
 		expect(s.status).toBe("corrupt");
 		expect(s.lastError).toBe("Page 42 has wrong btree type");
-		expect(s.lastCheckAt).not.toBeNull();
+		expect(s.lastQuickResult).toBe("corrupt");
 	});
 
-	it("clears error when transitioning from corrupt back to ok", () => {
-		dbOps.updateIntegrityStatus("corrupt", "some error");
-		dbOps.updateIntegrityStatus("ok");
+	it("clears corrupt after a quick ok when the corrupt was also a quick result", () => {
+		dbOps.recordIntegrityResult("quick", "corrupt", "some quick error");
+		dbOps.recordIntegrityResult("quick", "ok");
 
 		const s = dbOps.getIntegrityStatus();
 		expect(s.status).toBe("ok");
 		expect(s.lastError).toBeNull();
 	});
 
-	it("stores null error when no error param supplied", () => {
-		dbOps.updateIntegrityStatus("corrupt");
+	it("STICKY: a quick ok does NOT clear a full corrupt", () => {
+		// Full check finds index/table inconsistency that quick_check can't see.
+		dbOps.recordIntegrityResult("full", "corrupt", "index has missing entry");
+		// Six hours later, the quick check passes — that does NOT mean the
+		// full corruption is gone. The collapsed status must stay corrupt.
+		dbOps.recordIntegrityResult("quick", "ok");
+
 		const s = dbOps.getIntegrityStatus();
+		expect(s.status).toBe("corrupt");
+		expect(s.lastFullResult).toBe("corrupt");
+		expect(s.lastQuickResult).toBe("ok");
+		expect(s.lastError).toBe("index has missing entry");
+	});
+
+	it("a subsequent full ok clears full-check corruption", () => {
+		dbOps.recordIntegrityResult("full", "corrupt", "some error");
+		dbOps.recordIntegrityResult("full", "ok");
+
+		const s = dbOps.getIntegrityStatus();
+		expect(s.status).toBe("ok");
+		expect(s.lastFullResult).toBe("ok");
 		expect(s.lastError).toBeNull();
+	});
+
+	it("runningKind reflects the in-flight probe", () => {
+		const claimed = dbOps.markIntegrityCheckRunning("full");
+		expect(claimed).toBe(true);
+		const mid = dbOps.getIntegrityStatus();
+		expect(mid.status).toBe("running");
+		expect(mid.runningKind).toBe("full");
+
+		dbOps.recordIntegrityResult("full", "ok");
+		const done = dbOps.getIntegrityStatus();
+		expect(done.status).toBe("ok");
+		expect(done.runningKind).toBeNull();
+	});
+
+	it("markIntegrityCheckRunning refuses while another probe is running", () => {
+		expect(dbOps.markIntegrityCheckRunning("quick")).toBe(true);
+		expect(dbOps.markIntegrityCheckRunning("full")).toBe(false);
+		expect(dbOps.markIntegrityCheckRunning("quick")).toBe(false);
 	});
 });
 

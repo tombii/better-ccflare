@@ -12,22 +12,23 @@ let dbPath: string | undefined;
 let runtimeConfig: RuntimeConfig | undefined;
 let migrationChecked = false;
 
-let fastModeEnabled = false;
-
+/**
+ * The `fastMode` parameter is retained for backward compatibility with
+ * callers (CLI commands, tests) that still pass it. It is now a no-op:
+ * startup no longer runs `PRAGMA integrity_check`, so there's nothing
+ * left to skip. Integrity is verified by the background scheduler — see
+ * `packages/proxy/src/integrity-scheduler.ts`.
+ */
 export function initialize(
 	dbPathParam?: string,
 	runtimeConfigParam?: RuntimeConfig,
-	fastMode = false,
+	_fastMode = false,
 ): void {
 	dbPath = dbPathParam;
 	runtimeConfig = runtimeConfigParam;
-	// Store fast mode setting for database operations
-	fastModeEnabled = fastMode;
 }
 
-export function getInstance(fastMode?: boolean): DatabaseOperations {
-	// Use provided fastMode or the stored value from initialize()
-	const useFastMode = fastMode ?? fastModeEnabled;
+export function getInstance(_fastMode?: boolean): DatabaseOperations {
 	if (!instance) {
 		// Perform one-time migration check from legacy ccflare
 		if (!migrationChecked) {
@@ -61,12 +62,7 @@ export function getInstance(fastMode?: boolean): DatabaseOperations {
 		const retryConfig: DatabaseRetryConfig | undefined =
 			runtimeConfig?.database?.retry;
 
-		instance = new DatabaseOperations(
-			dbPath,
-			dbConfig,
-			retryConfig,
-			useFastMode,
-		);
+		instance = new DatabaseOperations(dbPath, dbConfig, retryConfig);
 		if (runtimeConfig) {
 			instance.setRuntimeConfig(runtimeConfig);
 		}
@@ -81,9 +77,9 @@ export function getInstance(fastMode?: boolean): DatabaseOperations {
  * Use this in server startup code where async is available.
  */
 export async function getInstanceAsync(
-	fastMode?: boolean,
+	_fastMode?: boolean,
 ): Promise<DatabaseOperations> {
-	const db = getInstance(fastMode);
+	const db = getInstance();
 	// Initialize PostgreSQL schema/migrations if needed
 	await db.initializeAsync();
 	return db;

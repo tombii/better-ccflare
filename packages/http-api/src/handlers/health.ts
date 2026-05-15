@@ -147,10 +147,19 @@ export function createHealthHandler(
 			response.runtime!.storage = {
 				integrity: {
 					status: integrity.status,
+					runningKind: integrity.runningKind,
 					lastCheckAt: integrity.lastCheckAt
 						? new Date(integrity.lastCheckAt).toISOString()
 						: null,
 					lastError: integrity.lastError,
+					lastQuickCheckAt: integrity.lastQuickCheckAt
+						? new Date(integrity.lastQuickCheckAt).toISOString()
+						: null,
+					lastQuickResult: integrity.lastQuickResult,
+					lastFullCheckAt: integrity.lastFullCheckAt
+						? new Date(integrity.lastFullCheckAt).toISOString()
+						: null,
+					lastFullResult: integrity.lastFullResult,
 				},
 			};
 		}
