@@ -109,7 +109,10 @@ function MessageComponent({
 						<div className="mt-2 space-y-2">
 							{tools?.map((tool, index) => (
 								<ToolUsageBlock
-									key={`tool-${tool.id || tool.name}-${index}`}
+									key={
+										// biome-ignore lint/suspicious/noArrayIndexKey: ToolUse.id is optional; index is a tiebreaker when multiple tools share name without id
+										`tool-${tool.id || tool.name}-${index}`
+									}
 									toolName={tool.name}
 									input={tool.input}
 								/>

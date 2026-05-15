@@ -45,7 +45,10 @@ export function SystemStatus({ recentErrors }: SystemStatusProps) {
 							</h4>
 							{recentErrors.slice(0, 3).map((error, i) => (
 								<div
-									key={`error-${error.substring(0, 20)}-${i}`}
+									key={
+										// biome-ignore lint/suspicious/noArrayIndexKey: recentErrors is a string list with no stable id; duplicates are allowed
+										`error-${error.substring(0, 20)}-${i}`
+									}
 									className="flex items-start gap-2 p-3 rounded-lg bg-destructive/10"
 								>
 									<XCircle className="h-4 w-4 text-destructive mt-0.5" />

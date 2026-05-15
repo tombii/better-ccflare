@@ -552,8 +552,8 @@ async function handleStart(msg: StartMessage): Promise<void> {
 			"zai",
 			"alibaba-coding-plan",
 			"ollama",
-				"ollama-cloud",
-				"qwen",
+			"ollama-cloud",
+			"qwen",
 			"codex",
 		]);
 		state.billingType = planProviders.has(msg.providerName) ? "plan" : "api";

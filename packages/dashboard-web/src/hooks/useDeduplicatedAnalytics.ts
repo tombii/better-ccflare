@@ -78,10 +78,10 @@ export function useBatchedAnalytics() {
 						params.modelBreakdown,
 					)
 					.then((result) => {
-						resolves.forEach((resolve) => resolve(result));
+						for (const resolve of resolves) resolve(result);
 					})
 					.catch((error) => {
-						rejects.forEach((reject) => reject(error));
+						for (const reject of rejects) reject(error);
 					});
 			},
 		);
@@ -128,9 +128,9 @@ export function useBatchedAnalytics() {
 			// Reject all pending requests
 			const batches = Array.from(pendingRequests.current.values());
 			pendingRequests.current.clear();
-			batches.forEach(({ rejects }) => {
-				rejects.forEach((reject) => reject(new Error("Component unmounted")));
-			});
+			for (const { rejects } of batches) {
+				for (const reject of rejects) reject(new Error("Component unmounted"));
+			}
 		};
 	}, []);
 

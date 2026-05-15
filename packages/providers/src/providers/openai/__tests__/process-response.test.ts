@@ -352,7 +352,7 @@ describe("processResponse – SSE (text/event-stream)", () => {
 
 		const messageStart = events.find((e) => e.event === "message_start");
 		expect(messageStart).toBeDefined();
-		const msgData = JSON.parse(messageStart?.data!);
+		const msgData = JSON.parse(messageStart!.data);
 		expect(msgData.type).toBe("message_start");
 
 		const textDelta = events.find(
@@ -362,7 +362,7 @@ describe("processResponse – SSE (text/event-stream)", () => {
 				JSON.parse(e.data).delta?.type === "text_delta",
 		);
 		expect(textDelta).toBeDefined();
-		const deltaData = JSON.parse(textDelta?.data!);
+		const deltaData = JSON.parse(textDelta!.data);
 		expect(deltaData.delta.text).toBe("Hello world");
 	});
 
@@ -422,7 +422,7 @@ describe("processResponse – SSE (text/event-stream)", () => {
 				JSON.parse(e.data).content_block?.type === "tool_use",
 		);
 		expect(blockStart).toBeDefined();
-		const blockData = JSON.parse(blockStart?.data!);
+		const blockData = JSON.parse(blockStart!.data);
 		expect(blockData.content_block.name).toBe("search");
 
 		// Should have a content_block_delta with input_json_delta
@@ -433,7 +433,7 @@ describe("processResponse – SSE (text/event-stream)", () => {
 				JSON.parse(e.data).delta?.type === "input_json_delta",
 		);
 		expect(jsonDelta).toBeDefined();
-		const jsonDeltaData = JSON.parse(jsonDelta?.data!);
+		const jsonDeltaData = JSON.parse(jsonDelta!.data);
 		expect(jsonDeltaData.delta.partial_json).toBe('{"q":"bun"}');
 	});
 });

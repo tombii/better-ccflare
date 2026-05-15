@@ -160,7 +160,13 @@ export function LogsTab() {
 						<p className="text-muted-foreground">No logs yet...</p>
 					) : (
 						logs.map((log, i) => (
-							<div key={`${log.ts}-${i}`} className="flex gap-2">
+							<div
+								key={
+									// biome-ignore lint/suspicious/noArrayIndexKey: append-only log buffer; LogEvent has no per-event id and ts is not unique across same-ms bursts
+									`${log.ts}-${i}`
+								}
+								className="flex gap-2"
+							>
 								<span className="text-muted-foreground">
 									{formatTimestamp(log.ts)}
 								</span>

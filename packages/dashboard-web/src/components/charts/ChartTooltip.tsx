@@ -45,7 +45,10 @@ export function ChartTooltip({
 
 					return (
 						<div
-							key={`${entry.dataKey}-${index}`}
+							key={
+								// biome-ignore lint/suspicious/noArrayIndexKey: index tiebreaks if a ComposedChart maps multiple payload entries (e.g. Line + Bar) to the same dataKey
+								`${entry.dataKey}-${index}`
+							}
 							className="flex items-center gap-2"
 						>
 							<div
