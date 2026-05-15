@@ -100,6 +100,26 @@ describe("DatabaseOperations.getIntegrityStatus / recordIntegrityResult", () => 
 		expect(s.lastError).toBeNull();
 	});
 
+	it("a full ok also clears a lingering quick-corrupt (superset rule)", () => {
+		// integrity_check is a strict superset of quick_check, so a passing
+		// full check implies the DB is structurally sound. The collapsed
+		// status must not stay "corrupt" on the stale quick result alone —
+		// otherwise the dashboard banner would persist for up to 6 h after
+		// the operator fixed the underlying problem.
+		dbOps.recordIntegrityResult("quick", "corrupt", "page checksum wrong");
+		expect(dbOps.getIntegrityStatus().status).toBe("corrupt");
+
+		dbOps.recordIntegrityResult("full", "ok");
+
+		const s = dbOps.getIntegrityStatus();
+		expect(s.status).toBe("ok");
+		expect(s.lastError).toBeNull();
+		// The lastQuickResult/lastQuickError are intentionally rewritten to
+		// "ok"/null so the surface reflects the latest authoritative state.
+		expect(s.lastQuickResult).toBe("ok");
+		expect(s.lastQuickError).toBeNull();
+	});
+
 	it("runningKind reflects the in-flight probe", () => {
 		const claimed = dbOps.markIntegrityCheckRunning("full");
 		expect(claimed).toBe(true);
