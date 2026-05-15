@@ -2,13 +2,13 @@ import {
 	CLAUDE_MODEL_IDS,
 	getClientVersion,
 	registerHeartbeat,
-	requestEvents,
 } from "@better-ccflare/core";
 import type { BunSqlAdapter } from "@better-ccflare/database";
 import { Logger } from "@better-ccflare/logger";
 import { fetchUsageData, getProvider } from "@better-ccflare/providers";
 import type { Account } from "@better-ccflare/types";
 import { TOKEN_SAFETY_WINDOW_MS } from "./constants";
+import { dispatchProxyRequest } from "./dispatch";
 import { getValidAccessToken } from "./handlers";
 import type { ProxyContext } from "./proxy";
 
@@ -306,20 +306,6 @@ export class AutoRefreshScheduler {
 				refresh_token_issued_at: null,
 			};
 
-			// Emit request start event for analytics
-			const requestId = crypto.randomUUID();
-			const timestamp = Date.now();
-			requestEvents.emit("event", {
-				type: "start",
-				id: requestId,
-				timestamp,
-				method: "POST",
-				path: "/v1/messages",
-				accountId: account.id,
-				statusCode: 0, // Will be updated later
-				agentUsed: null,
-			});
-
 			// Prepare dummy message request
 			const dummyMessages = [
 				"Write a hello world program in Python",
@@ -332,15 +318,12 @@ export class AutoRefreshScheduler {
 			const randomMessage =
 				dummyMessages[Math.floor(Math.random() * dummyMessages.length)];
 
-			// Send request through proxy with special header to force specific account usage
-			// This ensures proper request handling and analytics while using the correct account
-			const proxyPort = this.proxyContext.runtime.port;
-			// Determine protocol based on SSL configuration
-			const protocol =
-				process.env.SSL_KEY_PATH && process.env.SSL_CERT_PATH
-					? "https"
-					: "http";
-			const endpoint = `${protocol}://localhost:${proxyPort}/v1/messages`;
+			// Dispatch through the proxy pipeline in-process via dispatchProxyRequest.
+			// The URL is constructed for handleProxy's URL parsing only — there is no
+			// HTTP self-loop, no port, no TLS. The x-better-ccflare-account-id header
+			// is what actually forces routing to this specific account.
+			const endpoint = "http://internal.better-ccflare/v1/messages";
+			const url = new URL(endpoint);
 
 			// Use same headers as normal Claude Code CLI requests, plus the special account ID header
 			const headers = new Headers({
@@ -391,7 +374,7 @@ export class AutoRefreshScheduler {
 				try {
 					modelToTry = model; // Update the model being tried
 					log.info(
-						`Attempting auto-refresh for ${accountRow.name} with model: ${modelToTry} to endpoint: ${endpoint}`,
+						`Attempting auto-refresh for ${accountRow.name} with model: ${modelToTry}`,
 					);
 
 					const requestBody = {
@@ -408,15 +391,13 @@ export class AutoRefreshScheduler {
 					log.debug(
 						`Auto-refresh request payload: ${JSON.stringify(requestBody, null, 2)}`,
 					);
-					log.debug(
-						`Auto-refresh headers: ${JSON.stringify(Object.fromEntries(headers.entries()), null, 2)}`,
-					);
 
-					response = await fetch(endpoint, {
+					const req = new Request(url, {
 						method: "POST",
 						headers,
 						body: JSON.stringify(requestBody),
 					});
+					response = await dispatchProxyRequest(req, url, this.proxyContext);
 
 					log.debug(
 						`Auto-refresh response status: ${response.status} ${response.statusText}`,
@@ -433,11 +414,11 @@ export class AutoRefreshScheduler {
 							`Model ${modelToTry} not found for ${accountRow.name}, trying next model`,
 						);
 					}
-				} catch (fetchError) {
-					lastError = fetchError as Error;
+				} catch (dispatchError) {
+					lastError = dispatchError as Error;
 					log.debug(
-						`Network error with model ${modelToTry} for ${accountRow.name}:`,
-						fetchError,
+						`Dispatch error with model ${modelToTry} for ${accountRow.name}:`,
+						dispatchError,
 					);
 				}
 			}
@@ -451,39 +432,26 @@ export class AutoRefreshScheduler {
 				return false;
 			}
 
-			// Handle authentication errors specifically
-			if (response.status === 401) {
-				log.error(
-					`❌ AUTHENTICATION FAILED: Account "${accountRow.name}" needs manual reauthentication`,
-				);
-
-				log.error(
-					`⚠️  Token refresh failed for account "${accountRow.name}" - both access token and refresh token are invalid`,
-				);
-
-				log.error(
-					`🔧 MANUAL ACTION REQUIRED: Please run the following command to reauthenticate:`,
-				);
-				log.error(`   bun run cli --reauthenticate "${accountRow.name}"`);
-
-				log.error(
-					`📋 Alternative: You can also reauthenticate through the web dashboard at http://localhost:${this.proxyContext.runtime.port}/`,
-				);
-
-				// Mark account as needing attention in database (disable auto-refresh to prevent repeated failures)
-				await this.db.run(
-					`UPDATE accounts SET auto_refresh_enabled = 0 WHERE id = ?`,
-					[accountRow.id],
-				);
-
-				log.error(
-					`🚫 Auto-refresh has been DISABLED for account "${accountRow.name}" until reauthentication is completed`,
-				);
-				log.error(
-					`💡 Re-enable auto-refresh after reauthentication with: bun run cli --auto-refresh "${accountRow.name}"`,
-				);
-
-				return false;
+			// Surface upstream OAuth expiry — the proxy raises 503 with a message
+			// listing the affected accounts when refresh_token age exceeds the safety
+			// window. Log loudly with the reauth command, but do NOT auto-disable
+			// auto-refresh: that flag is a user setting, not a fault indicator, and
+			// disabling it caused false-positive reauth prompts when the real fault
+			// was elsewhere in the pipeline.
+			if (response.status === 503) {
+				try {
+					const body = await response.clone().text();
+					if (body.includes("OAuth tokens have expired")) {
+						log.warn(
+							`⚠️  Auto-refresh for "${accountRow.name}" reports an expired OAuth refresh token.`,
+						);
+						log.warn(
+							`   Reauthenticate with: bun run cli --reauthenticate "${accountRow.name}"`,
+						);
+					}
+				} catch {
+					// ignore body read errors — we still record the failure below
+				}
 			}
 
 			if (response.ok) {

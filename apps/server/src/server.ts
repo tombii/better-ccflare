@@ -40,10 +40,10 @@ import {
 import {
 	AutoRefreshScheduler,
 	CacheKeepaliveScheduler,
+	dispatchProxyRequest,
 	getUsageWorker,
 	getUsageWorkerHealth,
 	getValidAccessToken,
-	handleProxy,
 	type ProxyContext,
 	registerPollingRestarter,
 	registerRefreshClearer,
@@ -913,6 +913,26 @@ export default async function startServer(options?: {
 					}
 				}
 
+				// Reject unmatched /api/* paths with 404 before falling through to the
+				// proxy. Without this, an unknown management URL like /api/not-a-route
+				// would be treated as a proxy path (it'd 404 deeper in the pipeline,
+				// but with confusing semantics and an account-selection round-trip).
+				if (url.pathname === "/api" || url.pathname.startsWith("/api/")) {
+					return new Response(
+						JSON.stringify({
+							type: "error",
+							error: {
+								type: "not_found",
+								message: `Unknown API route: ${url.pathname}`,
+							},
+						}),
+						{
+							status: HTTP_STATUS.NOT_FOUND,
+							headers: { "Content-Type": "application/json" },
+						},
+					);
+				}
+
 				// All other paths go to proxy
 				// Authenticate the proxy request with error handling to prevent bypass
 				try {
@@ -937,72 +957,13 @@ export default async function startServer(options?: {
 						);
 					}
 
-					// Authorization check - verify API key has permission for this endpoint
-					if (authResult.apiKey) {
-						const authzResult = await authService.authorizeEndpoint(
-							authResult.apiKey,
-							url.pathname,
-							req.method,
-						);
-
-						if (!authzResult.authorized) {
-							return new Response(
-								JSON.stringify({
-									type: "error",
-									error: {
-										type: "authorization_error",
-										message: authzResult.reason || "Access denied",
-									},
-								}),
-								{
-									status: 403,
-									headers: { "Content-Type": "application/json" },
-								},
-							);
-						}
-					}
-
-					try {
-						return await handleProxy(
-							req,
-							url,
-							proxyContext,
-							authResult.apiKeyId,
-							authResult.apiKeyName,
-						);
-					} catch (proxyError) {
-						const statusCode =
-							typeof proxyError === "object" &&
-							proxyError !== null &&
-							"statusCode" in proxyError &&
-							typeof (proxyError as { statusCode: unknown }).statusCode ===
-								"number"
-								? (proxyError as { statusCode: number }).statusCode
-								: HTTP_STATUS.INTERNAL_SERVER_ERROR;
-
-						log.error("Proxy request failed:", proxyError);
-
-						const isServiceUnavailable =
-							statusCode === HTTP_STATUS.SERVICE_UNAVAILABLE;
-
-						return new Response(
-							JSON.stringify({
-								type: "error",
-								error: {
-									type: isServiceUnavailable
-										? "service_unavailable_error"
-										: "proxy_error",
-									message: isServiceUnavailable
-										? "Service temporarily unavailable. Please try again later."
-										: "Proxy request failed",
-								},
-							}),
-							{
-								status: statusCode,
-								headers: { "Content-Type": "application/json" },
-							},
-						);
-					}
+					return await dispatchProxyRequest(
+						req,
+						url,
+						proxyContext,
+						authResult.apiKeyId,
+						authResult.apiKeyName,
+					);
 				} catch (authError) {
 					// Log authentication errors for security monitoring
 					log.error("Authentication service error:", authError);
@@ -1068,6 +1029,23 @@ export default async function startServer(options?: {
 		}
 	}, MEMORY_MONITOR_INTERVAL_MS);
 	memoryMonitorInterval.unref();
+
+	// Warn loudly if bound to a non-loopback address. The management surface
+	// (/api/*) is unauthenticated by design — trust boundary is "can you reach
+	// the port" — so anything besides loopback exposes account management,
+	// debug endpoints, key administration, and request logs to the network.
+	// Operators should put a reverse proxy with auth in front for non-local
+	// deployments.
+	const loopbackHosts = new Set(["127.0.0.1", "::1", "localhost"]);
+	if (!loopbackHosts.has(hostname)) {
+		log.warn(
+			`better-ccflare is bound to '${hostname}' and the management API ` +
+				"(/api/*) is unauthenticated. Anyone who can reach this port can " +
+				"manage accounts, create/revoke API keys, read request logs, and " +
+				"download heap snapshots. Bind to localhost (set BETTER_CCFLARE_HOST=127.0.0.1) " +
+				"or put better-ccflare behind a reverse proxy that enforces authentication.",
+		);
+	}
 
 	// Log server startup (async)
 	getVersion().then((version) => {
