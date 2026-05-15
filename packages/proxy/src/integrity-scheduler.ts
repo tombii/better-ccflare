@@ -119,38 +119,19 @@ export function startIntegrityScheduler(
 			logger.debug("Skipping full check — another check is already running");
 			return;
 		}
-		const dbPath = dbOps.getResolvedDbPath();
-		if (!dbPath) {
-			// PostgreSQL or otherwise no SQLite file. Use the inline full-check
-			// method which is fast in that mode (just a SELECT 1).
-			try {
-				const result = await dbOps.runFullIntegrityCheck();
-				dbOps.recordIntegrityResult(
-					"full",
-					result === "ok" ? "ok" : "corrupt",
-					result === "ok" ? null : result,
-				);
-			} catch (error) {
-				dbOps.recordIntegrityResult("full", "corrupt", String(error));
-			}
-			return;
-		}
-		try {
-			logger.info("Running full integrity check (in worker)...");
-			const result = await runIntegrityCheckInWorker(dbPath);
-			if (result.ok) {
-				dbOps.recordIntegrityResult("full", "ok");
-				logger.info("Full integrity check passed");
-			} else {
-				dbOps.recordIntegrityResult("full", "corrupt", result.error);
-				logger.error(`Full integrity check FAILED: ${result.error}`);
-				logger.error(
-					"Database corruption detected. Run `bun run cli --doctor` for details.",
-				);
-			}
-		} catch (error) {
-			logger.error(`Full integrity check error: ${error}`);
-			dbOps.recordIntegrityResult("full", "corrupt", String(error));
+		logger.info("Running full integrity check...");
+		// Delegate to runFullCheckLocked so the scheduled and on-demand paths
+		// share one implementation. The helper handles dbPath/worker branching,
+		// catches its own errors, and releases the mutex via
+		// recordIntegrityResult — leaving us just the logging.
+		const { result, error } = await runFullCheckLocked(dbOps);
+		if (result === "ok") {
+			logger.info("Full integrity check passed");
+		} else {
+			logger.error(`Full integrity check FAILED: ${error}`);
+			logger.error(
+				"Database corruption detected. Run `bun run cli --doctor` for details.",
+			);
 		}
 	};
 
