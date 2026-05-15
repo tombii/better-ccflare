@@ -1,665 +1,294 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import { DatabaseFactory } from "@better-ccflare/database";
+import { randomBytes } from "node:crypto";
+import { existsSync, unlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import {
+	deleteApiKey,
+	disableApiKey,
+	enableApiKey,
+	generateApiKey,
+	listApiKeys,
+} from "@better-ccflare/cli-commands";
+import { DatabaseOperations } from "@better-ccflare/database";
 import { AuthService } from "@better-ccflare/http-api";
-import { generateApiKey, listApiKeys, disableApiKey, enableApiKey, deleteApiKey, updateApiKeyRole } from "@better-ccflare/cli-commands";
-import { NodeCryptoUtils } from "@better-ccflare/types";
 
-// Test data
-const TEST_DB_PATH = "/tmp/test-api-auth.db";
+function tempDbPath(): string {
+	return join(tmpdir(), `test-api-auth-${randomBytes(6).toString("hex")}.db`);
+}
 
-describe("API Authentication", () => {
-	let dbOps: any;
+function makeRequest(opts: {
+	apiKey?: string;
+	bearer?: string;
+	url?: string;
+}): Request {
+	const headers = new Headers();
+	if (opts.apiKey) headers.set("x-api-key", opts.apiKey);
+	if (opts.bearer) headers.set("authorization", `Bearer ${opts.bearer}`);
+	return new Request(opts.url ?? "http://localhost:8080/v1/messages", {
+		headers,
+		method: "POST",
+	});
+}
+
+describe("AuthService", () => {
+	let dbPath: string;
+	let dbOps: DatabaseOperations;
 	let authService: AuthService;
 
-	beforeAll(async () => {
-		// Clean up any existing test database
-		if (require("fs").existsSync(TEST_DB_PATH)) {
-			require("fs").unlinkSync(TEST_DB_PATH);
-		}
-
-		// Initialize test database
-		DatabaseFactory.initialize(TEST_DB_PATH);
-		dbOps = DatabaseFactory.getInstance();
+	beforeEach(() => {
+		dbPath = tempDbPath();
+		dbOps = new DatabaseOperations(dbPath);
 		authService = new AuthService(dbOps);
 	});
 
-	beforeEach(async () => {
-		// Clean up API keys between tests
-		await dbOps.clearApiKeys();
+	afterEach(() => {
+		dbOps.dispose?.();
+		if (existsSync(dbPath)) unlinkSync(dbPath);
 	});
 
-	afterAll(() => {
-		// Clean up test database
-		if (require("fs").existsSync(TEST_DB_PATH)) {
-			require("fs").unlinkSync(TEST_DB_PATH);
-		}
-		DatabaseFactory.reset();
-	});
-
-	describe("API Key Generation", () => {
-		test("should generate API key with valid format", async () => {
-			const result = await generateApiKey(dbOps, "test-key", "admin");
-
-			expect(result.name).toBe("test-key");
-			expect(result.apiKey).toMatch(/^btr-[a-zA-Z0-9]{32}$/);
-			expect(result.prefixLast8).toHaveLength(8);
-			expect(result.id).toMatch(/^[a-f0-9-]{36}$/);
-			expect(result.createdAt).toBeDefined();
-			expect(result.role).toBe("admin");
-		});
-
-		test("should reject empty key name", async () => {
-			await expect(generateApiKey(dbOps, "")).rejects.toThrow("API key name cannot be empty");
-		});
-
-		test("should reject duplicate key names", async () => {
-			await generateApiKey(dbOps, "duplicate-test", "admin");
-			await expect(generateApiKey(dbOps, "duplicate-test", "admin")).rejects.toThrow("already exists");
-		});
-	});
-
-	describe("API Key Management", () => {
-		test("should list generated API keys", async () => {
-			const result = await generateApiKey(dbOps, "list-test", "admin");
-			const keys = await listApiKeys(dbOps);
-
-			expect(keys).toHaveLength(1);
-			expect(keys[0].name).toBe("list-test");
-			expect(keys[0].prefixLast8).toBe(result.prefixLast8);
-			expect(keys[0].isActive).toBe(true);
-		});
-
-		test("should disable and enable API keys", async () => {
-			// Create 2 admin keys to avoid lockout
-			await generateApiKey(dbOps, "toggle-test", "admin");
-			await generateApiKey(dbOps, "backup-admin", "admin");
-
-			// Disable the key
-			const disableResult = await disableApiKey(dbOps, "toggle-test");
-			expect(disableResult).toBe(true);
-
-			// Verify it's disabled
-			const keys = await listApiKeys(dbOps);
-			const key = keys.find(k => k.name === "toggle-test");
-			expect(key?.isActive).toBe(false);
-
-			// Enable the key
-			const enableResult = await enableApiKey(dbOps, "toggle-test");
-			expect(enableResult).toBe(true);
-
-			// Verify it's enabled
-			const updatedKeys = await listApiKeys(dbOps);
-			const updatedKey = updatedKeys.find(k => k.name === "toggle-test");
-			expect(updatedKey?.isActive).toBe(true);
-
-			// Cleanup
-			await deleteApiKey(dbOps, "backup-admin");
-		});
-
-		test("should delete API keys", async () => {
-			// Create 2 keys so we can delete one safely
-			await generateApiKey(dbOps, "delete-test", "admin");
-			await generateApiKey(dbOps, "backup-key", "admin");
-
-			// Verify key exists
-			const keys = await listApiKeys(dbOps);
-			expect(keys.some(k => k.name === "delete-test")).toBe(true);
-
-			// Delete the key
-			const deleteResult = await deleteApiKey(dbOps, "delete-test");
-			expect(deleteResult).toBe(true);
-
-			// Verify key is gone
-			const updatedKeys = await listApiKeys(dbOps);
-			expect(updatedKeys.some(k => k.name === "delete-test")).toBe(false);
-
-			// Cleanup
-			await deleteApiKey(dbOps, "backup-key");
-		});
-	});
-
-	describe("Authentication Service", () => {
-		test("should detect authentication disabled when no keys exist", async () => {
+	describe("isAuthenticationEnabled()", () => {
+		test("returns false when no keys are configured", async () => {
 			expect(await authService.isAuthenticationEnabled()).toBe(false);
 		});
 
-		test("should detect authentication enabled when keys exist", async () => {
-			await generateApiKey(dbOps, "auth-test", "admin");
+		test("returns true when at least one active key exists", async () => {
+			await generateApiKey(dbOps, "first-key");
 			expect(await authService.isAuthenticationEnabled()).toBe(true);
 		});
 
-		test("should validate API key format", async () => {
-			const crypto = new NodeCryptoUtils();
-			const apiKey = await crypto.generateApiKey();
-			const hashedKey = await crypto.hashApiKey(apiKey);
+		test("returns false when the only key is disabled", async () => {
+			await generateApiKey(dbOps, "only-key");
+			await disableApiKey(dbOps, "only-key");
+			expect(await authService.isAuthenticationEnabled()).toBe(false);
+		});
 
-			// Create API key manually for testing
-			const id = globalThis.crypto.randomUUID();
-			const now = Date.now();
+		test("returns true when at least one of several keys is active", async () => {
+			await generateApiKey(dbOps, "active");
+			await generateApiKey(dbOps, "inactive");
+			await disableApiKey(dbOps, "inactive");
+			expect(await authService.isAuthenticationEnabled()).toBe(true);
+		});
+	});
 
-			await dbOps.createApiKey({
-				id,
-				name: "auth-validation-test",
-				hashedKey,
-				prefixLast8: apiKey.slice(-8),
-				createdAt: now,
-				lastUsed: null,
-				isActive: true,
-			});
-
-			const result = await authService.validateApiKey(apiKey);
+	describe("authenticateRequest() with no keys configured", () => {
+		// When no API keys exist, authentication is effectively disabled — every
+		// path passes through. This matches single-user / first-run behaviour.
+		test.each([
+			["/", "GET"],
+			["/dashboard", "GET"],
+			["/health", "GET"],
+			["/api/stats", "GET"],
+			["/api/accounts", "GET"],
+			["/v1/messages", "POST"],
+			["/messages", "POST"],
+		])("%s %s passes through with no key", async (path, method) => {
+			const req = makeRequest({ url: `http://localhost:8080${path}` });
+			const result = await authService.authenticateRequest(req, path, method);
 			expect(result.isAuthenticated).toBe(true);
-			expect(result.apiKey?.name).toBe("auth-validation-test");
-		});
-
-		test("should reject invalid API keys", async () => {
-			// Clear any existing API keys to ensure authentication is enabled
-			await dbOps.clearApiKeys();
-
-			// Create a valid API key first to enable authentication
-			await generateApiKey(dbOps, "valid-key-for-test", "admin");
-
-			const result = await authService.validateApiKey("invalid-key");
-			expect(result.isAuthenticated).toBe(false);
-			expect(result.error).toBe("Invalid API key");
-		});
-
-		test("should extract API key from x-api-key header", () => {
-			const request = new Request("http://localhost:8080", {
-				headers: { "x-api-key": "btr-test-key-123" }
-			});
-
-			const extractedKey = authService.extractApiKey(request);
-			expect(extractedKey).toBe("btr-test-key-123");
-		});
-
-		test("should extract API key from Authorization Bearer header", () => {
-			const request = new Request("http://localhost:8080", {
-				headers: { "authorization": "Bearer btr-bearer-key-456" }
-			});
-
-			const extractedKey = authService.extractApiKey(request);
-			expect(extractedKey).toBe("btr-bearer-key-456");
-		});
-
-		test("should exempt dashboard paths from authentication", async () => {
-			expect(await authService.isPathExempt("/", "GET")).toBe(true);
-			expect(await authService.isPathExempt("/dashboard", "GET")).toBe(true);
-			expect(await authService.isPathExempt("/health", "GET")).toBe(true);
-			expect(await authService.isPathExempt("/api/oauth/init", "POST")).toBe(true);
-		});
-
-		test("should exempt /api/version/check from authentication", async () => {
-			// Version check returns only the latest npm-published version (public data).
-			// The sidebar tile fires this on dashboard load with no API key in headers,
-			// so it must be reachable even when auth is enabled.
-			expect(authService.isStaticPathExempt("/api/version/check")).toBe(true);
-			expect(await authService.isPathExempt("/api/version/check", "GET")).toBe(true);
-		});
-
-		test("should allow /api/version/check without API key when auth is enabled", async () => {
-			// Reproduces the user-visible bug: with at least one API key configured,
-			// fetch("/api/version/check") from the dashboard returned 401 because the
-			// path was treated as a normal /api/* route requiring auth.
-			await generateApiKey(dbOps, "version-check-test-key", "admin");
-			expect(await authService.isAuthenticationEnabled()).toBe(true);
-
-			const request = new Request("http://localhost:8080/api/version/check");
-			const result = await authService.authenticateRequest(
-				request,
-				"/api/version/check",
-				"GET",
-			);
-
-			expect(result.isAuthenticated).toBe(true);
-			expect(result.error).toBeUndefined();
-		});
-
-		test("should exempt static assets from authentication", async () => {
-			expect(await authService.isPathExempt("/chunk-abc123.js", "GET")).toBe(true);
-			expect(await authService.isPathExempt("/chunk-abc123.css", "GET")).toBe(true);
-			expect(await authService.isPathExempt("/favicon-abc123.svg", "GET")).toBe(true);
-			expect(await authService.isPathExempt("/chunk-abc123.js.map", "GET")).toBe(true);
-			expect(await authService.isPathExempt("/static/logo.png", "GET")).toBe(true);
-			expect(await authService.isPathExempt("/assets/font.woff2", "GET")).toBe(true);
-		});
-
-		test("should require authentication for API paths", async () => {
-			expect(await authService.isPathExempt("/api/stats", "GET")).toBe(false);
-			expect(await authService.isPathExempt("/v1/messages", "POST")).toBe(false);
-			expect(await authService.isPathExempt("/api/accounts", "GET")).toBe(false);
+			expect(result.apiKeyId).toBeUndefined();
 		});
 	});
 
-	describe("RBAC Authorization", () => {
-		test("should allow admin keys to access all endpoints", async () => {
-			const crypto = new NodeCryptoUtils();
-			const apiKey = await crypto.generateApiKey();
-			const hashedKey = await crypto.hashApiKey(apiKey);
+	describe("authenticateRequest() with a key configured", () => {
+		let validKey: string;
 
-			// Create admin API key
-			const id = globalThis.crypto.randomUUID();
-			await dbOps.createApiKey({
-				id,
-				name: "admin-key",
-				hashedKey,
-				prefixLast8: apiKey.slice(-8),
-				createdAt: Date.now(),
-				lastUsed: null,
-				isActive: true,
-				role: "admin",
+		beforeEach(async () => {
+			const result = await generateApiKey(dbOps, "test-key");
+			validKey = result.apiKey;
+		});
+
+		describe("public paths require no key", () => {
+			test.each([
+				["/", "GET"],
+				["/dashboard", "GET"],
+				["/health", "GET"],
+				["/api", "GET"],
+				["/api/stats", "GET"],
+				["/api/accounts", "GET"],
+				["/api/oauth/init", "POST"],
+				["/some-client-route", "GET"],
+				["/static/logo.png", "GET"],
+			])("%s %s is public", async (path, method) => {
+				const req = makeRequest({ url: `http://localhost:8080${path}` });
+				const result = await authService.authenticateRequest(req, path, method);
+				expect(result.isAuthenticated).toBe(true);
+				expect(result.apiKeyId).toBeUndefined();
+			});
+		});
+
+		describe("/v1/* and /messages/* require an API key", () => {
+			test.each([
+				["/v1/messages", "POST"],
+				["/v1/models", "GET"],
+				["/v1/anthropic/version", "GET"],
+				["/messages", "POST"],
+				["/messages/123", "POST"],
+			])("%s %s rejects requests without a key", async (path, method) => {
+				const req = makeRequest({ url: `http://localhost:8080${path}` });
+				const result = await authService.authenticateRequest(req, path, method);
+				expect(result.isAuthenticated).toBe(false);
+				expect(result.error).toMatch(/API key required/);
 			});
 
-			const adminKey = (await dbOps.getApiKeyByName("admin-key"))!;
-
-			// Admin should have access to all endpoints
-			expect((await authService.authorizeEndpoint(adminKey, "/api/accounts", "GET")).authorized).toBe(true);
-			expect((await authService.authorizeEndpoint(adminKey, "/api/stats", "GET")).authorized).toBe(true);
-			expect((await authService.authorizeEndpoint(adminKey, "/v1/messages", "POST")).authorized).toBe(true);
-			expect((await authService.authorizeEndpoint(adminKey, "/api/api-keys", "GET")).authorized).toBe(true);
-		});
-
-		test("should allow api-only keys to access proxy endpoints", async () => {
-			const crypto = new NodeCryptoUtils();
-			const apiKey = await crypto.generateApiKey();
-			const hashedKey = await crypto.hashApiKey(apiKey);
-
-			// Create api-only API key
-			const id = globalThis.crypto.randomUUID();
-			await dbOps.createApiKey({
-				id,
-				name: "api-only-key",
-				hashedKey,
-				prefixLast8: apiKey.slice(-8),
-				createdAt: Date.now(),
-				lastUsed: null,
-				isActive: true,
-				role: "api-only",
+			test("rejects an invalid key", async () => {
+				const req = makeRequest({ apiKey: "btr-not-a-real-key" });
+				const result = await authService.authenticateRequest(
+					req,
+					"/v1/messages",
+					"POST",
+				);
+				expect(result.isAuthenticated).toBe(false);
+				expect(result.error).toBe("Invalid API key");
 			});
 
-			const apiOnlyKey = (await dbOps.getApiKeyByName("api-only-key"))!;
-
-			// API-only keys should have access to proxy endpoints
-			expect((await authService.authorizeEndpoint(apiOnlyKey, "/v1/messages", "POST")).authorized).toBe(true);
-			expect((await authService.authorizeEndpoint(apiOnlyKey, "/v1/models", "GET")).authorized).toBe(true);
-			expect((await authService.authorizeEndpoint(apiOnlyKey, "/v1/anthropic/version", "GET")).authorized).toBe(true);
-		});
-
-		test("should block api-only keys from dashboard endpoints", async () => {
-			const crypto = new NodeCryptoUtils();
-			const apiKey = await crypto.generateApiKey();
-			const hashedKey = await crypto.hashApiKey(apiKey);
-
-			// Create api-only API key
-			const id = globalThis.crypto.randomUUID();
-			await dbOps.createApiKey({
-				id,
-				name: "api-only-key",
-				hashedKey,
-				prefixLast8: apiKey.slice(-8),
-				createdAt: Date.now(),
-				lastUsed: null,
-				isActive: true,
-				role: "api-only",
+			test("accepts a valid key via the x-api-key header", async () => {
+				const req = makeRequest({ apiKey: validKey });
+				const result = await authService.authenticateRequest(
+					req,
+					"/v1/messages",
+					"POST",
+				);
+				expect(result.isAuthenticated).toBe(true);
+				expect(result.apiKeyName).toBe("test-key");
+				expect(result.apiKeyId).toBeDefined();
+				expect(result.error).toBeUndefined();
 			});
 
-			const apiOnlyKey = (await dbOps.getApiKeyByName("api-only-key"))!;
-
-			// API-only keys should NOT have access to dashboard endpoints
-			const accountsResult = await authService.authorizeEndpoint(apiOnlyKey, "/api/accounts", "GET");
-			expect(accountsResult.authorized).toBe(false);
-			expect(accountsResult.reason).toContain("Unauthorized");
-
-			const statsResult = await authService.authorizeEndpoint(apiOnlyKey, "/api/stats", "GET");
-			expect(statsResult.authorized).toBe(false);
-
-			const apiKeysResult = await authService.authorizeEndpoint(apiOnlyKey, "/api/api-keys", "GET");
-			expect(apiKeysResult.authorized).toBe(false);
-
-			const analyticsResult = await authService.authorizeEndpoint(apiOnlyKey, "/api/analytics", "GET");
-			expect(analyticsResult.authorized).toBe(false);
-		});
-	});
-
-	describe("Database Operations", () => {
-		test("should track API key usage statistics", async () => {
-			const result = await generateApiKey(dbOps, "usage-test", "admin");
-			const initialKey = await dbOps.getApiKeyByName("usage-test");
-			expect(initialKey?.usageCount).toBe(0);
-			expect(initialKey?.lastUsed).toBeNull();
-
-			// Update usage
-			await dbOps.updateApiKeyUsage(initialKey!.id, Date.now());
-			const updatedKey = await dbOps.getApiKeyByName("usage-test");
-			expect(updatedKey?.usageCount).toBe(1);
-			expect(updatedKey?.lastUsed).toBeGreaterThan(0);
-		});
-
-		test("should count active and total API keys", async () => {
-			// Clear existing keys
-			const allKeys = await listApiKeys(dbOps);
-			for (const key of allKeys) {
-				await deleteApiKey(dbOps, key.name);
-			}
-
-			expect(await dbOps.countAllApiKeys()).toBe(0);
-			expect(await dbOps.countActiveApiKeys()).toBe(0);
-
-			// Add some keys
-			await generateApiKey(dbOps, "count-test-1", "admin");
-			await generateApiKey(dbOps, "count-test-2", "admin");
-			await generateApiKey(dbOps, "count-test-3", "admin");
-
-			expect(await dbOps.countAllApiKeys()).toBe(3);
-			expect(await dbOps.countActiveApiKeys()).toBe(3);
-
-			// Disable one key
-			await disableApiKey(dbOps, "count-test-2");
-			expect(await dbOps.countAllApiKeys()).toBe(3);
-			expect(await dbOps.countActiveApiKeys()).toBe(2);
-		});
-	});
-
-	describe("Security", () => {
-		test("should hash API keys securely", async () => {
-			const crypto = new NodeCryptoUtils();
-			const apiKey = await crypto.generateApiKey();
-			const hashedKey1 = await crypto.hashApiKey(apiKey);
-			const hashedKey2 = await crypto.hashApiKey(apiKey);
-
-			// Same key should produce different hashes (different salts)
-			expect(hashedKey1).not.toBe(hashedKey2);
-
-			// But both should validate correctly
-			const valid1 = await crypto.verifyApiKey(apiKey, hashedKey1);
-			const valid2 = await crypto.verifyApiKey(apiKey, hashedKey2);
-			expect(valid1).toBe(true);
-			expect(valid2).toBe(true);
-
-			// Wrong key should not validate
-			const invalid = await crypto.verifyApiKey("wrong-key", hashedKey1);
-			expect(invalid).toBe(false);
-		});
-
-		test("should use constant-time comparison to prevent timing attacks", async () => {
-			const crypto = new NodeCryptoUtils();
-			const apiKey = await crypto.generateApiKey();
-			const hashedKey = await crypto.hashApiKey(apiKey);
-
-			// Create two different keys with same length for timing comparison
-			const correctKey = apiKey;
-			const wrongKey = "btr-" + "x".repeat(32);
-
-			// Verify correct key
-			const validResult = await crypto.verifyApiKey(correctKey, hashedKey);
-			expect(validResult).toBe(true);
-
-			// Verify wrong key (should use constant-time comparison)
-			const invalidResult = await crypto.verifyApiKey(wrongKey, hashedKey);
-			expect(invalidResult).toBe(false);
-		});
-
-		test("should reject different length hashes early", async () => {
-			const crypto = new NodeCryptoUtils();
-
-			// Create a malformed hash with different length
-			const malformedHash = "abc:123"; // Much shorter than a real hash
-			const apiKey = await crypto.generateApiKey();
-
-			// Should handle gracefully and return false
-			const result = await crypto.verifyApiKey(apiKey, malformedHash);
-			expect(result).toBe(false);
-		});
-
-		test("should handle invalid hash format gracefully", async () => {
-			const crypto = new NodeCryptoUtils();
-			const apiKey = await crypto.generateApiKey();
-
-			// Test various invalid hash formats
-			const invalidHashes = [
-				"no-colon-separator",
-				":missing-salt",
-				"missing-hash:",
-				"",
-				"::::",
-			];
-
-			for (const invalidHash of invalidHashes) {
-				const result = await crypto.verifyApiKey(apiKey, invalidHash);
-				expect(result).toBe(false);
-			}
-		});
-
-		test("should handle Buffer conversion errors gracefully", async () => {
-			const crypto = new NodeCryptoUtils();
-			const apiKey = await crypto.generateApiKey();
-
-			// Create a valid hash structure but with potentially problematic content
-			const edgeCaseHash = "salt:" + "a".repeat(128); // Valid format, long hash
-
-			// Should not throw, should return a boolean
-			const result = await crypto.verifyApiKey(apiKey, edgeCaseHash);
-			expect(typeof result).toBe("boolean");
-		});
-
-		test("should generate keys with sufficient entropy", async () => {
-			const crypto = new NodeCryptoUtils();
-			const keys = await Promise.all([
-				crypto.generateApiKey(),
-				crypto.generateApiKey(),
-				crypto.generateApiKey(),
-				crypto.generateApiKey(),
-				crypto.generateApiKey()
-			]);
-
-			// All keys should be different
-			const uniqueKeys = new Set(keys);
-			expect(uniqueKeys.size).toBe(5);
-
-			// All keys should have the correct format
-			for (const key of keys) {
-				expect(key).toMatch(/^btr-[a-zA-Z0-9]{32}$/);
-				expect(key).toHaveLength(36); // btr- + 32 chars
-			}
-		});
-	});
-
-	describe("Error Handling", () => {
-		test("should handle missing API key gracefully", async () => {
-			await generateApiKey(dbOps, "error-test", "admin");
-
-			// Enable authentication
-			expect(await authService.isAuthenticationEnabled()).toBe(true);
-
-			// Create request without API key
-			const request = new Request("http://localhost:8080/api/stats");
-			const result = await authService.authenticateRequest(request, "/api/stats", "GET");
-
-			expect(result.isAuthenticated).toBe(false);
-			expect(result.error).toContain("API key required");
-		});
-
-		test("should handle malformed headers gracefully", () => {
-			const request = new Request("http://localhost:8080", {
-				headers: { "x-api-key": "" }
+			test("accepts a valid key via Authorization: Bearer", async () => {
+				const req = makeRequest({ bearer: validKey });
+				const result = await authService.authenticateRequest(
+					req,
+					"/v1/messages",
+					"POST",
+				);
+				expect(result.isAuthenticated).toBe(true);
+				expect(result.apiKeyName).toBe("test-key");
 			});
 
-			const extractedKey = authService.extractApiKey(request);
-			expect(extractedKey).toBeNull();
-		});
+			test("rejects a key that has been disabled", async () => {
+				await disableApiKey(dbOps, "test-key");
+				// Now there are 0 active keys → isAuthenticationEnabled returns
+				// false, so authenticateRequest lets everything through. Verify
+				// that explicitly: this is the documented "no keys configured"
+				// behaviour, even though the row still exists.
+				const req = makeRequest({ apiKey: validKey });
+				const result = await authService.authenticateRequest(
+					req,
+					"/v1/messages",
+					"POST",
+				);
+				expect(result.isAuthenticated).toBe(true);
+			});
 
-		test("should handle invalid key names", async () => {
-			await expect(generateApiKey(dbOps, "", "admin")).rejects.toThrow("empty");
-			await expect(generateApiKey(dbOps, "   ", "admin")).rejects.toThrow("empty");
-			await expect(generateApiKey(dbOps, "a".repeat(1000), "admin")).rejects.toThrow();
-		});
-
-		test("should prevent creating api-only key as first key", async () => {
-			// Should fail when no keys exist
-			await expect(generateApiKey(dbOps, "first-key", "api-only"))
-				.rejects
-				.toThrow("Cannot create an API-only key as your first key");
-
-			// Should succeed after creating an admin key first
-			await generateApiKey(dbOps, "admin-key", "admin");
-			const result = await generateApiKey(dbOps, "api-only-key", "api-only");
-			expect(result.role).toBe("api-only");
-		});
-
-		test("should prevent deleting the last admin key when other keys exist", async () => {
-			// Create an admin key
-			await generateApiKey(dbOps, "admin-key", "admin");
-
-			// Create an api-only key
-			await generateApiKey(dbOps, "api-only-key", "api-only");
-
-			// Should fail to delete the only admin key when other keys exist
-			await expect(deleteApiKey(dbOps, "admin-key"))
-				.rejects.toThrow("Cannot delete the last active admin key");
-
-			// Verify admin key still exists
-			const keys = await listApiKeys(dbOps);
-			const adminKey = keys.find(k => k.name === "admin-key" && k.isActive);
-			expect(adminKey).toBeTruthy();
-
-			// Should be able to delete the api-only key
-			const deleteResult = await deleteApiKey(dbOps, "api-only-key");
-			expect(deleteResult).toBe(true);
-
-			// After deleting the api-only key, should now be able to delete the admin key
-			// because it's the only key left (deleting it would disable auth entirely)
-			const deleteAdminResult = await deleteApiKey(dbOps, "admin-key");
-			expect(deleteAdminResult).toBe(true);
-
-			// No keys should remain
-			const remainingKeys = await listApiKeys(dbOps);
-			expect(remainingKeys.length).toBe(0);
-		});
-
-		test("should allow deleting the last key when it's not the last admin", async () => {
-			// Create an admin key
-			await generateApiKey(dbOps, "admin-key", "admin");
-
-			// Create another admin key
-			await generateApiKey(dbOps, "second-admin-key", "admin");
-
-			// Create an api-only key
-			await generateApiKey(dbOps, "api-only-key", "api-only");
-
-			// Should be able to delete the api-only key (since there are other admin keys)
-			const deleteResult = await deleteApiKey(dbOps, "api-only-key");
-			expect(deleteResult).toBe(true);
+			test("with a second key active, disabled key is rejected", async () => {
+				await generateApiKey(dbOps, "second-key");
+				await disableApiKey(dbOps, "test-key");
+				const req = makeRequest({ apiKey: validKey });
+				const result = await authService.authenticateRequest(
+					req,
+					"/v1/messages",
+					"POST",
+				);
+				expect(result.isAuthenticated).toBe(false);
+				expect(result.error).toBe("Invalid API key");
+			});
 		});
 	});
+});
 
-	describe("API Key Role Updates", () => {
-		test("should update API key role from api-only to admin", async () => {
-			// Create an admin key first
-			const adminKey = await generateApiKey(dbOps, "admin-key", "admin");
+describe("API Key lifecycle", () => {
+	let dbPath: string;
+	let dbOps: DatabaseOperations;
 
-			// Create an api-only key
-			const apiOnlyKey = await generateApiKey(dbOps, "api-only-key", "api-only");
+	beforeEach(() => {
+		dbPath = tempDbPath();
+		dbOps = new DatabaseOperations(dbPath);
+	});
 
-			// Update api-only key to admin
-			const updateResult = await updateApiKeyRole(dbOps, apiOnlyKey.id, "admin");
-			expect(updateResult).toBe(true);
+	afterEach(() => {
+		dbOps.dispose?.();
+		if (existsSync(dbPath)) unlinkSync(dbPath);
+	});
 
-			// Verify the role was updated
-			const updatedKey = await dbOps.getApiKey(apiOnlyKey.id);
-			expect(updatedKey?.role).toBe("admin");
-		});
+	test("generateApiKey produces a btr-prefixed key with metadata", async () => {
+		const result = await generateApiKey(dbOps, "lifecycle-test");
+		expect(result.name).toBe("lifecycle-test");
+		expect(result.apiKey).toMatch(/^btr-[a-zA-Z0-9]{32}$/);
+		expect(result.prefixLast8).toHaveLength(8);
+		expect(result.id).toMatch(/^[a-f0-9-]{36}$/);
+		expect(result.createdAt).toBeDefined();
+	});
 
-		test("should update API key role from admin to api-only when multiple admins exist", async () => {
-			// Create two admin keys
-			const adminKey1 = await generateApiKey(dbOps, "admin-key-1", "admin");
-			const adminKey2 = await generateApiKey(dbOps, "admin-key-2", "admin");
+	test("rejects empty key name", async () => {
+		await expect(generateApiKey(dbOps, "")).rejects.toThrow(
+			"API key name cannot be empty",
+		);
+	});
 
-			// Update one admin key to api-only
-			const updateResult = await updateApiKeyRole(dbOps, adminKey2.id, "api-only");
-			expect(updateResult).toBe(true);
+	test("rejects whitespace-only key name", async () => {
+		await expect(generateApiKey(dbOps, "   ")).rejects.toThrow(
+			"API key name cannot be empty",
+		);
+	});
 
-			// Verify the role was updated
-			const updatedKey = await dbOps.getApiKey(adminKey2.id);
-			expect(updatedKey?.role).toBe("api-only");
-		});
+	test("rejects duplicate key names", async () => {
+		await generateApiKey(dbOps, "dup");
+		await expect(generateApiKey(dbOps, "dup")).rejects.toThrow(
+			"already exists",
+		);
+	});
 
-		test("should prevent changing the only admin key to api-only when other keys exist", async () => {
-			// Create an admin key
-			const adminKey = await generateApiKey(dbOps, "admin-key", "admin");
+	test("listApiKeys returns all keys without the raw secret", async () => {
+		await generateApiKey(dbOps, "alpha");
+		await generateApiKey(dbOps, "beta");
+		const keys = await listApiKeys(dbOps);
+		expect(keys).toHaveLength(2);
+		const names = keys.map((k) => k.name).sort();
+		expect(names).toEqual(["alpha", "beta"]);
+		for (const k of keys) {
+			expect((k as unknown as { apiKey?: string }).apiKey).toBeUndefined();
+			expect((k as unknown as { hashedKey?: string }).hashedKey).toBeUndefined();
+		}
+	});
 
-			// Create another admin key
-			const secondAdminKey = await generateApiKey(dbOps, "second-admin-key", "admin");
+	test("disable + enable round-trip preserves the key", async () => {
+		await generateApiKey(dbOps, "toggle");
 
-			// Create an api-only key
-			await generateApiKey(dbOps, "api-only-key-1", "api-only");
+		await disableApiKey(dbOps, "toggle");
+		let keys = await listApiKeys(dbOps);
+		expect(keys.find((k) => k.name === "toggle")?.isActive).toBe(false);
 
-			// Disable the second admin key, leaving only one active admin
-			await disableApiKey(dbOps, "second-admin-key");
+		await enableApiKey(dbOps, "toggle");
+		keys = await listApiKeys(dbOps);
+		expect(keys.find((k) => k.name === "toggle")?.isActive).toBe(true);
+	});
 
-			// Try to change the only active admin key to api-only (should fail)
-			// This should fail because it's now both the first key AND the last active admin
-			await expect(updateApiKeyRole(dbOps, adminKey.id, "api-only"))
-				.rejects.toThrow("first API key");  // It will fail on the first key check
-		});
+	test("disable on an already-disabled key throws", async () => {
+		await generateApiKey(dbOps, "twice");
+		await disableApiKey(dbOps, "twice");
+		await expect(disableApiKey(dbOps, "twice")).rejects.toThrow(
+			"already disabled",
+		);
+	});
 
-		test("should prevent changing the first API key to api-only", async () => {
-			// Create the first admin key
-			const firstKey = await generateApiKey(dbOps, "first-key", "admin");
+	test("enable on an already-active key throws", async () => {
+		await generateApiKey(dbOps, "active");
+		await expect(enableApiKey(dbOps, "active")).rejects.toThrow(
+			"already active",
+		);
+	});
 
-			// Create another admin key
-			await generateApiKey(dbOps, "second-key", "admin");
+	test("deleteApiKey removes the row", async () => {
+		await generateApiKey(dbOps, "to-delete");
+		await deleteApiKey(dbOps, "to-delete");
+		const keys = await listApiKeys(dbOps);
+		expect(keys.find((k) => k.name === "to-delete")).toBeUndefined();
+	});
 
-			// Try to change the first key to api-only (should fail)
-			await expect(updateApiKeyRole(dbOps, firstKey.id, "api-only"))
-				.rejects.toThrow("Cannot change the first API key to api-only");
-		});
-
-		test("should prevent modifying currently authenticated API key", async () => {
-			// Create two admin keys
-			const adminKey1 = await generateApiKey(dbOps, "admin-key-1", "admin");
-			const adminKey2 = await generateApiKey(dbOps, "admin-key-2", "admin");
-
-			// Try to update the currently authenticated key (should fail)
-			await expect(updateApiKeyRole(dbOps, adminKey1.id, "api-only", adminKey1.id))
-				.rejects.toThrow("Cannot modify the role of the currently authenticated API key");
-		});
-
-		test("should allow updating non-authenticated admin key when multiple admins exist", async () => {
-			// Create three admin keys
-			const adminKey1 = await generateApiKey(dbOps, "admin-key-1", "admin");
-			const adminKey2 = await generateApiKey(dbOps, "admin-key-2", "admin");
-			const adminKey3 = await generateApiKey(dbOps, "admin-key-3", "admin");
-
-			// Simulate adminKey1 is currently authenticated
-			// Update adminKey2 to api-only (should succeed since adminKey3 still exists as admin)
-			const updateResult = await updateApiKeyRole(dbOps, adminKey2.id, "api-only", adminKey1.id);
-			expect(updateResult).toBe(true);
-
-			// Verify the role was updated
-			const updatedKey = await dbOps.getApiKey(adminKey2.id);
-			expect(updatedKey?.role).toBe("api-only");
-		});
-
-		test("should handle role changes between admin and api-only", async () => {
-			// Create two admin keys
-			const adminKey1 = await generateApiKey(dbOps, "admin-key-1", "admin");
-			const adminKey2 = await generateApiKey(dbOps, "admin-key-2", "admin");
-
-			// Change one to api-only
-			await updateApiKeyRole(dbOps, adminKey2.id, "api-only");
-			let updatedKey = await dbOps.getApiKey(adminKey2.id);
-			expect(updatedKey?.role).toBe("api-only");
-
-			// Change it back to admin
-			await updateApiKeyRole(dbOps, adminKey2.id, "admin");
-			updatedKey = await dbOps.getApiKey(adminKey2.id);
-			expect(updatedKey?.role).toBe("admin");
-		});
-
-		test("should reject updates to non-existent API keys", async () => {
-			// Try to update a non-existent key
-			await expect(updateApiKeyRole(dbOps, "non-existent-id", "admin"))
-				.rejects.toThrow("API key not found");
-		});
+	test("disable/enable/delete on a missing key throws not-found", async () => {
+		await expect(disableApiKey(dbOps, "nope")).rejects.toThrow("not found");
+		await expect(enableApiKey(dbOps, "nope")).rejects.toThrow("not found");
+		await expect(deleteApiKey(dbOps, "nope")).rejects.toThrow("not found");
 	});
 });

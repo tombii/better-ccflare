@@ -1,9 +1,5 @@
 import type { DatabaseOperations } from "@better-ccflare/database";
-import {
-	type ApiKey,
-	type ApiKeyRole,
-	NodeCryptoUtils,
-} from "@better-ccflare/types";
+import { type ApiKey, NodeCryptoUtils } from "@better-ccflare/types";
 import { extractApiKey } from "./extract-api-key";
 
 export interface AuthenticationResult {
@@ -11,8 +7,27 @@ export interface AuthenticationResult {
 	apiKey?: ApiKey;
 	apiKeyId?: string;
 	apiKeyName?: string;
-	role?: ApiKeyRole;
 	error?: string;
+}
+
+/**
+ * Authentication policy: which surfaces require an API key.
+ *
+ * The model is intentionally narrow. API keys gate UPSTREAM AI TRAFFIC only
+ * (/v1/* and /messages/*). The management surface (/api/*, /health) is
+ * unauthenticated — trust boundary is "can you reach the port." Operators are
+ * expected to bind better-ccflare to a loopback address or put it behind a
+ * reverse proxy that enforces authentication.
+ */
+type AuthRequirement = "public" | "api_key";
+
+function policyFor(path: string): AuthRequirement {
+	if (path === "/health") return "public";
+	if (path === "/api" || path.startsWith("/api/")) return "public";
+	if (path === "/v1" || path.startsWith("/v1/")) return "api_key";
+	if (path === "/messages" || path.startsWith("/messages/")) return "api_key";
+	// Everything else (dashboard HTML, static assets, client-side routes) is public.
+	return "public";
 }
 
 export class AuthService {
@@ -68,7 +83,6 @@ export class AuthService {
 					apiKey: keyRecord,
 					apiKeyId: keyRecord.id,
 					apiKeyName: keyRecord.name,
-					role: keyRecord.role,
 				};
 			}
 		}
@@ -79,137 +93,32 @@ export class AuthService {
 		};
 	}
 
-	/**
-	 * Authorize endpoint access based on API key role
-	 */
-	async authorizeEndpoint(
-		apiKey: ApiKey,
-		path: string,
-		_method: string,
-	): Promise<{ authorized: boolean; reason?: string }> {
-		// Admin keys have full access
-		if (apiKey.role === "admin") {
-			return { authorized: true };
-		}
-
-		// Debug endpoints are admin-only (heap snapshots contain secrets)
-		if (path.startsWith("/api/debug/")) {
-			return {
-				authorized: false,
-				reason: "Unauthorized: Debug endpoints require an admin API key",
-			};
-		}
-
-		// API-only keys: Only allow /v1/* and /messages/* (proxy endpoints)
-		const isProxyEndpoint =
-			path.startsWith("/v1/") || path.startsWith("/messages/");
-
-		if (!isProxyEndpoint) {
-			return {
-				authorized: false,
-				reason: "Unauthorized: This API key does not have dashboard access",
-			};
-		}
-
-		return { authorized: true };
-	}
-
 	extractApiKey(req: Request): string | null {
 		return extractApiKey(req);
 	}
 
 	/**
-	 * Check if a path is statically exempt from authentication
-	 * (does not require async DB check)
-	 */
-	isStaticPathExempt(path: string): boolean {
-		// Health endpoint is always exempt
-		if (path === "/health") {
-			return true;
-		}
-
-		// OAuth endpoints are exempt (needed for account setup)
-		if (path.startsWith("/api/oauth")) {
-			return true;
-		}
-
-		// Version check returns only the latest npm-published version. The
-		// dashboard's sidebar tile fires this on load with no API key in
-		// headers, so it must be reachable whether or not auth is enabled.
-		if (path === "/api/version/check") {
-			return true;
-		}
-
-		// All other paths are dashboard routes (client-side routing) or static assets
-		// These should be exempt to allow serving the dashboard HTML and assets
-		// This matches the server logic that serves index.html for non-API routes
-		if (
-			!path.startsWith("/api") &&
-			!path.startsWith("/v1") &&
-			!path.startsWith("/messages")
-		) {
-			return true;
-		}
-
-		return false;
-	}
-
-	/**
-	 * Check if a path should be exempt from authentication
-	 */
-	async isPathExempt(path: string, method: string): Promise<boolean> {
-		// Static exemptions first (no DB hit)
-		if (this.isStaticPathExempt(path)) {
-			return true;
-		}
-
-		// API key management: Only allow initial key creation without auth if no keys exist
-		// All other operations require authentication
-		if (path.startsWith("/api/api-keys")) {
-			// Only allow POST (key creation) without auth if no keys exist
-			if (path === "/api/api-keys" && method === "POST") {
-				return !(await this.isAuthenticationEnabled()); // Only exempt if no keys exist
-			}
-			// All other API key operations require authentication
-			return false;
-		}
-
-		// Proxy endpoints (/v1/*, /messages/*, etc.) require authentication if enabled
-		if (path.startsWith("/v1") || path.startsWith("/messages")) {
-			return false;
-		}
-
-		// API endpoints require authentication if enabled
-		if (path.startsWith("/api")) {
-			return false;
-		}
-
-		return false;
-	}
-
-	/**
-	 * Authenticate a request
+	 * Authenticate a request against the auth policy.
+	 *
+	 * Public paths return authenticated without checking for a key. API-key
+	 * paths require a valid key when at least one is configured; when none are
+	 * configured, authentication is effectively disabled.
 	 */
 	async authenticateRequest(
 		req: Request,
 		path: string,
-		method: string,
+		_method: string,
 	): Promise<AuthenticationResult> {
-		// If path is exempt, allow without authentication
-		if (await this.isPathExempt(path, method)) {
-			return {
-				isAuthenticated: true,
-			};
+		if (policyFor(path) === "public") {
+			return { isAuthenticated: true };
 		}
 
-		// If authentication is not enabled (no API keys), allow
+		// API-key-gated path. If no keys are configured at all, let everything
+		// through (matches single-user / first-run behavior).
 		if (!(await this.isAuthenticationEnabled())) {
-			return {
-				isAuthenticated: true,
-			};
+			return { isAuthenticated: true };
 		}
 
-		// Extract API key from request
 		const apiKey = this.extractApiKey(req);
 		if (!apiKey) {
 			return {
@@ -219,7 +128,6 @@ export class AuthService {
 			};
 		}
 
-		// Validate the API key
 		return await this.validateApiKey(apiKey);
 	}
 }

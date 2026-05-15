@@ -11,6 +11,7 @@ export {
 } from "@better-ccflare/providers";
 export { AutoRefreshScheduler } from "./auto-refresh-scheduler";
 export { CacheKeepaliveScheduler } from "./cache-keepalive-scheduler";
+export { dispatchProxyRequest } from "./dispatch";
 export {
 	checkAllAccountsHealth,
 	checkRefreshTokenHealth,
