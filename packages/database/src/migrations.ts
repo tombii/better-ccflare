@@ -6,23 +6,40 @@ import { addPerformanceIndexes } from "./performance-indexes";
 
 const log = new Logger("DatabaseMigrations");
 
+const DEFAULT_BACKUP_RETENTION = 3;
+const INTEGER_RE = /^-?\d+$/;
+
 /**
  * Keep at most this many `.backup.<timestamp>` files alongside the live DB.
  * Each backup is a full copy of the DB (multi-GB in practice), so without a
  * cap they accumulate quickly when rapid restarts trigger repeat migrations.
  *
- * Override with `BETTER_CCFLARE_MIGRATION_BACKUP_KEEP`. 0 disables pruning.
+ * Override with `BETTER_CCFLARE_MIGRATION_BACKUP_KEEP`. 0 disables pruning
+ * entirely — operators who manage retention externally (e.g. via a separate
+ * cron + S3 sync) can opt out without losing the pre-migration safety net.
+ *
+ * Inputs that look like garbled integers (`"3abc"`, `"1.5"`, `""`,
+ * `"infinity"`) fall back to the default rather than silently truncating to
+ * a partial parse — `Number.parseInt` is too forgiving for that.
  */
 function getBackupRetention(): number {
 	const raw = process.env.BETTER_CCFLARE_MIGRATION_BACKUP_KEEP;
-	if (raw === undefined) return 3;
+	if (raw === undefined || raw === "") return DEFAULT_BACKUP_RETENTION;
+	if (!INTEGER_RE.test(raw)) {
+		log.warn(
+			`BETTER_CCFLARE_MIGRATION_BACKUP_KEEP="${raw}" is not a non-negative integer — using default ${DEFAULT_BACKUP_RETENTION}`,
+		);
+		return DEFAULT_BACKUP_RETENTION;
+	}
 	const parsed = Number.parseInt(raw, 10);
-	if (!Number.isFinite(parsed) || parsed < 0) return 3;
+	if (parsed < 0) return DEFAULT_BACKUP_RETENTION;
 	return parsed;
 }
 
 function pruneOldBackups(absoluteSourcePath: string): void {
 	const keep = getBackupRetention();
+	// keep === 0 means "do nothing", not "delete everything" — leaves all
+	// existing backups in place for operators managing retention externally.
 	if (keep === 0) return;
 
 	const dir = path.dirname(absoluteSourcePath);

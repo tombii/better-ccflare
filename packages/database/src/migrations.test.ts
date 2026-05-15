@@ -839,6 +839,58 @@ describe("Database Backup Behavior", () => {
 		// the two kept entries are: the new one, and `prune.db.backup.5000`.
 		expect(backups).toContain("prune.db.backup.5000");
 		expect(fs.existsSync(stalePath)).toBe(false);
+
+		// Explicitly verify the fresh backup survives — protects against a
+		// regression where the sorter accidentally treats the new file as
+		// oldest. The new file's suffix is the live `Date.now()`, which is
+		// orders of magnitude larger than the seeded `5000` value.
+		const freshBackup = backups.find((name) => {
+			const ts = Number.parseInt(name.slice("prune.db.backup.".length), 10);
+			return Number.isFinite(ts) && ts > 5000;
+		});
+		expect(freshBackup).toBeDefined();
+	});
+
+	it("should fall back to the default retention for garbled env values", () => {
+		// Without strict integer validation, `parseInt("3abc")` quietly returns
+		// 3 — keeping fewer backups than the operator expected. The check
+		// should treat such values as misconfiguration and use the default.
+		const dbPath = path.join(tmpDir, "garbled.db");
+		const db = new Database(dbPath);
+		ensureSchema(db);
+		db.close();
+
+		// 5 stale backups (more than default retention of 3).
+		fs.writeFileSync(path.join(tmpDir, "garbled.db.backup.1000"), "x");
+		fs.writeFileSync(path.join(tmpDir, "garbled.db.backup.2000"), "x");
+		fs.writeFileSync(path.join(tmpDir, "garbled.db.backup.3000"), "x");
+		fs.writeFileSync(path.join(tmpDir, "garbled.db.backup.4000"), "x");
+		fs.writeFileSync(path.join(tmpDir, "garbled.db.backup.5000"), "x");
+
+		const prev = process.env.BETTER_CCFLARE_MIGRATION_BACKUP_KEEP;
+		process.env.BETTER_CCFLARE_MIGRATION_BACKUP_KEEP = "2abc";
+		try {
+			const db2 = new Database(dbPath);
+			db2.prepare("ALTER TABLE accounts ADD COLUMN account_tier TEXT").run();
+			db2.close();
+
+			const db3 = new Database(dbPath);
+			runMigrations(db3, dbPath);
+			db3.close();
+		} finally {
+			if (prev === undefined) {
+				delete process.env.BETTER_CCFLARE_MIGRATION_BACKUP_KEEP;
+			} else {
+				process.env.BETTER_CCFLARE_MIGRATION_BACKUP_KEEP = prev;
+			}
+		}
+
+		const backups = fs
+			.readdirSync(tmpDir)
+			.filter((f) => f.startsWith("garbled.db.backup."));
+		// Garbled value should NOT silently parse as 2 — default of 3 applies.
+		// 5 stale + 1 fresh = 6 candidates, default retention 3 → 3 survive.
+		expect(backups).toHaveLength(3);
 	});
 
 	it("should leave backups in place when BETTER_CCFLARE_MIGRATION_BACKUP_KEEP=0", () => {
