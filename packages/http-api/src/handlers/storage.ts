@@ -1,6 +1,9 @@
 import type { DatabaseOperations } from "@better-ccflare/database";
 import { jsonResponse } from "@better-ccflare/http-common";
-import { runIntegrityCheckOnDemand } from "@better-ccflare/proxy";
+import {
+	runIntegrityCheckOnDemand,
+	startFullIntegrityCheckBackground,
+} from "@better-ccflare/proxy";
 
 export function createStorageHandler(dbOps: DatabaseOperations) {
 	return async (): Promise<Response> => {
@@ -38,13 +41,23 @@ export function createStorageHandler(dbOps: DatabaseOperations) {
 /**
  * On-demand integrity check trigger. Body: `{ kind: "quick" | "full" }`.
  *
- *  - **quick** runs synchronously on the main thread (it's a fast pragma).
- *    Returns 200 with `{result, error}` once the check finishes.
- *  - **full** spawns the integrity-check worker so the proxy event loop
- *    isn't blocked for tens of seconds. The request awaits the worker —
- *    the HTTP client therefore sees the result inline, but other requests
- *    keep flowing. If the call is initiated while another check is already
- *    running, returns 409.
+ *  - **quick** runs synchronously and returns 200 with `{kind, result, error}`.
+ *    A `quick_check` is fast enough (sub-second on most DBs, a few seconds
+ *    on multi-GB ones) that holding the HTTP connection open is fine.
+ *
+ *  - **full** kicks off the integrity-check worker in the background and
+ *    returns 202 with `{kind: "full", queued: true}` immediately. The
+ *    full check (`integrity_check` + `foreign_key_check`) takes tens of
+ *    seconds and could hit the worker timeout (10 min by default), which
+ *    would exceed common reverse-proxy `proxy_read_timeout` values
+ *    (nginx 60s, AWS ALB 60s, Caddy 5 min) — the proxy would drop the
+ *    connection and the dashboard would surface a false-negative
+ *    "Could not trigger check" even though the check is succeeding.
+ *    Clients poll `/api/storage` (`runningKind === "full"` while
+ *    in-flight, then `last_full_check_at` / `last_full_result` once
+ *    complete) to discover the outcome.
+ *
+ * Both kinds return 409 if another probe is already in flight.
  *
  * Sits behind the existing `/api/*` API-key auth middleware. The
  * scheduler-tracked status visible at `/api/storage` and `/health` reflects
@@ -60,7 +73,21 @@ export function createIntegrityCheckHandler(dbOps: DatabaseOperations) {
 		}
 		const kind = body.kind === "full" ? "full" : "quick";
 
-		const outcome = await runIntegrityCheckOnDemand(dbOps, kind);
+		if (kind === "full") {
+			const started = startFullIntegrityCheckBackground(dbOps);
+			if (!started.ok) {
+				return jsonResponse(
+					{
+						error: "integrity check already running",
+						reason: started.reason,
+					},
+					409,
+				);
+			}
+			return jsonResponse({ kind: "full", queued: true }, 202);
+		}
+
+		const outcome = await runIntegrityCheckOnDemand(dbOps, "quick");
 		if (!outcome.ok) {
 			return jsonResponse(
 				{
@@ -72,7 +99,7 @@ export function createIntegrityCheckHandler(dbOps: DatabaseOperations) {
 		}
 
 		return jsonResponse({
-			kind,
+			kind: "quick",
 			result: outcome.result,
 			error: outcome.error,
 		});

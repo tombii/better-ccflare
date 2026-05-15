@@ -62,11 +62,17 @@ export interface StorageInfoResponse {
 	null_account_rows_24h: number;
 }
 
-export interface IntegrityCheckResponse {
-	kind: "quick" | "full";
-	result: "ok" | "corrupt";
-	error: string | null;
-}
+/**
+ * Response from `POST /api/storage/integrity/check`.
+ *
+ * `quick` runs synchronously, so the response carries the verdict inline.
+ * `full` is fire-and-forget — server returns 202 with `queued: true` and
+ * the result lands in `/api/storage` once the worker completes. The
+ * dashboard's storage poll picks it up on its next tick.
+ */
+export type IntegrityCheckResponse =
+	| { kind: "quick"; result: "ok" | "corrupt"; error: string | null }
+	| { kind: "full"; queued: true };
 
 // Token health response interfaces
 export interface TokenHealthResponse {
