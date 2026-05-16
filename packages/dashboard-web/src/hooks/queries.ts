@@ -3,6 +3,44 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { queryKeys } from "../lib/query-keys";
 
+export const useStorageInfo = (refetchInterval?: number) => {
+	return useQuery({
+		queryKey: queryKeys.storage(),
+		queryFn: () => api.getStorageInfo(),
+		staleTime: 30_000,
+		// Cadence boost while a probe is in flight: a full check on a
+		// multi-GB DB takes 25–90s, and a fixed 60s poll could miss the
+		// transition entirely. While `integrity_status === "running"` poll
+		// every 5s so the dashboard surfaces completion within seconds of
+		// the worker finishing. Idle steady-state stays at 60s.
+		refetchInterval: (query) => {
+			if (refetchInterval !== undefined) return refetchInterval;
+			const data = query.state.data;
+			if (data?.integrity_status === "running") return 5_000;
+			return 60_000;
+		},
+		refetchIntervalInBackground: false,
+	});
+};
+
+export const useTriggerIntegrityCheck = () => {
+	const queryClient = useQueryClient();
+	return useMutation({
+		mutationFn: (kind: "quick" | "full") => api.triggerIntegrityCheck(kind),
+		onError: (error) => {
+			// 409 (scheduler already running), network errors, etc. — surface
+			// via console so a misbehaving on-demand trigger is visible in
+			// devtools. The mutation's `error` field is also exposed by
+			// useMutation, so the calling component (StorageIntegrityCard)
+			// renders the message inline next to the buttons.
+			console.error("Integrity check trigger failed:", error);
+		},
+		onSettled: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.storage() });
+		},
+	});
+};
+
 export const useAccounts = () => {
 	return useQuery({
 		queryKey: queryKeys.accounts(),

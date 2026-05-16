@@ -600,12 +600,11 @@ export default async function startServer(options?: {
 	DatabaseFactory.initialize(undefined, runtime);
 	const dbOps = await DatabaseFactory.getInstanceAsync();
 
-	// Run integrity check if database was initialized in fast mode (SQLite only)
-	if (dbOps.isSQLite) {
-		dbOps.runIntegrityCheck();
-	}
-
-	// Start periodic integrity scheduler
+	// Start periodic integrity scheduler. The startup `PRAGMA integrity_check`
+	// is intentionally gone — on multi-GB databases it blocked startup for
+	// tens of seconds. The scheduler runs `quick_check` every few hours and
+	// a full `integrity_check` + `foreign_key_check` daily (in a worker), and
+	// surfaces results via /api/storage and the dashboard.
 	stopIntegritySchedulerJob = startIntegrityScheduler(dbOps);
 
 	const db = dbOps.getAdapter();
