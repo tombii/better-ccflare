@@ -14,9 +14,19 @@ export function ensureSchema(db: Database): void {
 	// free pages a chunk at a time without ever needing a multi-minute
 	// blocking VACUUM. Existing DBs upgraded from auto_vacuum=NONE (mode 0)
 	// take the one-shot migration VACUUM at server startup; this PRAGMA is a
-	// no-op for them until that migration runs (see runBootstrapAutoVacuum in
+	// no-op for them until that migration runs (see bootstrapAutoVacuum in
 	// apps/server/src/server.ts).
-	db.exec("PRAGMA auto_vacuum = INCREMENTAL");
+	//
+	// Gated on current mode === 0 to preserve `auto_vacuum=FULL` (mode 1) as
+	// an explicit operator choice — SQLite quietly allows mode 1 → mode 2
+	// transitions without VACUUM, and issuing the PRAGMA unconditionally
+	// would silently rewrite that policy. (Greptile #230)
+	const currentAutoVacuum = (
+		db.query("PRAGMA auto_vacuum").get() as { auto_vacuum: number }
+	).auto_vacuum;
+	if (currentAutoVacuum === 0) {
+		db.exec("PRAGMA auto_vacuum = INCREMENTAL");
+	}
 
 	// Create accounts table
 	db.run(`

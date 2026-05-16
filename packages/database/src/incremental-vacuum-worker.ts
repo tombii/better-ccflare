@@ -22,8 +22,13 @@ import { Database } from "bun:sqlite";
  *  - `temp_store = FILE`: never spill temp tables to RAM under cgroup pressure.
  *  - `mmap_size = 0`: no mmap; reads go through the page cache (still
  *    reclaimable by the kernel under MemoryHigh pressure).
- *  - `busy_timeout = 0`: fail fast instead of sleeping in C. The caller
- *    handles a SQLITE_BUSY by retrying on the next hourly tick.
+ *  - `busy_timeout = 200`: small wait to absorb a brief write burst from the
+ *    post-processor flushing a batched insert. Long enough to cover the
+ *    common case (sub-100 ms commits), short enough that the worker can't
+ *    extend the writer-slot hold meaningfully. Bumped from 0 after Greptile
+ *    flagged that a zero timeout would silently skip every tick during
+ *    sustained write activity — see the consecutive-skip counter in
+ *    `incrementalVacuum()` for the escalation path. (Greptile #230)
  *
  * Refuses if `auto_vacuum != 2` — the operation is a no-op there and would
  * mask a misconfigured DB. Callers should have gated already via the same
@@ -45,7 +50,7 @@ self.onmessage = (event: MessageEvent<IncrementalVacuumRequest>) => {
 	let db: Database | undefined;
 	try {
 		db = new Database(dbPath);
-		db.exec("PRAGMA busy_timeout = 0");
+		db.exec("PRAGMA busy_timeout = 200");
 		db.exec("PRAGMA cache_size = -2000");
 		db.exec("PRAGMA temp_store = FILE");
 		db.exec("PRAGMA mmap_size = 0");

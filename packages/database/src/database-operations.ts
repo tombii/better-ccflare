@@ -77,10 +77,20 @@ function configureSqlite(
 		// causes pages to be allocated (notably `PRAGMA journal_mode = WAL`
 		// below) BEFORE this call would leave a fresh DB stuck at
 		// auto_vacuum=NONE. For DBs created prior to this change the PRAGMA
-		// is a no-op until `bootstrapAutoVacuum()` runs a one-shot VACUUM at
-		// server startup — see `runBootstrapAutoVacuum` in
-		// apps/server/src/server.ts.
-		db.exec("PRAGMA auto_vacuum = INCREMENTAL");
+		// is a no-op (rejected on non-empty mode-0 DBs); the migration
+		// happens via `bootstrapAutoVacuum()` at server startup.
+		//
+		// We ONLY issue the PRAGMA when the current mode is 0. SQLite quietly
+		// allows mode 1 (FULL) → mode 2 (INCREMENTAL) transitions without a
+		// VACUUM — issuing the PRAGMA unconditionally would silently rewrite
+		// an operator's `auto_vacuum=FULL` choice, which is a behavior change
+		// Greptile flagged on the original PR. (Greptile #230)
+		const currentMode = (
+			db.query("PRAGMA auto_vacuum").get() as { auto_vacuum: number }
+		).auto_vacuum;
+		if (currentMode === 0) {
+			db.exec("PRAGMA auto_vacuum = INCREMENTAL");
+		}
 
 		// Check database integrity first (skip in fast mode for CLI commands)
 		if (!skipIntegrityCheck) {
@@ -165,6 +175,15 @@ function configureSqlite(
 }
 
 /**
+ * After this many consecutive `incrementalVacuum()` ticks fail to claim
+ * the writer slot, the per-tick console.warn escalates to a louder
+ * "sustained-busy" line. 3 ticks = 3 hours of missed reclamation, which
+ * is the threshold where free pages start growing noticeably on a
+ * write-heavy DB. (Greptile #230)
+ */
+const INC_VAC_SKIP_ESCALATE_AT = 3;
+
+/**
  * DatabaseOperations using Repository Pattern
  * Provides a clean, organized interface for database operations
  *
@@ -177,8 +196,29 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 	private sqliteDb?: Database;
 	/** Resolved path to the SQLite DB file — used by the vacuum worker */
 	private resolvedDbPath?: string;
+	/**
+	 * auto_vacuum mode as it was on disk when this handle was opened, captured
+	 * BEFORE `configureSqlite()` issues its own `PRAGMA auto_vacuum =
+	 * INCREMENTAL`. SQLite quirk: that PRAGMA flips the connection-local view
+	 * to the requested value even though the on-disk header can't change
+	 * without a VACUUM — so a later `PRAGMA auto_vacuum` query on this
+	 * connection returns the requested value, not the persisted one. Used by
+	 * `bootstrapAutoVacuum()` to decide whether a migration VACUUM is actually
+	 * needed. (Greptile #230)
+	 */
+	private originalAutoVacuumMode?: number;
 	/** Prevents concurrent compact() calls from spawning multiple vacuum workers */
 	private compacting = false;
+	/**
+	 * Hourly `incrementalVacuum()` ticks that bailed because the worker
+	 * couldn't claim the writer slot (SQLITE_BUSY). Bumped on every failure,
+	 * reset on every success. Once it crosses `INC_VAC_SKIP_ESCALATE_AT` we
+	 * upgrade the per-tick `console.warn` to a louder warning so an operator
+	 * notices the DB isn't reclaiming pages — without that, sustained write
+	 * activity at tick time could leave free pages unreclaimed indefinitely.
+	 * (Greptile #230)
+	 */
+	private incVacuumConsecutiveSkips = 0;
 	private runtime?: RuntimeConfig;
 	private dbConfig: DatabaseConfig;
 	private retryConfig: DatabaseRetryConfig;
@@ -256,6 +296,15 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 			mkdirSync(dir, { recursive: true });
 
 			this.sqliteDb = new Database(resolvedPath, { create: true });
+
+			// Capture the persisted auto_vacuum mode BEFORE configureSqlite's
+			// leading PRAGMA flips the connection-local view. See the field
+			// docstring for the SQLite quirk this works around. (Greptile #230)
+			this.originalAutoVacuumMode = (
+				this.sqliteDb.query("PRAGMA auto_vacuum").get() as {
+					auto_vacuum: number;
+				}
+			).auto_vacuum;
 
 			// Apply SQLite configuration
 			configureSqlite(this.sqliteDb, this.dbConfig, fastMode);
@@ -1007,7 +1056,8 @@ OAuth tokens will need to be re-authenticated.
 	}
 
 	/**
-	 * One-time migration: promote the DB from auto_vacuum=NONE to INCREMENTAL.
+	 * One-time migration: promote the DB from auto_vacuum=NONE (mode 0) to
+	 * INCREMENTAL (mode 2).
 	 *
 	 * Fresh DBs are born in INCREMENTAL mode via `ensureSchema()`'s leading
 	 * `PRAGMA auto_vacuum = INCREMENTAL`. Existing DBs created before that
@@ -1016,14 +1066,22 @@ OAuth tokens will need to be re-authenticated.
 	 * next VACUUM rewrites every page. This method does that VACUUM exactly
 	 * once, blocking the caller.
 	 *
+	 * **Only migrates mode 0 → 2.** A DB at mode 1 (FULL) is an explicit
+	 * operator choice — FULL reclaims pages immediately on every COMMIT
+	 * whereas INCREMENTAL only reclaims when the hourly worker tick runs, so
+	 * silently promoting mode 1 → 2 would change reclamation timing for a
+	 * user who chose FULL on purpose. We leave mode 1 alone and log a
+	 * one-line notice instead. (Greptile #230)
+	 *
 	 * **MUST be called before HTTP binds.** VACUUM is a write transaction
 	 * that holds SQLite's single writer slot for the entire rewrite — on a
 	 * 15 GB DB on local SSD this can take many minutes. Called from
 	 * `apps/server/src/server.ts` startup so the proxy never observes a
 	 * blocked writer slot.
 	 *
-	 * Returns `{ migrated: false }` if the DB is already in INCREMENTAL mode
-	 * (the steady-state outcome for fresh installs and post-upgrade restarts).
+	 * Returns `{ migrated: false }` whenever no work was done — both for the
+	 * mode 2 (already INCREMENTAL) and mode 1 (deliberately FULL) cases. The
+	 * `modeBefore` field distinguishes them so callers can log appropriately.
 	 *
 	 * Throws if VACUUM fails (e.g. insufficient disk space — VACUUM needs
 	 * roughly 2× the DB size in free space transiently). Surfacing the
@@ -1045,11 +1103,28 @@ OAuth tokens will need to be re-authenticated.
 			};
 		}
 
-		const { auto_vacuum: modeBefore } = this.sqliteDb
-			.query("PRAGMA auto_vacuum")
-			.get() as { auto_vacuum: number };
+		// Resolve modeBefore from two sources, picking the trustworthy one for
+		// each case (see `incrementalVacuum()` for the full rationale):
+		//   - originalMode != 0: trust the captured value (SQLite quirk leaks
+		//     the configureSqlite PRAGMA into post-config queries when the
+		//     starting mode was non-zero).
+		//   - originalMode === 0: trust a fresh query. Fresh DBs end up at
+		//     mode 2 here (PRAGMA applied because file was empty); existing
+		//     mode-0 DBs stay at 0 (PRAGMA silently rejected on non-empty
+		//     DB). The query distinguishes correctly. (Greptile #230)
+		const modeBefore =
+			this.originalAutoVacuumMode && this.originalAutoVacuumMode !== 0
+				? this.originalAutoVacuumMode
+				: (
+						this.sqliteDb.query("PRAGMA auto_vacuum").get() as {
+							auto_vacuum: number;
+						}
+					).auto_vacuum;
 
-		if (modeBefore === 2) {
+		// Mode 2 (INCREMENTAL): steady-state, nothing to do.
+		// Mode 1 (FULL): operator-chosen, don't silently rewrite their policy.
+		// Anything else (= mode 0, NONE): migrate.
+		if (modeBefore !== 0) {
 			return {
 				migrated: false,
 				modeBefore,
@@ -1070,6 +1145,12 @@ OAuth tokens will need to be re-authenticated.
 		const { auto_vacuum: modeAfter } = this.sqliteDb
 			.query("PRAGMA auto_vacuum")
 			.get() as { auto_vacuum: number };
+
+		// VACUUM committed the new mode to the header, so update our captured
+		// value too — otherwise a second `bootstrapAutoVacuum()` call (rare,
+		// but possible in tests) would re-trigger the VACUUM because the old
+		// captured mode would still say 0.
+		this.originalAutoVacuumMode = modeAfter;
 
 		return {
 			migrated: true,
@@ -1198,15 +1279,34 @@ OAuth tokens will need to be re-authenticated.
 	async incrementalVacuum(pages = 8000): Promise<void> {
 		if (!this.sqliteDb || !this.resolvedDbPath) return;
 
-		const { auto_vacuum } = this.sqliteDb.query("PRAGMA auto_vacuum").get() as {
-			auto_vacuum: number;
-		};
-		if (auto_vacuum !== 2) {
-			// One-line debug; the loud startup-time warning in
-			// runBootstrapAutoVacuum is the right place to flag this. Repeating
-			// a WARN every hour would spam logs without adding signal.
+		// Resolve the effective auto_vacuum mode. The captured `originalMode`
+		// is the on-disk value at handle-open time; configureSqlite then
+		// issued `PRAGMA auto_vacuum = INCREMENTAL`. Two cases:
+		//
+		//   - originalMode != 0: SQLite quirk — the PRAGMA flips the
+		//     connection-local query result to 2 even though the on-disk
+		//     header can't change without a VACUUM. We trust `originalMode`.
+		//
+		//   - originalMode === 0: the PRAGMA either took effect (fresh DB,
+		//     header now 2) or was silently rejected (non-empty mode-0 DB,
+		//     header still 0). In this case the fresh PRAGMA query is
+		//     reliable — it returns 0 if rejected, 2 if applied.
+		//
+		// (Greptile #230)
+		const autoVacuum =
+			this.originalAutoVacuumMode && this.originalAutoVacuumMode !== 0
+				? this.originalAutoVacuumMode
+				: (
+						this.sqliteDb.query("PRAGMA auto_vacuum").get() as {
+							auto_vacuum: number;
+						}
+					).auto_vacuum;
+		if (autoVacuum !== 2) {
+			// One-line debug; the loud startup-time warning in the bootstrap
+			// path is the right place to flag this. Repeating a WARN every
+			// hour would spam logs without adding signal.
 			console.debug(
-				`[incrementalVacuum] skipped — auto_vacuum=${auto_vacuum}; expected 2 (INCREMENTAL). ` +
+				`[incrementalVacuum] skipped — auto_vacuum=${autoVacuum}; expected 2 (INCREMENTAL). ` +
 					`Run startup bootstrap migration to enable incremental reclamation.`,
 			);
 			return;
@@ -1236,8 +1336,27 @@ OAuth tokens will need to be re-authenticated.
 					reject(new Error(event.message ?? "incremental-vacuum worker error"));
 				worker.postMessage({ dbPath, pages });
 			});
-			if (!result.ok) {
-				console.warn(`[incrementalVacuum] worker error: ${result.error}`);
+			if (result.ok) {
+				this.incVacuumConsecutiveSkips = 0;
+			} else {
+				this.incVacuumConsecutiveSkips += 1;
+				// Single-tick failures are common and noise — sustained skips
+				// across several hourly ticks mean the DB isn't getting any
+				// reclamation, which can let free pages accumulate without
+				// bound. Escalate after 3 consecutive skips (= 3 hours of
+				// missed reclamation). (Greptile #230)
+				if (this.incVacuumConsecutiveSkips >= INC_VAC_SKIP_ESCALATE_AT) {
+					console.warn(
+						`[incrementalVacuum] worker error (${this.incVacuumConsecutiveSkips} consecutive ` +
+							`skips, ≈${this.incVacuumConsecutiveSkips}h of missed reclamation): ` +
+							`${result.error}. ` +
+							`Sustained SQLITE_BUSY suggests writer-slot contention — investigate ` +
+							`whether long-running writers (large DELETEs, manual maintenance) are ` +
+							`overlapping the hourly tick.`,
+					);
+				} else {
+					console.warn(`[incrementalVacuum] worker error: ${result.error}`);
+				}
 			}
 		} finally {
 			worker.terminate();

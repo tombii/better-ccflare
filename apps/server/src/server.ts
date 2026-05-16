@@ -622,6 +622,17 @@ export default async function startServer(options?: {
 							`incremental reclamation will be a no-op. Investigate disk space and DB integrity.`,
 					);
 				}
+			} else if (result.modeBefore === 1) {
+				// Operator set auto_vacuum=FULL on purpose. We don't migrate it to
+				// INCREMENTAL silently because FULL reclaims pages on every COMMIT
+				// while INCREMENTAL only reclaims when our hourly worker runs —
+				// rewriting that policy without notice would surprise the user.
+				// Log so it shows up in startup logs and `journalctl`. (Greptile #230)
+				startupLog.info(
+					`auto_vacuum=FULL (mode 1) detected — left in place. The hourly incremental_vacuum ` +
+						`worker is a no-op under FULL mode; pages are reclaimed on every COMMIT. ` +
+						`Switch to INCREMENTAL manually if you want the worker-driven cadence.`,
+				);
 			}
 		} catch (err) {
 			startupLog.error(

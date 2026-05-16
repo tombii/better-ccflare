@@ -41,6 +41,19 @@ export async function clearRequestHistory(
  * with a 1 s busy_timeout. If it can claim the writer slot the lock is
  * free and we proceed with the real compact; if not, we throw a clear
  * error pointing the operator at the right next step.
+ *
+ * **TOCTOU caveat** (Greptile #230): the probe immediately releases the
+ * writer slot before `dbOps.compact()` re-acquires it. In the millisecond
+ * window between `ROLLBACK` and the worker-thread `BEGIN`, another process
+ * could claim the slot — typically a service that was restarting during
+ * the probe. The worker-thread compact then falls back to its own
+ * busy_timeout (10 s by default), so this manifests as a short stall in
+ * the CLI rather than the multi-minute hang the guard is meant to prevent.
+ * For maintenance against an auto-restarting service, verify with
+ * `systemctl is-active better-ccflare` (should report `inactive` or
+ * `failed`) before invoking this command. A fully race-free guarantee
+ * would require holding a write transaction across the entire compact
+ * call, which `VACUUM` itself disallows.
  */
 export async function compactDatabase(dbOps: DatabaseOperations): Promise<{
 	walBusy: number;
@@ -56,7 +69,8 @@ export async function compactDatabase(dbOps: DatabaseOperations): Promise<{
 		if (reason !== null) {
 			throw new Error(
 				`Refusing to compact: ${reason}. ` +
-					`Stop the better-ccflare service first (e.g. \`systemctl stop better-ccflare\`) ` +
+					`Stop the better-ccflare service first (e.g. \`systemctl stop better-ccflare\` ` +
+					`then \`systemctl is-active better-ccflare\` to confirm it's not auto-restarting) ` +
 					`and re-run this command. Running compact while the server is live blocks ` +
 					`every request the server tries to persist.`,
 			);

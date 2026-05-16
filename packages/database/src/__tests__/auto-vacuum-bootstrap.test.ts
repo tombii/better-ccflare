@@ -134,6 +134,40 @@ describe("DatabaseOperations.bootstrapAutoVacuum", () => {
 			await dbOps.close();
 		}
 	});
+
+	it("leaves auto_vacuum=FULL (mode 1) alone (Greptile #230)", async () => {
+		// A user with `auto_vacuum=FULL` made an explicit choice — FULL
+		// reclaims pages on every COMMIT, INCREMENTAL only at the worker
+		// tick. Silently rewriting that to mode 2 would change reclamation
+		// timing for them, which is a behavior change Greptile flagged in PR
+		// review. Bootstrap should detect mode 1 and skip.
+		{
+			const legacyDb = new Database(dbPath, { create: true });
+			try {
+				// Set FULL mode BEFORE any table is created, so the header
+				// records mode 1.
+				legacyDb.exec("PRAGMA auto_vacuum = FULL");
+				legacyDb.exec("CREATE TABLE smoke (id INTEGER)");
+				legacyDb.exec("INSERT INTO smoke (id) VALUES (1)");
+			} finally {
+				legacyDb.close();
+			}
+		}
+		expect(readAutoVacuumMode(dbPath)).toBe(1);
+
+		const dbOps = new DatabaseOperations(dbPath);
+		try {
+			const result = dbOps.bootstrapAutoVacuum();
+			// Did NOT migrate, did NOT touch the mode.
+			expect(result.migrated).toBe(false);
+			expect(result.modeBefore).toBe(1);
+			expect(result.modeAfter).toBe(1);
+			expect(result.durationMs).toBe(0);
+		} finally {
+			await dbOps.close();
+		}
+		expect(readAutoVacuumMode(dbPath)).toBe(1);
+	});
 });
 
 describe("DatabaseOperations.incrementalVacuum: no destructive fallback", () => {
