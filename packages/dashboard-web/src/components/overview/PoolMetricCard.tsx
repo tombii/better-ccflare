@@ -95,6 +95,29 @@ function nextQuotaLabel(
 	return `${name} at ${nextQuotaTimeLabel(earliestResetMs, window)}`;
 }
 
+function formatShortDuration(ms: number): string {
+	const totalMinutes = Math.max(0, Math.round(ms / 60000));
+	const hours = Math.floor(totalMinutes / 60);
+	const minutes = totalMinutes % 60;
+	if (hours > 0) return `${hours}h ${minutes}m`;
+	return `${minutes}m`;
+}
+
+function atRiskBadge(
+	willRunOutCount: number,
+	capacityCount: number,
+): { label: string | null; colorClass: string | null } {
+	if (willRunOutCount === 0 || capacityCount === 0) {
+		return { label: null, colorClass: null };
+	}
+	const colorClass =
+		willRunOutCount >= capacityCount ? "text-destructive" : "text-warning";
+	return {
+		label: `${willRunOutCount} of ${capacityCount} will run out`,
+		colorClass,
+	};
+}
+
 export function PoolMetricCard({
 	title,
 	icon: Icon,
@@ -110,10 +133,17 @@ export function PoolMetricCard({
 		fallback,
 		earliestResetMs,
 		earliestResetAccountName,
+		atRisk,
 	} = result;
 
 	const eligibleTotal =
 		contributing.length + exhausted.length + excluded.length;
+	const capacityCount = contributing.length + exhausted.length;
+	const willRunOutCount = atRisk.length + exhausted.length;
+	const { label: willRunOutText, colorClass: willRunOutColor } = atRiskBadge(
+		willRunOutCount,
+		capacityCount,
+	);
 	const showChip = eligibleTotal > 0;
 	const colorClass = headlineColor(average);
 	const headline = average != null ? formatPercentage(average, 0) : "—";
@@ -123,6 +153,9 @@ export function PoolMetricCard({
 			: `more quota at ${nextQuotaTimeLabel(earliestResetMs, window)}`;
 
 	const sortedContributing = contributing.slice().sort((a, b) => b.pct - a.pct);
+	const sortedAtRisk = atRisk
+		.slice()
+		.sort((a, b) => a.exhaustsAtMs - b.exhaustsAtMs);
 	const exhaustedGroups = groupExcluded(exhausted);
 	const excludedGroups = groupExcluded(excluded);
 
@@ -130,6 +163,7 @@ export function PoolMetricCard({
 	const hasExhausted = exhausted.length > 0;
 	const hasExcluded = excluded.length > 0;
 	const hasFallback = fallback.length > 0;
+	const hasAtRisk = atRisk.length > 0;
 
 	const triggerNode = showChip ? (
 		<Popover>
@@ -171,6 +205,29 @@ export function PoolMetricCard({
 										{c.name}
 									</span>
 									<span className="tabular-nums">{c.pct.toFixed(0)}%</span>
+								</li>
+							))}
+						</ul>
+					</div>
+				)}
+				{hasAtRisk && (
+					<div>
+						<div className="font-medium mb-1">At risk ({atRisk.length})</div>
+						<div className="text-muted-foreground mb-1">
+							Projected to exhaust before their window resets.
+						</div>
+						<ul className="space-y-0.5">
+							{sortedAtRisk.map((a) => (
+								<li
+									key={a.name}
+									className="flex items-center justify-between gap-2"
+								>
+									<span className="truncate" title={a.name}>
+										{a.name}
+									</span>
+									<span className="tabular-nums">
+										runs out in {formatShortDuration(a.timeToExhaustMs)}
+									</span>
 								</li>
 							))}
 						</ul>
@@ -272,6 +329,11 @@ export function PoolMetricCard({
 					{nextQuotaText && (
 						<p className="text-xs text-muted-foreground truncate">
 							{nextQuotaText}
+						</p>
+					)}
+					{willRunOutText && (
+						<p className={cn("text-xs truncate", willRunOutColor)}>
+							{willRunOutText}
 						</p>
 					)}
 				</div>

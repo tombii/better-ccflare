@@ -496,6 +496,142 @@ describe("computePoolUsage", () => {
 		expect(result.worst).toEqual({ name: "high", pct: 87 });
 	});
 
+	describe("atRisk projection", () => {
+		const FIVE_HOUR_MS = 5 * 60 * 60 * 1000;
+		const SEVEN_DAY_MS = 7 * 24 * 60 * 60 * 1000;
+
+		function mkAnthropicAt(
+			name: string,
+			pct: number,
+			resetMs: number | null,
+		): AccountResponse {
+			return mkAccount({
+				name,
+				provider: "anthropic",
+				usageData: {
+					five_hour: {
+						utilization: pct,
+						resets_at: resetMs == null ? null : new Date(resetMs).toISOString(),
+					},
+					seven_day: { utilization: 0, resets_at: null },
+				} as never,
+			});
+		}
+
+		it("flags account burning faster than linear pace as at-risk", () => {
+			// 4.5h elapsed of a 5h window, 90% used → time-to-exhaust 30m, remaining 30m
+			// Use 91% to push timeToExhaust strictly below remaining.
+			const elapsedMs = 4.5 * 60 * 60 * 1000;
+			const resetMs = NOW + (FIVE_HOUR_MS - elapsedMs);
+			const account = mkAnthropicAt("burner", 91, resetMs);
+
+			const result = computePoolUsage([account], "five_hour", NOW);
+
+			expect(result.atRisk).toHaveLength(1);
+			expect(result.atRisk[0].name).toBe("burner");
+			expect(result.atRisk[0].pct).toBe(91);
+			expect(result.atRisk[0].resetMs).toBe(resetMs);
+			expect(result.atRisk[0].remainingMs).toBe(FIVE_HOUR_MS - elapsedMs);
+			expect(result.atRisk[0].exhaustsAtMs).toBeGreaterThan(NOW);
+			expect(result.atRisk[0].exhaustsAtMs).toBeLessThan(resetMs);
+		});
+
+		it("does not flag account on linear pace boundary (timeToExhaust === remaining)", () => {
+			// 1h elapsed of 5h window, 20% used → on perfect linear pace; will exactly
+			// reach 100% at reset. timeToExhaustMs === remainingMs, not strictly less.
+			const elapsedMs = 1 * 60 * 60 * 1000;
+			const resetMs = NOW + (FIVE_HOUR_MS - elapsedMs);
+			const account = mkAnthropicAt("steady", 20, resetMs);
+
+			const result = computePoolUsage([account], "five_hour", NOW);
+
+			expect(result.atRisk).toEqual([]);
+		});
+
+		it("does not flag account strictly under linear pace", () => {
+			// 1h elapsed of 5h window, 10% used → timeToExhaust = 9h, remaining = 4h.
+			// Far under pace; should never appear in atRisk.
+			const elapsedMs = 1 * 60 * 60 * 1000;
+			const resetMs = NOW + (FIVE_HOUR_MS - elapsedMs);
+			const account = mkAnthropicAt("slow", 10, resetMs);
+
+			const result = computePoolUsage([account], "five_hour", NOW);
+
+			expect(result.contributing).toHaveLength(1);
+			expect(result.atRisk).toEqual([]);
+		});
+
+		it("skips contributing accounts with resetMs === null", () => {
+			const account = mkAnthropicAt("nullreset", 95, null);
+
+			const result = computePoolUsage([account], "five_hour", NOW);
+
+			expect(result.contributing).toHaveLength(1);
+			expect(result.atRisk).toEqual([]);
+		});
+
+		it("skips contributing accounts with 0% usage (no rate to project)", () => {
+			const elapsedMs = 1 * 60 * 60 * 1000;
+			const resetMs = NOW + (FIVE_HOUR_MS - elapsedMs);
+			const account = mkAnthropicAt("idle", 0, resetMs);
+
+			const result = computePoolUsage([account], "five_hour", NOW);
+
+			expect(result.atRisk).toEqual([]);
+		});
+
+		it("does not include exhausted accounts in atRisk (they are already in exhausted)", () => {
+			const elapsedMs = 4.5 * 60 * 60 * 1000;
+			const resetMs = NOW + (FIVE_HOUR_MS - elapsedMs);
+			const burner = mkAnthropicAt("burner", 95, resetMs);
+			const exhaustedAccount = mkAccount({
+				name: "exh",
+				provider: "anthropic",
+				usageData: {
+					five_hour: {
+						utilization: 100,
+						resets_at: new Date(NOW + 60_000).toISOString(),
+					},
+					seven_day: { utilization: 0, resets_at: null },
+				} as never,
+			});
+
+			const result = computePoolUsage(
+				[burner, exhaustedAccount],
+				"five_hour",
+				NOW,
+			);
+
+			expect(result.atRisk).toHaveLength(1);
+			expect(result.atRisk[0].name).toBe("burner");
+			expect(result.exhausted.map((e) => e.name)).toContain("exh");
+		});
+
+		it("projects 7d window correctly using SEVEN_DAY_MS", () => {
+			// 6 days elapsed of 7d window, 95% used → timeToExhaust ≈ 6d * 0.05/0.95 ≈ 7.6h
+			// remaining = 24h, so 7.6h < 24h → at risk.
+			const elapsedMs = 6 * 24 * 60 * 60 * 1000;
+			const resetMs = NOW + (SEVEN_DAY_MS - elapsedMs);
+			const account = mkAccount({
+				name: "weekly-burner",
+				provider: "anthropic",
+				usageData: {
+					five_hour: { utilization: 0, resets_at: null },
+					seven_day: {
+						utilization: 95,
+						resets_at: new Date(resetMs).toISOString(),
+					},
+				} as never,
+			});
+
+			const result = computePoolUsage([account], "seven_day", NOW);
+
+			expect(result.atRisk).toHaveLength(1);
+			expect(result.atRisk[0].name).toBe("weekly-burner");
+			expect(result.atRisk[0].resetMs).toBe(resetMs);
+		});
+	});
+
 	it("counts accounts exhausted in another quota window as unavailable 5h capacity", () => {
 		const accounts: AccountResponse[] = [
 			mkAccount({

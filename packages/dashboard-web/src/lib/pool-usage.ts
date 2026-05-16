@@ -1,3 +1,4 @@
+import { computeWindowStartMs } from "@better-ccflare/core";
 import type { AccountResponse, FullUsageData } from "@better-ccflare/types";
 
 export type PoolWindow = "five_hour" | "seven_day";
@@ -15,6 +16,14 @@ export interface PoolUsageContribution {
 	name: string;
 	pct: number;
 	resetMs: number | null;
+}
+
+export interface PoolUsageProjection
+	extends Omit<PoolUsageContribution, "resetMs"> {
+	resetMs: number;
+	exhaustsAtMs: number;
+	timeToExhaustMs: number;
+	remainingMs: number;
 }
 
 export interface PoolUsageExclusion {
@@ -38,6 +47,7 @@ export interface PoolUsageResult {
 	fallback: PoolUsageFallback[];
 	earliestResetMs: number | null;
 	earliestResetAccountName: string | null;
+	atRisk: PoolUsageProjection[];
 }
 
 const FIVE_HOUR_ELIGIBLE_PROVIDERS: ReadonlySet<string> = new Set([
@@ -334,6 +344,29 @@ export function computePoolUsage(
 			: (resetCandidates.find((c) => c.resetMs === earliestResetMs)?.name ??
 				null);
 
+	const atRisk: PoolUsageProjection[] = [];
+	for (const c of contributing) {
+		if (c.resetMs == null) continue;
+		const startMs = computeWindowStartMs(c.resetMs, window);
+		if (startMs == null) continue;
+		const elapsed = now - startMs;
+		const remainingMs = c.resetMs - now;
+		if (elapsed <= 0 || remainingMs <= 0) continue;
+		const f = c.pct / 100;
+		if (f <= 0 || f >= 1) continue;
+		const timeToExhaustMs = ((1 - f) / f) * elapsed;
+		if (timeToExhaustMs < remainingMs) {
+			atRisk.push({
+				name: c.name,
+				pct: c.pct,
+				resetMs: c.resetMs,
+				exhaustsAtMs: now + timeToExhaustMs,
+				timeToExhaustMs,
+				remainingMs,
+			});
+		}
+	}
+
 	return {
 		average,
 		activeAverage,
@@ -344,5 +377,6 @@ export function computePoolUsage(
 		fallback,
 		earliestResetMs,
 		earliestResetAccountName,
+		atRisk,
 	};
 }
