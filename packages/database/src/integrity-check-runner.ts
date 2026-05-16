@@ -1,11 +1,14 @@
 import { EMBEDDED_INTEGRITY_CHECK_WORKER_CODE } from "./inline-integrity-check-worker";
+import type { IntegrityCheckKind } from "./integrity-check-worker";
+
+export type { IntegrityCheckKind } from "./integrity-check-worker";
 
 /**
  * Default hard cap on a worker run. A `PRAGMA integrity_check` on a multi-GB
  * DB is normally tens of seconds; the cap exists to defend against the
  * worker hanging forever on a failing disk / unresponsive NFS / etc, which
- * would otherwise leave `markIntegrityCheckRunning("full")` permanently set
- * and silently disable integrity checking for the lifetime of the process.
+ * would otherwise leave the scheduler mutex permanently set and silently
+ * disable integrity checking for the lifetime of the process.
  */
 const DEFAULT_WORKER_TIMEOUT_MS = 10 * 60 * 1000;
 
@@ -16,9 +19,12 @@ const DEFAULT_WORKER_TIMEOUT_MS = 10 * 60 * 1000;
  * source-mode from a checkout).
  *
  * The worker opens its own `bun:sqlite` handle — required because
- * `bun:sqlite` is synchronous and a `PRAGMA integrity_check` on a multi-GB
- * DB blocks the JS event loop for tens of seconds. We don't want the proxy
- * stalled during that window.
+ * `bun:sqlite` is synchronous and even `PRAGMA quick_check` on a multi-GB
+ * DB blocks the JS event loop for tens of seconds. We don't want the
+ * proxy stalled during that window — at ~30 s of frozen event loop,
+ * downstream sockets get reset by the OS and clients see "socket
+ * connection was closed unexpectedly". Both `quick` and `full` route
+ * through the worker.
  *
  * Race the worker promise against a configurable timeout (default 10 min,
  * env override `CCFLARE_INTEGRITY_CHECK_WORKER_TIMEOUT_MS`). On timeout the
@@ -31,7 +37,11 @@ const DEFAULT_WORKER_TIMEOUT_MS = 10 * 60 * 1000;
  */
 export async function runIntegrityCheckInWorker(
 	dbPath: string,
-	options?: { busyTimeoutMs?: number; timeoutMs?: number },
+	options: {
+		kind: IntegrityCheckKind;
+		busyTimeoutMs?: number;
+		timeoutMs?: number;
+	},
 ): Promise<{ ok: true } | { ok: false; error: string }> {
 	let worker: Worker;
 	if (EMBEDDED_INTEGRITY_CHECK_WORKER_CODE) {
@@ -47,7 +57,7 @@ export async function runIntegrityCheckInWorker(
 		);
 	}
 
-	const timeoutMs = resolveTimeoutMs(options?.timeoutMs);
+	const timeoutMs = resolveTimeoutMs(options.timeoutMs);
 	let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
 
 	try {
@@ -68,7 +78,8 @@ export async function runIntegrityCheckInWorker(
 			}, timeoutMs);
 			worker.postMessage({
 				dbPath,
-				busyTimeoutMs: options?.busyTimeoutMs ?? 10_000,
+				busyTimeoutMs: options.busyTimeoutMs ?? 10_000,
+				kind: options.kind,
 			});
 		});
 		return result;

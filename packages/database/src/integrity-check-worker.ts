@@ -1,38 +1,66 @@
 import { Database } from "bun:sqlite";
 
 /**
- * Dedicated worker for running the full integrity check on the SQLite file
- * out-of-band. `PRAGMA integrity_check` on a multi-GB DB can take tens of
- * seconds and `bun:sqlite` is synchronous (blocks the JS event loop), so
- * running it on the main thread would freeze the proxy for that duration.
+ * Dedicated worker for running integrity checks against the SQLite file
+ * out-of-band. `bun:sqlite` is synchronous, so any pragma that scans the
+ * whole DB blocks the JS event loop for its full duration. On a multi-GB
+ * DB even `PRAGMA quick_check` takes tens of seconds, which would freeze
+ * the proxy (no incoming connections accepted, no streaming writes
+ * flushed, downstream sockets reset).
  *
- * The worker opens its own `bun:sqlite` `Database` against the same file —
- * SQLite's WAL mode supports concurrent readers without conflict — runs the
- * pragmas, and posts the combined result back.
+ * The worker opens its own `bun:sqlite` `Database` against the same file
+ * with `readonly: true` — SQLite's WAL mode supports concurrent readers
+ * alongside the main-thread writer without lock contention — runs the
+ * requested pragmas, and posts the combined result back.
  *
- * Combines `PRAGMA integrity_check` and `PRAGMA foreign_key_check`:
- * `integrity_check` covers page structure, B-tree consistency, index/table
- * cross-checks, UNIQUE/CHECK/NOT NULL, freelist — but does NOT check
- * foreign keys (per SQLite docs). `foreign_key_check` returns one row per
- * violation. Together they reproduce the safety net the startup check used
- * to provide.
+ * Two kinds:
+ *  - `"quick"`: `PRAGMA quick_check` only. Catches page-structure /
+ *    freelist issues fast; runs every few hours.
+ *  - `"full"`: `PRAGMA integrity_check` + `PRAGMA foreign_key_check`.
+ *    `integrity_check` covers B-tree consistency, index/table
+ *    cross-checks, UNIQUE/CHECK/NOT NULL, freelist — but does NOT check
+ *    foreign keys (per SQLite docs). `foreign_key_check` returns one row
+ *    per violation. Together they reproduce the safety net the startup
+ *    check used to provide. Runs daily.
  */
+
+export type IntegrityCheckKind = "quick" | "full";
 
 export type IntegrityCheckRequest = {
 	dbPath: string;
 	busyTimeoutMs: number;
+	kind: IntegrityCheckKind;
 };
 
 export type IntegrityCheckResult = { ok: true } | { ok: false; error: string };
 
 self.onmessage = (event: MessageEvent<IntegrityCheckRequest>) => {
-	const { dbPath, busyTimeoutMs } = event.data;
+	const { dbPath, busyTimeoutMs, kind } = event.data;
 	let db: Database | undefined;
 	try {
 		db = new Database(dbPath, { readonly: true });
 		db.exec(
 			`PRAGMA busy_timeout = ${Math.max(0, Math.trunc(Number(busyTimeoutMs) || 10000))}`,
 		);
+
+		if (kind === "quick") {
+			// quick_check returns a single row: "ok" or a problem description.
+			const row = db.query("PRAGMA quick_check").get() as {
+				quick_check: string;
+			};
+			const msg = row.quick_check;
+			db.close();
+			db = undefined;
+			if (msg === "ok") {
+				self.postMessage({ ok: true } satisfies IntegrityCheckResult);
+			} else {
+				self.postMessage({
+					ok: false,
+					error: msg,
+				} satisfies IntegrityCheckResult);
+			}
+			return;
+		}
 
 		// integrity_check returns one row per problem, or a single "ok" row.
 		const integrityRows = db.query("PRAGMA integrity_check").all() as Array<{
