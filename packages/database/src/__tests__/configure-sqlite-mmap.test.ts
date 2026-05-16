@@ -78,8 +78,10 @@ describe("configureSqlite: mmap_size handling", () => {
 		// bun:sqlite-defined and changes between releases) — only that we
 		// didn't override it to 0 by mistake.
 		const dbPath = path.join(tmpDir, "undef.db");
-		// `Object.assign` so we can pass through an undefined key without TS
-		// silently substituting the default.
+		// Pass `{ mmapSize: undefined }` explicitly. The DatabaseOperations
+		// constructor spreads this over its defaults (`mmapSize: 0`); a
+		// spread of an `undefined` value still overwrites the default, which
+		// is the "no preference" path we want to exercise here. (Greptile #231)
 		const dbOps = new DatabaseOperations(dbPath, { mmapSize: undefined });
 		try {
 			const { mmap_size } = dbOps
