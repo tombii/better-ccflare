@@ -331,8 +331,11 @@ export function computePoolUsage(
 	}
 
 	const resetCandidates = [...contributing, ...exhausted].filter(
-		(c): (PoolUsageContribution | PoolUsageExclusion) & { resetMs: number } =>
-			c.resetMs != null && c.resetMs > now,
+		(
+			c,
+		): c is (PoolUsageContribution | PoolUsageExclusion) & {
+			resetMs: number;
+		} => c.resetMs != null && c.resetMs > now,
 	);
 	const earliestResetMs =
 		resetCandidates.length === 0
