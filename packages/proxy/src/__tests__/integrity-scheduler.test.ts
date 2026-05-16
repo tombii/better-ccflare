@@ -7,9 +7,40 @@
  * / recordIntegrityResult without touching a real database. Timers run on a
  * very long interval so the periodic ticks don't fire during the test —
  * we exercise the per-check coroutines via the on-demand entry point.
+ *
+ * `runIntegrityCheckInWorker` is mocked via `mock.module` so we can verify
+ * routing without spawning real `bun:sqlite` workers. Tests with
+ * `dbPath: undefined` exercise the PG/fallback branch (no worker); tests
+ * with `dbPath: "/tmp/anything"` exercise the worker branch.
  */
-import { afterEach, describe, expect, it, mock } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import type { DatabaseOperations } from "@better-ccflare/database";
+
+// ---------------------------------------------------------------------------
+// Module mock — must be declared before importing the scheduler so that
+// bun's module resolution picks up the mock when it resolves
+// @better-ccflare/database. The scheduler imports `runIntegrityCheckInWorker`
+// as a value (only thing we need to fake); `DatabaseOperations` is a
+// type-only import and is erased at runtime, so it doesn't need a stub.
+// ---------------------------------------------------------------------------
+
+type WorkerResult = { ok: true } | { ok: false; error: string };
+
+let workerResultByKind: { quick: WorkerResult; full: WorkerResult } = {
+	quick: { ok: true },
+	full: { ok: true },
+};
+
+const mockRunIntegrityCheckInWorker = mock(
+	async (
+		_dbPath: string,
+		options: { kind: "quick" | "full" },
+	): Promise<WorkerResult> => workerResultByKind[options.kind],
+);
+
+mock.module("@better-ccflare/database", () => ({
+	runIntegrityCheckInWorker: mockRunIntegrityCheckInWorker,
+}));
 
 import {
 	runIntegrityCheckOnDemand,
@@ -56,6 +87,11 @@ function makeDbOps(opts: MockDbOpsOptions = {}): DatabaseOperations {
 		getResolvedDbPath,
 	} as unknown as DatabaseOperations;
 }
+
+beforeEach(() => {
+	mockRunIntegrityCheckInWorker.mockClear();
+	workerResultByKind = { quick: { ok: true }, full: { ok: true } };
+});
 
 describe("startIntegrityScheduler", () => {
 	afterEach(() => {
@@ -178,6 +214,64 @@ describe("runIntegrityCheckOnDemand", () => {
 		if (out.ok) expect(out.result).toBe("ok");
 		// Should NOT have tried to spawn a worker — it has no SQLite file
 		expect(dbOps.runFullIntegrityCheck).toHaveBeenCalled();
+		expect(mockRunIntegrityCheckInWorker).not.toHaveBeenCalled();
+	});
+
+	it("quick routes through the worker when a SQLite path is resolvable", async () => {
+		// Regression: the quick check used to run on the main thread, which
+		// froze the proxy event loop for ~30 s on a multi-GiB DB (bun:sqlite
+		// is synchronous), resetting downstream sockets. It now goes through
+		// the same worker as the full check.
+		const dbOps = makeDbOps({ dbPath: "/tmp/test.db" });
+		workerResultByKind.quick = { ok: true };
+		const out = await runIntegrityCheckOnDemand(dbOps, "quick");
+		expect(out.ok).toBe(true);
+		if (out.ok) expect(out.result).toBe("ok");
+		expect(mockRunIntegrityCheckInWorker).toHaveBeenCalledTimes(1);
+		const [calledPath, calledOpts] =
+			mockRunIntegrityCheckInWorker.mock.calls[0];
+		expect(calledPath).toBe("/tmp/test.db");
+		expect(calledOpts).toEqual({ kind: "quick" });
+		// Critical: the synchronous main-thread fallback MUST NOT have been
+		// invoked when a SQLite path exists.
+		expect(dbOps.runQuickIntegrityCheck).not.toHaveBeenCalled();
+	});
+
+	it("quick worker corrupt result is recorded with the worker's error message", async () => {
+		const dbOps = makeDbOps({ dbPath: "/tmp/test.db" });
+		workerResultByKind.quick = { ok: false, error: "*** in database main" };
+		const out = await runIntegrityCheckOnDemand(dbOps, "quick");
+		expect(out.ok).toBe(true);
+		if (out.ok) {
+			expect(out.result).toBe("corrupt");
+			expect(out.error).toBe("*** in database main");
+		}
+		expect(dbOps.recordIntegrityResult).toHaveBeenCalledWith(
+			"quick",
+			"corrupt",
+			"*** in database main",
+		);
+	});
+
+	it("quick falls back to direct call when no SQLite path (e.g. PostgreSQL)", async () => {
+		const dbOps = makeDbOps({ dbPath: undefined, quickResult: "ok" });
+		const out = await runIntegrityCheckOnDemand(dbOps, "quick");
+		expect(out.ok).toBe(true);
+		if (out.ok) expect(out.result).toBe("ok");
+		expect(dbOps.runQuickIntegrityCheck).toHaveBeenCalled();
+		expect(mockRunIntegrityCheckInWorker).not.toHaveBeenCalled();
+	});
+
+	it("full routes through the worker when a SQLite path is resolvable", async () => {
+		const dbOps = makeDbOps({ dbPath: "/tmp/test.db" });
+		workerResultByKind.full = { ok: true };
+		const out = await runIntegrityCheckOnDemand(dbOps, "full");
+		expect(out.ok).toBe(true);
+		if (out.ok) expect(out.result).toBe("ok");
+		expect(mockRunIntegrityCheckInWorker).toHaveBeenCalledTimes(1);
+		const [, calledOpts] = mockRunIntegrityCheckInWorker.mock.calls[0];
+		expect(calledOpts).toEqual({ kind: "full" });
+		expect(dbOps.runFullIntegrityCheck).not.toHaveBeenCalled();
 	});
 
 	it("a quick on-demand check followed by a full corrupt produces sticky-corrupt status", async () => {

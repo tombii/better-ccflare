@@ -7,15 +7,23 @@ import { Logger } from "@better-ccflare/logger";
  * Periodic integrity scheduler. Two probes run on independent timers:
  *
  *  - **quick** (`PRAGMA quick_check`) every `CCFLARE_INTEGRITY_CHECK_INTERVAL`
- *    hours (default 6). Fast enough to run on the main thread; catches
- *    page-structure corruption and most freelist issues.
+ *    hours (default 6). Catches page-structure corruption and most
+ *    freelist issues.
  *  - **full** (`PRAGMA integrity_check` + `PRAGMA foreign_key_check`) every
- *    `CCFLARE_FULL_INTEGRITY_CHECK_INTERVAL` hours (default 24). On
- *    multi-GB databases this takes tens of seconds, so it runs in a
- *    dedicated `bun:sqlite` worker (see `integrity-check-worker.ts`) so the
- *    proxy event loop isn't blocked. Catches the silent-wrong-results class
- *    that `quick_check` misses (index/table cross-checks, UNIQUE/CHECK,
- *    foreign-key violations).
+ *    `CCFLARE_FULL_INTEGRITY_CHECK_INTERVAL` hours (default 24). Catches
+ *    the silent-wrong-results class that `quick_check` misses (index/table
+ *    cross-checks, UNIQUE/CHECK, foreign-key violations).
+ *
+ * Both probes run in a dedicated `bun:sqlite` worker (see
+ * `integrity-check-worker.ts`) when a SQLite path is available. `bun:sqlite`
+ * is synchronous, so even `PRAGMA quick_check` on a multi-GB DB blocks the
+ * JS event loop for tens of seconds (~30 s observed on a 7.6 GiB DB),
+ * during which the proxy can't accept connections or flush in-flight
+ * streaming responses — downstream sockets get reset and clients see
+ * "socket connection was closed unexpectedly". For PostgreSQL or when no
+ * SQLite path is resolvable, the probe falls back to a direct
+ * `DatabaseOperations` call (lightweight on PG; this branch only exists for
+ * the non-SQLite case).
  *
  * Mutex: only one probe runs at a time. If a probe is in flight, the next
  * tick logs and skips rather than queueing — checks are idempotent reads,
@@ -95,22 +103,15 @@ export function startIntegrityScheduler(
 			logger.debug("Skipping quick check — another check is already running");
 			return;
 		}
-		try {
-			logger.debug("Running quick integrity check...");
-			const result = await dbOps.runQuickIntegrityCheck();
-			if (result === "ok") {
-				dbOps.recordIntegrityResult("quick", "ok");
-				logger.debug("Quick integrity check passed");
-			} else {
-				dbOps.recordIntegrityResult("quick", "corrupt", result);
-				logger.error(`Quick integrity check FAILED: ${result}`);
-				logger.error(
-					"Database corruption detected. Run `bun run cli --doctor` for details.",
-				);
-			}
-		} catch (error) {
-			logger.error(`Quick integrity check error: ${error}`);
-			dbOps.recordIntegrityResult("quick", "corrupt", String(error));
+		logger.debug("Running quick integrity check...");
+		const { result, error } = await runCheckLocked(dbOps, "quick");
+		if (result === "ok") {
+			logger.debug("Quick integrity check passed");
+		} else {
+			logger.error(`Quick integrity check FAILED: ${error}`);
+			logger.error(
+				"Database corruption detected. Run `bun run cli --doctor` for details.",
+			);
 		}
 	};
 
@@ -120,11 +121,7 @@ export function startIntegrityScheduler(
 			return;
 		}
 		logger.info("Running full integrity check...");
-		// Delegate to runFullCheckLocked so the scheduled and on-demand paths
-		// share one implementation. The helper handles dbPath/worker branching,
-		// catches its own errors, and releases the mutex via
-		// recordIntegrityResult — leaving us just the logging.
-		const { result, error } = await runFullCheckLocked(dbOps);
+		const { result, error } = await runCheckLocked(dbOps, "full");
 		if (result === "ok") {
 			logger.info("Full integrity check passed");
 		} else {
@@ -164,30 +161,40 @@ export function startIntegrityScheduler(
 }
 
 /**
- * Inner full-check coroutine, called once the caller has already claimed
- * the mutex via `markIntegrityCheckRunning("full")`. Records the result
- * and (implicitly) releases the mutex via `recordIntegrityResult`.
+ * Run a check (`quick` or `full`) once the caller has already claimed the
+ * mutex via `markIntegrityCheckRunning(kind)`. Routes through the
+ * `integrity-check-worker` when a SQLite path is resolvable so the
+ * (synchronous) `bun:sqlite` pragma doesn't freeze the proxy event loop;
+ * falls back to `DatabaseOperations.run{Quick,Full}IntegrityCheck` for the
+ * non-SQLite case (PostgreSQL, or any backend without a file path —
+ * lightweight there, so blocking is fine).
+ *
+ * Records the result and (implicitly) releases the mutex via
+ * `recordIntegrityResult`.
  */
-async function runFullCheckLocked(dbOps: DatabaseOperations): Promise<{
-	result: "ok" | "corrupt";
-	error: string | null;
-}> {
+async function runCheckLocked(
+	dbOps: DatabaseOperations,
+	kind: "quick" | "full",
+): Promise<{ result: "ok" | "corrupt"; error: string | null }> {
 	try {
 		const dbPath = dbOps.getResolvedDbPath();
 		if (!dbPath) {
-			const out = await dbOps.runFullIntegrityCheck();
+			const out =
+				kind === "quick"
+					? await dbOps.runQuickIntegrityCheck()
+					: await dbOps.runFullIntegrityCheck();
 			const result = out === "ok" ? "ok" : "corrupt";
 			dbOps.recordIntegrityResult(
-				"full",
+				kind,
 				result,
 				result === "corrupt" ? out : null,
 			);
 			return { result, error: result === "corrupt" ? out : null };
 		}
-		const workerResult = await runIntegrityCheckInWorker(dbPath);
+		const workerResult = await runIntegrityCheckInWorker(dbPath, { kind });
 		const result = workerResult.ok ? "ok" : "corrupt";
 		dbOps.recordIntegrityResult(
-			"full",
+			kind,
 			result,
 			workerResult.ok ? null : workerResult.error,
 		);
@@ -197,7 +204,7 @@ async function runFullCheckLocked(dbOps: DatabaseOperations): Promise<{
 		};
 	} catch (error) {
 		const msg = String(error);
-		dbOps.recordIntegrityResult("full", "corrupt", msg);
+		dbOps.recordIntegrityResult(kind, "corrupt", msg);
 		return { result: "corrupt", error: msg };
 	}
 }
@@ -207,11 +214,11 @@ async function runFullCheckLocked(dbOps: DatabaseOperations): Promise<{
  * `POST /api/storage/integrity/check` endpoint. Returns
  * `{ ok: false, reason: "already-running" }` if the mutex is held.
  *
- * The full check is awaited end-to-end here, so this call can take tens
- * of seconds (or up to the worker timeout — 10 min by default). For HTTP
- * handlers that sit behind a reverse proxy with a short read_timeout,
- * use {@link startFullIntegrityCheckBackground} for the full kind to
- * return 202 immediately.
+ * Both kinds are awaited end-to-end here. The full check can take up to
+ * the worker timeout (10 min by default). For HTTP handlers that sit
+ * behind a reverse proxy with a short read_timeout, use
+ * {@link startFullIntegrityCheckBackground} for the full kind to return
+ * 202 immediately.
  */
 export async function runIntegrityCheckOnDemand(
 	dbOps: DatabaseOperations,
@@ -223,23 +230,8 @@ export async function runIntegrityCheckOnDemand(
 	if (!dbOps.markIntegrityCheckRunning(kind)) {
 		return { ok: false, reason: "already-running" };
 	}
-	try {
-		if (kind === "quick") {
-			const out = await dbOps.runQuickIntegrityCheck();
-			const result = out === "ok" ? "ok" : "corrupt";
-			dbOps.recordIntegrityResult(
-				"quick",
-				result,
-				result === "corrupt" ? out : null,
-			);
-			return { ok: true, result, error: result === "corrupt" ? out : null };
-		}
-		const { result, error } = await runFullCheckLocked(dbOps);
-		return { ok: true, result, error };
-	} catch (error) {
-		dbOps.recordIntegrityResult(kind, "corrupt", String(error));
-		return { ok: true, result: "corrupt", error: String(error) };
-	}
+	const { result, error } = await runCheckLocked(dbOps, kind);
+	return { ok: true, result, error };
 }
 
 /**
@@ -267,8 +259,8 @@ export function startFullIntegrityCheckBackground(
 	if (!dbOps.markIntegrityCheckRunning("full")) {
 		return { ok: false, reason: "already-running" };
 	}
-	// Fire-and-forget. `runFullCheckLocked` catches its own errors and
+	// Fire-and-forget. `runCheckLocked` catches its own errors and
 	// always calls `recordIntegrityResult` to release the mutex.
-	void runFullCheckLocked(dbOps);
+	void runCheckLocked(dbOps, "full");
 	return { ok: true };
 }
