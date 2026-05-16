@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { Logger, LogLevel } from "./index";
 
 describe("Logger env LOG_LEVEL handling", () => {
@@ -35,5 +35,28 @@ describe("Logger env LOG_LEVEL handling", () => {
 	it("ignores unknown LOG_LEVEL values and falls back to constructor default", () => {
 		process.env.LOG_LEVEL = "BANANA";
 		expect(new Logger("", LogLevel.WARN).getLevel()).toBe(LogLevel.WARN);
+	});
+
+	it("emits debug() output to console when LOG_LEVEL=DEBUG (silentConsole side-effect)", () => {
+		process.env.LOG_LEVEL = "DEBUG";
+		const spy = spyOn(console, "log").mockImplementation(() => {});
+		try {
+			new Logger("Test").debug("hello");
+			expect(spy).toHaveBeenCalledTimes(1);
+			expect(String(spy.mock.calls[0][0])).toContain("DEBUG");
+			expect(String(spy.mock.calls[0][0])).toContain("hello");
+		} finally {
+			spy.mockRestore();
+		}
+	});
+
+	it("suppresses debug() console output by default (LOG_LEVEL unset)", () => {
+		const spy = spyOn(console, "log").mockImplementation(() => {});
+		try {
+			new Logger("Test").debug("hello");
+			expect(spy).not.toHaveBeenCalled();
+		} finally {
+			spy.mockRestore();
+		}
 	});
 });
