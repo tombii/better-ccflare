@@ -18,6 +18,7 @@ tsconfig.tsbuildinfo
 packages/proxy/src/inline-worker.ts
 packages/proxy/src/embedded-tiktoken-wasm.ts
 packages/database/src/inline-vacuum-worker.ts
+packages/database/src/inline-incremental-vacuum-worker.ts
 CLAUDE.md
 AGENTS.md
 # Disallow .sh files except in .github/scripts/

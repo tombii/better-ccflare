@@ -600,6 +600,39 @@ export default async function startServer(options?: {
 	DatabaseFactory.initialize(undefined, runtime);
 	const dbOps = await DatabaseFactory.getInstanceAsync();
 
+	// One-time migration: promote pre-existing DBs from auto_vacuum=NONE to
+	// INCREMENTAL. Fresh DBs created since ensureSchema() started issuing
+	// `PRAGMA auto_vacuum = INCREMENTAL` are already in mode 2 and this is a
+	// fast no-op. Existing DBs upgraded into this build run a full VACUUM
+	// here — minutes on a multi-GB file. Done BEFORE the HTTP listener binds
+	// so the proxy never sees a stalled writer slot.
+	if (dbOps.isSQLite) {
+		const startupLog = new Logger("Startup");
+		try {
+			const result = dbOps.bootstrapAutoVacuum();
+			if (result.migrated) {
+				startupLog.info(
+					`One-time auto_vacuum migration: mode ${result.modeBefore} → ${result.modeAfter} ` +
+						`in ${result.durationMs}ms. Future free-page reclamation runs incrementally via the ` +
+						`hourly worker — no more blocking VACUUM.`,
+				);
+				if (result.modeAfter !== 2) {
+					startupLog.error(
+						`auto_vacuum still ${result.modeAfter} after migration VACUUM — ` +
+							`incremental reclamation will be a no-op. Investigate disk space and DB integrity.`,
+					);
+				}
+			}
+		} catch (err) {
+			startupLog.error(
+				`Bootstrap auto_vacuum migration failed: ${err instanceof Error ? err.message : String(err)}. ` +
+					`Free pages will not be reclaimed until this is resolved. ` +
+					`Common causes: disk full (VACUUM needs ~2× DB size free), DB corruption.`,
+			);
+			throw err;
+		}
+	}
+
 	// Run integrity check if database was initialized in fast mode (SQLite only)
 	if (dbOps.isSQLite) {
 		dbOps.runIntegrityCheck();
@@ -700,9 +733,17 @@ export default async function startServer(options?: {
 				log.info(
 					`Periodic cleanup: removed ${removedRequests} requests, ${removedPayloads} payloads in ${Date.now() - startTime}ms`,
 				);
-				// Reclaim freed SQLite pages without a full blocking VACUUM
-				// Increased from 50000 to 200000 pages (~800 MB) for more aggressive cleanup
-				dbOps.incrementalVacuum(200000);
+				// Reclaim a bounded chunk of freed pages. 8000 pages × 4 KiB = ~32 MiB
+				// per tick, off-thread via the incremental-vacuum worker. Small N
+				// keeps the writer-slot hold sub-100ms on local SSD so concurrent
+				// main-thread writes (rate-limit updates, OAuth refresh, post-
+				// processor inserts) don't pile up on busy_timeout. Pre-fix this
+				// path passed 200000 and silently fell back to a full main-thread
+				// VACUUM when auto_vacuum=NONE — see incrementalVacuum() in
+				// packages/database/src/database-operations.ts.
+				dbOps.incrementalVacuum(8000).catch((err) => {
+					log.error(`Incremental vacuum error: ${err}`);
+				});
 			}
 		} catch (err) {
 			log.error(`Periodic data retention cleanup error: ${err}`);

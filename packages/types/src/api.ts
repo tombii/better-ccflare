@@ -50,19 +50,3 @@ export interface CleanupResponse {
 	dbSizeBytes: number;
 	tableRowCounts: Array<{ name: string; rowCount: number; dataBytes?: number }>;
 }
-
-export interface CompactResponse {
-	ok: boolean;
-	/** Number of WAL frames still held by active readers at checkpoint time (0 = fully checkpointed) */
-	walBusy?: number;
-	/** Total WAL frames at checkpoint time */
-	walLog?: number;
-	/** WAL frames successfully written back to main DB */
-	walCheckpointed?: number;
-	/** Whether VACUUM ran successfully */
-	vacuumed?: boolean;
-	/** Number of busy readers during the final TRUNCATE checkpoint (0 = WAL fully zeroed) */
-	walTruncateBusy?: number;
-	/** Error message if compaction failed */
-	error?: string;
-}

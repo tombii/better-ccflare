@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import {
 	useCleanupNow,
-	useCompactDb,
 	useRetention,
 	useSetRetention,
 } from "../../hooks/queries";
@@ -20,7 +19,6 @@ export function DataRetentionCard() {
 	const { data, isLoading } = useRetention();
 	const setRetention = useSetRetention();
 	const cleanupNow = useCleanupNow();
-	const compactDb = useCompactDb();
 	const [payloadDays, setPayloadDays] = useState<number>(
 		data?.payloadDays ?? 3,
 	);
@@ -129,14 +127,6 @@ export function DataRetentionCard() {
 					>
 						{cleanupNow.isPending ? "Cleaning up…" : "Clean up now"}
 					</Button>
-					<Button
-						variant="outline"
-						size="sm"
-						onClick={() => compactDb.mutate()}
-						disabled={compactDb.isPending}
-					>
-						{compactDb.isPending ? "Compacting…" : "Compact database"}
-					</Button>
 				</div>
 
 				{cleanupNow.isError && (
@@ -193,25 +183,6 @@ export function DataRetentionCard() {
 							</details>
 						)}
 					</div>
-				)}
-
-				{compactDb.isError && (
-					<p className="text-xs text-destructive">
-						Operation timed out — for large databases this may take several
-						minutes. Check server logs.
-					</p>
-				)}
-
-				{compactDb.isSuccess && !compactDb.data?.ok && (
-					<p className="text-xs text-destructive">
-						{compactDb.data?.error ?? "Compaction failed — check server logs."}
-					</p>
-				)}
-
-				{compactDb.isSuccess && compactDb.data?.ok && (
-					<p className="text-xs text-muted-foreground">
-						Database compacted. File size should reduce on disk.
-					</p>
 				)}
 			</CardContent>
 		</Card>
