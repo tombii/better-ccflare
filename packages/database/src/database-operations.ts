@@ -17,6 +17,7 @@ import type {
 	StrategyStore,
 } from "@better-ccflare/types";
 import { BunSqlAdapter } from "./adapters/bun-sql-adapter";
+import { EMBEDDED_INCREMENTAL_VACUUM_WORKER_CODE } from "./inline-incremental-vacuum-worker";
 import { EMBEDDED_VACUUM_WORKER_CODE } from "./inline-vacuum-worker";
 import { ensureSchema, runMigrations } from "./migrations";
 import { ensureSchemaPg, runMigrationsPg } from "./migrations-pg";
@@ -74,6 +75,16 @@ export interface DatabaseRetryConfig {
  */
 function configureSqlite(db: Database, config: DatabaseConfig): void {
 	try {
+		// MUST be the first write-affecting PRAGMA. SQLite's auto_vacuum
+		// mode is locked in the DB header at first-write time. Anything that
+		// causes pages to be allocated (notably `PRAGMA journal_mode = WAL`
+		// below) BEFORE this call would leave a fresh DB stuck at
+		// auto_vacuum=NONE. For DBs created prior to this change the PRAGMA
+		// is a no-op until `bootstrapAutoVacuum()` runs a one-shot VACUUM at
+		// server startup — see `runBootstrapAutoVacuum` in
+		// apps/server/src/server.ts.
+		db.exec("PRAGMA auto_vacuum = INCREMENTAL");
+
 		// Enable WAL mode for better concurrency (with error handling)
 		if (config.walMode !== false) {
 			try {
@@ -1060,6 +1071,79 @@ OAuth tokens will need to be re-authenticated.
 		}
 	}
 
+	/**
+	 * One-time migration: promote the DB from auto_vacuum=NONE to INCREMENTAL.
+	 *
+	 * Fresh DBs are born in INCREMENTAL mode via `ensureSchema()`'s leading
+	 * `PRAGMA auto_vacuum = INCREMENTAL`. Existing DBs created before that
+	 * line was added show `PRAGMA auto_vacuum = 0` in their header — the
+	 * PRAGMA from `ensureSchema()` has no effect on a non-empty DB until the
+	 * next VACUUM rewrites every page. This method does that VACUUM exactly
+	 * once, blocking the caller.
+	 *
+	 * **MUST be called before HTTP binds.** VACUUM is a write transaction
+	 * that holds SQLite's single writer slot for the entire rewrite — on a
+	 * 15 GB DB on local SSD this can take many minutes. Called from
+	 * `apps/server/src/server.ts` startup so the proxy never observes a
+	 * blocked writer slot.
+	 *
+	 * Returns `{ migrated: false }` if the DB is already in INCREMENTAL mode
+	 * (the steady-state outcome for fresh installs and post-upgrade restarts).
+	 *
+	 * Throws if VACUUM fails (e.g. insufficient disk space — VACUUM needs
+	 * roughly 2× the DB size in free space transiently). Surfacing the
+	 * failure is the right behavior; the proxy would otherwise start in a
+	 * state where periodic incremental reclamation can never run.
+	 */
+	bootstrapAutoVacuum(): {
+		migrated: boolean;
+		modeBefore: number;
+		modeAfter: number;
+		durationMs: number;
+	} {
+		if (!this.sqliteDb) {
+			return {
+				migrated: false,
+				modeBefore: 0,
+				modeAfter: 0,
+				durationMs: 0,
+			};
+		}
+
+		const { auto_vacuum: modeBefore } = this.sqliteDb
+			.query("PRAGMA auto_vacuum")
+			.get() as { auto_vacuum: number };
+
+		if (modeBefore === 2) {
+			return {
+				migrated: false,
+				modeBefore,
+				modeAfter: modeBefore,
+				durationMs: 0,
+			};
+		}
+
+		const start = Date.now();
+		// `ensureSchema()` already ran this PRAGMA, but it's idempotent and a
+		// freshly-opened handle may not have absorbed the setting from a prior
+		// session. Cheap to re-issue, and removes a "spooky action at a
+		// distance" failure mode where the next VACUUM doesn't flip the mode
+		// because the PRAGMA wasn't actually set on this connection.
+		this.sqliteDb.exec("PRAGMA auto_vacuum = INCREMENTAL");
+		this.sqliteDb.exec("VACUUM");
+
+		const { auto_vacuum: modeAfter } = this.sqliteDb
+			.query("PRAGMA auto_vacuum")
+			.get() as { auto_vacuum: number };
+
+		return {
+			migrated: true,
+			modeBefore,
+			modeAfter,
+			durationMs: Date.now() - start,
+		};
+	}
+
 	/** Compact and reclaim disk space (SQLite only).
 	 *
 	 * In WAL mode the sequence is:
@@ -1157,23 +1241,71 @@ OAuth tokens will need to be re-authenticated.
 		}
 	}
 
-	/** Incremental vacuum - reclaims space without blocking (SQLite only) */
-	incrementalVacuum(pages?: number): void {
-		if (!this.sqliteDb) return;
+	/**
+	 * Incremental vacuum — reclaims a bounded number of free pages back to the
+	 * OS. Off-loaded to a Worker thread so the main JS event loop stays free
+	 * while the operation holds the SQLite writer slot.
+	 *
+	 * Refuses if `auto_vacuum != 2` (INCREMENTAL). The previous implementation
+	 * silently bootstrapped INCREMENTAL mode by running a full `VACUUM` inline,
+	 * which on a multi-GB DB rewrote the entire file on the main thread and
+	 * froze the proxy for many minutes. Fresh DBs are now born in INCREMENTAL
+	 * mode via `ensureSchema()`; existing DBs upgraded from auto_vacuum=NONE
+	 * are migrated at startup before HTTP binds (see runBootstrapAutoVacuum in
+	 * apps/server/src/server.ts). This method therefore expects mode 2 and
+	 * logs a one-line warning otherwise — no destructive fallback.
+	 *
+	 * Returns a Promise; callers that don't need to await can ignore it. The
+	 * inner worker handles its own errors and posts them back as
+	 * `{ok: false, error}` — we surface them via the returned promise rather
+	 * than throwing, so a transient failure doesn't crash the hourly tick.
+	 */
+	async incrementalVacuum(pages = 8000): Promise<void> {
+		if (!this.sqliteDb || !this.resolvedDbPath) return;
 
-		const autoVacuumMode = this.sqliteDb.query("PRAGMA auto_vacuum").get() as {
+		const { auto_vacuum } = this.sqliteDb.query("PRAGMA auto_vacuum").get() as {
 			auto_vacuum: number;
 		};
-
-		if (autoVacuumMode.auto_vacuum !== 2) {
-			this.sqliteDb.exec("PRAGMA auto_vacuum = INCREMENTAL");
-			this.sqliteDb.exec("VACUUM");
+		if (auto_vacuum !== 2) {
+			// One-line debug; the loud startup-time warning in
+			// runBootstrapAutoVacuum is the right place to flag this. Repeating
+			// a WARN every hour would spam logs without adding signal.
+			console.debug(
+				`[incrementalVacuum] skipped — auto_vacuum=${auto_vacuum}; expected 2 (INCREMENTAL). ` +
+					`Run startup bootstrap migration to enable incremental reclamation.`,
+			);
+			return;
 		}
 
-		if (pages) {
-			this.sqliteDb.exec(`PRAGMA incremental_vacuum(${pages})`);
+		const dbPath = this.resolvedDbPath;
+		let worker: Worker;
+		if (EMBEDDED_INCREMENTAL_VACUUM_WORKER_CODE) {
+			const workerCode = Buffer.from(
+				EMBEDDED_INCREMENTAL_VACUUM_WORKER_CODE,
+				"base64",
+			).toString("utf8");
+			const blob = new Blob([workerCode], { type: "text/javascript" });
+			worker = new Worker(URL.createObjectURL(blob), { smol: true });
 		} else {
-			this.sqliteDb.exec("PRAGMA incremental_vacuum");
+			worker = new Worker(
+				new URL("./incremental-vacuum-worker.ts", import.meta.url).href,
+			);
+		}
+
+		try {
+			const result = await new Promise<
+				{ ok: true; mode: number } | { ok: false; error: string }
+			>((resolve, reject) => {
+				worker.onmessage = (event: MessageEvent) => resolve(event.data);
+				worker.onerror = (event: ErrorEvent) =>
+					reject(new Error(event.message ?? "incremental-vacuum worker error"));
+				worker.postMessage({ dbPath, pages });
+			});
+			if (!result.ok) {
+				console.warn(`[incrementalVacuum] worker error: ${result.error}`);
+			}
+		} finally {
+			worker.terminate();
 		}
 	}
 
