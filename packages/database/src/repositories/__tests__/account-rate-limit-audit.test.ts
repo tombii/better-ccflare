@@ -42,7 +42,8 @@ function makeDb(): { db: Database; repo: AccountRepository } {
 			cross_region_mode TEXT,
 			model_fallbacks TEXT,
 			billing_type TEXT,
-			pause_reason TEXT
+			pause_reason TEXT,
+			consecutive_rate_limits INTEGER DEFAULT 0
 		)
 	`);
 
@@ -63,12 +64,13 @@ interface RawRateLimitAudit {
 	rate_limited_until: number | null;
 	rate_limited_reason: string | null;
 	rate_limited_at: number | null;
+	consecutive_rate_limits: number | null;
 }
 
 function getAudit(db: Database, id: string): RawRateLimitAudit {
 	return db
 		.query<RawRateLimitAudit, [string]>(
-			"SELECT rate_limited_until, rate_limited_reason, rate_limited_at FROM accounts WHERE id = ?",
+			"SELECT rate_limited_until, rate_limited_reason, rate_limited_at, consecutive_rate_limits FROM accounts WHERE id = ?",
 		)
 		.get(id) as RawRateLimitAudit;
 }
@@ -165,6 +167,140 @@ describe("AccountRepository — setRateLimited with reason audit (issue #178)", 
 			const row = getAudit(db, "acc-7");
 			expect(row.rate_limited_until).toBe(until2);
 			expect(row.rate_limited_reason).toBe("model_fallback_429");
+		});
+	});
+
+	describe("consecutive_rate_limits counter", () => {
+		it("returns 1 and persists counter=1 on first call", async () => {
+			insertAccount(db, "acc-counter-1");
+			const until = Date.now() + 30 * 1000;
+
+			const newCount = await repo.setRateLimited(
+				"acc-counter-1",
+				until,
+				"upstream_429_with_reset",
+			);
+
+			expect(newCount).toBe(1);
+			const row = getAudit(db, "acc-counter-1");
+			expect(row.consecutive_rate_limits).toBe(1);
+		});
+
+		it("returns 2 and persists counter=2 on second call", async () => {
+			insertAccount(db, "acc-counter-2");
+			const until = Date.now() + 30 * 1000;
+
+			const first = await repo.setRateLimited(
+				"acc-counter-2",
+				until,
+				"upstream_429_with_reset",
+			);
+			const second = await repo.setRateLimited(
+				"acc-counter-2",
+				until,
+				"upstream_429_with_reset",
+			);
+
+			expect(first).toBe(1);
+			expect(second).toBe(2);
+			const row = getAudit(db, "acc-counter-2");
+			expect(row.consecutive_rate_limits).toBe(2);
+		});
+
+		it("increments correctly across many sequential calls", async () => {
+			insertAccount(db, "acc-counter-3");
+			const until = Date.now() + 30 * 1000;
+
+			for (let i = 1; i <= 5; i++) {
+				const count = await repo.setRateLimited(
+					"acc-counter-3",
+					until,
+					"upstream_429_with_reset",
+				);
+				expect(count).toBe(i);
+			}
+
+			const row = getAudit(db, "acc-counter-3");
+			expect(row.consecutive_rate_limits).toBe(5);
+		});
+
+		it("two parallel calls result in counter=2 (atomic increment at SQL level)", async () => {
+			insertAccount(db, "acc-parallel");
+			const until = Date.now() + 30 * 1000;
+
+			const results = await Promise.all([
+				repo.setRateLimited("acc-parallel", until, "upstream_429_with_reset"),
+				repo.setRateLimited("acc-parallel", until, "upstream_429_with_reset"),
+			]);
+
+			// Counter in DB must reflect both increments — this is the critical
+			// invariant. If the UPDATE used `= 1` instead of `+1`, this would be 1.
+			const row = getAudit(db, "acc-parallel");
+			expect(row.consecutive_rate_limits).toBe(2);
+
+			// At least one of the returned values must equal the final counter,
+			// proving that callers see a real post-UPDATE snapshot. Under
+			// concurrent execution the second SELECT may observe the same value
+			// as the first if both SELECTs land after both UPDATEs, which is
+			// acceptable per the plan's "may be one tier short" caveat.
+			expect(results.length).toBe(2);
+			expect(Math.max(...results)).toBe(2);
+			expect(results.every((v) => v >= 1 && v <= 2)).toBe(true);
+		});
+	});
+
+	describe("resetConsecutiveRateLimits", () => {
+		it("zeros the counter", async () => {
+			insertAccount(db, "acc-reset-1");
+			const until = Date.now() + 30 * 1000;
+
+			await repo.setRateLimited(
+				"acc-reset-1",
+				until,
+				"upstream_429_with_reset",
+			);
+			await repo.setRateLimited(
+				"acc-reset-1",
+				until,
+				"upstream_429_with_reset",
+			);
+			expect(getAudit(db, "acc-reset-1").consecutive_rate_limits).toBe(2);
+
+			await repo.resetConsecutiveRateLimits("acc-reset-1");
+
+			expect(getAudit(db, "acc-reset-1").consecutive_rate_limits).toBe(0);
+		});
+
+		it("nulls rate_limited_at", async () => {
+			insertAccount(db, "acc-reset-2");
+			const until = Date.now() + 30 * 1000;
+
+			await repo.setRateLimited(
+				"acc-reset-2",
+				until,
+				"upstream_429_with_reset",
+			);
+			expect(getAudit(db, "acc-reset-2").rate_limited_at).not.toBeNull();
+
+			await repo.resetConsecutiveRateLimits("acc-reset-2");
+
+			expect(getAudit(db, "acc-reset-2").rate_limited_at).toBeNull();
+		});
+
+		it("does not touch rate_limited_until or rate_limited_reason", async () => {
+			insertAccount(db, "acc-reset-3");
+			const until = Date.now() + 30 * 1000;
+
+			await repo.setRateLimited(
+				"acc-reset-3",
+				until,
+				"upstream_429_with_reset",
+			);
+			await repo.resetConsecutiveRateLimits("acc-reset-3");
+
+			const row = getAudit(db, "acc-reset-3");
+			expect(row.rate_limited_until).toBe(until);
+			expect(row.rate_limited_reason).toBe("upstream_429_with_reset");
 		});
 	});
 });

@@ -21,7 +21,8 @@ export function ensureSchema(db: Database): void {
 			last_used INTEGER,
 			request_count INTEGER DEFAULT 0,
 			total_requests INTEGER DEFAULT 0,
-			priority INTEGER DEFAULT 0
+			priority INTEGER DEFAULT 0,
+			consecutive_rate_limits INTEGER NOT NULL DEFAULT 0
 		)
 	`);
 
@@ -554,6 +555,13 @@ export function runMigrations(db: Database, dbPath?: string): void {
 				"ALTER TABLE accounts ADD COLUMN rate_limited_at INTEGER",
 			).run();
 			log.info("Added rate_limited_at column to accounts table");
+		}
+
+		if (!initialAccountsColumnNames.includes("consecutive_rate_limits")) {
+			db.prepare(
+				"ALTER TABLE accounts ADD COLUMN consecutive_rate_limits INTEGER NOT NULL DEFAULT 0",
+			).run();
+			log.info("Added consecutive_rate_limits column to accounts table");
 		}
 
 		// Make refresh_token nullable (was NOT NULL, causing API-key providers to need workarounds)

@@ -56,7 +56,75 @@ export const TIME_CONSTANTS = {
 	// are unaffected by this default.
 	// Override at runtime via CCFLARE_DEFAULT_COOLDOWN_NO_RESET_MS.
 	DEFAULT_RATE_LIMIT_NO_RESET_COOLDOWN_MS: 60 * 1000, // 60s
+
+	// Adaptive rate-limit cooldown with exponential backoff.
+	// On each 429 in a consecutive streak, the cooldown grows: BASE * 2^(n-1),
+	// capped at MAX. Counter resets to 0 only after a successful response that
+	// follows a quiet period of at least RESET_STABILITY_MS since the last 429.
+	// Override at runtime via CCFLARE_RATE_LIMIT_BACKOFF_BASE_MS /
+	// CCFLARE_RATE_LIMIT_BACKOFF_MAX_MS / CCFLARE_RATE_LIMIT_RESET_STABILITY_MS.
+	RATE_LIMIT_BACKOFF_BASE_MS: 30 * 1000, // 30s: cooldown for the 1st 429 in a streak
+	RATE_LIMIT_BACKOFF_MAX_MS: 5 * 60 * 1000, // 5min: ceiling for the exponential ramp
+	RATE_LIMIT_RESET_STABILITY_MS: 5 * 60 * 1000, // 5min: healthy operation needed to reset the streak counter
 } as const;
+
+/**
+ * Compute the cooldown duration (ms) for the n-th consecutive 429 in a streak.
+ *
+ * Behavior:
+ *   - For n in [1..], returns `BASE * 2^(n-1)`, clamped to MAX.
+ *   - For n <= 0, behaves as n=1 (returns BASE).
+ *   - Reads BASE/MAX from env (`CCFLARE_RATE_LIMIT_BACKOFF_BASE_MS` /
+ *     `CCFLARE_RATE_LIMIT_BACKOFF_MAX_MS`), falling back to the
+ *     TIME_CONSTANTS defaults.
+ *   - Defends against misconfiguration: env BASE <= 0 is floored to 1000ms so
+ *     cooldowns can never collapse to zero. MAX is floored to BASE so the
+ *     ceiling can never sit below the floor.
+ *   - Caps the exponent at 30 before the bit-shift to prevent overflow at
+ *     very large n (e.g. n=100).
+ *
+ * Sequence with defaults: 30s → 60s → 120s → 240s → 300s (capped) → 300s …
+ */
+export function computeRateLimitBackoffMs(consecutiveCount: number): number {
+	// Read raw env values. We deliberately preserve 0 / negatives here (rather
+	// than treating them as "unset") so the Math.max floors below can defend
+	// against deliberate misconfiguration. Only an unset / non-numeric env
+	// falls back to the default.
+	const baseEnv = Number(process.env.CCFLARE_RATE_LIMIT_BACKOFF_BASE_MS);
+	const maxEnv = Number(process.env.CCFLARE_RATE_LIMIT_BACKOFF_MAX_MS);
+	const baseRaw = Number.isFinite(baseEnv)
+		? baseEnv
+		: TIME_CONSTANTS.RATE_LIMIT_BACKOFF_BASE_MS;
+	const maxRaw = Number.isFinite(maxEnv)
+		? maxEnv
+		: TIME_CONSTANTS.RATE_LIMIT_BACKOFF_MAX_MS;
+	// Clamp to defend against misconfiguration (env=0/negative would collapse cooldown to 0)
+	const base = Math.max(1000, baseRaw);
+	const max = Math.max(base, maxRaw);
+	const n = Math.max(1, consecutiveCount);
+	// Cap exponent before bit-shift to avoid overflow at large n
+	const exp = Math.min(n - 1, 30);
+	return Math.min(base * 2 ** exp, max);
+}
+
+/**
+ * Read the stability-reset window (ms) for the consecutive_rate_limits counter.
+ *
+ * Behavior:
+ *   - Reads `CCFLARE_RATE_LIMIT_RESET_STABILITY_MS` from env.
+ *   - Falls back to the TIME_CONSTANTS default (5 min) when unset / non-numeric
+ *     OR when the env value is <= 0 (a 0/negative value would mean the counter
+ *     resets immediately on any success, defeating the streak detection).
+ *   - Uses `Number.isFinite(raw) && raw > 0` (not `Number(env) || DEFAULT`,
+ *     because `0` is falsy in JS — same rationale as computeRateLimitBackoffMs).
+ */
+export function getRateLimitResetStabilityMs(): number {
+	const raw = Number(process.env.CCFLARE_RATE_LIMIT_RESET_STABILITY_MS);
+	// Clamp to defend against misconfiguration (env=0/negative would never reset the counter).
+	return Number.isFinite(raw) && raw > 0
+		? raw
+		: TIME_CONSTANTS.RATE_LIMIT_RESET_STABILITY_MS;
+}
 
 // Buffer sizes (in bytes unless specified)
 export const BUFFER_SIZES = {
