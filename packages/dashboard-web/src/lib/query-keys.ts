@@ -3,9 +3,9 @@ export const queryKeys = {
 	accounts: () => [...queryKeys.all, "accounts"] as const,
 	agents: () => [...queryKeys.all, "agents"] as const,
 	stats: (errorsSinceHours?: number) =>
-		errorsSinceHours === undefined
-			? ([...queryKeys.all, "stats"] as const)
-			: ([...queryKeys.all, "stats", { errorsSinceHours }] as const),
+		errorsSinceHours !== undefined
+			? ([...queryKeys.all, "stats", { errorsSinceHours }] as const)
+			: ([...queryKeys.all, "stats"] as const),
 	analytics: (
 		timeRange?: string,
 		filters?: unknown,
@@ -25,4 +25,5 @@ export const queryKeys = {
 		[...queryKeys.all, "config", "defaultAgentModel"] as const,
 	combos: () => [...queryKeys.all, "combos"] as const,
 	families: () => [...queryKeys.all, "families"] as const,
+	apiKeys: () => [...queryKeys.all, "api-keys"] as const,
 } as const;

@@ -1,6 +1,5 @@
-import { Check, Copy } from "lucide-react";
+import { AlertCircle, Check, Copy, Loader2 } from "lucide-react";
 import { type ComponentProps, useRef, useState } from "react";
-import { copyText } from "../lib/clipboard";
 import { cn } from "../lib/utils";
 import { Button } from "./ui/button";
 
@@ -10,6 +9,12 @@ interface CopyButtonProps {
 	 */
 	value?: string;
 	getValue?: () => string;
+	/**
+	 * Async value resolver. Used when the value isn't available synchronously
+	 * (e.g. when bodies need to be lazy-fetched). When set, the button shows a
+	 * spinner while resolving.
+	 */
+	getValueAsync?: () => Promise<string>;
 	/**
 	 * Forwarded props to underlying Button
 	 */
@@ -33,6 +38,7 @@ interface CopyButtonProps {
 export function CopyButton({
 	value,
 	getValue,
+	getValueAsync,
 	variant = "ghost",
 	size = "sm",
 	className,
@@ -40,22 +46,49 @@ export function CopyButton({
 	title,
 }: CopyButtonProps) {
 	const [copied, setCopied] = useState(false);
+	const [loading, setLoading] = useState(false);
+	const [errored, setErrored] = useState(false);
 	const timeoutRef = useRef<number | null>(null);
 
-	const handleCopy = () => {
-		const text = typeof getValue === "function" ? getValue() : (value ?? "");
-		if (!text) return;
+	const flashError = (err: unknown) => {
+		console.error("Copy failed", err);
+		setErrored(true);
+		if (timeoutRef.current) {
+			window.clearTimeout(timeoutRef.current);
+		}
+		timeoutRef.current = window.setTimeout(() => setErrored(false), 1500);
+	};
 
-		copyText(text)
+	const finishCopy = (text: string) => {
+		if (!text) {
+			flashError(new Error("No value to copy"));
+			return;
+		}
+
+		navigator.clipboard
+			.writeText(text)
 			.then(() => {
 				setCopied(true);
-				// Reset after 1.5s
 				if (timeoutRef.current) {
 					window.clearTimeout(timeoutRef.current);
 				}
 				timeoutRef.current = window.setTimeout(() => setCopied(false), 1500);
 			})
-			.catch((err) => console.error("Failed to copy", err));
+			.catch((err) => flashError(err));
+	};
+
+	const handleCopy = () => {
+		if (loading) return;
+		if (typeof getValueAsync === "function") {
+			setLoading(true);
+			getValueAsync()
+				.then((text) => finishCopy(text))
+				.catch((err) => flashError(err))
+				.finally(() => setLoading(false));
+			return;
+		}
+		const text = typeof getValue === "function" ? getValue() : (value ?? "");
+		finishCopy(text);
 	};
 
 	return (
@@ -65,8 +98,15 @@ export function CopyButton({
 			onClick={handleCopy}
 			title={title}
 			className={cn("relative overflow-hidden", className)}
+			disabled={loading}
 		>
-			{copied ? (
+			{loading ? (
+				<Loader2 className="h-4 w-4 animate-spin" />
+			) : errored ? (
+				<span className="animate-pulse text-destructive" title="Copy failed">
+					<AlertCircle className="h-4 w-4" />
+				</span>
+			) : copied ? (
 				<span className="animate-pulse">
 					<Check className="h-4 w-4" />
 				</span>

@@ -126,7 +126,12 @@ export function useRequestStream(limit = 200) {
 							);
 							const account = accounts?.find((a) => a.id === evt.accountId);
 
-							// Create a lightweight placeholder payload
+							// Create a lightweight placeholder payload.
+							// `bodiesOmitted: true` is required so that opening the
+							// details modal or pressing Copy-as-JSON triggers the
+							// lazy /api/requests/payload/:id fetch — without it the
+							// modal shows empty headers/body and the copy returns
+							// nulled-out bodies.
 							const placeholder: RequestPayload = {
 								id: evt.id,
 								request: { headers: {}, body: null },
@@ -144,6 +149,8 @@ export function useRequestStream(limit = 200) {
 									success: false,
 									pending: true,
 									agentUsed: evt.agentUsed || undefined,
+									rateLimited: evt.statusCode === 429,
+									bodiesOmitted: true,
 								},
 							};
 
@@ -179,7 +186,11 @@ export function useRequestStream(limit = 200) {
 						);
 						if (requestIndex >= 0) {
 							const newRequests = [...current.requests];
-							// Update meta to remove pending status
+							// Update meta to remove pending status. Preserve
+							// `bodiesOmitted: true` so consumers continue to lazy-
+							// load bodies, and refresh `rateLimited` from the final
+							// statusCode (the placeholder set it from `evt.statusCode`
+							// which is 0 until the response lands).
 							if (newRequests[requestIndex].meta) {
 								newRequests[requestIndex] = {
 									...newRequests[requestIndex],
@@ -187,6 +198,8 @@ export function useRequestStream(limit = 200) {
 										...newRequests[requestIndex].meta,
 										pending: false,
 										success: evt.payload.success,
+										rateLimited: evt.payload.rateLimited,
+										bodiesOmitted: true,
 									},
 								};
 							}
