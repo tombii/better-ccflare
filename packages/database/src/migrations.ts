@@ -7,6 +7,27 @@ import { addPerformanceIndexes } from "./performance-indexes";
 const log = new Logger("DatabaseMigrations");
 
 export function ensureSchema(db: Database): void {
+	// Apply auto_vacuum = INCREMENTAL before any tables exist so fresh DBs are
+	// born in incremental-vacuum mode. SQLite stores this in the DB header and
+	// the mode can only change when no tables exist OR by a full VACUUM — once
+	// committed, the periodic `PRAGMA incremental_vacuum(N)` worker can reclaim
+	// free pages a chunk at a time without ever needing a multi-minute
+	// blocking VACUUM. Existing DBs upgraded from auto_vacuum=NONE (mode 0)
+	// take the one-shot migration VACUUM at server startup; this PRAGMA is a
+	// no-op for them until that migration runs (see bootstrapAutoVacuum in
+	// apps/server/src/server.ts).
+	//
+	// Gated on current mode === 0 to preserve `auto_vacuum=FULL` (mode 1) as
+	// an explicit operator choice — SQLite quietly allows mode 1 → mode 2
+	// transitions without VACUUM, and issuing the PRAGMA unconditionally
+	// would silently rewrite that policy. (Greptile #230)
+	const currentAutoVacuum = (
+		db.query("PRAGMA auto_vacuum").get() as { auto_vacuum: number }
+	).auto_vacuum;
+	if (currentAutoVacuum === 0) {
+		db.exec("PRAGMA auto_vacuum = INCREMENTAL");
+	}
+
 	// Create accounts table
 	db.run(`
 		CREATE TABLE IF NOT EXISTS accounts (

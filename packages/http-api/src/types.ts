@@ -5,7 +5,6 @@ export type {
 	AnalyticsResponse,
 	APIContext,
 	CleanupResponse,
-	CompactResponse,
 	ConfigResponse,
 	HealthResponse,
 	IntegrityStatus,

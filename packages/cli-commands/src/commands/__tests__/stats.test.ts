@@ -27,15 +27,24 @@ function makeDbOps(result: {
 	} as unknown as import("@better-ccflare/database").DatabaseOperations;
 }
 
-function makeCompactDbOps(result: {
-	walBusy: number;
-	walLog: number;
-	walCheckpointed: number;
-	vacuumed: boolean;
-	walTruncateBusy?: number;
-	error?: string;
-}) {
+function makeCompactDbOps(
+	result: {
+		walBusy: number;
+		walLog: number;
+		walCheckpointed: number;
+		vacuumed: boolean;
+		walTruncateBusy?: number;
+		error?: string;
+	},
+	dbPath?: string,
+) {
 	return {
+		// Stub `getResolvedDbPath`; when it returns `undefined` the live-
+		// service writer-lock probe in `compactDatabase` is skipped (the
+		// probe only makes sense for SQLite mode where there's a real
+		// filesystem path to lock). Set `dbPath` to a real file to exercise
+		// the probe.
+		getResolvedDbPath: () => dbPath,
 		compact: mock(async () => result),
 	} as unknown as import("@better-ccflare/database").DatabaseOperations;
 }
@@ -90,6 +99,65 @@ describe("compactDatabase", () => {
 		expect(result.vacuumed).toBe(false);
 		expect(result.error).toBe("busy database");
 		expect(result.walBusy).toBe(1);
+	});
+
+	describe("live-service writer-lock guard", () => {
+		it("throws (and does NOT call compact) when another process holds the writer lock", async () => {
+			// Simulate the running better-ccflare server holding the DB
+			// writer lock by opening a second connection and starting a
+			// long-running write transaction. The CLI's probe should hit
+			// SQLITE_BUSY and refuse before invoking the worker-backed
+			// compact path that would otherwise hang the live server.
+			const { Database } = await import("bun:sqlite");
+			const fs = await import("node:fs");
+			const os = await import("node:os");
+			const path = await import("node:path");
+			const tmpDir = fs.mkdtempSync(
+				path.join(os.tmpdir(), "ccflare-compact-guard-"),
+			);
+			const dbPath = path.join(tmpDir, "test.db");
+			const blocker = new Database(dbPath, { create: true });
+			try {
+				blocker.exec("CREATE TABLE t (id INTEGER)");
+				blocker.exec("BEGIN IMMEDIATE");
+				try {
+					const dbOps = makeCompactDbOps(COMPACT_RESULT, dbPath);
+					await expect(compactDatabase(dbOps)).rejects.toThrow(
+						/Refusing to compact/,
+					);
+					expect(dbOps.compact).toHaveBeenCalledTimes(0);
+				} finally {
+					blocker.exec("ROLLBACK");
+				}
+			} finally {
+				blocker.close();
+				fs.rmSync(tmpDir, { recursive: true, force: true });
+			}
+		});
+
+		it("calls compact when the writer lock is free", async () => {
+			// Real DB file, nobody else holding the writer lock — probe
+			// succeeds, compact runs.
+			const { Database } = await import("bun:sqlite");
+			const fs = await import("node:fs");
+			const os = await import("node:os");
+			const path = await import("node:path");
+			const tmpDir = fs.mkdtempSync(
+				path.join(os.tmpdir(), "ccflare-compact-ok-"),
+			);
+			const dbPath = path.join(tmpDir, "test.db");
+			const initDb = new Database(dbPath, { create: true });
+			initDb.exec("CREATE TABLE t (id INTEGER)");
+			initDb.close();
+			try {
+				const dbOps = makeCompactDbOps(COMPACT_RESULT, dbPath);
+				const result = await compactDatabase(dbOps);
+				expect(dbOps.compact).toHaveBeenCalledTimes(1);
+				expect(result.vacuumed).toBe(true);
+			} finally {
+				fs.rmSync(tmpDir, { recursive: true, force: true });
+			}
+		});
 	});
 });
 

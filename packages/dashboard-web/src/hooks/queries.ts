@@ -332,12 +332,6 @@ export const useCleanupNow = () => {
 	});
 };
 
-export const useCompactDb = () => {
-	return useMutation({
-		mutationFn: () => api.compactDb(),
-	});
-};
-
 export const useCombos = () => {
 	return useQuery({
 		queryKey: queryKeys.combos(),

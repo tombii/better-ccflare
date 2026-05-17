@@ -73,10 +73,7 @@ import { createFeaturesHandler } from "./handlers/features";
 import { createHealthHandler } from "./handlers/health";
 import { createLogsStreamHandler } from "./handlers/logs";
 import { createLogsHistoryHandler } from "./handlers/logs-history";
-import {
-	createCleanupHandler,
-	createCompactHandler,
-} from "./handlers/maintenance";
+import { createCleanupHandler } from "./handlers/maintenance";
 import {
 	createAnthropicReauthCallbackHandler,
 	createAnthropicReauthInitHandler,
@@ -194,7 +191,6 @@ export class APIRouter {
 		const workspacesHandler = createWorkspacesListHandler();
 		const requestsStreamHandler = createRequestsStreamHandler();
 		const cleanupHandler = createCleanupHandler(dbOps, config);
-		const compactHandler = createCompactHandler(dbOps);
 		const systemInfoHandler = createSystemInfoHandler();
 		const versionCheckHandler = createVersionCheckHandler();
 		const featuresHandler = createFeaturesHandler();
@@ -352,7 +348,6 @@ export class APIRouter {
 			configHandlers.setUsageThrottling(req),
 		);
 		this.handlers.set("POST:/api/maintenance/cleanup", () => cleanupHandler());
-		this.handlers.set("POST:/api/maintenance/compact", () => compactHandler());
 		this.handlers.set("GET:/api/system/info", () => systemInfoHandler());
 		this.handlers.set("GET:/api/version/check", () => versionCheckHandler());
 		this.handlers.set("GET:/api/features", () => featuresHandler());
