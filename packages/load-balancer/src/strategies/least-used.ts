@@ -1,12 +1,12 @@
 import { isAccountAvailable } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
-import {
-	type Account,
-	type LoadBalancingStrategy,
-	PROVIDER_NAMES,
-	type RequestMeta,
-	type StrategyStore,
+import type {
+	Account,
+	LoadBalancingStrategy,
+	RequestMeta,
+	StrategyStore,
 } from "@better-ccflare/types";
+import { isPeekAvailable, wouldAutoUnpause } from "./peek-availability";
 
 /**
  * Window during which a freshly-picked account is deprioritized so
@@ -22,9 +22,6 @@ const RECENT_PICK_WINDOW_MS = 500;
  * utilization deltas (typically 0–95).
  */
 const RECENT_PICK_PENALTY = 100;
-
-/** 1-second buffer for clock-skew protection on rate_limit_reset comparisons. */
-const RATE_LIMIT_RESET_BUFFER_MS = 1000;
 
 /**
  * LeastUsedStrategy — picks the available account with the lowest effective
@@ -60,6 +57,34 @@ export class LeastUsedStrategy implements LoadBalancingStrategy {
 
 	initialize(store: StrategyStore): void {
 		this.store = store;
+	}
+
+	peek(accounts: Account[]): string | null {
+		const now = Date.now();
+		// Use isPeekAvailable so accounts that select() would auto-unpause on its
+		// next call (paused with safe pause_reason + auto_fallback + elapsed
+		// window) surface as candidates here. Without this, peek() flags a
+		// lower-priority account as Primary while real traffic goes to the
+		// auto-unpaused higher-priority one.
+		const available = accounts.filter((a) => isPeekAvailable(a, now));
+		if (available.length === 0) return null;
+
+		const scored = available.map((a) => {
+			const util = this.store?.getAccountUtilization?.(a.id, a.provider) ?? 0;
+			const lastPick = this.lastPickedAt.get(a.id) ?? 0;
+			const recencyPenalty =
+				now - lastPick < RECENT_PICK_WINDOW_MS ? RECENT_PICK_PENALTY : 0;
+			return { account: a, score: util + recencyPenalty };
+		});
+
+		scored.sort((a, b) => {
+			if (a.account.priority !== b.account.priority) {
+				return a.account.priority - b.account.priority;
+			}
+			return a.score - b.score;
+		});
+
+		return scored[0]?.account.id ?? null;
 	}
 
 	select(accounts: Account[], _meta: RequestMeta): Account[] {
@@ -114,45 +139,24 @@ export class LeastUsedStrategy implements LoadBalancingStrategy {
 	}
 
 	/**
-	 * Auto-unpause any account whose:
-	 *   - auto_fallback_enabled flag is set, AND
-	 *   - upstream rate_limit_reset window has elapsed, AND
-	 *   - pause_reason is one of the reasons we consider safe to auto-unpause
-	 *     ('overage' or 'rate_limit_window'; null is also treated as safe to
-	 *     match SessionStrategy's behavior on legacy rows).
+	 * Auto-unpause any account that {@link wouldAutoUnpause} reports as
+	 * eligible (auto_fallback_enabled + safe pause_reason + window elapsed).
 	 *
 	 * Mutates the in-memory account.paused flag to false on resume so the
 	 * subsequent isAccountAvailable check reflects the new state. Manual
 	 * pauses (pause_reason='manual' or 'failure_threshold') are not touched.
+	 *
+	 * Stays in sync with SessionStrategy.select() via the shared predicate —
+	 * keep changes there mirrored here.
 	 */
 	private autoUnpauseElapsedAccounts(accounts: Account[], now: number): void {
 		if (!this.store?.resumeAccount) return;
 
 		for (const account of accounts) {
-			if (!account.paused) continue;
-			if (!account.auto_fallback_enabled) continue;
-
-			// Only providers with proactive rate-limit-reset headers are eligible
-			// (matches SessionStrategy.checkForAutoFallbackAccounts).
-			const supportsWindowReset =
-				account.provider === PROVIDER_NAMES.ANTHROPIC ||
-				account.provider === PROVIDER_NAMES.CODEX ||
-				account.provider === PROVIDER_NAMES.ZAI;
-			if (!supportsWindowReset) continue;
-
-			const windowReset =
-				account.rate_limit_reset != null &&
-				account.rate_limit_reset < now - RATE_LIMIT_RESET_BUFFER_MS;
-			if (!windowReset) continue;
-
-			// Only auto-unpause for safe reasons. Match SessionStrategy:
-			// null pause_reason is treated as legacy/safe.
-			const safeReasons = [null, "overage", "rate_limit_window"];
-			const pauseReason = account.pause_reason ?? null;
-			if (!safeReasons.includes(pauseReason as string | null)) continue;
+			if (!wouldAutoUnpause(account, now)) continue;
 
 			this.log.info(
-				`Auto-unpausing ${account.name} (pause_reason=${pauseReason}) — usage window has reset`,
+				`Auto-unpausing ${account.name} (pause_reason=${account.pause_reason ?? "null"}) — usage window has reset`,
 			);
 			this.store.resumeAccount(account.id);
 			account.paused = false;
