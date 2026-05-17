@@ -371,8 +371,40 @@ export function runMigrations(db: Database, dbPath?: string): void {
 					log.debug("Database file is empty, skipping backup.");
 				} else {
 					const backupPath = `${absoluteSourcePath}.backup.${Date.now()}`;
-					fs.copyFileSync(absoluteSourcePath, backupPath);
-					log.info(`Database backup created at: ${backupPath}`);
+					// VACUUM INTO writes a defragmented copy via SQLite's pager.
+					// vs fs.copyFileSync: atomic page-by-page (no torn output mid-write
+					// across a checkpoint), produces a smaller file, and doesn't race
+					// the migration's own writes. Two-phase rename avoids leaving a
+					// half-written `.backup.<ts>` if SIGTERM hits mid-VACUUM.
+					const tempBackupPath = `${backupPath}.partial`;
+					// SQLite string literals only need single-quote doubling for
+					// escaping — backslash is not special. Embedding the path as a
+					// quoted literal is required because VACUUM INTO does not
+					// support host parameter binding for the destination path.
+					const escapedTempPath = tempBackupPath.replace(/'/g, "''");
+					try {
+						// VACUUM INTO refuses if the target exists, and a SIGTERM during
+						// a previous attempt may have left one behind. Unlink directly
+						// and swallow ENOENT (no exists+unlink TOCTOU window — a parallel
+						// cleanup between the two calls would otherwise misreport the
+						// race as a backup failure).
+						try {
+							fs.unlinkSync(tempBackupPath);
+						} catch (e) {
+							if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+						}
+						db.exec(`VACUUM INTO '${escapedTempPath}'`);
+						fs.renameSync(tempBackupPath, backupPath);
+						log.info(`Database backup created at: ${backupPath}`);
+					} catch (vacuumError) {
+						try {
+							fs.unlinkSync(tempBackupPath);
+						} catch {
+							// Best-effort cleanup; ENOENT here is the normal case
+							// (VACUUM never created the file).
+						}
+						throw vacuumError;
+					}
 				}
 			} else {
 				log.warn(
