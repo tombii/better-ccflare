@@ -42,8 +42,14 @@ export function RequestDetailsModal({
 	const effective: RequestPayload =
 		hydrated && hydrated.id === request.id ? hydrated : request;
 
+	// Hydrate when we have no request payload at all (legacy case), or when
+	// the list view handed us a body-less summary placeholder.
 	const needsHydration =
-		isOpen && !effective.error && !effective.request && failedId !== request.id;
+		isOpen &&
+		!effective.error &&
+		!effective.meta?.pending &&
+		(!effective.request || effective.meta?.bodiesOmitted === true) &&
+		failedId !== request.id;
 
 	useEffect(() => {
 		if (!needsHydration) return;
@@ -142,9 +148,6 @@ export function RequestDetailsModal({
 							)}
 							{summary?.costUsd && summary.costUsd > 0 && (
 								<Badge variant="default">{formatCost(summary.costUsd)}</Badge>
-							)}
-							{request.meta.rateLimited && (
-								<Badge variant="warning">Rate Limited</Badge>
 							)}
 						</div>
 						<div className="flex items-center gap-2">

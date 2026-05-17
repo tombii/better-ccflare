@@ -100,6 +100,7 @@ export function createRequestsSummaryHandler(db: BunSqlAdapter) {
 			apiKeyName: request.api_key_name || undefined,
 			billingType: request.billing_type || undefined,
 			comboName: request.combo_name || undefined,
+			rateLimited: request.status_code === 429,
 		}));
 
 		return jsonResponse(response);
