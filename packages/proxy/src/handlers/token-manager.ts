@@ -307,6 +307,23 @@ const refreshClearers: Map<string, (accountId: string) => void> = new Map();
 const pollingRestarters: Map<string, (accountId: string) => Promise<boolean>> =
 	new Map();
 
+export interface CodexUsageRefreshOutcome {
+	success: boolean;
+	message: string;
+}
+
+// Global registry for codex on-demand usage refreshers (one per server)
+const codexUsageRefreshers: Map<
+	string,
+	(accountId: string) => Promise<CodexUsageRefreshOutcome>
+> = new Map();
+
+// Per-account in-flight tracker so concurrent requests share a single fetch.
+const codexUsageInflight: Map<
+	string,
+	Promise<CodexUsageRefreshOutcome>
+> = new Map();
+
 /**
  * Register a function to restart usage polling for a specific account.
  * Used by the server to expose its polling restart capability to HTTP handlers.
@@ -343,6 +360,86 @@ export async function restartUsagePollingForAccount(
 		}
 	}
 	return anySuccess;
+}
+
+/**
+ * Register a function that performs an on-demand codex usage refresh for a
+ * given account. The server registers a callback that has access to its
+ * proxy context so token refresh + DB updates can run via the normal path.
+ */
+export function registerCodexUsageRefresher(
+	serverId: string,
+	refresher: (accountId: string) => Promise<CodexUsageRefreshOutcome>,
+): void {
+	codexUsageRefreshers.set(serverId, refresher);
+}
+
+/**
+ * Unregister a previously registered codex usage refresher.
+ */
+export function unregisterCodexUsageRefresher(serverId: string): void {
+	codexUsageRefreshers.delete(serverId);
+}
+
+/**
+ * Refresh codex usage data for an account by dispatching to a registered
+ * server. Iterates serverId-keyed callbacks **sequentially** and returns the
+ * first successful outcome — we never fan-out because every call costs a
+ * real codex request. Concurrent callers for the same accountId share a
+ * single in-flight promise.
+ */
+export async function refreshCodexUsageForAccount(
+	accountId: string,
+): Promise<CodexUsageRefreshOutcome> {
+	const existing = codexUsageInflight.get(accountId);
+	if (existing) {
+		log.debug(`Reusing in-flight codex usage refresh for account ${accountId}`);
+		return existing;
+	}
+
+	const promise = (async (): Promise<CodexUsageRefreshOutcome> => {
+		if (codexUsageRefreshers.size === 0) {
+			return {
+				success: false,
+				message: "No proxy server is registered to handle codex usage refresh.",
+			};
+		}
+
+		let lastFailure: CodexUsageRefreshOutcome | null = null;
+		for (const [serverId, refresher] of codexUsageRefreshers) {
+			try {
+				const result = await refresher(accountId);
+				if (result.success) {
+					log.info(
+						`Refreshed codex usage for account ${accountId} via server ${serverId}`,
+					);
+					return result;
+				}
+				lastFailure = result;
+			} catch (error) {
+				log.error(
+					`Codex usage refresh via server ${serverId} threw for account ${accountId}:`,
+					error,
+				);
+				lastFailure = {
+					success: false,
+					message: error instanceof Error ? error.message : String(error),
+				};
+			}
+		}
+		return (
+			lastFailure ?? {
+				success: false,
+				message: "Codex usage refresh failed for unknown reasons.",
+			}
+		);
+	})();
+
+	codexUsageInflight.set(accountId, promise);
+	promise.finally(() => {
+		codexUsageInflight.delete(accountId);
+	});
+	return promise;
 }
 
 /**

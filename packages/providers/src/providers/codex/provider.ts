@@ -27,9 +27,11 @@ function sanitizeResponseHeaders(headers: Headers): Headers {
 
 const TOKEN_URL = "https://auth.openai.com/oauth/token";
 const CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
-const DEFAULT_ENDPOINT = "https://chatgpt.com/backend-api/codex/responses";
-const CODEX_VERSION = "0.130.0";
-const CODEX_USER_AGENT = `codex-cli/${CODEX_VERSION} (Windows 10.0.26100; x64)`;
+export const CODEX_DEFAULT_ENDPOINT =
+	"https://chatgpt.com/backend-api/codex/responses";
+export const CODEX_VERSION = "0.130.0";
+export const CODEX_USER_AGENT = `codex-cli/${CODEX_VERSION} (Windows 10.0.26100; x64)`;
+export const CODEX_PING_MODEL = "gpt-5-codex";
 
 const _normalizeUsage = (value: unknown): Record<string, number> => {
 	const usage =
@@ -300,7 +302,7 @@ export class CodexProvider extends BaseProvider {
 				);
 			}
 		}
-		return DEFAULT_ENDPOINT;
+		return CODEX_DEFAULT_ENDPOINT;
 	}
 
 	prepareHeaders(headers: Headers, accessToken?: string): Headers {
