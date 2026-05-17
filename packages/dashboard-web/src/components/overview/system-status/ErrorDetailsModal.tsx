@@ -17,6 +17,7 @@ import { getErrorMeta } from "./errorCodeMeta";
 
 interface ErrorDetailsModalProps {
 	error: RecentErrorGroup | null;
+	otherAccountsAvailable: boolean;
 	onClose: () => void;
 	onDismiss: (group: RecentErrorGroup) => void;
 }
@@ -54,12 +55,18 @@ function DetailRow({ label, children }: DetailRowProps) {
 
 export function ErrorDetailsModal({
 	error,
+	otherAccountsAvailable,
 	onClose,
 	onDismiss,
 }: ErrorDetailsModalProps) {
 	const open = error !== null;
 
-	const meta = error ? getErrorMeta(error.errorCode) : null;
+	const meta = error
+		? getErrorMeta(error.errorCode, {
+				provider: error.provider,
+				otherAccountsAvailable,
+			})
+		: null;
 	const isWarning = meta?.severity === "warning";
 	const Icon = isWarning ? AlertTriangle : XCircle;
 	const iconColor = isWarning ? "text-warning" : "text-destructive";
