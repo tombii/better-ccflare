@@ -5,6 +5,7 @@ export interface OAuthSession {
 	verifier: string;
 	mode: "console" | "claude-oauth";
 	customEndpoint?: string;
+	priority: number;
 }
 
 export class OAuthRepository extends BaseRepository<OAuthSession> {
@@ -14,6 +15,7 @@ export class OAuthRepository extends BaseRepository<OAuthSession> {
 		verifier: string,
 		mode: "console" | "claude-oauth",
 		customEndpoint?: string,
+		priority: number = 0,
 		ttlMinutes = 10,
 	): Promise<void> {
 		const now = Date.now();
@@ -21,8 +23,8 @@ export class OAuthRepository extends BaseRepository<OAuthSession> {
 
 		await this.run(
 			`
-			INSERT INTO oauth_sessions (id, account_name, verifier, mode, custom_endpoint, created_at, expires_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?)
+			INSERT INTO oauth_sessions (id, account_name, verifier, mode, custom_endpoint, priority, created_at, expires_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		`,
 			[
 				sessionId,
@@ -30,6 +32,7 @@ export class OAuthRepository extends BaseRepository<OAuthSession> {
 				verifier,
 				mode,
 				customEndpoint || null,
+				priority,
 				now,
 				expiresAt,
 			],
@@ -42,10 +45,11 @@ export class OAuthRepository extends BaseRepository<OAuthSession> {
 			verifier: string;
 			mode: "console" | "claude-oauth";
 			custom_endpoint: string | null;
+			priority: number;
 			expires_at: number;
 		}>(
 			`
-			SELECT account_name, verifier, mode, custom_endpoint, expires_at
+			SELECT account_name, verifier, mode, custom_endpoint, priority, expires_at
 			FROM oauth_sessions
 			WHERE id = ? AND expires_at > ?
 		`,
@@ -59,6 +63,7 @@ export class OAuthRepository extends BaseRepository<OAuthSession> {
 			verifier: row.verifier,
 			mode: row.mode,
 			customEndpoint: row.custom_endpoint || undefined,
+			priority: row.priority,
 		};
 	}
 

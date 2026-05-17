@@ -747,6 +747,7 @@ OAuth tokens will need to be re-authenticated.
 		verifier: string,
 		mode: "console" | "claude-oauth",
 		customEndpoint?: string,
+		priority: number = 0,
 		ttlMinutes = 10,
 	): Promise<void> {
 		await this.oauth.createSession(
@@ -755,6 +756,7 @@ OAuth tokens will need to be re-authenticated.
 			verifier,
 			mode,
 			customEndpoint,
+			priority,
 			ttlMinutes,
 		);
 	}
@@ -764,6 +766,7 @@ OAuth tokens will need to be re-authenticated.
 		verifier: string;
 		mode: "console" | "claude-oauth";
 		customEndpoint?: string;
+		priority: number;
 	} | null> {
 		return this.oauth.getSession(sessionId);
 	}

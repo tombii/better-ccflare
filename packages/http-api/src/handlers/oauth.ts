@@ -618,8 +618,9 @@ export function createAnthropicReauthInitHandler(
 					account.name,
 					flowResult.pkce.verifier,
 					"claude-oauth",
-					undefined,
-					10,
+					undefined, // customEndpoint
+					0, // priority — reauth preserves existing account's priority via UPDATE, this is unused
+					10, // ttlMinutes
 				);
 
 				return jsonResponse({
@@ -809,6 +810,9 @@ export function createOAuthInitHandler(dbOps: DatabaseOperations) {
 				},
 			);
 
+			// Validate priority (0-100, defaults to 0)
+			const priority = validatePriority(body.priority ?? 0, "priority");
+
 			const config = new Config();
 			const oauthFlow = await createOAuthFlow(dbOps, config);
 
@@ -819,13 +823,15 @@ export function createOAuthInitHandler(dbOps: DatabaseOperations) {
 					mode,
 				});
 
-				// Store custom endpoint in session for later use
+				// Store custom endpoint and priority in session so the callback
+				// can forward them to oauthFlow.complete() when creating the account.
 				dbOps.createOAuthSession(
 					flowResult.sessionId,
 					name,
 					flowResult.pkce.verifier,
 					mode,
 					customEndpoint,
+					priority,
 					10, // 10 minute TTL
 				);
 
@@ -895,6 +901,7 @@ export function createOAuthCallbackHandler(dbOps: DatabaseOperations) {
 				verifier,
 				mode: savedMode,
 				customEndpoint: savedCustomEndpoint,
+				priority: savedPriority,
 			} = oauthSession;
 
 			try {
@@ -931,6 +938,7 @@ export function createOAuthCallbackHandler(dbOps: DatabaseOperations) {
 						sessionId,
 						code,
 						name,
+						priority: savedPriority,
 						customEndpoint: savedCustomEndpoint,
 					},
 					flowData,

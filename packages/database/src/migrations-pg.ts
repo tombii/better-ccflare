@@ -142,6 +142,7 @@ export async function ensureSchemaPg(adapter: BunSqlAdapter): Promise<void> {
 			verifier TEXT NOT NULL,
 			mode TEXT NOT NULL,
 			custom_endpoint TEXT,
+			priority INTEGER NOT NULL DEFAULT 0,
 			created_at BIGINT NOT NULL,
 			expires_at BIGINT NOT NULL
 		)
@@ -375,6 +376,12 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 			table: "oauth_sessions",
 			column: "custom_endpoint",
 			definition: "ALTER TABLE oauth_sessions ADD COLUMN custom_endpoint TEXT",
+		},
+		{
+			table: "oauth_sessions",
+			column: "priority",
+			definition:
+				"ALTER TABLE oauth_sessions ADD COLUMN priority INTEGER NOT NULL DEFAULT 0",
 		},
 	];
 
