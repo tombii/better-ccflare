@@ -204,7 +204,8 @@ export function ApiKeysTab() {
 
 	const handleGenerateKey = () => {
 		if (!newKeyName.trim()) return;
-		const role = isAdminKey ? "admin" : "api-only";
+		const isFirstKey = !stats || stats.active === 0;
+		const role = isFirstKey || isAdminKey ? "admin" : "api-only";
 		generateKeyMutation.mutate({ name: newKeyName.trim(), role });
 	};
 
