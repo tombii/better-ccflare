@@ -35,6 +35,7 @@ export interface APIContext {
 		startedAt: number | null;
 	};
 	getIntegrityStatus?: () => IntegrityStatus;
+	getStrategy?: () => LoadBalancingStrategy | null;
 }
 
 // Load balancing strategy interface
@@ -45,6 +46,14 @@ export interface LoadBalancingStrategy {
 	 * The first account in the list should be tried first.
 	 */
 	select(accounts: Account[], meta: RequestMeta): Account[];
+
+	/**
+	 * Side-effect-free preview: return the ID of the account that would
+	 * be picked first by select() given the current state, or null if
+	 * no account is available. MUST NOT mutate any state (no DB writes,
+	 * no resumeAccount, no resetSession, no internal counters).
+	 */
+	peek(accounts: Account[]): string | null;
 
 	/**
 	 * Optional initialization method to inject dependencies

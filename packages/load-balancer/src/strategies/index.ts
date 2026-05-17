@@ -10,6 +10,7 @@ import {
 	PROVIDER_NAMES,
 	requiresSessionDurationTracking,
 } from "@better-ccflare/types";
+import { isPeekAvailable } from "./peek-availability";
 
 export { LeastUsedStrategy } from "./least-used";
 
@@ -100,6 +101,75 @@ export class SessionStrategy implements LoadBalancingStrategy {
 			!!account.session_start &&
 			now - account.session_start < this.sessionDurationMs
 		);
+	}
+
+	peek(accounts: Account[]): string | null {
+		const now = Date.now();
+
+		// isPeekAvailable simulates the auto-unpause that select() performs on
+		// safe-reason paused accounts (auto_fallback_enabled + window elapsed).
+		// Without it, peek() and select() disagree whenever such an account is
+		// the would-be Primary, flagging the wrong row on the dashboard while
+		// real traffic goes to the auto-unpaused one.
+		const isAvailable = (account: Account): boolean =>
+			isPeekAvailable(account, now);
+
+		// Mirror the auto-fallback path from select(), but without unpausing.
+		// When fallback would trigger, select() re-evaluates the priority queue
+		// and returns the highest-priority available account — chosenFallback
+		// only ends up first if it happens to outrank everyone else. Peek must
+		// match that, otherwise a lower-priority fallback candidate gets
+		// flagged Primary while a higher-priority non-fallback account is the
+		// one that would actually be picked.
+		const fallbackCandidates = this.checkForAutoFallbackAccounts(accounts, now);
+		const fallbackTriggered = fallbackCandidates.some((c) => isAvailable(c));
+		if (fallbackTriggered) {
+			const sorted = accounts
+				.filter((a) => isAvailable(a))
+				.sort((a, b) => a.priority - b.priority);
+			return sorted[0]?.id ?? null;
+		}
+
+		let activeAccount: Account | null = null;
+		let mostRecentSessionStart = 0;
+		for (const account of accounts) {
+			if (
+				this.hasActiveSession(account, now) &&
+				account.session_start &&
+				account.session_start > mostRecentSessionStart
+			) {
+				activeAccount = account;
+				mostRecentSessionStart = account.session_start;
+			}
+		}
+
+		if (activeAccount && isAvailable(activeAccount)) {
+			const higherPriorityAccount = accounts
+				.filter(
+					(a) =>
+						a.id !== activeAccount.id &&
+						isAvailable(a) &&
+						a.priority < activeAccount.priority,
+				)
+				.sort((a, b) => a.priority - b.priority)[0];
+
+			if (!higherPriorityAccount) {
+				return activeAccount.id;
+			}
+		}
+
+		const available = accounts
+			.filter((a) => isAvailable(a))
+			.sort((a, b) => {
+				if (a.priority !== b.priority) return a.priority - b.priority;
+				const utilA =
+					this.store?.getAccountUtilization?.(a.id, a.provider) ?? 0;
+				const utilB =
+					this.store?.getAccountUtilization?.(b.id, b.provider) ?? 0;
+				return utilA - utilB;
+			});
+
+		return available[0]?.id ?? null;
 	}
 
 	select(accounts: Account[], meta: RequestMeta): Account[] {

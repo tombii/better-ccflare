@@ -622,6 +622,10 @@ export default async function startServer(options?: {
 	container.registerInstance(SERVICE_KEYS.PricingLogger, pricingLogger);
 	setPricingLogger(pricingLogger);
 
+	// Strategy is constructed below after RuntimeConfig is built. The router
+	// accepts a getter so it can read the live (post-hot-reload) instance.
+	let currentStrategy: LoadBalancingStrategy | null = null;
+
 	const apiRouter = new APIRouter({
 		db,
 		config,
@@ -633,6 +637,7 @@ export default async function startServer(options?: {
 		getAsyncWriterHealth: () => asyncWriter.getHealth(),
 		getUsageWorkerHealth: () => getUsageWorkerHealth(),
 		getIntegrityStatus: () => dbOps.getIntegrityStatus(),
+		getStrategy: () => currentStrategy,
 	});
 
 	// Initialize AuthService for proxy authentication
@@ -779,6 +784,7 @@ export default async function startServer(options?: {
 	});
 
 	strategy.initialize?.(strategyStore);
+	currentStrategy = strategy;
 
 	// Start usage worker eagerly (before first request)
 	startUsageWorker();
@@ -861,6 +867,7 @@ export default async function startServer(options?: {
 			);
 			strategy.initialize?.(strategyStore);
 			proxyContext.strategy = strategy;
+			currentStrategy = strategy;
 		}
 		if (key === "store_payloads") {
 			sendWorkerConfigUpdate(config.getStorePayloads());
@@ -1323,43 +1330,10 @@ Available endpoints:
 	};
 }
 
-// Max wall-clock time between SIGTERM and process exit. Long enough to let
-// most in-flight streaming responses complete; short enough that systemd's
-// default TimeoutStopSec (90s) doesn't have to escalate to SIGKILL.
-const SHUTDOWN_WATCHDOG_MS = 30_000;
-
-// Deduplicates concurrent shutdown invocations (e.g. SIGINT arriving while
-// SIGTERM is still awaiting serverInstance.stop()). Without this, the second
-// invocation races on the same Bun server, worker, and DB writer.
-let isShuttingDown = false;
-
 // Graceful shutdown handler
 async function handleGracefulShutdown(signal: string) {
-	if (isShuttingDown) {
-		console.log(`Ignoring ${signal} — shutdown already in progress`);
-		return;
-	}
-	isShuttingDown = true;
-
 	console.log(`\n👋 Received ${signal}, shutting down gracefully...`);
-
-	// Hard upper bound on shutdown duration. unref'd so it doesn't itself
-	// prevent a clean exit if everything else finishes first. Exits with 0
-	// because the watchdog only fires on an expected SIGTERM that ran long,
-	// not on a failure — code 1 would make systemd Restart=on-failure
-	// auto-restart the unit instead of treating it as a normal stop.
-	const watchdog = setTimeout(() => {
-		console.error(
-			`⚠️ Shutdown watchdog (${SHUTDOWN_WATCHDOG_MS}ms) expired, forcing exit`,
-		);
-		process.exit(0);
-	}, SHUTDOWN_WATCHDOG_MS);
-	watchdog.unref();
-
 	try {
-		// Stop scheduler triggers first so they don't add load while draining.
-		// These calls only stop the recurring trigger; any in-flight task they
-		// already kicked off continues until it finishes naturally.
 		if (stopRetentionJob) {
 			stopRetentionJob();
 			stopRetentionJob = null;
@@ -1417,29 +1391,8 @@ async function handleGracefulShutdown(signal: string) {
 		}
 
 		usageCache.clear(); // Stop all usage polling
-
-		// Stop accepting new connections and wait for in-flight HTTP requests
-		// (including streaming responses) to complete. stop() without args is
-		// Bun's graceful variant; stop(true) would force-close active conns.
-		if (serverInstance) {
-			console.log("Draining in-flight HTTP requests...");
-			try {
-				await serverInstance.stop();
-			} catch (err) {
-				console.warn("⚠️ serverInstance.stop() threw:", err);
-			}
-			serverInstance = null;
-			console.log("HTTP drain complete");
-		}
-
-		// Now that streams have finished, the usage worker has received all
-		// end-of-stream analytics messages. Terminate it so its DB writes
-		// flush into the AsyncDbWriter queue before we dispose that.
 		await terminateUsageWorker();
-
-		// Flush AsyncDbWriter and other Disposables.
 		await shutdown();
-
 		console.log("✅ Shutdown complete");
 		process.exit(0);
 	} catch (error) {

@@ -223,4 +223,76 @@ describe("LeastUsedStrategy", () => {
 			expect(store.resumeCalls).not.toContain("future");
 		});
 	});
+
+	describe("peek", () => {
+		it("returns null when no accounts are available", () => {
+			expect(
+				strategy.peek([
+					makeAccount({ id: "p1", paused: true }),
+					makeAccount({ id: "rl1", rate_limited_until: Date.now() + 60_000 }),
+				]),
+			).toBeNull();
+		});
+
+		it("returns the same primary that select() returns when no auto-unpause is needed", () => {
+			const accounts = [
+				makeAccount({ id: "p2", priority: 2 }),
+				makeAccount({ id: "p0", priority: 0 }),
+				makeAccount({ id: "p1", priority: 1 }),
+			];
+			const peeked = strategy.peek(accounts);
+			const selected = strategy.select(accounts, meta);
+			expect(peeked).toBe("p0");
+			expect(selected[0]?.id).toBe("p0");
+		});
+
+		it("returns the paused-but-auto-unpausable account that select() would pick", () => {
+			const past = Date.now() - 60_000;
+			// Mirrors the Greptile P1 scenario: a paused auto-fallback account
+			// with elapsed window must surface in peek() the same way select()
+			// picks it (after the auto-unpause).
+			const accounts = [
+				makeAccount({
+					id: "p0-paused",
+					priority: 0,
+					paused: true,
+					pause_reason: null,
+					auto_fallback_enabled: true,
+					rate_limit_reset: past,
+				}),
+				makeAccount({ id: "p1-ready", priority: 1 }),
+			];
+			expect(strategy.peek(accounts)).toBe("p0-paused");
+		});
+
+		it("does NOT treat manually-paused accounts as peek-available", () => {
+			const past = Date.now() - 60_000;
+			const accounts = [
+				makeAccount({
+					id: "p0-manual",
+					priority: 0,
+					paused: true,
+					pause_reason: "manual",
+					auto_fallback_enabled: true,
+					rate_limit_reset: past,
+				}),
+				makeAccount({ id: "p1-ready", priority: 1 }),
+			];
+			expect(strategy.peek(accounts)).toBe("p1-ready");
+		});
+
+		it("does NOT mutate store or account state when used", () => {
+			const past = Date.now() - 60_000;
+			const account = makeAccount({
+				id: "ovg",
+				paused: true,
+				pause_reason: "overage",
+				auto_fallback_enabled: true,
+				rate_limit_reset: past,
+			});
+			strategy.peek([account]);
+			expect(account.paused).toBe(true);
+			expect(store.resumeCalls).toEqual([]);
+		});
+	});
 });
