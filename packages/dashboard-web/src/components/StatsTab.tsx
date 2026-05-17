@@ -1,17 +1,10 @@
-import type { RecentErrorGroup } from "@better-ccflare/types";
 import { formatPercentage } from "@better-ccflare/ui-common";
-import { formatDistanceToNow } from "date-fns";
-import { RefreshCw, XCircle } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import { useResetStats, useStats } from "../hooks/queries";
 import { useApiError } from "../hooks/useApiError";
+import { RecentErrorsCard } from "./overview/system-status/RecentErrorsCard";
 import { Button } from "./ui/button";
-import {
-	Card,
-	CardContent,
-	CardDescription,
-	CardHeader,
-	CardTitle,
-} from "./ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 
 export function StatsTab() {
 	const { formatError } = useApiError();
@@ -122,56 +115,7 @@ export function StatsTab() {
 				</CardContent>
 			</Card>
 
-			{stats?.recentErrors && stats.recentErrors.length > 0 && (
-				<Card>
-					<CardHeader>
-						<CardTitle>Recent Errors</CardTitle>
-						<CardDescription>
-							Most recent errors from all accounts
-						</CardDescription>
-					</CardHeader>
-					<CardContent>
-						<div className="space-y-2">
-							{stats.recentErrors.map((error: RecentErrorGroup) => {
-								const accountLabel =
-									error.accountName ??
-									(error.accountId === null
-										? "Unauthenticated"
-										: "Deleted account");
-								return (
-									<div
-										key={error.latestRequestId}
-										className="text-sm p-2 bg-destructive/10 rounded-md flex items-start gap-2"
-									>
-										<XCircle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
-										<div className="flex-1 min-w-0">
-											<p className="text-destructive font-medium break-words">
-												{error.errorCode}
-												{error.occurrenceCount > 1 && (
-													<span
-														className="ml-2 text-xs font-normal"
-														role="img"
-														aria-label={`${error.occurrenceCount} occurrences`}
-													>
-														×{error.occurrenceCount}
-													</span>
-												)}
-											</p>
-											<p className="text-xs text-destructive/80 mt-0.5">
-												{accountLabel}
-												{" • "}
-												{formatDistanceToNow(new Date(error.latestTimestamp), {
-													addSuffix: true,
-												})}
-											</p>
-										</div>
-									</div>
-								);
-							})}
-						</div>
-					</CardContent>
-				</Card>
-			)}
+			<RecentErrorsCard />
 
 			<Card>
 				<CardHeader>
