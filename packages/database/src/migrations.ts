@@ -99,8 +99,6 @@ export function ensureSchema(db: Database): void {
 			account_name TEXT NOT NULL,
 			verifier TEXT NOT NULL,
 			mode TEXT NOT NULL,
-			custom_endpoint TEXT,
-			priority INTEGER NOT NULL DEFAULT 0,
 			created_at INTEGER NOT NULL,
 			expires_at INTEGER NOT NULL
 		)
@@ -274,7 +272,9 @@ export function runMigrations(db: Database, dbPath?: string): void {
 
 	const finalOAuthColumnNames = finalOAuthColumns.map((col) => col.name);
 
-	// Query remaining tables for column existence checks needed by willModifySchema
+	// Query remaining tables for the per-column ALTER TABLE checks below.
+	// (Backup gating, `willMutate`, only consults the accounts/oauth_sessions
+	// table info already read above; these reads feed the additive migrations.)
 	const requestsInfo = db
 		.prepare("PRAGMA table_info(requests)")
 		.all() as Array<{ name: string }>;
@@ -301,56 +301,22 @@ export function runMigrations(db: Database, dbPath?: string): void {
 		(col) => col.name === "refresh_token",
 	);
 
-	// Determine if any schema modifications are needed before running migrations
-	// This drives the backup decision — only backup when changes will actually occur
-	const willModifySchema =
-		!initialAccountsColumnNames.includes("rate_limited_until") ||
-		!initialAccountsColumnNames.includes("session_start") ||
-		!initialAccountsColumnNames.includes("session_request_count") ||
-		!initialAccountsColumnNames.includes("paused") ||
-		!initialAccountsColumnNames.includes("rate_limit_reset") ||
-		!initialAccountsColumnNames.includes("rate_limit_status") ||
-		!initialAccountsColumnNames.includes("rate_limit_remaining") ||
-		!initialAccountsColumnNames.includes("priority") ||
-		!initialAccountsColumnNames.includes("auto_fallback_enabled") ||
-		!initialAccountsColumnNames.includes("custom_endpoint") ||
-		!initialAccountsColumnNames.includes("auto_refresh_enabled") ||
-		!initialAccountsColumnNames.includes("model_mappings") ||
-		!initialAccountsColumnNames.includes("cross_region_mode") ||
-		!initialAccountsColumnNames.includes("model_fallbacks") ||
-		!initialAccountsColumnNames.includes("billing_type") ||
-		!initialAccountsColumnNames.includes("refresh_token_issued_at") ||
-		!initialAccountsColumnNames.includes("auto_pause_on_overage_enabled") ||
-		!initialAccountsColumnNames.includes("peak_hours_pause_enabled") ||
-		!initialAccountsColumnNames.includes("pause_reason") ||
-		!initialAccountsColumnNames.includes("rate_limited_reason") ||
-		!initialAccountsColumnNames.includes("rate_limited_at") ||
+	// A migration mutates the DB irreversibly when it drops a column, rebuilds a
+	// table, or relaxes a NOT NULL constraint (SQLite does table rebuilds for
+	// these). If those fail mid-flight, restoring from the pre-migration backup
+	// is the only way to recover the dropped data.
+	//
+	// Plain `ALTER TABLE ADD COLUMN` is reversible (just drop the column or
+	// re-run the migration on a fresh DB) and rolls back cleanly inside the
+	// migration transaction, so it doesn't need a multi-GB file copy of the
+	// live DB ahead of every restart.
+	const willMutate =
 		(refreshTokenCol && refreshTokenCol.notnull === 1) ||
-		!requestsColumnNames.includes("model") ||
-		!requestsColumnNames.includes("prompt_tokens") ||
-		!requestsColumnNames.includes("completion_tokens") ||
-		!requestsColumnNames.includes("total_tokens") ||
-		!requestsColumnNames.includes("cost_usd") ||
-		!requestsColumnNames.includes("input_tokens") ||
-		!requestsColumnNames.includes("cache_read_input_tokens") ||
-		!requestsColumnNames.includes("cache_creation_input_tokens") ||
-		!requestsColumnNames.includes("output_tokens") ||
-		!requestsColumnNames.includes("agent_used") ||
-		!requestsColumnNames.includes("output_tokens_per_second") ||
-		!requestsColumnNames.includes("api_key_id") ||
-		!requestsColumnNames.includes("api_key_name") ||
-		!requestsColumnNames.includes("project") ||
-		!requestsColumnNames.includes("billing_type") ||
-		!requestsColumnNames.includes("combo_name") ||
-		!requestPayloadsColumnNames.includes("timestamp") ||
-		!apiKeysColumnNames.includes("role") ||
-		!initialOauthSessionsColumnNames.includes("custom_endpoint") ||
-		!initialOauthSessionsColumnNames.includes("priority") ||
 		finalAccountsColumnNames.includes("account_tier") ||
 		finalOAuthColumnNames.includes("tier");
 
-	// Create backup before schema modifications
-	if (willModifySchema && dbPath && dbPath !== "") {
+	// Create backup before *destructive* schema modifications only.
+	if (willMutate && dbPath && dbPath !== "") {
 		try {
 			const absoluteSourcePath = path.resolve(dbPath);
 
@@ -652,14 +618,6 @@ export function runMigrations(db: Database, dbPath?: string): void {
 			log.info("Added custom_endpoint column to oauth_sessions table");
 		}
 
-		// Add priority column to oauth_sessions if it doesn't exist
-		if (!initialOauthSessionsColumnNames.includes("priority")) {
-			db.prepare(
-				"ALTER TABLE oauth_sessions ADD COLUMN priority INTEGER NOT NULL DEFAULT 0",
-			).run();
-			log.info("Added priority column to oauth_sessions table");
-		}
-
 		// Add model column if it doesn't exist
 		if (!requestsColumnNames.includes("model")) {
 			db.prepare("ALTER TABLE requests ADD COLUMN model TEXT").run();
@@ -867,31 +825,11 @@ export function runMigrations(db: Database, dbPath?: string): void {
 
 		// Drop tier column from oauth_sessions table if it exists
 		if (finalOAuthColumnNames.includes("tier")) {
-			// Relies on the priority ADD COLUMN above having run earlier in this
-			// same transaction; do not reorder these blocks.
-			//
-			// IMPORTANT: explicitly recreate the target schema with all constraints
-			// (PRIMARY KEY, NOT NULL, DEFAULT) — `CREATE TABLE ... AS SELECT ...`
-			// only copies column types, dropping every constraint. Keep this in
-			// sync with the oauth_sessions definition in ensureSchema().
 			db.prepare(`
-				CREATE TABLE oauth_sessions_new (
-					id TEXT PRIMARY KEY,
-					account_name TEXT NOT NULL,
-					verifier TEXT NOT NULL,
-					mode TEXT NOT NULL,
-					custom_endpoint TEXT,
-					priority INTEGER NOT NULL DEFAULT 0,
-					created_at INTEGER NOT NULL,
-					expires_at INTEGER NOT NULL
-				)
-			`).run();
-
-			db.prepare(`
-				INSERT INTO oauth_sessions_new (id, account_name, verifier, mode, custom_endpoint, priority, created_at, expires_at)
-				SELECT id, account_name, verifier, mode, custom_endpoint, priority, created_at, expires_at
-				FROM oauth_sessions
-			`).run();
+			CREATE TABLE oauth_sessions_new AS
+			SELECT id, account_name, verifier, mode, created_at, expires_at, custom_endpoint
+			FROM oauth_sessions
+		`).run();
 
 			db.prepare(`DROP TABLE oauth_sessions`).run();
 			db.prepare(

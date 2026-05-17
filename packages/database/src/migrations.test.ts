@@ -793,4 +793,85 @@ describe("Database Backup Behavior", () => {
 		const backupSize = fs.statSync(path.join(tmpDir, backups[0])).size;
 		expect(backupSize).toBeGreaterThan(0);
 	});
+
+	it("should NOT create backup when only additive migrations are needed", () => {
+		// Build a DB that's missing several add-only columns but has no
+		// destructive migrations pending (no account_tier/tier/strict-notnull
+		// refresh_token). Migration should run and add the columns without
+		// creating a backup file.
+		const dbPath = path.join(tmpDir, "addonly.db");
+		const db = new Database(dbPath);
+		db.exec(`
+			CREATE TABLE accounts (
+				id TEXT PRIMARY KEY,
+				name TEXT NOT NULL,
+				provider TEXT DEFAULT 'anthropic',
+				api_key TEXT,
+				refresh_token TEXT,
+				access_token TEXT,
+				expires_at INTEGER,
+				created_at INTEGER NOT NULL,
+				last_used INTEGER,
+				request_count INTEGER DEFAULT 0,
+				total_requests INTEGER DEFAULT 0,
+				priority INTEGER DEFAULT 0
+			);
+			CREATE TABLE requests (
+				id TEXT PRIMARY KEY,
+				timestamp INTEGER NOT NULL,
+				method TEXT NOT NULL,
+				path TEXT NOT NULL,
+				account_used TEXT,
+				status_code INTEGER,
+				success BOOLEAN,
+				error_message TEXT,
+				response_time_ms INTEGER,
+				failover_attempts INTEGER DEFAULT 0
+			);
+			CREATE TABLE request_payloads (
+				id TEXT PRIMARY KEY,
+				json TEXT NOT NULL
+			);
+			CREATE TABLE oauth_sessions (
+				id TEXT PRIMARY KEY,
+				account_name TEXT NOT NULL,
+				verifier TEXT NOT NULL,
+				mode TEXT NOT NULL,
+				created_at INTEGER NOT NULL,
+				expires_at INTEGER NOT NULL
+			);
+			CREATE TABLE api_keys (
+				id TEXT PRIMARY KEY,
+				name TEXT NOT NULL UNIQUE,
+				hashed_key TEXT NOT NULL UNIQUE,
+				prefix_last_8 TEXT NOT NULL,
+				created_at INTEGER NOT NULL,
+				last_used INTEGER,
+				usage_count INTEGER DEFAULT 0,
+				is_active INTEGER DEFAULT 1
+			);
+		`);
+		db.close();
+
+		const db2 = new Database(dbPath);
+		runMigrations(db2, dbPath);
+		db2.close();
+
+		const backups = fs
+			.readdirSync(tmpDir)
+			.filter((f) => f.startsWith("addonly.db.backup"));
+		expect(backups).toHaveLength(0);
+
+		// And verify the migration actually ran something — at least one of
+		// the add-only columns should now be present.
+		const db3 = new Database(dbPath);
+		const cols = (
+			db3.prepare("PRAGMA table_info(accounts)").all() as Array<{
+				name: string;
+			}>
+		).map((c) => c.name);
+		db3.close();
+		expect(cols).toContain("rate_limited_until");
+		expect(cols).toContain("paused");
+	});
 });
