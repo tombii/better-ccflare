@@ -30,13 +30,30 @@ export interface StatsResponse {
 	avgTokensPerSecond: number | null;
 }
 
+export interface RecentErrorGroup {
+	errorCode: string; // raw value from requests.error_message
+	accountId: string | null; // null when unauthenticated
+	accountName: string | null; // null when account deleted
+	occurrenceCount: number;
+	latestTimestamp: number; // ms epoch
+	firstTimestamp: number; // ms epoch
+	latestRequestId: string;
+	model: string | null;
+	statusCode: number | null;
+	path: string | null;
+	failoverAttempts: number;
+	rateLimitedUntil: number | null; // from accounts table, ms epoch
+	rateLimitedReason: RateLimitReason | null;
+	rateLimitedAt: number | null;
+}
+
 export interface StatsWithAccounts extends Stats {
 	accounts: Array<{
 		name: string;
 		requestCount: number;
 		successRate: number;
 	}>;
-	recentErrors: string[];
+	recentErrors: RecentErrorGroup[];
 }
 
 // Analytics types

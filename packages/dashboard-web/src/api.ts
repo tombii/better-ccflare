@@ -167,9 +167,13 @@ class API extends HttpClient {
 		}
 	}
 
-	async getStats(): Promise<Stats> {
+	async getStats(opts?: { errorsSinceHours?: number }): Promise<Stats> {
 		const startTime = Date.now();
-		const url = "/api/stats";
+		const hours = opts?.errorsSinceHours;
+		const url =
+			typeof hours === "number" && Number.isFinite(hours) && hours > 0
+				? `/api/stats?errorsSinceHours=${hours}`
+				: "/api/stats";
 
 		this.logger.debug(`→ GET ${url}`);
 

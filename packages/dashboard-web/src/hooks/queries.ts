@@ -25,10 +25,13 @@ export const useAgents = () => {
 	});
 };
 
-export const useStats = (refetchInterval?: number) => {
+export const useStats = (
+	refetchInterval?: number,
+	errorsSinceHours?: number,
+) => {
 	return useQuery({
-		queryKey: queryKeys.stats(),
-		queryFn: () => api.getStats(),
+		queryKey: queryKeys.stats(errorsSinceHours),
+		queryFn: () => api.getStats({ errorsSinceHours }),
 		staleTime: 15000, // Consider data fresh for 15 seconds
 		refetchInterval: refetchInterval ?? 30000, // Default to 30 seconds instead of 10
 		refetchIntervalInBackground: false, // Don't refresh when tab is not focused

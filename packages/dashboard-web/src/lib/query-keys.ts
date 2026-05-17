@@ -2,7 +2,10 @@ export const queryKeys = {
 	all: ["better-ccflare"] as const,
 	accounts: () => [...queryKeys.all, "accounts"] as const,
 	agents: () => [...queryKeys.all, "agents"] as const,
-	stats: () => [...queryKeys.all, "stats"] as const,
+	stats: (errorsSinceHours?: number) =>
+		errorsSinceHours === undefined
+			? ([...queryKeys.all, "stats"] as const)
+			: ([...queryKeys.all, "stats", { errorsSinceHours }] as const),
 	analytics: (
 		timeRange?: string,
 		filters?: unknown,

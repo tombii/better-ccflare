@@ -246,7 +246,7 @@ export const OverviewTab = React.memo(() => {
 				loading={loading}
 			/>
 
-			<SystemStatus recentErrors={stats?.recentErrors} />
+			<SystemStatus />
 
 			{accounts && <RateLimitInfo accounts={accounts} />}
 		</div>
