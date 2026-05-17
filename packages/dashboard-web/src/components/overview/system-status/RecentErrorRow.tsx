@@ -8,6 +8,7 @@ import { getErrorMeta } from "./errorCodeMeta";
 
 interface RecentErrorRowProps {
 	error: RecentErrorGroup;
+	otherAccountsAvailable: boolean;
 	onClick: () => void;
 	onDismiss: () => void;
 }
@@ -20,10 +21,14 @@ function accountLabel(error: RecentErrorGroup): string {
 
 export function RecentErrorRow({
 	error,
+	otherAccountsAvailable,
 	onClick,
 	onDismiss,
 }: RecentErrorRowProps) {
-	const meta = getErrorMeta(error.errorCode);
+	const meta = getErrorMeta(error.errorCode, {
+		provider: error.provider,
+		otherAccountsAvailable,
+	});
 	const isWarning = meta.severity === "warning";
 	const Icon = isWarning ? AlertTriangle : XCircle;
 	const bgClass = isWarning ? "bg-warning/10" : "bg-destructive/10";

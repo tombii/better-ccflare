@@ -242,6 +242,7 @@ export class StatsRepository {
 			occurrence_count: unknown;
 			first_seen: unknown;
 			account_name: unknown;
+			provider: unknown;
 			rate_limited_until: unknown;
 			rate_limited_reason: unknown;
 			rate_limited_at: unknown;
@@ -272,6 +273,7 @@ export class StatsRepository {
 				ranked.occurrence_count,
 				ranked.first_seen,
 				a.name                 AS account_name,
+				a.provider             AS provider,
 				a.rate_limited_until   AS rate_limited_until,
 				a.rate_limited_reason  AS rate_limited_reason,
 				a.rate_limited_at      AS rate_limited_at
@@ -287,6 +289,7 @@ export class StatsRepository {
 			const accountId = row.account_id == null ? null : String(row.account_id);
 			const accountName =
 				row.account_name == null ? null : String(row.account_name);
+			const provider = row.provider == null ? null : String(row.provider);
 			const model = row.model == null ? null : String(row.model);
 			const path = row.path == null ? null : String(row.path);
 			const statusCode =
@@ -304,6 +307,7 @@ export class StatsRepository {
 				errorCode: String(row.error_code ?? ""),
 				accountId,
 				accountName,
+				provider,
 				occurrenceCount: Number(row.occurrence_count) || 0,
 				latestTimestamp: Number(row.latest_timestamp) || 0,
 				firstTimestamp: Number(row.first_seen) || 0,
