@@ -6,6 +6,83 @@ import { addPerformanceIndexes } from "./performance-indexes";
 
 const log = new Logger("DatabaseMigrations");
 
+const DEFAULT_BACKUP_RETENTION = 3;
+const INTEGER_RE = /^-?\d+$/;
+
+/**
+ * Keep at most this many `.backup.<timestamp>` files alongside the live DB.
+ * Each backup is a full copy of the DB (multi-GB in practice), so without a
+ * cap they accumulate quickly when rapid restarts trigger repeat migrations.
+ *
+ * Override with `BETTER_CCFLARE_MIGRATION_BACKUP_KEEP`. 0 disables pruning
+ * entirely — operators who manage retention externally (e.g. via a separate
+ * cron + S3 sync) can opt out without losing the pre-migration safety net.
+ *
+ * Inputs that look like garbled integers (`"3abc"`, `"1.5"`, `""`,
+ * `"infinity"`) fall back to the default rather than silently truncating to
+ * a partial parse — `Number.parseInt` is too forgiving for that.
+ */
+function getBackupRetention(): number {
+	const raw = process.env.BETTER_CCFLARE_MIGRATION_BACKUP_KEEP;
+	if (raw === undefined || raw === "") return DEFAULT_BACKUP_RETENTION;
+	if (!INTEGER_RE.test(raw)) {
+		log.warn(
+			`BETTER_CCFLARE_MIGRATION_BACKUP_KEEP="${raw}" is not a non-negative integer — using default ${DEFAULT_BACKUP_RETENTION}`,
+		);
+		return DEFAULT_BACKUP_RETENTION;
+	}
+	const parsed = Number.parseInt(raw, 10);
+	if (parsed < 0) return DEFAULT_BACKUP_RETENTION;
+	return parsed;
+}
+
+function pruneOldBackups(absoluteSourcePath: string): void {
+	const keep = getBackupRetention();
+	// keep === 0 means "do nothing", not "delete everything" — leaves all
+	// existing backups in place for operators managing retention externally.
+	if (keep === 0) return;
+
+	const dir = path.dirname(absoluteSourcePath);
+	const base = path.basename(absoluteSourcePath);
+	const prefix = `${base}.backup.`;
+
+	let entries: string[];
+	try {
+		entries = fs.readdirSync(dir);
+	} catch (error) {
+		log.warn(`Could not list backup directory for pruning: ${(error as Error).message}`);
+		return;
+	}
+
+	// Order by the embedded `Date.now()` suffix, not mtime — survives clock
+	// drift, `touch`, and rsync timestamps. Names whose suffix isn't a pure
+	// integer (e.g. `db.backup.3abc`, `db.backup.notes`) are skipped — left
+	// untouched on disk — to honour an operator's manually-renamed files.
+	// `INTEGER_RE` matches before `parseInt` so trailing garbage can't
+	// silently truncate `db.backup.3abc` to timestamp 3 and prune a file
+	// that doesn't match the convention.
+	const backups = entries
+		.filter((name) => name.startsWith(prefix))
+		.map((name) => ({ name, suffix: name.slice(prefix.length) }))
+		.filter((entry) => INTEGER_RE.test(entry.suffix))
+		.map((entry) => ({
+			name: entry.name,
+			ts: Number.parseInt(entry.suffix, 10),
+		}))
+		.sort((a, b) => b.ts - a.ts);
+
+	const toDelete = backups.slice(keep);
+	for (const entry of toDelete) {
+		const filePath = path.join(dir, entry.name);
+		try {
+			fs.unlinkSync(filePath);
+			log.info(`Pruned old DB backup: ${entry.name}`);
+		} catch (error) {
+			log.warn(`Failed to prune backup ${entry.name}: ${(error as Error).message}`);
+		}
+	}
+}
+
 export function ensureSchema(db: Database): void {
 	// Create accounts table
 	db.run(`
@@ -373,6 +450,7 @@ export function runMigrations(db: Database, dbPath?: string): void {
 					const backupPath = `${absoluteSourcePath}.backup.${Date.now()}`;
 					fs.copyFileSync(absoluteSourcePath, backupPath);
 					log.info(`Database backup created at: ${backupPath}`);
+					pruneOldBackups(absoluteSourcePath);
 				}
 			} else {
 				log.warn(
