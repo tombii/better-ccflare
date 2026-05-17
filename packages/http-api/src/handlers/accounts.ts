@@ -34,6 +34,7 @@ import {
 import {
 	clearAccountRefreshCache,
 	getUsageThrottleStatus,
+	refreshCodexUsageForAccount,
 	restartUsagePollingForAccount,
 } from "@better-ccflare/proxy";
 import type { FullUsageData, RateLimitReason } from "@better-ccflare/types";
@@ -3494,9 +3495,12 @@ export function createOpenRouterAccountAddHandler(dbOps: DatabaseOperations) {
 }
 
 /**
- * Force an immediate usage data refresh for an Anthropic OAuth account.
- * Clears the refresh cache, restarts usage polling (which refreshes the token
- * if expired), and returns whether polling was successfully restarted.
+ * Force an immediate usage data refresh for an OAuth account.
+ *
+ * For Anthropic accounts this restarts the free `/api/oauth/usage` polling
+ * loop. For Codex accounts there is no free usage endpoint, so this sends a
+ * minimal real `/responses` request (capped via `max_output_tokens: 1` and
+ * abort-after-headers) and parses the `x-codex-*` headers off the response.
  */
 export function createAccountRefreshUsageHandler(dbOps: DatabaseOperations) {
 	return async (_req: Request, accountId: string): Promise<Response> => {
@@ -3507,10 +3511,10 @@ export function createAccountRefreshUsageHandler(dbOps: DatabaseOperations) {
 				return errorResponse(NotFound("Account not found"));
 			}
 
-			if (account.provider !== "anthropic") {
+			if (account.provider !== "anthropic" && account.provider !== "codex") {
 				return errorResponse(
 					BadRequest(
-						"Usage refresh is only available for Anthropic OAuth accounts",
+						"Usage refresh is only available for Anthropic OAuth and Codex accounts",
 					),
 				);
 			}
@@ -3521,6 +3525,18 @@ export function createAccountRefreshUsageHandler(dbOps: DatabaseOperations) {
 						`Account '${account.name}' has no tokens - please re-authenticate`,
 					),
 				);
+			}
+
+			if (account.provider === "codex") {
+				const outcome = await refreshCodexUsageForAccount(accountId);
+				log.info(
+					`Codex usage refresh requested for account '${account.name}' (success: ${outcome.success})`,
+				);
+				return jsonResponse({
+					success: outcome.success,
+					message: outcome.message,
+					pollingRestarted: false,
+				});
 			}
 
 			clearAccountRefreshCache(accountId);
