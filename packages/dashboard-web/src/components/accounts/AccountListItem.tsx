@@ -130,7 +130,6 @@ export function AccountListItem({
 
 	return (
 		<div
-			key={account.name}
 			className={`p-4 border rounded-lg transition-colors space-y-3 ${
 				isActive
 					? "border-primary bg-primary/5 shadow-sm"
