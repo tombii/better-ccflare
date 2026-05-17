@@ -36,7 +36,12 @@ import {
 	getUsageThrottleStatus,
 	restartUsagePollingForAccount,
 } from "@better-ccflare/proxy";
-import type { FullUsageData, RateLimitReason } from "@better-ccflare/types";
+import type {
+	Account,
+	FullUsageData,
+	LoadBalancingStrategy,
+	RateLimitReason,
+} from "@better-ccflare/types";
 import { requiresSessionDurationTracking } from "@better-ccflare/types";
 import type { AccountResponse } from "../types";
 
@@ -147,11 +152,14 @@ async function getCachedOrPersistedCodexUsage(
 export function createAccountsListHandler(
 	dbOps: DatabaseOperations,
 	config: Config,
+	getStrategy?: () => LoadBalancingStrategy | null,
 ) {
 	return async (): Promise<Response> => {
 		const db = dbOps.getAdapter();
 		const now = Date.now();
 		const sessionDuration = 5 * 60 * 60 * 1000; // 5 hours
+
+		const strategy = getStrategy?.() ?? null;
 
 		const accounts = await db.query<{
 			id: string;
@@ -186,6 +194,7 @@ export function createAccountsListHandler(
 			cross_region_mode: string | null;
 			model_fallbacks: string | null;
 			billing_type: string | null;
+			pause_reason: string | null;
 		}>(
 			`
 				SELECT
@@ -219,6 +228,7 @@ export function createAccountsListHandler(
 					cross_region_mode,
 					model_fallbacks,
 					billing_type,
+					pause_reason,
 					CASE
 						WHEN expires_at > ? THEN 1
 						ELSE 0
@@ -237,6 +247,39 @@ export function createAccountsListHandler(
 			`,
 			[now, now, now, sessionDuration],
 		);
+
+		// Ask the active load-balancing strategy which account it would pick
+		// next from the same in-memory snapshot we use to build the response —
+		// querying again would open a race window where isPrimary could land
+		// on a row whose paused/rate-limited fields the same response shows
+		// as blocked. Only the fields peek reads are mapped here; the rest of
+		// the Account interface is unused at peek time.
+		const primaryId = strategy
+			? strategy.peek(
+					accounts.map(
+						(a) =>
+							({
+								id: a.id,
+								provider: a.provider ?? "",
+								paused: !!a.paused,
+								// pause_reason and rate_limit_reset feed wouldAutoUnpause —
+								// without them peek() can't simulate the auto-unpause that
+								// select() performs on safe-reason paused accounts whose
+								// upstream window has reset.
+								pause_reason: a.pause_reason ?? null,
+								rate_limited_until: a.rate_limited_until
+									? Number(a.rate_limited_until)
+									: null,
+								rate_limit_reset: a.rate_limit_reset
+									? Number(a.rate_limit_reset)
+									: null,
+								session_start: a.session_start ? Number(a.session_start) : null,
+								priority: a.priority,
+								auto_fallback_enabled: !!a.auto_fallback_enabled,
+							}) as Account,
+					),
+				)
+			: null;
 
 		// Fetch session-window token stats only for providers with session-based limits
 		const sessionStatsMap = await dbOps
@@ -503,6 +546,7 @@ export function createAccountsListHandler(
 					modelFallbacks,
 					billingType: account.billing_type,
 					sessionStats: sessionStatsMap.get(account.id) ?? null,
+					isPrimary: account.id === primaryId,
 				};
 			}),
 		);
