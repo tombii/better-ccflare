@@ -104,9 +104,14 @@ curl http://localhost:8080/health
 Proxy requests to Claude API. All requests to paths starting with `/v1/` are forwarded to Claude using the configured load balancing strategy. This includes POST, GET, and any other HTTP methods that Claude's API supports.
 
 **Supported Endpoints:**
-- `POST /v1/messages` - Create chat completions
+- `POST /v1/messages` - Native Anthropic messages endpoint
+- `POST /v1/responses` - OpenAI Responses API compatibility endpoint (translated to `/v1/messages`)
+- `POST /v1/responses/compact` - Compact Responses API compatibility endpoint (translated to `/v1/messages`)
 - `POST /v1/complete` - Text completion (legacy)
 - Any other Claude API v1 endpoint
+
+**Codex Compatibility:**
+OpenAI Responses API clients (for example Codex) can target better-ccflare directly through `/v1/responses` and `/v1/responses/compact`. better-ccflare translates these payloads to Anthropic message format internally.
 
 **Note:** There is no `/v1/models` endpoint provided by better-ccflare. Model listing would need to be done directly through Claude's API if such an endpoint exists.
 

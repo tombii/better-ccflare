@@ -60,7 +60,7 @@ When working with Claude API at scale, rate limits can become a significant bott
 - [Model Mappings](./models.md) - Claude AI model definitions and constants
 
 ### User Interfaces
-- [HTTP API Reference](./api-http.md) - Complete REST API documentation
+- [HTTP API Reference](./api-http.md) - Complete REST API documentation, including `/v1/messages`, `/v1/responses`, and `/v1/responses/compact`
 - [CLI Commands](./cli.md) - Comprehensive command-line interface reference
 
 ### Operations
