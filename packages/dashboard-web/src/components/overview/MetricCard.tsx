@@ -3,6 +3,12 @@ import { Info, TrendingDown, TrendingUp } from "lucide-react";
 import { Card, CardContent } from "../ui/card";
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
 
+export interface MetricCardSubRow {
+	label: string;
+	value: string | number;
+	tooltip?: string;
+}
+
 export interface MetricCardProps {
 	title: string;
 	value: string | number;
@@ -10,6 +16,7 @@ export interface MetricCardProps {
 	icon: React.ComponentType<{ className?: string }>;
 	trend?: "up" | "down" | "flat";
 	trendPeriod?: string;
+	subRows?: MetricCardSubRow[];
 }
 
 export function MetricCard({
@@ -19,6 +26,7 @@ export function MetricCard({
 	icon: Icon,
 	trend,
 	trendPeriod,
+	subRows,
 }: MetricCardProps) {
 	const trendElement = trend !== "flat" && change !== undefined && (
 		<div
@@ -60,6 +68,20 @@ export function MetricCard({
 					<p className="text-sm text-muted-foreground">{title}</p>
 					<p className="text-2xl font-bold">{value}</p>
 				</div>
+				{subRows && subRows.length > 0 && (
+					<div className="mt-3 pt-3 border-t border-border/50 space-y-1">
+						{subRows.map((row) => (
+							<div
+								key={row.label}
+								className="flex items-baseline justify-between text-xs"
+								title={row.tooltip}
+							>
+								<span className="text-muted-foreground">{row.label}</span>
+								<span className="font-medium tabular-nums">{row.value}</span>
+							</div>
+						))}
+					</div>
+				)}
 			</CardContent>
 		</Card>
 	);

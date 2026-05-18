@@ -105,6 +105,12 @@ export interface AnalyticsResponse {
 		planCostUsd: number;
 		apiCostUsd: number;
 		avgTokensPerSecond: number | null;
+		// Fixed-window burn-rate KPIs, independent of the active range/filters.
+		// Daily: sum over the last 7 days / 7. Weekly: sum over the last 30 days × 7 / 30.
+		avgDailyPlanCostUsd: number;
+		avgWeeklyPlanCostUsd: number;
+		avgDailyApiCostUsd: number;
+		avgWeeklyApiCostUsd: number;
 	};
 	timeSeries: TimePoint[];
 	tokenBreakdown: TokenBreakdown;

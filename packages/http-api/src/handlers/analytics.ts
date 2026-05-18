@@ -154,6 +154,38 @@ export function createAnalyticsHandler(context: APIContext) {
 				[...queryParams, NO_ACCOUNT_ID],
 			);
 
+			// Fixed-window burn-rate aggregates. Independent of the user's range
+			// or filters so "Avg / day" and "Avg / week" stay stable when the
+			// dashboard range filter changes. Daily = sum(7d) / 7, weekly = sum(30d) * 7/30.
+			const nowMs = Date.now();
+			const sevenDayStart = nowMs - 7 * 24 * 60 * 60 * 1000;
+			const thirtyDayStart = nowMs - 30 * 24 * 60 * 60 * 1000;
+			const burnRateResult = await db.get<{
+				plan_cost_7d: number;
+				api_cost_7d: number;
+				plan_cost_30d: number;
+				api_cost_30d: number;
+			}>(
+				`
+				SELECT
+					SUM(CASE WHEN timestamp > ? AND billing_type = 'plan' THEN COALESCE(cost_usd, 0) ELSE 0 END) as plan_cost_7d,
+					SUM(CASE WHEN timestamp > ? AND billing_type != 'plan' THEN COALESCE(cost_usd, 0) ELSE 0 END) as api_cost_7d,
+					SUM(CASE WHEN billing_type = 'plan' THEN COALESCE(cost_usd, 0) ELSE 0 END) as plan_cost_30d,
+					SUM(CASE WHEN billing_type != 'plan' THEN COALESCE(cost_usd, 0) ELSE 0 END) as api_cost_30d
+				FROM requests
+				WHERE timestamp > ?
+			`,
+				[sevenDayStart, sevenDayStart, thirtyDayStart],
+			);
+			const planCost7d = Number(burnRateResult?.plan_cost_7d) || 0;
+			const apiCost7d = Number(burnRateResult?.api_cost_7d) || 0;
+			const planCost30d = Number(burnRateResult?.plan_cost_30d) || 0;
+			const apiCost30d = Number(burnRateResult?.api_cost_30d) || 0;
+			const avgDailyPlanCostUsd = planCost7d / 7;
+			const avgDailyApiCostUsd = apiCost7d / 7;
+			const avgWeeklyPlanCostUsd = (planCost30d * 7) / 30;
+			const avgWeeklyApiCostUsd = (apiCost30d * 7) / 30;
+
 			// Get time series data
 			const timeSeries = await db.query<{
 				ts: number;
@@ -554,6 +586,10 @@ export function createAnalyticsHandler(context: APIContext) {
 						consolidatedResult?.avg_tokens_per_second != null
 							? Number(consolidatedResult.avg_tokens_per_second)
 							: null,
+					avgDailyPlanCostUsd,
+					avgWeeklyPlanCostUsd,
+					avgDailyApiCostUsd,
+					avgWeeklyApiCostUsd,
 				},
 				timeSeries: transformedTimeSeries,
 				tokenBreakdown: {
