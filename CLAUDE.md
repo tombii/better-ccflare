@@ -81,6 +81,8 @@ When creating new functionality: write tests first, then implement, then run tes
 ## After Code Changes
 Always run: `bun run lint && bun run typecheck && bun run format`
 
+After pushing commits to main, run `npx gitnexus analyze` to keep the GitNexus index up to date.
+
 ## Git Commits
 - **Before making any changes, run `git status` to check for pre-existing uncommitted changes.** Note which files were already modified so you can distinguish your changes from theirs throughout the session.
 - Use `git add <specific-files>` (not `git add .`) to avoid committing inline-worker.ts
