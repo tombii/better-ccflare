@@ -10,6 +10,14 @@ type AsyncWriterHealthFn = () => {
 	failureCount: number;
 	recentDrops: number;
 	queuedJobs: number;
+	metadataQueuedJobs: number;
+	payloadQueuedJobs: number;
+	payloadBytesPending: number;
+	oldestMetadataAgeMs: number;
+	oldestPayloadAgeMs: number;
+	metadataDropped: number;
+	payloadDropped: number;
+	payloadDroppedBytes: number;
 };
 type UsageWorkerHealthFn = () => {
 	state: string;

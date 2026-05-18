@@ -27,6 +27,14 @@ export interface APIContext {
 		failureCount: number;
 		recentDrops: number;
 		queuedJobs: number;
+		metadataQueuedJobs: number;
+		payloadQueuedJobs: number;
+		payloadBytesPending: number;
+		oldestMetadataAgeMs: number;
+		oldestPayloadAgeMs: number;
+		metadataDropped: number;
+		payloadDropped: number;
+		payloadDroppedBytes: number;
 	};
 	getUsageWorkerHealth?: () => {
 		state: string;
