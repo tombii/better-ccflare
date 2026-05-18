@@ -807,60 +807,89 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 
 	const requestId = startMessage.requestId;
 	if (storePayloads) {
-		// Save payload - eagerly serialize to break closure references
-		let responseBody: string | null = null;
+		// Preflight backpressure check — skip serialization entirely if the
+		// writer is already overloaded. The metadata write above already
+		// captured the request; only the payload is dropped.
+		const estimatedRequestBytes = startMessage.requestBody?.length ?? 0;
+		const estimatedResponseBytes =
+			msg.responseBody?.length ?? state.chunksBytes ?? 0;
+		const estimatedPayloadBytes =
+			(estimatedRequestBytes +
+				estimatedResponseBytes +
+				2048) /* headers+meta overhead */ *
+			2; /* V8 UTF-16 string memory overhead */
 
-		if (msg.responseBody) {
-			// Non-streaming response
-			responseBody = msg.responseBody;
-		} else if (state.chunks.length > 0) {
-			// Streaming response - combine chunks
-			const combined = combineChunks(state.chunks);
-			if (combined.length > 0) {
-				responseBody = combined.toString("base64");
+		if (!asyncWriter.canAcceptPayload(estimatedPayloadBytes)) {
+			log.warn(
+				`Backpressure: skipping payload persistence for ${requestId} (estimated_bytes=${estimatedPayloadBytes})`,
+			);
+		} else {
+			// Save payload - eagerly serialize to break closure references
+			let responseBody: string | null = null;
+
+			if (msg.responseBody) {
+				// Non-streaming response
+				responseBody = msg.responseBody;
+			} else if (state.chunks.length > 0) {
+				// Streaming response - combine chunks
+				const combined = combineChunks(state.chunks);
+				if (combined.length > 0) {
+					responseBody = combined.toString("base64");
+				}
+			}
+
+			// Cap request body to prevent unbounded payload storage
+			let requestBody = startMessage.requestBody;
+			if (requestBody) {
+				const rawBytes = Buffer.byteLength(requestBody, "base64");
+				if (rawBytes > MAX_REQUEST_BODY_BYTES) {
+					requestBody = Buffer.from(requestBody, "base64")
+						.subarray(0, MAX_REQUEST_BODY_BYTES)
+						.toString("base64");
+				}
+			}
+
+			const payloadJson = JSON.stringify({
+				request: {
+					headers: startMessage.requestHeaders,
+					body: requestBody,
+				},
+				response: {
+					status: startMessage.responseStatus,
+					headers: startMessage.responseHeaders,
+					body: responseBody,
+				},
+				meta: {
+					accountId: startMessage.accountId || NO_ACCOUNT_ID,
+					timestamp: startMessage.timestamp,
+					success: msg.success,
+					isStream: startMessage.isStream,
+					retry: startMessage.retryAttempt,
+					project: state.project ?? undefined,
+				},
+			});
+
+			// Null out large references now that we have the serialized JSON
+			responseBody = null;
+
+			const payloadBytes = Buffer.byteLength(payloadJson);
+			const accepted = asyncWriter.enqueuePayload(
+				requestId,
+				payloadBytes,
+				async () => {
+					try {
+						await dbOps.saveRequestPayloadRaw(requestId, payloadJson);
+					} catch (error) {
+						log.error(`Failed to save payload for ${requestId}:`, error);
+					}
+				},
+			);
+			if (!accepted) {
+				log.warn(
+					`Payload write rejected post-serialization for ${requestId} (bytes=${payloadBytes})`,
+				);
 			}
 		}
-
-		// Cap request body to prevent unbounded payload storage
-		let requestBody = startMessage.requestBody;
-		if (requestBody) {
-			const rawBytes = Buffer.byteLength(requestBody, "base64");
-			if (rawBytes > MAX_REQUEST_BODY_BYTES) {
-				requestBody = Buffer.from(requestBody, "base64")
-					.subarray(0, MAX_REQUEST_BODY_BYTES)
-					.toString("base64");
-			}
-		}
-
-		const payloadJson = JSON.stringify({
-			request: {
-				headers: startMessage.requestHeaders,
-				body: requestBody,
-			},
-			response: {
-				status: startMessage.responseStatus,
-				headers: startMessage.responseHeaders,
-				body: responseBody,
-			},
-			meta: {
-				accountId: startMessage.accountId || NO_ACCOUNT_ID,
-				timestamp: startMessage.timestamp,
-				success: msg.success,
-				isStream: startMessage.isStream,
-				retry: startMessage.retryAttempt,
-				project: state.project ?? undefined,
-			},
-		});
-
-		// Null out large references now that we have the serialized JSON
-		responseBody = null;
-		asyncWriter.enqueue(async () => {
-			try {
-				await dbOps.saveRequestPayloadRaw(requestId, payloadJson);
-			} catch (error) {
-				log.error(`Failed to save payload for ${requestId}:`, error);
-			}
-		});
 	}
 	freeRequestState(state);
 
@@ -997,11 +1026,9 @@ const cleanupStaleRequests = () => {
 		}
 	}
 
-	if (removedCount > 0) {
-		log.info(
-			`Cleanup removed ${removedCount} stale requests, map size now: ${requests.size}`,
-		);
-	}
+	log.info(
+		`requests.size=${requests.size} after cleanup (removed=${removedCount})`,
+	);
 };
 
 const startCleanupInterval = () => {
