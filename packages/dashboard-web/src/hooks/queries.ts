@@ -1,7 +1,42 @@
 import type { AgentUpdatePayload } from "@better-ccflare/types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api } from "../api";
+import { api, type RequestPayload, type RequestSummary } from "../api";
 import { queryKeys } from "../lib/query-keys";
+
+/**
+ * Build a lightweight RequestPayload from a RequestSummary.
+ *
+ * The list view only needs metadata; full bodies (which can be ~256KB each)
+ * are lazy-loaded by RequestDetailsModal and CopyButton via /api/requests/payload/:id.
+ * `meta.bodiesOmitted` signals to consumers that the bodies must be hydrated.
+ */
+export function summaryToPlaceholder(summary: RequestSummary): RequestPayload {
+	// `accountUsed` is the resolved account name when the JOIN succeeds, else
+	// the raw account ID. We put it in accountName so the row renders the
+	// friendly name; the ID-only fallback is rare (only after account deletion).
+	const accountName = summary.accountUsed ?? undefined;
+	return {
+		id: summary.id,
+		request: { headers: {}, body: null },
+		response:
+			summary.statusCode != null
+				? { status: summary.statusCode, headers: {}, body: null }
+				: null,
+		error: summary.errorMessage ?? undefined,
+		meta: {
+			accountName,
+			timestamp: new Date(summary.timestamp).getTime(),
+			success: summary.success,
+			path: summary.path,
+			method: summary.method,
+			agentUsed: summary.agentUsed,
+			// Server derives this from statusCode === 429 so the list view can
+			// render the Rate Limited badge without lazy-loading the body.
+			rateLimited: summary.rateLimited,
+			bodiesOmitted: true,
+		},
+	};
+}
 
 export const useAccounts = () => {
 	return useQuery({
@@ -22,6 +57,34 @@ export const useAgents = () => {
 		refetchInterval: 60000, // Increase from 30 to 60 seconds
 		refetchIntervalInBackground: false, // Don't refresh when tab is not focused
 		gcTime: 10 * 60 * 1000, // Keep in cache for 10 minutes
+	});
+};
+
+interface ApiKeyListItem {
+	id: string;
+	name: string;
+	prefixLast8: string;
+	createdAt: string;
+	lastUsed: string | null;
+	usageCount: number;
+	isActive: boolean;
+}
+
+interface ApiKeysListResponse {
+	success: boolean;
+	data: ApiKeyListItem[];
+	count: number;
+}
+
+export const useApiKeys = () => {
+	return useQuery({
+		queryKey: queryKeys.apiKeys(),
+		queryFn: async () => {
+			const res = await api.get<ApiKeysListResponse>("/api/api-keys");
+			return res.data ?? [];
+		},
+		staleTime: 60000,
+		gcTime: 5 * 60 * 1000,
 	});
 };
 
@@ -119,15 +182,16 @@ export const useRequests = (limit: number, _refetchInterval?: number) => {
 	return useQuery({
 		queryKey: queryKeys.requests(limit),
 		queryFn: async () => {
-			const [requestsDetail, requestsSummary] = await Promise.all([
-				api.getRequestsDetail(limit),
-				api.getRequestsSummary(limit),
-			]);
-			// Convert array to Map for detailsMap
+			// Fetch only the summary endpoint - it has everything the list view needs.
+			// Full request/response bodies are lazy-loaded per row when needed
+			// (modal open, copy-as-JSON) via /api/requests/payload/:id.
+			const requestsSummary = await api.getRequestsSummary(limit);
 			const detailsMap = new Map(
 				requestsSummary.map((summary) => [summary.id, summary]),
 			);
-			return { requests: requestsDetail, detailsMap };
+			const requests: RequestPayload[] =
+				requestsSummary.map(summaryToPlaceholder);
+			return { requests, detailsMap };
 		},
 		staleTime: Infinity, // Consider data fresh until manually refetched
 		gcTime: 10 * 60 * 1000, // Keep in cache for 10 minutes
