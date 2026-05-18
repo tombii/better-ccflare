@@ -43,7 +43,7 @@ export class Logger {
 
 	constructor(prefix: string = "", level: LogLevel = LogLevel.INFO) {
 		this.prefix = prefix;
-		this.level = this.getLogLevelFromEnv() || level;
+		this.level = this.getLogLevelFromEnv() ?? level;
 		this.format = this.getFormatFromEnv();
 		// Only show console output in debug mode or if BETTER_CCFLARE_DEBUG or legacy ccflare_DEBUG is set
 		this.silentConsole = !(
