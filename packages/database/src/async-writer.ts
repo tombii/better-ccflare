@@ -37,7 +37,10 @@ export class AsyncDbWriter implements Disposable {
 	private metadataQueue: MetadataJob[] = [];
 	private payloadQueue: PayloadJob[] = [];
 	private payloadBytesPending = 0;
-	private running = false;
+	// Tracks the currently-executing tick. dispose() and re-entrant callers
+	// await this so a tick that has already shift()-ed its last job (queues
+	// empty) but is still inside its job's `finally` is not abandoned.
+	private runningPromise: Promise<void> | null = null;
 	private intervalId: Timer | null = null;
 	private healthInterval: Timer | null = null;
 
@@ -183,70 +186,77 @@ export class AsyncDbWriter implements Disposable {
 	}
 
 	private async processQueue(): Promise<void> {
-		if (
-			this.running ||
-			(this.metadataQueue.length === 0 && this.payloadQueue.length === 0)
-		) {
+		// Coalesce concurrent invocations onto the in-flight tick so callers can
+		// observe its completion. Without this dispose() can return while a
+		// shift()-ed job is mid-execution (queue length 0, finally not yet run).
+		if (this.runningPromise) {
+			return this.runningPromise;
+		}
+		if (this.metadataQueue.length === 0 && this.payloadQueue.length === 0) {
 			return;
 		}
 
-		this.running = true;
+		this.runningPromise = this.runTick();
+		try {
+			await this.runningPromise;
+		} finally {
+			this.runningPromise = null;
+		}
+	}
+
+	private async runTick(): Promise<void> {
 		const start = performance.now();
 		let jobsProcessed = 0;
 
-		try {
-			while (
-				(this.metadataQueue.length > 0 || this.payloadQueue.length > 0) &&
-				jobsProcessed < this.MAX_JOBS_PER_TICK &&
-				performance.now() - start < this.MAX_DRAIN_MS_PER_TICK
+		while (
+			(this.metadataQueue.length > 0 || this.payloadQueue.length > 0) &&
+			jobsProcessed < this.MAX_JOBS_PER_TICK &&
+			performance.now() - start < this.MAX_DRAIN_MS_PER_TICK
+		) {
+			const preferPayload =
+				this.metadataStreak >= this.METADATA_PER_PAYLOAD &&
+				this.payloadQueue.length > 0;
+
+			if (
+				!preferPayload &&
+				this.metadataQueue.length > 0 &&
+				this.metadataStreak < this.METADATA_PER_PAYLOAD
 			) {
-				const preferPayload =
-					this.metadataStreak >= this.METADATA_PER_PAYLOAD &&
-					this.payloadQueue.length > 0;
-
-				if (
-					!preferPayload &&
-					this.metadataQueue.length > 0 &&
-					this.metadataStreak < this.METADATA_PER_PAYLOAD
-				) {
-					const job = this.metadataQueue.shift();
-					if (job) {
-						await this.runJobWithWatchdog(job, "metadata");
-						this.metadataStreak++;
-						jobsProcessed++;
-					}
-					continue;
+				const job = this.metadataQueue.shift();
+				if (job) {
+					await this.runJobWithWatchdog(job, "metadata");
+					this.metadataStreak++;
+					jobsProcessed++;
 				}
-
-				if (this.payloadQueue.length > 0) {
-					const job = this.payloadQueue.shift();
-					if (job) {
-						await this.runJobWithWatchdog(job, "payload");
-						this.metadataStreak = 0;
-						jobsProcessed++;
-					}
-					continue;
-				}
-
-				// No payload available but we hit the metadata streak — fall through
-				// to metadata if any remain, otherwise break.
-				if (this.metadataQueue.length > 0) {
-					const job = this.metadataQueue.shift();
-					if (job) {
-						await this.runJobWithWatchdog(job, "metadata");
-						this.metadataStreak++;
-						jobsProcessed++;
-					}
-					continue;
-				}
-				break;
+				continue;
 			}
 
-			if (jobsProcessed > 0) {
-				logger.debug(`Processed ${jobsProcessed} database jobs`);
+			if (this.payloadQueue.length > 0) {
+				const job = this.payloadQueue.shift();
+				if (job) {
+					await this.runJobWithWatchdog(job, "payload");
+					this.metadataStreak = 0;
+					jobsProcessed++;
+				}
+				continue;
 			}
-		} finally {
-			this.running = false;
+
+			// No payload available but we hit the metadata streak — fall through
+			// to metadata if any remain, otherwise break.
+			if (this.metadataQueue.length > 0) {
+				const job = this.metadataQueue.shift();
+				if (job) {
+					await this.runJobWithWatchdog(job, "metadata");
+					this.metadataStreak++;
+					jobsProcessed++;
+				}
+				continue;
+			}
+			break;
+		}
+
+		if (jobsProcessed > 0) {
+			logger.debug(`Processed ${jobsProcessed} database jobs`);
 		}
 	}
 
@@ -294,8 +304,14 @@ export class AsyncDbWriter implements Disposable {
 		}
 
 		// Drain both queues to completion. processQueue is budgeted per-tick;
-		// call it in a loop until both queues are empty.
-		while (this.metadataQueue.length > 0 || this.payloadQueue.length > 0) {
+		// call it in a loop until both queues are empty AND no in-flight tick
+		// is still running (the latter covers the race where the last job has
+		// been shift()-ed off but its `finally` block has not yet executed).
+		while (
+			this.metadataQueue.length > 0 ||
+			this.payloadQueue.length > 0 ||
+			this.runningPromise
+		) {
 			await this.processQueue();
 		}
 

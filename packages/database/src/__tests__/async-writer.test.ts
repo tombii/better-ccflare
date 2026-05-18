@@ -328,6 +328,38 @@ describe("AsyncDbWriter", () => {
 		expect(h.payloadBytesPending).toBe(0);
 	});
 
+	test("dispose awaits in-flight tick even after queue is empty (Greptile P1)", async () => {
+		writer = new AsyncDbWriter();
+
+		// Single payload job whose body runs long enough that the queue has
+		// been shift()-ed to empty before dispose's drain loop checks lengths.
+		// Without the runningPromise guard, dispose would return before this
+		// job's finally block decrements payloadBytesPending.
+		let finished = false;
+		const bytes = 5_000_000;
+		const ok = writer.enqueuePayload("inflight", bytes, async () => {
+			await sleep(150);
+			finished = true;
+		});
+		expect(ok).toBe(true);
+
+		// Let the drain interval pick up the job (interval fires every 100 ms);
+		// give it just enough time to shift() and start awaiting but not to
+		// complete.
+		await sleep(120);
+
+		await writer.dispose();
+		const localWriter = writer;
+		writer = null;
+
+		// If dispose returned before the in-flight job's finally ran, finished
+		// would still be false and payloadBytesPending would still be 5_000_000.
+		expect(finished).toBe(true);
+		const h = localWriter.getHealth();
+		expect(h.payloadBytesPending).toBe(0);
+		expect(h.payloadQueuedJobs).toBe(0);
+	});
+
 	test("watchdog does not crash on slow job (>1 s slow-warn threshold)", async () => {
 		writer = new AsyncDbWriter();
 

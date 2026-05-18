@@ -1026,9 +1026,11 @@ const cleanupStaleRequests = () => {
 		}
 	}
 
-	log.info(
-		`requests.size=${requests.size} after cleanup (removed=${removedCount})`,
-	);
+	if (removedCount > 0 || requests.size > 0) {
+		log.info(
+			`requests.size=${requests.size} after cleanup (removed=${removedCount})`,
+		);
+	}
 };
 
 const startCleanupInterval = () => {
