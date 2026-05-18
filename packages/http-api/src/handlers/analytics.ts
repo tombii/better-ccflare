@@ -9,6 +9,20 @@ import type { AnalyticsResponse, APIContext } from "../types";
 
 const log = new Logger("AnalyticsHandler");
 
+// Exported for unit tests.
+export function effectiveBurnRateDays(
+	firstTs: number | null,
+	windowStartMs: number,
+	windowDays: number,
+	nowMs: number,
+): number {
+	if (firstTs == null) return windowDays;
+	const dayMs = 24 * 60 * 60 * 1000;
+	const start = Math.max(firstTs, windowStartMs);
+	const days = Math.ceil((nowMs - start) / dayMs);
+	return Math.min(windowDays, Math.max(1, days));
+}
+
 interface BucketConfig {
 	bucketMs: number;
 	displayName: string;
@@ -156,22 +170,29 @@ export function createAnalyticsHandler(context: APIContext) {
 
 			// Fixed-window burn-rate aggregates. Independent of the user's range
 			// or filters so "Avg / day" and "Avg / week" stay stable when the
-			// dashboard range filter changes. Daily = sum(7d) / 7, weekly = sum(30d) * 7/30.
+			// dashboard range filter changes. Divisor is clamped to the actual
+			// age of the data so thin history (e.g. the proxy was started 3 days
+			// ago) doesn't get padded with imaginary zero days.
+			const dayMs = 24 * 60 * 60 * 1000;
 			const nowMs = Date.now();
-			const sevenDayStart = nowMs - 7 * 24 * 60 * 60 * 1000;
-			const thirtyDayStart = nowMs - 30 * 24 * 60 * 60 * 1000;
+			const sevenDayStart = nowMs - 7 * dayMs;
+			const thirtyDayStart = nowMs - 30 * dayMs;
 			const burnRateResult = await db.get<{
 				plan_cost_7d: number;
 				api_cost_7d: number;
 				plan_cost_30d: number;
 				api_cost_30d: number;
+				first_plan_ts: number | null;
+				first_api_ts: number | null;
 			}>(
 				`
 				SELECT
 					SUM(CASE WHEN timestamp > ? AND billing_type = 'plan' THEN COALESCE(cost_usd, 0) ELSE 0 END) as plan_cost_7d,
 					SUM(CASE WHEN timestamp > ? AND billing_type != 'plan' THEN COALESCE(cost_usd, 0) ELSE 0 END) as api_cost_7d,
 					SUM(CASE WHEN billing_type = 'plan' THEN COALESCE(cost_usd, 0) ELSE 0 END) as plan_cost_30d,
-					SUM(CASE WHEN billing_type != 'plan' THEN COALESCE(cost_usd, 0) ELSE 0 END) as api_cost_30d
+					SUM(CASE WHEN billing_type != 'plan' THEN COALESCE(cost_usd, 0) ELSE 0 END) as api_cost_30d,
+					MIN(CASE WHEN billing_type = 'plan' THEN timestamp ELSE NULL END) as first_plan_ts,
+					MIN(CASE WHEN billing_type != 'plan' THEN timestamp ELSE NULL END) as first_api_ts
 				FROM requests
 				WHERE timestamp > ?
 			`,
@@ -181,10 +202,27 @@ export function createAnalyticsHandler(context: APIContext) {
 			const apiCost7d = Number(burnRateResult?.api_cost_7d) || 0;
 			const planCost30d = Number(burnRateResult?.plan_cost_30d) || 0;
 			const apiCost30d = Number(burnRateResult?.api_cost_30d) || 0;
-			const avgDailyPlanCostUsd = planCost7d / 7;
-			const avgDailyApiCostUsd = apiCost7d / 7;
-			const avgWeeklyPlanCostUsd = (planCost30d * 7) / 30;
-			const avgWeeklyApiCostUsd = (apiCost30d * 7) / 30;
+			const firstPlanTs =
+				burnRateResult?.first_plan_ts != null
+					? Number(burnRateResult.first_plan_ts)
+					: null;
+			const firstApiTs =
+				burnRateResult?.first_api_ts != null
+					? Number(burnRateResult.first_api_ts)
+					: null;
+			const avgDailyPlanCostUsd =
+				planCost7d /
+				effectiveBurnRateDays(firstPlanTs, sevenDayStart, 7, nowMs);
+			const avgDailyApiCostUsd =
+				apiCost7d / effectiveBurnRateDays(firstApiTs, sevenDayStart, 7, nowMs);
+			const avgWeeklyPlanCostUsd =
+				(planCost30d /
+					effectiveBurnRateDays(firstPlanTs, thirtyDayStart, 30, nowMs)) *
+				7;
+			const avgWeeklyApiCostUsd =
+				(apiCost30d /
+					effectiveBurnRateDays(firstApiTs, thirtyDayStart, 30, nowMs)) *
+				7;
 
 			// Get time series data
 			const timeSeries = await db.query<{
