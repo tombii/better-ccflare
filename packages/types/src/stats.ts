@@ -106,11 +106,13 @@ export interface AnalyticsResponse {
 		apiCostUsd: number;
 		avgTokensPerSecond: number | null;
 		// Fixed-window burn-rate KPIs, independent of the active range/filters.
-		// Daily: sum over the last 7 days / 7. Weekly: sum over the last 30 days × 7 / 30.
-		avgDailyPlanCostUsd: number;
-		avgWeeklyPlanCostUsd: number;
-		avgDailyApiCostUsd: number;
-		avgWeeklyApiCostUsd: number;
+		// Daily: sum(last 7d) / effectiveDays(≤7). Weekly: sum(last 30d) × 7 / effectiveDays(≤30).
+		// effectiveDays is clamped to the actual age of data so thin history doesn't inflate the average.
+		// Optional because an older server may not populate them — consumers should `?? 0`.
+		avgDailyPlanCostUsd?: number;
+		avgWeeklyPlanCostUsd?: number;
+		avgDailyApiCostUsd?: number;
+		avgWeeklyApiCostUsd?: number;
 	};
 	timeSeries: TimePoint[];
 	tokenBreakdown: TokenBreakdown;
