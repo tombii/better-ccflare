@@ -103,10 +103,10 @@ let tokenEncoder: Tiktoken | null = null;
 await initPayloadEncryption();
 
 // Initialize database connection for worker.
-// fastMode=true skips PRAGMA integrity_check — the main thread already ran it on
-// the same file, and on large DBs (multi-GB) this PRAGMA can take minutes,
-// blowing past the worker controller's 10s startup timeout.
-const dbOps = new DatabaseOperations(undefined, undefined, undefined, true);
+// PRAGMA integrity_check is no longer run at construction (the integrity
+// scheduler handles periodic quick/full checks in dedicated workers), so the
+// previous `fastMode` flag has been removed and we use the default constructor.
+const dbOps = new DatabaseOperations();
 dbOps.initializeAsync().catch((err: unknown) => {
 	log.error("Failed to initialize database async connection:", err);
 });
