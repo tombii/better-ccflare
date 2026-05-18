@@ -90,7 +90,10 @@ function DefaultErrorFallback({ error, reset }: DefaultErrorFallbackProps) {
 						fill="none"
 						viewBox="0 0 24 24"
 						stroke="currentColor"
+						role="img"
+						aria-label="Error"
 					>
+						<title>Error</title>
 						<path
 							strokeLinecap="round"
 							strokeLinejoin="round"
@@ -107,6 +110,7 @@ function DefaultErrorFallback({ error, reset }: DefaultErrorFallbackProps) {
 						"An unexpected error occurred while loading this component."}
 				</p>
 				<button
+					type="button"
 					onClick={reset}
 					className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2"
 				>
