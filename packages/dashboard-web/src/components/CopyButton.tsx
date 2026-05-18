@@ -53,6 +53,11 @@ export function CopyButton({
 	const flashError = (err: unknown) => {
 		console.error("Copy failed", err);
 		setErrored(true);
+		// Clear any lingering success state — `clearTimeout` below cancels
+		// the success-reset job too, so without `setCopied(false)` a failure
+		// that follows a recent success within 1.5 s would leave the Check
+		// icon shown indefinitely (until unmount).
+		setCopied(false);
 		if (timeoutRef.current) {
 			window.clearTimeout(timeoutRef.current);
 		}
@@ -69,6 +74,12 @@ export function CopyButton({
 			.writeText(text)
 			.then(() => {
 				setCopied(true);
+				// Clear any lingering error state from a previous attempt.
+				// `clearTimeout` below cancels the error-reset job too, so
+				// without this `setErrored(false)` a retry that succeeds within
+				// 1.5 s of a failed attempt would leave the AlertCircle icon
+				// shown indefinitely (until unmount).
+				setErrored(false);
 				if (timeoutRef.current) {
 					window.clearTimeout(timeoutRef.current);
 				}
