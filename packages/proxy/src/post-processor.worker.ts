@@ -810,14 +810,18 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 		// Preflight backpressure check — skip serialization entirely if the
 		// writer is already overloaded. The metadata write above already
 		// captured the request; only the payload is dropped.
+		//
+		// Use the same metric the cap tracks: `payloadBytesPending` charges
+		// `Buffer.byteLength(payloadJson)` (UTF-8 serialized bytes), so the
+		// preflight estimates the same. Request/response bodies are already
+		// base64 (ASCII) so `.length === byte count`; the JSON envelope plus
+		// headers/meta accounts for the remainder. No memory-cost multiplier
+		// here because the cap is a byte budget, not a memory bound.
 		const estimatedRequestBytes = startMessage.requestBody?.length ?? 0;
 		const estimatedResponseBytes =
 			msg.responseBody?.length ?? state.chunksBytes ?? 0;
 		const estimatedPayloadBytes =
-			(estimatedRequestBytes +
-				estimatedResponseBytes +
-				2048) /* headers+meta overhead */ *
-			2; /* V8 UTF-16 string memory overhead */
+			estimatedRequestBytes + estimatedResponseBytes + 2048;
 
 		if (!asyncWriter.canAcceptPayload(estimatedPayloadBytes)) {
 			log.warn(
