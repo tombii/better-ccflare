@@ -24,6 +24,10 @@ import { LoadingSkeleton } from "./overview/LoadingSkeleton";
 import { MetricCard } from "./overview/MetricCard";
 import { PoolMetricCard } from "./overview/PoolMetricCard";
 import { RateLimitInfo } from "./overview/RateLimitInfo";
+import {
+	StorageIntegrityBanner,
+	StorageIntegrityCard,
+} from "./overview/StorageIntegrityCard";
 import { SystemStatus } from "./overview/SystemStatus";
 import { TimeRangeSelector } from "./overview/TimeRangeSelector";
 
@@ -190,6 +194,9 @@ export const OverviewTab = React.memo(() => {
 
 	return (
 		<div className="space-y-6">
+			{/* Sticky corruption banner — only renders when /api/storage reports corrupt */}
+			<StorageIntegrityBanner />
+
 			{/* Header with Time Range Selector */}
 			<div className="flex justify-between items-center">
 				<h2 className="text-2xl font-semibold">Overview</h2>
@@ -289,7 +296,10 @@ export const OverviewTab = React.memo(() => {
 				loading={loading}
 			/>
 
-			<SystemStatus />
+			<div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+				<SystemStatus />
+				<StorageIntegrityCard />
+			</div>
 
 			{accounts && <RateLimitInfo accounts={accounts} />}
 		</div>

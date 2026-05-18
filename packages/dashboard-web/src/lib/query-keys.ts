@@ -26,4 +26,5 @@ export const queryKeys = {
 	combos: () => [...queryKeys.all, "combos"] as const,
 	families: () => [...queryKeys.all, "families"] as const,
 	apiKeys: () => [...queryKeys.all, "api-keys"] as const,
+	storage: () => [...queryKeys.all, "storage"] as const,
 } as const;

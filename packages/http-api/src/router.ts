@@ -96,7 +96,10 @@ import {
 } from "./handlers/requests";
 import { createRequestsStreamHandler } from "./handlers/requests-stream";
 import { createStatsHandler, createStatsResetHandler } from "./handlers/stats";
-import { createStorageHandler } from "./handlers/storage";
+import {
+	createIntegrityCheckHandler,
+	createStorageHandler,
+} from "./handlers/storage";
 import { createSystemInfoHandler } from "./handlers/system";
 import {
 	createAccountTokenHealthHandler,
@@ -150,6 +153,7 @@ export class APIRouter {
 		const statsHandler = createStatsHandler(dbOps);
 		const statsResetHandler = createStatsResetHandler(dbOps);
 		const storageHandler = createStorageHandler(dbOps);
+		const integrityCheckHandler = createIntegrityCheckHandler(dbOps);
 		const accountsHandler = createAccountsListHandler(dbOps, config);
 		const accountAddHandler = createAccountAddHandler(dbOps, config);
 		const zaiAccountAddHandler = createZaiAccountAddHandler(dbOps);
@@ -214,6 +218,9 @@ export class APIRouter {
 		this.handlers.set("GET:/api/stats", (_req, url) => statsHandler(url));
 		this.handlers.set("POST:/api/stats/reset", () => statsResetHandler());
 		this.handlers.set("GET:/api/storage", (_req, _url) => storageHandler());
+		this.handlers.set("POST:/api/storage/integrity/check", (req) =>
+			integrityCheckHandler(req),
+		);
 		this.handlers.set("GET:/api/accounts", () => accountsHandler());
 		this.handlers.set("POST:/api/accounts", (req) => accountAddHandler(req));
 		this.handlers.set("POST:/api/accounts/zai", (req) =>
