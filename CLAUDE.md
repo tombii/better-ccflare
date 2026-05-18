@@ -28,6 +28,14 @@ git merge --no-ff <branch-name>
 ```
 The `--no-ff` flag creates a merge commit even if the branch could be fast-forwarded.
 
+**Do NOT use `gh pr merge`** — it may squash or rebase, losing the contributor's identity. Always merge manually with `git merge --no-ff`.
+
+If the PR branch isn't available locally, fetch it first:
+```bash
+git fetch origin pull/<PR_NUMBER>/head:<branch-name>
+git merge --no-ff <branch-name>
+```
+
 After merging, update the Acknowledgements section in README.md to thank the contributor for their specific contributions.
 
 ## Issue Management
@@ -133,7 +141,7 @@ Automated release system uses commit prefixes for changelog:
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **better-ccflare** (9115 symbols, 16165 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **better-ccflare** (9594 symbols, 17947 relationships, 236 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
