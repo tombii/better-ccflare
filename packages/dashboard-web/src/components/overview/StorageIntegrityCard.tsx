@@ -169,10 +169,7 @@ export function StorageIntegrityCard() {
 						</div>
 
 						{triggerCheck.isError ? (
-							<p
-								role="alert"
-								className="text-sm text-destructive"
-							>
+							<p role="alert" className="text-sm text-destructive">
 								Could not trigger check:{" "}
 								{triggerCheck.error instanceof Error
 									? triggerCheck.error.message
