@@ -74,10 +74,22 @@ export function MetricCard({
 							<div
 								key={row.label}
 								className="flex items-baseline justify-between text-xs"
-								title={row.tooltip}
 							>
 								<span className="text-muted-foreground">{row.label}</span>
-								<span className="font-medium tabular-nums">{row.value}</span>
+								{row.tooltip ? (
+									<Popover>
+										<PopoverTrigger asChild>
+											<span className="font-medium tabular-nums cursor-help">
+												{row.value}
+											</span>
+										</PopoverTrigger>
+										<PopoverContent className="w-auto p-2 text-xs">
+											<p>{row.tooltip}</p>
+										</PopoverContent>
+									</Popover>
+								) : (
+									<span className="font-medium tabular-nums">{row.value}</span>
+								)}
 							</div>
 						))}
 					</div>
