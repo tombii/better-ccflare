@@ -1,5 +1,6 @@
 import { AlertCircle, Check, Copy, Loader2 } from "lucide-react";
 import { type ComponentProps, useRef, useState } from "react";
+import { copyText } from "../lib/clipboard";
 import { cn } from "../lib/utils";
 import { Button } from "./ui/button";
 
@@ -70,8 +71,7 @@ export function CopyButton({
 			return;
 		}
 
-		navigator.clipboard
-			.writeText(text)
+		copyText(text)
 			.then(() => {
 				setCopied(true);
 				// Clear any lingering error state from a previous attempt.
