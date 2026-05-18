@@ -813,9 +813,7 @@ describe("Database Backup Behavior", () => {
 		try {
 			// Trigger a migration so a new backup gets written + prune fires.
 			const db2 = new Database(dbPath);
-			db2
-				.prepare("ALTER TABLE accounts ADD COLUMN account_tier TEXT")
-				.run();
+			db2.prepare("ALTER TABLE accounts ADD COLUMN account_tier TEXT").run();
 			db2.close();
 
 			const db3 = new Database(dbPath);
@@ -958,9 +956,7 @@ describe("Database Backup Behavior", () => {
 		process.env.BETTER_CCFLARE_MIGRATION_BACKUP_KEEP = "0";
 		try {
 			const db2 = new Database(dbPath);
-			db2
-				.prepare("ALTER TABLE accounts ADD COLUMN account_tier TEXT")
-				.run();
+			db2.prepare("ALTER TABLE accounts ADD COLUMN account_tier TEXT").run();
 			db2.close();
 
 			const db3 = new Database(dbPath);

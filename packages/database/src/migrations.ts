@@ -48,7 +48,9 @@ function pruneOldBackups(absoluteSourcePath: string): void {
 	try {
 		entries = fs.readdirSync(dir);
 	} catch (error) {
-		log.warn(`Could not list backup directory for pruning: ${(error as Error).message}`);
+		log.warn(
+			`Could not list backup directory for pruning: ${(error as Error).message}`,
+		);
 		return;
 	}
 
@@ -76,7 +78,9 @@ function pruneOldBackups(absoluteSourcePath: string): void {
 			fs.unlinkSync(filePath);
 			log.info(`Pruned old DB backup: ${entry.name}`);
 		} catch (error) {
-			log.warn(`Failed to prune backup ${entry.name}: ${(error as Error).message}`);
+			log.warn(
+				`Failed to prune backup ${entry.name}: ${(error as Error).message}`,
+			);
 		}
 	}
 }
