@@ -117,6 +117,24 @@ export class AsyncDbWriter implements Disposable {
 		return true;
 	}
 
+	/**
+	 * Record a payload drop that did not go through `enqueuePayload` — i.e., a
+	 * caller that ran the cheap `canAcceptPayload` preflight and elected to skip
+	 * serialization. Without this the drop counters miss every preflight reject,
+	 * leaving `getHealth().payloadDropped` blind under sustained backpressure
+	 * and suppressing the 30s health log line (which gates on `recentDrops > 0`).
+	 */
+	recordPayloadDrop(bytes: number): void {
+		this.payloadDropped++;
+		this.payloadDroppedBytes += bytes;
+		this.payloadDroppedSinceLastLog++;
+		if (this.payloadDropped % 100 === 1) {
+			logger.warn(
+				`Payload preflight reject (bytes=${bytes}, queued=${this.payloadQueue.length}, bytesPending=${this.payloadBytesPending}). Total dropped: ${this.payloadDropped}`,
+			);
+		}
+	}
+
 	enqueuePayload(
 		requestId: string,
 		bytes: number,

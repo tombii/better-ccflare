@@ -824,6 +824,7 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 			estimatedRequestBytes + estimatedResponseBytes + 2048;
 
 		if (!asyncWriter.canAcceptPayload(estimatedPayloadBytes)) {
+			asyncWriter.recordPayloadDrop(estimatedPayloadBytes);
 			log.warn(
 				`Backpressure: skipping payload persistence for ${requestId} (estimated_bytes=${estimatedPayloadBytes})`,
 			);

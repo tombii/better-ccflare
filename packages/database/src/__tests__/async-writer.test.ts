@@ -328,6 +328,22 @@ describe("AsyncDbWriter", () => {
 		expect(h.payloadBytesPending).toBe(0);
 	});
 
+	test("recordPayloadDrop increments health counters (Greptile #234 round 3)", async () => {
+		writer = new AsyncDbWriter();
+
+		const before = writer.getHealth();
+		expect(before.payloadDropped).toBe(0);
+		expect(before.payloadDroppedBytes).toBe(0);
+
+		writer.recordPayloadDrop(1234);
+		writer.recordPayloadDrop(5678);
+		writer.recordPayloadDrop(9999);
+
+		const after = writer.getHealth();
+		expect(after.payloadDropped).toBe(3);
+		expect(after.payloadDroppedBytes).toBe(1234 + 5678 + 9999);
+	});
+
 	test("dispose awaits in-flight tick even after queue is empty (Greptile P1)", async () => {
 		writer = new AsyncDbWriter();
 
