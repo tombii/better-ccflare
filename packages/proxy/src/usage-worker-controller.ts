@@ -23,6 +23,32 @@ interface PendingAck {
 
 const MAX_RESTARTS = 3;
 const SHUTDOWN_GRACE_MS = 2_000;
+const DEFAULT_STARTUP_TIMEOUT_MS = 60_000;
+
+/**
+ * Resolve the worker startup timeout from `CF_WORKER_STARTUP_TIMEOUT_MS`,
+ * falling back to {@link DEFAULT_STARTUP_TIMEOUT_MS}.
+ *
+ * The worker opens its own SQLite handle on startup; on operators with large
+ * (multi-GB) databases the per-handle PRAGMA work can blow past the historical
+ * 10 s timeout and silently strand request analytics. 60 s gives that path
+ * headroom; ops with massive DBs or slow disks can raise it further via env.
+ */
+function resolveStartupTimeoutMs(): number {
+	const raw = process.env.CF_WORKER_STARTUP_TIMEOUT_MS;
+	if (raw === undefined || raw === "") return DEFAULT_STARTUP_TIMEOUT_MS;
+	// Number() rejects trailing garbage that Number.parseInt would silently
+	// accept ("100ms" → 100 was a real foot-gun); isInteger catches NaN,
+	// Infinity, and fractional values in one check.
+	const parsed = Number(raw);
+	if (!Number.isInteger(parsed) || parsed <= 0) {
+		log.warn(
+			`CF_WORKER_STARTUP_TIMEOUT_MS="${raw}" is not a positive integer — falling back to default ${DEFAULT_STARTUP_TIMEOUT_MS}ms`,
+		);
+		return DEFAULT_STARTUP_TIMEOUT_MS;
+	}
+	return parsed;
+}
 
 export class UsageWorkerController {
 	private state: WorkerState = "stopped";
@@ -37,7 +63,7 @@ export class UsageWorkerController {
 	constructor(
 		private readonly onSummary: (msg: SummaryMessage) => void,
 		private readonly onReady?: () => void,
-		private readonly startupTimeoutMs = 10_000,
+		private readonly startupTimeoutMs = resolveStartupTimeoutMs(),
 		private readonly ackTimeoutMs = 30_000,
 	) {}
 
