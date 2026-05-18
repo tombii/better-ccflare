@@ -1,5 +1,7 @@
+import type { RecentErrorGroup } from "@better-ccflare/types";
 import { formatPercentage } from "@better-ccflare/ui-common";
-import { RefreshCw } from "lucide-react";
+import { formatDistanceToNow } from "date-fns";
+import { RefreshCw, XCircle } from "lucide-react";
 import { useResetStats, useStats } from "../hooks/queries";
 import { useApiError } from "../hooks/useApiError";
 import { RecentErrorsCard } from "./overview/system-status/RecentErrorsCard";

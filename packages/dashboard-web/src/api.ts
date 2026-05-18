@@ -167,7 +167,9 @@ class API extends HttpClient {
 		}
 	}
 
-	async getStats(opts?: { errorsSinceHours?: number }): Promise<Stats> {
+	async getStats(opts?: {
+		errorsSinceHours?: number;
+	}): Promise<StatsWithAccounts> {
 		const startTime = Date.now();
 		const hours = opts?.errorsSinceHours;
 		const url =
@@ -178,7 +180,7 @@ class API extends HttpClient {
 		this.logger.debug(`→ GET ${url}`);
 
 		try {
-			const response = await this.get<Stats>(url);
+			const response = await this.get<StatsWithAccounts>(url);
 			const duration = Date.now() - startTime;
 			this.logger.debug(`← GET ${url} - 200 (${duration}ms)`);
 			return response;
