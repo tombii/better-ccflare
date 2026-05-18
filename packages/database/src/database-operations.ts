@@ -127,8 +127,17 @@ function configureSqlite(db: Database, config: DatabaseConfig): void {
 		const syncMode = config.synchronous || "FULL"; // Default to FULL for safety
 		db.run(`PRAGMA synchronous = ${syncMode}`);
 
-		// Configure memory-mapped I/O (disable on distributed filesystems if problematic)
-		if (config.mmapSize !== undefined && config.mmapSize > 0) {
+		// Configure memory-mapped I/O. `mmap_size = 0` is the SQLite-defined
+		// way to *disable* mmap, so the value 0 is a meaningful setting — not
+		// "no preference". Previously this branch was gated on `> 0`, which
+		// meant the default `mmapSize: 0` silently fell through and bun:sqlite
+		// used its built-in default (~15 GiB observed on a 15 GiB DB). That
+		// memory-maps the entire file, which is invisible until something
+		// walks every page — e.g. a full-DB VACUUM — at which point the
+		// resident set explodes and the cgroup OOM-kills the process. Treat
+		// `mmapSize` as "issue the PRAGMA whenever the operator has specified
+		// a value, including 0".
+		if (config.mmapSize !== undefined) {
 			try {
 				db.run(`PRAGMA mmap_size = ${config.mmapSize}`);
 			} catch (error) {
