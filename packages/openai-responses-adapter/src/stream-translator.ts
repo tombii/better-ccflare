@@ -147,10 +147,7 @@ function processEvent(
 				item_id: `${state.responseId}_msg_${outputIdx}`,
 				output_index: outputIdx,
 				content_index: outputIdx,
-				delta: {
-					type: "output_text",
-					text,
-				},
+				delta: text,
 			});
 		} else if (delta.type === "input_json_delta") {
 			const partial = (delta.partial_json as string) ?? "";

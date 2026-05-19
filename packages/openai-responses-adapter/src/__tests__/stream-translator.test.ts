@@ -100,11 +100,11 @@ describe("translateAnthropicStreamToResponses", () => {
 		// Third + fourth: response.output_text.delta
 		expect(parsed[2].event).toBe("response.output_text.delta");
 		const delta1 = parsed[2].data as Record<string, unknown>;
-		expect((delta1.delta as Record<string, unknown>).text).toBe("Hello");
+		expect(delta1.delta).toBe("Hello");
 
 		expect(parsed[3].event).toBe("response.output_text.delta");
 		const delta2 = parsed[3].data as Record<string, unknown>;
-		expect((delta2.delta as Record<string, unknown>).text).toBe(" world");
+		expect(delta2.delta).toBe(" world");
 
 		// Fifth: response.output_text.done with full accumulated text
 		expect(parsed[4].event).toBe("response.output_text.done");
