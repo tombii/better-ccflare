@@ -8,6 +8,7 @@ interface State {
 	responseId: string;
 	model: string;
 	outputIndex: number;
+	sequenceNumber: number;
 	blockIndexToOutput: Map<number, number>;
 	textByBlock: Map<number, string>;
 	toolByBlock: Map<number, { callId: string; name: string; argsBuf: string }>;
@@ -24,9 +25,14 @@ function emitSse(
 	controller: TransformStreamDefaultController,
 	eventType: string,
 	data: unknown,
+	state: State,
 ): void {
+	const payload = Object.assign(
+		{ sequence_number: state.sequenceNumber++ },
+		data as object,
+	);
 	controller.enqueue(
-		encoder.encode(`event: ${eventType}\ndata: ${JSON.stringify(data)}\n\n`),
+		encoder.encode(`event: ${eventType}\ndata: ${JSON.stringify(payload)}\n\n`),
 	);
 }
 
@@ -37,22 +43,27 @@ function emitDone(
 	if (state.doneSent) return;
 	state.doneSent = true;
 
-	emitSse(controller, "response.done", {
-		type: "response.done",
-		response: {
-			id: state.responseId,
-			object: "response",
-			created_at: Math.floor(Date.now() / 1000),
-			model: state.model,
-			status: "completed",
-			output: state.outputItems,
-			usage: {
-				input_tokens: state.inputTokens,
-				output_tokens: state.outputTokens,
-				total_tokens: state.inputTokens + state.outputTokens,
+	emitSse(
+		controller,
+		"response.done",
+		{
+			type: "response.done",
+			response: {
+				id: state.responseId,
+				object: "response",
+				created_at: Math.floor(Date.now() / 1000),
+				model: state.model,
+				status: "completed",
+				output: state.outputItems,
+				usage: {
+					input_tokens: state.inputTokens,
+					output_tokens: state.outputTokens,
+					total_tokens: state.inputTokens + state.outputTokens,
+				},
 			},
 		},
-	});
+		state,
+	);
 }
 
 function processEvent(
@@ -70,17 +81,22 @@ function processEvent(
 
 		if (!state.hasSentCreated) {
 			state.hasSentCreated = true;
-			emitSse(controller, "response.created", {
-				type: "response.created",
-				response: {
-					id: state.responseId,
-					object: "response",
-					created_at: Math.floor(Date.now() / 1000),
-					model: state.model,
-					status: "in_progress",
-					output: [],
+			emitSse(
+				controller,
+				"response.created",
+				{
+					type: "response.created",
+					response: {
+						id: state.responseId,
+						object: "response",
+						created_at: Math.floor(Date.now() / 1000),
+						model: state.model,
+						status: "in_progress",
+						output: [],
+					},
 				},
-			});
+				state,
+			);
 		}
 		return;
 	}
@@ -93,42 +109,57 @@ function processEvent(
 
 		if (contentBlock.type === "text") {
 			state.textByBlock.set(blockIndex, "");
-			emitSse(controller, "response.output_item.added", {
-				type: "response.output_item.added",
-				output_index: outputIdx,
-				item: {
-					type: "message",
-					id: `${state.responseId}_msg_${outputIdx}`,
-					role: "assistant",
-					content: [],
-					status: "in_progress",
+			emitSse(
+				controller,
+				"response.output_item.added",
+				{
+					type: "response.output_item.added",
+					output_index: outputIdx,
+					item: {
+						type: "message",
+						id: `${state.responseId}_msg_${outputIdx}`,
+						role: "assistant",
+						content: [],
+						status: "in_progress",
+					},
 				},
-			});
-			emitSse(controller, "response.content_part.added", {
-				type: "response.content_part.added",
-				item_id: `${state.responseId}_msg_${outputIdx}`,
-				output_index: outputIdx,
-				content_index: 0,
-				part: { type: "output_text", text: "" },
-			});
+				state,
+			);
+			emitSse(
+				controller,
+				"response.content_part.added",
+				{
+					type: "response.content_part.added",
+					item_id: `${state.responseId}_msg_${outputIdx}`,
+					output_index: outputIdx,
+					content_index: 0,
+					part: { type: "output_text", text: "" },
+				},
+				state,
+			);
 		} else if (contentBlock.type === "tool_use") {
 			state.toolByBlock.set(blockIndex, {
 				callId: contentBlock.id as string,
 				name: contentBlock.name as string,
 				argsBuf: "",
 			});
-			emitSse(controller, "response.output_item.added", {
-				type: "response.output_item.added",
-				output_index: outputIdx,
-				item: {
-					type: "function_call",
-					id: `${state.responseId}_fc_${outputIdx}`,
-					call_id: contentBlock.id as string,
-					name: contentBlock.name as string,
-					arguments: "",
-					status: "in_progress",
+			emitSse(
+				controller,
+				"response.output_item.added",
+				{
+					type: "response.output_item.added",
+					output_index: outputIdx,
+					item: {
+						type: "function_call",
+						id: `${state.responseId}_fc_${outputIdx}`,
+						call_id: contentBlock.id as string,
+						name: contentBlock.name as string,
+						arguments: "",
+						status: "in_progress",
+					},
 				},
-			});
+				state,
+			);
 		}
 		return;
 	}
@@ -148,24 +179,34 @@ function processEvent(
 			const current = state.textByBlock.get(blockIndex) ?? "";
 			state.textByBlock.set(blockIndex, current + text);
 
-			emitSse(controller, "response.output_text.delta", {
-				type: "response.output_text.delta",
-				item_id: `${state.responseId}_msg_${outputIdx}`,
-				output_index: outputIdx,
-				content_index: 0,
-				delta: text,
-			});
+			emitSse(
+				controller,
+				"response.output_text.delta",
+				{
+					type: "response.output_text.delta",
+					item_id: `${state.responseId}_msg_${outputIdx}`,
+					output_index: outputIdx,
+					content_index: 0,
+					delta: text,
+				},
+				state,
+			);
 		} else if (delta.type === "input_json_delta") {
 			const partial = (delta.partial_json as string) ?? "";
 			const tool = state.toolByBlock.get(blockIndex);
 			if (tool) {
 				tool.argsBuf += partial;
-				emitSse(controller, "response.function_call_arguments.delta", {
-					type: "response.function_call_arguments.delta",
-					item_id: `${state.responseId}_fc_${outputIdx}`,
-					output_index: outputIdx,
-					delta: partial,
-				});
+				emitSse(
+					controller,
+					"response.function_call_arguments.delta",
+					{
+						type: "response.function_call_arguments.delta",
+						item_id: `${state.responseId}_fc_${outputIdx}`,
+						output_index: outputIdx,
+						delta: partial,
+					},
+					state,
+				);
 			}
 		}
 		return;
@@ -182,20 +223,30 @@ function processEvent(
 
 		if (state.textByBlock.has(blockIndex)) {
 			const fullText = state.textByBlock.get(blockIndex) ?? "";
-			emitSse(controller, "response.output_text.done", {
-				type: "response.output_text.done",
-				item_id: `${state.responseId}_msg_${outputIdx}`,
-				output_index: outputIdx,
-				content_index: 0,
-				text: fullText,
-			});
-			emitSse(controller, "response.content_part.done", {
-				type: "response.content_part.done",
-				item_id: `${state.responseId}_msg_${outputIdx}`,
-				output_index: outputIdx,
-				content_index: 0,
-				part: { type: "output_text", text: fullText },
-			});
+			emitSse(
+				controller,
+				"response.output_text.done",
+				{
+					type: "response.output_text.done",
+					item_id: `${state.responseId}_msg_${outputIdx}`,
+					output_index: outputIdx,
+					content_index: 0,
+					text: fullText,
+				},
+				state,
+			);
+			emitSse(
+				controller,
+				"response.content_part.done",
+				{
+					type: "response.content_part.done",
+					item_id: `${state.responseId}_msg_${outputIdx}`,
+					output_index: outputIdx,
+					content_index: 0,
+					part: { type: "output_text", text: fullText },
+				},
+				state,
+			);
 			const doneItem: Record<string, unknown> = {
 				type: "message",
 				id: `${state.responseId}_msg_${outputIdx}`,
@@ -204,19 +255,30 @@ function processEvent(
 				status: "completed",
 			};
 			state.outputItems.push(doneItem);
-			emitSse(controller, "response.output_item.done", {
-				type: "response.output_item.done",
-				output_index: outputIdx,
-				item: doneItem,
-			});
+			emitSse(
+				controller,
+				"response.output_item.done",
+				{
+					type: "response.output_item.done",
+					output_index: outputIdx,
+					item: doneItem,
+				},
+				state,
+			);
 		} else if (state.toolByBlock.has(blockIndex)) {
 			const tool = state.toolByBlock.get(blockIndex)!;
-			emitSse(controller, "response.function_call_arguments.done", {
-				type: "response.function_call_arguments.done",
-				item_id: `${state.responseId}_fc_${outputIdx}`,
-				output_index: outputIdx,
-				arguments: tool.argsBuf,
-			});
+			emitSse(
+				controller,
+				"response.function_call_arguments.done",
+				{
+					type: "response.function_call_arguments.done",
+					item_id: `${state.responseId}_fc_${outputIdx}`,
+					output_index: outputIdx,
+					name: tool.name,
+					arguments: tool.argsBuf,
+				},
+				state,
+			);
 			const doneItem: Record<string, unknown> = {
 				type: "function_call",
 				id: `${state.responseId}_fc_${outputIdx}`,
@@ -226,11 +288,16 @@ function processEvent(
 				status: "completed",
 			};
 			state.outputItems.push(doneItem);
-			emitSse(controller, "response.output_item.done", {
-				type: "response.output_item.done",
-				output_index: outputIdx,
-				item: doneItem,
-			});
+			emitSse(
+				controller,
+				"response.output_item.done",
+				{
+					type: "response.output_item.done",
+					output_index: outputIdx,
+					item: doneItem,
+				},
+				state,
+			);
 		}
 		return;
 	}
@@ -255,23 +322,28 @@ function processEvent(
 			(err?.message as string) ?? "An error occurred during streaming";
 		state.streamError = { type: errType, message: errMsg };
 		state.doneSent = true;
-		emitSse(controller, "response.done", {
-			type: "response.done",
-			response: {
-				id: state.responseId,
-				object: "response",
-				created_at: Math.floor(Date.now() / 1000),
-				model: state.model,
-				status: "failed",
-				error: { code: errType, message: errMsg },
-				output: state.outputItems,
-				usage: {
-					input_tokens: state.inputTokens,
-					output_tokens: state.outputTokens,
-					total_tokens: state.inputTokens + state.outputTokens,
+		emitSse(
+			controller,
+			"response.done",
+			{
+				type: "response.done",
+				response: {
+					id: state.responseId,
+					object: "response",
+					created_at: Math.floor(Date.now() / 1000),
+					model: state.model,
+					status: "failed",
+					error: { code: errType, message: errMsg },
+					output: state.outputItems,
+					usage: {
+						input_tokens: state.inputTokens,
+						output_tokens: state.outputTokens,
+						total_tokens: state.inputTokens + state.outputTokens,
+					},
 				},
 			},
-		});
+			state,
+		);
 		return;
 	}
 }
@@ -331,6 +403,7 @@ export function translateAnthropicStreamToResponses(
 		responseId,
 		model,
 		outputIndex: 0,
+		sequenceNumber: 0,
 		blockIndexToOutput: new Map(),
 		textByBlock: new Map(),
 		toolByBlock: new Map(),
