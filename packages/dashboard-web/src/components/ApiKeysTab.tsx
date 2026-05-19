@@ -4,6 +4,7 @@ import {
 	AlertTriangle,
 	Copy,
 	Plus,
+	RefreshCw,
 	Shield,
 	ToggleLeft,
 	ToggleRight,
@@ -70,9 +71,13 @@ interface ApiKeyGenerationResponse {
 export function ApiKeysTab() {
 	const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
 	const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+	const [isRegenerateDialogOpen, setIsRegenerateDialogOpen] = useState(false);
 	const [newKeyName, setNewKeyName] = useState("");
 	const [selectedKey, setSelectedKey] = useState<ApiKey | null>(null);
-	const [generatedKey, setGeneratedKey] = useState<string | null>(null);
+	const [generatedKey, setGeneratedKey] = useState<{
+		apiKey: string;
+		source: "created" | "regenerated";
+	} | null>(null);
 
 	const queryClient = useQueryClient();
 
@@ -108,7 +113,7 @@ export function ApiKeysTab() {
 			return result.data;
 		},
 		onSuccess: (data) => {
-			setGeneratedKey(data.apiKey);
+			setGeneratedKey({ apiKey: data.apiKey, source: "created" });
 			setNewKeyName("");
 			setIsCreateDialogOpen(false);
 			queryClient.invalidateQueries({ queryKey: ["api-keys"] });
@@ -150,6 +155,25 @@ export function ApiKeysTab() {
 		},
 	});
 
+	// Regenerate API key mutation: mints a new secret for an existing key,
+	// preserving id, name, createdAt, usageCount, isActive. The aggregate
+	// counts in `api-keys-stats` don't change on regenerate (row stays, stays
+	// active), so we intentionally don't invalidate that query.
+	const regenerateKeyMutation = useMutation({
+		mutationFn: async (name: string) => {
+			const result = await api.post<ApiKeyGenerationResponse>(
+				`/api/api-keys/${encodeURIComponent(name)}/regenerate`,
+			);
+			return result.data;
+		},
+		onSuccess: (data) => {
+			setSelectedKey(null);
+			setIsRegenerateDialogOpen(false);
+			setGeneratedKey({ apiKey: data.apiKey, source: "regenerated" });
+			queryClient.invalidateQueries({ queryKey: ["api-keys"] });
+		},
+	});
+
 	const handleGenerateKey = () => {
 		if (!newKeyName.trim()) return;
 		generateKeyMutation.mutate({ name: newKeyName.trim() });
@@ -167,6 +191,17 @@ export function ApiKeysTab() {
 	const confirmDeleteKey = () => {
 		if (selectedKey) {
 			deleteKeyMutation.mutate(selectedKey.name);
+		}
+	};
+
+	const handleRegenerateKey = (key: ApiKey) => {
+		setSelectedKey(key);
+		setIsRegenerateDialogOpen(true);
+	};
+
+	const confirmRegenerateKey = () => {
+		if (selectedKey) {
+			regenerateKeyMutation.mutate(selectedKey.name);
 		}
 	};
 
@@ -369,6 +404,22 @@ export function ApiKeysTab() {
 										<Button
 											variant="outline"
 											size="sm"
+											onClick={() => handleRegenerateKey(key)}
+											disabled={
+												!key.isActive || regenerateKeyMutation.isPending
+											}
+											title={
+												key.isActive
+													? "Regenerate API key"
+													: "Enable the key first to regenerate it"
+											}
+											aria-label="Regenerate API key"
+										>
+											<RefreshCw className="h-4 w-4" />
+										</Button>
+										<Button
+											variant="outline"
+											size="sm"
 											onClick={() => handleDeleteKey(key)}
 											disabled={deleteKeyMutation.isPending}
 										>
@@ -393,10 +444,15 @@ export function ApiKeysTab() {
 			>
 				<DialogContent>
 					<DialogHeader>
-						<DialogTitle>API Key Generated</DialogTitle>
+						<DialogTitle>
+							{generatedKey?.source === "regenerated"
+								? "API Key Regenerated"
+								: "API Key Generated"}
+						</DialogTitle>
 						<DialogDescription>
-							Your API key has been generated. Save it securely now - it won't
-							be shown again.
+							{generatedKey?.source === "regenerated"
+								? "A new secret has been minted for this key. Save it securely now - it won't be shown again."
+								: "Your API key has been generated. Save it securely now - it won't be shown again."}
 						</DialogDescription>
 					</DialogHeader>
 					<div className="space-y-4 py-4">
@@ -404,12 +460,14 @@ export function ApiKeysTab() {
 							<Label>API Key</Label>
 							<div className="flex items-center gap-2">
 								<code className="flex-1 p-3 bg-muted rounded text-sm font-mono break-all">
-									{generatedKey}
+									{generatedKey?.apiKey}
 								</code>
 								<Button
 									variant="outline"
 									size="sm"
-									onClick={() => generatedKey && copyToClipboard(generatedKey)}
+									onClick={() =>
+										generatedKey && copyToClipboard(generatedKey.apiKey)
+									}
 								>
 									<Copy className="h-4 w-4" />
 								</Button>
@@ -429,6 +487,64 @@ export function ApiKeysTab() {
 					<DialogFooter>
 						<Button onClick={handleSavedKey} variant="outline">
 							I've saved the key
+						</Button>
+					</DialogFooter>
+				</DialogContent>
+			</Dialog>
+
+			{/* Regenerate Confirmation Dialog */}
+			<Dialog
+				open={isRegenerateDialogOpen}
+				onOpenChange={(open) => {
+					setIsRegenerateDialogOpen(open);
+					if (!open) {
+						setSelectedKey(null);
+						regenerateKeyMutation.reset();
+					}
+				}}
+			>
+				<DialogContent>
+					<DialogHeader>
+						<DialogTitle>Regenerate API Key</DialogTitle>
+						<DialogDescription>
+							Mint a new secret for "{selectedKey?.name}". The existing secret
+							will stop working immediately, but the key's stats and usage
+							history will be preserved.
+						</DialogDescription>
+					</DialogHeader>
+					<div className="py-4 space-y-3">
+						<p className="text-sm text-muted-foreground">
+							Use this when the original key has been lost. Any application or
+							script still using the old secret will start failing with 401
+							until you update it.
+						</p>
+						{regenerateKeyMutation.isError && (
+							<div className="p-3 bg-destructive/10 border border-destructive/30 rounded-lg">
+								<div className="flex items-start gap-2 text-destructive">
+									<AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+									<span className="text-sm">
+										{regenerateKeyMutation.error?.message ??
+											"Failed to regenerate API key."}
+									</span>
+								</div>
+							</div>
+						)}
+					</div>
+					<DialogFooter>
+						<Button
+							onClick={() => setIsRegenerateDialogOpen(false)}
+							variant="outline"
+						>
+							Cancel
+						</Button>
+						<Button
+							onClick={confirmRegenerateKey}
+							variant="destructive"
+							disabled={regenerateKeyMutation.isPending}
+						>
+							{regenerateKeyMutation.isPending
+								? "Regenerating..."
+								: "Regenerate Key"}
 						</Button>
 					</DialogFooter>
 				</DialogContent>

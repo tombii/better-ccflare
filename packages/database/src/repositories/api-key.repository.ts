@@ -172,6 +172,34 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 	}
 
 	/**
+	 * Replace the stored secret for an API key, preserving every other column
+	 * (name, created_at, usage_count, last_used, is_active).
+	 *
+	 * `expectedHashedKey` is an optimistic-concurrency guard: the row is only
+	 * rewritten if its current hash still matches. Returns false on a miss so
+	 * the caller can report a 409 instead of returning a silently-invalid
+	 * plaintext to a racing client.
+	 */
+	async rotateSecret(
+		id: string,
+		expectedHashedKey: string,
+		newHashedKey: string,
+		newPrefixLast8: string,
+	): Promise<boolean> {
+		const changes = await this.runWithChanges(
+			`
+			UPDATE api_keys
+			SET hashed_key = ?,
+				prefix_last_8 = ?
+			WHERE id = ? AND hashed_key = ?
+		`,
+			[newHashedKey, newPrefixLast8, id, expectedHashedKey],
+		);
+
+		return changes > 0;
+	}
+
+	/**
 	 * Permanently delete an API key
 	 */
 	async delete(id: string): Promise<boolean> {

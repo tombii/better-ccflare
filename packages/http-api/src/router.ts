@@ -45,6 +45,7 @@ import {
 	createApiKeyDeleteHandler,
 	createApiKeyDisableHandler,
 	createApiKeyEnableHandler,
+	createApiKeyRegenerateHandler,
 	createApiKeysGenerateHandler,
 	createApiKeysListHandler,
 	createApiKeysStatsHandler,
@@ -645,6 +646,16 @@ export class APIRouter {
 		if (path.startsWith("/api/api-keys/")) {
 			const parts = path.split("/");
 			const keyIdOrName = decodeURIComponent(parts[3]); // Decode URL-encoded IDs/names
+
+			// API key regenerate (mints a new secret, preserves stats)
+			if (path.endsWith("/regenerate") && method === "POST") {
+				const regenerateHandler = createApiKeyRegenerateHandler(
+					this.context.dbOps,
+				);
+				return await this.wrapHandler((req) =>
+					regenerateHandler(req, keyIdOrName),
+				)(req, url);
+			}
 
 			// API key disable
 			if (path.endsWith("/disable") && method === "POST") {

@@ -4,6 +4,7 @@ import {
 	enableApiKey,
 	generateApiKey,
 	listApiKeys,
+	regenerateApiKey,
 } from "@better-ccflare/cli-commands";
 import type { DatabaseOperations } from "@better-ccflare/database";
 import { BadRequest } from "@better-ccflare/errors";
@@ -90,6 +91,20 @@ export function createApiKeyEnableHandler(dbOps: DatabaseOperations) {
 			};
 
 			return new Response(JSON.stringify(response), {
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			});
+		} catch (error) {
+			return errorResponse(error);
+		}
+	};
+}
+
+export function createApiKeyRegenerateHandler(dbOps: DatabaseOperations) {
+	return async (_req: Request, name: string): Promise<Response> => {
+		try {
+			const result = await regenerateApiKey(dbOps, name);
+			return new Response(JSON.stringify({ success: true, data: result }), {
 				status: 200,
 				headers: { "Content-Type": "application/json" },
 			});

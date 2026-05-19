@@ -1283,6 +1283,25 @@ OAuth tokens will need to be re-authenticated.
 		);
 	}
 
+	async rotateApiKeySecret(
+		id: string,
+		expectedHashedKey: string,
+		newHashedKey: string,
+		newPrefixLast8: string,
+	): Promise<boolean> {
+		return withDatabaseRetry(
+			() =>
+				this.apiKeys.rotateSecret(
+					id,
+					expectedHashedKey,
+					newHashedKey,
+					newPrefixLast8,
+				),
+			this.retryConfig,
+			"rotateApiKeySecret",
+		);
+	}
+
 	async countActiveApiKeys(): Promise<number> {
 		return withDatabaseRetry(
 			() => this.apiKeys.countActive(),

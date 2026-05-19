@@ -38,6 +38,7 @@ import {
 	forceResetRateLimit,
 	formatApiKeyForDisplay,
 	formatApiKeyGenerationResult,
+	formatApiKeyRegenerationResult,
 	generateApiKey,
 	getAccountsList,
 	getApiKeyStats,
@@ -45,6 +46,7 @@ import {
 	listApiKeys,
 	pauseAccount,
 	reauthenticateAccount,
+	regenerateApiKey,
 	removeAccount,
 	resetAllStats,
 	resumeAccount,
@@ -109,6 +111,7 @@ interface ParsedArgs {
 	getModel: boolean;
 	setModel: string | null;
 	generateApiKey: string | null;
+	regenerateApiKey: string | null;
 	listApiKeys: boolean;
 	disableApiKey: string | null;
 	enableApiKey: string | null;
@@ -460,6 +463,7 @@ function parseArgs(args: string[]): ParsedArgs {
 		getModel: false,
 		setModel: null,
 		generateApiKey: null,
+		regenerateApiKey: null,
 		listApiKeys: false,
 		disableApiKey: null,
 		enableApiKey: null,
@@ -752,6 +756,13 @@ function parseArgs(args: string[]): ParsedArgs {
 				}
 				parsed.generateApiKey = args[++i];
 				break;
+			case "--regenerate-api-key":
+				if (i + 1 >= args.length || args[i + 1].startsWith("--")) {
+					console.error("❌ --regenerate-api-key requires an API key name");
+					fastExit(1);
+				}
+				parsed.regenerateApiKey = args[++i];
+				break;
 			case "--list-api-keys":
 				parsed.listApiKeys = true;
 				break;
@@ -871,11 +882,12 @@ Options:
   --set-model <model>  Set default agent model (opus-4 or sonnet-4)
 
 API Key Management:
-  --generate-api-key <name>  Generate a new API key
-  --list-api-keys            List all API keys
-  --disable-api-key <name>   Disable an API key
-  --enable-api-key <name>    Enable a disabled API key
-  --delete-api-key <name>    Delete an API key permanently
+  --generate-api-key <name>    Generate a new API key
+  --regenerate-api-key <name>  Mint a new secret for an existing API key (preserves stats)
+  --list-api-keys              List all API keys
+  --disable-api-key <name>     Disable an API key
+  --enable-api-key <name>      Enable a disabled API key
+  --delete-api-key <name>      Delete an API key permanently
 
 Debugging:
   --show-config              Show all configuration variables with their sources
@@ -1268,6 +1280,19 @@ Examples:
 			const errorMessage =
 				error instanceof Error ? error.message : String(error);
 			console.error(`❌ Failed to generate API key: ${errorMessage}`);
+			await exitGracefully(1);
+		}
+	}
+
+	if (parsed.regenerateApiKey) {
+		try {
+			const result = await regenerateApiKey(dbOps, parsed.regenerateApiKey);
+			console.log(formatApiKeyRegenerationResult(result));
+			await exitGracefully(0);
+		} catch (error: unknown) {
+			const errorMessage =
+				error instanceof Error ? error.message : String(error);
+			console.error(`❌ Failed to regenerate API key: ${errorMessage}`);
 			await exitGracefully(1);
 		}
 	}

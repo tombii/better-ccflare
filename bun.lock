@@ -13,7 +13,7 @@
     },
     "apps/cli": {
       "name": "better-ccflare",
-      "version": "3.3.25",
+      "version": "3.5.11",
       "bin": {
         "better-ccflare": "dist/better-ccflare",
       },
@@ -67,6 +67,7 @@
         "@better-ccflare/core": "workspace:*",
         "@better-ccflare/core-di": "workspace:*",
         "@better-ccflare/database": "workspace:*",
+        "@better-ccflare/errors": "workspace:*",
         "@better-ccflare/oauth-flow": "workspace:*",
         "@better-ccflare/providers": "workspace:*",
         "open": "^11.0.0",
