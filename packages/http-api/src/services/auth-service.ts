@@ -46,24 +46,11 @@ export class AuthService {
 	}
 
 	/**
-	 * Validate API key from request header
+	 * Verify a presented API key against the active set. Internal helper for
+	 * `authenticateRequest`; callers are expected to have already confirmed
+	 * the request needs an api-key check and that auth is enabled.
 	 */
-	async validateApiKey(apiKey: string): Promise<AuthenticationResult> {
-		if (!apiKey) {
-			return {
-				isAuthenticated: false,
-				error: "API key required",
-			};
-		}
-
-		// If no API keys are configured, authentication is disabled
-		if (!(await this.isAuthenticationEnabled())) {
-			return {
-				isAuthenticated: true,
-				error: undefined,
-			};
-		}
-
+	private async validateApiKey(apiKey: string): Promise<AuthenticationResult> {
 		// Get all active API keys
 		const activeApiKeys = await this.dbOps.getActiveApiKeys();
 
