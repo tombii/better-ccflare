@@ -138,9 +138,23 @@ export async function handleResponsesRequest(
 	}
 
 	// 9. Non-stream path
-	const respBody = await anthropicResp.json();
+	let respBody: unknown;
+	try {
+		respBody = await anthropicResp.json();
+	} catch {
+		return new Response(
+			JSON.stringify({
+				error: {
+					message: "Failed to parse upstream response",
+					type: "api_error",
+					code: "api_error",
+				},
+			}),
+			{ status: 502, headers: { "Content-Type": "application/json" } },
+		);
+	}
 	const translated = translateAnthropicResponseToResponses(
-		respBody,
+		respBody as Parameters<typeof translateAnthropicResponseToResponses>[0],
 		responseId,
 		body.model,
 	);
