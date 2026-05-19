@@ -30,19 +30,19 @@ export async function generateApiKey(
 ): Promise<ApiKeyGenerationResult> {
 	// Validate name
 	if (!name || name.trim().length === 0) {
-		throw new Error("API key name cannot be empty");
+		throw BadRequest("API key name cannot be empty");
 	}
 
 	const trimmedName = name.trim();
 
 	// Validate name length
 	if (trimmedName.length > 100) {
-		throw new Error("API key name cannot exceed 100 characters");
+		throw BadRequest("API key name cannot exceed 100 characters");
 	}
 
 	// Check if name already exists
 	if (await dbOps.apiKeyNameExists(trimmedName)) {
-		throw new Error(`API key with name '${trimmedName}' already exists`);
+		throw Conflict(`API key with name '${trimmedName}' already exists`);
 	}
 
 	const { apiKey, hashedKey, prefixLast8 } = await mintNewSecret();
