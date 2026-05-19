@@ -332,6 +332,23 @@ describe("API Key lifecycle", () => {
 		);
 	});
 
+	test("rotateSecret refuses to rotate a disabled row even with matching hash", async () => {
+		// Defense-in-depth: app code checks isActive before calling rotate, but
+		// a TOCTOU window could let a parallel disable land in between.
+		const original = await generateApiKey(dbOps, "disabled-rotate");
+		await disableApiKey(dbOps, "disabled-rotate");
+		const repo = dbOps.getApiKeyRepository();
+		const row = await repo.findById(original.id);
+		if (!row) throw new Error("setup: row missing");
+		const ok = await repo.rotateSecret(
+			row.id,
+			row.hashedKey, // matching hash — only is_active=1 predicate should block
+			"new:hash",
+			"newprefx",
+		);
+		expect(ok).toBe(false);
+	});
+
 	test("regenerateApiKey races: second concurrent caller gets a 409 Conflict", async () => {
 		// Simulates two regenerate requests that both read the same row before
 		// either writes. The first wins; the second's optimistic guard misses,

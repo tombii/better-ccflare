@@ -179,6 +179,11 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 	 * rewritten if its current hash still matches. Returns false on a miss so
 	 * the caller can report a 409 instead of returning a silently-invalid
 	 * plaintext to a racing client.
+	 *
+	 * The `is_active = 1` predicate is defense in depth: callers already check
+	 * isActive in app code, but a key can be disabled between that check and
+	 * this write (TOCTOU). Refusing to rotate a disabled row keeps the SQL
+	 * write consistent with the stated precondition.
 	 */
 	async rotateSecret(
 		id: string,
@@ -191,7 +196,7 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 			UPDATE api_keys
 			SET hashed_key = ?,
 				prefix_last_8 = ?
-			WHERE id = ? AND hashed_key = ?
+			WHERE id = ? AND hashed_key = ? AND is_active = 1
 		`,
 			[newHashedKey, newPrefixLast8, id, expectedHashedKey],
 		);
