@@ -146,7 +146,7 @@ function processEvent(
 				type: "response.output_text.delta",
 				item_id: `${state.responseId}_msg_${outputIdx}`,
 				output_index: outputIdx,
-				content_index: outputIdx,
+				content_index: 0,
 				delta: text,
 			});
 		} else if (delta.type === "input_json_delta") {
@@ -180,7 +180,7 @@ function processEvent(
 				type: "response.output_text.done",
 				item_id: `${state.responseId}_msg_${outputIdx}`,
 				output_index: outputIdx,
-				content_index: outputIdx,
+				content_index: 0,
 				text: fullText,
 			});
 			const doneItem: Record<string, unknown> = {
