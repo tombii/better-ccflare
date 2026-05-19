@@ -997,3 +997,11 @@ The following strategy is available:
 7. **Rate Limit Tracking**: Rate limit information is automatically extracted from responses and stored for each account, including reset times and remaining requests.
 
 8. **Provider Filtering**: Accounts are automatically filtered by provider when selecting for requests, ensuring compatibility.
+
+---
+
+## Known Limitations
+
+### OpenAI Responses API (`/v1/responses`, `/v1/responses/compact`)
+
+- **`input` must be an array.** The OpenAI Responses API specification allows `input` to be either a plain string or an array of message objects. better-ccflare only supports the array form. Passing a plain string will return a `400 Bad Request` error.

@@ -72,8 +72,38 @@ export async function handleResponsesRequest(
 		apiKeyName,
 	);
 
-	// 7. Pass through non-200 errors
+	// 7. Translate non-200 Anthropic errors to OpenAI error shape
 	if (anthropicResp.status !== 200) {
+		const contentType = anthropicResp.headers.get("content-type") ?? "";
+		if (contentType.includes("application/json")) {
+			let errorBody: { error: { message: string; type: string; code: string } };
+			try {
+				const anthropicError = (await anthropicResp.json()) as {
+					type?: string;
+					error?: { type?: string; message?: string };
+				};
+				const errType = anthropicError?.error?.type ?? "api_error";
+				errorBody = {
+					error: {
+						message: anthropicError?.error?.message ?? "Unknown error",
+						type: errType,
+						code: errType,
+					},
+				};
+			} catch {
+				errorBody = {
+					error: {
+						message: "Unknown error",
+						type: "api_error",
+						code: "api_error",
+					},
+				};
+			}
+			return new Response(JSON.stringify(errorBody), {
+				status: anthropicResp.status,
+				headers: { "Content-Type": "application/json" },
+			});
+		}
 		return anthropicResp;
 	}
 

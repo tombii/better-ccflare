@@ -557,7 +557,6 @@ async function handleStart(msg: StartMessage): Promise<void> {
 			"ollama",
 			"ollama-cloud",
 			"qwen",
-			"codex",
 		]);
 		state.billingType = planProviders.has(msg.providerName) ? "plan" : "api";
 	}
