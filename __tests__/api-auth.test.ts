@@ -233,6 +233,12 @@ describe("API Key lifecycle", () => {
 		);
 	});
 
+	test("rejects a name longer than 100 characters", async () => {
+		await expect(generateApiKey(dbOps, "a".repeat(101))).rejects.toThrow(
+			"API key name cannot exceed 100 characters",
+		);
+	});
+
 	test("rejects duplicate key names", async () => {
 		await generateApiKey(dbOps, "dup");
 		await expect(generateApiKey(dbOps, "dup")).rejects.toThrow(
