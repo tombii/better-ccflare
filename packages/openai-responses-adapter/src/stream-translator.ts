@@ -19,7 +19,6 @@ interface State {
 }
 
 const encoder = new TextEncoder();
-const decoder = new TextDecoder();
 
 function emitSse(
 	controller: TransformStreamDefaultController,
@@ -321,6 +320,10 @@ export function translateAnthropicStreamToResponses(
 	if (!anthropicResponse.body) {
 		return new Response(null, { status: anthropicResponse.status });
 	}
+
+	// Per-request decoder: TextDecoder is stateful (buffers incomplete UTF-8
+	// sequences across chunks), so a shared singleton would corrupt concurrent streams.
+	const decoder = new TextDecoder();
 
 	const state: State = {
 		lineBuffer: "",
