@@ -1,5 +1,5 @@
 import type { DatabaseOperations } from "@better-ccflare/database";
-import { Conflict } from "@better-ccflare/errors";
+import { BadRequest, Conflict, NotFound } from "@better-ccflare/errors";
 import { Logger } from "@better-ccflare/logger";
 import {
 	type ApiKeyGenerationResult,
@@ -90,11 +90,11 @@ export async function regenerateApiKey(
 ): Promise<ApiKeyGenerationResult> {
 	const existing = await dbOps.getApiKeyByName(name);
 	if (!existing) {
-		throw new Error(`API key '${name}' not found`);
+		throw NotFound(`API key '${name}' not found`);
 	}
 
 	if (!existing.isActive) {
-		throw new Error(
+		throw BadRequest(
 			`API key '${name}' is disabled. Enable it first, or generate a new key.`,
 		);
 	}
