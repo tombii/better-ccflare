@@ -137,11 +137,11 @@ export async function disableApiKey(
 ): Promise<boolean> {
 	const apiKey = await dbOps.getApiKeyByName(name);
 	if (!apiKey) {
-		throw new Error(`API key '${name}' not found`);
+		throw NotFound(`API key '${name}' not found`);
 	}
 
 	if (!apiKey.isActive) {
-		throw new Error(`API key '${name}' is already disabled`);
+		throw BadRequest(`API key '${name}' is already disabled`);
 	}
 
 	const success = await dbOps.disableApiKey(apiKey.id);
@@ -161,11 +161,11 @@ export async function enableApiKey(
 ): Promise<boolean> {
 	const apiKey = await dbOps.getApiKeyByName(name);
 	if (!apiKey) {
-		throw new Error(`API key '${name}' not found`);
+		throw NotFound(`API key '${name}' not found`);
 	}
 
 	if (apiKey.isActive) {
-		throw new Error(`API key '${name}' is already active`);
+		throw BadRequest(`API key '${name}' is already active`);
 	}
 
 	const success = await dbOps.enableApiKey(apiKey.id);
@@ -185,7 +185,7 @@ export async function deleteApiKey(
 ): Promise<boolean> {
 	const apiKey = await dbOps.getApiKeyByName(name);
 	if (!apiKey) {
-		throw new Error(`API key '${name}' not found`);
+		throw NotFound(`API key '${name}' not found`);
 	}
 
 	const success = await dbOps.deleteApiKey(apiKey.id);
