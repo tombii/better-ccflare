@@ -362,6 +362,10 @@ export function translateAnthropicStreamToResponses(
 
 			flush(controller) {
 				try {
+					// Flush remaining buffered UTF-8 bytes and release decoder's internal buffer
+					const remaining = decoder.decode();
+					if (remaining) state.lineBuffer += remaining;
+
 					// Process any remaining buffered content
 					if (state.lineBuffer.trim()) {
 						parseAndProcessChunk(`${state.lineBuffer}\n\n`, controller, state);
