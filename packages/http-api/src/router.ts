@@ -1,5 +1,4 @@
 import { validateNumber } from "@better-ccflare/core";
-import { Unauthorized } from "@better-ccflare/errors";
 import {
 	createAccountAddHandler,
 	createAccountAutoFallbackHandler,
@@ -107,7 +106,6 @@ import {
 	createTokenHealthHandler,
 } from "./handlers/token-health";
 import { createVersionCheckHandler } from "./handlers/version";
-import { AuthService } from "./services/auth-service";
 import type { APIContext } from "./types";
 import { errorResponse } from "./utils/http-error";
 
@@ -120,14 +118,12 @@ export class APIRouter {
 		string,
 		(req: Request, url: URL) => Response | Promise<Response>
 	>;
-	private authService: AuthService;
 	private qwenStatusHandler: (sessionId: string) => Response;
 	private codexStatusHandler: (sessionId: string) => Response;
 
 	constructor(context: APIContext) {
 		this.context = context;
 		this.handlers = new Map();
-		this.authService = new AuthService(context.dbOps);
 		this.qwenStatusHandler = createQwenDeviceFlowStatusHandler();
 		this.codexStatusHandler = createCodexDeviceFlowStatusHandler();
 		this.registerHandlers();
@@ -426,17 +422,12 @@ export class APIRouter {
 		const method = req.method;
 		const key = `${method}:${path}`;
 
-		// Authenticate the request
-		const authResult = await this.authService.authenticateRequest(
-			req,
-			path,
-			method,
-		);
-		if (!authResult.isAuthenticated) {
-			return errorResponse(
-				Unauthorized(authResult.error || "Authentication failed"),
-			);
-		}
+		// Auth is intentionally NOT called here. The router only dispatches
+		// /api/* paths, which are all public under the post-#216 policy. The
+		// upstream-traffic paths (/v1/*, /messages/*) don't match any handler
+		// here and fall through to the server.ts proxy dispatch, which runs
+		// authenticateRequest exactly once. Authing here would double-increment
+		// usage_count on every proxied request.
 
 		// Check for exact match
 		const handler = this.handlers.get(key);

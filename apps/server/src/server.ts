@@ -902,11 +902,15 @@ export default async function startServer(options?: {
 						);
 					}
 
-					// For all non-API routes, serve the dashboard index.html (client-side routing)
-					// This allows React Router to handle all dashboard routes without maintaining a list
+					// For all non-API, non-proxy routes, serve the dashboard index.html
+					// (client-side routing). This allows React Router to handle all
+					// dashboard routes without maintaining a list. Anthropic-style
+					// clients POSTing to /messages/* must NOT receive index.html —
+					// they need to fall through to the proxy dispatch below.
 					if (
 						!url.pathname.startsWith("/api/") &&
-						!url.pathname.startsWith("/v1/")
+						!url.pathname.startsWith("/v1/") &&
+						!url.pathname.startsWith("/messages/")
 					) {
 						return serveDashboardFile("/index.html", "text/html");
 					}

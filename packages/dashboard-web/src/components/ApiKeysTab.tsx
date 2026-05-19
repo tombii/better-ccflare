@@ -206,7 +206,9 @@ export function ApiKeysTab() {
 	};
 
 	const copyToClipboard = (text: string) => {
-		navigator.clipboard.writeText(text);
+		navigator.clipboard.writeText(text).catch((err) => {
+			console.error("Failed to copy to clipboard:", err);
+		});
 	};
 
 	const stats = statsResponse?.data;
