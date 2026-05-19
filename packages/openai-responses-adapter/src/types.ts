@@ -4,7 +4,7 @@
 
 export interface ResponsesRequest {
 	model: string;
-	input: ResponseItem[];
+	input: string | ResponseItem[];
 	instructions?: string;
 	tools?: ResponsesTool[];
 	tool_choice?: string | ResponsesToolChoice;

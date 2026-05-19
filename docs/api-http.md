@@ -1000,8 +1000,3 @@ The following strategy is available:
 
 ---
 
-## Known Limitations
-
-### OpenAI Responses API (`/v1/responses`, `/v1/responses/compact`)
-
-- **`input` must be an array.** The OpenAI Responses API specification allows `input` to be either a plain string or an array of message objects. better-ccflare only supports the array form. Passing a plain string will return a `400 Bad Request` error.

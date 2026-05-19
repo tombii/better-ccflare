@@ -30,8 +30,8 @@ export async function handleResponsesRequest(
 		);
 	}
 
-	// 2. Validate
-	if (!body || !Array.isArray(body.input)) {
+	// 2. Validate & normalise `input` — OpenAI Responses API allows a plain string
+	if (!body || (typeof body.input !== "string" && !Array.isArray(body.input))) {
 		return new Response(
 			JSON.stringify({
 				type: "error",
@@ -42,6 +42,18 @@ export async function handleResponsesRequest(
 			}),
 			{ status: 400, headers: { "Content-Type": "application/json" } },
 		);
+	}
+	if (typeof body.input === "string") {
+		body = {
+			...body,
+			input: [
+				{
+					type: "message",
+					role: "user",
+					content: [{ type: "input_text", text: body.input }],
+				},
+			],
+		};
 	}
 
 	// 3. Generate response ID

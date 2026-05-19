@@ -5,6 +5,7 @@ import type {
 	AnthropicRequest,
 	AnthropicTool,
 	AnthropicToolChoice,
+	ResponseItem,
 	ResponsesRequest,
 	ResponsesTool,
 } from "./types";
@@ -113,7 +114,7 @@ export function translateRequestToAnthropic(
 ): AnthropicRequest {
 	const messages: AnthropicMessage[] = [];
 
-	for (const item of req.input) {
+	for (const item of req.input as ResponseItem[]) {
 		if (item.type === "message") {
 			const content: AnthropicContent[] = item.content.map((c) =>
 				translateContentItem(c),
