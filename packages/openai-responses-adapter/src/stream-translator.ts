@@ -14,6 +14,7 @@ interface State {
 	inputTokens: number;
 	outputTokens: number;
 	doneSent: boolean;
+	outputItems: Array<Record<string, unknown>>;
 }
 
 const encoder = new TextEncoder();
@@ -44,7 +45,7 @@ function emitDone(
 			created_at: Math.floor(Date.now() / 1000),
 			model: state.model,
 			status: "completed",
-			output: [],
+			output: state.outputItems,
 			usage: {
 				input_tokens: state.inputTokens,
 				output_tokens: state.outputTokens,
@@ -144,7 +145,7 @@ function processEvent(
 				type: "response.output_text.delta",
 				item_id: `${state.responseId}_msg_${outputIdx}`,
 				output_index: outputIdx,
-				content_index: 0,
+				content_index: outputIdx,
 				delta: {
 					type: "output_text",
 					text,
@@ -177,30 +178,34 @@ function processEvent(
 
 		if (state.textByBlock.has(blockIndex)) {
 			const fullText = state.textByBlock.get(blockIndex) ?? "";
+			const doneItem: Record<string, unknown> = {
+				type: "message",
+				id: `${state.responseId}_msg_${outputIdx}`,
+				role: "assistant",
+				content: [{ type: "output_text", text: fullText }],
+				status: "completed",
+			};
+			state.outputItems.push(doneItem);
 			emitSse(controller, "response.output_item.done", {
 				type: "response.output_item.done",
 				output_index: outputIdx,
-				item: {
-					type: "message",
-					id: `${state.responseId}_msg_${outputIdx}`,
-					role: "assistant",
-					content: [{ type: "output_text", text: fullText }],
-					status: "completed",
-				},
+				item: doneItem,
 			});
 		} else if (state.toolByBlock.has(blockIndex)) {
 			const tool = state.toolByBlock.get(blockIndex)!;
+			const doneItem: Record<string, unknown> = {
+				type: "function_call",
+				id: `${state.responseId}_fc_${outputIdx}`,
+				call_id: tool.callId,
+				name: tool.name,
+				arguments: tool.argsBuf,
+				status: "completed",
+			};
+			state.outputItems.push(doneItem);
 			emitSse(controller, "response.output_item.done", {
 				type: "response.output_item.done",
 				output_index: outputIdx,
-				item: {
-					type: "function_call",
-					id: `${state.responseId}_fc_${outputIdx}`,
-					call_id: tool.callId,
-					name: tool.name,
-					arguments: tool.argsBuf,
-					status: "completed",
-				},
+				item: doneItem,
 			});
 		}
 		return;
@@ -277,6 +282,7 @@ export function translateAnthropicStreamToResponses(
 		inputTokens: 0,
 		outputTokens: 0,
 		doneSent: false,
+		outputItems: [],
 	};
 
 	const transformedBody = anthropicResponse.body.pipeThrough(

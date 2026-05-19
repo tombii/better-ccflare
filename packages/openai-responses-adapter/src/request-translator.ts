@@ -11,12 +11,6 @@ import type {
 
 const logger = new Logger("openai-responses-adapter");
 
-const BUILTIN_TOOL_TYPES = new Set([
-	"web_search_preview",
-	"code_interpreter",
-	"file_search",
-]);
-
 function parseArguments(args: string): unknown {
 	try {
 		return JSON.parse(args);
@@ -28,8 +22,8 @@ function parseArguments(args: string): unknown {
 function translateTools(tools: ResponsesTool[]): AnthropicTool[] {
 	const result: AnthropicTool[] = [];
 	for (const tool of tools) {
-		if (BUILTIN_TOOL_TYPES.has(tool.name)) {
-			logger.warn(`Skipping built-in tool: ${tool.name}`);
+		if (tool.type !== "function") {
+			logger.warn(`Skipping unsupported/built-in tool type: ${tool.type}`);
 			continue;
 		}
 		result.push({

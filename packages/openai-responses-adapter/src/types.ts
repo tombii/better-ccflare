@@ -87,12 +87,19 @@ export interface CustomToolCallOutputItem {
 }
 
 // Tool definition
-export interface ResponsesTool {
+export type ResponsesTool = ResponsesFunctionTool | ResponsesBuiltinTool;
+
+export interface ResponsesFunctionTool {
 	type: "function";
 	name: string;
 	description?: string;
 	parameters?: Record<string, unknown>; // JSON Schema
 	strict?: boolean;
+}
+
+export interface ResponsesBuiltinTool {
+	type: "web_search_preview" | "code_interpreter" | "file_search";
+	[key: string]: unknown;
 }
 
 export interface ResponsesToolChoice {
