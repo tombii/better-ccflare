@@ -91,7 +91,8 @@ function translateContentItem(c: {
 		return { type: "text", text: "[image content omitted]" };
 	}
 
-	return { type: "text", text: c.refusal ?? "" };
+	logger.warn(`Unknown content type "${c.type}" — content dropped`);
+	return { type: "text", text: "" };
 }
 
 function mergeConsecutiveSameRole(

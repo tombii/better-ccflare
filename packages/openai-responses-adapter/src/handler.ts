@@ -56,10 +56,25 @@ export async function handleResponsesRequest(
 		};
 	}
 
-	// 3. Generate response ID
+	// 3. Reject unsupported stateful fields
+	if (body.previous_response_id) {
+		return new Response(
+			JSON.stringify({
+				type: "error",
+				error: {
+					type: "unsupported_feature",
+					message:
+						"previous_response_id is not supported. better-ccflare is stateless — send the full conversation history in input on every turn.",
+				},
+			}),
+			{ status: 400, headers: { "Content-Type": "application/json" } },
+		);
+	}
+
+	// 4. Generate response ID
 	const responseId = `resp_${crypto.randomBytes(12).toString("hex")}`;
 
-	// 4. Translate to Anthropic format
+	// 5. Translate to Anthropic format
 	const anthropicBody = translateRequestToAnthropic(
 		body as typeof body & { input: ResponseItem[] },
 	);
