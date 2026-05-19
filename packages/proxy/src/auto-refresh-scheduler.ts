@@ -581,11 +581,11 @@ export class AutoRefreshScheduler {
 				// Ignore error reading body
 			}
 
-			// Track consecutive failures for this account (for non-401 errors too)
+			// Track consecutive failures for this account
 			await this.recordRefreshFailure(
 				accountRow.id,
 				accountRow.name,
-				"(non-401 error)",
+				`(status ${response.status})`,
 			);
 
 			return false;

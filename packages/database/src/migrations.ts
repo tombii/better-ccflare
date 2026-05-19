@@ -891,8 +891,18 @@ export function runMigrations(db: Database, dbPath?: string): void {
 					error,
 				);
 			}
-			db.prepare("ALTER TABLE api_keys DROP COLUMN role").run();
-			log.info("Removed role column from api_keys table");
+			// SQLite 3.35+ supports DROP COLUMN, but older bundled versions don't —
+			// degrade gracefully like the Postgres migration does, otherwise a
+			// boot-time exception here halts startup on a deployment with an old
+			// sqlite binary.
+			try {
+				db.prepare("ALTER TABLE api_keys DROP COLUMN role").run();
+				log.info("Removed role column from api_keys table");
+			} catch (error) {
+				log.warn(
+					`Could not drop api_keys.role column (continuing): ${(error as Error).message}`,
+				);
+			}
 		}
 
 		// Add performance indexes
