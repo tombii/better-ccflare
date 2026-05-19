@@ -1016,8 +1016,9 @@ export default async function startServer(options?: {
 
 					try {
 						if (
-							url.pathname === "/v1/responses" ||
-							url.pathname === "/v1/responses/compact"
+							req.method === "POST" &&
+							(url.pathname === "/v1/responses" ||
+								url.pathname === "/v1/responses/compact")
 						) {
 							return await handleResponsesRequest(
 								req,

@@ -104,6 +104,14 @@ function processEvent(
 	if (eventType === "content_block_start") {
 		const blockIndex = data.index as number;
 		const contentBlock = data.content_block as Record<string, unknown>;
+
+		// Only allocate an output slot for block types we emit events for.
+		// Incrementing unconditionally (e.g. for "thinking" blocks) leaves gaps in
+		// output_index that confuse clients expecting a contiguous sequence.
+		if (contentBlock.type !== "text" && contentBlock.type !== "tool_use") {
+			return;
+		}
+
 		const outputIdx = state.outputIndex++;
 		state.blockIndexToOutput.set(blockIndex, outputIdx);
 
