@@ -105,6 +105,13 @@ function processEvent(
 					status: "in_progress",
 				},
 			});
+			emitSse(controller, "response.content_part.added", {
+				type: "response.content_part.added",
+				item_id: `${state.responseId}_msg_${outputIdx}`,
+				output_index: outputIdx,
+				content_index: 0,
+				part: { type: "output_text", text: "" },
+			});
 		} else if (contentBlock.type === "tool_use") {
 			state.toolByBlock.set(blockIndex, {
 				callId: contentBlock.id as string,
@@ -182,6 +189,13 @@ function processEvent(
 				output_index: outputIdx,
 				content_index: 0,
 				text: fullText,
+			});
+			emitSse(controller, "response.content_part.done", {
+				type: "response.content_part.done",
+				item_id: `${state.responseId}_msg_${outputIdx}`,
+				output_index: outputIdx,
+				content_index: 0,
+				part: { type: "output_text", text: fullText },
 			});
 			const doneItem: Record<string, unknown> = {
 				type: "message",

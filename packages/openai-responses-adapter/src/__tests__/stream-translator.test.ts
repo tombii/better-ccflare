@@ -97,27 +97,33 @@ describe("translateAnthropicStreamToResponses", () => {
 		expect((added.item as Record<string, unknown>).type).toBe("message");
 		expect((added.item as Record<string, unknown>).role).toBe("assistant");
 
-		// Third + fourth: response.output_text.delta
-		expect(parsed[2].event).toBe("response.output_text.delta");
-		const delta1 = parsed[2].data as Record<string, unknown>;
+		// Third: response.content_part.added
+		expect(parsed[2].event).toBe("response.content_part.added");
+
+		// Fourth + fifth: response.output_text.delta
+		expect(parsed[3].event).toBe("response.output_text.delta");
+		const delta1 = parsed[3].data as Record<string, unknown>;
 		expect(delta1.delta).toBe("Hello");
 
-		expect(parsed[3].event).toBe("response.output_text.delta");
-		const delta2 = parsed[3].data as Record<string, unknown>;
+		expect(parsed[4].event).toBe("response.output_text.delta");
+		const delta2 = parsed[4].data as Record<string, unknown>;
 		expect(delta2.delta).toBe(" world");
 
-		// Fifth: response.output_text.done with full accumulated text
-		expect(parsed[4].event).toBe("response.output_text.done");
-		const textDone = parsed[4].data as Record<string, unknown>;
+		// Sixth: response.output_text.done with full accumulated text
+		expect(parsed[5].event).toBe("response.output_text.done");
+		const textDone = parsed[5].data as Record<string, unknown>;
 		expect(textDone.type).toBe("response.output_text.done");
 		expect(textDone.item_id).toBe("resp_001_msg_0");
 		expect(textDone.output_index).toBe(0);
 		expect(textDone.content_index).toBe(0);
 		expect(textDone.text).toBe("Hello world");
 
-		// Sixth: response.output_item.done with full text
-		expect(parsed[5].event).toBe("response.output_item.done");
-		const done = parsed[5].data as Record<string, unknown>;
+		// Seventh: response.content_part.done
+		expect(parsed[6].event).toBe("response.content_part.done");
+
+		// Eighth: response.output_item.done with full text
+		expect(parsed[7].event).toBe("response.output_item.done");
+		const done = parsed[7].data as Record<string, unknown>;
 		const doneItem = done.item as Record<string, unknown>;
 		expect(doneItem.type).toBe("message");
 		expect(doneItem.status).toBe("completed");
