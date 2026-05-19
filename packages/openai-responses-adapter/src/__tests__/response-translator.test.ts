@@ -33,7 +33,7 @@ describe("translateAnthropicResponseToResponses", () => {
 		const item = result.output[0];
 		expect(item.type).toBe("message");
 		if (item.type === "message") {
-			expect(item.id).toBe("resp_001_msg");
+			expect(item.id).toBe("resp_001_msg_0");
 			expect(item.role).toBe("assistant");
 			expect(item.status).toBe("completed");
 			expect(item.content).toHaveLength(1);
@@ -186,7 +186,7 @@ describe("translateAnthropicResponseToResponses", () => {
 		expect(result.created_at).toBeGreaterThan(0);
 	});
 
-	test("multiple text blocks → concatenated into single output_text", () => {
+	test("multiple text blocks → one OutputMessageItem per block", () => {
 		const resp = makeBaseResponse({
 			content: [
 				{ type: "text", text: "Hello " },
@@ -199,12 +199,22 @@ describe("translateAnthropicResponseToResponses", () => {
 			"claude-3-5-sonnet-20241022",
 		);
 
-		expect(result.output).toHaveLength(1);
-		const item = result.output[0];
-		if (item.type === "message") {
+		expect(result.output).toHaveLength(2);
+		const item0 = result.output[0];
+		const item1 = result.output[1];
+		expect(item0.type).toBe("message");
+		expect(item1.type).toBe("message");
+		if (item0.type === "message") {
+			expect(item0.id).toBe("resp_007_msg_0");
 			expect(
-				item.content[0].type === "output_text" && item.content[0].text,
-			).toBe("Hello world");
+				item0.content[0].type === "output_text" && item0.content[0].text,
+			).toBe("Hello ");
+		}
+		if (item1.type === "message") {
+			expect(item1.id).toBe("resp_007_msg_1");
+			expect(
+				item1.content[0].type === "output_text" && item1.content[0].text,
+			).toBe("world");
 		}
 	});
 });

@@ -178,6 +178,13 @@ function processEvent(
 
 		if (state.textByBlock.has(blockIndex)) {
 			const fullText = state.textByBlock.get(blockIndex) ?? "";
+			emitSse(controller, "response.output_text.done", {
+				type: "response.output_text.done",
+				item_id: `${state.responseId}_msg_${outputIdx}`,
+				output_index: outputIdx,
+				content_index: outputIdx,
+				text: fullText,
+			});
 			const doneItem: Record<string, unknown> = {
 				type: "message",
 				id: `${state.responseId}_msg_${outputIdx}`,
@@ -193,6 +200,12 @@ function processEvent(
 			});
 		} else if (state.toolByBlock.has(blockIndex)) {
 			const tool = state.toolByBlock.get(blockIndex)!;
+			emitSse(controller, "response.function_call_arguments.done", {
+				type: "response.function_call_arguments.done",
+				item_id: `${state.responseId}_fc_${outputIdx}`,
+				output_index: outputIdx,
+				arguments: tool.argsBuf,
+			});
 			const doneItem: Record<string, unknown> = {
 				type: "function_call",
 				id: `${state.responseId}_fc_${outputIdx}`,

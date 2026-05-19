@@ -106,9 +106,18 @@ describe("translateAnthropicStreamToResponses", () => {
 		const delta2 = parsed[3].data as Record<string, unknown>;
 		expect((delta2.delta as Record<string, unknown>).text).toBe(" world");
 
-		// Fifth: response.output_item.done with full text
-		expect(parsed[4].event).toBe("response.output_item.done");
-		const done = parsed[4].data as Record<string, unknown>;
+		// Fifth: response.output_text.done with full accumulated text
+		expect(parsed[4].event).toBe("response.output_text.done");
+		const textDone = parsed[4].data as Record<string, unknown>;
+		expect(textDone.type).toBe("response.output_text.done");
+		expect(textDone.item_id).toBe("resp_001_msg_0");
+		expect(textDone.output_index).toBe(0);
+		expect(textDone.content_index).toBe(0);
+		expect(textDone.text).toBe("Hello world");
+
+		// Sixth: response.output_item.done with full text
+		expect(parsed[5].event).toBe("response.output_item.done");
+		const done = parsed[5].data as Record<string, unknown>;
 		const doneItem = done.item as Record<string, unknown>;
 		expect(doneItem.type).toBe("message");
 		expect(doneItem.status).toBe("completed");
