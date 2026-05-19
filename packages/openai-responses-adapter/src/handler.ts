@@ -83,13 +83,37 @@ export async function handleResponsesRequest(
 
 	// 6. Forward to proxy
 	log.info(`Forwarding responses request to ${messagesUrl.pathname}`);
-	const anthropicResp = await handleProxy(
-		syntheticReq,
-		messagesUrl,
-		ctx,
-		apiKeyId,
-		apiKeyName,
-	);
+	let anthropicResp: Response;
+	try {
+		anthropicResp = await handleProxy(
+			syntheticReq,
+			messagesUrl,
+			ctx,
+			apiKeyId,
+			apiKeyName,
+		);
+	} catch (err) {
+		const statusCode =
+			typeof err === "object" &&
+			err !== null &&
+			"statusCode" in err &&
+			typeof (err as { statusCode: unknown }).statusCode === "number"
+				? (err as { statusCode: number }).statusCode
+				: 503;
+		const isUnavailable = statusCode === 503;
+		return new Response(
+			JSON.stringify({
+				error: {
+					message: isUnavailable
+						? "Service temporarily unavailable. Please try again later."
+						: "Proxy request failed",
+					type: isUnavailable ? "server_error" : "api_error",
+					code: isUnavailable ? "server_error" : "api_error",
+				},
+			}),
+			{ status: statusCode, headers: { "Content-Type": "application/json" } },
+		);
+	}
 
 	// 7. Translate non-200 Anthropic errors to OpenAI error shape
 	if (anthropicResp.status !== 200) {
