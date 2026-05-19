@@ -209,9 +209,17 @@ describe("translateRequestToAnthropic", () => {
 	});
 
 	test('tool_choice "auto" → {type:"auto"}, "required" → {type:"any"}', () => {
+		const fnTool = {
+			type: "function" as const,
+			name: "my_fn",
+			description: "A function",
+			parameters: {},
+		};
+
 		const req1: ResponsesRequest = {
 			model: "claude-3-5-sonnet-20241022",
 			input: [],
+			tools: [fnTool],
 			tool_choice: "auto",
 		};
 		expect(translateRequestToAnthropic(req1).tool_choice).toEqual({
@@ -221,6 +229,7 @@ describe("translateRequestToAnthropic", () => {
 		const req2: ResponsesRequest = {
 			model: "claude-3-5-sonnet-20241022",
 			input: [],
+			tools: [fnTool],
 			tool_choice: "required",
 		};
 		expect(translateRequestToAnthropic(req2).tool_choice).toEqual({
@@ -230,6 +239,7 @@ describe("translateRequestToAnthropic", () => {
 		const req3: ResponsesRequest = {
 			model: "claude-3-5-sonnet-20241022",
 			input: [],
+			tools: [fnTool],
 			tool_choice: "none",
 		};
 		expect(translateRequestToAnthropic(req3).tool_choice).toEqual({
@@ -239,6 +249,7 @@ describe("translateRequestToAnthropic", () => {
 		const req4: ResponsesRequest = {
 			model: "claude-3-5-sonnet-20241022",
 			input: [],
+			tools: [fnTool],
 			tool_choice: { type: "function", name: "my_fn" },
 		};
 		expect(translateRequestToAnthropic(req4).tool_choice).toEqual({
@@ -251,6 +262,14 @@ describe("translateRequestToAnthropic", () => {
 			input: [],
 		};
 		expect(translateRequestToAnthropic(req5).tool_choice).toBeUndefined();
+
+		// tool_choice without any function tools (only built-in) → suppressed to avoid Anthropic 400
+		const req6: ResponsesRequest = {
+			model: "claude-3-5-sonnet-20241022",
+			input: [],
+			tool_choice: "auto",
+		};
+		expect(translateRequestToAnthropic(req6).tool_choice).toBeUndefined();
 	});
 
 	test("tool schema: parameters field becomes input_schema", () => {

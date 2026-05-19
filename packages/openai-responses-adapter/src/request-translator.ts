@@ -172,13 +172,14 @@ export function translateRequestToAnthropic(
 		result.stream = req.stream;
 	}
 
-	if (req.tools && req.tools.length > 0) {
-		result.tools = translateTools(req.tools);
-	}
-
-	const toolChoice = translateToolChoice(req.tool_choice);
-	if (toolChoice !== undefined) {
-		result.tool_choice = toolChoice;
+	const translatedTools =
+		req.tools && req.tools.length > 0 ? translateTools(req.tools) : [];
+	if (translatedTools.length > 0) {
+		result.tools = translatedTools;
+		const toolChoice = translateToolChoice(req.tool_choice);
+		if (toolChoice !== undefined) {
+			result.tool_choice = toolChoice;
+		}
 	}
 
 	return result;

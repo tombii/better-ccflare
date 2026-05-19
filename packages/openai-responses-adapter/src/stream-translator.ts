@@ -15,6 +15,7 @@ interface State {
 	outputTokens: number;
 	doneSent: boolean;
 	outputItems: Array<Record<string, unknown>>;
+	streamError: { type: string; message: string } | null;
 }
 
 const encoder = new TextEncoder();
@@ -236,6 +237,33 @@ function processEvent(
 		emitDone(controller, state);
 		return;
 	}
+
+	if (eventType === "error") {
+		const err = data.error as Record<string, unknown> | undefined;
+		const errType = (err?.type as string) ?? "api_error";
+		const errMsg =
+			(err?.message as string) ?? "An error occurred during streaming";
+		state.streamError = { type: errType, message: errMsg };
+		state.doneSent = true;
+		emitSse(controller, "response.done", {
+			type: "response.done",
+			response: {
+				id: state.responseId,
+				object: "response",
+				created_at: Math.floor(Date.now() / 1000),
+				model: state.model,
+				status: "failed",
+				error: { code: errType, message: errMsg },
+				output: state.outputItems,
+				usage: {
+					input_tokens: state.inputTokens,
+					output_tokens: state.outputTokens,
+					total_tokens: state.inputTokens + state.outputTokens,
+				},
+			},
+		});
+		return;
+	}
 }
 
 function parseAndProcessChunk(
@@ -296,6 +324,7 @@ export function translateAnthropicStreamToResponses(
 		outputTokens: 0,
 		doneSent: false,
 		outputItems: [],
+		streamError: null,
 	};
 
 	const transformedBody = anthropicResponse.body.pipeThrough(
