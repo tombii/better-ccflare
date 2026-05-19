@@ -3,7 +3,7 @@ import { Logger } from "@better-ccflare/logger";
 import { translateRequestToAnthropic } from "./request-translator";
 import { translateAnthropicResponseToResponses } from "./response-translator";
 import { translateAnthropicStreamToResponses } from "./stream-translator";
-import type { HandleProxyFn, ResponsesRequest } from "./types";
+import type { HandleProxyFn, ResponseItem, ResponsesRequest } from "./types";
 
 const log = new Logger("openai-responses-adapter");
 
@@ -60,7 +60,9 @@ export async function handleResponsesRequest(
 	const responseId = `resp_${crypto.randomBytes(12).toString("hex")}`;
 
 	// 4. Translate to Anthropic format
-	const anthropicBody = translateRequestToAnthropic(body);
+	const anthropicBody = translateRequestToAnthropic(
+		body as typeof body & { input: ResponseItem[] },
+	);
 
 	// 5. Build synthetic request targeting /v1/messages
 	const messagesUrl = new URL(url.toString());
@@ -86,9 +88,9 @@ export async function handleResponsesRequest(
 
 	// 7. Translate non-200 Anthropic errors to OpenAI error shape
 	if (anthropicResp.status !== 200) {
+		let errorBody: { error: { message: string; type: string; code: string } };
 		const contentType = anthropicResp.headers.get("content-type") ?? "";
 		if (contentType.includes("application/json")) {
-			let errorBody: { error: { message: string; type: string; code: string } };
 			try {
 				const anthropicError = (await anthropicResp.json()) as {
 					type?: string;
@@ -111,12 +113,19 @@ export async function handleResponsesRequest(
 					},
 				};
 			}
-			return new Response(JSON.stringify(errorBody), {
-				status: anthropicResp.status,
-				headers: { "Content-Type": "application/json" },
-			});
+		} else {
+			errorBody = {
+				error: {
+					message: "Unknown error",
+					type: "api_error",
+					code: "api_error",
+				},
+			};
 		}
-		return anthropicResp;
+		return new Response(JSON.stringify(errorBody), {
+			status: anthropicResp.status,
+			headers: { "Content-Type": "application/json" },
+		});
 	}
 
 	// 8. Stream path

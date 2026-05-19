@@ -110,11 +110,11 @@ function mergeConsecutiveSameRole(
 }
 
 export function translateRequestToAnthropic(
-	req: ResponsesRequest,
+	req: ResponsesRequest & { input: ResponseItem[] },
 ): AnthropicRequest {
 	const messages: AnthropicMessage[] = [];
 
-	for (const item of req.input as ResponseItem[]) {
+	for (const item of req.input) {
 		if (item.type === "message") {
 			const content: AnthropicContent[] = item.content.map((c) =>
 				translateContentItem(c),

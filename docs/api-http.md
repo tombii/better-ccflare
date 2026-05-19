@@ -113,6 +113,10 @@ Proxy requests to Claude API. All requests to paths starting with `/v1/` are for
 **Codex Compatibility:**
 OpenAI Responses API clients (for example Codex) can target better-ccflare directly through `/v1/responses` and `/v1/responses/compact`. better-ccflare translates these payloads to Anthropic message format internally.
 
+**Known Limitations (`/v1/responses`):**
+- `previous_response_id` is accepted but ignored — better-ccflare is stateless and does not store prior responses. Clients using stateful multi-turn mode (`store: true`) must send the full conversation history in `input` on every turn rather than relying on server-side context retrieval.
+- Built-in tool types (`web_search_preview`, `code_interpreter`, `file_search`) are silently skipped; only `type: "function"` tools are forwarded to Anthropic.
+
 **Note:** There is no `/v1/models` endpoint provided by better-ccflare. Model listing would need to be done directly through Claude's API if such an endpoint exists.
 
 **Headers:**
