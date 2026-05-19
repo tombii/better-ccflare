@@ -161,7 +161,12 @@ export async function disableApiKey(
 
 	const success = await dbOps.disableApiKey(apiKey.id);
 	if (!success) {
-		throw new Error(`Failed to disable API key '${name}'`);
+		// TOCTOU: the row read above was gone by the time we tried to disable
+		// it (e.g. a concurrent DELETE landed). Return 404 — the request can't
+		// succeed against a key that no longer exists.
+		throw NotFound(
+			`API key '${name}' was deleted before the disable could complete.`,
+		);
 	}
 
 	return true;
@@ -185,7 +190,10 @@ export async function enableApiKey(
 
 	const success = await dbOps.enableApiKey(apiKey.id);
 	if (!success) {
-		throw new Error(`Failed to enable API key '${name}'`);
+		// TOCTOU: same as disable above — row gone between read and write.
+		throw NotFound(
+			`API key '${name}' was deleted before the enable could complete.`,
+		);
 	}
 
 	return true;
@@ -205,7 +213,8 @@ export async function deleteApiKey(
 
 	const success = await dbOps.deleteApiKey(apiKey.id);
 	if (!success) {
-		throw new Error(`Failed to delete API key '${name}'`);
+		// TOCTOU: a concurrent delete won the race.
+		throw NotFound(`API key '${name}' was deleted by a concurrent request.`);
 	}
 
 	return true;
