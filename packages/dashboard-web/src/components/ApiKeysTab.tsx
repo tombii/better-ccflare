@@ -172,6 +172,12 @@ export function ApiKeysTab() {
 			setGeneratedKey({ apiKey: data.apiKey, source: "regenerated" });
 			queryClient.invalidateQueries({ queryKey: ["api-keys"] });
 		},
+		onError: (error: Error) => {
+			// Inline error UI shows mutation.error in the regenerate dialog body;
+			// log for parity with generateKeyMutation so console-based debugging
+			// surfaces both flows consistently.
+			console.error("Failed to regenerate API key:", error);
+		},
 	});
 
 	const handleGenerateKey = () => {

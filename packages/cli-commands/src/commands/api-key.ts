@@ -112,12 +112,17 @@ export async function regenerateApiKey(
 		prefixLast8,
 	);
 	if (!updated) {
-		// rotateSecret returns false for two distinct conditions covered by its
-		// WHERE clause: stale hash (concurrent regenerate) or is_active=0 (key
-		// was disabled in the TOCTOU window after our isActive check above).
-		// Distinguish them so the caller's error message is actionable.
+		// rotateSecret returns false for three distinct conditions covered by its
+		// WHERE clause: row gone (deleted in the TOCTOU window), is_active=0
+		// (disabled in the window), or hash mismatch (concurrent regenerate won
+		// the race). Distinguish them so the caller's error message is actionable.
 		const recheck = await dbOps.getApiKeyByName(name);
-		if (recheck && !recheck.isActive) {
+		if (!recheck) {
+			throw NotFound(
+				`API key '${name}' was deleted before the regenerate could complete.`,
+			);
+		}
+		if (!recheck.isActive) {
 			throw BadRequest(
 				`API key '${name}' was disabled before the regenerate could complete. Enable it first.`,
 			);
