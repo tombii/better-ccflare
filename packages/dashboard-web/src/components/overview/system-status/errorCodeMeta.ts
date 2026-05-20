@@ -48,7 +48,7 @@ const KNOWN_ERROR_META: Record<
 	upstream_529_overloaded_with_reset: {
 		title: "Provider overload",
 		description:
-			"The upstream provider returned 529 (overloaded). Account temporarily cooled down until the provided Retry-After elapses.",
+			"The upstream provider returned 529 (overloaded). Account temporarily cooled down — the cooldown window comes from the Retry-After header when provided, or a synthesized window for mid-stream overloaded_error detections (no Retry-After is available in that path).",
 		suggestion:
 			"No action needed — the account will recover automatically. Traffic will shift to other configured accounts in the meantime.",
 		severity: "warning",
