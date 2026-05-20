@@ -15,16 +15,21 @@ const log = new Logger("ResponseProcessor");
  * @param account - The rate-limited account
  * @param rateLimitInfo - Parsed rate limit information
  * @param ctx - The proxy context
+ * @param status - HTTP status code of the triggering response (429 or 529). Defaults to 429.
  */
 export function handleRateLimitResponse(
 	account: Account,
 	rateLimitInfo: ReturnType<Provider["parseRateLimit"]>,
 	ctx: ProxyContext,
+	status = 429,
 ): void {
 	if (!rateLimitInfo.resetTime) return;
 
 	const resetTime = rateLimitInfo.resetTime;
-	const reason: RateLimitReason = "upstream_429_with_reset";
+	const reason: RateLimitReason =
+		status === 529
+			? "upstream_529_overloaded_with_reset"
+			: "upstream_429_with_reset";
 	account.rate_limited_until = resetTime;
 	ctx.asyncWriter.enqueue(() => {
 		log.warn(
@@ -280,10 +285,10 @@ export async function processProxyResponse(
 			requestMeta?.headers?.get("x-better-ccflare-keepalive") === "true";
 		if (isKeepalive) {
 			log.warn(
-				`Keepalive replay for ${account.name} got 429 — skipping cooldown (synthetic burst, not a real per-account rate limit)`,
+				`Keepalive replay for ${account.name} got ${response.status} — skipping cooldown (synthetic burst, not a real per-account rate limit)`,
 			);
 		} else if (rateLimitInfo.resetTime) {
-			handleRateLimitResponse(account, rateLimitInfo, ctx);
+			handleRateLimitResponse(account, rateLimitInfo, ctx, response.status);
 		} else {
 			// Mark as rate-limited even without reset time. Use a short
 			// probe-friendly cooldown (default 60s, override via
@@ -300,7 +305,10 @@ export async function processProxyResponse(
 			const cooldownUntil = Date.now() + cooldownMs;
 			account.rate_limited_until = cooldownUntil;
 			ctx.asyncWriter.enqueue(() => {
-				const reason: RateLimitReason = "upstream_429_no_reset_probe_cooldown";
+				const reason: RateLimitReason =
+					response.status === 529
+						? "upstream_529_overloaded_no_reset"
+						: "upstream_429_no_reset_probe_cooldown";
 				log.warn(
 					`[ccflare] account=${account.name} cooldown_applied reason=${reason} until=${new Date(cooldownUntil).toISOString()}`,
 				);

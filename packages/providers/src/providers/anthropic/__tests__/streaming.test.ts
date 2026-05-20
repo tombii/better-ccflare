@@ -147,6 +147,169 @@ describe("AnthropicProvider — streaming.test.ts", () => {
 			expect(result.isRateLimited).toBe(true);
 			expect(result.resetTime).toBe(unixSeconds * 1000);
 		});
+
+		// ─────────────────────────────────────────────
+		// 529 (overloaded_error) tests
+		// ─────────────────────────────────────────────
+
+		it("529 status with no rate-limit headers → isRateLimited:true and resetTime:undefined", () => {
+			const response = new Response(
+				'{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}',
+				{
+					status: 529,
+					headers: { "content-type": "application/json" },
+				},
+			);
+
+			const result = provider.parseRateLimit(response);
+
+			expect(result.isRateLimited).toBe(true);
+			expect(result.resetTime).toBeUndefined();
+		});
+
+		it("529 status with anthropic-ratelimit-unified-status: allowed → isRateLimited:true (overload masks allowed)", () => {
+			const response = new Response(
+				'{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}',
+				{
+					status: 529,
+					headers: {
+						"anthropic-ratelimit-unified-status": "allowed",
+					},
+				},
+			);
+
+			const result = provider.parseRateLimit(response);
+
+			// 529 overload should be treated as rate-limited even if status header says "allowed"
+			expect(result.isRateLimited).toBe(true);
+		});
+
+		it("529 status with retry-after as delta seconds → isRateLimited:true and resetTime ≈ now + N*1000", () => {
+			const deltaSeconds = 30;
+			const before = Date.now();
+			const response = new Response(null, {
+				status: 529,
+				headers: {
+					"retry-after": String(deltaSeconds),
+				},
+			});
+
+			const result = provider.parseRateLimit(response);
+			const after = Date.now();
+
+			expect(result.isRateLimited).toBe(true);
+			expect(result.resetTime).toBeGreaterThanOrEqual(
+				before + deltaSeconds * 1000,
+			);
+			expect(result.resetTime).toBeLessThanOrEqual(after + deltaSeconds * 1000);
+		});
+
+		it("529 status with retry-after as HTTP-date → isRateLimited:true and resetTime matches parsed date", () => {
+			// Use a date ~1 hour in the future
+			const futureDate = new Date(Date.now() + 3600 * 1000);
+			const httpDate = futureDate.toUTCString();
+			const response = new Response(null, {
+				status: 529,
+				headers: {
+					"retry-after": httpDate,
+				},
+			});
+
+			const result = provider.parseRateLimit(response);
+
+			expect(result.isRateLimited).toBe(true);
+			// Allow a 2-second tolerance for test execution time
+			expect(result.resetTime).toBeGreaterThanOrEqual(
+				futureDate.getTime() - 2000,
+			);
+			expect(result.resetTime).toBeLessThanOrEqual(futureDate.getTime() + 2000);
+		});
+
+		it("529 status with retry-after that is not a positive number falls back to x-ratelimit-reset (unix seconds)", () => {
+			// Use a future unix timestamp (now + 5 minutes) so clampResetTime accepts it.
+			const futureUnixSeconds = Math.floor((Date.now() + 5 * 60 * 1000) / 1000);
+			const response = new Response(null, {
+				status: 529,
+				headers: {
+					"retry-after": "not-a-date",
+					"x-ratelimit-reset": String(futureUnixSeconds),
+				},
+			});
+
+			const result = provider.parseRateLimit(response);
+
+			expect(result.isRateLimited).toBe(true);
+			expect(result.resetTime).toBeDefined();
+			expect(result.resetTime ?? 0).toBeGreaterThan(Date.now());
+			expect(result.resetTime ?? 0).toBeLessThanOrEqual(
+				futureUnixSeconds * 1000 + 1000,
+			);
+		});
+
+		it("non-429/529 status returns isRateLimited:false", () => {
+			const response = new Response(null, { status: 500 });
+
+			const result = provider.parseRateLimit(response);
+
+			expect(result.isRateLimited).toBe(false);
+		});
+
+		it("529 + retry-after '0' falls through with no usable resetTime", () => {
+			const response = new Response(null, {
+				status: 529,
+				headers: { "retry-after": "0" },
+			});
+			const result = provider.parseRateLimit(response);
+			expect(result.isRateLimited).toBe(true);
+			expect(result.resetTime).toBeUndefined();
+		});
+
+		it("529 + retry-after '-30' falls through with no usable resetTime", () => {
+			const response = new Response(null, {
+				status: 529,
+				headers: { "retry-after": "-30" },
+			});
+			const result = provider.parseRateLimit(response);
+			expect(result.isRateLimited).toBe(true);
+			expect(result.resetTime).toBeUndefined();
+		});
+
+		it("529 + retry-after as past HTTP-date falls through with no usable resetTime", () => {
+			const pastDate = new Date(Date.now() - 3600 * 1000);
+			const response = new Response(null, {
+				status: 529,
+				headers: { "retry-after": pastDate.toUTCString() },
+			});
+			const result = provider.parseRateLimit(response);
+			expect(result.isRateLimited).toBe(true);
+			expect(result.resetTime).toBeUndefined();
+		});
+
+		it("529 + retry-after 'Infinity' falls through with no usable resetTime", () => {
+			const response = new Response(null, {
+				status: 529,
+				headers: { "retry-after": "Infinity" },
+			});
+			const result = provider.parseRateLimit(response);
+			expect(result.isRateLimited).toBe(true);
+			expect(result.resetTime).toBeUndefined();
+		});
+
+		it("529 + retry-after '9999999999' is capped to now + 24h", () => {
+			const before = Date.now();
+			const response = new Response(null, {
+				status: 529,
+				headers: { "retry-after": "9999999999" },
+			});
+			const result = provider.parseRateLimit(response);
+			expect(result.isRateLimited).toBe(true);
+			const MAX = 24 * 60 * 60 * 1000;
+			expect(result.resetTime).toBeDefined();
+			expect(result.resetTime ?? 0).toBeLessThanOrEqual(
+				Date.now() + MAX + 1000,
+			);
+			expect(result.resetTime ?? 0).toBeGreaterThanOrEqual(before + MAX - 1000);
+		});
 	});
 
 	// ─────────────────────────────────────────────

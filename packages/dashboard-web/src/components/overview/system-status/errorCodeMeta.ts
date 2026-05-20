@@ -45,6 +45,22 @@ const KNOWN_ERROR_META: Record<
 		suggestion: "Wait for cooldown, or add more diverse fallback models.",
 		severity: "error",
 	},
+	upstream_529_overloaded_with_reset: {
+		title: "Provider overload",
+		description:
+			"The upstream provider returned 529 (overloaded). Account temporarily cooled down until the provided Retry-After elapses.",
+		suggestion:
+			"No action needed — the account will recover automatically. Traffic will shift to other configured accounts in the meantime.",
+		severity: "warning",
+	},
+	upstream_529_overloaded_no_reset: {
+		title: "Provider overload (no Retry-After)",
+		description:
+			"The upstream provider returned 529 (overloaded) without a Retry-After header; entering probe cooldown.",
+		suggestion:
+			"Cooldown defaults to 60s. Set `CCFLARE_DEFAULT_COOLDOWN_NO_RESET_MS` in your environment to change it.",
+		severity: "warning",
+	},
 };
 
 function getModelFallbackMeta(context?: ErrorContext): ErrorMeta {

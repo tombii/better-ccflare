@@ -18,6 +18,25 @@ const HARD_LIMIT_STATUSES = new Set([
 	"payment_required",
 ]);
 
+// Maximum allowed reset time: 24 hours from now.
+// Prevents a pathological Retry-After value from keeping an account
+// cooled down for days (or effectively forever with "Infinity").
+const MAX_RESET_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Clamp a candidate reset-time epoch-ms value.
+ *
+ * Returns:
+ *   - `undefined` if the input is NaN, not finite, or <= now (already in the past).
+ *   - `Math.min(input, now + MAX_RESET_MS)` otherwise — capped at 24 h from now.
+ */
+function clampResetTime(candidateMs: number, now: number): number | undefined {
+	if (!Number.isFinite(candidateMs) || candidateMs <= now) {
+		return undefined;
+	}
+	return Math.min(candidateMs, now + MAX_RESET_MS);
+}
+
 // Soft warning statuses that should not block account usage
 const _SOFT_WARNING_STATUSES = new Set(["allowed_warning", "queueing_soft"]);
 
@@ -275,18 +294,98 @@ export class AnthropicProvider extends BaseProvider {
 		);
 
 		if (statusHeader || resetHeader) {
-			const resetTime = resetHeader ? Number(resetHeader) * 1000 : undefined; // Convert to ms
+			const now = Date.now();
 			const remaining = remainingHeader ? Number(remainingHeader) : undefined;
 
-			// Only mark as rate limited for hard limit statuses or 429
+			// Only mark as rate limited for hard limit statuses, 429, or 529 (overloaded).
+			// A 529 is an overload even when the unified-status header says "allowed" —
+			// the overload condition takes precedence over the header value.
 			const isRateLimited =
-				HARD_LIMIT_STATUSES.has(statusHeader || "") || response.status === 429;
+				HARD_LIMIT_STATUSES.has(statusHeader || "") ||
+				response.status === 429 ||
+				response.status === 529;
 
+			// For 529 with a unified-reset header: clamp the reset time.
+			// If clamping rejects the value (past/NaN/infinite), fall through
+			// to the 529 block below to try Retry-After and x-ratelimit-reset.
+			if (response.status === 529 && resetHeader) {
+				const clamped = clampResetTime(Number(resetHeader) * 1000, now);
+				if (clamped === undefined) {
+					// Fall through to the 529 block for better header candidates.
+					// (handled below)
+				} else {
+					return {
+						isRateLimited,
+						resetTime: clamped,
+						statusHeader: statusHeader || undefined,
+						remaining,
+					};
+				}
+			} else if (response.status !== 529) {
+				// Non-529: use resetHeader as-is (existing behaviour for 429 / 200).
+				const resetTime = resetHeader ? Number(resetHeader) * 1000 : undefined;
+				return {
+					isRateLimited,
+					resetTime,
+					statusHeader: statusHeader || undefined,
+					remaining,
+				};
+			}
+			// 529 with no usable resetHeader — fall through to 529 block below.
+		}
+
+		// Handle 529 (overloaded_error) — try Retry-After, then x-ratelimit-reset
+		if (response.status === 529) {
+			const now = Date.now();
+			const retryAfterHeader = response.headers.get("retry-after");
+			if (retryAfterHeader) {
+				const parsed = Number(retryAfterHeader);
+				if (Number.isFinite(parsed) && parsed > 0) {
+					// Positive finite number → treat as delta-seconds
+					const clamped = clampResetTime(now + parsed * 1000, now);
+					if (clamped !== undefined) {
+						return {
+							isRateLimited: true,
+							resetTime: clamped,
+							statusHeader: undefined,
+							remaining: undefined,
+						};
+					}
+				}
+				// Try HTTP-date format
+				const dateMs = new Date(retryAfterHeader).getTime();
+				const clampedDate = clampResetTime(dateMs, now);
+				if (clampedDate !== undefined) {
+					return {
+						isRateLimited: true,
+						resetTime: clampedDate,
+						statusHeader: undefined,
+						remaining: undefined,
+					};
+				}
+			}
+
+			// Fall back to x-ratelimit-reset (unix epoch seconds → ms)
+			const rateLimitReset = response.headers.get("x-ratelimit-reset");
+			if (rateLimitReset) {
+				const resetMs = parseInt(rateLimitReset, 10) * 1000;
+				const clamped = clampResetTime(resetMs, now);
+				if (clamped !== undefined) {
+					return {
+						isRateLimited: true,
+						resetTime: clamped,
+						statusHeader: undefined,
+						remaining: undefined,
+					};
+				}
+			}
+
+			// No usable reset time — return without resetTime so the no-reset cooldown path fires
 			return {
-				isRateLimited,
-				resetTime,
-				statusHeader: statusHeader || undefined,
-				remaining,
+				isRateLimited: true,
+				resetTime: undefined,
+				statusHeader: undefined,
+				remaining: undefined,
 			};
 		}
 
@@ -295,10 +394,14 @@ export class AnthropicProvider extends BaseProvider {
 			return { isRateLimited: false };
 		}
 
+		const now429 = Date.now();
 		const rateLimitReset = response.headers.get("x-ratelimit-reset");
+		// Use the x-ratelimit-reset header as-is (preserving existing behaviour).
+		// For the no-header default (now + 60s), the helper makes the cap intent
+		// explicit, though 60s is always within the 24h cap.
 		const resetTime = rateLimitReset
 			? parseInt(rateLimitReset, 10) * 1000
-			: Date.now() + 60000; // Default to 1 minute
+			: (clampResetTime(now429 + 60000, now429) ?? now429 + 60000);
 
 		return {
 			isRateLimited: true,

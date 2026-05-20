@@ -5,7 +5,7 @@ const encode = (s: string) => new TextEncoder().encode(s);
 
 describe("SseRateLimitSniffer", () => {
 	it("detects a complete rate-limit error frame in a single chunk", () => {
-		const sniffer = createSseRateLimitSniffer();
+		const sniffer = createSseRateLimitSniffer({ provider: "anthropic" });
 		const frame = encode(
 			'event: error\ndata: {"type":"error","error":{"type":"rate_limit_error","message":"Rate limited"}}\n\n',
 		);
@@ -13,7 +13,7 @@ describe("SseRateLimitSniffer", () => {
 	});
 
 	it("detects a rate-limit error frame split across multiple chunks", () => {
-		const sniffer = createSseRateLimitSniffer();
+		const sniffer = createSseRateLimitSniffer({ provider: "anthropic" });
 
 		// Chunk 1: partial event + partial data (the marker is split)
 		expect(
@@ -28,24 +28,56 @@ describe("SseRateLimitSniffer", () => {
 		).toBe(true);
 	});
 
-	it("ignores overloaded_error frames", () => {
-		const sniffer = createSseRateLimitSniffer();
+	it("fires once for overloaded_error frames", () => {
+		const sniffer = createSseRateLimitSniffer({ provider: "anthropic" });
 		const frame = encode(
 			'event: error\ndata: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}\n\n',
 		);
-		expect(sniffer.feed(frame)).toBe(false);
+		expect(sniffer.feed(frame)).toBe(true);
+		expect(sniffer.firedReason).toBe("overloaded_error");
 	});
 
 	it("ignores api_error frames", () => {
-		const sniffer = createSseRateLimitSniffer();
+		const sniffer = createSseRateLimitSniffer({ provider: "anthropic" });
 		const frame = encode(
 			'event: error\ndata: {"type":"error","error":{"type":"api_error","message":"Server error"}}\n\n',
 		);
 		expect(sniffer.feed(frame)).toBe(false);
+		expect(sniffer.firedReason).toBeNull();
+	});
+
+	it("rate_limit_error sets firedReason to 'rate_limit_error'", () => {
+		const sniffer = createSseRateLimitSniffer({ provider: "anthropic" });
+		const frame = encode(
+			'event: error\ndata: {"type":"error","error":{"type":"rate_limit_error","message":"Rate limited"}}\n\n',
+		);
+		expect(sniffer.feed(frame)).toBe(true);
+		expect(sniffer.firedReason).toBe("rate_limit_error");
+	});
+
+	it("overloaded_error subsequent frame returns false (one-shot)", () => {
+		const sniffer = createSseRateLimitSniffer({ provider: "anthropic" });
+		// First overloaded frame fires
+		expect(
+			sniffer.feed(
+				encode(
+					'event: error\ndata: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}\n\n',
+				),
+			),
+		).toBe(true);
+
+		// Second overloaded frame does NOT fire — one-shot semantics
+		expect(
+			sniffer.feed(
+				encode(
+					'event: error\ndata: {"type":"error","error":{"type":"overloaded_error","message":"Still overloaded"}}\n\n',
+				),
+			),
+		).toBe(false);
 	});
 
 	it("ignores regular content chunks", () => {
-		const sniffer = createSseRateLimitSniffer();
+		const sniffer = createSseRateLimitSniffer({ provider: "anthropic" });
 		const chunks = [
 			'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}\n\n',
 			'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" world"}}\n\n',
@@ -57,7 +89,7 @@ describe("SseRateLimitSniffer", () => {
 	});
 
 	it("fires only once even if the buffer still matches on subsequent feeds", () => {
-		const sniffer = createSseRateLimitSniffer();
+		const sniffer = createSseRateLimitSniffer({ provider: "anthropic" });
 
 		// First rate-limit frame fires
 		expect(
@@ -79,15 +111,17 @@ describe("SseRateLimitSniffer", () => {
 	});
 
 	it("handles empty chunks gracefully", () => {
-		const sniffer = createSseRateLimitSniffer();
+		const sniffer = createSseRateLimitSniffer({ provider: "anthropic" });
 		expect(sniffer.feed(encode(""))).toBe(false);
 		expect(sniffer.feed(new Uint8Array(0))).toBe(false);
 	});
 
 	it("does not grow memory unboundedly for long non-matching streams", () => {
-		const sniffer = createSseRateLimitSniffer();
-		// Feed 200KB of content without a rate-limit marker
-		const bigChunk = encode("a".repeat(1024));
+		const sniffer = createSseRateLimitSniffer({ provider: "anthropic" });
+		// Feed 200KB of content without a rate-limit marker.
+		// Each chunk ends with a newline (realistic SSE data lines are newline-terminated)
+		// so the subsequent `event: error` chunk is treated as starting on a new line.
+		const bigChunk = encode(`${"a".repeat(1023)}\n`);
 		for (let i = 0; i < 200; i++) {
 			expect(sniffer.feed(bigChunk)).toBe(false);
 		}
@@ -96,17 +130,48 @@ describe("SseRateLimitSniffer", () => {
 		expect(
 			sniffer.feed(
 				encode(
-					'data: {"type":"error","error":{"type":"rate_limit_error","message":"Late"}}\n\n',
+					'event: error\ndata: {"type":"error","error":{"type":"rate_limit_error","message":"Late"}}\n\n',
 				),
 			),
 		).toBe(true);
 	});
 
 	it("detects marker with extra whitespace in JSON", () => {
-		const sniffer = createSseRateLimitSniffer();
+		const sniffer = createSseRateLimitSniffer({ provider: "anthropic" });
 		const frame = encode(
 			'event: error\ndata: {"type" : "error", "error": {"type" :  "rate_limit_error"}}\n\n',
 		);
 		expect(sniffer.feed(frame)).toBe(true);
+	});
+
+	it("claude-oauth provider fires on overloaded_error (Anthropic-shape)", () => {
+		const sniffer = createSseRateLimitSniffer({ provider: "claude-oauth" });
+		const frame = encode(
+			'event: error\ndata: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}\n\n',
+		);
+		expect(sniffer.feed(frame)).toBe(true);
+		expect(sniffer.firedReason).toBe("overloaded_error");
+	});
+
+	it("non-Anthropic provider does NOT fire on overloaded_error", () => {
+		const sniffer = createSseRateLimitSniffer({
+			provider: "openai-compatible",
+		});
+		const frame = encode(
+			'event: error\ndata: {"type":"error","error":{"type":"overloaded_error"}}\n\n',
+		);
+		expect(sniffer.feed(frame)).toBe(false);
+		expect(sniffer.firedReason).toBeNull();
+	});
+
+	it("non-Anthropic provider still fires on rate_limit_error", () => {
+		const sniffer = createSseRateLimitSniffer({
+			provider: "openai-compatible",
+		});
+		const frame = encode(
+			'event: error\ndata: {"type":"error","error":{"type":"rate_limit_error","message":"Rate limited"}}\n\n',
+		);
+		expect(sniffer.feed(frame)).toBe(true);
+		expect(sniffer.firedReason).toBe("rate_limit_error");
 	});
 });

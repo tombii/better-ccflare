@@ -7,7 +7,11 @@ export type RateLimitReason =
 	| "upstream_429_no_reset_default_5h"
 	| "upstream_429_no_reset_probe_cooldown"
 	| "model_fallback_429"
-	| "all_models_exhausted_429";
+	| "all_models_exhausted_429"
+	/** Anthropic 529 overloaded_error with a Retry-After reset time. */
+	| "upstream_529_overloaded_with_reset"
+	/** Anthropic 529 overloaded_error with no Retry-After header; probe cooldown applied. */
+	| "upstream_529_overloaded_no_reset";
 
 // Usage data types for Anthropic accounts
 export interface UsageWindowData {
