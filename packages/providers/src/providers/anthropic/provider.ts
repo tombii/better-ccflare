@@ -396,12 +396,14 @@ export class AnthropicProvider extends BaseProvider {
 
 		const now429 = Date.now();
 		const rateLimitReset = response.headers.get("x-ratelimit-reset");
-		// Use the x-ratelimit-reset header as-is (preserving existing behaviour).
-		// For the no-header default (now + 60s), the helper makes the cap intent
-		// explicit, though 60s is always within the 24h cap.
-		const resetTime = rateLimitReset
-			? parseInt(rateLimitReset, 10) * 1000
-			: (clampResetTime(now429 + 60000, now429) ?? now429 + 60000);
+		// Apply clampResetTime to both the upstream-provided reset header and the
+		// no-header default, matching the 529 path. Header values that are invalid,
+		// in the past, or beyond the 24h cap fall back to the 60s default.
+		const DEFAULT_429_COOLDOWN_MS = 60_000;
+		const parsedReset = rateLimitReset
+			? clampResetTime(parseInt(rateLimitReset, 10) * 1000, now429)
+			: undefined;
+		const resetTime = parsedReset ?? now429 + DEFAULT_429_COOLDOWN_MS;
 
 		return {
 			isRateLimited: true,

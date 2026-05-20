@@ -196,7 +196,8 @@ describe("transformStreamingResponse — text responses", () => {
 		const events = parseSSEEvents(raw);
 		const msgDelta = events.find((e) => e.event === "message_delta");
 		expect(msgDelta).toBeDefined();
-		const parsed = JSON.parse(msgDelta?.data);
+		if (!msgDelta) throw new Error("expected message_delta event");
+		const parsed = JSON.parse(msgDelta.data);
 		expect(parsed.delta.stop_reason).toBe("end_turn");
 	});
 
@@ -232,7 +233,9 @@ describe("transformStreamingResponse — text responses", () => {
 		const raw = await readStream(transformed.body!);
 		const events = parseSSEEvents(raw);
 		const msgDelta = events.find((e) => e.event === "message_delta");
-		const parsed = JSON.parse(msgDelta?.data);
+		expect(msgDelta).toBeDefined();
+		if (!msgDelta) throw new Error("expected message_delta event");
+		const parsed = JSON.parse(msgDelta.data);
 		expect(parsed.usage.input_tokens).toBe(20);
 		expect(parsed.usage.output_tokens).toBe(5);
 	});
@@ -305,8 +308,10 @@ describe("transformStreamingResponse — tool calls", () => {
 				JSON.parse(e.data!).content_block?.type === "tool_use",
 		);
 		expect(blockStart).toBeDefined();
-		expect(JSON.parse(blockStart?.data).content_block.name).toBe("search");
-		expect(JSON.parse(blockStart?.data).content_block.id).toBe("call_abc");
+		if (!blockStart) throw new Error("expected block_start event");
+		const blockStartData = JSON.parse(blockStart.data);
+		expect(blockStartData.content_block.name).toBe("search");
+		expect(blockStartData.content_block.id).toBe("call_abc");
 	});
 
 	it("buffers all argument chunks and emits a single input_json_delta at [DONE]", async () => {
@@ -356,7 +361,10 @@ describe("transformStreamingResponse — tool calls", () => {
 		);
 		// Should be exactly one buffered emission
 		expect(deltas).toHaveLength(1);
-		expect(JSON.parse(deltas[0]?.data).delta.partial_json).toBe('{"q":"bun"}');
+		const delta0 = deltas[0];
+		expect(delta0).toBeDefined();
+		if (!delta0) throw new Error("expected input_json_delta event");
+		expect(JSON.parse(delta0.data).delta.partial_json).toBe('{"q":"bun"}');
 	});
 
 	it("emits message_delta with stop_reason tool_use for tool calls", async () => {
@@ -387,7 +395,9 @@ describe("transformStreamingResponse — tool calls", () => {
 		const raw = await readStream(transformed.body!);
 		const events = parseSSEEvents(raw);
 		const msgDelta = events.find((e) => e.event === "message_delta");
-		expect(JSON.parse(msgDelta?.data).delta.stop_reason).toBe("tool_use");
+		expect(msgDelta).toBeDefined();
+		if (!msgDelta) throw new Error("expected message_delta event");
+		expect(JSON.parse(msgDelta.data).delta.stop_reason).toBe("tool_use");
 	});
 
 	it("handles multiple parallel tool calls (indexes 0 and 1)", async () => {
@@ -569,7 +579,8 @@ describe("transformStreamingResponse — reasoning_content (thinking blocks)", (
 				JSON.parse(e.data!).content_block?.type === "thinking",
 		);
 		expect(thinkingStart).toBeDefined();
-		expect(JSON.parse(thinkingStart?.data).index).toBe(0);
+		if (!thinkingStart) throw new Error("expected thinking block_start event");
+		expect(JSON.parse(thinkingStart.data).index).toBe(0);
 	});
 
 	it("emits content_block_delta with type thinking_delta for reasoning_content chunks", async () => {
@@ -724,7 +735,8 @@ describe("transformStreamingResponse — reasoning_content (thinking blocks)", (
 				JSON.parse(e.data!).content_block?.type === "text",
 		);
 		expect(textBlockStart).toBeDefined();
-		expect(JSON.parse(textBlockStart?.data).index).toBe(1);
+		if (!textBlockStart) throw new Error("expected text block_start event");
+		expect(JSON.parse(textBlockStart.data).index).toBe(1);
 
 		// text_delta should also be at index 1
 		const textDeltas = events.filter(
@@ -733,7 +745,10 @@ describe("transformStreamingResponse — reasoning_content (thinking blocks)", (
 				JSON.parse(e.data!).delta?.type === "text_delta",
 		);
 		expect(textDeltas.length).toBeGreaterThanOrEqual(1);
-		expect(JSON.parse(textDeltas[0]?.data).index).toBe(1);
+		const textDelta0 = textDeltas[0];
+		expect(textDelta0).toBeDefined();
+		if (!textDelta0) throw new Error("expected text_delta event");
+		expect(JSON.parse(textDelta0.data).index).toBe(1);
 	});
 
 	it("emits content_block_stop at index 1 on stream end when thinking+text both present", async () => {
@@ -807,7 +822,10 @@ describe("transformStreamingResponse — reasoning_content (thinking blocks)", (
 		// Thinking block must be closed exactly once and message terminated
 		const stops = events.filter((e) => e.event === "content_block_stop");
 		expect(stops).toHaveLength(1);
-		expect(JSON.parse(stops[0]?.data).index).toBe(0);
+		const stop0 = stops[0];
+		expect(stop0).toBeDefined();
+		if (!stop0) throw new Error("expected content_block_stop event");
+		expect(JSON.parse(stop0.data).index).toBe(0);
 		const types = events.map((e) => e.event);
 		expect(types).toContain("message_stop");
 	});
@@ -885,7 +903,11 @@ describe("transformStreamingResponse — reasoning_content (thinking blocks)", (
 		// thinking must be closed before tool opens
 		expect(thinkingStop).toBeLessThan(toolStart);
 		// tool block gets index 1 (thinking consumed 0)
-		expect(JSON.parse(events[toolStart]?.data).index).toBe(1);
+		const toolStartEvent = events[toolStart];
+		expect(toolStartEvent).toBeDefined();
+		if (!toolStartEvent)
+			throw new Error("expected tool_use block_start event at index");
+		expect(JSON.parse(toolStartEvent.data).index).toBe(1);
 	});
 
 	it("closes text block before first tool_use block when text precedes tool_calls", async () => {
@@ -961,7 +983,11 @@ describe("transformStreamingResponse — reasoning_content (thinking blocks)", (
 		// text block (idx=0) must be closed before tool block opens
 		expect(textStopIdx).toBeLessThan(toolStartIdx);
 		// tool block gets index 1
-		expect(JSON.parse(events[toolStartIdx]?.data).index).toBe(1);
+		const toolStartEvent2 = events[toolStartIdx];
+		expect(toolStartEvent2).toBeDefined();
+		if (!toolStartEvent2)
+			throw new Error("expected tool_use block_start event at index");
+		expect(JSON.parse(toolStartEvent2.data).index).toBe(1);
 	});
 
 	it("closes text block before thinking block when content precedes reasoning_content", async () => {
@@ -1013,7 +1039,11 @@ describe("transformStreamingResponse — reasoning_content (thinking blocks)", (
 		// text block (index 0) closed before thinking block opens
 		expect(textStopIdx).toBeLessThan(thinkingStartIdx);
 		// thinking block gets index 1
-		expect(JSON.parse(events[thinkingStartIdx]?.data).index).toBe(1);
+		const thinkingStartEvent = events[thinkingStartIdx];
+		expect(thinkingStartEvent).toBeDefined();
+		if (!thinkingStartEvent)
+			throw new Error("expected thinking block_start event at index");
+		expect(JSON.parse(thinkingStartEvent.data).index).toBe(1);
 		// exactly 2 content_block_stop events: one for text (index 0), one for thinking (index 1)
 		const stops = events.filter((e) => e.event === "content_block_stop");
 		expect(stops).toHaveLength(2);
@@ -1056,8 +1086,16 @@ describe("transformStreamingResponse — reasoning_content (thinking blocks)", (
 		expect(textStartIdx).toBeGreaterThanOrEqual(0);
 		// thinking block (index 0) before text block (index 1)
 		expect(thinkingStartIdx).toBeLessThan(textStartIdx);
-		expect(JSON.parse(events[thinkingStartIdx]?.data).index).toBe(0);
-		expect(JSON.parse(events[textStartIdx]?.data).index).toBe(1);
+		const thinkingStartEv = events[thinkingStartIdx];
+		expect(thinkingStartEv).toBeDefined();
+		if (!thinkingStartEv)
+			throw new Error("expected thinking block_start event at index");
+		const textStartEv = events[textStartIdx];
+		expect(textStartEv).toBeDefined();
+		if (!textStartEv)
+			throw new Error("expected text block_start event at index");
+		expect(JSON.parse(thinkingStartEv.data).index).toBe(0);
+		expect(JSON.parse(textStartEv.data).index).toBe(1);
 
 		// thinking block closed before text block opens
 		const thinkingStopIdx = events.findIndex(
@@ -1089,7 +1127,9 @@ describe("transformStreamingResponse — model extraction", () => {
 		const raw = await readStream(transformed.body!);
 		const events = parseSSEEvents(raw);
 		const msgStart = events.find((e) => e.event === "message_start");
-		const parsed = JSON.parse(msgStart?.data);
+		expect(msgStart).toBeDefined();
+		if (!msgStart) throw new Error("expected message_start event");
+		const parsed = JSON.parse(msgStart.data);
 		expect(parsed.message.model).toBe("claude-sonnet-4-5");
 	});
 });
@@ -1134,7 +1174,8 @@ describe("transformStreamingResponse — block index assignment", () => {
 				JSON.parse(e.data!).content_block?.type === "text",
 		);
 		expect(textStart).toBeDefined();
-		expect(JSON.parse(textStart?.data).index).toBe(0);
+		if (!textStart) throw new Error("expected text block_start event");
+		expect(JSON.parse(textStart.data).index).toBe(0);
 
 		const textDeltas = events.filter(
 			(e) =>
@@ -1179,7 +1220,8 @@ describe("transformStreamingResponse — block index assignment", () => {
 				JSON.parse(e.data!).content_block?.type === "tool_use",
 		);
 		expect(toolStart).toBeDefined();
-		expect(JSON.parse(toolStart?.data).index).toBe(0);
+		if (!toolStart) throw new Error("expected tool_use block_start event");
+		expect(JSON.parse(toolStart.data).index).toBe(0);
 	});
 
 	it("text then tool: text gets index 0, tool gets index 1 — no collision", async () => {
@@ -1232,9 +1274,11 @@ describe("transformStreamingResponse — block index assignment", () => {
 
 		expect(textStart).toBeDefined();
 		expect(toolStart).toBeDefined();
+		if (!textStart) throw new Error("expected text block_start event");
+		if (!toolStart) throw new Error("expected tool_use block_start event");
 
-		const textIdx = JSON.parse(textStart?.data).index;
-		const toolIdx = JSON.parse(toolStart?.data).index;
+		const textIdx = JSON.parse(textStart.data).index;
+		const toolIdx = JSON.parse(toolStart.data).index;
 
 		// Indices must be distinct — no collision
 		expect(textIdx).not.toBe(toolIdx);
@@ -1249,7 +1293,8 @@ describe("transformStreamingResponse — block index assignment", () => {
 				JSON.parse(e.data!).delta?.type === "input_json_delta",
 		);
 		expect(jsonDelta).toBeDefined();
-		expect(JSON.parse(jsonDelta?.data).index).toBe(toolIdx);
+		if (!jsonDelta) throw new Error("expected input_json_delta event");
+		expect(JSON.parse(jsonDelta.data).index).toBe(toolIdx);
 
 		// The content_block_stop for the tool must match too
 		const stops = events.filter((e) => e.event === "content_block_stop");

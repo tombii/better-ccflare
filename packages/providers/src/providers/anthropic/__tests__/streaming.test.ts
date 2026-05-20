@@ -133,19 +133,88 @@ describe("AnthropicProvider — streaming.test.ts", () => {
 			expect(result.isRateLimited).toBe(true);
 		});
 
-		it("429 with x-ratelimit-reset header → uses that reset time converted to ms", () => {
-			const unixSeconds = 1_700_000_000;
+		it("429 with x-ratelimit-reset header → uses that reset time converted to ms (clamped)", () => {
+			// Use a future unix timestamp so clampResetTime accepts it.
+			const futureUnixSeconds = Math.floor((Date.now() + 5 * 60 * 1000) / 1000);
 			const response = new Response(null, {
 				status: 429,
 				headers: {
-					"x-ratelimit-reset": String(unixSeconds),
+					"x-ratelimit-reset": String(futureUnixSeconds),
 				},
 			});
 
 			const result = provider.parseRateLimit(response);
 
 			expect(result.isRateLimited).toBe(true);
-			expect(result.resetTime).toBe(unixSeconds * 1000);
+			// clampResetTime accepts in-range future values; reset time should match the header
+			expect(result.resetTime).toBe(futureUnixSeconds * 1000);
+		});
+
+		it("429 + x-ratelimit-reset: far-future (year 2286) is capped to now + 24h", () => {
+			// Unix timestamp 9_999_999_999 is year 2286 — hostile/accidentally large value.
+			// clampResetTime must cap it at now + MAX_RESET_MS (24h) to prevent the account
+			// being locked effectively forever.
+			const before = Date.now();
+			const response = new Response(null, {
+				status: 429,
+				headers: {
+					"x-ratelimit-reset": "9999999999",
+				},
+			});
+
+			const result = provider.parseRateLimit(response);
+
+			expect(result.isRateLimited).toBe(true);
+			const MAX = 24 * 60 * 60 * 1000;
+			expect(result.resetTime).toBeDefined();
+			// Must be capped at 24h from now (not the raw header value)
+			expect(result.resetTime ?? 0).toBeLessThanOrEqual(
+				Date.now() + MAX + 1000,
+			);
+			expect(result.resetTime ?? 0).toBeGreaterThanOrEqual(before + MAX - 1000);
+		});
+
+		it("429 + x-ratelimit-reset: past unix epoch falls back to now + 60s default", () => {
+			// A past reset timestamp should be rejected by clampResetTime, triggering the
+			// 60s default cooldown instead of keeping the account locked.
+			const before = Date.now();
+			const pastUnixSeconds = Math.floor((Date.now() - 60 * 1000) / 1000);
+			const response = new Response(null, {
+				status: 429,
+				headers: {
+					"x-ratelimit-reset": String(pastUnixSeconds),
+				},
+			});
+
+			const result = provider.parseRateLimit(response);
+
+			expect(result.isRateLimited).toBe(true);
+			// Past value → clampResetTime returns undefined → falls back to now + 60s
+			expect(result.resetTime).toBeDefined();
+			expect(result.resetTime ?? 0).toBeGreaterThanOrEqual(
+				before + 60_000 - 500,
+			);
+			expect(result.resetTime ?? 0).toBeLessThanOrEqual(
+				Date.now() + 60_000 + 500,
+			);
+		});
+
+		it("429 + no x-ratelimit-reset header still gets now + 60s default", () => {
+			// Regression: the dead `?? now429 + 60000` fallback has been replaced with a
+			// direct `now + DEFAULT_429_COOLDOWN_MS` assignment. Verify the 60s default still fires.
+			const before = Date.now();
+			const response = new Response(null, { status: 429 });
+
+			const result = provider.parseRateLimit(response);
+
+			expect(result.isRateLimited).toBe(true);
+			expect(result.resetTime).toBeDefined();
+			expect(result.resetTime ?? 0).toBeGreaterThanOrEqual(
+				before + 60_000 - 500,
+			);
+			expect(result.resetTime ?? 0).toBeLessThanOrEqual(
+				Date.now() + 60_000 + 500,
+			);
 		});
 
 		// ─────────────────────────────────────────────
