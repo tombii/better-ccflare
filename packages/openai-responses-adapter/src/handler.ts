@@ -105,11 +105,9 @@ export async function handleResponsesRequest(
 	if (!syntheticHeaders.has("anthropic-version")) {
 		syntheticHeaders.set("anthropic-version", "2023-06-01");
 	}
-	// Exclude accounts that cannot handle Anthropic-format /v1/messages requests:
-	// - anthropic-oauth: Anthropic bans OAuth accounts used outside Claude CLI
-	// - codex: codex provider speaks native Responses API, not Anthropic format;
-	//   sending it Anthropic messages causes a 400 from chatgpt.com
-	syntheticHeaders.set("x-better-ccflare-exclude-providers", "anthropic-oauth,codex");
+	// claude-oauth accounts use Claude's OAuth tokens — Anthropic bans them
+	// when used outside Claude CLI. Always exclude from Codex CLI traffic.
+	syntheticHeaders.set("x-better-ccflare-exclude-providers", "anthropic-oauth");
 	const syntheticReq = new Request(messagesUrl.toString(), {
 		method: "POST",
 		headers: syntheticHeaders,
