@@ -44,7 +44,6 @@ export async function handleResponsesRequest(
 	try {
 		body = JSON.parse(new TextDecoder().decode(rawBody)) as ResponsesRequest;
 	} catch {
-		log.warn(`Invalid JSON body from POST ${url.pathname} — method=${req.method} upgrade=${req.headers.get("upgrade")} content-encoding=${contentEncoding} content-type=${req.headers.get("content-type")} body=${JSON.stringify(new TextDecoder().decode(rawBody).slice(0, 200))}`);
 		return new Response(
 			JSON.stringify({
 				type: "error",

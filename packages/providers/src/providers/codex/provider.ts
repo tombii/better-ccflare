@@ -627,7 +627,6 @@ export class CodexProvider extends BaseProvider {
 		account?: Account,
 		requestId?: string,
 	): CodexRequest {
-		log.info(`[codex:debug] convertToCodexFormat input: model=${body.model} messages=${JSON.stringify(body.messages).slice(0, 300)}`);
 		const model = this.mapModel(body.model, account);
 		if (process.env.DEBUG?.includes("model") || process.env.DEBUG === "true") {
 			log.info(
@@ -683,7 +682,6 @@ export class CodexProvider extends BaseProvider {
 			codexRequest.tools = tools;
 		}
 
-		log.info(`[codex:debug] convertToCodexFormat output: ${JSON.stringify(codexRequest).slice(0, 400)}`);
 		return codexRequest;
 	}
 
