@@ -110,8 +110,10 @@ Proxy requests to Claude API. All requests to paths starting with `/v1/` are for
 - `POST /v1/complete` - Text completion (legacy)
 - Any other Claude API v1 endpoint
 
-**Codex Compatibility:**
-OpenAI Responses API clients (for example Codex) can target better-ccflare directly through `/v1/responses` and `/v1/responses/compact`. better-ccflare translates these payloads to Anthropic message format internally.
+**Codex CLI as a Client:**
+Codex CLI (and other OpenAI Responses API clients) can target better-ccflare directly. Requests to `/v1/responses` and `/v1/responses/compact` are intercepted before the normal proxy and translated to Anthropic `/v1/messages` internally, then routed through the account pool like any other request. See the [README](../README.md#codex-cli-as-a-client) for configuration details.
+
+Note: this is distinct from the `codex` *provider*, which routes requests outbound to OpenAI's Codex endpoint.
 
 **Known Limitations (`/v1/responses`):**
 - `previous_response_id` is accepted but ignored — better-ccflare is stateless and does not store prior responses. Codex uses this field only over WebSocket (which better-ccflare does not implement); for regular HTTP requests Codex always sends the full conversation history in `input`, so this field has no effect.

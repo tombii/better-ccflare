@@ -398,16 +398,13 @@ claude
 - **Using only API keys in better-ccflare?** Use Option 2 (logout + API key)
 - **Getting auth conflict warnings?** You have both methods active - choose one and follow its steps above
 
-### Codex / OpenAI Responses Compatibility
+### Codex CLI as a Client
 
-better-ccflare now supports OpenAI Responses API clients (for example Codex). Incoming requests to:
+better-ccflare supports [Codex CLI](https://github.com/openai/codex) as a client. Codex speaks the OpenAI Responses API; better-ccflare intercepts requests to `/v1/responses` and `/v1/responses/compact` and translates them to Anthropic `POST /v1/messages` internally, routing through your configured account pool.
 
-- `POST /v1/responses`
-- `POST /v1/responses/compact`
+This is separate from the `codex` *provider* (which routes requests to OpenAI's Codex endpoint). You can use Codex CLI to talk to Anthropic accounts, Codex accounts, or any other provider in your pool.
 
-are intercepted and translated to Anthropic `POST /v1/messages` internally.
-
-Use this in `~/.codex/config.toml`:
+Configure Codex CLI to point at better-ccflare in `~/.codex/config.toml`:
 
 ```toml
 [api]
@@ -422,10 +419,10 @@ export OPENAI_BASE_URL=http://localhost:8080
 export OPENAI_API_KEY=dummy-key
 ```
 
-Known limitations (current):
+Known limitations:
 
-- OpenAI built-in tools are not fully mapped yet
-- Coverage is focused on Responses API compatibility paths (`/v1/responses`, `/v1/responses/compact`)
+- `previous_response_id` is accepted but ignored — Codex uses this only over WebSocket; for regular HTTP requests it always sends the full conversation history in `input`
+- Built-in tool types (`web_search_preview`, `code_interpreter`, `file_search`) are silently skipped; only `type: "function"` tools are forwarded to Anthropic
 
 ### SSL/HTTPS Configuration
 
