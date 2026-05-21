@@ -15,12 +15,36 @@ export async function handleResponsesRequest(
 	apiKeyId?: string | null,
 	apiKeyName?: string | null,
 ): Promise<Response> {
-	// 1. Parse body
-	const rawBody = await req.arrayBuffer();
+	// 1. Parse body — Codex CLI compresses request bodies (zstd, gzip, deflate).
+	// Bun decompresses response bodies automatically but not request bodies,
+	// so we decompress manually when content-encoding is present.
+	let rawBody = await req.arrayBuffer();
+	const contentEncoding = req.headers.get("content-encoding")?.toLowerCase();
+	if (contentEncoding) {
+		try {
+			const bytes = new Uint8Array(rawBody);
+			let decompressed: Uint8Array;
+			if (contentEncoding === "zstd") {
+				decompressed = Bun.zstdDecompressSync(bytes);
+			} else if (contentEncoding === "gzip") {
+				decompressed = Bun.gunzipSync(bytes);
+			} else if (contentEncoding === "deflate") {
+				decompressed = Bun.inflateSync(bytes);
+			} else {
+				log.warn(`Unsupported content-encoding: ${contentEncoding}`);
+				decompressed = bytes;
+			}
+			rawBody = decompressed.buffer as ArrayBuffer;
+		} catch (e) {
+			log.warn(`Failed to decompress ${contentEncoding} request body: ${e}`);
+		}
+	}
+
 	let body: ResponsesRequest;
 	try {
 		body = JSON.parse(new TextDecoder().decode(rawBody)) as ResponsesRequest;
 	} catch {
+		log.warn(`Invalid JSON body from POST ${url.pathname} — method=${req.method} upgrade=${req.headers.get("upgrade")} content-encoding=${contentEncoding} content-type=${req.headers.get("content-type")} body=${JSON.stringify(new TextDecoder().decode(rawBody).slice(0, 200))}`);
 		return new Response(
 			JSON.stringify({
 				type: "error",
