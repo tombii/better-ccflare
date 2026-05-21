@@ -450,6 +450,7 @@ export async function handleProxy(
 			apiKeyId,
 			apiKeyName,
 			requestBodyContext,
+			!filteredComboInfo?.comboName && i === accounts.length - 1,
 		);
 
 		if (response) {
@@ -502,6 +503,7 @@ export async function handleProxy(
 					apiKeyId,
 					apiKeyName,
 					requestBodyContext,
+					i === fallbackAccounts.length - 1,
 				);
 
 				if (response) {

@@ -650,6 +650,51 @@ describe("proxyWithAccount — 529 failover", () => {
 		expect(result).toBeNull();
 	});
 
+	it("returns upstream 529 on the final account attempt instead of pool exhaustion", async () => {
+		globalThis.fetch = mock(
+			async () =>
+				new Response(
+					'{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}',
+					{
+						status: 529,
+						headers: { "content-type": "application/json" },
+					},
+				),
+		);
+
+		const bodyBuffer = makeRequestBody();
+		const req = makeRequest(bodyBuffer);
+		const ctx = makeProxyContext();
+		const result = await proxyWithAccount(
+			req,
+			new URL("https://proxy.local/v1/messages"),
+			makeAccount({
+				provider: "anthropic",
+				api_key: "test-key",
+				access_token: null,
+			}),
+			makeRequestMeta(),
+			bodyBuffer,
+			() => undefined,
+			0,
+			ctx,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			true,
+		);
+
+		expect(result).not.toBeNull();
+		if (!result) throw new Error("Expected final 529 response");
+		expect(result.status).toBe(529);
+		const body = (await result.json()) as {
+			error: { type: string; message: string };
+		};
+		expect(body.error.type).toBe("overloaded_error");
+		expect(body.error.message).toBe("Overloaded");
+	});
+
 	it("isModelUnavailableError returns false for 529 overloaded responses", async () => {
 		const response = new Response(
 			'{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}',
