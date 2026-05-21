@@ -327,7 +327,9 @@ async function isCacheControlRejectionError(
  * Covers Anthropic (not_found_error), OpenAI-compat (model_not_found),
  * generic messages, and Bedrock (ResourceNotFoundException).
  */
-async function isModelUnavailableError(response: Response): Promise<boolean> {
+export async function isModelUnavailableError(
+	response: Response,
+): Promise<boolean> {
 	if (
 		response.status !== 404 &&
 		response.status !== 400 &&
