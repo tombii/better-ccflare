@@ -75,6 +75,9 @@ export async function handleResponsesRequest(
 	const syntheticHeaders = new Headers(req.headers);
 	syntheticHeaders.set("content-type", "application/json");
 	syntheticHeaders.delete("content-length");
+	// claude-oauth accounts use Claude's OAuth tokens — Anthropic bans them
+	// when used outside Claude CLI. Always exclude from Codex CLI traffic.
+	syntheticHeaders.set("x-better-ccflare-exclude-providers", "claude-oauth");
 	const syntheticReq = new Request(messagesUrl.toString(), {
 		method: "POST",
 		headers: syntheticHeaders,

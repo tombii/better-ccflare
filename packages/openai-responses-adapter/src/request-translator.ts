@@ -12,6 +12,22 @@ import type {
 
 const logger = new Logger("openai-responses-adapter");
 
+// Map OpenAI model names to Claude family aliases so per-account model_mappings
+// (opus/sonnet/haiku) resolve correctly when Codex CLI requests reach the proxy.
+// Rules based on OpenAI naming conventions:
+//   *-pro   → opus  (heavy reasoning tier, $30+/M input)
+//   *-mini  → haiku (fast/cheap tier)
+//   *-nano  → haiku (fast/cheap tier)
+//   gpt-5*  → sonnet (default capable tier, everything else)
+// Non-gpt-5 names (e.g. gpt-4) are passed through unchanged.
+function mapGptModelToClaudeFamily(model: string): string {
+	const lower = model.toLowerCase();
+	if (!lower.startsWith("gpt-")) return model;
+	if (lower.endsWith("-pro")) return "claude-opus-4-5";
+	if (lower.endsWith("-mini") || lower.endsWith("-nano")) return "claude-haiku-4-5";
+	return "claude-sonnet-4-6";
+}
+
 function parseArguments(args: string): unknown {
 	try {
 		return JSON.parse(args);
@@ -160,7 +176,7 @@ export function translateRequestToAnthropic(
 	const mergedMessages = mergeConsecutiveSameRole(messages);
 
 	const result: AnthropicRequest = {
-		model: req.model,
+		model: mapGptModelToClaudeFamily(req.model),
 		messages: mergedMessages,
 		max_tokens: req.max_output_tokens ?? 4096,
 	};

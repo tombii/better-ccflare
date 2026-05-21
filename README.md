@@ -402,27 +402,28 @@ claude
 
 better-ccflare supports [Codex CLI](https://github.com/openai/codex) as a client. Codex speaks the OpenAI Responses API; better-ccflare intercepts requests to `/v1/responses` and `/v1/responses/compact` and translates them to Anthropic `POST /v1/messages` internally, routing through your configured account pool.
 
-This is separate from the `codex` *provider* (which routes requests to OpenAI's Codex endpoint). You can use Codex CLI to talk to Anthropic accounts, Codex accounts, or any other provider in your pool.
-
 Configure Codex CLI to point at better-ccflare in `~/.codex/config.toml`:
 
 ```toml
-[api]
-base_url = "http://localhost:8080"
-api_key = "dummy-key" # or your real better-ccflare API key if API auth is enabled
+openai_base_url = "http://127.0.0.1:8080/v1"
 ```
 
-Equivalent environment variables:
+Note: use `127.0.0.1` instead of `localhost` — Codex CLI has a known issue where `localhost` resolves to IPv6 first and causes connection failures. The `/v1` suffix is required; Codex appends `/responses` to the base URL.
+
+Or via environment variables:
 
 ```bash
-export OPENAI_BASE_URL=http://localhost:8080
+export OPENAI_BASE_URL=http://127.0.0.1:8080/v1
 export OPENAI_API_KEY=dummy-key
 ```
+
+Codex CLI requires an API key to start — use `dummy-key` if better-ccflare API key authentication is not enabled, or your real better-ccflare API key if it is.
 
 Known limitations:
 
 - `previous_response_id` is accepted but ignored — Codex uses this only over WebSocket; for regular HTTP requests it always sends the full conversation history in `input`
 - Built-in tool types (`web_search_preview`, `code_interpreter`, `file_search`) are silently skipped; only `type: "function"` tools are forwarded to Anthropic
+- `claude-oauth` accounts (Claude Pro/Team OAuth) are automatically excluded from Codex CLI traffic — Anthropic bans these accounts when used outside Claude CLI. Anthropic API key accounts (`console` provider) are fine and will be used normally.
 
 ### SSL/HTTPS Configuration
 

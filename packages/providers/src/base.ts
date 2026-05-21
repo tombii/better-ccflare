@@ -56,6 +56,12 @@ export abstract class BaseProvider implements Provider {
 		// Note: API key handling is provider-specific and should be
 		// implemented in the provider subclass
 		newHeaders.delete("host");
+		// Strip internal proxy headers — never forward to upstream providers
+		for (const key of [...newHeaders.keys()]) {
+			if (key.startsWith("x-better-ccflare-")) {
+				newHeaders.delete(key);
+			}
+		}
 		return newHeaders;
 	}
 

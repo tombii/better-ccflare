@@ -127,6 +127,25 @@ export async function selectAccountsForRequest(
 		}
 	}
 
+	// Filter out excluded providers (e.g. claude-oauth excluded by the responses adapter)
+	const excludeProviders = meta.headers
+		?.get("x-better-ccflare-exclude-providers")
+		?.split(",")
+		.map((p) => p.trim())
+		.filter(Boolean) ?? [];
+
+	const applyExclusions = (accounts: Account[]): Account[] => {
+		if (excludeProviders.length === 0) return accounts;
+		const filtered = accounts.filter((a) => !excludeProviders.includes(a.provider));
+		const skipped = accounts.length - filtered.length;
+		if (skipped > 0) {
+			log.warn(
+				`Skipping ${skipped} account(s) with provider(s) [${excludeProviders.join(", ")}] — excluded for this request type (Codex CLI traffic must not use claude-oauth accounts)`,
+			);
+		}
+		return filtered;
+	};
+
 	// Try combo-aware routing if a model is provided
 	if (model) {
 		const family = getModelFamily(model);
@@ -186,8 +205,9 @@ export async function selectAccountsForRequest(
 					setComboSlotInfo(meta, slotInfo);
 					meta.comboName = combo.name;
 
-					if (availableAccounts.length > 0) {
-						return availableAccounts;
+					const filteredComboAccounts = applyExclusions(availableAccounts);
+					if (filteredComboAccounts.length > 0) {
+						return filteredComboAccounts;
 					}
 
 					// All slots unavailable — fall back to normal routing
@@ -199,5 +219,5 @@ export async function selectAccountsForRequest(
 		}
 	}
 
-	return getOrderedAccounts(meta, ctx);
+	return applyExclusions(await getOrderedAccounts(meta, ctx));
 }
