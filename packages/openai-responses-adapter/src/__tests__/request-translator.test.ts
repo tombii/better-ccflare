@@ -511,7 +511,14 @@ describe("translateRequestToAnthropic", () => {
 	});
 
 	test("gpt model mapping — no suffix maps to sonnet family alias", () => {
-		for (const model of ["gpt-5.5", "gpt-5.4", "gpt-5.3-codex", "gpt-5", "gpt-4", "gpt-4o"]) {
+		for (const model of [
+			"gpt-5.5",
+			"gpt-5.4",
+			"gpt-5.3-codex",
+			"gpt-5",
+			"gpt-4",
+			"gpt-4o",
+		]) {
 			expect(translateRequestToAnthropic({ model, input: [] }).model).toBe(
 				"claude-sonnet-4-6",
 			);
@@ -519,7 +526,9 @@ describe("translateRequestToAnthropic", () => {
 	});
 
 	test("non-gpt model names pass through unchanged", () => {
-		expect(translateRequestToAnthropic({ model: "o3", input: [] }).model).toBe("o3");
+		expect(translateRequestToAnthropic({ model: "o3", input: [] }).model).toBe(
+			"o3",
+		);
 	});
 
 	test("stream passthrough", () => {

@@ -423,7 +423,7 @@ Known limitations:
 
 - `previous_response_id` is accepted but ignored — Codex uses this only over WebSocket; for regular HTTP requests it always sends the full conversation history in `input`
 - Built-in tool types (`web_search_preview`, `code_interpreter`, `file_search`) are silently skipped; only `type: "function"` tools are forwarded to Anthropic
-- `claude-oauth` accounts (Claude Pro/Team OAuth) are automatically excluded from Codex CLI traffic — Anthropic bans these accounts when used outside Claude CLI. Anthropic API key accounts (`console` provider) are fine and will be used normally.
+- Claude OAuth accounts (Claude Pro/Team, `provider=anthropic` with OAuth tokens) are automatically excluded from Codex CLI traffic — Anthropic bans these when used outside Claude CLI. Anthropic API key accounts are fine and will be used normally.
 
 ### SSL/HTTPS Configuration
 

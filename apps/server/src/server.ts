@@ -1131,6 +1131,30 @@ export default async function startServer(options?: {
 					}
 
 					try {
+						// Codex CLI first tries WebSocket transport for /v1/responses.
+						// We only support HTTP — reject the upgrade cleanly so Codex
+						// falls back to HTTPS without hitting the proxy with an empty body.
+						if (
+							req.headers.get("upgrade")?.toLowerCase() === "websocket" &&
+							(url.pathname === "/v1/responses" ||
+								url.pathname === "/v1/responses/compact")
+						) {
+							return new Response(
+								JSON.stringify({
+									type: "error",
+									error: {
+										type: "not_supported_error",
+										message:
+											"WebSocket transport is not supported. Codex will retry over HTTPS automatically.",
+									},
+								}),
+								{
+									status: 503,
+									headers: { "Content-Type": "application/json" },
+								},
+							);
+						}
+
 						if (
 							req.method === "POST" &&
 							(url.pathname === "/v1/responses" ||

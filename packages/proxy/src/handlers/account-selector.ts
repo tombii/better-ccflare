@@ -128,19 +128,32 @@ export async function selectAccountsForRequest(
 	}
 
 	// Filter out excluded providers (e.g. claude-oauth excluded by the responses adapter)
-	const excludeProviders = meta.headers
-		?.get("x-better-ccflare-exclude-providers")
-		?.split(",")
-		.map((p) => p.trim())
-		.filter(Boolean) ?? [];
+	const excludeProviders =
+		meta.headers
+			?.get("x-better-ccflare-exclude-providers")
+			?.split(",")
+			.map((p) => p.trim())
+			.filter(Boolean) ?? [];
 
 	const applyExclusions = (accounts: Account[]): Account[] => {
 		if (excludeProviders.length === 0) return accounts;
-		const filtered = accounts.filter((a) => !excludeProviders.includes(a.provider));
+		const filtered = accounts.filter((a) => {
+			for (const ex of excludeProviders) {
+				// "anthropic-oauth" targets only Anthropic OAuth accounts (refresh_token present),
+				// leaving Anthropic API key accounts (console mode) eligible.
+				if (ex === "anthropic-oauth") {
+					if (a.provider === "anthropic" && a.refresh_token != null)
+						return false;
+				} else {
+					if (a.provider === ex) return false;
+				}
+			}
+			return true;
+		});
 		const skipped = accounts.length - filtered.length;
 		if (skipped > 0) {
 			log.warn(
-				`Skipping ${skipped} account(s) with provider(s) [${excludeProviders.join(", ")}] — excluded for this request type (Codex CLI traffic must not use claude-oauth accounts)`,
+				`Skipping ${skipped} account(s) excluded for this request type (Codex CLI traffic must not use Anthropic OAuth accounts)`,
 			);
 		}
 		return filtered;

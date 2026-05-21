@@ -75,9 +75,15 @@ export async function handleResponsesRequest(
 	const syntheticHeaders = new Headers(req.headers);
 	syntheticHeaders.set("content-type", "application/json");
 	syntheticHeaders.delete("content-length");
+	// Body is now decompressed plain JSON — remove the original encoding hint.
+	syntheticHeaders.delete("content-encoding");
+	// Required by Anthropic API — Codex CLI doesn't send this header.
+	if (!syntheticHeaders.has("anthropic-version")) {
+		syntheticHeaders.set("anthropic-version", "2023-06-01");
+	}
 	// claude-oauth accounts use Claude's OAuth tokens — Anthropic bans them
 	// when used outside Claude CLI. Always exclude from Codex CLI traffic.
-	syntheticHeaders.set("x-better-ccflare-exclude-providers", "claude-oauth");
+	syntheticHeaders.set("x-better-ccflare-exclude-providers", "anthropic-oauth");
 	const syntheticReq = new Request(messagesUrl.toString(), {
 		method: "POST",
 		headers: syntheticHeaders,
