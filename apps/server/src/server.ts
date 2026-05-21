@@ -29,6 +29,8 @@ import {
 import { Logger } from "@better-ccflare/logger";
 import { handleResponsesRequest } from "@better-ccflare/openai-responses-adapter";
 import {
+	CODEX_DEFAULT_ENDPOINT,
+	fetchCodexUsageOnDemand,
 	getProvider,
 	getRepresentativeUtilizationForProvider,
 	usageCache,
@@ -46,6 +48,7 @@ import {
 	getValidAccessToken,
 	handleProxy,
 	type ProxyContext,
+	registerCodexUsageRefresher,
 	registerPollingRestarter,
 	registerRefreshClearer,
 	sendWorkerConfigUpdate,
@@ -54,6 +57,7 @@ import {
 	startUsageWorker,
 	stopGlobalTokenHealthChecks,
 	terminateUsageWorker,
+	unregisterCodexUsageRefresher,
 } from "@better-ccflare/proxy";
 import { validatePathOrThrow } from "@better-ccflare/security";
 import {
@@ -201,6 +205,7 @@ function serveDashboardFile(
 
 // Module-level server instance
 let serverInstance: ReturnType<typeof serve> | null = null;
+let registeredServerId: string | null = null;
 let stopRetentionJob: (() => void) | null = null;
 let stopOAuthCleanupJob: (() => void) | null = null;
 let stopRateLimitCleanupJob: (() => void) | null = null;
@@ -851,6 +856,8 @@ export default async function startServer(options?: {
 
 	// Register this server's refresh clearing capability
 	const serverId = `server-${runtime.port}`;
+	// Track at module scope so handleGracefulShutdown can unregister cleanly.
+	registeredServerId = serverId;
 	registerRefreshClearer(serverId, (accountId: string) => {
 		// Clear refresh cache for this account in this server's context
 		proxyContext.refreshInFlight.delete(accountId);
@@ -889,6 +896,115 @@ export default async function startServer(options?: {
 			config.getUsagePollIntervalMs(),
 		);
 		return true;
+	});
+
+	// Register this server's codex on-demand usage refresher. Codex does not
+	// expose a free usage endpoint (unlike Anthropic's /api/oauth/usage), so
+	// each call sends a tiny upstream request and parses the x-codex-* headers
+	// from the response. Cost is bounded by `max_output_tokens: 1` plus the
+	// abort-after-headers cancel inside fetchCodexUsageOnDemand.
+	registerCodexUsageRefresher(serverId, async (accountId: string) => {
+		const account = await dbOps.getAccount(accountId);
+		if (!account) {
+			return {
+				success: false,
+				message: `Account ${accountId} not found`,
+			};
+		}
+		if (account.provider !== "codex") {
+			return {
+				success: false,
+				message: `Account '${account.name}' is not a Codex account`,
+			};
+		}
+		if (!account.access_token && !account.refresh_token) {
+			return {
+				success: false,
+				message: `Account '${account.name}' has no tokens — please re-authenticate`,
+			};
+		}
+
+		let accessToken: string;
+		try {
+			accessToken = await getValidAccessToken(account, proxyContext);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			log.warn(
+				`Codex usage refresh: failed to get access token for ${account.name}: ${message}`,
+			);
+			return {
+				success: false,
+				message: `Could not refresh access token for '${account.name}': ${message}`,
+			};
+		}
+
+		const endpoint = account.custom_endpoint ?? CODEX_DEFAULT_ENDPOINT;
+
+		let fetchResult: Awaited<ReturnType<typeof fetchCodexUsageOnDemand>>;
+		try {
+			fetchResult = await fetchCodexUsageOnDemand(accessToken, endpoint);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			log.error(
+				`Codex usage refresh: upstream fetch failed for ${account.name}:`,
+				message,
+			);
+			return {
+				success: false,
+				message: `Codex request failed for '${account.name}': ${message}`,
+			};
+		}
+
+		// Persist rate-limit reset even on non-2xx so the dashboard sees the
+		// most accurate reset time when the account is currently limited.
+		const codexProvider = getProvider("codex");
+		if (codexProvider) {
+			const rl = codexProvider.parseRateLimit(fetchResult.response);
+			if (rl.resetTime != null) {
+				try {
+					await db.run(
+						"UPDATE accounts SET rate_limit_reset = ? WHERE id = ?",
+						[rl.resetTime, account.id],
+					);
+				} catch (error) {
+					log.warn(
+						`Codex usage refresh: failed to update rate_limit_reset for ${account.name}:`,
+						error,
+					);
+				}
+			}
+		}
+
+		if (!fetchResult.data) {
+			return {
+				success: false,
+				message: `Codex returned no usage headers (status ${fetchResult.response.status}) for '${account.name}'`,
+			};
+		}
+
+		usageCache.set(accountId, fetchResult.data);
+
+		const fiveHour = fetchResult.data.five_hour?.utilization ?? 0;
+		const sevenDay = fetchResult.data.seven_day?.utilization ?? 0;
+		const isRateLimited = fetchResult.response.status === 429;
+		log.info(
+			`Codex usage refreshed for '${account.name}': 5h=${fiveHour}%, 7d=${sevenDay}%${
+				isRateLimited ? " (rate-limited)" : ""
+			}`,
+		);
+
+		// 429 still produces a successful header refresh (the usage payload is
+		// what we wanted), but the dashboard message must not celebrate it —
+		// otherwise the operator sees "refreshed successfully" while the
+		// account is fully exhausted. See tombii's PR #219 review note.
+		const message = isRateLimited
+			? `Usage refreshed for '${account.name}' — account is rate limited (5h: ${fiveHour}%, 7d: ${sevenDay}%).`
+			: `Usage refreshed for '${account.name}' (5h: ${fiveHour}%, 7d: ${sevenDay}%).`;
+
+		return {
+			success: true,
+			message,
+		};
 	});
 
 	// Initialize auto-refresh scheduler (now that proxyContext is available)
@@ -1389,7 +1505,6 @@ Available endpoints:
 	};
 }
 
-// Max wall-clock time between SIGTERM and process exit. Long enough to let
 // most in-flight streaming responses complete; short enough that systemd's
 // default TimeoutStopSec (90s) doesn't have to escalate to SIGKILL.
 const SHUTDOWN_WATCHDOG_MS = 30_000;
@@ -1423,9 +1538,6 @@ async function handleGracefulShutdown(signal: string) {
 	watchdog.unref();
 
 	try {
-		// Stop scheduler triggers first so they don't add load while draining.
-		// These calls only stop the recurring trigger; any in-flight task they
-		// already kicked off continues until it finishes naturally.
 		if (stopRetentionJob) {
 			stopRetentionJob();
 			stopRetentionJob = null;
@@ -1468,6 +1580,14 @@ async function handleGracefulShutdown(signal: string) {
 		// Stop token health monitoring
 		stopGlobalTokenHealthChecks();
 
+		// Unregister this server's Codex on-demand usage refresher so the
+		// module-level registry doesn't keep a stale callback after restart.
+		// Mirrors the cleanup pattern used by the schedulers above.
+		if (registeredServerId) {
+			unregisterCodexUsageRefresher(registeredServerId);
+			registeredServerId = null;
+		}
+
 		// Clear all pending usage polling retry timeouts
 		if (usagePollingRetryTimeouts.size > 0) {
 			console.log(
@@ -1483,29 +1603,8 @@ async function handleGracefulShutdown(signal: string) {
 		}
 
 		usageCache.clear(); // Stop all usage polling
-
-		// Stop accepting new connections and wait for in-flight HTTP requests
-		// (including streaming responses) to complete. stop() without args is
-		// Bun's graceful variant; stop(true) would force-close active conns.
-		if (serverInstance) {
-			console.log("Draining in-flight HTTP requests...");
-			try {
-				await serverInstance.stop();
-			} catch (err) {
-				console.warn("⚠️ serverInstance.stop() threw:", err);
-			}
-			serverInstance = null;
-			console.log("HTTP drain complete");
-		}
-
-		// Now that streams have finished, the usage worker has received all
-		// end-of-stream analytics messages. Terminate it so its DB writes
-		// flush into the AsyncDbWriter queue before we dispose that.
 		await terminateUsageWorker();
-
-		// Flush AsyncDbWriter and other Disposables.
 		await shutdown();
-
 		console.log("✅ Shutdown complete");
 		process.exit(0);
 	} catch (error) {

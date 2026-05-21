@@ -219,9 +219,7 @@ export async function forwardToClient(
 		// Mid-stream rate-limit detection for issue #114 Fix 1.2. Only
 		// create a sniffer when we know which account to mark — anonymous
 		// or unauthenticated requests can't be failed over.
-		const rateLimitSniffer = account
-			? createSseRateLimitSniffer({ provider: account.provider })
-			: null;
+		const rateLimitSniffer = account ? createSseRateLimitSniffer() : null;
 
 		(async () => {
 			// Configurable via env vars to support long agentic workloads where
@@ -302,14 +300,6 @@ export async function forwardToClient(
 							// Mid-stream rate-limit detection. The sniffer
 							// fires exactly once; after that feed() is a no-op.
 							if (account && rateLimitSniffer?.feed(value)) {
-								// Map firedReason to a synthetic status code so the
-								// audit trail uses the correct RateLimitReason:
-								//   "overloaded_error" → 529 → upstream_529_overloaded_with_reset
-								//   "rate_limit_error" → 429 → upstream_429_with_reset
-								const midStreamStatus =
-									rateLimitSniffer.firedReason === "overloaded_error"
-										? 529
-										: 429;
 								handleRateLimitResponse(
 									account,
 									{
@@ -317,7 +307,6 @@ export async function forwardToClient(
 										resetTime: Date.now() + getMidStreamRateLimitCooldownMs(),
 									},
 									ctx,
-									midStreamStatus,
 								);
 							}
 						}
