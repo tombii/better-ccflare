@@ -247,6 +247,19 @@ export const OverviewTab = React.memo(() => {
 					}
 					trendPeriod={trendPeriod}
 					icon={DollarSign}
+					subRows={[
+						{
+							label: "Avg / day",
+							value: formatCost(analytics?.totals.avgDailyPlanCostUsd ?? 0),
+							tooltip: "Average daily plan value over the last 7 days",
+						},
+						{
+							label: "Avg / week",
+							value: formatCost(analytics?.totals.avgWeeklyPlanCostUsd ?? 0),
+							tooltip:
+								"Average weekly plan value, derived from the last 30 days",
+						},
+					]}
 				/>
 				<MetricCard
 					title="API Cost"
