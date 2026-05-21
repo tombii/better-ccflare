@@ -162,7 +162,7 @@ export function translateRequestToAnthropic(
 	const result: AnthropicRequest = {
 		model: req.model,
 		messages: mergedMessages,
-		max_tokens: req.max_output_tokens ?? 8096,
+		max_tokens: req.max_output_tokens ?? 4096,
 	};
 
 	if (req.instructions !== undefined) {

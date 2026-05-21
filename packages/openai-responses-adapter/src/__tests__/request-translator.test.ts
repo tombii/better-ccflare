@@ -199,13 +199,13 @@ describe("translateRequestToAnthropic", () => {
 		expect(result.max_tokens).toBe(100);
 	});
 
-	test("no max_output_tokens → max_tokens=8096", () => {
+	test("no max_output_tokens → max_tokens=4096", () => {
 		const req: ResponsesRequest = {
 			model: "claude-3-5-sonnet-20241022",
 			input: [],
 		};
 		const result = translateRequestToAnthropic(req);
-		expect(result.max_tokens).toBe(8096);
+		expect(result.max_tokens).toBe(4096);
 	});
 
 	test('tool_choice "auto" → {type:"auto"}, "required" → {type:"any"}', () => {

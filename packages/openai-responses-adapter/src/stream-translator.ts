@@ -81,20 +81,25 @@ function processEvent(
 
 		if (!state.hasSentCreated) {
 			state.hasSentCreated = true;
+			const createdAt = Math.floor(Date.now() / 1000);
+			const responseShape = {
+				id: state.responseId,
+				object: "response",
+				created_at: createdAt,
+				model: state.model,
+				status: "in_progress",
+				output: [],
+			};
 			emitSse(
 				controller,
 				"response.created",
-				{
-					type: "response.created",
-					response: {
-						id: state.responseId,
-						object: "response",
-						created_at: Math.floor(Date.now() / 1000),
-						model: state.model,
-						status: "in_progress",
-						output: [],
-					},
-				},
+				{ type: "response.created", response: responseShape },
+				state,
+			);
+			emitSse(
+				controller,
+				"response.in_progress",
+				{ type: "response.in_progress", response: responseShape },
 				state,
 			);
 		}
