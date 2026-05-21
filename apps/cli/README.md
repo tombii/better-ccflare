@@ -17,6 +17,7 @@ https://github.com/user-attachments/assets/c859872f-ca5e-4f8b-b6a0-7cc7461fe62a
 - **🔒 OAuth Token Health** - Real-time monitoring of OAuth token status with automatic refresh and health indicators
 - **🔗 Custom API Endpoints** - Configure custom endpoints for Anthropic accounts for enterprise deployments
 - **☁️ OpenAI-Compatible Support** - Use OpenAI-compatible providers like OpenRouter, Together AI, and more with Claude API format
+- **🧩 Codex / Responses API Compatibility** - `POST /v1/responses` and `POST /v1/responses/compact` are translated to Anthropic `/v1/messages`
 - **🔄 Smart Auto-Fallback** - Automatically switch back to preferred accounts when their rate limits reset
 - **⚡ Auto-Refresh** - Automatically start new usage windows when rate limits reset with 30-minute buffer
 - **📊 Request-Level Analytics** - Track latency, token usage, and costs in real-time with optimized batch processing
@@ -396,6 +397,32 @@ claude
 - **Working on untrusted/temporary machines?** Use Option 3 (Remote VPS setup) - keeps credentials secure
 - **Using only API keys in better-ccflare?** Use Option 2 (logout + API key)
 - **Getting auth conflict warnings?** You have both methods active - choose one and follow its steps above
+
+### Codex CLI as a Client
+
+better-ccflare supports [Codex CLI](https://github.com/openai/codex) as a client. Codex speaks the OpenAI Responses API; better-ccflare intercepts requests to `/v1/responses` and `/v1/responses/compact` and translates them to Anthropic `POST /v1/messages` internally, routing through your configured account pool.
+
+This is separate from the `codex` *provider* (which routes requests to OpenAI's Codex endpoint). You can use Codex CLI to talk to Anthropic accounts, Codex accounts, or any other provider in your pool.
+
+Configure Codex CLI to point at better-ccflare in `~/.codex/config.toml`:
+
+```toml
+[api]
+base_url = "http://localhost:8080"
+api_key = "dummy-key" # or your real better-ccflare API key if API auth is enabled
+```
+
+Equivalent environment variables:
+
+```bash
+export OPENAI_BASE_URL=http://localhost:8080
+export OPENAI_API_KEY=dummy-key
+```
+
+Known limitations:
+
+- `previous_response_id` is accepted but ignored — Codex uses this only over WebSocket; for regular HTTP requests it always sends the full conversation history in `input`
+- Built-in tool types (`web_search_preview`, `code_interpreter`, `file_search`) are silently skipped; only `type: "function"` tools are forwarded to Anthropic
 
 ### SSL/HTTPS Configuration
 

@@ -27,6 +27,7 @@ import {
 	SessionStrategy,
 } from "@better-ccflare/load-balancer";
 import { Logger } from "@better-ccflare/logger";
+import { handleResponsesRequest } from "@better-ccflare/openai-responses-adapter";
 import {
 	CODEX_DEFAULT_ENDPOINT,
 	fetchCodexUsageOnDemand,
@@ -1130,6 +1131,20 @@ export default async function startServer(options?: {
 					}
 
 					try {
+						if (
+							req.method === "POST" &&
+							(url.pathname === "/v1/responses" ||
+								url.pathname === "/v1/responses/compact")
+						) {
+							return await handleResponsesRequest(
+								req,
+								url,
+								handleProxy as Parameters<typeof handleResponsesRequest>[2],
+								proxyContext,
+								authResult.apiKeyId,
+								authResult.apiKeyName,
+							);
+						}
 						return await handleProxy(
 							req,
 							url,
