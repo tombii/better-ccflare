@@ -1,6 +1,5 @@
 {
   "lockfileVersion": 1,
-  "configVersion": 0,
   "workspaces": {
     "": {
       "name": "ccflare",
@@ -13,7 +12,7 @@
     },
     "apps/cli": {
       "name": "better-ccflare",
-      "version": "3.3.25",
+      "version": "3.5.13",
       "bin": {
         "better-ccflare": "dist/better-ccflare",
       },
@@ -40,6 +39,7 @@
         "@better-ccflare/http-api": "workspace:*",
         "@better-ccflare/load-balancer": "workspace:*",
         "@better-ccflare/logger": "workspace:*",
+        "@better-ccflare/openai-responses-adapter": "workspace:*",
         "@better-ccflare/proxy": "workspace:*",
         "@better-ccflare/security": "workspace:*",
         "@better-ccflare/types": "workspace:*",
@@ -216,6 +216,14 @@
         "@better-ccflare/types": "workspace:*",
       },
     },
+    "packages/openai-responses-adapter": {
+      "name": "@better-ccflare/openai-responses-adapter",
+      "version": "0.1.0",
+      "dependencies": {
+        "@better-ccflare/logger": "workspace:*",
+        "@better-ccflare/types": "workspace:*",
+      },
+    },
     "packages/providers": {
       "name": "@better-ccflare/providers",
       "version": "0.1.0",
@@ -378,6 +386,8 @@
     "@better-ccflare/oauth-flow": ["@better-ccflare/oauth-flow@workspace:packages/oauth-flow"],
 
     "@better-ccflare/openai-formats": ["@better-ccflare/openai-formats@workspace:packages/openai-formats"],
+
+    "@better-ccflare/openai-responses-adapter": ["@better-ccflare/openai-responses-adapter@workspace:packages/openai-responses-adapter"],
 
     "@better-ccflare/providers": ["@better-ccflare/providers@workspace:packages/providers"],
 
@@ -927,7 +937,7 @@
 
     "@aws-sdk/credential-provider-sso/@aws-sdk/token-providers": ["@aws-sdk/token-providers@3.1021.0", "", { "dependencies": { "@aws-sdk/core": "^3.973.26", "@aws-sdk/nested-clients": "^3.996.18", "@aws-sdk/types": "^3.973.6", "@smithy/property-provider": "^4.2.12", "@smithy/shared-ini-file-loader": "^4.4.7", "@smithy/types": "^4.13.1", "tslib": "^2.6.2" } }, "sha512-TKY6h9spUk3OLs5v1oAgW9mAeBE3LAGNBwJokLy96wwmd4W2v/tYlXseProyed9ValDj2u1jK/4Rg1T+1NXyJA=="],
 
-    "@better-ccflare/dashboard-web/@types/bun": ["@types/bun@1.3.11", "", { "dependencies": { "bun-types": "1.3.11" } }, "sha512-5vPne5QvtpjGpsGYXiFyycfpDF2ECyPcTSsFBMa0fraoxiQyMJ3SmuQIGhzPg2WJuWxVBoxWJ2kClYTcw/4fAg=="],
+    "@better-ccflare/dashboard-web/@types/bun": ["@types/bun@1.3.14", "", { "dependencies": { "bun-types": "1.3.14" } }, "sha512-h1hFqFVcvAvD9j9K7ZW7vd82aSA+rTdznZa+5bwvCwqSB1jmmfLcbIWhOLx1/+boy/xmjgCs/OMUL8hRJSmnPw=="],
 
     "@better-ccflare/errors/@types/bun": ["@types/bun@1.1.15", "", { "dependencies": { "bun-types": "1.1.42" } }, "sha512-Fi7ND1jCq8O5iU3s9z3TKHggD0hidgpe7wSxyisviXpbMmY4B1KiokF3f/mmjOoDrEcf873tSpixgen7Wm9X0g=="],
 
@@ -981,7 +991,7 @@
 
     "@aws-crypto/util/@smithy/util-utf8/@smithy/util-buffer-from": ["@smithy/util-buffer-from@2.2.0", "", { "dependencies": { "@smithy/is-array-buffer": "^2.2.0", "tslib": "^2.6.2" } }, "sha512-IJdWBbTcMQ6DA0gdNhh/BwrLkDR+ADW5Kr1aZmd4k3DIF6ezMV4R2NIAmT08wQJ3yUK82thHWmC/TnK/wpMMIA=="],
 
-    "@better-ccflare/dashboard-web/@types/bun/bun-types": ["bun-types@1.3.11", "", { "dependencies": { "@types/node": "*" } }, "sha512-1KGPpoxQWl9f6wcZh57LvrPIInQMn2TQ7jsgxqpRzg+l0QPOFvJVH7HmvHo/AiPgwXy+/Thf6Ov3EdVn1vOabg=="],
+    "@better-ccflare/dashboard-web/@types/bun/bun-types": ["bun-types@1.3.14", "", { "dependencies": { "@types/node": "*" } }, "sha512-4N0ig0fEomHt5R0KCFWjovxow98rIoRwKolrYdCcknNwMekCXRnWEUvgu5soYV8QXtVsrUD8B95MBOZGPvr6KQ=="],
 
     "@better-ccflare/errors/@types/bun/bun-types": ["bun-types@1.1.42", "", { "dependencies": { "@types/node": "~20.12.8", "@types/ws": "~8.5.10" } }, "sha512-beMbnFqWbbBQHll/bn3phSwmoOQmnX2nt8NI9iOQKFbgR5Z6rlH3YuaMdlid8vp5XGct3/W4QVQBmhoOEoe4nw=="],
 
