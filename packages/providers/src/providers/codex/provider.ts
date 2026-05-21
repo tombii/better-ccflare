@@ -515,10 +515,14 @@ export class CodexProvider extends BaseProvider {
 			| CodexFunctionCallOutputItem
 		)[] = [];
 
+		// Codex API only accepts user/assistant/system roles.
+		// Map developer (Codex CLI system instructions sent as a message role) to system.
+		const role = (msg.role as string) === "developer" ? "system" : msg.role;
+
 		if (typeof msg.content === "string") {
-			const contentType = msg.role === "user" ? "input_text" : "output_text";
+			const contentType = role === "user" ? "input_text" : "output_text";
 			items.push({
-				role: msg.role,
+				role,
 				content: [{ type: contentType, text: msg.content } as CodexContentItem],
 			} as CodexMessage);
 			return items;
@@ -531,7 +535,7 @@ export class CodexProvider extends BaseProvider {
 
 		for (const block of msg.content) {
 			if (block.type === "text") {
-				const contentType = msg.role === "user" ? "input_text" : "output_text";
+				const contentType = role === "user" ? "input_text" : "output_text";
 				textBlocks.push({
 					type: contentType,
 					text: block.text,
@@ -563,7 +567,7 @@ export class CodexProvider extends BaseProvider {
 
 		// Text content goes in a message wrapper; function_call* are top-level items
 		if (textBlocks.length > 0) {
-			items.push({ role: msg.role, content: textBlocks } as CodexMessage);
+			items.push({ role, content: textBlocks } as CodexMessage);
 		}
 		for (const fc of functionCalls) {
 			items.push(fc);
