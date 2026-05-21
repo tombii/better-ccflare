@@ -157,10 +157,12 @@ Automated release system uses commit prefixes for changelog:
 - Security: `security:|vulnerabilit:|redact:|ReDoS:`
 - Improvements: `improve:|enhance:|update:|refactor:`
 
+**Acknowledgement commits** (when merging external PRs): always use `chore: acknowledge <name> for PR #<N>` as the commit subject. This prefix is excluded from release notes. If the merge also includes real fixes, commit them separately with the appropriate prefix.
+
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **better-ccflare** (9621 symbols, 18110 relationships, 235 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **better-ccflare** (9781 symbols, 18480 relationships, 237 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 

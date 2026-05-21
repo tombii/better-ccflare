@@ -1731,43 +1731,6 @@ class API extends HttpClient {
 		}
 	}
 
-	async compactDb(): Promise<{
-		ok: boolean;
-		error?: string;
-		walCheckpointed?: number;
-		walBusy?: number;
-		walLog?: number;
-		walTruncateBusy?: number;
-		vacuumed?: boolean;
-	}> {
-		const startTime = Date.now();
-		const url = "/api/maintenance/compact";
-
-		this.logger.debug(`→ POST ${url}`);
-
-		try {
-			const response = await this.post<{
-				ok: boolean;
-				error?: string;
-				walCheckpointed?: number;
-				walBusy?: number;
-				walLog?: number;
-				walTruncateBusy?: number;
-				vacuumed?: boolean;
-			}>(url, undefined, { timeout: 10 * 60 * 1000 });
-			const duration = Date.now() - startTime;
-			this.logger.debug(`← POST ${url} - 200 (${duration}ms)`);
-			return response;
-		} catch (error) {
-			const duration = Date.now() - startTime;
-			this.logger.error(`✗ POST ${url} - ERROR (${duration}ms)`, {
-				error: error instanceof Error ? error.message : String(error),
-				stack: error instanceof Error ? error.stack : undefined,
-			});
-			throw error;
-		}
-	}
-
 	// Helper method for token health API calls to reduce code duplication
 	private async tokenHealthRequest<T>(
 		url: string,
