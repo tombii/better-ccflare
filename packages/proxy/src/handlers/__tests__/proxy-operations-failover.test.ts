@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import type { Account, RequestMeta } from "@better-ccflare/types";
-import { proxyWithAccount } from "../proxy-operations";
+import { isModelUnavailableError, proxyWithAccount } from "../proxy-operations";
 import type { ProxyContext } from "../proxy-types";
 
 // Minimal Account fixture for openai-compatible provider
@@ -590,6 +590,117 @@ describe("getModelList — model_fallbacks merge", () => {
 			"qwen/qwen3.6-plus:free",
 			"meta-llama/llama-3.3-70b:free",
 		]);
+	});
+});
+
+describe("proxyWithAccount — 529 failover", () => {
+	let originalFetch: typeof globalThis.fetch;
+
+	beforeEach(() => {
+		originalFetch = globalThis.fetch;
+	});
+
+	afterEach(() => {
+		globalThis.fetch = originalFetch;
+	});
+
+	it("returns null (failover) when upstream returns 529 and provider parseRateLimit says isRateLimited:true", async () => {
+		globalThis.fetch = mock(
+			async () =>
+				new Response(
+					'{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}',
+					{
+						status: 529,
+						headers: { "content-type": "application/json" },
+					},
+				),
+		);
+
+		const bodyBuffer = makeRequestBody();
+		const req = makeRequest(bodyBuffer);
+
+		// Override the proxy context to have a provider that treats 529 as rate-limited
+		// (matching the Anthropic provider's parseRateLimit behaviour for 529).
+		const ctx = makeProxyContext();
+		(ctx as { provider: typeof ctx.provider }).provider = {
+			...ctx.provider,
+			parseRateLimit: (r: Response) => ({
+				isRateLimited: r.status === 529 || r.status === 429,
+				resetTime: r.status === 529 ? Date.now() + 60_000 : undefined,
+				statusHeader: undefined,
+				remaining: undefined,
+			}),
+		} as typeof ctx.provider;
+
+		const result = await proxyWithAccount(
+			req,
+			new URL("https://proxy.local/v1/messages"),
+			makeAccount({
+				provider: "anthropic",
+				api_key: "test-key",
+				access_token: null,
+			}),
+			makeRequestMeta(),
+			bodyBuffer,
+			() => undefined,
+			0,
+			ctx,
+		);
+
+		expect(result).toBeNull();
+	});
+
+	it("returns upstream 529 on the final account attempt instead of pool exhaustion", async () => {
+		globalThis.fetch = mock(
+			async () =>
+				new Response(
+					'{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}',
+					{
+						status: 529,
+						headers: { "content-type": "application/json" },
+					},
+				),
+		);
+
+		const bodyBuffer = makeRequestBody();
+		const req = makeRequest(bodyBuffer);
+		const ctx = makeProxyContext();
+		const result = await proxyWithAccount(
+			req,
+			new URL("https://proxy.local/v1/messages"),
+			makeAccount({
+				provider: "anthropic",
+				api_key: "test-key",
+				access_token: null,
+			}),
+			makeRequestMeta(),
+			bodyBuffer,
+			() => undefined,
+			0,
+			ctx,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			true,
+		);
+
+		expect(result).not.toBeNull();
+		if (!result) throw new Error("Expected final 529 response");
+		expect(result.status).toBe(529);
+		const body = (await result.json()) as {
+			error: { type: string; message: string };
+		};
+		expect(body.error.type).toBe("overloaded_error");
+		expect(body.error.message).toBe("Overloaded");
+	});
+
+	it("isModelUnavailableError returns false for 529 overloaded responses", async () => {
+		const response = new Response(
+			'{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}',
+			{ status: 529, headers: { "content-type": "application/json" } },
+		);
+		expect(await isModelUnavailableError(response)).toBe(false);
 	});
 });
 

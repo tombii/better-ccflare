@@ -56,6 +56,8 @@ const RATE_LIMIT_REASONS = new Set<RateLimitReason>([
 	"upstream_429_no_reset_probe_cooldown",
 	"model_fallback_429",
 	"all_models_exhausted_429",
+	"upstream_529_overloaded_with_reset",
+	"upstream_529_overloaded_no_reset",
 ]);
 
 function toRateLimitReason(v: string | null): RateLimitReason | null {
