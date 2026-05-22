@@ -18,7 +18,7 @@ Load balancer proxy for Claude distributing requests across multiple account pro
 If accidentally modified: `git checkout -- <path>`
 
 ## Git Refspecs
-This repo has both a `main` branch and a `main` tag. **Always use `refs/heads/main`** (not `main`) for all git log, diff, checkout, and merge-base commands to avoid ambiguous refspec errors. Applies to: `git log refs/heads/main`, `git diff refs/heads/main...`, `git merge-base refs/heads/main`, etc.
+This repo has both a `main` branch and a `main` tag. **Always use `refs/heads/main`** (not `main`) for local branch operations (push, checkout). For merge-base and log comparisons against the remote, use `origin/main` (the remote ref) to avoid the ambiguous refspec warning from the local tag.
 
 ## Branch Management
 Always branch from `main` with a fresh pull. Never make changes directly on main.
@@ -31,6 +31,7 @@ Before reviewing or merging any PR, always find the merge base and identify what
 
 ```bash
 git fetch origin pull/<PR_NUMBER>/head:<branch-name>
+git fetch origin main
 MERGE_BASE=$(git merge-base <branch-name> origin/main)
 git log $MERGE_BASE..origin/main --oneline          # commits on main the PR doesn't have
 git diff $MERGE_BASE..origin/main --name-only        # files main changed since PR branched
@@ -62,7 +63,7 @@ After merging, update the Acknowledgements section in README.md to thank the con
 ## Issue Staleness Check (MANDATORY before implementing)
 Before implementing any GitHub issue, always run:
 ```bash
-git log refs/heads/main --since='<issue-open-date>' --oneline --no-merges -- <relevant-paths>
+git log origin/main --since='<issue-open-date>' --oneline --no-merges -- <relevant-paths>
 ```
 Check if recent commits already partially or fully address the issue. Rate limiting, health, and proxy code change frequently. Ask the user "does this issue still apply given recent changes?" before proceeding. Especially check: has the reported symptom been fixed? Does the proposal conflict with new architecture?
 
@@ -162,7 +163,7 @@ Automated release system uses commit prefixes for changelog:
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **better-ccflare** (9781 symbols, 18480 relationships, 237 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **better-ccflare** (9981 symbols, 18731 relationships, 238 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
