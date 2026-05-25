@@ -133,6 +133,7 @@ export class APIRouter {
 			getAsyncWriterHealth,
 			getUsageWorkerHealth,
 			getIntegrityStatus,
+			getStrategy,
 		} = this.context;
 
 		// Create handlers
@@ -147,7 +148,11 @@ export class APIRouter {
 		const statsResetHandler = createStatsResetHandler(dbOps);
 		const storageHandler = createStorageHandler(dbOps);
 		const integrityCheckHandler = createIntegrityCheckHandler(dbOps);
-		const accountsHandler = createAccountsListHandler(dbOps, config);
+		const accountsHandler = createAccountsListHandler(
+			dbOps,
+			config,
+			getStrategy,
+		);
 		const accountAddHandler = createAccountAddHandler(dbOps, config);
 		const zaiAccountAddHandler = createZaiAccountAddHandler(dbOps);
 		const minimaxAccountAddHandler = createMinimaxAccountAddHandler(dbOps);

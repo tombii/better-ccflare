@@ -734,4 +734,56 @@ describe("SessionStrategy", () => {
 			expect(result[1]).toBe(lowPriorityLowUtil);
 		});
 	});
+
+	describe("peek auto-unpause parity with select", () => {
+		// These mirror the auto-unpause path inside select(): a paused
+		// auto-fallback account with safe pause_reason and an elapsed
+		// rate_limit_reset window must surface as the would-be Primary
+		// in peek() too, otherwise the dashboard flags the wrong account.
+		it("returns the paused-but-auto-unpausable account that select() picks", () => {
+			const past = Date.now() - 60_000;
+			const paused = makeAccount({
+				id: "p0-paused",
+				priority: 0,
+				paused: true,
+				pause_reason: null,
+				auto_fallback_enabled: true,
+				rate_limit_reset: past,
+			});
+			const ready = makeAccount({ id: "p1-ready", priority: 1 });
+
+			expect(strategy.peek([paused, ready])).toBe("p0-paused");
+			// And select() agrees.
+			const selected = strategy.select([paused, ready], meta);
+			expect(selected[0]?.id).toBe("p0-paused");
+		});
+
+		it("does NOT consider manually-paused accounts", () => {
+			const past = Date.now() - 60_000;
+			const paused = makeAccount({
+				id: "p0-manual",
+				priority: 0,
+				paused: true,
+				pause_reason: "manual",
+				auto_fallback_enabled: true,
+				rate_limit_reset: past,
+			});
+			const ready = makeAccount({ id: "p1-ready", priority: 1 });
+			expect(strategy.peek([paused, ready])).toBe("p1-ready");
+		});
+
+		it("peek does not mutate paused state or call resumeAccount", () => {
+			const past = Date.now() - 60_000;
+			const paused = makeAccount({
+				id: "p0",
+				paused: true,
+				pause_reason: "overage",
+				auto_fallback_enabled: true,
+				rate_limit_reset: past,
+			});
+			strategy.peek([paused]);
+			expect(paused.paused).toBe(true);
+			expect(mockStore.resumeCalls).toEqual([]);
+		});
+	});
 });

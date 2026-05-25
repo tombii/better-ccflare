@@ -13,6 +13,7 @@ export { AutoRefreshScheduler } from "./auto-refresh-scheduler";
 export { CacheKeepaliveScheduler } from "./cache-keepalive-scheduler";
 export { dispatchProxyRequest } from "./dispatch";
 export {
+	type CodexUsageRefreshOutcome,
 	checkAllAccountsHealth,
 	checkRefreshTokenHealth,
 	clearAccountRefreshCache,
@@ -23,6 +24,8 @@ export {
 	getUsageThrottleUntil,
 	getValidAccessToken,
 	isRefreshTokenLikelyExpired,
+	refreshCodexUsageForAccount,
+	registerCodexUsageRefresher,
 	registerPollingRestarter,
 	registerRefreshClearer,
 	restartUsagePollingForAccount,
@@ -30,6 +33,7 @@ export {
 	stopGlobalTokenHealthChecks,
 	type TokenHealthReport,
 	type TokenHealthStatus,
+	unregisterCodexUsageRefresher,
 } from "./handlers";
 export {
 	runIntegrityCheckOnDemand,

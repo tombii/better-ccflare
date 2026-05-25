@@ -38,11 +38,15 @@ export {
 	stopGlobalTokenHealthChecks,
 } from "./token-health-service";
 export {
+	type CodexUsageRefreshOutcome,
 	clearAccountRefreshCache,
 	getValidAccessToken,
+	refreshCodexUsageForAccount,
+	registerCodexUsageRefresher,
 	registerPollingRestarter,
 	registerRefreshClearer,
 	restartUsagePollingForAccount,
+	unregisterCodexUsageRefresher,
 } from "./token-manager";
 export {
 	createUsageThrottledResponse,

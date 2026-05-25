@@ -1,4 +1,5 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { fetchCodexUsageOnDemand } from "./on-demand-fetch";
 import { CodexProvider } from "./provider";
 import { parseCodexUsageHeaders } from "./usage";
 
@@ -946,5 +947,136 @@ describe("parseCodexUsageHeaders reset-after handling", () => {
 		expect(usage?.five_hour?.resets_at).toBe(
 			new Date(baseTimeMs + 600_000).toISOString(),
 		);
+	});
+});
+
+describe("fetchCodexUsageOnDemand", () => {
+	let originalFetch: typeof fetch;
+	let recorded: { url: string; init: RequestInit } | null;
+
+	beforeEach(() => {
+		originalFetch = globalThis.fetch;
+		recorded = null;
+	});
+
+	afterEach(() => {
+		globalThis.fetch = originalFetch;
+	});
+
+	const makeMockFetch = (response: Response) => {
+		return async (input: RequestInfo | URL, init?: RequestInit) => {
+			recorded = { url: String(input), init: init ?? {} };
+			return response;
+		};
+	};
+
+	it("sends a minimal codex request and parses usage headers", async () => {
+		globalThis.fetch = makeMockFetch(
+			new Response("event: ignored\n\n", {
+				status: 200,
+				headers: {
+					"x-codex-primary-used-percent": "11",
+					"x-codex-primary-window-minutes": "10080",
+					"x-codex-primary-reset-at": "1775000000",
+					"x-codex-secondary-used-percent": "4",
+					"x-codex-secondary-window-minutes": "300",
+					"x-codex-secondary-reset-at": "1774600000",
+				},
+			}),
+		) as unknown as typeof fetch;
+
+		const result = await fetchCodexUsageOnDemand(
+			"test-token",
+			"https://example.test/codex/responses",
+		);
+
+		expect(recorded).not.toBeNull();
+		expect(recorded?.url).toBe("https://example.test/codex/responses");
+		expect(recorded?.init.method).toBe("POST");
+
+		const body = JSON.parse(recorded?.init.body as string);
+		expect(body.stream).toBe(true);
+		expect(body.store).toBe(false);
+		expect(body.max_output_tokens).toBe(1);
+		expect(body.reasoning?.effort).toBe("minimal");
+		expect(body.input).toHaveLength(1);
+		expect(body.input[0].role).toBe("user");
+
+		const headersInit = recorded?.init.headers as Record<string, string>;
+		const headers = new Headers(headersInit);
+		expect(headers.get("Authorization")).toBe("Bearer test-token");
+		expect(headers.get("Openai-Beta")).toBe("responses=experimental");
+		expect(headers.get("originator")).toBe("codex_cli_rs");
+		expect(headers.get("Content-Type")).toBe("application/json");
+
+		expect(result.data?.five_hour).toEqual({
+			utilization: 4,
+			resets_at: new Date(1774600000 * 1000).toISOString(),
+		});
+		expect(result.data?.seven_day).toEqual({
+			utilization: 11,
+			resets_at: new Date(1775000000 * 1000).toISOString(),
+		});
+		expect(result.response.status).toBe(200);
+		expect(result.response.headers.get("x-codex-primary-reset-at")).toBe(
+			"1775000000",
+		);
+	});
+
+	it("returns null data when no Codex usage headers are present", async () => {
+		globalThis.fetch = makeMockFetch(
+			new Response("event: ignored\n\n", { status: 200 }),
+		) as unknown as typeof fetch;
+
+		const result = await fetchCodexUsageOnDemand(
+			"test-token",
+			"https://example.test/codex/responses",
+		);
+
+		expect(result.data).toBeNull();
+		expect(result.response.status).toBe(200);
+	});
+
+	it("preserves headers and status on a 429 so callers can persist rate_limit_reset", async () => {
+		globalThis.fetch = makeMockFetch(
+			new Response("rate limited", {
+				status: 429,
+				headers: {
+					"x-codex-primary-used-percent": "100",
+					"x-codex-primary-window-minutes": "300",
+					"x-codex-primary-reset-at": "1775000000",
+					"x-codex-secondary-used-percent": "82",
+					"x-codex-secondary-window-minutes": "10080",
+					"x-codex-secondary-reset-at": "1774700000",
+				},
+			}),
+		) as unknown as typeof fetch;
+
+		const result = await fetchCodexUsageOnDemand(
+			"test-token",
+			"https://example.test/codex/responses",
+		);
+
+		expect(result.response.status).toBe(429);
+		expect(result.data?.five_hour.utilization).toBe(100);
+		expect(result.data?.five_hour.resets_at).toBe(
+			new Date(1775000000 * 1000).toISOString(),
+		);
+		expect(result.response.headers.get("x-codex-primary-reset-at")).toBe(
+			"1775000000",
+		);
+	});
+
+	it("rejects an empty access token before issuing a request", async () => {
+		let called = false;
+		globalThis.fetch = (async () => {
+			called = true;
+			return new Response(null, { status: 200 });
+		}) as unknown as typeof fetch;
+
+		await expect(fetchCodexUsageOnDemand("")).rejects.toThrow(
+			/non-empty access token/,
+		);
+		expect(called).toBe(false);
 	});
 });

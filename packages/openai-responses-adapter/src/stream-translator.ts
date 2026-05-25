@@ -45,9 +45,9 @@ function emitDone(
 
 	emitSse(
 		controller,
-		"response.done",
+		"response.completed",
 		{
-			type: "response.done",
+			type: "response.completed",
 			response: {
 				id: state.responseId,
 				object: "response",
@@ -339,9 +339,9 @@ function processEvent(
 		state.doneSent = true;
 		emitSse(
 			controller,
-			"response.done",
+			"response.failed",
 			{
-				type: "response.done",
+				type: "response.failed",
 				response: {
 					id: state.responseId,
 					object: "response",

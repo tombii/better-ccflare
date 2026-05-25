@@ -34,9 +34,15 @@ import {
 import {
 	clearAccountRefreshCache,
 	getUsageThrottleStatus,
+	refreshCodexUsageForAccount,
 	restartUsagePollingForAccount,
 } from "@better-ccflare/proxy";
-import type { FullUsageData, RateLimitReason } from "@better-ccflare/types";
+import type {
+	Account,
+	FullUsageData,
+	LoadBalancingStrategy,
+	RateLimitReason,
+} from "@better-ccflare/types";
 import { requiresSessionDurationTracking } from "@better-ccflare/types";
 import type { AccountResponse } from "../types";
 
@@ -50,6 +56,8 @@ const RATE_LIMIT_REASONS = new Set<RateLimitReason>([
 	"upstream_429_no_reset_probe_cooldown",
 	"model_fallback_429",
 	"all_models_exhausted_429",
+	"upstream_529_overloaded_with_reset",
+	"upstream_529_overloaded_no_reset",
 ]);
 
 function toRateLimitReason(v: string | null): RateLimitReason | null {
@@ -147,11 +155,14 @@ async function getCachedOrPersistedCodexUsage(
 export function createAccountsListHandler(
 	dbOps: DatabaseOperations,
 	config: Config,
+	getStrategy?: () => LoadBalancingStrategy | null,
 ) {
 	return async (): Promise<Response> => {
 		const db = dbOps.getAdapter();
 		const now = Date.now();
 		const sessionDuration = 5 * 60 * 60 * 1000; // 5 hours
+
+		const strategy = getStrategy?.() ?? null;
 
 		const accounts = await db.query<{
 			id: string;
@@ -186,6 +197,7 @@ export function createAccountsListHandler(
 			cross_region_mode: string | null;
 			model_fallbacks: string | null;
 			billing_type: string | null;
+			pause_reason: string | null;
 		}>(
 			`
 				SELECT
@@ -219,6 +231,7 @@ export function createAccountsListHandler(
 					cross_region_mode,
 					model_fallbacks,
 					billing_type,
+					pause_reason,
 					CASE
 						WHEN expires_at > ? THEN 1
 						ELSE 0
@@ -237,6 +250,39 @@ export function createAccountsListHandler(
 			`,
 			[now, now, now, sessionDuration],
 		);
+
+		// Ask the active load-balancing strategy which account it would pick
+		// next from the same in-memory snapshot we use to build the response —
+		// querying again would open a race window where isPrimary could land
+		// on a row whose paused/rate-limited fields the same response shows
+		// as blocked. Only the fields peek reads are mapped here; the rest of
+		// the Account interface is unused at peek time.
+		const primaryId = strategy
+			? strategy.peek(
+					accounts.map(
+						(a) =>
+							({
+								id: a.id,
+								provider: a.provider ?? "",
+								paused: !!a.paused,
+								// pause_reason and rate_limit_reset feed wouldAutoUnpause —
+								// without them peek() can't simulate the auto-unpause that
+								// select() performs on safe-reason paused accounts whose
+								// upstream window has reset.
+								pause_reason: a.pause_reason ?? null,
+								rate_limited_until: a.rate_limited_until
+									? Number(a.rate_limited_until)
+									: null,
+								rate_limit_reset: a.rate_limit_reset
+									? Number(a.rate_limit_reset)
+									: null,
+								session_start: a.session_start ? Number(a.session_start) : null,
+								priority: a.priority,
+								auto_fallback_enabled: !!a.auto_fallback_enabled,
+							}) as Account,
+					),
+				)
+			: null;
 
 		// Fetch session-window token stats only for providers with session-based limits
 		const sessionStatsMap = await dbOps
@@ -503,6 +549,7 @@ export function createAccountsListHandler(
 					modelFallbacks,
 					billingType: account.billing_type,
 					sessionStats: sessionStatsMap.get(account.id) ?? null,
+					isPrimary: account.id === primaryId,
 				};
 			}),
 		);
@@ -3494,9 +3541,12 @@ export function createOpenRouterAccountAddHandler(dbOps: DatabaseOperations) {
 }
 
 /**
- * Force an immediate usage data refresh for an Anthropic OAuth account.
- * Clears the refresh cache, restarts usage polling (which refreshes the token
- * if expired), and returns whether polling was successfully restarted.
+ * Force an immediate usage data refresh for an OAuth account.
+ *
+ * For Anthropic accounts this restarts the free `/api/oauth/usage` polling
+ * loop. For Codex accounts there is no free usage endpoint, so this sends a
+ * minimal real `/responses` request (capped via `max_output_tokens: 1` and
+ * abort-after-headers) and parses the `x-codex-*` headers off the response.
  */
 export function createAccountRefreshUsageHandler(dbOps: DatabaseOperations) {
 	return async (_req: Request, accountId: string): Promise<Response> => {
@@ -3507,10 +3557,10 @@ export function createAccountRefreshUsageHandler(dbOps: DatabaseOperations) {
 				return errorResponse(NotFound("Account not found"));
 			}
 
-			if (account.provider !== "anthropic") {
+			if (account.provider !== "anthropic" && account.provider !== "codex") {
 				return errorResponse(
 					BadRequest(
-						"Usage refresh is only available for Anthropic OAuth accounts",
+						"Usage refresh is only available for Anthropic OAuth and Codex accounts",
 					),
 				);
 			}
@@ -3521,6 +3571,18 @@ export function createAccountRefreshUsageHandler(dbOps: DatabaseOperations) {
 						`Account '${account.name}' has no tokens - please re-authenticate`,
 					),
 				);
+			}
+
+			if (account.provider === "codex") {
+				const outcome = await refreshCodexUsageForAccount(accountId);
+				log.info(
+					`Codex usage refresh requested for account '${account.name}' (success: ${outcome.success})`,
+				);
+				return jsonResponse({
+					success: outcome.success,
+					message: outcome.message,
+					pollingRestarted: false,
+				});
 			}
 
 			clearAccountRefreshCache(accountId);

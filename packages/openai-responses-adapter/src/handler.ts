@@ -15,8 +15,31 @@ export async function handleResponsesRequest(
 	apiKeyId?: string | null,
 	apiKeyName?: string | null,
 ): Promise<Response> {
-	// 1. Parse body
-	const rawBody = await req.arrayBuffer();
+	// 1. Parse body — Codex CLI compresses request bodies (zstd, gzip, deflate).
+	// Bun decompresses response bodies automatically but not request bodies,
+	// so we decompress manually when content-encoding is present.
+	let rawBody = await req.arrayBuffer();
+	const contentEncoding = req.headers.get("content-encoding")?.toLowerCase();
+	if (contentEncoding) {
+		try {
+			const bytes = new Uint8Array(rawBody);
+			let decompressed: Uint8Array;
+			if (contentEncoding === "zstd") {
+				decompressed = Bun.zstdDecompressSync(bytes);
+			} else if (contentEncoding === "gzip") {
+				decompressed = Bun.gunzipSync(bytes);
+			} else if (contentEncoding === "deflate") {
+				decompressed = Bun.inflateSync(bytes);
+			} else {
+				log.warn(`Unsupported content-encoding: ${contentEncoding}`);
+				decompressed = bytes;
+			}
+			rawBody = decompressed.buffer as ArrayBuffer;
+		} catch (e) {
+			log.warn(`Failed to decompress ${contentEncoding} request body: ${e}`);
+		}
+	}
+
 	let body: ResponsesRequest;
 	try {
 		body = JSON.parse(new TextDecoder().decode(rawBody)) as ResponsesRequest;
@@ -75,6 +98,15 @@ export async function handleResponsesRequest(
 	const syntheticHeaders = new Headers(req.headers);
 	syntheticHeaders.set("content-type", "application/json");
 	syntheticHeaders.delete("content-length");
+	// Body is now decompressed plain JSON — remove the original encoding hint.
+	syntheticHeaders.delete("content-encoding");
+	// Required by Anthropic API — Codex CLI doesn't send this header.
+	if (!syntheticHeaders.has("anthropic-version")) {
+		syntheticHeaders.set("anthropic-version", "2023-06-01");
+	}
+	// claude-oauth accounts use Claude's OAuth tokens — Anthropic bans them
+	// when used outside Claude CLI. Always exclude from Codex CLI traffic.
+	syntheticHeaders.set("x-better-ccflare-exclude-providers", "anthropic-oauth");
 	const syntheticReq = new Request(messagesUrl.toString(), {
 		method: "POST",
 		headers: syntheticHeaders,
