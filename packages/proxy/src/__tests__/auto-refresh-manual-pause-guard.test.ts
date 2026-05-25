@@ -21,7 +21,7 @@
  * pause scenario. This proves row-level filtering, not just string presence.
  */
 import { Database } from "bun:sqlite";
-import { describe, expect, it, mock } from "bun:test";
+import { beforeAll, describe, expect, it, mock } from "bun:test";
 
 type QueryCall = { sql: string; params: unknown[] };
 
@@ -114,6 +114,7 @@ function seedDb(): Database {
 		["overage-null-reason", 1, 1, null], // overage pause, null reason → eligible (resumable)
 		["manual-overage-on", 1, 1, "manual"], // THE BUG: manual pause, feature on → MUST be excluded
 		["failure-threshold", 1, 1, "failure_threshold"], // auto-pause-fail → excluded
+		["peak-hours-paused", 1, 1, "peak_hours"], // zai peak-hours auto-pause → excluded
 		["manual-overage-off", 1, 0, "manual"], // manual pause, feature off → excluded (already was)
 	];
 	for (const [name, paused, overage, reason] of rows) {
@@ -137,48 +138,55 @@ function selectedNames(query: QueryCall): Set<string> {
 }
 
 describe("AutoRefreshScheduler — manual-pause probe guard", () => {
-	it("excludes manually-paused accounts even when auto_pause_on_overage_enabled=1", async () => {
-		const query = await captureEligibilityQuery();
-		const names = selectedNames(query);
+	// The eligibility SQL is identical across every scenario, so capture it (and
+	// the set of accounts it selects) once rather than re-running the whole
+	// scheduler per test.
+	let names: Set<string>;
 
+	beforeAll(async () => {
+		const query = await captureEligibilityQuery();
+		names = selectedNames(query);
+	});
+
+	it("excludes manually-paused accounts even when auto_pause_on_overage_enabled=1", () => {
 		// The regression: a manual pause with the overage *feature* enabled must
 		// NOT be probed, because the auto-resume guard would never un-pause it.
 		expect(names.has("manual-overage-on")).toBe(false);
 	});
 
-	it("excludes failure-threshold pauses", async () => {
-		const query = await captureEligibilityQuery();
-		const names = selectedNames(query);
+	it("excludes failure-threshold pauses", () => {
 		expect(names.has("failure-threshold")).toBe(false);
 	});
 
-	it("still includes overage-paused accounts (so they auto-resume on window reset)", async () => {
-		const query = await captureEligibilityQuery();
-		const names = selectedNames(query);
+	it("excludes peak_hours pauses (zai peak-hours auto-pause)", () => {
+		// checkPeakHoursPause sets pause_reason='peak_hours' on zai accounts; such
+		// a pause is not overage, so it must never be probed even with the overage
+		// feature flag enabled.
+		expect(names.has("peak-hours-paused")).toBe(false);
+	});
+
+	it("still includes overage-paused accounts (so they auto-resume on window reset)", () => {
 		expect(names.has("overage-paused")).toBe(true);
 		// A null pause_reason is treated as overage by the resume guard, so it
 		// must remain eligible too.
 		expect(names.has("overage-null-reason")).toBe(true);
 	});
 
-	it("still includes non-paused accounts and excludes feature-off manual pauses", async () => {
-		const query = await captureEligibilityQuery();
-		const names = selectedNames(query);
+	it("still includes non-paused accounts and excludes feature-off manual pauses", () => {
 		expect(names.has("active")).toBe(true);
 		expect(names.has("manual-overage-off")).toBe(false);
 	});
 
-	it("selection criteria match the auto-resume guard exactly", async () => {
+	it("selection criteria match the auto-resume guard exactly", () => {
 		// Paused rows the query selects must be precisely the rows the resume
 		// guard (auto_pause_on_overage_enabled=1 AND pause_reason IN (NULL,'overage'))
 		// would un-pause. Anything else is a probe that can never be resumed.
-		const query = await captureEligibilityQuery();
-		const names = selectedNames(query);
 		const pausedSelected = [
 			"overage-paused",
 			"overage-null-reason",
 			"manual-overage-on",
 			"failure-threshold",
+			"peak-hours-paused",
 			"manual-overage-off",
 		].filter((n) => names.has(n));
 		expect(pausedSelected.sort()).toEqual(
