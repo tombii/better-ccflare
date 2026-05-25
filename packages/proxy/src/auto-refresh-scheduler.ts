@@ -151,16 +151,22 @@ export class AutoRefreshScheduler {
 					AND (
 						rate_limited_until IS NULL OR rate_limited_until <= ?
 					)
-					-- Exclude accounts that are paused for reasons other than overage (e.g. manually
-					-- paused zai/codex accounts, or accounts paused by the failure-threshold guard).
-					-- auto_pause_on_overage_enabled defaults to 0 for zai/codex, so a manually-paused
-					-- account of those types is correctly excluded — there is no point refreshing a
-					-- broken/manually-paused endpoint.  Overage-paused accounts (paused=1 AND
-					-- auto_pause_on_overage_enabled=1) are intentionally included so the scheduler can
-					-- probe them and auto-resume after the usage window resets.
-					AND NOT (
-						COALESCE(paused, 0) = 1
-						AND COALESCE(auto_pause_on_overage_enabled, 0) = 0
+					-- Only probe a paused account if it was auto-paused due to billing
+					-- overage. The auto-resume guard in sendDummyMessage only un-pauses an
+					-- account when auto_pause_on_overage_enabled=1 AND pause_reason IN
+					-- (NULL, 'overage'); selecting any other paused account here would probe
+					-- it forever yet never resume it. So a manually-paused account
+					-- (pause_reason='manual') or one paused by the failure-threshold guard
+					-- (pause_reason='failure_threshold') is left completely alone — probing it
+					-- just burns quota and pollutes the request log with synthetic 429s for an
+					-- account the user (or the guard) intentionally disabled (issue #199, bug 1).
+					-- These criteria MUST stay in sync with the resume guard.
+					AND (
+						COALESCE(paused, 0) = 0
+						OR (
+							COALESCE(auto_pause_on_overage_enabled, 0) = 1
+							AND (pause_reason IS NULL OR pause_reason = 'overage')
+						)
 					)
 			`,
 				[now, now, now],
