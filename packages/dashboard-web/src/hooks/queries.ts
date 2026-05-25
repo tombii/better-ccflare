@@ -1,7 +1,80 @@
 import type { AgentUpdatePayload } from "@better-ccflare/types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api } from "../api";
+import { api, type RequestPayload, type RequestSummary } from "../api";
 import { queryKeys } from "../lib/query-keys";
+
+/**
+ * Build a lightweight RequestPayload from a RequestSummary.
+ *
+ * The list view only needs metadata; full bodies (which can be ~256KB each)
+ * are lazy-loaded by RequestDetailsModal and CopyButton via /api/requests/payload/:id.
+ * `meta.bodiesOmitted` signals to consumers that the bodies must be hydrated.
+ */
+export function summaryToPlaceholder(summary: RequestSummary): RequestPayload {
+	// `accountUsed` is the resolved account name when the JOIN succeeds, else
+	// the raw account ID. We put it in accountName so the row renders the
+	// friendly name; the ID-only fallback is rare (only after account deletion).
+	const accountName = summary.accountUsed ?? undefined;
+	return {
+		id: summary.id,
+		request: { headers: {}, body: null },
+		response:
+			summary.statusCode != null
+				? { status: summary.statusCode, headers: {}, body: null }
+				: null,
+		error: summary.errorMessage ?? undefined,
+		meta: {
+			accountName,
+			timestamp: new Date(summary.timestamp).getTime(),
+			success: summary.success,
+			path: summary.path,
+			method: summary.method,
+			agentUsed: summary.agentUsed,
+			// Server derives this from statusCode === 429 so the list view can
+			// render the Rate Limited badge without lazy-loading the body.
+			rateLimited: summary.rateLimited,
+			bodiesOmitted: true,
+		},
+	};
+}
+
+export const useStorageInfo = (refetchInterval?: number) => {
+	return useQuery({
+		queryKey: queryKeys.storage(),
+		queryFn: () => api.getStorageInfo(),
+		staleTime: 30_000,
+		// Cadence boost while a probe is in flight: a full check on a
+		// multi-GB DB takes 25–90s, and a fixed 60s poll could miss the
+		// transition entirely. While `integrity_status === "running"` poll
+		// every 5s so the dashboard surfaces completion within seconds of
+		// the worker finishing. Idle steady-state stays at 60s.
+		refetchInterval: (query) => {
+			if (refetchInterval !== undefined) return refetchInterval;
+			const data = query.state.data;
+			if (data?.integrity_status === "running") return 5_000;
+			return 60_000;
+		},
+		refetchIntervalInBackground: false,
+	});
+};
+
+export const useTriggerIntegrityCheck = () => {
+	const queryClient = useQueryClient();
+	return useMutation({
+		mutationFn: (kind: "quick" | "full") => api.triggerIntegrityCheck(kind),
+		onError: (error) => {
+			// 409 (scheduler already running), network errors, etc. — surface
+			// via console so a misbehaving on-demand trigger is visible in
+			// devtools. The mutation's `error` field is also exposed by
+			// useMutation, so the calling component (StorageIntegrityCard)
+			// renders the message inline next to the buttons.
+			console.error("Integrity check trigger failed:", error);
+		},
+		onSettled: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.storage() });
+		},
+	});
+};
 
 export const useAccounts = () => {
 	return useQuery({
@@ -25,10 +98,41 @@ export const useAgents = () => {
 	});
 };
 
-export const useStats = (refetchInterval?: number) => {
+interface ApiKeyListItem {
+	id: string;
+	name: string;
+	prefixLast8: string;
+	createdAt: string;
+	lastUsed: string | null;
+	usageCount: number;
+	isActive: boolean;
+}
+
+interface ApiKeysListResponse {
+	success: boolean;
+	data: ApiKeyListItem[];
+	count: number;
+}
+
+export const useApiKeys = () => {
 	return useQuery({
-		queryKey: queryKeys.stats(),
-		queryFn: () => api.getStats(),
+		queryKey: queryKeys.apiKeys(),
+		queryFn: async () => {
+			const res = await api.get<ApiKeysListResponse>("/api/api-keys");
+			return res.data ?? [];
+		},
+		staleTime: 60000,
+		gcTime: 5 * 60 * 1000,
+	});
+};
+
+export const useStats = (
+	refetchInterval?: number,
+	errorsSinceHours?: number,
+) => {
+	return useQuery({
+		queryKey: queryKeys.stats(errorsSinceHours),
+		queryFn: () => api.getStats({ errorsSinceHours }),
 		staleTime: 15000, // Consider data fresh for 15 seconds
 		refetchInterval: refetchInterval ?? 30000, // Default to 30 seconds instead of 10
 		refetchIntervalInBackground: false, // Don't refresh when tab is not focused
@@ -116,15 +220,16 @@ export const useRequests = (limit: number, _refetchInterval?: number) => {
 	return useQuery({
 		queryKey: queryKeys.requests(limit),
 		queryFn: async () => {
-			const [requestsDetail, requestsSummary] = await Promise.all([
-				api.getRequestsDetail(limit),
-				api.getRequestsSummary(limit),
-			]);
-			// Convert array to Map for detailsMap
+			// Fetch only the summary endpoint - it has everything the list view needs.
+			// Full request/response bodies are lazy-loaded per row when needed
+			// (modal open, copy-as-JSON) via /api/requests/payload/:id.
+			const requestsSummary = await api.getRequestsSummary(limit);
 			const detailsMap = new Map(
 				requestsSummary.map((summary) => [summary.id, summary]),
 			);
-			return { requests: requestsDetail, detailsMap };
+			const requests: RequestPayload[] =
+				requestsSummary.map(summaryToPlaceholder);
+			return { requests, detailsMap };
 		},
 		staleTime: Infinity, // Consider data fresh until manually refetched
 		gcTime: 10 * 60 * 1000, // Keep in cache for 10 minutes
@@ -326,12 +431,6 @@ export const useSetUsageThrottling = () => {
 export const useCleanupNow = () => {
 	return useMutation({
 		mutationFn: () => api.cleanupNow(),
-	});
-};
-
-export const useCompactDb = () => {
-	return useMutation({
-		mutationFn: () => api.compactDb(),
 	});
 };
 

@@ -126,15 +126,29 @@ export function useRequestStream(limit = 200) {
 							);
 							const account = accounts?.find((a) => a.id === evt.accountId);
 
-							// Create a lightweight placeholder payload
+							// Create a lightweight placeholder payload.
+							// `bodiesOmitted: true` is required so that opening the
+							// details modal or pressing Copy-as-JSON triggers the
+							// lazy /api/requests/payload/:id fetch — without it the
+							// modal shows empty headers/body and the copy returns
+							// nulled-out bodies.
+							//
+							// `response: null` when no status is known yet so the
+							// status chip (guarded by `statusCode != null`) does NOT
+							// render a "0" before the response lands. The summary
+							// handler below patches response.status from
+							// `evt.payload.statusCode` once the request completes.
+							const hasStatus = evt.statusCode > 0;
 							const placeholder: RequestPayload = {
 								id: evt.id,
 								request: { headers: {}, body: null },
-								response: {
-									status: evt.statusCode,
-									headers: {},
-									body: null,
-								},
+								response: hasStatus
+									? {
+											status: evt.statusCode,
+											headers: {},
+											body: null,
+										}
+									: null,
 								meta: {
 									timestamp: evt.timestamp,
 									path: evt.path,
@@ -144,6 +158,8 @@ export function useRequestStream(limit = 200) {
 									success: false,
 									pending: true,
 									agentUsed: evt.agentUsed || undefined,
+									rateLimited: evt.statusCode === 429,
+									bodiesOmitted: true,
 								},
 							};
 
@@ -179,14 +195,36 @@ export function useRequestStream(limit = 200) {
 						);
 						if (requestIndex >= 0) {
 							const newRequests = [...current.requests];
-							// Update meta to remove pending status
+							// Update meta to remove pending status. Preserve
+							// `bodiesOmitted: true` so consumers continue to lazy-
+							// load bodies, and refresh `rateLimited` from the final
+							// statusCode (the placeholder set it from `evt.statusCode`
+							// which is 0 until the response lands).
 							if (newRequests[requestIndex].meta) {
 								newRequests[requestIndex] = {
 									...newRequests[requestIndex],
+									// Refresh response.status from the final summary —
+									// the start placeholder set it to 0 before the HTTP
+									// response landed, and the new header-row chip uses
+									// a `statusCode != null` guard (0 is not null), so
+									// without this every SSE-completed request would
+									// permanently display a grey "0" chip.
+									response:
+										evt.payload.statusCode != null
+											? {
+													...(newRequests[requestIndex].response ?? {
+														headers: {},
+														body: null,
+													}),
+													status: evt.payload.statusCode,
+												}
+											: null,
 									meta: {
 										...newRequests[requestIndex].meta,
 										pending: false,
 										success: evt.payload.success,
+										rateLimited: evt.payload.rateLimited,
+										bodiesOmitted: true,
 									},
 								};
 							}

@@ -1,3 +1,4 @@
+import { parseHttpError } from "@better-ccflare/errors";
 import {
 	Activity,
 	BarChart3,
@@ -63,6 +64,7 @@ export function Navigation({
 		"idle" | "checking" | "available" | "current" | "error"
 	>("idle");
 	const [latestVersion, setLatestVersion] = useState<string>("");
+	const [updateError, setUpdateError] = useState<string | null>(null);
 	const location = useLocation();
 	const isMountedRef = useRef(true);
 
@@ -242,11 +244,16 @@ export function Navigation({
 		}
 
 		setUpdateStatus("checking");
+		setUpdateError(null);
 		try {
 			const [response, packageInfo] = await Promise.all([
 				fetch("/api/version/check"),
 				detectPackageManager(),
 			]);
+
+			if (!response.ok) {
+				throw await parseHttpError(response);
+			}
 
 			const data = await response.json();
 			const latest = data.version;
@@ -289,6 +296,7 @@ export function Navigation({
 			if (!isMountedRef.current) return;
 
 			setUpdateStatus("error");
+			setUpdateError(error instanceof Error ? error.message : String(error));
 			console.error("❌ Failed to check for updates:", error);
 		}
 	}, []);
@@ -494,6 +502,11 @@ export function Navigation({
 							{updateStatus === "current" && (
 								<p className="mt-1 text-xs text-muted-foreground text-left">
 									Version {version.replace(/^v/, "")}
+								</p>
+							)}
+							{updateStatus === "error" && updateError && (
+								<p className="mt-1 text-xs text-destructive text-left break-words">
+									{updateError}
 								</p>
 							)}
 						</div>

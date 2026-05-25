@@ -32,6 +32,22 @@ self.onmessage = (event: MessageEvent<VacuumRequest>) => {
 	let db: Database | undefined;
 	try {
 		db = new Database(dbPath);
+		// Apply memory-bounded PRAGMAs BEFORE anything else. The worker opens
+		// its own connection here, so the main process's `configureSqlite`
+		// PRAGMAs do not apply — without these the connection inherits
+		// bun:sqlite's built-in defaults, which memory-map essentially the
+		// entire DB file (~15 GiB observed on a 15 GiB DB). VACUUM then
+		// walks every page, the resident set explodes, and the cgroup
+		// OOM-kills the process. This is the same trap that motivated #231
+		// for the main connection; the worker needs the same treatment.
+		// (Greptile #231)
+		//   - mmap_size = 0  : disable memory-mapped I/O entirely
+		//   - cache_size = -2000 : cap page cache at 2 MiB (VACUUM doesn't
+		//     benefit from a big cache; it streams pages)
+		//   - temp_store = FILE : never spill VACUUM temp tables to RAM
+		db.exec("PRAGMA mmap_size = 0");
+		db.exec("PRAGMA cache_size = -2000");
+		db.exec("PRAGMA temp_store = FILE");
 		db.exec(
 			`PRAGMA busy_timeout = ${Math.max(0, Math.trunc(Number(busyTimeoutMs) || 10000))}`,
 		);

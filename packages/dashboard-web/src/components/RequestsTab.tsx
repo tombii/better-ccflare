@@ -19,9 +19,9 @@ import {
 	X,
 } from "lucide-react";
 import { useMemo, useState } from "react";
-import type { RequestPayload, RequestSummary } from "../api";
+import { api, type RequestPayload, type RequestSummary } from "../api";
 import { API_LIMITS } from "../constants";
-import { useAccounts, useRequests } from "../hooks/queries";
+import { useAccounts, useApiKeys, useRequests } from "../hooks/queries";
 import { useRequestStream } from "../hooks/useRequestStream";
 import { isAnthropicPeakHour, isZaiPeakHour } from "../utils/provider-utils";
 import { CopyButton } from "./CopyButton";
@@ -77,6 +77,7 @@ export function RequestsTab() {
 	useRequestStream(API_LIMITS.requestsDetail);
 
 	const { data: accounts } = useAccounts();
+	const { data: configuredApiKeys } = useApiKeys();
 	const zaiAccountNames = new Set(
 		(accounts ?? []).filter((a) => a.provider === "zai").map((a) => a.name),
 	);
@@ -104,17 +105,16 @@ export function RequestsTab() {
 		};
 	}, [requestsData]);
 
-	// Extract unique accounts for filter dropdown - memoized
+	// Filter dropdown options come from dedicated endpoints (not from the loaded
+	// requests slice) so every configured account/API key is selectable, even
+	// when it doesn't appear in the most recent N requests.
 	const uniqueAccounts = useMemo(() => {
-		if (!data) return [];
-		return Array.from(
-			new Set(
-				data.requests
-					.map((r) => r.meta.accountName || r.meta.accountId)
-					.filter(Boolean),
-			),
-		).sort();
-	}, [data]);
+		const fromConfig = (accounts ?? []).map((a) => a.name).filter(Boolean);
+		const fromRequests = (data?.requests ?? [])
+			.map((r) => r.meta.accountName || r.meta.accountId)
+			.filter((v): v is string => Boolean(v));
+		return Array.from(new Set([...fromConfig, ...fromRequests])).sort();
+	}, [accounts, data]);
 
 	// Extract unique status codes for filter - memoized
 	const uniqueStatusCodes = useMemo(() => {
@@ -143,20 +143,18 @@ export function RequestsTab() {
 		).sort();
 	}, [data]);
 
-	// Extract unique API keys for filter - memoized
+	// API key filter: union of all configured keys (from /api/api-keys) and any
+	// keys observed in the loaded request slice (covers historical keys that
+	// were deleted but still appear on past requests).
 	const uniqueApiKeys = useMemo(() => {
-		if (!data) return [];
-		return Array.from(
-			new Set(
-				data.requests
-					.map((r) => {
-						const summary = data.summaries.get(r.id);
-						return summary?.apiKeyName;
-					})
-					.filter(Boolean),
-			),
-		).sort();
-	}, [data]);
+		const fromConfig = (configuredApiKeys ?? []).map((k) => k.name);
+		const fromRequests = data
+			? Array.from(data.summaries.values())
+					.map((s) => s.apiKeyName)
+					.filter((v): v is string => Boolean(v))
+			: [];
+		return Array.from(new Set([...fromConfig, ...fromRequests])).sort();
+	}, [configuredApiKeys, data]);
 
 	// Filter requests based on selected filters - memoized to avoid recalculation on every render
 	const filteredRequests = useMemo(() => {
@@ -713,59 +711,157 @@ export function RequestsTab() {
 							const isError = request.error || !request.meta.success;
 							const statusCode = request.response?.status;
 							const summary = data?.summaries.get(request.id);
+							const method = request.meta.method || summary?.method;
+							const path = request.meta.path || summary?.path;
+							const accountLabel =
+								request.meta.accountName ||
+								(request.meta.accountId
+									? `${request.meta.accountId.slice(0, 8)}...`
+									: null);
+							const agent = summary?.agentUsed || request.meta.agentUsed;
+							const isZaiPeak =
+								zaiAccountNames.has(request.meta.accountName ?? "") &&
+								isZaiPeakHour(request.meta.timestamp);
+							const isAnthropicPeak =
+								oauthAccountNames.has(request.meta.accountName ?? "") &&
+								isAnthropicPeakHour(request.meta.timestamp);
+							const statusClass =
+								statusCode == null
+									? ""
+									: statusCode >= 200 && statusCode < 300
+										? "bg-green-500/10 text-green-600 dark:text-green-400"
+										: statusCode >= 400 && statusCode < 500
+											? "bg-yellow-500/10 text-yellow-600 dark:text-yellow-400"
+											: statusCode >= 500
+												? "bg-red-500/10 text-red-600 dark:text-red-400"
+												: "bg-muted text-muted-foreground";
 
 							return (
 								<div
 									key={request.id}
-									className={`border rounded-lg p-3 transition-all duration-300 ${
+									className={`border rounded-lg transition-all duration-300 ${
 										isError ? "border-destructive/50" : "border-border"
 									} ${request.meta.pending ? "animate-pulse opacity-70" : "opacity-100"}`}
 								>
-									<button
-										type="button"
-										className="flex items-center justify-between cursor-pointer w-full text-left"
-										onClick={() => toggleExpanded(request.id)}
-									>
-										<div className="flex items-center gap-2 flex-wrap">
+									{/* Header row: single line, never wraps */}
+									<div className="flex items-center gap-2 p-3">
+										<button
+											type="button"
+											className="flex items-center gap-2 min-w-0 flex-1 text-left cursor-pointer"
+											onClick={() => toggleExpanded(request.id)}
+											aria-expanded={isExpanded}
+										>
 											{isExpanded ? (
-												<ChevronDown className="h-4 w-4" />
+												<ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
 											) : (
-												<ChevronRight className="h-4 w-4" />
+												<ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
 											)}
-											<span className="text-sm font-mono">
+											<span className="text-xs font-mono tabular-nums text-muted-foreground shrink-0">
 												{new Date(request.meta.timestamp).toLocaleTimeString()}
 											</span>
-											{(request.meta.method || summary?.method) && (
-												<span className="text-sm font-medium">
-													{request.meta.method || summary?.method}
-												</span>
-											)}
-											{(request.meta.path || summary?.path) && (
-												<span className="text-sm text-muted-foreground font-mono">
-													{request.meta.path || summary?.path}
-												</span>
-											)}
-											{statusCode && (
+											{statusCode != null && (
 												<span
-													className={`text-sm font-medium ${
-														statusCode >= 200 && statusCode < 300
-															? "text-green-600"
-															: statusCode >= 400 && statusCode < 500
-																? "text-yellow-600"
-																: "text-red-600"
-													}`}
+													className={`text-xs font-mono font-semibold tabular-nums px-1.5 py-0.5 rounded shrink-0 ${statusClass}`}
 												>
 													{statusCode}
 												</span>
 											)}
+											{method && (
+												<span className="text-xs font-semibold uppercase shrink-0">
+													{method}
+												</span>
+											)}
+											{path && (
+												<span className="text-xs font-mono text-muted-foreground truncate min-w-0 flex-1">
+													{path}
+												</span>
+											)}
+											{summary?.responseTimeMs != null && (
+												<span
+													className="text-xs font-mono tabular-nums text-muted-foreground shrink-0"
+													title="Response time"
+												>
+													{formatDuration(summary.responseTimeMs)}
+												</span>
+											)}
+											<span
+												className="text-[11px] font-mono text-muted-foreground/70 shrink-0 hidden sm:inline"
+												title={request.id}
+											>
+												{request.id.slice(0, 8)}
+											</span>
+										</button>
+
+										{/* Action buttons stay outside the toggle-expand button so they
+										    never get cut off by flex shrinking and have their own hit area. */}
+										<div className="flex items-center gap-1 shrink-0">
+											<Button
+												variant="ghost"
+												size="icon"
+												onClick={() => setModalRequest(request)}
+												title="View Details"
+											>
+												<Eye className="h-4 w-4" />
+											</Button>
+											<CopyButton
+												variant="ghost"
+												size="icon"
+												title="Copy as JSON"
+												getValueAsync={async () => {
+													const full = request.meta.bodiesOmitted
+														? await api.getRequestPayload(request.id)
+														: request;
+													const decoded: RequestPayload & {
+														decoded?: true;
+													} = {
+														...full,
+														request: full.request
+															? {
+																	...full.request,
+																	body: full.request.body
+																		? decodeBase64(full.request.body)
+																		: null,
+																}
+															: full.request,
+														response: full.response
+															? {
+																	...full.response,
+																	body: full.response.body
+																		? decodeBase64(full.response.body)
+																		: null,
+																}
+															: null,
+														decoded: true,
+													};
+													return JSON.stringify(decoded, null, 2);
+												}}
+											/>
+										</div>
+									</div>
+
+									{/* Badges row: wraps freely, holds all the non-essential context */}
+									{(summary?.model ||
+										agent ||
+										summary?.comboName ||
+										summary?.apiKeyName ||
+										summary?.totalTokens != null ||
+										summary?.costUsd != null ||
+										summary?.billingType ||
+										(summary?.tokensPerSecond ?? 0) > 0 ||
+										accountLabel ||
+										request.meta.rateLimited ||
+										isZaiPeak ||
+										isAnthropicPeak) && (
+										<div className="flex flex-wrap items-center gap-1.5 px-3 pb-2 pl-9 text-xs">
 											{summary?.model && (
 												<Badge variant="secondary" className="text-xs">
 													{summary.model}
 												</Badge>
 											)}
-											{(summary?.agentUsed || request.meta.agentUsed) && (
+											{agent && (
 												<Badge variant="secondary" className="text-xs">
-													Agent: {summary?.agentUsed || request.meta.agentUsed}
+													<Bot className="h-3 w-3 mr-1" />
+													{agent}
 												</Badge>
 											)}
 											{summary?.comboName && (
@@ -782,19 +878,14 @@ export function RequestsTab() {
 													{summary.apiKeyName}
 												</Badge>
 											)}
-											{(summary?.totalTokens || request.meta.pending) && (
+											{summary?.totalTokens != null && (
 												<Badge variant="outline" className="text-xs">
-													{summary?.totalTokens
-														? formatTokens(summary.totalTokens)
-														: "--"}{" "}
-													tokens
+													{formatTokens(summary.totalTokens)} tokens
 												</Badge>
 											)}
-											{(summary?.costUsd || request.meta.pending) && (
+											{summary?.costUsd != null && summary.costUsd > 0 && (
 												<Badge variant="default" className="text-xs">
-													{summary?.costUsd && summary.costUsd > 0
-														? formatCost(summary.costUsd)
-														: "--"}
+													{formatCost(summary.costUsd)}
 												</Badge>
 											)}
 											{summary?.billingType === "overage" && (
@@ -813,17 +904,15 @@ export function RequestsTab() {
 													Plan
 												</Badge>
 											)}
-											{summary?.tokensPerSecond &&
+											{summary?.tokensPerSecond != null &&
 												summary.tokensPerSecond > 0 && (
 													<Badge variant="secondary" className="text-xs">
 														{formatTokensPerSecond(summary.tokensPerSecond)}
 													</Badge>
 												)}
-											{(request.meta.accountName || request.meta.accountId) && (
-												<span className="text-sm text-muted-foreground">
-													via{" "}
-													{request.meta.accountName ||
-														`${request.meta.accountId?.slice(0, 8)}...`}
+											{accountLabel && (
+												<span className="text-xs text-muted-foreground">
+													via {accountLabel}
 												</span>
 											)}
 											{request.meta.rateLimited && (
@@ -831,86 +920,25 @@ export function RequestsTab() {
 													Rate Limited
 												</Badge>
 											)}
-											{zaiAccountNames.has(request.meta.accountName ?? "") &&
-												isZaiPeakHour(request.meta.timestamp) && (
-													<Badge
-														variant="outline"
-														className="text-xs border-orange-500 text-orange-500"
-													>
-														Peak
-													</Badge>
-												)}
-											{oauthAccountNames.has(request.meta.accountName ?? "") &&
-												isAnthropicPeakHour(request.meta.timestamp) && (
-													<Badge
-														variant="outline"
-														className="text-xs border-orange-500 text-orange-500"
-													>
-														Peak
-													</Badge>
-												)}
-											{request.error && (
-												<span className="text-sm text-destructive">
-													Error: {request.error}
-												</span>
+											{(isZaiPeak || isAnthropicPeak) && (
+												<Badge
+													variant="outline"
+													className="text-xs border-orange-500 text-orange-500"
+												>
+													Peak
+												</Badge>
 											)}
 										</div>
-										<div className="text-sm text-muted-foreground flex items-center gap-2">
-											{(summary?.responseTimeMs || request.meta.pending) && (
-												<span>
-													{summary?.responseTimeMs
-														? formatDuration(summary.responseTimeMs)
-														: "--"}
-												</span>
-											)}
-											{request.meta.retry !== undefined &&
-												request.meta.retry > 0 && (
-													<span>Retry {request.meta.retry}</span>
-												)}
-											<span>ID: {request.id.slice(0, 8)}...</span>
-										</div>
-									</button>
+									)}
 
-									{/* Action buttons */}
-									<div className="flex justify-end gap-2 mt-2">
-										<Button
-											variant="ghost"
-											size="icon"
-											onClick={() => setModalRequest(request)}
-											title="View Details"
-										>
-											<Eye className="h-4 w-4" />
-										</Button>
-										<CopyButton
-											variant="ghost"
-											size="icon"
-											title="Copy as JSON"
-											getValue={() => {
-												const decoded: RequestPayload & { decoded?: true } = {
-													...request,
-													request: {
-														...request.request,
-														body: request.request.body
-															? decodeBase64(request.request.body)
-															: null,
-													},
-													response: request.response
-														? {
-																...request.response,
-																body: request.response.body
-																	? decodeBase64(request.response.body)
-																	: null,
-															}
-														: null,
-													decoded: true,
-												};
-												return JSON.stringify(decoded, null, 2);
-											}}
-										/>
-									</div>
+									{request.error && (
+										<div className="text-xs text-destructive px-3 pb-2 pl-9 break-words">
+											Error: {request.error}
+										</div>
+									)}
 
 									{isExpanded && (
-										<div className="mt-3 space-y-3">
+										<div className="px-3 pb-3 pl-9 space-y-3">
 											<TokenUsageDisplay summary={summary} />
 											<Button
 												variant="outline"

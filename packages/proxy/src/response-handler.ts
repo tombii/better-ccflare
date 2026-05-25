@@ -4,7 +4,7 @@ import {
 	withSanitizedProxyHeaders,
 } from "@better-ccflare/http-common";
 import { ANALYTICS_STREAM_SYMBOL } from "@better-ccflare/http-common/symbols";
-import type { Account } from "@better-ccflare/types";
+import type { Account, RateLimitReason } from "@better-ccflare/types";
 import type { ProxyContext } from "./handlers";
 import { applyRateLimitCooldown } from "./handlers/rate-limit-cooldown";
 import { createSseRateLimitSniffer } from "./handlers/sse-rate-limit-sniffer";
@@ -219,7 +219,9 @@ export async function forwardToClient(
 		// Mid-stream rate-limit detection for issue #114 Fix 1.2. Only
 		// create a sniffer when we know which account to mark — anonymous
 		// or unauthenticated requests can't be failed over.
-		const rateLimitSniffer = account ? createSseRateLimitSniffer() : null;
+		const rateLimitSniffer = account
+			? createSseRateLimitSniffer({ provider: account.provider })
+			: null;
 
 		(async () => {
 			// Configurable via env vars to support long agentic workloads where
@@ -300,10 +302,18 @@ export async function forwardToClient(
 							// Mid-stream rate-limit detection. The sniffer
 							// fires exactly once; after that feed() is a no-op.
 							if (account && rateLimitSniffer?.feed(value)) {
+								// Map firedReason to the correct RateLimitReason override:
+								//   "overloaded_error" → upstream_529_overloaded_with_reset
+								//   "rate_limit_error" → let applyRateLimitCooldown auto-derive (429)
+								const reason: RateLimitReason | undefined =
+									rateLimitSniffer.firedReason === "overloaded_error"
+										? "upstream_529_overloaded_with_reset"
+										: undefined;
 								applyRateLimitCooldown(
 									account,
 									{
 										resetTime: Date.now() + getMidStreamRateLimitCooldownMs(),
+										reason,
 									},
 									ctx,
 								);

@@ -340,6 +340,80 @@ describe("processProxyResponse — streaming rate-limit failover (issue #114)", 
 	});
 });
 
+describe("processProxyResponse — 529 overload reason", () => {
+	it("passes reason='upstream_529_overloaded_with_reset' on 529 with resetTime", async () => {
+		const account = makeAccount();
+		const resetTime = Date.now() + 30 * 60_000;
+		const { ctx, calls } = makeCtxWithReason({
+			isStream: false,
+			rateLimited: true,
+			resetTime,
+		});
+		const response = new Response(
+			'{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}',
+			{
+				status: 529,
+				headers: { "content-type": "application/json" },
+			},
+		);
+
+		await processProxyResponse(response, account, ctx);
+
+		expect(calls.markRateLimited).toHaveLength(1);
+		expect(calls.markRateLimited[0]?.reason).toBe(
+			"upstream_529_overloaded_with_reset",
+		);
+	});
+
+	it("passes reason='upstream_529_overloaded_no_reset' on 529 without resetTime", async () => {
+		const account = makeAccount();
+		const { ctx, calls } = makeCtxWithReason({
+			isStream: false,
+			rateLimited: true,
+			resetTime: undefined,
+		});
+		const response = new Response(
+			'{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}',
+			{
+				status: 529,
+				headers: { "content-type": "application/json" },
+			},
+		);
+
+		await processProxyResponse(response, account, ctx);
+
+		expect(calls.markRateLimited).toHaveLength(1);
+		expect(calls.markRateLimited[0]?.reason).toBe(
+			"upstream_529_overloaded_no_reset",
+		);
+	});
+
+	it("skips cooldown but logs status code for keepalive 529 requests", async () => {
+		const account = makeAccount();
+		const resetTime = Date.now() + 30 * 60_000;
+		const { ctx, calls } = makeCtxWithReason({
+			isStream: false,
+			rateLimited: true,
+			resetTime,
+		});
+		const response = new Response(
+			'{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}',
+			{
+				status: 529,
+				headers: { "content-type": "application/json" },
+			},
+		);
+		const requestMeta = {
+			headers: new Headers({ "x-better-ccflare-keepalive": "true" }),
+		};
+
+		await processProxyResponse(response, account, ctx, undefined, requestMeta);
+
+		// Keepalive requests skip cooldown marking
+		expect(calls.markRateLimited).toHaveLength(0);
+	});
+});
+
 describe("processProxyResponse — in-memory cooldown mutation", () => {
 	it("sets account.rate_limited_until on 429 with resetTime", async () => {
 		const account = makeAccount();

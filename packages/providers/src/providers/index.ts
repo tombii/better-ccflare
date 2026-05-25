@@ -8,9 +8,12 @@ export {
 	AnthropicCompatibleProvider,
 } from "./anthropic-compatible/index";
 export { BedrockProvider, parseBedrockConfig } from "./bedrock/index";
+export type { CodexUsageRefreshFetchResult } from "./codex/index";
 export {
+	CODEX_DEFAULT_ENDPOINT,
 	CodexOAuthProvider,
 	CodexProvider,
+	fetchCodexUsageOnDemand,
 	parseCodexUsageHeaders,
 } from "./codex/index";
 export { KiloProvider } from "./kilo/index";

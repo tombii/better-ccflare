@@ -27,7 +27,10 @@ import {
 	SessionStrategy,
 } from "@better-ccflare/load-balancer";
 import { Logger } from "@better-ccflare/logger";
+import { handleResponsesRequest } from "@better-ccflare/openai-responses-adapter";
 import {
+	CODEX_DEFAULT_ENDPOINT,
+	fetchCodexUsageOnDemand,
 	getProvider,
 	getRepresentativeUtilizationForProvider,
 	usageCache,
@@ -45,6 +48,7 @@ import {
 	getValidAccessToken,
 	handleProxy,
 	type ProxyContext,
+	registerCodexUsageRefresher,
 	registerPollingRestarter,
 	registerRefreshClearer,
 	sendWorkerConfigUpdate,
@@ -53,6 +57,7 @@ import {
 	startUsageWorker,
 	stopGlobalTokenHealthChecks,
 	terminateUsageWorker,
+	unregisterCodexUsageRefresher,
 } from "@better-ccflare/proxy";
 import { validatePathOrThrow } from "@better-ccflare/security";
 import {
@@ -200,6 +205,7 @@ function serveDashboardFile(
 
 // Module-level server instance
 let serverInstance: ReturnType<typeof serve> | null = null;
+let registeredServerId: string | null = null;
 let stopRetentionJob: (() => void) | null = null;
 let stopOAuthCleanupJob: (() => void) | null = null;
 let stopRateLimitCleanupJob: (() => void) | null = null;
@@ -600,12 +606,55 @@ export default async function startServer(options?: {
 	DatabaseFactory.initialize(undefined, runtime);
 	const dbOps = await DatabaseFactory.getInstanceAsync();
 
-	// Run integrity check if database was initialized in fast mode (SQLite only)
+	// One-time migration: promote pre-existing DBs from auto_vacuum=NONE to
+	// INCREMENTAL. Fresh DBs created since ensureSchema() started issuing
+	// `PRAGMA auto_vacuum = INCREMENTAL` are already in mode 2 and this is a
+	// fast no-op. Existing DBs upgraded into this build run a full VACUUM
+	// here — minutes on a multi-GB file. Done BEFORE the HTTP listener binds
+	// so the proxy never sees a stalled writer slot.
 	if (dbOps.isSQLite) {
-		dbOps.runIntegrityCheck();
+		const startupLog = new Logger("Startup");
+		try {
+			const result = dbOps.bootstrapAutoVacuum();
+			if (result.migrated) {
+				startupLog.info(
+					`One-time auto_vacuum migration: mode ${result.modeBefore} → ${result.modeAfter} ` +
+						`in ${result.durationMs}ms. Future free-page reclamation runs incrementally via the ` +
+						`hourly worker — no more blocking VACUUM.`,
+				);
+				if (result.modeAfter !== 2) {
+					startupLog.error(
+						`auto_vacuum still ${result.modeAfter} after migration VACUUM — ` +
+							`incremental reclamation will be a no-op. Investigate disk space and DB integrity.`,
+					);
+				}
+			} else if (result.modeBefore === 1) {
+				// Operator set auto_vacuum=FULL on purpose. We don't migrate it to
+				// INCREMENTAL silently because FULL reclaims pages on every COMMIT
+				// while INCREMENTAL only reclaims when our hourly worker runs —
+				// rewriting that policy without notice would surprise the user.
+				// Log so it shows up in startup logs and `journalctl`. (Greptile #230)
+				startupLog.info(
+					`auto_vacuum=FULL (mode 1) detected — left in place. The hourly incremental_vacuum ` +
+						`worker is a no-op under FULL mode; pages are reclaimed on every COMMIT. ` +
+						`Switch to INCREMENTAL manually if you want the worker-driven cadence.`,
+				);
+			}
+		} catch (err) {
+			startupLog.error(
+				`Bootstrap auto_vacuum migration failed: ${err instanceof Error ? err.message : String(err)}. ` +
+					`Free pages will not be reclaimed until this is resolved. ` +
+					`Common causes: disk full (VACUUM needs ~2× DB size free), DB corruption.`,
+			);
+			throw err;
+		}
 	}
 
-	// Start periodic integrity scheduler
+	// Start periodic integrity scheduler. The startup `PRAGMA integrity_check`
+	// is intentionally gone — on multi-GB databases it blocked startup for
+	// tens of seconds. The scheduler runs `quick_check` every few hours and
+	// a full `integrity_check` + `foreign_key_check` daily (in a worker), and
+	// surfaces results via /api/storage and the dashboard.
 	stopIntegritySchedulerJob = startIntegrityScheduler(dbOps);
 
 	const db = dbOps.getAdapter();
@@ -622,6 +671,10 @@ export default async function startServer(options?: {
 	container.registerInstance(SERVICE_KEYS.PricingLogger, pricingLogger);
 	setPricingLogger(pricingLogger);
 
+	// Strategy is constructed below after RuntimeConfig is built. The router
+	// accepts a getter so it can read the live (post-hot-reload) instance.
+	let currentStrategy: LoadBalancingStrategy | null = null;
+
 	const apiRouter = new APIRouter({
 		db,
 		config,
@@ -633,6 +686,7 @@ export default async function startServer(options?: {
 		getAsyncWriterHealth: () => asyncWriter.getHealth(),
 		getUsageWorkerHealth: () => getUsageWorkerHealth(),
 		getIntegrityStatus: () => dbOps.getIntegrityStatus(),
+		getStrategy: () => currentStrategy,
 	});
 
 	// Initialize AuthService for proxy authentication
@@ -700,9 +754,17 @@ export default async function startServer(options?: {
 				log.info(
 					`Periodic cleanup: removed ${removedRequests} requests, ${removedPayloads} payloads in ${Date.now() - startTime}ms`,
 				);
-				// Reclaim freed SQLite pages without a full blocking VACUUM
-				// Increased from 50000 to 200000 pages (~800 MB) for more aggressive cleanup
-				dbOps.incrementalVacuum(200000);
+				// Reclaim a bounded chunk of freed pages. 8000 pages × 4 KiB = ~32 MiB
+				// per tick, off-thread via the incremental-vacuum worker. Small N
+				// keeps the writer-slot hold sub-100ms on local SSD so concurrent
+				// main-thread writes (rate-limit updates, OAuth refresh, post-
+				// processor inserts) don't pile up on busy_timeout. Pre-fix this
+				// path passed 200000 and silently fell back to a full main-thread
+				// VACUUM when auto_vacuum=NONE — see incrementalVacuum() in
+				// packages/database/src/database-operations.ts.
+				dbOps.incrementalVacuum(8000).catch((err) => {
+					log.error(`Incremental vacuum error: ${err}`);
+				});
 			}
 		} catch (err) {
 			log.error(`Periodic data retention cleanup error: ${err}`);
@@ -779,6 +841,7 @@ export default async function startServer(options?: {
 	});
 
 	strategy.initialize?.(strategyStore);
+	currentStrategy = strategy;
 
 	// Start usage worker eagerly (before first request)
 	startUsageWorker();
@@ -799,6 +862,8 @@ export default async function startServer(options?: {
 
 	// Register this server's refresh clearing capability
 	const serverId = `server-${runtime.port}`;
+	// Track at module scope so handleGracefulShutdown can unregister cleanly.
+	registeredServerId = serverId;
 	registerRefreshClearer(serverId, (accountId: string) => {
 		// Clear refresh cache for this account in this server's context
 		proxyContext.refreshInFlight.delete(accountId);
@@ -839,6 +904,115 @@ export default async function startServer(options?: {
 		return true;
 	});
 
+	// Register this server's codex on-demand usage refresher. Codex does not
+	// expose a free usage endpoint (unlike Anthropic's /api/oauth/usage), so
+	// each call sends a tiny upstream request and parses the x-codex-* headers
+	// from the response. Cost is bounded by `max_output_tokens: 1` plus the
+	// abort-after-headers cancel inside fetchCodexUsageOnDemand.
+	registerCodexUsageRefresher(serverId, async (accountId: string) => {
+		const account = await dbOps.getAccount(accountId);
+		if (!account) {
+			return {
+				success: false,
+				message: `Account ${accountId} not found`,
+			};
+		}
+		if (account.provider !== "codex") {
+			return {
+				success: false,
+				message: `Account '${account.name}' is not a Codex account`,
+			};
+		}
+		if (!account.access_token && !account.refresh_token) {
+			return {
+				success: false,
+				message: `Account '${account.name}' has no tokens — please re-authenticate`,
+			};
+		}
+
+		let accessToken: string;
+		try {
+			accessToken = await getValidAccessToken(account, proxyContext);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			log.warn(
+				`Codex usage refresh: failed to get access token for ${account.name}: ${message}`,
+			);
+			return {
+				success: false,
+				message: `Could not refresh access token for '${account.name}': ${message}`,
+			};
+		}
+
+		const endpoint = account.custom_endpoint ?? CODEX_DEFAULT_ENDPOINT;
+
+		let fetchResult: Awaited<ReturnType<typeof fetchCodexUsageOnDemand>>;
+		try {
+			fetchResult = await fetchCodexUsageOnDemand(accessToken, endpoint);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			log.error(
+				`Codex usage refresh: upstream fetch failed for ${account.name}:`,
+				message,
+			);
+			return {
+				success: false,
+				message: `Codex request failed for '${account.name}': ${message}`,
+			};
+		}
+
+		// Persist rate-limit reset even on non-2xx so the dashboard sees the
+		// most accurate reset time when the account is currently limited.
+		const codexProvider = getProvider("codex");
+		if (codexProvider) {
+			const rl = codexProvider.parseRateLimit(fetchResult.response);
+			if (rl.resetTime != null) {
+				try {
+					await db.run(
+						"UPDATE accounts SET rate_limit_reset = ? WHERE id = ?",
+						[rl.resetTime, account.id],
+					);
+				} catch (error) {
+					log.warn(
+						`Codex usage refresh: failed to update rate_limit_reset for ${account.name}:`,
+						error,
+					);
+				}
+			}
+		}
+
+		if (!fetchResult.data) {
+			return {
+				success: false,
+				message: `Codex returned no usage headers (status ${fetchResult.response.status}) for '${account.name}'`,
+			};
+		}
+
+		usageCache.set(accountId, fetchResult.data);
+
+		const fiveHour = fetchResult.data.five_hour?.utilization ?? 0;
+		const sevenDay = fetchResult.data.seven_day?.utilization ?? 0;
+		const isRateLimited = fetchResult.response.status === 429;
+		log.info(
+			`Codex usage refreshed for '${account.name}': 5h=${fiveHour}%, 7d=${sevenDay}%${
+				isRateLimited ? " (rate-limited)" : ""
+			}`,
+		);
+
+		// 429 still produces a successful header refresh (the usage payload is
+		// what we wanted), but the dashboard message must not celebrate it —
+		// otherwise the operator sees "refreshed successfully" while the
+		// account is fully exhausted. See tombii's PR #219 review note.
+		const message = isRateLimited
+			? `Usage refreshed for '${account.name}' — account is rate limited (5h: ${fiveHour}%, 7d: ${sevenDay}%).`
+			: `Usage refreshed for '${account.name}' (5h: ${fiveHour}%, 7d: ${sevenDay}%).`;
+
+		return {
+			success: true,
+			message,
+		};
+	});
+
 	// Initialize auto-refresh scheduler (now that proxyContext is available)
 	autoRefreshScheduler = new AutoRefreshScheduler(db, proxyContext);
 	autoRefreshScheduler.start();
@@ -861,6 +1035,7 @@ export default async function startServer(options?: {
 			);
 			strategy.initialize?.(strategyStore);
 			proxyContext.strategy = strategy;
+			currentStrategy = strategy;
 		}
 		if (key === "store_payloads") {
 			sendWorkerConfigUpdate(config.getStorePayloads());
@@ -963,6 +1138,44 @@ export default async function startServer(options?: {
 					}
 
 					try {
+						// Codex CLI first tries WebSocket transport for /v1/responses.
+						// We only support HTTP — reject the upgrade cleanly so Codex
+						// falls back to HTTPS without hitting the proxy with an empty body.
+						if (
+							req.headers.get("upgrade")?.toLowerCase() === "websocket" &&
+							(url.pathname === "/v1/responses" ||
+								url.pathname === "/v1/responses/compact")
+						) {
+							return new Response(
+								JSON.stringify({
+									type: "error",
+									error: {
+										type: "not_supported_error",
+										message:
+											"WebSocket transport is not supported. Codex will retry over HTTPS automatically.",
+									},
+								}),
+								{
+									status: 503,
+									headers: { "Content-Type": "application/json" },
+								},
+							);
+						}
+
+						if (
+							req.method === "POST" &&
+							(url.pathname === "/v1/responses" ||
+								url.pathname === "/v1/responses/compact")
+						) {
+							return await handleResponsesRequest(
+								req,
+								url,
+								handleProxy as Parameters<typeof handleResponsesRequest>[2],
+								proxyContext,
+								authResult.apiKeyId,
+								authResult.apiKeyName,
+							);
+						}
 						return await handleProxy(
 							req,
 							url,
@@ -1323,10 +1536,42 @@ Available endpoints:
 	};
 }
 
+// most in-flight streaming responses complete; short enough that systemd's
+// default TimeoutStopSec (90s) doesn't have to escalate to SIGKILL.
+const SHUTDOWN_WATCHDOG_MS = 30_000;
+
+// Deduplicates concurrent shutdown invocations (e.g. SIGINT arriving while
+// SIGTERM is still awaiting serverInstance.stop()). Without this, the second
+// invocation races on the same Bun server, worker, and DB writer.
+let isShuttingDown = false;
+
 // Graceful shutdown handler
 async function handleGracefulShutdown(signal: string) {
+	if (isShuttingDown) {
+		console.log(`Ignoring ${signal} — shutdown already in progress`);
+		return;
+	}
+	isShuttingDown = true;
+
 	console.log(`\n👋 Received ${signal}, shutting down gracefully...`);
+
+	// Hard upper bound on shutdown duration. unref'd so it doesn't itself
+	// prevent a clean exit if everything else finishes first. Exits with 0
+	// because the watchdog only fires on an expected SIGTERM that ran long,
+	// not on a failure — code 1 would make systemd Restart=on-failure
+	// auto-restart the unit instead of treating it as a normal stop.
+	const watchdog = setTimeout(() => {
+		console.error(
+			`⚠️ Shutdown watchdog (${SHUTDOWN_WATCHDOG_MS}ms) expired, forcing exit`,
+		);
+		process.exit(0);
+	}, SHUTDOWN_WATCHDOG_MS);
+	watchdog.unref();
+
 	try {
+		// Stop scheduler triggers first so they don't add load while draining.
+		// These calls only stop the recurring trigger; any in-flight task they
+		// already kicked off continues until it finishes naturally.
 		if (stopRetentionJob) {
 			stopRetentionJob();
 			stopRetentionJob = null;
@@ -1368,6 +1613,14 @@ async function handleGracefulShutdown(signal: string) {
 
 		// Stop token health monitoring
 		stopGlobalTokenHealthChecks();
+
+		// Unregister this server's Codex on-demand usage refresher so the
+		// module-level registry doesn't keep a stale callback after restart.
+		// Mirrors the cleanup pattern used by the schedulers above.
+		if (registeredServerId) {
+			unregisterCodexUsageRefresher(registeredServerId);
+			registeredServerId = null;
+		}
 
 		// Clear all pending usage polling retry timeouts
 		if (usagePollingRetryTimeouts.size > 0) {

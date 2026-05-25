@@ -189,6 +189,32 @@ describe("API Authentication", () => {
 			expect(await authService.isPathExempt("/api/oauth/init", "POST")).toBe(true);
 		});
 
+		test("should exempt /api/version/check from authentication", async () => {
+			// Version check returns only the latest npm-published version (public data).
+			// The sidebar tile fires this on dashboard load with no API key in headers,
+			// so it must be reachable even when auth is enabled.
+			expect(authService.isStaticPathExempt("/api/version/check")).toBe(true);
+			expect(await authService.isPathExempt("/api/version/check", "GET")).toBe(true);
+		});
+
+		test("should allow /api/version/check without API key when auth is enabled", async () => {
+			// Reproduces the user-visible bug: with at least one API key configured,
+			// fetch("/api/version/check") from the dashboard returned 401 because the
+			// path was treated as a normal /api/* route requiring auth.
+			await generateApiKey(dbOps, "version-check-test-key", "admin");
+			expect(await authService.isAuthenticationEnabled()).toBe(true);
+
+			const request = new Request("http://localhost:8080/api/version/check");
+			const result = await authService.authenticateRequest(
+				request,
+				"/api/version/check",
+				"GET",
+			);
+
+			expect(result.isAuthenticated).toBe(true);
+			expect(result.error).toBeUndefined();
+		});
+
 		test("should exempt static assets from authentication", async () => {
 			expect(await authService.isPathExempt("/chunk-abc123.js", "GET")).toBe(true);
 			expect(await authService.isPathExempt("/chunk-abc123.css", "GET")).toBe(true);

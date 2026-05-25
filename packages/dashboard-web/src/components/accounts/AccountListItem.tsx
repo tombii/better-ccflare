@@ -32,7 +32,7 @@ function formatTokenCount(n: number): string {
 
 interface AccountListItemProps {
 	account: Account;
-	isActive?: boolean;
+	isPrimary?: boolean;
 	onPauseToggle: (account: Account) => void;
 	onForceResetRateLimit: (account: Account) => void;
 	onRefreshUsage: (account: Account) => Promise<void>;
@@ -53,7 +53,7 @@ interface AccountListItemProps {
 
 export function AccountListItem({
 	account,
-	isActive = false,
+	isPrimary = false,
 	onPauseToggle,
 	onForceResetRateLimit,
 	onRefreshUsage,
@@ -116,9 +116,8 @@ export function AccountListItem({
 
 	return (
 		<div
-			key={account.name}
 			className={`p-4 border rounded-lg transition-colors space-y-4 ${
-				isActive
+				isPrimary
 					? "border-primary bg-primary/5 shadow-sm"
 					: "border-border hover:border-muted-foreground/50"
 			}`}
@@ -128,9 +127,9 @@ export function AccountListItem({
 					<div>
 						<div className="flex items-center gap-2">
 							<p className="font-medium">{account.name}</p>
-							{isActive && (
+							{isPrimary && (
 								<span className="px-2 py-0.5 text-xs font-medium bg-primary text-primary-foreground rounded-full">
-									Active
+									Primary
 								</span>
 							)}
 							<span className="px-2 py-0.5 text-xs font-medium bg-secondary text-secondary-foreground rounded-full">
@@ -376,7 +375,8 @@ export function AccountListItem({
 							<KeyRound className="h-4 w-4" />
 						</Button>
 					)}
-					{account.provider === "anthropic" && (
+					{(account.provider === "anthropic" ||
+						account.provider === "codex") && (
 						<Button
 							variant="ghost"
 							size="sm"
@@ -390,7 +390,11 @@ export function AccountListItem({
 									setIsRefreshingUsage(false);
 								}
 							}}
-							title="Refresh usage data (restarts usage polling and refreshes token if expired)"
+							title={
+								account.provider === "codex"
+									? "Refresh usage data (sends one minimal Codex request — consumes a small slice of quota)"
+									: "Refresh usage data (restarts usage polling and refreshes token if expired)"
+							}
 						>
 							<RefreshCw
 								className={`h-3.5 w-3.5 ${isRefreshingUsage ? "animate-spin" : ""}`}

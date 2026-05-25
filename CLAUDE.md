@@ -10,16 +10,34 @@ Load balancer proxy for Claude distributing requests across multiple account pro
 
 **README files** - Only modify `./README.md` (root). Do NOT modify `apps/cli/README.md`.
 
-**NEVER TOUCH `inline-worker.ts`** — auto-generated, must be excluded from all reads, edits, searches, and commits.
-If accidentally modified: `git checkout -- packages/proxy/src/inline-worker.ts`
+**NEVER TOUCH these auto-generated files** — must be excluded from all reads, edits, searches, and commits:
+- `packages/proxy/src/inline-worker.ts`
+- `packages/database/src/inline-vacuum-worker.ts`
+- `packages/database/src/inline-integrity-check-worker.ts`
+
+If accidentally modified: `git checkout -- <path>`
 
 ## Git Refspecs
-This repo has both a `main` branch and a `main` tag. **Always use `refs/heads/main`** (not `main`) for all git log, diff, checkout, and merge-base commands to avoid ambiguous refspec errors. Applies to: `git log refs/heads/main`, `git diff refs/heads/main...`, `git merge-base refs/heads/main`, etc.
+This repo has both a `main` branch and a `main` tag. **Always use `refs/heads/main`** (not `main`) for local branch operations (push, checkout). For merge-base and log comparisons against the remote, use `origin/main` (the remote ref) to avoid the ambiguous refspec warning from the local tag.
 
 ## Branch Management
 Always branch from `main` with a fresh pull. Never make changes directly on main.
 PRs: `gh pr checkout <PR_NUMBER>` or `git checkout <branch-name>`.
 - If `git push origin main` fails with `src refspec main matches more than one` (branch/tag name collision), push explicitly: `git push origin refs/heads/main:refs/heads/main`.
+
+## PR Review Against Current Main (MANDATORY)
+
+Before reviewing or merging any PR, always find the merge base and identify what main has added since the PR branched:
+
+```bash
+git fetch origin pull/<PR_NUMBER>/head:<branch-name>
+git fetch origin main
+MERGE_BASE=$(git merge-base <branch-name> origin/main)
+git log $MERGE_BASE..origin/main --oneline          # commits on main the PR doesn't have
+git diff $MERGE_BASE..origin/main --name-only        # files main changed since PR branched
+```
+
+Cross-check the PR's changed files against main's post-branch files. If they overlap, inspect those specific hunks to confirm the PR doesn't regress recent fixes. A PR based on an old main can silently overwrite hotfixes, security patches, or behaviour changes that landed after it branched.
 
 ## Merging PRs from External Contributors
 When merging PRs from external contributors (not tombii), **create a merge commit** instead of squashing or rebasing. This preserves the contributor's commit history and ensures they appear in the git log as a contributor. Use:
@@ -27,6 +45,14 @@ When merging PRs from external contributors (not tombii), **create a merge commi
 git merge --no-ff <branch-name>
 ```
 The `--no-ff` flag creates a merge commit even if the branch could be fast-forwarded.
+
+**Do NOT use `gh pr merge`** — it may squash or rebase, losing the contributor's identity. Always merge manually with `git merge --no-ff`.
+
+If the PR branch isn't available locally, fetch it first:
+```bash
+git fetch origin pull/<PR_NUMBER>/head:<branch-name>
+git merge --no-ff <branch-name>
+```
 
 After merging, update the Acknowledgements section in README.md to thank the contributor for their specific contributions.
 
@@ -37,7 +63,7 @@ After merging, update the Acknowledgements section in README.md to thank the con
 ## Issue Staleness Check (MANDATORY before implementing)
 Before implementing any GitHub issue, always run:
 ```bash
-git log refs/heads/main --since='<issue-open-date>' --oneline --no-merges -- <relevant-paths>
+git log origin/main --since='<issue-open-date>' --oneline --no-merges -- <relevant-paths>
 ```
 Check if recent commits already partially or fully address the issue. Rate limiting, health, and proxy code change frequently. Ask the user "does this issue still apply given recent changes?" before proceeding. Especially check: has the reported symptom been fixed? Does the proposal conflict with new architecture?
 
@@ -72,6 +98,8 @@ When creating new functionality: write tests first, then implement, then run tes
 
 ## After Code Changes
 Always run: `bun run lint && bun run typecheck && bun run format`
+
+After pushing commits to main, run `npx gitnexus analyze` to keep the GitNexus index up to date.
 
 ## Git Commits
 - **Before making any changes, run `git status` to check for pre-existing uncommitted changes.** Note which files were already modified so you can distinguish your changes from theirs throughout the session.
@@ -130,10 +158,12 @@ Automated release system uses commit prefixes for changelog:
 - Security: `security:|vulnerabilit:|redact:|ReDoS:`
 - Improvements: `improve:|enhance:|update:|refactor:`
 
+**Acknowledgement commits** (when merging external PRs): always use `chore: acknowledge <name> for PR #<N>` as the commit subject. This prefix is excluded from release notes. If the merge also includes real fixes, commit them separately with the appropriate prefix.
+
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **better-ccflare** (9115 symbols, 16165 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **better-ccflare** (9981 symbols, 18731 relationships, 238 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 

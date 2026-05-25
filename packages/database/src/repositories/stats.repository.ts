@@ -2,7 +2,11 @@
  * Consolidated stats repository to eliminate duplication between cli-commands and http-api
  */
 
-import type { SessionStats } from "@better-ccflare/types";
+import type {
+	RateLimitReason,
+	RecentErrorGroup,
+	SessionStats,
+} from "@better-ccflare/types";
 import { NO_ACCOUNT_ID } from "@better-ccflare/types";
 import type { BunSqlAdapter } from "../adapters/bun-sql-adapter";
 
@@ -213,21 +217,110 @@ export class StatsRepository {
 	}
 
 	/**
-	 * Get recent errors (already exists in request.repository, but adding for completeness)
+	 * Get recent error groups within a time window.
+	 *
+	 * Groups requests by (error_message, account_used) and returns one entry per
+	 * group with metadata sourced from the most recent occurrence plus aggregate
+	 * stats and the owning account's current rate-limit state.
+	 *
+	 * @param sinceMs - Only include requests after this timestamp (ms since epoch).
+	 * @param limit - Maximum number of groups to return.
 	 */
-	async getRecentErrors(limit = 10): Promise<string[]> {
-		const errors = await this.adapter.query<{ error_message: string }>(
-			`SELECT error_message, MAX(timestamp) as latest
-			FROM requests
-			WHERE error_message IS NOT NULL
-				AND error_message != ''
-			GROUP BY error_message
-			ORDER BY latest DESC
+	async getRecentErrorGroups(
+		sinceMs: number,
+		limit = 10,
+	): Promise<RecentErrorGroup[]> {
+		const rows = await this.adapter.query<{
+			latest_request_id: unknown;
+			latest_timestamp: unknown;
+			error_code: unknown;
+			account_id: unknown;
+			model: unknown;
+			status_code: unknown;
+			path: unknown;
+			failover_attempts: unknown;
+			occurrence_count: unknown;
+			first_seen: unknown;
+			account_name: unknown;
+			provider: unknown;
+			rate_limited_until: unknown;
+			rate_limited_reason: unknown;
+			rate_limited_at: unknown;
+		}>(
+			`WITH ranked AS (
+				SELECT r.id, r.timestamp, r.error_message, r.account_used, r.model,
+				       r.status_code, r.path, r.failover_attempts,
+				       ROW_NUMBER() OVER (
+				         PARTITION BY r.error_message, COALESCE(r.account_used, ?)
+				         ORDER BY r.timestamp DESC
+				       ) AS rn,
+				       COUNT(*)         OVER (PARTITION BY r.error_message, COALESCE(r.account_used, ?)) AS occurrence_count,
+				       MIN(r.timestamp) OVER (PARTITION BY r.error_message, COALESCE(r.account_used, ?)) AS first_seen
+				FROM requests r
+				WHERE r.error_message IS NOT NULL
+				  AND r.error_message != ''
+				  AND r.timestamp > ?
+			)
+			SELECT
+				ranked.id              AS latest_request_id,
+				ranked.timestamp       AS latest_timestamp,
+				ranked.error_message   AS error_code,
+				ranked.account_used    AS account_id,
+				ranked.model,
+				ranked.status_code,
+				ranked.path,
+				ranked.failover_attempts,
+				ranked.occurrence_count,
+				ranked.first_seen,
+				a.name                 AS account_name,
+				a.provider             AS provider,
+				a.rate_limited_until   AS rate_limited_until,
+				a.rate_limited_reason  AS rate_limited_reason,
+				a.rate_limited_at      AS rate_limited_at
+			FROM ranked
+			LEFT JOIN accounts a ON a.id = ranked.account_used
+			WHERE ranked.rn = 1
+			ORDER BY ranked.timestamp DESC
 			LIMIT ?`,
-			[limit],
+			[NO_ACCOUNT_ID, NO_ACCOUNT_ID, NO_ACCOUNT_ID, sinceMs, limit],
 		);
 
-		return errors.map((e) => e.error_message);
+		return rows.map((row) => {
+			const accountId = row.account_id == null ? null : String(row.account_id);
+			const accountName =
+				row.account_name == null ? null : String(row.account_name);
+			const provider = row.provider == null ? null : String(row.provider);
+			const model = row.model == null ? null : String(row.model);
+			const path = row.path == null ? null : String(row.path);
+			const statusCode =
+				row.status_code == null ? null : Number(row.status_code);
+			const rateLimitedUntil =
+				row.rate_limited_until == null ? null : Number(row.rate_limited_until);
+			const rateLimitedAt =
+				row.rate_limited_at == null ? null : Number(row.rate_limited_at);
+			const rateLimitedReason =
+				row.rate_limited_reason == null
+					? null
+					: (String(row.rate_limited_reason) as RateLimitReason);
+
+			return {
+				errorCode: String(row.error_code ?? ""),
+				accountId,
+				accountName,
+				provider,
+				occurrenceCount: Number(row.occurrence_count) || 0,
+				latestTimestamp: Number(row.latest_timestamp) || 0,
+				firstTimestamp: Number(row.first_seen) || 0,
+				latestRequestId: String(row.latest_request_id ?? ""),
+				model,
+				statusCode,
+				path,
+				failoverAttempts: Number(row.failover_attempts) || 0,
+				rateLimitedUntil,
+				rateLimitedReason,
+				rateLimitedAt,
+			};
+		});
 	}
 
 	/**

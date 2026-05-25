@@ -14,6 +14,17 @@ export function createStatsHandler(dbOps: DatabaseOperations) {
 			Number.isFinite(sinceRaw) && sinceRaw > 0 ? Math.min(sinceRaw, 365) : 30;
 		const sinceMs = Date.now() - sinceDays * 24 * 60 * 60 * 1000;
 
+		// Parse optional ?errorsSinceHours=<n> query parameter
+		// (default: 24, max: 8760 hours = 365 days)
+		const errorsHoursRaw = Number(
+			url.searchParams.get("errorsSinceHours") ?? 24,
+		);
+		const errorsHours =
+			Number.isFinite(errorsHoursRaw) && errorsHoursRaw > 0
+				? Math.min(errorsHoursRaw, 8760)
+				: 24;
+		const errorsSinceMs = Date.now() - errorsHours * 60 * 60 * 1000;
+
 		// Get overall statistics using the consolidated repository
 		const stats = await statsRepository.getAggregatedStats(sinceMs);
 		const activeAccounts = await statsRepository.getActiveAccountCount();
@@ -27,7 +38,10 @@ export function createStatsHandler(dbOps: DatabaseOperations) {
 		const accountsWithStats = await statsRepository.getAccountStats(10, true);
 
 		// Get recent errors
-		const recentErrors = await statsRepository.getRecentErrors();
+		const recentErrors = await statsRepository.getRecentErrorGroups(
+			errorsSinceMs,
+			50,
+		);
 
 		// Get top models
 		const topModels = await statsRepository.getTopModels();

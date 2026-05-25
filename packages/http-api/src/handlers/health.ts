@@ -10,6 +10,14 @@ type AsyncWriterHealthFn = () => {
 	failureCount: number;
 	recentDrops: number;
 	queuedJobs: number;
+	metadataQueuedJobs: number;
+	payloadQueuedJobs: number;
+	payloadBytesPending: number;
+	oldestMetadataAgeMs: number;
+	oldestPayloadAgeMs: number;
+	metadataDropped: number;
+	payloadDropped: number;
+	payloadDroppedBytes: number;
 };
 type UsageWorkerHealthFn = () => {
 	state: string;
@@ -147,10 +155,19 @@ export function createHealthHandler(
 			response.runtime!.storage = {
 				integrity: {
 					status: integrity.status,
+					runningKind: integrity.runningKind,
 					lastCheckAt: integrity.lastCheckAt
 						? new Date(integrity.lastCheckAt).toISOString()
 						: null,
 					lastError: integrity.lastError,
+					lastQuickCheckAt: integrity.lastQuickCheckAt
+						? new Date(integrity.lastQuickCheckAt).toISOString()
+						: null,
+					lastQuickResult: integrity.lastQuickResult,
+					lastFullCheckAt: integrity.lastFullCheckAt
+						? new Date(integrity.lastFullCheckAt).toISOString()
+						: null,
+					lastFullResult: integrity.lastFullResult,
 				},
 			};
 		}

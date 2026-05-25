@@ -7,7 +7,11 @@ export type RateLimitReason =
 	| "upstream_429_no_reset_default_5h"
 	| "upstream_429_no_reset_probe_cooldown"
 	| "model_fallback_429"
-	| "all_models_exhausted_429";
+	| "all_models_exhausted_429"
+	/** Anthropic 529 overloaded_error with a Retry-After reset time. */
+	| "upstream_529_overloaded_with_reset"
+	/** Anthropic 529 overloaded_error with no Retry-After header; probe cooldown applied. */
+	| "upstream_529_overloaded_no_reset";
 
 // Usage data types for Anthropic accounts
 export interface UsageWindowData {
@@ -212,6 +216,7 @@ export interface AccountResponse {
 	modelFallbacks?: { [key: string]: string } | null;
 	billingType?: string | null;
 	sessionStats: SessionStats | null;
+	isPrimary: boolean; // True if this is the account the load balancer would pick next
 }
 
 // UI display type - used in CLI and web dashboard
@@ -435,6 +440,7 @@ export function toAccountResponse(account: Account): AccountResponse {
 		modelFallbacks,
 		billingType: account.billing_type,
 		sessionStats: null,
+		isPrimary: false,
 	};
 }
 

@@ -5,7 +5,7 @@ import {
 	parseCodexUsageHeaders,
 	usageCache,
 } from "@better-ccflare/providers";
-import type { Account } from "@better-ccflare/types";
+import type { Account, RateLimitReason } from "@better-ccflare/types";
 import type { ProxyContext } from "./proxy-types";
 import { applyRateLimitCooldown } from "./rate-limit-cooldown";
 
@@ -250,13 +250,20 @@ export async function processProxyResponse(
 			requestMeta?.headers?.get("x-better-ccflare-keepalive") === "true";
 		if (isKeepalive) {
 			log.warn(
-				`Keepalive replay for ${account.name} got 429 — skipping cooldown (synthetic burst, not a real per-account rate limit)`,
+				`Keepalive replay for ${account.name} got ${response.status} — skipping cooldown (synthetic burst, not a real per-account rate limit)`,
 			);
 		} else {
-			// Single entry point for both with-reset and no-reset 429s. The
-			// helper handles the missing-resetTime case internally (backoff-only)
-			// and the with-resetTime case via min(resetTime, now + backoff).
-			applyRateLimitCooldown(account, rateLimitInfo, ctx);
+			// Single entry point for both with-reset and no-reset paths.
+			// Derive a 529-specific reason override so the audit trail reflects
+			// the actual HTTP status (529 overloaded vs 429 rate-limited).
+			// applyRateLimitCooldown auto-derives the 429 reason when reason is undefined.
+			const reason: RateLimitReason | undefined =
+				response.status === 529
+					? rateLimitInfo.resetTime
+						? "upstream_529_overloaded_with_reset"
+						: "upstream_529_overloaded_no_reset"
+					: undefined;
+			applyRateLimitCooldown(account, { ...rateLimitInfo, reason }, ctx);
 		}
 		// Also update metadata for rate-limited responses
 		const bypassSession =

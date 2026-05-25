@@ -2,14 +2,9 @@ import { formatPercentage } from "@better-ccflare/ui-common";
 import { RefreshCw } from "lucide-react";
 import { useResetStats, useStats } from "../hooks/queries";
 import { useApiError } from "../hooks/useApiError";
+import { RecentErrorsCard } from "./overview/system-status/RecentErrorsCard";
 import { Button } from "./ui/button";
-import {
-	Card,
-	CardContent,
-	CardDescription,
-	CardHeader,
-	CardTitle,
-} from "./ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 
 export function StatsTab() {
 	const { formatError } = useApiError();
@@ -120,26 +115,7 @@ export function StatsTab() {
 				</CardContent>
 			</Card>
 
-			{stats?.recentErrors && stats.recentErrors.length > 0 && (
-				<Card>
-					<CardHeader>
-						<CardTitle>Recent Errors</CardTitle>
-						<CardDescription>Last 10 errors from all accounts</CardDescription>
-					</CardHeader>
-					<CardContent>
-						<div className="space-y-2">
-							{stats.recentErrors.map((error: string, i: number) => (
-								<div
-									key={`error-${i}-${error.substring(0, 10)}`}
-									className="text-sm p-2 bg-destructive/10 rounded-md"
-								>
-									<p className="text-destructive">{error}</p>
-								</div>
-							))}
-						</div>
-					</CardContent>
-				</Card>
-			)}
+			<RecentErrorsCard />
 
 			<Card>
 				<CardHeader>

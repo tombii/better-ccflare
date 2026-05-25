@@ -133,6 +133,13 @@ export class AuthService {
 			return true;
 		}
 
+		// Version check returns only the latest npm-published version. The
+		// dashboard's sidebar tile fires this on load with no API key in
+		// headers, so it must be reachable whether or not auth is enabled.
+		if (path === "/api/version/check") {
+			return true;
+		}
+
 		// All other paths are dashboard routes (client-side routing) or static assets
 		// These should be exempt to allow serving the dashboard HTML and assets
 		// This matches the server logic that serves index.html for non-API routes

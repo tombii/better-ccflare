@@ -104,9 +104,20 @@ curl http://localhost:8080/health
 Proxy requests to Claude API. All requests to paths starting with `/v1/` are forwarded to Claude using the configured load balancing strategy. This includes POST, GET, and any other HTTP methods that Claude's API supports.
 
 **Supported Endpoints:**
-- `POST /v1/messages` - Create chat completions
+- `POST /v1/messages` - Native Anthropic messages endpoint
+- `POST /v1/responses` - OpenAI Responses API compatibility endpoint (translated to `/v1/messages`)
+- `POST /v1/responses/compact` - Compact Responses API compatibility endpoint (translated to `/v1/messages`)
 - `POST /v1/complete` - Text completion (legacy)
 - Any other Claude API v1 endpoint
+
+**Codex CLI as a Client:**
+Codex CLI (and other OpenAI Responses API clients) can target better-ccflare directly. Requests to `/v1/responses` and `/v1/responses/compact` are intercepted before the normal proxy and translated to Anthropic `/v1/messages` internally, then routed through the account pool like any other request. See the [README](../README.md#codex-cli-as-a-client) for configuration details.
+
+Note: this is distinct from the `codex` *provider*, which routes requests outbound to OpenAI's Codex endpoint.
+
+**Known Limitations (`/v1/responses`):**
+- `previous_response_id` is accepted but ignored — better-ccflare is stateless and does not store prior responses. Codex uses this field only over WebSocket (which better-ccflare does not implement); for regular HTTP requests Codex always sends the full conversation history in `input`, so this field has no effect.
+- Built-in tool types (`web_search_preview`, `code_interpreter`, `file_search`) are silently skipped; only `type: "function"` tools are forwarded to Anthropic.
 
 **Note:** There is no `/v1/models` endpoint provided by better-ccflare. Model listing would need to be done directly through Claude's API if such an endpoint exists.
 
@@ -992,3 +1003,6 @@ The following strategy is available:
 7. **Rate Limit Tracking**: Rate limit information is automatically extracted from responses and stored for each account, including reset times and remaining requests.
 
 8. **Provider Filtering**: Accounts are automatically filtered by provider when selecting for requests, ensuring compatibility.
+
+---
+

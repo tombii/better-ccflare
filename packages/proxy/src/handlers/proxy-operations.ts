@@ -328,7 +328,9 @@ async function isCacheControlRejectionError(
  * Covers Anthropic (not_found_error), OpenAI-compat (model_not_found),
  * generic messages, and Bedrock (ResourceNotFoundException).
  */
-async function isModelUnavailableError(response: Response): Promise<boolean> {
+export async function isModelUnavailableError(
+	response: Response,
+): Promise<boolean> {
 	if (
 		response.status !== 404 &&
 		response.status !== 400 &&
@@ -480,6 +482,7 @@ export async function proxyWithAccount(
 	apiKeyId?: string | null,
 	apiKeyName?: string | null,
 	requestBodyContext?: RequestBodyContext | null,
+	returnRateLimitedResponseOnExhaustion = false,
 ): Promise<Response | null> {
 	try {
 		if (
@@ -963,8 +966,12 @@ export async function proxyWithAccount(
 		}
 
 		// Check for rate limit using account-specific provider
+		const responseForRateLimitCheck =
+			returnRateLimitedResponseOnExhaustion && response.status === 529
+				? response.clone()
+				: response;
 		const isRateLimited = await processProxyResponse(
-			response,
+			responseForRateLimitCheck,
 			account,
 			{
 				...ctx,
@@ -974,6 +981,31 @@ export async function proxyWithAccount(
 			requestMeta,
 		);
 		if (isRateLimited) {
+			if (returnRateLimitedResponseOnExhaustion && response.status === 529) {
+				log.warn(
+					`Account ${account.name} returned final 529 overload response — forwarding upstream response instead of pool_exhausted`,
+				);
+				return forwardToClient(
+					{
+						requestId: requestMeta.id,
+						method: req.method,
+						path: url.pathname,
+						account,
+						requestHeaders: req.headers,
+						requestBody: effectiveBodyBuffer,
+						project: requestMeta.project,
+						response,
+						timestamp: requestMeta.timestamp,
+						retryAttempt: 0,
+						failoverAttempts,
+						agentUsed: requestMeta.agentUsed,
+						comboName: requestMeta.comboName,
+						apiKeyId,
+						apiKeyName,
+					},
+					{ ...ctx, provider },
+				);
+			}
 			return null; // Signal to try next account
 		}
 
