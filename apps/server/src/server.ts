@@ -671,6 +671,10 @@ export default async function startServer(options?: {
 	container.registerInstance(SERVICE_KEYS.PricingLogger, pricingLogger);
 	setPricingLogger(pricingLogger);
 
+	// Strategy is constructed below after RuntimeConfig is built. The router
+	// accepts a getter so it can read the live (post-hot-reload) instance.
+	let currentStrategy: LoadBalancingStrategy | null = null;
+
 	const apiRouter = new APIRouter({
 		db,
 		config,
@@ -682,6 +686,7 @@ export default async function startServer(options?: {
 		getAsyncWriterHealth: () => asyncWriter.getHealth(),
 		getUsageWorkerHealth: () => getUsageWorkerHealth(),
 		getIntegrityStatus: () => dbOps.getIntegrityStatus(),
+		getStrategy: () => currentStrategy,
 	});
 
 	// Initialize AuthService for proxy authentication
@@ -836,6 +841,7 @@ export default async function startServer(options?: {
 	});
 
 	strategy.initialize?.(strategyStore);
+	currentStrategy = strategy;
 
 	// Start usage worker eagerly (before first request)
 	startUsageWorker();
@@ -1029,6 +1035,7 @@ export default async function startServer(options?: {
 			);
 			strategy.initialize?.(strategyStore);
 			proxyContext.strategy = strategy;
+			currentStrategy = strategy;
 		}
 		if (key === "store_payloads") {
 			sendWorkerConfigUpdate(config.getStorePayloads());
@@ -1131,6 +1138,30 @@ export default async function startServer(options?: {
 					}
 
 					try {
+						// Codex CLI first tries WebSocket transport for /v1/responses.
+						// We only support HTTP — reject the upgrade cleanly so Codex
+						// falls back to HTTPS without hitting the proxy with an empty body.
+						if (
+							req.headers.get("upgrade")?.toLowerCase() === "websocket" &&
+							(url.pathname === "/v1/responses" ||
+								url.pathname === "/v1/responses/compact")
+						) {
+							return new Response(
+								JSON.stringify({
+									type: "error",
+									error: {
+										type: "not_supported_error",
+										message:
+											"WebSocket transport is not supported. Codex will retry over HTTPS automatically.",
+									},
+								}),
+								{
+									status: 503,
+									headers: { "Content-Type": "application/json" },
+								},
+							);
+						}
+
 						if (
 							req.method === "POST" &&
 							(url.pathname === "/v1/responses" ||
@@ -1505,10 +1536,42 @@ Available endpoints:
 	};
 }
 
+// most in-flight streaming responses complete; short enough that systemd's
+// default TimeoutStopSec (90s) doesn't have to escalate to SIGKILL.
+const SHUTDOWN_WATCHDOG_MS = 30_000;
+
+// Deduplicates concurrent shutdown invocations (e.g. SIGINT arriving while
+// SIGTERM is still awaiting serverInstance.stop()). Without this, the second
+// invocation races on the same Bun server, worker, and DB writer.
+let isShuttingDown = false;
+
 // Graceful shutdown handler
 async function handleGracefulShutdown(signal: string) {
+	if (isShuttingDown) {
+		console.log(`Ignoring ${signal} — shutdown already in progress`);
+		return;
+	}
+	isShuttingDown = true;
+
 	console.log(`\n👋 Received ${signal}, shutting down gracefully...`);
+
+	// Hard upper bound on shutdown duration. unref'd so it doesn't itself
+	// prevent a clean exit if everything else finishes first. Exits with 0
+	// because the watchdog only fires on an expected SIGTERM that ran long,
+	// not on a failure — code 1 would make systemd Restart=on-failure
+	// auto-restart the unit instead of treating it as a normal stop.
+	const watchdog = setTimeout(() => {
+		console.error(
+			`⚠️ Shutdown watchdog (${SHUTDOWN_WATCHDOG_MS}ms) expired, forcing exit`,
+		);
+		process.exit(0);
+	}, SHUTDOWN_WATCHDOG_MS);
+	watchdog.unref();
+
 	try {
+		// Stop scheduler triggers first so they don't add load while draining.
+		// These calls only stop the recurring trigger; any in-flight task they
+		// already kicked off continues until it finishes naturally.
 		if (stopRetentionJob) {
 			stopRetentionJob();
 			stopRetentionJob = null;

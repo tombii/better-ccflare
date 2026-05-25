@@ -486,12 +486,49 @@ describe("translateRequestToAnthropic", () => {
 		});
 	});
 
-	test("model passthrough", () => {
+	test("model passthrough for non-gpt-5 names", () => {
 		const req: ResponsesRequest = {
 			model: "claude-opus-4-5",
 			input: [],
 		};
 		expect(translateRequestToAnthropic(req).model).toBe("claude-opus-4-5");
+	});
+
+	test("gpt-5 model mapping — *-pro maps to opus family alias", () => {
+		for (const model of ["gpt-5.5-pro", "gpt-5.4-pro", "GPT-5.5-PRO"]) {
+			expect(translateRequestToAnthropic({ model, input: [] }).model).toBe(
+				"claude-opus-4-5",
+			);
+		}
+	});
+
+	test("gpt-5 model mapping — *-mini and *-nano map to haiku family alias", () => {
+		for (const model of ["gpt-5.4-mini", "gpt-5.4-nano", "GPT-5.4-MINI"]) {
+			expect(translateRequestToAnthropic({ model, input: [] }).model).toBe(
+				"claude-haiku-4-5",
+			);
+		}
+	});
+
+	test("gpt model mapping — no suffix maps to sonnet family alias", () => {
+		for (const model of [
+			"gpt-5.5",
+			"gpt-5.4",
+			"gpt-5.3-codex",
+			"gpt-5",
+			"gpt-4",
+			"gpt-4o",
+		]) {
+			expect(translateRequestToAnthropic({ model, input: [] }).model).toBe(
+				"claude-sonnet-4-6",
+			);
+		}
+	});
+
+	test("non-gpt model names pass through unchanged", () => {
+		expect(translateRequestToAnthropic({ model: "o3", input: [] }).model).toBe(
+			"o3",
+		);
 	});
 
 	test("stream passthrough", () => {

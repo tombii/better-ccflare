@@ -12,6 +12,23 @@ import type {
 
 const logger = new Logger("openai-responses-adapter");
 
+// Map OpenAI model names to Claude family aliases so per-account model_mappings
+// (opus/sonnet/haiku) resolve correctly when Codex CLI requests reach the proxy.
+// Rules based on OpenAI naming conventions:
+//   *-pro   → opus  (heavy reasoning tier, $30+/M input)
+//   *-mini  → haiku (fast/cheap tier)
+//   *-nano  → haiku (fast/cheap tier)
+//   gpt-5*  → sonnet (default capable tier, everything else)
+// Non-gpt-5 names (e.g. gpt-4) are passed through unchanged.
+function mapGptModelToClaudeFamily(model: string): string {
+	const lower = model.toLowerCase();
+	if (!lower.startsWith("gpt-")) return model;
+	if (lower.endsWith("-pro")) return "claude-opus-4-5";
+	if (lower.endsWith("-mini") || lower.endsWith("-nano"))
+		return "claude-haiku-4-5";
+	return "claude-sonnet-4-6";
+}
+
 function parseArguments(args: string): unknown {
 	try {
 		return JSON.parse(args);
@@ -114,12 +131,22 @@ export function translateRequestToAnthropic(
 	req: ResponsesRequest & { input: ResponseItem[] },
 ): AnthropicRequest {
 	const messages: AnthropicMessage[] = [];
+	const developerBlocks: string[] = [];
 
 	for (const item of req.input) {
 		if (item.type === "message") {
 			const content: AnthropicContent[] = item.content.map((c) =>
 				translateContentItem(c),
 			);
+			// developer role is used by Codex CLI for system-level instructions.
+			// Anthropic /v1/messages does not accept this role in the messages array
+			// so we extract the text and merge it into the system prompt instead.
+			if ((item.role as string) === "developer") {
+				for (const c of content) {
+					if (c.type === "text") developerBlocks.push(c.text);
+				}
+				continue;
+			}
 			messages.push({ role: item.role, content });
 			continue;
 		}
@@ -160,14 +187,16 @@ export function translateRequestToAnthropic(
 	const mergedMessages = mergeConsecutiveSameRole(messages);
 
 	const result: AnthropicRequest = {
-		model: req.model,
+		model: mapGptModelToClaudeFamily(req.model),
 		messages: mergedMessages,
 		max_tokens: req.max_output_tokens ?? 4096,
 	};
 
-	if (req.instructions !== undefined) {
-		result.system = req.instructions;
-	}
+	// Merge developer-role blocks and req.instructions into system prompt.
+	const systemParts: string[] = [];
+	if (developerBlocks.length > 0) systemParts.push(developerBlocks.join("\n\n"));
+	if (req.instructions !== undefined) systemParts.push(req.instructions);
+	if (systemParts.length > 0) result.system = systemParts.join("\n\n");
 
 	if (req.stream !== undefined) {
 		result.stream = req.stream;

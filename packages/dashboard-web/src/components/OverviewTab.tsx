@@ -35,7 +35,6 @@ export const OverviewTab = React.memo(() => {
 	// Fetch all data using React Query hooks
 	const { data: stats, isLoading: statsLoading } = useStats(
 		REFRESH_INTERVALS.default,
-		24,
 	);
 	const [timeRange, setTimeRange] = useState("24h");
 	const { data: analytics, isLoading: analyticsLoading } = useAnalytics(
@@ -248,6 +247,19 @@ export const OverviewTab = React.memo(() => {
 					}
 					trendPeriod={trendPeriod}
 					icon={DollarSign}
+					subRows={[
+						{
+							label: "Avg / day",
+							value: formatCost(analytics?.totals.avgDailyPlanCostUsd ?? 0),
+							tooltip: "Average daily plan value over the last 7 days",
+						},
+						{
+							label: "Avg / week",
+							value: formatCost(analytics?.totals.avgWeeklyPlanCostUsd ?? 0),
+							tooltip:
+								"Average weekly plan value, derived from the last 30 days",
+						},
+					]}
 				/>
 				<MetricCard
 					title="API Cost"
