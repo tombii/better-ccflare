@@ -447,6 +447,7 @@ describe("selectAccountsForRequest — auto-refresh bypass (overage-paused accou
 			name: "overage-paused",
 			paused: true,
 			auto_pause_on_overage_enabled: true,
+			pause_reason: "overage",
 		});
 		const activeAcc = makeAccount({ id: "acc-active", name: "active" });
 		const ctx: ProxyContext = {
@@ -499,6 +500,42 @@ describe("selectAccountsForRequest — auto-refresh bypass (overage-paused accou
 
 		const result = await selectAccountsForRequest(meta, ctx);
 		// Without bypass header the account is unavailable; falls back to strategy
+		expect(result).toHaveLength(1);
+		expect(result[0]?.id).toBe("acc-active");
+	});
+
+	it("blocks manually-paused overage-enabled account even with bypass-session header", async () => {
+		// A manual pause must win even when auto_pause_on_overage_enabled is set:
+		// the auto-resume guard would never un-pause it, so admitting it on a
+		// bypass-session force-route just produces an endless probe loop. Mirrors
+		// the scheduler eligibility query and the sendDummyMessage resume guard.
+		const manualPausedAcc = makeAccount({
+			id: "acc-manual",
+			name: "manual-paused",
+			paused: true,
+			auto_pause_on_overage_enabled: true,
+			pause_reason: "manual",
+		});
+		const activeAcc = makeAccount({ id: "acc-active", name: "active" });
+		const ctx: ProxyContext = {
+			strategy: { select: mock(() => [activeAcc]) },
+			dbOps: {
+				getAllAccounts: mock(async () => [manualPausedAcc, activeAcc]),
+				getActiveComboForFamily: mock(async () => null),
+			},
+			refreshInFlight: new Map(),
+			asyncWriter: { enqueue: mock(() => {}) },
+			usageWorker: { postMessage: mock(() => {}) },
+		} as unknown as ProxyContext;
+		const meta = makeRequestMeta({
+			headers: new Headers({
+				"x-better-ccflare-account-id": "acc-manual",
+				"x-better-ccflare-bypass-session": "true",
+			}),
+		});
+
+		const result = await selectAccountsForRequest(meta, ctx);
+		// Manual pause is not overage → not allowed through; falls back to strategy
 		expect(result).toHaveLength(1);
 		expect(result[0]?.id).toBe("acc-active");
 	});

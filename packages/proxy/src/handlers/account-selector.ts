@@ -86,13 +86,19 @@ export async function selectAccountsForRequest(
 					// or to probe accounts that are rate-limited (to detect when the window has reset).
 					// For those requests we must allow through an overage-paused or rate-limited account
 					// so the scheduler can hit the real endpoint and trigger the window-reset + auto-resume logic.
-					// We still block accounts that were paused by the failure-threshold guard (those are
-					// paused because their endpoint is broken, not because of overage or rate-limiting).
+					// Only an overage pause qualifies: a manual pause (pause_reason='manual') or a
+					// failure-threshold / peak_hours pause must still win even when the overage feature
+					// flag is enabled, because the auto-resume guard would never un-pause those accounts.
+					// This mirrors the scheduler eligibility query and the sendDummyMessage resume guard
+					// (auto_pause_on_overage_enabled=1 AND pause_reason IN (NULL,'overage')).
 					const isAutoRefreshBypass =
 						meta.headers.get("x-better-ccflare-bypass-session") === "true";
 					const available = isAccountAvailable(forcedAccount);
 					const isOveragePaused =
-						forcedAccount.paused && forcedAccount.auto_pause_on_overage_enabled;
+						forcedAccount.paused &&
+						forcedAccount.auto_pause_on_overage_enabled &&
+						(!forcedAccount.pause_reason ||
+							forcedAccount.pause_reason === "overage");
 					const isRateLimited =
 						!available &&
 						!forcedAccount.paused &&
