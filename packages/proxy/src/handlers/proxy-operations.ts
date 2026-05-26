@@ -16,6 +16,7 @@ import { cacheBodyStore } from "../cache-body-store";
 import { RequestBodyContext } from "../request-body-context";
 import { forwardToClient } from "../response-handler";
 import { ERROR_MESSAGES, type ProxyContext } from "./proxy-types";
+import { applyRateLimitCooldown } from "./rate-limit-cooldown";
 import { makeProxyRequest, validateProviderPath } from "./request-handler";
 import { handleProxyError, processProxyResponse } from "./response-processor";
 import { getValidAccessToken } from "./token-manager";
@@ -754,10 +755,11 @@ export async function proxyWithAccount(
 							usageCache.getRateLimitedUntil.bind(usageCache),
 						);
 						const reason: RateLimitReason = "model_fallback_429";
-						log.warn(
-							`[ccflare] account=${account.name} cooldown_applied reason=${reason} until=${new Date(cooldownUntil).toISOString()}`,
+						applyRateLimitCooldown(
+							account,
+							{ resetTime: cooldownUntil, reason },
+							ctx,
 						);
-						account.rate_limited_until = cooldownUntil;
 						const responseTime = Date.now() - requestMeta.timestamp;
 						ctx.asyncWriter.enqueue(() =>
 							ctx.dbOps.saveRequest(
@@ -777,13 +779,6 @@ export async function proxyWithAccount(
 								requestMeta.project ?? null,
 								undefined,
 								requestMeta.comboName ?? null,
-							),
-						);
-						ctx.asyncWriter.enqueue(() =>
-							ctx.dbOps.markAccountRateLimited(
-								account.id,
-								cooldownUntil,
-								reason,
 							),
 						);
 						return null;
@@ -891,10 +886,11 @@ export async function proxyWithAccount(
 							usageCache.getRateLimitedUntil.bind(usageCache),
 						);
 						const reason: RateLimitReason = "all_models_exhausted_429";
-						log.warn(
-							`[ccflare] account=${account.name} cooldown_applied reason=${reason} until=${new Date(cooldownUntil).toISOString()}`,
+						applyRateLimitCooldown(
+							account,
+							{ resetTime: cooldownUntil, reason },
+							ctx,
 						);
-						account.rate_limited_until = cooldownUntil;
 						const responseTime = Date.now() - requestMeta.timestamp;
 						ctx.asyncWriter.enqueue(() =>
 							ctx.dbOps.saveRequest(
@@ -914,13 +910,6 @@ export async function proxyWithAccount(
 								requestMeta.project ?? null,
 								undefined,
 								requestMeta.comboName ?? null,
-							),
-						);
-						ctx.asyncWriter.enqueue(() =>
-							ctx.dbOps.markAccountRateLimited(
-								account.id,
-								cooldownUntil,
-								reason,
 							),
 						);
 					}

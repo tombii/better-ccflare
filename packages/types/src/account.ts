@@ -128,6 +128,7 @@ export interface AccountRow {
 	billing_type?: string | null; // Per-account billing override
 	pause_reason?: string | null; // null=not paused, 'manual'=user paused, 'failure_threshold'=auto-refresh failures, 'overage'=billing overage
 	refresh_token_issued_at?: number | null; // Timestamp when the current refresh token was issued (updated on each token refresh)
+	consecutive_rate_limits?: number | null;
 }
 
 // Domain model - used throughout the application
@@ -164,6 +165,7 @@ export interface Account {
 	billing_type: string | null;
 	pause_reason: string | null; // null=not paused, 'manual'=user paused, 'failure_threshold'=auto-refresh failures, 'overage'=billing overage
 	refresh_token_issued_at: number | null; // Timestamp when the current refresh token was issued (updated on each token refresh)
+	consecutive_rate_limits: number;
 }
 
 // Session statistics for 5-hour token window
@@ -344,6 +346,7 @@ export function toAccount(row: AccountRow): Account {
 		billing_type: row.billing_type || null,
 		pause_reason: row.pause_reason || null,
 		refresh_token_issued_at: toNumOrNull(row.refresh_token_issued_at),
+		consecutive_rate_limits: toNum(row.consecutive_rate_limits),
 	};
 }
 

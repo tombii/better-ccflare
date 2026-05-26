@@ -26,7 +26,8 @@ export class AccountRepository extends BaseRepository<Account> {
 				model_fallbacks,
 				billing_type,
 				pause_reason,
-				refresh_token_issued_at
+				refresh_token_issued_at,
+				COALESCE(consecutive_rate_limits, 0) as consecutive_rate_limits
 			FROM accounts
 			ORDER BY priority DESC
 		`);
@@ -53,7 +54,8 @@ export class AccountRepository extends BaseRepository<Account> {
 				model_fallbacks,
 				billing_type,
 				pause_reason,
-				refresh_token_issued_at
+				refresh_token_issued_at,
+				COALESCE(consecutive_rate_limits, 0) as consecutive_rate_limits
 			FROM accounts
 			WHERE id = ?
 		`,
@@ -117,6 +119,34 @@ export class AccountRepository extends BaseRepository<Account> {
 		await this.run(
 			`UPDATE accounts SET rate_limited_until = ?, rate_limited_reason = ?, rate_limited_at = ? WHERE id = ?`,
 			[until, reason, Date.now(), accountId],
+		);
+	}
+
+	async markAccountRateLimited(
+		accountId: string,
+		until: number,
+		reason: RateLimitReason,
+	): Promise<number> {
+		await this.run(
+			`UPDATE accounts
+           SET consecutive_rate_limits = COALESCE(consecutive_rate_limits, 0) + 1,
+               rate_limited_until      = ?,
+               rate_limited_reason     = ?,
+               rate_limited_at         = ?
+         WHERE id = ?`,
+			[until, reason, Date.now(), accountId],
+		);
+		const row = await this.get<{ consecutive_rate_limits: number }>(
+			`SELECT consecutive_rate_limits FROM accounts WHERE id = ?`,
+			[accountId],
+		);
+		return row?.consecutive_rate_limits ?? 0;
+	}
+
+	async resetConsecutiveRateLimits(accountId: string): Promise<void> {
+		await this.run(
+			`UPDATE accounts SET consecutive_rate_limits = 0, rate_limited_at = NULL WHERE id = ?`,
+			[accountId],
 		);
 	}
 

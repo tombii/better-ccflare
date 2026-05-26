@@ -56,7 +56,43 @@ export const TIME_CONSTANTS = {
 	// are unaffected by this default.
 	// Override at runtime via CCFLARE_DEFAULT_COOLDOWN_NO_RESET_MS.
 	DEFAULT_RATE_LIMIT_NO_RESET_COOLDOWN_MS: 60 * 1000, // 60s
+
+	// Adaptive rate-limit cooldown with exponential backoff.
+	// Cooldown for streak of n consecutive 429s = BASE * 2^(n-1), capped at MAX.
+	// Override at runtime via CCFLARE_RATE_LIMIT_BACKOFF_BASE_MS /
+	// CCFLARE_RATE_LIMIT_BACKOFF_MAX_MS / CCFLARE_RATE_LIMIT_RESET_STABILITY_MS.
+	RATE_LIMIT_BACKOFF_BASE_MS: 30 * 1000, // 30s: cooldown for the 1st 429 in a streak
+	RATE_LIMIT_BACKOFF_MAX_MS: 5 * 60 * 1000, // 5min: ceiling for the exponential ramp
+	RATE_LIMIT_RESET_STABILITY_MS: 5 * 60 * 1000, // 5min: healthy operation needed to reset the streak counter
 } as const;
+
+/**
+ * Compute exponential-backoff cooldown (ms) for a given streak depth.
+ *   backoff = BASE * 2^(consecutiveCount - 1), capped at MAX.
+ * Reads BASE/MAX from env (CCFLARE_RATE_LIMIT_BACKOFF_BASE_MS /
+ * CCFLARE_RATE_LIMIT_BACKOFF_MAX_MS), falling back to TIME_CONSTANTS.
+ * Uses || (not ??) so 0/NaN env values fall through to the default.
+ */
+export function computeRateLimitBackoffMs(consecutiveCount: number): number {
+	const count = Math.max(1, consecutiveCount);
+	const baseEnv = Number(process.env.CCFLARE_RATE_LIMIT_BACKOFF_BASE_MS);
+	const maxEnv = Number(process.env.CCFLARE_RATE_LIMIT_BACKOFF_MAX_MS);
+	const base = baseEnv || TIME_CONSTANTS.RATE_LIMIT_BACKOFF_BASE_MS;
+	const max = maxEnv || TIME_CONSTANTS.RATE_LIMIT_BACKOFF_MAX_MS;
+	// Guard against overflow: 2^53 is JS safe-integer limit.
+	const exponent = Math.min(count - 1, 52);
+	return Math.min(base * 2 ** exponent, max);
+}
+
+/**
+ * Read the stability-reset window (ms) for the consecutive_rate_limits counter.
+ * Reads CCFLARE_RATE_LIMIT_RESET_STABILITY_MS from env.
+ * Uses || (not ??) so 0/NaN env values fall through to the default.
+ */
+export function getRateLimitResetStabilityMs(): number {
+	const raw = Number(process.env.CCFLARE_RATE_LIMIT_RESET_STABILITY_MS);
+	return raw || TIME_CONSTANTS.RATE_LIMIT_RESET_STABILITY_MS;
+}
 
 // Buffer sizes (in bytes unless specified)
 export const BUFFER_SIZES = {

@@ -674,11 +674,19 @@ OAuth tokens will need to be re-authenticated.
 		accountId: string,
 		until: number,
 		reason: RateLimitReason,
-	): Promise<void> {
-		await withDatabaseRetry(
-			() => this.accounts.setRateLimited(accountId, until, reason),
+	): Promise<number> {
+		return withDatabaseRetry(
+			() => this.accounts.markAccountRateLimited(accountId, until, reason),
 			this.retryConfig,
 			"markAccountRateLimited",
+		);
+	}
+
+	async resetConsecutiveRateLimits(accountId: string): Promise<void> {
+		await withDatabaseRetry(
+			() => this.accounts.resetConsecutiveRateLimits(accountId),
+			this.retryConfig,
+			"resetConsecutiveRateLimits",
 		);
 	}
 
