@@ -1,4 +1,3 @@
-import { ANALYTICS_STREAM_SYMBOL } from "@better-ccflare/http-common/symbols";
 import { Logger } from "@better-ccflare/logger";
 import type { TransformStreamContext } from "./types";
 import { repairTruncatedToolJson } from "./utils";
@@ -653,23 +652,9 @@ export function transformStreamingResponse(response: Response): Response {
 		}),
 	);
 
-	// Tee the transformed stream into two independent streams
-	const [clientStream, analyticsStream] = transformedBody.tee();
-
-	// Create the response that will be returned to the client
-	const clientResponse = new Response(clientStream, {
+	return new Response(transformedBody, {
 		status: response.status,
 		statusText: response.statusText,
 		headers: sanitizeHeaders(response.headers),
 	});
-
-	// Attach the analytics stream as a non-enumerable Symbol property
-	Object.defineProperty(clientResponse, ANALYTICS_STREAM_SYMBOL, {
-		value: analyticsStream,
-		writable: false,
-		enumerable: false,
-		configurable: false,
-	});
-
-	return clientResponse;
 }

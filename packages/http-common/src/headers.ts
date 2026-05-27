@@ -1,5 +1,3 @@
-import { ANALYTICS_STREAM_SYMBOL } from "./symbols";
-
 /**
  * Sanitizes proxy headers by removing hop-by-hop headers that should not be forwarded
  * after Bun has automatically decompressed the response body.
@@ -41,25 +39,11 @@ export function sanitizeRequestHeaders(original: Headers): Headers {
 /**
  * Return a new Response with hop-by-hop / compression headers stripped.
  * Body & status are preserved.
- * Also preserves the __analyticsStream property if present (for OpenAI providers).
  */
 export function withSanitizedProxyHeaders(res: Response): Response {
-	const newResponse = new Response(res.body, {
+	return new Response(res.body, {
 		status: res.status,
 		statusText: res.statusText,
 		headers: sanitizeProxyHeaders(res.headers),
 	});
-
-	// Preserve __analyticsStream property if present (used by OpenAI provider)
-	const analyticsStream = (res as any)[ANALYTICS_STREAM_SYMBOL];
-	if (analyticsStream) {
-		Object.defineProperty(newResponse, ANALYTICS_STREAM_SYMBOL, {
-			value: analyticsStream,
-			writable: false,
-			enumerable: false,
-			configurable: false,
-		});
-	}
-
-	return newResponse;
 }
