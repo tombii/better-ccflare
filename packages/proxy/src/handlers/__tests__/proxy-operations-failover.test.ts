@@ -38,6 +38,7 @@ function makeAccount(overrides: Partial<Account> = {}): Account {
 		billing_type: null,
 		pause_reason: null,
 		refresh_token_issued_at: null,
+		consecutive_rate_limits: 0,
 		...overrides,
 	};
 }
@@ -67,7 +68,7 @@ function makeProxyContext(): ProxyContext {
 		dbOps: {
 			markAccountRateLimited: mock(
 				(_accountId: string, _until: number, _reason: string) =>
-					Promise.resolve(),
+					Promise.resolve(1),
 			),
 			saveRequest: mock((..._args: unknown[]) => Promise.resolve()),
 			updateAccountUsage: mock(() => Promise.resolve()),
@@ -505,9 +506,9 @@ describe("proxyWithAccount — in-memory cooldown mutation (issue #178 fix)", ()
 		// In-memory mutation should be set immediately (before DB write completes)
 		expect(account.rate_limited_until).not.toBeNull();
 		expect(account.rate_limited_until ?? 0).toBeGreaterThan(before);
-		// Default cooldown from extractCooldownUntil is at least 60s
+		// Exponential backoff for count=1 is 30s (RATE_LIMIT_BACKOFF_BASE_MS)
 		expect(account.rate_limited_until ?? 0).toBeGreaterThanOrEqual(
-			before + 60_000,
+			before + 30_000,
 		);
 	});
 
@@ -550,8 +551,9 @@ describe("proxyWithAccount — in-memory cooldown mutation (issue #178 fix)", ()
 
 		expect(account.rate_limited_until).not.toBeNull();
 		expect(account.rate_limited_until ?? 0).toBeGreaterThan(before);
+		// Exponential backoff for count=1 is 30s (RATE_LIMIT_BACKOFF_BASE_MS)
 		expect(account.rate_limited_until ?? 0).toBeGreaterThanOrEqual(
-			before + 60_000,
+			before + 30_000,
 		);
 	});
 });

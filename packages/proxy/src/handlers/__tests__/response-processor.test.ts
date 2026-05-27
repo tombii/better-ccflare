@@ -36,6 +36,7 @@ function makeAccount(overrides: Partial<Account> = {}): Account {
 		model_mappings: null,
 		cross_region_mode: null,
 		model_fallbacks: null,
+		consecutive_rate_limits: 0,
 		...overrides,
 	};
 }
@@ -73,6 +74,7 @@ function makeCtx(opts: {
 				_reason: string,
 			) => {
 				calls.markRateLimited.push({ accountId, resetTime });
+				return Promise.resolve(1);
 			},
 			updateAccountUsage: () => {},
 			updateAccountRateLimitMeta: () => {},
@@ -132,6 +134,7 @@ function makeCtxWithReason(opts: {
 				reason: string,
 			) => {
 				calls.markRateLimited.push({ accountId, resetTime, reason });
+				return Promise.resolve(1);
 			},
 			updateAccountUsage: () => {},
 			updateAccountRateLimitMeta: () => {},
@@ -170,7 +173,9 @@ describe("processProxyResponse — rate limit audit trail (issue #178)", () => {
 
 		expect(calls.markRateLimited).toHaveLength(1);
 		expect(calls.markRateLimited[0]?.accountId).toBe(account.id);
-		expect(calls.markRateLimited[0]?.resetTime).toBe(resetTime);
+		// cooldownUntil = Math.min(resetTime, now+backoff) — backoff caps below resetTime for count=1
+		expect(calls.markRateLimited[0]?.resetTime).toBeLessThanOrEqual(resetTime);
+		expect(calls.markRateLimited[0]?.resetTime).toBeGreaterThan(Date.now());
 		expect(calls.markRateLimited[0]?.reason).toBe("upstream_429_with_reset");
 	});
 
@@ -194,11 +199,11 @@ describe("processProxyResponse — rate limit audit trail (issue #178)", () => {
 		expect(calls.markRateLimited[0]?.reason).toBe(
 			"upstream_429_no_reset_probe_cooldown",
 		);
-		// Default cooldown is 60s (DEFAULT_RATE_LIMIT_NO_RESET_COOLDOWN_MS). Allow ±1s drift.
-		const SIXTY_SECONDS = 60 * 1000;
+		// Exponential backoff for count=1 is 30s (RATE_LIMIT_BACKOFF_BASE_MS). Allow ±1s drift.
+		const THIRTY_SECONDS = 30 * 1000;
 		const reset = calls.markRateLimited[0]?.resetTime ?? 0;
-		expect(reset).toBeGreaterThanOrEqual(before + SIXTY_SECONDS - 1000);
-		expect(reset).toBeLessThanOrEqual(Date.now() + SIXTY_SECONDS + 1000);
+		expect(reset).toBeGreaterThanOrEqual(before + THIRTY_SECONDS - 1000);
+		expect(reset).toBeLessThanOrEqual(Date.now() + THIRTY_SECONDS + 1000);
 	});
 
 	it("passes reason='upstream_429_with_reset' on streaming 429 with resetTime", async () => {
@@ -284,10 +289,9 @@ describe("processProxyResponse — streaming rate-limit failover (issue #114)", 
 		expect(calls.markRateLimited).toHaveLength(0);
 	});
 
-	it("falls back to a default 60s probe cooldown when a streaming 429 has no resetTime", async () => {
-		// Some providers return 429s without rate-limit headers. The current
-		// code path defaults to a 60s probe cooldown (DEFAULT_RATE_LIMIT_NO_RESET_COOLDOWN_MS)
-		// instead of the old 5h hard-ban, to avoid pool exhaustion on transient errors.
+	it("falls back to exponential backoff cooldown when a streaming 429 has no resetTime", async () => {
+		// Some providers return 429s without rate-limit headers. The code uses
+		// exponential backoff starting at 30s (RATE_LIMIT_BACKOFF_BASE_MS for count=1).
 		const account = makeAccount();
 		const before = Date.now();
 		const { ctx, calls } = makeCtx({
@@ -304,11 +308,11 @@ describe("processProxyResponse — streaming rate-limit failover (issue #114)", 
 
 		expect(result).toBe(true);
 		expect(calls.markRateLimited).toHaveLength(1);
-		// Default cooldown is 60s. Allow ±1s for test runtime drift.
-		const SIXTY_SECONDS = 60 * 1000;
+		// Exponential backoff for count=1 is 30s. Allow ±1s for test runtime drift.
+		const THIRTY_SECONDS = 30 * 1000;
 		const reset = calls.markRateLimited[0]?.resetTime ?? 0;
-		expect(reset).toBeGreaterThanOrEqual(before + SIXTY_SECONDS - 1000);
-		expect(reset).toBeLessThanOrEqual(Date.now() + SIXTY_SECONDS + 1000);
+		expect(reset).toBeGreaterThanOrEqual(before + THIRTY_SECONDS - 1000);
+		expect(reset).toBeLessThanOrEqual(Date.now() + THIRTY_SECONDS + 1000);
 	});
 });
 
@@ -330,8 +334,10 @@ describe("handleRateLimitResponse — in-memory cooldown mutation", () => {
 
 		handleRateLimitResponse(account, rateLimitInfo, ctx);
 
-		// In-memory mutation should be set immediately
-		expect(account.rate_limited_until).toBe(resetTime);
+		// In-memory mutation: cooldownUntil = Math.min(resetTime, now+backoff)
+		expect(account.rate_limited_until).not.toBeNull();
+		expect(account.rate_limited_until).toBeLessThanOrEqual(resetTime);
+		expect(account.rate_limited_until ?? 0).toBeGreaterThan(Date.now());
 	});
 
 	it("does not mutate account.rate_limited_until when resetTime is undefined", () => {
@@ -445,10 +451,13 @@ describe("processProxyResponse — in-memory cooldown mutation", () => {
 
 		await processProxyResponse(response, account, ctx);
 
-		expect(account.rate_limited_until).toBe(resetTime);
+		// cooldownUntil = Math.min(resetTime, now+backoff) — backoff caps below resetTime for count=1
+		expect(account.rate_limited_until).not.toBeNull();
+		expect(account.rate_limited_until).toBeLessThanOrEqual(resetTime);
+		expect(account.rate_limited_until ?? 0).toBeGreaterThan(Date.now());
 	});
 
-	it("sets account.rate_limited_until to ~60s on 429 without resetTime", async () => {
+	it("sets account.rate_limited_until to ~30s on 429 without resetTime", async () => {
 		const account = makeAccount();
 		const before = Date.now();
 		const { ctx } = makeCtx({
@@ -464,12 +473,13 @@ describe("processProxyResponse — in-memory cooldown mutation", () => {
 		await processProxyResponse(response, account, ctx);
 
 		expect(account.rate_limited_until).not.toBeNull();
-		const SIXTY_SECONDS = 60 * 1000;
+		// Exponential backoff for count=1 is 30s (RATE_LIMIT_BACKOFF_BASE_MS). Allow ±1s drift.
+		const THIRTY_SECONDS = 30 * 1000;
 		expect(account.rate_limited_until ?? 0).toBeGreaterThanOrEqual(
-			before + SIXTY_SECONDS - 1000,
+			before + THIRTY_SECONDS - 1000,
 		);
 		expect(account.rate_limited_until ?? 0).toBeLessThanOrEqual(
-			Date.now() + SIXTY_SECONDS + 1000,
+			Date.now() + THIRTY_SECONDS + 1000,
 		);
 	});
 

@@ -189,6 +189,6 @@ describe("handleResponsesRequest", () => {
 		// Read body and verify the translation actually ran
 		const rawBody = await resp.text();
 		expect(rawBody).toContain("response.created");
-		expect(rawBody).toContain("response.done");
+		expect(rawBody).toContain("response.completed");
 	});
 });

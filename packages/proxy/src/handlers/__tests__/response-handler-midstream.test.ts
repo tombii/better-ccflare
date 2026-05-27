@@ -48,6 +48,7 @@ function makeAccount(overrides: Partial<Account> = {}): Account {
 		billing_type: null,
 		pause_reason: null,
 		refresh_token_issued_at: null,
+		consecutive_rate_limits: 0,
 		...overrides,
 	};
 }
@@ -82,6 +83,7 @@ function makeCtxWithReason() {
 				reason: string,
 			) => {
 				calls.markRateLimited.push({ accountId, resetTime, reason });
+				return Promise.resolve(1);
 			},
 			updateAccountUsage: () => {},
 			updateAccountRateLimitMeta: () => {},
@@ -123,8 +125,11 @@ describe("handleRateLimitResponse — mid-stream 529 overload", () => {
 		expect(calls.markRateLimited[0]?.reason).toBe(
 			"upstream_529_overloaded_with_reset",
 		);
-		expect(calls.markRateLimited[0]?.resetTime).toBe(resetTime);
-		expect(account.rate_limited_until).toBe(resetTime);
+		// cooldownUntil = Math.min(resetTime, now+backoff) — backoff caps below resetTime for count=1
+		expect(calls.markRateLimited[0]?.resetTime).toBeLessThanOrEqual(resetTime);
+		expect(calls.markRateLimited[0]?.resetTime).toBeGreaterThan(Date.now());
+		expect(account.rate_limited_until).toBeLessThanOrEqual(resetTime);
+		expect(account.rate_limited_until ?? 0).toBeGreaterThan(Date.now());
 	});
 
 	it("marks account with reason='upstream_429_with_reset' when called with status 429 and resetTime", () => {

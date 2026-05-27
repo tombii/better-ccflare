@@ -133,9 +133,9 @@ describe("translateAnthropicStreamToResponses", () => {
 		const content = doneItem.content as Array<Record<string, unknown>>;
 		expect(content[0].text).toBe("Hello world");
 
-		// Last: response.done with usage
+		// Last: response.completed with usage
 		const lastEvent = parsed[parsed.length - 1];
-		expect(lastEvent.event).toBe("response.done");
+		expect(lastEvent.event).toBe("response.completed");
 		const doneFinal = lastEvent.data as Record<string, unknown>;
 		const usage = (doneFinal.response as Record<string, unknown>)
 			.usage as Record<string, number>;
@@ -214,9 +214,9 @@ describe("translateAnthropicStreamToResponses", () => {
 		expect(doneItem.status).toBe("completed");
 		expect(doneItem.arguments).toBe('{"path":"/tmp/x"}');
 
-		// response.done at end
+		// response.completed at end
 		const lastEvent = parsed[parsed.length - 1];
-		expect(lastEvent.event).toBe("response.done");
+		expect(lastEvent.event).toBe("response.completed");
 	});
 
 	test("mixed text + tool — both message and function_call items emitted in order", async () => {
@@ -296,11 +296,11 @@ describe("translateAnthropicStreamToResponses", () => {
 		);
 		expect(doneEvents).toHaveLength(2);
 
-		// Last event is response.done
-		expect(parsed[parsed.length - 1].event).toBe("response.done");
+		// Last event is response.completed
+		expect(parsed[parsed.length - 1].event).toBe("response.completed");
 	});
 
-	test("response.done usage stats — input, output, total correct", async () => {
+	test("response.completed usage stats — input, output, total correct", async () => {
 		const events = [
 			sseEvent("message_start", {
 				type: "message_start",
@@ -336,7 +336,7 @@ describe("translateAnthropicStreamToResponses", () => {
 		);
 
 		const parsed = await collectSseEvents(result);
-		const doneEvent = parsed.find((e) => e.event === "response.done");
+		const doneEvent = parsed.find((e) => e.event === "response.completed");
 		expect(doneEvent).toBeDefined();
 
 		const resp = (doneEvent?.data as Record<string, unknown>)
