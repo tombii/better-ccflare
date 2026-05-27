@@ -1043,6 +1043,12 @@ const startCleanupInterval = () => {
 		// Run cleanup every 30 seconds
 		cleanupInterval = setInterval(() => {
 			cleanupStaleRequests();
+			// Bun 1.3.x doesn't reclaim structured-clone backing stores of large
+			// postMessage payloads (request bodies, chunk Uint8Arrays) under
+			// sustained load — the JSC heap never gets enough idle time to collect
+			// them, causing RSS to climb unbounded. See oven-sh/bun#5709.
+			// An explicit GC on this off-request-path interval is acceptable.
+			if (typeof Bun !== "undefined") Bun.gc(true);
 		}, 30000);
 		// Allow worker to exit if no other work is pending
 		cleanupInterval.unref();
