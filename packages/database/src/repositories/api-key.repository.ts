@@ -9,7 +9,7 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 		const rows = await this.query<ApiKeyRow>(`
 			SELECT
 				id, name, hashed_key, prefix_last_8, created_at,
-				last_used, usage_count, is_active, role
+				last_used, usage_count, is_active
 			FROM api_keys
 			ORDER BY created_at DESC
 		`);
@@ -23,7 +23,7 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 		const rows = await this.query<ApiKeyRow>(`
 			SELECT
 				id, name, hashed_key, prefix_last_8, created_at,
-				last_used, usage_count, is_active, role
+				last_used, usage_count, is_active
 			FROM api_keys
 			WHERE is_active = 1
 			ORDER BY created_at DESC
@@ -39,7 +39,7 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 			`
 			SELECT
 				id, name, hashed_key, prefix_last_8, created_at,
-				last_used, usage_count, is_active, role
+				last_used, usage_count, is_active
 			FROM api_keys
 			WHERE id = ?
 		`,
@@ -57,7 +57,7 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 			`
 			SELECT
 				id, name, hashed_key, prefix_last_8, created_at,
-				last_used, usage_count, is_active, role
+				last_used, usage_count, is_active
 			FROM api_keys
 			WHERE hashed_key = ? AND is_active = 1
 		`,
@@ -75,7 +75,7 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 			`
 			SELECT
 				id, name, hashed_key, prefix_last_8, created_at,
-				last_used, usage_count, is_active, role
+				last_used, usage_count, is_active
 			FROM api_keys
 			WHERE name = ?
 		`,
@@ -109,8 +109,8 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 			`
 			INSERT INTO api_keys (
 				id, name, hashed_key, prefix_last_8, created_at,
-				last_used, is_active, role
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+				last_used, is_active
+			) VALUES (?, ?, ?, ?, ?, ?, ?)
 		`,
 			[
 				apiKey.id,
@@ -120,7 +120,6 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 				apiKey.created_at,
 				apiKey.last_used,
 				apiKey.is_active,
-				apiKey.role,
 			],
 		);
 	}
@@ -173,6 +172,39 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 	}
 
 	/**
+	 * Replace the stored secret for an API key, preserving every other column
+	 * (name, created_at, usage_count, last_used, is_active).
+	 *
+	 * `expectedHashedKey` is an optimistic-concurrency guard: the row is only
+	 * rewritten if its current hash still matches. Returns false on a miss so
+	 * the caller can report a 409 instead of returning a silently-invalid
+	 * plaintext to a racing client.
+	 *
+	 * The `is_active = 1` predicate is defense in depth: callers already check
+	 * isActive in app code, but a key can be disabled between that check and
+	 * this write (TOCTOU). Refusing to rotate a disabled row keeps the SQL
+	 * write consistent with the stated precondition.
+	 */
+	async rotateSecret(
+		id: string,
+		expectedHashedKey: string,
+		newHashedKey: string,
+		newPrefixLast8: string,
+	): Promise<boolean> {
+		const changes = await this.runWithChanges(
+			`
+			UPDATE api_keys
+			SET hashed_key = ?,
+				prefix_last_8 = ?
+			WHERE id = ? AND hashed_key = ? AND is_active = 1
+		`,
+			[newHashedKey, newPrefixLast8, id, expectedHashedKey],
+		);
+
+		return changes > 0;
+	}
+
+	/**
 	 * Permanently delete an API key
 	 */
 	async delete(id: string): Promise<boolean> {
@@ -182,22 +214,6 @@ export class ApiKeyRepository extends BaseRepository<ApiKey> {
 			WHERE id = ?
 		`,
 			[id],
-		);
-
-		return changes > 0;
-	}
-
-	/**
-	 * Update the role of an API key
-	 */
-	async updateRole(id: string, role: "admin" | "api-only"): Promise<boolean> {
-		const changes = await this.runWithChanges(
-			`
-			UPDATE api_keys
-			SET role = ?
-			WHERE id = ?
-		`,
-			[role, id],
 		);
 
 		return changes > 0;

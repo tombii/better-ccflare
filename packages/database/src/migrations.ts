@@ -905,30 +905,33 @@ export function runMigrations(db: Database, dbPath?: string): void {
 			);
 		}
 
-		// Add role column to api_keys if it doesn't exist (Migration v4)
-		if (!apiKeysColumnNames.includes("role")) {
-			// Add column with default value
-			db.prepare(
-				"ALTER TABLE api_keys ADD COLUMN role TEXT NOT NULL DEFAULT 'api-only'",
-			).run();
-			log.info("Added role column to api_keys table");
-
-			// Update existing keys to 'admin' for backwards compatibility
-			const updateResult = db
-				.prepare("UPDATE api_keys SET role = 'admin' WHERE role = 'api-only'")
-				.run();
-			const updatedCount = (updateResult.changes as number) || 0;
-			if (updatedCount > 0) {
-				log.info(
-					`Updated ${updatedCount} existing API key(s) to 'admin' role for backwards compatibility`,
+		// Drop role column from api_keys if it exists (cleanup migration).
+		// The role concept distinguished "admin" vs "api-only" keys, where only
+		// admin keys could reach /api/*. With /api/* now unauthenticated by
+		// design (trust boundary is "can you reach the port"), all API keys
+		// gate the same surface — /v1/* and /messages/* — and the role
+		// distinction is meaningless.
+		if (apiKeysColumnNames.includes("role")) {
+			try {
+				db.prepare("DROP INDEX IF EXISTS idx_api_keys_role").run();
+			} catch (error) {
+				log.warn(
+					"Failed to drop idx_api_keys_role (continuing with column drop):",
+					error,
 				);
 			}
-
-			// Create index on role column
-			db.prepare(
-				"CREATE INDEX IF NOT EXISTS idx_api_keys_role ON api_keys(role)",
-			).run();
-			log.info("Created index on api_keys role column");
+			// SQLite 3.35+ supports DROP COLUMN, but older bundled versions don't —
+			// degrade gracefully like the Postgres migration does, otherwise a
+			// boot-time exception here halts startup on a deployment with an old
+			// sqlite binary.
+			try {
+				db.prepare("ALTER TABLE api_keys DROP COLUMN role").run();
+				log.info("Removed role column from api_keys table");
+			} catch (error) {
+				log.warn(
+					`Could not drop api_keys.role column (continuing): ${(error as Error).message}`,
+				);
+			}
 		}
 
 		// Add performance indexes

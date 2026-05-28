@@ -7,7 +7,6 @@ import {
 	GitBranch,
 	Key,
 	LayoutDashboard,
-	LogOut,
 	Menu,
 	RefreshCw,
 	Settings,
@@ -51,14 +50,10 @@ const _navItems: NavItem[] = [
 ];
 
 interface NavigationProps {
-	onLogout?: () => void;
 	showCombos?: boolean;
 }
 
-export function Navigation({
-	onLogout,
-	showCombos = false,
-}: NavigationProps = {}) {
+export function Navigation({ showCombos = false }: NavigationProps = {}) {
 	const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 	const [updateStatus, setUpdateStatus] = useState<
 		"idle" | "checking" | "available" | "current" | "error"
@@ -412,19 +407,6 @@ export function Navigation({
 								</Link>
 							);
 						})}
-						{onLogout && (
-							<Button
-								variant="ghost"
-								className="w-full justify-start gap-3 transition-all text-muted-foreground hover:text-destructive"
-								onClick={() => {
-									setIsMobileMenuOpen(false);
-									onLogout();
-								}}
-							>
-								<LogOut className="h-4 w-4" />
-								Log Out
-							</Button>
-						)}
 					</nav>
 
 					<Separator />

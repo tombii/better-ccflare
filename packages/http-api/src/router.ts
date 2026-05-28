@@ -1,5 +1,4 @@
 import { validateNumber } from "@better-ccflare/core";
-import { Unauthorized } from "@better-ccflare/errors";
 import {
 	createAccountAddHandler,
 	createAccountAutoFallbackHandler,
@@ -45,10 +44,10 @@ import {
 	createApiKeyDeleteHandler,
 	createApiKeyDisableHandler,
 	createApiKeyEnableHandler,
+	createApiKeyRegenerateHandler,
 	createApiKeysGenerateHandler,
 	createApiKeysListHandler,
 	createApiKeysStatsHandler,
-	createApiKeyUpdateRoleHandler,
 } from "./handlers/api-keys";
 import {
 	createComboCreateHandler,
@@ -104,7 +103,6 @@ import {
 	createTokenHealthHandler,
 } from "./handlers/token-health";
 import { createVersionCheckHandler } from "./handlers/version";
-import { AuthService } from "./services/auth-service";
 import type { APIContext } from "./types";
 import { errorResponse } from "./utils/http-error";
 
@@ -117,14 +115,12 @@ export class APIRouter {
 		string,
 		(req: Request, url: URL) => Response | Promise<Response>
 	>;
-	private authService: AuthService;
 	private qwenStatusHandler: (sessionId: string) => Response;
 	private codexStatusHandler: (sessionId: string) => Response;
 
 	constructor(context: APIContext) {
 		this.context = context;
 		this.handlers = new Map();
-		this.authService = new AuthService(context.dbOps);
 		this.qwenStatusHandler = createQwenDeviceFlowStatusHandler();
 		this.codexStatusHandler = createCodexDeviceFlowStatusHandler();
 		this.registerHandlers();
@@ -426,31 +422,12 @@ export class APIRouter {
 		const method = req.method;
 		const key = `${method}:${path}`;
 
-		// Authenticate the request
-		const authResult = await this.authService.authenticateRequest(
-			req,
-			path,
-			method,
-		);
-		if (!authResult.isAuthenticated) {
-			return errorResponse(
-				Unauthorized(authResult.error || "Authentication failed"),
-			);
-		}
-
-		// Authorize the request based on API key role
-		if (authResult.apiKey) {
-			const authzResult = await this.authService.authorizeEndpoint(
-				authResult.apiKey,
-				path,
-				method,
-			);
-			if (!authzResult.authorized) {
-				return errorResponse(
-					Unauthorized(authzResult.reason || "Authorization failed"),
-				);
-			}
-		}
+		// Auth is intentionally NOT called here. The router only dispatches
+		// /api/* paths, which are all public under the post-#216 policy. The
+		// upstream-traffic paths (/v1/*, /messages/*) don't match any handler
+		// here and fall through to the server.ts proxy dispatch, which runs
+		// authenticateRequest exactly once. Authing here would double-increment
+		// usage_count on every proxied request.
 
 		// Check for exact match
 		const handler = this.handlers.get(key);
@@ -661,21 +638,13 @@ export class APIRouter {
 			const parts = path.split("/");
 			const keyIdOrName = decodeURIComponent(parts[3]); // Decode URL-encoded IDs/names
 
-			// API key role update - Only admin keys can update roles
-			if (path.endsWith("/role") && method === "PATCH") {
-				// Check if the authenticated key is an admin key
-				if (authResult.role !== "admin") {
-					return errorResponse(
-						Unauthorized(
-							"Only admin keys can update API key roles. Your key has api-only access.",
-						),
-					);
-				}
-				const updateRoleHandler = createApiKeyUpdateRoleHandler(
+			// API key regenerate (mints a new secret, preserves stats)
+			if (path.endsWith("/regenerate") && method === "POST") {
+				const regenerateHandler = createApiKeyRegenerateHandler(
 					this.context.dbOps,
 				);
 				return await this.wrapHandler((req) =>
-					updateRoleHandler(req, keyIdOrName, authResult.apiKeyId),
+					regenerateHandler(req, keyIdOrName),
 				)(req, url);
 			}
 

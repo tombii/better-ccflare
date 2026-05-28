@@ -172,8 +172,7 @@ export async function ensureSchemaPg(adapter: BunSqlAdapter): Promise<void> {
 			created_at BIGINT NOT NULL,
 			last_used BIGINT,
 			usage_count INTEGER DEFAULT 0,
-			is_active INTEGER DEFAULT 1,
-			role TEXT NOT NULL DEFAULT 'api-only'
+			is_active INTEGER DEFAULT 1
 		)
 	`);
 
@@ -342,12 +341,6 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 			definition: "ALTER TABLE requests ADD COLUMN api_key_name TEXT",
 		},
 		{
-			table: "api_keys",
-			column: "role",
-			definition:
-				"ALTER TABLE api_keys ADD COLUMN role TEXT NOT NULL DEFAULT 'api-only'",
-		},
-		{
 			table: "requests",
 			column: "project",
 			definition: "ALTER TABLE requests ADD COLUMN project TEXT",
@@ -403,6 +396,22 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 					`Could not add column ${col.table}.${col.column}: ${(error as Error).message}`,
 				);
 			}
+		}
+	}
+
+	// Drop role column from api_keys if it exists (cleanup migration — see
+	// SQLite counterpart for the rationale).
+	if (await columnExists(adapter, "api_keys", "role")) {
+		try {
+			await adapter.unsafe(`DROP INDEX IF EXISTS idx_api_keys_role`);
+		} catch (error) {
+			log.warn(`Could not drop idx_api_keys_role: ${(error as Error).message}`);
+		}
+		try {
+			await adapter.unsafe(`ALTER TABLE api_keys DROP COLUMN role`);
+			log.info("Removed role column from api_keys table");
+		} catch (error) {
+			log.warn(`Could not drop api_keys.role: ${(error as Error).message}`);
 		}
 	}
 

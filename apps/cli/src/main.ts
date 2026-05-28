@@ -38,6 +38,7 @@ import {
 	forceResetRateLimit,
 	formatApiKeyForDisplay,
 	formatApiKeyGenerationResult,
+	formatApiKeyRegenerationResult,
 	generateApiKey,
 	getAccountsList,
 	getApiKeyStats,
@@ -45,6 +46,7 @@ import {
 	listApiKeys,
 	pauseAccount,
 	reauthenticateAccount,
+	regenerateApiKey,
 	removeAccount,
 	resetAllStats,
 	resumeAccount,
@@ -109,13 +111,13 @@ interface ParsedArgs {
 	getModel: boolean;
 	setModel: string | null;
 	generateApiKey: string | null;
+	regenerateApiKey: string | null;
 	listApiKeys: boolean;
 	disableApiKey: string | null;
 	enableApiKey: string | null;
 	deleteApiKey: string | null;
 	forceResetRateLimit: string | null;
 	showConfig: boolean;
-	admin: boolean;
 }
 
 /**
@@ -461,13 +463,13 @@ function parseArgs(args: string[]): ParsedArgs {
 		getModel: false,
 		setModel: null,
 		generateApiKey: null,
+		regenerateApiKey: null,
 		listApiKeys: false,
 		disableApiKey: null,
 		enableApiKey: null,
 		deleteApiKey: null,
 		forceResetRateLimit: null,
 		showConfig: false,
-		admin: false,
 	};
 
 	for (let i = 0; i < args.length; i++) {
@@ -754,8 +756,12 @@ function parseArgs(args: string[]): ParsedArgs {
 				}
 				parsed.generateApiKey = args[++i];
 				break;
-			case "--admin":
-				parsed.admin = true;
+			case "--regenerate-api-key":
+				if (i + 1 >= args.length || args[i + 1].startsWith("--")) {
+					console.error("❌ --regenerate-api-key requires an API key name");
+					fastExit(1);
+				}
+				parsed.regenerateApiKey = args[++i];
 				break;
 			case "--list-api-keys":
 				parsed.listApiKeys = true;
@@ -876,12 +882,12 @@ Options:
   --set-model <model>  Set default agent model (opus-4 or sonnet-4)
 
 API Key Management:
-  --generate-api-key <name>  Generate a new API key
-    --admin                  Grant admin privileges (dashboard access)
-  --list-api-keys            List all API keys
-  --disable-api-key <name>   Disable an API key
-  --enable-api-key <name>    Enable a disabled API key
-  --delete-api-key <name>    Delete an API key permanently
+  --generate-api-key <name>    Generate a new API key
+  --regenerate-api-key <name>  Mint a new secret for an existing API key (preserves stats)
+  --list-api-keys              List all API keys
+  --disable-api-key <name>     Disable an API key
+  --enable-api-key <name>      Enable a disabled API key
+  --delete-api-key <name>      Delete an API key permanently
 
 Debugging:
   --show-config              Show all configuration variables with their sources
@@ -897,8 +903,7 @@ Examples:
   better-ccflare --pause work           # Pause account
   better-ccflare --analyze              # Run performance analysis
   better-ccflare --stats                # View stats
-  better-ccflare --generate-api-key "My App"  # Generate API-only key
-  better-ccflare --generate-api-key "Admin Key" --admin  # Generate admin key
+  better-ccflare --generate-api-key "My App"   # Generate a new API key
   better-ccflare --list-api-keys               # List all API keys
   better-ccflare --disable-api-key "My App"    # Disable an API key
 `);
@@ -1268,17 +1273,26 @@ Examples:
 	// API Key management commands
 	if (parsed.generateApiKey) {
 		try {
-			// Default to admin if this is the first key, otherwise api-only
-			const defaultRole =
-				(await dbOps.countActiveApiKeys()) === 0 ? "admin" : "api-only";
-			const role = parsed.admin ? ("admin" as const) : defaultRole;
-			const result = await generateApiKey(dbOps, parsed.generateApiKey, role);
+			const result = await generateApiKey(dbOps, parsed.generateApiKey);
 			console.log(formatApiKeyGenerationResult(result));
 			await exitGracefully(0);
 		} catch (error: unknown) {
 			const errorMessage =
 				error instanceof Error ? error.message : String(error);
 			console.error(`❌ Failed to generate API key: ${errorMessage}`);
+			await exitGracefully(1);
+		}
+	}
+
+	if (parsed.regenerateApiKey) {
+		try {
+			const result = await regenerateApiKey(dbOps, parsed.regenerateApiKey);
+			console.log(formatApiKeyRegenerationResult(result));
+			await exitGracefully(0);
+		} catch (error: unknown) {
+			const errorMessage =
+				error instanceof Error ? error.message : String(error);
+			console.error(`❌ Failed to regenerate API key: ${errorMessage}`);
 			await exitGracefully(1);
 		}
 	}

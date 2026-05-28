@@ -43,10 +43,10 @@ import {
 import {
 	AutoRefreshScheduler,
 	CacheKeepaliveScheduler,
+	dispatchProxyRequest,
 	getUsageWorker,
 	getUsageWorkerHealth,
 	getValidAccessToken,
-	handleProxy,
 	type ProxyContext,
 	registerCodexUsageRefresher,
 	registerPollingRestarter,
@@ -1078,14 +1078,41 @@ export default async function startServer(options?: {
 						);
 					}
 
-					// For all non-API routes, serve the dashboard index.html (client-side routing)
-					// This allows React Router to handle all dashboard routes without maintaining a list
-					if (
-						!url.pathname.startsWith("/api/") &&
-						!url.pathname.startsWith("/v1/")
-					) {
+					// For all non-API, non-proxy routes, serve the dashboard index.html
+					// (client-side routing). This allows React Router to handle all
+					// dashboard routes without maintaining a list. Anthropic-style
+					// clients POSTing to /messages or /messages/* (and /v1, /v1/*) must
+					// NOT receive index.html — they need to fall through to the proxy
+					// dispatch below. Mirrors the boundary `policyFor` uses.
+					const p = url.pathname;
+					const isProxyPath =
+						p === "/v1" ||
+						p.startsWith("/v1/") ||
+						p === "/messages" ||
+						p.startsWith("/messages/");
+					if (!p.startsWith("/api/") && !isProxyPath) {
 						return serveDashboardFile("/index.html", "text/html");
 					}
+				}
+
+				// Reject unmatched /api/* paths with 404 before falling through to the
+				// proxy. Without this, an unknown management URL like /api/not-a-route
+				// would be treated as a proxy path (it'd 404 deeper in the pipeline,
+				// but with confusing semantics and an account-selection round-trip).
+				if (url.pathname === "/api" || url.pathname.startsWith("/api/")) {
+					return new Response(
+						JSON.stringify({
+							type: "error",
+							error: {
+								type: "not_found",
+								message: `Unknown API route: ${url.pathname}`,
+							},
+						}),
+						{
+							status: HTTP_STATUS.NOT_FOUND,
+							headers: { "Content-Type": "application/json" },
+						},
+					);
 				}
 
 				// All other paths go to proxy
@@ -1112,110 +1139,54 @@ export default async function startServer(options?: {
 						);
 					}
 
-					// Authorization check - verify API key has permission for this endpoint
-					if (authResult.apiKey) {
-						const authzResult = await authService.authorizeEndpoint(
-							authResult.apiKey,
-							url.pathname,
-							req.method,
-						);
-
-						if (!authzResult.authorized) {
-							return new Response(
-								JSON.stringify({
-									type: "error",
-									error: {
-										type: "authorization_error",
-										message: authzResult.reason || "Access denied",
-									},
-								}),
-								{
-									status: 403,
-									headers: { "Content-Type": "application/json" },
-								},
-							);
-						}
-					}
-
-					try {
-						// Codex CLI first tries WebSocket transport for /v1/responses.
-						// We only support HTTP — reject the upgrade cleanly so Codex
-						// falls back to HTTPS without hitting the proxy with an empty body.
-						if (
-							req.headers.get("upgrade")?.toLowerCase() === "websocket" &&
-							(url.pathname === "/v1/responses" ||
-								url.pathname === "/v1/responses/compact")
-						) {
-							return new Response(
-								JSON.stringify({
-									type: "error",
-									error: {
-										type: "not_supported_error",
-										message:
-											"WebSocket transport is not supported. Codex will retry over HTTPS automatically.",
-									},
-								}),
-								{
-									status: 503,
-									headers: { "Content-Type": "application/json" },
-								},
-							);
-						}
-
-						if (
-							req.method === "POST" &&
-							(url.pathname === "/v1/responses" ||
-								url.pathname === "/v1/responses/compact")
-						) {
-							return await handleResponsesRequest(
-								req,
-								url,
-								handleProxy as Parameters<typeof handleResponsesRequest>[2],
-								proxyContext,
-								authResult.apiKeyId,
-								authResult.apiKeyName,
-							);
-						}
-						return await handleProxy(
-							req,
-							url,
-							proxyContext,
-							authResult.apiKeyId,
-							authResult.apiKeyName,
-						);
-					} catch (proxyError) {
-						const statusCode =
-							typeof proxyError === "object" &&
-							proxyError !== null &&
-							"statusCode" in proxyError &&
-							typeof (proxyError as { statusCode: unknown }).statusCode ===
-								"number"
-								? (proxyError as { statusCode: number }).statusCode
-								: HTTP_STATUS.INTERNAL_SERVER_ERROR;
-
-						log.error("Proxy request failed:", proxyError);
-
-						const isServiceUnavailable =
-							statusCode === HTTP_STATUS.SERVICE_UNAVAILABLE;
-
+					// Codex CLI first tries WebSocket transport for /v1/responses.
+					// We only support HTTP — reject the upgrade cleanly so Codex
+					// falls back to HTTPS without hitting the proxy with an empty body.
+					if (
+						req.headers.get("upgrade")?.toLowerCase() === "websocket" &&
+						(url.pathname === "/v1/responses" ||
+							url.pathname === "/v1/responses/compact")
+					) {
 						return new Response(
 							JSON.stringify({
 								type: "error",
 								error: {
-									type: isServiceUnavailable
-										? "service_unavailable_error"
-										: "proxy_error",
-									message: isServiceUnavailable
-										? "Service temporarily unavailable. Please try again later."
-										: "Proxy request failed",
+									type: "not_supported_error",
+									message:
+										"WebSocket transport is not supported. Codex will retry over HTTPS automatically.",
 								},
 							}),
 							{
-								status: statusCode,
+								status: 503,
 								headers: { "Content-Type": "application/json" },
 							},
 						);
 					}
+
+					if (
+						req.method === "POST" &&
+						(url.pathname === "/v1/responses" ||
+							url.pathname === "/v1/responses/compact")
+					) {
+						return await handleResponsesRequest(
+							req,
+							url,
+							dispatchProxyRequest as Parameters<
+								typeof handleResponsesRequest
+							>[2],
+							proxyContext,
+							authResult.apiKeyId,
+							authResult.apiKeyName,
+						);
+					}
+
+					return await dispatchProxyRequest(
+						req,
+						url,
+						proxyContext,
+						authResult.apiKeyId,
+						authResult.apiKeyName,
+					);
 				} catch (authError) {
 					// Log authentication errors for security monitoring
 					log.error("Authentication service error:", authError);
@@ -1281,6 +1252,23 @@ export default async function startServer(options?: {
 		}
 	}, MEMORY_MONITOR_INTERVAL_MS);
 	memoryMonitorInterval.unref();
+
+	// Warn loudly if bound to a non-loopback address. The management surface
+	// (/api/*) is unauthenticated by design — trust boundary is "can you reach
+	// the port" — so anything besides loopback exposes account management,
+	// debug endpoints, key administration, and request logs to the network.
+	// Operators should put a reverse proxy with auth in front for non-local
+	// deployments.
+	const loopbackHosts = new Set(["127.0.0.1", "::1", "localhost"]);
+	if (!loopbackHosts.has(hostname)) {
+		log.warn(
+			`better-ccflare is bound to '${hostname}' and the management API ` +
+				"(/api/*) is unauthenticated. Anyone who can reach this port can " +
+				"manage accounts, create/revoke API keys, read request logs, and " +
+				"download heap snapshots. Bind to localhost (set BETTER_CCFLARE_HOST=127.0.0.1) " +
+				"or put better-ccflare behind a reverse proxy that enforces authentication.",
+		);
+	}
 
 	// Log server startup (async)
 	getVersion().then((version) => {
