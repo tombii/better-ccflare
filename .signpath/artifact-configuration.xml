@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <!--
+    GitHub Actions uploads-artifact wraps the artifact in a ZIP automatically,
+    so the root element must be <zip-file>.
+    Only the Windows PE binary is signed with Authenticode; the Linux/macOS
+    binaries (ELF/Mach-O) are passed through unsigned inside the same ZIP.
+  -->
+  <zip-file>
+    <pe-file path="better-ccflare-windows-x64.exe">
+      <authenticode-sign/>
+    </pe-file>
+  </zip-file>
+</artifact-configuration>

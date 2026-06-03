@@ -1,0 +1,63 @@
+name: SignPath Test Signing
+
+on:
+  workflow_dispatch:
+
+jobs:
+  sign:
+    name: Test-sign Windows binary
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build dashboard
+        run: bun run build:dashboard
+
+      - name: Build Windows binary
+        run: |
+          cd apps/cli
+          bun build ./src/index.ts \
+            --compile \
+            --target bun-windows-x64 \
+            --outfile dist/better-ccflare-windows-x64.exe
+          ls -lh dist/better-ccflare-windows-x64.exe
+
+      - name: Upload unsigned binary
+        id: upload-unsigned
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-unsigned
+          path: apps/cli/dist/better-ccflare-windows-x64.exe
+          retention-days: 1
+
+      - name: Submit test-signing request
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: '${{ secrets.SIGNPATH_API_TOKEN }}'
+          organization-id: '${{ secrets.SIGNPATH_ORGANIZATION_ID }}'
+          project-slug: 'better-ccflare'
+          signing-policy-slug: 'test-signing'
+          artifact-configuration-slug: 'release'
+          github-artifact-id: '${{ steps.upload-unsigned.outputs.artifact-id }}'
+          wait-for-completion: true
+          output-artifact-directory: 'signed'
+
+      - name: Upload signed binary as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-signed-test
+          path: signed/better-ccflare-windows-x64.exe
+          retention-days: 7
