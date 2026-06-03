@@ -26,13 +26,10 @@ jobs:
       - name: Build dashboard
         run: bun run build:dashboard
 
-      - name: Build Windows binary
+      - name: Build all architectures
         run: |
           cd apps/cli
-          bun build ./src/index.ts \
-            --compile \
-            --target bun-windows-x64 \
-            --outfile dist/better-ccflare-windows-x64.exe
+          bun run build:multi
           ls -lh dist/better-ccflare-windows-x64.exe
 
       - name: Upload unsigned binary
