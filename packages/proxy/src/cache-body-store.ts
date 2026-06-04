@@ -32,6 +32,12 @@ const log = new Logger("CacheBodyStore");
  */
 const CACHEABLE_PATH = "/v1/messages";
 
+/** Maximum number of in-flight staging entries. Oldest is evicted when exceeded. */
+const MAX_STAGING_ENTRIES = 200;
+
+/** Maximum age for a staging entry before it is swept out. */
+const STAGING_MAX_AGE_MS = 5 * 60 * 1000; // 5 minutes
+
 /**
  * Byte patterns to search for in the request body to detect cache_control hints.
  * Both quoted forms cover JSON key serialization styles.
@@ -151,6 +157,56 @@ class CacheBodyStore {
 				timestamp: Date.now(),
 			},
 		});
+
+		// Enforce size cap: evict oldest entry if over limit.
+		if (this.staging.size > MAX_STAGING_ENTRIES) {
+			let oldestId: string | null = null;
+			let oldestTimestamp = Infinity;
+			for (const [id, staged] of this.staging) {
+				if (staged.entry.timestamp < oldestTimestamp) {
+					oldestTimestamp = staged.entry.timestamp;
+					oldestId = id;
+				}
+			}
+			if (oldestId !== null) {
+				this.staging.delete(oldestId);
+				log.warn(
+					`Staging cap (${MAX_STAGING_ENTRIES}) exceeded — evicted oldest entry (requestId=${oldestId})`,
+				);
+			}
+		}
+
+		// Sweep stale entries on every stage call.
+		this.sweepStagingByAge();
+	}
+
+	/**
+	 * Discards a staged entry without promoting it. Call on terminal error paths
+	 * (e.g. all-accounts-failed throw) where onSummary will never fire, to prevent
+	 * the staging map from leaking memory.
+	 */
+	discardStaged(requestId: string): void {
+		this.staging.delete(requestId);
+	}
+
+	/**
+	 * Removes staging entries that are older than STAGING_MAX_AGE_MS.
+	 * Handles the worker-restart orphan case where onSummary never fires.
+	 */
+	sweepStagingByAge(): void {
+		const cutoff = Date.now() - STAGING_MAX_AGE_MS;
+		let swept = 0;
+		for (const [id, staged] of this.staging) {
+			if (staged.entry.timestamp < cutoff) {
+				this.staging.delete(id);
+				swept++;
+			}
+		}
+		if (swept > 0) {
+			log.info(
+				`Swept ${swept} orphaned staging entr${swept === 1 ? "y" : "ies"} older than ${STAGING_MAX_AGE_MS / 1000}s`,
+			);
+		}
 	}
 
 	/**

@@ -43,20 +43,18 @@ import {
 import {
 	AutoRefreshScheduler,
 	CacheKeepaliveScheduler,
-	getUsageWorker,
-	getUsageWorkerHealth,
+	drainUsageCollector,
+	getUsageCollectorHealth,
 	getValidAccessToken,
 	handleProxy,
+	initProxy,
 	type ProxyContext,
 	registerCodexUsageRefresher,
 	registerPollingRestarter,
 	registerRefreshClearer,
-	sendWorkerConfigUpdate,
 	startGlobalTokenHealthChecks,
 	startIntegrityScheduler,
-	startUsageWorker,
 	stopGlobalTokenHealthChecks,
-	terminateUsageWorker,
 	unregisterCodexUsageRefresher,
 } from "@better-ccflare/proxy";
 import { validatePathOrThrow } from "@better-ccflare/security";
@@ -684,7 +682,7 @@ export default async function startServer(options?: {
 			tlsEnabled,
 		},
 		getAsyncWriterHealth: () => asyncWriter.getHealth(),
-		getUsageWorkerHealth: () => getUsageWorkerHealth(),
+		getUsageWorkerHealth: () => getUsageCollectorHealth(),
 		getIntegrityStatus: () => dbOps.getIntegrityStatus(),
 		getStrategy: () => currentStrategy,
 	});
@@ -843,12 +841,10 @@ export default async function startServer(options?: {
 	strategy.initialize?.(strategyStore);
 	currentStrategy = strategy;
 
-	// Start usage worker eagerly (before first request)
-	startUsageWorker();
+	// Initialize usage collector (main-thread replacement for the post-processor worker)
+	initProxy(() => config.getStorePayloads());
 
 	// Proxy context
-	const usageWorker = getUsageWorker();
-	sendWorkerConfigUpdate(config.getStorePayloads());
 	const proxyContext: ProxyContext = {
 		strategy,
 		dbOps,
@@ -857,7 +853,6 @@ export default async function startServer(options?: {
 		provider,
 		refreshInFlight: new Map(),
 		asyncWriter,
-		usageWorker,
 	};
 
 	// Register this server's refresh clearing capability
@@ -1037,9 +1032,7 @@ export default async function startServer(options?: {
 			proxyContext.strategy = strategy;
 			currentStrategy = strategy;
 		}
-		if (key === "store_payloads") {
-			sendWorkerConfigUpdate(config.getStorePayloads());
-		}
+		// store_payloads changes are picked up automatically via the getStorePayloads getter
 	});
 
 	// Main server
@@ -1637,7 +1630,7 @@ async function handleGracefulShutdown(signal: string) {
 		}
 
 		usageCache.clear(); // Stop all usage polling
-		await terminateUsageWorker();
+		await drainUsageCollector();
 		await shutdown();
 		console.log("✅ Shutdown complete");
 		process.exit(0);

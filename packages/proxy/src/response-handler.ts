@@ -8,8 +8,8 @@ import type { ProxyContext } from "./handlers";
 import { applyRateLimitCooldown } from "./handlers/rate-limit-cooldown";
 import { createSseRateLimitSniffer } from "./handlers/sse-rate-limit-sniffer";
 import { combineChunks, teeStream } from "./stream-tee";
-import type { UsageWorkerController } from "./usage-worker-controller";
-import type { ChunkMessage, EndMessage, StartMessage } from "./worker-messages";
+import { getUsageCollector } from "./usage-collector";
+import type { EndMessage, StartMessage } from "./worker-messages";
 
 // Default cooldown for rate-limit errors detected mid-stream. SSE error
 // frames don't carry reset headers (HTTP headers were sent before the
@@ -27,21 +27,10 @@ function getMidStreamRateLimitCooldownMs(): number {
 	);
 }
 
-// Must match MAX_REQUEST_BODY_BYTES in post-processor.worker.ts.
-// Cap applied before postMessage to avoid multi-MB structured clones.
+// Must match MAX_REQUEST_BODY_BYTES in usage-collector.ts.
+// Cap applied before passing to collector to avoid multi-MB copies.
 // 4MB so afterburn can see full conversation history for friction analysis.
 const MAX_REQUEST_BODY_BYTES = 4 * 1024 * 1024;
-
-function safePostMessage(
-	worker: UsageWorkerController,
-	message: StartMessage | ChunkMessage | EndMessage,
-): void {
-	try {
-		worker.postMessage(message);
-	} catch (_error) {
-		// Worker not ready or terminated — silently ignore
-	}
-}
 
 /**
  * Check if a response should be considered successful/expected
@@ -166,7 +155,7 @@ export async function forwardToClient(
 			retryAttempt,
 			failoverAttempts,
 		};
-		safePostMessage(ctx.usageWorker, startMessage);
+		getUsageCollector().handleStart(startMessage);
 	}
 
 	// Emit request start event for real-time dashboard
@@ -196,12 +185,7 @@ export async function forwardToClient(
 
 		const onChunk = (value: Uint8Array): void => {
 			if (shouldProcessRequest) {
-				const chunkMsg: ChunkMessage = {
-					type: "chunk",
-					requestId,
-					data: value,
-				};
-				safePostMessage(ctx.usageWorker, chunkMsg);
+				getUsageCollector().handleChunk(requestId, value);
 			}
 
 			// Mid-stream rate-limit detection. The sniffer
@@ -232,7 +216,8 @@ export async function forwardToClient(
 					requestId,
 					success: isExpectedResponse(path, response),
 				};
-				safePostMessage(ctx.usageWorker, endMsg);
+				// Fire-and-forget: handleEnd is async for DB writes but we don't block streaming
+				void getUsageCollector().handleEnd(endMsg);
 			}
 		};
 
@@ -244,7 +229,7 @@ export async function forwardToClient(
 					success: false,
 					error: err.message,
 				};
-				safePostMessage(ctx.usageWorker, endMsg);
+				void getUsageCollector().handleEnd(endMsg);
 			}
 		};
 
@@ -272,7 +257,7 @@ export async function forwardToClient(
 				responseBody: null,
 				success: isExpectedResponse(path, response),
 			};
-			safePostMessage(ctx.usageWorker, endMsg);
+			void getUsageCollector().handleEnd(endMsg);
 		}
 
 		return response;
@@ -292,7 +277,7 @@ export async function forwardToClient(
 					cappedBuf.byteLength > 0 ? cappedBuf.toString("base64") : null,
 				success: isExpectedResponse(path, response),
 			};
-			safePostMessage(ctx.usageWorker, endMsg);
+			void getUsageCollector().handleEnd(endMsg);
 		},
 		onError(err) {
 			if (!shouldProcessRequest) return;
@@ -302,7 +287,7 @@ export async function forwardToClient(
 				success: false,
 				error: err.message,
 			};
-			safePostMessage(ctx.usageWorker, endMsg);
+			void getUsageCollector().handleEnd(endMsg);
 		},
 	});
 

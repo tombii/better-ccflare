@@ -82,7 +82,6 @@ function makeCtx(
 		},
 		refreshInFlight: new Map(),
 		asyncWriter: { enqueue: mock(() => {}) },
-		usageWorker: { postMessage: mock(() => {}) },
 	} as unknown as ProxyContext;
 }
 

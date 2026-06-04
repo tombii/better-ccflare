@@ -25,8 +25,11 @@ import {
 	selectAccountsForRequest,
 	validateProviderPath,
 } from "./handlers";
-import { UsageWorkerController } from "./usage-worker-controller";
-import type { ConfigUpdateMessage, SummaryMessage } from "./worker-messages";
+import {
+	getUsageCollector,
+	initUsageCollector,
+	type UsageCollectorHealth,
+} from "./usage-collector";
 
 export type { ProxyContext } from "./handlers";
 
@@ -96,55 +99,20 @@ function extractProjectFromRequest(
 	return null;
 }
 
-// ===== WORKER MANAGEMENT =====
+// ===== USAGE COLLECTOR MANAGEMENT =====
 
-let pendingStorePayloads: boolean | null = null;
-
-const usageWorkerController = new UsageWorkerController(
-	(msg: SummaryMessage) => {
-		cacheBodyStore.onSummary(
-			msg.summary.id,
-			msg.summary.cacheCreationInputTokens,
-		);
-		requestEvents.emit("event", { type: "summary", payload: msg.summary });
-	},
-	() => {
-		// Apply deferred config update once worker is ready
-		if (pendingStorePayloads !== null) {
-			const msg: ConfigUpdateMessage = {
-				type: "config-update",
-				storePayloads: pendingStorePayloads,
-			};
-			usageWorkerController.postMessage(msg);
-			pendingStorePayloads = null;
-		}
-	},
-);
-
-export function getUsageWorker(): UsageWorkerController {
-	return usageWorkerController;
+export function initProxy(getStorePayloads: () => boolean): void {
+	initUsageCollector(getStorePayloads, (summary) => {
+		requestEvents.emit("event", { type: "summary", payload: summary });
+	});
 }
 
-export function startUsageWorker(): void {
-	usageWorkerController.start();
+export async function drainUsageCollector(): Promise<void> {
+	return getUsageCollector().drain();
 }
 
-export function sendWorkerConfigUpdate(storePayloads: boolean): void {
-	if (!usageWorkerController.isReady()) {
-		// Defer until worker is ready
-		pendingStorePayloads = storePayloads;
-		return;
-	}
-	const msg: ConfigUpdateMessage = { type: "config-update", storePayloads };
-	usageWorkerController.postMessage(msg);
-}
-
-export function terminateUsageWorker(): Promise<void> {
-	return usageWorkerController.terminate();
-}
-
-export function getUsageWorkerHealth() {
-	return usageWorkerController.getHealth();
+export function getUsageCollectorHealth(): UsageCollectorHealth {
+	return getUsageCollector().getHealth();
 }
 
 // ===== MAIN HANDLER =====
@@ -354,8 +322,8 @@ export async function handleProxy(
 		const isAutoRefreshProbe =
 			req.headers.get("x-better-ccflare-auto-refresh") === "true";
 		if (!isAutoRefreshProbe) {
-			// Send error message to usage worker for request history logging
-			ctx.usageWorker.postMessage({
+			// Log to request history via usage collector
+			getUsageCollector().handleStart({
 				type: "start",
 				messageId: crypto.randomUUID(),
 				requestId: requestMeta.id,
@@ -383,7 +351,7 @@ export async function handleProxy(
 				failoverAttempts: 0,
 			});
 
-			ctx.usageWorker.postMessage({
+			void getUsageCollector().handleEnd({
 				type: "end",
 				requestId: requestMeta.id,
 				success: false,
@@ -511,6 +479,7 @@ export async function handleProxy(
 				}
 			}
 		} else if (throttledFallbackAccounts.length > 0) {
+			cacheBodyStore.discardStaged(requestMeta.id);
 			return createUsageThrottledResponse(throttledFallbackAccounts);
 		}
 	}
@@ -532,12 +501,14 @@ export async function handleProxy(
 					`bun run cli --reauthenticate "${acc.name.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`,
 			)
 			.join("\n  ");
+		cacheBodyStore.discardStaged(requestMeta.id);
 		throw new ServiceUnavailableError(
 			`All accounts failed to proxy the request. OAuth tokens have expired for accounts: ${needsReauth.map((acc) => acc.name).join(", ")}.\n\nPlease re-authenticate:\n  ${reauthCommands}`,
 			ctx.provider.name,
 		);
 	}
 
+	cacheBodyStore.discardStaged(requestMeta.id);
 	throw new ServiceUnavailableError(
 		`${ERROR_MESSAGES.ALL_ACCOUNTS_FAILED} (${allAttemptedAccounts.length} attempted)`,
 		ctx.provider.name,

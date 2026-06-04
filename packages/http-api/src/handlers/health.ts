@@ -21,9 +21,9 @@ type AsyncWriterHealthFn = () => {
 };
 type UsageWorkerHealthFn = () => {
 	state: string;
-	pendingAcks: number;
-	lastError: string | null;
-	startedAt: number | null;
+	pendingAcks?: number;
+	lastError?: string | null;
+	startedAt?: number | null;
 };
 type IntegrityStatusFn = () => IntegrityStatus;
 
