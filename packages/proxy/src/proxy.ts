@@ -28,6 +28,7 @@ import {
 import {
 	getUsageCollector,
 	initUsageCollector,
+	tryGetUsageCollector,
 	type UsageCollectorHealth,
 } from "./usage-collector";
 
@@ -108,11 +109,11 @@ export function initProxy(getStorePayloads: () => boolean): void {
 }
 
 export async function drainUsageCollector(): Promise<void> {
-	return getUsageCollector().drain();
+	return tryGetUsageCollector()?.drain() ?? Promise.resolve();
 }
 
 export function getUsageCollectorHealth(): UsageCollectorHealth {
-	return getUsageCollector().getHealth();
+	return tryGetUsageCollector()?.getHealth() ?? { state: "ready" };
 }
 
 // ===== MAIN HANDLER =====

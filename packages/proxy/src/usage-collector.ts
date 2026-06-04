@@ -110,7 +110,8 @@ function extractProjectFromRequest(startMessage: StartMessage): string | null {
 	const sanitizedPath = sanitizeProjectName(pathMatch?.[1]);
 	if (sanitizedPath) return sanitizedPath;
 
-	const headingMatch = systemPrompt.match(/^#\s+(.+?)$/m);
+	// Mirror of the regex in proxy.ts (both cap output via sanitizeProjectName)
+	const headingMatch = systemPrompt.match(/^#\s+([^\n\r]{1,100})/m);
 	if (headingMatch) {
 		const heading = sanitizeProjectName(headingMatch[1]);
 		if (heading && !heading.toLowerCase().startsWith("claude")) {
@@ -1043,5 +1044,13 @@ export function getUsageCollector(): UsageCollector {
 			"UsageCollector not initialized — call initUsageCollector() first",
 		);
 	}
+	return _usageCollector;
+}
+
+/**
+ * Returns the singleton or null if not yet initialized.
+ * Use in shutdown / health paths where a pre-init call must be a no-op.
+ */
+export function tryGetUsageCollector(): UsageCollector | null {
 	return _usageCollector;
 }

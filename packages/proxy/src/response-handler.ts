@@ -262,13 +262,12 @@ export async function forwardToClient(
 	 *********************************************************************/
 	if (!response.body) {
 		if (shouldProcessRequest) {
-			const endMsg: EndMessage = {
+			fireAndForgetEnd({
 				type: "end",
 				requestId,
 				responseBody: null,
 				success: isExpectedResponse(path, response),
-			};
-			void getUsageCollector().handleEnd(endMsg);
+			});
 		}
 
 		return response;
@@ -281,24 +280,22 @@ export async function forwardToClient(
 		onClose(buffered) {
 			if (!shouldProcessRequest) return;
 			const cappedBuf = combineChunks(buffered);
-			const endMsg: EndMessage = {
+			fireAndForgetEnd({
 				type: "end",
 				requestId,
 				responseBody:
 					cappedBuf.byteLength > 0 ? cappedBuf.toString("base64") : null,
 				success: isExpectedResponse(path, response),
-			};
-			void getUsageCollector().handleEnd(endMsg);
+			});
 		},
 		onError(err) {
 			if (!shouldProcessRequest) return;
-			const endMsg: EndMessage = {
+			fireAndForgetEnd({
 				type: "end",
 				requestId,
 				success: false,
 				error: err.message,
-			};
-			void getUsageCollector().handleEnd(endMsg);
+			});
 		},
 	});
 
