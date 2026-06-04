@@ -4,6 +4,7 @@ import {
 	ProviderError,
 	TIME_CONSTANTS,
 } from "@better-ccflare/core";
+import { withSanitizedProxyHeaders } from "@better-ccflare/http-common";
 import { Logger } from "@better-ccflare/logger";
 import { stripCacheControlFromOpenAIRequest } from "@better-ccflare/openai-formats";
 import { getProvider, usageCache } from "@better-ccflare/providers";
@@ -783,7 +784,12 @@ export async function proxyWithAccount(
 						);
 						return null;
 					}
-					return rawResponse;
+					// Model-not-found (404/400) is forwarded to the client so it can
+					// surface the real error. Strip content-encoding/content-length
+					// first: Bun's fetch already decompressed the body, so leaving the
+					// upstream `content-encoding: gzip` header makes the client try to
+					// gunzip plaintext → "Decompression error: ZlibError".
+					return withSanitizedProxyHeaders(rawResponse);
 				}
 
 				for (let i = 1; i < modelList.length; i++) {
