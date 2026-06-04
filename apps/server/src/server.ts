@@ -589,9 +589,6 @@ export default async function startServer(options?: {
 
 	// Initialize payload encryption (no-op if PAYLOAD_ENCRYPTION_KEY is unset).
 	// This must run before any database operations that read/write payloads.
-	// NOTE: this only initializes the main thread; the post-processor worker
-	// runs `initPayloadEncryption()` itself at module load — Bun workers have
-	// isolated module scopes.
 	await initPayloadEncryption();
 
 	// Initialize components
@@ -841,7 +838,6 @@ export default async function startServer(options?: {
 	strategy.initialize?.(strategyStore);
 	currentStrategy = strategy;
 
-	// Initialize usage collector (main-thread replacement for the post-processor worker)
 	initProxy(() => config.getStorePayloads());
 
 	// Proxy context
