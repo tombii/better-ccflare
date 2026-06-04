@@ -6,6 +6,8 @@ export interface ComboSlotInfo {
 	slots: Array<{ accountId: string; modelOverride: string }>;
 }
 
+export type RequestRoutingMode = "native" | "compatibility";
+
 export interface RequestMeta {
 	id: string;
 	method: string;
@@ -18,6 +20,10 @@ export interface RequestMeta {
 	comboName?: string | null;
 	/** Combo slot index being attempted (set per-iteration in proxy loop) */
 	comboSlotIndex?: number | null;
+	/** Resolved upstream path after provider-prefix stripping (native routes only) */
+	upstreamPath?: string | null;
+	/** How the request was routed through the proxy */
+	routingMode?: RequestRoutingMode | null;
 }
 
 export interface AgentUpdatePayload {

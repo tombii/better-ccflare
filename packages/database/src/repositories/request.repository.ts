@@ -42,6 +42,8 @@ export interface RequestData {
 	project?: string | null;
 	billingType?: string;
 	comboName?: string | null;
+	upstreamPath?: string | null;
+	routingMode?: string | null;
 	usage?: {
 		model?: string;
 		promptTokens?: number;
@@ -67,9 +69,9 @@ export class RequestRepository extends BaseRepository<RequestData> {
 				model, prompt_tokens, completion_tokens, total_tokens, cost_usd,
 				input_tokens, cache_read_input_tokens, cache_creation_input_tokens, output_tokens,
 				agent_used, output_tokens_per_second, api_key_id, api_key_name, project,
-				billing_type, combo_name
+				billing_type, combo_name, upstream_path, routing_mode
 			)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT (id) DO UPDATE SET
 				timestamp = EXCLUDED.timestamp,
 				method = EXCLUDED.method,
@@ -95,7 +97,9 @@ export class RequestRepository extends BaseRepository<RequestData> {
 				api_key_name = EXCLUDED.api_key_name,
 				project = COALESCE(EXCLUDED.project, requests.project),
 				billing_type = COALESCE(EXCLUDED.billing_type, requests.billing_type),
-				combo_name = COALESCE(EXCLUDED.combo_name, requests.combo_name)
+				combo_name = COALESCE(EXCLUDED.combo_name, requests.combo_name),
+				upstream_path = COALESCE(EXCLUDED.upstream_path, requests.upstream_path),
+				routing_mode = COALESCE(EXCLUDED.routing_mode, requests.routing_mode)
 		`,
 			[
 				data.id,
@@ -124,6 +128,8 @@ export class RequestRepository extends BaseRepository<RequestData> {
 				data.project || null,
 				data.billingType || null,
 				data.comboName || null,
+				data.upstreamPath || null,
+				data.routingMode || null,
 			],
 		);
 	}
