@@ -62,6 +62,8 @@ export function createRequestsSummaryHandler(db: BunSqlAdapter) {
 			api_key_name: string | null;
 			billing_type: string | null;
 			combo_name: string | null;
+			upstream_path: string | null;
+			routing_mode: string | null;
 		}>(
 			`
 			SELECT r.*, a.name as account_name
@@ -100,6 +102,8 @@ export function createRequestsSummaryHandler(db: BunSqlAdapter) {
 			apiKeyName: request.api_key_name || undefined,
 			billingType: request.billing_type || undefined,
 			comboName: request.combo_name || undefined,
+			upstreamPath: request.upstream_path || undefined,
+			routingMode: request.routing_mode || undefined,
 			rateLimited: request.status_code === 429,
 		}));
 

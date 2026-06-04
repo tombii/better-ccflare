@@ -1215,6 +1215,7 @@ export default async function startServer(options?: {
 								authResult.apiKeyName,
 								{
 									clientPath: route.clientPath,
+									upstreamPath: route.upstreamPath,
 									nativePassthrough: true,
 								},
 							);

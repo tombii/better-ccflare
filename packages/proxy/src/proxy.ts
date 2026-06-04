@@ -172,6 +172,7 @@ export function getUsageWorkerHealth() {
  */
 export interface HandleProxyOptions {
 	clientPath?: string;
+	upstreamPath?: string;
 	nativePassthrough?: boolean;
 }
 
@@ -282,6 +283,14 @@ export async function handleProxy(
 	const requestMeta = createRequestMetadata(req, url, options?.clientPath);
 	requestMeta.agentUsed = agentUsed;
 	requestMeta.project = project;
+	if (options?.upstreamPath) {
+		requestMeta.upstreamPath = options.upstreamPath;
+	}
+	if (options?.nativePassthrough) {
+		requestMeta.routingMode = "native";
+	} else if (options?.clientPath) {
+		requestMeta.routingMode = "compatibility";
+	}
 
 	// 6. Select accounts
 	const selectedAccounts = await selectAccountsForRequest(

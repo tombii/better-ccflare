@@ -151,4 +151,64 @@ describe("native codex passthrough via proxyWithAccount", () => {
 		expect(body.object).toBe("response");
 		expect(body.id).toBe("resp_native");
 	});
+
+	it("streams native Responses API SSE without Anthropic translation", async () => {
+		const sseLines = [
+			"event: response.created",
+			'data: {"type":"response.created","response":{"id":"resp_stream","model":"gpt-5.3-codex"}}',
+			"",
+			"event: response.function_call_arguments.delta",
+			'data: {"type":"response.function_call_arguments.delta","delta":"{\\"path\\":\\"x\\"}","output_index":0}',
+			"",
+			"event: response.completed",
+			'data: {"type":"response.completed","response":{"model":"gpt-5.3-codex","usage":{"input_tokens":3,"output_tokens":2}}}',
+			"",
+		].join("\n");
+
+		fetchMock = mock(async () => {
+			return new Response(sseLines, {
+				status: 200,
+				headers: { "Content-Type": "text/event-stream" },
+			});
+		});
+		globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+		const nativeBody = {
+			model: "gpt-5.3-codex",
+			input: [{ role: "user", content: [{ type: "input_text", text: "Hi" }] }],
+			stream: true,
+		};
+		const req = new Request("https://proxy.local/v1/codex/responses", {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				[NATIVE_PASSTHROUGH_HEADER]: "true",
+			},
+			body: JSON.stringify(nativeBody),
+		});
+
+		const response = await proxyWithAccount(
+			req,
+			new URL("https://proxy.local/responses"),
+			makeCodexAccount(),
+			{
+				id: "req-native-stream",
+				method: "POST",
+				path: "/v1/codex/responses",
+				upstreamPath: "/responses",
+				routingMode: "native",
+				timestamp: Date.now(),
+				headers: req.headers,
+			},
+			new TextEncoder().encode(JSON.stringify(nativeBody)).buffer,
+			() => undefined,
+			0,
+			makeProxyContext(),
+		);
+
+		expect(response).not.toBeNull();
+		const body = await response?.text();
+		expect(body).toContain("response.function_call_arguments.delta");
+		expect(body).not.toContain("content_block_delta");
+	});
 });

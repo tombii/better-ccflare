@@ -1112,6 +1112,31 @@ describe("CodexProvider native passthrough", () => {
 		expect(await transformed.json()).toEqual(nativeBody);
 	});
 
+	it("still translates compatibility streaming without native passthrough header", async () => {
+		const provider = new CodexProvider();
+		const upstreamBody = sseBody([
+			...eventLine("response.created", {
+				response: { id: "resp_test", model: "gpt-5.4" },
+			}),
+			...eventLine("response.completed", {
+				response: {
+					model: "gpt-5.4",
+					usage: { input_tokens: 1, output_tokens: 1 },
+				},
+			}),
+		]);
+
+		const response = new Response(upstreamBody, {
+			status: 200,
+			headers: { "content-type": "text/event-stream" },
+		});
+
+		const transformed = await provider.processResponse(response, null);
+		const body = await transformed.text();
+		expect(body).toContain("message_start");
+		expect(body).not.toContain("response.completed");
+	});
+
 	it("returns native responses unchanged", async () => {
 		const provider = new CodexProvider();
 		const upstream = new Response(

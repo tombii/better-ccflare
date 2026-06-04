@@ -49,6 +49,13 @@ export interface StartMessage {
 	// Retry info
 	retryAttempt: number;
 	failoverAttempts: number;
+
+	/** Client-facing path (e.g. /v1/codex/responses) */
+	clientPath?: string | null;
+	/** Upstream path after provider-prefix stripping (e.g. /responses) */
+	upstreamPath?: string | null;
+	/** native | compatibility — distinguishes passthrough from translated traffic */
+	routingMode?: string | null;
 }
 
 export interface ChunkMessage {

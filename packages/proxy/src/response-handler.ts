@@ -73,6 +73,9 @@ export interface ResponseHandlerOptions {
 	apiKeyId?: string | null;
 	apiKeyName?: string | null;
 	comboName?: string | null;
+	clientPath?: string | null;
+	upstreamPath?: string | null;
+	routingMode?: string | null;
 }
 
 /**
@@ -100,6 +103,9 @@ export async function forwardToClient(
 		apiKeyId,
 		apiKeyName,
 		comboName,
+		clientPath,
+		upstreamPath,
+		routingMode,
 	} = options;
 
 	// Always strip compression headers *before* we do anything else
@@ -113,6 +119,7 @@ export async function forwardToClient(
 
 	const isStream = ctx.provider.isStreamingResponse?.(response) ?? false;
 	const shouldStorePayloads = ctx.config.getStorePayloads?.() ?? true;
+	const loggedPath = clientPath ?? path;
 
 	// Filter out:
 	//   - count_tokens requests on OpenAI-compatible providers (existing
@@ -137,7 +144,7 @@ export async function forwardToClient(
 			requestId,
 			accountId: account?.id || null,
 			method,
-			path,
+			path: loggedPath,
 			timestamp,
 			requestHeaders: requestHeadersObj,
 			requestBody:
@@ -165,6 +172,9 @@ export async function forwardToClient(
 			apiKeyName: apiKeyName || null,
 			retryAttempt,
 			failoverAttempts,
+			clientPath: loggedPath,
+			upstreamPath: upstreamPath ?? null,
+			routingMode: routingMode ?? null,
 		};
 		safePostMessage(ctx.usageWorker, startMessage);
 	}
@@ -176,7 +186,7 @@ export async function forwardToClient(
 			id: requestId,
 			timestamp,
 			method,
-			path,
+			path: loggedPath,
 			accountId: account?.id || null,
 			statusCode: response.status,
 			agentUsed: agentUsed || null,

@@ -429,6 +429,9 @@ export async function proxyUnauthenticated(
 				requestId: requestMeta.id,
 				method: req.method,
 				path: url.pathname,
+				clientPath: requestMeta.path,
+				upstreamPath: requestMeta.upstreamPath ?? null,
+				routingMode: requestMeta.routingMode ?? null,
 				account: null,
 				requestHeaders: req.headers,
 				requestBody: requestBodyBuffer,
@@ -765,7 +768,7 @@ export async function proxyWithAccount(
 							ctx.dbOps.saveRequest(
 								crypto.randomUUID(),
 								req.method,
-								url.pathname,
+								requestMeta.path,
 								account.id,
 								429,
 								false,
@@ -779,6 +782,8 @@ export async function proxyWithAccount(
 								requestMeta.project ?? null,
 								undefined,
 								requestMeta.comboName ?? null,
+								requestMeta.upstreamPath ?? null,
+								requestMeta.routingMode ?? null,
 							),
 						);
 						return null;
@@ -896,7 +901,7 @@ export async function proxyWithAccount(
 							ctx.dbOps.saveRequest(
 								crypto.randomUUID(),
 								req.method,
-								url.pathname,
+								requestMeta.path,
 								account.id,
 								429,
 								false,
@@ -910,6 +915,8 @@ export async function proxyWithAccount(
 								requestMeta.project ?? null,
 								undefined,
 								requestMeta.comboName ?? null,
+								requestMeta.upstreamPath ?? null,
+								requestMeta.routingMode ?? null,
 							),
 						);
 					}
@@ -977,6 +984,9 @@ export async function proxyWithAccount(
 						requestId: requestMeta.id,
 						method: req.method,
 						path: url.pathname,
+						clientPath: requestMeta.path,
+						upstreamPath: requestMeta.upstreamPath ?? null,
+						routingMode: requestMeta.routingMode ?? null,
 						account,
 						requestHeaders: req.headers,
 						requestBody: effectiveBodyBuffer,
@@ -1002,6 +1012,9 @@ export async function proxyWithAccount(
 				requestId: requestMeta.id,
 				method: req.method,
 				path: url.pathname,
+				clientPath: requestMeta.path,
+				upstreamPath: requestMeta.upstreamPath ?? null,
+				routingMode: requestMeta.routingMode ?? null,
 				account,
 				requestHeaders: req.headers,
 				requestBody: effectiveBodyBuffer,

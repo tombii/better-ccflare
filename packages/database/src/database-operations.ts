@@ -815,6 +815,8 @@ OAuth tokens will need to be re-authenticated.
 		project?: string | null,
 		billingType?: string,
 		comboName?: string | null,
+		upstreamPath?: string | null,
+		routingMode?: string | null,
 	): Promise<void> {
 		await withDatabaseRetry(
 			() =>
@@ -835,6 +837,8 @@ OAuth tokens will need to be re-authenticated.
 					project,
 					billingType,
 					comboName,
+					upstreamPath,
+					routingMode,
 				}),
 			this.retryConfig,
 			"saveRequest",

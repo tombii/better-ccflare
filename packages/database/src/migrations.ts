@@ -151,7 +151,9 @@ export function ensureSchema(db: Database): void {
 			output_tokens INTEGER DEFAULT 0,
 			agent_used TEXT,
 			project TEXT,
-			billing_type TEXT DEFAULT 'api'
+			billing_type TEXT DEFAULT 'api',
+			upstream_path TEXT,
+			routing_mode TEXT
 		)
 	`);
 
@@ -883,6 +885,16 @@ export function runMigrations(db: Database, dbPath?: string): void {
 		if (!requestsColumnNames.includes("combo_name")) {
 			db.prepare("ALTER TABLE requests ADD COLUMN combo_name TEXT").run();
 			log.info("Added combo_name column to requests table");
+		}
+
+		if (!requestsColumnNames.includes("upstream_path")) {
+			db.prepare("ALTER TABLE requests ADD COLUMN upstream_path TEXT").run();
+			log.info("Added upstream_path column to requests table");
+		}
+
+		if (!requestsColumnNames.includes("routing_mode")) {
+			db.prepare("ALTER TABLE requests ADD COLUMN routing_mode TEXT").run();
+			log.info("Added routing_mode column to requests table");
 		}
 
 		// Add timestamp column to request_payloads if it doesn't exist

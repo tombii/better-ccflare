@@ -513,8 +513,17 @@ export class CodexProvider extends BaseProvider {
 		}
 
 		const bodyText = await request.text();
+		const newHeaders = new Headers(request.headers);
+		newHeaders.delete("content-length");
+
 		try {
-			const body = JSON.parse(bodyText) as { model?: string };
+			const body = JSON.parse(bodyText) as { model?: string; stream?: boolean };
+			if (body.stream === true || body.stream === false) {
+				newHeaders.set(
+					"x-better-ccflare-request-stream",
+					body.stream ? "true" : "false",
+				);
+			}
 			if (
 				typeof body.model === "string" &&
 				account &&
@@ -524,8 +533,6 @@ export class CodexProvider extends BaseProvider {
 					...body,
 					model: mapModelName(body.model, account),
 				};
-				const newHeaders = new Headers(request.headers);
-				newHeaders.delete("content-length");
 				return new Request(request.url, {
 					method: request.method,
 					headers: newHeaders,
@@ -536,8 +543,6 @@ export class CodexProvider extends BaseProvider {
 			// Preserve malformed JSON passthrough for upstream validation.
 		}
 
-		const newHeaders = new Headers(request.headers);
-		newHeaders.delete("content-length");
 		return new Request(request.url, {
 			method: request.method,
 			headers: newHeaders,

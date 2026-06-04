@@ -257,12 +257,15 @@ function shouldParseSSEData(data: string, eventType: string): boolean {
 		case "message_delta":
 		case "content_block_start":
 		case "content_block_delta":
+		case "response.completed":
+		case "response.created":
 			return true;
 		default:
 			return (
 				data.includes("usage") ||
 				data.includes("message") ||
-				data.includes("model")
+				data.includes("model") ||
+				data.includes("response.completed")
 			);
 	}
 }
@@ -284,6 +287,50 @@ function processSSELine(line: string, state: RequestState): void {
 }
 
 // Extract usage data from non-stream JSON response bodies
+function applyResponsesApiUsage(
+	usageObj: {
+		input_tokens?: number;
+		output_tokens?: number;
+		cache_read_input_tokens?: number;
+		cache_creation_input_tokens?: number;
+		input_tokens_details?: {
+			cached_tokens?: number;
+			cache_creation_input_tokens?: number;
+		};
+	},
+	state: RequestState,
+	model?: string,
+): void {
+	if (model) {
+		state.usage.model = model;
+	}
+
+	const inputDetails = usageObj.input_tokens_details;
+	const cacheRead =
+		usageObj.cache_read_input_tokens ??
+		(typeof inputDetails?.cached_tokens === "number"
+			? inputDetails.cached_tokens
+			: undefined);
+	const cacheCreation =
+		usageObj.cache_creation_input_tokens ??
+		(typeof inputDetails?.cache_creation_input_tokens === "number"
+			? inputDetails.cache_creation_input_tokens
+			: undefined);
+
+	if (usageObj.input_tokens !== undefined) {
+		state.usage.inputTokens = usageObj.input_tokens;
+	}
+	if (usageObj.output_tokens !== undefined) {
+		state.usage.outputTokens = usageObj.output_tokens;
+	}
+	if (cacheRead !== undefined) {
+		state.usage.cacheReadInputTokens = cacheRead;
+	}
+	if (cacheCreation !== undefined) {
+		state.usage.cacheCreationInputTokens = cacheCreation;
+	}
+}
+
 function extractUsageFromJson(
 	json: {
 		model?: string;
@@ -292,22 +339,35 @@ function extractUsageFromJson(
 			cache_read_input_tokens?: number;
 			cache_creation_input_tokens?: number;
 			output_tokens?: number;
+			input_tokens_details?: {
+				cached_tokens?: number;
+				cache_creation_input_tokens?: number;
+			};
+		};
+		response?: {
+			model?: string;
+			usage?: {
+				input_tokens?: number;
+				cache_read_input_tokens?: number;
+				cache_creation_input_tokens?: number;
+				output_tokens?: number;
+				input_tokens_details?: {
+					cached_tokens?: number;
+					cache_creation_input_tokens?: number;
+				};
+			};
 		};
 	},
 	state: RequestState,
 ): void {
 	if (!json) return;
 
-	const usageObj = json.usage;
+	const nestedResponse = json.response;
+	const usageObj = json.usage ?? nestedResponse?.usage;
 	if (!usageObj) return;
 
-	state.usage.model = json.model ?? state.usage.model;
-
-	state.usage.inputTokens = usageObj.input_tokens ?? 0;
-	state.usage.cacheReadInputTokens = usageObj.cache_read_input_tokens ?? 0;
-	state.usage.cacheCreationInputTokens =
-		usageObj.cache_creation_input_tokens ?? 0;
-	state.usage.outputTokens = usageObj.output_tokens ?? 0;
+	state.usage.model = json.model ?? nestedResponse?.model ?? state.usage.model;
+	applyResponsesApiUsage(usageObj, state);
 
 	// Calculate total tokens
 	const prompt =
@@ -350,6 +410,22 @@ function extractUsageFromData(
 		}
 
 		// Handle message_delta - check both parsed.type and eventType
+		const isResponseCompleted =
+			parsed.type === "response.completed" ||
+			eventType === "response.completed";
+		if (isResponseCompleted) {
+			const resp = parsed.response as
+				| {
+						model?: string;
+						usage?: Parameters<typeof applyResponsesApiUsage>[0];
+				  }
+				| undefined;
+			if (resp?.usage) {
+				applyResponsesApiUsage(resp.usage, state, resp.model);
+			}
+			return;
+		}
+
 		const isMessageDelta =
 			parsed.type === "message_delta" || eventType === "message_delta";
 		if (isMessageDelta) {
@@ -768,7 +844,7 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 			await dbOps.saveRequest(
 				startMessage.requestId,
 				startMessage.method,
-				startMessage.path,
+				startMessage.clientPath ?? startMessage.path,
 				startMessage.accountId,
 				startMessage.responseStatus,
 				msg.success,
@@ -799,6 +875,8 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 				projectAtEnd,
 				state.billingType,
 				startMessage.comboName || null,
+				startMessage.upstreamPath ?? null,
+				startMessage.routingMode ?? null,
 			);
 		} catch (error) {
 			log.error(`Failed to save request for ${startMessage.requestId}:`, error);
