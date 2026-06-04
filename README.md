@@ -391,28 +391,86 @@ claude
 - **Using only API keys in better-ccflare?** Use Option 2 (logout + API key)
 - **Getting auth conflict warnings?** You have both methods active - choose one and follow its steps above
 
-### Codex CLI as a Client
+### Native provider routes vs compatibility routes
 
-better-ccflare supports [Codex CLI](https://github.com/openai/codex) as a client. Codex speaks the OpenAI Responses API; better-ccflare intercepts requests to `/v1/responses` and `/v1/responses/compact` and translates them to Anthropic `POST /v1/messages` internally, routing through your configured account pool.
+better-ccflare exposes two kinds of proxy paths:
 
-Configure Codex CLI to point at better-ccflare in `~/.codex/config.toml`:
+| Kind | Example paths | Behavior |
+|------|---------------|----------|
+| **Compatibility** (default) | `POST /v1/messages`, `POST /v1/responses`, `POST /v1/responses/compact` | Translates between client and provider formats (e.g. Anthropic Messages ↔ OpenAI/Codex Responses). Existing clients keep working unchanged. |
+| **Native** (opt-in) | `POST /v1/codex/responses`, `POST /v1/openai/responses`, `POST /v1/openai/chat/completions`, `POST /v1/anthropic/v1/messages` | Forwards request/response bodies in the provider’s native shape with no Anthropic translation. Account selection, OAuth refresh, rate limits, and dashboard logging still apply. |
 
-```toml
-openai_base_url = "http://127.0.0.1:8080/v1"
-```
+Native routes use a provider prefix in the URL: `/v1/{provider}/…` strips `{provider}` once and forwards the remainder upstream (e.g. `/v1/codex/responses` → upstream `/responses` on the Codex backend). Unsupported provider/path combinations return an explicit error and do **not** fall back to compatibility routes.
 
-Note: use `127.0.0.1` instead of `localhost` — Codex CLI has a known issue where `localhost` resolves to IPv6 first and causes connection failures. The `/v1` suffix is required; Codex appends `/responses` to the base URL.
+Request history records `routingMode: native` and both `path` (client path) and `upstreamPath` so you can tell translated traffic apart in the dashboard.
 
-Or via environment variables:
+**Force a specific account** on native or compatibility routes:
 
 ```bash
-export OPENAI_BASE_URL=http://127.0.0.1:8080/v1
+curl -H "x-better-ccflare-account-id: my-account-name" ...
+```
+
+**Known limitations**
+
+- WebSocket transport is not supported on compatibility `/v1/responses` paths (HTTP only; clients should retry over HTTPS).
+- Native routes only cover the paths listed above; other `/v1/{provider}/…` combinations are rejected.
+- Codex native passthrough does not add WebSocket support beyond what the Codex provider already exposes over HTTP.
+
+### Codex CLI as a Client (native route recommended)
+
+[Codex CLI](https://github.com/openai/codex) speaks the OpenAI Responses API. For best fidelity (system/developer instructions, tools, streaming events, model names), point Codex at the **native** route so payloads stay in OpenAI Responses shape end-to-end:
+
+```toml
+# ~/.codex/config.toml — native passthrough (recommended)
+openai_base_url = "http://127.0.0.1:8080/v1/codex"
+```
+
+Codex appends `/responses` to the base URL, so the full path becomes `POST /v1/codex/responses` through better-ccflare.
+
+**Compatibility fallback:** you can still use `openai_base_url = "http://127.0.0.1:8080/v1"` (→ `POST /v1/responses`), which translates to Anthropic `POST /v1/messages` internally. Use this only if you cannot change the client base URL.
+
+Note: use `127.0.0.1` instead of `localhost` — Codex CLI has a known issue where `localhost` resolves to IPv6 first and causes connection failures.
+
+Or via environment variables (native):
+
+```bash
+export OPENAI_BASE_URL=http://127.0.0.1:8080/v1/codex
 export OPENAI_API_KEY=dummy-key
 ```
 
-Codex CLI requires an API key to start — use `dummy-key` if better-ccflare API key authentication is not enabled, or your real better-ccflare API key if it is.
+Codex CLI requires an API key to start — use `dummy-key` if better-ccflare API key authentication is not enabled, or your real better-ccflare API key if it is. Traffic uses your configured **Codex OAuth** accounts (`provider=codex`).
 
-Known limitations:
+### OpenAI-compatible native routes
+
+For API-key accounts with `provider=openai-compatible` (OpenRouter, Together, custom OpenAI-compatible endpoints, etc.):
+
+| Client path | Upstream (typical) |
+|-------------|-------------------|
+| `POST /v1/openai/responses` | `{endpoint}/v1/responses` |
+| `POST /v1/openai/chat/completions` | `{endpoint}/v1/chat/completions` |
+
+Example:
+
+```bash
+curl -X POST http://127.0.0.1:8080/v1/openai/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer dummy-key" \
+  -d '{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"max_tokens":16}'
+```
+
+### Anthropic native route
+
+For Anthropic OAuth or API-key accounts with `provider=anthropic`:
+
+| Client path | Upstream |
+|-------------|----------|
+| `POST /v1/anthropic/v1/messages` | `https://api.anthropic.com/v1/messages` (or account `custom_endpoint`) |
+
+Use this when the client already speaks Anthropic Messages and you want load balancing without converting to another API shape.
+
+### Codex compatibility notes
+
+When using the **compatibility** `/v1/responses` path (not native):
 
 - `previous_response_id` is accepted but ignored — Codex uses this only over WebSocket; for regular HTTP requests it always sends the full conversation history in `input`
 - Built-in tool types (`web_search_preview`, `code_interpreter`, `file_search`) are silently skipped; only `type: "function"` tools are forwarded to Anthropic

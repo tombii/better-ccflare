@@ -1,4 +1,4 @@
-import { isKnownProvider } from "@better-ccflare/types";
+import { isKnownProvider, type ProviderName } from "@better-ccflare/types";
 
 export class ProviderPrefixError extends Error {
 	constructor(
@@ -19,9 +19,29 @@ export interface ResolvedNativeRoute {
 	upstreamPath: string;
 }
 
+/** URL path prefix segment → account provider name */
+const NATIVE_ROUTE_PREFIX_TO_PROVIDER: Record<string, ProviderName> = {
+	openai: "openai-compatible",
+	anthropic: "anthropic",
+	codex: "codex",
+};
+
 const SUPPORTED_NATIVE_UPSTREAM_PATHS: Record<string, ReadonlySet<string>> = {
+	openai: new Set(["/responses", "/chat/completions"]),
+	anthropic: new Set(["/v1/messages"]),
 	codex: new Set(["/responses"]),
 };
+
+function resolveAccountProvider(prefixSegment: string): ProviderName | null {
+	const aliased = NATIVE_ROUTE_PREFIX_TO_PROVIDER[prefixSegment];
+	if (aliased) {
+		return aliased;
+	}
+	if (isKnownProvider(prefixSegment)) {
+		return prefixSegment;
+	}
+	return null;
+}
 
 const NON_PROVIDER_V1_PREFIXES = new Set(["messages", "responses", "api"]);
 
@@ -73,7 +93,8 @@ export function resolveProviderPrefixedPath(
 		);
 	}
 
-	if (!isKnownProvider(providerSegment)) {
+	const accountProvider = resolveAccountProvider(providerSegment);
+	if (!accountProvider) {
 		throw new ProviderPrefixError(
 			`Unknown provider in native route: ${providerSegment}`,
 			"unknown_provider",
@@ -90,7 +111,7 @@ export function resolveProviderPrefixedPath(
 	}
 
 	return {
-		provider: providerSegment,
+		provider: accountProvider,
 		clientPath: pathname,
 		upstreamPath,
 	};

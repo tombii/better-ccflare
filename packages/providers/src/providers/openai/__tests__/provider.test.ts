@@ -102,6 +102,18 @@ describe("OpenAICompatibleProvider", () => {
 			);
 			expect(url).toBe("https://api.openai.com/v1/chat/completions");
 		});
+
+		it("maps native /responses upstream path to /v1/responses", () => {
+			const url = provider.buildUrl("/responses", "?stream=true", mockAccount);
+			expect(url).toBe(
+				"https://api.openrouter.ai/api/v1/responses?stream=true",
+			);
+		});
+
+		it("maps native /chat/completions upstream path to /v1/chat/completions", () => {
+			const url = provider.buildUrl("/chat/completions", "", mockAccount);
+			expect(url).toBe("https://api.openrouter.ai/api/v1/chat/completions");
+		});
 	});
 
 	describe("prepareHeaders", () => {
