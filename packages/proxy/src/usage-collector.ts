@@ -342,6 +342,9 @@ function processStreamChunk(
 			// Fallback: if no newline found, slice from end but this might cut mid-event
 			state.buffer = state.buffer.slice(-maxBufferSize);
 		}
+		// Event context is lost after truncation — a partial event: line may have
+		// been discarded, so the next data: line must not inherit a stale type.
+		state.currentEvent = undefined;
 	}
 
 	let lineStart = 0;
