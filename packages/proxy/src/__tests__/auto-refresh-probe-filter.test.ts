@@ -4,10 +4,19 @@
  * Three sites guard against auto-refresh probe pollution:
  *   1. proxy-operations.ts  — isSyntheticInternal skips cacheBodyStore.stageRequest
  *   2. response-handler.ts  — shouldProcessRequest is false for auto-refresh probes
- *   3. proxy.ts             — pool-exhausted path skips usageWorker.postMessage for probes
+ *   3. proxy.ts             — pool-exhausted path skips usageCollector calls for probes
  */
-import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import {
+	afterEach,
+	beforeEach,
+	describe,
+	expect,
+	it,
+	mock,
+	spyOn,
+} from "bun:test";
 import type { Account } from "@better-ccflare/types";
+import * as usageCollectorModule from "../usage-collector";
 
 // ---------------------------------------------------------------------------
 // Shared fixtures
@@ -110,10 +119,24 @@ describe("proxy-operations — isSyntheticInternal header detection", () => {
 // ---------------------------------------------------------------------------
 
 describe("response-handler — shouldProcessRequest suppresses auto-refresh probes", () => {
-	it("does not call usageWorker.postMessage for auto-refresh probe requests", async () => {
+	function createMockCollector() {
+		const handleStart = mock(() => {});
+		const handleChunk = mock(() => {});
+		const handleEnd = mock(() => Promise.resolve());
+		const collector = { handleStart, handleChunk, handleEnd };
+		const spy = spyOn(
+			usageCollectorModule,
+			"getUsageCollector",
+		).mockReturnValue(
+			collector as unknown as usageCollectorModule.UsageCollector,
+		);
+		return { collector, handleStart, spy };
+	}
+
+	it("does not call usageCollector.handleStart for auto-refresh probe requests", async () => {
+		const { handleStart } = createMockCollector();
 		const { forwardToClient } = await import("../response-handler");
 
-		const usageWorkerPostMessage = mock(() => {});
 		const account = makeAccount();
 
 		const ctx = {
@@ -122,7 +145,6 @@ describe("response-handler — shouldProcessRequest suppresses auto-refresh prob
 				isStreamingResponse: () => false,
 			} as never,
 			config: { getStorePayloads: () => false } as never,
-			usageWorker: { postMessage: usageWorkerPostMessage } as never,
 		};
 
 		const response = new Response(JSON.stringify({ type: "message" }), {
@@ -150,13 +172,13 @@ describe("response-handler — shouldProcessRequest suppresses auto-refresh prob
 			ctx as never,
 		);
 
-		expect(usageWorkerPostMessage).not.toHaveBeenCalled();
+		expect(handleStart).not.toHaveBeenCalled();
 	});
 
-	it("calls usageWorker.postMessage for normal (non-probe) requests", async () => {
+	it("calls usageCollector.handleStart for normal (non-probe) requests", async () => {
+		const { handleStart } = createMockCollector();
 		const { forwardToClient } = await import("../response-handler");
 
-		const usageWorkerPostMessage = mock(() => {});
 		const account = makeAccount();
 
 		const ctx = {
@@ -165,7 +187,6 @@ describe("response-handler — shouldProcessRequest suppresses auto-refresh prob
 				isStreamingResponse: () => false,
 			} as never,
 			config: { getStorePayloads: () => false } as never,
-			usageWorker: { postMessage: usageWorkerPostMessage } as never,
 		};
 
 		const response = new Response(JSON.stringify({ type: "message" }), {
@@ -192,8 +213,8 @@ describe("response-handler — shouldProcessRequest suppresses auto-refresh prob
 			ctx as never,
 		);
 
-		// At minimum a "start" message should have been sent
-		expect(usageWorkerPostMessage).toHaveBeenCalled();
+		// At minimum a "start" call should have happened
+		expect(handleStart).toHaveBeenCalled();
 	});
 });
 
@@ -201,7 +222,7 @@ describe("response-handler — shouldProcessRequest suppresses auto-refresh prob
 // Site 3: pool-exhausted path in proxy.ts
 // ---------------------------------------------------------------------------
 
-describe("proxy.ts — pool-exhausted path skips usageWorker for auto-refresh probes", () => {
+describe("proxy.ts — pool-exhausted path skips usageCollector for auto-refresh probes", () => {
 	let savedPassthrough: string | undefined;
 
 	beforeEach(() => {
@@ -217,10 +238,22 @@ describe("proxy.ts — pool-exhausted path skips usageWorker for auto-refresh pr
 		}
 	});
 
-	it("does not post to usageWorker when pool is exhausted and request is an auto-refresh probe", async () => {
-		const { handleProxy } = await import("../proxy");
+	function createMockCollector() {
+		const handleStart = mock(() => {});
+		const handleEnd = mock(() => Promise.resolve());
+		const collector = { handleStart, handleEnd, handleChunk: mock(() => {}) };
+		const spy = spyOn(
+			usageCollectorModule,
+			"getUsageCollector",
+		).mockReturnValue(
+			collector as unknown as usageCollectorModule.UsageCollector,
+		);
+		return { collector, handleStart, handleEnd, spy };
+	}
 
-		const usageWorkerPostMessage = mock(() => {});
+	it("does not call usageCollector when pool is exhausted and request is an auto-refresh probe", async () => {
+		const { handleStart, handleEnd } = createMockCollector();
+		const { handleProxy } = await import("../proxy");
 
 		const ctx = {
 			strategy: {
@@ -242,7 +275,6 @@ describe("proxy.ts — pool-exhausted path skips usageWorker for auto-refresh pr
 			} as never,
 			refreshInFlight: new Map(),
 			asyncWriter: { enqueue: mock(() => {}) } as never,
-			usageWorker: { postMessage: usageWorkerPostMessage } as never,
 		};
 
 		const probeRequest = new Request("https://proxy.local/v1/messages", {
@@ -267,14 +299,14 @@ describe("proxy.ts — pool-exhausted path skips usageWorker for auto-refresh pr
 		// Should still return 503
 		expect(response.status).toBe(503);
 
-		// But must NOT post to usageWorker
-		expect(usageWorkerPostMessage).not.toHaveBeenCalled();
+		// But must NOT call usageCollector
+		expect(handleStart).not.toHaveBeenCalled();
+		expect(handleEnd).not.toHaveBeenCalled();
 	});
 
-	it("posts to usageWorker when pool is exhausted and request is NOT an auto-refresh probe", async () => {
+	it("calls usageCollector when pool is exhausted and request is NOT an auto-refresh probe", async () => {
+		const { handleStart } = createMockCollector();
 		const { handleProxy } = await import("../proxy");
-
-		const usageWorkerPostMessage = mock(() => {});
 
 		const ctx = {
 			strategy: {
@@ -296,7 +328,6 @@ describe("proxy.ts — pool-exhausted path skips usageWorker for auto-refresh pr
 			} as never,
 			refreshInFlight: new Map(),
 			asyncWriter: { enqueue: mock(() => {}) } as never,
-			usageWorker: { postMessage: usageWorkerPostMessage } as never,
 		};
 
 		const normalRequest = new Request("https://proxy.local/v1/messages", {
@@ -318,6 +349,6 @@ describe("proxy.ts — pool-exhausted path skips usageWorker for auto-refresh pr
 		expect(response.status).toBe(503);
 
 		// Normal requests MUST be logged
-		expect(usageWorkerPostMessage).toHaveBeenCalled();
+		expect(handleStart).toHaveBeenCalled();
 	});
 });

@@ -1,4 +1,5 @@
 import { requestEvents, TIME_CONSTANTS } from "@better-ccflare/core";
+import { Logger } from "@better-ccflare/logger";
 import {
 	sanitizeRequestHeaders,
 	withSanitizedProxyHeaders,
@@ -8,8 +9,18 @@ import type { ProxyContext } from "./handlers";
 import { applyRateLimitCooldown } from "./handlers/rate-limit-cooldown";
 import { createSseRateLimitSniffer } from "./handlers/sse-rate-limit-sniffer";
 import { combineChunks, teeStream } from "./stream-tee";
-import type { UsageWorkerController } from "./usage-worker-controller";
-import type { ChunkMessage, EndMessage, StartMessage } from "./worker-messages";
+import { getUsageCollector } from "./usage-collector";
+import type { EndMessage, StartMessage } from "./worker-messages";
+
+const log = new Logger("ResponseHandler");
+
+function fireAndForgetEnd(msg: EndMessage): void {
+	getUsageCollector()
+		.handleEnd(msg)
+		.catch((err: unknown) => {
+			log.error(`handleEnd failed for request ${msg.requestId}`, err);
+		});
+}
 
 // Default cooldown for rate-limit errors detected mid-stream. SSE error
 // frames don't carry reset headers (HTTP headers were sent before the
@@ -27,21 +38,10 @@ function getMidStreamRateLimitCooldownMs(): number {
 	);
 }
 
-// Must match MAX_REQUEST_BODY_BYTES in post-processor.worker.ts.
-// Cap applied before postMessage to avoid multi-MB structured clones.
+// Must match MAX_REQUEST_BODY_BYTES in usage-collector.ts.
+// Cap applied before passing to collector to avoid multi-MB copies.
 // 4MB so afterburn can see full conversation history for friction analysis.
 const MAX_REQUEST_BODY_BYTES = 4 * 1024 * 1024;
-
-function safePostMessage(
-	worker: UsageWorkerController,
-	message: StartMessage | ChunkMessage | EndMessage,
-): void {
-	try {
-		worker.postMessage(message);
-	} catch (_error) {
-		// Worker not ready or terminated — silently ignore
-	}
-}
 
 /**
  * Check if a response should be considered successful/expected
@@ -166,7 +166,7 @@ export async function forwardToClient(
 			retryAttempt,
 			failoverAttempts,
 		};
-		safePostMessage(ctx.usageWorker, startMessage);
+		getUsageCollector().handleStart(startMessage);
 	}
 
 	// Emit request start event for real-time dashboard
@@ -196,12 +196,7 @@ export async function forwardToClient(
 
 		const onChunk = (value: Uint8Array): void => {
 			if (shouldProcessRequest) {
-				const chunkMsg: ChunkMessage = {
-					type: "chunk",
-					requestId,
-					data: value,
-				};
-				safePostMessage(ctx.usageWorker, chunkMsg);
+				getUsageCollector().handleChunk(requestId, value);
 			}
 
 			// Mid-stream rate-limit detection. The sniffer
@@ -232,7 +227,8 @@ export async function forwardToClient(
 					requestId,
 					success: isExpectedResponse(path, response),
 				};
-				safePostMessage(ctx.usageWorker, endMsg);
+				// Fire-and-forget: handleEnd is async for DB writes but we don't block streaming
+				fireAndForgetEnd(endMsg);
 			}
 		};
 
@@ -244,7 +240,7 @@ export async function forwardToClient(
 					success: false,
 					error: err.message,
 				};
-				safePostMessage(ctx.usageWorker, endMsg);
+				fireAndForgetEnd(endMsg);
 			}
 		};
 
@@ -266,13 +262,12 @@ export async function forwardToClient(
 	 *********************************************************************/
 	if (!response.body) {
 		if (shouldProcessRequest) {
-			const endMsg: EndMessage = {
+			fireAndForgetEnd({
 				type: "end",
 				requestId,
 				responseBody: null,
 				success: isExpectedResponse(path, response),
-			};
-			safePostMessage(ctx.usageWorker, endMsg);
+			});
 		}
 
 		return response;
@@ -285,24 +280,22 @@ export async function forwardToClient(
 		onClose(buffered) {
 			if (!shouldProcessRequest) return;
 			const cappedBuf = combineChunks(buffered);
-			const endMsg: EndMessage = {
+			fireAndForgetEnd({
 				type: "end",
 				requestId,
 				responseBody:
 					cappedBuf.byteLength > 0 ? cappedBuf.toString("base64") : null,
 				success: isExpectedResponse(path, response),
-			};
-			safePostMessage(ctx.usageWorker, endMsg);
+			});
 		},
 		onError(err) {
 			if (!shouldProcessRequest) return;
-			const endMsg: EndMessage = {
+			fireAndForgetEnd({
 				type: "end",
 				requestId,
 				success: false,
 				error: err.message,
-			};
-			safePostMessage(ctx.usageWorker, endMsg);
+			});
 		},
 	});
 

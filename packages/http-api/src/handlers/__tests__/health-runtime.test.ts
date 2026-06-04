@@ -44,9 +44,6 @@ describe("health runtime payload", () => {
 			() => ({ healthy: true, failureCount: 0, recentDrops: 0, queuedJobs: 2 }),
 			() => ({
 				state: "healthy",
-				pendingAcks: 1,
-				lastError: null,
-				startedAt: 123,
 			}),
 		);
 
@@ -67,9 +64,6 @@ describe("health runtime payload", () => {
 		});
 		expect(body.runtime.usageWorker).toEqual({
 			state: "healthy",
-			pendingAcks: 1,
-			lastError: null,
-			startedAt: 123,
 		});
 	});
 

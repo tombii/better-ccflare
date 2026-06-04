@@ -1,7 +1,8 @@
-import { describe, expect, it, mock } from "bun:test";
+import { describe, expect, it, mock, spyOn } from "bun:test";
 import { forwardToClient } from "../response-handler";
+import * as usageCollectorModule from "../usage-collector";
 
-describe("forwardToClient worker protocol", () => {
+describe("forwardToClient usage-collector protocol", () => {
 	async function waitFor(
 		predicate: () => boolean,
 		timeoutMs = 1000,
@@ -15,15 +16,37 @@ describe("forwardToClient worker protocol", () => {
 		}
 	}
 
-	function createCtx(
-		postMessage: (msg: Record<string, unknown>) => void,
-		storePayloads = true,
-	) {
-		const usageWorker = {
-			postMessage: mock(postMessage),
-		} as unknown as import("../usage-worker-controller").UsageWorkerController;
+	function createMockCollector() {
+		const starts: Record<string, unknown>[] = [];
+		const chunks: Array<{ requestId: string; data: Uint8Array }> = [];
+		const ends: Record<string, unknown>[] = [];
 
-		const ctx = {
+		const collector = {
+			handleStart: mock((msg: Record<string, unknown>) => {
+				starts.push(msg);
+			}),
+			handleChunk: mock((requestId: string, data: Uint8Array) => {
+				chunks.push({ requestId, data });
+			}),
+			handleEnd: mock((msg: Record<string, unknown>) => {
+				ends.push(msg);
+				return Promise.resolve();
+			}),
+		};
+
+		// Spy on getUsageCollector to return our mock
+		const spy = spyOn(
+			usageCollectorModule,
+			"getUsageCollector",
+		).mockReturnValue(
+			collector as unknown as usageCollectorModule.UsageCollector,
+		);
+
+		return { collector, starts, chunks, ends, spy };
+	}
+
+	function createCtx(storePayloads = true) {
+		return {
 			strategy: {},
 			dbOps: {},
 			runtime: { port: 8080, tlsEnabled: false },
@@ -36,15 +59,12 @@ describe("forwardToClient worker protocol", () => {
 			},
 			refreshInFlight: new Map<string, Promise<string>>(),
 			asyncWriter: {},
-			usageWorker,
 		} as unknown as import("../handlers").ProxyContext;
-
-		return { ctx, usageWorker };
 	}
 
-	it("sends start message with messageId", async () => {
-		const posted: Array<Record<string, unknown>> = [];
-		const { ctx, usageWorker } = createCtx((msg) => posted.push(msg));
+	it("calls handleStart with messageId", async () => {
+		const { starts } = createMockCollector();
+		const ctx = createCtx();
 
 		const response = await forwardToClient(
 			{
@@ -66,16 +86,15 @@ describe("forwardToClient worker protocol", () => {
 		);
 
 		expect(response.status).toBe(200);
-		expect(usageWorker.postMessage).toHaveBeenCalled();
-		expect(posted.length).toBeGreaterThan(0);
-		expect(posted[0].type).toBe("start");
-		expect(typeof posted[0].messageId).toBe("string");
-		expect((posted[0].messageId as string).length).toBeGreaterThan(0);
+		expect(starts.length).toBeGreaterThan(0);
+		expect(starts[0].type).toBe("start");
+		expect(typeof starts[0].messageId).toBe("string");
+		expect((starts[0].messageId as string).length).toBeGreaterThan(0);
 	});
 
 	it("sends null requestBody when payload storage is disabled", async () => {
-		const posted: Array<Record<string, unknown>> = [];
-		const { ctx } = createCtx((msg) => posted.push(msg), false);
+		const { starts } = createMockCollector();
+		const ctx = createCtx(false);
 
 		await forwardToClient(
 			{
@@ -99,14 +118,14 @@ describe("forwardToClient worker protocol", () => {
 			ctx,
 		);
 
-		expect(posted[0].type).toBe("start");
-		expect(posted[0].requestBody).toBeNull();
-		expect(posted[0].project).toBe("main-thread-project");
+		expect(starts[0].type).toBe("start");
+		expect(starts[0].requestBody).toBeNull();
+		expect(starts[0].project).toBe("main-thread-project");
 	});
 
 	it("preserves requestBody when payload storage is enabled", async () => {
-		const posted: Array<Record<string, unknown>> = [];
-		const { ctx } = createCtx((msg) => posted.push(msg), true);
+		const { starts } = createMockCollector();
+		const ctx = createCtx(true);
 		const requestBody = JSON.stringify({ system: "test", messages: [] });
 
 		await forwardToClient(
@@ -129,33 +148,16 @@ describe("forwardToClient worker protocol", () => {
 			ctx,
 		);
 
-		expect(posted[0].type).toBe("start");
-		expect(posted[0].requestBody).toBe(
+		expect(starts[0].type).toBe("start");
+		expect(starts[0].requestBody).toBe(
 			Buffer.from(requestBody).toString("base64"),
 		);
-		expect(posted[0].project).toBeNull();
+		expect(starts[0].project).toBeNull();
 	});
 
-	it("does not throw when worker is not ready", async () => {
-		const usageWorker = {
-			postMessage: mock(() => {
-				throw new Error("worker not ready");
-			}),
-		} as unknown as import("../usage-worker-controller").UsageWorkerController;
-
-		const ctx = {
-			strategy: {},
-			dbOps: {},
-			runtime: { port: 8080, tlsEnabled: false },
-			config: {},
-			provider: {
-				name: "anthropic",
-				isStreamingResponse: () => false,
-			},
-			refreshInFlight: new Map<string, Promise<string>>(),
-			asyncWriter: {},
-			usageWorker,
-		} as unknown as import("../handlers").ProxyContext;
+	it("does not throw when usage collector call succeeds", async () => {
+		createMockCollector();
+		const ctx = createCtx();
 
 		await expect(
 			forwardToClient(
@@ -179,15 +181,15 @@ describe("forwardToClient worker protocol", () => {
 		).resolves.toBeInstanceOf(Response);
 	});
 
-	it("tees streaming responses instead of cloning when no analytics stream exists", async () => {
+	it("tees streaming responses instead of cloning", async () => {
 		const originalClone = Response.prototype.clone;
 		Response.prototype.clone = mock(() => {
 			throw new Error("clone should not be called");
 		}) as unknown as typeof Response.prototype.clone;
 
 		try {
-			const posted: Array<Record<string, unknown>> = [];
-			const { ctx } = createCtx((msg) => posted.push(msg));
+			const { starts, chunks, ends } = createMockCollector();
+			const ctx = createCtx();
 			ctx.provider.isStreamingResponse = () => true;
 
 			const body = new ReadableStream<Uint8Array>({
@@ -219,11 +221,14 @@ describe("forwardToClient worker protocol", () => {
 			);
 
 			await expect(response.text()).resolves.toBe("data: one\n\ndata: two\n\n");
-			await waitFor(() => posted.some((msg) => msg.type === "end"));
+			await waitFor(() => ends.length > 0);
 
-			const chunks = posted.filter((msg) => msg.type === "chunk");
 			expect(chunks.length).toBe(2);
-			expect(posted.at(-1)).toMatchObject({
+			expect(starts[0]).toMatchObject({
+				type: "start",
+				requestId: "req-stream-tee",
+			});
+			expect(ends[0]).toMatchObject({
 				type: "end",
 				requestId: "req-stream-tee",
 				success: true,
@@ -240,8 +245,8 @@ describe("forwardToClient worker protocol", () => {
 		}) as unknown as typeof Response.prototype.clone;
 
 		try {
-			const posted: Array<Record<string, unknown>> = [];
-			const { ctx } = createCtx((msg) => posted.push(msg));
+			const { ends } = createMockCollector();
+			const ctx = createCtx();
 			const responseBody = JSON.stringify({ ok: true });
 
 			const response = await forwardToClient(
@@ -264,9 +269,9 @@ describe("forwardToClient worker protocol", () => {
 			);
 
 			await expect(response.text()).resolves.toBe(responseBody);
-			await waitFor(() => posted.some((msg) => msg.type === "end"));
+			await waitFor(() => ends.length > 0);
 
-			expect(posted.at(-1)).toMatchObject({
+			expect(ends[0]).toMatchObject({
 				type: "end",
 				requestId: "req-non-stream-tee",
 				responseBody: Buffer.from(responseBody).toString("base64"),

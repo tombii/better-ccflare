@@ -67,7 +67,6 @@ function makeContext(accounts: Account[]): ProxyContext {
 		} as never,
 		refreshInFlight: new Map(),
 		asyncWriter: { enqueue: mock(() => {}) } as never,
-		usageWorker: { postMessage: mock(() => {}) } as never,
 	};
 }
 
