@@ -1,4 +1,5 @@
 import { requestEvents, TIME_CONSTANTS } from "@better-ccflare/core";
+import { Logger } from "@better-ccflare/logger";
 import {
 	sanitizeRequestHeaders,
 	withSanitizedProxyHeaders,
@@ -10,6 +11,16 @@ import { createSseRateLimitSniffer } from "./handlers/sse-rate-limit-sniffer";
 import { combineChunks, teeStream } from "./stream-tee";
 import { getUsageCollector } from "./usage-collector";
 import type { EndMessage, StartMessage } from "./worker-messages";
+
+const log = new Logger("ResponseHandler");
+
+function fireAndForgetEnd(msg: EndMessage): void {
+	getUsageCollector()
+		.handleEnd(msg)
+		.catch((err: unknown) => {
+			log.error(`handleEnd failed for request ${msg.requestId}`, err);
+		});
+}
 
 // Default cooldown for rate-limit errors detected mid-stream. SSE error
 // frames don't carry reset headers (HTTP headers were sent before the
@@ -217,7 +228,7 @@ export async function forwardToClient(
 					success: isExpectedResponse(path, response),
 				};
 				// Fire-and-forget: handleEnd is async for DB writes but we don't block streaming
-				void getUsageCollector().handleEnd(endMsg);
+				fireAndForgetEnd(endMsg);
 			}
 		};
 
@@ -229,7 +240,7 @@ export async function forwardToClient(
 					success: false,
 					error: err.message,
 				};
-				void getUsageCollector().handleEnd(endMsg);
+				fireAndForgetEnd(endMsg);
 			}
 		};
 

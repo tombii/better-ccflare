@@ -351,12 +351,19 @@ export async function handleProxy(
 				failoverAttempts: 0,
 			});
 
-			void getUsageCollector().handleEnd({
-				type: "end",
-				requestId: requestMeta.id,
-				success: false,
-				error: "pool_exhausted",
-			});
+			getUsageCollector()
+				.handleEnd({
+					type: "end",
+					requestId: requestMeta.id,
+					success: false,
+					error: "pool_exhausted",
+				})
+				.catch((err: unknown) => {
+					log.error(
+						`handleEnd failed for pool_exhausted request ${requestMeta.id}`,
+						err,
+					);
+				});
 		}
 
 		return poolExhaustedResponse;
