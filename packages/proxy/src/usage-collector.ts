@@ -564,10 +564,12 @@ export class UsageCollector {
 	}
 
 	/**
-	 * Await all in-flight handleEnd promises for graceful shutdown.
+	 * Await all in-flight handleEnd promises then flush the AsyncDbWriter
+	 * queue to completion before process exit.
 	 */
 	async drain(): Promise<void> {
 		await Promise.allSettled([...this.pendingHandleEnds]);
+		await this.asyncWriter.dispose();
 	}
 
 	getHealth(): UsageCollectorHealth {

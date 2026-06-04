@@ -207,9 +207,6 @@ export interface HealthResponse {
 		};
 		usageWorker?: {
 			state: string;
-			pendingAcks?: number;
-			lastError?: string | null;
-			startedAt?: number | null;
 		};
 		storage?: {
 			integrity: {
