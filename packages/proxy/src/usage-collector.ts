@@ -557,9 +557,8 @@ export class UsageCollector {
 	handleEnd(msg: EndMessage): Promise<void> {
 		const promise = this._handleEndInternal(msg);
 		this.pendingHandleEnds.add(promise);
-		promise.finally(() => {
-			this.pendingHandleEnds.delete(promise);
-		});
+		const cleanup = () => this.pendingHandleEnds.delete(promise);
+		promise.then(cleanup, cleanup);
 		return promise;
 	}
 
