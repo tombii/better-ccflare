@@ -221,7 +221,7 @@ export class CodexProvider extends BaseProvider {
 	}
 
 	canHandle(path: string): boolean {
-		return path === "/v1/messages";
+		return path === "/v1/messages" || path === "/responses";
 	}
 
 	async refreshToken(
@@ -291,7 +291,18 @@ export class CodexProvider extends BaseProvider {
 		};
 	}
 
-	buildUrl(_path: string, _query: string, account?: Account): string {
+	buildUrl(path: string, query: string, account?: Account): string {
+		const baseEndpoint = this.resolveBaseEndpoint(account);
+		if (path === "/responses") {
+			if (!query) {
+				return baseEndpoint;
+			}
+			return `${baseEndpoint}${query.startsWith("?") ? query : `?${query}`}`;
+		}
+		return baseEndpoint;
+	}
+
+	private resolveBaseEndpoint(account?: Account): string {
 		if (account?.custom_endpoint) {
 			try {
 				return validateEndpointUrl(account.custom_endpoint, "custom_endpoint");
@@ -332,6 +343,10 @@ export class CodexProvider extends BaseProvider {
 		request: Request,
 		account?: Account,
 	): Promise<Request> {
+		if (request.headers.get("x-better-ccflare-native-passthrough") === "true") {
+			return this.transformNativeRequestBody(request, account);
+		}
+
 		const contentType = request.headers.get("content-type");
 		if (!contentType?.includes("application/json")) {
 			return request;
@@ -378,7 +393,16 @@ export class CodexProvider extends BaseProvider {
 	async processResponse(
 		response: Response,
 		_account: Account | null,
+		requestHeaders?: Headers,
 	): Promise<Response> {
+		if (requestHeaders?.get("x-better-ccflare-native-passthrough") === "true") {
+			return new Response(response.body, {
+				status: response.status,
+				statusText: response.statusText,
+				headers: sanitizeResponseHeaders(response.headers),
+			});
+		}
+
 		const contentType = response.headers.get("content-type");
 		const requestId = response.headers.get("x-better-ccflare-request-id");
 		const headerRequestedStream = response.headers.get(
@@ -478,6 +502,48 @@ export class CodexProvider extends BaseProvider {
 	}
 
 	// ── Private helpers ──────────────────────────────────────────────────────
+
+	private async transformNativeRequestBody(
+		request: Request,
+		account?: Account,
+	): Promise<Request> {
+		const contentType = request.headers.get("content-type");
+		if (!contentType?.includes("application/json")) {
+			return request;
+		}
+
+		const bodyText = await request.text();
+		try {
+			const body = JSON.parse(bodyText) as { model?: string };
+			if (
+				typeof body.model === "string" &&
+				account &&
+				mapModelName(body.model, account) !== body.model
+			) {
+				const mappedBody = {
+					...body,
+					model: mapModelName(body.model, account),
+				};
+				const newHeaders = new Headers(request.headers);
+				newHeaders.delete("content-length");
+				return new Request(request.url, {
+					method: request.method,
+					headers: newHeaders,
+					body: JSON.stringify(mappedBody),
+				});
+			}
+		} catch {
+			// Preserve malformed JSON passthrough for upstream validation.
+		}
+
+		const newHeaders = new Headers(request.headers);
+		newHeaders.delete("content-length");
+		return new Request(request.url, {
+			method: request.method,
+			headers: newHeaders,
+			body: bodyText,
+		});
+	}
 
 	private mapModel(anthropicModel: string, account?: Account): string {
 		if (account) {

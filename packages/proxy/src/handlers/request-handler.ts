@@ -10,11 +10,15 @@ import { ERROR_MESSAGES } from "./proxy-types";
  * @param url - The parsed URL
  * @returns Request metadata object
  */
-export function createRequestMetadata(req: Request, url: URL): RequestMeta {
+export function createRequestMetadata(
+	req: Request,
+	url: URL,
+	clientPath?: string,
+): RequestMeta {
 	return {
 		id: crypto.randomUUID(),
 		method: req.method,
-		path: url.pathname,
+		path: clientPath ?? url.pathname,
 		timestamp: Date.now(),
 		headers: req.headers,
 	};

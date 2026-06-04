@@ -646,4 +646,26 @@ describe("selectAccountsForRequest — paused accounts in combo", () => {
 		);
 		expect(result.map((a) => a.id)).toEqual(["acc-active"]);
 	});
+
+	it("includes only matching providers when x-better-ccflare-include-providers is set", async () => {
+		const codexAccount = makeAccount({
+			id: "acc-codex",
+			name: "codex",
+			provider: "codex",
+		});
+		const anthropicAccount = makeAccount({
+			id: "acc-anthropic",
+			name: "anthropic",
+			provider: "anthropic",
+		});
+		const ctx = makeCtx({ accounts: [codexAccount, anthropicAccount] });
+		const meta = makeRequestMeta({
+			headers: new Headers({
+				"x-better-ccflare-include-providers": "codex",
+			}),
+		});
+
+		const result = await selectAccountsForRequest(meta, ctx);
+		expect(result.map((a) => a.id)).toEqual(["acc-codex"]);
+	});
 });
