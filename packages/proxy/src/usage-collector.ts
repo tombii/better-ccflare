@@ -567,7 +567,7 @@ export class UsageCollector {
 	 * Await all in-flight handleEnd promises for graceful shutdown.
 	 */
 	async drain(): Promise<void> {
-		await Promise.all([...this.pendingHandleEnds]);
+		await Promise.allSettled([...this.pendingHandleEnds]);
 	}
 
 	getHealth(): UsageCollectorHealth {
