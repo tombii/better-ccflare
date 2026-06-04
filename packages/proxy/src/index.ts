@@ -42,6 +42,7 @@ export {
 export {
 	getUsageWorker,
 	getUsageWorkerHealth,
+	type HandleProxyOptions,
 	handleProxy,
 	type ProxyContext,
 	sendWorkerConfigUpdate,
@@ -52,6 +53,15 @@ export {
 	forwardToClient,
 	type ResponseHandlerOptions,
 } from "./response-handler";
+export {
+	createNativeProxyRequest,
+	createNativeRouteErrorResponse,
+	NATIVE_PASSTHROUGH_HEADER,
+	ProviderPrefixError,
+	type ResolvedNativeRoute,
+	resolveProviderPrefixedPath,
+	tryResolveProviderPrefixedPath,
+} from "./routing";
 export type { ProxyRequest, ProxyResponse } from "./types";
 export type { UsageWorkerHealth } from "./usage-worker-controller";
 export type {

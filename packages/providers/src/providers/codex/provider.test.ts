@@ -11,9 +11,10 @@ const eventLine = (name: string, data: unknown) => [
 ];
 
 describe("CodexProvider request conversion", () => {
-	it("handles only /v1/messages path", () => {
+	it("handles /v1/messages and native /responses paths", () => {
 		const provider = new CodexProvider();
 		expect(provider.canHandle("/v1/messages")).toBeTrue();
+		expect(provider.canHandle("/responses")).toBeTrue();
 		expect(provider.canHandle("/v1/messages/count_tokens")).toBeFalse();
 	});
 
@@ -1078,5 +1079,63 @@ describe("fetchCodexUsageOnDemand", () => {
 			/non-empty access token/,
 		);
 		expect(called).toBe(false);
+	});
+});
+
+describe("CodexProvider native passthrough", () => {
+	it("buildUrl appends query string for /responses upstream path", () => {
+		const provider = new CodexProvider();
+		expect(provider.buildUrl("/responses", "?stream=true")).toBe(
+			"https://chatgpt.com/backend-api/codex/responses?stream=true",
+		);
+	});
+
+	it("forwards native request bodies unchanged", async () => {
+		const provider = new CodexProvider();
+		const nativeBody = {
+			model: "gpt-5.3-codex",
+			input: [{ role: "user", content: [{ type: "input_text", text: "Hi" }] }],
+			stream: false,
+			reasoning: { effort: "high" },
+			tools: [{ type: "function", name: "read_file" }],
+		};
+		const request = new Request("https://example.com/responses", {
+			method: "POST",
+			headers: {
+				"content-type": "application/json",
+				"x-better-ccflare-native-passthrough": "true",
+			},
+			body: JSON.stringify(nativeBody),
+		});
+
+		const transformed = await provider.transformRequestBody(request);
+		expect(await transformed.json()).toEqual(nativeBody);
+	});
+
+	it("returns native responses unchanged", async () => {
+		const provider = new CodexProvider();
+		const upstream = new Response(
+			JSON.stringify({
+				id: "resp_1",
+				object: "response",
+				output: [],
+			}),
+			{
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			},
+		);
+
+		const result = await provider.processResponse(
+			upstream,
+			null,
+			new Headers({ "x-better-ccflare-native-passthrough": "true" }),
+		);
+
+		expect(await result.json()).toEqual({
+			id: "resp_1",
+			object: "response",
+			output: [],
+		});
 	});
 });

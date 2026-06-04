@@ -141,6 +141,27 @@ export async function selectAccountsForRequest(
 			.map((p) => p.trim())
 			.filter(Boolean) ?? [];
 
+	const includeProviders =
+		meta.headers
+			?.get("x-better-ccflare-include-providers")
+			?.split(",")
+			.map((p) => p.trim())
+			.filter(Boolean) ?? [];
+
+	const applyInclusions = (accounts: Account[]): Account[] => {
+		if (includeProviders.length === 0) return accounts;
+		const filtered = accounts.filter((a) =>
+			includeProviders.includes(a.provider),
+		);
+		const skipped = accounts.length - filtered.length;
+		if (skipped > 0) {
+			log.warn(
+				`Skipping ${skipped} account(s) not included for this native request`,
+			);
+		}
+		return filtered;
+	};
+
 	const applyExclusions = (accounts: Account[]): Account[] => {
 		if (excludeProviders.length === 0) return accounts;
 		const filtered = accounts.filter((a) => {
@@ -164,6 +185,9 @@ export async function selectAccountsForRequest(
 		}
 		return filtered;
 	};
+
+	const applyProviderFilters = (accounts: Account[]): Account[] =>
+		applyExclusions(applyInclusions(accounts));
 
 	// Try combo-aware routing if a model is provided
 	if (model) {
@@ -224,7 +248,7 @@ export async function selectAccountsForRequest(
 					setComboSlotInfo(meta, slotInfo);
 					meta.comboName = combo.name;
 
-					const filteredComboAccounts = applyExclusions(availableAccounts);
+					const filteredComboAccounts = applyProviderFilters(availableAccounts);
 					if (filteredComboAccounts.length > 0) {
 						return filteredComboAccounts;
 					}
@@ -238,5 +262,5 @@ export async function selectAccountsForRequest(
 		}
 	}
 
-	return applyExclusions(await getOrderedAccounts(meta, ctx));
+	return applyProviderFilters(await getOrderedAccounts(meta, ctx));
 }

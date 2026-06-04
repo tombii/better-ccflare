@@ -170,12 +170,18 @@ export function getUsageWorkerHealth() {
  * @throws {ServiceUnavailableError} If all accounts fail to proxy the request
  * @throws {ProviderError} If unauthenticated proxy fails
  */
+export interface HandleProxyOptions {
+	clientPath?: string;
+	nativePassthrough?: boolean;
+}
+
 export async function handleProxy(
 	req: Request,
 	url: URL,
 	ctx: ProxyContext,
 	apiKeyId?: string | null,
 	apiKeyName?: string | null,
+	options?: HandleProxyOptions,
 ): Promise<Response> {
 	// 0. Silently ignore Claude Code internal endpoints (non-critical, not supported by all providers)
 	if (
@@ -210,7 +216,11 @@ export async function handleProxy(
 	const project = extractProjectFromRequest(req.headers, parsedBody);
 
 	// 3a. Validate request body for /v1/messages endpoint
-	if (url.pathname === "/v1/messages" && requestBodyBuffer) {
+	if (
+		!options?.nativePassthrough &&
+		url.pathname === "/v1/messages" &&
+		requestBodyBuffer
+	) {
 		if (parsedBody) {
 			// Reject requests without messages field (e.g., Claude Code internal events)
 			if (!parsedBody.messages || !Array.isArray(parsedBody.messages)) {
@@ -246,7 +256,14 @@ export async function handleProxy(
 
 	// 4. Intercept and modify request for agent model preferences
 	const { modifiedBody, agentUsed, originalModel, appliedModel } =
-		await interceptAndModifyRequest(requestBodyContext, ctx.dbOps);
+		options?.nativePassthrough
+			? {
+					modifiedBody: null,
+					agentUsed: null,
+					originalModel: null,
+					appliedModel: null,
+				}
+			: await interceptAndModifyRequest(requestBodyContext, ctx.dbOps);
 
 	// Use modified body if available
 	const finalBodyBuffer = modifiedBody || requestBodyContext.getBuffer();
@@ -262,7 +279,7 @@ export async function handleProxy(
 	}
 
 	// 5. Create request metadata with agent info
-	const requestMeta = createRequestMetadata(req, url);
+	const requestMeta = createRequestMetadata(req, url, options?.clientPath);
 	requestMeta.agentUsed = agentUsed;
 	requestMeta.project = project;
 

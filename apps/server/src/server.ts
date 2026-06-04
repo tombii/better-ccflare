@@ -43,10 +43,13 @@ import {
 import {
 	AutoRefreshScheduler,
 	CacheKeepaliveScheduler,
+	createNativeProxyRequest,
+	createNativeRouteErrorResponse,
 	getUsageWorker,
 	getUsageWorkerHealth,
 	getValidAccessToken,
 	handleProxy,
+	ProviderPrefixError,
 	type ProxyContext,
 	registerCodexUsageRefresher,
 	registerPollingRestarter,
@@ -57,6 +60,7 @@ import {
 	startUsageWorker,
 	stopGlobalTokenHealthChecks,
 	terminateUsageWorker,
+	tryResolveProviderPrefixedPath,
 	unregisterCodexUsageRefresher,
 } from "@better-ccflare/proxy";
 import { validatePathOrThrow } from "@better-ccflare/security";
@@ -1176,6 +1180,46 @@ export default async function startServer(options?: {
 								authResult.apiKeyName,
 							);
 						}
+
+						const nativeResolution = tryResolveProviderPrefixedPath(
+							url.pathname,
+						);
+						if (nativeResolution !== null) {
+							if (!nativeResolution.ok) {
+								return createNativeRouteErrorResponse(nativeResolution.error);
+							}
+
+							const { route } = nativeResolution;
+							const nativeProvider = getProvider(route.provider);
+							if (!nativeProvider) {
+								return createNativeRouteErrorResponse(
+									new ProviderPrefixError(
+										`Provider is not registered: ${route.provider}`,
+										"unknown_provider",
+									),
+								);
+							}
+
+							const upstreamUrl = new URL(url);
+							upstreamUrl.pathname = route.upstreamPath;
+							const nativeReq = createNativeProxyRequest(req, route.provider);
+
+							return await handleProxy(
+								nativeReq,
+								upstreamUrl,
+								{
+									...proxyContext,
+									provider: nativeProvider,
+								},
+								authResult.apiKeyId,
+								authResult.apiKeyName,
+								{
+									clientPath: route.clientPath,
+									nativePassthrough: true,
+								},
+							);
+						}
+
 						return await handleProxy(
 							req,
 							url,
