@@ -209,6 +209,10 @@ export class AnthropicProvider extends BaseProvider {
 		request: Request,
 		account?: Account,
 	): Promise<Request> {
+		if (request.headers.get("x-better-ccflare-native-passthrough") === "true") {
+			return request;
+		}
+
 		return transformRequestBodyModel(request, account, (model, acc) => {
 			if (acc) {
 				return mapModelName(model, acc);
@@ -541,6 +545,10 @@ export class AnthropicProvider extends BaseProvider {
 			statusText: response.statusText,
 			headers,
 		});
+
+		if (requestHeaders?.get("x-better-ccflare-native-passthrough") === "true") {
+			return sanitizedResponse;
+		}
 
 		// Add OpenAI-compatible finish_reason alongside Anthropic's stop_reason
 		return this.transformStreamToOpenAIFormat(

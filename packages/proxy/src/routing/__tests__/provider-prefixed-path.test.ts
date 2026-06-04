@@ -15,6 +15,33 @@ describe("resolveProviderPrefixedPath", () => {
 		});
 	});
 
+	it("resolves /v1/openai/responses to openai-compatible with /responses upstream", () => {
+		const route = resolveProviderPrefixedPath("/v1/openai/responses");
+		expect(route).toEqual({
+			provider: "openai-compatible",
+			clientPath: "/v1/openai/responses",
+			upstreamPath: "/responses",
+		});
+	});
+
+	it("resolves /v1/openai/chat/completions to openai-compatible with /chat/completions upstream", () => {
+		const route = resolveProviderPrefixedPath("/v1/openai/chat/completions");
+		expect(route).toEqual({
+			provider: "openai-compatible",
+			clientPath: "/v1/openai/chat/completions",
+			upstreamPath: "/chat/completions",
+		});
+	});
+
+	it("resolves /v1/anthropic/v1/messages to anthropic with /v1/messages upstream", () => {
+		const route = resolveProviderPrefixedPath("/v1/anthropic/v1/messages");
+		expect(route).toEqual({
+			provider: "anthropic",
+			clientPath: "/v1/anthropic/v1/messages",
+			upstreamPath: "/v1/messages",
+		});
+	});
+
 	it("preserves upstream path segments beyond /responses for resolver output", () => {
 		expect(() =>
 			resolveProviderPrefixedPath("/v1/codex/responses/extra"),
@@ -70,6 +97,12 @@ describe("resolveProviderPrefixedPath", () => {
 
 	it("rejects unsupported native paths for known providers", () => {
 		expect(() => resolveProviderPrefixedPath("/v1/codex/messages")).toThrow(
+			ProviderPrefixError,
+		);
+		expect(() => resolveProviderPrefixedPath("/v1/openai/messages")).toThrow(
+			ProviderPrefixError,
+		);
+		expect(() => resolveProviderPrefixedPath("/v1/anthropic/messages")).toThrow(
 			ProviderPrefixError,
 		);
 	});

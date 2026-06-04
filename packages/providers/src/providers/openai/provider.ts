@@ -61,9 +61,16 @@ export class OpenAICompatibleProvider extends BaseProvider {
 		// Store endpoint for provider-specific transformations (e.g., Alibaba caching)
 		this.currentEndpoint = endpoint;
 
-		// Convert Anthropic paths to OpenAI-compatible paths
-		// Anthropic: /v1/messages → OpenAI: /v1/chat/completions
-		let openaiPath = convertAnthropicPathToOpenAI(path);
+		// Native provider-prefixed routes use OpenAI paths directly
+		let openaiPath: string;
+		if (path === "/responses") {
+			openaiPath = "/v1/responses";
+		} else if (path === "/chat/completions") {
+			openaiPath = "/v1/chat/completions";
+		} else {
+			// Compatibility: Anthropic /v1/messages → OpenAI /v1/chat/completions
+			openaiPath = convertAnthropicPathToOpenAI(path);
+		}
 		if (endpoint.endsWith("/v1") && openaiPath.startsWith("/v1/")) {
 			openaiPath = openaiPath.replace(/^\/v1/, "");
 		}
@@ -129,7 +136,16 @@ export class OpenAICompatibleProvider extends BaseProvider {
 	async processResponse(
 		response: Response,
 		_account: Account | null,
+		requestHeaders?: Headers,
 	): Promise<Response> {
+		if (requestHeaders?.get("x-better-ccflare-native-passthrough") === "true") {
+			return new Response(response.body, {
+				status: response.status,
+				statusText: response.statusText,
+				headers: sanitizeHeaders(response.headers),
+			});
+		}
+
 		// Convert OpenAI response format back to Anthropic format
 		const contentType = response.headers.get("content-type");
 
@@ -173,6 +189,10 @@ export class OpenAICompatibleProvider extends BaseProvider {
 		request: Request,
 		account?: Account,
 	): Promise<Request> {
+		if (request.headers.get("x-better-ccflare-native-passthrough") === "true") {
+			return request;
+		}
+
 		const contentType = request.headers.get("content-type");
 
 		if (!contentType?.includes("application/json")) {
