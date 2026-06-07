@@ -72,7 +72,11 @@ describe("UsageCollector codex-native observability", () => {
 				pauseAccount: mock(() => Promise.resolve()),
 			} as never,
 			{
-				enqueue: (fn: () => Promise<void>) => fn(),
+				enqueue: mock(() => {}),
+				enqueueMetadataAndWait: async (fn: () => Promise<void>) => {
+					await fn();
+					return "saved" as const;
+				},
 				enqueuePayload: () => true,
 				canAcceptPayload: () => true,
 				recordPayloadDrop: () => {},

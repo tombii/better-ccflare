@@ -17,7 +17,7 @@ Remotes: `origin` → `https://github.com/omcdowell/the-best-ccflare.git`; `upst
 | U4 | Codex-native path feature parity with old Claude pathing, including issue #7 fields | ✅ done | UsageCollector Codex Responses API extraction; see **U4** section below. |
 | U5 | Stale request error recovery with randomized auto-refresh | ✅ done | Bounded jitter/backoff; stale 401 refresh+retry; `/api/token-health` refreshRuntime; see **U5** section below. |
 | U6 | Persist compressed full message payloads for later analytics | ✅ done | gzip + optional AES-256-GCM; `request_payloads.compressed`; list endpoints stay lean — see **U6** section below. |
-| U7 | Issue #6: persisted/live request history reconciliation | ⬜ todo | Persist-before-final-SSE or pending/reconcile behavior. |
+| U7 | Issue #6: persisted/live request history reconciliation | ✅ done | Persist-before-final-SSE via `enqueueMetadataAndWait`; dashboard cache reconcile — see **U7** section below. |
 | U8 | Integration smoke, docs, handoff, final verification, push branch | ⬜ todo | Use a second instance only; never touch live port 8080. |
 | Owner | Provide/rotate real OAuth/API credentials if needed for manual smoke | 🔒 owner-only | `claude -p` smoke tests are allowed/preferred when pointed at a second test instance; never raw-curl Anthropic or use live port 8080. |
 | Owner | Approve production rollout/restart of live port 8080 instance | 🔒 owner-only | Run must not restart or test against live 8080. |
@@ -383,6 +383,47 @@ Full request/response payloads were stored as plaintext JSON in `request_payload
 | `bun test` (full) | ⚠️ **1542 pass / 31 fail** — same pre-existing Windows baseline as U0–U5 (+13 new U6 tests); **no regressions** |
 
 **GitNexus:** impact analysis unavailable in this environment (CLI install failed); edits limited to payload storage/repository/migration layer with low blast radius.
+
+---
+
+## U7 — Issue #6 request history persistence reconciliation (2026-06-07)
+
+### Staleness check (mandatory)
+
+`git log origin/main --since='2026-06-04' --oneline --no-merges` on `useRequestStream`, `RequestsTab`, `usage-collector`, `requests-stream`, `request.repository`:
+
+```
+(empty — no upstream commits on these paths since issue opened on this branch)
+```
+
+**Verdict:** Still applied — live SSE summaries were emitted before async metadata writes completed; reload replaced React Query cache with `/api/requests` and dropped unpersisted rows.
+
+### Implementation
+
+| Change | Detail |
+| --- | --- |
+| `async-writer.ts` | `enqueueMetadataAndWait()` resolves `saved` / `failed` / `dropped` |
+| `usage-collector.ts` | Await metadata `saveRequest` before SSE summary; set `persisted` / `persistenceFailed` on summary |
+| `types/request.ts` | `RequestResponse.persisted`, `persistenceFailed`; `RequestPayload.meta.pendingPersistence` |
+| `request-cache-reconcile.ts` | Merge persisted reload with live `pending` / `pendingPersistence` rows (30m window) |
+| `queries.ts` | `useRequests` reconciles fetched data with prior cache |
+| `useRequestStream.ts` | Summary handler sets pending/persistence flags from SSE payload |
+| `RequestsTab.tsx` | “Saving…” / “Not saved” badges; distinct row styling |
+| Tests | `request-persistence-summary.test.ts`, `request-cache-reconcile.test.ts`, async-writer metadata-wait tests |
+
+### U7 verification
+
+| Step | Result |
+| --- | --- |
+| `bun test packages/proxy/src/__tests__/request-persistence-summary.test.ts` | ✅ 5 pass |
+| `bun test packages/dashboard-web/src/lib/__tests__/request-cache-reconcile.test.ts` | ✅ 5 pass |
+| `bun test packages/proxy` | ✅ **345 pass / 0 fail** |
+| `bun run build` | ✅ pass (v3.5.20) |
+| `bun run typecheck` | ✅ pass |
+| `bun x biome check --write` (U7 scope only) | ✅ pass (1 pre-existing warning in `queries.ts`) |
+| `bun test` (full) | ⚠️ **1554 pass / 31 fail** — same pre-existing Windows baseline as U0–U6 (+12 new U7 tests); **no regressions** |
+
+**GitNexus:** impact analysis unavailable in this environment (CLI install failed); edits limited to UsageCollector/AsyncDbWriter persistence ordering and dashboard cache reconciliation.
 
 ---
 

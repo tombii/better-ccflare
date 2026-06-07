@@ -912,60 +912,10 @@ export class UsageCollector {
 			log.debug(`Saving final request data for ${startMessage.requestId}`);
 		}
 		const projectAtEnd = state.project ?? null;
-		// No preliminary INSERT needed — dashboard tracks pending requests via SSE events, not DB queries.
-		this.asyncWriter.enqueue(async () => {
-			try {
-				await this.dbOps.saveRequest(
-					startMessage.requestId,
-					startMessage.method,
-					startMessage.clientPath ?? startMessage.path,
-					startMessage.accountId,
-					startMessage.responseStatus,
-					msg.success,
-					msg.error || null,
-					responseTime,
-					startMessage.failoverAttempts,
-					state.usage.model
-						? {
-								model: state.usage.model,
-								promptTokens:
-									(state.usage.inputTokens || 0) +
-									(state.usage.cacheReadInputTokens || 0) +
-									(state.usage.cacheCreationInputTokens || 0),
-								completionTokens: state.usage.outputTokens,
-								totalTokens: state.usage.totalTokens,
-								costUsd: state.usage.costUsd,
-								// Keep original breakdown for payload
-								inputTokens: state.usage.inputTokens,
-								outputTokens: state.usage.outputTokens,
-								cacheReadInputTokens: state.usage.cacheReadInputTokens,
-								cacheCreationInputTokens: state.usage.cacheCreationInputTokens,
-								tokensPerSecond: state.usage.tokensPerSecond,
-							}
-						: undefined,
-					state.agentUsed,
-					startMessage.apiKeyId || undefined,
-					startMessage.apiKeyName || undefined,
-					projectAtEnd,
-					state.billingType,
-					startMessage.comboName || null,
-					startMessage.upstreamPath ?? null,
-					startMessage.routingMode ?? null,
-				);
-			} catch (error) {
-				log.error(
-					`Failed to save request for ${startMessage.requestId}:`,
-					error,
-				);
-			}
-		});
-
 		const requestId = startMessage.requestId;
 		const storePayloads = this.getStorePayloads();
+
 		if (storePayloads) {
-			// Preflight backpressure check — skip serialization entirely if the
-			// writer is already overloaded. The metadata write above already
-			// captured the request; only the payload is dropped.
 			const estimatedRequestBytes = startMessage.requestBody?.length ?? 0;
 			const estimatedResponseBytes =
 				msg.responseBody?.length ?? state.chunksBytes ?? 0;
@@ -978,21 +928,17 @@ export class UsageCollector {
 					`Backpressure: skipping payload persistence for ${requestId} (estimated_bytes=${estimatedPayloadBytes})`,
 				);
 			} else {
-				// Save payload - eagerly serialize to break closure references
 				let responseBody: string | null = null;
 
 				if (msg.responseBody) {
-					// Non-streaming response
 					responseBody = msg.responseBody;
 				} else if (state.chunks.length > 0) {
-					// Streaming response - combine chunks
 					const combined = combineChunks(state.chunks);
 					if (combined.length > 0) {
 						responseBody = combined.toString("base64");
 					}
 				}
 
-				// Cap request body to prevent unbounded payload storage
 				let requestBody = startMessage.requestBody;
 				if (requestBody) {
 					const rawBytes = Buffer.byteLength(requestBody, "base64");
@@ -1023,7 +969,6 @@ export class UsageCollector {
 					},
 				});
 
-				// Null out large references now that we have the serialized JSON
 				responseBody = null;
 
 				const payloadBytes = Buffer.byteLength(payloadJson);
@@ -1045,15 +990,66 @@ export class UsageCollector {
 				}
 			}
 		}
+
+		const metadataResult = await this.asyncWriter.enqueueMetadataAndWait(
+			async () => {
+				await this.dbOps.saveRequest(
+					startMessage.requestId,
+					startMessage.method,
+					startMessage.clientPath ?? startMessage.path,
+					startMessage.accountId,
+					startMessage.responseStatus,
+					msg.success,
+					msg.error || null,
+					responseTime,
+					startMessage.failoverAttempts,
+					state.usage.model
+						? {
+								model: state.usage.model,
+								promptTokens:
+									(state.usage.inputTokens || 0) +
+									(state.usage.cacheReadInputTokens || 0) +
+									(state.usage.cacheCreationInputTokens || 0),
+								completionTokens: state.usage.outputTokens,
+								totalTokens: state.usage.totalTokens,
+								costUsd: state.usage.costUsd,
+								inputTokens: state.usage.inputTokens,
+								outputTokens: state.usage.outputTokens,
+								cacheReadInputTokens: state.usage.cacheReadInputTokens,
+								cacheCreationInputTokens: state.usage.cacheCreationInputTokens,
+								tokensPerSecond: state.usage.tokensPerSecond,
+							}
+						: undefined,
+					state.agentUsed,
+					startMessage.apiKeyId || undefined,
+					startMessage.apiKeyName || undefined,
+					projectAtEnd,
+					state.billingType,
+					startMessage.comboName || null,
+					startMessage.upstreamPath ?? null,
+					startMessage.routingMode ?? null,
+				);
+			},
+		);
+
+		if (metadataResult === "failed") {
+			log.error(
+				`Failed to save request metadata for ${startMessage.requestId}`,
+			);
+		} else if (metadataResult === "dropped") {
+			log.warn(
+				`Metadata queue dropped save for ${startMessage.requestId} — summary will be marked unpersisted`,
+			);
+		}
+
 		freeRequestState(state);
 
-		// Log if we have usage
-		if (state.usage.model && startMessage.accountId !== NO_ACCOUNT_ID) {
-			if (
-				process.env.DEBUG?.includes("worker") ||
-				process.env.DEBUG === "true" ||
-				process.env.NODE_ENV === "development"
-			) {
+		if (
+			process.env.DEBUG?.includes("worker") ||
+			process.env.DEBUG === "true" ||
+			process.env.NODE_ENV === "development"
+		) {
+			if (state.usage.model && startMessage.accountId !== NO_ACCOUNT_ID) {
 				log.debug(
 					`Usage for request ${startMessage.requestId}: Model: ${state.usage.model}, ` +
 						`Tokens: ${state.usage.totalTokens || 0}, Cost: ${formatCost(state.usage.costUsd)}`,
@@ -1061,7 +1057,7 @@ export class UsageCollector {
 			}
 		}
 
-		// Build summary for real-time updates
+		const persisted = metadataResult === "saved";
 		const summary: RequestResponse = {
 			id: startMessage.requestId,
 			timestamp: new Date(startMessage.timestamp).toISOString(),
@@ -1089,9 +1085,10 @@ export class UsageCollector {
 			project: state.project ?? undefined,
 			billingType: state.billingType,
 			comboName: startMessage.comboName || undefined,
+			persisted,
+			persistenceFailed: !persisted ? true : undefined,
 		};
 
-		// Notify cacheBodyStore and emit summary for real-time updates
 		cacheBodyStore.onSummary(
 			startMessage.requestId,
 			state.usage.cacheCreationInputTokens,

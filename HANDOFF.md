@@ -11,8 +11,14 @@
 | Issue | Title | Status |
 | --- | --- | --- |
 | #5 | Prevent Claude traffic from unexpectedly falling back to Codex accounts | Fixed in U3 — unprefixed `/v1/messages` excludes Codex by default; opt-in header documented |
-| #6 | Request History live SSE rows not yet persisted | Open — U7 |
+| #6 | Request History live SSE rows not yet persisted | Fixed in U7 — metadata saved before SSE summary; reload reconciles live pending rows |
 | #7 | Codex request history missing model/token/cost/throughput | Fixed in U4 — UsageCollector maps Codex Responses API usage/model; `requestedModel` fallback when payload storage disabled |
+
+### U7 — request history persistence reconciliation (this branch)
+
+- `UsageCollector` awaits `AsyncDbWriter.enqueueMetadataAndWait()` before emitting SSE summaries; summaries carry `persisted` / `persistenceFailed`.
+- Failed/dropped metadata writes surface a **Not saved** badge instead of a misleading completed row.
+- `/requests` reload merges persisted `/api/requests` data with recent live-only cache rows (`pending`, `pendingPersistence`) for up to 30 minutes.
 
 ### U6 — compressed payload persistence (this branch)
 

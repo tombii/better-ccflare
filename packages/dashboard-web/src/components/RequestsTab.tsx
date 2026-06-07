@@ -741,7 +741,15 @@ export function RequestsTab() {
 									key={request.id}
 									className={`border rounded-lg transition-all duration-300 ${
 										isError ? "border-destructive/50" : "border-border"
-									} ${request.meta.pending ? "animate-pulse opacity-70" : "opacity-100"}`}
+									} ${
+										request.meta.pending
+											? "animate-pulse opacity-70"
+											: request.meta.persistenceFailed
+												? "border-amber-500/50 opacity-90"
+												: request.meta.pendingPersistence
+													? "border-sky-500/40 opacity-90"
+													: "opacity-100"
+									}`}
 								>
 									{/* Header row: single line, never wraps */}
 									<div className="flex items-center gap-2 p-3">
@@ -918,6 +926,16 @@ export function RequestsTab() {
 											{request.meta.rateLimited && (
 												<Badge variant="warning" className="text-xs">
 													Rate Limited
+												</Badge>
+											)}
+											{request.meta.pendingPersistence && (
+												<Badge variant="outline" className="text-xs">
+													Saving…
+												</Badge>
+											)}
+											{request.meta.persistenceFailed && (
+												<Badge variant="destructive" className="text-xs">
+													Not saved
 												</Badge>
 											)}
 											{(isZaiPeak || isAnthropicPeak) && (
