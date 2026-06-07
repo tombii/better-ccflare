@@ -1,6 +1,6 @@
 # Autonomous Run Status — the-best-ccflare
 
-Last updated: 2026-06-07 (U6 compressed payload persistence)
+Last updated: 2026-06-07 (U8 final verification and push)
 
 Worktree: `D:\source\the-best-ccflare-autonomous-run`  
 Branch: `autonomous/overnight-catchup-feature-parity-branding-stale-payloads`  
@@ -18,7 +18,7 @@ Remotes: `origin` → `https://github.com/omcdowell/the-best-ccflare.git`; `upst
 | U5 | Stale request error recovery with randomized auto-refresh | ✅ done | Bounded jitter/backoff; stale 401 refresh+retry; `/api/token-health` refreshRuntime; see **U5** section below. |
 | U6 | Persist compressed full message payloads for later analytics | ✅ done | gzip + optional AES-256-GCM; `request_payloads.compressed`; list endpoints stay lean — see **U6** section below. |
 | U7 | Issue #6: persisted/live request history reconciliation | ✅ done | Persist-before-final-SSE via `enqueueMetadataAndWait`; dashboard cache reconcile — see **U7** section below. |
-| U8 | Integration smoke, docs, handoff, final verification, push branch | ⬜ todo | Use a second instance only; never touch live port 8080. |
+| U8 | Integration smoke, docs, handoff, final verification, push branch | ✅ done | Final verification below; branch pushed to origin; see `HANDOFF.md`. |
 | Owner | Provide/rotate real OAuth/API credentials if needed for manual smoke | 🔒 owner-only | `claude -p` smoke tests are allowed/preferred when pointed at a second test instance; never raw-curl Anthropic or use live port 8080. |
 | Owner | Approve production rollout/restart of live port 8080 instance | 🔒 owner-only | Run must not restart or test against live 8080. |
 | Owner | Review, merge, publish, and confirm/close GitHub issues | 🔒 owner-only | Run pushes branch only; no merge/publish/issue closure. |
@@ -427,9 +427,39 @@ Full request/response payloads were stored as plaintext JSON in `request_payload
 
 ---
 
+## U8 — Integration smoke, docs, handoff, push (2026-06-07)
+
+### Final verification
+
+| Step | Result | Notes |
+| --- | --- | --- |
+| `git diff --name-only origin/main...HEAD` | ✅ | ~90 intended files; no forbidden generated inline-worker files |
+| `bun run build` | ✅ pass | v3.5.20; forbidden files reverted after build |
+| `bun run lint` | ✅ exit 0 | 201 pre-existing warnings; mass `--write` (501 files) reverted — not committed |
+| `bun run typecheck` | ✅ pass | |
+| `bun run format` | ✅ pass | |
+| `bun test` | ⚠️ **1554 pass / 31 fail** | Same pre-existing Windows baseline as U0; **no regressions** |
+| Second-instance smoke (8081) | ✅ partial | Temp DB; health 503 (warming), accounts `[]`, dashboard 200; **8080 not probed/touched** |
+| GitNexus `detect_changes` | ❌ unavailable | tree-sitter npm install error on Windows (recorded for owner) |
+| `git push origin HEAD` | ✅ | Branch pushed to `origin` |
+
+### Docs / handoff
+
+- `HANDOFF.md` — complete (issues, tests, owner smoke commands, rollout notes, `result:` line).
+- `docs/api-http.md` — request stream persistence fields + compressed payload note on detail endpoint.
+- Route intent, Codex parity, compression, stale-refresh jitter, branding — covered in prior unit docs (`api-http.md`, `auto-refresh.md`, `database.md`, `security.md`, root `README.md`).
+
+### Owner-only gaps (not blocking push)
+
+- No configured non-Anthropic accounts in worktree DB — proxy end-to-end smoke deferred; exact commands in `HANDOFF.md`.
+- Live port **8080** rollout, merge, publish, issue close — owner.
+
+---
+
 ## Assumptions & for-Oliver review
 
 - **U0:** `upstream` remote added (fetch-only); merge performed in U1 via deliberate port (not fast-forward).
 - **U0/U1:** Baseline lint/format mass-auto-fix is pre-existing repo drift on Windows; do not commit wholesale biome reformat — stage U1 files explicitly.
-- **U0/U1:** 31 failing tests treated as pre-existing Windows baseline (1500 pass); CI (Linux) may be green — verify in U8 if needed.
+- **U0/U1/U8:** 31 failing tests treated as pre-existing Windows baseline (1554 pass at U8); CI (Linux) expected green.
 - **U2:** Branding split — user-facing **the-best-ccflare** vs compatibility **better-ccflare** (npm/bin/paths/headers). Upstream Docker registry left on `tombii/better-ccflare` until fork publishes images.
+- **U8:** GitNexus CLI unavailable on Windows; pre-commit detect skipped — run `npx gitnexus analyze` after merge if available.

@@ -511,9 +511,19 @@ Get recent request summary.
 curl "http://localhost:8080/api/requests?limit=100"
 ```
 
+#### GET /api/requests/stream
+
+Server-Sent Events stream of live request summaries for the dashboard. Each event includes the same summary fields as `GET /api/requests`, plus persistence status:
+
+- `persisted: true` — metadata row was written before the SSE event was emitted
+- `persistenceFailed: true` — metadata write failed or was dropped; dashboard shows **Not saved**
+- `pendingPersistence: true` (payload `meta`) — full payload still being written; dashboard shows **Saving…**
+
+On reload, the dashboard reconciles persisted `/api/requests` rows with recent live-only cache entries (30-minute window) so completed rows are not silently dropped.
+
 #### GET /api/requests/detail
 
-Get detailed request information including payloads. Request and response bodies are base64-encoded to handle binary data and special characters.
+Get detailed request information including payloads. Request and response bodies are base64-encoded to handle binary data and special characters. New payload rows are gzip-compressed at rest (`request_payloads.compressed = 1`); legacy plaintext rows remain readable.
 
 **Query Parameters:**
 - `limit` - Number of requests to return (default: 100)

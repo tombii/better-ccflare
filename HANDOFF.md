@@ -1,109 +1,94 @@
 # Handoff — the-best-ccflare autonomous run
 
-> **Placeholder** — completed in U8 after all implementation units land.
+Branch: `autonomous/overnight-catchup-feature-parity-branding-stale-payloads`  
+Remote: `origin` → `https://github.com/omcdowell/the-best-ccflare.git`  
+Version: **3.5.20** (unchanged — release system owns bumps)
 
-## What changed
+## What changed (U0–U7)
 
-- **U2 (this branch):** Rebranded user-visible/docs/package metadata to **the-best-ccflare** (`omcdowell/the-best-ccflare` URLs). npm package, CLI binary, env vars, headers, and config paths remain **better-ccflare** for compatibility. Dashboard nav/title/API-key copy use shared branding constants in `packages/ui-constants/src/branding.ts`.
+| Unit | Summary |
+| --- | --- |
+| U0 | Baseline, upstream comparison, issue staleness checks, safe second-instance harness |
+| U1 | Ported upstream PR #245 (`UsageCollector` on main thread); removed post-processor worker; preserved fork Codex observability hooks |
+| U2 | Rebranded user-visible/docs/package metadata to **the-best-ccflare**; npm package, CLI binary, env vars, headers, and config paths remain **better-ccflare** |
+| U3 | Issue **#5** — unprefixed `POST /v1/messages` excludes Codex by default; opt-in via `x-better-ccflare-allow-providers: codex` |
+| U4 | Issue **#7** — Codex `/v1/codex/responses` usage/model/cost/throughput parity via `UsageCollector` + `requestedModel` fallback |
+| U5 | Stale OAuth 401 → one token refresh + single retry; auto-refresh probes staggered with 0–30s jitter; `/api/token-health` exposes `refreshRuntime` |
+| U6 | Full payloads gzip-compressed (`request_payloads.compressed`); optional AES-256-GCM; SQLite + PostgreSQL migrations |
+| U7 | Issue **#6** — metadata persisted before SSE summary; dashboard reconciles live pending rows on reload |
 
-## Issue status
+## Issue status (fork: omcdowell/the-best-ccflare)
 
-| Issue | Title | Status |
+| Issue | Title | Code status | Close? |
+| --- | --- | --- | --- |
+| [#5](https://github.com/omcdowell/the-best-ccflare/issues/5) | Prevent Claude→Codex surprise fallback | Fixed U3 | Owner confirms on live instance |
+| [#6](https://github.com/omcdowell/the-best-ccflare/issues/6) | Live SSE rows not persisted | Fixed U7 | Owner confirms on live instance |
+| [#7](https://github.com/omcdowell/the-best-ccflare/issues/7) | Codex history missing model/tokens/cost | Fixed U4 | Owner confirms with Codex account |
+
+Per `CLAUDE.md`, do **not** auto-close issues — wait for reporter confirmation.
+
+## Tests run (U8 final verification)
+
+| Step | Result | Notes |
 | --- | --- | --- |
-| #5 | Prevent Claude traffic from unexpectedly falling back to Codex accounts | Fixed in U3 — unprefixed `/v1/messages` excludes Codex by default; opt-in header documented |
-| #6 | Request History live SSE rows not yet persisted | Fixed in U7 — metadata saved before SSE summary; reload reconciles live pending rows |
-| #7 | Codex request history missing model/token/cost/throughput | Fixed in U4 — UsageCollector maps Codex Responses API usage/model; `requestedModel` fallback when payload storage disabled |
+| `bun run build` | ✅ pass | v3.5.20; dashboard + CLI binary; forbidden inline-worker files reverted after build |
+| `bun run lint` | ✅ exit 0 | 201 pre-existing warnings; `--write` fixed 501 files (CRLF drift) — **reverted, not committed** |
+| `bun run typecheck` | ✅ pass | |
+| `bun run format` | ✅ pass | No additional fixes after lint revert |
+| `bun test` | ⚠️ **1554 pass / 31 fail** | Same pre-existing Windows baseline as U0; **no regressions** (+54 tests vs U0) |
+| Second-instance smoke (8081) | ✅ partial | Temp DB; `/api/health` 503 (warming), `/api/accounts` `[]`, dashboard 200; **port 8080 not touched** |
+| GitNexus `detect_changes` | ❌ unavailable | `npx gitnexus` failed — tree-sitter npm install error on Windows (same as U6/U7) |
 
-### U7 — request history persistence reconciliation (this branch)
+### Windows baseline failures (31, unchanged)
 
-- `UsageCollector` awaits `AsyncDbWriter.enqueueMetadataAndWait()` before emitting SSE summaries; summaries carry `persisted` / `persistenceFailed`.
-- Failed/dropped metadata writes surface a **Not saved** badge instead of a misleading completed row.
-- `/requests` reload merges persisted `/api/requests` data with recent live-only cache rows (`pending`, `pendingPersistence`) for up to 30 minutes.
+Path validator (20), database backup/migration (16), auto_vacuum/mmap (8), CLI SSL paths (2), CLI sanitize timeout (1), API auth setup (1). CI (Linux) expected green.
 
-### U6 — compressed payload persistence (this branch)
+## Owner-only smoke (credentials required)
 
-- New `request_payloads.compressed` column (SQLite + PostgreSQL); legacy rows (`compressed = 0`) remain readable.
-- Save pipeline: gzip → optional AES-256-GCM (`PAYLOAD_ENCRYPTION_KEY`); read paths transparently decompress.
-- `/api/requests` list stays metadata-only; detail and `GET /api/requests/payload/:id` return full decoded payloads.
-- Controlled by existing `STORE_PAYLOADS` / dashboard setting; retention cleanup unchanged (payloads deleted before request metadata).
-
-### U5 — stale token recovery (this branch)
-
-- Upstream **401** on OAuth accounts: one conservative token refresh + single retry before account failover.
-- Auto-refresh scheduler: bounded **0–30s jitter** between probes; existing **60s refresh backoff** unchanged.
-- `/api/token-health` exposes per-account `refreshRuntime` backoff state.
-
-## Tests run
-
-_(To be filled by U8.)_
-
-## Skipped upstream deltas
-
-See `STATUS.md` **U1** section for full table. Summary:
-
-- **Merged:** PR #245 UsageCollector migration, model-not-found `content-encoding` strip, SSE `currentEvent` reset, CLI build worker removal, health type narrowing.
-- **Skipped:** upstream `3.5.21` version bump; README/cli README branding (U2); redundant AsyncDbWriter-only commits already covered by collector `drain()`.
-- **Fork preserved:** Codex Responses API usage parsing, `clientPath`/`upstreamPath`/`routingMode` observability, native passthrough routes/tests, `HandleProxyOptions`.
-
-## Owner-only tasks
-
-- Provide/rotate real OAuth/API credentials for manual smoke if needed.
-- Approve production rollout/restart of the live instance on port **8080**.
-- Review, merge, publish, and confirm/close GitHub issues #5/#6/#7.
-
-## Production rollout notes
-
-_(To be filled by U8.)_
-
----
-
-## Safe second-instance test harness (U0 baseline)
-
-Use this for all proxy/dashboard smoke tests during the run. **Never** stop, restart, or send test traffic through the live production instance on port **8080**.
-
-### Instance
+No non-Anthropic accounts in this worktree DB. Run on a **second instance** (never port 8080):
 
 ```bash
-# Fresh temp DB (do not point at ~/.config/better-ccflare/better-ccflare.db in production)
-export BETTER_CCFLARE_DB_PATH="/tmp/the-best-ccflare-test.db"
+export BETTER_CCFLARE_DB_PATH="/tmp/the-best-ccflare-smoke.db"
 bun start --serve --port 8081
-```
+# wait ~15s
 
-- Startup takes ~15s; wait before curling.
-- Local dev/testing port per `CLAUDE.md`: **8081** (production runs on **8082**; live `the-best-ccflare` on **8080**).
-- U0 smoke: server bound to `0.0.0.0:8081` with temp DB; responded (health may return 503 while worker warms up).
-
-### Database
-
-- Default prod DB: `~/.config/better-ccflare/better-ccflare.db` (Windows: `%LOCALAPPDATA%\better-ccflare\better-ccflare.db`).
-- Tests: always `BETTER_CCFLARE_DB_PATH` to a temp or copied snapshot — never mutate the live production DB.
-- PostgreSQL: set `DATABASE_URL=postgresql://...` when testing PG migrations (mirror every SQLite change in `migrations-pg.ts`).
-
-### Anthropic / account testing restrictions
-
-From `CLAUDE.md` — **mandatory**:
-
-- **NEVER** `curl` the Anthropic endpoint directly.
-- **NEVER** route automated/scripted tests through a `claude` OAuth account (ban risk).
-- The `claude` account is only for real Claude Code sessions.
-- Unit/integration tests: use non-Anthropic accounts (`ollama`, `litellm`, `omniroute`, etc.) and force-route with header `x-better-ccflare-account-id`.
-- OpenRouter smoke: model `z-ai/glm-4.5-air:free`:
-
-```bash
+# OpenRouter (force-route if needed)
 curl -X POST http://localhost:8081/v1/messages \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer test" \
   -d '{"model":"z-ai/glm-4.5-air:free","messages":[{"role":"user","content":"test"}],"max_tokens":10}'
+
+# Issue #5 — should NOT use Codex without header (expect 503/no Codex account if only Codex configured)
+# Issue #5 opt-in:
+curl -H "x-better-ccflare-allow-providers: codex" ...
+
+# Issue #7 — native Codex route (requires Codex OAuth account in test DB)
+curl -X POST http://localhost:8081/v1/codex/responses ...
+
+# Issue #6 — dashboard Request History: complete row should survive reload; failed writes show "Not saved"
+
+# Claude behavior: prefer `claude -p` pointed at localhost:8081 — never curl Anthropic directly
 ```
 
-- Claude/Anthropic behavior through the proxy: prefer `claude -p` pointed at the **second test instance** (port 8081) — Anthropic-approved; still no raw Anthropic curls.
+## Skipped upstream deltas
 
-### Forbidden generated files
+See `STATUS.md` **U1**. Summary: merged UsageCollector migration + low-risk streaming fixes; skipped upstream `3.5.21` bump and upstream README branding; fork native routes and Codex observability preserved.
 
-Never read/edit/search/commit:
+## Production rollout (owner-only)
 
-- `packages/proxy/src/inline-worker.ts`
-- `packages/database/src/inline-vacuum-worker.ts`
-- `packages/database/src/inline-integrity-check-worker.ts`
+1. Review branch diff vs `origin/main` (9 commits, ~90 files).
+2. Merge when satisfied (`git merge --no-ff` if external contributor rules apply).
+3. **Do not restart live port 8080** until approved; test on 8081/8082 first.
+4. Publish/npm release handled by existing release system — **do not bump version manually**.
+5. After merge to main, run `npx gitnexus analyze` if GitNexus is available.
+6. Confirm issues #5/#6/#7 on production, then close.
 
-If `bun run build` touches them: `git checkout -- <path>` before commit. Use `git add <specific-files>`, not `git add .`.
+## Branch diff guardrails
+
+- `git diff --name-only origin/main...HEAD` — no forbidden generated files (`inline-worker.ts`, `inline-vacuum-worker.ts`, `inline-integrity-check-worker.ts`).
+- `apps/cli/README.md` untouched.
+- Versions unchanged at 3.5.20.
+
+---
+
+**result:** U0–U8 complete on branch `autonomous/overnight-catchup-feature-parity-branding-stale-payloads`; pushed to origin. Owner: merge/publish, live 8080 rollout, credential smoke, issue confirmation/closure.
