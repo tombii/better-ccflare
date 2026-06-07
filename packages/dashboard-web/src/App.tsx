@@ -1,4 +1,5 @@
 import { HttpError } from "@better-ccflare/http-common";
+import { PRODUCT_NAME } from "@better-ccflare/ui-constants";
 import {
 	MutationCache,
 	QueryCache,
@@ -64,7 +65,7 @@ export function App() {
 				path: "/",
 				element: <OverviewTab />,
 				title: "Dashboard Overview",
-				subtitle: "Monitor your ccflare performance and usage",
+				subtitle: `Monitor your ${PRODUCT_NAME} performance and usage`,
 			},
 			{
 				path: "/analytics",

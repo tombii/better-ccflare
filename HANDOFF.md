@@ -4,7 +4,7 @@
 
 ## What changed
 
-_(To be filled by U8.)_
+- **U2 (this branch):** Rebranded user-visible/docs/package metadata to **the-best-ccflare** (`omcdowell/the-best-ccflare` URLs). npm package, CLI binary, env vars, headers, and config paths remain **better-ccflare** for compatibility. Dashboard nav/title/API-key copy use shared branding constants in `packages/ui-constants/src/branding.ts`.
 
 ## Issue status
 

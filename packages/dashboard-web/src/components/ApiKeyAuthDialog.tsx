@@ -1,3 +1,4 @@
+import { PRODUCT_NAME } from "@better-ccflare/ui-constants";
 import { AlertCircle, Lock } from "lucide-react";
 import { useState } from "react";
 import { Button } from "./ui/button";
@@ -91,7 +92,7 @@ export function ApiKeyAuthDialog({
 								className="font-mono"
 							/>
 							<p className="text-xs text-muted-foreground">
-								Enter your better-ccflare API key (starts with "btr-")
+								Enter your {PRODUCT_NAME} API key (starts with "btr-")
 							</p>
 						</div>
 					</div>

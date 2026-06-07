@@ -49,7 +49,7 @@ This guide helps you diagnose and resolve common issues with better-ccflare.
 **Error Message**: `Token expired or missing for account: [name]`
 
 **Solutions**:
-1. better-ccflare automatically attempts to refresh expired tokens
+1. the-best-ccflare automatically attempts to refresh expired tokens
 2. If automatic refresh fails, re-authenticate the account
 3. Check for refresh token stampede prevention - multiple simultaneous refresh attempts are prevented
 
@@ -113,7 +113,7 @@ curl http://localhost:8080/api/accounts | jq '.[] | {name, rate_limit_status, ra
 ### Recovery Strategies
 
 **When an account is rate-limited**:
-1. better-ccflare automatically rotates to the next available account
+1. the-best-ccflare automatically rotates to the next available account
 2. Rate-limited accounts are marked with a reset timestamp
 3. Accounts automatically become available again after the reset time
 
@@ -448,7 +448,7 @@ Environment variables override config file settings:
 - `SQLITE_BUSY`
 
 **Solutions**:
-1. Ensure only one instance of better-ccflare is running:
+1. Ensure only one instance of the-best-ccflare is running:
    ```bash
    ps aux | grep "bun start" | grep -v grep
    ps aux | grep "better-ccflare --serve" | grep -v grep
@@ -837,7 +837,7 @@ bun start
 
 ## FAQ
 
-### Q: How do I know if better-ccflare is working?
+### Q: How do I know if the-best-ccflare is working?
 
 **A**: Check the health endpoint:
 ```bash

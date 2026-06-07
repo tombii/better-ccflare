@@ -1,4 +1,4 @@
-# better-ccflare 🛡️
+# the-best-ccflare 🛡️
 [![Mentioned in Awesome Claude Code](https://awesome.re/mentioned-badge.svg)](https://github.com/hesreallyhim/awesome-claude-code)
 
 **Track Every Request. Go Low-Level. Never Hit Rate Limits Again.**
@@ -8,9 +8,9 @@ The ultimate Claude API proxy with intelligent load balancing across multiple ac
 https://github.com/user-attachments/assets/c859872f-ca5e-4f8b-b6a0-7cc7461fe62a
 
 
-![better-ccflare Dashboard](apps/lander/src/screenshot-dashboard.png)
+![the-best-ccflare Dashboard](apps/lander/src/screenshot-dashboard.png)
 
-## Why better-ccflare?
+## Why the-best-ccflare?
 
 - **🚀 Zero Rate Limit Errors** - Automatically distribute requests across multiple accounts
 - **🤖 Multi-Provider Support** - Claude OAuth, Claude API console, Vertex AI, AWS Bedrock, NanoGPT, z.ai, Minimax, OpenRouter, Kilo, Codex (OpenAI OAuth), Anthropic-compatible, and OpenAI-compatible providers
@@ -29,7 +29,7 @@ https://github.com/user-attachments/assets/c859872f-ca5e-4f8b-b6a0-7cc7461fe62a
 
 ### Why this fork?
 
-This project builds upon the excellent foundation of [snipeship/ccflare](https://github.com/snipeship/ccflare) with significant enhancements:
+**the-best-ccflare** is maintained at [omcdowell/the-best-ccflare](https://github.com/omcdowell/the-best-ccflare) and builds on [tombii/better-ccflare](https://github.com/tombii/better-ccflare), which in turn builds upon the excellent foundation of [snipeship/ccflare](https://github.com/snipeship/ccflare) with significant enhancements:
 
 **🎯 Core Improvements (v3.0.0):**
 - **Enhanced Security** - Critical fixes for authentication bypass, command injection, and PKCE implementation
@@ -66,10 +66,10 @@ This project builds upon the excellent foundation of [snipeship/ccflare](https:/
 ```bash
 npm install -g better-ccflare
 
-# Start better-ccflare (Server + Dashboard)
+# Start the-best-ccflare (Server + Dashboard)
 better-ccflare
 ```
-Continue to [Configure Claude SDK](https://github.com/tombii/better-ccflare#configure-claude-sdk).
+Continue to [Configure Claude SDK](https://github.com/omcdowell/the-best-ccflare#configure-claude-sdk).
 
 **⚠️ Windows npm Installation Issue**: If you installed via npm on Windows and encounter a path error like `"C:\\Program Files\\nodejs\\\\node_modules\\better-ccflare\\dist\\better-ccflare" is either misspelled or could not be found`, this is a known [npm bug on Windows](https://github.com/npm/cli/issues/969) affecting how npm generates wrapper scripts. See [Windows Troubleshooting](#windows-troubleshooting) for workarounds.
 ### Install via bun
@@ -77,31 +77,31 @@ Continue to [Configure Claude SDK](https://github.com/tombii/better-ccflare#conf
 ```bash
 bun install -g better-ccflare
 
-# Start better-ccflare (Server + Dashboard)
+# Start the-best-ccflare (Server + Dashboard)
 better-ccflare
 ```
-Continue to [Configure Claude SDK](https://github.com/tombii/better-ccflare#configure-claude-sdk).
+Continue to [Configure Claude SDK](https://github.com/omcdowell/the-best-ccflare#configure-claude-sdk).
 ### Install Pre-compiled Binary (All Architectures)
 
-Download the appropriate binary for your platform from [GitHub Releases](https://github.com/tombii/better-ccflare/releases/latest):
+Download the appropriate binary for your platform from [GitHub Releases](https://github.com/omcdowell/the-best-ccflare/releases/latest):
 
 #### Linux x86_64
 ```bash
-wget https://github.com/tombii/better-ccflare/releases/latest/download/better-ccflare-linux-amd64
+wget https://github.com/omcdowell/the-best-ccflare/releases/latest/download/better-ccflare-linux-amd64
 chmod +x better-ccflare-linux-amd64
 ./better-ccflare-linux-amd64
 ```
-Continue to [Configure Claude SDK](https://github.com/tombii/better-ccflare#configure-claude-sdk).
+Continue to [Configure Claude SDK](https://github.com/omcdowell/the-best-ccflare#configure-claude-sdk).
 #### Linux ARM64 (Raspberry Pi 3/4/5, Oracle Cloud ARM, AWS Graviton)
 ```bash
-wget https://github.com/tombii/better-ccflare/releases/latest/download/better-ccflare-linux-arm64
+wget https://github.com/omcdowell/the-best-ccflare/releases/latest/download/better-ccflare-linux-arm64
 chmod +x better-ccflare-linux-arm64
 ./better-ccflare-linux-arm64
 ```
-Continue to [Configure Claude SDK](https://github.com/tombii/better-ccflare#configure-claude-sdk).
+Continue to [Configure Claude SDK](https://github.com/omcdowell/the-best-ccflare#configure-claude-sdk).
 #### macOS Intel
 ```bash
-curl -L -o better-ccflare-macos-x86_64 https://github.com/tombii/better-ccflare/releases/latest/download/better-ccflare-macos-x86_64
+curl -L -o better-ccflare-macos-x86_64 https://github.com/omcdowell/the-best-ccflare/releases/latest/download/better-ccflare-macos-x86_64
 chmod +x better-ccflare-macos-x86_64
 
 # Remove quarantine attribute (required on macOS to run unsigned binaries)
@@ -109,10 +109,10 @@ xattr -d com.apple.quarantine better-ccflare-macos-x86_64
 
 ./better-ccflare-macos-x86_64
 ```
-Continue to [Configure Claude SDK](https://github.com/tombii/better-ccflare#configure-claude-sdk).
+Continue to [Configure Claude SDK](https://github.com/omcdowell/the-best-ccflare#configure-claude-sdk).
 #### macOS Apple Silicon
 ```bash
-curl -L -o better-ccflare-macos-arm64 https://github.com/tombii/better-ccflare/releases/latest/download/better-ccflare-macos-arm64
+curl -L -o better-ccflare-macos-arm64 https://github.com/omcdowell/the-best-ccflare/releases/latest/download/better-ccflare-macos-arm64
 chmod +x better-ccflare-macos-arm64
 
 # Remove quarantine attribute (required on macOS to run unsigned binaries)
@@ -120,13 +120,13 @@ xattr -d com.apple.quarantine better-ccflare-macos-arm64
 
 ./better-ccflare-macos-arm64
 ```
-Continue to [Configure Claude SDK](https://github.com/tombii/better-ccflare#configure-claude-sdk).
+Continue to [Configure Claude SDK](https://github.com/omcdowell/the-best-ccflare#configure-claude-sdk).
 
 **macOS Gatekeeper Notice:** Our macOS binaries are not notarized by Apple as this requires a paid Apple Developer subscription. After downloading, you must remove the quarantine attribute using the `xattr` command shown above to run the binary. If you prefer not to run unsigned binaries, you can [install from source](#install-from-source) instead.
 
 #### Windows x86_64
-Download [`better-ccflare-windows-x64.exe`](https://github.com/tombii/better-ccflare/releases/latest/download/better-ccflare-windows-x64.exe) and run it.
-Continue to [Configure Claude SDK](https://github.com/tombii/better-ccflare#configure-claude-sdk).
+Download [`better-ccflare-windows-x64.exe`](https://github.com/omcdowell/the-best-ccflare/releases/latest/download/better-ccflare-windows-x64.exe) and run it.
+Continue to [Configure Claude SDK](https://github.com/omcdowell/the-best-ccflare#configure-claude-sdk).
 ### Run without installation (npx/bunx)
 
 ```bash
@@ -136,28 +136,28 @@ npx better-ccflare@latest
 # Run with bunx (faster for bun users)
 bunx better-ccflare@latest
 ```
-Continue to [Configure Claude SDK](https://github.com/tombii/better-ccflare#configure-claude-sdk).
+Continue to [Configure Claude SDK](https://github.com/omcdowell/the-best-ccflare#configure-claude-sdk).
 ### Install from source
 
 ```bash
 # Clone and install
-git clone https://github.com/tombii/better-ccflare
-cd better-ccflare
+git clone https://github.com/omcdowell/the-best-ccflare
+cd the-best-ccflare
 bun install
 
 # Build dashboard (required before first run)
 bun run build
 
-# Start better-ccflare (TUI + Server)
+# Start the-best-ccflare (TUI + Server)
 bun run better-ccflare
 ```
-Continue to [Configure Claude SDK](https://github.com/tombii/better-ccflare#configure-claude-sdk).
+Continue to [Configure Claude SDK](https://github.com/omcdowell/the-best-ccflare#configure-claude-sdk).
 
 **Note**: You must run `bun run build` at least once to build the dashboard files before starting the server. This can also be done by running `bun run better-ccflare` which includes the build step.
 
 ### Environment Variables
 
-better-ccflare supports several environment variables for configuration:
+the-best-ccflare supports several environment variables for configuration:
 
 ```bash
 # Server Configuration
@@ -216,7 +216,7 @@ PAYLOAD_ENCRYPTION_KEY=                # 64-character hex (32 bytes / AES-256). 
 
 ### Using .env Files
 
-better-ccflare automatically supports `.env` files for easy configuration management. You can create a `.env` file in your project directory:
+the-best-ccflare automatically supports `.env` files for easy configuration management. You can create a `.env` file in your project directory:
 
 ```bash
 # Copy the example .env file
@@ -270,7 +270,7 @@ docker run -v $(pwd)/.env:/app/.env:ro -p 8080:8080 ghcr.io/tombii/better-ccflar
 
 ```bash
 # Quick start with docker-compose
-curl -O https://raw.githubusercontent.com/tombii/better-ccflare/main/docker-compose.yml
+curl -O https://raw.githubusercontent.com/omcdowell/the-best-ccflare/main/docker-compose.yml
 
 # Optional: Create and configure .env file
 cp .env.example .env
@@ -307,7 +307,7 @@ See [DOCKER.md](DOCKER.md) for detailed Docker documentation.
 
 ### Systemd Deployment
 
-For running better-ccflare as a native systemd service on Linux (without Docker), see the [Systemd Deployment Guide](docs/systemd.md). It covers unit file configuration, memory management with `--smol`, restart policies, and a preflight script that prevents `BUN_JSC_*` environment variable crashes.
+For running the-best-ccflare as a native systemd service on Linux (without Docker), see the [Systemd Deployment Guide](docs/systemd.md). It covers unit file configuration, memory management with `--smol`, restart policies, and a preflight script that prevents `BUN_JSC_*` environment variable crashes.
 
 ## Configure Claude SDK
 
@@ -319,7 +319,7 @@ If you have a Claude Pro or Team subscription and are logged into Claude CLI:
 # Set only the base URL - no API key needed!
 export ANTHROPIC_BASE_URL=http://localhost:8080
 
-# Make sure to configure your accounts in the better-ccflare dashboard
+# Make sure to configure your accounts in your the-best-ccflare dashboard
 
 # Start Claude CLI (uses your existing login)
 claude
@@ -343,9 +343,9 @@ export ANTHROPIC_AUTH_TOKEN=dummy-key
 
 # If better-ccflare HAS API keys configured (protected):
 # Generate a key first: better-ccflare --generate-api-key "My VPS"
-export ANTHROPIC_AUTH_TOKEN=btr-abcdef1234567890...  # Use your real better-ccflare API key
+export ANTHROPIC_AUTH_TOKEN=btr-abcdef1234567890...  # Use your real the-best-ccflare API key
 
-# Make sure to configure your accounts in the better-ccflare dashboard
+# Make sure to configure your accounts in your the-best-ccflare dashboard
 
 # Start Claude CLI
 claude
@@ -353,9 +353,9 @@ claude
 
 ### Option 3: Remote/Headless VPS Setup (Secure Proxy)
 
-Use better-ccflare on a trusted server to avoid storing OAuth credentials on untrusted/temporary machines:
+Use the-best-ccflare on a trusted server to avoid storing OAuth credentials on untrusted/temporary machines:
 
-**On your trusted server (running better-ccflare):**
+**On your trusted server (running the-best-ccflare):**
 ```bash
 # Add your Claude account with OAuth
 better-ccflare --add-account myaccount --mode claude-oauth --priority 0
@@ -372,15 +372,15 @@ better-ccflare --serve
 ```bash
 # Set the remote better-ccflare URL and API key
 export ANTHROPIC_BASE_URL=https://your-server.com:8080
-export ANTHROPIC_AUTH_TOKEN=btr-abcdef1234567890...  # Your better-ccflare API key
+export ANTHROPIC_AUTH_TOKEN=btr-abcdef1234567890...  # Your the-best-ccflare API key
 
-# Start Claude CLI (no need to login - better-ccflare handles auth)
+# Start Claude CLI (no need to login - the-best-ccflare handles auth)
 claude
 ```
 
 **How it works:**
-- Claude Code CLI sends requests with your better-ccflare API key
-- better-ccflare validates the API key and proxies requests using its stored OAuth credentials
+- Claude Code CLI sends requests with your the-best-ccflare API key
+- the-best-ccflare validates the API key and proxies requests using its stored OAuth credentials
 - Your OAuth credentials stay secure on your trusted server
 - You can use Claude Code on any machine without storing sensitive credentials
 
@@ -393,7 +393,7 @@ claude
 
 ### Native provider routes vs compatibility routes
 
-better-ccflare exposes two kinds of proxy paths:
+the-best-ccflare exposes two kinds of proxy paths:
 
 | Kind | Example paths | Behavior |
 |------|---------------|----------|
@@ -425,7 +425,7 @@ curl -H "x-better-ccflare-account-id: my-account-name" ...
 openai_base_url = "http://127.0.0.1:8080/v1/codex"
 ```
 
-Codex appends `/responses` to the base URL, so the full path becomes `POST /v1/codex/responses` through better-ccflare.
+Codex appends `/responses` to the base URL, so the full path becomes `POST /v1/codex/responses` through the-best-ccflare.
 
 **Compatibility fallback:** you can still use `openai_base_url = "http://127.0.0.1:8080/v1"` (→ `POST /v1/responses`), which translates to Anthropic `POST /v1/messages` internally. Use this only if you cannot change the client base URL.
 
@@ -438,7 +438,7 @@ export OPENAI_BASE_URL=http://127.0.0.1:8080/v1/codex
 export OPENAI_API_KEY=dummy-key
 ```
 
-Codex CLI requires an API key to start — use `dummy-key` if better-ccflare API key authentication is not enabled, or your real better-ccflare API key if it is. Traffic uses your configured **Codex OAuth** accounts (`provider=codex`).
+Codex CLI requires an API key to start — use `dummy-key` if the-best-ccflare API key authentication is not enabled, or your real the-best-ccflare API key if it is. Traffic uses your configured **Codex OAuth** accounts (`provider=codex`).
 
 ### OpenAI-compatible native routes
 
@@ -487,7 +487,7 @@ To enable HTTPS with better-ccflare, you'll need SSL certificates. Here are your
 openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365 -nodes \
   -subj "/C=US/ST=State/L=City/O=Organization/CN=yourhostname"
 
-# Start better-ccflare with SSL
+# Start the-best-ccflare with SSL
 export SSL_KEY_PATH=/path/to/key.pem
 export SSL_CERT_PATH=/path/to/cert.pem
 better-ccflare
@@ -540,7 +540,7 @@ The `NODE_OPTIONS="--use-system-ca"` is **required** for Claude Code and other N
 
 #### Option 2: Use Production Certificates (Production/Remote Access)
 
-If you're running better-ccflare on a server with a domain name, use Let's Encrypt or your certificate provider:
+If you're running the-best-ccflare on a server with a domain name, use Let's Encrypt or your certificate provider:
 
 ```bash
 # Using Let's Encrypt certificates
@@ -671,7 +671,7 @@ This bypasses the npm wrapper script entirely and runs better-ccflare directly.
 
 **Option 2: Use the Pre-compiled Binary**
 
-Download the standalone Windows executable from [GitHub Releases](https://github.com/tombii/better-ccflare/releases/latest):
+Download the standalone Windows executable from [GitHub Releases](https://github.com/omcdowell/the-best-ccflare/releases/latest):
 
 ```powershell
 # Download better-ccflare-windows-x64.exe and run it directly
@@ -856,7 +856,7 @@ Full documentation available in [`docs/`](docs/):
 
 ## Acknowledgments
 
-Inspired by [snipeship/ccflare](https://github.com/snipeship/ccflare) - thanks for the original idea and implementation!
+Inspired by [snipeship/ccflare](https://github.com/snipeship/ccflare) and [tombii/better-ccflare](https://github.com/tombii/better-ccflare) — thanks for the original idea and implementation!
 
 **Special thanks to our contributors:**
 - [@bitcoin4cashqc](https://github.com/bitcoin4cashqc) - SSL/HTTPS support implementation with comprehensive documentation

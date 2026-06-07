@@ -1,5 +1,10 @@
 import { parseHttpError } from "@better-ccflare/errors";
 import {
+	PACKAGE_NAME,
+	PRODUCT_NAME,
+	RELEASES_URL,
+} from "@better-ccflare/ui-constants";
+import {
 	Activity,
 	BarChart3,
 	Bot,
@@ -26,7 +31,7 @@ import { Button } from "./ui/button";
 import { Separator } from "./ui/separator";
 
 // Store update command globally
-let updateCommand: string = "npm install -g better-ccflare@latest";
+let updateCommand: string = `npm install -g ${PACKAGE_NAME}@latest`;
 let detectedPackageManager: "npm" | "bun" | "unknown" = "npm";
 let isBinaryInstallation: boolean = false;
 let isDockerInstallation: boolean = false;
@@ -165,14 +170,14 @@ export function Navigation({
 			}
 
 			// Return GitHub releases URL instead of a command
-			return "Download latest binary from GitHub releases";
+			return `Download latest binary from ${RELEASES_URL}`;
 		}
 
 		switch (packageManager) {
 			case "bun":
-				return "bun install -g better-ccflare@latest";
+				return `bun install -g ${PACKAGE_NAME}@latest`;
 			default:
-				return "npm install -g better-ccflare@latest";
+				return `npm install -g ${PACKAGE_NAME}@latest`;
 		}
 	};
 
@@ -327,7 +332,7 @@ export function Navigation({
 			<div className="lg:hidden fixed top-0 left-0 right-0 z-50 h-16 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-b px-4 flex items-center justify-between">
 				<div className="flex items-center gap-3">
 					<Shield className="h-6 w-6 text-primary" />
-					<span className="font-semibold text-lg">better-ccflare</span>
+					<span className="font-semibold text-lg">{PRODUCT_NAME}</span>
 				</div>
 				<div className="flex items-center gap-2">
 					<ThemeToggle />
@@ -372,7 +377,7 @@ export function Navigation({
 								<Shield className="h-6 w-6 text-primary" />
 							</div>
 							<div>
-								<h1 className="font-semibold text-lg">better-ccflare</h1>
+								<h1 className="font-semibold text-lg">{PRODUCT_NAME}</h1>
 								<p className="text-xs text-muted-foreground">
 									Powerful proxy for Claude Code
 								</p>

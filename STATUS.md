@@ -12,7 +12,7 @@ Remotes: `origin` → `https://github.com/omcdowell/the-best-ccflare.git`; `upst
 | --- | --- | --- | --- |
 | U0 | Baseline clean worktree, open issues, staleness checks, upstream comparison, safe second-instance test harness | ✅ done | See sections below; `HANDOFF.md` placeholder created. |
 | U1 | Catch up with upstream `better-ccflare` while preserving fork behavior | ✅ done | PR #245 `UsageCollector` migration; fork Codex SSE hooks merged; see **U1** section below. |
-| U2 | Rebrand visible/package/docs surface to `the-best-ccflare` | ⬜ todo | Root README only; never edit `apps/cli/README.md`; no version bump. |
+| U2 | Rebrand visible/package/docs surface to `the-best-ccflare` | ✅ done | Root README, package metadata, dashboard UI, docs links; compatibility preserved — see **U2** section below. |
 | U3 | Issue #5: explicit route intent; no surprise Claude-to-Codex fallback | ⬜ todo | `/v1/messages` excludes Codex by default; Codex-prefixed routes still work. |
 | U4 | Codex-native path feature parity with old Claude pathing, including issue #7 fields | ⬜ todo | Model/tokens/cost/throughput and observability parity where data exists. |
 | U5 | Stale request error recovery with randomized auto-refresh | ⬜ todo | Bounded jitter/backoff; no real Anthropic calls in tests. |
@@ -184,9 +184,46 @@ Documented in `HANDOFF.md`. U0 smoke: `BETTER_CCFLARE_DB_PATH=<temp>` + `bun sta
 
 ---
 
+## U2 — Rebrand to the-best-ccflare (2026-06-07)
+
+### User-visible / metadata changes
+
+| Surface | Change |
+| --- | --- |
+| Root `README.md` | Title, headings, fork attribution, clone/issues/releases URLs → `omcdowell/the-best-ccflare`; install/run commands keep npm package `better-ccflare` |
+| `package.json` (root + `apps/cli`) | `repository` / `homepage` / `bugs` → fork; workspace/npm name unchanged |
+| Dashboard | `PRODUCT_NAME` in nav, page title, API key dialog, overview subtitle via `@better-ccflare/ui-constants` branding module |
+| `docs/` | Fork GitHub links and user-facing product name; technical env/header/path strings unchanged |
+
+### Compatibility preserved (documented exceptions)
+
+| Item | Kept as | Reason |
+| --- | --- | --- |
+| npm package / CLI binary | `better-ccflare` | Published package and command compatibility |
+| Workspace scopes | `@better-ccflare/*` | Dependency graph unchanged |
+| Env vars | `BETTER_CCFLARE_*`, `CCFLARE_*` | Existing deployments |
+| HTTP headers | `x-better-ccflare-*` | Client/proxy contract |
+| Config/data paths | `~/.config/better-ccflare/`, `better-ccflare.db` | Existing user data |
+| Docker images | `ghcr.io/tombii/better-ccflare:*` | Upstream registry until fork publishes |
+| `apps/cli/README.md` | Untouched | Scope guardrail |
+| CLI `--version` / `--help` output | `better-ccflare` | Binary/command compatibility |
+
+### U2 verification
+
+| Step | Result |
+| --- | --- |
+| `bun test packages/ui-constants/src/branding.test.ts` | ✅ 4 pass |
+| `bun run build` | ✅ pass (v3.5.20); dashboard + CLI binary built |
+| `bun run lint` | ✅ exit 0 (201 pre-existing warnings); mass auto-fix reverted — not committed |
+| `bun run typecheck` | ✅ pass |
+| `bun run format` | ✅ exit 0; mass CRLF drift reverted — not committed |
+| `bun test` (full) | ⚠️ **1504 pass / 31 fail** — same pre-existing Windows baseline as U0/U1 (no regressions) |
+
+---
+
 ## Assumptions & for-Oliver review
 
 - **U0:** `upstream` remote added (fetch-only); merge performed in U1 via deliberate port (not fast-forward).
 - **U0/U1:** Baseline lint/format mass-auto-fix is pre-existing repo drift on Windows; do not commit wholesale biome reformat — stage U1 files explicitly.
 - **U0/U1:** 31 failing tests treated as pre-existing Windows baseline (1500 pass); CI (Linux) may be green — verify in U8 if needed.
-- **U1:** PR #245 ported with fork Codex SSE hooks and observability fields; native routes and `HandleProxyOptions` preserved.
+- **U2:** Branding split — user-facing **the-best-ccflare** vs compatibility **better-ccflare** (npm/bin/paths/headers). Upstream Docker registry left on `tombii/better-ccflare` until fork publishes images.

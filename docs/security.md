@@ -6,7 +6,7 @@ This document outlines the security considerations, practices, and recommendatio
 
 ## ⚠️ Critical Security Notice
 
-**IMPORTANT**: better-ccflare is designed for local development and trusted environments. The current implementation has several security limitations:
+**IMPORTANT**: the-best-ccflare is designed for local development and trusted environments. The current implementation has several security limitations:
 
 1. **No Authentication**: All API endpoints and the dashboard are publicly accessible
 2. **Network Exposure**: Server binds to all interfaces (0.0.0.0) by default
@@ -45,7 +45,7 @@ Based on the latest security review, the following critical issues require immed
 
 ## Security Overview
 
-better-ccflare is a load balancer proxy that manages multiple OAuth accounts to distribute requests to the Claude API. The system handles sensitive authentication tokens and request/response data, requiring careful security considerations.
+the-best-ccflare is a load balancer proxy that manages multiple OAuth accounts to distribute requests to the Claude API. The system handles sensitive authentication tokens and request/response data, requiring careful security considerations.
 
 ### Key Security Components
 

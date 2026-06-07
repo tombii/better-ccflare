@@ -1,3 +1,13 @@
+export {
+	ISSUES_URL,
+	ORIGINAL_REPOSITORY_URL,
+	PACKAGE_NAME,
+	PRODUCT_NAME,
+	RELEASES_URL,
+	REPOSITORY_URL,
+	UPSTREAM_REPOSITORY_URL,
+} from "./branding";
+
 // Color palette used across UI components
 export const COLORS = {
 	primary: "#f38020",

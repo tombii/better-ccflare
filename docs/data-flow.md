@@ -1,8 +1,8 @@
-# better-ccflare Data Flow Documentation
+# the-best-ccflare Data Flow Documentation
 
 ## Overview
 
-better-ccflare is a load balancer proxy for Claude API that distributes requests across multiple OAuth accounts to avoid rate limiting. This document details the complete data flow through the system, including request lifecycle, error handling, token refresh, rate limit management, and streaming response capture.
+the-best-ccflare is a load balancer proxy for Claude API that distributes requests across multiple OAuth accounts to avoid rate limiting. This document details the complete data flow through the system, including request lifecycle, error handling, token refresh, rate limit management, and streaming response capture.
 
 ## Table of Contents
 

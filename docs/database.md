@@ -2,7 +2,7 @@
 
 ## Overview
 
-better-ccflare supports two database backends:
+the-best-ccflare supports two database backends:
 
 - **SQLite** (default) — zero-configuration, embedded, great for single-node deployments
 - **PostgreSQL** — set `DATABASE_URL` to a `postgresql://` connection string; required for Kubernetes / multi-pod deployments where pods cannot safely share a SQLite file
