@@ -14,6 +14,12 @@
 | #6 | Request History live SSE rows not yet persisted | Open — U7 |
 | #7 | Codex request history missing model/token/cost/throughput | Fixed in U4 — UsageCollector maps Codex Responses API usage/model; `requestedModel` fallback when payload storage disabled |
 
+### U5 — stale token recovery (this branch)
+
+- Upstream **401** on OAuth accounts: one conservative token refresh + single retry before account failover.
+- Auto-refresh scheduler: bounded **0–30s jitter** between probes; existing **60s refresh backoff** unchanged.
+- `/api/token-health` exposes per-account `refreshRuntime` backoff state.
+
 ## Tests run
 
 _(To be filled by U8.)_

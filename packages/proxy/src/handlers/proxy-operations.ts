@@ -4,8 +4,8 @@ import {
 	ProviderError,
 	TIME_CONSTANTS,
 } from "@better-ccflare/core";
-import { Logger } from "@better-ccflare/logger";
 import { withSanitizedProxyHeaders } from "@better-ccflare/http-common";
+import { Logger } from "@better-ccflare/logger";
 import { stripCacheControlFromOpenAIRequest } from "@better-ccflare/openai-formats";
 import { getProvider, usageCache } from "@better-ccflare/providers";
 import type {
@@ -14,13 +14,18 @@ import type {
 	RequestMeta,
 } from "@better-ccflare/types";
 import { cacheBodyStore } from "../cache-body-store";
+import { STALE_TOKEN_MAX_RETRY } from "../constants";
 import { RequestBodyContext } from "../request-body-context";
 import { forwardToClient } from "../response-handler";
 import { ERROR_MESSAGES, type ProxyContext } from "./proxy-types";
 import { applyRateLimitCooldown } from "./rate-limit-cooldown";
 import { makeProxyRequest, validateProviderPath } from "./request-handler";
 import { handleProxyError, processProxyResponse } from "./response-processor";
-import { getValidAccessToken } from "./token-manager";
+import {
+	canAttemptStaleTokenRefresh,
+	isStaleAuthResponseStatus,
+} from "./stale-token-retry";
+import { getValidAccessToken, refreshAccessTokenSafe } from "./token-manager";
 
 const log = new Logger("ProxyOperations");
 
@@ -487,6 +492,7 @@ export async function proxyWithAccount(
 	apiKeyName?: string | null,
 	requestBodyContext?: RequestBodyContext | null,
 	returnRateLimitedResponseOnExhaustion = false,
+	staleTokenRetryAttempt = 0,
 ): Promise<Response | null> {
 	try {
 		if (
@@ -952,8 +958,47 @@ export async function proxyWithAccount(
 			req.headers,
 		);
 
-		// Failover to next account on upstream 401 — credentials are invalid/expired
-		if (response.status === 401) {
+		// Failover to next account on upstream 401 — credentials are invalid/expired.
+		// For OAuth accounts, attempt one conservative refresh+retry when credentials
+		// may be stale (in-memory token out of sync with DB or recently rotated).
+		if (isStaleAuthResponseStatus(response.status)) {
+			const isAutoRefreshProbe =
+				req.headers.get("x-better-ccflare-auto-refresh") === "true";
+			if (
+				staleTokenRetryAttempt < STALE_TOKEN_MAX_RETRY &&
+				canAttemptStaleTokenRefresh(account) &&
+				!isAutoRefreshProbe
+			) {
+				log.info(
+					`Upstream 401 for OAuth account ${account.name} — refreshing token and retrying once`,
+				);
+				try {
+					await refreshAccessTokenSafe(account, ctx);
+				} catch (error) {
+					log.warn(
+						`Stale token refresh failed for ${account.name}, failing over:`,
+						error instanceof Error ? error.message : String(error),
+					);
+					return null;
+				}
+				return proxyWithAccount(
+					req,
+					url,
+					account,
+					requestMeta,
+					requestBodyBuffer,
+					_createBodyStream,
+					failoverAttempts,
+					ctx,
+					modelOverride,
+					apiKeyId,
+					apiKeyName,
+					effectiveBodyContext,
+					returnRateLimitedResponseOnExhaustion,
+					staleTokenRetryAttempt + 1,
+				);
+			}
+
 			log.warn(
 				`Authentication failed (401) for account ${account.name}, failing over to next account`,
 			);

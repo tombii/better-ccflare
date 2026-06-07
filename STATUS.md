@@ -15,7 +15,7 @@ Remotes: `origin` → `https://github.com/omcdowell/the-best-ccflare.git`; `upst
 | U2 | Rebrand visible/package/docs surface to `the-best-ccflare` | ✅ done | Root README, package metadata, dashboard UI, docs links; compatibility preserved — see **U2** section below. |
 | U3 | Issue #5: explicit route intent; no surprise Claude-to-Codex fallback | ✅ done | `/v1/messages` excludes Codex by default; native `/v1/codex/responses` unchanged; opt-in via `x-better-ccflare-allow-providers: codex`. |
 | U4 | Codex-native path feature parity with old Claude pathing, including issue #7 fields | ✅ done | UsageCollector Codex Responses API extraction; see **U4** section below. |
-| U5 | Stale request error recovery with randomized auto-refresh | ⬜ todo | Bounded jitter/backoff; no real Anthropic calls in tests. |
+| U5 | Stale request error recovery with randomized auto-refresh | ✅ done | Bounded jitter/backoff; stale 401 refresh+retry; `/api/token-health` refreshRuntime; see **U5** section below. |
 | U6 | Persist compressed full message payloads for later analytics | ⬜ todo | SQLite and PostgreSQL migrations; compression/security conventions; list endpoints stay lean. |
 | U7 | Issue #6: persisted/live request history reconciliation | ⬜ todo | Persist-before-final-SSE or pending/reconcile behavior. |
 | U8 | Integration smoke, docs, handoff, final verification, push branch | ⬜ todo | Use a second instance only; never touch live port 8080. |
@@ -310,6 +310,42 @@ e6418c75 feat: native Codex streaming passthrough and request observability
 | `bun run typecheck` | ✅ pass |
 | `bun run format` | ✅ pass on U4 scope |
 | `bun test` (full) | ⚠️ **1521 pass / 31 fail** — same pre-existing Windows baseline as U0–U3 (+7 new Codex tests); **no regressions** |
+
+---
+
+## U5 — Stale request error recovery with randomized auto-refresh (2026-06-07)
+
+### Problem
+
+OAuth accounts could return upstream **401** when the in-memory access token was stale (out of sync with DB or recently rotated). The proxy failed over immediately without attempting a conservative token refresh. Auto-refresh scheduler probes for multiple accounts could also synchronize and hit Anthropic in a burst.
+
+### Implementation
+
+| Change | Detail |
+| --- | --- |
+| `handlers/stale-token-retry.ts` | `canAttemptStaleTokenRefresh` — OAuth-only; skips API-key providers |
+| `handlers/proxy-operations.ts` | On upstream 401: one `refreshAccessTokenSafe` + single retry (`STALE_TOKEN_MAX_RETRY=1`); skips auto-refresh probes; then existing failover |
+| `refresh-jitter.ts` | `computeRefreshScheduleDelay` — bounded 0–30s jitter (stable per-account hash + random) |
+| `constants.ts` | `AUTO_REFRESH_MAX_JITTER_MS`, `STALE_TOKEN_MAX_RETRY` |
+| `auto-refresh-scheduler.ts` | Stagger window-reset probes and proactive Qwen/Codex token refresh with jitter + debug logs |
+| `handlers/token-manager.ts` | `getTokenRefreshRuntimeStatus`, `enrichTokenHealthWithRefreshRuntime`, `checkAllAccountsHealthWithRefreshRuntime` |
+| `handlers/token-health-monitor.ts` | Optional `refreshRuntime` on `TokenHealthStatus` |
+| `http-api/.../token-health.ts` | `/api/token-health` includes `refreshRuntime` (`inBackoff`, `backoffUntil`, `consecutiveBackoffHits`) |
+| `docs/auto-refresh.md` | Jitter, stale-token retry, token-health backoff fields documented |
+| Tests | `stale-token-retry.test.ts`, `refresh-jitter.test.ts` — mock upstream 401/200 + `getUsageCollector`; no real Anthropic calls |
+
+### U5 verification
+
+| Step | Result |
+| --- | --- |
+| `bun test packages/proxy/src/__tests__/stale-token-retry.test.ts` | ✅ 4 pass |
+| `bun test packages/proxy/src/__tests__/refresh-jitter.test.ts` | ✅ 4 pass |
+| `bun test packages/proxy` | ✅ **319 pass / 0 fail** |
+| `bun run build` | ✅ pass (v3.5.20) |
+| `bun run lint` | ✅ exit 0 on U5 scope (2 pre-existing `noNonNullAssertion` warnings in `proxy-operations.ts`); repo-wide `--write` reverted — not committed |
+| `bun run typecheck` | ✅ pass |
+| `bun run format` | ✅ pass on U5 scope only |
+| `bun test` (full) | ⚠️ **1529 pass / 31 fail** — same pre-existing Windows baseline as U0–U4 (+8 new U5 tests); **no regressions** |
 
 ---
 

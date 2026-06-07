@@ -11,6 +11,7 @@ import type { Account } from "@better-ccflare/types";
 import { TOKEN_SAFETY_WINDOW_MS } from "./constants";
 import { getValidAccessToken } from "./handlers";
 import type { ProxyContext } from "./proxy";
+import { computeRefreshScheduleDelay, sleepMs } from "./refresh-jitter";
 
 const log = new Logger("AutoRefreshScheduler");
 
@@ -201,9 +202,16 @@ export class AutoRefreshScheduler {
 				`Found ${accountsToRefresh.length} account(s) with new windows for auto-refresh`,
 			);
 
-			// Send dummy message to each account
+			// Send dummy message to each account (staggered with bounded jitter)
 			// The sendDummyMessage method will update lastRefreshResetTime with the NEW rate_limit_reset from the API
 			for (const accountRow of accountsToRefresh) {
+				const jitterMs = computeRefreshScheduleDelay(accountRow.id);
+				if (jitterMs > 0) {
+					log.debug(
+						`Auto-refresh jitter: waiting ${jitterMs}ms before probing ${accountRow.name}`,
+					);
+					await sleepMs(jitterMs);
+				}
 				await this.sendDummyMessage(accountRow);
 			}
 
@@ -748,6 +756,14 @@ export class AutoRefreshScheduler {
 				continue;
 			}
 
+			const jitterMs = computeRefreshScheduleDelay(row.id);
+			if (jitterMs > 0) {
+				log.debug(
+					`Qwen token refresh jitter: waiting ${jitterMs}ms before ${row.name}`,
+				);
+				await sleepMs(jitterMs);
+			}
+
 			try {
 				log.info(`Refreshing Qwen token for account: ${row.name}`);
 
@@ -875,6 +891,14 @@ export class AutoRefreshScheduler {
 					`Skipping proactive Codex refresh for ${row.name} — refresh already in-flight`,
 				);
 				continue;
+			}
+
+			const jitterMs = computeRefreshScheduleDelay(row.id);
+			if (jitterMs > 0) {
+				log.debug(
+					`Codex token refresh jitter: waiting ${jitterMs}ms before ${row.name}`,
+				);
+				await sleepMs(jitterMs);
 			}
 
 			try {

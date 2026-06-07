@@ -15,6 +15,11 @@ export interface TokenHealthStatus {
 	message: string;
 	daysUntilExpiration?: number;
 	requiresReauth: boolean;
+	refreshRuntime?: {
+		inBackoff: boolean;
+		backoffUntil: number | null;
+		consecutiveBackoffHits: number;
+	};
 }
 
 export interface TokenHealthReport {
