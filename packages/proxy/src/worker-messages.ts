@@ -56,6 +56,9 @@ export interface StartMessage {
 	upstreamPath?: string | null;
 	/** native | compatibility — distinguishes passthrough from translated traffic */
 	routingMode?: string | null;
+
+	/** Model from client request body (for usage when response omits model) */
+	requestedModel?: string | null;
 }
 
 export interface ChunkMessage {

@@ -41,7 +41,9 @@ describe("native codex observability", () => {
 					provider: "codex",
 				} as never,
 				requestHeaders: new Headers(),
-				requestBody: null,
+				requestBody: new TextEncoder().encode(
+					JSON.stringify({ model: "gpt-5.3-codex", stream: false }),
+				).buffer,
 				response: new Response(JSON.stringify({ object: "response" }), {
 					status: 200,
 					headers: { "Content-Type": "application/json" },
@@ -59,5 +61,6 @@ describe("native codex observability", () => {
 		expect(starts[0]?.upstreamPath).toBe("/responses");
 		expect(starts[0]?.routingMode).toBe("native");
 		expect(starts[0]?.providerName).toBe("codex");
+		expect(starts[0]?.requestedModel).toBe("gpt-5.3-codex");
 	});
 });

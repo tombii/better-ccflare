@@ -12,7 +12,7 @@
 | --- | --- | --- |
 | #5 | Prevent Claude traffic from unexpectedly falling back to Codex accounts | Fixed in U3 — unprefixed `/v1/messages` excludes Codex by default; opt-in header documented |
 | #6 | Request History live SSE rows not yet persisted | Open — U7 |
-| #7 | Codex request history missing model/token/cost/throughput | Open — U4 |
+| #7 | Codex request history missing model/token/cost/throughput | Fixed in U4 — UsageCollector maps Codex Responses API usage/model; `requestedModel` fallback when payload storage disabled |
 
 ## Tests run
 

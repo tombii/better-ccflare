@@ -1,9 +1,9 @@
 import { requestEvents, TIME_CONSTANTS } from "@better-ccflare/core";
-import { Logger } from "@better-ccflare/logger";
 import {
 	sanitizeRequestHeaders,
 	withSanitizedProxyHeaders,
 } from "@better-ccflare/http-common";
+import { Logger } from "@better-ccflare/logger";
 import type { Account, RateLimitReason } from "@better-ccflare/types";
 import type { ProxyContext } from "./handlers";
 import { applyRateLimitCooldown } from "./handlers/rate-limit-cooldown";
@@ -30,6 +30,25 @@ function getMidStreamRateLimitCooldownMs(): number {
 }
 
 const MAX_REQUEST_BODY_BYTES = 4 * 1024 * 1024;
+
+function extractRequestedModel(requestBody: ArrayBuffer | null): string | null {
+	if (!requestBody || requestBody.byteLength === 0) return null;
+	try {
+		const parsed = JSON.parse(
+			new TextDecoder().decode(
+				new Uint8Array(requestBody).subarray(
+					0,
+					Math.min(requestBody.byteLength, MAX_REQUEST_BODY_BYTES),
+				),
+			),
+		) as { model?: unknown };
+		return typeof parsed.model === "string" && parsed.model.length > 0
+			? parsed.model
+			: null;
+	} catch {
+		return null;
+	}
+}
 
 function isExpectedResponse(path: string, response: Response): boolean {
 	if (path.startsWith("/.well-known/") && response.status === 404) {
@@ -101,6 +120,7 @@ export async function forwardToClient(
 		) && !isAutoRefreshProbe;
 
 	if (shouldProcessRequest) {
+		const requestedModel = extractRequestedModel(requestBody);
 		const startMessage: StartMessage = {
 			type: "start",
 			messageId: crypto.randomUUID(),
@@ -119,6 +139,7 @@ export async function forwardToClient(
 							),
 						).toString("base64")
 					: null,
+			requestedModel,
 			project: project ?? null,
 			responseStatus: response.status,
 			responseHeaders: responseHeadersObj,

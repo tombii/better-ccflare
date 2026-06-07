@@ -1,6 +1,6 @@
 # Autonomous Run Status — the-best-ccflare
 
-Last updated: 2026-06-07 (U1 UsageCollector migration)
+Last updated: 2026-06-07 (U4 Codex observability parity)
 
 Worktree: `D:\source\the-best-ccflare-autonomous-run`  
 Branch: `autonomous/overnight-catchup-feature-parity-branding-stale-payloads`  
@@ -14,7 +14,7 @@ Remotes: `origin` → `https://github.com/omcdowell/the-best-ccflare.git`; `upst
 | U1 | Catch up with upstream `better-ccflare` while preserving fork behavior | ✅ done | PR #245 `UsageCollector` migration; fork Codex SSE hooks merged; see **U1** section below. |
 | U2 | Rebrand visible/package/docs surface to `the-best-ccflare` | ✅ done | Root README, package metadata, dashboard UI, docs links; compatibility preserved — see **U2** section below. |
 | U3 | Issue #5: explicit route intent; no surprise Claude-to-Codex fallback | ✅ done | `/v1/messages` excludes Codex by default; native `/v1/codex/responses` unchanged; opt-in via `x-better-ccflare-allow-providers: codex`. |
-| U4 | Codex-native path feature parity with old Claude pathing, including issue #7 fields | ⬜ todo | Model/tokens/cost/throughput and observability parity where data exists. |
+| U4 | Codex-native path feature parity with old Claude pathing, including issue #7 fields | ✅ done | UsageCollector Codex Responses API extraction; see **U4** section below. |
 | U5 | Stale request error recovery with randomized auto-refresh | ⬜ todo | Bounded jitter/backoff; no real Anthropic calls in tests. |
 | U6 | Persist compressed full message payloads for later analytics | ⬜ todo | SQLite and PostgreSQL migrations; compression/security conventions; list endpoints stay lean. |
 | U7 | Issue #6: persisted/live request history reconciliation | ⬜ todo | Persist-before-final-SSE or pending/reconcile behavior. |
@@ -253,6 +253,63 @@ e6418c75 feat: native Codex streaming passthrough and request observability
 | `bun run format` | ✅ pass on U3 scope |
 | `bun test packages/proxy` | ✅ **304 pass / 0 fail** |
 | `bun test` (full) | ⚠️ **1514 pass / 31 fail** — same pre-existing Windows baseline as U0/U1/U2 (+9 new route-intent tests); **no regressions** |
+
+---
+
+## U4 — Issue #7 Codex observability parity (2026-06-07)
+
+### Staleness check (mandatory)
+
+`git log origin/main --since='2026-06-04' --oneline --no-merges` on codex provider, usage-collector, observability tests, request repository:
+
+```
+(empty — no new upstream commits on these paths since issue opened)
+```
+
+**Verdict:** Still applied — native Codex path persisted rows but `UsageCollector` did not map model/tokens from split `response.created` / `response.completed` SSE events or from request model when payload storage is disabled.
+
+### Claude vs Codex-native parity checklist
+
+| Field / behavior | Claude `/v1/messages` | Codex `/v1/codex/responses` | Status |
+| --- | --- | --- | --- |
+| `model` | From `message_start` / response JSON | From `response.created`, `response.completed`, request `model`, or `requestedModel` | ✅ |
+| `input_tokens` / `output_tokens` / `total_tokens` | Anthropic SSE `usage` | OpenAI Responses API `response.usage` (stream + JSON) | ✅ |
+| `cost_usd` | `estimateCostUSD` when model known | Same — plan models may be `$0` when not in catalogue | ✅ |
+| `output_tokens_per_second` | Streaming timestamps (`content_block_*`) | Codex delta events + fallback to total response time | ✅ |
+| `account_used` | Account id | Account id | ✅ |
+| `billing_type` | Anthropic headers / account override | Provider heuristic (`plan` for codex) / account override | ✅ |
+| `path` / `clientPath` | `/v1/messages` | `/v1/codex/responses` | ✅ |
+| `upstream_path` / `routing_mode` | compatibility routes | `/responses`, `native` | ✅ |
+| Live SSE dashboard row | `/api/requests/stream` | Same pipeline via `UsageCollector.onSummary` | ✅ |
+| Persisted `/api/requests` row | `saveRequest` usage block | Same | ✅ |
+| Anthropic cache token breakdown | `cache_read` / `cache_creation` | `input_tokens_details.cached_tokens` when present | ✅ |
+| Claude `project` from system prompt | Extracted | N/A — OpenAI Responses `instructions` not scanned (no Claude system prompt) | N/A |
+| Anthropic overage header billing | `anthropic-ratelimit-unified-*` | N/A — Codex uses subscription plan billing | N/A |
+| Combo / agent metadata | Supported | Supported when present on request | ✅ |
+| Error rows (no upstream usage) | Model + status + error | Request model + status + error (tokens zero) | ✅ |
+
+### Implementation
+
+| Change | Detail |
+| --- | --- |
+| `usage-collector.ts` | Parse `response.created`; data-only SSE (`type` in JSON); Codex stream timestamps; request model fallback via `requestedModel` / body |
+| `response-handler.ts` | Always extract `requestedModel` from request body (independent of payload storage) |
+| `worker-messages.ts` | Add `requestedModel` to `StartMessage` |
+| Tests | `usage-collector-codex.test.ts` (stream/non-stream/errors); extended observability + response-handler protocol tests |
+
+### U4 verification
+
+| Step | Result |
+| --- | --- |
+| `bun test packages/proxy/src/__tests__/usage-collector-codex.test.ts` | ✅ 7 pass |
+| `bun test packages/proxy/src/__tests__/native-codex-observability.test.ts` | ✅ 1 pass |
+| `bun test packages/proxy/src/__tests__/response-handler-worker-protocol.test.ts` | ✅ 6 pass |
+| `bun test packages/proxy` | ✅ 311 pass / 0 fail |
+| `bun run build` | ✅ pass (v3.5.20) |
+| `bun run lint` | ✅ exit 0 (201 pre-existing warnings); scope-only — no mass format commit |
+| `bun run typecheck` | ✅ pass |
+| `bun run format` | ✅ pass on U4 scope |
+| `bun test` (full) | ⚠️ **1521 pass / 31 fail** — same pre-existing Windows baseline as U0–U3 (+7 new Codex tests); **no regressions** |
 
 ---
 

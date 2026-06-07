@@ -154,6 +154,48 @@ function _extractSystemPrompt(requestBody: string | null): string | null {
 	return null;
 }
 
+function extractModelFromRequest(startMessage: StartMessage): string | null {
+	if (startMessage.requestedModel) {
+		return startMessage.requestedModel;
+	}
+
+	if (!startMessage.requestBody) return null;
+
+	try {
+		const decodedBody = Buffer.from(
+			startMessage.requestBody,
+			"base64",
+		).toString("utf-8");
+		const parsed = JSON.parse(decodedBody) as { model?: unknown };
+		return typeof parsed.model === "string" && parsed.model.length > 0
+			? parsed.model
+			: null;
+	} catch {
+		return null;
+	}
+}
+
+function applyModelFallback(
+	state: RequestState,
+	startMessage: StartMessage,
+): void {
+	if (state.usage.model) return;
+	const model = extractModelFromRequest(startMessage);
+	if (model) {
+		state.usage.model = model;
+	}
+}
+
+function isCodexStreamActivity(type: string): boolean {
+	return (
+		type === "response.created" ||
+		type === "response.output_item.added" ||
+		type === "response.output_text.delta" ||
+		type === "response.function_call_arguments.delta" ||
+		type === "response.reasoning_summary_text.delta"
+	);
+}
+
 // Parse SSE lines to extract usage (reuse existing logic)
 function parseSSELine(line: string): { event?: string; data?: string } {
 	// Handle both "event: message_start" and "event:message_start" formats
@@ -202,12 +244,21 @@ function processSSELine(line: string, state: RequestState): void {
 	const parsed = parseSSELine(trimmed);
 	if (parsed.event) {
 		state.currentEvent = parsed.event;
-	} else if (
-		parsed.data &&
-		state.currentEvent &&
-		shouldParseSSEData(parsed.data, state.currentEvent)
-	) {
-		extractUsageFromData(parsed.data, state.currentEvent, state);
+	} else if (parsed.data?.startsWith("{")) {
+		let eventType = state.currentEvent;
+		if (!eventType) {
+			try {
+				const json = JSON.parse(parsed.data) as { type?: string };
+				if (typeof json.type === "string") {
+					eventType = json.type;
+				}
+			} catch {
+				// Ignore malformed JSON lines
+			}
+		}
+		if (eventType && shouldParseSSEData(parsed.data, eventType)) {
+			extractUsageFromData(parsed.data, eventType, state);
+		}
 	}
 }
 
@@ -334,6 +385,30 @@ function extractUsageFromData(
 			state.firstTokenTimestamp = Date.now();
 		}
 
+		// Handle OpenAI Responses API response.created events (Codex)
+		const isResponseCreated =
+			parsed.type === "response.created" || eventType === "response.created";
+		if (isResponseCreated) {
+			const resp = parsed.response as { model?: string } | undefined;
+			if (resp?.model) {
+				state.usage.model = resp.model;
+			}
+			if (!state.firstTokenTimestamp) {
+				state.firstTokenTimestamp = Date.now();
+			}
+			return;
+		}
+
+		if (
+			isCodexStreamActivity(parsed.type) ||
+			isCodexStreamActivity(eventType)
+		) {
+			if (!state.firstTokenTimestamp) {
+				state.firstTokenTimestamp = Date.now();
+			}
+			state.lastTokenTimestamp = Date.now();
+		}
+
 		// Handle OpenAI Responses API response.completed events (Codex)
 		const isResponseCompleted =
 			parsed.type === "response.completed" ||
@@ -347,7 +422,17 @@ function extractUsageFromData(
 				| undefined;
 			if (resp?.usage) {
 				applyResponsesApiUsage(resp.usage, state, resp.model);
+				const prompt =
+					(state.usage.inputTokens ?? 0) +
+					(state.usage.cacheReadInputTokens ?? 0) +
+					(state.usage.cacheCreationInputTokens ?? 0);
+				const completion = state.usage.outputTokens ?? 0;
+				state.usage.totalTokens = prompt + completion;
 			}
+			if (resp?.model && !state.usage.model) {
+				state.usage.model = resp.model;
+			}
+			state.lastTokenTimestamp = Date.now();
 			return;
 		}
 
@@ -546,6 +631,11 @@ export class UsageCollector {
 			);
 		}
 
+		const requestModel = extractModelFromRequest(msg);
+		if (requestModel) {
+			state.usage.model = requestModel;
+		}
+
 		// Detect billing type from response headers
 		const overageInUse =
 			msg.responseHeaders["anthropic-ratelimit-unified-overage-in-use"];
@@ -688,7 +778,7 @@ export class UsageCollector {
 		}
 
 		// For non-stream responses, extract usage data from response body
-		if (!state.usage.model && msg.responseBody) {
+		if (msg.responseBody) {
 			try {
 				const decoded = Buffer.from(msg.responseBody, "base64").toString(
 					"utf-8",
@@ -699,6 +789,8 @@ export class UsageCollector {
 				// Ignore parse errors
 			}
 		}
+
+		applyModelFallback(state, startMessage);
 
 		// Calculate total tokens and cost
 		if (state.usage.model) {

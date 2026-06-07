@@ -104,7 +104,11 @@ describe("forwardToClient usage-collector protocol", () => {
 				account: null,
 				requestHeaders: new Headers({ "content-type": "application/json" }),
 				requestBody: new TextEncoder().encode(
-					JSON.stringify({ system: "test", messages: [] }),
+					JSON.stringify({
+						system: "test",
+						messages: [],
+						model: "claude-sonnet",
+					}),
 				),
 				project: "main-thread-project",
 				response: new Response(JSON.stringify({ ok: true }), {
@@ -120,6 +124,7 @@ describe("forwardToClient usage-collector protocol", () => {
 
 		expect(starts[0].type).toBe("start");
 		expect(starts[0].requestBody).toBeNull();
+		expect(starts[0].requestedModel).toBe("claude-sonnet");
 		expect(starts[0].project).toBe("main-thread-project");
 	});
 
