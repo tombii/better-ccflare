@@ -45,21 +45,19 @@ import {
 	CacheKeepaliveScheduler,
 	createNativeProxyRequest,
 	createNativeRouteErrorResponse,
-	getUsageWorker,
-	getUsageWorkerHealth,
+	drainUsageCollector,
+	getUsageCollectorHealth,
 	getValidAccessToken,
 	handleProxy,
+	initProxy,
 	ProviderPrefixError,
 	type ProxyContext,
 	registerCodexUsageRefresher,
 	registerPollingRestarter,
 	registerRefreshClearer,
-	sendWorkerConfigUpdate,
 	startGlobalTokenHealthChecks,
 	startIntegrityScheduler,
-	startUsageWorker,
 	stopGlobalTokenHealthChecks,
-	terminateUsageWorker,
 	tryResolveProviderPrefixedPath,
 	unregisterCodexUsageRefresher,
 } from "@better-ccflare/proxy";
@@ -595,9 +593,6 @@ export default async function startServer(options?: {
 
 	// Initialize payload encryption (no-op if PAYLOAD_ENCRYPTION_KEY is unset).
 	// This must run before any database operations that read/write payloads.
-	// NOTE: this only initializes the main thread; the post-processor worker
-	// runs `initPayloadEncryption()` itself at module load — Bun workers have
-	// isolated module scopes.
 	await initPayloadEncryption();
 
 	// Initialize components
@@ -688,7 +683,7 @@ export default async function startServer(options?: {
 			tlsEnabled,
 		},
 		getAsyncWriterHealth: () => asyncWriter.getHealth(),
-		getUsageWorkerHealth: () => getUsageWorkerHealth(),
+		getUsageWorkerHealth: () => getUsageCollectorHealth(),
 		getIntegrityStatus: () => dbOps.getIntegrityStatus(),
 		getStrategy: () => currentStrategy,
 	});
@@ -847,12 +842,10 @@ export default async function startServer(options?: {
 	strategy.initialize?.(strategyStore);
 	currentStrategy = strategy;
 
-	// Start usage worker eagerly (before first request)
-	startUsageWorker();
+	// Initialize usage collector (before first request)
+	initProxy(() => config.getStorePayloads());
 
 	// Proxy context
-	const usageWorker = getUsageWorker();
-	sendWorkerConfigUpdate(config.getStorePayloads());
 	const proxyContext: ProxyContext = {
 		strategy,
 		dbOps,
@@ -861,7 +854,6 @@ export default async function startServer(options?: {
 		provider,
 		refreshInFlight: new Map(),
 		asyncWriter,
-		usageWorker,
 	};
 
 	// Register this server's refresh clearing capability
@@ -1040,9 +1032,6 @@ export default async function startServer(options?: {
 			strategy.initialize?.(strategyStore);
 			proxyContext.strategy = strategy;
 			currentStrategy = strategy;
-		}
-		if (key === "store_payloads") {
-			sendWorkerConfigUpdate(config.getStorePayloads());
 		}
 	});
 
@@ -1682,7 +1671,7 @@ async function handleGracefulShutdown(signal: string) {
 		}
 
 		usageCache.clear(); // Stop all usage polling
-		await terminateUsageWorker();
+		await drainUsageCollector();
 		await shutdown();
 		console.log("✅ Shutdown complete");
 		process.exit(0);

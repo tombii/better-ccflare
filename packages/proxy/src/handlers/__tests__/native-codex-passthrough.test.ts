@@ -62,7 +62,6 @@ function makeProxyContext(): ProxyContext {
 		provider,
 		refreshInFlight: new Map(),
 		asyncWriter: { enqueue: mock(() => {}) } as never,
-		usageWorker: { postMessage: mock(() => {}) } as never,
 	};
 }
 

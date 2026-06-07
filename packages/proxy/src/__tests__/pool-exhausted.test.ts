@@ -1,7 +1,8 @@
-import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
 import type { Account } from "@better-ccflare/types";
 import type { ProxyContext } from "../handlers";
 import { handleProxy } from "../proxy";
+import * as usageCollectorModule from "../usage-collector";
 
 function makeAccount(overrides: Partial<Account> = {}): Account {
 	return {
@@ -67,7 +68,6 @@ function makeContext(accounts: Account[]): ProxyContext {
 		} as never,
 		refreshInFlight: new Map(),
 		asyncWriter: { enqueue: mock(() => {}) } as never,
-		usageWorker: { postMessage: mock(() => {}) } as never,
 	};
 }
 
@@ -88,6 +88,12 @@ let savedPassthrough: string | undefined;
 beforeEach(() => {
 	savedPassthrough = process.env.CCFLARE_PASSTHROUGH_ON_EMPTY_POOL;
 	delete process.env.CCFLARE_PASSTHROUGH_ON_EMPTY_POOL;
+
+	spyOn(usageCollectorModule, "getUsageCollector").mockReturnValue({
+		handleStart: mock(() => {}),
+		handleEnd: mock(() => Promise.resolve()),
+		handleChunk: mock(() => {}),
+	} as unknown as usageCollectorModule.UsageCollector);
 });
 
 afterEach(() => {

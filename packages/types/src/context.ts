@@ -38,9 +38,6 @@ export interface APIContext {
 	};
 	getUsageWorkerHealth?: () => {
 		state: string;
-		pendingAcks: number;
-		lastError: string | null;
-		startedAt: number | null;
 	};
 	getIntegrityStatus?: () => IntegrityStatus;
 	getStrategy?: () => LoadBalancingStrategy | null;

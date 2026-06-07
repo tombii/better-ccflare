@@ -1,6 +1,6 @@
 # Autonomous Run Status — the-best-ccflare
 
-Last updated: 2026-06-07 (U0 baseline)
+Last updated: 2026-06-07 (U1 UsageCollector migration)
 
 Worktree: `D:\source\the-best-ccflare-autonomous-run`  
 Branch: `autonomous/overnight-catchup-feature-parity-branding-stale-payloads`  
@@ -11,7 +11,7 @@ Remotes: `origin` → `https://github.com/omcdowell/the-best-ccflare.git`; `upst
 | Unit | Item | Status | Notes |
 | --- | --- | --- | --- |
 | U0 | Baseline clean worktree, open issues, staleness checks, upstream comparison, safe second-instance test harness | ✅ done | See sections below; `HANDOFF.md` placeholder created. |
-| U1 | Catch up with upstream `better-ccflare` while preserving fork behavior | ⬜ todo | Fetch/compare upstream; merge/cherry-pick or record skipped deltas. |
+| U1 | Catch up with upstream `better-ccflare` while preserving fork behavior | ✅ done | PR #245 `UsageCollector` migration; fork Codex SSE hooks merged; see **U1** section below. |
 | U2 | Rebrand visible/package/docs surface to `the-best-ccflare` | ⬜ todo | Root README only; never edit `apps/cli/README.md`; no version bump. |
 | U3 | Issue #5: explicit route intent; no surprise Claude-to-Codex fallback | ⬜ todo | `/v1/messages` excludes Codex by default; Codex-prefixed routes still work. |
 | U4 | Codex-native path feature parity with old Claude pathing, including issue #7 fields | ⬜ todo | Model/tokens/cost/throughput and observability parity where data exists. |
@@ -143,9 +143,50 @@ Documented in `HANDOFF.md`. U0 smoke: `BETTER_CCFLARE_DB_PATH=<temp>` + `bun sta
 
 ---
 
+## U1 — Upstream UsageCollector migration (2026-06-07)
+
+### Merged (architectural + low-risk fixes)
+
+| Upstream commit | What landed |
+| --- | --- |
+| `315440fa` / `5b3b7fb1` | **PR #245:** main-thread `UsageCollector` replaces Bun post-processor worker; deleted `post-processor.worker.ts`, `usage-worker-controller.ts`; added `usage-collector.ts`; `initProxy` / `drainUsageCollector` / `getUsageCollectorHealth`; server shutdown drains collector |
+| `51540b44` / `8926f5be` | Strip `content-encoding` on upstream model-not-found raw responses (`withSanitizedProxyHeaders`) |
+| `61f4007a` | Reset `currentEvent` after SSE buffer truncation (in `usage-collector.ts`) |
+| `41752084` | Remove post-processor worker build/embed steps from `apps/cli` build scripts |
+| `c78f2c7d` / `16748635` | Narrow `usageWorker` health type to `{ state: string }` in `packages/types` + health handler |
+
+### Fork-specific behavior preserved in `usage-collector.ts`
+
+- Codex/OpenAI Responses API: `applyResponsesApiUsage`, `response.completed`/`response.created` in `shouldParseSSEData`, nested `json.response.usage`, `input_tokens_details`
+- `saveRequest` uses `clientPath ?? path`, plus `upstreamPath` and `routingMode`
+- `HandleProxyOptions` (clientPath/upstreamPath/nativePassthrough) unchanged in `proxy.ts`
+- `response-handler.ts` fork fields + `loggedPath` logic; now calls `getUsageCollector()` with `fireAndForgetEnd`
+- Native route files and passthrough tests kept
+
+### Skipped upstream deltas
+
+| Commit | Reason |
+| --- | --- |
+| `d8cb0512` | Version bump to 3.5.21 — release system owns versions |
+| Upstream README / `apps/cli/README.md` | Deferred to U2 branding |
+| Full AsyncDbWriter drain/logging commits (`ba89fe28`, `921062eb`, `eb9817a6`) | Already present or orthogonal; no additional merge needed beyond collector `drain()` |
+
+### U1 verification
+
+| Step | Result |
+| --- | --- |
+| `bun run build` | ✅ pass (v3.5.20); CLI build no longer embeds post-processor worker |
+| `bun run lint` | ✅ exit 0 (pre-existing warnings) |
+| `bun run typecheck` | ✅ pass |
+| `bun run format` | ✅ exit 0 — **note:** triggers pre-existing CRLF drift across ~500 files on Windows; restore unrelated paths before commit |
+| `bun test` (full) | ⚠️ **1500 pass / 31 fail** — same pre-existing Windows baseline as U0 |
+| `bun test` (`packages/proxy`) | ✅ **294 pass / 0 fail** |
+
+---
+
 ## Assumptions & for-Oliver review
 
-- **U0:** `upstream` remote added (fetch-only); no merge performed yet — deferred to U1.
-- **U0:** Baseline lint/format mass-auto-fix is pre-existing repo drift; implementation units should not commit wholesale biome reformat unless intentional.
-- **U0:** 31 failing tests treated as pre-existing Windows baseline; CI (Linux) may be green — verify in U8 if needed.
-- **U1:** PR #245 worker→UsageCollector migration is the highest-risk upstream delta; needs careful port, not fast-forward merge.
+- **U0:** `upstream` remote added (fetch-only); merge performed in U1 via deliberate port (not fast-forward).
+- **U0/U1:** Baseline lint/format mass-auto-fix is pre-existing repo drift on Windows; do not commit wholesale biome reformat — stage U1 files explicitly.
+- **U0/U1:** 31 failing tests treated as pre-existing Windows baseline (1500 pass); CI (Linux) may be green — verify in U8 if needed.
+- **U1:** PR #245 ported with fork Codex SSE hooks and observability fields; native routes and `HandleProxyOptions` preserved.

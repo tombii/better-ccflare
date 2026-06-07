@@ -20,7 +20,11 @@ _(To be filled by U8.)_
 
 ## Skipped upstream deltas
 
-_(To be filled by U1/U8.)_
+See `STATUS.md` **U1** section for full table. Summary:
+
+- **Merged:** PR #245 UsageCollector migration, model-not-found `content-encoding` strip, SSE `currentEvent` reset, CLI build worker removal, health type narrowing.
+- **Skipped:** upstream `3.5.21` version bump; README/cli README branding (U2); redundant AsyncDbWriter-only commits already covered by collector `drain()`.
+- **Fork preserved:** Codex Responses API usage parsing, `clientPath`/`upstreamPath`/`routingMode` observability, native passthrough routes/tests, `HandleProxyOptions`.
 
 ## Owner-only tasks
 

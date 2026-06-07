@@ -61,7 +61,6 @@ function makeProxyContext(): ProxyContext {
 		provider: new OpenAICompatibleProvider(),
 		refreshInFlight: new Map(),
 		asyncWriter: { enqueue: mock(() => {}) } as never,
-		usageWorker: { postMessage: mock(() => {}) } as never,
 	};
 }
 

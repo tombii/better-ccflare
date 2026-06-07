@@ -5,6 +5,7 @@ import {
 	TIME_CONSTANTS,
 } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
+import { withSanitizedProxyHeaders } from "@better-ccflare/http-common";
 import { stripCacheControlFromOpenAIRequest } from "@better-ccflare/openai-formats";
 import { getProvider, usageCache } from "@better-ccflare/providers";
 import type {
@@ -788,7 +789,7 @@ export async function proxyWithAccount(
 						);
 						return null;
 					}
-					return rawResponse;
+					return withSanitizedProxyHeaders(rawResponse);
 				}
 
 				for (let i = 1; i < modelList.length; i++) {

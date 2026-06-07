@@ -1,4 +1,5 @@
 import { requestEvents, TIME_CONSTANTS } from "@better-ccflare/core";
+import { Logger } from "@better-ccflare/logger";
 import {
 	sanitizeRequestHeaders,
 	withSanitizedProxyHeaders,
@@ -8,18 +9,19 @@ import type { ProxyContext } from "./handlers";
 import { applyRateLimitCooldown } from "./handlers/rate-limit-cooldown";
 import { createSseRateLimitSniffer } from "./handlers/sse-rate-limit-sniffer";
 import { combineChunks, teeStream } from "./stream-tee";
-import type { UsageWorkerController } from "./usage-worker-controller";
-import type { ChunkMessage, EndMessage, StartMessage } from "./worker-messages";
+import { getUsageCollector } from "./usage-collector";
+import type { EndMessage, StartMessage } from "./worker-messages";
 
-// Default cooldown for rate-limit errors detected mid-stream. SSE error
-// frames don't carry reset headers (HTTP headers were sent before the
-// error occurred), so we fall back to the same probe-friendly default
-// that response-processor.ts uses for headerless 429 responses.
-//
-// Read on every call (not module load) so a runtime change to the env
-// var is picked up without a server restart. Use `||` (not `??`) so an
-// empty-string env value (Number("") === 0) falls through to the default
-// instead of silently disabling the cooldown.
+const log = new Logger("ResponseHandler");
+
+function fireAndForgetEnd(msg: EndMessage): void {
+	getUsageCollector()
+		.handleEnd(msg)
+		.catch((err: unknown) => {
+			log.error(`handleEnd failed for request ${msg.requestId}`, err);
+		});
+}
+
 function getMidStreamRateLimitCooldownMs(): number {
 	return (
 		Number(process.env.CCFLARE_DEFAULT_COOLDOWN_NO_RESET_MS) ||
@@ -27,33 +29,12 @@ function getMidStreamRateLimitCooldownMs(): number {
 	);
 }
 
-// Must match MAX_REQUEST_BODY_BYTES in post-processor.worker.ts.
-// Cap applied before postMessage to avoid multi-MB structured clones.
-// 4MB so afterburn can see full conversation history for friction analysis.
 const MAX_REQUEST_BODY_BYTES = 4 * 1024 * 1024;
 
-function safePostMessage(
-	worker: UsageWorkerController,
-	message: StartMessage | ChunkMessage | EndMessage,
-): void {
-	try {
-		worker.postMessage(message);
-	} catch (_error) {
-		// Worker not ready or terminated — silently ignore
-	}
-}
-
-/**
- * Check if a response should be considered successful/expected
- * Treats certain well-known paths that return 404 as expected
- */
 function isExpectedResponse(path: string, response: Response): boolean {
-	// Any .well-known path returning 404 is expected
 	if (path.startsWith("/.well-known/") && response.status === 404) {
 		return true;
 	}
-
-	// Otherwise use standard HTTP success logic
 	return response.ok;
 }
 
@@ -78,11 +59,6 @@ export interface ResponseHandlerOptions {
 	routingMode?: string | null;
 }
 
-/**
- * Unified response handler that immediately streams responses
- * while forwarding data to worker for async processing
- */
-// Forward response to client while streaming analytics to worker
 export async function forwardToClient(
 	options: ResponseHandlerOptions,
 	ctx: ProxyContext,
@@ -97,7 +73,7 @@ export async function forwardToClient(
 		project,
 		response: responseRaw,
 		timestamp,
-		retryAttempt, // Always 0 in new flow, but kept for message compatibility
+		retryAttempt,
 		failoverAttempts,
 		agentUsed,
 		apiKeyId,
@@ -108,26 +84,14 @@ export async function forwardToClient(
 		routingMode,
 	} = options;
 
-	// Always strip compression headers *before* we do anything else
 	const response = withSanitizedProxyHeaders(responseRaw);
-
-	// Prepare objects once for serialisation - sanitize headers before storing
 	const sanitizedReq = sanitizeRequestHeaders(requestHeaders);
 	const requestHeadersObj = Object.fromEntries(sanitizedReq.entries());
-
 	const responseHeadersObj = Object.fromEntries(response.headers.entries());
-
 	const isStream = ctx.provider.isStreamingResponse?.(response) ?? false;
 	const shouldStorePayloads = ctx.config.getStorePayloads?.() ?? true;
 	const loggedPath = clientPath ?? path;
 
-	// Filter out:
-	//   - count_tokens requests on OpenAI-compatible providers (existing
-	//     filter — these aren't billable user traffic).
-	//   - synthetic auto-refresh probes (issue #199, bug 2). Logging these
-	//     pollutes the user-visible 503/200 metrics on the dashboard with
-	//     internal scheduler activity. Header set by AutoRefreshScheduler
-	//     mirrors the existing keepalive pattern.
 	const isAutoRefreshProbe =
 		requestHeaders.get("x-better-ccflare-auto-refresh") === "true";
 	const shouldProcessRequest =
@@ -136,7 +100,6 @@ export async function forwardToClient(
 			path === "/v1/messages/count_tokens"
 		) && !isAutoRefreshProbe;
 
-	// Send START message immediately if not filtered
 	if (shouldProcessRequest) {
 		const startMessage: StartMessage = {
 			type: "start",
@@ -176,10 +139,9 @@ export async function forwardToClient(
 			upstreamPath: upstreamPath ?? null,
 			routingMode: routingMode ?? null,
 		};
-		safePostMessage(ctx.usageWorker, startMessage);
+		getUsageCollector().handleStart(startMessage);
 	}
 
-	// Emit request start event for real-time dashboard
 	if (shouldProcessRequest) {
 		requestEvents.emit("event", {
 			type: "start",
@@ -193,33 +155,17 @@ export async function forwardToClient(
 		});
 	}
 
-	/*********************************************************************
-	 *  STREAMING RESPONSES — wrap body with teeStream for inline analytics
-	 *********************************************************************/
 	if (isStream && response.body) {
-		// Mid-stream rate-limit detection for issue #114 Fix 1.2. Only
-		// create a sniffer when we know which account to mark — anonymous
-		// or unauthenticated requests can't be failed over.
 		const rateLimitSniffer = account
 			? createSseRateLimitSniffer({ provider: account.provider })
 			: null;
 
 		const onChunk = (value: Uint8Array): void => {
 			if (shouldProcessRequest) {
-				const chunkMsg: ChunkMessage = {
-					type: "chunk",
-					requestId,
-					data: value,
-				};
-				safePostMessage(ctx.usageWorker, chunkMsg);
+				getUsageCollector().handleChunk(requestId, value);
 			}
 
-			// Mid-stream rate-limit detection. The sniffer
-			// fires exactly once; after that feed() is a no-op.
 			if (account && rateLimitSniffer?.feed(value)) {
-				// Map firedReason to the correct RateLimitReason:
-				//   "overloaded_error" → upstream_529_overloaded_with_reset
-				//   "rate_limit_error" → upstream_429_with_reset
 				const midStreamReason: RateLimitReason =
 					rateLimitSniffer.firedReason === "overloaded_error"
 						? "upstream_529_overloaded_with_reset"
@@ -237,24 +183,22 @@ export async function forwardToClient(
 
 		const onClose = (_buffered: Uint8Array[]): void => {
 			if (shouldProcessRequest) {
-				const endMsg: EndMessage = {
+				fireAndForgetEnd({
 					type: "end",
 					requestId,
 					success: isExpectedResponse(path, response),
-				};
-				safePostMessage(ctx.usageWorker, endMsg);
+				});
 			}
 		};
 
 		const onError = (err: Error): void => {
 			if (shouldProcessRequest) {
-				const endMsg: EndMessage = {
+				fireAndForgetEnd({
 					type: "end",
 					requestId,
 					success: false,
 					error: err.message,
-				};
-				safePostMessage(ctx.usageWorker, endMsg);
+				});
 			}
 		};
 
@@ -271,48 +215,40 @@ export async function forwardToClient(
 		});
 	}
 
-	/*********************************************************************
-	 *  NON-STREAMING RESPONSES — read body in background, send END once
-	 *********************************************************************/
 	if (!response.body) {
 		if (shouldProcessRequest) {
-			const endMsg: EndMessage = {
+			fireAndForgetEnd({
 				type: "end",
 				requestId,
 				responseBody: null,
 				success: isExpectedResponse(path, response),
-			};
-			safePostMessage(ctx.usageWorker, endMsg);
+			});
 		}
-
 		return response;
 	}
 
-	const MAX_NON_STREAM_BODY_BYTES = 256 * 1024; // 256KB cap for stored body
-
+	const MAX_NON_STREAM_BODY_BYTES = 256 * 1024;
 	const passthroughBody = teeStream(response.body, {
 		maxBytes: MAX_NON_STREAM_BODY_BYTES,
 		onClose(buffered) {
 			if (!shouldProcessRequest) return;
 			const cappedBuf = combineChunks(buffered);
-			const endMsg: EndMessage = {
+			fireAndForgetEnd({
 				type: "end",
 				requestId,
 				responseBody:
 					cappedBuf.byteLength > 0 ? cappedBuf.toString("base64") : null,
 				success: isExpectedResponse(path, response),
-			};
-			safePostMessage(ctx.usageWorker, endMsg);
+			});
 		},
 		onError(err) {
 			if (!shouldProcessRequest) return;
-			const endMsg: EndMessage = {
+			fireAndForgetEnd({
 				type: "end",
 				requestId,
 				success: false,
 				error: err.message,
-			};
-			safePostMessage(ctx.usageWorker, endMsg);
+			});
 		},
 	});
 
