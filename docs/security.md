@@ -377,15 +377,16 @@ if (isStream && response.body) {
 
 ### Storage Security Considerations
 
-1. **Base64 Encoding**: Request/response bodies are Base64 encoded; **optional AES-256-GCM encryption at rest is available** via the `PAYLOAD_ENCRYPTION_KEY` environment variable (see [Payload Encryption at Rest](#payload-encryption-at-rest) below)
-2. **Auth Header Stripping**: `authorization`, `x-api-key`, and `cookie` headers are stripped from persisted request payloads (`sanitizeRequestHeaders` in `packages/http-common/src/headers.ts`) so analytics rows never contain client credentials
-3. **Database File Access**: SQLite database file can be read by any process with file system access — encryption at rest mitigates this when enabled
-4. **No Body-Content Sanitization**: Sensitive patterns inside request/response **bodies** (API keys, passwords, PII) are not redacted
-5. **Unlimited Retention**: No automatic cleanup of old request payloads (configurable via `DATA_RETENTION_DAYS`)
+1. **Base64 Encoding**: Request/response bodies are Base64 encoded inside the stored JSON envelope; new rows are **gzip-compressed** (`request_payloads.compressed = 1`) before optional encryption to reduce database size
+2. **Optional encryption**: **AES-256-GCM encryption at rest** is available via the `PAYLOAD_ENCRYPTION_KEY` environment variable (see [Payload Encryption at Rest](#payload-encryption-at-rest) below)
+3. **Auth Header Stripping**: `authorization`, `x-api-key`, and `cookie` headers are stripped from persisted request payloads (`sanitizeRequestHeaders` in `packages/http-common/src/headers.ts`) so analytics rows never contain client credentials
+4. **Database File Access**: SQLite database file can be read by any process with file system access — encryption at rest mitigates this when enabled
+5. **No Body-Content Sanitization**: Sensitive patterns inside request/response **bodies** (API keys, passwords, PII) are not redacted
+6. **Retention**: Payload rows older than the payload retention window are deleted independently of request metadata (`DATA_RETENTION_DAYS` / dashboard maintenance)
 
 ### Payload Encryption at Rest
 
-When `PAYLOAD_ENCRYPTION_KEY` is set to a 64-character hex string (32 bytes / AES-256), every payload row is encrypted with AES-256-GCM before being written to `request_payloads.json`.
+When `PAYLOAD_ENCRYPTION_KEY` is set to a 64-character hex string (32 bytes / AES-256), every new payload row is gzip-compressed, then encrypted with AES-256-GCM before being written to `request_payloads.json`. Legacy rows (`compressed = 0`) skip decompression on read.
 
 **Format**: `enc:` + base64(iv ‖ ciphertext ‖ authTag), where the 12-byte IV is generated per-encryption with `crypto.getRandomValues`.
 

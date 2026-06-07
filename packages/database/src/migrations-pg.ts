@@ -130,6 +130,7 @@ export async function ensureSchemaPg(adapter: BunSqlAdapter): Promise<void> {
 			id TEXT PRIMARY KEY,
 			json TEXT NOT NULL,
 			timestamp BIGINT,
+			compressed INTEGER NOT NULL DEFAULT 0,
 			FOREIGN KEY (id) REFERENCES requests(id) ON DELETE CASCADE
 		)
 	`);
@@ -390,6 +391,12 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 			table: "request_payloads",
 			column: "timestamp",
 			definition: "ALTER TABLE request_payloads ADD COLUMN timestamp BIGINT",
+		},
+		{
+			table: "request_payloads",
+			column: "compressed",
+			definition:
+				"ALTER TABLE request_payloads ADD COLUMN compressed INTEGER NOT NULL DEFAULT 0",
 		},
 		{
 			table: "oauth_sessions",

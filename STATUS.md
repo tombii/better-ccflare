@@ -1,6 +1,6 @@
 # Autonomous Run Status — the-best-ccflare
 
-Last updated: 2026-06-07 (U4 Codex observability parity)
+Last updated: 2026-06-07 (U6 compressed payload persistence)
 
 Worktree: `D:\source\the-best-ccflare-autonomous-run`  
 Branch: `autonomous/overnight-catchup-feature-parity-branding-stale-payloads`  
@@ -16,7 +16,7 @@ Remotes: `origin` → `https://github.com/omcdowell/the-best-ccflare.git`; `upst
 | U3 | Issue #5: explicit route intent; no surprise Claude-to-Codex fallback | ✅ done | `/v1/messages` excludes Codex by default; native `/v1/codex/responses` unchanged; opt-in via `x-better-ccflare-allow-providers: codex`. |
 | U4 | Codex-native path feature parity with old Claude pathing, including issue #7 fields | ✅ done | UsageCollector Codex Responses API extraction; see **U4** section below. |
 | U5 | Stale request error recovery with randomized auto-refresh | ✅ done | Bounded jitter/backoff; stale 401 refresh+retry; `/api/token-health` refreshRuntime; see **U5** section below. |
-| U6 | Persist compressed full message payloads for later analytics | ⬜ todo | SQLite and PostgreSQL migrations; compression/security conventions; list endpoints stay lean. |
+| U6 | Persist compressed full message payloads for later analytics | ✅ done | gzip + optional AES-256-GCM; `request_payloads.compressed`; list endpoints stay lean — see **U6** section below. |
 | U7 | Issue #6: persisted/live request history reconciliation | ⬜ todo | Persist-before-final-SSE or pending/reconcile behavior. |
 | U8 | Integration smoke, docs, handoff, final verification, push branch | ⬜ todo | Use a second instance only; never touch live port 8080. |
 | Owner | Provide/rotate real OAuth/API credentials if needed for manual smoke | 🔒 owner-only | `claude -p` smoke tests are allowed/preferred when pointed at a second test instance; never raw-curl Anthropic or use live port 8080. |
@@ -346,6 +346,43 @@ OAuth accounts could return upstream **401** when the in-memory access token was
 | `bun run typecheck` | ✅ pass |
 | `bun run format` | ✅ pass on U5 scope only |
 | `bun test` (full) | ⚠️ **1529 pass / 31 fail** — same pre-existing Windows baseline as U0–U4 (+8 new U5 tests); **no regressions** |
+
+---
+
+## U6 — Compressed full message payload persistence (2026-06-07)
+
+### Problem
+
+Full request/response payloads were stored as plaintext JSON in `request_payloads.json`, bloating the database. List endpoints already avoided joining payloads; detail/lazy-load paths needed transparent decompression for legacy rows.
+
+### Implementation
+
+| Change | Detail |
+| --- | --- |
+| `payload-compression.ts` | gzip compress/decompress (base64 wire form) |
+| `payload-storage.ts` | Pipeline: gzip → optional `enc:` AES-256-GCM (matches existing encryption conventions) |
+| `request_payloads.compressed` | SQLite + PostgreSQL migration (`0` = legacy plaintext JSON, `1` = gzip) |
+| `request.repository.ts` | Save/load/list paths honor `compressed` flag; legacy rows unchanged |
+| `usage-collector.ts` | Unchanged — already persists full inbound/outbound bodies via `saveRequestPayloadRaw` when `STORE_PAYLOADS=true` |
+| API | `/api/requests` summary stays metadata-only; `/api/requests/details` and `/api/requests/payload/:id` decode compressed rows |
+| Docs | `docs/database.md`, `docs/security.md` — compression + retention documented |
+
+### U6 verification
+
+| Step | Result |
+| --- | --- |
+| `bun test packages/database/src/payload-compression.test.ts` | ✅ 3 pass |
+| `bun test packages/database/src/payload-storage.test.ts` | ✅ 2 pass |
+| `bun test packages/database/src/repositories/__tests__/request-payload-compression.test.ts` | ✅ 5 pass |
+| `bun test packages/database/src/migrations-pg-shape.test.ts` | ✅ 1 pass |
+| `bun test packages/database` (compression migration tests) | ✅ pass |
+| `bun run build` | ✅ pass (v3.5.20) |
+| `bun run lint` | ✅ exit 0 on U6 scope (201 pre-existing warnings); repo-wide `--write` reverted — not committed |
+| `bun run typecheck` | ✅ pass |
+| `bun run format` | ✅ pass on U6 scope only |
+| `bun test` (full) | ⚠️ **1542 pass / 31 fail** — same pre-existing Windows baseline as U0–U5 (+13 new U6 tests); **no regressions** |
+
+**GitNexus:** impact analysis unavailable in this environment (CLI install failed); edits limited to payload storage/repository/migration layer with low blast radius.
 
 ---
 

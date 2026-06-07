@@ -1,5 +1,8 @@
 import { Logger } from "@better-ccflare/logger";
-import { decryptPayload, encryptPayload } from "../payload-encryption";
+import {
+	decodePayloadFromStorage,
+	encodePayloadForStorage,
+} from "../payload-storage";
 import { BaseRepository } from "./base.repository";
 
 const log = new Logger("RequestRepository");
@@ -14,9 +17,13 @@ const log = new Logger("RequestRepository");
  * Single-row reads (`getPayload`) MUST stay strict and let the error
  * propagate — there's no fallback that makes sense for a single row.
  */
-async function decryptForList(id: string, json: string): Promise<string> {
+async function decryptForList(
+	id: string,
+	json: string,
+	compressed: boolean,
+): Promise<string> {
 	try {
-		return await decryptPayload(json);
+		return await decodePayloadFromStorage(json, compressed);
 	} catch (err) {
 		log.error(`Failed to decrypt payload ${id}:`, err);
 		return JSON.stringify({
@@ -174,39 +181,35 @@ export class RequestRepository extends BaseRepository<RequestData> {
 
 	// Payload management
 	async savePayload(id: string, data: unknown): Promise<void> {
-		const json = JSON.stringify(data);
-		const stored = await encryptPayload(json);
-		const ts = Date.now();
-		await this.run(
-			`INSERT INTO request_payloads (id, json, timestamp) VALUES (?, ?, ?)
-			 ON CONFLICT (id) DO UPDATE SET json = EXCLUDED.json, timestamp = EXCLUDED.timestamp`,
-			[id, stored, ts],
-		);
+		await this.savePayloadRaw(id, JSON.stringify(data));
 	}
 
 	async savePayloadRaw(id: string, json: string): Promise<void> {
-		const stored = await encryptPayload(json);
+		const { stored, compressed } = await encodePayloadForStorage(json);
 		const ts = Date.now();
 		await this.run(
-			`INSERT INTO request_payloads (id, json, timestamp) VALUES (?, ?, ?)
-			 ON CONFLICT (id) DO UPDATE SET json = EXCLUDED.json, timestamp = EXCLUDED.timestamp`,
-			[id, stored, ts],
+			`INSERT INTO request_payloads (id, json, timestamp, compressed) VALUES (?, ?, ?, ?)
+			 ON CONFLICT (id) DO UPDATE SET
+			   json = EXCLUDED.json,
+			   timestamp = EXCLUDED.timestamp,
+			   compressed = EXCLUDED.compressed`,
+			[id, stored, ts, compressed ? 1 : 0],
 		);
 	}
 
 	async getPayload(id: string): Promise<unknown | null> {
-		const row = await this.get<{ json: string }>(
-			`SELECT json FROM request_payloads WHERE id = ?`,
+		const row = await this.get<{ json: string; compressed: number | null }>(
+			`SELECT json, compressed FROM request_payloads WHERE id = ?`,
 			[id],
 		);
 
 		if (!row) return null;
 
-		// Decryption errors must propagate — they indicate tampering, a wrong key,
-		// or a missing key for an encrypted row. Silently returning null would
-		// hide real misconfiguration. Only JSON parse errors are tolerated, since
-		// historical rows may contain malformed payloads.
-		const decoded = await decryptPayload(row.json);
+		// Decryption/decompression errors must propagate — they indicate tampering,
+		// a wrong key, or a missing key for an encrypted row. Silently returning
+		// null would hide real misconfiguration. Only JSON parse errors are
+		// tolerated, since historical rows may contain malformed payloads.
+		const decoded = await decodePayloadFromStorage(row.json, !!row.compressed);
 		try {
 			return JSON.parse(decoded);
 		} catch {
@@ -215,9 +218,13 @@ export class RequestRepository extends BaseRepository<RequestData> {
 	}
 
 	async listPayloads(limit = 50): Promise<Array<{ id: string; json: string }>> {
-		const rows = await this.query<{ id: string; json: string }>(
+		const rows = await this.query<{
+			id: string;
+			json: string;
+			compressed: number | null;
+		}>(
 			`
-			SELECT rp.id, rp.json
+			SELECT rp.id, rp.json, rp.compressed
 			FROM request_payloads rp
 			JOIN requests r ON rp.id = r.id
 			ORDER BY r.timestamp DESC
@@ -228,7 +235,7 @@ export class RequestRepository extends BaseRepository<RequestData> {
 		return Promise.all(
 			rows.map(async (row) => ({
 				id: row.id,
-				json: await decryptForList(row.id, row.json),
+				json: await decryptForList(row.id, row.json, !!row.compressed),
 			})),
 		);
 	}
@@ -244,11 +251,12 @@ export class RequestRepository extends BaseRepository<RequestData> {
 		const rows = await this.query<{
 			id: string;
 			json: string | null;
+			compressed: number | null;
 			timestamp: number;
 			account_name: string | null;
 		}>(
 			`
-			SELECT r.id, r.timestamp, rp.json, a.name as account_name
+			SELECT r.id, r.timestamp, rp.json, rp.compressed, a.name as account_name
 			FROM requests r
 			LEFT JOIN request_payloads rp ON rp.id = r.id
 			LEFT JOIN accounts a ON r.account_used = a.id
@@ -261,7 +269,9 @@ export class RequestRepository extends BaseRepository<RequestData> {
 			rows.map(async (row) => ({
 				id: row.id,
 				timestamp: row.timestamp,
-				json: row.json ? await decryptForList(row.id, row.json) : null,
+				json: row.json
+					? await decryptForList(row.id, row.json, !!row.compressed)
+					: null,
 				account_name: row.account_name,
 			})),
 		);

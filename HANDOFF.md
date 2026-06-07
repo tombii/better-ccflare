@@ -14,6 +14,13 @@
 | #6 | Request History live SSE rows not yet persisted | Open — U7 |
 | #7 | Codex request history missing model/token/cost/throughput | Fixed in U4 — UsageCollector maps Codex Responses API usage/model; `requestedModel` fallback when payload storage disabled |
 
+### U6 — compressed payload persistence (this branch)
+
+- New `request_payloads.compressed` column (SQLite + PostgreSQL); legacy rows (`compressed = 0`) remain readable.
+- Save pipeline: gzip → optional AES-256-GCM (`PAYLOAD_ENCRYPTION_KEY`); read paths transparently decompress.
+- `/api/requests` list stays metadata-only; detail and `GET /api/requests/payload/:id` return full decoded payloads.
+- Controlled by existing `STORE_PAYLOADS` / dashboard setting; retention cleanup unchanged (payloads deleted before request metadata).
+
 ### U5 — stale token recovery (this branch)
 
 - Upstream **401** on OAuth accounts: one conservative token refresh + single retry before account failover.
