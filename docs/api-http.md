@@ -124,6 +124,9 @@ Note: this is distinct from the `codex` *provider*, which routes requests outbou
 **Headers:**
 - All standard Claude API headers are supported
 - `Authorization` header is managed by better-ccflare (no need to provide)
+- `x-better-ccflare-allow-providers: codex` — opt in to Codex account fallback on `POST /v1/messages` (excluded by default; native `/v1/codex/responses` does not need this header)
+
+**Route intent:** `POST /v1/messages` excludes Codex accounts by default. Native `POST /v1/codex/responses` selects Codex accounts only. Compatibility `POST /v1/responses` translates to `/v1/messages` and inherits the same Codex exclusion.
 
 **Request Body:**
 Same as Claude API requirements for the specific endpoint.

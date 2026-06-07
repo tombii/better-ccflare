@@ -10,7 +10,7 @@
 
 | Issue | Title | Status |
 | --- | --- | --- |
-| #5 | Prevent Claude traffic from unexpectedly falling back to Codex accounts | Open — U3 |
+| #5 | Prevent Claude traffic from unexpectedly falling back to Codex accounts | Fixed in U3 — unprefixed `/v1/messages` excludes Codex by default; opt-in header documented |
 | #6 | Request History live SSE rows not yet persisted | Open — U7 |
 | #7 | Codex request history missing model/token/cost/throughput | Open — U4 |
 

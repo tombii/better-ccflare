@@ -13,7 +13,7 @@ Remotes: `origin` → `https://github.com/omcdowell/the-best-ccflare.git`; `upst
 | U0 | Baseline clean worktree, open issues, staleness checks, upstream comparison, safe second-instance test harness | ✅ done | See sections below; `HANDOFF.md` placeholder created. |
 | U1 | Catch up with upstream `better-ccflare` while preserving fork behavior | ✅ done | PR #245 `UsageCollector` migration; fork Codex SSE hooks merged; see **U1** section below. |
 | U2 | Rebrand visible/package/docs surface to `the-best-ccflare` | ✅ done | Root README, package metadata, dashboard UI, docs links; compatibility preserved — see **U2** section below. |
-| U3 | Issue #5: explicit route intent; no surprise Claude-to-Codex fallback | ⬜ todo | `/v1/messages` excludes Codex by default; Codex-prefixed routes still work. |
+| U3 | Issue #5: explicit route intent; no surprise Claude-to-Codex fallback | ✅ done | `/v1/messages` excludes Codex by default; native `/v1/codex/responses` unchanged; opt-in via `x-better-ccflare-allow-providers: codex`. |
 | U4 | Codex-native path feature parity with old Claude pathing, including issue #7 fields | ⬜ todo | Model/tokens/cost/throughput and observability parity where data exists. |
 | U5 | Stale request error recovery with randomized auto-refresh | ⬜ todo | Bounded jitter/backoff; no real Anthropic calls in tests. |
 | U6 | Persist compressed full message payloads for later analytics | ⬜ todo | SQLite and PostgreSQL migrations; compression/security conventions; list endpoints stay lean. |
@@ -218,6 +218,41 @@ Documented in `HANDOFF.md`. U0 smoke: `BETTER_CCFLARE_DB_PATH=<temp>` + `bun sta
 | `bun run typecheck` | ✅ pass |
 | `bun run format` | ✅ exit 0; mass CRLF drift reverted — not committed |
 | `bun test` (full) | ⚠️ **1504 pass / 31 fail** — same pre-existing Windows baseline as U0/U1 (no regressions) |
+
+---
+
+## U3 — Issue #5 route intent (2026-06-07)
+
+### Staleness check (mandatory)
+
+`git log origin/main --since='2026-06-04' --oneline --no-merges` on routing/selector paths:
+
+```
+7a18b843 feat: add native OpenAI and Anthropic provider routes with docs
+e6418c75 feat: native Codex streaming passthrough and request observability
+```
+
+**Verdict:** Still applied — native prefixed routes landed but unprefixed `/v1/messages` did not exclude Codex on pool exhaustion.
+
+### Implementation
+
+| Change | Detail |
+| --- | --- |
+| `packages/proxy/src/routing/route-intent.ts` | Default exclude `codex` on `/v1/messages` and `/v1/messages/*`; opt-in via `x-better-ccflare-allow-providers: codex` |
+| `account-selector.ts` | Uses `resolveRouteIntent(meta.path, meta.headers)` |
+| Tests | `route-intent.test.ts`, account-selector, `route-intent-messages.test.ts` |
+| Docs | README + `docs/api-http.md` |
+
+### U3 verification
+
+| Step | Result |
+| --- | --- |
+| `bun run build` | ✅ pass |
+| `bun run lint` | ✅ exit 0 (201 pre-existing warnings); repo-wide `--write` reverted — do not commit mass CRLF drift |
+| `bun run typecheck` | ✅ pass |
+| `bun run format` | ✅ pass on U3 scope |
+| `bun test packages/proxy` | ✅ **304 pass / 0 fail** |
+| `bun test` (full) | ⚠️ **1514 pass / 31 fail** — same pre-existing Windows baseline as U0/U1/U2 (+9 new route-intent tests); **no regressions** |
 
 ---
 

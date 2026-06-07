@@ -638,6 +638,53 @@ describe("selectAccountsForRequest — paused accounts in combo", () => {
 		expect(result.map((a) => a.id)).toEqual(["acc-active"]);
 	});
 
+	it("excludes codex from /v1/messages when Claude accounts are unavailable", async () => {
+		const codexAccount = makeAccount({
+			id: "acc-codex",
+			name: "codex",
+			provider: "codex",
+		});
+		const ctx: ProxyContext = {
+			strategy: { select: mock(() => [codexAccount]) },
+			dbOps: {
+				getAllAccounts: mock(async () => [codexAccount]),
+				getActiveComboForFamily: mock(async () => null),
+			},
+			refreshInFlight: new Map(),
+			asyncWriter: { enqueue: mock(() => {}) },
+		} as unknown as ProxyContext;
+		const meta = makeRequestMeta({ path: "/v1/messages" });
+
+		const result = await selectAccountsForRequest(meta, ctx);
+		expect(result).toHaveLength(0);
+	});
+
+	it("allows codex on /v1/messages when x-better-ccflare-allow-providers includes codex", async () => {
+		const codexAccount = makeAccount({
+			id: "acc-codex",
+			name: "codex",
+			provider: "codex",
+		});
+		const ctx: ProxyContext = {
+			strategy: { select: mock(() => [codexAccount]) },
+			dbOps: {
+				getAllAccounts: mock(async () => [codexAccount]),
+				getActiveComboForFamily: mock(async () => null),
+			},
+			refreshInFlight: new Map(),
+			asyncWriter: { enqueue: mock(() => {}) },
+		} as unknown as ProxyContext;
+		const meta = makeRequestMeta({
+			path: "/v1/messages",
+			headers: new Headers({
+				"x-better-ccflare-allow-providers": "codex",
+			}),
+		});
+
+		const result = await selectAccountsForRequest(meta, ctx);
+		expect(result.map((a) => a.id)).toEqual(["acc-codex"]);
+	});
+
 	it("includes only matching providers when x-better-ccflare-include-providers is set", async () => {
 		const codexAccount = makeAccount({
 			id: "acc-codex",

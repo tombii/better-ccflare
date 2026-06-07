@@ -410,6 +410,14 @@ Request history records `routingMode: native` and both `path` (client path) and 
 curl -H "x-better-ccflare-account-id: my-account-name" ...
 ```
 
+**Route intent (Claude vs Codex):** unprefixed `POST /v1/messages` is treated as Claude/Anthropic compatibility traffic. Codex accounts (`provider=codex`) are **excluded by default**, even when Claude accounts are rate-limited or unavailable — use the native route `POST /v1/codex/responses` for Codex OAuth traffic. To opt in to Codex as a cross-provider fallback on `/v1/messages`, send:
+
+```bash
+curl -H "x-better-ccflare-allow-providers: codex" ...
+```
+
+Native provider-prefixed routes (`/v1/codex/…`, `/v1/openai/…`, `/v1/anthropic/…`) continue to restrict account selection to the named provider via `x-better-ccflare-include-providers`.
+
 **Known limitations**
 
 - WebSocket transport is not supported on compatibility `/v1/responses` paths (HTTP only; clients should retry over HTTPS).
@@ -475,6 +483,7 @@ When using the **compatibility** `/v1/responses` path (not native):
 - `previous_response_id` is accepted but ignored — Codex uses this only over WebSocket; for regular HTTP requests it always sends the full conversation history in `input`
 - Built-in tool types (`web_search_preview`, `code_interpreter`, `file_search`) are silently skipped; only `type: "function"` tools are forwarded to Anthropic
 - Claude OAuth accounts (Claude Pro/Team, `provider=anthropic` with OAuth tokens) are automatically excluded from Codex CLI traffic — Anthropic bans these when used outside Claude CLI. Anthropic API key accounts are fine and will be used normally.
+- Codex OAuth accounts are never used for unprefixed `/v1/messages` traffic (including when this adapter forwards to `/v1/messages` internally). Use the native `/v1/codex/responses` route for Codex accounts, or send `x-better-ccflare-allow-providers: codex` to opt in to cross-provider fallback.
 
 ### SSL/HTTPS Configuration
 
