@@ -74,7 +74,9 @@ export function RequestDetailsModal({
 			if (str === "[streamed]") {
 				return "[Streaming data not captured]";
 			}
-			return atob(str);
+			const binary = atob(str);
+      		const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
+      		return new TextDecoder("utf-8").decode(bytes);
 		} catch (error) {
 			console.error("Failed to decode base64:", error, "Input:", str);
 			return `Failed to decode: ${str}`;
