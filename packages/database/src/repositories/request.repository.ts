@@ -68,6 +68,8 @@ export interface RequestData {
 export class RequestRepository extends BaseRepository<RequestData> {
 	async save(data: RequestData): Promise<void> {
 		const { usage } = data;
+		const upstreamPath = data.upstreamPath ?? data.path;
+		const routingMode = data.routingMode ?? "compatibility";
 		await this.run(
 			`
 			INSERT INTO requests (
@@ -135,8 +137,8 @@ export class RequestRepository extends BaseRepository<RequestData> {
 				data.project || null,
 				data.billingType || null,
 				data.comboName || null,
-				data.upstreamPath || null,
-				data.routingMode || null,
+				upstreamPath,
+				routingMode,
 			],
 		);
 	}
