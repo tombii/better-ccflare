@@ -20,6 +20,28 @@ If accidentally modified: `git checkout -- <path>`
 ## Git Refspecs
 This repo has both a `main` branch and a `main` tag. **Always use `refs/heads/main`** (not `main`) for local branch operations (push, checkout). For merge-base and log comparisons against the remote, use `origin/main` (the remote ref) to avoid the ambiguous refspec warning from the local tag.
 
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues on `omcdowell/the-best-ccflare`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Use the sparse repo label vocabulary; `ready-for-agent` is currently the only confirmed canonical label. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context repo: `CLAUDE.md` plus relevant `docs/*.md`; no root `CONTEXT.md` or `docs/adr/` exists yet. See `docs/agents/domain.md`.
+
+### Upstream watchlist
+
+Before upstream catch-up, request-history, auth, routing, or rate-limit work, read `docs/agents/upstream-watch.md`.
+
+### Private operator notes
+
+For remote-machine access or safe testing against private infrastructure, first check the untracked local note `.git/info/private-notes/remote-machine-testing.md`; if it is absent, ask the maintainer. Never copy its contents into committed files, GitHub issues, or PR comments.
+
 ## Branch Management
 Always branch from `main` with a fresh pull. Never make changes directly on main.
 PRs: `gh pr checkout <PR_NUMBER>` or `git checkout <branch-name>`.

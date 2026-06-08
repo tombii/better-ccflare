@@ -11,11 +11,12 @@ import {
 	initPayloadEncryption,
 } from "@better-ccflare/database";
 import { Logger } from "@better-ccflare/logger";
-import { NO_ACCOUNT_ID, type RequestResponse } from "@better-ccflare/types";
+import { NO_ACCOUNT_ID } from "@better-ccflare/types";
 import { formatCost } from "@better-ccflare/ui-common";
 import model from "@dqbd/tiktoken/encoders/cl100k_base.json";
 import { init, Tiktoken } from "@dqbd/tiktoken/lite/init";
 import { EMBEDDED_TIKTOKEN_WASM } from "./embedded-tiktoken-wasm";
+import { enqueueFinalRequestPersistence } from "./request-persistence-summary";
 import { combineChunks } from "./stream-tee";
 import type {
 	AckMessage,
@@ -839,49 +840,43 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 	}
 	const projectAtEnd = state.project ?? null;
 	// No preliminary INSERT needed — dashboard tracks pending requests via SSE events, not DB queries.
-	asyncWriter.enqueue(async () => {
-		try {
-			await dbOps.saveRequest(
-				startMessage.requestId,
-				startMessage.method,
-				startMessage.clientPath ?? startMessage.path,
-				startMessage.accountId,
-				startMessage.responseStatus,
-				msg.success,
-				msg.error || null,
-				responseTime,
-				startMessage.failoverAttempts,
-				state.usage.model
-					? {
-							model: state.usage.model,
-							promptTokens:
-								(state.usage.inputTokens || 0) +
-								(state.usage.cacheReadInputTokens || 0) +
-								(state.usage.cacheCreationInputTokens || 0),
-							completionTokens: state.usage.outputTokens,
-							totalTokens: state.usage.totalTokens,
-							costUsd: state.usage.costUsd,
-							// Keep original breakdown for payload
-							inputTokens: state.usage.inputTokens,
-							outputTokens: state.usage.outputTokens,
-							cacheReadInputTokens: state.usage.cacheReadInputTokens,
-							cacheCreationInputTokens: state.usage.cacheCreationInputTokens,
-							tokensPerSecond: state.usage.tokensPerSecond,
-						}
-					: undefined,
-				state.agentUsed,
-				startMessage.apiKeyId || undefined,
-				startMessage.apiKeyName || undefined,
-				projectAtEnd,
-				state.billingType,
-				startMessage.comboName || null,
-				startMessage.upstreamPath ?? null,
-				startMessage.routingMode ?? null,
-			);
-		} catch (error) {
+	// Emit the completed summary only after saveRequest succeeds so the live row
+	// cannot look complete before it is queryable from /api/requests.
+	enqueueFinalRequestPersistence(
+		{
+			requestId: startMessage.requestId,
+			timestamp: startMessage.timestamp,
+			method: startMessage.method,
+			path: startMessage.path,
+			clientPath: startMessage.clientPath,
+			accountId: startMessage.accountId,
+			statusCode: startMessage.responseStatus,
+			success: msg.success,
+			error: msg.error || null,
+			responseTimeMs: responseTime,
+			failoverAttempts: startMessage.failoverAttempts,
+			usage: state.usage,
+			agentUsed: state.agentUsed,
+			apiKeyId: startMessage.apiKeyId || undefined,
+			apiKeyName: startMessage.apiKeyName || undefined,
+			project: projectAtEnd,
+			billingType: state.billingType,
+			comboName: startMessage.comboName,
+			upstreamPath: startMessage.upstreamPath,
+			routingMode: startMessage.routingMode,
+		},
+		dbOps,
+		asyncWriter,
+		(summary) => {
+			self.postMessage({
+				type: "summary",
+				summary,
+			} satisfies SummaryMessage);
+		},
+		(error) => {
 			log.error(`Failed to save request for ${startMessage.requestId}:`, error);
-		}
-	});
+		},
+	);
 
 	const requestId = startMessage.requestId;
 	if (storePayloads) {
@@ -989,41 +984,6 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 			);
 		}
 	}
-
-	// Post summary to main thread for real-time updates
-	const summary: RequestResponse = {
-		id: startMessage.requestId,
-		timestamp: new Date(startMessage.timestamp).toISOString(),
-		method: startMessage.method,
-		path: startMessage.path,
-		accountUsed: startMessage.accountId,
-		statusCode: startMessage.responseStatus,
-		success: msg.success,
-		errorMessage: msg.error || null,
-		responseTimeMs: responseTime,
-		failoverAttempts: startMessage.failoverAttempts,
-		model: state.usage.model,
-		promptTokens: state.usage.inputTokens,
-		completionTokens: state.usage.outputTokens,
-		totalTokens: state.usage.totalTokens,
-		inputTokens: state.usage.inputTokens,
-		cacheReadInputTokens: state.usage.cacheReadInputTokens,
-		cacheCreationInputTokens: state.usage.cacheCreationInputTokens,
-		outputTokens: state.usage.outputTokens,
-		costUsd: state.usage.costUsd,
-		agentUsed: state.agentUsed,
-		tokensPerSecond: state.usage.tokensPerSecond,
-		apiKeyId: startMessage.apiKeyId || undefined,
-		apiKeyName: startMessage.apiKeyName || undefined,
-		project: state.project ?? undefined,
-		billingType: state.billingType,
-		comboName: startMessage.comboName || undefined,
-	};
-
-	self.postMessage({
-		type: "summary",
-		summary,
-	} satisfies SummaryMessage);
 
 	// Clean up
 	requests.delete(msg.requestId);
