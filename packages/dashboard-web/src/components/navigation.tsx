@@ -7,6 +7,7 @@ import {
 	GitBranch,
 	Key,
 	LayoutDashboard,
+	Lightbulb,
 	LogOut,
 	Menu,
 	RefreshCw,
@@ -41,6 +42,7 @@ interface NavItem {
 const _navItems: NavItem[] = [
 	{ label: "Overview", icon: LayoutDashboard, path: "/" },
 	{ label: "Analytics", icon: BarChart3, path: "/analytics" },
+	{ label: "Insights", icon: Lightbulb, path: "/insights" },
 	{ label: "Requests", icon: Activity, path: "/requests" },
 	{ label: "Accounts", icon: Users, path: "/accounts" },
 	// { label: "Combos", icon: Zap, path: "/combos" },
@@ -73,6 +75,7 @@ export function Navigation({
 		const baseItems: NavItem[] = [
 			{ label: "Overview", icon: LayoutDashboard, path: "/" },
 			{ label: "Analytics", icon: BarChart3, path: "/analytics" },
+			{ label: "Insights", icon: Lightbulb, path: "/insights" },
 			{ label: "Requests", icon: Activity, path: "/requests" },
 			{ label: "Accounts", icon: Users, path: "/accounts" },
 		];

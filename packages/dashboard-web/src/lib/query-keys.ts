@@ -17,6 +17,8 @@ export const queryKeys = {
 			"analytics",
 			{ timeRange, filters, viewMode, modelBreakdown },
 		] as const,
+	insightsCache: (timeRange?: string, threshold?: number) =>
+		[...queryKeys.all, "insights", "cache", { timeRange, threshold }] as const,
 	requests: (limit?: number) =>
 		[...queryKeys.all, "requests", { limit }] as const,
 	logs: () => [...queryKeys.all, "logs"] as const,

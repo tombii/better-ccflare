@@ -6,6 +6,7 @@ import {
 import { Logger } from "@better-ccflare/logger";
 import { NO_ACCOUNT_ID } from "@better-ccflare/types";
 import type { AnalyticsResponse, APIContext } from "../types";
+import { buildRequestFilters, getRangeConfig } from "../utils/query-filters";
 
 const log = new Logger("AnalyticsHandler");
 
@@ -23,53 +24,6 @@ export function effectiveBurnRateDays(
 	return Math.min(windowDays, Math.max(1, days));
 }
 
-interface BucketConfig {
-	bucketMs: number;
-	displayName: string;
-}
-
-function getRangeConfig(range: string): {
-	startMs: number;
-	bucket: BucketConfig;
-} {
-	const now = Date.now();
-	const hour = 60 * 60 * 1000;
-	const day = 24 * hour;
-
-	switch (range) {
-		case "1h":
-			return {
-				startMs: now - hour,
-				bucket: { bucketMs: 60 * 1000, displayName: "1m" },
-			};
-		case "6h":
-			return {
-				startMs: now - 6 * hour,
-				bucket: { bucketMs: 5 * 60 * 1000, displayName: "5m" },
-			};
-		case "24h":
-			return {
-				startMs: now - day,
-				bucket: { bucketMs: hour, displayName: "1h" },
-			};
-		case "7d":
-			return {
-				startMs: now - 7 * day,
-				bucket: { bucketMs: hour, displayName: "1h" },
-			};
-		case "30d":
-			return {
-				startMs: now - 30 * day,
-				bucket: { bucketMs: day, displayName: "1d" },
-			};
-		default:
-			return {
-				startMs: now - day,
-				bucket: { bucketMs: hour, displayName: "1h" },
-			};
-	}
-}
-
 export function createAnalyticsHandler(context: APIContext) {
 	return async (params: URLSearchParams): Promise<Response> => {
 		const db = context.dbOps.getAdapter();
@@ -78,52 +32,12 @@ export function createAnalyticsHandler(context: APIContext) {
 		const mode = params.get("mode") ?? "normal";
 		const isCumulative = mode === "cumulative";
 
-		// Extract filters
-		const accountsFilter =
-			params.get("accounts")?.split(",").filter(Boolean) || [];
-		const modelsFilter = params.get("models")?.split(",").filter(Boolean) || [];
-		const apiKeysFilter =
-			params.get("apiKeys")?.split(",").filter(Boolean) || [];
-		const statusFilter = params.get("status") || "all";
-
-		// Build filter conditions
-		const conditions: string[] = ["timestamp > ?"];
-		const queryParams: (string | number)[] = [startMs];
-
-		if (accountsFilter.length > 0) {
-			// Handle account filter - map account names to IDs via join
-			const placeholders = accountsFilter.map(() => "?").join(",");
-			conditions.push(`(
-				r.account_used IN (SELECT id FROM accounts WHERE name IN (${placeholders}))
-				OR (r.account_used = ? AND ? IN (${placeholders}))
-			)`);
-			queryParams.push(
-				...accountsFilter,
-				NO_ACCOUNT_ID,
-				NO_ACCOUNT_ID,
-				...accountsFilter,
-			);
-		}
-
-		if (modelsFilter.length > 0) {
-			const placeholders = modelsFilter.map(() => "?").join(",");
-			conditions.push(`model IN (${placeholders})`);
-			queryParams.push(...modelsFilter);
-		}
-
-		if (apiKeysFilter.length > 0) {
-			const placeholders = apiKeysFilter.map(() => "?").join(",");
-			conditions.push(`api_key_name IN (${placeholders})`);
-			queryParams.push(...apiKeysFilter);
-		}
-
-		if (statusFilter === "success") {
-			conditions.push("success = TRUE");
-		} else if (statusFilter === "error") {
-			conditions.push("success = FALSE");
-		}
-
-		const whereClause = conditions.join(" AND ");
+		// Build the shared range/filter WHERE clause (timestamp window,
+		// accounts, models, apiKeys, status)
+		const { whereClause, params: queryParams } = buildRequestFilters(
+			params,
+			startMs,
+		);
 
 		try {
 			// Check if we need per-model time series

@@ -216,6 +216,18 @@ export const useAnalytics = (
 	});
 };
 
+export const useCacheInsights = (timeRange: string, threshold?: number) => {
+	return useQuery({
+		queryKey: queryKeys.insightsCache(timeRange, threshold),
+		queryFn: () => api.getCacheInsights(timeRange, threshold),
+		staleTime: 45000,
+		refetchInterval: 60000,
+		refetchIntervalInBackground: false,
+		gcTime: 15 * 60 * 1000,
+		enabled: !!timeRange,
+	});
+};
+
 export const useRequests = (limit: number, _refetchInterval?: number) => {
 	return useQuery({
 		queryKey: queryKeys.requests(limit),

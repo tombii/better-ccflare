@@ -5,8 +5,10 @@ import {
 	estimateCostUSD,
 	fetchNanoGPTPricingData,
 	getCachedNanoGPTPricing,
+	getModelRates,
 	initializeNanoGPTPricingRefresh,
 	resetNanoGPTPricingCacheForTest,
+	setPricingLogger,
 	stopNanoGPTPricingRefresh,
 	type TokenBreakdown,
 } from "./pricing";
@@ -317,5 +319,116 @@ describe("NanoGPT Pricing", () => {
 			"nanogpt",
 		);
 		expect(initializeRefreshSpy).not.toHaveBeenCalled();
+	});
+});
+
+describe("getModelRates", () => {
+	let originalOffline: string | undefined;
+	let originalFetch: typeof global.fetch;
+
+	beforeEach(() => {
+		resetNanoGPTPricingCacheForTest();
+		originalOffline = process.env.CF_PRICING_OFFLINE;
+		process.env.CF_PRICING_OFFLINE = "1";
+		originalFetch = global.fetch;
+		// Block the NanoGPT fetch so only bundled pricing is used
+		global.fetch = vi.fn().mockRejectedValue(new Error("offline"));
+	});
+
+	afterEach(() => {
+		if (originalOffline === undefined) {
+			delete process.env.CF_PRICING_OFFLINE;
+		} else {
+			process.env.CF_PRICING_OFFLINE = originalOffline;
+		}
+		global.fetch = originalFetch;
+		resetNanoGPTPricingCacheForTest();
+		vi.restoreAllMocks();
+	});
+
+	it("should return full rates for a bundled model with cache pricing", async () => {
+		const rates = await getModelRates("claude-sonnet-4-20250514");
+
+		expect(rates).toEqual({
+			input: 3,
+			output: 15,
+			cacheRead: 0.3,
+			cacheWrite: 3.75,
+		});
+	});
+
+	it("should return null for an unknown model without throwing", async () => {
+		const rates = await getModelRates("totally-unknown-model-xyz");
+
+		expect(rates).toBeNull();
+	});
+
+	it("should return null cache rates for a bundled model without cache pricing", async () => {
+		const rates = await getModelRates("MiniMax-M2");
+
+		expect(rates).toEqual({
+			input: 0.3,
+			output: 1.2,
+			cacheRead: null,
+			cacheWrite: null,
+		});
+	});
+
+	it("should return null and warn when the catalogue has malformed cost data", async () => {
+		// Inject a malformed model via the NanoGPT merge path: pricing values
+		// flow straight into cost.input/cost.output without validation.
+		global.fetch = vi.fn().mockResolvedValue({
+			ok: true,
+			json: async () => ({
+				object: "list",
+				data: [
+					{
+						id: "malformed-cost-model",
+						name: "Malformed Cost Model",
+						pricing: {
+							prompt: "not-a-number",
+							completion: Number.NaN,
+							currency: "USD",
+							unit: "per_million_tokens",
+						},
+					},
+				],
+			}),
+		} as unknown as Response);
+
+		const warnLogger = { warn: vi.fn(), debug: vi.fn() };
+		setPricingLogger(warnLogger);
+
+		const rates = await getModelRates("malformed-cost-model");
+
+		expect(rates).toBeNull();
+		expect(warnLogger.warn).toHaveBeenCalledWith(
+			"Price for model %s not found - cache savings reported as unknown",
+			"malformed-cost-model",
+		);
+	});
+
+	it("should still warn when estimateCostUSD warned first for the same model", async () => {
+		const warnLogger = { warn: vi.fn(), debug: vi.fn() };
+		setPricingLogger(warnLogger);
+
+		// estimateCostUSD warns first via warnOnce (cost set to 0)
+		const cost = await estimateCostUSD("unknown-model-warn-dedup", {
+			inputTokens: 100,
+		});
+		expect(cost).toBe(0);
+		expect(warnLogger.warn).toHaveBeenCalledWith(
+			"Price for model %s not found - cost set to 0 (reason: %s)",
+			"unknown-model-warn-dedup",
+			expect.any(String),
+		);
+
+		// getModelRates must still emit its own distinct warning
+		const rates = await getModelRates("unknown-model-warn-dedup");
+		expect(rates).toBeNull();
+		expect(warnLogger.warn).toHaveBeenCalledWith(
+			"Price for model %s not found - cache savings reported as unknown",
+			"unknown-model-warn-dedup",
+		);
 	});
 });

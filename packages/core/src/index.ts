@@ -68,7 +68,9 @@ export {
 } from "./models";
 export {
 	estimateCostUSD,
+	getModelRates,
 	initializeNanoGPTPricingIfAccountsExist,
+	type ModelRates,
 	resetNanoGPTPricingCacheForTest,
 	setPricingLogger,
 	type TokenBreakdown,
