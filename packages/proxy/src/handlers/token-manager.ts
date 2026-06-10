@@ -12,8 +12,11 @@ import type { Account } from "@better-ccflare/types";
 import { TOKEN_REFRESH_BACKOFF_MS, TOKEN_SAFETY_WINDOW_MS } from "../constants";
 import { ERROR_MESSAGES, type ProxyContext } from "./proxy-types";
 import {
+	checkAllAccountsHealth,
 	checkRefreshTokenHealth,
 	getOAuthErrorMessage,
+	type TokenHealthReport,
+	type TokenHealthStatus,
 } from "./token-health-monitor";
 
 const log = new Logger("TokenManager");
@@ -473,6 +476,26 @@ export function clearAccountRefreshCache(accountId: string): void {
 }
 
 /**
+ * Runtime refresh/backoff status for observability (token-health, dashboard).
+ */
+export function getTokenRefreshRuntimeStatus(accountId: string): {
+	inBackoff: boolean;
+	backoffUntil: number | null;
+	consecutiveBackoffHits: number;
+} {
+	const lastFailure = refreshFailures.get(accountId);
+	const inBackoff = !!(
+		lastFailure && Date.now() - lastFailure < TOKEN_REFRESH_BACKOFF_MS
+	);
+	return {
+		inBackoff,
+		backoffUntil:
+			inBackoff && lastFailure ? lastFailure + TOKEN_REFRESH_BACKOFF_MS : null,
+		consecutiveBackoffHits: backoffCounters.get(accountId) ?? 0,
+	};
+}
+
+/**
  * Internal function to clear refresh cache with specific context
  * This is what the server registers as its clearer function
  */
@@ -552,4 +575,23 @@ export async function getValidAccessToken(
 
 	log.info(`Token ${reason} for account: ${account.name}`);
 	return await refreshAccessTokenSafe(account, ctx);
+}
+
+export function enrichTokenHealthWithRefreshRuntime(
+	status: TokenHealthStatus,
+): TokenHealthStatus {
+	return {
+		...status,
+		refreshRuntime: getTokenRefreshRuntimeStatus(status.accountId),
+	};
+}
+
+export function checkAllAccountsHealthWithRefreshRuntime(
+	accounts: Account[],
+): TokenHealthReport {
+	const report = checkAllAccountsHealth(accounts);
+	return {
+		...report,
+		accounts: report.accounts.map(enrichTokenHealthWithRefreshRuntime),
+	};
 }

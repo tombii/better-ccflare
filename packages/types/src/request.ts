@@ -95,6 +95,10 @@ export interface RequestResponse {
 	// Derived from statusCode === 429 server-side so the list view can render
 	// the "Rate Limited" badge without lazy-loading the full payload.
 	rateLimited?: boolean;
+	/** True when metadata was durably written before this summary was emitted. */
+	persisted?: boolean;
+	/** True when metadata persistence was dropped or failed — row must not look fully completed. */
+	persistenceFailed?: boolean;
 }
 
 // Detailed request with payload
@@ -120,6 +124,10 @@ export interface RequestPayload {
 		success?: boolean;
 		accountsAttempted?: number;
 		pending?: boolean;
+		/** Live SSE row awaiting durable metadata write or reload reconciliation. */
+		pendingPersistence?: boolean;
+		/** Metadata write failed or was dropped by the async writer. */
+		persistenceFailed?: boolean;
 		path?: string;
 		method?: string;
 		agentUsed?: string;

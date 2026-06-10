@@ -2,6 +2,7 @@ import type { AgentUpdatePayload } from "@better-ccflare/types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type RequestPayload, type RequestSummary } from "../api";
 import { queryKeys } from "../lib/query-keys";
+import { reconcileRequestsCache } from "../lib/request-cache-reconcile";
 
 /**
  * Build a lightweight RequestPayload from a RequestSummary.
@@ -217,19 +218,41 @@ export const useAnalytics = (
 };
 
 export const useRequests = (limit: number, _refetchInterval?: number) => {
+	const queryClient = useQueryClient();
+
 	return useQuery({
 		queryKey: queryKeys.requests(limit),
 		queryFn: async () => {
-			// Fetch only the summary endpoint - it has everything the list view needs.
-			// Full request/response bodies are lazy-loaded per row when needed
-			// (modal open, copy-as-JSON) via /api/requests/payload/:id.
+			const previous = queryClient.getQueryData<{
+				requests: RequestPayload[];
+				detailsMap: Map<string, RequestSummary> | RequestSummary[];
+			}>(queryKeys.requests(limit));
+
 			const requestsSummary = await api.getRequestsSummary(limit);
 			const detailsMap = new Map(
 				requestsSummary.map((summary) => [summary.id, summary]),
 			);
 			const requests: RequestPayload[] =
 				requestsSummary.map(summaryToPlaceholder);
-			return { requests, detailsMap };
+
+			return reconcileRequestsCache(
+				{ requests, detailsMap },
+				previous
+					? {
+							requests: previous.requests,
+							detailsMap:
+								previous.detailsMap instanceof Map
+									? previous.detailsMap
+									: new Map(
+											(previous.detailsMap as RequestSummary[]).map((s) => [
+												s.id,
+												s,
+											]),
+										),
+						}
+					: undefined,
+				limit,
+			);
 		},
 		staleTime: Infinity, // Consider data fresh until manually refetched
 		gcTime: 10 * 60 * 1000, // Keep in cache for 10 minutes

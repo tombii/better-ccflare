@@ -64,13 +64,13 @@ Before you begin, ensure you have the following installed:
 
 2. **Clone your fork**:
    ```bash
-   git clone https://github.com/YOUR_USERNAME/better-ccflare.git
-   cd better-ccflare
+   git clone https://github.com/omcdowell/the-best-ccflare.git
+   cd the-best-ccflare
    ```
 
 3. **Add the upstream remote**:
    ```bash
-   git remote add upstream https://github.com/ORIGINAL_OWNER/better-ccflare.git
+   git remote add upstream https://github.com/tombii/better-ccflare.git
    ```
 
 4. **Install dependencies**:
@@ -172,7 +172,7 @@ When contributing, ensure any major architectural changes or new patterns are do
 
 ## Project Structure
 
-better-ccflare is organized as a Bun monorepo with clear separation of concerns:
+the-best-ccflare is organized as a Bun monorepo with clear separation of concerns:
 
 ```
 better-ccflare/
@@ -720,7 +720,7 @@ Contributors are recognized in:
 The CLI functionality provides explicit commands for all operations. Use `bun run cli` with command-line flags:
 
 ```bash
-# If better-ccflare is not installed globally, use:
+# If the-best-ccflare is not installed globally, use:
 # bun run cli [options]
 # or build and run with: bun run better-ccflare
 

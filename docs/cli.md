@@ -1,4 +1,4 @@
-# better-ccflare CLI Documentation
+# the-best-ccflare CLI Documentation
 
 The better-ccflare CLI provides a command-line interface for managing OAuth accounts, monitoring usage statistics, and controlling the load balancer.
 
@@ -28,7 +28,7 @@ The better-ccflare CLI provides a command-line interface for managing OAuth acco
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/tombii/better-ccflare.git
+git clone https://github.com/omcdowell/the-best-ccflare.git
 cd better-ccflare
 ```
 

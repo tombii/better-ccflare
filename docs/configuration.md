@@ -1,4 +1,4 @@
-# better-ccflare Configuration Guide
+# the-best-ccflare Configuration Guide
 
 This guide covers all configuration options for better-ccflare, including file-based configuration, environment variables, and runtime API updates.
 
@@ -126,7 +126,7 @@ These environment variables are not stored in the configuration file and must be
 
 ## Database Configuration
 
-better-ccflare supports two database backends:
+the-best-ccflare supports two database backends:
 
 | Backend | When used | Environment variable |
 |---------|-----------|---------------------|

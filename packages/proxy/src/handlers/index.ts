@@ -39,7 +39,10 @@ export {
 } from "./token-health-service";
 export {
 	type CodexUsageRefreshOutcome,
+	checkAllAccountsHealthWithRefreshRuntime,
 	clearAccountRefreshCache,
+	enrichTokenHealthWithRefreshRuntime,
+	getTokenRefreshRuntimeStatus,
 	getValidAccessToken,
 	refreshCodexUsageForAccount,
 	registerCodexUsageRefresher,

@@ -425,7 +425,7 @@ echo "✅ API keys generated for deployment"
 # Dockerfile.example
 FROM node:18-alpine
 
-# Install better-ccflare
+# Install the-best-ccflare
 RUN npm install -g better-ccflare
 
 # Generate API key during build
@@ -440,9 +440,9 @@ CMD ["node", "server.js"]
 
 ## 🆘 Need Help?
 
-- **Documentation**: [Full Documentation](https://github.com/your-repo/better-ccflare)
-- **Issues**: [GitHub Issues](https://github.com/your-repo/better-ccflare/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/your-repo/better-ccflare/discussions)
+- **Documentation**: [Full Documentation](https://github.com/omcdowell/the-best-ccflare)
+- **Issues**: [GitHub Issues](https://github.com/omcdowell/the-best-ccflare/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/omcdowell/the-best-ccflare/discussions)
 - **Community**: [Join our Discord](https://discord.gg/better-ccflare)
 
 ---

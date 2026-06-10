@@ -1,7 +1,15 @@
 {
 	"private": true,
 	"name": "better-ccflare",
-	"description": "A load balancer proxy for Claude Code with intelligent load balancing across multiple accounts",
+	"description": "the-best-ccflare — a load balancer proxy for Claude Code with intelligent load balancing across multiple accounts",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/omcdowell/the-best-ccflare.git"
+	},
+	"homepage": "https://github.com/omcdowell/the-best-ccflare#readme",
+	"bugs": {
+		"url": "https://github.com/omcdowell/the-best-ccflare/issues"
+	},
 	"workspaces": [
 		"apps/*",
 		"packages/*"
@@ -17,7 +25,7 @@
 		"typecheck": "bunx tsc --noEmit",
 		"test": "bun test",
 		"test:cli": "bun test apps/cli/__tests__",
-		"build": "echo \"🏗️  Building better-ccflare v$(node -p \"require('./package.json').version\")\" && bun run build:dashboard && bun run build:cli",
+		"build": "echo \"🏗️  Building the-best-ccflare v$(node -p \"require('./package.json').version\") (npm: better-ccflare)\" && bun run build:dashboard && bun run build:cli",
 		"build:dashboard": "bun run --cwd packages/dashboard-web build",
 		"build:cli": "bun run --cwd apps/cli build",
 		"build:lander": "bun run --cwd apps/lander build",

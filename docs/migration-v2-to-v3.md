@@ -111,7 +111,7 @@ bun install -g better-ccflare@latest
 
 ### 3. Start the Application
 
-Start better-ccflare normally. The migration will run automatically:
+Start the-best-ccflare normally. The migration will run automatically:
 
 ```bash
 better-ccflare
@@ -180,5 +180,5 @@ If you encounter issues during migration:
 
 1. Check the logs for error messages
 2. Verify your database backup exists
-3. Consult the [GitHub Issues](https://github.com/tombii/better-ccflare/issues) page
+3. Consult the [GitHub Issues](https://github.com/omcdowell/the-best-ccflare/issues) page
 4. Create a new issue if needed with your version information and error details

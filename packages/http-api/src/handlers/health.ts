@@ -1,29 +1,19 @@
 import type { Config } from "@better-ccflare/config";
 import { isAccountAvailable, TtlCache } from "@better-ccflare/core";
-import type { DatabaseOperations } from "@better-ccflare/database";
+import type {
+	AsyncWriterHealth,
+	DatabaseOperations,
+} from "@better-ccflare/database";
 import { jsonResponse } from "@better-ccflare/http-common";
 import type { Account } from "@better-ccflare/types";
 import type { HealthResponse, IntegrityStatus, PoolStatus } from "../types";
 
-type AsyncWriterHealthFn = () => {
-	healthy: boolean;
-	failureCount: number;
-	recentDrops: number;
-	queuedJobs: number;
-	metadataQueuedJobs: number;
-	payloadQueuedJobs: number;
-	payloadBytesPending: number;
-	oldestMetadataAgeMs: number;
-	oldestPayloadAgeMs: number;
-	metadataDropped: number;
-	payloadDropped: number;
-	payloadDroppedBytes: number;
-};
+type AsyncWriterHealthFn = () => AsyncWriterHealth;
 type UsageWorkerHealthFn = () => {
 	state: string;
-	pendingAcks: number;
-	lastError: string | null;
-	startedAt: number | null;
+	asyncWriter?: AsyncWriterHealth;
+	pendingHandleEnds?: number;
+	trackedRequests?: number;
 };
 type IntegrityStatusFn = () => IntegrityStatus;
 
@@ -124,7 +114,8 @@ export function createHealthHandler(
 			? asyncWriterHealth.healthy
 			: true;
 		const usageWorkerHealthy = usageWorkerHealth
-			? usageWorkerHealth.state !== "error"
+			? usageWorkerHealth.state !== "error" &&
+				(usageWorkerHealth.asyncWriter?.healthy ?? true)
 			: true;
 		const runtimeHealthy = asyncWriterHealthy && usageWorkerHealthy;
 
@@ -151,8 +142,9 @@ export function createHealthHandler(
 			if (!response.runtime) {
 				response.runtime = {};
 			}
+			const runtime = response.runtime;
 			const integrity = getIntegrityStatus();
-			response.runtime!.storage = {
+			runtime.storage = {
 				integrity: {
 					status: integrity.status,
 					runningKind: integrity.runningKind,

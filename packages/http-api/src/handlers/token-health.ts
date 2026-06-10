@@ -1,8 +1,9 @@
 import type { DatabaseOperations } from "@better-ccflare/database";
 import { jsonResponse } from "@better-ccflare/http-common";
 import {
-	checkAllAccountsHealth,
+	checkAllAccountsHealthWithRefreshRuntime,
 	checkRefreshTokenHealth,
+	enrichTokenHealthWithRefreshRuntime,
 	getAccountsNeedingReauth,
 } from "@better-ccflare/proxy";
 
@@ -12,7 +13,7 @@ import {
 export function createTokenHealthHandler(dbOps: DatabaseOperations) {
 	return async (): Promise<Response> => {
 		const accounts = await dbOps.getAllAccounts();
-		const healthReport = checkAllAccountsHealth(accounts);
+		const healthReport = checkAllAccountsHealthWithRefreshRuntime(accounts);
 
 		return jsonResponse({
 			success: true,
@@ -74,11 +75,11 @@ export function createAccountTokenHealthHandler(
 			);
 		}
 
-		const tokenHealth = checkRefreshTokenHealth(account);
-
 		return jsonResponse({
 			success: true,
-			data: tokenHealth,
+			data: enrichTokenHealthWithRefreshRuntime(
+				checkRefreshTokenHealth(account),
+			),
 		});
 	};
 }

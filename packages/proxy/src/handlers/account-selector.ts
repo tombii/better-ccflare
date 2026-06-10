@@ -6,6 +6,7 @@ import type {
 	ComboSlotInfo,
 	RequestMeta,
 } from "@better-ccflare/types";
+import { resolveRouteIntent } from "../routing/route-intent";
 import type { ProxyContext } from "./proxy-types";
 
 const log = new Logger("AccountSelector");
@@ -133,20 +134,11 @@ export async function selectAccountsForRequest(
 		}
 	}
 
-	// Filter out excluded providers (e.g. claude-oauth excluded by the responses adapter)
-	const excludeProviders =
-		meta.headers
-			?.get("x-better-ccflare-exclude-providers")
-			?.split(",")
-			.map((p) => p.trim())
-			.filter(Boolean) ?? [];
-
-	const includeProviders =
-		meta.headers
-			?.get("x-better-ccflare-include-providers")
-			?.split(",")
-			.map((p) => p.trim())
-			.filter(Boolean) ?? [];
+	// Route intent + explicit provider filters (native routes, responses adapter, opt-in)
+	const { excludeProviders, includeProviders } = resolveRouteIntent(
+		meta.path,
+		meta.headers,
+	);
 
 	const applyInclusions = (accounts: Account[]): Account[] => {
 		if (includeProviders.length === 0) return accounts;

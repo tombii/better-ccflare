@@ -1,4 +1,4 @@
-# better-ccflare HTTP API Documentation
+# the-best-ccflare HTTP API Documentation
 
 ## Quick Start
 
@@ -116,7 +116,7 @@ Codex CLI (and other OpenAI Responses API clients) can target better-ccflare dir
 Note: this is distinct from the `codex` *provider*, which routes requests outbound to OpenAI's Codex endpoint.
 
 **Known Limitations (`/v1/responses`):**
-- `previous_response_id` is accepted but ignored — better-ccflare is stateless and does not store prior responses. Codex uses this field only over WebSocket (which better-ccflare does not implement); for regular HTTP requests Codex always sends the full conversation history in `input`, so this field has no effect.
+- `previous_response_id` is accepted but ignored — the-best-ccflare is stateless and does not store prior responses. Codex uses this field only over WebSocket (which the-best-ccflare does not implement); for regular HTTP requests Codex always sends the full conversation history in `input`, so this field has no effect.
 - Built-in tool types (`web_search_preview`, `code_interpreter`, `file_search`) are silently skipped; only `type: "function"` tools are forwarded to Anthropic.
 
 **Note:** There is no `/v1/models` endpoint provided by better-ccflare. Model listing would need to be done directly through Claude's API if such an endpoint exists.
@@ -124,6 +124,9 @@ Note: this is distinct from the `codex` *provider*, which routes requests outbou
 **Headers:**
 - All standard Claude API headers are supported
 - `Authorization` header is managed by better-ccflare (no need to provide)
+- `x-better-ccflare-allow-providers: codex` — opt in to Codex account fallback on `POST /v1/messages` (excluded by default; native `/v1/codex/responses` does not need this header)
+
+**Route intent:** `POST /v1/messages` excludes Codex accounts by default. Native `POST /v1/codex/responses` selects Codex accounts only. Compatibility `POST /v1/responses` translates to `/v1/messages` and inherits the same Codex exclusion.
 
 **Request Body:**
 Same as Claude API requirements for the specific endpoint.
@@ -132,7 +135,7 @@ Same as Claude API requirements for the specific endpoint.
 Proxied response from Claude API, including streaming responses.
 
 **Automatic Failover:**
-If a request fails or an account is rate limited, better-ccflare automatically retries with the next available account according to the configured load balancing strategy. This ensures high availability and reliability.
+If a request fails or an account is rate limited, the-best-ccflare automatically retries with the next available account according to the configured load balancing strategy. This ensures high availability and reliability.
 
 **Example:**
 ```bash
@@ -508,9 +511,19 @@ Get recent request summary.
 curl "http://localhost:8080/api/requests?limit=100"
 ```
 
+#### GET /api/requests/stream
+
+Server-Sent Events stream of live request summaries for the dashboard. Each event includes the same summary fields as `GET /api/requests`, plus persistence status:
+
+- `persisted: true` — metadata row was written before the SSE event was emitted
+- `persistenceFailed: true` — metadata write failed or was dropped; dashboard shows **Not saved**
+- `pendingPersistence: true` (payload `meta`) — full payload still being written; dashboard shows **Saving…**
+
+On reload, the dashboard reconciles persisted `/api/requests` rows with recent live-only cache entries (30-minute window) so completed rows are not silently dropped.
+
 #### GET /api/requests/detail
 
-Get detailed request information including payloads. Request and response bodies are base64-encoded to handle binary data and special characters.
+Get detailed request information including payloads. Request and response bodies are base64-encoded to handle binary data and special characters. New payload rows are gzip-compressed at rest (`request_payloads.compressed = 1`); legacy plaintext rows remain readable.
 
 **Query Parameters:**
 - `limit` - Number of requests to return (default: 100)
@@ -885,7 +898,7 @@ All API errors follow a consistent format:
 
 ### Rate Limiting
 
-When an account hits rate limits, better-ccflare automatically fails over to the next available account. If all accounts are rate limited, a 503 error is returned.
+When an account hits rate limits, the-best-ccflare automatically fails over to the next available account. If all accounts are rate limited, a 503 error is returned.
 
 Rate limit information is included in account responses:
 - `rateLimitStatus` - Current status (e.g., "allowed", "allowed_warning", "rate_limited")
@@ -903,7 +916,7 @@ The proxy endpoints support streaming responses for compatible Claude API calls.
 3. Each chunk is delivered as a Server-Sent Event
 
 **Streaming Response Capture:**
-better-ccflare automatically captures streaming response bodies for analytics and debugging purposes:
+the-best-ccflare automatically captures streaming response bodies for analytics and debugging purposes:
 - Captured data is limited to `CF_STREAM_BODY_MAX_BYTES` (default: 256KB)
 - The capture process doesn't interfere with the client's stream
 - Captured bodies are stored base64-encoded in the request history
@@ -958,7 +971,7 @@ better-ccflare can be configured using the following environment variables:
 
 ### Configuration File
 
-In addition to environment variables, better-ccflare supports configuration through a JSON file. The config file location varies by platform:
+In addition to environment variables, the-best-ccflare supports configuration through a JSON file. The config file location varies by platform:
 - macOS: `~/Library/Application Support/better-ccflare/config.json`
 - Linux: `~/.config/better-ccflare/config.json`
 - Windows: `%APPDATA%\better-ccflare\config.json`
@@ -990,7 +1003,7 @@ The following strategy is available:
 
 1. **No Authentication**: The API endpoints do not require authentication. better-ccflare manages the OAuth tokens internally for proxying to Claude.
 
-2. **Automatic Failover**: When a request fails or an account is rate limited, better-ccflare automatically tries the next available account. If no accounts are available, requests are forwarded without authentication as a fallback.
+2. **Automatic Failover**: When a request fails or an account is rate limited, the-best-ccflare automatically tries the next available account. If no accounts are available, requests are forwarded without authentication as a fallback.
 
 3. **Token Refresh**: Access tokens are automatically refreshed when they expire.
 

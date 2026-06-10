@@ -6,7 +6,6 @@ import {
 import { Logger } from "@better-ccflare/logger";
 import { usageCache } from "@better-ccflare/providers";
 import type { Account } from "@better-ccflare/types";
-import { cacheBodyStore } from "./cache-body-store";
 import {
 	createPoolExhaustedResponse,
 	createRequestMetadata,
@@ -25,8 +24,12 @@ import {
 	selectAccountsForRequest,
 	validateProviderPath,
 } from "./handlers";
-import { UsageWorkerController } from "./usage-worker-controller";
-import type { ConfigUpdateMessage, SummaryMessage } from "./worker-messages";
+import {
+	getUsageCollector,
+	initUsageCollector,
+	tryGetUsageCollector,
+	type UsageCollectorHealth,
+} from "./usage-collector";
 
 export type { ProxyContext } from "./handlers";
 
@@ -96,55 +99,40 @@ function extractProjectFromRequest(
 	return null;
 }
 
-// ===== WORKER MANAGEMENT =====
+// ===== USAGE COLLECTOR MANAGEMENT =====
 
-let pendingStorePayloads: boolean | null = null;
+export function initProxy(getStorePayloads: () => boolean): void {
+	initUsageCollector(getStorePayloads, (summary) => {
+		requestEvents.emit("event", { type: "summary", payload: summary });
+	});
+}
 
-const usageWorkerController = new UsageWorkerController(
-	(msg: SummaryMessage) => {
-		cacheBodyStore.onSummary(
-			msg.summary.id,
-			msg.summary.cacheCreationInputTokens,
-		);
-		requestEvents.emit("event", { type: "summary", payload: msg.summary });
-	},
-	() => {
-		// Apply deferred config update once worker is ready
-		if (pendingStorePayloads !== null) {
-			const msg: ConfigUpdateMessage = {
-				type: "config-update",
-				storePayloads: pendingStorePayloads,
-			};
-			usageWorkerController.postMessage(msg);
-			pendingStorePayloads = null;
+export async function drainUsageCollector(): Promise<void> {
+	return tryGetUsageCollector()?.drain() ?? Promise.resolve();
+}
+
+export function getUsageCollectorHealth(): UsageCollectorHealth {
+	return (
+		tryGetUsageCollector()?.getHealth() ?? {
+			state: "ready",
+			asyncWriter: {
+				healthy: true,
+				failureCount: 0,
+				recentDrops: 0,
+				queuedJobs: 0,
+				metadataQueuedJobs: 0,
+				payloadQueuedJobs: 0,
+				payloadBytesPending: 0,
+				oldestMetadataAgeMs: 0,
+				oldestPayloadAgeMs: 0,
+				metadataDropped: 0,
+				payloadDropped: 0,
+				payloadDroppedBytes: 0,
+			},
+			pendingHandleEnds: 0,
+			trackedRequests: 0,
 		}
-	},
-);
-
-export function getUsageWorker(): UsageWorkerController {
-	return usageWorkerController;
-}
-
-export function startUsageWorker(): void {
-	usageWorkerController.start();
-}
-
-export function sendWorkerConfigUpdate(storePayloads: boolean): void {
-	if (!usageWorkerController.isReady()) {
-		// Defer until worker is ready
-		pendingStorePayloads = storePayloads;
-		return;
-	}
-	const msg: ConfigUpdateMessage = { type: "config-update", storePayloads };
-	usageWorkerController.postMessage(msg);
-}
-
-export function terminateUsageWorker(): Promise<void> {
-	return usageWorkerController.terminate();
-}
-
-export function getUsageWorkerHealth() {
-	return usageWorkerController.getHealth();
+	);
 }
 
 // ===== MAIN HANDLER =====
@@ -380,8 +368,7 @@ export async function handleProxy(
 		const isAutoRefreshProbe =
 			req.headers.get("x-better-ccflare-auto-refresh") === "true";
 		if (!isAutoRefreshProbe) {
-			// Send error message to usage worker for request history logging
-			ctx.usageWorker.postMessage({
+			getUsageCollector().handleStart({
 				type: "start",
 				messageId: crypto.randomUUID(),
 				requestId: requestMeta.id,
@@ -409,12 +396,19 @@ export async function handleProxy(
 				failoverAttempts: 0,
 			});
 
-			ctx.usageWorker.postMessage({
-				type: "end",
-				requestId: requestMeta.id,
-				success: false,
-				error: "pool_exhausted",
-			});
+			getUsageCollector()
+				.handleEnd({
+					type: "end",
+					requestId: requestMeta.id,
+					success: false,
+					error: "pool_exhausted",
+				})
+				.catch((err: unknown) => {
+					log.error(
+						`handleEnd failed for pool_exhausted request ${requestMeta.id}`,
+						err,
+					);
+				});
 		}
 
 		return poolExhaustedResponse;

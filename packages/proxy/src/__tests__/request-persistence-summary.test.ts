@@ -1,160 +1,211 @@
-import { expect, test } from "bun:test";
+import { beforeEach, describe, expect, it, mock } from "bun:test";
 import type { RequestResponse } from "@better-ccflare/types";
-import {
-	buildRequestSummary,
-	enqueueFinalRequestPersistence,
-	type FinalRequestPersistenceInput,
-	type RequestPersistenceWriter,
-	type SaveRequest,
-} from "../request-persistence-summary";
+import { UsageCollector } from "../usage-collector";
+import type { StartMessage } from "../worker-messages";
 
-function baseInput(): FinalRequestPersistenceInput {
+function makeStart(overrides: Partial<StartMessage> = {}): StartMessage {
 	return {
-		requestId: "req-live-1",
-		timestamp: 1_700_000_000_000,
+		type: "start",
+		messageId: "msg-1",
+		requestId: "req-persist-1",
+		accountId: "acc-1",
 		method: "POST",
 		path: "/v1/messages",
-		clientPath: "/v1/messages",
-		accountId: "acct-1",
-		statusCode: 200,
-		success: true,
-		error: null,
-		responseTimeMs: 123,
+		timestamp: Date.now() - 100,
+		requestHeaders: {},
+		requestBody: null,
+		requestedModel: "claude-haiku-4-5-20251001",
+		project: null,
+		responseStatus: 200,
+		responseHeaders: { "content-type": "application/json" },
+		isStream: false,
+		providerName: "anthropic",
+		accountBillingType: null,
+		accountAutoPauseOnOverageEnabled: 0,
+		accountName: "test",
+		agentUsed: "claude-code-1",
+		comboName: null,
+		apiKeyId: null,
+		apiKeyName: null,
+		retryAttempt: 0,
 		failoverAttempts: 0,
-		usage: {
-			model: "claude-test",
-			inputTokens: 10,
-			cacheReadInputTokens: 2,
-			cacheCreationInputTokens: 3,
-			outputTokens: 5,
-			totalTokens: 20,
-			costUsd: 0.001,
-			tokensPerSecond: 42,
-		},
-		agentUsed: "agent-a",
-		apiKeyId: "key-1",
-		apiKeyName: "test key",
-		project: "project-a",
-		billingType: "plan",
-		comboName: "combo-a",
-		upstreamPath: "/messages",
-		routingMode: "native",
+		clientPath: "/v1/messages",
+		upstreamPath: null,
+		routingMode: null,
+		...overrides,
 	};
 }
 
-test("buildRequestSummary preserves the live summary shape", () => {
-	const summary = buildRequestSummary(baseInput());
+describe("UsageCollector request persistence vs SSE summary", () => {
+	let saveRequest: ReturnType<typeof mock>;
+	let enqueueMetadataAndWait: ReturnType<typeof mock>;
+	let onSummary: ReturnType<typeof mock>;
+	let collector: UsageCollector;
 
-	expect(summary).toEqual({
-		id: "req-live-1",
-		timestamp: new Date(1_700_000_000_000).toISOString(),
-		method: "POST",
-		path: "/v1/messages",
-		accountUsed: "acct-1",
-		statusCode: 200,
-		success: true,
-		errorMessage: null,
-		responseTimeMs: 123,
-		failoverAttempts: 0,
-		model: "claude-test",
-		promptTokens: 10,
-		completionTokens: 5,
-		totalTokens: 20,
-		inputTokens: 10,
-		cacheReadInputTokens: 2,
-		cacheCreationInputTokens: 3,
-		outputTokens: 5,
-		costUsd: 0.001,
-		agentUsed: "agent-a",
-		tokensPerSecond: 42,
-		apiKeyId: "key-1",
-		apiKeyName: "test key",
-		project: "project-a",
-		billingType: "plan",
-		comboName: "combo-a",
-	} satisfies RequestResponse);
-});
+	beforeEach(() => {
+		saveRequest = mock(() => Promise.resolve());
+		onSummary = mock((_summary: RequestResponse) => {});
+		enqueueMetadataAndWait = mock(async (job: () => Promise<void>) => {
+			await job();
+			return "saved" as const;
+		});
 
-test("completed SSE summary is emitted only after saveRequest succeeds", async () => {
-	let capturedJob: (() => Promise<void> | void) | null = null;
-	const writer: RequestPersistenceWriter = {
-		enqueue: (job) => {
-			capturedJob = job;
-		},
-	};
-
-	let resolveSave: (() => void) | null = null;
-	const saveRequestCalls: unknown[][] = [];
-	const dbOps: SaveRequest = {
-		saveRequest: (...args) => {
-			saveRequestCalls.push(args);
-			return new Promise<void>((resolve) => {
-				resolveSave = resolve;
-			});
-		},
-	};
-
-	const summaries: RequestResponse[] = [];
-	enqueueFinalRequestPersistence(
-		baseInput(),
-		dbOps,
-		writer,
-		(summary) => summaries.push(summary),
-		() => {},
-	);
-
-	expect(summaries).toHaveLength(0);
-	expect(capturedJob).toBeFunction();
-
-	const jobPromise = capturedJob?.();
-	expect(summaries).toHaveLength(0);
-	expect(saveRequestCalls).toHaveLength(1);
-	expect(saveRequestCalls[0][0]).toBe("req-live-1");
-	expect(saveRequestCalls[0][2]).toBe("/v1/messages");
-	expect(saveRequestCalls[0][9]).toEqual({
-		model: "claude-test",
-		promptTokens: 15,
-		completionTokens: 5,
-		totalTokens: 20,
-		costUsd: 0.001,
-		inputTokens: 10,
-		outputTokens: 5,
-		cacheReadInputTokens: 2,
-		cacheCreationInputTokens: 3,
-		tokensPerSecond: 42,
+		collector = new UsageCollector(
+			{
+				saveRequest,
+				updateAccountUsage: mock(() => Promise.resolve()),
+				pauseAccount: mock(() => Promise.resolve()),
+			} as never,
+			{
+				enqueue: mock(() => {}),
+				enqueueMetadataAndWait,
+				enqueuePayload: () => true,
+				canAcceptPayload: () => true,
+				recordPayloadDrop: () => {},
+				dispose: async () => {},
+			} as never,
+			() => false,
+			onSummary,
+		);
 	});
 
-	resolveSave?.();
-	await jobPromise;
+	it("emits summary only after saveRequest completes", async () => {
+		const order: string[] = [];
+		saveRequest.mockImplementation(async () => {
+			order.push("saveRequest");
+		});
+		onSummary.mockImplementation(() => {
+			order.push("onSummary");
+		});
 
-	expect(summaries).toHaveLength(1);
-	expect(summaries[0].id).toBe("req-live-1");
-});
+		collector.handleStart(makeStart());
+		await collector.handleEnd({
+			type: "end",
+			requestId: "req-persist-1",
+			success: true,
+			responseBody: Buffer.from(
+				JSON.stringify({
+					type: "message",
+					model: "claude-haiku-4-5-20251001",
+					usage: { input_tokens: 10, output_tokens: 5 },
+				}),
+			).toString("base64"),
+		});
 
-test("failed saveRequest does not emit a completed SSE summary", async () => {
-	let capturedJob: (() => Promise<void> | void) | null = null;
-	const writer: RequestPersistenceWriter = {
-		enqueue: (job) => {
-			capturedJob = job;
-		},
-	};
-	const error = new Error("db busy");
-	const dbOps: SaveRequest = {
-		saveRequest: () => Promise.reject(error),
-	};
-	const summaries: RequestResponse[] = [];
-	const errors: unknown[] = [];
+		expect(saveRequest).toHaveBeenCalledTimes(1);
+		expect(onSummary).toHaveBeenCalledTimes(1);
+		expect(order).toEqual(["saveRequest", "onSummary"]);
+	});
 
-	enqueueFinalRequestPersistence(
-		baseInput(),
-		dbOps,
-		writer,
-		(summary) => summaries.push(summary),
-		(err) => errors.push(err),
-	);
+	it("marks summary persisted=true when metadata save succeeds", async () => {
+		collector.handleStart(makeStart());
+		await collector.handleEnd({
+			type: "end",
+			requestId: "req-persist-1",
+			success: true,
+			responseBody: Buffer.from(
+				JSON.stringify({
+					type: "message",
+					model: "claude-haiku-4-5-20251001",
+					usage: { input_tokens: 1, output_tokens: 1 },
+				}),
+			).toString("base64"),
+		});
 
-	await capturedJob?.();
+		const summary = onSummary.mock.calls[0]?.[0] as RequestResponse;
+		expect(summary.persisted).toBe(true);
+		expect(summary.persistenceFailed).toBeUndefined();
+	});
 
-	expect(summaries).toHaveLength(0);
-	expect(errors).toEqual([error]);
+	it("does not emit a completed summary when metadata save is dropped", async () => {
+		enqueueMetadataAndWait.mockResolvedValue("dropped");
+
+		collector.handleStart(makeStart());
+		await collector.handleEnd({
+			type: "end",
+			requestId: "req-persist-1",
+			success: true,
+			responseBody: Buffer.from(
+				JSON.stringify({
+					type: "message",
+					model: "claude-haiku-4-5-20251001",
+					usage: { input_tokens: 1, output_tokens: 1 },
+				}),
+			).toString("base64"),
+		});
+
+		expect(saveRequest).not.toHaveBeenCalled();
+		expect(onSummary).toHaveBeenCalledTimes(1);
+		const summary = onSummary.mock.calls[0]?.[0] as RequestResponse;
+		expect(summary.persisted).toBe(false);
+		expect(summary.persistenceFailed).toBe(true);
+	});
+
+	it("marks persistenceFailed when saveRequest throws", async () => {
+		saveRequest.mockRejectedValue(new Error("db down"));
+		enqueueMetadataAndWait.mockImplementation(
+			async (job: () => Promise<void>) => {
+				try {
+					await job();
+					return "saved" as const;
+				} catch {
+					return "failed" as const;
+				}
+			},
+		);
+
+		collector.handleStart(makeStart());
+		await collector.handleEnd({
+			type: "end",
+			requestId: "req-persist-1",
+			success: true,
+			responseBody: Buffer.from(
+				JSON.stringify({
+					type: "message",
+					model: "claude-haiku-4-5-20251001",
+					usage: { input_tokens: 1, output_tokens: 1 },
+				}),
+			).toString("base64"),
+		});
+
+		const summary = onSummary.mock.calls[0]?.[0] as RequestResponse;
+		expect(summary.persisted).toBe(false);
+		expect(summary.persistenceFailed).toBe(true);
+	});
+
+	it("does not emit summary until enqueueMetadataAndWait job finishes", async () => {
+		let releaseSave!: () => void;
+		const saveBlocked = new Promise<void>((resolve) => {
+			releaseSave = resolve;
+		});
+		saveRequest.mockImplementation(() => saveBlocked);
+		enqueueMetadataAndWait.mockImplementation(
+			async (job: () => Promise<void>) => {
+				await job();
+				return "saved" as const;
+			},
+		);
+
+		collector.handleStart(makeStart());
+		const endPromise = collector.handleEnd({
+			type: "end",
+			requestId: "req-persist-1",
+			success: true,
+			responseBody: Buffer.from(
+				JSON.stringify({
+					type: "message",
+					model: "claude-haiku-4-5-20251001",
+					usage: { input_tokens: 1, output_tokens: 1 },
+				}),
+			).toString("base64"),
+		});
+
+		await Bun.sleep(20);
+		expect(saveRequest).toHaveBeenCalled();
+		expect(onSummary).not.toHaveBeenCalled();
+
+		releaseSave();
+		await endPromise;
+		expect(onSummary).toHaveBeenCalledTimes(1);
+	});
 });

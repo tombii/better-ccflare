@@ -1,4 +1,4 @@
-# better-ccflare Documentation
+# the-best-ccflare Documentation
 
 ## Track Every Request. Go Low-Level. Never Hit Rate Limits Again.
 
@@ -9,11 +9,11 @@
 
 ## Overview
 
-better-ccflare is the ultimate Claude API proxy with intelligent load balancing across multiple accounts. Built with TypeScript and Bun runtime, it provides full visibility into every request, response, and rate limit, ensuring your AI applications never experience downtime due to rate limiting.
+the-best-ccflare is the ultimate Claude API proxy with intelligent load balancing across multiple accounts. Built with TypeScript and Bun runtime, it provides full visibility into every request, response, and rate limit, ensuring your AI applications never experience downtime due to rate limiting.
 
-### Why better-ccflare?
+### Why the-best-ccflare?
 
-When working with Claude API at scale, rate limits can become a significant bottleneck. better-ccflare solves this by:
+When working with Claude API at scale, rate limits can become a significant bottleneck. the-best-ccflare solves this by:
 
 - **🚀 Zero Rate Limit Errors**: Automatically distributes requests across multiple accounts with intelligent failover
 - **📊 Request-Level Analytics**: Track latency, token usage, and costs in real-time with <10ms overhead
@@ -75,21 +75,21 @@ When working with Claude API at scale, rate limits can become a significant bott
 
 ## Quick Start
 
-### 1. Install better-ccflare
+### 1. Install the-best-ccflare
 
 ```bash
 # Clone the repository
-git clone https://github.com/snipeship/better-ccflare.git
-cd better-ccflare
+git clone https://github.com/omcdowell/the-best-ccflare.git
+cd the-best-ccflare
 
 # Install dependencies
 bun install
 ```
 
-### 2. Start better-ccflare (CLI + Server)
+### 2. Start the-best-ccflare (CLI + Server)
 
 ```bash
-# Start better-ccflare with CLI (automatically starts server if no command specified)
+# Start the-best-ccflare with CLI (automatically starts server if no command specified)
 bun run cli
 
 # Or start just the server
@@ -245,12 +245,12 @@ NODE_ENV=production            # Environment mode
 - [SQLite Documentation](https://www.sqlite.org/docs.html) - SQLite database docs
 
 ### Support
-- [GitHub Repository](https://github.com/snipeship/better-ccflare) - Source code and issues
+- [GitHub Repository](https://github.com/omcdowell/the-best-ccflare) - Source code and issues
 - [Contributing](./contributing.md) - How to contribute to better-ccflare
 
 ## License
 
-better-ccflare is open source software licensed under the MIT License. See the [LICENSE](../LICENSE) file for details.
+the-best-ccflare is open source software licensed under the MIT License. See the [LICENSE](../LICENSE) file for details.
 
 ---
 

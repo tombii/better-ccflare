@@ -11,6 +11,7 @@ import type { Account } from "@better-ccflare/types";
 import { TOKEN_SAFETY_WINDOW_MS } from "./constants";
 import { getValidAccessToken } from "./handlers";
 import type { ProxyContext } from "./proxy";
+import { computeRefreshScheduleDelay, runStaggered } from "./refresh-jitter";
 
 const log = new Logger("AutoRefreshScheduler");
 
@@ -201,11 +202,22 @@ export class AutoRefreshScheduler {
 				`Found ${accountsToRefresh.length} account(s) with new windows for auto-refresh`,
 			);
 
-			// Send dummy message to each account
-			// The sendDummyMessage method will update lastRefreshResetTime with the NEW rate_limit_reset from the API
-			for (const accountRow of accountsToRefresh) {
-				await this.sendDummyMessage(accountRow);
-			}
+			// Send dummy messages concurrently after per-account jitter. This keeps
+			// total scheduler duration bounded by the largest jitter instead of the
+			// sum of all jitters when many accounts become eligible together.
+			// The sendDummyMessage method will update lastRefreshResetTime with the NEW rate_limit_reset from the API.
+			await runStaggered(
+				accountsToRefresh,
+				(accountRow) => computeRefreshScheduleDelay(accountRow.id),
+				async (accountRow, jitterMs) => {
+					if (jitterMs > 0) {
+						log.debug(
+							`Auto-refresh jitter: waiting ${jitterMs}ms before probing ${accountRow.name}`,
+						);
+					}
+					await this.sendDummyMessage(accountRow);
+				},
+			);
 
 			// Proactively refresh Qwen OAuth tokens expiring within the safety window
 			await this.checkAndRefreshQwenTokens();
@@ -739,93 +751,103 @@ export class AutoRefreshScheduler {
 			`Proactive Qwen token refresh: ${accounts.length} account(s) need refresh`,
 		);
 
-		for (const row of accounts) {
-			// Skip if a refresh is already in-flight for this account (deduplication)
-			if (this.proxyContext.refreshInFlight.has(row.id)) {
-				log.debug(
-					`Skipping proactive Qwen refresh for ${row.name} — refresh already in-flight`,
-				);
-				continue;
-			}
-
-			try {
-				log.info(`Refreshing Qwen token for account: ${row.name}`);
-
-				const provider = getProvider(row.provider);
-				if (!provider) {
-					log.error(`No provider found for qwen (account: ${row.name})`);
-					continue;
+		await runStaggered(
+			accounts,
+			(row) => computeRefreshScheduleDelay(row.id),
+			async (row, jitterMs) => {
+				// Skip if a refresh is already in-flight for this account (deduplication)
+				if (this.proxyContext.refreshInFlight.has(row.id)) {
+					log.debug(
+						`Skipping proactive Qwen refresh for ${row.name} — refresh already in-flight`,
+					);
+					return;
 				}
 
-				const account: Account = {
-					id: row.id,
-					name: row.name,
-					provider: row.provider,
-					api_key: null,
-					refresh_token: row.refresh_token,
-					access_token: row.access_token,
-					expires_at: row.expires_at,
-					request_count: 0,
-					total_requests: 0,
-					last_used: null,
-					created_at: 0,
-					rate_limited_until: null,
-					rate_limited_reason: null,
-					rate_limited_at: null,
-					session_start: null,
-					session_request_count: 0,
-					paused: false,
-					rate_limit_reset: null,
-					rate_limit_status: null,
-					rate_limit_remaining: null,
-					priority: 0,
-					auto_fallback_enabled: false,
-					auto_refresh_enabled: true,
-					auto_pause_on_overage_enabled: false,
-					peak_hours_pause_enabled: false,
-					custom_endpoint: row.custom_endpoint,
-					model_mappings: null,
-					cross_region_mode: null,
-					model_fallbacks: null,
-					billing_type: null,
-					pause_reason: null,
-					refresh_token_issued_at: null,
-					consecutive_rate_limits: 0,
-				};
+				if (jitterMs > 0) {
+					log.debug(
+						`Qwen token refresh jitter: waiting ${jitterMs}ms before ${row.name}`,
+					);
+				}
 
-				// Use refreshAccessTokenSafe to get deduplication and backoff handling
-				const refreshPromise = provider
-					.refreshToken(account, this.proxyContext.runtime.clientId)
-					.then(async (result) => {
-						const newRefreshToken = result.refreshToken ?? row.refresh_token;
-						await this.db.run(
-							`UPDATE accounts SET access_token = ?, expires_at = ?, refresh_token = ?, refresh_token_issued_at = ? WHERE id = ?`,
-							[
-								result.accessToken,
-								result.expiresAt,
-								newRefreshToken,
-								Date.now(),
-								row.id,
-							],
-						);
-						log.info(
-							`Qwen token refreshed for ${row.name}, expires at ${new Date(result.expiresAt).toISOString()}`,
-						);
-						return result.accessToken;
-					})
-					.finally(() => {
-						this.proxyContext.refreshInFlight.delete(row.id);
-					});
+				try {
+					log.info(`Refreshing Qwen token for account: ${row.name}`);
 
-				this.proxyContext.refreshInFlight.set(row.id, refreshPromise);
-				await refreshPromise;
-			} catch (error) {
-				log.error(
-					`Failed to proactively refresh Qwen token for ${row.name}:`,
-					error,
-				);
-			}
-		}
+					const provider = getProvider(row.provider);
+					if (!provider) {
+						log.error(`No provider found for qwen (account: ${row.name})`);
+						return;
+					}
+
+					const account: Account = {
+						id: row.id,
+						name: row.name,
+						provider: row.provider,
+						api_key: null,
+						refresh_token: row.refresh_token,
+						access_token: row.access_token,
+						expires_at: row.expires_at,
+						request_count: 0,
+						total_requests: 0,
+						last_used: null,
+						created_at: 0,
+						rate_limited_until: null,
+						rate_limited_reason: null,
+						rate_limited_at: null,
+						session_start: null,
+						session_request_count: 0,
+						paused: false,
+						rate_limit_reset: null,
+						rate_limit_status: null,
+						rate_limit_remaining: null,
+						priority: 0,
+						auto_fallback_enabled: false,
+						auto_refresh_enabled: true,
+						auto_pause_on_overage_enabled: false,
+						peak_hours_pause_enabled: false,
+						custom_endpoint: row.custom_endpoint,
+						model_mappings: null,
+						cross_region_mode: null,
+						model_fallbacks: null,
+						billing_type: null,
+						pause_reason: null,
+						refresh_token_issued_at: null,
+						consecutive_rate_limits: 0,
+					};
+
+					// Use refreshAccessTokenSafe to get deduplication and backoff handling
+					const refreshPromise = provider
+						.refreshToken(account, this.proxyContext.runtime.clientId)
+						.then(async (result) => {
+							const newRefreshToken = result.refreshToken ?? row.refresh_token;
+							await this.db.run(
+								`UPDATE accounts SET access_token = ?, expires_at = ?, refresh_token = ?, refresh_token_issued_at = ? WHERE id = ?`,
+								[
+									result.accessToken,
+									result.expiresAt,
+									newRefreshToken,
+									Date.now(),
+									row.id,
+								],
+							);
+							log.info(
+								`Qwen token refreshed for ${row.name}, expires at ${new Date(result.expiresAt).toISOString()}`,
+							);
+							return result.accessToken;
+						})
+						.finally(() => {
+							this.proxyContext.refreshInFlight.delete(row.id);
+						});
+
+					this.proxyContext.refreshInFlight.set(row.id, refreshPromise);
+					await refreshPromise;
+				} catch (error) {
+					log.error(
+						`Failed to proactively refresh Qwen token for ${row.name}:`,
+						error,
+					);
+				}
+			},
+		);
 	}
 
 	/**
@@ -868,93 +890,103 @@ export class AutoRefreshScheduler {
 			`Proactive Codex token refresh: ${accounts.length} account(s) need refresh`,
 		);
 
-		for (const row of accounts) {
-			// Skip if a refresh is already in-flight for this account (deduplication)
-			if (this.proxyContext.refreshInFlight.has(row.id)) {
-				log.debug(
-					`Skipping proactive Codex refresh for ${row.name} — refresh already in-flight`,
-				);
-				continue;
-			}
-
-			try {
-				log.info(`Refreshing Codex token for account: ${row.name}`);
-
-				const provider = getProvider(row.provider);
-				if (!provider) {
-					log.error(`No provider found for codex (account: ${row.name})`);
-					continue;
+		await runStaggered(
+			accounts,
+			(row) => computeRefreshScheduleDelay(row.id),
+			async (row, jitterMs) => {
+				// Skip if a refresh is already in-flight for this account (deduplication)
+				if (this.proxyContext.refreshInFlight.has(row.id)) {
+					log.debug(
+						`Skipping proactive Codex refresh for ${row.name} — refresh already in-flight`,
+					);
+					return;
 				}
 
-				const account: Account = {
-					id: row.id,
-					name: row.name,
-					provider: row.provider,
-					api_key: null,
-					refresh_token: row.refresh_token,
-					access_token: row.access_token,
-					expires_at: row.expires_at,
-					request_count: 0,
-					total_requests: 0,
-					last_used: null,
-					created_at: 0,
-					rate_limited_until: null,
-					rate_limited_reason: null,
-					rate_limited_at: null,
-					session_start: null,
-					session_request_count: 0,
-					paused: false,
-					rate_limit_reset: null,
-					rate_limit_status: null,
-					rate_limit_remaining: null,
-					priority: 0,
-					auto_fallback_enabled: false,
-					auto_refresh_enabled: true,
-					auto_pause_on_overage_enabled: false,
-					peak_hours_pause_enabled: false,
-					custom_endpoint: row.custom_endpoint,
-					model_mappings: null,
-					cross_region_mode: null,
-					model_fallbacks: null,
-					billing_type: null,
-					pause_reason: null,
-					refresh_token_issued_at: null,
-					consecutive_rate_limits: 0,
-				};
+				if (jitterMs > 0) {
+					log.debug(
+						`Codex token refresh jitter: waiting ${jitterMs}ms before ${row.name}`,
+					);
+				}
 
-				// Register in refreshInFlight so concurrent request-triggered refreshes join this one
-				const refreshPromise = provider
-					.refreshToken(account, this.proxyContext.runtime.clientId)
-					.then(async (result) => {
-						const newRefreshToken = result.refreshToken ?? row.refresh_token;
-						await this.db.run(
-							`UPDATE accounts SET access_token = ?, expires_at = ?, refresh_token = ?, refresh_token_issued_at = ? WHERE id = ?`,
-							[
-								result.accessToken,
-								result.expiresAt,
-								newRefreshToken,
-								Date.now(),
-								row.id,
-							],
-						);
-						log.info(
-							`Codex token refreshed for ${row.name}, expires at ${new Date(result.expiresAt).toISOString()}`,
-						);
-						return result.accessToken;
-					})
-					.finally(() => {
-						this.proxyContext.refreshInFlight.delete(row.id);
-					});
+				try {
+					log.info(`Refreshing Codex token for account: ${row.name}`);
 
-				this.proxyContext.refreshInFlight.set(row.id, refreshPromise);
-				await refreshPromise;
-			} catch (error) {
-				log.error(
-					`Failed to proactively refresh Codex token for ${row.name}:`,
-					error,
-				);
-			}
-		}
+					const provider = getProvider(row.provider);
+					if (!provider) {
+						log.error(`No provider found for codex (account: ${row.name})`);
+						return;
+					}
+
+					const account: Account = {
+						id: row.id,
+						name: row.name,
+						provider: row.provider,
+						api_key: null,
+						refresh_token: row.refresh_token,
+						access_token: row.access_token,
+						expires_at: row.expires_at,
+						request_count: 0,
+						total_requests: 0,
+						last_used: null,
+						created_at: 0,
+						rate_limited_until: null,
+						rate_limited_reason: null,
+						rate_limited_at: null,
+						session_start: null,
+						session_request_count: 0,
+						paused: false,
+						rate_limit_reset: null,
+						rate_limit_status: null,
+						rate_limit_remaining: null,
+						priority: 0,
+						auto_fallback_enabled: false,
+						auto_refresh_enabled: true,
+						auto_pause_on_overage_enabled: false,
+						peak_hours_pause_enabled: false,
+						custom_endpoint: row.custom_endpoint,
+						model_mappings: null,
+						cross_region_mode: null,
+						model_fallbacks: null,
+						billing_type: null,
+						pause_reason: null,
+						refresh_token_issued_at: null,
+						consecutive_rate_limits: 0,
+					};
+
+					// Register in refreshInFlight so concurrent request-triggered refreshes join this one
+					const refreshPromise = provider
+						.refreshToken(account, this.proxyContext.runtime.clientId)
+						.then(async (result) => {
+							const newRefreshToken = result.refreshToken ?? row.refresh_token;
+							await this.db.run(
+								`UPDATE accounts SET access_token = ?, expires_at = ?, refresh_token = ?, refresh_token_issued_at = ? WHERE id = ?`,
+								[
+									result.accessToken,
+									result.expiresAt,
+									newRefreshToken,
+									Date.now(),
+									row.id,
+								],
+							);
+							log.info(
+								`Codex token refreshed for ${row.name}, expires at ${new Date(result.expiresAt).toISOString()}`,
+							);
+							return result.accessToken;
+						})
+						.finally(() => {
+							this.proxyContext.refreshInFlight.delete(row.id);
+						});
+
+					this.proxyContext.refreshInFlight.set(row.id, refreshPromise);
+					await refreshPromise;
+				} catch (error) {
+					log.error(
+						`Failed to proactively refresh Codex token for ${row.name}:`,
+						error,
+					);
+				}
+			},
+		);
 	}
 
 	/**

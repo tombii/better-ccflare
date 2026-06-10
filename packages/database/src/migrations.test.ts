@@ -1096,3 +1096,49 @@ describe("Database Backup Behavior", () => {
 		expect(cols).toContain("paused");
 	});
 });
+
+describe("request_payloads compression migration", () => {
+	it("includes compressed column on fresh SQLite schema", () => {
+		const db = new Database(":memory:");
+		ensureSchema(db);
+		runMigrations(db);
+		const cols = (
+			db.prepare("PRAGMA table_info(request_payloads)").all() as Array<{
+				name: string;
+			}>
+		).map((c) => c.name);
+		db.close();
+		expect(cols).toContain("compressed");
+	});
+
+	it("adds compressed column to legacy request_payloads tables", () => {
+		const db = new Database(":memory:");
+		db.exec(`
+			CREATE TABLE requests (
+				id TEXT PRIMARY KEY,
+				timestamp INTEGER NOT NULL,
+				method TEXT NOT NULL,
+				path TEXT NOT NULL,
+				account_used TEXT,
+				status_code INTEGER,
+				success BOOLEAN,
+				error_message TEXT,
+				response_time_ms INTEGER,
+				failover_attempts INTEGER DEFAULT 0
+			);
+			CREATE TABLE request_payloads (
+				id TEXT PRIMARY KEY,
+				json TEXT NOT NULL,
+				timestamp INTEGER
+			);
+		`);
+		runMigrations(db);
+		const cols = (
+			db.prepare("PRAGMA table_info(request_payloads)").all() as Array<{
+				name: string;
+			}>
+		).map((c) => c.name);
+		db.close();
+		expect(cols).toContain("compressed");
+	});
+});

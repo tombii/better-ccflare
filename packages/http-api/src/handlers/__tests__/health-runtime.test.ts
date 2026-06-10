@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { AsyncDbWriter } from "@better-ccflare/database";
+import type { HealthResponse } from "../../types";
 import { createHealthHandler } from "../health";
 
 describe("health runtime payload", () => {
@@ -43,16 +44,29 @@ describe("health runtime payload", () => {
 			config,
 			() => ({ healthy: true, failureCount: 0, recentDrops: 0, queuedJobs: 2 }),
 			() => ({
-				state: "healthy",
-				pendingAcks: 1,
-				lastError: null,
-				startedAt: 123,
+				state: "ready",
+				asyncWriter: {
+					healthy: true,
+					failureCount: 0,
+					recentDrops: 0,
+					queuedJobs: 1,
+					metadataQueuedJobs: 1,
+					payloadQueuedJobs: 0,
+					payloadBytesPending: 0,
+					oldestMetadataAgeMs: 10,
+					oldestPayloadAgeMs: 0,
+					metadataDropped: 0,
+					payloadDropped: 0,
+					payloadDroppedBytes: 0,
+				},
+				pendingHandleEnds: 0,
+				trackedRequests: 0,
 			}),
 		);
 
 		const url = new URL("http://localhost/health");
 		const response = await handler(url);
-		const body = (await response.json()) as Record<string, any>;
+		const body = (await response.json()) as HealthResponse;
 
 		expect(response.status).toBe(200);
 		expect(body.status).toBe("ok");
@@ -66,11 +80,66 @@ describe("health runtime payload", () => {
 			queuedJobs: 2,
 		});
 		expect(body.runtime.usageWorker).toEqual({
-			state: "healthy",
-			pendingAcks: 1,
-			lastError: null,
-			startedAt: 123,
+			state: "ready",
+			asyncWriter: {
+				healthy: true,
+				failureCount: 0,
+				recentDrops: 0,
+				queuedJobs: 1,
+				metadataQueuedJobs: 1,
+				payloadQueuedJobs: 0,
+				payloadBytesPending: 0,
+				oldestMetadataAgeMs: 10,
+				oldestPayloadAgeMs: 0,
+				metadataDropped: 0,
+				payloadDropped: 0,
+				payloadDroppedBytes: 0,
+			},
+			pendingHandleEnds: 0,
+			trackedRequests: 0,
 		});
+	});
+
+	it("marks runtime unhealthy when collector writer is unhealthy", async () => {
+		const db = {
+			getAllAccounts: async () => [
+				{ name: "acc1", paused: false, rate_limited_until: null },
+			],
+		} as unknown as import("@better-ccflare/database").DatabaseOperations;
+
+		const config = {
+			getStrategy: () => "session",
+		} as unknown as import("@better-ccflare/config").Config;
+
+		const handler = createHealthHandler(
+			db,
+			config,
+			() => ({ healthy: true, failureCount: 0, recentDrops: 0, queuedJobs: 0 }),
+			() => ({
+				state: "ready",
+				asyncWriter: {
+					healthy: false,
+					failureCount: 10,
+					recentDrops: 5,
+					queuedJobs: 1000,
+					metadataQueuedJobs: 1000,
+					payloadQueuedJobs: 0,
+					payloadBytesPending: 0,
+					oldestMetadataAgeMs: 30_000,
+					oldestPayloadAgeMs: 0,
+					metadataDropped: 10,
+					payloadDropped: 0,
+					payloadDroppedBytes: 0,
+				},
+			}),
+		);
+
+		const response = await handler(new URL("http://localhost/health"));
+		const body = (await response.json()) as HealthResponse;
+
+		expect(response.status).toBe(503);
+		expect(body.status).toBe("unhealthy");
+		expect(body.runtime?.usageWorker?.asyncWriter?.healthy).toBe(false);
 	});
 
 	it("omits runtime health when callbacks are not provided", async () => {

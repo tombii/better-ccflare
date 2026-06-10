@@ -2,7 +2,7 @@
 
 ## Overview
 
-better-ccflare supports two database backends:
+the-best-ccflare supports two database backends:
 
 - **SQLite** (default) — zero-configuration, embedded, great for single-node deployments
 - **PostgreSQL** — set `DATABASE_URL` to a `postgresql://` connection string; required for Kubernetes / multi-pod deployments where pods cannot safely share a SQLite file
@@ -187,13 +187,16 @@ The `request_payloads` table stores full request and response bodies for detaile
 | Column | Type | Constraints | Description |
 |--------|------|-------------|-------------|
 | `id` | TEXT | PRIMARY KEY, FOREIGN KEY | References requests.id |
-| `json` | TEXT | NOT NULL | Complete request/response payload, optionally encrypted (see below) |
+| `json` | TEXT | NOT NULL | Complete request/response payload, gzip-compressed then optionally encrypted (see below) |
 | `timestamp` | INTEGER | NULL* | Unix timestamp for retention queries (added via migration) |
+| `compressed` | INTEGER | NOT NULL DEFAULT 0 | `1` when `json` holds gzip-compressed data (new rows); `0` for legacy plaintext JSON |
 
 **Foreign Key Constraints:**
 - `id` references `requests(id)` with `ON DELETE CASCADE`
 
-**Optional encryption at rest**: when `PAYLOAD_ENCRYPTION_KEY` is set, the `json` column stores AES-256-GCM ciphertext prefixed with `enc:` (see `docs/security.md` → Payload Encryption at Rest). Plaintext rows from before encryption was enabled remain readable.
+**Compression at rest**: new payload rows are gzip-compressed before storage (`compressed = 1`). The `json` column stores base64(gzip(utf8 JSON)), optionally wrapped in AES-256-GCM encryption. Legacy rows (`compressed = 0`) store plaintext JSON and remain readable without migration.
+
+**Optional encryption at rest**: when `PAYLOAD_ENCRYPTION_KEY` is set, the compressed (or legacy plaintext) bytes are encrypted with AES-256-GCM and prefixed with `enc:` (see `docs/security.md` → Payload Encryption at Rest). Plaintext rows from before encryption was enabled remain readable.
 
 ### oauth_sessions Table
 
@@ -692,7 +695,7 @@ chmod 600 better-ccflare.db
 
 6. **Encryption**: Implement column-level encryption for sensitive data (tokens, API keys).
 
-7. **Compression**: Enable compression for the `request_payloads` table to reduce storage requirements.
+7. **Compression**: Implemented — new `request_payloads` rows are gzip-compressed (`compressed = 1`) before optional encryption.
 
 8. **Analytics Tables**: Create pre-aggregated tables for common analytics queries.
 

@@ -18,6 +18,20 @@ export const TOKEN_SAFETY_WINDOW_MS = 30 * 60 * 1000; // 30 minutes - proactive 
 export const TOKEN_REFRESH_BACKOFF_MS = 60_000; // 60 seconds - backoff after refresh failure
 
 /**
+ * **Auto-refresh jitter cap (30 seconds):** Upper bound for randomized delay before
+ * each scheduled auto-refresh probe. Spreads account refresh attempts so they do
+ * not synchronize and hammer Anthropic at the same instant.
+ */
+export const AUTO_REFRESH_MAX_JITTER_MS = 30_000;
+
+/**
+ * **Stale-token retry limit:** Maximum upstream retries after a 401 when OAuth
+ * credentials can be refreshed. Keeps recovery conservative — one refresh cycle
+ * per request, then failover.
+ */
+export const STALE_TOKEN_MAX_RETRY = 1;
+
+/**
  * Refresh Token Health Monitoring Thresholds
  *
  * These thresholds define the token health status levels for proactive token management:

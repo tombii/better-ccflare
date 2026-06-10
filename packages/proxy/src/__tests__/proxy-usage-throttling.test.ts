@@ -7,8 +7,8 @@ import { handleProxy } from "../proxy";
 function makeAccount(overrides: Partial<Account> = {}): Account {
 	return {
 		id: "acc-1",
-		name: "codex-primary",
-		provider: "codex",
+		name: "anthropic-primary",
+		provider: "anthropic",
 		api_key: null,
 		refresh_token: "refresh-token",
 		access_token: "access-token",
@@ -55,12 +55,11 @@ function makeContext(account: Account): ProxyContext {
 			getSystemPromptCacheTtl1h: () => false,
 		} as never,
 		provider: {
-			name: "codex",
+			name: "anthropic",
 			canHandle: () => true,
 		} as never,
 		refreshInFlight: new Map(),
 		asyncWriter: { enqueue: mock(() => {}) } as never,
-		usageWorker: { postMessage: mock(() => {}) } as never,
 	};
 }
 

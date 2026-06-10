@@ -14,11 +14,14 @@ export { CacheKeepaliveScheduler } from "./cache-keepalive-scheduler";
 export {
 	type CodexUsageRefreshOutcome,
 	checkAllAccountsHealth,
+	checkAllAccountsHealthWithRefreshRuntime,
 	checkRefreshTokenHealth,
 	clearAccountRefreshCache,
 	createUsageThrottledResponse,
+	enrichTokenHealthWithRefreshRuntime,
 	formatTokenHealthReport,
 	getAccountsNeedingReauth,
+	getTokenRefreshRuntimeStatus,
 	getUsageThrottleStatus,
 	getUsageThrottleUntil,
 	getValidAccessToken,
@@ -40,14 +43,12 @@ export {
 	startIntegrityScheduler,
 } from "./integrity-scheduler";
 export {
-	getUsageWorker,
-	getUsageWorkerHealth,
+	drainUsageCollector,
+	getUsageCollectorHealth,
 	type HandleProxyOptions,
 	handleProxy,
+	initProxy,
 	type ProxyContext,
-	sendWorkerConfigUpdate,
-	startUsageWorker,
-	terminateUsageWorker,
 } from "./proxy";
 export {
 	forwardToClient,
@@ -63,7 +64,7 @@ export {
 	tryResolveProviderPrefixedPath,
 } from "./routing";
 export type { ProxyRequest, ProxyResponse } from "./types";
-export type { UsageWorkerHealth } from "./usage-worker-controller";
+export type { UsageCollectorHealth } from "./usage-collector";
 export type {
 	ChunkMessage,
 	ControlMessage,

@@ -1,6 +1,6 @@
 # Documentation
 
-This directory contains detailed documentation for better-ccflare features and implementations.
+This directory contains detailed documentation for the-best-ccflare features and implementations.
 
 ## Available Documentation
 
@@ -16,4 +16,4 @@ Comprehensive documentation of the OAuth re-authentication system that allows us
 
 ## For Developers
 
-These documents provide in-depth technical details for developers working on the better-ccflare codebase. For user-facing documentation, see the main [CLAUDE.md](../CLAUDE.md) file.
+These documents provide in-depth technical details for developers working on the-best-ccflare codebase. For user-facing documentation, see the main [CLAUDE.md](../CLAUDE.md) file.

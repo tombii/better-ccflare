@@ -178,6 +178,7 @@ export function ensureSchema(db: Database): void {
 			id TEXT PRIMARY KEY,
 			json TEXT NOT NULL,
 			timestamp INTEGER,
+			compressed INTEGER NOT NULL DEFAULT 0,
 			FOREIGN KEY (id) REFERENCES requests(id) ON DELETE CASCADE
 		)
 	`);
@@ -915,6 +916,14 @@ export function runMigrations(db: Database, dbPath?: string): void {
 			log.info(
 				"Added timestamp column to request_payloads table and backfilled from requests",
 			);
+		}
+
+		// gzip compression flag for request_payloads (0 = legacy plaintext JSON)
+		if (!requestPayloadsColumnNames.includes("compressed")) {
+			db.prepare(
+				"ALTER TABLE request_payloads ADD COLUMN compressed INTEGER NOT NULL DEFAULT 0",
+			).run();
+			log.info("Added compressed column to request_payloads table");
 		}
 
 		// Add role column to api_keys if it doesn't exist (Migration v4)

@@ -1,22 +1,30 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, mock, spyOn } from "bun:test";
 import type { ProxyContext } from "../handlers";
 import { forwardToClient } from "../response-handler";
+import * as usageCollectorModule from "../usage-collector";
 import type { StartMessage } from "../worker-messages";
 
 describe("native codex observability", () => {
-	it("records client path, upstream path, and routing mode in worker start message", async () => {
-		const posted: StartMessage[] = [];
+	it("records client path, upstream path, and routing mode in collector start message", async () => {
+		const starts: StartMessage[] = [];
+		const collector = {
+			handleStart: mock((msg: StartMessage) => {
+				starts.push(msg);
+			}),
+			handleChunk: mock(() => {}),
+			handleEnd: mock(() => Promise.resolve()),
+		};
+
+		spyOn(usageCollectorModule, "getUsageCollector").mockReturnValue(
+			collector as unknown as usageCollectorModule.UsageCollector,
+		);
+
 		const ctx = {
 			provider: {
 				name: "codex",
 				isStreamingResponse: () => false,
 			},
 			config: { getStorePayloads: () => false },
-			usageWorker: {
-				postMessage: (msg: StartMessage) => {
-					if (msg.type === "start") posted.push(msg);
-				},
-			},
 		} as unknown as ProxyContext;
 
 		await forwardToClient(
@@ -33,7 +41,9 @@ describe("native codex observability", () => {
 					provider: "codex",
 				} as never,
 				requestHeaders: new Headers(),
-				requestBody: null,
+				requestBody: new TextEncoder().encode(
+					JSON.stringify({ model: "gpt-5.3-codex", stream: false }),
+				).buffer,
 				response: new Response(JSON.stringify({ object: "response" }), {
 					status: 200,
 					headers: { "Content-Type": "application/json" },
@@ -45,11 +55,12 @@ describe("native codex observability", () => {
 			ctx,
 		);
 
-		expect(posted).toHaveLength(1);
-		expect(posted[0]?.path).toBe("/v1/codex/responses");
-		expect(posted[0]?.clientPath).toBe("/v1/codex/responses");
-		expect(posted[0]?.upstreamPath).toBe("/responses");
-		expect(posted[0]?.routingMode).toBe("native");
-		expect(posted[0]?.providerName).toBe("codex");
+		expect(starts).toHaveLength(1);
+		expect(starts[0]?.path).toBe("/v1/codex/responses");
+		expect(starts[0]?.clientPath).toBe("/v1/codex/responses");
+		expect(starts[0]?.upstreamPath).toBe("/responses");
+		expect(starts[0]?.routingMode).toBe("native");
+		expect(starts[0]?.providerName).toBe("codex");
+		expect(starts[0]?.requestedModel).toBe("gpt-5.3-codex");
 	});
 });

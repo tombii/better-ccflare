@@ -394,4 +394,33 @@ describe("AsyncDbWriter", () => {
 		expect(h.payloadBytesPending).toBe(0);
 		expect(h.payloadQueuedJobs).toBe(0);
 	});
+
+	test("enqueueMetadataAndWait resolves saved and failed", async () => {
+		writer = new AsyncDbWriter();
+
+		const saved = await writer.enqueueMetadataAndWait(async () => {});
+		expect(saved).toBe("saved");
+
+		const failed = await writer.enqueueMetadataAndWait(async () => {
+			throw new Error("boom");
+		});
+		expect(failed).toBe("failed");
+	});
+
+	test("enqueueMetadataAndWait returns dropped at capacity", async () => {
+		const localWriter = new AsyncDbWriter();
+		const gate = makeGate();
+		localWriter.enqueue(async () => {
+			await gate.wait();
+		});
+		for (let i = 1; i < 2001; i++) {
+			localWriter.enqueue(() => {});
+		}
+
+		const dropped = await localWriter.enqueueMetadataAndWait(async () => {});
+		expect(dropped).toBe("dropped");
+
+		gate.release();
+		await localWriter.dispose();
+	});
 });

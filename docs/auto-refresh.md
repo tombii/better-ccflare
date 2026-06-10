@@ -360,6 +360,31 @@ The auto-refresh scheduler runs every minute by default. This is configured in t
 private checkInterval = 60000; // Check every minute
 ```
 
+### Refresh jitter (staggered probes)
+
+To prevent multiple accounts from refreshing in synchronized bursts, each scheduled
+auto-refresh probe (window reset dummy message, proactive Qwen/Codex OAuth token
+refresh) waits a **bounded random delay** before running. Jitter is capped at
+**30 seconds** (`AUTO_REFRESH_MAX_JITTER_MS`) and combines a stable per-account
+offset with randomness so accounts spread out over time without locking into sync.
+
+Debug logs include lines such as:
+
+```
+[DEBUG] Auto-refresh jitter: waiting 12450ms before probing my-account
+```
+
+Token refresh backoff after failures remains at **60 seconds** (`TOKEN_REFRESH_BACKOFF_MS`).
+Runtime backoff state is exposed on `/api/token-health` via each account's
+`refreshRuntime` field (`inBackoff`, `backoffUntil`, `consecutiveBackoffHits`).
+
+### Stale token recovery on live requests
+
+When an OAuth account receives an upstream **401** on a real (non auto-refresh-probe)
+request, the proxy attempts **one** conservative token refresh and retries the same
+request before failing over to the next account. API-key-only providers skip this
+path and fail over immediately.
+
 ### Custom Endpoint Support
 
 Auto-refresh works with custom endpoint configurations:

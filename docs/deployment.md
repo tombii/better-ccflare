@@ -1,8 +1,8 @@
-# better-ccflare Deployment Documentation
+# the-best-ccflare Deployment Documentation
 
 ## Overview
 
-better-ccflare is a load balancer proxy for Claude API accounts that can be deployed in various configurations, from simple local development to production-grade distributed systems. This document covers all deployment options, from single-instance setups to scalable architectures.
+the-best-ccflare is a load balancer proxy for Claude API accounts that can be deployed in various configurations, from simple local development to production-grade distributed systems. This document covers all deployment options, from single-instance setups to scalable architectures.
 
 > **Important**: better-ccflare provides a powerful CLI interface and web dashboard for monitoring and management. The main executable `better-ccflare` provides all functionality through command-line flags.
 
@@ -64,8 +64,8 @@ graph TB
 
 ```bash
 # Clone the repository
-git clone https://github.com/snipeship/better-ccflare.git
-cd better-ccflare
+git clone https://github.com/omcdowell/the-best-ccflare.git
+cd the-best-ccflare
 
 # Install dependencies
 bun install
@@ -73,7 +73,7 @@ bun install
 # Build the project (dashboard and CLI)
 bun run build
 
-# Start better-ccflare (Server + Dashboard)
+# Start the-best-ccflare (Server + Dashboard)
 bun run better-ccflare
 
 # Or use CLI commands:
@@ -1189,7 +1189,7 @@ The configuration file is located at:
 
 ## Conclusion
 
-better-ccflare is designed to be flexible and scalable, supporting everything from simple local deployments to complex distributed architectures. Choose the deployment option that best fits your needs and scale as your requirements grow.
+the-best-ccflare is designed to be flexible and scalable, supporting everything from simple local deployments to complex distributed architectures. Choose the deployment option that best fits your needs and scale as your requirements grow.
 
 ### Key Features Summary
 
@@ -1205,7 +1205,7 @@ better-ccflare is designed to be flexible and scalable, supporting everything fr
 - [Configuration Guide](./configuration.md)
 - [Load Balancing Strategies](./load-balancing.md)
 - [API Reference](./api-http.md)
-- [GitHub Repository](https://github.com/snipeship/better-ccflare)
+- [GitHub Repository](https://github.com/omcdowell/the-best-ccflare)
 
 ## Web Dashboard
 
@@ -1214,7 +1214,7 @@ better-ccflare includes a powerful web-based dashboard for monitoring and manage
 ### Accessing the Dashboard
 
 ```bash
-# Start better-ccflare server with embedded dashboard
+# Start the-best-ccflare server with embedded dashboard
 better-ccflare --serve
 
 # Or from source:

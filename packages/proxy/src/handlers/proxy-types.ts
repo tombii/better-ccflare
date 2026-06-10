@@ -5,7 +5,6 @@ import type {
 } from "@better-ccflare/database";
 import type { Provider } from "@better-ccflare/providers";
 import type { LoadBalancingStrategy } from "@better-ccflare/types";
-import type { UsageWorkerController } from "../usage-worker-controller";
 
 export interface ProxyContext {
 	strategy: LoadBalancingStrategy;
@@ -15,10 +14,8 @@ export interface ProxyContext {
 	provider: Provider;
 	refreshInFlight: Map<string, Promise<string>>;
 	asyncWriter: AsyncDbWriter;
-	usageWorker: UsageWorkerController;
 }
 
-/** Error messages used throughout the proxy module */
 export const ERROR_MESSAGES = {
 	NO_ACCOUNTS:
 		"No active accounts available - forwarding request without authentication",
@@ -31,12 +28,10 @@ export const ERROR_MESSAGES = {
 	POOL_EXHAUSTED: "All accounts are temporarily unavailable",
 } as const;
 
-/** Timing constants */
 export const TIMING = {
-	WORKER_SHUTDOWN_DELAY: 100, // ms
+	WORKER_SHUTDOWN_DELAY: 100,
 } as const;
 
-/** HTTP headers used in proxy operations */
 export const HEADERS = {
 	CONTENT_TYPE: "Content-Type",
 	AUTHORIZATION: "Authorization",

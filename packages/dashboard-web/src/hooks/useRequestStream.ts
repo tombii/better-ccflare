@@ -195,20 +195,13 @@ export function useRequestStream(limit = 200) {
 						);
 						if (requestIndex >= 0) {
 							const newRequests = [...current.requests];
-							// Update meta to remove pending status. Preserve
-							// `bodiesOmitted: true` so consumers continue to lazy-
-							// load bodies, and refresh `rateLimited` from the final
-							// statusCode (the placeholder set it from `evt.statusCode`
-							// which is 0 until the response lands).
+							const persisted = evt.payload.persisted !== false;
+							const persistenceFailed =
+								evt.payload.persistenceFailed === true ||
+								evt.payload.persisted === false;
 							if (newRequests[requestIndex].meta) {
 								newRequests[requestIndex] = {
 									...newRequests[requestIndex],
-									// Refresh response.status from the final summary —
-									// the start placeholder set it to 0 before the HTTP
-									// response landed, and the new header-row chip uses
-									// a `statusCode != null` guard (0 is not null), so
-									// without this every SSE-completed request would
-									// permanently display a grey "0" chip.
 									response:
 										evt.payload.statusCode != null
 											? {
@@ -221,7 +214,10 @@ export function useRequestStream(limit = 200) {
 											: null,
 									meta: {
 										...newRequests[requestIndex].meta,
-										pending: false,
+										pending: !persisted && !persistenceFailed,
+										pendingPersistence:
+											!persisted && !persistenceFailed ? true : undefined,
+										persistenceFailed: persistenceFailed ? true : undefined,
 										success: evt.payload.success,
 										rateLimited: evt.payload.rateLimited,
 										bodiesOmitted: true,
@@ -229,6 +225,10 @@ export function useRequestStream(limit = 200) {
 								};
 							}
 							return { ...current, requests: newRequests, detailsMap: map };
+						}
+
+						if (evt.payload.persisted === false) {
+							return { ...current, detailsMap: map };
 						}
 
 						return { ...current, detailsMap: map };

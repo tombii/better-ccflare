@@ -5,6 +5,8 @@ const logger = new Logger("async-db-writer");
 
 type DbJob = () => void | Promise<void>;
 
+export type MetadataWriteResult = "saved" | "dropped" | "failed";
+
 type MetadataJob = {
 	requestId?: string;
 	enqueuedAt: number;
@@ -108,6 +110,39 @@ export class AsyncDbWriter implements Disposable {
 			run: job,
 		});
 		void this.processQueue();
+	}
+
+	/**
+	 * Enqueue a metadata job and resolve once it completes, is dropped at
+	 * admission, or throws. Used by UsageCollector so SSE summaries are not
+	 * emitted as completed rows before durable metadata writes land.
+	 */
+	enqueueMetadataAndWait(job: DbJob): Promise<MetadataWriteResult> {
+		if (this.metadataQueue.length >= this.METADATA_QUEUE_CAP) {
+			this.metadataDropped++;
+			this.droppedJobsSinceLastLog++;
+			if (this.metadataDropped % 100 === 1) {
+				logger.warn(
+					`Metadata queue at capacity (${this.METADATA_QUEUE_CAP}), dropping jobs. Total dropped: ${this.metadataDropped}`,
+				);
+			}
+			return Promise.resolve("dropped");
+		}
+
+		return new Promise<MetadataWriteResult>((resolve) => {
+			this.metadataQueue.push({
+				enqueuedAt: performance.now(),
+				run: async () => {
+					try {
+						await job();
+						resolve("saved");
+					} catch {
+						resolve("failed");
+					}
+				},
+			});
+			void this.processQueue();
+		});
 	}
 
 	canAcceptPayload(estimatedBytes: number): boolean {
