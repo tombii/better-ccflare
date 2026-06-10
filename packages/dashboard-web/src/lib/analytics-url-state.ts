@@ -4,7 +4,7 @@ import type { FilterState } from "../components/analytics/AnalyticsFilters";
 export type AnalyticsUrlState = {
 	viewMode: "normal" | "cumulative";
 	timeRange: TimeRange;
-	selectedMetric: string;
+	selectedMetric: AnalyticsMetric;
 	modelBreakdown: boolean;
 	filters: FilterState;
 };
@@ -25,8 +25,17 @@ const METRIC_VALUES = [
 	"responseTime",
 	"tokensPerSecond",
 ] as const;
+
+/**
+ * The set of metrics the analytics chart can display — the single source of
+ * truth for `selectedMetric`. Typing the field as this union (rather than a
+ * bare `string`) means a metric added to `METRIC_VALUES` is reflected at every
+ * consumer, instead of silently falling back to "requests" when decoded.
+ */
+export type AnalyticsMetric = (typeof METRIC_VALUES)[number];
+
 const STATUS_VALUES = ["all", "success", "error"] as const;
-const RANGE_VALUES = Object.keys(TIME_RANGES) as TimeRange[];
+const RANGE_VALUES = Object.keys(TIME_RANGES) as readonly TimeRange[];
 
 // Query-string keys this feature owns. Used to decide URL-vs-storage hydration.
 const PARAM_KEYS = [

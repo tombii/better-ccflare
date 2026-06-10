@@ -3,6 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import type { FilterState } from "../components/analytics/AnalyticsFilters";
 import type { TimeRange } from "../constants";
 import {
+	type AnalyticsMetric,
 	type AnalyticsUrlState,
 	decodeAnalyticsState,
 	encodeAnalyticsState,
@@ -34,7 +35,7 @@ function writeStoredState(state: AnalyticsUrlState): void {
 
 export interface UseAnalyticsUrlState {
 	timeRange: TimeRange;
-	selectedMetric: string;
+	selectedMetric: AnalyticsMetric;
 	viewMode: "normal" | "cumulative";
 	modelBreakdown: boolean;
 	filters: FilterState;
@@ -108,9 +109,23 @@ export function useAnalyticsUrlState(): UseAnalyticsUrlState {
 		(range: TimeRange) => setField("timeRange", range),
 		[setField],
 	);
+	// Accepts a raw string (the Radix Select emits `string`); normalizeState
+	// validates it against METRIC_VALUES, so the stored value stays a valid
+	// AnalyticsMetric. Inlined rather than routed through the strictly-typed
+	// setField so the unvalidated input doesn't need an unsafe cast.
 	const setSelectedMetric = useCallback(
-		(metric: string) => setField("selectedMetric", metric),
-		[setField],
+		(metric: string) =>
+			setSearchParams(
+				(prev) =>
+					encodeAnalyticsState(
+						normalizeState({
+							...decodeAnalyticsState(prev),
+							selectedMetric: metric,
+						}),
+					),
+				{ replace: true },
+			),
+		[setSearchParams],
 	);
 	const setViewMode = useCallback(
 		(mode: "normal" | "cumulative") => setField("viewMode", mode),
