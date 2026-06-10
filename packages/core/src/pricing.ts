@@ -516,13 +516,48 @@ class PriceCatalogue {
 	 * Warn once that a model has no usable rates. Unlike warnOnce, the message
 	 * reflects that cache savings are reported as unknown rather than 0.
 	 */
-	warnRatesUnknownOnce(modelId: string): void {
+	private warnRatesUnknownOnce(modelId: string): void {
 		if (this.warnedRatesUnknownModels.has(modelId)) return;
 		this.warnedRatesUnknownModels.add(modelId);
 		this.logger?.warn(
 			"Price for model %s not found - cache savings reported as unknown",
 			modelId,
 		);
+	}
+
+	/**
+	 * Get the per-model pricing rates in dollars per 1M tokens.
+	 * @returns Rates for the model, or null if the model is unknown
+	 */
+	async getModelRates(modelId: string): Promise<ModelRates | null> {
+		const model = await findModel(modelId);
+		const cost = model?.cost;
+		if (
+			!cost ||
+			typeof cost.input !== "number" ||
+			!Number.isFinite(cost.input) ||
+			typeof cost.output !== "number" ||
+			!Number.isFinite(cost.output)
+		) {
+			// Missing or malformed catalogue data (remote catalogues are not
+			// validated) - treat as unknown pricing rather than emitting NaN.
+			this.warnRatesUnknownOnce(modelId);
+			return null;
+		}
+
+		return {
+			input: cost.input,
+			output: cost.output,
+			cacheRead:
+				typeof cost.cache_read === "number" && Number.isFinite(cost.cache_read)
+					? cost.cache_read
+					: null,
+			cacheWrite:
+				typeof cost.cache_write === "number" &&
+				Number.isFinite(cost.cache_write)
+					? cost.cache_write
+					: null,
+		};
 	}
 }
 
@@ -794,33 +829,7 @@ export interface ModelRates {
 export async function getModelRates(
 	modelId: string,
 ): Promise<ModelRates | null> {
-	const model = await findModel(modelId);
-	const cost = model?.cost;
-	if (
-		!cost ||
-		typeof cost.input !== "number" ||
-		!Number.isFinite(cost.input) ||
-		typeof cost.output !== "number" ||
-		!Number.isFinite(cost.output)
-	) {
-		// Missing or malformed catalogue data (remote catalogues are not
-		// validated) - treat as unknown pricing rather than emitting NaN.
-		PriceCatalogue.get().warnRatesUnknownOnce(modelId);
-		return null;
-	}
-
-	return {
-		input: cost.input,
-		output: cost.output,
-		cacheRead:
-			typeof cost.cache_read === "number" && Number.isFinite(cost.cache_read)
-				? cost.cache_read
-				: null,
-		cacheWrite:
-			typeof cost.cache_write === "number" && Number.isFinite(cost.cache_write)
-				? cost.cache_write
-				: null,
-	};
+	return PriceCatalogue.get().getModelRates(modelId);
 }
 
 /**

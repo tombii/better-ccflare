@@ -208,7 +208,9 @@ export function CacheEfficiencyView({
 
 				<Card>
 					<CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-						<CardTitle className="text-sm font-medium">Actual Cost</CardTitle>
+						<CardTitle className="text-sm font-medium">
+							Cache Token Cost
+						</CardTitle>
 						<DollarSign className="h-4 w-4 text-muted-foreground" />
 					</CardHeader>
 					<CardContent>
@@ -216,8 +218,8 @@ export function CacheEfficiencyView({
 							{formatCost(totals?.actualCacheCostUsd ?? 0)}
 						</div>
 						<p className="text-xs text-muted-foreground">
-							vs {formatCost(totals?.counterfactualCostUsd ?? 0)} without
-							caching
+							Cache read/write tokens only, vs{" "}
+							{formatCost(totals?.counterfactualCostUsd ?? 0)} without caching
 						</p>
 					</CardContent>
 				</Card>

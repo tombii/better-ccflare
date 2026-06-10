@@ -118,7 +118,7 @@ export function createCacheInsightsHandler(context: APIContext) {
 				modelIds.map((modelId) => getModelRates(modelId)),
 			);
 			const rates = new Map<string, ModelRates | null>(
-				modelIds.map((modelId, index) => [modelId, rateList[index] ?? null]),
+				modelIds.map((modelId, index) => [modelId, rateList[index]]),
 			);
 
 			return jsonResponse(

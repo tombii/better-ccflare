@@ -41,3 +41,5 @@ export const InsightsTab = React.memo(() => {
 		</div>
 	);
 });
+
+InsightsTab.displayName = "InsightsTab";

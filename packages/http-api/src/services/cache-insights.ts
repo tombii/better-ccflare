@@ -294,7 +294,6 @@ export function buildCacheInsightsResponse(
 			}
 		}
 	};
-	collectUnknown(input.accountModelRows);
 	collectUnknown(input.projectModelRows);
 
 	for (const row of input.accountModelRows) {
@@ -302,8 +301,12 @@ export function buildCacheInsightsResponse(
 		totals.uncachedInputTokens += row.uncachedInputTokens;
 		totals.cacheReadInputTokens += row.cacheReadInputTokens;
 		totals.cacheCreationInputTokens += row.cacheCreationInputTokens;
+		// Single cost computation per row feeds both the unknown-models set
+		// and the totals accumulation.
 		const costs = computeCacheCosts(row, ratesForModel(row.model, input.rates));
-		if (costs !== null) {
+		if (costs === null) {
+			unknownModels.add(normalizeKey(row.model));
+		} else {
 			totals.actualCacheCostUsd += costs.actualCacheCostUsd;
 			totals.counterfactualCostUsd += costs.counterfactualCostUsd;
 		}
