@@ -40,6 +40,7 @@ import {
 	createWorkspacesListHandler,
 } from "./handlers/agents";
 import { createAgentUpdateHandler } from "./handlers/agents-update";
+import { createAlertAcknowledgeHandler } from "./handlers/alerts";
 import { createAnalyticsHandler } from "./handlers/analytics";
 import {
 	createApiKeyDeleteHandler,
@@ -770,6 +771,15 @@ export class APIRouter {
 			if (parts.length === 4 && method === "DELETE") {
 				const handler = createComboDeleteHandler(this.context.dbOps);
 				return await this.wrapHandler(() => handler(comboId))(req, url);
+			}
+		}
+
+		// Alert acknowledge by ID
+		if (path.startsWith("/api/insights/alerts/") && method === "POST") {
+			const alertId = path.split("/")[4];
+			if (alertId) {
+				const alertAckHandler = createAlertAcknowledgeHandler(this.context);
+				return await this.wrapHandler(() => alertAckHandler(alertId))(req, url);
 			}
 		}
 

@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
+import { useAlerts } from "../hooks/queries";
 import { cn } from "../lib/utils";
 import { version } from "../lib/version";
 import { CopyButton } from "./CopyButton";
@@ -67,6 +68,8 @@ export function Navigation({
 	>("idle");
 	const [latestVersion, setLatestVersion] = useState<string>("");
 	const [updateError, setUpdateError] = useState<string | null>(null);
+	const { data: alertData } = useAlerts();
+	const _unacknowledgedCount = alertData?.unacknowledgedCount ?? 0;
 	const location = useLocation();
 	const isMountedRef = useRef(true);
 

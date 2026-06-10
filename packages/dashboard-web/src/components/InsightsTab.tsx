@@ -2,6 +2,7 @@ import { AlertTriangle } from "lucide-react";
 import React, { useState } from "react";
 import type { TimeRange } from "../constants";
 import { useCacheInsights } from "../hooks/queries";
+import { AlertsView } from "./insights/AlertsView";
 import { CacheEfficiencyView } from "./insights/CacheEfficiencyView";
 import { TimeRangeSelector } from "./overview/TimeRangeSelector";
 import { Card, CardContent } from "./ui/card";
@@ -43,3 +44,5 @@ export const InsightsTab = React.memo(() => {
 });
 
 InsightsTab.displayName = "InsightsTab";
+
+<AlertsView />;

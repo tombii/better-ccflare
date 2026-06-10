@@ -586,3 +586,36 @@ export const useReorderComboSlots = () => {
 		},
 	});
 };
+
+export const useAlerts = () => {
+	return useQuery({
+		queryKey: queryKeys.insightsAlerts(),
+		queryFn: async () => {
+			const res = await api.getAlerts(200);
+			return res;
+		},
+		staleTime: 15_000,
+		refetchInterval: 30_000,
+		refetchIntervalInBackground: false,
+	});
+};
+
+export const useAcknowledgeAlert = () => {
+	const queryClient = useQueryClient();
+	return useMutation({
+		mutationFn: (id: string) => api.acknowledgeAlert(id),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.insightsAlerts() });
+		},
+	});
+};
+
+export const useAcknowledgeAllAlerts = () => {
+	const queryClient = useQueryClient();
+	return useMutation({
+		mutationFn: () => api.acknowledgeAllAlerts(),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.insightsAlerts() });
+		},
+	});
+};

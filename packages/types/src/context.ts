@@ -4,6 +4,7 @@ import type {
 	DatabaseOperations,
 } from "@better-ccflare/database";
 import type { Account } from "./account";
+import type { AlertEvent } from "./alerts";
 import type { RequestMeta } from "./api";
 import type { ApiKey } from "./api-key";
 import type { IntegrityStatus } from "./stats";
@@ -14,6 +15,12 @@ export interface APIContext {
 	db: BunSqlAdapter;
 	config: Config;
 	dbOps: DatabaseOperations;
+	alertService: {
+		listAlerts(limit?: number): Promise<AlertEvent[]>;
+		getUnacknowledgedCount(): Promise<number>;
+		acknowledgeAlert(id: string): Promise<boolean>;
+		acknowledgeAll(): Promise<void>;
+	};
 	auth?: {
 		isAuthenticated: boolean;
 		apiKey?: ApiKey;

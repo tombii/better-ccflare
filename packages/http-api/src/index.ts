@@ -3,6 +3,7 @@
 // Export handlers
 export * from "./handlers/storage";
 export { APIRouter } from "./router";
+export { AlertService } from "./services/alerts";
 // Export services
 export { AuthService } from "./services/auth-service";
 // Export types

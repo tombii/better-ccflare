@@ -2211,6 +2211,24 @@ class API extends HttpClient {
 			throw error;
 		}
 	}
+	async getAlerts(limit = 100): Promise<{
+		alerts: import("@better-ccflare/types").AlertEvent[];
+		unacknowledgedCount: number;
+	}> {
+		const res = await this.get<{
+			alerts: import("@better-ccflare/types").AlertEvent[];
+			unacknowledgedCount: number;
+		}>(`/api/insights/alerts?limit=${Math.min(Math.max(1, limit), 500)}`);
+		return res;
+	}
+
+	async acknowledgeAlert(id: string): Promise<void> {
+		await this.post(`/api/insights/alerts/${encodeURIComponent(id)}`);
+	}
+
+	async acknowledgeAllAlerts(): Promise<void> {
+		await this.post("/api/insights/alerts/acknowledge-all");
+	}
 }
 
 export const api = new API();

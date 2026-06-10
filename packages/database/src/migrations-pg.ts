@@ -122,6 +122,31 @@ export async function ensureSchemaPg(adapter: BunSqlAdapter): Promise<void> {
 		`CREATE INDEX IF NOT EXISTS idx_requests_timestamp_account ON requests(timestamp DESC, account_used)`,
 	);
 
+	// Create alerts table
+	await adapter.unsafe(`
+		CREATE TABLE IF NOT EXISTS alerts (
+			id TEXT PRIMARY KEY,
+			timestamp BIGINT NOT NULL,
+			type TEXT NOT NULL,
+			severity TEXT NOT NULL,
+			title TEXT NOT NULL,
+			message TEXT NOT NULL,
+			value DOUBLE PRECISION,
+			threshold DOUBLE PRECISION,
+			account TEXT,
+			model TEXT,
+			project TEXT,
+			request_id TEXT,
+			acknowledged INTEGER NOT NULL DEFAULT 0
+		)
+	`);
+	await adapter.unsafe(
+		`CREATE INDEX IF NOT EXISTS idx_alerts_timestamp ON alerts(timestamp DESC)`,
+	);
+	await adapter.unsafe(
+		`CREATE INDEX IF NOT EXISTS idx_alerts_acknowledged ON alerts(acknowledged)`,
+	);
+
 	// Create request_payloads table
 	await adapter.unsafe(`
 		CREATE TABLE IF NOT EXISTS request_payloads (
@@ -425,6 +450,35 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 	try {
 		await adapter.unsafe(
 			`CREATE INDEX IF NOT EXISTS idx_request_payloads_timestamp ON request_payloads(timestamp)`,
+		);
+	} catch (_error) {
+		// Index may already exist
+	}
+
+	// Ensure alerts table exists (for upgrades from pre-alerts installs)
+	await adapter.unsafe(`
+		CREATE TABLE IF NOT EXISTS alerts (
+			id TEXT PRIMARY KEY,
+			timestamp BIGINT NOT NULL,
+			type TEXT NOT NULL,
+			severity TEXT NOT NULL,
+			title TEXT NOT NULL,
+			message TEXT NOT NULL,
+			value DOUBLE PRECISION,
+			threshold DOUBLE PRECISION,
+			account TEXT,
+			model TEXT,
+			project TEXT,
+			request_id TEXT,
+			acknowledged INTEGER NOT NULL DEFAULT 0
+		)
+	`);
+	try {
+		await adapter.unsafe(
+			`CREATE INDEX IF NOT EXISTS idx_alerts_timestamp ON alerts(timestamp DESC)`,
+		);
+		await adapter.unsafe(
+			`CREATE INDEX IF NOT EXISTS idx_alerts_acknowledged ON alerts(acknowledged)`,
 		);
 	} catch (_error) {
 		// Index may already exist
