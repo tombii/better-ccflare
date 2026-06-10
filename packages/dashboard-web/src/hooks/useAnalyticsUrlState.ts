@@ -74,7 +74,7 @@ export function useAnalyticsUrlState(): UseAnalyticsUrlState {
 		setSearchParams(seeded, { replace: true });
 		// Run once on mount; we intentionally read params/setter without resubscribing.
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, []);
+	}, [setSearchParams, searchParams]);
 
 	// Mirror the active state to localStorage so the next visit can restore it.
 	useEffect(() => {
@@ -86,7 +86,10 @@ export function useAnalyticsUrlState(): UseAnalyticsUrlState {
 	}, [state]);
 
 	const setField = useCallback(
-		<K extends keyof AnalyticsUrlState>(key: K, value: AnalyticsUrlState[K]) => {
+		<K extends keyof AnalyticsUrlState>(
+			key: K,
+			value: AnalyticsUrlState[K],
+		) => {
 			setSearchParams(
 				(prev) =>
 					encodeAnalyticsState(

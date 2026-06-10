@@ -45,7 +45,8 @@ function oneOf<T extends string>(
 	allowed: readonly T[],
 	fallback: T,
 ): T {
-	return typeof value === "string" && (allowed as readonly string[]).includes(value)
+	return typeof value === "string" &&
+		(allowed as readonly string[]).includes(value)
 		? (value as T)
 		: fallback;
 }
@@ -72,7 +73,8 @@ export function normalizeState(input: unknown): AnalyticsUrlState {
 	const raw = asRecord(input);
 	const filters = asRecord(raw.filters);
 	const viewMode = oneOf(raw.viewMode, VIEW_VALUES, "normal");
-	const breakdown = raw.modelBreakdown === true || raw.modelBreakdown === "true";
+	const breakdown =
+		raw.modelBreakdown === true || raw.modelBreakdown === "true";
 	return {
 		viewMode,
 		timeRange: oneOf(raw.timeRange, RANGE_VALUES, "1h"),
@@ -88,7 +90,9 @@ export function normalizeState(input: unknown): AnalyticsUrlState {
 }
 
 /** Serialize state to query params, omitting anything equal to its default. */
-export function encodeAnalyticsState(state: AnalyticsUrlState): URLSearchParams {
+export function encodeAnalyticsState(
+	state: AnalyticsUrlState,
+): URLSearchParams {
 	const params = new URLSearchParams();
 	if (state.viewMode !== "normal") params.set("view", state.viewMode);
 	if (state.timeRange !== "1h") params.set("range", state.timeRange);
@@ -96,15 +100,19 @@ export function encodeAnalyticsState(state: AnalyticsUrlState): URLSearchParams 
 		params.set("metric", state.selectedMetric);
 	if (state.modelBreakdown && state.viewMode !== "cumulative")
 		params.set("breakdown", "true");
-	for (const account of state.filters.accounts) params.append("accounts", account);
+	for (const account of state.filters.accounts)
+		params.append("accounts", account);
 	for (const model of state.filters.models) params.append("models", model);
 	for (const key of state.filters.apiKeys) params.append("keys", key);
-	if (state.filters.status !== "all") params.set("status", state.filters.status);
+	if (state.filters.status !== "all")
+		params.set("status", state.filters.status);
 	return params;
 }
 
 /** Parse query params back into a validated, normalized state. */
-export function decodeAnalyticsState(params: URLSearchParams): AnalyticsUrlState {
+export function decodeAnalyticsState(
+	params: URLSearchParams,
+): AnalyticsUrlState {
 	return normalizeState({
 		viewMode: params.get("view") ?? undefined,
 		timeRange: params.get("range") ?? undefined,

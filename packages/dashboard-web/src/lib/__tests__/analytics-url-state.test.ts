@@ -77,7 +77,9 @@ describe("decodeAnalyticsState", () => {
 	});
 
 	it("falls back to defaults for invalid scalar values", () => {
-		const params = new URLSearchParams("view=bogus&range=99y&metric=foo&status=maybe");
+		const params = new URLSearchParams(
+			"view=bogus&range=99y&metric=foo&status=maybe",
+		);
 		expect(decodeAnalyticsState(params)).toEqual(DEFAULT_ANALYTICS_STATE);
 	});
 
@@ -134,7 +136,9 @@ describe("hasAnalyticsParams", () => {
 	});
 
 	it("is true when a recognized param is present", () => {
-		expect(hasAnalyticsParams(new URLSearchParams("view=cumulative"))).toBe(true);
+		expect(hasAnalyticsParams(new URLSearchParams("view=cumulative"))).toBe(
+			true,
+		);
 		expect(hasAnalyticsParams(new URLSearchParams("accounts=a"))).toBe(true);
 	});
 });
