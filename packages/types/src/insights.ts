@@ -135,9 +135,9 @@ export interface RunawayLoopGroup {
 	/** Request rate over the burst, floored at a one-minute span. */
 	requestsPerMinute: number;
 	/** Mean request-side tokens (input + cache read + cache creation). */
-	meanInputTokens: number;
+	meanRequestSideTokens: number;
 	/** Coefficient of variation of request-side tokens (0 = identical). */
-	inputTokenSpread: number;
+	requestSideTokenSpread: number;
 }
 
 /**

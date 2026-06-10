@@ -249,8 +249,16 @@ export interface RunawayLoopOptions {
  * is similar (coefficient of variation <= similarityTolerance).
  *
  * All rows count, including zero-token ones — repeated failing retries are
- * exactly the signal. Overlapping qualifying windows merge into one
- * sustained run so a long loop is reported once, not per window position.
+ * exactly the signal.
+ *
+ * Both count and similarity are checked PER WINDOW (forward-maximal windows
+ * from each start row plus backward-maximal windows from each end row, so a
+ * burst adjacent to dissimilar traffic on either side is still found), and
+ * only then are overlapping qualifying windows merged, so a long loop is
+ * reported once. Two adjacent bursts with different profiles inside one
+ * window length therefore surface as two separate loops. A merged run's
+ * reported spread is computed over the whole run and can exceed the
+ * tolerance when the profile drifts across merged windows.
  *
  * Sorted by request count descending.
  */
@@ -272,47 +280,94 @@ export function detectRunawayLoops(
 	const loops: RunawayLoopGroup[] = [];
 	for (const group of groups.values()) {
 		group.sort((a, b) => a.timestamp - b.timestamp);
+		const n = group.length;
 
-		// Find qualifying windows with two pointers and merge overlapping
-		// index ranges into maximal runs.
-		const runs: Array<{ start: number; end: number }> = [];
-		let end = 0;
-		for (let start = 0; start < group.length; start++) {
-			if (end < start) end = start;
+		// Prefix sums of request-side tokens so any window's mean/stddev is
+		// O(1); token counts are small enough that the sum-of-squares form
+		// is numerically safe in doubles.
+		const prefixSum = new Float64Array(n + 1);
+		const prefixSumSquares = new Float64Array(n + 1);
+		for (let i = 0; i < n; i++) {
+			const tokens = requestSideTokens(group[i]);
+			prefixSum[i + 1] = prefixSum[i] + tokens;
+			prefixSumSquares[i + 1] = prefixSumSquares[i] + tokens * tokens;
+		}
+
+		const windowStats = (start: number, end: number) => {
+			const count = end - start + 1;
+			const mean = (prefixSum[end + 1] - prefixSum[start]) / count;
+			const variance = Math.max(
+				(prefixSumSquares[end + 1] - prefixSumSquares[start]) / count -
+					mean * mean,
+				0,
+			);
+			const stdDev = Math.sqrt(variance);
+			// All-zero-token windows (failing retries) are identical profiles.
+			return { mean, spread: mean > 0 ? stdDev / mean : 0 };
+		};
+
+		const qualifies = (start: number, end: number) =>
+			end - start + 1 >= options.minRequests &&
+			windowStats(start, end).spread <= options.similarityTolerance;
+
+		// Forward-maximal window for each start row, backward-maximal window
+		// for each end row (both two-pointer, so O(n) per group).
+		const ranges: Array<{ start: number; end: number }> = [];
+		let forwardEnd = 0;
+		for (let start = 0; start < n; start++) {
+			if (forwardEnd < start) forwardEnd = start;
 			while (
-				end + 1 < group.length &&
-				group[end + 1].timestamp - group[start].timestamp <= options.windowMs
+				forwardEnd + 1 < n &&
+				group[forwardEnd + 1].timestamp - group[start].timestamp <=
+					options.windowMs
 			) {
-				end++;
+				forwardEnd++;
 			}
-			if (end - start + 1 < options.minRequests) continue;
+			if (qualifies(start, forwardEnd)) {
+				ranges.push({ start, end: forwardEnd });
+			}
+		}
+		let backwardStart = 0;
+		for (let end = 0; end < n; end++) {
+			while (
+				group[end].timestamp - group[backwardStart].timestamp >
+				options.windowMs
+			) {
+				backwardStart++;
+			}
+			if (qualifies(backwardStart, end)) {
+				ranges.push({ start: backwardStart, end });
+			}
+		}
+
+		// Merge overlapping qualifying windows into maximal runs.
+		ranges.sort((a, b) => a.start - b.start || a.end - b.end);
+		const runs: Array<{ start: number; end: number }> = [];
+		for (const range of ranges) {
 			const last = runs[runs.length - 1];
-			if (last && start <= last.end) {
-				last.end = Math.max(last.end, end);
+			if (last && range.start <= last.end) {
+				last.end = Math.max(last.end, range.end);
 			} else {
-				runs.push({ start, end });
+				runs.push({ ...range });
 			}
 		}
 
 		for (const run of runs) {
-			const burst = group.slice(run.start, run.end + 1);
-			const { mean, stdDev } = meanAndStdDev(burst.map(requestSideTokens));
-			const spread = mean > 0 ? stdDev / mean : 0;
-			if (spread > options.similarityTolerance) continue;
-			const windowStartMs = burst[0].timestamp;
-			const windowEndMs = burst[burst.length - 1].timestamp;
+			const { mean, spread } = windowStats(run.start, run.end);
+			const windowStartMs = group[run.start].timestamp;
+			const windowEndMs = group[run.end].timestamp;
 			loops.push({
-				account: normalizeKey(burst[0].account),
-				model: normalizeKey(burst[0].model),
-				project: burst[0].project,
+				account: normalizeKey(group[run.start].account),
+				model: normalizeKey(group[run.start].model),
+				project: group[run.start].project,
 				windowStartMs,
 				windowEndMs,
-				requests: burst.length,
+				requests: run.end - run.start + 1,
 				requestsPerMinute:
-					(burst.length * 60_000) /
+					((run.end - run.start + 1) * 60_000) /
 					Math.max(windowEndMs - windowStartMs, 60_000),
-				meanInputTokens: mean,
-				inputTokenSpread: spread,
+				meanRequestSideTokens: mean,
+				requestSideTokenSpread: spread,
 			});
 		}
 	}
@@ -350,9 +405,10 @@ export function detectModelMisrouting(
 	for (const row of rows) {
 		const tokens = totalTokens(row);
 		if (tokens === 0 || tokens > options.maxTotalTokens) continue;
-		const model = normalizeKey(row.model);
-		if (model === UNKNOWN_KEY) continue;
-		const modelRates = rates.get(model);
+		// Look up rates with the raw model id — the rates map is keyed by the
+		// raw values, normalizeKey is only for display grouping.
+		if (row.model == null || row.model === "") continue;
+		const modelRates = rates.get(row.model);
 		if (!modelRates || modelRates.output < options.minOutputRateUsd) continue;
 		const key = baselineKey(row.account, row.model);
 		const group = groups.get(key);

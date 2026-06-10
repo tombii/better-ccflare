@@ -214,8 +214,8 @@ describe("detectRunawayLoops", () => {
 		expect(loops[0].requests).toBe(12);
 		expect(loops[0].windowStartMs).toBe(0);
 		expect(loops[0].windowEndMs).toBe(110_000);
-		expect(loops[0].meanInputTokens).toBe(500);
-		expect(loops[0].inputTokenSpread).toBe(0);
+		expect(loops[0].meanRequestSideTokens).toBe(500);
+		expect(loops[0].requestSideTokenSpread).toBe(0);
 		// 12 requests over 110s
 		expect(loops[0].requestsPerMinute).toBeCloseTo((12 * 60_000) / 110_000, 6);
 	});
@@ -253,8 +253,33 @@ describe("detectRunawayLoops", () => {
 		);
 		const loops = detectRunawayLoops(rows, opts);
 		expect(loops).toHaveLength(1);
-		expect(loops[0].meanInputTokens).toBe(0);
-		expect(loops[0].inputTokenSpread).toBe(0);
+		expect(loops[0].meanRequestSideTokens).toBe(0);
+		expect(loops[0].requestSideTokenSpread).toBe(0);
+	});
+
+	test("reports adjacent bursts with different profiles as separate loops", () => {
+		// Burst A: 12 requests at 100 tokens (t = 0..110s). Burst B: 12
+		// requests at 10000 tokens (t = 120s..230s). Both fit inside one
+		// 5-minute window, so a post-merge similarity check would drop both;
+		// per-window qualification must report each burst on its own.
+		const rows = [
+			...Array.from({ length: 12 }, (_, i) =>
+				req({ timestamp: i * 10_000, inputTokens: 100 }),
+			),
+			...Array.from({ length: 12 }, (_, i) =>
+				req({ timestamp: 120_000 + i * 10_000, inputTokens: 10_000 }),
+			),
+		];
+		const loops = detectRunawayLoops(rows, opts);
+		expect(loops).toHaveLength(2);
+		const means = loops
+			.map((loop) => loop.meanRequestSideTokens)
+			.sort((a, b) => a - b);
+		expect(means).toEqual([100, 10_000]);
+		for (const loop of loops) {
+			expect(loop.requests).toBe(12);
+			expect(loop.requestSideTokenSpread).toBe(0);
+		}
 	});
 
 	test("merges overlapping qualifying windows into one sustained run", () => {

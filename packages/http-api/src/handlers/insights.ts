@@ -190,9 +190,9 @@ function toAnomalyRequestRow(row: AnomalyRequestSqlRow): AnomalyRequestRow {
 /**
  * Parse a numeric detector-threshold query param: fall back to the default
  * when missing or unparseable, clamp to [min, max], optionally round to an
- * integer (for count-like params).
+ * integer (for count-like params). Exported for tests.
  */
-function parseDetectorParam(
+export function parseDetectorParam(
 	raw: string | null,
 	fallback: number,
 	min: number,
@@ -314,6 +314,9 @@ export function createAnomalyInsightsHandler(context: APIContext) {
 				queryParams,
 			);
 			const truncated = sqlRows.length > MAX_ANOMALY_SCAN_ROWS;
+			// Undo the DESC fetch order so detectors see chronological rows.
+			// Not load-bearing (the loop detector re-sorts per group), just
+			// keeps the row order deterministic and intuitive.
 			const rows = sqlRows
 				.slice(0, MAX_ANOMALY_SCAN_ROWS)
 				.map(toAnomalyRequestRow)
