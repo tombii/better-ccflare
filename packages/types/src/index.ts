@@ -9,6 +9,7 @@ export * from "./combo";
 export * from "./constants";
 export * from "./context";
 export * from "./conversation";
+export * from "./insights";
 export * from "./logging";
 export * from "./request";
 export * from "./stats";

@@ -29,6 +29,11 @@ const LazyAnalyticsTab = lazy(() =>
 		default: module.LazyAnalytics,
 	})),
 );
+const LazyInsightsTab = lazy(() =>
+	import("./components/InsightsTab").then((module) => ({
+		default: module.InsightsTab,
+	})),
+);
 const LoadingSkeleton = () => (
 	<div className="space-y-6 p-6">
 		<div className="animate-pulse">
@@ -77,6 +82,16 @@ export function App() {
 				subtitle: "Deep dive into your usage patterns and trends",
 			},
 			{
+				path: "/insights",
+				element: (
+					<Suspense fallback={<LoadingSkeleton />}>
+						<LazyInsightsTab />
+					</Suspense>
+				),
+				title: "Insights",
+				subtitle: "Cache efficiency and estimated cost savings",
+			},
+			{
 				path: "/requests",
 				element: <RequestsTab />,
 				title: "Request History",
@@ -114,9 +129,9 @@ export function App() {
 			},
 		];
 
-		// Add combos route if feature is enabled
+		// Add combos route if feature is enabled (after Accounts, matching the nav)
 		if (showCombos) {
-			baseRoutes.splice(4, 0, {
+			baseRoutes.splice(5, 0, {
 				path: "/combos",
 				element: <CombosTab />,
 				title: "Combos Management",

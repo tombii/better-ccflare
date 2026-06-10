@@ -9,6 +9,7 @@ import type {
 	AgentUpdatePayload,
 	AgentWorkspace,
 	AnalyticsResponse,
+	CacheInsightsResponse,
 	Combo,
 	ComboFamilyAssignment,
 	ComboSlot,
@@ -959,6 +960,21 @@ class API extends HttpClient {
 
 			throw error;
 		}
+	}
+
+	async getCacheInsights(
+		range = "24h",
+		threshold?: number,
+	): Promise<CacheInsightsResponse> {
+		const params = new URLSearchParams({ range });
+
+		if (threshold !== undefined) {
+			params.append("threshold", String(threshold));
+		}
+
+		return this.get<CacheInsightsResponse>(
+			`/api/insights/cache?${params.toString()}`,
+		);
 	}
 
 	// Batch analytics requests for improved performance

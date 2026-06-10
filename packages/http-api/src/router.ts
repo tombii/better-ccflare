@@ -71,6 +71,7 @@ import {
 } from "./handlers/debug";
 import { createFeaturesHandler } from "./handlers/features";
 import { createHealthHandler } from "./handlers/health";
+import { createCacheInsightsHandler } from "./handlers/insights";
 import { createLogsStreamHandler } from "./handlers/logs";
 import { createLogsHistoryHandler } from "./handlers/logs-history";
 import { createCleanupHandler } from "./handlers/maintenance";
@@ -182,6 +183,7 @@ export class APIRouter {
 		const logsStreamHandler = createLogsStreamHandler();
 		const logsHistoryHandler = createLogsHistoryHandler();
 		const analyticsHandler = createAnalyticsHandler(this.context);
+		const cacheInsightsHandler = createCacheInsightsHandler(this.context);
 		const oauthInitHandler = createOAuthInitHandler(dbOps);
 		const oauthCallbackHandler = createOAuthCallbackHandler(dbOps);
 		const qwenDeviceFlowInitHandler = createQwenDeviceFlowInitHandler(dbOps);
@@ -368,6 +370,9 @@ export class APIRouter {
 		this.handlers.set("GET:/api/analytics", (_req, url) => {
 			return analyticsHandler(url.searchParams);
 		});
+		this.handlers.set("GET:/api/insights/cache", (_req, url) =>
+			cacheInsightsHandler(url.searchParams),
+		);
 		this.handlers.set("GET:/api/agents", () => agentsHandler());
 		this.handlers.set("POST:/api/agents/bulk-preference", (req) => {
 			const bulkHandler = createBulkAgentPreferenceUpdateHandler(
