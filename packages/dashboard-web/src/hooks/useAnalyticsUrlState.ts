@@ -60,11 +60,16 @@ export function useAnalyticsUrlState(): UseAnalyticsUrlState {
 	);
 
 	// On first mount, if the URL has no analytics params, seed it from the saved
-	// preference using replace (no new history entry). `skipMirror` stops the
-	// persistence effect below from clobbering the saved value with defaults
-	// during the pre-seed render.
+	// preference using replace (no new history entry). The `didSeed` guard makes
+	// this run exactly once: without it, re-running when `searchParams` changes
+	// would re-seed the stored value and fight the user when they reset a control
+	// back to its default. `skipMirror` stops the persistence effect below from
+	// clobbering the saved value with defaults during the pre-seed render.
+	const didSeed = useRef(false);
 	const skipMirror = useRef(false);
 	useEffect(() => {
+		if (didSeed.current) return;
+		didSeed.current = true;
 		if (hasAnalyticsParams(searchParams)) return;
 		const stored = readStoredState();
 		if (!stored) return;
@@ -72,9 +77,7 @@ export function useAnalyticsUrlState(): UseAnalyticsUrlState {
 		if (seeded.toString() === "") return;
 		skipMirror.current = true;
 		setSearchParams(seeded, { replace: true });
-		// Run once on mount; we intentionally read params/setter without resubscribing.
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [setSearchParams, searchParams]);
+	}, [searchParams, setSearchParams]);
 
 	// Mirror the active state to localStorage so the next visit can restore it.
 	useEffect(() => {
