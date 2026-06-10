@@ -1,6 +1,10 @@
 import { describe, expect, it } from "bun:test";
 import { AUTO_REFRESH_MAX_JITTER_MS } from "../constants";
-import { computeRefreshScheduleDelay, sleepMs } from "../refresh-jitter";
+import {
+	computeRefreshScheduleDelay,
+	runStaggered,
+	sleepMs,
+} from "../refresh-jitter";
 
 describe("computeRefreshScheduleDelay", () => {
 	it("returns a delay within [0, AUTO_REFRESH_MAX_JITTER_MS]", () => {
@@ -33,5 +37,24 @@ describe("sleepMs", () => {
 		await sleepMs(0);
 		await sleepMs(-5);
 		expect(Date.now() - start).toBeLessThan(50);
+	});
+});
+
+describe("runStaggered", () => {
+	it("runs delayed tasks concurrently instead of serially accumulating delays", async () => {
+		const started: string[] = [];
+		const start = Date.now();
+
+		const results = await runStaggered(
+			["a", "b", "c"],
+			() => 30,
+			(item) => {
+				started.push(item);
+			},
+		);
+
+		expect(results.every((result) => result.status === "fulfilled")).toBe(true);
+		expect(started).toHaveLength(3);
+		expect(Date.now() - start).toBeLessThan(80);
 	});
 });

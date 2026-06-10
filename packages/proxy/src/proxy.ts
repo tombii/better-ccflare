@@ -112,7 +112,27 @@ export async function drainUsageCollector(): Promise<void> {
 }
 
 export function getUsageCollectorHealth(): UsageCollectorHealth {
-	return tryGetUsageCollector()?.getHealth() ?? { state: "ready" };
+	return (
+		tryGetUsageCollector()?.getHealth() ?? {
+			state: "ready",
+			asyncWriter: {
+				healthy: true,
+				failureCount: 0,
+				recentDrops: 0,
+				queuedJobs: 0,
+				metadataQueuedJobs: 0,
+				payloadQueuedJobs: 0,
+				payloadBytesPending: 0,
+				oldestMetadataAgeMs: 0,
+				oldestPayloadAgeMs: 0,
+				metadataDropped: 0,
+				payloadDropped: 0,
+				payloadDroppedBytes: 0,
+			},
+			pendingHandleEnds: 0,
+			trackedRequests: 0,
+		}
+	);
 }
 
 // ===== MAIN HANDLER =====

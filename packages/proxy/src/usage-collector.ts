@@ -3,7 +3,11 @@ import {
 	estimateCostUSD,
 	TIME_CONSTANTS,
 } from "@better-ccflare/core";
-import { AsyncDbWriter, DatabaseOperations } from "@better-ccflare/database";
+import {
+	AsyncDbWriter,
+	type AsyncWriterHealth,
+	DatabaseOperations,
+} from "@better-ccflare/database";
 import { Logger } from "@better-ccflare/logger";
 import { NO_ACCOUNT_ID, type RequestResponse } from "@better-ccflare/types";
 import { formatCost } from "@better-ccflare/ui-common";
@@ -538,6 +542,9 @@ function freeRequestState(state: RequestState): void {
 
 export interface UsageCollectorHealth {
 	state: "ready";
+	asyncWriter: AsyncWriterHealth;
+	pendingHandleEnds: number;
+	trackedRequests: number;
 }
 
 /**
@@ -742,7 +749,12 @@ export class UsageCollector {
 	}
 
 	getHealth(): UsageCollectorHealth {
-		return { state: "ready" };
+		return {
+			state: "ready",
+			asyncWriter: this.asyncWriter.getHealth(),
+			pendingHandleEnds: this.pendingHandleEnds.size,
+			trackedRequests: this.requests.size,
+		};
 	}
 
 	dispose(): void {

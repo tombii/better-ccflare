@@ -191,6 +191,21 @@ export interface AccountDetail {
 	rate_limited_at: number | null;
 }
 
+export interface HealthAsyncWriter {
+	healthy: boolean;
+	failureCount: number;
+	recentDrops?: number;
+	queuedJobs: number;
+	metadataQueuedJobs?: number;
+	payloadQueuedJobs?: number;
+	payloadBytesPending?: number;
+	oldestMetadataAgeMs?: number;
+	oldestPayloadAgeMs?: number;
+	metadataDropped?: number;
+	payloadDropped?: number;
+	payloadDroppedBytes?: number;
+}
+
 // Health check response
 export interface HealthResponse {
 	status: string;
@@ -200,13 +215,12 @@ export interface HealthResponse {
 	pool?: PoolStatus;
 	accounts_detail?: Array<AccountDetail>;
 	runtime?: {
-		asyncWriter?: {
-			healthy: boolean;
-			failureCount: number;
-			queuedJobs: number;
-		};
+		asyncWriter?: HealthAsyncWriter;
 		usageWorker?: {
 			state: string;
+			asyncWriter?: HealthAsyncWriter;
+			pendingHandleEnds?: number;
+			trackedRequests?: number;
 		};
 		storage?: {
 			integrity: {

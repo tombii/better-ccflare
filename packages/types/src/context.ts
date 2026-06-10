@@ -1,5 +1,6 @@
 import type { Config } from "@better-ccflare/config";
 import type {
+	AsyncWriterHealth,
 	BunSqlAdapter,
 	DatabaseOperations,
 } from "@better-ccflare/database";
@@ -22,22 +23,12 @@ export interface APIContext {
 		port: number;
 		tlsEnabled: boolean;
 	};
-	getAsyncWriterHealth?: () => {
-		healthy: boolean;
-		failureCount: number;
-		recentDrops: number;
-		queuedJobs: number;
-		metadataQueuedJobs: number;
-		payloadQueuedJobs: number;
-		payloadBytesPending: number;
-		oldestMetadataAgeMs: number;
-		oldestPayloadAgeMs: number;
-		metadataDropped: number;
-		payloadDropped: number;
-		payloadDroppedBytes: number;
-	};
+	getAsyncWriterHealth?: () => AsyncWriterHealth;
 	getUsageWorkerHealth?: () => {
 		state: string;
+		asyncWriter?: AsyncWriterHealth;
+		pendingHandleEnds?: number;
+		trackedRequests?: number;
 	};
 	getIntegrityStatus?: () => IntegrityStatus;
 	getStrategy?: () => LoadBalancingStrategy | null;

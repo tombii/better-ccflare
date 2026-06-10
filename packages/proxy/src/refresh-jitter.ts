@@ -30,3 +30,23 @@ export function sleepMs(ms: number): Promise<void> {
 	}
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
+
+/**
+ * Run independent account work after per-item delays concurrently.
+ * Total wall time is bounded by the largest delay + slowest task, not the sum
+ * of every delay. This keeps scheduler ticks from stretching into minutes when
+ * many accounts are eligible at once.
+ */
+export async function runStaggered<T>(
+	items: readonly T[],
+	getDelayMs: (item: T) => number,
+	run: (item: T, delayMs: number) => Promise<void> | void,
+): Promise<PromiseSettledResult<void>[]> {
+	return Promise.allSettled(
+		items.map(async (item) => {
+			const delayMs = getDelayMs(item);
+			await sleepMs(delayMs);
+			await run(item, delayMs);
+		}),
+	);
+}
