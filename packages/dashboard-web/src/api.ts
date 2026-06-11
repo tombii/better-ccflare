@@ -14,6 +14,7 @@ import type {
 	ComboFamilyAssignment,
 	ComboSlot,
 	ComboWithSlots,
+	ContextInsightsResponse,
 	LogEvent,
 	RequestPayload,
 	RequestResponse,
@@ -974,6 +975,14 @@ class API extends HttpClient {
 
 		return this.get<CacheInsightsResponse>(
 			`/api/insights/cache?${params.toString()}`,
+		);
+	}
+
+	async getContextInsights(range = "24h"): Promise<ContextInsightsResponse> {
+		const params = new URLSearchParams({ range });
+
+		return this.get<ContextInsightsResponse>(
+			`/api/insights/context?${params.toString()}`,
 		);
 	}
 

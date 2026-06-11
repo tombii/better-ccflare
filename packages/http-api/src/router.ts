@@ -82,6 +82,7 @@ import { createHealthHandler } from "./handlers/health";
 import {
 	createAnomalyInsightsHandler,
 	createCacheInsightsHandler,
+	createContextInsightsHandler,
 } from "./handlers/insights";
 import { createLogsStreamHandler } from "./handlers/logs";
 import { createLogsHistoryHandler } from "./handlers/logs-history";
@@ -196,6 +197,7 @@ export class APIRouter {
 		const analyticsHandler = createAnalyticsHandler(this.context);
 		const cacheInsightsHandler = createCacheInsightsHandler(this.context);
 		const anomalyInsightsHandler = createAnomalyInsightsHandler(this.context);
+		const contextInsightsHandler = createContextInsightsHandler(this.context);
 		const alertsHistoryHandler = createAlertsHistoryHandler(this.context);
 		const alertsConfigGetHandler = createAlertsConfigGetHandler(this.context);
 		const alertsConfigSetHandler = createAlertsConfigSetHandler(this.context);
@@ -392,6 +394,9 @@ export class APIRouter {
 		);
 		this.handlers.set("GET:/api/insights/anomalies", (_req, url) =>
 			anomalyInsightsHandler(url.searchParams),
+		);
+		this.handlers.set("GET:/api/insights/context", (_req, url) =>
+			contextInsightsHandler(url.searchParams),
 		);
 		// Alert routes
 		this.handlers.set("GET:/api/insights/alerts", (_req, url) =>
