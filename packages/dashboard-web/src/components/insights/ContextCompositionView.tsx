@@ -111,10 +111,7 @@ function ContributorsTable({ contributors }: ContributorsTableProps) {
 				</thead>
 				<tbody>
 					{contributors.map((contributor) => (
-						<tr
-							key={`${contributor.kind}-${contributor.label}-${contributor.maxChars}`}
-							className="border-t"
-						>
+						<tr key={contributor.hash} className="border-t">
 							<td className="px-3 py-2">
 								<Badge
 									variant={CONTRIBUTOR_KIND_VARIANTS[contributor.kind]}

@@ -338,8 +338,9 @@ function aggregateContributors(
 		}
 	}
 
-	return [...groups.values()]
-		.map((acc) => ({
+	return [...groups.entries()]
+		.map(([hash, acc]) => ({
+			hash,
 			kind: acc.kind,
 			label: acc.label,
 			maxChars: acc.maxChars,

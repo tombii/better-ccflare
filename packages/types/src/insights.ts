@@ -238,6 +238,8 @@ export type ContextContributorKind = "tool_result" | "text" | "tool_use";
  * so re-sent copies of the same block collapse into a single entry.
  */
 export interface ContextContributor {
+	/** Content hash the copies were grouped by; unique within the list. */
+	hash: string;
 	kind: ContextContributorKind;
 	/**
 	 * Tool name for tool_result/tool_use blocks when resolvable, else a short
