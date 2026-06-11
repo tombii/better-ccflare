@@ -808,7 +808,7 @@ export class APIRouter {
 			method === "POST" &&
 			!path.endsWith("/acknowledge-all")
 		) {
-			const alertId = path.split("/")[4];
+			const alertId = decodeURIComponent(path.split("/")[4] ?? "");
 			if (alertId) {
 				const alertAckHandler = createAlertAcknowledgeHandler(this.context);
 				return await this.wrapHandler(() => alertAckHandler(alertId))(req, url);

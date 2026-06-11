@@ -76,13 +76,16 @@ export function setAlertsConfig(
 	config: Config,
 	payload: AlertsConfigPayload,
 ): void {
+	// Validate webhookUrl before mutating any fields to avoid partial config state.
+	// setAlertWebhookUrl throws ValidationError for non-http(s) URLs; all other
+	// setters only clamp/coerce and never throw.
+	config.setAlertWebhookUrl(payload.webhookUrl);
 	config.setAlertDailySpendUsd(payload.dailySpendUsd);
 	config.setAlertTokensPerHour(payload.tokensPerHour);
 	config.setAlertRequestTokens(payload.requestTokens);
 	config.setAlertAnomalyEnabled(payload.anomalyEnabled);
 	config.setAlertAnomalyIntervalMinutes(payload.anomalyIntervalMinutes);
 	config.setAlertCooldownMinutes(payload.cooldownMinutes);
-	config.setAlertWebhookUrl(payload.webhookUrl);
 }
 
 export function shouldFireAlert(threshold: number, value: number): boolean {
