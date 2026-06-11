@@ -62,6 +62,13 @@ export interface ConfigData {
 	usage_throttling_five_hour_enabled?: boolean;
 	usage_throttling_weekly_enabled?: boolean;
 	health_detail_enabled?: boolean;
+	alert_daily_spend_usd?: number;
+	alert_tokens_per_hour?: number;
+	alert_request_tokens?: number;
+	alert_anomaly_enabled?: boolean;
+	alert_anomaly_interval_minutes?: number;
+	alert_cooldown_minutes?: number;
+	alert_webhook_url?: string;
 	// Database configuration
 	db_wal_mode?: boolean;
 	db_busy_timeout_ms?: number;
@@ -416,6 +423,128 @@ export class Config extends EventEmitter {
 		return false;
 	}
 
+	getAlertDailySpendUsd(): number {
+		const fromEnv = process.env.ALERT_DAILY_SPEND_USD;
+		if (fromEnv) {
+			const n = Number.parseFloat(fromEnv);
+			if (!Number.isNaN(n)) return this.clamp(n, 0, 1_000_000);
+		}
+		const fromFile = this.data.alert_daily_spend_usd;
+		if (typeof fromFile === "number") return this.clamp(fromFile, 0, 1_000_000);
+		return 0;
+	}
+
+	setAlertDailySpendUsd(value: number): void {
+		this.set("alert_daily_spend_usd", this.clamp(value, 0, 1_000_000));
+	}
+
+	getAlertTokensPerHour(): number {
+		const fromEnv = process.env.ALERT_TOKENS_PER_HOUR;
+		if (fromEnv) {
+			const n = Number.parseInt(fromEnv, 10);
+			if (!Number.isNaN(n)) return this.clamp(n, 0, 1_000_000_000);
+		}
+		const fromFile = this.data.alert_tokens_per_hour;
+		if (typeof fromFile === "number") {
+			return this.clamp(fromFile, 0, 1_000_000_000);
+		}
+		return 0;
+	}
+
+	setAlertTokensPerHour(value: number): void {
+		this.set("alert_tokens_per_hour", this.clamp(value, 0, 1_000_000_000));
+	}
+
+	getAlertRequestTokens(): number {
+		const fromEnv = process.env.ALERT_REQUEST_TOKENS;
+		if (fromEnv) {
+			const n = Number.parseInt(fromEnv, 10);
+			if (!Number.isNaN(n)) return this.clamp(n, 0, 1_000_000_000);
+		}
+		const fromFile = this.data.alert_request_tokens;
+		if (typeof fromFile === "number") {
+			return this.clamp(fromFile, 0, 1_000_000_000);
+		}
+		return 0;
+	}
+
+	setAlertRequestTokens(value: number): void {
+		this.set("alert_request_tokens", this.clamp(value, 0, 1_000_000_000));
+	}
+
+	getAlertAnomalyEnabled(): boolean {
+		const fromEnv = parseEnabledEnvFlag(process.env.ALERT_ANOMALY_ENABLED);
+		if (fromEnv !== undefined) {
+			return fromEnv;
+		}
+		const fromFile = this.data.alert_anomaly_enabled;
+		if (typeof fromFile === "boolean") return fromFile;
+		return false;
+	}
+
+	setAlertAnomalyEnabled(value: boolean): void {
+		this.set("alert_anomaly_enabled", value);
+	}
+
+	getAlertAnomalyIntervalMinutes(): number {
+		const fromEnv = process.env.ALERT_ANOMALY_INTERVAL_MINUTES;
+		if (fromEnv) {
+			const n = Number.parseInt(fromEnv, 10);
+			if (!Number.isNaN(n)) return this.clamp(n, 5, 1440);
+		}
+		const fromFile = this.data.alert_anomaly_interval_minutes;
+		if (typeof fromFile === "number") return this.clamp(fromFile, 5, 1440);
+		return 15;
+	}
+
+	setAlertAnomalyIntervalMinutes(value: number): void {
+		this.set("alert_anomaly_interval_minutes", this.clamp(value, 5, 1440));
+	}
+
+	getAlertCooldownMinutes(): number {
+		const fromEnv = process.env.ALERT_COOLDOWN_MINUTES;
+		if (fromEnv) {
+			const n = Number.parseInt(fromEnv, 10);
+			if (!Number.isNaN(n)) return this.clamp(n, 1, 1440);
+		}
+		const fromFile = this.data.alert_cooldown_minutes;
+		if (typeof fromFile === "number") return this.clamp(fromFile, 1, 1440);
+		return 60;
+	}
+
+	setAlertCooldownMinutes(value: number): void {
+		this.set("alert_cooldown_minutes", this.clamp(value, 1, 1440));
+	}
+
+	getAlertWebhookUrl(): string {
+		const fromEnv = process.env.ALERT_WEBHOOK_URL;
+		if (fromEnv !== undefined) return fromEnv;
+		const fromFile = this.data.alert_webhook_url;
+		if (typeof fromFile === "string") return fromFile;
+		return "";
+	}
+
+	setAlertWebhookUrl(value: string): void {
+		if (value !== "") {
+			let parsed: URL;
+			try {
+				parsed = new URL(value);
+			} catch (_error) {
+				throw new ValidationError(
+					"Invalid alert webhook URL",
+					"alert_webhook_url",
+				);
+			}
+			if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+				throw new ValidationError(
+					"Invalid alert webhook URL",
+					"alert_webhook_url",
+				);
+			}
+		}
+		this.set("alert_webhook_url", value);
+	}
+
 	getAllSettings(): Record<string, string | number | boolean | undefined> {
 		// Include current strategy (which might come from env)
 		return {
@@ -432,6 +561,13 @@ export class Config extends EventEmitter {
 				this.getUsageThrottlingFiveHourEnabled(),
 			usage_throttling_weekly_enabled: this.getUsageThrottlingWeeklyEnabled(),
 			health_detail_enabled: this.getHealthDetailEnabled(),
+			alert_daily_spend_usd: this.getAlertDailySpendUsd(),
+			alert_tokens_per_hour: this.getAlertTokensPerHour(),
+			alert_request_tokens: this.getAlertRequestTokens(),
+			alert_anomaly_enabled: this.getAlertAnomalyEnabled(),
+			alert_anomaly_interval_minutes: this.getAlertAnomalyIntervalMinutes(),
+			alert_cooldown_minutes: this.getAlertCooldownMinutes(),
+			alert_webhook_url: this.getAlertWebhookUrl(),
 		};
 	}
 

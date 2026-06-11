@@ -170,6 +170,31 @@ export function ensureSchema(db: Database): void {
 		`CREATE INDEX IF NOT EXISTS idx_requests_timestamp_account ON requests(timestamp DESC, account_used)`,
 	);
 
+	// Create alerts table for threshold and anomaly alert history
+	db.run(`
+		CREATE TABLE IF NOT EXISTS alerts (
+			id TEXT PRIMARY KEY,
+			timestamp INTEGER NOT NULL,
+			type TEXT NOT NULL,
+			severity TEXT NOT NULL,
+			title TEXT NOT NULL,
+			message TEXT NOT NULL,
+			value REAL,
+			threshold REAL,
+			account TEXT,
+			model TEXT,
+			project TEXT,
+			request_id TEXT,
+			acknowledged INTEGER NOT NULL DEFAULT 0
+		)
+	`);
+	db.run(
+		`CREATE INDEX IF NOT EXISTS idx_alerts_timestamp ON alerts(timestamp DESC)`,
+	);
+	db.run(
+		`CREATE INDEX IF NOT EXISTS idx_alerts_acknowledged ON alerts(acknowledged)`,
+	);
+
 	// Create request_payloads table for storing full request/response data
 	db.run(`
 		CREATE TABLE IF NOT EXISTS request_payloads (

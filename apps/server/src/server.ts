@@ -21,7 +21,7 @@ import {
 	DatabaseFactory,
 	initPayloadEncryption,
 } from "@better-ccflare/database";
-import { APIRouter, AuthService } from "@better-ccflare/http-api";
+import { AlertService, APIRouter, AuthService } from "@better-ccflare/http-api";
 import {
 	LeastUsedStrategy,
 	SessionStrategy,
@@ -666,6 +666,10 @@ export default async function startServer(options?: {
 	container.registerInstance(SERVICE_KEYS.PricingLogger, pricingLogger);
 	setPricingLogger(pricingLogger);
 
+	const alertService = new AlertService(db, config);
+	alertService.start();
+	registerDisposable({ dispose: () => alertService.stop() });
+
 	// Strategy is constructed below after RuntimeConfig is built. The router
 	// accepts a getter so it can read the live (post-hot-reload) instance.
 	let currentStrategy: LoadBalancingStrategy | null = null;
@@ -674,6 +678,7 @@ export default async function startServer(options?: {
 		db,
 		config,
 		dbOps,
+		alertService,
 		runtime: {
 			port,
 			tlsEnabled,

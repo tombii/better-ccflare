@@ -29,6 +29,7 @@ export type ModelMappingData = {
 	modelMappings?: ModelMapping;
 };
 export type ModelFallback = { [modelFamily: string]: string };
+export * from "./alert-events";
 export {
 	type IntervalConfig,
 	intervalManager,
