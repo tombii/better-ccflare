@@ -453,14 +453,6 @@ export function createContextInsightsHandler(context: APIContext) {
 			searchParams,
 			startMs,
 		);
-		// buildRequestFilters emits an unqualified `timestamp > ?` (fine for
-		// requests-only queries); the payload joins below need it qualified
-		// because request_payloads also has a timestamp column.
-		const qualifiedWhere = whereClause.replace(
-			"timestamp > ?",
-			"r.timestamp > ?",
-		);
-
 		const limit = parseDetectorParam(
 			searchParams.get("limit"),
 			DEFAULT_PAYLOAD_SCAN_LIMIT,
@@ -493,7 +485,7 @@ export function createContextInsightsHandler(context: APIContext) {
 					COUNT(rp.id) as requests_with_payload
 				FROM requests r
 				LEFT JOIN request_payloads rp ON rp.id = r.id
-				WHERE ${qualifiedWhere}
+				WHERE ${whereClause}
 			`,
 				queryParams,
 			);
@@ -520,7 +512,7 @@ export function createContextInsightsHandler(context: APIContext) {
 				FROM requests r
 				JOIN request_payloads rp ON rp.id = r.id
 				LEFT JOIN accounts a ON a.id = r.account_used
-				WHERE ${qualifiedWhere}
+				WHERE ${whereClause}
 				ORDER BY r.timestamp DESC
 				LIMIT ${limit + 1}
 			`,

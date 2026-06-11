@@ -384,15 +384,29 @@ export const ContextCompositionView = React.memo(
 							<div className="flex items-start gap-3">
 								<Database className="h-5 w-5 text-muted-foreground mt-0.5 shrink-0" />
 								<div className="space-y-1">
-									<p className="font-medium">No stored payloads to analyze</p>
+									<p className="font-medium">
+										{requestsInRange === 0
+											? "No requests in this period"
+											: "No stored payloads to analyze"}
+									</p>
 									<p className="text-sm text-muted-foreground">
-										Context composition is computed from stored request
-										payloads, but none of the {formatNumber(requestsInRange)}{" "}
-										requests in the last {timeRange} have one. Enable payload
-										storage (the <code>store_payloads</code> config option) and
-										new requests will appear here. Note that payloads are
-										size-capped and cleaned up by retention, so coverage is
-										always partial.
+										{requestsInRange === 0 ? (
+											<>
+												No requests were recorded in the last {timeRange}, so
+												there is nothing to analyze yet. Try a wider time range.
+											</>
+										) : (
+											<>
+												Context composition is computed from stored request
+												payloads, but none of the{" "}
+												{formatNumber(requestsInRange)} requests in the last{" "}
+												{timeRange} have one. Enable payload storage (the{" "}
+												<code>store_payloads</code> config option) and new
+												requests will appear here. Note that payloads are
+												size-capped and cleaned up by retention, so coverage is
+												always partial.
+											</>
+										)}
 									</p>
 								</div>
 							</div>
