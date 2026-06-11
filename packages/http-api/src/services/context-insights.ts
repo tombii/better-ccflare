@@ -68,7 +68,8 @@ export interface ContributorBlock {
 	label: string;
 	/** Serialized size of the block. */
 	chars: number;
-	/** Cheap content hash used to group re-sent copies across requests. */
+	/** Cheap content hash used to group re-sent copies across requests.
+	 *  Theoretically collisions are possible for blocks sharing tool name, length, and first 256 chars. */
 	hash: string;
 }
 
@@ -279,8 +280,8 @@ export function analyzePayloadWrapper(
 	const bodyB64 = wrapper.request.body;
 	if (typeof bodyB64 !== "string" || bodyB64.length === 0) return null;
 
-	// Invalid base64 yields garbage rather than throwing; both that and
-	// truncated bodies surface as a JSON.parse failure here.
+	// Buffer.from silently drops invalid base64 chars producing a short buffer;
+	// truncated bodies also surface as JSON.parse failures here.
 	let body: unknown;
 	try {
 		body = JSON.parse(Buffer.from(bodyB64, "base64").toString("utf-8"));

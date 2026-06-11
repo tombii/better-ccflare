@@ -43,13 +43,6 @@ interface ContextCompositionViewProps {
 	timeRange: TimeRange;
 }
 
-/** Mirrors the backend's char→token heuristic (see ContextInsightsMeta.estimateNote). */
-const CHARS_PER_TOKEN = 4;
-
-function estimateTokensFromChars(chars: number): number {
-	return Math.round(chars / CHARS_PER_TOKEN);
-}
-
 const CONTRIBUTOR_KIND_LABELS: Record<ContextContributorKind, string> = {
 	tool_result: "Tool Result",
 	text: "Text",
@@ -179,13 +172,13 @@ function PerRequestTable({ rows }: PerRequestTableProps) {
 							Project
 						</th>
 						<th scope="col" className="text-right px-3 py-2">
-							System
+							System (chars)
 						</th>
 						<th scope="col" className="text-right px-3 py-2">
-							Tools
+							Tools (chars)
 						</th>
 						<th scope="col" className="text-right px-3 py-2">
-							Messages
+							Messages (chars)
 						</th>
 						<th scope="col" className="text-right px-3 py-2">
 							Est. Context
@@ -217,13 +210,13 @@ function PerRequestTable({ rows }: PerRequestTableProps) {
 									</span>
 								</td>
 								<td className="px-3 py-2 text-right">
-									~{formatTokens(estimateTokensFromChars(row.systemChars))}
+									{formatNumber(row.systemChars)}
 								</td>
 								<td className="px-3 py-2 text-right">
-									~{formatTokens(estimateTokensFromChars(row.toolsChars))}
+									{formatNumber(row.toolsChars)}
 								</td>
 								<td className="px-3 py-2 text-right">
-									~{formatTokens(estimateTokensFromChars(row.messagesChars))}
+									{formatNumber(row.messagesChars)}
 								</td>
 								<td className="px-3 py-2 text-right">
 									~{formatTokens(row.estimatedContextTokens)}
@@ -287,9 +280,7 @@ export const ContextCompositionView = React.memo(
 
 		const recentRequests = useMemo(
 			() =>
-				[...(data?.composition.perRequest ?? [])]
-					.sort((a, b) => b.timestamp - a.timestamp)
-					.slice(0, PER_REQUEST_ROW_LIMIT),
+				(data?.composition.perRequest ?? []).slice(0, PER_REQUEST_ROW_LIMIT),
 			[data?.composition.perRequest],
 		);
 
@@ -333,8 +324,7 @@ export const ContextCompositionView = React.memo(
 								~{formatTokens(totals?.estimatedTokens.total ?? 0)}
 							</div>
 							<p className="text-xs text-muted-foreground">
-								Estimated tokens across analyzed payloads (~
-								{CHARS_PER_TOKEN} chars/token)
+								Estimated tokens across analyzed payloads (~ 4 chars/token)
 							</p>
 						</CardContent>
 					</Card>
@@ -375,41 +365,31 @@ export const ContextCompositionView = React.memo(
 					</Card>
 				</div>
 
-				{noPayloads ? (
+				{/* No-payloads notice — only for payload-dependent sections */}
+				{noPayloads && requestsInRange > 0 && (
 					<Card>
 						<CardContent className="p-6">
 							<div className="flex items-start gap-3">
 								<Database className="h-5 w-5 text-muted-foreground mt-0.5 shrink-0" />
 								<div className="space-y-1">
-									<p className="font-medium">
-										{requestsInRange === 0
-											? "No requests in this period"
-											: "No stored payloads to analyze"}
-									</p>
+									<p className="font-medium">No stored payloads to analyze</p>
 									<p className="text-sm text-muted-foreground">
-										{requestsInRange === 0 ? (
-											<>
-												No requests were recorded in the last {timeRange}, so
-												there is nothing to analyze yet. Try a wider time range.
-											</>
-										) : (
-											<>
-												Context composition is computed from stored request
-												payloads, but none of the{" "}
-												{formatNumber(requestsInRange)} requests in the last{" "}
-												{timeRange} have one. Enable payload storage (the{" "}
-												<code>store_payloads</code> config option) and new
-												requests will appear here. Note that payloads are
-												size-capped and cleaned up by retention, so coverage is
-												always partial.
-											</>
-										)}
+										Context composition is computed from stored request
+										payloads, but none of the {formatNumber(requestsInRange)}{" "}
+										requests in the last {timeRange} have one. Enable payload
+										storage (the <code>store_payloads</code> config option) and
+										new requests will appear here. Note that payloads are
+										size-capped and cleaned up by retention, so coverage is
+										always partial.
 									</p>
 								</div>
 							</div>
 						</CardContent>
 					</Card>
-				) : (
+				)}
+
+				{/* Payload-dependent sections: composition donuts + context details */}
+				{!noPayloads && (
 					<>
 						{/* Composition Donuts */}
 						<div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -431,9 +411,7 @@ export const ContextCompositionView = React.memo(
 										paddingAngle={5}
 										tooltipStyle="success"
 										tooltipFormatter={(value, name) => [
-											`~${formatTokens(
-												estimateTokensFromChars(value as number),
-											)} tokens (${formatNumber(value as number)} chars)`,
+											`${formatNumber(value as number)} chars`,
 											name ?? "",
 										]}
 										showLegend
@@ -503,79 +481,6 @@ export const ContextCompositionView = React.memo(
 							</Card>
 						</div>
 
-						{/* Growth Curve */}
-						<Card>
-							<CardHeader>
-								<div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-									<div>
-										<CardTitle>Context Growth</CardTitle>
-										<CardDescription>
-											Exact context tokens (input + cache read + cache creation)
-											per request over a session
-										</CardDescription>
-									</div>
-									{sessions.length > 0 && (
-										<Select
-											value={String(sessionIndex)}
-											onValueChange={setSelectedSession}
-										>
-											<SelectTrigger className="w-full sm:w-[340px]">
-												<SelectValue />
-											</SelectTrigger>
-											<SelectContent>
-												{sessions.map((session, index) => (
-													<SelectItem
-														key={`${session.project ?? "unknown"}-${session.startTimestamp}`}
-														value={String(index)}
-													>
-														{formatSessionLabel(session)}
-													</SelectItem>
-												))}
-											</SelectContent>
-										</Select>
-									)}
-								</div>
-							</CardHeader>
-							<CardContent>
-								<BaseLineChart
-									data={growthData}
-									loading={loading}
-									height="medium"
-									xAxisKey="time"
-									lines={[
-										{
-											dataKey: "contextTokens",
-											name: "Context tokens",
-											stroke: COLORS.primary,
-											dot: true,
-										},
-										{
-											dataKey: "outputTokens",
-											name: "Output tokens",
-											stroke: COLORS.blue,
-										},
-									]}
-									yAxisTickFormatter={(value) => formatTokens(Number(value))}
-									tooltipFormatter={(value, name) => [
-										`${formatTokens(value as number)} tokens`,
-										name ?? "",
-									]}
-									showLegend
-									emptyState={
-										<p className="text-sm text-muted-foreground">
-											No session data for this period
-										</p>
-									}
-								/>
-								{data?.growthCurve.truncated && (
-									<p className="mt-2 text-xs text-muted-foreground">
-										<AlertTriangle className="h-3 w-3 inline mr-1" />
-										Some sessions or points were trimmed by scan caps.
-									</p>
-								)}
-							</CardContent>
-						</Card>
-
 						{/* Contributors + Per-Request Tables */}
 						<Card>
 							<CardHeader>
@@ -612,6 +517,81 @@ export const ContextCompositionView = React.memo(
 							</CardContent>
 						</Card>
 					</>
+				)}
+
+				{/* Growth Curve — always shown, doesn't need payloads */}
+				{data && (
+					<Card>
+						<CardHeader>
+							<div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+								<div>
+									<CardTitle>Context Growth</CardTitle>
+									<CardDescription>
+										Exact context tokens (input + cache read + cache creation)
+										per request over a session
+									</CardDescription>
+								</div>
+								{sessions.length > 0 && (
+									<Select
+										value={String(sessionIndex)}
+										onValueChange={setSelectedSession}
+									>
+										<SelectTrigger className="w-full sm:w-[340px]">
+											<SelectValue />
+										</SelectTrigger>
+										<SelectContent>
+											{sessions.map((session, index) => (
+												<SelectItem
+													key={`${session.project ?? "unknown"}-${session.startTimestamp}`}
+													value={String(index)}
+												>
+													{formatSessionLabel(session)}
+												</SelectItem>
+											))}
+										</SelectContent>
+									</Select>
+								)}
+							</div>
+						</CardHeader>
+						<CardContent>
+							<BaseLineChart
+								data={growthData}
+								loading={loading}
+								height="medium"
+								xAxisKey="time"
+								lines={[
+									{
+										dataKey: "contextTokens",
+										name: "Context tokens",
+										stroke: COLORS.primary,
+										dot: true,
+									},
+									{
+										dataKey: "outputTokens",
+										name: "Output tokens",
+										stroke: COLORS.blue,
+									},
+								]}
+								yAxisTickFormatter={(value) => formatTokens(Number(value))}
+								tooltipFormatter={(value, name) => [
+									`${formatTokens(value as number)} tokens`,
+									name ?? "",
+								]}
+								showLegend
+								emptyState={
+									<p className="text-sm text-muted-foreground">
+										No session data for this period
+									</p>
+								}
+							/>
+							{data?.growthCurve.truncated && (
+								<p className="mt-2 text-xs text-muted-foreground">
+									<AlertTriangle className="h-3 w-3 inline mr-1" />
+									Some sessions or points were trimmed by scan caps.
+								</p>
+							)}
+						</CardContent>
+					</Card>
 				)}
 
 				{/* Footnotes */}
