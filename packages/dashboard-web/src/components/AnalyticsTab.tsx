@@ -1,12 +1,11 @@
 import { format } from "date-fns";
 import React, { useCallback, useMemo, useState } from "react";
-import type { TimeRange } from "../constants";
 import { useAnalytics } from "../hooks/queries";
+import { useAnalyticsUrlState } from "../hooks/useAnalyticsUrlState";
 import {
 	AnalyticsControls,
 	CumulativeGrowthChart,
 	CumulativeTokenComposition,
-	type FilterState,
 	MainMetricsChart,
 	ModelAnalytics,
 	PerformanceIndicatorsChart,
@@ -15,17 +14,19 @@ import {
 } from "./analytics";
 
 export const AnalyticsTab = React.memo(() => {
-	const [timeRange, setTimeRange] = useState<TimeRange>("1h");
-	const [selectedMetric, setSelectedMetric] = useState("requests");
+	const {
+		timeRange,
+		setTimeRange,
+		selectedMetric,
+		setSelectedMetric,
+		viewMode,
+		setViewMode,
+		modelBreakdown,
+		setModelBreakdown,
+		filters,
+		setFilters,
+	} = useAnalyticsUrlState();
 	const [filterOpen, setFilterOpen] = useState(false);
-	const [viewMode, setViewMode] = useState<"normal" | "cumulative">("normal");
-	const [modelBreakdown, setModelBreakdown] = useState(false);
-	const [filters, setFilters] = useState<FilterState>({
-		accounts: [],
-		models: [],
-		apiKeys: [],
-		status: "all",
-	});
 
 	// Fetch analytics data with automatic refetch on dependency changes
 	const { data: analytics, isLoading: loading } = useAnalytics(
@@ -214,13 +215,7 @@ export const AnalyticsTab = React.memo(() => {
 				timeRange={timeRange}
 				setTimeRange={setTimeRange}
 				viewMode={viewMode}
-				setViewMode={(mode) => {
-					setViewMode(mode);
-					// Disable per-model breakdown when switching to cumulative
-					if (mode === "cumulative") {
-						setModelBreakdown(false);
-					}
-				}}
+				setViewMode={setViewMode}
 				filters={filters}
 				setFilters={setFilters}
 				availableAccounts={availableAccounts}
