@@ -501,6 +501,15 @@ export class AlertService {
 		alert: AlertEvent,
 		webhookUrl: string,
 	): Promise<void> {
+		// Check if a row with this cooldown-bucket ID already exists before inserting.
+		// If it does, the alert is within its cooldown window — skip emission entirely
+		// to avoid SSE storms and duplicate webhook deliveries.
+		const existing = await this.db.get<{ id: string }>(
+			`SELECT id FROM alerts WHERE id = ?`,
+			[alert.id],
+		);
+		if (existing) return;
+
 		await this.db.run(
 			`
 			INSERT OR IGNORE INTO alerts (
@@ -524,15 +533,10 @@ export class AlertService {
 				alert.acknowledged ? 1 : 0,
 			],
 		);
-		const saved = await this.db.get<AlertRow>(
-			`SELECT * FROM alerts WHERE id = ?`,
-			[alert.id],
-		);
-		if (!saved || Boolean(saved.acknowledged)) return;
-		const event: AlertEvt = { type: "alert", payload: toAlertEvent(saved) };
+		const event: AlertEvt = { type: "alert", payload: alert };
 		alertEvents.emit("event", event);
 		if (webhookUrl) {
-			void this.deliverWebhook(webhookUrl, event.payload);
+			void this.deliverWebhook(webhookUrl, alert);
 		}
 	}
 
