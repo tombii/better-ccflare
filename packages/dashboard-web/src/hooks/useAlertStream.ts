@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export interface AlertStreamEvent {
 	type: "alert";
@@ -27,9 +27,16 @@ interface UseAlertStreamOptions {
 export function useAlertStream(options: UseAlertStreamOptions = {}) {
 	const [connected, setConnected] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	const onAlertRef = useRef(options.onAlert);
+
+	// Keep ref current without causing re-renders
+	useEffect(() => {
+		onAlertRef.current = options.onAlert;
+	}, [options.onAlert]);
 
 	useEffect(() => {
-		if (!options.enabled) return;
+		// Opt-out only when explicitly disabled
+		if (options.enabled === false) return;
 
 		let evtSource: EventSource | null = null;
 		let alive = true;
@@ -49,7 +56,7 @@ export function useAlertStream(options: UseAlertStreamOptions = {}) {
 					if (!alive) return;
 					try {
 						const data = JSON.parse(event.data) as AlertStreamEvent;
-						options.onAlert?.(data);
+						onAlertRef.current?.(data);
 					} catch (err) {
 						console.warn("Malformed alert event:", err);
 					}
@@ -71,7 +78,7 @@ export function useAlertStream(options: UseAlertStreamOptions = {}) {
 			alive = false;
 			evtSource?.close();
 		};
-	}, [options.enabled, options.onAlert]);
+	}, [options.enabled]);
 
 	return { connected, error };
 }
