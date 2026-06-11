@@ -1,9 +1,9 @@
 import { requestEvents, TIME_CONSTANTS } from "@better-ccflare/core";
-import { Logger } from "@better-ccflare/logger";
 import {
 	sanitizeRequestHeaders,
 	withSanitizedProxyHeaders,
 } from "@better-ccflare/http-common";
+import { Logger } from "@better-ccflare/logger";
 import type { Account, RateLimitReason } from "@better-ccflare/types";
 import type { ProxyContext } from "./handlers";
 import { applyRateLimitCooldown } from "./handlers/rate-limit-cooldown";

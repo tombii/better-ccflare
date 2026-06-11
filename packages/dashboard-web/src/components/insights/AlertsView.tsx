@@ -1,6 +1,6 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { Check, CheckCheck, TriangleAlert } from "lucide-react";
 import React from "react";
-import { useQueryClient } from "@tanstack/react-query";
 import {
 	useAcknowledgeAlert,
 	useAcknowledgeAllAlerts,

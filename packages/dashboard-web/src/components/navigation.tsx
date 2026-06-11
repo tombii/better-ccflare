@@ -103,7 +103,7 @@ export function Navigation({
 		);
 
 		return baseItems;
-	}, [showCombos]);
+	}, [showCombos, unacknowledgedCount]);
 
 	// Cleanup on unmount to prevent memory leaks
 	useEffect(() => {

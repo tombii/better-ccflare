@@ -194,7 +194,8 @@ export function translateRequestToAnthropic(
 
 	// Merge developer-role blocks and req.instructions into system prompt.
 	const systemParts: string[] = [];
-	if (developerBlocks.length > 0) systemParts.push(developerBlocks.join("\n\n"));
+	if (developerBlocks.length > 0)
+		systemParts.push(developerBlocks.join("\n\n"));
 	if (req.instructions !== undefined) systemParts.push(req.instructions);
 	if (systemParts.length > 0) result.system = systemParts.join("\n\n");
 
