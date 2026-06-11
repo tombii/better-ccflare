@@ -181,6 +181,7 @@ export class AlertService {
 	private readonly db: BunSqlAdapter;
 	private readonly config: Config;
 	private readonly requestListener: (event: RequestEvt) => void;
+	private readonly configChangeListener: ({ key }: { key: string }) => void;
 	private anomalyTimer: ReturnType<typeof setInterval> | null = null;
 
 	constructor(db: BunSqlAdapter, config: Config) {
@@ -191,23 +192,25 @@ export class AlertService {
 				void this.evaluateRequest(event.payload);
 			}
 		};
-	}
-
-	start(): void {
-		requestEvents.on("event", this.requestListener);
-		this.restartAnomalyTimer();
-		this.config.on("change", ({ key }: { key: string }) => {
+		this.configChangeListener = ({ key }: { key: string }) => {
 			if (
 				key === "alert_anomaly_enabled" ||
 				key === "alert_anomaly_interval_minutes"
 			) {
 				this.restartAnomalyTimer();
 			}
-		});
+		};
+	}
+
+	start(): void {
+		requestEvents.on("event", this.requestListener);
+		this.config.on("change", this.configChangeListener);
+		this.restartAnomalyTimer();
 	}
 
 	stop(): void {
 		requestEvents.off("event", this.requestListener);
+		this.config.off("change", this.configChangeListener);
 		if (this.anomalyTimer) {
 			clearInterval(this.anomalyTimer);
 			this.anomalyTimer = null;
@@ -259,6 +262,11 @@ export class AlertService {
 	}
 
 	async acknowledgeAlert(id: string): Promise<boolean> {
+		const row = await this.db.get<{ cnt: number }>(
+			`SELECT COUNT(*) as cnt FROM alerts WHERE id = ?`,
+			[id],
+		);
+		if (!row || row.cnt === 0) return false;
 		await this.db.run(`UPDATE alerts SET acknowledged = 1 WHERE id = ?`, [id]);
 		return true;
 	}

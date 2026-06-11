@@ -69,7 +69,7 @@ export function Navigation({
 	const [latestVersion, setLatestVersion] = useState<string>("");
 	const [updateError, setUpdateError] = useState<string | null>(null);
 	const { data: alertData } = useAlerts();
-	const _unacknowledgedCount = alertData?.unacknowledgedCount ?? 0;
+	const unacknowledgedCount = alertData?.unacknowledgedCount ?? 0;
 	const location = useLocation();
 	const isMountedRef = useRef(true);
 
@@ -78,7 +78,13 @@ export function Navigation({
 		const baseItems: NavItem[] = [
 			{ label: "Overview", icon: LayoutDashboard, path: "/" },
 			{ label: "Analytics", icon: BarChart3, path: "/analytics" },
-			{ label: "Insights", icon: Lightbulb, path: "/insights" },
+			{
+				label: "Insights",
+				icon: Lightbulb,
+				path: "/insights",
+				badge:
+					unacknowledgedCount > 0 ? String(unacknowledgedCount) : undefined,
+			},
 			{ label: "Requests", icon: Activity, path: "/requests" },
 			{ label: "Accounts", icon: Users, path: "/accounts" },
 		];

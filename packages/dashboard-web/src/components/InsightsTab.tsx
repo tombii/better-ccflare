@@ -39,10 +39,10 @@ export const InsightsTab = React.memo(() => {
 					timeRange={timeRange}
 				/>
 			)}
+
+			<AlertsView />
 		</div>
 	);
 });
 
 InsightsTab.displayName = "InsightsTab";
-
-<AlertsView />;

@@ -1,26 +1,29 @@
 import { Check, CheckCheck, TriangleAlert } from "lucide-react";
 import React from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
 	useAcknowledgeAlert,
 	useAcknowledgeAllAlerts,
 	useAlerts,
 } from "../../hooks/queries";
+import { useAlertStream } from "../../hooks/useAlertStream";
+import { queryKeys } from "../../lib/query-keys";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardHeader } from "../ui/card";
 
-function formatTimestamp(ts: number): string {
-	try {
-		return new Date(ts).toLocaleString();
-	} catch (_error) {
-		return String(ts);
-	}
-}
-
 export const AlertsView = React.memo(() => {
+	const queryClient = useQueryClient();
 	const { data, isLoading } = useAlerts();
 	const ack = useAcknowledgeAlert();
 	const ackAll = useAcknowledgeAllAlerts();
+
+	// Connect SSE stream and invalidate alerts query on new events.
+	useAlertStream({
+		onAlert: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.insightsAlerts() });
+		},
+	});
 
 	const alerts = data?.alerts ?? [];
 	const unacknowledgedCount = data?.unacknowledgedCount ?? 0;
@@ -31,6 +34,10 @@ export const AlertsView = React.memo(() => {
 				<CardContent className="p-6">Loading alerts…</CardContent>
 			</Card>
 		);
+	}
+
+	function formatTimestamp(ts: number): string {
+		return new Date(ts).toLocaleString();
 	}
 
 	return (
