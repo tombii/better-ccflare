@@ -146,7 +146,9 @@ export class AgentRegistry {
 			// Handle shorthand model names
 			if (data.model) {
 				const modelLower = data.model.toLowerCase();
-				if (modelLower === "opus") {
+				if (modelLower === "fable") {
+					model = CLAUDE_MODEL_IDS.FABLE_5 as AllowedModel;
+				} else if (modelLower === "opus") {
 					model = CLAUDE_MODEL_IDS.OPUS_4 as AllowedModel; // Keep existing default
 				} else if (modelLower === "sonnet") {
 					model = CLAUDE_MODEL_IDS.SONNET_4 as AllowedModel; // Keep existing default

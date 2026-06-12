@@ -236,6 +236,12 @@ describe("Model Validation Utilities", () => {
 		expect(getModelFamily("claude-haiku-5-0")).toBe("haiku");
 	});
 
+	test("getModelFamily detects fable models", () => {
+		expect(getModelFamily("claude-fable-5")).toBe("fable");
+		expect(getModelFamily("claude-fable-5-20260601")).toBe("fable");
+		expect(getModelFamily("CLAUDE-FABLE-5")).toBe("fable"); // case insensitive
+	});
+
 	test("getModelFamily returns null for invalid models", () => {
 		expect(getModelFamily("gpt-4")).toBeNull();
 		expect(getModelFamily("invalid-model")).toBeNull();
@@ -246,6 +252,7 @@ describe("Model Validation Utilities", () => {
 		expect(isValidClaudeModel("claude-opus-4-6")).toBe(true);
 		expect(isValidClaudeModel("claude-sonnet-4-5-20250929")).toBe(true);
 		expect(isValidClaudeModel("claude-haiku-4-5-20251001")).toBe(true);
+		expect(isValidClaudeModel("claude-fable-5")).toBe(true);
 		expect(isValidClaudeModel("claude-opus-5-0-future")).toBe(true); // future models
 	});
 
@@ -260,5 +267,32 @@ describe("Model Validation Utilities", () => {
 		expect(message).toContain("opus");
 		expect(message).toContain("sonnet");
 		expect(message).toContain("haiku");
+		expect(message).toContain("fable");
+	});
+
+	test("mapModelName maps fable family via family mapping", () => {
+		const mockAccount: Account = {
+			id: "test",
+			name: "test-account",
+			provider: "openai-compatible",
+			api_key: "test-key",
+			refresh_token: "",
+			access_token: "",
+			expires_at: null,
+			created_at: Date.now(),
+			request_count: 0,
+			total_requests: 0,
+			priority: 10,
+			model_mappings: JSON.stringify({
+				fable: "my-fable-model",
+			}),
+			custom_endpoint: null,
+		} as Account;
+
+		expect(mapModelName("claude-fable-5", mockAccount)).toBe("my-fable-model");
+		// Unmapped families pass through unchanged
+		expect(mapModelName("claude-opus-4-6", mockAccount)).toBe(
+			"claude-opus-4-6",
+		);
 	});
 });

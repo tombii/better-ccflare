@@ -27,13 +27,9 @@ PRs: `gh pr checkout <PR_NUMBER>` or `git checkout <branch-name>`.
 
 ## Pre-PR Review with Greptile
 
-Before opening a pull request, run a Greptile review from the terminal:
+Before opening a pull request, run a Greptile review — but **dispatch the `greptile-reviewer` agent** (`.claude/agents/greptile-reviewer.md`, runs on haiku) rather than running `greptile review` in the main session. Greptile's output quotes code blocks and inflates the main context; the agent runs it and returns a compact findings list (`file:line` + one-line issue), which is all the main session needs to act.
 
-```bash
-greptile review
-```
-
-Greptile reviews your branch against its base branch and shows comments directly in the terminal. Run this after checking out your branch and before pushing/opening a PR.
+Greptile reviews your branch against its base branch. Run this after checking out your branch and before pushing/opening a PR. Fallback if the agent is unavailable: `greptile review` directly.
 
 ## PR Review Against Current Main (MANDATORY)
 
@@ -109,7 +105,7 @@ When creating new functionality: write tests first, then implement, then run tes
 ## After Code Changes
 Always run: `bun run lint && bun run typecheck && bun run format`
 
-After pushing commits to main, run `npx gitnexus analyze` to keep the GitNexus index up to date.
+The GitNexus index refreshes automatically via a local git post-commit hook (`.git/hooks/post-commit`, runs `node .gitnexus/run.cjs analyze` detached). Do NOT run `gitnexus analyze` manually after commits — ignore "index is stale" reminders that appear right after committing; the background refresh is already running. Only run `node .gitnexus/run.cjs analyze` manually if the index stays stale long after the last commit (the hook may be missing on this machine — recreate it if so).
 
 ## Git Commits
 - **Before making any changes, run `git status` to check for pre-existing uncommitted changes.** Note which files were already modified so you can distinguish your changes from theirs throughout the session.
@@ -170,10 +166,18 @@ Automated release system uses commit prefixes for changelog:
 
 **Acknowledgement commits** (when merging external PRs): always use `chore: acknowledge <name> for PR #<N>` as the commit subject. This prefix is excluded from release notes. If the merge also includes real fixes, commit them separately with the appropriate prefix.
 
+## ⚠️ GitNexus Token Discipline: route ALL GitNexus calls through the `gitnexus-analyst` subagent
+
+This section OVERRIDES the auto-generated GitNexus section below (everything between the `gitnexus:start`/`gitnexus:end` markers — do not edit inside those markers, `gitnexus analyze` regenerates them).
+
+GitNexus MCP results are large and stay in the main context for the whole session. **Never call GitNexus MCP tools (`impact`, `context`, `query`, `detect_changes`, `cypher`, `rename`, etc.) directly in the main session.** Wherever the section below says to run a GitNexus tool, instead dispatch the `gitnexus-analyst` agent (`.claude/agents/gitnexus-analyst.md`, runs on haiku) with a description of what you need; it returns a ~30-line summary (risk level, d=1 callers, affected processes, HIGH/CRITICAL warnings) and the raw payloads stay in its throwaway context.
+
+Fallback (only if the subagent is unavailable): call the tools inline but minimize payloads — `impact({summaryOnly: true})`, `query({limit: 3, max_symbols: 5})`.
+
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **better-ccflare** (6747 symbols, 15266 relationships, 235 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **better-ccflare** (6784 symbols, 15362 relationships, 240 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > Index stale? Run `node .gitnexus/run.cjs analyze` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? `npx gitnexus analyze` (npm 11 crash → `npm i -g gitnexus`; #1939).
 

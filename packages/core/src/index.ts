@@ -61,6 +61,7 @@ export {
 	getModelDisplayName,
 	getModelShortName,
 	isValidModelId,
+	LATEST_FABLE_MODEL,
 	LATEST_HAIKU_MODEL,
 	LATEST_OPUS_MODEL,
 	LATEST_SONNET_MODEL,
