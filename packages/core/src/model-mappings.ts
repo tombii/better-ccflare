@@ -299,7 +299,7 @@ export function createCustomEndpointData(
 
 /**
  * Parse model fallbacks from account's model_fallbacks field.
- * Model fallbacks map model family names (opus/sonnet/haiku) to fallback model names.
+ * Model fallbacks map model family names (fable/opus/sonnet/haiku) to fallback model names.
  */
 export function parseModelFallbacks(
 	modelFallbacks: string | null,

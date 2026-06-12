@@ -19,9 +19,10 @@ interface BedrockModel {
 	searchKey: string;
 }
 
-type ModelFamily = "opus" | "sonnet" | "haiku";
+type ModelFamily = "fable" | "opus" | "sonnet" | "haiku";
 
 const MODEL_FAMILY_ALIASES: Record<ModelFamily, string[]> = {
+	fable: ["fable", "claude-fable", "claude-fable-5"],
 	opus: ["opus", "claude-opus", "claude-opus-4-6", "claude-4-opus"],
 	sonnet: ["sonnet", "claude-sonnet", "claude-sonnet-4-6", "claude-4-sonnet"],
 	haiku: ["haiku", "claude-haiku", "claude-haiku-4-5", "claude-4-haiku"],
