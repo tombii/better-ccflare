@@ -169,7 +169,12 @@ export async function selectAccountsForRequest(
 	if (model) {
 		const family = getModelFamily(model);
 		if (family) {
-			const validFamilies: readonly string[] = ["opus", "sonnet", "haiku"];
+			const validFamilies: readonly string[] = [
+				"fable",
+				"opus",
+				"sonnet",
+				"haiku",
+			];
 			if (!validFamilies.includes(family)) {
 				log.warn(`Unknown model family "${family}", skipping combo lookup`);
 			} else {

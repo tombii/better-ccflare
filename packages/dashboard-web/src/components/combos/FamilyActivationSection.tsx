@@ -18,9 +18,10 @@ import {
 } from "../ui/select";
 import { Switch } from "../ui/switch";
 
-const FAMILIES: ComboFamily[] = ["opus", "sonnet", "haiku"];
+const FAMILIES: ComboFamily[] = ["fable", "opus", "sonnet", "haiku"];
 
 const FAMILY_LABELS: Record<ComboFamily, string> = {
+	fable: "Fable",
 	opus: "Opus",
 	sonnet: "Sonnet",
 	haiku: "Haiku",

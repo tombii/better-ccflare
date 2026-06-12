@@ -15,6 +15,7 @@ export const CLAUDE_MODEL_IDS = {
 	OPUS_4_5: "claude-opus-4-5-20251101",
 	OPUS_4_6: "claude-opus-4-6",
 	OPUS_4_7: "claude-opus-4-7",
+	FABLE_5: "claude-fable-5",
 } as const;
 
 // Model display names
@@ -28,6 +29,7 @@ export const MODEL_DISPLAY_NAMES: Record<string, string> = {
 	[CLAUDE_MODEL_IDS.OPUS_4_5]: "Claude Opus 4.5",
 	[CLAUDE_MODEL_IDS.OPUS_4_6]: "Claude Opus 4.6",
 	[CLAUDE_MODEL_IDS.OPUS_4_7]: "Claude Opus 4.7",
+	[CLAUDE_MODEL_IDS.FABLE_5]: "Claude Fable 5",
 };
 
 // Short model names used in UI (for color mapping, etc.)
@@ -41,10 +43,12 @@ export const MODEL_SHORT_NAMES: Record<string, string> = {
 	[CLAUDE_MODEL_IDS.OPUS_4_5]: "claude-opus-4.5",
 	[CLAUDE_MODEL_IDS.OPUS_4_6]: "claude-opus-4.6",
 	[CLAUDE_MODEL_IDS.OPUS_4_7]: "claude-opus-4.7",
+	[CLAUDE_MODEL_IDS.FABLE_5]: "claude-fable-5",
 };
 
 // Latest model aliases — update these when Anthropic releases new models.
 // Check https://docs.anthropic.com/en/docs/about-claude/models for the current list.
+export const LATEST_FABLE_MODEL = CLAUDE_MODEL_IDS.FABLE_5;
 export const LATEST_OPUS_MODEL = CLAUDE_MODEL_IDS.OPUS_4_7;
 export const LATEST_SONNET_MODEL = CLAUDE_MODEL_IDS.SONNET_4_6;
 export const LATEST_HAIKU_MODEL = CLAUDE_MODEL_IDS.HAIKU_4_5;

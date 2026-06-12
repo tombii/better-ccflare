@@ -274,7 +274,7 @@ export async function ensureSchemaPg(adapter: BunSqlAdapter): Promise<void> {
 	// Seed canonical families
 	await adapter.unsafe(`
 		INSERT INTO combo_family_assignments (family, combo_id, enabled)
-		VALUES ('opus', NULL, 0), ('sonnet', NULL, 0), ('haiku', NULL, 0)
+		VALUES ('fable', NULL, 0), ('opus', NULL, 0), ('sonnet', NULL, 0), ('haiku', NULL, 0)
 		ON CONFLICT (family) DO NOTHING
 	`);
 
@@ -527,7 +527,7 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 	`);
 	await adapter.unsafe(`
 		INSERT INTO combo_family_assignments (family, combo_id, enabled)
-		VALUES ('opus', NULL, 0), ('sonnet', NULL, 0), ('haiku', NULL, 0)
+		VALUES ('fable', NULL, 0), ('opus', NULL, 0), ('sonnet', NULL, 0), ('haiku', NULL, 0)
 		ON CONFLICT (family) DO NOTHING
 	`);
 
