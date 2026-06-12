@@ -170,10 +170,18 @@ Automated release system uses commit prefixes for changelog:
 
 **Acknowledgement commits** (when merging external PRs): always use `chore: acknowledge <name> for PR #<N>` as the commit subject. This prefix is excluded from release notes. If the merge also includes real fixes, commit them separately with the appropriate prefix.
 
+## ⚠️ GitNexus Token Discipline: route ALL GitNexus calls through the `gitnexus-analyst` subagent
+
+This section OVERRIDES the auto-generated GitNexus section below (everything between the `gitnexus:start`/`gitnexus:end` markers — do not edit inside those markers, `gitnexus analyze` regenerates them).
+
+GitNexus MCP results are large and stay in the main context for the whole session. **Never call GitNexus MCP tools (`impact`, `context`, `query`, `detect_changes`, `cypher`, `rename`, etc.) directly in the main session.** Wherever the section below says to run a GitNexus tool, instead dispatch the `gitnexus-analyst` agent (`.claude/agents/gitnexus-analyst.md`, runs on haiku) with a description of what you need; it returns a ~30-line summary (risk level, d=1 callers, affected processes, HIGH/CRITICAL warnings) and the raw payloads stay in its throwaway context.
+
+Fallback (only if the subagent is unavailable): call the tools inline but minimize payloads — `impact({summaryOnly: true})`, `query({limit: 3, max_symbols: 5})`.
+
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **better-ccflare** (6747 symbols, 15266 relationships, 235 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **better-ccflare** (6784 symbols, 15362 relationships, 240 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > Index stale? Run `node .gitnexus/run.cjs analyze` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? `npx gitnexus analyze` (npm 11 crash → `npm i -g gitnexus`; #1939).
 
