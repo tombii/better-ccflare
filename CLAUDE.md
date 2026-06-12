@@ -27,13 +27,9 @@ PRs: `gh pr checkout <PR_NUMBER>` or `git checkout <branch-name>`.
 
 ## Pre-PR Review with Greptile
 
-Before opening a pull request, run a Greptile review from the terminal:
+Before opening a pull request, run a Greptile review — but **dispatch the `greptile-reviewer` agent** (`.claude/agents/greptile-reviewer.md`, runs on haiku) rather than running `greptile review` in the main session. Greptile's output quotes code blocks and inflates the main context; the agent runs it and returns a compact findings list (`file:line` + one-line issue), which is all the main session needs to act.
 
-```bash
-greptile review
-```
-
-Greptile reviews your branch against its base branch and shows comments directly in the terminal. Run this after checking out your branch and before pushing/opening a PR.
+Greptile reviews your branch against its base branch. Run this after checking out your branch and before pushing/opening a PR. Fallback if the agent is unavailable: `greptile review` directly.
 
 ## PR Review Against Current Main (MANDATORY)
 
@@ -109,7 +105,7 @@ When creating new functionality: write tests first, then implement, then run tes
 ## After Code Changes
 Always run: `bun run lint && bun run typecheck && bun run format`
 
-After pushing commits to main, run `npx gitnexus analyze` to keep the GitNexus index up to date.
+The GitNexus index refreshes automatically via a local git post-commit hook (`.git/hooks/post-commit`, runs `node .gitnexus/run.cjs analyze` detached). Do NOT run `gitnexus analyze` manually after commits — ignore "index is stale" reminders that appear right after committing; the background refresh is already running. Only run `node .gitnexus/run.cjs analyze` manually if the index stays stale long after the last commit (the hook may be missing on this machine — recreate it if so).
 
 ## Git Commits
 - **Before making any changes, run `git status` to check for pre-existing uncommitted changes.** Note which files were already modified so you can distinguish your changes from theirs throughout the session.
