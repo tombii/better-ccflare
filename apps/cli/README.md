@@ -827,6 +827,12 @@ This repository includes an automated Claude code review system:
 - **Automatic Review**: Runs automatically when a new pull request is opened
 - **Manual Review**: Can be manually triggered by contributors by commenting `/claude-review` on the PR
 
+## Acknowledgements
+
+Thanks to the contributors who have improved better-ccflare:
+
+- [@zionts](https://github.com/zionts) — fix false "integrity check failed" banner on large DBs; adaptive incremental vacuum; payload retention default reduction ([#259](https://github.com/tombii/better-ccflare/pull/259))
+
 ## License
 
 MIT - See [LICENSE](LICENSE) for details
