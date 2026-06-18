@@ -39,6 +39,8 @@ describe("DatabaseOperations.getIntegrityStatus / recordIntegrityResult", () => 
 		expect(s.lastQuickResult).toBeNull();
 		expect(s.lastFullCheckAt).toBeNull();
 		expect(s.lastFullResult).toBeNull();
+		expect(s.lastQuickSkipReason).toBeNull();
+		expect(s.lastFullSkipReason).toBeNull();
 	});
 
 	it("reflects ok status after recording a quick ok result", () => {
@@ -137,6 +139,94 @@ describe("DatabaseOperations.getIntegrityStatus / recordIntegrityResult", () => 
 		expect(dbOps.markIntegrityCheckRunning("quick")).toBe(true);
 		expect(dbOps.markIntegrityCheckRunning("full")).toBe(false);
 		expect(dbOps.markIntegrityCheckRunning("quick")).toBe(false);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Tests: recordIntegritySkipped
+// ---------------------------------------------------------------------------
+
+describe("DatabaseOperations.recordIntegritySkipped", () => {
+	let dbOps: DatabaseOperations;
+
+	beforeEach(() => {
+		dbOps = new DatabaseOperations(tempDbPath());
+	});
+
+	afterEach(() => {
+		dbOps.dispose?.();
+	});
+
+	it("fresh instance has null skip reasons", () => {
+		const s = dbOps.getIntegrityStatus();
+		expect(s.lastQuickSkipReason).toBeNull();
+		expect(s.lastFullSkipReason).toBeNull();
+	});
+
+	it("recording a full skip with no prior result leaves status unchecked", () => {
+		const before = Date.now();
+		dbOps.recordIntegritySkipped("full", "too big");
+		const after = Date.now();
+
+		const s = dbOps.getIntegrityStatus();
+		expect(s.status).toBe("unchecked");
+		expect(s.lastFullSkipReason).toBe("too big");
+		expect(s.lastFullResult).toBeNull();
+		expect(s.runningKind).toBeNull();
+		expect(s.lastFullCheckAt).toBeGreaterThanOrEqual(before);
+		expect(s.lastFullCheckAt).toBeLessThanOrEqual(after);
+	});
+
+	it("a full skip after a quick ok keeps status ok", () => {
+		dbOps.recordIntegrityResult("quick", "ok");
+		dbOps.recordIntegritySkipped("full", "too big");
+
+		const s = dbOps.getIntegrityStatus();
+		expect(s.status).toBe("ok");
+		expect(s.lastFullSkipReason).toBe("too big");
+		expect(s.lastQuickResult).toBe("ok");
+	});
+
+	it("STICKY: a full skip does NOT clear a full corrupt", () => {
+		dbOps.recordIntegrityResult("full", "corrupt", "index has missing entry");
+		dbOps.recordIntegritySkipped("full", "timeout");
+
+		const s = dbOps.getIntegrityStatus();
+		expect(s.status).toBe("corrupt");
+		expect(s.lastFullResult).toBe("corrupt");
+		expect(s.lastFullSkipReason).toBe("timeout");
+	});
+
+	it("a real quick ok after a quick skip clears the quick skip reason", () => {
+		dbOps.recordIntegritySkipped("quick", "x");
+		expect(dbOps.getIntegrityStatus().lastQuickSkipReason).toBe("x");
+
+		dbOps.recordIntegrityResult("quick", "ok");
+		const s = dbOps.getIntegrityStatus();
+		expect(s.lastQuickSkipReason).toBeNull();
+		expect(s.lastQuickResult).toBe("ok");
+	});
+
+	it("a real full ok after a full skip clears the full skip reason", () => {
+		dbOps.recordIntegritySkipped("full", "x");
+		expect(dbOps.getIntegrityStatus().lastFullSkipReason).toBe("x");
+
+		dbOps.recordIntegrityResult("full", "ok");
+		const s = dbOps.getIntegrityStatus();
+		expect(s.lastFullSkipReason).toBeNull();
+		expect(s.lastFullResult).toBe("ok");
+	});
+
+	it("releases the mutex (status not running) after a skip", () => {
+		expect(dbOps.markIntegrityCheckRunning("full")).toBe(true);
+		expect(dbOps.getIntegrityStatus().status).toBe("running");
+
+		dbOps.recordIntegritySkipped("full", "x");
+		const s = dbOps.getIntegrityStatus();
+		expect(s.status).not.toBe("running");
+		expect(s.runningKind).toBeNull();
+		// Mutex released — a new probe can be claimed.
+		expect(dbOps.markIntegrityCheckRunning("quick")).toBe(true);
 	});
 });
 

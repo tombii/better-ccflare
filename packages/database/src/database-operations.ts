@@ -229,6 +229,8 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		lastFullCheckAt: null,
 		lastFullResult: null,
 		lastFullError: null,
+		lastQuickSkipReason: null,
+		lastFullSkipReason: null,
 	};
 
 	// Repositories
@@ -480,10 +482,14 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 			next.lastQuickCheckAt = now;
 			next.lastQuickResult = result;
 			next.lastQuickError = result === "corrupt" ? (error ?? null) : null;
+			// A completed quick probe supersedes any prior quick skip note.
+			next.lastQuickSkipReason = null;
 		} else {
 			next.lastFullCheckAt = now;
 			next.lastFullResult = result;
 			next.lastFullError = result === "corrupt" ? (error ?? null) : null;
+			// A completed full probe supersedes any prior full skip note.
+			next.lastFullSkipReason = null;
 			// A passing full check is a strict superset of quick_check, so it
 			// subsumes any lingering quick-corrupt: if the structurally-more-
 			// thorough probe is clean, the structurally-less-thorough probe's
@@ -500,6 +506,56 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		next.lastCheckAt = now;
 
 		// Recompute collapsed status. Order: any corrupt result wins.
+		const fullCorrupt = next.lastFullResult === "corrupt";
+		const quickCorrupt = next.lastQuickResult === "corrupt";
+		if (fullCorrupt || quickCorrupt) {
+			next.status = "corrupt";
+			next.lastError =
+				next.lastFullError ?? next.lastQuickError ?? "integrity check failed";
+		} else if (next.lastQuickResult === "ok" || next.lastFullResult === "ok") {
+			next.status = "ok";
+			next.lastError = null;
+		} else {
+			next.status = "unchecked";
+			next.lastError = null;
+		}
+
+		this.integrityStatus = next;
+	}
+
+	/**
+	 * Record that an integrity probe was attempted but skipped — either the DB
+	 * is over the configured size threshold (so the full check would exceed the
+	 * worker timeout) or the worker run itself timed out. A skip is purely
+	 * informational: it preserves the last real ok/corrupt verdict and never
+	 * moves the collapsed `status` to "corrupt" (a timeout is not corruption).
+	 *
+	 * Releases the mutex just like `recordIntegrityResult` so the next tick is
+	 * eligible to run.
+	 */
+	recordIntegritySkipped(kind: "quick" | "full", reason: string): void {
+		const now = Date.now();
+		const next: IntegrityStatus = {
+			...this.integrityStatus,
+			runningKind: null,
+		};
+
+		next.lastCheckAt = now;
+
+		if (kind === "quick") {
+			next.lastQuickCheckAt = now;
+			next.lastQuickSkipReason = reason;
+			// Leave lastQuickResult/lastQuickError unchanged — preserve the last
+			// real verdict.
+		} else {
+			next.lastFullCheckAt = now;
+			next.lastFullSkipReason = reason;
+			// Leave lastFullResult/lastFullError unchanged — preserve the last
+			// real verdict.
+		}
+
+		// Recompute collapsed status with the SAME logic as
+		// recordIntegrityResult. A skip must never set status to "corrupt".
 		const fullCorrupt = next.lastFullResult === "corrupt";
 		const quickCorrupt = next.lastQuickResult === "corrupt";
 		if (fullCorrupt || quickCorrupt) {
@@ -1443,6 +1499,107 @@ OAuth tokens will need to be re-authenticated.
 		} finally {
 			worker.terminate();
 		}
+	}
+
+	/**
+	 * Read `PRAGMA freelist_count` — the number of free pages currently on the
+	 * SQLite freelist (deleted-but-not-yet-reclaimed pages). Returns 0 when not
+	 * in SQLite mode or no handle is open. Synchronous, like the other small
+	 * pragma readers in this file.
+	 */
+	getFreelistCount(): number {
+		if (!this.sqliteDb) return 0;
+		const result = this.sqliteDb.query("PRAGMA freelist_count").get() as {
+			freelist_count: number;
+		};
+		return result.freelist_count;
+	}
+
+	/**
+	 * Adaptive incremental vacuum — the unattended hourly backstop.
+	 *
+	 * With auto_vacuum=INCREMENTAL, deleted pages go to the freelist and are
+	 * reused by new inserts; the file only shrinks when we return surplus free
+	 * pages to the OS via `PRAGMA incremental_vacuum`. A fixed 8000-page chunk
+	 * per hour is fine in steady state, but after a retention *drop* the
+	 * freelist can hold hundreds of thousands of pages — at 8000/hour that file
+	 * shrinks over weeks. This method instead scales reclaim with the current
+	 * freelist so the file recovers over hours.
+	 *
+	 * It does NOT reclaim everything in one transaction. It drives the
+	 * single-chunk `incrementalVacuum()` primitive repeatedly:
+	 *   - each worker call reclaims at most `chunkPages` (~64 MiB at 4 KiB),
+	 *     bounding how long any one write transaction holds SQLite's single
+	 *     writer slot;
+	 *   - a per-tick ceiling of `maxPagesPerTick` (~1 GiB) caps total reclaim
+	 *     for one hourly tick;
+	 *   - between chunks we yield (`setTimeout(25)`) so concurrent proxy writes
+	 *     (rate-limit updates, OAuth refresh, post-processor inserts) can
+	 *     interleave and aren't starved.
+	 *
+	 * This keeps the LIVE proxy responsive while still draining a large
+	 * surplus over a handful of ticks. For a large *immediate* reclaim, the
+	 * one-off `scripts/shrink-db.sh` is the fast path; this is the hands-off
+	 * backstop.
+	 *
+	 * A STALL GUARD breaks the loop if a chunk fails to decrease the freelist
+	 * (e.g. auto_vacuum != 2 makes `incrementalVacuum()` a no-op, or writer
+	 * contention prevents progress) so we never spin on a no-op.
+	 *
+	 * `reclaimedPages` is the actual freelist delta across the whole call
+	 * (first reading minus last, clamped at >= 0). Under concurrent inserts
+	 * this is approximate — new deletes can re-grow the freelist mid-call — but
+	 * it's a faithful "how much did the file shrink" signal for logging.
+	 */
+	async incrementalVacuumAdaptive(opts?: {
+		maxPagesPerTick?: number;
+		chunkPages?: number;
+	}): Promise<{ reclaimedPages: number; chunks: number }> {
+		if (!this.sqliteDb || !this.resolvedDbPath) {
+			return { reclaimedPages: 0, chunks: 0 };
+		}
+
+		const MAX = opts?.maxPagesPerTick ?? 262144; // ~1 GiB at 4 KiB pages — per-tick reclaim ceiling
+		const CHUNK = opts?.chunkPages ?? 16384; // ~64 MiB per worker call — bounds each writer-slot hold
+
+		const initialFreelist = this.getFreelistCount();
+		let freelist = initialFreelist;
+		if (freelist <= 0) {
+			// Nothing to reclaim — steady state. Avoid spawning a worker.
+			return { reclaimedPages: 0, chunks: 0 };
+		}
+
+		const budget = Math.min(freelist, MAX);
+		let requestedPages = 0;
+		let chunks = 0;
+
+		while (requestedPages < budget && freelist > 0) {
+			const n = Math.min(CHUNK, budget - requestedPages);
+			const before = this.getFreelistCount();
+			await this.incrementalVacuum(n); // one bounded worker txn
+			const after = this.getFreelistCount();
+			requestedPages += n;
+			chunks += 1;
+
+			// STALL GUARD: if the freelist didn't shrink, further chunks won't
+			// either (no-op auto_vacuum mode, or writer contention). Stop rather
+			// than spin.
+			if (after >= before) {
+				break;
+			}
+
+			freelist = after;
+
+			// More work to do — yield the writer slot briefly so concurrent
+			// proxy writes can interleave between chunks.
+			if (requestedPages < budget && freelist > 0) {
+				await new Promise((r) => setTimeout(r, 25));
+			}
+		}
+
+		const finalFreelist = this.getFreelistCount();
+		const reclaimedPages = Math.max(0, initialFreelist - finalFreelist);
+		return { reclaimedPages, chunks };
 	}
 
 	// API Key operations delegated to repository

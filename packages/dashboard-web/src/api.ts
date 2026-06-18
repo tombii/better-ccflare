@@ -59,6 +59,8 @@ export interface StorageInfoResponse {
 	last_quick_result: "ok" | "corrupt" | null;
 	last_full_check_at: string | null;
 	last_full_result: "ok" | "corrupt" | null;
+	last_quick_skip_reason: string | null;
+	last_full_skip_reason: string | null;
 	orphan_pages: number | null;
 	last_retention_sweep_at: string | null;
 	null_account_rows_24h: number;

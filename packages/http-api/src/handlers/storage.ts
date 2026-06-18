@@ -27,6 +27,8 @@ export function createStorageHandler(dbOps: DatabaseOperations) {
 				? new Date(integrity.lastFullCheckAt).toISOString()
 				: null,
 			last_full_result: integrity.lastFullResult,
+			last_quick_skip_reason: integrity.lastQuickSkipReason,
+			last_full_skip_reason: integrity.lastFullSkipReason,
 			orphan_pages: metrics.orphanPages,
 			last_retention_sweep_at: metrics.lastRetentionSweepAt
 				? new Date(metrics.lastRetentionSweepAt).toISOString()

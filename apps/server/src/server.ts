@@ -754,17 +754,30 @@ export default async function startServer(options?: {
 				log.info(
 					`Periodic cleanup: removed ${removedRequests} requests, ${removedPayloads} payloads in ${Date.now() - startTime}ms`,
 				);
-				// Reclaim a bounded chunk of freed pages. 8000 pages × 4 KiB = ~32 MiB
-				// per tick, off-thread via the incremental-vacuum worker. Small N
-				// keeps the writer-slot hold sub-100ms on local SSD so concurrent
-				// main-thread writes (rate-limit updates, OAuth refresh, post-
-				// processor inserts) don't pile up on busy_timeout. Pre-fix this
-				// path passed 200000 and silently fell back to a full main-thread
-				// VACUUM when auto_vacuum=NONE — see incrementalVacuum() in
-				// packages/database/src/database-operations.ts.
-				dbOps.incrementalVacuum(8000).catch((err) => {
-					log.error(`Incremental vacuum error: ${err}`);
-				});
+				// Reclaim freed pages adaptively. incrementalVacuumAdaptive()
+				// scales reclaim with the current freelist: in steady state it
+				// returns a small chunk (or no-ops on an empty freelist), but
+				// after a retention *drop* — which dumps a large surplus of free
+				// pages onto the freelist — it drains that surplus over a handful
+				// of hourly ticks instead of weeks. Each underlying worker call is
+				// bounded (~64 MiB) and the per-tick total is capped (~1 GiB), with
+				// yields between chunks, so the single writer slot is never held
+				// long and concurrent main-thread writes (rate-limit updates, OAuth
+				// refresh, post-processor inserts) aren't starved. Off-thread via
+				// the incremental-vacuum worker. Fire-and-forget so the cleanup
+				// callback isn't blocked on it.
+				dbOps
+					.incrementalVacuumAdaptive()
+					.then((r) => {
+						if (r.reclaimedPages > 0) {
+							log.info(
+								`Adaptive incremental vacuum reclaimed ${r.reclaimedPages} pages in ${r.chunks} chunk(s)`,
+							);
+						}
+					})
+					.catch((err) => {
+						log.error(`Incremental vacuum error: ${err}`);
+					});
 			}
 		} catch (err) {
 			log.error(`Periodic data retention cleanup error: ${err}`);

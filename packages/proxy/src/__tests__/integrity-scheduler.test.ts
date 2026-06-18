@@ -24,7 +24,9 @@ import type { DatabaseOperations } from "@better-ccflare/database";
 // type-only import and is erased at runtime, so it doesn't need a stub.
 // ---------------------------------------------------------------------------
 
-type WorkerResult = { ok: true } | { ok: false; error: string };
+type WorkerResult =
+	| { ok: true }
+	| { ok: false; error: string; timedOut?: boolean };
 
 let workerResultByKind: { quick: WorkerResult; full: WorkerResult } = {
 	quick: { ok: true },
@@ -53,6 +55,9 @@ interface MockDbOpsOptions {
 	fullResult?: { ok: true } | { ok: false; error: string } | Error;
 	dbPath?: string | undefined;
 	canClaim?: boolean;
+	/** Bytes returned by getDbSizeBytes(); defaults small (below the full-check
+	 *  size threshold) so full checks run normally unless a test overrides it. */
+	dbSizeBytes?: number;
 }
 
 function makeDbOps(opts: MockDbOpsOptions = {}): DatabaseOperations {
@@ -77,14 +82,22 @@ function makeDbOps(opts: MockDbOpsOptions = {}): DatabaseOperations {
 	const recordIntegrityResult = mock(() => {
 		claimed = false;
 	});
+	const recordIntegritySkipped = mock(() => {
+		claimed = false;
+	});
 	const getResolvedDbPath = mock(() => opts.dbPath);
+	// Default well below the 16 GiB full-check threshold so full checks run
+	// normally; tests that exercise the size-skip path pass a large value.
+	const getDbSizeBytes = mock(async () => opts.dbSizeBytes ?? 1024);
 
 	return {
 		runQuickIntegrityCheck,
 		runFullIntegrityCheck,
 		markIntegrityCheckRunning,
 		recordIntegrityResult,
+		recordIntegritySkipped,
 		getResolvedDbPath,
+		getDbSizeBytes,
 	} as unknown as DatabaseOperations;
 }
 
@@ -272,6 +285,60 @@ describe("runIntegrityCheckOnDemand", () => {
 		const [, calledOpts] = mockRunIntegrityCheckInWorker.mock.calls[0];
 		expect(calledOpts).toEqual({ kind: "full" });
 		expect(dbOps.runFullIntegrityCheck).not.toHaveBeenCalled();
+	});
+
+	it("full on an oversized DB skips integrity_check and runs quick_check instead", async () => {
+		// 20 GiB — above the 16 GiB default threshold. The full integrity_check
+		// would time out, so it's recorded as skipped (not corrupt) and a
+		// quick_check is run in its place.
+		const dbOps = makeDbOps({
+			dbPath: "/tmp/test.db",
+			dbSizeBytes: 20 * 1024 * 1024 * 1024,
+		});
+		workerResultByKind.quick = { ok: true };
+
+		const out = await runIntegrityCheckOnDemand(dbOps, "full");
+		expect(out.ok).toBe(true);
+		if (out.ok) expect(out.result).toBe("ok"); // a skip is not corruption
+
+		// Full probe recorded as skipped with an explanatory reason…
+		const skipCall = (
+			dbOps.recordIntegritySkipped as ReturnType<typeof mock>
+		).mock.calls.at(-1);
+		expect(skipCall?.[0]).toBe("full");
+		expect(String(skipCall?.[1])).toContain("skipped");
+
+		// …and the worker was invoked for a quick check, not a full one.
+		expect(mockRunIntegrityCheckInWorker).toHaveBeenCalledTimes(1);
+		const [, calledOpts] = mockRunIntegrityCheckInWorker.mock.calls[0];
+		expect(calledOpts).toEqual({ kind: "quick" });
+		expect(dbOps.recordIntegrityResult).toHaveBeenCalledWith("quick", "ok");
+	});
+
+	it("a worker TIMEOUT is recorded as skipped, not corrupt", async () => {
+		const dbOps = makeDbOps({ dbPath: "/tmp/test.db" });
+		workerResultByKind.full = {
+			ok: false,
+			error: "worker timed out after 600000ms — bun:sqlite call likely hung",
+			timedOut: true,
+		};
+
+		const out = await runIntegrityCheckOnDemand(dbOps, "full");
+		expect(out.ok).toBe(true);
+		// A timeout is a hung worker, not corruption.
+		if (out.ok) expect(out.result).toBe("ok");
+
+		const skipCall = (
+			dbOps.recordIntegritySkipped as ReturnType<typeof mock>
+		).mock.calls.at(-1);
+		expect(skipCall?.[0]).toBe("full");
+		expect(String(skipCall?.[1])).toContain("timed out");
+		// Crucially: it must NOT be recorded as corrupt.
+		expect(dbOps.recordIntegrityResult).not.toHaveBeenCalledWith(
+			"full",
+			"corrupt",
+			expect.anything(),
+		);
 	});
 
 	it("a quick on-demand check followed by a full corrupt produces sticky-corrupt status", async () => {
