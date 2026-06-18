@@ -67,14 +67,23 @@ export function StorageIntegrityCard() {
 		tone = "ok";
 		icon = <CheckCircle className="h-5 w-5 text-success" />;
 		label = "Database integrity verified";
-		description =
-			data?.last_full_check_at != null
-				? `Last full check ${formatRelative(data.last_full_check_at)}`
-				: data?.last_quick_check_at != null
-					? `Last quick check ${formatRelative(data.last_quick_check_at)} — full check still pending`
-					: "—";
 		if (data?.last_full_skip_reason) {
-			description += " — full check skipped (DB too large); quick check passed";
+			// Full check was skipped — show the quick check time to avoid the
+			// contradiction of "Last full check X ago" when the full check never ran.
+			description =
+				data?.last_quick_check_at != null
+					? `Full check skipped (DB too large) — quick check passed ${formatRelative(data.last_quick_check_at)}`
+					: "Full check skipped (DB too large) — quick check passed";
+		} else {
+			description =
+				data?.last_full_check_at != null
+					? `Last full check ${formatRelative(data.last_full_check_at)}`
+					: data?.last_quick_check_at != null
+						? `Last quick check ${formatRelative(data.last_quick_check_at)} — full check still pending`
+						: "—";
+		}
+		if (data?.last_quick_skip_reason) {
+			description += " — quick check timed out (skipped)";
 		}
 		badgeNode = (
 			<Badge variant="default" className="bg-success">
@@ -136,6 +145,14 @@ export function StorageIntegrityCard() {
 									{formatRelative(data?.last_quick_check_at ?? null)}
 									{data?.last_quick_result === "corrupt" ? (
 										<span className="text-destructive"> (corrupt)</span>
+									) : data?.last_quick_skip_reason ? (
+										<span
+											className="text-muted-foreground"
+											title={data.last_quick_skip_reason}
+										>
+											{" "}
+											(skipped)
+										</span>
 									) : null}
 								</dd>
 							</div>

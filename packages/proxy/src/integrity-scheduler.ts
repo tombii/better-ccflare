@@ -152,9 +152,15 @@ export function startIntegrityScheduler(
 			return;
 		}
 		logger.info("Running full integrity check...");
-		const { result, error } = await runCheckLocked(dbOps, "full");
+		const { result, error, skipped } = await runCheckLocked(dbOps, "full");
 		if (result === "ok") {
-			logger.info("Full integrity check passed");
+			if (skipped) {
+				logger.info(
+					"Full integrity check skipped (DB too large) — quick check passed",
+				);
+			} else {
+				logger.info("Full integrity check passed");
+			}
 		} else {
 			logger.error(`Full integrity check FAILED: ${error}`);
 			logger.error(
@@ -219,7 +225,7 @@ export function startIntegrityScheduler(
 async function runCheckLocked(
 	dbOps: DatabaseOperations,
 	kind: "quick" | "full",
-): Promise<{ result: "ok" | "corrupt"; error: string | null }> {
+): Promise<{ result: "ok" | "corrupt"; error: string | null; skipped?: true }> {
 	const logger = new Logger("IntegrityScheduler");
 	try {
 		const dbPath = dbOps.getResolvedDbPath();
@@ -264,11 +270,11 @@ async function runCheckLocked(
 				dbOps.recordIntegritySkipped("full", reason);
 				if (quickResult.ok) {
 					dbOps.recordIntegrityResult("quick", "ok");
-					return { result: "ok", error: null };
+					return { result: "ok", error: null, skipped: true };
 				}
 				if (quickResult.timedOut) {
 					dbOps.recordIntegritySkipped("quick", quickResult.error);
-					return { result: "ok", error: null };
+					return { result: "ok", error: null, skipped: true };
 				}
 				dbOps.recordIntegrityResult("quick", "corrupt", quickResult.error);
 				return { result: "corrupt", error: quickResult.error };
@@ -284,7 +290,7 @@ async function runCheckLocked(
 		// it as skipped so it doesn't light the false corruption banner.
 		if (workerResult.timedOut) {
 			dbOps.recordIntegritySkipped(kind, workerResult.error);
-			return { result: "ok", error: null };
+			return { result: "ok", error: null, skipped: true };
 		}
 		dbOps.recordIntegrityResult(kind, "corrupt", workerResult.error);
 		return { result: "corrupt", error: workerResult.error };
