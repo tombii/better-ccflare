@@ -279,10 +279,21 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 			this.isSQLite = false;
 			// Import SQL lazily to avoid issues when not needed
 			const { SQL } = require("bun");
+			const pgMax = Number(process.env.BETTER_CCFLARE_DB_POOL_MAX ?? 10);
+			const pgIdleTimeout = Number(
+				process.env.BETTER_CCFLARE_DB_IDLE_TIMEOUT ?? 0,
+			);
 			const sqlClient = new SQL({
 				url: databaseUrl,
-				max: 10,
-				idleTimeout: 30,
+				max: pgMax,
+				idleTimeout: pgIdleTimeout,
+			});
+			// ERR_POSTGRES_IDLE_TIMEOUT is a normal pool lifecycle event (idle
+			// connection reaped). Without this handler it bubbles as an unhandled
+			// error and crashes the process, causing 502s behind a load balancer.
+			sqlClient.on?.("error", (err: Error & { code?: string }) => {
+				if (err?.code === "ERR_POSTGRES_IDLE_TIMEOUT") return;
+				console.error("[postgres] pool error:", err);
 			});
 			this.adapter = new BunSqlAdapter(sqlClient, false);
 		} else {
