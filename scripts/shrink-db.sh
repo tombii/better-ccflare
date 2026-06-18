@@ -145,7 +145,22 @@ while :; do
 	[[ "$n" -eq 2000 ]] || break
 done
 # Also sweep orphaned payloads (payload with no matching request row).
-"${SQLITE[@]}" "DELETE FROM request_payloads WHERE id NOT IN (SELECT id FROM requests);" >/dev/null
+# Batched like the retention sweep above to avoid long writer-slot holds on
+# large tables. Uses NOT EXISTS rather than NOT IN to avoid the NULL-trap
+# (NOT IN returns UNKNOWN for every row when the subquery contains a NULL,
+# silently deleting nothing).
+while :; do
+	orphans="$("${SQLITE[@]}" "
+		DELETE FROM request_payloads
+		WHERE id IN (
+			SELECT rp.id FROM request_payloads rp
+			WHERE NOT EXISTS (SELECT 1 FROM requests r WHERE r.id = rp.id)
+			LIMIT 2000
+		);
+		SELECT changes();
+	")"
+	[[ "$orphans" -gt 0 ]] || break
+done
 echo " done ($deleted_total removed)."
 
 # ---------------------------------------------------------------------------

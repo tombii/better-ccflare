@@ -239,6 +239,12 @@ async function runCheckLocked(
 
 		// Full check on an oversized DB: skip integrity_check (it would time
 		// out) and run quick_check instead, recording each probe separately.
+		//
+		// IMPORTANT: recordIntegritySkipped("full") is called AFTER the fallback
+		// quick worker resolves, not before. Calling it early releases the mutex
+		// (markIntegrityCheckRunning guards on status==="running", which
+		// recordIntegritySkipped clears), allowing a concurrent periodic tick or
+		// on-demand HTTP request to claim a second probe mid-flight.
 		if (kind === "full") {
 			const sizeBytes = await dbOps.getDbSizeBytes();
 			const maxBytes = resolveMaxFullIntegrityBytes(logger);
@@ -249,11 +255,13 @@ async function runCheckLocked(
 					1,
 				)} GB threshold, CCFLARE_FULL_INTEGRITY_MAX_DB_BYTES); ran quick_check instead`;
 				logger.warn(reason);
-				dbOps.recordIntegritySkipped("full", reason);
 
 				const quickResult = await runIntegrityCheckInWorker(dbPath, {
 					kind: "quick",
 				});
+				// Record the full-skip only after the fallback worker is done so
+				// the mutex stays held for the entire size-skip path.
+				dbOps.recordIntegritySkipped("full", reason);
 				if (quickResult.ok) {
 					dbOps.recordIntegrityResult("quick", "ok");
 					return { result: "ok", error: null };
