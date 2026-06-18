@@ -296,7 +296,11 @@ export class Config extends EventEmitter {
 		}
 		const fromFile = this.data.data_retention_days;
 		if (typeof fromFile === "number") return this.clamp(fromFile, 1, 365);
-		return 3; // Reduced from 7 to 3 days to reduce database size
+		// Default payload retention reduced to 1 day to bound request_payloads
+		// growth: each request stores up to ~4 MiB of conversation history, so
+		// high-volume proxies otherwise reach tens of GB. Override via the
+		// DATA_RETENTION_DAYS env var or the data_retention_days config key.
+		return 1;
 	}
 
 	setDataRetentionDays(days: number): void {

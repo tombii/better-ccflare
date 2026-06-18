@@ -35,6 +35,14 @@ import { Logger } from "@better-ccflare/logger";
 
 const DEFAULT_QUICK_INTERVAL_HOURS = 6;
 const DEFAULT_FULL_INTERVAL_HOURS = 24;
+/**
+ * Above this DB size the full `PRAGMA integrity_check` can't finish inside the
+ * worker timeout (a 27 GiB DB times out), so the scheduler skips it and runs a
+ * `quick_check` instead. A timeout is NOT corruption — recording one as such
+ * lights a false cross-dashboard "integrity check failed" banner. Override via
+ * `CCFLARE_FULL_INTEGRITY_MAX_DB_BYTES` (0 = no limit / never skip).
+ */
+const DEFAULT_FULL_INTEGRITY_MAX_DB_BYTES = 16 * 1024 * 1024 * 1024; // 16 GiB
 const QUICK_INITIAL_DELAY_MS = 30 * TIME_CONSTANTS.SECOND;
 /** Delay full check past startup spike of disk I/O (dashboard build, schema
  *  migrations, performance index creation) so it doesn't compound with
@@ -57,6 +65,29 @@ function parseIntervalEnv(
 	}
 	if (parsed === 0) return null;
 	return parsed * TIME_CONSTANTS.HOUR;
+}
+
+/**
+ * Resolve the max DB size (bytes) above which the full integrity check is
+ * skipped in favour of a quick check. Reads
+ * `CCFLARE_FULL_INTEGRITY_MAX_DB_BYTES`: unset/empty → default; positive
+ * integer → that value; `0` → no limit (never skip, returns +Infinity);
+ * anything else → warn + default.
+ */
+function resolveMaxFullIntegrityBytes(logger: Logger): number {
+	const raw = process.env.CCFLARE_FULL_INTEGRITY_MAX_DB_BYTES;
+	if (raw === undefined || raw === "")
+		return DEFAULT_FULL_INTEGRITY_MAX_DB_BYTES;
+	const parsed = Number(raw);
+	if (!Number.isInteger(parsed) || parsed < 0) {
+		logger.warn(
+			`Invalid CCFLARE_FULL_INTEGRITY_MAX_DB_BYTES="${raw}", using default ${DEFAULT_FULL_INTEGRITY_MAX_DB_BYTES}`,
+		);
+		return DEFAULT_FULL_INTEGRITY_MAX_DB_BYTES;
+	}
+	// 0 disables the size limit — the full check always runs.
+	if (parsed === 0) return Number.POSITIVE_INFINITY;
+	return parsed;
 }
 
 export function startIntegrityScheduler(
@@ -170,12 +201,26 @@ export function startIntegrityScheduler(
  * lightweight there, so blocking is fine).
  *
  * Records the result and (implicitly) releases the mutex via
- * `recordIntegrityResult`.
+ * `recordIntegrityResult` (or `recordIntegritySkipped` for size-threshold /
+ * timeout skips).
+ *
+ * Skip semantics (neither is corruption, so both keep the dashboard healthy):
+ *  - **Size threshold**: when a `full` check is requested but the DB is over
+ *    `CCFLARE_FULL_INTEGRITY_MAX_DB_BYTES`, the full `integrity_check` can't
+ *    finish inside the worker timeout, so we record the full probe as skipped
+ *    and run a `quick_check` instead, recording ITS result normally.
+ *  - **Worker timeout**: a `!ok && timedOut` worker result is a hung
+ *    bun:sqlite call (failing disk / unresponsive NFS), not corruption — it is
+ *    recorded as skipped, not corrupt.
+ *
+ * The return contract stays `{ result: "ok" | "corrupt"; error }`; a skip
+ * returns `{ result: "ok", error: null }` because nothing is corrupt.
  */
 async function runCheckLocked(
 	dbOps: DatabaseOperations,
 	kind: "quick" | "full",
 ): Promise<{ result: "ok" | "corrupt"; error: string | null }> {
+	const logger = new Logger("IntegrityScheduler");
 	try {
 		const dbPath = dbOps.getResolvedDbPath();
 		if (!dbPath) {
@@ -191,17 +236,50 @@ async function runCheckLocked(
 			);
 			return { result, error: result === "corrupt" ? out : null };
 		}
+
+		// Full check on an oversized DB: skip integrity_check (it would time
+		// out) and run quick_check instead, recording each probe separately.
+		if (kind === "full") {
+			const sizeBytes = await dbOps.getDbSizeBytes();
+			const maxBytes = resolveMaxFullIntegrityBytes(logger);
+			if (sizeBytes > maxBytes) {
+				const reason = `full integrity_check skipped — DB is ${(
+					sizeBytes / 1024 / 1024 / 1024
+				).toFixed(1)} GB (> ${(maxBytes / 1024 / 1024 / 1024).toFixed(
+					1,
+				)} GB threshold, CCFLARE_FULL_INTEGRITY_MAX_DB_BYTES); ran quick_check instead`;
+				logger.warn(reason);
+				dbOps.recordIntegritySkipped("full", reason);
+
+				const quickResult = await runIntegrityCheckInWorker(dbPath, {
+					kind: "quick",
+				});
+				if (quickResult.ok) {
+					dbOps.recordIntegrityResult("quick", "ok");
+					return { result: "ok", error: null };
+				}
+				if (quickResult.timedOut) {
+					dbOps.recordIntegritySkipped("quick", quickResult.error);
+					return { result: "ok", error: null };
+				}
+				dbOps.recordIntegrityResult("quick", "corrupt", quickResult.error);
+				return { result: "corrupt", error: quickResult.error };
+			}
+		}
+
 		const workerResult = await runIntegrityCheckInWorker(dbPath, { kind });
-		const result = workerResult.ok ? "ok" : "corrupt";
-		dbOps.recordIntegrityResult(
-			kind,
-			result,
-			workerResult.ok ? null : workerResult.error,
-		);
-		return {
-			result,
-			error: workerResult.ok ? null : workerResult.error,
-		};
+		if (workerResult.ok) {
+			dbOps.recordIntegrityResult(kind, "ok");
+			return { result: "ok", error: null };
+		}
+		// A worker timeout is a hung bun:sqlite call, not corruption — record
+		// it as skipped so it doesn't light the false corruption banner.
+		if (workerResult.timedOut) {
+			dbOps.recordIntegritySkipped(kind, workerResult.error);
+			return { result: "ok", error: null };
+		}
+		dbOps.recordIntegrityResult(kind, "corrupt", workerResult.error);
+		return { result: "corrupt", error: workerResult.error };
 	} catch (error) {
 		const msg = String(error);
 		dbOps.recordIntegrityResult(kind, "corrupt", msg);

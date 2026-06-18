@@ -73,6 +73,9 @@ export function StorageIntegrityCard() {
 				: data?.last_quick_check_at != null
 					? `Last quick check ${formatRelative(data.last_quick_check_at)} — full check still pending`
 					: "—";
+		if (data?.last_full_skip_reason) {
+			description += " — full check skipped (DB too large); quick check passed";
+		}
 		badgeNode = (
 			<Badge variant="default" className="bg-success">
 				Healthy
@@ -142,6 +145,14 @@ export function StorageIntegrityCard() {
 									{formatRelative(data?.last_full_check_at ?? null)}
 									{data?.last_full_result === "corrupt" ? (
 										<span className="text-destructive"> (corrupt)</span>
+									) : data?.last_full_skip_reason ? (
+										<span
+											className="text-muted-foreground"
+											title={data.last_full_skip_reason}
+										>
+											{" "}
+											(skipped)
+										</span>
 									) : null}
 								</dd>
 							</div>

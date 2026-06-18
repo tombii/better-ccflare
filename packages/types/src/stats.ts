@@ -19,6 +19,12 @@ export type IntegrityCheckKind = "quick" | "full";
  *  - `corrupt`: at least one of the last-known probes returned non-"ok".
  *    A subsequent quick `ok` clears quick-only corruption but does NOT clear
  *    a full `corrupt`; only another full `ok` does that.
+ *
+ * A "skipped" probe (the full check was skipped because the DB is over the
+ * size threshold, or a worker run timed out) is informational only: it is
+ * recorded in `lastQuickSkipReason` / `lastFullSkipReason` and does NOT mark
+ * the DB corrupt. The collapsed `status` stays driven by the last real
+ * ok/corrupt results — a skip never moves `status` to "corrupt".
  */
 export interface IntegrityStatus {
 	status: "ok" | "corrupt" | "unchecked" | "running";
@@ -36,6 +42,10 @@ export interface IntegrityStatus {
 	lastFullCheckAt: number | null;
 	lastFullResult: "ok" | "corrupt" | null;
 	lastFullError: string | null;
+	/** Reason the most recent quick probe was skipped (size threshold / timeout) instead of completing; null if it completed. */
+	lastQuickSkipReason: string | null;
+	/** Reason the most recent full probe was skipped (DB over size threshold, or worker timeout) instead of completing; null if it completed. */
+	lastFullSkipReason: string | null;
 }
 
 // Stats types

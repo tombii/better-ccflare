@@ -42,7 +42,7 @@ export async function runIntegrityCheckInWorker(
 		busyTimeoutMs?: number;
 		timeoutMs?: number;
 	},
-): Promise<{ ok: true } | { ok: false; error: string }> {
+): Promise<{ ok: true } | { ok: false; error: string; timedOut?: boolean }> {
 	let worker: Worker;
 	if (EMBEDDED_INTEGRITY_CHECK_WORKER_CODE) {
 		const workerCode = Buffer.from(
@@ -62,18 +62,20 @@ export async function runIntegrityCheckInWorker(
 
 	try {
 		const result = await new Promise<
-			{ ok: true } | { ok: false; error: string }
+			{ ok: true } | { ok: false; error: string; timedOut?: boolean }
 		>((resolve, reject) => {
 			worker.onmessage = (event: MessageEvent) => resolve(event.data);
 			worker.onerror = (event: ErrorEvent) =>
 				reject(new Error(event.message ?? "integrity worker error"));
 			timeoutHandle = setTimeout(() => {
 				// resolve (not reject) — we want this to look like any other
-				// "non-ok" result so callers (recordIntegrityResult, the
-				// on-demand endpoint) treat it uniformly and release the mutex.
+				// "non-ok" result so callers release the mutex. `timedOut` lets
+				// callers distinguish a hung worker (not corruption) from a
+				// genuine corrupt verdict and record it as "skipped" instead.
 				resolve({
 					ok: false,
 					error: `worker timed out after ${timeoutMs}ms — bun:sqlite call likely hung on disk I/O; check filesystem health`,
+					timedOut: true,
 				});
 			}, timeoutMs);
 			worker.postMessage({
