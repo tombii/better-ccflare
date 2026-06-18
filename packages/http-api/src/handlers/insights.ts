@@ -23,6 +23,18 @@ import {
 	DEFAULT_THRESHOLD_PERCENT,
 	type GroupedTokenRow,
 } from "../services/cache-insights";
+import {
+	analyzePayloadWrapper,
+	buildContextInsightsResponse,
+	type ContextGrowthRow,
+	type ContextRequestRow,
+	DEFAULT_PAYLOAD_SCAN_LIMIT,
+	DEFAULT_SESSION_GAP_MINUTES,
+	DEFAULT_TOP_CONTRIBUTORS,
+	MAX_PAYLOAD_SCAN_LIMIT,
+	MAX_TOP_CONTRIBUTORS,
+	type PayloadAnalysis,
+} from "../services/context-insights";
 import type { APIContext } from "../types";
 import { buildRequestFilters, getRangeConfig } from "../utils/query-filters";
 
@@ -347,6 +359,236 @@ export function createAnomalyInsightsHandler(context: APIContext) {
 			log.error("Anomaly insights error:", error);
 			return errorResponse(
 				InternalServerError("Failed to fetch anomaly insights data"),
+			);
+		}
+	};
+}
+
+/**
+ * Hard cap on rows fetched for the context growth curve. The growth query
+ * reads the requests table only (no payload join), so it may scan far more
+ * rows than the payload loop; beyond the cap only the most recent rows are
+ * used and growthCurve.truncated is set.
+ */
+const MAX_GROWTH_SCAN_ROWS = 20_000;
+
+/** Upper bound for the sessionGapMinutes query param (12 hours). */
+const MAX_SESSION_GAP_MINUTES = 720;
+
+/** Raw row shape for the payload coverage query. */
+interface ContextCoverageSqlRow {
+	requests_in_range: number;
+	requests_with_payload: number;
+}
+
+/** Raw per-request row shape for the context candidate query. */
+interface ContextRequestSqlRow {
+	id: string;
+	timestamp: number;
+	account: string | null;
+	model: string | null;
+	project: string | null;
+	input_tokens: number;
+	cache_read_input_tokens: number;
+	cache_creation_input_tokens: number;
+	output_tokens: number;
+}
+
+function toContextRequestRow(row: ContextRequestSqlRow): ContextRequestRow {
+	return {
+		id: row.id,
+		timestamp: Number(row.timestamp) || 0,
+		account: row.account,
+		model: row.model,
+		project: row.project,
+		inputTokens: Number(row.input_tokens) || 0,
+		cacheReadInputTokens: Number(row.cache_read_input_tokens) || 0,
+		cacheCreationInputTokens: Number(row.cache_creation_input_tokens) || 0,
+		outputTokens: Number(row.output_tokens) || 0,
+	};
+}
+
+/** Raw per-request row shape for the growth-curve query. */
+interface ContextGrowthSqlRow {
+	id: string;
+	timestamp: number;
+	project: string | null;
+	input_tokens: number;
+	cache_read_input_tokens: number;
+	cache_creation_input_tokens: number;
+	output_tokens: number;
+}
+
+function toContextGrowthRow(row: ContextGrowthSqlRow): ContextGrowthRow {
+	return {
+		id: row.id,
+		timestamp: Number(row.timestamp) || 0,
+		project: row.project,
+		inputTokens: Number(row.input_tokens) || 0,
+		cacheReadInputTokens: Number(row.cache_read_input_tokens) || 0,
+		cacheCreationInputTokens: Number(row.cache_creation_input_tokens) || 0,
+		outputTokens: Number(row.output_tokens) || 0,
+	};
+}
+
+/**
+ * GET /api/insights/context — context composition analysis from stored
+ * request payloads.
+ *
+ * Payload storage is optional (store_payloads) and retention-cleaned, so
+ * coverage is partial — meta.payloadCoverage reports requests in the window
+ * vs requests with a stored payload. To bound memory, candidate request ids
+ * are fetched metadata-only first, then each payload's json column is
+ * fetched, parsed, aggregated and discarded ONE ROW AT A TIME; the json
+ * column is never selected in a multi-row query. The growth curve uses only
+ * exact requests-table token columns (no payload parsing).
+ */
+export function createContextInsightsHandler(context: APIContext) {
+	return async (searchParams: URLSearchParams): Promise<Response> => {
+		const db = context.dbOps.getAdapter();
+		const { startMs, range } = getRangeConfig(
+			searchParams.get("range") ?? "24h",
+		);
+		const { whereClause, params: queryParams } = buildRequestFilters(
+			searchParams,
+			startMs,
+		);
+		const limit = parseDetectorParam(
+			searchParams.get("limit"),
+			DEFAULT_PAYLOAD_SCAN_LIMIT,
+			1,
+			MAX_PAYLOAD_SCAN_LIMIT,
+			true,
+		);
+		const topContributors = parseDetectorParam(
+			searchParams.get("topContributors"),
+			DEFAULT_TOP_CONTRIBUTORS,
+			1,
+			MAX_TOP_CONTRIBUTORS,
+			true,
+		);
+		const sessionGapMinutes = parseDetectorParam(
+			searchParams.get("sessionGapMinutes"),
+			DEFAULT_SESSION_GAP_MINUTES,
+			1,
+			MAX_SESSION_GAP_MINUTES,
+			true,
+		);
+
+		try {
+			// Coverage: how many requests in the window have a stored payload at
+			// all — payload storage is optional, so this can be far below 100%.
+			const coverageRows = await db.query<ContextCoverageSqlRow>(
+				`
+				SELECT
+					COUNT(*) as requests_in_range,
+					COUNT(rp.id) as requests_with_payload
+				FROM requests r
+				LEFT JOIN request_payloads rp ON rp.id = r.id
+				WHERE ${whereClause}
+			`,
+				queryParams,
+			);
+			const coverage = {
+				requestsInRange: Number(coverageRows[0]?.requests_in_range) || 0,
+				requestsWithPayload:
+					Number(coverageRows[0]?.requests_with_payload) || 0,
+			};
+
+			// Candidate ids: metadata-only (the json column is deliberately NOT
+			// selected here), most recent first, one extra row to detect truncation.
+			const candidateSqlRows = await db.query<ContextRequestSqlRow>(
+				`
+				SELECT
+					r.id as id,
+					r.timestamp as timestamp,
+					a.name as account,
+					r.model as model,
+					r.project as project,
+					COALESCE(r.input_tokens, 0) as input_tokens,
+					COALESCE(r.cache_read_input_tokens, 0) as cache_read_input_tokens,
+					COALESCE(r.cache_creation_input_tokens, 0) as cache_creation_input_tokens,
+					COALESCE(r.output_tokens, 0) as output_tokens
+				FROM requests r
+				JOIN request_payloads rp ON rp.id = r.id
+				LEFT JOIN accounts a ON a.id = r.account_used
+				WHERE ${whereClause}
+				ORDER BY r.timestamp DESC
+				LIMIT ${limit + 1}
+			`,
+				queryParams,
+			);
+			const truncated = candidateSqlRows.length > limit;
+			const candidates = candidateSqlRows
+				.slice(0, limit)
+				.map(toContextRequestRow);
+
+			// Sequential per-id loop keeps at most one payload in memory at a
+			// time. getRequestPayload handles at-rest decryption; rows that
+			// fail to decrypt or whose bodies don't parse (truncated 4MB-capped
+			// bodies, invalid base64) count as unparseable in meta rather than
+			// failing the request.
+			const analyses: Array<{
+				row: ContextRequestRow;
+				analysis: PayloadAnalysis | null;
+			}> = [];
+			for (const row of candidates) {
+				let payload: unknown = null;
+				try {
+					payload = await context.dbOps.getRequestPayload(row.id);
+				} catch (error) {
+					log.warn(`Failed to load payload ${row.id}:`, error);
+				}
+				analyses.push({
+					row,
+					analysis: payload === null ? null : analyzePayloadWrapper(payload),
+				});
+			}
+
+			// Growth curve: exact token columns over the whole window, no payload
+			// join. Fetch one extra row to detect truncation at the scan cap.
+			const growthSqlRows = await db.query<ContextGrowthSqlRow>(
+				`
+				SELECT
+					r.id as id,
+					r.timestamp as timestamp,
+					r.project as project,
+					COALESCE(r.input_tokens, 0) as input_tokens,
+					COALESCE(r.cache_read_input_tokens, 0) as cache_read_input_tokens,
+					COALESCE(r.cache_creation_input_tokens, 0) as cache_creation_input_tokens,
+					COALESCE(r.output_tokens, 0) as output_tokens
+				FROM requests r
+				WHERE ${whereClause}
+				ORDER BY r.timestamp DESC
+				LIMIT ${MAX_GROWTH_SCAN_ROWS + 1}
+			`,
+				queryParams,
+			);
+			const growthScanTruncated = growthSqlRows.length > MAX_GROWTH_SCAN_ROWS;
+			// Undo the DESC fetch order so session building sees chronological rows.
+			const growthRows = growthSqlRows
+				.slice(0, MAX_GROWTH_SCAN_ROWS)
+				.map(toContextGrowthRow)
+				.reverse();
+
+			return jsonResponse(
+				buildContextInsightsResponse({
+					analyses,
+					coverage,
+					growthRows,
+					options: {
+						range,
+						truncated,
+						growthScanTruncated,
+						topContributors,
+						sessionGapMinutes,
+					},
+				}),
+			);
+		} catch (error) {
+			log.error("Context insights error:", error);
+			return errorResponse(
+				InternalServerError("Failed to fetch context insights data"),
 			);
 		}
 	};

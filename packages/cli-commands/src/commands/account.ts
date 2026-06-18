@@ -636,12 +636,18 @@ function parseModelInput(value: string): string | string[] | null {
 async function promptModelMappings(
 	adapter: PromptAdapter,
 	existingMappings?: ModelMapping,
-	providerDefaults?: { opus: string; sonnet: string; haiku: string },
+	providerDefaults?: {
+		fable?: string;
+		opus: string;
+		sonnet: string;
+		haiku: string;
+	},
 ): Promise<ModelMapping | null> {
 	const defaults = providerDefaults ?? {
-		opus: "openai/gpt-5",
-		sonnet: "openai/gpt-5",
-		haiku: "openai/gpt-5-mini",
+		fable: "openai/gpt-5.5",
+		opus: "openai/gpt-5.5",
+		sonnet: "openai/gpt-5.5",
+		haiku: "openai/gpt-5.4-mini",
 	};
 
 	const wantsCustomMappings = await adapter.select(
@@ -663,6 +669,13 @@ async function promptModelMappings(
 		"\nEnter model mappings (comma-separated for multiple models to cycle through):",
 	);
 	const mappings: ModelMapping = {};
+
+	// Get fable mapping
+	const fableModel = await adapter.input(
+		`Fable model (default: ${defaults.fable ?? defaults.opus}): `,
+	);
+	const fable = parseModelInput(fableModel);
+	if (fable) mappings.fable = fable;
 
 	// Get opus mapping
 	const opusModel = await adapter.input(

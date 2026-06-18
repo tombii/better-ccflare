@@ -342,10 +342,12 @@ export function ensureSchema(db: Database): void {
 		)
 	`);
 
-	// Seed the three canonical families so fresh installs have assignment rows
+	// Seed the canonical families so fresh installs have assignment rows
+	// (INSERT OR IGNORE also backfills new families on existing installs)
 	db.run(`
 		INSERT OR IGNORE INTO combo_family_assignments (family, combo_id, enabled)
-		VALUES ('opus',   NULL, 0),
+		VALUES ('fable',  NULL, 0),
+		       ('opus',   NULL, 0),
 		       ('sonnet', NULL, 0),
 		       ('haiku',  NULL, 0);
 	`);

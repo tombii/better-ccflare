@@ -166,3 +166,152 @@ export interface AnomalyInsightsResponse {
 	runawayLoops: RunawayLoopGroup[];
 	misrouting: ModelMisroutingGroup[];
 }
+
+/**
+ * Response types for the context insights endpoint (/api/insights/context).
+ *
+ * Char counts are JSON.stringify lengths of stored payload sections — they
+ * are estimates, NOT token counts, and are converted with a clearly-labelled
+ * ~4 chars/token heuristic. Exact token figures (tokenTotals, growth curve)
+ * come from the requests-table token columns instead.
+ */
+
+/**
+ * Char totals per context section across all parsed payloads, with
+ * ~4 chars/token estimates and share-of-total percentages.
+ */
+export interface ContextCompositionTotals {
+	systemChars: number;
+	toolsChars: number;
+	messagesChars: number;
+	totalChars: number;
+	/** Math.round(chars / CHARS_PER_TOKEN) per section. */
+	estimatedTokens: {
+		system: number;
+		tools: number;
+		messages: number;
+		total: number;
+	};
+	/** Share of totalChars per section (0-100); all 0 when totalChars is 0. */
+	percentages: {
+		system: number;
+		tools: number;
+		messages: number;
+	};
+}
+
+/**
+ * Exact token sums over the ANALYZED (successfully parsed) requests, taken
+ * from the requests-table columns — not estimated from chars.
+ */
+export interface ContextTokenTotals {
+	uncachedInputTokens: number;
+	cacheReadInputTokens: number;
+	cacheCreationInputTokens: number;
+}
+
+/** Composition breakdown for one request whose payload parsed successfully. */
+export interface ContextRequestComposition {
+	id: string;
+	timestamp: number;
+	account: string | null;
+	model: string | null;
+	project: string | null;
+	systemChars: number;
+	toolsChars: number;
+	messagesChars: number;
+	totalChars: number;
+	/** ~4 chars/token estimate over totalChars. */
+	estimatedContextTokens: number;
+	/** Exact requests-table token columns. */
+	inputTokens: number;
+	cacheReadInputTokens: number;
+	cacheCreationInputTokens: number;
+	outputTokens: number;
+}
+
+/** Kind of message content block reported as a context contributor. */
+export type ContextContributorKind = "tool_result" | "text" | "tool_use";
+
+/**
+ * One large content block, grouped by content hash across analyzed requests
+ * so re-sent copies of the same block collapse into a single entry.
+ */
+export interface ContextContributor {
+	/** Content hash the copies were grouped by; unique within the list. */
+	hash: string;
+	kind: ContextContributorKind;
+	/**
+	 * Tool name for tool_result/tool_use blocks when resolvable, else a short
+	 * single-line content preview (first ~80 chars).
+	 */
+	label: string;
+	/** Serialized size of the largest copy seen. */
+	maxChars: number;
+	/** ~4 chars/token estimate over maxChars. */
+	estimatedTokens: number;
+	/** Total times the block was seen across analyzed requests. */
+	occurrences: number;
+	/** Distinct requests the block appeared in. */
+	requestCount: number;
+}
+
+/** One request's exact token point on the context growth curve. */
+export interface ContextGrowthPoint {
+	requestId: string;
+	timestamp: number;
+	/** input + cache_read + cache_creation (exact requests-table columns). */
+	contextTokens: number;
+	outputTokens: number;
+}
+
+/**
+ * A run of requests for one project, split from its neighbours by a
+ * configurable time gap (no real session id exists in the schema).
+ */
+export interface ContextGrowthSession {
+	project: string | null;
+	startTimestamp: number;
+	endTimestamp: number;
+	/** Requests in the session BEFORE any per-session point cap was applied. */
+	requestCount: number;
+	points: ContextGrowthPoint[];
+}
+
+/** Metadata echoed back with a context insights response. */
+export interface ContextInsightsMeta {
+	range: string;
+	generatedAt: number;
+	/** Payload rows fetched and analyzed (parse attempted). */
+	scannedPayloads: number;
+	parsedPayloads: number;
+	unparseablePayloads: number;
+	/** True when more payload-bearing requests existed than the scan limit. */
+	truncated: boolean;
+	/**
+	 * Payload storage is optional and retention-cleaned, so coverage is
+	 * partial: requests in the window vs requests with a stored payload.
+	 */
+	payloadCoverage: {
+		requestsInRange: number;
+		requestsWithPayload: number;
+	};
+	/** Human-readable caveat about char-based estimates and partial coverage. */
+	estimateNote: string;
+}
+
+/** Full response of GET /api/insights/context. */
+export interface ContextInsightsResponse {
+	meta: ContextInsightsMeta;
+	composition: {
+		totals: ContextCompositionTotals;
+		tokenTotals: ContextTokenTotals;
+		perRequest: ContextRequestComposition[];
+	};
+	topContributors: ContextContributor[];
+	growthCurve: {
+		sessions: ContextGrowthSession[];
+		/** True when the growth scan cap or session/point caps trimmed data. */
+		truncated: boolean;
+	};
+}

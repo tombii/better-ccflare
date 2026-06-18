@@ -1,4 +1,4 @@
-export type ComboFamily = "opus" | "sonnet" | "haiku";
+export type ComboFamily = "fable" | "opus" | "sonnet" | "haiku";
 
 // Database row types (snake_case, INTEGER booleans — match SQLite storage)
 export interface ComboRow {

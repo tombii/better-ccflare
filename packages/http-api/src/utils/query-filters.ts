@@ -84,6 +84,10 @@ export interface RequestFilterResult {
  * Conditions, in order: timestamp window, accounts (names resolved to ids via
  * subquery, plus the NO_ACCOUNT_ID sentinel escape hatch), models, apiKeys,
  * status (success/error; anything else adds no condition).
+ *
+ * Every column reference is qualified with the `r` alias so the clause stays
+ * unambiguous in queries that join other tables sharing column names (e.g.
+ * request_payloads also has a timestamp column).
  */
 export function buildRequestFilters(
 	searchParams: URLSearchParams,
@@ -97,7 +101,7 @@ export function buildRequestFilters(
 		searchParams.get("apiKeys")?.split(",").filter(Boolean) || [];
 	const statusFilter = searchParams.get("status") || "all";
 
-	const conditions: string[] = ["timestamp > ?"];
+	const conditions: string[] = ["r.timestamp > ?"];
 	const params: (string | number)[] = [startMs];
 
 	if (accountsFilter.length > 0) {
@@ -117,20 +121,20 @@ export function buildRequestFilters(
 
 	if (modelsFilter.length > 0) {
 		const placeholders = modelsFilter.map(() => "?").join(",");
-		conditions.push(`model IN (${placeholders})`);
+		conditions.push(`r.model IN (${placeholders})`);
 		params.push(...modelsFilter);
 	}
 
 	if (apiKeysFilter.length > 0) {
 		const placeholders = apiKeysFilter.map(() => "?").join(",");
-		conditions.push(`api_key_name IN (${placeholders})`);
+		conditions.push(`r.api_key_name IN (${placeholders})`);
 		params.push(...apiKeysFilter);
 	}
 
 	if (statusFilter === "success") {
-		conditions.push("success = TRUE");
+		conditions.push("r.success = TRUE");
 	} else if (statusFilter === "error") {
-		conditions.push("success = FALSE");
+		conditions.push("r.success = FALSE");
 	}
 
 	return { whereClause: conditions.join(" AND "), params };

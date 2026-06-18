@@ -71,7 +71,7 @@ describe("buildRequestFilters", () => {
 			new URLSearchParams(),
 			START_MS,
 		);
-		expect(whereClause).toBe("timestamp > ?");
+		expect(whereClause).toBe("r.timestamp > ?");
 		expect(params).toEqual([START_MS]);
 	});
 
@@ -81,7 +81,7 @@ describe("buildRequestFilters", () => {
 			START_MS,
 		);
 
-		expect(whereClause).toContain("timestamp > ?");
+		expect(whereClause).toContain("r.timestamp > ?");
 		expect(whereClause).toContain(
 			"r.account_used IN (SELECT id FROM accounts WHERE name IN (?,?))",
 		);
@@ -102,7 +102,7 @@ describe("buildRequestFilters", () => {
 			new URLSearchParams("models=model-a,model-b"),
 			START_MS,
 		);
-		expect(whereClause).toContain("model IN (?,?)");
+		expect(whereClause).toContain("r.model IN (?,?)");
 		expect(params).toEqual([START_MS, "model-a", "model-b"]);
 	});
 
@@ -111,7 +111,7 @@ describe("buildRequestFilters", () => {
 			new URLSearchParams("apiKeys=key-1"),
 			START_MS,
 		);
-		expect(whereClause).toContain("api_key_name IN (?)");
+		expect(whereClause).toContain("r.api_key_name IN (?)");
 		expect(params).toEqual([START_MS, "key-1"]);
 	});
 
@@ -120,7 +120,7 @@ describe("buildRequestFilters", () => {
 			new URLSearchParams("status=success"),
 			START_MS,
 		);
-		expect(whereClause).toContain("success = TRUE");
+		expect(whereClause).toContain("r.success = TRUE");
 		expect(params).toEqual([START_MS]);
 	});
 
@@ -129,7 +129,7 @@ describe("buildRequestFilters", () => {
 			new URLSearchParams("status=error"),
 			START_MS,
 		);
-		expect(whereClause).toContain("success = FALSE");
+		expect(whereClause).toContain("r.success = FALSE");
 		expect(params).toEqual([START_MS]);
 	});
 
@@ -146,7 +146,7 @@ describe("buildRequestFilters", () => {
 			new URLSearchParams("accounts=&models=&apiKeys="),
 			START_MS,
 		);
-		expect(whereClause).toBe("timestamp > ?");
+		expect(whereClause).toBe("r.timestamp > ?");
 		expect(params).toEqual([START_MS]);
 	});
 
@@ -155,7 +155,7 @@ describe("buildRequestFilters", () => {
 			new URLSearchParams("models=model-a,,model-b,"),
 			START_MS,
 		);
-		expect(whereClause).toContain("model IN (?,?)");
+		expect(whereClause).toContain("r.model IN (?,?)");
 		expect(params).toEqual([START_MS, "model-a", "model-b"]);
 	});
 
@@ -167,11 +167,11 @@ describe("buildRequestFilters", () => {
 			START_MS,
 		);
 
-		const tsIdx = whereClause.indexOf("timestamp > ?");
+		const tsIdx = whereClause.indexOf("r.timestamp > ?");
 		const acctIdx = whereClause.indexOf("r.account_used IN");
-		const modelIdx = whereClause.indexOf("model IN");
-		const keyIdx = whereClause.indexOf("api_key_name IN");
-		const statusIdx = whereClause.indexOf("success = FALSE");
+		const modelIdx = whereClause.indexOf("r.model IN");
+		const keyIdx = whereClause.indexOf("r.api_key_name IN");
+		const statusIdx = whereClause.indexOf("r.success = FALSE");
 
 		expect(tsIdx).toBeGreaterThanOrEqual(0);
 		expect(acctIdx).toBeGreaterThan(tsIdx);

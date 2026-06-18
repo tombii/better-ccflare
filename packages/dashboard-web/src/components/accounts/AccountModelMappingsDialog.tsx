@@ -1,4 +1,5 @@
 import {
+	LATEST_FABLE_MODEL,
 	LATEST_HAIKU_MODEL,
 	LATEST_OPUS_MODEL,
 	LATEST_SONNET_MODEL,
@@ -48,10 +49,12 @@ export function AccountModelMappingsDialog({
 	onUpdateModelMappings,
 }: AccountModelMappingsDialogProps) {
 	const [modelMappings, setModelMappings] = useState<{
+		fable: string;
 		opus: string;
 		sonnet: string;
 		haiku: string;
 	}>({
+		fable: "",
 		opus: "",
 		sonnet: "",
 		haiku: "",
@@ -62,12 +65,14 @@ export function AccountModelMappingsDialog({
 	React.useEffect(() => {
 		if (account?.modelMappings) {
 			setModelMappings({
+				fable: formatMappingValue(account.modelMappings.fable || ""),
 				opus: formatMappingValue(account.modelMappings.opus || ""),
 				sonnet: formatMappingValue(account.modelMappings.sonnet || ""),
 				haiku: formatMappingValue(account.modelMappings.haiku || ""),
 			});
 		} else {
 			setModelMappings({
+				fable: "",
 				opus: "",
 				sonnet: "",
 				haiku: "",
@@ -81,10 +86,12 @@ export function AccountModelMappingsDialog({
 		setIsLoading(true);
 		try {
 			const mappingsToSend: { [key: string]: string | string[] } = {};
+			const fable = parseMappingValue(modelMappings.fable);
 			const opus = parseMappingValue(modelMappings.opus);
 			const sonnet = parseMappingValue(modelMappings.sonnet);
 			const haiku = parseMappingValue(modelMappings.haiku);
 
+			if (fable) mappingsToSend.fable = fable;
 			if (opus) mappingsToSend.opus = opus;
 			if (sonnet) mappingsToSend.sonnet = sonnet;
 			if (haiku) mappingsToSend.haiku = haiku;
@@ -99,7 +106,7 @@ export function AccountModelMappingsDialog({
 	};
 
 	const handleInputChange = (
-		modelType: "opus" | "sonnet" | "haiku",
+		modelType: "fable" | "opus" | "sonnet" | "haiku",
 		value: string,
 	) => {
 		setModelMappings((prev) => ({
@@ -131,7 +138,19 @@ export function AccountModelMappingsDialog({
 							</code>
 							) to cycle on rate limits.
 						</p>
-						<div className="grid grid-cols-3 gap-3">
+						<div className="grid grid-cols-2 gap-3">
+							<div className="space-y-1">
+								<Label htmlFor="fable" className="text-xs">
+									Fable
+								</Label>
+								<Input
+									id="fable"
+									value={modelMappings.fable}
+									onChange={(e) => handleInputChange("fable", e.target.value)}
+									placeholder={`e.g., ${LATEST_FABLE_MODEL}`}
+									className="h-8"
+								/>
+							</div>
 							<div className="space-y-1">
 								<Label htmlFor="opus" className="text-xs">
 									Opus
