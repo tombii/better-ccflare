@@ -644,6 +644,7 @@ async function promptModelMappings(
 	},
 ): Promise<ModelMapping | null> {
 	const defaults = providerDefaults ?? {
+		fable: "openai/gpt-5",
 		opus: "openai/gpt-5",
 		sonnet: "openai/gpt-5",
 		haiku: "openai/gpt-5-mini",
