@@ -60,11 +60,26 @@ export async function interceptAndModifyRequest(
 		// per agent. Takes precedence over system-prompt matching; absent = unchanged.
 		const explicitAgentId = requestHeaders
 			?.get("x-anthropic-agent-id")
-			?.trim();
+			?.trim()
+			?.slice(0, 256);
 		if (explicitAgentId) {
 			log.debug(
 				`Agent attributed via x-anthropic-agent-id: ${explicitAgentId}`,
 			);
+			// Honor model-preference substitution for the declared agent, the same
+			// as the system-prompt path — don't silently bypass it.
+			const preference = await dbOps.getAgentPreference(explicitAgentId);
+			const preferredModel = preference?.model;
+			if (preferredModel && preferredModel !== originalModel) {
+				log.info(`Modifying model from ${originalModel} to ${preferredModel}`);
+				bodyContext.setModel(preferredModel);
+				return {
+					modifiedBody: bodyContext.getBuffer(),
+					agentUsed: explicitAgentId,
+					originalModel,
+					appliedModel: preferredModel,
+				};
+			}
 			return {
 				modifiedBody: requestBodyBuffer,
 				agentUsed: explicitAgentId,
