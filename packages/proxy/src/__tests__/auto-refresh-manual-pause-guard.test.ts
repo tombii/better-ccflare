@@ -154,8 +154,12 @@ describe("AutoRefreshScheduler — manual-pause probe guard", () => {
 		expect(names.has("manual-overage-on")).toBe(false);
 	});
 
-	it("excludes failure-threshold pauses", () => {
-		expect(names.has("failure-threshold")).toBe(false);
+	it("includes failure-threshold pauses (so they can self-recover, #262)", () => {
+		// A failure_threshold pause is set by this scheduler after repeated refresh
+		// failures. It must remain probe-eligible so a successful probe can clear it
+		// — otherwise the account is stuck in API ERROR until a human clicks Force
+		// Refresh. Re-probe frequency is throttled in shouldRefreshAccount, not here.
+		expect(names.has("failure-threshold")).toBe(true);
 	});
 
 	it("excludes peak_hours pauses (zai peak-hours auto-pause)", () => {
@@ -178,9 +182,10 @@ describe("AutoRefreshScheduler — manual-pause probe guard", () => {
 	});
 
 	it("selection criteria match the auto-resume guard exactly", () => {
-		// Paused rows the query selects must be precisely the rows the resume
-		// guard (auto_pause_on_overage_enabled=1 AND pause_reason IN (NULL,'overage'))
-		// would un-pause. Anything else is a probe that can never be resumed.
+		// Paused rows the query selects must be precisely the rows the resume guard
+		// would un-pause: overage (pause_reason NULL/'overage') and failure_threshold
+		// (cleared on successful probe, #262). Anything else is a probe that can never
+		// be resumed.
 		const pausedSelected = [
 			"overage-paused",
 			"overage-null-reason",
@@ -190,7 +195,68 @@ describe("AutoRefreshScheduler — manual-pause probe guard", () => {
 			"manual-overage-off",
 		].filter((n) => names.has(n));
 		expect(pausedSelected.sort()).toEqual(
-			["overage-null-reason", "overage-paused"].sort(),
+			["failure-threshold", "overage-null-reason", "overage-paused"].sort(),
 		);
+	});
+});
+
+/**
+ * #262: failure_threshold-paused accounts must be re-probed on a cooldown so
+ * they can self-recover, but not hammered every 60s. The throttle lives in
+ * shouldRefreshAccount (which consults lastFailureProbeAt).
+ */
+describe("AutoRefreshScheduler — failure_threshold re-probe cooldown", () => {
+	const failureRow = {
+		id: "acct-ft",
+		name: "acct-ft",
+		provider: "anthropic",
+		refresh_token: "rt",
+		access_token: "at",
+		expires_at: null as number | null,
+		rate_limit_reset: null as number | null,
+		custom_endpoint: null as string | null,
+		paused: 1,
+		pause_reason: "failure_threshold" as string | null,
+	};
+
+	type SchedulerWithInternals = {
+		shouldRefreshAccount(account: typeof failureRow, now: number): boolean;
+		lastFailureProbeAt: Map<string, number>;
+		FAILURE_PROBE_COOLDOWN_MS: number;
+	};
+
+	async function makeSchedulerInternals(): Promise<SchedulerWithInternals> {
+		const scheduler = await makeScheduler(makeDb([]));
+		return scheduler as unknown as SchedulerWithInternals;
+	}
+
+	it("probes a failure_threshold account on the first cycle", async () => {
+		const s = await makeSchedulerInternals();
+		expect(s.shouldRefreshAccount(failureRow, Date.now())).toBe(true);
+	});
+
+	it("skips re-probing within the cooldown window", async () => {
+		const s = await makeSchedulerInternals();
+		const now = Date.now();
+		// Simulate sendDummyMessage having recorded a probe just now.
+		s.lastFailureProbeAt.set(failureRow.id, now);
+		expect(s.shouldRefreshAccount(failureRow, now + 60_000)).toBe(false);
+	});
+
+	it("re-probes after the cooldown elapses", async () => {
+		const s = await makeSchedulerInternals();
+		const now = Date.now();
+		s.lastFailureProbeAt.set(failureRow.id, now);
+		const afterCooldown = now + s.FAILURE_PROBE_COOLDOWN_MS + 1;
+		expect(s.shouldRefreshAccount(failureRow, afterCooldown)).toBe(true);
+	});
+
+	it("does not throttle non-failure_threshold accounts", async () => {
+		const s = await makeSchedulerInternals();
+		// A stale lastFailureProbeAt entry must not suppress a normal account.
+		s.lastFailureProbeAt.set("other", Date.now());
+		const activeRow = { ...failureRow, paused: 0, pause_reason: null };
+		// First-time refresh (no lastRefreshResetTime entry) → true regardless.
+		expect(s.shouldRefreshAccount(activeRow, Date.now())).toBe(true);
 	});
 });
