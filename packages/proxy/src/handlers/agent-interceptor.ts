@@ -26,6 +26,7 @@ export interface AgentInterceptResult {
 export async function interceptAndModifyRequest(
 	requestBody: ArrayBuffer | RequestBodyContext | null,
 	dbOps: DatabaseOperations,
+	requestHeaders?: Headers,
 ): Promise<AgentInterceptResult> {
 	const bodyContext =
 		requestBody instanceof RequestBodyContext
@@ -52,6 +53,40 @@ export async function interceptAndModifyRequest(
 		// Extract original model
 		const originalModel =
 			typeof parsedBody.model === "string" ? parsedBody.model : null;
+
+		// Explicit agent attribution via header (vendor-neutral): lets any client —
+		// a multi-agent orchestrator, a router, an SDK wrapper — declare which agent
+		// issued the request, so downstream observability tools can attribute usage
+		// per agent. Takes precedence over system-prompt matching; absent = unchanged.
+		const explicitAgentId = requestHeaders
+			?.get("x-anthropic-agent-id")
+			?.trim()
+			?.slice(0, 256);
+		if (explicitAgentId) {
+			log.debug(
+				`Agent attributed via x-anthropic-agent-id: ${explicitAgentId}`,
+			);
+			// Honor model-preference substitution for the declared agent, the same
+			// as the system-prompt path — don't silently bypass it.
+			const preference = await dbOps.getAgentPreference(explicitAgentId);
+			const preferredModel = preference?.model;
+			if (preferredModel && preferredModel !== originalModel) {
+				log.info(`Modifying model from ${originalModel} to ${preferredModel}`);
+				bodyContext.setModel(preferredModel);
+				return {
+					modifiedBody: bodyContext.getBuffer(),
+					agentUsed: explicitAgentId,
+					originalModel,
+					appliedModel: preferredModel,
+				};
+			}
+			return {
+				modifiedBody: requestBodyBuffer,
+				agentUsed: explicitAgentId,
+				originalModel,
+				appliedModel: originalModel,
+			};
+		}
 
 		// Extract system prompt to detect agent usage
 		const systemPrompt = extractSystemPrompt(parsedBody as RequestBody);
