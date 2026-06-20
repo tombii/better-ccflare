@@ -40,6 +40,29 @@ function clampResetTime(candidateMs: number, now: number): number | undefined {
 // Soft warning statuses that should not block account usage
 const _SOFT_WARNING_STATUSES = new Set(["allowed_warning", "queueing_soft"]);
 
+/**
+ * Anthropic returns this header value (via
+ * `anthropic-ratelimit-unified-overage-disabled-reason`) when credits/overage
+ * are depleted for a specific model or beta (e.g. context-1m). This is
+ * model/beta-scoped, NOT account-wide — other models on the same account still
+ * succeed — so the account must NOT be benched; the proxy fails over per-request.
+ */
+export const OUT_OF_CREDITS_REASON = "out_of_credits";
+
+/**
+ * Returns true iff the response carries the exact (case-sensitive)
+ * `anthropic-ratelimit-unified-overage-disabled-reason: out_of_credits` header.
+ * This signals model/beta-scoped credit depletion, not an account-wide block —
+ * callers should fail over without benching the account.
+ */
+export function isAnthropicOutOfCredits(response: Response): boolean {
+	return (
+		response.headers.get(
+			"anthropic-ratelimit-unified-overage-disabled-reason",
+		) === OUT_OF_CREDITS_REASON
+	);
+}
+
 const log = new Logger("AnthropicProvider");
 
 export class AnthropicProvider extends BaseProvider {

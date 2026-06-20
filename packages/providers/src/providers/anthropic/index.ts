@@ -1,2 +1,6 @@
 export { AnthropicOAuthProvider } from "./oauth";
-export { AnthropicProvider } from "./provider";
+export {
+	AnthropicProvider,
+	isAnthropicOutOfCredits,
+	OUT_OF_CREDITS_REASON,
+} from "./provider";

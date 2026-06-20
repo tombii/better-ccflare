@@ -691,6 +691,59 @@ describe("Accounts Handler - Dashboard Usage Data Integration", () => {
 			expect(payload[0].rateLimitedAt).toBe(rateLimitedAt);
 		});
 
+		it("should expose out_of_credits reason via API (allowlist coverage, issue #261)", async () => {
+			const accountsHandler = createMockAccountsListHandler(
+				CACHE_FRESHNESS_THRESHOLD_MS,
+			);
+			const rateLimitedAt = Date.now() - 30_000;
+
+			mockUsageCache.getAge = () => 30000;
+
+			mockQuery.all = () => [
+				{
+					id: "ooc-account-id",
+					name: "Out of Credits Account",
+					provider: "anthropic",
+					access_token: "sk-ant-test",
+					refresh_token: "refresh-token",
+					request_count: 0,
+					total_requests: 0,
+					last_used: null,
+					created_at: Date.now() - 86400000,
+					expires_at: Date.now() + 86400000,
+					// out_of_credits is model-scoped — the account is not benched,
+					// but the reason can still appear in persisted audit state.
+					rate_limited_until: null,
+					rate_limited_reason: "out_of_credits",
+					rate_limited_at: rateLimitedAt,
+					rate_limit_reset: null,
+					rate_limit_status: null,
+					rate_limit_remaining: null,
+					session_start: null,
+					session_request_count: 0,
+					paused: 0,
+					priority: 0,
+					auto_fallback_enabled: 0,
+					auto_refresh_enabled: 0,
+					custom_endpoint: null,
+					model_mappings: null,
+					token_valid: 1,
+					rate_limited: 0,
+					session_info: null,
+				},
+			];
+
+			const response = await accountsHandler();
+			const payload = (await response.json()) as Array<{
+				rateLimitedReason: string | null;
+				rateLimitedAt: number | null;
+			}>;
+
+			expect(response.ok).toBe(true);
+			expect(payload[0].rateLimitedReason).toBe("out_of_credits");
+			expect(payload[0].rateLimitedAt).toBe(rateLimitedAt);
+		});
+
 		it("should return null rateLimitedReason and rateLimitedAt for accounts that are not rate-limited (issue #178)", async () => {
 			const accountsHandler = createMockAccountsListHandler(
 				CACHE_FRESHNESS_THRESHOLD_MS,

@@ -7,7 +7,11 @@ import {
 import { withSanitizedProxyHeaders } from "@better-ccflare/http-common";
 import { Logger } from "@better-ccflare/logger";
 import { stripCacheControlFromOpenAIRequest } from "@better-ccflare/openai-formats";
-import { getProvider, usageCache } from "@better-ccflare/providers";
+import {
+	getProvider,
+	isAnthropicOutOfCredits,
+	usageCache,
+} from "@better-ccflare/providers";
 import type {
 	Account,
 	RateLimitReason,
@@ -723,6 +727,47 @@ export async function proxyWithAccount(
 			let requestedModel: string | null = null;
 			if (effectiveBodyBuffer) requestedModel = effectiveBodyContext.getModel();
 
+			// ── out_of_credits: model/beta-scoped depletion, NOT account-wide (issue #261) ──
+			// Anthropic returns 429 + `overage-disabled-reason: out_of_credits` with no reset
+			// header. This is scoped to a specific model/beta (e.g. context-1m), not the
+			// account — opus/haiku/plain-sonnet still succeed on the same account. So we do
+			// NOT bench the account (no applyRateLimitCooldown, no consecutive increment):
+			// fail over per-request and leave the account in rotation for other models.
+			if (rawResponse.status === 429 && isAnthropicOutOfCredits(rawResponse)) {
+				const isKeepalive =
+					req.headers.get("x-better-ccflare-keepalive") === "true";
+				if (isKeepalive) {
+					return null;
+				}
+				const reason: RateLimitReason = "out_of_credits";
+				log.warn(
+					`Account ${account.name} out_of_credits (429${requestedModel ? `, model=${requestedModel}` : ""}) — ` +
+						`model/beta-scoped, NOT benching account; failing over to next account`,
+				);
+				const responseTime = Date.now() - requestMeta.timestamp;
+				ctx.asyncWriter.enqueue(() =>
+					ctx.dbOps.saveRequest(
+						crypto.randomUUID(),
+						req.method,
+						url.pathname,
+						account.id,
+						429,
+						false,
+						reason,
+						responseTime,
+						failoverAttempts,
+						requestedModel ? { model: requestedModel } : undefined,
+						requestMeta.agentUsed ?? undefined,
+						apiKeyId ?? undefined,
+						apiKeyName ?? undefined,
+						requestMeta.project ?? null,
+						undefined,
+						requestMeta.comboName ?? null,
+					),
+				);
+				return null;
+			}
+
 			if (requestedModel) {
 				const modelList = getModelList(requestedModel, account);
 				if (!modelList || modelList.length <= 1) {
@@ -773,7 +818,7 @@ export async function proxyWithAccount(
 								reason,
 								responseTime,
 								failoverAttempts,
-								undefined,
+								requestedModel ? { model: requestedModel } : undefined,
 								requestMeta.agentUsed ?? undefined,
 								apiKeyId ?? undefined,
 								apiKeyName ?? undefined,
@@ -909,7 +954,7 @@ export async function proxyWithAccount(
 								reason,
 								responseTime,
 								failoverAttempts,
-								undefined,
+								requestedModel ? { model: requestedModel } : undefined,
 								requestMeta.agentUsed ?? undefined,
 								apiKeyId ?? undefined,
 								apiKeyName ?? undefined,

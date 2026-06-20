@@ -65,4 +65,12 @@ describe("getErrorMeta", () => {
 		expect(meta.description).toContain("529");
 		expect(meta.suggestion).toContain("CCFLARE_DEFAULT_COOLDOWN_NO_RESET_MS");
 	});
+
+	test("out_of_credits surfaces model-scoped credit depletion as an error", () => {
+		const meta = getErrorMeta("out_of_credits");
+		expect(meta.title).toBe("Account out of credits");
+		expect(meta.severity).toBe("error");
+		expect(meta.description).toContain("out_of_credits");
+		expect(meta.suggestion).toContain("credits");
+	});
 });
