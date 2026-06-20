@@ -832,6 +832,7 @@ This repository includes an automated Claude code review system:
 Thanks to the contributors who have improved better-ccflare:
 
 - [@zionts](https://github.com/zionts) — fix false "integrity check failed" banner on large DBs; adaptive incremental vacuum; payload retention default reduction ([#259](https://github.com/tombii/better-ccflare/pull/259))
+- [@zenprocess](https://github.com/zenprocess) — optional `X-Anthropic-Agent-Id` header for explicit per-agent attribution ([#260](https://github.com/tombii/better-ccflare/pull/260))
 
 ## License
 
