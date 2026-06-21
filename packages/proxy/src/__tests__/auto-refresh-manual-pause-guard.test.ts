@@ -261,6 +261,19 @@ describe("AutoRefreshScheduler — failure_threshold re-probe cooldown", () => {
 		expect(s.shouldRefreshAccount(activeRow, Date.now())).toBe(true);
 	});
 
+	it("clears the cooldown path once a failure_threshold account is resumed (resume-then-reprobe)", async () => {
+		// Greptile #263 (round 2): a stale lastFailureProbeAt entry under the
+		// SAME id must not affect an account once it has been resumed
+		// (paused=0, pause_reason cleared). After resume the account follows normal
+		// window logic — the failure_threshold short-circuit no longer applies.
+		const s = await makeSchedulerInternals();
+		s.lastFailureProbeAt.set(failureRow.id, Date.now());
+		const resumedRow = { ...failureRow, paused: 0, pause_reason: null };
+		// First-time refresh (no lastRefreshResetTime) → true regardless of the
+		// stale probe timestamp.
+		expect(s.shouldRefreshAccount(resumedRow, Date.now())).toBe(true);
+	});
+
 	it("probes after cooldown even when a prior window is still active (long-running scheduler)", async () => {
 		// Greptile #263: once the cooldown elapses, the re-probe must fire even if
 		// lastRefreshResetTime is set and the current rate-limit window hasn't
