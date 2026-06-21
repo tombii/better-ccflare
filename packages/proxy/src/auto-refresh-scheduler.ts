@@ -39,6 +39,12 @@ export class AutoRefreshScheduler {
 	private consecutiveFailures: Map<string, number> = new Map();
 	// Threshold for marking an account as needing re-authentication
 	private readonly FAILURE_THRESHOLD = 5;
+	// Timestamp (ms) of the last probe sent to a failure_threshold-paused account.
+	// Re-probing is throttled to once per FAILURE_PROBE_COOLDOWN_MS so a genuinely
+	// dead endpoint isn't hit every 60s (#199), while still letting the account
+	// self-recover automatically instead of getting stuck in API ERROR (#262).
+	private lastFailureProbeAt: Map<string, number> = new Map();
+	private readonly FAILURE_PROBE_COOLDOWN_MS = 10 * 60 * 1000; // 10 minutes
 
 	constructor(db: BunSqlAdapter, proxyContext: ProxyContext) {
 		this.db = db;
@@ -78,6 +84,7 @@ export class AutoRefreshScheduler {
 		// Clear the tracking maps to free memory
 		this.lastRefreshResetTime.clear();
 		this.consecutiveFailures.clear();
+		this.lastFailureProbeAt.clear();
 	}
 
 	/**
@@ -151,22 +158,21 @@ export class AutoRefreshScheduler {
 					AND (
 						rate_limited_until IS NULL OR rate_limited_until <= ?
 					)
-					-- Only probe a paused account if it was auto-paused due to billing
-					-- overage. The auto-resume guard in sendDummyMessage only un-pauses an
-					-- account when auto_pause_on_overage_enabled=1 AND pause_reason IN
-					-- (NULL, 'overage'); selecting any other paused account here would probe
-					-- it forever yet never resume it. So a manually-paused account
-					-- (pause_reason='manual') or one paused by the failure-threshold guard
-					-- (pause_reason='failure_threshold') is left completely alone — probing it
-					-- just burns quota and pollutes the request log with synthetic 429s for an
-					-- account the user (or the guard) intentionally disabled (issue #199, bug 1).
-					-- These criteria MUST stay in sync with the resume guard.
+					-- Probe a paused account only if it can be auto-resumed. Overage pauses
+					-- (auto_pause_on_overage_enabled=1) resume on window reset. failure_threshold
+					-- pauses (set by this scheduler after FAILURE_THRESHOLD consecutive refresh
+					-- failures) MUST be re-probed on a cooldown so they can self-recover —
+					-- otherwise they're stuck in API ERROR until a human clicks Force Refresh
+					-- (issue #262). The per-account re-probe cooldown is enforced in
+					-- shouldRefreshAccount. Manual and peak_hours pauses are left alone.
+					-- These criteria MUST stay in sync with the resume guard in sendDummyMessage.
 					AND (
 						COALESCE(paused, 0) = 0
 						OR (
 							COALESCE(auto_pause_on_overage_enabled, 0) = 1
 							AND (pause_reason IS NULL OR pause_reason = 'overage')
 						)
+						OR pause_reason = 'failure_threshold'
 					)
 			`,
 				[now, now, now],
@@ -256,6 +262,13 @@ export class AutoRefreshScheduler {
 	}): Promise<boolean> {
 		try {
 			log.info(`Sending auto-refresh message to account: ${accountRow.name}`);
+
+			// Record the probe timestamp for failure_threshold accounts so the
+			// cooldown in shouldRefreshAccount suppresses re-probes for the next
+			// FAILURE_PROBE_COOLDOWN_MS (#262).
+			if (accountRow.pause_reason === "failure_threshold") {
+				this.lastFailureProbeAt.set(accountRow.id, Date.now());
+			}
 
 			const provider = getProvider(accountRow.provider);
 			if (!provider) {
@@ -560,9 +573,24 @@ export class AutoRefreshScheduler {
 					);
 				}
 
-				// Auto-resume on window reset: if account was auto-paused due to overage, resume it now.
-				// Never auto-resume accounts paused manually or due to failure threshold.
+				// Auto-resume on a successful probe. failure_threshold-paused accounts
+				// (set by this scheduler after repeated refresh failures) resume as soon
+				// as a probe succeeds — the endpoint works again (#262). Overage-paused
+				// accounts resume when the window resets. Manual and peak_hours pauses are
+				// never auto-resumed.
 				if (
+					accountRow.paused === 1 &&
+					accountRow.pause_reason === "failure_threshold"
+				) {
+					log.info(
+						`Auto-resuming account '${accountRow.name}' — failure_threshold cleared after successful probe`,
+					);
+					await this.db.run(
+						"UPDATE accounts SET paused = 0, pause_reason = NULL WHERE id = ?",
+						[accountRow.id],
+					);
+					this.lastFailureProbeAt.delete(accountRow.id);
+				} else if (
 					accountRow.auto_pause_on_overage_enabled === 1 &&
 					accountRow.paused === 1 &&
 					(!accountRow.pause_reason || accountRow.pause_reason === "overage")
@@ -996,6 +1024,16 @@ export class AutoRefreshScheduler {
 					);
 				}
 			}
+
+			// Clean up failure-probe cooldown timestamps for non-active accounts
+			for (const accountId of this.lastFailureProbeAt.keys()) {
+				if (!activeAccountIdSet.has(accountId)) {
+					this.lastFailureProbeAt.delete(accountId);
+					log.debug(
+						`Removed failure-probe cooldown tracking for account ${accountId} (no longer exists or auto-refresh disabled)`,
+					);
+				}
+			}
 		} catch (error) {
 			if (error instanceof Error) {
 				const errorMessage = `Error cleaning up tracking map: ${error.name}: ${error.message}`;
@@ -1076,9 +1114,29 @@ export class AutoRefreshScheduler {
 			expires_at: number | null;
 			rate_limit_reset: number | null;
 			custom_endpoint: string | null;
+			paused: number;
+			pause_reason: string | null;
 		},
 		now: number,
 	): boolean {
+		// Throttle re-probes of failure_threshold-paused accounts to once per
+		// cooldown — avoids burning quota on a dead endpoint every 60s (#199)
+		// while still letting it recover automatically (#262).
+		if (account.pause_reason === "failure_threshold") {
+			const lastProbe = this.lastFailureProbeAt.get(account.id);
+			if (lastProbe && now - lastProbe < this.FAILURE_PROBE_COOLDOWN_MS) {
+				log.debug(
+					`Skipping failure_threshold probe for account ${account.name} — last probe ${Math.round((now - lastProbe) / 1000)}s ago, cooldown ${this.FAILURE_PROBE_COOLDOWN_MS / 1000}s`,
+				);
+				return false;
+			}
+			// Cooldown elapsed (or no prior probe) — probe immediately. We're
+			// checking endpoint liveness, not whether a new usage window opened,
+			// so bypass the normal rate_limit_reset window logic (which would
+			// suppress re-probes while a prior window is still active).
+			return true;
+		}
+
 		const lastResetTime = this.lastRefreshResetTime.get(account.id);
 
 		// If we've never refreshed this account before, refresh it
