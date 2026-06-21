@@ -222,6 +222,7 @@ describe("AutoRefreshScheduler — failure_threshold re-probe cooldown", () => {
 	type SchedulerWithInternals = {
 		shouldRefreshAccount(account: typeof failureRow, now: number): boolean;
 		lastFailureProbeAt: Map<string, number>;
+		lastRefreshResetTime: Map<string, number>;
 		FAILURE_PROBE_COOLDOWN_MS: number;
 	};
 
@@ -258,5 +259,23 @@ describe("AutoRefreshScheduler — failure_threshold re-probe cooldown", () => {
 		const activeRow = { ...failureRow, paused: 0, pause_reason: null };
 		// First-time refresh (no lastRefreshResetTime entry) → true regardless.
 		expect(s.shouldRefreshAccount(activeRow, Date.now())).toBe(true);
+	});
+
+	it("probes after cooldown even when a prior window is still active (long-running scheduler)", async () => {
+		// Greptile #263: once the cooldown elapses, the re-probe must fire even if
+		// lastRefreshResetTime is set and the current rate-limit window hasn't
+		// expired — we're probing liveness, not waiting for a new window.
+		const s = await makeSchedulerInternals();
+		const now = Date.now();
+		// Prior successful refresh recorded a reset time 2h in the future, and a
+		// probe happened recently enough that the cooldown has now elapsed.
+		const futureReset = now + 2 * 60 * 60 * 1000;
+		s.lastRefreshResetTime.set(failureRow.id, now - 3 * 60 * 1000);
+		s.lastFailureProbeAt.set(
+			failureRow.id,
+			now - s.FAILURE_PROBE_COOLDOWN_MS - 1,
+		);
+		const rowWithWindow = { ...failureRow, rate_limit_reset: futureReset };
+		expect(s.shouldRefreshAccount(rowWithWindow, now)).toBe(true);
 	});
 });

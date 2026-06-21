@@ -1130,6 +1130,11 @@ export class AutoRefreshScheduler {
 				);
 				return false;
 			}
+			// Cooldown elapsed (or no prior probe) — probe immediately. We're
+			// checking endpoint liveness, not whether a new usage window opened,
+			// so bypass the normal rate_limit_reset window logic (which would
+			// suppress re-probes while a prior window is still active).
+			return true;
 		}
 
 		const lastResetTime = this.lastRefreshResetTime.get(account.id);
