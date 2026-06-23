@@ -1032,7 +1032,7 @@ export async function proxyWithAccount(
 						const retryRaw = isSyntheticProviderResponse(
 							transformedRequestForRetry,
 						)
-							? materializeSyntheticResponse(transformedRequestForRetry)
+							? materializeSyntheticResponse(transformedRequestForRetry.clone())
 							: await makeProxyRequest(transformedRequestForRetry.clone());
 
 						const retryTaggedHeaders = new Headers(retryRaw.headers);
@@ -1052,6 +1052,12 @@ export async function proxyWithAccount(
 						);
 
 						response = retryResponse;
+
+						// If credentials expired mid-retry, break out and let the 401
+						// failover guard below handle it (return null → try next account).
+						if (retryResponse.status === 401) {
+							break;
+						}
 
 						if (retryResponse.status !== 529) {
 							log.info(
@@ -1073,6 +1079,17 @@ export async function proxyWithAccount(
 					}
 				}
 			}
+		}
+
+		// Re-check 401 after in-place retry — credentials might have been revoked
+		// between the initial 529 and a retry response. The guard above only covered
+		// the initial response; a retry 401 would have updated `response` and broken
+		// out of the loop, so we need to catch it here before forwarding to the client.
+		if (response.status === 401) {
+			log.warn(
+				`Authentication failed (401) on 529 retry for account ${account.name}, failing over to next account`,
+			);
+			return null;
 		}
 
 		// Check for rate limit using account-specific provider
