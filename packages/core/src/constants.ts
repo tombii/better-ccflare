@@ -101,10 +101,14 @@ export function getOverloadRetryConfig(): {
 	maxMs: number;
 } {
 	const enabled = process.env.CCFLARE_OVERLOAD_RETRY_ENABLED !== "false";
+	// maxAttempts: 0 is not useful (use ENABLED=false to disable), so || is correct.
 	const maxAttempts =
 		Number(process.env.CCFLARE_OVERLOAD_RETRY_MAX_ATTEMPTS) || 2;
-	const baseMs = Number(process.env.CCFLARE_OVERLOAD_RETRY_BASE_MS) || 750;
-	const maxMs = Number(process.env.CCFLARE_OVERLOAD_RETRY_MAX_MS) || 3000;
+	// baseMs/maxMs: 0 is valid (zero delay for tests), so use explicit finite check.
+	const rawBase = Number(process.env.CCFLARE_OVERLOAD_RETRY_BASE_MS);
+	const rawMax = Number(process.env.CCFLARE_OVERLOAD_RETRY_MAX_MS);
+	const baseMs = Number.isFinite(rawBase) && rawBase >= 0 ? rawBase : 750;
+	const maxMs = Number.isFinite(rawMax) && rawMax >= 0 ? rawMax : 3000;
 	return { enabled, maxAttempts, baseMs, maxMs };
 }
 
