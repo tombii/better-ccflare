@@ -705,6 +705,196 @@ describe("proxyWithAccount — 529 failover", () => {
 	});
 });
 
+describe("proxyWithAccount — 529 in-place retry", () => {
+	let originalFetch: typeof globalThis.fetch;
+	const overloadBody =
+		'{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}';
+	const successBody =
+		'{"id":"msg_1","type":"message","content":[],"model":"claude-sonnet-4-5","stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}';
+
+	beforeEach(() => {
+		originalFetch = globalThis.fetch;
+		// Zero-delay backoff so tests don't sleep
+		process.env.CCFLARE_OVERLOAD_RETRY_BASE_MS = "0";
+		process.env.CCFLARE_OVERLOAD_RETRY_MAX_MS = "0";
+		delete process.env.CCFLARE_OVERLOAD_RETRY_ENABLED;
+		delete process.env.CCFLARE_OVERLOAD_RETRY_MAX_ATTEMPTS;
+	});
+
+	afterEach(() => {
+		globalThis.fetch = originalFetch;
+		delete process.env.CCFLARE_OVERLOAD_RETRY_BASE_MS;
+		delete process.env.CCFLARE_OVERLOAD_RETRY_MAX_MS;
+		delete process.env.CCFLARE_OVERLOAD_RETRY_ENABLED;
+		delete process.env.CCFLARE_OVERLOAD_RETRY_MAX_ATTEMPTS;
+	});
+
+	function make529NoResetCtx() {
+		const ctx = makeProxyContext();
+		(ctx as { provider: typeof ctx.provider }).provider = {
+			...ctx.provider,
+			parseRateLimit: (r: Response) => ({
+				isRateLimited: r.status === 529,
+				resetTime: undefined, // no reset — triggers in-place retry path
+				statusHeader: undefined,
+				remaining: undefined,
+			}),
+		} as typeof ctx.provider;
+		return ctx;
+	}
+
+	it("retries in-place on 529 no-reset and makes exactly 2 fetch calls before succeeding", async () => {
+		let callCount = 0;
+		globalThis.fetch = mock(async () => {
+			callCount++;
+			if (callCount === 1) {
+				return new Response(overloadBody, {
+					status: 529,
+					headers: { "content-type": "application/json" },
+				});
+			}
+			return new Response(successBody, {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			});
+		});
+
+		process.env.CCFLARE_OVERLOAD_RETRY_MAX_ATTEMPTS = "2";
+		const ctx = make529NoResetCtx();
+		const bodyBuffer = makeRequestBody();
+		// proxyWithAccount reaches forwardToClient on success, which requires
+		// UsageCollector initialization (not wired in unit tests). Catch that
+		// specific error while still verifying the retry fired.
+		try {
+			await proxyWithAccount(
+				makeRequest(bodyBuffer),
+				new URL("https://proxy.local/v1/messages"),
+				makeAccount({
+					provider: "anthropic",
+					api_key: "test-key",
+					access_token: null,
+				}),
+				makeRequestMeta(),
+				bodyBuffer,
+				() => undefined,
+				0,
+				ctx,
+			);
+		} catch (e) {
+			const msg = e instanceof Error ? e.message : String(e);
+			if (!msg.includes("UsageCollector not initialized")) throw e;
+		}
+
+		// fetch was called twice: initial 529 + 1 in-place retry
+		expect(callCount).toBe(2);
+		// markAccountRateLimited should NOT have been called — no cooldown on successful retry
+		expect(ctx.dbOps.markAccountRateLimited).not.toHaveBeenCalled();
+	});
+
+	it("falls through to cooldown/failover when all retries are exhausted", async () => {
+		globalThis.fetch = mock(
+			async () =>
+				new Response(overloadBody, {
+					status: 529,
+					headers: { "content-type": "application/json" },
+				}),
+		);
+
+		process.env.CCFLARE_OVERLOAD_RETRY_MAX_ATTEMPTS = "3";
+		const ctx = make529NoResetCtx();
+		const bodyBuffer = makeRequestBody();
+		const result = await proxyWithAccount(
+			makeRequest(bodyBuffer),
+			new URL("https://proxy.local/v1/messages"),
+			makeAccount({
+				provider: "anthropic",
+				api_key: "test-key",
+				access_token: null,
+			}),
+			makeRequestMeta(),
+			bodyBuffer,
+			() => undefined,
+			0,
+			ctx,
+		);
+
+		// All retries exhausted → null (cooldown applied, failover to next account)
+		expect(result).toBeNull();
+	});
+
+	it("skips in-place retry when CCFLARE_OVERLOAD_RETRY_ENABLED=false", async () => {
+		let callCount = 0;
+		globalThis.fetch = mock(async () => {
+			callCount++;
+			return new Response(overloadBody, {
+				status: 529,
+				headers: { "content-type": "application/json" },
+			});
+		});
+
+		process.env.CCFLARE_OVERLOAD_RETRY_ENABLED = "false";
+		const ctx = make529NoResetCtx();
+		const bodyBuffer = makeRequestBody();
+		await proxyWithAccount(
+			makeRequest(bodyBuffer),
+			new URL("https://proxy.local/v1/messages"),
+			makeAccount({
+				provider: "anthropic",
+				api_key: "test-key",
+				access_token: null,
+			}),
+			makeRequestMeta(),
+			bodyBuffer,
+			() => undefined,
+			0,
+			ctx,
+		);
+
+		// Disabled — only the initial request, no retries
+		expect(callCount).toBe(1);
+	});
+
+	it("skips in-place retry for synthetic keepalive requests", async () => {
+		let callCount = 0;
+		globalThis.fetch = mock(async () => {
+			callCount++;
+			return new Response(overloadBody, {
+				status: 529,
+				headers: { "content-type": "application/json" },
+			});
+		});
+
+		process.env.CCFLARE_OVERLOAD_RETRY_MAX_ATTEMPTS = "3";
+		const ctx = make529NoResetCtx();
+		const bodyBuffer = makeRequestBody();
+		const keepaliveReq = new Request("https://proxy.local/v1/messages", {
+			method: "POST",
+			body: bodyBuffer,
+			headers: {
+				"Content-Type": "application/json",
+				"x-better-ccflare-keepalive": "true",
+			},
+		});
+		await proxyWithAccount(
+			keepaliveReq,
+			new URL("https://proxy.local/v1/messages"),
+			makeAccount({
+				provider: "anthropic",
+				api_key: "test-key",
+				access_token: null,
+			}),
+			makeRequestMeta(),
+			bodyBuffer,
+			() => undefined,
+			0,
+			ctx,
+		);
+
+		// Keepalive — only the initial request, no in-place retries
+		expect(callCount).toBe(1);
+	});
+});
+
 describe("proxyWithAccount — 401 failover", () => {
 	let originalFetch: typeof globalThis.fetch;
 

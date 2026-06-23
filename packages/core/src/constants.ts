@@ -84,6 +84,34 @@ export function getRateLimitResetStabilityMs(): number {
 	return raw || TIME_CONSTANTS.RATE_LIMIT_RESET_STABILITY_MS;
 }
 
+/**
+ * Configuration for in-place retry of reset-less 529 (overloaded_error) responses.
+ * Used by proxyWithAccount before applying account cooldown.
+ *
+ * Env knobs:
+ *   CCFLARE_OVERLOAD_RETRY_ENABLED      — set to "false" to disable (default: true)
+ *   CCFLARE_OVERLOAD_RETRY_MAX_ATTEMPTS — max in-place attempts (default: 2)
+ *   CCFLARE_OVERLOAD_RETRY_BASE_MS      — jitter backoff base delay ms (default: 750)
+ *   CCFLARE_OVERLOAD_RETRY_MAX_MS       — jitter backoff ceiling ms (default: 3000)
+ */
+export function getOverloadRetryConfig(): {
+	enabled: boolean;
+	maxAttempts: number;
+	baseMs: number;
+	maxMs: number;
+} {
+	const enabled = process.env.CCFLARE_OVERLOAD_RETRY_ENABLED !== "false";
+	// maxAttempts: 0 is not useful (use ENABLED=false to disable), so || is correct.
+	const maxAttempts =
+		Number(process.env.CCFLARE_OVERLOAD_RETRY_MAX_ATTEMPTS) || 2;
+	// baseMs/maxMs: 0 is valid (zero delay for tests), so use explicit finite check.
+	const rawBase = Number(process.env.CCFLARE_OVERLOAD_RETRY_BASE_MS);
+	const rawMax = Number(process.env.CCFLARE_OVERLOAD_RETRY_MAX_MS);
+	const baseMs = Number.isFinite(rawBase) && rawBase >= 0 ? rawBase : 750;
+	const maxMs = Number.isFinite(rawMax) && rawMax >= 0 ? rawMax : 3000;
+	return { enabled, maxAttempts, baseMs, maxMs };
+}
+
 // Buffer sizes (in bytes unless specified)
 export const BUFFER_SIZES = {
 	// Stream usage buffer size in KB (multiplied by 1024 to get bytes)

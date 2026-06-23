@@ -1,5 +1,6 @@
 import {
 	getModelList,
+	getOverloadRetryConfig,
 	logError,
 	ProviderError,
 	TIME_CONSTANTS,
@@ -624,6 +625,9 @@ export async function proxyWithAccount(
 			);
 		}
 
+		// Capture a clone for in-place 529 retries before the body is consumed.
+		const transformedRequestForRetry = transformedRequest.clone();
+
 		// Make the request (or unwrap a synthetic provider response)
 		let rawResponse = isSyntheticProviderResponse(transformedRequest)
 			? materializeSyntheticResponse(transformedRequest)
@@ -989,7 +993,7 @@ export async function proxyWithAccount(
 		});
 
 		// Process response (transform format, sanitize headers, etc.) using account-specific provider
-		const response = await provider.processResponse(
+		let response = await provider.processResponse(
 			taggedRawResponse,
 			account,
 			req.headers,
@@ -999,6 +1003,91 @@ export async function proxyWithAccount(
 		if (response.status === 401) {
 			log.warn(
 				`Authentication failed (401) for account ${account.name}, failing over to next account`,
+			);
+			return null;
+		}
+
+		// In-place retry for reset-less 529 (overloaded_error) — bounded attempts with
+		// full-jitter exponential backoff before applying account cooldown. This prevents
+		// all accounts cooling simultaneously under concurrency spikes. Skipped for
+		// synthetic (keepalive / auto-refresh) requests to avoid loop amplification.
+		if (response.status === 529 && !isSyntheticInternal) {
+			const rlInfo = provider.parseRateLimit(response.clone());
+			if (rlInfo.isRateLimited && !rlInfo.resetTime) {
+				const retryCfg = getOverloadRetryConfig();
+				if (retryCfg.enabled && retryCfg.maxAttempts > 1) {
+					for (let attempt = 1; attempt < retryCfg.maxAttempts; attempt++) {
+						// Full-jitter backoff: sleep in [0, min(base * 2^attempt, max)]
+						const cap = Math.min(
+							retryCfg.baseMs * 2 ** attempt,
+							retryCfg.maxMs,
+						);
+						const delayMs = Math.random() * cap;
+						await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+
+						log.info(
+							`Account ${account.name}: in-place retry ${attempt}/${retryCfg.maxAttempts - 1} after ${Math.round(delayMs)}ms for 529 overloaded_error`,
+						);
+
+						const retryRaw = isSyntheticProviderResponse(
+							transformedRequestForRetry,
+						)
+							? materializeSyntheticResponse(transformedRequestForRetry.clone())
+							: await makeProxyRequest(transformedRequestForRetry.clone());
+
+						const retryTaggedHeaders = new Headers(retryRaw.headers);
+						retryTaggedHeaders.set(
+							"x-better-ccflare-request-id",
+							requestMeta.id,
+						);
+						const retryTaggedRaw = new Response(retryRaw.body, {
+							status: retryRaw.status,
+							statusText: retryRaw.statusText,
+							headers: retryTaggedHeaders,
+						});
+						const retryResponse = await provider.processResponse(
+							retryTaggedRaw,
+							account,
+							req.headers,
+						);
+
+						response = retryResponse;
+
+						// If credentials expired mid-retry, break out and let the 401
+						// failover guard below handle it (return null → try next account).
+						if (retryResponse.status === 401) {
+							break;
+						}
+
+						if (retryResponse.status !== 529) {
+							log.info(
+								`Account ${account.name}: 529 resolved on retry ${attempt} (status ${retryResponse.status})`,
+							);
+							break;
+						}
+
+						const retryRlInfo = provider.parseRateLimit(retryResponse.clone());
+						if (!retryRlInfo.isRateLimited || retryRlInfo.resetTime) {
+							// Got a reset hint on retry — stop; let processProxyResponse apply cooldown
+							break;
+						}
+					}
+					if (response.status === 529) {
+						log.warn(
+							`Account ${account.name}: all ${retryCfg.maxAttempts - 1} in-place 529 retries exhausted, applying cooldown and failing over`,
+						);
+					}
+				}
+			}
+		}
+
+		// Re-check 401 after in-place retry — credentials might have been revoked
+		// between the initial 529 and a retry response. The guard above only covered
+		// the initial response; a retry 401 would have updated `response` and broken
+		// out of the loop, so we need to catch it here before forwarding to the client.
+		if (response.status === 401) {
+			log.warn(
+				`Authentication failed (401) on 529 retry for account ${account.name}, failing over to next account`,
 			);
 			return null;
 		}
