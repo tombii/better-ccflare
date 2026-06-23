@@ -186,6 +186,12 @@ RETRY_ATTEMPTS=3                       # Number of retry attempts
 RETRY_DELAY_MS=1000                   # Initial retry delay in milliseconds
 RETRY_BACKOFF=2                        # Retry backoff multiplier
 
+# Overload retry (529 no-reset in-place retry before account cooldown)
+CCFLARE_OVERLOAD_RETRY_ENABLED=true    # Set to "false" to disable (default: true)
+CCFLARE_OVERLOAD_RETRY_MAX_ATTEMPTS=2  # Total attempts incl. original (default: 2)
+CCFLARE_OVERLOAD_RETRY_BASE_MS=750     # Backoff base in ms; 0 = no sleep (default: 750)
+CCFLARE_OVERLOAD_RETRY_MAX_MS=3000     # Backoff ceiling in ms (default: 3000)
+
 # Health endpoint
 HEALTH_DETAIL_ENABLED=false            # Enable ?detail=1 on /health to expose per-account status (default: off, set true for internal monitoring)
 
