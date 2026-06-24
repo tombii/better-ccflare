@@ -198,6 +198,12 @@ interface StreamState {
 	contextWindow: ContextWindow | null;
 	// Track function_call items: output_index → buffered arguments and block index
 	functionCallBlocks: Map<number, FunctionCallBuffer>;
+	upstreamError?: {
+		type: string;
+		message: string;
+		code?: string;
+		status?: string;
+	};
 }
 
 export class CodexProvider extends BaseProvider {
@@ -696,6 +702,7 @@ export class CodexProvider extends BaseProvider {
 			.getReader();
 		let messageStartPayload: Record<string, unknown> | null = null;
 		let messageDeltaPayload: Record<string, unknown> | null = null;
+		let errorPayload: Record<string, unknown> | null = null;
 		const content: Array<Record<string, unknown>> = [];
 		const textByIndex = new Map<number, string>();
 		const toolByIndex = new Map<
@@ -716,6 +723,10 @@ export class CodexProvider extends BaseProvider {
 				try {
 					data = JSON.parse(line.slice("data:".length).trim());
 				} catch {
+					return;
+				}
+				if (eventName === "error") {
+					errorPayload = data;
 					return;
 				}
 				if (eventName === "message_start") {
@@ -782,6 +793,18 @@ export class CodexProvider extends BaseProvider {
 			} finally {
 				reader.releaseLock();
 			}
+		}
+
+		if (errorPayload) {
+			const headers = sanitizeResponseHeaders(response.headers);
+			headers.set("content-type", "application/json");
+			const { status, statusText } =
+				this.httpStatusForAnthropicErrorPayload(errorPayload);
+			return new Response(JSON.stringify(errorPayload), {
+				status,
+				statusText,
+				headers,
+			});
 		}
 
 		const allIndices = new Set([...textByIndex.keys(), ...toolByIndex.keys()]);
@@ -1020,6 +1043,10 @@ export class CodexProvider extends BaseProvider {
 					}
 				}
 
+				if (state.upstreamError) {
+					return;
+				}
+
 				// Flush any remaining
 				await ensureMessageStart();
 
@@ -1054,6 +1081,102 @@ export class CodexProvider extends BaseProvider {
 			statusText: response.statusText,
 			headers,
 		});
+	}
+
+	private normalizeCodexStreamError(
+		eventName: string,
+		data: Record<string, unknown>,
+	): StreamState["upstreamError"] {
+		const response =
+			data.response && typeof data.response === "object"
+				? (data.response as Record<string, unknown>)
+				: undefined;
+		const responseError =
+			response?.error && typeof response.error === "object"
+				? (response.error as Record<string, unknown>)
+				: undefined;
+		const directError =
+			data.error && typeof data.error === "object"
+				? (data.error as Record<string, unknown>)
+				: undefined;
+		const error = responseError ?? directError ?? data;
+		const messageCandidate = error.message ?? data.message ?? response?.status;
+		const typeCandidate = error.type ?? error.code ?? eventName;
+		const codeCandidate = error.code ?? data.code;
+		const statusCandidate = response?.status ?? data.status;
+
+		return {
+			type:
+				typeof typeCandidate === "string" && typeCandidate.length > 0
+					? typeCandidate
+					: "api_error",
+			message:
+				typeof messageCandidate === "string" && messageCandidate.length > 0
+					? messageCandidate
+					: "Codex upstream failed while generating a response.",
+			...(typeof codeCandidate === "string" ? { code: codeCandidate } : {}),
+			...(typeof statusCandidate === "string"
+				? { status: statusCandidate }
+				: {}),
+		};
+	}
+
+	private toAnthropicErrorPayload(error: StreamState["upstreamError"]): {
+		type: "error";
+		error: { type: string; message: string; code?: string };
+	} {
+		const code = error?.code;
+		const type =
+			code === "context_length_exceeded"
+				? "invalid_request_error"
+				: error?.type || "api_error";
+		return {
+			type: "error",
+			error: {
+				type,
+				message: error?.message || "Codex upstream failed.",
+				...(code ? { code } : {}),
+			},
+		};
+	}
+
+	private httpStatusForAnthropicErrorPayload(
+		payload: Record<string, unknown>,
+	): {
+		status: number;
+		statusText: string;
+	} {
+		const error =
+			payload.error && typeof payload.error === "object"
+				? (payload.error as Record<string, unknown>)
+				: {};
+		const type = typeof error.type === "string" ? error.type : "";
+		const code = typeof error.code === "string" ? error.code : "";
+		const status = typeof error.status === "string" ? error.status : "";
+
+		if (code === "context_length_exceeded") {
+			return { status: 400, statusText: "Bad Request" };
+		}
+		if (type === "invalid_request_error") {
+			return { status: 400, statusText: "Bad Request" };
+		}
+		if (type === "authentication_error") {
+			return { status: 401, statusText: "Unauthorized" };
+		}
+		if (type === "permission_error") {
+			return { status: 403, statusText: "Forbidden" };
+		}
+		if (
+			type === "rate_limit_error" ||
+			code === "rate_limit_exceeded" ||
+			status === "rate_limited"
+		) {
+			return { status: 429, statusText: "Too Many Requests" };
+		}
+		if (type === "overloaded_error") {
+			return { status: 529, statusText: "Overloaded" };
+		}
+		return { status: 502, statusText: "Bad Gateway" };
 	}
 
 	private async handleCodexEvent(
@@ -1218,6 +1341,19 @@ export class CodexProvider extends BaseProvider {
 					});
 					state.contentBlockIndex++;
 					state.hasSentContentBlockStart = false;
+				}
+				break;
+			}
+
+			case "error":
+			case "response.failed": {
+				state.upstreamError = this.normalizeCodexStreamError(eventName, data);
+				if (!state.hasSentTerminalEvents) {
+					await writeSSE(
+						"error",
+						this.toAnthropicErrorPayload(state.upstreamError),
+					);
+					state.hasSentTerminalEvents = true;
 				}
 				break;
 			}
