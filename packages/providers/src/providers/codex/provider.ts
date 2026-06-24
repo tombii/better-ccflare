@@ -651,11 +651,7 @@ export class CodexProvider extends BaseProvider {
 	}
 
 	private isSyntheticCountTokensRequest(url: string): boolean {
-		try {
-			return url === CODEX_SYNTHETIC_COUNT_TOKENS_URL;
-		} catch {
-			return false;
-		}
+		return url === CODEX_SYNTHETIC_COUNT_TOKENS_URL;
 	}
 
 	private createSyntheticJsonResponse(
@@ -697,19 +693,82 @@ export class CodexProvider extends BaseProvider {
 	}
 
 	private estimateCountTokensInput(body: unknown): number {
-		let serialized = "";
-		try {
-			serialized = JSON.stringify(body) ?? "";
-		} catch {
-			serialized = String(body ?? "");
+		const material = this.extractCountTokensMaterial(body);
+		let serialized = material.join("\n");
+		if (serialized.length === 0) {
+			try {
+				serialized = JSON.stringify(body) ?? "";
+			} catch {
+				serialized = String(body ?? "");
+			}
 		}
 
 		// Anthropic's count_tokens endpoint is advisory for client-side budgeting.
 		// Codex has no equivalent endpoint, so return a conservative local estimate
 		// instead of failing flows that ask for a token count between real messages.
+		// Estimate over prompt material rather than the entire request envelope so
+		// short prompts are not dominated by JSON field names and punctuation.
 		// Roughly 3 UTF-16 chars/token overestimates English text and gives clients a
 		// safe context-budget signal.
 		return Math.max(1, Math.ceil(serialized.length / 3));
+	}
+
+	private extractCountTokensMaterial(body: unknown): string[] {
+		if (!body || typeof body !== "object") return [];
+		const request = body as Record<string, unknown>;
+		const chunks: string[] = [];
+		this.appendCountTokensContent(chunks, request.system);
+		const messages = request.messages;
+		if (Array.isArray(messages)) {
+			for (const message of messages) {
+				if (!message || typeof message !== "object") continue;
+				const msg = message as Record<string, unknown>;
+				if (typeof msg.role === "string") chunks.push(msg.role);
+				this.appendCountTokensContent(chunks, msg.content);
+			}
+		}
+		const tools = request.tools;
+		if (Array.isArray(tools)) {
+			for (const tool of tools) {
+				this.appendCountTokensContent(chunks, tool);
+			}
+		}
+		return chunks;
+	}
+
+	private appendCountTokensContent(chunks: string[], value: unknown): void {
+		if (typeof value === "string") {
+			chunks.push(value);
+			return;
+		}
+		if (Array.isArray(value)) {
+			for (const item of value) {
+				this.appendCountTokensContent(chunks, item);
+			}
+			return;
+		}
+		if (!value || typeof value !== "object") return;
+		const record = value as Record<string, unknown>;
+		const before = chunks.length;
+		if (typeof record.text === "string") chunks.push(record.text);
+		if (typeof record.name === "string") chunks.push(record.name);
+		if (typeof record.description === "string") chunks.push(record.description);
+		if ("input" in record) this.appendCountTokensContent(chunks, record.input);
+		if ("content" in record)
+			this.appendCountTokensContent(chunks, record.content);
+		if ("input_schema" in record) {
+			this.appendCountTokensContent(chunks, record.input_schema);
+		}
+		if ("parameters" in record) {
+			this.appendCountTokensContent(chunks, record.parameters);
+		}
+		if (Object.keys(record).length > 0 && chunks.length === before) {
+			try {
+				chunks.push(JSON.stringify(record));
+			} catch {
+				// Ignore non-serializable objects; the caller has a request-level fallback.
+			}
+		}
 	}
 
 	private convertToCodexFormat(

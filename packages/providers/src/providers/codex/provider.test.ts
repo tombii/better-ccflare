@@ -794,6 +794,25 @@ describe("CodexProvider.transformRequestBody", () => {
 		expect(body).not.toHaveProperty("store");
 	});
 
+	it("estimates count_tokens from prompt material instead of the full JSON envelope", async () => {
+		const provider = new CodexProvider();
+		const url = provider.buildUrl("/v1/messages/count_tokens", "");
+		const request = new Request(url, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				model: "claude-3-7-sonnet",
+				messages: [{ role: "user", content: "hello" }],
+			}),
+		});
+
+		const transformed = await provider.transformRequestBody(request, undefined);
+		const body = await transformed.json();
+
+		expect(body.input_tokens).toBeGreaterThan(0);
+		expect(body.input_tokens).toBeLessThan(10);
+	});
+
 	it("returns a synthetic error for malformed count_tokens requests", async () => {
 		const provider = new CodexProvider();
 		const url = provider.buildUrl("/v1/messages/count_tokens", "");
