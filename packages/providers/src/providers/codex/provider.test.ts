@@ -11,10 +11,11 @@ const eventLine = (name: string, data: unknown) => [
 ];
 
 describe("CodexProvider request conversion", () => {
-	it("handles only /v1/messages path", () => {
+	it("handles messages and synthetic count_tokens paths", () => {
 		const provider = new CodexProvider();
 		expect(provider.canHandle("/v1/messages")).toBeTrue();
-		expect(provider.canHandle("/v1/messages/count_tokens")).toBeFalse();
+		expect(provider.canHandle("/v1/messages/count_tokens")).toBeTrue();
+		expect(provider.canHandle("/v1/complete")).toBeFalse();
 	});
 
 	it("forwards Claude reasoning effort to Codex reasoning.effort", async () => {
@@ -762,6 +763,87 @@ describe("CodexProvider.processResponse", () => {
 });
 
 describe("CodexProvider.transformRequestBody", () => {
+	it("returns a synthetic Anthropic count_tokens response", async () => {
+		const provider = new CodexProvider();
+		const url = provider.buildUrl("/v1/messages/count_tokens", "");
+		const request = new Request(url, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				model: "claude-3-7-sonnet",
+				messages: [{ role: "user", content: "hello world" }],
+			}),
+		});
+
+		const transformed = await provider.transformRequestBody(request, undefined);
+		const body = await transformed.json();
+
+		expect(transformed.headers.get("content-type")).toContain(
+			"application/json",
+		);
+		expect(transformed.headers.get("x-better-ccflare-synthetic-response")).toBe(
+			"true",
+		);
+		expect(transformed.headers.get("x-better-ccflare-synthetic-status")).toBe(
+			"200",
+		);
+		expect(body.input_tokens).toBeNumber();
+		expect(body.input_tokens).toBeGreaterThan(0);
+		expect(body).not.toHaveProperty("input");
+		expect(body).not.toHaveProperty("stream");
+		expect(body).not.toHaveProperty("store");
+	});
+
+	it("returns a synthetic error for malformed count_tokens requests", async () => {
+		const provider = new CodexProvider();
+		const url = provider.buildUrl("/v1/messages/count_tokens", "");
+		const request = new Request(url, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: "{not-json",
+		});
+
+		const transformed = await provider.transformRequestBody(request, undefined);
+		const body = await transformed.json();
+
+		expect(transformed.headers.get("x-better-ccflare-synthetic-response")).toBe(
+			"true",
+		);
+		expect(transformed.headers.get("x-better-ccflare-synthetic-status")).toBe(
+			"400",
+		);
+		expect(body).toEqual({
+			type: "error",
+			error: {
+				type: "invalid_request_error",
+				message: "Codex count_tokens requires a valid JSON request body.",
+			},
+		});
+	});
+
+	it("returns a synthetic error for non-JSON count_tokens requests", async () => {
+		const provider = new CodexProvider();
+		const url = provider.buildUrl("/v1/messages/count_tokens", "");
+		const request = new Request(url, {
+			method: "POST",
+			headers: { "content-type": "text/plain" },
+			body: "hello",
+		});
+
+		const transformed = await provider.transformRequestBody(request, undefined);
+		const body = await transformed.json();
+
+		expect(transformed.headers.get("x-better-ccflare-synthetic-response")).toBe(
+			"true",
+		);
+		expect(transformed.headers.get("x-better-ccflare-synthetic-status")).toBe(
+			"400",
+		);
+		expect(body.error.message).toBe(
+			"Codex count_tokens requires an application/json request body.",
+		);
+	});
+
 	it("maps sonnet-family models to the default Codex model", async () => {
 		const provider = new CodexProvider();
 		const request = new Request("https://example.com/v1/messages", {

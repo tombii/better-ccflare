@@ -32,6 +32,8 @@ export const CODEX_DEFAULT_ENDPOINT =
 export const CODEX_VERSION = "0.142.0";
 export const CODEX_USER_AGENT = `codex-cli/${CODEX_VERSION} (Windows 10.0.26100; x64)`;
 export const CODEX_PING_MODEL = "gpt-5-codex";
+const CODEX_SYNTHETIC_COUNT_TOKENS_URL =
+	"https://better-ccflare.local/codex/count_tokens";
 
 const _normalizeUsage = (value: unknown): Record<string, number> => {
 	const usage =
@@ -221,7 +223,7 @@ export class CodexProvider extends BaseProvider {
 	}
 
 	canHandle(path: string): boolean {
-		return path === "/v1/messages";
+		return path === "/v1/messages" || path === "/v1/messages/count_tokens";
 	}
 
 	async refreshToken(
@@ -292,6 +294,10 @@ export class CodexProvider extends BaseProvider {
 	}
 
 	buildUrl(_path: string, _query: string, account?: Account): string {
+		if (_path === "/v1/messages/count_tokens") {
+			return CODEX_SYNTHETIC_COUNT_TOKENS_URL;
+		}
+
 		if (account?.custom_endpoint) {
 			try {
 				return validateEndpointUrl(account.custom_endpoint, "custom_endpoint");
@@ -332,14 +338,28 @@ export class CodexProvider extends BaseProvider {
 		request: Request,
 		account?: Account,
 	): Promise<Request> {
+		const isSyntheticCountTokens = this.isSyntheticCountTokensRequest(
+			request.url,
+		);
 		const contentType = request.headers.get("content-type");
 		if (!contentType?.includes("application/json")) {
-			return request;
+			return isSyntheticCountTokens
+				? this.createSyntheticErrorResponse(
+						request,
+						400,
+						"invalid_request_error",
+						"Codex count_tokens requires an application/json request body.",
+					)
+				: request;
 		}
 
 		try {
 			this.sweepRequestStreamById();
 			const body = (await request.json()) as AnthropicRequest;
+			if (isSyntheticCountTokens) {
+				return this.createSyntheticCountTokensResponse(request, body);
+			}
+
 			const requestId = request.headers.get("x-better-ccflare-request-id");
 			if (requestId) {
 				this.requestStreamById.set(requestId, {
@@ -369,6 +389,14 @@ export class CodexProvider extends BaseProvider {
 		} catch (error) {
 			if (error instanceof ValidationError) {
 				throw error;
+			}
+			if (isSyntheticCountTokens) {
+				return this.createSyntheticErrorResponse(
+					request,
+					400,
+					"invalid_request_error",
+					"Codex count_tokens requires a valid JSON request body.",
+				);
 			}
 			log.error("Failed to transform request body to Codex format:", error);
 			return request;
@@ -620,6 +648,68 @@ export class CodexProvider extends BaseProvider {
 			},
 			context_window_size: contextWindowSize,
 		};
+	}
+
+	private isSyntheticCountTokensRequest(url: string): boolean {
+		try {
+			return url === CODEX_SYNTHETIC_COUNT_TOKENS_URL;
+		} catch {
+			return false;
+		}
+	}
+
+	private createSyntheticJsonResponse(
+		request: Request,
+		status: number,
+		body: unknown,
+	): Request {
+		const headers = new Headers({
+			"content-type": "application/json",
+			"x-better-ccflare-synthetic-response": "true",
+			"x-better-ccflare-synthetic-status": String(status),
+		});
+		return new Request(request.url, {
+			method: request.method,
+			headers,
+			body: JSON.stringify(body),
+		});
+	}
+
+	private createSyntheticCountTokensResponse(
+		request: Request,
+		body: unknown,
+	): Request {
+		return this.createSyntheticJsonResponse(request, 200, {
+			input_tokens: this.estimateCountTokensInput(body),
+		});
+	}
+
+	private createSyntheticErrorResponse(
+		request: Request,
+		status: number,
+		type: string,
+		message: string,
+	): Request {
+		return this.createSyntheticJsonResponse(request, status, {
+			type: "error",
+			error: { type, message },
+		});
+	}
+
+	private estimateCountTokensInput(body: unknown): number {
+		let serialized = "";
+		try {
+			serialized = JSON.stringify(body) ?? "";
+		} catch {
+			serialized = String(body ?? "");
+		}
+
+		// Anthropic's count_tokens endpoint is advisory for client-side budgeting.
+		// Codex has no equivalent endpoint, so return a conservative local estimate
+		// instead of failing flows that ask for a token count between real messages.
+		// Roughly 3 UTF-16 chars/token overestimates English text and gives clients a
+		// safe context-budget signal.
+		return Math.max(1, Math.ceil(serialized.length / 3));
 	}
 
 	private convertToCodexFormat(

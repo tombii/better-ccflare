@@ -29,6 +29,10 @@ import { getValidAccessToken } from "./token-manager";
 
 const log = new Logger("ProxyOperations");
 
+const SYNTHETIC_RESPONSE_HEADER = "x-better-ccflare-synthetic-response";
+const SYNTHETIC_STATUS_HEADER = "x-better-ccflare-synthetic-status";
+const SYNTHETIC_RESPONSE_URL_PREFIX = "https://better-ccflare.local/";
+
 /**
  * Determines the absolute epoch timestamp (ms since epoch) until which an account
  * should be marked rate-limited after model exhaustion. Priority:
@@ -99,23 +103,39 @@ export function extractCooldownUntil(
 }
 
 /**
- * Bedrock provider currently returns a synthetic Request containing the
- * provider response payload (instead of a real URL to fetch).
- * Detect and unwrap that request so we don't try to fetch a fake host.
+ * Some providers return a synthetic Request containing the provider response
+ * payload (instead of a real URL to fetch). Detect and unwrap those requests so
+ * we don't try to fetch fake hosts. Bedrock's historical x-bedrock-response
+ * marker is kept for compatibility; newer providers use the generic marker.
  */
 function isSyntheticProviderResponse(request: Request): boolean {
 	return (
-		request.headers.get("x-bedrock-response") === "true" &&
-		request.url.startsWith("https://bedrock.aws/response")
+		(request.headers.get("x-bedrock-response") === "true" &&
+			request.url.startsWith("https://bedrock.aws/response")) ||
+		(request.headers.get(SYNTHETIC_RESPONSE_HEADER) === "true" &&
+			request.url.startsWith(SYNTHETIC_RESPONSE_URL_PREFIX))
 	);
 }
 
+function parseSyntheticStatus(request: Request): number {
+	const status = Number.parseInt(
+		request.headers.get(SYNTHETIC_STATUS_HEADER) ?? "200",
+		10,
+	);
+	return Number.isInteger(status) && status >= 200 && status <= 599
+		? status
+		: 200;
+}
+
 function materializeSyntheticResponse(request: Request): Response {
-	const headers = new Headers(request.headers);
-	headers.delete("x-bedrock-response");
+	const headers = new Headers();
+	const contentType = request.headers.get("content-type");
+	const cacheControl = request.headers.get("cache-control");
+	if (contentType) headers.set("content-type", contentType);
+	if (cacheControl) headers.set("cache-control", cacheControl);
 
 	return new Response(request.body, {
-		status: 200,
+		status: parseSyntheticStatus(request),
 		headers,
 	});
 }
@@ -562,8 +582,14 @@ export async function proxyWithAccount(
 		// Validate that the account-specific provider can handle this path
 		validateProviderPath(provider, url.pathname);
 
-		// Get valid access token
-		const accessToken = await getValidAccessToken(account, ctx);
+		const isSyntheticCodexCountTokens =
+			provider.name === "codex" && url.pathname === "/v1/messages/count_tokens";
+
+		// Synthetic Codex count_tokens never calls upstream, so it should not require
+		// or refresh OAuth credentials just to return an advisory local estimate.
+		const accessToken = isSyntheticCodexCountTokens
+			? ""
+			: await getValidAccessToken(account, ctx);
 
 		// Pre-process request if provider supports it (e.g., to extract model for URL)
 		if (provider.prepareRequest) {
@@ -576,6 +602,10 @@ export async function proxyWithAccount(
 			accessToken,
 			account.api_key || undefined,
 		);
+		// Synthetic-response markers are internal provider-to-proxy signals. Strip
+		// client-supplied copies before providers transform the outbound request.
+		headers.delete(SYNTHETIC_RESPONSE_HEADER);
+		headers.delete(SYNTHETIC_STATUS_HEADER);
 		const targetUrl = provider.buildUrl(url.pathname, url.search, account);
 
 		const requestInit: RequestInit & { duplex?: "half" } = {
