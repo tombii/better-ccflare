@@ -82,12 +82,14 @@ interface CodexFunctionCallItem {
 	call_id: string;
 	name: string;
 	arguments: string;
+	status?: "in_progress" | "completed" | "incomplete";
 }
 
 interface CodexFunctionCallOutputItem {
 	type: "function_call_output";
 	call_id: string;
 	output: string;
+	status?: "in_progress" | "completed" | "incomplete";
 }
 
 type CodexContentItem =
@@ -97,7 +99,7 @@ type CodexContentItem =
 	| CodexFunctionCallOutputItem;
 
 interface CodexMessage {
-	role: "user" | "assistant";
+	role: "user" | "assistant" | "system";
 	content: CodexContentItem[];
 }
 
@@ -198,6 +200,8 @@ interface StreamState {
 	contextWindow: ContextWindow | null;
 	// Track function_call items: output_index → buffered arguments and block index
 	functionCallBlocks: Map<number, FunctionCallBuffer>;
+	// Anthropic clients expect stop_reason=tool_use when the assistant emitted a tool call.
+	sawToolUse: boolean;
 }
 
 export class CodexProvider extends BaseProvider {
@@ -520,7 +524,7 @@ export class CodexProvider extends BaseProvider {
 		const role = (msg.role as string) === "developer" ? "system" : msg.role;
 
 		if (typeof msg.content === "string") {
-			const contentType = role === "user" ? "input_text" : "output_text";
+			const contentType = role === "assistant" ? "output_text" : "input_text";
 			items.push({
 				role,
 				content: [{ type: contentType, text: msg.content } as CodexContentItem],
@@ -535,7 +539,7 @@ export class CodexProvider extends BaseProvider {
 
 		for (const block of msg.content) {
 			if (block.type === "text") {
-				const contentType = role === "user" ? "input_text" : "output_text";
+				const contentType = role === "assistant" ? "output_text" : "input_text";
 				textBlocks.push({
 					type: contentType,
 					text: block.text,
@@ -546,6 +550,7 @@ export class CodexProvider extends BaseProvider {
 					call_id: block.id,
 					name: block.name,
 					arguments: JSON.stringify(block.input || {}),
+					status: "completed",
 				});
 			} else if (block.type === "tool_result") {
 				const outputText =
@@ -561,6 +566,7 @@ export class CodexProvider extends BaseProvider {
 					type: "function_call_output",
 					call_id: block.tool_use_id,
 					output: outputText,
+					status: "completed",
 				});
 			}
 		}
@@ -841,6 +847,9 @@ export class CodexProvider extends BaseProvider {
 				`[codex:model-debug] request_id=${requestId} transformSseResponseToJson used fallback model=gpt-5.4 (startMessage.model missing)`,
 			);
 		}
+		const stopReason = content.some((block) => block.type === "tool_use")
+			? "tool_use"
+			: "end_turn";
 		const jsonPayload = {
 			id:
 				typeof startMessage.id === "string"
@@ -850,7 +859,7 @@ export class CodexProvider extends BaseProvider {
 			role: "assistant",
 			model: resolvedModel,
 			content: content.length > 0 ? content : [{ type: "text", text: "" }],
-			stop_reason: "end_turn",
+			stop_reason: stopReason,
 			stop_sequence: null,
 			usage,
 		};
@@ -885,6 +894,7 @@ export class CodexProvider extends BaseProvider {
 			cacheCreationInputTokens: 0,
 			contextWindow: null,
 			functionCallBlocks: new Map(),
+			sawToolUse: false,
 		};
 
 		const headers = sanitizeResponseHeaders(response.headers);
@@ -1035,7 +1045,10 @@ export class CodexProvider extends BaseProvider {
 				if (!state.hasSentTerminalEvents) {
 					await writeSSE("message_delta", {
 						type: "message_delta",
-						delta: { stop_reason: "end_turn", stop_sequence: null },
+						delta: {
+							stop_reason: state.sawToolUse ? "tool_use" : "end_turn",
+							stop_sequence: null,
+						},
 						usage: { output_tokens: state.outputTokens },
 					});
 					await writeSSE("message_stop", { type: "message_stop" });
@@ -1088,6 +1101,7 @@ export class CodexProvider extends BaseProvider {
 				} else if (itemType === "function_call") {
 					const callId = item?.call_id as string;
 					const name = item?.name as string;
+					state.sawToolUse = true;
 
 					if (state.hasSentContentBlockStart) {
 						await writeSSE("content_block_stop", {
@@ -1264,7 +1278,7 @@ export class CodexProvider extends BaseProvider {
 
 				const messageDelta: {
 					type: "message_delta";
-					delta: { stop_reason: "end_turn"; stop_sequence: null };
+					delta: { stop_reason: "end_turn" | "tool_use"; stop_sequence: null };
 					usage: {
 						input_tokens: number;
 						output_tokens: number;
@@ -1274,7 +1288,10 @@ export class CodexProvider extends BaseProvider {
 					context_window?: ContextWindow;
 				} = {
 					type: "message_delta",
-					delta: { stop_reason: "end_turn", stop_sequence: null },
+					delta: {
+						stop_reason: state.sawToolUse ? "tool_use" : "end_turn",
+						stop_sequence: null,
+					},
 					usage: {
 						input_tokens: state.inputTokens,
 						output_tokens: state.outputTokens,
