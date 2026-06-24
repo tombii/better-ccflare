@@ -613,6 +613,9 @@ export class CodexProvider extends BaseProvider {
 			} else {
 				delete sanitized.allowed_domains;
 			}
+			// Claude Code's WebSearch tool only accepts an allow-list at this
+			// Anthropic-compatibility boundary. Drop block-lists intentionally rather
+			// than forwarding a field the local tool schema rejects.
 			delete sanitized.blocked_domains;
 		}
 
