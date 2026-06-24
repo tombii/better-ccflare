@@ -204,6 +204,51 @@ describe("CodexProvider request conversion", () => {
 			"Continue the user's original request now",
 		);
 	});
+
+	it("does not inject a Skill continuation nudge into replayed mid-history", async () => {
+		const provider = new CodexProvider();
+		const request = new Request("https://example.com/v1/messages", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				model: "claude-3-7-sonnet",
+				max_tokens: 10,
+				messages: [
+					{ role: "user", content: "load /ce-plan" },
+					{
+						role: "assistant",
+						content: [
+							{
+								type: "tool_use",
+								id: "call_skill_1",
+								name: "Skill",
+								input: { skill: "ce-plan" },
+							},
+						],
+					},
+					{
+						role: "user",
+						content: [
+							{
+								type: "tool_result",
+								tool_use_id: "call_skill_1",
+								content: [{ type: "text", text: "Successfully loaded skill" }],
+							},
+						],
+					},
+					{ role: "assistant", content: "I will apply the plan skill." },
+					{ role: "user", content: "continue" },
+				],
+			}),
+		});
+
+		const transformed = await provider.transformRequestBody(request, undefined);
+		const body = await transformed.json();
+
+		expect(JSON.stringify(body.input)).not.toContain(
+			"Continue the user's original request now",
+		);
+	});
 });
 
 describe("CodexProvider.processResponse", () => {

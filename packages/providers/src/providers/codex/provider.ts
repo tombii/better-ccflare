@@ -638,9 +638,9 @@ export class CodexProvider extends BaseProvider {
 		// Convert messages
 		const input: CodexRequest["input"] = [];
 		const skillCallIds = new Set<string>();
-		for (const msg of body.messages) {
+		for (const [msgIndex, msg] of body.messages.entries()) {
 			const items = this.convertMessage(msg);
-			for (const item of items) {
+			for (const [itemIndex, item] of items.entries()) {
 				input.push(item);
 				if ("type" in item && item.type === "function_call") {
 					if (item.name === "Skill") {
@@ -652,6 +652,12 @@ export class CodexProvider extends BaseProvider {
 					skillCallIds.has(item.call_id)
 				) {
 					skillCallIds.delete(item.call_id);
+					if (
+						msgIndex !== body.messages.length - 1 ||
+						itemIndex !== items.length - 1
+					) {
+						continue;
+					}
 					input.push({
 						role: "user",
 						content: [
