@@ -1101,15 +1101,14 @@ export class CodexProvider extends BaseProvider {
 				: undefined;
 		const error = responseError ?? directError ?? data;
 		const messageCandidate = error.message ?? data.message ?? response?.status;
-		const typeCandidate = error.type ?? error.code ?? eventName;
+		const rawType = typeof error.type === "string" ? error.type : "";
+		const rawCode = typeof error.code === "string" ? error.code : "";
+		const typeCandidate = rawType && rawType !== "error" ? rawType : rawCode;
 		const codeCandidate = error.code ?? data.code;
 		const statusCandidate = response?.status ?? data.status;
 
 		return {
-			type:
-				typeof typeCandidate === "string" && typeCandidate.length > 0
-					? typeCandidate
-					: "api_error",
+			type: typeCandidate || "api_error",
 			message:
 				typeof messageCandidate === "string" && messageCandidate.length > 0
 					? messageCandidate
@@ -1123,19 +1122,34 @@ export class CodexProvider extends BaseProvider {
 
 	private toAnthropicErrorPayload(error: StreamState["upstreamError"]): {
 		type: "error";
-		error: { type: string; message: string; code?: string };
+		error: { type: string; message: string; code?: string; status?: string };
 	} {
 		const code = error?.code;
-		const type =
-			code === "context_length_exceeded"
-				? "invalid_request_error"
-				: error?.type || "api_error";
+		const status = error?.status === "rate_limited" ? error.status : undefined;
+		const rawType = error?.type;
+		let type = "api_error";
+		if (code === "context_length_exceeded") {
+			type = "invalid_request_error";
+		} else if (code === "rate_limit_exceeded" || status === "rate_limited") {
+			type = "rate_limit_error";
+		} else if (
+			rawType === "invalid_request_error" ||
+			rawType === "authentication_error" ||
+			rawType === "permission_error" ||
+			rawType === "not_found_error" ||
+			rawType === "rate_limit_error" ||
+			rawType === "overloaded_error" ||
+			rawType === "api_error"
+		) {
+			type = rawType;
+		}
 		return {
 			type: "error",
 			error: {
 				type,
 				message: error?.message || "Codex upstream failed.",
 				...(code ? { code } : {}),
+				...(status ? { status } : {}),
 			},
 		};
 	}
@@ -1349,6 +1363,14 @@ export class CodexProvider extends BaseProvider {
 			case "response.failed": {
 				state.upstreamError = this.normalizeCodexStreamError(eventName, data);
 				if (!state.hasSentTerminalEvents) {
+					if (state.hasSentContentBlockStart) {
+						await writeSSE("content_block_stop", {
+							type: "content_block_stop",
+							index: state.contentBlockIndex,
+						});
+						state.contentBlockIndex++;
+						state.hasSentContentBlockStart = false;
+					}
 					await writeSSE(
 						"error",
 						this.toAnthropicErrorPayload(state.upstreamError),

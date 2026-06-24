@@ -821,6 +821,46 @@ describe("CodexProvider.processResponse", () => {
 		expect(transformedBody).not.toContain("event: message_stop");
 	});
 
+	it("closes an open content block before surfacing a streaming Codex error", async () => {
+		const provider = new CodexProvider();
+		const upstreamBody = sseBody([
+			...eventLine("response.created", {
+				response: { id: "resp_failed", model: "gpt-5.5" },
+			}),
+			...eventLine("response.output_item.added", {
+				item: { type: "message" },
+				output_index: 0,
+			}),
+			...eventLine("response.content_part.added", {
+				part: { type: "output_text" },
+			}),
+			...eventLine("response.output_text.delta", { delta: "partial" }),
+			...eventLine("response.failed", {
+				response: {
+					status: "failed",
+					error: {
+						type: "invalid_request_error",
+						message: "Codex failed after partial output",
+					},
+				},
+			}),
+		]);
+
+		const response = new Response(upstreamBody, {
+			status: 200,
+			headers: { "content-type": "text/event-stream" },
+		});
+
+		const transformed = await provider.processResponse(response, null);
+		const transformedBody = await transformed.text();
+
+		const stopPos = transformedBody.indexOf("event: content_block_stop");
+		const errorPos = transformedBody.indexOf("event: error");
+		expect(stopPos).toBeGreaterThan(-1);
+		expect(errorPos).toBeGreaterThan(stopPos);
+		expect(transformedBody).toContain("Codex failed after partial output");
+	});
+
 	it("surfaces Codex SSE errors as JSON errors for non-streaming clients", async () => {
 		const provider = new CodexProvider();
 		const upstreamBody = sseBody([
@@ -892,6 +932,62 @@ describe("CodexProvider.processResponse", () => {
 				code: "context_length_exceeded",
 			},
 		});
+	});
+
+	it("maps generic Codex error events to a valid Anthropic api_error type", async () => {
+		const provider = new CodexProvider();
+		const upstreamBody = sseBody([
+			...eventLine("error", {
+				type: "error",
+				code: "some_other_code",
+				message: "Generic Codex failure",
+			}),
+		]);
+
+		const response = new Response(upstreamBody, {
+			status: 200,
+			headers: {
+				"content-type": "text/event-stream",
+				"x-better-ccflare-request-stream": "false",
+			},
+		});
+
+		const transformed = await provider.processResponse(response, null);
+		const body = await transformed.json();
+
+		expect(transformed.status).toBe(502);
+		expect(body.error.type).toBe("api_error");
+		expect(body.error.code).toBe("some_other_code");
+	});
+
+	it("maps Codex rate-limited status to a non-streaming 429", async () => {
+		const provider = new CodexProvider();
+		const upstreamBody = sseBody([
+			...eventLine("response.failed", {
+				response: {
+					status: "rate_limited",
+					error: {
+						type: "error",
+						message: "Rate limited by Codex",
+					},
+				},
+			}),
+		]);
+
+		const response = new Response(upstreamBody, {
+			status: 200,
+			headers: {
+				"content-type": "text/event-stream",
+				"x-better-ccflare-request-stream": "false",
+			},
+		});
+
+		const transformed = await provider.processResponse(response, null);
+		const body = await transformed.json();
+
+		expect(transformed.status).toBe(429);
+		expect(body.error.type).toBe("rate_limit_error");
+		expect(body.error.status).toBe("rate_limited");
 	});
 
 	it("passes through non-streaming error responses", async () => {
