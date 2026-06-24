@@ -1,0 +1,5 @@
+---
+## Summary
+
+This is a tracking issue for a "Token Insights" surface built on top of the data better-ccflare
+already logs (`/api/analytics`, `/api/stats`, request hi
