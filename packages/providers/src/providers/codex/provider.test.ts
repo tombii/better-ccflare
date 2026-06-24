@@ -112,6 +112,139 @@ describe("CodexProvider request conversion", () => {
 		const body = await transformed.json();
 		expect(body.reasoning).toEqual({ effort: "medium" });
 	});
+
+	it("omits empty Read.pages when replaying Anthropic history to Codex", async () => {
+		const provider = new CodexProvider();
+		const request = new Request("https://example.com/v1/messages", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				model: "claude-3-5-sonnet-20241022",
+				max_tokens: 100,
+				messages: [
+					{
+						role: "assistant",
+						content: [
+							{
+								type: "tool_use",
+								id: "call_read_1",
+								name: "Read",
+								input: {
+									file_path: "/tmp/full.diff",
+									offset: 0,
+									limit: 2000,
+									pages: "",
+								},
+							},
+						],
+					},
+				],
+			}),
+		});
+
+		const transformed = await provider.transformRequestBody(request);
+		const body = await transformed.json();
+
+		expect(body.input[0]).toMatchObject({
+			type: "function_call",
+			call_id: "call_read_1",
+			name: "Read",
+		});
+		expect(JSON.parse(body.input[0].arguments)).toEqual({
+			file_path: "/tmp/full.diff",
+			offset: 0,
+			limit: 2000,
+		});
+	});
+
+	it("normalizes stored WebSearch tool_use input when replaying Anthropic history to Codex", async () => {
+		const provider = new CodexProvider();
+		const request = new Request("https://example.com/v1/messages", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				model: "claude-3-5-sonnet-20241022",
+				max_tokens: 100,
+				messages: [
+					{
+						role: "assistant",
+						content: [
+							{
+								type: "tool_use",
+								id: "call_search_1",
+								name: "WebSearch",
+								input: {
+									query: "latest earnings",
+									allowed_domains: [" investors.example.com ", ""],
+									blocked_domains: ["spam.example.com"],
+								},
+							},
+						],
+					},
+				],
+			}),
+		});
+
+		const transformed = await provider.transformRequestBody(request);
+		const body = await transformed.json();
+
+		expect(body.input[0]).toMatchObject({
+			type: "function_call",
+			call_id: "call_search_1",
+			name: "WebSearch",
+		});
+		expect(JSON.parse(body.input[0].arguments)).toEqual({
+			query: "latest earnings",
+			allowed_domains: ["investors.example.com"],
+		});
+	});
+
+	it("preserves falsy non-object tool_use input when replaying Anthropic history to Codex", async () => {
+		const provider = new CodexProvider();
+		const request = new Request("https://example.com/v1/messages", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				model: "claude-3-5-sonnet-20241022",
+				max_tokens: 100,
+				messages: [
+					{
+						role: "assistant",
+						content: [
+							{
+								type: "tool_use",
+								id: "call_generic_1",
+								name: "generic_tool",
+								input: "",
+							},
+							{
+								type: "tool_use",
+								id: "call_generic_2",
+								name: "generic_tool",
+								input: null,
+							},
+						],
+					},
+				],
+			}),
+		});
+
+		const transformed = await provider.transformRequestBody(request);
+		const body = await transformed.json();
+
+		expect(body.input[0]).toMatchObject({
+			type: "function_call",
+			call_id: "call_generic_1",
+			name: "generic_tool",
+		});
+		expect(body.input[0].arguments).toBe('""');
+		expect(body.input[1]).toMatchObject({
+			type: "function_call",
+			call_id: "call_generic_2",
+			name: "generic_tool",
+		});
+		expect(body.input[1].arguments).toBe("null");
+	});
 });
 
 describe("CodexProvider.processResponse", () => {
@@ -164,6 +297,95 @@ describe("CodexProvider.processResponse", () => {
 		const stopPos = transformedBody.indexOf("event: content_block_stop");
 		expect(deltaPos).toBeGreaterThanOrEqual(0);
 		expect(stopPos).toBeGreaterThan(deltaPos);
+	});
+
+	it("omits empty Read.pages from streaming tool-call arguments", async () => {
+		const provider = new CodexProvider();
+		const upstreamBody = sseBody([
+			...eventLine("response.created", {
+				response: { id: "resp_test", model: "gpt-5.4" },
+			}),
+			...eventLine("response.output_item.added", {
+				item: { type: "function_call", call_id: "call_1", name: "Read" },
+				output_index: 0,
+			}),
+			...eventLine("response.function_call_arguments.delta", {
+				delta: '{"file_path":"/tmp/full.diff","offset":0,',
+				output_index: 0,
+			}),
+			...eventLine("response.function_call_arguments.delta", {
+				delta: '"limit":2000,"pages":""}',
+				output_index: 0,
+			}),
+			...eventLine("response.output_item.done", {
+				item: { type: "function_call", call_id: "call_1", name: "Read" },
+				output_index: 0,
+			}),
+			...eventLine("response.completed", {
+				response: {
+					model: "gpt-5.4",
+					usage: { input_tokens: 1, output_tokens: 1 },
+				},
+			}),
+		]);
+
+		const response = new Response(upstreamBody, {
+			status: 200,
+			headers: { "content-type": "text/event-stream" },
+		});
+
+		const transformed = await provider.processResponse(response, null);
+		const transformedBody = await transformed.text();
+
+		expect(transformedBody).toContain(
+			'"partial_json":"{\\"file_path\\":\\"/tmp/full.diff\\",\\"offset\\":0,\\"limit\\":2000}"',
+		);
+		expect(transformedBody).not.toContain('\\"pages\\"');
+	});
+
+	it("omits invalid WebSearch domain filters from streaming tool-call arguments", async () => {
+		const provider = new CodexProvider();
+		const upstreamBody = sseBody([
+			...eventLine("response.created", {
+				response: { id: "resp_test", model: "gpt-5.4" },
+			}),
+			...eventLine("response.output_item.added", {
+				item: { type: "function_call", call_id: "call_1", name: "WebSearch" },
+				output_index: 0,
+			}),
+			...eventLine("response.function_call_arguments.delta", {
+				delta: '{"query":"earnings","allowed_domains":[],',
+				output_index: 0,
+			}),
+			...eventLine("response.function_call_arguments.delta", {
+				delta: '"blocked_domains":[""]}',
+				output_index: 0,
+			}),
+			...eventLine("response.output_item.done", {
+				item: { type: "function_call", call_id: "call_1", name: "WebSearch" },
+				output_index: 0,
+			}),
+			...eventLine("response.completed", {
+				response: {
+					model: "gpt-5.4",
+					usage: { input_tokens: 1, output_tokens: 1 },
+				},
+			}),
+		]);
+
+		const response = new Response(upstreamBody, {
+			status: 200,
+			headers: { "content-type": "text/event-stream" },
+		});
+
+		const transformed = await provider.processResponse(response, null);
+		const transformedBody = await transformed.text();
+
+		expect(transformedBody).toContain(
+			'"partial_json":"{\\"query\\":\\"earnings\\"}"',
+		);
+		expect(transformedBody).not.toContain("allowed_domains");
+		expect(transformedBody).not.toContain("blocked_domains");
 	});
 
 	it("uses the function_call block index rather than the current text block index", async () => {
@@ -539,6 +761,165 @@ describe("CodexProvider.processResponse", () => {
 				id: "call_1",
 				name: "search",
 				input: { query: "hello" },
+			},
+		]);
+	});
+
+	it("omits invalid WebSearch domain filters from non-streaming tool_use input", async () => {
+		const provider = new CodexProvider();
+		const requestId = "req_non_stream_websearch_domains";
+		const originalRequest = new Request("https://example.test/v1/messages", {
+			method: "POST",
+			headers: {
+				"content-type": "application/json",
+				"x-better-ccflare-request-id": requestId,
+			},
+			body: JSON.stringify({
+				model: "claude-sonnet-4-5",
+				max_tokens: 16,
+				stream: false,
+				tools: [
+					{
+						name: "WebSearch",
+						description: "search",
+						input_schema: {
+							type: "object",
+							properties: {
+								allowed_domains: { type: "array", items: { type: "string" } },
+								blocked_domains: { type: "array", items: { type: "string" } },
+							},
+						},
+					},
+				],
+				messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+			}),
+		});
+		await provider.transformRequestBody(originalRequest);
+
+		const upstreamBody = sseBody([
+			...eventLine("response.created", {
+				response: { id: "resp_tool", model: "gpt-5.4" },
+			}),
+			...eventLine("response.output_item.added", {
+				item: { type: "function_call", call_id: "call_1", name: "WebSearch" },
+				output_index: 0,
+			}),
+			...eventLine("response.function_call_arguments.delta", {
+				delta:
+					'{"query":"earnings","allowed_domains":["reuters.com"],"blocked_domains":["seekingalpha.com"]}',
+				output_index: 0,
+			}),
+			...eventLine("response.output_item.done", {
+				item: { type: "function_call", call_id: "call_1", name: "WebSearch" },
+				output_index: 0,
+			}),
+			...eventLine("response.completed", {
+				response: {
+					model: "gpt-5.4",
+					usage: { input_tokens: 9, output_tokens: 4 },
+				},
+			}),
+		]);
+		const response = new Response(upstreamBody, {
+			status: 200,
+			headers: {
+				"content-type": "text/event-stream",
+				"x-better-ccflare-request-id": requestId,
+				"x-better-ccflare-request-stream": "false",
+			},
+		});
+
+		const transformed = await provider.processResponse(response, null);
+		const payload = JSON.parse(await transformed.text()) as Record<
+			string,
+			unknown
+		>;
+		expect(payload.content).toEqual([
+			{
+				type: "tool_use",
+				id: "call_1",
+				name: "WebSearch",
+				input: { query: "earnings", allowed_domains: ["reuters.com"] },
+			},
+		]);
+	});
+
+	it("preserves non-object tool arguments in non-streaming SSE-to-JSON conversion", async () => {
+		const provider = new CodexProvider();
+		const requestId = "req_non_stream_non_object_tool_input";
+		const originalRequest = new Request("https://example.test/v1/messages", {
+			method: "POST",
+			headers: {
+				"content-type": "application/json",
+				"x-better-ccflare-request-id": requestId,
+			},
+			body: JSON.stringify({
+				model: "claude-sonnet-4-5",
+				max_tokens: 16,
+				stream: false,
+				tools: [
+					{
+						name: "generic_tool",
+						description: "generic",
+						input_schema: { type: "object" },
+					},
+				],
+				messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+			}),
+		});
+		await provider.transformRequestBody(originalRequest);
+
+		const upstreamBody = sseBody([
+			...eventLine("response.created", {
+				response: { id: "resp_tool", model: "gpt-5.4" },
+			}),
+			...eventLine("response.output_item.added", {
+				item: {
+					type: "function_call",
+					call_id: "call_1",
+					name: "generic_tool",
+				},
+				output_index: 0,
+			}),
+			...eventLine("response.function_call_arguments.delta", {
+				delta: "null",
+				output_index: 0,
+			}),
+			...eventLine("response.output_item.done", {
+				item: {
+					type: "function_call",
+					call_id: "call_1",
+					name: "generic_tool",
+				},
+				output_index: 0,
+			}),
+			...eventLine("response.completed", {
+				response: {
+					model: "gpt-5.4",
+					usage: { input_tokens: 9, output_tokens: 4 },
+				},
+			}),
+		]);
+		const response = new Response(upstreamBody, {
+			status: 200,
+			headers: {
+				"content-type": "text/event-stream",
+				"x-better-ccflare-request-id": requestId,
+				"x-better-ccflare-request-stream": "false",
+			},
+		});
+
+		const transformed = await provider.processResponse(response, null);
+		const payload = JSON.parse(await transformed.text()) as Record<
+			string,
+			unknown
+		>;
+		expect(payload.content).toEqual([
+			{
+				type: "tool_use",
+				id: "call_1",
+				name: "generic_tool",
+				input: null,
 			},
 		]);
 	});
