@@ -131,7 +131,7 @@ bun run cli --add-account <name> --mode <claude-oauth|console|codex|qwen|xai|zai
   - `console`: Claude API account
   - `codex`: Codex/OpenAI account (OAuth)
   - `qwen`: Qwen account (OAuth device code)
-  - `xai`: xAI/Grok account (imports local Grok CLI OAuth credentials from `~/.grok/auth.json`; token values are never displayed). xAI refresh tokens may rotate, so if you keep using Grok CLI separately, re-authenticate or refresh Grok CLI after importing so each tool has a fresh token chain.
+  - `xai`: xAI/Grok account (imports local Grok CLI OAuth credentials from `~/.grok/auth.json`; token values are never displayed). xAI refresh tokens may rotate, so if you keep using Grok CLI separately, re-authenticate or refresh Grok CLI after importing so each tool has a fresh token chain. Per-request token usage is recorded from responses, but Grok CLI OAuth does not currently expose a pollable quota-window endpoint for dashboard bars.
   - `zai`: z.ai account (API key)
   - `openai-compatible`: OpenAI-compatible provider (API key)
 - `--priority`: Account priority (optional, defaults to 0)

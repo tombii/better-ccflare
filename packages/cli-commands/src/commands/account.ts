@@ -717,8 +717,21 @@ interface GrokAuthEntry {
 	email?: string;
 }
 
+const XAI_IMPORTED_TOKEN_DEFAULT_TTL_MS = 6 * 60 * 60 * 1000;
+
+function resolveGrokAuthExpiresAt(
+	expiresAt: string | undefined,
+	fallbackFrom = Date.now(),
+): number {
+	const parsedExpiresAt = Date.parse(expiresAt ?? "");
+	return Number.isFinite(parsedExpiresAt)
+		? parsedExpiresAt
+		: fallbackFrom + XAI_IMPORTED_TOKEN_DEFAULT_TTL_MS;
+}
+
 function loadGrokAuthEntry(
-	authPath = join(homedir(), ".grok", "auth.json"),
+	authPath = process.env.BETTER_CCFLARE_GROK_AUTH_PATH ||
+		join(homedir(), ".grok", "auth.json"),
 ): GrokAuthEntry | null {
 	try {
 		const raw = readFileSync(authPath, "utf8");
@@ -765,7 +778,8 @@ async function createXaiAccount(
 			? modelMappings
 			: XAI_MODEL_MAPPINGS,
 	);
-	const expiresAt = Date.parse(auth.expires_at ?? "");
+	const parsedExpiresAt = Date.parse(auth.expires_at ?? "");
+	const expiresAt = resolveGrokAuthExpiresAt(auth.expires_at, now);
 
 	await dbOps.getAdapter().run(
 		`INSERT INTO accounts (
@@ -778,7 +792,7 @@ async function createXaiAccount(
 			"xai",
 			auth.refresh_token,
 			auth.key,
-			Number.isFinite(expiresAt) ? expiresAt : now,
+			expiresAt,
 			now,
 			0,
 			0,
@@ -796,7 +810,7 @@ async function createXaiAccount(
 	console.log(
 		"Note: xAI refresh tokens may rotate. If you keep using Grok CLI separately, re-authenticate or refresh Grok CLI after importing so each tool has a fresh token chain.",
 	);
-	if (Number.isFinite(expiresAt)) {
+	if (Number.isFinite(parsedExpiresAt)) {
 		console.log(`Token expires: ${new Date(expiresAt).toISOString()}`);
 	}
 	if (mappings) {
@@ -2216,7 +2230,7 @@ async function reauthenticateXaiAccount(
 		};
 	}
 
-	const expiresAt = Date.parse(auth.expires_at ?? "");
+	const expiresAt = resolveGrokAuthExpiresAt(auth.expires_at);
 	try {
 		await dbOps.getAdapter().run(
 			`UPDATE accounts SET
@@ -2228,7 +2242,7 @@ async function reauthenticateXaiAccount(
 			[
 				auth.refresh_token,
 				auth.key,
-				Number.isFinite(expiresAt) ? expiresAt : Date.now(),
+				expiresAt,
 				account.custom_endpoint || XAI_DEFAULT_ENDPOINT,
 				account.id,
 			],

@@ -716,6 +716,7 @@ We recommend using one of the workarounds above until the npm bug is fixed.
 - **Vertex AI** - Google Cloud Vertex AI integration with service account authentication
 - **z.ai, Minimax** - API key based providers with pay-as-you-go model
 - **OpenRouter** - OpenRouter integration with native API support and model mapping
+- **xAI/Grok** - Native Grok CLI OAuth import/refresh with per-request token accounting (Grok OAuth does not currently expose a pollable quota-window endpoint)
 - **Kilo** - Kilo API integration with usage tracking
 - **Anthropic-Compatible** - Custom Anthropic-compatible providers with pay-as-you-go model
 - **Ollama** - Local Ollama instance (v0.14.0+) via native Anthropic-compatible API at `/v1/messages`, no API key required

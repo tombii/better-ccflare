@@ -102,6 +102,12 @@ describe("XaiProvider", () => {
 		expect(body.model).toBe("grok-custom");
 	});
 
+	it("does not advertise a pollable quota-window usage endpoint", () => {
+		const provider = new XaiProvider();
+
+		expect(provider.supportsUsageTracking()).toBe(false);
+	});
+
 	it("requests stream usage chunks for streaming xAI requests", async () => {
 		const provider = new XaiProvider();
 		const request = new Request("https://proxy.local/v1/messages", {
