@@ -13,6 +13,7 @@ import {
 import { isPeekAvailable } from "./peek-availability";
 
 export { LeastUsedStrategy } from "./least-used";
+export { SessionAffinityStrategy } from "./session-affinity";
 
 export class SessionStrategy implements LoadBalancingStrategy {
 	private sessionDurationMs: number;
