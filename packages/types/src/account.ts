@@ -277,6 +277,7 @@ export interface AccountListItem {
 		| "alibaba-coding-plan"
 		| "codex"
 		| "qwen"
+		| "xai"
 		| "ollama"
 		| "ollama-cloud";
 	priority: number;
@@ -297,7 +298,8 @@ export interface AddAccountOptions {
 		| "anthropic-compatible"
 		| "openai-compatible"
 		| "bedrock"
-		| "openrouter";
+		| "openrouter"
+		| "xai";
 	priority?: number;
 	customEndpoint?: string;
 }

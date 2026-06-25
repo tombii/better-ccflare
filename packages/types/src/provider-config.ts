@@ -16,6 +16,7 @@ export const PROVIDER_NAMES = {
 	ALIBABA_CODING_PLAN: "alibaba-coding-plan",
 	CODEX: "codex",
 	QWEN: "qwen",
+	XAI: "xai",
 	OLLAMA: "ollama",
 	OLLAMA_CLOUD: "ollama-cloud",
 } as const;
@@ -131,6 +132,12 @@ export const PROVIDER_CONFIG: Record<ProviderName, ProviderConfig> = {
 		supportsUsageTracking: true, // Usage tracked via response body (OpenAI-compatible)
 		supportsOAuth: true, // Qwen uses OAuth 2.0 device code flow
 		defaultEndpoint: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+	},
+	[PROVIDER_NAMES.XAI]: {
+		requiresSessionTracking: false, // xAI OAuth/API usage is per request, no session stickiness
+		supportsUsageTracking: true, // Usage tracked via OpenAI-compatible response body
+		supportsOAuth: true, // Imports/refreshes Grok CLI OAuth credentials
+		defaultEndpoint: "https://api.x.ai/v1",
 	},
 	[PROVIDER_NAMES.OLLAMA]: {
 		requiresSessionTracking: false,

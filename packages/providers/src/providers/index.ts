@@ -25,4 +25,11 @@ export { OllamaCloudProvider, OllamaProvider } from "./ollama/index";
 export { OpenAICompatibleProvider } from "./openai/index";
 export { OpenRouterProvider } from "./openrouter/index";
 export { type VertexAIConfig, VertexAIProvider } from "./vertex-ai/index";
+export {
+	XAI_DEFAULT_CLIENT_ID,
+	XAI_DEFAULT_ENDPOINT,
+	XAI_MODEL_MAPPINGS,
+	XAI_TOKEN_ENDPOINT,
+	XaiProvider,
+} from "./xai/index";
 export { ZaiProvider } from "./zai/index";
