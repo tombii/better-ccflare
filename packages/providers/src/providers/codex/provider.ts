@@ -197,11 +197,11 @@ interface StreamState {
 	outputTokens: number;
 	cacheReadInputTokens: number;
 	cacheCreationInputTokens: number;
+	// Anthropic clients expect stop_reason=tool_use when the assistant emitted a tool call.
+	sawToolUse: boolean;
 	contextWindow: ContextWindow | null;
 	// Track function_call items: output_index → buffered arguments and block index
 	functionCallBlocks: Map<number, FunctionCallBuffer>;
-	// Anthropic clients expect stop_reason=tool_use when the assistant emitted a tool call.
-	sawToolUse: boolean;
 }
 
 export class CodexProvider extends BaseProvider {
@@ -550,7 +550,6 @@ export class CodexProvider extends BaseProvider {
 					call_id: block.id,
 					name: block.name,
 					arguments: JSON.stringify(block.input || {}),
-					status: "completed",
 				});
 			} else if (block.type === "tool_result") {
 				const outputText =
@@ -576,7 +575,7 @@ export class CodexProvider extends BaseProvider {
 			items.push({ role, content: textBlocks } as CodexMessage);
 		}
 		for (const fc of functionCalls) {
-			items.push(fc);
+			items.push({ ...fc, status: "completed" });
 		}
 		for (const fco of functionCallOutputs) {
 			items.push(fco);

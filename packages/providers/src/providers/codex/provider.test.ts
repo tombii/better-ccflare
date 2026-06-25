@@ -55,64 +55,6 @@ describe("CodexProvider request conversion", () => {
 		expect(body.reasoning).toEqual({ effort: "xhigh" });
 	});
 
-	it("keeps default Codex reasoning effort when Claude effort is absent", async () => {
-		const provider = new CodexProvider();
-		const request = new Request("https://example.com/v1/messages", {
-			method: "POST",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify({
-				model: "claude-3-5-sonnet-20241022",
-				max_tokens: 100,
-				messages: [{ role: "user", content: "Hello" }],
-			}),
-		});
-
-		const transformed = await provider.transformRequestBody(request);
-		const body = await transformed.json();
-
-		expect(body.reasoning).toEqual({ effort: "medium" });
-	});
-
-	it("rejects unsupported reasoning effort values", async () => {
-		const provider = new CodexProvider();
-		const request = new Request("https://example.com/v1/messages", {
-			method: "POST",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify({
-				model: "claude-3-5-sonnet-20241022",
-				max_tokens: 100,
-				reasoning: { effort: "extreme" },
-				messages: [{ role: "user", content: "Hello" }],
-			}),
-		});
-
-		await expect(provider.transformRequestBody(request)).rejects.toThrow(
-			"reasoning.effort must be one of: minimal, low, medium, high, xhigh, max",
-		);
-	});
-
-	it("downgrades efforts unsupported by the mapped Codex model", async () => {
-		const provider = new CodexProvider();
-		const account = {
-			model_mappings: JSON.stringify({ sonnet: "gpt-5.4-mini" }),
-		} as Parameters<typeof provider.transformRequestBody>[1];
-
-		const request = new Request("https://example.com/v1/messages", {
-			method: "POST",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify({
-				model: "claude-3-5-sonnet-20241022",
-				max_tokens: 100,
-				reasoning: { effort: "xhigh" },
-				messages: [{ role: "user", content: "Hello" }],
-			}),
-		});
-
-		const transformed = await provider.transformRequestBody(request, account);
-		const body = await transformed.json();
-		expect(body.reasoning).toEqual({ effort: "medium" });
-	});
-
 	it("uses role-appropriate text block types in Codex input", async () => {
 		const provider = new CodexProvider();
 		const request = new Request("https://example.com/v1/messages", {
@@ -196,6 +138,64 @@ describe("CodexProvider request conversion", () => {
 			output: "result",
 			status: "completed",
 		});
+	});
+
+	it("keeps default Codex reasoning effort when Claude effort is absent", async () => {
+		const provider = new CodexProvider();
+		const request = new Request("https://example.com/v1/messages", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				model: "claude-3-5-sonnet-20241022",
+				max_tokens: 100,
+				messages: [{ role: "user", content: "Hello" }],
+			}),
+		});
+
+		const transformed = await provider.transformRequestBody(request);
+		const body = await transformed.json();
+
+		expect(body.reasoning).toEqual({ effort: "medium" });
+	});
+
+	it("rejects unsupported reasoning effort values", async () => {
+		const provider = new CodexProvider();
+		const request = new Request("https://example.com/v1/messages", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				model: "claude-3-5-sonnet-20241022",
+				max_tokens: 100,
+				reasoning: { effort: "extreme" },
+				messages: [{ role: "user", content: "Hello" }],
+			}),
+		});
+
+		await expect(provider.transformRequestBody(request)).rejects.toThrow(
+			"reasoning.effort must be one of: minimal, low, medium, high, xhigh, max",
+		);
+	});
+
+	it("downgrades efforts unsupported by the mapped Codex model", async () => {
+		const provider = new CodexProvider();
+		const account = {
+			model_mappings: JSON.stringify({ sonnet: "gpt-5.4-mini" }),
+		} as Parameters<typeof provider.transformRequestBody>[1];
+
+		const request = new Request("https://example.com/v1/messages", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				model: "claude-3-5-sonnet-20241022",
+				max_tokens: 100,
+				reasoning: { effort: "xhigh" },
+				messages: [{ role: "user", content: "Hello" }],
+			}),
+		});
+
+		const transformed = await provider.transformRequestBody(request, account);
+		const body = await transformed.json();
+		expect(body.reasoning).toEqual({ effort: "medium" });
 	});
 });
 
