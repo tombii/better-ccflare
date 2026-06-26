@@ -171,6 +171,7 @@ interface AnthropicRequest {
 
 interface FunctionCallBuffer {
 	contentBlockIndex: number;
+	name: string;
 	arguments: string[];
 }
 
@@ -579,7 +580,9 @@ export class CodexProvider extends BaseProvider {
 					type: "function_call",
 					call_id: block.id,
 					name: block.name,
-					arguments: JSON.stringify(block.input || {}),
+					arguments: JSON.stringify(
+						this.sanitizeToolUseInput(block.name, block.input),
+					),
 				});
 			} else if (block.type === "tool_result") {
 				const outputText =
@@ -611,6 +614,69 @@ export class CodexProvider extends BaseProvider {
 		}
 
 		return items;
+	}
+
+	private sanitizeToolUseInput(name: string, input: unknown): unknown {
+		if (input === undefined) return {};
+		if (input === null || typeof input !== "object" || Array.isArray(input)) {
+			return input;
+		}
+
+		const sanitized: Record<string, unknown> = {
+			...(input as Record<string, unknown>),
+		};
+
+		if (name === "Read") {
+			const pages = sanitized.pages;
+			if (
+				pages === "" ||
+				pages === null ||
+				pages === undefined ||
+				(Array.isArray(pages) && pages.length === 0)
+			) {
+				delete sanitized.pages;
+			}
+		}
+
+		if (name === "WebSearch") {
+			const allowedDomains = this.cleanWebSearchDomains(
+				sanitized.allowed_domains,
+			);
+			if (allowedDomains.length > 0) {
+				sanitized.allowed_domains = allowedDomains;
+			} else {
+				delete sanitized.allowed_domains;
+			}
+			// Claude Code's WebSearch tool only accepts an allow-list at this
+			// Anthropic-compatibility boundary. Drop block-lists intentionally rather
+			// than forwarding a field the local tool schema rejects.
+			delete sanitized.blocked_domains;
+		}
+
+		return sanitized;
+	}
+
+	private cleanWebSearchDomains(value: unknown): string[] {
+		if (!Array.isArray(value)) return [];
+		return value
+			.filter((domain): domain is string => typeof domain === "string")
+			.map((domain) => domain.trim())
+			.filter((domain) => domain.length > 0);
+	}
+
+	private sanitizeToolUsePartialJson(
+		name: string,
+		partialJson: string,
+	): string {
+		try {
+			const input = JSON.parse(partialJson) as unknown;
+			if (typeof input !== "object" || input === null || Array.isArray(input)) {
+				return partialJson;
+			}
+			return JSON.stringify(this.sanitizeToolUseInput(name, input));
+		} catch {
+			return partialJson;
+		}
 	}
 
 	private extractContextWindow(
@@ -976,7 +1042,7 @@ export class CodexProvider extends BaseProvider {
 					type: "tool_use",
 					id: tool.id || `call_${index}`,
 					name: tool.name,
-					input,
+					input: this.sanitizeToolUseInput(tool.name, input),
 				});
 			}
 		}
@@ -1395,6 +1461,7 @@ export class CodexProvider extends BaseProvider {
 					if (outputIndex !== undefined) {
 						state.functionCallBlocks.set(outputIndex, {
 							contentBlockIndex: blockIdx,
+							name,
 							arguments: [],
 						});
 					}
@@ -1476,7 +1543,10 @@ export class CodexProvider extends BaseProvider {
 							index: buffer.contentBlockIndex,
 							delta: {
 								type: "input_json_delta",
-								partial_json: buffer.arguments.join(""),
+								partial_json: this.sanitizeToolUsePartialJson(
+									buffer.name,
+									buffer.arguments.join(""),
+								),
 							},
 						});
 						await writeSSE("content_block_stop", {
