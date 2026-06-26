@@ -186,6 +186,12 @@ RETRY_ATTEMPTS=3                       # Number of retry attempts
 RETRY_DELAY_MS=1000                   # Initial retry delay in milliseconds
 RETRY_BACKOFF=2                        # Retry backoff multiplier
 
+# Overload retry (529 no-reset in-place retry before account cooldown)
+CCFLARE_OVERLOAD_RETRY_ENABLED=true    # Set to "false" to disable (default: true)
+CCFLARE_OVERLOAD_RETRY_MAX_ATTEMPTS=2  # Total attempts incl. original (default: 2)
+CCFLARE_OVERLOAD_RETRY_BASE_MS=750     # Backoff base in ms; 0 = no sleep (default: 750)
+CCFLARE_OVERLOAD_RETRY_MAX_MS=3000     # Backoff ceiling in ms (default: 3000)
+
 # Health endpoint
 HEALTH_DETAIL_ENABLED=false            # Enable ?detail=1 on /health to expose per-account status (default: off, set true for internal monitoring)
 
@@ -833,6 +839,7 @@ Thanks to the contributors who have improved better-ccflare:
 
 - [@zionts](https://github.com/zionts) — fix false "integrity check failed" banner on large DBs; adaptive incremental vacuum; payload retention default reduction ([#259](https://github.com/tombii/better-ccflare/pull/259))
 - [@zenprocess](https://github.com/zenprocess) — optional `X-Anthropic-Agent-Id` header for explicit per-agent attribution ([#260](https://github.com/tombii/better-ccflare/pull/260))
+- [@StartupBros](https://github.com/StartupBros) — surface Codex SSE `error`/`response.failed` events to clients instead of fabricating empty success turns ([#274](https://github.com/tombii/better-ccflare/pull/274)); synthesize safe `count_tokens` responses for Codex without upstream calls or OAuth refresh ([#275](https://github.com/tombii/better-ccflare/pull/275)); sanitize Codex tool-call inputs at the Anthropic compatibility boundary ([#277](https://github.com/tombii/better-ccflare/pull/277)); align Codex tool-call semantics so tool loops work correctly with Anthropic-compatible clients ([#278](https://github.com/tombii/better-ccflare/pull/278)); inject a continuation nudge after Codex replays Skill tool results so the model resumes the original request instead of stalling ([#279](https://github.com/tombii/better-ccflare/pull/279))
 
 ## License
 
