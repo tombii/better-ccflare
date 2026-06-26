@@ -1084,7 +1084,7 @@ export class CodexProvider extends BaseProvider {
 	}
 
 	private normalizeCodexStreamError(
-		eventName: string,
+		_eventName: string,
 		data: Record<string, unknown>,
 	): StreamState["upstreamError"] {
 		const response =
@@ -1381,6 +1381,7 @@ export class CodexProvider extends BaseProvider {
 			}
 
 			case "response.completed": {
+				if (state.upstreamError || state.hasSentTerminalEvents) break;
 				const resp = data.response as Record<string, unknown> | undefined;
 				const usage = resp?.usage as
 					| {

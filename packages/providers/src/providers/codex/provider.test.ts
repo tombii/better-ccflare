@@ -990,6 +990,39 @@ describe("CodexProvider.processResponse", () => {
 		expect(body.error.status).toBe("rate_limited");
 	});
 
+	it("does not emit terminal events after response.failed when response.completed follows", async () => {
+		const provider = new CodexProvider();
+		const upstreamBody = sseBody([
+			...eventLine("response.created", {
+				response: { id: "resp_failed", model: "gpt-5.5" },
+			}),
+			...eventLine("response.failed", {
+				response: {
+					status: "failed",
+					error: { type: "invalid_request_error", message: "Context exceeded" },
+				},
+			}),
+			...eventLine("response.completed", {
+				response: {
+					model: "gpt-5.5",
+					usage: { input_tokens: 5, output_tokens: 0 },
+				},
+			}),
+		]);
+
+		const response = new Response(upstreamBody, {
+			status: 200,
+			headers: { "content-type": "text/event-stream" },
+		});
+
+		const transformed = await provider.processResponse(response, null);
+		const body = await transformed.text();
+
+		expect(body).toContain("event: error");
+		expect(body).not.toContain("event: message_delta");
+		expect(body).not.toContain("event: message_stop");
+	});
+
 	it("passes through non-streaming error responses", async () => {
 		const provider = new CodexProvider();
 		const response = new Response('{"error":"bad_request"}', {
