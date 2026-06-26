@@ -198,6 +198,12 @@ interface StreamState {
 	contextWindow: ContextWindow | null;
 	// Track function_call items: output_index → buffered arguments and block index
 	functionCallBlocks: Map<number, FunctionCallBuffer>;
+	upstreamError?: {
+		type: string;
+		message: string;
+		code?: string;
+		status?: string;
+	};
 }
 
 export class CodexProvider extends BaseProvider {
@@ -696,6 +702,7 @@ export class CodexProvider extends BaseProvider {
 			.getReader();
 		let messageStartPayload: Record<string, unknown> | null = null;
 		let messageDeltaPayload: Record<string, unknown> | null = null;
+		let errorPayload: Record<string, unknown> | null = null;
 		const content: Array<Record<string, unknown>> = [];
 		const textByIndex = new Map<number, string>();
 		const toolByIndex = new Map<
@@ -716,6 +723,10 @@ export class CodexProvider extends BaseProvider {
 				try {
 					data = JSON.parse(line.slice("data:".length).trim());
 				} catch {
+					return;
+				}
+				if (eventName === "error") {
+					errorPayload = data;
 					return;
 				}
 				if (eventName === "message_start") {
@@ -782,6 +793,18 @@ export class CodexProvider extends BaseProvider {
 			} finally {
 				reader.releaseLock();
 			}
+		}
+
+		if (errorPayload) {
+			const headers = sanitizeResponseHeaders(response.headers);
+			headers.set("content-type", "application/json");
+			const { status, statusText } =
+				this.httpStatusForAnthropicErrorPayload(errorPayload);
+			return new Response(JSON.stringify(errorPayload), {
+				status,
+				statusText,
+				headers,
+			});
 		}
 
 		const allIndices = new Set([...textByIndex.keys(), ...toolByIndex.keys()]);
@@ -1020,6 +1043,10 @@ export class CodexProvider extends BaseProvider {
 					}
 				}
 
+				if (state.upstreamError) {
+					return;
+				}
+
 				// Flush any remaining
 				await ensureMessageStart();
 
@@ -1054,6 +1081,116 @@ export class CodexProvider extends BaseProvider {
 			statusText: response.statusText,
 			headers,
 		});
+	}
+
+	private normalizeCodexStreamError(
+		_eventName: string,
+		data: Record<string, unknown>,
+	): StreamState["upstreamError"] {
+		const response =
+			data.response && typeof data.response === "object"
+				? (data.response as Record<string, unknown>)
+				: undefined;
+		const responseError =
+			response?.error && typeof response.error === "object"
+				? (response.error as Record<string, unknown>)
+				: undefined;
+		const directError =
+			data.error && typeof data.error === "object"
+				? (data.error as Record<string, unknown>)
+				: undefined;
+		const error = responseError ?? directError ?? data;
+		const messageCandidate = error.message ?? data.message ?? response?.status;
+		const rawType = typeof error.type === "string" ? error.type : "";
+		const rawCode = typeof error.code === "string" ? error.code : "";
+		const typeCandidate = rawType && rawType !== "error" ? rawType : rawCode;
+		const codeCandidate = error.code ?? data.code;
+		const statusCandidate = response?.status ?? data.status;
+
+		return {
+			type: typeCandidate || "api_error",
+			message:
+				typeof messageCandidate === "string" && messageCandidate.length > 0
+					? messageCandidate
+					: "Codex upstream failed while generating a response.",
+			...(typeof codeCandidate === "string" ? { code: codeCandidate } : {}),
+			...(typeof statusCandidate === "string"
+				? { status: statusCandidate }
+				: {}),
+		};
+	}
+
+	private toAnthropicErrorPayload(error: StreamState["upstreamError"]): {
+		type: "error";
+		error: { type: string; message: string; code?: string; status?: string };
+	} {
+		const code = error?.code;
+		const status = error?.status === "rate_limited" ? error.status : undefined;
+		const rawType = error?.type;
+		let type = "api_error";
+		if (code === "context_length_exceeded") {
+			type = "invalid_request_error";
+		} else if (code === "rate_limit_exceeded" || status === "rate_limited") {
+			type = "rate_limit_error";
+		} else if (
+			rawType === "invalid_request_error" ||
+			rawType === "authentication_error" ||
+			rawType === "permission_error" ||
+			rawType === "not_found_error" ||
+			rawType === "rate_limit_error" ||
+			rawType === "overloaded_error" ||
+			rawType === "api_error"
+		) {
+			type = rawType;
+		}
+		return {
+			type: "error",
+			error: {
+				type,
+				message: error?.message || "Codex upstream failed.",
+				...(code ? { code } : {}),
+				...(status ? { status } : {}),
+			},
+		};
+	}
+
+	private httpStatusForAnthropicErrorPayload(
+		payload: Record<string, unknown>,
+	): {
+		status: number;
+		statusText: string;
+	} {
+		const error =
+			payload.error && typeof payload.error === "object"
+				? (payload.error as Record<string, unknown>)
+				: {};
+		const type = typeof error.type === "string" ? error.type : "";
+		const code = typeof error.code === "string" ? error.code : "";
+		const status = typeof error.status === "string" ? error.status : "";
+
+		if (code === "context_length_exceeded") {
+			return { status: 400, statusText: "Bad Request" };
+		}
+		if (type === "invalid_request_error") {
+			return { status: 400, statusText: "Bad Request" };
+		}
+		if (type === "authentication_error") {
+			return { status: 401, statusText: "Unauthorized" };
+		}
+		if (type === "permission_error") {
+			return { status: 403, statusText: "Forbidden" };
+		}
+		if (
+			type === "rate_limit_error" ||
+			code === "rate_limit_exceeded" ||
+			status === "rate_limited"
+		) {
+			return { status: 429, statusText: "Too Many Requests" };
+		}
+		if (type === "overloaded_error") {
+			return { status: 529, statusText: "Overloaded" };
+		}
+		return { status: 502, statusText: "Bad Gateway" };
 	}
 
 	private async handleCodexEvent(
@@ -1222,7 +1359,29 @@ export class CodexProvider extends BaseProvider {
 				break;
 			}
 
+			case "error":
+			case "response.failed": {
+				state.upstreamError = this.normalizeCodexStreamError(eventName, data);
+				if (!state.hasSentTerminalEvents) {
+					if (state.hasSentContentBlockStart) {
+						await writeSSE("content_block_stop", {
+							type: "content_block_stop",
+							index: state.contentBlockIndex,
+						});
+						state.contentBlockIndex++;
+						state.hasSentContentBlockStart = false;
+					}
+					await writeSSE(
+						"error",
+						this.toAnthropicErrorPayload(state.upstreamError),
+					);
+					state.hasSentTerminalEvents = true;
+				}
+				break;
+			}
+
 			case "response.completed": {
+				if (state.upstreamError || state.hasSentTerminalEvents) break;
 				const resp = data.response as Record<string, unknown> | undefined;
 				const usage = resp?.usage as
 					| {

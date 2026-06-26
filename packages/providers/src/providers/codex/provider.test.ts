@@ -747,6 +747,282 @@ describe("CodexProvider.processResponse", () => {
 		expect(await transformed.text()).toBe("ok");
 	});
 
+	it("returns Anthropic JSON for non-streaming missing-content-type SSE bodies", async () => {
+		const provider = new CodexProvider();
+		const upstreamBody = sseBody([
+			...eventLine("response.created", {
+				response: { id: "resp_test", model: "gpt-5.4" },
+			}),
+			...eventLine("response.output_item.added", {
+				item: { type: "message" },
+				output_index: 0,
+			}),
+			...eventLine("response.content_part.added", {
+				part: { type: "output_text" },
+			}),
+			...eventLine("response.output_text.delta", { delta: "hello" }),
+			...eventLine("response.completed", {
+				response: {
+					model: "gpt-5.4",
+					usage: { input_tokens: 2, output_tokens: 1 },
+				},
+			}),
+		]);
+
+		const response = new Response(upstreamBody, {
+			status: 200,
+			headers: { "x-better-ccflare-request-stream": "false" },
+		});
+
+		const transformed = await provider.processResponse(response, null);
+		expect(transformed.headers.get("content-type")).toContain(
+			"application/json",
+		);
+		const payload = await transformed.json();
+		expect(payload.content).toEqual([{ type: "text", text: "hello" }]);
+		expect(payload.usage).toEqual({
+			input_tokens: 2,
+			output_tokens: 1,
+			cache_read_input_tokens: 0,
+			cache_creation_input_tokens: 0,
+		});
+	});
+
+	it("surfaces Codex SSE errors instead of fabricating an empty streaming success", async () => {
+		const provider = new CodexProvider();
+		const upstreamBody = sseBody([
+			...eventLine("response.created", {
+				response: { id: "resp_failed", model: "gpt-5.5" },
+			}),
+			...eventLine("response.failed", {
+				response: {
+					status: "failed",
+					error: {
+						type: "invalid_request_error",
+						code: "context_length_exceeded",
+						message: "Input is too large",
+					},
+				},
+			}),
+		]);
+
+		const response = new Response(upstreamBody, {
+			status: 200,
+			headers: { "content-type": "text/event-stream" },
+		});
+
+		const transformed = await provider.processResponse(response, null);
+		const transformedBody = await transformed.text();
+
+		expect(transformedBody).toContain("event: error");
+		expect(transformedBody).toContain("Input is too large");
+		expect(transformedBody).toContain("context_length_exceeded");
+		expect(transformedBody).not.toContain("event: message_delta");
+		expect(transformedBody).not.toContain("event: message_stop");
+	});
+
+	it("closes an open content block before surfacing a streaming Codex error", async () => {
+		const provider = new CodexProvider();
+		const upstreamBody = sseBody([
+			...eventLine("response.created", {
+				response: { id: "resp_failed", model: "gpt-5.5" },
+			}),
+			...eventLine("response.output_item.added", {
+				item: { type: "message" },
+				output_index: 0,
+			}),
+			...eventLine("response.content_part.added", {
+				part: { type: "output_text" },
+			}),
+			...eventLine("response.output_text.delta", { delta: "partial" }),
+			...eventLine("response.failed", {
+				response: {
+					status: "failed",
+					error: {
+						type: "invalid_request_error",
+						message: "Codex failed after partial output",
+					},
+				},
+			}),
+		]);
+
+		const response = new Response(upstreamBody, {
+			status: 200,
+			headers: { "content-type": "text/event-stream" },
+		});
+
+		const transformed = await provider.processResponse(response, null);
+		const transformedBody = await transformed.text();
+
+		const stopPos = transformedBody.indexOf("event: content_block_stop");
+		const errorPos = transformedBody.indexOf("event: error");
+		expect(stopPos).toBeGreaterThan(-1);
+		expect(errorPos).toBeGreaterThan(stopPos);
+		expect(transformedBody).toContain("Codex failed after partial output");
+	});
+
+	it("surfaces Codex SSE errors as JSON errors for non-streaming clients", async () => {
+		const provider = new CodexProvider();
+		const upstreamBody = sseBody([
+			...eventLine("response.created", {
+				response: { id: "resp_failed", model: "gpt-5.5" },
+			}),
+			...eventLine("response.failed", {
+				response: {
+					status: "failed",
+					error: {
+						type: "invalid_request_error",
+						message: "Codex failed",
+					},
+				},
+			}),
+		]);
+
+		const response = new Response(upstreamBody, {
+			status: 200,
+			headers: {
+				"content-type": "text/event-stream",
+				"x-better-ccflare-request-stream": "false",
+			},
+		});
+
+		const transformed = await provider.processResponse(response, null);
+		const body = await transformed.json();
+
+		expect(transformed.status).toBe(400);
+		expect(body).toEqual({
+			type: "error",
+			error: {
+				type: "invalid_request_error",
+				message: "Codex failed",
+			},
+		});
+	});
+
+	it("maps non-streaming Codex context-window SSE errors to non-retryable bad requests", async () => {
+		const provider = new CodexProvider();
+		const upstreamBody = sseBody([
+			...eventLine("response.created", {
+				response: { id: "resp_failed", model: "gpt-5.5" },
+			}),
+			...eventLine("error", {
+				type: "error",
+				code: "context_length_exceeded",
+				message: "Input is too large",
+			}),
+		]);
+
+		const response = new Response(upstreamBody, {
+			status: 200,
+			headers: {
+				"content-type": "text/event-stream",
+				"x-better-ccflare-request-stream": "false",
+			},
+		});
+
+		const transformed = await provider.processResponse(response, null);
+		const body = await transformed.json();
+
+		expect(transformed.status).toBe(400);
+		expect(body).toEqual({
+			type: "error",
+			error: {
+				type: "invalid_request_error",
+				message: "Input is too large",
+				code: "context_length_exceeded",
+			},
+		});
+	});
+
+	it("maps generic Codex error events to a valid Anthropic api_error type", async () => {
+		const provider = new CodexProvider();
+		const upstreamBody = sseBody([
+			...eventLine("error", {
+				type: "error",
+				code: "some_other_code",
+				message: "Generic Codex failure",
+			}),
+		]);
+
+		const response = new Response(upstreamBody, {
+			status: 200,
+			headers: {
+				"content-type": "text/event-stream",
+				"x-better-ccflare-request-stream": "false",
+			},
+		});
+
+		const transformed = await provider.processResponse(response, null);
+		const body = await transformed.json();
+
+		expect(transformed.status).toBe(502);
+		expect(body.error.type).toBe("api_error");
+		expect(body.error.code).toBe("some_other_code");
+	});
+
+	it("maps Codex rate-limited status to a non-streaming 429", async () => {
+		const provider = new CodexProvider();
+		const upstreamBody = sseBody([
+			...eventLine("response.failed", {
+				response: {
+					status: "rate_limited",
+					error: {
+						type: "error",
+						message: "Rate limited by Codex",
+					},
+				},
+			}),
+		]);
+
+		const response = new Response(upstreamBody, {
+			status: 200,
+			headers: {
+				"content-type": "text/event-stream",
+				"x-better-ccflare-request-stream": "false",
+			},
+		});
+
+		const transformed = await provider.processResponse(response, null);
+		const body = await transformed.json();
+
+		expect(transformed.status).toBe(429);
+		expect(body.error.type).toBe("rate_limit_error");
+		expect(body.error.status).toBe("rate_limited");
+	});
+
+	it("does not emit terminal events after response.failed when response.completed follows", async () => {
+		const provider = new CodexProvider();
+		const upstreamBody = sseBody([
+			...eventLine("response.created", {
+				response: { id: "resp_failed", model: "gpt-5.5" },
+			}),
+			...eventLine("response.failed", {
+				response: {
+					status: "failed",
+					error: { type: "invalid_request_error", message: "Context exceeded" },
+				},
+			}),
+			...eventLine("response.completed", {
+				response: {
+					model: "gpt-5.5",
+					usage: { input_tokens: 5, output_tokens: 0 },
+				},
+			}),
+		]);
+
+		const response = new Response(upstreamBody, {
+			status: 200,
+			headers: { "content-type": "text/event-stream" },
+		});
+
+		const transformed = await provider.processResponse(response, null);
+		const body = await transformed.text();
+
+		expect(body).toContain("event: error");
+		expect(body).not.toContain("event: message_delta");
+		expect(body).not.toContain("event: message_stop");
+	});
+
 	it("passes through non-streaming error responses", async () => {
 		const provider = new CodexProvider();
 		const response = new Response('{"error":"bad_request"}', {
