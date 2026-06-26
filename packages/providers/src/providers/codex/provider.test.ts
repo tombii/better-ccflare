@@ -56,6 +56,91 @@ describe("CodexProvider request conversion", () => {
 		expect(body.reasoning).toEqual({ effort: "xhigh" });
 	});
 
+	it("uses role-appropriate text block types in Codex input", async () => {
+		const provider = new CodexProvider();
+		const request = new Request("https://example.com/v1/messages", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				model: "claude-3-5-sonnet-20241022",
+				max_tokens: 100,
+				messages: [
+					{ role: "user", content: "hello" },
+					{ role: "assistant", content: "hi" },
+					{ role: "developer", content: "follow policy" },
+				],
+			}),
+		});
+
+		const transformed = await provider.transformRequestBody(request);
+		const body = await transformed.json();
+
+		expect(body.input[0]).toEqual({
+			role: "user",
+			content: [{ type: "input_text", text: "hello" }],
+		});
+		expect(body.input[1]).toEqual({
+			role: "assistant",
+			content: [{ type: "output_text", text: "hi" }],
+		});
+		expect(body.input[2]).toEqual({
+			role: "system",
+			content: [{ type: "input_text", text: "follow policy" }],
+		});
+	});
+
+	it("marks replayed tool call items as completed", async () => {
+		const provider = new CodexProvider();
+		const request = new Request("https://example.com/v1/messages", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				model: "claude-3-5-sonnet-20241022",
+				max_tokens: 100,
+				messages: [
+					{
+						role: "assistant",
+						content: [
+							{
+								type: "tool_use",
+								id: "call_1",
+								name: "search",
+								input: { query: "hello" },
+							},
+						],
+					},
+					{
+						role: "user",
+						content: [
+							{
+								type: "tool_result",
+								tool_use_id: "call_1",
+								content: [{ type: "text", text: "result" }],
+							},
+						],
+					},
+				],
+			}),
+		});
+
+		const transformed = await provider.transformRequestBody(request);
+		const body = await transformed.json();
+
+		expect(body.input[0]).toMatchObject({
+			type: "function_call",
+			call_id: "call_1",
+			name: "search",
+			arguments: JSON.stringify({ query: "hello" }),
+			status: "completed",
+		});
+		expect(body.input[1]).toMatchObject({
+			type: "function_call_output",
+			call_id: "call_1",
+			output: "result",
+			status: "completed",
+		});
+	});
+
 	it("keeps default Codex reasoning effort when Claude effort is absent", async () => {
 		const provider = new CodexProvider();
 		const request = new Request("https://example.com/v1/messages", {
@@ -298,6 +383,7 @@ describe("CodexProvider.processResponse", () => {
 		const stopPos = transformedBody.indexOf("event: content_block_stop");
 		expect(deltaPos).toBeGreaterThanOrEqual(0);
 		expect(stopPos).toBeGreaterThan(deltaPos);
+		expect(transformedBody).toContain('"stop_reason":"tool_use"');
 	});
 
 	it("omits empty Read.pages from streaming tool-call arguments", async () => {
@@ -764,6 +850,7 @@ describe("CodexProvider.processResponse", () => {
 				input: { query: "hello" },
 			},
 		]);
+		expect(payload.stop_reason).toBe("tool_use");
 	});
 
 	it("omits invalid WebSearch domain filters from non-streaming tool_use input", async () => {
