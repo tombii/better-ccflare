@@ -863,10 +863,37 @@ export class CodexProvider extends BaseProvider {
 
 		// Convert messages
 		const input: CodexRequest["input"] = [];
-		for (const msg of body.messages) {
+		const skillCallIds = new Set<string>();
+		for (const [msgIndex, msg] of body.messages.entries()) {
 			const items = this.convertMessage(msg);
-			for (const item of items) {
+			for (const [itemIndex, item] of items.entries()) {
 				input.push(item);
+				if ("type" in item && item.type === "function_call") {
+					if (item.name === "Skill") {
+						skillCallIds.add(item.call_id);
+					}
+				} else if (
+					"type" in item &&
+					item.type === "function_call_output" &&
+					skillCallIds.has(item.call_id)
+				) {
+					skillCallIds.delete(item.call_id);
+					if (
+						msgIndex !== body.messages.length - 1 ||
+						itemIndex !== items.length - 1
+					) {
+						continue;
+					}
+					input.push({
+						role: "user",
+						content: [
+							{
+								type: "input_text",
+								text: "The requested Skill tool has loaded additional instructions. Continue the user's original request now, applying those instructions. Do not wait for another user message.",
+							},
+						],
+					});
+				}
 			}
 		}
 
