@@ -11,6 +11,16 @@ import { applyRateLimitCooldown } from "./rate-limit-cooldown";
 
 const log = new Logger("ResponseProcessor");
 
+function isSyntheticCountTokensRequest(
+	ctx: ProxyContext,
+	requestMeta?: { path?: string },
+): boolean {
+	return (
+		requestMeta?.path === "/v1/messages/count_tokens" &&
+		(ctx.provider.name === "openai-compatible" || ctx.provider.name === "codex")
+	);
+}
+
 /**
  * Handles rate limit response for an account
  * @param account - The rate-limited account
@@ -220,7 +230,7 @@ export async function processProxyResponse(
 	account: Account,
 	ctx: ProxyContext,
 	requestId?: string,
-	requestMeta?: { headers?: Headers },
+	requestMeta?: { headers?: Headers; path?: string },
 ): Promise<boolean> {
 	let rateLimitInfo = ctx.provider.parseRateLimit(response);
 
@@ -301,12 +311,15 @@ export async function processProxyResponse(
 		return true; // Signal rate limit
 	}
 
-	// Update account metadata in background
-	const bypassSession =
-		requestMeta?.headers?.get("x-better-ccflare-bypass-session") === "true";
-	updateAccountMetadata(account, response, ctx, requestId, bypassSession);
+	const skipAccountMetadata = isSyntheticCountTokensRequest(ctx, requestMeta);
+	if (!skipAccountMetadata) {
+		// Update account metadata in background
+		const bypassSession =
+			requestMeta?.headers?.get("x-better-ccflare-bypass-session") === "true";
+		updateAccountMetadata(account, response, ctx, requestId, bypassSession);
+	}
 
-	if (!rateLimitInfo.isRateLimited) {
+	if (!rateLimitInfo.isRateLimited && !skipAccountMetadata) {
 		// (a) Stability reset — gated only on rate_limited_at.
 		// clearExpiredRateLimits nulls rate_limited_until without touching rate_limited_at,
 		// so we must not gate on rate_limited_until or we'd miss accounts already cleared
