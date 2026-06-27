@@ -894,9 +894,9 @@ export default async function startServer(options?: {
 			);
 			return false;
 		}
-		if (account.provider !== "anthropic") {
+		if (!supportsRefreshBackedUsagePolling(account.provider)) {
 			log.warn(
-				`Cannot restart usage polling: account ${account.name} is not an Anthropic OAuth account`,
+				`Cannot restart usage polling: account ${account.name} does not support refresh-backed usage polling`,
 			);
 			return false;
 		}

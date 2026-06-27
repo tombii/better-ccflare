@@ -3577,10 +3577,14 @@ export function createAccountRefreshUsageHandler(dbOps: DatabaseOperations) {
 				return errorResponse(NotFound("Account not found"));
 			}
 
-			if (account.provider !== "anthropic" && account.provider !== "codex") {
+			if (
+				account.provider !== "anthropic" &&
+				account.provider !== "codex" &&
+				account.provider !== "xai"
+			) {
 				return errorResponse(
 					BadRequest(
-						"Usage refresh is only available for Anthropic OAuth and Codex accounts",
+						"Usage refresh is only available for Anthropic OAuth, Codex, and xAI accounts",
 					),
 				);
 			}
