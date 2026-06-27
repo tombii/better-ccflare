@@ -134,8 +134,8 @@ export const PROVIDER_CONFIG: Record<ProviderName, ProviderConfig> = {
 		defaultEndpoint: "https://dashscope.aliyuncs.com/compatible-mode/v1",
 	},
 	[PROVIDER_NAMES.XAI]: {
-		requiresSessionTracking: false, // xAI OAuth/API usage is per request, no session stickiness
-		supportsUsageTracking: false, // xAI exposes per-response tokens, but no pollable quota-window endpoint for Grok CLI OAuth
+		requiresSessionTracking: false, // Grok Build credits reset by billing window, not session stickiness
+		supportsUsageTracking: true, // Grok CLI OAuth bearer can poll grok.com Grok Build credits via gRPC-web
 		supportsOAuth: true, // Imports/refreshes Grok CLI OAuth credentials
 		defaultEndpoint: "https://api.x.ai/v1",
 	},

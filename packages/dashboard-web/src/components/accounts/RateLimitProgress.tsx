@@ -132,6 +132,8 @@ function formatWindowName(window: string | null): string {
 			return "Time Quota";
 		case "tokens_limit":
 			return "5-hour";
+		case "credits":
+			return "Grok credits";
 		default:
 			return window.replace("_", " ");
 	}
@@ -242,6 +244,9 @@ export function RateLimitProgress({
 	const isZaiData =
 		usageData && ("time_limit" in usageData || "tokens_limit" in usageData);
 
+	// Check if this is xAI/Grok usage data
+	const isXaiData = usageData && "credits" in usageData;
+
 	// Check if this is Alibaba Coding Plan usage data
 	const isAlibabaData =
 		usageData && "five_hour" in usageData && "weekly" in usageData;
@@ -282,6 +287,18 @@ export function RateLimitProgress({
 				? new Date(alibabaData.monthly.resetAt).toISOString()
 				: null,
 		});
+	} else if (isXaiData && showWeekly) {
+		// xAI/Grok usage data - show Grok Build credits utilization.
+		const xaiData = usageData as {
+			credits?: { utilization: number; resets_at: string | null };
+		};
+		if (xaiData.credits) {
+			usages.push({
+				utilization: xaiData.credits.utilization,
+				window: "credits",
+				resetTime: xaiData.credits.resets_at,
+			});
+		}
 	} else if (isZaiData && showWeekly) {
 		// Zai usage data - show tokens_limit (5-hour token quota) and time_limit (peak-hour limit)
 		const zaiData = usageData as {

@@ -102,10 +102,10 @@ describe("XaiProvider", () => {
 		expect(body.model).toBe("grok-custom");
 	});
 
-	it("does not advertise a pollable quota-window usage endpoint", () => {
+	it("advertises Grok Build credits usage polling", () => {
 		const provider = new XaiProvider();
 
-		expect(provider.supportsUsageTracking()).toBe(false);
+		expect(provider.supportsUsageTracking()).toBe(true);
 	});
 
 	it("requests stream usage chunks for streaming xAI requests", async () => {

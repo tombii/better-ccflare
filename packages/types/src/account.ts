@@ -90,13 +90,24 @@ export interface AlibabaCodingPlanUsageData {
 	remainingDays: number | null;
 }
 
+// Usage data types for xAI/Grok accounts
+export interface XaiUsageWindow {
+	utilization: number; // 0-100 Grok Build credits utilization
+	resets_at: string | null; // ISO timestamp when available
+}
+
+export interface XaiUsageData {
+	credits: XaiUsageWindow;
+}
+
 // Combined usage data type that supports all providers
 export type FullUsageData =
 	| AnthropicUsageData
 	| NanoGPTUsageData
 	| ZaiUsageData
 	| KiloUsageData
-	| AlibabaCodingPlanUsageData;
+	| AlibabaCodingPlanUsageData
+	| XaiUsageData;
 
 // Database row types that match the actual database schema
 export interface AccountRow {

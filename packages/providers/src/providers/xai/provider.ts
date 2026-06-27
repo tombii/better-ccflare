@@ -111,7 +111,7 @@ export class XaiProvider extends OpenAICompatibleProvider {
 	}
 
 	override supportsUsageTracking(): boolean {
-		return false;
+		return true;
 	}
 
 	override beforeConvert(

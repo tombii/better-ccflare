@@ -30,6 +30,8 @@ export {
 export * from "./types";
 // Export usage fetcher
 export * from "./usage-fetcher";
+// Export xAI usage fetcher
+export * from "./xai-usage-fetcher";
 // Export Zai usage fetcher
 export * from "./zai-usage-fetcher";
 
