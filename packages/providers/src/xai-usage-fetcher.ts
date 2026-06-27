@@ -1,4 +1,7 @@
 import { Logger } from "@better-ccflare/logger";
+import type { XaiUsageData } from "@better-ccflare/types";
+
+export type { XaiUsageData, XaiUsageWindow } from "@better-ccflare/types";
 
 const log = new Logger("XaiUsageFetcher");
 
@@ -6,17 +9,6 @@ export const XAI_GROK_CREDITS_ENDPOINT =
 	"https://grok.com/grok_api_v2.GrokBuildBilling/GetGrokCreditsConfig";
 
 const EMPTY_GRPC_WEB_FRAME = new Uint8Array([0, 0, 0, 0, 0]);
-
-export interface XaiUsageWindow {
-	/** Grok Build credits utilization percentage in the current billing window. */
-	utilization: number;
-	/** ISO reset timestamp when Grok exposes one; null when unavailable. */
-	resets_at: string | null;
-}
-
-export interface XaiUsageData {
-	credits: XaiUsageWindow;
-}
 
 interface ProtobufScan {
 	fixed32: Array<{ path: number[]; value: number; order: number }>;
