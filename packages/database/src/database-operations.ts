@@ -283,10 +283,19 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 			const pgIdleTimeout = Number(
 				process.env.BETTER_CCFLARE_DB_IDLE_TIMEOUT ?? 0,
 			);
+			const pgStatementTimeout = Number(
+				process.env.BETTER_CCFLARE_DB_STATEMENT_TIMEOUT ?? 8000,
+			);
 			const sqlClient = new SQL({
 				url: databaseUrl,
 				max: pgMax,
 				idleTimeout: pgIdleTimeout,
+				connection: {
+					// Server-side timeout so PG cancels the query and frees the
+					// connection instead of leaving it occupied after the client
+					// gives up. Matches the client-side Promise.race in BunSqlAdapter.
+					statement_timeout: pgStatementTimeout,
+				},
 			});
 			// ERR_POSTGRES_IDLE_TIMEOUT is a normal pool lifecycle event (idle
 			// connection reaped). Without this handler it bubbles as an unhandled

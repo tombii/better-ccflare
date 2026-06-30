@@ -117,20 +117,23 @@ export class BunSqlAdapter {
 		ms: number,
 		queryHint: string,
 	): Promise<T> {
-		return Promise.race([
-			promise,
-			new Promise<never>((_, reject) =>
-				setTimeout(
-					() =>
-						reject(
-							new Error(
-								`PG query timeout after ${ms}ms: ${queryHint.slice(0, 80)}`,
-							),
+		// Client-side belt-and-suspenders guard. The primary protection is the
+		// server-side statement_timeout set at connection time in DatabaseOperations,
+		// which causes PG to cancel the query and release the connection. This race
+		// just ensures the caller unblocks even if the PG cancel is delayed.
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const timeout = new Promise<never>((_, reject) => {
+			timer = setTimeout(
+				() =>
+					reject(
+						new Error(
+							`PG query timeout after ${ms}ms: ${queryHint.slice(0, 80)}`,
 						),
-					ms,
-				),
-			),
-		]);
+					),
+				ms,
+			);
+		});
+		return Promise.race([promise.finally(() => clearTimeout(timer)), timeout]);
 	}
 
 	/**

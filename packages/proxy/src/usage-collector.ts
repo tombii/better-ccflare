@@ -1024,17 +1024,13 @@ export function initUsageCollector(
 ): UsageCollector {
 	if (_usageCollector) return _usageCollector;
 
-	let dbOps: DatabaseOperations;
-	if (sharedDbOps) {
-		// Reuse the caller's already-initialized instance to avoid opening a
-		// second PG connection pool that competes for the same server connections.
-		dbOps = sharedDbOps;
-	} else {
-		dbOps = new DatabaseOperations();
-		dbOps.initializeAsync().catch((err: unknown) => {
-			log.error("Failed to initialize database async connection:", err);
-		});
-	}
+	const dbOps = sharedDbOps ?? new DatabaseOperations();
+	// Always call initializeAsync — it is idempotent for already-initialized
+	// instances and ensures PG schema/migrations are applied before any write
+	// even when a shared (pre-initialized) instance is passed in.
+	dbOps.initializeAsync().catch((err: unknown) => {
+		log.error("Failed to initialize database async connection:", err);
+	});
 	const asyncWriter = new AsyncDbWriter();
 
 	_usageCollector = new UsageCollector(

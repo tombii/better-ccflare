@@ -43,6 +43,10 @@ export class AsyncDbWriter implements Disposable {
 	private runningPromise: Promise<void> | null = null;
 	private intervalId: Timer | null = null;
 	private healthInterval: Timer | null = null;
+	// Jobs whose Promise.race was won by the hard-abort timer. The underlying
+	// job.run() may still be in-flight (Promises can't be cancelled). We track
+	// them so dispose() can wait for them before returning.
+	private abandonedJobs: Set<Promise<unknown>> = new Set();
 
 	private readonly METADATA_QUEUE_CAP = 2000;
 	private readonly PAYLOAD_QUEUE_HARD_CAP = 1000;
@@ -174,10 +178,8 @@ export class AsyncDbWriter implements Disposable {
 		kind: "metadata" | "payload",
 	): Promise<void> {
 		const t0 = performance.now();
+		const rid = job.requestId ?? "n/a";
 
-		// abortPromise / hardReject: a 30s hard-abort that races the job. Without
-		// this a single stuck PG query holds the entire queue forever — the watchdog
-		// used to only log but never unblock.
 		let hardReject!: (e: Error) => void;
 		const abortPromise = new Promise<never>((_, reject) => {
 			hardReject = reject;
@@ -185,38 +187,66 @@ export class AsyncDbWriter implements Disposable {
 
 		const warnTimer = setTimeout(() => {
 			logger.warn(
-				`DB job stuck: kind=${kind} requestId=${job.requestId ?? "n/a"} elapsed_ms=${Math.round(performance.now() - t0)}`,
+				`DB job stuck: kind=${kind} requestId=${rid} elapsed_ms=${Math.round(performance.now() - t0)}`,
 			);
 		}, 5000);
 
 		const abortTimer = setTimeout(() => {
 			hardReject(
 				new Error(
-					`DB job hard-aborted after 30s: kind=${kind} requestId=${job.requestId ?? "n/a"}`,
+					`DB job hard-aborted after 30s: kind=${kind} requestId=${rid}`,
 				),
 			);
 		}, 30000);
 
+		// Eagerly resolve the job into a named promise so we can track it if the
+		// abort timer fires first (the job may still be in-flight — Promises
+		// cannot be cancelled, but we can wait for it in dispose()).
+		const jobPromise = Promise.resolve(job.run());
+
+		// decrementBytes ensures payloadBytesPending is adjusted exactly once,
+		// whether the job completes normally or is abandoned after a hard-abort.
+		const decrementBytes = (() => {
+			let done = false;
+			return () => {
+				if (done) return;
+				done = true;
+				if (kind === "payload") {
+					this.payloadBytesPending -= (job as PayloadJob).bytes;
+				}
+			};
+		})();
+
 		try {
-			await Promise.race([job.run(), abortPromise]);
+			await Promise.race([jobPromise, abortPromise]);
 		} catch (err) {
-			logger.error(
-				`DB job failed: kind=${kind} requestId=${job.requestId ?? "n/a"}`,
-				err,
-			);
+			const isHardAbort =
+				err instanceof Error && err.message.startsWith("DB job hard-aborted");
+
+			if (isHardAbort) {
+				// The queue can advance, but the underlying job.run() is still
+				// in-flight. Track it so dispose() waits before shutting down.
+				const tracked = jobPromise
+					.catch(() => {})
+					.finally(() => {
+						decrementBytes();
+						this.abandonedJobs.delete(tracked);
+					});
+				this.abandonedJobs.add(tracked);
+			}
+
+			logger.error(`DB job failed: kind=${kind} requestId=${rid}`, err);
 		} finally {
 			clearTimeout(warnTimer);
 			clearTimeout(abortTimer);
-			// finally-safety: bytes counter must decrement on every payload completion
-			// (success OR error), otherwise a single throwing job would permanently
-			// inflate payloadBytesPending and eventually wedge admission.
-			if (kind === "payload") {
-				this.payloadBytesPending -= (job as PayloadJob).bytes;
-			}
+			// Decrement bytes for the normal (non-aborted) path. The once-guard
+			// inside decrementBytes prevents a double-decrement if the abandoned
+			// job's finally also calls it.
+			decrementBytes();
 			const dur = performance.now() - t0;
 			if (dur > 1000) {
 				logger.warn(
-					`Slow DB job: kind=${kind} dur_ms=${Math.round(dur)} requestId=${job.requestId ?? "n/a"}`,
+					`Slow DB job: kind=${kind} dur_ms=${Math.round(dur)} requestId=${rid}`,
 				);
 			}
 		}
@@ -350,6 +380,16 @@ export class AsyncDbWriter implements Disposable {
 			this.runningPromise
 		) {
 			await this.processQueue();
+		}
+
+		// Wait for any jobs that were hard-aborted from the queue but whose
+		// underlying job.run() promise is still in-flight. Without this, dispose()
+		// could return while an abandoned write is still using the database.
+		if (this.abandonedJobs.size > 0) {
+			logger.info(
+				`Waiting for ${this.abandonedJobs.size} abandoned job(s) to settle...`,
+			);
+			await Promise.allSettled([...this.abandonedJobs]);
 		}
 
 		logger.info("Async DB writer queue flushed", {
