@@ -75,10 +75,14 @@ export interface CryptoUtils {
 export class NodeCryptoUtils implements CryptoUtils {
 	// biome-ignore lint/suspicious/noExplicitAny: Dynamic require for Node.js crypto module compatibility
 	private crypto: any;
+	// biome-ignore lint/suspicious/noExplicitAny: promisify returns any-typed wrapper
+	private scryptAsync: any;
 
 	constructor() {
 		// Import crypto dynamically to avoid issues with bundling
 		this.crypto = require("node:crypto");
+		const { promisify } = require("node:util");
+		this.scryptAsync = promisify(this.crypto.scrypt);
 	}
 
 	async generateApiKey(): Promise<string> {
@@ -92,7 +96,8 @@ export class NodeCryptoUtils implements CryptoUtils {
 
 	async hashApiKey(apiKey: string): Promise<string> {
 		const salt = this.crypto.randomBytes(16).toString("hex");
-		const hash = this.crypto.scryptSync(apiKey, salt, 64).toString("hex");
+		const hashBuf: Buffer = await this.scryptAsync(apiKey, salt, 64);
+		const hash = hashBuf.toString("hex");
 		return `${salt}:${hash}`;
 	}
 
@@ -103,9 +108,8 @@ export class NodeCryptoUtils implements CryptoUtils {
 				return false;
 			}
 
-			const candidateHash = this.crypto
-				.scryptSync(apiKey, salt, 64)
-				.toString("hex");
+			const candidateBuf: Buffer = await this.scryptAsync(apiKey, salt, 64);
+			const candidateHash = candidateBuf.toString("hex");
 
 			// Length validation before timing-safe comparison
 			if (candidateHash.length !== hash.length) {

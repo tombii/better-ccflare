@@ -1020,13 +1020,21 @@ let _usageCollector: UsageCollector | null = null;
 export function initUsageCollector(
 	getStorePayloads: () => boolean,
 	onSummary: (summary: RequestResponse) => void,
+	sharedDbOps?: DatabaseOperations,
 ): UsageCollector {
 	if (_usageCollector) return _usageCollector;
 
-	const dbOps = new DatabaseOperations();
-	dbOps.initializeAsync().catch((err: unknown) => {
-		log.error("Failed to initialize database async connection:", err);
-	});
+	let dbOps: DatabaseOperations;
+	if (sharedDbOps) {
+		// Reuse the caller's already-initialized instance to avoid opening a
+		// second PG connection pool that competes for the same server connections.
+		dbOps = sharedDbOps;
+	} else {
+		dbOps = new DatabaseOperations();
+		dbOps.initializeAsync().catch((err: unknown) => {
+			log.error("Failed to initialize database async connection:", err);
+		});
+	}
 	const asyncWriter = new AsyncDbWriter();
 
 	_usageCollector = new UsageCollector(

@@ -109,6 +109,31 @@ export class BunSqlAdapter {
 	}
 
 	/**
+	 * Race a PG query promise against a timeout. Rejects if the query does not
+	 * settle within `ms` milliseconds. Only used for the PostgreSQL path.
+	 */
+	private withPgTimeout<T>(
+		promise: Promise<T>,
+		ms: number,
+		queryHint: string,
+	): Promise<T> {
+		return Promise.race([
+			promise,
+			new Promise<never>((_, reject) =>
+				setTimeout(
+					() =>
+						reject(
+							new Error(
+								`PG query timeout after ${ms}ms: ${queryHint.slice(0, 80)}`,
+							),
+						),
+					ms,
+				),
+			),
+		]);
+	}
+
+	/**
 	 * Retry a synchronous SQLite call asynchronously when the database is
 	 * locked by another connection (SQLITE_BUSY / errno 5).
 	 *
@@ -153,7 +178,11 @@ export class BunSqlAdapter {
 		// PostgreSQL via Bun.SQL unsafe
 		const pgQuery = this.pgSql(sqlStr);
 		// biome-ignore lint/suspicious/noExplicitAny: Bun.SQL accepts various binding types
-		const result = await this.sql?.unsafe(pgQuery, params as any[]);
+		const result = await this.withPgTimeout(
+			this.sql?.unsafe(pgQuery, params as any[]) as Promise<unknown>,
+			8000,
+			sqlStr,
+		);
 		return result as unknown as R[];
 	}
 
@@ -171,7 +200,11 @@ export class BunSqlAdapter {
 		}
 		const pgQuery = this.pgSql(sqlStr);
 		// biome-ignore lint/suspicious/noExplicitAny: Bun.SQL accepts various binding types
-		const rows = await this.sql?.unsafe(pgQuery, params as any[]);
+		const rows = await this.withPgTimeout(
+			this.sql?.unsafe(pgQuery, params as any[]) as Promise<unknown>,
+			8000,
+			sqlStr,
+		);
 		return ((rows as unknown as R[])[0] ?? null) as R | null;
 	}
 
@@ -187,7 +220,11 @@ export class BunSqlAdapter {
 		}
 		const pgQuery = this.pgSql(sqlStr);
 		// biome-ignore lint/suspicious/noExplicitAny: Bun.SQL accepts various binding types
-		await this.sql?.unsafe(pgQuery, params as any[]);
+		await this.withPgTimeout(
+			this.sql?.unsafe(pgQuery, params as any[]) as Promise<unknown>,
+			8000,
+			sqlStr,
+		);
 	}
 
 	/**
@@ -207,7 +244,11 @@ export class BunSqlAdapter {
 		}
 		const pgQuery = this.pgSql(sqlStr);
 		// biome-ignore lint/suspicious/noExplicitAny: Bun.SQL accepts various binding types
-		const result = await this.sql?.unsafe(pgQuery, params as any[]);
+		const result = await this.withPgTimeout(
+			this.sql?.unsafe(pgQuery, params as any[]) as Promise<unknown>,
+			8000,
+			sqlStr,
+		);
 		// Bun.SQL returns an array-like with a `count` property for DML statements
 		return (result as unknown as { count: number }).count ?? 0;
 	}
@@ -257,7 +298,11 @@ export class BunSqlAdapter {
 		}
 		const pgQuery = params && params.length > 0 ? this.pgSql(sqlStr) : sqlStr;
 		// biome-ignore lint/suspicious/noExplicitAny: Bun.SQL accepts various binding types
-		return this.sql?.unsafe(pgQuery, params as any[]);
+		return this.withPgTimeout(
+			this.sql?.unsafe(pgQuery, params as any[]) as Promise<unknown>,
+			8000,
+			sqlStr,
+		);
 	}
 
 	/**

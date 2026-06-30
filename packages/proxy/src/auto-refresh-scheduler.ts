@@ -436,6 +436,7 @@ export class AutoRefreshScheduler {
 						method: "POST",
 						headers,
 						body: JSON.stringify(requestBody),
+						signal: AbortSignal.timeout(30000),
 					});
 
 					log.debug(

@@ -174,20 +174,39 @@ export class AsyncDbWriter implements Disposable {
 		kind: "metadata" | "payload",
 	): Promise<void> {
 		const t0 = performance.now();
-		const watchdog = setTimeout(() => {
+
+		// abortPromise / hardReject: a 30s hard-abort that races the job. Without
+		// this a single stuck PG query holds the entire queue forever — the watchdog
+		// used to only log but never unblock.
+		let hardReject!: (e: Error) => void;
+		const abortPromise = new Promise<never>((_, reject) => {
+			hardReject = reject;
+		});
+
+		const warnTimer = setTimeout(() => {
 			logger.warn(
 				`DB job stuck: kind=${kind} requestId=${job.requestId ?? "n/a"} elapsed_ms=${Math.round(performance.now() - t0)}`,
 			);
 		}, 5000);
+
+		const abortTimer = setTimeout(() => {
+			hardReject(
+				new Error(
+					`DB job hard-aborted after 30s: kind=${kind} requestId=${job.requestId ?? "n/a"}`,
+				),
+			);
+		}, 30000);
+
 		try {
-			await job.run();
+			await Promise.race([job.run(), abortPromise]);
 		} catch (err) {
 			logger.error(
 				`DB job failed: kind=${kind} requestId=${job.requestId ?? "n/a"}`,
 				err,
 			);
 		} finally {
-			clearTimeout(watchdog);
+			clearTimeout(warnTimer);
+			clearTimeout(abortTimer);
 			// finally-safety: bytes counter must decrement on every payload completion
 			// (success OR error), otherwise a single throwing job would permanently
 			// inflate payloadBytesPending and eventually wedge admission.
