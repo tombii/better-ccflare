@@ -26,7 +26,7 @@ function mapGptModelToClaudeFamily(model: string): string {
 	if (lower.endsWith("-pro")) return "claude-opus-4-5";
 	if (lower.endsWith("-mini") || lower.endsWith("-nano"))
 		return "claude-haiku-4-5";
-	return "claude-sonnet-4-6";
+	return "claude-sonnet-5";
 }
 
 function parseArguments(args: string): unknown {

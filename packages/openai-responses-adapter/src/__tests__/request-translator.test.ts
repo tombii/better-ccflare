@@ -520,7 +520,7 @@ describe("translateRequestToAnthropic", () => {
 			"gpt-4o",
 		]) {
 			expect(translateRequestToAnthropic({ model, input: [] }).model).toBe(
-				"claude-sonnet-4-6",
+				"claude-sonnet-5",
 			);
 		}
 	});
