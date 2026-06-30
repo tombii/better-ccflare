@@ -1,4 +1,4 @@
-import { formatCost } from "@better-ccflare/ui-common";
+import { formatCost, formatPercentage } from "@better-ccflare/ui-common";
 import { useMemo } from "react";
 import { CHART_COLORS, COLORS } from "../../constants";
 import {
@@ -130,10 +130,19 @@ export function ChartsSection({
 					<CardContent>
 						<BaseLineChart
 							data={timeSeriesData}
-							lines={{ dataKey: "successRate", stroke: COLORS.success }}
+							lines={{
+								dataKey: "successRate",
+								stroke: COLORS.success,
+								name: "Success Rate",
+							}}
 							loading={loading}
 							height="medium"
 							yAxisDomain={[80, 100]}
+							yAxisTickFormatter={(value) => formatPercentage(Number(value), 0)}
+							tooltipFormatter={(value) => [
+								formatPercentage(Number(value), 0),
+								"Success Rate",
+							]}
 						/>
 					</CardContent>
 				</Card>
