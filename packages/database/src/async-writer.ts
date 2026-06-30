@@ -385,11 +385,24 @@ export class AsyncDbWriter implements Disposable {
 		// Wait for any jobs that were hard-aborted from the queue but whose
 		// underlying job.run() promise is still in-flight. Without this, dispose()
 		// could return while an abandoned write is still using the database.
+		// Bounded by its own timeout — these jobs already exceeded the 30s
+		// hard-abort and may never settle (e.g. a connection stuck below the PG
+		// statement_timeout), so an unbounded wait here would just relocate the
+		// hang from runJobWithWatchdog into dispose() and stall process shutdown.
 		if (this.abandonedJobs.size > 0) {
-			logger.info(
-				`Waiting for ${this.abandonedJobs.size} abandoned job(s) to settle...`,
-			);
-			await Promise.allSettled([...this.abandonedJobs]);
+			const pending = this.abandonedJobs.size;
+			logger.info(`Waiting for ${pending} abandoned job(s) to settle...`);
+			const settled = await Promise.race([
+				Promise.allSettled([...this.abandonedJobs]).then(() => true),
+				new Promise<false>((resolve) =>
+					setTimeout(() => resolve(false), 10_000),
+				),
+			]);
+			if (!settled) {
+				logger.warn(
+					`Giving up waiting on ${this.abandonedJobs.size} abandoned job(s) after 10s; shutdown proceeding without them`,
+				);
+			}
 		}
 
 		logger.info("Async DB writer queue flushed", {
