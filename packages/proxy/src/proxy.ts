@@ -3,6 +3,7 @@ import {
 	ServiceUnavailableError,
 	trackClientVersion,
 } from "@better-ccflare/core";
+import { DatabaseFactory } from "@better-ccflare/database";
 import { Logger } from "@better-ccflare/logger";
 import { usageCache } from "@better-ccflare/providers";
 import type { Account } from "@better-ccflare/types";
@@ -102,10 +103,16 @@ function extractProjectFromRequest(
 
 // ===== USAGE COLLECTOR MANAGEMENT =====
 
-export function initProxy(getStorePayloads: () => boolean): void {
-	initUsageCollector(getStorePayloads, (summary) => {
-		requestEvents.emit("event", { type: "summary", payload: summary });
-	});
+export async function initProxy(
+	getStorePayloads: () => boolean,
+): Promise<void> {
+	await initUsageCollector(
+		getStorePayloads,
+		(summary) => {
+			requestEvents.emit("event", { type: "summary", payload: summary });
+		},
+		DatabaseFactory.getInstance(),
+	);
 }
 
 export async function drainUsageCollector(): Promise<void> {

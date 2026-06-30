@@ -169,35 +169,51 @@ export class AsyncDbWriter implements Disposable {
 		return true;
 	}
 
+	/**
+	 * Run a single job to completion, logging if it runs long.
+	 *
+	 * There is deliberately no hard-abort/cancel here. On the PostgreSQL path
+	 * every job's `run()` bottoms out in a `BunSqlAdapter` call, which already
+	 * enforces a client+server-side timeout (see bun-sql-adapter.ts /
+	 * database-operations.ts), so a job cannot hang the queue indefinitely
+	 * there. The SQLite path is not bounded the same way — `withBusyRetry` in
+	 * BunSqlAdapter can legitimately retry SQLITE_BUSY for up to 10 minutes
+	 * while a separate Worker holds an exclusive lock (e.g. VACUUM) — so a
+	 * SQLite job can still stall the writer queue for that long. That is an
+	 * accepted, pre-existing tradeoff: the process-level shutdown watchdog in
+	 * server.ts force-exits 30s after a SIGTERM/SIGINT regardless of what
+	 * dispose() is still waiting on, so a wedged SQLite job bounds shutdown
+	 * lateness to that watchdog rather than hanging forever. Layering a second
+	 * abort here would just orphan the original promise — `await`able JS
+	 * Promises can't actually be cancelled — without shortening the real
+	 * wait, which is the bug this used to have.
+	 */
 	private async runJobWithWatchdog(
 		job: MetadataJob | PayloadJob,
 		kind: "metadata" | "payload",
 	): Promise<void> {
 		const t0 = performance.now();
-		const watchdog = setTimeout(() => {
+		const rid = job.requestId ?? "n/a";
+
+		const warnTimer = setTimeout(() => {
 			logger.warn(
-				`DB job stuck: kind=${kind} requestId=${job.requestId ?? "n/a"} elapsed_ms=${Math.round(performance.now() - t0)}`,
+				`DB job stuck: kind=${kind} requestId=${rid} elapsed_ms=${Math.round(performance.now() - t0)}`,
 			);
 		}, 5000);
+
 		try {
 			await job.run();
 		} catch (err) {
-			logger.error(
-				`DB job failed: kind=${kind} requestId=${job.requestId ?? "n/a"}`,
-				err,
-			);
+			logger.error(`DB job failed: kind=${kind} requestId=${rid}`, err);
 		} finally {
-			clearTimeout(watchdog);
-			// finally-safety: bytes counter must decrement on every payload completion
-			// (success OR error), otherwise a single throwing job would permanently
-			// inflate payloadBytesPending and eventually wedge admission.
+			clearTimeout(warnTimer);
 			if (kind === "payload") {
 				this.payloadBytesPending -= (job as PayloadJob).bytes;
 			}
 			const dur = performance.now() - t0;
 			if (dur > 1000) {
 				logger.warn(
-					`Slow DB job: kind=${kind} dur_ms=${Math.round(dur)} requestId=${job.requestId ?? "n/a"}`,
+					`Slow DB job: kind=${kind} dur_ms=${Math.round(dur)} requestId=${rid}`,
 				);
 			}
 		}

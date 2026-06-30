@@ -53,8 +53,16 @@ export class AuthService {
 		// Get all active API keys
 		const activeApiKeys = await this.dbOps.getActiveApiKeys();
 
+		// Derive the last-8 suffix of the incoming key for a cheap pre-filter.
+		// This matches how `prefixLast8` is stored: apiKey.slice(-8).
+		const incomingLast8 = apiKey.slice(-8);
+
 		// Check each API key
 		for (const keyRecord of activeApiKeys) {
+			// Short-circuit: skip expensive scrypt if the last-8 suffix doesn't match
+			if (keyRecord.prefixLast8 && keyRecord.prefixLast8 !== incomingLast8) {
+				continue;
+			}
 			const isValid = await this.crypto.verifyApiKey(
 				apiKey,
 				keyRecord.hashedKey,

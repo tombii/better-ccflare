@@ -865,7 +865,7 @@ export default async function startServer(options?: {
 	strategy.initialize?.(strategyStore);
 	currentStrategy = strategy;
 
-	initProxy(() => config.getStorePayloads());
+	await initProxy(() => config.getStorePayloads());
 
 	// Proxy context
 	const proxyContext: ProxyContext = {

@@ -52,6 +52,16 @@ function convertPlaceholders(sql: string): string {
 }
 
 /**
+ * Client-side timeout (ms) for the PostgreSQL Promise.race guard in
+ * withPgTimeout(). The server-side `statement_timeout` (set in
+ * DatabaseOperations) must always be configured below this value so PG
+ * cancels the query and frees the connection before the client gives up —
+ * otherwise the client unblocks while the query (and its pool connection)
+ * is still running on the server.
+ */
+export const PG_CLIENT_QUERY_TIMEOUT_MS = 8000;
+
+/**
  * Unified SQL adapter that abstracts over bun:sqlite (sync) and Bun.SQL/PostgreSQL (async).
  *
  * For SQLite: wraps the existing bun:sqlite Database for synchronous operations.
@@ -109,6 +119,34 @@ export class BunSqlAdapter {
 	}
 
 	/**
+	 * Race a PG query promise against a timeout. Rejects if the query does not
+	 * settle within `ms` milliseconds. Only used for the PostgreSQL path.
+	 */
+	private withPgTimeout<T>(
+		promise: Promise<T>,
+		ms: number,
+		queryHint: string,
+	): Promise<T> {
+		// Client-side belt-and-suspenders guard. The primary protection is the
+		// server-side statement_timeout set at connection time in DatabaseOperations,
+		// which causes PG to cancel the query and release the connection. This race
+		// just ensures the caller unblocks even if the PG cancel is delayed.
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const timeout = new Promise<never>((_, reject) => {
+			timer = setTimeout(
+				() =>
+					reject(
+						new Error(
+							`PG query timeout after ${ms}ms: ${queryHint.slice(0, 80)}`,
+						),
+					),
+				ms,
+			);
+		});
+		return Promise.race([promise.finally(() => clearTimeout(timer)), timeout]);
+	}
+
+	/**
 	 * Retry a synchronous SQLite call asynchronously when the database is
 	 * locked by another connection (SQLITE_BUSY / errno 5).
 	 *
@@ -153,7 +191,11 @@ export class BunSqlAdapter {
 		// PostgreSQL via Bun.SQL unsafe
 		const pgQuery = this.pgSql(sqlStr);
 		// biome-ignore lint/suspicious/noExplicitAny: Bun.SQL accepts various binding types
-		const result = await this.sql?.unsafe(pgQuery, params as any[]);
+		const result = await this.withPgTimeout(
+			this.sql?.unsafe(pgQuery, params as any[]) as Promise<unknown>,
+			PG_CLIENT_QUERY_TIMEOUT_MS,
+			sqlStr,
+		);
 		return result as unknown as R[];
 	}
 
@@ -171,7 +213,11 @@ export class BunSqlAdapter {
 		}
 		const pgQuery = this.pgSql(sqlStr);
 		// biome-ignore lint/suspicious/noExplicitAny: Bun.SQL accepts various binding types
-		const rows = await this.sql?.unsafe(pgQuery, params as any[]);
+		const rows = await this.withPgTimeout(
+			this.sql?.unsafe(pgQuery, params as any[]) as Promise<unknown>,
+			PG_CLIENT_QUERY_TIMEOUT_MS,
+			sqlStr,
+		);
 		return ((rows as unknown as R[])[0] ?? null) as R | null;
 	}
 
@@ -187,7 +233,11 @@ export class BunSqlAdapter {
 		}
 		const pgQuery = this.pgSql(sqlStr);
 		// biome-ignore lint/suspicious/noExplicitAny: Bun.SQL accepts various binding types
-		await this.sql?.unsafe(pgQuery, params as any[]);
+		await this.withPgTimeout(
+			this.sql?.unsafe(pgQuery, params as any[]) as Promise<unknown>,
+			PG_CLIENT_QUERY_TIMEOUT_MS,
+			sqlStr,
+		);
 	}
 
 	/**
@@ -207,7 +257,11 @@ export class BunSqlAdapter {
 		}
 		const pgQuery = this.pgSql(sqlStr);
 		// biome-ignore lint/suspicious/noExplicitAny: Bun.SQL accepts various binding types
-		const result = await this.sql?.unsafe(pgQuery, params as any[]);
+		const result = await this.withPgTimeout(
+			this.sql?.unsafe(pgQuery, params as any[]) as Promise<unknown>,
+			PG_CLIENT_QUERY_TIMEOUT_MS,
+			sqlStr,
+		);
 		// Bun.SQL returns an array-like with a `count` property for DML statements
 		return (result as unknown as { count: number }).count ?? 0;
 	}
@@ -257,7 +311,11 @@ export class BunSqlAdapter {
 		}
 		const pgQuery = params && params.length > 0 ? this.pgSql(sqlStr) : sqlStr;
 		// biome-ignore lint/suspicious/noExplicitAny: Bun.SQL accepts various binding types
-		return this.sql?.unsafe(pgQuery, params as any[]);
+		return this.withPgTimeout(
+			this.sql?.unsafe(pgQuery, params as any[]) as Promise<unknown>,
+			PG_CLIENT_QUERY_TIMEOUT_MS,
+			sqlStr,
+		);
 	}
 
 	/**

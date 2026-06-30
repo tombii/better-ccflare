@@ -1012,21 +1012,26 @@ let _usageCollector: UsageCollector | null = null;
 /**
  * Initialize (or return the existing) singleton UsageCollector.
  * Must be called after initPayloadEncryption() and after DatabaseFactory
- * is set up, because it creates its own DatabaseOperations + AsyncDbWriter.
+ * is set up, because it creates its own DatabaseOperations + AsyncDbWriter
+ * (unless a shared instance is passed via `sharedDbOps`).
+ *
+ * Awaits schema setup/migrations (initializeAsync is idempotent — safe to
+ * call on an already-initialized shared instance) before returning, so no
+ * caller can enqueue a write against a PostgreSQL database that hasn't been
+ * migrated yet.
  *
  * The `onSummary` callback is called once per completed request and should
  * emit requestEvents + drive cacheBodyStore.
  */
-export function initUsageCollector(
+export async function initUsageCollector(
 	getStorePayloads: () => boolean,
 	onSummary: (summary: RequestResponse) => void,
-): UsageCollector {
+	sharedDbOps?: DatabaseOperations,
+): Promise<UsageCollector> {
 	if (_usageCollector) return _usageCollector;
 
-	const dbOps = new DatabaseOperations();
-	dbOps.initializeAsync().catch((err: unknown) => {
-		log.error("Failed to initialize database async connection:", err);
-	});
+	const dbOps = sharedDbOps ?? new DatabaseOperations();
+	await dbOps.initializeAsync();
 	const asyncWriter = new AsyncDbWriter();
 
 	_usageCollector = new UsageCollector(
