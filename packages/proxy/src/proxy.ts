@@ -234,6 +234,7 @@ export async function handleProxy(
 	const requestMeta = createRequestMetadata(req, url);
 	requestMeta.agentUsed = agentUsed;
 	requestMeta.project = project;
+	requestMeta.clientSessionId = requestBodyContext.getClientId();
 
 	// 6. Select accounts
 	const selectedAccounts = await selectAccountsForRequest(

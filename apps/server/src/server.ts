@@ -24,6 +24,7 @@ import {
 import { AlertService, APIRouter, AuthService } from "@better-ccflare/http-api";
 import {
 	LeastUsedStrategy,
+	SessionAffinityStrategy,
 	SessionStrategy,
 } from "@better-ccflare/load-balancer";
 import { Logger } from "@better-ccflare/logger";
@@ -77,6 +78,8 @@ function buildStrategy(
 	switch (name) {
 		case StrategyName.LeastUsed:
 			return new LeastUsedStrategy();
+		case StrategyName.SessionAffinity:
+			return new SessionAffinityStrategy(sessionDurationMs);
 		default:
 			return new SessionStrategy(sessionDurationMs);
 	}

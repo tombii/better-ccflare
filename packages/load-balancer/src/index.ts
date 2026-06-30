@@ -1,1 +1,5 @@
-export { LeastUsedStrategy, SessionStrategy } from "./strategies";
+export {
+	LeastUsedStrategy,
+	SessionAffinityStrategy,
+	SessionStrategy,
+} from "./strategies";

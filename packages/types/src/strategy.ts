@@ -3,6 +3,7 @@ import type { Account } from "./account";
 export enum StrategyName {
 	Session = "session",
 	LeastUsed = "least-used",
+	SessionAffinity = "session-affinity",
 }
 
 /**

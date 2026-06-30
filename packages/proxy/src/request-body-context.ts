@@ -71,6 +71,17 @@ export class RequestBodyContext {
 		}
 	}
 
+	/** Best-effort client/session id from metadata.user_id. Telemetry/routing only. */
+	getClientId(): string | null {
+		const body = this.getParsedJson();
+		const meta = body?.metadata;
+		if (meta && typeof meta === "object") {
+			const uid = (meta as Record<string, unknown>).user_id;
+			if (typeof uid === "string" && uid.length > 0) return uid;
+		}
+		return null;
+	}
+
 	getModel(): string | null {
 		const body = this.getParsedJson();
 		const model = body?.model;
