@@ -147,6 +147,30 @@ export class BunSqlAdapter {
 	}
 
 	/**
+	 * Retry once on ERR_POSTGRES_UNSUPPORTED_INTEGER_SIZE — a known Bun native
+	 * PG driver bug (oven-sh/bun#16774) where concurrent queries sharing a
+	 * pooled connection can misattribute a cached statement's column
+	 * metadata, corrupting binary integer decoding (#284). The error is a
+	 * transient decode race, not a data problem, so re-running the query on a
+	 * fresh pool connection self-heals it. The callback re-issues the query
+	 * (rather than re-awaiting the original promise) since the corruption
+	 * happens during the original send/receive cycle and can't be recovered
+	 * from after the fact. Only used for read paths (query/get) — DML never
+	 * decodes column data here (no RETURNING clauses), so it isn't at risk.
+	 */
+	private async withPgIntegerSizeRetry<T>(run: () => Promise<T>): Promise<T> {
+		try {
+			return await run();
+		} catch (err) {
+			const code = (err as { code?: string } | undefined)?.code;
+			if (code !== "ERR_POSTGRES_UNSUPPORTED_INTEGER_SIZE") {
+				throw err;
+			}
+			return run();
+		}
+	}
+
+	/**
 	 * Retry a synchronous SQLite call asynchronously when the database is
 	 * locked by another connection (SQLITE_BUSY / errno 5).
 	 *
@@ -190,11 +214,13 @@ export class BunSqlAdapter {
 		}
 		// PostgreSQL via Bun.SQL unsafe
 		const pgQuery = this.pgSql(sqlStr);
-		// biome-ignore lint/suspicious/noExplicitAny: Bun.SQL accepts various binding types
-		const result = await this.withPgTimeout(
-			this.sql?.unsafe(pgQuery, params as any[]) as Promise<unknown>,
-			PG_CLIENT_QUERY_TIMEOUT_MS,
-			sqlStr,
+		const result = await this.withPgIntegerSizeRetry(() =>
+			this.withPgTimeout(
+				// biome-ignore lint/suspicious/noExplicitAny: Bun.SQL accepts various binding types
+				this.sql?.unsafe(pgQuery, params as any[]) as Promise<unknown>,
+				PG_CLIENT_QUERY_TIMEOUT_MS,
+				sqlStr,
+			),
 		);
 		return result as unknown as R[];
 	}
@@ -212,11 +238,13 @@ export class BunSqlAdapter {
 			return (result as R) ?? null;
 		}
 		const pgQuery = this.pgSql(sqlStr);
-		// biome-ignore lint/suspicious/noExplicitAny: Bun.SQL accepts various binding types
-		const rows = await this.withPgTimeout(
-			this.sql?.unsafe(pgQuery, params as any[]) as Promise<unknown>,
-			PG_CLIENT_QUERY_TIMEOUT_MS,
-			sqlStr,
+		const rows = await this.withPgIntegerSizeRetry(() =>
+			this.withPgTimeout(
+				// biome-ignore lint/suspicious/noExplicitAny: Bun.SQL accepts various binding types
+				this.sql?.unsafe(pgQuery, params as any[]) as Promise<unknown>,
+				PG_CLIENT_QUERY_TIMEOUT_MS,
+				sqlStr,
+			),
 		);
 		return ((rows as unknown as R[])[0] ?? null) as R | null;
 	}

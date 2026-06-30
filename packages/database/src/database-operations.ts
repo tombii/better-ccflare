@@ -302,10 +302,18 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 				requestedPgStatementTimeout <= maxPgStatementTimeout
 					? requestedPgStatementTimeout
 					: maxPgStatementTimeout;
+			// Named prepared statements are disabled by default: Bun's native PG
+			// driver has a known class of bugs (oven-sh/bun#16774) where concurrent
+			// queries sharing a pooled connection can misattribute a cached
+			// statement's column metadata, corrupting binary integer decoding
+			// (ERR_POSTGRES_UNSUPPORTED_INTEGER_SIZE — #284). Unnamed prepared
+			// statements close this window since they don't persist across queries.
+			const pgPrepare = process.env.BETTER_CCFLARE_DB_PG_PREPARE !== "true";
 			const sqlClient = new SQL({
 				url: databaseUrl,
 				max: pgMax,
 				idleTimeout: pgIdleTimeout,
+				prepare: pgPrepare,
 				connection: {
 					// Server-side timeout so PG cancels the query and frees the
 					// connection instead of leaving it occupied after the client
