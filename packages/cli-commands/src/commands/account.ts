@@ -778,7 +778,6 @@ async function createXaiAccount(
 			? modelMappings
 			: XAI_MODEL_MAPPINGS,
 	);
-	const parsedExpiresAt = Date.parse(auth.expires_at ?? "");
 	const expiresAt = resolveGrokAuthExpiresAt(auth.expires_at, now);
 
 	await dbOps.getAdapter().run(
@@ -810,7 +809,7 @@ async function createXaiAccount(
 	console.log(
 		"Note: xAI refresh tokens may rotate. If you keep using Grok CLI separately, re-authenticate or refresh Grok CLI after importing so each tool has a fresh token chain.",
 	);
-	if (Number.isFinite(parsedExpiresAt)) {
+	if (Number.isFinite(Date.parse(auth.expires_at ?? ""))) {
 		console.log(`Token expires: ${new Date(expiresAt).toISOString()}`);
 	}
 	if (mappings) {
