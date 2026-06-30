@@ -43,10 +43,6 @@ export class AsyncDbWriter implements Disposable {
 	private runningPromise: Promise<void> | null = null;
 	private intervalId: Timer | null = null;
 	private healthInterval: Timer | null = null;
-	// Jobs whose Promise.race was won by the hard-abort timer. The underlying
-	// job.run() may still be in-flight (Promises can't be cancelled). We track
-	// them so dispose() can wait for them before returning.
-	private abandonedJobs: Set<Promise<unknown>> = new Set();
 
 	private readonly METADATA_QUEUE_CAP = 2000;
 	private readonly PAYLOAD_QUEUE_HARD_CAP = 1000;
@@ -173,6 +169,18 @@ export class AsyncDbWriter implements Disposable {
 		return true;
 	}
 
+	/**
+	 * Run a single job to completion, logging if it runs long.
+	 *
+	 * There is deliberately no hard-abort/cancel here. Every job's `run()`
+	 * bottoms out in a `BunSqlAdapter` call, which already enforces an 8s
+	 * timeout on the PostgreSQL path (client-side race + server-side
+	 * `statement_timeout`, see bun-sql-adapter.ts / database-operations.ts) and
+	 * is synchronous for SQLite. A job therefore cannot hang the queue past
+	 * that bound. Layering a second abort here would just orphan the original
+	 * promise — `await`able JS Promises can't actually be cancelled — without
+	 * shortening the real wait, which is the bug this used to have.
+	 */
 	private async runJobWithWatchdog(
 		job: MetadataJob | PayloadJob,
 		kind: "metadata" | "payload",
@@ -180,69 +188,21 @@ export class AsyncDbWriter implements Disposable {
 		const t0 = performance.now();
 		const rid = job.requestId ?? "n/a";
 
-		let hardReject!: (e: Error) => void;
-		const abortPromise = new Promise<never>((_, reject) => {
-			hardReject = reject;
-		});
-
 		const warnTimer = setTimeout(() => {
 			logger.warn(
 				`DB job stuck: kind=${kind} requestId=${rid} elapsed_ms=${Math.round(performance.now() - t0)}`,
 			);
 		}, 5000);
 
-		const abortTimer = setTimeout(() => {
-			hardReject(
-				new Error(
-					`DB job hard-aborted after 30s: kind=${kind} requestId=${rid}`,
-				),
-			);
-		}, 30000);
-
-		// Eagerly resolve the job into a named promise so we can track it if the
-		// abort timer fires first (the job may still be in-flight — Promises
-		// cannot be cancelled, but we can wait for it in dispose()).
-		const jobPromise = Promise.resolve(job.run());
-
-		// decrementBytes ensures payloadBytesPending is adjusted exactly once,
-		// whether the job completes normally or is abandoned after a hard-abort.
-		const decrementBytes = (() => {
-			let done = false;
-			return () => {
-				if (done) return;
-				done = true;
-				if (kind === "payload") {
-					this.payloadBytesPending -= (job as PayloadJob).bytes;
-				}
-			};
-		})();
-
 		try {
-			await Promise.race([jobPromise, abortPromise]);
+			await job.run();
 		} catch (err) {
-			const isHardAbort =
-				err instanceof Error && err.message.startsWith("DB job hard-aborted");
-
-			if (isHardAbort) {
-				// The queue can advance, but the underlying job.run() is still
-				// in-flight. Track it so dispose() waits before shutting down.
-				const tracked = jobPromise
-					.catch(() => {})
-					.finally(() => {
-						decrementBytes();
-						this.abandonedJobs.delete(tracked);
-					});
-				this.abandonedJobs.add(tracked);
-			}
-
 			logger.error(`DB job failed: kind=${kind} requestId=${rid}`, err);
 		} finally {
 			clearTimeout(warnTimer);
-			clearTimeout(abortTimer);
-			// Decrement bytes for the normal (non-aborted) path. The once-guard
-			// inside decrementBytes prevents a double-decrement if the abandoned
-			// job's finally also calls it.
-			decrementBytes();
+			if (kind === "payload") {
+				this.payloadBytesPending -= (job as PayloadJob).bytes;
+			}
 			const dur = performance.now() - t0;
 			if (dur > 1000) {
 				logger.warn(
@@ -380,29 +340,6 @@ export class AsyncDbWriter implements Disposable {
 			this.runningPromise
 		) {
 			await this.processQueue();
-		}
-
-		// Wait for any jobs that were hard-aborted from the queue but whose
-		// underlying job.run() promise is still in-flight. Without this, dispose()
-		// could return while an abandoned write is still using the database.
-		// Bounded by its own timeout — these jobs already exceeded the 30s
-		// hard-abort and may never settle (e.g. a connection stuck below the PG
-		// statement_timeout), so an unbounded wait here would just relocate the
-		// hang from runJobWithWatchdog into dispose() and stall process shutdown.
-		if (this.abandonedJobs.size > 0) {
-			const pending = this.abandonedJobs.size;
-			logger.info(`Waiting for ${pending} abandoned job(s) to settle...`);
-			const settled = await Promise.race([
-				Promise.allSettled([...this.abandonedJobs]).then(() => true),
-				new Promise<false>((resolve) =>
-					setTimeout(() => resolve(false), 10_000),
-				),
-			]);
-			if (!settled) {
-				logger.warn(
-					`Giving up waiting on ${this.abandonedJobs.size} abandoned job(s) after 10s; shutdown proceeding without them`,
-				);
-			}
 		}
 
 		logger.info("Async DB writer queue flushed", {

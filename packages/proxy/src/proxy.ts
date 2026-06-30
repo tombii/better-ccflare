@@ -103,8 +103,10 @@ function extractProjectFromRequest(
 
 // ===== USAGE COLLECTOR MANAGEMENT =====
 
-export function initProxy(getStorePayloads: () => boolean): void {
-	initUsageCollector(
+export async function initProxy(
+	getStorePayloads: () => boolean,
+): Promise<void> {
+	await initUsageCollector(
 		getStorePayloads,
 		(summary) => {
 			requestEvents.emit("event", { type: "summary", payload: summary });
