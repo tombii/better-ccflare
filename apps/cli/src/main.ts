@@ -932,6 +932,7 @@ Examples:
 				"opus-4.1": CLAUDE_MODEL_IDS.OPUS_4_1,
 				"sonnet-4.5": CLAUDE_MODEL_IDS.SONNET_4_5,
 				"sonnet-4.6": CLAUDE_MODEL_IDS.SONNET_4_6,
+				"sonnet-5": CLAUDE_MODEL_IDS.SONNET_5,
 			};
 
 			const fullModel = modelMap[parsed.setModel];

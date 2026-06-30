@@ -82,7 +82,7 @@ function analyzeQueryPerformance(db: Database) {
 				WHERE row_num = CAST(CEIL(total_count * 0.95) AS INTEGER)
 				LIMIT 1
 			`,
-			params: [CLAUDE_MODEL_IDS.SONNET_4_6],
+			params: [CLAUDE_MODEL_IDS.SONNET_5],
 		},
 	];
 

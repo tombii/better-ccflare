@@ -1,4 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import {
+	LATEST_HAIKU_MODEL,
+	LATEST_OPUS_MODEL,
+	LATEST_SONNET_MODEL,
+} from "@better-ccflare/core";
 import { translateRequestToAnthropic } from "../request-translator";
 import type { ResponsesRequest } from "../types";
 
@@ -497,7 +502,7 @@ describe("translateRequestToAnthropic", () => {
 	test("gpt-5 model mapping — *-pro maps to opus family alias", () => {
 		for (const model of ["gpt-5.5-pro", "gpt-5.4-pro", "GPT-5.5-PRO"]) {
 			expect(translateRequestToAnthropic({ model, input: [] }).model).toBe(
-				"claude-opus-4-5",
+				LATEST_OPUS_MODEL,
 			);
 		}
 	});
@@ -505,7 +510,7 @@ describe("translateRequestToAnthropic", () => {
 	test("gpt-5 model mapping — *-mini and *-nano map to haiku family alias", () => {
 		for (const model of ["gpt-5.4-mini", "gpt-5.4-nano", "GPT-5.4-MINI"]) {
 			expect(translateRequestToAnthropic({ model, input: [] }).model).toBe(
-				"claude-haiku-4-5",
+				LATEST_HAIKU_MODEL,
 			);
 		}
 	});
@@ -520,7 +525,7 @@ describe("translateRequestToAnthropic", () => {
 			"gpt-4o",
 		]) {
 			expect(translateRequestToAnthropic({ model, input: [] }).model).toBe(
-				"claude-sonnet-4-6",
+				LATEST_SONNET_MODEL,
 			);
 		}
 	});

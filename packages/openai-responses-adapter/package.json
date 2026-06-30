@@ -10,6 +10,7 @@
 		"typecheck": "bunx tsc --noEmit"
 	},
 	"dependencies": {
+		"@better-ccflare/core": "workspace:*",
 		"@better-ccflare/logger": "workspace:*",
 		"@better-ccflare/types": "workspace:*"
 	}
