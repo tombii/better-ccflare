@@ -55,7 +55,9 @@ class MockStore implements StrategyStore {
 	resumeAccount(accountId: string): void {
 		this.resumeCalls.push(accountId);
 	}
-	getAccountUtilization(accountId: string): number | null {
+	// Mirror the StrategyStore signature exactly (accountId, provider) so the
+	// mock can't silently diverge from the contract — provider is unused here.
+	getAccountUtilization(accountId: string, _provider?: string): number | null {
 		return this.utilization.has(accountId)
 			? (this.utilization.get(accountId) ?? null)
 			: null;
@@ -185,6 +187,49 @@ describe("SessionAffinityStrategy", () => {
 			makeAccount({ id: "rl1", rate_limited_until: Date.now() + 60_000 }),
 		];
 		expect(strategy.select(accounts, metaFor("client-1"))).toEqual([]);
+	});
+
+	it("spreads concurrent failovers across backups instead of piling onto one", () => {
+		// Pin two clients to the SAME account x (it's the only account at
+		// assignment time), then bring x down with two equal healthy backups.
+		const x = makeAccount({ id: "x" });
+		strategy.select([x], metaFor("c1"));
+		strategy.select([x], metaFor("c2"));
+
+		const xDown = makeAccount({
+			id: "x",
+			rate_limited_until: Date.now() + 60_000,
+		});
+		const y = makeAccount({ id: "y" });
+		const z = makeAccount({ id: "z" });
+		store.setUtil("y", 0);
+		store.setUtil("z", 0);
+
+		const f1 = strategy.select([xDown, y, z], metaFor("c1"))[0].id;
+		const f2 = strategy.select([xDown, y, z], metaFor("c2"))[0].id;
+
+		// Both fail off the down account, and onto DIFFERENT backups — the
+		// failover path now marks lastPickedAt, so the second failover is steered
+		// off the first's pick. Pre-fix both converged on the same backup.
+		expect(f1).not.toBe("x");
+		expect(f2).not.toBe("x");
+		expect(f1).not.toBe(f2);
+		expect(new Set([f1, f2])).toEqual(new Set(["y", "z"]));
+	});
+
+	it("caps the affinity map under a flood of unique client ids", () => {
+		const cap = 5;
+		const capped = new SessionAffinityStrategy(60_000, cap);
+		capped.initialize(store);
+		const x = makeAccount({ id: "x" });
+
+		// Far more distinct client ids than the cap (simulates adversarial /
+		// buggy callers sending many metadata.user_id values).
+		for (let i = 0; i < cap * 4; i++) {
+			capped.select([x], metaFor(`client-${i}`));
+		}
+
+		expect(capped.affinityEntries).toBe(cap);
 	});
 
 	describe("peek", () => {

@@ -25,6 +25,17 @@ const RECENT_PICK_WINDOW_MS = 500;
 const RECENT_PICK_PENALTY = 100;
 
 /**
+ * Upper bound on live client→account affinity entries. `clientId` comes from
+ * the request body (`metadata.user_id`), so an adversarial or buggy caller can
+ * send a stream of distinct ids; the TTL-based GC only evicts *expired* entries
+ * and gives no bound within the TTL window. When the map is full we evict the
+ * least-recently-touched entry so memory stays bounded regardless of input.
+ * Legitimate concurrent client-sessions are in the hundreds at most, far below
+ * this; the cap only ever bites pathological input.
+ */
+const MAX_AFFINITY_ENTRIES = 10_000;
+
+/**
  * SessionAffinityStrategy — a hybrid of SessionStrategy and LeastUsedStrategy.
  *
  * Routing is keyed on the *client* session id (request body
@@ -60,6 +71,7 @@ const RECENT_PICK_PENALTY = 100;
  */
 export class SessionAffinityStrategy implements LoadBalancingStrategy {
 	private affinityTtlMs: number;
+	private maxAffinityEntries: number;
 	private store: StrategyStore | null = null;
 	private log = new Logger("SessionAffinityStrategy");
 	/** clientId → which account it is stuck to (and when it was last touched). */
@@ -72,8 +84,15 @@ export class SessionAffinityStrategy implements LoadBalancingStrategy {
 
 	constructor(
 		affinityTtlMs: number = TIME_CONSTANTS.ANTHROPIC_SESSION_DURATION_DEFAULT,
+		maxAffinityEntries: number = MAX_AFFINITY_ENTRIES,
 	) {
 		this.affinityTtlMs = affinityTtlMs;
+		this.maxAffinityEntries = maxAffinityEntries;
+	}
+
+	/** Live sticky-mapping count — read-only, for tests and ops metrics. */
+	get affinityEntries(): number {
+		return this.affinity.size;
 	}
 
 	initialize(store: StrategyStore): void {
@@ -103,6 +122,50 @@ export class SessionAffinityStrategy implements LoadBalancingStrategy {
 				return a.score - b.score;
 			})
 			.map((s) => s.account);
+	}
+
+	/**
+	 * Rank available accounts least-used AND mark the chosen primary as
+	 * recently-picked, so concurrent picks within RECENT_PICK_WINDOW_MS spread
+	 * across the pool instead of converging on one account.
+	 *
+	 * Used by BOTH the new-session assignment and the failover path. The
+	 * failover path MUST mark too: when many clients are pinned to a single
+	 * downed account and fail over together, without the mark each one
+	 * independently recomputes the same least-used backup and piles onto it —
+	 * overloading the next account during exactly the partial-outage scenario
+	 * where spreading matters most.
+	 */
+	private pickAndMark(available: Account[], now: number): Account[] {
+		const ranked = this.rankByLeastUsed(available, now);
+		const chosen = ranked[0];
+		if (chosen) {
+			this.lastPickedAt.set(chosen.id, now);
+			// Opportunistic GC of entries older than 10× the window.
+			const gcThreshold = now - RECENT_PICK_WINDOW_MS * 10;
+			for (const [id, ts] of this.lastPickedAt) {
+				if (ts < gcThreshold) this.lastPickedAt.delete(id);
+			}
+		}
+		return ranked;
+	}
+
+	/**
+	 * Bound the affinity map: when it is full, evict the least-recently-touched
+	 * entry (smallest assignedAt) before inserting a new one. O(n) only when at
+	 * capacity, which only happens under pathological unique-clientId input.
+	 */
+	private evictOldestIfFull(): void {
+		if (this.affinity.size < this.maxAffinityEntries) return;
+		let oldestKey: string | null = null;
+		let oldestAt = Number.POSITIVE_INFINITY;
+		for (const [key, entry] of this.affinity) {
+			if (entry.assignedAt < oldestAt) {
+				oldestAt = entry.assignedAt;
+				oldestKey = key;
+			}
+		}
+		if (oldestKey !== null) this.affinity.delete(oldestKey);
 	}
 
 	peek(accounts: Account[]): string | null {
@@ -162,25 +225,18 @@ export class SessionAffinityStrategy implements LoadBalancingStrategy {
 				this.log.info(
 					`Client ${clientId} pinned account ${mapping.accountId} is unavailable — temporary failover to least-used`,
 				);
-				return this.rankByLeastUsed(available, now);
+				return this.pickAndMark(available, now);
 			}
 		}
 
 		// New (or expired) client-session, or a request with no client id: assign
-		// the least-loaded available account and stick the client to it.
-		const ranked = this.rankByLeastUsed(available, now);
+		// the least-loaded available account (marking it picked for spread) and
+		// stick the client to it.
+		const ranked = this.pickAndMark(available, now);
 		const chosen = ranked[0];
 
-		// Mark chosen as recently picked so concurrently-starting NEW sessions
-		// within RECENT_PICK_WINDOW_MS prefer a different account (spread).
-		// Opportunistic GC of entries older than 10× the window.
-		this.lastPickedAt.set(chosen.id, now);
-		const gcThreshold = now - RECENT_PICK_WINDOW_MS * 10;
-		for (const [id, ts] of this.lastPickedAt) {
-			if (ts < gcThreshold) this.lastPickedAt.delete(id);
-		}
-
-		if (clientId !== null) {
+		if (clientId !== null && chosen) {
+			this.evictOldestIfFull();
 			this.affinity.set(clientId, { accountId: chosen.id, assignedAt: now });
 			this.log.debug(
 				`Assigned client ${clientId} → ${chosen.name} (least-used)`,
