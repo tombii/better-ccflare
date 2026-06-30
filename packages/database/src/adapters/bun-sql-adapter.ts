@@ -52,6 +52,16 @@ function convertPlaceholders(sql: string): string {
 }
 
 /**
+ * Client-side timeout (ms) for the PostgreSQL Promise.race guard in
+ * withPgTimeout(). The server-side `statement_timeout` (set in
+ * DatabaseOperations) must always be configured below this value so PG
+ * cancels the query and frees the connection before the client gives up —
+ * otherwise the client unblocks while the query (and its pool connection)
+ * is still running on the server.
+ */
+export const PG_CLIENT_QUERY_TIMEOUT_MS = 8000;
+
+/**
  * Unified SQL adapter that abstracts over bun:sqlite (sync) and Bun.SQL/PostgreSQL (async).
  *
  * For SQLite: wraps the existing bun:sqlite Database for synchronous operations.
@@ -183,7 +193,7 @@ export class BunSqlAdapter {
 		// biome-ignore lint/suspicious/noExplicitAny: Bun.SQL accepts various binding types
 		const result = await this.withPgTimeout(
 			this.sql?.unsafe(pgQuery, params as any[]) as Promise<unknown>,
-			8000,
+			PG_CLIENT_QUERY_TIMEOUT_MS,
 			sqlStr,
 		);
 		return result as unknown as R[];
@@ -205,7 +215,7 @@ export class BunSqlAdapter {
 		// biome-ignore lint/suspicious/noExplicitAny: Bun.SQL accepts various binding types
 		const rows = await this.withPgTimeout(
 			this.sql?.unsafe(pgQuery, params as any[]) as Promise<unknown>,
-			8000,
+			PG_CLIENT_QUERY_TIMEOUT_MS,
 			sqlStr,
 		);
 		return ((rows as unknown as R[])[0] ?? null) as R | null;
@@ -225,7 +235,7 @@ export class BunSqlAdapter {
 		// biome-ignore lint/suspicious/noExplicitAny: Bun.SQL accepts various binding types
 		await this.withPgTimeout(
 			this.sql?.unsafe(pgQuery, params as any[]) as Promise<unknown>,
-			8000,
+			PG_CLIENT_QUERY_TIMEOUT_MS,
 			sqlStr,
 		);
 	}
@@ -249,7 +259,7 @@ export class BunSqlAdapter {
 		// biome-ignore lint/suspicious/noExplicitAny: Bun.SQL accepts various binding types
 		const result = await this.withPgTimeout(
 			this.sql?.unsafe(pgQuery, params as any[]) as Promise<unknown>,
-			8000,
+			PG_CLIENT_QUERY_TIMEOUT_MS,
 			sqlStr,
 		);
 		// Bun.SQL returns an array-like with a `count` property for DML statements
@@ -303,7 +313,7 @@ export class BunSqlAdapter {
 		// biome-ignore lint/suspicious/noExplicitAny: Bun.SQL accepts various binding types
 		return this.withPgTimeout(
 			this.sql?.unsafe(pgQuery, params as any[]) as Promise<unknown>,
-			8000,
+			PG_CLIENT_QUERY_TIMEOUT_MS,
 			sqlStr,
 		);
 	}

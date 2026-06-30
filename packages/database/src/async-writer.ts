@@ -172,14 +172,21 @@ export class AsyncDbWriter implements Disposable {
 	/**
 	 * Run a single job to completion, logging if it runs long.
 	 *
-	 * There is deliberately no hard-abort/cancel here. Every job's `run()`
-	 * bottoms out in a `BunSqlAdapter` call, which already enforces an 8s
-	 * timeout on the PostgreSQL path (client-side race + server-side
-	 * `statement_timeout`, see bun-sql-adapter.ts / database-operations.ts) and
-	 * is synchronous for SQLite. A job therefore cannot hang the queue past
-	 * that bound. Layering a second abort here would just orphan the original
-	 * promise — `await`able JS Promises can't actually be cancelled — without
-	 * shortening the real wait, which is the bug this used to have.
+	 * There is deliberately no hard-abort/cancel here. On the PostgreSQL path
+	 * every job's `run()` bottoms out in a `BunSqlAdapter` call, which already
+	 * enforces a client+server-side timeout (see bun-sql-adapter.ts /
+	 * database-operations.ts), so a job cannot hang the queue indefinitely
+	 * there. The SQLite path is not bounded the same way — `withBusyRetry` in
+	 * BunSqlAdapter can legitimately retry SQLITE_BUSY for up to 10 minutes
+	 * while a separate Worker holds an exclusive lock (e.g. VACUUM) — so a
+	 * SQLite job can still stall the writer queue for that long. That is an
+	 * accepted, pre-existing tradeoff: the process-level shutdown watchdog in
+	 * server.ts force-exits 30s after a SIGTERM/SIGINT regardless of what
+	 * dispose() is still waiting on, so a wedged SQLite job bounds shutdown
+	 * lateness to that watchdog rather than hanging forever. Layering a second
+	 * abort here would just orphan the original promise — `await`able JS
+	 * Promises can't actually be cancelled — without shortening the real
+	 * wait, which is the bug this used to have.
 	 */
 	private async runJobWithWatchdog(
 		job: MetadataJob | PayloadJob,

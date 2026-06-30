@@ -16,7 +16,10 @@ import type {
 	RateLimitReason,
 	StrategyStore,
 } from "@better-ccflare/types";
-import { BunSqlAdapter } from "./adapters/bun-sql-adapter";
+import {
+	BunSqlAdapter,
+	PG_CLIENT_QUERY_TIMEOUT_MS,
+} from "./adapters/bun-sql-adapter";
 import { EMBEDDED_INCREMENTAL_VACUUM_WORKER_CODE } from "./inline-incremental-vacuum-worker";
 import { EMBEDDED_VACUUM_WORKER_CODE } from "./inline-vacuum-worker";
 import { ensureSchema, runMigrations } from "./migrations";
@@ -283,9 +286,22 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 			const pgIdleTimeout = Number(
 				process.env.BETTER_CCFLARE_DB_IDLE_TIMEOUT ?? 0,
 			);
-			const pgStatementTimeout = Number(
-				process.env.BETTER_CCFLARE_DB_STATEMENT_TIMEOUT ?? 8000,
+			// Server-side timeout must stay below the adapter's client-side race
+			// (PG_CLIENT_QUERY_TIMEOUT_MS) so PG cancels the statement — freeing
+			// its pool connection — before the client gives up. A non-numeric,
+			// zero/negative (PG treats 0 as "disabled"), or too-large override is
+			// silently clamped rather than trusted, since an unbounded value here
+			// reopens the exact connection-leak bug this timeout exists to close.
+			const requestedPgStatementTimeout = Number(
+				process.env.BETTER_CCFLARE_DB_STATEMENT_TIMEOUT,
 			);
+			const maxPgStatementTimeout = PG_CLIENT_QUERY_TIMEOUT_MS - 1000;
+			const pgStatementTimeout =
+				Number.isFinite(requestedPgStatementTimeout) &&
+				requestedPgStatementTimeout > 0 &&
+				requestedPgStatementTimeout <= maxPgStatementTimeout
+					? requestedPgStatementTimeout
+					: maxPgStatementTimeout;
 			const sqlClient = new SQL({
 				url: databaseUrl,
 				max: pgMax,
