@@ -308,7 +308,7 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 			// statement's column metadata, corrupting binary integer decoding
 			// (ERR_POSTGRES_UNSUPPORTED_INTEGER_SIZE — #284). Unnamed prepared
 			// statements close this window since they don't persist across queries.
-			const pgPrepare = process.env.BETTER_CCFLARE_DB_PG_PREPARE !== "true";
+			const pgPrepare = process.env.BETTER_CCFLARE_DB_PG_PREPARE === "true";
 			const sqlClient = new SQL({
 				url: databaseUrl,
 				max: pgMax,
