@@ -152,6 +152,15 @@ export DATABASE_URL=postgresql://ccflare_user:secret@localhost:5432/ccflare
 
 The schema and any missing columns are created automatically on startup. No manual migration steps are required. This backend is recommended for Kubernetes or other multi-pod deployments where multiple instances need to share the same database.
 
+**Connection tuning** (PostgreSQL only — see [database.md](database.md#postgresql-connection-tuning) for details):
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BETTER_CCFLARE_DB_POOL_MAX` | `10` | Maximum pooled connections |
+| `BETTER_CCFLARE_DB_IDLE_TIMEOUT` | `0` (disabled) | Seconds before an idle pooled connection is closed |
+| `BETTER_CCFLARE_DB_STATEMENT_TIMEOUT` | `7000` | Server-side statement timeout in milliseconds (clamped below the 8000ms client-side timeout) |
+| `BETTER_CCFLARE_DB_PG_PREPARE` | `false` | Set to `true` to re-enable named prepared statement caching |
+
 ```yaml
 # Kubernetes Secret example
 apiVersion: v1
