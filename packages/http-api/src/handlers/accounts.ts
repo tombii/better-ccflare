@@ -439,6 +439,25 @@ export function createAccountsListHandler(
 							);
 						}
 					}
+				} else if (account.provider === "xai" && usageData) {
+					// xAI/Grok usage data - Grok Build credits from gRPC-web billing probe
+					const isXaiData = "credits" in usageData;
+					if (isXaiData) {
+						try {
+							const {
+								getRepresentativeXaiUtilization,
+								getRepresentativeXaiWindow,
+							} = require("@better-ccflare/providers");
+							usageUtilization = getRepresentativeXaiUtilization(usageData);
+							usageWindow = getRepresentativeXaiWindow(usageData);
+							fullUsageData = usageData as FullUsageData;
+						} catch (error) {
+							log.warn(
+								`Failed to process xAI usage data for account ${account.name}:`,
+								error,
+							);
+						}
+					}
 				}
 
 				const usageThrottleSettings = {
@@ -3558,10 +3577,14 @@ export function createAccountRefreshUsageHandler(dbOps: DatabaseOperations) {
 				return errorResponse(NotFound("Account not found"));
 			}
 
-			if (account.provider !== "anthropic" && account.provider !== "codex") {
+			if (
+				account.provider !== "anthropic" &&
+				account.provider !== "codex" &&
+				account.provider !== "xai"
+			) {
 				return errorResponse(
 					BadRequest(
-						"Usage refresh is only available for Anthropic OAuth and Codex accounts",
+						"Usage refresh is only available for Anthropic OAuth, Codex, and xAI accounts",
 					),
 				);
 			}

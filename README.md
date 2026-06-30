@@ -13,7 +13,7 @@ https://github.com/user-attachments/assets/c859872f-ca5e-4f8b-b6a0-7cc7461fe62a
 ## Why better-ccflare?
 
 - **🚀 Zero Rate Limit Errors** - Automatically distribute requests across multiple accounts
-- **🤖 Multi-Provider Support** - Claude OAuth, Claude API console, Vertex AI, AWS Bedrock, NanoGPT, z.ai, Minimax, OpenRouter, Kilo, Codex (OpenAI OAuth), Anthropic-compatible, and OpenAI-compatible providers
+- **🤖 Multi-Provider Support** - Claude OAuth, Claude API console, Vertex AI, AWS Bedrock, NanoGPT, z.ai, Minimax, OpenRouter, Kilo, Codex (OpenAI OAuth), xAI/Grok, Anthropic-compatible, and OpenAI-compatible providers
 - **🔒 OAuth Token Health** - Real-time monitoring of OAuth token status with automatic refresh and health indicators
 - **🔗 Custom API Endpoints** - Configure custom endpoints for Anthropic accounts for enterprise deployments
 - **☁️ OpenAI-Compatible Support** - Use OpenAI-compatible providers like OpenRouter, Together AI, and more with Claude API format
@@ -34,7 +34,7 @@ This project builds upon the excellent foundation of [snipeship/ccflare](https:/
 **🎯 Core Improvements (v3.0.0):**
 - **Enhanced Security** - Critical fixes for authentication bypass, command injection, and PKCE implementation
 - **OAuth Token Health Monitoring** - Real-time status indicators and automatic token refresh with 30-minute buffer
-- **Extended Provider Support** - AWS Bedrock, NanoGPT (with dynamic pricing), Minimax, OpenRouter, Kilo, Codex (OpenAI OAuth), Anthropic-compatible, and OpenAI-compatible providers
+- **Extended Provider Support** - AWS Bedrock, NanoGPT (with dynamic pricing), Minimax, OpenRouter, Kilo, Codex (OpenAI OAuth), xAI/Grok, Anthropic-compatible, and OpenAI-compatible providers
 - **Simplified Load Balancing** - Removed tier system for O(1) priority-based selection
 - **Real-time Analytics Dashboard** - Beautiful web UI with fixed request history (no disappearing requests)
 - **Package Distribution** - Available via npm and bun for easy installation
@@ -716,6 +716,7 @@ We recommend using one of the workarounds above until the npm bug is fixed.
 - **Vertex AI** - Google Cloud Vertex AI integration with service account authentication
 - **z.ai, Minimax** - API key based providers with pay-as-you-go model
 - **OpenRouter** - OpenRouter integration with native API support and model mapping
+- **xAI/Grok** - Native Grok CLI OAuth import/refresh with per-request token accounting and Grok Build credits usage polling via grok.com gRPC-web
 - **Kilo** - Kilo API integration with usage tracking
 - **Anthropic-Compatible** - Custom Anthropic-compatible providers with pay-as-you-go model
 - **Ollama** - Local Ollama instance (v0.14.0+) via native Anthropic-compatible API at `/v1/messages`, no API key required

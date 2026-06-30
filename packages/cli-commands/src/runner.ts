@@ -48,7 +48,7 @@ export async function runCli(argv: string[]): Promise<void> {
 				if (!name) {
 					console.error("Error: Account name is required");
 					console.log(
-						"Usage: ccflare-cli add <name> [--mode <claude-oauth|console|zai|minimax|anthropic-compatible|openai-compatible>] [--priority <number>] [--modelMappings <JSON>]",
+						"Usage: ccflare-cli add <name> [--mode <claude-oauth|console|codex|qwen|xai|zai|minimax|anthropic-compatible|openai-compatible|nanogpt|kilo|openrouter|ollama|ollama-cloud>] [--priority <number>] [--modelMappings <JSON>]",
 					);
 					process.exit(1);
 				}
@@ -57,10 +57,21 @@ export async function runCli(argv: string[]): Promise<void> {
 				let mode = values.mode as
 					| "claude-oauth"
 					| "console"
+					| "codex"
+					| "qwen"
+					| "xai"
 					| "zai"
 					| "minimax"
 					| "anthropic-compatible"
 					| "openai-compatible"
+					| "nanogpt"
+					| "vertex-ai"
+					| "bedrock"
+					| "kilo"
+					| "openrouter"
+					| "alibaba-coding-plan"
+					| "ollama"
+					| "ollama-cloud"
 					| "max"
 					| undefined;
 

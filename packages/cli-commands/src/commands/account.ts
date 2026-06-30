@@ -17,6 +17,8 @@ import {
 	generatePKCE,
 	getOAuthProvider,
 	type TokenRefreshResult as TokenResult,
+	XAI_DEFAULT_ENDPOINT,
+	XAI_MODEL_MAPPINGS,
 } from "@better-ccflare/providers";
 import {
 	initiateDeviceFlow as initiateQwenDeviceFlow,
@@ -48,6 +50,7 @@ export interface AddAccountOptionsWithAdapter {
 		| "alibaba-coding-plan"
 		| "codex"
 		| "qwen"
+		| "xai"
 		| "ollama"
 		| "ollama-cloud";
 	priority?: number;
@@ -80,6 +83,7 @@ export interface AccountListItemWithMode extends AccountListItem {
 		| "alibaba-coding-plan"
 		| "codex"
 		| "qwen"
+		| "xai"
 		| "ollama"
 		| "ollama-cloud";
 }
@@ -704,6 +708,119 @@ async function promptModelMappings(
 /**
  * Create an OpenAI-compatible account in the database
  */
+interface GrokAuthEntry {
+	key?: string;
+	refresh_token?: string;
+	expires_at?: string;
+	oidc_client_id?: string;
+	oidc_issuer?: string;
+	email?: string;
+}
+
+const XAI_IMPORTED_TOKEN_DEFAULT_TTL_MS = 6 * 60 * 60 * 1000;
+
+function resolveGrokAuthExpiresAt(
+	expiresAt: string | undefined,
+	fallbackFrom = Date.now(),
+): number {
+	const parsedExpiresAt = Date.parse(expiresAt ?? "");
+	return Number.isFinite(parsedExpiresAt)
+		? parsedExpiresAt
+		: fallbackFrom + XAI_IMPORTED_TOKEN_DEFAULT_TTL_MS;
+}
+
+function loadGrokAuthEntry(
+	authPath = process.env.BETTER_CCFLARE_GROK_AUTH_PATH ||
+		join(homedir(), ".grok", "auth.json"),
+): GrokAuthEntry | null {
+	try {
+		const raw = readFileSync(authPath, "utf8");
+		const parsed = JSON.parse(raw) as Record<string, GrokAuthEntry>;
+		const entries = Object.entries(parsed)
+			.filter(([, entry]) => entry?.key && entry?.refresh_token)
+			.sort(([, a], [, b]) => {
+				const aExpires = Date.parse(a.expires_at ?? "");
+				const bExpires = Date.parse(b.expires_at ?? "");
+				return (
+					(Number.isFinite(bExpires) ? bExpires : 0) -
+					(Number.isFinite(aExpires) ? aExpires : 0)
+				);
+			});
+		return entries[0]?.[1] ?? null;
+	} catch {
+		return null;
+	}
+}
+
+async function createXaiAccount(
+	dbOps: DatabaseOperations,
+	name: string,
+	priority: number,
+	customEndpoint?: string,
+	modelMappings?: ModelMapping | null,
+): Promise<void> {
+	const auth = loadGrokAuthEntry();
+	if (!auth?.key || !auth.refresh_token) {
+		throw new Error(
+			"No Grok CLI OAuth credentials found in ~/.grok/auth.json. Run `grok --oauth` first, then try adding the xAI account again.",
+		);
+	}
+
+	const accountId = crypto.randomUUID();
+	const now = Date.now();
+	const endpoint = validateEndpointUrl(
+		customEndpoint || XAI_DEFAULT_ENDPOINT,
+		"xAI endpoint",
+	);
+	const validatedPriority = validatePriority(priority, "priority");
+	const mappings = validateAndSanitizeModelMappings(
+		modelMappings && Object.keys(modelMappings).length > 0
+			? modelMappings
+			: XAI_MODEL_MAPPINGS,
+	);
+	const parsedExpiresAt = Date.parse(auth.expires_at ?? "");
+	const expiresAt = resolveGrokAuthExpiresAt(auth.expires_at, now);
+
+	await dbOps.getAdapter().run(
+		`INSERT INTO accounts (
+			id, name, provider, api_key, refresh_token, access_token,
+			expires_at, created_at, request_count, total_requests, priority, custom_endpoint, model_mappings, model_fallbacks
+		) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+		[
+			accountId,
+			name,
+			"xai",
+			auth.refresh_token,
+			auth.key,
+			expiresAt,
+			now,
+			0,
+			0,
+			validatedPriority,
+			endpoint,
+			mappings ? JSON.stringify(mappings) : null,
+		],
+	);
+
+	console.log(`\nAccount '${name}' added successfully!`);
+	console.log("Type: xAI / Grok (Grok CLI OAuth)");
+	console.log(`Endpoint: ${endpoint}`);
+	console.log(`Priority: ${validatedPriority}`);
+	console.log("Imported credentials from ~/.grok/auth.json (tokens hidden)");
+	console.log(
+		"Note: xAI refresh tokens may rotate. If you keep using Grok CLI separately, re-authenticate or refresh Grok CLI after importing so each tool has a fresh token chain.",
+	);
+	if (Number.isFinite(parsedExpiresAt)) {
+		console.log(`Token expires: ${new Date(expiresAt).toISOString()}`);
+	}
+	if (mappings) {
+		console.log("Model mappings:");
+		for (const [key, value] of Object.entries(mappings)) {
+			console.log(`  ${key} → ${value}`);
+		}
+	}
+}
+
 async function createOpenAIAccount(
 	dbOps: DatabaseOperations,
 	name: string,
@@ -1056,6 +1173,7 @@ export async function addAccount(
 			{ label: "Claude API account", value: "console" },
 			{ label: "Codex (OpenAI OAuth)", value: "codex" },
 			{ label: "Qwen (Alibaba Cloud OAuth)", value: "qwen" },
+			{ label: "xAI / Grok (Grok CLI OAuth)", value: "xai" },
 			{ label: "Vertex AI (Google Cloud)", value: "vertex-ai" },
 			{ label: "AWS Bedrock (AWS profile credentials)", value: "bedrock" },
 			{ label: "z.ai account (API key)", value: "zai" },
@@ -1457,6 +1575,31 @@ export async function addAccount(
 				: parseInt(String(priority), 10) || 0,
 			finalModelMappings,
 		);
+	} else if (mode === "xai") {
+		// Handle xAI/Grok accounts by importing local Grok CLI OAuth credentials.
+		const priority =
+			providedPriority ??
+			Number(
+				(await adapter.input(
+					"\nEnter priority (0 = highest, lower number = higher priority, default 0): ",
+				)) || 0,
+			);
+
+		const finalModelMappings = await promptModelMappings(
+			adapter,
+			modelMappings,
+			XAI_MODEL_MAPPINGS,
+		);
+
+		await createXaiAccount(
+			dbOps,
+			name,
+			typeof priority === "number"
+				? priority
+				: parseInt(String(priority), 10) || 0,
+			customEndpoint,
+			finalModelMappings,
+		);
 	} else if (mode === "anthropic-compatible") {
 		// Handle Anthropic-compatible accounts with API keys
 		const apiKey = await adapter.input(
@@ -1670,7 +1813,8 @@ export async function getAccountsList(
 					account.provider === "anthropic-compatible" ||
 					account.provider === "bedrock" ||
 					account.provider === "openrouter" ||
-					account.provider === "codex"
+					account.provider === "codex" ||
+					account.provider === "xai"
 				) {
 					return account.provider;
 				}
@@ -2070,6 +2214,53 @@ async function reauthenticateQwenAccount(
 }
 
 /**
+ * Re-authenticate an xAI account by re-importing local Grok CLI OAuth credentials.
+ */
+async function reauthenticateXaiAccount(
+	dbOps: DatabaseOperations,
+	account: { id: string; custom_endpoint: string | null },
+	name: string,
+): Promise<{ success: boolean; message: string }> {
+	const auth = loadGrokAuthEntry();
+	if (!auth?.key || !auth.refresh_token) {
+		return {
+			success: false,
+			message:
+				"No Grok CLI OAuth credentials found in ~/.grok/auth.json. Run `grok --oauth`, then try re-authenticating again.",
+		};
+	}
+
+	const expiresAt = resolveGrokAuthExpiresAt(auth.expires_at);
+	try {
+		await dbOps.getAdapter().run(
+			`UPDATE accounts SET
+				refresh_token = ?,
+				access_token = ?,
+				expires_at = ?,
+				custom_endpoint = COALESCE(custom_endpoint, ?)
+			WHERE id = ?`,
+			[
+				auth.refresh_token,
+				auth.key,
+				expiresAt,
+				account.custom_endpoint || XAI_DEFAULT_ENDPOINT,
+				account.id,
+			],
+		);
+	} catch (dbError) {
+		return {
+			success: false,
+			message: `Database error while updating xAI tokens: ${dbError instanceof Error ? dbError.message : String(dbError)}`,
+		};
+	}
+
+	return {
+		success: true,
+		message: `Account '${name}' re-authenticated successfully from local Grok CLI credentials. Tokens were updated without displaying secret values.`,
+	};
+}
+
+/**
  * Re-authenticate an account by name (preserves all metadata)
  * This performs soft re-authentication: only updates OAuth tokens, keeps all other data
  */
@@ -2100,16 +2291,24 @@ export async function reauthenticateAccount(
 	}
 
 	// Check if account supports OAuth re-authentication
-	if (account.provider !== "anthropic" && account.provider !== "qwen") {
+	if (
+		account.provider !== "anthropic" &&
+		account.provider !== "qwen" &&
+		account.provider !== "xai"
+	) {
 		return {
 			success: false,
-			message: `Account '${name}' (${account.provider}) does not support OAuth re-authentication. Only Anthropic and Qwen accounts can be re-authenticated.`,
+			message: `Account '${name}' (${account.provider}) does not support OAuth re-authentication. Only Anthropic, Qwen, and xAI accounts can be re-authenticated.`,
 		};
 	}
 
 	// Handle Qwen re-authentication via device code flow
 	if (account.provider === "qwen") {
 		return reauthenticateQwenAccount(dbOps, account, name);
+	}
+
+	if (account.provider === "xai") {
+		return reauthenticateXaiAccount(dbOps, account, name);
 	}
 
 	// Create OAuth flow instance

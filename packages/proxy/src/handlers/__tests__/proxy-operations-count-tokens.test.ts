@@ -1,6 +1,15 @@
-import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import {
+	afterEach,
+	beforeEach,
+	describe,
+	expect,
+	it,
+	mock,
+	spyOn,
+} from "bun:test";
 import { CodexProvider } from "@better-ccflare/providers";
 import type { Account, RequestMeta } from "@better-ccflare/types";
+import * as usageCollectorModule from "../../usage-collector";
 import { proxyWithAccount } from "../proxy-operations";
 import type { ProxyContext } from "../proxy-types";
 
@@ -176,15 +185,27 @@ describe("proxyWithAccount — Codex count_tokens", () => {
 		});
 		globalThis.fetch = fetchMock;
 
-		const bodyBuffer = new TextEncoder().encode(
-			JSON.stringify({
-				model: "claude-sonnet-4-5",
-				messages: [{ role: "user", content: "hello world" }],
-				max_tokens: 16,
-			}),
-		).buffer;
-		await expect(
-			proxyWithAccount(
+		const collector = {
+			handleStart: mock(() => {}),
+			handleChunk: mock(() => {}),
+			handleEnd: mock(() => Promise.resolve()),
+		};
+		const collectorSpy = spyOn(
+			usageCollectorModule,
+			"getUsageCollector",
+		).mockReturnValue(
+			collector as unknown as usageCollectorModule.UsageCollector,
+		);
+
+		try {
+			const bodyBuffer = new TextEncoder().encode(
+				JSON.stringify({
+					model: "claude-sonnet-4-5",
+					messages: [{ role: "user", content: "hello world" }],
+					max_tokens: 16,
+				}),
+			).buffer;
+			const result = await proxyWithAccount(
 				makeMessagesRequest(bodyBuffer, {
 					"Content-Type": "application/json",
 					"x-better-ccflare-synthetic-response": "true",
@@ -200,8 +221,14 @@ describe("proxyWithAccount — Codex count_tokens", () => {
 				() => undefined,
 				0,
 				makeProxyContext(),
-			),
-		).rejects.toThrow("UsageCollector not initialized");
+			);
+
+			expect(result).toBeInstanceOf(Response);
+			expect(result?.status).toBe(200);
+			await result?.text();
+		} finally {
+			collectorSpy.mockRestore();
+		}
 
 		expect(fetchMock).toHaveBeenCalledTimes(1);
 		expect(

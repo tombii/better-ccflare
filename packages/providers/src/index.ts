@@ -30,6 +30,8 @@ export {
 export * from "./types";
 // Export usage fetcher
 export * from "./usage-fetcher";
+// Export xAI usage fetcher
+export * from "./xai-usage-fetcher";
 // Export Zai usage fetcher
 export * from "./zai-usage-fetcher";
 
@@ -47,6 +49,7 @@ import { OpenAICompatibleProvider } from "./providers/openai/provider";
 import { OpenRouterProvider } from "./providers/openrouter/provider";
 import { QwenProvider } from "./providers/qwen/provider";
 import { VertexAIProvider } from "./providers/vertex-ai/provider";
+import { XaiProvider } from "./providers/xai/provider";
 import { ZaiProvider } from "./providers/zai/provider";
 // Auto-register built-in providers
 import { registry } from "./registry";
@@ -62,6 +65,7 @@ registry.registerProvider(new MinimaxProvider());
 registry.registerProvider(new NanoGPTProvider());
 registry.registerProvider(new ZaiProvider());
 registry.registerProvider(new VertexAIProvider());
+registry.registerProvider(new XaiProvider());
 registry.registerProvider(new OpenAICompatibleProvider());
 registry.registerProvider(new OllamaProvider());
 registry.registerProvider(new OllamaCloudProvider());

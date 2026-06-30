@@ -34,6 +34,7 @@ export const ACCOUNT_MODES = {
 	ANTHROPIC_COMPATIBLE: "anthropic-compatible", // Anthropic-compatible provider (API key)
 	OPENAI_COMPATIBLE: "openai-compatible", // OpenAI-compatible provider (API key)
 	NANOGPT: "nanogpt", // NanoGPT provider (API key)
+	XAI: "xai", // xAI/Grok account (Grok CLI OAuth)
 	OLLAMA: "ollama", // Ollama local provider (v0.14.0+, no API key required)
 } as const;
 
@@ -46,8 +47,7 @@ export function usesApiKey(provider: string): boolean {
 	if (!isKnownProvider(provider)) {
 		return false; // Unknown providers don't use API key authentication by default
 	}
-	// API key providers are all providers except Anthropic OAuth
-	return provider !== PROVIDER_NAMES.ANTHROPIC;
+	return !supportsOAuth(provider);
 }
 
 /**
@@ -69,6 +69,8 @@ export function getProviderFromMode(mode: AccountMode): ProviderName {
 			return PROVIDER_NAMES.OPENAI_COMPATIBLE;
 		case ACCOUNT_MODES.NANOGPT:
 			return PROVIDER_NAMES.NANOGPT;
+		case ACCOUNT_MODES.XAI:
+			return PROVIDER_NAMES.XAI;
 		case ACCOUNT_MODES.OLLAMA:
 			return PROVIDER_NAMES.OLLAMA;
 		default:

@@ -1,6 +1,7 @@
 import { describe, expect, it, mock } from "bun:test";
 import type { UsageData } from "../usage-fetcher";
 import { extractWindowResetTime, usageCache } from "../usage-fetcher";
+import type { XaiUsageData } from "../xai-usage-fetcher";
 import type { ZaiUsageData } from "../zai-usage-fetcher";
 
 // ── extractWindowResetTime ────────────────────────────────────────────────────
@@ -42,6 +43,16 @@ describe("extractWindowResetTime", () => {
 			seven_day: { utilization: 10, resets_at: null },
 		};
 		expect(extractWindowResetTime(data, "anthropic")).toBeNull();
+	});
+
+	it("returns parsed credits reset for xai provider", () => {
+		const resetIso = "2030-02-01T00:00:00.000Z";
+		const data: XaiUsageData = {
+			credits: { utilization: 11, resets_at: resetIso },
+		};
+		expect(extractWindowResetTime(data, "xai")).toBe(
+			new Date(resetIso).getTime(),
+		);
 	});
 
 	it("returns null for unknown/unsupported provider", () => {

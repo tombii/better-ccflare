@@ -120,7 +120,7 @@ Add a new OAuth account to the load balancer pool.
 
 **Syntax:**
 ```bash
-bun run cli --add-account <name> --mode <claude-oauth|console|zai|minimax|anthropic-compatible|openai-compatible> --priority <number>
+bun run cli --add-account <name> --mode <claude-oauth|console|codex|qwen|xai|zai|minimax|anthropic-compatible|openai-compatible> --priority <number>
 ```
 
 **Note:** All flags must be provided explicitly as the CLI requires explicit parameters.
@@ -129,6 +129,9 @@ bun run cli --add-account <name> --mode <claude-oauth|console|zai|minimax|anthro
 - `--mode`: Account type (required)
   - `claude-oauth`: Claude CLI OAuth account
   - `console`: Claude API account
+  - `codex`: Codex/OpenAI account (OAuth)
+  - `qwen`: Qwen account (OAuth device code)
+  - `xai`: xAI/Grok account (imports local Grok CLI OAuth credentials from `~/.grok/auth.json`; token values are never displayed). xAI refresh tokens may rotate, so if you keep using Grok CLI separately, re-authenticate or refresh Grok CLI after importing so each tool has a fresh token chain. Per-request token usage is recorded from responses, and Grok Build credits usage is polled via grok.com gRPC-web for dashboard bars.
   - `zai`: z.ai account (API key)
   - `openai-compatible`: OpenAI-compatible provider (API key)
 - `--priority`: Account priority (optional, defaults to 0)
@@ -139,8 +142,9 @@ bun run cli --add-account <name> --mode <claude-oauth|console|zai|minimax|anthro
 1. Execute command with all required flags
 2. For OAuth accounts (claude-oauth/console), opens browser for authentication
 3. Waits for OAuth callback on localhost:7856
-4. For API key accounts (zai/openai-compatible), prompts for API key
-5. Stores account credentials securely in the database
+4. For xAI/Grok accounts, imports existing Grok CLI OAuth credentials from `~/.grok/auth.json` without printing token values
+5. For API key accounts (zai/openai-compatible), prompts for API key
+6. Stores account credentials securely in the database
 
 #### `--list`
 

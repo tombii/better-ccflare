@@ -18,6 +18,12 @@ import {
 	getRepresentativeNanoGPTUtilization,
 	type NanoGPTUsageData,
 } from "./nanogpt-usage-fetcher";
+import {
+	fetchXaiUsageData,
+	getRepresentativeXaiUtilization,
+	getRepresentativeXaiWindow,
+	type XaiUsageData,
+} from "./xai-usage-fetcher";
 import { fetchZaiUsageData, type ZaiUsageData } from "./zai-usage-fetcher";
 
 const log = new Logger("UsageFetcher");
@@ -54,7 +60,8 @@ export type AnyUsageData =
 	| NanoGPTUsageData
 	| ZaiUsageData
 	| KiloUsageData
-	| AlibabaCodingPlanUsageData;
+	| AlibabaCodingPlanUsageData
+	| XaiUsageData;
 
 /**
  * Extract the primary window reset timestamp (ms) from usage data.
@@ -78,6 +85,13 @@ export function extractWindowResetTime(
 	if (provider === "codex") {
 		const codex = data as UsageData;
 		const resetsAt = codex.five_hour?.resets_at;
+		if (!resetsAt) return null;
+		const ms = new Date(resetsAt).getTime();
+		return Number.isFinite(ms) ? ms : null;
+	}
+	if (provider === "xai") {
+		const xai = data as XaiUsageData;
+		const resetsAt = xai.credits?.resets_at;
 		if (!resetsAt) return null;
 		const ms = new Date(resetsAt).getTime();
 		return Number.isFinite(ms) ? ms : null;
@@ -313,6 +327,9 @@ export function getRepresentativeUtilizationForProvider(
 			return getRepresentativeAlibabaCodingPlanUtilization(
 				data as AlibabaCodingPlanUsageData,
 			);
+		}
+		case "xai": {
+			return getRepresentativeXaiUtilization(data as XaiUsageData);
 		}
 		default:
 			return null;
@@ -683,6 +700,23 @@ class UsageCache {
 					);
 					log.debug(
 						`Successfully fetched Alibaba Coding Plan usage data for account ${accountId}: ${utilization?.toFixed(1)}% used (${window} window)`,
+					);
+					return { success: true, retryAfterMs: null };
+				}
+			} else if (provider === "xai") {
+				// Fetch xAI/Grok Build credits data via grok.com gRPC-web.
+				data = await fetchXaiUsageData(token);
+				if (data) {
+					const callback = this.windowResetCallbacks.get(accountId);
+					if (callback)
+						this.notifyWindowReset(accountId, data, "xai", callback);
+					this.cache.set(accountId, { data, timestamp: Date.now() });
+					const utilization = getRepresentativeXaiUtilization(
+						data as XaiUsageData,
+					);
+					const window = getRepresentativeXaiWindow(data as XaiUsageData);
+					log.debug(
+						`Successfully fetched xAI Grok usage data for account ${accountId}: ${utilization?.toFixed(1)}% used (${window} window)`,
 					);
 					return { success: true, retryAfterMs: null };
 				}

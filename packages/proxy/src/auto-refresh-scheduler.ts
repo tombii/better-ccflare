@@ -213,8 +213,8 @@ export class AutoRefreshScheduler {
 				await this.sendDummyMessage(accountRow);
 			}
 
-			// Proactively refresh Qwen OAuth tokens expiring within the safety window
-			await this.checkAndRefreshQwenTokens();
+			// Proactively refresh OpenAI-compatible OAuth tokens expiring within the safety window
+			await this.checkAndRefreshOpenAICompatibleOAuthTokens();
 
 			// Proactively refresh Codex OAuth tokens expiring within the safety window
 			await this.checkAndRefreshCodexTokens();
@@ -727,11 +727,11 @@ export class AutoRefreshScheduler {
 	}
 
 	/**
-	 * Proactively refresh Qwen OAuth access tokens that are expiring within the safety window.
+	 * Proactively refresh OpenAI-compatible OAuth access tokens that are expiring within the safety window.
 	 * Unlike Anthropic accounts (which use dummy messages to reset rate-limit windows),
-	 * Qwen only needs the OAuth token refreshed — no dummy message required.
+	 * these providers only need the OAuth token refreshed — no dummy message required.
 	 */
-	private async checkAndRefreshQwenTokens(): Promise<void> {
+	private async checkAndRefreshOpenAICompatibleOAuthTokens(): Promise<void> {
 		if (!this.db) return;
 
 		const now = Date.now();
@@ -750,7 +750,7 @@ export class AutoRefreshScheduler {
 			SELECT id, name, provider, refresh_token, access_token, expires_at, custom_endpoint
 			FROM accounts
 			WHERE
-				provider = 'qwen'
+				provider IN ('qwen', 'xai')
 				AND refresh_token IS NOT NULL
 				AND (
 					access_token IS NULL
@@ -764,24 +764,26 @@ export class AutoRefreshScheduler {
 		if (accounts.length === 0) return;
 
 		log.info(
-			`Proactive Qwen token refresh: ${accounts.length} account(s) need refresh`,
+			`Proactive OpenAI-compatible OAuth token refresh: ${accounts.length} account(s) need refresh`,
 		);
 
 		for (const row of accounts) {
 			// Skip if a refresh is already in-flight for this account (deduplication)
 			if (this.proxyContext.refreshInFlight.has(row.id)) {
 				log.debug(
-					`Skipping proactive Qwen refresh for ${row.name} — refresh already in-flight`,
+					`Skipping proactive ${row.provider} refresh for ${row.name} — refresh already in-flight`,
 				);
 				continue;
 			}
 
 			try {
-				log.info(`Refreshing Qwen token for account: ${row.name}`);
+				log.info(`Refreshing ${row.provider} token for account: ${row.name}`);
 
 				const provider = getProvider(row.provider);
 				if (!provider) {
-					log.error(`No provider found for qwen (account: ${row.name})`);
+					log.error(
+						`No provider found for ${row.provider} (account: ${row.name})`,
+					);
 					continue;
 				}
 
@@ -837,7 +839,7 @@ export class AutoRefreshScheduler {
 							],
 						);
 						log.info(
-							`Qwen token refreshed for ${row.name}, expires at ${new Date(result.expiresAt).toISOString()}`,
+							`${row.provider} token refreshed for ${row.name}, expires at ${new Date(result.expiresAt).toISOString()}`,
 						);
 						return result.accessToken;
 					})
@@ -849,7 +851,7 @@ export class AutoRefreshScheduler {
 				await refreshPromise;
 			} catch (error) {
 				log.error(
-					`Failed to proactively refresh Qwen token for ${row.name}:`,
+					`Failed to proactively refresh ${row.provider} token for ${row.name}:`,
 					error,
 				);
 			}

@@ -6,11 +6,14 @@ export function getHelpText(): string {
 Usage: better-ccflare <command> [options]
 
 Commands:
-  add <name> [--mode <claude-oauth|console|zai|minimax|anthropic-compatible|openai-compatible|nanogpt|kilo|openrouter|ollama|ollama-cloud>] [--priority <number>] [--modelMappings <JSON>]
+  add <name> [--mode <claude-oauth|console|codex|qwen|xai|zai|minimax|anthropic-compatible|openai-compatible|nanogpt|kilo|openrouter|ollama|ollama-cloud>] [--priority <number>] [--modelMappings <JSON>]
     Add a new account using OAuth or API key
     --mode: Account type (optional, will prompt if not provided)
       claude-oauth: Claude CLI OAuth account (OAuth)
       console: Claude API account (OAuth)
+      codex: Codex/OpenAI account (OAuth)
+      qwen: Qwen account (OAuth device code)
+      xai: xAI/Grok account (imports local Grok CLI OAuth credentials)
       zai: z.ai account (API key)
       minimax: Minimax account (API key)
       anthropic-compatible: Anthropic-compatible provider (API key)
@@ -62,6 +65,7 @@ Commands:
 
 Examples:
   better-ccflare add myaccount --mode claude-oauth --priority 10
+  better-ccflare add grok --mode xai --priority 50
   better-ccflare add anthropic-account --mode anthropic-compatible --priority 5 --modelMappings '{"opus":"claude-3-opus","sonnet":"claude-3-sonnet"}'
   better-ccflare add "My Account" --mode claude-oauth --priority 10  # Account names with spaces must be quoted
   better-ccflare list

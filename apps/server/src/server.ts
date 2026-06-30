@@ -111,6 +111,12 @@ const MEMORY_MONITOR_INTERVAL_MS = 60 * 1000;
 const MEMORY_GROWTH_WARN_BYTES = 512 * 1024 * 1024;
 const MEMORY_GROWTH_ERROR_BYTES = 1024 * 1024 * 1024;
 
+export function supportsRefreshBackedUsagePolling(
+	provider: string | null | undefined,
+): boolean {
+	return provider === "anthropic" || provider === "xai";
+}
+
 // Helper function to resolve dashboard assets with fallback
 function resolveDashboardAsset(assetPath: string): string | null {
 	try {
@@ -888,9 +894,9 @@ export default async function startServer(options?: {
 			);
 			return false;
 		}
-		if (account.provider !== "anthropic") {
+		if (!supportsRefreshBackedUsagePolling(account.provider)) {
 			log.warn(
-				`Cannot restart usage polling: account ${account.name} is not an Anthropic OAuth account`,
+				`Cannot restart usage polling: account ${account.name} does not support refresh-backed usage polling`,
 			);
 			return false;
 		}
@@ -1341,15 +1347,21 @@ Available endpoints:
 		);
 	}
 
-	// Start usage polling for Anthropic accounts with token refresh (regardless of paused status)
-	const anthropicAccounts = accounts.filter((a) => a.provider === "anthropic");
-	if (anthropicAccounts.length > 0) {
+	// Start usage polling for refresh-backed providers (regardless of paused status).
+	// Anthropic polls Claude quota windows; xAI polls Grok Build credits via
+	// grok.com gRPC-web and may need to refresh an expired imported Grok CLI token
+	// before the first usage fetch.
+	const refreshBackedUsageAccounts = accounts.filter((a) =>
+		supportsRefreshBackedUsagePolling(a.provider),
+	);
+	if (refreshBackedUsageAccounts.length > 0) {
 		log.info(
-			`Found ${anthropicAccounts.length} Anthropic accounts, starting usage polling...`,
+			`Found ${refreshBackedUsageAccounts.length} refresh-backed usage account(s), starting usage polling...`,
 		);
-		for (const [index, account] of anthropicAccounts.entries()) {
-			log.debug(`Processing account: ${account.name}`, {
+		for (const [index, account] of refreshBackedUsageAccounts.entries()) {
+			log.debug(`Processing usage account: ${account.name}`, {
 				accountId: account.id,
+				provider: account.provider,
 				hasAccessToken: !!account.access_token,
 				hasRefreshToken: !!account.refresh_token,
 				paused: account.paused,
@@ -1359,9 +1371,9 @@ Available endpoints:
 			});
 
 			if (account.access_token || account.refresh_token) {
-				// Start usage polling with token refresh capability
-				// Usage data fetching should work independently of account paused status
-				// Stagger startup by 5s per account to avoid simultaneous 429s on boot
+				// Start usage polling with token refresh capability.
+				// Usage data fetching should work independently of account paused status.
+				// Stagger startup by 5s per account to avoid simultaneous rate-limit bursts.
 				const startupDelayMs = index * 5000;
 				startUsagePollingWithRefresh(
 					account,
@@ -1370,7 +1382,7 @@ Available endpoints:
 					config.getUsagePollIntervalMs(),
 				);
 				log.info(
-					`Started usage polling for account ${account.name}${startupDelayMs > 0 ? ` (delayed ${startupDelayMs / 1000}s)` : ""}`,
+					`Started usage polling for ${account.provider} account ${account.name}${startupDelayMs > 0 ? ` (delayed ${startupDelayMs / 1000}s)` : ""}`,
 				);
 			} else {
 				log.warn(
@@ -1379,7 +1391,9 @@ Available endpoints:
 			}
 		}
 	} else {
-		log.info(`No Anthropic accounts found, usage polling will not start`);
+		log.info(
+			`No refresh-backed usage accounts found, usage polling will not start`,
+		);
 	}
 
 	// Start usage polling for NanoGPT accounts (PayG with optional subscription tracking)
