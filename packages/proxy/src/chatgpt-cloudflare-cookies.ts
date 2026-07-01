@@ -40,13 +40,30 @@ function parseCookieNameValue(
 	return { name, value };
 }
 
+function isExpiredAttributes(attributes: string): boolean {
+	const maxAgeMatch = attributes.match(/;\s*max-age\s*=\s*(-?\d+)/i);
+	if (maxAgeMatch && Number(maxAgeMatch[1]) <= 0) return true;
+
+	const expiresMatch = attributes.match(/;\s*expires\s*=\s*([^;]+)/i);
+	if (expiresMatch) {
+		const expiresAt = Date.parse(expiresMatch[1].trim());
+		if (!Number.isNaN(expiresAt) && expiresAt <= Date.now()) return true;
+	}
+
+	return false;
+}
+
 function parseSetCookieNameValue(
 	setCookie: string,
-): { name: string; value: string } | null {
+): { name: string; value: string; expired: boolean } | null {
 	const attributeIndex = setCookie.indexOf(";");
 	const pair =
 		attributeIndex === -1 ? setCookie : setCookie.slice(0, attributeIndex);
-	return parseCookieNameValue(pair);
+	const parsed = parseCookieNameValue(pair);
+	if (!parsed) return null;
+	const attributes =
+		attributeIndex === -1 ? "" : setCookie.slice(attributeIndex);
+	return { ...parsed, expired: isExpiredAttributes(attributes) };
 }
 
 function isAllowedChatGptCookieUrl(url: URL): boolean {
@@ -75,6 +92,10 @@ export class ChatGptCloudflareCookieJar {
 			const parsedCookie = parseSetCookieNameValue(setCookie);
 			if (!parsedCookie) continue;
 			if (!isAllowedCloudflareCookieName(parsedCookie.name)) continue;
+			if (parsedCookie.expired) {
+				hostCookies?.delete(parsedCookie.name);
+				continue;
+			}
 			if (!hostCookies) {
 				hostCookies = new Map<string, string>();
 				this.cookiesByHost.set(parsed.hostname, hostCookies);

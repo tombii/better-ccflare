@@ -141,6 +141,50 @@ describe("ChatGptCloudflareCookieJar", () => {
 		expect(httpsHeaders.get("Cookie")).toBeNull();
 	});
 
+	it("removes a stored cookie when Cloudflare sends a Max-Age=0 revocation", () => {
+		const jar = new ChatGptCloudflareCookieJar();
+
+		jar.captureFromResponse(
+			"https://chatgpt.com/backend-api/codex/responses",
+			makeSetCookieResponse(["cf_clearance=clearance; Path=/; Secure"]),
+		);
+		jar.captureFromResponse(
+			"https://chatgpt.com/backend-api/codex/responses",
+			makeSetCookieResponse(["cf_clearance=; Path=/; Secure; Max-Age=0"]),
+		);
+
+		const headers = new Headers();
+		jar.applyCookieHeader(
+			"https://chatgpt.com/backend-api/codex/responses",
+			headers,
+		);
+
+		expect(headers.get("Cookie")).toBeNull();
+	});
+
+	it("removes a stored cookie when Cloudflare sends an expired Expires attribute", () => {
+		const jar = new ChatGptCloudflareCookieJar();
+
+		jar.captureFromResponse(
+			"https://chatgpt.com/backend-api/codex/responses",
+			makeSetCookieResponse(["__cflb=west; Path=/; Secure"]),
+		);
+		jar.captureFromResponse(
+			"https://chatgpt.com/backend-api/codex/responses",
+			makeSetCookieResponse([
+				"__cflb=; Path=/; Secure; Expires=Thu, 01 Jan 1970 00:00:00 GMT",
+			]),
+		);
+
+		const headers = new Headers();
+		jar.applyCookieHeader(
+			"https://chatgpt.com/backend-api/codex/responses",
+			headers,
+		);
+
+		expect(headers.get("Cookie")).toBeNull();
+	});
+
 	it("replaces __cflb value on load-balancer affinity switch", () => {
 		const jar = new ChatGptCloudflareCookieJar();
 
