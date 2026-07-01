@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { TIME_CONSTANTS, ValidationError } from "@better-ccflare/core";
 import type { Provider } from "@better-ccflare/providers";
 import type { RequestMeta } from "@better-ccflare/types";
+import { chatGptCloudflareCookieJar } from "../chatgpt-cloudflare-cookies";
 import { ERROR_MESSAGES } from "./proxy-types";
 
 /**
@@ -96,16 +97,32 @@ export async function makeProxyRequest(
 
 	try {
 		if (target instanceof Request) {
-			return await fetch(new Request(target, { signal: effectiveSignal }));
+			const targetUrl = target.url;
+			const mutableHeaders = new Headers(target.headers);
+			chatGptCloudflareCookieJar.applyCookieHeader(targetUrl, mutableHeaders);
+
+			const response = await fetch(
+				new Request(target, {
+					headers: mutableHeaders,
+					signal: effectiveSignal,
+				}),
+			);
+			chatGptCloudflareCookieJar.captureFromResponse(targetUrl, response);
+			return response;
 		}
 
-		return await fetch(target, {
+		const mutableHeaders = new Headers(headers);
+		chatGptCloudflareCookieJar.applyCookieHeader(target, mutableHeaders);
+
+		const response = await fetch(target, {
 			method,
-			headers,
+			headers: mutableHeaders,
 			body: createBodyStream ? createBodyStream() : undefined,
 			signal: effectiveSignal,
 			...(hasBody ? ({ duplex: "half" } as RequestInit) : {}),
 		});
+		chatGptCloudflareCookieJar.captureFromResponse(target, response);
+		return response;
 	} finally {
 		if (timeoutId) clearTimeout(timeoutId);
 	}
