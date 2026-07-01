@@ -25,12 +25,6 @@ Always branch from `main` with a fresh pull. Never make changes directly on main
 PRs: `gh pr checkout <PR_NUMBER>` or `git checkout <branch-name>`.
 - If `git push origin main` fails with `src refspec main matches more than one` (branch/tag name collision), push explicitly: `git push origin refs/heads/main:refs/heads/main`.
 
-## Pre-PR Review with Greptile
-
-Before opening a pull request, run a Greptile review — but **dispatch the `greptile-reviewer` agent** (`.claude/agents/greptile-reviewer.md`, runs on haiku) rather than running `greptile review` in the main session. Greptile's output quotes code blocks and inflates the main context; the agent runs it and returns a compact findings list (`file:line` + one-line issue), which is all the main session needs to act.
-
-Greptile reviews your branch against its base branch. Run this after checking out your branch and before pushing/opening a PR. Fallback if the agent is unavailable: `greptile review` directly.
-
 ## PR Review Against Current Main (MANDATORY)
 
 Before reviewing or merging any PR, always find the merge base and identify what main has added since the PR branched:
