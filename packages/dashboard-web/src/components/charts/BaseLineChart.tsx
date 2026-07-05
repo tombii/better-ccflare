@@ -24,10 +24,13 @@ interface LineConfig {
 	strokeWidth?: number;
 	dot?: boolean;
 	name?: string;
+	strokeDasharray?: string;
+	connectNulls?: boolean;
 }
 
 interface ReferenceLineConfig {
-	y: number;
+	x?: number | string;
+	y?: number;
 	stroke?: string;
 	strokeDasharray?: string;
 	label?: string;
@@ -36,6 +39,8 @@ interface ReferenceLineConfig {
 interface BaseLineChartProps extends CommonChartProps {
 	lines: LineConfig | LineConfig[];
 	referenceLines?: ReferenceLineConfig[];
+	xAxisType?: "number" | "category";
+	xAxisDomain?: [number | string, number | string];
 }
 
 export function BaseLineChart({
@@ -48,6 +53,8 @@ export function BaseLineChart({
 	xAxisTextAnchor = "middle",
 	xAxisHeight = 30,
 	xAxisTickFormatter,
+	xAxisType,
+	xAxisDomain,
 	yAxisDomain,
 	yAxisTickFormatter,
 	tooltipFormatter,
@@ -85,6 +92,9 @@ export function BaseLineChart({
 					/>
 					<XAxis
 						dataKey={xAxisKey}
+						type={xAxisType}
+						domain={xAxisDomain}
+						allowDataOverflow
 						className="text-xs"
 						angle={xAxisAngle}
 						textAnchor={xAxisTextAnchor}
@@ -114,11 +124,15 @@ export function BaseLineChart({
 							dot={lineConfig.dot ?? false}
 							name={lineConfig.name || lineConfig.dataKey}
 							animationDuration={animationDuration}
+							strokeDasharray={lineConfig.strokeDasharray}
+							connectNulls={lineConfig.connectNulls ?? false}
 						/>
 					))}
-					{referenceLines.map((refLine) => (
+					{referenceLines.map((refLine, refIndex) => (
 						<ReferenceLine
-							key={`ref-line-${refLine.y}`}
+							// biome-ignore lint/suspicious/noArrayIndexKey: referenceLines is a static config array (no reorder); y may be undefined for x-only markers so it cannot key
+							key={`ref-line-${refIndex}`}
+							x={refLine.x}
 							y={refLine.y}
 							stroke={refLine.stroke || COLORS.primary}
 							strokeDasharray={

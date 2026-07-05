@@ -618,6 +618,13 @@ export class AutoRefreshScheduler {
 							log.info(
 								`Fetched usage data for ${accountRow.name}: 5h=${usageData.five_hour.utilization}%, 7d=${usageData.seven_day.utilization}%`,
 							);
+							this.proxyContext.dbOps
+								.recordUsageSnapshot(accountRow.id, usageData, Date.now())
+								.catch((err) =>
+									log.warn(
+										`Failed to record usage snapshot for ${accountRow.name}: ${err}`,
+									),
+								);
 						} else {
 							log.warn(
 								`Failed to fetch usage data for ${accountRow.name} after auto-refresh`,

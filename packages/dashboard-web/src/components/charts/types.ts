@@ -1,5 +1,5 @@
 // Common types for chart components
-export type ChartDataPoint = Record<string, string | number>;
+export type ChartDataPoint = Record<string, string | number | null>;
 
 export type TooltipFormatterValue = string | number | [number, number];
 

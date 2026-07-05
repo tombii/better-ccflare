@@ -55,6 +55,7 @@ export interface ConfigData {
 	default_agent_model?: string;
 	data_retention_days?: number;
 	request_retention_days?: number;
+	usage_history_retention_days?: number;
 	store_payloads?: boolean;
 	usage_poll_interval_ms?: number;
 	cache_keepalive_ttl_minutes?: number;
@@ -324,6 +325,22 @@ export class Config extends EventEmitter {
 		this.set("request_retention_days", clamped);
 	}
 
+	getUsageHistoryRetentionDays(): number {
+		const fromEnv = process.env.USAGE_HISTORY_RETENTION_DAYS;
+		if (fromEnv) {
+			const n = parseInt(fromEnv, 10);
+			if (!Number.isNaN(n)) return this.clamp(n, 1, 3650);
+		}
+		const fromFile = this.data.usage_history_retention_days;
+		if (typeof fromFile === "number") return this.clamp(fromFile, 1, 3650);
+		return 90; // default: keep 90 days of usage-window history
+	}
+
+	setUsageHistoryRetentionDays(days: number): void {
+		const clamped = this.clamp(days, 1, 3650);
+		this.set("usage_history_retention_days", clamped);
+	}
+
 	getStorePayloads(): boolean {
 		const fromEnv = process.env.STORE_PAYLOADS;
 		if (fromEnv) {
@@ -557,6 +574,7 @@ export class Config extends EventEmitter {
 			default_agent_model: this.getDefaultAgentModel(),
 			data_retention_days: this.getDataRetentionDays(),
 			request_retention_days: this.getRequestRetentionDays(),
+			usage_history_retention_days: this.getUsageHistoryRetentionDays(),
 			store_payloads: this.getStorePayloads(),
 			usage_poll_interval_ms: this.getUsagePollIntervalMs(),
 			cache_keepalive_ttl_minutes: this.getCacheKeepaliveTtlMinutes(),

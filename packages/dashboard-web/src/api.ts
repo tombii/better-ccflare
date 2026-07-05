@@ -19,6 +19,7 @@ import type {
 	RequestPayload,
 	RequestResponse,
 	StatsWithAccounts,
+	UsageHistoryResponse,
 } from "@better-ccflare/types";
 import { API_LIMITS, API_TIMEOUT } from "./constants";
 
@@ -977,6 +978,16 @@ class API extends HttpClient {
 
 		return this.get<CacheInsightsResponse>(
 			`/api/insights/cache?${params.toString()}`,
+		);
+	}
+
+	async getUsageHistory(
+		account: string,
+		range = "24h",
+	): Promise<UsageHistoryResponse> {
+		const params = new URLSearchParams({ account, range });
+		return this.get<UsageHistoryResponse>(
+			`/api/usage-history?${params.toString()}`,
 		);
 	}
 
