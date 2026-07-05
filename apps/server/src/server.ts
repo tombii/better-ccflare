@@ -244,9 +244,12 @@ async function runStartupMaintenance(
 		log.info(
 			`Startup cleanup removed ${removedRequests} requests and ${removedPayloads} payloads (payload=${payloadDays}d, requests=${requestDays}d)`,
 		);
-		await dbOps.pruneUsageSnapshots(
+		const removedSnapshots = await dbOps.pruneUsageSnapshots(
 			Date.now() - config.getUsageHistoryRetentionDays() * TIME_CONSTANTS.DAY,
 		);
+		if (removedSnapshots > 0) {
+			log.info(`Pruned ${removedSnapshots} old usage snapshots`);
+		}
 	} catch (err) {
 		log.error(`Startup cleanup error: ${err}`);
 	}
