@@ -842,8 +842,9 @@ export default async function startServer(options?: {
 	strategy.initialize?.(strategyStore);
 	currentStrategy = strategy;
 
-	// Initialize usage collector (before first request)
-	initProxy(() => config.getStorePayloads());
+	// Initialize usage collector (before first request). Awaited so DB
+	// schema/migrations are ready before any request can trigger a write.
+	await initProxy(() => config.getStorePayloads());
 
 	// Proxy context
 	const proxyContext: ProxyContext = {

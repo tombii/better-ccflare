@@ -12,7 +12,10 @@ import {
 	validatePriority,
 	validateString,
 } from "@better-ccflare/core";
-import type { DatabaseOperations } from "@better-ccflare/database";
+import {
+	type DatabaseOperations,
+	decodePayloadFromStorage,
+} from "@better-ccflare/database";
 import { ValidationError } from "@better-ccflare/errors";
 import {
 	BadRequest,
@@ -102,8 +105,12 @@ async function getCachedOrPersistedCodexUsage(
 			return normalizedCache as FullUsageData;
 		}
 	}
-	const rows = await db.query<{ json: string; timestamp: number | null }>(
-		`SELECT rp.json, COALESCE(rp.timestamp, r.timestamp) as timestamp
+	const rows = await db.query<{
+		json: string;
+		compressed: number | null;
+		timestamp: number | null;
+	}>(
+		`SELECT rp.json, rp.compressed, COALESCE(rp.timestamp, r.timestamp) as timestamp
 		 FROM request_payloads rp
 		 JOIN requests r ON rp.id = r.id
 		 WHERE r.account_used = ?
@@ -116,7 +123,13 @@ async function getCachedOrPersistedCodexUsage(
 		if (!row.json || !row.timestamp) continue;
 
 		try {
-			const payload = JSON.parse(row.json) as {
+			// Payloads are gzip-encoded (and optionally encrypted) on write, so the
+			// raw column is never plain JSON — decode before parsing.
+			const decoded = await decodePayloadFromStorage(
+				row.json,
+				!!row.compressed,
+			);
+			const payload = JSON.parse(decoded) as {
 				response?: { headers?: Record<string, string>; status?: number };
 				meta?: { timestamp?: number };
 			};

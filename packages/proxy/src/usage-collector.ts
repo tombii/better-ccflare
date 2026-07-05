@@ -927,7 +927,66 @@ export class UsageCollector {
 		const requestId = startMessage.requestId;
 		const storePayloads = this.getStorePayloads();
 
-		if (storePayloads) {
+		// Persist the parent `requests` row FIRST and await it before touching the
+		// payload table. request_payloads has FOREIGN KEY (id) REFERENCES
+		// requests(id); the two writes live in separate async-writer queues, so
+		// enqueuing the payload before the parent row is committed makes the payload
+		// INSERT fail the FK constraint — a non-retryable error that silently drops
+		// every payload. Ordering must therefore be enforced here.
+		const metadataResult = await this.asyncWriter.enqueueMetadataAndWait(
+			async () => {
+				await this.dbOps.saveRequest(
+					startMessage.requestId,
+					startMessage.method,
+					startMessage.clientPath ?? startMessage.path,
+					startMessage.accountId,
+					startMessage.responseStatus,
+					msg.success,
+					msg.error || null,
+					responseTime,
+					startMessage.failoverAttempts,
+					state.usage.model
+						? {
+								model: state.usage.model,
+								promptTokens:
+									(state.usage.inputTokens || 0) +
+									(state.usage.cacheReadInputTokens || 0) +
+									(state.usage.cacheCreationInputTokens || 0),
+								completionTokens: state.usage.outputTokens,
+								totalTokens: state.usage.totalTokens,
+								costUsd: state.usage.costUsd,
+								inputTokens: state.usage.inputTokens,
+								outputTokens: state.usage.outputTokens,
+								cacheReadInputTokens: state.usage.cacheReadInputTokens,
+								cacheCreationInputTokens: state.usage.cacheCreationInputTokens,
+								tokensPerSecond: state.usage.tokensPerSecond,
+							}
+						: undefined,
+					state.agentUsed,
+					startMessage.apiKeyId || undefined,
+					startMessage.apiKeyName || undefined,
+					projectAtEnd,
+					state.billingType,
+					startMessage.comboName || null,
+					startMessage.upstreamPath ?? null,
+					startMessage.routingMode ?? null,
+				);
+			},
+		);
+
+		if (metadataResult === "failed") {
+			log.error(
+				`Failed to save request metadata for ${startMessage.requestId}`,
+			);
+		} else if (metadataResult === "dropped") {
+			log.warn(
+				`Metadata queue dropped save for ${startMessage.requestId} — summary will be marked unpersisted`,
+			);
+		}
+
+		// Only persist the payload once the parent row is durably written; a missing
+		// or failed parent would guarantee the FK insert fails and drops the payload.
+		if (storePayloads && metadataResult === "saved") {
 			const estimatedRequestBytes = startMessage.requestBody?.length ?? 0;
 			const estimatedResponseBytes =
 				msg.responseBody?.length ?? state.chunksBytes ?? 0;
@@ -1001,57 +1060,6 @@ export class UsageCollector {
 					);
 				}
 			}
-		}
-
-		const metadataResult = await this.asyncWriter.enqueueMetadataAndWait(
-			async () => {
-				await this.dbOps.saveRequest(
-					startMessage.requestId,
-					startMessage.method,
-					startMessage.clientPath ?? startMessage.path,
-					startMessage.accountId,
-					startMessage.responseStatus,
-					msg.success,
-					msg.error || null,
-					responseTime,
-					startMessage.failoverAttempts,
-					state.usage.model
-						? {
-								model: state.usage.model,
-								promptTokens:
-									(state.usage.inputTokens || 0) +
-									(state.usage.cacheReadInputTokens || 0) +
-									(state.usage.cacheCreationInputTokens || 0),
-								completionTokens: state.usage.outputTokens,
-								totalTokens: state.usage.totalTokens,
-								costUsd: state.usage.costUsd,
-								inputTokens: state.usage.inputTokens,
-								outputTokens: state.usage.outputTokens,
-								cacheReadInputTokens: state.usage.cacheReadInputTokens,
-								cacheCreationInputTokens: state.usage.cacheCreationInputTokens,
-								tokensPerSecond: state.usage.tokensPerSecond,
-							}
-						: undefined,
-					state.agentUsed,
-					startMessage.apiKeyId || undefined,
-					startMessage.apiKeyName || undefined,
-					projectAtEnd,
-					state.billingType,
-					startMessage.comboName || null,
-					startMessage.upstreamPath ?? null,
-					startMessage.routingMode ?? null,
-				);
-			},
-		);
-
-		if (metadataResult === "failed") {
-			log.error(
-				`Failed to save request metadata for ${startMessage.requestId}`,
-			);
-		} else if (metadataResult === "dropped") {
-			log.warn(
-				`Metadata queue dropped save for ${startMessage.requestId} — summary will be marked unpersisted`,
-			);
 		}
 
 		freeRequestState(state);
@@ -1197,16 +1205,20 @@ let _usageCollector: UsageCollector | null = null;
  * The `onSummary` callback is called once per completed request and should
  * emit requestEvents + drive cacheBodyStore.
  */
-export function initUsageCollector(
+export async function initUsageCollector(
 	getStorePayloads: () => boolean,
 	onSummary: (summary: RequestResponse) => void,
-): UsageCollector {
+): Promise<UsageCollector> {
 	if (_usageCollector) return _usageCollector;
 
 	const dbOps = new DatabaseOperations();
-	dbOps.initializeAsync().catch((err: unknown) => {
-		log.error("Failed to initialize database async connection:", err);
-	});
+	// Await schema/migration setup before the collector can issue any writes.
+	// On Postgres initializeAsync() runs ensureSchemaPg/runMigrationsPg; issuing
+	// saveRequest before it resolves hits missing tables/columns, and that error
+	// is swallowed by the async-writer — silently losing every early request.
+	// (SQLite builds its schema synchronously in the constructor, so this is a
+	// no-op there, but awaiting keeps the init contract uniform across backends.)
+	await dbOps.initializeAsync();
 	const asyncWriter = new AsyncDbWriter();
 
 	_usageCollector = new UsageCollector(

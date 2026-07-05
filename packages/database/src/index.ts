@@ -22,6 +22,12 @@ export {
 	initPayloadEncryption,
 	isEncryptionEnabled,
 } from "./payload-encryption";
+// Payload storage codec — decode is needed by consumers that read
+// `request_payloads.json` directly (payloads are always gzip-encoded on write).
+export {
+	decodePayloadFromStorage,
+	encodePayloadForStorage,
+} from "./payload-storage";
 export { analyzeIndexUsage } from "./performance-indexes";
 export type {
 	ModelTranslation,
