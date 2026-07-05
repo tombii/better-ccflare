@@ -7,15 +7,19 @@ export interface ChartRow {
 }
 
 const PRED_SUFFIX = "__pred";
-const LIMIT = 100;
+const HOUR_MS = 3_600_000;
+
+const clampPct = (v: number): number => Math.max(0, Math.min(100, v));
 
 /**
  * Merge per-window actual points AND a 2-point dashed prediction segment for
  * each rising window into a single time-indexed recharts dataset. The forecast
- * segment runs from the last actual point to whichever comes first — the ETA
- * (endpoint 100%) or the window reset (endpoint = predictedAtReset) — so a
- * barely-positive slope can't stretch the x-domain weeks out (Fable M2).
- * Missing values are `null` (gaps).
+ * segment runs from the last actual point to whichever comes first — the ETA,
+ * this window's OWN reset, or the NEAREST reset across all windows — so neither
+ * a barely-positive slope (Fable M2) nor a far-horizon window (e.g. seven_day
+ * resetting ~13h out while five_hour resets in minutes) can stretch the x-domain
+ * and squish near-term detail. The endpoint value interpolates the straight-line
+ * forecast at that (possibly capped) time. Missing values are `null` (gaps).
  */
 export function buildUsageChartData(
 	windows: UsageHistoryWindowSeries[],
@@ -39,20 +43,33 @@ export function buildUsageChartData(
 		return row;
 	};
 
+	// The single nearest reset > now across all windows (within the horizon). A
+	// far-horizon window's forecast is capped here so it can't stretch the domain.
+	const markers = resetMarkers(windows, now, horizonMs);
+	const nearestResetX = markers[0]?.x ?? null;
+
 	for (const w of windows) {
 		for (const p of w.points) ensureRow(p.t)[w.window] = p.utilization;
 
-		const { state, etaExhaustMs, resetsAtMs, predictedAtReset } = w.prediction;
+		const { state, etaExhaustMs, resetsAtMs, slopePerHour } = w.prediction;
 		if (state === "rising" && etaExhaustMs != null && w.points.length > 0) {
 			const predKey = `${w.window}${PRED_SUFFIX}`;
 			const last = w.points[w.points.length - 1];
 			ensureRow(last.t)[predKey] = last.utilization;
-			// Cap the drawn forecast at the reset when the ETA is beyond it.
-			if (resetsAtMs != null && etaExhaustMs > resetsAtMs) {
-				ensureRow(resetsAtMs)[predKey] = predictedAtReset ?? LIMIT;
-			} else {
-				ensureRow(etaExhaustMs)[predKey] = LIMIT;
-			}
+			// Endpoint time = earliest of ETA, this window's own reset, and the
+			// nearest reset across ALL windows. etaExhaustMs is non-null here, so
+			// there is always at least one candidate.
+			const endpointTime = Math.min(
+				...[etaExhaustMs, resetsAtMs, nearestResetX].filter(
+					(v): v is number => v != null,
+				),
+			);
+			// Interpolate the straight-line forecast at the (possibly capped)
+			// endpoint; an ETA endpoint yields ~100, matching the prior behaviour.
+			const endpointValue = clampPct(
+				last.utilization + slopePerHour * ((endpointTime - last.t) / HOUR_MS),
+			);
+			ensureRow(endpointTime)[predKey] = endpointValue;
 			predictionKeys.push(predKey);
 		}
 	}
@@ -67,7 +84,7 @@ export function buildUsageChartData(
 		rows,
 		windowKeys,
 		predictionKeys,
-		markers: resetMarkers(windows, now, horizonMs),
+		markers,
 	};
 }
 

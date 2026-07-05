@@ -71,7 +71,11 @@ describe("buildUsageChartData", () => {
 		expect(t2.seven_day).toBe(3);
 		expect(t2.five_hour__pred).toBe(20); // prediction anchored at last actual
 		const eta = rows.find((r) => r.t === 4 * H)!;
-		expect(eta.five_hour__pred).toBe(100); // dashed line reaches the limit
+		// Endpoint value now interpolates the straight-line forecast at the (capped)
+		// endpoint time rather than snapping to 100. This synthetic fixture's ETA
+		// (4h) is inconsistent with its slope, so the interpolation lands below 100.
+		const expectedEta = 20 + 10 * ((4 * H - 2000) / H);
+		expect(eta.five_hour__pred).toBeCloseTo(expectedEta, 5);
 		expect(eta.five_hour).toBeNull(); // no actual point there
 		const t1 = rows.find((r) => r.t === 1000)!;
 		expect(t1.seven_day).toBeNull(); // gap
@@ -98,9 +102,82 @@ describe("buildUsageChartData", () => {
 		];
 		const { rows, predictionKeys } = buildUsageChartData(windows, NOW, 24 * H);
 		expect(predictionKeys).toEqual(["seven_day__pred"]);
-		// forecast endpoint is at the reset (10h), value = predictedAtReset (58), NOT 30h/100
+		// forecast endpoint is at the reset (10h), NOT 30h. Value now interpolates
+		// the straight line to that endpoint: 42 + slope(2) * (10h - 1h) = 60.
 		expect(rows.map((r) => r.t)).toEqual([0, 1 * H, 10 * H]);
-		expect(rows.find((r) => r.t === 10 * H)?.seven_day__pred).toBe(58);
+		expect(rows.find((r) => r.t === 10 * H)?.seven_day__pred).toBe(60);
+	});
+
+	it("caps a rising window's forecast at the nearest reset across windows", () => {
+		// Window A (five_hour) resets SOON (1h); window B (seven_day) resets FAR
+		// (10h). B's own reset/ETA are far out, but the nearest reset across ALL
+		// windows is A's 1h — B's forecast endpoint must be capped there so a
+		// far-horizon window can't stretch the x-domain right (near-term detail).
+		const HOUR = 60 * 60 * 1000;
+		const windows: UsageHistoryWindowSeries[] = [
+			{
+				window: "five_hour",
+				points: [{ t: 0, utilization: 50, resetsAt: 1 * HOUR }],
+				prediction: {
+					slopePerHour: 10,
+					etaExhaustMs: 5 * HOUR,
+					predictedAtReset: 60,
+					resetsAtMs: 1 * HOUR,
+					willExhaustBeforeReset: false,
+					state: "rising",
+					lowConfidence: false,
+				},
+			},
+			{
+				window: "seven_day",
+				points: [{ t: 0, utilization: 20, resetsAt: 10 * HOUR }],
+				prediction: {
+					slopePerHour: 2,
+					etaExhaustMs: 40 * HOUR,
+					predictedAtReset: 44,
+					resetsAtMs: 10 * HOUR,
+					willExhaustBeforeReset: false,
+					state: "rising",
+					lowConfidence: false,
+				},
+			},
+		];
+		const { rows, predictionKeys } = buildUsageChartData(windows, 0, 24 * HOUR);
+		expect(predictionKeys).toEqual(["five_hour__pred", "seven_day__pred"]);
+		// B's forecast endpoint is at A's reset (1h), NOT at B's own 10h.
+		expect(rows.find((r) => r.t === 10 * HOUR)).toBeUndefined();
+		// interpolated value at the capped endpoint: 20 + slopeB(2) * 1h = 22
+		expect(rows.find((r) => r.t === 1 * HOUR)?.seven_day__pred).toBe(22);
+		// domain not stretched: the max row t is A's reset (1h), not 10h
+		const maxT = Math.max(...rows.map((r) => r.t));
+		expect(maxT).toBe(1 * HOUR);
+		expect(maxT).toBeLessThanOrEqual(1 * HOUR);
+	});
+
+	it("leaves a single rising window's forecast endpoint at its own reset/ETA", () => {
+		// Only one window ⇒ nearestReset == its own reset ⇒ endpoint == min(own
+		// reset, ETA) exactly as before the multi-window cap was introduced.
+		const HOUR = 60 * 60 * 1000;
+		const windows: UsageHistoryWindowSeries[] = [
+			{
+				window: "five_hour",
+				points: [{ t: 0, utilization: 60, resetsAt: 5 * HOUR }],
+				prediction: {
+					slopePerHour: 10,
+					etaExhaustMs: 4 * HOUR, // ETA before the reset ⇒ endpoint at ETA
+					predictedAtReset: 100,
+					resetsAtMs: 5 * HOUR,
+					willExhaustBeforeReset: true,
+					state: "rising",
+					lowConfidence: false,
+				},
+			},
+		];
+		const { rows, predictionKeys } = buildUsageChartData(windows, 0, 24 * HOUR);
+		expect(predictionKeys).toEqual(["five_hour__pred"]);
+		// endpoint sits at the ETA (4h) — unchanged; value interpolates to 100.
+		expect(rows.find((r) => r.t === 4 * HOUR)?.five_hour__pred).toBe(100);
+		expect(Math.max(...rows.map((r) => r.t))).toBe(4 * HOUR);
 	});
 
 	it("threads horizonMs into markers — a far reset is dropped", () => {
