@@ -300,6 +300,10 @@ export async function ensureSchemaPg(adapter: BunSqlAdapter): Promise<void> {
 	await adapter.unsafe(
 		`CREATE INDEX IF NOT EXISTS idx_usage_snapshots_acct_win_time ON usage_snapshots(account_id, window_key, timestamp DESC)`,
 	);
+	// Secondary index on timestamp alone for retention pruning (see SQLite migration).
+	await adapter.unsafe(
+		`CREATE INDEX IF NOT EXISTS idx_usage_snapshots_ts ON usage_snapshots(timestamp)`,
+	);
 
 	log.info("PostgreSQL schema ensured");
 }
@@ -557,6 +561,10 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 	`);
 	await adapter.unsafe(
 		`CREATE INDEX IF NOT EXISTS idx_usage_snapshots_acct_win_time ON usage_snapshots(account_id, window_key, timestamp DESC)`,
+	);
+	// Secondary index on timestamp alone for retention pruning (see SQLite migration).
+	await adapter.unsafe(
+		`CREATE INDEX IF NOT EXISTS idx_usage_snapshots_ts ON usage_snapshots(timestamp)`,
 	);
 
 	// Rename oauth_sessions.mode 'max' → 'claude-oauth'

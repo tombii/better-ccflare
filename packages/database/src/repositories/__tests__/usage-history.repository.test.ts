@@ -23,6 +23,17 @@ describe("usage_snapshots schema", () => {
 		expect(row?.name).toBe("usage_snapshots");
 		db.close();
 	});
+
+	it("creates the timestamp prune index", () => {
+		const db = makeDb();
+		const row = db
+			.query(
+				"SELECT name FROM sqlite_master WHERE type='index' AND name='idx_usage_snapshots_ts'",
+			)
+			.get() as { name: string } | null;
+		expect(row?.name).toBe("idx_usage_snapshots_ts");
+		db.close();
+	});
 });
 
 function makeRepo(db: Database): UsageHistoryRepository {

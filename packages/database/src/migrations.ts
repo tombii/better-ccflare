@@ -367,6 +367,12 @@ export function ensureSchema(db: Database): void {
 	db.run(
 		`CREATE INDEX IF NOT EXISTS idx_usage_snapshots_acct_win_time ON usage_snapshots(account_id, window_key, timestamp DESC)`,
 	);
+	// Secondary index on timestamp alone so retention pruning
+	// (`DELETE ... WHERE timestamp < ?`) uses an index instead of full-scanning —
+	// the composite index above can't serve it because timestamp isn't leading.
+	db.run(
+		`CREATE INDEX IF NOT EXISTS idx_usage_snapshots_ts ON usage_snapshots(timestamp)`,
+	);
 }
 
 export function runMigrations(db: Database, dbPath?: string): void {
