@@ -43,20 +43,31 @@ export class UsageHistoryRepository extends BaseRepository<UsageSnapshotRow> {
 		usage: Record<string, unknown>,
 		now: number,
 	): Promise<void> {
+		// Build one value tuple per window, then insert them all in a SINGLE
+		// statement. A multi-row INSERT is atomic (all-or-nothing) on both SQLite
+		// and Postgres, so a failure can no longer leave a partial snapshot the
+		// way the previous await-in-loop of per-window inserts could.
+		const params: unknown[] = [];
+		let count = 0;
 		for (const [windowKey, value] of Object.entries(usage)) {
 			if (!isWindow(value)) continue;
-			const utilization = value.utilization;
 			let resetsAt: number | null = null;
 			if (value.resets_at) {
 				const ms = new Date(value.resets_at).getTime();
 				resetsAt = Number.isFinite(ms) ? ms : null;
 			}
-			await this.run(
-				`INSERT INTO usage_snapshots (account_id, timestamp, window_key, utilization, resets_at)
-				 VALUES (?, ?, ?, ?, ?)`,
-				[accountId, now, windowKey, utilization, resetsAt],
-			);
+			params.push(accountId, now, windowKey, value.utilization, resetsAt);
+			count++;
 		}
+		if (count === 0) return;
+		const rows = Array.from({ length: count }, () => "(?, ?, ?, ?, ?)").join(
+			", ",
+		);
+		await this.run(
+			`INSERT INTO usage_snapshots (account_id, timestamp, window_key, utilization, resets_at)
+			 VALUES ${rows}`,
+			params,
+		);
 	}
 
 	async getSeries(opts: GetSeriesOptions): Promise<UsageSnapshotRow[]> {
