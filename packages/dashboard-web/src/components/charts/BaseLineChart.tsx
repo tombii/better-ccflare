@@ -1,3 +1,4 @@
+import type { ReactElement } from "react";
 import {
 	CartesianGrid,
 	Legend,
@@ -41,6 +42,10 @@ interface BaseLineChartProps extends CommonChartProps {
 	referenceLines?: ReferenceLineConfig[];
 	xAxisType?: "number" | "category";
 	xAxisDomain?: [number | string, number | string];
+	// Fully custom recharts tooltip. recharts clones this element with the
+	// injected `active`/`payload`/`label` props. When set, it replaces the
+	// default formatter-based tooltip (other charts are unaffected).
+	tooltipContent?: ReactElement;
 }
 
 export function BaseLineChart({
@@ -59,6 +64,7 @@ export function BaseLineChart({
 	yAxisTickFormatter,
 	tooltipFormatter,
 	tooltipLabelFormatter,
+	tooltipContent,
 	tooltipStyle = "default",
 	animationDuration = 1000,
 	showLegend = false,
@@ -106,13 +112,17 @@ export function BaseLineChart({
 						domain={yAxisDomain}
 						tickFormatter={yAxisTickFormatter}
 					/>
-					<Tooltip
-						contentStyle={tooltipStyles}
-						// biome-ignore lint/suspicious/noExplicitAny: recharts v3.8 widened Formatter to include undefined
-						formatter={tooltipFormatter as any}
-						// biome-ignore lint/suspicious/noExplicitAny: recharts v3.8 widened labelFormatter label to ReactNode
-						labelFormatter={tooltipLabelFormatter as any}
-					/>
+					{tooltipContent ? (
+						<Tooltip content={tooltipContent} />
+					) : (
+						<Tooltip
+							contentStyle={tooltipStyles}
+							// biome-ignore lint/suspicious/noExplicitAny: recharts v3.8 widened Formatter to include undefined
+							formatter={tooltipFormatter as any}
+							// biome-ignore lint/suspicious/noExplicitAny: recharts v3.8 widened labelFormatter label to ReactNode
+							labelFormatter={tooltipLabelFormatter as any}
+						/>
+					)}
 					{showLegend && <Legend height={legendHeight} />}
 					{lineConfigs.map((lineConfig, _index) => (
 						<Line
