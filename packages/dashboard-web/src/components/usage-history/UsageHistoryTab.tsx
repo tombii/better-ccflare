@@ -30,6 +30,10 @@ export function UsageHistoryTab() {
 	const selectedAccount = accounts?.find((a) => a.id === selected);
 	const { data, isLoading } = useUsageHistory(selected, range);
 	const windows = data?.windows ?? [];
+	// Bucket "now" to 1-minute granularity (matching the chart's nowBucket) so the
+	// per-window annotations use a single, stable reference rather than a fresh
+	// Date.now() per window per render — avoids sub-minute ETA display drift.
+	const nowBucket = Math.floor(Date.now() / 60_000) * 60_000;
 
 	return (
 		<div className="space-y-4">
@@ -73,9 +77,7 @@ export function UsageHistoryTab() {
 			{windows.length > 0 && (
 				<Card className="p-4 space-y-1 text-sm">
 					{windows.map((w) => (
-						<div key={w.window}>
-							{formatPredictionAnnotation(w, Date.now())}
-						</div>
+						<div key={w.window}>{formatPredictionAnnotation(w, nowBucket)}</div>
 					))}
 				</Card>
 			)}
