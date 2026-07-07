@@ -68,9 +68,10 @@ export interface UsageSpend {
 }
 
 export interface UsageData {
-	// Core windows (always present in older API versions)
-	five_hour: UsageWindow;
-	seven_day: UsageWindow;
+	// Core windows — present on legacy payloads but ABSENT on limits[]-only
+	// payloads (Anthropic is migrating the flat windows into the generic limits[]).
+	five_hour?: UsageWindow;
+	seven_day?: UsageWindow;
 	seven_day_oauth_apps?: UsageWindow;
 	seven_day_opus?: UsageWindow | null;
 	// New fields from 2025-11 API update (all optional for backward compatibility)

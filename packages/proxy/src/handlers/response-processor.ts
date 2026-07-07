@@ -118,7 +118,7 @@ export function updateAccountMetadata(
 
 			usageCache.set(account.id, codexUsage);
 			log.debug(
-				`Updated Codex usage cache for ${account.name}: 5h=${codexUsage.five_hour.utilization}%, 7d=${codexUsage.seven_day.utilization}%`,
+				`Updated Codex usage cache for ${account.name}: 5h=${codexUsage.five_hour?.utilization ?? "?"}%, 7d=${codexUsage.seven_day?.utilization ?? "?"}%`,
 			);
 
 			// Update rate_limit_reset from usage headers so auto-refresh can track windows

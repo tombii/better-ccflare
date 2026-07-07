@@ -69,25 +69,24 @@ function toRateLimitReason(v: string | null): RateLimitReason | null {
 }
 
 function normalizeCodexUsageData(usage: UsageData): UsageData | null {
-	const normalized: UsageData = {
-		five_hour: { ...usage.five_hour },
-		seven_day: { ...usage.seven_day },
-	};
+	// Codex payloads carry the flat windows; default to empty windows if a
+	// limits-only shape ever reaches here (five_hour/seven_day are now optional).
+	let five_hour = usage.five_hour ?? { utilization: 0, resets_at: null };
+	let seven_day = usage.seven_day ?? { utilization: 0, resets_at: null };
 	if (
-		normalized.five_hour.resets_at &&
-		new Date(normalized.five_hour.resets_at).getTime() <= Date.now()
+		five_hour.resets_at &&
+		new Date(five_hour.resets_at).getTime() <= Date.now()
 	) {
-		normalized.five_hour = { utilization: 0, resets_at: null };
+		five_hour = { utilization: 0, resets_at: null };
 	}
 	if (
-		normalized.seven_day.resets_at &&
-		new Date(normalized.seven_day.resets_at).getTime() <= Date.now()
+		seven_day.resets_at &&
+		new Date(seven_day.resets_at).getTime() <= Date.now()
 	) {
-		normalized.seven_day = { utilization: 0, resets_at: null };
+		seven_day = { utilization: 0, resets_at: null };
 	}
-	return normalized.five_hour.resets_at !== null ||
-		normalized.seven_day.resets_at !== null
-		? normalized
+	return five_hour.resets_at !== null || seven_day.resets_at !== null
+		? { five_hour, seven_day }
 		: null;
 }
 
