@@ -263,11 +263,22 @@ export async function handleProxy(
 		const available: Account[] = [];
 		const throttled: Account[] = [];
 
+		// Model-aware throttling: a per-model weekly cap should only throttle
+		// requests for that model. Use the effective (post-intercept) request
+		// model; combo-routed requests assign per-slot models later, so skip
+		// scoped caps (null) and rely on the flat windows + reactive out_of_credits.
+		const comboRouted = getComboSlotInfo(requestMeta) != null;
+		const effectiveModel = appliedModel ?? requestModel ?? null;
+
 		for (const account of accounts) {
 			const throttleUntil = getUsageThrottleUntil(
 				usageCache.get(account.id),
 				settings,
 				now,
+				{
+					requestModel: comboRouted ? null : effectiveModel,
+					scopedMode: "match",
+				},
 			);
 			if (throttleUntil && throttleUntil > now) {
 				throttled.push(account);

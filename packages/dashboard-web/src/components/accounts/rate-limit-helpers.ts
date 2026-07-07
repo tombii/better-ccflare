@@ -7,6 +7,7 @@
  * the legacy flat `seven_day_*` keys are null on current plans. We render from
  * `limits[]` when present and fall back to the legacy flat windows otherwise.
  */
+import { weeklyScopedWindowKey } from "@better-ccflare/core";
 import type { AnthropicUsageData, UsageLimit } from "@better-ccflare/types";
 
 /** A single progress-bar row rendered by RateLimitProgress. */
@@ -101,17 +102,6 @@ export function severityColor(
 	return "normal";
 }
 
-// Slugify a model display name into an internal `seven_day_<slug>` window key.
-// The slug only needs to (a) start with `seven_day_` so the pace marker
-// (computeWindowStartMs) treats it as a 7-day window and (b) be stable per model.
-// The human label is carried separately on the row, so the slug form is cosmetic.
-function slugifyModel(name: string): string {
-	return name
-		.toLowerCase()
-		.replace(/[^a-z0-9]+/g, "_")
-		.replace(/^_+|_+$/g, "");
-}
-
 /**
  * Build display rows from Anthropic's generic `limits[]` array — the primary,
  * authoritative source. Order follows the array (session, weekly_all, then
@@ -151,7 +141,7 @@ export function collectAnthropicLimitRows(
 		} else if (limit.kind === "weekly_scoped") {
 			const name = limit.scope?.model?.display_name?.trim();
 			if (!name) continue;
-			const baseWindow = `seven_day_${slugifyModel(name)}`;
+			const baseWindow = weeklyScopedWindowKey(name);
 			const seen = seenScoped.get(baseWindow) ?? 0;
 			seenScoped.set(baseWindow, seen + 1);
 			// First occurrence keeps the byte-stable key + label (throttle-window

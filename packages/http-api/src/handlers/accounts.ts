@@ -474,6 +474,9 @@ export function createAccountsListHandler(
 						fullUsageData as AnyUsageData,
 						usageThrottleSettings,
 						now,
+						// Display path: surface ALL per-model caps (m3 amber highlight);
+						// routing-side model matching happens in proxy.ts only.
+						{ scopedMode: "all" },
 					);
 					usageThrottledUntil = usageThrottleStatus.throttleUntil;
 					usageThrottledWindows = usageThrottleStatus.throttledWindows;

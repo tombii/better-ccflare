@@ -140,6 +140,103 @@ describe("getUsageThrottleUntil", () => {
 	});
 });
 
+describe("model-aware limits[] throttling (Phase 2a)", () => {
+	const NOW = Date.UTC(2026, 3, 28, 12, 0, 0);
+	const settings = { fiveHourEnabled: true, weeklyEnabled: true };
+	// A weekly window that started ~1h ago -> any utilization is over the pacing line.
+	const weekReset = new Date(
+		NOW + 7 * 24 * 60 * 60 * 1000 - 60 * 60 * 1000,
+	).toISOString();
+
+	const scoped = (percent: number, displayName = "Fable") =>
+		({
+			limits: [
+				{
+					kind: "weekly_scoped",
+					percent,
+					resets_at: weekReset,
+					scope: {
+						model: { id: null, display_name: displayName },
+						surface: null,
+					},
+				},
+			],
+		}) as never;
+
+	it("reads weekly_scoped from limits[] and throttles it (scopedMode 'all')", () => {
+		const status = getUsageThrottleStatus(scoped(50), settings, NOW, {
+			scopedMode: "all",
+		});
+		expect(status.throttledWindows).toContain("seven_day_fable");
+		expect(status.throttleUntil).not.toBeNull();
+	});
+
+	it("throttles a scoped Fable cap only for the matching request family (match mode)", () => {
+		expect(
+			getUsageThrottleUntil(scoped(50), settings, NOW, {
+				requestModel: "claude-fable-5",
+				scopedMode: "match",
+			}),
+		).not.toBeNull();
+		// An Opus request over the same account is NOT throttled by the Fable cap.
+		expect(
+			getUsageThrottleUntil(scoped(50), settings, NOW, {
+				requestModel: "claude-opus-4-8",
+				scopedMode: "match",
+			}),
+		).toBeNull();
+	});
+
+	it("skips scoped windows when the request model is unknown/combo (null) in match mode", () => {
+		expect(
+			getUsageThrottleUntil(scoped(50), settings, NOW, {
+				requestModel: null,
+				scopedMode: "match",
+			}),
+		).toBeNull();
+	});
+
+	it("throttles weekly_all regardless of the request model", () => {
+		const data = {
+			limits: [
+				{ kind: "weekly_all", percent: 50, resets_at: weekReset, scope: null },
+			],
+		} as never;
+		expect(
+			getUsageThrottleUntil(data, settings, NOW, {
+				requestModel: "claude-opus-4-8",
+				scopedMode: "match",
+			}),
+		).not.toBeNull();
+	});
+
+	it("throttles a dynamic seven_day_<slug> window (isWindowThrottlingEnabled default)", () => {
+		const status = getUsageThrottleStatus(
+			scoped(50, "Fable 4.5"),
+			settings,
+			NOW,
+			{ scopedMode: "all" },
+		);
+		expect(status.throttledWindows).toContain("seven_day_fable_4_5");
+	});
+
+	it("reads limits[] instead of the flat windows for hybrid payloads (no double-count)", () => {
+		const data = {
+			five_hour: { utilization: 5, resets_at: weekReset },
+			seven_day: { utilization: 5, resets_at: weekReset },
+			limits: [
+				{ kind: "weekly_all", percent: 50, resets_at: weekReset, scope: null },
+			],
+		} as never;
+		const status = getUsageThrottleStatus(data, settings, NOW, {
+			scopedMode: "all",
+		});
+		expect(status.throttledWindows).toContain("seven_day");
+		// flat five_hour is NOT emitted because the limits[] branch wins.
+		expect(status.throttledWindows).not.toContain("five_hour");
+	});
+});
+
 describe("createUsageThrottledResponse", () => {
 	it("returns HTTP 529 with Retry-After and an Anthropic-style overload body", async () => {
 		const response = createUsageThrottledResponse([
