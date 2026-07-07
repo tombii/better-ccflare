@@ -719,3 +719,73 @@ describe("computePoolUsage", () => {
 		expect(sevenDay.earliestResetAccountName).toBe("five-hour-exhausted");
 	});
 });
+
+describe("Anthropic limits[] primary (pool usage)", () => {
+	const RESET_ISO = "2030-01-01T00:00:00.000Z";
+
+	it("isAnthropicStyleShape is true for a limits[]-only payload", () => {
+		expect(
+			isAnthropicStyleShape({
+				limits: [{ kind: "session", percent: 10, resets_at: RESET_ISO }],
+			} as never),
+		).toBe(true);
+	});
+
+	it("reads five_hour / seven_day from limits[] when no flat windows exist", () => {
+		const acc = mkAccount({
+			provider: "anthropic",
+			usageData: {
+				limits: [
+					{ kind: "session", percent: 40, resets_at: RESET_ISO, scope: null },
+					{
+						kind: "weekly_all",
+						percent: 70,
+						resets_at: RESET_ISO,
+						scope: null,
+					},
+				],
+			} as never,
+		});
+		const five = computePoolUsage([acc], "five_hour", NOW);
+		expect(five.contributing[0]?.pct).toBe(40);
+		const seven = computePoolUsage([acc], "seven_day", NOW);
+		expect(seven.contributing[0]?.pct).toBe(70);
+	});
+
+	it("classifies a weekly_all >= 100 from limits[] as seven_day_exhausted", () => {
+		const acc = mkAccount({
+			name: "fable-capped",
+			provider: "anthropic",
+			usageData: {
+				limits: [
+					{ kind: "session", percent: 10, resets_at: RESET_ISO, scope: null },
+					{
+						kind: "weekly_all",
+						percent: 100,
+						resets_at: RESET_ISO,
+						scope: null,
+					},
+				],
+			} as never,
+		});
+		const seven = computePoolUsage([acc], "seven_day", NOW);
+		expect(seven.exhausted.map((e) => e.reason)).toContain(
+			"seven_day_exhausted",
+		);
+	});
+
+	it("falls back to the flat window when the matching kind is absent from limits[]", () => {
+		const acc = mkAccount({
+			provider: "anthropic",
+			usageData: {
+				// limits[] has only a session entry; seven_day must come from the flat window.
+				limits: [
+					{ kind: "session", percent: 20, resets_at: RESET_ISO, scope: null },
+				],
+				seven_day: { utilization: 55, resets_at: RESET_ISO },
+			} as never,
+		});
+		const seven = computePoolUsage([acc], "seven_day", NOW);
+		expect(seven.contributing[0]?.pct).toBe(55);
+	});
+});

@@ -110,12 +110,35 @@ export function isAnthropicStyleShape(
 	if (isNanoGPTShape(usageData)) return false;
 	if (isAlibabaShape(usageData)) return false;
 	if (isZaiShape(usageData)) return false;
-	return "five_hour" in usageData && "seven_day" in usageData;
+	return (
+		("five_hour" in usageData && "seven_day" in usageData) ||
+		Array.isArray((usageData as { limits?: unknown }).limits)
+	);
 }
 
 interface ExtractedValue {
 	pct: number | null;
 	resetMs: number | null;
+}
+
+// Read a session / weekly_all entry from Anthropic's generic limits[] array
+// (the authoritative source). NanoGPT's `limits` is an object, so we guard with
+// Array.isArray. Returns null when limits[] is absent -> caller falls back to
+// the legacy flat five_hour / seven_day windows.
+function extractAnthropicLimit(
+	usageData: FullUsageData,
+	kind: "session" | "weekly_all",
+): ExtractedValue | null {
+	const limits = (usageData as { limits?: unknown }).limits;
+	if (!Array.isArray(limits)) return null;
+	const entry = limits.find(
+		(l) => l && typeof l === "object" && (l as { kind?: string }).kind === kind,
+	) as { percent?: number | null; resets_at?: string | null } | undefined;
+	if (!entry) return null;
+	return {
+		pct: entry.percent ?? null,
+		resetMs: normalizeResetMs(entry.resets_at ?? null),
+	};
 }
 
 function extractFiveHour(usageData: FullUsageData): ExtractedValue | null {
@@ -146,6 +169,9 @@ function extractFiveHour(usageData: FullUsageData): ExtractedValue | null {
 		};
 	}
 	if (isAnthropicStyleShape(usageData)) {
+		// PRIMARY: the generic limits[] session entry; FALLBACK: legacy five_hour.
+		const fromLimits = extractAnthropicLimit(usageData, "session");
+		if (fromLimits) return fromLimits;
 		const data = usageData as {
 			five_hour?: { utilization: number | null; resets_at: string | null };
 		};
@@ -176,6 +202,9 @@ function extractSevenDay(usageData: FullUsageData): ExtractedValue | null {
 		return null;
 	}
 	if (isAnthropicStyleShape(usageData)) {
+		// PRIMARY: the generic limits[] weekly_all entry; FALLBACK: legacy seven_day.
+		const fromLimits = extractAnthropicLimit(usageData, "weekly_all");
+		if (fromLimits) return fromLimits;
 		const data = usageData as {
 			seven_day?: { utilization: number | null; resets_at: string | null };
 		};

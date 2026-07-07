@@ -342,7 +342,8 @@ export function createAccountsListHandler(
 					usageData
 				) {
 					const isAnthropicStyleData =
-						"five_hour" in usageData && "seven_day" in usageData;
+						("five_hour" in usageData && "seven_day" in usageData) ||
+						Array.isArray((usageData as { limits?: unknown }).limits);
 					if (isAnthropicStyleData) {
 						try {
 							usageUtilization = getRepresentativeUtilization(

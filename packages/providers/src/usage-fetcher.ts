@@ -40,6 +40,33 @@ export interface ExtraUsage {
 	utilization: number | null;
 }
 
+// Anthropic's generic per-limit representation (2026 usage API). Session and
+// all-models weekly come as kind "session" / "weekly_all"; per-model weekly caps
+// (Fable/Opus/Sonnet) come ONLY as kind "weekly_scoped" with scope.model.
+export interface UsageLimit {
+	kind: string; // "session" | "weekly_all" | "weekly_scoped" | ...
+	group?: string; // "session" | "weekly"
+	percent: number | null;
+	severity?: "normal" | "warning" | "critical" | string;
+	resets_at: string | null;
+	scope?: {
+		model?: { id: string | null; display_name: string } | null;
+		surface?: string | null;
+	} | null;
+	is_active?: boolean;
+}
+
+// Overage / pay-as-you-go credit spend block from the usage payload.
+export interface UsageSpend {
+	used?: { amount_minor: number; currency: string; exponent: number } | null;
+	limit?: unknown;
+	percent?: number | null;
+	severity?: string;
+	enabled?: boolean;
+	currency?: string | null;
+	disabled_reason?: string | null;
+}
+
 export interface UsageData {
 	// Core windows (always present in older API versions)
 	five_hour: UsageWindow;
@@ -48,10 +75,15 @@ export interface UsageData {
 	seven_day_opus?: UsageWindow | null;
 	// New fields from 2025-11 API update (all optional for backward compatibility)
 	seven_day_sonnet?: UsageWindow | null;
+	seven_day_fable?: UsageWindow | null;
 	iguana_necktie?: unknown; // Unknown purpose, keep as flexible type
 	extra_usage?: ExtraUsage;
+	// New generic representation (2026 API): session/weekly_all/weekly_scoped
+	// entries. Per-model weekly caps (Fable/Opus/Sonnet) live ONLY here.
+	limits?: UsageLimit[];
+	spend?: UsageSpend;
 	// Allow any additional fields Anthropic might add in the future
-	[key: string]: UsageWindow | ExtraUsage | unknown;
+	[key: string]: UsageWindow | ExtraUsage | UsageLimit[] | UsageSpend | unknown;
 }
 
 // Union type for all provider usage data
