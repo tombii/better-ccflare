@@ -220,7 +220,7 @@ describe("model-aware limits[] throttling (Phase 2a)", () => {
 		expect(status.throttledWindows).toContain("seven_day_fable_4_5");
 	});
 
-	it("reads limits[] instead of the flat windows for hybrid payloads (no double-count)", () => {
+	it("prefers limits[] for the windows it carries (weekly_all -> seven_day)", () => {
 		const data = {
 			five_hour: { utilization: 5, resets_at: weekReset },
 			seven_day: { utilization: 5, resets_at: weekReset },
@@ -231,8 +231,9 @@ describe("model-aware limits[] throttling (Phase 2a)", () => {
 		const status = getUsageThrottleStatus(data, settings, NOW, {
 			scopedMode: "all",
 		});
+		// seven_day comes from the limits[] weekly_all (50%, over pace).
 		expect(status.throttledWindows).toContain("seven_day");
-		// flat five_hour is NOT emitted because the limits[] branch wins.
+		// the low flat five_hour (5%) is below pace, so it is not throttled.
 		expect(status.throttledWindows).not.toContain("five_hour");
 	});
 });
@@ -306,6 +307,46 @@ describe("review fixes (codex/grok/fable)", () => {
 			getUsageThrottleStatus(data, settings, NOW, { scopedMode: "all" })
 				.throttledWindows,
 		).toContain("seven_day_mystery");
+	});
+
+	it("does not double-count five_hour when limits[] session and flat five_hour both exist", () => {
+		const data = {
+			five_hour: { utilization: 90, resets_at: fiveReset },
+			limits: [
+				{ kind: "session", percent: 90, resets_at: fiveReset, scope: null },
+			],
+		} as never;
+		const status = getUsageThrottleStatus(data, settings, NOW, {
+			scopedMode: "all",
+		});
+		// five_hour comes from the limits[] session; the flat five_hour is NOT re-added.
+		expect(
+			status.throttledWindows.filter((w) => w === "five_hour"),
+		).toHaveLength(1);
+	});
+
+	it("still evaluates the flat account cap when limits[] carries only a scoped row (Greptile hybrid)", () => {
+		// limits[] has ONLY a per-model Fable cap; the flat five_hour account cap is
+		// exhausted and NOT represented in limits[].
+		const data = {
+			five_hour: { utilization: 95, resets_at: fiveReset },
+			limits: [
+				{
+					kind: "weekly_scoped",
+					percent: 50,
+					resets_at: weekReset,
+					scope: { model: { id: null, display_name: "Fable" }, surface: null },
+				},
+			],
+		} as never;
+		// A Sonnet request: the Fable scoped cap is skipped (family mismatch), but
+		// the exhausted flat five_hour ACCOUNT cap must still throttle.
+		expect(
+			getUsageThrottleUntil(data, settings, NOW, {
+				requestModel: "claude-sonnet-4-5",
+				scopedMode: "match",
+			}),
+		).not.toBeNull();
 	});
 });
 

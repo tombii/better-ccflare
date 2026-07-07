@@ -72,13 +72,17 @@ function collectWindows(data: AnyUsageData | null): UsageWindowSnapshot[] {
 	// (with modelFamily so throttling can be scoped to the request's model).
 	if (Array.isArray((data as { limits?: unknown }).limits)) {
 		const limits = (data as { limits: AnthropicLimit[] }).limits;
+		let hasSession = false;
+		let hasWeeklyAll = false;
 		for (const l of limits) {
 			if (!l || typeof l.percent !== "number") continue;
 			const resetMs = l.resets_at ? new Date(l.resets_at).getTime() : null;
 			if (l.kind === "session") {
 				pushWindow("five_hour", l.percent, resetMs);
+				hasSession = true;
 			} else if (l.kind === "weekly_all") {
 				pushWindow("seven_day", l.percent, resetMs);
+				hasWeeklyAll = true;
 			} else if (l.kind === "weekly_scoped") {
 				const name = l.scope?.model?.display_name?.trim();
 				if (!name) continue;
@@ -91,9 +95,34 @@ function collectWindows(data: AnyUsageData | null): UsageWindowSnapshot[] {
 				);
 			}
 		}
-		// If limits[] yielded no usable windows (empty array, all percent null,
-		// unknown kinds), fall through to the legacy flat windows — mirroring the
-		// dashboard (rate-limit-helpers) so the proxy and UI agree on such payloads.
+		// Supplement the account-level windows (five_hour / seven_day) from the flat
+		// payload whenever limits[] did NOT carry them (per-kind, so no double-count):
+		// a payload with only per-model scoped rows must still throttle on an
+		// exhausted flat ACCOUNT cap, and an empty limits[] falls back to flat too.
+		const flat = data as {
+			five_hour?: { utilization?: number | null; resets_at?: string | null };
+			seven_day?: { utilization?: number | null; resets_at?: string | null };
+		};
+		if (!hasSession && flat.five_hour) {
+			pushWindow(
+				"five_hour",
+				flat.five_hour.utilization,
+				flat.five_hour.resets_at
+					? new Date(flat.five_hour.resets_at).getTime()
+					: null,
+			);
+		}
+		if (!hasWeeklyAll && flat.seven_day) {
+			pushWindow(
+				"seven_day",
+				flat.seven_day.utilization,
+				flat.seven_day.resets_at
+					? new Date(flat.seven_day.resets_at).getTime()
+					: null,
+			);
+		}
+		// Return unless nothing usable was collected (empty limits[] AND no flat
+		// account windows), in which case fall through to the other shape branches.
 		if (windows.length > 0) return windows;
 	}
 
