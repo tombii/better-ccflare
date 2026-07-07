@@ -342,4 +342,22 @@ describe("collectAnthropicLimitRows — scoped identity (Greptile P2)", () => {
 		expect(rows[0].window).toBe("seven_day_opus");
 		expect(rows[0].label).toBe("Opus (Weekly)");
 	});
+
+	it("gives every duplicate a unique window key even when surface repeats", () => {
+		// Greptile P2 re-review: surface alone is not a unique disambiguator.
+		const scoped = (surface: string): UsageLimit => ({
+			kind: "weekly_scoped",
+			percent: 50,
+			resets_at: RESET,
+			scope: { model: { id: null, display_name: "Fable" }, surface },
+		});
+		const rows = collectAnthropicLimitRows([
+			scoped("api"),
+			scoped("api"),
+			scoped("api"),
+		]);
+		const windows = rows.map((r) => r.window);
+		expect(new Set(windows).size).toBe(3); // all distinct -> no duplicate React keys
+		expect(windows[0]).toBe("seven_day_fable"); // first stays byte-stable
+	});
 });

@@ -156,19 +156,19 @@ export function collectAnthropicLimitRows(
 			seenScoped.set(baseWindow, seen + 1);
 			// First occurrence keeps the byte-stable key + label (throttle-window
 			// match, pace marker, snapshot tests). Later duplicates — same
-			// display_name, different scope.surface / model.id — get a distinct
-			// suffix (still seven_day_-prefixed so the pace marker applies) and a
-			// distinct label so React keys and projection state stay unique.
-			const disambig =
-				limit.scope?.surface?.trim() ||
-				limit.scope?.model?.id?.trim() ||
-				String(seen + 1);
+			// display_name, even the SAME surface/model.id — get a monotonic
+			// counter suffix (guaranteed unique, still seven_day_-prefixed so the
+			// pace marker applies) so React keys / projection state stay distinct;
+			// surface/model.id is label-only context.
+			const context =
+				limit.scope?.surface?.trim() || limit.scope?.model?.id?.trim();
 			rows.push({
 				...base,
-				window:
-					seen === 0 ? baseWindow : `${baseWindow}_${slugifyModel(disambig)}`,
+				window: seen === 0 ? baseWindow : `${baseWindow}_${seen}`,
 				label:
-					seen === 0 ? `${name} (Weekly)` : `${name} (Weekly, ${disambig})`,
+					seen === 0
+						? `${name} (Weekly)`
+						: `${name} (Weekly, ${context ?? seen + 1})`,
 				group: "weekly",
 			});
 		}
