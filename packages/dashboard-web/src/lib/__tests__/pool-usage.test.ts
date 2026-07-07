@@ -788,4 +788,19 @@ describe("Anthropic limits[] primary (pool usage)", () => {
 		const seven = computePoolUsage([acc], "seven_day", NOW);
 		expect(seven.contributing[0]?.pct).toBe(55);
 	});
+
+	it("falls back to the flat window when the limits[] entry exists but percent is null", () => {
+		const acc = mkAccount({
+			provider: "anthropic",
+			usageData: {
+				// session limit present but percent null -> must NOT shadow the flat window.
+				limits: [
+					{ kind: "session", percent: null, resets_at: RESET_ISO, scope: null },
+				],
+				five_hour: { utilization: 33, resets_at: RESET_ISO },
+			} as never,
+		});
+		const five = computePoolUsage([acc], "five_hour", NOW);
+		expect(five.contributing[0]?.pct).toBe(33);
+	});
 });

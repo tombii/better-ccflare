@@ -299,3 +299,47 @@ describe("review fixes: limits[] fallback (M2) + group ordering (m1)", () => {
 		]);
 	});
 });
+
+describe("collectAnthropicLimitRows — scoped identity (Greptile P2)", () => {
+	it("keeps the first scoped occurrence byte-stable and disambiguates duplicates by surface", () => {
+		const rows = collectAnthropicLimitRows([
+			{
+				kind: "weekly_scoped",
+				percent: 50,
+				resets_at: RESET,
+				scope: { model: { id: null, display_name: "Fable" }, surface: "api" },
+			},
+			{
+				kind: "weekly_scoped",
+				percent: 80,
+				resets_at: RESET,
+				scope: {
+					model: { id: null, display_name: "Fable" },
+					surface: "vscode",
+				},
+			},
+		]);
+		// First occurrence keeps the exact seven_day_fable key + label so the m3
+		// throttle-window match, pace marker, and snapshot tests stay stable.
+		expect(rows[0].window).toBe("seven_day_fable");
+		expect(rows[0].label).toBe("Fable (Weekly)");
+		// Same display name, different surface -> distinct window AND label
+		// (no duplicate React keys, distinguishable in projection state).
+		expect(rows[1].window).not.toBe(rows[0].window);
+		expect(rows[1].window?.startsWith("seven_day_")).toBe(true);
+		expect(rows[1].label).not.toBe(rows[0].label);
+	});
+
+	it("leaves a single scoped limit's key/label unchanged (byte-stable)", () => {
+		const rows = collectAnthropicLimitRows([
+			{
+				kind: "weekly_scoped",
+				percent: 50,
+				resets_at: RESET,
+				scope: { model: { id: null, display_name: "Opus" }, surface: "api" },
+			},
+		]);
+		expect(rows[0].window).toBe("seven_day_opus");
+		expect(rows[0].label).toBe("Opus (Weekly)");
+	});
+});

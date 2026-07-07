@@ -123,6 +123,9 @@ export function collectAnthropicLimitRows(
 	limits: UsageLimit[],
 ): UsageDisplay[] {
 	const rows: UsageDisplay[] = [];
+	// Track scoped window keys so two limits with the same display_name on
+	// different surfaces don't collide (duplicate React keys / indistinguishable).
+	const seenScoped = new Map<string, number>();
 	for (const limit of limits) {
 		if (!limit || limit.percent == null) continue;
 		const base = {
@@ -148,10 +151,24 @@ export function collectAnthropicLimitRows(
 		} else if (limit.kind === "weekly_scoped") {
 			const name = limit.scope?.model?.display_name?.trim();
 			if (!name) continue;
+			const baseWindow = `seven_day_${slugifyModel(name)}`;
+			const seen = seenScoped.get(baseWindow) ?? 0;
+			seenScoped.set(baseWindow, seen + 1);
+			// First occurrence keeps the byte-stable key + label (throttle-window
+			// match, pace marker, snapshot tests). Later duplicates — same
+			// display_name, different scope.surface / model.id — get a distinct
+			// suffix (still seven_day_-prefixed so the pace marker applies) and a
+			// distinct label so React keys and projection state stay unique.
+			const disambig =
+				limit.scope?.surface?.trim() ||
+				limit.scope?.model?.id?.trim() ||
+				String(seen + 1);
 			rows.push({
 				...base,
-				window: `seven_day_${slugifyModel(name)}`,
-				label: `${name} (Weekly)`,
+				window:
+					seen === 0 ? baseWindow : `${baseWindow}_${slugifyModel(disambig)}`,
+				label:
+					seen === 0 ? `${name} (Weekly)` : `${name} (Weekly, ${disambig})`,
 				group: "weekly",
 			});
 		}

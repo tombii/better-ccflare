@@ -134,9 +134,11 @@ function extractAnthropicLimit(
 	const entry = limits.find(
 		(l) => l && typeof l === "object" && (l as { kind?: string }).kind === kind,
 	) as { percent?: number | null; resets_at?: string | null } | undefined;
-	if (!entry) return null;
+	// Absent OR present-but-null percent -> return null so the caller falls back to
+	// the legacy flat window instead of excluding the account as no_usage_data.
+	if (!entry || entry.percent == null) return null;
 	return {
-		pct: entry.percent ?? null,
+		pct: entry.percent,
 		resetMs: normalizeResetMs(entry.resets_at ?? null),
 	};
 }

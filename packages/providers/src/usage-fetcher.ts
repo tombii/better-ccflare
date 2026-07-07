@@ -107,16 +107,15 @@ export function extractWindowResetTime(
 		const zai = data as ZaiUsageData;
 		return zai.tokens_limit?.resetAt ?? null;
 	}
-	if (provider === "anthropic") {
-		const anthropic = data as UsageData;
-		const resetsAt = anthropic.five_hour?.resets_at;
-		if (!resetsAt) return null;
-		const ms = new Date(resetsAt).getTime();
-		return Number.isFinite(ms) ? ms : null;
-	}
-	if (provider === "codex") {
-		const codex = data as UsageData;
-		const resetsAt = codex.five_hour?.resets_at;
+	if (provider === "anthropic" || provider === "codex") {
+		const d = data as UsageData;
+		// Prefer the flat five_hour window; fall back to the limits[] session
+		// entry so limits-only payloads still expose a session reset time.
+		const resetsAt =
+			d.five_hour?.resets_at ??
+			(Array.isArray(d.limits)
+				? (d.limits.find((l) => l?.kind === "session")?.resets_at ?? null)
+				: null);
 		if (!resetsAt) return null;
 		const ms = new Date(resetsAt).getTime();
 		return Number.isFinite(ms) ? ms : null;
@@ -236,6 +235,24 @@ export async function fetchUsageData(
  * Returns the highest utilization across all windows
  * Dynamically handles any usage window fields in the response
  */
+// Account-level utilization from Anthropic's generic limits[] array: session ->
+// five_hour, weekly_all -> seven_day. Per-model (weekly_scoped) caps are excluded
+// — they are mutual fallbacks, not hard account limits.
+function accountLevelLimitWindows(
+	usage: UsageData,
+): Array<{ window: string; util: number }> {
+	if (!Array.isArray(usage.limits)) return [];
+	const out: Array<{ window: string; util: number }> = [];
+	for (const limit of usage.limits) {
+		if (!limit || typeof limit.percent !== "number") continue;
+		if (limit.kind === "session")
+			out.push({ window: "five_hour", util: limit.percent });
+		else if (limit.kind === "weekly_all")
+			out.push({ window: "seven_day", util: limit.percent });
+	}
+	return out;
+}
+
 export function getRepresentativeUtilization(
 	usage: UsageData | null,
 ): number | null {
@@ -266,7 +283,14 @@ export function getRepresentativeUtilization(
 		}
 	}
 
-	return utilizations.length > 0 ? Math.max(...utilizations) : 0;
+	// Fold in Anthropic's generic limits[] account-level caps (session / weekly_all).
+	for (const { util } of accountLevelLimitWindows(usage)) {
+		utilizations.push(util);
+	}
+
+	// Return null (not 0) when nothing was found: 0 reads as "fully available" and
+	// would falsely un-bench an exhausted account (capacity guard) and mis-rank it.
+	return utilizations.length > 0 ? Math.max(...utilizations) : null;
 }
 
 /**
@@ -301,6 +325,10 @@ export function getRepresentativeWindow(
 		) {
 			windows.push({ name: key, util: value.utilization });
 		}
+	}
+
+	for (const { window, util } of accountLevelLimitWindows(usage)) {
+		windows.push({ name: window, util });
 	}
 
 	if (windows.length === 0) return null;
@@ -339,6 +367,8 @@ export function getRepresentativeUtilizationForProvider(
 			// extra_usage has utilization: number | null
 			if (d.extra_usage?.utilization != null)
 				utils.push(d.extra_usage.utilization);
+			// Account-level limits[] caps (session / weekly_all) for limits-only payloads.
+			for (const { util } of accountLevelLimitWindows(d)) utils.push(util);
 			return utils.length > 0 ? Math.max(...utils) : null;
 		}
 		case "nanogpt": {
