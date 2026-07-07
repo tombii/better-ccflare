@@ -330,6 +330,25 @@ describe("collectAnthropicLimitRows — scoped identity (Greptile P2)", () => {
 		expect(rows[1].label).not.toBe(rows[0].label);
 	});
 
+	it("does not collide a duplicate counter suffix with a real model slug", () => {
+		// codex/fable: seven_day_fable_1 (dup of "Fable") must not equal
+		// weeklyScopedWindowKey("Fable 1").
+		const s = (name: string): UsageLimit => ({
+			kind: "weekly_scoped",
+			percent: 50,
+			resets_at: RESET,
+			scope: { model: { id: null, display_name: name }, surface: null },
+		});
+		const rows = collectAnthropicLimitRows([
+			s("Fable"),
+			s("Fable"),
+			s("Fable 1"),
+		]);
+		const windows = rows.map((r) => r.window);
+		expect(new Set(windows).size).toBe(3); // all distinct, no collision
+		expect(windows[0]).toBe("seven_day_fable");
+	});
+
 	it("leaves a single scoped limit's key/label unchanged (byte-stable)", () => {
 		const rows = collectAnthropicLimitRows([
 			{

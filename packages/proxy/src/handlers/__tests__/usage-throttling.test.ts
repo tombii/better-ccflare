@@ -237,6 +237,78 @@ describe("model-aware limits[] throttling (Phase 2a)", () => {
 	});
 });
 
+describe("review fixes (codex/grok/fable)", () => {
+	const NOW = Date.UTC(2026, 3, 28, 12, 0, 0);
+	const settings = { fiveHourEnabled: true, weeklyEnabled: true };
+	const weekReset = new Date(
+		NOW + 7 * 24 * 60 * 60 * 1000 - 60 * 60 * 1000,
+	).toISOString();
+	const fiveReset = new Date(
+		NOW + 5 * 60 * 60 * 1000 - 60 * 60 * 1000,
+	).toISOString();
+
+	it("falls back to flat windows when limits[] is present but empty", () => {
+		const data = {
+			limits: [],
+			five_hour: { utilization: 50, resets_at: fiveReset },
+			seven_day: { utilization: 50, resets_at: weekReset },
+		} as never;
+		const status = getUsageThrottleStatus(data, settings, NOW, {
+			scopedMode: "all",
+		});
+		expect(status.throttledWindows).toContain("five_hour");
+	});
+
+	it("falls back to flat windows when every limits[] entry has null percent", () => {
+		const data = {
+			limits: [
+				{ kind: "session", percent: null, resets_at: fiveReset, scope: null },
+				{
+					kind: "weekly_all",
+					percent: null,
+					resets_at: weekReset,
+					scope: null,
+				},
+			],
+			five_hour: { utilization: 50, resets_at: fiveReset },
+			seven_day: { utilization: 50, resets_at: weekReset },
+		} as never;
+		const status = getUsageThrottleStatus(data, settings, NOW, {
+			scopedMode: "all",
+		});
+		expect(status.throttledWindows).toContain("five_hour");
+	});
+
+	it("does NOT throttle a scoped cap with an unmapped model family in match mode", () => {
+		// "Mystery" contains no fable/opus/sonnet/haiku -> modelFamily undefined.
+		const data = {
+			limits: [
+				{
+					kind: "weekly_scoped",
+					percent: 50,
+					resets_at: weekReset,
+					scope: {
+						model: { id: null, display_name: "Mystery" },
+						surface: null,
+					},
+				},
+			],
+		} as never;
+		// match mode with any model -> scoped skipped (cannot attribute) -> no throttle.
+		expect(
+			getUsageThrottleUntil(data, settings, NOW, {
+				requestModel: "claude-opus-4-8",
+				scopedMode: "match",
+			}),
+		).toBeNull();
+		// all mode (display) still surfaces the cap.
+		expect(
+			getUsageThrottleStatus(data, settings, NOW, { scopedMode: "all" })
+				.throttledWindows,
+		).toContain("seven_day_mystery");
+	});
+});
+
 describe("createUsageThrottledResponse", () => {
 	it("returns HTTP 529 with Retry-After and an Anthropic-style overload body", async () => {
 		const response = createUsageThrottledResponse([

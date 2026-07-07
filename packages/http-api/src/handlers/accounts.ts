@@ -71,8 +71,12 @@ function toRateLimitReason(v: string | null): RateLimitReason | null {
 function normalizeCodexUsageData(usage: UsageData): UsageData | null {
 	// Codex payloads carry the flat windows; default to empty windows if a
 	// limits-only shape ever reaches here (five_hour/seven_day are now optional).
-	let five_hour = usage.five_hour ?? { utilization: 0, resets_at: null };
-	let seven_day = usage.seven_day ?? { utilization: 0, resets_at: null };
+	let five_hour = usage.five_hour
+		? { ...usage.five_hour }
+		: { utilization: 0, resets_at: null };
+	let seven_day = usage.seven_day
+		? { ...usage.seven_day }
+		: { utilization: 0, resets_at: null };
 	if (
 		five_hour.resets_at &&
 		new Date(five_hour.resets_at).getTime() <= Date.now()

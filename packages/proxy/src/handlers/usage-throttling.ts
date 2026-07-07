@@ -14,6 +14,8 @@ interface UsageWindowSnapshot {
 	window: string;
 	/** Set for per-model weekly caps (weekly_scoped); drives model-aware throttling. */
 	modelFamily?: string;
+	/** True for a weekly_scoped (per-model) cap — even when its family is unknown. */
+	scoped?: boolean;
 }
 
 // Minimal shape of Anthropic's generic limits[] entries (see providers UsageLimit).
@@ -44,6 +46,7 @@ function collectWindows(data: AnyUsageData | null): UsageWindowSnapshot[] {
 		utilization: number | null | undefined,
 		resetAtMs: number | null | undefined,
 		modelFamily?: string,
+		scoped?: boolean,
 	) => {
 		if (
 			typeof utilization !== "number" ||
@@ -59,6 +62,7 @@ function collectWindows(data: AnyUsageData | null): UsageWindowSnapshot[] {
 			resetAtMs,
 			window,
 			modelFamily,
+			scoped,
 		});
 	};
 
@@ -83,10 +87,14 @@ function collectWindows(data: AnyUsageData | null): UsageWindowSnapshot[] {
 					l.percent,
 					resetMs,
 					getModelFamily(name) ?? undefined,
+					true,
 				);
 			}
 		}
-		return windows;
+		// If limits[] yielded no usable windows (empty array, all percent null,
+		// unknown kinds), fall through to the legacy flat windows — mirroring the
+		// dashboard (rate-limit-helpers) so the proxy and UI agree on such payloads.
+		if (windows.length > 0) return windows;
 	}
 
 	if ("five_hour" in data && "seven_day" in data) {
@@ -228,12 +236,14 @@ export function getUsageThrottleStatus(
 	const throttledWindows: string[] = [];
 
 	for (const window of windows) {
-		// A per-model weekly cap only throttles in "all" mode or on a family match;
-		// a null/unknown/combo request family therefore never throttles a scoped cap.
+		// A per-model (scoped) cap only throttles in "all" mode, or in "match" mode
+		// when its family is KNOWN and equals the request's. An unmapped scoped cap
+		// (modelFamily undefined) is skipped in match mode rather than throttling
+		// every model; whole-account windows (not scoped) always throttle.
 		if (
-			window.modelFamily != null &&
+			window.scoped &&
 			scopedMode !== "all" &&
-			window.modelFamily !== requestFamily
+			(window.modelFamily == null || window.modelFamily !== requestFamily)
 		) {
 			continue;
 		}

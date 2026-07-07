@@ -113,9 +113,10 @@ export function collectAnthropicLimitRows(
 	limits: UsageLimit[],
 ): UsageDisplay[] {
 	const rows: UsageDisplay[] = [];
-	// Track scoped window keys so two limits with the same display_name on
-	// different surfaces don't collide (duplicate React keys / indistinguishable).
-	const seenScoped = new Map<string, number>();
+	// Track every scoped window key already emitted so duplicates get a unique
+	// suffix that can't collide with each other OR with a real model whose slug
+	// already ends in _<n> (e.g. a "Fable" duplicate vs a model named "Fable 1").
+	const usedWindows = new Set<string>();
 	for (const limit of limits) {
 		if (!limit || limit.percent == null) continue;
 		const base = {
@@ -142,23 +143,28 @@ export function collectAnthropicLimitRows(
 			const name = limit.scope?.model?.display_name?.trim();
 			if (!name) continue;
 			const baseWindow = weeklyScopedWindowKey(name);
-			const seen = seenScoped.get(baseWindow) ?? 0;
-			seenScoped.set(baseWindow, seen + 1);
 			// First occurrence keeps the byte-stable key + label (throttle-window
-			// match, pace marker, snapshot tests). Later duplicates — same
-			// display_name, even the SAME surface/model.id — get a monotonic
-			// counter suffix (guaranteed unique, still seven_day_-prefixed so the
-			// pace marker applies) so React keys / projection state stay distinct;
-			// surface/model.id is label-only context.
+			// match, pace marker, snapshot tests). Later duplicates get the next free
+			// numeric suffix, checked against ALL used scoped keys so it can never
+			// collide with another duplicate or a real model slug; still
+			// seven_day_-prefixed so the pace marker applies. surface/model.id is
+			// label-only context.
+			let window = baseWindow;
+			let n = 0;
+			while (usedWindows.has(window)) {
+				n += 1;
+				window = `${baseWindow}_${n}`;
+			}
+			usedWindows.add(window);
 			const context =
 				limit.scope?.surface?.trim() || limit.scope?.model?.id?.trim();
 			rows.push({
 				...base,
-				window: seen === 0 ? baseWindow : `${baseWindow}_${seen}`,
+				window,
 				label:
-					seen === 0
+					window === baseWindow
 						? `${name} (Weekly)`
-						: `${name} (Weekly, ${context ?? seen + 1})`,
+						: `${name} (Weekly, ${context ?? n})`,
 				group: "weekly",
 			});
 		}
