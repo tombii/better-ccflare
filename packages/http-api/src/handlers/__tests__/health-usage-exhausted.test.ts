@@ -77,6 +77,21 @@ describe("computePoolStatus — usage_exhausted counter", () => {
 		}));
 		expect(status.usage_exhausted).toBe(0);
 	});
+
+	it("does NOT count an account under an active cooldown — usage_exhausted is a subset of routable", () => {
+		// Greptile P2 on PR #299: a benched account was counted in BOTH
+		// rate_limited and usage_exhausted, so usage_exhausted could exceed
+		// routable, contradicting the documented semantics in stats.ts.
+		const benched = makeAccount({ rate_limited_until: now + 60_000 });
+		const status = computePoolStatus([benched], now, () => ({
+			utilization: 100,
+			resetMs: now + 3_600_000,
+		}));
+		expect(status.rate_limited).toBe(1);
+		expect(status.routable).toBe(0);
+		expect(status.usage_exhausted).toBe(0);
+		expect(status.usage_exhausted).toBeLessThanOrEqual(status.routable);
+	});
 });
 
 describe("createHealthHandler — pool.usage_exhausted in the response", () => {
@@ -91,6 +106,8 @@ describe("createHealthHandler — pool.usage_exhausted in the response", () => {
 	afterEach(() => {
 		usageCache.delete("health-test-exhausted");
 		usageCache.delete("health-test-stale");
+		usageCache.delete("health-test-zai-stale");
+		usageCache.delete("health-test-zai-fresh");
 	});
 
 	it("exposes usage_exhausted via an injected utilization source", async () => {
@@ -175,5 +192,74 @@ describe("createHealthHandler — pool.usage_exhausted in the response", () => {
 		};
 
 		expect(body.pool.usage_exhausted).toBe(0);
+	});
+
+	it("default path applies the staleness guard for NON-anthropic providers too (zai, reset in the past)", async () => {
+		// Greptile P2 on PR #299: the default getter extracted resetMs only for
+		// anthropic-shaped payloads, so a zai account at 100% with an already
+		// reset window stayed "exhausted" on /health while the accounts API
+		// (which extracts the reset for every provider) said "OK" — the exact
+		// split-brain the shared guard is supposed to prevent.
+		usageCache.set("health-test-zai-stale", {
+			time_limit: null,
+			tokens_limit: {
+				used: 100,
+				remaining: 0,
+				percentage: 100,
+				resetAt: Date.now() - 60_000,
+				type: "tokens",
+			},
+		});
+
+		const handler = createHealthHandler(
+			dbWith([
+				{
+					id: "health-test-zai-stale",
+					name: "zai-stale",
+					provider: "zai",
+					paused: false,
+				},
+			]),
+			config,
+		);
+
+		const response = await handler(new URL("http://localhost/health"));
+		const body = (await response.json()) as {
+			pool: { usage_exhausted: number };
+		};
+
+		expect(body.pool.usage_exhausted).toBe(0);
+	});
+
+	it("default path still counts a genuinely exhausted non-anthropic account (zai, reset in the future)", async () => {
+		usageCache.set("health-test-zai-fresh", {
+			time_limit: null,
+			tokens_limit: {
+				used: 100,
+				remaining: 0,
+				percentage: 100,
+				resetAt: Date.now() + 3_600_000,
+				type: "tokens",
+			},
+		});
+
+		const handler = createHealthHandler(
+			dbWith([
+				{
+					id: "health-test-zai-fresh",
+					name: "zai-fresh",
+					provider: "zai",
+					paused: false,
+				},
+			]),
+			config,
+		);
+
+		const response = await handler(new URL("http://localhost/health"));
+		const body = (await response.json()) as {
+			pool: { usage_exhausted: number };
+		};
+
+		expect(body.pool.usage_exhausted).toBe(1);
 	});
 });

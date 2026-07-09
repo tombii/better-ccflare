@@ -4,13 +4,14 @@ import type { DatabaseOperations } from "@better-ccflare/database";
 import { jsonResponse } from "@better-ccflare/http-common";
 import {
 	getRepresentativeUtilizationForProvider,
-	getRepresentativeWindow,
-	type UsageData,
 	usageCache,
 } from "@better-ccflare/providers";
 import type { Account } from "@better-ccflare/types";
 import type { HealthResponse, IntegrityStatus, PoolStatus } from "../types";
-import { extractUsageResetMs, isUsageExhausted } from "./rate-limit-status";
+import {
+	getRepresentativeUsageResetMs,
+	isUsageExhausted,
+} from "./rate-limit-status";
 
 /**
  * Usage snapshot for exhaustion accounting: representative utilization
@@ -25,25 +26,17 @@ export type AccountUsageInfoFn = (account: Account) => AccountUsageInfo | null;
 const usageCacheUsageInfo: AccountUsageInfoFn = (account) => {
 	const data = usageCache.get(account.id);
 	if (!data) return null;
-	const utilization = getRepresentativeUtilizationForProvider(
-		data,
-		account.provider ?? "anthropic",
-	);
+	const provider = account.provider ?? "anthropic";
+	const utilization = getRepresentativeUtilizationForProvider(data, provider);
 	if (utilization === null) return null;
-	// Reset time of the representative window (anthropic-style payloads only;
-	// other providers fall back to null = trust the fresh cache).
-	let resetMs: number | null = null;
-	if ("five_hour" in data && "seven_day" in data) {
-		try {
-			resetMs = extractUsageResetMs(
-				data,
-				getRepresentativeWindow(data as UsageData),
-			);
-		} catch {
-			resetMs = null;
-		}
-	}
-	return { utilization, resetMs };
+	// Same provider-aware reset derivation as the accounts handler, so the
+	// staleness guard sees identical inputs on both surfaces (PR #299 review
+	// finding: guarding only anthropic-shaped payloads recreated the /health
+	// vs accounts split-brain for the other providers).
+	return {
+		utilization,
+		resetMs: getRepresentativeUsageResetMs(data, provider),
+	};
 };
 
 type AsyncWriterHealthFn = () => {
@@ -77,12 +70,15 @@ export function computePoolStatus(
 	);
 	const rate_limited = rateLimitedAccounts.length;
 	const routable = accounts.filter((a) => isAccountAvailable(a, now)).length;
-	// Counted independently of `routable`: an account at 100% usage has no
-	// active cooldown (it stays routable) yet upstream rejects its requests,
-	// so `routable > 0` alone can mask an effectively exhausted pool
-	// (incident 2026-07-09).
+	// Subset of `routable`: accounts with no pause and no active cooldown
+	// whose usage window sits at 100% — they look available locally, yet
+	// upstream rejects their requests, so `routable > 0` alone can mask an
+	// effectively exhausted pool (incident 2026-07-09). Benched accounts are
+	// excluded — they are already visible via `rate_limited`, and counting
+	// them here would let usage_exhausted exceed routable (PR #299 review
+	// finding).
 	const usage_exhausted = accounts.filter((a) => {
-		if (a.paused) return false;
+		if (!isAccountAvailable(a, now)) return false;
 		const usage = getUsageInfo(a);
 		return (
 			usage !== null && isUsageExhausted(usage.utilization, usage.resetMs, now)

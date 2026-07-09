@@ -15,6 +15,23 @@
  *   4. "OK".
  */
 
+import type {
+	AlibabaCodingPlanUsageData,
+	AnyUsageData,
+	KiloUsageData,
+	NanoGPTUsageData,
+	UsageData,
+	XaiUsageData,
+	ZaiUsageData,
+} from "@better-ccflare/providers";
+import {
+	getRepresentativeAlibabaCodingPlanWindow,
+	getRepresentativeKiloWindow,
+	getRepresentativeNanoGPTWindow,
+	getRepresentativeWindow,
+	getRepresentativeXaiWindow,
+} from "@better-ccflare/providers";
+
 export interface RateLimitStatusInput {
 	/** Last `anthropic-ratelimit-unified-status` snapshot, if any. */
 	rate_limit_status: string | null;
@@ -76,6 +93,66 @@ export function computeRateLimitStatusDisplay(
 	}
 
 	return "OK";
+}
+
+/**
+ * Reset time (ms epoch) of the representative usage window, derived the same
+ * way for every provider — the single source BOTH the /health usage_exhausted
+ * counter and the accounts rateLimitStatus display use, so their staleness
+ * guards cannot diverge (PR #299 review finding). Note zai: the display
+ * window is labeled "five_hour" (Claude terminology), but the payload key
+ * carrying the reset is `tokens_limit` — extraction must use the payload key,
+ * not the display label.
+ */
+export function getRepresentativeUsageResetMs(
+	usageData: unknown,
+	provider: string,
+): number | null {
+	if (!usageData || typeof usageData !== "object") return null;
+	try {
+		const data = usageData as AnyUsageData;
+		switch (provider) {
+			case "anthropic":
+			case "codex":
+				return "five_hour" in data && "seven_day" in data
+					? extractUsageResetMs(
+							data,
+							getRepresentativeWindow(data as UsageData),
+						)
+					: null;
+			case "zai":
+				return extractUsageResetMs(
+					data,
+					(data as ZaiUsageData).tokens_limit ? "tokens_limit" : null,
+				);
+			case "nanogpt":
+				return extractUsageResetMs(
+					data,
+					getRepresentativeNanoGPTWindow(data as NanoGPTUsageData),
+				);
+			case "kilo":
+				return extractUsageResetMs(
+					data,
+					getRepresentativeKiloWindow(data as KiloUsageData),
+				);
+			case "alibaba-coding-plan":
+				return extractUsageResetMs(
+					data,
+					getRepresentativeAlibabaCodingPlanWindow(
+						data as AlibabaCodingPlanUsageData,
+					),
+				);
+			case "xai":
+				return extractUsageResetMs(
+					data,
+					getRepresentativeXaiWindow(data as XaiUsageData),
+				);
+			default:
+				return null;
+		}
+	} catch {
+		return null;
+	}
 }
 
 /**

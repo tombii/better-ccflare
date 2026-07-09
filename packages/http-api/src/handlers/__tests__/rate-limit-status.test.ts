@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import {
 	computeRateLimitStatusDisplay,
 	extractUsageResetMs,
+	getRepresentativeUsageResetMs,
 	isUsageExhausted,
 } from "../rate-limit-status";
 
@@ -140,6 +141,57 @@ describe("computeRateLimitStatusDisplay — existing behavior (parity)", () => {
 
 	it("returns OK when nothing is known", () => {
 		expect(computeRateLimitStatusDisplay(base, NOW)).toBe("OK");
+	});
+});
+
+describe("getRepresentativeUsageResetMs — shared provider-aware reset derivation", () => {
+	it("zai: reads the reset from the tokens_limit payload key despite the five_hour display label", () => {
+		const resetAt = NOW + 3_600_000;
+		const data = {
+			time_limit: null,
+			tokens_limit: {
+				used: 100,
+				remaining: 0,
+				percentage: 100,
+				resetAt,
+				type: "tokens",
+			},
+		};
+		expect(getRepresentativeUsageResetMs(data, "zai")).toBe(resetAt);
+	});
+
+	it("anthropic: uses the representative (max-utilization) window's resets_at", () => {
+		const data = {
+			five_hour: { utilization: 10, resets_at: null },
+			seven_day: { utilization: 100, resets_at: "2026-07-11T08:00:00.000Z" },
+		};
+		expect(getRepresentativeUsageResetMs(data, "anthropic")).toBe(
+			Date.UTC(2026, 6, 11, 8, 0, 0),
+		);
+	});
+
+	it("nanogpt: uses the busier window's resetAt", () => {
+		const resetAt = NOW + 7_200_000;
+		const data = {
+			active: true,
+			limits: { daily: 1, monthly: 1 },
+			enforceDailyLimit: true,
+			daily: { used: 1, remaining: 0, percentUsed: 1, resetAt },
+			monthly: {
+				used: 0,
+				remaining: 1,
+				percentUsed: 0.1,
+				resetAt: NOW + 30 * 86_400_000,
+			},
+			state: "active",
+			graceUntil: null,
+		};
+		expect(getRepresentativeUsageResetMs(data, "nanogpt")).toBe(resetAt);
+	});
+
+	it("returns null for unknown providers or missing data", () => {
+		expect(getRepresentativeUsageResetMs(null, "zai")).toBeNull();
+		expect(getRepresentativeUsageResetMs({}, "openai-compatible")).toBeNull();
 	});
 });
 

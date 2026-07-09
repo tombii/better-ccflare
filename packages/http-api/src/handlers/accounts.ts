@@ -47,7 +47,7 @@ import { requiresSessionDurationTracking } from "@better-ccflare/types";
 import type { AccountResponse } from "../types";
 import {
 	computeRateLimitStatusDisplay,
-	extractUsageResetMs,
+	getRepresentativeUsageResetMs,
 } from "./rate-limit-status";
 
 const log = new Logger("AccountsHandler");
@@ -476,7 +476,14 @@ export function createAccountsListHandler(
 							? Number(account.rate_limited_until)
 							: null,
 						usageUtilization,
-						usageResetMs: extractUsageResetMs(fullUsageData, usageWindow),
+						// Shared provider-aware derivation (same as /health) — a plain
+						// extractUsageResetMs(fullUsageData, usageWindow) silently loses
+						// the zai reset because usageWindow is the display label
+						// ("five_hour"), not the payload key ("tokens_limit").
+						usageResetMs: getRepresentativeUsageResetMs(
+							fullUsageData,
+							account.provider ?? "anthropic",
+						),
 					},
 					now,
 				);
