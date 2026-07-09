@@ -799,6 +799,57 @@ curl -X POST http://localhost:8080/api/agents/agent-uuid/preference \
   -d '{"model": "claude-3-5-sonnet-20241022"}'
 ```
 
+#### DELETE /api/agents/:agentId/preference
+
+Remove an agent's model preference, reverting it to its default (the agent's frontmatter model, or the session model if it has none).
+
+**Response:**
+```json
+{
+  "success": true,
+  "agentId": "agent-uuid",
+  "deleted": true
+}
+```
+
+**Example:**
+```bash
+curl -X DELETE http://localhost:8080/api/agents/agent-uuid/preference
+```
+
+#### PATCH /api/agents/:agentId
+
+Update an agent's configuration. Changes are written to the agent's `.md` file.
+
+**Request:** (all fields optional)
+```json
+{
+  "description": "Reviews code for quality and best practices",
+  "model": "claude-3-5-sonnet-20241022",
+  "tools": ["Read", "Edit"],
+  "color": "blue",
+  "systemPrompt": "You are a code reviewer...",
+  "mode": "edit"
+}
+```
+
+`model` accepts a valid model id, `null`, or the string `"inherit"` (case-insensitive); the latter two remove the `model:` key from the agent file so it inherits the session model. **Side effect:** including `model` in the request body at all — even to set it to `null` — clears the agent's runtime model preference (see `POST`/`DELETE /api/agents/:agentId/preference` above), so the two override mechanisms don't end up conflicting.
+
+**Response:**
+```json
+{
+  "success": true,
+  "agent": { ... }
+}
+```
+
+**Example:**
+```bash
+curl -X PATCH http://localhost:8080/api/agents/agent-uuid \
+  -H "Content-Type: application/json" \
+  -d '{"model": null}'
+```
+
 #### GET /api/workspaces
 
 List all available workspaces with agent counts.

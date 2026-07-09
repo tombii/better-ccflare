@@ -213,7 +213,7 @@ The `oauth_sessions` table stores temporary OAuth PKCE (Proof Key for Code Excha
 
 ### agent_preferences Table
 
-The `agent_preferences` table stores user-defined model preferences for specific agents.
+The `agent_preferences` table stores user-defined model preferences for specific agents. This is a runtime-only override — it never modifies the agent's `.md` file — and a row is deleted automatically whenever a default model is saved for that agent via `PATCH /api/agents/:id`.
 
 | Column | Type | Constraints | Description |
 |--------|------|-------------|-------------|

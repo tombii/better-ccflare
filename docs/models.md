@@ -162,4 +162,4 @@ The model mappings include both current and legacy model versions:
 
 better-ccflare supports agent-specific model preferences through the agent system. When an agent is detected in a request, the system can automatically override the model selection based on the agent's configured preference.
 
-See [Agent Documentation](./providers.md#agent-system) for more details on how agents work with model preferences.
+See the [Agents Package section](./architecture.md#3-agents-package-packagesagents) in the architecture docs for more details on how agents work with model preferences.
