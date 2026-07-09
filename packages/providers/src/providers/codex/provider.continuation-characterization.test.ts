@@ -40,7 +40,8 @@ function nudges(input: CodexBody["input"]): number {
 			it.role === "user" &&
 			Array.isArray(it.content) &&
 			(it.content as Array<Record<string, unknown>>).some(
-				(c) => typeof c.text === "string" && c.text.includes(CONTINUATION_NUDGE),
+				(c) =>
+					typeof c.text === "string" && c.text.includes(CONTINUATION_NUDGE),
 			),
 	).length;
 }
@@ -60,13 +61,22 @@ describe("Codex transform — continuation nudge behavior", () => {
 				{
 					role: "assistant",
 					content: [
-						{ type: "tool_use", id: "call_skill_1", name: "Skill", input: { skill: "ce-plan" } },
+						{
+							type: "tool_use",
+							id: "call_skill_1",
+							name: "Skill",
+							input: { skill: "ce-plan" },
+						},
 					],
 				},
 				{
 					role: "user",
 					content: [
-						{ type: "tool_result", tool_use_id: "call_skill_1", content: [{ type: "text", text: "loaded" }] },
+						{
+							type: "tool_result",
+							tool_use_id: "call_skill_1",
+							content: [{ type: "text", text: "loaded" }],
+						},
 					],
 				},
 			],
@@ -80,8 +90,22 @@ describe("Codex transform — continuation nudge behavior", () => {
 			max_tokens: 10,
 			messages: [
 				{ role: "user", content: "run /ce-plan" },
-				{ role: "assistant", content: [{ type: "tool_use", id: "call_skill_1", name: "Skill", input: {} }] },
-				{ role: "user", content: [{ type: "tool_result", tool_use_id: "call_skill_1", content: [{ type: "text", text: "loaded" }] }] },
+				{
+					role: "assistant",
+					content: [
+						{ type: "tool_use", id: "call_skill_1", name: "Skill", input: {} },
+					],
+				},
+				{
+					role: "user",
+					content: [
+						{
+							type: "tool_result",
+							tool_use_id: "call_skill_1",
+							content: [{ type: "text", text: "loaded" }],
+						},
+					],
+				},
 				{ role: "assistant", content: "Now doing the work." },
 				{ role: "user", content: "thanks, continue" },
 			],
@@ -100,20 +124,40 @@ describe("Codex transform — continuation nudge behavior", () => {
 				{
 					role: "assistant",
 					content: [
-						{ type: "tool_use", id: "call_skill_a", name: "Skill", input: { skill: "a" } },
-						{ type: "tool_use", id: "call_skill_b", name: "Skill", input: { skill: "b" } },
+						{
+							type: "tool_use",
+							id: "call_skill_a",
+							name: "Skill",
+							input: { skill: "a" },
+						},
+						{
+							type: "tool_use",
+							id: "call_skill_b",
+							name: "Skill",
+							input: { skill: "b" },
+						},
 					],
 				},
 				{
 					role: "user",
 					content: [
-						{ type: "tool_result", tool_use_id: "call_skill_a", content: [{ type: "text", text: "a loaded" }] },
-						{ type: "tool_result", tool_use_id: "call_skill_b", content: [{ type: "text", text: "b loaded" }] },
+						{
+							type: "tool_result",
+							tool_use_id: "call_skill_a",
+							content: [{ type: "text", text: "a loaded" }],
+						},
+						{
+							type: "tool_result",
+							tool_use_id: "call_skill_b",
+							content: [{ type: "text", text: "b loaded" }],
+						},
 					],
 				},
 			],
 		});
-		console.log(`[characterization] two-skill nudge count = ${nudges(body.input)}`);
+		console.log(
+			`[characterization] two-skill nudge count = ${nudges(body.input)}`,
+		);
 		expect(nudges(body.input)).toBeGreaterThanOrEqual(0);
 	});
 });
@@ -128,25 +172,57 @@ describe("Codex transform — subagent (Task) tool_result fidelity", () => {
 				{
 					role: "assistant",
 					content: [
-						{ type: "tool_use", id: "t1", name: "Task", input: { prompt: "review a" } },
-						{ type: "tool_use", id: "t2", name: "Task", input: { prompt: "review b" } },
-						{ type: "tool_use", id: "t3", name: "Task", input: { prompt: "review c" } },
+						{
+							type: "tool_use",
+							id: "t1",
+							name: "Task",
+							input: { prompt: "review a" },
+						},
+						{
+							type: "tool_use",
+							id: "t2",
+							name: "Task",
+							input: { prompt: "review b" },
+						},
+						{
+							type: "tool_use",
+							id: "t3",
+							name: "Task",
+							input: { prompt: "review c" },
+						},
 					],
 				},
 				{
 					role: "user",
 					content: [
-						{ type: "tool_result", tool_use_id: "t1", content: [{ type: "text", text: "finding a" }] },
-						{ type: "tool_result", tool_use_id: "t2", content: [{ type: "text", text: "finding b" }] },
-						{ type: "tool_result", tool_use_id: "t3", content: [{ type: "text", text: "finding c" }] },
+						{
+							type: "tool_result",
+							tool_use_id: "t1",
+							content: [{ type: "text", text: "finding a" }],
+						},
+						{
+							type: "tool_result",
+							tool_use_id: "t2",
+							content: [{ type: "text", text: "finding b" }],
+						},
+						{
+							type: "tool_result",
+							tool_use_id: "t3",
+							content: [{ type: "text", text: "finding c" }],
+						},
 					],
 				},
 			],
 		});
-		expect(calls(body.input).map((c) => c.call_id).sort()).toEqual(["t1", "t2", "t3"]);
+		expect(
+			calls(body.input)
+				.map((c) => c.call_id)
+				.sort(),
+		).toEqual(["t1", "t2", "t3"]);
 		const outs = outputs(body.input);
 		expect(outs.map((o) => o.call_id).sort()).toEqual(["t1", "t2", "t3"]);
-		for (const o of outs) expect((o.output as string).length).toBeGreaterThan(0);
+		for (const o of outs)
+			expect((o.output as string).length).toBeGreaterThan(0);
 	});
 
 	// REVEAL: a subagent whose result carries a non-text content block collapses
@@ -158,21 +234,35 @@ describe("Codex transform — subagent (Task) tool_result fidelity", () => {
 			max_tokens: 10,
 			messages: [
 				{ role: "user", content: "run a subagent" },
-				{ role: "assistant", content: [{ type: "tool_use", id: "t1", name: "Task", input: {} }] },
+				{
+					role: "assistant",
+					content: [{ type: "tool_use", id: "t1", name: "Task", input: {} }],
+				},
 				{
 					role: "user",
 					content: [
 						{
 							type: "tool_result",
 							tool_use_id: "t1",
-							content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: "AAAA" } }],
+							content: [
+								{
+									type: "image",
+									source: {
+										type: "base64",
+										media_type: "image/png",
+										data: "AAAA",
+									},
+								},
+							],
 						},
 					],
 				},
 			],
 		});
 		const out = outputs(body.input)[0];
-		console.log(`[characterization] non-text tool_result output = ${JSON.stringify(out?.output)}`);
+		console.log(
+			`[characterization] non-text tool_result output = ${JSON.stringify(out?.output)}`,
+		);
 		expect(out?.output).toBe("");
 	});
 });
@@ -186,8 +276,22 @@ describe("Codex transform — prompt-cache prefix stability", () => {
 			max_tokens: 10,
 			messages: [
 				{ role: "user", content: "run /ce-plan" },
-				{ role: "assistant", content: [{ type: "tool_use", id: "call_skill_1", name: "Skill", input: {} }] },
-				{ role: "user", content: [{ type: "tool_result", tool_use_id: "call_skill_1", content: [{ type: "text", text: "loaded" }] }] },
+				{
+					role: "assistant",
+					content: [
+						{ type: "tool_use", id: "call_skill_1", name: "Skill", input: {} },
+					],
+				},
+				{
+					role: "user",
+					content: [
+						{
+							type: "tool_result",
+							tool_use_id: "call_skill_1",
+							content: [{ type: "text", text: "loaded" }],
+						},
+					],
+				},
 			],
 		});
 		const last = body.input[body.input.length - 1];
