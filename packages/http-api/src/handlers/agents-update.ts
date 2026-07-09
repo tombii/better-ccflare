@@ -16,7 +16,8 @@ type ToolMode = keyof typeof TOOL_PRESETS | "custom";
 
 interface AgentUpdateRequest {
 	description?: string;
-	model?: AllowedModel;
+	/** `null` (or the string "inherit", case-insensitive) reverts to inheriting the session model. */
+	model?: AllowedModel | null;
 	tools?: AgentTool[];
 	color?: string;
 	systemPrompt?: string;
@@ -31,7 +32,7 @@ export function createAgentUpdateHandler(dbOps: DatabaseOperations) {
 			// Validate individual pieces
 			const updates: Partial<{
 				description: string;
-				model: AllowedModel;
+				model: AllowedModel | null;
 				tools: AgentTool[];
 				color: string;
 				systemPrompt: string;
@@ -45,10 +46,16 @@ export function createAgentUpdateHandler(dbOps: DatabaseOperations) {
 			}
 
 			if (body.model !== undefined) {
-				if (!isValidClaudeModel(body.model)) {
+				if (
+					body.model === null ||
+					body.model.trim().toLowerCase() === "inherit"
+				) {
+					updates.model = null;
+				} else if (!isValidClaudeModel(body.model)) {
 					return errorResponse(`Invalid model. ${getAllowedModelsMessage()}`);
+				} else {
+					updates.model = body.model;
 				}
-				updates.model = body.model;
 			}
 
 			if (body.color !== undefined) {

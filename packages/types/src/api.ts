@@ -1,3 +1,5 @@
+import type { AllowedModel } from "./agent";
+
 /** Combo slot routing info — maps each returned account to its slot's model override */
 export interface ComboSlotInfo {
 	/** The combo name (null when not using combo routing) */
@@ -28,7 +30,8 @@ export interface RequestMeta {
 
 export interface AgentUpdatePayload {
 	description?: string;
-	model?: string;
+	/** `null` (or the string "inherit") reverts the agent to inheriting the session model. */
+	model?: AllowedModel | null;
 	tools?: string[];
 	color?: string;
 	systemPrompt?: string;

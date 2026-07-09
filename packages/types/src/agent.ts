@@ -34,6 +34,18 @@ export interface Agent {
 	 * key at all — both mean "no explicit preference").
 	 */
 	model: AllowedModel | null;
+	/**
+	 * Where `model` came from: an explicit DB preference, the agent's
+	 * frontmatter, or session inheritance (no preference, no frontmatter
+	 * model). Optional so registry-internal Agent objects (built before the
+	 * preference merge) still type-check; only set on API responses.
+	 */
+	modelSource?: AgentModelSource;
+	/**
+	 * The registry agent's raw `model` value before the DB preference merge.
+	 * Optional for the same reason as `modelSource`.
+	 */
+	frontmatterModel?: AllowedModel | null;
 	systemPrompt: string;
 	source: AgentSource;
 	workspace?: string; // workspace path if source is "workspace"
@@ -41,6 +53,16 @@ export interface Agent {
 	filePath: string; // absolute path of the markdown file
 	pluginName?: string; // set only when source === "plugin"; derived from the plugin manifest key
 }
+
+/**
+ * Provenance of an agent's effective `model` field:
+ * - "preference": an explicit DB preference row exists for the agent.
+ * - "frontmatter": no DB preference; the model comes from the agent file's
+ *   frontmatter.
+ * - "inherit": no DB preference and no frontmatter model; the agent
+ *   inherits the session's model.
+ */
+export type AgentModelSource = "preference" | "frontmatter" | "inherit";
 
 export type AgentResponse = Agent[];
 

@@ -2,6 +2,7 @@ import {
 	afterAll,
 	afterEach,
 	beforeAll,
+	beforeEach,
 	describe,
 	expect,
 	it,
@@ -10,14 +11,42 @@ import {
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { agentRegistry } from "@better-ccflare/agents";
+import {
+	agentRegistry,
+	WorkspacePersistence,
+	workspacePersistence,
+} from "@better-ccflare/agents";
 import type { DatabaseOperations } from "@better-ccflare/database";
-import type { APIContext } from "@better-ccflare/types";
+import type { Agent, APIContext } from "@better-ccflare/types";
 import {
 	createAgentPreferenceDeleteHandler,
 	createAgentPreferenceUpdateHandler,
+	createAgentsListHandler,
 	createBulkAgentPreferenceUpdateHandler,
 } from "../agents";
+import { createAgentUpdateHandler } from "../agents-update";
+
+// The `agentRegistry` singleton used below defaults to persisting workspace
+// state to the real `~/.better-ccflare/workspaces.json`. Redirect it to an
+// isolated tmp-dir file for the lifetime of this test file so no test here
+// can ever touch the developer's real file.
+let workspacePersistenceTmpDir: string;
+
+beforeAll(() => {
+	workspacePersistenceTmpDir = fs.mkdtempSync(
+		path.join(os.tmpdir(), "bcf-agents-handler-workspace-persistence-"),
+	);
+	agentRegistry.setWorkspacePersistenceForTests(
+		new WorkspacePersistence({
+			workspacesFile: path.join(workspacePersistenceTmpDir, "workspaces.json"),
+		}),
+	);
+});
+
+afterAll(() => {
+	agentRegistry.setWorkspacePersistenceForTests(workspacePersistence);
+	fs.rmSync(workspacePersistenceTmpDir, { recursive: true, force: true });
+});
 
 function makeDbOps(): DatabaseOperations {
 	return {
@@ -273,5 +302,226 @@ describe("createBulkAgentPreferenceUpdateHandler - live catalog warning", () => 
 		const body = (await response.json()) as { warning?: string };
 
 		expect(body.warning).toBeUndefined();
+	});
+});
+
+describe("createAgentsListHandler - model provenance", () => {
+	let tmpDir: string;
+	let agentsDir: string;
+
+	beforeAll(() => {
+		tmpDir = fs.mkdtempSync(
+			path.join(os.tmpdir(), "bcf-agents-list-provenance-test-"),
+		);
+		agentsDir = path.join(tmpDir, ".claude", "agents");
+		fs.mkdirSync(agentsDir, { recursive: true });
+		fs.writeFileSync(
+			path.join(agentsDir, "preference-agent.md"),
+			"---\nname: Preference Agent\ndescription: has a DB preference\nmodel: claude-sonnet-5\n---\n\nYou are the preference test agent.",
+		);
+		fs.writeFileSync(
+			path.join(agentsDir, "frontmatter-agent.md"),
+			"---\nname: Frontmatter Agent\ndescription: uses its frontmatter model\nmodel: claude-opus-4-8\n---\n\nYou are the frontmatter test agent.",
+		);
+		fs.writeFileSync(
+			path.join(agentsDir, "inherit-agent.md"),
+			"---\nname: Inherit Agent\ndescription: inherits the session model\nmodel: inherit\n---\n\nYou are the inherit test agent.",
+		);
+	});
+
+	afterAll(() => {
+		fs.rmSync(tmpDir, { recursive: true, force: true });
+		agentRegistry.clearWorkspaces();
+	});
+
+	afterEach(() => {
+		agentRegistry.clearWorkspaces();
+	});
+
+	function makeListDbOps(
+		preferences: Array<{ agent_id: string; model: string }>,
+	): DatabaseOperations {
+		return {
+			getAllAgentPreferences: mock(async () => preferences),
+		} as unknown as DatabaseOperations;
+	}
+
+	it("marks an agent with a DB preference as modelSource: 'preference'", async () => {
+		await agentRegistry.registerWorkspace(tmpDir);
+		// Workspace agent ids are prefixed with the (possibly realpath-resolved)
+		// workspace name, so discover the actual id instead of assuming it
+		// equals the file basename.
+		const preferenceAgentId = (await agentRegistry.getAgents()).find(
+			(a) => a.name === "Preference Agent",
+		)?.id;
+		const dbOps = makeListDbOps([
+			{ agent_id: preferenceAgentId ?? "", model: "claude-opus-4-8" },
+		]);
+		const handler = createAgentsListHandler(dbOps);
+		const response = await handler();
+		const body = (await response.json()) as { agents: Agent[] };
+		// Workspace agent ids are prefixed with the workspace dir name
+		// (`<workspace>:<file-basename>`), so match by name instead.
+		const agent = body.agents.find((a) => a.name === "Preference Agent");
+
+		expect(agent?.modelSource).toBe("preference");
+		expect(agent?.model).toBe("claude-opus-4-8");
+		expect(agent?.frontmatterModel).toBe("claude-sonnet-5");
+	});
+
+	it("marks an agent with a frontmatter model and no preference as modelSource: 'frontmatter'", async () => {
+		await agentRegistry.registerWorkspace(tmpDir);
+		const dbOps = makeListDbOps([]);
+		const handler = createAgentsListHandler(dbOps);
+		const response = await handler();
+		const body = (await response.json()) as { agents: Agent[] };
+		const agent = body.agents.find((a) => a.name === "Frontmatter Agent");
+
+		expect(agent?.modelSource).toBe("frontmatter");
+		expect(agent?.model).toBe("claude-opus-4-8");
+		expect(agent?.frontmatterModel).toBe("claude-opus-4-8");
+	});
+
+	it("marks an agent with model: inherit and no preference as modelSource: 'inherit'", async () => {
+		await agentRegistry.registerWorkspace(tmpDir);
+		const dbOps = makeListDbOps([]);
+		const handler = createAgentsListHandler(dbOps);
+		const response = await handler();
+		const body = (await response.json()) as { agents: Agent[] };
+		const agent = body.agents.find((a) => a.name === "Inherit Agent");
+
+		expect(agent?.modelSource).toBe("inherit");
+		expect(agent?.model).toBeNull();
+		expect(agent?.frontmatterModel).toBeNull();
+	});
+});
+
+describe("createAgentUpdateHandler - model inherit support", () => {
+	let tmpDir: string;
+	let agentsDir: string;
+	let filePath: string;
+	let agentId: string;
+
+	beforeEach(async () => {
+		tmpDir = fs.mkdtempSync(
+			path.join(os.tmpdir(), "bcf-agent-update-inherit-test-"),
+		);
+		agentsDir = path.join(tmpDir, ".claude", "agents");
+		fs.mkdirSync(agentsDir, { recursive: true });
+		filePath = path.join(agentsDir, "update-inherit-agent.md");
+		fs.writeFileSync(
+			filePath,
+			"---\nname: Update Inherit Agent\ndescription: test agent\nmodel: claude-opus-4-8\n---\n\nYou are the update-inherit test agent.",
+		);
+		await agentRegistry.registerWorkspace(tmpDir);
+		const agent = (await agentRegistry.getAgents()).find(
+			(a) => a.name === "Update Inherit Agent",
+		);
+		if (!agent) throw new Error("fixture agent not found");
+		agentId = agent.id;
+	});
+
+	afterEach(() => {
+		agentRegistry.clearWorkspaces();
+		fs.rmSync(tmpDir, { recursive: true, force: true });
+	});
+
+	function makeUpdateDbOps(): DatabaseOperations {
+		return {
+			deleteAgentPreference: mock(async () => true),
+		} as unknown as DatabaseOperations;
+	}
+
+	it("removes the model: key and clears the DB preference when model is null", async () => {
+		const dbOps = makeUpdateDbOps();
+		const handler = createAgentUpdateHandler(dbOps);
+		const response = await handler(
+			new Request(`http://localhost/api/agents/${agentId}`, {
+				method: "PATCH",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ model: null }),
+			}),
+			agentId,
+		);
+		const body = (await response.json()) as {
+			success: boolean;
+			agent: Agent;
+		};
+
+		expect(response.status).toBe(200);
+		expect(body.agent.model).toBeNull();
+		const fileContent = fs.readFileSync(filePath, "utf-8");
+		expect(fileContent).not.toMatch(/^model:/m);
+		expect(dbOps.deleteAgentPreference).toHaveBeenCalledWith(agentId);
+	});
+
+	it('treats model: "INHERIT" (case-insensitive) the same as null', async () => {
+		const dbOps = makeUpdateDbOps();
+		const handler = createAgentUpdateHandler(dbOps);
+		const response = await handler(
+			new Request(`http://localhost/api/agents/${agentId}`, {
+				method: "PATCH",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ model: "INHERIT" }),
+			}),
+			agentId,
+		);
+		const body = (await response.json()) as {
+			success: boolean;
+			agent: Agent;
+		};
+
+		expect(response.status).toBe(200);
+		expect(body.agent.model).toBeNull();
+		const fileContent = fs.readFileSync(filePath, "utf-8");
+		expect(fileContent).not.toMatch(/^model:/m);
+	});
+
+	it("rejects an invalid non-null model string without writing it to the file", async () => {
+		const dbOps = makeUpdateDbOps();
+		const handler = createAgentUpdateHandler(dbOps);
+		const response = await handler(
+			new Request(`http://localhost/api/agents/${agentId}`, {
+				method: "PATCH",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ model: "totally-not-a-claude-model" }),
+			}),
+			agentId,
+		);
+
+		// Note: this validation branch predates the inherit/null support and
+		// calls errorResponse() with a raw string rather than BadRequest(...),
+		// so it currently returns 500 rather than the 400 its sibling handler
+		// (createAgentPreferenceUpdateHandler) returns for the same kind of
+		// input — a pre-existing inconsistency, not something this change
+		// affects. What matters here is that the invalid model is rejected and
+		// never written to the frontmatter file.
+		expect(response.status).not.toBe(200);
+		expect(dbOps.deleteAgentPreference).not.toHaveBeenCalled();
+		const fileContent = fs.readFileSync(filePath, "utf-8");
+		expect(fileContent).toMatch(/^model: claude-opus-4-8$/m);
+	});
+
+	it("still writes a concrete model value normally", async () => {
+		const dbOps = makeUpdateDbOps();
+		const handler = createAgentUpdateHandler(dbOps);
+		const response = await handler(
+			new Request(`http://localhost/api/agents/${agentId}`, {
+				method: "PATCH",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ model: "claude-sonnet-5" }),
+			}),
+			agentId,
+		);
+		const body = (await response.json()) as {
+			success: boolean;
+			agent: Agent;
+		};
+
+		expect(response.status).toBe(200);
+		expect(body.agent.model).toBe("claude-sonnet-5");
+		const fileContent = fs.readFileSync(filePath, "utf-8");
+		expect(fileContent).toMatch(/^model: claude-sonnet-5$/m);
+		expect(dbOps.deleteAgentPreference).toHaveBeenCalledWith(agentId);
 	});
 });

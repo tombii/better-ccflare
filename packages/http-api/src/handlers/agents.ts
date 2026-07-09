@@ -12,7 +12,7 @@ import {
 	jsonResponse,
 } from "@better-ccflare/http-common";
 import { Logger } from "@better-ccflare/logger";
-import type { APIContext } from "@better-ccflare/types";
+import type { AgentModelSource, APIContext } from "@better-ccflare/types";
 
 const log = new Logger("AgentsHandler");
 
@@ -52,11 +52,23 @@ export function createAgentsListHandler(dbOps: DatabaseOperations) {
 			// Create a map of preferences for easy lookup
 			const prefMap = new Map(preferences.map((p) => [p.agent_id, p.model]));
 
-			// Merge preferences with agents
-			const agentsWithPreferences = agents.map((agent) => ({
-				...agent,
-				model: prefMap.get(agent.id) || agent.model,
-			}));
+			// Merge preferences with agents, tagging the effective model's
+			// provenance so the UI can distinguish an explicit DB override from
+			// the agent's own default.
+			const agentsWithPreferences = agents.map((agent) => {
+				const modelSource: AgentModelSource = prefMap.has(agent.id)
+					? "preference"
+					: agent.model
+						? "frontmatter"
+						: "inherit";
+
+				return {
+					...agent,
+					model: prefMap.get(agent.id) || agent.model,
+					modelSource,
+					frontmatterModel: agent.model,
+				};
+			});
 
 			// Group agents by source
 			const globalAgents = agentsWithPreferences.filter(

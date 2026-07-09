@@ -590,27 +590,6 @@ export class AgentRegistry {
 			);
 		}
 
-		// Prepare front-matter updates
-		const frontMatterUpdates: Record<string, unknown> = {};
-
-		if (updates.description !== undefined) {
-			frontMatterUpdates.description = updates.description;
-		}
-		if (updates.model !== undefined) {
-			frontMatterUpdates.model = updates.model;
-		}
-		if (updates.tools !== undefined) {
-			if (updates.tools.length === 0) {
-				// Remove tools property entirely for "all" mode
-				frontMatterUpdates.tools = undefined;
-			} else {
-				frontMatterUpdates.tools = updates.tools.join(", ");
-			}
-		}
-		if (updates.color !== undefined) {
-			frontMatterUpdates.color = updates.color;
-		}
-
 		// Reconstruct the agent file
 		const currentContent = await readFile(agent.filePath, "utf-8");
 		const frontmatterMatch = currentContent.match(
@@ -649,9 +628,14 @@ export class AgentRegistry {
 			existingData.description = updates.description;
 		}
 		if (updates.model !== undefined) {
-			// null means "inherit" — persist Claude Code's own vocabulary for it
-			// rather than an empty/undefined frontmatter value.
-			existingData.model = updates.model ?? "inherit";
+			if (updates.model === null) {
+				// Explicit revert to inherit: remove the model: key entirely so
+				// discovery parses this the same as an agent that never had one,
+				// mirroring the tools-removal behavior below.
+				delete existingData.model;
+			} else {
+				existingData.model = updates.model;
+			}
 		}
 		if (updates.tools !== undefined) {
 			if (updates.tools.length === 0) {
@@ -679,8 +663,9 @@ export class AgentRegistry {
 		const newContent = `---\n${newFrontmatter}\n---\n\n${newSystemPrompt}`;
 		await writeFile(agent.filePath, newContent, "utf-8");
 
-		// If model was updated, clear any database preference to avoid conflicts
-		if (updates.model && dbOps?.deleteAgentPreference) {
+		// If model was updated (including an explicit revert to inherit), clear
+		// any database preference so it doesn't mask the new frontmatter value.
+		if (updates.model !== undefined && dbOps?.deleteAgentPreference) {
 			try {
 				await dbOps.deleteAgentPreference(agentId);
 			} catch (error) {

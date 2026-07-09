@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -190,6 +190,91 @@ describe("AgentRegistry — model parsing and empty-prompt guard", () => {
 			const found = await registry.findAgentByPrompt(largerPrompt);
 			expect(found).toBeDefined();
 			expect(found?.id.endsWith(":agent-normal")).toBe(true);
+		});
+	});
+
+	describe("updateAgent — model", () => {
+		it("removes the model: key from frontmatter when reverting to inherit (model: null)", async () => {
+			writeAgent(
+				"agent-update-inherit.md",
+				"name: Update Inherit Agent\ndescription: test agent\nmodel: claude-opus-4-8",
+				"You are a test agent.",
+			);
+			const registry = new AgentRegistry(
+				undefined,
+				// Never touch the real ~/.better-ccflare/workspaces.json from tests.
+				new WorkspacePersistence({
+					workspacesFile: path.join(tmpDir, "test-workspaces.json"),
+				}),
+			);
+			await registry.registerWorkspace(tmpDir);
+			const agent = (await registry.getAgents()).find((a) =>
+				a.id.endsWith(":agent-update-inherit"),
+			);
+			if (!agent) throw new Error("fixture agent not found");
+
+			const updated = await registry.updateAgent(agent.id, { model: null });
+
+			expect(updated.model).toBeNull();
+			const fileContent = fs.readFileSync(agent.filePath, "utf-8");
+			expect(fileContent).not.toMatch(/^model:/m);
+		});
+
+		it("clears the DB agent preference when reverting to inherit", async () => {
+			writeAgent(
+				"agent-update-inherit-pref.md",
+				"name: Update Inherit Pref Agent\ndescription: test agent\nmodel: claude-opus-4-8",
+				"You are a test agent.",
+			);
+			const registry = new AgentRegistry(
+				undefined,
+				// Never touch the real ~/.better-ccflare/workspaces.json from tests.
+				new WorkspacePersistence({
+					workspacesFile: path.join(tmpDir, "test-workspaces.json"),
+				}),
+			);
+			await registry.registerWorkspace(tmpDir);
+			const agent = (await registry.getAgents()).find((a) =>
+				a.id.endsWith(":agent-update-inherit-pref"),
+			);
+			if (!agent) throw new Error("fixture agent not found");
+
+			const deleteAgentPreference = mock(async () => true);
+			await registry.updateAgent(
+				agent.id,
+				{ model: null },
+				{ deleteAgentPreference },
+			);
+
+			expect(deleteAgentPreference).toHaveBeenCalledWith(agent.id);
+		});
+
+		it("still writes a concrete model value normally", async () => {
+			writeAgent(
+				"agent-update-concrete.md",
+				"name: Update Concrete Agent\ndescription: test agent\nmodel: inherit",
+				"You are a test agent.",
+			);
+			const registry = new AgentRegistry(
+				undefined,
+				// Never touch the real ~/.better-ccflare/workspaces.json from tests.
+				new WorkspacePersistence({
+					workspacesFile: path.join(tmpDir, "test-workspaces.json"),
+				}),
+			);
+			await registry.registerWorkspace(tmpDir);
+			const agent = (await registry.getAgents()).find((a) =>
+				a.id.endsWith(":agent-update-concrete"),
+			);
+			if (!agent) throw new Error("fixture agent not found");
+
+			const updated = await registry.updateAgent(agent.id, {
+				model: "claude-sonnet-5",
+			});
+
+			expect(updated.model).toBe("claude-sonnet-5");
+			const fileContent = fs.readFileSync(agent.filePath, "utf-8");
+			expect(fileContent).toMatch(/^model: claude-sonnet-5$/m);
 		});
 	});
 });
