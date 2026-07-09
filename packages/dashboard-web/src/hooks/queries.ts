@@ -1,4 +1,6 @@
+import { getModelDisplayName } from "@better-ccflare/core";
 import type { AgentUpdatePayload } from "@better-ccflare/types";
+import { COMMON_MODELS } from "@better-ccflare/types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type RequestPayload, type RequestSummary } from "../api";
 import { queryKeys } from "../lib/query-keys";
@@ -374,6 +376,25 @@ export const useModels = () => {
 		refetchIntervalInBackground: false,
 		gcTime: 30 * 60 * 1000, // Keep in cache for 30 minutes
 	});
+};
+
+/**
+ * Model select options, sourced from the live Anthropic model catalog when
+ * available. Falls back to the bundled static list while the catalog is
+ * loading or if it comes back empty for any reason.
+ */
+export const useModelOptions = (): { id: string; displayName: string }[] => {
+	const { data: modelCatalog } = useModels();
+
+	return modelCatalog && modelCatalog.models.length > 0
+		? modelCatalog.models.map((m) => ({
+				id: m.id,
+				displayName: m.displayName,
+			}))
+		: COMMON_MODELS.map((id) => ({
+				id,
+				displayName: getModelDisplayName(id),
+			}));
 };
 
 export const useRefreshModels = () => {

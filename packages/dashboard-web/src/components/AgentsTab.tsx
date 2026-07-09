@@ -1,5 +1,4 @@
-import { DEFAULT_AGENT_MODEL, getModelDisplayName } from "@better-ccflare/core";
-import { COMMON_MODELS } from "@better-ccflare/types";
+import { DEFAULT_AGENT_MODEL } from "@better-ccflare/core";
 import {
 	AlertCircle,
 	Bot,
@@ -16,12 +15,10 @@ import {
 	useAgents,
 	useBulkUpdateAgentPreferences,
 	useDefaultAgentModel,
-	useModels,
 	useRefreshModels,
 	useSetDefaultAgentModel,
-	useUpdateAgentPreference,
 } from "../hooks/queries";
-import { AgentCard, WorkspaceCard } from "./agents";
+import { AgentCard, ModelSelect, WorkspaceCard } from "./agents";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import {
@@ -40,25 +37,16 @@ import {
 	DialogTitle,
 	DialogTrigger,
 } from "./ui/dialog";
-import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from "./ui/select";
 import { Separator } from "./ui/separator";
 import { Skeleton } from "./ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 
 export function AgentsTab() {
 	const { data: response, isLoading, error, refetch } = useAgents();
-	const updatePreference = useUpdateAgentPreference();
 	const { data: defaultModel, isLoading: isLoadingDefaultModel } =
 		useDefaultAgentModel();
 	const setDefaultModel = useSetDefaultAgentModel();
 	const bulkUpdatePreferences = useBulkUpdateAgentPreferences();
-	const { data: modelCatalog } = useModels();
 	const refreshModels = useRefreshModels();
 	const [selectedWorkspace, setSelectedWorkspace] = useState<string | null>(
 		null,
@@ -66,23 +54,6 @@ export function AgentsTab() {
 	const [bulkUpdateDialogOpen, setBulkUpdateDialogOpen] = useState(false);
 	const [bulkUpdateModel, setBulkUpdateModel] =
 		useState<string>(DEFAULT_AGENT_MODEL);
-
-	// Prefer the live catalog; fall back to the bundled static list while
-	// loading or if the catalog is empty for any reason.
-	const modelOptions =
-		modelCatalog && modelCatalog.models.length > 0
-			? modelCatalog.models.map((m) => ({
-					id: m.id,
-					displayName: m.displayName,
-				}))
-			: COMMON_MODELS.map((id) => ({
-					id,
-					displayName: getModelDisplayName(id),
-				}));
-
-	const handleModelChange = (agentId: string, model: string) => {
-		updatePreference.mutate({ agentId, model });
-	};
 
 	const handleDefaultModelChange = (model: string) => {
 		setDefaultModel.mutate(model);
@@ -218,6 +189,11 @@ Your system prompt content here...`}
 						<p className="text-muted-foreground mt-1">
 							Manage your AI agents and their model preferences
 						</p>
+						<p className="text-xs text-muted-foreground mt-1">
+							Model preference on a card sets a runtime proxy override (database
+							only). Edit opens the agent's configuration file — those changes
+							are written to disk.
+						</p>
 					</div>
 					<div className="flex items-center gap-4">
 						<div className="flex items-center gap-2">
@@ -270,24 +246,15 @@ Your system prompt content here...`}
 						<div className="space-y-4">
 							<div className="flex items-center gap-4">
 								<div className="flex-1">
-									<Select
+									<ModelSelect
 										value={defaultModel || DEFAULT_AGENT_MODEL}
 										onValueChange={handleDefaultModelChange}
 										disabled={
 											isLoadingDefaultModel || setDefaultModel.isPending
 										}
-									>
-										<SelectTrigger className="w-full max-w-xs">
-											<SelectValue placeholder="Select a model" />
-										</SelectTrigger>
-										<SelectContent>
-											{modelOptions.map((model) => (
-												<SelectItem key={model.id} value={model.id}>
-													{model.displayName}
-												</SelectItem>
-											))}
-										</SelectContent>
-									</Select>
+										placeholder="Select a model"
+										triggerClassName="w-full max-w-xs"
+									/>
 								</div>
 								{setDefaultModel.isPending && (
 									<span className="text-sm text-muted-foreground">
@@ -323,21 +290,10 @@ Your system prompt content here...`}
 											</DialogDescription>
 										</DialogHeader>
 										<div className="py-4">
-											<Select
+											<ModelSelect
 												value={bulkUpdateModel}
 												onValueChange={setBulkUpdateModel}
-											>
-												<SelectTrigger>
-													<SelectValue />
-												</SelectTrigger>
-												<SelectContent>
-													{modelOptions.map((model) => (
-														<SelectItem key={model.id} value={model.id}>
-															{model.displayName}
-														</SelectItem>
-													))}
-												</SelectContent>
-											</Select>
+											/>
 										</div>
 										<DialogFooter>
 											<Button
@@ -424,12 +380,7 @@ Your system prompt content here...`}
 							</div>
 							<div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
 								{globalAgents.map((agent) => (
-									<AgentCard
-										key={agent.id}
-										agent={agent}
-										onModelChange={handleModelChange}
-										isUpdating={updatePreference.isPending}
-									/>
+									<AgentCard key={agent.id} agent={agent} />
 								))}
 							</div>
 						</div>
@@ -454,12 +405,7 @@ Your system prompt content here...`}
 							</div>
 							<div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
 								{filteredWorkspaceAgents.map((agent) => (
-									<AgentCard
-										key={agent.id}
-										agent={agent}
-										onModelChange={handleModelChange}
-										isUpdating={updatePreference.isPending}
-									/>
+									<AgentCard key={agent.id} agent={agent} />
 								))}
 							</div>
 						</div>
@@ -473,12 +419,7 @@ Your system prompt content here...`}
 							</div>
 							<div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
 								{pluginAgents.map((agent) => (
-									<AgentCard
-										key={agent.id}
-										agent={agent}
-										onModelChange={handleModelChange}
-										isUpdating={updatePreference.isPending}
-									/>
+									<AgentCard key={agent.id} agent={agent} />
 								))}
 							</div>
 						</div>
@@ -501,12 +442,7 @@ Your system prompt content here...`}
 					) : (
 						<div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
 							{globalAgents.map((agent) => (
-								<AgentCard
-									key={agent.id}
-									agent={agent}
-									onModelChange={handleModelChange}
-									isUpdating={updatePreference.isPending}
-								/>
+								<AgentCard key={agent.id} agent={agent} />
 							))}
 						</div>
 					)}
@@ -549,12 +485,7 @@ Your system prompt content here...`}
 							)}
 							<div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
 								{filteredWorkspaceAgents.map((agent) => (
-									<AgentCard
-										key={agent.id}
-										agent={agent}
-										onModelChange={handleModelChange}
-										isUpdating={updatePreference.isPending}
-									/>
+									<AgentCard key={agent.id} agent={agent} />
 								))}
 							</div>
 						</>

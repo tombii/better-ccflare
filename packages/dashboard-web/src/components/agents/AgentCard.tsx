@@ -1,9 +1,6 @@
-import { getModelDisplayName } from "@better-ccflare/core";
 import type { Agent } from "@better-ccflare/types";
-import { COMMON_MODELS } from "@better-ccflare/types";
 import { Bot, Cpu, Edit3, Folder, Globe, Sparkles } from "lucide-react";
 import { useState } from "react";
-import { AGENT_DEFAULT_MODEL_SENTINEL, useModels } from "../../hooks/queries";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
@@ -14,41 +11,15 @@ import {
 	CardTitle,
 } from "../ui/card";
 import { Label } from "../ui/label";
-import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from "../ui/select";
 import { AgentEditDialog } from "./AgentEditDialog";
+import { AgentModelPreferenceSelect } from "./AgentModelPreferenceSelect";
 
 interface AgentCardProps {
 	agent: Agent;
-	onModelChange?: (agentId: string, model: string) => void;
-	isUpdating?: boolean;
 }
 
-export function AgentCard({
-	agent,
-	onModelChange,
-	isUpdating,
-}: AgentCardProps) {
+export function AgentCard({ agent }: AgentCardProps) {
 	const [editDialogOpen, setEditDialogOpen] = useState(false);
-	const { data: modelCatalog } = useModels();
-
-	// Prefer the live catalog; fall back to the bundled static list while
-	// loading or if the catalog is empty for any reason.
-	const modelOptions =
-		modelCatalog && modelCatalog.models.length > 0
-			? modelCatalog.models.map((m) => ({
-					id: m.id,
-					displayName: m.displayName,
-				}))
-			: COMMON_MODELS.map((id) => ({
-					id,
-					displayName: getModelDisplayName(id),
-				}));
 
 	// Map color names to more sophisticated gradient classes
 	const colorMap: Record<string, { border: string; bg: string; icon: string }> =
@@ -152,6 +123,21 @@ export function AgentCard({
 											Advanced
 										</Badge>
 									)}
+									{agent.modelSource === "frontmatter" && (
+										<Badge variant="outline" className="text-xs">
+											Default
+										</Badge>
+									)}
+									{agent.modelSource === "inherit" && (
+										<Badge variant="outline" className="text-xs">
+											Inherited
+										</Badge>
+									)}
+									{agent.modelSource === "preference" && (
+										<Badge variant="secondary" className="text-xs">
+											Override
+										</Badge>
+									)}
 								</div>
 							</div>
 						</div>
@@ -179,41 +165,13 @@ export function AgentCard({
 			<CardContent className="relative space-y-4">
 				<div className="space-y-2">
 					<Label className="text-muted-foreground">Model Preference</Label>
-					<Select
-						value={agent.model ?? undefined}
-						onValueChange={(value) => onModelChange?.(agent.id, value)}
-						disabled={isUpdating}
-					>
-						<SelectTrigger className="w-full bg-background/60 backdrop-blur-sm">
-							<SelectValue placeholder="Inherit (session model)" />
-						</SelectTrigger>
-						<SelectContent>
-							<SelectItem
-								value={AGENT_DEFAULT_MODEL_SENTINEL}
-								className="flex items-center"
-							>
-								<span className="text-muted-foreground">
-									Agent default (frontmatter / inherit)
-								</span>
-							</SelectItem>
-							{modelOptions.map((model) => (
-								<SelectItem
-									key={model.id}
-									value={model.id}
-									className="flex items-center"
-								>
-									<span className="flex items-center gap-2">
-										{model.displayName}
-										{model.id.includes("opus") && (
-											<Badge variant="secondary" className="text-xs">
-												Premium
-											</Badge>
-										)}
-									</span>
-								</SelectItem>
-							))}
-						</SelectContent>
-					</Select>
+					<AgentModelPreferenceSelect
+						agent={agent}
+						triggerClassName="w-full bg-background/60 backdrop-blur-sm"
+					/>
+					<p className="text-xs text-muted-foreground">
+						Proxy override — applies instantly, never modifies the agent file.
+					</p>
 				</div>
 
 				<div className="pt-2 border-t">

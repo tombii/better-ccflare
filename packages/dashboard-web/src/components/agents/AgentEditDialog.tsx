@@ -1,15 +1,17 @@
-import { DEFAULT_AGENT_MODEL, getModelDisplayName } from "@better-ccflare/core";
+import { DEFAULT_AGENT_MODEL } from "@better-ccflare/core";
 import type {
 	Agent,
 	AgentTool,
 	AgentUpdatePayload,
-	AllowedModel,
 } from "@better-ccflare/types";
-import { ALL_TOOLS, COMMON_MODELS } from "@better-ccflare/types";
+import { ALL_TOOLS } from "@better-ccflare/types";
 import { Cpu, Edit3, FileText, Palette, Save, Shield, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { TOOL_PRESETS } from "../../constants";
-import { useUpdateAgent } from "../../hooks/queries";
+import {
+	AGENT_DEFAULT_MODEL_SENTINEL,
+	useUpdateAgent,
+} from "../../hooks/queries";
 import { cn } from "../../lib/utils";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -22,14 +24,9 @@ import {
 	DialogTitle,
 } from "../ui/dialog";
 import { Label } from "../ui/label";
-import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from "../ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
+import { AgentModelPreferenceSelect } from "./AgentModelPreferenceSelect";
+import { ModelSelect } from "./ModelSelect";
 
 interface AgentEditDialogProps {
 	agent: Agent;
@@ -109,14 +106,18 @@ export function AgentEditDialog({
 	const [description, setDescription] = useState(
 		agent.description.replace(/\\n/g, "\n"),
 	);
-	// agent.model === null means "inherit" (no explicit preference). The edit
-	// form always saves an explicit model, so seed it with the default rather
-	// than leaving the Select without a matching value.
-	const [model, setModel] = useState<AllowedModel>(
-		agent.model ?? DEFAULT_AGENT_MODEL,
-	);
 	const [color, setColor] = useState(agent.color);
 	const [systemPrompt, setSystemPrompt] = useState(agent.systemPrompt);
+
+	// Seed from the agent file's own frontmatter, not the DB-preference-merged
+	// `agent.model` — this select edits the file's default, so it must reflect
+	// what's actually written there. `frontmatterModel === undefined` means an
+	// older API response without the field; fall back to the legacy behavior.
+	const initialModelValue =
+		agent.frontmatterModel === undefined
+			? (agent.model ?? DEFAULT_AGENT_MODEL)
+			: (agent.frontmatterModel ?? AGENT_DEFAULT_MODEL_SENTINEL);
+	const [modelValue, setModelValue] = useState(initialModelValue);
 
 	// Initialize selected modes based on current tools
 	const [selectedModes, setSelectedModes] = useState<Set<ToolPresetMode>>(
@@ -322,15 +323,29 @@ export function AgentEditDialog({
 				}
 			}
 
+			// Only send `model` when the selection actually changed: the backend
+			// clears any DB preference whenever `model` is present in the PATCH
+			// body, so including it unconditionally would silently wipe the
+			// user's proxy override on every unrelated save (e.g. editing just
+			// the description).
+			const modelChanged = modelValue !== initialModelValue;
+
 			await updateAgent.mutateAsync({
 				id: agent.id,
 				payload: {
 					description: description.replace(/\n/g, "\\n"),
-					model,
 					color,
 					systemPrompt,
 					mode: mode as AgentUpdatePayload["mode"],
 					tools: mode ? undefined : tools,
+					...(modelChanged
+						? {
+								model:
+									modelValue === AGENT_DEFAULT_MODEL_SENTINEL
+										? null
+										: modelValue,
+							}
+						: {}),
 				},
 			});
 
@@ -387,14 +402,21 @@ export function AgentEditDialog({
 						<div className="p-2 bg-primary/10 rounded-lg">
 							<Edit3 className="h-5 w-5 text-primary" />
 						</div>
-						<span>Edit Agent Configuration</span>
+						<span>Edit Agent Configuration File</span>
 					</DialogTitle>
-					<DialogDescription className="flex items-center gap-2">
-						<Badge variant="secondary" className="gap-1.5">
-							{agent.name}
-						</Badge>
-						<span className="text-muted-foreground">
-							Customize how this agent behaves and what it can access
+					<DialogDescription className="flex flex-col gap-1">
+						<span className="flex items-center gap-2">
+							<Badge variant="secondary" className="gap-1.5">
+								{agent.name}
+							</Badge>
+							<span className="text-muted-foreground">
+								Customize how this agent behaves and what it can access
+							</span>
+						</span>
+						<span className="text-xs text-muted-foreground">
+							Changes here are written to the agent's .md file on Save — except
+							the Model Preference override below, which applies immediately via
+							the database.
 						</span>
 					</DialogDescription>
 				</DialogHeader>
@@ -421,32 +443,37 @@ export function AgentEditDialog({
 
 					<div className="overflow-y-auto flex-1 px-1">
 						<TabsContent value="general" className="mt-6 space-y-6">
-							{/* Model */}
+							{/* Default Model (agent file) */}
 							<div className="space-y-3">
-								<Label className="text-base font-medium">Language Model</Label>
-								<Select
-									value={model}
-									onValueChange={(value) => setModel(value as AllowedModel)}
-								>
-									<SelectTrigger className="w-full">
-										<SelectValue />
-									</SelectTrigger>
-									<SelectContent>
-										{COMMON_MODELS.map((m) => (
-											<SelectItem key={m} value={m}>
-												<div className="flex items-center gap-2">
-													<Cpu className="h-4 w-4" />
-													{getModelDisplayName(m)}
-													{m.includes("opus") && (
-														<Badge variant="secondary" className="ml-2 text-xs">
-															Advanced
-														</Badge>
-													)}
-												</div>
-											</SelectItem>
-										))}
-									</SelectContent>
-								</Select>
+								<Label className="text-base font-medium">
+									Default Model (agent file)
+								</Label>
+								<ModelSelect
+									value={modelValue}
+									onValueChange={setModelValue}
+									placeholder="Select a model"
+									defaultItem={{
+										label: "Inherit (session model)",
+										badgeLabel: "Inherited",
+									}}
+								/>
+								<p className="text-xs text-muted-foreground">
+									Written to the agent's .md file on Save. Saving a new default
+									clears any proxy override to avoid conflicts. "Inherit
+									(session model)" removes the model key from the file.
+								</p>
+							</div>
+
+							{/* Model Preference (proxy override) */}
+							<div className="space-y-3 border-t pt-6">
+								<Label className="text-base font-medium">
+									Model Preference (proxy override)
+								</Label>
+								<AgentModelPreferenceSelect agent={agent} />
+								<p className="text-xs text-muted-foreground">
+									Proxy override — applies immediately, stored in the database,
+									never written to the agent file.
+								</p>
 							</div>
 
 							{/* Color */}
