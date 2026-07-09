@@ -356,6 +356,27 @@ export const useBulkUpdateAgentPreferences = () => {
 	});
 };
 
+export const useModels = () => {
+	return useQuery({
+		queryKey: queryKeys.models(),
+		queryFn: () => api.getModels(),
+		staleTime: 2 * 60 * 1000, // Consider data fresh for 2 minutes
+		refetchInterval: 5 * 60 * 1000, // Poll every 5 minutes
+		refetchIntervalInBackground: false,
+		gcTime: 30 * 60 * 1000, // Keep in cache for 30 minutes
+	});
+};
+
+export const useRefreshModels = () => {
+	const queryClient = useQueryClient();
+	return useMutation({
+		mutationFn: () => api.refreshModels(),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.models() });
+		},
+	});
+};
+
 export const useUpdateAgent = () => {
 	const queryClient = useQueryClient();
 	return useMutation({

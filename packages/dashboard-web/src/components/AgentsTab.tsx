@@ -16,6 +16,8 @@ import {
 	useAgents,
 	useBulkUpdateAgentPreferences,
 	useDefaultAgentModel,
+	useModels,
+	useRefreshModels,
 	useSetDefaultAgentModel,
 	useUpdateAgentPreference,
 } from "../hooks/queries";
@@ -56,12 +58,27 @@ export function AgentsTab() {
 		useDefaultAgentModel();
 	const setDefaultModel = useSetDefaultAgentModel();
 	const bulkUpdatePreferences = useBulkUpdateAgentPreferences();
+	const { data: modelCatalog } = useModels();
+	const refreshModels = useRefreshModels();
 	const [selectedWorkspace, setSelectedWorkspace] = useState<string | null>(
 		null,
 	);
 	const [bulkUpdateDialogOpen, setBulkUpdateDialogOpen] = useState(false);
 	const [bulkUpdateModel, setBulkUpdateModel] =
 		useState<string>(DEFAULT_AGENT_MODEL);
+
+	// Prefer the live catalog; fall back to the bundled static list while
+	// loading or if the catalog is empty for any reason.
+	const modelOptions =
+		modelCatalog && modelCatalog.models.length > 0
+			? modelCatalog.models.map((m) => ({
+					id: m.id,
+					displayName: m.displayName,
+				}))
+			: COMMON_MODELS.map((id) => ({
+					id,
+					displayName: getModelDisplayName(id),
+				}));
 
 	const handleModelChange = (agentId: string, model: string) => {
 		updatePreference.mutate({ agentId, model });
@@ -225,14 +242,29 @@ Your system prompt content here...`}
 				{/* Default Model Settings */}
 				<Card>
 					<CardHeader>
-						<CardTitle className="text-base flex items-center gap-2">
-							<Settings className="h-4 w-4" />
-							Default Agent Model
-						</CardTitle>
-						<CardDescription>
-							Set the default model for all agents. Individual agent preferences
-							will override this setting.
-						</CardDescription>
+						<div className="flex items-center justify-between">
+							<div>
+								<CardTitle className="text-base flex items-center gap-2">
+									<Settings className="h-4 w-4" />
+									Default Agent Model
+								</CardTitle>
+								<CardDescription>
+									Set the default model for all agents. Individual agent
+									preferences will override this setting.
+								</CardDescription>
+							</div>
+							<Button
+								variant="outline"
+								size="sm"
+								onClick={() => refreshModels.mutate()}
+								disabled={refreshModels.isPending}
+								title="Refresh the live model list from Anthropic"
+							>
+								<RefreshCw
+									className={`h-3.5 w-3.5 ${refreshModels.isPending ? "animate-spin" : ""}`}
+								/>
+							</Button>
+						</div>
 					</CardHeader>
 					<CardContent>
 						<div className="space-y-4">
@@ -249,9 +281,9 @@ Your system prompt content here...`}
 											<SelectValue placeholder="Select a model" />
 										</SelectTrigger>
 										<SelectContent>
-											{COMMON_MODELS.map((model) => (
-												<SelectItem key={model} value={model}>
-													{getModelDisplayName(model)}
+											{modelOptions.map((model) => (
+												<SelectItem key={model.id} value={model.id}>
+													{model.displayName}
 												</SelectItem>
 											))}
 										</SelectContent>
@@ -299,9 +331,9 @@ Your system prompt content here...`}
 													<SelectValue />
 												</SelectTrigger>
 												<SelectContent>
-													{COMMON_MODELS.map((model) => (
-														<SelectItem key={model} value={model}>
-															{getModelDisplayName(model)}
+													{modelOptions.map((model) => (
+														<SelectItem key={model.id} value={model.id}>
+															{model.displayName}
 														</SelectItem>
 													))}
 												</SelectContent>

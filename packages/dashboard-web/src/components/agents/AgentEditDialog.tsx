@@ -1,4 +1,4 @@
-import { getModelDisplayName } from "@better-ccflare/core";
+import { DEFAULT_AGENT_MODEL, getModelDisplayName } from "@better-ccflare/core";
 import type {
 	Agent,
 	AgentTool,
@@ -109,7 +109,12 @@ export function AgentEditDialog({
 	const [description, setDescription] = useState(
 		agent.description.replace(/\\n/g, "\n"),
 	);
-	const [model, setModel] = useState<AllowedModel>(agent.model);
+	// agent.model === null means "inherit" (no explicit preference). The edit
+	// form always saves an explicit model, so seed it with the default rather
+	// than leaving the Select without a matching value.
+	const [model, setModel] = useState<AllowedModel>(
+		agent.model ?? DEFAULT_AGENT_MODEL,
+	);
 	const [color, setColor] = useState(agent.color);
 	const [systemPrompt, setSystemPrompt] = useState(agent.systemPrompt);
 

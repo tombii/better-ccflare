@@ -3,6 +3,7 @@ import type { Agent } from "@better-ccflare/types";
 import { COMMON_MODELS } from "@better-ccflare/types";
 import { Bot, Cpu, Edit3, Folder, Globe, Sparkles } from "lucide-react";
 import { useState } from "react";
+import { useModels } from "../../hooks/queries";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
@@ -34,6 +35,20 @@ export function AgentCard({
 	isUpdating,
 }: AgentCardProps) {
 	const [editDialogOpen, setEditDialogOpen] = useState(false);
+	const { data: modelCatalog } = useModels();
+
+	// Prefer the live catalog; fall back to the bundled static list while
+	// loading or if the catalog is empty for any reason.
+	const modelOptions =
+		modelCatalog && modelCatalog.models.length > 0
+			? modelCatalog.models.map((m) => ({
+					id: m.id,
+					displayName: m.displayName,
+				}))
+			: COMMON_MODELS.map((id) => ({
+					id,
+					displayName: getModelDisplayName(id),
+				}));
 
 	// Map color names to more sophisticated gradient classes
 	const colorMap: Record<string, { border: string; bg: string; icon: string }> =
@@ -122,7 +137,7 @@ export function AgentCard({
 							<div className="flex-1">
 								<CardTitle className="text-lg font-semibold flex items-center gap-2">
 									{displayName}
-									{agent.model.includes("opus") && (
+									{agent.model?.includes("opus") && (
 										<Sparkles className="h-4 w-4 text-yellow-500" />
 									)}
 								</CardTitle>
@@ -131,7 +146,7 @@ export function AgentCard({
 										<SourceIcon className="h-3 w-3" />
 										{isWorkspaceAgent ? workspaceName : "Global"}
 									</Badge>
-									{agent.model.includes("opus") && (
+									{agent.model?.includes("opus") && (
 										<Badge variant="secondary" className="text-xs gap-1">
 											<Cpu className="h-3 w-3" />
 											Advanced
@@ -165,23 +180,23 @@ export function AgentCard({
 				<div className="space-y-2">
 					<Label className="text-muted-foreground">Model Preference</Label>
 					<Select
-						value={agent.model}
+						value={agent.model ?? undefined}
 						onValueChange={(value) => onModelChange?.(agent.id, value)}
 						disabled={isUpdating}
 					>
 						<SelectTrigger className="w-full bg-background/60 backdrop-blur-sm">
-							<SelectValue />
+							<SelectValue placeholder="Inherit (session model)" />
 						</SelectTrigger>
 						<SelectContent>
-							{COMMON_MODELS.map((model) => (
+							{modelOptions.map((model) => (
 								<SelectItem
-									key={model}
-									value={model}
+									key={model.id}
+									value={model.id}
 									className="flex items-center"
 								>
 									<span className="flex items-center gap-2">
-										{getModelDisplayName(model)}
-										{model.includes("opus") && (
+										{model.displayName}
+										{model.id.includes("opus") && (
 											<Badge variant="secondary" className="text-xs">
 												Premium
 											</Badge>

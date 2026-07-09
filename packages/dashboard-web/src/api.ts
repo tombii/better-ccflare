@@ -16,6 +16,8 @@ import type {
 	ComboWithSlots,
 	ContextInsightsResponse,
 	LogEvent,
+	ModelCatalogRefreshResponse,
+	ModelCatalogResponse,
 	RequestPayload,
 	RequestResponse,
 	StatsWithAccounts,
@@ -1551,6 +1553,51 @@ class API extends HttpClient {
 			await this.post(url, { model });
 			const duration = Date.now() - startTime;
 			this.logger.debug(`← POST ${url} - 200 (${duration}ms)`);
+		} catch (error) {
+			const duration = Date.now() - startTime;
+			this.logger.error(`✗ POST ${url} - ERROR (${duration}ms)`, {
+				error: error instanceof Error ? error.message : String(error),
+				stack: error instanceof Error ? error.stack : undefined,
+			});
+			if (error instanceof HttpError) {
+				throw new Error(error.message);
+			}
+			throw error;
+		}
+	}
+
+	async getModels(): Promise<ModelCatalogResponse> {
+		const startTime = Date.now();
+		const url = "/api/models";
+
+		this.logger.debug(`→ GET ${url}`);
+
+		try {
+			const data = await this.get<ModelCatalogResponse>(url);
+			const duration = Date.now() - startTime;
+			this.logger.debug(`← GET ${url} - 200 (${duration}ms)`);
+			return data;
+		} catch (error) {
+			const duration = Date.now() - startTime;
+			this.logger.error(`✗ GET ${url} - ERROR (${duration}ms)`, {
+				error: error instanceof Error ? error.message : String(error),
+				stack: error instanceof Error ? error.stack : undefined,
+			});
+			throw error;
+		}
+	}
+
+	async refreshModels(): Promise<ModelCatalogRefreshResponse> {
+		const startTime = Date.now();
+		const url = "/api/models/refresh";
+
+		this.logger.debug(`→ POST ${url}`);
+
+		try {
+			const data = await this.post<ModelCatalogRefreshResponse>(url, {});
+			const duration = Date.now() - startTime;
+			this.logger.debug(`← POST ${url} - 200 (${duration}ms)`);
+			return data;
 		} catch (error) {
 			const duration = Date.now() - startTime;
 			this.logger.error(`✗ POST ${url} - ERROR (${duration}ms)`, {
