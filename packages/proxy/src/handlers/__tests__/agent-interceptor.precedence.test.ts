@@ -10,13 +10,39 @@ import * as fs from "node:fs";
 import { existsSync, unlinkSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { agentRegistry } from "@better-ccflare/agents";
+import {
+	agentRegistry,
+	WorkspacePersistence,
+	workspacePersistence,
+} from "@better-ccflare/agents";
 import { LATEST_SONNET_MODEL } from "@better-ccflare/core";
 import {
 	DatabaseFactory,
 	type DatabaseOperations,
 } from "@better-ccflare/database";
 import { interceptAndModifyRequest } from "../agent-interceptor";
+
+// The `agentRegistry` singleton used below defaults to persisting workspace
+// state to the real `~/.better-ccflare/workspaces.json`. Redirect it to an
+// isolated tmp-dir file for the lifetime of this test file so no test here
+// can ever touch the developer's real file.
+let workspacePersistenceTmpDir: string;
+
+beforeAll(() => {
+	workspacePersistenceTmpDir = fs.mkdtempSync(
+		path.join(os.tmpdir(), "bcf-interceptor-precedence-workspace-persistence-"),
+	);
+	agentRegistry.setWorkspacePersistenceForTests(
+		new WorkspacePersistence({
+			workspacesFile: path.join(workspacePersistenceTmpDir, "workspaces.json"),
+		}),
+	);
+});
+
+afterAll(() => {
+	agentRegistry.setWorkspacePersistenceForTests(workspacePersistence);
+	fs.rmSync(workspacePersistenceTmpDir, { recursive: true, force: true });
+});
 
 const TEST_DB_PATH = "/tmp/test-agent-interceptor-precedence.db";
 

@@ -22,7 +22,10 @@ import {
 	getPluginManifestPath,
 	parsePluginManifest,
 } from "./paths";
-import { workspacePersistence } from "./workspace-persistence";
+import {
+	type WorkspacePersistence,
+	workspacePersistence,
+} from "./workspace-persistence";
 
 interface AgentCache {
 	agents: Agent[];
@@ -59,9 +62,28 @@ export class AgentRegistry {
 	private workspaces: Map<string, AgentWorkspace> = new Map();
 	private initialized = false;
 	private readonly manifestPathOverride?: string;
+	private workspacePersistence: WorkspacePersistence;
 
-	constructor(manifestPathOverride?: string) {
+	constructor(
+		manifestPathOverride?: string,
+		persistence: WorkspacePersistence = workspacePersistence,
+	) {
 		this.manifestPathOverride = manifestPathOverride;
+		this.workspacePersistence = persistence;
+	}
+
+	/**
+	 * Test-only escape hatch: redirects this registry's workspace persistence
+	 * to a different instance. The exported `agentRegistry` singleton (used
+	 * directly by `agent-interceptor.ts` and several test files) is
+	 * constructed once at module load with the default (real-file)
+	 * persistence, before any test can pass a constructor argument — tests
+	 * that exercise that singleton must call this first, pointing it at a
+	 * tmp-dir-backed `WorkspacePersistence`, so they never write to the real
+	 * `~/.better-ccflare/workspaces.json`. Not for production use.
+	 */
+	setWorkspacePersistenceForTests(persistence: WorkspacePersistence): void {
+		this.workspacePersistence = persistence;
 	}
 
 	// Initialize the registry (load persisted workspaces)
@@ -69,7 +91,7 @@ export class AgentRegistry {
 		if (this.initialized) return;
 
 		try {
-			const savedWorkspaces = await workspacePersistence.loadWorkspaces();
+			const savedWorkspaces = await this.workspacePersistence.loadWorkspaces();
 			for (const workspace of savedWorkspaces) {
 				this.workspaces.set(workspace.path, workspace);
 			}
@@ -502,7 +524,7 @@ export class AgentRegistry {
 	// Save workspaces to disk
 	private async saveWorkspaces(): Promise<void> {
 		try {
-			await workspacePersistence.saveWorkspaces(this.getWorkspaces());
+			await this.workspacePersistence.saveWorkspaces(this.getWorkspaces());
 		} catch (error) {
 			log.error("Failed to save workspaces:", error);
 		}

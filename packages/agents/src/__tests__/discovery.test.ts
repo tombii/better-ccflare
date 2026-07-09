@@ -9,6 +9,7 @@ import {
 	LATEST_SONNET_MODEL,
 } from "@better-ccflare/core";
 import { AgentRegistry } from "../discovery";
+import { WorkspacePersistence } from "../workspace-persistence";
 
 /**
  * Hardening tests for AgentRegistry.loadAgentFromFile / findAgentByPrompt.
@@ -41,7 +42,13 @@ describe("AgentRegistry — model parsing and empty-prompt guard", () => {
 	async function loadAgents(): Promise<
 		Awaited<ReturnType<AgentRegistry["getAgents"]>>
 	> {
-		const registry = new AgentRegistry();
+		const registry = new AgentRegistry(
+			undefined,
+			// Never touch the real ~/.better-ccflare/workspaces.json from tests.
+			new WorkspacePersistence({
+				workspacesFile: path.join(tmpDir, "test-workspaces.json"),
+			}),
+		);
 		await registry.registerWorkspace(tmpDir);
 		return registry.getAgents();
 	}
@@ -141,7 +148,13 @@ describe("AgentRegistry — model parsing and empty-prompt guard", () => {
 				"name: Empty Body Agent\ndescription: test agent",
 				"",
 			);
-			const registry = new AgentRegistry();
+			const registry = new AgentRegistry(
+				undefined,
+				// Never touch the real ~/.better-ccflare/workspaces.json from tests.
+				new WorkspacePersistence({
+					workspacesFile: path.join(tmpDir, "test-workspaces.json"),
+				}),
+			);
 			await registry.registerWorkspace(tmpDir);
 
 			// Sanity: the agent was actually loaded.
@@ -163,7 +176,13 @@ describe("AgentRegistry — model parsing and empty-prompt guard", () => {
 				"name: Normal Agent\ndescription: test agent",
 				"You are a specialized code reviewer.",
 			);
-			const registry = new AgentRegistry();
+			const registry = new AgentRegistry(
+				undefined,
+				// Never touch the real ~/.better-ccflare/workspaces.json from tests.
+				new WorkspacePersistence({
+					workspacesFile: path.join(tmpDir, "test-workspaces.json"),
+				}),
+			);
 			await registry.registerWorkspace(tmpDir);
 
 			const largerPrompt =
