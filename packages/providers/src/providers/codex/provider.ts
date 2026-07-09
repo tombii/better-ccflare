@@ -9,6 +9,7 @@ import { resolveReasoningEffort } from "@better-ccflare/openai-formats";
 import type { Account } from "@better-ccflare/types";
 import { BaseProvider } from "../../base";
 import type { RateLimitInfo, TokenRefreshResult } from "../../types";
+import { writeCodexTrace } from "./trace";
 
 const log = new Logger("CodexProvider");
 
@@ -383,6 +384,19 @@ export class CodexProvider extends BaseProvider {
 				account,
 				requestId ?? undefined,
 			);
+
+			// Best-effort, env-gated observability (no-op unless CCFLARE_CODEX_TRACE_DIR set).
+			writeCodexTrace({
+				requestId: requestId ?? undefined,
+				account: account?.name,
+				modelIn: body.model,
+				modelOut: codexBody.model,
+				messageCount: body.messages.length,
+				instructionsLen: codexBody.instructions?.length,
+				codexInput: codexBody.input,
+				anthropicRequest: body,
+				codexRequest: codexBody,
+			});
 
 			const newHeaders = new Headers(request.headers);
 			newHeaders.set("content-type", "application/json");
