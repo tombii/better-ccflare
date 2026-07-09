@@ -20,6 +20,10 @@ export interface RequestMeta {
 	comboSlotIndex?: number | null;
 	/** Per-client session id (from request body metadata.user_id) for session-affinity routing. */
 	clientSessionId?: string | null;
+	/** Model the client originally requested, before any agent-preference rewrite. */
+	originalModel?: string | null;
+	/** Model actually forwarded upstream after an agent-preference rewrite (equal to originalModel when none occurred). */
+	appliedModel?: string | null;
 }
 
 export interface AgentUpdatePayload {

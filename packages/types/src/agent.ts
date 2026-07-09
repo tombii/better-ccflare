@@ -28,7 +28,12 @@ export interface Agent {
 	name: string;
 	description: string;
 	color: string;
-	model: AllowedModel;
+	/**
+	 * Model preference for this agent, or `null` to inherit the session's
+	 * model (Claude Code's `model: inherit` frontmatter value, or no `model:`
+	 * key at all — both mean "no explicit preference").
+	 */
+	model: AllowedModel | null;
 	systemPrompt: string;
 	source: AgentSource;
 	workspace?: string; // workspace path if source is "workspace"

@@ -43,6 +43,25 @@ function getMidStreamRateLimitCooldownMs(): number {
 // 4MB so afterburn can see full conversation history for friction analysis.
 const MAX_REQUEST_BODY_BYTES = 4 * 1024 * 1024;
 
+const MODEL_REWRITE_HEADER = "x-better-ccflare-model-rewrite";
+
+/**
+ * Builds a Headers copy with the model-rewrite header set when an
+ * agent-preference rewrite actually swapped the model (originalModel and
+ * appliedModel both present and different). No-op copy otherwise.
+ */
+function withModelRewriteHeader(
+	headers: Headers,
+	originalModel?: string | null,
+	appliedModel?: string | null,
+): Headers {
+	const result = new Headers(headers);
+	if (originalModel && appliedModel && originalModel !== appliedModel) {
+		result.set(MODEL_REWRITE_HEADER, `${originalModel}->${appliedModel}`);
+	}
+	return result;
+}
+
 /**
  * Check if a response should be considered successful/expected
  * Treats certain well-known paths that return 404 as expected
@@ -73,6 +92,8 @@ export interface ResponseHandlerOptions {
 	apiKeyId?: string | null;
 	apiKeyName?: string | null;
 	comboName?: string | null;
+	originalModel?: string | null;
+	appliedModel?: string | null;
 }
 
 /**
@@ -100,6 +121,8 @@ export async function forwardToClient(
 		apiKeyId,
 		apiKeyName,
 		comboName,
+		originalModel,
+		appliedModel,
 	} = options;
 
 	// Always strip compression headers *before* we do anything else
@@ -160,6 +183,8 @@ export async function forwardToClient(
 				: 0,
 			accountName: account?.name ?? null,
 			agentUsed: agentUsed || null,
+			originalModel: originalModel || null,
+			appliedModel: appliedModel || null,
 			comboName: comboName || null,
 			apiKeyId: apiKeyId || null,
 			apiKeyName: apiKeyName || null,
@@ -253,7 +278,11 @@ export async function forwardToClient(
 		return new Response(passthroughBody, {
 			status: response.status,
 			statusText: response.statusText,
-			headers: response.headers,
+			headers: withModelRewriteHeader(
+				response.headers,
+				originalModel,
+				appliedModel,
+			),
 		});
 	}
 
@@ -267,6 +296,18 @@ export async function forwardToClient(
 				requestId,
 				responseBody: null,
 				success: isExpectedResponse(path, response),
+			});
+		}
+
+		if (originalModel && appliedModel && originalModel !== appliedModel) {
+			return new Response(null, {
+				status: response.status,
+				statusText: response.statusText,
+				headers: withModelRewriteHeader(
+					response.headers,
+					originalModel,
+					appliedModel,
+				),
 			});
 		}
 
@@ -302,6 +343,10 @@ export async function forwardToClient(
 	return new Response(passthroughBody, {
 		status: response.status,
 		statusText: response.statusText,
-		headers: response.headers,
+		headers: withModelRewriteHeader(
+			response.headers,
+			originalModel,
+			appliedModel,
+		),
 	});
 }

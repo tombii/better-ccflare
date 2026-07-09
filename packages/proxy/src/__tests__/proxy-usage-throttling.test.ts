@@ -53,6 +53,7 @@ function makeContext(account: Account): ProxyContext {
 			getUsageThrottlingFiveHourEnabled: () => true,
 			getUsageThrottlingWeeklyEnabled: () => true,
 			getSystemPromptCacheTtl1h: () => false,
+			getAgentFrontmatterModelFallback: () => false,
 		} as never,
 		provider: {
 			name: "codex",

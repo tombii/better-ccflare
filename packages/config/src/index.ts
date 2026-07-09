@@ -61,6 +61,7 @@ export interface ConfigData {
 	system_prompt_cache_ttl_1h?: boolean;
 	usage_throttling_five_hour_enabled?: boolean;
 	usage_throttling_weekly_enabled?: boolean;
+	agent_frontmatter_model_fallback?: boolean;
 	health_detail_enabled?: boolean;
 	alert_daily_spend_usd?: number;
 	alert_tokens_per_hour?: number;
@@ -409,6 +410,27 @@ export class Config extends EventEmitter {
 		return false;
 	}
 
+	/**
+	 * Whether an agent's frontmatter `model` field should be used as a
+	 * substitution fallback when no explicit DB preference is configured for
+	 * that agent. Defaults to false: Claude Code already resolves frontmatter
+	 * model aliases client-side, so the registry's copy of `agent.model` can
+	 * go stale relative to what the client actually resolved and sent. With
+	 * the flag off, only an explicit DB preference (set via the dashboard/CLI)
+	 * triggers a rewrite; the frontmatter value is opt-in.
+	 */
+	getAgentFrontmatterModelFallback(): boolean {
+		const fromEnv = parseEnabledEnvFlag(
+			process.env.AGENT_FRONTMATTER_MODEL_FALLBACK,
+		);
+		if (fromEnv !== undefined) {
+			return fromEnv;
+		}
+		const fromFile = this.data.agent_frontmatter_model_fallback;
+		if (typeof fromFile === "boolean") return fromFile;
+		return false;
+	}
+
 	setUsageThrottlingFiveHourEnabled(value: boolean): void {
 		this.set("usage_throttling_five_hour_enabled", value);
 	}
@@ -564,6 +586,7 @@ export class Config extends EventEmitter {
 			usage_throttling_five_hour_enabled:
 				this.getUsageThrottlingFiveHourEnabled(),
 			usage_throttling_weekly_enabled: this.getUsageThrottlingWeeklyEnabled(),
+			agent_frontmatter_model_fallback: this.getAgentFrontmatterModelFallback(),
 			health_detail_enabled: this.getHealthDetailEnabled(),
 			alert_daily_spend_usd: this.getAlertDailySpendUsd(),
 			alert_tokens_per_hour: this.getAlertTokensPerHour(),

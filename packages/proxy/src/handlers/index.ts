@@ -4,12 +4,14 @@ export {
 } from "../request-body-context";
 export {
 	getComboSlotInfo,
+	resolveEffectiveModel,
 	selectAccountsForRequest,
 	setComboSlotInfo,
 } from "./account-selector";
 export {
 	type AgentInterceptResult,
 	interceptAndModifyRequest,
+	isRewriteTargetServable,
 } from "./agent-interceptor";
 export {
 	createPoolExhaustedResponse,

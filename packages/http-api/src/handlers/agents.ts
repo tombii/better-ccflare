@@ -12,8 +12,36 @@ import {
 	jsonResponse,
 } from "@better-ccflare/http-common";
 import { Logger } from "@better-ccflare/logger";
+import type { APIContext } from "@better-ccflare/types";
 
 const log = new Logger("AgentsHandler");
+
+/**
+ * Non-blocking parity check against the live model catalog (mirrors the
+ * proxy's `isRewriteTargetServable` veto, but never blocks the write — the
+ * preference is already persisted by the time this runs). Only warns when
+ * the catalog is confirmed live and non-empty and doesn't list the model;
+ * a fallback/offline/errored catalog never produces a warning, matching the
+ * fail-open semantics of the proxy-side guard.
+ */
+async function getLiveCatalogWarning(
+	modelCatalog: APIContext["modelCatalog"] | undefined,
+	model: string,
+): Promise<string | undefined> {
+	if (!modelCatalog) return undefined;
+	try {
+		const catalog = await modelCatalog.get();
+		if (catalog.source !== "live" || catalog.models.length === 0) {
+			return undefined;
+		}
+		if (catalog.models.some((entry) => entry.id === model)) {
+			return undefined;
+		}
+		return `Model '${model}' not present in the live Anthropic model list — it may fail upstream.`;
+	} catch {
+		return undefined;
+	}
+}
 
 export function createAgentsListHandler(dbOps: DatabaseOperations) {
 	return async (): Promise<Response> => {
@@ -58,7 +86,10 @@ export function createAgentsListHandler(dbOps: DatabaseOperations) {
 	};
 }
 
-export function createAgentPreferenceUpdateHandler(dbOps: DatabaseOperations) {
+export function createAgentPreferenceUpdateHandler(
+	dbOps: DatabaseOperations,
+	modelCatalog?: APIContext["modelCatalog"],
+) {
 	return async (req: Request, agentId: string): Promise<Response> => {
 		try {
 			const body = await req.json();
@@ -76,10 +107,13 @@ export function createAgentPreferenceUpdateHandler(dbOps: DatabaseOperations) {
 			// Update preference
 			dbOps.setAgentPreference(agentId, model);
 
+			const warning = await getLiveCatalogWarning(modelCatalog, model);
+
 			return jsonResponse({
 				success: true,
 				agentId,
 				model,
+				...(warning ? { warning } : {}),
 			});
 		} catch (error) {
 			log.error("Error updating agent preference:", error);
@@ -119,6 +153,7 @@ export function createWorkspacesListHandler() {
 
 export function createBulkAgentPreferenceUpdateHandler(
 	dbOps: DatabaseOperations,
+	modelCatalog?: APIContext["modelCatalog"],
 ) {
 	return async (req: Request): Promise<Response> => {
 		const log = new Logger("BulkAgentPreferenceUpdate");
@@ -157,10 +192,16 @@ export function createBulkAgentPreferenceUpdateHandler(
 				`Updated ${agentIds.length} agent preferences to model: ${modelValidation}`,
 			);
 
+			const warning = await getLiveCatalogWarning(
+				modelCatalog,
+				modelValidation,
+			);
+
 			return jsonResponse({
 				success: true,
 				updatedCount: agentIds.length,
 				model: modelValidation,
+				...(warning ? { warning } : {}),
 			});
 		} catch (error) {
 			log.error("Error updating agent preferences in bulk:", error);

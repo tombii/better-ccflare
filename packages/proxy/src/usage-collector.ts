@@ -780,6 +780,19 @@ export class UsageCollector {
 					projectAtEnd,
 					state.billingType,
 					startMessage.comboName || null,
+					// Only persist when an actual rewrite occurred — leaves both
+					// columns null for the (overwhelmingly common) unchanged case
+					// instead of duplicating the `model` column's value.
+					startMessage.originalModel &&
+						startMessage.appliedModel &&
+						startMessage.originalModel !== startMessage.appliedModel
+						? startMessage.originalModel
+						: null,
+					startMessage.originalModel &&
+						startMessage.appliedModel &&
+						startMessage.originalModel !== startMessage.appliedModel
+						? startMessage.appliedModel
+						: null,
 				);
 			} catch (error) {
 				log.error(
@@ -917,6 +930,8 @@ export class UsageCollector {
 			apiKeyName: startMessage.apiKeyName || undefined,
 			project: state.project ?? undefined,
 			billingType: state.billingType,
+			originalModel: startMessage.originalModel || undefined,
+			appliedModel: startMessage.appliedModel || undefined,
 			comboName: startMessage.comboName || undefined,
 		};
 

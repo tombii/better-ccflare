@@ -39,6 +39,12 @@ export interface StartMessage {
 	// Agent info
 	agentUsed: string | null;
 
+	// Model rewrite observability: the model the client originally requested
+	// and the model actually forwarded upstream. Both null unless an
+	// agent-preference rewrite (agent-interceptor.ts) changed the model.
+	originalModel: string | null;
+	appliedModel: string | null;
+
 	// Combo info
 	comboName: string | null;
 

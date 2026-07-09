@@ -88,6 +88,10 @@ import { createLogsStreamHandler } from "./handlers/logs";
 import { createLogsHistoryHandler } from "./handlers/logs-history";
 import { createCleanupHandler } from "./handlers/maintenance";
 import {
+	createModelsHandler,
+	createModelsRefreshHandler,
+} from "./handlers/models";
+import {
 	createAnthropicReauthCallbackHandler,
 	createAnthropicReauthInitHandler,
 	createCodexDeviceFlowInitHandler,
@@ -418,6 +422,7 @@ export class APIRouter {
 		this.handlers.set("POST:/api/agents/bulk-preference", (req) => {
 			const bulkHandler = createBulkAgentPreferenceUpdateHandler(
 				this.context.dbOps,
+				this.context.modelCatalog,
 			);
 			return bulkHandler(req);
 		});
@@ -447,6 +452,12 @@ export class APIRouter {
 		this.handlers.set("GET:/api/families", () =>
 			createFamiliesListHandler(dbOps)(),
 		);
+
+		// Model catalog routes
+		const modelsHandler = createModelsHandler(this.context);
+		const modelsRefreshHandler = createModelsRefreshHandler(this.context);
+		this.handlers.set("GET:/api/models", () => modelsHandler());
+		this.handlers.set("POST:/api/models/refresh", () => modelsRefreshHandler());
 	}
 
 	/**
@@ -685,6 +696,7 @@ export class APIRouter {
 			if (path.endsWith("/preference") && method === "POST") {
 				const preferenceHandler = createAgentPreferenceUpdateHandler(
 					this.context.dbOps,
+					this.context.modelCatalog,
 				);
 				return await this.wrapHandler((req) => preferenceHandler(req, agentId))(
 					req,

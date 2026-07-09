@@ -2,8 +2,13 @@ import { existsSync, realpathSync } from "node:fs";
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
-import { Config } from "@better-ccflare/config";
-import { CLAUDE_MODEL_IDS, isValidClaudeModel } from "@better-ccflare/core";
+import {
+	isValidClaudeModel,
+	LATEST_FABLE_MODEL,
+	LATEST_HAIKU_MODEL,
+	LATEST_OPUS_MODEL,
+	LATEST_SONNET_MODEL,
+} from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import { validatePathOrThrow } from "@better-ccflare/security";
 import type {
@@ -30,15 +35,32 @@ const PLUGIN_AGENT_DISCOVERY_ENV = "BETTER_CCFLARE_DISCOVER_PLUGIN_AGENTS";
 
 const log = new Logger("AgentRegistry");
 
+/**
+ * Strips a single layer of matching surrounding quotes (single or double)
+ * from a frontmatter value and trims it. YAML-style quoting is common in
+ * hand-written agent files (e.g. `model: "sonnet"`) but the line-based
+ * frontmatter parser here doesn't understand YAML quoting — without this,
+ * the quotes end up embedded in the value itself.
+ */
+function dequoteValue(value: string): string {
+	const trimmed = value.trim();
+	if (
+		trimmed.length >= 2 &&
+		((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+			(trimmed.startsWith("'") && trimmed.endsWith("'")))
+	) {
+		return trimmed.slice(1, -1).trim();
+	}
+	return trimmed;
+}
+
 export class AgentRegistry {
 	private cache: AgentCache | null = null;
 	private workspaces: Map<string, AgentWorkspace> = new Map();
 	private initialized = false;
-	private config: Config;
 	private readonly manifestPathOverride?: string;
 
 	constructor(manifestPathOverride?: string) {
-		this.config = new Config();
 		this.manifestPathOverride = manifestPathOverride;
 	}
 
@@ -116,7 +138,7 @@ export class AgentRegistry {
 				if (keyMatch) {
 					// Save previous key-value pair if exists
 					if (currentKey) {
-						data[currentKey] = currentValue.trim();
+						data[currentKey] = dequoteValue(currentValue.trim());
 					}
 					// Start new key-value pair
 					currentKey = keyMatch[1];
@@ -128,7 +150,7 @@ export class AgentRegistry {
 			}
 			// Save the last key-value pair
 			if (currentKey) {
-				data[currentKey] = currentValue.trim();
+				data[currentKey] = dequoteValue(currentValue.trim());
 			}
 
 			// Validate required fields
@@ -139,26 +161,29 @@ export class AgentRegistry {
 				return null;
 			}
 
-			// Parse and validate model
-			const defaultModel = this.config.getDefaultAgentModel();
-			let model: AllowedModel = defaultModel as AllowedModel;
+			// Parse and validate model. `null` means "no preference" — the agent
+			// inherits whatever model the session/caller is already using. This is
+			// the case for a missing `model:` key, Claude Code's `model: inherit`
+			// convention, and any value that fails validation.
+			let model: AllowedModel | null = null;
 
-			// Handle shorthand model names
 			if (data.model) {
 				const modelLower = data.model.toLowerCase();
-				if (modelLower === "fable") {
-					model = CLAUDE_MODEL_IDS.FABLE_5 as AllowedModel;
+				if (modelLower === "inherit") {
+					model = null;
+				} else if (modelLower === "fable") {
+					model = LATEST_FABLE_MODEL;
 				} else if (modelLower === "opus") {
-					model = CLAUDE_MODEL_IDS.OPUS_4 as AllowedModel; // Keep existing default
+					model = LATEST_OPUS_MODEL;
 				} else if (modelLower === "sonnet") {
-					model = CLAUDE_MODEL_IDS.SONNET_4 as AllowedModel; // Keep existing default
+					model = LATEST_SONNET_MODEL;
 				} else if (modelLower === "haiku") {
-					model = CLAUDE_MODEL_IDS.HAIKU_4_5 as AllowedModel; // Keep existing default
+					model = LATEST_HAIKU_MODEL;
 				} else if (this.isValidModel(data.model)) {
 					model = data.model as AllowedModel; // Use exact model specified
 				} else {
 					log.warn(
-						`Agent file ${filePath} has invalid model: ${data.model}. Using default.`,
+						`Agent file ${filePath} has invalid model: ${data.model}. Treating as inherit.`,
 					);
 				}
 			}
@@ -414,9 +439,14 @@ export class AgentRegistry {
 		const normalizedPrompt = systemPrompt.trim();
 
 		return agents.find((agent) => {
+			const agentPrompt = agent.systemPrompt.trim();
+			// An empty agent system prompt would match any request via
+			// String.includes("") — exclude it rather than let an empty-body
+			// agent silently swallow every request that reaches this point.
+			if (!agentPrompt) return false;
 			// Check if the agent's system prompt is contained within the provided prompt
 			// This handles cases where the agent prompt is part of a larger system prompt
-			return normalizedPrompt.includes(agent.systemPrompt);
+			return normalizedPrompt.includes(agentPrompt);
 		});
 	}
 
@@ -597,7 +627,9 @@ export class AgentRegistry {
 			existingData.description = updates.description;
 		}
 		if (updates.model !== undefined) {
-			existingData.model = updates.model;
+			// null means "inherit" — persist Claude Code's own vocabulary for it
+			// rather than an empty/undefined frontmatter value.
+			existingData.model = updates.model ?? "inherit";
 		}
 		if (updates.tools !== undefined) {
 			if (updates.tools.length === 0) {

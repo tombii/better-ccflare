@@ -26,6 +26,8 @@ export interface RequestRow {
 	project: string | null;
 	billing_type: string | null;
 	combo_name: string | null;
+	original_model: string | null;
+	applied_model: string | null;
 }
 
 // Domain model
@@ -56,6 +58,8 @@ export interface Request {
 	project?: string;
 	billingType?: string;
 	comboName?: string;
+	originalModel?: string;
+	appliedModel?: string;
 }
 
 // API response type
@@ -86,6 +90,8 @@ export interface RequestResponse {
 	project?: string;
 	billingType?: string;
 	comboName?: string;
+	originalModel?: string;
+	appliedModel?: string;
 	// Derived from statusCode === 429 server-side so the list view can render
 	// the "Rate Limited" badge without lazy-loading the full payload.
 	rateLimited?: boolean;
@@ -175,6 +181,8 @@ export function toRequest(row: RequestRow): Request {
 		project: row.project || undefined,
 		billingType: row.billing_type || undefined,
 		comboName: row.combo_name || undefined,
+		originalModel: row.original_model || undefined,
+		appliedModel: row.applied_model || undefined,
 	};
 }
 
@@ -206,6 +214,8 @@ export function toRequestResponse(request: Request): RequestResponse {
 		project: request.project,
 		billingType: request.billingType,
 		comboName: request.comboName,
+		originalModel: request.originalModel,
+		appliedModel: request.appliedModel,
 		rateLimited: request.statusCode === 429,
 	};
 }

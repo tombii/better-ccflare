@@ -71,4 +71,42 @@ describe("createConfigHandlers", () => {
 		);
 		expect(config.setUsageThrottlingWeeklyEnabled).toHaveBeenCalledWith(true);
 	});
+
+	it("rejects a default agent model without a recognized Claude family substring", async () => {
+		const config = makeConfig();
+		const handlers = createConfigHandlers(config, {
+			port: 8080,
+			tlsEnabled: false,
+		});
+
+		const response = await handlers.setDefaultAgentModel(
+			new Request("http://localhost/api/config/model", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ model: "totally-not-a-claude-model" }),
+			}),
+		);
+
+		expect(response.status).toBe(400);
+		expect(config.setDefaultAgentModel).not.toHaveBeenCalled();
+	});
+
+	it("accepts a valid Claude model as the default agent model", async () => {
+		const config = makeConfig();
+		const handlers = createConfigHandlers(config, {
+			port: 8080,
+			tlsEnabled: false,
+		});
+
+		const response = await handlers.setDefaultAgentModel(
+			new Request("http://localhost/api/config/model", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ model: "claude-sonnet-5" }),
+			}),
+		);
+
+		expect(response.status).toBe(200);
+		expect(config.setDefaultAgentModel).toHaveBeenCalledWith("claude-sonnet-5");
+	});
 });

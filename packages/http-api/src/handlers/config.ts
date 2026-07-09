@@ -1,6 +1,8 @@
 import type { Config } from "@better-ccflare/config";
 import {
 	DEFAULT_AGENT_MODEL,
+	getAllowedModelsMessage,
+	isValidClaudeModel,
 	NETWORK,
 	STRATEGIES,
 	type StrategyName,
@@ -109,6 +111,14 @@ export function createConfigHandlers(
 
 			if (!modelValidation) {
 				return errorResponse(BadRequest("Model is required"));
+			}
+
+			// Validate model is in allowed list (parity with agent preference
+			// validation in agents.ts).
+			if (!isValidClaudeModel(modelValidation)) {
+				return errorResponse(
+					BadRequest(`Invalid model. ${getAllowedModelsMessage()}`),
+				);
 			}
 
 			config.setDefaultAgentModel(modelValidation);

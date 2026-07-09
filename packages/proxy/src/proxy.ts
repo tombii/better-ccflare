@@ -23,6 +23,7 @@ import {
 	proxyWithAccount,
 	RequestBodyContext,
 	type RequestJsonBody,
+	resolveEffectiveModel,
 	selectAccountsForRequest,
 	validateProviderPath,
 } from "./handlers";
@@ -222,7 +223,14 @@ export async function handleProxy(
 
 	// 4. Intercept and modify request for agent model preferences
 	const { modifiedBody, agentUsed, originalModel, appliedModel } =
-		await interceptAndModifyRequest(requestBodyContext, ctx.dbOps, req.headers);
+		await interceptAndModifyRequest(
+			requestBodyContext,
+			ctx.dbOps,
+			req.headers,
+			{
+				frontmatterModelFallback: ctx.config.getAgentFrontmatterModelFallback(),
+			},
+		);
 
 	// Use modified body if available
 	const finalBodyBuffer = modifiedBody || requestBodyContext.getBuffer();
@@ -242,12 +250,18 @@ export async function handleProxy(
 	requestMeta.agentUsed = agentUsed;
 	requestMeta.project = project;
 	requestMeta.clientSessionId = requestBodyContext.getClientId();
+	requestMeta.originalModel = originalModel;
+	requestMeta.appliedModel = appliedModel;
 
-	// 6. Select accounts
+	// 6. Select accounts. Route on the model that will actually be sent
+	// upstream (post-interceptor-rewrite), not the model the client asked
+	// for — otherwise combo routing and family-based selection see a model
+	// that no longer matches the outgoing request.
+	const effectiveModel = resolveEffectiveModel(appliedModel, requestModel);
 	const selectedAccounts = await selectAccountsForRequest(
 		requestMeta,
 		ctx,
-		requestModel ?? undefined,
+		effectiveModel ?? undefined,
 	);
 
 	const applyUsageThrottling = (accounts: Account[]) => {
@@ -353,6 +367,8 @@ export async function handleProxy(
 				accountAutoPauseOnOverageEnabled: 0,
 				accountName: null,
 				agentUsed: agentUsed || null,
+				originalModel: originalModel || null,
+				appliedModel: appliedModel || null,
 				comboName: null,
 				apiKeyId: apiKeyId || null,
 				apiKeyName: apiKeyName || null,
