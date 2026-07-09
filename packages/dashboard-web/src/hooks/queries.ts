@@ -311,11 +311,20 @@ export const useResetStats = () => {
 	});
 };
 
+/**
+ * Sentinel select value for "remove the explicit preference" — routed to
+ * DELETE /api/agents/:id/preference instead of the POST update (which
+ * requires a concrete model). Deliberately not a valid model id.
+ */
+export const AGENT_DEFAULT_MODEL_SENTINEL = "__agent_default__";
+
 export const useUpdateAgentPreference = () => {
 	const queryClient = useQueryClient();
 	return useMutation({
 		mutationFn: ({ agentId, model }: { agentId: string; model: string }) =>
-			api.updateAgentPreference(agentId, model),
+			model === AGENT_DEFAULT_MODEL_SENTINEL
+				? api.clearAgentPreference(agentId)
+				: api.updateAgentPreference(agentId, model),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.agents() });
 		},

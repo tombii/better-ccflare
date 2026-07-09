@@ -1492,6 +1492,34 @@ class API extends HttpClient {
 		}
 	}
 
+	/**
+	 * Removes an agent's explicit model preference so it reverts to its
+	 * frontmatter model or inherit — the POST endpoint requires a concrete
+	 * model and cannot express "no override".
+	 */
+	async clearAgentPreference(agentId: string): Promise<void> {
+		const startTime = Date.now();
+		const url = `/api/agents/${agentId}/preference`;
+
+		this.logger.debug(`→ DELETE ${url}`, { agentId });
+
+		try {
+			await this.delete(url);
+			const duration = Date.now() - startTime;
+			this.logger.debug(`← DELETE ${url} - 200 (${duration}ms)`);
+		} catch (error) {
+			const duration = Date.now() - startTime;
+			this.logger.error(`✗ DELETE ${url} - ERROR (${duration}ms)`, {
+				error: error instanceof Error ? error.message : String(error),
+				stack: error instanceof Error ? error.stack : undefined,
+			});
+			if (error instanceof HttpError) {
+				throw new Error(error.message);
+			}
+			throw error;
+		}
+	}
+
 	async updateAgent(
 		agentId: string,
 		payload: AgentUpdatePayload,

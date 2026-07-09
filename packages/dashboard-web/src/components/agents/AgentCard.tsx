@@ -3,7 +3,7 @@ import type { Agent } from "@better-ccflare/types";
 import { COMMON_MODELS } from "@better-ccflare/types";
 import { Bot, Cpu, Edit3, Folder, Globe, Sparkles } from "lucide-react";
 import { useState } from "react";
-import { useModels } from "../../hooks/queries";
+import { AGENT_DEFAULT_MODEL_SENTINEL, useModels } from "../../hooks/queries";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
@@ -188,6 +188,14 @@ export function AgentCard({
 							<SelectValue placeholder="Inherit (session model)" />
 						</SelectTrigger>
 						<SelectContent>
+							<SelectItem
+								value={AGENT_DEFAULT_MODEL_SENTINEL}
+								className="flex items-center"
+							>
+								<span className="text-muted-foreground">
+									Agent default (frontmatter / inherit)
+								</span>
+							</SelectItem>
 							{modelOptions.map((model) => (
 								<SelectItem
 									key={model.id}

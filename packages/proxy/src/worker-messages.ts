@@ -41,7 +41,9 @@ export interface StartMessage {
 
 	// Model rewrite observability: the model the client originally requested
 	// and the model actually forwarded upstream. Both null unless an
-	// agent-preference rewrite (agent-interceptor.ts) changed the model.
+	// agent-preference rewrite (agent-interceptor.ts) changed the model —
+	// gate every write through isModelRewrite() so "agent detected but
+	// nothing rewritten" never records a pair of equal values.
 	originalModel: string | null;
 	appliedModel: string | null;
 
@@ -55,6 +57,20 @@ export interface StartMessage {
 	// Retry info
 	retryAttempt: number;
 	failoverAttempts: number;
+}
+
+/**
+ * True only when an agent-preference rewrite actually swapped the model:
+ * both values present and different. The single source of truth for every
+ * consumer that persists or surfaces the originalModel/appliedModel pair
+ * (StartMessage construction, request-row persistence, response header) —
+ * keeping them in agreement so a no-rewrite request never looks like one.
+ */
+export function isModelRewrite(
+	originalModel: string | null | undefined,
+	appliedModel: string | null | undefined,
+): boolean {
+	return !!originalModel && !!appliedModel && originalModel !== appliedModel;
 }
 
 export interface ChunkMessage {

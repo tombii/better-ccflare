@@ -9,7 +9,11 @@ import { NO_ACCOUNT_ID, type RequestResponse } from "@better-ccflare/types";
 import { formatCost } from "@better-ccflare/ui-common";
 import { cacheBodyStore } from "./cache-body-store";
 import { combineChunks } from "./stream-tee";
-import type { EndMessage, StartMessage } from "./worker-messages";
+import {
+	type EndMessage,
+	isModelRewrite,
+	type StartMessage,
+} from "./worker-messages";
 
 interface RequestState {
 	startMessage: StartMessage;
@@ -743,6 +747,10 @@ export class UsageCollector {
 			log.debug(`Saving final request data for ${startMessage.requestId}`);
 		}
 		const projectAtEnd = state.project ?? null;
+		const modelRewritten = isModelRewrite(
+			startMessage.originalModel,
+			startMessage.appliedModel,
+		);
 		// No preliminary INSERT needed — dashboard tracks pending requests via SSE events, not DB queries.
 		this.asyncWriter.enqueue(async () => {
 			try {
@@ -783,16 +791,8 @@ export class UsageCollector {
 					// Only persist when an actual rewrite occurred — leaves both
 					// columns null for the (overwhelmingly common) unchanged case
 					// instead of duplicating the `model` column's value.
-					startMessage.originalModel &&
-						startMessage.appliedModel &&
-						startMessage.originalModel !== startMessage.appliedModel
-						? startMessage.originalModel
-						: null,
-					startMessage.originalModel &&
-						startMessage.appliedModel &&
-						startMessage.originalModel !== startMessage.appliedModel
-						? startMessage.appliedModel
-						: null,
+					modelRewritten ? startMessage.originalModel : null,
+					modelRewritten ? startMessage.appliedModel : null,
 				);
 			} catch (error) {
 				log.error(

@@ -10,7 +10,11 @@ import { applyRateLimitCooldown } from "./handlers/rate-limit-cooldown";
 import { createSseRateLimitSniffer } from "./handlers/sse-rate-limit-sniffer";
 import { combineChunks, teeStream } from "./stream-tee";
 import { getUsageCollector } from "./usage-collector";
-import type { EndMessage, StartMessage } from "./worker-messages";
+import {
+	type EndMessage,
+	isModelRewrite,
+	type StartMessage,
+} from "./worker-messages";
 
 const log = new Logger("ResponseHandler");
 
@@ -56,7 +60,7 @@ function withModelRewriteHeader(
 	appliedModel?: string | null,
 ): Headers {
 	const result = new Headers(headers);
-	if (originalModel && appliedModel && originalModel !== appliedModel) {
+	if (isModelRewrite(originalModel, appliedModel)) {
 		result.set(MODEL_REWRITE_HEADER, `${originalModel}->${appliedModel}`);
 	}
 	return result;
@@ -183,8 +187,15 @@ export async function forwardToClient(
 				: 0,
 			accountName: account?.name ?? null,
 			agentUsed: agentUsed || null,
-			originalModel: originalModel || null,
-			appliedModel: appliedModel || null,
+			// Persist the pair only for an actual swap — an agent-detected but
+			// unmodified request would otherwise record two equal values that
+			// downstream cannot distinguish from a real rewrite.
+			originalModel: isModelRewrite(originalModel, appliedModel)
+				? (originalModel as string)
+				: null,
+			appliedModel: isModelRewrite(originalModel, appliedModel)
+				? (appliedModel as string)
+				: null,
 			comboName: comboName || null,
 			apiKeyId: apiKeyId || null,
 			apiKeyName: apiKeyName || null,
@@ -299,7 +310,7 @@ export async function forwardToClient(
 			});
 		}
 
-		if (originalModel && appliedModel && originalModel !== appliedModel) {
+		if (isModelRewrite(originalModel, appliedModel)) {
 			return new Response(null, {
 				status: response.status,
 				statusText: response.statusText,

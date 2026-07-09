@@ -125,6 +125,24 @@ export function createAgentPreferenceUpdateHandler(
 	};
 }
 
+/**
+ * Removes an agent's explicit model preference so it falls back to its
+ * frontmatter model — or, for `inherit`/no-model agents, to the session's
+ * model. This is the only way to revert to "no override" from the
+ * dashboard: the POST handler above requires a concrete model value.
+ */
+export function createAgentPreferenceDeleteHandler(dbOps: DatabaseOperations) {
+	return async (_req: Request, agentId: string): Promise<Response> => {
+		try {
+			const deleted = await dbOps.deleteAgentPreference(agentId);
+			return jsonResponse({ success: true, agentId, deleted });
+		} catch (error) {
+			log.error("Error deleting agent preference:", error);
+			return jsonResponse({ error: "Failed to delete agent preference" }, 500);
+		}
+	};
+}
+
 export function createWorkspacesListHandler() {
 	return async (): Promise<Response> => {
 		try {

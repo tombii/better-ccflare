@@ -34,6 +34,7 @@ import {
 	createZaiAccountAddHandler,
 } from "./handlers/accounts";
 import {
+	createAgentPreferenceDeleteHandler,
 	createAgentPreferenceUpdateHandler,
 	createAgentsListHandler,
 	createBulkAgentPreferenceUpdateHandler,
@@ -702,6 +703,16 @@ export class APIRouter {
 					req,
 					url,
 				);
+			}
+
+			// Agent preference removal (revert to frontmatter/inherit default)
+			if (path.endsWith("/preference") && method === "DELETE") {
+				const preferenceDeleteHandler = createAgentPreferenceDeleteHandler(
+					this.context.dbOps,
+				);
+				return await this.wrapHandler((req) =>
+					preferenceDeleteHandler(req, agentId),
+				)(req, url);
 			}
 
 			// Agent update (PATCH /api/agents/:id)

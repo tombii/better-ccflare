@@ -14,6 +14,7 @@ import { agentRegistry } from "@better-ccflare/agents";
 import type { DatabaseOperations } from "@better-ccflare/database";
 import type { APIContext } from "@better-ccflare/types";
 import {
+	createAgentPreferenceDeleteHandler,
 	createAgentPreferenceUpdateHandler,
 	createBulkAgentPreferenceUpdateHandler,
 } from "../agents";
@@ -141,6 +142,68 @@ describe("createAgentPreferenceUpdateHandler - live catalog warning", () => {
 
 		expect(response.status).toBe(400);
 		expect(dbOps.setAgentPreference).not.toHaveBeenCalled();
+	});
+});
+
+describe("createAgentPreferenceDeleteHandler - revert to agent default", () => {
+	it("deletes the preference and reports deleted: true", async () => {
+		const deleteAgentPreference = mock(async () => true);
+		const dbOps = {
+			deleteAgentPreference,
+		} as unknown as DatabaseOperations;
+		const handler = createAgentPreferenceDeleteHandler(dbOps);
+
+		const response = await handler(
+			new Request("http://localhost/api/agents/agent-1/preference", {
+				method: "DELETE",
+			}),
+			"agent-1",
+		);
+		const body = (await response.json()) as {
+			success: boolean;
+			agentId: string;
+			deleted: boolean;
+		};
+
+		expect(response.status).toBe(200);
+		expect(body).toEqual({ success: true, agentId: "agent-1", deleted: true });
+		expect(deleteAgentPreference).toHaveBeenCalledWith("agent-1");
+	});
+
+	it("reports deleted: false when no preference row existed", async () => {
+		const dbOps = {
+			deleteAgentPreference: mock(async () => false),
+		} as unknown as DatabaseOperations;
+		const handler = createAgentPreferenceDeleteHandler(dbOps);
+
+		const response = await handler(
+			new Request("http://localhost/api/agents/agent-1/preference", {
+				method: "DELETE",
+			}),
+			"agent-1",
+		);
+		const body = (await response.json()) as { deleted: boolean };
+
+		expect(response.status).toBe(200);
+		expect(body.deleted).toBe(false);
+	});
+
+	it("returns 500 when the delete operation throws", async () => {
+		const dbOps = {
+			deleteAgentPreference: mock(async () => {
+				throw new Error("db unavailable");
+			}),
+		} as unknown as DatabaseOperations;
+		const handler = createAgentPreferenceDeleteHandler(dbOps);
+
+		const response = await handler(
+			new Request("http://localhost/api/agents/agent-1/preference", {
+				method: "DELETE",
+			}),
+			"agent-1",
+		);
+
+		expect(response.status).toBe(500);
 	});
 });
 
