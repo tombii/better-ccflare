@@ -48,6 +48,23 @@ export interface APIContext {
 	};
 	getIntegrityStatus?: () => IntegrityStatus;
 	getStrategy?: () => LoadBalancingStrategy | null;
+	/**
+	 * Live Anthropic model catalog access, injected by the server entrypoint
+	 * (avoids a direct http-api -> proxy type dependency here). Absent when
+	 * the catalog has not been wired up (e.g. in narrower test contexts).
+	 */
+	modelCatalog?: {
+		get: () => Promise<{
+			models: Array<{
+				id: string;
+				displayName: string;
+				createdAt: string | null;
+			}>;
+			fetchedAt: number;
+			source: "live" | "fallback";
+		}>;
+		refresh: () => Promise<{ success: boolean; error?: string }>;
+	};
 }
 
 // Load balancing strategy interface

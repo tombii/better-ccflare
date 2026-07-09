@@ -49,12 +49,37 @@ export function isAllowedModel(model: string): model is AllowedModel {
 
 // Export commonly used models for defaults (not for validation)
 export const COMMON_MODELS = [
+	CLAUDE_MODEL_IDS.HAIKU_4_5,
 	CLAUDE_MODEL_IDS.OPUS_4,
 	CLAUDE_MODEL_IDS.OPUS_4_1,
 	CLAUDE_MODEL_IDS.OPUS_4_5,
 	CLAUDE_MODEL_IDS.OPUS_4_6,
+	CLAUDE_MODEL_IDS.OPUS_4_7,
+	CLAUDE_MODEL_IDS.OPUS_4_8,
 	CLAUDE_MODEL_IDS.SONNET_4,
 	CLAUDE_MODEL_IDS.SONNET_4_5,
 	CLAUDE_MODEL_IDS.SONNET_4_6,
 	CLAUDE_MODEL_IDS.SONNET_5,
+	CLAUDE_MODEL_IDS.FABLE_5,
 ] as const;
+
+/** A single model entry in the live Anthropic model catalog. */
+export interface ModelCatalogEntry {
+	id: string;
+	displayName: string;
+	createdAt: string | null;
+}
+
+/** Response shape for GET /api/models. */
+export interface ModelCatalogResponse {
+	models: ModelCatalogEntry[];
+	fetchedAt: number;
+	source: "live" | "fallback";
+}
+
+/** Response shape for POST /api/models/refresh. */
+export interface ModelCatalogRefreshResponse {
+	success: boolean;
+	error?: string;
+	catalog: ModelCatalogResponse;
+}
