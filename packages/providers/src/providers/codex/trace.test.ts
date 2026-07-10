@@ -111,14 +111,23 @@ describe("summarizeCodexResponse (response phase)", () => {
 				{ name: "Task", arg_preview: '{"prompt":"b"}' },
 				{ name: "Bash", arg_preview: '{"command":"ls"}' },
 			],
-			{ input_tokens: 300, output_tokens: 50, cache_read_input_tokens: 700 },
+			{ input_tokens: 1_000, output_tokens: 50, cache_read_input_tokens: 700 },
 			"tool_use",
 		);
 		expect(s.new_tool_call_count).toBe(3);
 		expect(s.new_tool_use_by_name).toEqual({ Task: 2, Bash: 1 });
 		expect(s.stop_reason).toBe("tool_use");
-		// 700 / (300 + 700) = 70%
+		// Cached tokens are a subset of total input tokens.
 		expect(s.cache_hit_pct).toBe(70);
+	});
+
+	test("clamps malformed cached token counts to the total input", () => {
+		const s = summarizeCodexResponse(
+			[],
+			{ input_tokens: 100, cache_read_input_tokens: 700 },
+			"end_turn",
+		);
+		expect(s.cache_hit_pct).toBe(100);
 	});
 
 	test("null cache hit pct when no input tokens seen", () => {

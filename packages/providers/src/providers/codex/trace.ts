@@ -177,8 +177,11 @@ export function summarizeCodexResponse(
 		cache_read_input_tokens: cacheRead,
 		cache_creation_input_tokens: usage.cache_creation_input_tokens ?? 0,
 		cache_hit_pct:
-			inputTokens + cacheRead > 0
-				? Math.round((1000 * cacheRead) / (inputTokens + cacheRead)) / 10
+			inputTokens > 0
+				? Math.round(
+						(1000 * Math.min(Math.max(cacheRead, 0), inputTokens)) /
+							inputTokens,
+					) / 10
 				: null,
 		...(error?.type ? { error_type: error.type } : {}),
 		...(error?.message ? { error_message: error.message } : {}),
