@@ -1,4 +1,5 @@
 import { DEFAULT_AGENT_MODEL } from "@better-ccflare/core";
+import { format, formatDistanceToNow } from "date-fns";
 import {
 	AlertCircle,
 	Bot,
@@ -15,6 +16,7 @@ import {
 	useAgents,
 	useBulkUpdateAgentPreferences,
 	useDefaultAgentModel,
+	useModels,
 	useRefreshModels,
 	useSetDefaultAgentModel,
 } from "../hooks/queries";
@@ -48,6 +50,7 @@ export function AgentsTab() {
 	const setDefaultModel = useSetDefaultAgentModel();
 	const bulkUpdatePreferences = useBulkUpdateAgentPreferences();
 	const refreshModels = useRefreshModels();
+	const { data: modelCatalog } = useModels();
 	const [selectedWorkspace, setSelectedWorkspace] = useState<string | null>(
 		null,
 	);
@@ -229,17 +232,32 @@ Your system prompt content here...`}
 									preferences will override this setting.
 								</CardDescription>
 							</div>
-							<Button
-								variant="outline"
-								size="sm"
-								onClick={() => refreshModels.mutate()}
-								disabled={refreshModels.isPending}
-								title="Refresh the live model list from Anthropic"
-							>
-								<RefreshCw
-									className={`h-3.5 w-3.5 ${refreshModels.isPending ? "animate-spin" : ""}`}
-								/>
-							</Button>
+							<div className="flex items-center gap-3">
+								{modelCatalog && (
+									<span className="text-xs text-muted-foreground">
+										{modelCatalog.source === "live"
+											? `Live model list · fetched ${formatDistanceToNow(
+													new Date(modelCatalog.fetchedAt),
+													{ addSuffix: true },
+												)}`
+											: `Bundled model list · as of ${format(
+													new Date(modelCatalog.fetchedAt),
+													"PP",
+												)}`}
+									</span>
+								)}
+								<Button
+									variant="outline"
+									size="sm"
+									onClick={() => refreshModels.mutate()}
+									disabled={refreshModels.isPending}
+									title="Refresh the live model list from Anthropic"
+								>
+									<RefreshCw
+										className={`h-3.5 w-3.5 ${refreshModels.isPending ? "animate-spin" : ""}`}
+									/>
+								</Button>
+							</div>
 						</div>
 					</CardHeader>
 					<CardContent>

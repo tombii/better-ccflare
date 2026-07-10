@@ -8,7 +8,9 @@ import type { ProxyContext } from "../handlers/proxy-types";
 import {
 	fetchLiveModels,
 	getModelCatalog,
+	ingestModelsListing,
 	initModelCatalogRefresh,
+	type ModelCatalog,
 	refreshModelCatalog,
 	resetModelCatalogForTest,
 } from "../model-catalog";
@@ -16,9 +18,11 @@ import {
 function makeAccount(overrides: Partial<Account> = {}): Account {
 	return {
 		id: "acc-1",
-		name: "test-anthropic-account",
-		provider: "anthropic",
-		api_key: null,
+		name: "test-console-account",
+		// Console (API-key) accounts are the default-eligible provider for
+		// automatic catalog refreshes; override to "anthropic" for OAuth tests.
+		provider: "claude-console-api",
+		api_key: "sk-test-key",
 		refresh_token: "rt",
 		access_token: "at-valid",
 		expires_at: Date.now() + 60 * 60 * 1000,
@@ -52,13 +56,19 @@ function makeAccount(overrides: Partial<Account> = {}): Account {
 	};
 }
 
-function makeCtx(accounts: Account[]): ProxyContext {
+function makeCtx(
+	accounts: Account[],
+	options?: { oauthRefreshEnabled?: boolean },
+): ProxyContext {
+	const oauthRefreshEnabled = options?.oauthRefreshEnabled ?? false;
 	return {
 		strategy: {} as never,
 		// biome-ignore lint/suspicious/noExplicitAny: minimal test double
 		dbOps: { getAllAccounts: async () => accounts } as any,
 		runtime: { port: 8080, clientId: "test-client" } as never,
-		config: {} as never,
+		config: {
+			getModelCatalogOAuthRefreshEnabled: () => oauthRefreshEnabled,
+		} as never,
 		provider: getProvider("anthropic")!,
 		refreshInFlight: new Map(),
 		// biome-ignore lint/suspicious/noExplicitAny: minimal test double
@@ -70,6 +80,25 @@ const TEST_CACHE_DIR = join(tmpdir(), "better-ccflare-test-model-catalog");
 
 async function cleanCacheDir() {
 	await fs.rm(TEST_CACHE_DIR, { recursive: true, force: true });
+}
+
+async function writeCacheFile(catalog: ModelCatalog): Promise<void> {
+	await fs.mkdir(TEST_CACHE_DIR, { recursive: true });
+	await fs.writeFile(
+		join(TEST_CACHE_DIR, "anthropic-models.json"),
+		JSON.stringify(catalog, null, 2),
+	);
+}
+
+function deferred<T>(): {
+	promise: Promise<T>;
+	resolve: (value: T) => void;
+} {
+	let resolve!: (value: T) => void;
+	const promise = new Promise<T>((res) => {
+		resolve = res;
+	});
+	return { promise, resolve };
 }
 
 describe("model-catalog", () => {
@@ -93,7 +122,7 @@ describe("model-catalog", () => {
 	});
 
 	describe("fetchLiveModels", () => {
-		it("selects an active anthropic account and fetches models", async () => {
+		it("selects an active console account and fetches models", async () => {
 			global.fetch = mock(async (input: RequestInfo | URL) => {
 				const url = input instanceof Request ? input.url : String(input);
 				expect(url).toContain("/v1/models");
@@ -156,12 +185,12 @@ describe("model-catalog", () => {
 			) as unknown as typeof fetch;
 
 			const ctx = makeCtx([
-				makeAccount({ id: "low-prio", priority: 10, access_token: "at-low" }),
-				makeAccount({ id: "high-prio", priority: 0, access_token: "at-high" }),
+				makeAccount({ id: "low-prio", priority: 10, api_key: "sk-low" }),
+				makeAccount({ id: "high-prio", priority: 0, api_key: "sk-high" }),
 			]);
 			await fetchLiveModels(ctx);
 
-			expect(usedAccountIds[0]).toBe("Bearer at-high");
+			expect(usedAccountIds[0]).toBe("Bearer sk-high");
 		});
 
 		it("paginates using after_id until has_more is false", async () => {
@@ -268,6 +297,61 @@ describe("model-catalog", () => {
 			const ctx = makeCtx([makeAccount()]);
 			await expect(fetchLiveModels(ctx)).rejects.toThrow(/500/);
 		});
+
+		it("throws with OAuth-opt-in guidance when only an OAuth account exists and allowOAuth is not requested", async () => {
+			const ctx = makeCtx([makeAccount({ provider: "anthropic" })]);
+			await expect(fetchLiveModels(ctx)).rejects.toThrow(
+				/no active anthropic account/i,
+			);
+			await expect(fetchLiveModels(ctx)).rejects.toThrow(
+				/BETTER_CCFLARE_MODELS_OAUTH_REFRESH/,
+			);
+		});
+
+		it("allows an OAuth account when allowOAuth is explicitly requested", async () => {
+			global.fetch = mock(
+				async () =>
+					new Response(JSON.stringify({ data: [], has_more: false }), {
+						status: 200,
+					}),
+			) as unknown as typeof fetch;
+
+			const ctx = makeCtx([makeAccount({ provider: "anthropic" })]);
+			await expect(fetchLiveModels(ctx, { allowOAuth: true })).resolves.toEqual(
+				[],
+			);
+		});
+
+		it("prefers a console account over an OAuth account even when allowOAuth is requested", async () => {
+			const usedAccountIds: string[] = [];
+			global.fetch = mock(
+				async (_input: RequestInfo | URL, init?: RequestInit) => {
+					const headers = new Headers(init?.headers);
+					usedAccountIds.push(headers.get("authorization") ?? "");
+					return new Response(JSON.stringify({ data: [], has_more: false }), {
+						status: 200,
+					});
+				},
+			) as unknown as typeof fetch;
+
+			const ctx = makeCtx([
+				makeAccount({
+					id: "oauth-high-prio",
+					provider: "anthropic",
+					priority: 0,
+					access_token: "at-oauth",
+				}),
+				makeAccount({
+					id: "console-low-prio",
+					provider: "claude-console-api",
+					priority: 10,
+					api_key: "sk-console",
+				}),
+			]);
+			await fetchLiveModels(ctx, { allowOAuth: true });
+
+			expect(usedAccountIds[0]).toBe("Bearer sk-console");
+		});
 	});
 
 	describe("refreshModelCatalog / getModelCatalog", () => {
@@ -301,6 +385,9 @@ describe("model-catalog", () => {
 			const result = await refreshModelCatalog(ctx);
 
 			expect(result.success).toBe(true);
+			expect(result.catalog.nextRefreshAt).toBeGreaterThan(
+				result.catalog.fetchedAt,
+			);
 			const catalog = await getModelCatalog();
 			expect(catalog.source).toBe("live");
 			expect(catalog.models).toEqual([
@@ -376,36 +463,71 @@ describe("model-catalog", () => {
 			expect(catalog.source).toBe("live");
 			expect(catalog.models[0]?.id).toBe("claude-sonnet-5");
 		});
-	});
 
-	describe("initModelCatalogRefresh", () => {
-		it("registers a periodic interval and performs an immediate refresh", async () => {
+		it("fails an automatic-trigger refresh against an OAuth-only account when the opt-in is not set", async () => {
+			const ctx = makeCtx([makeAccount({ provider: "anthropic" })]);
+			const result = await refreshModelCatalog(ctx, { trigger: "automatic" });
+
+			expect(result.success).toBe(false);
+			expect(result.error).toMatch(/BETTER_CCFLARE_MODELS_OAUTH_REFRESH/);
+		});
+
+		it("succeeds an automatic-trigger refresh against an OAuth-only account once the opt-in is enabled", async () => {
 			global.fetch = mock(
 				async () =>
-					new Response(
-						JSON.stringify({
-							data: [
-								{ id: "claude-sonnet-5", display_name: "Claude Sonnet 5" },
-							],
-							has_more: false,
-						}),
-						{ status: 200 },
-					),
+					new Response(JSON.stringify({ data: [], has_more: false }), {
+						status: 200,
+					}),
+			) as unknown as typeof fetch;
+
+			const ctx = makeCtx([makeAccount({ provider: "anthropic" })], {
+				oauthRefreshEnabled: true,
+			});
+			const result = await refreshModelCatalog(ctx, { trigger: "automatic" });
+
+			expect(result.success).toBe(true);
+		});
+
+		it("always succeeds a manual-trigger refresh against an OAuth-only account, opt-in or not", async () => {
+			global.fetch = mock(
+				async () =>
+					new Response(JSON.stringify({ data: [], has_more: false }), {
+						status: 200,
+					}),
+			) as unknown as typeof fetch;
+
+			const ctx = makeCtx([makeAccount({ provider: "anthropic" })]);
+			const result = await refreshModelCatalog(ctx, { trigger: "manual" });
+
+			expect(result.success).toBe(true);
+		});
+
+		it("persists nextRefreshAt computed from the configured refresh interval", async () => {
+			process.env.BETTER_CCFLARE_MODELS_REFRESH_HOURS = "2";
+			global.fetch = mock(
+				async () =>
+					new Response(JSON.stringify({ data: [], has_more: false }), {
+						status: 200,
+					}),
 			) as unknown as typeof fetch;
 
 			const ctx = makeCtx([makeAccount()]);
-			const unregister = initModelCatalogRefresh(ctx);
+			const result = await refreshModelCatalog(ctx);
 
-			// Immediate refresh runs asynchronously in the interval callback; give it a tick.
-			await new Promise((resolve) => setTimeout(resolve, 10));
-
-			const catalog = await getModelCatalog();
-			expect(catalog.source).toBe("live");
-
-			unregister();
+			expect(result.success).toBe(true);
+			const twoHoursMs = 2 * 60 * 60 * 1000;
+			const oneDayMs = 24 * 60 * 60 * 1000;
+			expect(result.catalog.nextRefreshAt).toBeGreaterThanOrEqual(
+				result.catalog.fetchedAt + twoHoursMs,
+			);
+			expect(result.catalog.nextRefreshAt).toBeLessThanOrEqual(
+				result.catalog.fetchedAt + twoHoursMs + oneDayMs,
+			);
 		});
+	});
 
-		it("does not register a periodic interval when refresh hours is 0", async () => {
+	describe("initModelCatalogRefresh", () => {
+		it("disables the scheduler entirely when refresh hours is 0 (no fetch, inert unregister)", async () => {
 			process.env.BETTER_CCFLARE_MODELS_REFRESH_HOURS = "0";
 			const fetchMock = mock(
 				async () =>
@@ -416,14 +538,25 @@ describe("model-catalog", () => {
 			global.fetch = fetchMock as unknown as typeof fetch;
 
 			const ctx = makeCtx([makeAccount()]);
-			const unregister = initModelCatalogRefresh(ctx);
+			const unregister = initModelCatalogRefresh(ctx, {
+				initialDelayMs: 5,
+				tickSeconds: 0.02,
+			});
+			await new Promise((resolve) => setTimeout(resolve, 40));
 			unregister();
 
-			// Should not throw and should be a no-op cleanup.
+			expect(fetchMock).not.toHaveBeenCalled();
 			expect(typeof unregister).toBe("function");
 		});
 
-		it("skips the immediate refresh when a fresh live cache already exists on disk", async () => {
+		it("fires the initial refresh once the freshly-derived due time has already passed", async () => {
+			// A tiny refresh interval makes the freshly-derived due time
+			// (fetchedAt-of-the-fallback-catalog + interval + jitter) due almost
+			// immediately, without needing to seed a disk cache.
+			// Effectively-zero interval (and thus effectively-zero jitter, since
+			// jitter is bounded by the interval) so the derived due time is
+			// "now", deterministically, regardless of jitter randomness.
+			process.env.BETTER_CCFLARE_MODELS_REFRESH_HOURS = "0.0000000001";
 			const fetchMock = mock(
 				async () =>
 					new Response(
@@ -439,21 +572,58 @@ describe("model-catalog", () => {
 			global.fetch = fetchMock as unknown as typeof fetch;
 
 			const ctx = makeCtx([makeAccount()]);
-			// Populate a live cache (in-memory + disk), then simulate a process
-			// restart by dropping the in-memory singleton only.
-			await refreshModelCatalog(ctx);
-			resetModelCatalogForTest();
-			fetchMock.mockClear();
+			const unregister = initModelCatalogRefresh(ctx, { initialDelayMs: 5 });
+			await new Promise((resolve) => setTimeout(resolve, 30));
+			unregister();
 
-			const unregister = initModelCatalogRefresh(ctx);
-			await new Promise((resolve) => setTimeout(resolve, 10));
+			expect(fetchMock).toHaveBeenCalled();
+			expect((await getModelCatalog()).source).toBe("live");
+		});
+
+		it("does not fire before the freshly-derived due time (persisted recent fetchedAt, default interval)", async () => {
+			// Default 168h interval: seed a disk cache with fetchedAt "now" so
+			// the derived due time is deterministically far in the future.
+			// (Deliberately not relying on the bundled fallback catalog here —
+			// since Part D, its fetchedAt is the fixed BUNDLED_MODELS_AS_OF
+			// snapshot date rather than "now", which may itself already be more
+			// than 168h in the past.)
+			await writeCacheFile({
+				models: [
+					{ id: "old-model", displayName: "Old Model", createdAt: null },
+				],
+				fetchedAt: Date.now(),
+				source: "live",
+			});
+			const fetchMock = mock(
+				async () =>
+					new Response(JSON.stringify({ data: [], has_more: false }), {
+						status: 200,
+					}),
+			);
+			global.fetch = fetchMock as unknown as typeof fetch;
+
+			const ctx = makeCtx([makeAccount()]);
+			const unregister = initModelCatalogRefresh(ctx, {
+				initialDelayMs: 5,
+				tickSeconds: 0.02,
+			});
+			await new Promise((resolve) => setTimeout(resolve, 60));
 			unregister();
 
 			expect(fetchMock).not.toHaveBeenCalled();
 		});
 
-		it("performs the immediate refresh when the existing live cache is expired", async () => {
-			process.env.BETTER_CCFLARE_MODELS_REFRESH_HOURS = "1";
+		it("resumes a refresh from a persisted nextRefreshAt that has already passed", async () => {
+			process.env.BETTER_CCFLARE_MODELS_REFRESH_HOURS = "168";
+			await writeCacheFile({
+				models: [
+					{ id: "old-model", displayName: "Old Model", createdAt: null },
+				],
+				fetchedAt: Date.now() - 1000,
+				source: "live",
+				nextRefreshAt: Date.now() - 500,
+			});
+
 			const fetchMock = mock(
 				async () =>
 					new Response(
@@ -469,31 +639,127 @@ describe("model-catalog", () => {
 			global.fetch = fetchMock as unknown as typeof fetch;
 
 			const ctx = makeCtx([makeAccount()]);
-			await refreshModelCatalog(ctx);
-			resetModelCatalogForTest();
-			fetchMock.mockClear();
+			const unregister = initModelCatalogRefresh(ctx, { initialDelayMs: 5 });
+			await new Promise((resolve) => setTimeout(resolve, 40));
+			unregister();
 
-			// Rewrite the disk cache with a `fetchedAt` older than the 1h TTL.
-			const staleContent = JSON.parse(
-				await fs.readFile(
-					join(TEST_CACHE_DIR, "anthropic-models.json"),
-					"utf-8",
-				),
-			);
-			staleContent.fetchedAt = Date.now() - 2 * 60 * 60 * 1000;
-			await fs.writeFile(
-				join(TEST_CACHE_DIR, "anthropic-models.json"),
-				JSON.stringify(staleContent),
-			);
+			expect(fetchMock).toHaveBeenCalled();
+			expect((await getModelCatalog()).models[0]?.id).toBe("claude-sonnet-5");
+		});
 
-			const unregister = initModelCatalogRefresh(ctx);
-			await new Promise((resolve) => setTimeout(resolve, 10));
+		it("does not refresh before a persisted future nextRefreshAt", async () => {
+			process.env.BETTER_CCFLARE_MODELS_REFRESH_HOURS = "1";
+			await writeCacheFile({
+				models: [
+					{ id: "old-model", displayName: "Old Model", createdAt: null },
+				],
+				fetchedAt: Date.now(),
+				source: "live",
+				nextRefreshAt: Date.now() + 60 * 60 * 1000,
+			});
+
+			const fetchMock = mock(
+				async () =>
+					new Response(JSON.stringify({ data: [], has_more: false }), {
+						status: 200,
+					}),
+			);
+			global.fetch = fetchMock as unknown as typeof fetch;
+
+			const ctx = makeCtx([makeAccount()]);
+			const unregister = initModelCatalogRefresh(ctx, {
+				initialDelayMs: 5,
+				tickSeconds: 0.02,
+			});
+			await new Promise((resolve) => setTimeout(resolve, 40));
+			unregister();
+
+			expect(fetchMock).not.toHaveBeenCalled();
+			expect((await getModelCatalog()).models[0]?.id).toBe("old-model");
+		});
+
+		it("clamps a stale persisted nextRefreshAt down when the refresh interval has been lowered since it was written", async () => {
+			const fetchedAt = Date.now();
+			await writeCacheFile({
+				models: [
+					{ id: "old-model", displayName: "Old Model", createdAt: null },
+				],
+				fetchedAt,
+				source: "live",
+				// Computed under a long-since-abandoned much larger interval.
+				nextRefreshAt: fetchedAt + 1000 * 60 * 60 * 1000,
+			});
+			// Effectively-zero interval (and thus effectively-zero jitter, since
+			// jitter is bounded by the interval) so the derived due time is
+			// "now", deterministically, regardless of jitter randomness.
+			process.env.BETTER_CCFLARE_MODELS_REFRESH_HOURS = "0.0000000001";
+
+			const fetchMock = mock(
+				async () =>
+					new Response(
+						JSON.stringify({
+							data: [
+								{ id: "claude-sonnet-5", display_name: "Claude Sonnet 5" },
+							],
+							has_more: false,
+						}),
+						{ status: 200 },
+					),
+			);
+			global.fetch = fetchMock as unknown as typeof fetch;
+
+			const ctx = makeCtx([makeAccount()]);
+			const unregister = initModelCatalogRefresh(ctx, { initialDelayMs: 5 });
+			await new Promise((resolve) => setTimeout(resolve, 40));
 			unregister();
 
 			expect(fetchMock).toHaveBeenCalled();
 		});
 
-		it("performs the immediate refresh when no cache exists yet", async () => {
+		it("does not run overlapping refreshes while a refresh is still in flight (in-progress guard)", async () => {
+			// Effectively-zero interval (and thus effectively-zero jitter, since
+			// jitter is bounded by the interval) so the derived due time is
+			// "now", deterministically, regardless of jitter randomness.
+			process.env.BETTER_CCFLARE_MODELS_REFRESH_HOURS = "0.0000000001";
+			let fetchCallCount = 0;
+			const gate = deferred<Response>();
+			global.fetch = mock(async () => {
+				fetchCallCount++;
+				return gate.promise;
+			}) as unknown as typeof fetch;
+
+			const ctx = makeCtx([makeAccount()]);
+			const unregister = initModelCatalogRefresh(ctx, {
+				initialDelayMs: 5,
+				tickSeconds: 0.02,
+			});
+
+			// Several heartbeat ticks elapse while the first fetch is still
+			// pending; none of them should start a second overlapping refresh.
+			await new Promise((resolve) => setTimeout(resolve, 80));
+			expect(fetchCallCount).toBe(1);
+
+			gate.resolve(
+				new Response(
+					JSON.stringify({
+						data: [{ id: "claude-sonnet-5", display_name: "Claude Sonnet 5" }],
+						has_more: false,
+					}),
+					{ status: 200 },
+				),
+			);
+			await new Promise((resolve) => setTimeout(resolve, 20));
+			unregister();
+
+			expect((await getModelCatalog()).source).toBe("live");
+		});
+
+		it("recovers on a later tick once an eligible account becomes available after a failed refresh", async () => {
+			// Effectively-zero interval (and thus effectively-zero jitter, since
+			// jitter is bounded by the interval) so the derived due time is
+			// "now", deterministically, regardless of jitter randomness.
+			process.env.BETTER_CCFLARE_MODELS_REFRESH_HOURS = "0.0000000001";
+			const accounts: Account[] = [];
 			const fetchMock = mock(
 				async () =>
 					new Response(
@@ -508,12 +774,267 @@ describe("model-catalog", () => {
 			);
 			global.fetch = fetchMock as unknown as typeof fetch;
 
-			const ctx = makeCtx([makeAccount()]);
-			const unregister = initModelCatalogRefresh(ctx);
-			await new Promise((resolve) => setTimeout(resolve, 10));
+			const ctx = makeCtx(accounts);
+			const unregister = initModelCatalogRefresh(ctx, {
+				initialDelayMs: 5,
+				tickSeconds: 0.03,
+			});
+
+			// First tick: no eligible account, refresh fails; fetch never runs.
+			await new Promise((resolve) => setTimeout(resolve, 30));
+			expect(fetchMock).not.toHaveBeenCalled();
+			expect((await getModelCatalog()).source).toBe("fallback");
+
+			// A console account becomes available; a later tick should pick it
+			// up rather than waiting out the (already tiny) nominal interval.
+			accounts.push(makeAccount());
+			await new Promise((resolve) => setTimeout(resolve, 100));
 			unregister();
 
 			expect(fetchMock).toHaveBeenCalled();
+			expect((await getModelCatalog()).source).toBe("live");
+		});
+
+		it("does not fire if unregistered before the initial refresh check resolves", async () => {
+			const fetchMock = mock(
+				async () =>
+					new Response(JSON.stringify({ data: [], has_more: false }), {
+						status: 200,
+					}),
+			);
+			global.fetch = fetchMock as unknown as typeof fetch;
+
+			const ctx = makeCtx([makeAccount()]);
+			const unregister = initModelCatalogRefresh(ctx, {
+				initialDelayMs: 5,
+				tickSeconds: 0.02,
+			});
+			unregister();
+
+			await new Promise((resolve) => setTimeout(resolve, 60));
+
+			expect(fetchMock).not.toHaveBeenCalled();
+		});
+	});
+
+	describe("ingestModelsListing", () => {
+		it("replaces the catalog outright for a complete listing (has_more: false, no after_id)", async () => {
+			await writeCacheFile({
+				models: [
+					{ id: "old-model", displayName: "Old Model", createdAt: null },
+				],
+				fetchedAt: Date.now() - 1000,
+				source: "live",
+			});
+
+			await ingestModelsListing(
+				JSON.stringify({
+					data: [{ id: "claude-sonnet-5", display_name: "Claude Sonnet 5" }],
+					has_more: false,
+				}),
+				makeAccount(),
+				null,
+			);
+
+			const catalog = await getModelCatalog();
+			expect(catalog.source).toBe("live");
+			expect(catalog.models).toEqual([
+				{
+					id: "claude-sonnet-5",
+					displayName: "Claude Sonnet 5",
+					createdAt: null,
+				},
+			]);
+		});
+
+		it("merges by id (upsert, no deletions) for a partial listing observed while the catalog is already live", async () => {
+			await writeCacheFile({
+				models: [
+					{ id: "model-a", displayName: "Model A", createdAt: null },
+					{ id: "model-b", displayName: "Model B (old name)", createdAt: null },
+				],
+				fetchedAt: Date.now() - 1000,
+				source: "live",
+			});
+
+			await ingestModelsListing(
+				JSON.stringify({
+					data: [{ id: "model-b", display_name: "Model B" }],
+					has_more: true,
+					last_id: "model-b",
+				}),
+				makeAccount(),
+				null,
+			);
+
+			const catalog = await getModelCatalog();
+			expect(catalog.source).toBe("live");
+			expect(catalog.models).toEqual([
+				{ id: "model-a", displayName: "Model A", createdAt: null },
+				{ id: "model-b", displayName: "Model B", createdAt: null },
+			]);
+		});
+
+		it("skips a partial listing observed while the existing catalog is still the bundled fallback", async () => {
+			await ingestModelsListing(
+				JSON.stringify({
+					data: [{ id: "test-partial-model", display_name: "Partial Model" }],
+					has_more: true,
+					last_id: "test-partial-model",
+				}),
+				makeAccount(),
+				null,
+			);
+
+			const catalog = await getModelCatalog();
+			expect(catalog.source).toBe("fallback");
+			expect(catalog.models.some((m) => m.id === "test-partial-model")).toBe(
+				false,
+			);
+		});
+
+		it("treats a request carrying after_id as partial even when the observed page's has_more is false", async () => {
+			await writeCacheFile({
+				models: [{ id: "model-a", displayName: "Model A", createdAt: null }],
+				fetchedAt: Date.now() - 1000,
+				source: "live",
+			});
+
+			await ingestModelsListing(
+				JSON.stringify({
+					data: [{ id: "model-b", display_name: "Model B" }],
+					has_more: false,
+				}),
+				makeAccount(),
+				"?after_id=model-a",
+			);
+
+			const catalog = await getModelCatalog();
+			expect(catalog.models).toEqual([
+				{ id: "model-a", displayName: "Model A", createdAt: null },
+				{ id: "model-b", displayName: "Model B", createdAt: null },
+			]);
+		});
+
+		it("does not capture from an account whose provider is not an eligible Anthropic provider", async () => {
+			await ingestModelsListing(
+				JSON.stringify({
+					data: [{ id: "test-exotic-model", display_name: "Exotic Model" }],
+					has_more: false,
+				}),
+				makeAccount({ provider: "zai" }),
+				null,
+			);
+
+			const catalog = await getModelCatalog();
+			expect(catalog.source).toBe("fallback");
+			expect(catalog.models.some((m) => m.id === "test-exotic-model")).toBe(
+				false,
+			);
+		});
+
+		it("does not capture from an account with a custom_endpoint override (third-party poisoning gate)", async () => {
+			await ingestModelsListing(
+				JSON.stringify({
+					data: [{ id: "test-foreign-model", display_name: "Foreign Model" }],
+					has_more: false,
+				}),
+				makeAccount({ custom_endpoint: "https://compatible.example.com" }),
+				null,
+			);
+
+			const catalog = await getModelCatalog();
+			expect(catalog.source).toBe("fallback");
+			expect(catalog.models.some((m) => m.id === "test-foreign-model")).toBe(
+				false,
+			);
+		});
+
+		it("is a no-op when BETTER_CCFLARE_MODELS_OFFLINE=1", async () => {
+			process.env.BETTER_CCFLARE_MODELS_OFFLINE = "1";
+
+			await ingestModelsListing(
+				JSON.stringify({
+					data: [{ id: "test-offline-model", display_name: "Offline Model" }],
+					has_more: false,
+				}),
+				makeAccount(),
+				null,
+			);
+
+			const catalog = await getModelCatalog();
+			expect(catalog.source).toBe("fallback");
+			expect(catalog.models.some((m) => m.id === "test-offline-model")).toBe(
+				false,
+			);
+		});
+
+		it("never throws on a malformed JSON body and leaves the catalog untouched", async () => {
+			await expect(
+				ingestModelsListing("{not valid json", makeAccount(), null),
+			).resolves.toBeUndefined();
+
+			const catalog = await getModelCatalog();
+			expect(catalog.source).toBe("fallback");
+		});
+
+		it("is a no-op when the observed data array is empty", async () => {
+			await ingestModelsListing(
+				JSON.stringify({ data: [], has_more: false }),
+				makeAccount(),
+				null,
+			);
+
+			const catalog = await getModelCatalog();
+			expect(catalog.source).toBe("fallback");
+		});
+
+		it("is a no-op when no account is present", async () => {
+			await ingestModelsListing(
+				JSON.stringify({
+					data: [{ id: "test-no-account-model", display_name: "No Account" }],
+					has_more: false,
+				}),
+				null,
+				null,
+			);
+
+			const catalog = await getModelCatalog();
+			expect(catalog.source).toBe("fallback");
+			expect(catalog.models.some((m) => m.id === "test-no-account-model")).toBe(
+				false,
+			);
+		});
+
+		it("recomputes and persists nextRefreshAt on a successful replace", async () => {
+			await ingestModelsListing(
+				JSON.stringify({
+					data: [{ id: "claude-sonnet-5", display_name: "Claude Sonnet 5" }],
+					has_more: false,
+				}),
+				makeAccount(),
+				null,
+			);
+
+			const catalog = await getModelCatalog();
+			expect(catalog.nextRefreshAt).toBeGreaterThan(catalog.fetchedAt);
+		});
+
+		it("persists the replaced catalog to disk and reloads it in a fresh store instance", async () => {
+			await ingestModelsListing(
+				JSON.stringify({
+					data: [{ id: "claude-sonnet-5", display_name: "Claude Sonnet 5" }],
+					has_more: false,
+				}),
+				makeAccount(),
+				null,
+			);
+
+			resetModelCatalogForTest();
+
+			const catalog = await getModelCatalog();
+			expect(catalog.source).toBe("live");
+			expect(catalog.models[0]?.id).toBe("claude-sonnet-5");
 		});
 	});
 });

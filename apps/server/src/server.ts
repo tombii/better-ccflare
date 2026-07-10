@@ -707,7 +707,9 @@ export default async function startServer(options?: {
 						error: "Model catalog is not initialized yet",
 					};
 				}
-				const result = await refreshModelCatalog(modelCatalogProxyContext);
+				const result = await refreshModelCatalog(modelCatalogProxyContext, {
+					trigger: "manual",
+				});
 				return { success: result.success, error: result.error };
 			},
 		},
@@ -1568,9 +1570,11 @@ Available endpoints:
 	// Initialize NanoGPT pricing refresh if there are NanoGPT accounts (non-blocking)
 	void initializeNanoGPTPricingIfAccountsExist(dbOps, pricingLogger);
 
-	// Initialize the live Anthropic model catalog refresh (daily by default,
-	// configurable via BETTER_CCFLARE_MODELS_REFRESH_HOURS; runs an immediate
-	// refresh on startup unless disabled).
+	// Initialize the live Anthropic model catalog refresh scheduler (weekly by
+	// default, configurable via BETTER_CCFLARE_MODELS_REFRESH_HOURS; a
+	// "tick-and-check" scheduler that fires an initial check after a random
+	// 30-120s delay, then re-checks every 15 minutes whether a refresh is due,
+	// rather than a single long-lived interval timer).
 	stopModelCatalogRefreshJob = initModelCatalogRefresh(proxyContext);
 
 	const serverPort = serverInstance.port;

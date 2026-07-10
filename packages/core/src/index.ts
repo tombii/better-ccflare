@@ -55,6 +55,7 @@ export {
 	validateAndSanitizeModelMappings,
 } from "./model-mappings";
 export {
+	BUNDLED_MODELS_AS_OF,
 	CLAUDE_MODEL_IDS,
 	type ClaudeModelId,
 	DEFAULT_AGENT_MODEL,

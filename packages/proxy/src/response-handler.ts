@@ -8,6 +8,7 @@ import type { Account, RateLimitReason } from "@better-ccflare/types";
 import type { ProxyContext } from "./handlers";
 import { applyRateLimitCooldown } from "./handlers/rate-limit-cooldown";
 import { createSseRateLimitSniffer } from "./handlers/sse-rate-limit-sniffer";
+import { ingestModelsListing } from "./model-catalog";
 import { combineChunks, teeStream } from "./stream-tee";
 import { getUsageCollector } from "./usage-collector";
 import {
@@ -88,6 +89,8 @@ export interface ResponseHandlerOptions {
 	requestHeaders: Headers;
 	requestBody: ArrayBuffer | null;
 	project?: string | null;
+	/** Raw URL query string (e.g. `?after_id=...`), used for passive model-catalog capture. */
+	query?: string | null;
 	response: Response;
 	timestamp: number;
 	retryAttempt: number;
@@ -117,6 +120,7 @@ export async function forwardToClient(
 		requestHeaders,
 		requestBody,
 		project,
+		query,
 		response: responseRaw,
 		timestamp,
 		retryAttempt, // Always 0 in new flow, but kept for message compatibility
@@ -330,8 +334,22 @@ export async function forwardToClient(
 	const passthroughBody = teeStream(response.body, {
 		maxBytes: MAX_NON_STREAM_BODY_BYTES,
 		onClose(buffered) {
-			if (!shouldProcessRequest) return;
+			// Hoisted above the shouldProcessRequest filter: passive model-catalog
+			// capture is independent of the analytics/logging filter above (it's
+			// not analytics, and must still run e.g. for a filtered synthetic
+			// request that nonetheless carries a real GET /v1/models response).
 			const cappedBuf = combineChunks(buffered);
+
+			if (
+				method === "GET" &&
+				path === "/v1/models" &&
+				response.status === 200 &&
+				account
+			) {
+				void ingestModelsListing(cappedBuf.toString("utf-8"), account, query);
+			}
+
+			if (!shouldProcessRequest) return;
 			fireAndForgetEnd({
 				type: "end",
 				requestId,
