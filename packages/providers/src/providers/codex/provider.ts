@@ -77,7 +77,7 @@ const DEFAULT_MODEL_MAP: Record<string, string> = {
 // codex-cli 0.144.1). Missing entries mean no context_window block is
 // reported to the client, which disables its context gauge and compaction
 // triggers for that model.
-const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
+export const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
 	"gpt-5.3-codex": 272_000,
 	"gpt-5.3-codex-spark": 128_000,
 	"gpt-5.4": 272_000,
@@ -86,6 +86,23 @@ const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
 	"gpt-5.6-sol": 372_000,
 	"gpt-5.6-terra": 372_000,
 	"gpt-5.6-luna": 372_000,
+};
+
+// Codex's model metadata declares an effective usable window below the raw
+// maximum (effective_context_window_percent, 95 for every current model).
+// When CCFLARE_CODEX_EFFECTIVE_CONTEXT=1, report the effective size so the
+// client's compaction triggers fire before the degradation zone instead of
+// at the hard limit.
+export const CODEX_EFFECTIVE_CONTEXT_ENV = "CCFLARE_CODEX_EFFECTIVE_CONTEXT";
+const MODEL_EFFECTIVE_CONTEXT_PERCENT: Record<string, number> = {
+	"gpt-5.3-codex": 95,
+	"gpt-5.3-codex-spark": 95,
+	"gpt-5.4": 95,
+	"gpt-5.4-mini": 95,
+	"gpt-5.5": 95,
+	"gpt-5.6-sol": 95,
+	"gpt-5.6-terra": 95,
+	"gpt-5.6-luna": 95,
 };
 
 // ── Codex Responses API types ─────────────────────────────────────────────────
@@ -860,8 +877,14 @@ export class CodexProvider extends BaseProvider {
 	): ContextWindow | null {
 		const model = response?.model;
 		if (typeof model !== "string") return null;
-		const contextWindowSize = MODEL_CONTEXT_WINDOWS[model];
+		let contextWindowSize = MODEL_CONTEXT_WINDOWS[model];
 		if (!contextWindowSize) return null;
+		if (process.env[CODEX_EFFECTIVE_CONTEXT_ENV] === "1") {
+			const pct = MODEL_EFFECTIVE_CONTEXT_PERCENT[model];
+			if (pct && pct > 0 && pct < 100) {
+				contextWindowSize = Math.floor((contextWindowSize * pct) / 100);
+			}
+		}
 
 		const inputTokens = usage?.input_tokens;
 		if (
@@ -1524,6 +1547,7 @@ export class CodexProvider extends BaseProvider {
 					writeCodexResponseTrace({
 						requestId,
 						modelOut: state.model,
+						modelContextWindow: MODEL_CONTEXT_WINDOWS[state.model],
 						summary: summarizeCodexResponse(
 							state.traceNewToolCalls,
 							{ output_tokens: state.outputTokens },
@@ -1853,6 +1877,7 @@ export class CodexProvider extends BaseProvider {
 					writeCodexResponseTrace({
 						requestId: state.traceRequestId,
 						modelOut: state.model,
+						modelContextWindow: MODEL_CONTEXT_WINDOWS[state.model],
 						summary: summarizeCodexResponse(
 							state.traceNewToolCalls,
 							{
@@ -1942,6 +1967,7 @@ export class CodexProvider extends BaseProvider {
 				writeCodexResponseTrace({
 					requestId: state.traceRequestId,
 					modelOut: state.model,
+					modelContextWindow: MODEL_CONTEXT_WINDOWS[state.model],
 					summary: summarizeCodexResponse(
 						state.traceNewToolCalls,
 						{

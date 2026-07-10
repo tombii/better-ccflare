@@ -165,7 +165,18 @@ interface TraceInputs {
 interface ResponseTraceInputs {
 	requestId?: string;
 	modelOut?: string;
+	/** Raw model context window, for utilization telemetry. */
+	modelContextWindow?: number;
 	summary: CodexResponseSummary;
+}
+
+/** Input tokens as a percentage of the model window, 0.1% resolution. */
+export function contextUtilizationPct(
+	inputTokens: number,
+	contextWindow: number | undefined,
+): number | null {
+	if (!contextWindow || contextWindow <= 0 || inputTokens <= 0) return null;
+	return Math.round((1000 * inputTokens) / contextWindow) / 10;
 }
 
 export function summarizeCodexResponse(
@@ -268,6 +279,10 @@ export function writeCodexResponseTrace(inputs: ResponseTraceInputs): void {
 		ts: new Date().toISOString(),
 		request_id: inputs.requestId ?? null,
 		model_out: inputs.modelOut ?? null,
+		context_utilization_pct: contextUtilizationPct(
+			inputs.summary.input_tokens,
+			inputs.modelContextWindow,
+		),
 		...inputs.summary,
 	});
 }

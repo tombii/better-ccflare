@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
 	CODEX_TRACE_HMAC_KEY_ENV,
+	contextUtilizationPct,
 	summarizeCodexResponse,
 	summarizeCodexTransform,
 } from "./trace";
@@ -140,6 +141,14 @@ describe("summarizeCodexResponse (response phase)", () => {
 	test("text-only responses report zero subagent spawns", () => {
 		const s = summarizeCodexResponse([], { input_tokens: 10 }, "end_turn");
 		expect(s.new_subagent_spawn_count).toBe(0);
+	});
+
+	test("contextUtilizationPct reports input pressure against the window", () => {
+		expect(contextUtilizationPct(186_000, 372_000)).toBe(50);
+		expect(contextUtilizationPct(360_310, 372_000)).toBe(96.9);
+		expect(contextUtilizationPct(0, 372_000)).toBeNull();
+		expect(contextUtilizationPct(1000, undefined)).toBeNull();
+		expect(contextUtilizationPct(1000, 0)).toBeNull();
 	});
 
 	test("clamps malformed cached token counts to the total input", () => {
