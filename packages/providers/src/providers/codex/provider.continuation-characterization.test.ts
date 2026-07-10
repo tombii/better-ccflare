@@ -225,10 +225,7 @@ describe("Codex transform — subagent (Task) tool_result fidelity", () => {
 			expect((o.output as string).length).toBeGreaterThan(0);
 	});
 
-	// REVEAL: a subagent whose result carries a non-text content block collapses
-	// to an empty function_call_output — the orchestrator then cannot see the
-	// result and may re-dispatch the subagent.
-	test("REVEAL: non-text tool_result content becomes empty output", async () => {
+	test("non-text image tool_result uses a bounded placeholder", async () => {
 		const body = await transform({
 			model: "claude-opus-4-8",
 			max_tokens: 10,
@@ -260,10 +257,44 @@ describe("Codex transform — subagent (Task) tool_result fidelity", () => {
 			],
 		});
 		const out = outputs(body.input)[0];
-		console.log(
-			`[characterization] non-text tool_result output = ${JSON.stringify(out?.output)}`,
+		expect(out?.output).toBe(
+			"[image content not supported in Codex tool results]",
 		);
-		expect(out?.output).toBe("");
+		expect(out?.output).not.toContain("AAAA");
+	});
+
+	test("tool_reference result blocks are preserved as JSON", async () => {
+		const body = await transform({
+			model: "claude-opus-4-8",
+			max_tokens: 10,
+			messages: [
+				{ role: "user", content: "load tools" },
+				{
+					role: "assistant",
+					content: [
+						{ type: "tool_use", id: "t1", name: "ToolSearch", input: {} },
+					],
+				},
+				{
+					role: "user",
+					content: [
+						{
+							type: "tool_result",
+							tool_use_id: "t1",
+							content: [
+								{ type: "tool_reference", tool_name: "TaskCreate" },
+								{ type: "tool_reference", tool_name: "TaskUpdate" },
+							],
+						},
+					],
+				},
+			],
+		});
+		const out = outputs(body.input)[0];
+		expect(out?.output).toBe(
+			'{"type":"tool_reference","tool_name":"TaskCreate"}\n' +
+				'{"type":"tool_reference","tool_name":"TaskUpdate"}',
+		);
 	});
 });
 

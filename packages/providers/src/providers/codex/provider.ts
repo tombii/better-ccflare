@@ -153,7 +153,13 @@ interface AnthropicToolUse {
 interface AnthropicToolResult {
 	type: "tool_result";
 	tool_use_id: string;
-	content: string | AnthropicTextContent[];
+	content:
+		| string
+		| Array<{
+				type: string;
+				text?: string;
+				[key: string]: unknown;
+		  }>;
 }
 
 type AnthropicContentBlock =
@@ -632,6 +638,23 @@ export class CodexProvider extends BaseProvider {
 		return { type: "function", name: choice.name };
 	}
 
+	private serializeToolResultContent(
+		content: AnthropicToolResult["content"],
+	): string {
+		if (typeof content === "string") return content;
+		return content
+			.map((block) => {
+				if (block.type === "text" && typeof block.text === "string") {
+					return block.text;
+				}
+				if (block.type === "image") {
+					return "[image content not supported in Codex tool results]";
+				}
+				return JSON.stringify(block);
+			})
+			.join("\n");
+	}
+
 	private convertMessage(
 		msg: AnthropicMessage,
 	): (CodexMessage | CodexFunctionCallItem | CodexFunctionCallOutputItem)[] {
@@ -676,19 +699,10 @@ export class CodexProvider extends BaseProvider {
 					),
 				});
 			} else if (block.type === "tool_result") {
-				const outputText =
-					typeof block.content === "string"
-						? block.content
-						: Array.isArray(block.content)
-							? block.content
-									.filter((b) => b.type === "text")
-									.map((b) => b.text)
-									.join("\n")
-							: "";
 				functionCallOutputs.push({
 					type: "function_call_output",
 					call_id: block.tool_use_id,
-					output: outputText,
+					output: this.serializeToolResultContent(block.content),
 					status: "completed",
 				});
 			}
