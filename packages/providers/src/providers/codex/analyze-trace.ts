@@ -34,8 +34,11 @@ export interface TraceRecord {
 	history_empty_output_count?: number;
 	nudge_count?: number;
 	history_tool_use_by_name?: Record<string, number>;
+	session_key_hash?: string | null;
+	prompt_cache_key_set?: boolean;
 	// response phase
 	new_tool_call_count?: number;
+	new_subagent_spawn_count?: number;
 	new_tool_use_by_name?: Record<string, number>;
 	new_tool_calls?: ToolCall[];
 	stop_reason?: "tool_use" | "end_turn" | "error";
@@ -43,6 +46,18 @@ export interface TraceRecord {
 	cache_read_input_tokens?: number;
 	cache_hit_pct?: number | null;
 	error_type?: string;
+}
+
+/** Requests above this input size are the interesting cache population. */
+const LARGE_INPUT_TOKENS = 50_000;
+
+export interface CacheCohortStats {
+	responses: number;
+	avgCacheHitPct: number | null;
+	zeroHitResponses: number;
+	largeResponses: number;
+	largeAvgCacheHitPct: number | null;
+	largeZeroHitResponses: number;
 }
 
 export interface TraceReport {
@@ -54,10 +69,19 @@ export interface TraceReport {
 		maxInputItems: number;
 		maxApproxInputChars: number;
 		totalNudges: number;
+		distinctSessions: number;
+		topSessions: Array<{ session: string; requests: number }>;
 	};
 	response: {
 		totalNewToolCalls: number;
 		maxNewFanOut: number;
+		/** Newly emitted Task/Agent calls, the recursive fan-out signal. */
+		totalSubagentSpawns: number;
+		maxSubagentSpawns: number;
+		/** Cache stats split by whether the request carried a prompt_cache_key. */
+		cacheCohorts: { keyOn: CacheCohortStats; keyOff: CacheCohortStats };
+		/** Responses whose request record was not found for cohort joining. */
+		unjoinedResponses: number;
 		newFanOutHistogram: Record<string, number>;
 		newToolUseByName: Record<string, number>;
 		stopReasons: Record<string, number>;
@@ -79,6 +103,28 @@ function keyOf(c: ToolCall): string {
 	return `${c.name}::${c.arg_preview}`;
 }
 
+function cohortStats(
+	samples: ReadonlyArray<{ pct: number | null; inputTokens: number }>,
+): CacheCohortStats {
+	const withPct = samples.filter((s) => s.pct !== null) as Array<{
+		pct: number;
+		inputTokens: number;
+	}>;
+	const large = withPct.filter((s) => s.inputTokens > LARGE_INPUT_TOKENS);
+	const avg = (xs: number[]) =>
+		xs.length > 0
+			? Math.round((10 * xs.reduce((a, b) => a + b, 0)) / xs.length) / 10
+			: null;
+	return {
+		responses: samples.length,
+		avgCacheHitPct: avg(withPct.map((s) => s.pct)),
+		zeroHitResponses: withPct.filter((s) => s.pct === 0).length,
+		largeResponses: large.length,
+		largeAvgCacheHitPct: avg(large.map((s) => s.pct)),
+		largeZeroHitResponses: large.filter((s) => s.pct === 0).length,
+	};
+}
+
 export function analyzeCodexTrace(
 	records: readonly TraceRecord[],
 ): TraceReport {
@@ -91,18 +137,42 @@ export function analyzeCodexTrace(
 	let maxInputItems = 0;
 	let maxApproxInputChars = 0;
 	let totalNudges = 0;
+	const sessionRequestCounts = new Map<string, number>();
 
 	// response phase
 	let totalNewToolCalls = 0;
 	let maxNewFanOut = 0;
+	let totalSubagentSpawns = 0;
+	let maxSubagentSpawns = 0;
 	let textOnlyResponses = 0;
 	let respawnResponses = 0;
+	let unjoinedResponses = 0;
 	const newFanOutHistogram: Record<string, number> = {};
 	const newToolUseByName: Record<string, number> = {};
 	const stopReasons: Record<string, number> = {};
 	const errors: Record<string, number> = {};
 	const worstRespawns: TraceReport["response"]["worstRespawns"] = [];
 	const cacheHitPcts: number[] = [];
+	const cohortSamples = {
+		keyOn: [] as Array<{ pct: number | null; inputTokens: number }>,
+		keyOff: [] as Array<{ pct: number | null; inputTokens: number }>,
+	};
+
+	// Pre-pass: request metadata by id so responses can be joined into
+	// cache-key cohorts and sessions without assuming record order.
+	const requestKeySetById = new Map<string, boolean>();
+	for (const r of records) {
+		if ((r.phase ?? "request") !== "request") continue;
+		if (typeof r.request_id === "string" && r.request_id.length > 0) {
+			requestKeySetById.set(r.request_id, r.prompt_cache_key_set === true);
+		}
+		if (typeof r.session_key_hash === "string" && r.session_key_hash) {
+			sessionRequestCounts.set(
+				r.session_key_hash,
+				(sessionRequestCounts.get(r.session_key_hash) ?? 0) + 1,
+			);
+		}
+	}
 
 	for (const r of records) {
 		if (r.ts) timestamps.push(r.ts);
@@ -132,11 +202,33 @@ export function analyzeCodexTrace(
 		for (const [name, n] of Object.entries(r.new_tool_use_by_name ?? {})) {
 			newToolUseByName[name] = (newToolUseByName[name] ?? 0) + n;
 		}
+		// Prefer the explicit schema-v3 field; derive from tool names for
+		// older records so mixed-version files still report spawns.
+		const spawns =
+			r.new_subagent_spawn_count ??
+			(r.new_tool_use_by_name?.Task ?? 0) +
+				(r.new_tool_use_by_name?.Agent ?? 0);
+		totalSubagentSpawns += spawns;
+		maxSubagentSpawns = Math.max(maxSubagentSpawns, spawns);
 		const stop = r.stop_reason ?? "unknown";
 		stopReasons[stop] = (stopReasons[stop] ?? 0) + 1;
 		if (stop === "end_turn" && newCalls === 0) textOnlyResponses++;
 		if (r.error_type) errors[r.error_type] = (errors[r.error_type] ?? 0) + 1;
 		if (typeof r.cache_hit_pct === "number") cacheHitPcts.push(r.cache_hit_pct);
+
+		// Cache-key cohort join via request_id.
+		const keySet =
+			typeof r.request_id === "string"
+				? requestKeySetById.get(r.request_id)
+				: undefined;
+		if (keySet === undefined) {
+			unjoinedResponses++;
+		} else {
+			cohortSamples[keySet ? "keyOn" : "keyOff"].push({
+				pct: typeof r.cache_hit_pct === "number" ? r.cache_hit_pct : null,
+				inputTokens: r.input_tokens ?? 0,
+			});
+		}
 
 		// within-response duplicate new tool calls -> true re-spawn
 		const counts = new Map<string, number>();
@@ -159,6 +251,10 @@ export function analyzeCodexTrace(
 
 	timestamps.sort();
 	worstRespawns.sort((a, b) => b.count - a.count);
+	const topSessions = [...sessionRequestCounts.entries()]
+		.map(([session, count]) => ({ session, requests: count }))
+		.sort((a, b) => b.requests - a.requests)
+		.slice(0, 5);
 
 	return {
 		requests,
@@ -169,10 +265,19 @@ export function analyzeCodexTrace(
 			maxInputItems,
 			maxApproxInputChars,
 			totalNudges,
+			distinctSessions: sessionRequestCounts.size,
+			topSessions,
 		},
 		response: {
 			totalNewToolCalls,
 			maxNewFanOut,
+			totalSubagentSpawns,
+			maxSubagentSpawns,
+			cacheCohorts: {
+				keyOn: cohortStats(cohortSamples.keyOn),
+				keyOff: cohortStats(cohortSamples.keyOff),
+			},
+			unjoinedResponses,
 			newFanOutHistogram,
 			newToolUseByName,
 			stopReasons,
@@ -247,6 +352,22 @@ function formatReport(report: TraceReport): string {
 	);
 	lines.push(
 		`  avg cache hit %            : ${report.response.cacheHitPctAvg ?? "n/a"}`,
+	);
+	lines.push(
+		`  subagent spawns            : total ${report.response.totalSubagentSpawns}, max/response ${report.response.maxSubagentSpawns}`,
+	);
+	const cohortLine = (label: string, c: CacheCohortStats) =>
+		`    ${label}: n=${c.responses} avg=${c.avgCacheHitPct ?? "n/a"}% zero=${c.zeroHitResponses} | large(>${LARGE_INPUT_TOKENS / 1000}k) n=${c.largeResponses} avg=${c.largeAvgCacheHitPct ?? "n/a"}% zero=${c.largeZeroHitResponses}`;
+	lines.push("  CACHE COHORTS (by prompt_cache_key on request):");
+	lines.push(cohortLine("key ON ", report.response.cacheCohorts.keyOn));
+	lines.push(cohortLine("key OFF", report.response.cacheCohorts.keyOff));
+	lines.push(
+		`    unjoined responses: ${report.response.unjoinedResponses} (no matching request record)`,
+	);
+	lines.push(
+		`  sessions                   : ${report.request.distinctSessions} distinct; top ${report.request.topSessions
+			.map((s) => `${s.session.slice(0, 8)}=${s.requests}`)
+			.join(", ")}`,
 	);
 	lines.push(
 		`  RE-SPAWN responses         : ${report.response.respawnResponses}  (same new tool call emitted >1x in one response)`,
