@@ -172,6 +172,12 @@ interface AnthropicTool {
 	input_schema?: Record<string, unknown>;
 }
 
+type AnthropicToolChoice =
+	| { type: "auto" }
+	| { type: "any" }
+	| { type: "none" }
+	| { type: "tool"; name: string };
+
 interface AnthropicRequest {
 	model: string;
 	max_tokens: number;
@@ -179,6 +185,7 @@ interface AnthropicRequest {
 	system?: string | { type: string; text: string }[];
 	stream?: boolean;
 	tools?: AnthropicTool[];
+	tool_choice?: AnthropicToolChoice;
 	reasoning?: { effort?: string };
 	metadata?: { user_id?: string };
 	[key: string]: unknown;
@@ -609,6 +616,22 @@ export class CodexProvider extends BaseProvider {
 		}
 	}
 
+	private convertToolChoice(
+		choice: AnthropicToolChoice | undefined,
+		tools: readonly CodexTool[],
+	): CodexRequest["tool_choice"] | undefined {
+		if (!choice) return undefined;
+		if (choice.type === "auto") return "auto";
+		if (choice.type === "any") return "required";
+		if (choice.type === "none") return "none";
+		if (!tools.some((tool) => tool.name === choice.name)) {
+			throw new ValidationError(
+				`tool_choice references unknown tool: ${choice.name}`,
+			);
+		}
+		return { type: "function", name: choice.name };
+	}
+
 	private convertMessage(
 		msg: AnthropicMessage,
 	): (CodexMessage | CodexFunctionCallItem | CodexFunctionCallOutputItem)[] {
@@ -1001,11 +1024,17 @@ export class CodexProvider extends BaseProvider {
 		}
 		if (tools) {
 			codexRequest.tools = tools;
-			// Claude Code schema agents provide a StructuredOutput tool but do not set
-			// Anthropic tool_choice. Native Claude reliably follows the hidden schema
-			// instruction; Codex models often end_turn with text instead. Force the
-			// function when this sentinel tool is present to preserve workflow semantics.
-			if (tools.some((t) => t.name === "StructuredOutput")) {
+			const explicitToolChoice = this.convertToolChoice(
+				body.tool_choice,
+				tools,
+			);
+			if (explicitToolChoice) {
+				codexRequest.tool_choice = explicitToolChoice;
+			} else if (tools.some((t) => t.name === "StructuredOutput")) {
+				// Claude Code schema agents provide a StructuredOutput tool but do not set
+				// Anthropic tool_choice. Native Claude reliably follows the hidden schema
+				// instruction; Codex models often end_turn with text instead. Force the
+				// function when this sentinel tool is present to preserve workflow semantics.
 				codexRequest.tool_choice = {
 					type: "function",
 					name: "StructuredOutput",

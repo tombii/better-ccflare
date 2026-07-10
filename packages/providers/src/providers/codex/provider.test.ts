@@ -2003,6 +2003,89 @@ describe("CodexProvider.transformRequestBody", () => {
 		expect(body.tool_choice).toBeUndefined();
 	});
 
+	it.each([
+		[{ type: "auto" }, "auto"],
+		[{ type: "any" }, "required"],
+		[{ type: "none" }, "none"],
+		[
+			{ type: "tool", name: "Read" },
+			{ type: "function", name: "Read" },
+		],
+	] as const)("maps Anthropic tool_choice %j to Codex", async (toolChoice, expected) => {
+		const provider = new CodexProvider();
+		const request = new Request("https://example.com/v1/messages", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				model: "claude-opus-4-8",
+				max_tokens: 10,
+				messages: [{ role: "user", content: "read a file" }],
+				tools: [
+					{
+						name: "Read",
+						description: "Read a file.",
+						input_schema: { type: "object" },
+					},
+				],
+				tool_choice: toolChoice,
+			}),
+		});
+
+		const transformed = await provider.transformRequestBody(request);
+		const body = await transformed.json();
+		expect(body.tool_choice).toEqual(expected);
+	});
+
+	it("preserves explicit tool_choice precedence over StructuredOutput fallback", async () => {
+		const provider = new CodexProvider();
+		const request = new Request("https://example.com/v1/messages", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				model: "claude-opus-4-8",
+				max_tokens: 10,
+				messages: [{ role: "user", content: "return text" }],
+				tools: [
+					{
+						name: "StructuredOutput",
+						description: "Return structured output.",
+						input_schema: { type: "object" },
+					},
+				],
+				tool_choice: { type: "none" },
+			}),
+		});
+
+		const transformed = await provider.transformRequestBody(request);
+		const body = await transformed.json();
+		expect(body.tool_choice).toBe("none");
+	});
+
+	it("rejects a named tool_choice that is absent from tools", async () => {
+		const provider = new CodexProvider();
+		const request = new Request("https://example.com/v1/messages", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				model: "claude-opus-4-8",
+				max_tokens: 10,
+				messages: [{ role: "user", content: "search" }],
+				tools: [
+					{
+						name: "Read",
+						description: "Read a file.",
+						input_schema: { type: "object" },
+					},
+				],
+				tool_choice: { type: "tool", name: "WebSearch" },
+			}),
+		});
+
+		await expect(provider.transformRequestBody(request)).rejects.toThrow(
+			"tool_choice references unknown tool: WebSearch",
+		);
+	});
+
 	it("omits prompt_cache_key by default", async () => {
 		const provider = new CodexProvider();
 		const request = new Request("https://example.com/v1/messages", {
