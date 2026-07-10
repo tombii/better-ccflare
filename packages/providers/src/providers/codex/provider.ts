@@ -61,10 +61,19 @@ const DEFAULT_MODEL_MAP: Record<string, string> = {
 	haiku: "gpt-5.4-mini",
 };
 
+// Synced from the Codex CLI model cache (~/.codex/models_cache.json,
+// codex-cli 0.144.1). Missing entries mean no context_window block is
+// reported to the client, which disables its context gauge and compaction
+// triggers for that model.
 const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
 	"gpt-5.3-codex": 272_000,
+	"gpt-5.3-codex-spark": 128_000,
 	"gpt-5.4": 272_000,
 	"gpt-5.4-mini": 272_000,
+	"gpt-5.5": 272_000,
+	"gpt-5.6-sol": 372_000,
+	"gpt-5.6-terra": 372_000,
+	"gpt-5.6-luna": 372_000,
 };
 
 // ── Codex Responses API types ─────────────────────────────────────────────────

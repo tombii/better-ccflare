@@ -1187,6 +1187,34 @@ describe("CodexProvider.processResponse", () => {
 		expect(messageDeltaLine).toContain('"context_window_size":272000');
 	});
 
+	it("reports the 372k context_window for GPT-5.6 models", async () => {
+		const provider = new CodexProvider();
+		const upstreamBody = sseBody([
+			...eventLine("response.created", {
+				response: { id: "resp_test", model: "gpt-5.6-sol" },
+			}),
+			...eventLine("response.completed", {
+				response: {
+					model: "gpt-5.6-sol",
+					usage: { input_tokens: 100, output_tokens: 50 },
+				},
+			}),
+		]);
+
+		const response = new Response(upstreamBody, {
+			status: 200,
+			headers: { "content-type": "text/event-stream" },
+		});
+
+		const transformed = await provider.processResponse(response, null);
+		const transformedBody = await transformed.text();
+		const messageDeltaLine = transformedBody
+			.split("\n")
+			.find((line) => line.includes('"type":"message_delta"'));
+
+		expect(messageDeltaLine).toContain('"context_window_size":372000');
+	});
+
 	it("omits context_window when model metadata is unavailable", async () => {
 		const provider = new CodexProvider();
 		const upstreamBody = sseBody([
