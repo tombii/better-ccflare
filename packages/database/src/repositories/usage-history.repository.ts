@@ -1,3 +1,4 @@
+import { weeklyScopedWindowKey } from "@better-ccflare/core";
 import type { PredictionPoint, UsageSnapshotRow } from "@better-ccflare/types";
 import { BaseRepository } from "./base.repository";
 
@@ -11,6 +12,35 @@ function isWindow(
 		typeof (value as { utilization?: unknown }).utilization === "number" &&
 		"resets_at" in (value as object)
 	);
+}
+
+/** Duck-typed entry of Anthropic's generic `limits[]` array (session/weekly_all/weekly_scoped). */
+function isLimitEntry(value: unknown): value is {
+	kind?: string;
+	percent?: number | null;
+	resets_at?: string | null;
+	scope?: { model?: { display_name?: string } | null } | null;
+} {
+	return typeof value === "object" && value !== null && "kind" in value;
+}
+
+/**
+ * Maps a `limits[]` entry to the internal window_key used everywhere else
+ * (dashboard rows, throttle snapshots): session -> five_hour, weekly_all ->
+ * seven_day, weekly_scoped -> seven_day_<slug> via weeklyScopedWindowKey.
+ * Returns null for limit kinds we don't track as a history window.
+ */
+function limitWindowKey(limit: {
+	kind?: string;
+	scope?: { model?: { display_name?: string } | null } | null;
+}): string | null {
+	if (limit.kind === "session") return "five_hour";
+	if (limit.kind === "weekly_all") return "seven_day";
+	if (limit.kind === "weekly_scoped") {
+		const name = limit.scope?.model?.display_name?.trim();
+		return name ? weeklyScopedWindowKey(name) : null;
+	}
+	return null;
 }
 
 interface SnapshotDbRow {
@@ -37,6 +67,11 @@ export class UsageHistoryRepository extends BaseRepository<UsageSnapshotRow> {
 	 * bounded by retention pruning instead. `usage` is the raw UsageData-shaped
 	 * record from the provider cache; non-window fields (extra_usage, unknown
 	 * keys) are ignored. A malformed `resets_at` is stored as null, never NaN.
+	 *
+	 * Anthropic's `limits[]` array (session/weekly_all/weekly_scoped) is folded
+	 * in under the same window_key convention as the flat windows (five_hour,
+	 * seven_day, seven_day_<slug>) so a limits-only payload — e.g. a per-model
+	 * Fable cap with five_hour/seven_day both null — still gets recorded.
 	 */
 	async recordSnapshot(
 		accountId: string,
@@ -48,6 +83,7 @@ export class UsageHistoryRepository extends BaseRepository<UsageSnapshotRow> {
 		// and Postgres, so a failure can no longer leave a partial snapshot the
 		// way the previous await-in-loop of per-window inserts could.
 		const params: unknown[] = [];
+		const seenKeys = new Set<string>();
 		let count = 0;
 		for (const [windowKey, value] of Object.entries(usage)) {
 			if (!isWindow(value)) continue;
@@ -57,7 +93,26 @@ export class UsageHistoryRepository extends BaseRepository<UsageSnapshotRow> {
 				resetsAt = Number.isFinite(ms) ? ms : null;
 			}
 			params.push(accountId, now, windowKey, value.utilization, resetsAt);
+			seenKeys.add(windowKey);
 			count++;
+		}
+		const limits = usage.limits;
+		if (Array.isArray(limits)) {
+			for (const limit of limits) {
+				if (!isLimitEntry(limit) || typeof limit.percent !== "number") continue;
+				const windowKey = limitWindowKey(limit);
+				// Skip a kind we don't map, and skip one already recorded from the
+				// flat windows above (no double-count of five_hour/seven_day).
+				if (!windowKey || seenKeys.has(windowKey)) continue;
+				let resetsAt: number | null = null;
+				if (limit.resets_at) {
+					const ms = new Date(limit.resets_at).getTime();
+					resetsAt = Number.isFinite(ms) ? ms : null;
+				}
+				params.push(accountId, now, windowKey, limit.percent, resetsAt);
+				seenKeys.add(windowKey);
+				count++;
+			}
 		}
 		if (count === 0) return;
 		const rows = Array.from({ length: count }, () => "(?, ?, ?, ?, ?)").join(

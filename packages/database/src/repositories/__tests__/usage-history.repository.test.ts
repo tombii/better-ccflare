@@ -70,6 +70,78 @@ describe("UsageHistoryRepository", () => {
 		db.close();
 	});
 
+	it("records limits[]-only payload (session/weekly_all/weekly_scoped, no flat windows)", async () => {
+		const db = makeDb();
+		const repo = makeRepo(db);
+		await repo.recordSnapshot(
+			"acc1",
+			{
+				limits: [
+					{ kind: "session", percent: 42, resets_at: "2026-07-05T12:00:00Z" },
+					{ kind: "weekly_all", percent: 7, resets_at: null },
+					{
+						kind: "weekly_scoped",
+						percent: 100,
+						resets_at: null,
+						scope: { model: { display_name: "Fable" } },
+					},
+				],
+			},
+			1000,
+		);
+		const rows = await repo.getSeries({ accountId: "acc1" });
+		expect(rows.map((r) => r.windowKey).sort()).toEqual([
+			"five_hour",
+			"seven_day",
+			"seven_day_fable",
+		]);
+		const fiveH = rows.find((r) => r.windowKey === "five_hour");
+		expect(fiveH?.utilization).toBe(42);
+		expect(fiveH?.resetsAt).toBe(new Date("2026-07-05T12:00:00Z").getTime());
+		const fable = rows.find((r) => r.windowKey === "seven_day_fable");
+		expect(fable?.utilization).toBe(100);
+		db.close();
+	});
+
+	it("does not double-count a flat window already present in limits[]", async () => {
+		const db = makeDb();
+		const repo = makeRepo(db);
+		await repo.recordSnapshot(
+			"acc1",
+			{
+				five_hour: { utilization: 10, resets_at: null },
+				limits: [{ kind: "session", percent: 99, resets_at: null }],
+			},
+			1000,
+		);
+		const rows = await repo.getSeries({
+			accountId: "acc1",
+			windowKey: "five_hour",
+		});
+		// Flat window wins; the limits[] session entry for the same key is skipped.
+		expect(rows.length).toBe(1);
+		expect(rows[0].utilization).toBe(10);
+		db.close();
+	});
+
+	it("ignores limits[] entries with unknown kind or missing model name", async () => {
+		const db = makeDb();
+		const repo = makeRepo(db);
+		await repo.recordSnapshot(
+			"acc1",
+			{
+				limits: [
+					{ kind: "overage", percent: 50, resets_at: null },
+					{ kind: "weekly_scoped", percent: 80, resets_at: null, scope: {} },
+				],
+			},
+			1000,
+		);
+		const rows = await repo.getSeries({ accountId: "acc1" });
+		expect(rows).toEqual([]);
+		db.close();
+	});
+
 	it("records every poll (no dedup) so flat windows stay a continuous series", async () => {
 		const db = makeDb();
 		const repo = makeRepo(db);
