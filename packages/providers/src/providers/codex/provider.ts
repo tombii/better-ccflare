@@ -126,6 +126,11 @@ interface CodexRequest {
 	reasoning?: { effort: string };
 	instructions?: string;
 	tools?: CodexTool[];
+	tool_choice?:
+		| "auto"
+		| "required"
+		| "none"
+		| { type: "function"; name: string };
 }
 
 // ── Anthropic request types ───────────────────────────────────────────────────
@@ -955,6 +960,16 @@ export class CodexProvider extends BaseProvider {
 		codexRequest.instructions = instructions || "You are a helpful assistant.";
 		if (tools) {
 			codexRequest.tools = tools;
+			// Claude Code schema agents provide a StructuredOutput tool but do not set
+			// Anthropic tool_choice. Native Claude reliably follows the hidden schema
+			// instruction; Codex models often end_turn with text instead. Force the
+			// function when this sentinel tool is present to preserve workflow semantics.
+			if (tools.some((t) => t.name === "StructuredOutput")) {
+				codexRequest.tool_choice = {
+					type: "function",
+					name: "StructuredOutput",
+				};
+			}
 		}
 
 		return codexRequest;
