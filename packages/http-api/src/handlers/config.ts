@@ -1,8 +1,6 @@
 import type { Config } from "@better-ccflare/config";
 import {
 	DEFAULT_AGENT_MODEL,
-	getAllowedModelsMessage,
-	isValidClaudeModel,
 	NETWORK,
 	STRATEGIES,
 	type StrategyName,
@@ -15,6 +13,11 @@ import {
 	errorResponse,
 	jsonResponse,
 } from "@better-ccflare/http-common";
+import type { APIContext } from "@better-ccflare/types";
+import {
+	allowedModelErrorMessage,
+	isAllowedModel,
+} from "../services/model-validation";
 import type { ConfigResponse, RetentionSetRequest } from "../types";
 
 /**
@@ -23,6 +26,7 @@ import type { ConfigResponse, RetentionSetRequest } from "../types";
 export function createConfigHandlers(
 	config: Config,
 	runtime?: { port: number; tlsEnabled: boolean },
+	modelCatalog?: APIContext["modelCatalog"],
 ) {
 	return {
 		/**
@@ -115,9 +119,9 @@ export function createConfigHandlers(
 
 			// Validate model is in allowed list (parity with agent preference
 			// validation in agents.ts).
-			if (!isValidClaudeModel(modelValidation)) {
+			if (!(await isAllowedModel(modelValidation, modelCatalog))) {
 				return errorResponse(
-					BadRequest(`Invalid model. ${getAllowedModelsMessage()}`),
+					BadRequest(`Invalid model. ${allowedModelErrorMessage()}`),
 				);
 			}
 

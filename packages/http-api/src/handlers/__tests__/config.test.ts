@@ -1,5 +1,20 @@
 import { describe, expect, it, mock } from "bun:test";
+import type { APIContext } from "@better-ccflare/types";
 import { createConfigHandlers } from "../config";
+
+function makeCatalog(
+	models: string[],
+	source: "live" | "fallback" = "live",
+): APIContext["modelCatalog"] {
+	return {
+		get: async () => ({
+			models: models.map((id) => ({ id, displayName: id, createdAt: null })),
+			fetchedAt: Date.now(),
+			source,
+		}),
+		refresh: async () => ({ success: true }),
+	};
+}
 
 function makeConfig() {
 	return {
@@ -108,5 +123,64 @@ describe("createConfigHandlers", () => {
 
 		expect(response.status).toBe(200);
 		expect(config.setDefaultAgentModel).toHaveBeenCalledWith("claude-sonnet-5");
+	});
+
+	it("accepts a non-pattern model id present in a live catalog", async () => {
+		const config = makeConfig();
+		const handlers = createConfigHandlers(
+			config,
+			{ port: 8080, tlsEnabled: false },
+			makeCatalog(["claude-nova-9"]),
+		);
+
+		const response = await handlers.setDefaultAgentModel(
+			new Request("http://localhost/api/config/model", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ model: "claude-nova-9" }),
+			}),
+		);
+
+		expect(response.status).toBe(200);
+		expect(config.setDefaultAgentModel).toHaveBeenCalledWith("claude-nova-9");
+	});
+
+	it("rejects a non-pattern model id absent from a fallback catalog with 400", async () => {
+		const config = makeConfig();
+		const handlers = createConfigHandlers(
+			config,
+			{ port: 8080, tlsEnabled: false },
+			makeCatalog(["claude-nova-9"], "fallback"),
+		);
+
+		const response = await handlers.setDefaultAgentModel(
+			new Request("http://localhost/api/config/model", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ model: "claude-nova-9" }),
+			}),
+		);
+
+		expect(response.status).toBe(400);
+		expect(config.setDefaultAgentModel).not.toHaveBeenCalled();
+	});
+
+	it("rejects a non-pattern model id with 400 when no catalog is injected", async () => {
+		const config = makeConfig();
+		const handlers = createConfigHandlers(config, {
+			port: 8080,
+			tlsEnabled: false,
+		});
+
+		const response = await handlers.setDefaultAgentModel(
+			new Request("http://localhost/api/config/model", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ model: "claude-nova-9" }),
+			}),
+		);
+
+		expect(response.status).toBe(400);
+		expect(config.setDefaultAgentModel).not.toHaveBeenCalled();
 	});
 });

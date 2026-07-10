@@ -172,6 +172,63 @@ describe("createAgentPreferenceUpdateHandler - live catalog warning", () => {
 		expect(response.status).toBe(400);
 		expect(dbOps.setAgentPreference).not.toHaveBeenCalled();
 	});
+
+	it("accepts a non-pattern model id present in a live catalog", async () => {
+		const dbOps = makeDbOps();
+		const handler = createAgentPreferenceUpdateHandler(
+			dbOps,
+			makeCatalog(["claude-nova-9"]),
+		);
+		const response = await handler(
+			new Request("http://localhost/api/agents/agent-1/preference", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ model: "claude-nova-9" }),
+			}),
+			"agent-1",
+		);
+
+		expect(response.status).toBe(200);
+		expect(dbOps.setAgentPreference).toHaveBeenCalledWith(
+			"agent-1",
+			"claude-nova-9",
+		);
+	});
+
+	it("rejects a non-pattern model id absent from a fallback catalog with 400", async () => {
+		const dbOps = makeDbOps();
+		const handler = createAgentPreferenceUpdateHandler(
+			dbOps,
+			makeCatalog(["claude-nova-9"], "fallback"),
+		);
+		const response = await handler(
+			new Request("http://localhost/api/agents/agent-1/preference", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ model: "claude-nova-9" }),
+			}),
+			"agent-1",
+		);
+
+		expect(response.status).toBe(400);
+		expect(dbOps.setAgentPreference).not.toHaveBeenCalled();
+	});
+
+	it("rejects a non-pattern model id with 400 when no catalog is injected", async () => {
+		const dbOps = makeDbOps();
+		const handler = createAgentPreferenceUpdateHandler(dbOps, undefined);
+		const response = await handler(
+			new Request("http://localhost/api/agents/agent-1/preference", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ model: "claude-nova-9" }),
+			}),
+			"agent-1",
+		);
+
+		expect(response.status).toBe(400);
+		expect(dbOps.setAgentPreference).not.toHaveBeenCalled();
+	});
 });
 
 describe("createAgentPreferenceDeleteHandler - revert to agent default", () => {
@@ -302,6 +359,60 @@ describe("createBulkAgentPreferenceUpdateHandler - live catalog warning", () => 
 		const body = (await response.json()) as { warning?: string };
 
 		expect(body.warning).toBeUndefined();
+	});
+
+	it("accepts a non-pattern model id present in a live catalog", async () => {
+		await agentRegistry.registerWorkspace(tmpDir);
+		const dbOps = makeDbOps();
+		const handler = createBulkAgentPreferenceUpdateHandler(
+			dbOps,
+			makeCatalog(["claude-nova-9"]),
+		);
+		const response = await handler(
+			new Request("http://localhost/api/agents/bulk-preference", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ model: "claude-nova-9" }),
+			}),
+		);
+
+		expect(response.status).toBe(200);
+		expect(dbOps.setBulkAgentPreferences).toHaveBeenCalled();
+	});
+
+	it("rejects a non-pattern model id absent from a fallback catalog with 400", async () => {
+		await agentRegistry.registerWorkspace(tmpDir);
+		const dbOps = makeDbOps();
+		const handler = createBulkAgentPreferenceUpdateHandler(
+			dbOps,
+			makeCatalog(["claude-nova-9"], "fallback"),
+		);
+		const response = await handler(
+			new Request("http://localhost/api/agents/bulk-preference", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ model: "claude-nova-9" }),
+			}),
+		);
+
+		expect(response.status).toBe(400);
+		expect(dbOps.setBulkAgentPreferences).not.toHaveBeenCalled();
+	});
+
+	it("rejects a non-pattern model id with 400 when no catalog is injected", async () => {
+		await agentRegistry.registerWorkspace(tmpDir);
+		const dbOps = makeDbOps();
+		const handler = createBulkAgentPreferenceUpdateHandler(dbOps, undefined);
+		const response = await handler(
+			new Request("http://localhost/api/agents/bulk-preference", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ model: "claude-nova-9" }),
+			}),
+		);
+
+		expect(response.status).toBe(400);
+		expect(dbOps.setBulkAgentPreferences).not.toHaveBeenCalled();
 	});
 });
 
@@ -489,17 +600,69 @@ describe("createAgentUpdateHandler - model inherit support", () => {
 			agentId,
 		);
 
-		// Note: this validation branch predates the inherit/null support and
-		// calls errorResponse() with a raw string rather than BadRequest(...),
-		// so it currently returns 500 rather than the 400 its sibling handler
-		// (createAgentPreferenceUpdateHandler) returns for the same kind of
-		// input — a pre-existing inconsistency, not something this change
-		// affects. What matters here is that the invalid model is rejected and
-		// never written to the frontmatter file.
-		expect(response.status).not.toBe(200);
+		expect(response.status).toBe(400);
 		expect(dbOps.deleteAgentPreference).not.toHaveBeenCalled();
 		const fileContent = fs.readFileSync(filePath, "utf-8");
 		expect(fileContent).toMatch(/^model: claude-opus-4-8$/m);
+	});
+
+	it("accepts a non-pattern model id present in a live catalog", async () => {
+		const dbOps = makeUpdateDbOps();
+		const handler = createAgentUpdateHandler(
+			dbOps,
+			makeCatalog(["claude-nova-9"]),
+		);
+		const response = await handler(
+			new Request(`http://localhost/api/agents/${agentId}`, {
+				method: "PATCH",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ model: "claude-nova-9" }),
+			}),
+			agentId,
+		);
+
+		// The write itself is accepted (not rejected with 400) and the raw
+		// value lands in the frontmatter file. Note the round-tripped
+		// `agent.model` on the response is null: `agentRegistry.updateAgent`
+		// re-reads the file through discovery.ts's frontmatter parser, which
+		// stays pattern-only by design (out of scope for this validator —
+		// see model-validation.ts) and treats a non-pattern id as `inherit`.
+		expect(response.status).toBe(200);
+		const fileContent = fs.readFileSync(filePath, "utf-8");
+		expect(fileContent).toMatch(/^model: claude-nova-9$/m);
+	});
+
+	it("rejects a non-pattern model id absent from a fallback catalog with 400", async () => {
+		const dbOps = makeUpdateDbOps();
+		const handler = createAgentUpdateHandler(
+			dbOps,
+			makeCatalog(["claude-nova-9"], "fallback"),
+		);
+		const response = await handler(
+			new Request(`http://localhost/api/agents/${agentId}`, {
+				method: "PATCH",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ model: "claude-nova-9" }),
+			}),
+			agentId,
+		);
+
+		expect(response.status).toBe(400);
+	});
+
+	it("rejects a non-pattern model id with 400 when no catalog is injected", async () => {
+		const dbOps = makeUpdateDbOps();
+		const handler = createAgentUpdateHandler(dbOps);
+		const response = await handler(
+			new Request(`http://localhost/api/agents/${agentId}`, {
+				method: "PATCH",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ model: "claude-nova-9" }),
+			}),
+			agentId,
+		);
+
+		expect(response.status).toBe(400);
 	});
 
 	it("still writes a concrete model value normally", async () => {

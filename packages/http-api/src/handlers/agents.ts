@@ -1,9 +1,5 @@
 import { agentRegistry } from "@better-ccflare/agents";
-import {
-	getAllowedModelsMessage,
-	isValidClaudeModel,
-	validateString,
-} from "@better-ccflare/core";
+import { validateString } from "@better-ccflare/core";
 import type { DatabaseOperations } from "@better-ccflare/database";
 import {
 	BadRequest,
@@ -13,6 +9,10 @@ import {
 } from "@better-ccflare/http-common";
 import { Logger } from "@better-ccflare/logger";
 import type { AgentModelSource, APIContext } from "@better-ccflare/types";
+import {
+	allowedModelErrorMessage,
+	isAllowedModel,
+} from "../services/model-validation";
 
 const log = new Logger("AgentsHandler");
 
@@ -111,9 +111,10 @@ export function createAgentPreferenceUpdateHandler(
 				throw BadRequest("Model is required");
 			}
 
-			// Validate model is in allowed list
-			if (!isValidClaudeModel(model)) {
-				throw BadRequest(`Invalid model. ${getAllowedModelsMessage()}`);
+			// Validate model is in allowed list (pattern match or exact id in a
+			// live catalog).
+			if (!(await isAllowedModel(model, modelCatalog))) {
+				throw BadRequest(`Invalid model. ${allowedModelErrorMessage()}`);
 			}
 
 			// Update preference
@@ -200,10 +201,11 @@ export function createBulkAgentPreferenceUpdateHandler(
 				return errorResponse(BadRequest("Model is required"));
 			}
 
-			// Validate model is in allowed list
-			if (!isValidClaudeModel(modelValidation)) {
+			// Validate model is in allowed list (pattern match or exact id in a
+			// live catalog).
+			if (!(await isAllowedModel(modelValidation, modelCatalog))) {
 				return errorResponse(
-					BadRequest(`Invalid model. ${getAllowedModelsMessage()}`),
+					BadRequest(`Invalid model. ${allowedModelErrorMessage()}`),
 				);
 			}
 

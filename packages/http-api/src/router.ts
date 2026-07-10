@@ -196,7 +196,11 @@ export class APIRouter {
 			dbOps.getAdapter(),
 		);
 		const requestsDetailHandler = createRequestsDetailHandler(dbOps);
-		const configHandlers = createConfigHandlers(config, this.context.runtime);
+		const configHandlers = createConfigHandlers(
+			config,
+			this.context.runtime,
+			this.context.modelCatalog,
+		);
 		const logsStreamHandler = createLogsStreamHandler();
 		const logsHistoryHandler = createLogsHistoryHandler();
 		const analyticsHandler = createAnalyticsHandler(this.context);
@@ -717,7 +721,10 @@ export class APIRouter {
 
 			// Agent update (PATCH /api/agents/:id)
 			if (parts.length === 4 && method === "PATCH") {
-				const updateHandler = createAgentUpdateHandler(this.context.dbOps);
+				const updateHandler = createAgentUpdateHandler(
+					this.context.dbOps,
+					this.context.modelCatalog,
+				);
 				return await this.wrapHandler((req) => updateHandler(req, agentId))(
 					req,
 					url,
