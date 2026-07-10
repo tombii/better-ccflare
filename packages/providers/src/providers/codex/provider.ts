@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
 	mapModelName,
 	ValidationError,
@@ -40,6 +41,7 @@ export const CODEX_USER_AGENT = `codex-cli/${CODEX_VERSION} (Windows 10.0.26100;
 export const CODEX_PING_MODEL = "gpt-5-codex";
 const CODEX_SYNTHETIC_COUNT_TOKENS_URL =
 	"https://better-ccflare.local/codex/count_tokens";
+export const CODEX_PROMPT_CACHE_KEY_ENV = "CCFLARE_CODEX_PROMPT_CACHE_KEY";
 
 const _normalizeUsage = (value: unknown): Record<string, number> => {
 	const usage =
@@ -125,6 +127,7 @@ interface CodexRequest {
 	store: false;
 	reasoning?: { effort: string };
 	instructions?: string;
+	prompt_cache_key?: string;
 	tools?: CodexTool[];
 	tool_choice?:
 		| "auto"
@@ -177,6 +180,7 @@ interface AnthropicRequest {
 	stream?: boolean;
 	tools?: AnthropicTool[];
 	reasoning?: { effort?: string };
+	metadata?: { user_id?: string };
 	[key: string]: unknown;
 }
 
@@ -583,6 +587,28 @@ export class CodexProvider extends BaseProvider {
 			.join("\n\n");
 	}
 
+	private extractPromptCacheKey(body: AnthropicRequest): string | undefined {
+		if (process.env[CODEX_PROMPT_CACHE_KEY_ENV] !== "1") return undefined;
+		const rawUserId = body.metadata?.user_id;
+		if (typeof rawUserId !== "string") return undefined;
+		try {
+			const metadata = JSON.parse(rawUserId) as unknown;
+			if (!metadata || typeof metadata !== "object") return undefined;
+			const sessionId = (metadata as Record<string, unknown>).session_id;
+			if (
+				typeof sessionId !== "string" ||
+				!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+					sessionId,
+				)
+			) {
+				return undefined;
+			}
+			return `ccflare-session-${createHash("sha256").update(sessionId).digest("hex")}`;
+		} catch {
+			return undefined;
+		}
+	}
+
 	private convertMessage(
 		msg: AnthropicMessage,
 	): (CodexMessage | CodexFunctionCallItem | CodexFunctionCallOutputItem)[] {
@@ -969,6 +995,10 @@ export class CodexProvider extends BaseProvider {
 		};
 
 		codexRequest.instructions = instructions || "You are a helpful assistant.";
+		const promptCacheKey = this.extractPromptCacheKey(body);
+		if (promptCacheKey) {
+			codexRequest.prompt_cache_key = promptCacheKey;
+		}
 		if (tools) {
 			codexRequest.tools = tools;
 			// Claude Code schema agents provide a StructuredOutput tool but do not set

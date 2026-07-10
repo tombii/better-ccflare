@@ -3,7 +3,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fetchCodexUsageOnDemand } from "./on-demand-fetch";
-import { CodexProvider } from "./provider";
+import { CODEX_PROMPT_CACHE_KEY_ENV, CodexProvider } from "./provider";
 import { CODEX_TRACE_DIR_ENV } from "./trace";
 import { parseCodexUsageHeaders } from "./usage";
 
@@ -22,6 +22,10 @@ const readTraceRecords = (dir: string): Array<Record<string, unknown>> => {
 		.filter(Boolean)
 		.map((line) => JSON.parse(line) as Record<string, unknown>);
 };
+
+afterEach(() => {
+	delete process.env[CODEX_PROMPT_CACHE_KEY_ENV];
+});
 
 describe("CodexProvider request conversion", () => {
 	it("handles messages and synthetic count_tokens paths", () => {
@@ -1997,6 +2001,75 @@ describe("CodexProvider.transformRequestBody", () => {
 		const body = await transformed.json();
 
 		expect(body.tool_choice).toBeUndefined();
+	});
+
+	it("omits prompt_cache_key by default", async () => {
+		const provider = new CodexProvider();
+		const request = new Request("https://example.com/v1/messages", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				model: "claude-opus-4-8",
+				max_tokens: 10,
+				metadata: {
+					user_id: JSON.stringify({
+						session_id: "11111111-1111-4111-8111-111111111111",
+					}),
+				},
+				messages: [{ role: "user", content: "hello" }],
+			}),
+		});
+
+		const transformed = await provider.transformRequestBody(request);
+		const body = await transformed.json();
+		expect(body.prompt_cache_key).toBeUndefined();
+	});
+
+	it("derives a deterministic prompt_cache_key from Claude Code session metadata when enabled", async () => {
+		process.env[CODEX_PROMPT_CACHE_KEY_ENV] = "1";
+		const transform = async (sessionId: string) => {
+			const request = new Request("https://example.com/v1/messages", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({
+					model: "claude-opus-4-8",
+					max_tokens: 10,
+					metadata: { user_id: JSON.stringify({ session_id: sessionId }) },
+					messages: [{ role: "user", content: "hello" }],
+				}),
+			});
+			return new CodexProvider()
+				.transformRequestBody(request)
+				.then((r) => r.json());
+		};
+
+		const first = await transform("11111111-1111-4111-8111-111111111111");
+		const repeated = await transform("11111111-1111-4111-8111-111111111111");
+		const different = await transform("22222222-2222-4222-8222-222222222222");
+
+		expect(first.prompt_cache_key).toMatch(/^ccflare-session-[0-9a-f]{64}$/);
+		expect(repeated.prompt_cache_key).toBe(first.prompt_cache_key);
+		expect(different.prompt_cache_key).not.toBe(first.prompt_cache_key);
+		expect(first.prompt_cache_key).not.toContain("11111111");
+	});
+
+	it("omits prompt_cache_key for malformed session metadata", async () => {
+		process.env[CODEX_PROMPT_CACHE_KEY_ENV] = "1";
+		const provider = new CodexProvider();
+		const request = new Request("https://example.com/v1/messages", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				model: "claude-opus-4-8",
+				max_tokens: 10,
+				metadata: { user_id: "not-json" },
+				messages: [{ role: "user", content: "hello" }],
+			}),
+		});
+
+		const transformed = await provider.transformRequestBody(request);
+		const body = await transformed.json();
+		expect(body.prompt_cache_key).toBeUndefined();
 	});
 });
 
