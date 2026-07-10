@@ -193,6 +193,36 @@ describe("getRepresentativeUsageResetMs — shared provider-aware reset derivati
 		expect(getRepresentativeUsageResetMs(null, "zai")).toBeNull();
 		expect(getRepresentativeUsageResetMs({}, "openai-compatible")).toBeNull();
 	});
+
+	it("anthropic: limits[]-only payload (2026 API) falls back to the matching limit's own resets_at", () => {
+		// Post-merge regression (PR #299 x PR #296): five_hour/seven_day are
+		// absent as properties on limits[]-only payloads, so the flat-window
+		// extraction must fall back to the limits[] entry itself instead of
+		// silently returning null (which disabled the staleness guard).
+		const weeklyReset = "2026-07-11T08:00:00.000Z";
+		const data = {
+			limits: [
+				{ kind: "session", percent: 30, resets_at: "2026-07-10T10:00:00.000Z" },
+				{ kind: "weekly_all", percent: 100, resets_at: weeklyReset },
+			],
+		};
+		expect(getRepresentativeUsageResetMs(data, "anthropic")).toBe(
+			Date.UTC(2026, 6, 11, 8, 0, 0),
+		);
+	});
+
+	it("anthropic: limits[]-only payload with no matching kind returns null", () => {
+		const data = {
+			limits: [
+				{
+					kind: "weekly_scoped",
+					percent: 100,
+					resets_at: "2026-07-11T08:00:00.000Z",
+				},
+			],
+		};
+		expect(getRepresentativeUsageResetMs(data, "anthropic")).toBeNull();
+	});
 });
 
 describe("extractUsageResetMs", () => {

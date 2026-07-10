@@ -113,13 +113,19 @@ export function getRepresentativeUsageResetMs(
 		const data = usageData as AnyUsageData;
 		switch (provider) {
 			case "anthropic":
-			case "codex":
-				return "five_hour" in data && "seven_day" in data
-					? extractUsageResetMs(
-							data,
-							getRepresentativeWindow(data as UsageData),
-						)
-					: null;
+			case "codex": {
+				const windowName = getRepresentativeWindow(data as UsageData);
+				// Flat legacy shape: the window name is an actual property
+				// (five_hour/seven_day/...) carrying its own resets_at.
+				const flatReset = extractUsageResetMs(data, windowName);
+				if (flatReset !== null) return flatReset;
+				// limits[]-only payloads (2026 API): five_hour/seven_day are
+				// absent as properties — getRepresentativeWindow derives those
+				// same names synthetically from limits[] kind "session" /
+				// "weekly_all". Fall back to the matching limits[] entry's own
+				// resets_at so the staleness guard still has a real reset time.
+				return getRepresentativeLimitResetMs(data as UsageData, windowName);
+			}
 			case "zai":
 				return extractUsageResetMs(
 					data,
@@ -153,6 +159,36 @@ export function getRepresentativeUsageResetMs(
 	} catch {
 		return null;
 	}
+}
+
+/**
+ * limits[] `kind` that maps to each synthetic window name produced by
+ * getRepresentativeWindow's accountLevelLimitWindows fold (session ->
+ * five_hour, weekly_all -> seven_day). Kept in lockstep with that mapping in
+ * packages/providers/src/usage-fetcher.ts.
+ */
+const WINDOW_NAME_TO_LIMIT_KIND: Record<string, string> = {
+	five_hour: "session",
+	seven_day: "weekly_all",
+};
+
+/**
+ * Reset time (ms epoch) for a limits[]-only Anthropic/Codex payload: finds
+ * the limits[] entry whose `kind` corresponds to the given synthetic window
+ * name and returns its own `resets_at`.
+ */
+function getRepresentativeLimitResetMs(
+	usage: UsageData,
+	windowName: string | null,
+): number | null {
+	if (!windowName || !Array.isArray(usage.limits)) return null;
+	const kind = WINDOW_NAME_TO_LIMIT_KIND[windowName];
+	if (!kind) return null;
+	const limit = usage.limits.find((l) => l?.kind === kind);
+	const resetsAt = limit?.resets_at;
+	if (typeof resetsAt !== "string") return null;
+	const ms = new Date(resetsAt).getTime();
+	return Number.isFinite(ms) ? ms : null;
 }
 
 /**
