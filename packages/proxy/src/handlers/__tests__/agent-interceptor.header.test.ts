@@ -5,6 +5,7 @@ import {
 	DatabaseFactory,
 	type DatabaseOperations,
 } from "@better-ccflare/database";
+import type { ModelCatalog } from "../../model-catalog";
 import { interceptAndModifyRequest } from "../agent-interceptor";
 
 const TEST_DB_PATH = "/tmp/test-agent-interceptor-header.db";
@@ -39,6 +40,18 @@ describe("Agent Interceptor - X-Anthropic-Agent-Id Header", () => {
 
 	function headers(pairs: Record<string, string>): Headers {
 		return new Headers(pairs);
+	}
+
+	// Model-preference substitution tests below assert a rewrite to a fake
+	// model id succeeds. Left un-injected, interceptAndModifyRequest falls
+	// through to the real getModelCatalog(), which reads this machine's
+	// actual disk cache — a live, non-empty catalog that (correctly) doesn't
+	// contain the fake id, vetoing the rewrite. This suite is about
+	// preference precedence, not catalog serviceability (that's covered by
+	// agent-interceptor.rewrite-guard.test.ts), so inject a catalog that
+	// never vetoes, isolating these tests from the host's real cache state.
+	function nonVetoingCatalog(): ModelCatalog {
+		return { models: [], fetchedAt: Date.now(), source: "fallback" };
 	}
 
 	beforeAll(() => {
@@ -101,6 +114,7 @@ describe("Agent Interceptor - X-Anthropic-Agent-Id Header", () => {
 				buffer,
 				dbOps,
 				headers({ "x-anthropic-agent-id": "preferred-agent" }),
+				{ getModelCatalog: async () => nonVetoingCatalog() },
 			);
 			expect(result.agentUsed).toBe("preferred-agent");
 			expect(result.originalModel).toBe("claude-3-5-sonnet-20241022");

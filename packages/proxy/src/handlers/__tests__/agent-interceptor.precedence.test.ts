@@ -20,6 +20,7 @@ import {
 	DatabaseFactory,
 	type DatabaseOperations,
 } from "@better-ccflare/database";
+import type { ModelCatalog } from "../../model-catalog";
 import { interceptAndModifyRequest } from "../agent-interceptor";
 
 // The `agentRegistry` singleton used below defaults to persisting workspace
@@ -85,6 +86,19 @@ describe("Agent Interceptor - precedence (DB preference vs. frontmatter fallback
 		};
 	}
 
+	// Tests below assert a preference rewrite succeeds. Left un-injected,
+	// interceptAndModifyRequest falls through to the real getModelCatalog(),
+	// which reads this machine's actual disk cache — a live, non-empty
+	// catalog that (correctly) vetoes rewrites to model ids it doesn't
+	// contain (e.g. the fake "claude-opus-model"). This suite is about DB
+	// preference vs. frontmatter-fallback precedence, not catalog
+	// serviceability (that's covered by agent-interceptor.rewrite-guard.
+	// test.ts), so inject a catalog that never vetoes, isolating these
+	// tests from the host's real cache state.
+	function nonVetoingCatalog(): ModelCatalog {
+		return { models: [], fetchedAt: Date.now(), source: "fallback" };
+	}
+
 	beforeAll(() => {
 		try {
 			if (existsSync(TEST_DB_PATH)) unlinkSync(TEST_DB_PATH);
@@ -147,7 +161,9 @@ describe("Agent Interceptor - precedence (DB preference vs. frontmatter fallback
 				system: "You are agent A, a specialized helper.",
 			}),
 		);
-		const result = await interceptAndModifyRequest(buffer, dbOps);
+		const result = await interceptAndModifyRequest(buffer, dbOps, undefined, {
+			getModelCatalog: async () => nonVetoingCatalog(),
+		});
 		expect(result.agentUsed).toBe(agent?.id);
 		expect(result.appliedModel).toBe("claude-opus-model");
 		expect(result.originalModel).toBe("claude-3-5-sonnet-20241022");
@@ -160,6 +176,7 @@ describe("Agent Interceptor - precedence (DB preference vs. frontmatter fallback
 			buffer,
 			dbOps,
 			new Headers({ "x-anthropic-agent-id": "header-agent-a" }),
+			{ getModelCatalog: async () => nonVetoingCatalog() },
 		);
 		expect(result.agentUsed).toBe("header-agent-a");
 		expect(result.appliedModel).toBe("claude-opus-model");
@@ -207,6 +224,7 @@ describe("Agent Interceptor - precedence (DB preference vs. frontmatter fallback
 		);
 		const result = await interceptAndModifyRequest(buffer, dbOps, undefined, {
 			frontmatterModelFallback: true,
+			getModelCatalog: async () => nonVetoingCatalog(),
 		});
 		expect(result.agentUsed).toBe(agent?.id);
 		expect(result.appliedModel).toBe(LATEST_SONNET_MODEL);
