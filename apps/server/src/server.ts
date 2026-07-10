@@ -1615,9 +1615,27 @@ Available endpoints:
 	};
 }
 
-// most in-flight streaming responses complete; short enough that systemd's
-// default TimeoutStopSec (90s) doesn't have to escalate to SIGKILL.
-const SHUTDOWN_WATCHDOG_MS = 30_000;
+/**
+ * How long shutdown waits for in-flight requests to complete before
+ * force-closing them. Agent SSE streams can run for minutes, and a
+ * mid-stream close is unrecoverable for the client (tokens were already
+ * streamed), so this defaults generously. Supervisors must keep their stop
+ * timeout (systemd TimeoutStopSec, wrapper SIGKILL delays) above this value
+ * plus the watchdog margin or the drain gets SIGKILLed out from under us.
+ */
+export const SHUTDOWN_DRAIN_MS_ENV = "CCFLARE_SHUTDOWN_DRAIN_MS";
+const DEFAULT_SHUTDOWN_DRAIN_MS = 60_000;
+/** Budget for post-drain cleanup (DB writer, disposables) before force exit. */
+const SHUTDOWN_WATCHDOG_MARGIN_MS = 15_000;
+
+export function readShutdownDrainMs(): number {
+	const raw = process.env[SHUTDOWN_DRAIN_MS_ENV];
+	if (raw === undefined || raw === "") return DEFAULT_SHUTDOWN_DRAIN_MS;
+	const parsed = Number.parseInt(raw, 10);
+	return Number.isFinite(parsed) && parsed >= 0
+		? parsed
+		: DEFAULT_SHUTDOWN_DRAIN_MS;
+}
 
 // Deduplicates concurrent shutdown invocations (e.g. SIGINT arriving while
 // SIGTERM is still awaiting serverInstance.stop()). Without this, the second
@@ -1634,17 +1652,20 @@ async function handleGracefulShutdown(signal: string) {
 
 	console.log(`\n👋 Received ${signal}, shutting down gracefully...`);
 
-	// Hard upper bound on shutdown duration. unref'd so it doesn't itself
-	// prevent a clean exit if everything else finishes first. Exits with 0
-	// because the watchdog only fires on an expected SIGTERM that ran long,
-	// not on a failure — code 1 would make systemd Restart=on-failure
-	// auto-restart the unit instead of treating it as a normal stop.
+	// Hard upper bound on shutdown duration: the drain budget plus a margin
+	// for the remaining cleanup. unref'd so it doesn't itself prevent a clean
+	// exit if everything else finishes first. Exits with 0 because the
+	// watchdog only fires on an expected SIGTERM that ran long, not on a
+	// failure — code 1 would make systemd Restart=on-failure auto-restart
+	// the unit instead of treating it as a normal stop.
+	const drainMs = readShutdownDrainMs();
+	const watchdogMs = drainMs + SHUTDOWN_WATCHDOG_MARGIN_MS;
 	const watchdog = setTimeout(() => {
 		console.error(
-			`⚠️ Shutdown watchdog (${SHUTDOWN_WATCHDOG_MS}ms) expired, forcing exit`,
+			`⚠️ Shutdown watchdog (${watchdogMs}ms) expired, forcing exit`,
 		);
 		process.exit(0);
-	}, SHUTDOWN_WATCHDOG_MS);
+	}, watchdogMs);
 	watchdog.unref();
 
 	try {
@@ -1717,6 +1738,32 @@ async function handleGracefulShutdown(signal: string) {
 				clearTimeout(timeoutId);
 			}
 			usagePollingRetryTimeouts.clear();
+		}
+
+		// Drain in-flight requests before tearing down shared resources.
+		// stop() without arguments stops accepting new connections while
+		// letting active ones (including agent SSE streams) run to
+		// completion; wait for pendingRequests to reach zero within the
+		// drain budget, then force-close whatever remains.
+		if (serverInstance) {
+			serverInstance.stop();
+			const deadline = Date.now() + drainMs;
+			const initialPending = serverInstance.pendingRequests;
+			if (initialPending > 0) {
+				console.log(
+					`Draining ${initialPending} in-flight request(s) (budget ${drainMs}ms)...`,
+				);
+			}
+			while (serverInstance.pendingRequests > 0 && Date.now() < deadline) {
+				await new Promise((resolve) => setTimeout(resolve, 250));
+			}
+			const remaining = serverInstance.pendingRequests;
+			if (remaining > 0) {
+				console.error(
+					`Drain budget exhausted; force-closing ${remaining} in-flight request(s)`,
+				);
+				serverInstance.stop(true);
+			}
 		}
 
 		usageCache.clear(); // Stop all usage polling
