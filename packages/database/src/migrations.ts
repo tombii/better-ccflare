@@ -351,6 +351,28 @@ export function ensureSchema(db: Database): void {
 		       ('sonnet', NULL, 0),
 		       ('haiku',  NULL, 0);
 	`);
+
+	// Create usage_snapshots table: time series of per-account usage-window
+	// utilization (0–100) captured on each /oauth/usage poll. Append-only, no
+	// surrogate key; queried and pruned by (account_id, window_key, timestamp).
+	db.run(`
+		CREATE TABLE IF NOT EXISTS usage_snapshots (
+			account_id TEXT NOT NULL,
+			timestamp INTEGER NOT NULL,
+			window_key TEXT NOT NULL,
+			utilization REAL NOT NULL,
+			resets_at INTEGER
+		)
+	`);
+	db.run(
+		`CREATE INDEX IF NOT EXISTS idx_usage_snapshots_acct_win_time ON usage_snapshots(account_id, window_key, timestamp DESC)`,
+	);
+	// Secondary index on timestamp alone so retention pruning
+	// (`DELETE ... WHERE timestamp < ?`) uses an index instead of full-scanning —
+	// the composite index above can't serve it because timestamp isn't leading.
+	db.run(
+		`CREATE INDEX IF NOT EXISTS idx_usage_snapshots_ts ON usage_snapshots(timestamp)`,
+	);
 }
 
 export function runMigrations(db: Database, dbPath?: string): void {

@@ -228,6 +228,18 @@ export const useCacheInsights = (timeRange: string, threshold?: number) => {
 	});
 };
 
+export const useUsageHistory = (account: string, range: string) => {
+	return useQuery({
+		queryKey: queryKeys.usageHistory(account, range),
+		queryFn: () => api.getUsageHistory(account, range),
+		staleTime: 45000,
+		refetchInterval: 60000,
+		refetchIntervalInBackground: false,
+		gcTime: 15 * 60 * 1000,
+		enabled: !!account,
+	});
+};
+
 export const useContextInsights = (timeRange: string) => {
 	return useQuery({
 		queryKey: queryKeys.insightsContext(timeRange),

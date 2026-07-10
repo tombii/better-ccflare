@@ -136,8 +136,8 @@ export function BaseScatterChart({
 							data.map((entry) => (
 								<text
 									key={`label-${entry[xKey]}-${entry[yKey]}`}
-									x={entry[xKey]}
-									y={entry[yKey]}
+									x={entry[xKey] ?? undefined}
+									y={entry[yKey] ?? undefined}
 									dy={-10}
 									textAnchor="middle"
 									className="text-xs fill-foreground"

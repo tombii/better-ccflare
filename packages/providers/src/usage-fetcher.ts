@@ -357,6 +357,10 @@ class UsageCache {
 		string,
 		(accountId: string) => void
 	>();
+	private snapshotCallbacks = new Map<
+		string,
+		(accountId: string, data: UsageData) => void
+	>();
 	private inFlightFetches = new Map<
 		string,
 		Promise<{ success: boolean; retryAfterMs: number | null }>
@@ -438,6 +442,7 @@ class UsageCache {
 		customEndpoint?: string | null,
 		onWindowReset?: (accountId: string) => void,
 		onCapacityRestored?: (accountId: string) => void,
+		onSnapshot?: (accountId: string, data: UsageData) => void,
 	) {
 		// Check if provider supports usage tracking
 		if (provider && !supportsUsageTracking(provider)) {
@@ -482,6 +487,11 @@ class UsageCache {
 			this.capacityRestoredCallbacks.set(accountId, onCapacityRestored);
 		} else {
 			this.capacityRestoredCallbacks.delete(accountId);
+		}
+		if (onSnapshot) {
+			this.snapshotCallbacks.set(accountId, onSnapshot);
+		} else {
+			this.snapshotCallbacks.delete(accountId);
 		}
 
 		// Default to 90s if not provided
@@ -546,6 +556,7 @@ class UsageCache {
 			this.failureCounts.delete(accountId);
 			this.windowResetCallbacks.delete(accountId);
 			this.capacityRestoredCallbacks.delete(accountId);
+			this.snapshotCallbacks.delete(accountId);
 			// Clean up cache entry when polling stops to prevent memory leaks
 			this.cache.delete(accountId);
 			this.usageRateLimitedUntil.delete(accountId);
@@ -739,6 +750,8 @@ class UsageCache {
 						data: result.data,
 						timestamp: Date.now(),
 					});
+					const snapshotCb = this.snapshotCallbacks.get(accountId);
+					if (snapshotCb) snapshotCb(accountId, result.data as UsageData);
 					const utilization = getRepresentativeUtilization(
 						result.data as UsageData,
 					);

@@ -287,6 +287,24 @@ export async function ensureSchemaPg(adapter: BunSqlAdapter): Promise<void> {
 		)
 	`);
 
+	// Create usage_snapshots table (see SQLite migration for rationale).
+	await adapter.unsafe(`
+		CREATE TABLE IF NOT EXISTS usage_snapshots (
+			account_id TEXT NOT NULL,
+			timestamp BIGINT NOT NULL,
+			window_key TEXT NOT NULL,
+			utilization DOUBLE PRECISION NOT NULL,
+			resets_at BIGINT
+		)
+	`);
+	await adapter.unsafe(
+		`CREATE INDEX IF NOT EXISTS idx_usage_snapshots_acct_win_time ON usage_snapshots(account_id, window_key, timestamp DESC)`,
+	);
+	// Secondary index on timestamp alone for retention pruning (see SQLite migration).
+	await adapter.unsafe(
+		`CREATE INDEX IF NOT EXISTS idx_usage_snapshots_ts ON usage_snapshots(timestamp)`,
+	);
+
 	log.info("PostgreSQL schema ensured");
 }
 
@@ -530,6 +548,24 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 		VALUES ('fable', NULL, 0), ('opus', NULL, 0), ('sonnet', NULL, 0), ('haiku', NULL, 0)
 		ON CONFLICT (family) DO NOTHING
 	`);
+
+	// Ensure usage_snapshots table exists (for upgrades from pre-usage-history installs)
+	await adapter.unsafe(`
+		CREATE TABLE IF NOT EXISTS usage_snapshots (
+			account_id TEXT NOT NULL,
+			timestamp BIGINT NOT NULL,
+			window_key TEXT NOT NULL,
+			utilization DOUBLE PRECISION NOT NULL,
+			resets_at BIGINT
+		)
+	`);
+	await adapter.unsafe(
+		`CREATE INDEX IF NOT EXISTS idx_usage_snapshots_acct_win_time ON usage_snapshots(account_id, window_key, timestamp DESC)`,
+	);
+	// Secondary index on timestamp alone for retention pruning (see SQLite migration).
+	await adapter.unsafe(
+		`CREATE INDEX IF NOT EXISTS idx_usage_snapshots_ts ON usage_snapshots(timestamp)`,
+	);
 
 	// Rename oauth_sessions.mode 'max' → 'claude-oauth'
 	try {
