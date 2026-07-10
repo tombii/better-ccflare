@@ -45,6 +45,10 @@ import type {
 } from "@better-ccflare/types";
 import { requiresSessionDurationTracking } from "@better-ccflare/types";
 import type { AccountResponse } from "../types";
+import {
+	computeRateLimitStatusDisplay,
+	getRepresentativeUsageResetMs,
+} from "./rate-limit-status";
 
 const log = new Logger("AccountsHandler");
 
@@ -303,25 +307,6 @@ export function createAccountsListHandler(
 
 		const response: AccountResponse[] = await Promise.all(
 			accounts.map(async (account) => {
-				let rateLimitStatus = "OK";
-
-				// Use unified rate limit status if available
-				if (account.rate_limit_status) {
-					rateLimitStatus = account.rate_limit_status;
-					const resetMs = Number(account.rate_limit_reset);
-					if (resetMs && resetMs > now) {
-						const minutesLeft = Math.ceil((resetMs - now) / 60000);
-						rateLimitStatus = `${account.rate_limit_status} (${minutesLeft}m)`;
-					}
-				} else if (account.rate_limited && account.rate_limited_until) {
-					// Fall back to legacy rate limit check
-					const limitedMs = Number(account.rate_limited_until);
-					if (limitedMs > now) {
-						const minutesLeft = Math.ceil((limitedMs - now) / 60000);
-						rateLimitStatus = `Rate limited (${minutesLeft}m)`;
-					}
-				}
-
 				// Get usage data from cache for providers that expose account-page quota or credit data
 				const cachedUsageData = usageCache.get(account.id);
 				let usageData: FullUsageData | null =
@@ -484,6 +469,31 @@ export function createAccountsListHandler(
 					usageThrottledUntil = usageThrottleStatus.throttleUntil;
 					usageThrottledWindows = usageThrottleStatus.throttledWindows;
 				}
+
+				// Computed after usage resolution so an exhausted usage window can
+				// outrank stale header snapshots and the bare "OK" default
+				// (incident 2026-07-09: 100% weekly utilization displayed as "OK").
+				const rateLimitStatus = computeRateLimitStatusDisplay(
+					{
+						rate_limit_status: account.rate_limit_status ?? null,
+						rate_limit_reset: account.rate_limit_reset
+							? Number(account.rate_limit_reset)
+							: null,
+						rate_limited_until: account.rate_limited_until
+							? Number(account.rate_limited_until)
+							: null,
+						usageUtilization,
+						// Shared provider-aware derivation (same as /health) — a plain
+						// extractUsageResetMs(fullUsageData, usageWindow) silently loses
+						// the zai reset because usageWindow is the display label
+						// ("five_hour"), not the payload key ("tokens_limit").
+						usageResetMs: getRepresentativeUsageResetMs(
+							fullUsageData,
+							account.provider ?? "anthropic",
+						),
+					},
+					now,
+				);
 
 				// Parse model mappings for OpenAI-compatible, Anthropic-compatible, NanoGPT, and OpenRouter providers
 				let modelMappings: { [key: string]: string } | null = null;

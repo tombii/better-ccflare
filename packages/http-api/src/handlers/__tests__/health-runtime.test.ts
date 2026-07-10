@@ -232,6 +232,7 @@ describe("computeHealthStatus three-state logic", () => {
 			paused: 1,
 			rate_limited: 0,
 			routable: 2,
+			usage_exhausted: 0,
 			next_available_at: null,
 		};
 
@@ -246,6 +247,7 @@ describe("computeHealthStatus three-state logic", () => {
 			paused: 0,
 			rate_limited: 2,
 			routable: 0,
+			usage_exhausted: 0,
 			next_available_at: new Date(Date.now() + 3600000).toISOString(),
 		};
 
@@ -260,6 +262,7 @@ describe("computeHealthStatus three-state logic", () => {
 			paused: 0,
 			rate_limited: 0,
 			routable: 3,
+			usage_exhausted: 0,
 			next_available_at: null,
 		};
 
@@ -274,6 +277,7 @@ describe("computeHealthStatus three-state logic", () => {
 			paused: 0,
 			rate_limited: 0,
 			routable: 0,
+			usage_exhausted: 0,
 			next_available_at: null,
 		};
 
@@ -288,6 +292,7 @@ describe("computeHealthStatus three-state logic", () => {
 			paused: 2,
 			rate_limited: 0,
 			routable: 0,
+			usage_exhausted: 0,
 			next_available_at: null,
 		};
 

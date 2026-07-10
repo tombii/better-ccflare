@@ -2,8 +2,42 @@ import type { Config } from "@better-ccflare/config";
 import { isAccountAvailable, TtlCache } from "@better-ccflare/core";
 import type { DatabaseOperations } from "@better-ccflare/database";
 import { jsonResponse } from "@better-ccflare/http-common";
+import {
+	getRepresentativeUtilizationForProvider,
+	usageCache,
+} from "@better-ccflare/providers";
 import type { Account } from "@better-ccflare/types";
 import type { HealthResponse, IntegrityStatus, PoolStatus } from "../types";
+import {
+	getRepresentativeUsageResetMs,
+	isUsageExhausted,
+} from "./rate-limit-status";
+
+/**
+ * Usage snapshot for exhaustion accounting: representative utilization
+ * (0-100) plus the representative window's reset time when known.
+ */
+export interface AccountUsageInfo {
+	utilization: number;
+	resetMs: number | null;
+}
+export type AccountUsageInfoFn = (account: Account) => AccountUsageInfo | null;
+
+const usageCacheUsageInfo: AccountUsageInfoFn = (account) => {
+	const data = usageCache.get(account.id);
+	if (!data) return null;
+	const provider = account.provider ?? "anthropic";
+	const utilization = getRepresentativeUtilizationForProvider(data, provider);
+	if (utilization === null) return null;
+	// Same provider-aware reset derivation as the accounts handler, so the
+	// staleness guard sees identical inputs on both surfaces (PR #299 review
+	// finding: guarding only anthropic-shaped payloads recreated the /health
+	// vs accounts split-brain for the other providers).
+	return {
+		utilization,
+		resetMs: getRepresentativeUsageResetMs(data, provider),
+	};
+};
 
 type AsyncWriterHealthFn = () => {
 	healthy: boolean;
@@ -27,6 +61,7 @@ type IntegrityStatusFn = () => IntegrityStatus;
 export function computePoolStatus(
 	accounts: Account[],
 	now: number,
+	getUsageInfo: AccountUsageInfoFn = () => null,
 ): PoolStatus {
 	const configured = accounts.length;
 	const paused = accounts.filter((a) => a.paused).length;
@@ -35,6 +70,20 @@ export function computePoolStatus(
 	);
 	const rate_limited = rateLimitedAccounts.length;
 	const routable = accounts.filter((a) => isAccountAvailable(a, now)).length;
+	// Subset of `routable`: accounts with no pause and no active cooldown
+	// whose usage window sits at 100% — they look available locally, yet
+	// upstream rejects their requests, so `routable > 0` alone can mask an
+	// effectively exhausted pool (incident 2026-07-09). Benched accounts are
+	// excluded — they are already visible via `rate_limited`, and counting
+	// them here would let usage_exhausted exceed routable (PR #299 review
+	// finding).
+	const usage_exhausted = accounts.filter((a) => {
+		if (!isAccountAvailable(a, now)) return false;
+		const usage = getUsageInfo(a);
+		return (
+			usage !== null && isUsageExhausted(usage.utilization, usage.resetMs, now)
+		);
+	}).length;
 
 	const earliestRateLimit = rateLimitedAccounts.reduce<number | null>(
 		(min, account) => {
@@ -55,6 +104,7 @@ export function computePoolStatus(
 		paused,
 		rate_limited,
 		routable,
+		usage_exhausted,
 		next_available_at,
 	};
 }
@@ -91,6 +141,7 @@ export function createHealthHandler(
 	getAsyncWriterHealth?: AsyncWriterHealthFn,
 	getUsageWorkerHealth?: UsageWorkerHealthFn,
 	getIntegrityStatus?: IntegrityStatusFn,
+	getAccountUsageInfo: AccountUsageInfoFn = usageCacheUsageInfo,
 ) {
 	const normalCache = new TtlCache<HealthResponse>(2000);
 	const detailCache = new TtlCache<HealthResponse>(2000);
@@ -106,7 +157,7 @@ export function createHealthHandler(
 
 		const accounts = await dbOps.getAllAccounts();
 		const now = Date.now();
-		const pool = computePoolStatus(accounts, now);
+		const pool = computePoolStatus(accounts, now, getAccountUsageInfo);
 
 		// Call each health function once and store results
 		const asyncWriterHealth = getAsyncWriterHealth
