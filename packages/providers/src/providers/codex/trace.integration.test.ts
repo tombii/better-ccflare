@@ -5,10 +5,12 @@ import { join } from "node:path";
 import { CodexProvider } from "./provider";
 import { CODEX_TRACE_DIR_ENV, CODEX_TRACE_FULL_ENV } from "./trace";
 
-function messagesRequest(body: unknown): Request {
+function messagesRequest(body: unknown, requestId?: string): Request {
+	const headers = new Headers({ "content-type": "application/json" });
+	if (requestId) headers.set("x-better-ccflare-request-id", requestId);
 	return new Request("https://example.com/v1/messages", {
 		method: "POST",
-		headers: { "content-type": "application/json" },
+		headers,
 		body: JSON.stringify(body),
 	});
 }
@@ -48,10 +50,10 @@ describe("Codex trace wiring (integration)", () => {
 		rmSync(dir, { recursive: true, force: true });
 	});
 
-	test("transformRequestBody writes a JSONL record when enabled (summary only)", async () => {
+	test("transformRequestBody traces and strips the internal request id", async () => {
 		process.env[CODEX_TRACE_DIR_ENV] = dir;
-		await new CodexProvider().transformRequestBody(
-			messagesRequest(SAMPLE),
+		const transformed = await new CodexProvider().transformRequestBody(
+			messagesRequest(SAMPLE, "req_trace_1"),
 			undefined,
 		);
 
@@ -59,9 +61,11 @@ describe("Codex trace wiring (integration)", () => {
 		expect(files.length).toBe(1);
 		const rec = JSON.parse(readFileSync(join(dir, files[0]), "utf8").trim());
 		expect(rec.phase).toBe("request");
+		expect(rec.request_id).toBe("req_trace_1");
 		expect(rec.model_in).toBe("claude-opus-4-8");
 		expect(rec.history_function_call_count).toBe(1);
 		expect(rec.history_tool_use_by_name).toEqual({ Task: 1 });
+		expect(transformed.headers.get("x-better-ccflare-request-id")).toBeNull();
 		// full bodies must be absent unless FULL is set
 		expect(rec.anthropic_request).toBeUndefined();
 	});

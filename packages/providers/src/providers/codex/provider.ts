@@ -417,6 +417,7 @@ export class CodexProvider extends BaseProvider {
 				"x-better-ccflare-request-stream",
 				body.stream === true ? "true" : "false",
 			);
+			newHeaders.delete("x-better-ccflare-request-id");
 			newHeaders.delete("content-length");
 
 			return new Request(request.url, {
