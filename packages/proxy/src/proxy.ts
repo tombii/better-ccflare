@@ -13,6 +13,7 @@ import {
 	type CachePacingSlot,
 	finishPacing,
 } from "./cache-pacing";
+import { warnOnLookbackRisk } from "./cache-telemetry";
 import {
 	createPoolExhaustedResponse,
 	createRequestMetadata,
@@ -284,6 +285,7 @@ export async function handleProxy(
 			sessionKey: requestMeta.clientSessionId,
 			model: appliedModel ?? requestModel,
 		});
+		warnOnLookbackRisk(parsedBody, requestMeta.clientSessionId);
 	}
 
 	// 6. Select accounts

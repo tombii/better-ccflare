@@ -655,3 +655,38 @@ describe("CacheKeepaliveScheduler", () => {
 		});
 	});
 });
+
+describe("sanitizeKeepaliveBody", () => {
+	const { sanitizeKeepaliveBody } = require("../cache-keepalive-scheduler");
+	const encode = (v: unknown) => new TextEncoder().encode(JSON.stringify(v));
+
+	it("patches max_tokens and stream, preserving cache-identity fields", () => {
+		const out = sanitizeKeepaliveBody(
+			encode({
+				model: "claude-opus-4-8",
+				max_tokens: 32000,
+				stream: true,
+				thinking: { type: "adaptive" },
+				tool_choice: { type: "auto" },
+				system: [
+					{ type: "text", text: "s", cache_control: { type: "ephemeral" } },
+				],
+				messages: [{ role: "user", content: "hi" }],
+			}),
+		);
+		const parsed = JSON.parse(out as string);
+		expect(parsed.max_tokens).toBe(1);
+		expect(parsed.stream).toBe(false);
+		// The messages-tier cache identity must survive the patch.
+		expect(parsed.thinking).toEqual({ type: "adaptive" });
+		expect(parsed.tool_choice).toEqual({ type: "auto" });
+		expect(parsed.system[0].cache_control).toEqual({ type: "ephemeral" });
+		expect(parsed.messages).toEqual([{ role: "user", content: "hi" }]);
+	});
+
+	it("returns original bytes for non-JSON bodies", () => {
+		const raw = new TextEncoder().encode("not json");
+		const out = sanitizeKeepaliveBody(raw);
+		expect(new TextDecoder().decode(out as ArrayBuffer)).toBe("not json");
+	});
+});
