@@ -616,7 +616,7 @@ export class AutoRefreshScheduler {
 						const { data: usageData } = await fetchUsageData(accessToken);
 						if (usageData) {
 							log.info(
-								`Fetched usage data for ${accountRow.name}: 5h=${usageData.five_hour.utilization}%, 7d=${usageData.seven_day.utilization}%`,
+								`Fetched usage data for ${accountRow.name}: 5h=${usageData.five_hour?.utilization ?? "?"}%, 7d=${usageData.seven_day?.utilization ?? "?"}%`,
 							);
 							this.proxyContext.dbOps
 								.recordUsageSnapshot(accountRow.id, usageData, Date.now())

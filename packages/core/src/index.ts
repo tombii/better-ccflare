@@ -53,6 +53,7 @@ export {
 	parseModelMappings,
 	validateAndSanitizeModelFallbacks,
 	validateAndSanitizeModelMappings,
+	weeklyScopedWindowKey,
 } from "./model-mappings";
 export {
 	CLAUDE_MODEL_IDS,

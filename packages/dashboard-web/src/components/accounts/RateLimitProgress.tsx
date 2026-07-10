@@ -1,5 +1,5 @@
 import { computeWindowStartMs, registerUIRefresh } from "@better-ccflare/core";
-import type { FullUsageData } from "@better-ccflare/types";
+import type { AnthropicUsageData, FullUsageData } from "@better-ccflare/types";
 import { useEffect, useState } from "react";
 import { cn } from "../../lib/utils";
 import {
@@ -9,6 +9,13 @@ import {
 	providerShowsWeeklyUsage,
 } from "../../utils/provider-utils";
 import { Progress } from "../ui/progress";
+import {
+	collectAnthropicUsageRows,
+	formatWindowName,
+	isWeeklyWindow,
+	severityColor,
+	type UsageDisplay,
+} from "./rate-limit-helpers";
 
 interface RateLimitProgressProps {
 	resetIso: string | null;
@@ -88,6 +95,17 @@ function formatThrottledUntil(throttledUntilMs: number, now: number): string {
 	});
 }
 
+// Map an Anthropic severity (or a >=100% fallback) to a Progress indicator class.
+function severityIndicatorClass(
+	severity: string | undefined,
+	utilization: number | null,
+): string | undefined {
+	const c = severityColor(severity, utilization);
+	if (c === "critical") return "bg-red-500 dark:bg-red-400";
+	if (c === "warning") return "bg-amber-500 dark:bg-amber-400";
+	return undefined;
+}
+
 function computeProjectedMessage(
 	resetTime: string | null,
 	window: string | null,
@@ -108,41 +126,6 @@ function computeProjectedMessage(
 		return `Runs out ${formatDuration(remaining - timeToExhaustMs)} before reset`;
 	}
 	return `Resets ${formatDuration(timeToExhaustMs - remaining)} before exhaustion`;
-}
-
-// Format window name for display
-function formatWindowName(window: string | null): string {
-	if (!window) return "window";
-	switch (window) {
-		case "five_hour":
-			return "5-hour";
-		case "seven_day":
-			return "Weekly";
-		case "seven_day_opus":
-			return "Opus (Weekly)";
-		case "seven_day_sonnet":
-			return "Sonnet (Weekly)";
-		case "daily":
-			return "Daily";
-		case "weekly":
-			return "Weekly";
-		case "monthly":
-			return "Monthly";
-		case "time_limit":
-			return "Time Quota";
-		case "tokens_limit":
-			return "5-hour";
-		case "credits":
-			return "Grok credits";
-		default:
-			return window.replace("_", " ");
-	}
-}
-
-interface UsageDisplay {
-	utilization: number | null;
-	window: string | null;
-	resetTime: string | null;
 }
 
 export function RateLimitProgress({
@@ -253,9 +236,11 @@ export function RateLimitProgress({
 
 	// Anthropic-style quota data is shared by Anthropic and Codex; detect by shape, not provider name.
 	const hasAnthropicStyleData =
-		usageData &&
-		"five_hour" in usageData &&
-		"seven_day" in usageData &&
+		usageData != null &&
+		// Legacy flat windows OR the new generic limits[] array. Never NanoGPT's
+		// object-shaped `limits` — disambiguated with Array.isArray.
+		(("five_hour" in usageData && "seven_day" in usageData) ||
+			Array.isArray((usageData as { limits?: unknown }).limits)) &&
 		!isAlibabaData &&
 		!isZaiData &&
 		!isNanoGPTData;
@@ -363,81 +348,14 @@ export function RateLimitProgress({
 			});
 		}
 	} else if (hasAnthropicStyleData && showWeekly) {
-		// Anthropic usage data - show 5-hour and weekly usage
-		const anthropicData = usageData as {
-			five_hour?: { utilization: number | null; resets_at: string | null };
-			seven_day?: { utilization: number | null; resets_at: string | null };
-			seven_day_opus?: { utilization: number | null; resets_at: string | null };
-			seven_day_sonnet?: {
-				utilization: number | null;
-				resets_at: string | null;
-			};
-		};
-		if (anthropicData?.five_hour) {
-			usages.push({
-				utilization: anthropicData.five_hour.utilization,
-				window: "five_hour",
-				resetTime: anthropicData.five_hour.resets_at,
-			});
-		} else {
-			// Fallback: use the most restrictive window data for 5-hour display
-			usages.push({
+		// Anthropic usage data - show 5-hour, weekly, and any per-model weekly
+		// tier (opus, sonnet, and future tiers such as Fable) generically.
+		usages.push(
+			...collectAnthropicUsageRows(usageData as unknown as AnthropicUsageData, {
 				utilization: usageUtilization ?? null,
-				window: "five_hour",
 				resetTime: resetIso,
-			});
-		}
-
-		// Check if seven_day data exists and has valid utilization
-		if (
-			anthropicData &&
-			anthropicData.seven_day &&
-			anthropicData.seven_day.utilization !== null &&
-			anthropicData.seven_day.utilization !== undefined
-		) {
-			usages.push({
-				utilization: anthropicData.seven_day.utilization,
-				window: "seven_day",
-				resetTime: anthropicData.seven_day.resets_at,
-			});
-		} else {
-			// Add weekly usage as placeholder if data is not available
-			usages.push({
-				utilization: null,
-				window: "seven_day",
-				resetTime: null,
-			});
-		}
-
-		// Check if seven_day_opus data exists, has valid utilization, and resets_at is not null
-		if (
-			anthropicData &&
-			anthropicData.seven_day_opus &&
-			anthropicData.seven_day_opus.utilization !== null &&
-			anthropicData.seven_day_opus.utilization !== undefined &&
-			anthropicData.seven_day_opus.resets_at !== null
-		) {
-			usages.push({
-				utilization: anthropicData.seven_day_opus.utilization,
-				window: "seven_day_opus",
-				resetTime: anthropicData.seven_day_opus.resets_at,
-			});
-		}
-
-		// Check if seven_day_sonnet data exists, has valid utilization, and resets_at is not null
-		if (
-			anthropicData &&
-			anthropicData.seven_day_sonnet &&
-			anthropicData.seven_day_sonnet.utilization !== null &&
-			anthropicData.seven_day_sonnet.utilization !== undefined &&
-			anthropicData.seven_day_sonnet.resets_at !== null
-		) {
-			usages.push({
-				utilization: anthropicData.seven_day_sonnet.utilization,
-				window: "seven_day_sonnet",
-				resetTime: anthropicData.seven_day_sonnet.resets_at,
-			});
-		}
+			}),
+		);
 	} else if (
 		providerShowsWeeklyUsage(provider) &&
 		usageUtilization !== null &&
@@ -507,6 +425,11 @@ export function RateLimitProgress({
 				const percentage = usage.utilization;
 				const isAvailable = percentage !== null;
 
+				// Group header shown before the first row of each group (limits[] rows).
+				const showGroupHeader =
+					usage.group != null && usage.group !== usages[_index - 1]?.group;
+				const groupTitle = usage.group === "session" ? "Session" : "Weekly";
+
 				// Calculate time remaining for this specific window
 				let windowTimeText = "";
 				if (usage.resetTime) {
@@ -523,14 +446,9 @@ export function RateLimitProgress({
 					} else {
 						windowTimeText = `${windowRemainingMinutes}m`;
 					}
-				} else if (usage.window === "seven_day") {
-					// Special handling for weekly data when reset time is not available
-					windowTimeText = "Data unavailable";
-				} else if (
-					usage.window === "seven_day_opus" ||
-					usage.window === "seven_day_sonnet"
-				) {
-					// Special handling for weekly opus/sonnet data when reset time is not available
+				} else if (usage.window && isWeeklyWindow(usage.window)) {
+					// Weekly account/tier windows (seven_day, seven_day_opus,
+					// seven_day_sonnet, seven_day_fable, …) when reset time is unavailable.
 					windowTimeText = "Data unavailable";
 				} else if (usage.window === "daily" || usage.window === "monthly") {
 					// Special handling for NanoGPT when no subscription is active (PayG mode)
@@ -543,7 +461,10 @@ export function RateLimitProgress({
 					!usage.resetTime
 				) {
 					return (
-						<div key={usage.window || "default"} className="space-y-2">
+						<div
+							key={`${usage.window ?? "row"}:${usage.label ?? "default"}`}
+							className="space-y-2"
+						>
 							<div className="flex items-center justify-between">
 								<span className="text-xs text-muted-foreground">
 									No subscription (PayG mode)
@@ -554,7 +475,15 @@ export function RateLimitProgress({
 				}
 
 				return (
-					<div key={usage.window || "default"} className="space-y-2">
+					<div
+						key={`${usage.window ?? "row"}:${usage.label ?? "default"}`}
+						className="space-y-2"
+					>
+						{showGroupHeader && (
+							<div className="pt-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+								{groupTitle}
+							</div>
+						)}
 						{(() => {
 							const expectedPct = computeExpectedPct(
 								usage.resetTime,
@@ -577,7 +506,7 @@ export function RateLimitProgress({
 							const throttleDisplayUntil =
 								windowThrottleUntil ?? usageThrottledUntil;
 							const windowLabel = usage.window
-								? formatWindowName(usage.window)
+								? (usage.label ?? formatWindowName(usage.window))
 								: "Rate limit";
 							const projectedMessage = computeProjectedMessage(
 								usage.resetTime,
@@ -590,7 +519,8 @@ export function RateLimitProgress({
 									<div className="flex items-center justify-between">
 										<span className="text-xs text-muted-foreground">
 											{usage.window
-												? `Usage (${formatWindowName(usage.window)})`
+												? (usage.label ??
+													`Usage (${formatWindowName(usage.window)})`)
 												: "Rate limit window"}
 										</span>
 										<span
@@ -601,6 +531,11 @@ export function RateLimitProgress({
 											)}
 										>
 											{isAvailable ? `${percentage?.toFixed(0)}%` : "N/A"}
+											{usage.isActive && (
+												<span className="ml-1.5 text-[10px] font-normal uppercase tracking-wide text-red-500 dark:text-red-400">
+													binding
+												</span>
+											)}
 										</span>
 									</div>
 									<div className="group relative">
@@ -631,7 +566,14 @@ export function RateLimitProgress({
 											indicatorClassName={
 												isWindowThrottled
 													? "bg-amber-500 dark:bg-amber-400"
-													: undefined
+													: severityIndicatorClass(
+															usage.severity,
+															// Time-based fallback row (window == null) uses elapsed
+															// time as its bar %, not usage -- never color it by that.
+															usage.window == null
+																? null
+																: (percentage ?? null),
+														)
 											}
 										/>
 										{expectedPct !== null && (
@@ -678,9 +620,7 @@ export function RateLimitProgress({
 										: `${windowTimeText} until refresh`}
 								</span>
 								<span className="text-xs text-muted-foreground">
-									{usage.window === "seven_day" ||
-									usage.window === "seven_day_opus" ||
-									usage.window === "seven_day_sonnet" ||
+									{(usage.window && isWeeklyWindow(usage.window)) ||
 									usage.window === "weekly" ||
 									usage.window === "monthly" ||
 									usage.window === "time_limit" ||
@@ -705,9 +645,7 @@ export function RateLimitProgress({
 							</div>
 						)}
 						{!usage.resetTime &&
-							(usage.window === "seven_day" ||
-								usage.window === "seven_day_opus" ||
-								usage.window === "seven_day_sonnet" ||
+							((usage.window && isWeeklyWindow(usage.window)) ||
 								usage.window === "daily" ||
 								usage.window === "monthly") && (
 								<div className="flex items-center justify-between">
@@ -724,6 +662,54 @@ export function RateLimitProgress({
 					</div>
 				);
 			})}
+			{hasAnthropicStyleData &&
+				(() => {
+					const spend = (
+						usageData as {
+							spend?: {
+								enabled?: boolean;
+								percent?: number | null;
+								used?: {
+									amount_minor: number;
+									currency: string;
+									exponent?: number;
+								} | null;
+								currency?: string | null;
+							};
+						}
+					).spend;
+					if (!spend?.enabled) return null;
+					const used = spend.used;
+					const exponent = used?.exponent ?? 2;
+					const rawAmount =
+						used != null ? used.amount_minor / 10 ** exponent : null;
+					const amount =
+						rawAmount != null && Number.isFinite(rawAmount) ? rawAmount : null;
+					const cur = used?.currency ?? spend.currency ?? "USD";
+					const pct = spend.percent ?? null;
+					return (
+						<div className="space-y-2">
+							<div className="flex items-center justify-between">
+								<span className="text-xs text-muted-foreground">
+									Overage credits
+								</span>
+								<span className="text-xs font-medium text-muted-foreground">
+									{amount != null
+										? `${cur} ${amount.toFixed(2)}`
+										: pct != null
+											? `${pct.toFixed(0)}%`
+											: "—"}
+								</span>
+							</div>
+							{pct != null && (
+								<Progress
+									value={Math.min(100, Math.max(0, pct))}
+									className="h-2"
+								/>
+							)}
+						</div>
+					);
+				})()}
 		</div>
 	);
 }

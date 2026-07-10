@@ -69,6 +69,12 @@ export function computeWindowStartMs(
 		return resetMs - actualMonthDurationMs;
 	}
 
-	const durationMs = FIXED_WINDOW_DURATION_MS[window];
+	// Any Anthropic weekly model-tier window (`seven_day_*`, e.g. a new
+	// `seven_day_fable` tier or future tiers) is a 7-day window, even when not
+	// explicitly listed above. This keeps the pace marker / exhaustion
+	// projection generic instead of hardcoded per tier.
+	const durationMs =
+		FIXED_WINDOW_DURATION_MS[window] ??
+		(window.startsWith("seven_day_") ? 7 * 24 * 60 * 60 * 1000 : undefined);
 	return durationMs ? resetMs - durationMs : null;
 }

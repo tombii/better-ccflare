@@ -30,6 +30,21 @@ export function getModelFamily(
 }
 
 /**
+ * Internal window key for a per-model weekly (weekly_scoped) limit, derived from
+ * the model display name. Kept byte-identical between the dashboard usage rows
+ * and the proxy throttle snapshots so the two match (throttle-window match /
+ * amber highlight). Only needs to start with `seven_day_` (so the pace marker
+ * treats it as a 7-day window) and be stable per model.
+ */
+export function weeklyScopedWindowKey(displayName: string): string {
+	const slug = displayName
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, "_")
+		.replace(/^_+|_+$/g, "");
+	return `seven_day_${slug}`;
+}
+
+/**
  * Validate if a model ID is a valid Claude model
  * Accepts any model containing fable, opus, sonnet, or haiku (case-insensitive)
  * @returns true if model matches a known pattern
