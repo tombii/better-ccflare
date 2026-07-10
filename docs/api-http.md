@@ -119,7 +119,7 @@ Note: this is distinct from the `codex` *provider*, which routes requests outbou
 - `previous_response_id` is accepted but ignored — better-ccflare is stateless and does not store prior responses. Codex uses this field only over WebSocket (which better-ccflare does not implement); for regular HTTP requests Codex always sends the full conversation history in `input`, so this field has no effect.
 - Built-in tool types (`web_search_preview`, `code_interpreter`, `file_search`) are silently skipped; only `type: "function"` tools are forwarded to Anthropic.
 
-**Note:** There is no `/v1/models` endpoint provided by better-ccflare. Model listing would need to be done directly through Claude's API if such an endpoint exists.
+**Note:** `GET /v1/models` is proxied through to Claude like any other `/v1/*` request. A successful response (from a console/API-key account) is also passively captured into better-ccflare's own model catalog cache — see [Model Catalog](#model-catalog) below for the read endpoint (`GET /api/models`) and how the catalog is kept up to date.
 
 **Headers:**
 - All standard Claude API headers are supported
@@ -874,6 +874,55 @@ curl http://localhost:8080/api/workspaces
 
 ---
 
+### Model Catalog
+
+#### GET /api/models
+
+Return the cached Anthropic model catalog used to populate model dropdowns (dashboard agent/default-model selects). Returns the live catalog if a successful fetch has occurred (scheduled refresh, manual refresh, or passive capture from a proxied `GET /v1/models`); otherwise the bundled static fallback shipped with better-ccflare.
+
+**Response:**
+```json
+{
+  "models": [
+    { "id": "claude-sonnet-5", "displayName": "Claude Sonnet 5", "createdAt": "2026-01-15T00:00:00Z" }
+  ],
+  "fetchedAt": 1751270400000,
+  "source": "live"
+}
+```
+
+`source` is `"live"` when the catalog came from a real Anthropic response, or `"fallback"` when no live fetch has ever succeeded and the bundled model list is being served instead (`fetchedAt` is then the bundled list's snapshot date, not the current time — see [Model Catalog](configuration.md#model-catalog) in the configuration guide).
+
+**Example:**
+```bash
+curl http://localhost:8080/api/models
+```
+
+#### POST /api/models/refresh
+
+Force an immediate live model catalog refresh, bypassing the scheduled interval. Prefers a console/API-key account but falls back to an OAuth account if `BETTER_CCFLARE_MODELS_OAUTH_REFRESH` (or the equivalent config toggle) is enabled. Never throws — always returns `200` with the outcome, even on failure (e.g. no eligible account, network error).
+
+**Response:**
+```json
+{
+  "success": true,
+  "catalog": {
+    "models": [ ... ],
+    "fetchedAt": 1751270400000,
+    "source": "live"
+  }
+}
+```
+
+On failure, `success` is `false` and an `error` field describes the reason; `catalog` still reflects the current (unchanged) cached catalog.
+
+**Example:**
+```bash
+curl -X POST http://localhost:8080/api/models/refresh
+```
+
+---
+
 ### Logs
 
 #### GET /api/logs/stream
@@ -1006,6 +1055,10 @@ better-ccflare can be configured using the following environment variables:
 - `RETRY_ATTEMPTS` - Number of retry attempts for failed requests (default: 3)
 - `RETRY_DELAY_MS` - Initial delay between retries in milliseconds (default: 1000)
 - `RETRY_BACKOFF` - Exponential backoff multiplier for retries (default: 2)
+- `BETTER_CCFLARE_MODELS_REFRESH_HOURS` - Hours between scheduled model catalog refreshes, 0 disables scheduled refresh (default: 168 / 7 days). See [Model Catalog](configuration.md#model-catalog).
+- `BETTER_CCFLARE_MODELS_OFFLINE` - Disable scheduled/manual model catalog refresh and passive `/v1/models` capture (default: unset)
+- `BETTER_CCFLARE_MODELS_CACHE_DIR` - Directory for the persisted model catalog cache file (default: platform config dir)
+- `BETTER_CCFLARE_MODELS_OAUTH_REFRESH` - Allow OAuth accounts as a fallback source for manual model catalog refreshes (default: unset / console-only)
 
 ### Configuration File
 
