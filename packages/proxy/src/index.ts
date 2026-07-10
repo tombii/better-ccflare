@@ -10,6 +10,7 @@ export {
 	registerProvider,
 } from "@better-ccflare/providers";
 export { AutoRefreshScheduler } from "./auto-refresh-scheduler";
+export { handleCacheDiagnosisRequest } from "./cache-diagnosis";
 export { CacheKeepaliveScheduler } from "./cache-keepalive-scheduler";
 export {
 	type CodexUsageRefreshOutcome,

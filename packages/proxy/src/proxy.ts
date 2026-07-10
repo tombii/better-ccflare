@@ -8,6 +8,7 @@ import { Logger } from "@better-ccflare/logger";
 import { usageCache } from "@better-ccflare/providers";
 import type { Account } from "@better-ccflare/types";
 import { cacheBodyStore } from "./cache-body-store";
+import { recordDiagnosisCandidate } from "./cache-diagnosis";
 import {
 	acquireCachePacing,
 	type CachePacingSlot,
@@ -286,6 +287,11 @@ export async function handleProxy(
 			model: appliedModel ?? requestModel,
 		});
 		warnOnLookbackRisk(parsedBody, requestMeta.clientSessionId);
+		recordDiagnosisCandidate(
+			requestMeta.clientSessionId,
+			finalBodyBuffer,
+			req.headers,
+		);
 	}
 
 	// 6. Select accounts

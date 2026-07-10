@@ -47,6 +47,7 @@ import {
 	drainUsageCollector,
 	getUsageCollectorHealth,
 	getValidAccessToken,
+	handleCacheDiagnosisRequest,
 	handleProxy,
 	initProxy,
 	type ProxyContext,
@@ -1081,6 +1082,14 @@ export default async function startServer(options?: {
 				const apiResponse = await apiRouter.handleRequest(url, req);
 				if (apiResponse) {
 					return apiResponse;
+				}
+
+				// On-demand prompt-cache forensics (env-gated; see cache-diagnosis.ts)
+				if (
+					req.method === "POST" &&
+					url.pathname === "/api/debug/cache-diagnosis"
+				) {
+					return await handleCacheDiagnosisRequest(req, serverPort ?? port);
 				}
 
 				// Dashboard routes (only if enabled and assets are available)
