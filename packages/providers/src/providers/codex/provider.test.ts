@@ -1987,7 +1987,9 @@ describe("fetchCodexUsageOnDemand", () => {
 		const headersInit = recorded?.init.headers as Record<string, string>;
 		const headers = new Headers(headersInit);
 		expect(headers.get("Authorization")).toBe("Bearer test-token");
+		expect(headers.get("Version")).toBe("0.144.1");
 		expect(headers.get("Openai-Beta")).toBe("responses=experimental");
+		expect(headers.get("User-Agent")).toContain("codex-cli/0.144.1");
 		expect(headers.get("originator")).toBe("codex_cli_rs");
 		expect(headers.get("Content-Type")).toBe("application/json");
 
