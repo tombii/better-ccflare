@@ -2214,7 +2214,7 @@ describe("CodexProvider prompt_cache_key derivation", () => {
 			transform({
 				metadata: { user_id: JSON.stringify({ session_id: sessionId }) },
 			});
-		const lower = await withSession("11111111-1111-4111-8111-111111111111");
+const lower = await withSession("11111111-1111-4111-8111-111111111111");
 		const upper = await withSession(
 			"11111111-1111-4111-8111-111111111111".toUpperCase(),
 		);
