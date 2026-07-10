@@ -20,12 +20,24 @@
 import { createHmac } from "node:crypto";
 import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { Logger } from "@better-ccflare/logger";
 
 export const CODEX_TRACE_DIR_ENV = "CCFLARE_CODEX_TRACE_DIR";
 export const CODEX_TRACE_FULL_ENV = "CCFLARE_CODEX_TRACE_FULL";
 export const CODEX_TRACE_HMAC_KEY_ENV = "CCFLARE_CODEX_TRACE_HMAC_KEY";
+/** Warn when one response spawns at least this many subagents (0 disables). */
+export const CODEX_FANOUT_WARN_ENV = "CCFLARE_CODEX_FANOUT_WARN";
 
-const TRACE_SCHEMA_VERSION = 2;
+const TRACE_SCHEMA_VERSION = 3;
+const DEFAULT_FANOUT_WARN = 8;
+/**
+ * Tool names that spawn subagents in Claude Code ("Task" historically,
+ * "Agent" in current clients). Fan-out through these compounds recursively,
+ * so they get dedicated telemetry.
+ */
+const SUBAGENT_TOOL_NAMES = new Set(["Task", "Agent"]);
+
+const log = new Logger("CodexTrace");
 
 const CONTINUATION_NUDGE_MARKER = "Continue the user's original request now";
 
@@ -54,6 +66,8 @@ export interface CodexTransformSummary {
 
 export interface CodexResponseSummary {
 	new_tool_call_count: number;
+	/** Newly emitted Task/Agent calls: the recursive fan-out signal. */
+	new_subagent_spawn_count: number;
 	new_tool_use_by_name: Record<string, number>;
 	new_tool_calls: ToolCallSummary[];
 	stop_reason: "tool_use" | "end_turn" | "error";
@@ -136,6 +150,10 @@ interface TraceInputs {
 	modelIn?: string;
 	modelOut?: string;
 	messageCount?: number;
+	/** Privacy-preserving session join key (hash of metadata.user_id). */
+	sessionKeyHash?: string | null;
+	/** Whether a prompt_cache_key was attached to the outbound request. */
+	promptCacheKeySet?: boolean;
 	instructions?: string;
 	tools?: readonly unknown[];
 	codexInput: readonly unknown[];
@@ -162,13 +180,18 @@ export function summarizeCodexResponse(
 	error?: { type?: string; message?: string },
 ): CodexResponseSummary {
 	const newToolUseByName: Record<string, number> = {};
+	let subagentSpawnCount = 0;
 	for (const call of toolCalls) {
 		newToolUseByName[call.name] = (newToolUseByName[call.name] ?? 0) + 1;
+		if (SUBAGENT_TOOL_NAMES.has(call.name)) {
+			subagentSpawnCount++;
+		}
 	}
 	const inputTokens = usage.input_tokens ?? 0;
 	const cacheRead = usage.cache_read_input_tokens ?? 0;
 	return {
 		new_tool_call_count: toolCalls.length,
+		new_subagent_spawn_count: subagentSpawnCount,
 		new_tool_use_by_name: newToolUseByName,
 		new_tool_calls: [...toolCalls],
 		stop_reason: stopReason,
@@ -205,6 +228,8 @@ export function writeCodexTrace(inputs: TraceInputs): void {
 		model_in: inputs.modelIn ?? null,
 		model_out: inputs.modelOut ?? null,
 		message_count: inputs.messageCount ?? null,
+		session_key_hash: inputs.sessionKeyHash ?? null,
+		prompt_cache_key_set: inputs.promptCacheKeySet ?? false,
 		instructions_len: inputs.instructions?.length ?? null,
 		instructions_bytes: instructionsMetrics?.bytes ?? null,
 		instructions_hmac: instructionsMetrics?.hmac ?? null,
@@ -225,6 +250,18 @@ export function writeCodexTrace(inputs: TraceInputs): void {
  * Append one response JSONL trace record. No-op (and never throws) when disabled.
  */
 export function writeCodexResponseTrace(inputs: ResponseTraceInputs): void {
+	// Real-time fan-out visibility, independent of whether file tracing is on:
+	// a single response spawning many subagents is the leading edge of a
+	// recursive storm and should be loud in the service journal.
+	const warnThreshold = readFanoutWarnThreshold();
+	if (
+		warnThreshold > 0 &&
+		inputs.summary.new_subagent_spawn_count >= warnThreshold
+	) {
+		log.warn(
+			`response ${inputs.requestId ?? "unknown"} (${inputs.modelOut ?? "unknown model"}) spawned ${inputs.summary.new_subagent_spawn_count} subagents in one turn (warn threshold ${warnThreshold}). Possible recursive fan-out.`,
+		);
+	}
 	appendTraceRecord({
 		trace_schema_version: TRACE_SCHEMA_VERSION,
 		phase: "response",
@@ -266,6 +303,13 @@ function serializedMetrics(value: unknown): {
 	} catch {
 		return { bytes: 0, hmac: null };
 	}
+}
+
+function readFanoutWarnThreshold(): number {
+	const raw = process.env[CODEX_FANOUT_WARN_ENV];
+	if (raw === undefined || raw === "") return DEFAULT_FANOUT_WARN;
+	const parsed = Number.parseInt(raw, 10);
+	return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_FANOUT_WARN;
 }
 
 function safeLength(value: unknown): number {

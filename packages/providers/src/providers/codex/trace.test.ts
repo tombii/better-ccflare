@@ -121,6 +121,27 @@ describe("summarizeCodexResponse (response phase)", () => {
 		expect(s.cache_hit_pct).toBe(70);
 	});
 
+	test("counts Task and Agent calls as subagent spawns, other tools excluded", () => {
+		const s = summarizeCodexResponse(
+			[
+				{ name: "Task", arg_preview: "{}" },
+				{ name: "Agent", arg_preview: "{}" },
+				{ name: "Agent", arg_preview: "{}" },
+				{ name: "Bash", arg_preview: "{}" },
+				{ name: "Read", arg_preview: "{}" },
+			],
+			{ input_tokens: 100 },
+			"tool_use",
+		);
+		expect(s.new_tool_call_count).toBe(5);
+		expect(s.new_subagent_spawn_count).toBe(3);
+	});
+
+	test("text-only responses report zero subagent spawns", () => {
+		const s = summarizeCodexResponse([], { input_tokens: 10 }, "end_turn");
+		expect(s.new_subagent_spawn_count).toBe(0);
+	});
+
 	test("clamps malformed cached token counts to the total input", () => {
 		const s = summarizeCodexResponse(
 			[],

@@ -437,6 +437,8 @@ export class CodexProvider extends BaseProvider {
 				modelIn: body.model,
 				modelOut: codexBody.model,
 				messageCount: body.messages.length,
+				sessionKeyHash: this.hashSessionKey(body),
+				promptCacheKeySet: Boolean(codexBody.prompt_cache_key),
 				instructions: codexBody.instructions,
 				tools: codexBody.tools,
 				codexInput: codexBody.input,
@@ -613,6 +615,17 @@ export class CodexProvider extends BaseProvider {
 			.filter((b) => b.type === "text")
 			.map((b) => b.text)
 			.join("\n\n");
+	}
+
+	/**
+	 * Short, privacy-preserving session join key for trace records. Unlike
+	 * extractPromptCacheKey this is not env-gated and never sent upstream;
+	 * it only lets offline analysis group request/response records by session.
+	 */
+	private hashSessionKey(body: AnthropicRequest): string | null {
+		const rawUserId = body.metadata?.user_id;
+		if (typeof rawUserId !== "string" || rawUserId.length === 0) return null;
+		return createHash("sha256").update(rawUserId).digest("hex").slice(0, 16);
 	}
 
 	private extractPromptCacheKey(body: AnthropicRequest): string | undefined {
