@@ -5,7 +5,7 @@ import { agentRegistry } from "@better-ccflare/agents";
 import type { DatabaseOperations } from "@better-ccflare/database";
 import { Logger } from "@better-ccflare/logger";
 import { validatePath } from "@better-ccflare/security";
-import type { Agent } from "@better-ccflare/types";
+import { getModelCatalog, type ModelCatalog } from "../model-catalog";
 import { RequestBodyContext } from "../request-body-context";
 
 const log = new Logger("AgentInterceptor");
@@ -18,16 +18,47 @@ export interface AgentInterceptResult {
 }
 
 /**
+ * Guards a preference-driven model rewrite against the live Anthropic model
+ * catalog. Fail-open by design: a veto only ever comes from a confirmed
+ * live catalog that doesn't list the target model. A stale/bundled fallback
+ * catalog (whether because no live fetch has ever succeeded, or the catalog
+ * came back empty) must never block a rewrite — the static fallback list is
+ * not authoritative enough to justify overriding an explicit preference.
+ */
+export function isRewriteTargetServable(
+	catalog: ModelCatalog | null | undefined,
+	model: string,
+): boolean {
+	if (!catalog) return true;
+	if (catalog.source !== "live") return true;
+	if (catalog.models.length === 0) return true;
+	return catalog.models.some((entry) => entry.id === model);
+}
+
+/**
  * Detects agent usage and modifies the request body to use the preferred model
  * @param requestBodyBuffer - The buffered request body
  * @param dbOps - Database operations instance
+ * @param requestHeaders - Incoming request headers (used for x-anthropic-agent-id)
+ * @param options.frontmatterModelFallback - When true, fall back to the
+ *   agent's frontmatter `model` if no explicit DB preference is configured.
+ *   Defaults to false (see `Config.getAgentFrontmatterModelFallback`).
+ * @param options.getModelCatalog - Injectable model-catalog accessor (defaults
+ *   to the real `getModelCatalog`), consulted before applying a preference
+ *   rewrite via `isRewriteTargetServable`. Tests inject a stub to avoid the
+ *   real disk-cache/network-backed implementation.
  * @returns Modified request body and agent detection information
  */
 export async function interceptAndModifyRequest(
 	requestBody: ArrayBuffer | RequestBodyContext | null,
 	dbOps: DatabaseOperations,
 	requestHeaders?: Headers,
+	options?: {
+		frontmatterModelFallback?: boolean;
+		getModelCatalog?: () => Promise<ModelCatalog>;
+	},
 ): Promise<AgentInterceptResult> {
+	const loadModelCatalog = options?.getModelCatalog ?? getModelCatalog;
 	const bodyContext =
 		requestBody instanceof RequestBodyContext
 			? requestBody
@@ -44,6 +75,10 @@ export async function interceptAndModifyRequest(
 		};
 	}
 
+	// Extracted outside the try so a parse failure below still lets us report
+	// the original model (best-effort) instead of resetting it to null.
+	let originalModel: string | null = null;
+
 	try {
 		const parsedBody = bodyContext.getParsedJson();
 		if (!parsedBody) {
@@ -51,7 +86,7 @@ export async function interceptAndModifyRequest(
 		}
 
 		// Extract original model
-		const originalModel =
+		originalModel =
 			typeof parsedBody.model === "string" ? parsedBody.model : null;
 
 		// Explicit agent attribution via header (vendor-neutral): lets any client —
@@ -66,19 +101,29 @@ export async function interceptAndModifyRequest(
 			log.debug(
 				`Agent attributed via x-anthropic-agent-id: ${explicitAgentId}`,
 			);
-			// Honor model-preference substitution for the declared agent, the same
-			// as the system-prompt path — don't silently bypass it.
+			// Both the header path and the system-prompt path below rewrite the
+			// model only on an explicit DB preference set via the dashboard/CLI;
+			// an agent's frontmatter `model` is never consulted here, since a
+			// declared agent id has no associated frontmatter to fall back to.
 			const preference = await dbOps.getAgentPreference(explicitAgentId);
 			const preferredModel = preference?.model;
 			if (preferredModel && preferredModel !== originalModel) {
-				log.info(`Modifying model from ${originalModel} to ${preferredModel}`);
-				bodyContext.setModel(preferredModel);
-				return {
-					modifiedBody: bodyContext.getBuffer(),
-					agentUsed: explicitAgentId,
-					originalModel,
-					appliedModel: preferredModel,
-				};
+				const catalog = await loadModelCatalog();
+				if (isRewriteTargetServable(catalog, preferredModel)) {
+					log.info(
+						`Modifying model from ${originalModel} to ${preferredModel}`,
+					);
+					bodyContext.setModel(preferredModel);
+					return {
+						modifiedBody: bodyContext.getBuffer(),
+						agentUsed: explicitAgentId,
+						originalModel,
+						appliedModel: preferredModel,
+					};
+				}
+				log.warn(
+					`Agent ${explicitAgentId} prefers model ${preferredModel} which is not in the live model list — passing through ${originalModel}`,
+				);
 			}
 			return {
 				modifiedBody: requestBodyBuffer,
@@ -148,11 +193,9 @@ export async function interceptAndModifyRequest(
 			}
 		}
 
-		// Detect agent usage
-		const agents = await agentRegistry.getAgents();
-		const detectedAgent = agents.find((agent: Agent) =>
-			systemPrompt.includes(agent.systemPrompt.trim()),
-		);
+		// Detect agent usage — delegate to the registry's own matcher so the
+		// containment/empty-prompt semantics live in exactly one place.
+		const detectedAgent = await agentRegistry.findAgentByPrompt(systemPrompt);
 
 		if (!detectedAgent) {
 			// No agent detected
@@ -168,12 +211,35 @@ export async function interceptAndModifyRequest(
 			`Detected agent usage: ${detectedAgent.name} (${detectedAgent.id})`,
 		);
 
-		// Look up model preference
+		// Look up model preference. An explicit DB preference (set via the
+		// dashboard/CLI) always wins. Absent that, the agent's frontmatter
+		// `model` is only consulted as a fallback when explicitly opted in via
+		// config — Claude Code already resolves frontmatter model aliases
+		// client-side, so the registry's copy can go stale relative to what the
+		// client actually resolved and sent; rewriting from it by default has
+		// broken subagent spawns against dead alias targets in the past. A null
+		// agent.model means "inherit" (no preference) either way.
 		const preference = await dbOps.getAgentPreference(detectedAgent.id);
-		const preferredModel = preference?.model || detectedAgent.model;
+		const preferredModel =
+			preference?.model ??
+			(options?.frontmatterModelFallback ? detectedAgent.model : null);
 
-		// If the preferred model is the same as original, no modification needed
-		if (preferredModel === originalModel) {
+		// If there's no preference at all, or it matches the original, no
+		// modification is needed. agentUsed is still reported for attribution.
+		if (!preferredModel || preferredModel === originalModel) {
+			return {
+				modifiedBody: requestBodyBuffer,
+				agentUsed: detectedAgent.id,
+				originalModel,
+				appliedModel: originalModel,
+			};
+		}
+
+		const catalog = await loadModelCatalog();
+		if (!isRewriteTargetServable(catalog, preferredModel)) {
+			log.warn(
+				`Agent ${detectedAgent.id} prefers model ${preferredModel} which is not in the live model list — passing through ${originalModel}`,
+			);
 			return {
 				modifiedBody: requestBodyBuffer,
 				agentUsed: detectedAgent.id,
@@ -194,12 +260,14 @@ export async function interceptAndModifyRequest(
 		};
 	} catch (error) {
 		log.error("Failed to intercept/modify request:", error);
-		// On error, return original body unmodified
+		// On error, return original body unmodified. originalModel may have
+		// been extracted before the failure (best-effort) — preserve it
+		// instead of resetting to null so downstream routing still sees it.
 		return {
 			modifiedBody: requestBodyBuffer,
 			agentUsed: null,
-			originalModel: null,
-			appliedModel: null,
+			originalModel,
+			appliedModel: originalModel,
 		};
 	}
 }

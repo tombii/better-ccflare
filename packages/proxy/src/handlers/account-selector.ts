@@ -24,6 +24,21 @@ export function getComboSlotInfo(meta: RequestMeta): ComboSlotInfo | null {
 }
 
 /**
+ * Resolves the model that should drive account routing: the agent
+ * interceptor's applied (post-rewrite) model when it modified the request,
+ * falling back to the original client-requested model otherwise. Routing
+ * must see the model that will actually be sent upstream — combo routing
+ * and family-based selection would otherwise match against a model the
+ * outgoing request no longer carries.
+ */
+export function resolveEffectiveModel(
+	appliedModel: string | null | undefined,
+	requestModel: string | null | undefined,
+): string | null {
+	return appliedModel ?? requestModel ?? null;
+}
+
+/**
  * Gets accounts ordered by the load balancing strategy
  * @param meta - Request metadata
  * @param ctx - The proxy context

@@ -151,7 +151,9 @@ export function ensureSchema(db: Database): void {
 			output_tokens INTEGER DEFAULT 0,
 			agent_used TEXT,
 			project TEXT,
-			billing_type TEXT DEFAULT 'api'
+			billing_type TEXT DEFAULT 'api',
+			original_model TEXT,
+			applied_model TEXT
 		)
 	`);
 
@@ -932,6 +934,17 @@ export function runMigrations(db: Database, dbPath?: string): void {
 		if (!requestsColumnNames.includes("combo_name")) {
 			db.prepare("ALTER TABLE requests ADD COLUMN combo_name TEXT").run();
 			log.info("Added combo_name column to requests table");
+		}
+
+		// Add original_model / applied_model columns if they don't exist
+		// (observability for agent-preference model rewrites — issue C5b)
+		if (!requestsColumnNames.includes("original_model")) {
+			db.prepare("ALTER TABLE requests ADD COLUMN original_model TEXT").run();
+			log.info("Added original_model column to requests table");
+		}
+		if (!requestsColumnNames.includes("applied_model")) {
+			db.prepare("ALTER TABLE requests ADD COLUMN applied_model TEXT").run();
+			log.info("Added applied_model column to requests table");
 		}
 
 		// Add timestamp column to request_payloads if it doesn't exist

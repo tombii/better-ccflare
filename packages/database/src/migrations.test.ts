@@ -358,6 +358,81 @@ describe("Database Migrations - Tier Column Removal", () => {
 		});
 	});
 
+	describe("Agent Model Rewrite Observability (original_model/applied_model)", () => {
+		it("ensureSchema creates original_model and applied_model TEXT columns on requests", () => {
+			ensureSchema(db);
+
+			const columns = db.prepare("PRAGMA table_info(requests)").all() as Array<{
+				name: string;
+				type: string;
+			}>;
+			const original = columns.find((c) => c.name === "original_model");
+			const applied = columns.find((c) => c.name === "applied_model");
+
+			expect(original).toBeDefined();
+			expect(original?.type.toUpperCase()).toBe("TEXT");
+			expect(applied).toBeDefined();
+			expect(applied?.type.toUpperCase()).toBe("TEXT");
+		});
+
+		it("runMigrations adds original_model/applied_model columns idempotently to a pre-existing requests table", () => {
+			// Simulate a legacy DB without the new columns by building the requests
+			// table manually (mirrors ensureSchema's pre-migration shape) instead of
+			// calling ensureSchema, which already includes the columns under test.
+			db.run(`
+				CREATE TABLE requests (
+					id TEXT PRIMARY KEY,
+					timestamp INTEGER NOT NULL,
+					method TEXT NOT NULL,
+					path TEXT NOT NULL,
+					account_used TEXT,
+					status_code INTEGER,
+					success BOOLEAN,
+					error_message TEXT,
+					response_time_ms INTEGER,
+					failover_attempts INTEGER DEFAULT 0
+				)
+			`);
+
+			expect(() => {
+				runMigrations(db);
+			}).not.toThrow();
+
+			const columns = db.prepare("PRAGMA table_info(requests)").all() as Array<{
+				name: string;
+			}>;
+			const columnNames = columns.map((c) => c.name);
+			expect(columnNames).toContain("original_model");
+			expect(columnNames).toContain("applied_model");
+
+			// Re-running migrations must not throw or duplicate the column.
+			expect(() => {
+				runMigrations(db);
+			}).not.toThrow();
+		});
+
+		it("new columns default to NULL for existing rows", () => {
+			ensureSchema(db);
+			db.prepare(
+				`INSERT INTO requests (id, timestamp, method, path) VALUES (?, ?, ?, ?)`,
+			).run("existing-request", Date.now(), "POST", "/v1/messages");
+
+			runMigrations(db);
+
+			const row = db
+				.prepare(
+					"SELECT original_model, applied_model FROM requests WHERE id = ?",
+				)
+				.get("existing-request") as {
+				original_model: string | null;
+				applied_model: string | null;
+			};
+
+			expect(row.original_model).toBeNull();
+			expect(row.applied_model).toBeNull();
+		});
+	});
+
 	describe("API Key Storage Migration", () => {
 		it("should migrate API keys from refresh_token to api_key field for API-key providers", () => {
 			// Initialize the schema

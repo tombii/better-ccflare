@@ -1,3 +1,5 @@
+import type { AllowedModel } from "./agent";
+
 /** Combo slot routing info — maps each returned account to its slot's model override */
 export interface ComboSlotInfo {
 	/** The combo name (null when not using combo routing) */
@@ -20,11 +22,16 @@ export interface RequestMeta {
 	comboSlotIndex?: number | null;
 	/** Per-client session id (from request body metadata.user_id) for session-affinity routing. */
 	clientSessionId?: string | null;
+	/** Model the client originally requested, before any agent-preference rewrite. */
+	originalModel?: string | null;
+	/** Model actually forwarded upstream after an agent-preference rewrite (equal to originalModel when none occurred). */
+	appliedModel?: string | null;
 }
 
 export interface AgentUpdatePayload {
 	description?: string;
-	model?: string;
+	/** `null` (or the string "inherit") reverts the agent to inheriting the session model. */
+	model?: AllowedModel | null;
 	tools?: string[];
 	color?: string;
 	systemPrompt?: string;

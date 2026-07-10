@@ -317,6 +317,15 @@ classDiagram
 4. **Workspace Detection**: Automatically registers workspaces from system prompts containing CLAUDE.md references
 5. **Model Preferences**: Per-agent model preferences stored in database
 
+**Two Model Override Mechanisms:**
+
+An agent's effective model can be influenced through two independent mechanisms, which the dashboard exposes as separate controls:
+
+1. **Runtime Model Preference** (`agent_preferences` table): A proxy-only override set from the dashboard's agent card or the edit dialog's "Model Preference" section, via `POST /api/agents/:agentId/preference`. It is read by the agent interceptor at request time to rewrite the outgoing model and never touches the agent's `.md` file. `DELETE /api/agents/:agentId/preference` removes it, reverting the agent to its default.
+2. **Agent File Editing**: The agent's own default model, edited via the dashboard's Edit dialog and written through `PATCH /api/agents/:id`, which rewrites the `.md` file's `model:` frontmatter key. Setting the model to `null` (or the string `"inherit"`) removes the `model:` key entirely, so the agent inherits the session's model. Saving a concrete default model here clears any existing runtime preference for that agent, so the two mechanisms cannot silently conflict.
+
+**Precedence:** an explicit DB preference always takes priority over the client-resolved frontmatter/session model — i.e. DB preference > frontmatter model > inherited session model.
+
 ### 4. Load Balancer Package (`packages/load-balancer`)
 
 Implements the session-based load balancing strategy:

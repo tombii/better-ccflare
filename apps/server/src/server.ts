@@ -45,11 +45,14 @@ import {
 	AutoRefreshScheduler,
 	CacheKeepaliveScheduler,
 	drainUsageCollector,
+	getModelCatalog,
 	getUsageCollectorHealth,
 	getValidAccessToken,
 	handleProxy,
+	initModelCatalogRefresh,
 	initProxy,
 	type ProxyContext,
+	refreshModelCatalog,
 	registerCodexUsageRefresher,
 	registerPollingRestarter,
 	registerRefreshClearer,
@@ -219,6 +222,7 @@ let stopRateLimitCleanupJob: (() => void) | null = null;
 let stopDataCleanupJob: (() => void) | null = null;
 let stopWalCheckpointJob: (() => void) | null = null;
 let stopIntegritySchedulerJob: (() => void) | null = null;
+let stopModelCatalogRefreshJob: (() => void) | null = null;
 let autoRefreshScheduler: AutoRefreshScheduler | null = null;
 let cacheKeepaliveScheduler: CacheKeepaliveScheduler | null = null;
 let memoryMonitorInterval: Timer | null = null;
@@ -698,11 +702,32 @@ export default async function startServer(options?: {
 	// accepts a getter so it can read the live (post-hot-reload) instance.
 	let currentStrategy: LoadBalancingStrategy | null = null;
 
+	// The model catalog needs a ProxyContext (account credentials, provider)
+	// that is only constructed later in this function. The router is built
+	// eagerly, so route through a mutable reference assigned once the
+	// ProxyContext exists — mirrors the getStrategy() lazy-getter pattern above.
+	let modelCatalogProxyContext: ProxyContext | null = null;
+
 	const apiRouter = new APIRouter({
 		db,
 		config,
 		dbOps,
 		alertService,
+		modelCatalog: {
+			get: () => getModelCatalog(),
+			refresh: async () => {
+				if (!modelCatalogProxyContext) {
+					return {
+						success: false,
+						error: "Model catalog is not initialized yet",
+					};
+				}
+				const result = await refreshModelCatalog(modelCatalogProxyContext, {
+					trigger: "manual",
+				});
+				return { success: result.success, error: result.error };
+			},
+		},
 		runtime: {
 			port,
 			tlsEnabled,
@@ -899,6 +924,7 @@ export default async function startServer(options?: {
 		refreshInFlight: new Map(),
 		asyncWriter,
 	};
+	modelCatalogProxyContext = proxyContext;
 
 	// Register this server's refresh clearing capability
 	const serverId = `server-${runtime.port}`;
@@ -1566,6 +1592,13 @@ Available endpoints:
 	// Initialize NanoGPT pricing refresh if there are NanoGPT accounts (non-blocking)
 	void initializeNanoGPTPricingIfAccountsExist(dbOps, pricingLogger);
 
+	// Initialize the live Anthropic model catalog refresh scheduler (weekly by
+	// default, configurable via BETTER_CCFLARE_MODELS_REFRESH_HOURS; a
+	// "tick-and-check" scheduler that fires an initial check after a random
+	// 30-120s delay, then re-checks every 15 minutes whether a refresh is due,
+	// rather than a single long-lived interval timer).
+	stopModelCatalogRefreshJob = initModelCatalogRefresh(proxyContext);
+
 	const serverPort = serverInstance.port;
 	if (typeof serverPort !== "number") {
 		throw new Error("Server instance has no valid port");
@@ -1641,6 +1674,10 @@ async function handleGracefulShutdown(signal: string) {
 		if (stopIntegritySchedulerJob) {
 			stopIntegritySchedulerJob();
 			stopIntegritySchedulerJob = null;
+		}
+		if (stopModelCatalogRefreshJob) {
+			stopModelCatalogRefreshJob();
+			stopModelCatalogRefreshJob = null;
 		}
 		if (autoRefreshScheduler) {
 			autoRefreshScheduler.stop();

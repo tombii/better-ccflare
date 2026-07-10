@@ -17,32 +17,52 @@ interface WorkspacesData {
 
 export class WorkspacePersistence {
 	private migrationChecked = false;
+	private readonly workspacesFile: string;
+	private readonly legacyWorkspacesFile: string;
+
+	/**
+	 * @param options.workspacesFile Override for the persisted-workspaces
+	 *   file path. Defaults to the real `~/.better-ccflare/workspaces.json`.
+	 *   Tests MUST pass a tmp-dir path here (or via
+	 *   `AgentRegistry.setWorkspacePersistenceForTests`) instead of relying
+	 *   on the default — the default writes to the real file.
+	 * @param options.legacyWorkspacesFile Override for the legacy migration
+	 *   source path. Defaults to the real `~/.ccflare/workspaces.json`.
+	 */
+	constructor(options?: {
+		workspacesFile?: string;
+		legacyWorkspacesFile?: string;
+	}) {
+		this.workspacesFile = options?.workspacesFile ?? WORKSPACES_FILE;
+		this.legacyWorkspacesFile =
+			options?.legacyWorkspacesFile ?? LEGACY_WORKSPACES_FILE;
+	}
 
 	private async migrateFromLegacy(): Promise<void> {
 		if (this.migrationChecked) return;
 		this.migrationChecked = true;
 
 		// If new file exists, no migration needed
-		if (existsSync(WORKSPACES_FILE)) {
+		if (existsSync(this.workspacesFile)) {
 			return;
 		}
 
 		// If legacy file doesn't exist, nothing to migrate
-		if (!existsSync(LEGACY_WORKSPACES_FILE)) {
+		if (!existsSync(this.legacyWorkspacesFile)) {
 			return;
 		}
 
 		try {
 			// Ensure target directory exists
-			const targetDir = dirname(WORKSPACES_FILE);
+			const targetDir = dirname(this.workspacesFile);
 			if (!existsSync(targetDir)) {
 				await mkdir(targetDir, { recursive: true });
 			}
 
 			// Copy legacy file to new location
-			await copyFile(LEGACY_WORKSPACES_FILE, WORKSPACES_FILE);
+			await copyFile(this.legacyWorkspacesFile, this.workspacesFile);
 			log.info(
-				`✅ Migrated workspaces from ${LEGACY_WORKSPACES_FILE} to ${WORKSPACES_FILE}`,
+				`✅ Migrated workspaces from ${this.legacyWorkspacesFile} to ${this.workspacesFile}`,
 			);
 		} catch (error) {
 			log.error(`Failed to migrate workspaces file: ${error}`);
@@ -54,12 +74,12 @@ export class WorkspacePersistence {
 		await this.migrateFromLegacy();
 
 		try {
-			if (!existsSync(WORKSPACES_FILE)) {
+			if (!existsSync(this.workspacesFile)) {
 				log.debug("No workspaces file found");
 				return [];
 			}
 
-			const content = await readFile(WORKSPACES_FILE, "utf-8");
+			const content = await readFile(this.workspacesFile, "utf-8");
 			const data: WorkspacesData = JSON.parse(content);
 
 			if (data.version !== 1) {
@@ -85,12 +105,12 @@ export class WorkspacePersistence {
 			const content = JSON.stringify(data, null, 2);
 
 			// Ensure directory exists
-			const dir = dirname(WORKSPACES_FILE);
+			const dir = dirname(this.workspacesFile);
 			if (!existsSync(dir)) {
 				await mkdir(dir, { recursive: true });
 			}
 
-			await writeFile(WORKSPACES_FILE, content, "utf-8");
+			await writeFile(this.workspacesFile, content, "utf-8");
 			log.info(`Saved ${workspaces.length} workspaces to disk`);
 		} catch (error) {
 			log.error("Failed to save workspaces:", error);

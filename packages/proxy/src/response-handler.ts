@@ -8,9 +8,14 @@ import type { Account, RateLimitReason } from "@better-ccflare/types";
 import type { ProxyContext } from "./handlers";
 import { applyRateLimitCooldown } from "./handlers/rate-limit-cooldown";
 import { createSseRateLimitSniffer } from "./handlers/sse-rate-limit-sniffer";
+import { ingestModelsListing } from "./model-catalog";
 import { combineChunks, teeStream } from "./stream-tee";
 import { getUsageCollector } from "./usage-collector";
-import type { EndMessage, StartMessage } from "./worker-messages";
+import {
+	type EndMessage,
+	isModelRewrite,
+	type StartMessage,
+} from "./worker-messages";
 
 const log = new Logger("ResponseHandler");
 
@@ -43,6 +48,25 @@ function getMidStreamRateLimitCooldownMs(): number {
 // 4MB so afterburn can see full conversation history for friction analysis.
 const MAX_REQUEST_BODY_BYTES = 4 * 1024 * 1024;
 
+const MODEL_REWRITE_HEADER = "x-better-ccflare-model-rewrite";
+
+/**
+ * Builds a Headers copy with the model-rewrite header set when an
+ * agent-preference rewrite actually swapped the model (originalModel and
+ * appliedModel both present and different). No-op copy otherwise.
+ */
+function withModelRewriteHeader(
+	headers: Headers,
+	originalModel?: string | null,
+	appliedModel?: string | null,
+): Headers {
+	const result = new Headers(headers);
+	if (isModelRewrite(originalModel, appliedModel)) {
+		result.set(MODEL_REWRITE_HEADER, `${originalModel}->${appliedModel}`);
+	}
+	return result;
+}
+
 /**
  * Check if a response should be considered successful/expected
  * Treats certain well-known paths that return 404 as expected
@@ -65,6 +89,8 @@ export interface ResponseHandlerOptions {
 	requestHeaders: Headers;
 	requestBody: ArrayBuffer | null;
 	project?: string | null;
+	/** Raw URL query string (e.g. `?after_id=...`), used for passive model-catalog capture. */
+	query?: string | null;
 	response: Response;
 	timestamp: number;
 	retryAttempt: number;
@@ -73,6 +99,8 @@ export interface ResponseHandlerOptions {
 	apiKeyId?: string | null;
 	apiKeyName?: string | null;
 	comboName?: string | null;
+	originalModel?: string | null;
+	appliedModel?: string | null;
 }
 
 /**
@@ -92,6 +120,7 @@ export async function forwardToClient(
 		requestHeaders,
 		requestBody,
 		project,
+		query,
 		response: responseRaw,
 		timestamp,
 		retryAttempt, // Always 0 in new flow, but kept for message compatibility
@@ -100,6 +129,8 @@ export async function forwardToClient(
 		apiKeyId,
 		apiKeyName,
 		comboName,
+		originalModel,
+		appliedModel,
 	} = options;
 
 	// Always strip compression headers *before* we do anything else
@@ -160,6 +191,15 @@ export async function forwardToClient(
 				: 0,
 			accountName: account?.name ?? null,
 			agentUsed: agentUsed || null,
+			// Persist the pair only for an actual swap — an agent-detected but
+			// unmodified request would otherwise record two equal values that
+			// downstream cannot distinguish from a real rewrite.
+			originalModel: isModelRewrite(originalModel, appliedModel)
+				? (originalModel as string)
+				: null,
+			appliedModel: isModelRewrite(originalModel, appliedModel)
+				? (appliedModel as string)
+				: null,
 			comboName: comboName || null,
 			apiKeyId: apiKeyId || null,
 			apiKeyName: apiKeyName || null,
@@ -253,7 +293,11 @@ export async function forwardToClient(
 		return new Response(passthroughBody, {
 			status: response.status,
 			statusText: response.statusText,
-			headers: response.headers,
+			headers: withModelRewriteHeader(
+				response.headers,
+				originalModel,
+				appliedModel,
+			),
 		});
 	}
 
@@ -270,6 +314,18 @@ export async function forwardToClient(
 			});
 		}
 
+		if (isModelRewrite(originalModel, appliedModel)) {
+			return new Response(null, {
+				status: response.status,
+				statusText: response.statusText,
+				headers: withModelRewriteHeader(
+					response.headers,
+					originalModel,
+					appliedModel,
+				),
+			});
+		}
+
 		return response;
 	}
 
@@ -278,8 +334,22 @@ export async function forwardToClient(
 	const passthroughBody = teeStream(response.body, {
 		maxBytes: MAX_NON_STREAM_BODY_BYTES,
 		onClose(buffered) {
-			if (!shouldProcessRequest) return;
+			// Hoisted above the shouldProcessRequest filter: passive model-catalog
+			// capture is independent of the analytics/logging filter above (it's
+			// not analytics, and must still run e.g. for a filtered synthetic
+			// request that nonetheless carries a real GET /v1/models response).
 			const cappedBuf = combineChunks(buffered);
+
+			if (
+				method === "GET" &&
+				path === "/v1/models" &&
+				response.status === 200 &&
+				account
+			) {
+				void ingestModelsListing(cappedBuf.toString("utf-8"), account, query);
+			}
+
+			if (!shouldProcessRequest) return;
 			fireAndForgetEnd({
 				type: "end",
 				requestId,
@@ -302,6 +372,10 @@ export async function forwardToClient(
 	return new Response(passthroughBody, {
 		status: response.status,
 		statusText: response.statusText,
-		headers: response.headers,
+		headers: withModelRewriteHeader(
+			response.headers,
+			originalModel,
+			appliedModel,
+		),
 	});
 }

@@ -1,9 +1,5 @@
 import { agentRegistry } from "@better-ccflare/agents";
-import {
-	getAllowedModelsMessage,
-	isValidClaudeModel,
-	validateString,
-} from "@better-ccflare/core";
+import { validateString } from "@better-ccflare/core";
 import type { DatabaseOperations } from "@better-ccflare/database";
 import {
 	BadRequest,
@@ -12,8 +8,40 @@ import {
 	jsonResponse,
 } from "@better-ccflare/http-common";
 import { Logger } from "@better-ccflare/logger";
+import type { AgentModelSource, APIContext } from "@better-ccflare/types";
+import {
+	allowedModelErrorMessage,
+	isAllowedModel,
+} from "../services/model-validation";
 
 const log = new Logger("AgentsHandler");
+
+/**
+ * Non-blocking parity check against the live model catalog (mirrors the
+ * proxy's `isRewriteTargetServable` veto, but never blocks the write — the
+ * preference is already persisted by the time this runs). Only warns when
+ * the catalog is confirmed live and non-empty and doesn't list the model;
+ * a fallback/offline/errored catalog never produces a warning, matching the
+ * fail-open semantics of the proxy-side guard.
+ */
+async function getLiveCatalogWarning(
+	modelCatalog: APIContext["modelCatalog"] | undefined,
+	model: string,
+): Promise<string | undefined> {
+	if (!modelCatalog) return undefined;
+	try {
+		const catalog = await modelCatalog.get();
+		if (catalog.source !== "live" || catalog.models.length === 0) {
+			return undefined;
+		}
+		if (catalog.models.some((entry) => entry.id === model)) {
+			return undefined;
+		}
+		return `Model '${model}' not present in the live Anthropic model list — it may fail upstream.`;
+	} catch {
+		return undefined;
+	}
+}
 
 export function createAgentsListHandler(dbOps: DatabaseOperations) {
 	return async (): Promise<Response> => {
@@ -24,11 +52,23 @@ export function createAgentsListHandler(dbOps: DatabaseOperations) {
 			// Create a map of preferences for easy lookup
 			const prefMap = new Map(preferences.map((p) => [p.agent_id, p.model]));
 
-			// Merge preferences with agents
-			const agentsWithPreferences = agents.map((agent) => ({
-				...agent,
-				model: prefMap.get(agent.id) || agent.model,
-			}));
+			// Merge preferences with agents, tagging the effective model's
+			// provenance so the UI can distinguish an explicit DB override from
+			// the agent's own default.
+			const agentsWithPreferences = agents.map((agent) => {
+				const modelSource: AgentModelSource = prefMap.has(agent.id)
+					? "preference"
+					: agent.model
+						? "frontmatter"
+						: "inherit";
+
+				return {
+					...agent,
+					model: prefMap.get(agent.id) || agent.model,
+					modelSource,
+					frontmatterModel: agent.model,
+				};
+			});
 
 			// Group agents by source
 			const globalAgents = agentsWithPreferences.filter(
@@ -58,7 +98,10 @@ export function createAgentsListHandler(dbOps: DatabaseOperations) {
 	};
 }
 
-export function createAgentPreferenceUpdateHandler(dbOps: DatabaseOperations) {
+export function createAgentPreferenceUpdateHandler(
+	dbOps: DatabaseOperations,
+	modelCatalog?: APIContext["modelCatalog"],
+) {
 	return async (req: Request, agentId: string): Promise<Response> => {
 		try {
 			const body = await req.json();
@@ -68,18 +111,22 @@ export function createAgentPreferenceUpdateHandler(dbOps: DatabaseOperations) {
 				throw BadRequest("Model is required");
 			}
 
-			// Validate model is in allowed list
-			if (!isValidClaudeModel(model)) {
-				throw BadRequest(`Invalid model. ${getAllowedModelsMessage()}`);
+			// Validate model is in allowed list (pattern match or exact id in a
+			// live catalog).
+			if (!(await isAllowedModel(model, modelCatalog))) {
+				throw BadRequest(`Invalid model. ${allowedModelErrorMessage()}`);
 			}
 
 			// Update preference
 			dbOps.setAgentPreference(agentId, model);
 
+			const warning = await getLiveCatalogWarning(modelCatalog, model);
+
 			return jsonResponse({
 				success: true,
 				agentId,
 				model,
+				...(warning ? { warning } : {}),
 			});
 		} catch (error) {
 			log.error("Error updating agent preference:", error);
@@ -87,6 +134,24 @@ export function createAgentPreferenceUpdateHandler(dbOps: DatabaseOperations) {
 				return jsonResponse({ error: error.message }, error.status);
 			}
 			return jsonResponse({ error: "Failed to update agent preference" }, 500);
+		}
+	};
+}
+
+/**
+ * Removes an agent's explicit model preference so it falls back to its
+ * frontmatter model — or, for `inherit`/no-model agents, to the session's
+ * model. This is the only way to revert to "no override" from the
+ * dashboard: the POST handler above requires a concrete model value.
+ */
+export function createAgentPreferenceDeleteHandler(dbOps: DatabaseOperations) {
+	return async (_req: Request, agentId: string): Promise<Response> => {
+		try {
+			const deleted = await dbOps.deleteAgentPreference(agentId);
+			return jsonResponse({ success: true, agentId, deleted });
+		} catch (error) {
+			log.error("Error deleting agent preference:", error);
+			return jsonResponse({ error: "Failed to delete agent preference" }, 500);
 		}
 	};
 }
@@ -119,6 +184,7 @@ export function createWorkspacesListHandler() {
 
 export function createBulkAgentPreferenceUpdateHandler(
 	dbOps: DatabaseOperations,
+	modelCatalog?: APIContext["modelCatalog"],
 ) {
 	return async (req: Request): Promise<Response> => {
 		const log = new Logger("BulkAgentPreferenceUpdate");
@@ -135,10 +201,11 @@ export function createBulkAgentPreferenceUpdateHandler(
 				return errorResponse(BadRequest("Model is required"));
 			}
 
-			// Validate model is in allowed list
-			if (!isValidClaudeModel(modelValidation)) {
+			// Validate model is in allowed list (pattern match or exact id in a
+			// live catalog).
+			if (!(await isAllowedModel(modelValidation, modelCatalog))) {
 				return errorResponse(
-					BadRequest(`Invalid model. ${getAllowedModelsMessage()}`),
+					BadRequest(`Invalid model. ${allowedModelErrorMessage()}`),
 				);
 			}
 
@@ -157,10 +224,16 @@ export function createBulkAgentPreferenceUpdateHandler(
 				`Updated ${agentIds.length} agent preferences to model: ${modelValidation}`,
 			);
 
+			const warning = await getLiveCatalogWarning(
+				modelCatalog,
+				modelValidation,
+			);
+
 			return jsonResponse({
 				success: true,
 				updatedCount: agentIds.length,
 				model: modelValidation,
+				...(warning ? { warning } : {}),
 			});
 		} catch (error) {
 			log.error("Error updating agent preferences in bulk:", error);

@@ -62,6 +62,8 @@ export function createRequestsSummaryHandler(db: BunSqlAdapter) {
 			api_key_name: string | null;
 			billing_type: string | null;
 			combo_name: string | null;
+			original_model: string | null;
+			applied_model: string | null;
 		}>(
 			`
 			SELECT r.*, a.name as account_name
@@ -100,6 +102,8 @@ export function createRequestsSummaryHandler(db: BunSqlAdapter) {
 			apiKeyName: request.api_key_name || undefined,
 			billingType: request.billing_type || undefined,
 			comboName: request.combo_name || undefined,
+			originalModel: request.original_model || undefined,
+			appliedModel: request.applied_model || undefined,
 			rateLimited: request.status_code === 429,
 		}));
 
