@@ -17,11 +17,15 @@
  * Tracing is best-effort and MUST never affect the request path: all I/O is
  * wrapped so a trace failure is swallowed.
  */
+import { createHmac } from "node:crypto";
 import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 
 export const CODEX_TRACE_DIR_ENV = "CCFLARE_CODEX_TRACE_DIR";
 export const CODEX_TRACE_FULL_ENV = "CCFLARE_CODEX_TRACE_FULL";
+export const CODEX_TRACE_HMAC_KEY_ENV = "CCFLARE_CODEX_TRACE_HMAC_KEY";
+
+const TRACE_SCHEMA_VERSION = 2;
 
 const CONTINUATION_NUDGE_MARKER = "Continue the user's original request now";
 
@@ -32,6 +36,12 @@ export interface ToolCallSummary {
 
 export interface CodexTransformSummary {
 	input_item_count: number;
+	input_bytes: number;
+	input_hmac: string | null;
+	input_except_last_item_bytes: number | null;
+	input_except_last_item_hmac: string | null;
+	input_first_item_bytes: number | null;
+	input_first_item_hmac: string | null;
 	/** Historical tool calls replayed into this request, NOT newly emitted calls. */
 	history_function_call_count: number;
 	history_function_call_output_count: number;
@@ -93,8 +103,20 @@ export function summarizeCodexTransform(
 		}
 	}
 
+	const fullInput = serializedMetrics(codexInput);
+	const inputExceptLastItem =
+		codexInput.length > 1 ? serializedMetrics(codexInput.slice(0, -1)) : null;
+	const firstInputItem =
+		codexInput.length > 0 ? serializedMetrics(codexInput[0]) : null;
+
 	return {
 		input_item_count: codexInput.length,
+		input_bytes: fullInput.bytes,
+		input_hmac: fullInput.hmac,
+		input_except_last_item_bytes: inputExceptLastItem?.bytes ?? null,
+		input_except_last_item_hmac: inputExceptLastItem?.hmac ?? null,
+		input_first_item_bytes: firstInputItem?.bytes ?? null,
+		input_first_item_hmac: firstInputItem?.hmac ?? null,
 		history_function_call_count: function_call_count,
 		history_function_call_output_count: function_call_output_count,
 		history_empty_output_count: empty_output_count,
@@ -114,7 +136,8 @@ interface TraceInputs {
 	modelIn?: string;
 	modelOut?: string;
 	messageCount?: number;
-	instructionsLen?: number;
+	instructions?: string;
+	tools?: readonly unknown[];
 	codexInput: readonly unknown[];
 	/** full bodies, only embedded when CCFLARE_CODEX_TRACE_FULL=1 */
 	anthropicRequest?: unknown;
@@ -166,7 +189,12 @@ export function summarizeCodexResponse(
  * Append one request JSONL trace record. No-op (and never throws) when disabled.
  */
 export function writeCodexTrace(inputs: TraceInputs): void {
+	const instructionsMetrics = inputs.instructions
+		? serializedMetrics(inputs.instructions)
+		: null;
+	const toolsMetrics = inputs.tools ? serializedMetrics(inputs.tools) : null;
 	const record: Record<string, unknown> = {
+		trace_schema_version: TRACE_SCHEMA_VERSION,
 		phase: "request",
 		ts: new Date().toISOString(),
 		request_id: inputs.requestId ?? null,
@@ -174,7 +202,12 @@ export function writeCodexTrace(inputs: TraceInputs): void {
 		model_in: inputs.modelIn ?? null,
 		model_out: inputs.modelOut ?? null,
 		message_count: inputs.messageCount ?? null,
-		instructions_len: inputs.instructionsLen ?? null,
+		instructions_len: inputs.instructions?.length ?? null,
+		instructions_bytes: instructionsMetrics?.bytes ?? null,
+		instructions_hmac: instructionsMetrics?.hmac ?? null,
+		tool_count: inputs.tools?.length ?? 0,
+		tools_bytes: toolsMetrics?.bytes ?? null,
+		tools_hmac: toolsMetrics?.hmac ?? null,
 		approx_input_chars: safeLength(inputs.codexInput),
 		...summarizeCodexTransform(inputs.codexInput),
 	};
@@ -190,6 +223,7 @@ export function writeCodexTrace(inputs: TraceInputs): void {
  */
 export function writeCodexResponseTrace(inputs: ResponseTraceInputs): void {
 	appendTraceRecord({
+		trace_schema_version: TRACE_SCHEMA_VERSION,
 		phase: "response",
 		ts: new Date().toISOString(),
 		request_id: inputs.requestId ?? null,
@@ -210,6 +244,24 @@ function appendTraceRecord(record: Record<string, unknown>): void {
 		);
 	} catch {
 		// best-effort: tracing must never break the request path
+	}
+}
+
+function serializedMetrics(value: unknown): {
+	bytes: number;
+	hmac: string | null;
+} {
+	try {
+		const serialized = JSON.stringify(value) ?? "";
+		const key = process.env[CODEX_TRACE_HMAC_KEY_ENV];
+		return {
+			bytes: Buffer.byteLength(serialized, "utf8"),
+			hmac: key
+				? createHmac("sha256", key).update(serialized, "utf8").digest("hex")
+				: null,
+		};
+	} catch {
+		return { bytes: 0, hmac: null };
 	}
 }
 

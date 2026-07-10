@@ -60,9 +60,14 @@ describe("Codex trace wiring (integration)", () => {
 		const files = readdirSync(dir).filter((f) => f.endsWith(".jsonl"));
 		expect(files.length).toBe(1);
 		const rec = JSON.parse(readFileSync(join(dir, files[0]), "utf8").trim());
+		expect(rec.trace_schema_version).toBe(2);
 		expect(rec.phase).toBe("request");
 		expect(rec.request_id).toBe("req_trace_1");
 		expect(rec.model_in).toBe("claude-opus-4-8");
+		expect(rec.input_bytes).toBeGreaterThan(0);
+		expect(rec.input_hmac).toBeNull();
+		expect(rec.instructions_bytes).toBeGreaterThan(0);
+		expect(rec.instructions_hmac).toBeNull();
 		expect(rec.history_function_call_count).toBe(1);
 		expect(rec.history_tool_use_by_name).toEqual({ Task: 1 });
 		expect(transformed.headers.get("x-better-ccflare-request-id")).toBeNull();

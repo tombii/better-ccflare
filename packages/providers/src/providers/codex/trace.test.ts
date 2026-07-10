@@ -1,5 +1,13 @@
-import { describe, expect, test } from "bun:test";
-import { summarizeCodexResponse, summarizeCodexTransform } from "./trace";
+import { afterEach, describe, expect, test } from "bun:test";
+import {
+	CODEX_TRACE_HMAC_KEY_ENV,
+	summarizeCodexResponse,
+	summarizeCodexTransform,
+} from "./trace";
+
+afterEach(() => {
+	delete process.env[CODEX_TRACE_HMAC_KEY_ENV];
+});
 
 describe("summarizeCodexTransform (request/history phase)", () => {
 	test("counts historical tool calls, outputs, empties, and nudges", () => {
@@ -60,6 +68,38 @@ describe("summarizeCodexTransform (request/history phase)", () => {
 		const s = summarizeCodexTransform([null, undefined, 42, "str", {}]);
 		expect(s.history_function_call_count).toBe(0);
 		expect(s.input_item_count).toBe(5);
+	});
+
+	test("records byte sizes but no fingerprints without an HMAC key", () => {
+		const s = summarizeCodexTransform([{ role: "user", content: "héllo" }]);
+		expect(s.input_bytes).toBeGreaterThan(0);
+		expect(s.input_hmac).toBeNull();
+		expect(s.input_first_item_bytes).toBeGreaterThan(0);
+		expect(s.input_first_item_hmac).toBeNull();
+		expect(s.input_except_last_item_bytes).toBeNull();
+		expect(s.input_except_last_item_hmac).toBeNull();
+	});
+
+	test("creates deterministic HMAC fingerprints for full input and structural slices", () => {
+		process.env[CODEX_TRACE_HMAC_KEY_ENV] = "test-only-key";
+		const input = [
+			{ role: "user", content: "first" },
+			{ role: "assistant", content: "second" },
+		];
+		const first = summarizeCodexTransform(input);
+		const second = summarizeCodexTransform(input);
+		const changed = summarizeCodexTransform([
+			input[0],
+			{ role: "assistant", content: "changed" },
+		]);
+
+		expect(first.input_hmac).toHaveLength(64);
+		expect(first.input_hmac).toBe(second.input_hmac);
+		expect(first.input_except_last_item_hmac).toBe(
+			changed.input_except_last_item_hmac,
+		);
+		expect(first.input_hmac).not.toBe(changed.input_hmac);
+		expect(first.input_first_item_hmac).toBe(changed.input_first_item_hmac);
 	});
 });
 
