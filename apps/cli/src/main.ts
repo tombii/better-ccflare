@@ -119,10 +119,18 @@ interface ParsedArgs {
 	admin: boolean;
 }
 
+// When the long-running server starts, its own SIGINT/SIGTERM handlers
+// (apps/server) own shutdown: they drain in-flight requests before exit.
+// The CLI-level handlers must then stand down; otherwise exitGracefully()
+// races the server's drain, disposes the same resources concurrently, and
+// its process.exit() severs active streams mid-response.
+let serverOwnsShutdown = false;
+
 /**
  * Helper function to start server with unified environment variable handling
  */
 function startServerWithConfig(args: ParsedArgs, config: Config) {
+	serverOwnsShutdown = true;
 	const runtime = config.getRuntime();
 
 	// Proper precedence: command line args > environment variables > config defaults
@@ -1399,11 +1407,14 @@ main().catch(async (error) => {
 	await exitGracefully(1);
 });
 
-// Handle process termination
+// Handle process termination. When the server is running it owns shutdown
+// (see serverOwnsShutdown); these handlers cover short-lived CLI commands.
 process.on("SIGINT", async () => {
+	if (serverOwnsShutdown) return;
 	await exitGracefully(0);
 });
 
 process.on("SIGTERM", async () => {
+	if (serverOwnsShutdown) return;
 	await exitGracefully(0);
 });

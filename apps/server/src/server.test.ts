@@ -14,3 +14,19 @@ describe("supportsRefreshBackedUsagePolling", () => {
 		expect(supportsRefreshBackedUsagePolling(null)).toBe(false);
 	});
 });
+
+describe("readShutdownDrainMs", () => {
+	const { readShutdownDrainMs, SHUTDOWN_DRAIN_MS_ENV } = require("./server");
+
+	it("defaults to 60s and parses overrides", () => {
+		delete process.env[SHUTDOWN_DRAIN_MS_ENV];
+		expect(readShutdownDrainMs()).toBe(60_000);
+		process.env[SHUTDOWN_DRAIN_MS_ENV] = "5000";
+		expect(readShutdownDrainMs()).toBe(5_000);
+		process.env[SHUTDOWN_DRAIN_MS_ENV] = "0";
+		expect(readShutdownDrainMs()).toBe(0);
+		process.env[SHUTDOWN_DRAIN_MS_ENV] = "nonsense";
+		expect(readShutdownDrainMs()).toBe(60_000);
+		delete process.env[SHUTDOWN_DRAIN_MS_ENV];
+	});
+});
