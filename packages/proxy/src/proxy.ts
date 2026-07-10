@@ -27,6 +27,10 @@ import {
 	validateProviderPath,
 } from "./handlers";
 import {
+	buildSessionRejectResponse,
+	recordSessionRequest,
+} from "./session-governor";
+import {
 	getUsageCollector,
 	initUsageCollector,
 	tryGetUsageCollector,
@@ -242,6 +246,22 @@ export async function handleProxy(
 	requestMeta.agentUsed = agentUsed;
 	requestMeta.project = project;
 	requestMeta.clientSessionId = requestBodyContext.getClientId();
+
+	// 5b. Session volume circuit breaker: a runaway subagent storm shows up as
+	// one client session hammering /v1/messages. Count it here and, when
+	// enforcement is enabled, reject before account selection burns upstream
+	// quota. Internal synthetic requests (keepalive replays, refresh probes)
+	// are not client traffic and are skipped.
+	if (
+		url.pathname === "/v1/messages" &&
+		!req.headers.get("x-better-ccflare-keepalive") &&
+		!req.headers.get("x-better-ccflare-auto-refresh")
+	) {
+		const verdict = recordSessionRequest(requestMeta.clientSessionId);
+		if (verdict?.rejected) {
+			return buildSessionRejectResponse(verdict);
+		}
+	}
 
 	// 6. Select accounts
 	const selectedAccounts = await selectAccountsForRequest(
