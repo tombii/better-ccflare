@@ -2130,7 +2130,7 @@ describe("CodexProvider.transformRequestBody", () => {
 		const repeated = await transform("11111111-1111-4111-8111-111111111111");
 		const different = await transform("22222222-2222-4222-8222-222222222222");
 
-		expect(first.prompt_cache_key).toMatch(/^ccflare-session-[0-9a-f]{64}$/);
+		expect(first.prompt_cache_key).toMatch(/^ccflare-session-[0-9a-f]{48}$/);
 		expect(repeated.prompt_cache_key).toBe(first.prompt_cache_key);
 		expect(different.prompt_cache_key).not.toBe(first.prompt_cache_key);
 		expect(first.prompt_cache_key).not.toContain("11111111");
