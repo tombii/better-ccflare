@@ -464,9 +464,12 @@ export class CodexProvider extends BaseProvider {
 		const isEventStream = contentType?.includes("text/event-stream") ?? false;
 		if (isEventStream) {
 			if (requestedStream) {
-				return this.transformStreamingResponse(response);
+				return this.transformStreamingResponse(
+					response,
+					requestId ?? undefined,
+				);
 			}
-			return this.transformSseResponseToJson(response);
+			return this.transformSseResponseToJson(response, requestId ?? undefined);
 		}
 
 		if (response.ok && response.body !== null) {
@@ -486,9 +489,15 @@ export class CodexProvider extends BaseProvider {
 					headers,
 				});
 				if (requestedStream) {
-					return this.transformStreamingResponse(sseResponse);
+					return this.transformStreamingResponse(
+						sseResponse,
+						requestId ?? undefined,
+					);
 				}
-				return this.transformSseResponseToJson(sseResponse);
+				return this.transformSseResponseToJson(
+					sseResponse,
+					requestId ?? undefined,
+				);
 			}
 
 			const headers = sanitizeResponseHeaders(response.headers);
@@ -977,10 +986,10 @@ export class CodexProvider extends BaseProvider {
 
 	private async transformSseResponseToJson(
 		response: Response,
+		requestId = response.headers.get("x-better-ccflare-request-id") ??
+			"unknown",
 	): Promise<Response> {
-		const requestId =
-			response.headers.get("x-better-ccflare-request-id") ?? "unknown";
-		const transformed = this.transformStreamingResponse(response);
+		const transformed = this.transformStreamingResponse(response, requestId);
 		const reader = transformed.body
 			?.pipeThrough(new TextDecoderStream())
 			.getReader();
@@ -1173,9 +1182,11 @@ export class CodexProvider extends BaseProvider {
 		});
 	}
 
-	private transformStreamingResponse(response: Response): Response {
-		const requestId =
-			response.headers.get("x-better-ccflare-request-id") ?? "unknown";
+	private transformStreamingResponse(
+		response: Response,
+		requestId = response.headers.get("x-better-ccflare-request-id") ??
+			"unknown",
+	): Response {
 		if (process.env.DEBUG?.includes("model") || process.env.DEBUG === "true") {
 			log.info(
 				`[codex:model-debug] request_id=${requestId} transformStreamingResponse initial fallback model=gpt-5.4 until response.created arrives`,

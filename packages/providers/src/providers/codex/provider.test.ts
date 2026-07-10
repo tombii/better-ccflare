@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fetchCodexUsageOnDemand } from "./on-demand-fetch";
 import { CodexProvider } from "./provider";
+import { CODEX_TRACE_DIR_ENV } from "./trace";
 import { parseCodexUsageHeaders } from "./usage";
 
 const sseBody = (lines: string[]) => `${lines.join("\n")}\n`;
@@ -9,6 +13,15 @@ const eventLine = (name: string, data: unknown) => [
 	`data: ${typeof data === "string" ? data : JSON.stringify(data)}`,
 	"",
 ];
+const readTraceRecords = (dir: string): Array<Record<string, unknown>> => {
+	const file = readdirSync(dir).find((f) => f.endsWith(".jsonl"));
+	if (!file) return [];
+	return readFileSync(join(dir, file), "utf8")
+		.trim()
+		.split("\n")
+		.filter(Boolean)
+		.map((line) => JSON.parse(line) as Record<string, unknown>);
+};
 
 describe("CodexProvider request conversion", () => {
 	it("handles messages and synthetic count_tokens paths", () => {
@@ -1339,6 +1352,82 @@ describe("CodexProvider.processResponse", () => {
 		expect(transformedBody).toContain(
 			'"usage":{"input_tokens":2,"output_tokens":1',
 		);
+	});
+
+	it("preserves request id in traces for missing-content-type SSE streams", async () => {
+		const provider = new CodexProvider();
+		const requestId = "req_trace_stream_missing_content_type";
+		const traceDir = mkdtempSync(join(tmpdir(), "codex-trace-"));
+		process.env[CODEX_TRACE_DIR_ENV] = traceDir;
+		try {
+			const upstreamBody = sseBody([
+				...eventLine("response.created", {
+					response: { id: "resp_trace", model: "gpt-5.4" },
+				}),
+				...eventLine("response.completed", {
+					response: {
+						model: "gpt-5.4",
+						usage: { input_tokens: 3, output_tokens: 1 },
+					},
+				}),
+			]);
+			const response = new Response(upstreamBody, {
+				status: 200,
+				headers: {
+					"x-better-ccflare-request-id": requestId,
+					"x-better-ccflare-request-stream": "true",
+				},
+			});
+
+			const transformed = await provider.processResponse(response, null);
+			await transformed.text();
+
+			const responseRecord = readTraceRecords(traceDir).find(
+				(r) => r.phase === "response",
+			);
+			expect(responseRecord?.request_id).toBe(requestId);
+		} finally {
+			delete process.env[CODEX_TRACE_DIR_ENV];
+			rmSync(traceDir, { recursive: true, force: true });
+		}
+	});
+
+	it("preserves request id in traces for missing-content-type SSE to JSON", async () => {
+		const provider = new CodexProvider();
+		const requestId = "req_trace_json_missing_content_type";
+		const traceDir = mkdtempSync(join(tmpdir(), "codex-trace-"));
+		process.env[CODEX_TRACE_DIR_ENV] = traceDir;
+		try {
+			const upstreamBody = sseBody([
+				...eventLine("response.created", {
+					response: { id: "resp_trace", model: "gpt-5.4" },
+				}),
+				...eventLine("response.completed", {
+					response: {
+						model: "gpt-5.4",
+						usage: { input_tokens: 3, output_tokens: 1 },
+					},
+				}),
+			]);
+			const response = new Response(upstreamBody, {
+				status: 200,
+				headers: {
+					"x-better-ccflare-request-id": requestId,
+					"x-better-ccflare-request-stream": "false",
+				},
+			});
+
+			const transformed = await provider.processResponse(response, null);
+			await transformed.text();
+
+			const responseRecord = readTraceRecords(traceDir).find(
+				(r) => r.phase === "response",
+			);
+			expect(responseRecord?.request_id).toBe(requestId);
+		} finally {
+			delete process.env[CODEX_TRACE_DIR_ENV];
+			rmSync(traceDir, { recursive: true, force: true });
+		}
 	});
 
 	it("passes through successful missing-content-type unknown bodies", async () => {
