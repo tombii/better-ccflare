@@ -1943,6 +1943,71 @@ describe("CodexProvider.transformRequestBody", () => {
 
 		expect(body.model).toBe("gpt-5.4-mini");
 	});
+
+	it("forces StructuredOutput tool_choice when the Claude Code schema tool is present", async () => {
+		const provider = new CodexProvider();
+		const request = new Request("https://example.com/v1/messages", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				model: "claude-haiku-4-5-20251001",
+				max_tokens: 10,
+				messages: [{ role: "user", content: "return structured output" }],
+				tools: [
+					{
+						name: "StructuredOutput",
+						description: "Return the validated payload.",
+						input_schema: {
+							type: "object",
+							additionalProperties: false,
+							properties: { ok: { type: "boolean" } },
+							required: ["ok"],
+						},
+					},
+				],
+			}),
+		});
+
+		const transformed = await provider.transformRequestBody(request, undefined);
+		const body = await transformed.json();
+
+		expect(body.tools.map((t: { name: string }) => t.name)).toContain(
+			"StructuredOutput",
+		);
+		expect(body.tool_choice).toEqual({
+			type: "function",
+			name: "StructuredOutput",
+		});
+	});
+
+	it("does not force tool_choice for ordinary tool-enabled requests", async () => {
+		const provider = new CodexProvider();
+		const request = new Request("https://example.com/v1/messages", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				model: "claude-haiku-4-5-20251001",
+				max_tokens: 10,
+				messages: [{ role: "user", content: "read a file" }],
+				tools: [
+					{
+						name: "Read",
+						description: "Read a file.",
+						input_schema: {
+							type: "object",
+							properties: { file_path: { type: "string" } },
+							required: ["file_path"],
+						},
+					},
+				],
+			}),
+		});
+
+		const transformed = await provider.transformRequestBody(request, undefined);
+		const body = await transformed.json();
+
+		expect(body.tool_choice).toBeUndefined();
+	});
 });
 
 describe("CodexProvider prompt_cache_key derivation", () => {
