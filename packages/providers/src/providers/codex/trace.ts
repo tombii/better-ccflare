@@ -1,16 +1,17 @@
 /**
- * Codex transform trace — permanent, env-gated observability for the Codex
- * request translation.
+ * Codex trace, permanent, env-gated observability for request translation and
+ * response streaming.
  *
- * The Codex path can spawn far more subagent turns (and cache far worse) than
- * the native Anthropic path, and production payload capture is usually off. This
- * writes one JSONL record per translated request so a live session can be
- * inspected offline: per-turn tool-call fan-out, re-spawn signatures (identical
- * tool-call argument previews recurring across turns), continuation-nudge
- * injections, and empty tool outputs.
+ * The Codex path can spawn far more subagent turns, and cache far worse, than the
+ * native Anthropic path. Production payload capture is usually off, so this
+ * writes JSONL records that make a live session inspectable offline.
+ *
+ * Request records summarize historical tool-call load replayed into Codex.
+ * Response records summarize newly emitted tool calls from the current Codex
+ * response, which is the real signal for fresh subagent fan-out.
  *
  * Enable:
- *   CCFLARE_CODEX_TRACE_DIR=/path/to/dir     # summaries only (no prompt content)
+ *   CCFLARE_CODEX_TRACE_DIR=/path/to/dir     # summaries only, no prompt content
  *   CCFLARE_CODEX_TRACE_FULL=1               # also embed full request bodies
  *
  * Tracing is best-effort and MUST never affect the request path: all I/O is
@@ -24,15 +25,35 @@ export const CODEX_TRACE_FULL_ENV = "CCFLARE_CODEX_TRACE_FULL";
 
 const CONTINUATION_NUDGE_MARKER = "Continue the user's original request now";
 
+export interface ToolCallSummary {
+	name: string;
+	arg_preview: string;
+}
+
 export interface CodexTransformSummary {
 	input_item_count: number;
-	function_call_count: number;
-	function_call_output_count: number;
-	empty_output_count: number;
+	/** Historical tool calls replayed into this request, NOT newly emitted calls. */
+	history_function_call_count: number;
+	history_function_call_output_count: number;
+	history_empty_output_count: number;
 	nudge_count: number;
-	tool_use_by_name: Record<string, number>;
-	/** name + short argument preview per tool call — diff across turns to spot re-spawns. */
-	tool_calls: Array<{ name: string; arg_preview: string }>;
+	history_tool_use_by_name: Record<string, number>;
+	/** name + short argument preview per historical call, useful for debugging history bloat. */
+	history_tool_calls: ToolCallSummary[];
+}
+
+export interface CodexResponseSummary {
+	new_tool_call_count: number;
+	new_tool_use_by_name: Record<string, number>;
+	new_tool_calls: ToolCallSummary[];
+	stop_reason: "tool_use" | "end_turn" | "error";
+	input_tokens: number;
+	output_tokens: number;
+	cache_read_input_tokens: number;
+	cache_creation_input_tokens: number;
+	cache_hit_pct: number | null;
+	error_type?: string;
+	error_message?: string;
 }
 
 /**
@@ -74,12 +95,12 @@ export function summarizeCodexTransform(
 
 	return {
 		input_item_count: codexInput.length,
-		function_call_count,
-		function_call_output_count,
-		empty_output_count,
+		history_function_call_count: function_call_count,
+		history_function_call_output_count: function_call_output_count,
+		history_empty_output_count: empty_output_count,
 		nudge_count,
-		tool_use_by_name,
-		tool_calls,
+		history_tool_use_by_name: tool_use_by_name,
+		history_tool_calls: tool_calls,
 	};
 }
 
@@ -100,29 +121,88 @@ interface TraceInputs {
 	codexRequest?: unknown;
 }
 
+interface ResponseTraceInputs {
+	requestId?: string;
+	modelOut?: string;
+	summary: CodexResponseSummary;
+}
+
+export function summarizeCodexResponse(
+	toolCalls: readonly ToolCallSummary[],
+	usage: {
+		input_tokens?: number;
+		output_tokens?: number;
+		cache_read_input_tokens?: number;
+		cache_creation_input_tokens?: number;
+	},
+	stopReason: CodexResponseSummary["stop_reason"],
+	error?: { type?: string; message?: string },
+): CodexResponseSummary {
+	const newToolUseByName: Record<string, number> = {};
+	for (const call of toolCalls) {
+		newToolUseByName[call.name] = (newToolUseByName[call.name] ?? 0) + 1;
+	}
+	const inputTokens = usage.input_tokens ?? 0;
+	const cacheRead = usage.cache_read_input_tokens ?? 0;
+	return {
+		new_tool_call_count: toolCalls.length,
+		new_tool_use_by_name: newToolUseByName,
+		new_tool_calls: [...toolCalls],
+		stop_reason: stopReason,
+		input_tokens: inputTokens,
+		output_tokens: usage.output_tokens ?? 0,
+		cache_read_input_tokens: cacheRead,
+		cache_creation_input_tokens: usage.cache_creation_input_tokens ?? 0,
+		cache_hit_pct:
+			inputTokens + cacheRead > 0
+				? Math.round((1000 * cacheRead) / (inputTokens + cacheRead)) / 10
+				: null,
+		...(error?.type ? { error_type: error.type } : {}),
+		...(error?.message ? { error_message: error.message } : {}),
+	};
+}
+
 /**
- * Append one JSONL trace record. No-op (and never throws) when disabled.
+ * Append one request JSONL trace record. No-op (and never throws) when disabled.
  */
 export function writeCodexTrace(inputs: TraceInputs): void {
+	const record: Record<string, unknown> = {
+		phase: "request",
+		ts: new Date().toISOString(),
+		request_id: inputs.requestId ?? null,
+		account: inputs.account ?? null,
+		model_in: inputs.modelIn ?? null,
+		model_out: inputs.modelOut ?? null,
+		message_count: inputs.messageCount ?? null,
+		instructions_len: inputs.instructionsLen ?? null,
+		approx_input_chars: safeLength(inputs.codexInput),
+		...summarizeCodexTransform(inputs.codexInput),
+	};
+	if (process.env[CODEX_TRACE_FULL_ENV] === "1") {
+		record.anthropic_request = inputs.anthropicRequest ?? null;
+		record.codex_request = inputs.codexRequest ?? null;
+	}
+	appendTraceRecord(record);
+}
+
+/**
+ * Append one response JSONL trace record. No-op (and never throws) when disabled.
+ */
+export function writeCodexResponseTrace(inputs: ResponseTraceInputs): void {
+	appendTraceRecord({
+		phase: "response",
+		ts: new Date().toISOString(),
+		request_id: inputs.requestId ?? null,
+		model_out: inputs.modelOut ?? null,
+		...inputs.summary,
+	});
+}
+
+function appendTraceRecord(record: Record<string, unknown>): void {
 	const dir = process.env[CODEX_TRACE_DIR_ENV];
 	if (!dir) return;
 	try {
 		mkdirSync(dir, { recursive: true });
-		const record: Record<string, unknown> = {
-			ts: new Date().toISOString(),
-			request_id: inputs.requestId ?? null,
-			account: inputs.account ?? null,
-			model_in: inputs.modelIn ?? null,
-			model_out: inputs.modelOut ?? null,
-			message_count: inputs.messageCount ?? null,
-			instructions_len: inputs.instructionsLen ?? null,
-			approx_input_chars: safeLength(inputs.codexInput),
-			...summarizeCodexTransform(inputs.codexInput),
-		};
-		if (process.env[CODEX_TRACE_FULL_ENV] === "1") {
-			record.anthropic_request = inputs.anthropicRequest ?? null;
-			record.codex_request = inputs.codexRequest ?? null;
-		}
 		const day = new Date().toISOString().slice(0, 10);
 		appendFileSync(
 			join(dir, `codex-trace-${day}.jsonl`),

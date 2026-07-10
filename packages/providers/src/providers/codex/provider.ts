@@ -9,7 +9,12 @@ import { resolveReasoningEffort } from "@better-ccflare/openai-formats";
 import type { Account } from "@better-ccflare/types";
 import { BaseProvider } from "../../base";
 import type { RateLimitInfo, TokenRefreshResult } from "../../types";
-import { writeCodexTrace } from "./trace";
+import {
+	summarizeCodexResponse,
+	type ToolCallSummary,
+	writeCodexResponseTrace,
+	writeCodexTrace,
+} from "./trace";
 
 const log = new Logger("CodexProvider");
 
@@ -212,6 +217,9 @@ interface StreamState {
 		code?: string;
 		status?: string;
 	};
+	// Newly emitted tool calls from this response only (not historical replay).
+	traceNewToolCalls: ToolCallSummary[];
+	traceRequestId: string;
 }
 
 export class CodexProvider extends BaseProvider {
@@ -1173,6 +1181,8 @@ export class CodexProvider extends BaseProvider {
 			contextWindow: null,
 			functionCallBlocks: new Map(),
 			sawToolUse: false,
+			traceNewToolCalls: [],
+			traceRequestId: requestId,
 		};
 
 		const headers = sanitizeResponseHeaders(response.headers);
@@ -1325,13 +1335,23 @@ export class CodexProvider extends BaseProvider {
 
 				// Final message_delta + message_stop if upstream never sent response.completed
 				if (!state.hasSentTerminalEvents) {
+					const stopReason = state.sawToolUse ? "tool_use" : "end_turn";
 					await writeSSE("message_delta", {
 						type: "message_delta",
 						delta: {
-							stop_reason: state.sawToolUse ? "tool_use" : "end_turn",
+							stop_reason: stopReason,
 							stop_sequence: null,
 						},
 						usage: { output_tokens: state.outputTokens },
+					});
+					writeCodexResponseTrace({
+						requestId,
+						modelOut: state.model,
+						summary: summarizeCodexResponse(
+							state.traceNewToolCalls,
+							{ output_tokens: state.outputTokens },
+							stopReason,
+						),
 					});
 					await writeSSE("message_stop", { type: "message_stop" });
 				}
@@ -1592,15 +1612,20 @@ export class CodexProvider extends BaseProvider {
 							? state.functionCallBlocks.get(outputIndex)
 							: undefined;
 					if (buffer) {
+						const partialJson = this.sanitizeToolUsePartialJson(
+							buffer.name,
+							buffer.arguments.join(""),
+						);
+						state.traceNewToolCalls.push({
+							name: buffer.name,
+							arg_preview: partialJson.slice(0, 120),
+						});
 						await writeSSE("content_block_delta", {
 							type: "content_block_delta",
 							index: buffer.contentBlockIndex,
 							delta: {
 								type: "input_json_delta",
-								partial_json: this.sanitizeToolUsePartialJson(
-									buffer.name,
-									buffer.arguments.join(""),
-								),
+								partial_json: partialJson,
 							},
 						});
 						await writeSSE("content_block_stop", {
@@ -1648,6 +1673,21 @@ export class CodexProvider extends BaseProvider {
 						"error",
 						this.toAnthropicErrorPayload(state.upstreamError),
 					);
+					writeCodexResponseTrace({
+						requestId: state.traceRequestId,
+						modelOut: state.model,
+						summary: summarizeCodexResponse(
+							state.traceNewToolCalls,
+							{
+								input_tokens: state.inputTokens,
+								output_tokens: state.outputTokens,
+								cache_read_input_tokens: state.cacheReadInputTokens,
+								cache_creation_input_tokens: state.cacheCreationInputTokens,
+							},
+							"error",
+							state.upstreamError,
+						),
+					});
 					state.hasSentTerminalEvents = true;
 				}
 				break;
@@ -1722,6 +1762,20 @@ export class CodexProvider extends BaseProvider {
 				}
 
 				await writeSSE("message_delta", messageDelta);
+				writeCodexResponseTrace({
+					requestId: state.traceRequestId,
+					modelOut: state.model,
+					summary: summarizeCodexResponse(
+						state.traceNewToolCalls,
+						{
+							input_tokens: state.inputTokens,
+							output_tokens: state.outputTokens,
+							cache_read_input_tokens: state.cacheReadInputTokens,
+							cache_creation_input_tokens: state.cacheCreationInputTokens,
+						},
+						messageDelta.delta.stop_reason,
+					),
+				});
 				await writeSSE("message_stop", { type: "message_stop" });
 				state.hasSentTerminalEvents = true;
 				break;

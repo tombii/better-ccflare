@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { summarizeCodexTransform } from "./trace";
+import { summarizeCodexResponse, summarizeCodexTransform } from "./trace";
 
-describe("summarizeCodexTransform", () => {
-	test("counts tool calls, outputs, empties, and nudges", () => {
+describe("summarizeCodexTransform (request/history phase)", () => {
+	test("counts historical tool calls, outputs, empties, and nudges", () => {
 		const s = summarizeCodexTransform([
 			{ role: "user", content: [{ type: "input_text", text: "hi" }] },
 			{
@@ -36,28 +36,14 @@ describe("summarizeCodexTransform", () => {
 			},
 		]);
 
-		expect(s.function_call_count).toBe(3);
-		expect(s.function_call_output_count).toBe(2);
-		expect(s.empty_output_count).toBe(1);
+		expect(s.history_function_call_count).toBe(3);
+		expect(s.history_function_call_output_count).toBe(2);
+		expect(s.history_empty_output_count).toBe(1);
 		expect(s.nudge_count).toBe(1);
-		expect(s.tool_use_by_name).toEqual({ Task: 2, Skill: 1 });
+		expect(s.history_tool_use_by_name).toEqual({ Task: 2, Skill: 1 });
 	});
 
-	test("captures per-call argument previews for cross-turn re-spawn diffing", () => {
-		const s = summarizeCodexTransform([
-			{
-				type: "function_call",
-				call_id: "t1",
-				name: "Task",
-				arguments: '{"prompt":"review the auth module"}',
-			},
-		]);
-		expect(s.tool_calls).toEqual([
-			{ name: "Task", arg_preview: '{"prompt":"review the auth module"}' },
-		]);
-	});
-
-	test("truncates long argument previews to 120 chars", () => {
+	test("captures per-call argument previews, truncated to 120 chars", () => {
 		const longArg = `{"prompt":"${"x".repeat(500)}"}`;
 		const s = summarizeCodexTransform([
 			{
@@ -67,12 +53,47 @@ describe("summarizeCodexTransform", () => {
 				arguments: longArg,
 			},
 		]);
-		expect(s.tool_calls[0].arg_preview.length).toBe(120);
+		expect(s.history_tool_calls[0].arg_preview.length).toBe(120);
 	});
 
 	test("ignores malformed items without throwing", () => {
 		const s = summarizeCodexTransform([null, undefined, 42, "str", {}]);
-		expect(s.function_call_count).toBe(0);
+		expect(s.history_function_call_count).toBe(0);
 		expect(s.input_item_count).toBe(5);
+	});
+});
+
+describe("summarizeCodexResponse (response phase)", () => {
+	test("counts newly emitted tool calls and computes cache hit pct", () => {
+		const s = summarizeCodexResponse(
+			[
+				{ name: "Task", arg_preview: '{"prompt":"a"}' },
+				{ name: "Task", arg_preview: '{"prompt":"b"}' },
+				{ name: "Bash", arg_preview: '{"command":"ls"}' },
+			],
+			{ input_tokens: 300, output_tokens: 50, cache_read_input_tokens: 700 },
+			"tool_use",
+		);
+		expect(s.new_tool_call_count).toBe(3);
+		expect(s.new_tool_use_by_name).toEqual({ Task: 2, Bash: 1 });
+		expect(s.stop_reason).toBe("tool_use");
+		// 700 / (300 + 700) = 70%
+		expect(s.cache_hit_pct).toBe(70);
+	});
+
+	test("null cache hit pct when no input tokens seen", () => {
+		const s = summarizeCodexResponse([], {}, "end_turn");
+		expect(s.new_tool_call_count).toBe(0);
+		expect(s.cache_hit_pct).toBeNull();
+	});
+
+	test("carries upstream error type/message", () => {
+		const s = summarizeCodexResponse([], { input_tokens: 10 }, "error", {
+			type: "rate_limit_error",
+			message: "429",
+		});
+		expect(s.stop_reason).toBe("error");
+		expect(s.error_type).toBe("rate_limit_error");
+		expect(s.error_message).toBe("429");
 	});
 });
