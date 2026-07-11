@@ -537,12 +537,17 @@ function startUsagePollingWithRefresh(
 }
 
 // Export for programmatic use
+let serverLifecycleOwned = false;
+
 export default async function startServer(options?: {
 	port?: number;
 	withDashboard?: boolean;
 	sslKeyPath?: string;
 	sslCertPath?: string;
 }) {
+	// From here on, this process owns a server lifecycle: the module-scope
+	// signal handlers below act, and the CLI's own handlers stand down.
+	serverLifecycleOwned = true;
 	// Return existing server if already running
 	if (serverInstance) {
 		const existingPort = serverInstance.port;
@@ -1240,12 +1245,14 @@ export default async function startServer(options?: {
 								authResult.apiKeyName,
 							);
 						}
-						return await handleProxy(
-							req,
-							url,
-							proxyContext,
-							authResult.apiKeyId,
-							authResult.apiKeyName,
+						return trackStreamForShutdown(
+							await handleProxy(
+								req,
+								url,
+								proxyContext,
+								authResult.apiKeyId,
+								authResult.apiKeyName,
+							),
 						);
 					} catch (proxyError) {
 						const statusCode =
@@ -1623,6 +1630,73 @@ Available endpoints:
  * timeout (systemd TimeoutStopSec, wrapper SIGKILL delays) above this value
  * plus the watchdog margin or the drain gets SIGKILLed out from under us.
  */
+// ── In-flight stream registry for shutdown ─────────────────────────────────
+// Bun 1.x cannot escalate a graceful stop(): once stop() has removed the
+// listener, a later stop(true) no longer terminates active connections
+// (verified empirically on Bun 1.3.5). To force-close still-streaming
+// responses at the drain deadline, every proxied response is wrapped in a
+// pass-through whose controller can be errored explicitly.
+const inflightStreamAborts = new Set<() => void>();
+
+export function trackStreamForShutdown(response: Response): Response {
+	const body = response.body;
+	if (!body) return response;
+	const reader = body.getReader();
+	let abort: (() => void) | null = null;
+	const unregister = () => {
+		if (abort) inflightStreamAborts.delete(abort);
+	};
+	const stream = new ReadableStream<Uint8Array>({
+		start(controller) {
+			abort = () => {
+				unregister();
+				try {
+					controller.error(new Error("server shutdown: drain deadline"));
+				} catch {
+					// already closed or errored
+				}
+				reader.cancel().catch(() => {});
+			};
+			inflightStreamAborts.add(abort);
+		},
+		async pull(controller) {
+			try {
+				const { done, value } = await reader.read();
+				if (done) {
+					unregister();
+					controller.close();
+				} else {
+					controller.enqueue(value);
+				}
+			} catch (error) {
+				unregister();
+				try {
+					controller.error(error);
+				} catch {
+					// already errored by abort
+				}
+			}
+		},
+		cancel(reason) {
+			unregister();
+			return reader.cancel(reason).catch(() => {});
+		},
+	});
+	return new Response(stream, {
+		status: response.status,
+		statusText: response.statusText,
+		headers: response.headers,
+	});
+}
+
+/** Error every tracked in-flight stream; returns how many were aborted. */
+export function abortInflightStreams(): number {
+	const aborts = [...inflightStreamAborts];
+	inflightStreamAborts.clear();
+	for (const abort of aborts) abort();
+	return aborts.length;
+}
+
 export const SHUTDOWN_DRAIN_MS_ENV = "CCFLARE_SHUTDOWN_DRAIN_MS";
 const DEFAULT_SHUTDOWN_DRAIN_MS = 60_000;
 /**
@@ -1641,8 +1715,11 @@ export function readShutdownDrainMs(): number {
 	// Strict digits only: parseInt accepts numeric prefixes like "1abc" as 1,
 	// which would silently shrink the drain budget to a millisecond.
 	if (!/^\d+$/.test(raw)) return DEFAULT_SHUTDOWN_DRAIN_MS;
-	const parsed = Number.parseInt(raw, 10);
-	if (!Number.isSafeInteger(parsed) || parsed < 0) {
+	// Number (not parseInt) so digit strings beyond MAX_SAFE_INTEGER still
+	// compare correctly and clamp to the maximum instead of falling back to
+	// the shorter default the operator did not ask for.
+	const parsed = Number(raw);
+	if (!Number.isFinite(parsed) || parsed < 0) {
 		return DEFAULT_SHUTDOWN_DRAIN_MS;
 	}
 	return Math.min(parsed, MAX_SHUTDOWN_DRAIN_MS);
@@ -1773,7 +1850,15 @@ async function handleGracefulShutdown(signal: string) {
 				console.error(
 					`Drain budget exhausted; force-closing ${remaining} in-flight request(s)`,
 				);
+				// stop(true) cannot escalate an earlier graceful stop() on Bun 1.x
+				// (verified on 1.3.5), so error the tracked response streams
+				// directly; the call stays as belt-and-braces for Bun versions
+				// where escalation works.
 				serverInstance.stop(true);
+				const aborted = abortInflightStreams();
+				if (aborted > 0) {
+					console.error(`Errored ${aborted} tracked response stream(s)`);
+				}
 				// Force-cancelled streams still have queued close/error handlers
 				// that record their final usage. Yield briefly so those callbacks
 				// run before the usage collector drains and the async DB writer
@@ -1795,8 +1880,18 @@ async function handleGracefulShutdown(signal: string) {
 }
 
 // Register signal handlers
-process.on("SIGINT", () => handleGracefulShutdown("SIGINT"));
-process.on("SIGTERM", () => handleGracefulShutdown("SIGTERM"));
+// Only act once this process actually owns a server lifecycle: for
+// short-lived CLI commands (which import this module without starting a
+// server) the CLI's own handlers own shutdown, and a second concurrent
+// shutdown path could exit while the first is still disposing resources.
+process.on("SIGINT", () => {
+	if (!serverLifecycleOwned) return;
+	handleGracefulShutdown("SIGINT");
+});
+process.on("SIGTERM", () => {
+	if (!serverLifecycleOwned) return;
+	handleGracefulShutdown("SIGTERM");
+});
 
 // Export helper to get the current protocol
 export function getProtocol(): string {
