@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import type { Account } from "@better-ccflare/types";
 import { fetchCodexUsageOnDemand } from "./on-demand-fetch";
 import {
 	CODEX_CACHE_KEY_MODE_ENV,
@@ -6,6 +7,43 @@ import {
 	CodexProvider,
 } from "./provider";
 import { parseCodexUsageHeaders } from "./usage";
+
+const codexAccount = (overrides: Partial<Account> = {}): Account => ({
+	id: "codex-1",
+	name: "codex-test",
+	provider: "codex",
+	api_key: null,
+	refresh_token: "refresh-token",
+	access_token: "access-token",
+	expires_at: Date.now() + 60_000,
+	request_count: 0,
+	total_requests: 0,
+	last_used: null,
+	created_at: Date.now(),
+	rate_limited_until: null,
+	rate_limited_reason: null,
+	rate_limited_at: null,
+	session_start: null,
+	session_request_count: 0,
+	paused: false,
+	rate_limit_reset: null,
+	rate_limit_status: null,
+	rate_limit_remaining: null,
+	priority: 50,
+	auto_fallback_enabled: true,
+	auto_refresh_enabled: true,
+	auto_pause_on_overage_enabled: false,
+	peak_hours_pause_enabled: false,
+	custom_endpoint: null,
+	model_mappings: null,
+	cross_region_mode: null,
+	model_fallbacks: null,
+	billing_type: null,
+	pause_reason: null,
+	refresh_token_issued_at: null,
+	consecutive_rate_limits: 0,
+	...overrides,
+});
 
 const sseBody = (lines: string[]) => `${lines.join("\n")}\n`;
 const eventLine = (name: string, data: unknown) => [
@@ -1856,7 +1894,10 @@ describe("CodexProvider prompt_cache_key derivation", () => {
 		delete process.env[CODEX_CACHE_KEY_MODE_ENV];
 	});
 
-	const transform = async (payload: Record<string, unknown>) => {
+	const transform = async (
+		payload: Record<string, unknown>,
+		account?: Account,
+	) => {
 		const request = new Request("https://example.com/v1/messages", {
 			method: "POST",
 			headers: { "content-type": "application/json" },
@@ -1873,12 +1914,36 @@ describe("CodexProvider prompt_cache_key derivation", () => {
 			}),
 		});
 		return new CodexProvider()
-			.transformRequestBody(request, undefined)
+			.transformRequestBody(request, account)
 			.then((r) => r.json());
 	};
 
 	it("omits prompt_cache_key unless enabled", async () => {
 		const body = await transform({});
+		expect(body.prompt_cache_key).toBeUndefined();
+	});
+
+	it("attaches prompt_cache_key when the account targets OpenAI's real endpoint", async () => {
+		process.env[CODEX_PROMPT_CACHE_KEY_ENV] = "1";
+		const noAccount = await transform({});
+		const openaiAccount = await transform(
+			{},
+			codexAccount({ custom_endpoint: "https://api.openai.com/v1" }),
+		);
+		expect(noAccount.prompt_cache_key).toMatch(/^ccflare-convo-[0-9a-f]{48}$/);
+		expect(openaiAccount.prompt_cache_key).toMatch(
+			/^ccflare-convo-[0-9a-f]{48}$/,
+		);
+	});
+
+	it("omits prompt_cache_key for custom/self-hosted OpenAI-compatible endpoints even when enabled", async () => {
+		process.env[CODEX_PROMPT_CACHE_KEY_ENV] = "1";
+		const body = await transform(
+			{},
+			codexAccount({
+				custom_endpoint: "https://my-openai-proxy.example.com/v1",
+			}),
+		);
 		expect(body.prompt_cache_key).toBeUndefined();
 	});
 

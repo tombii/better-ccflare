@@ -18,9 +18,11 @@ const log = new Logger("CodexProvider");
  * requests. OpenAI documents that on GPT-5.6-family models this key is
  * required for reliable prompt-cache matching.
  *
- * Only enable this when Codex accounts point at OpenAI's own Responses API.
- * A strict OpenAI-compatible endpoint that does not know the field may
- * reject requests carrying it; that is why the flag defaults to off.
+ * Attaching the key is also gated on the resolved account endpoint (see
+ * isOpenAiPromptCacheEndpoint): it is only sent when the account targets
+ * OpenAI's own chatgpt.com / api.openai.com hosts. Custom or self-hosted
+ * OpenAI-compatible endpoints may reject the unknown field, so the key is
+ * skipped for those even when this flag is enabled.
  */
 export const CODEX_PROMPT_CACHE_KEY_ENV = "CCFLARE_CODEX_PROMPT_CACHE_KEY";
 /** "conversation" (default) or "session"; see derivePromptCacheKey. */
@@ -43,6 +45,8 @@ const TOKEN_URL = "https://auth.openai.com/oauth/token";
 const CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 export const CODEX_DEFAULT_ENDPOINT =
 	"https://chatgpt.com/backend-api/codex/responses";
+/** Hosts that are OpenAI's own Codex/Responses API, not a custom endpoint. */
+const OPENAI_PROMPT_CACHE_HOSTS = new Set(["chatgpt.com", "api.openai.com"]);
 export const CODEX_VERSION = "0.144.1";
 export const CODEX_USER_AGENT = `codex-cli/${CODEX_VERSION} (Windows 10.0.26100; x64)`;
 export const CODEX_PING_MODEL = "gpt-5-codex";
@@ -228,6 +232,38 @@ interface StreamState {
 		code?: string;
 		status?: string;
 	};
+}
+
+/**
+ * Resolves the endpoint a Codex request would be sent to, mirroring
+ * CodexProvider.buildUrl's fallback (invalid/missing custom_endpoint falls
+ * back to CODEX_DEFAULT_ENDPOINT). Read-only: unlike buildUrl it never logs,
+ * since it may be called on every request just to decide prompt_cache_key
+ * eligibility.
+ */
+function resolveCodexPromptCacheEndpoint(account?: Account): string {
+	if (account?.custom_endpoint) {
+		try {
+			return validateEndpointUrl(account.custom_endpoint, "custom_endpoint");
+		} catch {
+			return CODEX_DEFAULT_ENDPOINT;
+		}
+	}
+	return CODEX_DEFAULT_ENDPOINT;
+}
+
+/**
+ * prompt_cache_key is an OpenAI-specific Responses API field. Custom or
+ * self-hosted OpenAI-compatible endpoints may reject the unknown field, so
+ * only attach it when the account resolves to OpenAI's own hosts.
+ */
+function isOpenAiPromptCacheEndpoint(account?: Account): boolean {
+	try {
+		const { hostname } = new URL(resolveCodexPromptCacheEndpoint(account));
+		return OPENAI_PROMPT_CACHE_HOSTS.has(hostname);
+	} catch {
+		return false;
+	}
 }
 
 export class CodexProvider extends BaseProvider {
@@ -908,8 +944,10 @@ export class CodexProvider extends BaseProvider {
 		body: AnthropicRequest,
 		instructions: string,
 		input: readonly unknown[],
+		account?: Account,
 	): string | undefined {
 		if (process.env[CODEX_PROMPT_CACHE_KEY_ENV] !== "1") return undefined;
+		if (!isOpenAiPromptCacheEndpoint(account)) return undefined;
 		const sessionId = this.extractSessionId(body);
 		if (!sessionId) return undefined;
 		// Digests are truncated to 48 hex chars so the full key fits the API's
@@ -1026,6 +1064,7 @@ export class CodexProvider extends BaseProvider {
 			body,
 			codexRequest.instructions,
 			input,
+			account,
 		);
 		if (promptCacheKey) {
 			codexRequest.prompt_cache_key = promptCacheKey;
