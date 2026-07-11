@@ -125,8 +125,11 @@ export function resetSessionGovernor(): void {
 function readLimit(envName: string, fallback: number): number {
 	const raw = process.env[envName];
 	if (raw === undefined || raw === "") return fallback;
+	// Strict digits only: parseInt would accept prefixes like "1e5" as 1 or
+	// "0x10" as 0, silently turning a generous budget into a near-zero one.
+	if (!/^\d+$/.test(raw)) return fallback;
 	const parsed = Number.parseInt(raw, 10);
-	return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+	return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
 function sweep(now: number): void {
@@ -137,14 +140,21 @@ function sweep(now: number): void {
 			sessions.delete(key);
 		}
 	}
-	// Hard bound even if every session is active: drop oldest-inserted entries.
+	// Hard bound even if every session is active: evict the least recently
+	// active sessions first. Insertion order would evict a long-running
+	// runaway session (the exact thing being governed) and let it restart
+	// counting from zero; least-recent-activity eviction keeps the busiest
+	// offenders tracked.
 	if (sessions.size >= MAX_TRACKED_SESSIONS) {
 		const excess = sessions.size - MAX_TRACKED_SESSIONS + 1;
-		let dropped = 0;
-		for (const key of sessions.keys()) {
-			if (dropped >= excess) break;
-			sessions.delete(key);
-			dropped++;
+		const byLastActivity = [...sessions.entries()]
+			.map(
+				([key, window]) =>
+					[key, window.times[window.times.length - 1] ?? 0] as const,
+			)
+			.sort((a, b) => a[1] - b[1]);
+		for (let i = 0; i < excess && i < byLastActivity.length; i++) {
+			sessions.delete(byLastActivity[i][0]);
 		}
 	}
 }
