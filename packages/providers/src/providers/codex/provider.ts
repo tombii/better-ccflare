@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
 	mapModelName,
 	ValidationError,
@@ -11,6 +12,15 @@ import { BaseProvider } from "../../base";
 import type { RateLimitInfo, TokenRefreshResult } from "../../types";
 
 const log = new Logger("CodexProvider");
+
+/**
+ * Opt-in: set to "1" to attach an OpenAI prompt_cache_key to converted
+ * requests. OpenAI documents that on GPT-5.6-family models this key is
+ * required for reliable prompt-cache matching.
+ */
+export const CODEX_PROMPT_CACHE_KEY_ENV = "CCFLARE_CODEX_PROMPT_CACHE_KEY";
+/** "conversation" (default) or "session"; see derivePromptCacheKey. */
+export const CODEX_CACHE_KEY_MODE_ENV = "CCFLARE_CODEX_CACHE_KEY_MODE";
 
 const INTERNAL_HEADERS = [
 	"x-better-ccflare-request-id",
@@ -120,6 +130,7 @@ interface CodexRequest {
 	reasoning?: { effort: string };
 	instructions?: string;
 	tools?: CodexTool[];
+	prompt_cache_key?: string;
 }
 
 // ── Anthropic request types ───────────────────────────────────────────────────
@@ -166,6 +177,8 @@ interface AnthropicRequest {
 	stream?: boolean;
 	tools?: AnthropicTool[];
 	reasoning?: { effort?: string };
+	/** Claude Code sends a JSON-encoded object with a session_id here. */
+	metadata?: { user_id?: string };
 	[key: string]: unknown;
 }
 
@@ -848,6 +861,80 @@ export class CodexProvider extends BaseProvider {
 		}
 	}
 
+	private extractSessionId(body: AnthropicRequest): string | undefined {
+		const rawUserId = body.metadata?.user_id;
+		if (typeof rawUserId !== "string") return undefined;
+		try {
+			const metadata = JSON.parse(rawUserId) as unknown;
+			if (!metadata || typeof metadata !== "object") return undefined;
+			const sessionId = (metadata as Record<string, unknown>).session_id;
+			if (
+				typeof sessionId !== "string" ||
+				!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+					sessionId,
+				)
+			) {
+				return undefined;
+			}
+			return sessionId.toLowerCase();
+		} catch {
+			return undefined;
+		}
+	}
+
+	/**
+	 * OpenAI routes each request to a cache machine by hashing the prompt's
+	 * initial tokens together with prompt_cache_key, and documents that one key
+	 * should stay under ~15 requests/minute or "some requests may miss the
+	 * cache". A Claude Code session multiplexes the main loop plus every
+	 * subagent conversation over one session id, so keying on the session
+	 * alone funnels an entire fan-out burst onto one cache machine and
+	 * thrashes it (measured in production traces: turns 1-8 of subagent
+	 * conversations cached no better than cold starts while one session key
+	 * carried 170+ conversations in five minutes).
+	 *
+	 * Default "conversation" mode therefore partitions the key by conversation
+	 * identity: session id + instructions + first input item, all stable
+	 * across the turns of one conversation and distinct across concurrent
+	 * subagents. Each conversation is sequential, so per-key traffic stays far
+	 * below the documented rate bound. CCFLARE_CODEX_CACHE_KEY_MODE=session
+	 * restores the coarse per-session key.
+	 */
+	private derivePromptCacheKey(
+		body: AnthropicRequest,
+		instructions: string,
+		input: readonly unknown[],
+	): string | undefined {
+		if (process.env[CODEX_PROMPT_CACHE_KEY_ENV] !== "1") return undefined;
+		const sessionId = this.extractSessionId(body);
+		if (!sessionId) return undefined;
+		// Digests are truncated to 48 hex chars so the full key fits the API's
+		// 64-char key bound. Session ids and content never appear in the key.
+		if (
+			process.env[CODEX_CACHE_KEY_MODE_ENV] === "session" ||
+			input.length === 0
+		) {
+			return `ccflare-session-${createHash("sha256")
+				.update(sessionId)
+				.digest("hex")
+				.slice(0, 48)}`;
+		}
+		let firstItem = "";
+		try {
+			firstItem = JSON.stringify(input[0]) ?? "";
+		} catch {
+			// Non-serializable first item: fall back to instructions-only identity.
+		}
+		return `ccflare-convo-${createHash("sha256")
+			.update(sessionId)
+			.update("\0")
+			.update(instructions)
+			.update("\0")
+			.update(firstItem)
+			.digest("hex")
+			.slice(0, 48)}`;
+	}
+
 	private convertToCodexFormat(
 		body: AnthropicRequest,
 		account?: Account,
@@ -931,6 +1018,14 @@ export class CodexProvider extends BaseProvider {
 		};
 
 		codexRequest.instructions = instructions || "You are a helpful assistant.";
+		const promptCacheKey = this.derivePromptCacheKey(
+			body,
+			codexRequest.instructions,
+			input,
+		);
+		if (promptCacheKey) {
+			codexRequest.prompt_cache_key = promptCacheKey;
+		}
 		if (tools) {
 			codexRequest.tools = tools;
 		}
