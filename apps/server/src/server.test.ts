@@ -29,4 +29,16 @@ describe("readShutdownDrainMs", () => {
 		expect(readShutdownDrainMs()).toBe(60_000);
 		delete process.env[SHUTDOWN_DRAIN_MS_ENV];
 	});
+
+	it("rejects numeric prefixes and clamps oversized values", () => {
+		const { MAX_SHUTDOWN_DRAIN_MS } = require("./server");
+		// parseInt would read "1abc" as a 1ms drain; treat it as invalid.
+		process.env[SHUTDOWN_DRAIN_MS_ENV] = "1abc";
+		expect(readShutdownDrainMs()).toBe(60_000);
+		// Values beyond the clamp would overflow setTimeout's 32-bit delay and
+		// make the watchdog fire immediately.
+		process.env[SHUTDOWN_DRAIN_MS_ENV] = "99999999999";
+		expect(readShutdownDrainMs()).toBe(MAX_SHUTDOWN_DRAIN_MS);
+		delete process.env[SHUTDOWN_DRAIN_MS_ENV];
+	});
 });

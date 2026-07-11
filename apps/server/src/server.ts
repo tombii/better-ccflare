@@ -1625,16 +1625,27 @@ Available endpoints:
  */
 export const SHUTDOWN_DRAIN_MS_ENV = "CCFLARE_SHUTDOWN_DRAIN_MS";
 const DEFAULT_SHUTDOWN_DRAIN_MS = 60_000;
+/**
+ * Upper clamp for the drain budget: keeps the watchdog setTimeout well
+ * inside its 32-bit millisecond range (an overflowed delay fires
+ * immediately, which would cut off the very streams being drained) and
+ * keeps shutdown inside any sane service-manager stop timeout.
+ */
+export const MAX_SHUTDOWN_DRAIN_MS = 15 * 60 * 1000;
 /** Budget for post-drain cleanup (DB writer, disposables) before force exit. */
 const SHUTDOWN_WATCHDOG_MARGIN_MS = 15_000;
 
 export function readShutdownDrainMs(): number {
 	const raw = process.env[SHUTDOWN_DRAIN_MS_ENV];
 	if (raw === undefined || raw === "") return DEFAULT_SHUTDOWN_DRAIN_MS;
+	// Strict digits only: parseInt accepts numeric prefixes like "1abc" as 1,
+	// which would silently shrink the drain budget to a millisecond.
+	if (!/^\d+$/.test(raw)) return DEFAULT_SHUTDOWN_DRAIN_MS;
 	const parsed = Number.parseInt(raw, 10);
-	return Number.isFinite(parsed) && parsed >= 0
-		? parsed
-		: DEFAULT_SHUTDOWN_DRAIN_MS;
+	if (!Number.isSafeInteger(parsed) || parsed < 0) {
+		return DEFAULT_SHUTDOWN_DRAIN_MS;
+	}
+	return Math.min(parsed, MAX_SHUTDOWN_DRAIN_MS);
 }
 
 // Deduplicates concurrent shutdown invocations (e.g. SIGINT arriving while
@@ -1763,6 +1774,12 @@ async function handleGracefulShutdown(signal: string) {
 					`Drain budget exhausted; force-closing ${remaining} in-flight request(s)`,
 				);
 				serverInstance.stop(true);
+				// Force-cancelled streams still have queued close/error handlers
+				// that record their final usage. Yield briefly so those callbacks
+				// run before the usage collector drains and the async DB writer
+				// is disposed; otherwise the cancelled streams' last usage events
+				// are lost.
+				await new Promise((resolve) => setTimeout(resolve, 250));
 			}
 		}
 
