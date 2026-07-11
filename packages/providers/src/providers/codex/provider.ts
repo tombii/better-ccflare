@@ -107,6 +107,26 @@ const MODEL_EFFECTIVE_CONTEXT_PERCENT: Record<string, number> = {
 	"gpt-5.6-luna": 95,
 };
 
+/**
+ * Exact lookup first, then longest-prefix fallback so dated or suffixed
+ * variants the API may return (e.g. "gpt-5.6-sol-2026-05-13") still resolve
+ * to their family's metadata instead of silently losing the client's context
+ * gauge. Prefix matches require a "-" boundary so "gpt-5.55" cannot match
+ * "gpt-5.5".
+ */
+function lookupModelFamilyKey(model: string): string | undefined {
+	if (MODEL_CONTEXT_WINDOWS[model]) return model;
+	let bestKey: string | undefined;
+	for (const key of Object.keys(MODEL_CONTEXT_WINDOWS)) {
+		if (
+			model.startsWith(`${key}-`) &&
+			(bestKey === undefined || key.length > bestKey.length)
+		) {
+			bestKey = key;
+		}
+	}
+	return bestKey;
+}
 // ── Codex Responses API types ─────────────────────────────────────────────────
 
 interface CodexInputTextItem {
@@ -934,10 +954,12 @@ export class CodexProvider extends BaseProvider {
 	): ContextWindow | null {
 		const model = response?.model;
 		if (typeof model !== "string") return null;
-		let contextWindowSize = MODEL_CONTEXT_WINDOWS[model];
+		const familyKey = lookupModelFamilyKey(model);
+		if (!familyKey) return null;
+		let contextWindowSize = MODEL_CONTEXT_WINDOWS[familyKey];
 		if (!contextWindowSize) return null;
 		if (process.env[CODEX_EFFECTIVE_CONTEXT_ENV] === "1") {
-			const pct = MODEL_EFFECTIVE_CONTEXT_PERCENT[model];
+			const pct = MODEL_EFFECTIVE_CONTEXT_PERCENT[familyKey];
 			if (pct && pct > 0 && pct < 100) {
 				contextWindowSize = Math.floor((contextWindowSize * pct) / 100);
 			}
