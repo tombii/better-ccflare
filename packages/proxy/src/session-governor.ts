@@ -18,6 +18,11 @@
  * Legitimate heavy sessions (e.g. a bounded 20-agent workflow) burst wide but
  * finish; a recursive storm keeps growing. Budgets should therefore sit well
  * above normal workflow bursts and trip only on sustained volume.
+ *
+ * State is process-local by design: better-ccflare runs as a single-process
+ * local proxy. A multi-replica deployment without session-affinity routing
+ * would multiply the effective budget by the replica count; that setup needs
+ * shared state (or affinity) and is out of scope here.
  */
 import { Logger } from "@better-ccflare/logger";
 
@@ -33,6 +38,16 @@ const DEFAULT_WARN_PER_HOUR = 300;
 const DEFAULT_MAX_PER_HOUR = 0;
 /** Memory bound for tracked sessions; oldest entries are swept past this. */
 const MAX_TRACKED_SESSIONS = 2048;
+/**
+ * Per-session history bound: with enforcement on, rejected requests are not
+ * appended so history never exceeds the budget; in warn-only mode a runaway
+ * session saturates here (counts read "at least this many") instead of
+ * growing without bound.
+ */
+const MAX_TRACKED_TIMES = 20_000;
+/** Housekeeping cadence independent of map capacity. */
+const SWEEP_INTERVAL_MS = 5 * 60 * 1000;
+let lastSweepAt = 0;
 
 interface SessionWindow {
 	times: number[];
@@ -48,6 +63,8 @@ export interface SessionGovernorVerdict {
 	warnLimit: number;
 	maxLimit: number;
 	rejected: boolean;
+	/** Seconds until the oldest admitted request leaves the window. */
+	retryAfterSec: number | null;
 }
 
 /**
@@ -64,6 +81,13 @@ export function recordSessionRequest(
 	const warnLimit = readLimit(SESSION_GOVERNOR_WARN_ENV, DEFAULT_WARN_PER_HOUR);
 	const maxLimit = readLimit(SESSION_GOVERNOR_MAX_ENV, DEFAULT_MAX_PER_HOUR);
 
+	// Periodic housekeeping independent of map capacity, so an idle session's
+	// history does not persist until the map happens to fill up.
+	if (now - lastSweepAt >= SWEEP_INTERVAL_MS) {
+		lastSweepAt = now;
+		sweep(now);
+	}
+
 	let window = sessions.get(sessionKey);
 	if (!window) {
 		if (sessions.size >= MAX_TRACKED_SESSIONS) {
@@ -73,15 +97,34 @@ export function recordSessionRequest(
 		sessions.set(sessionKey, window);
 	}
 
+	// Timestamps are appended in order, so expired entries form a prefix.
+	// Splice that prefix off only when something actually expired: filtering
+	// the whole array on every request would make a runaway session cost
+	// quadratic time and stall the event loop, the exact storm being governed.
 	const cutoff = now - WINDOW_MS;
-	window.times = window.times.filter((t) => t > cutoff);
+	let expired = 0;
+	while (expired < window.times.length && window.times[expired] <= cutoff) {
+		expired++;
+	}
+	if (expired > 0) {
+		window.times.splice(0, expired);
+	}
 	if (window.times.length === 0) {
 		window.warned = false;
 	}
-	window.times.push(now);
-	const count = window.times.length;
 
+	const count = window.times.length + 1;
 	const rejected = maxLimit > 0 && count > maxLimit;
+	// A rejected request consumes no budget: appending it would let a client
+	// retrying every few minutes hold the session over its limit forever,
+	// turning a temporary 429 into a permanent lockout.
+	if (!rejected && window.times.length < MAX_TRACKED_TIMES) {
+		window.times.push(now);
+	}
+	const retryAfterSec = rejected
+		? Math.max(1, Math.ceil((window.times[0] + WINDOW_MS - now) / 1000))
+		: null;
+
 	if (!rejected && warnLimit > 0 && count >= warnLimit && !window.warned) {
 		window.warned = true;
 		log.warn(
@@ -89,7 +132,14 @@ export function recordSessionRequest(
 		);
 	}
 
-	return { key: sessionKey, count, warnLimit, maxLimit, rejected };
+	return {
+		key: sessionKey,
+		count,
+		warnLimit,
+		maxLimit,
+		rejected,
+		retryAfterSec,
+	};
 }
 
 /** Anthropic-shaped 429 for a rejected verdict. */
@@ -111,7 +161,9 @@ export function buildSessionRejectResponse(
 			status: 429,
 			headers: {
 				"Content-Type": "application/json",
-				"retry-after": "300",
+				// Honest hint: when the oldest admitted request leaves the
+				// window, one slot frees up.
+				"retry-after": String(verdict.retryAfterSec ?? 300),
 			},
 		},
 	);
@@ -120,6 +172,7 @@ export function buildSessionRejectResponse(
 /** Test hook: clear all tracked sessions. */
 export function resetSessionGovernor(): void {
 	sessions.clear();
+	lastSweepAt = 0;
 }
 
 function readLimit(envName: string, fallback: number): number {

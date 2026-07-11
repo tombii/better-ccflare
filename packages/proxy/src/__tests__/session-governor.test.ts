@@ -90,6 +90,28 @@ describe("recordSessionRequest", () => {
 		expect(next?.maxLimit).toBe(0);
 	});
 
+	test("rejected requests consume no budget and retry-after is honest", () => {
+		process.env[SESSION_GOVERNOR_MAX_ENV] = "3";
+		recordSessionRequest("s1", T0);
+		recordSessionRequest("s1", T0 + 1_000);
+		recordSessionRequest("s1", T0 + 2_000);
+		const rejectedVerdict = recordSessionRequest("s1", T0 + 3_000);
+		expect(rejectedVerdict?.rejected).toBe(true);
+		// The oldest admitted request (T0) leaves the window at T0 + 1h.
+		expect(rejectedVerdict?.retryAfterSec).toBe(
+			Math.ceil((HOUR - 3_000) / 1000),
+		);
+		// Retrying while rejected must not extend the lockout: none of these
+		// consume budget, so the session recovers when the original burst
+		// expires instead of being locked out forever.
+		for (let i = 0; i < 50; i++) {
+			const retry = recordSessionRequest("s1", T0 + 60_000 * (i + 1));
+			expect(retry?.rejected).toBe(true);
+		}
+		const afterExpiry = recordSessionRequest("s1", T0 + HOUR + 2_500);
+		expect(afterExpiry?.rejected).toBe(false);
+	});
+
 	test("capacity eviction drops idle sessions before active ones", () => {
 		// Fill the tracker to capacity with sessions whose last activity is
 		// oldest-first, then keep one hot session current.
@@ -118,7 +140,8 @@ describe("buildSessionRejectResponse", () => {
 
 		const res = buildSessionRejectResponse(verdict);
 		expect(res.status).toBe(429);
-		expect(res.headers.get("retry-after")).toBe("300");
+		// The single admitted request (T0) leaves the window one hour later.
+		expect(res.headers.get("retry-after")).toBe("3600");
 		const body = (await res.json()) as {
 			type: string;
 			error: { type: string; message: string };
