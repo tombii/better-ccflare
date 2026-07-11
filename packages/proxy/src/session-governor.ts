@@ -161,6 +161,10 @@ export function buildSessionRejectResponse(
 			status: 429,
 			headers: {
 				"Content-Type": "application/json",
+				// Marks this as a deliberate policy rejection (not transient
+				// upstream capacity) so fronting proxies pass it to the client
+				// instead of retry-holding it.
+				"x-better-ccflare-governor": "session-budget",
 				// Honest hint: when the oldest admitted request leaves the
 				// window, one slot frees up.
 				"retry-after": String(verdict.retryAfterSec ?? 300),
