@@ -3,6 +3,7 @@ import {
 	acquireCachePacing,
 	CACHE_PACING_MS_ENV,
 	finishPacing,
+	getCachePacingStats,
 	readCachePacingMs,
 	resetCachePacing,
 } from "../cache-pacing";
@@ -151,5 +152,60 @@ describe("acquireCachePacing", () => {
 		});
 		expect(second).not.toBeNull();
 		expect(Date.now() - start).toBeLessThan(1_000);
+		expect(getCachePacingStats().other?.staleLeadersReplaced).toBe(1);
+	});
+});
+
+describe("getCachePacingStats", () => {
+	test("attributes leaders and leader-released followers per family", async () => {
+		process.env[CACHE_PACING_MS_ENV] = "5000";
+		const leader = await acquireCachePacing({
+			sessionKey: "st1",
+			model: "claude-opus-4-8",
+		});
+		const followerPromise = acquireCachePacing({
+			sessionKey: "st1",
+			model: "claude-opus-4-8",
+		});
+		await new Promise((r) => setTimeout(r, 10));
+		const wrapped = finishPacing(leader, sseResponse(["event: a\n\n"], 1));
+		await wrapped.text();
+		await followerPromise;
+
+		const stats = getCachePacingStats();
+		expect(stats.anthropic.leaders).toBe(1);
+		expect(stats.anthropic.followersHeld).toBe(1);
+		expect(stats.anthropic.followersReleasedByLeader).toBe(1);
+		expect(stats.anthropic.followersReleasedByCap).toBe(0);
+		expect(stats.anthropic.followerWaitMsTotal).toBeGreaterThanOrEqual(0);
+		expect(stats.openai).toBeUndefined();
+	});
+
+	test("attributes cap releases and abandons, families separated", async () => {
+		process.env[CACHE_PACING_MS_ENV] = "30";
+		await acquireCachePacing({ sessionKey: "st2", model: "gpt-5.6-sol" });
+		// Leader never streams: the follower must release at the cap.
+		await acquireCachePacing({ sessionKey: "st2", model: "gpt-5.6-sol" });
+		const abandoned = await acquireCachePacing({
+			sessionKey: "st3",
+			model: "gpt-5.6-sol",
+		});
+		abandoned?.abandon();
+
+		const stats = getCachePacingStats();
+		expect(stats.openai.leaders).toBe(2);
+		expect(stats.openai.followersHeld).toBe(1);
+		expect(stats.openai.followersReleasedByCap).toBe(1);
+		expect(stats.openai.followersReleasedByLeader).toBe(0);
+		expect(stats.openai.leadersAbandoned).toBe(1);
+		expect(stats.openai.followerWaitMsMax).toBeGreaterThanOrEqual(20);
+		expect(stats.anthropic).toBeUndefined();
+	});
+
+	test("reset clears stats", async () => {
+		process.env[CACHE_PACING_MS_ENV] = "5000";
+		await acquireCachePacing({ sessionKey: "st4", model: "claude-opus-4-8" });
+		resetCachePacing();
+		expect(getCachePacingStats()).toEqual({});
 	});
 });

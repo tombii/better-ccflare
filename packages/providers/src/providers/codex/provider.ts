@@ -42,6 +42,8 @@ export const CODEX_PING_MODEL = "gpt-5-codex";
 const CODEX_SYNTHETIC_COUNT_TOKENS_URL =
 	"https://better-ccflare.local/codex/count_tokens";
 export const CODEX_PROMPT_CACHE_KEY_ENV = "CCFLARE_CODEX_PROMPT_CACHE_KEY";
+/** "conversation" (default) or "session"; see derivePromptCacheKey. */
+export const CODEX_CACHE_KEY_MODE_ENV = "CCFLARE_CODEX_CACHE_KEY_MODE";
 // Structured (non-text) tool_result blocks larger than this are replaced with
 // a size marker: replaying megabyte payloads (e.g. base64 documents) into
 // every subsequent turn bloats context and destroys prompt-cache reuse.
@@ -456,6 +458,14 @@ export class CodexProvider extends BaseProvider {
 				messageCount: body.messages.length,
 				sessionKeyHash: this.hashSessionKey(body),
 				promptCacheKeySet: Boolean(codexBody.prompt_cache_key),
+				promptCacheKeyId: codexBody.prompt_cache_key
+					? codexBody.prompt_cache_key.slice(-16)
+					: null,
+				cacheKeyMode: codexBody.prompt_cache_key
+					? codexBody.prompt_cache_key.startsWith("ccflare-convo-")
+						? "conversation"
+						: "session"
+					: null,
 				instructions: codexBody.instructions,
 				tools: codexBody.tools,
 				codexInput: codexBody.input,
@@ -645,8 +655,7 @@ export class CodexProvider extends BaseProvider {
 		return createHash("sha256").update(rawUserId).digest("hex").slice(0, 16);
 	}
 
-	private extractPromptCacheKey(body: AnthropicRequest): string | undefined {
-		if (process.env[CODEX_PROMPT_CACHE_KEY_ENV] !== "1") return undefined;
+	private extractSessionId(body: AnthropicRequest): string | undefined {
 		const rawUserId = body.metadata?.user_id;
 		if (typeof rawUserId !== "string") return undefined;
 		try {
@@ -661,15 +670,63 @@ export class CodexProvider extends BaseProvider {
 			) {
 				return undefined;
 			}
-			// Case-normalized, digest truncated to 48 hex chars so the full key
-			// ("ccflare-session-" + 48) fits the API's 64-char key bound.
-			return `ccflare-session-${createHash("sha256")
-				.update(sessionId.toLowerCase())
-				.digest("hex")
-				.slice(0, 48)}`;
+			return sessionId.toLowerCase();
 		} catch {
 			return undefined;
 		}
+	}
+
+	/**
+	 * OpenAI routes each request to a cache machine by hashing the prompt's
+	 * initial tokens together with prompt_cache_key, and documents that one key
+	 * should stay under ~15 requests/minute or "some requests may miss the
+	 * cache". A Claude Code session multiplexes the main loop plus every
+	 * subagent conversation over one session id, so keying on the session
+	 * alone funnels an entire fan-out burst onto one cache machine and
+	 * thrashes it (measured in dogfood traces: turns 1-8 of subagent
+	 * conversations cached no better than cold starts while one session key
+	 * carried 170+ conversations in five minutes).
+	 *
+	 * Default "conversation" mode therefore partitions the key by conversation
+	 * identity: session id + instructions + first input item, all stable
+	 * across the turns of one conversation and distinct across concurrent
+	 * subagents. Each conversation is sequential, so per-key traffic stays far
+	 * below the documented rate bound. CCFLARE_CODEX_CACHE_KEY_MODE=session
+	 * restores the coarse per-session key.
+	 */
+	private derivePromptCacheKey(
+		body: AnthropicRequest,
+		instructions: string,
+		input: readonly unknown[],
+	): string | undefined {
+		if (process.env[CODEX_PROMPT_CACHE_KEY_ENV] !== "1") return undefined;
+		const sessionId = this.extractSessionId(body);
+		if (!sessionId) return undefined;
+		// Digests are truncated to 48 hex chars so the full key fits the API's
+		// 64-char key bound. Session ids and content never appear in the key.
+		if (
+			process.env[CODEX_CACHE_KEY_MODE_ENV] === "session" ||
+			input.length === 0
+		) {
+			return `ccflare-session-${createHash("sha256")
+				.update(sessionId)
+				.digest("hex")
+				.slice(0, 48)}`;
+		}
+		let firstItem = "";
+		try {
+			firstItem = JSON.stringify(input[0]) ?? "";
+		} catch {
+			// Non-serializable first item: fall back to instructions-only identity.
+		}
+		return `ccflare-convo-${createHash("sha256")
+			.update(sessionId)
+			.update("\0")
+			.update(instructions)
+			.update("\0")
+			.update(firstItem)
+			.digest("hex")
+			.slice(0, 48)}`;
 	}
 
 	private convertToolChoice(
@@ -1128,7 +1185,11 @@ export class CodexProvider extends BaseProvider {
 		};
 
 		codexRequest.instructions = instructions || "You are a helpful assistant.";
-		const promptCacheKey = this.extractPromptCacheKey(body);
+		const promptCacheKey = this.derivePromptCacheKey(
+			body,
+			codexRequest.instructions,
+			input,
+		);
 		if (promptCacheKey) {
 			codexRequest.prompt_cache_key = promptCacheKey;
 		}

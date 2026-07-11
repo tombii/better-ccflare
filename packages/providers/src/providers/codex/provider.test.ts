@@ -3,7 +3,11 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fetchCodexUsageOnDemand } from "./on-demand-fetch";
-import { CODEX_PROMPT_CACHE_KEY_ENV, CodexProvider } from "./provider";
+import {
+	CODEX_CACHE_KEY_MODE_ENV,
+	CODEX_PROMPT_CACHE_KEY_ENV,
+	CodexProvider,
+} from "./provider";
 import { CODEX_TRACE_DIR_ENV } from "./trace";
 import { parseCodexUsageHeaders } from "./usage";
 
@@ -25,6 +29,7 @@ const readTraceRecords = (dir: string): Array<Record<string, unknown>> => {
 
 afterEach(() => {
 	delete process.env[CODEX_PROMPT_CACHE_KEY_ENV];
+	delete process.env[CODEX_CACHE_KEY_MODE_ENV];
 });
 
 describe("CodexProvider request conversion", () => {
@@ -2192,10 +2197,92 @@ describe("CodexProvider.transformRequestBody", () => {
 		const repeated = await transform("11111111-1111-4111-8111-111111111111");
 		const different = await transform("22222222-2222-4222-8222-222222222222");
 
-		expect(first.prompt_cache_key).toMatch(/^ccflare-session-[0-9a-f]{48}$/);
+		expect(first.prompt_cache_key).toMatch(/^ccflare-convo-[0-9a-f]{48}$/);
 		expect(repeated.prompt_cache_key).toBe(first.prompt_cache_key);
 		expect(different.prompt_cache_key).not.toBe(first.prompt_cache_key);
 		expect(first.prompt_cache_key).not.toContain("11111111");
+	});
+
+	it("conversation keys are stable across turns and distinct across conversations", async () => {
+		process.env[CODEX_PROMPT_CACHE_KEY_ENV] = "1";
+		const transform = async (payload: Record<string, unknown>) => {
+			const request = new Request("https://example.com/v1/messages", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({
+					model: "claude-opus-4-8",
+					max_tokens: 10,
+					metadata: {
+						user_id: JSON.stringify({
+							session_id: "11111111-1111-4111-8111-111111111111",
+						}),
+					},
+					...payload,
+				}),
+			});
+			return new CodexProvider()
+				.transformRequestBody(request)
+				.then((r) => r.json());
+		};
+
+		const turn1 = await transform({
+			system: "main loop system prompt",
+			messages: [{ role: "user", content: "task A" }],
+		});
+		// Same conversation, one turn later: identical first message, longer tail.
+		const turn2 = await transform({
+			system: "main loop system prompt",
+			messages: [
+				{ role: "user", content: "task A" },
+				{ role: "assistant", content: "working on it" },
+				{ role: "user", content: "continue" },
+			],
+		});
+		// Sibling subagent: same session and system, different first message.
+		const sibling = await transform({
+			system: "main loop system prompt",
+			messages: [{ role: "user", content: "task B" }],
+		});
+		// Different agent type: same first message, different system prompt.
+		const otherAgent = await transform({
+			system: "subagent system prompt",
+			messages: [{ role: "user", content: "task A" }],
+		});
+
+		expect(turn1.prompt_cache_key).toMatch(/^ccflare-convo-[0-9a-f]{48}$/);
+		expect(turn2.prompt_cache_key).toBe(turn1.prompt_cache_key);
+		expect(sibling.prompt_cache_key).not.toBe(turn1.prompt_cache_key);
+		expect(otherAgent.prompt_cache_key).not.toBe(turn1.prompt_cache_key);
+	});
+
+	it("session mode restores the coarse per-session key", async () => {
+		process.env[CODEX_PROMPT_CACHE_KEY_ENV] = "1";
+		process.env[CODEX_CACHE_KEY_MODE_ENV] = "session";
+		const transform = async (content: string) => {
+			const request = new Request("https://example.com/v1/messages", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({
+					model: "claude-opus-4-8",
+					max_tokens: 10,
+					metadata: {
+						user_id: JSON.stringify({
+							session_id: "11111111-1111-4111-8111-111111111111",
+						}),
+					},
+					messages: [{ role: "user", content }],
+				}),
+			});
+			return new CodexProvider()
+				.transformRequestBody(request)
+				.then((r) => r.json());
+		};
+
+		const first = await transform("task A");
+		const other = await transform("completely different task");
+
+		expect(first.prompt_cache_key).toMatch(/^ccflare-session-[0-9a-f]{48}$/);
+		expect(other.prompt_cache_key).toBe(first.prompt_cache_key);
 	});
 
 	it("omits prompt_cache_key for malformed session metadata", async () => {

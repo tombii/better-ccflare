@@ -45,12 +45,14 @@ import {
 	AutoRefreshScheduler,
 	CacheKeepaliveScheduler,
 	drainUsageCollector,
+	getCachePacingStats,
 	getUsageCollectorHealth,
 	getValidAccessToken,
 	handleCacheDiagnosisRequest,
 	handleProxy,
 	initProxy,
 	type ProxyContext,
+	readCachePacingMs,
 	registerCodexUsageRefresher,
 	registerPollingRestarter,
 	registerRefreshClearer,
@@ -1075,7 +1077,7 @@ export default async function startServer(options?: {
 						},
 					}
 				: {}),
-			async fetch(req: Request) {
+			async fetch(req: Request): Promise<Response> {
 				const url = new URL(req.url);
 
 				// Try API routes first
@@ -1090,6 +1092,19 @@ export default async function startServer(options?: {
 					url.pathname === "/api/debug/cache-diagnosis"
 				) {
 					return await handleCacheDiagnosisRequest(req, serverPort ?? port);
+				}
+
+				// Rolling fan-out pacing counters (see cache-pacing.ts). Production
+				// runs at WARN log level, so this is the only always-on view of
+				// follower hold behavior.
+				if (
+					req.method === "GET" &&
+					url.pathname === "/api/debug/cache-pacing"
+				) {
+					return Response.json({
+						pacing_ms: readCachePacingMs(),
+						families: getCachePacingStats(),
+					});
 				}
 
 				// Dashboard routes (only if enabled and assets are available)

@@ -35,6 +35,62 @@ interface LeaderEntry {
 
 const leaders = new Map<string, LeaderEntry>();
 
+/**
+ * Rolling in-process counters, grouped by provider family. Production runs at
+ * WARN log level, which hides the per-request INFO hold lines, so these
+ * counters (served via GET /api/debug/cache-pacing) are the only always-on
+ * view of what pacing actually does: how often followers are held, for how
+ * long, and whether they release on the leader's first byte or time out at
+ * the cap. Counters reset on process restart.
+ */
+export interface CachePacingFamilyStats {
+	leaders: number;
+	leadersAbandoned: number;
+	staleLeadersReplaced: number;
+	followersHeld: number;
+	followersReleasedByLeader: number;
+	followersReleasedByCap: number;
+	followerWaitMsTotal: number;
+	followerWaitMsMax: number;
+}
+
+const statsByFamily = new Map<string, CachePacingFamilyStats>();
+
+function pacingFamily(model: string | null | undefined): string {
+	if (!model) return "unknown";
+	if (model.startsWith("claude")) return "anthropic";
+	if (model.startsWith("gpt") || /^o\d/.test(model)) return "openai";
+	return "other";
+}
+
+function familyStats(model: string | null | undefined): CachePacingFamilyStats {
+	const family = pacingFamily(model);
+	let entry = statsByFamily.get(family);
+	if (!entry) {
+		entry = {
+			leaders: 0,
+			leadersAbandoned: 0,
+			staleLeadersReplaced: 0,
+			followersHeld: 0,
+			followersReleasedByLeader: 0,
+			followersReleasedByCap: 0,
+			followerWaitMsTotal: 0,
+			followerWaitMsMax: 0,
+		};
+		statsByFamily.set(family, entry);
+	}
+	return entry;
+}
+
+export function getCachePacingStats(): Record<string, CachePacingFamilyStats> {
+	return Object.fromEntries(
+		[...statsByFamily.entries()].map(([family, entry]) => [
+			family,
+			{ ...entry },
+		]),
+	);
+}
+
 export interface CachePacingSlot {
 	readonly key: string;
 	/**
@@ -67,20 +123,39 @@ export async function acquireCachePacing(opts: {
 	if (maxHoldMs <= 0 || !opts.sessionKey) return null;
 	const nowFn = opts.now ?? Date.now;
 	const key = `${opts.sessionKey}::${opts.model ?? ""}`;
+	const stats = familyStats(opts.model);
 
 	const existing = leaders.get(key);
 	// A leader older than twice the cap is considered dead (its followers have
 	// long since released at the cap); replace it rather than waiting on it.
 	if (existing && nowFn() - existing.startedAt < maxHoldMs * 2) {
 		const heldStart = nowFn();
-		await Promise.race([
-			existing.promise,
-			new Promise<void>((resolve) => setTimeout(resolve, maxHoldMs)),
+		stats.followersHeld++;
+		let capTimer: ReturnType<typeof setTimeout> | undefined;
+		const releasedByLeader = await Promise.race([
+			existing.promise.then(() => true),
+			new Promise<boolean>((resolve) => {
+				capTimer = setTimeout(() => resolve(false), maxHoldMs);
+			}),
 		]);
+		if (capTimer !== undefined) clearTimeout(capTimer);
+		const waitedMs = nowFn() - heldStart;
+		if (releasedByLeader) {
+			stats.followersReleasedByLeader++;
+		} else {
+			stats.followersReleasedByCap++;
+		}
+		stats.followerWaitMsTotal += waitedMs;
+		if (waitedMs > stats.followerWaitMsMax) {
+			stats.followerWaitMsMax = waitedMs;
+		}
 		log.info(
-			`held follower ${nowFn() - heldStart}ms behind leader for ${previewKey(key)}`,
+			`held follower ${waitedMs}ms behind leader for ${previewKey(key)}`,
 		);
 		return null;
+	}
+	if (existing) {
+		stats.staleLeadersReplaced++;
 	}
 
 	// Become the leader. No await between the check above and this set, so
@@ -91,6 +166,7 @@ export async function acquireCachePacing(opts: {
 	});
 	const entry: LeaderEntry = { promise, resolve, startedAt: nowFn() };
 	leaders.set(key, entry);
+	stats.leaders++;
 
 	let done = false;
 	const finish = () => {
@@ -134,6 +210,7 @@ export async function acquireCachePacing(opts: {
 		abandon(): void {
 			if (done) return;
 			done = true;
+			stats.leadersAbandoned++;
 			finish();
 		},
 	};
@@ -155,9 +232,10 @@ export function finishPacing(
 	return response;
 }
 
-/** Test hook: clear all leader state. */
+/** Test hook: clear all leader state and rolling stats. */
 export function resetCachePacing(): void {
 	leaders.clear();
+	statsByFamily.clear();
 }
 
 function previewKey(key: string): string {

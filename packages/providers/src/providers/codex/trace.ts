@@ -28,7 +28,7 @@ export const CODEX_TRACE_HMAC_KEY_ENV = "CCFLARE_CODEX_TRACE_HMAC_KEY";
 /** Warn when one response spawns at least this many subagents (0 disables). */
 export const CODEX_FANOUT_WARN_ENV = "CCFLARE_CODEX_FANOUT_WARN";
 
-const TRACE_SCHEMA_VERSION = 3;
+const TRACE_SCHEMA_VERSION = 4;
 const DEFAULT_FANOUT_WARN = 8;
 /**
  * Tool names that spawn subagents in Claude Code ("Task" historically,
@@ -154,6 +154,14 @@ interface TraceInputs {
 	sessionKeyHash?: string | null;
 	/** Whether a prompt_cache_key was attached to the outbound request. */
 	promptCacheKeySet?: boolean;
+	/**
+	 * Last 16 hex chars of the outbound prompt_cache_key (itself a digest, so
+	 * nothing reversible). Lets offline analysis group requests per cache key
+	 * and measure hit rate by turn within one conversation.
+	 */
+	promptCacheKeyId?: string | null;
+	/** Key derivation mode: "conversation" | "session" (see provider). */
+	cacheKeyMode?: string | null;
 	instructions?: string;
 	tools?: readonly unknown[];
 	codexInput: readonly unknown[];
@@ -241,6 +249,8 @@ export function writeCodexTrace(inputs: TraceInputs): void {
 		message_count: inputs.messageCount ?? null,
 		session_key_hash: inputs.sessionKeyHash ?? null,
 		prompt_cache_key_set: inputs.promptCacheKeySet ?? false,
+		prompt_cache_key_id: inputs.promptCacheKeyId ?? null,
+		cache_key_mode: inputs.cacheKeyMode ?? null,
 		instructions_len: inputs.instructions?.length ?? null,
 		instructions_bytes: instructionsMetrics?.bytes ?? null,
 		instructions_hmac: instructionsMetrics?.hmac ?? null,

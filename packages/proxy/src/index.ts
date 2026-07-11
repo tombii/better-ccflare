@@ -13,6 +13,11 @@ export { AutoRefreshScheduler } from "./auto-refresh-scheduler";
 export { handleCacheDiagnosisRequest } from "./cache-diagnosis";
 export { CacheKeepaliveScheduler } from "./cache-keepalive-scheduler";
 export {
+	type CachePacingFamilyStats,
+	getCachePacingStats,
+	readCachePacingMs,
+} from "./cache-pacing";
+export {
 	type CodexUsageRefreshOutcome,
 	checkAllAccountsHealth,
 	checkRefreshTokenHealth,
