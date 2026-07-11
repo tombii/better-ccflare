@@ -140,6 +140,7 @@ describe("buildSessionRejectResponse", () => {
 
 		const res = buildSessionRejectResponse(verdict);
 		expect(res.status).toBe(429);
+		expect(res.headers.get("x-better-ccflare-governor")).toBe("session-budget");
 		// The single admitted request (T0) leaves the window one hour later.
 		expect(res.headers.get("retry-after")).toBe("3600");
 		const body = (await res.json()) as {
