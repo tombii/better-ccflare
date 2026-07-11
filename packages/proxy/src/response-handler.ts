@@ -4,7 +4,12 @@ import {
 	withSanitizedProxyHeaders,
 } from "@better-ccflare/http-common";
 import { Logger } from "@better-ccflare/logger";
-import type { Account, RateLimitReason } from "@better-ccflare/types";
+import type {
+	Account,
+	AgentAttributionSource,
+	ProjectAttributionSource,
+	RateLimitReason,
+} from "@better-ccflare/types";
 import type { ProxyContext } from "./handlers";
 import { applyRateLimitCooldown } from "./handlers/rate-limit-cooldown";
 import { createSseRateLimitSniffer } from "./handlers/sse-rate-limit-sniffer";
@@ -91,11 +96,13 @@ export interface ResponseHandlerOptions {
 	project?: string | null;
 	/** Raw URL query string (e.g. `?after_id=...`), used for passive model-catalog capture. */
 	query?: string | null;
+	projectAttributionSource?: ProjectAttributionSource | null;
 	response: Response;
 	timestamp: number;
 	retryAttempt: number;
 	failoverAttempts: number;
 	agentUsed?: string | null;
+	agentAttributionSource?: AgentAttributionSource | null;
 	apiKeyId?: string | null;
 	apiKeyName?: string | null;
 	comboName?: string | null;
@@ -121,11 +128,13 @@ export async function forwardToClient(
 		requestBody,
 		project,
 		query,
+		projectAttributionSource,
 		response: responseRaw,
 		timestamp,
 		retryAttempt, // Always 0 in new flow, but kept for message compatibility
 		failoverAttempts,
 		agentUsed,
+		agentAttributionSource,
 		apiKeyId,
 		apiKeyName,
 		comboName,
@@ -181,6 +190,8 @@ export async function forwardToClient(
 						).toString("base64")
 					: null,
 			project: project ?? null,
+			projectAttributionSource: projectAttributionSource ?? "none",
+			agentAttributionSource: agentAttributionSource ?? "none",
 			responseStatus: response.status,
 			responseHeaders: responseHeadersObj,
 			isStream,
@@ -220,6 +231,7 @@ export async function forwardToClient(
 			accountId: account?.id || null,
 			statusCode: response.status,
 			agentUsed: agentUsed || null,
+			agentAttributionSource: agentAttributionSource ?? "none",
 		});
 	}
 

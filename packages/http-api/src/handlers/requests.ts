@@ -3,6 +3,10 @@ import type {
 	DatabaseOperations,
 } from "@better-ccflare/database";
 import { jsonResponse } from "@better-ccflare/http-common";
+import type {
+	AgentAttributionSource,
+	ProjectAttributionSource,
+} from "@better-ccflare/types";
 import type { RequestResponse } from "../types";
 
 const MAX_BODY_PREVIEW_BYTES = 256 * 1024; // 256KB - match response body cap to preserve full conversation history
@@ -64,6 +68,9 @@ export function createRequestsSummaryHandler(db: BunSqlAdapter) {
 			combo_name: string | null;
 			original_model: string | null;
 			applied_model: string | null;
+			project: string | null;
+			project_attribution_source: string | null;
+			agent_attribution_source: string | null;
 		}>(
 			`
 			SELECT r.*, a.name as account_name
@@ -104,6 +111,13 @@ export function createRequestsSummaryHandler(db: BunSqlAdapter) {
 			comboName: request.combo_name || undefined,
 			originalModel: request.original_model || undefined,
 			appliedModel: request.applied_model || undefined,
+			project: request.project || undefined,
+			projectAttributionSource:
+				(request.project_attribution_source as ProjectAttributionSource) ||
+				undefined,
+			agentAttributionSource:
+				(request.agent_attribution_source as AgentAttributionSource) ||
+				undefined,
 			rateLimited: request.status_code === 429,
 		}));
 

@@ -1,4 +1,5 @@
 import { describe, expect, it, mock, spyOn } from "bun:test";
+import { requestEvents } from "@better-ccflare/core";
 import type { Account } from "@better-ccflare/types";
 import * as modelCatalogModule from "../model-catalog";
 import { forwardToClient } from "../response-handler";
@@ -282,6 +283,182 @@ describe("forwardToClient usage-collector protocol", () => {
 		} finally {
 			Response.prototype.clone = originalClone;
 		}
+	});
+
+	it("non-streaming request with project+agent sources set in options produces a StartMessage carrying both source labels", async () => {
+		const { starts } = createMockCollector();
+		const ctx = createCtx();
+
+		await forwardToClient(
+			{
+				requestId: "req-sources-non-stream",
+				method: "POST",
+				path: "/v1/messages",
+				account: null,
+				requestHeaders: new Headers({ "content-type": "application/json" }),
+				requestBody: new TextEncoder().encode("{}"),
+				project: "acme-project",
+				projectAttributionSource: "header_project",
+				response: new Response(JSON.stringify({ ok: true }), {
+					status: 200,
+					headers: { "content-type": "application/json" },
+				}),
+				timestamp: Date.now(),
+				retryAttempt: 0,
+				failoverAttempts: 0,
+				agentUsed: "code-reviewer",
+				agentAttributionSource: "prompt_agent",
+			},
+			ctx,
+		);
+
+		expect(starts[0].projectAttributionSource).toBe("header_project");
+		expect(starts[0].agentAttributionSource).toBe("prompt_agent");
+	});
+
+	it("streaming request with project+agent sources set in options produces a StartMessage carrying both source labels", async () => {
+		const { starts, ends } = createMockCollector();
+		const ctx = createCtx();
+		ctx.provider.isStreamingResponse = () => true;
+
+		const body = new ReadableStream<Uint8Array>({
+			start(controller) {
+				controller.enqueue(new TextEncoder().encode("data: one\n\n"));
+				controller.close();
+			},
+		});
+
+		const response = await forwardToClient(
+			{
+				requestId: "req-sources-stream",
+				method: "POST",
+				path: "/v1/messages",
+				account: null,
+				requestHeaders: new Headers({ "content-type": "application/json" }),
+				requestBody: new TextEncoder().encode("{}"),
+				project: "acme-project",
+				projectAttributionSource: "path_project",
+				response: new Response(body, {
+					status: 200,
+					headers: { "content-type": "text/event-stream" },
+				}),
+				timestamp: Date.now(),
+				retryAttempt: 0,
+				failoverAttempts: 0,
+				agentUsed: "code-reviewer",
+				agentAttributionSource: "header_agent",
+			},
+			ctx,
+		);
+
+		await response.text();
+		await waitFor(() => ends.length > 0);
+
+		expect(starts[0].projectAttributionSource).toBe("path_project");
+		expect(starts[0].agentAttributionSource).toBe("header_agent");
+	});
+
+	it("defaults source labels to 'none' when options omit them", async () => {
+		const { starts } = createMockCollector();
+		const ctx = createCtx();
+
+		await forwardToClient(
+			{
+				requestId: "req-sources-default",
+				method: "POST",
+				path: "/v1/messages",
+				account: null,
+				requestHeaders: new Headers({ "content-type": "application/json" }),
+				requestBody: new TextEncoder().encode("{}"),
+				response: new Response(JSON.stringify({ ok: true }), {
+					status: 200,
+					headers: { "content-type": "application/json" },
+				}),
+				timestamp: Date.now(),
+				retryAttempt: 0,
+				failoverAttempts: 0,
+			},
+			ctx,
+		);
+
+		expect(starts[0].projectAttributionSource).toBe("none");
+		expect(starts[0].agentAttributionSource).toBe("none");
+	});
+
+	it("SSE start event includes agentAttributionSource", async () => {
+		const { collector: _collector } = createMockCollector();
+		const ctx = createCtx();
+
+		const events: Array<Record<string, unknown>> = [];
+		const listener = (evt: Record<string, unknown>) => {
+			if (evt.type === "start") events.push(evt);
+		};
+		requestEvents.on("event", listener);
+
+		try {
+			await forwardToClient(
+				{
+					requestId: "req-sse-source",
+					method: "POST",
+					path: "/v1/messages",
+					account: null,
+					requestHeaders: new Headers({ "content-type": "application/json" }),
+					requestBody: new TextEncoder().encode("{}"),
+					response: new Response(JSON.stringify({ ok: true }), {
+						status: 200,
+						headers: { "content-type": "application/json" },
+					}),
+					timestamp: Date.now(),
+					retryAttempt: 0,
+					failoverAttempts: 0,
+					agentUsed: "code-reviewer",
+					agentAttributionSource: "header_agent",
+				},
+				ctx,
+			);
+
+			expect(events.length).toBeGreaterThan(0);
+			expect(events[0].agentAttributionSource).toBe("header_agent");
+		} finally {
+			requestEvents.off("event", listener);
+		}
+	});
+
+	it("accepts a legacy StartMessage without source fields without throwing, leaving them undefined", () => {
+		const { collector, starts } = createMockCollector();
+
+		// Simulates a message built by an older worker/producer that predates
+		// the projectAttributionSource/agentAttributionSource fields. Both are
+		// optional on StartMessage precisely so this legacy shape still type-checks.
+		const legacyStartMessage: import("../worker-messages").StartMessage = {
+			type: "start",
+			messageId: "legacy-msg-1",
+			requestId: "req-legacy",
+			accountId: null,
+			method: "POST",
+			path: "/v1/messages",
+			timestamp: Date.now(),
+			requestHeaders: {},
+			requestBody: null,
+			project: null,
+			responseStatus: 200,
+			responseHeaders: {},
+			isStream: false,
+			providerName: "anthropic",
+			accountBillingType: null,
+			accountAutoPauseOnOverageEnabled: null,
+			accountName: null,
+			agentUsed: null,
+			comboName: null,
+			apiKeyId: null,
+			apiKeyName: null,
+			retryAttempt: 0,
+			failoverAttempts: 0,
+		};
+
+		expect(() => collector.handleStart(legacyStartMessage)).not.toThrow();
+		expect(starts[0].projectAttributionSource).toBeUndefined();
+		expect(starts[0].agentAttributionSource).toBeUndefined();
 	});
 });
 

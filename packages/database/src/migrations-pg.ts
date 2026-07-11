@@ -4,6 +4,14 @@ import type { BunSqlAdapter } from "./adapters/bun-sql-adapter";
 const log = new Logger("DatabaseMigrations-PG");
 
 /**
+ * PostgreSQL SQLSTATE for duplicate_column. Bun's `Bun.SQL` PostgresError
+ * surfaces the raw Postgres SQLSTATE code on `.code` (there is no separate
+ * `sqlState` field, unlike the MySQL error class), so this is safe to match
+ * directly rather than sniffing the error message.
+ */
+const PG_DUPLICATE_COLUMN = "42701";
+
+/**
  * Check if a column exists in a PostgreSQL table using information_schema
  */
 async function columnExists(
@@ -109,7 +117,9 @@ export async function ensureSchemaPg(adapter: BunSqlAdapter): Promise<void> {
 			billing_type TEXT DEFAULT 'api',
 			combo_name TEXT,
 			original_model TEXT,
-			applied_model TEXT
+			applied_model TEXT,
+			project_attribution_source TEXT,
+			agent_attribution_source TEXT
 		)
 	`);
 
@@ -430,6 +440,18 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 			definition: "ALTER TABLE requests ADD COLUMN applied_model TEXT",
 		},
 		{
+			table: "requests",
+			column: "project_attribution_source",
+			definition:
+				"ALTER TABLE requests ADD COLUMN project_attribution_source TEXT",
+		},
+		{
+			table: "requests",
+			column: "agent_attribution_source",
+			definition:
+				"ALTER TABLE requests ADD COLUMN agent_attribution_source TEXT",
+		},
+		{
 			table: "request_payloads",
 			column: "timestamp",
 			definition: "ALTER TABLE request_payloads ADD COLUMN timestamp BIGINT",
@@ -454,8 +476,22 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 				await adapter.unsafe(col.definition);
 				log.info(`Added column ${col.table}.${col.column}`);
 			} catch (error) {
-				log.warn(
-					`Could not add column ${col.table}.${col.column}: ${(error as Error).message}`,
+				const code = (error as { code?: string } | undefined)?.code;
+				if (code !== PG_DUPLICATE_COLUMN) {
+					// Not the known duplicate-column race: a genuine failure
+					// (permissions, lock timeout, etc). Don't swallow it, a
+					// missing column here means unconditional inserts against
+					// it (e.g. RequestRepository) will fail on every write.
+					throw error;
+				}
+				// Another instance won the race to add this column concurrently.
+				// Re-verify it actually landed before treating this as a no-op.
+				const nowExists = await columnExists(adapter, col.table, col.column);
+				if (!nowExists) {
+					throw error;
+				}
+				log.info(
+					`Column ${col.table}.${col.column} already added by a concurrent migration`,
 				);
 			}
 		}

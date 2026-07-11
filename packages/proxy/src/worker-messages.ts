@@ -3,6 +3,11 @@
  * Handles both streaming and non-streaming responses
  */
 
+import type {
+	AgentAttributionSource,
+	ProjectAttributionSource,
+} from "@better-ccflare/types";
+
 // ===== MAIN THREAD → WORKER =====
 
 export interface StartMessage {
@@ -38,6 +43,8 @@ export interface StartMessage {
 
 	// Agent info
 	agentUsed: string | null;
+	projectAttributionSource?: ProjectAttributionSource | null;
+	agentAttributionSource?: AgentAttributionSource | null;
 
 	// Model rewrite observability: the model the client originally requested
 	// and the model actually forwarded upstream. Both null unless an
