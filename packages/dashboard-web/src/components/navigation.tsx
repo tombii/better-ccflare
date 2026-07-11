@@ -5,6 +5,7 @@ import {
 	Bot,
 	FileText,
 	GitBranch,
+	History,
 	Key,
 	LayoutDashboard,
 	Lightbulb,
@@ -87,6 +88,7 @@ export function Navigation({
 			},
 			{ label: "Requests", icon: Activity, path: "/requests" },
 			{ label: "Accounts", icon: Users, path: "/accounts" },
+			{ label: "Usage History", icon: History, path: "/usage-history" },
 		];
 
 		// Add combos item if feature is enabled

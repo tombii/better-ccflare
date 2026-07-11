@@ -45,6 +45,10 @@ import type {
 } from "@better-ccflare/types";
 import { requiresSessionDurationTracking } from "@better-ccflare/types";
 import type { AccountResponse } from "../types";
+import {
+	computeRateLimitStatusDisplay,
+	getRepresentativeUsageResetMs,
+} from "./rate-limit-status";
 
 const log = new Logger("AccountsHandler");
 
@@ -69,25 +73,28 @@ function toRateLimitReason(v: string | null): RateLimitReason | null {
 }
 
 function normalizeCodexUsageData(usage: UsageData): UsageData | null {
-	const normalized: UsageData = {
-		five_hour: { ...usage.five_hour },
-		seven_day: { ...usage.seven_day },
-	};
+	// Codex payloads carry the flat windows; default to empty windows if a
+	// limits-only shape ever reaches here (five_hour/seven_day are now optional).
+	let five_hour = usage.five_hour
+		? { ...usage.five_hour }
+		: { utilization: 0, resets_at: null };
+	let seven_day = usage.seven_day
+		? { ...usage.seven_day }
+		: { utilization: 0, resets_at: null };
 	if (
-		normalized.five_hour.resets_at &&
-		new Date(normalized.five_hour.resets_at).getTime() <= Date.now()
+		five_hour.resets_at &&
+		new Date(five_hour.resets_at).getTime() <= Date.now()
 	) {
-		normalized.five_hour = { utilization: 0, resets_at: null };
+		five_hour = { utilization: 0, resets_at: null };
 	}
 	if (
-		normalized.seven_day.resets_at &&
-		new Date(normalized.seven_day.resets_at).getTime() <= Date.now()
+		seven_day.resets_at &&
+		new Date(seven_day.resets_at).getTime() <= Date.now()
 	) {
-		normalized.seven_day = { utilization: 0, resets_at: null };
+		seven_day = { utilization: 0, resets_at: null };
 	}
-	return normalized.five_hour.resets_at !== null ||
-		normalized.seven_day.resets_at !== null
-		? normalized
+	return five_hour.resets_at !== null || seven_day.resets_at !== null
+		? { five_hour, seven_day }
 		: null;
 }
 
@@ -300,25 +307,6 @@ export function createAccountsListHandler(
 
 		const response: AccountResponse[] = await Promise.all(
 			accounts.map(async (account) => {
-				let rateLimitStatus = "OK";
-
-				// Use unified rate limit status if available
-				if (account.rate_limit_status) {
-					rateLimitStatus = account.rate_limit_status;
-					const resetMs = Number(account.rate_limit_reset);
-					if (resetMs && resetMs > now) {
-						const minutesLeft = Math.ceil((resetMs - now) / 60000);
-						rateLimitStatus = `${account.rate_limit_status} (${minutesLeft}m)`;
-					}
-				} else if (account.rate_limited && account.rate_limited_until) {
-					// Fall back to legacy rate limit check
-					const limitedMs = Number(account.rate_limited_until);
-					if (limitedMs > now) {
-						const minutesLeft = Math.ceil((limitedMs - now) / 60000);
-						rateLimitStatus = `Rate limited (${minutesLeft}m)`;
-					}
-				}
-
 				// Get usage data from cache for providers that expose account-page quota or credit data
 				const cachedUsageData = usageCache.get(account.id);
 				let usageData: FullUsageData | null =
@@ -342,7 +330,8 @@ export function createAccountsListHandler(
 					usageData
 				) {
 					const isAnthropicStyleData =
-						"five_hour" in usageData && "seven_day" in usageData;
+						("five_hour" in usageData && "seven_day" in usageData) ||
+						Array.isArray((usageData as { limits?: unknown }).limits);
 					if (isAnthropicStyleData) {
 						try {
 							usageUtilization = getRepresentativeUtilization(
@@ -473,10 +462,38 @@ export function createAccountsListHandler(
 						fullUsageData as AnyUsageData,
 						usageThrottleSettings,
 						now,
+						// Display path: surface ALL per-model caps (m3 amber highlight);
+						// routing-side model matching happens in proxy.ts only.
+						{ scopedMode: "all" },
 					);
 					usageThrottledUntil = usageThrottleStatus.throttleUntil;
 					usageThrottledWindows = usageThrottleStatus.throttledWindows;
 				}
+
+				// Computed after usage resolution so an exhausted usage window can
+				// outrank stale header snapshots and the bare "OK" default
+				// (incident 2026-07-09: 100% weekly utilization displayed as "OK").
+				const rateLimitStatus = computeRateLimitStatusDisplay(
+					{
+						rate_limit_status: account.rate_limit_status ?? null,
+						rate_limit_reset: account.rate_limit_reset
+							? Number(account.rate_limit_reset)
+							: null,
+						rate_limited_until: account.rate_limited_until
+							? Number(account.rate_limited_until)
+							: null,
+						usageUtilization,
+						// Shared provider-aware derivation (same as /health) — a plain
+						// extractUsageResetMs(fullUsageData, usageWindow) silently loses
+						// the zai reset because usageWindow is the display label
+						// ("five_hour"), not the payload key ("tokens_limit").
+						usageResetMs: getRepresentativeUsageResetMs(
+							fullUsageData,
+							account.provider ?? "anthropic",
+						),
+					},
+					now,
+				);
 
 				// Parse model mappings for OpenAI-compatible, Anthropic-compatible, NanoGPT, and OpenRouter providers
 				let modelMappings: { [key: string]: string } | null = null;
@@ -2772,6 +2789,13 @@ export function createAccountForceResetRateLimitHandler(
 				const { data: usageData } = await fetchUsageData(account.access_token);
 				if (usageData) {
 					usageCache.set(account.id, usageData);
+					dbOps
+						.recordUsageSnapshot(account.id, usageData, Date.now())
+						.catch((err) =>
+							log.warn(
+								`Failed to record usage snapshot for ${account.name}: ${err}`,
+							),
+						);
 					usagePollTriggered = true;
 				}
 			}

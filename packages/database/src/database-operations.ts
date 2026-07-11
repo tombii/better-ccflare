@@ -36,6 +36,7 @@ import {
 } from "./repositories/request.repository";
 import { StatsRepository } from "./repositories/stats.repository";
 import { StrategyRepository } from "./repositories/strategy.repository";
+import { UsageHistoryRepository } from "./repositories/usage-history.repository";
 import { withDatabaseRetry } from "./retry";
 
 export interface DatabaseConfig {
@@ -245,6 +246,7 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 	private agentPreferences: AgentPreferenceRepository;
 	private apiKeys: ApiKeyRepository;
 	private combo: ComboRepository;
+	private usageHistory: UsageHistoryRepository;
 
 	constructor(
 		dbPath?: string,
@@ -367,6 +369,7 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		this.agentPreferences = new AgentPreferenceRepository(this.adapter);
 		this.apiKeys = new ApiKeyRepository(this.adapter);
 		this.combo = new ComboRepository(this.adapter);
+		this.usageHistory = new UsageHistoryRepository(this.adapter);
 	}
 
 	/**
@@ -817,6 +820,32 @@ OAuth tokens will need to be re-authenticated.
 		);
 	}
 
+	// Usage-history operations delegated to repository
+	getUsageHistoryRepository(): UsageHistoryRepository {
+		return this.usageHistory;
+	}
+
+	async recordUsageSnapshot(
+		accountId: string,
+		usage: Record<string, unknown>,
+		now: number,
+	): Promise<void> {
+		await this.usageHistory.recordSnapshot(accountId, usage, now);
+	}
+
+	async getUsageHistory(opts: {
+		accountId: string;
+		windowKey?: string;
+		since?: number;
+		until?: number;
+	}) {
+		return this.usageHistory.getSeries(opts);
+	}
+
+	async pruneUsageSnapshots(cutoffTs: number): Promise<number> {
+		return this.usageHistory.deleteOlderThan(cutoffTs);
+	}
+
 	async forceResetAccountRateLimit(accountId: string): Promise<boolean> {
 		return withDatabaseRetry(
 			async () => {
@@ -915,6 +944,8 @@ OAuth tokens will need to be re-authenticated.
 		project?: string | null,
 		billingType?: string,
 		comboName?: string | null,
+		originalModel?: string | null,
+		appliedModel?: string | null,
 	): Promise<void> {
 		await withDatabaseRetry(
 			() =>
@@ -935,6 +966,8 @@ OAuth tokens will need to be re-authenticated.
 					project,
 					billingType,
 					comboName,
+					originalModel,
+					appliedModel,
 				}),
 			this.retryConfig,
 			"saveRequest",

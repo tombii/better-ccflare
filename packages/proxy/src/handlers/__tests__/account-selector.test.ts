@@ -6,6 +6,7 @@ import type {
 } from "@better-ccflare/types";
 import {
 	getComboSlotInfo,
+	resolveEffectiveModel,
 	selectAccountsForRequest,
 	setComboSlotInfo,
 } from "../account-selector";
@@ -644,5 +645,71 @@ describe("selectAccountsForRequest — paused accounts in combo", () => {
 			"claude-sonnet-4-5",
 		);
 		expect(result.map((a) => a.id)).toEqual(["acc-active"]);
+	});
+});
+
+// ── resolveEffectiveModel ──────────────────────────────────────────────────────
+
+describe("resolveEffectiveModel", () => {
+	it("returns the applied model when the interceptor rewrote the request", () => {
+		expect(resolveEffectiveModel("claude-opus-4-5", "claude-sonnet-4-5")).toBe(
+			"claude-opus-4-5",
+		);
+	});
+
+	it("falls back to the original request model when nothing was applied", () => {
+		expect(resolveEffectiveModel(null, "claude-sonnet-4-5")).toBe(
+			"claude-sonnet-4-5",
+		);
+		expect(resolveEffectiveModel(undefined, "claude-sonnet-4-5")).toBe(
+			"claude-sonnet-4-5",
+		);
+	});
+
+	it("returns null when neither an applied nor an original model is available", () => {
+		expect(resolveEffectiveModel(null, null)).toBeNull();
+		expect(resolveEffectiveModel(undefined, undefined)).toBeNull();
+	});
+});
+
+// ── selectAccountsForRequest — routes on the post-rewrite (effective) model ────
+
+describe("selectAccountsForRequest — routes on effective model, not the client's original model", () => {
+	it("combo routing matches the applied model's family, not the original request's family", async () => {
+		// Client requested a sonnet model, but the agent interceptor rewrote it
+		// to an opus model (e.g. via an agent preference). Routing must pick
+		// the combo for the *opus* family, mirroring what proxy.ts does by
+		// calling selectAccountsForRequest with resolveEffectiveModel's result
+		// instead of the raw client-requested model.
+		const opusAcc = makeAccount({ id: "acc-opus" });
+		const opusCombo = makeCombo([
+			{
+				id: "slot-1",
+				combo_id: "combo-opus",
+				account_id: "acc-opus",
+				model: "claude-opus-4-5",
+				priority: 0,
+				enabled: true,
+			},
+		]);
+
+		const ctx = makeCtx({ accounts: [opusAcc], activeCombo: opusCombo });
+		const meta = makeRequestMeta();
+
+		const originalModel = "claude-sonnet-4-5";
+		const appliedModel = "claude-opus-4-5"; // simulates interceptor rewrite
+		const effectiveModel = resolveEffectiveModel(appliedModel, originalModel);
+		expect(effectiveModel).toBe("claude-opus-4-5");
+
+		const result = await selectAccountsForRequest(
+			meta,
+			ctx,
+			effectiveModel ?? undefined,
+		);
+
+		expect(result.map((a) => a.id)).toEqual(["acc-opus"]);
+		const slotInfo = getComboSlotInfo(meta);
+		expect(slotInfo?.comboName).toBe("Test Combo");
+		expect(slotInfo?.slots[0]?.modelOverride).toBe("claude-opus-4-5");
 	});
 });

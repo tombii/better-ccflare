@@ -15,3 +15,4 @@ export * from "./logging";
 export * from "./request";
 export * from "./stats";
 export * from "./strategy";
+export * from "./usage-history";

@@ -1,3 +1,4 @@
+import type { ReactElement } from "react";
 import {
 	CartesianGrid,
 	Legend,
@@ -24,10 +25,13 @@ interface LineConfig {
 	strokeWidth?: number;
 	dot?: boolean;
 	name?: string;
+	strokeDasharray?: string;
+	connectNulls?: boolean;
 }
 
 interface ReferenceLineConfig {
-	y: number;
+	x?: number | string;
+	y?: number;
 	stroke?: string;
 	strokeDasharray?: string;
 	label?: string;
@@ -36,6 +40,12 @@ interface ReferenceLineConfig {
 interface BaseLineChartProps extends CommonChartProps {
 	lines: LineConfig | LineConfig[];
 	referenceLines?: ReferenceLineConfig[];
+	xAxisType?: "number" | "category";
+	xAxisDomain?: [number | string, number | string];
+	// Fully custom recharts tooltip. recharts clones this element with the
+	// injected `active`/`payload`/`label` props. When set, it replaces the
+	// default formatter-based tooltip (other charts are unaffected).
+	tooltipContent?: ReactElement;
 }
 
 export function BaseLineChart({
@@ -48,10 +58,13 @@ export function BaseLineChart({
 	xAxisTextAnchor = "middle",
 	xAxisHeight = 30,
 	xAxisTickFormatter,
+	xAxisType,
+	xAxisDomain,
 	yAxisDomain,
 	yAxisTickFormatter,
 	tooltipFormatter,
 	tooltipLabelFormatter,
+	tooltipContent,
 	tooltipStyle = "default",
 	animationDuration = 1000,
 	showLegend = false,
@@ -85,6 +98,9 @@ export function BaseLineChart({
 					/>
 					<XAxis
 						dataKey={xAxisKey}
+						type={xAxisType}
+						domain={xAxisDomain}
+						allowDataOverflow
 						className="text-xs"
 						angle={xAxisAngle}
 						textAnchor={xAxisTextAnchor}
@@ -96,13 +112,17 @@ export function BaseLineChart({
 						domain={yAxisDomain}
 						tickFormatter={yAxisTickFormatter}
 					/>
-					<Tooltip
-						contentStyle={tooltipStyles}
-						// biome-ignore lint/suspicious/noExplicitAny: recharts v3.8 widened Formatter to include undefined
-						formatter={tooltipFormatter as any}
-						// biome-ignore lint/suspicious/noExplicitAny: recharts v3.8 widened labelFormatter label to ReactNode
-						labelFormatter={tooltipLabelFormatter as any}
-					/>
+					{tooltipContent ? (
+						<Tooltip content={tooltipContent} />
+					) : (
+						<Tooltip
+							contentStyle={tooltipStyles}
+							// biome-ignore lint/suspicious/noExplicitAny: recharts v3.8 widened Formatter to include undefined
+							formatter={tooltipFormatter as any}
+							// biome-ignore lint/suspicious/noExplicitAny: recharts v3.8 widened labelFormatter label to ReactNode
+							labelFormatter={tooltipLabelFormatter as any}
+						/>
+					)}
 					{showLegend && <Legend height={legendHeight} />}
 					{lineConfigs.map((lineConfig, _index) => (
 						<Line
@@ -114,11 +134,15 @@ export function BaseLineChart({
 							dot={lineConfig.dot ?? false}
 							name={lineConfig.name || lineConfig.dataKey}
 							animationDuration={animationDuration}
+							strokeDasharray={lineConfig.strokeDasharray}
+							connectNulls={lineConfig.connectNulls ?? false}
 						/>
 					))}
-					{referenceLines.map((refLine) => (
+					{referenceLines.map((refLine, refIndex) => (
 						<ReferenceLine
-							key={`ref-line-${refLine.y}`}
+							// biome-ignore lint/suspicious/noArrayIndexKey: referenceLines is a static config array (no reorder); y may be undefined for x-only markers so it cannot key
+							key={`ref-line-${refIndex}`}
+							x={refLine.x}
 							y={refLine.y}
 							stroke={refLine.stroke || COLORS.primary}
 							strokeDasharray={

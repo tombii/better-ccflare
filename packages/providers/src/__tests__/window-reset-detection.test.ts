@@ -45,6 +45,18 @@ describe("extractWindowResetTime", () => {
 		expect(extractWindowResetTime(data, "anthropic")).toBeNull();
 	});
 
+	it("falls back to limits[] session resets_at for anthropic limits-only payloads", () => {
+		const resetIso = "2030-03-01T00:00:00.000Z";
+		const data = {
+			limits: [
+				{ kind: "session", percent: 40, resets_at: resetIso, scope: null },
+			],
+		} as unknown as UsageData;
+		expect(extractWindowResetTime(data, "anthropic")).toBe(
+			new Date(resetIso).getTime(),
+		);
+	});
+
 	it("returns parsed credits reset for xai provider", () => {
 		const resetIso = "2030-02-01T00:00:00.000Z";
 		const data: XaiUsageData = {

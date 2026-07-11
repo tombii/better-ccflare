@@ -107,7 +107,9 @@ export async function ensureSchemaPg(adapter: BunSqlAdapter): Promise<void> {
 			api_key_name TEXT,
 			project TEXT,
 			billing_type TEXT DEFAULT 'api',
-			combo_name TEXT
+			combo_name TEXT,
+			original_model TEXT,
+			applied_model TEXT
 		)
 	`);
 
@@ -287,6 +289,24 @@ export async function ensureSchemaPg(adapter: BunSqlAdapter): Promise<void> {
 		)
 	`);
 
+	// Create usage_snapshots table (see SQLite migration for rationale).
+	await adapter.unsafe(`
+		CREATE TABLE IF NOT EXISTS usage_snapshots (
+			account_id TEXT NOT NULL,
+			timestamp BIGINT NOT NULL,
+			window_key TEXT NOT NULL,
+			utilization DOUBLE PRECISION NOT NULL,
+			resets_at BIGINT
+		)
+	`);
+	await adapter.unsafe(
+		`CREATE INDEX IF NOT EXISTS idx_usage_snapshots_acct_win_time ON usage_snapshots(account_id, window_key, timestamp DESC)`,
+	);
+	// Secondary index on timestamp alone for retention pruning (see SQLite migration).
+	await adapter.unsafe(
+		`CREATE INDEX IF NOT EXISTS idx_usage_snapshots_ts ON usage_snapshots(timestamp)`,
+	);
+
 	log.info("PostgreSQL schema ensured");
 }
 
@@ -398,6 +418,16 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 			table: "requests",
 			column: "combo_name",
 			definition: "ALTER TABLE requests ADD COLUMN combo_name TEXT",
+		},
+		{
+			table: "requests",
+			column: "original_model",
+			definition: "ALTER TABLE requests ADD COLUMN original_model TEXT",
+		},
+		{
+			table: "requests",
+			column: "applied_model",
+			definition: "ALTER TABLE requests ADD COLUMN applied_model TEXT",
 		},
 		{
 			table: "request_payloads",
@@ -530,6 +560,24 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 		VALUES ('fable', NULL, 0), ('opus', NULL, 0), ('sonnet', NULL, 0), ('haiku', NULL, 0)
 		ON CONFLICT (family) DO NOTHING
 	`);
+
+	// Ensure usage_snapshots table exists (for upgrades from pre-usage-history installs)
+	await adapter.unsafe(`
+		CREATE TABLE IF NOT EXISTS usage_snapshots (
+			account_id TEXT NOT NULL,
+			timestamp BIGINT NOT NULL,
+			window_key TEXT NOT NULL,
+			utilization DOUBLE PRECISION NOT NULL,
+			resets_at BIGINT
+		)
+	`);
+	await adapter.unsafe(
+		`CREATE INDEX IF NOT EXISTS idx_usage_snapshots_acct_win_time ON usage_snapshots(account_id, window_key, timestamp DESC)`,
+	);
+	// Secondary index on timestamp alone for retention pruning (see SQLite migration).
+	await adapter.unsafe(
+		`CREATE INDEX IF NOT EXISTS idx_usage_snapshots_ts ON usage_snapshots(timestamp)`,
+	);
 
 	// Rename oauth_sessions.mode 'max' → 'claude-oauth'
 	try {

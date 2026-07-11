@@ -189,6 +189,11 @@ export interface PoolStatus {
 	routable: number; // Available for routing
 	paused: number; // Manually or automatically paused
 	rate_limited: number; // Temporarily rate-limited
+	// Unpaused accounts whose usage window sits at 100%: they still count as
+	// routable (no active cooldown), but upstream will reject their requests.
+	// Surfaced separately so `routable > 0` stops masking an exhausted pool
+	// (incident 2026-07-09).
+	usage_exhausted: number;
 	next_available_at: string | null; // ISO timestamp when earliest rate-limit expires
 }
 

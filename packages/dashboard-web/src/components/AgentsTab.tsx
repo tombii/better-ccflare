@@ -1,5 +1,5 @@
-import { DEFAULT_AGENT_MODEL, getModelDisplayName } from "@better-ccflare/core";
-import { COMMON_MODELS } from "@better-ccflare/types";
+import { DEFAULT_AGENT_MODEL } from "@better-ccflare/core";
+import { format, formatDistanceToNow } from "date-fns";
 import {
 	AlertCircle,
 	Bot,
@@ -16,10 +16,11 @@ import {
 	useAgents,
 	useBulkUpdateAgentPreferences,
 	useDefaultAgentModel,
+	useModels,
+	useRefreshModels,
 	useSetDefaultAgentModel,
-	useUpdateAgentPreference,
 } from "../hooks/queries";
-import { AgentCard, WorkspaceCard } from "./agents";
+import { AgentCard, ModelSelect, WorkspaceCard } from "./agents";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import {
@@ -38,34 +39,24 @@ import {
 	DialogTitle,
 	DialogTrigger,
 } from "./ui/dialog";
-import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from "./ui/select";
 import { Separator } from "./ui/separator";
 import { Skeleton } from "./ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 
 export function AgentsTab() {
 	const { data: response, isLoading, error, refetch } = useAgents();
-	const updatePreference = useUpdateAgentPreference();
 	const { data: defaultModel, isLoading: isLoadingDefaultModel } =
 		useDefaultAgentModel();
 	const setDefaultModel = useSetDefaultAgentModel();
 	const bulkUpdatePreferences = useBulkUpdateAgentPreferences();
+	const refreshModels = useRefreshModels();
+	const { data: modelCatalog } = useModels();
 	const [selectedWorkspace, setSelectedWorkspace] = useState<string | null>(
 		null,
 	);
 	const [bulkUpdateDialogOpen, setBulkUpdateDialogOpen] = useState(false);
 	const [bulkUpdateModel, setBulkUpdateModel] =
 		useState<string>(DEFAULT_AGENT_MODEL);
-
-	const handleModelChange = (agentId: string, model: string) => {
-		updatePreference.mutate({ agentId, model });
-	};
 
 	const handleDefaultModelChange = (model: string) => {
 		setDefaultModel.mutate(model);
@@ -201,6 +192,11 @@ Your system prompt content here...`}
 						<p className="text-muted-foreground mt-1">
 							Manage your AI agents and their model preferences
 						</p>
+						<p className="text-xs text-muted-foreground mt-1">
+							Model preference on a card sets a runtime proxy override (database
+							only). Edit opens the agent's configuration file — those changes
+							are written to disk.
+						</p>
 					</div>
 					<div className="flex items-center gap-4">
 						<div className="flex items-center gap-2">
@@ -225,37 +221,58 @@ Your system prompt content here...`}
 				{/* Default Model Settings */}
 				<Card>
 					<CardHeader>
-						<CardTitle className="text-base flex items-center gap-2">
-							<Settings className="h-4 w-4" />
-							Default Agent Model
-						</CardTitle>
-						<CardDescription>
-							Set the default model for all agents. Individual agent preferences
-							will override this setting.
-						</CardDescription>
+						<div className="flex items-center justify-between">
+							<div>
+								<CardTitle className="text-base flex items-center gap-2">
+									<Settings className="h-4 w-4" />
+									Default Agent Model
+								</CardTitle>
+								<CardDescription>
+									Set the default model for all agents. Individual agent
+									preferences will override this setting.
+								</CardDescription>
+							</div>
+							<div className="flex items-center gap-3">
+								{modelCatalog && (
+									<span className="text-xs text-muted-foreground">
+										{modelCatalog.source === "live"
+											? `Live model list · fetched ${formatDistanceToNow(
+													new Date(modelCatalog.fetchedAt),
+													{ addSuffix: true },
+												)}`
+											: `Bundled model list · as of ${format(
+													new Date(modelCatalog.fetchedAt),
+													"PP",
+												)}`}
+									</span>
+								)}
+								<Button
+									variant="outline"
+									size="sm"
+									onClick={() => refreshModels.mutate()}
+									disabled={refreshModels.isPending}
+									title="Refresh the live model list from Anthropic"
+								>
+									<RefreshCw
+										className={`h-3.5 w-3.5 ${refreshModels.isPending ? "animate-spin" : ""}`}
+									/>
+								</Button>
+							</div>
+						</div>
 					</CardHeader>
 					<CardContent>
 						<div className="space-y-4">
 							<div className="flex items-center gap-4">
 								<div className="flex-1">
-									<Select
+									<ModelSelect
 										value={defaultModel || DEFAULT_AGENT_MODEL}
 										onValueChange={handleDefaultModelChange}
 										disabled={
 											isLoadingDefaultModel || setDefaultModel.isPending
 										}
-									>
-										<SelectTrigger className="w-full max-w-xs">
-											<SelectValue placeholder="Select a model" />
-										</SelectTrigger>
-										<SelectContent>
-											{COMMON_MODELS.map((model) => (
-												<SelectItem key={model} value={model}>
-													{getModelDisplayName(model)}
-												</SelectItem>
-											))}
-										</SelectContent>
-									</Select>
+										placeholder="Select a model"
+										triggerClassName="w-full max-w-xs"
+									/>
 								</div>
 								{setDefaultModel.isPending && (
 									<span className="text-sm text-muted-foreground">
@@ -291,21 +308,10 @@ Your system prompt content here...`}
 											</DialogDescription>
 										</DialogHeader>
 										<div className="py-4">
-											<Select
+											<ModelSelect
 												value={bulkUpdateModel}
 												onValueChange={setBulkUpdateModel}
-											>
-												<SelectTrigger>
-													<SelectValue />
-												</SelectTrigger>
-												<SelectContent>
-													{COMMON_MODELS.map((model) => (
-														<SelectItem key={model} value={model}>
-															{getModelDisplayName(model)}
-														</SelectItem>
-													))}
-												</SelectContent>
-											</Select>
+											/>
 										</div>
 										<DialogFooter>
 											<Button
@@ -392,12 +398,7 @@ Your system prompt content here...`}
 							</div>
 							<div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
 								{globalAgents.map((agent) => (
-									<AgentCard
-										key={agent.id}
-										agent={agent}
-										onModelChange={handleModelChange}
-										isUpdating={updatePreference.isPending}
-									/>
+									<AgentCard key={agent.id} agent={agent} />
 								))}
 							</div>
 						</div>
@@ -422,12 +423,7 @@ Your system prompt content here...`}
 							</div>
 							<div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
 								{filteredWorkspaceAgents.map((agent) => (
-									<AgentCard
-										key={agent.id}
-										agent={agent}
-										onModelChange={handleModelChange}
-										isUpdating={updatePreference.isPending}
-									/>
+									<AgentCard key={agent.id} agent={agent} />
 								))}
 							</div>
 						</div>
@@ -441,12 +437,7 @@ Your system prompt content here...`}
 							</div>
 							<div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
 								{pluginAgents.map((agent) => (
-									<AgentCard
-										key={agent.id}
-										agent={agent}
-										onModelChange={handleModelChange}
-										isUpdating={updatePreference.isPending}
-									/>
+									<AgentCard key={agent.id} agent={agent} />
 								))}
 							</div>
 						</div>
@@ -469,12 +460,7 @@ Your system prompt content here...`}
 					) : (
 						<div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
 							{globalAgents.map((agent) => (
-								<AgentCard
-									key={agent.id}
-									agent={agent}
-									onModelChange={handleModelChange}
-									isUpdating={updatePreference.isPending}
-								/>
+								<AgentCard key={agent.id} agent={agent} />
 							))}
 						</div>
 					)}
@@ -517,12 +503,7 @@ Your system prompt content here...`}
 							)}
 							<div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
 								{filteredWorkspaceAgents.map((agent) => (
-									<AgentCard
-										key={agent.id}
-										agent={agent}
-										onModelChange={handleModelChange}
-										isUpdating={updatePreference.isPending}
-									/>
+									<AgentCard key={agent.id} agent={agent} />
 								))}
 							</div>
 						</>

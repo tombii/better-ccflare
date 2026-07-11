@@ -151,7 +151,9 @@ export function ensureSchema(db: Database): void {
 			output_tokens INTEGER DEFAULT 0,
 			agent_used TEXT,
 			project TEXT,
-			billing_type TEXT DEFAULT 'api'
+			billing_type TEXT DEFAULT 'api',
+			original_model TEXT,
+			applied_model TEXT
 		)
 	`);
 
@@ -351,6 +353,28 @@ export function ensureSchema(db: Database): void {
 		       ('sonnet', NULL, 0),
 		       ('haiku',  NULL, 0);
 	`);
+
+	// Create usage_snapshots table: time series of per-account usage-window
+	// utilization (0–100) captured on each /oauth/usage poll. Append-only, no
+	// surrogate key; queried and pruned by (account_id, window_key, timestamp).
+	db.run(`
+		CREATE TABLE IF NOT EXISTS usage_snapshots (
+			account_id TEXT NOT NULL,
+			timestamp INTEGER NOT NULL,
+			window_key TEXT NOT NULL,
+			utilization REAL NOT NULL,
+			resets_at INTEGER
+		)
+	`);
+	db.run(
+		`CREATE INDEX IF NOT EXISTS idx_usage_snapshots_acct_win_time ON usage_snapshots(account_id, window_key, timestamp DESC)`,
+	);
+	// Secondary index on timestamp alone so retention pruning
+	// (`DELETE ... WHERE timestamp < ?`) uses an index instead of full-scanning —
+	// the composite index above can't serve it because timestamp isn't leading.
+	db.run(
+		`CREATE INDEX IF NOT EXISTS idx_usage_snapshots_ts ON usage_snapshots(timestamp)`,
+	);
 }
 
 export function runMigrations(db: Database, dbPath?: string): void {
@@ -910,6 +934,17 @@ export function runMigrations(db: Database, dbPath?: string): void {
 		if (!requestsColumnNames.includes("combo_name")) {
 			db.prepare("ALTER TABLE requests ADD COLUMN combo_name TEXT").run();
 			log.info("Added combo_name column to requests table");
+		}
+
+		// Add original_model / applied_model columns if they don't exist
+		// (observability for agent-preference model rewrites — issue C5b)
+		if (!requestsColumnNames.includes("original_model")) {
+			db.prepare("ALTER TABLE requests ADD COLUMN original_model TEXT").run();
+			log.info("Added original_model column to requests table");
+		}
+		if (!requestsColumnNames.includes("applied_model")) {
+			db.prepare("ALTER TABLE requests ADD COLUMN applied_model TEXT").run();
+			log.info("Added applied_model column to requests table");
 		}
 
 		// Add timestamp column to request_payloads if it doesn't exist

@@ -30,6 +30,7 @@ import {
 	proxyWithAccount,
 	RequestBodyContext,
 	type RequestJsonBody,
+	resolveEffectiveModel,
 	selectAccountsForRequest,
 	validateProviderPath,
 } from "./handlers";
@@ -233,7 +234,14 @@ export async function handleProxy(
 
 	// 4. Intercept and modify request for agent model preferences
 	const { modifiedBody, agentUsed, originalModel, appliedModel } =
-		await interceptAndModifyRequest(requestBodyContext, ctx.dbOps, req.headers);
+		await interceptAndModifyRequest(
+			requestBodyContext,
+			ctx.dbOps,
+			req.headers,
+			{
+				frontmatterModelFallback: ctx.config.getAgentFrontmatterModelFallback(),
+			},
+		);
 
 	// Use modified body if available
 	const finalBodyBuffer = modifiedBody || requestBodyContext.getBuffer();
@@ -253,17 +261,19 @@ export async function handleProxy(
 	requestMeta.agentUsed = agentUsed;
 	requestMeta.project = project;
 	requestMeta.clientSessionId = requestBodyContext.getClientId();
+	requestMeta.originalModel = originalModel;
+	requestMeta.appliedModel = appliedModel;
 
 	// 5b. Session volume circuit breaker: a runaway subagent storm shows up as
 	// one client session hammering /v1/messages. Count it here and, when
 	// enforcement is enabled, reject before account selection burns upstream
-	// quota. Internal synthetic requests (keepalive replays, refresh probes)
-	// are not client traffic and are skipped.
-	if (
-		url.pathname === "/v1/messages" &&
-		!req.headers.get("x-better-ccflare-keepalive") &&
-		!req.headers.get("x-better-ccflare-auto-refresh")
-	) {
+	// quota. All identified traffic is counted: header-based exemptions would
+	// be client-forgeable, and internal synthetic requests either carry no
+	// client session (refresh probes, anonymous and thus ungoverned) or spend
+	// upstream quota like any other request (keepalive replays) and belong in
+	// the budget. This is a runaway-loop breaker, not an authentication
+	// boundary: a client that omits session metadata entirely is out of scope.
+	if (url.pathname === "/v1/messages") {
 		const verdict = recordSessionRequest(requestMeta.clientSessionId);
 		if (verdict?.rejected) {
 			return buildSessionRejectResponse(verdict);
@@ -294,11 +304,15 @@ export async function handleProxy(
 		);
 	}
 
-	// 6. Select accounts
+	// 6. Select accounts. Route on the model that will actually be sent
+	// upstream (post-interceptor-rewrite), not the model the client asked
+	// for — otherwise combo routing and family-based selection see a model
+	// that no longer matches the outgoing request.
+	const effectiveModel = resolveEffectiveModel(appliedModel, requestModel);
 	const selectedAccounts = await selectAccountsForRequest(
 		requestMeta,
 		ctx,
-		requestModel ?? undefined,
+		effectiveModel ?? undefined,
 	);
 
 	const applyUsageThrottling = (accounts: Account[]) => {
@@ -314,11 +328,26 @@ export async function handleProxy(
 		const available: Account[] = [];
 		const throttled: Account[] = [];
 
+		// Model-aware throttling: a per-model weekly cap should only throttle
+		// requests for that model. Use the effective (post-intercept) request
+		// model; combo-routed requests assign per-slot models later, so skip
+		// scoped caps (null) and rely on the flat windows + reactive out_of_credits.
+		// combo routing sets meta.comboName during selection and CLEARS it on the
+		// step-10 fallback; use it (not the stale comboSlotInfo WeakMap, which the
+		// fallback does not clear) so fallback routing still applies per-model scoped
+		// throttling for its now-known single model.
+		const comboRouted = requestMeta.comboName != null;
+		const effectiveModel = appliedModel ?? requestModel ?? null;
+
 		for (const account of accounts) {
 			const throttleUntil = getUsageThrottleUntil(
 				usageCache.get(account.id),
 				settings,
 				now,
+				{
+					requestModel: comboRouted ? null : effectiveModel,
+					scopedMode: "match",
+				},
 			);
 			if (throttleUntil && throttleUntil > now) {
 				throttled.push(account);
@@ -410,6 +439,8 @@ export async function handleProxy(
 				accountAutoPauseOnOverageEnabled: 0,
 				accountName: null,
 				agentUsed: agentUsed || null,
+				originalModel: originalModel || null,
+				appliedModel: appliedModel || null,
 				comboName: null,
 				apiKeyId: apiKeyId || null,
 				apiKeyName: apiKeyName || null,

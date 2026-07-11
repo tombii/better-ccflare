@@ -9,6 +9,7 @@ This guide covers all configuration options for better-ccflare, including file-b
 - [Configuration File Format](#configuration-file-format)
 - [Configuration Options](#configuration-options)
 - [Environment Variables](#environment-variables)
+- [Model Catalog](#model-catalog)
 - [Runtime Configuration API](#runtime-configuration-api)
 - [Example Configurations](#example-configurations)
 - [Auto-Fallback Setup](#auto-fallback-setup)
@@ -120,6 +121,10 @@ These environment variables are not stored in the configuration file and must be
 | `DATABASE_URL` | Use PostgreSQL instead of SQLite. Set to a `postgresql://` or `postgres://` connection string. When set, `better-ccflare_DB_PATH` is ignored. | - | `DATABASE_URL=postgresql://user:pass@localhost:5432/ccflare` |
 | `CF_PRICING_REFRESH_HOURS` | Hours between pricing data refreshes | `24` | `CF_PRICING_REFRESH_HOURS=12` |
 | `CF_PRICING_OFFLINE` | Disable online pricing updates | - | `CF_PRICING_OFFLINE=1` |
+| `BETTER_CCFLARE_MODELS_REFRESH_HOURS` | Hours between scheduled model catalog refreshes; `0` disables scheduled refresh entirely | `168` (7 days) | `BETTER_CCFLARE_MODELS_REFRESH_HOURS=48` |
+| `BETTER_CCFLARE_MODELS_OFFLINE` | Disable scheduled/manual model catalog refresh **and** passive `/v1/models` capture | - | `BETTER_CCFLARE_MODELS_OFFLINE=1` |
+| `BETTER_CCFLARE_MODELS_CACHE_DIR` | Directory for the persisted model catalog cache file. Use a persistent directory (not a tmpdir that's wiped on restart) to keep the refresh schedule stable across restarts | Platform tmp dir | `BETTER_CCFLARE_MODELS_CACHE_DIR=/var/lib/better-ccflare` |
+| `BETTER_CCFLARE_MODELS_OAUTH_REFRESH` | Allow OAuth accounts as a fallback source for *scheduled* (automatic) model catalog refreshes when no console/API-key account is eligible. Same as the `model_catalog_oauth_refresh_enabled` config file field; env var takes precedence. Manual refreshes (`POST /api/models/refresh`) always allow the OAuth fallback regardless of this setting | - (console-only) | `BETTER_CCFLARE_MODELS_OAUTH_REFRESH=1` |
 | `CF_STREAM_USAGE_BUFFER_KB` | Stream usage buffer size in KB | `64` | `CF_STREAM_USAGE_BUFFER_KB=128` |
 | `CF_STREAM_TIMEOUT_MS` | Stream processing timeout in milliseconds | `60000` (1 minute) | `CF_STREAM_TIMEOUT_MS=120000` |
 | `PAYLOAD_ENCRYPTION_KEY` | Optional 64-char hex key (32 bytes / AES-256) enabling AES-256-GCM encryption-at-rest for the `request_payloads` table. See [security.md](security.md#payload-encryption-at-rest). | unset (plaintext) | `PAYLOAD_ENCRYPTION_KEY=$(openssl rand -hex 32)` |
@@ -181,6 +186,30 @@ env:
       name: better-ccflare-secrets
       key: database-url
 ```
+
+## Model Catalog
+
+better-ccflare maintains a cache of the Anthropic model catalog (id, display name, creation date) used to populate model dropdowns in the dashboard (agent preferences, default agent model). It's exposed read-only via `GET /api/models` and force-refreshable via `POST /api/models/refresh` — see [api-http.md](api-http.md#model-catalog) for the endpoint reference.
+
+### Why this isn't fetched from every account
+
+A consumer OAuth account (`claude-oauth` mode) is meant for interactive Claude Code traffic. Recurring background API calls — and the proactive OAuth token refreshes they can trigger — are an atypical automation pattern for that account type and risk a flag or ban. API-key accounts (`console`, `zai`, `minimax`, `anthropic-compatible`, `openai-compatible`) are the sanctioned surface for unattended, programmatic requests. Because of this, the model catalog refresh is deliberately restrictive by default:
+
+- **Scheduled (automatic) refresh**: only console/API-key accounts are eligible, unless `BETTER_CCFLARE_MODELS_OAUTH_REFRESH=1` (or the `model_catalog_oauth_refresh_enabled` config field) opts in to an OAuth fallback.
+- **Manual refresh** (`POST /api/models/refresh`, human-triggered from the dashboard or `curl`): always allows the OAuth fallback in addition to console accounts, since a one-off manual action doesn't carry the same recurring-automation risk.
+- If no eligible account exists at all, a refresh (scheduled or manual) is a no-op — the existing cached catalog (live or bundled fallback) is left untouched; it's never emptied or errored out.
+
+### Refresh cadence
+
+When at least one eligible account exists, the catalog refreshes automatically on a schedule controlled by `BETTER_CCFLARE_MODELS_REFRESH_HOURS` (default **168 hours / 7 days**; `0` disables scheduled refresh). To avoid many independently-restarting instances all hitting Anthropic at the same wall-clock moment, each scheduled refresh is smeared with random jitter (up to 24 hours) on top of the configured interval. Every successful catalog write — scheduled, manual, or passive (see below) — recomputes and persists the next scheduled refresh time, so the schedule stays anchored to the most recent real data rather than drifting.
+
+### Passive capture
+
+Any successful `GET /v1/models` response proxied through better-ccflare from a console/API-key account (a client calling the pass-through endpoint directly) is also captured into the catalog cache opportunistically, independent of the scheduled/manual refresh paths. This never triggers extra outbound calls — it only observes traffic that was going to happen anyway.
+
+### Bundled fallback
+
+If no live fetch has ever succeeded (fresh install, no eligible account, or `BETTER_CCFLARE_MODELS_OFFLINE=1`), `GET /api/models` serves a static list bundled with better-ccflare (`CLAUDE_MODEL_IDS` in `packages/core/src/models.ts`). Its response reports `source: "fallback"` and a `fetchedAt` timestamp equal to the bundled list's snapshot date (`BUNDLED_MODELS_AS_OF`), not the current time — this is an intentional, honest "as of `<date>`" provenance rather than a `Date.now()` that would misleadingly imply the list was just fetched. The dashboard surfaces this distinction next to the model catalog's refresh button ("Live model list · fetched ..." vs. "Bundled model list · as of ...").
 
 ## Runtime Configuration API
 

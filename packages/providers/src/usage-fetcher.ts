@@ -40,18 +40,51 @@ export interface ExtraUsage {
 	utilization: number | null;
 }
 
+// Anthropic's generic per-limit representation (2026 usage API). Session and
+// all-models weekly come as kind "session" / "weekly_all"; per-model weekly caps
+// (Fable/Opus/Sonnet) come ONLY as kind "weekly_scoped" with scope.model.
+export interface UsageLimit {
+	kind: string; // "session" | "weekly_all" | "weekly_scoped" | ...
+	group?: string; // "session" | "weekly"
+	percent: number | null;
+	severity?: "normal" | "warning" | "critical" | string;
+	resets_at: string | null;
+	scope?: {
+		model?: { id: string | null; display_name: string } | null;
+		surface?: string | null;
+	} | null;
+	is_active?: boolean;
+}
+
+// Overage / pay-as-you-go credit spend block from the usage payload.
+export interface UsageSpend {
+	used?: { amount_minor: number; currency: string; exponent: number } | null;
+	limit?: unknown;
+	percent?: number | null;
+	severity?: string;
+	enabled?: boolean;
+	currency?: string | null;
+	disabled_reason?: string | null;
+}
+
 export interface UsageData {
-	// Core windows (always present in older API versions)
-	five_hour: UsageWindow;
-	seven_day: UsageWindow;
+	// Core windows — present on legacy payloads but ABSENT on limits[]-only
+	// payloads (Anthropic is migrating the flat windows into the generic limits[]).
+	five_hour?: UsageWindow;
+	seven_day?: UsageWindow;
 	seven_day_oauth_apps?: UsageWindow;
 	seven_day_opus?: UsageWindow | null;
 	// New fields from 2025-11 API update (all optional for backward compatibility)
 	seven_day_sonnet?: UsageWindow | null;
+	seven_day_fable?: UsageWindow | null;
 	iguana_necktie?: unknown; // Unknown purpose, keep as flexible type
 	extra_usage?: ExtraUsage;
+	// New generic representation (2026 API): session/weekly_all/weekly_scoped
+	// entries. Per-model weekly caps (Fable/Opus/Sonnet) live ONLY here.
+	limits?: UsageLimit[];
+	spend?: UsageSpend;
 	// Allow any additional fields Anthropic might add in the future
-	[key: string]: UsageWindow | ExtraUsage | unknown;
+	[key: string]: UsageWindow | ExtraUsage | UsageLimit[] | UsageSpend | unknown;
 }
 
 // Union type for all provider usage data
@@ -75,16 +108,15 @@ export function extractWindowResetTime(
 		const zai = data as ZaiUsageData;
 		return zai.tokens_limit?.resetAt ?? null;
 	}
-	if (provider === "anthropic") {
-		const anthropic = data as UsageData;
-		const resetsAt = anthropic.five_hour?.resets_at;
-		if (!resetsAt) return null;
-		const ms = new Date(resetsAt).getTime();
-		return Number.isFinite(ms) ? ms : null;
-	}
-	if (provider === "codex") {
-		const codex = data as UsageData;
-		const resetsAt = codex.five_hour?.resets_at;
+	if (provider === "anthropic" || provider === "codex") {
+		const d = data as UsageData;
+		// Prefer the flat five_hour window; fall back to the limits[] session
+		// entry so limits-only payloads still expose a session reset time.
+		const resetsAt =
+			d.five_hour?.resets_at ??
+			(Array.isArray(d.limits)
+				? (d.limits.find((l) => l?.kind === "session")?.resets_at ?? null)
+				: null);
 		if (!resetsAt) return null;
 		const ms = new Date(resetsAt).getTime();
 		return Number.isFinite(ms) ? ms : null;
@@ -204,6 +236,24 @@ export async function fetchUsageData(
  * Returns the highest utilization across all windows
  * Dynamically handles any usage window fields in the response
  */
+// Account-level utilization from Anthropic's generic limits[] array: session ->
+// five_hour, weekly_all -> seven_day. Per-model (weekly_scoped) caps are excluded
+// — they are mutual fallbacks, not hard account limits.
+function accountLevelLimitWindows(
+	usage: UsageData,
+): Array<{ window: string; util: number }> {
+	if (!Array.isArray(usage.limits)) return [];
+	const out: Array<{ window: string; util: number }> = [];
+	for (const limit of usage.limits) {
+		if (!limit || typeof limit.percent !== "number") continue;
+		if (limit.kind === "session")
+			out.push({ window: "five_hour", util: limit.percent });
+		else if (limit.kind === "weekly_all")
+			out.push({ window: "seven_day", util: limit.percent });
+	}
+	return out;
+}
+
 export function getRepresentativeUtilization(
 	usage: UsageData | null,
 ): number | null {
@@ -234,7 +284,14 @@ export function getRepresentativeUtilization(
 		}
 	}
 
-	return utilizations.length > 0 ? Math.max(...utilizations) : 0;
+	// Fold in Anthropic's generic limits[] account-level caps (session / weekly_all).
+	for (const { util } of accountLevelLimitWindows(usage)) {
+		utilizations.push(util);
+	}
+
+	// Return null (not 0) when nothing was found: 0 reads as "fully available" and
+	// would falsely un-bench an exhausted account (capacity guard) and mis-rank it.
+	return utilizations.length > 0 ? Math.max(...utilizations) : null;
 }
 
 /**
@@ -269,6 +326,10 @@ export function getRepresentativeWindow(
 		) {
 			windows.push({ name: key, util: value.utilization });
 		}
+	}
+
+	for (const { window, util } of accountLevelLimitWindows(usage)) {
+		windows.push({ name: window, util });
 	}
 
 	if (windows.length === 0) return null;
@@ -307,6 +368,8 @@ export function getRepresentativeUtilizationForProvider(
 			// extra_usage has utilization: number | null
 			if (d.extra_usage?.utilization != null)
 				utils.push(d.extra_usage.utilization);
+			// Account-level limits[] caps (session / weekly_all) for limits-only payloads.
+			for (const { util } of accountLevelLimitWindows(d)) utils.push(util);
 			return utils.length > 0 ? Math.max(...utils) : null;
 		}
 		case "nanogpt": {
@@ -356,6 +419,10 @@ class UsageCache {
 	private capacityRestoredCallbacks = new Map<
 		string,
 		(accountId: string) => void
+	>();
+	private snapshotCallbacks = new Map<
+		string,
+		(accountId: string, data: UsageData) => void
 	>();
 	private inFlightFetches = new Map<
 		string,
@@ -438,6 +505,7 @@ class UsageCache {
 		customEndpoint?: string | null,
 		onWindowReset?: (accountId: string) => void,
 		onCapacityRestored?: (accountId: string) => void,
+		onSnapshot?: (accountId: string, data: UsageData) => void,
 	) {
 		// Check if provider supports usage tracking
 		if (provider && !supportsUsageTracking(provider)) {
@@ -482,6 +550,11 @@ class UsageCache {
 			this.capacityRestoredCallbacks.set(accountId, onCapacityRestored);
 		} else {
 			this.capacityRestoredCallbacks.delete(accountId);
+		}
+		if (onSnapshot) {
+			this.snapshotCallbacks.set(accountId, onSnapshot);
+		} else {
+			this.snapshotCallbacks.delete(accountId);
 		}
 
 		// Default to 90s if not provided
@@ -546,6 +619,7 @@ class UsageCache {
 			this.failureCounts.delete(accountId);
 			this.windowResetCallbacks.delete(accountId);
 			this.capacityRestoredCallbacks.delete(accountId);
+			this.snapshotCallbacks.delete(accountId);
 			// Clean up cache entry when polling stops to prevent memory leaks
 			this.cache.delete(accountId);
 			this.usageRateLimitedUntil.delete(accountId);
@@ -739,6 +813,8 @@ class UsageCache {
 						data: result.data,
 						timestamp: Date.now(),
 					});
+					const snapshotCb = this.snapshotCallbacks.get(accountId);
+					if (snapshotCb) snapshotCb(accountId, result.data as UsageData);
 					const utilization = getRepresentativeUtilization(
 						result.data as UsageData,
 					);

@@ -1,6 +1,4 @@
-import { getModelDisplayName } from "@better-ccflare/core";
 import type { Agent } from "@better-ccflare/types";
-import { COMMON_MODELS } from "@better-ccflare/types";
 import { Bot, Cpu, Edit3, Folder, Globe, Sparkles } from "lucide-react";
 import { useState } from "react";
 import { Badge } from "../ui/badge";
@@ -13,26 +11,14 @@ import {
 	CardTitle,
 } from "../ui/card";
 import { Label } from "../ui/label";
-import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from "../ui/select";
 import { AgentEditDialog } from "./AgentEditDialog";
+import { AgentModelPreferenceSelect } from "./AgentModelPreferenceSelect";
 
 interface AgentCardProps {
 	agent: Agent;
-	onModelChange?: (agentId: string, model: string) => void;
-	isUpdating?: boolean;
 }
 
-export function AgentCard({
-	agent,
-	onModelChange,
-	isUpdating,
-}: AgentCardProps) {
+export function AgentCard({ agent }: AgentCardProps) {
 	const [editDialogOpen, setEditDialogOpen] = useState(false);
 
 	// Map color names to more sophisticated gradient classes
@@ -122,7 +108,7 @@ export function AgentCard({
 							<div className="flex-1">
 								<CardTitle className="text-lg font-semibold flex items-center gap-2">
 									{displayName}
-									{agent.model.includes("opus") && (
+									{agent.model?.includes("opus") && (
 										<Sparkles className="h-4 w-4 text-yellow-500" />
 									)}
 								</CardTitle>
@@ -131,10 +117,25 @@ export function AgentCard({
 										<SourceIcon className="h-3 w-3" />
 										{isWorkspaceAgent ? workspaceName : "Global"}
 									</Badge>
-									{agent.model.includes("opus") && (
+									{agent.model?.includes("opus") && (
 										<Badge variant="secondary" className="text-xs gap-1">
 											<Cpu className="h-3 w-3" />
 											Advanced
+										</Badge>
+									)}
+									{agent.modelSource === "frontmatter" && (
+										<Badge variant="outline" className="text-xs">
+											Default
+										</Badge>
+									)}
+									{agent.modelSource === "inherit" && (
+										<Badge variant="outline" className="text-xs">
+											Inherited
+										</Badge>
+									)}
+									{agent.modelSource === "preference" && (
+										<Badge variant="secondary" className="text-xs">
+											Override
 										</Badge>
 									)}
 								</div>
@@ -164,33 +165,13 @@ export function AgentCard({
 			<CardContent className="relative space-y-4">
 				<div className="space-y-2">
 					<Label className="text-muted-foreground">Model Preference</Label>
-					<Select
-						value={agent.model}
-						onValueChange={(value) => onModelChange?.(agent.id, value)}
-						disabled={isUpdating}
-					>
-						<SelectTrigger className="w-full bg-background/60 backdrop-blur-sm">
-							<SelectValue />
-						</SelectTrigger>
-						<SelectContent>
-							{COMMON_MODELS.map((model) => (
-								<SelectItem
-									key={model}
-									value={model}
-									className="flex items-center"
-								>
-									<span className="flex items-center gap-2">
-										{getModelDisplayName(model)}
-										{model.includes("opus") && (
-											<Badge variant="secondary" className="text-xs">
-												Premium
-											</Badge>
-										)}
-									</span>
-								</SelectItem>
-							))}
-						</SelectContent>
-					</Select>
+					<AgentModelPreferenceSelect
+						agent={agent}
+						triggerClassName="w-full bg-background/60 backdrop-blur-sm"
+					/>
+					<p className="text-xs text-muted-foreground">
+						Proxy override — applies instantly, never modifies the agent file.
+					</p>
 				</div>
 
 				<div className="pt-2 border-t">

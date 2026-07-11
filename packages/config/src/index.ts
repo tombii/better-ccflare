@@ -55,12 +55,15 @@ export interface ConfigData {
 	default_agent_model?: string;
 	data_retention_days?: number;
 	request_retention_days?: number;
+	usage_history_retention_days?: number;
 	store_payloads?: boolean;
 	usage_poll_interval_ms?: number;
 	cache_keepalive_ttl_minutes?: number;
 	system_prompt_cache_ttl_1h?: boolean;
 	usage_throttling_five_hour_enabled?: boolean;
 	usage_throttling_weekly_enabled?: boolean;
+	agent_frontmatter_model_fallback?: boolean;
+	model_catalog_oauth_refresh_enabled?: boolean;
 	health_detail_enabled?: boolean;
 	alert_daily_spend_usd?: number;
 	alert_tokens_per_hour?: number;
@@ -324,6 +327,22 @@ export class Config extends EventEmitter {
 		this.set("request_retention_days", clamped);
 	}
 
+	getUsageHistoryRetentionDays(): number {
+		const fromEnv = process.env.USAGE_HISTORY_RETENTION_DAYS;
+		if (fromEnv) {
+			const n = parseInt(fromEnv, 10);
+			if (!Number.isNaN(n)) return this.clamp(n, 1, 3650);
+		}
+		const fromFile = this.data.usage_history_retention_days;
+		if (typeof fromFile === "number") return this.clamp(fromFile, 1, 3650);
+		return 90; // default: keep 90 days of usage-window history
+	}
+
+	setUsageHistoryRetentionDays(days: number): void {
+		const clamped = this.clamp(days, 1, 3650);
+		this.set("usage_history_retention_days", clamped);
+	}
+
 	getStorePayloads(): boolean {
 		const fromEnv = process.env.STORE_PAYLOADS;
 		if (fromEnv) {
@@ -405,6 +424,49 @@ export class Config extends EventEmitter {
 			return fromEnv;
 		}
 		const fromFile = this.data.usage_throttling_weekly_enabled;
+		if (typeof fromFile === "boolean") return fromFile;
+		return false;
+	}
+
+	/**
+	 * Whether an agent's frontmatter `model` field should be used as a
+	 * substitution fallback when no explicit DB preference is configured for
+	 * that agent. Defaults to false: Claude Code already resolves frontmatter
+	 * model aliases client-side, so the registry's copy of `agent.model` can
+	 * go stale relative to what the client actually resolved and sent. With
+	 * the flag off, only an explicit DB preference (set via the dashboard/CLI)
+	 * triggers a rewrite; the frontmatter value is opt-in.
+	 */
+	getAgentFrontmatterModelFallback(): boolean {
+		const fromEnv = parseEnabledEnvFlag(
+			process.env.AGENT_FRONTMATTER_MODEL_FALLBACK,
+		);
+		if (fromEnv !== undefined) {
+			return fromEnv;
+		}
+		const fromFile = this.data.agent_frontmatter_model_fallback;
+		if (typeof fromFile === "boolean") return fromFile;
+		return false;
+	}
+
+	/**
+	 * Whether the automatic (non-manual) model catalog refresh is allowed to
+	 * fall back to an OAuth account when no eligible API-key account exists.
+	 * Defaults to false: recurring background traffic — and the proactive
+	 * OAuth token refreshes it can trigger — on a consumer OAuth account is an
+	 * atypical automation pattern that risks an account flag/ban, whereas
+	 * API-key accounts are the sanctioned programmatic surface. A manual,
+	 * human-triggered refresh always allows the OAuth fallback regardless of
+	 * this flag.
+	 */
+	getModelCatalogOAuthRefreshEnabled(): boolean {
+		const fromEnv = parseEnabledEnvFlag(
+			process.env.BETTER_CCFLARE_MODELS_OAUTH_REFRESH,
+		);
+		if (fromEnv !== undefined) {
+			return fromEnv;
+		}
+		const fromFile = this.data.model_catalog_oauth_refresh_enabled;
 		if (typeof fromFile === "boolean") return fromFile;
 		return false;
 	}
@@ -557,6 +619,7 @@ export class Config extends EventEmitter {
 			default_agent_model: this.getDefaultAgentModel(),
 			data_retention_days: this.getDataRetentionDays(),
 			request_retention_days: this.getRequestRetentionDays(),
+			usage_history_retention_days: this.getUsageHistoryRetentionDays(),
 			store_payloads: this.getStorePayloads(),
 			usage_poll_interval_ms: this.getUsagePollIntervalMs(),
 			cache_keepalive_ttl_minutes: this.getCacheKeepaliveTtlMinutes(),
@@ -564,6 +627,9 @@ export class Config extends EventEmitter {
 			usage_throttling_five_hour_enabled:
 				this.getUsageThrottlingFiveHourEnabled(),
 			usage_throttling_weekly_enabled: this.getUsageThrottlingWeeklyEnabled(),
+			agent_frontmatter_model_fallback: this.getAgentFrontmatterModelFallback(),
+			model_catalog_oauth_refresh_enabled:
+				this.getModelCatalogOAuthRefreshEnabled(),
 			health_detail_enabled: this.getHealthDetailEnabled(),
 			alert_daily_spend_usd: this.getAlertDailySpendUsd(),
 			alert_tokens_per_hour: this.getAlertTokensPerHour(),

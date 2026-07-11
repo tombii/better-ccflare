@@ -34,6 +34,11 @@ const LazyInsightsTab = lazy(() =>
 		default: module.InsightsTab,
 	})),
 );
+const LazyUsageHistoryTab = lazy(() =>
+	import("./components/usage-history/UsageHistoryTab").then((m) => ({
+		default: m.UsageHistoryTab,
+	})),
+);
 const LoadingSkeleton = () => (
 	<div className="space-y-6 p-6">
 		<div className="animate-pulse">
@@ -102,6 +107,16 @@ export function App() {
 				element: <AccountsTab />,
 				title: "Account Management",
 				subtitle: "Manage your OAuth accounts and settings",
+			},
+			{
+				path: "/usage-history",
+				element: (
+					<Suspense fallback={<LoadingSkeleton />}>
+						<LazyUsageHistoryTab />
+					</Suspense>
+				),
+				title: "Usage History",
+				subtitle: "Per-account usage windows over time, with limit prediction",
 			},
 			{
 				path: "/agents",

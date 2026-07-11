@@ -20,6 +20,13 @@ export const CLAUDE_MODEL_IDS = {
 	FABLE_5: "claude-fable-5",
 } as const;
 
+// Snapshot date for the bundled model list above — bump this alongside
+// CLAUDE_MODEL_IDS whenever a model is added/removed. Used as the
+// `fetchedAt` for the fallback catalog (packages/proxy/src/model-catalog.ts)
+// so a fresh install without a live-refreshable account shows an honest
+// "as of <date>" provenance instead of a misleading "just now".
+export const BUNDLED_MODELS_AS_OF = "2026-06-30";
+
 // Model display names
 export const MODEL_DISPLAY_NAMES: Record<string, string> = {
 	[CLAUDE_MODEL_IDS.SONNET_4]: "Claude Sonnet 4",

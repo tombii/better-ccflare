@@ -1,4 +1,6 @@
+import { getModelDisplayName } from "@better-ccflare/core";
 import type { AgentUpdatePayload } from "@better-ccflare/types";
+import { COMMON_MODELS } from "@better-ccflare/types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type RequestPayload, type RequestSummary } from "../api";
 import { queryKeys } from "../lib/query-keys";
@@ -228,6 +230,18 @@ export const useCacheInsights = (timeRange: string, threshold?: number) => {
 	});
 };
 
+export const useUsageHistory = (account: string, range: string) => {
+	return useQuery({
+		queryKey: queryKeys.usageHistory(account, range),
+		queryFn: () => api.getUsageHistory(account, range),
+		staleTime: 45000,
+		refetchInterval: 60000,
+		refetchIntervalInBackground: false,
+		gcTime: 15 * 60 * 1000,
+		enabled: !!account,
+	});
+};
+
 export const useContextInsights = (timeRange: string) => {
 	return useQuery({
 		queryKey: queryKeys.insightsContext(timeRange),
@@ -311,11 +325,20 @@ export const useResetStats = () => {
 	});
 };
 
+/**
+ * Sentinel select value for "remove the explicit preference" — routed to
+ * DELETE /api/agents/:id/preference instead of the POST update (which
+ * requires a concrete model). Deliberately not a valid model id.
+ */
+export const AGENT_DEFAULT_MODEL_SENTINEL = "__agent_default__";
+
 export const useUpdateAgentPreference = () => {
 	const queryClient = useQueryClient();
 	return useMutation({
 		mutationFn: ({ agentId, model }: { agentId: string; model: string }) =>
-			api.updateAgentPreference(agentId, model),
+			model === AGENT_DEFAULT_MODEL_SENTINEL
+				? api.clearAgentPreference(agentId)
+				: api.updateAgentPreference(agentId, model),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.agents() });
 		},
@@ -352,6 +375,46 @@ export const useBulkUpdateAgentPreferences = () => {
 		mutationFn: (model: string) => api.setBulkAgentPreferences(model),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.agents() });
+		},
+	});
+};
+
+export const useModels = () => {
+	return useQuery({
+		queryKey: queryKeys.models(),
+		queryFn: () => api.getModels(),
+		staleTime: 2 * 60 * 1000, // Consider data fresh for 2 minutes
+		refetchInterval: 5 * 60 * 1000, // Poll every 5 minutes
+		refetchIntervalInBackground: false,
+		gcTime: 30 * 60 * 1000, // Keep in cache for 30 minutes
+	});
+};
+
+/**
+ * Model select options, sourced from the live Anthropic model catalog when
+ * available. Falls back to the bundled static list while the catalog is
+ * loading or if it comes back empty for any reason.
+ */
+export const useModelOptions = (): { id: string; displayName: string }[] => {
+	const { data: modelCatalog } = useModels();
+
+	return modelCatalog && modelCatalog.models.length > 0
+		? modelCatalog.models.map((m) => ({
+				id: m.id,
+				displayName: m.displayName,
+			}))
+		: COMMON_MODELS.map((id) => ({
+				id,
+				displayName: getModelDisplayName(id),
+			}));
+};
+
+export const useRefreshModels = () => {
+	const queryClient = useQueryClient();
+	return useMutation({
+		mutationFn: () => api.refreshModels(),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.models() });
 		},
 	});
 };

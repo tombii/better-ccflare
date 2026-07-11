@@ -46,6 +46,15 @@ export {
 	startIntegrityScheduler,
 } from "./integrity-scheduler";
 export {
+	fetchLiveModels,
+	getModelCatalog,
+	initModelCatalogRefresh,
+	type ModelCatalog,
+	type ModelCatalogEntry,
+	type ModelCatalogRefreshResult,
+	refreshModelCatalog,
+} from "./model-catalog";
+export {
 	drainUsageCollector,
 	getUsageCollectorHealth,
 	handleProxy,
