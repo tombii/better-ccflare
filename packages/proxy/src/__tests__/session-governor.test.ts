@@ -73,6 +73,39 @@ describe("recordSessionRequest", () => {
 		}
 		expect(verdict?.rejected).toBe(false);
 	});
+
+	test("numeric-prefix env values fall back instead of truncating", () => {
+		// parseInt would read "1e5" as 1 and "0x10" as 0; both must be treated
+		// as invalid rather than becoming tiny or disabled budgets.
+		process.env[SESSION_GOVERNOR_MAX_ENV] = "1e5";
+		let verdict: SessionGovernorVerdict | null = null;
+		for (let i = 0; i < 10; i++) {
+			verdict = recordSessionRequest("s1", T0 + i);
+		}
+		expect(verdict?.rejected).toBe(false);
+		expect(verdict?.maxLimit).toBe(0);
+
+		process.env[SESSION_GOVERNOR_MAX_ENV] = "0x10";
+		const next = recordSessionRequest("s1", T0 + 100);
+		expect(next?.maxLimit).toBe(0);
+	});
+
+	test("capacity eviction drops idle sessions before active ones", () => {
+		// Fill the tracker to capacity with sessions whose last activity is
+		// oldest-first, then keep one hot session current.
+		for (let i = 0; i < 2048; i++) {
+			recordSessionRequest(`filler-${i}`, T0 + i);
+		}
+		const hot = recordSessionRequest("hot", T0 + 10_000);
+		expect(hot?.count).toBe(1);
+
+		// New sessions past capacity must evict stale fillers, not "hot".
+		for (let i = 0; i < 50; i++) {
+			recordSessionRequest(`overflow-${i}`, T0 + 11_000 + i);
+		}
+		const hotAgain = recordSessionRequest("hot", T0 + 12_000);
+		expect(hotAgain?.count).toBe(2);
+	});
 });
 
 describe("buildSessionRejectResponse", () => {

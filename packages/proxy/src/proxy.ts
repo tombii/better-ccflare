@@ -260,13 +260,13 @@ export async function handleProxy(
 	// 5b. Session volume circuit breaker: a runaway subagent storm shows up as
 	// one client session hammering /v1/messages. Count it here and, when
 	// enforcement is enabled, reject before account selection burns upstream
-	// quota. Internal synthetic requests (keepalive replays, refresh probes)
-	// are not client traffic and are skipped.
-	if (
-		url.pathname === "/v1/messages" &&
-		!req.headers.get("x-better-ccflare-keepalive") &&
-		!req.headers.get("x-better-ccflare-auto-refresh")
-	) {
+	// quota. All identified traffic is counted: header-based exemptions would
+	// be client-forgeable, and internal synthetic requests either carry no
+	// client session (refresh probes, anonymous and thus ungoverned) or spend
+	// upstream quota like any other request (keepalive replays) and belong in
+	// the budget. This is a runaway-loop breaker, not an authentication
+	// boundary: a client that omits session metadata entirely is out of scope.
+	if (url.pathname === "/v1/messages") {
 		const verdict = recordSessionRequest(requestMeta.clientSessionId);
 		if (verdict?.rejected) {
 			return buildSessionRejectResponse(verdict);
