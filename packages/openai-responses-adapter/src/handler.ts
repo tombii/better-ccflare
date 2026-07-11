@@ -92,6 +92,20 @@ export async function handleResponsesRequest(
 		body as typeof body & { input: ResponseItem[] },
 	);
 
+	// 4b. Preserve the client's session identity. Codex CLI identifies its
+	// conversation via prompt_cache_key (some versions also send a session_id
+	// header); the translated Anthropic body would otherwise carry no
+	// metadata, leaving this traffic anonymous to downstream per-session
+	// accounting (session governor, load-balancer session affinity).
+	const sessionKey =
+		(typeof body.prompt_cache_key === "string" && body.prompt_cache_key) ||
+		req.headers.get("session_id") ||
+		req.headers.get("x-session-id") ||
+		null;
+	if (sessionKey && !anthropicBody.metadata) {
+		anthropicBody.metadata = { user_id: `codex-responses-${sessionKey}` };
+	}
+
 	// 5. Build synthetic request targeting /v1/messages
 	const messagesUrl = new URL(url.toString());
 	messagesUrl.pathname = "/v1/messages";
