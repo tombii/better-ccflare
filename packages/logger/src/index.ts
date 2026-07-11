@@ -35,6 +35,20 @@ function normalizeLogData(data: any): any {
 	return data;
 }
 
+let consoleLoggingOverride: boolean | null = null;
+
+/**
+ * Force console output on (or off) for every logger, regardless of debug
+ * mode. The interactive TUI silences console logging so log lines do not
+ * corrupt the screen, but headless serve mode has no TUI: journald or the
+ * operator's terminal is exactly where WARN/ERROR lines belong. Without
+ * this, production warnings (runaway fan-out, session budgets) are
+ * invisible outside the dashboard log bus.
+ */
+export function setConsoleLogging(enabled: boolean | null): void {
+	consoleLoggingOverride = enabled;
+}
+
 export class Logger {
 	private level: LogLevel;
 	private prefix: string;
@@ -115,7 +129,7 @@ export class Logger {
 			};
 			logBus.emit("log", event);
 			logFileWriter?.write(event);
-			if (!this.silentConsole) console.log(msg);
+			if (consoleLoggingOverride ?? !this.silentConsole) console.log(msg);
 		}
 	}
 
@@ -132,7 +146,7 @@ export class Logger {
 			};
 			logBus.emit("log", event);
 			logFileWriter?.write(event);
-			if (!this.silentConsole) console.log(msg);
+			if (consoleLoggingOverride ?? !this.silentConsole) console.log(msg);
 		}
 	}
 
@@ -149,7 +163,7 @@ export class Logger {
 			};
 			logBus.emit("log", event);
 			logFileWriter?.write(event);
-			if (!this.silentConsole) console.warn(msg);
+			if (consoleLoggingOverride ?? !this.silentConsole) console.warn(msg);
 		}
 	}
 
@@ -166,7 +180,7 @@ export class Logger {
 			};
 			logBus.emit("log", event);
 			logFileWriter?.write(event);
-			if (!this.silentConsole) console.error(msg);
+			if (consoleLoggingOverride ?? !this.silentConsole) console.error(msg);
 		}
 	}
 

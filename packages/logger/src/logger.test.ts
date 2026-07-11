@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import type { LogEvent } from "@better-ccflare/types";
-import { Logger, LogLevel, logBus } from "./index";
+import { Logger, setConsoleLogging, LogLevel, logBus } from "./index";
 
 describe("Logger error serialization", () => {
 	let captured: LogEvent[] = [];
@@ -142,6 +142,34 @@ describe("Logger env LOG_LEVEL handling", () => {
 			expect(spy).not.toHaveBeenCalled();
 		} finally {
 			spy.mockRestore();
+		}
+	});
+});
+
+describe("setConsoleLogging override", () => {
+	afterEach(() => {
+		setConsoleLogging(null);
+		delete process.env.LOG_LEVEL;
+	});
+
+	it("silences console by default outside debug mode, override restores it", () => {
+		process.env.LOG_LEVEL = "warn";
+		const logger = new Logger("test");
+		const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
+		try {
+			logger.warn("invisible by default");
+			expect(warnSpy).toHaveBeenCalledTimes(0);
+
+			// Headless serve mode: warnings must reach the console/journal.
+			setConsoleLogging(true);
+			logger.warn("visible with override");
+			expect(warnSpy).toHaveBeenCalledTimes(1);
+
+			setConsoleLogging(null);
+			logger.warn("silent again");
+			expect(warnSpy).toHaveBeenCalledTimes(1);
+		} finally {
+			warnSpy.mockRestore();
 		}
 	});
 });

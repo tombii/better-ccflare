@@ -1,6 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fetchCodexUsageOnDemand } from "./on-demand-fetch";
-import { CodexProvider } from "./provider";
+import {
+	CODEX_CACHE_KEY_MODE_ENV,
+	CODEX_PROMPT_CACHE_KEY_ENV,
+	CodexProvider,
+} from "./provider";
+import { CODEX_TRACE_DIR_ENV } from "./trace";
 import { parseCodexUsageHeaders } from "./usage";
 
 const sseBody = (lines: string[]) => `${lines.join("\n")}\n`;
@@ -9,6 +17,20 @@ const eventLine = (name: string, data: unknown) => [
 	`data: ${typeof data === "string" ? data : JSON.stringify(data)}`,
 	"",
 ];
+const readTraceRecords = (dir: string): Array<Record<string, unknown>> => {
+	const file = readdirSync(dir).find((f) => f.endsWith(".jsonl"));
+	if (!file) return [];
+	return readFileSync(join(dir, file), "utf8")
+		.trim()
+		.split("\n")
+		.filter(Boolean)
+		.map((line) => JSON.parse(line) as Record<string, unknown>);
+};
+
+afterEach(() => {
+	delete process.env[CODEX_PROMPT_CACHE_KEY_ENV];
+	delete process.env[CODEX_CACHE_KEY_MODE_ENV];
+});
 
 describe("CodexProvider request conversion", () => {
 	it("handles messages and synthetic count_tokens paths", () => {
@@ -1187,6 +1209,96 @@ describe("CodexProvider.processResponse", () => {
 		expect(messageDeltaLine).toContain('"context_window_size":272000');
 	});
 
+	it("reports the effective context window when CCFLARE_CODEX_EFFECTIVE_CONTEXT=1", async () => {
+		process.env.CCFLARE_CODEX_EFFECTIVE_CONTEXT = "1";
+		try {
+			const provider = new CodexProvider();
+			const upstreamBody = sseBody([
+				...eventLine("response.created", {
+					response: { id: "resp_test", model: "gpt-5.6-sol" },
+				}),
+				...eventLine("response.completed", {
+					response: {
+						model: "gpt-5.6-sol",
+						usage: { input_tokens: 100, output_tokens: 50 },
+					},
+				}),
+			]);
+
+			const response = new Response(upstreamBody, {
+				status: 200,
+				headers: { "content-type": "text/event-stream" },
+			});
+
+			const transformed = await provider.processResponse(response, null);
+			const transformedBody = await transformed.text();
+			const messageDeltaLine = transformedBody
+				.split("\n")
+				.find((line) => line.includes('"type":"message_delta"'));
+
+			// 372000 * 95% effective = 353400
+			expect(messageDeltaLine).toContain('"context_window_size":353400');
+		} finally {
+			delete process.env.CCFLARE_CODEX_EFFECTIVE_CONTEXT;
+		}
+	});
+
+	it("reports the 372k context_window for GPT-5.6 models", async () => {
+		const provider = new CodexProvider();
+		const upstreamBody = sseBody([
+			...eventLine("response.created", {
+				response: { id: "resp_test", model: "gpt-5.6-sol" },
+			}),
+			...eventLine("response.completed", {
+				response: {
+					model: "gpt-5.6-sol",
+					usage: { input_tokens: 100, output_tokens: 50 },
+				},
+			}),
+		]);
+
+		const response = new Response(upstreamBody, {
+			status: 200,
+			headers: { "content-type": "text/event-stream" },
+		});
+
+		const transformed = await provider.processResponse(response, null);
+		const transformedBody = await transformed.text();
+		const messageDeltaLine = transformedBody
+			.split("\n")
+			.find((line) => line.includes('"type":"message_delta"'));
+
+		expect(messageDeltaLine).toContain('"context_window_size":372000');
+	});
+
+	it("resolves dated model variants to their family context window", async () => {
+		const provider = new CodexProvider();
+		const upstreamBody = sseBody([
+			...eventLine("response.created", {
+				response: { id: "resp_test", model: "gpt-5.6-sol-2026-05-13" },
+			}),
+			...eventLine("response.completed", {
+				response: {
+					model: "gpt-5.6-sol-2026-05-13",
+					usage: { input_tokens: 100, output_tokens: 50 },
+				},
+			}),
+		]);
+
+		const response = new Response(upstreamBody, {
+			status: 200,
+			headers: { "content-type": "text/event-stream" },
+		});
+
+		const transformed = await provider.processResponse(response, null);
+		const transformedBody = await transformed.text();
+		const messageDeltaLine = transformedBody
+			.split("\n")
+			.find((line) => line.includes('"type":"message_delta"'));
+
+		expect(messageDeltaLine).toContain('"context_window_size":372000');
+	});
+
 	it("omits context_window when model metadata is unavailable", async () => {
 		const provider = new CodexProvider();
 		const upstreamBody = sseBody([
@@ -1339,6 +1451,82 @@ describe("CodexProvider.processResponse", () => {
 		expect(transformedBody).toContain(
 			'"usage":{"input_tokens":2,"output_tokens":1',
 		);
+	});
+
+	it("preserves request id in traces for missing-content-type SSE streams", async () => {
+		const provider = new CodexProvider();
+		const requestId = "req_trace_stream_missing_content_type";
+		const traceDir = mkdtempSync(join(tmpdir(), "codex-trace-"));
+		process.env[CODEX_TRACE_DIR_ENV] = traceDir;
+		try {
+			const upstreamBody = sseBody([
+				...eventLine("response.created", {
+					response: { id: "resp_trace", model: "gpt-5.4" },
+				}),
+				...eventLine("response.completed", {
+					response: {
+						model: "gpt-5.4",
+						usage: { input_tokens: 3, output_tokens: 1 },
+					},
+				}),
+			]);
+			const response = new Response(upstreamBody, {
+				status: 200,
+				headers: {
+					"x-better-ccflare-request-id": requestId,
+					"x-better-ccflare-request-stream": "true",
+				},
+			});
+
+			const transformed = await provider.processResponse(response, null);
+			await transformed.text();
+
+			const responseRecord = readTraceRecords(traceDir).find(
+				(r) => r.phase === "response",
+			);
+			expect(responseRecord?.request_id).toBe(requestId);
+		} finally {
+			delete process.env[CODEX_TRACE_DIR_ENV];
+			rmSync(traceDir, { recursive: true, force: true });
+		}
+	});
+
+	it("preserves request id in traces for missing-content-type SSE to JSON", async () => {
+		const provider = new CodexProvider();
+		const requestId = "req_trace_json_missing_content_type";
+		const traceDir = mkdtempSync(join(tmpdir(), "codex-trace-"));
+		process.env[CODEX_TRACE_DIR_ENV] = traceDir;
+		try {
+			const upstreamBody = sseBody([
+				...eventLine("response.created", {
+					response: { id: "resp_trace", model: "gpt-5.4" },
+				}),
+				...eventLine("response.completed", {
+					response: {
+						model: "gpt-5.4",
+						usage: { input_tokens: 3, output_tokens: 1 },
+					},
+				}),
+			]);
+			const response = new Response(upstreamBody, {
+				status: 200,
+				headers: {
+					"x-better-ccflare-request-id": requestId,
+					"x-better-ccflare-request-stream": "false",
+				},
+			});
+
+			const transformed = await provider.processResponse(response, null);
+			await transformed.text();
+
+			const responseRecord = readTraceRecords(traceDir).find(
+				(r) => r.phase === "response",
+			);
+			expect(responseRecord?.request_id).toBe(requestId);
+		} finally {
+			delete process.env[CODEX_TRACE_DIR_ENV];
+			rmSync(traceDir, { recursive: true, force: true });
+		}
 	});
 
 	it("passes through successful missing-content-type unknown bodies", async () => {
@@ -1844,6 +2032,305 @@ describe("CodexProvider.transformRequestBody", () => {
 
 		expect(body.model).toBe("gpt-5.4-mini");
 	});
+
+	it("forces StructuredOutput tool_choice when the Claude Code schema tool is present", async () => {
+		const provider = new CodexProvider();
+		const request = new Request("https://example.com/v1/messages", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				model: "claude-haiku-4-5-20251001",
+				max_tokens: 10,
+				messages: [{ role: "user", content: "return structured output" }],
+				tools: [
+					{
+						name: "StructuredOutput",
+						description: "Return the validated payload.",
+						input_schema: {
+							type: "object",
+							additionalProperties: false,
+							properties: { ok: { type: "boolean" } },
+							required: ["ok"],
+						},
+					},
+				],
+			}),
+		});
+
+		const transformed = await provider.transformRequestBody(request, undefined);
+		const body = await transformed.json();
+
+		expect(body.tools.map((t: { name: string }) => t.name)).toContain(
+			"StructuredOutput",
+		);
+		expect(body.tool_choice).toEqual({
+			type: "function",
+			name: "StructuredOutput",
+		});
+	});
+
+	it("does not force tool_choice for ordinary tool-enabled requests", async () => {
+		const provider = new CodexProvider();
+		const request = new Request("https://example.com/v1/messages", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				model: "claude-haiku-4-5-20251001",
+				max_tokens: 10,
+				messages: [{ role: "user", content: "read a file" }],
+				tools: [
+					{
+						name: "Read",
+						description: "Read a file.",
+						input_schema: {
+							type: "object",
+							properties: { file_path: { type: "string" } },
+							required: ["file_path"],
+						},
+					},
+				],
+			}),
+		});
+
+		const transformed = await provider.transformRequestBody(request, undefined);
+		const body = await transformed.json();
+
+		expect(body.tool_choice).toBeUndefined();
+	});
+
+	it.each([
+		[{ type: "auto" }, "auto"],
+		[{ type: "any" }, "required"],
+		[{ type: "none" }, "none"],
+		[
+			{ type: "tool", name: "Read" },
+			{ type: "function", name: "Read" },
+		],
+	] as const)("maps Anthropic tool_choice %j to Codex", async (toolChoice, expected) => {
+		const provider = new CodexProvider();
+		const request = new Request("https://example.com/v1/messages", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				model: "claude-opus-4-8",
+				max_tokens: 10,
+				messages: [{ role: "user", content: "read a file" }],
+				tools: [
+					{
+						name: "Read",
+						description: "Read a file.",
+						input_schema: { type: "object" },
+					},
+				],
+				tool_choice: toolChoice,
+			}),
+		});
+
+		const transformed = await provider.transformRequestBody(request);
+		const body = await transformed.json();
+		expect(body.tool_choice).toEqual(expected);
+	});
+
+	it("preserves explicit tool_choice precedence over StructuredOutput fallback", async () => {
+		const provider = new CodexProvider();
+		const request = new Request("https://example.com/v1/messages", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				model: "claude-opus-4-8",
+				max_tokens: 10,
+				messages: [{ role: "user", content: "return text" }],
+				tools: [
+					{
+						name: "StructuredOutput",
+						description: "Return structured output.",
+						input_schema: { type: "object" },
+					},
+				],
+				tool_choice: { type: "none" },
+			}),
+		});
+
+		const transformed = await provider.transformRequestBody(request);
+		const body = await transformed.json();
+		expect(body.tool_choice).toBe("none");
+	});
+
+	it("rejects a named tool_choice that is absent from tools", async () => {
+		const provider = new CodexProvider();
+		const request = new Request("https://example.com/v1/messages", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				model: "claude-opus-4-8",
+				max_tokens: 10,
+				messages: [{ role: "user", content: "search" }],
+				tools: [
+					{
+						name: "Read",
+						description: "Read a file.",
+						input_schema: { type: "object" },
+					},
+				],
+				tool_choice: { type: "tool", name: "WebSearch" },
+			}),
+		});
+
+		await expect(provider.transformRequestBody(request)).rejects.toThrow(
+			"tool_choice references unknown tool: WebSearch",
+		);
+	});
+
+	it("omits prompt_cache_key by default", async () => {
+		const provider = new CodexProvider();
+		const request = new Request("https://example.com/v1/messages", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				model: "claude-opus-4-8",
+				max_tokens: 10,
+				metadata: {
+					user_id: JSON.stringify({
+						session_id: "11111111-1111-4111-8111-111111111111",
+					}),
+				},
+				messages: [{ role: "user", content: "hello" }],
+			}),
+		});
+
+		const transformed = await provider.transformRequestBody(request);
+		const body = await transformed.json();
+		expect(body.prompt_cache_key).toBeUndefined();
+	});
+
+	it("derives a deterministic prompt_cache_key from Claude Code session metadata when enabled", async () => {
+		process.env[CODEX_PROMPT_CACHE_KEY_ENV] = "1";
+		const transform = async (sessionId: string) => {
+			const request = new Request("https://example.com/v1/messages", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({
+					model: "claude-opus-4-8",
+					max_tokens: 10,
+					metadata: { user_id: JSON.stringify({ session_id: sessionId }) },
+					messages: [{ role: "user", content: "hello" }],
+				}),
+			});
+			return new CodexProvider()
+				.transformRequestBody(request)
+				.then((r) => r.json());
+		};
+
+		const first = await transform("11111111-1111-4111-8111-111111111111");
+		const repeated = await transform("11111111-1111-4111-8111-111111111111");
+		const different = await transform("22222222-2222-4222-8222-222222222222");
+
+		expect(first.prompt_cache_key).toMatch(/^ccflare-convo-[0-9a-f]{48}$/);
+		expect(repeated.prompt_cache_key).toBe(first.prompt_cache_key);
+		expect(different.prompt_cache_key).not.toBe(first.prompt_cache_key);
+		expect(first.prompt_cache_key).not.toContain("11111111");
+	});
+
+	it("conversation keys are stable across turns and distinct across conversations", async () => {
+		process.env[CODEX_PROMPT_CACHE_KEY_ENV] = "1";
+		const transform = async (payload: Record<string, unknown>) => {
+			const request = new Request("https://example.com/v1/messages", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({
+					model: "claude-opus-4-8",
+					max_tokens: 10,
+					metadata: {
+						user_id: JSON.stringify({
+							session_id: "11111111-1111-4111-8111-111111111111",
+						}),
+					},
+					...payload,
+				}),
+			});
+			return new CodexProvider()
+				.transformRequestBody(request)
+				.then((r) => r.json());
+		};
+
+		const turn1 = await transform({
+			system: "main loop system prompt",
+			messages: [{ role: "user", content: "task A" }],
+		});
+		// Same conversation, one turn later: identical first message, longer tail.
+		const turn2 = await transform({
+			system: "main loop system prompt",
+			messages: [
+				{ role: "user", content: "task A" },
+				{ role: "assistant", content: "working on it" },
+				{ role: "user", content: "continue" },
+			],
+		});
+		// Sibling subagent: same session and system, different first message.
+		const sibling = await transform({
+			system: "main loop system prompt",
+			messages: [{ role: "user", content: "task B" }],
+		});
+		// Different agent type: same first message, different system prompt.
+		const otherAgent = await transform({
+			system: "subagent system prompt",
+			messages: [{ role: "user", content: "task A" }],
+		});
+
+		expect(turn1.prompt_cache_key).toMatch(/^ccflare-convo-[0-9a-f]{48}$/);
+		expect(turn2.prompt_cache_key).toBe(turn1.prompt_cache_key);
+		expect(sibling.prompt_cache_key).not.toBe(turn1.prompt_cache_key);
+		expect(otherAgent.prompt_cache_key).not.toBe(turn1.prompt_cache_key);
+	});
+
+	it("session mode restores the coarse per-session key", async () => {
+		process.env[CODEX_PROMPT_CACHE_KEY_ENV] = "1";
+		process.env[CODEX_CACHE_KEY_MODE_ENV] = "session";
+		const transform = async (content: string) => {
+			const request = new Request("https://example.com/v1/messages", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({
+					model: "claude-opus-4-8",
+					max_tokens: 10,
+					metadata: {
+						user_id: JSON.stringify({
+							session_id: "11111111-1111-4111-8111-111111111111",
+						}),
+					},
+					messages: [{ role: "user", content }],
+				}),
+			});
+			return new CodexProvider()
+				.transformRequestBody(request)
+				.then((r) => r.json());
+		};
+
+		const first = await transform("task A");
+		const other = await transform("completely different task");
+
+		expect(first.prompt_cache_key).toMatch(/^ccflare-session-[0-9a-f]{48}$/);
+		expect(other.prompt_cache_key).toBe(first.prompt_cache_key);
+	});
+
+	it("omits prompt_cache_key for malformed session metadata", async () => {
+		process.env[CODEX_PROMPT_CACHE_KEY_ENV] = "1";
+		const provider = new CodexProvider();
+		const request = new Request("https://example.com/v1/messages", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				model: "claude-opus-4-8",
+				max_tokens: 10,
+				metadata: { user_id: "not-json" },
+				messages: [{ role: "user", content: "hello" }],
+			}),
+		});
+
+		const transformed = await provider.transformRequestBody(request);
+		const body = await transformed.json();
+		expect(body.prompt_cache_key).toBeUndefined();
+	});
 });
 
 describe("parseCodexUsageHeaders", () => {
@@ -1987,7 +2474,9 @@ describe("fetchCodexUsageOnDemand", () => {
 		const headersInit = recorded?.init.headers as Record<string, string>;
 		const headers = new Headers(headersInit);
 		expect(headers.get("Authorization")).toBe("Bearer test-token");
+		expect(headers.get("Version")).toBe("0.144.1");
 		expect(headers.get("Openai-Beta")).toBe("responses=experimental");
+		expect(headers.get("User-Agent")).toContain("codex-cli/0.144.1");
 		expect(headers.get("originator")).toBe("codex_cli_rs");
 		expect(headers.get("Content-Type")).toBe("application/json");
 

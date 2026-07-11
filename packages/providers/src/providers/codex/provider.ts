@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
 	mapModelName,
 	ValidationError,
@@ -9,6 +10,12 @@ import { resolveReasoningEffort } from "@better-ccflare/openai-formats";
 import type { Account } from "@better-ccflare/types";
 import { BaseProvider } from "../../base";
 import type { RateLimitInfo, TokenRefreshResult } from "../../types";
+import {
+	summarizeCodexResponse,
+	type ToolCallSummary,
+	writeCodexResponseTrace,
+	writeCodexTrace,
+} from "./trace";
 
 const log = new Logger("CodexProvider");
 
@@ -34,6 +41,13 @@ export const CODEX_USER_AGENT = `codex-cli/${CODEX_VERSION} (Windows 10.0.26100;
 export const CODEX_PING_MODEL = "gpt-5-codex";
 const CODEX_SYNTHETIC_COUNT_TOKENS_URL =
 	"https://better-ccflare.local/codex/count_tokens";
+export const CODEX_PROMPT_CACHE_KEY_ENV = "CCFLARE_CODEX_PROMPT_CACHE_KEY";
+/** "conversation" (default) or "session"; see derivePromptCacheKey. */
+export const CODEX_CACHE_KEY_MODE_ENV = "CCFLARE_CODEX_CACHE_KEY_MODE";
+// Structured (non-text) tool_result blocks larger than this are replaced with
+// a size marker: replaying megabyte payloads (e.g. base64 documents) into
+// every subsequent turn bloats context and destroys prompt-cache reuse.
+const CODEX_MAX_STRUCTURED_BLOCK_CHARS = 8_192;
 
 const _normalizeUsage = (value: unknown): Record<string, number> => {
 	const usage =
@@ -61,12 +75,58 @@ const DEFAULT_MODEL_MAP: Record<string, string> = {
 	haiku: "gpt-5.4-mini",
 };
 
-const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
+// Synced from the Codex CLI model cache (~/.codex/models_cache.json,
+// codex-cli 0.144.1). Missing entries mean no context_window block is
+// reported to the client, which disables its context gauge and compaction
+// triggers for that model.
+export const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
 	"gpt-5.3-codex": 272_000,
+	"gpt-5.3-codex-spark": 128_000,
 	"gpt-5.4": 272_000,
 	"gpt-5.4-mini": 272_000,
+	"gpt-5.5": 272_000,
+	"gpt-5.6-sol": 372_000,
+	"gpt-5.6-terra": 372_000,
+	"gpt-5.6-luna": 372_000,
 };
 
+// Codex's model metadata declares an effective usable window below the raw
+// maximum (effective_context_window_percent, 95 for every current model).
+// When CCFLARE_CODEX_EFFECTIVE_CONTEXT=1, report the effective size so the
+// client's compaction triggers fire before the degradation zone instead of
+// at the hard limit.
+export const CODEX_EFFECTIVE_CONTEXT_ENV = "CCFLARE_CODEX_EFFECTIVE_CONTEXT";
+const MODEL_EFFECTIVE_CONTEXT_PERCENT: Record<string, number> = {
+	"gpt-5.3-codex": 95,
+	"gpt-5.3-codex-spark": 95,
+	"gpt-5.4": 95,
+	"gpt-5.4-mini": 95,
+	"gpt-5.5": 95,
+	"gpt-5.6-sol": 95,
+	"gpt-5.6-terra": 95,
+	"gpt-5.6-luna": 95,
+};
+
+/**
+ * Exact lookup first, then longest-prefix fallback so dated or suffixed
+ * variants the API may return (e.g. "gpt-5.6-sol-2026-05-13") still resolve
+ * to their family's metadata instead of silently losing the client's context
+ * gauge. Prefix matches require a "-" boundary so "gpt-5.55" cannot match
+ * "gpt-5.5".
+ */
+function lookupModelFamilyKey(model: string): string | undefined {
+	if (MODEL_CONTEXT_WINDOWS[model]) return model;
+	let bestKey: string | undefined;
+	for (const key of Object.keys(MODEL_CONTEXT_WINDOWS)) {
+		if (
+			model.startsWith(`${key}-`) &&
+			(bestKey === undefined || key.length > bestKey.length)
+		) {
+			bestKey = key;
+		}
+	}
+	return bestKey;
+}
 // ── Codex Responses API types ─────────────────────────────────────────────────
 
 interface CodexInputTextItem {
@@ -119,7 +179,14 @@ interface CodexRequest {
 	store: false;
 	reasoning?: { effort: string };
 	instructions?: string;
+	prompt_cache_key?: string;
 	tools?: CodexTool[];
+	tool_choice?:
+		| "auto"
+		| "required"
+		| "none"
+		| { type: "function"; name: string };
+	parallel_tool_calls?: boolean;
 }
 
 // ── Anthropic request types ───────────────────────────────────────────────────
@@ -139,7 +206,14 @@ interface AnthropicToolUse {
 interface AnthropicToolResult {
 	type: "tool_result";
 	tool_use_id: string;
-	content: string | AnthropicTextContent[];
+	is_error?: boolean;
+	content:
+		| string
+		| Array<{
+				type: string;
+				text?: string;
+				[key: string]: unknown;
+		  }>;
 }
 
 type AnthropicContentBlock =
@@ -158,6 +232,12 @@ interface AnthropicTool {
 	input_schema?: Record<string, unknown>;
 }
 
+interface AnthropicToolChoice {
+	type: "auto" | "any" | "none" | "tool";
+	name?: string;
+	disable_parallel_tool_use?: boolean;
+}
+
 interface AnthropicRequest {
 	model: string;
 	max_tokens: number;
@@ -165,7 +245,9 @@ interface AnthropicRequest {
 	system?: string | { type: string; text: string }[];
 	stream?: boolean;
 	tools?: AnthropicTool[];
+	tool_choice?: AnthropicToolChoice;
 	reasoning?: { effort?: string };
+	metadata?: { user_id?: string };
 	[key: string]: unknown;
 }
 
@@ -211,6 +293,9 @@ interface StreamState {
 		code?: string;
 		status?: string;
 	};
+	// Newly emitted tool calls from this response only (not historical replay).
+	traceNewToolCalls: ToolCallSummary[];
+	traceRequestId: string;
 }
 
 export class CodexProvider extends BaseProvider {
@@ -384,12 +469,37 @@ export class CodexProvider extends BaseProvider {
 				requestId ?? undefined,
 			);
 
+			// Best-effort, env-gated observability (no-op unless CCFLARE_CODEX_TRACE_DIR set).
+			writeCodexTrace({
+				requestId: requestId ?? undefined,
+				account: account?.name,
+				modelIn: body.model,
+				modelOut: codexBody.model,
+				messageCount: body.messages.length,
+				sessionKeyHash: this.hashSessionKey(body),
+				promptCacheKeySet: Boolean(codexBody.prompt_cache_key),
+				promptCacheKeyId: codexBody.prompt_cache_key
+					? codexBody.prompt_cache_key.slice(-16)
+					: null,
+				cacheKeyMode: codexBody.prompt_cache_key
+					? codexBody.prompt_cache_key.startsWith("ccflare-convo-")
+						? "conversation"
+						: "session"
+					: null,
+				instructions: codexBody.instructions,
+				tools: codexBody.tools,
+				codexInput: codexBody.input,
+				anthropicRequest: body,
+				codexRequest: codexBody,
+			});
+
 			const newHeaders = new Headers(request.headers);
 			newHeaders.set("content-type", "application/json");
 			newHeaders.set(
 				"x-better-ccflare-request-stream",
 				body.stream === true ? "true" : "false",
 			);
+			newHeaders.delete("x-better-ccflare-request-id");
 			newHeaders.delete("content-length");
 
 			return new Request(request.url, {
@@ -437,9 +547,12 @@ export class CodexProvider extends BaseProvider {
 		const isEventStream = contentType?.includes("text/event-stream") ?? false;
 		if (isEventStream) {
 			if (requestedStream) {
-				return this.transformStreamingResponse(response);
+				return this.transformStreamingResponse(
+					response,
+					requestId ?? undefined,
+				);
 			}
-			return this.transformSseResponseToJson(response);
+			return this.transformSseResponseToJson(response, requestId ?? undefined);
 		}
 
 		if (response.ok && response.body !== null) {
@@ -459,9 +572,15 @@ export class CodexProvider extends BaseProvider {
 					headers,
 				});
 				if (requestedStream) {
-					return this.transformStreamingResponse(sseResponse);
+					return this.transformStreamingResponse(
+						sseResponse,
+						requestId ?? undefined,
+					);
 				}
-				return this.transformSseResponseToJson(sseResponse);
+				return this.transformSseResponseToJson(
+					sseResponse,
+					requestId ?? undefined,
+				);
 			}
 
 			const headers = sanitizeResponseHeaders(response.headers);
@@ -545,6 +664,157 @@ export class CodexProvider extends BaseProvider {
 			.join("\n\n");
 	}
 
+	/**
+	 * Short, privacy-preserving session join key for trace records. Unlike
+	 * extractPromptCacheKey this is not env-gated and never sent upstream;
+	 * it only lets offline analysis group request/response records by session.
+	 */
+	private hashSessionKey(body: AnthropicRequest): string | null {
+		const rawUserId = body.metadata?.user_id;
+		if (typeof rawUserId !== "string" || rawUserId.length === 0) return null;
+		return createHash("sha256").update(rawUserId).digest("hex").slice(0, 16);
+	}
+
+	private extractSessionId(body: AnthropicRequest): string | undefined {
+		const rawUserId = body.metadata?.user_id;
+		if (typeof rawUserId !== "string") return undefined;
+		try {
+			const metadata = JSON.parse(rawUserId) as unknown;
+			if (!metadata || typeof metadata !== "object") return undefined;
+			const sessionId = (metadata as Record<string, unknown>).session_id;
+			if (
+				typeof sessionId !== "string" ||
+				!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+					sessionId,
+				)
+			) {
+				return undefined;
+			}
+			return sessionId.toLowerCase();
+		} catch {
+			return undefined;
+		}
+	}
+
+	/**
+	 * OpenAI routes each request to a cache machine by hashing the prompt's
+	 * initial tokens together with prompt_cache_key, and documents that one key
+	 * should stay under ~15 requests/minute or "some requests may miss the
+	 * cache". A Claude Code session multiplexes the main loop plus every
+	 * subagent conversation over one session id, so keying on the session
+	 * alone funnels an entire fan-out burst onto one cache machine and
+	 * thrashes it (measured in dogfood traces: turns 1-8 of subagent
+	 * conversations cached no better than cold starts while one session key
+	 * carried 170+ conversations in five minutes).
+	 *
+	 * Default "conversation" mode therefore partitions the key by conversation
+	 * identity: session id + instructions + first input item, all stable
+	 * across the turns of one conversation and distinct across concurrent
+	 * subagents. Each conversation is sequential, so per-key traffic stays far
+	 * below the documented rate bound. CCFLARE_CODEX_CACHE_KEY_MODE=session
+	 * restores the coarse per-session key.
+	 */
+	private derivePromptCacheKey(
+		body: AnthropicRequest,
+		instructions: string,
+		input: readonly unknown[],
+	): string | undefined {
+		if (process.env[CODEX_PROMPT_CACHE_KEY_ENV] !== "1") return undefined;
+		const sessionId = this.extractSessionId(body);
+		if (!sessionId) return undefined;
+		// Digests are truncated to 48 hex chars so the full key fits the API's
+		// 64-char key bound. Session ids and content never appear in the key.
+		if (
+			process.env[CODEX_CACHE_KEY_MODE_ENV] === "session" ||
+			input.length === 0
+		) {
+			return `ccflare-session-${createHash("sha256")
+				.update(sessionId)
+				.digest("hex")
+				.slice(0, 48)}`;
+		}
+		let firstItem = "";
+		try {
+			firstItem = JSON.stringify(input[0]) ?? "";
+		} catch {
+			// Non-serializable first item: fall back to instructions-only identity.
+		}
+		return `ccflare-convo-${createHash("sha256")
+			.update(sessionId)
+			.update("\0")
+			.update(instructions)
+			.update("\0")
+			.update(firstItem)
+			.digest("hex")
+			.slice(0, 48)}`;
+	}
+
+	private convertToolChoice(
+		choice: AnthropicToolChoice | undefined,
+		tools: readonly CodexTool[],
+	): CodexRequest["tool_choice"] | undefined {
+		if (!choice) return undefined;
+		if (typeof choice !== "object") {
+			throw new ValidationError("tool_choice must be an object");
+		}
+		if (choice.type === "auto") return "auto";
+		if (choice.type === "any") return "required";
+		if (choice.type === "none") return "none";
+		if (choice.type === "tool") {
+			if (
+				typeof choice.name !== "string" ||
+				!tools.some((tool) => tool.name === choice.name)
+			) {
+				throw new ValidationError(
+					`tool_choice references unknown tool: ${choice.name}`,
+				);
+			}
+			return { type: "function", name: choice.name };
+		}
+		throw new ValidationError(
+			`tool_choice has unsupported type: ${String(
+				(choice as { type?: unknown }).type,
+			)}`,
+		);
+	}
+
+	private serializeToolResultContent(
+		content: AnthropicToolResult["content"],
+	): string {
+		if (typeof content === "string") return content;
+		// External input can violate the declared type (missing, null, object);
+		// degrade to an empty output rather than throwing, because a throw here
+		// is swallowed by transformRequestBody and forwards the untranslated
+		// Anthropic body upstream.
+		if (!Array.isArray(content)) return "";
+		const parts: string[] = [];
+		for (const block of content) {
+			if (!block || typeof block !== "object") continue;
+			if (block.type === "text" && typeof block.text === "string") {
+				parts.push(block.text);
+				continue;
+			}
+			if (block.type === "image") {
+				parts.push("[image content not supported in Codex tool results]");
+				continue;
+			}
+			let serialized: string;
+			try {
+				serialized = JSON.stringify(block) ?? "";
+			} catch {
+				continue;
+			}
+			if (serialized.length > CODEX_MAX_STRUCTURED_BLOCK_CHARS) {
+				parts.push(
+					`[${String(block.type ?? "unknown")} content omitted: ${serialized.length} chars]`,
+				);
+				continue;
+			}
+			parts.push(serialized);
+		}
+		return parts.join("\n");
+	}
+
 	private convertMessage(
 		msg: AnthropicMessage,
 	): (CodexMessage | CodexFunctionCallItem | CodexFunctionCallOutputItem)[] {
@@ -567,56 +837,50 @@ export class CodexProvider extends BaseProvider {
 			return items;
 		}
 
-		// Complex content array — may contain tool_use, tool_result, text
-		const textBlocks: CodexContentItem[] = [];
-		const functionCalls: CodexFunctionCallItem[] = [];
-		const functionCallOutputs: CodexFunctionCallOutputItem[] = [];
+		// Complex content array: may contain tool_use, tool_result, text.
+		// Preserve source order so Codex sees the same block chronology the
+		// client sent: outputs stay adjacent to their calls, and follow-up text
+		// stays after the results it refers to. Consecutive text blocks batch
+		// into one message wrapper; function_call* are top-level items.
+		let pendingText: CodexContentItem[] = [];
+		const flushText = () => {
+			if (pendingText.length === 0) return;
+			items.push({ role, content: pendingText } as CodexMessage);
+			pendingText = [];
+		};
 
 		for (const block of msg.content) {
+			if (!block || typeof block !== "object") continue;
 			if (block.type === "text") {
 				const contentType = role === "assistant" ? "output_text" : "input_text";
-				textBlocks.push({
+				pendingText.push({
 					type: contentType,
 					text: block.text,
 				} as CodexContentItem);
 			} else if (block.type === "tool_use") {
-				functionCalls.push({
+				flushText();
+				items.push({
 					type: "function_call",
 					call_id: block.id,
 					name: block.name,
 					arguments: JSON.stringify(
 						this.sanitizeToolUseInput(block.name, block.input),
 					),
+					status: "completed",
 				});
 			} else if (block.type === "tool_result") {
-				const outputText =
-					typeof block.content === "string"
-						? block.content
-						: Array.isArray(block.content)
-							? block.content
-									.filter((b) => b.type === "text")
-									.map((b) => b.text)
-									.join("\n")
-							: "";
-				functionCallOutputs.push({
+				flushText();
+				const serialized = this.serializeToolResultContent(block.content);
+				items.push({
 					type: "function_call_output",
 					call_id: block.tool_use_id,
-					output: outputText,
+					output:
+						block.is_error === true ? `[tool error] ${serialized}` : serialized,
 					status: "completed",
 				});
 			}
 		}
-
-		// Text content goes in a message wrapper; function_call* are top-level items
-		if (textBlocks.length > 0) {
-			items.push({ role, content: textBlocks } as CodexMessage);
-		}
-		for (const fc of functionCalls) {
-			items.push({ ...fc, status: "completed" });
-		}
-		for (const fco of functionCallOutputs) {
-			items.push(fco);
-		}
+		flushText();
 
 		return items;
 	}
@@ -690,8 +954,16 @@ export class CodexProvider extends BaseProvider {
 	): ContextWindow | null {
 		const model = response?.model;
 		if (typeof model !== "string") return null;
-		const contextWindowSize = MODEL_CONTEXT_WINDOWS[model];
+		const familyKey = lookupModelFamilyKey(model);
+		if (!familyKey) return null;
+		let contextWindowSize = MODEL_CONTEXT_WINDOWS[familyKey];
 		if (!contextWindowSize) return null;
+		if (process.env[CODEX_EFFECTIVE_CONTEXT_ENV] === "1") {
+			const pct = MODEL_EFFECTIVE_CONTEXT_PERCENT[familyKey];
+			if (pct && pct > 0 && pct < 100) {
+				contextWindowSize = Math.floor((contextWindowSize * pct) / 100);
+			}
+		}
 
 		const inputTokens = usage?.input_tokens;
 		if (
@@ -864,9 +1136,9 @@ export class CodexProvider extends BaseProvider {
 		// Convert messages
 		const input: CodexRequest["input"] = [];
 		const skillCallIds = new Set<string>();
+		let skillCompletedInFinalMessage = false;
 		for (const [msgIndex, msg] of body.messages.entries()) {
-			const items = this.convertMessage(msg);
-			for (const [itemIndex, item] of items.entries()) {
+			for (const item of this.convertMessage(msg)) {
 				input.push(item);
 				if ("type" in item && item.type === "function_call") {
 					if (item.name === "Skill") {
@@ -878,23 +1150,27 @@ export class CodexProvider extends BaseProvider {
 					skillCallIds.has(item.call_id)
 				) {
 					skillCallIds.delete(item.call_id);
-					if (
-						msgIndex !== body.messages.length - 1 ||
-						itemIndex !== items.length - 1
-					) {
-						continue;
+					if (msgIndex === body.messages.length - 1) {
+						skillCompletedInFinalMessage = true;
 					}
-					input.push({
-						role: "user",
-						content: [
-							{
-								type: "input_text",
-								text: "The requested Skill tool has loaded additional instructions. Continue the user's original request now, applying those instructions. Do not wait for another user message.",
-							},
-						],
-					});
 				}
 			}
+		}
+		// A Skill result in the active turn means new instructions just loaded.
+		// Native Claude continues on its own; Codex often stops, so append one
+		// nudge. Tail placement keeps the cached prefix stable, and firing on
+		// any final-turn Skill result (not only a trailing one) covers parallel
+		// fan-out turns that mix Skill and other tool results.
+		if (skillCompletedInFinalMessage) {
+			input.push({
+				role: "user",
+				content: [
+					{
+						type: "input_text",
+						text: "The requested Skill tool has loaded additional instructions. Continue the user's original request now, applying those instructions. Do not wait for another user message.",
+					},
+				],
+			});
 		}
 
 		// Convert tools
@@ -931,8 +1207,35 @@ export class CodexProvider extends BaseProvider {
 		};
 
 		codexRequest.instructions = instructions || "You are a helpful assistant.";
+		const promptCacheKey = this.derivePromptCacheKey(
+			body,
+			codexRequest.instructions,
+			input,
+		);
+		if (promptCacheKey) {
+			codexRequest.prompt_cache_key = promptCacheKey;
+		}
+		const explicitToolChoice = this.convertToolChoice(
+			body.tool_choice,
+			tools ?? [],
+		);
 		if (tools) {
 			codexRequest.tools = tools;
+			if (explicitToolChoice) {
+				codexRequest.tool_choice = explicitToolChoice;
+			} else if (tools.some((t) => t.name === "StructuredOutput")) {
+				// Claude Code schema agents provide a StructuredOutput tool but do not set
+				// Anthropic tool_choice. Native Claude reliably follows the hidden schema
+				// instruction; Codex models often end_turn with text instead. Force the
+				// function when this sentinel tool is present to preserve workflow semantics.
+				codexRequest.tool_choice = {
+					type: "function",
+					name: "StructuredOutput",
+				};
+			}
+			if (body.tool_choice?.disable_parallel_tool_use === true) {
+				codexRequest.parallel_tool_calls = false;
+			}
 		}
 
 		return codexRequest;
@@ -940,10 +1243,10 @@ export class CodexProvider extends BaseProvider {
 
 	private async transformSseResponseToJson(
 		response: Response,
+		requestId = response.headers.get("x-better-ccflare-request-id") ??
+			"unknown",
 	): Promise<Response> {
-		const requestId =
-			response.headers.get("x-better-ccflare-request-id") ?? "unknown";
-		const transformed = this.transformStreamingResponse(response);
+		const transformed = this.transformStreamingResponse(response, requestId);
 		const reader = transformed.body
 			?.pipeThrough(new TextDecoderStream())
 			.getReader();
@@ -1136,9 +1439,11 @@ export class CodexProvider extends BaseProvider {
 		});
 	}
 
-	private transformStreamingResponse(response: Response): Response {
-		const requestId =
-			response.headers.get("x-better-ccflare-request-id") ?? "unknown";
+	private transformStreamingResponse(
+		response: Response,
+		requestId = response.headers.get("x-better-ccflare-request-id") ??
+			"unknown",
+	): Response {
 		if (process.env.DEBUG?.includes("model") || process.env.DEBUG === "true") {
 			log.info(
 				`[codex:model-debug] request_id=${requestId} transformStreamingResponse initial fallback model=gpt-5.4 until response.created arrives`,
@@ -1159,6 +1464,8 @@ export class CodexProvider extends BaseProvider {
 			contextWindow: null,
 			functionCallBlocks: new Map(),
 			sawToolUse: false,
+			traceNewToolCalls: [],
+			traceRequestId: requestId,
 		};
 
 		const headers = sanitizeResponseHeaders(response.headers);
@@ -1311,13 +1618,24 @@ export class CodexProvider extends BaseProvider {
 
 				// Final message_delta + message_stop if upstream never sent response.completed
 				if (!state.hasSentTerminalEvents) {
+					const stopReason = state.sawToolUse ? "tool_use" : "end_turn";
 					await writeSSE("message_delta", {
 						type: "message_delta",
 						delta: {
-							stop_reason: state.sawToolUse ? "tool_use" : "end_turn",
+							stop_reason: stopReason,
 							stop_sequence: null,
 						},
 						usage: { output_tokens: state.outputTokens },
+					});
+					writeCodexResponseTrace({
+						requestId,
+						modelOut: state.model,
+						modelContextWindow: MODEL_CONTEXT_WINDOWS[state.model],
+						summary: summarizeCodexResponse(
+							state.traceNewToolCalls,
+							{ output_tokens: state.outputTokens },
+							stopReason,
+						),
 					});
 					await writeSSE("message_stop", { type: "message_stop" });
 				}
@@ -1578,15 +1896,20 @@ export class CodexProvider extends BaseProvider {
 							? state.functionCallBlocks.get(outputIndex)
 							: undefined;
 					if (buffer) {
+						const partialJson = this.sanitizeToolUsePartialJson(
+							buffer.name,
+							buffer.arguments.join(""),
+						);
+						state.traceNewToolCalls.push({
+							name: buffer.name,
+							arg_preview: partialJson.slice(0, 120),
+						});
 						await writeSSE("content_block_delta", {
 							type: "content_block_delta",
 							index: buffer.contentBlockIndex,
 							delta: {
 								type: "input_json_delta",
-								partial_json: this.sanitizeToolUsePartialJson(
-									buffer.name,
-									buffer.arguments.join(""),
-								),
+								partial_json: partialJson,
 							},
 						});
 						await writeSSE("content_block_stop", {
@@ -1634,6 +1957,22 @@ export class CodexProvider extends BaseProvider {
 						"error",
 						this.toAnthropicErrorPayload(state.upstreamError),
 					);
+					writeCodexResponseTrace({
+						requestId: state.traceRequestId,
+						modelOut: state.model,
+						modelContextWindow: MODEL_CONTEXT_WINDOWS[state.model],
+						summary: summarizeCodexResponse(
+							state.traceNewToolCalls,
+							{
+								input_tokens: state.inputTokens,
+								output_tokens: state.outputTokens,
+								cache_read_input_tokens: state.cacheReadInputTokens,
+								cache_creation_input_tokens: state.cacheCreationInputTokens,
+							},
+							"error",
+							state.upstreamError,
+						),
+					});
 					state.hasSentTerminalEvents = true;
 				}
 				break;
@@ -1708,6 +2047,21 @@ export class CodexProvider extends BaseProvider {
 				}
 
 				await writeSSE("message_delta", messageDelta);
+				writeCodexResponseTrace({
+					requestId: state.traceRequestId,
+					modelOut: state.model,
+					modelContextWindow: MODEL_CONTEXT_WINDOWS[state.model],
+					summary: summarizeCodexResponse(
+						state.traceNewToolCalls,
+						{
+							input_tokens: state.inputTokens,
+							output_tokens: state.outputTokens,
+							cache_read_input_tokens: state.cacheReadInputTokens,
+							cache_creation_input_tokens: state.cacheCreationInputTokens,
+						},
+						messageDelta.delta.stop_reason,
+					),
+				});
 				await writeSSE("message_stop", { type: "message_stop" });
 				state.hasSentTerminalEvents = true;
 				break;

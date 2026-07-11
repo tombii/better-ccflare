@@ -7,6 +7,43 @@ import type { ProxyContext } from "./proxy";
 
 const log = new Logger("CacheKeepaliveScheduler");
 
+/**
+ * Patch a staged request body for replay as a cache keepalive.
+ *
+ * max_tokens is set to 1 and stream to false to minimize quota and transport
+ * cost. Neither field is part of any prompt-cache tier's identity, so the
+ * replay still reads (and thereby TTL-refreshes) every cache entry the
+ * original request wrote.
+ *
+ * We deliberately do NOT use the documented max_tokens: 0 pre-warm shape:
+ * that shape rejects bodies carrying stream, enabled thinking, forced
+ * tool_choice, or output_config.format, and stripping those fields changes
+ * the messages-tier cache identity (thinking and tool_choice are part of
+ * it). A stripped warmup would refresh only the tools+system tiers and let
+ * the far larger conversation tier expire, silently defeating the feature.
+ *
+ * Parsing errors are handled gracefully: if the body is not valid JSON the
+ * original bytes are replayed unpatched.
+ */
+export function sanitizeKeepaliveBody(
+	body: Uint8Array | ArrayBuffer,
+): string | ArrayBuffer {
+	const bytes = body instanceof Uint8Array ? body : new Uint8Array(body);
+	try {
+		const bodyJson = JSON.parse(new TextDecoder().decode(bytes));
+		if (typeof bodyJson === "object" && bodyJson !== null) {
+			bodyJson.max_tokens = 1;
+			bodyJson.stream = false;
+			return JSON.stringify(bodyJson);
+		}
+	} catch {
+		// Body isn't valid JSON - skip patching and use original
+	}
+	// Fresh copy so the return is a plain ArrayBuffer regardless of the
+	// source view's offset or backing buffer type.
+	return bytes.slice().buffer;
+}
+
 export class CacheKeepaliveScheduler {
 	private proxyContext: ProxyContext;
 	private config: Config;
@@ -142,20 +179,7 @@ export class CacheKeepaliveScheduler {
 				`Replaying cached request for account ${accountId} (${cached.body.length} bytes, recorded ${Math.round((Date.now() - cached.timestamp) / 1000)}s ago)`,
 			);
 
-			// Patch max_tokens to 1 to minimize quota consumption.
-			// The keepalive only needs to warm the cache, not generate a full completion.
-			// Parsing errors are handled gracefully - if body isn't valid JSON, we skip
-			// the patching and use the original body as-is.
-			let bodyToSend: BodyInit = new Uint8Array(cached.body);
-			try {
-				const bodyJson = JSON.parse(new TextDecoder().decode(cached.body));
-				if (typeof bodyJson === "object" && bodyJson !== null) {
-					bodyJson.max_tokens = 1;
-					bodyToSend = JSON.stringify(bodyJson);
-				}
-			} catch {
-				// Body isn't valid JSON - skip patching and use original
-			}
+			const bodyToSend = sanitizeKeepaliveBody(cached.body);
 
 			// For HTTPS localhost requests, use an agent that accepts self-signed certificates.
 			// This is needed when SSL_KEY_PATH + SSL_CERT_PATH are configured with self-signed certs.

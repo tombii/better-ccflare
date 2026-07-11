@@ -8,6 +8,13 @@ import { Logger } from "@better-ccflare/logger";
 import { usageCache } from "@better-ccflare/providers";
 import type { Account } from "@better-ccflare/types";
 import { cacheBodyStore } from "./cache-body-store";
+import { recordDiagnosisCandidate } from "./cache-diagnosis";
+import {
+	acquireCachePacing,
+	type CachePacingSlot,
+	finishPacing,
+} from "./cache-pacing";
+import { warnOnLookbackRisk } from "./cache-telemetry";
 import {
 	createPoolExhaustedResponse,
 	createRequestMetadata,
@@ -27,6 +34,10 @@ import {
 	selectAccountsForRequest,
 	validateProviderPath,
 } from "./handlers";
+import {
+	buildSessionRejectResponse,
+	recordSessionRequest,
+} from "./session-governor";
 import {
 	getUsageCollector,
 	initUsageCollector,
@@ -253,6 +264,46 @@ export async function handleProxy(
 	requestMeta.originalModel = originalModel;
 	requestMeta.appliedModel = appliedModel;
 
+	// 5b. Session volume circuit breaker: a runaway subagent storm shows up as
+	// one client session hammering /v1/messages. Count it here and, when
+	// enforcement is enabled, reject before account selection burns upstream
+	// quota. All identified traffic is counted: header-based exemptions would
+	// be client-forgeable, and internal synthetic requests either carry no
+	// client session (refresh probes, anonymous and thus ungoverned) or spend
+	// upstream quota like any other request (keepalive replays) and belong in
+	// the budget. This is a runaway-loop breaker, not an authentication
+	// boundary: a client that omits session metadata entirely is out of scope.
+	if (url.pathname === "/v1/messages") {
+		const verdict = recordSessionRequest(requestMeta.clientSessionId);
+		if (verdict?.rejected) {
+			return buildSessionRejectResponse(verdict);
+		}
+	}
+
+	// 5c. Cache-aware fan-out pacing: parallel same-session requests all miss
+	// the prompt cache because an entry only becomes readable once the first
+	// response starts streaming. Hold concurrent followers (bounded) until the
+	// session leader's first body chunk so they read the cache it just wrote.
+	// Opt-in via CCFLARE_CACHE_PACING_MS; leader exit paths below must call
+	// finishPacing()/abandon() so followers never wait past the cap.
+	let pacingSlot: CachePacingSlot | null = null;
+	if (
+		url.pathname === "/v1/messages" &&
+		!req.headers.get("x-better-ccflare-keepalive") &&
+		!req.headers.get("x-better-ccflare-auto-refresh")
+	) {
+		pacingSlot = await acquireCachePacing({
+			sessionKey: requestMeta.clientSessionId,
+			model: appliedModel ?? requestModel,
+		});
+		warnOnLookbackRisk(parsedBody, requestMeta.clientSessionId);
+		recordDiagnosisCandidate(
+			requestMeta.clientSessionId,
+			finalBodyBuffer,
+			req.headers,
+		);
+	}
+
 	// 6. Select accounts. Route on the model that will actually be sent
 	// upstream (post-interceptor-rewrite), not the model the client asked
 	// for — otherwise combo routing and family-based selection see a model
@@ -320,21 +371,27 @@ export async function handleProxy(
 	// 7. Handle no accounts case
 	if (accounts.length === 0) {
 		if (throttledAccounts.length > 0) {
-			return createUsageThrottledResponse(throttledAccounts);
+			return finishPacing(
+				pacingSlot,
+				createUsageThrottledResponse(throttledAccounts),
+			);
 		}
 
 		// Check feature flag for backwards compatibility
 		if (process.env.CCFLARE_PASSTHROUGH_ON_EMPTY_POOL === "1") {
 			log.warn(ERROR_MESSAGES.NO_ACCOUNTS);
-			return proxyUnauthenticated(
-				req,
-				url,
-				requestMeta,
-				finalBodyBuffer,
-				finalCreateBodyStream,
-				ctx,
-				apiKeyId,
-				apiKeyName,
+			return finishPacing(
+				pacingSlot,
+				await proxyUnauthenticated(
+					req,
+					url,
+					requestMeta,
+					finalBodyBuffer,
+					finalCreateBodyStream,
+					ctx,
+					apiKeyId,
+					apiKeyName,
+				),
 			);
 		}
 
@@ -406,7 +463,7 @@ export async function handleProxy(
 				});
 		}
 
-		return poolExhaustedResponse;
+		return finishPacing(pacingSlot, poolExhaustedResponse);
 	}
 
 	// 8. Log selected accounts
@@ -469,7 +526,7 @@ export async function handleProxy(
 		);
 
 		if (response) {
-			return response;
+			return finishPacing(pacingSlot, response);
 		}
 
 		// Log combo slot failure
@@ -522,12 +579,15 @@ export async function handleProxy(
 				);
 
 				if (response) {
-					return response;
+					return finishPacing(pacingSlot, response);
 				}
 			}
 		} else if (throttledFallbackAccounts.length > 0) {
 			cacheBodyStore.discardStaged(requestMeta.id);
-			return createUsageThrottledResponse(throttledFallbackAccounts);
+			return finishPacing(
+				pacingSlot,
+				createUsageThrottledResponse(throttledFallbackAccounts),
+			);
 		}
 	}
 
@@ -549,6 +609,7 @@ export async function handleProxy(
 			)
 			.join("\n  ");
 		cacheBodyStore.discardStaged(requestMeta.id);
+		pacingSlot?.abandon();
 		throw new ServiceUnavailableError(
 			`All accounts failed to proxy the request. OAuth tokens have expired for accounts: ${needsReauth.map((acc) => acc.name).join(", ")}.\n\nPlease re-authenticate:\n  ${reauthCommands}`,
 			ctx.provider.name,
@@ -556,6 +617,7 @@ export async function handleProxy(
 	}
 
 	cacheBodyStore.discardStaged(requestMeta.id);
+	pacingSlot?.abandon();
 	throw new ServiceUnavailableError(
 		`${ERROR_MESSAGES.ALL_ACCOUNTS_FAILED} (${allAttemptedAccounts.length} attempted)`,
 		ctx.provider.name,

@@ -605,6 +605,12 @@ export async function proxyWithAccount(
 			accessToken,
 			account.api_key || undefined,
 		);
+		// Codex request tracing and stream-intent correlation need the proxy request
+		// ID during transformRequestBody. The Codex provider consumes and strips this
+		// internal header before the request is sent upstream.
+		if (provider.name === "codex") {
+			headers.set("x-better-ccflare-request-id", requestMeta.id);
+		}
 		// Synthetic-response markers are internal provider-to-proxy signals. Strip
 		// client-supplied copies before providers transform the outbound request.
 		headers.delete(SYNTHETIC_RESPONSE_HEADER);
