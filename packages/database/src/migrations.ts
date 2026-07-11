@@ -153,7 +153,9 @@ export function ensureSchema(db: Database): void {
 			project TEXT,
 			billing_type TEXT DEFAULT 'api',
 			original_model TEXT,
-			applied_model TEXT
+			applied_model TEXT,
+			project_attribution_source TEXT,
+			agent_attribution_source TEXT
 		)
 	`);
 
@@ -945,6 +947,22 @@ export function runMigrations(db: Database, dbPath?: string): void {
 		if (!requestsColumnNames.includes("applied_model")) {
 			db.prepare("ALTER TABLE requests ADD COLUMN applied_model TEXT").run();
 			log.info("Added applied_model column to requests table");
+		}
+
+		// Add project_attribution_source column if it doesn't exist
+		if (!requestsColumnNames.includes("project_attribution_source")) {
+			db.prepare(
+				"ALTER TABLE requests ADD COLUMN project_attribution_source TEXT",
+			).run();
+			log.info("Added project_attribution_source column to requests table");
+		}
+
+		// Add agent_attribution_source column if it doesn't exist
+		if (!requestsColumnNames.includes("agent_attribution_source")) {
+			db.prepare(
+				"ALTER TABLE requests ADD COLUMN agent_attribution_source TEXT",
+			).run();
+			log.info("Added agent_attribution_source column to requests table");
 		}
 
 		// Add timestamp column to request_payloads if it doesn't exist

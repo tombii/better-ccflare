@@ -21,6 +21,7 @@ import type {
 import { cacheBodyStore } from "../cache-body-store";
 import { RequestBodyContext } from "../request-body-context";
 import { forwardToClient } from "../response-handler";
+import { isModelRewrite } from "../worker-messages";
 import { ERROR_MESSAGES, type ProxyContext } from "./proxy-types";
 import { applyRateLimitCooldown } from "./rate-limit-cooldown";
 import { makeProxyRequest, validateProviderPath } from "./request-handler";
@@ -460,6 +461,7 @@ export async function proxyUnauthenticated(
 				requestBody: requestBodyBuffer,
 				project: requestMeta.project,
 				query: url.search || null,
+				projectAttributionSource: requestMeta.projectAttributionSource ?? null,
 				response,
 				timestamp: requestMeta.timestamp,
 				retryAttempt: 0,
@@ -467,6 +469,7 @@ export async function proxyUnauthenticated(
 				agentUsed: requestMeta.agentUsed,
 				originalModel: requestMeta.originalModel,
 				appliedModel: requestMeta.appliedModel,
+				agentAttributionSource: requestMeta.agentAttributionSource ?? null,
 				comboName: requestMeta.comboName,
 				apiKeyId,
 				apiKeyName,
@@ -800,6 +803,14 @@ export async function proxyWithAccount(
 						requestMeta.project ?? null,
 						undefined,
 						requestMeta.comboName ?? null,
+						isModelRewrite(requestMeta.originalModel, requestMeta.appliedModel)
+							? (requestMeta.originalModel ?? null)
+							: null,
+						isModelRewrite(requestMeta.originalModel, requestMeta.appliedModel)
+							? (requestMeta.appliedModel ?? null)
+							: null,
+						requestMeta.projectAttributionSource ?? null,
+						requestMeta.agentAttributionSource ?? null,
 					),
 				);
 				return null;
@@ -862,6 +873,20 @@ export async function proxyWithAccount(
 								requestMeta.project ?? null,
 								undefined,
 								requestMeta.comboName ?? null,
+								isModelRewrite(
+									requestMeta.originalModel,
+									requestMeta.appliedModel,
+								)
+									? (requestMeta.originalModel ?? null)
+									: null,
+								isModelRewrite(
+									requestMeta.originalModel,
+									requestMeta.appliedModel,
+								)
+									? (requestMeta.appliedModel ?? null)
+									: null,
+								requestMeta.projectAttributionSource ?? null,
+								requestMeta.agentAttributionSource ?? null,
 							),
 						);
 						return null;
@@ -998,6 +1023,20 @@ export async function proxyWithAccount(
 								requestMeta.project ?? null,
 								undefined,
 								requestMeta.comboName ?? null,
+								isModelRewrite(
+									requestMeta.originalModel,
+									requestMeta.appliedModel,
+								)
+									? (requestMeta.originalModel ?? null)
+									: null,
+								isModelRewrite(
+									requestMeta.originalModel,
+									requestMeta.appliedModel,
+								)
+									? (requestMeta.appliedModel ?? null)
+									: null,
+								requestMeta.projectAttributionSource ?? null,
+								requestMeta.agentAttributionSource ?? null,
 							),
 						);
 					}
@@ -1155,6 +1194,8 @@ export async function proxyWithAccount(
 						requestBody: effectiveBodyBuffer,
 						project: requestMeta.project,
 						query: url.search || null,
+						projectAttributionSource:
+							requestMeta.projectAttributionSource ?? null,
 						response,
 						timestamp: requestMeta.timestamp,
 						retryAttempt: 0,
@@ -1162,6 +1203,7 @@ export async function proxyWithAccount(
 						agentUsed: requestMeta.agentUsed,
 						originalModel: requestMeta.originalModel,
 						appliedModel: requestMeta.appliedModel,
+						agentAttributionSource: requestMeta.agentAttributionSource ?? null,
 						comboName: requestMeta.comboName,
 						apiKeyId,
 						apiKeyName,
@@ -1183,6 +1225,7 @@ export async function proxyWithAccount(
 				requestBody: effectiveBodyBuffer,
 				project: requestMeta.project,
 				query: url.search || null,
+				projectAttributionSource: requestMeta.projectAttributionSource ?? null,
 				response,
 				timestamp: requestMeta.timestamp,
 				retryAttempt: 0,
@@ -1190,6 +1233,7 @@ export async function proxyWithAccount(
 				agentUsed: requestMeta.agentUsed,
 				originalModel: requestMeta.originalModel,
 				appliedModel: requestMeta.appliedModel,
+				agentAttributionSource: requestMeta.agentAttributionSource ?? null,
 				comboName: requestMeta.comboName,
 				apiKeyId,
 				apiKeyName,

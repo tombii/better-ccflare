@@ -23,6 +23,7 @@ import { api, type RequestPayload, type RequestSummary } from "../api";
 import { API_LIMITS } from "../constants";
 import { useAccounts, useApiKeys, useRequests } from "../hooks/queries";
 import { useRequestStream } from "../hooks/useRequestStream";
+import { attributionSourceLabel } from "../lib/attribution";
 import { isAnthropicPeakHour, isZaiPeakHour } from "../utils/provider-utils";
 import { CopyButton } from "./CopyButton";
 import { RequestDetailsModal } from "./RequestDetailsModal";
@@ -719,6 +720,13 @@ export function RequestsTab() {
 									? `${request.meta.accountId.slice(0, 8)}...`
 									: null);
 							const agent = summary?.agentUsed || request.meta.agentUsed;
+							const agentSrcLabel = attributionSourceLabel(
+								summary?.agentAttributionSource ||
+									request.meta.agentAttributionSource,
+							);
+							const projectSrcLabel = attributionSourceLabel(
+								summary?.projectAttributionSource,
+							);
 							const isZaiPeak =
 								zaiAccountNames.has(request.meta.accountName ?? "") &&
 								isZaiPeakHour(request.meta.timestamp);
@@ -841,6 +849,7 @@ export function RequestsTab() {
 
 									{/* Badges row: wraps freely, holds all the non-essential context */}
 									{(summary?.model ||
+										summary?.project ||
 										agent ||
 										summary?.comboName ||
 										summary?.apiKeyName ||
@@ -858,10 +867,25 @@ export function RequestsTab() {
 													{summary.model}
 												</Badge>
 											)}
+											{summary?.project && (
+												<Badge variant="secondary" className="text-xs">
+													Project: {summary.project}
+													{projectSrcLabel && (
+														<span className="text-muted-foreground/70 ml-1">
+															· {projectSrcLabel}
+														</span>
+													)}
+												</Badge>
+											)}
 											{agent && (
 												<Badge variant="secondary" className="text-xs">
 													<Bot className="h-3 w-3 mr-1" />
 													{agent}
+													{agentSrcLabel && (
+														<span className="text-muted-foreground/70 ml-1">
+															· {agentSrcLabel}
+														</span>
+													)}
 												</Badge>
 											)}
 											{summary?.comboName && (

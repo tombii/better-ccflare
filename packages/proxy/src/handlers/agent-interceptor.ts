@@ -5,6 +5,7 @@ import { agentRegistry } from "@better-ccflare/agents";
 import type { DatabaseOperations } from "@better-ccflare/database";
 import { Logger } from "@better-ccflare/logger";
 import { validatePath } from "@better-ccflare/security";
+import type { AgentAttributionSource } from "@better-ccflare/types";
 import { getModelCatalog, type ModelCatalog } from "../model-catalog";
 import { RequestBodyContext } from "../request-body-context";
 
@@ -15,6 +16,7 @@ export interface AgentInterceptResult {
 	agentUsed: string | null;
 	originalModel: string | null;
 	appliedModel: string | null;
+	agentAttributionSource: AgentAttributionSource;
 }
 
 /**
@@ -72,6 +74,7 @@ export async function interceptAndModifyRequest(
 			agentUsed: null,
 			originalModel: null,
 			appliedModel: null,
+			agentAttributionSource: "none",
 		};
 	}
 
@@ -93,14 +96,14 @@ export async function interceptAndModifyRequest(
 		// a multi-agent orchestrator, a router, an SDK wrapper — declare which agent
 		// issued the request, so downstream observability tools can attribute usage
 		// per agent. Takes precedence over system-prompt matching; absent = unchanged.
-		const explicitAgentId = requestHeaders
-			?.get("x-anthropic-agent-id")
-			?.trim()
-			?.slice(0, 256);
+		// The namespaced `x-better-ccflare-agent-id` header is preferred; the legacy
+		// `x-anthropic-agent-id` header is honored for backward compatibility when
+		// the namespaced header is absent.
+		const explicitAgentId =
+			requestHeaders?.get("x-better-ccflare-agent-id")?.trim()?.slice(0, 256) ||
+			requestHeaders?.get("x-anthropic-agent-id")?.trim()?.slice(0, 256);
 		if (explicitAgentId) {
-			log.debug(
-				`Agent attributed via x-anthropic-agent-id: ${explicitAgentId}`,
-			);
+			log.debug(`Agent attributed via explicit header: ${explicitAgentId}`);
 			// Both the header path and the system-prompt path below rewrite the
 			// model only on an explicit DB preference set via the dashboard/CLI;
 			// an agent's frontmatter `model` is never consulted here, since a
@@ -119,6 +122,7 @@ export async function interceptAndModifyRequest(
 						agentUsed: explicitAgentId,
 						originalModel,
 						appliedModel: preferredModel,
+						agentAttributionSource: "header_agent",
 					};
 				}
 				log.warn(
@@ -130,6 +134,7 @@ export async function interceptAndModifyRequest(
 				agentUsed: explicitAgentId,
 				originalModel,
 				appliedModel: originalModel,
+				agentAttributionSource: "header_agent",
 			};
 		}
 
@@ -143,6 +148,7 @@ export async function interceptAndModifyRequest(
 				agentUsed: null,
 				originalModel,
 				appliedModel: originalModel,
+				agentAttributionSource: "none",
 			};
 		}
 
@@ -204,6 +210,7 @@ export async function interceptAndModifyRequest(
 				agentUsed: null,
 				originalModel,
 				appliedModel: originalModel,
+				agentAttributionSource: "none",
 			};
 		}
 
@@ -232,6 +239,7 @@ export async function interceptAndModifyRequest(
 				agentUsed: detectedAgent.id,
 				originalModel,
 				appliedModel: originalModel,
+				agentAttributionSource: "prompt_agent",
 			};
 		}
 
@@ -245,6 +253,7 @@ export async function interceptAndModifyRequest(
 				agentUsed: detectedAgent.id,
 				originalModel,
 				appliedModel: originalModel,
+				agentAttributionSource: "prompt_agent",
 			};
 		}
 
@@ -257,6 +266,7 @@ export async function interceptAndModifyRequest(
 			agentUsed: detectedAgent.id,
 			originalModel,
 			appliedModel: preferredModel,
+			agentAttributionSource: "prompt_agent",
 		};
 	} catch (error) {
 		log.error("Failed to intercept/modify request:", error);
@@ -268,6 +278,7 @@ export async function interceptAndModifyRequest(
 			agentUsed: null,
 			originalModel,
 			appliedModel: originalModel,
+			agentAttributionSource: "none",
 		};
 	}
 }

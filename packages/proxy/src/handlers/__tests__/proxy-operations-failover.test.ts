@@ -43,13 +43,14 @@ function makeAccount(overrides: Partial<Account> = {}): Account {
 	};
 }
 
-function makeRequestMeta(): RequestMeta {
+function makeRequestMeta(overrides: Partial<RequestMeta> = {}): RequestMeta {
 	return {
 		id: "req-1",
 		method: "POST",
 		path: "/v1/messages",
 		timestamp: Date.now(),
 		headers: new Headers(),
+		...overrides,
 	};
 }
 
@@ -457,6 +458,210 @@ describe("proxyWithAccount — rate limit audit trail (issue #178)", () => {
 			(args: unknown[]) => args[2] as string,
 		);
 		expect(reasons).toContain("all_models_exhausted_429");
+	});
+});
+
+describe("proxyWithAccount — attribution source pass-through to saveRequest (P2)", () => {
+	let originalFetch: typeof globalThis.fetch;
+
+	beforeEach(() => {
+		originalFetch = globalThis.fetch;
+	});
+
+	afterEach(() => {
+		globalThis.fetch = originalFetch;
+	});
+
+	it("passes requestMeta.projectAttributionSource/agentAttributionSource through to saveRequest at positions 18/19 on the model_fallback_429 failover path", async () => {
+		globalThis.fetch = mock(async () =>
+			jsonResponse(
+				{
+					error: {
+						type: "api_error",
+						message:
+							"Rate limit exceeded: limit_rpm/qwen/qwen3.6-plus:free/abc",
+					},
+				},
+				429,
+			),
+		);
+
+		const ctx = makeProxyContextWithAsyncExec();
+		const bodyBuffer = makeRequestBody();
+		const req = makeRequest(bodyBuffer);
+
+		await proxyWithAccount(
+			req,
+			new URL("https://proxy.local/v1/messages"),
+			makeAccount(), // no model_fallbacks -> model_fallback_429 path
+			makeRequestMeta({
+				projectAttributionSource: "header_project",
+				agentAttributionSource: "header_agent",
+			}),
+			bodyBuffer,
+			() => undefined,
+			0,
+			ctx,
+		);
+
+		const saveRequestMock = ctx.dbOps.saveRequest as ReturnType<typeof mock>;
+		expect(saveRequestMock.mock.calls.length).toBeGreaterThan(0);
+		const args = saveRequestMock.mock.calls[0] as unknown[];
+		// Full positional order (0-indexed): id, method, path, accountUsed,
+		// statusCode, success, errorMessage, responseTime, failoverAttempts,
+		// usage, agentUsed, apiKeyId, apiKeyName, project, billingType,
+		// comboName, originalModel, appliedModel, projectAttributionSource,
+		// agentAttributionSource.
+		expect(args[18]).toBe("header_project");
+		expect(args[19]).toBe("header_agent");
+	});
+
+	it("passes null attribution sources through to saveRequest when requestMeta omits them", async () => {
+		globalThis.fetch = mock(async () =>
+			jsonResponse(
+				{
+					error: {
+						type: "api_error",
+						message: "Rate limit exceeded: limit_rpm/model/abc",
+					},
+				},
+				429,
+			),
+		);
+
+		const ctx = makeProxyContextWithAsyncExec();
+		const bodyBuffer = makeRequestBody();
+		const req = makeRequest(bodyBuffer);
+
+		await proxyWithAccount(
+			req,
+			new URL("https://proxy.local/v1/messages"),
+			makeAccount({
+				model_mappings: JSON.stringify({
+					sonnet: [
+						"qwen/qwen3.6-plus:free",
+						"bytedance-seed/dola-seed-2.0-pro:free",
+					],
+				}),
+			}),
+			makeRequestMeta(), // no attribution source overrides
+			bodyBuffer,
+			() => undefined,
+			0,
+			ctx,
+		);
+
+		const saveRequestMock = ctx.dbOps.saveRequest as ReturnType<typeof mock>;
+		const reasons = saveRequestMock.mock.calls.map(
+			(args: unknown[]) => args[6] as string,
+		);
+		expect(reasons).toContain("all_models_exhausted_429");
+		const call = saveRequestMock.mock.calls.find(
+			(args: unknown[]) => args[6] === "all_models_exhausted_429",
+		) as unknown[];
+		expect(call[18]).toBeNull();
+		expect(call[19]).toBeNull();
+	});
+});
+
+describe("proxyWithAccount — originalModel/appliedModel gated by isModelRewrite on direct 429 saveRequest paths (P2)", () => {
+	let originalFetch: typeof globalThis.fetch;
+
+	beforeEach(() => {
+		originalFetch = globalThis.fetch;
+	});
+
+	afterEach(() => {
+		globalThis.fetch = originalFetch;
+	});
+
+	it("persists null/null (not the equal pair) on the model_fallback_429 path when requestMeta carries an unmodified originalModel/appliedModel pair", async () => {
+		globalThis.fetch = mock(async () =>
+			jsonResponse(
+				{
+					error: {
+						type: "api_error",
+						message:
+							"Rate limit exceeded: limit_rpm/qwen/qwen3.6-plus:free/abc",
+					},
+				},
+				429,
+			),
+		);
+
+		const ctx = makeProxyContextWithAsyncExec();
+		const bodyBuffer = makeRequestBody();
+		const req = makeRequest(bodyBuffer);
+
+		await proxyWithAccount(
+			req,
+			new URL("https://proxy.local/v1/messages"),
+			makeAccount(), // no model_fallbacks -> model_fallback_429 path
+			makeRequestMeta({
+				// Agent-detected but NOT rewritten: original === applied. Before the
+				// fix this bypassed isModelRewrite and persisted the equal pair,
+				// making an untouched request look like a real rewrite.
+				originalModel: "claude-sonnet-4-5",
+				appliedModel: "claude-sonnet-4-5",
+			}),
+			bodyBuffer,
+			() => undefined,
+			0,
+			ctx,
+		);
+
+		const saveRequestMock = ctx.dbOps.saveRequest as ReturnType<typeof mock>;
+		expect(saveRequestMock.mock.calls.length).toBeGreaterThan(0);
+		const args = saveRequestMock.mock.calls[0] as unknown[];
+		expect(args[16]).toBeNull();
+		expect(args[17]).toBeNull();
+	});
+
+	it("still persists a genuine originalModel/appliedModel rewrite pair on the all_models_exhausted_429 path", async () => {
+		globalThis.fetch = mock(async () =>
+			jsonResponse(
+				{
+					error: {
+						type: "api_error",
+						message: "Rate limit exceeded: limit_rpm/model/abc",
+					},
+				},
+				429,
+			),
+		);
+
+		const ctx = makeProxyContextWithAsyncExec();
+		const bodyBuffer = makeRequestBody();
+		const req = makeRequest(bodyBuffer);
+
+		await proxyWithAccount(
+			req,
+			new URL("https://proxy.local/v1/messages"),
+			makeAccount({
+				model_mappings: JSON.stringify({
+					sonnet: [
+						"qwen/qwen3.6-plus:free",
+						"bytedance-seed/dola-seed-2.0-pro:free",
+					],
+				}),
+			}),
+			makeRequestMeta({
+				originalModel: "claude-sonnet-4-5",
+				appliedModel: "qwen/qwen3.6-plus:free",
+			}),
+			bodyBuffer,
+			() => undefined,
+			0,
+			ctx,
+		);
+
+		const saveRequestMock = ctx.dbOps.saveRequest as ReturnType<typeof mock>;
+		const call = saveRequestMock.mock.calls.find(
+			(args: unknown[]) => args[6] === "all_models_exhausted_429",
+		) as unknown[];
+		expect(call).toBeDefined();
+		expect(call[16]).toBe("claude-sonnet-4-5");
+		expect(call[17]).toBe("qwen/qwen3.6-plus:free");
 	});
 });
 

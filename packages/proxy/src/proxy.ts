@@ -27,6 +27,7 @@ import {
 	selectAccountsForRequest,
 	validateProviderPath,
 } from "./handlers";
+import { extractProjectAttributionFromRequest } from "./project-attribution";
 import {
 	getUsageCollector,
 	initUsageCollector,
@@ -37,70 +38,6 @@ import {
 export type { ProxyContext } from "./handlers";
 
 const log = new Logger("Proxy");
-
-const PROJECT_NAME_MAX_LEN = 64;
-
-function sanitizeProjectName(raw: string | undefined | null): string | null {
-	if (!raw) return null;
-	// biome-ignore lint/suspicious/noControlCharactersInRegex: stripping them is the point
-	const cleaned = raw.replace(/[\x00-\x1F\x7F]/g, "").trim();
-	if (!cleaned) return null;
-	return cleaned.length > PROJECT_NAME_MAX_LEN
-		? cleaned.slice(0, PROJECT_NAME_MAX_LEN)
-		: cleaned;
-}
-
-function extractSystemPrompt(body: RequestJsonBody | null): string | null {
-	if (!body) return null;
-	const system = body.system;
-
-	if (typeof system === "string") {
-		return system;
-	}
-
-	if (Array.isArray(system)) {
-		return system
-			.filter(
-				(item): item is { type?: string; text: string } =>
-					typeof item === "object" &&
-					item !== null &&
-					(item as { type?: string }).type === "text" &&
-					typeof (item as { text?: unknown }).text === "string",
-			)
-			.map((item) => item.text)
-			.join("\n");
-	}
-
-	return null;
-}
-
-function extractProjectFromRequest(
-	headers: Headers,
-	body: RequestJsonBody | null,
-): string | null {
-	const headerProject = headers.get("x-project");
-	const sanitizedHeader = sanitizeProjectName(headerProject);
-	if (sanitizedHeader) return sanitizedHeader;
-
-	const systemPrompt = extractSystemPrompt(body);
-	if (!systemPrompt) return null;
-
-	const pathMatch = systemPrompt.match(
-		/\/(?:Users|home)\/[^/]+\/(?:Desktop|projects|repos|src)\/([^/]+)\//,
-	);
-	const sanitizedPath = sanitizeProjectName(pathMatch?.[1]);
-	if (sanitizedPath) return sanitizedPath;
-
-	const headingMatch = systemPrompt.match(/^#\s+([^\n\r]{1,100})/m);
-	if (headingMatch) {
-		const heading = sanitizeProjectName(headingMatch[1]);
-		if (heading && !heading.toLowerCase().startsWith("claude")) {
-			return heading;
-		}
-	}
-
-	return null;
-}
 
 // ===== USAGE COLLECTOR MANAGEMENT =====
 
@@ -184,7 +121,8 @@ export async function handleProxy(
 	// and reuse parsed body for /v1/messages validation (consolidate parses)
 	const parsedBody = requestBodyContext.getParsedJson();
 	const requestModel = requestBodyContext.getModel();
-	const project = extractProjectFromRequest(req.headers, parsedBody);
+	const { project, projectAttributionSource } =
+		extractProjectAttributionFromRequest(req.headers, parsedBody);
 
 	// 3a. Validate request body for /v1/messages endpoint
 	if (url.pathname === "/v1/messages" && requestBodyBuffer) {
@@ -222,15 +160,20 @@ export async function handleProxy(
 	}
 
 	// 4. Intercept and modify request for agent model preferences
-	const { modifiedBody, agentUsed, originalModel, appliedModel } =
-		await interceptAndModifyRequest(
-			requestBodyContext,
-			ctx.dbOps,
-			req.headers,
-			{
-				frontmatterModelFallback: ctx.config.getAgentFrontmatterModelFallback(),
-			},
-		);
+	const {
+		modifiedBody,
+		agentUsed,
+		originalModel,
+		appliedModel,
+		agentAttributionSource,
+	} = await interceptAndModifyRequest(
+		requestBodyContext,
+		ctx.dbOps,
+		req.headers,
+		{
+			frontmatterModelFallback: ctx.config.getAgentFrontmatterModelFallback(),
+		},
+	);
 
 	// Use modified body if available
 	const finalBodyBuffer = modifiedBody || requestBodyContext.getBuffer();
@@ -248,7 +191,9 @@ export async function handleProxy(
 	// 5. Create request metadata with agent info
 	const requestMeta = createRequestMetadata(req, url);
 	requestMeta.agentUsed = agentUsed;
+	requestMeta.agentAttributionSource = agentAttributionSource;
 	requestMeta.project = project;
+	requestMeta.projectAttributionSource = projectAttributionSource;
 	requestMeta.clientSessionId = requestBodyContext.getClientId();
 	requestMeta.originalModel = originalModel;
 	requestMeta.appliedModel = appliedModel;
@@ -372,6 +317,8 @@ export async function handleProxy(
 				requestHeaders: Object.fromEntries(req.headers.entries()),
 				requestBody: null,
 				project: project ?? null,
+				projectAttributionSource: projectAttributionSource ?? "none",
+				agentAttributionSource: agentAttributionSource ?? "none",
 				responseStatus: 503,
 				responseHeaders: Object.fromEntries(
 					poolExhaustedResponse.headers.entries(),

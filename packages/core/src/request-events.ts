@@ -9,6 +9,9 @@ export type RequestStartEvt = {
 	accountId: string | null;
 	statusCode: number;
 	agentUsed: string | null;
+	agentAttributionSource?:
+		| import("@better-ccflare/types").AgentAttributionSource
+		| null;
 };
 
 export type RequestSummaryEvt = {
