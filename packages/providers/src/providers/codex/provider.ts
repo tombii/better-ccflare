@@ -17,6 +17,10 @@ const log = new Logger("CodexProvider");
  * Opt-in: set to "1" to attach an OpenAI prompt_cache_key to converted
  * requests. OpenAI documents that on GPT-5.6-family models this key is
  * required for reliable prompt-cache matching.
+ *
+ * Only enable this when Codex accounts point at OpenAI's own Responses API.
+ * A strict OpenAI-compatible endpoint that does not know the field may
+ * reject requests carrying it; that is why the flag defaults to off.
  */
 export const CODEX_PROMPT_CACHE_KEY_ENV = "CCFLARE_CODEX_PROMPT_CACHE_KEY";
 /** "conversation" (default) or "session"; see derivePromptCacheKey. */
