@@ -5,6 +5,7 @@ export const ANTHROPIC_TERMINAL_RECOVERY_GRACE_MS = 10_000;
 
 const encoder = new TextEncoder();
 const messageStopBytes = encoder.encode(ANTHROPIC_MESSAGE_STOP_FRAME);
+const MAX_PENDING_EVENT_CHARS = 64 * 1024;
 
 export type AnthropicTerminalRecoveryReason = "timeout" | "eof";
 
@@ -41,8 +42,14 @@ export function createAnthropicTerminalRecoveryStream(
 	const decoder = new TextDecoder();
 
 	let eventBuffer = "";
+	let eventBufferTruncated = false;
 	let terminalDeltaSeen = false;
+	let provisionalTerminalDeltaSeen = false;
 	let messageStopSeen = false;
+	let terminalFailureSeen = false;
+	let recoveryDisabled = false;
+	let unknownContentBlockOpen = false;
+	const openContentBlocks = new Set<number>();
 	let finalized = false;
 	let upstreamCancelPromise: Promise<void> | null = null;
 	let recoveryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -104,7 +111,17 @@ export function createAnthropicTerminalRecoveryStream(
 		reason: AnthropicTerminalRecoveryReason,
 		missingEventDelimiter = "",
 	): void => {
-		if (finalized || messageStopSeen || !downstreamController) return;
+		if (
+			finalized ||
+			messageStopSeen ||
+			terminalFailureSeen ||
+			recoveryDisabled ||
+			!terminalDeltaSeen ||
+			unknownContentBlockOpen ||
+			openContentBlocks.size > 0 ||
+			!downstreamController
+		)
+			return;
 
 		finalized = true;
 		clearRecoveryTimer();
@@ -118,7 +135,14 @@ export function createAnthropicTerminalRecoveryStream(
 		);
 	};
 
-	const inspectEvent = (rawEvent: string): void => {
+	const markTerminalFailure = (): void => {
+		terminalFailureSeen = true;
+		terminalDeltaSeen = false;
+		provisionalTerminalDeltaSeen = false;
+		clearRecoveryTimer();
+	};
+
+	const inspectEvent = (rawEvent: string, provisional = false): void => {
 		let eventType: string | undefined;
 		const dataLines: string[] = [];
 
@@ -134,6 +158,11 @@ export function createAnthropicTerminalRecoveryStream(
 			if (field === "data") dataLines.push(value);
 		}
 
+		if (eventType === "error") {
+			markTerminalFailure();
+			return;
+		}
+
 		if (dataLines.length === 0) return;
 
 		let parsed: unknown;
@@ -144,12 +173,73 @@ export function createAnthropicTerminalRecoveryStream(
 		}
 		if (!isRecord(parsed)) return;
 
+		if (parsed.type === "error") {
+			markTerminalFailure();
+			return;
+		}
+
 		const isMessageStop =
 			eventType === "message_stop" || parsed.type === "message_stop";
 		if (isMessageStop) {
+			if (provisional) return;
 			messageStopSeen = true;
+			provisionalTerminalDeltaSeen = false;
 			clearRecoveryTimer();
 			return;
+		}
+
+		if (!provisional) {
+			const contentBlockIndex =
+				typeof parsed.index === "number" &&
+				Number.isSafeInteger(parsed.index) &&
+				parsed.index >= 0
+					? parsed.index
+					: null;
+			const isContentBlockStart =
+				eventType === "content_block_start" ||
+				parsed.type === "content_block_start";
+			const isContentBlockStop =
+				eventType === "content_block_stop" ||
+				parsed.type === "content_block_stop";
+
+			if (isContentBlockStart) {
+				if (
+					contentBlockIndex === null ||
+					openContentBlocks.has(contentBlockIndex)
+				) {
+					unknownContentBlockOpen = true;
+					recoveryDisabled = true;
+				} else {
+					openContentBlocks.add(contentBlockIndex);
+				}
+				if (terminalDeltaSeen || provisionalTerminalDeltaSeen) {
+					recoveryDisabled = true;
+				}
+				clearRecoveryTimer();
+				return;
+			}
+
+			if (isContentBlockStop) {
+				if (
+					contentBlockIndex === null ||
+					!openContentBlocks.has(contentBlockIndex)
+				) {
+					unknownContentBlockOpen = true;
+					recoveryDisabled = true;
+				} else {
+					openContentBlocks.delete(contentBlockIndex);
+				}
+				if (
+					terminalDeltaSeen &&
+					!terminalFailureSeen &&
+					!recoveryDisabled &&
+					!unknownContentBlockOpen &&
+					openContentBlocks.size === 0
+				) {
+					armRecoveryTimer();
+				}
+				return;
+			}
 		}
 
 		const isMessageDelta =
@@ -158,8 +248,23 @@ export function createAnthropicTerminalRecoveryStream(
 			? parsed.delta.stop_reason
 			: undefined;
 		if (isMessageDelta && stopReason !== null && stopReason !== undefined) {
-			terminalDeltaSeen = true;
-			armRecoveryTimer();
+			if (unknownContentBlockOpen || openContentBlocks.size > 0) {
+				recoveryDisabled = true;
+				clearRecoveryTimer();
+			}
+			if (provisional) provisionalTerminalDeltaSeen = true;
+			else {
+				terminalDeltaSeen = true;
+				provisionalTerminalDeltaSeen = false;
+			}
+			if (
+				!terminalFailureSeen &&
+				!recoveryDisabled &&
+				!unknownContentBlockOpen &&
+				openContentBlocks.size === 0
+			) {
+				armRecoveryTimer();
+			}
 		}
 	};
 
@@ -167,7 +272,9 @@ export function createAnthropicTerminalRecoveryStream(
 		if (eventBuffer.length === 0) return "";
 		const bufferedEvent = eventBuffer;
 		eventBuffer = "";
-		inspectEvent(bufferedEvent);
+		provisionalTerminalDeltaSeen = false;
+		if (!eventBufferTruncated) inspectEvent(bufferedEvent);
+		eventBufferTruncated = false;
 		return bufferedEvent.endsWith("\r\n")
 			? "\r\n"
 			: bufferedEvent.endsWith("\n")
@@ -208,12 +315,48 @@ export function createAnthropicTerminalRecoveryStream(
 	const inspectChunk = (chunk: Uint8Array): void => {
 		eventBuffer += decoder.decode(chunk, { stream: true });
 
+		if (eventBufferTruncated) {
+			const resyncDelimiter = /\r?\n\r?\n/.exec(eventBuffer);
+			if (resyncDelimiter?.index === undefined) {
+				eventBuffer = eventBuffer.slice(-3);
+				return;
+			}
+			eventBuffer = eventBuffer.slice(
+				resyncDelimiter.index + resyncDelimiter[0].length,
+			);
+			eventBufferTruncated = false;
+		}
+
 		let delimiter = /\r?\n\r?\n/.exec(eventBuffer);
 		while (delimiter?.index !== undefined) {
 			const rawEvent = eventBuffer.slice(0, delimiter.index);
 			eventBuffer = eventBuffer.slice(delimiter.index + delimiter[0].length);
-			inspectEvent(rawEvent);
+			provisionalTerminalDeltaSeen = false;
+			if (eventBufferTruncated || rawEvent.length > MAX_PENDING_EVENT_CHARS) {
+				recoveryDisabled = true;
+				clearRecoveryTimer();
+			} else {
+				inspectEvent(rawEvent);
+			}
+			eventBufferTruncated = false;
 			delimiter = /\r?\n\r?\n/.exec(eventBuffer);
+		}
+
+		if (eventBuffer.length > MAX_PENDING_EVENT_CHARS) {
+			eventBuffer = eventBuffer.slice(-3);
+			eventBufferTruncated = true;
+			recoveryDisabled = true;
+			clearRecoveryTimer();
+			provisionalTerminalDeltaSeen = false;
+			return;
+		}
+
+		if (
+			!eventBufferTruncated &&
+			eventBuffer.length > 0 &&
+			/\r?\n$/.test(eventBuffer)
+		) {
+			inspectEvent(eventBuffer, true);
 		}
 	};
 
@@ -231,15 +374,25 @@ export function createAnthropicTerminalRecoveryStream(
 
 				if (done) {
 					eventBuffer += decoder.decode();
+					const messageStopSeenBeforeBufferedEvent = messageStopSeen;
 					const missingEventDelimiter = takeBufferedEventDelimiter();
-					if (terminalDeltaSeen && !messageStopSeen) {
+					const bufferedEventSuppliedMessageStop =
+						!messageStopSeenBeforeBufferedEvent && messageStopSeen;
+					if (
+						terminalDeltaSeen &&
+						!messageStopSeen &&
+						!terminalFailureSeen &&
+						!recoveryDisabled &&
+						!unknownContentBlockOpen &&
+						openContentBlocks.size === 0
+					) {
 						recover("eof", missingEventDelimiter);
 						return;
 					}
 
 					finalized = true;
 					clearRecoveryTimer();
-					if (messageStopSeen) {
+					if (bufferedEventSuppliedMessageStop) {
 						appendMissingEventDelimiter(missingEventDelimiter);
 					}
 					controller.close();

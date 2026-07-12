@@ -1,4 +1,4 @@
-import { describe, expect, it, mock } from "bun:test";
+import { describe, expect, it, mock, spyOn } from "bun:test";
 import { ANTHROPIC_MESSAGE_STOP_FRAME } from "../anthropic-terminal-recovery";
 import type { ProxyContext } from "../handlers";
 
@@ -12,6 +12,7 @@ mock.module("@better-ccflare/database", () => ({
 	ModelTranslationRepository: class ModelTranslationRepository {},
 }));
 
+const usageCollectorModule = await import("../usage-collector");
 const { forwardToClient } = await import("../response-handler");
 
 const encoder = new TextEncoder();
@@ -93,6 +94,70 @@ describe("forwardToClient Anthropic terminal recovery integration", () => {
 		await expect(forwardClosedStream({ requestHeaders })).resolves.toBe(
 			`${terminalDelta}${ANTHROPIC_MESSAGE_STOP_FRAME}`,
 		);
+	});
+
+	it("feeds synthesized framing through the normal usage lifecycle", async () => {
+		const chunks: Uint8Array[] = [];
+		const ends: Array<Record<string, unknown>> = [];
+		const collector = {
+			handleStart: mock(() => undefined),
+			handleChunk: mock((_requestId: string, data: Uint8Array) => {
+				chunks.push(data);
+			}),
+			handleEnd: mock((message: Record<string, unknown>) => {
+				ends.push(message);
+				return Promise.resolve();
+			}),
+		};
+		const collectorSpy = spyOn(
+			usageCollectorModule,
+			"getUsageCollector",
+		).mockReturnValue(
+			collector as unknown as usageCollectorModule.UsageCollector,
+		);
+
+		try {
+			const requestId = "normal-recovered-request";
+			const response = await forwardToClient(
+				{
+					requestId,
+					method: "POST",
+					path: "/v1/messages",
+					account: null,
+					requestHeaders: new Headers({
+						"anthropic-version": "2023-06-01",
+					}),
+					requestBody: bytes("{}"),
+					response: new Response(immediateStream(bytes(terminalDelta)), {
+						status: 200,
+						headers: { "content-type": "text/event-stream" },
+					}),
+					timestamp: Date.now(),
+					retryAttempt: 0,
+					failoverAttempts: 0,
+				},
+				nativeAnthropicCtx(),
+			);
+
+			await expect(response.text()).resolves.toBe(
+				`${terminalDelta}${ANTHROPIC_MESSAGE_STOP_FRAME}`,
+			);
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			expect(collector.handleStart).toHaveBeenCalledTimes(1);
+			expect(Buffer.concat(chunks).toString()).toBe(
+				`${terminalDelta}${ANTHROPIC_MESSAGE_STOP_FRAME}`,
+			);
+			expect(ends).toEqual([
+				expect.objectContaining({
+					requestId,
+					success: true,
+					type: "end",
+				}),
+			]);
+		} finally {
+			collectorSpy.mockRestore();
+		}
 	});
 
 	it("leaves non-native, non-Anthropic, and non-Messages streams unchanged", async () => {

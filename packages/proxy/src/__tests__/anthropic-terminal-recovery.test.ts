@@ -40,6 +40,12 @@ const terminalDelta =
 	'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":42}}\n\n';
 const messageStop = 'event: message_stop\ndata: {"type":"message_stop"}\n\n';
 const ping = 'event: ping\ndata: {"type":"ping"}\n\n';
+const contentBlockStart =
+	'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}\n\n';
+const contentBlockStop =
+	'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n';
+const overloadedError =
+	'event: error\ndata: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}\n\n';
 
 describe("createAnthropicTerminalRecoveryStream", () => {
 	it("leaves a healthy stream byte-for-byte unchanged", async () => {
@@ -149,6 +155,24 @@ describe("createAnthropicTerminalRecoveryStream", () => {
 		expect(source.cancel).toHaveBeenCalledTimes(1);
 	});
 
+	it("closes a message_stop data line that only lacks its final blank line", async () => {
+		const source = controllableStream();
+		const onRecovery = mock(() => undefined);
+		const messageStopWithoutBlankLine = messageStop.slice(0, -1);
+		const body = createAnthropicTerminalRecoveryStream(source.stream, {
+			gracePeriodMs: 20,
+			onRecovery,
+		});
+		const result = new Response(body).text();
+
+		source.controller().enqueue(bytes(terminalDelta));
+		source.controller().enqueue(bytes(messageStopWithoutBlankLine));
+
+		await expect(result).resolves.toBe(`${terminalDelta}${messageStop}`);
+		expect(onRecovery).not.toHaveBeenCalled();
+		expect(source.cancel).toHaveBeenCalledTimes(1);
+	});
+
 	it("preserves a message_stop that completes shortly before the timeout", async () => {
 		const source = controllableStream();
 		const onRecovery = mock(() => undefined);
@@ -224,6 +248,210 @@ describe("createAnthropicTerminalRecoveryStream", () => {
 			`${terminalDeltaWithoutDelimiter}\n\n${ANTHROPIC_MESSAGE_STOP_FRAME}`,
 		);
 		expect(onRecovery).toHaveBeenCalledTimes(1);
+	});
+
+	it("starts recovery for a complete terminal data line without a blank-line delimiter", async () => {
+		const source = controllableStream();
+		const onRecovery = mock(() => undefined);
+		const terminalDeltaWithoutBlankLine = terminalDelta.slice(0, -1);
+		const body = createAnthropicTerminalRecoveryStream(source.stream, {
+			gracePeriodMs: 20,
+			onRecovery,
+		});
+		const result = new Response(body).text();
+
+		source.controller().enqueue(bytes(terminalDeltaWithoutBlankLine));
+		const settled = await Promise.race([
+			result,
+			new Promise<false>((resolve) => setTimeout(() => resolve(false), 75)),
+		]);
+		if (settled === false) source.controller().close();
+
+		expect(settled).toBe(
+			`${terminalDeltaWithoutBlankLine}\n${ANTHROPIC_MESSAGE_STOP_FRAME}`,
+		);
+		expect(onRecovery).toHaveBeenCalledTimes(1);
+	});
+
+	it("never synthesizes success after an in-band error event", async () => {
+		const source = controllableStream();
+		const onRecovery = mock(() => undefined);
+		const body = createAnthropicTerminalRecoveryStream(source.stream, {
+			gracePeriodMs: 20,
+			onRecovery,
+		});
+		const result = new Response(body).text();
+
+		source.controller().enqueue(bytes(terminalDelta));
+		source.controller().enqueue(bytes(overloadedError));
+		await new Promise((resolve) => setTimeout(resolve, 40));
+		try {
+			source.controller().close();
+		} catch {
+			// The pre-fix implementation already closed after false recovery.
+		}
+
+		await expect(result).resolves.toBe(`${terminalDelta}${overloadedError}`);
+		expect(onRecovery).not.toHaveBeenCalled();
+	});
+
+	it("treats the SSE error field as failure even when data is not JSON", async () => {
+		const source = controllableStream();
+		const plainTextError = "event: error\ndata: upstream disconnected\n\n";
+		const onRecovery = mock(() => undefined);
+		const body = createAnthropicTerminalRecoveryStream(source.stream, {
+			gracePeriodMs: 20,
+			onRecovery,
+		});
+		const result = new Response(body).text();
+
+		source.controller().enqueue(bytes(terminalDelta));
+		source.controller().enqueue(bytes(plainTextError));
+		await new Promise((resolve) => setTimeout(resolve, 40));
+		source.controller().close();
+
+		await expect(result).resolves.toBe(`${terminalDelta}${plainTextError}`);
+		expect(onRecovery).not.toHaveBeenCalled();
+	});
+
+	it("treats a payload error type as failure without an SSE error field", async () => {
+		const payloadOnlyError =
+			'data: {"type":"error","error":{"type":"api_error","message":"failed"}}\n\n';
+		const original = `${terminalDelta}${payloadOnlyError}`;
+		const onRecovery = mock(() => undefined);
+		const body = createAnthropicTerminalRecoveryStream(
+			immediateStream([bytes(original)]),
+			{ gracePeriodMs: 5, onRecovery },
+		);
+
+		await expect(new Response(body).text()).resolves.toBe(original);
+		expect(onRecovery).not.toHaveBeenCalled();
+	});
+
+	it("does not synthesize while a content block remains open", async () => {
+		const original = `${contentBlockStart}${terminalDelta}`;
+		const onRecovery = mock(() => undefined);
+		const body = createAnthropicTerminalRecoveryStream(
+			immediateStream([bytes(original)]),
+			{ gracePeriodMs: 5, onRecovery },
+		);
+
+		await expect(new Response(body).text()).resolves.toBe(original);
+		expect(onRecovery).not.toHaveBeenCalled();
+	});
+
+	it("does not re-enable recovery when an open block closes after the terminal delta", async () => {
+		const original = `${contentBlockStart}${terminalDelta}${contentBlockStop}`;
+		const onRecovery = mock(() => undefined);
+		const body = createAnthropicTerminalRecoveryStream(
+			immediateStream([bytes(original)]),
+			{ gracePeriodMs: 5, onRecovery },
+		);
+
+		await expect(new Response(body).text()).resolves.toBe(original);
+		expect(onRecovery).not.toHaveBeenCalled();
+	});
+
+	it("disables recovery after malformed content-block transitions", async () => {
+		const indexlessStart =
+			'event: content_block_start\ndata: {"type":"content_block_start","content_block":{"type":"text","text":""}}\n\n';
+		const indexlessStop =
+			'event: content_block_stop\ndata: {"type":"content_block_stop"}\n\n';
+		const cases = [
+			`${indexlessStart}${indexlessStart}${indexlessStop}${terminalDelta}`,
+			`${contentBlockStart}${contentBlockStart}${contentBlockStop}${terminalDelta}`,
+			`${contentBlockStop}${terminalDelta}`,
+		];
+
+		for (const original of cases) {
+			const onRecovery = mock(() => undefined);
+			const body = createAnthropicTerminalRecoveryStream(
+				immediateStream([bytes(original)]),
+				{ gracePeriodMs: 5, onRecovery },
+			);
+
+			await expect(new Response(body).text()).resolves.toBe(original);
+			expect(onRecovery).not.toHaveBeenCalled();
+		}
+	});
+
+	it("passes through an oversized event but disables later recovery", async () => {
+		const oversizedEvent = `data: ${"x".repeat(80 * 1024)}\n\n`;
+		const original = `${oversizedEvent}${contentBlockStart}${contentBlockStop}${terminalDelta}`;
+		const chunks: Uint8Array[] = [];
+		for (let offset = 0; offset < original.length; offset += 1024) {
+			chunks.push(bytes(original.slice(offset, offset + 1024)));
+		}
+		const onRecovery = mock(() => undefined);
+		const body = createAnthropicTerminalRecoveryStream(
+			immediateStream(chunks),
+			{ gracePeriodMs: 5, onRecovery },
+		);
+
+		await expect(new Response(body).text()).resolves.toBe(original);
+		expect(onRecovery).not.toHaveBeenCalled();
+	});
+
+	it("does not append a delimiter to trailing data after a complete message_stop", async () => {
+		const trailingData = `data: ${"x".repeat(80 * 1024)}\n`;
+		const original = `${terminalDelta}${messageStop}${trailingData}`;
+		const onRecovery = mock(() => undefined);
+		const body = createAnthropicTerminalRecoveryStream(
+			immediateStream([bytes(original)]),
+			{ gracePeriodMs: 5, onRecovery },
+		);
+
+		await expect(new Response(body).text()).resolves.toBe(original);
+		expect(onRecovery).not.toHaveBeenCalled();
+	});
+
+	it("disables recovery if an oversized event becomes uninspectable after the terminal delta", async () => {
+		const source = controllableStream();
+		const oversizedPendingEvent = `data: ${"x".repeat(80 * 1024)}\n`;
+		const onRecovery = mock(() => undefined);
+		const body = createAnthropicTerminalRecoveryStream(source.stream, {
+			gracePeriodMs: 20,
+			onRecovery,
+		});
+		const result = new Response(body).text();
+
+		source.controller().enqueue(bytes(terminalDelta));
+		source.controller().enqueue(bytes(oversizedPendingEvent));
+		await new Promise((resolve) => setTimeout(resolve, 40));
+		try {
+			source.controller().close();
+		} catch {
+			// The pre-fix implementation already closed after unsafe recovery.
+		}
+
+		await expect(result).resolves.toBe(
+			`${terminalDelta}${oversizedPendingEvent}`,
+		);
+		expect(onRecovery).not.toHaveBeenCalled();
+	});
+
+	it("handles oversized events consistently across transport chunking", async () => {
+		const largeDelta = `event: content_block_delta\ndata: ${JSON.stringify({
+			type: "content_block_delta",
+			index: 0,
+			delta: { type: "text_delta", text: "x".repeat(80 * 1024) },
+		})}\n\n`;
+		const original = `${contentBlockStart}${largeDelta}${contentBlockStop}${terminalDelta}`;
+		const splitChunks: Uint8Array[] = [];
+		for (let offset = 0; offset < original.length; offset += 1024) {
+			splitChunks.push(bytes(original.slice(offset, offset + 1024)));
+		}
+
+		for (const chunks of [[bytes(original)], splitChunks]) {
+			const onRecovery = mock(() => undefined);
+			const body = createAnthropicTerminalRecoveryStream(
+				immediateStream(chunks),
+				{ gracePeriodMs: 5, onRecovery },
+			);
+
+			await expect(new Response(body).text()).resolves.toBe(original);
+			expect(onRecovery).not.toHaveBeenCalled();
+		}
 	});
 
 	it("propagates upstream errors without masking them as successful completion", async () => {
