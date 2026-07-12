@@ -3,6 +3,7 @@ import {
 	ANTHROPIC_MESSAGE_STOP_FRAME,
 	createAnthropicTerminalRecoveryStream,
 } from "../anthropic-terminal-recovery";
+import { teeStream } from "../stream-tee";
 
 const encoder = new TextEncoder();
 
@@ -44,6 +45,8 @@ const contentBlockStart =
 	'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}\n\n';
 const contentBlockStop =
 	'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n';
+const contentBlockDelta =
+	'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hello"}}\n\n';
 const overloadedError =
 	'event: error\ndata: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}\n\n';
 
@@ -113,6 +116,39 @@ describe("createAnthropicTerminalRecoveryStream", () => {
 		} finally {
 			clearInterval(interval);
 		}
+	});
+
+	it("does not let recovery overtake unread upstream events during downstream backpressure", async () => {
+		const source = controllableStream();
+		const realMessageStop =
+			'event: message_stop\ndata: {"type":"message_stop","marker":"real-upstream-stop"}\n\n';
+		const original = `${terminalDelta}${ping}${ping}${realMessageStop}`;
+		const recoveryBody = createAnthropicTerminalRecoveryStream(source.stream, {
+			gracePeriodMs: 25,
+		});
+		const clientBody = teeStream(recoveryBody);
+		const reader = clientBody.getReader();
+
+		source.controller().enqueue(bytes(terminalDelta));
+		source.controller().enqueue(bytes(ping));
+		source.controller().enqueue(bytes(ping));
+		source.controller().enqueue(bytes(realMessageStop));
+		source.controller().close();
+
+		const first = await reader.read();
+		expect(first.done).toBe(false);
+		expect(new TextDecoder().decode(first.value)).toBe(terminalDelta);
+		await new Promise((resolve) => setTimeout(resolve, 70));
+
+		let output = new TextDecoder().decode(first.value);
+		for (;;) {
+			const next = await reader.read();
+			if (next.done) break;
+			output += new TextDecoder().decode(next.value);
+		}
+
+		expect(output).toBe(original);
+		expect(source.cancel).not.toHaveBeenCalled();
 	});
 
 	it("separates a partial post-terminal ping before timeout recovery", async () => {
@@ -328,6 +364,40 @@ describe("createAnthropicTerminalRecoveryStream", () => {
 		expect(onRecovery).not.toHaveBeenCalled();
 	});
 
+	it("fails closed on unparseable data events but still permits explicit ping keepalives", async () => {
+		const malformedEvent =
+			'event: content_block_start\ndata: {"type":"content_block_start"\n\n';
+		for (const original of [
+			`${malformedEvent}${terminalDelta}`,
+			`${terminalDelta}${malformedEvent}`,
+		]) {
+			const onRecovery = mock(() => undefined);
+			const body = createAnthropicTerminalRecoveryStream(
+				immediateStream([bytes(original)]),
+				{ gracePeriodMs: 5, onRecovery },
+			);
+
+			await expect(new Response(body).text()).resolves.toBe(original);
+			expect(onRecovery).not.toHaveBeenCalled();
+		}
+
+		const malformedPing = "event: ping\ndata: not-json\n\n";
+		const source = controllableStream();
+		const onRecovery = mock(() => undefined);
+		const body = createAnthropicTerminalRecoveryStream(source.stream, {
+			gracePeriodMs: 5,
+			onRecovery,
+		});
+		const result = new Response(body).text();
+		source.controller().enqueue(bytes(terminalDelta));
+		source.controller().enqueue(bytes(malformedPing));
+
+		await expect(result).resolves.toBe(
+			`${terminalDelta}${malformedPing}${ANTHROPIC_MESSAGE_STOP_FRAME}`,
+		);
+		expect(onRecovery).toHaveBeenCalledTimes(1);
+	});
+
 	it("does not synthesize while a content block remains open", async () => {
 		const original = `${contentBlockStart}${terminalDelta}`;
 		const onRecovery = mock(() => undefined);
@@ -373,6 +443,39 @@ describe("createAnthropicTerminalRecoveryStream", () => {
 			await expect(new Response(body).text()).resolves.toBe(original);
 			expect(onRecovery).not.toHaveBeenCalled();
 		}
+	});
+
+	it("validates every content-block delta against the open block lifecycle", async () => {
+		const invalidDelta =
+			'event: content_block_delta\ndata: {"type":"content_block_delta","index":-1,"delta":{"type":"text_delta","text":"bad"}}\n\n';
+		const invalidCases = [
+			`${contentBlockDelta}${terminalDelta}`,
+			`${contentBlockStart}${contentBlockStop}${contentBlockDelta}${terminalDelta}`,
+			`${terminalDelta}${contentBlockDelta}`,
+			`${invalidDelta}${terminalDelta}`,
+		];
+
+		for (const original of invalidCases) {
+			const onRecovery = mock(() => undefined);
+			const body = createAnthropicTerminalRecoveryStream(
+				immediateStream([bytes(original)]),
+				{ gracePeriodMs: 5, onRecovery },
+			);
+
+			await expect(new Response(body).text()).resolves.toBe(original);
+			expect(onRecovery).not.toHaveBeenCalled();
+		}
+
+		const valid = `${contentBlockStart}${contentBlockDelta}${contentBlockStop}${terminalDelta}`;
+		const onRecovery = mock(() => undefined);
+		const body = createAnthropicTerminalRecoveryStream(
+			immediateStream([bytes(valid)]),
+			{ gracePeriodMs: 5, onRecovery },
+		);
+		await expect(new Response(body).text()).resolves.toBe(
+			`${valid}${ANTHROPIC_MESSAGE_STOP_FRAME}`,
+		);
+		expect(onRecovery).toHaveBeenCalledTimes(1);
 	});
 
 	it("passes through an oversized event but disables later recovery", async () => {

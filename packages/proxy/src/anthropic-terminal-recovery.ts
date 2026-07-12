@@ -53,14 +53,28 @@ export function createAnthropicTerminalRecoveryStream(
 	let finalized = false;
 	let upstreamCancelPromise: Promise<void> | null = null;
 	let recoveryTimer: ReturnType<typeof setTimeout> | null = null;
+	let recoveryWaitRemainingMs = gracePeriodMs;
+	let recoveryWaitStartedAt: number | null = null;
+	let upstreamReadPending = false;
 	let downstreamController:
 		| ReadableStreamDefaultController<Uint8Array>
 		| undefined;
 
 	const clearRecoveryTimer = (): void => {
-		if (recoveryTimer === null) return;
-		clearTimeout(recoveryTimer);
+		if (recoveryTimer !== null) clearTimeout(recoveryTimer);
 		recoveryTimer = null;
+		recoveryWaitStartedAt = null;
+	};
+
+	const pauseRecoveryTimer = (): void => {
+		if (recoveryTimer !== null) clearTimeout(recoveryTimer);
+		recoveryTimer = null;
+		if (recoveryWaitStartedAt === null) return;
+		recoveryWaitRemainingMs = Math.max(
+			0,
+			recoveryWaitRemainingMs - (Date.now() - recoveryWaitStartedAt),
+		);
+		recoveryWaitStartedAt = null;
 	};
 
 	const cancelUpstream = (reason: unknown): Promise<void> => {
@@ -142,6 +156,11 @@ export function createAnthropicTerminalRecoveryStream(
 		clearRecoveryTimer();
 	};
 
+	const disableRecovery = (): void => {
+		recoveryDisabled = true;
+		clearRecoveryTimer();
+	};
+
 	const inspectEvent = (rawEvent: string, provisional = false): void => {
 		let eventType: string | undefined;
 		const dataLines: string[] = [];
@@ -163,20 +182,30 @@ export function createAnthropicTerminalRecoveryStream(
 			return;
 		}
 
-		if (dataLines.length === 0) return;
+		if (dataLines.length === 0) {
+			if (!provisional && eventType !== undefined && eventType !== "ping") {
+				disableRecovery();
+			}
+			return;
+		}
 
 		let parsed: unknown;
 		try {
 			parsed = JSON.parse(dataLines.join("\n")) as unknown;
 		} catch {
+			if (!provisional && eventType !== "ping") disableRecovery();
 			return;
 		}
-		if (!isRecord(parsed)) return;
+		if (!isRecord(parsed)) {
+			if (!provisional && eventType !== "ping") disableRecovery();
+			return;
+		}
 
 		if (parsed.type === "error") {
 			markTerminalFailure();
 			return;
 		}
+		if (eventType === "ping") return;
 
 		const isMessageStop =
 			eventType === "message_stop" || parsed.type === "message_stop";
@@ -201,6 +230,9 @@ export function createAnthropicTerminalRecoveryStream(
 			const isContentBlockStop =
 				eventType === "content_block_stop" ||
 				parsed.type === "content_block_stop";
+			const isContentBlockDelta =
+				eventType === "content_block_delta" ||
+				parsed.type === "content_block_delta";
 
 			if (isContentBlockStart) {
 				if (
@@ -237,6 +269,18 @@ export function createAnthropicTerminalRecoveryStream(
 					openContentBlocks.size === 0
 				) {
 					armRecoveryTimer();
+				}
+				return;
+			}
+
+			if (isContentBlockDelta) {
+				if (
+					contentBlockIndex === null ||
+					!openContentBlocks.has(contentBlockIndex) ||
+					terminalDeltaSeen ||
+					provisionalTerminalDeltaSeen
+				) {
+					disableRecovery();
 				}
 				return;
 			}
@@ -298,6 +342,8 @@ export function createAnthropicTerminalRecoveryStream(
 
 	const handleRecoveryTimeout = (): void => {
 		recoveryTimer = null;
+		recoveryWaitRemainingMs = 0;
+		recoveryWaitStartedAt = null;
 		if (finalized) return;
 		const missingEventDelimiter = takeBufferedEventDelimiter();
 		if (messageStopSeen) {
@@ -308,8 +354,21 @@ export function createAnthropicTerminalRecoveryStream(
 	};
 
 	const armRecoveryTimer = (): void => {
-		if (recoveryTimer !== null || finalized || messageStopSeen) return;
-		recoveryTimer = setTimeout(handleRecoveryTimeout, gracePeriodMs);
+		if (
+			recoveryTimer !== null ||
+			finalized ||
+			messageStopSeen ||
+			terminalFailureSeen ||
+			recoveryDisabled ||
+			(!terminalDeltaSeen && !provisionalTerminalDeltaSeen) ||
+			!upstreamReadPending
+		)
+			return;
+		recoveryWaitStartedAt = Date.now();
+		recoveryTimer = setTimeout(
+			handleRecoveryTimeout,
+			recoveryWaitRemainingMs,
+		);
 	};
 
 	const inspectChunk = (chunk: Uint8Array): void => {
@@ -369,7 +428,16 @@ export function createAnthropicTerminalRecoveryStream(
 			if (finalized) return;
 
 			try {
-				const { value, done } = await reader.read();
+				const { value, done } = await (async () => {
+					upstreamReadPending = true;
+					armRecoveryTimer();
+					try {
+						return await reader.read();
+					} finally {
+						upstreamReadPending = false;
+						pauseRecoveryTimer();
+					}
+				})();
 				if (finalized) return;
 
 				if (done) {
