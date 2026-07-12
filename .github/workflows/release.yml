@@ -293,6 +293,38 @@ jobs:
                 done <<< "$IMPROVEMENTS"
               fi
 
+              # Find merged PR contributors in this range (excludes tombii's own merges)
+              CONTRIBUTORS=$(git log --merges "$PREV_TAG"..HEAD --format="%s" \
+                | grep -oE "Merge pull request #[0-9]+ from [^ ]+" \
+                | sed -E 's/Merge pull request #([0-9]+) from ([^\/ ]+).*/\1 \2/')
+
+              CONTRIBUTOR_LINES=""
+              if [ -n "$CONTRIBUTORS" ]; then
+                while IFS= read -r entry; do
+                  [ -z "$entry" ] && continue
+                  PR_NUM=$(echo "$entry" | cut -d' ' -f1)
+                  USERNAME=$(echo "$entry" | cut -d' ' -f2-)
+                  [ "$USERNAME" = "tombii" ] && continue
+                  CONTRIBUTOR_LINES="$CONTRIBUTOR_LINES$USERNAME #$PR_NUM"$'\n'
+                done <<< "$CONTRIBUTORS"
+              fi
+
+              if [ -n "$CONTRIBUTOR_LINES" ]; then
+                CHANGELOG="$CHANGELOG
+
+          ### 🙏 Thanks to our contributors
+          "
+                # Group PR numbers by username, one line per contributor
+                THANKS=$(echo "$CONTRIBUTOR_LINES" | sed '/^$/d' | awk '{u=$1; $1=""; sub(/^ /,""); prs[u]=prs[u] " " $0} END {for (u in prs) print u"|"prs[u]}' | sort)
+                while IFS= read -r line; do
+                  [ -z "$line" ] && continue
+                  USERNAME=$(echo "$line" | cut -d'|' -f1)
+                  PRS=$(echo "$line" | cut -d'|' -f2- | xargs -n1 | sort -u -t'#' -k2 -n | paste -sd',' - | sed 's/,/, /g')
+                  CHANGELOG="$CHANGELOG
+          - Thanks to [@$USERNAME](https://github.com/$USERNAME) for $PRS"
+                done <<< "$THANKS"
+              fi
+
               # Add comparison link
               CHANGELOG="$CHANGELOG
 
