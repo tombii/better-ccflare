@@ -413,10 +413,30 @@ describe("UsageCollector request lifecycle", () => {
 		}
 	});
 
-	it("falls back to the default pricing deadline for an invalid override", () => {
-		process.env.CF_PRICING_TIMEOUT_MS = "60001";
-		const { collector } = harness();
-		expect(testable(collector).pricingTimeoutMs).toBe(5_000);
+	it("accepts only integer pricing deadlines in the inclusive supported range", () => {
+		const cases: Array<{
+			configured: string | undefined;
+			expected: number;
+		}> = [
+			{ configured: "1", expected: 1 },
+			{ configured: "60000", expected: 60_000 },
+			{ configured: "0", expected: 5_000 },
+			{ configured: "60001", expected: 5_000 },
+			{ configured: "1.5", expected: 5_000 },
+			{ configured: "not-a-number", expected: 5_000 },
+			{ configured: undefined, expected: 5_000 },
+		];
+
+		for (const { configured, expected } of cases) {
+			if (configured === undefined) {
+				delete process.env.CF_PRICING_TIMEOUT_MS;
+			} else {
+				process.env.CF_PRICING_TIMEOUT_MS = configured;
+			}
+
+			const { collector } = harness();
+			expect(testable(collector).pricingTimeoutMs).toBe(expected);
+		}
 	});
 
 	it("evicts a stream that exceeds the inactivity timeout", async () => {
