@@ -5,6 +5,10 @@ import {
 } from "@better-ccflare/http-common";
 import { Logger } from "@better-ccflare/logger";
 import type { Account, RateLimitReason } from "@better-ccflare/types";
+import {
+	ANTHROPIC_TERMINAL_RECOVERY_GRACE_MS,
+	createAnthropicTerminalRecoveryStream,
+} from "./anthropic-terminal-recovery";
 import type { ProxyContext } from "./handlers";
 import { applyRateLimitCooldown } from "./handlers/rate-limit-cooldown";
 import { createSseRateLimitSniffer } from "./handlers/sse-rate-limit-sniffer";
@@ -284,7 +288,40 @@ export async function forwardToClient(
 			}
 		};
 
-		const passthroughBody = teeStream(response.body, {
+		const isNativeAnthropicMessagesStream =
+			method === "POST" &&
+			path === "/v1/messages" &&
+			ctx.provider.name === "anthropic" &&
+			requestHeaders.has("anthropic-version") &&
+			response.ok &&
+			response.headers
+				.get("content-type")
+				?.toLowerCase()
+				.includes("text/event-stream");
+		const responseBody = isNativeAnthropicMessagesStream
+			? createAnthropicTerminalRecoveryStream(response.body, {
+					onRecovery(reason) {
+						log.warn("anthropic_terminal_message_stop_recovered", {
+							requestId,
+							accountId: account?.id ?? null,
+							provider: ctx.provider.name,
+							reason,
+							gracePeriodMs: ANTHROPIC_TERMINAL_RECOVERY_GRACE_MS,
+						});
+					},
+					onCancelError(error, reason) {
+						log.warn("anthropic_terminal_upstream_cancel_failed", {
+							requestId,
+							accountId: account?.id ?? null,
+							provider: ctx.provider.name,
+							reason,
+							errorType: error instanceof Error ? error.name : typeof error,
+						});
+					},
+				})
+			: response.body;
+
+		const passthroughBody = teeStream(responseBody, {
 			onChunk,
 			onClose,
 			onError,
