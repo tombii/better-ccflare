@@ -52,6 +52,15 @@ let lastSweepAt = 0;
 interface SessionWindow {
 	times: number[];
 	warned: boolean;
+	/**
+	 * Timestamp of the most recent request, admitted or rejected. Eviction and
+	 * idle sweeps key off this instead of `times[times.length - 1]`: rejected
+	 * requests are deliberately not appended to `times` (see below), so a
+	 * session stuck over budget would otherwise look idle to the sweep while
+	 * it keeps retrying, get its whole window evicted, and restart counting
+	 * from zero on its next request.
+	 */
+	lastSeen: number;
 }
 
 const sessions = new Map<string, SessionWindow>();
@@ -93,9 +102,10 @@ export function recordSessionRequest(
 		if (sessions.size >= MAX_TRACKED_SESSIONS) {
 			sweep(now);
 		}
-		window = { times: [], warned: false };
+		window = { times: [], warned: false, lastSeen: now };
 		sessions.set(sessionKey, window);
 	}
+	window.lastSeen = now;
 
 	// Timestamps are appended in order, so expired entries form a prefix.
 	// Splice that prefix off only when something actually expired: filtering
@@ -192,8 +202,7 @@ function readLimit(envName: string, fallback: number): number {
 function sweep(now: number): void {
 	const cutoff = now - WINDOW_MS;
 	for (const [key, window] of sessions) {
-		const newest = window.times[window.times.length - 1];
-		if (newest === undefined || newest <= cutoff) {
+		if (window.lastSeen <= cutoff) {
 			sessions.delete(key);
 		}
 	}
@@ -201,14 +210,13 @@ function sweep(now: number): void {
 	// active sessions first. Insertion order would evict a long-running
 	// runaway session (the exact thing being governed) and let it restart
 	// counting from zero; least-recent-activity eviction keeps the busiest
-	// offenders tracked.
+	// offenders tracked. `lastSeen` (not `times[times.length - 1]`) is the
+	// activity signal so a rejected-and-retrying session, which stops
+	// appending to `times`, doesn't look idle and get evicted anyway.
 	if (sessions.size >= MAX_TRACKED_SESSIONS) {
 		const excess = sessions.size - MAX_TRACKED_SESSIONS + 1;
 		const byLastActivity = [...sessions.entries()]
-			.map(
-				([key, window]) =>
-					[key, window.times[window.times.length - 1] ?? 0] as const,
-			)
+			.map(([key, window]) => [key, window.lastSeen] as const)
 			.sort((a, b) => a[1] - b[1]);
 		for (let i = 0; i < excess && i < byLastActivity.length; i++) {
 			sessions.delete(byLastActivity[i][0]);

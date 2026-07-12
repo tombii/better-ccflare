@@ -128,6 +128,63 @@ describe("recordSessionRequest", () => {
 		const hotAgain = recordSessionRequest("hot", T0 + 12_000);
 		expect(hotAgain?.count).toBe(2);
 	});
+
+	test("capacity eviction does not reset a rejected session that keeps retrying", () => {
+		process.env[SESSION_GOVERNOR_MAX_ENV] = "3";
+		// Push "offender" over budget, then have it retry without ever being
+		// admitted again — rejected requests are not appended to `times`, so
+		// eviction must not treat this session as idle just because `times`
+		// stopped growing.
+		recordSessionRequest("offender", T0);
+		recordSessionRequest("offender", T0 + 1_000);
+		recordSessionRequest("offender", T0 + 2_000);
+		expect(recordSessionRequest("offender", T0 + 3_000)?.rejected).toBe(true);
+
+		// Fill the tracker to capacity, interleaving an "offender" retry with
+		// every filler so its lastSeen stays as current as everyone else's —
+		// it is being actively (if unsuccessfully) retried the whole time.
+		for (let i = 0; i < 2048; i++) {
+			const t = T0 + 4_000 + i * 2;
+			recordSessionRequest(`filler-${i}`, t);
+			expect(recordSessionRequest("offender", t + 1)?.rejected).toBe(true);
+		}
+
+		// Push past capacity — this must evict a filler, not "offender", since
+		// "offender" was just as recently seen as any filler.
+		recordSessionRequest("overflow", T0 + 4_000 + 2048 * 2 + 10);
+
+		// "offender" must still be tracked with its full history, so it stays
+		// rejected instead of restarting at count === 1.
+		const stillOffending = recordSessionRequest(
+			"offender",
+			T0 + 4_000 + 2048 * 2 + 20,
+		);
+		expect(stillOffending?.rejected).toBe(true);
+	});
+
+	test("idle sweep does not evict a rejected session that keeps retrying", () => {
+		process.env[SESSION_GOVERNOR_MAX_ENV] = "3";
+		recordSessionRequest("offender", T0);
+		recordSessionRequest("offender", T0 + 1_000);
+		recordSessionRequest("offender", T0 + 2_000);
+		expect(recordSessionRequest("offender", T0 + 3_000)?.rejected).toBe(true);
+
+		// Retry every 6 minutes, well within the one-hour budget window (so
+		// the original burst has not expired and the session is still
+		// legitimately over budget) but crossing the 5-minute sweep interval
+		// several times. Each "other" request can trigger the periodic sweep;
+		// the offender's own retries keep its lastSeen current, so it must
+		// not be treated as idle and evicted mid-window.
+		let verdict: SessionGovernorVerdict | null = null;
+		for (let i = 1; i <= 9; i++) {
+			recordSessionRequest("other", T0 + i * 6 * 60_000);
+			verdict = recordSessionRequest("offender", T0 + i * 6 * 60_000 + 1);
+		}
+		// 54 minutes in, still inside the one-hour window of the original
+		// burst: it must still be rejected, not reset to count === 1.
+		expect(verdict?.rejected).toBe(true);
+		expect(verdict?.count).toBe(4);
+	});
 });
 
 describe("buildSessionRejectResponse", () => {
