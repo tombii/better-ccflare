@@ -14,6 +14,8 @@ export interface ResponsesRequest {
 	previous_response_id?: string | null;
 	max_output_tokens?: number;
 	store?: boolean;
+	/** Codex CLI's stable conversation identity for prompt-cache routing. */
+	prompt_cache_key?: string;
 }
 
 // ResponseItem union — all item types codex can send
@@ -181,6 +183,8 @@ export interface AnthropicRequest {
 	tool_choice?: AnthropicToolChoice;
 	max_tokens: number;
 	stream?: boolean;
+	/** Session identity surfaced the way Anthropic clients send it. */
+	metadata?: { user_id?: string };
 }
 
 export interface AnthropicMessage {
