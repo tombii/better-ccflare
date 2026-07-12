@@ -15,7 +15,13 @@ export type RateLimitReason =
 	/** Anthropic 429 with `overage-disabled-reason: out_of_credits` — credits/overage
 	 *  depleted for a specific model/beta (e.g. context-1m); account is NOT benched,
 	 *  request fails over. */
-	| "out_of_credits";
+	| "out_of_credits"
+	/** Anthropic 400 `invalid_request_error` for extra-usage credit depletion on
+	 *  OAuth accounts used by third-party apps (e.g. OpenCode). NOT account-wide/
+	 *  model-scoped in the rate-limit sense — the account is not benched, and by
+	 *  the time this is detected the response has typically already been passed
+	 *  through to the client. */
+	| "extra_usage_exhausted";
 
 // Usage data types for Anthropic accounts
 export interface UsageWindowData {

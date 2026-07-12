@@ -63,6 +63,35 @@ export function isAnthropicOutOfCredits(response: Response): boolean {
 	);
 }
 
+/**
+ * Anthropic returns this 400 `invalid_request_error` when a Claude OAuth
+ * account's "extra usage" credit balance is depleted for third-party-app
+ * traffic (e.g. OpenCode), as opposed to the plan's included quota. This is
+ * a billing-policy rejection, not a rate limit — callers must NOT bench the
+ * account, since some models/routes may still succeed; this exists purely
+ * for labeling in request history / the dashboard.
+ */
+export const EXTRA_USAGE_EXHAUSTED_REASON = "extra_usage_exhausted";
+
+export async function isAnthropicExtraUsageExhausted(
+	response: Response,
+): Promise<boolean> {
+	if (response.status !== 400) return false;
+	try {
+		const clone = response.clone();
+		const contentType = response.headers.get("content-type");
+		if (!contentType?.includes("application/json")) return false;
+		const json = await clone.json();
+		return (
+			json?.error?.type === "invalid_request_error" &&
+			typeof json?.error?.message === "string" &&
+			json.error.message.toLowerCase().includes("extra usage")
+		);
+	} catch {
+		return false;
+	}
+}
+
 const log = new Logger("AnthropicProvider");
 
 export class AnthropicProvider extends BaseProvider {
