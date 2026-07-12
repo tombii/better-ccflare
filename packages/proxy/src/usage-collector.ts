@@ -34,7 +34,7 @@ interface RequestState {
 		tokensPerSecond?: number;
 	};
 	lastActivity: number;
-	createdAt: number; // TTL tracking
+	createdAt: number; // Capacity eviction ordering
 	agentUsed?: string;
 	project?: string | null;
 	billingType?: string;
@@ -49,7 +49,9 @@ const log = new Logger("UsageCollector");
 
 // Limits to prevent unbounded growth
 const MAX_REQUESTS_MAP_SIZE = 10000;
-const REQUEST_TTL_MS = 2 * 60 * 1000; // 2 minutes - hard limit for request lifecycle
+const MAX_MISSING_STATE_WARNINGS = 1000;
+const DEFAULT_PRICING_TIMEOUT_MS = 5_000;
+const MAX_PRICING_TIMEOUT_MS = 60_000;
 const MAX_RESPONSE_BODY_BYTES = 256 * 1024; // 256KB - cap stored response body
 const MAX_REQUEST_BODY_BYTES = 4 * 1024 * 1024; // 4MB - afterburn needs full conversation history
 
@@ -60,6 +62,15 @@ function shouldLogRequest(path: string, status: number): boolean {
 		return false;
 	}
 	return true;
+}
+
+function getPricingTimeoutMs(): number {
+	const configured = Number(process.env.CF_PRICING_TIMEOUT_MS);
+	return Number.isSafeInteger(configured) &&
+		configured >= 1 &&
+		configured <= MAX_PRICING_TIMEOUT_MS
+		? configured
+		: DEFAULT_PRICING_TIMEOUT_MS;
 }
 
 // Project names are persisted to a single TEXT column and surfaced in the UI.
@@ -371,8 +382,8 @@ function freeRequestState(state: RequestState): void {
 	state.chunksBytes = 0;
 	state.buffer = "";
 	// Release request body and headers held in startMessage.
-	// Without this, orphaned requests retain full request bodies
-	// for the TTL duration (up to 2 minutes). See #67.
+	// Without this, orphaned requests retain full request bodies until the
+	// inactivity cleanup configured by CF_STREAM_TIMEOUT_MS runs. See #67.
 	state.startMessage.requestBody = null;
 	state.startMessage.requestHeaders = {};
 	state.startMessage.responseHeaders = {};
@@ -391,10 +402,12 @@ export interface UsageCollectorHealth {
  */
 export class UsageCollector {
 	private readonly requests = new Map<string, RequestState>();
+	private readonly missingStateWarnings = new Set<string>();
 	private readonly pendingHandleEnds = new Set<Promise<void>>();
 	private cleanupInterval: Timer | null = null;
 
 	private readonly maxBufferSize: number;
+	private readonly pricingTimeoutMs: number;
 	private readonly timeoutMs: number;
 
 	constructor(
@@ -408,6 +421,7 @@ export class UsageCollector {
 				process.env.CF_STREAM_USAGE_BUFFER_KB ||
 					BUFFER_SIZES.STREAM_USAGE_BUFFER_KB,
 			) * 1024;
+		this.pricingTimeoutMs = getPricingTimeoutMs();
 		this.timeoutMs = Number(
 			process.env.CF_STREAM_TIMEOUT_MS || TIME_CONSTANTS.STREAM_TIMEOUT_DEFAULT,
 		);
@@ -416,6 +430,10 @@ export class UsageCollector {
 	}
 
 	handleStart(msg: StartMessage): void {
+		// A reused request ID is a new lifecycle and should be eligible for a fresh
+		// missing-state warning if it is later evicted.
+		this.missingStateWarnings.delete(msg.requestId);
+
 		// Check if we should skip logging this request
 		const shouldSkip = !shouldLogRequest(msg.path, msg.responseStatus);
 
@@ -438,7 +456,8 @@ export class UsageCollector {
 				);
 
 				for (let i = 0; i < toRemove; i++) {
-					const [id] = sortedByAge[i];
+					const [id, state] = sortedByAge[i];
+					freeRequestState(state);
 					this.requests.delete(id);
 				}
 			}
@@ -535,7 +554,7 @@ export class UsageCollector {
 	handleChunk(requestId: string, data: Uint8Array): void {
 		const state = this.requests.get(requestId);
 		if (!state) {
-			log.warn(`No state found for request ${requestId}`);
+			this.warnMissingState(requestId);
 			return;
 		}
 
@@ -589,17 +608,20 @@ export class UsageCollector {
 	private async _handleEndInternal(msg: EndMessage): Promise<void> {
 		const state = this.requests.get(msg.requestId);
 		if (!state) {
-			log.warn(`No state found for request ${msg.requestId}`);
+			this.warnMissingState(msg.requestId);
 			return;
 		}
+		// Atomically transfer ownership to this finalizer before its first await.
+		// This keeps capacity cleanup from freeing the state while pricing resolves,
+		// and prevents this lifecycle from later deleting a reused request ID.
+		this.requests.delete(msg.requestId);
 
 		const { startMessage } = state;
 		const responseTime = Date.now() - startMessage.timestamp;
 
 		// Skip all database operations for ignored requests
 		if (state.shouldSkipLogging) {
-			// Clean up state without logging
-			this.requests.delete(msg.requestId);
+			freeRequestState(state);
 			return;
 		}
 
@@ -629,6 +651,7 @@ export class UsageCollector {
 
 		// Calculate total tokens and cost
 		if (state.usage.model) {
+			const model = state.usage.model;
 			// Use provider's authoritative count if available, fallback to computed
 			const finalOutputTokens =
 				state.providerFinalOutputTokens ??
@@ -646,12 +669,17 @@ export class UsageCollector {
 				(state.usage.cacheReadInputTokens || 0) +
 				(state.usage.cacheCreationInputTokens || 0);
 
-			state.usage.costUsd = await estimateCostUSD(state.usage.model, {
-				inputTokens: state.usage.inputTokens,
-				outputTokens: finalOutputTokens,
-				cacheReadInputTokens: state.usage.cacheReadInputTokens,
-				cacheCreationInputTokens: state.usage.cacheCreationInputTokens,
-			});
+			state.usage.costUsd = await this.estimateCostWithDeadline(
+				startMessage.requestId,
+				model,
+				() =>
+					estimateCostUSD(model, {
+						inputTokens: state.usage.inputTokens,
+						outputTokens: finalOutputTokens,
+						cacheReadInputTokens: state.usage.cacheReadInputTokens,
+						cacheCreationInputTokens: state.usage.cacheCreationInputTokens,
+					}),
+			);
 
 			// Calculate tokens per second - zai specific vs other providers
 			if (finalOutputTokens > 0) {
@@ -941,29 +969,15 @@ export class UsageCollector {
 			state.usage.cacheCreationInputTokens,
 		);
 		this.onSummary(summary);
-
-		// Clean up
-		this.requests.delete(msg.requestId);
 	}
 
 	private cleanupStaleRequests(): void {
 		const now = Date.now();
 		let removedCount = 0;
 
-		// 1. Remove TTL-expired requests (hard limit)
-		for (const [id, state] of this.requests) {
-			const age = now - state.createdAt;
-			if (age > REQUEST_TTL_MS) {
-				log.warn(
-					`Request ${id} exceeded TTL (age: ${Math.round(age / 1000)}s, limit: ${REQUEST_TTL_MS / 1000}s), removing...`,
-				);
-				freeRequestState(state);
-				this.requests.delete(id);
-				removedCount++;
-			}
-		}
-
-		// 2. Remove inactive requests (orphaned)
+		// 1. Remove inactive requests (orphaned). A stream may legitimately run
+		// for much longer than the inactivity timeout, so lifecycle age alone must
+		// never evict it while chunks (including provider pings) are still arriving.
 		for (const [id, state] of this.requests) {
 			const inactivity = now - state.lastActivity;
 			if (inactivity > this.timeoutMs) {
@@ -976,7 +990,7 @@ export class UsageCollector {
 			}
 		}
 
-		// 3. Enforce size limit by evicting oldest entries
+		// 2. Enforce size limit by evicting oldest entries
 		if (this.requests.size > MAX_REQUESTS_MAP_SIZE) {
 			const excess = this.requests.size - MAX_REQUESTS_MAP_SIZE;
 			const sortedByAge = Array.from(this.requests.entries()).sort(
@@ -999,6 +1013,45 @@ export class UsageCollector {
 			log.info(
 				`requests.size=${this.requests.size} after cleanup (removed=${removedCount})`,
 			);
+		}
+	}
+
+	private async estimateCostWithDeadline(
+		requestId: string,
+		model: string,
+		estimate: () => Promise<number>,
+	): Promise<number> {
+		let timeoutHandle: Timer | undefined;
+		const timeout = new Promise<number>((resolve) => {
+			timeoutHandle = setTimeout(() => {
+				log.warn("Pricing estimate timed out; using zero-cost fallback", {
+					model,
+					requestId,
+					timeoutMs: this.pricingTimeoutMs,
+				});
+				resolve(0);
+			}, this.pricingTimeoutMs);
+		});
+
+		const estimatePromise = Promise.resolve().then(estimate);
+		try {
+			return await Promise.race([estimatePromise, timeout]);
+		} finally {
+			if (timeoutHandle) clearTimeout(timeoutHandle);
+		}
+	}
+
+	private warnMissingState(requestId: string): void {
+		if (this.missingStateWarnings.has(requestId)) return;
+
+		log.warn(`No state found for request ${requestId}`);
+		this.missingStateWarnings.add(requestId);
+
+		if (this.missingStateWarnings.size > MAX_MISSING_STATE_WARNINGS) {
+			const oldestRequestId = this.missingStateWarnings.keys().next().value;
+			if (oldestRequestId !== undefined) {
+				this.missingStateWarnings.delete(oldestRequestId);
+			}
 		}
 	}
 
