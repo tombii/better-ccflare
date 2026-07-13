@@ -24,6 +24,104 @@ const mockAccountRepository = {
 	hasAccountsForProvider: vi.fn(),
 };
 
+describe("models.dev pricing", () => {
+	let originalFetch: typeof global.fetch;
+	let originalOffline: string | undefined;
+
+	beforeEach(() => {
+		originalFetch = global.fetch;
+		originalOffline = process.env.CF_PRICING_OFFLINE;
+		delete process.env.CF_PRICING_OFFLINE;
+		resetNanoGPTPricingCacheForTest();
+		vi.clearAllMocks();
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+		global.fetch = originalFetch;
+		if (originalOffline === undefined) {
+			delete process.env.CF_PRICING_OFFLINE;
+		} else {
+			process.env.CF_PRICING_OFFLINE = originalOffline;
+		}
+		resetNanoGPTPricingCacheForTest();
+		vi.restoreAllMocks();
+	});
+
+	it("shares one cold models.dev fetch across concurrent estimates", async () => {
+		let resolveModelsDev!: (response: Response) => void;
+		const modelsDevResponse = new Promise<Response>((resolve) => {
+			resolveModelsDev = resolve;
+		});
+		const fetchMock = vi.fn((input: string | URL | Request) => {
+			if (String(input) === "https://models.dev/api.json") {
+				return modelsDevResponse;
+			}
+			return Promise.resolve({
+				ok: true,
+				json: async () => ({ object: "list", data: [] }),
+			} as Response);
+		});
+		global.fetch = fetchMock as typeof global.fetch;
+
+		const estimates = [
+			estimateCostUSD("claude-sonnet-4-20250514", { outputTokens: 1 }),
+			estimateCostUSD("claude-sonnet-4-20250514", { outputTokens: 2 }),
+		];
+		await Promise.resolve();
+		await Promise.resolve();
+
+		const modelsDevCalls = fetchMock.mock.calls.filter(
+			([input]) => String(input) === "https://models.dev/api.json",
+		).length;
+		resolveModelsDev({
+			ok: true,
+			json: async () => ({}),
+		} as Response);
+		await Promise.all(estimates);
+
+		expect(modelsDevCalls).toBe(1);
+	});
+
+	it("aborts a stalled models.dev fetch and falls back to bundled pricing", async () => {
+		vi.useFakeTimers();
+		let modelsDevSignal: AbortSignal | undefined;
+		const fetchMock = vi.fn(
+			(input: string | URL | Request, init?: RequestInit) => {
+				if (String(input) !== "https://models.dev/api.json") {
+					return Promise.resolve({
+						ok: true,
+						json: async () => ({ object: "list", data: [] }),
+					} as Response);
+				}
+
+				modelsDevSignal = init?.signal ?? undefined;
+				return new Promise<Response>((_resolve, reject) => {
+					modelsDevSignal?.addEventListener(
+						"abort",
+						() => reject(new DOMException("aborted", "AbortError")),
+						{ once: true },
+					);
+					// Test-only escape hatch: the pre-fix fetch has no signal, so make
+					// the failing test settle instead of leaving a permanent promise.
+					setTimeout(() => reject(new Error("test fetch guard expired")), 10_001);
+				});
+			},
+		);
+		global.fetch = fetchMock as typeof global.fetch;
+
+		const estimate = estimateCostUSD("claude-sonnet-4-20250514", {
+			outputTokens: 1_000_000,
+		});
+		vi.advanceTimersByTime(10_001);
+		const cost = await estimate;
+
+		expect(modelsDevSignal).toBeInstanceOf(AbortSignal);
+		expect(modelsDevSignal?.aborted).toBe(true);
+		expect(cost).toBe(15);
+	});
+});
+
 describe("NanoGPT Pricing", () => {
 	beforeEach(() => {
 		// Clear any existing intervals
