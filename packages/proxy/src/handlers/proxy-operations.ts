@@ -747,7 +747,12 @@ export async function proxyWithAccount(
 		// mentioning "extra usage") is not a "model unavailable" condition and would
 		// otherwise never be reached — isModelUnavailableError only matches not_found_error,
 		// model_not_found, "model not found"/"does not exist", or ResourceNotFoundException.
+		// Gated to Anthropic/Claude-OAuth accounts only — the body-shape match
+		// (invalid_request_error + "extra usage") is specific enough for Anthropic's
+		// API but could otherwise coincidentally match an arbitrary OpenAI-compatible
+		// provider's error text and mislabel its billing state.
 		if (
+			isClaudeProvider &&
 			rawResponse.status === 400 &&
 			(await isAnthropicExtraUsageExhausted(rawResponse.clone()))
 		) {
