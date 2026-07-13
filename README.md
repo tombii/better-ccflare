@@ -803,7 +803,7 @@ Full documentation available in [`docs/`](docs/):
 **Not supported:**
 - ARM32 devices (Raspberry Pi Zero, Pi 1, Pi 2, or 32-bit OS)
 
-## Acknowledgments
+## Acknowledgements
 
 Inspired by [snipeship/ccflare](https://github.com/snipeship/ccflare) - thanks for the original idea and implementation!
 
