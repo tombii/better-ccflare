@@ -69,6 +69,7 @@ import {
 	type StrategyStore,
 } from "@better-ccflare/types";
 import { serve } from "bun";
+import { runGracefulShutdownSequence } from "./shutdown-sequence";
 
 /**
  * Build a load-balancing strategy from its enum name. Add new strategies here
@@ -1624,6 +1625,74 @@ const SHUTDOWN_WATCHDOG_MS = 30_000;
 // invocation races on the same Bun server, worker, and DB writer.
 let isShuttingDown = false;
 
+function cleanupBackgroundWorkForShutdown(): void {
+	// Stop scheduler triggers so they don't add load while HTTP connections drain.
+	// These calls only stop the recurring trigger; any in-flight task they already
+	// kicked off continues until it finishes naturally.
+	if (stopRetentionJob) {
+		stopRetentionJob();
+		stopRetentionJob = null;
+	}
+	if (stopOAuthCleanupJob) {
+		stopOAuthCleanupJob();
+		stopOAuthCleanupJob = null;
+	}
+	if (stopRateLimitCleanupJob) {
+		stopRateLimitCleanupJob();
+		stopRateLimitCleanupJob = null;
+	}
+	if (stopDataCleanupJob) {
+		stopDataCleanupJob();
+		stopDataCleanupJob = null;
+	}
+	if (stopWalCheckpointJob) {
+		stopWalCheckpointJob();
+		stopWalCheckpointJob = null;
+	}
+	if (stopIntegritySchedulerJob) {
+		stopIntegritySchedulerJob();
+		stopIntegritySchedulerJob = null;
+	}
+	if (stopModelCatalogRefreshJob) {
+		stopModelCatalogRefreshJob();
+		stopModelCatalogRefreshJob = null;
+	}
+	if (autoRefreshScheduler) {
+		autoRefreshScheduler.stop();
+		autoRefreshScheduler = null;
+	}
+	if (cacheKeepaliveScheduler) {
+		cacheKeepaliveScheduler.stop();
+		cacheKeepaliveScheduler = null;
+	}
+
+	if (memoryMonitorInterval) {
+		clearInterval(memoryMonitorInterval);
+		memoryMonitorInterval = null;
+	}
+
+	stopGlobalTokenHealthChecks();
+
+	// Unregister this server's Codex on-demand usage refresher so the module-level
+	// registry doesn't keep a stale callback after restart.
+	if (registeredServerId) {
+		unregisterCodexUsageRefresher(registeredServerId);
+		registeredServerId = null;
+	}
+
+	if (usagePollingRetryTimeouts.size > 0) {
+		console.log(
+			`Clearing ${usagePollingRetryTimeouts.size} pending usage polling retry timeout(s)...`,
+		);
+		for (const timeoutId of usagePollingRetryTimeouts.values()) {
+			clearTimeout(timeoutId);
+		}
+		usagePollingRetryTimeouts.clear();
+	}
+
+	usageCache.clear();
+}
+
 // Graceful shutdown handler
 async function handleGracefulShutdown(signal: string) {
 	if (isShuttingDown) {
@@ -1648,80 +1717,14 @@ async function handleGracefulShutdown(signal: string) {
 	watchdog.unref();
 
 	try {
-		// Stop scheduler triggers first so they don't add load while draining.
-		// These calls only stop the recurring trigger; any in-flight task they
-		// already kicked off continues until it finishes naturally.
-		if (stopRetentionJob) {
-			stopRetentionJob();
-			stopRetentionJob = null;
-		}
-		if (stopOAuthCleanupJob) {
-			stopOAuthCleanupJob();
-			stopOAuthCleanupJob = null;
-		}
-		if (stopRateLimitCleanupJob) {
-			stopRateLimitCleanupJob();
-			stopRateLimitCleanupJob = null;
-		}
-		if (stopDataCleanupJob) {
-			stopDataCleanupJob();
-			stopDataCleanupJob = null;
-		}
-		if (stopWalCheckpointJob) {
-			stopWalCheckpointJob();
-			stopWalCheckpointJob = null;
-		}
-		if (stopIntegritySchedulerJob) {
-			stopIntegritySchedulerJob();
-			stopIntegritySchedulerJob = null;
-		}
-		if (stopModelCatalogRefreshJob) {
-			stopModelCatalogRefreshJob();
-			stopModelCatalogRefreshJob = null;
-		}
-		if (autoRefreshScheduler) {
-			autoRefreshScheduler.stop();
-			autoRefreshScheduler = null;
-		}
-		if (cacheKeepaliveScheduler) {
-			cacheKeepaliveScheduler.stop();
-			cacheKeepaliveScheduler = null;
-		}
-
-		// Stop memory monitoring
-		if (memoryMonitorInterval) {
-			clearInterval(memoryMonitorInterval);
-			memoryMonitorInterval = null;
-		}
-
-		// Stop token health monitoring
-		stopGlobalTokenHealthChecks();
-
-		// Unregister this server's Codex on-demand usage refresher so the
-		// module-level registry doesn't keep a stale callback after restart.
-		// Mirrors the cleanup pattern used by the schedulers above.
-		if (registeredServerId) {
-			unregisterCodexUsageRefresher(registeredServerId);
-			registeredServerId = null;
-		}
-
-		// Clear all pending usage polling retry timeouts
-		if (usagePollingRetryTimeouts.size > 0) {
-			console.log(
-				`Clearing ${usagePollingRetryTimeouts.size} pending usage polling retry timeout(s)...`,
-			);
-			for (const [
-				_accountId,
-				timeoutId,
-			] of usagePollingRetryTimeouts.entries()) {
-				clearTimeout(timeoutId);
-			}
-			usagePollingRetryTimeouts.clear();
-		}
-
-		usageCache.clear(); // Stop all usage polling
-		await drainUsageCollector();
-		await shutdown();
+		const stoppingServer = serverInstance;
+		serverInstance = null;
+		await runGracefulShutdownSequence({
+			server: stoppingServer,
+			cleanupBackgroundWork: cleanupBackgroundWorkForShutdown,
+			drainUsage: drainUsageCollector,
+			shutdownCore: shutdown,
+		});
 		console.log("✅ Shutdown complete");
 		process.exit(0);
 	} catch (error) {
