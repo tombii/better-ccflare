@@ -245,6 +245,8 @@ interface NanoGPTApiResponse {
 	data: NanoGPTModel[];
 }
 
+const MODELS_DEV_FETCH_TIMEOUT_MS = 10_000;
+
 // Cache constants for NanoGPT pricing
 export const NANOGPT_CACHE_DURATION_MS = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
 
@@ -258,6 +260,7 @@ class PriceCatalogue {
 	private static instance: PriceCatalogue;
 	private priceData: ApiResponse | null = null;
 	private lastFetch = 0;
+	private remoteFetchPromise: Promise<ApiResponse | null> | null = null;
 	private warnedModels = new Set<string>();
 	private warnedRatesUnknownModels = new Set<string>();
 	private logger: Logger | null = null;
@@ -483,8 +486,30 @@ class PriceCatalogue {
 			return null;
 		}
 
+		if (this.remoteFetchPromise) return this.remoteFetchPromise;
+
+		const fetchPromise = this.fetchRemoteOnce();
+		this.remoteFetchPromise = fetchPromise;
 		try {
-			const response = await fetch("https://models.dev/api.json");
+			return await fetchPromise;
+		} finally {
+			if (this.remoteFetchPromise === fetchPromise) {
+				this.remoteFetchPromise = null;
+			}
+		}
+	}
+
+	private async fetchRemoteOnce(): Promise<ApiResponse | null> {
+		const controller = new AbortController();
+		const timeoutId = setTimeout(
+			() => controller.abort(),
+			MODELS_DEV_FETCH_TIMEOUT_MS,
+		);
+
+		try {
+			const response = await fetch("https://models.dev/api.json", {
+				signal: controller.signal,
+			});
 			if (!response.ok) {
 				throw new Error(`HTTP ${response.status}: ${response.statusText}`);
 			}
@@ -494,6 +519,8 @@ class PriceCatalogue {
 		} catch (error) {
 			this.logger?.warn("Failed to fetch pricing data: %s", error);
 			return null;
+		} finally {
+			clearTimeout(timeoutId);
 		}
 	}
 
