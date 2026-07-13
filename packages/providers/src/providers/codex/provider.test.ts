@@ -1,7 +1,49 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import type { Account } from "@better-ccflare/types";
 import { fetchCodexUsageOnDemand } from "./on-demand-fetch";
-import { CodexProvider } from "./provider";
+import {
+	CODEX_CACHE_KEY_MODE_ENV,
+	CODEX_PROMPT_CACHE_KEY_ENV,
+	CodexProvider,
+} from "./provider";
 import { parseCodexUsageHeaders } from "./usage";
+
+const codexAccount = (overrides: Partial<Account> = {}): Account => ({
+	id: "codex-1",
+	name: "codex-test",
+	provider: "codex",
+	api_key: null,
+	refresh_token: "refresh-token",
+	access_token: "access-token",
+	expires_at: Date.now() + 60_000,
+	request_count: 0,
+	total_requests: 0,
+	last_used: null,
+	created_at: Date.now(),
+	rate_limited_until: null,
+	rate_limited_reason: null,
+	rate_limited_at: null,
+	session_start: null,
+	session_request_count: 0,
+	paused: false,
+	rate_limit_reset: null,
+	rate_limit_status: null,
+	rate_limit_remaining: null,
+	priority: 50,
+	auto_fallback_enabled: true,
+	auto_refresh_enabled: true,
+	auto_pause_on_overage_enabled: false,
+	peak_hours_pause_enabled: false,
+	custom_endpoint: null,
+	model_mappings: null,
+	cross_region_mode: null,
+	model_fallbacks: null,
+	billing_type: null,
+	pause_reason: null,
+	refresh_token_issued_at: null,
+	consecutive_rate_limits: 0,
+	...overrides,
+});
 
 const sseBody = (lines: string[]) => `${lines.join("\n")}\n`;
 const eventLine = (name: string, data: unknown) => [
@@ -1843,6 +1885,138 @@ describe("CodexProvider.transformRequestBody", () => {
 		const body = await transformed.json();
 
 		expect(body.model).toBe("gpt-5.4-mini");
+	});
+});
+
+describe("CodexProvider prompt_cache_key derivation", () => {
+	afterEach(() => {
+		delete process.env[CODEX_PROMPT_CACHE_KEY_ENV];
+		delete process.env[CODEX_CACHE_KEY_MODE_ENV];
+	});
+
+	const transform = async (
+		payload: Record<string, unknown>,
+		account?: Account,
+	) => {
+		const request = new Request("https://example.com/v1/messages", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				model: "claude-3-5-sonnet-20241022",
+				max_tokens: 10,
+				metadata: {
+					user_id: JSON.stringify({
+						session_id: "11111111-1111-4111-8111-111111111111",
+					}),
+				},
+				messages: [{ role: "user", content: "hello" }],
+				...payload,
+			}),
+		});
+		return new CodexProvider()
+			.transformRequestBody(request, account)
+			.then((r) => r.json());
+	};
+
+	it("omits prompt_cache_key unless enabled", async () => {
+		const body = await transform({});
+		expect(body.prompt_cache_key).toBeUndefined();
+	});
+
+	it("attaches prompt_cache_key when the account targets OpenAI's real endpoint", async () => {
+		process.env[CODEX_PROMPT_CACHE_KEY_ENV] = "1";
+		const noAccount = await transform({});
+		const openaiAccount = await transform(
+			{},
+			codexAccount({ custom_endpoint: "https://api.openai.com/v1" }),
+		);
+		expect(noAccount.prompt_cache_key).toMatch(/^ccflare-convo-[0-9a-f]{48}$/);
+		expect(openaiAccount.prompt_cache_key).toMatch(
+			/^ccflare-convo-[0-9a-f]{48}$/,
+		);
+	});
+
+	it("omits prompt_cache_key for custom/self-hosted OpenAI-compatible endpoints even when enabled", async () => {
+		process.env[CODEX_PROMPT_CACHE_KEY_ENV] = "1";
+		const body = await transform(
+			{},
+			codexAccount({
+				custom_endpoint: "https://my-openai-proxy.example.com/v1",
+			}),
+		);
+		expect(body.prompt_cache_key).toBeUndefined();
+	});
+
+	it("conversation keys are stable across turns and distinct across conversations", async () => {
+		process.env[CODEX_PROMPT_CACHE_KEY_ENV] = "1";
+		const turn1 = await transform({
+			system: "main loop system prompt",
+			messages: [{ role: "user", content: "task A" }],
+		});
+		// Same conversation one turn later: identical first message, longer tail.
+		const turn2 = await transform({
+			system: "main loop system prompt",
+			messages: [
+				{ role: "user", content: "task A" },
+				{ role: "assistant", content: "working on it" },
+				{ role: "user", content: "continue" },
+			],
+		});
+		// Sibling subagent: same session and system, different first message.
+		const sibling = await transform({
+			system: "main loop system prompt",
+			messages: [{ role: "user", content: "task B" }],
+		});
+		// Different agent type: same first message, different system prompt.
+		const otherAgent = await transform({
+			system: "subagent system prompt",
+			messages: [{ role: "user", content: "task A" }],
+		});
+
+		expect(turn1.prompt_cache_key).toMatch(/^ccflare-convo-[0-9a-f]{48}$/);
+		expect((turn1.prompt_cache_key as string).length).toBeLessThanOrEqual(64);
+		expect(turn1.prompt_cache_key).not.toContain("11111111");
+		expect(turn2.prompt_cache_key).toBe(turn1.prompt_cache_key);
+		expect(sibling.prompt_cache_key).not.toBe(turn1.prompt_cache_key);
+		expect(otherAgent.prompt_cache_key).not.toBe(turn1.prompt_cache_key);
+	});
+
+	it("session mode keys the whole session identically", async () => {
+		process.env[CODEX_PROMPT_CACHE_KEY_ENV] = "1";
+		process.env[CODEX_CACHE_KEY_MODE_ENV] = "session";
+		const first = await transform({
+			messages: [{ role: "user", content: "task A" }],
+		});
+		const other = await transform({
+			messages: [{ role: "user", content: "completely different task" }],
+		});
+		expect(first.prompt_cache_key).toMatch(/^ccflare-session-[0-9a-f]{48}$/);
+		expect(other.prompt_cache_key).toBe(first.prompt_cache_key);
+	});
+
+	it("differing session ids produce differing keys, case-insensitively", async () => {
+		process.env[CODEX_PROMPT_CACHE_KEY_ENV] = "1";
+		const withSession = (sessionId: string) =>
+			transform({
+				metadata: { user_id: JSON.stringify({ session_id: sessionId }) },
+			});
+		const lower = await withSession("11111111-1111-4111-8111-111111111111");
+		const upper = await withSession(
+			"11111111-1111-4111-8111-111111111111".toUpperCase(),
+		);
+		const different = await withSession("22222222-2222-4222-8222-222222222222");
+		expect(upper.prompt_cache_key).toBe(lower.prompt_cache_key);
+		expect(different.prompt_cache_key).not.toBe(lower.prompt_cache_key);
+	});
+
+	it("omits prompt_cache_key for malformed session metadata", async () => {
+		process.env[CODEX_PROMPT_CACHE_KEY_ENV] = "1";
+		const noMeta = await transform({ metadata: { user_id: "not-json" } });
+		expect(noMeta.prompt_cache_key).toBeUndefined();
+		const badUuid = await transform({
+			metadata: { user_id: JSON.stringify({ session_id: "not-a-uuid" }) },
+		});
+		expect(badUuid.prompt_cache_key).toBeUndefined();
 	});
 });
 
