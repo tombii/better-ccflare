@@ -63,6 +63,7 @@ const RATE_LIMIT_REASONS = new Set<RateLimitReason>([
 	"upstream_529_overloaded_with_reset",
 	"upstream_529_overloaded_no_reset",
 	"out_of_credits",
+	"extra_usage_exhausted",
 ]);
 
 function toRateLimitReason(v: string | null): RateLimitReason | null {

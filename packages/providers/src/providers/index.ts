@@ -2,6 +2,8 @@ export { AlibabaCodingPlanProvider } from "./alibaba-coding-plan/index";
 export {
 	AnthropicOAuthProvider,
 	AnthropicProvider,
+	EXTRA_USAGE_EXHAUSTED_REASON,
+	isAnthropicExtraUsageExhausted,
 	isAnthropicOutOfCredits,
 	OUT_OF_CREDITS_REASON,
 } from "./anthropic/index";

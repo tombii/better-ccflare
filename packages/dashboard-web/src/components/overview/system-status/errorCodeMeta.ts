@@ -69,6 +69,20 @@ const KNOWN_ERROR_META: Record<
 			"Top up the account's credits or raise its overage allowance. Meanwhile, traffic for other models continues to use this account, and the rejected model shifts to other accounts.",
 		severity: "error",
 	},
+	extra_usage_exhausted: {
+		title: "Extra usage credits depleted",
+		description:
+			"Anthropic returned 400 invalid_request_error: this OAuth account's " +
+			"extra-usage credit balance is $0. Anthropic bills third-party-app " +
+			"traffic on Claude OAuth accounts from a separate extra-usage pool, " +
+			"not the plan's included quota — Haiku requests may still succeed " +
+			"since routing/exemption can differ by model.",
+		suggestion:
+			"Add credits or enable auto-reload at claude.ai/settings/usage. This " +
+			"is an Anthropic billing state, not a proxy failure — the account " +
+			"stays in rotation and the request is passed through unchanged.",
+		severity: "error",
+	},
 };
 
 function getModelFallbackMeta(context?: ErrorContext): ErrorMeta {
