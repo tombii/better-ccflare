@@ -162,6 +162,8 @@ interface TraceInputs {
 	promptCacheKeyId?: string | null;
 	/** Key derivation mode: "conversation" | "session" (see provider). */
 	cacheKeyMode?: string | null;
+	/** Pacing canary cohort: "control" | "bypass". */
+	pacingCanary?: string | null;
 	instructions?: string;
 	tools?: readonly unknown[];
 	codexInput: readonly unknown[];
@@ -251,6 +253,7 @@ export function writeCodexTrace(inputs: TraceInputs): void {
 		prompt_cache_key_set: inputs.promptCacheKeySet ?? false,
 		prompt_cache_key_id: inputs.promptCacheKeyId ?? null,
 		cache_key_mode: inputs.cacheKeyMode ?? null,
+		pacing_canary: inputs.pacingCanary ?? null,
 		instructions_len: inputs.instructions?.length ?? null,
 		instructions_bytes: instructionsMetrics?.bytes ?? null,
 		instructions_hmac: instructionsMetrics?.hmac ?? null,

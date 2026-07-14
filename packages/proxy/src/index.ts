@@ -17,9 +17,12 @@ export {
 	type CachePacingObservation,
 	type CachePacingRouteStats,
 	type CachePacingTarget,
+	CODEX_PACING_BYPASS_PERCENT_ENV,
 	getCachePacingRouteStats,
 	getCachePacingStats,
+	isCodexPacingBypassCandidate,
 	readCachePacingMs,
+	readCodexPacingBypassPercent,
 } from "./cache-pacing";
 export {
 	type CodexUsageRefreshOutcome,

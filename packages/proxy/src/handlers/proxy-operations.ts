@@ -610,6 +610,12 @@ export async function proxyWithAccount(
 		// internal header before the request is sent upstream.
 		if (provider.name === "codex") {
 			headers.set("x-better-ccflare-request-id", requestMeta.id);
+			if (requestMeta.codexPacingCanary) {
+				headers.set(
+					"x-better-ccflare-pacing-canary",
+					requestMeta.codexPacingCanary,
+				);
+			}
 		}
 		// Synthetic-response markers are internal provider-to-proxy signals. Strip
 		// client-supplied copies before providers transform the outbound request.
@@ -627,10 +633,32 @@ export async function proxyWithAccount(
 		}
 
 		const providerRequest = new Request(targetUrl, requestInit);
+		// Retries below reuse `headers`; strip one-shot internal metadata now so
+		// no fallback transform can leak it upstream. The initial request already
+		// captured the values in providerRequest for tracing.
+		headers.delete("x-better-ccflare-request-id");
+		headers.delete("x-better-ccflare-pacing-canary");
 
 		let transformedRequest = provider.transformRequestBody
 			? await provider.transformRequestBody(providerRequest, account)
 			: providerRequest;
+		// Defense-in-depth: providers normally consume these before returning,
+		// but transform fallbacks may return the original request. Never leak
+		// internal correlation or experiment metadata upstream.
+		const sanitizedTransformedHeaders = new Headers(transformedRequest.headers);
+		sanitizedTransformedHeaders.delete("x-better-ccflare-request-id");
+		sanitizedTransformedHeaders.delete("x-better-ccflare-pacing-canary");
+		if (
+			transformedRequest.headers.has("x-better-ccflare-request-id") ||
+			transformedRequest.headers.has("x-better-ccflare-pacing-canary")
+		) {
+			transformedRequest = new Request(transformedRequest.url, {
+				method: transformedRequest.method,
+				headers: sanitizedTransformedHeaders,
+				body: transformedRequest.body,
+				...(transformedRequest.body ? { duplex: "half" as const } : {}),
+			});
+		}
 
 		// Pre-strip cache_control for (account, model) pairs known to reject it
 		const transformedBodyText = await transformedRequest.clone().text();

@@ -11,10 +11,13 @@
  * request; recordCachePacingRoute() binds that outcome afterward without
  * changing coordination behavior.
  */
+import { createHash } from "node:crypto";
 import { Logger } from "@better-ccflare/logger";
 
 const log = new Logger("CachePacing");
 export const CACHE_PACING_MS_ENV = "CCFLARE_CACHE_PACING_MS";
+export const CODEX_PACING_BYPASS_PERCENT_ENV =
+	"CCFLARE_CODEX_PACING_BYPASS_PERCENT";
 const MAX_ROUTE_STATS = 256;
 
 interface LeaderEntry {
@@ -57,11 +60,13 @@ export interface CachePacingRouteStats extends CachePacingFamilyStats {
 	accountName: string;
 	provider: string;
 	requestsServed: number;
+	canaryBypassServed: number;
+	canaryControlServed: number;
+	canaryCrossovers: number;
 }
 
 const statsByFamily = new Map<string, CachePacingFamilyStats>();
 const statsByRoute = new Map<string, CachePacingRouteStats>();
-
 function pacingFamily(model: string | null | undefined): string {
 	if (!model) return "unknown";
 	if (model.startsWith("claude")) return "anthropic";
@@ -121,8 +126,10 @@ export function getCachePacingRouteStats(): Record<
 export function recordCachePacingRoute(
 	observation: CachePacingObservation | null,
 	target: CachePacingTarget,
+	canary?: { candidate: boolean; bypassed: boolean },
 ): void {
-	if (!observation) return;
+	// Route volume and cohort counts apply even when pacing was disabled or
+	// ineligible (observation=null). Only wait/leader mechanics need a receipt.
 	let entry = statsByRoute.get(target.accountId);
 	if (!entry) {
 		if (statsByRoute.size >= MAX_ROUTE_STATS) {
@@ -135,12 +142,27 @@ export function recordCachePacingRoute(
 			accountName: target.accountName,
 			provider: target.provider,
 			requestsServed: 0,
+			canaryBypassServed: 0,
+			canaryControlServed: 0,
+			canaryCrossovers: 0,
 		};
 		statsByRoute.set(target.accountId, entry);
 	}
 	entry.accountName = target.accountName;
 	entry.provider = target.provider;
 	entry.requestsServed++;
+	if (canary?.candidate) {
+		if (canary.bypassed && target.provider === "codex") {
+			entry.canaryBypassServed++;
+		} else if (canary.bypassed) {
+			// Candidate was selected for Codex bypass but ultimately served by a
+			// different provider after failover. Keep it out of treatment metrics.
+			entry.canaryCrossovers++;
+		} else if (target.provider === "codex") {
+			entry.canaryControlServed++;
+		}
+	}
+	if (!observation) return;
 	if (observation.role === "leader") {
 		entry.leaders++;
 		return;
@@ -166,6 +188,28 @@ export function readCachePacingMs(): number {
 	if (raw === undefined || raw === "") return 0;
 	const parsed = Number.parseInt(raw, 10);
 	return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+export function readCodexPacingBypassPercent(): number {
+	const raw = process.env[CODEX_PACING_BYPASS_PERCENT_ENV];
+	if (raw === undefined || raw === "") return 0;
+	if (!/^\d+$/.test(raw)) return 0;
+	const parsed = Number.parseInt(raw, 10);
+	return Number.isSafeInteger(parsed) ? Math.min(parsed, 100) : 0;
+}
+
+/** Stable per-session cohort assignment; missing identity is always control. */
+export function isCodexPacingBypassCandidate(
+	sessionKey: string | null | undefined,
+	percent: number = readCodexPacingBypassPercent(),
+): boolean {
+	if (!sessionKey || readCachePacingMs() <= 0 || percent <= 0) return false;
+	if (percent >= 100) return true;
+	const bucket = createHash("sha256")
+		.update(sessionKey)
+		.digest()
+		.readUInt16BE(0);
+	return bucket % 100 < percent;
 }
 
 /** Full two-phase API used by the proxy. */

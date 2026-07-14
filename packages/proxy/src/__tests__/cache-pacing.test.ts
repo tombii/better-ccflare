@@ -2,11 +2,14 @@ import { afterEach, describe, expect, test } from "bun:test";
 import {
 	acquireCachePacing,
 	CACHE_PACING_MS_ENV,
+	CODEX_PACING_BYPASS_PERCENT_ENV,
 	finishPacing,
 	getCachePacingRouteStats,
 	getCachePacingStats,
+	isCodexPacingBypassCandidate,
 	observeCachePacing,
 	readCachePacingMs,
+	readCodexPacingBypassPercent,
 	recordCachePacingRoute,
 	resetCachePacing,
 } from "../cache-pacing";
@@ -14,6 +17,7 @@ import {
 afterEach(() => {
 	resetCachePacing();
 	delete process.env[CACHE_PACING_MS_ENV];
+	delete process.env[CODEX_PACING_BYPASS_PERCENT_ENV];
 });
 
 function sseResponse(chunks: string[], delayMs = 0): Response {
@@ -42,6 +46,72 @@ describe("readCachePacingMs", () => {
 		expect(readCachePacingMs()).toBe(15_000);
 		process.env[CACHE_PACING_MS_ENV] = "junk";
 		expect(readCachePacingMs()).toBe(0);
+	});
+});
+
+describe("Codex pacing bypass cohort", () => {
+	test("defaults off, parses strictly, and clamps to 100", () => {
+		expect(readCodexPacingBypassPercent()).toBe(0);
+		for (const invalid of ["junk", "1e2", "-1", "1.5"]) {
+			process.env[CODEX_PACING_BYPASS_PERCENT_ENV] = invalid;
+			expect(readCodexPacingBypassPercent()).toBe(0);
+		}
+		process.env[CODEX_PACING_BYPASS_PERCENT_ENV] = "17";
+		expect(readCodexPacingBypassPercent()).toBe(17);
+		process.env[CODEX_PACING_BYPASS_PERCENT_ENV] = "999";
+		expect(readCodexPacingBypassPercent()).toBe(100);
+	});
+
+	test("assignment is deterministic by session and missing identity stays control", () => {
+		process.env[CACHE_PACING_MS_ENV] = "15000";
+		expect(isCodexPacingBypassCandidate(null, 100)).toBe(false);
+		expect(isCodexPacingBypassCandidate("session-a", 0)).toBe(false);
+		expect(isCodexPacingBypassCandidate("session-a", 100)).toBe(true);
+		const first = isCodexPacingBypassCandidate("session-stable", 37);
+		for (let i = 0; i < 20; i++) {
+			expect(isCodexPacingBypassCandidate("session-stable", 37)).toBe(first);
+		}
+	});
+
+	test("records treatment, control, and crossovers separately", () => {
+		const codex = {
+			accountId: "pro",
+			accountName: "pro-primary",
+			provider: "codex",
+		};
+		const anthropic = {
+			accountId: "max",
+			accountName: "max-secondary",
+			provider: "anthropic",
+		};
+		recordCachePacingRoute(null, codex, { candidate: true, bypassed: true });
+		const control = {
+			key: "k",
+			role: "leader" as const,
+			waitedMs: 0,
+			releaseReason: null,
+			slot: null,
+		};
+		recordCachePacingRoute(control, codex, {
+			candidate: true,
+			bypassed: false,
+		});
+		// The ordinary non-treatment population is also part of control.
+		recordCachePacingRoute(control, codex, {
+			candidate: true,
+			bypassed: false,
+		});
+		recordCachePacingRoute(null, anthropic, {
+			candidate: true,
+			bypassed: true,
+		});
+
+		const routes = getCachePacingRouteStats();
+		expect(routes.pro.canaryBypassServed).toBe(1);
+		expect(routes.pro.canaryControlServed).toBe(2);
+		expect(routes.pro.canaryCrossovers).toBe(0);
+		expect(routes.max.canaryCrossovers).toBe(1);
+		expect(routes.max.canaryBypassServed).toBe(0);
 	});
 });
 

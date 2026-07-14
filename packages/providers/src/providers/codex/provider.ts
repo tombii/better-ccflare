@@ -22,6 +22,7 @@ const log = new Logger("CodexProvider");
 const INTERNAL_HEADERS = [
 	"x-better-ccflare-request-id",
 	"x-better-ccflare-request-stream",
+	"x-better-ccflare-pacing-canary",
 ];
 
 function sanitizeResponseHeaders(headers: Headers): Headers {
@@ -486,6 +487,7 @@ export class CodexProvider extends BaseProvider {
 						? "conversation"
 						: "session"
 					: null,
+				pacingCanary: request.headers.get("x-better-ccflare-pacing-canary"),
 				instructions: codexBody.instructions,
 				tools: codexBody.tools,
 				codexInput: codexBody.input,
@@ -500,6 +502,7 @@ export class CodexProvider extends BaseProvider {
 				body.stream === true ? "true" : "false",
 			);
 			newHeaders.delete("x-better-ccflare-request-id");
+			newHeaders.delete("x-better-ccflare-pacing-canary");
 			newHeaders.delete("content-length");
 
 			return new Request(request.url, {

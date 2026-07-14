@@ -26,6 +26,8 @@ export interface RequestMeta {
 	originalModel?: string | null;
 	/** Model actually forwarded upstream after an agent-preference rewrite (equal to originalModel when none occurred). */
 	appliedModel?: string | null;
+	/** Deterministic Codex pacing-canary cohort for trace correlation. */
+	codexPacingCanary?: "control" | "bypass" | null;
 }
 
 export interface AgentUpdatePayload {

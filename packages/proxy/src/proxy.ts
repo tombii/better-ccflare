@@ -12,6 +12,7 @@ import { recordDiagnosisCandidate } from "./cache-diagnosis";
 import {
 	type CachePacingObservation,
 	finishPacing,
+	isCodexPacingBypassCandidate,
 	observeCachePacing,
 	recordCachePacingRoute,
 } from "./cache-pacing";
@@ -281,21 +282,29 @@ export async function handleProxy(
 		}
 	}
 
-	// 5c. Cache-aware fan-out pacing stays before account selection. Followers
-	// must wait before routing so they observe any account cooldown the leader
-	// discovers; moving this wait after selection makes their account list stale.
-	// Route-neutral observations are attributed later, only when an account
-	// actually returns the successful response.
+	// 5c. Cache pacing and the Codex-only bypass canary. Non-candidate controls
+	// retain the original wait-before-selection ordering. Candidates select
+	// early; after usage throttling, only a first usable Codex route bypasses.
+	// A candidate resolving elsewhere is paced before any upstream call and
+	// reselected afterward so Anthropic never receives stale or unpaced traffic.
 	const pacingEligible =
 		url.pathname === "/v1/messages" &&
 		!req.headers.get("x-better-ccflare-keepalive") &&
 		!req.headers.get("x-better-ccflare-auto-refresh");
+	const canaryCandidate =
+		pacingEligible && isCodexPacingBypassCandidate(requestMeta.clientSessionId);
+	const effectiveModel = resolveEffectiveModel(appliedModel, requestModel);
 	let pacingObservation: CachePacingObservation | null = null;
-	if (pacingEligible) {
+	let pacingBypassed = false;
+	let selectedAccounts: Account[] | null = null;
+
+	if (!canaryCandidate && pacingEligible) {
 		pacingObservation = await observeCachePacing({
 			sessionKey: requestMeta.clientSessionId,
-			model: appliedModel ?? requestModel,
+			model: effectiveModel,
 		});
+	}
+	if (pacingEligible) {
 		warnOnLookbackRisk(parsedBody, requestMeta.clientSessionId);
 		recordDiagnosisCandidate(
 			requestMeta.clientSessionId,
@@ -303,19 +312,14 @@ export async function handleProxy(
 			req.headers,
 		);
 	}
-	const pacingSlot = pacingObservation?.slot ?? null;
 
-	// 6. Select accounts. Route on the model that will actually be sent
-	// upstream (post-interceptor-rewrite), not the model the client asked
-	// for — otherwise combo routing and family-based selection see a model
-	// that no longer matches the outgoing request.
-	const effectiveModel = resolveEffectiveModel(appliedModel, requestModel);
-	const selectedAccounts = await selectAccountsForRequest(
+	// 6. Controls select after pacing. Candidates select here so the bypass
+	// decision can use the first actually available, usage-throttled account.
+	selectedAccounts = await selectAccountsForRequest(
 		requestMeta,
 		ctx,
 		effectiveModel ?? undefined,
 	);
-
 	const applyUsageThrottling = (accounts: Account[]) => {
 		const settings = {
 			fiveHourEnabled: ctx.config.getUsageThrottlingFiveHourEnabled(),
@@ -366,8 +370,34 @@ export async function handleProxy(
 		return { available, throttled };
 	};
 
-	const { available: accounts, throttled: throttledAccounts } =
+	let { available: accounts, throttled: throttledAccounts } =
 		applyUsageThrottling(selectedAccounts);
+
+	if (canaryCandidate && accounts[0]?.provider === "codex") {
+		pacingBypassed = true;
+	} else if (canaryCandidate && pacingEligible) {
+		// This candidate did not resolve to a usable Codex route. Pace before any
+		// upstream call, then discard the pre-wait selection and route again so
+		// Anthropic availability/cooldowns are fresh after the wait.
+		pacingObservation = await observeCachePacing({
+			sessionKey: requestMeta.clientSessionId,
+			model: effectiveModel,
+		});
+		selectedAccounts = await selectAccountsForRequest(
+			requestMeta,
+			ctx,
+			effectiveModel ?? undefined,
+		);
+		({ available: accounts, throttled: throttledAccounts } =
+			applyUsageThrottling(selectedAccounts));
+	}
+	let pacingSlot = pacingObservation?.slot ?? null;
+	let crossoverPacingRestored = false;
+	requestMeta.codexPacingCanary = pacingEligible
+		? pacingBypassed
+			? "bypass"
+			: "control"
+		: null;
 
 	// 7. Handle no accounts case
 	if (accounts.length === 0) {
@@ -493,6 +523,23 @@ export async function handleProxy(
 	let response: Response | null = null;
 
 	for (let i = 0; i < accounts.length; i++) {
+		// A Codex treatment may fail over to Anthropic. Before the first
+		// non-Codex attempt, restore pacing so no crossover sends Anthropic
+		// traffic unpaced. The route is still marked as a crossover, not treatment.
+		if (
+			pacingBypassed &&
+			!crossoverPacingRestored &&
+			accounts[i].provider !== "codex"
+		) {
+			pacingObservation = await observeCachePacing({
+				sessionKey: requestMeta.clientSessionId,
+				model: effectiveModel,
+			});
+			pacingSlot = pacingObservation?.slot ?? null;
+			crossoverPacingRestored = true;
+			pacingBypassed = false;
+			requestMeta.codexPacingCanary = "control";
+		}
 		// For combo routing: enrich metadata with slot index and look up model override
 		let modelOverride: string | null = null;
 		if (filteredComboInfo?.slots[i]) {
@@ -527,11 +574,18 @@ export async function handleProxy(
 		);
 
 		if (response) {
-			recordCachePacingRoute(pacingObservation, {
-				accountId: accounts[i].id,
-				accountName: accounts[i].name,
-				provider: accounts[i].provider,
-			});
+			recordCachePacingRoute(
+				pacingObservation,
+				{
+					accountId: accounts[i].id,
+					accountName: accounts[i].name,
+					provider: accounts[i].provider,
+				},
+				{
+					candidate: pacingEligible,
+					bypassed: pacingBypassed,
+				},
+			);
 			return finishPacing(pacingSlot, response);
 		}
 
@@ -568,6 +622,20 @@ export async function handleProxy(
 				`Fallback: trying ${fallbackAccounts.length} SessionStrategy accounts`,
 			);
 			for (let i = 0; i < fallbackAccounts.length; i++) {
+				if (
+					pacingBypassed &&
+					!crossoverPacingRestored &&
+					fallbackAccounts[i].provider !== "codex"
+				) {
+					pacingObservation = await observeCachePacing({
+						sessionKey: requestMeta.clientSessionId,
+						model: effectiveModel,
+					});
+					pacingSlot = pacingObservation?.slot ?? null;
+					crossoverPacingRestored = true;
+					pacingBypassed = false;
+					requestMeta.codexPacingCanary = "control";
+				}
 				response = await proxyWithAccount(
 					req,
 					url,
@@ -585,11 +653,18 @@ export async function handleProxy(
 				);
 
 				if (response) {
-					recordCachePacingRoute(pacingObservation, {
-						accountId: fallbackAccounts[i].id,
-						accountName: fallbackAccounts[i].name,
-						provider: fallbackAccounts[i].provider,
-					});
+					recordCachePacingRoute(
+						pacingObservation,
+						{
+							accountId: fallbackAccounts[i].id,
+							accountName: fallbackAccounts[i].name,
+							provider: fallbackAccounts[i].provider,
+						},
+						{
+							candidate: pacingEligible,
+							bypassed: pacingBypassed,
+						},
+					);
 					return finishPacing(pacingSlot, response);
 				}
 			}
