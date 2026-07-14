@@ -1975,7 +1975,13 @@ describe("CodexProvider prompt_cache_key derivation", () => {
 			.then((r) => r.json());
 	};
 
-	it("omits prompt_cache_key unless enabled", async () => {
+	it("attaches prompt_cache_key by default", async () => {
+		const body = await transform({});
+		expect(body.prompt_cache_key).toMatch(/^ccflare-convo-[0-9a-f]{48}$/);
+	});
+
+	it("omits prompt_cache_key when explicitly disabled via =0", async () => {
+		process.env[CODEX_PROMPT_CACHE_KEY_ENV] = "0";
 		const body = await transform({});
 		expect(body.prompt_cache_key).toBeUndefined();
 	});

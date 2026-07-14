@@ -14,15 +14,16 @@ import type { RateLimitInfo, TokenRefreshResult } from "../../types";
 const log = new Logger("CodexProvider");
 
 /**
- * Opt-in: set to "1" to attach an OpenAI prompt_cache_key to converted
+ * Enabled by default: attaches an OpenAI prompt_cache_key to converted
  * requests. OpenAI documents that on GPT-5.6-family models this key is
- * required for reliable prompt-cache matching.
+ * required for reliable prompt-cache matching. Set to "0" to opt out and
+ * restore the old (no cache key) behavior.
  *
  * Attaching the key is also gated on the resolved account endpoint (see
  * isOpenAiPromptCacheEndpoint): it is only sent when the account targets
  * OpenAI's own chatgpt.com / api.openai.com hosts. Custom or self-hosted
  * OpenAI-compatible endpoints may reject the unknown field, so the key is
- * skipped for those even when this flag is enabled.
+ * skipped for those regardless of this flag.
  */
 export const CODEX_PROMPT_CACHE_KEY_ENV = "CCFLARE_CODEX_PROMPT_CACHE_KEY";
 /** "conversation" (default) or "session"; see derivePromptCacheKey. */
@@ -977,7 +978,7 @@ export class CodexProvider extends BaseProvider {
 		input: readonly unknown[],
 		account?: Account,
 	): string | undefined {
-		if (process.env[CODEX_PROMPT_CACHE_KEY_ENV] !== "1") return undefined;
+		if (process.env[CODEX_PROMPT_CACHE_KEY_ENV] === "0") return undefined;
 		if (!isOpenAiPromptCacheEndpoint(account)) return undefined;
 		const sessionId = this.extractSessionId(body);
 		if (!sessionId) return undefined;
