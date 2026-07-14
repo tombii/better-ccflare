@@ -811,6 +811,13 @@ export async function proxyWithAccount(
 					return null;
 				}
 				const reason: RateLimitReason = "out_of_credits";
+				if (requestedModel) {
+					usageCache.markModelScopedExhausted(
+						account.id,
+						requestedModel,
+						req.headers.get("anthropic-beta"),
+					);
+				}
 				log.warn(
 					`Account ${account.name} out_of_credits (429${requestedModel ? `, model=${requestedModel}` : ""}) — ` +
 						`model/beta-scoped, NOT benching account; failing over to next account`,

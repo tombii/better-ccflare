@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, mock } from "bun:test";
 import { usageCache } from "@better-ccflare/providers";
 import type { Account } from "@better-ccflare/types";
 import type { ProxyContext } from "../handlers";
-import { handleProxy } from "../proxy";
+import { handleProxy, isReactivelyModelDepleted } from "../proxy";
 
 function makeAccount(overrides: Partial<Account> = {}): Account {
 	return {
@@ -34,6 +34,10 @@ function makeAccount(overrides: Partial<Account> = {}): Account {
 		model_fallbacks: null,
 		billing_type: null,
 		pause_reason: null,
+		rate_limited_reason: null,
+		rate_limited_at: null,
+		consecutive_rate_limits: 0,
+		peak_hours_pause_enabled: false,
 		refresh_token_issued_at: null,
 		...overrides,
 	};
@@ -101,6 +105,88 @@ describe("handleProxy usage throttling", () => {
 			expect(response.headers.get("Retry-After")).toBe("60");
 		} finally {
 			Date.now = realDateNow;
+		}
+	});
+
+	it("keeps reactive evidence scoped to account, exact model, beta, and real traffic", () => {
+		const now = Date.now();
+		usageCache.markModelScopedExhausted(
+			"acc-1",
+			"claude-fable-5",
+			"context-1m,beta-a",
+			now + 60_000,
+		);
+		const base = {
+			model: "claude-fable-5",
+			betaSignature: "beta-a,context-1m",
+			syntheticProbe: false,
+			now,
+		};
+		expect(isReactivelyModelDepleted({ ...base, accountId: "acc-1" })).toBe(
+			true,
+		);
+		expect(isReactivelyModelDepleted({ ...base, accountId: "acc-2" })).toBe(
+			false,
+		);
+		expect(
+			isReactivelyModelDepleted({
+				...base,
+				accountId: "acc-1",
+				model: "claude-opus-4-8",
+			}),
+		).toBe(false);
+		expect(
+			isReactivelyModelDepleted({
+				...base,
+				accountId: "acc-1",
+				betaSignature: "other-beta",
+			}),
+		).toBe(false);
+		expect(
+			isReactivelyModelDepleted({
+				...base,
+				accountId: "acc-1",
+				syntheticProbe: true,
+			}),
+		).toBe(false);
+	});
+
+	it("proactively skips a reactively depleted same-model route", async () => {
+		const account = makeAccount({
+			provider: "anthropic",
+			name: "max-secondary",
+		});
+		usageCache.markModelScopedExhausted(
+			account.id,
+			"claude-fable-5",
+			null,
+			Date.now() + 60_000,
+		);
+		const realFetch = globalThis.fetch;
+		const fetchMock = mock(async () => {
+			throw new Error("depleted route must be skipped before fetch");
+		});
+		globalThis.fetch = fetchMock as unknown as typeof fetch;
+		try {
+			const request = new Request("https://proxy.local/v1/messages", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					model: "claude-fable-5",
+					messages: [{ role: "user", content: "hello" }],
+					max_tokens: 16,
+				}),
+			});
+			const ctx = makeContext(account);
+			// Direct failure evidence applies independently of optional predictive
+			// usage-throttling settings.
+			ctx.config.getUsageThrottlingFiveHourEnabled = () => false;
+			ctx.config.getUsageThrottlingWeeklyEnabled = () => false;
+			const response = await handleProxy(request, new URL(request.url), ctx);
+			expect(response.status).toBe(529);
+			expect(fetchMock).toHaveBeenCalledTimes(0);
+		} finally {
+			globalThis.fetch = realFetch;
 		}
 	});
 });

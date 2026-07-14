@@ -28,6 +28,42 @@ import { fetchZaiUsageData, type ZaiUsageData } from "./zai-usage-fetcher";
 
 const log = new Logger("UsageFetcher");
 
+/** Conservative fallback when direct out_of_credits evidence has no reset. */
+export const MODEL_SCOPED_DEPLETION_TTL_MS = 5 * 60 * 1000;
+const MAX_MODEL_SCOPED_DEPLETIONS_PER_ACCOUNT = 64;
+
+interface ModelScopedDepletion {
+	expiresAt: number;
+	markedAt: number;
+}
+
+function normalizeModelScope(model: string): string {
+	return model.trim().toLowerCase();
+}
+
+export function canonicalizeBetaSignature(
+	value: string | null | undefined,
+): string {
+	if (!value) return "";
+	return [
+		...new Set(
+			value
+				.split(",")
+				.map((part) => part.trim().toLowerCase())
+				.filter(Boolean),
+		),
+	]
+		.sort()
+		.join(",");
+}
+
+function modelScopedDepletionKey(
+	model: string,
+	betaSignature?: string | null,
+): string {
+	return `model:${normalizeModelScope(model)}::beta:${canonicalizeBetaSignature(betaSignature)}`;
+}
+
 export interface UsageWindow {
 	utilization: number;
 	resets_at: string | null;
@@ -416,6 +452,10 @@ class UsageCache {
 	private customEndpoints = new Map<string, string | null>(); // Track custom endpoints
 	private windowResetCallbacks = new Map<string, (accountId: string) => void>();
 	private usageRateLimitedUntil = new Map<string, number>(); // Tracks when usage API 429 clears
+	private modelScopedDepletions = new Map<
+		string,
+		Map<string, ModelScopedDepletion>
+	>();
 	private capacityRestoredCallbacks = new Map<
 		string,
 		(accountId: string) => void
@@ -623,6 +663,7 @@ class UsageCache {
 			// Clean up cache entry when polling stops to prevent memory leaks
 			this.cache.delete(accountId);
 			this.usageRateLimitedUntil.delete(accountId);
+			this.modelScopedDepletions.delete(accountId);
 			// Clear any in-flight fetch so it doesn't linger after polling stops.
 			this.inFlightFetches.delete(accountId);
 			log.info(
@@ -712,7 +753,7 @@ class UsageCache {
 						getRepresentativeNanoGPTWindow,
 					} = await import("./nanogpt-usage-fetcher");
 
-					this.cache.set(accountId, { data, timestamp: Date.now() });
+					this.setAuthoritative(accountId, data);
 					const utilization = getRepresentativeNanoGPTUtilization(
 						data as NanoGPTUsageData,
 					);
@@ -737,7 +778,7 @@ class UsageCache {
 					const callback = this.windowResetCallbacks.get(accountId);
 					if (callback)
 						this.notifyWindowReset(accountId, data, "zai", callback);
-					this.cache.set(accountId, { data, timestamp: Date.now() });
+					this.setAuthoritative(accountId, data);
 					const utilization = getRepresentativeZaiUtilization(
 						data as ZaiUsageData,
 					);
@@ -751,7 +792,7 @@ class UsageCache {
 				// Fetch Kilo usage data
 				data = await fetchKiloUsageData(token);
 				if (data) {
-					this.cache.set(accountId, { data, timestamp: Date.now() });
+					this.setAuthoritative(accountId, data);
 					const utilization = getRepresentativeKiloUtilization(
 						data as KiloUsageData,
 					);
@@ -765,7 +806,7 @@ class UsageCache {
 				// Fetch Alibaba Coding Plan usage data
 				data = await fetchAlibabaCodingPlanUsageData(token);
 				if (data) {
-					this.cache.set(accountId, { data, timestamp: Date.now() });
+					this.setAuthoritative(accountId, data);
 					const utilization = getRepresentativeAlibabaCodingPlanUtilization(
 						data as AlibabaCodingPlanUsageData,
 					);
@@ -784,7 +825,7 @@ class UsageCache {
 					const callback = this.windowResetCallbacks.get(accountId);
 					if (callback)
 						this.notifyWindowReset(accountId, data, "xai", callback);
-					this.cache.set(accountId, { data, timestamp: Date.now() });
+					this.setAuthoritative(accountId, data);
 					const utilization = getRepresentativeXaiUtilization(
 						data as XaiUsageData,
 					);
@@ -809,10 +850,7 @@ class UsageCache {
 							"anthropic",
 							callback,
 						);
-					this.cache.set(accountId, {
-						data: result.data,
-						timestamp: Date.now(),
-					});
+					this.setAuthoritative(accountId, result.data);
 					const snapshotCb = this.snapshotCallbacks.get(accountId);
 					if (snapshotCb) snapshotCb(accountId, result.data as UsageData);
 					const utilization = getRepresentativeUtilization(
@@ -904,11 +942,76 @@ class UsageCache {
 		return cached.data;
 	}
 
-	/**
-	 * Set cached usage data for an account
-	 */
-	set(accountId: string, data: AnyUsageData): void {
+	/** Mark direct upstream evidence that one account/model/beta candidate is depleted. */
+	markModelScopedExhausted(
+		accountId: string,
+		model: string,
+		betaSignature?: string | null,
+		expiresAt: number = Date.now() + MODEL_SCOPED_DEPLETION_TTL_MS,
+	): void {
+		const now = Date.now();
+		const safeExpiresAt =
+			Number.isFinite(expiresAt) && expiresAt > now
+				? expiresAt
+				: now + MODEL_SCOPED_DEPLETION_TTL_MS;
+		let accountMarkers = this.modelScopedDepletions.get(accountId);
+		if (!accountMarkers) {
+			accountMarkers = new Map();
+			this.modelScopedDepletions.set(accountId, accountMarkers);
+		}
+		const key = modelScopedDepletionKey(model, betaSignature);
+		// Prune stale entries before enforcing the bound. Re-marking an existing
+		// key refreshes its insertion order so bounded eviction removes the least
+		// recently evidenced candidate, not a freshly reconfirmed one.
+		for (const [candidateKey, marker] of accountMarkers) {
+			if (marker.expiresAt <= now) accountMarkers.delete(candidateKey);
+		}
+		if (accountMarkers.has(key)) accountMarkers.delete(key);
+		if (accountMarkers.size >= MAX_MODEL_SCOPED_DEPLETIONS_PER_ACCOUNT) {
+			const oldest = accountMarkers.keys().next().value;
+			if (oldest !== undefined) accountMarkers.delete(oldest);
+		}
+		accountMarkers.set(key, {
+			expiresAt: safeExpiresAt,
+			markedAt: now,
+		});
+	}
+
+	/** Return active direct depletion evidence, lazily removing expired state. */
+	getModelScopedExhaustion(
+		accountId: string,
+		model: string,
+		betaSignature?: string | null,
+		now: number = Date.now(),
+	): { exhausted: true; expiresAt: number; markedAt: number } | null {
+		const accountMarkers = this.modelScopedDepletions.get(accountId);
+		if (!accountMarkers) return null;
+		const key = modelScopedDepletionKey(model, betaSignature);
+		const marker = accountMarkers.get(key);
+		if (!marker) return null;
+		if (marker.expiresAt <= now) {
+			accountMarkers.delete(key);
+			if (accountMarkers.size === 0) {
+				this.modelScopedDepletions.delete(accountId);
+			}
+			return null;
+		}
+		return { exhausted: true, ...marker };
+	}
+
+	private setAuthoritative(accountId: string, data: AnyUsageData): void {
 		this.cache.set(accountId, { data, timestamp: Date.now() });
+		// Ordinary usage snapshots do not prove a recent model+client-beta-specific
+		// out_of_credits condition has cleared, and an older in-flight poll can
+		// complete after newer direct failure evidence. Keep reactive markers for
+		// their short TTL; account deletion, polling teardown, or explicit cache
+		// clearing removes them sooner. The provider's mandatory OAuth beta is
+		// intentionally excluded because it is constant across these candidates.
+	}
+
+	/** Set authoritative cached usage data for an account. */
+	set(accountId: string, data: AnyUsageData): void {
+		this.setAuthoritative(accountId, data);
 
 		// Periodic cleanup of stale entries to prevent memory bloat
 		// Run cleanup every 100 sets to balance performance and memory
@@ -985,6 +1088,7 @@ class UsageCache {
 	 */
 	delete(accountId: string): void {
 		this.cache.delete(accountId);
+		this.modelScopedDepletions.delete(accountId);
 		log.debug(`Cleared usage cache for account ${accountId}`);
 	}
 
@@ -997,6 +1101,7 @@ class UsageCache {
 		}
 		this.cache.clear();
 		this.usageRateLimitedUntil.clear();
+		this.modelScopedDepletions.clear();
 		log.info("Cleared all usage cache and stopped polling");
 	}
 }

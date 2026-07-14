@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { usageCache } from "@better-ccflare/providers";
 import type { Account, RequestMeta } from "@better-ccflare/types";
 import { proxyWithAccount } from "../proxy-operations";
 import type { ProxyContext } from "../proxy-types";
@@ -143,6 +144,7 @@ describe("proxyWithAccount — out_of_credits (issue #261)", () => {
 
 	afterEach(() => {
 		globalThis.fetch = originalFetch;
+		usageCache.delete("acc-anthropic-1");
 	});
 
 	it("does NOT bench the account and fails over on out_of_credits 429", async () => {
@@ -167,8 +169,16 @@ describe("proxyWithAccount — out_of_credits (issue #261)", () => {
 		// Failed over to the next account.
 		expect(result).toBeNull();
 
-		// Account was NOT benched.
+		// Account was NOT benched, but the exact model/beta candidate is marked
+		// reactively so the next request can skip this known failed route.
 		expect(account.rate_limited_until).toBeNull();
+		expect(
+			usageCache.getModelScopedExhaustion(
+				account.id,
+				"claude-sonnet-4-5",
+				null,
+			),
+		).not.toBeNull();
 		expect(account.consecutive_rate_limits).toBe(0);
 
 		// markAccountRateLimited was never called (no bench).
@@ -217,8 +227,51 @@ describe("proxyWithAccount — out_of_credits (issue #261)", () => {
 		expect(result).toBeNull();
 		expect(account.rate_limited_until).toBeNull();
 
-		// keepalive path skips the audit row entirely.
+		// keepalive path skips the audit row and does not create routing evidence.
 		const saveMock = ctx.dbOps.saveRequest as ReturnType<typeof mock>;
 		expect(saveMock.mock.calls.length).toBe(0);
+		expect(
+			usageCache.getModelScopedExhaustion(
+				account.id,
+				"claude-sonnet-4-5",
+				null,
+			),
+		).toBeNull();
+	});
+
+	it("treats a literal false keepalive header as real traffic", async () => {
+		globalThis.fetch = mock(async () => outOfCreditsResponse());
+		const ctx = makeProxyContextWithAsyncExec();
+		const account = makeAccount();
+		const bodyBuffer = makeRequestBody();
+		const req = new Request("https://proxy.local/v1/messages", {
+			method: "POST",
+			body: bodyBuffer,
+			headers: {
+				"Content-Type": "application/json",
+				"x-better-ccflare-keepalive": "false",
+			},
+		});
+
+		await proxyWithAccount(
+			req,
+			new URL(req.url),
+			account,
+			makeRequestMeta(),
+			bodyBuffer,
+			() => undefined,
+			0,
+			ctx,
+		);
+
+		expect(
+			usageCache.getModelScopedExhaustion(
+				account.id,
+				"claude-sonnet-4-5",
+				null,
+			),
+		).not.toBeNull();
+		const saveMock = ctx.dbOps.saveRequest as ReturnType<typeof mock>;
+		expect(saveMock.mock.calls.length).toBe(1);
 	});
 });

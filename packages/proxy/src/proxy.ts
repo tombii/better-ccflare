@@ -49,6 +49,24 @@ import {
 
 export type { ProxyContext } from "./handlers";
 
+export function isReactivelyModelDepleted(opts: {
+	accountId: string;
+	model: string | null;
+	betaSignature: string | null;
+	syntheticProbe: boolean;
+	now?: number;
+}): boolean {
+	if (opts.syntheticProbe || !opts.model) return false;
+	return (
+		usageCache.getModelScopedExhaustion(
+			opts.accountId,
+			opts.model,
+			opts.betaSignature,
+			opts.now,
+		) != null
+	);
+}
+
 const log = new Logger("Proxy");
 
 const PROJECT_NAME_MAX_LEN = 64;
@@ -320,15 +338,15 @@ export async function handleProxy(
 		ctx,
 		effectiveModel ?? undefined,
 	);
+	const syntheticProbe =
+		req.headers.get("x-better-ccflare-keepalive") === "true";
 	const applyUsageThrottling = (accounts: Account[]) => {
 		const settings = {
 			fiveHourEnabled: ctx.config.getUsageThrottlingFiveHourEnabled(),
 			weeklyEnabled: ctx.config.getUsageThrottlingWeeklyEnabled(),
 		};
-		if (!settings.fiveHourEnabled && !settings.weeklyEnabled) {
-			return { available: accounts, throttled: [] as Account[] };
-		}
-
+		const predictiveUsageEnabled =
+			settings.fiveHourEnabled || settings.weeklyEnabled;
 		const now = Date.now();
 		const available: Account[] = [];
 		const throttled: Account[] = [];
@@ -345,16 +363,22 @@ export async function handleProxy(
 		const effectiveModel = appliedModel ?? requestModel ?? null;
 
 		for (const account of accounts) {
-			const throttleUntil = getUsageThrottleUntil(
-				usageCache.get(account.id),
-				settings,
-				now,
-				{
-					requestModel: comboRouted ? null : effectiveModel,
-					scopedMode: "match",
-				},
-			);
-			if (throttleUntil && throttleUntil > now) {
+			const throttleUntil = predictiveUsageEnabled
+				? getUsageThrottleUntil(usageCache.get(account.id), settings, now, {
+						requestModel: comboRouted ? null : effectiveModel,
+						scopedMode: "match",
+					})
+				: null;
+			const reactivelyDepleted =
+				!comboRouted &&
+				isReactivelyModelDepleted({
+					accountId: account.id,
+					model: effectiveModel,
+					betaSignature: req.headers.get("anthropic-beta"),
+					syntheticProbe,
+					now,
+				});
+			if ((throttleUntil && throttleUntil > now) || reactivelyDepleted) {
 				throttled.push(account);
 				continue;
 			}
@@ -521,6 +545,9 @@ export async function handleProxy(
 			}
 		: null;
 	let response: Response | null = null;
+	let upstreamAttempts = 0;
+	const reactiveDepletionSkips: Account[] = [];
+	const betaSignature = req.headers.get("anthropic-beta");
 
 	for (let i = 0; i < accounts.length; i++) {
 		// A Codex treatment may fail over to Anthropic. Before the first
@@ -557,6 +584,27 @@ export async function handleProxy(
 			);
 		}
 
+		const attemptModel = modelOverride ?? effectiveModel;
+		// Normal routes were filtered above. Combo slots need this attempt-level
+		// check because each slot may override the model independently.
+		if (
+			!syntheticProbe &&
+			filteredComboInfo &&
+			attemptModel &&
+			usageCache.getModelScopedExhaustion(
+				accounts[i].id,
+				attemptModel,
+				betaSignature,
+			)
+		) {
+			reactiveDepletionSkips.push(accounts[i]);
+			log.info(
+				`Skipping account ${accounts[i].name} for model ${attemptModel}: recent model-scoped out_of_credits`,
+			);
+			continue;
+		}
+
+		upstreamAttempts++;
 		response = await proxyWithAccount(
 			req,
 			url,
@@ -636,6 +684,7 @@ export async function handleProxy(
 					pacingBypassed = false;
 					requestMeta.codexPacingCanary = "control";
 				}
+				upstreamAttempts++;
 				response = await proxyWithAccount(
 					req,
 					url,
@@ -673,6 +722,20 @@ export async function handleProxy(
 			return finishPacing(
 				pacingSlot,
 				createUsageThrottledResponse(throttledFallbackAccounts),
+			);
+		}
+	}
+
+	// If routing skipped every remaining candidate using direct, short-lived
+	// model-scoped depletion evidence, report temporary usage throttling rather
+	// than a generic all-accounts failure. The account itself remains available
+	// for other model families and beta configurations.
+	if (reactiveDepletionSkips.length > 0) {
+		if (upstreamAttempts === 0) {
+			cacheBodyStore.discardStaged(requestMeta.id);
+			return finishPacing(
+				pacingSlot,
+				createUsageThrottledResponse(reactiveDepletionSkips),
 			);
 		}
 	}
