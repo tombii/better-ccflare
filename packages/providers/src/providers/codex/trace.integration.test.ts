@@ -5,8 +5,15 @@ import { join } from "node:path";
 import { CodexProvider } from "./provider";
 import { CODEX_TRACE_DIR_ENV, CODEX_TRACE_FULL_ENV } from "./trace";
 
-function messagesRequest(body: unknown, requestId?: string): Request {
-	const headers = new Headers({ "content-type": "application/json" });
+function messagesRequest(
+	body: unknown,
+	requestId?: string,
+	internalHeaders?: Record<string, string>,
+): Request {
+	const headers = new Headers({
+		"content-type": "application/json",
+		...internalHeaders,
+	});
 	if (requestId) headers.set("x-better-ccflare-request-id", requestId);
 	return new Request("https://example.com/v1/messages", {
 		method: "POST",
@@ -77,6 +84,27 @@ describe("Codex trace wiring (integration)", () => {
 		expect(transformed.headers.get("x-better-ccflare-request-id")).toBeNull();
 		// full bodies must be absent unless FULL is set
 		expect(rec.anthropic_request).toBeUndefined();
+	});
+
+	test("traces canary arm and cohort digest, then strips both headers", async () => {
+		process.env[CODEX_TRACE_DIR_ENV] = dir;
+		const transformed = await new CodexProvider().transformRequestBody(
+			messagesRequest(SAMPLE, "req_canary", {
+				"x-better-ccflare-pacing-canary": "bypass",
+				"x-better-ccflare-pacing-cohort-id": "0123456789abcdef",
+			}),
+			undefined,
+		);
+		const file = readdirSync(dir).find((f) => f.endsWith(".jsonl")) as string;
+		const rec = JSON.parse(readFileSync(join(dir, file), "utf8").trim());
+		expect(rec.pacing_canary).toBe("bypass");
+		expect(rec.pacing_cohort_id).toBe("0123456789abcdef");
+		expect(
+			transformed.headers.get("x-better-ccflare-pacing-canary"),
+		).toBeNull();
+		expect(
+			transformed.headers.get("x-better-ccflare-pacing-cohort-id"),
+		).toBeNull();
 	});
 
 	test("embeds full bodies only when CCFLARE_CODEX_TRACE_FULL=1", async () => {

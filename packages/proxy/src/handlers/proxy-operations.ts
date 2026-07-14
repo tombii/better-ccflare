@@ -609,11 +609,22 @@ export async function proxyWithAccount(
 		// ID during transformRequestBody. The Codex provider consumes and strips this
 		// internal header before the request is sent upstream.
 		if (provider.name === "codex") {
+			// Client-supplied copies are untrusted. Strip before attaching only
+			// server-derived experiment metadata so traces cannot be spoofed or
+			// retain arbitrary sensitive header content.
+			headers.delete("x-better-ccflare-pacing-canary");
+			headers.delete("x-better-ccflare-pacing-cohort-id");
 			headers.set("x-better-ccflare-request-id", requestMeta.id);
 			if (requestMeta.codexPacingCanary) {
 				headers.set(
 					"x-better-ccflare-pacing-canary",
 					requestMeta.codexPacingCanary,
+				);
+			}
+			if (requestMeta.codexPacingCohortId) {
+				headers.set(
+					"x-better-ccflare-pacing-cohort-id",
+					requestMeta.codexPacingCohortId,
 				);
 			}
 		}
@@ -638,19 +649,30 @@ export async function proxyWithAccount(
 		// captured the values in providerRequest for tracing.
 		headers.delete("x-better-ccflare-request-id");
 		headers.delete("x-better-ccflare-pacing-canary");
+		headers.delete("x-better-ccflare-pacing-cohort-id");
 
 		let transformedRequest = provider.transformRequestBody
 			? await provider.transformRequestBody(providerRequest, account)
 			: providerRequest;
+		// Provider-local stream intent must reach processResponse, not upstream.
+		// Capture it before transport sanitization and reattach only to the local
+		// response object below.
+		const internalRequestStream = transformedRequest.headers.get(
+			"x-better-ccflare-request-stream",
+		);
 		// Defense-in-depth: providers normally consume these before returning,
 		// but transform fallbacks may return the original request. Never leak
 		// internal correlation or experiment metadata upstream.
 		const sanitizedTransformedHeaders = new Headers(transformedRequest.headers);
 		sanitizedTransformedHeaders.delete("x-better-ccflare-request-id");
 		sanitizedTransformedHeaders.delete("x-better-ccflare-pacing-canary");
+		sanitizedTransformedHeaders.delete("x-better-ccflare-pacing-cohort-id");
+		sanitizedTransformedHeaders.delete("x-better-ccflare-request-stream");
 		if (
 			transformedRequest.headers.has("x-better-ccflare-request-id") ||
-			transformedRequest.headers.has("x-better-ccflare-pacing-canary")
+			transformedRequest.headers.has("x-better-ccflare-pacing-canary") ||
+			transformedRequest.headers.has("x-better-ccflare-pacing-cohort-id") ||
+			transformedRequest.headers.has("x-better-ccflare-request-stream")
 		) {
 			transformedRequest = new Request(transformedRequest.url, {
 				method: transformedRequest.method,
@@ -1051,9 +1073,6 @@ export async function proxyWithAccount(
 		// stream intent and request ID without needing the original request object.
 		const responseHeaders = new Headers(rawResponse.headers);
 		responseHeaders.set("x-better-ccflare-request-id", requestMeta.id);
-		const internalRequestStream = transformedRequest.headers.get(
-			"x-better-ccflare-request-stream",
-		);
 		if (internalRequestStream === "true" || internalRequestStream === "false") {
 			responseHeaders.set(
 				"x-better-ccflare-request-stream",

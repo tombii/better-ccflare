@@ -23,6 +23,7 @@ const INTERNAL_HEADERS = [
 	"x-better-ccflare-request-id",
 	"x-better-ccflare-request-stream",
 	"x-better-ccflare-pacing-canary",
+	"x-better-ccflare-pacing-cohort-id",
 ];
 
 function sanitizeResponseHeaders(headers: Headers): Headers {
@@ -488,6 +489,9 @@ export class CodexProvider extends BaseProvider {
 						: "session"
 					: null,
 				pacingCanary: request.headers.get("x-better-ccflare-pacing-canary"),
+				pacingCohortId: request.headers.get(
+					"x-better-ccflare-pacing-cohort-id",
+				),
 				instructions: codexBody.instructions,
 				tools: codexBody.tools,
 				codexInput: codexBody.input,
@@ -501,8 +505,10 @@ export class CodexProvider extends BaseProvider {
 				"x-better-ccflare-request-stream",
 				body.stream === true ? "true" : "false",
 			);
+
 			newHeaders.delete("x-better-ccflare-request-id");
 			newHeaders.delete("x-better-ccflare-pacing-canary");
+			newHeaders.delete("x-better-ccflare-pacing-cohort-id");
 			newHeaders.delete("content-length");
 
 			return new Request(request.url, {

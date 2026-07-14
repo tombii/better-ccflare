@@ -316,6 +316,7 @@ export async function handleProxy(
 	);
 	const canaryCandidate =
 		pacingEligible && isCodexPacingBypassCandidate(pacingCohortKey);
+	requestMeta.codexPacingCohortId = pacingCohortKey?.slice(0, 16) ?? null;
 	const effectiveModel = resolveEffectiveModel(appliedModel, requestModel);
 	let pacingObservation: CachePacingObservation | null = null;
 	let pacingBypassed = false;

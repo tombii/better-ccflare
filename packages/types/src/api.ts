@@ -28,6 +28,8 @@ export interface RequestMeta {
 	appliedModel?: string | null;
 	/** Deterministic Codex pacing-canary cohort for trace correlation. */
 	codexPacingCanary?: "control" | "bypass" | null;
+	/** Privacy-preserving digest of the pacing-canary conversation identity. */
+	codexPacingCohortId?: string | null;
 }
 
 export interface AgentUpdatePayload {

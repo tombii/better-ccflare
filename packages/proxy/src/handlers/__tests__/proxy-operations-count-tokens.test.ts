@@ -243,4 +243,66 @@ describe("proxyWithAccount — Codex count_tokens", () => {
 			fetchedRequest?.headers.get("x-better-ccflare-synthetic-status"),
 		).toBeNull();
 	});
+
+	it("does not trust client-supplied pacing experiment metadata", async () => {
+		let transformedHeaders: Headers | null = null;
+		const provider = new CodexProvider();
+		const originalTransform = provider.transformRequestBody.bind(provider);
+		provider.transformRequestBody = async (request, account) => {
+			transformedHeaders = new Headers(request.headers);
+			return originalTransform(request, account);
+		};
+		const ctx = makeProxyContext();
+		ctx.provider = provider as never;
+		globalThis.fetch = mock(
+			async () =>
+				new Response(JSON.stringify({ ok: true }), {
+					status: 200,
+					headers: { "content-type": "application/json" },
+				}),
+		);
+		const collectorSpy = spyOn(
+			usageCollectorModule,
+			"getUsageCollector",
+		).mockReturnValue({
+			handleStart: mock(() => {}),
+			handleChunk: mock(() => {}),
+			handleEnd: mock(() => Promise.resolve()),
+		} as unknown as usageCollectorModule.UsageCollector);
+		try {
+			const bodyBuffer = new TextEncoder().encode(
+				JSON.stringify({
+					model: "claude-sonnet-4-5",
+					messages: [{ role: "user", content: "hello" }],
+					max_tokens: 16,
+				}),
+			).buffer;
+			const result = await proxyWithAccount(
+				makeMessagesRequest(bodyBuffer, {
+					"Content-Type": "application/json",
+					"x-better-ccflare-pacing-canary": "spoofed",
+					"x-better-ccflare-pacing-cohort-id": "secret-value",
+				}),
+				new URL("https://proxy.local/v1/messages"),
+				makeCodexAccount({
+					access_token: "access-token",
+					expires_at: Date.now() + 60 * 60 * 1000,
+				}),
+				makeRequestMeta("/v1/messages"),
+				bodyBuffer,
+				() => undefined,
+				0,
+				ctx,
+			);
+			await result?.text();
+		} finally {
+			collectorSpy.mockRestore();
+		}
+		expect(
+			transformedHeaders?.get("x-better-ccflare-pacing-canary") ?? null,
+		).toBeNull();
+		expect(
+			transformedHeaders?.get("x-better-ccflare-pacing-cohort-id") ?? null,
+		).toBeNull();
+	});
 });
