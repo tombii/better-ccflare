@@ -11,6 +11,7 @@ import { cacheBodyStore } from "./cache-body-store";
 import { recordDiagnosisCandidate } from "./cache-diagnosis";
 import {
 	type CachePacingObservation,
+	derivePacingCohortKey,
 	finishPacing,
 	isCodexPacingBypassCandidate,
 	observeCachePacing,
@@ -309,8 +310,12 @@ export async function handleProxy(
 		url.pathname === "/v1/messages" &&
 		!req.headers.get("x-better-ccflare-keepalive") &&
 		!req.headers.get("x-better-ccflare-auto-refresh");
+	const pacingCohortKey = derivePacingCohortKey(
+		requestMeta.clientSessionId,
+		parsedBody,
+	);
 	const canaryCandidate =
-		pacingEligible && isCodexPacingBypassCandidate(requestMeta.clientSessionId);
+		pacingEligible && isCodexPacingBypassCandidate(pacingCohortKey);
 	const effectiveModel = resolveEffectiveModel(appliedModel, requestModel);
 	let pacingObservation: CachePacingObservation | null = null;
 	let pacingBypassed = false;

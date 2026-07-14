@@ -3,6 +3,7 @@ import {
 	acquireCachePacing,
 	CACHE_PACING_MS_ENV,
 	CODEX_PACING_BYPASS_PERCENT_ENV,
+	derivePacingCohortKey,
 	finishPacing,
 	getCachePacingRouteStats,
 	getCachePacingStats,
@@ -62,14 +63,33 @@ describe("Codex pacing bypass cohort", () => {
 		expect(readCodexPacingBypassPercent()).toBe(100);
 	});
 
-	test("assignment is deterministic by session and missing identity stays control", () => {
+	test("assignment is deterministic by conversation and missing identity stays control", () => {
 		process.env[CACHE_PACING_MS_ENV] = "15000";
+		const turn1 = derivePacingCohortKey("session-a", {
+			system: "same system",
+			messages: [{ role: "user", content: "task A" }],
+		});
+		const turn2 = derivePacingCohortKey("session-a", {
+			system: "same system",
+			messages: [
+				{ role: "user", content: "task A" },
+				{ role: "assistant", content: "working" },
+				{ role: "user", content: "continue" },
+			],
+		});
+		const sibling = derivePacingCohortKey("session-a", {
+			system: "same system",
+			messages: [{ role: "user", content: "task B" }],
+		});
+		expect(turn1).toBe(turn2);
+		expect(sibling).not.toBe(turn1);
+		expect(derivePacingCohortKey(null, { messages: [] })).toBeNull();
 		expect(isCodexPacingBypassCandidate(null, 100)).toBe(false);
-		expect(isCodexPacingBypassCandidate("session-a", 0)).toBe(false);
-		expect(isCodexPacingBypassCandidate("session-a", 100)).toBe(true);
-		const first = isCodexPacingBypassCandidate("session-stable", 37);
+		expect(isCodexPacingBypassCandidate(turn1, 0)).toBe(false);
+		expect(isCodexPacingBypassCandidate(turn1, 100)).toBe(true);
+		const first = isCodexPacingBypassCandidate(turn1, 37);
 		for (let i = 0; i < 20; i++) {
-			expect(isCodexPacingBypassCandidate("session-stable", 37)).toBe(first);
+			expect(isCodexPacingBypassCandidate(turn1, 37)).toBe(first);
 		}
 	});
 
@@ -334,14 +354,14 @@ describe("getCachePacingStats", () => {
 	});
 	test("reset clears family and route stats", async () => {
 		process.env[CACHE_PACING_MS_ENV] = "5000";
-		await acquireCachePacing({
+		const observation = await observeCachePacing({
 			sessionKey: "st4",
 			model: "claude-opus-4-8",
-			target: {
-				accountId: "acct",
-				accountName: "account",
-				provider: "anthropic",
-			},
+		});
+		recordCachePacingRoute(observation, {
+			accountId: "acct",
+			accountName: "account",
+			provider: "anthropic",
 		});
 		resetCachePacing();
 		expect(getCachePacingStats()).toEqual({});

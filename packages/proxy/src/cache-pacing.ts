@@ -198,15 +198,40 @@ export function readCodexPacingBypassPercent(): number {
 	return Number.isSafeInteger(parsed) ? Math.min(parsed, 100) : 0;
 }
 
-/** Stable per-session cohort assignment; missing identity is always control. */
-export function isCodexPacingBypassCandidate(
+/**
+ * Privacy-preserving conversation identity for canary assignment. The first
+ * message and system prompt are stable across a conversation's turns but
+ * distinct across sibling subagents. Only the digest is returned.
+ */
+export function derivePacingCohortKey(
 	sessionKey: string | null | undefined,
+	body: Record<string, unknown> | null | undefined,
+): string | null {
+	if (!sessionKey || !body || !Array.isArray(body.messages)) return null;
+	const firstMessage = body.messages[0];
+	if (firstMessage === undefined) return null;
+	try {
+		return createHash("sha256")
+			.update(sessionKey)
+			.update("\0")
+			.update(JSON.stringify(body.system ?? ""))
+			.update("\0")
+			.update(JSON.stringify(firstMessage))
+			.digest("hex");
+	} catch {
+		return null;
+	}
+}
+
+/** Stable per-conversation cohort assignment; missing identity is control. */
+export function isCodexPacingBypassCandidate(
+	cohortKey: string | null | undefined,
 	percent: number = readCodexPacingBypassPercent(),
 ): boolean {
-	if (!sessionKey || readCachePacingMs() <= 0 || percent <= 0) return false;
+	if (!cohortKey || readCachePacingMs() <= 0 || percent <= 0) return false;
 	if (percent >= 100) return true;
 	const bucket = createHash("sha256")
-		.update(sessionKey)
+		.update(cohortKey)
 		.digest()
 		.readUInt16BE(0);
 	return bucket % 100 < percent;
