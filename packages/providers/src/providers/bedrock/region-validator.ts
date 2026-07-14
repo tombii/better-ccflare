@@ -3,7 +3,7 @@ import {
 	InvokeModelCommand,
 } from "@aws-sdk/client-bedrock-runtime";
 import { Logger } from "@better-ccflare/logger";
-import type { Provider } from "@smithy/types";
+import type { AwsCredentialIdentity, Provider } from "@smithy/types";
 
 const log = new Logger("BedrockRegionValidator");
 
@@ -30,7 +30,7 @@ const log = new Logger("BedrockRegionValidator");
  */
 export async function validateBedrockRegion(
 	region: string,
-	credentials: Provider<any>,
+	credentials: Provider<AwsCredentialIdentity>,
 ): Promise<boolean> {
 	try {
 		const client = new BedrockRuntimeClient({ region, credentials });

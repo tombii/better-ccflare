@@ -1,6 +1,15 @@
 import { describe, expect, it } from "bun:test";
 import { OAuthError } from "@better-ccflare/core";
+import type { OAuthProviderConfig } from "../../../types";
 import { AnthropicOAuthProvider } from "../oauth";
+
+/** Minimal shape of the mocked fetch Response used across these tests. */
+interface MockFetchResponse {
+	ok: boolean;
+	status?: number;
+	statusText?: string;
+	json: () => Promise<unknown>;
+}
 
 /**
  * Helper: installs a one-shot fetch mock that records calls.
@@ -8,15 +17,16 @@ import { AnthropicOAuthProvider } from "../oauth";
  * Uses direct globalThis.fetch assignment instead of spyOn because
  * Bun does not support spyOn on accessor properties.
  */
-function mockFetchOnce(response: any): {
-	mock: { calls: any[][] };
+function mockFetchOnce(response: MockFetchResponse): {
+	mock: { calls: Parameters<typeof fetch>[] };
 	mockRestore: () => void;
 } {
 	const originalFetch = globalThis.fetch;
-	const calls: any[][] = [];
-	globalThis.fetch = ((...args: any[]) => {
+	const calls: Parameters<typeof fetch>[] = [];
+	globalThis.fetch = ((...args: Parameters<typeof fetch>) => {
 		calls.push(args);
 		return Promise.resolve(response);
+		// biome-ignore lint/suspicious/noExplicitAny: test-only fetch stub must satisfy the global `fetch` type, which is broader than our mock response shape
 	}) as any;
 	return {
 		mock: { calls },
@@ -38,17 +48,21 @@ describe("AnthropicOAuthProvider - Claude OAuth Fixes", () => {
 		}),
 	});
 
-	const createMockErrorResponse = (errorResponse: any, status = 400) => ({
+	const createMockErrorResponse = (errorResponse: unknown, status = 400) => ({
 		ok: false,
 		status,
 		statusText: "Bad Request",
 		json: async () => errorResponse,
 	});
 
-	const createTestConfig = (overrides: any = {}) => ({
+	const createTestConfig = (
+		overrides: Partial<OAuthProviderConfig> = {},
+	): OAuthProviderConfig => ({
+		authorizeUrl: "https://platform.claude.com/oauth/authorize",
 		clientId: "test-client-id",
 		redirectUri: "https://platform.claude.com/oauth/code/callback",
 		tokenUrl: "https://platform.claude.com/v1/oauth/token",
+		scopes: [],
 		mode: "claude-oauth",
 		...overrides,
 	});

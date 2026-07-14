@@ -1287,34 +1287,24 @@ export function createPoolExhaustedResponse(accounts: Account[]): Response {
 
 	// Calculate next_available_at from earliest rate_limited_until
 	const rateLimitedAccounts = accounts.filter(
-		(account) => account.rate_limited_until && account.rate_limited_until > now,
+		(account): account is Account & { rate_limited_until: number } =>
+			!!account.rate_limited_until && account.rate_limited_until > now,
 	);
-	const nextAvailableAt =
+	const earliestRateLimitedUntil =
 		rateLimitedAccounts.length > 0
-			? new Date(
-					Math.min(
-						...rateLimitedAccounts.map(
-							(account) => account.rate_limited_until!,
-						),
-					),
-				).toISOString()
+			? Math.min(
+					...rateLimitedAccounts.map((account) => account.rate_limited_until),
+				)
+			: null;
+	const nextAvailableAt =
+		earliestRateLimitedUntil !== null
+			? new Date(earliestRateLimitedUntil).toISOString()
 			: null;
 
 	// Calculate Retry-After header (seconds) directly from numeric min
 	const retryAfterSeconds =
-		rateLimitedAccounts.length > 0
-			? Math.max(
-					1,
-					Math.round(
-						(Math.min(
-							...rateLimitedAccounts.map(
-								(account) => account.rate_limited_until!,
-							),
-						) -
-							now) /
-							1000,
-					),
-				)
+		earliestRateLimitedUntil !== null
+			? Math.max(1, Math.round((earliestRateLimitedUntil - now) / 1000))
 			: 60; // Default 60s if no cooldown info
 
 	return new Response(

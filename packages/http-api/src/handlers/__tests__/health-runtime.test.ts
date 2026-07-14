@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { AsyncDbWriter } from "@better-ccflare/database";
+import type { Account, HealthResponse } from "@better-ccflare/types";
 import { createHealthHandler } from "../health";
 
 describe("health runtime payload", () => {
@@ -49,20 +50,20 @@ describe("health runtime payload", () => {
 
 		const url = new URL("http://localhost/health");
 		const response = await handler(url);
-		const body = (await response.json()) as Record<string, any>;
+		const body = (await response.json()) as HealthResponse;
 
 		expect(response.status).toBe(200);
 		expect(body.status).toBe("ok");
 		expect(body.accounts).toBe(3);
 		expect(body.strategy).toBe("session");
 		expect(body.runtime).toBeDefined();
-		expect(body.runtime.asyncWriter).toEqual({
+		expect(body.runtime?.asyncWriter).toEqual({
 			healthy: true,
 			failureCount: 0,
 			recentDrops: 0,
 			queuedJobs: 2,
 		});
-		expect(body.runtime.usageWorker).toEqual({
+		expect(body.runtime?.usageWorker).toEqual({
 			state: "healthy",
 		});
 	});
@@ -137,7 +138,7 @@ describe("computePoolStatus", () => {
 				paused: false,
 				rate_limited_until: now + 3600000,
 			},
-		] as any[];
+		] as unknown as Account[];
 
 		const status = computePoolStatus(accounts, now);
 
@@ -166,7 +167,7 @@ describe("computePoolStatus", () => {
 		const accounts = [
 			{ name: "paused1", paused: true, rate_limited_until: null },
 			{ name: "paused2", paused: true, rate_limited_until: null },
-		] as any[];
+		] as unknown as Account[];
 
 		const status = computePoolStatus(accounts, Date.now());
 
@@ -191,7 +192,7 @@ describe("computePoolStatus", () => {
 				paused: false,
 				rate_limited_until: now + 3600000,
 			},
-		] as any[];
+		] as unknown as Account[];
 
 		const status = computePoolStatus(accounts, now);
 
@@ -214,7 +215,7 @@ describe("computePoolStatus", () => {
 				rate_limited_until: now - 1000,
 			},
 			{ name: "available", paused: false, rate_limited_until: null },
-		] as any[];
+		] as unknown as Account[];
 
 		const status = computePoolStatus(accounts, now);
 
@@ -416,11 +417,11 @@ describe("?detail=1 parameter", () => {
 		const handler = createHealthHandler(db, config);
 		const url = new URL("http://localhost/health?detail=1");
 		const response = await handler(url);
-		const body = (await response.json()) as Record<string, any>;
+		const body = (await response.json()) as HealthResponse;
 
 		expect(body.accounts_detail).toBeDefined();
 		expect(body.accounts_detail).toHaveLength(3);
-		expect(body.accounts_detail[0]).toEqual({
+		expect(body.accounts_detail?.[0]).toEqual({
 			name: "acc1",
 			status: "available",
 			rate_limited_until: null,
@@ -482,10 +483,10 @@ describe("?detail=1 parameter", () => {
 		const handler = createHealthHandler(db, config);
 		const url = new URL("http://localhost/health?detail=1");
 		const response = await handler(url);
-		const body = (await response.json()) as Record<string, any>;
+		const body = (await response.json()) as HealthResponse;
 
-		expect(body.accounts_detail[0].status).toBe("available");
-		expect(body.accounts_detail[0].rate_limited_until).toBeNull();
+		expect(body.accounts_detail?.[0].status).toBe("available");
+		expect(body.accounts_detail?.[0].rate_limited_until).toBeNull();
 	});
 
 	it("returns normal health response without accounts_detail when detail=1 but HEALTH_DETAIL_ENABLED is false", async () => {
@@ -535,9 +536,9 @@ describe("cache isolation between detail and non-detail", () => {
 		const detailResp = await handler(
 			new URL("http://localhost/health?detail=1"),
 		);
-		const detailBody = (await detailResp.json()) as Record<string, any>;
+		const detailBody = (await detailResp.json()) as HealthResponse;
 		expect(detailBody.accounts_detail).toBeDefined();
-		expect(detailBody.accounts_detail[0].name).toBe("acc-1");
+		expect(detailBody.accounts_detail?.[0].name).toBe("acc-1");
 		expect(callCount).toBe(1);
 
 		// Second request without detail — should NOT hit the detail cache
@@ -575,7 +576,7 @@ describe("cache isolation between detail and non-detail", () => {
 		const detailResp = await handler(
 			new URL("http://localhost/health?detail=1"),
 		);
-		const detailBody = (await detailResp.json()) as Record<string, any>;
+		const detailBody = (await detailResp.json()) as HealthResponse;
 		expect(detailBody.accounts_detail).toBeDefined();
 		expect(callCount).toBe(2);
 	});
@@ -599,13 +600,13 @@ describe("cache isolation between detail and non-detail", () => {
 		const handler = createHealthHandler(db, config);
 
 		const resp1 = await handler(new URL("http://localhost/health"));
-		const body1 = (await resp1.json()) as Record<string, any>;
+		const body1 = (await resp1.json()) as Record<string, unknown>;
 		expect(body1.accounts_detail).toBeUndefined();
 		expect(callCount).toBe(1);
 
 		// Repeated non-detail request — should hit cache
 		const resp2 = await handler(new URL("http://localhost/health"));
-		const body2 = (await resp2.json()) as Record<string, any>;
+		const body2 = (await resp2.json()) as Record<string, unknown>;
 		expect(body2.accounts_detail).toBeUndefined();
 		expect(callCount).toBe(1); // no extra DB call
 	});

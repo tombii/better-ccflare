@@ -1,6 +1,6 @@
 import { AlertTriangle, CheckCircle, RefreshCw, XCircle } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
-import { api } from "../api";
+import { api, type TokenHealthResponse } from "../api";
 
 type TokenHealthStatus =
 	| "healthy"
@@ -51,7 +51,7 @@ export function TokenHealthIndicator({
 				if (response?.success && response.data?.accounts) {
 					// Filter out API key accounts (no-refresh-token) and find the worst status
 					const oauthAccounts = response.data.accounts.filter(
-						(acc: any) => acc.status !== "no-refresh-token",
+						(acc: TokenHealthResponse) => acc.status !== "no-refresh-token",
 					);
 
 					if (oauthAccounts.length === 0) {
@@ -62,10 +62,12 @@ export function TokenHealthIndicator({
 
 					const worstAccount =
 						oauthAccounts.find(
-							(acc: any) =>
+							(acc: TokenHealthResponse) =>
 								acc.status === "expired" || acc.status === "critical",
 						) ||
-						oauthAccounts.find((acc: any) => acc.status === "warning") ||
+						oauthAccounts.find(
+							(acc: TokenHealthResponse) => acc.status === "warning",
+						) ||
 						oauthAccounts[0];
 
 					setTokenHealth(worstAccount);

@@ -434,8 +434,10 @@ describe("CacheKeepaliveScheduler", () => {
 
 			await capturedCallback?.();
 
-			expect(capturedBodyText).not.toBeNull();
-			const decoded = JSON.parse(capturedBodyText!);
+			if (capturedBodyText === null) {
+				throw new Error("expected fetch to be called with a request body");
+			}
+			const decoded = JSON.parse(capturedBodyText);
 			// Scheduler patches max_tokens: 1 to minimise quota on replay
 			expect(decoded.model).toBe("claude-opus-4-5");
 			expect(decoded.messages).toEqual([{ role: "user", content: "hello" }]);

@@ -64,6 +64,7 @@ describe("BunSqlAdapter withBusyRetry", () => {
 		it("returns result on second attempt after one SQLITE_BUSY", async () => {
 			db.run("INSERT INTO t (id, val) VALUES (1, 'hello')");
 
+			// biome-ignore lint/suspicious/noExplicitAny: test accesses private field
 			const sqliteDb = (adapter as any).sqliteDb as Database;
 			const restore = stubBusyOnce(sqliteDb, "query");
 			try {
@@ -82,6 +83,7 @@ describe("BunSqlAdapter withBusyRetry", () => {
 		it("returns the row on second attempt after one SQLITE_BUSY", async () => {
 			db.run("INSERT INTO t (id, val) VALUES (2, 'world')");
 
+			// biome-ignore lint/suspicious/noExplicitAny: test accesses private field
 			const sqliteDb = (adapter as any).sqliteDb as Database;
 			const restore = stubBusyOnce(sqliteDb, "query");
 			try {
@@ -99,6 +101,7 @@ describe("BunSqlAdapter withBusyRetry", () => {
 
 	describe("run() retries on SQLITE_BUSY", () => {
 		it("completes successfully on second attempt after one SQLITE_BUSY", async () => {
+			// biome-ignore lint/suspicious/noExplicitAny: test accesses private field
 			const sqliteDb = (adapter as any).sqliteDb as Database;
 			const restore = stubBusyOnce(sqliteDb, "run");
 			try {
@@ -120,6 +123,7 @@ describe("BunSqlAdapter withBusyRetry", () => {
 		it("returns affected-row count on second attempt after one SQLITE_BUSY", async () => {
 			db.run("INSERT INTO t (id, val) VALUES (4, 'before')");
 
+			// biome-ignore lint/suspicious/noExplicitAny: test accesses private field
 			const sqliteDb = (adapter as any).sqliteDb as Database;
 			const restore = stubBusyOnce(sqliteDb, "run");
 			try {
@@ -137,6 +141,7 @@ describe("BunSqlAdapter withBusyRetry", () => {
 	describe("non-SQLITE_BUSY errors are not retried", () => {
 		it("propagates a non-busy error immediately without retrying", async () => {
 			// Inject an error whose code is NOT SQLITE_BUSY
+			// biome-ignore lint/suspicious/noExplicitAny: test accesses private field
 			const sqliteDb = (adapter as any).sqliteDb as Database;
 			const original = sqliteDb.query.bind(sqliteDb);
 			let calls = 0;
@@ -147,6 +152,7 @@ describe("BunSqlAdapter withBusyRetry", () => {
 					code: "SQLITE_IOERR",
 				});
 				// biome-ignore lint/correctness/noUnreachable: intentional unreachable for type
+				// biome-ignore lint/suspicious/noExplicitAny: delegating to real implementation
 				return (original as any)(...args);
 			};
 
@@ -165,6 +171,7 @@ describe("BunSqlAdapter withBusyRetry", () => {
 
 	describe("SQLITE_BUSY past deadline is propagated", () => {
 		it("throws SQLITE_BUSY when Date.now() is already past the retry deadline", async () => {
+			// biome-ignore lint/suspicious/noExplicitAny: test accesses private field
 			const sqliteDb = (adapter as any).sqliteDb as Database;
 			const originalQuery = sqliteDb.query.bind(sqliteDb);
 			const originalDateNow = Date.now;

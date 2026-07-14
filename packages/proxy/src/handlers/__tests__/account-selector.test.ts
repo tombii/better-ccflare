@@ -280,7 +280,7 @@ describe("selectAccountsForRequest — combo routing", () => {
 		const meta = makeRequestMeta();
 
 		await selectAccountsForRequest(meta, ctx, "claude-haiku-4-5");
-		expect((meta as any).comboName).toBe("Test Combo");
+		expect(meta.comboName).toBe("Test Combo");
 	});
 
 	it("skips disabled slots", async () => {
@@ -392,7 +392,10 @@ describe("selectAccountsForRequest — combo routing", () => {
 			ctx,
 			"gpt-4-turbo-unknown",
 		);
-		// getActiveComboForFamily should not be called for unknown families
+		// getActiveComboForFamily should not be called for unknown families.
+		// dbOps is a plain mock object (not a real DatabaseOperations instance),
+		// so the mock-specific assertion methods require escaping the type here.
+		// biome-ignore lint/suspicious/noExplicitAny: accessing bun:test mock assertion API on a test double
 		const ctxAny = ctx as any;
 		expect(ctxAny.dbOps.getActiveComboForFamily).not.toHaveBeenCalled();
 		expect(result[0]?.id).toBe("acc-normal");

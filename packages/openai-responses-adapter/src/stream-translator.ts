@@ -280,6 +280,7 @@ function processEvent(
 				state,
 			);
 		} else if (state.toolByBlock.has(blockIndex)) {
+			// biome-ignore lint/style/noNonNullAssertion: guarded by the has() check above — TS can't narrow Map.get() from a prior has() call.
 			const tool = state.toolByBlock.get(blockIndex)!;
 			emitSse(
 				controller,

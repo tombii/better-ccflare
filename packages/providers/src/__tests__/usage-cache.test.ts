@@ -1,12 +1,13 @@
 import { beforeEach, describe, expect, it, spyOn } from "bun:test";
+import type { AnyUsageData } from "../usage-fetcher";
 
 // Mock the import that's causing issues to isolate our test
 const mockUsageCache = {
-	cache: new Map(),
-	polling: new Map(),
-	tokenProviders: new Map(),
-	providerTypes: new Map(),
-	customEndpoints: new Map(),
+	cache: new Map<string, { data: AnyUsageData; timestamp: number }>(),
+	polling: new Map<string, ReturnType<typeof setInterval>>(),
+	tokenProviders: new Map<string, () => Promise<string>>(),
+	providerTypes: new Map<string, string>(),
+	customEndpoints: new Map<string, string>(),
 
 	clear() {
 		for (const accountId of this.polling.keys()) {
@@ -39,14 +40,14 @@ const mockUsageCache = {
 		}
 	},
 
-	set(accountId: string, data: any) {
+	set(accountId: string, data: AnyUsageData) {
 		this.cache.set(accountId, { data, timestamp: Date.now() });
 		if (this.cache.size % 100 === 0) {
 			this.cleanupStaleEntries();
 		}
 	},
 
-	get(accountId: string): any {
+	get(accountId: string): AnyUsageData | null {
 		const cached = this.cache.get(accountId);
 		if (!cached) return null;
 

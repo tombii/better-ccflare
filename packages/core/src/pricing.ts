@@ -622,12 +622,7 @@ export async function fetchNanoGPTPricingData(
 		const data: NanoGPTApiResponse = await response.json();
 
 		// Convert NanoGPT pricing format to our internal format
-		const nanogptPricing: ApiResponse = {
-			nanogpt: {
-				models: {},
-			},
-		};
-		const nanogptModels = nanogptPricing.nanogpt.models!;
+		const nanogptModels: Record<string, ModelDef> = {};
 
 		for (const model of data.data) {
 			nanogptModels[model.id] = {
@@ -640,6 +635,12 @@ export async function fetchNanoGPTPricingData(
 				},
 			};
 		}
+
+		const nanogptPricing: ApiResponse = {
+			nanogpt: {
+				models: nanogptModels,
+			},
+		};
 
 		logger?.debug(
 			"Successfully fetched and converted NanoGPT pricing data for %d models",
@@ -779,6 +780,7 @@ export function resetNanoGPTPricingCacheForTest(): void {
 
 	// Reset the PriceCatalogue instance by clearing the singleton instance
 	// This is done by accessing the private static property through the class
+	// biome-ignore lint/suspicious/noExplicitAny: test-only reset of a private static singleton field
 	(PriceCatalogue as any).instance = undefined;
 }
 

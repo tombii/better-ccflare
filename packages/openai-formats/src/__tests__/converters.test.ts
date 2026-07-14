@@ -174,6 +174,9 @@ describe("convertAnthropicRequestToOpenAI — system message", () => {
 					{
 						type: "image",
 						source: { type: "base64", media_type: "image/png", data: "abc" },
+						// AnthropicRequest["system"] only types text blocks; this
+						// intentionally injects a non-text block to test filtering.
+						// biome-ignore lint/suspicious/noExplicitAny: intentionally malformed input for filter-path test
 					} as any,
 					{ type: "text", text: "Only text." },
 				],
@@ -707,12 +710,7 @@ describe("convertOpenAIResponseToAnthropic — success cases", () => {
 			}),
 		);
 		expect(result.stop_reason).toBe("tool_use");
-		const content = (result as any).content as Array<{
-			type: string;
-			id: string;
-			name: string;
-			input: unknown;
-		}>;
+		const content = result.content ?? [];
 		const toolBlock = content.find((c) => c.type === "tool_use");
 		expect(toolBlock).toBeDefined();
 		expect(toolBlock?.name).toBe("search");
@@ -735,17 +733,15 @@ describe("convertOpenAIResponseToAnthropic — success cases", () => {
 	});
 
 	it("maps token usage to input_tokens / output_tokens", () => {
-		const result = convertOpenAIResponseToAnthropic(
-			openaiTextResponse(),
-		) as any;
-		expect(result.usage.input_tokens).toBe(10);
-		expect(result.usage.output_tokens).toBe(5);
+		const result = convertOpenAIResponseToAnthropic(openaiTextResponse());
+		expect(result.usage?.input_tokens).toBe(10);
+		expect(result.usage?.output_tokens).toBe(5);
 	});
 
 	it("passes through the response id", () => {
 		const result = convertOpenAIResponseToAnthropic(
 			openaiTextResponse({ id: "chatcmpl-xyz" }),
-		) as any;
+		);
 		expect(result.id).toBe("chatcmpl-xyz");
 	});
 
@@ -770,8 +766,8 @@ describe("convertOpenAIResponseToAnthropic — success cases", () => {
 					},
 				],
 			}),
-		) as any;
-		const content = result.content as Array<{ type: string }>;
+		);
+		const content = result.content ?? [];
 		expect(content.some((c) => c.type === "text")).toBe(true);
 		expect(content.some((c) => c.type === "tool_use")).toBe(true);
 	});
@@ -779,20 +775,26 @@ describe("convertOpenAIResponseToAnthropic — success cases", () => {
 
 describe("convertOpenAIResponseToAnthropic — error cases", () => {
 	it("returns error type when response has error field", () => {
+		// Intentionally malformed input (missing choices/model) to exercise the
+		// error-response path — the cast bypasses OpenAIResponse's shape on purpose.
 		const result = convertOpenAIResponseToAnthropic({
 			error: { type: "invalid_request_error", message: "Bad request" },
-		} as any) as any;
+			// biome-ignore lint/suspicious/noExplicitAny: intentionally malformed input for error-path test
+		} as any);
 		expect(result.type).toBe("error");
-		expect(result.error.message).toBe("Bad request");
+		expect(result.error?.message).toBe("Bad request");
 	});
 
 	it("returns error when choices array is missing", () => {
+		// Intentionally malformed input (missing model/usage) to exercise the
+		// invalid-response path — the cast bypasses OpenAIResponse's shape on purpose.
 		const result = convertOpenAIResponseToAnthropic({
 			id: "xyz",
 			choices: [],
-		} as any) as any;
+			// biome-ignore lint/suspicious/noExplicitAny: intentionally malformed input for error-path test
+		} as any);
 		expect(result.type).toBe("error");
-		expect(result.error.type).toBe("invalid_response");
+		expect(result.error?.type).toBe("invalid_response");
 	});
 
 	it("handles malformed tool call arguments gracefully via safeParseJSON", () => {
@@ -816,9 +818,9 @@ describe("convertOpenAIResponseToAnthropic — error cases", () => {
 					},
 				],
 			}),
-		) as any;
+		);
 		// Should not throw — safeParseJSON returns {}
-		const toolBlock = result.content?.find((c: any) => c.type === "tool_use");
-		expect(toolBlock?.input).toEqual({});
+		const toolBlock = result.content?.find((c) => c.type === "tool_use");
+		expect(toolBlock?.type === "tool_use" && toolBlock.input).toEqual({});
 	});
 });

@@ -880,13 +880,13 @@ export function createOAuthCallbackHandler(dbOps: DatabaseOperations) {
 			const sessionId = validateString(body.sessionId, "sessionId", {
 				required: true,
 				pattern: patterns.uuid,
-			})!;
+			});
 
 			// Validate code - validateString throws ValidationError if invalid
 			const code = validateString(body.code, "code", {
 				required: true,
 				minLength: 1,
-			})!;
+			});
 
 			// Get stored PKCE verifier from database
 			const oauthSession = await dbOps.getOAuthSession(sessionId);

@@ -7,6 +7,7 @@ const createRepoWithRows = (rows: Array<Record<string, unknown>>) => {
 		query: async () => rows,
 	};
 
+	// biome-ignore lint/suspicious/noExplicitAny: partial mock adapter object
 	return new StatsRepository(adapter as any);
 };
 
@@ -64,6 +65,7 @@ describe("getSessionStats cost aggregation", () => {
 			query: async () => {
 				throw new Error("query should not run when no sessions are active");
 			},
+			// biome-ignore lint/suspicious/noExplicitAny: partial mock adapter object
 		} as any);
 
 		const result = await repo.getSessionStats([

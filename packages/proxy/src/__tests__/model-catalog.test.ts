@@ -69,6 +69,7 @@ function makeCtx(
 		config: {
 			getModelCatalogOAuthRefreshEnabled: () => oauthRefreshEnabled,
 		} as never,
+		// biome-ignore lint/style/noNonNullAssertion: anthropic provider is always registered in this test environment
 		provider: getProvider("anthropic")!,
 		refreshInFlight: new Map(),
 		// biome-ignore lint/suspicious/noExplicitAny: minimal test double

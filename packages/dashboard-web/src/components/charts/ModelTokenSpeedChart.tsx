@@ -39,6 +39,17 @@ const MODEL_COLORS: Record<string, string> = {
 	"claude-sonnet-4.5": COLORS.purple,
 };
 
+function tokenSpeedTooltipFormatter(value: number, name: string) {
+	if (name === "avgSpeed") {
+		return [formatTokensPerSecond(value), "Avg Speed"];
+	}
+	return [value, name];
+}
+
+function tokenSpeedLabelFormatter(label: string) {
+	return `Model: ${label}`;
+}
+
 function getModelColor(model: string): string {
 	// Try to find color by short name first
 	const shortName = getModelShortName(model);
@@ -130,16 +141,9 @@ export function ModelTokenSpeedChart({
 				<Tooltip
 					contentStyle={getTooltipStyles("default")}
 					// biome-ignore lint/suspicious/noExplicitAny: recharts v3.8 widened Formatter to include undefined
-					formatter={
-						((value: number, name: string) => {
-							if (name === "avgSpeed") {
-								return [formatTokensPerSecond(value), "Avg Speed"];
-							}
-							return [value, name];
-						}) as any
-					}
+					formatter={tokenSpeedTooltipFormatter as any}
 					// biome-ignore lint/suspicious/noExplicitAny: recharts v3.8 widened labelFormatter label to ReactNode
-					labelFormatter={((label: string) => `Model: ${label}`) as any}
+					labelFormatter={tokenSpeedLabelFormatter as any}
 				/>
 				<Bar dataKey="avgSpeed" name="Average Speed">
 					{chartData.map((entry) => (

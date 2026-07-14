@@ -118,6 +118,7 @@ describe("OAuth Token Health Monitoring Features", () => {
 						access_token: "test-access-token",
 						expires_in: 3600,
 					}),
+					// biome-ignore lint/suspicious/noExplicitAny: partial Response mock for test, only ok/json are used by exchangeCode
 				}) as any;
 
 			try {
@@ -199,13 +200,17 @@ describe("OAuth Token Health Monitoring Features", () => {
 						error: "invalid_grant",
 						error_description: "Authorization code expired",
 					}),
+					// biome-ignore lint/suspicious/noExplicitAny: partial Response mock for test, only ok/status/statusText/json are used by exchangeCode
 				}) as any;
 
 			try {
 				await oauthProvider.exchangeCode("expired-code", pkce.verifier, config);
 				expect(true).toBe(false); // Should not reach here
-			} catch (error: any) {
-				expect(error.message).toContain("Authorization code expired");
+			} catch (error) {
+				expect(error).toBeInstanceOf(Error);
+				expect((error as Error).message).toContain(
+					"Authorization code expired",
+				);
 			}
 
 			global.fetch = originalFetch;
@@ -215,7 +220,7 @@ describe("OAuth Token Health Monitoring Features", () => {
 	describe("6. Backward Compatibility", () => {
 		it("should handle deprecated 'max' mode gracefully", () => {
 			// Test that the old 'max' mode still works (should be treated as 'claude-oauth')
-			const config = oauthProvider.getOAuthConfig("max" as any);
+			const config = oauthProvider.getOAuthConfig("max");
 
 			// Should be treated as claude-oauth
 			expect(config.authorizeUrl).toBe("https://claude.ai/oauth/authorize");
@@ -358,7 +363,9 @@ describe("4. PKCE and State Security Tests", () => {
 					.replace(/=/g, "");
 			};
 
-			const parseOAuthState = (state: string): any => {
+			const parseOAuthState = (
+				state: string,
+			): { csrfToken: string; timestamp: number } | null => {
 				try {
 					const base64State = state.replace(/-/g, "+").replace(/_/g, "/");
 					const jsonState = atob(
@@ -374,7 +381,9 @@ describe("4. PKCE and State Security Tests", () => {
 			const parsedState = parseOAuthState(generatedState);
 
 			// Should be able to parse the generated state
-			expect(parsedState).not.toBeNull();
+			if (parsedState === null) {
+				throw new Error("expected parseOAuthState to decode the state");
+			}
 			expect(parsedState).toHaveProperty("csrfToken");
 			expect(parsedState).toHaveProperty("timestamp");
 

@@ -1,6 +1,5 @@
 import {
 	BedrockClient,
-	type FoundationModelSummary,
 	ListFoundationModelsCommand,
 } from "@aws-sdk/client-bedrock";
 import { Logger } from "@better-ccflare/logger";
@@ -73,17 +72,25 @@ export async function discoverBedrockModels(
 			return [];
 		}
 
-		const models: DiscoveredModel[] = response.modelSummaries
-			.filter((model): model is FoundationModelSummary => !!model.modelId)
-			.map((model) => ({
-				modelId: model.modelId!,
-				modelName: model.modelName || model.modelId!,
-				providerName: model.providerName || "Unknown",
-				inputModalities: model.inputModalities || [],
-				outputModalities: model.outputModalities || [],
-				inferenceTypesSupported: model.inferenceTypesSupported || [],
-				responseStreamingSupported: model.responseStreamingSupported ?? false,
-			}));
+		const models: DiscoveredModel[] = response.modelSummaries.flatMap(
+			(model) => {
+				if (!model.modelId) {
+					return [];
+				}
+				return [
+					{
+						modelId: model.modelId,
+						modelName: model.modelName || model.modelId,
+						providerName: model.providerName || "Unknown",
+						inputModalities: model.inputModalities || [],
+						outputModalities: model.outputModalities || [],
+						inferenceTypesSupported: model.inferenceTypesSupported || [],
+						responseStreamingSupported:
+							model.responseStreamingSupported ?? false,
+					},
+				];
+			},
+		);
 
 		log.info(
 			`Discovered ${models.length} Anthropic models for account ${account.name}`,

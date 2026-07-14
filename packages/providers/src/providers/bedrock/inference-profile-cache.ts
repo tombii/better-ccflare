@@ -305,11 +305,12 @@ async function getOrRefreshCache(
 	const cacheAge = now - lastRefreshTime;
 
 	// Return cached profiles if cache is fresh
-	if (inferenceProfileCache.has(region) && cacheAge < CACHE_TTL_MS) {
+	const cached = inferenceProfileCache.get(region);
+	if (cached && cacheAge < CACHE_TTL_MS) {
 		log.debug(
 			`Using cached inference profiles for region ${region} (age: ${cacheAge}ms)`,
 		);
-		return inferenceProfileCache.get(region)!;
+		return cached;
 	}
 
 	// Evict oldest region if we're at capacity and adding a new region

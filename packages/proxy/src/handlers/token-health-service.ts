@@ -103,7 +103,15 @@ export function createTokenHealthService(): TokenHealthService {
 		getAccounts: () => Account[] | Promise<Account[]>,
 	): Promise<TokenHealthReport> => {
 		await performHealthCheck(getAccounts);
-		return lastHealthReport!;
+		if (!lastHealthReport) {
+			// performHealthCheck catches its own errors and only assigns
+			// lastHealthReport on success, so this path is reachable if
+			// getAccounts() (or checkAllAccountsHealth) threw.
+			throw new Error(
+				"Token health check failed; no health report is available",
+			);
+		}
+		return lastHealthReport;
 	};
 
 	return {

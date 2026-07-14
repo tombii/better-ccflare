@@ -79,17 +79,6 @@ type ToolUseBlockParam = AnthropicContentBlock & {
 };
 type ToolResultBlockParam = AnthropicContentBlock & { type: "tool_result" };
 
-// Local type aliases for Ollama types used in response conversion
-type OllamaResponseChunkWithContent = OllamaResponseChunk & {
-	message: {
-		role: string;
-		content: string;
-		tool_calls?: {
-			function: { name: string; arguments: string | Record<string, unknown> };
-		}[];
-	};
-};
-
 function extractTextContent(content: ContentBlock | string): string {
 	if (typeof content === "string") return content;
 	if (content.type === "text") return content.text;

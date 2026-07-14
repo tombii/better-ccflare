@@ -18,7 +18,7 @@ const mockUsageCache = {
 		return cached ? Date.now() - cached.timestamp : null;
 	},
 
-	set: (accountId: string, data: any) => {
+	set: (accountId: string, data: unknown) => {
 		mockUsageCache.cache.set(accountId, { data, timestamp: Date.now() });
 	},
 
@@ -49,7 +49,7 @@ const mockGetRepresentativeUtilization = (
 	const utils = Object.values(usageData)
 		.filter(
 			(v): v is { utilization: number } =>
-				v != null && typeof (v as any).utilization === "number",
+				v != null && typeof v.utilization === "number",
 		)
 		.map((v) => v.utilization);
 	return utils.length > 0 ? Math.max(...utils) : 70;
@@ -85,6 +85,7 @@ const mockDbOps = {
 const mockDatabase = {
 	query: () => mockQuery,
 	run: () => {},
+	// biome-ignore lint/suspicious/noExplicitAny: partial mock whose `run` is reassigned per-test with varying signatures; no single interface fits all
 } as any;
 
 const mockQuery = {
@@ -93,6 +94,7 @@ const mockQuery = {
 };
 
 // Mock response helpers
+// biome-ignore lint/suspicious/noExplicitAny: test fixture accepts arbitrarily-shaped response payloads across call sites
 const mockJsonResponse = (data: any) => ({
 	ok: true,
 	json: async () => data,
@@ -100,6 +102,7 @@ const mockJsonResponse = (data: any) => ({
 	headers: new Headers(),
 });
 
+// biome-ignore lint/suspicious/noExplicitAny: test fixture accepts arbitrarily-shaped error payloads and reads error.status
 const mockErrorResponse = (error: any) => ({
 	ok: false,
 	json: async () => error,
@@ -861,6 +864,18 @@ describe("Accounts Handler - Dashboard Usage Data Integration", () => {
 	});
 });
 
+// Minimal shape of an account row as returned by the mocked SQL query below.
+interface MockAccountRow {
+	id: string;
+	name: string;
+	provider: string;
+	access_token: string | null;
+	refresh_token: string | null;
+	rate_limited_until: number | null;
+	rate_limited_reason: string | null;
+	rate_limited_at: number | null;
+}
+
 // Mock factory functions to create handlers with our mocked dependencies
 function createMockAccountsListHandler(
 	CACHE_FRESHNESS_THRESHOLD_MS: number,
@@ -875,7 +890,7 @@ function createMockAccountsListHandler(
 			now,
 			now,
 			sessionDuration,
-		) as Array<any>;
+		) as Array<MockAccountRow>;
 
 		// Fetch usage data for all Claude CLI OAuth accounts
 		const oauthAccounts = accounts.filter(
