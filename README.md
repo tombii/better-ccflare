@@ -157,7 +157,7 @@ Continue to [Configure Claude SDK](https://github.com/tombii/better-ccflare#conf
 
 ### Environment Variables
 
-better-ccflare supports several environment variables for configuration:
+better-ccflare supports several environment variables for configuration. The most commonly used ones:
 
 ```bash
 # Server Configuration
@@ -186,39 +186,17 @@ RETRY_ATTEMPTS=3                       # Number of retry attempts
 RETRY_DELAY_MS=1000                   # Initial retry delay in milliseconds
 RETRY_BACKOFF=2                        # Retry backoff multiplier
 
-# Overload retry (529 no-reset in-place retry before account cooldown)
-CCFLARE_OVERLOAD_RETRY_ENABLED=true    # Set to "false" to disable (default: true)
-CCFLARE_OVERLOAD_RETRY_MAX_ATTEMPTS=2  # Total attempts incl. original (default: 2)
-CCFLARE_OVERLOAD_RETRY_BASE_MS=750     # Backoff base in ms; 0 = no sleep (default: 750)
-CCFLARE_OVERLOAD_RETRY_MAX_MS=3000     # Backoff ceiling in ms (default: 3000)
-
-# Health endpoint
-HEALTH_DETAIL_ENABLED=false            # Enable ?detail=1 on /health to expose per-account status (default: off, set true for internal monitoring)
-
-# Agent Discovery
-BETTER_CCFLARE_DISCOVER_PLUGIN_AGENTS=false  # Set to true to discover agents distributed by Claude Code plugins
-                                       # (reads ~/.claude/plugins/installed_plugins.json)
-
 # Storage
 STORE_PAYLOADS=false                   # Disable storing request/response bodies (reduces DB size and memory usage)
                                        # Token counts, costs, model, status and timing are still recorded
-
-# Payload encryption at rest (optional)
-# When set, request/response payloads are encrypted with AES-256-GCM before
-# being written to `request_payloads`. Existing plaintext rows remain readable.
-# Generate with: openssl rand -hex 32
-PAYLOAD_ENCRYPTION_KEY=                # 64-character hex (32 bytes / AES-256). Unset = plaintext storage.
 ```
-
-**Encryption notes**:
-- Without a key, payloads are stored as plaintext (no behavior change from prior versions).
-- Losing the key makes encrypted rows unreadable — payload reads throw rather than silently returning garbage. Back the key up alongside the database.
-- The key is read once at process start (and once per Bun worker). Rotating it requires a re-encrypt migration; not yet built.
 
 **Security Notes**:
 - Use `BETTER_CCFLARE_HOST=127.0.0.1` to bind only to localhost for better security
 - Never commit `.env` files containing sensitive values to version control
 - Use environment-specific configuration for production deployments
+
+📖 **See [docs/configuration.md](docs/configuration.md) for the complete list** — overload/rate-limit retry tuning, health endpoint detail, agent discovery, payload encryption at rest, model catalog refresh, PostgreSQL pooling, Codex prompt-cache keys, and more.
 
 ### Using .env Files
 
