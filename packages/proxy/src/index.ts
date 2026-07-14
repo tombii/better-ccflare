@@ -14,6 +14,10 @@ export { handleCacheDiagnosisRequest } from "./cache-diagnosis";
 export { CacheKeepaliveScheduler } from "./cache-keepalive-scheduler";
 export {
 	type CachePacingFamilyStats,
+	type CachePacingObservation,
+	type CachePacingRouteStats,
+	type CachePacingTarget,
+	getCachePacingRouteStats,
 	getCachePacingStats,
 	readCachePacingMs,
 } from "./cache-pacing";

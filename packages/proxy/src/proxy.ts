@@ -10,9 +10,10 @@ import type { Account } from "@better-ccflare/types";
 import { cacheBodyStore } from "./cache-body-store";
 import { recordDiagnosisCandidate } from "./cache-diagnosis";
 import {
-	acquireCachePacing,
-	type CachePacingSlot,
+	type CachePacingObservation,
 	finishPacing,
+	observeCachePacing,
+	recordCachePacingRoute,
 } from "./cache-pacing";
 import { warnOnLookbackRisk } from "./cache-telemetry";
 import {
@@ -280,19 +281,18 @@ export async function handleProxy(
 		}
 	}
 
-	// 5c. Cache-aware fan-out pacing: parallel same-session requests all miss
-	// the prompt cache because an entry only becomes readable once the first
-	// response starts streaming. Hold concurrent followers (bounded) until the
-	// session leader's first body chunk so they read the cache it just wrote.
-	// Opt-in via CCFLARE_CACHE_PACING_MS; leader exit paths below must call
-	// finishPacing()/abandon() so followers never wait past the cap.
-	let pacingSlot: CachePacingSlot | null = null;
-	if (
+	// 5c. Cache-aware fan-out pacing stays before account selection. Followers
+	// must wait before routing so they observe any account cooldown the leader
+	// discovers; moving this wait after selection makes their account list stale.
+	// Route-neutral observations are attributed later, only when an account
+	// actually returns the successful response.
+	const pacingEligible =
 		url.pathname === "/v1/messages" &&
 		!req.headers.get("x-better-ccflare-keepalive") &&
-		!req.headers.get("x-better-ccflare-auto-refresh")
-	) {
-		pacingSlot = await acquireCachePacing({
+		!req.headers.get("x-better-ccflare-auto-refresh");
+	let pacingObservation: CachePacingObservation | null = null;
+	if (pacingEligible) {
+		pacingObservation = await observeCachePacing({
 			sessionKey: requestMeta.clientSessionId,
 			model: appliedModel ?? requestModel,
 		});
@@ -303,6 +303,7 @@ export async function handleProxy(
 			req.headers,
 		);
 	}
+	const pacingSlot = pacingObservation?.slot ?? null;
 
 	// 6. Select accounts. Route on the model that will actually be sent
 	// upstream (post-interceptor-rewrite), not the model the client asked
@@ -526,6 +527,11 @@ export async function handleProxy(
 		);
 
 		if (response) {
+			recordCachePacingRoute(pacingObservation, {
+				accountId: accounts[i].id,
+				accountName: accounts[i].name,
+				provider: accounts[i].provider,
+			});
 			return finishPacing(pacingSlot, response);
 		}
 
@@ -579,6 +585,11 @@ export async function handleProxy(
 				);
 
 				if (response) {
+					recordCachePacingRoute(pacingObservation, {
+						accountId: fallbackAccounts[i].id,
+						accountName: fallbackAccounts[i].name,
+						provider: fallbackAccounts[i].provider,
+					});
 					return finishPacing(pacingSlot, response);
 				}
 			}

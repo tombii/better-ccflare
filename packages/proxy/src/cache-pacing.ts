@@ -2,30 +2,20 @@
  * Cache-aware fan-out pacing.
  *
  * Anthropic's prompt cache entry becomes readable only after the first
- * response begins streaming. When a client fans out N parallel requests that
- * share a prompt prefix (Claude Code subagent bursts), all N miss the cache
- * and each pays the full cache-write price for the shared prefix. The
- * documented pattern is: send one request, await its first streamed byte,
- * then release the rest so they read the cache the leader just wrote.
+ * response begins streaming. The first in-flight request per (session, model)
+ * becomes the leader; followers wait for its first body chunk or a bounded
+ * cap. CCFLARE_CACHE_PACING_MS controls the cap (0/unset disables pacing).
  *
- * This module implements that pattern at the proxy: the first in-flight
- * request per (session, model) becomes the leader; concurrent followers are
- * held until the leader's first body chunk arrives or a bounded cap expires.
- * The wall-clock cost to a follower is roughly zero, because uncached prefill
- * would have taken it about as long as the leader's time-to-first-byte, while
- * the token saving is the full shared prefix per follower.
- *
- *   CCFLARE_CACHE_PACING_MS   max follower hold in ms (0 or unset = disabled)
- *
- * Failure containment: every leader exit path must call wrap() or abandon().
- * If a leader dies without either (unexpected throw), followers still release
- * at the cap, so a bug here degrades to today's behavior, never a deadlock.
+ * Routing happens after this wait. Pacing observations are therefore
+ * route-neutral until the proxy knows which account actually served the
+ * request; recordCachePacingRoute() binds that outcome afterward without
+ * changing coordination behavior.
  */
 import { Logger } from "@better-ccflare/logger";
 
 const log = new Logger("CachePacing");
-
 export const CACHE_PACING_MS_ENV = "CCFLARE_CACHE_PACING_MS";
+const MAX_ROUTE_STATS = 256;
 
 interface LeaderEntry {
 	promise: Promise<void>;
@@ -35,14 +25,22 @@ interface LeaderEntry {
 
 const leaders = new Map<string, LeaderEntry>();
 
-/**
- * Rolling in-process counters, grouped by provider family. Production runs at
- * WARN log level, which hides the per-request INFO hold lines, so these
- * counters (served via GET /api/debug/cache-pacing) are the only always-on
- * view of what pacing actually does: how often followers are held, for how
- * long, and whether they release on the leader's first byte or time out at
- * the cap. Counters reset on process restart.
- */
+export type CachePacingReleaseReason = "leader" | "cap";
+
+export interface CachePacingObservation {
+	readonly key: string;
+	readonly role: "leader" | "follower";
+	readonly waitedMs: number;
+	readonly releaseReason: CachePacingReleaseReason | null;
+	readonly slot: CachePacingSlot | null;
+}
+
+export interface CachePacingTarget {
+	accountId: string;
+	accountName: string;
+	provider: string;
+}
+
 export interface CachePacingFamilyStats {
 	leaders: number;
 	leadersAbandoned: number;
@@ -54,7 +52,15 @@ export interface CachePacingFamilyStats {
 	followerWaitMsMax: number;
 }
 
+export interface CachePacingRouteStats extends CachePacingFamilyStats {
+	accountId: string;
+	accountName: string;
+	provider: string;
+	requestsServed: number;
+}
+
 const statsByFamily = new Map<string, CachePacingFamilyStats>();
+const statsByRoute = new Map<string, CachePacingRouteStats>();
 
 function pacingFamily(model: string | null | undefined): string {
 	if (!model) return "unknown";
@@ -63,20 +69,24 @@ function pacingFamily(model: string | null | undefined): string {
 	return "other";
 }
 
+function newStats(): CachePacingFamilyStats {
+	return {
+		leaders: 0,
+		leadersAbandoned: 0,
+		staleLeadersReplaced: 0,
+		followersHeld: 0,
+		followersReleasedByLeader: 0,
+		followersReleasedByCap: 0,
+		followerWaitMsTotal: 0,
+		followerWaitMsMax: 0,
+	};
+}
+
 function familyStats(model: string | null | undefined): CachePacingFamilyStats {
 	const family = pacingFamily(model);
 	let entry = statsByFamily.get(family);
 	if (!entry) {
-		entry = {
-			leaders: 0,
-			leadersAbandoned: 0,
-			staleLeadersReplaced: 0,
-			followersHeld: 0,
-			followersReleasedByLeader: 0,
-			followersReleasedByCap: 0,
-			followerWaitMsTotal: 0,
-			followerWaitMsMax: 0,
-		};
+		entry = newStats();
 		statsByFamily.set(family, entry);
 	}
 	return entry;
@@ -91,14 +101,63 @@ export function getCachePacingStats(): Record<string, CachePacingFamilyStats> {
 	);
 }
 
+export function getCachePacingRouteStats(): Record<
+	string,
+	CachePacingRouteStats
+> {
+	return Object.fromEntries(
+		[...statsByRoute.entries()].map(([accountId, entry]) => [
+			accountId,
+			{ ...entry },
+		]),
+	);
+}
+
+/**
+ * Attribute a completed pacing observation to the account that actually
+ * served it. This must be called only after a successful proxyWithAccount
+ * result, never for merely selected, throttled, or failed accounts.
+ */
+export function recordCachePacingRoute(
+	observation: CachePacingObservation | null,
+	target: CachePacingTarget,
+): void {
+	if (!observation) return;
+	let entry = statsByRoute.get(target.accountId);
+	if (!entry) {
+		if (statsByRoute.size >= MAX_ROUTE_STATS) {
+			const oldest = statsByRoute.keys().next().value;
+			if (oldest !== undefined) statsByRoute.delete(oldest);
+		}
+		entry = {
+			...newStats(),
+			accountId: target.accountId,
+			accountName: target.accountName,
+			provider: target.provider,
+			requestsServed: 0,
+		};
+		statsByRoute.set(target.accountId, entry);
+	}
+	entry.accountName = target.accountName;
+	entry.provider = target.provider;
+	entry.requestsServed++;
+	if (observation.role === "leader") {
+		entry.leaders++;
+		return;
+	}
+	entry.followersHeld++;
+	entry.followerWaitMsTotal += observation.waitedMs;
+	entry.followerWaitMsMax = Math.max(
+		entry.followerWaitMsMax,
+		observation.waitedMs,
+	);
+	if (observation.releaseReason === "cap") entry.followersReleasedByCap++;
+	else entry.followersReleasedByLeader++;
+}
+
 export interface CachePacingSlot {
 	readonly key: string;
-	/**
-	 * Leader success path: returns a pass-through copy of the response whose
-	 * first body chunk releases waiting followers. Marks the slot done.
-	 */
 	wrap(response: Response): Response;
-	/** Leader failure path: release followers immediately. Idempotent. */
 	abandon(): void;
 }
 
@@ -109,16 +168,12 @@ export function readCachePacingMs(): number {
 	return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 }
 
-/**
- * Returns a leader slot when this request should lead its (session, model)
- * group, or null when pacing is disabled, inapplicable, or this request was
- * held as a follower and has now been released.
- */
-export async function acquireCachePacing(opts: {
+/** Full two-phase API used by the proxy. */
+export async function observeCachePacing(opts: {
 	sessionKey: string | null | undefined;
 	model?: string | null;
 	now?: () => number;
-}): Promise<CachePacingSlot | null> {
+}): Promise<CachePacingObservation | null> {
 	const maxHoldMs = readCachePacingMs();
 	if (maxHoldMs <= 0 || !opts.sessionKey) return null;
 	const nowFn = opts.now ?? Date.now;
@@ -126,8 +181,6 @@ export async function acquireCachePacing(opts: {
 	const stats = familyStats(opts.model);
 
 	const existing = leaders.get(key);
-	// A leader older than twice the cap is considered dead (its followers have
-	// long since released at the cap); replace it rather than waiting on it.
 	if (existing && nowFn() - existing.startedAt < maxHoldMs * 2) {
 		const heldStart = nowFn();
 		stats.followersHeld++;
@@ -140,26 +193,23 @@ export async function acquireCachePacing(opts: {
 		]);
 		if (capTimer !== undefined) clearTimeout(capTimer);
 		const waitedMs = nowFn() - heldStart;
-		if (releasedByLeader) {
-			stats.followersReleasedByLeader++;
-		} else {
-			stats.followersReleasedByCap++;
-		}
+		if (releasedByLeader) stats.followersReleasedByLeader++;
+		else stats.followersReleasedByCap++;
 		stats.followerWaitMsTotal += waitedMs;
-		if (waitedMs > stats.followerWaitMsMax) {
-			stats.followerWaitMsMax = waitedMs;
-		}
+		stats.followerWaitMsMax = Math.max(stats.followerWaitMsMax, waitedMs);
 		log.info(
 			`held follower ${waitedMs}ms behind leader for ${previewKey(key)}`,
 		);
-		return null;
+		return {
+			key,
+			role: "follower",
+			waitedMs,
+			releaseReason: releasedByLeader ? "leader" : "cap",
+			slot: null,
+		};
 	}
-	if (existing) {
-		stats.staleLeadersReplaced++;
-	}
+	if (existing) stats.staleLeadersReplaced++;
 
-	// Become the leader. No await between the check above and this set, so
-	// registration is atomic on the event loop.
 	let resolve!: () => void;
 	const promise = new Promise<void>((r) => {
 		resolve = r;
@@ -171,12 +221,9 @@ export async function acquireCachePacing(opts: {
 	let done = false;
 	const finish = () => {
 		entry.resolve();
-		if (leaders.get(key) === entry) {
-			leaders.delete(key);
-		}
+		if (leaders.get(key) === entry) leaders.delete(key);
 	};
-
-	return {
+	const slot: CachePacingSlot = {
 		key,
 		wrap(response: Response): Response {
 			if (done) return response;
@@ -214,28 +261,32 @@ export async function acquireCachePacing(opts: {
 			finish();
 		},
 	};
+	return { key, role: "leader", waitedMs: 0, releaseReason: null, slot };
 }
 
-/**
- * Uniform helper for leader return sites: successful responses are wrapped so
- * followers release on first byte; failures release followers immediately.
- */
+/** Compatibility wrapper for existing callers and tests. */
+export async function acquireCachePacing(opts: {
+	sessionKey: string | null | undefined;
+	model?: string | null;
+	now?: () => number;
+}): Promise<CachePacingSlot | null> {
+	return (await observeCachePacing(opts))?.slot ?? null;
+}
+
 export function finishPacing(
 	slot: CachePacingSlot | null,
 	response: Response,
 ): Response {
 	if (!slot) return response;
-	if (response.ok) {
-		return slot.wrap(response);
-	}
+	if (response.ok) return slot.wrap(response);
 	slot.abandon();
 	return response;
 }
 
-/** Test hook: clear all leader state and rolling stats. */
 export function resetCachePacing(): void {
 	leaders.clear();
 	statsByFamily.clear();
+	statsByRoute.clear();
 }
 
 function previewKey(key: string): string {

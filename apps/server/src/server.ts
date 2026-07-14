@@ -45,6 +45,7 @@ import {
 	AutoRefreshScheduler,
 	CacheKeepaliveScheduler,
 	drainUsageCollector,
+	getCachePacingRouteStats,
 	getCachePacingStats,
 	getModelCatalog,
 	getUsageCollectorHealth,
@@ -1160,6 +1161,7 @@ export default async function startServer(options?: {
 					return Response.json({
 						pacing_ms: readCachePacingMs(),
 						families: getCachePacingStats(),
+						routes: getCachePacingRouteStats(),
 					});
 				}
 

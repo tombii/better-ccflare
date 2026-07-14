@@ -3,8 +3,11 @@ import {
 	acquireCachePacing,
 	CACHE_PACING_MS_ENV,
 	finishPacing,
+	getCachePacingRouteStats,
 	getCachePacingStats,
+	observeCachePacing,
 	readCachePacingMs,
+	recordCachePacingRoute,
 	resetCachePacing,
 } from "../cache-pacing";
 
@@ -178,7 +181,7 @@ describe("getCachePacingStats", () => {
 		expect(stats.anthropic.followersReleasedByLeader).toBe(1);
 		expect(stats.anthropic.followersReleasedByCap).toBe(0);
 		expect(stats.anthropic.followerWaitMsTotal).toBeGreaterThanOrEqual(0);
-		expect(stats.openai).toBeUndefined();
+		expect(stats.codex).toBeUndefined();
 	});
 
 	test("attributes cap releases and abandons, families separated", async () => {
@@ -202,10 +205,76 @@ describe("getCachePacingStats", () => {
 		expect(stats.anthropic).toBeUndefined();
 	});
 
-	test("reset clears stats", async () => {
+	test("attributes observations only after the serving route is known", async () => {
 		process.env[CACHE_PACING_MS_ENV] = "5000";
-		await acquireCachePacing({ sessionKey: "st4", model: "claude-opus-4-8" });
+		const leader = await observeCachePacing({
+			sessionKey: "shadow",
+			model: "claude-opus-4-8",
+		});
+		const followerPromise = observeCachePacing({
+			sessionKey: "shadow",
+			model: "claude-opus-4-8",
+		});
+		await new Promise((r) => setTimeout(r, 10));
+		const wrapped = finishPacing(
+			leader?.slot ?? null,
+			sseResponse(["event: a\n\n"], 1),
+		);
+		await wrapped.text();
+		const follower = await followerPromise;
+
+		// No selection-time attribution: only successful routes are counted.
+		expect(getCachePacingRouteStats()).toEqual({});
+		recordCachePacingRoute(leader, {
+			accountId: "acct-a",
+			accountName: "failed-first-account",
+			provider: "anthropic",
+		});
+		recordCachePacingRoute(follower, {
+			accountId: "acct-pro",
+			accountName: "pro-primary",
+			provider: "codex",
+		});
+
+		const routes = getCachePacingRouteStats();
+		expect(routes["acct-a"].leaders).toBe(1);
+		expect(routes["acct-a"].requestsServed).toBe(1);
+		expect(routes["acct-pro"].followersHeld).toBe(1);
+		expect(routes["acct-pro"].followersReleasedByLeader).toBe(1);
+		expect(routes["acct-pro"].followerWaitMsTotal).toBeGreaterThanOrEqual(0);
+		expect(routes["acct-pro"].provider).toBe("codex");
+	});
+
+	// Route counters are the Codex-bypass counterfactual: a served Codex
+	// follower's ordinary wait metrics are exactly what bypass would avoid.
+	test("preserves openai family compatibility while routes carry actual provider", async () => {
+		process.env[CACHE_PACING_MS_ENV] = "5000";
+		const observation = await observeCachePacing({
+			sessionKey: "codex",
+			model: "gpt-5.6-sol",
+		});
+		recordCachePacingRoute(observation, {
+			accountId: "acct-pro",
+			accountName: "pro-primary",
+			provider: "codex",
+		});
+		expect(getCachePacingStats().openai.leaders).toBe(1);
+		expect(getCachePacingRouteStats()["acct-pro"].provider).toBe("codex");
+		observation?.slot?.abandon();
+	});
+	test("reset clears family and route stats", async () => {
+		process.env[CACHE_PACING_MS_ENV] = "5000";
+		await acquireCachePacing({
+			sessionKey: "st4",
+			model: "claude-opus-4-8",
+			target: {
+				accountId: "acct",
+				accountName: "account",
+				provider: "anthropic",
+			},
+		});
 		resetCachePacing();
 		expect(getCachePacingStats()).toEqual({});
+		expect(getCachePacingRouteStats()).toEqual({});
 	});
 });
