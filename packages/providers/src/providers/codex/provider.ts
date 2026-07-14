@@ -79,11 +79,42 @@ const DEFAULT_MODEL_MAP: Record<string, string> = {
 	haiku: "gpt-5.4-mini",
 };
 
+// Synced from the Codex CLI model cache (~/.codex/models_cache.json,
+// codex-cli 0.144.1). Missing entries mean no context_window block is
+// reported to the client, which disables its context gauge and compaction
+// triggers for that model.
 const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
 	"gpt-5.3-codex": 272_000,
+	"gpt-5.3-codex-spark": 128_000,
 	"gpt-5.4": 272_000,
 	"gpt-5.4-mini": 272_000,
+	"gpt-5.5": 272_000,
+	"gpt-5.6-sol": 372_000,
+	"gpt-5.6-terra": 372_000,
+	"gpt-5.6-luna": 372_000,
 };
+
+/**
+ * Exact lookup first, then longest-prefix fallback so dated or suffixed
+ * variants the API may return (e.g. "gpt-5.6-sol-2026-05-13") still resolve
+ * to their family's window instead of silently losing the client's context
+ * gauge. Prefix matches require a "-" boundary so "gpt-5.55" cannot match
+ * "gpt-5.5".
+ */
+function lookupContextWindow(model: string): number | undefined {
+	const exact = MODEL_CONTEXT_WINDOWS[model];
+	if (exact) return exact;
+	let bestKey: string | undefined;
+	for (const key of Object.keys(MODEL_CONTEXT_WINDOWS)) {
+		if (
+			model.startsWith(`${key}-`) &&
+			(bestKey === undefined || key.length > bestKey.length)
+		) {
+			bestKey = key;
+		}
+	}
+	return bestKey ? MODEL_CONTEXT_WINDOWS[bestKey] : undefined;
+}
 
 // ── Codex Responses API types ─────────────────────────────────────────────────
 
@@ -743,7 +774,7 @@ export class CodexProvider extends BaseProvider {
 	): ContextWindow | null {
 		const model = response?.model;
 		if (typeof model !== "string") return null;
-		const contextWindowSize = MODEL_CONTEXT_WINDOWS[model];
+		const contextWindowSize = lookupContextWindow(model);
 		if (!contextWindowSize) return null;
 
 		const inputTokens = usage?.input_tokens;
