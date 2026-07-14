@@ -7,6 +7,7 @@ import {
 import { Eye } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, type RequestPayload, type RequestSummary } from "../api";
+import { attributionSourceLabel } from "../lib/attribution";
 import { ConversationView } from "./ConversationView";
 import { CopyButton } from "./CopyButton";
 import { TokenUsageDisplay } from "./TokenUsageDisplay";
@@ -140,9 +141,30 @@ export function RequestDetailsModal({
 							{summary?.model && (
 								<Badge variant="secondary">{summary.model}</Badge>
 							)}
-							{summary?.agentUsed && (
-								<Badge variant="secondary">Agent: {summary.agentUsed}</Badge>
-							)}
+							{summary?.project &&
+								(() => {
+									const srcLabel = attributionSourceLabel(
+										summary.projectAttributionSource,
+									);
+									return (
+										<Badge variant="secondary">
+											Project: {summary.project}
+											{srcLabel ? ` · ${srcLabel}` : ""}
+										</Badge>
+									);
+								})()}
+							{summary?.agentUsed &&
+								(() => {
+									const agentSrcLabel = attributionSourceLabel(
+										summary.agentAttributionSource,
+									);
+									return (
+										<Badge variant="secondary">
+											Agent: {summary.agentUsed}
+											{agentSrcLabel ? ` · ${agentSrcLabel}` : ""}
+										</Badge>
+									);
+								})()}
 							{summary?.totalTokens && (
 								<Badge variant="outline">
 									{formatTokens(summary.totalTokens)} tokens

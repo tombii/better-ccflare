@@ -1,4 +1,8 @@
 import type { AllowedModel } from "./agent";
+import type {
+	AgentAttributionSource,
+	ProjectAttributionSource,
+} from "./request";
 
 /** Combo slot routing info — maps each returned account to its slot's model override */
 export interface ComboSlotInfo {
@@ -15,6 +19,8 @@ export interface RequestMeta {
 	timestamp: number;
 	agentUsed?: string | null;
 	project?: string | null;
+	projectAttributionSource?: ProjectAttributionSource | null;
+	agentAttributionSource?: AgentAttributionSource | null;
 	headers?: Headers;
 	/** Active combo name (set when combo routing is used) */
 	comboName?: string | null;

@@ -1,5 +1,6 @@
 {
   "lockfileVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "name": "ccflare",
@@ -12,7 +13,7 @@
     },
     "apps/cli": {
       "name": "better-ccflare",
-      "version": "3.5.32",
+      "version": "3.5.35",
       "bin": {
         "better-ccflare": "dist/better-ccflare",
       },
@@ -164,6 +165,7 @@
         "@better-ccflare/database": "workspace:*",
         "@better-ccflare/oauth-flow": "workspace:*",
         "@better-ccflare/providers": "workspace:*",
+        "@better-ccflare/proxy": "workspace:*",
         "@better-ccflare/types": "workspace:*",
       },
     },
