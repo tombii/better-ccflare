@@ -92,6 +92,7 @@ function makeContext(accounts: Account[]): ProxyContext {
 			getUsageThrottlingFiveHourEnabled: () => false,
 			getUsageThrottlingWeeklyEnabled: () => false,
 			getSystemPromptCacheTtl1h: () => false,
+			getAgentFrontmatterModelFallback: () => false,
 		} as never,
 		provider: {
 			name: "anthropic",
