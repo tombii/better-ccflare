@@ -614,11 +614,18 @@ export async function proxyWithAccount(
 			// retain arbitrary sensitive header content.
 			headers.delete("x-better-ccflare-pacing-canary");
 			headers.delete("x-better-ccflare-pacing-cohort-id");
+			headers.delete("x-better-ccflare-pacing-action");
 			headers.set("x-better-ccflare-request-id", requestMeta.id);
 			if (requestMeta.codexPacingCanary) {
 				headers.set(
 					"x-better-ccflare-pacing-canary",
 					requestMeta.codexPacingCanary,
+				);
+			}
+			if (requestMeta.codexPacingAction) {
+				headers.set(
+					"x-better-ccflare-pacing-action",
+					requestMeta.codexPacingAction,
 				);
 			}
 			if (requestMeta.codexPacingCohortId) {
@@ -650,6 +657,7 @@ export async function proxyWithAccount(
 		headers.delete("x-better-ccflare-request-id");
 		headers.delete("x-better-ccflare-pacing-canary");
 		headers.delete("x-better-ccflare-pacing-cohort-id");
+		headers.delete("x-better-ccflare-pacing-action");
 
 		let transformedRequest = provider.transformRequestBody
 			? await provider.transformRequestBody(providerRequest, account)
@@ -667,11 +675,13 @@ export async function proxyWithAccount(
 		sanitizedTransformedHeaders.delete("x-better-ccflare-request-id");
 		sanitizedTransformedHeaders.delete("x-better-ccflare-pacing-canary");
 		sanitizedTransformedHeaders.delete("x-better-ccflare-pacing-cohort-id");
+		sanitizedTransformedHeaders.delete("x-better-ccflare-pacing-action");
 		sanitizedTransformedHeaders.delete("x-better-ccflare-request-stream");
 		if (
 			transformedRequest.headers.has("x-better-ccflare-request-id") ||
 			transformedRequest.headers.has("x-better-ccflare-pacing-canary") ||
 			transformedRequest.headers.has("x-better-ccflare-pacing-cohort-id") ||
+			transformedRequest.headers.has("x-better-ccflare-pacing-action") ||
 			transformedRequest.headers.has("x-better-ccflare-request-stream")
 		) {
 			transformedRequest = new Request(transformedRequest.url, {

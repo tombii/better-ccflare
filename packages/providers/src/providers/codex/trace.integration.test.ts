@@ -92,6 +92,7 @@ describe("Codex trace wiring (integration)", () => {
 			messagesRequest(SAMPLE, "req_canary", {
 				"x-better-ccflare-pacing-canary": "bypass",
 				"x-better-ccflare-pacing-cohort-id": "0123456789abcdef",
+				"x-better-ccflare-pacing-action": "bypassed",
 			}),
 			undefined,
 		);
@@ -99,11 +100,15 @@ describe("Codex trace wiring (integration)", () => {
 		const rec = JSON.parse(readFileSync(join(dir, file), "utf8").trim());
 		expect(rec.pacing_canary).toBe("bypass");
 		expect(rec.pacing_cohort_id).toBe("0123456789abcdef");
+		expect(rec.pacing_action).toBe("bypassed");
 		expect(
 			transformed.headers.get("x-better-ccflare-pacing-canary"),
 		).toBeNull();
 		expect(
 			transformed.headers.get("x-better-ccflare-pacing-cohort-id"),
+		).toBeNull();
+		expect(
+			transformed.headers.get("x-better-ccflare-pacing-action"),
 		).toBeNull();
 	});
 
