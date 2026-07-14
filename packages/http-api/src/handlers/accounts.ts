@@ -3590,8 +3590,8 @@ export function createOpenRouterAccountAddHandler(dbOps: DatabaseOperations) {
  *
  * For Anthropic accounts this restarts the free `/api/oauth/usage` polling
  * loop. For Codex accounts there is no free usage endpoint, so this sends a
- * minimal real `/responses` request (capped via `max_output_tokens: 1` and
- * abort-after-headers) and parses the `x-codex-*` headers off the response.
+ * minimal real `/responses` request, aborts immediately after receiving the
+ * headers, and parses the `x-codex-*` usage data from that snapshot.
  */
 export function createAccountRefreshUsageHandler(dbOps: DatabaseOperations) {
 	return async (_req: Request, accountId: string): Promise<Response> => {

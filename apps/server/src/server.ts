@@ -973,8 +973,8 @@ export default async function startServer(options?: {
 	// Register this server's codex on-demand usage refresher. Codex does not
 	// expose a free usage endpoint (unlike Anthropic's /api/oauth/usage), so
 	// each call sends a tiny upstream request and parses the x-codex-* headers
-	// from the response. Cost is bounded by `max_output_tokens: 1` plus the
-	// abort-after-headers cancel inside fetchCodexUsageOnDemand.
+	// from the response. The subscription endpoint rejects output-token caps,
+	// so fetchCodexUsageOnDemand aborts and cancels immediately after headers.
 	registerCodexUsageRefresher(serverId, async (accountId: string) => {
 		const account = await dbOps.getAccount(accountId);
 		if (!account) {
