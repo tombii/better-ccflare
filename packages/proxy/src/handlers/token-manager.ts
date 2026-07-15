@@ -1,4 +1,5 @@
 import {
+	authFailureEvents,
 	registerDisposable,
 	ServiceUnavailableError,
 	TokenRefreshError,
@@ -289,6 +290,12 @@ export async function refreshAccessTokenSafe(
 					ctx.asyncWriter.enqueue(() =>
 						ctx.dbOps.setRequiresReauth(account.id, true),
 					);
+					authFailureEvents.emit("event", {
+						accountId: account.id,
+						accountName: account.name,
+						provider: account.provider,
+						reason: providerError,
+					});
 				}
 				log.error(
 					`Token refresh failed for account ${account.name}: ${enhancedMessage}`,

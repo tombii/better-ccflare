@@ -1,4 +1,5 @@
 import { describe, expect, it, mock } from "bun:test";
+import { type AuthFailureEvt, authFailureEvents } from "@better-ccflare/core";
 import type { Account } from "@better-ccflare/types";
 import { refreshAccessTokenSafe } from "../token-manager";
 
@@ -74,6 +75,8 @@ describe("refreshAccessTokenSafe requires_reauth detection", () => {
 				'Failed to refresh token for account replay: {"error":"invalid_grant","error_description":"Refresh token invalid or expired"}',
 			),
 		);
+		const emitted: AuthFailureEvt[] = [];
+		authFailureEvents.once("event", (event) => emitted.push(event));
 
 		await expect(
 			refreshAccessTokenSafe(makeAccount("invalid-grant"), ctx as never),
@@ -82,6 +85,13 @@ describe("refreshAccessTokenSafe requires_reauth detection", () => {
 		expect(queuedJobs).toHaveLength(1);
 		await queuedJobs[0]();
 		expect(setRequiresReauth).toHaveBeenCalledWith("invalid-grant", true);
+		expect(emitted).toHaveLength(1);
+		expect(emitted[0]).toMatchObject({
+			accountId: "invalid-grant",
+			accountName: "test-account",
+			provider: "fake-refresh-provider",
+		});
+		expect(emitted[0]?.reason).toContain("invalid_grant");
 	});
 
 	it("does not flag network or upstream failures", async () => {
