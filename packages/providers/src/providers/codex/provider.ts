@@ -14,15 +14,16 @@ import type { RateLimitInfo, TokenRefreshResult } from "../../types";
 const log = new Logger("CodexProvider");
 
 /**
- * Opt-in: set to "1" to attach an OpenAI prompt_cache_key to converted
+ * Enabled by default: attaches an OpenAI prompt_cache_key to converted
  * requests. OpenAI documents that on GPT-5.6-family models this key is
- * required for reliable prompt-cache matching.
+ * required for reliable prompt-cache matching. Set to "0" to opt out and
+ * restore the old (no cache key) behavior.
  *
  * Attaching the key is also gated on the resolved account endpoint (see
  * isOpenAiPromptCacheEndpoint): it is only sent when the account targets
  * OpenAI's own chatgpt.com / api.openai.com hosts. Custom or self-hosted
  * OpenAI-compatible endpoints may reject the unknown field, so the key is
- * skipped for those even when this flag is enabled.
+ * skipped for those regardless of this flag.
  */
 export const CODEX_PROMPT_CACHE_KEY_ENV = "CCFLARE_CODEX_PROMPT_CACHE_KEY";
 /** "conversation" (default) or "session"; see derivePromptCacheKey. */
@@ -45,7 +46,7 @@ const TOKEN_URL = "https://auth.openai.com/oauth/token";
 const CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 export const CODEX_DEFAULT_ENDPOINT =
 	"https://chatgpt.com/backend-api/codex/responses";
-export const CODEX_VERSION = "0.144.3";
+export const CODEX_VERSION = "0.144.4";
 /** Hosts that are OpenAI's own Codex/Responses API, not a custom endpoint. */
 const OPENAI_PROMPT_CACHE_HOSTS = new Set(["chatgpt.com", "api.openai.com"]);
 export const CODEX_USER_AGENT = `codex-cli/${CODEX_VERSION} (Windows 10.0.26100; x64)`;
@@ -79,11 +80,42 @@ const DEFAULT_MODEL_MAP: Record<string, string> = {
 	haiku: "gpt-5.4-mini",
 };
 
+// Synced from the Codex CLI model cache (~/.codex/models_cache.json,
+// codex-cli 0.144.1). Missing entries mean no context_window block is
+// reported to the client, which disables its context gauge and compaction
+// triggers for that model.
 const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
 	"gpt-5.3-codex": 272_000,
+	"gpt-5.3-codex-spark": 128_000,
 	"gpt-5.4": 272_000,
 	"gpt-5.4-mini": 272_000,
+	"gpt-5.5": 272_000,
+	"gpt-5.6-sol": 372_000,
+	"gpt-5.6-terra": 372_000,
+	"gpt-5.6-luna": 372_000,
 };
+
+/**
+ * Exact lookup first, then longest-prefix fallback so dated or suffixed
+ * variants the API may return (e.g. "gpt-5.6-sol-2026-05-13") still resolve
+ * to their family's window instead of silently losing the client's context
+ * gauge. Prefix matches require a "-" boundary so "gpt-5.55" cannot match
+ * "gpt-5.5".
+ */
+function lookupContextWindow(model: string): number | undefined {
+	const exact = MODEL_CONTEXT_WINDOWS[model];
+	if (exact) return exact;
+	let bestKey: string | undefined;
+	for (const key of Object.keys(MODEL_CONTEXT_WINDOWS)) {
+		if (
+			model.startsWith(`${key}-`) &&
+			(bestKey === undefined || key.length > bestKey.length)
+		) {
+			bestKey = key;
+		}
+	}
+	return bestKey ? MODEL_CONTEXT_WINDOWS[bestKey] : undefined;
+}
 
 // ── Codex Responses API types ─────────────────────────────────────────────────
 
@@ -743,7 +775,7 @@ export class CodexProvider extends BaseProvider {
 	): ContextWindow | null {
 		const model = response?.model;
 		if (typeof model !== "string") return null;
-		const contextWindowSize = MODEL_CONTEXT_WINDOWS[model];
+		const contextWindowSize = lookupContextWindow(model);
 		if (!contextWindowSize) return null;
 
 		const inputTokens = usage?.input_tokens;
@@ -946,7 +978,7 @@ export class CodexProvider extends BaseProvider {
 		input: readonly unknown[],
 		account?: Account,
 	): string | undefined {
-		if (process.env[CODEX_PROMPT_CACHE_KEY_ENV] !== "1") return undefined;
+		if (process.env[CODEX_PROMPT_CACHE_KEY_ENV] === "0") return undefined;
 		if (!isOpenAiPromptCacheEndpoint(account)) return undefined;
 		const sessionId = this.extractSessionId(body);
 		if (!sessionId) return undefined;

@@ -5,6 +5,7 @@ import {
 	CODEX_CACHE_KEY_MODE_ENV,
 	CODEX_DEFAULT_ENDPOINT,
 	CODEX_PROMPT_CACHE_KEY_ENV,
+	CODEX_VERSION,
 	CodexProvider,
 } from "./provider";
 import { parseCodexUsageHeaders } from "./usage";
@@ -1230,6 +1231,62 @@ describe("CodexProvider.processResponse", () => {
 		expect(messageDeltaLine).toContain('"context_window_size":272000');
 	});
 
+	it("reports the 372k context_window for GPT-5.6 models", async () => {
+		const provider = new CodexProvider();
+		const upstreamBody = sseBody([
+			...eventLine("response.created", {
+				response: { id: "resp_test", model: "gpt-5.6-sol" },
+			}),
+			...eventLine("response.completed", {
+				response: {
+					model: "gpt-5.6-sol",
+					usage: { input_tokens: 100, output_tokens: 50 },
+				},
+			}),
+		]);
+
+		const response = new Response(upstreamBody, {
+			status: 200,
+			headers: { "content-type": "text/event-stream" },
+		});
+
+		const transformed = await provider.processResponse(response, null);
+		const transformedBody = await transformed.text();
+		const messageDeltaLine = transformedBody
+			.split("\n")
+			.find((line) => line.includes('"type":"message_delta"'));
+
+		expect(messageDeltaLine).toContain('"context_window_size":372000');
+	});
+
+	it("resolves dated model variants to their family context window", async () => {
+		const provider = new CodexProvider();
+		const upstreamBody = sseBody([
+			...eventLine("response.created", {
+				response: { id: "resp_test", model: "gpt-5.6-sol-2026-05-13" },
+			}),
+			...eventLine("response.completed", {
+				response: {
+					model: "gpt-5.6-sol-2026-05-13",
+					usage: { input_tokens: 100, output_tokens: 50 },
+				},
+			}),
+		]);
+
+		const response = new Response(upstreamBody, {
+			status: 200,
+			headers: { "content-type": "text/event-stream" },
+		});
+
+		const transformed = await provider.processResponse(response, null);
+		const transformedBody = await transformed.text();
+		const messageDeltaLine = transformedBody
+			.split("\n")
+			.find((line) => line.includes('"type":"message_delta"'));
+
+		expect(messageDeltaLine).toContain('"context_window_size":372000');
+	});
+
 	it("omits context_window when model metadata is unavailable", async () => {
 		const provider = new CodexProvider();
 		const upstreamBody = sseBody([
@@ -1919,7 +1976,13 @@ describe("CodexProvider prompt_cache_key derivation", () => {
 			.then((r) => r.json());
 	};
 
-	it("omits prompt_cache_key unless enabled", async () => {
+	it("attaches prompt_cache_key by default", async () => {
+		const body = await transform({});
+		expect(body.prompt_cache_key).toMatch(/^ccflare-convo-[0-9a-f]{48}$/);
+	});
+
+	it("omits prompt_cache_key when explicitly disabled via =0", async () => {
+		process.env[CODEX_PROMPT_CACHE_KEY_ENV] = "0";
 		const body = await transform({});
 		expect(body.prompt_cache_key).toBeUndefined();
 	});
@@ -2168,7 +2231,9 @@ describe("fetchCodexUsageOnDemand", () => {
 		const headersInit = recorded?.init.headers as Record<string, string>;
 		const headers = new Headers(headersInit);
 		expect(headers.get("Authorization")).toBe("Bearer test-token");
+		expect(headers.get("Version")).toBe(CODEX_VERSION);
 		expect(headers.get("Openai-Beta")).toBe("responses=experimental");
+		expect(headers.get("User-Agent")).toContain(`codex-cli/${CODEX_VERSION}`);
 		expect(headers.get("originator")).toBe("codex_cli_rs");
 		expect(headers.get("Content-Type")).toBe("application/json");
 
