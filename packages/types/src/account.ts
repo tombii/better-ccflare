@@ -246,8 +246,8 @@ export interface AccountResponse {
 	lastUsed: string | null;
 	created: string;
 	paused: boolean;
-	requiresReauth?: boolean;
-	pauseReason?: string | null;
+	requiresReauth: boolean;
+	pauseReason: string | null;
 	tokenStatus: "valid" | "expired";
 	tokenExpiresAt: string | null; // ISO timestamp of token expiration
 	rateLimitStatus: string;
@@ -312,6 +312,7 @@ export interface AccountListItem {
 	requestCount: number;
 	totalRequests: number;
 	paused: boolean;
+	requiresReauth: boolean;
 	tokenStatus: "valid" | "expired";
 	rateLimitStatus: string;
 	sessionInfo: string;
