@@ -351,6 +351,12 @@ export async function refreshAccessTokenSafe(
 					account.name,
 				);
 				if (authFailureReason) {
+					// Accepted race (documented, not synchronized): a manual re-auth that
+					// clears the flag via a direct DB write could be overtaken by this
+					// still-queued set(true) under a pathologically backlogged async
+					// writer. Likelihood is negligible — a human OAuth round-trip versus a
+					// millisecond queue drain — and recovery is simply to re-authenticate
+					// again, so building synchronization here is not worth the complexity.
 					ctx.asyncWriter.enqueue(() =>
 						ctx.dbOps.setRequiresReauth(account.id, true),
 					);

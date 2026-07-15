@@ -42,7 +42,9 @@ export {
 export {
 	type CodexUsageRefreshOutcome,
 	clearAccountRefreshCache,
+	extractAuthFailureReason,
 	getValidAccessToken,
+	isDefinitiveAuthFailure,
 	refreshCodexUsageForAccount,
 	registerCodexUsageRefresher,
 	registerPollingRestarter,
