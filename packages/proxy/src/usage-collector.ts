@@ -565,7 +565,10 @@ export class UsageCollector {
 			const requestBodyBytes = msg.requestBody
 				? Buffer.byteLength(msg.requestBody)
 				: 0;
-			if (this.activePayloadBytes + requestBodyBytes > MAX_ACTIVE_PAYLOAD_BYTES) {
+			if (
+				this.activePayloadBytes + requestBodyBytes >
+				MAX_ACTIVE_PAYLOAD_BYTES
+			) {
 				this.asyncWriter.recordPayloadDrop(requestBodyBytes);
 				log.warn(
 					`Active payload budget exceeded; disabling payload capture for ${msg.requestId} (request_bytes=${requestBodyBytes}, active_payload_bytes=${this.activePayloadBytes})`,
@@ -612,9 +615,7 @@ export class UsageCollector {
 		if (storePayloads && !state.payloadReleased && !state.chunksTruncated) {
 			const remaining = MAX_RESPONSE_BODY_BYTES - state.chunksBytes;
 			const bytesToCapture = Math.min(data.byteLength, Math.max(0, remaining));
-			if (
-				this.activePayloadBytes + bytesToCapture > MAX_ACTIVE_PAYLOAD_BYTES
-			) {
+			if (this.activePayloadBytes + bytesToCapture > MAX_ACTIVE_PAYLOAD_BYTES) {
 				this.asyncWriter.recordPayloadDrop(
 					state.retainedPayloadBytes + bytesToCapture,
 				);
@@ -1171,10 +1172,13 @@ export class UsageCollector {
 		estimate: () => Promise<number>,
 	): Promise<number> {
 		if (this.draining) {
-			log.warn("Pricing estimate skipped during drain; using zero-cost fallback", {
-				model,
-				requestId,
-			});
+			log.warn(
+				"Pricing estimate skipped during drain; using zero-cost fallback",
+				{
+					model,
+					requestId,
+				},
+			);
 			return 0;
 		}
 

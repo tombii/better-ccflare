@@ -103,10 +103,7 @@ describe("runGracefulShutdownSequence", () => {
 			throw new Error("expected graceful shutdown to reject");
 		} catch (error) {
 			expect(error).toBeInstanceOf(AggregateError);
-			expect((error as AggregateError).errors).toEqual([
-				stopError,
-				drainError,
-			]);
+			expect((error as AggregateError).errors).toEqual([stopError, drainError]);
 		}
 		expect(events).toEqual([
 			"server-stop",

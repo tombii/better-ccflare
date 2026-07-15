@@ -104,7 +104,10 @@ describe("models.dev pricing", () => {
 					);
 					// Test-only escape hatch: the pre-fix fetch has no signal, so make
 					// the failing test settle instead of leaving a permanent promise.
-					setTimeout(() => reject(new Error("test fetch guard expired")), 10_001);
+					setTimeout(
+						() => reject(new Error("test fetch guard expired")),
+						10_001,
+					);
 				});
 			},
 		);

@@ -61,6 +61,9 @@ export async function runGracefulShutdownSequence({
 
 	if (errors.length === 1) throw errors[0];
 	if (errors.length > 1) {
-		throw new AggregateError(errors, "Errors occurred during graceful shutdown");
+		throw new AggregateError(
+			errors,
+			"Errors occurred during graceful shutdown",
+		);
 	}
 }
