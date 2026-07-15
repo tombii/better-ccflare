@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
 	mapModelName,
 	ValidationError,
@@ -11,6 +12,22 @@ import { BaseProvider } from "../../base";
 import type { RateLimitInfo, TokenRefreshResult } from "../../types";
 
 const log = new Logger("CodexProvider");
+
+/**
+ * Enabled by default: attaches an OpenAI prompt_cache_key to converted
+ * requests. OpenAI documents that on GPT-5.6-family models this key is
+ * required for reliable prompt-cache matching. Set to "0" to opt out and
+ * restore the old (no cache key) behavior.
+ *
+ * Attaching the key is also gated on the resolved account endpoint (see
+ * isOpenAiPromptCacheEndpoint): it is only sent when the account targets
+ * OpenAI's own chatgpt.com / api.openai.com hosts. Custom or self-hosted
+ * OpenAI-compatible endpoints may reject the unknown field, so the key is
+ * skipped for those regardless of this flag.
+ */
+export const CODEX_PROMPT_CACHE_KEY_ENV = "CCFLARE_CODEX_PROMPT_CACHE_KEY";
+/** "conversation" (default) or "session"; see derivePromptCacheKey. */
+export const CODEX_CACHE_KEY_MODE_ENV = "CCFLARE_CODEX_CACHE_KEY_MODE";
 
 const INTERNAL_HEADERS = [
 	"x-better-ccflare-request-id",
@@ -29,7 +46,9 @@ const TOKEN_URL = "https://auth.openai.com/oauth/token";
 const CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 export const CODEX_DEFAULT_ENDPOINT =
 	"https://chatgpt.com/backend-api/codex/responses";
-export const CODEX_VERSION = "0.144.1";
+export const CODEX_VERSION = "0.144.4";
+/** Hosts that are OpenAI's own Codex/Responses API, not a custom endpoint. */
+const OPENAI_PROMPT_CACHE_HOSTS = new Set(["chatgpt.com", "api.openai.com"]);
 export const CODEX_USER_AGENT = `codex-cli/${CODEX_VERSION} (Windows 10.0.26100; x64)`;
 export const CODEX_PING_MODEL = "gpt-5-codex";
 const CODEX_SYNTHETIC_COUNT_TOKENS_URL =
@@ -61,11 +80,42 @@ const DEFAULT_MODEL_MAP: Record<string, string> = {
 	haiku: "gpt-5.4-mini",
 };
 
+// Synced from the Codex CLI model cache (~/.codex/models_cache.json,
+// codex-cli 0.144.1). Missing entries mean no context_window block is
+// reported to the client, which disables its context gauge and compaction
+// triggers for that model.
 const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
 	"gpt-5.3-codex": 272_000,
+	"gpt-5.3-codex-spark": 128_000,
 	"gpt-5.4": 272_000,
 	"gpt-5.4-mini": 272_000,
+	"gpt-5.5": 272_000,
+	"gpt-5.6-sol": 372_000,
+	"gpt-5.6-terra": 372_000,
+	"gpt-5.6-luna": 372_000,
 };
+
+/**
+ * Exact lookup first, then longest-prefix fallback so dated or suffixed
+ * variants the API may return (e.g. "gpt-5.6-sol-2026-05-13") still resolve
+ * to their family's window instead of silently losing the client's context
+ * gauge. Prefix matches require a "-" boundary so "gpt-5.55" cannot match
+ * "gpt-5.5".
+ */
+function lookupContextWindow(model: string): number | undefined {
+	const exact = MODEL_CONTEXT_WINDOWS[model];
+	if (exact) return exact;
+	let bestKey: string | undefined;
+	for (const key of Object.keys(MODEL_CONTEXT_WINDOWS)) {
+		if (
+			model.startsWith(`${key}-`) &&
+			(bestKey === undefined || key.length > bestKey.length)
+		) {
+			bestKey = key;
+		}
+	}
+	return bestKey ? MODEL_CONTEXT_WINDOWS[bestKey] : undefined;
+}
 
 // ── Codex Responses API types ─────────────────────────────────────────────────
 
@@ -120,6 +170,7 @@ interface CodexRequest {
 	reasoning?: { effort: string };
 	instructions?: string;
 	tools?: CodexTool[];
+	prompt_cache_key?: string;
 }
 
 // ── Anthropic request types ───────────────────────────────────────────────────
@@ -166,6 +217,8 @@ interface AnthropicRequest {
 	stream?: boolean;
 	tools?: AnthropicTool[];
 	reasoning?: { effort?: string };
+	/** Claude Code sends a JSON-encoded object with a session_id here. */
+	metadata?: { user_id?: string };
 	[key: string]: unknown;
 }
 
@@ -211,6 +264,38 @@ interface StreamState {
 		code?: string;
 		status?: string;
 	};
+}
+
+/**
+ * Resolves the endpoint a Codex request would be sent to, mirroring
+ * CodexProvider.buildUrl's fallback (invalid/missing custom_endpoint falls
+ * back to CODEX_DEFAULT_ENDPOINT). Read-only: unlike buildUrl it never logs,
+ * since it may be called on every request just to decide prompt_cache_key
+ * eligibility.
+ */
+function resolveCodexPromptCacheEndpoint(account?: Account): string {
+	if (account?.custom_endpoint) {
+		try {
+			return validateEndpointUrl(account.custom_endpoint, "custom_endpoint");
+		} catch {
+			return CODEX_DEFAULT_ENDPOINT;
+		}
+	}
+	return CODEX_DEFAULT_ENDPOINT;
+}
+
+/**
+ * prompt_cache_key is an OpenAI-specific Responses API field. Custom or
+ * self-hosted OpenAI-compatible endpoints may reject the unknown field, so
+ * only attach it when the account resolves to OpenAI's own hosts.
+ */
+function isOpenAiPromptCacheEndpoint(account?: Account): boolean {
+	try {
+		const { hostname } = new URL(resolveCodexPromptCacheEndpoint(account));
+		return OPENAI_PROMPT_CACHE_HOSTS.has(hostname);
+	} catch {
+		return false;
+	}
 }
 
 export class CodexProvider extends BaseProvider {
@@ -690,7 +775,7 @@ export class CodexProvider extends BaseProvider {
 	): ContextWindow | null {
 		const model = response?.model;
 		if (typeof model !== "string") return null;
-		const contextWindowSize = MODEL_CONTEXT_WINDOWS[model];
+		const contextWindowSize = lookupContextWindow(model);
 		if (!contextWindowSize) return null;
 
 		const inputTokens = usage?.input_tokens;
@@ -848,6 +933,82 @@ export class CodexProvider extends BaseProvider {
 		}
 	}
 
+	private extractSessionId(body: AnthropicRequest): string | undefined {
+		const rawUserId = body.metadata?.user_id;
+		if (typeof rawUserId !== "string") return undefined;
+		try {
+			const metadata = JSON.parse(rawUserId) as unknown;
+			if (!metadata || typeof metadata !== "object") return undefined;
+			const sessionId = (metadata as Record<string, unknown>).session_id;
+			if (
+				typeof sessionId !== "string" ||
+				!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+					sessionId,
+				)
+			) {
+				return undefined;
+			}
+			return sessionId.toLowerCase();
+		} catch {
+			return undefined;
+		}
+	}
+
+	/**
+	 * OpenAI routes each request to a cache machine by hashing the prompt's
+	 * initial tokens together with prompt_cache_key, and documents that one key
+	 * should stay under ~15 requests/minute or "some requests may miss the
+	 * cache". A Claude Code session multiplexes the main loop plus every
+	 * subagent conversation over one session id, so keying on the session
+	 * alone funnels an entire fan-out burst onto one cache machine and
+	 * thrashes it (measured in production traces: turns 1-8 of subagent
+	 * conversations cached no better than cold starts while one session key
+	 * carried 170+ conversations in five minutes).
+	 *
+	 * Default "conversation" mode therefore partitions the key by conversation
+	 * identity: session id + instructions + first input item, all stable
+	 * across the turns of one conversation and distinct across concurrent
+	 * subagents. Each conversation is sequential, so per-key traffic stays far
+	 * below the documented rate bound. CCFLARE_CODEX_CACHE_KEY_MODE=session
+	 * restores the coarse per-session key.
+	 */
+	private derivePromptCacheKey(
+		body: AnthropicRequest,
+		instructions: string,
+		input: readonly unknown[],
+		account?: Account,
+	): string | undefined {
+		if (process.env[CODEX_PROMPT_CACHE_KEY_ENV] === "0") return undefined;
+		if (!isOpenAiPromptCacheEndpoint(account)) return undefined;
+		const sessionId = this.extractSessionId(body);
+		if (!sessionId) return undefined;
+		// Digests are truncated to 48 hex chars so the full key fits the API's
+		// 64-char key bound. Session ids and content never appear in the key.
+		if (
+			process.env[CODEX_CACHE_KEY_MODE_ENV] === "session" ||
+			input.length === 0
+		) {
+			return `ccflare-session-${createHash("sha256")
+				.update(sessionId)
+				.digest("hex")
+				.slice(0, 48)}`;
+		}
+		let firstItem = "";
+		try {
+			firstItem = JSON.stringify(input[0]) ?? "";
+		} catch {
+			// Non-serializable first item: fall back to instructions-only identity.
+		}
+		return `ccflare-convo-${createHash("sha256")
+			.update(sessionId)
+			.update("\0")
+			.update(instructions)
+			.update("\0")
+			.update(firstItem)
+			.digest("hex")
+			.slice(0, 48)}`;
+	}
+
 	private convertToCodexFormat(
 		body: AnthropicRequest,
 		account?: Account,
@@ -931,6 +1092,15 @@ export class CodexProvider extends BaseProvider {
 		};
 
 		codexRequest.instructions = instructions || "You are a helpful assistant.";
+		const promptCacheKey = this.derivePromptCacheKey(
+			body,
+			codexRequest.instructions,
+			input,
+			account,
+		);
+		if (promptCacheKey) {
+			codexRequest.prompt_cache_key = promptCacheKey;
+		}
 		if (tools) {
 			codexRequest.tools = tools;
 		}

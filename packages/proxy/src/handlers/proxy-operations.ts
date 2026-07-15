@@ -10,6 +10,7 @@ import { Logger } from "@better-ccflare/logger";
 import { stripCacheControlFromOpenAIRequest } from "@better-ccflare/openai-formats";
 import {
 	getProvider,
+	isAnthropicExtraUsageExhausted,
 	isAnthropicOutOfCredits,
 	usageCache,
 } from "@better-ccflare/providers";
@@ -734,6 +735,59 @@ export async function proxyWithAccount(
 			} catch (err) {
 				log.warn("Failed to retry without cache_control:", err);
 			}
+		}
+
+		// ── extra_usage_exhausted: billing-policy rejection, NOT a rate limit (issue #293) ──
+		// Anthropic returns 400 invalid_request_error when a Claude OAuth account's
+		// "extra usage" credit balance is depleted for third-party-app traffic (e.g.
+		// OpenCode). This is a billing rejection, not account exhaustion — we do NOT
+		// bench the account and we do NOT change what's returned to the client; the
+		// 400 is passed through unchanged. We only log/record it for dashboard visibility.
+		// Checked before isModelUnavailableError since this 400 shape (invalid_request_error
+		// mentioning "extra usage") is not a "model unavailable" condition and would
+		// otherwise never be reached — isModelUnavailableError only matches not_found_error,
+		// model_not_found, "model not found"/"does not exist", or ResourceNotFoundException.
+		// Gated to Anthropic/Claude-OAuth accounts only — the body-shape match
+		// (invalid_request_error + "extra usage") is specific enough for Anthropic's
+		// API but could otherwise coincidentally match an arbitrary OpenAI-compatible
+		// provider's error text and mislabel its billing state.
+		if (
+			isClaudeProvider &&
+			rawResponse.status === 400 &&
+			(await isAnthropicExtraUsageExhausted(rawResponse.clone()))
+		) {
+			let requestedModel: string | null = null;
+			if (effectiveBodyBuffer) requestedModel = effectiveBodyContext.getModel();
+
+			const reason: RateLimitReason = "extra_usage_exhausted";
+			log.warn(
+				`Account ${account.name} extra_usage_exhausted (400${requestedModel ? `, model=${requestedModel}` : ""}) — ` +
+					`Anthropic extra-usage credits depleted for this OAuth account; NOT benching, response passed through to client`,
+			);
+			const responseTime = Date.now() - requestMeta.timestamp;
+			ctx.asyncWriter.enqueue(() =>
+				ctx.dbOps.saveRequest(
+					crypto.randomUUID(),
+					req.method,
+					url.pathname,
+					account.id,
+					400,
+					false,
+					reason,
+					responseTime,
+					failoverAttempts,
+					requestedModel ? { model: requestedModel } : undefined,
+					requestMeta.agentUsed ?? undefined,
+					apiKeyId ?? undefined,
+					apiKeyName ?? undefined,
+					requestMeta.project ?? null,
+					undefined,
+					requestMeta.comboName ?? null,
+				),
+			);
+			// Do not bench the account or fail over — pass Anthropic's real error
+			// through to the client unchanged, same as any other 400 today.
+			return withSanitizedProxyHeaders(rawResponse);
 		}
 
 		// On model unavailable / rate-limited: cycle through the model list for

@@ -28,6 +28,10 @@ import {
 	validateProviderPath,
 } from "./handlers";
 import {
+	buildSessionRejectResponse,
+	recordSessionRequest,
+} from "./session-governor";
+import {
 	getUsageCollector,
 	initUsageCollector,
 	tryGetUsageCollector,
@@ -252,6 +256,22 @@ export async function handleProxy(
 	requestMeta.clientSessionId = requestBodyContext.getClientId();
 	requestMeta.originalModel = originalModel;
 	requestMeta.appliedModel = appliedModel;
+
+	// 5b. Session volume circuit breaker: a runaway subagent storm shows up as
+	// one client session hammering /v1/messages. Count it here and, when
+	// enforcement is enabled, reject before account selection burns upstream
+	// quota. All identified traffic is counted: header-based exemptions would
+	// be client-forgeable, and internal synthetic requests either carry no
+	// client session (refresh probes, anonymous and thus ungoverned) or spend
+	// upstream quota like any other request (keepalive replays) and belong in
+	// the budget. This is a runaway-loop breaker, not an authentication
+	// boundary: a client that omits session metadata entirely is out of scope.
+	if (url.pathname === "/v1/messages") {
+		const verdict = recordSessionRequest(requestMeta.clientSessionId);
+		if (verdict?.rejected) {
+			return buildSessionRejectResponse(verdict);
+		}
+	}
 
 	// 6. Select accounts. Route on the model that will actually be sent
 	// upstream (post-interceptor-rewrite), not the model the client asked
