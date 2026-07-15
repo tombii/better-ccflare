@@ -156,4 +156,29 @@ describe("XaiProvider", () => {
 		expect(result.refreshToken).toBe("new-refresh-token");
 		expect(result.expiresAt).toBeGreaterThan(Date.now());
 	});
+
+	it("preserves the machine-readable OAuth error code on a failed refresh", async () => {
+		const provider = new XaiProvider();
+		globalThis.fetch = mock(
+			async () =>
+				new Response(
+					JSON.stringify({
+						error: "invalid_grant",
+						error_description: "Refresh token is invalid or has been revoked.",
+					}),
+					{ status: 401, headers: { "content-type": "application/json" } },
+				),
+		) as unknown as typeof fetch;
+
+		let thrown: Error | null = null;
+		try {
+			await provider.refreshToken(account(), "unused");
+		} catch (error) {
+			thrown = error as Error;
+		}
+
+		// The code must survive alongside the description so the token-manager's
+		// requires_reauth detection can classify a dead xAI refresh token.
+		expect(thrown?.message).toContain("invalid_grant");
+	});
 });

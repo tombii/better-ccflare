@@ -355,13 +355,20 @@ export class CodexProvider extends BaseProvider {
 				// ignore
 			}
 
+			// Preserve the machine-readable OAuth error code ahead of the human
+			// description so the token-manager's requires_reauth detection can
+			// classify a dead refresh token; a description-only message hides it.
 			const errorMessage =
-				errorData?.error_description || errorData?.error || response.statusText;
+				[errorData?.error, errorData?.error_description]
+					.filter(Boolean)
+					.join(": ") || response.statusText;
 
-			// Rotating refresh tokens: reuse → must re-auth
+			// Rotating refresh tokens: reuse → must re-auth. Keep the
+			// "refresh_token_reused" marker verbatim in the thrown message so
+			// downstream detection fires — the friendly hint alone would not match.
 			if (errorData?.error === "refresh_token_reused") {
 				throw new Error(
-					`Codex refresh token was reused for account ${account.name}. Please re-authenticate with: bun run cli --reauthenticate ${account.name}`,
+					`Failed to refresh Codex token for account ${account.name}: refresh_token_reused - the refresh token was already used; re-authenticate with: bun run cli --reauthenticate ${account.name}`,
 				);
 			}
 
