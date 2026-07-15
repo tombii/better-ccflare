@@ -2264,6 +2264,8 @@ describe("fetchCodexUsageOnDemand", () => {
 
 			await fetchCodexUsageOnDemand("test-token", endpoint);
 
+			// Preserve configured query and fragment components in the fetch URL.
+			expect(recorded?.url).toBe(endpoint);
 			const body = JSON.parse(recorded?.init.body as string);
 			expect(body).not.toHaveProperty("max_output_tokens");
 		}
