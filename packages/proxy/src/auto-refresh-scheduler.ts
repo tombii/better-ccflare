@@ -306,6 +306,7 @@ export class AutoRefreshScheduler {
 				session_start: null,
 				session_request_count: 0,
 				paused: false,
+				requires_reauth: false,
 				rate_limit_reset: accountRow.rate_limit_reset
 					? Number(accountRow.rate_limit_reset)
 					: null,
@@ -813,6 +814,7 @@ export class AutoRefreshScheduler {
 					session_start: null,
 					session_request_count: 0,
 					paused: false,
+					requires_reauth: false,
 					rate_limit_reset: null,
 					rate_limit_status: null,
 					rate_limit_remaining: null,
@@ -942,6 +944,7 @@ export class AutoRefreshScheduler {
 					session_start: null,
 					session_request_count: 0,
 					paused: false,
+					requires_reauth: false,
 					rate_limit_reset: null,
 					rate_limit_status: null,
 					rate_limit_remaining: null,
