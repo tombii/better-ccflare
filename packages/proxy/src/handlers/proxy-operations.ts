@@ -786,6 +786,14 @@ export async function proxyWithAccount(
 					requestMeta.project ?? null,
 					undefined,
 					requestMeta.comboName ?? null,
+					isModelRewrite(requestMeta.originalModel, requestMeta.appliedModel)
+						? (requestMeta.originalModel ?? null)
+						: null,
+					isModelRewrite(requestMeta.originalModel, requestMeta.appliedModel)
+						? (requestMeta.appliedModel ?? null)
+						: null,
+					requestMeta.projectAttributionSource ?? null,
+					requestMeta.agentAttributionSource ?? null,
 				),
 			);
 			// Do not bench the account or fail over — pass Anthropic's real error
