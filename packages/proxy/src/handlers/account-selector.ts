@@ -120,7 +120,9 @@ export async function selectAccountsForRequest(
 						!!forcedAccount.rate_limited_until;
 					const allowThrough =
 						available ||
-						(isAutoRefreshBypass && (isOveragePaused || isRateLimited));
+						(isAutoRefreshBypass &&
+							!forcedAccount.requires_reauth &&
+							(isOveragePaused || isRateLimited));
 					if (allowThrough) {
 						return [forcedAccount];
 					}

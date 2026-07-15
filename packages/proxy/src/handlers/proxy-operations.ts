@@ -1267,11 +1267,13 @@ export function createPoolExhaustedResponse(accounts: Account[]): Response {
 
 	// Build account info list
 	const accountInfos = accounts.map((account) => {
-		const reason = account.paused
-			? "paused"
-			: account.rate_limited_until && account.rate_limited_until > now
-				? "rate_limited"
-				: "unavailable";
+		const reason = account.requires_reauth
+			? "requires_reauth"
+			: account.paused
+				? "paused"
+				: account.rate_limited_until && account.rate_limited_until > now
+					? "rate_limited"
+					: "unavailable";
 
 		const availableAt =
 			account.rate_limited_until && account.rate_limited_until > now
