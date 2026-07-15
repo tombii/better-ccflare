@@ -1636,40 +1636,59 @@ Available endpoints:
 // (verified empirically on Bun 1.3.5). To force-close still-streaming
 // responses at the drain deadline, every proxied response is wrapped in a
 // pass-through whose controller can be errored explicitly.
-const inflightStreamAborts = new Set<() => void>();
+//
+// Each tracked stream also exposes a settlement promise. Force-close must
+// await those settlements before usage-collector drain / DB disposal, or
+// close/error finalizers that record the last usage events can still be
+// racing the shutdown path.
+type TrackedInflightStream = {
+	abort: () => void;
+	settled: Promise<void>;
+};
+
+const inflightStreams = new Set<TrackedInflightStream>();
 
 export function trackStreamForShutdown(response: Response): Response {
 	const body = response.body;
 	if (!body) return response;
 	const reader = body.getReader();
-	let abort: (() => void) | null = null;
-	const unregister = () => {
-		if (abort) inflightStreamAborts.delete(abort);
+	let tracked: TrackedInflightStream | null = null;
+	let settle!: () => void;
+	const settled = new Promise<void>((resolve) => {
+		settle = resolve;
+	});
+	const finish = () => {
+		if (!tracked) return;
+		inflightStreams.delete(tracked);
+		tracked = null;
+		settle();
 	};
 	const stream = new ReadableStream<Uint8Array>({
 		start(controller) {
-			abort = () => {
-				unregister();
+			const abort = () => {
 				try {
 					controller.error(new Error("server shutdown: drain deadline"));
 				} catch {
 					// already closed or errored
 				}
-				reader.cancel().catch(() => {});
+				// Settlement waits for source cancellation so shutdown can
+				// observe the terminal path even when no pull is scheduled.
+				void reader.cancel().finally(() => finish());
 			};
-			inflightStreamAborts.add(abort);
+			tracked = { abort, settled };
+			inflightStreams.add(tracked);
 		},
 		async pull(controller) {
 			try {
 				const { done, value } = await reader.read();
 				if (done) {
-					unregister();
+					finish();
 					controller.close();
 				} else {
 					controller.enqueue(value);
 				}
 			} catch (error) {
-				unregister();
+				finish();
 				try {
 					controller.error(error);
 				} catch {
@@ -1678,8 +1697,10 @@ export function trackStreamForShutdown(response: Response): Response {
 			}
 		},
 		cancel(reason) {
-			unregister();
-			return reader.cancel(reason).catch(() => {});
+			return reader
+				.cancel(reason)
+				.catch(() => {})
+				.finally(() => finish());
 		},
 	});
 	return new Response(stream, {
@@ -1689,12 +1710,24 @@ export function trackStreamForShutdown(response: Response): Response {
 	});
 }
 
-/** Error every tracked in-flight stream; returns how many were aborted. */
-export function abortInflightStreams(): number {
-	const aborts = [...inflightStreamAborts];
-	inflightStreamAborts.clear();
-	for (const abort of aborts) abort();
-	return aborts.length;
+/**
+ * Error every tracked in-flight stream and return both the abort count and a
+ * promise that settles once every aborted stream has finished its terminal
+ * close/error path.
+ */
+export function abortInflightStreams(): {
+	aborted: number;
+	settled: Promise<void>;
+} {
+	const streams = [...inflightStreams];
+	inflightStreams.clear();
+	for (const stream of streams) stream.abort();
+	return {
+		aborted: streams.length,
+		settled: Promise.allSettled(streams.map((stream) => stream.settled)).then(
+			() => undefined,
+		),
+	};
 }
 
 export const SHUTDOWN_DRAIN_MS_ENV = "CCFLARE_SHUTDOWN_DRAIN_MS";
@@ -1855,16 +1888,24 @@ async function handleGracefulShutdown(signal: string) {
 				// directly; the call stays as belt-and-braces for Bun versions
 				// where escalation works.
 				serverInstance.stop(true);
-				const aborted = abortInflightStreams();
+				const { aborted, settled } = abortInflightStreams();
 				if (aborted > 0) {
 					console.error(`Errored ${aborted} tracked response stream(s)`);
 				}
-				// Force-cancelled streams still have queued close/error handlers
-				// that record their final usage. Yield briefly so those callbacks
-				// run before the usage collector drains and the async DB writer
-				// is disposed; otherwise the cancelled streams' last usage events
-				// are lost.
-				await new Promise((resolve) => setTimeout(resolve, 250));
+				// Force-cancelled streams still have close/error handlers that
+				// record final usage. Await tracked stream settlements, then
+				// wait for Bun's pending request counter to clear so those
+				// finalizers can register before usage-collector drain and DB
+				// disposal. Bounded by the remaining drain budget, not a fixed
+				// sleep that can finish too early or waste time.
+				await settled;
+				const settleDeadline = Date.now() + Math.max(0, deadline - Date.now());
+				while (
+					serverInstance.pendingRequests > 0 &&
+					Date.now() < settleDeadline
+				) {
+					await new Promise((resolve) => setTimeout(resolve, 50));
+				}
 			}
 		}
 

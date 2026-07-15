@@ -47,10 +47,7 @@ describe("readShutdownDrainMs", () => {
 });
 
 describe("trackStreamForShutdown", () => {
-	const {
-		trackStreamForShutdown,
-		abortInflightStreams,
-	} = require("./server");
+	const { trackStreamForShutdown, abortInflightStreams } = require("./server");
 
 	const endlessResponse = () =>
 		new Response(
@@ -68,7 +65,9 @@ describe("trackStreamForShutdown", () => {
 		const reader = wrapped.body?.getReader();
 		if (!reader) throw new Error("wrapped response lost its body");
 		await reader.read(); // stream is live
-		expect(abortInflightStreams()).toBe(1);
+		const first = abortInflightStreams();
+		expect(first.aborted).toBe(1);
+		await first.settled;
 		await expect(
 			(async () => {
 				while (true) {
@@ -78,7 +77,9 @@ describe("trackStreamForShutdown", () => {
 			})(),
 		).rejects.toThrow(/drain deadline/);
 		// Registry is drained; a second sweep has nothing to abort.
-		expect(abortInflightStreams()).toBe(0);
+		const second = abortInflightStreams();
+		expect(second.aborted).toBe(0);
+		await second.settled;
 	});
 
 	it("unregisters streams that complete normally", async () => {
@@ -93,11 +94,42 @@ describe("trackStreamForShutdown", () => {
 			),
 		);
 		expect(await wrapped.text()).toBe("done");
-		expect(abortInflightStreams()).toBe(0);
+		const result = abortInflightStreams();
+		expect(result.aborted).toBe(0);
+		await result.settled;
 	});
 
 	it("passes non-stream responses through untouched", () => {
 		const plain = new Response(null, { status: 204 });
 		expect(trackStreamForShutdown(plain)).toBe(plain);
+	});
+
+	it("resolves abort settlements after source cancellation, not a fixed sleep", async () => {
+		let cancelResolved = false;
+		const delayedCancelResponse = () =>
+			new Response(
+				new ReadableStream<Uint8Array>({
+					async pull(controller) {
+						controller.enqueue(new TextEncoder().encode("tick\n"));
+						await new Promise((r) => setTimeout(r, 20));
+					},
+					async cancel() {
+						await new Promise((r) => setTimeout(r, 30));
+						cancelResolved = true;
+					},
+				}),
+				{ headers: { "content-type": "text/event-stream" } },
+			);
+
+		const wrapped = trackStreamForShutdown(delayedCancelResponse());
+		const reader = wrapped.body?.getReader();
+		if (!reader) throw new Error("wrapped response lost its body");
+		await reader.read();
+		const { aborted, settled } = abortInflightStreams();
+		expect(aborted).toBe(1);
+		expect(cancelResolved).toBe(false);
+		await settled;
+		expect(cancelResolved).toBe(true);
+		reader.cancel().catch(() => {});
 	});
 });
