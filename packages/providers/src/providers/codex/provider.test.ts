@@ -2017,33 +2017,30 @@ describe("CodexProvider.transformRequestBody", () => {
 			{ type: "tool", name: "Read" },
 			{ type: "function", name: "Read" },
 		],
-	] as const)(
-		"maps Anthropic tool_choice %j to Codex",
-		async (toolChoice, expected) => {
-			const provider = new CodexProvider();
-			const request = new Request("https://example.com/v1/messages", {
-				method: "POST",
-				headers: { "content-type": "application/json" },
-				body: JSON.stringify({
-					model: "claude-opus-4-8",
-					max_tokens: 10,
-					messages: [{ role: "user", content: "read a file" }],
-					tools: [
-						{
-							name: "Read",
-							description: "Read a file.",
-							input_schema: { type: "object" },
-						},
-					],
-					tool_choice: toolChoice,
-				}),
-			});
+	] as const)("maps Anthropic tool_choice %j to Codex", async (toolChoice, expected) => {
+		const provider = new CodexProvider();
+		const request = new Request("https://example.com/v1/messages", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				model: "claude-opus-4-8",
+				max_tokens: 10,
+				messages: [{ role: "user", content: "read a file" }],
+				tools: [
+					{
+						name: "Read",
+						description: "Read a file.",
+						input_schema: { type: "object" },
+					},
+				],
+				tool_choice: toolChoice,
+			}),
+		});
 
-			const transformed = await provider.transformRequestBody(request);
-			const body = await transformed.json();
-			expect(body.tool_choice).toEqual(expected);
-		},
-	);
+		const transformed = await provider.transformRequestBody(request);
+		const body = await transformed.json();
+		expect(body.tool_choice).toEqual(expected);
+	});
 
 	it("preserves explicit tool_choice precedence over StructuredOutput fallback", async () => {
 		const provider = new CodexProvider();
@@ -2214,7 +2211,7 @@ describe("CodexProvider prompt_cache_key derivation", () => {
 			transform({
 				metadata: { user_id: JSON.stringify({ session_id: sessionId }) },
 			});
-const lower = await withSession("11111111-1111-4111-8111-111111111111");
+		const lower = await withSession("11111111-1111-4111-8111-111111111111");
 		const upper = await withSession(
 			"11111111-1111-4111-8111-111111111111".toUpperCase(),
 		);
