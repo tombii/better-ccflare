@@ -167,6 +167,7 @@ interface CodexRequest {
 	input: (CodexMessage | CodexFunctionCallItem | CodexFunctionCallOutputItem)[];
 	stream: boolean;
 	store: false;
+	max_output_tokens?: number;
 	reasoning?: { effort: string };
 	instructions?: string;
 	tools?: CodexTool[];
@@ -293,6 +294,19 @@ function isOpenAiPromptCacheEndpoint(account?: Account): boolean {
 	try {
 		const { hostname } = new URL(resolveCodexPromptCacheEndpoint(account));
 		return OPENAI_PROMPT_CACHE_HOSTS.has(hostname);
+	} catch {
+		return false;
+	}
+}
+
+function isCodexSubscriptionEndpoint(account?: Account): boolean {
+	try {
+		const endpoint = new URL(resolveCodexPromptCacheEndpoint(account));
+		const normalizedPath = endpoint.pathname.replace(/\/+$/, "");
+		return (
+			endpoint.origin === "https://chatgpt.com" &&
+			normalizedPath === "/backend-api/codex/responses"
+		);
 	} catch {
 		return false;
 	}
@@ -454,6 +468,14 @@ export class CodexProvider extends BaseProvider {
 			const body = (await request.json()) as AnthropicRequest;
 			if (isSyntheticCountTokens) {
 				return this.createSyntheticCountTokensResponse(request, body);
+			}
+			if (isCodexSubscriptionEndpoint(account) && body.max_tokens === 0) {
+				return this.createSyntheticErrorResponse(
+					request,
+					400,
+					"invalid_request_error",
+					"Codex subscription endpoint does not support max_tokens: 0.",
+				);
 			}
 
 			const requestId = request.headers.get("x-better-ccflare-request-id");
@@ -1090,6 +1112,17 @@ export class CodexProvider extends BaseProvider {
 			store: false,
 			reasoning: { effort: reasoningResolution.effort ?? "medium" },
 		};
+		if (
+			!isCodexSubscriptionEndpoint(account) &&
+			typeof body.max_tokens === "number" &&
+			Number.isFinite(body.max_tokens)
+		) {
+			if (body.max_tokens > 0) {
+				codexRequest.max_output_tokens = Math.floor(body.max_tokens);
+			} else if (body.max_tokens === 0) {
+				codexRequest.max_output_tokens = 1;
+			}
+		}
 
 		codexRequest.instructions = instructions || "You are a helpful assistant.";
 		const promptCacheKey = this.derivePromptCacheKey(
