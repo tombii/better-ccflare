@@ -3,7 +3,7 @@ import { logBus } from "@better-ccflare/logger";
 import type { LogEvent } from "@better-ccflare/types";
 import { isValidClaudeModel } from "../../../core/src/model-mappings";
 import { CLAUDE_MODEL_IDS } from "../../../core/src/models";
-import type { StartMessage } from "../worker-messages";
+import type { EndMessage, StartMessage } from "../worker-messages";
 
 interface PricingTokens {
 	inputTokens?: number;
@@ -50,10 +50,12 @@ const INACTIVITY_TIMEOUT_MS = 2 * 60 * 1000;
 
 interface TestHarness {
 	collector: UsageCollectorInstance;
+	payloadDrops: number[];
 	saveRequestIds: string[];
 	payloads: Map<string, string>;
 	summaryCosts: Map<string, number | undefined>;
 	summaries: string[];
+	writerState: { disposed: boolean };
 }
 
 interface TestRequestState {
@@ -61,11 +63,22 @@ interface TestRequestState {
 	buffer: string;
 	chunks: Uint8Array[];
 	chunksBytes: number;
+	chunksTruncated: boolean;
+	payloadReleased: boolean;
+	retainedPayloadBytes: number;
+	usage: {
+		model?: string;
+		outputTokens?: number;
+	};
 }
 
 interface TestableCollector {
+	_handleEndInternal(msg: EndMessage): Promise<void>;
+	activePayloadBytes: number;
 	cleanupStaleRequests(): void;
 	missingStateWarnings: Set<string>;
+	pendingPayloadBytes: number;
+	pendingPayloadCount: number;
 	pricingTimeoutMs: number;
 	requests: Map<string, TestRequestState>;
 }
@@ -107,8 +120,10 @@ function makeStartMessage(
 function createHarness(storePayloads = false): TestHarness {
 	const saveRequestIds: string[] = [];
 	const payloads = new Map<string, string>();
+	const payloadDrops: number[] = [];
 	const summaryCosts = new Map<string, number | undefined>();
 	const summaries: string[] = [];
+	const writerState = { disposed: false };
 	const pendingWrites = new Set<Promise<void>>();
 
 	const dbOps = {
@@ -131,9 +146,13 @@ function createHarness(storePayloads = false): TestHarness {
 		},
 		async dispose(): Promise<void> {
 			await Promise.allSettled([...pendingWrites]);
+			writerState.disposed = true;
 		},
 		canAcceptPayload(): boolean {
 			return true;
+		},
+		recordPayloadDrop(bytes: number): void {
+			payloadDrops.push(bytes);
 		},
 		enqueuePayload(
 			_requestId: string,
@@ -155,7 +174,15 @@ function createHarness(storePayloads = false): TestHarness {
 		},
 	);
 
-	return { collector, saveRequestIds, payloads, summaries, summaryCosts };
+	return {
+		collector,
+		payloadDrops,
+		saveRequestIds,
+		payloads,
+		summaries,
+		summaryCosts,
+		writerState,
+	};
 }
 
 function testable(collector: UsageCollectorInstance): TestableCollector {
@@ -231,7 +258,7 @@ describe("UsageCollector request lifecycle", () => {
 		expect(testable(collector).requests.has("active-stream")).toBe(false);
 	});
 
-	it("detaches a finalizing stream before pricing yields so capacity eviction cannot free it", async () => {
+	it("snapshots a finalizing payload before pricing yields and promptly releases its request state", async () => {
 		const { collector, payloads } = harness(true);
 		const requestBody = Buffer.from("old request body").toString("base64");
 		collector.handleStart(
@@ -257,10 +284,11 @@ describe("UsageCollector request lifecycle", () => {
 		for (let i = 0; i <= 10_000; i++) {
 			collector.handleStart(makeStartMessage(`race-capacity-${i}`));
 		}
-		const stateSurvivedCapacityEviction =
-			(finalizingState?.chunks.length ?? 0) > 0 &&
-			finalizingState?.startMessage.requestBody === requestBody &&
-			finalizingState?.startMessage.requestHeaders["x-lifecycle"] === "old";
+		const payloadStateReleasedBeforePricingResolved =
+			finalizingState?.chunks.length === 0 &&
+			finalizingState.chunksBytes === 0 &&
+			finalizingState.startMessage.requestBody === null &&
+			Object.keys(finalizingState.startMessage.requestHeaders).length === 0;
 
 		await endPromise;
 		await collector.drain();
@@ -269,12 +297,46 @@ describe("UsageCollector request lifecycle", () => {
 			payloads.get("finalizing-stream") ?? "null",
 		);
 		expect(detachedBeforePricingResolved).toBe(true);
-		expect(stateSurvivedCapacityEviction).toBe(true);
+		expect(payloadStateReleasedBeforePricingResolved).toBe(true);
 		expect(savedPayload.request.body).toBe(requestBody);
 		expect(savedPayload.request.headers).toEqual({ "x-lifecycle": "old" });
 		expect(
 			Buffer.from(savedPayload.response.body, "base64").toString("utf8"),
 		).toContain("message_start");
+	});
+
+	it("bounds serialized payloads waiting behind pricing", async () => {
+		process.env.CF_PRICING_TIMEOUT_MS = "60000";
+		pricingImplementation = () => new Promise<number>(() => {});
+		const { collector, payloadDrops, payloads } = harness(true);
+		const requestBody = Buffer.from("bounded payload").toString("base64");
+
+		// Simulate the collector-local pending-finalizer capacity already being full.
+		testable(collector).pendingPayloadCount = 1_000;
+		collector.handleStart(
+			makeStartMessage("bounded-finalizer", {
+				requestBody,
+				requestHeaders: { "x-payload": "bounded" },
+			}),
+		);
+		collector.handleChunk("bounded-finalizer", modelBearingChunk());
+		const state = testable(collector).requests.get("bounded-finalizer");
+
+		const endPromise = collector.handleEnd({
+			type: "end",
+			requestId: "bounded-finalizer",
+			success: true,
+		});
+
+		expect(state?.startMessage.requestBody).toBeNull();
+		expect(state?.startMessage.requestHeaders).toEqual({});
+		expect(state?.chunks).toEqual([]);
+		expect(payloadDrops).toHaveLength(1);
+		expect(testable(collector).pendingPayloadCount).toBe(1_000);
+
+		await collector.drain();
+		await endPromise;
+		expect(payloads.has("bounded-finalizer")).toBe(false);
 	});
 
 	it("does not delete a new same-ID lifecycle when the old finalizer completes", async () => {
@@ -381,6 +443,77 @@ describe("UsageCollector request lifecycle", () => {
 		}
 	});
 
+	it("drain forces current pricing waits to zero without waiting for the configured deadline", async () => {
+		process.env.CF_PRICING_TIMEOUT_MS = "60000";
+		pricingImplementation = () => new Promise<number>(() => {});
+		const { collector, summaryCosts } = harness();
+		collector.handleStart(makeStartMessage("drain-pricing"));
+		collector.handleChunk("drain-pricing", modelBearingChunk());
+		const endPromise = collector.handleEnd({
+			type: "end",
+			requestId: "drain-pricing",
+			success: true,
+		});
+
+		const drainedPromptly = await Promise.race([
+			collector.drain().then(() => true),
+			new Promise<false>((resolve) => setTimeout(() => resolve(false), 250)),
+		]);
+		await endPromise;
+
+		expect(drainedPromptly).toBe(true);
+		expect(summaryCosts.get("drain-pricing")).toBe(0);
+	});
+
+	it("drain waits for handleEnd work registered while its first snapshot settles", async () => {
+		process.env.CF_PRICING_TIMEOUT_MS = "60000";
+		pricingImplementation = () => new Promise<number>(() => {});
+		const { collector, saveRequestIds, summaries, writerState } = harness();
+		for (const requestId of ["drain-first", "drain-second"]) {
+			collector.handleStart(makeStartMessage(requestId));
+			collector.handleChunk(requestId, modelBearingChunk());
+		}
+
+		let releaseSecond = () => {};
+		const secondGate = new Promise<void>((resolve) => {
+			releaseSecond = resolve;
+		});
+		const target = testable(collector);
+		const originalHandleEnd = target._handleEndInternal.bind(collector);
+		target._handleEndInternal = async (msg: EndMessage) => {
+			if (msg.requestId === "drain-second") await secondGate;
+			return originalHandleEnd(msg);
+		};
+
+		const firstEnd = collector.handleEnd({
+			type: "end",
+			requestId: "drain-first",
+			success: true,
+		});
+		const drainPromise = collector.drain();
+		const secondEnd = collector.handleEnd({
+			type: "end",
+			requestId: "drain-second",
+			success: true,
+		});
+
+		try {
+			const returnedBeforeSecondSettled = await Promise.race([
+				drainPromise.then(() => true),
+				new Promise<false>((resolve) => setTimeout(() => resolve(false), 30)),
+			]);
+			expect(returnedBeforeSecondSettled).toBe(false);
+			expect(writerState.disposed).toBe(false);
+		} finally {
+			releaseSecond();
+		}
+
+		await Promise.all([firstEnd, secondEnd, drainPromise]);
+		expect(saveRequestIds.sort()).toEqual(["drain-first", "drain-second"]);
+		expect(summaries.sort()).toEqual(["drain-first", "drain-second"]);
+		expect(writerState.disposed).toBe(true);
+	});
+
 	it("clears the pricing deadline timer when estimation finishes quickly", async () => {
 		process.env.CF_PRICING_TIMEOUT_MS = "20";
 		pricingImplementation = async () => 0.25;
@@ -413,10 +546,30 @@ describe("UsageCollector request lifecycle", () => {
 		}
 	});
 
-	it("falls back to the default pricing deadline for an invalid override", () => {
-		process.env.CF_PRICING_TIMEOUT_MS = "60001";
-		const { collector } = harness();
-		expect(testable(collector).pricingTimeoutMs).toBe(5_000);
+	it("accepts only integer pricing deadlines in the inclusive supported range", () => {
+		const cases: Array<{
+			configured: string | undefined;
+			expected: number;
+		}> = [
+			{ configured: "1", expected: 1 },
+			{ configured: "60000", expected: 60_000 },
+			{ configured: "0", expected: 5_000 },
+			{ configured: "60001", expected: 5_000 },
+			{ configured: "1.5", expected: 5_000 },
+			{ configured: "not-a-number", expected: 5_000 },
+			{ configured: undefined, expected: 5_000 },
+		];
+
+		for (const { configured, expected } of cases) {
+			if (configured === undefined) {
+				delete process.env.CF_PRICING_TIMEOUT_MS;
+			} else {
+				process.env.CF_PRICING_TIMEOUT_MS = configured;
+			}
+
+			const { collector } = harness();
+			expect(testable(collector).pricingTimeoutMs).toBe(expected);
+		}
 	});
 
 	it("evicts a stream that exceeds the inactivity timeout", async () => {
@@ -435,6 +588,166 @@ describe("UsageCollector request lifecycle", () => {
 		});
 		await collector.drain();
 		expect(saveRequestIds).toEqual([]);
+	});
+
+	it("keeps parser state but permanently releases payload capture for an old active stream", async () => {
+		const { collector, payloads, saveRequestIds } = harness(true);
+		const requestBody = Buffer.from("old active request").toString("base64");
+		collector.handleStart(
+			makeStartMessage("old-active-stream", {
+				requestBody,
+				requestHeaders: { "x-old-active": "true" },
+				responseHeaders: { "x-response": "old-active" },
+			}),
+		);
+		collector.handleChunk("old-active-stream", modelBearingChunk());
+		const state = testable(collector).requests.get("old-active-stream");
+		expect(state?.chunks.length).toBeGreaterThan(0);
+
+		now += 2 * 60 * 1000 + 1;
+		collector.handleChunk(
+			"old-active-stream",
+			new TextEncoder().encode(": keep-alive\n\n"),
+		);
+		testable(collector).cleanupStaleRequests();
+
+		expect(testable(collector).requests.has("old-active-stream")).toBe(true);
+		expect(state?.payloadReleased).toBe(true);
+		expect(state?.startMessage.requestBody).toBeNull();
+		expect(state?.startMessage.requestHeaders).toEqual({});
+		expect(state?.startMessage.responseHeaders).toEqual({});
+		expect(state?.chunks).toEqual([]);
+		expect(state?.chunksBytes).toBe(0);
+		expect(state?.chunksTruncated).toBe(true);
+
+		collector.handleChunk(
+			"old-active-stream",
+			new TextEncoder().encode(
+				'event: message_delta\ndata: {"type":"message_delta","usage":{"output_tokens":7}}\n\n',
+			),
+		);
+		expect(state?.usage.outputTokens).toBe(7);
+		expect(state?.chunks).toEqual([]);
+		expect(state?.chunksBytes).toBe(0);
+
+		await collector.handleEnd({
+			type: "end",
+			requestId: "old-active-stream",
+			success: true,
+		});
+		await collector.drain();
+
+		expect(saveRequestIds).toEqual(["old-active-stream"]);
+		expect(payloads.has("old-active-stream")).toBe(false);
+	});
+
+	it("releases one active request payload when its next chunk would exceed the global byte budget", async () => {
+		const { collector, payloadDrops } = harness(true);
+		const requestBody = Buffer.from("budgeted request body").toString("base64");
+		collector.handleStart(
+			makeStartMessage("active-budget", {
+				requestBody,
+				requestHeaders: { "x-active-budget": "true" },
+			}),
+		);
+		const state = testable(collector).requests.get("active-budget");
+		const retainedBeforeChunk = state?.retainedPayloadBytes ?? 0;
+		expect(retainedBeforeChunk).toBe(Buffer.byteLength(requestBody));
+
+		const nearCap = 100 * 1024 * 1024 - 1;
+		testable(collector).activePayloadBytes = nearCap;
+		collector.handleChunk("active-budget", modelBearingChunk());
+
+		expect(state?.payloadReleased).toBe(true);
+		expect(state?.startMessage.requestBody).toBeNull();
+		expect(state?.startMessage.requestHeaders).toEqual({});
+		expect(state?.chunks).toEqual([]);
+		expect(state?.chunksBytes).toBe(0);
+		expect(state?.retainedPayloadBytes).toBe(0);
+		expect(testable(collector).activePayloadBytes).toBe(
+			nearCap - retainedBeforeChunk,
+		);
+		expect(state?.usage.outputTokens).toBe(0);
+		expect(payloadDrops).toHaveLength(1);
+	});
+
+	it("accounts active payload bytes through capture and prompt finalization release", async () => {
+		const { collector } = harness(true);
+		const requestBody = Buffer.from("accounted request").toString("base64");
+		collector.handleStart(
+			makeStartMessage("payload-accounting", { requestBody }),
+		);
+		const state = testable(collector).requests.get("payload-accounting");
+		expect(testable(collector).activePayloadBytes).toBe(
+			Buffer.byteLength(requestBody),
+		);
+
+		const chunk = new TextEncoder().encode(": ping\n\n");
+		collector.handleChunk("payload-accounting", chunk);
+		expect(state?.retainedPayloadBytes).toBe(
+			Buffer.byteLength(requestBody) + chunk.byteLength,
+		);
+		expect(testable(collector).activePayloadBytes).toBe(
+			Buffer.byteLength(requestBody) + chunk.byteLength,
+		);
+
+		await collector.handleEnd({
+			type: "end",
+			requestId: "payload-accounting",
+			success: true,
+		});
+		expect(testable(collector).activePayloadBytes).toBe(0);
+	});
+
+	it("copies a captured chunk out of an oversized backing buffer", () => {
+		const { collector } = harness(true);
+		collector.handleStart(makeStartMessage("chunk-view-copy"));
+		const encoded = modelBearingChunk();
+		const backing = new Uint8Array(1024 * 1024);
+		const offset = 127;
+		backing.set(encoded, offset);
+		const view = new Uint8Array(backing.buffer, offset, encoded.byteLength);
+
+		collector.handleChunk("chunk-view-copy", view);
+
+		const state = testable(collector).requests.get("chunk-view-copy");
+		const stored = state?.chunks[0];
+		expect(stored?.byteLength).toBe(view.byteLength);
+		expect(stored?.buffer).not.toBe(backing.buffer);
+		expect(stored?.buffer.byteLength).toBe(view.byteLength);
+		expect(state?.chunksBytes).toBe(view.byteLength);
+		expect(state?.retainedPayloadBytes).toBe(view.byteLength);
+		expect(state?.usage.model).toBe("claude-sonnet-4-5-20250929");
+		expect(state?.usage.outputTokens).toBe(0);
+	});
+
+	it("does not retain request bodies or chunks while payload storage is disabled", async () => {
+		const { collector } = harness(false);
+		const requestBody = Buffer.from("disabled payload").toString("base64");
+		collector.handleStart(
+			makeStartMessage("payload-disabled", {
+				requestBody,
+				requestHeaders: { "x-disabled": "true" },
+			}),
+		);
+		const state = testable(collector).requests.get("payload-disabled");
+		expect(state?.payloadReleased).toBe(true);
+		expect(state?.startMessage.requestBody).toBeNull();
+		expect(state?.startMessage.requestHeaders).toEqual({});
+		expect(state?.retainedPayloadBytes).toBe(0);
+		expect(testable(collector).activePayloadBytes).toBe(0);
+
+		collector.handleChunk("payload-disabled", modelBearingChunk());
+		expect(state?.chunks).toEqual([]);
+		expect(state?.chunksBytes).toBe(0);
+		expect(state?.usage.outputTokens).toBe(0);
+		expect(testable(collector).activePayloadBytes).toBe(0);
+
+		await collector.handleEnd({
+			type: "end",
+			requestId: "payload-disabled",
+			success: true,
+		});
 	});
 
 	it("retains the capacity safeguard and frees the oldest evicted state", () => {
