@@ -145,6 +145,7 @@ export class AutoRefreshScheduler {
 				WHERE
 					auto_refresh_enabled = 1
 					AND provider IN ('anthropic', 'codex', 'zai')
+					AND COALESCE(requires_reauth, 0) = 0
 					AND (
 						(rate_limit_reset IS NOT NULL AND rate_limit_reset <= ?)
 						OR rate_limit_reset IS NULL
@@ -494,7 +495,7 @@ export class AutoRefreshScheduler {
 
 				// Mark account as needing attention in database (disable auto-refresh to prevent repeated failures)
 				await this.db.run(
-					`UPDATE accounts SET auto_refresh_enabled = 0 WHERE id = ?`,
+					`UPDATE accounts SET auto_refresh_enabled = 0, expires_at = 0 WHERE id = ?`,
 					[accountRow.id],
 				);
 

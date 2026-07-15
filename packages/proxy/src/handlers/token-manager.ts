@@ -276,7 +276,20 @@ export async function refreshAccessTokenSafe(
 				const originalError =
 					error instanceof Error ? error.message : String(error);
 				const enhancedMessage = getOAuthErrorMessage(account, originalError);
-
+				const lastErrorDelimiter = originalError.lastIndexOf(": ");
+				const providerError =
+					lastErrorDelimiter >= 0
+						? originalError.slice(lastErrorDelimiter + 2)
+						: originalError;
+				if (
+					/invalid_grant|invalid_refresh_token|refresh_token_reused/i.test(
+						providerError,
+					)
+				) {
+					ctx.asyncWriter.enqueue(() =>
+						ctx.dbOps.setRequiresReauth(account.id, true),
+					);
+				}
 				log.error(
 					`Token refresh failed for account ${account.name}: ${enhancedMessage}`,
 					error,
