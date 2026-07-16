@@ -27,7 +27,7 @@ import {
 	SessionAffinityStrategy,
 	SessionStrategy,
 } from "@better-ccflare/load-balancer";
-import { Logger } from "@better-ccflare/logger";
+import { Logger, setConsoleLogging } from "@better-ccflare/logger";
 import { handleResponsesRequest } from "@better-ccflare/openai-responses-adapter";
 import {
 	CODEX_DEFAULT_ENDPOINT,
@@ -543,6 +543,9 @@ export default async function startServer(options?: {
 	sslKeyPath?: string;
 	sslCertPath?: string;
 }) {
+	// Headless serve mode has no TUI to protect: route WARN/ERROR (and any
+	// enabled level) to the console so journald/terminal actually see them.
+	setConsoleLogging(true);
 	// Return existing server if already running
 	if (serverInstance) {
 		const existingPort = serverInstance.port;
