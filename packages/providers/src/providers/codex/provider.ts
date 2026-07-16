@@ -73,6 +73,22 @@ const _normalizeUsage = (value: unknown): Record<string, number> => {
 	};
 };
 
+// Known Codex failure codes -> Anthropic error types. Quota exhaustion cools
+// the account like a rate limit; slow_down/server_is_overloaded are throttles;
+// context/policy and subscription errors are permanent and must not be
+// retried as 5xx. Codes and their retry semantics mirror the reference
+// client (openai/codex codex-api/src/sse/responses.rs + api_bridge.rs).
+const CODEX_ERROR_TYPE_BY_CODE: Record<string, string> = {
+	rate_limit_exceeded: "rate_limit_error",
+	insufficient_quota: "rate_limit_error",
+	server_is_overloaded: "overloaded_error",
+	slow_down: "overloaded_error",
+	server_error: "api_error",
+	context_length_exceeded: "invalid_request_error",
+	cyber_policy: "invalid_request_error",
+	usage_not_included: "permission_error",
+};
+
 // Default model mapping: Anthropic model name prefixes → Codex model names
 const DEFAULT_MODEL_MAP: Record<string, string> = {
 	opus: "gpt-5.3-codex",
@@ -1552,9 +1568,12 @@ export class CodexProvider extends BaseProvider {
 		const status = error?.status === "rate_limited" ? error.status : undefined;
 		const rawType = error?.type;
 		let type = "api_error";
-		if (code === "context_length_exceeded") {
-			type = "invalid_request_error";
-		} else if (code === "rate_limit_exceeded" || status === "rate_limited") {
+		const mappedFromCode = code
+			? CODEX_ERROR_TYPE_BY_CODE[code.toLowerCase()]
+			: undefined;
+		if (mappedFromCode) {
+			type = mappedFromCode;
+		} else if (status === "rate_limited") {
 			type = "rate_limit_error";
 		} else if (
 			rawType === "invalid_request_error" ||
@@ -1567,11 +1586,23 @@ export class CodexProvider extends BaseProvider {
 		) {
 			type = rawType;
 		}
+		const upstreamMessage = error?.message || "Codex upstream failed.";
+		const normalizedCode = code?.toLowerCase();
+		// Some Codex endpoints report context overflow without the
+		// context_length_exceeded code, only a "your input exceeds the context
+		// window..." message. Match that message shape too so the client still
+		// gets the friendlier, prefixed error text.
+		const isContextOverflow =
+			normalizedCode === "context_length_exceeded" ||
+			/^your input exceeds the context window\b/i.test(upstreamMessage);
+		const message = isContextOverflow
+			? `Prompt is too long. Codex reported: ${upstreamMessage}`
+			: upstreamMessage;
 		return {
 			type: "error",
 			error: {
 				type,
-				message: error?.message || "Codex upstream failed.",
+				message,
 				...(code ? { code } : {}),
 				...(status ? { status } : {}),
 			},
