@@ -868,9 +868,9 @@ describe("CodexProvider.processResponse", () => {
 		expect(payload.usage.input_tokens).toBe(40);
 		// The additive input_tokens plus the cache read must reconstruct the
 		// original cache-inclusive total Codex reported.
-		expect(payload.usage.input_tokens + payload.usage.cache_read_input_tokens).toBe(
-			100,
-		);
+		expect(
+			payload.usage.input_tokens + payload.usage.cache_read_input_tokens,
+		).toBe(100);
 	});
 
 	it("normalizes message_delta usage and delta defaults when missing", async () => {
