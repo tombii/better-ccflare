@@ -10,6 +10,7 @@ import { resolveReasoningEffort } from "@better-ccflare/openai-formats";
 import type { Account } from "@better-ccflare/types";
 import { BaseProvider } from "../../base";
 import type { RateLimitInfo, TokenRefreshResult } from "../../types";
+import { normalizeCodexInputUsage } from "./usage";
 
 const log = new Logger("CodexProvider");
 
@@ -806,17 +807,15 @@ export class CodexProvider extends BaseProvider {
 		const inputTokenDetails = usageRecord?.input_tokens_details as
 			| Record<string, unknown>
 			| undefined;
-		const cachedTokens = inputTokenDetails?.cached_tokens;
+		const normalizedInput = normalizeCodexInputUsage(
+			inputTokens,
+			inputTokenDetails?.cached_tokens,
+		);
 
 		return {
 			current_usage: {
-				input_tokens: inputTokens,
-				cache_read_input_tokens:
-					typeof cachedTokens === "number" &&
-					Number.isFinite(cachedTokens) &&
-					cachedTokens >= 0
-						? cachedTokens
-						: 0,
+				input_tokens: normalizedInput.inputTokens,
+				cache_read_input_tokens: normalizedInput.cacheReadInputTokens,
 				cache_creation_input_tokens:
 					typeof inputTokenDetails?.cache_creation_input_tokens === "number" &&
 					Number.isFinite(inputTokenDetails.cache_creation_input_tokens) &&
@@ -1855,22 +1854,29 @@ export class CodexProvider extends BaseProvider {
 					  }
 					| undefined;
 
-				// Extract cache fields from input_tokens_details (Codex format)
+				// Extract cache fields from input_tokens_details (Codex format).
+				// OpenAI's input_tokens is cache-inclusive; normalize to Anthropic's
+				// additive semantics so input_tokens excludes cache reads instead of
+				// double-counting them.
 				const inputTokenDetails = usage?.input_tokens_details;
-				const cacheRead =
-					typeof inputTokenDetails?.cached_tokens === "number" &&
-					inputTokenDetails.cached_tokens >= 0
-						? inputTokenDetails.cached_tokens
-						: 0;
+				const normalizedInput = normalizeCodexInputUsage(
+					usage?.input_tokens,
+					inputTokenDetails?.cached_tokens,
+				);
 				const cacheCreation =
 					typeof inputTokenDetails?.cache_creation_input_tokens === "number" &&
 					inputTokenDetails.cache_creation_input_tokens >= 0
 						? inputTokenDetails.cache_creation_input_tokens
 						: 0;
 
-				state.inputTokens = usage?.input_tokens || state.inputTokens;
-				state.outputTokens = usage?.output_tokens || state.outputTokens;
-				state.cacheReadInputTokens = cacheRead;
+				state.inputTokens = normalizedInput.inputTokens;
+				state.outputTokens =
+					typeof usage?.output_tokens === "number" &&
+					Number.isFinite(usage.output_tokens) &&
+					usage.output_tokens >= 0
+						? usage.output_tokens
+						: state.outputTokens;
+				state.cacheReadInputTokens = normalizedInput.cacheReadInputTokens;
 				state.cacheCreationInputTokens = cacheCreation;
 				state.contextWindow = this.extractContextWindow(resp, usage);
 				// Close any lingering content block

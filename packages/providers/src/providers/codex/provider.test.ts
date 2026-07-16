@@ -7,7 +7,7 @@ import {
 	CODEX_VERSION,
 	CodexProvider,
 } from "./provider";
-import { parseCodexUsageHeaders } from "./usage";
+import { normalizeCodexInputUsage, parseCodexUsageHeaders } from "./usage";
 
 const codexAccount = (overrides: Partial<Account> = {}): Account => ({
 	id: "codex-1",
@@ -827,8 +827,50 @@ describe("CodexProvider.processResponse", () => {
 		expect(messageDeltaLine).not.toContain('"context_window"');
 		expect(messageDeltaLine).toContain('"usage":{');
 		expect(messageDeltaLine).toContain('"output_tokens":3');
-		expect(messageDeltaLine).toContain('"input_tokens":12');
+		// Codex's input_tokens (12) is cache-inclusive; Anthropic's input_tokens
+		// is additive and excludes the 4 cached tokens, which are reported
+		// separately as cache_read_input_tokens.
+		expect(messageDeltaLine).toContain('"input_tokens":8');
 		expect(messageDeltaLine).toContain('"cache_read_input_tokens":4');
+	});
+
+	it("translates cached input usage additively so input_tokens excludes cache reads", async () => {
+		const provider = new CodexProvider();
+		const upstreamBody = sseBody([
+			...eventLine("response.created", {
+				response: { id: "resp_test", model: "gpt-5.3-codex" },
+			}),
+			...eventLine("response.completed", {
+				response: {
+					model: "gpt-5.3-codex",
+					usage: {
+						input_tokens: 100,
+						output_tokens: 20,
+						input_tokens_details: { cached_tokens: 60 },
+					},
+				},
+			}),
+		]);
+
+		const response = new Response(upstreamBody, {
+			status: 200,
+			headers: { "content-type": "text/event-stream" },
+		});
+
+		const transformed = await provider.processResponse(response, null);
+		const transformedBody = await transformed.text();
+		const messageDeltaLine = transformedBody
+			.split("\n")
+			.find((line) => line.includes('"type":"message_delta"')) as string;
+		const payload = JSON.parse(messageDeltaLine.slice("data: ".length));
+
+		expect(payload.usage.cache_read_input_tokens).toBe(60);
+		expect(payload.usage.input_tokens).toBe(40);
+		// The additive input_tokens plus the cache read must reconstruct the
+		// original cache-inclusive total Codex reported.
+		expect(payload.usage.input_tokens + payload.usage.cache_read_input_tokens).toBe(
+			100,
+		);
 	});
 
 	it("normalizes message_delta usage and delta defaults when missing", async () => {
@@ -2328,6 +2370,47 @@ describe("CodexProvider prompt_cache_key derivation", () => {
 			metadata: { user_id: JSON.stringify({ session_id: "not-a-uuid" }) },
 		});
 		expect(badUuid.prompt_cache_key).toBeUndefined();
+	});
+});
+
+describe("normalizeCodexInputUsage", () => {
+	it("subtracts cached tokens from the cache-inclusive total", () => {
+		const result = normalizeCodexInputUsage(100, 60);
+		expect(result.totalInputTokens).toBe(100);
+		expect(result.inputTokens).toBe(40);
+		expect(result.cacheReadInputTokens).toBe(60);
+	});
+
+	it("treats a missing or non-numeric total as zero", () => {
+		expect(normalizeCodexInputUsage(undefined, 5)).toEqual({
+			totalInputTokens: 0,
+			inputTokens: 0,
+			cacheReadInputTokens: 0,
+		});
+		expect(normalizeCodexInputUsage(Number.NaN, 5)).toEqual({
+			totalInputTokens: 0,
+			inputTokens: 0,
+			cacheReadInputTokens: 0,
+		});
+	});
+
+	it("treats a missing or negative cached count as zero", () => {
+		expect(normalizeCodexInputUsage(10, undefined)).toEqual({
+			totalInputTokens: 10,
+			inputTokens: 10,
+			cacheReadInputTokens: 0,
+		});
+		expect(normalizeCodexInputUsage(10, -5)).toEqual({
+			totalInputTokens: 10,
+			inputTokens: 10,
+			cacheReadInputTokens: 0,
+		});
+	});
+
+	it("clamps a cached count larger than the total instead of going negative", () => {
+		const result = normalizeCodexInputUsage(10, 25);
+		expect(result.inputTokens).toBe(0);
+		expect(result.cacheReadInputTokens).toBe(10);
 	});
 });
 
