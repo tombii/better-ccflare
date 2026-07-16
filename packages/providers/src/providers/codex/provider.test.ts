@@ -1740,6 +1740,126 @@ describe("CodexProvider.processResponse", () => {
 		expect(processed.status).toBe(400);
 		expect(await processed.text()).toBe('{"error":"bad_request"}');
 	});
+
+	it("maps response.incomplete with a content_filter reason to a refusal stop_reason", async () => {
+		const provider = new CodexProvider();
+		const upstreamBody = sseBody([
+			...eventLine("response.created", {
+				response: { id: "resp_incomplete", model: "gpt-5.5" },
+			}),
+			...eventLine("response.incomplete", {
+				response: {
+					model: "gpt-5.5",
+					status: "incomplete",
+					incomplete_details: { reason: "content_filter" },
+					usage: { input_tokens: 3, output_tokens: 1 },
+				},
+			}),
+		]);
+
+		const response = new Response(upstreamBody, {
+			status: 200,
+			headers: { "content-type": "text/event-stream" },
+		});
+
+		const transformed = await provider.processResponse(response, null);
+		const body = await transformed.text();
+
+		expect(body).toContain('"stop_reason":"refusal"');
+		expect(body).toContain("event: message_delta");
+		expect(body).toContain("event: message_stop");
+	});
+
+	it("maps response.incomplete with a non-content_filter reason to max_tokens", async () => {
+		const provider = new CodexProvider();
+		const upstreamBody = sseBody([
+			...eventLine("response.created", {
+				response: { id: "resp_incomplete", model: "gpt-5.5" },
+			}),
+			...eventLine("response.incomplete", {
+				response: {
+					model: "gpt-5.5",
+					status: "incomplete",
+					incomplete_details: { reason: "max_output_tokens" },
+					usage: { input_tokens: 3, output_tokens: 512 },
+				},
+			}),
+		]);
+
+		const response = new Response(upstreamBody, {
+			status: 200,
+			headers: { "content-type": "text/event-stream" },
+		});
+
+		const transformed = await provider.processResponse(response, null);
+		const body = await transformed.text();
+
+		expect(body).toContain('"stop_reason":"max_tokens"');
+	});
+
+	it("treats a response.completed event carrying status incomplete the same as response.incomplete", async () => {
+		const provider = new CodexProvider();
+		const upstreamBody = sseBody([
+			...eventLine("response.created", {
+				response: { id: "resp_incomplete", model: "gpt-5.5" },
+			}),
+			...eventLine("response.completed", {
+				response: {
+					model: "gpt-5.5",
+					status: "incomplete",
+					incomplete_details: { reason: "unknown_future_reason" },
+					usage: { input_tokens: 3, output_tokens: 10 },
+				},
+			}),
+		]);
+
+		const response = new Response(upstreamBody, {
+			status: 200,
+			headers: { "content-type": "text/event-stream" },
+		});
+
+		const transformed = await provider.processResponse(response, null);
+		const body = await transformed.text();
+
+		expect(body).toContain('"stop_reason":"max_tokens"');
+	});
+
+	it("never resolves an incomplete response with a pending tool call to a success stop_reason", async () => {
+		const provider = new CodexProvider();
+		const upstreamBody = sseBody([
+			...eventLine("response.created", {
+				response: { id: "resp_incomplete", model: "gpt-5.5" },
+			}),
+			...eventLine("response.output_item.added", {
+				item: { type: "function_call", call_id: "call_1", name: "search" },
+				output_index: 0,
+			}),
+			...eventLine("response.output_item.done", {
+				item: { type: "function_call", call_id: "call_1", name: "search" },
+				output_index: 0,
+			}),
+			...eventLine("response.incomplete", {
+				response: {
+					model: "gpt-5.5",
+					status: "incomplete",
+					incomplete_details: { reason: "max_output_tokens" },
+					usage: { input_tokens: 3, output_tokens: 50 },
+				},
+			}),
+		]);
+
+		const response = new Response(upstreamBody, {
+			status: 200,
+			headers: { "content-type": "text/event-stream" },
+		});
+
+		const transformed = await provider.processResponse(response, null);
+		const body = await transformed.text();
+
+		expect(body).not.toContain('"stop_reason":"tool_use"');
+		expect(body).not.toContain('"stop_reason":"end_turn"');
+		expect(body).toContain('"stop_reason":"max_tokens"');
+	});
 });
 
 describe("CodexProvider.transformRequestBody", () => {

@@ -1809,6 +1809,7 @@ export class CodexProvider extends BaseProvider {
 				break;
 			}
 
+			case "response.incomplete":
 			case "response.completed": {
 				if (state.upstreamError || state.hasSentTerminalEvents) break;
 				const resp = data.response as Record<string, unknown> | undefined;
@@ -1850,9 +1851,31 @@ export class CodexProvider extends BaseProvider {
 					state.hasSentContentBlockStart = false;
 				}
 
+				const incompleteDetails = resp?.incomplete_details as
+					| { reason?: string }
+					| undefined;
+				const isIncomplete =
+					eventName === "response.incomplete" || resp?.status === "incomplete";
+				// An incomplete response never resolves to a success stop_reason:
+				// content_filter -> refusal (client discards partial output); every
+				// other reason, including unknown future ones, -> max_tokens (generic
+				// truncation, mirroring real Anthropic mid-tool-input truncation
+				// semantics: partial blocks are framed, stop_reason forbids execution).
+				const stopReason: "end_turn" | "tool_use" | "max_tokens" | "refusal" =
+					isIncomplete
+						? incompleteDetails?.reason === "content_filter"
+							? "refusal"
+							: "max_tokens"
+						: state.sawToolUse
+							? "tool_use"
+							: "end_turn";
+
 				const messageDelta: {
 					type: "message_delta";
-					delta: { stop_reason: "end_turn" | "tool_use"; stop_sequence: null };
+					delta: {
+						stop_reason: "end_turn" | "tool_use" | "max_tokens" | "refusal";
+						stop_sequence: null;
+					};
 					usage: {
 						input_tokens: number;
 						output_tokens: number;
@@ -1863,7 +1886,7 @@ export class CodexProvider extends BaseProvider {
 				} = {
 					type: "message_delta",
 					delta: {
-						stop_reason: state.sawToolUse ? "tool_use" : "end_turn",
+						stop_reason: stopReason,
 						stop_sequence: null,
 					},
 					usage: {
