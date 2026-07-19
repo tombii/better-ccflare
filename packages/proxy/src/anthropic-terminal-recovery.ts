@@ -365,10 +365,7 @@ export function createAnthropicTerminalRecoveryStream(
 		)
 			return;
 		recoveryWaitStartedAt = Date.now();
-		recoveryTimer = setTimeout(
-			handleRecoveryTimeout,
-			recoveryWaitRemainingMs,
-		);
+		recoveryTimer = setTimeout(handleRecoveryTimeout, recoveryWaitRemainingMs);
 	};
 
 	const inspectChunk = (chunk: Uint8Array): void => {
