@@ -1748,6 +1748,9 @@ export class CodexProvider extends BaseProvider {
 		const isContextOverflow =
 			normalizedCode === "context_length_exceeded" ||
 			/^your input exceeds the context window\b/i.test(upstreamMessage);
+		if (isContextOverflow) {
+			type = "invalid_request_error";
+		}
 		const message = isContextOverflow
 			? `Prompt is too long. Codex reported: ${upstreamMessage}`
 			: upstreamMessage;
