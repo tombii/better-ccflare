@@ -2165,6 +2165,7 @@ async function reauthenticateQwenAccount(
 				access_token = ?,
 				expires_at = ?,
 				custom_endpoint = ?,
+				refresh_token_issued_at = ?,
 				requires_reauth = 0
 			WHERE id = ?`,
 			[
@@ -2172,6 +2173,7 @@ async function reauthenticateQwenAccount(
 				tokens.access_token,
 				Date.now() + tokens.expires_in * 1000,
 				resourceUrl,
+				Date.now(),
 				account.id,
 			],
 		);
@@ -2239,6 +2241,7 @@ async function reauthenticateXaiAccount(
 				access_token = ?,
 				expires_at = ?,
 				custom_endpoint = COALESCE(custom_endpoint, ?),
+				refresh_token_issued_at = ?,
 				requires_reauth = 0
 			WHERE id = ?`,
 			[
@@ -2246,6 +2249,7 @@ async function reauthenticateXaiAccount(
 				auth.key,
 				expiresAt,
 				account.custom_endpoint || XAI_DEFAULT_ENDPOINT,
+				Date.now(),
 				account.id,
 			],
 		);
