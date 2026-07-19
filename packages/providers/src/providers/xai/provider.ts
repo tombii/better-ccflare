@@ -50,7 +50,12 @@ export class XaiProvider extends OpenAICompatibleProvider {
 					error?: string;
 					error_description?: string;
 				};
-				message = data.error_description || data.error || message;
+				// Preserve the machine-readable OAuth error code (e.g. "invalid_grant")
+				// ahead of the human description so the token-manager's requires_reauth
+				// detection can classify a dead xAI refresh token.
+				message =
+					[data.error, data.error_description].filter(Boolean).join(": ") ||
+					message;
 			} catch {
 				// Do not include raw response bodies in refresh errors; auth servers
 				// should not echo credentials, but keeping messages structured avoids

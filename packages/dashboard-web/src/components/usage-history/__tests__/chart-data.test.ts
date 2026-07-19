@@ -6,6 +6,15 @@ import {
 	resetMarkers,
 } from "../chart-data";
 
+/** Find a row by timestamp, throwing with a clear message if absent (instead of a silent `!` assertion). */
+function findRowByT<T extends { t: number }>(rows: T[], t: number): T {
+	const row = rows.find((r) => r.t === t);
+	if (!row) {
+		throw new Error(`Expected a row with t=${t}, but none was found`);
+	}
+	return row;
+}
+
 const H = 60 * 60 * 1000;
 const NOW = 3 * H;
 
@@ -66,18 +75,18 @@ describe("buildUsageChartData", () => {
 		expect(predictionKeys).toEqual(["five_hour__pred"]); // only the rising window
 		// distinct timestamps: 1000, 2000 (actual) + 4h (eta endpoint) = 3 rows
 		expect(rows.map((r) => r.t)).toEqual([1000, 2000, 4 * H]);
-		const t2 = rows.find((r) => r.t === 2000)!;
+		const t2 = findRowByT(rows, 2000);
 		expect(t2.five_hour).toBe(20);
 		expect(t2.seven_day).toBe(3);
 		expect(t2.five_hour__pred).toBe(20); // prediction anchored at last actual
-		const eta = rows.find((r) => r.t === 4 * H)!;
+		const eta = findRowByT(rows, 4 * H);
 		// Endpoint value now interpolates the straight-line forecast at the (capped)
 		// endpoint time rather than snapping to 100. This synthetic fixture's ETA
 		// (4h) is inconsistent with its slope, so the interpolation lands below 100.
 		const expectedEta = 20 + 10 * ((4 * H - 2000) / H);
 		expect(eta.five_hour__pred).toBeCloseTo(expectedEta, 5);
 		expect(eta.five_hour).toBeNull(); // no actual point there
-		const t1 = rows.find((r) => r.t === 1000)!;
+		const t1 = findRowByT(rows, 1000);
 		expect(t1.seven_day).toBeNull(); // gap
 	});
 

@@ -196,11 +196,10 @@ export function createHealthHandler(
 
 		// Add storage integrity independently — orthogonal to asyncWriter/usageWorker
 		if (getIntegrityStatus) {
-			if (!response.runtime) {
-				response.runtime = {};
-			}
+			const runtime = response.runtime ?? {};
+			response.runtime = runtime;
 			const integrity = getIntegrityStatus();
-			response.runtime!.storage = {
+			runtime.storage = {
 				integrity: {
 					status: integrity.status,
 					runningKind: integrity.runningKind,

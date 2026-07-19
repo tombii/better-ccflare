@@ -149,9 +149,12 @@ describe("AccountRepository — setRateLimited with reason audit (issue #178)", 
 
 			const after = Date.now();
 			const row = getAudit(db, "acc-6");
-			expect(row.rate_limited_at).not.toBeNull();
-			expect(row.rate_limited_at!).toBeGreaterThanOrEqual(before);
-			expect(row.rate_limited_at!).toBeLessThanOrEqual(after + 100);
+			const rateLimitedAt = row.rate_limited_at;
+			expect(rateLimitedAt).not.toBeNull();
+			// biome-ignore lint/style/noNonNullAssertion: verified non-null by preceding assertion
+			expect(rateLimitedAt!).toBeGreaterThanOrEqual(before);
+			// biome-ignore lint/style/noNonNullAssertion: verified non-null by preceding assertion
+			expect(rateLimitedAt!).toBeLessThanOrEqual(after + 100);
 		});
 
 		it("overwrites previous reason when rate-limited again", async () => {

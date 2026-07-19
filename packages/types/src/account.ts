@@ -168,6 +168,7 @@ export interface AccountRow {
 	session_start?: number | null;
 	session_request_count?: number;
 	paused?: boolean | number | null;
+	requires_reauth?: boolean | number | null;
 	rate_limit_reset?: number | null;
 	rate_limit_status?: string | null;
 	rate_limit_remaining?: number | null;
@@ -205,6 +206,7 @@ export interface Account {
 	session_start: number | null;
 	session_request_count: number;
 	paused: boolean;
+	requires_reauth: boolean;
 	rate_limit_reset: number | null;
 	rate_limit_status: string | null;
 	rate_limit_remaining: number | null;
@@ -244,6 +246,8 @@ export interface AccountResponse {
 	lastUsed: string | null;
 	created: string;
 	paused: boolean;
+	requiresReauth: boolean;
+	pauseReason: string | null;
 	tokenStatus: "valid" | "expired";
 	tokenExpiresAt: string | null; // ISO timestamp of token expiration
 	rateLimitStatus: string;
@@ -308,6 +312,7 @@ export interface AccountListItem {
 	requestCount: number;
 	totalRequests: number;
 	paused: boolean;
+	requiresReauth: boolean;
 	tokenStatus: "valid" | "expired";
 	rateLimitStatus: string;
 	sessionInfo: string;
@@ -388,6 +393,7 @@ export function toAccount(row: AccountRow): Account {
 		session_start: toNumOrNull(row.session_start),
 		session_request_count: toNum(row.session_request_count),
 		paused: !!row.paused,
+		requires_reauth: !!row.requires_reauth,
 		rate_limit_reset: toNumOrNull(row.rate_limit_reset),
 		rate_limit_status: row.rate_limit_status || null,
 		rate_limit_remaining: toNumOrNull(row.rate_limit_remaining),
@@ -466,6 +472,8 @@ export function toAccountResponse(account: Account): AccountResponse {
 			: null,
 		created: new Date(account.created_at).toISOString(),
 		paused: account.paused,
+		requiresReauth: account.requires_reauth,
+		pauseReason: account.pause_reason,
 		tokenStatus,
 		tokenExpiresAt: account.expires_at
 			? new Date(account.expires_at).toISOString()

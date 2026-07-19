@@ -1,3 +1,4 @@
+import type { AgentAttributionSource } from "@better-ccflare/types";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef } from "react";
 import type { Account, RequestPayload, RequestResponse } from "../api";
@@ -93,6 +94,7 @@ export function useRequestStream(limit = 200) {
 							accountId: string | null;
 							statusCode: number;
 							agentUsed: string | null;
+							agentAttributionSource?: AgentAttributionSource | null;
 					  }
 					| { type: "summary"; payload: RequestResponse };
 
@@ -158,6 +160,8 @@ export function useRequestStream(limit = 200) {
 									success: false,
 									pending: true,
 									agentUsed: evt.agentUsed || undefined,
+									agentAttributionSource:
+										evt.agentAttributionSource || undefined,
 									rateLimited: evt.statusCode === 429,
 									bodiesOmitted: true,
 								},

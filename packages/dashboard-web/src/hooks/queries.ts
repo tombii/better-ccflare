@@ -592,6 +592,7 @@ export const useUpdateCombo = () => {
 export const useGetCombo = (id: string | null) => {
 	return useQuery({
 		queryKey: ["combo", id],
+		// biome-ignore lint/style/noNonNullAssertion: queryFn only runs when `enabled: !!id` is true, so id is guaranteed non-null here — TS can't see the enabled/queryFn connection.
 		queryFn: () => api.getCombo(id!),
 		enabled: !!id,
 	});

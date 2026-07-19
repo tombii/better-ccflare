@@ -207,8 +207,8 @@ export class BunSqlAdapter {
 	async query<R>(sqlStr: string, params: unknown[] = []): Promise<R[]> {
 		if (this.isSQLite && this.sqliteDb) {
 			const db = this.sqliteDb;
-			// biome-ignore lint/suspicious/noExplicitAny: SQLite params can be any binding type
 			return this.withBusyRetry(() =>
+				// biome-ignore lint/suspicious/noExplicitAny: SQLite params can be any binding type
 				db.query<R, any[]>(sqlStr).all(...(params as any[])),
 			);
 		}
@@ -231,8 +231,8 @@ export class BunSqlAdapter {
 	async get<R>(sqlStr: string, params: unknown[] = []): Promise<R | null> {
 		if (this.isSQLite && this.sqliteDb) {
 			const db = this.sqliteDb;
-			// biome-ignore lint/suspicious/noExplicitAny: SQLite params can be any binding type
 			const result = await this.withBusyRetry(() =>
+				// biome-ignore lint/suspicious/noExplicitAny: SQLite params can be any binding type
 				db.query<R, any[]>(sqlStr).get(...(params as any[])),
 			);
 			return (result as R) ?? null;
@@ -260,8 +260,8 @@ export class BunSqlAdapter {
 			return;
 		}
 		const pgQuery = this.pgSql(sqlStr);
-		// biome-ignore lint/suspicious/noExplicitAny: Bun.SQL accepts various binding types
 		await this.withPgTimeout(
+			// biome-ignore lint/suspicious/noExplicitAny: Bun.SQL accepts various binding types
 			this.sql?.unsafe(pgQuery, params as any[]) as Promise<unknown>,
 			PG_CLIENT_QUERY_TIMEOUT_MS,
 			sqlStr,
@@ -277,15 +277,15 @@ export class BunSqlAdapter {
 	): Promise<number> {
 		if (this.isSQLite && this.sqliteDb) {
 			const db = this.sqliteDb;
-			// biome-ignore lint/suspicious/noExplicitAny: SQLite params can be any binding type
 			const result = await this.withBusyRetry(() =>
+				// biome-ignore lint/suspicious/noExplicitAny: SQLite params can be any binding type
 				db.run(sqlStr, params as any[]),
 			);
 			return result.changes;
 		}
 		const pgQuery = this.pgSql(sqlStr);
-		// biome-ignore lint/suspicious/noExplicitAny: Bun.SQL accepts various binding types
 		const result = await this.withPgTimeout(
+			// biome-ignore lint/suspicious/noExplicitAny: Bun.SQL accepts various binding types
 			this.sql?.unsafe(pgQuery, params as any[]) as Promise<unknown>,
 			PG_CLIENT_QUERY_TIMEOUT_MS,
 			sqlStr,
@@ -338,8 +338,8 @@ export class BunSqlAdapter {
 			return;
 		}
 		const pgQuery = params && params.length > 0 ? this.pgSql(sqlStr) : sqlStr;
-		// biome-ignore lint/suspicious/noExplicitAny: Bun.SQL accepts various binding types
 		return this.withPgTimeout(
+			// biome-ignore lint/suspicious/noExplicitAny: Bun.SQL accepts various binding types
 			this.sql?.unsafe(pgQuery, params as any[]) as Promise<unknown>,
 			PG_CLIENT_QUERY_TIMEOUT_MS,
 			sqlStr,

@@ -1,6 +1,5 @@
 import {
 	BedrockClient,
-	type FoundationModelSummary,
 	ListFoundationModelsCommand,
 } from "@aws-sdk/client-bedrock";
 import { Logger } from "@better-ccflare/logger";
@@ -209,12 +208,17 @@ async function fetchModelsFromBedrockWithRetry(
 			return [];
 		}
 
-		const models: BedrockModel[] = response.modelSummaries
-			.filter((model): model is FoundationModelSummary => !!model.modelId)
-			.map((model) => ({
-				modelId: model.modelId!,
-				searchKey: normalizeModelName(model.modelId!),
-			}));
+		const models: BedrockModel[] = response.modelSummaries.flatMap((model) => {
+			if (!model.modelId) {
+				return [];
+			}
+			return [
+				{
+					modelId: model.modelId,
+					searchKey: normalizeModelName(model.modelId),
+				},
+			];
+		});
 
 		log.info(
 			`Loaded ${models.length} Anthropic models from Bedrock in region ${region}`,
@@ -296,9 +300,10 @@ async function getOrRefreshCache(
 	const cacheAge = now - lastRefreshTime;
 
 	// Return cached models if cache is fresh
-	if (modelCache.has(region) && cacheAge < CACHE_TTL_MS) {
+	const cached = modelCache.get(region);
+	if (cached && cacheAge < CACHE_TTL_MS) {
 		log.debug(`Using cached models for region ${region} (age: ${cacheAge}ms)`);
-		return modelCache.get(region)!;
+		return cached;
 	}
 
 	// Evict oldest region if we're at capacity and adding a new region

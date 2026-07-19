@@ -45,6 +45,18 @@ const MODEL_COLORS: Record<string, string> = {
 	"claude-sonnet-4.5": COLORS.purple,
 };
 
+function speedCostTooltipFormatter(value: number, name: string) {
+	if (name === "Speed") return [formatTokensPerSecond(value), name];
+	if (name === "Cost/1K") return [formatCost(value), name];
+	return [value, name];
+}
+
+function performanceTooltipFormatter(value: number, name: string) {
+	if (name === "Response Time") return [`${value}ms`, name];
+	if (name === "Error Rate") return [`${value}%`, name];
+	return [value, name];
+}
+
 function getModelColor(model: string): string {
 	// Try to find color by short name first
 	const shortName = getModelShortName(model);
@@ -165,14 +177,7 @@ export function ModelPerformanceComparison({
 								backdropFilter: "blur(8px)",
 							}}
 							// biome-ignore lint/suspicious/noExplicitAny: recharts v3.8 widened Formatter to include undefined
-							formatter={
-								((value: number, name: string) => {
-									if (name === "Speed")
-										return [formatTokensPerSecond(value), name];
-									if (name === "Cost/1K") return [formatCost(value), name];
-									return [value, name];
-								}) as any
-							}
+							formatter={speedCostTooltipFormatter as any}
 						/>
 						<Legend
 							verticalAlign="top"
@@ -263,13 +268,7 @@ export function ModelPerformanceComparison({
 						<Tooltip
 							contentStyle={getTooltipStyles("dark")}
 							// biome-ignore lint/suspicious/noExplicitAny: recharts v3.8 widened Formatter to include undefined
-							formatter={
-								((value: number, name: string) => {
-									if (name === "Response Time") return [`${value}ms`, name];
-									if (name === "Error Rate") return [`${value}%`, name];
-									return [value, name];
-								}) as any
-							}
+							formatter={performanceTooltipFormatter as any}
 						/>
 						<Legend verticalAlign="top" height={36} iconType="rect" />
 						<Bar

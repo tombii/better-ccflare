@@ -1,7 +1,10 @@
 import {
 	BedrockRuntimeClient,
 	ConverseCommand,
+	type ConverseCommandInput,
 	ConverseStreamCommand,
+	type ConverseStreamCommandInput,
+	type ConverseStreamOutput,
 } from "@aws-sdk/client-bedrock-runtime";
 import { estimateCostUSD } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
@@ -35,6 +38,22 @@ import {
 } from "./response-parser";
 
 const log = new Logger("BedrockProvider");
+
+/**
+ * Usage payload as it may appear in a Bedrock SSE stream event.
+ * Bedrock's native streaming events use camelCase field names, but some
+ * Claude-format passthrough events may use snake_case, so both are checked.
+ */
+interface BedrockStreamUsage {
+	inputTokens?: number;
+	outputTokens?: number;
+	cacheWriteInputTokens?: number;
+	cacheReadInputTokens?: number;
+	input_tokens?: number;
+	output_tokens?: number;
+	cache_write_input_tokens?: number;
+	cache_read_input_tokens?: number;
+}
 
 /**
  * AWS Bedrock provider for better-ccflare
@@ -83,7 +102,7 @@ export class BedrockProvider extends BaseProvider implements Provider {
 	}
 
 	private createAnthropicCompatibleStream(
-		bedrockStream: AsyncIterable<any> | undefined,
+		bedrockStream: AsyncIterable<ConverseStreamOutput> | undefined,
 		clientModelName: string,
 	): ReadableStream {
 		const encoder = new TextEncoder();
@@ -180,13 +199,13 @@ export class BedrockProvider extends BaseProvider implements Provider {
 											text: delta.text,
 										},
 									});
-								} else if (delta?.toolUse?.inputChunk) {
+								} else if (delta?.toolUse?.input) {
 									emit("content_block_delta", {
 										type: "content_block_delta",
 										index,
 										delta: {
 											type: "input_json_delta",
-											partial_json: delta.toolUse.inputChunk,
+											partial_json: delta.toolUse.input,
 										},
 									});
 								}
@@ -604,13 +623,13 @@ export class BedrockProvider extends BaseProvider implements Provider {
 				const command = new ConverseStreamCommand({
 					modelId: transformedModelId,
 					...converseInput,
-				} as any); // Cast to any due to ConverseStreamCommandInput type constraints
+				} as ConverseStreamCommandInput);
 
 				const response = await client.send(command);
 
 				const clientModelName = generateClientModelName(transformedModelId);
 				const stream = this.createAnthropicCompatibleStream(
-					response.stream as AsyncIterable<any> | undefined,
+					response.stream,
 					clientModelName,
 				);
 
@@ -629,7 +648,7 @@ export class BedrockProvider extends BaseProvider implements Provider {
 				const command = new ConverseCommand({
 					modelId: transformedModelId,
 					...converseInput,
-				} as any); // Cast to any due to ConverseCommandInput type constraints
+				} as ConverseCommandInput);
 
 				const response = await client.send(command);
 
@@ -638,12 +657,13 @@ export class BedrockProvider extends BaseProvider implements Provider {
 					model: generateClientModelName(transformedModelId),
 				});
 			}
-		} catch (error: any) {
+		} catch (error) {
 			// Streaming fallback logic
+			const err = error as { name?: string; message?: string };
 			if (
 				isStreaming &&
-				error.name === "ValidationException" &&
-				error.message?.includes("streaming")
+				err.name === "ValidationException" &&
+				err.message?.includes("streaming")
 			) {
 				log.warn(
 					`Model ${finalModelId} does not support streaming, falling back to non-streaming`,
@@ -653,7 +673,7 @@ export class BedrockProvider extends BaseProvider implements Provider {
 				const command = new ConverseCommand({
 					modelId: transformedModelId,
 					...transformMessagesRequest(body),
-				} as any);
+				} as ConverseCommandInput);
 
 				const response = await client.send(command);
 
@@ -794,7 +814,7 @@ export class BedrockProvider extends BaseProvider implements Provider {
 
 			const decoder = new TextDecoder();
 			let buffer = "";
-			let usage: any = null;
+			let usage: BedrockStreamUsage | null = null;
 
 			try {
 				while (true) {

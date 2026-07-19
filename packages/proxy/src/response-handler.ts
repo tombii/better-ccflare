@@ -4,7 +4,16 @@ import {
 	withSanitizedProxyHeaders,
 } from "@better-ccflare/http-common";
 import { Logger } from "@better-ccflare/logger";
-import type { Account, RateLimitReason } from "@better-ccflare/types";
+import type {
+	Account,
+	AgentAttributionSource,
+	ProjectAttributionSource,
+	RateLimitReason,
+} from "@better-ccflare/types";
+import {
+	ANTHROPIC_TERMINAL_RECOVERY_GRACE_MS,
+	createAnthropicTerminalRecoveryStream,
+} from "./anthropic-terminal-recovery";
 import type { ProxyContext } from "./handlers";
 import { applyRateLimitCooldown } from "./handlers/rate-limit-cooldown";
 import { createSseRateLimitSniffer } from "./handlers/sse-rate-limit-sniffer";
@@ -91,11 +100,13 @@ export interface ResponseHandlerOptions {
 	project?: string | null;
 	/** Raw URL query string (e.g. `?after_id=...`), used for passive model-catalog capture. */
 	query?: string | null;
+	projectAttributionSource?: ProjectAttributionSource | null;
 	response: Response;
 	timestamp: number;
 	retryAttempt: number;
 	failoverAttempts: number;
 	agentUsed?: string | null;
+	agentAttributionSource?: AgentAttributionSource | null;
 	apiKeyId?: string | null;
 	apiKeyName?: string | null;
 	comboName?: string | null;
@@ -121,11 +132,13 @@ export async function forwardToClient(
 		requestBody,
 		project,
 		query,
+		projectAttributionSource,
 		response: responseRaw,
 		timestamp,
 		retryAttempt, // Always 0 in new flow, but kept for message compatibility
 		failoverAttempts,
 		agentUsed,
+		agentAttributionSource,
 		apiKeyId,
 		apiKeyName,
 		comboName,
@@ -181,6 +194,8 @@ export async function forwardToClient(
 						).toString("base64")
 					: null,
 			project: project ?? null,
+			projectAttributionSource: projectAttributionSource ?? "none",
+			agentAttributionSource: agentAttributionSource ?? "none",
 			responseStatus: response.status,
 			responseHeaders: responseHeadersObj,
 			isStream,
@@ -220,6 +235,7 @@ export async function forwardToClient(
 			accountId: account?.id || null,
 			statusCode: response.status,
 			agentUsed: agentUsed || null,
+			agentAttributionSource: agentAttributionSource ?? "none",
 		});
 	}
 
@@ -284,7 +300,40 @@ export async function forwardToClient(
 			}
 		};
 
-		const passthroughBody = teeStream(response.body, {
+		const isNativeAnthropicMessagesStream =
+			method === "POST" &&
+			path === "/v1/messages" &&
+			ctx.provider.name === "anthropic" &&
+			requestHeaders.has("anthropic-version") &&
+			response.ok &&
+			response.headers
+				.get("content-type")
+				?.toLowerCase()
+				.includes("text/event-stream");
+		const responseBody = isNativeAnthropicMessagesStream
+			? createAnthropicTerminalRecoveryStream(response.body, {
+					onRecovery(reason) {
+						log.warn("anthropic_terminal_message_stop_recovered", {
+							requestId,
+							accountId: account?.id ?? null,
+							provider: ctx.provider.name,
+							reason,
+							gracePeriodMs: ANTHROPIC_TERMINAL_RECOVERY_GRACE_MS,
+						});
+					},
+					onCancelError(error, reason) {
+						log.warn("anthropic_terminal_upstream_cancel_failed", {
+							requestId,
+							accountId: account?.id ?? null,
+							provider: ctx.provider.name,
+							reason,
+							errorType: error instanceof Error ? error.name : typeof error,
+						});
+					},
+				})
+			: response.body;
+
+		const passthroughBody = teeStream(responseBody, {
 			onChunk,
 			onClose,
 			onError,

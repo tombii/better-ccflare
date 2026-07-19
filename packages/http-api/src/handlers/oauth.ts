@@ -23,6 +23,7 @@ import {
 	initiateDeviceFlow as initiateQwenDeviceFlow,
 	pollForToken as pollQwenForToken,
 } from "@better-ccflare/providers/qwen";
+import { clearAccountRefreshCache } from "@better-ccflare/proxy";
 
 const log = new Logger("OAuthHandler");
 
@@ -256,7 +257,8 @@ export function createQwenReauthHandler(dbOps: DatabaseOperations) {
 							refresh_token = ?,
 							access_token = ?,
 							expires_at = ?,
-							custom_endpoint = ?
+							custom_endpoint = ?,
+							requires_reauth = 0
 						WHERE id = ?`,
 						[
 							tokens.refresh_token,
@@ -266,6 +268,7 @@ export function createQwenReauthHandler(dbOps: DatabaseOperations) {
 							account.id,
 						],
 					);
+					clearAccountRefreshCache(account.id);
 
 					qwenSessions.set(sessionId, {
 						status: "complete",
@@ -493,7 +496,8 @@ export function createCodexReauthHandler(dbOps: DatabaseOperations) {
 						`UPDATE accounts SET
 							refresh_token = ?,
 							access_token = ?,
-							expires_at = ?
+							expires_at = ?,
+							requires_reauth = 0
 						WHERE id = ?`,
 						[
 							tokens.refresh_token,
@@ -502,6 +506,7 @@ export function createCodexReauthHandler(dbOps: DatabaseOperations) {
 							account.id,
 						],
 					);
+					clearAccountRefreshCache(account.id);
 
 					codexSessions.set(sessionId, {
 						status: "complete",
@@ -723,6 +728,7 @@ export function createAnthropicReauthCallbackHandler(
 					{ sessionId, code, name, id: account.id },
 					flowData,
 				);
+				clearAccountRefreshCache(account.id);
 
 				dbOps.deleteOAuthSession(sessionId);
 
@@ -880,13 +886,13 @@ export function createOAuthCallbackHandler(dbOps: DatabaseOperations) {
 			const sessionId = validateString(body.sessionId, "sessionId", {
 				required: true,
 				pattern: patterns.uuid,
-			})!;
+			});
 
 			// Validate code - validateString throws ValidationError if invalid
 			const code = validateString(body.code, "code", {
 				required: true,
 				minLength: 1,
-			})!;
+			});
 
 			// Get stored PKCE verifier from database
 			const oauthSession = await dbOps.getOAuthSession(sessionId);

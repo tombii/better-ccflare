@@ -4,8 +4,38 @@
 import { ValidationError } from "./errors";
 
 /**
- * Validates and sanitizes a string input
+ * Validates and sanitizes a string input.
+ *
+ * Overload: when `options.required` is the literal `true`, the function
+ * either returns a `string` or throws `ValidationError` — it never returns
+ * `undefined` in that branch — so callers don't need a non-null assertion.
  */
+export function validateString(
+	value: unknown,
+	field: string,
+	options: {
+		required: true;
+		minLength?: number;
+		maxLength?: number;
+		pattern?: RegExp;
+		patternErrorMessage?: string;
+		allowedValues?: readonly string[];
+		transform?: (value: string) => string;
+	},
+): string;
+export function validateString(
+	value: unknown,
+	field: string,
+	options?: {
+		required?: boolean;
+		minLength?: number;
+		maxLength?: number;
+		pattern?: RegExp;
+		patternErrorMessage?: string;
+		allowedValues?: readonly string[];
+		transform?: (value: string) => string;
+	},
+): string | undefined;
 export function validateString(
 	value: unknown,
 	field: string,

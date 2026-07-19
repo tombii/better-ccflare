@@ -121,10 +121,16 @@ describe("CLI xAI account import", () => {
 		const account = dbOps
 			.getDatabase()
 			.query<
-				{ access_token: string; refresh_token: string; expires_at: number },
+				{
+					access_token: string;
+					refresh_token: string;
+					expires_at: number;
+					refresh_token_issued_at: number | null;
+					requires_reauth: number;
+				},
 				[string]
 			>(
-				"SELECT access_token, refresh_token, expires_at FROM accounts WHERE name = ?",
+				"SELECT access_token, refresh_token, expires_at, refresh_token_issued_at, requires_reauth FROM accounts WHERE name = ?",
 			)
 			.get("xai-reauth");
 
@@ -137,6 +143,9 @@ describe("CLI xAI account import", () => {
 		expect(account?.expires_at).toBeLessThanOrEqual(
 			after + DEFAULT_XAI_TOKEN_TTL_MS,
 		);
+		expect(account?.requires_reauth).toBe(0);
+		expect(account?.refresh_token_issued_at).toBeGreaterThanOrEqual(before);
+		expect(account?.refresh_token_issued_at).toBeLessThanOrEqual(after);
 	});
 
 	function writeGrokAuth(entry: {

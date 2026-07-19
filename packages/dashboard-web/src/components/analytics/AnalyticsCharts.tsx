@@ -267,6 +267,12 @@ export function MainMetricsChart({
 						case "cost": {
 							const isLongRange = timeRange === "7d" || timeRange === "30d";
 							const strokeW = viewMode === "cumulative" ? 3 : 2;
+							const costFormatter = (value: number, name: string) => [
+								formatCost(Number(value)),
+								name === "planCost" ? "Plan Cost" : "API/Overage Cost",
+							];
+							const costLabelFormatter = (label: string) =>
+								viewMode === "cumulative" ? `Cumulative at ${label}` : label;
 							return (
 								<ResponsiveContainer width="100%" height={CHART_HEIGHTS.large}>
 									<AreaChart
@@ -333,21 +339,9 @@ export function MainMetricsChart({
 										/>
 										<Tooltip
 											// biome-ignore lint/suspicious/noExplicitAny: recharts v3.8 widened Formatter to include undefined
-											formatter={
-												((value: number, name: string) => [
-													formatCost(Number(value)),
-													name === "planCost"
-														? "Plan Cost"
-														: "API/Overage Cost",
-												]) as any
-											}
+											formatter={costFormatter as any}
 											// biome-ignore lint/suspicious/noExplicitAny: recharts v3.8 widened labelFormatter label to ReactNode
-											labelFormatter={
-												((label: string) =>
-													viewMode === "cumulative"
-														? `Cumulative at ${label}`
-														: label) as any
-											}
+											labelFormatter={costLabelFormatter as any}
 										/>
 										<Legend height={36} />
 										<Area
@@ -717,6 +711,11 @@ interface CumulativeGrowthChartProps {
 }
 
 export function CumulativeGrowthChart({ data }: CumulativeGrowthChartProps) {
+	const cumulativeTooltipFormatter = (value: number | string, name: string) => {
+		if (name === "Total Cost") return [formatCost(Number(value)), "Total Cost"];
+		return [formatTokens(value as number), "Total Tokens"];
+	};
+
 	return (
 		<Card className="bg-gradient-to-br from-background to-muted/10 border-muted">
 			<CardHeader>
@@ -789,13 +788,7 @@ export function CumulativeGrowthChart({ data }: CumulativeGrowthChartProps) {
 								backdropFilter: "blur(8px)",
 							}}
 							// biome-ignore lint/suspicious/noExplicitAny: recharts v3.8 widened Formatter to include undefined
-							formatter={
-								((value: number | string, name: string) => {
-									if (name === "Total Cost")
-										return [formatCost(Number(value)), "Total Cost"];
-									return [formatTokens(value as number), "Total Tokens"];
-								}) as any
-							}
+							formatter={cumulativeTooltipFormatter as any}
 						/>
 						<Legend
 							verticalAlign="top"

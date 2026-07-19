@@ -186,11 +186,16 @@ export class AnthropicProvider extends BaseProvider {
 					error_description?: string;
 					message?: string;
 				};
+				// Preserve the machine-readable RFC-6749 error code (e.g.
+				// "invalid_grant") ahead of any human-readable description. When only
+				// error_description is surfaced the code is discarded, and the
+				// token-manager's requires_reauth detection — which keys on that code —
+				// silently misses a dead refresh token (the exact 43h-undetected
+				// incident this feature exists for).
 				errorMessage =
-					errorObj.error_description ||
-					errorObj.error ||
-					errorObj.message ||
-					errorMessage;
+					[errorObj.error, errorObj.error_description || errorObj.message]
+						.filter(Boolean)
+						.join(": ") || errorMessage;
 
 				// Log specific OAuth authentication errors
 				if (response.status === 401 && typeof errorMessage === "string") {

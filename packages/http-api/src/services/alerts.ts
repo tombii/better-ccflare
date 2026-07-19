@@ -1,7 +1,9 @@
 import type { Config } from "@better-ccflare/config";
 import {
 	type AlertEvt,
+	type AuthFailureEvt,
 	alertEvents,
+	authFailureEvents,
 	getModelRates,
 	type RequestEvt,
 	requestEvents,
@@ -184,6 +186,7 @@ export class AlertService {
 	private readonly db: BunSqlAdapter;
 	private readonly config: Config;
 	private readonly requestListener: (event: RequestEvt) => void;
+	private readonly authFailureListener: (event: AuthFailureEvt) => void;
 	private readonly configChangeListener: ({ key }: { key: string }) => void;
 	private anomalyTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -194,6 +197,9 @@ export class AlertService {
 			if (event.type === "summary") {
 				void this.evaluateRequest(event.payload);
 			}
+		};
+		this.authFailureListener = (event) => {
+			void this.handleAuthFailure(event);
 		};
 		this.configChangeListener = ({ key }: { key: string }) => {
 			if (
@@ -208,16 +214,44 @@ export class AlertService {
 	start(): void {
 		requestEvents.on("event", this.requestListener);
 		this.config.on("change", this.configChangeListener);
+		authFailureEvents.on("event", this.authFailureListener);
 		this.restartAnomalyTimer();
 	}
 
 	stop(): void {
 		requestEvents.off("event", this.requestListener);
 		this.config.off("change", this.configChangeListener);
+		authFailureEvents.off("event", this.authFailureListener);
 		if (this.anomalyTimer) {
 			clearInterval(this.anomalyTimer);
 			this.anomalyTimer = null;
 		}
+	}
+
+	private async handleAuthFailure(event: AuthFailureEvt): Promise<void> {
+		const timestamp = Date.now();
+		const config = getAlertsConfig(this.config);
+		const alert: AlertEvent = {
+			id: buildThresholdAlertId(
+				"auth_failure",
+				event.accountId,
+				timestamp,
+				config.cooldownMinutes,
+			),
+			timestamp,
+			type: "auth_failure",
+			severity: "critical",
+			title: "Account authentication failed",
+			message: `Account ${event.accountName} (${event.provider}) requires re-authentication: ${event.reason}`,
+			value: null,
+			threshold: null,
+			account: event.accountName,
+			model: null,
+			project: null,
+			requestId: null,
+			acknowledged: false,
+		};
+		await this.persistAndEmit(alert, config.webhookUrl);
 	}
 
 	private restartAnomalyTimer(): void {

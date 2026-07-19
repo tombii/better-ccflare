@@ -347,7 +347,8 @@ describe("processResponse – SSE (text/event-stream)", () => {
 		]);
 
 		const result = await provider.processResponse(upstream, makeAccount());
-		const raw = await readStream(result.body!);
+		if (!result.body) throw new Error("expected response body");
+		const raw = await readStream(result.body);
 		const events = parseSSEEvents(raw);
 
 		const messageStart = events.find((e) => e.event === "message_start");
@@ -413,7 +414,8 @@ describe("processResponse – SSE (text/event-stream)", () => {
 
 		const upstream = makeOpenAIStream([chunk1, chunk2, "[DONE]"]);
 		const result = await provider.processResponse(upstream, makeAccount());
-		const raw = await readStream(result.body!);
+		if (!result.body) throw new Error("expected response body");
+		const raw = await readStream(result.body);
 		const events = parseSSEEvents(raw);
 
 		// Should have a content_block_start with type:tool_use

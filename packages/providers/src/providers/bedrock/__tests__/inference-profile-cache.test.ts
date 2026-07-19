@@ -12,6 +12,7 @@ const mockBedrockClient = mock(() => ({ send: mockSend }));
 
 mock.module("@aws-sdk/client-bedrock", () => ({
 	BedrockClient: mockBedrockClient,
+	// biome-ignore lint/suspicious/noExplicitAny: mock passthrough for AWS SDK command constructor input, shape varies by call site
 	ListInferenceProfilesCommand: mock((input: any) => input),
 }));
 

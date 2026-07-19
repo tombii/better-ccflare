@@ -119,6 +119,7 @@ describe("OAuthFlow.completeReauth", () => {
 		expect(sql).toMatch(/refresh_token/i);
 		expect(sql).toMatch(/access_token/i);
 		expect(sql).toMatch(/expires_at/i);
+		expect(sql).toMatch(/requires_reauth\s*=\s*0/i);
 		// Params: [refreshToken, accessToken, expiresAt, refreshTokenIssuedAt, accountId]
 		expect(params[0]).toBe("new-refresh-token");
 		expect(params[1]).toBe("new-access-token");
@@ -166,6 +167,7 @@ describe("OAuthFlow.completeReauth", () => {
 			const [sql, params] = runSpy.mock.calls[0];
 			expect(sql).toMatch(/UPDATE\s+accounts/i);
 			expect(sql).toMatch(/api_key/i);
+			expect(sql).toMatch(/requires_reauth\s*=\s*0/i);
 			expect(params[0]).toBe("sk-console-api-key");
 			expect(params[1]).toBe(accountId);
 		} finally {

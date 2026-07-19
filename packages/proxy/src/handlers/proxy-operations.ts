@@ -22,6 +22,7 @@ import type {
 import { cacheBodyStore } from "../cache-body-store";
 import { RequestBodyContext } from "../request-body-context";
 import { forwardToClient } from "../response-handler";
+import { isModelRewrite } from "../worker-messages";
 import { ERROR_MESSAGES, type ProxyContext } from "./proxy-types";
 import { applyRateLimitCooldown } from "./rate-limit-cooldown";
 import { makeProxyRequest, validateProviderPath } from "./request-handler";
@@ -461,6 +462,7 @@ export async function proxyUnauthenticated(
 				requestBody: requestBodyBuffer,
 				project: requestMeta.project,
 				query: url.search || null,
+				projectAttributionSource: requestMeta.projectAttributionSource ?? null,
 				response,
 				timestamp: requestMeta.timestamp,
 				retryAttempt: 0,
@@ -468,6 +470,7 @@ export async function proxyUnauthenticated(
 				agentUsed: requestMeta.agentUsed,
 				originalModel: requestMeta.originalModel,
 				appliedModel: requestMeta.appliedModel,
+				agentAttributionSource: requestMeta.agentAttributionSource ?? null,
 				comboName: requestMeta.comboName,
 				apiKeyId,
 				apiKeyName,
@@ -765,6 +768,10 @@ export async function proxyWithAccount(
 					`Anthropic extra-usage credits depleted for this OAuth account; NOT benching, response passed through to client`,
 			);
 			const responseTime = Date.now() - requestMeta.timestamp;
+			const modelRewrite = isModelRewrite(
+				requestMeta.originalModel,
+				requestMeta.appliedModel,
+			);
 			ctx.asyncWriter.enqueue(() =>
 				ctx.dbOps.saveRequest(
 					crypto.randomUUID(),
@@ -783,6 +790,10 @@ export async function proxyWithAccount(
 					requestMeta.project ?? null,
 					undefined,
 					requestMeta.comboName ?? null,
+					modelRewrite ? (requestMeta.originalModel ?? null) : null,
+					modelRewrite ? (requestMeta.appliedModel ?? null) : null,
+					requestMeta.projectAttributionSource ?? null,
+					requestMeta.agentAttributionSource ?? null,
 				),
 			);
 			// Do not bench the account or fail over — pass Anthropic's real error
@@ -836,6 +847,10 @@ export async function proxyWithAccount(
 						`model/beta-scoped, NOT benching account; failing over to next account`,
 				);
 				const responseTime = Date.now() - requestMeta.timestamp;
+				const modelRewrite = isModelRewrite(
+					requestMeta.originalModel,
+					requestMeta.appliedModel,
+				);
 				ctx.asyncWriter.enqueue(() =>
 					ctx.dbOps.saveRequest(
 						crypto.randomUUID(),
@@ -854,6 +869,10 @@ export async function proxyWithAccount(
 						requestMeta.project ?? null,
 						undefined,
 						requestMeta.comboName ?? null,
+						modelRewrite ? (requestMeta.originalModel ?? null) : null,
+						modelRewrite ? (requestMeta.appliedModel ?? null) : null,
+						requestMeta.projectAttributionSource ?? null,
+						requestMeta.agentAttributionSource ?? null,
 					),
 				);
 				return null;
@@ -898,6 +917,10 @@ export async function proxyWithAccount(
 							ctx,
 						);
 						const responseTime = Date.now() - requestMeta.timestamp;
+						const modelRewrite = isModelRewrite(
+							requestMeta.originalModel,
+							requestMeta.appliedModel,
+						);
 						ctx.asyncWriter.enqueue(() =>
 							ctx.dbOps.saveRequest(
 								crypto.randomUUID(),
@@ -916,6 +939,10 @@ export async function proxyWithAccount(
 								requestMeta.project ?? null,
 								undefined,
 								requestMeta.comboName ?? null,
+								modelRewrite ? (requestMeta.originalModel ?? null) : null,
+								modelRewrite ? (requestMeta.appliedModel ?? null) : null,
+								requestMeta.projectAttributionSource ?? null,
+								requestMeta.agentAttributionSource ?? null,
 							),
 						);
 						return null;
@@ -1034,6 +1061,10 @@ export async function proxyWithAccount(
 							ctx,
 						);
 						const responseTime = Date.now() - requestMeta.timestamp;
+						const modelRewrite = isModelRewrite(
+							requestMeta.originalModel,
+							requestMeta.appliedModel,
+						);
 						ctx.asyncWriter.enqueue(() =>
 							ctx.dbOps.saveRequest(
 								crypto.randomUUID(),
@@ -1052,6 +1083,10 @@ export async function proxyWithAccount(
 								requestMeta.project ?? null,
 								undefined,
 								requestMeta.comboName ?? null,
+								modelRewrite ? (requestMeta.originalModel ?? null) : null,
+								modelRewrite ? (requestMeta.appliedModel ?? null) : null,
+								requestMeta.projectAttributionSource ?? null,
+								requestMeta.agentAttributionSource ?? null,
 							),
 						);
 					}
@@ -1209,6 +1244,8 @@ export async function proxyWithAccount(
 						requestBody: effectiveBodyBuffer,
 						project: requestMeta.project,
 						query: url.search || null,
+						projectAttributionSource:
+							requestMeta.projectAttributionSource ?? null,
 						response,
 						timestamp: requestMeta.timestamp,
 						retryAttempt: 0,
@@ -1216,6 +1253,7 @@ export async function proxyWithAccount(
 						agentUsed: requestMeta.agentUsed,
 						originalModel: requestMeta.originalModel,
 						appliedModel: requestMeta.appliedModel,
+						agentAttributionSource: requestMeta.agentAttributionSource ?? null,
 						comboName: requestMeta.comboName,
 						apiKeyId,
 						apiKeyName,
@@ -1237,6 +1275,7 @@ export async function proxyWithAccount(
 				requestBody: effectiveBodyBuffer,
 				project: requestMeta.project,
 				query: url.search || null,
+				projectAttributionSource: requestMeta.projectAttributionSource ?? null,
 				response,
 				timestamp: requestMeta.timestamp,
 				retryAttempt: 0,
@@ -1244,6 +1283,7 @@ export async function proxyWithAccount(
 				agentUsed: requestMeta.agentUsed,
 				originalModel: requestMeta.originalModel,
 				appliedModel: requestMeta.appliedModel,
+				agentAttributionSource: requestMeta.agentAttributionSource ?? null,
 				comboName: requestMeta.comboName,
 				apiKeyId,
 				apiKeyName,
@@ -1267,11 +1307,13 @@ export function createPoolExhaustedResponse(accounts: Account[]): Response {
 
 	// Build account info list
 	const accountInfos = accounts.map((account) => {
-		const reason = account.paused
-			? "paused"
-			: account.rate_limited_until && account.rate_limited_until > now
-				? "rate_limited"
-				: "unavailable";
+		const reason = account.requires_reauth
+			? "requires_reauth"
+			: account.paused
+				? "paused"
+				: account.rate_limited_until && account.rate_limited_until > now
+					? "rate_limited"
+					: "unavailable";
 
 		const availableAt =
 			account.rate_limited_until && account.rate_limited_until > now
@@ -1287,34 +1329,24 @@ export function createPoolExhaustedResponse(accounts: Account[]): Response {
 
 	// Calculate next_available_at from earliest rate_limited_until
 	const rateLimitedAccounts = accounts.filter(
-		(account) => account.rate_limited_until && account.rate_limited_until > now,
+		(account): account is Account & { rate_limited_until: number } =>
+			!!account.rate_limited_until && account.rate_limited_until > now,
 	);
-	const nextAvailableAt =
+	const earliestRateLimitedUntil =
 		rateLimitedAccounts.length > 0
-			? new Date(
-					Math.min(
-						...rateLimitedAccounts.map(
-							(account) => account.rate_limited_until!,
-						),
-					),
-				).toISOString()
+			? Math.min(
+					...rateLimitedAccounts.map((account) => account.rate_limited_until),
+				)
+			: null;
+	const nextAvailableAt =
+		earliestRateLimitedUntil !== null
+			? new Date(earliestRateLimitedUntil).toISOString()
 			: null;
 
 	// Calculate Retry-After header (seconds) directly from numeric min
 	const retryAfterSeconds =
-		rateLimitedAccounts.length > 0
-			? Math.max(
-					1,
-					Math.round(
-						(Math.min(
-							...rateLimitedAccounts.map(
-								(account) => account.rate_limited_until!,
-							),
-						) -
-							now) /
-							1000,
-					),
-				)
+		earliestRateLimitedUntil !== null
+			? Math.max(1, Math.round((earliestRateLimitedUntil - now) / 1000))
 			: 60; // Default 60s if no cooldown info
 
 	return new Response(

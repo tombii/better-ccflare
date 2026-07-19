@@ -158,6 +158,10 @@ export function MultiModelChart({
 		);
 	}
 
+	const tooltipFormatter = (value: number) => formatValue(value, metric);
+	const tooltipLabelFormatter = (label: string) =>
+		viewMode === "cumulative" ? `Cumulative at ${label}` : label;
+
 	return (
 		<ResponsiveContainer width="100%" height={height}>
 			<LineChart
@@ -218,14 +222,9 @@ export function MultiModelChart({
 				<Tooltip
 					contentStyle={getTooltipStyles("dark")}
 					// biome-ignore lint/suspicious/noExplicitAny: recharts v3.8 widened Formatter to include undefined
-					formatter={((value: number) => formatValue(value, metric)) as any}
+					formatter={tooltipFormatter as any}
 					// biome-ignore lint/suspicious/noExplicitAny: recharts v3.8 widened labelFormatter label to ReactNode
-					labelFormatter={
-						((label: string) =>
-							viewMode === "cumulative"
-								? `Cumulative at ${label}`
-								: label) as any
-					}
+					labelFormatter={tooltipLabelFormatter as any}
 				/>
 				<Legend
 					verticalAlign="top"

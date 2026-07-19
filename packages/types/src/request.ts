@@ -1,3 +1,11 @@
+export type ProjectAttributionSource =
+	| "header_project"
+	| "path_project"
+	| "heading_project"
+	| "none";
+
+export type AgentAttributionSource = "header_agent" | "prompt_agent" | "none";
+
 // Database row type
 export interface RequestRow {
 	id: string;
@@ -28,6 +36,8 @@ export interface RequestRow {
 	combo_name: string | null;
 	original_model: string | null;
 	applied_model: string | null;
+	project_attribution_source: string | null;
+	agent_attribution_source: string | null;
 }
 
 // Domain model
@@ -60,6 +70,8 @@ export interface Request {
 	comboName?: string;
 	originalModel?: string;
 	appliedModel?: string;
+	projectAttributionSource?: ProjectAttributionSource;
+	agentAttributionSource?: AgentAttributionSource;
 }
 
 // API response type
@@ -95,6 +107,8 @@ export interface RequestResponse {
 	// Derived from statusCode === 429 server-side so the list view can render
 	// the "Rate Limited" badge without lazy-loading the full payload.
 	rateLimited?: boolean;
+	projectAttributionSource?: ProjectAttributionSource;
+	agentAttributionSource?: AgentAttributionSource;
 }
 
 // Detailed request with payload
@@ -123,6 +137,9 @@ export interface RequestPayload {
 		path?: string;
 		method?: string;
 		agentUsed?: string;
+		agentAttributionSource?: AgentAttributionSource;
+		project?: string;
+		projectAttributionSource?: ProjectAttributionSource;
 		requestBodyTruncated?: boolean;
 		responseBodyTruncated?: boolean;
 		limitApplied?: number;
@@ -183,6 +200,10 @@ export function toRequest(row: RequestRow): Request {
 		comboName: row.combo_name || undefined,
 		originalModel: row.original_model || undefined,
 		appliedModel: row.applied_model || undefined,
+		projectAttributionSource:
+			(row.project_attribution_source as ProjectAttributionSource) || undefined,
+		agentAttributionSource:
+			(row.agent_attribution_source as AgentAttributionSource) || undefined,
 	};
 }
 
@@ -217,6 +238,8 @@ export function toRequestResponse(request: Request): RequestResponse {
 		originalModel: request.originalModel,
 		appliedModel: request.appliedModel,
 		rateLimited: request.statusCode === 429,
+		projectAttributionSource: request.projectAttributionSource,
+		agentAttributionSource: request.agentAttributionSource,
 	};
 }
 

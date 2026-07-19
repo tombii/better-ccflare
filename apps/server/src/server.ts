@@ -537,12 +537,17 @@ function startUsagePollingWithRefresh(
 }
 
 // Export for programmatic use
+let serverLifecycleOwned = false;
+
 export default async function startServer(options?: {
 	port?: number;
 	withDashboard?: boolean;
 	sslKeyPath?: string;
 	sslCertPath?: string;
 }) {
+	// From here on, this process owns a server lifecycle: the module-scope
+	// signal handlers below act, and the CLI's own handlers stand down.
+	serverLifecycleOwned = true;
 	// Return existing server if already running
 	if (serverInstance) {
 		const existingPort = serverInstance.port;
@@ -973,8 +978,8 @@ export default async function startServer(options?: {
 	// Register this server's codex on-demand usage refresher. Codex does not
 	// expose a free usage endpoint (unlike Anthropic's /api/oauth/usage), so
 	// each call sends a tiny upstream request and parses the x-codex-* headers
-	// from the response. Cost is bounded by `max_output_tokens: 1` plus the
-	// abort-after-headers cancel inside fetchCodexUsageOnDemand.
+	// from the response. The subscription endpoint rejects output-token caps,
+	// so fetchCodexUsageOnDemand aborts and cancels immediately after headers.
 	registerCodexUsageRefresher(serverId, async (accountId: string) => {
 		const account = await dbOps.getAccount(accountId);
 		if (!account) {
@@ -1240,12 +1245,14 @@ export default async function startServer(options?: {
 								authResult.apiKeyName,
 							);
 						}
-						return await handleProxy(
-							req,
-							url,
-							proxyContext,
-							authResult.apiKeyId,
-							authResult.apiKeyName,
+						return trackStreamForShutdown(
+							await handleProxy(
+								req,
+								url,
+								proxyContext,
+								authResult.apiKeyId,
+								authResult.apiKeyName,
+							),
 						);
 					} catch (proxyError) {
 						const statusCode =
@@ -1615,9 +1622,141 @@ Available endpoints:
 	};
 }
 
-// most in-flight streaming responses complete; short enough that systemd's
-// default TimeoutStopSec (90s) doesn't have to escalate to SIGKILL.
-const SHUTDOWN_WATCHDOG_MS = 30_000;
+/**
+ * How long shutdown waits for in-flight requests to complete before
+ * force-closing them. Agent SSE streams can run for minutes, and a
+ * mid-stream close is unrecoverable for the client (tokens were already
+ * streamed), so this defaults generously. Supervisors must keep their stop
+ * timeout (systemd TimeoutStopSec, wrapper SIGKILL delays) above this value
+ * plus the watchdog margin or the drain gets SIGKILLed out from under us.
+ */
+// ── In-flight stream registry for shutdown ─────────────────────────────────
+// Bun 1.x cannot escalate a graceful stop(): once stop() has removed the
+// listener, a later stop(true) no longer terminates active connections
+// (verified empirically on Bun 1.3.5). To force-close still-streaming
+// responses at the drain deadline, every proxied response is wrapped in a
+// pass-through whose controller can be errored explicitly.
+//
+// Each tracked stream also exposes a settlement promise. Force-close must
+// await those settlements before usage-collector drain / DB disposal, or
+// close/error finalizers that record the last usage events can still be
+// racing the shutdown path.
+type TrackedInflightStream = {
+	abort: () => void;
+	settled: Promise<void>;
+};
+
+const inflightStreams = new Set<TrackedInflightStream>();
+
+export function trackStreamForShutdown(response: Response): Response {
+	const body = response.body;
+	if (!body) return response;
+	const reader = body.getReader();
+	let tracked: TrackedInflightStream | null = null;
+	let settle!: () => void;
+	const settled = new Promise<void>((resolve) => {
+		settle = resolve;
+	});
+	const finish = () => {
+		if (!tracked) return;
+		inflightStreams.delete(tracked);
+		tracked = null;
+		settle();
+	};
+	const stream = new ReadableStream<Uint8Array>({
+		start(controller) {
+			const abort = () => {
+				try {
+					controller.error(new Error("server shutdown: drain deadline"));
+				} catch {
+					// already closed or errored
+				}
+				// Settlement waits for source cancellation so shutdown can
+				// observe the terminal path even when no pull is scheduled.
+				void reader.cancel().finally(() => finish());
+			};
+			tracked = { abort, settled };
+			inflightStreams.add(tracked);
+		},
+		async pull(controller) {
+			try {
+				const { done, value } = await reader.read();
+				if (done) {
+					finish();
+					controller.close();
+				} else {
+					controller.enqueue(value);
+				}
+			} catch (error) {
+				finish();
+				try {
+					controller.error(error);
+				} catch {
+					// already errored by abort
+				}
+			}
+		},
+		cancel(reason) {
+			return reader
+				.cancel(reason)
+				.catch(() => {})
+				.finally(() => finish());
+		},
+	});
+	return new Response(stream, {
+		status: response.status,
+		statusText: response.statusText,
+		headers: response.headers,
+	});
+}
+
+/**
+ * Error every tracked in-flight stream and return both the abort count and a
+ * promise that settles once every aborted stream has finished its terminal
+ * close/error path.
+ */
+export function abortInflightStreams(): {
+	aborted: number;
+	settled: Promise<void>;
+} {
+	const streams = [...inflightStreams];
+	inflightStreams.clear();
+	for (const stream of streams) stream.abort();
+	return {
+		aborted: streams.length,
+		settled: Promise.allSettled(streams.map((stream) => stream.settled)).then(
+			() => undefined,
+		),
+	};
+}
+
+export const SHUTDOWN_DRAIN_MS_ENV = "CCFLARE_SHUTDOWN_DRAIN_MS";
+const DEFAULT_SHUTDOWN_DRAIN_MS = 60_000;
+/**
+ * Upper clamp for the drain budget: keeps the watchdog setTimeout well
+ * inside its 32-bit millisecond range (an overflowed delay fires
+ * immediately, which would cut off the very streams being drained) and
+ * keeps shutdown inside any sane service-manager stop timeout.
+ */
+export const MAX_SHUTDOWN_DRAIN_MS = 15 * 60 * 1000;
+/** Budget for post-drain cleanup (DB writer, disposables) before force exit. */
+const SHUTDOWN_WATCHDOG_MARGIN_MS = 15_000;
+
+export function readShutdownDrainMs(): number {
+	const raw = process.env[SHUTDOWN_DRAIN_MS_ENV];
+	if (raw === undefined || raw === "") return DEFAULT_SHUTDOWN_DRAIN_MS;
+	// Strict digits only: parseInt accepts numeric prefixes like "1abc" as 1,
+	// which would silently shrink the drain budget to a millisecond.
+	if (!/^\d+$/.test(raw)) return DEFAULT_SHUTDOWN_DRAIN_MS;
+	// Number (not parseInt) so digit strings beyond MAX_SAFE_INTEGER still
+	// compare correctly and clamp to the maximum instead of falling back to
+	// the shorter default the operator did not ask for.
+	const parsed = Number(raw);
+	if (!Number.isFinite(parsed) || parsed < 0) {
+		return DEFAULT_SHUTDOWN_DRAIN_MS;
+	}
+	return Math.min(parsed, MAX_SHUTDOWN_DRAIN_MS);
+}
 
 // Deduplicates concurrent shutdown invocations (e.g. SIGINT arriving while
 // SIGTERM is still awaiting serverInstance.stop()). Without this, the second
@@ -1634,17 +1773,20 @@ async function handleGracefulShutdown(signal: string) {
 
 	console.log(`\n👋 Received ${signal}, shutting down gracefully...`);
 
-	// Hard upper bound on shutdown duration. unref'd so it doesn't itself
-	// prevent a clean exit if everything else finishes first. Exits with 0
-	// because the watchdog only fires on an expected SIGTERM that ran long,
-	// not on a failure — code 1 would make systemd Restart=on-failure
-	// auto-restart the unit instead of treating it as a normal stop.
+	// Hard upper bound on shutdown duration: the drain budget plus a margin
+	// for the remaining cleanup. unref'd so it doesn't itself prevent a clean
+	// exit if everything else finishes first. Exits with 0 because the
+	// watchdog only fires on an expected SIGTERM that ran long, not on a
+	// failure — code 1 would make systemd Restart=on-failure auto-restart
+	// the unit instead of treating it as a normal stop.
+	const drainMs = readShutdownDrainMs();
+	const watchdogMs = drainMs + SHUTDOWN_WATCHDOG_MARGIN_MS;
 	const watchdog = setTimeout(() => {
 		console.error(
-			`⚠️ Shutdown watchdog (${SHUTDOWN_WATCHDOG_MS}ms) expired, forcing exit`,
+			`⚠️ Shutdown watchdog (${watchdogMs}ms) expired, forcing exit`,
 		);
 		process.exit(0);
-	}, SHUTDOWN_WATCHDOG_MS);
+	}, watchdogMs);
 	watchdog.unref();
 
 	try {
@@ -1719,6 +1861,56 @@ async function handleGracefulShutdown(signal: string) {
 			usagePollingRetryTimeouts.clear();
 		}
 
+		// Drain in-flight requests before tearing down shared resources.
+		// stop() without arguments stops accepting new connections while
+		// letting active ones (including agent SSE streams) run to
+		// completion; wait for pendingRequests to reach zero within the
+		// drain budget, then force-close whatever remains.
+		if (serverInstance) {
+			serverInstance.stop();
+			const deadline = Date.now() + drainMs;
+			const initialPending = serverInstance.pendingRequests;
+			if (initialPending > 0) {
+				console.log(
+					`Draining ${initialPending} in-flight request(s) (budget ${drainMs}ms)...`,
+				);
+			}
+			while (serverInstance.pendingRequests > 0 && Date.now() < deadline) {
+				await new Promise((resolve) => setTimeout(resolve, 250));
+			}
+			const remaining = serverInstance.pendingRequests;
+			if (remaining > 0) {
+				console.error(
+					`Drain budget exhausted; force-closing ${remaining} in-flight request(s)`,
+				);
+				// stop(true) cannot escalate an earlier graceful stop() on Bun 1.x
+				// (verified on 1.3.5), so error the tracked response streams
+				// directly; the call stays as belt-and-braces for Bun versions
+				// where escalation works.
+				serverInstance.stop(true);
+				const { aborted, settled } = abortInflightStreams();
+				if (aborted > 0) {
+					console.error(`Errored ${aborted} tracked response stream(s)`);
+				}
+				// Force-cancelled streams still have close/error handlers that
+				// record final usage. Await tracked stream settlements, then
+				// wait for Bun's pending request counter to clear so those
+				// finalizers can register before usage-collector drain and DB
+				// disposal. Bounded by the remaining drain budget so a source
+				// stream whose cancel() handler hangs can't silently consume
+				// the watchdog margin reserved for DB/usage cleanup.
+				await Promise.race([
+					settled,
+					new Promise<void>((resolve) =>
+						setTimeout(resolve, Math.max(0, deadline - Date.now())),
+					),
+				]);
+				while (serverInstance.pendingRequests > 0 && Date.now() < deadline) {
+					await new Promise((resolve) => setTimeout(resolve, 50));
+				}
+			}
+		}
+
 		usageCache.clear(); // Stop all usage polling
 		await drainUsageCollector();
 		await shutdown();
@@ -1731,8 +1923,18 @@ async function handleGracefulShutdown(signal: string) {
 }
 
 // Register signal handlers
-process.on("SIGINT", () => handleGracefulShutdown("SIGINT"));
-process.on("SIGTERM", () => handleGracefulShutdown("SIGTERM"));
+// Only act once this process actually owns a server lifecycle: for
+// short-lived CLI commands (which import this module without starting a
+// server) the CLI's own handlers own shutdown, and a second concurrent
+// shutdown path could exit while the first is still disposing resources.
+process.on("SIGINT", () => {
+	if (!serverLifecycleOwned) return;
+	handleGracefulShutdown("SIGINT");
+});
+process.on("SIGTERM", () => {
+	if (!serverLifecycleOwned) return;
+	handleGracefulShutdown("SIGTERM");
+});
 
 // Export helper to get the current protocol
 export function getProtocol(): string {

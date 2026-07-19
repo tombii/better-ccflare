@@ -221,4 +221,39 @@ describe("proxyWithAccount — out_of_credits (issue #261)", () => {
 		const saveMock = ctx.dbOps.saveRequest as ReturnType<typeof mock>;
 		expect(saveMock.mock.calls.length).toBe(0);
 	});
+
+	it("persists null/null originalModel/appliedModel (not the equal pair) when requestMeta carries an unmodified pair (P2: isModelRewrite guard)", async () => {
+		globalThis.fetch = mock(async () => outOfCreditsResponse());
+
+		const ctx = makeProxyContextWithAsyncExec();
+		const account = makeAccount();
+		const bodyBuffer = makeRequestBody("claude-sonnet-4-5");
+		const req = makeRequest(bodyBuffer);
+
+		await proxyWithAccount(
+			req,
+			new URL("https://proxy.local/v1/messages"),
+			account,
+			{
+				...makeRequestMeta(),
+				// Agent-detected but NOT rewritten: original === applied. Before the
+				// fix, the three direct 429 saveRequest call sites persisted this
+				// equal pair unconditionally, bypassing isModelRewrite and
+				// corrupting observability.
+				originalModel: "claude-sonnet-4-5",
+				appliedModel: "claude-sonnet-4-5",
+			},
+			bodyBuffer,
+			() => undefined,
+			0,
+			ctx,
+		);
+
+		const saveMock = ctx.dbOps.saveRequest as ReturnType<typeof mock>;
+		expect(saveMock.mock.calls.length).toBe(1);
+		const args = saveMock.mock.calls[0] as unknown[];
+		// 17th/18th positional args are originalModel/appliedModel.
+		expect(args[16]).toBeNull();
+		expect(args[17]).toBeNull();
+	});
 });

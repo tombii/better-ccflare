@@ -7,12 +7,14 @@ import type { Disposable } from "@better-ccflare/core";
 import { TIME_CONSTANTS } from "@better-ccflare/core";
 import type {
 	Account,
+	AgentAttributionSource,
 	Combo,
 	ComboFamily,
 	ComboFamilyAssignment,
 	ComboSlot,
 	ComboWithSlots,
 	IntegrityStatus,
+	ProjectAttributionSource,
 	RateLimitReason,
 	StrategyStore,
 } from "@better-ccflare/types";
@@ -763,6 +765,14 @@ OAuth tokens will need to be re-authenticated.
 		);
 	}
 
+	async setRequiresReauth(accountId: string, value: boolean): Promise<void> {
+		await withDatabaseRetry(
+			() => this.accounts.setRequiresReauth(accountId, value),
+			this.retryConfig,
+			"setRequiresReauth",
+		);
+	}
+
 	async updateAccountUsage(accountId: string): Promise<void> {
 		const sessionDuration =
 			this.runtime?.sessionDurationMs || 5 * 60 * 60 * 1000;
@@ -946,6 +956,8 @@ OAuth tokens will need to be re-authenticated.
 		comboName?: string | null,
 		originalModel?: string | null,
 		appliedModel?: string | null,
+		projectAttributionSource?: ProjectAttributionSource | null,
+		agentAttributionSource?: AgentAttributionSource | null,
 	): Promise<void> {
 		await withDatabaseRetry(
 			() =>
@@ -968,6 +980,8 @@ OAuth tokens will need to be re-authenticated.
 					comboName,
 					originalModel,
 					appliedModel,
+					projectAttributionSource,
+					agentAttributionSource,
 				}),
 			this.retryConfig,
 			"saveRequest",

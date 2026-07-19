@@ -207,6 +207,7 @@ export function createAccountsListHandler(
 			model_fallbacks: string | null;
 			billing_type: string | null;
 			pause_reason: string | null;
+			requires_reauth: 0 | 1;
 		}>(
 			`
 				SELECT
@@ -229,6 +230,7 @@ export function createAccountsListHandler(
 					refresh_token,
 					access_token,
 					COALESCE(paused, 0) as paused,
+					COALESCE(requires_reauth, 0) as requires_reauth,
 					COALESCE(priority, 0) as priority,
 					COALESCE(auto_fallback_enabled, 0) as auto_fallback_enabled,
 					COALESCE(auto_refresh_enabled, 0) as auto_refresh_enabled,
@@ -274,6 +276,7 @@ export function createAccountsListHandler(
 								id: a.id,
 								provider: a.provider ?? "",
 								paused: !!a.paused,
+								requires_reauth: !!a.requires_reauth,
 								// pause_reason and rate_limit_reset feed wouldAutoUnpause —
 								// without them peek() can't simulate the auto-unpause that
 								// select() performs on safe-reason paused accounts whose
@@ -545,6 +548,8 @@ export function createAccountsListHandler(
 						: null,
 					created: new Date(Number(account.created_at)).toISOString(),
 					paused: account.paused === 1,
+					requiresReauth: account.requires_reauth === 1,
+					pauseReason: account.pause_reason ?? null,
 					priority: Number(account.priority) || 0,
 					tokenStatus: account.token_valid ? "valid" : "expired",
 					tokenExpiresAt: account.expires_at
@@ -3590,8 +3595,8 @@ export function createOpenRouterAccountAddHandler(dbOps: DatabaseOperations) {
  *
  * For Anthropic accounts this restarts the free `/api/oauth/usage` polling
  * loop. For Codex accounts there is no free usage endpoint, so this sends a
- * minimal real `/responses` request (capped via `max_output_tokens: 1` and
- * abort-after-headers) and parses the `x-codex-*` headers off the response.
+ * minimal real `/responses` request, aborts immediately after receiving the
+ * headers, and parses the `x-codex-*` usage data from that snapshot.
  */
 export function createAccountRefreshUsageHandler(dbOps: DatabaseOperations) {
 	return async (_req: Request, accountId: string): Promise<Response> => {

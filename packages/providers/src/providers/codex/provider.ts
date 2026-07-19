@@ -46,7 +46,7 @@ const TOKEN_URL = "https://auth.openai.com/oauth/token";
 const CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 export const CODEX_DEFAULT_ENDPOINT =
 	"https://chatgpt.com/backend-api/codex/responses";
-export const CODEX_VERSION = "0.144.4";
+export const CODEX_VERSION = "0.144.6";
 /** Hosts that are OpenAI's own Codex/Responses API, not a custom endpoint. */
 const OPENAI_PROMPT_CACHE_HOSTS = new Set(["chatgpt.com", "api.openai.com"]);
 export const CODEX_USER_AGENT = `codex-cli/${CODEX_VERSION} (Windows 10.0.26100; x64)`;
@@ -167,6 +167,7 @@ interface CodexRequest {
 	input: (CodexMessage | CodexFunctionCallItem | CodexFunctionCallOutputItem)[];
 	stream: boolean;
 	store: false;
+	max_output_tokens?: number;
 	reasoning?: { effort: string };
 	instructions?: string;
 	tools?: CodexTool[];
@@ -298,6 +299,19 @@ function isOpenAiPromptCacheEndpoint(account?: Account): boolean {
 	}
 }
 
+function isCodexSubscriptionEndpoint(account?: Account): boolean {
+	try {
+		const endpoint = new URL(resolveCodexPromptCacheEndpoint(account));
+		const normalizedPath = endpoint.pathname.replace(/\/+$/, "");
+		return (
+			endpoint.origin === "https://chatgpt.com" &&
+			normalizedPath === "/backend-api/codex/responses"
+		);
+	} catch {
+		return false;
+	}
+}
+
 export class CodexProvider extends BaseProvider {
 	name = "codex";
 	// Fallback map: proxy-operations.ts injects x-better-ccflare-request-id and
@@ -355,13 +369,20 @@ export class CodexProvider extends BaseProvider {
 				// ignore
 			}
 
+			// Preserve the machine-readable OAuth error code ahead of the human
+			// description so the token-manager's requires_reauth detection can
+			// classify a dead refresh token; a description-only message hides it.
 			const errorMessage =
-				errorData?.error_description || errorData?.error || response.statusText;
+				[errorData?.error, errorData?.error_description]
+					.filter(Boolean)
+					.join(": ") || response.statusText;
 
-			// Rotating refresh tokens: reuse → must re-auth
+			// Rotating refresh tokens: reuse → must re-auth. Keep the
+			// "refresh_token_reused" marker verbatim in the thrown message so
+			// downstream detection fires — the friendly hint alone would not match.
 			if (errorData?.error === "refresh_token_reused") {
 				throw new Error(
-					`Codex refresh token was reused for account ${account.name}. Please re-authenticate with: bun run cli --reauthenticate ${account.name}`,
+					`Failed to refresh Codex token for account ${account.name}: refresh_token_reused - the refresh token was already used; re-authenticate with: bun run cli --reauthenticate ${account.name}`,
 				);
 			}
 
@@ -455,6 +476,19 @@ export class CodexProvider extends BaseProvider {
 			if (isSyntheticCountTokens) {
 				return this.createSyntheticCountTokensResponse(request, body);
 			}
+			const isSubscriptionEndpoint = isCodexSubscriptionEndpoint(account);
+			if (
+				isSubscriptionEndpoint &&
+				typeof body.max_tokens === "number" &&
+				body.max_tokens <= 0
+			) {
+				return this.createSyntheticErrorResponse(
+					request,
+					400,
+					"invalid_request_error",
+					`Codex subscription endpoint does not support max_tokens: ${body.max_tokens}.`,
+				);
+			}
 
 			const requestId = request.headers.get("x-better-ccflare-request-id");
 			if (requestId) {
@@ -467,6 +501,7 @@ export class CodexProvider extends BaseProvider {
 				body,
 				account,
 				requestId ?? undefined,
+				isSubscriptionEndpoint,
 			);
 
 			const newHeaders = new Headers(request.headers);
@@ -1013,6 +1048,7 @@ export class CodexProvider extends BaseProvider {
 		body: AnthropicRequest,
 		account?: Account,
 		requestId?: string,
+		isSubscriptionEndpoint = isCodexSubscriptionEndpoint(account),
 	): CodexRequest {
 		const model = this.mapModel(body.model, account);
 		if (process.env.DEBUG?.includes("model") || process.env.DEBUG === "true") {
@@ -1090,6 +1126,17 @@ export class CodexProvider extends BaseProvider {
 			store: false,
 			reasoning: { effort: reasoningResolution.effort ?? "medium" },
 		};
+		if (
+			!isSubscriptionEndpoint &&
+			typeof body.max_tokens === "number" &&
+			Number.isFinite(body.max_tokens)
+		) {
+			if (body.max_tokens > 0) {
+				codexRequest.max_output_tokens = Math.floor(body.max_tokens);
+			} else if (body.max_tokens === 0) {
+				codexRequest.max_output_tokens = 1;
+			}
+		}
 
 		codexRequest.instructions = instructions || "You are a helpful assistant.";
 		const promptCacheKey = this.derivePromptCacheKey(

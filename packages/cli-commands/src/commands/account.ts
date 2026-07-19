@@ -1801,6 +1801,7 @@ export async function getAccountsList(
 			requestCount: account.request_count,
 			totalRequests: account.total_requests,
 			paused: account.paused,
+			requiresReauth: account.requires_reauth,
 			tokenStatus,
 			rateLimitStatus,
 			sessionInfo,
@@ -2163,13 +2164,16 @@ async function reauthenticateQwenAccount(
 				refresh_token = ?,
 				access_token = ?,
 				expires_at = ?,
-				custom_endpoint = ?
+				custom_endpoint = ?,
+				refresh_token_issued_at = ?,
+				requires_reauth = 0
 			WHERE id = ?`,
 			[
 				tokens.refresh_token,
 				tokens.access_token,
 				Date.now() + tokens.expires_in * 1000,
 				resourceUrl,
+				Date.now(),
 				account.id,
 			],
 		);
@@ -2236,13 +2240,16 @@ async function reauthenticateXaiAccount(
 				refresh_token = ?,
 				access_token = ?,
 				expires_at = ?,
-				custom_endpoint = COALESCE(custom_endpoint, ?)
+				custom_endpoint = COALESCE(custom_endpoint, ?),
+				refresh_token_issued_at = ?,
+				requires_reauth = 0
 			WHERE id = ?`,
 			[
 				auth.refresh_token,
 				auth.key,
 				expiresAt,
 				account.custom_endpoint || XAI_DEFAULT_ENDPOINT,
+				Date.now(),
 				account.id,
 			],
 		);
@@ -2419,7 +2426,8 @@ export async function reauthenticateAccount(
 						api_key = ?,
 						refresh_token = ?,
 						access_token = NULL,
-						expires_at = NULL
+						expires_at = NULL,
+						requires_reauth = 0
 					WHERE id = ?`,
 					[apiKey, apiKey, account.id],
 				);
@@ -2448,9 +2456,17 @@ export async function reauthenticateAccount(
 			`UPDATE accounts SET
 				refresh_token = ?,
 				access_token = ?,
-				expires_at = ?
+				expires_at = ?,
+				refresh_token_issued_at = ?,
+				requires_reauth = 0
 			WHERE id = ?`,
-			[tokens.refreshToken, tokens.accessToken, tokens.expiresAt, account.id],
+			[
+				tokens.refreshToken,
+				tokens.accessToken,
+				tokens.expiresAt,
+				Date.now(),
+				account.id,
+			],
 		);
 
 		console.log("OAuth tokens updated.");

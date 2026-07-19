@@ -212,16 +212,16 @@ export class OAuthFlow {
 		// Handle console mode — create new API key and update account
 		if (flowData.mode === "console" || !tokens.refreshToken) {
 			const apiKey = await this.createAnthropicApiKey(tokens.accessToken);
-			await adapter.run(`UPDATE accounts SET api_key = ? WHERE id = ?`, [
-				apiKey,
-				id,
-			]);
+			await adapter.run(
+				`UPDATE accounts SET api_key = ?, requires_reauth = 0 WHERE id = ?`,
+				[apiKey, id],
+			);
 			return;
 		}
 
 		// Handle claude-oauth mode — update OAuth tokens in place
 		await adapter.run(
-			`UPDATE accounts SET refresh_token = ?, access_token = ?, expires_at = ?, refresh_token_issued_at = ? WHERE id = ?`,
+			`UPDATE accounts SET refresh_token = ?, access_token = ?, expires_at = ?, refresh_token_issued_at = ?, requires_reauth = 0 WHERE id = ?`,
 			[
 				tokens.refreshToken,
 				tokens.accessToken,

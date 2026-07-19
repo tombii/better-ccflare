@@ -165,12 +165,16 @@ export function transformStreamingResponse(response: Response): Response {
 	const encoder = new TextEncoder();
 	const decoder = new TextDecoder();
 
-	// Use pipeThrough to transform the stream while preserving clonability
+	// Use pipeThrough to transform the stream while preserving clonability.
+	// Streaming state lives in this closure variable (rather than `this` on the
+	// handler object) so it can be fully typed without `any` — the DOM lib's
+	// Transformer callbacks don't allow attaching arbitrary properties to `this`.
+	let streamContext: TransformStreamContext | null = null;
 	const transformedBody = response.body.pipeThrough(
 		new TransformStream<Uint8Array, Uint8Array>({
 			start(_controller) {
 				// Initialize context object for streaming state
-				(this as any).context = {
+				streamContext = {
 					buffer: "",
 					hasStarted: false,
 					extractedModel: "unknown",
@@ -191,15 +195,20 @@ export function transformStreamingResponse(response: Response): Response {
 					toolCallBlockIndices: {},
 					maxToolCallLength: 1_000_000,
 					maxToolCallIndex: 100,
-				} as TransformStreamContext;
+				};
 			},
 			transform(chunk, controller) {
 				try {
-					const context = (this as any).context as TransformStreamContext;
-					if (!context) {
+					if (!streamContext) {
 						log.error("TransformStream context not initialized");
 						return;
 					}
+					// Bind to a non-null local so TypeScript's null-narrowing holds for
+					// the rest of this call. The outer `streamContext` is itself
+					// reassigned later in this same function (on [DONE]) and in
+					// `flush`, which would otherwise widen it back to `T | null` at
+					// every use below.
+					const context = streamContext;
 					// Decode the chunk and add to buffer
 					context.buffer += decoder.decode(chunk, { stream: true });
 					const lines = context.buffer.split("\n");
@@ -273,7 +282,7 @@ export function transformStreamingResponse(response: Response): Response {
 							}
 
 							// Cleanup entire context after stream completion
-							(this as any).context = null;
+							streamContext = null;
 							continue;
 						}
 
@@ -579,8 +588,10 @@ export function transformStreamingResponse(response: Response): Response {
 				}
 			},
 			flush(controller) {
-				const context = (this as any).context as TransformStreamContext;
-				if (!context) return;
+				if (!streamContext) return;
+				// Bind to a non-null local so TypeScript's null-narrowing holds for
+				// the rest of this call (see `transform` above for why).
+				const context = streamContext;
 
 				// Stream ended without [DONE] (e.g. timeout/truncation).
 				// Emit buffered JSON + stop events so the client gets a valid response.
@@ -647,7 +658,7 @@ export function transformStreamingResponse(response: Response): Response {
 					);
 				}
 
-				(this as any).context = null;
+				streamContext = null;
 			},
 		}),
 	);

@@ -201,4 +201,85 @@ describe("proxyWithAccount — extra_usage_exhausted (issue #293)", () => {
 		// 10th positional arg is the `usage` parameter.
 		expect(args[9]).toEqual({ model: "claude-sonnet-4-5" });
 	});
+
+	it("passes requestMeta attribution sources and rewritten models through to saveRequest", async () => {
+		globalThis.fetch = mock(async () => extraUsageExhaustedResponse());
+
+		const ctx = makeProxyContextWithAsyncExec();
+		const account = makeAccount();
+		const bodyBuffer = makeRequestBody("claude-sonnet-4-5");
+		const req = makeRequest(bodyBuffer);
+
+		await proxyWithAccount(
+			req,
+			new URL("https://proxy.local/v1/messages"),
+			account,
+			{
+				...makeRequestMeta(),
+				project: "Harness",
+				agentUsed: "reviewer",
+				projectAttributionSource: "header_project",
+				agentAttributionSource: "header_agent",
+				originalModel: "claude-sonnet-4-5",
+				appliedModel: "claude-opus-4-6",
+			},
+			bodyBuffer,
+			() => undefined,
+			0,
+			ctx,
+		);
+
+		const saveMock = ctx.dbOps.saveRequest as ReturnType<typeof mock>;
+		expect(saveMock.mock.calls.length).toBe(1);
+		const args = saveMock.mock.calls[0] as unknown[];
+		// Full positional order (0-indexed): id, method, path, accountUsed,
+		// statusCode, success, errorMessage, responseTime, failoverAttempts,
+		// usage, agentUsed, apiKeyId, apiKeyName, project, billingType,
+		// comboName, originalModel, appliedModel, projectAttributionSource,
+		// agentAttributionSource.
+		expect(args[6]).toBe("extra_usage_exhausted");
+		expect(args[10]).toBe("reviewer");
+		expect(args[13]).toBe("Harness");
+		expect(args[16]).toBe("claude-sonnet-4-5");
+		expect(args[17]).toBe("claude-opus-4-6");
+		expect(args[18]).toBe("header_project");
+		expect(args[19]).toBe("header_agent");
+	});
+
+	it("persists null/null originalModel/appliedModel when requestMeta carries an unmodified pair", async () => {
+		globalThis.fetch = mock(async () => extraUsageExhaustedResponse());
+
+		const ctx = makeProxyContextWithAsyncExec();
+		const account = makeAccount();
+		const bodyBuffer = makeRequestBody("claude-sonnet-4-5");
+		const req = makeRequest(bodyBuffer);
+
+		await proxyWithAccount(
+			req,
+			new URL("https://proxy.local/v1/messages"),
+			account,
+			{
+				...makeRequestMeta(),
+				// Agent-detected but NOT rewritten: original === applied. The
+				// direct extra_usage_exhausted save path must match the other
+				// direct persistence sites and gate through isModelRewrite.
+				originalModel: "claude-sonnet-4-5",
+				appliedModel: "claude-sonnet-4-5",
+				projectAttributionSource: "path_project",
+				agentAttributionSource: "prompt_agent",
+			},
+			bodyBuffer,
+			() => undefined,
+			0,
+			ctx,
+		);
+
+		const saveMock = ctx.dbOps.saveRequest as ReturnType<typeof mock>;
+		expect(saveMock.mock.calls.length).toBe(1);
+		const args = saveMock.mock.calls[0] as unknown[];
+		expect(args[16]).toBeNull();
+		expect(args[17]).toBeNull();
+		expect(args[18]).toBe("path_project");
+		expect(args[19]).toBe("prompt_agent");
+	});
 });
