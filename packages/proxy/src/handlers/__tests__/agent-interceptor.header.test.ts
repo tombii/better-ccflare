@@ -1,10 +1,12 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, unlinkSync } from "node:fs";
 
+import { agentRegistry } from "@better-ccflare/agents";
 import {
 	DatabaseFactory,
 	type DatabaseOperations,
 } from "@better-ccflare/database";
+import type { Agent } from "@better-ccflare/types";
 import type { ModelCatalog } from "../../model-catalog";
 import { interceptAndModifyRequest } from "../agent-interceptor";
 
@@ -82,6 +84,7 @@ describe("Agent Interceptor - X-Anthropic-Agent-Id Header", () => {
 				headers({ "x-anthropic-agent-id": "my-router-agent" }),
 			);
 			expect(result.agentUsed).toBe("my-router-agent");
+			expect(result.agentAttributionSource).toBe("header_agent");
 		});
 
 		test("header is case-insensitive", async () => {
@@ -93,6 +96,7 @@ describe("Agent Interceptor - X-Anthropic-Agent-Id Header", () => {
 				headers({ "X-Anthropic-Agent-Id": "case-insensitive-agent" }),
 			);
 			expect(result.agentUsed).toBe("case-insensitive-agent");
+			expect(result.agentAttributionSource).toBe("header_agent");
 		});
 
 		test("absent header falls through to system-prompt path (unchanged)", async () => {
@@ -101,6 +105,94 @@ describe("Agent Interceptor - X-Anthropic-Agent-Id Header", () => {
 			// No explicit header and a benign prompt => no agent detected
 			expect(result.agentUsed).toBeNull();
 			expect(result.modifiedBody).toBe(buffer);
+			expect(result.agentAttributionSource).toBe("none");
+		});
+	});
+
+	describe("x-better-ccflare-agent-id namespaced header alias", () => {
+		test("namespaced header present -> agentUsed is header value, source is header_agent", async () => {
+			const buffer = toArrayBuffer(createMockRequestBody());
+			const result = await interceptAndModifyRequest(
+				buffer,
+				dbOps,
+				headers({ "x-better-ccflare-agent-id": "namespaced-agent" }),
+			);
+			expect(result.agentUsed).toBe("namespaced-agent");
+			expect(result.agentAttributionSource).toBe("header_agent");
+		});
+
+		test("both namespaced and legacy headers present -> namespaced header wins deterministically", async () => {
+			const buffer = toArrayBuffer(createMockRequestBody());
+			const result = await interceptAndModifyRequest(
+				buffer,
+				dbOps,
+				headers({
+					"x-better-ccflare-agent-id": "namespaced-agent",
+					"x-anthropic-agent-id": "legacy-agent",
+				}),
+			);
+			expect(result.agentUsed).toBe("namespaced-agent");
+			expect(result.agentAttributionSource).toBe("header_agent");
+		});
+
+		test("trims surrounding whitespace before use", async () => {
+			const buffer = toArrayBuffer(createMockRequestBody());
+			const result = await interceptAndModifyRequest(
+				buffer,
+				dbOps,
+				headers({
+					"x-better-ccflare-agent-id": "  trimmed-namespaced-agent  ",
+				}),
+			);
+			expect(result.agentUsed).toBe("trimmed-namespaced-agent");
+			expect(result.agentAttributionSource).toBe("header_agent");
+		});
+
+		test("caps value at 256 characters", async () => {
+			const longId = "b".repeat(500);
+			const buffer = toArrayBuffer(createMockRequestBody());
+			const result = await interceptAndModifyRequest(
+				buffer,
+				dbOps,
+				headers({ "x-better-ccflare-agent-id": longId }),
+			);
+			expect(result.agentUsed).toHaveLength(256);
+			expect(result.agentUsed).toBe("b".repeat(256));
+			expect(result.agentAttributionSource).toBe("header_agent");
+		});
+	});
+
+	describe("Attribution source for prompt/registry-based detection", () => {
+		test("detected agent via system-prompt match -> source is prompt_agent", async () => {
+			const fakeAgent: Agent = {
+				id: "fixture-prompt-agent",
+				name: "Fixture Prompt Agent",
+				description: "Test fixture agent for prompt-match source labeling",
+				color: "gray",
+				model: "claude-3-5-sonnet-20241022",
+				systemPrompt: "You are the fixture-prompt-agent-83f2 test agent.",
+				source: "global",
+				filePath: "/tmp/fixture-prompt-agent.md",
+			};
+
+			// The agent-interceptor imports the agentRegistry singleton directly,
+			// so we stub its getAgents() for the duration of this test rather than
+			// writing real workspace/global agent files to disk.
+			const originalGetAgents = agentRegistry.getAgents.bind(agentRegistry);
+			agentRegistry.getAgents = async () => [fakeAgent];
+
+			try {
+				const buffer = toArrayBuffer(
+					createMockRequestBody({
+						system: `Some preamble.\n${fakeAgent.systemPrompt}\nSome epilogue.`,
+					}),
+				);
+				const result = await interceptAndModifyRequest(buffer, dbOps);
+				expect(result.agentUsed).toBe("fixture-prompt-agent");
+				expect(result.agentAttributionSource).toBe("prompt_agent");
+			} finally {
+				agentRegistry.getAgents = originalGetAgents;
+			}
 		});
 	});
 
@@ -117,6 +209,7 @@ describe("Agent Interceptor - X-Anthropic-Agent-Id Header", () => {
 				{ getModelCatalog: async () => nonVetoingCatalog() },
 			);
 			expect(result.agentUsed).toBe("preferred-agent");
+			expect(result.agentAttributionSource).toBe("header_agent");
 			expect(result.originalModel).toBe("claude-3-5-sonnet-20241022");
 			expect(result.appliedModel).toBe("claude-opus-model");
 			expect(result.modifiedBody).not.toBe(buffer);
@@ -136,6 +229,7 @@ describe("Agent Interceptor - X-Anthropic-Agent-Id Header", () => {
 				headers({ "x-anthropic-agent-id": "no-pref-agent" }),
 			);
 			expect(result.agentUsed).toBe("no-pref-agent");
+			expect(result.agentAttributionSource).toBe("header_agent");
 			expect(result.originalModel).toBe("claude-3-5-sonnet-20241022");
 			expect(result.appliedModel).toBe("claude-3-5-sonnet-20241022");
 			// No substitution => body passed through unchanged
@@ -169,6 +263,7 @@ describe("Agent Interceptor - X-Anthropic-Agent-Id Header", () => {
 				headers({ "x-anthropic-agent-id": "  trimmed-agent  " }),
 			);
 			expect(result.agentUsed).toBe("trimmed-agent");
+			expect(result.agentAttributionSource).toBe("header_agent");
 		});
 
 		test("caps value at 256 characters", async () => {
@@ -181,6 +276,7 @@ describe("Agent Interceptor - X-Anthropic-Agent-Id Header", () => {
 			);
 			expect(result.agentUsed).toHaveLength(256);
 			expect(result.agentUsed).toBe("a".repeat(256));
+			expect(result.agentAttributionSource).toBe("header_agent");
 		});
 
 		test("empty/whitespace-only header is treated as absent", async () => {
@@ -192,6 +288,7 @@ describe("Agent Interceptor - X-Anthropic-Agent-Id Header", () => {
 			);
 			// Falls through to system-prompt path => no agent from a benign prompt
 			expect(result.agentUsed).toBeNull();
+			expect(result.agentAttributionSource).toBe("none");
 		});
 	});
 });

@@ -81,6 +81,9 @@ describe("Agent Interceptor - Directory Traversal Security", () => {
 			expect(result).toBeDefined();
 			// Verify no agent was detected from the malicious path
 			expect(result.agentUsed).toBeNull();
+			// No agent was attributed from the malicious/traversal content, so the
+			// source label must be "none" -- never a secret-derived value.
+			expect(result.agentAttributionSource).toBe("none");
 			// The original request should be returned unmodified
 			expect(result.modifiedBody).toBe(buffer);
 		});

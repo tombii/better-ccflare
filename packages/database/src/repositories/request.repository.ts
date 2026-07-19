@@ -1,8 +1,39 @@
 import { Logger } from "@better-ccflare/logger";
+import type {
+	AgentAttributionSource,
+	ProjectAttributionSource,
+} from "@better-ccflare/types";
 import { decryptPayload, encryptPayload } from "../payload-encryption";
 import { BaseRepository } from "./base.repository";
 
 const log = new Logger("RequestRepository");
+
+// Source-authority ranks for the UPSERT conflict resolution below. Higher
+// number = higher authority. NULL and "none" both fall through to the ELSE
+// branch (rank 0) since neither is an explicit attribution.
+//
+// Project: header (explicit client header) > path (workspace path in the
+// system prompt) > heading (inferred from an H1 heading) > none.
+const PROJECT_SOURCE_RANK_SQL = `CASE %COL%
+	WHEN 'header_project' THEN 3
+	WHEN 'path_project' THEN 2
+	WHEN 'heading_project' THEN 1
+	ELSE 0
+END`;
+// Agent: header (explicit client header) > prompt (inferred from the prompt) > none.
+const AGENT_SOURCE_RANK_SQL = `CASE %COL%
+	WHEN 'header_agent' THEN 2
+	WHEN 'prompt_agent' THEN 1
+	ELSE 0
+END`;
+
+function projectRank(col: string): string {
+	return PROJECT_SOURCE_RANK_SQL.replace("%COL%", col);
+}
+
+function agentRank(col: string): string {
+	return AGENT_SOURCE_RANK_SQL.replace("%COL%", col);
+}
 
 /**
  * Decrypt a stored payload for a list endpoint, swallowing per-row errors
@@ -52,6 +83,8 @@ export interface RequestData {
 	 */
 	originalModel?: string | null;
 	appliedModel?: string | null;
+	projectAttributionSource?: ProjectAttributionSource | null;
+	agentAttributionSource?: AgentAttributionSource | null;
 	usage?: {
 		model?: string;
 		promptTokens?: number;
@@ -69,6 +102,23 @@ export interface RequestData {
 export class RequestRepository extends BaseRepository<RequestData> {
 	async save(data: RequestData): Promise<void> {
 		const { usage } = data;
+		const projectRankIncoming = projectRank(
+			"EXCLUDED.project_attribution_source",
+		);
+		const projectRankExisting = projectRank(
+			"requests.project_attribution_source",
+		);
+		const agentRankIncoming = agentRank("EXCLUDED.agent_attribution_source");
+		const agentRankExisting = agentRank("requests.agent_attribution_source");
+		// An incoming project/agent pair wins the conflict only when it carries a
+		// non-null value AND its source is at least as authoritative as the
+		// existing one. Equal rank still wins (keeps legacy no-source callers,
+		// where both sides rank 0, overwriting as before; and lets a fresh
+		// same-authority re-derivation replace a stale one). Strictly lower rank
+		// never wins, so an omitted/`none`/lower-authority source can no longer
+		// erase or downgrade a higher-authority attribution (e.g. header_*).
+		const projectWinsIncoming = `EXCLUDED.project IS NOT NULL AND ${projectRankIncoming} >= ${projectRankExisting}`;
+		const agentWinsIncoming = `EXCLUDED.agent_used IS NOT NULL AND ${agentRankIncoming} >= ${agentRankExisting}`;
 		await this.run(
 			`
 			INSERT INTO requests (
@@ -77,9 +127,10 @@ export class RequestRepository extends BaseRepository<RequestData> {
 				model, prompt_tokens, completion_tokens, total_tokens, cost_usd,
 				input_tokens, cache_read_input_tokens, cache_creation_input_tokens, output_tokens,
 				agent_used, output_tokens_per_second, api_key_id, api_key_name, project,
-				billing_type, combo_name, original_model, applied_model
+				billing_type, combo_name, original_model, applied_model,
+				project_attribution_source, agent_attribution_source
 			)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT (id) DO UPDATE SET
 				timestamp = EXCLUDED.timestamp,
 				method = EXCLUDED.method,
@@ -99,15 +150,25 @@ export class RequestRepository extends BaseRepository<RequestData> {
 				cache_read_input_tokens = EXCLUDED.cache_read_input_tokens,
 				cache_creation_input_tokens = EXCLUDED.cache_creation_input_tokens,
 				output_tokens = EXCLUDED.output_tokens,
-				agent_used = EXCLUDED.agent_used,
 				output_tokens_per_second = EXCLUDED.output_tokens_per_second,
 				api_key_id = EXCLUDED.api_key_id,
 				api_key_name = EXCLUDED.api_key_name,
-				project = COALESCE(EXCLUDED.project, requests.project),
 				billing_type = COALESCE(EXCLUDED.billing_type, requests.billing_type),
 				combo_name = COALESCE(EXCLUDED.combo_name, requests.combo_name),
 				original_model = COALESCE(EXCLUDED.original_model, requests.original_model),
-				applied_model = COALESCE(EXCLUDED.applied_model, requests.applied_model)
+				applied_model = COALESCE(EXCLUDED.applied_model, requests.applied_model),
+				-- (project, project_attribution_source) and (agent_used, agent_attribution_source)
+				-- move in LOCKSTEP and are resolved by SOURCE AUTHORITY, not preserve-first or
+				-- unconditional-overwrite (see projectRank/agentRank above). The incoming pair
+				-- replaces the existing pair only when it has a non-null value AND a source rank
+				-- >= the existing source rank; otherwise the existing pair is kept verbatim. This
+				-- stops a re-save with an omitted/none/lower-authority source (e.g. a heading
+				-- re-derived on a later request) from erasing or downgrading a higher-authority
+				-- attribution (e.g. header_project) recorded earlier for the same request id.
+				project = CASE WHEN ${projectWinsIncoming} THEN EXCLUDED.project ELSE requests.project END,
+				project_attribution_source = CASE WHEN ${projectWinsIncoming} THEN EXCLUDED.project_attribution_source ELSE requests.project_attribution_source END,
+				agent_used = CASE WHEN ${agentWinsIncoming} THEN EXCLUDED.agent_used ELSE requests.agent_used END,
+				agent_attribution_source = CASE WHEN ${agentWinsIncoming} THEN EXCLUDED.agent_attribution_source ELSE requests.agent_attribution_source END
 		`,
 			[
 				data.id,
@@ -138,6 +199,8 @@ export class RequestRepository extends BaseRepository<RequestData> {
 				data.comboName || null,
 				data.originalModel || null,
 				data.appliedModel || null,
+				data.projectAttributionSource || null,
+				data.agentAttributionSource || null,
 			],
 		);
 	}
