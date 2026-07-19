@@ -67,7 +67,7 @@ The configuration file is stored at:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `lb_strategy` | string | `"session"` | Load balancing strategy. Only `"session"` is supported (using other strategies risks account bans) |
+| `lb_strategy` | string | `"session"` | Load balancing strategy. Use session-class strategies only: `"session"` (default) or `"session-drain-soonest"` (same session semantics, prefers the soonest-resetting weekly window). Per-request spreading strategies risk account bans — see warning below |
 | `client_id` | string | `"9d1c250a-e61b-44d9-88ed-5944d1962f5e"` | OAuth client ID for authentication |
 | `retry_attempts` | number | `3` | Maximum number of retry attempts for failed requests |
 | `retry_delay_ms` | number | `1000` | Initial delay in milliseconds between retry attempts |
@@ -77,7 +77,7 @@ The configuration file is stored at:
 
 ### Load Balancing Strategy
 
-⚠️ **WARNING**: Only use the `session` strategy. Other strategies can trigger Claude's anti-abuse systems and result in account bans.
+⚠️ **WARNING**: Only use session-class strategies — `session` (default) or `session-drain-soonest`, which shares the same 5-hour session affinity semantics. Strategies that spread individual requests across accounts can trigger Claude's anti-abuse systems and result in account bans.
 
 | Strategy | Description | Use Case |
 |----------|-------------|----------|
