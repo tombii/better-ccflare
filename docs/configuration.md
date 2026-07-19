@@ -81,7 +81,8 @@ The configuration file is stored at:
 
 | Strategy | Description | Use Case |
 |----------|-------------|----------|
-| `session` | Maintains client-account affinity for session duration, with automatic alignment to Anthropic OAuth usage window resets | Only supported strategy - mimics natural usage patterns and optimizes resource utilization |
+| `session` | Maintains client-account affinity for session duration, with automatic alignment to Anthropic OAuth usage window resets | Default and recommended - mimics natural usage patterns and optimizes resource utilization |
+| `session-drain-soonest` | Same session semantics as `session` (5h windows, auto-fallback, session stickiness), but prefers the account whose weekly_all usage window resets soonest, so weekly capacity is drained before it expires ("use it or lose it"). Accounts without weekly telemetry rank last; ties fall back to priority, then utilization. Switches accounts only at session boundaries or when another account's weekly reset is strictly earlier (60s cohort tolerance) | Multi-account pools with staggered weekly resets where unused weekly capacity should be consumed before it is lost |
 
 ### Logging Configuration (Environment Only)
 

@@ -4,6 +4,7 @@ export enum StrategyName {
 	Session = "session",
 	LeastUsed = "least-used",
 	SessionAffinity = "session-affinity",
+	SessionDrainSoonest = "session-drain-soonest",
 }
 
 /**
@@ -47,4 +48,12 @@ export interface StrategyStore {
 	 * most-constrained usage window. Returns null when no usage data is available.
 	 */
 	getAccountUtilization?(accountId: string, provider: string): number | null;
+
+	/**
+	 * Get the epoch-ms reset time of the account's weekly_all (all-models
+	 * weekly) usage window — the point at which unused capacity is lost and
+	 * fresh capacity becomes available. Returns null when unknown or when the
+	 * reset has already passed (stale telemetry that hasn't caught up yet).
+	 */
+	getAccountWeeklyReset?(accountId: string, provider: string): number | null;
 }

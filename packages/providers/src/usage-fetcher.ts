@@ -132,6 +132,33 @@ export function extractWindowResetTime(
 }
 
 /**
+ * Extract the weekly_all (all-models weekly) window reset timestamp (ms).
+ * Distinct from {@link extractWindowResetTime}, which prefers the shorter
+ * five_hour/session window — this reads specifically the account-level
+ * weekly cap ("use it or lose it": unused capacity does not roll over past
+ * this reset), used by SessionDrainSoonestStrategy to rank accounts by
+ * which one's weekly window expires soonest. Only Anthropic and Codex
+ * expose this window; other providers return null.
+ */
+export function extractWeeklyResetTime(
+	data: AnyUsageData,
+	provider: string,
+): number | null {
+	if (provider !== "anthropic" && provider !== "codex") return null;
+	const d = data as UsageData;
+	// Prefer the flat seven_day window; fall back to the limits[] weekly_all
+	// entry so limits-only payloads still expose a weekly reset time.
+	const resetsAt =
+		d.seven_day?.resets_at ??
+		(Array.isArray(d.limits)
+			? (d.limits.find((l) => l?.kind === "weekly_all")?.resets_at ?? null)
+			: null);
+	if (!resetsAt) return null;
+	const ms = new Date(resetsAt).getTime();
+	return Number.isFinite(ms) ? ms : null;
+}
+
+/**
  * Fetch usage data from Anthropic's OAuth usage endpoint
  */
 export interface UsageFetchResult {

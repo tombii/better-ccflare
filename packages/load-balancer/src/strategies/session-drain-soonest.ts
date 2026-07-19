@@ -12,14 +12,40 @@ import {
 } from "@better-ccflare/types";
 import { isPeekAvailable } from "./peek-availability";
 
-export { LeastUsedStrategy } from "./least-used";
-export { SessionAffinityStrategy } from "./session-affinity";
-export { SessionDrainSoonestStrategy } from "./session-drain-soonest";
+/**
+ * Cohort tolerance for the "same weekly-reset group" check used to decide
+ * whether an active session should keep stickiness. Two accounts whose
+ * weekly_all resets fall within this window of each other are treated as
+ * equivalent — stickiness wins. An account with a STRICTLY earlier reset
+ * beyond this tolerance takes over, so its capacity is drained before it's
+ * lost at reset ("use it or lose it").
+ */
+const COHORT_TOLERANCE_MS = 60_000;
 
-export class SessionStrategy implements LoadBalancingStrategy {
+/**
+ * SessionDrainSoonestStrategy — identical session-affinity semantics to
+ * {@link SessionStrategy} (same 5h Anthropic session window, same
+ * rate-limit-window-reset session invalidation, same auto-fallback
+ * reactivation), but the ranking of *which* account to prefer is driven by
+ * each account's weekly_all usage-window reset time instead of a static
+ * `priority` field:
+ *
+ *   - Accounts whose weekly_all window resets SOONER are preferred over ones
+ *     that reset later, so unused weekly capacity gets drained before it is
+ *     replaced by a fresh (unrelated) allowance — "use it or lose it".
+ *   - Accounts with an unknown/expired reset (no usage telemetry yet, or the
+ *     provider doesn't expose a weekly_all window) sort last, behind every
+ *     account with a known future reset.
+ *   - Ties (equal reset, or both unknown) fall back to `priority` ASC, then
+ *     upstream utilization ASC — identical tie-break order to SessionStrategy.
+ *
+ * peek() mirrors select()'s decision exactly (same requirement as every
+ * other strategy here) since the dashboard's "Primary" badge is driven by it.
+ */
+export class SessionDrainSoonestStrategy implements LoadBalancingStrategy {
 	private sessionDurationMs: number;
 	private store: StrategyStore | null = null;
-	private log = new Logger("SessionStrategy");
+	private log = new Logger("SessionDrainSoonestStrategy");
 
 	constructor(
 		sessionDurationMs: number = TIME_CONSTANTS.ANTHROPIC_SESSION_DURATION_DEFAULT,
@@ -31,26 +57,69 @@ export class SessionStrategy implements LoadBalancingStrategy {
 		this.store = store;
 	}
 
+	/**
+	 * Weekly_all reset time (epoch ms) for the account, or null when unknown
+	 * OR already in the past (stale telemetry that hasn't caught up to a
+	 * reset that already happened — treated the same as "no data" rather than
+	 * ranked as if it were the soonest reset).
+	 */
+	private getWeeklyReset(account: Account, now: number): number | null {
+		const reset =
+			this.store?.getAccountWeeklyReset?.(account.id, account.provider) ?? null;
+		if (reset === null || reset <= now) return null;
+		return reset;
+	}
+
+	/**
+	 * Rank comparator: earliest future weekly_all reset first (unknown last),
+	 * then priority ASC, then utilization ASC. Shared by both peek() and
+	 * select() so the two never disagree on ordering.
+	 */
+	private compareAccounts(a: Account, b: Account, now: number): number {
+		const resetA = this.getWeeklyReset(a, now);
+		const resetB = this.getWeeklyReset(b, now);
+		if (resetA !== resetB) {
+			if (resetA === null) return 1;
+			if (resetB === null) return -1;
+			return resetA - resetB;
+		}
+		if (a.priority !== b.priority) return a.priority - b.priority;
+		const utilA = this.store?.getAccountUtilization?.(a.id, a.provider) ?? 0;
+		const utilB = this.store?.getAccountUtilization?.(b.id, b.provider) ?? 0;
+		return utilA - utilB;
+	}
+
+	/**
+	 * True when `candidate`'s weekly reset is strictly earlier than
+	 * `activeReset` by more than {@link COHORT_TOLERANCE_MS} — i.e. it is
+	 * outside the active session's cohort and should preempt its stickiness.
+	 * An unknown candidate reset never preempts; an unknown active reset is
+	 * preempted by any known candidate reset (a known upcoming drain deadline
+	 * always outranks "no deadline").
+	 */
+	private hasStrictlyEarlierReset(
+		candidateReset: number | null,
+		activeReset: number | null,
+	): boolean {
+		if (candidateReset === null) return false;
+		if (activeReset === null) return true;
+		return candidateReset < activeReset - COHORT_TOLERANCE_MS;
+	}
+
 	private resetSessionIfExpired(account: Account): void {
 		const now = Date.now();
 
-		// Check if session has exceeded the fixed duration (only for providers that require session duration tracking)
 		const fixedDurationExpired =
 			requiresSessionDurationTracking(account.provider) &&
 			(!account.session_start ||
 				now - account.session_start >= this.sessionDurationMs);
 
-		// Check if the account's rate limit window has reset
-		// This helps Anthropic accounts better utilize their usage windows
-		// Usage windows: Anthropic accounts with proactive rate limit headers (usage-based accounts)
-		// No usage windows: Other account types or Anthropic console keys without usage windows
 		const rateLimitWindowReset =
-			account.provider === PROVIDER_NAMES.ANTHROPIC && // Explicit provider check for Anthropic usage windows
+			account.provider === PROVIDER_NAMES.ANTHROPIC &&
 			account.rate_limit_reset &&
 			account.rate_limit_reset < now - 1000; // 1 second buffer for clock skew protection
 
 		if (fixedDurationExpired || rateLimitWindowReset) {
-			// Reset session
 			if (this.store) {
 				const wasExpired = account.session_start !== null;
 				const resetReason = rateLimitWindowReset
@@ -63,7 +132,6 @@ export class SessionStrategy implements LoadBalancingStrategy {
 				);
 				this.store.resetAccountSession(account.id, now);
 
-				// Update the account object to reflect changes
 				account.session_start = now;
 				account.session_request_count = 0;
 			}
@@ -71,34 +139,19 @@ export class SessionStrategy implements LoadBalancingStrategy {
 	}
 
 	/**
-	 * Determines if an account has an active session based on provider requirements
-	 * For Anthropic providers: checks if session is within the 5-hour window AND
-	 * the account is not currently rate-limited
-	 * For other providers: always returns false (no session stickiness for pay-as-you-go)
-	 * @param account The account to check
-	 * @param now Current timestamp
-	 * @returns true if session is active (Anthropic only), false otherwise
+	 * Determines if an account has an active session based on provider requirements.
+	 * Identical semantics to SessionStrategy.hasActiveSession — see that file
+	 * for the full rationale on the rate-limited-but-in-window carve-out.
 	 */
 	private hasActiveSession(account: Account, now: number): boolean {
-		// Non-Anthropic providers (API-key-based, etc.) should not have persistent sessions
-		// since they're pay-as-you-go and don't benefit from session stickiness
 		if (!requiresSessionDurationTracking(account.provider)) {
 			return false;
 		}
 
-		// An account that is currently rate-limited has no usable session, even
-		// if its session_start is still inside the 5h Anthropic session window.
-		// Treating it as active would re-pin requests to a known-throttled
-		// upstream for the entire rate-limit window. Note we do NOT clear
-		// session_start here — when the rate-limit window elapses the session
-		// is conceptually still valid (5h Anthropic prompt-cache windows are
-		// independent of rate-limit windows), so we'll resume the cached
-		// session naturally on the next request after recovery. See issue #115.
 		if (account.rate_limited_until && account.rate_limited_until > now) {
 			return false;
 		}
 
-		// For Anthropic providers: check if session is active (within duration window)
 		return (
 			!!account.session_start &&
 			now - account.session_start < this.sessionDurationMs
@@ -108,27 +161,15 @@ export class SessionStrategy implements LoadBalancingStrategy {
 	peek(accounts: Account[]): string | null {
 		const now = Date.now();
 
-		// isPeekAvailable simulates the auto-unpause that select() performs on
-		// safe-reason paused accounts (auto_fallback_enabled + window elapsed).
-		// Without it, peek() and select() disagree whenever such an account is
-		// the would-be Primary, flagging the wrong row on the dashboard while
-		// real traffic goes to the auto-unpaused one.
 		const isAvailable = (account: Account): boolean =>
 			isPeekAvailable(account, now);
 
-		// Mirror the auto-fallback path from select(), but without unpausing.
-		// When fallback would trigger, select() re-evaluates the priority queue
-		// and returns the highest-priority available account — chosenFallback
-		// only ends up first if it happens to outrank everyone else. Peek must
-		// match that, otherwise a lower-priority fallback candidate gets
-		// flagged Primary while a higher-priority non-fallback account is the
-		// one that would actually be picked.
 		const fallbackCandidates = this.checkForAutoFallbackAccounts(accounts, now);
 		const fallbackTriggered = fallbackCandidates.some((c) => isAvailable(c));
 		if (fallbackTriggered) {
 			const sorted = accounts
 				.filter((a) => isAvailable(a))
-				.sort((a, b) => a.priority - b.priority);
+				.sort((a, b) => this.compareAccounts(a, b, now));
 			return sorted[0]?.id ?? null;
 		}
 
@@ -146,30 +187,25 @@ export class SessionStrategy implements LoadBalancingStrategy {
 		}
 
 		if (activeAccount && isAvailable(activeAccount)) {
-			const higherPriorityAccount = accounts
-				.filter(
-					(a) =>
-						a.id !== activeAccount.id &&
-						isAvailable(a) &&
-						a.priority < activeAccount.priority,
-				)
-				.sort((a, b) => a.priority - b.priority)[0];
+			const activeReset = this.getWeeklyReset(activeAccount, now);
+			const preemptingAccount = accounts
+				.filter((a) => {
+					if (a.id === activeAccount.id || !isAvailable(a)) return false;
+					return this.hasStrictlyEarlierReset(
+						this.getWeeklyReset(a, now),
+						activeReset,
+					);
+				})
+				.sort((a, b) => this.compareAccounts(a, b, now))[0];
 
-			if (!higherPriorityAccount) {
+			if (!preemptingAccount) {
 				return activeAccount.id;
 			}
 		}
 
 		const available = accounts
 			.filter((a) => isAvailable(a))
-			.sort((a, b) => {
-				if (a.priority !== b.priority) return a.priority - b.priority;
-				const utilA =
-					this.store?.getAccountUtilization?.(a.id, a.provider) ?? 0;
-				const utilB =
-					this.store?.getAccountUtilization?.(b.id, b.provider) ?? 0;
-				return utilA - utilB;
-			});
+			.sort((a, b) => this.compareAccounts(a, b, now));
 
 		return available[0]?.id ?? null;
 	}
@@ -177,7 +213,6 @@ export class SessionStrategy implements LoadBalancingStrategy {
 	select(accounts: Account[], meta: RequestMeta): Account[] {
 		const now = Date.now();
 
-		// Check if session tracking should be bypassed (for auto-refresh messages)
 		const bypassHeader = meta.headers?.get("x-better-ccflare-bypass-session");
 		const bypassSession = bypassHeader === "true";
 
@@ -189,7 +224,6 @@ export class SessionStrategy implements LoadBalancingStrategy {
 			this.log.info("Session tracking bypassed due to bypass header");
 		}
 
-		// Cache availability checks within this request lifecycle
 		const availabilityCache = new Map<string, boolean>();
 		const getCachedAvailability = (account: Account): boolean => {
 			if (!availabilityCache.has(account.id)) {
@@ -198,15 +232,10 @@ export class SessionStrategy implements LoadBalancingStrategy {
 			return availabilityCache.get(account.id) || false;
 		};
 
-		// Check for higher priority accounts that have become available due to rate limit reset.
-		// Iterate through all candidates in priority order to find the first usable one.
 		const fallbackCandidates = this.checkForAutoFallbackAccounts(accounts, now);
 		let chosenFallback: Account | null = null;
 		const skippedByReason = new Map<string, string[]>();
 		for (const candidate of fallbackCandidates) {
-			// If the candidate is paused, only auto-unpause if it was paused due to
-			// overage, or `rate_limit_window` (reserved/future pause reason) — never auto-unpause
-			// manual or failure_threshold pauses.
 			if (candidate.paused && this.store?.resumeAccount) {
 				const canAutoUnpause =
 					!candidate.pause_reason ||
@@ -218,7 +247,6 @@ export class SessionStrategy implements LoadBalancingStrategy {
 					);
 					this.store.resumeAccount(candidate.id);
 					candidate.paused = false;
-					// Invalidate the cache so getCachedAvailability reflects the unpause
 					availabilityCache.delete(candidate.id);
 				} else {
 					const reason = candidate.pause_reason || "unknown";
@@ -249,16 +277,13 @@ export class SessionStrategy implements LoadBalancingStrategy {
 			this.log.info(
 				`Auto-fallback triggered to account ${chosenFallback.name} (priority: ${chosenFallback.priority}, auto-fallback enabled)`,
 			);
-			// Return all available accounts sorted by priority — chosenFallback will appear
-			// first naturally if it is the highest-priority available account, avoiding
-			// priority inversion when other accounts rank higher.
+			// Return all available accounts sorted by drain-soonest ranking —
+			// chosenFallback appears first naturally if it also ranks highest.
 			return accounts
 				.filter((a) => getCachedAvailability(a))
-				.sort((a, b) => a.priority - b.priority);
+				.sort((a, b) => this.compareAccounts(a, b, now));
 		}
 
-		// Find account with active session (most recent session_start within window)
-		// Only for providers that require session duration tracking
 		let activeAccount: Account | null = null;
 		let mostRecentSessionStart = 0;
 
@@ -273,7 +298,6 @@ export class SessionStrategy implements LoadBalancingStrategy {
 			}
 		}
 
-		// Log session tracking decisions for debugging
 		if (activeAccount) {
 			this.log.debug(
 				`Active session found for account ${activeAccount.name} (provider: ${activeAccount.provider})`,
@@ -284,89 +308,75 @@ export class SessionStrategy implements LoadBalancingStrategy {
 			);
 		}
 
-		// If we have an active account and it's available, use it — unless a higher-priority
-		// non-session account is available (priority is more important than stickiness).
+		// If we have an active account and it's available, use it — unless an
+		// available account has a STRICTLY earlier weekly-reset (outside the
+		// cohort tolerance) than the active account, in which case draining
+		// that soon-to-reset capacity takes priority over cache stickiness.
 		if (activeAccount && getCachedAvailability(activeAccount)) {
-			// Check if any available account has strictly higher priority than the active session account
-			const higherPriorityAccount = accounts
-				.filter(
-					(a) =>
-						a.id !== activeAccount.id &&
-						getCachedAvailability(a) &&
-						a.priority < activeAccount.priority,
-				)
-				.sort((a, b) => a.priority - b.priority)[0];
+			const activeReset = this.getWeeklyReset(activeAccount, now);
+			const preemptingAccount = accounts
+				.filter((a) => {
+					if (a.id === activeAccount.id || !getCachedAvailability(a))
+						return false;
+					return this.hasStrictlyEarlierReset(
+						this.getWeeklyReset(a, now),
+						activeReset,
+					);
+				})
+				.sort((a, b) => this.compareAccounts(a, b, now))[0];
 
-			if (higherPriorityAccount) {
+			if (preemptingAccount) {
 				this.log.info(
-					`Skipping session on account ${activeAccount.name} (priority: ${activeAccount.priority}) — higher-priority account ${higherPriorityAccount.name} (priority: ${higherPriorityAccount.priority}) is available`,
+					`Skipping session on account ${activeAccount.name} — account ${preemptingAccount.name} has a strictly earlier weekly reset`,
 				);
-				// Fall through to normal priority-based selection below by nulling activeAccount
+				// Fall through to drain-soonest selection below by nulling activeAccount
 			} else {
-				// Reset session if expired (shouldn't happen but just in case)
 				if (!bypassSession) {
 					this.resetSessionIfExpired(activeAccount);
 				}
 				this.log.info(
 					`Continuing session for account ${activeAccount.name} (${activeAccount.session_request_count} requests in session)`,
 				);
-				// Return active account first, then others as fallback (sorted by priority)
 				const others = accounts
 					.filter((a) => a.id !== activeAccount.id && getCachedAvailability(a))
-					.sort((a, b) => a.priority - b.priority);
+					.sort((a, b) => this.compareAccounts(a, b, now));
 				return [activeAccount, ...others];
 			}
 		}
 
-		// No active session or active account is rate limited
-		// Filter available accounts and sort by priority (lower number = higher priority).
-		// Within the same priority, break ties by utilization (ascending) so that the
-		// account with the most remaining capacity is chosen first.
+		// No active session, or the active account was preempted by a
+		// soon-to-reset account. Filter available accounts and rank by
+		// drain-soonest (earliest weekly reset, then priority, then utilization).
 		const available = accounts
 			.filter((a) => getCachedAvailability(a))
-			.sort((a, b) => {
-				if (a.priority !== b.priority) return a.priority - b.priority;
-				// Treat null as 0: an account with no usage data is assumed fresh
-				// (maximum remaining capacity). This prevents newly-added accounts
-				// from being permanently sidelined until all others expire.
-				const utilA =
-					this.store?.getAccountUtilization?.(a.id, a.provider) ?? 0;
-				const utilB =
-					this.store?.getAccountUtilization?.(b.id, b.provider) ?? 0;
-				return utilA - utilB;
-			});
+			.sort((a, b) => this.compareAccounts(a, b, now));
 
 		if (available.length === 0) return [];
 
-		// Pick the highest priority account (first in sorted list) and start a new session with it
 		const chosenAccount = available[0];
 		if (!bypassSession) {
 			this.resetSessionIfExpired(chosenAccount);
 		}
 
-		// Return chosen account first, then others as fallback (already sorted by priority)
 		const others = available.filter((a) => a.id !== chosenAccount.id);
 		return [chosenAccount, ...others];
 	}
 
 	/**
-	 * Check for higher priority accounts that have auto-fallback enabled and have become available
-	 * due to rate limit reset
+	 * Check for higher priority accounts that have auto-fallback enabled and
+	 * have become available due to rate limit reset. Identical to
+	 * SessionStrategy.checkForAutoFallbackAccounts — this determines which
+	 * *unavailable* accounts should be probed for reactivation, which is
+	 * orthogonal to the drain-soonest ranking used for already-available
+	 * accounts, so it intentionally keeps priority-based ordering.
 	 */
 	private checkForAutoFallbackAccounts(
 		accounts: Account[],
 		now: number,
 	): Account[] {
-		// Find accounts with auto-fallback enabled that:
-		// 1. Have an API reset time that has passed (usage window has reset)
-		// 2. Are not currently paused
-		// 3. Are not currently in a rate limited state (rate_limited_until is in the past or null)
 		const resetAccounts = accounts.filter((account) => {
 			if (!account.auto_fallback_enabled) return false;
-			// Note: We check paused status AFTER filtering for auto-fallback enabled accounts
-			// This allows paused accounts with auto-fallback to be considered for reactivation
 
-			// Check if the API usage window has reset for auto-fallback
 			const supportsWindowReset =
 				account.provider === PROVIDER_NAMES.ANTHROPIC ||
 				account.provider === PROVIDER_NAMES.CODEX ||
@@ -376,7 +386,6 @@ export class SessionStrategy implements LoadBalancingStrategy {
 				account.rate_limit_reset &&
 				account.rate_limit_reset < now - 1000; // 1 second buffer for clock skew protection
 
-			// Check if the account is not currently rate limited by our system
 			const notRateLimited =
 				!account.rate_limited_until || account.rate_limited_until <= now;
 
@@ -385,7 +394,6 @@ export class SessionStrategy implements LoadBalancingStrategy {
 
 		if (resetAccounts.length === 0) return [];
 
-		// Sort by priority (lower number = higher priority)
 		return resetAccounts.sort((a, b) => a.priority - b.priority);
 	}
 }

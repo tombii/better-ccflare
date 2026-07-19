@@ -1,6 +1,10 @@
 import { describe, expect, it, mock } from "bun:test";
 import type { UsageData } from "../usage-fetcher";
-import { extractWindowResetTime, usageCache } from "../usage-fetcher";
+import {
+	extractWeeklyResetTime,
+	extractWindowResetTime,
+	usageCache,
+} from "../usage-fetcher";
 import type { XaiUsageData } from "../xai-usage-fetcher";
 import type { ZaiUsageData } from "../zai-usage-fetcher";
 
@@ -69,6 +73,53 @@ describe("extractWindowResetTime", () => {
 
 	it("returns null for unknown/unsupported provider", () => {
 		expect(extractWindowResetTime({} as any, "nanogpt")).toBeNull();
+	});
+});
+
+// ── extractWeeklyResetTime ─────────────────────────────────────────────────
+
+describe("extractWeeklyResetTime", () => {
+	it("returns parsed seven_day resets_at ms for anthropic provider", () => {
+		const resetIso = "2030-01-08T12:00:00Z";
+		const data: UsageData = {
+			five_hour: { utilization: 50, resets_at: "2030-01-01T12:00:00Z" },
+			seven_day: { utilization: 10, resets_at: resetIso },
+		};
+		expect(extractWeeklyResetTime(data, "anthropic")).toBe(
+			new Date(resetIso).getTime(),
+		);
+	});
+
+	it("returns null for anthropic when seven_day resets_at is null", () => {
+		const data: UsageData = {
+			five_hour: { utilization: 50, resets_at: "2030-01-01T12:00:00Z" },
+			seven_day: { utilization: 10, resets_at: null },
+		};
+		expect(extractWeeklyResetTime(data, "anthropic")).toBeNull();
+	});
+
+	it("falls back to limits[] weekly_all resets_at for limits-only payloads", () => {
+		const resetIso = "2030-03-08T00:00:00.000Z";
+		const data = {
+			limits: [
+				{ kind: "session", percent: 40, resets_at: null, scope: null },
+				{
+					kind: "weekly_all",
+					percent: 60,
+					resets_at: resetIso,
+					scope: null,
+				},
+			],
+		} as unknown as UsageData;
+		expect(extractWeeklyResetTime(data, "codex")).toBe(
+			new Date(resetIso).getTime(),
+		);
+	});
+
+	it("returns null for providers without a weekly_all window (zai, xai, unsupported)", () => {
+		expect(extractWeeklyResetTime({} as any, "zai")).toBeNull();
+		expect(extractWeeklyResetTime({} as any, "xai")).toBeNull();
+		expect(extractWeeklyResetTime({} as any, "nanogpt")).toBeNull();
 	});
 });
 
