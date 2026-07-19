@@ -12,6 +12,7 @@ import {
 	getFamilyExhaustionOrigin,
 	getFamilyExhaustionUntil,
 	isAccountExhaustedForModel,
+	type ModelFamilyExhaustionInfo,
 } from "./model-capacity";
 import type { ProxyContext } from "./proxy-types";
 
@@ -30,16 +31,14 @@ export function getComboSlotInfo(meta: RequestMeta): ComboSlotInfo | null {
 	return comboSlotInfoMap.get(meta) ?? null;
 }
 
-export interface ModelFamilyExhaustionInfo {
-	family: string;
-	resetAt: number | null;
-	origin: FamilyExhaustionOrigin;
-}
+// Canonical definition lives in model-capacity.ts (single source of truth —
+// a structurally-identical local copy could silently drift).
+export type { ModelFamilyExhaustionInfo } from "./model-capacity";
 
 // Module-level WeakMap to store model-family exhaustion info per RequestMeta,
 // set when the capacity filter below removes every candidate account for a
 // request's model family. proxy.ts reads this to return a structured
-// model_family_exhausted 529 instead of the generic pool_exhausted response.
+// model_family_exhausted 429 instead of the generic pool_exhausted response.
 const exhaustionInfoMap = new WeakMap<RequestMeta, ModelFamilyExhaustionInfo>();
 
 /** Store model-family exhaustion info on a RequestMeta for downstream consumption */

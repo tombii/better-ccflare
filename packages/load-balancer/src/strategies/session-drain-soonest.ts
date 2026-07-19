@@ -195,11 +195,12 @@ export class SessionDrainSoonestStrategy implements LoadBalancingStrategy {
 		const bypassHeader = meta.headers?.get("x-better-ccflare-bypass-session");
 		const bypassSession = bypassHeader === "true";
 
-		this.log.info(
-			`Bypass header: ${bypassHeader}, bypassSession: ${bypassSession}`,
-		);
-
+		// Only log when the bypass actually fires — an unconditional line here
+		// would emit once per request on a busy proxy.
 		if (bypassSession) {
+			this.log.info(
+				`Bypass header: ${bypassHeader}, bypassSession: ${bypassSession}`,
+			);
 			this.log.info("Session tracking bypassed due to bypass header");
 		}
 
