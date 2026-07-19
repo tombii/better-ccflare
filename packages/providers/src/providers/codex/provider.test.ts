@@ -1947,6 +1947,40 @@ describe("CodexProvider.transformRequestBody", () => {
 		});
 	});
 
+	it("rejects negative max_tokens locally for the canonical subscription endpoint", async () => {
+		const provider = new CodexProvider();
+		const endpoint = "https://chatgpt.com/backend-api/codex/responses";
+		const request = new Request(endpoint, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				model: "claude-3-7-sonnet",
+				max_tokens: -1,
+				messages: [{ role: "user", content: "hello" }],
+			}),
+		});
+
+		const transformed = await provider.transformRequestBody(
+			request,
+			codexAccount({ custom_endpoint: endpoint }),
+		);
+		const body = await transformed.json();
+
+		expect(transformed.headers.get("x-better-ccflare-synthetic-response")).toBe(
+			"true",
+		);
+		expect(transformed.headers.get("x-better-ccflare-synthetic-status")).toBe(
+			"400",
+		);
+		expect(body).toEqual({
+			type: "error",
+			error: {
+				type: "invalid_request_error",
+				message: "Codex subscription endpoint does not support max_tokens: -1.",
+			},
+		});
+	});
+
 	it("maps sonnet-family models to the default Codex model", async () => {
 		const provider = new CodexProvider();
 		const request = new Request("https://example.com/v1/messages", {

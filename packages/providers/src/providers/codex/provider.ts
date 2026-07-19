@@ -476,12 +476,17 @@ export class CodexProvider extends BaseProvider {
 			if (isSyntheticCountTokens) {
 				return this.createSyntheticCountTokensResponse(request, body);
 			}
-			if (isCodexSubscriptionEndpoint(account) && body.max_tokens === 0) {
+			const isSubscriptionEndpoint = isCodexSubscriptionEndpoint(account);
+			if (
+				isSubscriptionEndpoint &&
+				typeof body.max_tokens === "number" &&
+				body.max_tokens <= 0
+			) {
 				return this.createSyntheticErrorResponse(
 					request,
 					400,
 					"invalid_request_error",
-					"Codex subscription endpoint does not support max_tokens: 0.",
+					`Codex subscription endpoint does not support max_tokens: ${body.max_tokens}.`,
 				);
 			}
 
@@ -496,6 +501,7 @@ export class CodexProvider extends BaseProvider {
 				body,
 				account,
 				requestId ?? undefined,
+				isSubscriptionEndpoint,
 			);
 
 			const newHeaders = new Headers(request.headers);
@@ -1042,6 +1048,7 @@ export class CodexProvider extends BaseProvider {
 		body: AnthropicRequest,
 		account?: Account,
 		requestId?: string,
+		isSubscriptionEndpoint = isCodexSubscriptionEndpoint(account),
 	): CodexRequest {
 		const model = this.mapModel(body.model, account);
 		if (process.env.DEBUG?.includes("model") || process.env.DEBUG === "true") {
@@ -1120,7 +1127,7 @@ export class CodexProvider extends BaseProvider {
 			reasoning: { effort: reasoningResolution.effort ?? "medium" },
 		};
 		if (
-			!isCodexSubscriptionEndpoint(account) &&
+			!isSubscriptionEndpoint &&
 			typeof body.max_tokens === "number" &&
 			Number.isFinite(body.max_tokens)
 		) {
