@@ -10,6 +10,7 @@ import { resolveReasoningEffort } from "@better-ccflare/openai-formats";
 import type { Account } from "@better-ccflare/types";
 import { BaseProvider } from "../../base";
 import type { RateLimitInfo, TokenRefreshResult } from "../../types";
+import { normalizeCodexInputUsage } from "./usage";
 
 const log = new Logger("CodexProvider");
 
@@ -75,6 +76,22 @@ const _normalizeUsage = (value: unknown): Record<string, number> => {
 		cache_read_input_tokens: getNumber("cache_read_input_tokens"),
 		cache_creation_input_tokens: getNumber("cache_creation_input_tokens"),
 	};
+};
+
+// Known Codex failure codes -> Anthropic error types. Quota exhaustion cools
+// the account like a rate limit; slow_down/server_is_overloaded are throttles;
+// context/policy and subscription errors are permanent and must not be
+// retried as 5xx. Codes and their retry semantics mirror the reference
+// client (openai/codex codex-api/src/sse/responses.rs + api_bridge.rs).
+const CODEX_ERROR_TYPE_BY_CODE: Record<string, string> = {
+	rate_limit_exceeded: "rate_limit_error",
+	insufficient_quota: "rate_limit_error",
+	server_is_overloaded: "overloaded_error",
+	slow_down: "overloaded_error",
+	server_error: "api_error",
+	context_length_exceeded: "invalid_request_error",
+	cyber_policy: "invalid_request_error",
+	usage_not_included: "permission_error",
 };
 
 // Default model mapping: Anthropic model name prefixes → Codex model names
@@ -909,17 +926,15 @@ export class CodexProvider extends BaseProvider {
 		const inputTokenDetails = usageRecord?.input_tokens_details as
 			| Record<string, unknown>
 			| undefined;
-		const cachedTokens = inputTokenDetails?.cached_tokens;
+		const normalizedInput = normalizeCodexInputUsage(
+			inputTokens,
+			inputTokenDetails?.cached_tokens,
+		);
 
 		return {
 			current_usage: {
-				input_tokens: inputTokens,
-				cache_read_input_tokens:
-					typeof cachedTokens === "number" &&
-					Number.isFinite(cachedTokens) &&
-					cachedTokens >= 0
-						? cachedTokens
-						: 0,
+				input_tokens: normalizedInput.inputTokens,
+				cache_read_input_tokens: normalizedInput.cacheReadInputTokens,
 				cache_creation_input_tokens:
 					typeof inputTokenDetails?.cache_creation_input_tokens === "number" &&
 					Number.isFinite(inputTokenDetails.cache_creation_input_tokens) &&
@@ -1706,9 +1721,12 @@ export class CodexProvider extends BaseProvider {
 		const status = error?.status === "rate_limited" ? error.status : undefined;
 		const rawType = error?.type;
 		let type = "api_error";
-		if (code === "context_length_exceeded") {
-			type = "invalid_request_error";
-		} else if (code === "rate_limit_exceeded" || status === "rate_limited") {
+		const mappedFromCode = code
+			? CODEX_ERROR_TYPE_BY_CODE[code.toLowerCase()]
+			: undefined;
+		if (mappedFromCode) {
+			type = mappedFromCode;
+		} else if (status === "rate_limited") {
 			type = "rate_limit_error";
 		} else if (
 			rawType === "invalid_request_error" ||
@@ -1721,11 +1739,23 @@ export class CodexProvider extends BaseProvider {
 		) {
 			type = rawType;
 		}
+		const upstreamMessage = error?.message || "Codex upstream failed.";
+		const normalizedCode = code?.toLowerCase();
+		// Some Codex endpoints report context overflow without the
+		// context_length_exceeded code, only a "your input exceeds the context
+		// window..." message. Match that message shape too so the client still
+		// gets the friendlier, prefixed error text.
+		const isContextOverflow =
+			normalizedCode === "context_length_exceeded" ||
+			/^your input exceeds the context window\b/i.test(upstreamMessage);
+		const message = isContextOverflow
+			? `Prompt is too long. Codex reported: ${upstreamMessage}`
+			: upstreamMessage;
 		return {
 			type: "error",
 			error: {
 				type,
-				message: error?.message || "Codex upstream failed.",
+				message,
 				...(code ? { code } : {}),
 				...(status ? { status } : {}),
 			},
@@ -1963,6 +1993,7 @@ export class CodexProvider extends BaseProvider {
 				break;
 			}
 
+			case "response.incomplete":
 			case "response.completed": {
 				if (state.upstreamError || state.hasSentTerminalEvents) break;
 				const resp = data.response as Record<string, unknown> | undefined;
@@ -1977,22 +2008,29 @@ export class CodexProvider extends BaseProvider {
 					  }
 					| undefined;
 
-				// Extract cache fields from input_tokens_details (Codex format)
+				// Extract cache fields from input_tokens_details (Codex format).
+				// OpenAI's input_tokens is cache-inclusive; normalize to Anthropic's
+				// additive semantics so input_tokens excludes cache reads instead of
+				// double-counting them.
 				const inputTokenDetails = usage?.input_tokens_details;
-				const cacheRead =
-					typeof inputTokenDetails?.cached_tokens === "number" &&
-					inputTokenDetails.cached_tokens >= 0
-						? inputTokenDetails.cached_tokens
-						: 0;
+				const normalizedInput = normalizeCodexInputUsage(
+					usage?.input_tokens,
+					inputTokenDetails?.cached_tokens,
+				);
 				const cacheCreation =
 					typeof inputTokenDetails?.cache_creation_input_tokens === "number" &&
 					inputTokenDetails.cache_creation_input_tokens >= 0
 						? inputTokenDetails.cache_creation_input_tokens
 						: 0;
 
-				state.inputTokens = usage?.input_tokens || state.inputTokens;
-				state.outputTokens = usage?.output_tokens || state.outputTokens;
-				state.cacheReadInputTokens = cacheRead;
+				state.inputTokens = normalizedInput.inputTokens;
+				state.outputTokens =
+					typeof usage?.output_tokens === "number" &&
+					Number.isFinite(usage.output_tokens) &&
+					usage.output_tokens >= 0
+						? usage.output_tokens
+						: state.outputTokens;
+				state.cacheReadInputTokens = normalizedInput.cacheReadInputTokens;
 				state.cacheCreationInputTokens = cacheCreation;
 				state.contextWindow = this.extractContextWindow(resp, usage);
 				// Close any lingering content block
@@ -2004,9 +2042,31 @@ export class CodexProvider extends BaseProvider {
 					state.hasSentContentBlockStart = false;
 				}
 
+				const incompleteDetails = resp?.incomplete_details as
+					| { reason?: string }
+					| undefined;
+				const isIncomplete =
+					eventName === "response.incomplete" || resp?.status === "incomplete";
+				// An incomplete response never resolves to a success stop_reason:
+				// content_filter -> refusal (client discards partial output); every
+				// other reason, including unknown future ones, -> max_tokens (generic
+				// truncation, mirroring real Anthropic mid-tool-input truncation
+				// semantics: partial blocks are framed, stop_reason forbids execution).
+				const stopReason: "end_turn" | "tool_use" | "max_tokens" | "refusal" =
+					isIncomplete
+						? incompleteDetails?.reason === "content_filter"
+							? "refusal"
+							: "max_tokens"
+						: state.sawToolUse
+							? "tool_use"
+							: "end_turn";
+
 				const messageDelta: {
 					type: "message_delta";
-					delta: { stop_reason: "end_turn" | "tool_use"; stop_sequence: null };
+					delta: {
+						stop_reason: "end_turn" | "tool_use" | "max_tokens" | "refusal";
+						stop_sequence: null;
+					};
 					usage: {
 						input_tokens: number;
 						output_tokens: number;
@@ -2017,7 +2077,7 @@ export class CodexProvider extends BaseProvider {
 				} = {
 					type: "message_delta",
 					delta: {
-						stop_reason: state.sawToolUse ? "tool_use" : "end_turn",
+						stop_reason: stopReason,
 						stop_sequence: null,
 					},
 					usage: {

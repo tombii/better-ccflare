@@ -8,7 +8,7 @@ import {
 	CODEX_VERSION,
 	CodexProvider,
 } from "./provider";
-import { parseCodexUsageHeaders } from "./usage";
+import { normalizeCodexInputUsage, parseCodexUsageHeaders } from "./usage";
 
 const codexAccount = (overrides: Partial<Account> = {}): Account => ({
 	id: "codex-1",
@@ -828,8 +828,50 @@ describe("CodexProvider.processResponse", () => {
 		expect(messageDeltaLine).not.toContain('"context_window"');
 		expect(messageDeltaLine).toContain('"usage":{');
 		expect(messageDeltaLine).toContain('"output_tokens":3');
-		expect(messageDeltaLine).toContain('"input_tokens":12');
+		// Codex's input_tokens (12) is cache-inclusive; Anthropic's input_tokens
+		// is additive and excludes the 4 cached tokens, which are reported
+		// separately as cache_read_input_tokens.
+		expect(messageDeltaLine).toContain('"input_tokens":8');
 		expect(messageDeltaLine).toContain('"cache_read_input_tokens":4');
+	});
+
+	it("translates cached input usage additively so input_tokens excludes cache reads", async () => {
+		const provider = new CodexProvider();
+		const upstreamBody = sseBody([
+			...eventLine("response.created", {
+				response: { id: "resp_test", model: "gpt-5.3-codex" },
+			}),
+			...eventLine("response.completed", {
+				response: {
+					model: "gpt-5.3-codex",
+					usage: {
+						input_tokens: 100,
+						output_tokens: 20,
+						input_tokens_details: { cached_tokens: 60 },
+					},
+				},
+			}),
+		]);
+
+		const response = new Response(upstreamBody, {
+			status: 200,
+			headers: { "content-type": "text/event-stream" },
+		});
+
+		const transformed = await provider.processResponse(response, null);
+		const transformedBody = await transformed.text();
+		const messageDeltaLine = transformedBody
+			.split("\n")
+			.find((line) => line.includes('"type":"message_delta"')) as string;
+		const payload = JSON.parse(messageDeltaLine.slice("data: ".length));
+
+		expect(payload.usage.cache_read_input_tokens).toBe(60);
+		expect(payload.usage.input_tokens).toBe(40);
+		// The additive input_tokens plus the cache read must reconstruct the
+		// original cache-inclusive total Codex reported.
+		expect(
+			payload.usage.input_tokens + payload.usage.cache_read_input_tokens,
+		).toBe(100);
 	});
 
 	it("normalizes message_delta usage and delta defaults when missing", async () => {
@@ -1634,7 +1676,7 @@ describe("CodexProvider.processResponse", () => {
 			type: "error",
 			error: {
 				type: "invalid_request_error",
-				message: "Input is too large",
+				message: "Prompt is too long. Codex reported: Input is too large",
 				code: "context_length_exceeded",
 			},
 		});
@@ -1740,6 +1782,254 @@ describe("CodexProvider.processResponse", () => {
 
 		expect(processed.status).toBe(400);
 		expect(await processed.text()).toBe('{"error":"bad_request"}');
+	});
+
+	it("maps response.incomplete with a content_filter reason to a refusal stop_reason", async () => {
+		const provider = new CodexProvider();
+		const upstreamBody = sseBody([
+			...eventLine("response.created", {
+				response: { id: "resp_incomplete", model: "gpt-5.5" },
+			}),
+			...eventLine("response.incomplete", {
+				response: {
+					model: "gpt-5.5",
+					status: "incomplete",
+					incomplete_details: { reason: "content_filter" },
+					usage: { input_tokens: 3, output_tokens: 1 },
+				},
+			}),
+		]);
+
+		const response = new Response(upstreamBody, {
+			status: 200,
+			headers: { "content-type": "text/event-stream" },
+		});
+
+		const transformed = await provider.processResponse(response, null);
+		const body = await transformed.text();
+
+		expect(body).toContain('"stop_reason":"refusal"');
+		expect(body).toContain("event: message_delta");
+		expect(body).toContain("event: message_stop");
+	});
+
+	it("maps response.incomplete with a non-content_filter reason to max_tokens", async () => {
+		const provider = new CodexProvider();
+		const upstreamBody = sseBody([
+			...eventLine("response.created", {
+				response: { id: "resp_incomplete", model: "gpt-5.5" },
+			}),
+			...eventLine("response.incomplete", {
+				response: {
+					model: "gpt-5.5",
+					status: "incomplete",
+					incomplete_details: { reason: "max_output_tokens" },
+					usage: { input_tokens: 3, output_tokens: 512 },
+				},
+			}),
+		]);
+
+		const response = new Response(upstreamBody, {
+			status: 200,
+			headers: { "content-type": "text/event-stream" },
+		});
+
+		const transformed = await provider.processResponse(response, null);
+		const body = await transformed.text();
+
+		expect(body).toContain('"stop_reason":"max_tokens"');
+	});
+
+	it("treats a response.completed event carrying status incomplete the same as response.incomplete", async () => {
+		const provider = new CodexProvider();
+		const upstreamBody = sseBody([
+			...eventLine("response.created", {
+				response: { id: "resp_incomplete", model: "gpt-5.5" },
+			}),
+			...eventLine("response.completed", {
+				response: {
+					model: "gpt-5.5",
+					status: "incomplete",
+					incomplete_details: { reason: "unknown_future_reason" },
+					usage: { input_tokens: 3, output_tokens: 10 },
+				},
+			}),
+		]);
+
+		const response = new Response(upstreamBody, {
+			status: 200,
+			headers: { "content-type": "text/event-stream" },
+		});
+
+		const transformed = await provider.processResponse(response, null);
+		const body = await transformed.text();
+
+		expect(body).toContain('"stop_reason":"max_tokens"');
+	});
+
+	it("never resolves an incomplete response with a pending tool call to a success stop_reason", async () => {
+		const provider = new CodexProvider();
+		const upstreamBody = sseBody([
+			...eventLine("response.created", {
+				response: { id: "resp_incomplete", model: "gpt-5.5" },
+			}),
+			...eventLine("response.output_item.added", {
+				item: { type: "function_call", call_id: "call_1", name: "search" },
+				output_index: 0,
+			}),
+			...eventLine("response.output_item.done", {
+				item: { type: "function_call", call_id: "call_1", name: "search" },
+				output_index: 0,
+			}),
+			...eventLine("response.incomplete", {
+				response: {
+					model: "gpt-5.5",
+					status: "incomplete",
+					incomplete_details: { reason: "max_output_tokens" },
+					usage: { input_tokens: 3, output_tokens: 50 },
+				},
+			}),
+		]);
+
+		const response = new Response(upstreamBody, {
+			status: 200,
+			headers: { "content-type": "text/event-stream" },
+		});
+
+		const transformed = await provider.processResponse(response, null);
+		const body = await transformed.text();
+
+		expect(body).not.toContain('"stop_reason":"tool_use"');
+		expect(body).not.toContain('"stop_reason":"end_turn"');
+		expect(body).toContain('"stop_reason":"max_tokens"');
+	});
+
+	it("normalizes the subscription endpoint context-window message for streaming clients", async () => {
+		const provider = new CodexProvider();
+		const upstreamBody = sseBody([
+			...eventLine("response.failed", {
+				response: {
+					status: "failed",
+					error: {
+						type: "invalid_request_error",
+						message:
+							"Your input exceeds the context window of this model. Please adjust your input and try again.",
+					},
+				},
+			}),
+		]);
+
+		const response = new Response(upstreamBody, {
+			status: 200,
+			headers: { "content-type": "text/event-stream" },
+		});
+
+		const transformed = await provider.processResponse(response, null);
+		const body = await transformed.text();
+
+		expect(body).toContain(
+			"Prompt is too long. Codex reported: Your input exceeds the context window of this model. Please adjust your input and try again.",
+		);
+	});
+
+	it("normalizes the subscription endpoint context-window message for non-streaming clients", async () => {
+		const provider = new CodexProvider();
+		const upstreamBody = sseBody([
+			...eventLine("response.failed", {
+				response: {
+					status: "failed",
+					error: {
+						type: "invalid_request_error",
+						message:
+							"Your input exceeds the context window of this model. Please adjust your input and try again.",
+					},
+				},
+			}),
+		]);
+
+		const response = new Response(upstreamBody, {
+			status: 200,
+			headers: {
+				"content-type": "text/event-stream",
+				"x-better-ccflare-request-stream": "false",
+			},
+		});
+
+		const transformed = await provider.processResponse(response, null);
+		const body = await transformed.json();
+
+		expect(transformed.status).toBe(400);
+		expect(body).toEqual({
+			type: "error",
+			error: {
+				type: "invalid_request_error",
+				message:
+					"Prompt is too long. Codex reported: Your input exceeds the context window of this model. Please adjust your input and try again.",
+			},
+		});
+	});
+});
+
+describe("CodexProvider upstream error code classification", () => {
+	const errorForCode = async (code: string) => {
+		const provider = new CodexProvider();
+		const upstreamBody = sseBody([
+			...eventLine("error", {
+				type: "error",
+				code,
+				message: `Codex reported ${code}`,
+			}),
+		]);
+
+		const response = new Response(upstreamBody, {
+			status: 200,
+			headers: {
+				"content-type": "text/event-stream",
+				"x-better-ccflare-request-stream": "false",
+			},
+		});
+
+		const transformed = await provider.processResponse(response, null);
+		const body = (await transformed.json()) as {
+			error: { type: string; code?: string };
+		};
+		return { status: transformed.status, body };
+	};
+
+	it("maps insufficient_quota to rate_limit_error", async () => {
+		const { status, body } = await errorForCode("insufficient_quota");
+		expect(body.error.type).toBe("rate_limit_error");
+		expect(status).toBe(429);
+	});
+
+	it("maps server_is_overloaded to overloaded_error", async () => {
+		const { status, body } = await errorForCode("server_is_overloaded");
+		expect(body.error.type).toBe("overloaded_error");
+		expect(status).toBe(529);
+	});
+
+	it("maps slow_down to overloaded_error", async () => {
+		const { status, body } = await errorForCode("slow_down");
+		expect(body.error.type).toBe("overloaded_error");
+		expect(status).toBe(529);
+	});
+
+	it("maps cyber_policy to invalid_request_error", async () => {
+		const { status, body } = await errorForCode("cyber_policy");
+		expect(body.error.type).toBe("invalid_request_error");
+		expect(status).toBe(400);
+	});
+
+	it("maps usage_not_included to permission_error", async () => {
+		const { status, body } = await errorForCode("usage_not_included");
+		expect(body.error.type).toBe("permission_error");
+		expect(status).toBe(403);
+	});
+
+	it("maps server_error to api_error", async () => {
+		const { status, body } = await errorForCode("server_error");
+		expect(body.error.type).toBe("api_error");
+		expect(status).toBe(502);
 	});
 });
 
@@ -2366,6 +2656,47 @@ describe("CodexProvider prompt_cache_key derivation", () => {
 			metadata: { user_id: JSON.stringify({ session_id: "not-a-uuid" }) },
 		});
 		expect(badUuid.prompt_cache_key).toBeUndefined();
+	});
+});
+
+describe("normalizeCodexInputUsage", () => {
+	it("subtracts cached tokens from the cache-inclusive total", () => {
+		const result = normalizeCodexInputUsage(100, 60);
+		expect(result.totalInputTokens).toBe(100);
+		expect(result.inputTokens).toBe(40);
+		expect(result.cacheReadInputTokens).toBe(60);
+	});
+
+	it("treats a missing or non-numeric total as zero", () => {
+		expect(normalizeCodexInputUsage(undefined, 5)).toEqual({
+			totalInputTokens: 0,
+			inputTokens: 0,
+			cacheReadInputTokens: 0,
+		});
+		expect(normalizeCodexInputUsage(Number.NaN, 5)).toEqual({
+			totalInputTokens: 0,
+			inputTokens: 0,
+			cacheReadInputTokens: 0,
+		});
+	});
+
+	it("treats a missing or negative cached count as zero", () => {
+		expect(normalizeCodexInputUsage(10, undefined)).toEqual({
+			totalInputTokens: 10,
+			inputTokens: 10,
+			cacheReadInputTokens: 0,
+		});
+		expect(normalizeCodexInputUsage(10, -5)).toEqual({
+			totalInputTokens: 10,
+			inputTokens: 10,
+			cacheReadInputTokens: 0,
+		});
+	});
+
+	it("clamps a cached count larger than the total instead of going negative", () => {
+		const result = normalizeCodexInputUsage(10, 25);
+		expect(result.inputTokens).toBe(0);
+		expect(result.cacheReadInputTokens).toBe(10);
 	});
 });
 
