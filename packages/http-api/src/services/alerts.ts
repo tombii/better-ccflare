@@ -547,29 +547,47 @@ export class AlertService {
 		);
 		if (existing) return;
 
-		await this.db.run(
-			`
-			INSERT OR IGNORE INTO alerts (
-				id, timestamp, type, severity, title, message, value, threshold,
-				account, model, project, request_id, acknowledged
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		`,
-			[
-				alert.id,
-				alert.timestamp,
-				alert.type,
-				alert.severity,
-				alert.title,
-				alert.message,
-				alert.value,
-				alert.threshold,
-				alert.account,
-				alert.model,
-				alert.project,
-				alert.requestId,
-				alert.acknowledged ? 1 : 0,
-			],
-		);
+		// INSERT OR IGNORE is SQLite-only; PostgreSQL uses ON CONFLICT DO NOTHING.
+		// The pre-check above makes the conflict clause functionally redundant, but
+		// keeping it defends against a race between the SELECT and INSERT.
+		const conflictClause = this.db.isSQLite ? "INSERT OR IGNORE" : "INSERT";
+		const onConflictClause = this.db.isSQLite
+			? ""
+			: "ON CONFLICT (id) DO NOTHING";
+		try {
+			await this.db.run(
+				`
+				${conflictClause} INTO alerts (
+					id, timestamp, type, severity, title, message, value, threshold,
+					account, model, project, request_id, acknowledged
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				${onConflictClause}
+			`,
+				[
+					alert.id,
+					alert.timestamp,
+					alert.type,
+					alert.severity,
+					alert.title,
+					alert.message,
+					alert.value,
+					alert.threshold,
+					alert.account,
+					alert.model,
+					alert.project,
+					alert.requestId,
+					alert.acknowledged ? 1 : 0,
+				],
+			);
+		} catch (error) {
+			// Alerts are best-effort telemetry — a persistence failure must not
+			// terminate the proxy (the listener is invoked from an async event
+			// handler, so an unhandled rejection crashes Bun with exit code 1).
+			log.error(
+				`Failed to persist ${alert.type} alert: ${(error as Error).message}`,
+			);
+			return;
+		}
 		const event: AlertEvt = { type: "alert", payload: alert };
 		alertEvents.emit("event", event);
 		if (webhookUrl) {
