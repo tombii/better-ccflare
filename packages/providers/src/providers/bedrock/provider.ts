@@ -199,17 +199,13 @@ export class BedrockProvider extends BaseProvider implements Provider {
 											text: delta.text,
 										},
 									});
-								} else if (
-									// biome-ignore lint/suspicious/noExplicitAny: `inputChunk` is not part of the SDK's ToolUseBlockDelta type (which only defines `input`); this reads a field observed on the wire that isn't reflected in @aws-sdk/client-bedrock-runtime's types
-									(delta?.toolUse as any)?.inputChunk
-								) {
+								} else if (delta?.toolUse?.input) {
 									emit("content_block_delta", {
 										type: "content_block_delta",
 										index,
 										delta: {
 											type: "input_json_delta",
-											// biome-ignore lint/suspicious/noExplicitAny: see above
-											partial_json: (delta?.toolUse as any).inputChunk,
+											partial_json: delta.toolUse.input,
 										},
 									});
 								}
