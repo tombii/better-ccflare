@@ -1844,6 +1844,109 @@ describe("CodexProvider.transformRequestBody", () => {
 		);
 	});
 
+	it("maps max_tokens according to the resolved Codex endpoint contract", async () => {
+		const cases = [
+			{
+				name: "custom endpoint",
+				endpoint: "https://codex.example.com/v1/responses",
+				expectedMaxOutputTokens: 4096,
+			},
+			{
+				name: "canonical subscription endpoint",
+				endpoint: "https://chatgpt.com/backend-api/codex/responses",
+				expectedMaxOutputTokens: undefined,
+			},
+			{
+				name: "canonical subscription endpoint with trailing slash",
+				endpoint: "https://chatgpt.com/backend-api/codex/responses/",
+				expectedMaxOutputTokens: undefined,
+			},
+			{
+				name: "canonical subscription endpoint with query",
+				endpoint:
+					"https://chatgpt.com/backend-api/codex/responses?feature=request-contract",
+				expectedMaxOutputTokens: undefined,
+			},
+		] as const;
+
+		for (const testCase of cases) {
+			const provider = new CodexProvider();
+			const account = codexAccount({ custom_endpoint: testCase.endpoint });
+			const request = new Request(testCase.endpoint, {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({
+					model: "claude-3-7-sonnet",
+					max_tokens: 4096,
+					messages: [{ role: "user", content: "hello" }],
+				}),
+			});
+
+			const transformed = await provider.transformRequestBody(request, account);
+			const body = await transformed.json();
+
+			expect(body.max_output_tokens, testCase.name).toBe(
+				testCase.expectedMaxOutputTokens,
+			);
+		}
+	});
+
+	it("preserves custom endpoint max_tokens: 0 as max_output_tokens: 1", async () => {
+		const provider = new CodexProvider();
+		const endpoint = "https://codex.example.com/v1/responses";
+		const request = new Request(endpoint, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				model: "claude-3-7-sonnet",
+				max_tokens: 0,
+				messages: [{ role: "user", content: "hello" }],
+			}),
+		});
+
+		const transformed = await provider.transformRequestBody(
+			request,
+			codexAccount({ custom_endpoint: endpoint }),
+		);
+		const body = await transformed.json();
+
+		expect(body.max_output_tokens).toBe(1);
+	});
+
+	it("rejects max_tokens: 0 locally for the canonical subscription endpoint", async () => {
+		const provider = new CodexProvider();
+		const endpoint = "https://chatgpt.com/backend-api/codex/responses";
+		const request = new Request(endpoint, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				model: "claude-3-7-sonnet",
+				max_tokens: 0,
+				messages: [{ role: "user", content: "hello" }],
+			}),
+		});
+
+		const transformed = await provider.transformRequestBody(
+			request,
+			codexAccount({ custom_endpoint: endpoint }),
+		);
+		const body = await transformed.json();
+
+		expect(transformed.headers.get("x-better-ccflare-synthetic-response")).toBe(
+			"true",
+		);
+		expect(transformed.headers.get("x-better-ccflare-synthetic-status")).toBe(
+			"400",
+		);
+		expect(body).toEqual({
+			type: "error",
+			error: {
+				type: "invalid_request_error",
+				message: "Codex subscription endpoint does not support max_tokens: 0.",
+			},
+		});
+	});
+
 	it("maps sonnet-family models to the default Codex model", async () => {
 		const provider = new CodexProvider();
 		const request = new Request("https://example.com/v1/messages", {
