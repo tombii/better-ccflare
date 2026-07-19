@@ -1,4 +1,5 @@
 import {
+	getModelFamily,
 	getModelList,
 	getOverloadRetryConfig,
 	logError,
@@ -9,6 +10,7 @@ import { withSanitizedProxyHeaders } from "@better-ccflare/http-common";
 import { Logger } from "@better-ccflare/logger";
 import { stripCacheControlFromOpenAIRequest } from "@better-ccflare/openai-formats";
 import {
+	type AnyUsageData,
 	getProvider,
 	isAnthropicExtraUsageExhausted,
 	isAnthropicOutOfCredits,
@@ -23,17 +25,36 @@ import { cacheBodyStore } from "../cache-body-store";
 import { RequestBodyContext } from "../request-body-context";
 import { forwardToClient } from "../response-handler";
 import { isModelRewrite } from "../worker-messages";
+import { markFamilyExhausted } from "./model-capacity";
 import { ERROR_MESSAGES, type ProxyContext } from "./proxy-types";
 import { applyRateLimitCooldown } from "./rate-limit-cooldown";
 import { makeProxyRequest, validateProviderPath } from "./request-handler";
 import { handleProxyError, processProxyResponse } from "./response-processor";
 import { getValidAccessToken } from "./token-manager";
+import { collectWindows } from "./usage-throttling";
 
 const log = new Logger("ProxyOperations");
 
 const SYNTHETIC_RESPONSE_HEADER = "x-better-ccflare-synthetic-response";
 const SYNTHETIC_STATUS_HEADER = "x-better-ccflare-synthetic-status";
 const SYNTHETIC_RESPONSE_URL_PREFIX = "https://better-ccflare.local/";
+
+/**
+ * Diagnose-only lookup of the family's current weekly_scoped utilization
+ * percent from cached usage telemetry, used purely to log what the last
+ * poll knew when a reactive out_of_credits mark is recorded — never a gate.
+ */
+function currentScopedPercentForFamily(
+	usageData: AnyUsageData | null,
+	family: string,
+): number | null {
+	for (const window of collectWindows(usageData)) {
+		if (window.scoped && window.modelFamily === family) {
+			return window.utilization;
+		}
+	}
+	return null;
+}
 
 /**
  * Determines the absolute epoch timestamp (ms since epoch) until which an account
@@ -836,6 +857,40 @@ export async function proxyWithAccount(
 			// NOT bench the account (no applyRateLimitCooldown, no consecutive increment):
 			// fail over per-request and leave the account in rotation for other models.
 			if (rawResponse.status === 429 && isAnthropicOutOfCredits(rawResponse)) {
+				// Feed the model-scoped capacity negative cache (model-capacity.ts):
+				// this account is confirmed exhausted for the requested model's
+				// family right now, even before usageCache's next poll would reflect
+				// it — regardless of whether this is a real client request or a
+				// keepalive probe, the observed 429 is an equally real signal. The
+				// mark always uses the fixed default TTL (no resetAt seeding — see
+				// model-capacity.ts) and is recorded with "recent_upstream_rejection"
+				// provenance since it is never corroborated by telemetry here.
+				if (requestedModel) {
+					const family = getModelFamily(requestedModel);
+					if (family) {
+						// Diagnose-only: log the family's last-known scoped percent from
+						// cached telemetry to correlate this reactive mark against the
+						// most recent poll — purely for attribution, not a gate. Lives
+						// here (not in model-capacity.ts) so that module never depends
+						// on the usageCache singleton.
+						const scopedPercent = currentScopedPercentForFamily(
+							usageCache.get(account.id),
+							family,
+						);
+						log.debug(
+							`Marking ${account.name} exhausted for model family "${family}" via out_of_credits ` +
+								`(last known weekly_scoped percent: ${scopedPercent ?? "unknown"})`,
+						);
+						markFamilyExhausted(
+							account.id,
+							family,
+							undefined,
+							undefined,
+							"recent_upstream_rejection",
+						);
+					}
+				}
+
 				const isKeepalive =
 					req.headers.get("x-better-ccflare-keepalive") === "true";
 				if (isKeepalive) {

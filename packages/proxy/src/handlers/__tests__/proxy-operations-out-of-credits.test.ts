@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { usageCache } from "@better-ccflare/providers";
 import type { Account, RequestMeta } from "@better-ccflare/types";
+import {
+	clearFamilyExhaustionCache,
+	getFamilyExhaustionOrigin,
+	isFamilyExhausted,
+} from "../model-capacity";
 import { proxyWithAccount } from "../proxy-operations";
 import type { ProxyContext } from "../proxy-types";
 
@@ -143,6 +149,8 @@ describe("proxyWithAccount — out_of_credits (issue #261)", () => {
 
 	afterEach(() => {
 		globalThis.fetch = originalFetch;
+		usageCache.clear();
+		clearFamilyExhaustionCache();
 	});
 
 	it("does NOT bench the account and fails over on out_of_credits 429", async () => {
@@ -255,5 +263,135 @@ describe("proxyWithAccount — out_of_credits (issue #261)", () => {
 		// 17th/18th positional args are originalModel/appliedModel.
 		expect(args[16]).toBeNull();
 		expect(args[17]).toBeNull();
+	});
+
+	it("marks the account's model family exhausted in the negative cache on out_of_credits", async () => {
+		globalThis.fetch = mock(async () => outOfCreditsResponse());
+
+		const ctx = makeProxyContextWithAsyncExec();
+		const account = makeAccount();
+		const bodyBuffer = makeRequestBody("claude-sonnet-4-5");
+		const req = makeRequest(bodyBuffer);
+
+		expect(isFamilyExhausted(account.id, "sonnet")).toBe(false);
+
+		await proxyWithAccount(
+			req,
+			new URL("https://proxy.local/v1/messages"),
+			account,
+			makeRequestMeta(),
+			bodyBuffer,
+			() => undefined,
+			0,
+			ctx,
+		);
+
+		expect(isFamilyExhausted(account.id, "sonnet")).toBe(true);
+	});
+
+	// v3 Fix1: findScopedResetAt-based TTL seeding is REMOVED. The negative
+	// cache always uses the fixed 5-minute default TTL for a reactive
+	// out_of_credits mark, regardless of any longer weekly_scoped reset found
+	// in cached usage telemetry — a false attribution (5h-/weekly_all-/beta
+	// bind misread as this family) now costs at most 5 minutes instead of
+	// however far out the (possibly unrelated) scoped reset happens to be.
+	it("always uses the fixed 5-minute TTL, even when a longer weekly_scoped reset is present in cached usage telemetry", async () => {
+		globalThis.fetch = mock(async () => outOfCreditsResponse());
+
+		const now = Date.now();
+		const account = makeAccount();
+		const resetAt = now + 10 * 60 * 1000; // 10 minutes out — beyond the 5min default
+		usageCache.set(account.id, {
+			limits: [
+				{
+					kind: "weekly_scoped",
+					percent: 40,
+					resets_at: new Date(resetAt).toISOString(),
+					scope: { model: { id: null, display_name: "Sonnet" }, surface: null },
+				},
+			],
+		} as never);
+
+		const ctx = makeProxyContextWithAsyncExec();
+		const bodyBuffer = makeRequestBody("claude-sonnet-4-5");
+		const req = makeRequest(bodyBuffer);
+
+		await proxyWithAccount(
+			req,
+			new URL("https://proxy.local/v1/messages"),
+			account,
+			makeRequestMeta(),
+			bodyBuffer,
+			() => undefined,
+			0,
+			ctx,
+		);
+
+		// Still exhausted within the 5-minute default TTL...
+		expect(isFamilyExhausted(account.id, "sonnet", now + 4 * 60 * 1000)).toBe(
+			true,
+		);
+		// ...but expired just past 5 minutes, well before the 10-minute scoped
+		// reset — proves the fixed TTL was used, NOT the longer scoped reset.
+		expect(isFamilyExhausted(account.id, "sonnet", now + 6 * 60 * 1000)).toBe(
+			false,
+		);
+	});
+
+	// v3 Revision v2 Fix1: a reactive out_of_credits mark is never confirmed
+	// by telemetry — its provenance must be recorded as "recent_upstream_rejection"
+	// so the eventual model_family_exhausted response uses neutral wording
+	// instead of asserting "weekly capacity exhausted".
+	it("marks the negative-cache entry with 'recent_upstream_rejection' origin, never 'telemetry_confirmed'", async () => {
+		globalThis.fetch = mock(async () => outOfCreditsResponse());
+
+		const ctx = makeProxyContextWithAsyncExec();
+		const account = makeAccount();
+		const bodyBuffer = makeRequestBody("claude-sonnet-4-5");
+		const req = makeRequest(bodyBuffer);
+
+		await proxyWithAccount(
+			req,
+			new URL("https://proxy.local/v1/messages"),
+			account,
+			makeRequestMeta(),
+			bodyBuffer,
+			() => undefined,
+			0,
+			ctx,
+		);
+
+		expect(getFamilyExhaustionOrigin(account.id, "sonnet")).toBe(
+			"recent_upstream_rejection",
+		);
+	});
+
+	it("also marks the negative cache on a keepalive out_of_credits probe", async () => {
+		globalThis.fetch = mock(async () => outOfCreditsResponse());
+
+		const ctx = makeProxyContextWithAsyncExec();
+		const account = makeAccount();
+		const bodyBuffer = makeRequestBody("claude-sonnet-4-5");
+		const req = new Request("https://proxy.local/v1/messages", {
+			method: "POST",
+			body: bodyBuffer,
+			headers: {
+				"Content-Type": "application/json",
+				"x-better-ccflare-keepalive": "true",
+			},
+		});
+
+		await proxyWithAccount(
+			req,
+			new URL("https://proxy.local/v1/messages"),
+			account,
+			makeRequestMeta(),
+			bodyBuffer,
+			() => undefined,
+			0,
+			ctx,
+		);
+
+		expect(isFamilyExhausted(account.id, "sonnet")).toBe(true);
 	});
 });

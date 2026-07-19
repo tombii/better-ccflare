@@ -67,7 +67,7 @@ The configuration file is stored at:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `lb_strategy` | string | `"session"` | Load balancing strategy. Only `"session"` is supported (using other strategies risks account bans) |
+| `lb_strategy` | string | `"session"` | Load balancing strategy. Use session-class strategies only: `"session"` (default) or `"session-drain-soonest"` (same session semantics, prefers the soonest-resetting weekly window). Per-request spreading strategies risk account bans — see warning below |
 | `client_id` | string | `"9d1c250a-e61b-44d9-88ed-5944d1962f5e"` | OAuth client ID for authentication |
 | `retry_attempts` | number | `3` | Maximum number of retry attempts for failed requests |
 | `retry_delay_ms` | number | `1000` | Initial delay in milliseconds between retry attempts |
@@ -77,11 +77,12 @@ The configuration file is stored at:
 
 ### Load Balancing Strategy
 
-⚠️ **WARNING**: Only use the `session` strategy. Other strategies can trigger Claude's anti-abuse systems and result in account bans.
+⚠️ **WARNING**: Only use session-class strategies — `session` (default) or `session-drain-soonest`, which shares the same 5-hour session affinity semantics. Strategies that spread individual requests across accounts can trigger Claude's anti-abuse systems and result in account bans.
 
 | Strategy | Description | Use Case |
 |----------|-------------|----------|
-| `session` | Maintains client-account affinity for session duration, with automatic alignment to Anthropic OAuth usage window resets | Only supported strategy - mimics natural usage patterns and optimizes resource utilization |
+| `session` | Maintains client-account affinity for session duration, with automatic alignment to Anthropic OAuth usage window resets | Default and recommended - mimics natural usage patterns and optimizes resource utilization |
+| `session-drain-soonest` | Same session semantics as `session` (5h windows, auto-fallback, session stickiness), but at every fresh selection (session start/expiry, account unavailable) it prefers the account whose weekly_all usage window resets soonest, so weekly capacity is drained before it expires ("use it or lose it"). Active sessions are never preempted by drain ranking mid-window; the one deliberate exception is auto-fallback reactivation (same as `session`): an eligible account whose usage window has reset takes over immediately. Accounts without weekly telemetry rank last; ties fall back to priority, then utilization | Multi-account pools with staggered weekly resets where unused weekly capacity should be consumed before it is lost |
 
 ### Logging Configuration (Environment Only)
 
@@ -136,6 +137,7 @@ These environment variables are not stored in the configuration file and must be
 | `CCFLARE_RATE_LIMIT_BACKOFF_MAX_MS` | Ceiling for adaptive per-account 429 cooldown backoff | `300000` (5min) | `CCFLARE_RATE_LIMIT_BACKOFF_MAX_MS=600000` |
 | `CCFLARE_RATE_LIMIT_RESET_STABILITY_MS` | Window after which a clean streak resets the consecutive-429 counter | `300000` (5min) | `CCFLARE_RATE_LIMIT_RESET_STABILITY_MS=600000` |
 | `HEALTH_DETAIL_ENABLED` | Expose per-account status on `GET /health?detail=1` | `false` | `HEALTH_DETAIL_ENABLED=true` |
+| `MODEL_SCOPED_CAPACITY_ROUTING` | `off` leaves account selection unchanged. `exhausted` skips an account for a request when its weekly per-model-family cap (`limits[] kind=weekly_scoped`, e.g. a Fable/Opus/Sonnet-specific quota) is at/above 100% with a future reset AND overage cannot serve the account (`spend`/`extra_usage` signal unavailable; unknown or available fails open) — both in normal and combo-slot routing. Observed `out_of_credits` 429s additionally sideline the (account, family) pair for 5 minutes to bridge telemetry lag. When every candidate account for a model family is filtered out, the request gets a `429` with `error.type: rate_limit_error` and `error.code: model_family_exhausted` (capped Retry-After) instead of exhausting the per-account failover loop against accounts already known to reject that family. Telemetry can lag up to the poll interval; with polling degraded, expect one probe 429 per family every ~5 minutes. Same as the `model_scoped_capacity_routing` config file field; env var takes precedence | `off` | `MODEL_SCOPED_CAPACITY_ROUTING=exhausted` |
 | `BETTER_CCFLARE_DISCOVER_PLUGIN_AGENTS` | Discover agents distributed by Claude Code plugins (reads `~/.claude/plugins/installed_plugins.json`) | `false` | `BETTER_CCFLARE_DISCOVER_PLUGIN_AGENTS=true` |
 | `STORE_PAYLOADS` | Set to `false` to stop storing request/response bodies (token counts, cost, model, status, and timing are still recorded) | `true` | `STORE_PAYLOADS=false` |
 | `PAYLOAD_ENCRYPTION_KEY` | AES-256-GCM key encrypting `request_payloads` at rest. 64-char hex (32 bytes), generate with `openssl rand -hex 32`. Unset = plaintext storage. Losing the key makes encrypted rows unreadable; read once at process start (and per Bun worker), so rotation needs a re-encrypt migration (not yet built) | - (plaintext) | `PAYLOAD_ENCRYPTION_KEY=$(openssl rand -hex 32)` |

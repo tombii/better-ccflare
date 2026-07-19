@@ -391,6 +391,12 @@ export class APIRouter {
 		this.handlers.set("POST:/api/config/usage-throttling", (req) =>
 			configHandlers.setUsageThrottling(req),
 		);
+		this.handlers.set("GET:/api/config/model-capacity-routing", () =>
+			configHandlers.getModelCapacityRouting(),
+		);
+		this.handlers.set("POST:/api/config/model-capacity-routing", (req) =>
+			configHandlers.setModelCapacityRouting(req),
+		);
 		this.handlers.set("POST:/api/maintenance/cleanup", () => cleanupHandler());
 		this.handlers.set("GET:/api/system/info", () => systemInfoHandler());
 		this.handlers.set("GET:/api/version/check", () => versionCheckHandler());

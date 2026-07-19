@@ -9,11 +9,13 @@ import { usageCache } from "@better-ccflare/providers";
 import type { Account } from "@better-ccflare/types";
 import { cacheBodyStore } from "./cache-body-store";
 import {
+	createModelFamilyExhaustedResponse,
 	createPoolExhaustedResponse,
 	createRequestMetadata,
 	createUsageThrottledResponse,
 	ERROR_MESSAGES,
 	getComboSlotInfo,
+	getModelFamilyExhaustionInfo,
 	getUsageThrottleUntil,
 	interceptAndModifyRequest,
 	isRefreshTokenLikelyExpired,
@@ -288,6 +290,16 @@ export async function handleProxy(
 
 	// 7. Handle no accounts case
 	if (accounts.length === 0) {
+		// Model-scoped capacity filter (account-selector.ts) emptied the
+		// candidate pool because every account is exhausted for this request's
+		// model family — a structured, actionable response instead of the
+		// generic pool_exhausted 503 or exhausting failover against accounts
+		// already known to reject this model family.
+		const exhaustionInfo = getModelFamilyExhaustionInfo(requestMeta);
+		if (exhaustionInfo) {
+			return createModelFamilyExhaustedResponse(exhaustionInfo);
+		}
+
 		if (throttledAccounts.length > 0) {
 			return createUsageThrottledResponse(throttledAccounts);
 		}
@@ -472,12 +484,20 @@ export async function handleProxy(
 		log.warn(
 			`All combo slots failed for combo "${filteredComboInfo.comboName}", falling back to SessionStrategy routing`,
 		);
-		// Clear combo info and retry with normal routing
+		// Clear combo info and retry with normal routing. Pass the effective
+		// model + skipCombo:true so this re-selection (a) applies the same
+		// model-scoped capacity filter as the initial selection instead of
+		// blindly re-attempting the just-failed combo accounts unfiltered, and
+		// (b) does not re-trigger the same combo lookup — the combo lookup is
+		// keyed on the model's family, not on requestMeta.comboName, so clearing
+		// comboName alone would not make it inert.
 		requestMeta.comboName = null;
 		requestMeta.comboSlotIndex = null;
 		const selectedFallbackAccounts = await selectAccountsForRequest(
 			requestMeta,
 			ctx,
+			effectiveModel ?? undefined,
+			{ skipCombo: true },
 		);
 		const {
 			available: filteredFallbackAccounts,
@@ -521,9 +541,19 @@ export async function handleProxy(
 					return response;
 				}
 			}
-		} else if (throttledFallbackAccounts.length > 0) {
-			cacheBodyStore.discardStaged(requestMeta.id);
-			return createUsageThrottledResponse(throttledFallbackAccounts);
+		} else {
+			// Same no-accounts resolver order as the initial selection (Step 7):
+			// capacity-exhaustion first (structured, actionable response instead
+			// of falling through to a generic failure), then usage-throttling.
+			const fallbackExhaustionInfo = getModelFamilyExhaustionInfo(requestMeta);
+			if (fallbackExhaustionInfo) {
+				cacheBodyStore.discardStaged(requestMeta.id);
+				return createModelFamilyExhaustedResponse(fallbackExhaustionInfo);
+			}
+			if (throttledFallbackAccounts.length > 0) {
+				cacheBodyStore.discardStaged(requestMeta.id);
+				return createUsageThrottledResponse(throttledFallbackAccounts);
+			}
 		}
 	}
 
