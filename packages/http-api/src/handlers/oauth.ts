@@ -268,6 +268,7 @@ export function createQwenReauthHandler(dbOps: DatabaseOperations) {
 							account.id,
 						],
 					);
+					clearAccountRefreshCache(account.id);
 
 					qwenSessions.set(sessionId, {
 						status: "complete",
@@ -505,6 +506,7 @@ export function createCodexReauthHandler(dbOps: DatabaseOperations) {
 							account.id,
 						],
 					);
+					clearAccountRefreshCache(account.id);
 
 					codexSessions.set(sessionId, {
 						status: "complete",
