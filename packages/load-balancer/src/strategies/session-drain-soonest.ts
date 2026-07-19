@@ -13,21 +13,15 @@ import {
 import { isPeekAvailable } from "./peek-availability";
 
 /**
- * Cohort tolerance for the "same weekly-reset group" check used to decide
- * whether an active session should keep stickiness. Two accounts whose
- * weekly_all resets fall within this window of each other are treated as
- * equivalent — stickiness wins. An account with a STRICTLY earlier reset
- * beyond this tolerance takes over, so its capacity is drained before it's
- * lost at reset ("use it or lose it").
- */
-const COHORT_TOLERANCE_MS = 60_000;
-
-/**
  * SessionDrainSoonestStrategy — identical session-affinity semantics to
  * {@link SessionStrategy} (same 5h Anthropic session window, same
  * rate-limit-window-reset session invalidation, same auto-fallback
- * reactivation), but the ranking of *which* account to prefer is driven by
- * each account's weekly_all usage-window reset time instead of a static
+ * reactivation) EXCEPT it has no priority-based preemption: an active,
+ * available, non-expired session is NEVER interrupted, regardless of any
+ * other account's priority or weekly reset. The ranking of *which* account
+ * to prefer only applies at re-selection time (session start, session
+ * expiry, or the active account becoming unavailable) and is driven by each
+ * account's weekly_all usage-window reset time instead of a static
  * `priority` field:
  *
  *   - Accounts whose weekly_all window resets SOONER are preferred over ones
@@ -38,6 +32,12 @@ const COHORT_TOLERANCE_MS = 60_000;
  *     account with a known future reset.
  *   - Ties (equal reset, or both unknown) fall back to `priority` ASC, then
  *     upstream utilization ASC — identical tie-break order to SessionStrategy.
+ *
+ * Auto-fallback reactivation is a priority rule that overrides drain-soonest
+ * ranking: the chosen fallback account (first available candidate from
+ * checkForAutoFallbackAccounts, in priority order) is always placed at
+ * position 0 of select()'s return value, even when another available
+ * account has an earlier weekly reset.
  *
  * peek() mirrors select()'s decision exactly (same requirement as every
  * other strategy here) since the dashboard's "Primary" badge is driven by it.
@@ -87,23 +87,6 @@ export class SessionDrainSoonestStrategy implements LoadBalancingStrategy {
 		const utilA = this.store?.getAccountUtilization?.(a.id, a.provider) ?? 0;
 		const utilB = this.store?.getAccountUtilization?.(b.id, b.provider) ?? 0;
 		return utilA - utilB;
-	}
-
-	/**
-	 * True when `candidate`'s weekly reset is strictly earlier than
-	 * `activeReset` by more than {@link COHORT_TOLERANCE_MS} — i.e. it is
-	 * outside the active session's cohort and should preempt its stickiness.
-	 * An unknown candidate reset never preempts; an unknown active reset is
-	 * preempted by any known candidate reset (a known upcoming drain deadline
-	 * always outranks "no deadline").
-	 */
-	private hasStrictlyEarlierReset(
-		candidateReset: number | null,
-		activeReset: number | null,
-	): boolean {
-		if (candidateReset === null) return false;
-		if (activeReset === null) return true;
-		return candidateReset < activeReset - COHORT_TOLERANCE_MS;
 	}
 
 	private resetSessionIfExpired(account: Account): void {
@@ -164,13 +147,15 @@ export class SessionDrainSoonestStrategy implements LoadBalancingStrategy {
 		const isAvailable = (account: Account): boolean =>
 			isPeekAvailable(account, now);
 
+		// Mirror select()'s auto-fallback path, without unpausing. select()
+		// walks fallbackCandidates in priority order and forces the first
+		// available one to position 0 regardless of drain ranking — peek must
+		// return that exact id, not just the drain-soonest winner among all
+		// available accounts.
 		const fallbackCandidates = this.checkForAutoFallbackAccounts(accounts, now);
-		const fallbackTriggered = fallbackCandidates.some((c) => isAvailable(c));
-		if (fallbackTriggered) {
-			const sorted = accounts
-				.filter((a) => isAvailable(a))
-				.sort((a, b) => this.compareAccounts(a, b, now));
-			return sorted[0]?.id ?? null;
+		const chosenFallback = fallbackCandidates.find((c) => isAvailable(c));
+		if (chosenFallback) {
+			return chosenFallback.id;
 		}
 
 		let activeAccount: Account | null = null;
@@ -186,21 +171,11 @@ export class SessionDrainSoonestStrategy implements LoadBalancingStrategy {
 			}
 		}
 
+		// An active, available session is never preempted by drain-soonest
+		// ranking — it always wins re-selection, no matter how much earlier
+		// another candidate's weekly reset is.
 		if (activeAccount && isAvailable(activeAccount)) {
-			const activeReset = this.getWeeklyReset(activeAccount, now);
-			const preemptingAccount = accounts
-				.filter((a) => {
-					if (a.id === activeAccount.id || !isAvailable(a)) return false;
-					return this.hasStrictlyEarlierReset(
-						this.getWeeklyReset(a, now),
-						activeReset,
-					);
-				})
-				.sort((a, b) => this.compareAccounts(a, b, now))[0];
-
-			if (!preemptingAccount) {
-				return activeAccount.id;
-			}
+			return activeAccount.id;
 		}
 
 		const available = accounts
@@ -277,11 +252,13 @@ export class SessionDrainSoonestStrategy implements LoadBalancingStrategy {
 			this.log.info(
 				`Auto-fallback triggered to account ${chosenFallback.name} (priority: ${chosenFallback.priority}, auto-fallback enabled)`,
 			);
-			// Return all available accounts sorted by drain-soonest ranking —
-			// chosenFallback appears first naturally if it also ranks highest.
-			return accounts
-				.filter((a) => getCachedAvailability(a))
+			// chosenFallback is forced to position 0 — auto-fallback is a
+			// priority rule that overrides drain-soonest ranking. The rest of
+			// the available pool is drain-sorted behind it.
+			const others = accounts
+				.filter((a) => a.id !== chosenFallback.id && getCachedAvailability(a))
 				.sort((a, b) => this.compareAccounts(a, b, now));
+			return [chosenFallback, ...others];
 		}
 
 		let activeAccount: Account | null = null;
@@ -308,45 +285,27 @@ export class SessionDrainSoonestStrategy implements LoadBalancingStrategy {
 			);
 		}
 
-		// If we have an active account and it's available, use it — unless an
-		// available account has a STRICTLY earlier weekly-reset (outside the
-		// cohort tolerance) than the active account, in which case draining
-		// that soon-to-reset capacity takes priority over cache stickiness.
+		// An active, available session is NEVER preempted — no priority-based
+		// override (unlike SessionStrategy) and no drain-soonest override
+		// either. Drain-soonest ranking only governs which account is
+		// (re-)selected when there is no active session, or the active
+		// account has become unavailable.
 		if (activeAccount && getCachedAvailability(activeAccount)) {
-			const activeReset = this.getWeeklyReset(activeAccount, now);
-			const preemptingAccount = accounts
-				.filter((a) => {
-					if (a.id === activeAccount.id || !getCachedAvailability(a))
-						return false;
-					return this.hasStrictlyEarlierReset(
-						this.getWeeklyReset(a, now),
-						activeReset,
-					);
-				})
-				.sort((a, b) => this.compareAccounts(a, b, now))[0];
-
-			if (preemptingAccount) {
-				this.log.info(
-					`Skipping session on account ${activeAccount.name} — account ${preemptingAccount.name} has a strictly earlier weekly reset`,
-				);
-				// Fall through to drain-soonest selection below by nulling activeAccount
-			} else {
-				if (!bypassSession) {
-					this.resetSessionIfExpired(activeAccount);
-				}
-				this.log.info(
-					`Continuing session for account ${activeAccount.name} (${activeAccount.session_request_count} requests in session)`,
-				);
-				const others = accounts
-					.filter((a) => a.id !== activeAccount.id && getCachedAvailability(a))
-					.sort((a, b) => this.compareAccounts(a, b, now));
-				return [activeAccount, ...others];
+			if (!bypassSession) {
+				this.resetSessionIfExpired(activeAccount);
 			}
+			this.log.info(
+				`Continuing session for account ${activeAccount.name} (${activeAccount.session_request_count} requests in session)`,
+			);
+			const others = accounts
+				.filter((a) => a.id !== activeAccount.id && getCachedAvailability(a))
+				.sort((a, b) => this.compareAccounts(a, b, now));
+			return [activeAccount, ...others];
 		}
 
-		// No active session, or the active account was preempted by a
-		// soon-to-reset account. Filter available accounts and rank by
-		// drain-soonest (earliest weekly reset, then priority, then utilization).
+		// No active session, or the active account is unavailable. Filter
+		// available accounts and rank by drain-soonest (earliest weekly
+		// reset, then priority, then utilization).
 		const available = accounts
 			.filter((a) => getCachedAvailability(a))
 			.sort((a, b) => this.compareAccounts(a, b, now));

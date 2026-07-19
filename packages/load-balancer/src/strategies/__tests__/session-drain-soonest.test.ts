@@ -249,11 +249,15 @@ describe("SessionDrainSoonestStrategy", () => {
 	});
 
 	// -------------------------------------------------------------------------
-	// Cohort stickiness: an active session stays on its account as long as no
-	// available account has a STRICTLY earlier reset beyond the 60s tolerance.
+	// v3: session stickiness — NO mid-session preemption. Drain-soonest ranking
+	// only governs which account is chosen at a fresh/re-selection (session
+	// start, session expiry, account unavailable). An active session keeps its
+	// account for the rest of the session no matter how much earlier another
+	// account's weekly reset is; COHORT_TOLERANCE_MS and the old
+	// hasStrictlyEarlierReset preemption branches are gone.
 	// -------------------------------------------------------------------------
-	describe("cohort stickiness", () => {
-		it("keeps the active-session account when another account's reset is within the 60s cohort tolerance", () => {
+	describe("session stickiness (no mid-session preemption)", () => {
+		it("keeps the active-session account when another account's reset is only slightly earlier", () => {
 			const now = Date.now();
 
 			const active = makeAccount({
@@ -270,7 +274,7 @@ describe("SessionDrainSoonestStrategy", () => {
 			});
 
 			mockStore.setWeeklyReset("active", now + 60 * 60 * 1000);
-			// 30s earlier — inside the 60s cohort tolerance
+			// 30s earlier — previously inside the 60s cohort tolerance.
 			mockStore.setWeeklyReset("same-cohort", now + 60 * 60 * 1000 - 30_000);
 
 			const result = strategy.select([sameCohort, active], meta);
@@ -278,7 +282,7 @@ describe("SessionDrainSoonestStrategy", () => {
 			expect(result[0]).toBe(active);
 		});
 
-		it("preempts the active-session account when another account's reset is strictly earlier beyond the 60s tolerance", () => {
+		it("keeps the active-session account even when another account's reset is strictly, substantially earlier", () => {
 			const now = Date.now();
 
 			const active = makeAccount({
@@ -286,30 +290,29 @@ describe("SessionDrainSoonestStrategy", () => {
 				name: "active",
 				session_start: now - 30 * 60 * 1000,
 				session_request_count: 10,
-				priority: 0, // even with higher priority, must yield
+				priority: 0,
 			});
-			const soonerCohort = makeAccount({
-				id: "sooner-cohort",
-				name: "sooner-cohort",
+			const soonerReset = makeAccount({
+				id: "sooner-reset",
+				name: "sooner-reset",
 				priority: 5,
 			});
 
 			mockStore.setWeeklyReset("active", now + 60 * 60 * 1000);
-			// 5 minutes earlier — well outside the 60s cohort tolerance
+			// 5 minutes earlier — under v2 this used to preempt; v3 must NOT.
 			mockStore.setWeeklyReset(
-				"sooner-cohort",
+				"sooner-reset",
 				now + 60 * 60 * 1000 - 5 * 60 * 1000,
 			);
 
-			const result = strategy.select([active, soonerCohort], meta);
+			const result = strategy.select([active, soonerReset], meta);
 
-			expect(result[0]).toBe(soonerCohort);
-			// Active session's own bookkeeping should be untouched — it wasn't
-			// resumed, just fell through to normal ranking.
+			expect(result[0]).toBe(active);
+			// Active session's own bookkeeping should be untouched.
 			expect(mockStore.getResetCall(active.id)).toBeUndefined();
 		});
 
-		it("preempts an active session with unknown reset when a candidate has a known future reset", () => {
+		it("keeps the active-session account (unknown reset) even when a candidate has a known future reset", () => {
 			const now = Date.now();
 
 			const active = makeAccount({
@@ -330,7 +333,7 @@ describe("SessionDrainSoonestStrategy", () => {
 
 			const result = strategy.select([active, known], meta);
 
-			expect(result[0]).toBe(known);
+			expect(result[0]).toBe(active);
 		});
 
 		it("keeps stickiness when the only other candidate also has an unknown reset", () => {
@@ -354,6 +357,24 @@ describe("SessionDrainSoonestStrategy", () => {
 			const result = strategy.select([active, otherUnknown], meta);
 
 			expect(result[0]).toBe(active);
+		});
+
+		it("selects the earliest-reset account on a fresh (no active session) re-selection after the sticky session ends", () => {
+			// S6: "active session on B stays until session end, even though A
+			// resets earlier; a NEW selection (no active session) picks A."
+			const now = Date.now();
+
+			const accountA = makeAccount({ id: "A", name: "A", priority: 5 });
+			const accountB = makeAccount({ id: "B", name: "B", priority: 0 });
+			// No session_start set on either — this models the post-session-end
+			// re-selection moment (SessionStrategy semantics: no active session).
+
+			mockStore.setWeeklyReset("A", now + 24 * 60 * 60 * 1000); // +1d
+			mockStore.setWeeklyReset("B", now + 3 * 24 * 60 * 60 * 1000); // +3d
+
+			const result = strategy.select([accountB, accountA], meta);
+
+			expect(result[0]).toBe(accountA);
 		});
 	});
 
@@ -492,7 +513,7 @@ describe("SessionDrainSoonestStrategy", () => {
 			expect(peeked).toBe("active");
 		});
 
-		it("peek agrees with select when a strictly-earlier reset preempts the active session", () => {
+		it("peek agrees with select: active session is never preempted by a substantially-earlier-reset candidate (v3)", () => {
 			const now = Date.now();
 
 			const active = makeAccount({
@@ -502,24 +523,24 @@ describe("SessionDrainSoonestStrategy", () => {
 				session_request_count: 10,
 				priority: 0,
 			});
-			const preempting = makeAccount({
-				id: "preempting",
-				name: "preempting",
+			const notPreempting = makeAccount({
+				id: "not-preempting",
+				name: "not-preempting",
 				priority: 5,
 			});
 
 			mockStore.setWeeklyReset("active", now + 60 * 60 * 1000);
 			mockStore.setWeeklyReset(
-				"preempting",
+				"not-preempting",
 				now + 60 * 60 * 1000 - 5 * 60 * 1000,
 			);
 
-			const accounts = [active, preempting];
+			const accounts = [active, notPreempting];
 			const peeked = strategy.peek(accounts);
 			const selected = strategy.select(accounts, meta)[0]?.id;
 
 			expect(peeked).toBe(selected);
-			expect(peeked).toBe("preempting");
+			expect(peeked).toBe("active");
 		});
 
 		it("peek does not mutate state (side-effect-free)", () => {
@@ -548,6 +569,99 @@ describe("SessionDrainSoonestStrategy", () => {
 			});
 
 			expect(strategy.peek([rateLimited])).toBeNull();
+		});
+	});
+
+	// -------------------------------------------------------------------------
+	// v3 Fix5 (Revision v2, codex-9): auto-fallback is a PRIORITY rule — the
+	// chosen fallback account is guaranteed at position 0 of select()'s return
+	// value (and is what peek() returns), even when drain-soonest ranking by
+	// weekly reset would otherwise place a different available account first.
+	// -------------------------------------------------------------------------
+	describe("auto-fallback position-0 guarantee (S6)", () => {
+		it("select() returns the chosen auto-fallback account at position 0 even when another available account has an earlier drain reset", () => {
+			const now = Date.now();
+
+			const fallback = makeAccount({
+				id: "fallback",
+				name: "fallback",
+				paused: true,
+				rate_limit_reset: now - 2000, // expired -> triggers reactivation
+				priority: 0,
+				auto_fallback_enabled: true,
+			});
+			const earlierDrain = makeAccount({
+				id: "earlier-drain",
+				name: "earlier-drain",
+				priority: 5,
+			});
+
+			// earlierDrain has a known, earlier weekly reset than fallback (which
+			// has none) — drain-soonest ranking ALONE would place it first.
+			mockStore.setWeeklyReset("earlier-drain", now + 60 * 1000);
+
+			const result = strategy.select([earlierDrain, fallback], meta);
+
+			expect(result[0]).toBe(fallback);
+			expect(result.map((a) => a.id)).toEqual(["fallback", "earlier-drain"]);
+		});
+
+		it("peek() returns the chosen auto-fallback account under the same conditions", () => {
+			const now = Date.now();
+
+			const fallback = makeAccount({
+				id: "fallback",
+				name: "fallback",
+				paused: true,
+				rate_limit_reset: now - 2000,
+				priority: 0,
+				auto_fallback_enabled: true,
+			});
+			const earlierDrain = makeAccount({
+				id: "earlier-drain",
+				name: "earlier-drain",
+				priority: 5,
+			});
+
+			mockStore.setWeeklyReset("earlier-drain", now + 60 * 1000);
+
+			const accounts = [earlierDrain, fallback];
+			expect(strategy.peek(accounts)).toBe("fallback");
+			expect(strategy.peek(accounts)).toBe(
+				strategy.select(accounts, meta)[0]?.id,
+			);
+		});
+
+		it("select() places the chosen fallback first even when a second, lower-priority fallback candidate would otherwise win the drain-ranking tiebreak", () => {
+			// Two accounts are eligible for auto-fallback reactivation; the one
+			// checkForAutoFallbackAccounts picks first (priority ASC among
+			// fallback candidates) must end up at position 0 regardless of how
+			// the full drain-soonest comparator would have ordered the pool.
+			const now = Date.now();
+
+			const chosenFallback = makeAccount({
+				id: "chosen",
+				name: "chosen",
+				paused: true,
+				rate_limit_reset: now - 2000,
+				priority: 0, // wins among fallback candidates
+				auto_fallback_enabled: true,
+			});
+			const earlierButNotChosen = makeAccount({
+				id: "earlier-but-not-chosen",
+				name: "earlier-but-not-chosen",
+				priority: 9,
+			});
+
+			mockStore.setWeeklyReset("earlier-but-not-chosen", now + 30 * 1000);
+			// chosenFallback has no weekly-reset data (unknown, sorts last on its own).
+
+			const result = strategy.select(
+				[earlierButNotChosen, chosenFallback],
+				meta,
+			);
+
+			expect(result[0]).toBe(chosenFallback);
 		});
 	});
 });
