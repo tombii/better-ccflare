@@ -322,15 +322,59 @@ export async function ensureSchemaPg(adapter: BunSqlAdapter): Promise<void> {
 }
 
 /**
+ * A column to add to an existing table, expressed as an ALTER TABLE
+ * definition (used by the ADD COLUMN backfill loop in runMigrationsPg).
+ */
+interface ColumnToAdd {
+	table: string;
+	column: string;
+	definition: string;
+}
+
+/**
+ * Run a single ADD COLUMN migration, tolerating only the expected
+ * concurrent-instance race (another process winning the race to add the
+ * same column, surfaced as SQLSTATE 42701 duplicate_column). Any other
+ * failure (permissions, lock timeout, etc) is rethrown so startup aborts
+ * loudly instead of silently continuing with a missing column that later
+ * writes (e.g. RequestRepository) would fail against on every request.
+ *
+ * Exported for testing.
+ */
+export async function addColumnTolerant(
+	adapter: BunSqlAdapter,
+	col: ColumnToAdd,
+): Promise<void> {
+	try {
+		await adapter.unsafe(col.definition);
+		log.info(`Added column ${col.table}.${col.column}`);
+	} catch (error) {
+		const code = (error as { code?: string } | undefined)?.code;
+		if (code !== PG_DUPLICATE_COLUMN) {
+			// Not the known duplicate-column race: a genuine failure
+			// (permissions, lock timeout, etc). Don't swallow it, a
+			// missing column here means unconditional inserts against
+			// it (e.g. RequestRepository) will fail on every write.
+			throw error;
+		}
+		// Another instance won the race to add this column concurrently.
+		// Re-verify it actually landed before treating this as a no-op.
+		const nowExists = await columnExists(adapter, col.table, col.column);
+		if (!nowExists) {
+			throw error;
+		}
+		log.info(
+			`Column ${col.table}.${col.column} already added by a concurrent migration`,
+		);
+	}
+}
+
+/**
  * Run PostgreSQL-specific migrations
  */
 export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 	// Add columns that might be missing from older schema versions
-	const columnsToAdd: Array<{
-		table: string;
-		column: string;
-		definition: string;
-	}> = [
+	const columnsToAdd: ColumnToAdd[] = [
 		{
 			table: "accounts",
 			column: "cross_region_mode",
@@ -479,28 +523,7 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 	for (const col of columnsToAdd) {
 		const exists = await columnExists(adapter, col.table, col.column);
 		if (!exists) {
-			try {
-				await adapter.unsafe(col.definition);
-				log.info(`Added column ${col.table}.${col.column}`);
-			} catch (error) {
-				const code = (error as { code?: string } | undefined)?.code;
-				if (code !== PG_DUPLICATE_COLUMN) {
-					// Not the known duplicate-column race: a genuine failure
-					// (permissions, lock timeout, etc). Don't swallow it, a
-					// missing column here means unconditional inserts against
-					// it (e.g. RequestRepository) will fail on every write.
-					throw error;
-				}
-				// Another instance won the race to add this column concurrently.
-				// Re-verify it actually landed before treating this as a no-op.
-				const nowExists = await columnExists(adapter, col.table, col.column);
-				if (!nowExists) {
-					throw error;
-				}
-				log.info(
-					`Column ${col.table}.${col.column} already added by a concurrent migration`,
-				);
-			}
+			await addColumnTolerant(adapter, col);
 		}
 	}
 
