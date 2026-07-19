@@ -27,11 +27,11 @@ import {
 	selectAccountsForRequest,
 	validateProviderPath,
 } from "./handlers";
-import { extractProjectAttributionFromRequest } from "./project-attribution";
 import {
 	completeRateLimitProbe,
 	getRateLimitProbeAdmission,
 } from "./handlers/rate-limit-cooldown";
+import { extractProjectAttributionFromRequest } from "./project-attribution";
 import {
 	buildSessionRejectResponse,
 	recordSessionRequest,
