@@ -270,6 +270,68 @@ describe("isAccountExhaustedForModel", () => {
 			);
 			expect(result.exhausted).toBe(true);
 		});
+
+		// The normalizer drops rows with a null/unparsable reset or a missing
+		// percent. A dropped same-family row is unproven capacity — the "ALL
+		// rows exhausted" rule must fail open, not conclude exhaustion from
+		// the surviving rows alone (fresh windows legitimately report
+		// resets_at: null in production payloads).
+		it("fails open when a second same-family row was dropped by the normalizer (resets_at null)", () => {
+			const data = {
+				limits: [
+					{
+						kind: "weekly_scoped",
+						percent: 100,
+						resets_at: futureReset,
+						scope: {
+							model: { id: null, display_name: "Fable" },
+							surface: "cli",
+						},
+					},
+					{
+						kind: "weekly_scoped",
+						percent: 40,
+						resets_at: null,
+						scope: {
+							model: { id: null, display_name: "Fable" },
+							surface: "api",
+						},
+					},
+				],
+				spend: { enabled: false },
+			} as never;
+			expect(
+				isAccountExhaustedForModel(data, "claude-fable-5", NOW).exhausted,
+			).toBe(false);
+		});
+
+		it("fails open when a second same-family row was dropped by the normalizer (percent missing)", () => {
+			const data = {
+				limits: [
+					{
+						kind: "weekly_scoped",
+						percent: 100,
+						resets_at: futureReset,
+						scope: {
+							model: { id: null, display_name: "Fable" },
+							surface: "cli",
+						},
+					},
+					{
+						kind: "weekly_scoped",
+						resets_at: futureReset,
+						scope: {
+							model: { id: null, display_name: "Fable" },
+							surface: "api",
+						},
+					},
+				],
+				spend: { enabled: false },
+			} as never;
+			expect(
+				isAccountExhaustedForModel(data, "claude-fable-5", NOW).exhausted,
+			).toBe(false);
+		});
 	});
 });
 

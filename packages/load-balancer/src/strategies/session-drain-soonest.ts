@@ -17,8 +17,12 @@ import { isPeekAvailable } from "./peek-availability";
  * {@link SessionStrategy} (same 5h Anthropic session window, same
  * rate-limit-window-reset session invalidation, same auto-fallback
  * reactivation) EXCEPT it has no priority-based preemption: an active,
- * available, non-expired session is NEVER interrupted, regardless of any
- * other account's priority or weekly reset. The ranking of *which* account
+ * available, non-expired session is never interrupted by DRAIN RANKING or
+ * static priority. The single deliberate exception — inherited unchanged
+ * from SessionStrategy, because it is the feature's whole purpose — is
+ * auto-fallback reactivation: an eligible account (auto_fallback_enabled,
+ * safe pause reason, provider usage window reset) takes over immediately,
+ * even from an active session. The ranking of *which* account
  * to prefer only applies at re-selection time (session start, session
  * expiry, or the active account becoming unavailable) and is driven by each
  * account's weekly_all usage-window reset time instead of a static

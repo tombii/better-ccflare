@@ -20,6 +20,7 @@ export {
 	createModelFamilyExhaustedResponse,
 	type FamilyExhaustionOrigin,
 	getFamilyExhaustionOrigin,
+	getFamilyExhaustionUntil,
 	isAccountExhaustedForModel,
 	isFamilyExhausted,
 	type ModelExhaustionResult,

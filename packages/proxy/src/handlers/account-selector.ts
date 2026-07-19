@@ -10,6 +10,7 @@ import type {
 import {
 	type FamilyExhaustionOrigin,
 	getFamilyExhaustionOrigin,
+	getFamilyExhaustionUntil,
 	isAccountExhaustedForModel,
 } from "./model-capacity";
 import type { ProxyContext } from "./proxy-types";
@@ -105,7 +106,15 @@ function isAccountCapacityExcluded(
 		now,
 	);
 	if (negativeCacheOrigin) {
-		return { excluded: true, resetAt: null, origin: negativeCacheOrigin };
+		// Feed the cache expiry into the resetAt aggregation: a reactively
+		// sidelined account becomes eligible again when its mark expires
+		// (minutes), and Retry-After must reflect that instead of only the
+		// far-away telemetry resets of other accounts.
+		return {
+			excluded: true,
+			resetAt: getFamilyExhaustionUntil(account.id, family, now),
+			origin: negativeCacheOrigin,
+		};
 	}
 	return { excluded: false, resetAt: null, origin: null };
 }

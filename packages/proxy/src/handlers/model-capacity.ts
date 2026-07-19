@@ -40,23 +40,53 @@ export function resolveOverageStatus(
 }
 
 /**
+ * Counts the RAW weekly_scoped limits[] rows attributable to `family`,
+ * regardless of whether their percent/resets_at values are usable. The
+ * normalizer ({@link collectWindows}) silently drops rows with a missing
+ * percent or an unparsable/absent reset — fresh windows legitimately carry
+ * `resets_at: null` — so the "ALL rows exhausted" check below must compare
+ * against this raw count: a dropped partial row is unproven capacity, and
+ * unproven capacity means fail open, not "exhausted by omission".
+ */
+function countRawScopedFamilyRows(
+	usageData: AnyUsageData | null | undefined,
+	family: string,
+): number {
+	const limits = (usageData as { limits?: unknown[] } | null | undefined)
+		?.limits;
+	if (!Array.isArray(limits)) return 0;
+	let count = 0;
+	for (const entry of limits) {
+		const row = entry as {
+			kind?: string;
+			scope?: { model?: { display_name?: string | null } | null } | null;
+		} | null;
+		if (!row || row.kind !== "weekly_scoped") continue;
+		const name = row.scope?.model?.display_name?.trim();
+		if (!name) continue;
+		if (getModelFamily(name) === family) count++;
+	}
+	return count;
+}
+
+/**
  * Checks whether the account's weekly per-model (weekly_scoped) cap for the
  * given model's family is fully exhausted: EVERY weekly_scoped row for that
  * family is at percent >= 100 with a reset still in the future (a single
  * non-exhausted row — e.g. a distinct surface — means the family still has
- * usable capacity), AND overage/pay-as-you-go billing has not been
- * explicitly confirmed as available for this account (see
- * {@link resolveOverageStatus}: only a confirmed "available" status keeps
- * the account in rotation past 100% — "unavailable" and "unknown" both
- * exclude, since the 100%+future-reset telemetry is itself the primary
- * exhaustion signal).
+ * usable capacity), AND overage/pay-as-you-go billing is CONFIRMED
+ * unavailable (see {@link resolveOverageStatus}: "available" means upstream
+ * still serves past 100% via overage, and "unknown" — missing/contradictory
+ * billing signals — must fail open rather than assume disabled).
  *
  * Fails open (returns {exhausted:false}) whenever the family can't be
  * confidently attributed: unknown request-model family, a scoped row whose
  * display name has no known family mapping, a reset that has already
- * passed (stale telemetry), or missing telemetry altogether. A false
- * positive here removes a working account from rotation; a false negative
- * just costs one extra 429 round-trip, so the asymmetry favors not excluding.
+ * passed (stale telemetry), a family row the normalizer had to drop
+ * (missing percent / unusable reset — see {@link countRawScopedFamilyRows}),
+ * or missing telemetry altogether. A false positive here removes a working
+ * account from rotation; a false negative just costs one extra 429
+ * round-trip, so the asymmetry favors not excluding.
  */
 export function isAccountExhaustedForModel(
 	usageData: AnyUsageData | null | undefined,
@@ -70,6 +100,13 @@ export function isAccountExhaustedForModel(
 		(window) => window.scoped && window.modelFamily === family,
 	);
 	if (familyRows.length === 0) return { exhausted: false, resetAt: null };
+
+	// A raw family row the normalizer dropped (missing percent, resets_at
+	// null/unparsable) is unproven capacity — "all remaining rows exhausted"
+	// would be exhaustion by omission, so fail open instead.
+	if (countRawScopedFamilyRows(usageData, family) !== familyRows.length) {
+		return { exhausted: false, resetAt: null };
+	}
 
 	const exhaustedRows = familyRows.filter(
 		(window) => window.utilization >= 100 && window.resetAtMs > now,
@@ -183,6 +220,29 @@ export function getFamilyExhaustionOrigin(
 	return entry.origin;
 }
 
+/**
+ * Expiry (epoch ms) of the current negative-cache mark for (accountId,
+ * family), or null when nothing is marked / the mark has expired. Selection
+ * feeds this into the all-exhausted response's earliest-reset aggregation so
+ * Retry-After reflects when a reactively-sidelined account actually becomes
+ * eligible again (minutes), not only telemetry reset times (potentially
+ * days).
+ */
+export function getFamilyExhaustionUntil(
+	accountId: string,
+	family: string,
+	now: number = Date.now(),
+): number | null {
+	const key = negativeCacheKey(accountId, family);
+	const entry = negativeCache.get(key);
+	if (!entry) return null;
+	if (entry.until <= now) {
+		negativeCache.delete(key);
+		return null;
+	}
+	return entry.until;
+}
+
 /** Test-only: reset all negative-cache state between test cases. */
 export function clearFamilyExhaustionCache(): void {
 	negativeCache.clear();
@@ -229,11 +289,14 @@ export function createModelFamilyExhaustedResponse(
 	const resetIso =
 		info.resetAt != null ? new Date(info.resetAt).toISOString() : null;
 
+	// The non-confirmed wording must stay accurate for MIXED provenance too
+	// (some accounts telemetry-filtered, some only recently rejected), so it
+	// names both possibilities instead of asserting "all recently rejected".
 	const message =
 		info.origin === "telemetry_confirmed"
 			? `All available accounts have exhausted their weekly ${info.family} capacity.` +
 				(resetIso ? ` Earliest reset at ${resetIso}.` : "")
-			: `All available accounts have recently rejected requests for the ${info.family} model family.` +
+			: `All available accounts are temporarily unavailable for the ${info.family} model family (capacity exhausted or recently rejected upstream).` +
 				(resetIso ? ` Retry after ${resetIso}.` : "");
 
 	return new Response(

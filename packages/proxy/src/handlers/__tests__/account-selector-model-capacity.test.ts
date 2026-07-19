@@ -577,4 +577,28 @@ describe("selectAccountsForRequest — exhaustion signal provenance", () => {
 			"recent_upstream_rejection",
 		);
 	});
+
+	// codex branch-review finding 3: with mixed provenance, Retry-After must
+	// reflect the EARLIEST point any excluded account becomes eligible again —
+	// the reactive mark's 60s expiry here, not the telemetry account's
+	// 3-day scoped reset.
+	it("aggregates the earliest recovery time across telemetry resets AND negative-cache expiries", async () => {
+		const now = Date.now();
+		const telemetryAcc = makeAccount({ id: "acc-agg-telemetry" });
+		const reactiveAcc = makeAccount({ id: "acc-agg-reactive" });
+		usageCache.set(telemetryAcc.id, exhaustedUsage("Fable", now));
+		const reactiveUntil = now + 60_000;
+		markFamilyExhausted(reactiveAcc.id, "fable", reactiveUntil);
+		const ctx = makeCtx({
+			accounts: [telemetryAcc, reactiveAcc],
+			capacityRoutingMode: "exhausted",
+		});
+		const meta = makeRequestMeta();
+
+		const result = await selectAccountsForRequest(meta, ctx, "claude-fable-5");
+
+		expect(result).toHaveLength(0);
+		const info = getModelFamilyExhaustionInfo(meta);
+		expect(info?.resetAt).toBe(reactiveUntil);
+	});
 });

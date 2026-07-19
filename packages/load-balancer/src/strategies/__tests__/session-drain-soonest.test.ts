@@ -579,6 +579,39 @@ describe("SessionDrainSoonestStrategy", () => {
 	// weekly reset would otherwise place a different available account first.
 	// -------------------------------------------------------------------------
 	describe("auto-fallback position-0 guarantee (S6)", () => {
+		// codex branch-review finding 2: auto-fallback reactivation is the ONE
+		// deliberate exception to "active sessions are never preempted" —
+		// inherited unchanged from SessionStrategy (jumping back onto a
+		// reactivated account is the feature's purpose). This test pins that
+		// exception explicitly so the guarantee wording stays honest.
+		it("select() lets an eligible auto-fallback account take over even from an ACTIVE session (deliberate exception)", () => {
+			const now = Date.now();
+
+			const fallback = makeAccount({
+				id: "fallback-over-session",
+				name: "fallback-over-session",
+				paused: true,
+				rate_limit_reset: now - 2000, // expired -> triggers reactivation
+				priority: 0,
+				auto_fallback_enabled: true,
+			});
+			const activeSession = makeAccount({
+				id: "active-session",
+				name: "active-session",
+				priority: 5,
+				session_start: now - 30 * 60 * 1000, // active 5h session, 30min in
+				session_request_count: 12,
+			});
+			mockStore.setWeeklyReset("active-session", now + 60 * 1000);
+
+			const selected = strategy.select([activeSession, fallback], meta);
+			expect(selected[0]).toBe(fallback);
+
+			// peek() must mirror the same takeover decision.
+			const peeked = strategy.peek([activeSession, fallback]);
+			expect(peeked).toBe(fallback.id);
+		});
+
 		it("select() returns the chosen auto-fallback account at position 0 even when another available account has an earlier drain reset", () => {
 			const now = Date.now();
 
