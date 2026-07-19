@@ -7,7 +7,10 @@ import {
 } from "@better-ccflare/providers";
 import type { Account, RateLimitReason } from "@better-ccflare/types";
 import type { ProxyContext } from "./proxy-types";
-import { applyRateLimitCooldown } from "./rate-limit-cooldown";
+import {
+	applyRateLimitCooldown,
+	completeRateLimitProbe,
+} from "./rate-limit-cooldown";
 
 const log = new Logger("ResponseProcessor");
 
@@ -320,6 +323,7 @@ export async function processProxyResponse(
 	}
 
 	if (!rateLimitInfo.isRateLimited && !skipAccountMetadata) {
+		completeRateLimitProbe(account, response.ok ? "recovered" : "abandoned");
 		// (a) Stability reset — gated only on rate_limited_at.
 		// clearExpiredRateLimits nulls rate_limited_until without touching rate_limited_at,
 		// so we must not gate on rate_limited_until or we'd miss accounts already cleared

@@ -29,6 +29,10 @@ import {
 } from "./handlers";
 import { extractProjectAttributionFromRequest } from "./project-attribution";
 import {
+	completeRateLimitProbe,
+	getRateLimitProbeAdmission,
+} from "./handlers/rate-limit-cooldown";
+import {
 	buildSessionRejectResponse,
 	recordSessionRequest,
 } from "./session-governor";
@@ -419,21 +423,35 @@ export async function handleProxy(
 			);
 		}
 
-		response = await proxyWithAccount(
-			req,
-			url,
-			accounts[i],
-			requestMeta,
-			finalBodyBuffer,
-			finalCreateBodyStream,
-			i,
-			ctx,
-			modelOverride,
-			apiKeyId,
-			apiKeyName,
-			requestBodyContext,
-			!filteredComboInfo?.comboName && i === accounts.length - 1,
-		);
+		const probeAdmission = getRateLimitProbeAdmission(accounts[i]);
+		if (probeAdmission === "suppressed") {
+			// A mature cooldown just expired for this account and another
+			// concurrent request is already probing it. Skip straight to the
+			// next account instead of stampeding the recovering account.
+			continue;
+		}
+
+		try {
+			response = await proxyWithAccount(
+				req,
+				url,
+				accounts[i],
+				requestMeta,
+				finalBodyBuffer,
+				finalCreateBodyStream,
+				i,
+				ctx,
+				modelOverride,
+				apiKeyId,
+				apiKeyName,
+				requestBodyContext,
+				!filteredComboInfo?.comboName && i === accounts.length - 1,
+			);
+		} finally {
+			if (probeAdmission === "admitted") {
+				completeRateLimitProbe(accounts[i], "abandoned");
+			}
+		}
 
 		if (response) {
 			return response;
@@ -472,21 +490,32 @@ export async function handleProxy(
 				`Fallback: trying ${fallbackAccounts.length} SessionStrategy accounts`,
 			);
 			for (let i = 0; i < fallbackAccounts.length; i++) {
-				response = await proxyWithAccount(
-					req,
-					url,
-					fallbackAccounts[i],
-					requestMeta,
-					finalBodyBuffer,
-					finalCreateBodyStream,
-					i,
-					ctx,
-					undefined, // No model override for fallback path
-					apiKeyId,
-					apiKeyName,
-					requestBodyContext,
-					i === fallbackAccounts.length - 1,
-				);
+				const probeAdmission = getRateLimitProbeAdmission(fallbackAccounts[i]);
+				if (probeAdmission === "suppressed") {
+					continue;
+				}
+
+				try {
+					response = await proxyWithAccount(
+						req,
+						url,
+						fallbackAccounts[i],
+						requestMeta,
+						finalBodyBuffer,
+						finalCreateBodyStream,
+						i,
+						ctx,
+						undefined, // No model override for fallback path
+						apiKeyId,
+						apiKeyName,
+						requestBodyContext,
+						i === fallbackAccounts.length - 1,
+					);
+				} finally {
+					if (probeAdmission === "admitted") {
+						completeRateLimitProbe(fallbackAccounts[i], "abandoned");
+					}
+				}
 
 				if (response) {
 					return response;
