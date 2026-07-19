@@ -8,8 +8,9 @@ import type {
 	RequestMeta,
 } from "@better-ccflare/types";
 import {
+	type FamilyExhaustionOrigin,
+	getFamilyExhaustionOrigin,
 	isAccountExhaustedForModel,
-	isFamilyExhausted,
 } from "./model-capacity";
 import type { ProxyContext } from "./proxy-types";
 
@@ -31,6 +32,7 @@ export function getComboSlotInfo(meta: RequestMeta): ComboSlotInfo | null {
 export interface ModelFamilyExhaustionInfo {
 	family: string;
 	resetAt: number | null;
+	origin: FamilyExhaustionOrigin;
 }
 
 // Module-level WeakMap to store model-family exhaustion info per RequestMeta,
@@ -67,16 +69,23 @@ function isCapacityRoutingEnabled(ctx: ProxyContext): boolean {
 /**
  * Whether `account` should be excluded from routing for `model`'s family:
  * either its cached usage telemetry shows a fully exhausted (>=100%, future
- * reset) weekly_scoped cap for that family, or the family was recently
- * observed exhausted via an out_of_credits 429 (negative cache).
+ * reset) weekly_scoped cap for that family (origin "telemetry_confirmed"),
+ * or the family was recently observed exhausted via an out_of_credits 429
+ * (negative cache — origin as recorded by markFamilyExhausted, normally
+ * "recent_upstream_rejection"). Telemetry is checked first: it's the
+ * stronger signal and is what should surface if both happen to agree.
  */
 function isAccountCapacityExcluded(
 	account: Account,
 	model: string,
 	now: number,
-): { excluded: boolean; resetAt: number | null } {
+): {
+	excluded: boolean;
+	resetAt: number | null;
+	origin: FamilyExhaustionOrigin | null;
+} {
 	const family = getModelFamily(model);
-	if (!family) return { excluded: false, resetAt: null };
+	if (!family) return { excluded: false, resetAt: null, origin: null };
 
 	const usageResult = isAccountExhaustedForModel(
 		usageCache.get(account.id),
@@ -84,12 +93,21 @@ function isAccountCapacityExcluded(
 		now,
 	);
 	if (usageResult.exhausted) {
-		return { excluded: true, resetAt: usageResult.resetAt };
+		return {
+			excluded: true,
+			resetAt: usageResult.resetAt,
+			origin: "telemetry_confirmed",
+		};
 	}
-	if (isFamilyExhausted(account.id, family, now)) {
-		return { excluded: true, resetAt: null };
+	const negativeCacheOrigin = getFamilyExhaustionOrigin(
+		account.id,
+		family,
+		now,
+	);
+	if (negativeCacheOrigin) {
+		return { excluded: true, resetAt: null, origin: negativeCacheOrigin };
 	}
-	return { excluded: false, resetAt: null };
+	return { excluded: false, resetAt: null, origin: null };
 }
 
 /**
@@ -148,12 +166,19 @@ export async function getOrderedAccounts(
  * @param meta - Request metadata
  * @param ctx - The proxy context
  * @param model - Optional model string for combo family detection
+ * @param options - `skipCombo` makes the combo lookup an explicit no-op —
+ *   used by proxy.ts's Step-10 fallback re-selection after a combo's own
+ *   slots have already been attempted and failed, so it falls straight into
+ *   normal (capacity-filtered) routing instead of re-triggering the same
+ *   combo lookup (which is keyed only on the model's family, not on
+ *   `meta.comboName`, so clearing comboName alone would not prevent it).
  * @returns Array of selected accounts
  */
 export async function selectAccountsForRequest(
 	meta: RequestMeta,
 	ctx: ProxyContext,
 	model?: string,
+	options?: { skipCombo?: boolean },
 ): Promise<Account[]> {
 	// Check if a specific account is requested via special header
 	if (meta.headers) {
@@ -249,8 +274,9 @@ export async function selectAccountsForRequest(
 		return filtered;
 	};
 
-	// Try combo-aware routing if a model is provided
-	if (model) {
+	// Try combo-aware routing if a model is provided (skipped entirely when
+	// skipCombo is set — see the `options` doc above).
+	if (model && !options?.skipCombo) {
 		const family = getModelFamily(model);
 		if (family) {
 			const validFamilies: readonly string[] = [
@@ -318,20 +344,24 @@ export async function selectAccountsForRequest(
 						});
 					}
 
-					// Store combo slot info for downstream consumption
-					const slotInfo: ComboSlotInfo = {
-						comboName: combo.name,
-						slots: slotEntries,
-					};
-					setComboSlotInfo(meta, slotInfo);
-					meta.comboName = combo.name;
-
 					const filteredComboAccounts = applyExclusions(availableAccounts);
 					if (filteredComboAccounts.length > 0) {
+						// Only mark this request as combo-routed once combo accounts are
+						// actually being returned — setting this earlier (even when every
+						// slot ends up unavailable/filtered) would leave stale combo state
+						// on `meta` for the normal-routing fallthrough below.
+						const slotInfo: ComboSlotInfo = {
+							comboName: combo.name,
+							slots: slotEntries,
+						};
+						setComboSlotInfo(meta, slotInfo);
+						meta.comboName = combo.name;
 						return filteredComboAccounts;
 					}
 
-					// All slots unavailable — fall back to normal routing
+					// All slots unavailable — fall back to normal routing. Combo state
+					// is deliberately left unset (never was set above) so this fallthrough
+					// is treated as ordinary, non-combo selection downstream.
 					log.warn(
 						`All ${combo.slots.length} combo slots unavailable for ${combo.name}, falling back to SessionStrategy`,
 					);
@@ -355,15 +385,23 @@ export async function selectAccountsForRequest(
 			const available: Account[] = [];
 			let earliestResetAt: number | null = null;
 			let anyExcluded = false;
+			// Strictest origin wins: the aggregate is only "telemetry_confirmed"
+			// when EVERY excluded account was telemetry-confirmed; a single
+			// reactive-only exclusion downgrades the whole response to neutral
+			// wording, since that account's exhaustion was never corroborated.
+			let allTelemetryConfirmed = true;
 
 			for (const account of orderedAccounts) {
-				const { excluded, resetAt } = isAccountCapacityExcluded(
+				const { excluded, resetAt, origin } = isAccountCapacityExcluded(
 					account,
 					model,
 					now,
 				);
 				if (excluded) {
 					anyExcluded = true;
+					if (origin !== "telemetry_confirmed") {
+						allTelemetryConfirmed = false;
+					}
 					if (
 						resetAt != null &&
 						(earliestResetAt == null || resetAt < earliestResetAt)
@@ -382,6 +420,9 @@ export async function selectAccountsForRequest(
 				setModelFamilyExhaustionInfo(meta, {
 					family,
 					resetAt: earliestResetAt,
+					origin: allTelemetryConfirmed
+						? "telemetry_confirmed"
+						: "recent_upstream_rejection",
 				});
 				return [];
 			}

@@ -18,12 +18,15 @@ export {
 } from "./agent-interceptor";
 export {
 	createModelFamilyExhaustedResponse,
-	findScopedResetAt,
+	type FamilyExhaustionOrigin,
+	getFamilyExhaustionOrigin,
 	isAccountExhaustedForModel,
 	isFamilyExhausted,
 	type ModelExhaustionResult,
 	type ModelFamilyExhaustionInfo as ModelCapacityExhaustionInfo,
 	markFamilyExhausted,
+	type OverageStatus,
+	resolveOverageStatus,
 } from "./model-capacity";
 export {
 	createPoolExhaustedResponse,

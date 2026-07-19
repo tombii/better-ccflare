@@ -3,6 +3,7 @@ import { usageCache } from "@better-ccflare/providers";
 import type { Account, RequestMeta } from "@better-ccflare/types";
 import {
 	clearFamilyExhaustionCache,
+	getFamilyExhaustionOrigin,
 	isFamilyExhausted,
 } from "../model-capacity";
 import { proxyWithAccount } from "../proxy-operations";
@@ -253,7 +254,13 @@ describe("proxyWithAccount — out_of_credits (issue #261)", () => {
 		expect(isFamilyExhausted(account.id, "sonnet")).toBe(true);
 	});
 
-	it("seeds the negative-cache TTL from the account's known weekly_scoped reset when available", async () => {
+	// v3 Fix1: findScopedResetAt-based TTL seeding is REMOVED. The negative
+	// cache always uses the fixed 5-minute default TTL for a reactive
+	// out_of_credits mark, regardless of any longer weekly_scoped reset found
+	// in cached usage telemetry — a false attribution (5h-/weekly_all-/beta
+	// bind misread as this family) now costs at most 5 minutes instead of
+	// however far out the (possibly unrelated) scoped reset happens to be.
+	it("always uses the fixed 5-minute TTL, even when a longer weekly_scoped reset is present in cached usage telemetry", async () => {
 		globalThis.fetch = mock(async () => outOfCreditsResponse());
 
 		const now = Date.now();
@@ -285,14 +292,42 @@ describe("proxyWithAccount — out_of_credits (issue #261)", () => {
 			ctx,
 		);
 
-		// Still exhausted just past the default 5-minute TTL — proves the real
-		// scoped reset (10 min out), not the 5-minute fallback, was used.
-		expect(isFamilyExhausted(account.id, "sonnet", now + 6 * 60 * 1000)).toBe(
+		// Still exhausted within the 5-minute default TTL...
+		expect(isFamilyExhausted(account.id, "sonnet", now + 4 * 60 * 1000)).toBe(
 			true,
 		);
-		// Expired once the real reset time passes.
-		expect(isFamilyExhausted(account.id, "sonnet", resetAt + 1_000)).toBe(
+		// ...but expired just past 5 minutes, well before the 10-minute scoped
+		// reset — proves the fixed TTL was used, NOT the longer scoped reset.
+		expect(isFamilyExhausted(account.id, "sonnet", now + 6 * 60 * 1000)).toBe(
 			false,
+		);
+	});
+
+	// v3 Revision v2 Fix1: a reactive out_of_credits mark is never confirmed
+	// by telemetry — its provenance must be recorded as "recent_upstream_rejection"
+	// so the eventual model_family_exhausted response uses neutral wording
+	// instead of asserting "weekly capacity exhausted".
+	it("marks the negative-cache entry with 'recent_upstream_rejection' origin, never 'telemetry_confirmed'", async () => {
+		globalThis.fetch = mock(async () => outOfCreditsResponse());
+
+		const ctx = makeProxyContextWithAsyncExec();
+		const account = makeAccount();
+		const bodyBuffer = makeRequestBody("claude-sonnet-4-5");
+		const req = makeRequest(bodyBuffer);
+
+		await proxyWithAccount(
+			req,
+			new URL("https://proxy.local/v1/messages"),
+			account,
+			makeRequestMeta(),
+			bodyBuffer,
+			() => undefined,
+			0,
+			ctx,
+		);
+
+		expect(getFamilyExhaustionOrigin(account.id, "sonnet")).toBe(
+			"recent_upstream_rejection",
 		);
 	});
 

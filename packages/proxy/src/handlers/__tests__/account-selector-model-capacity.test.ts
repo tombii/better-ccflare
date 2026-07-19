@@ -111,6 +111,9 @@ function exhaustedUsage(displayName: string, now: number) {
 				},
 			},
 		],
+		// Overage confirmed unavailable — without this the tri-state resolver
+		// reports "unknown" and the capacity filter correctly fails open.
+		spend: { enabled: false },
 	} as never;
 }
 
@@ -316,5 +319,262 @@ describe("selectAccountsForRequest — model-scoped capacity filter (switch off)
 		const result = await selectAccountsForRequest(meta, ctx, "claude-fable-5");
 
 		expect(result.map((a) => a.id)).toEqual(["acc-exhausted"]);
+	});
+
+	// v3 S8: capacity routing off must leave a pre-populated negative cache
+	// entirely without effect — exact today's behavior.
+	it("ignores a pre-populated negative cache entry when capacity routing is off", async () => {
+		const acc = makeAccount({ id: "acc-1" });
+		markFamilyExhausted(acc.id, "fable", Date.now() + 60_000);
+		const ctx = makeCtx({ accounts: [acc], capacityRoutingMode: "off" });
+		const meta = makeRequestMeta();
+
+		const result = await selectAccountsForRequest(meta, ctx, "claude-fable-5");
+
+		expect(result.map((a) => a.id)).toEqual(["acc-1"]);
+		expect(getModelFamilyExhaustionInfo(meta)).toBeNull();
+	});
+});
+
+// ── v3 Revision v2 Fix3 (codex-1/2): skipCombo option ───────────────────────────
+//
+// Step 10 in proxy.ts re-selects after every combo slot has failed. Passing
+// only the model would re-trigger the SAME combo lookup (the combo lookup is
+// keyed purely on the model's family, not on requestMeta.comboName — clearing
+// comboName does NOT make the branch inert). skipCombo makes the combo branch
+// an explicit no-op so Step 10 falls straight into normal (capacity-filtered)
+// routing instead of re-selecting the already-failed combo.
+
+describe("selectAccountsForRequest — skipCombo option (v3 Fix3)", () => {
+	it("does not perform a combo lookup at all when skipCombo is true, even though an active combo exists for the family", async () => {
+		const comboAcc = makeAccount({ id: "acc-combo" });
+		const combo = makeCombo([
+			{
+				id: "slot-1",
+				combo_id: "combo-1",
+				account_id: "acc-combo",
+				model: "claude-sonnet-4-5",
+				priority: 0,
+				enabled: true,
+			},
+		]);
+		const ctx = makeCtx({
+			accounts: [comboAcc],
+			activeCombo: combo,
+			capacityRoutingMode: "off",
+		});
+		const meta = makeRequestMeta();
+
+		const result = await selectAccountsForRequest(
+			meta,
+			ctx,
+			"claude-sonnet-4-5",
+			{ skipCombo: true },
+		);
+
+		expect(
+			(ctx.dbOps.getActiveComboForFamily as ReturnType<typeof mock>).mock.calls
+				.length,
+		).toBe(0);
+		// Falls straight to normal (strategy-driven) routing.
+		expect(result.map((a) => a.id)).toEqual(["acc-combo"]);
+	});
+
+	it("applies the capacity filter on the skipCombo path using the passed model", async () => {
+		const exhausted = makeAccount({ id: "acc-exhausted" });
+		usageCache.set(exhausted.id, exhaustedUsage("Sonnet", Date.now()));
+		const combo = makeCombo([
+			{
+				id: "slot-1",
+				combo_id: "combo-1",
+				account_id: "acc-exhausted",
+				model: "claude-sonnet-4-5",
+				priority: 0,
+				enabled: true,
+			},
+		]);
+		const ctx = makeCtx({
+			accounts: [exhausted],
+			activeCombo: combo,
+			capacityRoutingMode: "exhausted",
+		});
+		const meta = makeRequestMeta();
+
+		const result = await selectAccountsForRequest(
+			meta,
+			ctx,
+			"claude-sonnet-4-5",
+			{ skipCombo: true },
+		);
+
+		expect(result).toHaveLength(0);
+		expect(getModelFamilyExhaustionInfo(meta)?.family).toBe("sonnet");
+	});
+});
+
+// ── v3 S4 (integration level): overage tri-state ────────────────────────────────
+
+describe("selectAccountsForRequest — overage tri-state (integration)", () => {
+	function scopedUsageWithOverage(
+		displayName: string,
+		now: number,
+		overage?: { extraUsageEnabled?: boolean; spendEnabled?: boolean },
+	) {
+		return {
+			limits: [
+				{
+					kind: "weekly_scoped",
+					percent: 100,
+					resets_at: new Date(now + 3 * 24 * 60 * 60 * 1000).toISOString(),
+					scope: {
+						model: { id: null, display_name: displayName },
+						surface: null,
+					},
+				},
+			],
+			...(overage?.extraUsageEnabled !== undefined
+				? {
+						extra_usage: {
+							is_enabled: overage.extraUsageEnabled,
+							monthly_limit: null,
+							used_credits: null,
+							utilization: null,
+						},
+					}
+				: {}),
+			...(overage?.spendEnabled !== undefined
+				? { spend: { enabled: overage.spendEnabled } }
+				: {}),
+		} as never;
+	}
+
+	it("keeps an account routable when overage is available (extra_usage.is_enabled=true)", async () => {
+		const acc = makeAccount({ id: "acc-overage-available" });
+		usageCache.set(
+			acc.id,
+			scopedUsageWithOverage("Fable", Date.now(), { extraUsageEnabled: true }),
+		);
+		const ctx = makeCtx({ accounts: [acc], capacityRoutingMode: "exhausted" });
+		const meta = makeRequestMeta();
+
+		const result = await selectAccountsForRequest(meta, ctx, "claude-fable-5");
+
+		expect(result.map((a) => a.id)).toEqual(["acc-overage-available"]);
+	});
+
+	it("excludes an account when overage is explicitly unavailable (extra_usage.is_enabled=false)", async () => {
+		const acc = makeAccount({ id: "acc-overage-unavailable" });
+		usageCache.set(
+			acc.id,
+			scopedUsageWithOverage("Fable", Date.now(), { extraUsageEnabled: false }),
+		);
+		const ctx = makeCtx({ accounts: [acc], capacityRoutingMode: "exhausted" });
+		const meta = makeRequestMeta();
+
+		const result = await selectAccountsForRequest(meta, ctx, "claude-fable-5");
+
+		expect(result).toHaveLength(0);
+	});
+
+	it("fails open (keeps the account) when overage status is unknown (no extra_usage, no spend block)", async () => {
+		const acc = makeAccount({ id: "acc-overage-unknown" });
+		usageCache.set(acc.id, scopedUsageWithOverage("Fable", Date.now()));
+		const ctx = makeCtx({ accounts: [acc], capacityRoutingMode: "exhausted" });
+		const meta = makeRequestMeta();
+
+		const result = await selectAccountsForRequest(meta, ctx, "claude-fable-5");
+
+		expect(result.map((a) => a.id)).toEqual(["acc-overage-unknown"]);
+	});
+});
+
+// ── v3 S8/codex-6 (integration level): two scoped rows for the same family ───────
+
+describe("selectAccountsForRequest — multiple weekly_scoped rows for the same family", () => {
+	it("fails open when only one of two same-family rows is exhausted", async () => {
+		const acc = makeAccount({ id: "acc-two-rows" });
+		const now = Date.now();
+		usageCache.set(acc.id, {
+			limits: [
+				{
+					kind: "weekly_scoped",
+					percent: 100,
+					resets_at: new Date(now + 3 * 24 * 60 * 60 * 1000).toISOString(),
+					scope: { model: { id: null, display_name: "Fable" }, surface: "cli" },
+				},
+				{
+					kind: "weekly_scoped",
+					percent: 40,
+					resets_at: new Date(now + 3 * 24 * 60 * 60 * 1000).toISOString(),
+					scope: { model: { id: null, display_name: "Fable" }, surface: "api" },
+				},
+			],
+		} as never);
+		const ctx = makeCtx({ accounts: [acc], capacityRoutingMode: "exhausted" });
+		const meta = makeRequestMeta();
+
+		const result = await selectAccountsForRequest(meta, ctx, "claude-fable-5");
+
+		expect(result.map((a) => a.id)).toEqual(["acc-two-rows"]);
+	});
+});
+
+// ── v3 Revision v2 Fix1: signal provenance surfaced on the exhaustion info ────────
+
+describe("selectAccountsForRequest — exhaustion signal provenance", () => {
+	it("reports origin 'telemetry_confirmed' when exhaustion comes from cached usage telemetry", async () => {
+		const acc = makeAccount({ id: "acc-telemetry" });
+		usageCache.set(acc.id, exhaustedUsage("Fable", Date.now()));
+		const ctx = makeCtx({ accounts: [acc], capacityRoutingMode: "exhausted" });
+		const meta = makeRequestMeta();
+
+		const result = await selectAccountsForRequest(meta, ctx, "claude-fable-5");
+
+		expect(result).toHaveLength(0);
+		expect(getModelFamilyExhaustionInfo(meta)?.origin).toBe(
+			"telemetry_confirmed",
+		);
+	});
+
+	it("reports origin 'recent_upstream_rejection' when exhaustion comes only from the reactive negative cache", async () => {
+		const acc = makeAccount({ id: "acc-reactive" });
+		markFamilyExhausted(acc.id, "sonnet", Date.now() + 60_000);
+		const ctx = makeCtx({ accounts: [acc], capacityRoutingMode: "exhausted" });
+		const meta = makeRequestMeta();
+
+		const result = await selectAccountsForRequest(
+			meta,
+			ctx,
+			"claude-sonnet-4-5",
+		);
+
+		expect(result).toHaveLength(0);
+		expect(getModelFamilyExhaustionInfo(meta)?.origin).toBe(
+			"recent_upstream_rejection",
+		);
+	});
+
+	// v3 Revision v2 Fix3: strictest origin wins when the excluded accounts
+	// disagree on provenance — a mix of telemetry-confirmed and reactive-only
+	// exclusions must not claim "weekly capacity exhausted" for the whole
+	// family, since at least one of those accounts was never corroborated by
+	// telemetry.
+	it("reports origin 'recent_upstream_rejection' when excluded accounts have mixed provenance (strictest origin wins)", async () => {
+		const telemetryAcc = makeAccount({ id: "acc-mixed-telemetry" });
+		const reactiveAcc = makeAccount({ id: "acc-mixed-reactive" });
+		usageCache.set(telemetryAcc.id, exhaustedUsage("Fable", Date.now()));
+		markFamilyExhausted(reactiveAcc.id, "fable", Date.now() + 60_000);
+		const ctx = makeCtx({
+			accounts: [telemetryAcc, reactiveAcc],
+			capacityRoutingMode: "exhausted",
+		});
+		const meta = makeRequestMeta();
+
+		const result = await selectAccountsForRequest(meta, ctx, "claude-fable-5");
+
+		expect(result).toHaveLength(0);
+		expect(getModelFamilyExhaustionInfo(meta)?.origin).toBe(
+			"recent_upstream_rejection",
+		);
 	});
 });
