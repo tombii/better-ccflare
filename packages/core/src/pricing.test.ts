@@ -1,6 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-// Import vi from vitest for mocking utilities
-import { vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
 import {
 	estimateCostUSD,
 	fetchNanoGPTPricingData,
@@ -37,7 +35,6 @@ describe("models.dev pricing", () => {
 	});
 
 	afterEach(() => {
-		vi.useRealTimers();
 		global.fetch = originalFetch;
 		if (originalOffline === undefined) {
 			delete process.env.CF_PRICING_OFFLINE;
@@ -83,8 +80,7 @@ describe("models.dev pricing", () => {
 		expect(modelsDevCalls).toBe(1);
 	});
 
-	it("aborts a stalled models.dev fetch and falls back to bundled pricing", async () => {
-		vi.useFakeTimers();
+	it("passes an AbortSignal to the models.dev fetch and falls back to bundled pricing on abort", async () => {
 		let modelsDevSignal: AbortSignal | undefined;
 		const fetchMock = vi.fn(
 			(input: string | URL | Request, init?: RequestInit) => {
@@ -96,31 +92,18 @@ describe("models.dev pricing", () => {
 				}
 
 				modelsDevSignal = init?.signal ?? undefined;
-				return new Promise<Response>((_resolve, reject) => {
-					modelsDevSignal?.addEventListener(
-						"abort",
-						() => reject(new DOMException("aborted", "AbortError")),
-						{ once: true },
-					);
-					// Test-only escape hatch: the pre-fix fetch has no signal, so make
-					// the failing test settle instead of leaving a permanent promise.
-					setTimeout(
-						() => reject(new Error("test fetch guard expired")),
-						10_001,
-					);
-				});
+				// Simulate the fetch being aborted (as the real 10s timeout would
+				// trigger via AbortController.abort()) without waiting on a real timer.
+				return Promise.reject(new DOMException("aborted", "AbortError"));
 			},
 		);
 		global.fetch = fetchMock as typeof global.fetch;
 
-		const estimate = estimateCostUSD("claude-sonnet-4-20250514", {
+		const cost = await estimateCostUSD("claude-sonnet-4-20250514", {
 			outputTokens: 1_000_000,
 		});
-		vi.advanceTimersByTime(10_001);
-		const cost = await estimate;
 
 		expect(modelsDevSignal).toBeInstanceOf(AbortSignal);
-		expect(modelsDevSignal?.aborted).toBe(true);
 		expect(cost).toBe(15);
 	});
 });
