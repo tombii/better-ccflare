@@ -1896,14 +1896,16 @@ async function handleGracefulShutdown(signal: string) {
 				// record final usage. Await tracked stream settlements, then
 				// wait for Bun's pending request counter to clear so those
 				// finalizers can register before usage-collector drain and DB
-				// disposal. Bounded by the remaining drain budget, not a fixed
-				// sleep that can finish too early or waste time.
-				await settled;
-				const settleDeadline = Date.now() + Math.max(0, deadline - Date.now());
-				while (
-					serverInstance.pendingRequests > 0 &&
-					Date.now() < settleDeadline
-				) {
+				// disposal. Bounded by the remaining drain budget so a source
+				// stream whose cancel() handler hangs can't silently consume
+				// the watchdog margin reserved for DB/usage cleanup.
+				await Promise.race([
+					settled,
+					new Promise<void>((resolve) =>
+						setTimeout(resolve, Math.max(0, deadline - Date.now())),
+					),
+				]);
+				while (serverInstance.pendingRequests > 0 && Date.now() < deadline) {
 					await new Promise((resolve) => setTimeout(resolve, 50));
 				}
 			}
