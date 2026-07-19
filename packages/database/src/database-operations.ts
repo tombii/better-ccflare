@@ -763,6 +763,14 @@ OAuth tokens will need to be re-authenticated.
 		);
 	}
 
+	async setRequiresReauth(accountId: string, value: boolean): Promise<void> {
+		await withDatabaseRetry(
+			() => this.accounts.setRequiresReauth(accountId, value),
+			this.retryConfig,
+			"setRequiresReauth",
+		);
+	}
+
 	async updateAccountUsage(accountId: string): Promise<void> {
 		const sessionDuration =
 			this.runtime?.sessionDurationMs || 5 * 60 * 60 * 1000;

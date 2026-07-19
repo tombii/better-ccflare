@@ -14,6 +14,7 @@ export class AccountRepository extends BaseRepository<Account> {
 				expires_at, created_at, last_used, request_count, total_requests,
 				rate_limited_until, rate_limited_reason, rate_limited_at, session_start, session_request_count,
 				COALESCE(paused, 0) as paused,
+				COALESCE(requires_reauth, 0) as requires_reauth,
 				rate_limit_reset, rate_limit_status, rate_limit_remaining,
 				COALESCE(priority, 0) as priority,
 				COALESCE(auto_fallback_enabled, 0) as auto_fallback_enabled,
@@ -42,6 +43,7 @@ export class AccountRepository extends BaseRepository<Account> {
 				expires_at, created_at, last_used, request_count, total_requests,
 				rate_limited_until, rate_limited_reason, rate_limited_at, session_start, session_request_count,
 				COALESCE(paused, 0) as paused,
+				COALESCE(requires_reauth, 0) as requires_reauth,
 				rate_limit_reset, rate_limit_status, rate_limit_remaining,
 				COALESCE(priority, 0) as priority,
 				COALESCE(auto_fallback_enabled, 0) as auto_fallback_enabled,
@@ -74,15 +76,22 @@ export class AccountRepository extends BaseRepository<Account> {
 		const now = Date.now();
 		if (refreshToken) {
 			await this.run(
-				`UPDATE accounts SET access_token = ?, expires_at = ?, refresh_token = ?, refresh_token_issued_at = ? WHERE id = ?`,
+				`UPDATE accounts SET access_token = ?, expires_at = ?, refresh_token = ?, refresh_token_issued_at = ?, requires_reauth = 0 WHERE id = ?`,
 				[accessToken, expiresAt, refreshToken, now, accountId],
 			);
 		} else {
 			await this.run(
-				`UPDATE accounts SET access_token = ?, expires_at = ? WHERE id = ?`,
+				`UPDATE accounts SET access_token = ?, expires_at = ?, requires_reauth = 0 WHERE id = ?`,
 				[accessToken, expiresAt, accountId],
 			);
 		}
+	}
+
+	async setRequiresReauth(accountId: string, value: boolean): Promise<void> {
+		await this.run(`UPDATE accounts SET requires_reauth = ? WHERE id = ?`, [
+			value ? 1 : 0,
+			accountId,
+		]);
 	}
 
 	async incrementUsage(

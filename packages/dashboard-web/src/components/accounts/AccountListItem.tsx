@@ -20,6 +20,7 @@ import {
 	providerSupportsCustomBilling,
 } from "../../utils/provider-utils";
 import { OAuthTokenStatusWithBoundary } from "../OAuthTokenStatus";
+import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
 import { RateLimitProgress } from "./RateLimitProgress";
@@ -28,6 +29,11 @@ function formatTokenCount(n: number): string {
 	if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
 	if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
 	return String(n);
+}
+
+function formatPauseReason(reason: string | null): string | null {
+	if (!reason) return null;
+	return reason.replaceAll("_", " ");
 }
 
 interface AccountListItemProps {
@@ -252,8 +258,22 @@ export function AccountListItem({
 						<span className="text-sm text-muted-foreground">
 							{presenter.sessionInfo}
 						</span>
-						{presenter.isPaused && (
-							<span className="text-sm text-muted-foreground">Paused</span>
+						{account.requiresReauth ? (
+							<Badge
+								variant="destructive"
+								title="Refresh token invalid — re-authenticate"
+							>
+								Needs authentication
+							</Badge>
+						) : (
+							presenter.isPaused && (
+								<span className="text-sm text-muted-foreground">
+									Paused
+									{formatPauseReason(account.pauseReason)
+										? ` (${formatPauseReason(account.pauseReason)})`
+										: ""}
+								</span>
+							)
 						)}
 						{!presenter.isPaused && presenter.rateLimitStatus !== "OK" && (
 							<span

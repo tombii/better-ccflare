@@ -1,4 +1,5 @@
 import {
+	authFailureEvents,
 	registerDisposable,
 	ServiceUnavailableError,
 	TokenRefreshError,
@@ -127,6 +128,67 @@ function enforceMaxSize(): void {
 			);
 		}
 	}
+}
+
+/**
+ * Definitive dead-refresh-token signals. Providers preserve the machine-readable
+ * OAuth error code verbatim in their thrown message (invalid_grant /
+ * invalid_refresh_token from the RFC-6749 grant flow, refresh_token_reused from
+ * Codex's rotating-token reuse guard). Only these are definitive; transient
+ * failures (network / 5xx / timeout) never carry them, so a false positive that
+ * pulls the account from routing until a manual re-auth cannot occur from them.
+ */
+const DEFINITIVE_AUTH_FAILURE_RE =
+	/invalid_grant|invalid_refresh_token|refresh_token_reused/i;
+
+/**
+ * Remove the "account <name>" framing from a provider refresh error before
+ * scanning it for auth-failure codes.
+ *
+ * Every provider frames the account as `... for account ${account.name}: <rest>`
+ * (Codex additionally repeats it in a `--reauthenticate ${account.name}` hint).
+ * The account NAME is free-form user input, so an account literally named e.g.
+ * "test_invalid_grant" would otherwise trip detection on ANY unrelated failure
+ * and be pulled from routing. Anchoring the removal on the literal "account "
+ * keyword means only the framed name is stripped and never the machine error
+ * code in <rest> — so a real invalid_grant for an account named "grant" still
+ * matches (no false negatives on the code itself), while the name can never
+ * fabricate a match (no false positives from the name).
+ */
+function stripAccountFraming(message: string, accountName: string): string {
+	if (!accountName) return message;
+	return message.split(`account ${accountName}`).join("account");
+}
+
+/**
+ * True when a raw provider refresh-error message carries a definitive
+ * dead-refresh-token signal, scanned over the whole message (minus the account
+ * framing) so a preserved `<code>: <description>` shape still matches. Exported
+ * for direct unit testing.
+ */
+export function isDefinitiveAuthFailure(
+	message: string,
+	accountName: string,
+): boolean {
+	return DEFINITIVE_AUTH_FAILURE_RE.test(
+		stripAccountFraming(message, accountName),
+	);
+}
+
+/**
+ * Returns the matched definitive-auth-failure code (normalized to lower-case,
+ * e.g. "invalid_grant") or null when the message is not a definitive failure.
+ * Same account-framing scoping as {@link isDefinitiveAuthFailure}; used to tag
+ * the emitted auth-failure alert event with a stable, machine-readable reason.
+ */
+export function extractAuthFailureReason(
+	message: string,
+	accountName: string,
+): string | null {
+	const match = DEFINITIVE_AUTH_FAILURE_RE.exec(
+		stripAccountFraming(message, accountName),
+	);
+	return match ? match[0].toLowerCase() : null;
 }
 
 /**
@@ -277,6 +339,34 @@ export async function refreshAccessTokenSafe(
 					error instanceof Error ? error.message : String(error);
 				const enhancedMessage = getOAuthErrorMessage(account, originalError);
 
+				// Definitive dead-refresh-token signal (invalid_grant /
+				// invalid_refresh_token / refresh_token_reused) — persist
+				// requires_reauth so the account is pulled from routing until a manual
+				// re-auth clears it. Detection runs on the RAW provider message (which
+				// preserves the machine error code) here, BEFORE it is wrapped into
+				// TokenRefreshError (whose .message is a fixed string). Mirrors the
+				// success-path enqueue idiom. Transient failures never match.
+				const authFailureReason = extractAuthFailureReason(
+					originalError,
+					account.name,
+				);
+				if (authFailureReason) {
+					// Accepted race (documented, not synchronized): a manual re-auth that
+					// clears the flag via a direct DB write could be overtaken by this
+					// still-queued set(true) under a pathologically backlogged async
+					// writer. Likelihood is negligible — a human OAuth round-trip versus a
+					// millisecond queue drain — and recovery is simply to re-authenticate
+					// again, so building synchronization here is not worth the complexity.
+					ctx.asyncWriter.enqueue(() =>
+						ctx.dbOps.setRequiresReauth(account.id, true),
+					);
+					authFailureEvents.emit("event", {
+						accountId: account.id,
+						accountName: account.name,
+						provider: account.provider,
+						reason: authFailureReason,
+					});
+				}
 				log.error(
 					`Token refresh failed for account ${account.name}: ${enhancedMessage}`,
 					error,

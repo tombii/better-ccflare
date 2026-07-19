@@ -94,7 +94,8 @@ function seedDb(): Database {
 			auto_pause_on_overage_enabled INTEGER,
 			pause_reason TEXT,
 			auto_refresh_enabled INTEGER,
-			rate_limited_until INTEGER
+			rate_limited_until INTEGER,
+			requires_reauth INTEGER DEFAULT 0
 		)
 	`);
 

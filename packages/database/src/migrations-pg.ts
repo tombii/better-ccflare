@@ -71,6 +71,7 @@ export async function ensureSchemaPg(adapter: BunSqlAdapter): Promise<void> {
 			auto_pause_on_overage_enabled INTEGER DEFAULT 0,
 			peak_hours_pause_enabled INTEGER NOT NULL DEFAULT 0,
 			pause_reason TEXT,
+			requires_reauth INTEGER DEFAULT 0,
 			billing_type TEXT DEFAULT NULL,
 			refresh_token_issued_at BIGINT,
 			rate_limited_reason TEXT,
@@ -407,6 +408,12 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 			table: "accounts",
 			column: "pause_reason",
 			definition: "ALTER TABLE accounts ADD COLUMN pause_reason TEXT",
+		},
+		{
+			table: "accounts",
+			column: "requires_reauth",
+			definition:
+				"ALTER TABLE accounts ADD COLUMN requires_reauth INTEGER DEFAULT 0",
 		},
 		{
 			table: "requests",

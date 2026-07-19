@@ -1,4 +1,5 @@
 import {
+	authFailureEvents,
 	CLAUDE_MODEL_IDS,
 	getClientVersion,
 	registerHeartbeat,
@@ -9,7 +10,7 @@ import { Logger } from "@better-ccflare/logger";
 import { fetchUsageData, getProvider } from "@better-ccflare/providers";
 import type { Account } from "@better-ccflare/types";
 import { TOKEN_SAFETY_WINDOW_MS } from "./constants";
-import { getValidAccessToken } from "./handlers";
+import { extractAuthFailureReason, getValidAccessToken } from "./handlers";
 import type { ProxyContext } from "./proxy";
 
 const log = new Logger("AutoRefreshScheduler");
@@ -145,6 +146,7 @@ export class AutoRefreshScheduler {
 				WHERE
 					auto_refresh_enabled = 1
 					AND provider IN ('anthropic', 'codex', 'zai')
+					AND COALESCE(requires_reauth, 0) = 0
 					AND (
 						(rate_limit_reset IS NOT NULL AND rate_limit_reset <= ?)
 						OR rate_limit_reset IS NULL
@@ -306,6 +308,7 @@ export class AutoRefreshScheduler {
 				session_start: null,
 				session_request_count: 0,
 				paused: false,
+				requires_reauth: false,
 				rate_limit_reset: accountRow.rate_limit_reset
 					? Number(accountRow.rate_limit_reset)
 					: null,
@@ -493,7 +496,7 @@ export class AutoRefreshScheduler {
 
 				// Mark account as needing attention in database (disable auto-refresh to prevent repeated failures)
 				await this.db.run(
-					`UPDATE accounts SET auto_refresh_enabled = 0 WHERE id = ?`,
+					`UPDATE accounts SET auto_refresh_enabled = 0, expires_at = 0 WHERE id = ?`,
 					[accountRow.id],
 				);
 
@@ -760,6 +763,10 @@ export class AutoRefreshScheduler {
 			WHERE
 				provider IN ('qwen', 'xai')
 				AND refresh_token IS NOT NULL
+				-- Never probe an account already flagged for manual re-auth: its
+				-- refresh token is known dead, so the probe is a guaranteed fail and
+				-- recovery is only the manual re-auth clear-site.
+				AND COALESCE(requires_reauth, 0) = 0
 				AND (
 					access_token IS NULL
 					OR expires_at IS NULL
@@ -813,6 +820,7 @@ export class AutoRefreshScheduler {
 					session_start: null,
 					session_request_count: 0,
 					paused: false,
+					requires_reauth: false,
 					rate_limit_reset: null,
 					rate_limit_status: null,
 					rate_limit_remaining: null,
@@ -862,6 +870,7 @@ export class AutoRefreshScheduler {
 					`Failed to proactively refresh ${row.provider} token for ${row.name}:`,
 					error,
 				);
+				await this.flagIfDefinitiveAuthFailure(error, row);
 			}
 		}
 	}
@@ -891,6 +900,10 @@ export class AutoRefreshScheduler {
 			WHERE
 				provider = 'codex'
 				AND refresh_token IS NOT NULL
+				-- Never probe an account already flagged for manual re-auth: its
+				-- refresh token is known dead, so the probe is a guaranteed fail and
+				-- recovery is only the manual re-auth clear-site.
+				AND COALESCE(requires_reauth, 0) = 0
 				AND (
 					access_token IS NULL
 					OR expires_at IS NULL
@@ -942,6 +955,7 @@ export class AutoRefreshScheduler {
 					session_start: null,
 					session_request_count: 0,
 					paused: false,
+					requires_reauth: false,
 					rate_limit_reset: null,
 					rate_limit_status: null,
 					rate_limit_remaining: null,
@@ -991,8 +1005,54 @@ export class AutoRefreshScheduler {
 					`Failed to proactively refresh Codex token for ${row.name}:`,
 					error,
 				);
+				await this.flagIfDefinitiveAuthFailure(error, row);
 			}
 		}
+	}
+
+	/**
+	 * Persist requires_reauth and emit an auth-failure alert when a proactive
+	 * refresh fails with a DEFINITIVE dead-refresh-token signal (invalid_grant /
+	 * invalid_refresh_token / refresh_token_reused).
+	 *
+	 * These proactive paths refresh via provider.refreshToken() directly, bypassing
+	 * the token-manager funnel, so without this a qwen/xai/codex token that dies
+	 * while only the scheduler touches it would evaporate silently — logged but
+	 * never flagged, never pulled from routing, never alerted. Transient failures
+	 * (network / 5xx / timeout) do not carry these codes and are left untouched so
+	 * the account keeps retrying.
+	 */
+	private async flagIfDefinitiveAuthFailure(
+		error: unknown,
+		row: { id: string; name: string; provider: string },
+	): Promise<void> {
+		const message = error instanceof Error ? error.message : String(error);
+		const reason = extractAuthFailureReason(message, row.name);
+		if (!reason) return;
+
+		try {
+			await this.db.run(
+				`UPDATE accounts SET requires_reauth = 1 WHERE id = ?`,
+				[row.id],
+			);
+			log.error(
+				`Account ${row.name} requires re-authentication — proactive ${row.provider} refresh returned ${reason}`,
+			);
+		} catch (writeError) {
+			log.error(
+				`Failed to persist requires_reauth for ${row.name}:`,
+				writeError,
+			);
+		}
+
+		// Emit regardless of the write outcome — the alert is the operator's only
+		// signal that the account is dead, and it is fire-and-forget.
+		authFailureEvents.emit("event", {
+			accountId: row.id,
+			accountName: row.name,
+			provider: row.provider,
+			reason,
+		});
 	}
 
 	/**

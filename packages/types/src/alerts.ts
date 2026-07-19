@@ -17,7 +17,8 @@ export type AlertType =
 	| "anomaly_token_outlier"
 	| "anomaly_output_blowup"
 	| "anomaly_runaway_loop"
-	| "anomaly_model_misrouting";
+	| "anomaly_model_misrouting"
+	| "auth_failure";
 
 /** A single alert raised by the alert engine. */
 export interface AlertEvent {

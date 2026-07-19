@@ -16,6 +16,7 @@ export function isAccountAvailable(
 	now = Date.now(),
 ): boolean {
 	return (
+		!account.requires_reauth &&
 		!account.paused &&
 		(!account.rate_limited_until || account.rate_limited_until < now)
 	);

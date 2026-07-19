@@ -974,7 +974,8 @@ Examples:
 		const stats = {
 			totalAccounts: accounts.length,
 			activeAccounts: accounts.filter(
-				(acc) => !acc.paused && acc.tokenStatus === "valid",
+				(acc) =>
+					!acc.paused && !acc.requiresReauth && acc.tokenStatus === "valid",
 			).length,
 			pausedAccounts: accounts.filter((acc) => acc.paused).length,
 			expiredAccounts: accounts.filter((acc) => acc.tokenStatus === "expired")
