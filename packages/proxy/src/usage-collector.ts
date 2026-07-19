@@ -805,6 +805,7 @@ export class UsageCollector {
 						project: state.project ?? undefined,
 						projectAttributionSource:
 							state.projectAttributionSource ?? undefined,
+						agentAttributionSource: state.agentAttributionSource ?? undefined,
 					},
 				});
 

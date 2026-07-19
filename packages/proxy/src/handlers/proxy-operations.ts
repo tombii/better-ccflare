@@ -768,6 +768,10 @@ export async function proxyWithAccount(
 					`Anthropic extra-usage credits depleted for this OAuth account; NOT benching, response passed through to client`,
 			);
 			const responseTime = Date.now() - requestMeta.timestamp;
+			const modelRewrite = isModelRewrite(
+				requestMeta.originalModel,
+				requestMeta.appliedModel,
+			);
 			ctx.asyncWriter.enqueue(() =>
 				ctx.dbOps.saveRequest(
 					crypto.randomUUID(),
@@ -786,12 +790,8 @@ export async function proxyWithAccount(
 					requestMeta.project ?? null,
 					undefined,
 					requestMeta.comboName ?? null,
-					isModelRewrite(requestMeta.originalModel, requestMeta.appliedModel)
-						? (requestMeta.originalModel ?? null)
-						: null,
-					isModelRewrite(requestMeta.originalModel, requestMeta.appliedModel)
-						? (requestMeta.appliedModel ?? null)
-						: null,
+					modelRewrite ? (requestMeta.originalModel ?? null) : null,
+					modelRewrite ? (requestMeta.appliedModel ?? null) : null,
 					requestMeta.projectAttributionSource ?? null,
 					requestMeta.agentAttributionSource ?? null,
 				),
@@ -847,6 +847,10 @@ export async function proxyWithAccount(
 						`model/beta-scoped, NOT benching account; failing over to next account`,
 				);
 				const responseTime = Date.now() - requestMeta.timestamp;
+				const modelRewrite = isModelRewrite(
+					requestMeta.originalModel,
+					requestMeta.appliedModel,
+				);
 				ctx.asyncWriter.enqueue(() =>
 					ctx.dbOps.saveRequest(
 						crypto.randomUUID(),
@@ -865,12 +869,8 @@ export async function proxyWithAccount(
 						requestMeta.project ?? null,
 						undefined,
 						requestMeta.comboName ?? null,
-						isModelRewrite(requestMeta.originalModel, requestMeta.appliedModel)
-							? (requestMeta.originalModel ?? null)
-							: null,
-						isModelRewrite(requestMeta.originalModel, requestMeta.appliedModel)
-							? (requestMeta.appliedModel ?? null)
-							: null,
+						modelRewrite ? (requestMeta.originalModel ?? null) : null,
+						modelRewrite ? (requestMeta.appliedModel ?? null) : null,
 						requestMeta.projectAttributionSource ?? null,
 						requestMeta.agentAttributionSource ?? null,
 					),
@@ -917,6 +917,10 @@ export async function proxyWithAccount(
 							ctx,
 						);
 						const responseTime = Date.now() - requestMeta.timestamp;
+						const modelRewrite = isModelRewrite(
+							requestMeta.originalModel,
+							requestMeta.appliedModel,
+						);
 						ctx.asyncWriter.enqueue(() =>
 							ctx.dbOps.saveRequest(
 								crypto.randomUUID(),
@@ -935,18 +939,8 @@ export async function proxyWithAccount(
 								requestMeta.project ?? null,
 								undefined,
 								requestMeta.comboName ?? null,
-								isModelRewrite(
-									requestMeta.originalModel,
-									requestMeta.appliedModel,
-								)
-									? (requestMeta.originalModel ?? null)
-									: null,
-								isModelRewrite(
-									requestMeta.originalModel,
-									requestMeta.appliedModel,
-								)
-									? (requestMeta.appliedModel ?? null)
-									: null,
+								modelRewrite ? (requestMeta.originalModel ?? null) : null,
+								modelRewrite ? (requestMeta.appliedModel ?? null) : null,
 								requestMeta.projectAttributionSource ?? null,
 								requestMeta.agentAttributionSource ?? null,
 							),
@@ -1067,6 +1061,10 @@ export async function proxyWithAccount(
 							ctx,
 						);
 						const responseTime = Date.now() - requestMeta.timestamp;
+						const modelRewrite = isModelRewrite(
+							requestMeta.originalModel,
+							requestMeta.appliedModel,
+						);
 						ctx.asyncWriter.enqueue(() =>
 							ctx.dbOps.saveRequest(
 								crypto.randomUUID(),
@@ -1085,18 +1083,8 @@ export async function proxyWithAccount(
 								requestMeta.project ?? null,
 								undefined,
 								requestMeta.comboName ?? null,
-								isModelRewrite(
-									requestMeta.originalModel,
-									requestMeta.appliedModel,
-								)
-									? (requestMeta.originalModel ?? null)
-									: null,
-								isModelRewrite(
-									requestMeta.originalModel,
-									requestMeta.appliedModel,
-								)
-									? (requestMeta.appliedModel ?? null)
-									: null,
+								modelRewrite ? (requestMeta.originalModel ?? null) : null,
+								modelRewrite ? (requestMeta.appliedModel ?? null) : null,
 								requestMeta.projectAttributionSource ?? null,
 								requestMeta.agentAttributionSource ?? null,
 							),
