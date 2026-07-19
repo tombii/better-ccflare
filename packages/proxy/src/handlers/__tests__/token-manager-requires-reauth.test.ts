@@ -117,6 +117,22 @@ describe("extractAuthFailureReason / isDefinitiveAuthFailure", () => {
 			"Failed to refresh token for account grant: invalid_grant: Refresh token is invalid.";
 		expect(extractAuthFailureReason(message, "grant")).toBe("invalid_grant");
 	});
+
+	it("is not tripped by a code-like substring inside an unrelated error_description", () => {
+		// A non-conformant OAuth server could return error=temporarily_unavailable
+		// with a description that happens to mention "invalid_grant" in prose.
+		// Detection must scan only the error-CODE segment, not the description.
+		const message =
+			"Failed to refresh token for account my-acct: temporarily_unavailable: please retry later (this is not an invalid_grant condition).";
+		expect(isDefinitiveAuthFailure(message, "my-acct")).toBe(false);
+		expect(extractAuthFailureReason(message, "my-acct")).toBeNull();
+	});
+
+	it("still fires on the xAI shape where the code follows an HTTP status token", () => {
+		const message =
+			"Failed to refresh xAI token for account my-acct: 401 invalid_grant: Refresh token is invalid or has been revoked.";
+		expect(extractAuthFailureReason(message, "my-acct")).toBe("invalid_grant");
+	});
 });
 
 describe("refreshAccessTokenSafe requires_reauth detection", () => {

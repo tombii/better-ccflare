@@ -161,24 +161,52 @@ function stripAccountFraming(message: string, accountName: string): string {
 }
 
 /**
+ * Isolate the OAuth `error` code portion of a provider refresh-error message,
+ * excluding the free-form `error_description` text.
+ *
+ * Every provider constructs its thrown message as a static framing prefix
+ * (`... for account: `) followed by `[errorObj.error, errorObj.error_description]
+ * .filter(Boolean).join(": ")` (xAI additionally inserts the HTTP status before
+ * the code, e.g. `"401 invalid_grant: ..."`; Codex's rotating-token special case
+ * appends free text after `" - "` instead of `": "`). In every shape the code
+ * lives in the segment between the FIRST and SECOND `": "` separators — the
+ * first separator closes the static framing prefix, and the second (if any)
+ * opens the human-readable description. Scanning only that middle segment
+ * means a non-conformant `error_description` can never fabricate a match by
+ * merely containing a code-like substring, while a real code is always found
+ * (it never contains ": " itself — RFC 6749 error codes are bare identifiers).
+ * Falls back to the whole (stripped) message when the expected `": "` framing
+ * isn't present, so unanticipated message shapes are still scanned rather than
+ * silently skipped (no new false negatives from the narrowing itself).
+ */
+function extractCodeSegment(message: string, accountName: string): string {
+	const stripped = stripAccountFraming(message, accountName);
+	const firstSep = stripped.indexOf(": ");
+	if (firstSep === -1) return stripped;
+	const afterFraming = stripped.slice(firstSep + 2);
+	const secondSep = afterFraming.indexOf(": ");
+	return secondSep === -1 ? afterFraming : afterFraming.slice(0, secondSep);
+}
+
+/**
  * True when a raw provider refresh-error message carries a definitive
- * dead-refresh-token signal, scanned over the whole message (minus the account
- * framing) so a preserved `<code>: <description>` shape still matches. Exported
- * for direct unit testing.
+ * dead-refresh-token signal. Scoped to just the OAuth error-code segment (see
+ * {@link extractCodeSegment}) so a non-conformant server's `error_description`
+ * text cannot trigger a false match. Exported for direct unit testing.
  */
 export function isDefinitiveAuthFailure(
 	message: string,
 	accountName: string,
 ): boolean {
 	return DEFINITIVE_AUTH_FAILURE_RE.test(
-		stripAccountFraming(message, accountName),
+		extractCodeSegment(message, accountName),
 	);
 }
 
 /**
  * Returns the matched definitive-auth-failure code (normalized to lower-case,
  * e.g. "invalid_grant") or null when the message is not a definitive failure.
- * Same account-framing scoping as {@link isDefinitiveAuthFailure}; used to tag
+ * Same code-segment scoping as {@link isDefinitiveAuthFailure}; used to tag
  * the emitted auth-failure alert event with a stable, machine-readable reason.
  */
 export function extractAuthFailureReason(
@@ -186,7 +214,7 @@ export function extractAuthFailureReason(
 	accountName: string,
 ): string | null {
 	const match = DEFINITIVE_AUTH_FAILURE_RE.exec(
-		stripAccountFraming(message, accountName),
+		extractCodeSegment(message, accountName),
 	);
 	return match ? match[0].toLowerCase() : null;
 }
