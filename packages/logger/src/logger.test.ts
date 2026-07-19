@@ -147,6 +147,10 @@ describe("Logger env LOG_LEVEL handling", () => {
 });
 
 describe("setConsoleLogging override", () => {
+	beforeEach(() => {
+		setConsoleLogging(null);
+	});
+
 	afterEach(() => {
 		setConsoleLogging(null);
 		delete process.env.LOG_LEVEL;
