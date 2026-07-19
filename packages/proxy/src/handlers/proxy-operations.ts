@@ -1,4 +1,5 @@
 import {
+	getModelFamily,
 	getModelList,
 	getOverloadRetryConfig,
 	logError,
@@ -22,6 +23,7 @@ import type {
 import { cacheBodyStore } from "../cache-body-store";
 import { RequestBodyContext } from "../request-body-context";
 import { forwardToClient } from "../response-handler";
+import { findScopedResetAt, markFamilyExhausted } from "./model-capacity";
 import { ERROR_MESSAGES, type ProxyContext } from "./proxy-types";
 import { applyRateLimitCooldown } from "./rate-limit-cooldown";
 import { makeProxyRequest, validateProviderPath } from "./request-handler";
@@ -825,6 +827,22 @@ export async function proxyWithAccount(
 			// NOT bench the account (no applyRateLimitCooldown, no consecutive increment):
 			// fail over per-request and leave the account in rotation for other models.
 			if (rawResponse.status === 429 && isAnthropicOutOfCredits(rawResponse)) {
+				// Feed the model-scoped capacity negative cache (model-capacity.ts):
+				// this account is confirmed exhausted for the requested model's
+				// family right now, even before usageCache's next poll would reflect
+				// it — regardless of whether this is a real client request or a
+				// keepalive probe, the observed 429 is an equally real signal.
+				if (requestedModel) {
+					const family = getModelFamily(requestedModel);
+					if (family) {
+						const resetAt = findScopedResetAt(
+							usageCache.get(account.id),
+							requestedModel,
+						);
+						markFamilyExhausted(account.id, family, resetAt);
+					}
+				}
+
 				const isKeepalive =
 					req.headers.get("x-better-ccflare-keepalive") === "true";
 				if (isKeepalive) {

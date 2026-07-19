@@ -4,15 +4,27 @@ export {
 } from "../request-body-context";
 export {
 	getComboSlotInfo,
+	getModelFamilyExhaustionInfo,
+	type ModelFamilyExhaustionInfo,
 	resolveEffectiveModel,
 	selectAccountsForRequest,
 	setComboSlotInfo,
+	setModelFamilyExhaustionInfo,
 } from "./account-selector";
 export {
 	type AgentInterceptResult,
 	interceptAndModifyRequest,
 	isRewriteTargetServable,
 } from "./agent-interceptor";
+export {
+	createModelFamilyExhaustedResponse,
+	findScopedResetAt,
+	isAccountExhaustedForModel,
+	isFamilyExhausted,
+	type ModelExhaustionResult,
+	type ModelFamilyExhaustionInfo as ModelCapacityExhaustionInfo,
+	markFamilyExhausted,
+} from "./model-capacity";
 export {
 	createPoolExhaustedResponse,
 	proxyUnauthenticated,

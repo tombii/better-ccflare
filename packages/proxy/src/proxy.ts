@@ -9,11 +9,13 @@ import { usageCache } from "@better-ccflare/providers";
 import type { Account } from "@better-ccflare/types";
 import { cacheBodyStore } from "./cache-body-store";
 import {
+	createModelFamilyExhaustedResponse,
 	createPoolExhaustedResponse,
 	createRequestMetadata,
 	createUsageThrottledResponse,
 	ERROR_MESSAGES,
 	getComboSlotInfo,
+	getModelFamilyExhaustionInfo,
 	getUsageThrottleUntil,
 	interceptAndModifyRequest,
 	isRefreshTokenLikelyExpired,
@@ -339,6 +341,16 @@ export async function handleProxy(
 
 	// 7. Handle no accounts case
 	if (accounts.length === 0) {
+		// Model-scoped capacity filter (account-selector.ts) emptied the
+		// candidate pool because every account is exhausted for this request's
+		// model family — a structured, actionable response instead of the
+		// generic pool_exhausted 503 or exhausting failover against accounts
+		// already known to reject this model family.
+		const exhaustionInfo = getModelFamilyExhaustionInfo(requestMeta);
+		if (exhaustionInfo) {
+			return createModelFamilyExhaustedResponse(exhaustionInfo);
+		}
+
 		if (throttledAccounts.length > 0) {
 			return createUsageThrottledResponse(throttledAccounts);
 		}

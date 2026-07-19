@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { usageCache } from "@better-ccflare/providers";
 import type { Account, RequestMeta } from "@better-ccflare/types";
+import {
+	clearFamilyExhaustionCache,
+	isFamilyExhausted,
+} from "../model-capacity";
 import { proxyWithAccount } from "../proxy-operations";
 import type { ProxyContext } from "../proxy-types";
 
@@ -143,6 +148,8 @@ describe("proxyWithAccount — out_of_credits (issue #261)", () => {
 
 	afterEach(() => {
 		globalThis.fetch = originalFetch;
+		usageCache.clear();
+		clearFamilyExhaustionCache();
 	});
 
 	it("does NOT bench the account and fails over on out_of_credits 429", async () => {
@@ -220,5 +227,101 @@ describe("proxyWithAccount — out_of_credits (issue #261)", () => {
 		// keepalive path skips the audit row entirely.
 		const saveMock = ctx.dbOps.saveRequest as ReturnType<typeof mock>;
 		expect(saveMock.mock.calls.length).toBe(0);
+	});
+
+	it("marks the account's model family exhausted in the negative cache on out_of_credits", async () => {
+		globalThis.fetch = mock(async () => outOfCreditsResponse());
+
+		const ctx = makeProxyContextWithAsyncExec();
+		const account = makeAccount();
+		const bodyBuffer = makeRequestBody("claude-sonnet-4-5");
+		const req = makeRequest(bodyBuffer);
+
+		expect(isFamilyExhausted(account.id, "sonnet")).toBe(false);
+
+		await proxyWithAccount(
+			req,
+			new URL("https://proxy.local/v1/messages"),
+			account,
+			makeRequestMeta(),
+			bodyBuffer,
+			() => undefined,
+			0,
+			ctx,
+		);
+
+		expect(isFamilyExhausted(account.id, "sonnet")).toBe(true);
+	});
+
+	it("seeds the negative-cache TTL from the account's known weekly_scoped reset when available", async () => {
+		globalThis.fetch = mock(async () => outOfCreditsResponse());
+
+		const now = Date.now();
+		const account = makeAccount();
+		const resetAt = now + 10 * 60 * 1000; // 10 minutes out — beyond the 5min default
+		usageCache.set(account.id, {
+			limits: [
+				{
+					kind: "weekly_scoped",
+					percent: 40,
+					resets_at: new Date(resetAt).toISOString(),
+					scope: { model: { id: null, display_name: "Sonnet" }, surface: null },
+				},
+			],
+		} as never);
+
+		const ctx = makeProxyContextWithAsyncExec();
+		const bodyBuffer = makeRequestBody("claude-sonnet-4-5");
+		const req = makeRequest(bodyBuffer);
+
+		await proxyWithAccount(
+			req,
+			new URL("https://proxy.local/v1/messages"),
+			account,
+			makeRequestMeta(),
+			bodyBuffer,
+			() => undefined,
+			0,
+			ctx,
+		);
+
+		// Still exhausted just past the default 5-minute TTL — proves the real
+		// scoped reset (10 min out), not the 5-minute fallback, was used.
+		expect(isFamilyExhausted(account.id, "sonnet", now + 6 * 60 * 1000)).toBe(
+			true,
+		);
+		// Expired once the real reset time passes.
+		expect(isFamilyExhausted(account.id, "sonnet", resetAt + 1_000)).toBe(
+			false,
+		);
+	});
+
+	it("also marks the negative cache on a keepalive out_of_credits probe", async () => {
+		globalThis.fetch = mock(async () => outOfCreditsResponse());
+
+		const ctx = makeProxyContextWithAsyncExec();
+		const account = makeAccount();
+		const bodyBuffer = makeRequestBody("claude-sonnet-4-5");
+		const req = new Request("https://proxy.local/v1/messages", {
+			method: "POST",
+			body: bodyBuffer,
+			headers: {
+				"Content-Type": "application/json",
+				"x-better-ccflare-keepalive": "true",
+			},
+		});
+
+		await proxyWithAccount(
+			req,
+			new URL("https://proxy.local/v1/messages"),
+			account,
+			makeRequestMeta(),
+			bodyBuffer,
+			() => undefined,
+			0,
+			ctx,
+		);
+
+		expect(isFamilyExhausted(account.id, "sonnet")).toBe(true);
 	});
 });

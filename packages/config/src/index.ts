@@ -23,6 +23,21 @@ function parseEnabledEnvFlag(value: string | undefined): boolean | undefined {
 	return value === "true" || value === "1";
 }
 
+/**
+ * "off": never skip an account on account-scoped (weekly_scoped) exhaustion.
+ * "exhausted": skip an account for a request's model family when its
+ * weekly_scoped cap for that family is at/above 100% with a future reset
+ * (see model-capacity.ts). Defaults to "off" — the filter must be
+ * explicitly opted into.
+ */
+export type ModelScopedCapacityRoutingMode = "off" | "exhausted";
+
+function isValidModelScopedCapacityRoutingMode(
+	value: unknown,
+): value is ModelScopedCapacityRoutingMode {
+	return value === "off" || value === "exhausted";
+}
+
 export interface RuntimeConfig {
 	clientId: string;
 	retry: { attempts: number; delayMs: number; backoff: number };
@@ -62,6 +77,7 @@ export interface ConfigData {
 	system_prompt_cache_ttl_1h?: boolean;
 	usage_throttling_five_hour_enabled?: boolean;
 	usage_throttling_weekly_enabled?: boolean;
+	model_scoped_capacity_routing?: ModelScopedCapacityRoutingMode;
 	agent_frontmatter_model_fallback?: boolean;
 	model_catalog_oauth_refresh_enabled?: boolean;
 	health_detail_enabled?: boolean;
@@ -479,6 +495,28 @@ export class Config extends EventEmitter {
 		this.set("usage_throttling_weekly_enabled", value);
 	}
 
+	getModelScopedCapacityRouting(): ModelScopedCapacityRoutingMode {
+		const fromEnv = process.env.MODEL_SCOPED_CAPACITY_ROUTING;
+		if (isValidModelScopedCapacityRoutingMode(fromEnv)) {
+			return fromEnv;
+		}
+		const fromFile = this.data.model_scoped_capacity_routing;
+		if (isValidModelScopedCapacityRoutingMode(fromFile)) {
+			return fromFile;
+		}
+		return "off";
+	}
+
+	setModelScopedCapacityRouting(mode: ModelScopedCapacityRoutingMode): void {
+		if (!isValidModelScopedCapacityRoutingMode(mode)) {
+			throw new ValidationError(
+				`Invalid model_scoped_capacity_routing mode: ${mode}`,
+				"model_scoped_capacity_routing",
+			);
+		}
+		this.set("model_scoped_capacity_routing", mode);
+	}
+
 	getHealthDetailEnabled(): boolean {
 		const fromEnv = parseEnabledEnvFlag(process.env.HEALTH_DETAIL_ENABLED);
 		if (fromEnv !== undefined) {
@@ -627,6 +665,7 @@ export class Config extends EventEmitter {
 			usage_throttling_five_hour_enabled:
 				this.getUsageThrottlingFiveHourEnabled(),
 			usage_throttling_weekly_enabled: this.getUsageThrottlingWeeklyEnabled(),
+			model_scoped_capacity_routing: this.getModelScopedCapacityRouting(),
 			agent_frontmatter_model_fallback: this.getAgentFrontmatterModelFallback(),
 			model_catalog_oauth_refresh_enabled:
 				this.getModelCatalogOAuthRefreshEnabled(),

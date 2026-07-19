@@ -1,11 +1,16 @@
 import { getModelFamily, isAccountAvailable } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
+import { usageCache } from "@better-ccflare/providers";
 import type {
 	Account,
 	ComboFamily,
 	ComboSlotInfo,
 	RequestMeta,
 } from "@better-ccflare/types";
+import {
+	isAccountExhaustedForModel,
+	isFamilyExhausted,
+} from "./model-capacity";
 import type { ProxyContext } from "./proxy-types";
 
 const log = new Logger("AccountSelector");
@@ -21,6 +26,70 @@ export function setComboSlotInfo(meta: RequestMeta, info: ComboSlotInfo): void {
 /** Retrieve combo slot info from a RequestMeta (null if not combo-routed) */
 export function getComboSlotInfo(meta: RequestMeta): ComboSlotInfo | null {
 	return comboSlotInfoMap.get(meta) ?? null;
+}
+
+export interface ModelFamilyExhaustionInfo {
+	family: string;
+	resetAt: number | null;
+}
+
+// Module-level WeakMap to store model-family exhaustion info per RequestMeta,
+// set when the capacity filter below removes every candidate account for a
+// request's model family. proxy.ts reads this to return a structured
+// model_family_exhausted 529 instead of the generic pool_exhausted response.
+const exhaustionInfoMap = new WeakMap<RequestMeta, ModelFamilyExhaustionInfo>();
+
+/** Store model-family exhaustion info on a RequestMeta for downstream consumption */
+export function setModelFamilyExhaustionInfo(
+	meta: RequestMeta,
+	info: ModelFamilyExhaustionInfo,
+): void {
+	exhaustionInfoMap.set(meta, info);
+}
+
+/** Retrieve model-family exhaustion info from a RequestMeta (null if not set) */
+export function getModelFamilyExhaustionInfo(
+	meta: RequestMeta,
+): ModelFamilyExhaustionInfo | null {
+	return exhaustionInfoMap.get(meta) ?? null;
+}
+
+/**
+ * Whether the model-scoped capacity filter is active. Reads `ctx.config`
+ * defensively (optional chaining) so callers/tests that construct a
+ * ProxyContext without a `config` mock don't throw — capacity routing then
+ * simply behaves as "off", matching the feature's default.
+ */
+function isCapacityRoutingEnabled(ctx: ProxyContext): boolean {
+	return ctx.config?.getModelScopedCapacityRouting?.() === "exhausted";
+}
+
+/**
+ * Whether `account` should be excluded from routing for `model`'s family:
+ * either its cached usage telemetry shows a fully exhausted (>=100%, future
+ * reset) weekly_scoped cap for that family, or the family was recently
+ * observed exhausted via an out_of_credits 429 (negative cache).
+ */
+function isAccountCapacityExcluded(
+	account: Account,
+	model: string,
+	now: number,
+): { excluded: boolean; resetAt: number | null } {
+	const family = getModelFamily(model);
+	if (!family) return { excluded: false, resetAt: null };
+
+	const usageResult = isAccountExhaustedForModel(
+		usageCache.get(account.id),
+		model,
+		now,
+	);
+	if (usageResult.exhausted) {
+		return { excluded: true, resetAt: usageResult.resetAt };
+	}
+	if (isFamilyExhausted(account.id, family, now)) {
+		return { excluded: true, resetAt: null };
+	}
+	return { excluded: false, resetAt: null };
 }
 
 /**
@@ -212,6 +281,8 @@ export async function selectAccountsForRequest(
 						accountId: string;
 						modelOverride: string;
 					}> = [];
+					const capacityRoutingEnabled = isCapacityRoutingEnabled(ctx);
+					const capacityNow = Date.now();
 
 					// Slots are already ordered by priority ASC from the repository
 					for (const slot of combo.slots) {
@@ -226,6 +297,17 @@ export async function selectAccountsForRequest(
 						}
 
 						if (!isAccountAvailable(account)) {
+							continue;
+						}
+
+						// Per-slot capacity check uses the slot's own model override
+						// (not the combo family's request model), since slots can carry
+						// distinct concrete models within the same family.
+						if (
+							capacityRoutingEnabled &&
+							isAccountCapacityExcluded(account, slot.model, capacityNow)
+								.excluded
+						) {
 							continue;
 						}
 
@@ -258,5 +340,54 @@ export async function selectAccountsForRequest(
 		}
 	}
 
-	return applyExclusions(await getOrderedAccounts(meta, ctx));
+	const orderedAccounts = applyExclusions(await getOrderedAccounts(meta, ctx));
+
+	// Model-scoped capacity filter for the non-combo (or combo-inactive/
+	// combo-exhausted-fallthrough) path: drop accounts whose weekly per-model
+	// cap for this model's family is exhausted. Only when the filter empties
+	// an otherwise non-empty candidate list do we record exhaustion info —
+	// an empty candidate list from the strategy itself is the ordinary
+	// pool_exhausted case and must not be relabeled.
+	if (model && isCapacityRoutingEnabled(ctx)) {
+		const family = getModelFamily(model);
+		if (family) {
+			const now = Date.now();
+			const available: Account[] = [];
+			let earliestResetAt: number | null = null;
+			let anyExcluded = false;
+
+			for (const account of orderedAccounts) {
+				const { excluded, resetAt } = isAccountCapacityExcluded(
+					account,
+					model,
+					now,
+				);
+				if (excluded) {
+					anyExcluded = true;
+					if (
+						resetAt != null &&
+						(earliestResetAt == null || resetAt < earliestResetAt)
+					) {
+						earliestResetAt = resetAt;
+					}
+					continue;
+				}
+				available.push(account);
+			}
+
+			if (available.length === 0 && anyExcluded) {
+				log.warn(
+					`All ${orderedAccounts.length} candidate account(s) exhausted for model family "${family}"`,
+				);
+				setModelFamilyExhaustionInfo(meta, {
+					family,
+					resetAt: earliestResetAt,
+				});
+				return [];
+			}
+			return available;
+		}
+	}
+
+	return orderedAccounts;
 }

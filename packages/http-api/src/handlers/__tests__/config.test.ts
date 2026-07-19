@@ -32,6 +32,8 @@ function makeConfig() {
 		getUsageThrottlingWeeklyEnabled: () => true,
 		setUsageThrottlingFiveHourEnabled: mock(() => {}),
 		setUsageThrottlingWeeklyEnabled: mock(() => {}),
+		getModelScopedCapacityRouting: () => "off" as const,
+		setModelScopedCapacityRouting: mock(() => {}),
 		getStrategy: () => "session",
 		setStrategy: mock(() => {}),
 		getDefaultAgentModel: () => "sonnet",
@@ -85,6 +87,58 @@ describe("createConfigHandlers", () => {
 			false,
 		);
 		expect(config.setUsageThrottlingWeeklyEnabled).toHaveBeenCalledWith(true);
+	});
+
+	it("reports the current model capacity routing mode", async () => {
+		const config = makeConfig();
+		const handlers = createConfigHandlers(config, {
+			port: 8080,
+			tlsEnabled: false,
+		});
+
+		const response = handlers.getModelCapacityRouting();
+		const body = (await response.json()) as { mode: string };
+		expect(body.mode).toBe("off");
+	});
+
+	it("updates the model capacity routing mode from POST body", async () => {
+		const config = makeConfig();
+		const handlers = createConfigHandlers(config, {
+			port: 8080,
+			tlsEnabled: false,
+		});
+
+		const response = await handlers.setModelCapacityRouting(
+			new Request("http://localhost/api/config/model-capacity-routing", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ mode: "exhausted" }),
+			}),
+		);
+
+		expect(response.status).toBe(204);
+		expect(config.setModelScopedCapacityRouting).toHaveBeenCalledWith(
+			"exhausted",
+		);
+	});
+
+	it("rejects an invalid model capacity routing mode with 400", async () => {
+		const config = makeConfig();
+		const handlers = createConfigHandlers(config, {
+			port: 8080,
+			tlsEnabled: false,
+		});
+
+		const response = await handlers.setModelCapacityRouting(
+			new Request("http://localhost/api/config/model-capacity-routing", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ mode: "always" }),
+			}),
+		);
+
+		expect(response.status).toBe(400);
+		expect(config.setModelScopedCapacityRouting).not.toHaveBeenCalled();
 	});
 
 	it("rejects a default agent model without a recognized Claude family substring", async () => {

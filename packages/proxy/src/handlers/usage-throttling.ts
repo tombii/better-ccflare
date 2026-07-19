@@ -8,7 +8,7 @@ import type { Account } from "@better-ccflare/types";
 
 const RETRY_AFTER_SECONDS = 60;
 
-interface UsageWindowSnapshot {
+export interface UsageWindowSnapshot {
 	utilization: number;
 	resetAtMs: number;
 	window: string;
@@ -36,7 +36,15 @@ export interface UsageThrottleStatus {
 	throttledWindows: string[];
 }
 
-function collectWindows(data: AnyUsageData | null): UsageWindowSnapshot[] {
+/**
+ * Parses a provider's usage payload into normalized window snapshots.
+ * Exported for reuse by model-capacity.ts, which needs the same weekly_scoped
+ * family-matching logic to detect per-model exhaustion — do not duplicate
+ * this parsing elsewhere.
+ */
+export function collectWindows(
+	data: AnyUsageData | null,
+): UsageWindowSnapshot[] {
 	if (!data || typeof data !== "object") return [];
 
 	const windows: UsageWindowSnapshot[] = [];

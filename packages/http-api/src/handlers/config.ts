@@ -242,5 +242,24 @@ export function createConfigHandlers(
 			config.setUsageThrottlingWeeklyEnabled(body.weeklyEnabled);
 			return new Response(null, { status: 204 });
 		},
+
+		getModelCapacityRouting: (): Response => {
+			return jsonResponse({
+				mode: config.getModelScopedCapacityRouting(),
+			});
+		},
+
+		setModelCapacityRouting: async (req: Request): Promise<Response> => {
+			const body = await req.json();
+			if (body.mode !== "off" && body.mode !== "exhausted") {
+				return errorResponse(
+					BadRequest(
+						"Invalid model capacity routing payload: expected 'mode' to be 'off' or 'exhausted'",
+					),
+				);
+			}
+			config.setModelScopedCapacityRouting(body.mode);
+			return new Response(null, { status: 204 });
+		},
 	};
 }
