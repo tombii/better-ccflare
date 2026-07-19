@@ -43,7 +43,7 @@ interface RequestState {
 		tokensPerSecond?: number;
 	};
 	lastActivity: number;
-	createdAt: number; // TTL tracking
+	createdAt: number; // Capacity eviction ordering
 	agentUsed?: string;
 	agentAttributionSource?: AgentAttributionSource | null;
 	project?: string | null;
@@ -54,15 +54,31 @@ interface RequestState {
 	providerFinalOutputTokens?: number;
 	shouldSkipLogging?: boolean;
 	currentEvent?: string; // Track SSE event type across chunks
+	payloadReleased: boolean;
+	retainedPayloadBytes: number;
+}
+
+interface PreparedPayload {
+	json: string;
+	bytes: number;
 }
 
 const log = new Logger("UsageCollector");
 
 // Limits to prevent unbounded growth
 const MAX_REQUESTS_MAP_SIZE = 10000;
-const REQUEST_TTL_MS = 2 * 60 * 1000; // 2 minutes - hard limit for request lifecycle
+const MAX_MISSING_STATE_WARNINGS = 1000;
+const DEFAULT_PRICING_TIMEOUT_MS = 5_000;
+const MAX_PRICING_TIMEOUT_MS = 60_000;
 const MAX_RESPONSE_BODY_BYTES = 256 * 1024; // 256KB - cap stored response body
 const MAX_REQUEST_BODY_BYTES = 4 * 1024 * 1024; // 4MB - afterburn needs full conversation history
+const REQUEST_PAYLOAD_RETENTION_MS = 2 * 60 * 1000;
+const MAX_ACTIVE_PAYLOAD_BYTES = 100 * 1024 * 1024;
+// Detached finalizers are outside requests-map capacity. Bound their serialized
+// payload snapshots to the same count/byte envelope as AsyncDbWriter's payload
+// queue so a pricing outage cannot retain unbounded conversation bodies.
+const MAX_PENDING_PAYLOAD_COUNT = 1000;
+const MAX_PENDING_PAYLOAD_BYTES = 100 * 1024 * 1024;
 
 // Check if a request should be logged
 function shouldLogRequest(path: string, status: number): boolean {
@@ -71,6 +87,15 @@ function shouldLogRequest(path: string, status: number): boolean {
 		return false;
 	}
 	return true;
+}
+
+function getPricingTimeoutMs(): number {
+	const configured = Number(process.env.CF_PRICING_TIMEOUT_MS);
+	return Number.isSafeInteger(configured) &&
+		configured >= 1 &&
+		configured <= MAX_PRICING_TIMEOUT_MS
+		? configured
+		: DEFAULT_PRICING_TIMEOUT_MS;
 }
 
 // Parse SSE lines to extract usage (reuse existing logic)
@@ -280,14 +305,15 @@ function processStreamChunk(
 	}
 }
 
-/** Free memory held by a request state before deletion */
-function freeRequestState(state: RequestState): void {
+/** Release payload-only fields while retaining the stream parser/token state. */
+function releasePayloadState(state: RequestState): void {
 	state.chunks.length = 0;
 	state.chunksBytes = 0;
-	state.buffer = "";
+	state.chunksTruncated = true;
+	state.payloadReleased = true;
 	// Release request body and headers held in startMessage.
-	// Without this, orphaned requests retain full request bodies
-	// for the TTL duration (up to 2 minutes). See #67.
+	// Without this, orphaned requests retain full request bodies until the
+	// inactivity cleanup configured by CF_STREAM_TIMEOUT_MS runs. See #67.
 	state.startMessage.requestBody = null;
 	state.startMessage.requestHeaders = {};
 	state.startMessage.responseHeaders = {};
@@ -306,10 +332,18 @@ export interface UsageCollectorHealth {
  */
 export class UsageCollector {
 	private readonly requests = new Map<string, RequestState>();
+	private readonly missingStateWarnings = new Set<string>();
 	private readonly pendingHandleEnds = new Set<Promise<void>>();
+	private readonly pendingPricingFallbacks = new Set<() => void>();
 	private cleanupInterval: Timer | null = null;
+	// Permanent once drain() is called — collector cannot estimate costs after this.
+	private draining = false;
+	private activePayloadBytes = 0;
+	private pendingPayloadBytes = 0;
+	private pendingPayloadCount = 0;
 
 	private readonly maxBufferSize: number;
+	private readonly pricingTimeoutMs: number;
 	private readonly timeoutMs: number;
 
 	constructor(
@@ -323,6 +357,7 @@ export class UsageCollector {
 				process.env.CF_STREAM_USAGE_BUFFER_KB ||
 					BUFFER_SIZES.STREAM_USAGE_BUFFER_KB,
 			) * 1024;
+		this.pricingTimeoutMs = getPricingTimeoutMs();
 		this.timeoutMs = Number(
 			process.env.CF_STREAM_TIMEOUT_MS || TIME_CONSTANTS.STREAM_TIMEOUT_DEFAULT,
 		);
@@ -331,6 +366,15 @@ export class UsageCollector {
 	}
 
 	handleStart(msg: StartMessage): void {
+		// A reused request ID is a new lifecycle and should be eligible for a fresh
+		// missing-state warning if it is later evicted.
+		this.missingStateWarnings.delete(msg.requestId);
+		const replacedState = this.requests.get(msg.requestId);
+		if (replacedState) {
+			this.freeRequestState(replacedState);
+			this.requests.delete(msg.requestId);
+		}
+
 		// Check if we should skip logging this request
 		const shouldSkip = !shouldLogRequest(msg.path, msg.responseStatus);
 
@@ -353,7 +397,8 @@ export class UsageCollector {
 				);
 
 				for (let i = 0; i < toRemove; i++) {
-					const [id] = sortedByAge[i];
+					const [id, state] = sortedByAge[i];
+					this.freeRequestState(state);
 					this.requests.delete(id);
 				}
 			}
@@ -372,6 +417,8 @@ export class UsageCollector {
 			lastActivity: now,
 			createdAt: now,
 			shouldSkipLogging: shouldSkip,
+			payloadReleased: false,
+			retainedPayloadBytes: 0,
 		};
 
 		// Use agent from message if provided
@@ -454,6 +501,27 @@ export class UsageCollector {
 			state.billingType = planProviders.has(msg.providerName) ? "plan" : "api";
 		}
 
+		if (this.getStorePayloads()) {
+			const requestBodyBytes = msg.requestBody
+				? Buffer.byteLength(msg.requestBody)
+				: 0;
+			if (
+				this.activePayloadBytes + requestBodyBytes >
+				MAX_ACTIVE_PAYLOAD_BYTES
+			) {
+				this.asyncWriter.recordPayloadDrop(requestBodyBytes);
+				log.warn(
+					`Active payload budget exceeded; disabling payload capture for ${msg.requestId} (request_bytes=${requestBodyBytes}, active_payload_bytes=${this.activePayloadBytes})`,
+				);
+				this.releaseRequestPayload(state);
+			} else {
+				state.retainedPayloadBytes = requestBodyBytes;
+				this.activePayloadBytes += requestBodyBytes;
+			}
+		} else {
+			this.releaseRequestPayload(state);
+		}
+
 		this.requests.set(msg.requestId, state);
 
 		// Skip all database operations for ignored requests
@@ -474,25 +542,39 @@ export class UsageCollector {
 	handleChunk(requestId: string, data: Uint8Array): void {
 		const state = this.requests.get(requestId);
 		if (!state) {
-			log.warn(`No state found for request ${requestId}`);
+			this.warnMissingState(requestId);
 			return;
 		}
 
 		const storePayloads = this.getStorePayloads();
+		if (!storePayloads && !state.payloadReleased) {
+			this.releaseRequestPayload(state);
+		}
 
 		// Store chunk for later payload saving (capped at MAX_RESPONSE_BODY_BYTES)
-		if (storePayloads && !state.chunksTruncated) {
-			if (state.chunksBytes + data.byteLength <= MAX_RESPONSE_BODY_BYTES) {
-				state.chunks.push(data);
-				state.chunksBytes += data.byteLength;
+		if (storePayloads && !state.payloadReleased && !state.chunksTruncated) {
+			const remaining = MAX_RESPONSE_BODY_BYTES - state.chunksBytes;
+			const bytesToCapture = Math.min(data.byteLength, Math.max(0, remaining));
+			if (this.activePayloadBytes + bytesToCapture > MAX_ACTIVE_PAYLOAD_BYTES) {
+				this.asyncWriter.recordPayloadDrop(
+					state.retainedPayloadBytes + bytesToCapture,
+				);
+				log.warn(
+					`Active payload budget exceeded; disabling payload capture for ${requestId} (incoming_bytes=${bytesToCapture}, request_payload_bytes=${state.retainedPayloadBytes}, active_payload_bytes=${this.activePayloadBytes})`,
+				);
+				this.releaseRequestPayload(state);
 			} else {
-				// Store partial chunk up to the limit
-				const remaining = MAX_RESPONSE_BODY_BYTES - state.chunksBytes;
-				if (remaining > 0) {
-					state.chunks.push(data.slice(0, remaining));
-					state.chunksBytes += remaining;
+				if (bytesToCapture > 0) {
+					// Always copy: an incoming view can cover only a few bytes of a much
+					// larger backing ArrayBuffer. Retaining the view would defeat byte
+					// accounting by keeping the entire backing allocation alive.
+					const captured = data.slice(0, bytesToCapture);
+					state.chunks.push(captured);
+					state.chunksBytes += bytesToCapture;
+					state.retainedPayloadBytes += bytesToCapture;
+					this.activePayloadBytes += bytesToCapture;
 				}
-				state.chunksTruncated = true;
+				if (bytesToCapture < data.byteLength) state.chunksTruncated = true;
 			}
 		}
 
@@ -513,7 +595,16 @@ export class UsageCollector {
 	 * queue to completion before process exit.
 	 */
 	async drain(): Promise<void> {
-		await Promise.allSettled([...this.pendingHandleEnds]);
+		this.draining = true;
+		for (const forceFallback of [...this.pendingPricingFallbacks]) {
+			forceFallback();
+		}
+		// handleEnd can register more work while an earlier snapshot is settling.
+		// Keep taking snapshots until the finalizer set is genuinely quiescent so
+		// writer disposal cannot race later metadata/payload enqueues.
+		while (this.pendingHandleEnds.size > 0) {
+			await Promise.allSettled([...this.pendingHandleEnds]);
+		}
 		await this.asyncWriter.dispose();
 	}
 
@@ -528,17 +619,20 @@ export class UsageCollector {
 	private async _handleEndInternal(msg: EndMessage): Promise<void> {
 		const state = this.requests.get(msg.requestId);
 		if (!state) {
-			log.warn(`No state found for request ${msg.requestId}`);
+			this.warnMissingState(msg.requestId);
 			return;
 		}
+		// Atomically transfer ownership to this finalizer before its first await.
+		// This keeps capacity cleanup from freeing the state while pricing resolves,
+		// and prevents this lifecycle from later deleting a reused request ID.
+		this.requests.delete(msg.requestId);
 
 		const { startMessage } = state;
 		const responseTime = Date.now() - startMessage.timestamp;
 
 		// Skip all database operations for ignored requests
 		if (state.shouldSkipLogging) {
-			// Clean up state without logging
-			this.requests.delete(msg.requestId);
+			this.freeRequestState(state);
 			return;
 		}
 
@@ -566,8 +660,15 @@ export class UsageCollector {
 			}
 		}
 
+		// Payload serialization must happen before pricing yields. Once the bounded
+		// snapshot is reserved, the detached finalizer no longer needs to retain the
+		// original multi-megabyte request/chunk/header graph.
+		let preparedPayload = this.preparePayloadForFinalization(state, msg);
+		this.freeRequestState(state);
+
 		// Calculate total tokens and cost
 		if (state.usage.model) {
+			const model = state.usage.model;
 			// Use provider's authoritative count if available, fallback to computed
 			const finalOutputTokens =
 				state.providerFinalOutputTokens ??
@@ -585,12 +686,25 @@ export class UsageCollector {
 				(state.usage.cacheReadInputTokens || 0) +
 				(state.usage.cacheCreationInputTokens || 0);
 
-			state.usage.costUsd = await estimateCostUSD(state.usage.model, {
-				inputTokens: state.usage.inputTokens,
-				outputTokens: finalOutputTokens,
-				cacheReadInputTokens: state.usage.cacheReadInputTokens,
-				cacheCreationInputTokens: state.usage.cacheCreationInputTokens,
-			});
+			try {
+				state.usage.costUsd = await this.estimateCostWithDeadline(
+					startMessage.requestId,
+					model,
+					() =>
+						estimateCostUSD(model, {
+							inputTokens: state.usage.inputTokens,
+							outputTokens: finalOutputTokens,
+							cacheReadInputTokens: state.usage.cacheReadInputTokens,
+							cacheCreationInputTokens: state.usage.cacheCreationInputTokens,
+						}),
+				);
+			} catch (error) {
+				if (preparedPayload) {
+					this.releasePreparedPayload(preparedPayload);
+					preparedPayload = null;
+				}
+				throw error;
+			}
 
 			// Calculate tokens per second - zai specific vs other providers
 			if (finalOutputTokens > 0) {
@@ -744,94 +858,10 @@ export class UsageCollector {
 		});
 
 		const requestId = startMessage.requestId;
-		const storePayloads = this.getStorePayloads();
-		if (storePayloads) {
-			// Preflight backpressure check — skip serialization entirely if the
-			// writer is already overloaded. The metadata write above already
-			// captured the request; only the payload is dropped.
-			const estimatedRequestBytes = startMessage.requestBody?.length ?? 0;
-			const estimatedResponseBytes =
-				msg.responseBody?.length ?? state.chunksBytes ?? 0;
-			const estimatedPayloadBytes =
-				estimatedRequestBytes + estimatedResponseBytes + 2048;
-
-			if (!this.asyncWriter.canAcceptPayload(estimatedPayloadBytes)) {
-				this.asyncWriter.recordPayloadDrop(estimatedPayloadBytes);
-				log.warn(
-					`Backpressure: skipping payload persistence for ${requestId} (estimated_bytes=${estimatedPayloadBytes})`,
-				);
-			} else {
-				// Save payload - eagerly serialize to break closure references
-				let responseBody: string | null = null;
-
-				if (msg.responseBody) {
-					// Non-streaming response
-					responseBody = msg.responseBody;
-				} else if (state.chunks.length > 0) {
-					// Streaming response - combine chunks
-					const combined = combineChunks(state.chunks);
-					if (combined.length > 0) {
-						responseBody = combined.toString("base64");
-					}
-				}
-
-				// Cap request body to prevent unbounded payload storage
-				let requestBody = startMessage.requestBody;
-				if (requestBody) {
-					const rawBytes = Buffer.byteLength(requestBody, "base64");
-					if (rawBytes > MAX_REQUEST_BODY_BYTES) {
-						requestBody = Buffer.from(requestBody, "base64")
-							.subarray(0, MAX_REQUEST_BODY_BYTES)
-							.toString("base64");
-					}
-				}
-
-				const payloadJson = JSON.stringify({
-					request: {
-						headers: startMessage.requestHeaders,
-						body: requestBody,
-					},
-					response: {
-						status: startMessage.responseStatus,
-						headers: startMessage.responseHeaders,
-						body: responseBody,
-					},
-					meta: {
-						accountId: startMessage.accountId || NO_ACCOUNT_ID,
-						timestamp: startMessage.timestamp,
-						success: msg.success,
-						isStream: startMessage.isStream,
-						retry: startMessage.retryAttempt,
-						project: state.project ?? undefined,
-						projectAttributionSource:
-							state.projectAttributionSource ?? undefined,
-						agentAttributionSource: state.agentAttributionSource ?? undefined,
-					},
-				});
-
-				// Null out large references now that we have the serialized JSON
-				responseBody = null;
-
-				const payloadBytes = Buffer.byteLength(payloadJson);
-				const accepted = this.asyncWriter.enqueuePayload(
-					requestId,
-					payloadBytes,
-					async () => {
-						try {
-							await this.dbOps.saveRequestPayloadRaw(requestId, payloadJson);
-						} catch (error) {
-							log.error(`Failed to save payload for ${requestId}:`, error);
-						}
-					},
-				);
-				if (!accepted) {
-					log.warn(
-						`Payload write rejected post-serialization for ${requestId} (bytes=${payloadBytes})`,
-					);
-				}
-			}
+		if (preparedPayload) {
+			this.enqueuePreparedPayload(requestId, preparedPayload);
+			preparedPayload = null;
 		}
-		freeRequestState(state);
 
 		// Log if we have usage
 		if (state.usage.model && startMessage.accountId !== NO_ACCOUNT_ID) {
@@ -887,36 +917,173 @@ export class UsageCollector {
 			state.usage.cacheCreationInputTokens,
 		);
 		this.onSummary(summary);
+	}
 
-		// Clean up
-		this.requests.delete(msg.requestId);
+	private releaseRequestPayload(state: RequestState): void {
+		this.activePayloadBytes = Math.max(
+			0,
+			this.activePayloadBytes - state.retainedPayloadBytes,
+		);
+		state.retainedPayloadBytes = 0;
+		releasePayloadState(state);
+	}
+
+	private freeRequestState(state: RequestState): void {
+		this.releaseRequestPayload(state);
+		state.buffer = "";
+	}
+
+	private preparePayloadForFinalization(
+		state: RequestState,
+		msg: EndMessage,
+	): PreparedPayload | null {
+		if (!this.getStorePayloads() || state.payloadReleased) return null;
+
+		const { startMessage } = state;
+		const estimatedRequestBytes = startMessage.requestBody?.length ?? 0;
+		// msg.responseBody is already a text string (no inflation needed), but
+		// state.chunksBytes is raw bytes that get base64-encoded before storage
+		// (see combineChunks(...).toString("base64") below), which inflates
+		// size by ~33% — scale the estimate accordingly for the streaming case.
+		const estimatedResponseBytes =
+			msg.responseBody?.length ?? Math.ceil((state.chunksBytes * 4) / 3);
+		const estimatedPayloadBytes =
+			estimatedRequestBytes + estimatedResponseBytes + 2048;
+		const estimatedPendingBytes =
+			this.pendingPayloadBytes + estimatedPayloadBytes;
+
+		if (
+			this.pendingPayloadCount >= MAX_PENDING_PAYLOAD_COUNT ||
+			estimatedPendingBytes > MAX_PENDING_PAYLOAD_BYTES ||
+			!this.asyncWriter.canAcceptPayload(estimatedPendingBytes)
+		) {
+			this.asyncWriter.recordPayloadDrop(estimatedPayloadBytes);
+			log.warn(
+				`Backpressure: skipping payload persistence for ${startMessage.requestId} (estimated_bytes=${estimatedPayloadBytes}, pending_finalizer_bytes=${this.pendingPayloadBytes}, pending_finalizer_count=${this.pendingPayloadCount})`,
+			);
+			return null;
+		}
+
+		let responseBody: string | null = null;
+		if (msg.responseBody) {
+			responseBody = msg.responseBody;
+		} else if (state.chunks.length > 0) {
+			const combined = combineChunks(state.chunks);
+			if (combined.length > 0) responseBody = combined.toString("base64");
+		}
+
+		let requestBody = startMessage.requestBody;
+		if (requestBody) {
+			const rawBytes = Buffer.byteLength(requestBody, "base64");
+			if (rawBytes > MAX_REQUEST_BODY_BYTES) {
+				requestBody = Buffer.from(requestBody, "base64")
+					.subarray(0, MAX_REQUEST_BODY_BYTES)
+					.toString("base64");
+			}
+		}
+
+		const payloadJson = JSON.stringify({
+			request: {
+				headers: startMessage.requestHeaders,
+				body: requestBody,
+			},
+			response: {
+				status: startMessage.responseStatus,
+				headers: startMessage.responseHeaders,
+				body: responseBody,
+			},
+			meta: {
+				accountId: startMessage.accountId || NO_ACCOUNT_ID,
+				timestamp: startMessage.timestamp,
+				success: msg.success,
+				isStream: startMessage.isStream,
+				retry: startMessage.retryAttempt,
+				project: state.project ?? undefined,
+				projectAttributionSource: state.projectAttributionSource ?? undefined,
+				agentAttributionSource: state.agentAttributionSource ?? undefined,
+			},
+		});
+		responseBody = null;
+
+		const payloadBytes = Buffer.byteLength(payloadJson);
+		const totalPendingBytes = this.pendingPayloadBytes + payloadBytes;
+		if (
+			totalPendingBytes > MAX_PENDING_PAYLOAD_BYTES ||
+			!this.asyncWriter.canAcceptPayload(totalPendingBytes)
+		) {
+			this.asyncWriter.recordPayloadDrop(payloadBytes);
+			log.warn(
+				`Backpressure: skipping payload persistence for ${startMessage.requestId} after serialization (bytes=${payloadBytes}, pending_finalizer_bytes=${this.pendingPayloadBytes})`,
+			);
+			return null;
+		}
+
+		this.pendingPayloadBytes = totalPendingBytes;
+		this.pendingPayloadCount++;
+		return { json: payloadJson, bytes: payloadBytes };
+	}
+
+	private enqueuePreparedPayload(
+		requestId: string,
+		payload: PreparedPayload,
+	): void {
+		try {
+			const accepted = this.asyncWriter.enqueuePayload(
+				requestId,
+				payload.bytes,
+				async () => {
+					try {
+						await this.dbOps.saveRequestPayloadRaw(requestId, payload.json);
+					} catch (error) {
+						log.error(`Failed to save payload for ${requestId}:`, error);
+					}
+				},
+			);
+			if (!accepted) {
+				log.warn(
+					`Payload write rejected post-serialization for ${requestId} (bytes=${payload.bytes})`,
+				);
+			}
+		} finally {
+			this.releasePreparedPayload(payload);
+		}
+	}
+
+	private releasePreparedPayload(payload: PreparedPayload): void {
+		this.pendingPayloadBytes = Math.max(
+			0,
+			this.pendingPayloadBytes - payload.bytes,
+		);
+		this.pendingPayloadCount = Math.max(0, this.pendingPayloadCount - 1);
 	}
 
 	private cleanupStaleRequests(): void {
 		const now = Date.now();
 		let removedCount = 0;
 
-		// 1. Remove TTL-expired requests (hard limit)
+		// 1. Bound payload retention independently of stream lifetime. Active
+		// streams keep their parser/token state, but pings cannot keep multi-MB
+		// request bodies and captured response chunks alive indefinitely.
 		for (const [id, state] of this.requests) {
 			const age = now - state.createdAt;
-			if (age > REQUEST_TTL_MS) {
+			if (!state.payloadReleased && age > REQUEST_PAYLOAD_RETENTION_MS) {
 				log.warn(
-					`Request ${id} exceeded TTL (age: ${Math.round(age / 1000)}s, limit: ${REQUEST_TTL_MS / 1000}s), removing...`,
+					`Request ${id} is still active after ${Math.round(age / 1000)}s; releasing retained payload fields`,
 				);
-				freeRequestState(state);
-				this.requests.delete(id);
-				removedCount++;
+				this.releaseRequestPayload(state);
 			}
 		}
 
-		// 2. Remove inactive requests (orphaned)
+		// 2. Remove inactive requests (orphaned). A stream may legitimately run
+		// for much longer than the inactivity timeout, so lifecycle age alone must
+		// never evict it while chunks (including provider pings) are still arriving.
 		for (const [id, state] of this.requests) {
 			const inactivity = now - state.lastActivity;
 			if (inactivity > this.timeoutMs) {
 				log.warn(
 					`Request ${id} appears orphaned (no activity for ${Math.round(inactivity / 1000)}s), removing...`,
 				);
-				freeRequestState(state);
+				this.freeRequestState(state);
 				this.requests.delete(id);
 				removedCount++;
 			}
@@ -935,7 +1102,7 @@ export class UsageCollector {
 
 			for (let i = 0; i < excess; i++) {
 				const [id, state] = sortedByAge[i];
-				freeRequestState(state);
+				this.freeRequestState(state);
 				this.requests.delete(id);
 				removedCount++;
 			}
@@ -945,6 +1112,83 @@ export class UsageCollector {
 			log.info(
 				`requests.size=${this.requests.size} after cleanup (removed=${removedCount})`,
 			);
+		}
+	}
+
+	private async estimateCostWithDeadline(
+		requestId: string,
+		model: string,
+		estimate: () => Promise<number>,
+	): Promise<number> {
+		if (this.draining) {
+			log.warn(
+				"Pricing estimate skipped during drain; using zero-cost fallback",
+				{
+					model,
+					requestId,
+				},
+			);
+			return 0;
+		}
+
+		let timeoutHandle: Timer | undefined;
+		let settled = false;
+		let resolveFallback: (value: number) => void = () => {};
+		const fallback = new Promise<number>((resolve) => {
+			resolveFallback = resolve;
+			timeoutHandle = setTimeout(() => {
+				if (settled) return;
+				settled = true;
+				log.warn("Pricing estimate timed out; using zero-cost fallback", {
+					model,
+					requestId,
+					timeoutMs: this.pricingTimeoutMs,
+				});
+				resolve(0);
+			}, this.pricingTimeoutMs);
+		});
+		const forceFallback = () => {
+			if (settled) return;
+			settled = true;
+			log.warn(
+				"Pricing estimate cancelled during drain; using zero-cost fallback",
+				{ model, requestId },
+			);
+			resolveFallback(0);
+		};
+		this.pendingPricingFallbacks.add(forceFallback);
+
+		const estimatePromise = Promise.resolve()
+			.then(estimate)
+			.then(
+				(value) => {
+					settled = true;
+					return value;
+				},
+				(error) => {
+					settled = true;
+					throw error;
+				},
+			);
+		try {
+			return await Promise.race([estimatePromise, fallback]);
+		} finally {
+			this.pendingPricingFallbacks.delete(forceFallback);
+			if (timeoutHandle) clearTimeout(timeoutHandle);
+		}
+	}
+
+	private warnMissingState(requestId: string): void {
+		if (this.missingStateWarnings.has(requestId)) return;
+
+		log.warn(`No state found for request ${requestId}`);
+		this.missingStateWarnings.add(requestId);
+
+		if (this.missingStateWarnings.size > MAX_MISSING_STATE_WARNINGS) {
+			const oldestRequestId = this.missingStateWarnings.keys().next().value;
+			if (oldestRequestId !== undefined) {
+				this.missingStateWarnings.delete(oldestRequestId);
+			}
 		}
 	}
 
