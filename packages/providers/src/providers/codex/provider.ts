@@ -740,7 +740,7 @@ export class CodexProvider extends BaseProvider {
 			}
 			let serialized: string;
 			try {
-				serialized = JSON.stringify(block) ?? "";
+				serialized = JSON.stringify(block);
 			} catch {
 				continue;
 			}
@@ -1240,23 +1240,23 @@ export class CodexProvider extends BaseProvider {
 			body.tool_choice,
 			tools ?? [],
 		);
+		if (explicitToolChoice) {
+			codexRequest.tool_choice = explicitToolChoice;
+		} else if (tools?.some((t) => t.name === "StructuredOutput")) {
+			// Claude Code schema agents provide a StructuredOutput tool but do not set
+			// Anthropic tool_choice. Native Claude reliably follows the hidden schema
+			// instruction; Codex models often end_turn with text instead. Force the
+			// function when this sentinel tool is present to preserve workflow semantics.
+			codexRequest.tool_choice = {
+				type: "function",
+				name: "StructuredOutput",
+			};
+		}
+		if (body.tool_choice?.disable_parallel_tool_use === true) {
+			codexRequest.parallel_tool_calls = false;
+		}
 		if (tools) {
 			codexRequest.tools = tools;
-			if (explicitToolChoice) {
-				codexRequest.tool_choice = explicitToolChoice;
-			} else if (tools.some((t) => t.name === "StructuredOutput")) {
-				// Claude Code schema agents provide a StructuredOutput tool but do not set
-				// Anthropic tool_choice. Native Claude reliably follows the hidden schema
-				// instruction; Codex models often end_turn with text instead. Force the
-				// function when this sentinel tool is present to preserve workflow semantics.
-				codexRequest.tool_choice = {
-					type: "function",
-					name: "StructuredOutput",
-				};
-			}
-			if (body.tool_choice?.disable_parallel_tool_use === true) {
-				codexRequest.parallel_tool_calls = false;
-			}
 		}
 
 		return codexRequest;

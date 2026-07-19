@@ -158,7 +158,9 @@ describe("Codex transform — continuation nudge behavior", () => {
 		console.log(
 			`[characterization] two-skill nudge count = ${nudges(body.input)}`,
 		);
-		expect(nudges(body.input)).toBeGreaterThanOrEqual(0);
+		// Pinned now that the single-tail-nudge behavior is implemented: two
+		// concurrent Skill results still produce exactly one nudge.
+		expect(nudges(body.input)).toBe(1);
 	});
 });
 
