@@ -1868,6 +1868,53 @@ class API extends HttpClient {
 		}
 	}
 
+	async getModelCapacityRouting(): Promise<{
+		mode: "off" | "exhausted";
+		source: "env" | "file" | "default";
+	}> {
+		const startTime = Date.now();
+		const url = "/api/config/model-capacity-routing";
+
+		this.logger.debug(`→ GET ${url}`);
+
+		try {
+			const response = await this.get<{
+				mode: "off" | "exhausted";
+				source: "env" | "file" | "default";
+			}>(url);
+			const duration = Date.now() - startTime;
+			this.logger.debug(`← GET ${url} - 200 (${duration}ms)`);
+			return response;
+		} catch (error) {
+			const duration = Date.now() - startTime;
+			this.logger.error(`✗ GET ${url} - ERROR (${duration}ms)`, {
+				error: error instanceof Error ? error.message : String(error),
+				stack: error instanceof Error ? error.stack : undefined,
+			});
+			throw error;
+		}
+	}
+
+	async setModelCapacityRouting(mode: "off" | "exhausted"): Promise<void> {
+		const startTime = Date.now();
+		const url = "/api/config/model-capacity-routing";
+
+		this.logger.debug(`→ POST ${url}`, { mode });
+
+		try {
+			await this.post(url, { mode });
+			const duration = Date.now() - startTime;
+			this.logger.debug(`← POST ${url} - 200 (${duration}ms)`);
+		} catch (error) {
+			const duration = Date.now() - startTime;
+			this.logger.error(`✗ POST ${url} - ERROR (${duration}ms)`, {
+				error: error instanceof Error ? error.message : String(error),
+				stack: error instanceof Error ? error.stack : undefined,
+			});
+			throw error;
+		}
+	}
+
 	async cleanupNow(): Promise<{
 		removedRequests: number;
 		removedPayloads: number;
