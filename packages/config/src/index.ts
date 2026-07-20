@@ -507,6 +507,26 @@ export class Config extends EventEmitter {
 		return "off";
 	}
 
+	/**
+	 * Report where the effective model-scoped capacity routing mode comes from,
+	 * mirroring the precedence in getModelScopedCapacityRouting():
+	 * a valid MODEL_SCOPED_CAPACITY_ROUTING env value wins ("env"), else a valid
+	 * config-file field ("file"), else the built-in default ("default"). The
+	 * dashboard uses "env" to lock the control, because a POST that writes the
+	 * file field is ineffective while the env var overrides it.
+	 */
+	getModelScopedCapacityRoutingSource(): "env" | "file" | "default" {
+		const fromEnv = process.env.MODEL_SCOPED_CAPACITY_ROUTING;
+		if (isValidModelScopedCapacityRoutingMode(fromEnv)) {
+			return "env";
+		}
+		const fromFile = this.data.model_scoped_capacity_routing;
+		if (isValidModelScopedCapacityRoutingMode(fromFile)) {
+			return "file";
+		}
+		return "default";
+	}
+
 	setModelScopedCapacityRouting(mode: ModelScopedCapacityRoutingMode): void {
 		if (!isValidModelScopedCapacityRoutingMode(mode)) {
 			throw new ValidationError(

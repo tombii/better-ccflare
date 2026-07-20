@@ -99,4 +99,55 @@ describe("getModelScopedCapacityRouting / setModelScopedCapacityRouting", () => 
 			cleanup();
 		}
 	});
+
+	it("reports source 'default' when neither env nor file is set", () => {
+		const { config, cleanup } = makeConfig();
+		try {
+			expect(config.getModelScopedCapacityRoutingSource()).toBe("default");
+		} finally {
+			cleanup();
+		}
+	});
+
+	it("reports source 'file' when only the config-file field is set", () => {
+		const { config, cleanup } = makeConfig();
+		try {
+			config.setModelScopedCapacityRouting("exhausted");
+			expect(config.getModelScopedCapacityRoutingSource()).toBe("file");
+		} finally {
+			cleanup();
+		}
+	});
+
+	it("reports source 'env' when a valid env override is present", () => {
+		process.env.MODEL_SCOPED_CAPACITY_ROUTING = "exhausted";
+		const { config, cleanup } = makeConfig();
+		try {
+			expect(config.getModelScopedCapacityRoutingSource()).toBe("env");
+		} finally {
+			cleanup();
+		}
+	});
+
+	it("reports source 'env' even when a config-file value is also set", () => {
+		process.env.MODEL_SCOPED_CAPACITY_ROUTING = "off";
+		const { config, cleanup } = makeConfig();
+		try {
+			config.setModelScopedCapacityRouting("exhausted");
+			expect(config.getModelScopedCapacityRoutingSource()).toBe("env");
+		} finally {
+			cleanup();
+		}
+	});
+
+	it("reports source 'file' when an invalid env value falls back to the file", () => {
+		process.env.MODEL_SCOPED_CAPACITY_ROUTING = "always";
+		const { config, cleanup } = makeConfig();
+		try {
+			config.setModelScopedCapacityRouting("exhausted");
+			expect(config.getModelScopedCapacityRoutingSource()).toBe("file");
+		} finally {
+			cleanup();
+		}
+	});
 });

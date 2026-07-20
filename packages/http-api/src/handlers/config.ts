@@ -246,6 +246,7 @@ export function createConfigHandlers(
 		getModelCapacityRouting: (): Response => {
 			return jsonResponse({
 				mode: config.getModelScopedCapacityRouting(),
+				source: config.getModelScopedCapacityRoutingSource(),
 			});
 		},
 
@@ -259,7 +260,16 @@ export function createConfigHandlers(
 				);
 			}
 			config.setModelScopedCapacityRouting(body.mode);
-			return new Response(null, { status: 204 });
+			// Report the post-set EFFECTIVE mode/source: a MODEL_SCOPED_CAPACITY_ROUTING
+			// env var still overrides the file we just wrote, so `effective` may differ
+			// from the requested `mode`. The dashboard uses this to warn that the write
+			// was ineffective while env-locked.
+			return jsonResponse({
+				success: true,
+				mode: body.mode,
+				source: config.getModelScopedCapacityRoutingSource(),
+				effective: config.getModelScopedCapacityRouting(),
+			});
 		},
 	};
 }
