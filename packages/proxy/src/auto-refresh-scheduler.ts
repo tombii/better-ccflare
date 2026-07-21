@@ -659,6 +659,21 @@ export class AutoRefreshScheduler {
 				// Ignore error reading body
 			}
 
+			// A 529 (overloaded_error) is a deliberate throttle/overload signal —
+			// either better-ccflare's own usage-throttling (should no longer reach
+			// here now that the probe is exempted in applyUsageThrottling, but kept
+			// as defense in depth) or a transient upstream overload from the
+			// provider itself. Neither indicates the endpoint is broken, so it must
+			// NOT count toward the consecutive-failure pause threshold: doing so
+			// previously auto-paused a healthy-but-throttled account the instant
+			// its usage window reset and the scheduler re-probed it.
+			if (response.status === 529) {
+				log.warn(
+					`Auto-refresh probe for ${accountRow.name} received 529 (overloaded/throttled) — not counting toward the ${this.FAILURE_THRESHOLD}-failure pause threshold`,
+				);
+				return false;
+			}
+
 			// Track consecutive failures for this account (for non-401 errors too)
 			await this.recordRefreshFailure(
 				accountRow.id,
