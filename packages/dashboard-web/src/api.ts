@@ -1394,17 +1394,23 @@ class API extends HttpClient {
 		}
 	}
 
-	async getStrategy(): Promise<string> {
+	async getStrategy(): Promise<{
+		strategy: string;
+		strategySource: "env" | "file" | "default";
+	}> {
 		const startTime = Date.now();
 		const url = "/api/config/strategy";
 
 		this.logger.debug(`→ GET ${url}`);
 
 		try {
-			const data = await this.get<{ strategy: string }>(url);
+			const data = await this.get<{
+				strategy: string;
+				strategySource: "env" | "file" | "default";
+			}>(url);
 			const duration = Date.now() - startTime;
 			this.logger.debug(`← GET ${url} - 200 (${duration}ms)`);
-			return data.strategy;
+			return data;
 		} catch (error) {
 			const duration = Date.now() - startTime;
 			this.logger.error(`✗ GET ${url} - ERROR (${duration}ms)`, {

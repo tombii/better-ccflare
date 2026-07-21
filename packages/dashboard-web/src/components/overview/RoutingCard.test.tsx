@@ -6,13 +6,19 @@
  */
 import { describe, expect, it } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { RoutingCardView, type RoutingCardViewProps } from "./RoutingCard";
+import {
+	getStrategySelectItems,
+	RoutingCardView,
+	type RoutingCardViewProps,
+	type StrategySelectItem,
+} from "./RoutingCard";
 
 function render(overrides: Partial<RoutingCardViewProps> = {}): string {
 	const props: RoutingCardViewProps = {
 		strategy: "session",
 		onStrategyChange: () => {},
 		strategyDisabled: false,
+		strategySource: "default",
 		capacityMode: "off",
 		capacitySource: "default",
 		onCapacityChange: () => {},
@@ -80,5 +86,78 @@ describe("RoutingCardView", () => {
 		});
 		expect(html).not.toContain("env-locked");
 		expect(html).not.toContain("data-disabled");
+	});
+
+	it("locks the strategy select and shows an env-locked badge when strategySource is env", () => {
+		const html = render({ strategy: "session", strategySource: "env" });
+		expect(html).toContain("env-locked");
+		// The capacity switch is enabled here (default "default" source), so
+		// this uniquely proves the strategy select itself is disabled.
+		expect(html).toContain("data-disabled");
+		// Badge tooltip points the user at the overriding env var.
+		expect(html).toContain("LB_STRATEGY");
+	});
+
+	it("leaves the strategy select enabled and hides its badge for the file source", () => {
+		const html = render({ strategy: "session", strategySource: "file" });
+		expect(html).not.toContain("env-locked");
+		expect(html).not.toContain("data-disabled");
+	});
+
+	it("leaves the strategy select enabled and hides its badge for the default source", () => {
+		const html = render({ strategy: "session", strategySource: "default" });
+		expect(html).not.toContain("env-locked");
+		expect(html).not.toContain("data-disabled");
+	});
+
+	it("associates the strategy label with its Select trigger via htmlFor/id", () => {
+		const html = render();
+		expect(html).toContain('for="routing-strategy"');
+		expect(html).toContain('id="routing-strategy"');
+	});
+
+	it("associates the capacity label with its Switch via htmlFor/id", () => {
+		const html = render();
+		expect(html).toContain('for="routing-capacity"');
+		expect(html).toContain('id="routing-capacity"');
+	});
+
+	it("does not throw when the effective strategy is not one of the listed options", () => {
+		// least-used/session-affinity are valid StrategyName values that are
+		// deliberately not offered (see STRATEGY_OPTIONS), but the server can
+		// still report them as the effective strategy (env/config/older
+		// default). The view must render without error in that case.
+		const html = render({ strategy: "least-used" });
+		expect(html).toContain('role="combobox"');
+	});
+});
+
+describe("getStrategySelectItems", () => {
+	const listed: readonly StrategySelectItem[] = [
+		{ label: "Session", value: "session" },
+		{ label: "Session — drain soonest", value: "session-drain-soonest" },
+	];
+
+	it("returns only the two listed options when the current strategy is one of them", () => {
+		expect(getStrategySelectItems("session")).toEqual(listed);
+		expect(getStrategySelectItems("session-drain-soonest")).toEqual(listed);
+	});
+
+	it("appends the current strategy as a disabled item when it is not listed", () => {
+		expect(getStrategySelectItems("least-used")).toEqual([
+			...listed,
+			{ label: "least-used (current)", value: "least-used", disabled: true },
+		]);
+	});
+
+	it("appends session-affinity as a disabled item when it is the current strategy", () => {
+		expect(getStrategySelectItems("session-affinity")).toEqual([
+			...listed,
+			{
+				label: "session-affinity (current)",
+				value: "session-affinity",
+				disabled: true,
+			},
+		]);
 	});
 });
