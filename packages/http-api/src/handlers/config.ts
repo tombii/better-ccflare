@@ -62,7 +62,14 @@ export function createConfigHandlers(
 		 */
 		getStrategy: (): Response => {
 			const strategy = config.getStrategy();
-			return jsonResponse({ strategy });
+			// strategySource mirrors the model-capacity-routing source field so
+			// the dashboard can lock the strategy control the same way when
+			// LB_STRATEGY overrides the config file. Additive field: existing
+			// consumers of `strategy` are unaffected.
+			return jsonResponse({
+				strategy,
+				strategySource: config.getStrategySource(),
+			});
 		},
 
 		/**

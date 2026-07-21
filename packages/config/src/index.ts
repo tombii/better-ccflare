@@ -260,19 +260,19 @@ export class Config extends EventEmitter {
 	}
 
 	getStrategy(): StrategyName {
-		// First check environment variable
-		const envStrategy = process.env.LB_STRATEGY;
-		if (envStrategy && isValidStrategy(envStrategy)) {
-			return envStrategy;
-		}
+		return this.resolveStrategy().value;
+	}
 
-		// Then check config file
-		const configStrategy = this.data.lb_strategy;
-		if (configStrategy && isValidStrategy(configStrategy)) {
-			return configStrategy;
-		}
-
-		return DEFAULT_STRATEGY;
+	/**
+	 * Report where the effective load-balancing strategy comes from, mirroring
+	 * the precedence in getStrategy(): a valid LB_STRATEGY env value wins
+	 * ("env"), else a valid config-file field ("file"), else the built-in
+	 * default ("default"). The dashboard uses "env" to lock the strategy
+	 * control, because a POST that writes the file field is ineffective while
+	 * the env var overrides it.
+	 */
+	getStrategySource(): "env" | "file" | "default" {
+		return this.resolveStrategy().source;
 	}
 
 	setStrategy(strategy: StrategyName): void {
@@ -516,6 +516,23 @@ export class Config extends EventEmitter {
 			return { value: fileValue, source: "file" };
 		}
 		return { value: defaultValue, source: "default" };
+	}
+
+	/**
+	 * Resolve the effective load-balancing strategy plus its source, using the
+	 * same env > file > default precedence getStrategy() has always used.
+	 * Backs both getStrategy() and getStrategySource() so they cannot drift.
+	 */
+	private resolveStrategy(): {
+		value: StrategyName;
+		source: "env" | "file" | "default";
+	} {
+		return this.resolveEnvFileSetting(
+			process.env.LB_STRATEGY,
+			this.data.lb_strategy,
+			isValidStrategy,
+			DEFAULT_STRATEGY,
+		);
 	}
 
 	private resolveModelScopedCapacityRouting(): {
