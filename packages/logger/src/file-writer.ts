@@ -121,7 +121,24 @@ export class LogFileWriter implements Disposable {
 			}
 		}
 
-		const line = `${JSON.stringify(event)}\n`;
+		let line: string;
+		try {
+			line = `${JSON.stringify(event)}\n`;
+		} catch (e: unknown) {
+			// event.data comes from caller-supplied log payloads and may contain
+			// circular references or BigInt values, both of which make
+			// JSON.stringify throw. A logging call must never crash its caller,
+			// so fall back to a sanitized line that preserves ts/level/msg and
+			// replaces only the offending data field.
+			const reason = e instanceof Error ? e.message : String(e);
+			const fallback: LogEvent = {
+				ts: event.ts,
+				level: event.level,
+				msg: event.msg,
+				data: `[unserializable: ${reason}]`,
+			};
+			line = `${JSON.stringify(fallback)}\n`;
+		}
 		if (this.stream) {
 			this.stream.write(line);
 		}
