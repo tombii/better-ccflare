@@ -495,16 +495,43 @@ export class Config extends EventEmitter {
 		this.set("usage_throttling_weekly_enabled", value);
 	}
 
+	/**
+	 * Shared env > file > default precedence resolver: a valid environment
+	 * value wins ("env"), else a valid config-file value ("file"), else
+	 * `defaultValue` ("default"). Used by getModelScopedCapacityRouting() /
+	 * getModelScopedCapacityRoutingSource() so the two can never drift, and
+	 * is reusable for other env+file-backed string settings (e.g. a future
+	 * getStrategySource() for LB_STRATEGY).
+	 */
+	private resolveEnvFileSetting<T extends string>(
+		envValue: string | undefined,
+		fileValue: T | undefined,
+		isValid: (value: string) => value is T,
+		defaultValue: T,
+	): { value: T; source: "env" | "file" | "default" } {
+		if (envValue !== undefined && isValid(envValue)) {
+			return { value: envValue, source: "env" };
+		}
+		if (fileValue !== undefined && isValid(fileValue)) {
+			return { value: fileValue, source: "file" };
+		}
+		return { value: defaultValue, source: "default" };
+	}
+
+	private resolveModelScopedCapacityRouting(): {
+		value: ModelScopedCapacityRoutingMode;
+		source: "env" | "file" | "default";
+	} {
+		return this.resolveEnvFileSetting(
+			process.env.MODEL_SCOPED_CAPACITY_ROUTING,
+			this.data.model_scoped_capacity_routing,
+			isValidModelScopedCapacityRoutingMode,
+			"off",
+		);
+	}
+
 	getModelScopedCapacityRouting(): ModelScopedCapacityRoutingMode {
-		const fromEnv = process.env.MODEL_SCOPED_CAPACITY_ROUTING;
-		if (isValidModelScopedCapacityRoutingMode(fromEnv)) {
-			return fromEnv;
-		}
-		const fromFile = this.data.model_scoped_capacity_routing;
-		if (isValidModelScopedCapacityRoutingMode(fromFile)) {
-			return fromFile;
-		}
-		return "off";
+		return this.resolveModelScopedCapacityRouting().value;
 	}
 
 	/**
@@ -516,15 +543,7 @@ export class Config extends EventEmitter {
 	 * file field is ineffective while the env var overrides it.
 	 */
 	getModelScopedCapacityRoutingSource(): "env" | "file" | "default" {
-		const fromEnv = process.env.MODEL_SCOPED_CAPACITY_ROUTING;
-		if (isValidModelScopedCapacityRoutingMode(fromEnv)) {
-			return "env";
-		}
-		const fromFile = this.data.model_scoped_capacity_routing;
-		if (isValidModelScopedCapacityRoutingMode(fromFile)) {
-			return "file";
-		}
-		return "default";
+		return this.resolveModelScopedCapacityRouting().source;
 	}
 
 	setModelScopedCapacityRouting(mode: ModelScopedCapacityRoutingMode): void {

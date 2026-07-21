@@ -56,6 +56,17 @@ describe("getModelScopedCapacityRouting / setModelScopedCapacityRouting", () => 
 		}
 	});
 
+	it("falls back to the file value when an invalid env value is set and a file value exists", () => {
+		process.env.MODEL_SCOPED_CAPACITY_ROUTING = "always";
+		const { config, cleanup } = makeConfig();
+		try {
+			config.setModelScopedCapacityRouting("exhausted");
+			expect(config.getModelScopedCapacityRouting()).toBe("exhausted");
+		} finally {
+			cleanup();
+		}
+	});
+
 	it("honors a config-file override set via setModelScopedCapacityRouting", () => {
 		const { config, cleanup } = makeConfig();
 		try {
