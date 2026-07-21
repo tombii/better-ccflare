@@ -528,6 +528,7 @@ export const useSetStrategy = () => {
 		mutationFn: (strategy: string) => api.setStrategy(strategy),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ["strategy"] });
+			queryClient.invalidateQueries({ queryKey: queryKeys.accounts() });
 		},
 	});
 };

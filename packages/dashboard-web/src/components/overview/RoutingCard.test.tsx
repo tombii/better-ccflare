@@ -60,8 +60,24 @@ describe("RoutingCardView", () => {
 		expect(html).toContain("MODEL_SCOPED_CAPACITY_ROUTING");
 	});
 
-	it("leaves the switch enabled and hides the badge for file/default sources", () => {
+	it("locks the switch off and shows an env-locked badge when mode is off and source is env", () => {
+		const html = render({ capacityMode: "off", capacitySource: "env" });
+		expect(html).toContain('aria-checked="false"');
+		expect(html).toContain("data-disabled");
+		expect(html).toContain("env-locked");
+	});
+
+	it("leaves the switch enabled and hides the badge for the file source", () => {
 		const html = render({ capacityMode: "exhausted", capacitySource: "file" });
+		expect(html).not.toContain("env-locked");
+		expect(html).not.toContain("data-disabled");
+	});
+
+	it("leaves the switch enabled and hides the badge for the default source", () => {
+		const html = render({
+			capacityMode: "exhausted",
+			capacitySource: "default",
+		});
 		expect(html).not.toContain("env-locked");
 		expect(html).not.toContain("data-disabled");
 	});
