@@ -41,8 +41,11 @@ flowchart TD
     J -->|"Strategy itself found nothing<br/>(all paused / rate-limited)"| M["503 pool_exhausted"]
     I -->|"Yes"| N["Dispatch: try candidates in order"]
     N --> O{"Upstream 429?"}
-    O -->|"Yes"| P["Apply cooldown,<br/>fail over to next candidate"]
-    P --> N
+    O -->|"Yes"| P{"out_of_credits (model/beta-<br/>scoped) or synthetic keepalive?"}
+    P -->|"Yes"| P2["No account cooldown —<br/>fail over to next candidate"]
+    P -->|"No"| P3["Apply account cooldown,<br/>fail over to next candidate"]
+    P2 --> N
+    P3 --> N
     O -->|"No"| Q["Return response to client"]
 ```
 
@@ -124,7 +127,7 @@ flowchart TD
 
 ## Usage Throttling
 
-Independent of which strategy picked the candidate order, usage-throttling (`usage_throttling_five_hour_enabled` / `usage_throttling_weekly_enabled`) can hold an account back even though it isn't rate-limited yet. For each enabled window class, ccflare computes its own linear **pacing line** — the percentage of the window's duration that has elapsed — and compares it against Anthropic's real reported utilization: if the account is "ahead of pace" it is throttled until the point where reported usage and the pacing line would realign. A per-model weekly cap only counts against the request's own model family; there is no special exemption for internal auto-refresh/keepalive probes — they are throttled by the same gate as any other request (they are only exempted from request-history logging, not from this gate).
+Independent of which strategy picked the candidate order, usage-throttling (`usage_throttling_five_hour_enabled` / `usage_throttling_weekly_enabled`) can hold an account back even though it isn't rate-limited yet. For each enabled window class, ccflare computes its own linear **pacing line** — the percentage of the window's duration that has elapsed — and compares it against Anthropic's real reported utilization: if the account is "ahead of pace" it is throttled until the point where reported usage and the pacing line would realign. A per-model weekly cap only counts against the request's own model family for normal requests — but combo-routed requests assign their per-slot model later in the pipeline, so `applyUsageThrottling` passes no request model for them and model-scoped weekly windows are skipped entirely (only the flat, non-scoped windows and the reactive `out_of_credits` cache still apply). There is no special exemption for internal auto-refresh/keepalive probes — they are throttled by the same gate as any other request (they are only exempted from request-history logging, not from this gate).
 
 ```mermaid
 flowchart TD
