@@ -108,10 +108,33 @@ export class Logger {
 				msg: message,
 				...(data && { data }),
 			};
-			return JSON.stringify(logEntry);
+			try {
+				return JSON.stringify(logEntry);
+			} catch (e: unknown) {
+				// data is caller-supplied and may be circular or contain a
+				// BigInt, both of which make JSON.stringify throw. A logging
+				// call must never crash its caller, so fall back to a
+				// sanitized entry that preserves ts/level/msg.
+				const reason = e instanceof Error ? e.message : String(e);
+				return JSON.stringify({
+					ts: timestamp,
+					level,
+					prefix: this.prefix || undefined,
+					msg: message,
+					data: `[unserializable: ${reason}]`,
+				});
+			}
 		} else {
 			const prefix = this.prefix ? `[${this.prefix}] ` : "";
-			const dataStr = data ? ` ${JSON.stringify(data)}` : "";
+			let dataStr = "";
+			if (data) {
+				try {
+					dataStr = ` ${JSON.stringify(data)}`;
+				} catch (e: unknown) {
+					const reason = e instanceof Error ? e.message : String(e);
+					dataStr = ` [unserializable: ${reason}]`;
+				}
+			}
 			return `[${timestamp}] ${level}: ${prefix}${message}${dataStr}`;
 		}
 	}
