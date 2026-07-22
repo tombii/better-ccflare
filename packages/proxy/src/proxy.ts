@@ -244,6 +244,24 @@ export async function handleProxy(
 			return { available: accounts, throttled: [] as Account[] };
 		}
 
+		// Internal synthetic probes (auto-refresh window-reset checks, cache
+		// keepalive replays) must never be usage-throttled. They exist
+		// specifically to hit the real endpoint and observe state changes
+		// (window resets, recovered accounts) — the same reason
+		// selectAccountsForRequest already lets them bypass pause/rate-limit
+		// checks (see account-selector.ts's isAutoRefreshBypass). Without this
+		// exemption, a throttled-but-healthy account's own synthetic probe gets
+		// our own 529 back; the auto-refresh scheduler then misreads that as an
+		// endpoint failure and counts it toward its consecutive-failure pause
+		// threshold (recordRefreshFailure), auto-pausing a healthy account the
+		// instant its usage window resets and the scheduler re-probes it.
+		const isSyntheticProbe =
+			req.headers.get("x-better-ccflare-auto-refresh") === "true" ||
+			req.headers.get("x-better-ccflare-keepalive") === "true";
+		if (isSyntheticProbe) {
+			return { available: accounts, throttled: [] as Account[] };
+		}
+
 		const now = Date.now();
 		const available: Account[] = [];
 		const throttled: Account[] = [];
