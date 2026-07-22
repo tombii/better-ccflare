@@ -515,6 +515,42 @@ export const useSetUsageThrottling = () => {
 	});
 };
 
+export const useStrategy = () => {
+	return useQuery({
+		queryKey: ["strategy"],
+		queryFn: () => api.getStrategy(),
+	});
+};
+
+export const useSetStrategy = () => {
+	const queryClient = useQueryClient();
+	return useMutation({
+		mutationFn: (strategy: string) => api.setStrategy(strategy),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ["strategy"] });
+			queryClient.invalidateQueries({ queryKey: queryKeys.accounts() });
+		},
+	});
+};
+
+export const useModelCapacityRouting = () => {
+	return useQuery({
+		queryKey: ["model-capacity-routing"],
+		queryFn: () => api.getModelCapacityRouting(),
+	});
+};
+
+export const useSetModelCapacityRouting = () => {
+	const queryClient = useQueryClient();
+	return useMutation({
+		mutationFn: (mode: "off" | "exhausted") =>
+			api.setModelCapacityRouting(mode),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ["model-capacity-routing"] });
+		},
+	});
+};
+
 export const useCleanupNow = () => {
 	return useMutation({
 		mutationFn: () => api.cleanupNow(),

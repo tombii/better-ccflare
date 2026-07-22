@@ -62,7 +62,14 @@ export function createConfigHandlers(
 		 */
 		getStrategy: (): Response => {
 			const strategy = config.getStrategy();
-			return jsonResponse({ strategy });
+			// strategySource mirrors the model-capacity-routing source field so
+			// the dashboard can lock the strategy control the same way when
+			// LB_STRATEGY overrides the config file. Additive field: existing
+			// consumers of `strategy` are unaffected.
+			return jsonResponse({
+				strategy,
+				strategySource: config.getStrategySource(),
+			});
 		},
 
 		/**
@@ -246,6 +253,7 @@ export function createConfigHandlers(
 		getModelCapacityRouting: (): Response => {
 			return jsonResponse({
 				mode: config.getModelScopedCapacityRouting(),
+				source: config.getModelScopedCapacityRoutingSource(),
 			});
 		},
 
@@ -259,7 +267,16 @@ export function createConfigHandlers(
 				);
 			}
 			config.setModelScopedCapacityRouting(body.mode);
-			return new Response(null, { status: 204 });
+			// Report the post-set EFFECTIVE mode/source: a MODEL_SCOPED_CAPACITY_ROUTING
+			// env var still overrides the file we just wrote, so `effective` may differ
+			// from the requested `mode`. The dashboard uses this to warn that the write
+			// was ineffective while env-locked.
+			return jsonResponse({
+				success: true,
+				mode: body.mode,
+				source: config.getModelScopedCapacityRoutingSource(),
+				effective: config.getModelScopedCapacityRouting(),
+			});
 		},
 	};
 }
