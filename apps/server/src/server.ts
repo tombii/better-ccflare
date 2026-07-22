@@ -7,6 +7,7 @@ import {
 	getVersion,
 	HTTP_STATUS,
 	initializeNanoGPTPricingIfAccountsExist,
+	installOutboundProxy,
 	NETWORK,
 	registerCleanup,
 	registerDisposable,
@@ -633,6 +634,13 @@ export default async function startServer(options?: {
 
 	// Initialize components
 	const config = container.resolve<Config>(SERVICE_KEYS.Config);
+	installOutboundProxy(() => config.getOutboundProxy());
+	const outboundProxyUrl = config.getOutboundProxy();
+	if (outboundProxyUrl) {
+		new Logger("OutboundProxy").info(
+			`Outbound proxy enabled: ${outboundProxyUrl}`,
+		);
+	}
 	const runtime = config.getRuntime();
 	// Override port if provided
 	if (port !== runtime.port) {
