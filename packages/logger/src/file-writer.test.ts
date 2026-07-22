@@ -81,6 +81,35 @@ describe("LogFileWriter.write — non-serializable payloads", () => {
 		expect(String(parsed.data)).toContain("unserializable");
 	});
 
+	it("does not throw when the thrown error itself is not stringifiable", async () => {
+		// toJSON throwing a value whose Symbol.toPrimitive also throws means
+		// the catch block's `String(e)` would itself throw if unguarded.
+		const hostile = {
+			toJSON() {
+				throw {
+					[Symbol.toPrimitive]() {
+						throw new Error("nope");
+					},
+				};
+			},
+		};
+		const event: LogEvent = {
+			ts: 1700000000003,
+			level: "ERROR",
+			msg: "hostile payload",
+			data: hostile,
+		};
+
+		expect(() => writer.write(event)).not.toThrow();
+
+		const parsed = await readLastLine();
+		expect(parsed.ts).toBe(event.ts);
+		expect(parsed.level).toBe("ERROR");
+		expect(parsed.msg).toBe("hostile payload");
+		expect(typeof parsed.data).toBe("string");
+		expect(String(parsed.data)).toContain("unserializable");
+	});
+
 	it("leaves normal serializable events byte-identical", async () => {
 		const event: LogEvent = {
 			ts: 1700000000002,
@@ -130,6 +159,22 @@ describe("Logger.error — non-serializable data does not crash the caller", () 
 		const logger = new Logger("Test", LogLevel.ERROR);
 
 		expect(() => logger.error("boom", { n: 5n })).not.toThrow();
+		expect(captured.length).toBe(1);
+	});
+
+	it("does not throw when the thrown error itself is not stringifiable", () => {
+		const logger = new Logger("Test", LogLevel.ERROR);
+		const hostile = {
+			toJSON() {
+				throw {
+					[Symbol.toPrimitive]() {
+						throw new Error("nope");
+					},
+				};
+			},
+		};
+
+		expect(() => logger.error("boom", hostile)).not.toThrow();
 		expect(captured.length).toBe(1);
 	});
 });

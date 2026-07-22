@@ -31,6 +31,18 @@ function registerDisposable(disposable: Disposable): void {
 	disposables.add(disposable);
 }
 
+// String(e) can itself throw (e.g. an object with a throwing
+// Symbol.toPrimitive, or Object.create(null)), which would defeat the
+// purpose of the catch block calling this. Never let this throw.
+function safeErrorReason(e: unknown): string {
+	if (e instanceof Error) return e.message;
+	try {
+		return String(e);
+	} catch {
+		return "unknown error";
+	}
+}
+
 export class LogFileWriter implements Disposable {
 	private logDir: string;
 	private logFile: string;
@@ -130,7 +142,7 @@ export class LogFileWriter implements Disposable {
 			// JSON.stringify throw. A logging call must never crash its caller,
 			// so fall back to a sanitized line that preserves ts/level/msg and
 			// replaces only the offending data field.
-			const reason = e instanceof Error ? e.message : String(e);
+			const reason = safeErrorReason(e);
 			const fallback: LogEvent = {
 				ts: event.ts,
 				level: event.level,

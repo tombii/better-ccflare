@@ -35,6 +35,18 @@ function normalizeLogData(data: any): any {
 	return data;
 }
 
+// String(e) can itself throw (e.g. an object with a throwing
+// Symbol.toPrimitive, or Object.create(null)), which would defeat the
+// purpose of the catch block calling this. Never let this throw.
+function safeErrorReason(e: unknown): string {
+	if (e instanceof Error) return e.message;
+	try {
+		return String(e);
+	} catch {
+		return "unknown error";
+	}
+}
+
 let consoleLoggingOverride: boolean | null = null;
 
 /**
@@ -115,7 +127,7 @@ export class Logger {
 				// BigInt, both of which make JSON.stringify throw. A logging
 				// call must never crash its caller, so fall back to a
 				// sanitized entry that preserves ts/level/msg.
-				const reason = e instanceof Error ? e.message : String(e);
+				const reason = safeErrorReason(e);
 				return JSON.stringify({
 					ts: timestamp,
 					level,
@@ -131,8 +143,7 @@ export class Logger {
 				try {
 					dataStr = ` ${JSON.stringify(data)}`;
 				} catch (e: unknown) {
-					const reason = e instanceof Error ? e.message : String(e);
-					dataStr = ` [unserializable: ${reason}]`;
+					dataStr = ` [unserializable: ${safeErrorReason(e)}]`;
 				}
 			}
 			return `[${timestamp}] ${level}: ${prefix}${message}${dataStr}`;
