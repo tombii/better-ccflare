@@ -94,16 +94,19 @@ flowchart TD
 
 ### session-affinity (SessionAffinityStrategy)
 
-A hybrid of `session` and `least-used`, keyed on the *client's* session id (the request body's `metadata.user_id`) rather than a single account-level session: the first request from a new client is routed to the least-loaded account, and that client→account mapping then stays sticky for `affinityTtlMs`. This spreads many concurrent client-sessions across the whole pool (instead of `session`'s single account taking all traffic until it rate-limits), while each individual client still keeps its prompt-cache locality. Auto-fallback here only auto-*unpauses* eligible accounts so they re-enter the pool — it never forces a pick, unlike `session`/`session-drain-soonest`.
+A hybrid of `session` and `least-used`, keyed on the *client's* session id (the request body's `metadata.user_id`) rather than a single account-level session: the first request from a new client is routed to the least-loaded account, and that client→account mapping then stays sticky for `affinityTtlMs`. This spreads many concurrent client-sessions across the whole pool (instead of `session`'s single account taking all traffic until it rate-limits), while each individual client still keeps its prompt-cache locality. A request with no `clientSessionId` at all is still routed to the least-used account, but since there is no client id to key on, no sticky mapping is recorded for it — the next such request is scored fresh. Auto-fallback here only auto-*unpauses* eligible accounts so they re-enter the pool — it never forces a pick, unlike `session`/`session-drain-soonest`.
 
 ```mermaid
 flowchart TD
     A["select(accounts, meta)"] --> B["Auto-unpause eligible accounts<br/>(auto_fallback_enabled + safe pause<br/>reason + window elapsed) — no forced<br/>ordering, just re-enters the pool"]
-    B --> C{"clientSessionId has a live<br/>sticky mapping?"}
-    C -->|"Yes, mapped account available"| D["Keep it, refresh the TTL<br/>(prompt-cache reuse)"]
-    C -->|"Yes, but mapped account<br/>is unavailable"| E["Temporary failover to the<br/>least-used available account —<br/>mapping is NOT deleted, snaps back<br/>once the original recovers"]
-    C -->|"No mapping / expired /<br/>no clientSessionId"| F["Assign the least-used<br/>available account, make it<br/>sticky for affinityTtlMs"]
+    B --> C{"clientSessionId present?"}
+    C -->|"No"| F0["Assign the least-used<br/>available account —<br/>NOT recorded as sticky<br/>(no clientSessionId to key on)"]
+    C -->|"Yes"| C2{"Has a live<br/>sticky mapping?"}
+    C2 -->|"Yes, mapped account available"| D["Keep it, refresh the TTL<br/>(prompt-cache reuse)"]
+    C2 -->|"Yes, but mapped account<br/>is unavailable"| E["Temporary failover to the<br/>least-used available account —<br/>mapping is NOT deleted, snaps back<br/>once the original recovers"]
+    C2 -->|"No mapping / expired"| F["Assign the least-used<br/>available account, make it<br/>sticky for affinityTtlMs"]
     F --> G["Rank pool: priority ASC, then<br/>utilization + recency-penalty ASC"]
+    F0 --> G
     D --> H["Return chosen account<br/>plus ranked fallbacks"]
     E --> H
     G --> H
@@ -167,17 +170,17 @@ flowchart TD
 
 ## Auto-Fallback
 
-The same per-account `auto_fallback_enabled` flag drives two different mechanisms depending on which strategy is active, both gated on the same eligibility rule: the account's provider must support window-reset detection (Anthropic, Codex, or Zai), its `rate_limit_reset` must have passed, and it must not currently be rate-limited by ccflare itself. `session` and `session-drain-soonest` run a dedicated `checkForAutoFallbackAccounts` pass that walks eligible candidates in priority order, auto-unpauses one with a safe pause reason (`null`, `overage`, or `rate_limit_window` — never `manual` or `failure_threshold`), and either lets it float up in a fresh priority sort (`session`) or forces it to the very front, even preempting an active session (`session-drain-soonest`). `least-used` and `session-affinity` instead only auto-*unpause* eligible accounts via the shared `wouldAutoUnpause` predicate — the account re-enters the normal pool but must still win that strategy's own ranking (utilization score or sticky affinity) to actually be chosen; neither strategy force-picks it.
+The same per-account `auto_fallback_enabled` flag drives two different mechanisms depending on which strategy is active, and the two mechanisms do **not** share one eligibility rule — they diverge on exactly which state an account must be in. `session` and `session-drain-soonest` run a dedicated `checkForAutoFallbackAccounts` pass: it filters candidates on provider window-reset support (Anthropic, Codex, or Zai) with `rate_limit_reset` passed AND not currently rate-limited by ccflare — deliberately checking paused status nowhere, so both paused and already-unpaused accounts can win this pass — then walks the survivors in priority order and unpauses the first one whose `pause_reason` is safe (`null`, `overage`, or `rate_limit_window` — never `manual` or `failure_threshold`), letting it float up in a fresh priority sort (`session`) or forcing it to the very front, even preempting an active session (`session-drain-soonest`). `least-used` and `session-affinity` instead only auto-*unpause* eligible accounts via the shared `wouldAutoUnpause` predicate, which requires `account.paused === true` (unlike the other pass, an already-unpaused account is simply skipped here — there's nothing to unpause) plus the same provider/window-reset/safe-pause-reason checks, but does **not** check `rate_limited_until` at all; the account re-enters the normal pool but must still win that strategy's own ranking (utilization score or sticky affinity) to actually be chosen, and neither strategy force-picks it.
 
 ```mermaid
 flowchart TD
-    A["account.auto_fallback_enabled = true<br/>AND provider supports window reset<br/>(Anthropic, Codex, or Zai)<br/>AND rate_limit_reset has passed<br/>AND not currently rate-limited by ccflare"] --> B{"Which strategy is active?"}
-    B -->|"session or<br/>session-drain-soonest"| C["checkForAutoFallbackAccounts:<br/>walk candidates in priority order,<br/>auto-unpause if pause_reason is<br/>null, overage, or rate_limit_window"]
+    A{"Which strategy is active?"} -->|"session or<br/>session-drain-soonest"| B["checkForAutoFallbackAccounts:<br/>filter on provider window-reset support<br/>+ rate_limit_reset passed<br/>+ NOT rate_limited_until<br/>(paused status NOT checked here)"]
+    B --> C["Walk survivors in priority order;<br/>unpause first with a safe pause_reason<br/>(null, overage, or rate_limit_window)"]
     C --> D["First eligible candidate wins"]
     D --> E["session: reset its session, then<br/>priority-sort ALL available accounts<br/>(winner floats up, not forced)"]
     D --> F["session-drain-soonest: reset its<br/>session, FORCE it to position 0<br/>(overrides drain ranking, even<br/>preempts an active session)"]
-    B -->|"least-used or<br/>session-affinity"| G["autoUnpauseElapsedAccounts:<br/>same safe-pause-reason check,<br/>only clears the paused flag"]
-    G --> H["Account re-enters the normal pool —<br/>must still win the strategy's own<br/>ranking (utilization or sticky<br/>affinity) to be chosen"]
+    A -->|"least-used or<br/>session-affinity"| G["wouldAutoUnpause per account:<br/>account.paused === true<br/>+ provider window-reset support<br/>+ rate_limit_reset passed<br/>+ safe pause_reason<br/>(rate_limited_until NOT checked here)"]
+    G --> H["Eligible accounts have their<br/>paused flag cleared and<br/>re-enter the normal pool —<br/>must still win the strategy's own<br/>ranking (utilization or sticky<br/>affinity) to be chosen"]
 ```
 
 *Source: `packages/load-balancer/src/strategies/peek-availability.ts` (`wouldAutoUnpause`, shared by `least-used` and `session-affinity`), `packages/load-balancer/src/strategies/index.ts` and `session-drain-soonest.ts` (`checkForAutoFallbackAccounts`, the forced-position variant).*
