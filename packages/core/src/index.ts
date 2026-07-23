@@ -73,6 +73,10 @@ export {
 	MODEL_SHORT_NAMES,
 } from "./models";
 export {
+	installOutboundProxy,
+	uninstallOutboundProxy,
+} from "./outbound-proxy";
+export {
 	estimateCostUSD,
 	getModelRates,
 	initializeNanoGPTPricingIfAccountsExist,

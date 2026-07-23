@@ -9,6 +9,7 @@ import {
 	type StrategyName,
 	TIME_CONSTANTS,
 	ValidationError,
+	validateEndpointUrl,
 	validateNumber,
 	validateString,
 } from "@better-ccflare/core";
@@ -88,6 +89,7 @@ export interface ConfigData {
 	alert_anomaly_interval_minutes?: number;
 	alert_cooldown_minutes?: number;
 	alert_webhook_url?: string;
+	outbound_proxy?: string;
 	// Database configuration
 	db_wal_mode?: boolean;
 	db_busy_timeout_ms?: number;
@@ -301,6 +303,20 @@ export class Config extends EventEmitter {
 
 	setDefaultAgentModel(model: string): void {
 		this.set("default_agent_model", model);
+	}
+
+	getOutboundProxy(): string | undefined {
+		const candidate =
+			process.env.BETTER_CCFLARE_OUTBOUND_PROXY ?? this.data.outbound_proxy;
+		if (!candidate) {
+			return undefined;
+		}
+		try {
+			return validateEndpointUrl(candidate, "outbound_proxy");
+		} catch (error) {
+			log.warn("Invalid outbound proxy URL. Ignoring.", error);
+			return undefined;
+		}
 	}
 
 	private clamp(n: number, min: number, max: number): number {
