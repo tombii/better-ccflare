@@ -108,6 +108,7 @@ function makeProxyContextWithAsyncExec(): ProxyContext {
 			}),
 		} as never,
 		config: { getStorePayloads: () => true } as never,
+		internalProbeSecret: "test-secret",
 	};
 }
 
@@ -208,6 +209,7 @@ describe("proxyWithAccount — out_of_credits (issue #261)", () => {
 			headers: {
 				"Content-Type": "application/json",
 				"x-better-ccflare-keepalive": "true",
+				"x-better-ccflare-internal-probe-secret": "test-secret",
 			},
 		});
 

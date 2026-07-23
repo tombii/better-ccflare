@@ -33,6 +33,10 @@ export function sanitizeRequestHeaders(original: Headers): Headers {
 	h.delete("authorization");
 	h.delete("x-api-key");
 	h.delete("cookie");
+	// keep in sync with INTERNAL_PROBE_SECRET_HEADER
+	// (@better-ccflare/proxy already depends on http-common, so importing the
+	// proxy package's constant here would create an import cycle)
+	h.delete("x-better-ccflare-internal-probe-secret");
 	return h;
 }
 

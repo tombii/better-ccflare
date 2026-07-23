@@ -3,6 +3,7 @@ import type { Config } from "@better-ccflare/config";
 import { registerHeartbeat } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import { cacheBodyStore } from "./cache-body-store";
+import { INTERNAL_PROBE_SECRET_HEADER } from "./handlers";
 import type { ProxyContext } from "./proxy";
 
 const log = new Logger("CacheKeepaliveScheduler");
@@ -131,6 +132,10 @@ export class CacheKeepaliveScheduler {
 			//  1. Visibility: request logger can identify synthetic requests
 			//  2. Loop prevention: proxy skips staging to avoid infinite replay cycle
 			replayHeaders.set("x-better-ccflare-keepalive", "true");
+			replayHeaders.set(
+				INTERNAL_PROBE_SECRET_HEADER,
+				this.proxyContext.internalProbeSecret ?? "",
+			);
 			const proxyPort = this.proxyContext.runtime.port;
 			const protocol =
 				process.env.SSL_KEY_PATH && process.env.SSL_CERT_PATH

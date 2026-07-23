@@ -98,6 +98,7 @@ function makeProxyContext(): ProxyContext {
 		refreshInFlight: new Map(),
 		asyncWriter: { enqueue: mock(() => {}) } as never,
 		config: { getStorePayloads: () => true } as never,
+		internalProbeSecret: "test-secret",
 	};
 }
 
@@ -1115,6 +1116,7 @@ describe("proxyWithAccount — 529 in-place retry", () => {
 			headers: {
 				"Content-Type": "application/json",
 				"x-better-ccflare-keepalive": "true",
+				"x-better-ccflare-internal-probe-secret": "test-secret",
 			},
 		});
 		await proxyWithAccount(

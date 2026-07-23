@@ -10,7 +10,11 @@ import { Logger } from "@better-ccflare/logger";
 import { fetchUsageData, getProvider } from "@better-ccflare/providers";
 import type { Account } from "@better-ccflare/types";
 import { TOKEN_SAFETY_WINDOW_MS } from "./constants";
-import { extractAuthFailureReason, getValidAccessToken } from "./handlers";
+import {
+	extractAuthFailureReason,
+	getValidAccessToken,
+	INTERNAL_PROBE_SECRET_HEADER,
+} from "./handlers";
 import type { ProxyContext } from "./proxy";
 
 const log = new Logger("AutoRefreshScheduler");
@@ -398,6 +402,8 @@ export class AutoRefreshScheduler {
 				// bug 2). Mirrors the existing x-better-ccflare-keepalive
 				// pattern used by cache-keepalive-scheduler.ts.
 				"x-better-ccflare-auto-refresh": "true",
+				[INTERNAL_PROBE_SECRET_HEADER]:
+					this.proxyContext.internalProbeSecret ?? "",
 			});
 
 			// Try sending with multiple models if needed

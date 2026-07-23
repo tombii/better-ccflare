@@ -14,7 +14,7 @@ import {
 	ANTHROPIC_TERMINAL_RECOVERY_GRACE_MS,
 	createAnthropicTerminalRecoveryStream,
 } from "./anthropic-terminal-recovery";
-import type { ProxyContext } from "./handlers";
+import { isInternalProbe, type ProxyContext } from "./handlers";
 import { applyRateLimitCooldown } from "./handlers/rate-limit-cooldown";
 import { createSseRateLimitSniffer } from "./handlers/sse-rate-limit-sniffer";
 import { ingestModelsListing } from "./model-catalog";
@@ -165,8 +165,11 @@ export async function forwardToClient(
 	//     pollutes the user-visible 503/200 metrics on the dashboard with
 	//     internal scheduler activity. Header set by AutoRefreshScheduler
 	//     mirrors the existing keepalive pattern.
-	const isAutoRefreshProbe =
-		requestHeaders.get("x-better-ccflare-auto-refresh") === "true";
+	const isAutoRefreshProbe = isInternalProbe(
+		requestHeaders,
+		ctx,
+		"auto-refresh",
+	);
 	const isSyntheticCountTokens =
 		path === "/v1/messages/count_tokens" &&
 		(ctx.provider.name === "openai-compatible" ||
