@@ -26,7 +26,11 @@ import { RequestBodyContext } from "../request-body-context";
 import { forwardToClient } from "../response-handler";
 import { isModelRewrite } from "../worker-messages";
 import { markFamilyExhausted } from "./model-capacity";
-import { ERROR_MESSAGES, type ProxyContext } from "./proxy-types";
+import {
+	ERROR_MESSAGES,
+	isInternalProbe,
+	type ProxyContext,
+} from "./proxy-types";
 import { applyRateLimitCooldown } from "./rate-limit-cooldown";
 import { makeProxyRequest, validateProviderPath } from "./request-handler";
 import { handleProxyError, processProxyResponse } from "./response-processor";
@@ -588,12 +592,7 @@ export async function proxyWithAccount(
 		//   - auto-refresh probes — same loop-prevention concern, plus these
 		//     hit known-cooled accounts and shouldn't pollute the staged-body cache
 		//     (issue #199, bug 2).
-		// Both checks are truthy (not strict-equality) to preserve the original
-		// keepalive guard's behaviour: any non-empty header value triggers the
-		// skip, matching what `!req.headers.get(...)` returned before.
-		const isSyntheticInternal =
-			!!req.headers.get("x-better-ccflare-keepalive") ||
-			!!req.headers.get("x-better-ccflare-auto-refresh");
+		const isSyntheticInternal = isInternalProbe(req.headers, ctx);
 		if (!isSyntheticInternal) {
 			cacheBodyStore.stageRequest(
 				requestMeta.id,
@@ -891,8 +890,7 @@ export async function proxyWithAccount(
 					}
 				}
 
-				const isKeepalive =
-					req.headers.get("x-better-ccflare-keepalive") === "true";
+				const isKeepalive = isInternalProbe(req.headers, ctx, "keepalive");
 				if (isKeepalive) {
 					return null;
 				}
@@ -948,8 +946,7 @@ export async function proxyWithAccount(
 						// account at the same instant. Applying real cooldowns
 						// here drains the pool to zero routable accounts even
 						// though no real user-facing rate limit was hit.
-						const isKeepalive =
-							req.headers.get("x-better-ccflare-keepalive") === "true";
+						const isKeepalive = isInternalProbe(req.headers, ctx, "keepalive");
 						if (isKeepalive) {
 							log.warn(
 								`Keepalive replay for ${account.name} got 429 — skipping cooldown (synthetic burst, not a real per-account rate limit)`,
@@ -1097,8 +1094,7 @@ export async function proxyWithAccount(
 					// Same keepalive-skip as the no-fallback path above: synthetic
 					// keepalive bursts can trip Anthropic's per-IP limit even when
 					// individual accounts are healthy.
-					const isKeepalive =
-						req.headers.get("x-better-ccflare-keepalive") === "true";
+					const isKeepalive = isInternalProbe(req.headers, ctx, "keepalive");
 					if (isKeepalive) {
 						log.warn(
 							`Keepalive replay for ${account.name} got 429 (post-model-list) — skipping cooldown`,

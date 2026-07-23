@@ -44,6 +44,7 @@ function nativeAnthropicCtx(providerName = "anthropic"): ProxyContext {
 		},
 		refreshInFlight: new Map<string, Promise<string>>(),
 		asyncWriter: {},
+		internalProbeSecret: "test-secret",
 	} as unknown as ProxyContext;
 }
 
@@ -89,6 +90,7 @@ describe("forwardToClient Anthropic terminal recovery integration", () => {
 		const requestHeaders = new Headers({
 			"anthropic-version": "2023-06-01",
 			"x-better-ccflare-auto-refresh": "true",
+			"x-better-ccflare-internal-probe-secret": "test-secret",
 		});
 
 		await expect(forwardClosedStream({ requestHeaders })).resolves.toBe(
@@ -163,6 +165,7 @@ describe("forwardToClient Anthropic terminal recovery integration", () => {
 	it("leaves non-native, non-Anthropic, and non-Messages streams unchanged", async () => {
 		const filteredHeaders = new Headers({
 			"x-better-ccflare-auto-refresh": "true",
+			"x-better-ccflare-internal-probe-secret": "test-secret",
 		});
 		const nativeHeaders = new Headers(filteredHeaders);
 		nativeHeaders.set("anthropic-version", "2023-06-01");
@@ -188,6 +191,7 @@ describe("forwardToClient Anthropic terminal recovery integration", () => {
 		const nativeHeaders = new Headers({
 			"anthropic-version": "2023-06-01",
 			"x-better-ccflare-auto-refresh": "true",
+			"x-better-ccflare-internal-probe-secret": "test-secret",
 		});
 
 		await expect(

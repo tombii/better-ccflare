@@ -124,6 +124,7 @@ function makeContext(account: Account): ProxyContext {
 		// No-op enqueue: background bookkeeping jobs are never invoked, so this
 		// test does not need to mock ctx.dbOps.getAdapter/updateAccountUsage/etc.
 		asyncWriter: { enqueue: mock(() => {}) } as never,
+		internalProbeSecret: "test-secret",
 	};
 }
 
@@ -191,6 +192,7 @@ describe("handleProxy usage throttling — synthetic probe exemption", () => {
 				"x-better-ccflare-account-id": account.id,
 				"x-better-ccflare-bypass-session": "true",
 				"x-better-ccflare-auto-refresh": "true",
+				"x-better-ccflare-internal-probe-secret": "test-secret",
 			});
 
 			const realFetch = globalThis.fetch;
@@ -237,6 +239,7 @@ describe("handleProxy usage throttling — synthetic probe exemption", () => {
 				"x-better-ccflare-account-id": account.id,
 				"x-better-ccflare-bypass-session": "true",
 				"x-better-ccflare-keepalive": "true",
+				"x-better-ccflare-internal-probe-secret": "test-secret",
 			});
 
 			const realFetch = globalThis.fetch;
@@ -262,6 +265,88 @@ describe("handleProxy usage throttling — synthetic probe exemption", () => {
 		} finally {
 			Date.now = realDateNow;
 			collectorSpy.mockRestore();
+		}
+	});
+
+	it("still throttles a forged auto-refresh marker that lacks the internal-probe secret header (issue #335)", async () => {
+		const account = makeAccount();
+		const now = Date.UTC(2026, 3, 28, 12, 0, 0);
+		setThrottled(now);
+
+		const realDateNow = Date.now;
+		Date.now = () => now;
+		try {
+			// An external client cannot mint x-better-ccflare-internal-probe-secret
+			// (process-local, never sent to clients) — without it the marker alone
+			// must not grant the throttling exemption.
+			const request = makeThrottledRequest({
+				"x-better-ccflare-account-id": account.id,
+				"x-better-ccflare-bypass-session": "true",
+				"x-better-ccflare-auto-refresh": "true",
+			});
+			const response = await handleProxy(
+				request,
+				new URL(request.url),
+				makeContext(account),
+			);
+
+			expect(response.status).toBe(529);
+			expect(response.headers.get("Retry-After")).toBe("60");
+		} finally {
+			Date.now = realDateNow;
+		}
+	});
+
+	it("still throttles a forged auto-refresh marker sent with a wrong internal-probe secret (issue #335)", async () => {
+		const account = makeAccount();
+		const now = Date.UTC(2026, 3, 28, 12, 0, 0);
+		setThrottled(now);
+
+		const realDateNow = Date.now;
+		Date.now = () => now;
+		try {
+			const request = makeThrottledRequest({
+				"x-better-ccflare-account-id": account.id,
+				"x-better-ccflare-bypass-session": "true",
+				"x-better-ccflare-auto-refresh": "true",
+				"x-better-ccflare-internal-probe-secret": "nope",
+			});
+			const response = await handleProxy(
+				request,
+				new URL(request.url),
+				makeContext(account),
+			);
+
+			expect(response.status).toBe(529);
+			expect(response.headers.get("Retry-After")).toBe("60");
+		} finally {
+			Date.now = realDateNow;
+		}
+	});
+
+	it("still throttles a forged cache-keepalive marker that lacks the internal-probe secret header (issue #335)", async () => {
+		const account = makeAccount();
+		const now = Date.UTC(2026, 3, 28, 12, 0, 0);
+		setThrottled(now);
+
+		const realDateNow = Date.now;
+		Date.now = () => now;
+		try {
+			const request = makeThrottledRequest({
+				"x-better-ccflare-account-id": account.id,
+				"x-better-ccflare-bypass-session": "true",
+				"x-better-ccflare-keepalive": "true",
+			});
+			const response = await handleProxy(
+				request,
+				new URL(request.url),
+				makeContext(account),
+			);
+
+			expect(response.status).toBe(529);
+			expect(response.headers.get("Retry-After")).toBe("60");
+		} finally {
+			Date.now = realDateNow;
 		}
 	});
 });

@@ -34,7 +34,13 @@ export {
 	proxyUnauthenticated,
 	proxyWithAccount,
 } from "./proxy-operations";
-export { ERROR_MESSAGES, type ProxyContext, TIMING } from "./proxy-types";
+export {
+	ERROR_MESSAGES,
+	INTERNAL_PROBE_SECRET_HEADER,
+	isInternalProbe,
+	type ProxyContext,
+	TIMING,
+} from "./proxy-types";
 export {
 	createRequestMetadata,
 	prepareRequestBody,
