@@ -54,6 +54,24 @@ function isComboSessionFallbackDisabled(): boolean {
 	return /^(1|true|yes|on)$/i.test(value ?? "");
 }
 
+function createComboSessionFallbackDisabledResponse(comboName: string): Response {
+	return new Response(
+		JSON.stringify({
+			type: "error",
+			error: {
+				type: "service_unavailable_error",
+				message: "Service temporarily unavailable. Please try again later.",
+				code: "combo_session_fallback_disabled",
+				combo: comboName,
+			},
+		}),
+		{
+			status: 503,
+			headers: { "Content-Type": "application/json" },
+		},
+	);
+}
+
 // ===== USAGE COLLECTOR MANAGEMENT =====
 
 export async function initProxy(
@@ -508,11 +526,57 @@ export async function handleProxy(
 			log.warn(
 				`All combo slots failed for combo "${filteredComboInfo.comboName}", session fallback disabled by CCFLARE_DISABLE_COMBO_SESSION_FALLBACK`,
 			);
+			const disabledFallbackResponse =
+				createComboSessionFallbackDisabledResponse(filteredComboInfo.comboName);
+			const collector = tryGetUsageCollector();
+			if (collector) {
+				collector.handleStart({
+					type: "start",
+					messageId: crypto.randomUUID(),
+					requestId: requestMeta.id,
+					accountId: null,
+					method: req.method,
+					path: url.pathname,
+					timestamp: requestMeta.timestamp,
+					requestHeaders: Object.fromEntries(req.headers.entries()),
+					requestBody: null,
+					project: project ?? null,
+					projectAttributionSource: projectAttributionSource ?? "none",
+					agentAttributionSource: agentAttributionSource ?? "none",
+					responseStatus: 503,
+					responseHeaders: Object.fromEntries(
+						disabledFallbackResponse.headers.entries(),
+					),
+					isStream: false,
+					providerName: ctx.provider.name,
+					accountBillingType: null,
+					accountAutoPauseOnOverageEnabled: 0,
+					accountName: null,
+					agentUsed: agentUsed || null,
+					originalModel: originalModel || null,
+					appliedModel: appliedModel || null,
+					comboName: filteredComboInfo.comboName,
+					apiKeyId: apiKeyId || null,
+					apiKeyName: apiKeyName || null,
+					retryAttempt: 0,
+					failoverAttempts: accounts.length,
+				});
+				collector
+					.handleEnd({
+						type: "end",
+						requestId: requestMeta.id,
+						success: false,
+						error: "combo_session_fallback_disabled",
+					})
+					.catch((err: unknown) => {
+						log.error(
+							`handleEnd failed for combo fallback disabled request ${requestMeta.id}`,
+							err,
+						);
+					});
+			}
 			cacheBodyStore.discardStaged(requestMeta.id);
-			throw new ServiceUnavailableError(
-				`All combo slots failed for combo "${filteredComboInfo.comboName}" and combo session fallback is disabled`,
-				ctx.provider.name,
-			);
+			return disabledFallbackResponse;
 		}
 
 		log.warn(

@@ -1,9 +1,9 @@
-import { afterEach, describe, expect, it, mock } from "bun:test";
-import { ServiceUnavailableError } from "@better-ccflare/core";
+import { afterEach, describe, expect, it, mock, spyOn } from "bun:test";
 import { usageCache } from "@better-ccflare/providers";
 import type { Account, ComboWithSlots } from "@better-ccflare/types";
 import type { ProxyContext } from "../handlers";
 import { handleProxy } from "../proxy";
+import * as usageCollectorModule from "../usage-collector";
 
 function makeAccount(overrides: Partial<Account> = {}): Account {
 	return {
@@ -377,6 +377,16 @@ describe("handleProxy Step-10 combo-fallback control flow (v3 Fix3)", () => {
 
 	it("can disable Step-10 SessionStrategy fallback after combo slots fail", async () => {
 		process.env.CCFLARE_DISABLE_COMBO_SESSION_FALLBACK = "true";
+		const handleStart = mock(() => {});
+		const handleEnd = mock(() => Promise.resolve());
+		const collectorSpy = spyOn(
+			usageCollectorModule,
+			"tryGetUsageCollector",
+		).mockReturnValue({
+			handleStart,
+			handleEnd,
+			handleChunk: mock(() => {}),
+		} as unknown as usageCollectorModule.UsageCollector);
 
 		const acc1 = makeComboAccount({ id: "acc-1", name: "acc-1" });
 		const acc2 = makeComboAccount({ id: "acc-2", name: "acc-2" });
@@ -389,29 +399,22 @@ describe("handleProxy Step-10 combo-fallback control flow (v3 Fix3)", () => {
 				priority: 0,
 				enabled: true,
 			},
+			{
+				id: "slot-2",
+				combo_id: "combo-1",
+				account_id: "acc-2",
+				model: "claude-sonnet-4-5",
+				priority: 1,
+				enabled: true,
+			},
 		]);
 
 		globalThis.fetch = mock(
-			async () =>
-				new Response(
-					JSON.stringify({
-						type: "error",
-						error: {
-							type: "rate_limit_error",
-							message: "request rate limit exceeded",
-						},
-					}),
-					{
-						status: 429,
-						headers: {
-							"content-type": "application/json",
-							"x-should-retry": "true",
-						},
-					},
-				),
+			async () => outOfCreditsResponse(),
 		);
 
 		const ctx = makeComboContext([acc1, acc2], combo);
+		ctx.config.getModelScopedCapacityRouting = () => "off";
 		const select = ctx.strategy.select as ReturnType<typeof mock>;
 		const request = new Request("https://proxy.local/v1/messages", {
 			method: "POST",
@@ -423,23 +426,30 @@ describe("handleProxy Step-10 combo-fallback control flow (v3 Fix3)", () => {
 			}),
 		});
 
-		let response: Response | undefined;
-		let thrown: unknown;
 		try {
-			response = await handleProxy(request, new URL(request.url), ctx);
-		} catch (error) {
-			thrown = error;
+			const response = await handleProxy(request, new URL(request.url), ctx);
+			const body = (await response.json()) as {
+				error?: { code?: string };
+			};
+
+			expect(response.status).toBe(503);
+			expect(body.error?.code).toBe("combo_session_fallback_disabled");
+			expect(handleStart).toHaveBeenCalledTimes(1);
+			expect(handleStart.mock.calls[0]?.[0]).toMatchObject({
+				responseStatus: 503,
+				comboName: "Test Combo",
+				failoverAttempts: 2,
+			});
+			expect(handleEnd).toHaveBeenCalledTimes(1);
+			expect(handleEnd.mock.calls[0]?.[0]).toMatchObject({
+				success: false,
+				error: "combo_session_fallback_disabled",
+			});
+		} finally {
+			collectorSpy.mockRestore();
 		}
 
-		// Initial combo selection only. Step-10 must not re-enter the global pool.
-		expect(select.mock.calls.length).toBe(1);
-		if (thrown) {
-			expect(thrown).toBeInstanceOf(ServiceUnavailableError);
-			expect(String((thrown as Error).message)).toContain(
-				"combo session fallback is disabled",
-			);
-		} else {
-			expect(response?.status).toBe(429);
-		}
+		// Combo selection only. Step-10 must not re-enter the global pool.
+		expect(select.mock.calls.length).toBe(0);
 	});
 });
