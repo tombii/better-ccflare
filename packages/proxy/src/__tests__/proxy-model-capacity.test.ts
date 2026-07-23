@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, mock } from "bun:test";
+import { ServiceUnavailableError } from "@better-ccflare/core";
 import { usageCache } from "@better-ccflare/providers";
 import type { Account, ComboWithSlots } from "@better-ccflare/types";
 import type { ProxyContext } from "../handlers";
@@ -190,7 +191,7 @@ function makeComboContext(
 	combo: ComboWithSlots,
 ): ProxyContext {
 	return {
-		strategy: { select: (accs: Account[]) => accs } as never,
+		strategy: { select: mock((accs: Account[]) => accs) } as never,
 		dbOps: {
 			getAllAccounts: mock(async () => accounts),
 			getActiveComboForFamily: mock(async () => combo),
@@ -271,6 +272,7 @@ function makeComboAccount(overrides: Partial<Account> = {}): Account {
 describe("handleProxy Step-10 combo-fallback control flow (v3 Fix3)", () => {
 	afterEach(() => {
 		usageCache.clear();
+		delete process.env.CCFLARE_DISABLE_COMBO_SESSION_FALLBACK;
 	});
 
 	it("does not re-attempt the just-failed combo accounts unfiltered — the Step-10 fallback re-selection applies the capacity filter and returns the structured model_family_exhausted response instead of a generic failure", async () => {
@@ -371,5 +373,73 @@ describe("handleProxy Step-10 combo-fallback control flow (v3 Fix3)", () => {
 		// Exactly ONE combo lookup for the whole request: the initial selection.
 		// Step 10 must use skipCombo and never re-trigger getActiveComboForFamily.
 		expect(getActiveComboForFamily.mock.calls.length).toBe(1);
+	});
+
+	it("can disable Step-10 SessionStrategy fallback after combo slots fail", async () => {
+		process.env.CCFLARE_DISABLE_COMBO_SESSION_FALLBACK = "true";
+
+		const acc1 = makeComboAccount({ id: "acc-1", name: "acc-1" });
+		const acc2 = makeComboAccount({ id: "acc-2", name: "acc-2" });
+		const combo = makeCombo([
+			{
+				id: "slot-1",
+				combo_id: "combo-1",
+				account_id: "acc-1",
+				model: "claude-sonnet-4-5",
+				priority: 0,
+				enabled: true,
+			},
+		]);
+
+		globalThis.fetch = mock(
+			async () =>
+				new Response(
+					JSON.stringify({
+						type: "error",
+						error: {
+							type: "rate_limit_error",
+							message: "request rate limit exceeded",
+						},
+					}),
+					{
+						status: 429,
+						headers: {
+							"content-type": "application/json",
+							"x-should-retry": "true",
+						},
+					},
+				),
+		);
+
+		const ctx = makeComboContext([acc1, acc2], combo);
+		const select = ctx.strategy.select as ReturnType<typeof mock>;
+		const request = new Request("https://proxy.local/v1/messages", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				model: "claude-sonnet-4-5",
+				messages: [{ role: "user", content: "hello" }],
+				max_tokens: 16,
+			}),
+		});
+
+		let response: Response | undefined;
+		let thrown: unknown;
+		try {
+			response = await handleProxy(request, new URL(request.url), ctx);
+		} catch (error) {
+			thrown = error;
+		}
+
+		// Initial combo selection only. Step-10 must not re-enter the global pool.
+		expect(select.mock.calls.length).toBe(1);
+		if (thrown) {
+			expect(thrown).toBeInstanceOf(ServiceUnavailableError);
+			expect(String((thrown as Error).message)).toContain(
+				"combo session fallback is disabled",
+			);
+		} else {
+			expect(response?.status).toBe(429);
+		}
 	});
 });

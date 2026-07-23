@@ -49,6 +49,11 @@ export type { ProxyContext } from "./handlers";
 
 const log = new Logger("Proxy");
 
+function isComboSessionFallbackDisabled(): boolean {
+	const value = process.env.CCFLARE_DISABLE_COMBO_SESSION_FALLBACK;
+	return /^(1|true|yes|on)$/i.test(value ?? "");
+}
+
 // ===== USAGE COLLECTOR MANAGEMENT =====
 
 export async function initProxy(
@@ -499,6 +504,17 @@ export async function handleProxy(
 	//     fall back to normal SessionStrategy routing (REQ-14)
 	let fallbackAccounts: Account[] | null = null;
 	if (filteredComboInfo?.comboName) {
+		if (isComboSessionFallbackDisabled()) {
+			log.warn(
+				`All combo slots failed for combo "${filteredComboInfo.comboName}", session fallback disabled by CCFLARE_DISABLE_COMBO_SESSION_FALLBACK`,
+			);
+			cacheBodyStore.discardStaged(requestMeta.id);
+			throw new ServiceUnavailableError(
+				`All combo slots failed for combo "${filteredComboInfo.comboName}" and combo session fallback is disabled`,
+				ctx.provider.name,
+			);
+		}
+
 		log.warn(
 			`All combo slots failed for combo "${filteredComboInfo.comboName}", falling back to SessionStrategy routing`,
 		);
