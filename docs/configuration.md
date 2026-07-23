@@ -155,7 +155,7 @@ better-ccflare can route all of its outbound HTTP(S) traffic — provider reques
 
 Configure it via the `BETTER_CCFLARE_OUTBOUND_PROXY` environment variable (or the equivalent `outbound_proxy` config file key); env var takes precedence over the config file value, matching the pattern used elsewhere in this doc. A dedicated variable is used instead of the conventional `HTTPS_PROXY`/`HTTP_PROXY` because those affect every process on the machine by convention — a dedicated variable lets operators scope the proxy to just this application (e.g. via MDM/provisioning) without redirecting traffic for every other tool.
 
-Loopback destinations (`localhost`, `127.0.0.1`, `::1`) are always exempt and never routed through the configured proxy, so local testing setups (e.g. a local Ollama or LiteLLM instance) keep working unaffected.
+Loopback destinations (`localhost`, `127.0.0.0/8` addresses, `::1`) are always exempt and never routed through the configured proxy, so local testing setups (e.g. a local Ollama or LiteLLM instance) keep working unaffected.
 
 If the forward proxy performs TLS interception (MITM), such as an LLM security/inspection gateway, its CA certificate must be trusted by the Node/Bun process. Set `NODE_EXTRA_CA_CERTS` as a real environment variable at process launch — not inside a `.env` file loaded at runtime — since it must be present before the process starts.
 

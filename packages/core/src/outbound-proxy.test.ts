@@ -82,6 +82,24 @@ describe("outbound-proxy", () => {
 		expect(proxy.requestLines.length).toBe(0);
 	});
 
+	it("excludes any 127.0.0.0/8 address from proxying", async () => {
+		const proxy = startFakeProxy();
+		cleanups.push(() => proxy.server.stop(true));
+
+		installOutboundProxy(() => `http://127.0.0.1:${proxy.port}`);
+
+		// 127.0.0.2 has no route on most machines (no loopback alias configured),
+		// so the direct request is expected to fail/time out — what matters is
+		// that the fake proxy never sees it, proving the exemption kicked in
+		// before any connection attempt was routed through the proxy.
+		try {
+			await fetch("http://127.0.0.2:1/", { signal: AbortSignal.timeout(500) });
+		} catch {
+			// Expected: no route to 127.0.0.2 on this host.
+		}
+		expect(proxy.requestLines.length).toBe(0);
+	});
+
 	it("is a no-op when the resolver returns undefined", async () => {
 		const proxy = startFakeProxy();
 		cleanups.push(() => proxy.server.stop(true));

@@ -9,6 +9,7 @@ interface FetchInitWithProxy extends RequestInit {
 type FetchLike = typeof fetch;
 
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
+const IPV4_LOOPBACK_RE = /^127\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
 
 let originalFetch: FetchLike | undefined;
 let resolveProxy: (() => string | undefined) | undefined;
@@ -31,7 +32,7 @@ function extractHostname(input: RequestInfo | URL): string | undefined {
 }
 
 function isLoopbackHost(hostname: string): boolean {
-	return LOOPBACK_HOSTS.has(hostname);
+	return LOOPBACK_HOSTS.has(hostname) || IPV4_LOOPBACK_RE.test(hostname);
 }
 
 /**
@@ -47,7 +48,7 @@ function isLoopbackHost(hostname: string): boolean {
  * `fetch` once, globally, guarantees coverage regardless of which module
  * initiates the request.
  *
- * Loopback destinations (localhost, 127.0.0.1, ::1) are always excluded from
+ * Loopback destinations (localhost, 127.0.0.0/8, ::1) are always excluded from
  * proxying, so the app's own local traffic — e.g. calls to a local
  * Ollama/LiteLLM server an operator is running for testing — never gets
  * routed through an external proxy that has no route back to the local

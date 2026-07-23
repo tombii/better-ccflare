@@ -314,7 +314,7 @@ export class Config extends EventEmitter {
 		try {
 			return validateEndpointUrl(candidate, "outbound_proxy");
 		} catch (error) {
-			log.warn(`Invalid outbound proxy URL: ${candidate}. Ignoring.`, error);
+			log.warn("Invalid outbound proxy URL. Ignoring.", error);
 			return undefined;
 		}
 	}

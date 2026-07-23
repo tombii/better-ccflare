@@ -637,8 +637,9 @@ export default async function startServer(options?: {
 	installOutboundProxy(() => config.getOutboundProxy());
 	const outboundProxyUrl = config.getOutboundProxy();
 	if (outboundProxyUrl) {
+		const { protocol, host } = new URL(outboundProxyUrl);
 		new Logger("OutboundProxy").info(
-			`Outbound proxy enabled: ${outboundProxyUrl}`,
+			`Outbound proxy enabled: ${protocol}//${host}`,
 		);
 	}
 	const runtime = config.getRuntime();
