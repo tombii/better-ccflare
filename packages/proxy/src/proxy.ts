@@ -561,19 +561,19 @@ export async function handleProxy(
 					retryAttempt: 0,
 					failoverAttempts: accounts.length,
 				});
-				collector
-					.handleEnd({
+				try {
+					await collector.handleEnd({
 						type: "end",
 						requestId: requestMeta.id,
 						success: false,
 						error: "combo_session_fallback_disabled",
-					})
-					.catch((err: unknown) => {
-						log.error(
-							`handleEnd failed for combo fallback disabled request ${requestMeta.id}`,
-							err,
-						);
 					});
+				} catch (err) {
+					log.error(
+						`handleEnd failed for combo fallback disabled request ${requestMeta.id}`,
+						err,
+					);
+				}
 			}
 			cacheBodyStore.discardStaged(requestMeta.id);
 			return disabledFallbackResponse;
