@@ -1,8 +1,9 @@
-import { afterEach, describe, expect, it, mock } from "bun:test";
+import { afterEach, describe, expect, it, mock, spyOn } from "bun:test";
 import { usageCache } from "@better-ccflare/providers";
 import type { Account, ComboWithSlots } from "@better-ccflare/types";
 import type { ProxyContext } from "../handlers";
 import { handleProxy } from "../proxy";
+import * as usageCollectorModule from "../usage-collector";
 
 function makeAccount(overrides: Partial<Account> = {}): Account {
 	return {
@@ -190,7 +191,7 @@ function makeComboContext(
 	combo: ComboWithSlots,
 ): ProxyContext {
 	return {
-		strategy: { select: (accs: Account[]) => accs } as never,
+		strategy: { select: mock((accs: Account[]) => accs) } as never,
 		dbOps: {
 			getAllAccounts: mock(async () => accounts),
 			getActiveComboForFamily: mock(async () => combo),
@@ -271,6 +272,7 @@ function makeComboAccount(overrides: Partial<Account> = {}): Account {
 describe("handleProxy Step-10 combo-fallback control flow (v3 Fix3)", () => {
 	afterEach(() => {
 		usageCache.clear();
+		delete process.env.CCFLARE_DISABLE_COMBO_SESSION_FALLBACK;
 	});
 
 	it("does not re-attempt the just-failed combo accounts unfiltered — the Step-10 fallback re-selection applies the capacity filter and returns the structured model_family_exhausted response instead of a generic failure", async () => {
@@ -371,5 +373,83 @@ describe("handleProxy Step-10 combo-fallback control flow (v3 Fix3)", () => {
 		// Exactly ONE combo lookup for the whole request: the initial selection.
 		// Step 10 must use skipCombo and never re-trigger getActiveComboForFamily.
 		expect(getActiveComboForFamily.mock.calls.length).toBe(1);
+	});
+
+	it("can disable Step-10 SessionStrategy fallback after combo slots fail", async () => {
+		process.env.CCFLARE_DISABLE_COMBO_SESSION_FALLBACK = "true";
+		const handleStart = mock(() => {});
+		const handleEnd = mock(() => Promise.resolve());
+		const collectorSpy = spyOn(
+			usageCollectorModule,
+			"tryGetUsageCollector",
+		).mockReturnValue({
+			handleStart,
+			handleEnd,
+			handleChunk: mock(() => {}),
+		} as unknown as usageCollectorModule.UsageCollector);
+
+		const acc1 = makeComboAccount({ id: "acc-1", name: "acc-1" });
+		const acc2 = makeComboAccount({ id: "acc-2", name: "acc-2" });
+		const combo = makeCombo([
+			{
+				id: "slot-1",
+				combo_id: "combo-1",
+				account_id: "acc-1",
+				model: "claude-sonnet-4-5",
+				priority: 0,
+				enabled: true,
+			},
+			{
+				id: "slot-2",
+				combo_id: "combo-1",
+				account_id: "acc-2",
+				model: "claude-sonnet-4-5",
+				priority: 1,
+				enabled: true,
+			},
+		]);
+
+		globalThis.fetch = mock(
+			async () => outOfCreditsResponse(),
+		);
+
+		const ctx = makeComboContext([acc1, acc2], combo);
+		ctx.config.getModelScopedCapacityRouting = () => "off";
+		const select = ctx.strategy.select as ReturnType<typeof mock>;
+		const request = new Request("https://proxy.local/v1/messages", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				model: "claude-sonnet-4-5",
+				messages: [{ role: "user", content: "hello" }],
+				max_tokens: 16,
+			}),
+		});
+
+		try {
+			const response = await handleProxy(request, new URL(request.url), ctx);
+			const body = (await response.json()) as {
+				error?: { code?: string };
+			};
+
+			expect(response.status).toBe(503);
+			expect(body.error?.code).toBe("combo_session_fallback_disabled");
+			expect(handleStart).toHaveBeenCalledTimes(1);
+			expect(handleStart.mock.calls[0]?.[0]).toMatchObject({
+				responseStatus: 503,
+				comboName: "Test Combo",
+				failoverAttempts: 2,
+			});
+			expect(handleEnd).toHaveBeenCalledTimes(1);
+			expect(handleEnd.mock.calls[0]?.[0]).toMatchObject({
+				success: false,
+				error: "combo_session_fallback_disabled",
+			});
+		} finally {
+			collectorSpy.mockRestore();
+		}
+
+		// Combo selection only. Step-10 must not re-enter the global pool.
+		expect(select.mock.calls.length).toBe(0);
 	});
 });
