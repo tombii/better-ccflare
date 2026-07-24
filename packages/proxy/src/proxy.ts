@@ -326,11 +326,72 @@ export async function handleProxy(
 		return { available, throttled };
 	};
 
+	const returnComboSessionFallbackDisabled = async (
+		comboName: string,
+		failoverAttempts: number,
+	): Promise<Response> => {
+		const disabledFallbackResponse =
+			createComboSessionFallbackDisabledResponse(comboName);
+		const collector = tryGetUsageCollector();
+		if (collector) {
+			collector.handleStart({
+				type: "start",
+				messageId: crypto.randomUUID(),
+				requestId: requestMeta.id,
+				accountId: null,
+				method: req.method,
+				path: url.pathname,
+				timestamp: requestMeta.timestamp,
+				requestHeaders: Object.fromEntries(req.headers.entries()),
+				requestBody: null,
+				project: project ?? null,
+				projectAttributionSource: projectAttributionSource ?? "none",
+				agentAttributionSource: agentAttributionSource ?? "none",
+				responseStatus: 503,
+				responseHeaders: Object.fromEntries(
+					disabledFallbackResponse.headers.entries(),
+				),
+				isStream: false,
+				providerName: ctx.provider.name,
+				accountBillingType: null,
+				accountAutoPauseOnOverageEnabled: 0,
+				accountName: null,
+				agentUsed: agentUsed || null,
+				originalModel: originalModel || null,
+				appliedModel: appliedModel || null,
+				comboName,
+				apiKeyId: apiKeyId || null,
+				apiKeyName: apiKeyName || null,
+				retryAttempt: 0,
+				failoverAttempts,
+			});
+			try {
+				await collector.handleEnd({
+					type: "end",
+					requestId: requestMeta.id,
+					success: false,
+					error: "combo_session_fallback_disabled",
+				});
+			} catch (err) {
+				log.error(
+					`handleEnd failed for combo fallback disabled request ${requestMeta.id}`,
+					err,
+				);
+			}
+		}
+		cacheBodyStore.discardStaged(requestMeta.id);
+		return disabledFallbackResponse;
+	};
+
 	const { available: accounts, throttled: throttledAccounts } =
 		applyUsageThrottling(selectedAccounts);
 
 	// 7. Handle no accounts case
 	if (accounts.length === 0) {
+		if (requestMeta.comboName && isComboSessionFallbackDisabled()) {
+			return await returnComboSessionFallbackDisabled(requestMeta.comboName, 0);
+		}
+
 		// Model-scoped capacity filter (account-selector.ts) emptied the
 		// candidate pool because every account is exhausted for this request's
 		// model family — a structured, actionable response instead of the
@@ -526,57 +587,10 @@ export async function handleProxy(
 			log.warn(
 				`All combo slots failed for combo "${filteredComboInfo.comboName}", session fallback disabled by CCFLARE_DISABLE_COMBO_SESSION_FALLBACK`,
 			);
-			const disabledFallbackResponse =
-				createComboSessionFallbackDisabledResponse(filteredComboInfo.comboName);
-			const collector = tryGetUsageCollector();
-			if (collector) {
-				collector.handleStart({
-					type: "start",
-					messageId: crypto.randomUUID(),
-					requestId: requestMeta.id,
-					accountId: null,
-					method: req.method,
-					path: url.pathname,
-					timestamp: requestMeta.timestamp,
-					requestHeaders: Object.fromEntries(req.headers.entries()),
-					requestBody: null,
-					project: project ?? null,
-					projectAttributionSource: projectAttributionSource ?? "none",
-					agentAttributionSource: agentAttributionSource ?? "none",
-					responseStatus: 503,
-					responseHeaders: Object.fromEntries(
-						disabledFallbackResponse.headers.entries(),
-					),
-					isStream: false,
-					providerName: ctx.provider.name,
-					accountBillingType: null,
-					accountAutoPauseOnOverageEnabled: 0,
-					accountName: null,
-					agentUsed: agentUsed || null,
-					originalModel: originalModel || null,
-					appliedModel: appliedModel || null,
-					comboName: filteredComboInfo.comboName,
-					apiKeyId: apiKeyId || null,
-					apiKeyName: apiKeyName || null,
-					retryAttempt: 0,
-					failoverAttempts: accounts.length,
-				});
-				try {
-					await collector.handleEnd({
-						type: "end",
-						requestId: requestMeta.id,
-						success: false,
-						error: "combo_session_fallback_disabled",
-					});
-				} catch (err) {
-					log.error(
-						`handleEnd failed for combo fallback disabled request ${requestMeta.id}`,
-						err,
-					);
-				}
-			}
-			cacheBodyStore.discardStaged(requestMeta.id);
-			return disabledFallbackResponse;
+			return await returnComboSessionFallbackDisabled(
+				filteredComboInfo.comboName,
+				accounts.length,
+			);
 		}
 
 		log.warn(
