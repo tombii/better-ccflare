@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "status": "CLOSED",
+  "blast_class": "high",
+  "action_floor": "low",
+  "clean_target": 2,
+  "artifact_ref": "7d04cb73eeb39fb33f5ea209008f3d3ad04f09ea",
+  "artifact_tree": "7bcd46e6f94002e3731944510fb061f421e87471",
+  "artifact_hash": "b930c79320473589aa07c742f7bd8320475bddccd4d26d870feacfab4deea6cf",
+  "changed_file_list_sha256": "2ad0257ce47b886e523935262987471142188b368fc0a720f82ed9df029a7dff",
+  "scope_hash": "b930c79320473589aa07c742f7bd8320475bddccd4d26d870feacfab4deea6cf",
+  "rounds": [
+    {
+      "round_id": "bhr-20260725-7d04cb73",
+      "fresh_context_id": "fresh-readonly-no-network-r1c",
+      "artifact_hash": "b930c79320473589aa07c742f7bd8320475bddccd4d26d870feacfab4deea6cf",
+      "scope_hash": "b930c79320473589aa07c742f7bd8320475bddccd4d26d870feacfab4deea6cf",
+      "verdict": "CLEAN",
+      "valid": true,
+      "full_gate_status": "PASS",
+      "triggered_contract_inventory": "complete",
+      "refuter_records": "complete",
+      "report_path": "/tmp/bhr-round1-7d04cb73-r1c.md"
+    },
+    {
+      "round_id": "bhr-better-ccflare-opencodex-7d04cb73-20260725-r2c",
+      "fresh_context_id": "fresh-codex-audit-r2c-7d04cb73",
+      "artifact_hash": "b930c79320473589aa07c742f7bd8320475bddccd4d26d870feacfab4deea6cf",
+      "scope_hash": "b930c79320473589aa07c742f7bd8320475bddccd4d26d870feacfab4deea6cf",
+      "verdict": "CLEAN",
+      "valid": true,
+      "full_gate_status": "PASS",
+      "triggered_contract_inventory": "complete",
+      "refuter_records": "complete",
+      "report_path": "/tmp/bhr-round2-7d04cb73-r2c.md"
+    }
+  ],
+  "acceptance_matrix": "complete",
+  "verification_matrix": "complete",
+  "investigation_log": "complete",
+  "good_findings": "complete",
+  "ledger_ref": "docs/aqe/opencodex-better-ccflare-compat-ledger.md",
+  "candidate_records": "queued",
+  "rollback": "git revert 7d04cb73eeb39fb33f5ea209008f3d3ad04f09ea; keep previous deployed better-ccflare image/container until post-deploy verification passes",
+  "composite_audit": "PASS",
+  "closure_dossier": "present",
+  "post_closure_deploy": "pending"
+}

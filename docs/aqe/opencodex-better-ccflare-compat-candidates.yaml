@@ -1,0 +1,45 @@
+lane: knowledge.*
+store: agent-memory
+embedding_model: nomic-768
+adapter_status: unverified
+promotion_status: queued_candidates_only
+records:
+  - id: bcf-opencodex-compat-defect-001
+    record_type: defect
+    title: OpenCodex compat keepalive forced-account replay must not bypass model-scoped capacity
+    severity: medium
+    root_cause: missing boundary
+    evidence: "BHR c7f06d02 round found packages/proxy/src/handlers/account-selector.ts allowed x-better-ccflare-bypass-session to bypass capacity; fixed in 7d04cb73."
+    fix_or_attack: "Removed bypass-session from capacityAllowed and added a regression proving forced bypass-session replays fall back when the target model family is exhausted."
+    verification: "bun test packages/proxy/src/handlers/__tests__/account-selector-model-capacity.test.ts; two fresh BHR rounds CLEAN on 7d04cb73."
+    source_backlink: "tombii/better-ccflare commit 7d04cb73eeb39fb33f5ea209008f3d3ad04f09ea ledger BCF-001"
+    rollback_handle: "git revert 7d04cb73eeb39fb33f5ea209008f3d3ad04f09ea"
+    retrieval_question: "Why must x-better-ccflare-bypass-session not bypass model-scoped capacity for OpenCodex Claude OAuth cache keepalive?"
+    redaction_status: passed
+    status: candidate
+  - id: bcf-opencodex-compat-defect-002
+    record_type: defect
+    title: Pool-exhausted diagnostic headers may be client-visible but not persisted
+    severity: low
+    root_cause: untested branch
+    evidence: "BHR c7f06d02 round found packages/proxy/src/proxy.ts persisted x-better-ccflare-pool-status via poolExhaustedResponse.headers.entries(); fixed in 7d04cb73."
+    fix_or_attack: "Added shared sanitizeResponseHeaders and applied it to direct pool-exhausted usage history while preserving the client response header."
+    verification: "bun test packages/proxy/src/__tests__/auto-refresh-probe-filter.test.ts packages/http-common/src/__tests__/headers.test.ts; two fresh BHR rounds CLEAN on 7d04cb73."
+    source_backlink: "tombii/better-ccflare commit 7d04cb73eeb39fb33f5ea209008f3d3ad04f09ea ledger BCF-002"
+    rollback_handle: "git revert 7d04cb73eeb39fb33f5ea209008f3d3ad04f09ea"
+    retrieval_question: "How should better-ccflare handle internal diagnostic headers in persisted response metadata?"
+    redaction_status: passed
+    status: candidate
+  - id: bcf-opencodex-compat-verified-001
+    record_type: verified_solid
+    title: better-ccflare owns explicit OpenCodex Claude OAuth compat policy
+    severity: n/a
+    root_cause: n/a
+    evidence: "Two fresh BHR rounds on source artifact 7d04cb73 verified safe default exclusion, explicit compat env+allowlist, request shaping, provider stripping, cache policy refresh, and no-quota checker behavior."
+    fix_or_attack: "Adversarial checks attempted forged internal headers, forced-account routing, stale cache policy replay, provider-boundary leaks, and split model-catalog false positives."
+    verification: "Round 1 /tmp/bhr-round1-7d04cb73-r1c.md CLEAN; Round 2 /tmp/bhr-round2-7d04cb73-r2c.md CLEAN; targeted tests 205 pass; broad routing pack 309 pass; lint/typecheck/format/build passed."
+    source_backlink: "tombii/better-ccflare commit 7d04cb73eeb39fb33f5ea209008f3d3ad04f09ea closure manifest docs/aqe/opencodex-better-ccflare-compat-closure-manifest.json"
+    rollback_handle: "git revert 7d04cb73eeb39fb33f5ea209008f3d3ad04f09ea; keep prior deployed better-ccflare image until post-deploy verification passes"
+    retrieval_question: "What is the blessed OpenCodex to better-ccflare Claude OAuth compatibility contract?"
+    redaction_status: passed
+    status: candidate
