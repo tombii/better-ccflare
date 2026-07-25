@@ -280,7 +280,7 @@ describe("handleResponsesRequest", () => {
 		).toBeNull();
 	});
 
-	test("strips client-forged internal probe headers from responses traffic", async () => {
+	test("strips client-forged internal headers before adding trusted responses policy", async () => {
 		process.env[CODEX_CLAUDE_OAUTH_MODE_ENV] = CODEX_CLAUDE_OAUTH_MODE_COMPAT;
 		process.env[CODEX_CLAUDE_OAUTH_ACCOUNT_ALLOWLIST_ENV] = "Jenny_claude";
 
@@ -309,9 +309,12 @@ describe("handleResponsesRequest", () => {
 			headers: {
 				"Content-Type": "application/json",
 				"x-better-ccflare-account-id": "acc-jenny",
+				"x-better-ccflare-anthropic-oauth-allowlist": "Mallory_Claude",
 				"x-better-ccflare-auto-refresh": "true",
 				"x-better-ccflare-bypass-session": "true",
+				"x-better-ccflare-exclude-providers": "anthropic",
 				"x-better-ccflare-keepalive": "true",
+				"x-better-ccflare-request-source": "client-forged",
 			},
 		});
 
@@ -320,8 +323,18 @@ describe("handleResponsesRequest", () => {
 		expect(capturedHeaders?.get("x-better-ccflare-bypass-session")).toBeNull();
 		expect(capturedHeaders?.get("x-better-ccflare-auto-refresh")).toBeNull();
 		expect(capturedHeaders?.get("x-better-ccflare-keepalive")).toBeNull();
-		expect(capturedHeaders?.get("x-better-ccflare-account-id")).toBe(
-			"acc-jenny",
+		expect(capturedHeaders?.get("x-better-ccflare-account-id")).toBeNull();
+		expect(
+			capturedHeaders?.get("x-better-ccflare-exclude-providers"),
+		).toBeNull();
+		expect(capturedHeaders?.get(BETTER_CCFLARE_REQUEST_SOURCE_HEADER)).toBe(
+			CODEX_RESPONSES_REQUEST_SOURCE,
+		);
+		expect(capturedHeaders?.get(CODEX_CLAUDE_OAUTH_MODE_HEADER)).toBe(
+			CODEX_CLAUDE_OAUTH_MODE_COMPAT,
+		);
+		expect(capturedHeaders?.get(CODEX_CLAUDE_OAUTH_ALLOWLIST_HEADER)).toBe(
+			"Jenny_claude",
 		);
 	});
 

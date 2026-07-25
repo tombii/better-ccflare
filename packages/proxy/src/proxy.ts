@@ -4,6 +4,7 @@ import {
 	trackClientVersion,
 } from "@better-ccflare/core";
 import { DatabaseFactory } from "@better-ccflare/database";
+import { sanitizeRequestHeaders } from "@better-ccflare/http-common";
 import { Logger } from "@better-ccflare/logger";
 import { usageCache } from "@better-ccflare/providers";
 import type { Account } from "@better-ccflare/types";
@@ -368,7 +369,9 @@ export async function handleProxy(
 				method: req.method,
 				path: url.pathname,
 				timestamp: requestMeta.timestamp,
-				requestHeaders: Object.fromEntries(req.headers.entries()),
+				requestHeaders: Object.fromEntries(
+					sanitizeRequestHeaders(req.headers).entries(),
+				),
 				requestBody: null,
 				project: project ?? null,
 				projectAttributionSource: projectAttributionSource ?? "none",

@@ -17,6 +17,7 @@ import {
 } from "bun:test";
 import type { Account } from "@better-ccflare/types";
 import * as usageCollectorModule from "../usage-collector";
+import type { StartMessage } from "../worker-messages";
 
 // ---------------------------------------------------------------------------
 // Shared fixtures
@@ -352,5 +353,72 @@ describe("proxy.ts — pool-exhausted path skips usageCollector for auto-refresh
 
 		// Normal requests MUST be logged
 		expect(handleStart).toHaveBeenCalled();
+	});
+
+	it("strips internal routing headers before logging pool-exhausted request history", async () => {
+		const { handleStart } = createMockCollector();
+		const { handleProxy } = await import("../proxy");
+
+		const ctx = {
+			strategy: {
+				select: () => [],
+			} as never,
+			dbOps: {
+				getAllAccounts: mock(async () => []),
+				getActiveComboForFamily: mock(async () => null),
+			} as never,
+			runtime: { port: 8080, clientId: "test" } as never,
+			config: {
+				getUsageThrottlingFiveHourEnabled: () => false,
+				getUsageThrottlingWeeklyEnabled: () => false,
+				getSystemPromptCacheTtl1h: () => false,
+				getAgentFrontmatterModelFallback: () => false,
+			} as never,
+			provider: {
+				name: "anthropic",
+				canHandle: () => true,
+			} as never,
+			refreshInFlight: new Map(),
+			asyncWriter: { enqueue: mock(() => {}) } as never,
+		};
+
+		const request = new Request("https://proxy.local/v1/messages", {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				"x-better-ccflare-account-id": "acc-secret",
+				"x-better-ccflare-anthropic-oauth-allowlist": "Jenny_claude,acc-secret",
+				"x-better-ccflare-codex-claude-oauth-mode": "claude-code-compat",
+				"x-better-ccflare-request-source": "openai-responses-adapter",
+				"x-ordinary-debug": "kept",
+			},
+			body: JSON.stringify({
+				model: "claude-haiku-4-5",
+				messages: [{ role: "user", content: "hi" }],
+				max_tokens: 10,
+			}),
+		});
+
+		const response = await handleProxy(
+			request,
+			new URL("https://proxy.local/v1/messages"),
+			ctx as never,
+		);
+
+		expect(response.status).toBe(503);
+		expect(handleStart).toHaveBeenCalled();
+		const start = handleStart.mock.calls[0]?.[0] as StartMessage;
+		expect(start.requestHeaders["x-better-ccflare-account-id"]).toBeUndefined();
+		expect(
+			start.requestHeaders["x-better-ccflare-anthropic-oauth-allowlist"],
+		).toBeUndefined();
+		expect(
+			start.requestHeaders["x-better-ccflare-codex-claude-oauth-mode"],
+		).toBeUndefined();
+		expect(
+			start.requestHeaders["x-better-ccflare-request-source"],
+		).toBeUndefined();
+		expect(start.requestHeaders["content-type"]).toBe("application/json");
+		expect(start.requestHeaders["x-ordinary-debug"]).toBe("kept");
 	});
 });
