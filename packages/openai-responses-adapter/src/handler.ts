@@ -20,6 +20,11 @@ const CLAUDE_CODE_COMPAT_BETA =
 	"claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,prompt-caching-scope-2026-01-05,token-efficient-tools-2026-03-28";
 const CLAUDE_CODE_COMPAT_VERSION = "2.1.63";
 const CLAUDE_CODE_COMPAT_FINGERPRINT_SALT = "59cf53e54c78";
+const INTERNAL_REQUEST_HEADERS = [
+	"x-better-ccflare-bypass-session",
+	"x-better-ccflare-auto-refresh",
+	"x-better-ccflare-keepalive",
+];
 const CLAUDE_CODE_COMPAT_PROMPT = [
 	"You are Claude Code, Anthropic's official CLI for Claude.",
 	"You help with code changes, debugging, and repo-aware development tasks.",
@@ -278,6 +283,9 @@ export async function handleResponsesRequest(
 	syntheticHeaders.delete("content-length");
 	// Body is now decompressed plain JSON — remove the original encoding hint.
 	syntheticHeaders.delete("content-encoding");
+	for (const header of INTERNAL_REQUEST_HEADERS) {
+		syntheticHeaders.delete(header);
+	}
 	// Required by Anthropic API — Codex CLI doesn't send this header.
 	if (!syntheticHeaders.has("anthropic-version")) {
 		syntheticHeaders.set("anthropic-version", "2023-06-01");

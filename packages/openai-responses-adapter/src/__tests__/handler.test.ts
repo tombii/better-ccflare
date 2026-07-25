@@ -280,6 +280,51 @@ describe("handleResponsesRequest", () => {
 		).toBeNull();
 	});
 
+	test("strips client-forged internal probe headers from responses traffic", async () => {
+		process.env[CODEX_CLAUDE_OAUTH_MODE_ENV] = CODEX_CLAUDE_OAUTH_MODE_COMPAT;
+		process.env[CODEX_CLAUDE_OAUTH_ACCOUNT_ALLOWLIST_ENV] = "Jenny_claude";
+
+		let capturedHeaders: Headers | null = null;
+		const mockHandleProxy: HandleProxyFn = async (req2) => {
+			capturedHeaders = req2.headers;
+			return new Response(ANTHROPIC_MESSAGE_BODY, {
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			});
+		};
+
+		const req = new Request("http://localhost/v1/responses", {
+			method: "POST",
+			body: JSON.stringify({
+				model: "claude-fable-5",
+				input: [
+					{
+						type: "message",
+						role: "user",
+						content: [{ type: "input_text", text: "Hi" }],
+					},
+				],
+				stream: false,
+			}),
+			headers: {
+				"Content-Type": "application/json",
+				"x-better-ccflare-account-id": "acc-jenny",
+				"x-better-ccflare-auto-refresh": "true",
+				"x-better-ccflare-bypass-session": "true",
+				"x-better-ccflare-keepalive": "true",
+			},
+		});
+
+		await handleResponsesRequest(req, new URL(req.url), mockHandleProxy, {});
+
+		expect(capturedHeaders?.get("x-better-ccflare-bypass-session")).toBeNull();
+		expect(capturedHeaders?.get("x-better-ccflare-auto-refresh")).toBeNull();
+		expect(capturedHeaders?.get("x-better-ccflare-keepalive")).toBeNull();
+		expect(capturedHeaders?.get("x-better-ccflare-account-id")).toBe(
+			"acc-jenny",
+		);
+	});
+
 	test("surfaces Codex CLI session identity as metadata.user_id", async () => {
 		let forwardedBody: Record<string, unknown> | null = null;
 		const mockHandleProxy: HandleProxyFn = async (req2) => {
