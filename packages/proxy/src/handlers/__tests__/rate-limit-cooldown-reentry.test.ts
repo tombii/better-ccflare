@@ -1,4 +1,8 @@
 import { afterEach, describe, expect, it, mock } from "bun:test";
+import {
+	computeRateLimitBackoffMs,
+	TIME_CONSTANTS,
+} from "@better-ccflare/core";
 import type { Account } from "@better-ccflare/types";
 import type { ProxyContext } from "../proxy-types";
 import {
@@ -47,7 +51,11 @@ function makeAccount(overrides: Partial<Account> = {}): Account {
 
 function makeCtx(opts: { rateLimited: boolean; resetTime?: number }) {
 	const calls = {
-		markRateLimited: [] as Array<{ until: number; reason: string }>,
+		markRateLimited: [] as Array<{
+			until: number;
+			reason: string;
+			incrementStreak?: boolean;
+		}>,
 	};
 	const ctx = {
 		provider: {
@@ -65,8 +73,9 @@ function makeCtx(opts: { rateLimited: boolean; resetTime?: number }) {
 				_accountId: string,
 				until: number,
 				reason: string,
+				incrementStreak?: boolean,
 			) => {
-				calls.markRateLimited.push({ until, reason });
+				calls.markRateLimited.push({ until, reason, incrementStreak });
 				return 9;
 			},
 			updateAccountUsage: mock(() => {}),
@@ -209,5 +218,88 @@ describe("mature cooldown re-entry / single-flight probe", () => {
 		// The original account's lease was evicted, so a fresh probe is admitted
 		// again instead of being suppressed.
 		expect(getRateLimitProbeAdmission(first)).toBe("admitted");
+	});
+});
+
+describe("529 overload cooldown separation", () => {
+	it("applies the fixed overload cooldown for a reset-less 529, ignoring the 429 streak depth", () => {
+		Date.now = () => NOW;
+		// A mature 429 streak would normally ramp the exponential backoff to
+		// minutes; a 529 overload must ignore that ramp entirely.
+		const account = makeAccount({ consecutive_rate_limits: 8 });
+		const { ctx } = makeCtx({ rateLimited: true });
+
+		applyRateLimitCooldown(
+			account,
+			{ reason: "upstream_529_overloaded_no_reset" },
+			ctx,
+		);
+
+		expect(account.rate_limited_until).toBe(
+			NOW + TIME_CONSTANTS.OVERLOAD_COOLDOWN_MS,
+		);
+	});
+
+	it("does not increment consecutive_rate_limits after a 529 overload, in-memory or via the DB call", () => {
+		Date.now = () => NOW;
+		const account = makeAccount({ consecutive_rate_limits: 8 });
+		const { ctx, calls } = makeCtx({ rateLimited: true });
+
+		applyRateLimitCooldown(
+			account,
+			{ reason: "upstream_529_overloaded_no_reset" },
+			ctx,
+		);
+
+		expect(account.consecutive_rate_limits).toBe(8);
+		expect(calls.markRateLimited).toHaveLength(1);
+		expect(calls.markRateLimited[0]?.incrementStreak).toBe(false);
+	});
+
+	it("keeps the reset-driven cooldown duration for a 529-with-reset, but still suppresses the streak (upstream ccflare#271)", () => {
+		Date.now = () => NOW;
+		const account = makeAccount({ consecutive_rate_limits: 8 });
+		const { ctx, calls } = makeCtx({ rateLimited: true });
+		// Anthropic's real retry-after for the with-reset path (production incident: 60s).
+		const resetTime = NOW + 60_000;
+
+		applyRateLimitCooldown(
+			account,
+			{ resetTime, reason: "upstream_529_overloaded_with_reset" },
+			ctx,
+		);
+
+		// Duration formula is untouched — min(resetTime, now + exponential-ramp) —
+		// so Anthropic's retry-after is honored exactly as for a normal 429. It
+		// must NOT be shortened to the fixed reset-less overload cooldown.
+		expect(account.rate_limited_until).toBe(
+			Math.min(resetTime, NOW + computeRateLimitBackoffMs(9)),
+		);
+		// The streak itself stays untouched — a 529 is not a quota signal, even
+		// when it does carry a reset.
+		expect(account.consecutive_rate_limits).toBe(8);
+		expect(calls.markRateLimited).toHaveLength(1);
+		expect(calls.markRateLimited[0]?.incrementStreak).toBe(false);
+	});
+
+	it("keeps the exponential 429 ramp and reset-time cap unchanged (regression)", () => {
+		Date.now = () => NOW;
+		const account = makeAccount({ consecutive_rate_limits: 8 });
+		const { ctx, calls } = makeCtx({ rateLimited: true });
+		// Shorter than the 8th-streak backoff ceiling, so it drives the cap.
+		const resetTime = NOW + 10_000;
+
+		applyRateLimitCooldown(
+			account,
+			{ resetTime, reason: "upstream_429_no_reset_probe_cooldown" },
+			ctx,
+		);
+
+		expect(account.consecutive_rate_limits).toBe(9);
+		expect(account.rate_limited_until).toBe(
+			Math.min(resetTime, NOW + computeRateLimitBackoffMs(9)),
+		);
+		expect(calls.markRateLimited).toHaveLength(1);
+		expect(calls.markRateLimited[0]?.incrementStreak).toBe(true);
 	});
 });

@@ -787,9 +787,16 @@ OAuth tokens will need to be re-authenticated.
 		accountId: string,
 		until: number,
 		reason: RateLimitReason,
+		incrementStreak = true,
 	): Promise<number> {
 		return withDatabaseRetry(
-			() => this.accounts.markAccountRateLimited(accountId, until, reason),
+			() =>
+				this.accounts.markAccountRateLimited(
+					accountId,
+					until,
+					reason,
+					incrementStreak,
+				),
 			this.retryConfig,
 			"markAccountRateLimited",
 		);

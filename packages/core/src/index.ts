@@ -2,10 +2,12 @@
 export {
 	BUFFER_SIZES,
 	CACHE,
+	computeOverloadCooldownMs,
 	computeRateLimitBackoffMs,
 	getOverloadRetryConfig,
 	getRateLimitResetStabilityMs,
 	HTTP_STATUS,
+	isOverloadReason,
 	LIMITS,
 	NETWORK,
 	TIME_CONSTANTS,

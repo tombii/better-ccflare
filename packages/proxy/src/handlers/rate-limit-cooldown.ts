@@ -1,5 +1,7 @@
 import {
+	computeOverloadCooldownMs,
 	computeRateLimitBackoffMs,
+	isOverloadReason,
 	logError,
 	RateLimitError,
 } from "@better-ccflare/core";
@@ -95,17 +97,32 @@ export function resetRateLimitProbeGatesForTests(): void {
 }
 
 /**
- * Single entry point for applying a 429-driven cooldown to an account.
- * Computes exponential-backoff cooldown capped by upstream reset (if any), updates
- * in-memory state, and enqueues the DB-side atomic increment.
+ * Single entry point for applying an upstream-driven cooldown to an account
+ * after a 429 (quota) or 529 (transient overload) response.
  *
- * Must be called from every 429 path (response-processor, model_fallback_429,
+ * Cooldown DURATION: a 429 and a 529-with-reset both use the exponential-backoff
+ * ramp capped by the upstream reset (if any) — `min(resetTime, now + backoff)`.
+ * A reset-less 529 (`upstream_529_overloaded_no_reset`) uses a short fixed
+ * cooldown instead (`computeOverloadCooldownMs`): Anthropic gave no retry-after
+ * for it, so there is no account-specific signal to honor, and ramping the
+ * backoff there only punishes a healthy account for an upstream-wide overload.
+ * A 529-with-reset DOES carry Anthropic's retry-after and must not be
+ * shortened — see upstream ccflare#271.
+ *
+ * Streak (`consecutive_rate_limits`): incremented for 429s only. BOTH 529
+ * variants (`isOverloadReason`) leave it untouched — the streak also gates
+ * `getRateLimitProbeAdmission`'s single-flight recovery probe, so letting a
+ * run of transient overloads inflate it would keep throttling an account's
+ * concurrency long after its cooldown (and the overload) has cleared, even
+ * though the account itself never hit its own quota.
+ *
+ * Must be called from every 429/529 path (response-processor, model_fallback_429,
  * all_models_exhausted_429, mid-stream sniffer) — never reach into rate_limited_until manually.
  *
- * @param account - The account that just received a 429 (mutated in place).
+ * @param account - The account that just received a 429/529 (mutated in place).
  * @param rateLimitInfo - `resetTime` caps the computed cooldown via min(resetTime, now + backoff).
- *   `remaining` is forwarded to the emitted RateLimitError. `reason` overrides the
- *   auto-derived audit reason.
+ *   `remaining` is forwarded to the emitted RateLimitError (429 path only). `reason` overrides the
+ *   auto-derived audit reason and determines which cooldown strategy applies.
  * @param ctx - The proxy context (provides asyncWriter + dbOps).
  */
 export function applyRateLimitCooldown(
@@ -118,25 +135,37 @@ export function applyRateLimitCooldown(
 	ctx: ProxyContext,
 ): void {
 	const now = Date.now();
-	// Best-effort in-memory computation. The DB write does the authoritative atomic
-	// increment; under parallel 429s the second concurrent request may compute one
-	// tier short, but the persisted counter still ramps correctly.
-	const nextCount = account.consecutive_rate_limits + 1;
-	const backoffMs = computeRateLimitBackoffMs(nextCount);
-	const candidateUntil = now + backoffMs;
-	const cooldownUntil = rateLimitInfo.resetTime
-		? Math.min(rateLimitInfo.resetTime, candidateUntil)
-		: candidateUntil;
 	const reason: RateLimitReason =
 		rateLimitInfo.reason ??
 		(rateLimitInfo.resetTime
 			? "upstream_429_with_reset"
 			: "upstream_429_no_reset_probe_cooldown");
+	const isOverload = isOverloadReason(reason);
+	// Only the reset-less 529 gets the fixed short cooldown. A 529-with-reset
+	// carries Anthropic's own retry-after and must keep the normal ramp-capped
+	// formula below — shortening it would undercut a real upstream signal.
+	const isOverloadNoReset = reason === "upstream_529_overloaded_no_reset";
+
+	// Best-effort in-memory computation. The DB write does the authoritative atomic
+	// increment; under parallel 429s the second concurrent request may compute one
+	// tier short, but the persisted counter still ramps correctly. For 529s this
+	// increment is hypothetical (used only to drive the with-reset duration
+	// formula below) and is never persisted to consecutive_rate_limits.
+	const nextCount = account.consecutive_rate_limits + 1;
+	const backoffMs = isOverloadNoReset
+		? computeOverloadCooldownMs()
+		: computeRateLimitBackoffMs(nextCount);
+	const candidateUntil = now + backoffMs;
+	const cooldownUntil = rateLimitInfo.resetTime
+		? Math.min(rateLimitInfo.resetTime, candidateUntil)
+		: candidateUntil;
 
 	// In-memory update so the rest of this request sees consistent state.
 	account.rate_limited_until = cooldownUntil;
 	account.rate_limited_at = now;
-	account.consecutive_rate_limits = nextCount;
+	if (!isOverload) {
+		account.consecutive_rate_limits = nextCount;
+	}
 	const wasRecoveryProbe = probeLeases.has(account.id);
 	completeRateLimitProbe(account, "cooldown_reapplied");
 	if (wasRecoveryProbe) {
@@ -150,15 +179,30 @@ export function applyRateLimitCooldown(
 			account.id,
 			cooldownUntil,
 			reason,
+			!isOverload,
 		);
 		// Reconcile in-memory counter with the authoritative DB value (may differ
-		// under concurrent 429s for the same account).
-		account.consecutive_rate_limits = persistedCount;
+		// under concurrent 429s for the same account). Skipped for overload: the
+		// streak is not touched by a 529 (with or without reset), so there is
+		// nothing to reconcile.
+		if (!isOverload) {
+			account.consecutive_rate_limits = persistedCount;
+		}
 		// Log AFTER the DB write so the reported consecutive= reflects the persisted value.
 		log.warn(
 			`[ccflare] account=${account.name} cooldown_applied reason=${reason} until=${new Date(cooldownUntil).toISOString()} consecutive=${persistedCount}`,
 		);
 	});
+
+	if (isOverload) {
+		// A 529 is a transient upstream server state, not a quota signal —
+		// emitting a RateLimitError here would misdiagnose it as account
+		// exhaustion. Log honestly instead.
+		log.warn(
+			`[ccflare] account=${account.name} upstream_overloaded reason=${reason} until=${new Date(cooldownUntil).toISOString()} (529 — transient, streak untouched)`,
+		);
+		return;
+	}
 
 	const rateLimitError = new RateLimitError(
 		account.id,

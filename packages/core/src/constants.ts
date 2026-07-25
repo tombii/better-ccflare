@@ -3,6 +3,8 @@
  * All magic numbers should be defined here to improve maintainability
  */
 
+import type { RateLimitReason } from "@better-ccflare/types";
+
 // Time constants (all in milliseconds)
 export const TIME_CONSTANTS = {
 	// Base units
@@ -54,6 +56,15 @@ export const TIME_CONSTANTS = {
 	RATE_LIMIT_BACKOFF_BASE_MS: 30 * 1000, // 30s: cooldown for the 1st 429 in a streak
 	RATE_LIMIT_BACKOFF_MAX_MS: 5 * 60 * 1000, // 5min: ceiling for the exponential ramp
 	RATE_LIMIT_RESET_STABILITY_MS: 5 * 60 * 1000, // 5min: healthy operation needed to reset the streak counter
+
+	// Fixed cooldown applied when an upstream returns 529 (overloaded_error).
+	// A 529 is a transient upstream SERVER state, not a signal about the
+	// account's own quota — it says nothing about how much capacity the
+	// account has left. Unlike 429 cooldowns it never ramps with a streak
+	// and never touches consecutive_rate_limits: that counter is reserved
+	// for genuine 429 quota exhaustion.
+	// Override at runtime via CCFLARE_OVERLOAD_COOLDOWN_MS.
+	OVERLOAD_COOLDOWN_MS: 10 * 1000, // 10s
 } as const;
 
 /**
@@ -82,6 +93,29 @@ export function computeRateLimitBackoffMs(consecutiveCount: number): number {
 export function getRateLimitResetStabilityMs(): number {
 	const raw = Number(process.env.CCFLARE_RATE_LIMIT_RESET_STABILITY_MS);
 	return raw || TIME_CONSTANTS.RATE_LIMIT_RESET_STABILITY_MS;
+}
+
+/**
+ * Read the fixed 529-overload cooldown (ms).
+ * Reads CCFLARE_OVERLOAD_COOLDOWN_MS from env.
+ * Uses || (not ??) so 0/NaN env values fall through to the default.
+ */
+export function computeOverloadCooldownMs(): number {
+	const raw = Number(process.env.CCFLARE_OVERLOAD_COOLDOWN_MS);
+	return raw || TIME_CONSTANTS.OVERLOAD_COOLDOWN_MS;
+}
+
+/**
+ * True for RateLimitReason values that represent an Anthropic 529
+ * (overloaded_error) — a transient upstream state, not account quota
+ * exhaustion. Used to route cooldown handling to the fixed overload
+ * cooldown instead of the exponential 429 backoff ramp.
+ */
+export function isOverloadReason(reason: RateLimitReason): boolean {
+	return (
+		reason === "upstream_529_overloaded_with_reset" ||
+		reason === "upstream_529_overloaded_no_reset"
+	);
 }
 
 /**

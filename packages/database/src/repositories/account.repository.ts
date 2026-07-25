@@ -135,16 +135,30 @@ export class AccountRepository extends BaseRepository<Account> {
 		accountId: string,
 		until: number,
 		reason: RateLimitReason,
+		incrementStreak = true,
 	): Promise<number> {
-		await this.run(
-			`UPDATE accounts
+		if (incrementStreak) {
+			await this.run(
+				`UPDATE accounts
            SET consecutive_rate_limits = COALESCE(consecutive_rate_limits, 0) + 1,
                rate_limited_until      = ?,
                rate_limited_reason     = ?,
                rate_limited_at         = ?
          WHERE id = ?`,
-			[until, reason, Date.now(), accountId],
-		);
+				[until, reason, Date.now(), accountId],
+			);
+		} else {
+			// 529 overload: cooldown state moves, but the 429 streak counter
+			// is left untouched — an overload is not a quota signal.
+			await this.run(
+				`UPDATE accounts
+           SET rate_limited_until      = ?,
+               rate_limited_reason     = ?,
+               rate_limited_at         = ?
+         WHERE id = ?`,
+				[until, reason, Date.now(), accountId],
+			);
+		}
 		const row = await this.get<{ consecutive_rate_limits: number }>(
 			`SELECT consecutive_rate_limits FROM accounts WHERE id = ?`,
 			[accountId],
