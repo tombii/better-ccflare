@@ -602,3 +602,149 @@ describe("selectAccountsForRequest — exhaustion signal provenance", () => {
 		expect(info?.resetAt).toBe(reactiveUntil);
 	});
 });
+
+// ── cooldown-masked capacity exhaustion (529-overload-cooldown-separation) ──
+//
+// orderedAccounts (line ~383) has already been through the strategy's
+// isAccountAvailable filter, which drops any account with a future
+// rate_limited_until regardless of the reason (a short 529-overload cooldown
+// included). The capacity loop above only ever sees what survived that
+// filter, so when every SURVIVING candidate happens to be capacity-exhausted
+// it must not claim "weekly capacity exhausted" if some other account that
+// was merely cooling down still has free capacity for the family — that
+// account, not the weekly cap, is the real reason nothing is available right
+// now, and it recovers in minutes rather than at the weekly reset.
+
+describe("selectAccountsForRequest — cooldown-masked capacity exhaustion", () => {
+	it("reports 'cooldown_masked' origin with the cooldown's own reset time when a cooldown-only account still has free capacity for the family", async () => {
+		const now = Date.now();
+		const exhaustedAcc = makeAccount({ id: "acc-exhausted" });
+		usageCache.set(exhaustedAcc.id, exhaustedUsage("Fable", now));
+		// Sidelined only by a short rate-limit cooldown — not paused, not
+		// requires_reauth, and NOT capacity-exhausted for Fable — so the
+		// strategy (simulated here via a fixed select() mock) already
+		// dropped it out of orderedAccounts before the capacity loop ran.
+		const cooldownAcc = makeAccount({
+			id: "acc-cooldown",
+			rate_limited_until: now + 90_000,
+		});
+		const ctx: ProxyContext = {
+			strategy: { select: mock(() => [exhaustedAcc]) },
+			dbOps: {
+				getAllAccounts: mock(async () => [exhaustedAcc, cooldownAcc]),
+				getActiveComboForFamily: mock(async () => null),
+			},
+			refreshInFlight: new Map(),
+			asyncWriter: { enqueue: mock(() => {}) },
+			config: { getModelScopedCapacityRouting: () => "exhausted" },
+		} as unknown as ProxyContext;
+		const meta = makeRequestMeta();
+
+		const result = await selectAccountsForRequest(meta, ctx, "claude-fable-5");
+
+		expect(result).toHaveLength(0);
+		const info = getModelFamilyExhaustionInfo(meta);
+		expect(info?.origin).toBe("cooldown_masked");
+		expect(info?.resetAt).toBe(cooldownAcc.rate_limited_until);
+	});
+
+	it("keeps the telemetry_confirmed weekly-exhaustion response when the cooldown-only account is ALSO capacity-exhausted for the family", async () => {
+		const now = Date.now();
+		const exhaustedAcc = makeAccount({ id: "acc-exhausted" });
+		usageCache.set(exhaustedAcc.id, exhaustedUsage("Fable", now));
+		const cooldownAcc = makeAccount({
+			id: "acc-cooldown-exhausted",
+			rate_limited_until: now + 90_000,
+		});
+		usageCache.set(cooldownAcc.id, exhaustedUsage("Fable", now));
+		const ctx: ProxyContext = {
+			strategy: { select: mock(() => [exhaustedAcc]) },
+			dbOps: {
+				getAllAccounts: mock(async () => [exhaustedAcc, cooldownAcc]),
+				getActiveComboForFamily: mock(async () => null),
+			},
+			refreshInFlight: new Map(),
+			asyncWriter: { enqueue: mock(() => {}) },
+			config: { getModelScopedCapacityRouting: () => "exhausted" },
+		} as unknown as ProxyContext;
+		const meta = makeRequestMeta();
+
+		const result = await selectAccountsForRequest(meta, ctx, "claude-fable-5");
+
+		expect(result).toHaveLength(0);
+		const info = getModelFamilyExhaustionInfo(meta);
+		// Every candidate — including the cooling-down one — is genuinely
+		// capacity-exhausted for the family, so the original telemetry-backed
+		// response and its (far-away) weekly reset must stand.
+		expect(info?.origin).toBe("telemetry_confirmed");
+		expect(info?.resetAt).not.toBe(cooldownAcc.rate_limited_until);
+	});
+
+	it("does not treat a PAUSED account as a cooldown-masking candidate", async () => {
+		const now = Date.now();
+		const exhaustedAcc = makeAccount({ id: "acc-exhausted" });
+		usageCache.set(exhaustedAcc.id, exhaustedUsage("Fable", now));
+		// paused (not a pure rate-limit cooldown) — must be ignored by the
+		// cooldown-masking check even though it also carries a future
+		// rate_limited_until and free capacity.
+		const pausedAcc = makeAccount({
+			id: "acc-paused",
+			paused: true,
+			rate_limited_until: now + 90_000,
+		});
+		const ctx: ProxyContext = {
+			strategy: { select: mock(() => [exhaustedAcc]) },
+			dbOps: {
+				getAllAccounts: mock(async () => [exhaustedAcc, pausedAcc]),
+				getActiveComboForFamily: mock(async () => null),
+			},
+			refreshInFlight: new Map(),
+			asyncWriter: { enqueue: mock(() => {}) },
+			config: { getModelScopedCapacityRouting: () => "exhausted" },
+		} as unknown as ProxyContext;
+		const meta = makeRequestMeta();
+
+		const result = await selectAccountsForRequest(meta, ctx, "claude-fable-5");
+
+		expect(result).toHaveLength(0);
+		expect(getModelFamilyExhaustionInfo(meta)?.origin).toBe(
+			"telemetry_confirmed",
+		);
+	});
+
+	it("aggregates the EARLIEST rate_limited_until across multiple cooldown-masking accounts", async () => {
+		const now = Date.now();
+		const exhaustedAcc = makeAccount({ id: "acc-exhausted" });
+		usageCache.set(exhaustedAcc.id, exhaustedUsage("Fable", now));
+		const laterCooldown = makeAccount({
+			id: "acc-cooldown-later",
+			rate_limited_until: now + 300_000,
+		});
+		const earlierCooldown = makeAccount({
+			id: "acc-cooldown-earlier",
+			rate_limited_until: now + 30_000,
+		});
+		const ctx: ProxyContext = {
+			strategy: { select: mock(() => [exhaustedAcc]) },
+			dbOps: {
+				getAllAccounts: mock(async () => [
+					exhaustedAcc,
+					laterCooldown,
+					earlierCooldown,
+				]),
+				getActiveComboForFamily: mock(async () => null),
+			},
+			refreshInFlight: new Map(),
+			asyncWriter: { enqueue: mock(() => {}) },
+			config: { getModelScopedCapacityRouting: () => "exhausted" },
+		} as unknown as ProxyContext;
+		const meta = makeRequestMeta();
+
+		const result = await selectAccountsForRequest(meta, ctx, "claude-fable-5");
+
+		expect(result).toHaveLength(0);
+		const info = getModelFamilyExhaustionInfo(meta);
+		expect(info?.origin).toBe("cooldown_masked");
+		expect(info?.resetAt).toBe(earlierCooldown.rate_limited_until);
+	});
+});
