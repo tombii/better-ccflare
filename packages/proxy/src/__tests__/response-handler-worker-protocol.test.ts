@@ -158,6 +158,47 @@ describe("forwardToClient usage-collector protocol", () => {
 		expect(starts[0].project).toBeNull();
 	});
 
+	it("strips internal routing headers before sending persisted payload metadata", async () => {
+		const { starts } = createMockCollector();
+		const ctx = createCtx(true);
+
+		await forwardToClient(
+			{
+				requestId: "req-internal-headers",
+				method: "POST",
+				path: "/v1/messages",
+				account: null,
+				requestHeaders: new Headers({
+					"content-type": "application/json",
+					"x-better-ccflare-account-id": "acc-secret",
+					"x-better-ccflare-anthropic-oauth-allowlist":
+						"Jenny_claude,acc-secret",
+					"x-better-ccflare-request-source": "openai-responses-adapter",
+					"x-ordinary-debug": "kept",
+				}),
+				requestBody: new TextEncoder().encode("{}"),
+				project: null,
+				response: new Response(JSON.stringify({ ok: true }), {
+					status: 200,
+					headers: { "content-type": "application/json" },
+				}),
+				timestamp: Date.now(),
+				retryAttempt: 0,
+				failoverAttempts: 0,
+			},
+			ctx,
+		);
+
+		const storedHeaders = starts[0].requestHeaders as Record<string, string>;
+		expect(storedHeaders["x-better-ccflare-account-id"]).toBeUndefined();
+		expect(
+			storedHeaders["x-better-ccflare-anthropic-oauth-allowlist"],
+		).toBeUndefined();
+		expect(storedHeaders["x-better-ccflare-request-source"]).toBeUndefined();
+		expect(storedHeaders["content-type"]).toBe("application/json");
+		expect(storedHeaders["x-ordinary-debug"]).toBe("kept");
+	});
+
 	it("does not throw when usage collector call succeeds", async () => {
 		createMockCollector();
 		const ctx = createCtx();

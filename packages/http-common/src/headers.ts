@@ -1,3 +1,5 @@
+import { isBetterCcflareInternalHeaderName } from "@better-ccflare/types";
+
 /**
  * Sanitizes proxy headers by removing hop-by-hop headers that should not be forwarded
  * after Bun has automatically decompressed the response body.
@@ -21,7 +23,7 @@ export function sanitizeProxyHeaders(original: Headers): Headers {
  * analytics.
  *
  * Removes: accept-encoding, content-encoding, transfer-encoding, content-length,
- * authorization, x-api-key, cookie
+ * authorization, x-api-key, cookie, and internal x-better-ccflare-* headers
  */
 export function sanitizeRequestHeaders(original: Headers): Headers {
 	const h = new Headers(original);
@@ -33,6 +35,11 @@ export function sanitizeRequestHeaders(original: Headers): Headers {
 	h.delete("authorization");
 	h.delete("x-api-key");
 	h.delete("cookie");
+	for (const key of [...h.keys()]) {
+		if (isBetterCcflareInternalHeaderName(key)) {
+			h.delete(key);
+		}
+	}
 	return h;
 }
 
