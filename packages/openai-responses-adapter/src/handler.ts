@@ -1,11 +1,175 @@
 import crypto from "node:crypto";
 import { Logger } from "@better-ccflare/logger";
+import {
+	BETTER_CCFLARE_REQUEST_SOURCE_HEADER,
+	CODEX_CLAUDE_OAUTH_ACCOUNT_ALLOWLIST_ENV,
+	CODEX_CLAUDE_OAUTH_ALLOWLIST_HEADER,
+	CODEX_CLAUDE_OAUTH_MODE_COMPAT,
+	CODEX_CLAUDE_OAUTH_MODE_ENV,
+	CODEX_CLAUDE_OAUTH_MODE_HEADER,
+	CODEX_CLAUDE_OAUTH_MODE_SAFE,
+	CODEX_RESPONSES_REQUEST_SOURCE,
+} from "@better-ccflare/types";
 import { translateRequestToAnthropic } from "./request-translator";
 import { translateAnthropicResponseToResponses } from "./response-translator";
 import { translateAnthropicStreamToResponses } from "./stream-translator";
 import type { HandleProxyFn, ResponseItem, ResponsesRequest } from "./types";
 
 const log = new Logger("openai-responses-adapter");
+const CLAUDE_CODE_COMPAT_BETA =
+	"claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,prompt-caching-scope-2026-01-05,token-efficient-tools-2026-03-28";
+const CLAUDE_CODE_COMPAT_VERSION = "2.1.63";
+const CLAUDE_CODE_COMPAT_FINGERPRINT_SALT = "59cf53e54c78";
+const CLAUDE_CODE_COMPAT_PROMPT = [
+	"You are Claude Code, Anthropic's official CLI for Claude.",
+	"You help with code changes, debugging, and repo-aware development tasks.",
+	"Be concise, direct, and action-oriented.",
+].join("\n\n");
+
+function parseCsv(value: string | undefined | null): string[] {
+	return (
+		value
+			?.split(",")
+			.map((entry) => entry.trim())
+			.filter(Boolean) ?? []
+	);
+}
+
+function appendCsvHeader(headers: Headers, name: string, value: string): void {
+	const values = new Set(parseCsv(headers.get(name)));
+	values.add(value);
+	headers.set(name, [...values].join(","));
+}
+
+function removeCsvHeaderValue(
+	headers: Headers,
+	name: string,
+	value: string,
+): void {
+	const values = parseCsv(headers.get(name)).filter((entry) => entry !== value);
+	if (values.length === 0) headers.delete(name);
+	else headers.set(name, values.join(","));
+}
+
+function resolveCodexClaudeOauthPolicy(): {
+	mode:
+		| typeof CODEX_CLAUDE_OAUTH_MODE_SAFE
+		| typeof CODEX_CLAUDE_OAUTH_MODE_COMPAT;
+	allowlist: string[];
+} {
+	const requestedMode = process.env[CODEX_CLAUDE_OAUTH_MODE_ENV]?.trim();
+	const allowlist = parseCsv(
+		process.env[CODEX_CLAUDE_OAUTH_ACCOUNT_ALLOWLIST_ENV],
+	);
+	if (
+		requestedMode === CODEX_CLAUDE_OAUTH_MODE_COMPAT &&
+		allowlist.length > 0
+	) {
+		return { mode: CODEX_CLAUDE_OAUTH_MODE_COMPAT, allowlist };
+	}
+	return { mode: CODEX_CLAUDE_OAUTH_MODE_SAFE, allowlist: [] };
+}
+
+function anthropicTextBlock(text: string): { type: "text"; text: string } {
+	return { type: "text", text };
+}
+
+function textFromSystemBlocks(system: unknown): string {
+	if (typeof system === "string") return system;
+	if (!Array.isArray(system)) return "";
+	const pieces: string[] = [];
+	for (const block of system) {
+		if (!block || typeof block !== "object" || Array.isArray(block)) continue;
+		const text = (block as { text?: unknown }).text;
+		if (typeof text === "string" && text.length > 0) pieces.push(text);
+	}
+	return pieces.join("\n\n");
+}
+
+function computeClaudeCodeCompatFingerprint(systemText: string): string {
+	const chars = [4, 7, 20].map((index) => systemText[index] ?? "0").join("");
+	return crypto
+		.createHash("sha256")
+		.update(
+			`${CLAUDE_CODE_COMPAT_FINGERPRINT_SALT}${chars}${CLAUDE_CODE_COMPAT_VERSION}`,
+		)
+		.digest("hex")
+		.slice(0, 3);
+}
+
+function claudeCodeSessionId(seed: string | null): string {
+	const h = crypto
+		.createHash("sha256")
+		.update(`claude-code-session:${seed || "better-ccflare-codex-responses"}`)
+		.digest("hex");
+	const variant = ((Number.parseInt(h[16] ?? "0", 16) & 0x3) | 0x8).toString(
+		16,
+	);
+	return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-${variant}${h.slice(17, 20)}-${h.slice(20, 32)}`;
+}
+
+function applyClaudeCodeCompatShaping(
+	body: ReturnType<typeof translateRequestToAnthropic>,
+): void {
+	const systemText = textFromSystemBlocks(body.system);
+	const payload = JSON.stringify(body);
+	const fingerprint = computeClaudeCodeCompatFingerprint(systemText);
+	const cch = crypto
+		.createHash("sha256")
+		.update(payload)
+		.digest("hex")
+		.slice(0, 5);
+	const billingHeader = `x-anthropic-billing-header: cc_version=${CLAUDE_CODE_COMPAT_VERSION}.${fingerprint}; cc_entrypoint=cli; cch=${cch};`;
+
+	body.system = [
+		anthropicTextBlock(billingHeader),
+		anthropicTextBlock(
+			"You are Claude Code, Anthropic's official CLI for Claude.",
+		),
+		anthropicTextBlock(CLAUDE_CODE_COMPAT_PROMPT),
+	];
+
+	if (!systemText.trim()) return;
+	const firstUserIdx = body.messages.findIndex(
+		(message) => message.role === "user",
+	);
+	if (firstUserIdx < 0) return;
+	const firstUser = body.messages[firstUserIdx];
+	if (!firstUser) return;
+	body.messages = body.messages.slice();
+	body.messages[firstUserIdx] = {
+		...firstUser,
+		content: [anthropicTextBlock(systemText.trim()), ...firstUser.content],
+	};
+}
+
+function applyClaudeCodeCompatHeaders(
+	headers: Headers,
+	options: { stream?: boolean; sessionKey: string | null },
+): void {
+	headers.set(
+		"accept",
+		options.stream ? "text/event-stream" : "application/json",
+	);
+	headers.set("accept-language", "*");
+	headers.set("anthropic-beta", CLAUDE_CODE_COMPAT_BETA);
+	headers.set("anthropic-version", "2023-06-01");
+	headers.set("user-agent", "@anthropic-ai/sdk/0.74.0");
+	headers.set("x-app", "cli");
+	headers.set("x-client-request-id", crypto.randomUUID());
+	headers.set(
+		"x-claude-code-session-id",
+		claudeCodeSessionId(options.sessionKey),
+	);
+	headers.set("x-stainless-arch", process.arch);
+	headers.set("x-stainless-lang", "js");
+	headers.set("x-stainless-os", process.platform);
+	headers.set("x-stainless-package-version", "0.74.0");
+	headers.set("x-stainless-retry-count", "0");
+	headers.set("x-stainless-runtime", "node");
+	headers.set("x-stainless-runtime-version", process.version.slice(1));
+	headers.set("x-stainless-timeout", "600");
+}
 
 export async function handleResponsesRequest(
 	req: Request,
@@ -118,9 +282,43 @@ export async function handleResponsesRequest(
 	if (!syntheticHeaders.has("anthropic-version")) {
 		syntheticHeaders.set("anthropic-version", "2023-06-01");
 	}
-	// claude-oauth accounts use Claude's OAuth tokens — Anthropic bans them
-	// when used outside Claude CLI. Always exclude from Codex CLI traffic.
-	syntheticHeaders.set("x-better-ccflare-exclude-providers", "anthropic-oauth");
+	syntheticHeaders.set(
+		BETTER_CCFLARE_REQUEST_SOURCE_HEADER,
+		CODEX_RESPONSES_REQUEST_SOURCE,
+	);
+	syntheticHeaders.delete(CODEX_CLAUDE_OAUTH_ALLOWLIST_HEADER);
+	const codexClaudeOauthPolicy = resolveCodexClaudeOauthPolicy();
+	syntheticHeaders.set(
+		CODEX_CLAUDE_OAUTH_MODE_HEADER,
+		codexClaudeOauthPolicy.mode,
+	);
+	if (codexClaudeOauthPolicy.mode === CODEX_CLAUDE_OAUTH_MODE_COMPAT) {
+		// Explicit operator opt-in: better-ccflare owns Claude-Code-compatible
+		// request shaping and account eligibility for this Codex Responses request.
+		messagesUrl.searchParams.set("beta", "true");
+		applyClaudeCodeCompatShaping(anthropicBody);
+		removeCsvHeaderValue(
+			syntheticHeaders,
+			"x-better-ccflare-exclude-providers",
+			"anthropic-oauth",
+		);
+		syntheticHeaders.set(
+			CODEX_CLAUDE_OAUTH_ALLOWLIST_HEADER,
+			codexClaudeOauthPolicy.allowlist.join(","),
+		);
+		applyClaudeCodeCompatHeaders(syntheticHeaders, {
+			stream: anthropicBody.stream,
+			sessionKey,
+		});
+	} else {
+		// Claude OAuth accounts must stay excluded unless the operator explicitly
+		// enables compat mode and supplies an allowlist.
+		appendCsvHeader(
+			syntheticHeaders,
+			"x-better-ccflare-exclude-providers",
+			"anthropic-oauth",
+		);
+	}
 	const syntheticReq = new Request(messagesUrl.toString(), {
 		method: "POST",
 		headers: syntheticHeaders,
@@ -128,7 +326,13 @@ export async function handleResponsesRequest(
 	});
 
 	// 6. Forward to proxy
-	log.info(`Forwarding responses request to ${messagesUrl.pathname}`);
+	const routingLabel =
+		codexClaudeOauthPolicy.mode === CODEX_CLAUDE_OAUTH_MODE_COMPAT
+			? `source=${CODEX_RESPONSES_REQUEST_SOURCE} mode=${codexClaudeOauthPolicy.mode} allowlist=${codexClaudeOauthPolicy.allowlist.join(",")}`
+			: `source=${CODEX_RESPONSES_REQUEST_SOURCE} mode=${codexClaudeOauthPolicy.mode} exclude=anthropic-oauth`;
+	log.info(
+		`Forwarding responses request to ${messagesUrl.pathname}${messagesUrl.search} (${routingLabel})`,
+	);
 	let anthropicResp: Response;
 	try {
 		anthropicResp = await handleProxy(

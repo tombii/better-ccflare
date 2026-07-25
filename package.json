@@ -21,6 +21,7 @@
 		"build:dashboard": "bun run --cwd packages/dashboard-web build",
 		"build:cli": "bun run --cwd apps/cli build",
 		"build:lander": "bun run --cwd apps/lander build",
+		"check:opencodex-compat": "scripts/check-opencodex-compat.sh",
 		"format": "bunx biome format --write .",
 		"lint": "bunx --bun biome check --write --unsafe ."
 	},

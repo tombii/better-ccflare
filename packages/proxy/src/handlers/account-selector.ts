@@ -7,6 +7,7 @@ import type {
 	ComboSlotInfo,
 	RequestMeta,
 } from "@better-ccflare/types";
+import { CODEX_CLAUDE_OAUTH_ALLOWLIST_HEADER } from "@better-ccflare/types";
 import {
 	type FamilyExhaustionOrigin,
 	getFamilyExhaustionOrigin,
@@ -64,6 +65,62 @@ export function getModelFamilyExhaustionInfo(
  */
 function isCapacityRoutingEnabled(ctx: ProxyContext): boolean {
 	return ctx.config?.getModelScopedCapacityRouting?.() === "exhausted";
+}
+
+function parseCsvHeader(headers: Headers | undefined, name: string): string[] {
+	return (
+		headers
+			?.get(name)
+			?.split(",")
+			.map((entry) => entry.trim())
+			.filter(Boolean) ?? []
+	);
+}
+
+function normalizeIdentifier(value: string): string {
+	return value.trim().toLowerCase();
+}
+
+function isAnthropicOauthAccount(account: Account): boolean {
+	return account.provider === "anthropic" && account.refresh_token != null;
+}
+
+function resolveAnthropicOauthAllowlist(
+	headers: Headers | undefined,
+): Set<string> | null {
+	const raw = headers?.get(CODEX_CLAUDE_OAUTH_ALLOWLIST_HEADER);
+	if (raw == null) return null;
+	return new Set(
+		parseCsvHeader(headers, CODEX_CLAUDE_OAUTH_ALLOWLIST_HEADER).map(
+			normalizeIdentifier,
+		),
+	);
+}
+
+function isAccountAllowedByRequestPolicy(
+	account: Account,
+	excludeProviders: string[],
+	anthropicOauthAllowlist: Set<string> | null,
+): boolean {
+	for (const ex of excludeProviders) {
+		const normalizedEx = normalizeIdentifier(ex);
+		// "anthropic-oauth" targets only Anthropic OAuth accounts (refresh_token
+		// present), leaving Anthropic API key accounts (console mode) eligible.
+		if (normalizedEx === "anthropic-oauth") {
+			if (isAnthropicOauthAccount(account)) return false;
+		} else if (normalizeIdentifier(account.provider) === normalizedEx) {
+			return false;
+		}
+	}
+
+	if (anthropicOauthAllowlist && isAnthropicOauthAccount(account)) {
+		return (
+			anthropicOauthAllowlist.has(normalizeIdentifier(account.id)) ||
+			anthropicOauthAllowlist.has(normalizeIdentifier(account.name))
+		);
+	}
+
+	return true;
 }
 
 /**
@@ -188,6 +245,20 @@ export async function selectAccountsForRequest(
 	model?: string,
 	options?: { skipCombo?: boolean },
 ): Promise<Account[]> {
+	const excludeProviders = parseCsvHeader(
+		meta.headers,
+		"x-better-ccflare-exclude-providers",
+	);
+	const anthropicOauthAllowlist = resolveAnthropicOauthAllowlist(meta.headers);
+	const isAllowedByRequestPolicy = (account: Account) =>
+		isAccountAllowedByRequestPolicy(
+			account,
+			excludeProviders,
+			anthropicOauthAllowlist,
+		);
+	const hasRequestAccountPolicy =
+		excludeProviders.length > 0 || anthropicOauthAllowlist !== null;
+
 	// Check if a specific account is requested via special header
 	if (meta.headers) {
 		const forcedAccountId = meta.headers.get("x-better-ccflare-account-id");
@@ -225,7 +296,7 @@ export async function selectAccountsForRequest(
 						(isAutoRefreshBypass &&
 							!forcedAccount.requires_reauth &&
 							(isOveragePaused || isRateLimited));
-					if (allowThrough) {
+					if (allowThrough && isAllowedByRequestPolicy(forcedAccount)) {
 						return [forcedAccount];
 					}
 				}
@@ -252,36 +323,48 @@ export async function selectAccountsForRequest(
 		}
 	}
 
-	// Filter out excluded providers (e.g. claude-oauth excluded by the responses adapter)
-	const excludeProviders =
-		meta.headers
-			?.get("x-better-ccflare-exclude-providers")
-			?.split(",")
-			.map((p) => p.trim())
-			.filter(Boolean) ?? [];
-
-	const applyExclusions = (accounts: Account[]): Account[] => {
-		if (excludeProviders.length === 0) return accounts;
-		const filtered = accounts.filter((a) => {
-			for (const ex of excludeProviders) {
-				// "anthropic-oauth" targets only Anthropic OAuth accounts (refresh_token present),
-				// leaving Anthropic API key accounts (console mode) eligible.
-				if (ex === "anthropic-oauth") {
-					if (a.provider === "anthropic" && a.refresh_token != null)
-						return false;
-				} else {
-					if (a.provider === ex) return false;
-				}
-			}
-			return true;
-		});
+	const applyExclusions = (
+		accounts: Account[],
+		options?: { logSkipped?: boolean },
+	): Account[] => {
+		if (excludeProviders.length === 0 && !anthropicOauthAllowlist)
+			return accounts;
+		const filtered = accounts.filter(isAllowedByRequestPolicy);
 		const skipped = accounts.length - filtered.length;
-		if (skipped > 0) {
+		if (skipped > 0 && options?.logSkipped !== false) {
 			log.warn(
-				`Skipping ${skipped} account(s) excluded for this request type (Codex CLI traffic must not use Anthropic OAuth accounts)`,
+				`Skipping ${skipped} account(s) excluded by request account policy`,
 			);
 		}
 		return filtered;
+	};
+
+	const getPolicyAwareOrderedAccounts = async (): Promise<Account[]> => {
+		if (!hasRequestAccountPolicy) {
+			return getOrderedAccounts(meta, ctx);
+		}
+
+		try {
+			const allAccounts = await ctx.dbOps.getAllAccounts();
+			const eligibleAccounts = applyExclusions(allAccounts);
+			const selectedAccounts = ctx.strategy.select(eligibleAccounts, meta);
+			return applyExclusions(selectedAccounts, { logSkipped: false });
+		} catch (error) {
+			log.error("Failed to get accounts from database:", error);
+			console.error("\n❌ DATABASE ERROR DETECTED");
+			console.error("═".repeat(50));
+			console.error(
+				"The database encountered an error while loading accounts.",
+			);
+			console.error(
+				"This may indicate database corruption or integrity issues.\n",
+			);
+			console.error("To diagnose and repair the database, run:");
+			console.error("  bun run cli --repair-db\n");
+			console.error("The request will fall back to unauthenticated mode.");
+			console.error(`${"═".repeat(50)}\n`);
+			return [];
+		}
 	};
 
 	// Try combo-aware routing if a model is provided (skipped entirely when
@@ -380,7 +463,7 @@ export async function selectAccountsForRequest(
 		}
 	}
 
-	const orderedAccounts = applyExclusions(await getOrderedAccounts(meta, ctx));
+	const orderedAccounts = await getPolicyAwareOrderedAccounts();
 
 	// Model-scoped capacity filter for the non-combo (or combo-inactive/
 	// combo-exhausted-fallthrough) path: drop accounts whose weekly per-model

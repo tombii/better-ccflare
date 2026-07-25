@@ -66,6 +66,7 @@ When working with Claude API at scale, rate limits can become a significant bott
 ### Operations
 - [Migration Guide: v2 to v3](./migration-v2-to-v3.md) - Upgrading from version 2.x to 3.x
 - [Deployment Guide](./deployment.md) - Production deployment with Docker, systemd, PM2, and Kubernetes
+- [OpenCodex Claude OAuth Compat Runbook](./operations/opencodex-better-ccflare-compat.md) - Operational contract for OpenCodex `/v1/responses` traffic routed to allowlisted Claude OAuth accounts
 - [Security Considerations](./security.md) - Authentication, encryption, and best practices
 - [Troubleshooting](./troubleshooting.md) - Common issues and solutions
 - [Contributing](./contributing.md) - Development setup and contribution guidelines

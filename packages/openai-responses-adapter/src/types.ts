@@ -178,7 +178,7 @@ export interface ResponsesError {
 export interface AnthropicRequest {
 	model: string;
 	messages: AnthropicMessage[];
-	system?: string;
+	system?: string | AnthropicTextContent[];
 	tools?: AnthropicTool[];
 	tool_choice?: AnthropicToolChoice;
 	max_tokens: number;

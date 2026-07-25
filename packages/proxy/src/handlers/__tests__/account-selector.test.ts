@@ -4,6 +4,7 @@ import type {
 	ComboWithSlots,
 	RequestMeta,
 } from "@better-ccflare/types";
+import { CODEX_CLAUDE_OAUTH_ALLOWLIST_HEADER } from "@better-ccflare/types";
 import {
 	getComboSlotInfo,
 	resolveEffectiveModel,
@@ -198,6 +199,193 @@ describe("selectAccountsForRequest — x-better-ccflare-account-id header", () =
 		// Rate-limited forced account is skipped; falls back to strategy.select which returns activeAcc
 		expect(result).toHaveLength(1);
 		expect(result[0]?.id).toBe("acc-active");
+	});
+});
+
+// ── selectAccountsForRequest — Codex Responses Anthropic OAuth allowlist ─────
+
+describe("selectAccountsForRequest — Codex Responses Anthropic OAuth allowlist", () => {
+	it("keeps only allowlisted Anthropic OAuth accounts while preserving non-OAuth accounts", async () => {
+		const jenny = makeAccount({
+			id: "acc-jenny",
+			name: "Jenny_claude",
+			provider: "anthropic",
+			refresh_token: "rt-jenny",
+			access_token: "at-jenny",
+		});
+		const sandra = makeAccount({
+			id: "acc-sandra",
+			name: "Sandra_Claude",
+			provider: "anthropic",
+			refresh_token: "rt-sandra",
+			access_token: "at-sandra",
+		});
+		const vale = makeAccount({
+			id: "acc-vale",
+			name: "Vale_Claude",
+			provider: "anthropic",
+			refresh_token: "rt-vale",
+			access_token: "at-vale",
+		});
+		const consoleAccount = makeAccount({
+			id: "acc-console",
+			name: "Console_Anthropic",
+			provider: "anthropic",
+			refresh_token: null,
+			access_token: null,
+			api_key: "sk-test",
+		});
+		const ctx = makeCtx({
+			accounts: [jenny, sandra, vale, consoleAccount],
+		});
+		const meta = makeRequestMeta({
+			headers: new Headers({
+				[CODEX_CLAUDE_OAUTH_ALLOWLIST_HEADER]: "Jenny_claude, acc-sandra",
+			}),
+		});
+
+		const result = await selectAccountsForRequest(meta, ctx);
+
+		expect(result.map((a) => a.id)).toEqual([
+			"acc-jenny",
+			"acc-sandra",
+			"acc-console",
+		]);
+	});
+
+	it("filters request-policy accounts before session strategy selection", async () => {
+		const stickyMike = makeAccount({
+			id: "acc-mike",
+			name: "Mike_Claude",
+			session_start: Date.now(),
+			session_request_count: 3,
+		});
+		const jenny = makeAccount({
+			id: "acc-jenny",
+			name: "Jenny_claude",
+		});
+		const strategySelect = mock((accounts: Account[]) => accounts);
+		const ctx = {
+			strategy: { select: strategySelect },
+			dbOps: {
+				getAllAccounts: mock(async () => [stickyMike, jenny]),
+				getActiveComboForFamily: mock(async () => null),
+			},
+			refreshInFlight: new Map(),
+			asyncWriter: { enqueue: mock(() => {}) },
+			usageWorker: { postMessage: mock(() => {}) },
+		} as unknown as ProxyContext;
+		const meta = makeRequestMeta({
+			headers: new Headers({
+				[CODEX_CLAUDE_OAUTH_ALLOWLIST_HEADER]: "Jenny_claude",
+			}),
+		});
+
+		const result = await selectAccountsForRequest(meta, ctx);
+
+		expect(strategySelect.mock.calls[0]?.[0].map((a) => a.id)).toEqual([
+			"acc-jenny",
+		]);
+		expect(result.map((a) => a.id)).toEqual(["acc-jenny"]);
+	});
+
+	it("excludes every Anthropic OAuth account when the allowlist header is empty", async () => {
+		const jenny = makeAccount({
+			id: "acc-jenny",
+			name: "Jenny_claude",
+			provider: "anthropic",
+			refresh_token: "rt-jenny",
+		});
+		const consoleAccount = makeAccount({
+			id: "acc-console",
+			name: "Console_Anthropic",
+			provider: "anthropic",
+			refresh_token: null,
+			api_key: "sk-test",
+		});
+		const ctx = makeCtx({
+			accounts: [jenny, consoleAccount],
+		});
+		const meta = makeRequestMeta({
+			headers: new Headers({
+				[CODEX_CLAUDE_OAUTH_ALLOWLIST_HEADER]: " , ",
+			}),
+		});
+
+		const result = await selectAccountsForRequest(meta, ctx);
+
+		expect(result.map((a) => a.id)).toEqual(["acc-console"]);
+	});
+
+	it("does not let a forced account header bypass the Anthropic OAuth allowlist", async () => {
+		const vale = makeAccount({
+			id: "acc-vale",
+			name: "Vale_Claude",
+			provider: "anthropic",
+			refresh_token: "rt-vale",
+		});
+		const jenny = makeAccount({
+			id: "acc-jenny",
+			name: "Jenny_claude",
+			provider: "anthropic",
+			refresh_token: "rt-jenny",
+		});
+		const ctx = makeCtx({
+			accounts: [vale, jenny],
+		});
+		const meta = makeRequestMeta({
+			headers: new Headers({
+				"x-better-ccflare-account-id": "acc-vale",
+				[CODEX_CLAUDE_OAUTH_ALLOWLIST_HEADER]: "Jenny_claude",
+			}),
+		});
+
+		const result = await selectAccountsForRequest(meta, ctx);
+
+		expect(result.map((a) => a.id)).toEqual(["acc-jenny"]);
+	});
+
+	it("does not revive paused allowlisted Anthropic OAuth combo slots", async () => {
+		const pausedJenny = makeAccount({
+			id: "acc-jenny",
+			name: "Jenny_claude",
+			paused: true,
+		});
+		const activeSandra = makeAccount({
+			id: "acc-sandra",
+			name: "Sandra_Claude",
+		});
+		const combo = makeCombo([
+			{
+				id: "slot-jenny",
+				combo_id: "combo-1",
+				account_id: "acc-jenny",
+				model: "claude-fable-5",
+				priority: 0,
+				enabled: true,
+			},
+			{
+				id: "slot-sandra",
+				combo_id: "combo-1",
+				account_id: "acc-sandra",
+				model: "claude-fable-5",
+				priority: 1,
+				enabled: true,
+			},
+		]);
+		const ctx = makeCtx({
+			accounts: [pausedJenny, activeSandra],
+			activeCombo: combo,
+		});
+		const meta = makeRequestMeta({
+			headers: new Headers({
+				[CODEX_CLAUDE_OAUTH_ALLOWLIST_HEADER]: "Jenny_claude,Sandra_Claude",
+			}),
+		});
+
+		const result = await selectAccountsForRequest(meta, ctx, "claude-fable-5");
+
+		expect(result.map((a) => a.id)).toEqual(["acc-sandra"]);
 	});
 });
 
