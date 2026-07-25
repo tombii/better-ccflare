@@ -5,6 +5,13 @@
  * intercepted before the scheduler module is imported.  The mock stores the
  * registered callback so individual tests can invoke it directly, which lets
  * us test sendKeepalives() without relying on real timers.
+ *
+ * The mock spreads the real module (imported once beforehand) and overrides
+ * only registerHeartbeat. mock.module replaces the WHOLE module globally and
+ * across file boundaries in Bun — a partial stub here would silently break
+ * unrelated exports (e.g. isOverloadReason, computeRateLimitBackoffMs) for
+ * every other test file that imports @better-ccflare/core later in the same
+ * run.
  */
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import type { Config } from "@better-ccflare/config";
@@ -34,16 +41,11 @@ const mockRegisterHeartbeat = mock((opts: HeartbeatOpts) => {
 	return mockUnregister;
 });
 
+const actualCore = await import("@better-ccflare/core");
+
 mock.module("@better-ccflare/core", () => ({
+	...actualCore,
 	registerHeartbeat: mockRegisterHeartbeat,
-	// Re-export other things that the proxy module tree may need (none required
-	// by the scheduler itself, but avoids any import-time crash).
-	registerCleanup: mock(() => () => {}),
-	registerUIRefresh: mock(() => () => {}),
-	intervalManager: {
-		register: mock(() => () => {}),
-		unregister: mock(() => {}),
-	},
 }));
 
 import { cacheBodyStore } from "../cache-body-store";
