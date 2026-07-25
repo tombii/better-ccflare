@@ -703,6 +703,29 @@ describe("AnthropicProvider — streaming.test.ts", () => {
 			expect(result.get("host")).toBeNull();
 		});
 
+		it("strips internal better-ccflare routing headers before upstream", () => {
+			const incoming = new Headers({
+				"content-type": "application/json",
+				"x-better-ccflare-account-id": "acc-jenny",
+				"x-better-ccflare-anthropic-oauth-allowlist":
+					"Jenny_claude,Sandra_Claude",
+				"x-better-ccflare-codex-claude-oauth-mode": "claude-code-compat",
+				"x-better-ccflare-exclude-providers": "anthropic-oauth",
+				"x-better-ccflare-request-source": "openai-responses-adapter",
+			});
+			const result = provider.prepareHeaders(incoming, "at-bearer");
+
+			expect(result.get("x-better-ccflare-account-id")).toBeNull();
+			expect(
+				result.get("x-better-ccflare-anthropic-oauth-allowlist"),
+			).toBeNull();
+			expect(result.get("x-better-ccflare-codex-claude-oauth-mode")).toBeNull();
+			expect(result.get("x-better-ccflare-exclude-providers")).toBeNull();
+			expect(result.get("x-better-ccflare-request-source")).toBeNull();
+			expect(result.get("authorization")).toBe("Bearer at-bearer");
+			expect(result.get("content-type")).toBe("application/json");
+		});
+
 		it("adds oauth-2025-04-20 to anthropic-beta header when accessToken is set", () => {
 			const incoming = new Headers({ "content-type": "application/json" });
 			const result = provider.prepareHeaders(incoming, "at-bearer");

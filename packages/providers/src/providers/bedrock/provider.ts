@@ -8,7 +8,10 @@ import {
 } from "@aws-sdk/client-bedrock-runtime";
 import { estimateCostUSD } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
-import type { Account } from "@better-ccflare/types";
+import {
+	type Account,
+	isBetterCcflareInternalHeaderName,
+} from "@better-ccflare/types";
 import { BaseProvider } from "../../base";
 import type { Provider, RateLimitInfo, TokenRefreshResult } from "../../types";
 import {
@@ -376,6 +379,11 @@ export class BedrockProvider extends BaseProvider implements Provider {
 		newHeaders.delete("host");
 		newHeaders.delete("accept-encoding");
 		newHeaders.delete("content-encoding");
+		for (const key of [...newHeaders.keys()]) {
+			if (isBetterCcflareInternalHeaderName(key)) {
+				newHeaders.delete(key);
+			}
+		}
 		return newHeaders;
 	}
 

@@ -1,4 +1,7 @@
-import type { Account } from "@better-ccflare/types";
+import {
+	type Account,
+	isBetterCcflareInternalHeaderName,
+} from "@better-ccflare/types";
 import type { Provider, RateLimitInfo, TokenRefreshResult } from "./types";
 
 export abstract class BaseProvider implements Provider {
@@ -58,7 +61,7 @@ export abstract class BaseProvider implements Provider {
 		newHeaders.delete("host");
 		// Strip internal proxy headers — never forward to upstream providers
 		for (const key of [...newHeaders.keys()]) {
-			if (key.startsWith("x-better-ccflare-")) {
+			if (isBetterCcflareInternalHeaderName(key)) {
 				newHeaders.delete(key);
 			}
 		}

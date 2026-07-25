@@ -12,7 +12,10 @@ import {
 	sanitizeHeaders,
 	transformStreamingResponse,
 } from "@better-ccflare/openai-formats";
-import type { Account } from "@better-ccflare/types";
+import {
+	type Account,
+	isBetterCcflareInternalHeaderName,
+} from "@better-ccflare/types";
 import { BaseProvider } from "../../base";
 import type { RateLimitInfo, TokenRefreshResult } from "../../types";
 
@@ -95,6 +98,11 @@ export class OpenAICompatibleProvider extends BaseProvider {
 
 		// Remove host header
 		newHeaders.delete("host");
+		for (const key of [...newHeaders.keys()]) {
+			if (isBetterCcflareInternalHeaderName(key)) {
+				newHeaders.delete(key);
+			}
+		}
 
 		// Remove Anthropic-specific headers
 		newHeaders.delete("anthropic-version");

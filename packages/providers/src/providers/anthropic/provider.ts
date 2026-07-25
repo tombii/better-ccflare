@@ -5,7 +5,10 @@ import {
 } from "@better-ccflare/core";
 import { sanitizeProxyHeaders } from "@better-ccflare/http-common";
 import { Logger } from "@better-ccflare/logger";
-import type { Account } from "@better-ccflare/types";
+import {
+	type Account,
+	isBetterCcflareInternalHeaderName,
+} from "@better-ccflare/types";
 import { BaseProvider } from "../../base";
 import type { RateLimitInfo, TokenRefreshResult } from "../../types";
 import { transformRequestBodyModel } from "../../utils/model-mapping";
@@ -334,6 +337,11 @@ export class AnthropicProvider extends BaseProvider {
 
 		// Remove host header
 		newHeaders.delete("host");
+		for (const key of [...newHeaders.keys()]) {
+			if (isBetterCcflareInternalHeaderName(key)) {
+				newHeaders.delete(key);
+			}
+		}
 
 		return newHeaders;
 	}

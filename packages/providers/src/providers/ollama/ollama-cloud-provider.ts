@@ -1,4 +1,7 @@
-import type { Account } from "@better-ccflare/types";
+import {
+	type Account,
+	isBetterCcflareInternalHeaderName,
+} from "@better-ccflare/types";
 import { BaseAnthropicCompatibleProvider } from "../base-anthropic-compatible";
 
 export class OllamaCloudProvider extends BaseAnthropicCompatibleProvider {
@@ -39,6 +42,11 @@ export class OllamaCloudProvider extends BaseAnthropicCompatibleProvider {
 
 		newHeaders.delete("host");
 		newHeaders.delete("accept-encoding");
+		for (const key of [...newHeaders.keys()]) {
+			if (isBetterCcflareInternalHeaderName(key)) {
+				newHeaders.delete(key);
+			}
+		}
 
 		return newHeaders;
 	}

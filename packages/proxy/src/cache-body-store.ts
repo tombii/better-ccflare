@@ -1,4 +1,5 @@
 import { Logger } from "@better-ccflare/logger";
+import { isBetterCcflareInternalHeaderName } from "@better-ccflare/types";
 
 const log = new Logger("CacheBodyStore");
 
@@ -84,10 +85,6 @@ const STRIP_HEADERS = new Set([
 	"authorization",
 	"x-api-key",
 	"cookie",
-	"x-better-ccflare-account-id",
-	"x-better-ccflare-bypass-session",
-	"x-better-ccflare-skip-cache",
-	"x-better-ccflare-keepalive",
 	"content-length",
 	"transfer-encoding",
 	"accept-encoding",
@@ -143,7 +140,11 @@ class CacheBodyStore {
 
 		const sanitizedHeaders: Record<string, string> = {};
 		headers.forEach((value, key) => {
-			if (!STRIP_HEADERS.has(key.toLowerCase())) {
+			const normalizedKey = key.toLowerCase();
+			if (
+				!STRIP_HEADERS.has(normalizedKey) &&
+				!isBetterCcflareInternalHeaderName(normalizedKey)
+			) {
 				sanitizedHeaders[key] = value;
 			}
 		});

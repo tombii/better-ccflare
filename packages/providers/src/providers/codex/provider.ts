@@ -7,7 +7,10 @@ import {
 import { sanitizeProxyHeaders } from "@better-ccflare/http-common";
 import { Logger } from "@better-ccflare/logger";
 import { resolveReasoningEffort } from "@better-ccflare/openai-formats";
-import type { Account } from "@better-ccflare/types";
+import {
+	type Account,
+	isBetterCcflareInternalHeaderName,
+} from "@better-ccflare/types";
 import { BaseProvider } from "../../base";
 import type { RateLimitInfo, TokenRefreshResult } from "../../types";
 import { normalizeCodexInputUsage } from "./usage";
@@ -479,6 +482,11 @@ export class CodexProvider extends BaseProvider {
 		newHeaders.delete("anthropic-beta");
 		newHeaders.delete("x-api-key");
 		newHeaders.delete("host");
+		for (const key of [...newHeaders.keys()]) {
+			if (isBetterCcflareInternalHeaderName(key)) {
+				newHeaders.delete(key);
+			}
+		}
 
 		// Set Codex-required headers
 		if (accessToken) {

@@ -336,7 +336,7 @@ export async function handleResponsesRequest(
 	// 6. Forward to proxy
 	const routingLabel =
 		codexClaudeOauthPolicy.mode === CODEX_CLAUDE_OAUTH_MODE_COMPAT
-			? `source=${CODEX_RESPONSES_REQUEST_SOURCE} mode=${codexClaudeOauthPolicy.mode} allowlist=${codexClaudeOauthPolicy.allowlist.join(",")}`
+			? `source=${CODEX_RESPONSES_REQUEST_SOURCE} mode=${codexClaudeOauthPolicy.mode} allowlist_count=${codexClaudeOauthPolicy.allowlist.length}`
 			: `source=${CODEX_RESPONSES_REQUEST_SOURCE} mode=${codexClaudeOauthPolicy.mode} exclude=anthropic-oauth`;
 	log.info(
 		`Forwarding responses request to ${messagesUrl.pathname}${messagesUrl.search} (${routingLabel})`,
