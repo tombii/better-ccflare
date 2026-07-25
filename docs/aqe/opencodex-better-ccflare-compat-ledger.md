@@ -9,7 +9,7 @@ must not receive this file.
 - Artifact tree: `7bcd46e6f94002e3731944510fb061f421e87471`
 - Artifact hash: `b930c79320473589aa07c742f7bd8320475bddccd4d26d870feacfab4deea6cf`
 - Changed-file-list hash: `2ad0257ce47b886e523935262987471142188b368fc0a720f82ed9df029a7dff`
-- Current phase / round: source AQE closed; deployment lock-in pending
+- Current phase / round: source AQE closed; deployment lock-in complete
 - Fix cycles used / cap: 2 / 5
 - Consecutive invalid rounds: 1 delivery failure on first `7d04cb73` attempt, replaced by fresh `r1c`
 - Clean streak / target: 2 / 2
@@ -17,8 +17,8 @@ must not receive this file.
 - Human-signed dispositions: none
 - Verification passed / failed: source verification passed; live endpoint smoke intentionally not run
 - Candidate records queued: `bcf-opencodex-compat-defect-001`, `bcf-opencodex-compat-defect-002`, `bcf-opencodex-compat-verified-001`
-- Next action: deploy/pin better-ccflare and run no-quota post-deploy checker
-- Rollback: `git revert 7d04cb73eeb39fb33f5ea209008f3d3ad04f09ea`; preserve current deployed better-ccflare image/container until post-deploy verification passes
+- Next action: upstream/push/PR or keep branch as local deploy source
+- Rollback: `git revert 7d04cb73eeb39fb33f5ea209008f3d3ad04f09ea`; remote rollback containers `better-ccflare-test-rollback-opencodex-compat-20260725T124417Z` and `better-ccflare-test-rollback-opencodex-compat-20260725T124417Z-nohc`
 
 ## Audit Ledger
 
@@ -44,3 +44,13 @@ must not receive this file.
 - Composite-audit decision: PASS; this is a single-artifact high-blast change and the two clean rounds were run on the final artifact
 - Re-packet decision: not required before deploy; next task is operational deploy/pin and no-quota runtime verification
 - Codex goal state: not requested
+
+## Post-Closure Deployment
+
+- Deployed container: `better-ccflare-test`
+- Deployed image: `better-ccflare:opencodex-compat-20260725T124417Z-hc`
+- Port/mount: `127.0.0.1:8088->8080/tcp`, `/opt/better-ccflare-test/data:/data`
+- Docker health: `Up ... (healthy)`
+- Health proof: `curl http://127.0.0.1:8088/health` returned `{"status":"ok","accounts":9,...}`
+- No-quota proof: `RUN_LIVE_SMOKE=0 ... bun run check:opencodex-compat` passed all checks and explicitly skipped live smoke
+- Rollback containers retained: `better-ccflare-test-rollback-opencodex-compat-20260725T124417Z`, `better-ccflare-test-rollback-opencodex-compat-20260725T124417Z-nohc`

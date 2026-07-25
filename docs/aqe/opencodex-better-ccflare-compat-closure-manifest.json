@@ -44,5 +44,20 @@
   "rollback": "git revert 7d04cb73eeb39fb33f5ea209008f3d3ad04f09ea; keep previous deployed better-ccflare image/container until post-deploy verification passes",
   "composite_audit": "PASS",
   "closure_dossier": "present",
-  "post_closure_deploy": "pending"
+  "post_closure_deploy": {
+    "status": "deployed",
+    "container": "better-ccflare-test",
+    "image": "better-ccflare:opencodex-compat-20260725T124417Z-hc",
+    "host_port": "127.0.0.1:8088",
+    "rollback_containers": [
+      "better-ccflare-test-rollback-opencodex-compat-20260725T124417Z",
+      "better-ccflare-test-rollback-opencodex-compat-20260725T124417Z-nohc"
+    ],
+    "proof": [
+      "docker ps reported Up healthy for better-ccflare:opencodex-compat-20260725T124417Z-hc",
+      "curl http://127.0.0.1:8088/health returned status ok with 9 configured accounts",
+      "RUN_LIVE_SMOKE=0 bun run check:opencodex-compat passed"
+    ],
+    "live_smoke": "skipped_no_quota"
+  }
 }
