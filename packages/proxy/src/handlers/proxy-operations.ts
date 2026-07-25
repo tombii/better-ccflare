@@ -16,10 +16,11 @@ import {
 	isAnthropicOutOfCredits,
 	usageCache,
 } from "@better-ccflare/providers";
-import type {
-	Account,
-	RateLimitReason,
-	RequestMeta,
+import {
+	type Account,
+	isBetterCcflareInternalHeaderName,
+	type RateLimitReason,
+	type RequestMeta,
 } from "@better-ccflare/types";
 import { cacheBodyStore } from "../cache-body-store";
 import { RequestBodyContext } from "../request-body-context";
@@ -161,6 +162,23 @@ function materializeSyntheticResponse(request: Request): Response {
 		status: parseSyntheticStatus(request),
 		headers,
 	});
+}
+
+function sanitizeOutboundProviderRequest(request: Request): Request {
+	const headers = new Headers(request.headers);
+	for (const key of [...headers.keys()]) {
+		if (isBetterCcflareInternalHeaderName(key)) {
+			headers.delete(key);
+		}
+	}
+	return new Request(request, { headers });
+}
+
+async function dispatchProviderRequest(request: Request): Promise<Response> {
+	if (isSyntheticProviderResponse(request)) {
+		return materializeSyntheticResponse(request);
+	}
+	return makeProxyRequest(sanitizeOutboundProviderRequest(request));
 }
 
 /**
@@ -687,9 +705,7 @@ export async function proxyWithAccount(
 		const transformedRequestForRetry = transformedRequest.clone();
 
 		// Make the request (or unwrap a synthetic provider response)
-		let rawResponse = isSyntheticProviderResponse(transformedRequest)
-			? materializeSyntheticResponse(transformedRequest)
-			: await makeProxyRequest(transformedRequest);
+		let rawResponse = await dispatchProviderRequest(transformedRequest);
 
 		// Check if this is a Claude provider and we got an invalid thinking signature error
 		const isClaudeProvider =
@@ -721,9 +737,7 @@ export async function proxyWithAccount(
 					: retryProviderRequest;
 
 				// Make the retry request (or unwrap a synthetic provider response)
-				rawResponse = isSyntheticProviderResponse(retryTransformedRequest)
-					? materializeSyntheticResponse(retryTransformedRequest)
-					: await makeProxyRequest(retryTransformedRequest);
+				rawResponse = await dispatchProviderRequest(retryTransformedRequest);
 			} else {
 				log.warn(
 					"Failed to filter thinking blocks or no changes made, proceeding with original error response",
@@ -753,9 +767,7 @@ export async function proxyWithAccount(
 					headers: transformedRequest.headers,
 					body: JSON.stringify(retryBodyJson),
 				});
-				rawResponse = isSyntheticProviderResponse(retryRequest)
-					? materializeSyntheticResponse(retryRequest)
-					: await makeProxyRequest(retryRequest);
+				rawResponse = await dispatchProviderRequest(retryRequest);
 			} catch (err) {
 				log.warn("Failed to retry without cache_control:", err);
 			}
@@ -1070,9 +1082,7 @@ export async function proxyWithAccount(
 						// If re-patching fails, proceed with the transformed request as-is
 					}
 
-					rawResponse = isSyntheticProviderResponse(retryTransformedRequest)
-						? materializeSyntheticResponse(retryTransformedRequest)
-						: await makeProxyRequest(retryTransformedRequest);
+					rawResponse = await dispatchProviderRequest(retryTransformedRequest);
 
 					if (!(await isModelUnavailableError(rawResponse.clone()))) {
 						break; // Success — stop cycling
@@ -1206,11 +1216,9 @@ export async function proxyWithAccount(
 							`Account ${account.name}: in-place retry ${attempt}/${retryCfg.maxAttempts - 1} after ${Math.round(delayMs)}ms for 529 overloaded_error`,
 						);
 
-						const retryRaw = isSyntheticProviderResponse(
-							transformedRequestForRetry,
-						)
-							? materializeSyntheticResponse(transformedRequestForRetry.clone())
-							: await makeProxyRequest(transformedRequestForRetry.clone());
+						const retryRaw = await dispatchProviderRequest(
+							transformedRequestForRetry.clone(),
+						);
 
 						const retryTaggedHeaders = new Headers(retryRaw.headers);
 						retryTaggedHeaders.set(

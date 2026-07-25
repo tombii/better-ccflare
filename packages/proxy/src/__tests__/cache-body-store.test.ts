@@ -1,4 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import {
+	BETTER_CCFLARE_REQUEST_SOURCE_HEADER,
+	CODEX_CLAUDE_OAUTH_ALLOWLIST_HEADER,
+	CODEX_CLAUDE_OAUTH_MODE_COMPAT,
+	CODEX_CLAUDE_OAUTH_MODE_HEADER,
+	CODEX_RESPONSES_REQUEST_SOURCE,
+} from "@better-ccflare/types";
 import { cacheBodyStore } from "../cache-body-store";
 
 // ---------------------------------------------------------------------------
@@ -296,6 +303,33 @@ describe("CacheBodyStore", () => {
 			const entry = cacheBodyStore.getLastCachedRequest("account-a");
 			expect(entry).not.toBeNull();
 			expect(Object.keys(entry?.headers)).toHaveLength(0);
+		});
+
+		it("remembers OpenCodex compat origin without storing policy headers", () => {
+			cacheBodyStore.stageRequest(
+				"req-codex-compat",
+				"account-a",
+				makeBody(),
+				makeHeaders({
+					"content-type": "application/json",
+					[BETTER_CCFLARE_REQUEST_SOURCE_HEADER]:
+						CODEX_RESPONSES_REQUEST_SOURCE,
+					[CODEX_CLAUDE_OAUTH_MODE_HEADER]: CODEX_CLAUDE_OAUTH_MODE_COMPAT,
+					[CODEX_CLAUDE_OAUTH_ALLOWLIST_HEADER]: "Jenny_claude,account-a",
+				}),
+				"/v1/messages",
+			);
+			cacheBodyStore.onSummary("req-codex-compat", 10);
+
+			const entry = cacheBodyStore.getLastCachedRequest("account-a");
+			expect(entry?.requiresCodexClaudeOauthPolicy).toBe(true);
+			expect(
+				entry?.headers[BETTER_CCFLARE_REQUEST_SOURCE_HEADER],
+			).toBeUndefined();
+			expect(entry?.headers[CODEX_CLAUDE_OAUTH_MODE_HEADER]).toBeUndefined();
+			expect(
+				entry?.headers[CODEX_CLAUDE_OAUTH_ALLOWLIST_HEADER],
+			).toBeUndefined();
 		});
 	});
 

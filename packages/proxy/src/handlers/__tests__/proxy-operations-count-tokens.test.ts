@@ -242,5 +242,8 @@ describe("proxyWithAccount — Codex count_tokens", () => {
 		expect(
 			fetchedRequest?.headers.get("x-better-ccflare-synthetic-status"),
 		).toBeNull();
+		expect(
+			fetchedRequest?.headers.get("x-better-ccflare-request-stream"),
+		).toBeNull();
 	});
 });

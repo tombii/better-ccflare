@@ -2,10 +2,49 @@ import https from "node:https";
 import type { Config } from "@better-ccflare/config";
 import { registerHeartbeat } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
+import {
+	BETTER_CCFLARE_REQUEST_SOURCE_HEADER,
+	CODEX_CLAUDE_OAUTH_ACCOUNT_ALLOWLIST_ENV,
+	CODEX_CLAUDE_OAUTH_ALLOWLIST_HEADER,
+	CODEX_CLAUDE_OAUTH_MODE_COMPAT,
+	CODEX_CLAUDE_OAUTH_MODE_ENV,
+	CODEX_CLAUDE_OAUTH_MODE_HEADER,
+	CODEX_RESPONSES_REQUEST_SOURCE,
+} from "@better-ccflare/types";
 import { cacheBodyStore } from "./cache-body-store";
 import type { ProxyContext } from "./proxy";
 
 const log = new Logger("CacheKeepaliveScheduler");
+
+function parseCsv(value: string | undefined | null): string[] {
+	return (
+		value
+			?.split(",")
+			.map((entry) => entry.trim())
+			.filter(Boolean) ?? []
+	);
+}
+
+function applyCurrentCodexClaudeOauthPolicy(headers: Headers): boolean {
+	const allowlist = parseCsv(
+		process.env[CODEX_CLAUDE_OAUTH_ACCOUNT_ALLOWLIST_ENV],
+	);
+	if (
+		process.env[CODEX_CLAUDE_OAUTH_MODE_ENV]?.trim() !==
+			CODEX_CLAUDE_OAUTH_MODE_COMPAT ||
+		allowlist.length === 0
+	) {
+		return false;
+	}
+
+	headers.set(
+		BETTER_CCFLARE_REQUEST_SOURCE_HEADER,
+		CODEX_RESPONSES_REQUEST_SOURCE,
+	);
+	headers.set(CODEX_CLAUDE_OAUTH_MODE_HEADER, CODEX_CLAUDE_OAUTH_MODE_COMPAT);
+	headers.set(CODEX_CLAUDE_OAUTH_ALLOWLIST_HEADER, allowlist.join(","));
+	return true;
+}
 
 export class CacheKeepaliveScheduler {
 	private proxyContext: ProxyContext;
@@ -123,6 +162,15 @@ export class CacheKeepaliveScheduler {
 			// Auth and internal proxy headers were stripped at capture time.
 			const replayHeaders = new Headers(cached.headers);
 			replayHeaders.set("content-type", "application/json");
+			if (
+				cached.requiresCodexClaudeOauthPolicy &&
+				!applyCurrentCodexClaudeOauthPolicy(replayHeaders)
+			) {
+				log.warn(
+					`Skipping OpenCodex compat cache keepalive for account ${accountId}: Claude OAuth compat mode or allowlist is no longer active`,
+				);
+				return;
+			}
 			// Inject routing headers fresh — these were stripped from the snapshot
 			replayHeaders.set("x-better-ccflare-account-id", accountId);
 			replayHeaders.set("x-better-ccflare-bypass-session", "true");

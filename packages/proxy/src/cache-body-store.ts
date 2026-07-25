@@ -1,5 +1,11 @@
 import { Logger } from "@better-ccflare/logger";
-import { isBetterCcflareInternalHeaderName } from "@better-ccflare/types";
+import {
+	BETTER_CCFLARE_REQUEST_SOURCE_HEADER,
+	CODEX_CLAUDE_OAUTH_MODE_COMPAT,
+	CODEX_CLAUDE_OAUTH_MODE_HEADER,
+	CODEX_RESPONSES_REQUEST_SOURCE,
+	isBetterCcflareInternalHeaderName,
+} from "@better-ccflare/types";
 
 const log = new Logger("CacheBodyStore");
 
@@ -76,6 +82,8 @@ export interface CachedRequestEntry {
 	path: string;
 	/** Unix timestamp when this entry was recorded. */
 	timestamp: number;
+	/** True when the source request came through OpenCodex Claude OAuth compat. */
+	requiresCodexClaudeOauthPolicy: boolean;
 }
 
 // Strip sensitive and internal headers before storing.
@@ -156,6 +164,11 @@ class CacheBodyStore {
 				headers: sanitizedHeaders,
 				path,
 				timestamp: Date.now(),
+				requiresCodexClaudeOauthPolicy:
+					headers.get(BETTER_CCFLARE_REQUEST_SOURCE_HEADER) ===
+						CODEX_RESPONSES_REQUEST_SOURCE &&
+					headers.get(CODEX_CLAUDE_OAUTH_MODE_HEADER) ===
+						CODEX_CLAUDE_OAUTH_MODE_COMPAT,
 			},
 		});
 

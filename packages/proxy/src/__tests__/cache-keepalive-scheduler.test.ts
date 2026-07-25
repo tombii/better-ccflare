@@ -8,6 +8,15 @@
  */
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import type { Config } from "@better-ccflare/config";
+import {
+	BETTER_CCFLARE_REQUEST_SOURCE_HEADER,
+	CODEX_CLAUDE_OAUTH_ACCOUNT_ALLOWLIST_ENV,
+	CODEX_CLAUDE_OAUTH_ALLOWLIST_HEADER,
+	CODEX_CLAUDE_OAUTH_MODE_COMPAT,
+	CODEX_CLAUDE_OAUTH_MODE_ENV,
+	CODEX_CLAUDE_OAUTH_MODE_HEADER,
+	CODEX_RESPONSES_REQUEST_SOURCE,
+} from "@better-ccflare/types";
 import type { ProxyContext } from "../proxy";
 
 // ---------------------------------------------------------------------------
@@ -27,6 +36,10 @@ let capturedCallback: (() => void | Promise<void>) | null = null;
 let capturedSeconds: number | null = null;
 let capturedId: string | null = null;
 const mockUnregister = mock(() => {});
+const savedCodexClaudeOauthEnv = {
+	mode: process.env[CODEX_CLAUDE_OAUTH_MODE_ENV],
+	allowlist: process.env[CODEX_CLAUDE_OAUTH_ACCOUNT_ALLOWLIST_ENV],
+};
 const mockRegisterHeartbeat = mock((opts: HeartbeatOpts) => {
 	capturedCallback = opts.callback;
 	capturedSeconds = opts.seconds ?? 30;
@@ -101,11 +114,17 @@ function seedCacheEntry(
 	accountId: string,
 	path = "/v1/messages",
 	bodyText = '{"model":"claude-opus-4-5","messages":[],"system":[{"type":"text","text":"hi","cache_control":{"type":"ephemeral"}}]}',
+	headers: HeadersInit = { "content-type": "application/json" },
 ): void {
 	const requestId = `req-${accountId}-${Date.now()}`;
 	const bodyBuffer = new TextEncoder().encode(bodyText).buffer;
-	const headers = new Headers({ "content-type": "application/json" });
-	cacheBodyStore.stageRequest(requestId, accountId, bodyBuffer, headers, path);
+	cacheBodyStore.stageRequest(
+		requestId,
+		accountId,
+		bodyBuffer,
+		new Headers(headers),
+		path,
+	);
 	// Promote by simulating a successful cache creation (cacheCreationInputTokens > 0).
 	cacheBodyStore.onSummary(requestId, 42);
 }
@@ -129,6 +148,25 @@ function resetStore(): void {
 	// scheduler.start() which calls setEnabled based on TTL.
 }
 
+function resetCodexClaudeOauthEnv(): void {
+	delete process.env[CODEX_CLAUDE_OAUTH_MODE_ENV];
+	delete process.env[CODEX_CLAUDE_OAUTH_ACCOUNT_ALLOWLIST_ENV];
+}
+
+function restoreCodexClaudeOauthEnv(): void {
+	if (savedCodexClaudeOauthEnv.mode === undefined) {
+		delete process.env[CODEX_CLAUDE_OAUTH_MODE_ENV];
+	} else {
+		process.env[CODEX_CLAUDE_OAUTH_MODE_ENV] = savedCodexClaudeOauthEnv.mode;
+	}
+	if (savedCodexClaudeOauthEnv.allowlist === undefined) {
+		delete process.env[CODEX_CLAUDE_OAUTH_ACCOUNT_ALLOWLIST_ENV];
+	} else {
+		process.env[CODEX_CLAUDE_OAUTH_ACCOUNT_ALLOWLIST_ENV] =
+			savedCodexClaudeOauthEnv.allowlist;
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -137,6 +175,7 @@ describe("CacheKeepaliveScheduler", () => {
 	beforeEach(() => {
 		resetMocks();
 		resetStore();
+		resetCodexClaudeOauthEnv();
 		// Restore fetch to a safe default so tests that do NOT mock fetch still work.
 		globalThis.fetch = mock(async () => new Response("ok", { status: 200 }));
 	});
@@ -145,6 +184,7 @@ describe("CacheKeepaliveScheduler", () => {
 		// Restore fetch to the real implementation.
 		// @ts-expect-error — resetting to undefined lets bun restore native fetch.
 		globalThis.fetch = undefined;
+		restoreCodexClaudeOauthEnv();
 		resetStore();
 	});
 
@@ -403,6 +443,72 @@ describe("CacheKeepaliveScheduler", () => {
 			expect(headers.get("x-better-ccflare-account-id")).toBe(accountId);
 			expect(headers.get("x-better-ccflare-bypass-session")).toBe("true");
 			expect(headers.get("content-type")).toBe("application/json");
+
+			scheduler.stop();
+		});
+
+		it("replays OpenCodex compat cache only with the current allowlist policy", async () => {
+			process.env[CODEX_CLAUDE_OAUTH_MODE_ENV] = CODEX_CLAUDE_OAUTH_MODE_COMPAT;
+			process.env[CODEX_CLAUDE_OAUTH_ACCOUNT_ALLOWLIST_ENV] =
+				"Jenny_claude,acc-opencodex";
+			const capturedInputs: { url: string; init?: RequestInit }[] = [];
+			const fetchMock = mock(
+				async (input: RequestInfo | URL, init?: RequestInit) => {
+					const url =
+						typeof input === "string" ? input : (input as Request).url;
+					capturedInputs.push({ url, init });
+					return new Response("", { status: 200 });
+				},
+			);
+			globalThis.fetch = fetchMock;
+
+			const { config } = makeConfig(5);
+			const scheduler = new CacheKeepaliveScheduler(makeProxyContext(), config);
+			scheduler.start();
+
+			seedCacheEntry("acc-opencodex", "/v1/messages", undefined, {
+				"content-type": "application/json",
+				[BETTER_CCFLARE_REQUEST_SOURCE_HEADER]: CODEX_RESPONSES_REQUEST_SOURCE,
+				[CODEX_CLAUDE_OAUTH_MODE_HEADER]: CODEX_CLAUDE_OAUTH_MODE_COMPAT,
+				[CODEX_CLAUDE_OAUTH_ALLOWLIST_HEADER]: "stale-account",
+			});
+
+			await capturedCallback?.();
+
+			expect(fetchMock).toHaveBeenCalledTimes(1);
+			const headers = capturedInputs[0]?.init?.headers as Headers;
+			expect(headers.get(BETTER_CCFLARE_REQUEST_SOURCE_HEADER)).toBe(
+				CODEX_RESPONSES_REQUEST_SOURCE,
+			);
+			expect(headers.get(CODEX_CLAUDE_OAUTH_MODE_HEADER)).toBe(
+				CODEX_CLAUDE_OAUTH_MODE_COMPAT,
+			);
+			expect(headers.get(CODEX_CLAUDE_OAUTH_ALLOWLIST_HEADER)).toBe(
+				"Jenny_claude,acc-opencodex",
+			);
+			expect(headers.get("x-better-ccflare-account-id")).toBe("acc-opencodex");
+
+			scheduler.stop();
+		});
+
+		it("skips OpenCodex compat cache replay when current compat policy is disabled", async () => {
+			const fetchMock = mock(async () => new Response("", { status: 200 }));
+			globalThis.fetch = fetchMock;
+
+			const { config } = makeConfig(5);
+			const scheduler = new CacheKeepaliveScheduler(makeProxyContext(), config);
+			scheduler.start();
+
+			seedCacheEntry("acc-disabled-compat", "/v1/messages", undefined, {
+				"content-type": "application/json",
+				[BETTER_CCFLARE_REQUEST_SOURCE_HEADER]: CODEX_RESPONSES_REQUEST_SOURCE,
+				[CODEX_CLAUDE_OAUTH_MODE_HEADER]: CODEX_CLAUDE_OAUTH_MODE_COMPAT,
+				[CODEX_CLAUDE_OAUTH_ALLOWLIST_HEADER]: "acc-disabled-compat",
+			});
+
+			await capturedCallback?.();
+
+			expect(fetchMock).not.toHaveBeenCalled();
 
 			scheduler.stop();
 		});
