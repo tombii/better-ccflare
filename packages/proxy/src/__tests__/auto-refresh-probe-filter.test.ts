@@ -408,6 +408,9 @@ describe("proxy.ts — pool-exhausted path skips usageCollector for auto-refresh
 		expect(response.status).toBe(503);
 		expect(handleStart).toHaveBeenCalled();
 		const start = handleStart.mock.calls[0]?.[0] as StartMessage;
+		expect(response.headers.get("x-better-ccflare-pool-status")).toBe(
+			"exhausted",
+		);
 		expect(start.requestHeaders["x-better-ccflare-account-id"]).toBeUndefined();
 		expect(
 			start.requestHeaders["x-better-ccflare-anthropic-oauth-allowlist"],
@@ -417,6 +420,9 @@ describe("proxy.ts — pool-exhausted path skips usageCollector for auto-refresh
 		).toBeUndefined();
 		expect(
 			start.requestHeaders["x-better-ccflare-request-source"],
+		).toBeUndefined();
+		expect(
+			start.responseHeaders["x-better-ccflare-pool-status"],
 		).toBeUndefined();
 		expect(start.requestHeaders["content-type"]).toBe("application/json");
 		expect(start.requestHeaders["x-ordinary-debug"]).toBe("kept");

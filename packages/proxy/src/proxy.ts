@@ -4,7 +4,10 @@ import {
 	trackClientVersion,
 } from "@better-ccflare/core";
 import { DatabaseFactory } from "@better-ccflare/database";
-import { sanitizeRequestHeaders } from "@better-ccflare/http-common";
+import {
+	sanitizeRequestHeaders,
+	sanitizeResponseHeaders,
+} from "@better-ccflare/http-common";
 import { Logger } from "@better-ccflare/logger";
 import { usageCache } from "@better-ccflare/providers";
 import type { Account } from "@better-ccflare/types";
@@ -378,7 +381,7 @@ export async function handleProxy(
 				agentAttributionSource: agentAttributionSource ?? "none",
 				responseStatus: 503,
 				responseHeaders: Object.fromEntries(
-					poolExhaustedResponse.headers.entries(),
+					sanitizeResponseHeaders(poolExhaustedResponse.headers).entries(),
 				),
 				isStream: false,
 				providerName: ctx.provider.name,

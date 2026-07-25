@@ -299,7 +299,6 @@ export async function selectAccountsForRequest(
 					const capacityAllowed =
 						!model ||
 						!isCapacityRoutingEnabled(ctx) ||
-						isAutoRefreshBypass ||
 						!isAccountCapacityExcluded(forcedAccount, model, Date.now())
 							.excluded;
 					if (

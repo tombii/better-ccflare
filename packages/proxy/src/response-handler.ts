@@ -1,15 +1,15 @@
 import { requestEvents, TIME_CONSTANTS } from "@better-ccflare/core";
 import {
 	sanitizeRequestHeaders,
+	sanitizeResponseHeaders,
 	withSanitizedProxyHeaders,
 } from "@better-ccflare/http-common";
 import { Logger } from "@better-ccflare/logger";
-import {
-	type Account,
-	type AgentAttributionSource,
-	isBetterCcflareInternalHeaderName,
-	type ProjectAttributionSource,
-	type RateLimitReason,
+import type {
+	Account,
+	AgentAttributionSource,
+	ProjectAttributionSource,
+	RateLimitReason,
 } from "@better-ccflare/types";
 import {
 	ANTHROPIC_TERMINAL_RECOVERY_GRACE_MS,
@@ -75,16 +75,6 @@ function withModelRewriteHeader(
 		result.set(MODEL_REWRITE_HEADER, `${originalModel}->${appliedModel}`);
 	}
 	return result;
-}
-
-function sanitizeResponseHeadersForHistory(headers: Headers): Headers {
-	const sanitized = new Headers(headers);
-	for (const key of [...sanitized.keys()]) {
-		if (isBetterCcflareInternalHeaderName(key)) {
-			sanitized.delete(key);
-		}
-	}
-	return sanitized;
 }
 
 /**
@@ -165,7 +155,7 @@ export async function forwardToClient(
 	const requestHeadersObj = Object.fromEntries(sanitizedReq.entries());
 
 	const responseHeadersObj = Object.fromEntries(
-		sanitizeResponseHeadersForHistory(response.headers).entries(),
+		sanitizeResponseHeaders(response.headers).entries(),
 	);
 
 	const isStream = ctx.provider.isStreamingResponse?.(response) ?? false;

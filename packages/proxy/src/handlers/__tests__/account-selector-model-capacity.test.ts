@@ -290,10 +290,14 @@ describe("selectAccountsForRequest — model-scoped capacity filter (force-heade
 		expect(getModelFamilyExhaustionInfo(meta)).toBeNull();
 	});
 
-	it("keeps the internal bypass-session probe eligible for the forced account", async () => {
+	it("does not let an internal bypass-session probe override model-scoped capacity", async () => {
 		const acc = makeAccount({ id: "acc-forced" });
+		const fallback = makeAccount({ id: "acc-fallback" });
 		usageCache.set(acc.id, exhaustedUsage("Fable", Date.now()));
-		const ctx = makeCtx({ accounts: [acc], capacityRoutingMode: "exhausted" });
+		const ctx = makeCtx({
+			accounts: [acc, fallback],
+			capacityRoutingMode: "exhausted",
+		});
 		const meta = makeRequestMeta({
 			headers: new Headers({
 				"x-better-ccflare-account-id": "acc-forced",
@@ -303,7 +307,7 @@ describe("selectAccountsForRequest — model-scoped capacity filter (force-heade
 
 		const result = await selectAccountsForRequest(meta, ctx, "claude-fable-5");
 
-		expect(result.map((a) => a.id)).toEqual(["acc-forced"]);
+		expect(result.map((a) => a.id)).toEqual(["acc-fallback"]);
 	});
 });
 

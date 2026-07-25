@@ -44,6 +44,21 @@ export function sanitizeRequestHeaders(original: Headers): Headers {
 }
 
 /**
+ * Removes internal proxy diagnostic/routing headers before response headers are
+ * persisted for analytics/history. Client-facing diagnostics may still be
+ * returned to the caller by the response path that owns them.
+ */
+export function sanitizeResponseHeaders(original: Headers): Headers {
+	const h = new Headers(original);
+	for (const key of [...h.keys()]) {
+		if (isBetterCcflareInternalHeaderName(key)) {
+			h.delete(key);
+		}
+	}
+	return h;
+}
+
+/**
  * Return a new Response with hop-by-hop / compression headers stripped.
  * Body & status are preserved.
  */
