@@ -22,6 +22,7 @@
 		"build:cli": "bun run --cwd apps/cli build",
 		"build:lander": "bun run --cwd apps/lander build",
 		"check:opencodex-compat": "scripts/check-opencodex-compat.sh",
+		"test:opencodex-compat-checker": "scripts/check-opencodex-compat.test.sh",
 		"format": "bunx biome format --write .",
 		"lint": "bunx --bun biome check --write --unsafe ."
 	},

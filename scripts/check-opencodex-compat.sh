@@ -11,6 +11,8 @@ EXPECTED_STRATEGY="${EXPECTED_STRATEGY:-session}"
 CHECK_FABLE_FALLBACK="${CHECK_FABLE_FALLBACK:-1}"
 RUN_LIVE_SMOKE="${RUN_LIVE_SMOKE:-0}"
 LIVE_SMOKE_MODEL="${LIVE_SMOKE_MODEL:-anthropic-ccflare/claude-sonnet-5}"
+CURL_BIN="${CURL_BIN:-curl}"
+SSH_BIN="${SSH_BIN:-ssh}"
 
 need() {
 	if ! command -v "$1" >/dev/null 2>&1; then
@@ -28,17 +30,17 @@ fail() {
 	exit 1
 }
 
-need curl
+need "$CURL_BIN"
 need jq
 
-opencodex_health="$(curl -fsS "$OPENCODEX_BASE_URL/healthz")"
+opencodex_health="$("$CURL_BIN" -fsS "$OPENCODEX_BASE_URL/healthz")"
 jq -e '.status == "ok"' >/dev/null <<<"$opencodex_health" \
 	|| fail "OpenCodex healthz is not ok"
 pass "OpenCodex healthz is ok"
 
-opencodex_models="$(curl -fsS "$OPENCODEX_BASE_URL/v1/models")"
+opencodex_models="$("$CURL_BIN" -fsS "$OPENCODEX_BASE_URL/v1/models")"
 jq -e --arg provider "$EXPECTED_PROVIDER" \
-	'.data | any(.owned_by == $provider) and any(.id | startswith($provider + "/"))' \
+	'.data | any(.owned_by == $provider and ((.id // "") | startswith($provider + "/")))' \
 	>/dev/null <<<"$opencodex_models" \
 	|| fail "OpenCodex catalog does not expose $EXPECTED_PROVIDER models"
 pass "OpenCodex catalog exposes $EXPECTED_PROVIDER models"
@@ -56,19 +58,20 @@ jq -e --arg provider "$EXPECTED_PROVIDER" \
 	|| fail "OpenCodex config is not the blessed native-default + /v1/responses shape"
 pass "OpenCodex config keeps native default and delegates $EXPECTED_PROVIDER to /v1/responses"
 
-better_health="$(curl -fsS "$BETTER_CCFLARE_BASE_URL/health")"
+better_health="$("$CURL_BIN" -fsS "$BETTER_CCFLARE_BASE_URL/health")"
 jq -e '.status == "ok"' >/dev/null <<<"$better_health" \
 	|| fail "better-ccflare health is not ok"
 pass "better-ccflare health is ok"
 
-strategy_payload="$(curl -fsS "$BETTER_CCFLARE_BASE_URL/api/config/strategy")"
+strategy_payload="$("$CURL_BIN" -fsS "$BETTER_CCFLARE_BASE_URL/api/config/strategy")"
 jq -e --arg strategy "$EXPECTED_STRATEGY" '.strategy == $strategy' >/dev/null <<<"$strategy_payload" \
 	|| fail "better-ccflare strategy is not $EXPECTED_STRATEGY"
 pass "better-ccflare strategy is $EXPECTED_STRATEGY"
 
 if [[ -n "${BETTER_CCFLARE_SSH_HOST:-}" && -n "${BETTER_CCFLARE_CONTAINER:-}" ]]; then
+	need "$SSH_BIN"
 	remote_env="$(
-		ssh ${BETTER_CCFLARE_SSH_OPTS:-} "$BETTER_CCFLARE_SSH_HOST" \
+		"$SSH_BIN" ${BETTER_CCFLARE_SSH_OPTS:-} "$BETTER_CCFLARE_SSH_HOST" \
 			"docker inspect '$BETTER_CCFLARE_CONTAINER' --format '{{range .Config.Env}}{{println .}}{{end}}'"
 	)"
 	grep -Fx "CODEX_CLAUDE_OAUTH_MODE=$EXPECTED_COMPAT_MODE" >/dev/null <<<"$remote_env" \
@@ -81,7 +84,7 @@ else
 fi
 
 if [[ "$CHECK_FABLE_FALLBACK" == "1" ]]; then
-	accounts_payload="$(curl -fsS "$BETTER_CCFLARE_BASE_URL/api/accounts")"
+	accounts_payload="$("$CURL_BIN" -fsS "$BETTER_CCFLARE_BASE_URL/api/accounts")"
 	jq -e '
 		[.[] | select(.provider == "anthropic")] as $accounts
 		| ($accounts | length) > 0
