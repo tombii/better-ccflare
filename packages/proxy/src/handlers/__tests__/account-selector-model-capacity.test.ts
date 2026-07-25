@@ -269,21 +269,41 @@ describe("selectAccountsForRequest — model-scoped capacity filter (combo routi
 	});
 });
 
-// ── force-header bypass ──────────────────────────────────────────────────────────
+// ── force-header routing ─────────────────────────────────────────────────────────
 
-describe("selectAccountsForRequest — model-scoped capacity filter (force-header bypass)", () => {
-	it("returns the forced account even when it is exhausted for the request's family", async () => {
-		const acc = makeAccount({ id: "acc-forced" });
-		usageCache.set(acc.id, exhaustedUsage("Fable", Date.now()));
-		const ctx = makeCtx({ accounts: [acc], capacityRoutingMode: "exhausted" });
+describe("selectAccountsForRequest — model-scoped capacity filter (force-header routing)", () => {
+	it("does not let a forced account bypass model-scoped capacity", async () => {
+		const forced = makeAccount({ id: "acc-forced" });
+		const fallback = makeAccount({ id: "acc-fallback" });
+		usageCache.set(forced.id, exhaustedUsage("Fable", Date.now()));
+		const ctx = makeCtx({
+			accounts: [forced, fallback],
+			capacityRoutingMode: "exhausted",
+		});
 		const meta = makeRequestMeta({
 			headers: new Headers({ "x-better-ccflare-account-id": "acc-forced" }),
 		});
 
 		const result = await selectAccountsForRequest(meta, ctx, "claude-fable-5");
 
-		expect(result).toHaveLength(1);
-		expect(result[0]?.id).toBe("acc-forced");
+		expect(result.map((a) => a.id)).toEqual(["acc-fallback"]);
+		expect(getModelFamilyExhaustionInfo(meta)).toBeNull();
+	});
+
+	it("keeps the internal bypass-session probe eligible for the forced account", async () => {
+		const acc = makeAccount({ id: "acc-forced" });
+		usageCache.set(acc.id, exhaustedUsage("Fable", Date.now()));
+		const ctx = makeCtx({ accounts: [acc], capacityRoutingMode: "exhausted" });
+		const meta = makeRequestMeta({
+			headers: new Headers({
+				"x-better-ccflare-account-id": "acc-forced",
+				"x-better-ccflare-bypass-session": "true",
+			}),
+		});
+
+		const result = await selectAccountsForRequest(meta, ctx, "claude-fable-5");
+
+		expect(result.map((a) => a.id)).toEqual(["acc-forced"]);
 	});
 });
 

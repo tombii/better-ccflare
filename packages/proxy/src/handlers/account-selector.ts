@@ -296,7 +296,17 @@ export async function selectAccountsForRequest(
 						(isAutoRefreshBypass &&
 							!forcedAccount.requires_reauth &&
 							(isOveragePaused || isRateLimited));
-					if (allowThrough && isAllowedByRequestPolicy(forcedAccount)) {
+					const capacityAllowed =
+						!model ||
+						!isCapacityRoutingEnabled(ctx) ||
+						isAutoRefreshBypass ||
+						!isAccountCapacityExcluded(forcedAccount, model, Date.now())
+							.excluded;
+					if (
+						allowThrough &&
+						isAllowedByRequestPolicy(forcedAccount) &&
+						capacityAllowed
+					) {
 						return [forcedAccount];
 					}
 				}
