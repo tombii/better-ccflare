@@ -199,6 +199,42 @@ describe("forwardToClient usage-collector protocol", () => {
 		expect(storedHeaders["x-ordinary-debug"]).toBe("kept");
 	});
 
+	it("strips internal response headers before sending persisted response metadata", async () => {
+		const { starts } = createMockCollector();
+		const ctx = createCtx(true);
+
+		await forwardToClient(
+			{
+				requestId: "req-internal-response-headers",
+				method: "POST",
+				path: "/v1/messages",
+				account: null,
+				requestHeaders: new Headers({ "content-type": "application/json" }),
+				requestBody: new TextEncoder().encode("{}"),
+				project: null,
+				response: new Response(JSON.stringify({ ok: true }), {
+					status: 200,
+					headers: {
+						"content-type": "application/json",
+						"x-better-ccflare-request-id": "req-internal-response-headers",
+						"x-better-ccflare-request-stream": "false",
+						"x-ordinary-debug": "kept",
+					},
+				}),
+				timestamp: Date.now(),
+				retryAttempt: 0,
+				failoverAttempts: 0,
+			},
+			ctx,
+		);
+
+		const storedHeaders = starts[0].responseHeaders as Record<string, string>;
+		expect(storedHeaders["x-better-ccflare-request-id"]).toBeUndefined();
+		expect(storedHeaders["x-better-ccflare-request-stream"]).toBeUndefined();
+		expect(storedHeaders["content-type"]).toBe("application/json");
+		expect(storedHeaders["x-ordinary-debug"]).toBe("kept");
+	});
+
 	it("does not throw when usage collector call succeeds", async () => {
 		createMockCollector();
 		const ctx = createCtx();
