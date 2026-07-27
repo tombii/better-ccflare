@@ -512,6 +512,13 @@ export async function handleProxy(
 		log.info(
 			`All ${accounts.length} candidate account(s) were probe-gate suppressed; retrying account ${accounts[i].name} ungated`,
 		);
+		// This retry IS the request's terminal attempt by construction — the
+		// loop above already exhausted every candidate before falling through
+		// here. Unlike the loop's own `i === accounts.length - 1` check (which
+		// tracks whether the CURRENT iteration is the last one), `i` is always
+		// 0 in this block regardless of pool size, so that comparison would be
+		// a constant `false` for any pool with more than one candidate — the
+		// flag must instead depend only on whether this is combo routing.
 		response = await proxyWithAccount(
 			req,
 			url,
@@ -525,7 +532,7 @@ export async function handleProxy(
 			apiKeyId,
 			apiKeyName,
 			requestBodyContext,
-			!filteredComboInfo?.comboName && i === accounts.length - 1,
+			!filteredComboInfo?.comboName,
 		);
 
 		if (response) {
@@ -607,6 +614,11 @@ export async function handleProxy(
 				log.info(
 					`All ${fallbackAccounts.length} fallback candidate(s) were probe-gate suppressed; retrying account ${fallbackAccounts[i].name} ungated`,
 				);
+				// Same rationale as the main-loop block above: this retry is the
+				// terminal attempt by construction (the fallback loop already
+				// exhausted every candidate), and the fallback path is never
+				// combo-routed (comboName was cleared before re-selection), so the
+				// flag is unconditionally true here.
 				response = await proxyWithAccount(
 					req,
 					url,
@@ -620,7 +632,7 @@ export async function handleProxy(
 					apiKeyId,
 					apiKeyName,
 					requestBodyContext,
-					i === fallbackAccounts.length - 1,
+					true,
 				);
 
 				if (response) {
