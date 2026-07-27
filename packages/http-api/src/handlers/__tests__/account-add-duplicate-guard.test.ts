@@ -138,13 +138,21 @@ describe("createAccountAddHandler — duplicate (name, provider, custom_endpoint
 				await adapter.run(
 					`INSERT INTO accounts (id, name, provider, refresh_token, access_token, created_at)
 					 VALUES (?, ?, ?, ?, ?, ?)`,
-					["concurrent", "race", "anthropic", "r-direct", "a-direct", Date.now()],
+					[
+						"concurrent",
+						"race",
+						"anthropic",
+						"r-direct",
+						"a-direct",
+						Date.now(),
+					],
 				);
 				return true;
 			} catch (e) {
 				// Expected: the UNIQUE constraint rejects it. The atomic
 				// guarantee is precisely this rejection.
-				return e instanceof Error && e.message.includes("UNIQUE constraint failed")
+				return e instanceof Error &&
+					e.message.includes("UNIQUE constraint failed")
 					? "rejected"
 					: false;
 			}

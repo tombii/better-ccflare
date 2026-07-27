@@ -140,10 +140,7 @@ export function createQwenDeviceFlowInitHandler(dbOps: DatabaseOperations) {
 								accountName: name,
 								error: msg,
 							});
-							setTimeout(
-								() => qwenSessions.delete(sessionId),
-								10 * 60 * 1000,
-							);
+							setTimeout(() => qwenSessions.delete(sessionId), 10 * 60 * 1000);
 							return;
 						}
 						throw insertErr;
@@ -433,10 +430,7 @@ export function createCodexDeviceFlowInitHandler(dbOps: DatabaseOperations) {
 								accountName: name,
 								error: msg,
 							});
-							setTimeout(
-								() => codexSessions.delete(sessionId),
-								10 * 60 * 1000,
-							);
+							setTimeout(() => codexSessions.delete(sessionId), 10 * 60 * 1000);
 							return;
 						}
 						throw insertErr;

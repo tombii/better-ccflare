@@ -108,7 +108,11 @@ describe("Database Migrations — non-destructive account dedup", () => {
 			.prepare(
 				`SELECT id, refresh_token, access_token FROM accounts WHERE name = 'alpha'`,
 			)
-			.all() as Array<{ id: string; refresh_token: string; access_token: string }>;
+			.all() as Array<{
+			id: string;
+			refresh_token: string;
+			access_token: string;
+		}>;
 		expect(survivors).toHaveLength(1);
 		expect(survivors[0]?.id).toBe("alpha-1");
 	});
@@ -635,9 +639,7 @@ describe("Database Migrations — non-destructive account dedup", () => {
 		runMigrations(db);
 
 		const snapshots = db
-			.prepare(
-				`SELECT account_id FROM usage_snapshots ORDER BY timestamp`,
-			)
+			.prepare(`SELECT account_id FROM usage_snapshots ORDER BY timestamp`)
 			.all() as Array<{ account_id: string }>;
 		expect(snapshots).toHaveLength(2);
 		expect(snapshots.every((s) => s.account_id === "alpha-1")).toBe(true);

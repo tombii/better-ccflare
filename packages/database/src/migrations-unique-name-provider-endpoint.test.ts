@@ -97,11 +97,27 @@ describe("Database Migrations — UNIQUE index on (name, provider, COALESCE(cust
 		db.prepare(
 			`INSERT INTO accounts (id, name, provider, refresh_token, access_token, created_at, custom_endpoint)
 			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		).run("beta-1", "beta", "openai-compatible", "r3", "a3", now - 2000, "https://x");
+		).run(
+			"beta-1",
+			"beta",
+			"openai-compatible",
+			"r3",
+			"a3",
+			now - 2000,
+			"https://x",
+		);
 		db.prepare(
 			`INSERT INTO accounts (id, name, provider, refresh_token, access_token, created_at, custom_endpoint)
 			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		).run("beta-2", "beta", "openai-compatible", "r4", "a4", now - 500, "https://x");
+		).run(
+			"beta-2",
+			"beta",
+			"openai-compatible",
+			"r4",
+			"a4",
+			now - 500,
+			"https://x",
+		);
 
 		runMigrations(db);
 
@@ -193,9 +209,7 @@ describe("Database Migrations — UNIQUE index on (name, provider, COALESCE(cust
 		}
 
 		expect(caught).toBeInstanceOf(Error);
-		expect((caught as Error).message).toMatch(
-			/UNIQUE constraint failed/,
-		);
+		expect((caught as Error).message).toMatch(/UNIQUE constraint failed/);
 	});
 
 	it("treats NULL and '' custom_endpoint as the same tuple", () => {

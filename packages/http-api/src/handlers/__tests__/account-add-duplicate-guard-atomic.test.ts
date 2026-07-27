@@ -22,9 +22,12 @@
 //       sequential case (this matches the existing
 //       account-add-duplicate-guard.test.ts scenario 1).
 
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
-import { ensureSchema, runMigrations } from "../../../../database/src/migrations";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import {
+	ensureSchema,
+	runMigrations,
+} from "../../../../database/src/migrations";
 
 const TEST_DB_PATH = `${process.env.TMPDIR ?? "/tmp"}/test-account-add-duplicate-guard-atomic.db`;
 
@@ -128,7 +131,15 @@ describe("createAccountAddHandler — atomic DB-level guard (Greptile P1)", () =
 		db.prepare(
 			`INSERT INTO accounts (id, name, provider, refresh_token, access_token, created_at, custom_endpoint)
 			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		).run("a", "beta", "anthropic", "r", "a", Date.now(), "https://api.example.com");
+		).run(
+			"a",
+			"beta",
+			"anthropic",
+			"r",
+			"a",
+			Date.now(),
+			"https://api.example.com",
+		);
 
 		// Same name + provider, but a different custom_endpoint.
 		expect(() =>
@@ -137,7 +148,15 @@ describe("createAccountAddHandler — atomic DB-level guard (Greptile P1)", () =
 					`INSERT INTO accounts (id, name, provider, refresh_token, access_token, created_at, custom_endpoint)
 					 VALUES (?, ?, ?, ?, ?, ?, ?)`,
 				)
-				.run("b", "beta", "anthropic", "r", "a", Date.now(), "https://api.other.example.com"),
+				.run(
+					"b",
+					"beta",
+					"anthropic",
+					"r",
+					"a",
+					Date.now(),
+					"https://api.other.example.com",
+				),
 		).not.toThrow();
 	});
 

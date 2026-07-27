@@ -588,11 +588,10 @@ function collapseAccountDuplicatesPreservingState(db: Database): void {
 	let totalRepointedSnapshots = 0;
 
 	for (const grp of dupGroups) {
-		const survivor = pickSurvivor.get(
-			grp.name,
-			grp.provider,
-			grp.ep,
-		) as { survivor_rowid: number; survivor_id: string };
+		const survivor = pickSurvivor.get(grp.name, grp.provider, grp.ep) as {
+			survivor_rowid: number;
+			survivor_id: string;
+		};
 		if (!survivor) {
 			continue;
 		}
@@ -606,11 +605,21 @@ function collapseAccountDuplicatesPreservingState(db: Database): void {
 		const discardedIds = discardedRows.map((r) => r.id);
 
 		const merged = bestCredentials.get(
-			grp.name, grp.provider, grp.ep, // refresh_token subquery
-			grp.name, grp.provider, grp.ep, // access_token subquery
-			grp.name, grp.provider, grp.ep, // expires_at subquery
-			grp.name, grp.provider, grp.ep, // refresh_token_issued_at subquery
-			grp.name, grp.provider, grp.ep, // api_key subquery
+			grp.name,
+			grp.provider,
+			grp.ep, // refresh_token subquery
+			grp.name,
+			grp.provider,
+			grp.ep, // access_token subquery
+			grp.name,
+			grp.provider,
+			grp.ep, // expires_at subquery
+			grp.name,
+			grp.provider,
+			grp.ep, // refresh_token_issued_at subquery
+			grp.name,
+			grp.provider,
+			grp.ep, // api_key subquery
 		) as {
 			merged_refresh_token: string | null;
 			merged_access_token: string | null;

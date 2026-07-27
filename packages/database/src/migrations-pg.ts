@@ -614,9 +614,7 @@ async function collapseAccountDuplicatesPreservingStatePg(
 				[survivor.id, ...discardedIds],
 			);
 
-			const idPlaceholders = discardedIds
-				.map((_, i) => `$${i + 1}`)
-				.join(",");
+			const idPlaceholders = discardedIds.map((_, i) => `$${i + 1}`).join(",");
 			const deleted = await adapter.runWithChanges(
 				`DELETE FROM accounts WHERE id IN (${idPlaceholders})`,
 				discardedIds,
