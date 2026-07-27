@@ -86,7 +86,7 @@ function makeCtxWithReason() {
 				reason: string,
 			) => {
 				calls.markRateLimited.push({ accountId, resetTime, reason });
-				return Promise.resolve(1);
+				return Promise.resolve({ consecutiveRateLimits: 1, applied: true });
 			},
 			updateAccountUsage: () => {},
 			updateAccountRateLimitMeta: () => {},
@@ -207,7 +207,8 @@ describe("forwardToClient — real mid-stream sniffer call form", () => {
 			provider: { name: "anthropic", isStreamingResponse: () => true },
 			config: { getStorePayloads: () => true },
 			dbOps: {
-				markAccountRateLimited: () => Promise.resolve(1),
+				markAccountRateLimited: () =>
+					Promise.resolve({ consecutiveRateLimits: 1, applied: true }),
 			},
 			asyncWriter: {
 				enqueue: (job: () => void | Promise<void>) => {

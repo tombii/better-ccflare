@@ -74,7 +74,7 @@ function makeCtx(opts: {
 				_reason: string,
 			) => {
 				calls.markRateLimited.push({ accountId, resetTime });
-				return Promise.resolve(1);
+				return Promise.resolve({ consecutiveRateLimits: 1, applied: true });
 			},
 			updateAccountUsage: () => {},
 			updateAccountRateLimitMeta: () => {},
@@ -134,7 +134,7 @@ function makeCtxWithReason(opts: {
 				reason: string,
 			) => {
 				calls.markRateLimited.push({ accountId, resetTime, reason });
-				return Promise.resolve(1);
+				return Promise.resolve({ consecutiveRateLimits: 1, applied: true });
 			},
 			updateAccountUsage: () => {},
 			updateAccountRateLimitMeta: () => {},

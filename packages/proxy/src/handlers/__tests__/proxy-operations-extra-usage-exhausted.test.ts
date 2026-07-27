@@ -64,7 +64,8 @@ function makeRequestBody(model = "claude-sonnet-4-5") {
 
 function makeProxyContextWithAsyncExec(): ProxyContext {
 	const markAccountRateLimited = mock(
-		(_accountId: string, _until: number, _reason: string) => Promise.resolve(1),
+		(_accountId: string, _until: number, _reason: string) =>
+			Promise.resolve({ consecutiveRateLimits: 1, applied: true }),
 	);
 	const saveRequest = mock((..._args: unknown[]) => Promise.resolve());
 	return {

@@ -9,6 +9,17 @@ import { BaseRepository } from "./base.repository";
 
 const log = new Logger("AccountRepository");
 
+/**
+ * Result of {@link AccountRepository.markAccountRateLimited}. `applied`
+ * distinguishes an actually-persisted write from one the 529 forward guard
+ * rejected (or that found no matching row) — callers must not assume the
+ * write happened just because the call resolved.
+ */
+export interface MarkAccountRateLimitedResult {
+	consecutiveRateLimits: number;
+	applied: boolean;
+}
+
 export class AccountRepository extends BaseRepository<Account> {
 	async findAll(): Promise<Account[]> {
 		const rows = await this.query<AccountRow>(`
@@ -139,7 +150,8 @@ export class AccountRepository extends BaseRepository<Account> {
 		until: number,
 		reason: RateLimitReason,
 		incrementStreak = true,
-	): Promise<number> {
+	): Promise<MarkAccountRateLimitedResult> {
+		let applied = true;
 		if (incrementStreak) {
 			await this.run(
 				`UPDATE accounts
@@ -177,15 +189,18 @@ export class AccountRepository extends BaseRepository<Account> {
            AND (rate_limited_until IS NULL OR rate_limited_until <= ?)`,
 				[until, reason, Date.now(), accountId, until],
 			);
-			if (changes === 0) {
-				// The guard rejected the write: a longer cooldown is already active
-				// for this account (set by a concurrent request between this call's
-				// read and write). Log it here — the caller in rate-limit-cooldown.ts
-				// awaits only the reconciled streak count and has no other signal
-				// that its own in-memory write just diverged from what's actually
-				// persisted.
+			applied = changes > 0;
+			if (!applied) {
+				// The guarded write was skipped. This has two distinct causes the
+				// row count alone can't distinguish: a longer cooldown is already
+				// active for this account (set by a concurrent request between
+				// this call's read and write), or the row itself no longer exists
+				// (account deleted/renamed since the caller last read it) — so this
+				// message states neither as fact. The caller (applyRateLimitCooldown
+				// in rate-limit-cooldown.ts) receives `applied` below and logs the
+				// correct outcome for its own event instead of asserting a cause.
 				log.warn(
-					`[ccflare] account=${accountId} cooldown_skipped_longer_active reason=${reason} candidate_until=${new Date(until).toISOString()} — a longer cooldown is already active in the DB, guarded UPDATE rejected`,
+					`[ccflare] account=${accountId} rate_limited_write_skipped reason=${reason} candidate_until=${new Date(until).toISOString()} — guarded write skipped: existing rate_limited_until is later, or the row is absent`,
 				);
 			}
 		}
@@ -193,7 +208,10 @@ export class AccountRepository extends BaseRepository<Account> {
 			`SELECT consecutive_rate_limits FROM accounts WHERE id = ?`,
 			[accountId],
 		);
-		return row?.consecutive_rate_limits ?? 0;
+		return {
+			consecutiveRateLimits: row?.consecutive_rate_limits ?? 0,
+			applied,
+		};
 	}
 
 	async resetConsecutiveRateLimits(accountId: string): Promise<void> {

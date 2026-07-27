@@ -27,7 +27,10 @@ import { EMBEDDED_VACUUM_WORKER_CODE } from "./inline-vacuum-worker";
 import { ensureSchema, runMigrations } from "./migrations";
 import { ensureSchemaPg, runMigrationsPg } from "./migrations-pg";
 import { resolveDbPath } from "./paths";
-import { AccountRepository } from "./repositories/account.repository";
+import {
+	AccountRepository,
+	type MarkAccountRateLimitedResult,
+} from "./repositories/account.repository";
 import { AgentPreferenceRepository } from "./repositories/agent-preference.repository";
 import { ApiKeyRepository } from "./repositories/api-key.repository";
 import { ComboRepository } from "./repositories/combo.repository";
@@ -788,7 +791,7 @@ OAuth tokens will need to be re-authenticated.
 		until: number,
 		reason: RateLimitReason,
 		incrementStreak = true,
-	): Promise<number> {
+	): Promise<MarkAccountRateLimitedResult> {
 		return withDatabaseRetry(
 			() =>
 				this.accounts.markAccountRateLimited(

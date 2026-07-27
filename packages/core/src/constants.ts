@@ -68,12 +68,21 @@ export const TIME_CONSTANTS = {
 	// (DEFAULT_RATE_LIMIT_NO_RESET_COOLDOWN_MS, 60s, above): that 60s cooldown
 	// is UNGATED — once it expires, full concurrency returns to the account
 	// immediately, so a long cooldown is the only thing limiting request rate.
-	// This 10s cooldown only makes sense paired with the single-flight probe
-	// gate (getRateLimitProbeAdmission in rate-limit-cooldown.ts): once it
-	// expires, the gate lets exactly one probe request through and suppresses
-	// the rest until that probe resolves. Reusing the 10s value without the
-	// gate active for a given account would let every concurrently selected
-	// request pile onto it the instant the cooldown clears.
+	// This 10s cooldown pairs with the single-flight probe gate
+	// (getRateLimitProbeAdmission in rate-limit-cooldown.ts), but what the
+	// gate actually does for a suppressed request depends on pool size:
+	// - Multi-account pool: once the cooldown expires, the gate admits
+	//   exactly one probe request for THIS account and suppresses the rest —
+	//   a suppressed request does not wait for that probe, it moves on to the
+	//   next candidate account in the same selection (proxy.ts's account
+	//   loop), so concurrent requests spread across the pool instead of
+	//   piling onto the one recovering account.
+	// - Single-account pool: there is no other candidate to defer to, so a
+	//   suppressed request runs the account ungated instead of failing
+	//   outright (proxy.ts's "every candidate suppressed" fallback). The gate
+	//   suppresses nothing in that case; the short 10s value is the only
+	//   thing bounding how often that ungated path re-hits the account
+	//   during an overload storm.
 	// Override at runtime via CCFLARE_OVERLOAD_COOLDOWN_MS.
 	OVERLOAD_COOLDOWN_MS: 10 * 1000, // 10s
 

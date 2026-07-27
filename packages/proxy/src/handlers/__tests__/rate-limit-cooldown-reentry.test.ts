@@ -76,7 +76,7 @@ function makeCtx(opts: { rateLimited: boolean; resetTime?: number }) {
 				incrementStreak?: boolean,
 			) => {
 				calls.markRateLimited.push({ until, reason, incrementStreak });
-				return 9;
+				return { consecutiveRateLimits: 9, applied: true };
 			},
 			updateAccountUsage: mock(() => {}),
 			updateAccountRateLimitMeta: mock(() => {}),
@@ -274,12 +274,19 @@ describe("529 overload cooldown separation", () => {
 		expect(calls.markRateLimited[0]?.incrementStreak).toBe(false);
 	});
 
-	it("keeps the reset-driven cooldown duration for a 529-with-reset, but still suppresses the streak (upstream ccflare#271)", () => {
+	it("caps a 529-with-reset at the overload-scale ceiling, not the frozen streak's exponential ramp, while still suppressing the streak (delta2-5)", () => {
 		Date.now = () => NOW;
 		const account = makeAccount({ consecutive_rate_limits: 8 });
 		const { ctx, calls } = makeCtx({ rateLimited: true });
-		// Anthropic's real retry-after for the with-reset path (production incident: 60s).
-		const resetTime = NOW + 60_000;
+		// Chosen so the two candidate formulas diverge: the overload cap (60s,
+		// computeOverloadWithResetCapMs) sits well below this reset, while the
+		// streak's exponential ramp (computeRateLimitBackoffMs(9), capped at
+		// 5min) sits well above it. A regression back to deriving duration from
+		// the streak — the formula this test used to pin — would silently pass
+		// with a resetTime of exactly 60s (both formulas agree there); this
+		// value makes the two diverge so the test can actually catch that
+		// revert.
+		const resetTime = NOW + 120_000;
 
 		applyRateLimitCooldown(
 			account,
@@ -287,12 +294,12 @@ describe("529 overload cooldown separation", () => {
 			ctx,
 		);
 
-		// Duration formula is untouched — min(resetTime, now + exponential-ramp) —
-		// so Anthropic's retry-after is honored exactly as for a normal 429. It
-		// must NOT be shortened to the fixed reset-less overload cooldown.
-		expect(account.rate_limited_until).toBe(
-			Math.min(resetTime, NOW + computeRateLimitBackoffMs(9)),
-		);
+		// Duration formula is min(resetTime, now + computeOverloadWithResetCapMs())
+		// (see rate-limit-cooldown.ts) — NOT the frozen 429 streak's exponential
+		// ramp, even though this account's streak sits at 8. A streak-derived
+		// formula would have produced NOW + 120_000 (the uncapped resetTime)
+		// here instead.
+		expect(account.rate_limited_until).toBe(NOW + 60_000);
 		// The streak itself stays untouched — a 529 is not a quota signal, even
 		// when it does carry a reset.
 		expect(account.consecutive_rate_limits).toBe(8);

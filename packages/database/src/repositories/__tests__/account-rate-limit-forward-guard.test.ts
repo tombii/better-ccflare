@@ -1,10 +1,11 @@
 import { Database } from "bun:sqlite";
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 // Force @better-ccflare/core to initialise before @better-ccflare/types resolves its
 // circular dependency (types/agent.ts → core → core/strategy.ts → types/StrategyName).
 // Without this the enum is undefined when strategy.ts runs. Same pattern as
 // account-rate-limit-audit.test.ts.
 import "@better-ccflare/core";
+import { Logger } from "@better-ccflare/logger";
 import { BunSqlAdapter } from "../../adapters/bun-sql-adapter";
 import { AccountRepository } from "../account.repository";
 
@@ -106,13 +107,14 @@ describe("AccountRepository.markAccountRateLimited — 529 forward guard (delta-
 		// cooldown (`>`), so it lets this equal-expiry write proceed in memory —
 		// the DB-side guard must agree, or the DB silently keeps the stale 429
 		// reason while memory has already moved on to the 529 reason.
-		await repo.markAccountRateLimited(
+		const result = await repo.markAccountRateLimited(
 			"acc-1",
 			X,
 			"upstream_529_overloaded_with_reset",
 			false,
 		);
 
+		expect(result.applied).toBe(true);
 		const row = getAudit(db, "acc-1");
 		expect(row.rate_limited_reason).toBe("upstream_529_overloaded_with_reset");
 		expect(row.rate_limited_until).toBe(X);
@@ -129,13 +131,17 @@ describe("AccountRepository.markAccountRateLimited — 529 forward guard (delta-
 		);
 
 		const shorter = X - 60_000;
-		await repo.markAccountRateLimited(
+		const result = await repo.markAccountRateLimited(
 			"acc-2",
 			shorter,
 			"upstream_529_overloaded_no_reset",
 			false,
 		);
 
+		// delta2-3: the guard's rejection must be visible to the caller, not
+		// just to the DB row — the caller (applyRateLimitCooldown) uses this to
+		// decide whether to log `cooldown_applied` or `cooldown_skipped_longer_active`.
+		expect(result.applied).toBe(false);
 		// The longer, already-active 429 bench must survive untouched.
 		const row = getAudit(db, "acc-2");
 		expect(row.rate_limited_reason).toBe("upstream_429_with_reset");
@@ -146,15 +152,71 @@ describe("AccountRepository.markAccountRateLimited — 529 forward guard (delta-
 		insertAccount(db, "acc-3");
 		const until = Date.now() + 10_000;
 
-		await repo.markAccountRateLimited(
+		const result = await repo.markAccountRateLimited(
 			"acc-3",
 			until,
 			"upstream_529_overloaded_no_reset",
 			false,
 		);
 
+		expect(result.applied).toBe(true);
 		const row = getAudit(db, "acc-3");
 		expect(row.rate_limited_reason).toBe("upstream_529_overloaded_no_reset");
 		expect(row.rate_limited_until).toBe(until);
+	});
+
+	it("reports applied=true for the 429 (incrementStreak) path unconditionally", async () => {
+		insertAccount(db, "acc-4");
+		const until = Date.now() + 30_000;
+
+		const result = await repo.markAccountRateLimited(
+			"acc-4",
+			until,
+			"upstream_429_no_reset_probe_cooldown",
+			true,
+		);
+
+		expect(result.applied).toBe(true);
+		expect(result.consecutiveRateLimits).toBe(1);
+	});
+
+	it("logs a neutral warning naming the account when the guarded write is skipped (delta2-6)", async () => {
+		insertAccount(db, "acc-5");
+		const X = Date.now() + 5 * 60 * 1000;
+		await repo.markAccountRateLimited(
+			"acc-5",
+			X,
+			"upstream_429_with_reset",
+			true,
+		);
+
+		const warnSpy = spyOn(Logger.prototype, "warn");
+		try {
+			const shorter = X - 60_000;
+			await repo.markAccountRateLimited(
+				"acc-5",
+				shorter,
+				"upstream_529_overloaded_no_reset",
+				false,
+			);
+
+			// Row-state assertions alone (as in the sibling tests above) don't
+			// prove this observability line actually fires — the whole point of
+			// delta2-3's rate_limited_write_skipped message is to give an
+			// operator a signal when the DB row diverges from what the caller
+			// wrote. It must not assert a specific cause (see the message text):
+			// changes===0 covers both "a longer cooldown is active" and "the row
+			// is absent" and can't tell them apart from the row count alone.
+			const skipCall = warnSpy.mock.calls.find((call) =>
+				String(call[0]).includes("rate_limited_write_skipped"),
+			);
+			expect(skipCall).toBeDefined();
+			expect(String(skipCall?.[0])).toContain("account=acc-5");
+			expect(String(skipCall?.[0])).not.toMatch(
+				/a longer cooldown is already active in the DB/,
+			);
+		} finally {
+			warnSpy.mockRestore();
+		}
 	});
 });

@@ -244,12 +244,13 @@ export function applyRateLimitCooldown(
 	}
 
 	ctx.asyncWriter.enqueue(async () => {
-		const persistedCount = await ctx.dbOps.markAccountRateLimited(
-			account.id,
-			cooldownUntil,
-			reason,
-			!isOverload,
-		);
+		const { consecutiveRateLimits: persistedCount, applied } =
+			await ctx.dbOps.markAccountRateLimited(
+				account.id,
+				cooldownUntil,
+				reason,
+				!isOverload,
+			);
 		// Reconcile in-memory counter with the authoritative DB value (may differ
 		// under concurrent 429s for the same account). Skipped for overload: the
 		// streak is not touched by a 529 (with or without reset), so there is
@@ -257,10 +258,21 @@ export function applyRateLimitCooldown(
 		if (!isOverload) {
 			account.consecutive_rate_limits = persistedCount;
 		}
-		// Log AFTER the DB write so the reported consecutive= reflects the persisted value.
-		log.warn(
-			`[ccflare] account=${account.name} cooldown_applied reason=${reason} until=${new Date(cooldownUntil).toISOString()} consecutive=${persistedCount}`,
-		);
+		// Log AFTER the DB write so the reported consecutive= reflects the persisted
+		// value, and log the outcome the write actually had. A guarded 529 write
+		// can be rejected by the repository's forward guard (a concurrent request
+		// already set a longer-lived cooldown) — asserting `cooldown_applied` for
+		// a write that was in fact skipped left two contradictory log lines for
+		// the same event.
+		if (applied) {
+			log.warn(
+				`[ccflare] account=${account.name} cooldown_applied reason=${reason} until=${new Date(cooldownUntil).toISOString()} consecutive=${persistedCount}`,
+			);
+		} else {
+			log.warn(
+				`[ccflare] account=${account.name} cooldown_skipped_longer_active reason=${reason} candidate_until=${new Date(cooldownUntil).toISOString()} consecutive=${persistedCount}`,
+			);
+		}
 	});
 
 	if (isOverload) {
