@@ -58,7 +58,7 @@ const KNOWN_ERROR_META: Record<
 		description:
 			"The upstream provider returned 529 (overloaded) without a Retry-After header; entering probe cooldown. This also covers mid-stream overloaded_error detections, which never carry a Retry-After header — HTTP headers were already sent before the error occurred in that path.",
 		suggestion:
-			"Cooldown defaults to 60s. Set `CCFLARE_DEFAULT_COOLDOWN_NO_RESET_MS` in your environment to change it.",
+			"Cooldown defaults to 10s and pairs with a single-flight recovery probe (only one request re-probes the account once it expires). Set `CCFLARE_OVERLOAD_COOLDOWN_MS` in your environment to change it.",
 		severity: "warning",
 	},
 	out_of_credits: {
