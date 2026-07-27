@@ -1,4 +1,12 @@
-import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import {
+	afterAll,
+	afterEach,
+	beforeEach,
+	describe,
+	expect,
+	it,
+	mock,
+} from "bun:test";
 import { logBus } from "@better-ccflare/logger";
 import type { LogEvent } from "@better-ccflare/types";
 import type { EndMessage, StartMessage } from "../worker-messages";
@@ -34,10 +42,26 @@ mock.module("@better-ccflare/core", () => ({
 	estimateCostUSD,
 }));
 
-mock.module("@better-ccflare/database", () => ({
-	AsyncDbWriter: class {},
-	DatabaseOperations: class {},
-}));
+// Unlike @better-ccflare/core above, this file never touches
+// @better-ccflare/database's real exports at runtime: every test constructs
+// UsageCollector directly with hand-rolled fake dbOps/asyncWriter objects
+// (see makeHarness below), so getUsageCollector()'s internal
+// `new DatabaseOperations()` / `new AsyncDbWriter()` fallback is never
+// reached. Stubbing DatabaseOperations/AsyncDbWriter here bought nothing and
+// cost every other test file in the process a broken DatabaseFactory
+// singleton (mock.module has no per-file isolation without --isolate, and
+// bun pre-evaluates every file's top-level mock.module calls before running
+// any test, so even an afterAll restore here can't protect a file whose
+// beforeAll runs first). Do not reintroduce this mock without also auditing
+// bun's cross-file mock.module ordering.
+
+// Restore @better-ccflare/core once this file's tests finish so later test
+// files in the same process (mock.module has no per-file isolation without
+// --isolate) resolve the real exports again instead of the stub registered
+// above.
+afterAll(() => {
+	mock.module("@better-ccflare/core", () => actualCore);
+});
 
 const { UsageCollector } = await import("../usage-collector");
 type UsageCollectorInstance = InstanceType<typeof UsageCollector>;

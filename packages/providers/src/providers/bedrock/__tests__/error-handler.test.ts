@@ -1,17 +1,42 @@
-import { describe, expect, it, mock } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { existsSync, unlinkSync } from "node:fs";
+import { DatabaseFactory } from "@better-ccflare/database";
 import { translateBedrockError } from "../error-handler";
 
-// Mock database dependencies used by getModelNotFoundSuggestion
-mock.module("@better-ccflare/database", () => ({
-	DatabaseFactory: {
-		getInstance: mock(() => ({
-			getDatabase: mock(() => ({})),
-		})),
-	},
-	ModelTranslationRepository: mock(() => ({
-		findSimilar: mock(() => []),
-	})),
-}));
+// getModelNotFoundSuggestion (exercised indirectly below) calls
+// DatabaseFactory.getInstance() directly, so it can't be exercised without a
+// database instance. Rather than mock.module("@better-ccflare/database", ...)
+// — which replaces the WHOLE module globally and across file boundaries in
+// Bun (no per-file isolation without --isolate), permanently shadowing the
+// real DatabaseFactory/ModelTranslationRepository for every other test file
+// sharing this process — use a real, empty, throwaway database. The
+// suggestion lookup naturally finds no matches against an empty DB, which is
+// all these tests assert on (empty/absent suggestions, no throw, no hang).
+const TEST_DB_PATH = "/tmp/test-bedrock-error-handler.db";
+
+beforeAll(() => {
+	try {
+		if (existsSync(TEST_DB_PATH)) {
+			unlinkSync(TEST_DB_PATH);
+		}
+	} catch (error) {
+		console.warn("Failed to clean up existing test database:", error);
+	}
+	DatabaseFactory.initialize(TEST_DB_PATH);
+	// Force instantiation so later calls reuse this instance.
+	DatabaseFactory.getInstance();
+});
+
+afterAll(() => {
+	DatabaseFactory.reset();
+	try {
+		if (existsSync(TEST_DB_PATH)) {
+			unlinkSync(TEST_DB_PATH);
+		}
+	} catch (error) {
+		console.warn("Failed to clean up test database:", error);
+	}
+});
 
 describe("translateBedrockError", () => {
 	describe("credential/auth errors → 403", () => {

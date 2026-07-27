@@ -13,7 +13,15 @@
  * every other test file that imports @better-ccflare/core later in the same
  * run.
  */
-import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import {
+	afterAll,
+	afterEach,
+	beforeEach,
+	describe,
+	expect,
+	it,
+	mock,
+} from "bun:test";
 import type { Config } from "@better-ccflare/config";
 import type { ProxyContext } from "../proxy";
 
@@ -47,6 +55,13 @@ mock.module("@better-ccflare/core", () => ({
 	...actualCore,
 	registerHeartbeat: mockRegisterHeartbeat,
 }));
+
+// Restore the real module once this file's tests finish so later test files
+// in the same process (mock.module has no per-file isolation without
+// --isolate) resolve the real @better-ccflare/core exports again.
+afterAll(() => {
+	mock.module("@better-ccflare/core", () => actualCore);
+});
 
 import { cacheBodyStore } from "../cache-body-store";
 // Import AFTER mock.module so the scheduler gets the mocked registerHeartbeat.

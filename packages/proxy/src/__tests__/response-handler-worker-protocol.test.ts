@@ -195,11 +195,24 @@ describe("forwardToClient usage-collector protocol", () => {
 			const ctx = createCtx();
 			ctx.provider.isStreamingResponse = () => true;
 
+			// Must be a well-formed Anthropic Messages SSE stream — the
+			// terminal-recovery wrapper (anthropic-terminal-recovery.ts)
+			// inspects event contents and only records success when it
+			// observes a terminal `message_delta` (stop_reason) followed by
+			// `message_stop`. Arbitrary non-protocol SSE data (e.g. bare
+			// "data: one\n\n") is correctly classified as truncated.
+			const messageStopFrame =
+				'event: message_stop\ndata: {"type":"message_stop"}\n\n';
 			const body = new ReadableStream<Uint8Array>({
 				start(controller) {
 					const encoder = new TextEncoder();
 					controller.enqueue(encoder.encode("data: one\n\n"));
-					controller.enqueue(encoder.encode("data: two\n\n"));
+					controller.enqueue(
+						encoder.encode(
+							'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}\n\n',
+						),
+					);
+					controller.enqueue(encoder.encode(messageStopFrame));
 					controller.close();
 				},
 			});
@@ -223,10 +236,14 @@ describe("forwardToClient usage-collector protocol", () => {
 				ctx,
 			);
 
-			await expect(response.text()).resolves.toBe("data: one\n\ndata: two\n\n");
+			await expect(response.text()).resolves.toBe(
+				"data: one\n\n" +
+					'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}\n\n' +
+					messageStopFrame,
+			);
 			await waitFor(() => ends.length > 0);
 
-			expect(chunks.length).toBe(2);
+			expect(chunks.length).toBe(3);
 			expect(starts[0]).toMatchObject({
 				type: "start",
 				requestId: "req-stream-tee",

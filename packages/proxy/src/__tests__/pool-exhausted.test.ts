@@ -1,7 +1,24 @@
-import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import {
+	afterEach,
+	beforeEach,
+	describe,
+	expect,
+	it,
+	mock,
+	spyOn,
+} from "bun:test";
 import type { Account } from "@better-ccflare/types";
 import type { ProxyContext } from "../handlers";
 import { handleProxy } from "../proxy";
+import * as usageCollectorModule from "../usage-collector";
+
+function stubUsageCollector() {
+	return spyOn(usageCollectorModule, "getUsageCollector").mockReturnValue({
+		handleStart: mock(() => {}),
+		handleChunk: mock(() => {}),
+		handleEnd: mock(() => Promise.resolve()),
+	} as unknown as usageCollectorModule.UsageCollector);
+}
 
 function makeAccount(overrides: Partial<Account> = {}): Account {
 	return {
@@ -88,6 +105,7 @@ let savedPassthrough: string | undefined;
 beforeEach(() => {
 	savedPassthrough = process.env.CCFLARE_PASSTHROUGH_ON_EMPTY_POOL;
 	delete process.env.CCFLARE_PASSTHROUGH_ON_EMPTY_POOL;
+	stubUsageCollector();
 });
 
 afterEach(() => {

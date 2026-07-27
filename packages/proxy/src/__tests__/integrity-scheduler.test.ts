@@ -13,7 +13,15 @@
  * `dbPath: undefined` exercise the PG/fallback branch (no worker); tests
  * with `dbPath: "/tmp/anything"` exercise the worker branch.
  */
-import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import {
+	afterAll,
+	afterEach,
+	beforeEach,
+	describe,
+	expect,
+	it,
+	mock,
+} from "bun:test";
 import type { DatabaseOperations } from "@better-ccflare/database";
 
 // ---------------------------------------------------------------------------
@@ -40,9 +48,25 @@ const mockRunIntegrityCheckInWorker = mock(
 	): Promise<WorkerResult> => workerResultByKind[options.kind],
 );
 
+// mock.module replaces the WHOLE module globally and across file boundaries
+// in Bun (no per-file isolation without --isolate), so spread the real
+// module's exports and only override runIntegrityCheckInWorker — otherwise
+// other test files importing @better-ccflare/database later in the same
+// process would lose every other export (DatabaseFactory, DatabaseOperations,
+// etc.) this file doesn't otherwise need to touch.
+const actualDatabase = await import("@better-ccflare/database");
+
 mock.module("@better-ccflare/database", () => ({
+	...actualDatabase,
 	runIntegrityCheckInWorker: mockRunIntegrityCheckInWorker,
 }));
+
+// Restore the real module once this file's tests finish so later test files
+// in the same process (mock.module has no per-file isolation without
+// --isolate) resolve the real @better-ccflare/database exports again.
+afterAll(() => {
+	mock.module("@better-ccflare/database", () => actualDatabase);
+});
 
 import {
 	runIntegrityCheckOnDemand,

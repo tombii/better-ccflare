@@ -3,15 +3,19 @@ import { ANTHROPIC_MESSAGE_STOP_FRAME } from "../anthropic-terminal-recovery";
 import type { ProxyContext } from "../handlers";
 
 // The source worktree intentionally excludes generated database worker bundles.
-// ResponseHandler only reaches these constructors through UsageCollector, which
-// this filtered probe path never initializes or calls.
-mock.module("@better-ccflare/database", () => ({
-	AsyncDbWriter: class AsyncDbWriter {},
-	DatabaseFactory: class DatabaseFactory {},
-	DatabaseOperations: class DatabaseOperations {},
-	ModelTranslationRepository: class ModelTranslationRepository {},
-}));
-
+// ResponseHandler only reaches DatabaseOperations/AsyncDbWriter construction
+// through UsageCollector's getUsageCollector() fallback, which this filtered
+// probe path never initializes or calls: every ProxyContext below passes
+// hand-rolled dbOps: {} / asyncWriter: {} fakes, and getUsageCollector itself
+// is spied/replaced per-test where needed. So @better-ccflare/database's real
+// exports are never touched here — do NOT add a
+// mock.module("@better-ccflare/database", ...) stub for
+// DatabaseOperations/AsyncDbWriter/DatabaseFactory: it isn't needed, and
+// mock.module replaces the WHOLE module globally with no per-file isolation
+// (no --isolate in this bun version) and is pre-evaluated for every test file
+// before any test runs, so such a stub would corrupt DatabaseFactory's
+// process-wide singleton for every other test file, including ones that run
+// (and complete) before this file's own afterAll could restore it.
 const usageCollectorModule = await import("../usage-collector");
 const { forwardToClient } = await import("../response-handler");
 
