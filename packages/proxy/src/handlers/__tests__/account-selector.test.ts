@@ -7,6 +7,7 @@ import type {
 } from "@better-ccflare/types";
 import {
 	getComboSlotInfo,
+	getOrderedAccounts,
 	resolveEffectiveModel,
 	selectAccountsForRequest,
 	setComboSlotInfo,
@@ -76,7 +77,11 @@ function makeCtx(
 	const accounts = opts.accounts ?? [makeAccount()];
 	return {
 		strategy: {
-			select: mock((_all: Account[], _meta: RequestMeta) => accounts),
+			// Return what we were HANDED, not the full fixture list. A real strategy
+			// can only pick from the candidates it receives, so a mock that ignores
+			// its input silently defeats any upstream filtering — which is exactly how
+			// a disconnected usage-exhaustion filter previously looked like it worked.
+			select: mock((all: Account[], _meta: RequestMeta) => all),
 		},
 		dbOps: {
 			getAllAccounts: mock(async () => accounts),
@@ -759,5 +764,94 @@ describe("selectAccountsForRequest — routes on effective model, not the client
 		const slotInfo = getComboSlotInfo(meta);
 		expect(slotInfo?.comboName).toBe("Test Combo");
 		expect(slotInfo?.slots[0]?.modelOverride).toBe("claude-opus-4-5");
+	});
+});
+
+// ── getOrderedAccounts: usage-capped accounts never reach the strategy ────────
+//
+// These assert on what the STRATEGY RECEIVES, not on what selection returns.
+// That distinction is the whole point: every load-balancing strategy filters
+// with `isAccountAvailable(account, now)` and cannot see the usage cache, so a
+// capped account that is still handed to the strategy gets selected, retried,
+// and model-cycled until every model 429s. Asserting on the return value would
+// pass even with the filter removed, because the strategy mock decides the
+// return.
+describe("getOrderedAccounts usage-exhaustion filtering", () => {
+	it("does not hand a usage-capped account to the strategy", async () => {
+		const now = Date.now();
+		const cappedAcc = makeAccount({ id: "acc-capped", name: "capped" });
+		const healthyAcc = makeAccount({ id: "acc-healthy", name: "healthy" });
+		usageCache.set(cappedAcc.id, {
+			seven_day: {
+				utilization: 100,
+				resets_at: new Date(now + 40 * 3600_000).toISOString(),
+			},
+			five_hour: {
+				utilization: 20,
+				resets_at: new Date(now + 3600_000).toISOString(),
+			},
+		});
+
+		const ctx = makeCtx({ accounts: [cappedAcc, healthyAcc] });
+		await getOrderedAccounts(makeRequestMeta(), ctx);
+
+		const passed = (
+			ctx.strategy.select as unknown as {
+				mock: { calls: Array<[Account[], RequestMeta]> };
+			}
+		).mock.calls[0][0];
+		expect(passed.map((a) => a.id)).toEqual(["acc-healthy"]);
+	});
+
+	it("keeps an account whose capped window already reset (stale snapshot)", async () => {
+		const pastReset = new Date(Date.now() - 5 * 60_000).toISOString();
+		const acc = makeAccount({ id: "acc-stale", name: "stale" });
+		// 100% utilization but the reset is in the PAST: the snapshot predates
+		// the window reset, so exhaustion must not be claimed from it.
+		usageCache.set(acc.id, {
+			seven_day: { utilization: 100, resets_at: pastReset },
+			five_hour: { utilization: 100, resets_at: pastReset },
+		});
+
+		const ctx = makeCtx({ accounts: [acc] });
+		await getOrderedAccounts(makeRequestMeta(), ctx);
+
+		const passed = (
+			ctx.strategy.select as unknown as {
+				mock: { calls: Array<[Account[], RequestMeta]> };
+			}
+		).mock.calls[0][0];
+		expect(passed.map((a) => a.id)).toEqual(["acc-stale"]);
+	});
+
+	it("still hands a capped account to the strategy for auto-refresh probes", async () => {
+		// The scheduler probes capped accounts to detect their window reset. A
+		// capped account is neither paused nor rate_limited_until, so if the
+		// bypass did not cover it nothing else would let it back in.
+		const now = Date.now();
+		const cappedAcc = makeAccount({ id: "acc-capped", name: "capped" });
+		usageCache.set(cappedAcc.id, {
+			seven_day: {
+				utilization: 100,
+				resets_at: new Date(now + 40 * 3600_000).toISOString(),
+			},
+			five_hour: {
+				utilization: 20,
+				resets_at: new Date(now + 3600_000).toISOString(),
+			},
+		});
+
+		const ctx = makeCtx({ accounts: [cappedAcc] });
+		const meta = makeRequestMeta({
+			headers: new Headers({ "x-better-ccflare-bypass-session": "true" }),
+		});
+		await getOrderedAccounts(meta, ctx);
+
+		const passed = (
+			ctx.strategy.select as unknown as {
+				mock: { calls: Array<[Account[], RequestMeta]> };
+			}
+		).mock.calls[0][0];
+		expect(passed.map((a) => a.id)).toEqual(["acc-capped"]);
 	});
 });

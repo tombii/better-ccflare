@@ -1,4 +1,8 @@
-import { getModelFamily, isAccountAvailable } from "@better-ccflare/core";
+import {
+	getModelFamily,
+	isAccountAvailable,
+	isUsageExhausted,
+} from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import {
 	getRepresentativeUsageResetMs,
@@ -175,8 +179,40 @@ export async function getOrderedAccounts(
 ): Promise<Account[]> {
 	try {
 		const allAccounts = await ctx.dbOps.getAllAccounts();
-		// Return all accounts - the provider will be determined dynamically per account
-		return ctx.strategy.select(allAccounts, meta);
+		// Drop usage-capped accounts before the strategy ever sees them.
+		//
+		// This is the choke point that matters: every load-balancing strategy
+		// filters with `isAccountAvailable(account, now)` and has no access to
+		// the usage cache (it lives in this package, not @better-ccflare/
+		// load-balancer), so gating inside the strategies would mean plumbing
+		// usage through every one of them. Filtering here covers all strategies
+		// at once and keeps a capped account from being picked, retried, and
+		// model-cycled until every model 429s.
+		//
+		// The auto-refresh scheduler's probes must still get through: that is
+		// how a capped account's window-reset is detected, and a capped account
+		// is neither `paused` nor `rate_limited_until`, so nothing else would
+		// let it back in.
+		const isAutoRefreshBypass =
+			meta.headers?.get("x-better-ccflare-bypass-session") === "true";
+		// Deliberately narrow: this removes ONLY usage-capped accounts. The
+		// paused / requires_reauth / rate_limited_until checks stay where they
+		// already are, inside the strategies, because some of them rely on
+		// seeing the full account list (session affinity has to find its sticky
+		// account before deciding anything). Filtering those here too would
+		// silently change strategy behaviour, which is not what this fix is for.
+		const now = Date.now();
+		const candidates = isAutoRefreshBypass
+			? allAccounts
+			: allAccounts.filter((account) => {
+					const usage = usageSnapshot(account);
+					return (
+						usage === null ||
+						!isUsageExhausted(usage.utilization, usage.resetMs, now)
+					);
+				});
+		// Provider is still determined dynamically per account downstream.
+		return ctx.strategy.select(candidates, meta);
 	} catch (error) {
 		log.error("Failed to get accounts from database:", error);
 		console.error("\n❌ DATABASE ERROR DETECTED");
@@ -240,7 +276,12 @@ export async function selectAccountsForRequest(
 					// (auto_pause_on_overage_enabled=1 AND pause_reason IN (NULL,'overage')).
 					const isAutoRefreshBypass =
 						meta.headers.get("x-better-ccflare-bypass-session") === "true";
-					const available = isAccountAvailable(forcedAccount);
+					const forcedUsage = usageSnapshot(forcedAccount);
+					const available = isAccountAvailable(
+						forcedAccount,
+						Date.now(),
+						forcedUsage ?? undefined,
+					);
 					const isOveragePaused =
 						forcedAccount.paused &&
 						forcedAccount.auto_pause_on_overage_enabled &&
@@ -250,11 +291,21 @@ export async function selectAccountsForRequest(
 						!available &&
 						!forcedAccount.paused &&
 						!!forcedAccount.rate_limited_until;
+					// A usage-capped account is neither paused nor
+					// rate_limited_until, so without this it would fail
+					// `available` and then match none of the bypass conditions —
+					// leaving the scheduler unable to probe it and detect its
+					// window reset, the one thing the bypass exists to do.
+					const isUsageCapped =
+						!available &&
+						!forcedAccount.paused &&
+						!forcedAccount.rate_limited_until &&
+						forcedUsage !== null;
 					const allowThrough =
 						available ||
 						(isAutoRefreshBypass &&
 							!forcedAccount.requires_reauth &&
-							(isOveragePaused || isRateLimited));
+							(isOveragePaused || isRateLimited || isUsageCapped));
 					if (allowThrough) {
 						return [forcedAccount];
 					}
@@ -362,7 +413,13 @@ export async function selectAccountsForRequest(
 							continue;
 						}
 
-						if (!isAccountAvailable(account)) {
+						if (
+							!isAccountAvailable(
+								account,
+								Date.now(),
+								usageSnapshot(account) ?? undefined,
+							)
+						) {
 							continue;
 						}
 
