@@ -48,7 +48,7 @@ const KNOWN_ERROR_META: Record<
 	upstream_529_overloaded_with_reset: {
 		title: "Provider overload",
 		description:
-			"The upstream provider returned 529 (overloaded). Account temporarily cooled down — the cooldown window comes from the Retry-After header when provided, or a synthesized window for mid-stream overloaded_error detections (no Retry-After is available in that path).",
+			"The upstream provider returned 529 (overloaded) with a Retry-After header. Account temporarily cooled down for that duration.",
 		suggestion:
 			"No action needed — the account will recover automatically. Traffic will shift to other configured accounts in the meantime.",
 		severity: "warning",
@@ -56,7 +56,7 @@ const KNOWN_ERROR_META: Record<
 	upstream_529_overloaded_no_reset: {
 		title: "Provider overload (no Retry-After)",
 		description:
-			"The upstream provider returned 529 (overloaded) without a Retry-After header; entering probe cooldown.",
+			"The upstream provider returned 529 (overloaded) without a Retry-After header; entering probe cooldown. This also covers mid-stream overloaded_error detections, which never carry a Retry-After header — HTTP headers were already sent before the error occurred in that path.",
 		suggestion:
 			"Cooldown defaults to 60s. Set `CCFLARE_DEFAULT_COOLDOWN_NO_RESET_MS` in your environment to change it.",
 		severity: "warning",
