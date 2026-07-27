@@ -68,7 +68,7 @@ export const PROVIDER_CONFIG: Record<ProviderName, ProviderConfig> = {
 	},
 	[PROVIDER_NAMES.MINIMAX]: {
 		requiresSessionTracking: false, // Minimax is pay-as-you-go
-		supportsUsageTracking: false, // Minimax doesn't support usage tracking
+		supportsUsageTracking: true, // Minimax exposes Token Plan remains via /v1/token_plan/remains (polling only; request forwarding still goes through the generic anthropic-compatible path)
 		supportsOAuth: false, // Minimax uses API key authentication
 		defaultEndpoint: "https://api.minimax.io/anthropic",
 	},

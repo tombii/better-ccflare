@@ -19,6 +19,7 @@ import type {
 	AlibabaCodingPlanUsageData,
 	AnyUsageData,
 	KiloUsageData,
+	MinimaxUsageData,
 	NanoGPTUsageData,
 	UsageData,
 	XaiUsageData,
@@ -27,6 +28,7 @@ import type {
 import {
 	getRepresentativeAlibabaCodingPlanWindow,
 	getRepresentativeKiloWindow,
+	getRepresentativeMinimaxWindow,
 	getRepresentativeNanoGPTWindow,
 	getRepresentativeWindow,
 	getRepresentativeXaiWindow,
@@ -153,6 +155,15 @@ export function getRepresentativeUsageResetMs(
 					data,
 					getRepresentativeXaiWindow(data as XaiUsageData),
 				);
+			case "minimax": {
+				const windowName = getRepresentativeMinimaxWindow(
+					data as MinimaxUsageData,
+				);
+				// extractUsageResetMs reads `resets_at` (string) OR `resetAt` (ms);
+				// the Minimax fetcher populates `resetAt` with epoch ms, so this
+				// works for both 5h and 7d windows.
+				return extractUsageResetMs(data, windowName);
+			}
 			default:
 				return null;
 		}

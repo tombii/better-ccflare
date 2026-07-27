@@ -451,6 +451,27 @@ export function createAccountsListHandler(
 							);
 						}
 					}
+				} else if (account.provider === "minimax" && usageData) {
+					// Minimax Token Plan usage data — 5h/7d windows from /v1/token_plan/remains
+					const isMinimaxData =
+						"five_hour" in usageData || "seven_day" in usageData;
+					if (isMinimaxData) {
+						try {
+							const {
+								getRepresentativeMinimaxUtilization,
+								getRepresentativeMinimaxWindow,
+							} = require("@better-ccflare/providers");
+							usageUtilization =
+								getRepresentativeMinimaxUtilization(usageData);
+							usageWindow = getRepresentativeMinimaxWindow(usageData);
+							fullUsageData = usageData as FullUsageData;
+						} catch (error) {
+							log.warn(
+								`Failed to process Minimax usage data for account ${account.name}:`,
+								error,
+							);
+						}
+					}
 				}
 
 				const usageThrottleSettings = {

@@ -45,3 +45,4 @@ test_*.sh
 .worktrees/
 docs/superpowers/
 packages/database/src/inline-integrity-check-worker.ts
+.tmp/
