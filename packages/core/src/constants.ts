@@ -81,12 +81,15 @@ export const TIME_CONSTANTS = {
 	// Anthropic's own retry-after value (min(resetTime, now + cap)), but that
 	// resetTime can come from the anthropic-ratelimit-unified-reset header —
 	// a quota-window reset that can be hours away (see provider.ts:368-380) —
-	// rather than a short, per-request retry-after. Deliberately identical to
-	// RATE_LIMIT_BACKOFF_MAX_MS (the established 429 ramp ceiling): it honors
-	// a real, short retry-after literally, while still capping a unified-reset
-	// window value at the same bound the 429 path already trusts.
+	// rather than a short, per-request retry-after. A quota-window timestamp
+	// carries no information about how long the *overload* itself lasts, so
+	// this caps at OVERLOAD scale, not the 429 ramp ceiling: deliberately
+	// identical to DEFAULT_RATE_LIMIT_NO_RESET_COOLDOWN_MS (60s, above) — the
+	// repo's established "no usable signal" answer. A real, short retry-after
+	// (≤ 60s) is still honored literally; only a multi-hour unified-reset
+	// value gets capped down to this bound.
 	// Override at runtime via CCFLARE_OVERLOAD_WITH_RESET_MAX_MS.
-	OVERLOAD_WITH_RESET_MAX_MS: 5 * 60 * 1000, // 5min
+	OVERLOAD_WITH_RESET_MAX_MS: 60 * 1000, // 60s
 } as const;
 
 /**

@@ -345,7 +345,8 @@ describe("529 overload cooldown separation", () => {
 		const account = makeAccount({ consecutive_rate_limits: 0 });
 		const { ctx } = makeCtx({ rateLimited: true });
 		// anthropic-ratelimit-unified-reset can carry a quota-window reset that's
-		// hours away (provider.ts:368-380) rather than a real short retry-after.
+		// hours away (provider.ts:368-380) rather than a real short retry-after —
+		// far beyond the 60s overload-scale cap.
 		const resetTime = NOW + 10 * 60_000;
 
 		applyRateLimitCooldown(
@@ -354,9 +355,11 @@ describe("529 overload cooldown separation", () => {
 			ctx,
 		);
 
-		expect(account.rate_limited_until).toBe(
-			NOW + TIME_CONSTANTS.OVERLOAD_WITH_RESET_MAX_MS,
-		);
+		// Pin the literal value, not TIME_CONSTANTS.OVERLOAD_WITH_RESET_MAX_MS
+		// itself — a quota-window reset carries no information about how long
+		// the overload lasts, so the cap must be overload-scale (60s), not the
+		// 429 ramp ceiling (5min) a prior revision used here.
+		expect(account.rate_limited_until).toBe(NOW + 60_000);
 	});
 
 	it("does not shorten an active 429 quota bench when a 529 overload arrives mid-window (forward guard)", () => {
