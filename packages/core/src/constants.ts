@@ -105,18 +105,42 @@ export const TIME_CONSTANTS = {
 } as const;
 
 /**
+ * Read a duration (ms) override from the environment, falling back to the
+ * compiled-in default unless the value is a finite, positive number.
+ *
+ * Only a positive finite value is a usable duration. The other outcomes are
+ * not weaker settings but broken state: a negative duration puts every
+ * cooldown computed from it in the past, so it expires the moment it is
+ * written (silently disabling the mechanism), and Infinity benches the
+ * account forever — and throws RangeError where the resulting timestamp is
+ * rendered via `new Date(...).toISOString()` for the audit log. Unset,
+ * unparseable and 0 keep their previous meaning of "use the default".
+ */
+function readDurationOverrideMs(
+	raw: string | undefined,
+	fallback: number,
+): number {
+	const parsed = Number(raw);
+	return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+/**
  * Compute exponential-backoff cooldown (ms) for a given streak depth.
  *   backoff = BASE * 2^(consecutiveCount - 1), capped at MAX.
  * Reads BASE/MAX from env (CCFLARE_RATE_LIMIT_BACKOFF_BASE_MS /
- * CCFLARE_RATE_LIMIT_BACKOFF_MAX_MS), falling back to TIME_CONSTANTS.
- * Uses || (not ??) so 0/NaN env values fall through to the default.
+ * CCFLARE_RATE_LIMIT_BACKOFF_MAX_MS), falling back to TIME_CONSTANTS
+ * for anything that is not a positive finite duration.
  */
 export function computeRateLimitBackoffMs(consecutiveCount: number): number {
 	const count = Math.max(1, consecutiveCount);
-	const baseEnv = Number(process.env.CCFLARE_RATE_LIMIT_BACKOFF_BASE_MS);
-	const maxEnv = Number(process.env.CCFLARE_RATE_LIMIT_BACKOFF_MAX_MS);
-	const base = baseEnv || TIME_CONSTANTS.RATE_LIMIT_BACKOFF_BASE_MS;
-	const max = maxEnv || TIME_CONSTANTS.RATE_LIMIT_BACKOFF_MAX_MS;
+	const base = readDurationOverrideMs(
+		process.env.CCFLARE_RATE_LIMIT_BACKOFF_BASE_MS,
+		TIME_CONSTANTS.RATE_LIMIT_BACKOFF_BASE_MS,
+	);
+	const max = readDurationOverrideMs(
+		process.env.CCFLARE_RATE_LIMIT_BACKOFF_MAX_MS,
+		TIME_CONSTANTS.RATE_LIMIT_BACKOFF_MAX_MS,
+	);
 	// Guard against overflow: 2^53 is JS safe-integer limit.
 	const exponent = Math.min(count - 1, 52);
 	return Math.min(base * 2 ** exponent, max);
@@ -125,31 +149,39 @@ export function computeRateLimitBackoffMs(consecutiveCount: number): number {
 /**
  * Read the stability-reset window (ms) for the consecutive_rate_limits counter.
  * Reads CCFLARE_RATE_LIMIT_RESET_STABILITY_MS from env.
- * Uses || (not ??) so 0/NaN env values fall through to the default.
  */
 export function getRateLimitResetStabilityMs(): number {
-	const raw = Number(process.env.CCFLARE_RATE_LIMIT_RESET_STABILITY_MS);
-	return raw || TIME_CONSTANTS.RATE_LIMIT_RESET_STABILITY_MS;
+	return readDurationOverrideMs(
+		process.env.CCFLARE_RATE_LIMIT_RESET_STABILITY_MS,
+		TIME_CONSTANTS.RATE_LIMIT_RESET_STABILITY_MS,
+	);
 }
 
 /**
  * Read the fixed 529-overload cooldown (ms).
  * Reads CCFLARE_OVERLOAD_COOLDOWN_MS from env.
- * Uses || (not ??) so 0/NaN env values fall through to the default.
  */
 export function computeOverloadCooldownMs(): number {
-	const raw = Number(process.env.CCFLARE_OVERLOAD_COOLDOWN_MS);
-	return raw || TIME_CONSTANTS.OVERLOAD_COOLDOWN_MS;
+	return readDurationOverrideMs(
+		process.env.CCFLARE_OVERLOAD_COOLDOWN_MS,
+		TIME_CONSTANTS.OVERLOAD_COOLDOWN_MS,
+	);
 }
 
 /**
  * Read the cap (ms) on a 529-with-reset cooldown duration.
  * Reads CCFLARE_OVERLOAD_WITH_RESET_MAX_MS from env.
- * Uses || (not ??) so 0/NaN env values fall through to the default.
+ *
+ * This value is applied as `min(resetTime, now + cap)`, so it is the only
+ * clamp standing between a 529 that carries an anthropic-ratelimit-unified-reset
+ * header (a quota window hours out) and an hours-long bench — a non-finite
+ * override would not widen the cap but remove it.
  */
 export function computeOverloadWithResetCapMs(): number {
-	const raw = Number(process.env.CCFLARE_OVERLOAD_WITH_RESET_MAX_MS);
-	return raw || TIME_CONSTANTS.OVERLOAD_WITH_RESET_MAX_MS;
+	return readDurationOverrideMs(
+		process.env.CCFLARE_OVERLOAD_WITH_RESET_MAX_MS,
+		TIME_CONSTANTS.OVERLOAD_WITH_RESET_MAX_MS,
+	);
 }
 
 /**
