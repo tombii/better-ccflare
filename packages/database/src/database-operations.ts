@@ -958,6 +958,13 @@ OAuth tokens will need to be re-authenticated.
 		appliedModel?: string | null,
 		projectAttributionSource?: ProjectAttributionSource | null,
 		agentAttributionSource?: AgentAttributionSource | null,
+		streamTerminalState?:
+			| "complete"
+			| "recovered"
+			| "error"
+			| "truncated"
+			| "client_cancelled"
+			| null,
 	): Promise<void> {
 		await withDatabaseRetry(
 			() =>
@@ -982,6 +989,7 @@ OAuth tokens will need to be re-authenticated.
 					appliedModel,
 					projectAttributionSource,
 					agentAttributionSource,
+					streamTerminalState,
 				}),
 			this.retryConfig,
 			"saveRequest",

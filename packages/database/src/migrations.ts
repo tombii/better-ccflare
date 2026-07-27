@@ -156,7 +156,8 @@ export function ensureSchema(db: Database): void {
 			original_model TEXT,
 			applied_model TEXT,
 			project_attribution_source TEXT,
-			agent_attribution_source TEXT
+			agent_attribution_source TEXT,
+			stream_terminal_state TEXT
 		)
 	`);
 
@@ -972,6 +973,21 @@ export function runMigrations(db: Database, dbPath?: string): void {
 				"ALTER TABLE requests ADD COLUMN agent_attribution_source TEXT",
 			).run();
 			log.info("Added agent_attribution_source column to requests table");
+		}
+
+		// Add stream_terminal_state column if it doesn't exist
+		// Real SSE termination state for Anthropic-Messages-shaped streaming
+		// responses — distinct from the header-only `success` bit. One of
+		// "complete" | "recovered" | "error" | "truncated" | NULL. Persisted
+		// so operators can distinguish a synthetically-terminated stream
+		// (recovered) or a TCP-close mid-content (truncated) from a clean
+		// completion (complete). NULL for non-streaming responses or streams
+		// that were not wrapped by the terminal-recovery observer.
+		if (!requestsColumnNames.includes("stream_terminal_state")) {
+			db.prepare(
+				"ALTER TABLE requests ADD COLUMN stream_terminal_state TEXT",
+			).run();
+			log.info("Added stream_terminal_state column to requests table");
 		}
 
 		// Add timestamp column to request_payloads if it doesn't exist

@@ -85,6 +85,20 @@ export interface RequestData {
 	appliedModel?: string | null;
 	projectAttributionSource?: ProjectAttributionSource | null;
 	agentAttributionSource?: AgentAttributionSource | null;
+	/**
+	 * Real SSE termination state for Anthropic-Messages-shaped streams. One of
+	 * "complete" | "recovered" | "error" | "truncated" | "client_cancelled" |
+	 * null/undefined. Undefined/null for non-streaming responses or streams
+	 * not wrapped by the terminal-recovery observer. See
+	 * packages/proxy/src/anthropic-terminal-recovery.ts for the producer.
+	 */
+	streamTerminalState?:
+		| "complete"
+		| "recovered"
+		| "error"
+		| "truncated"
+		| "client_cancelled"
+		| null;
 	usage?: {
 		model?: string;
 		promptTokens?: number;
@@ -128,9 +142,10 @@ export class RequestRepository extends BaseRepository<RequestData> {
 				input_tokens, cache_read_input_tokens, cache_creation_input_tokens, output_tokens,
 				agent_used, output_tokens_per_second, api_key_id, api_key_name, project,
 				billing_type, combo_name, original_model, applied_model,
-				project_attribution_source, agent_attribution_source
+				project_attribution_source, agent_attribution_source,
+				stream_terminal_state
 			)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT (id) DO UPDATE SET
 				timestamp = EXCLUDED.timestamp,
 				method = EXCLUDED.method,
@@ -168,7 +183,13 @@ export class RequestRepository extends BaseRepository<RequestData> {
 				project = CASE WHEN ${projectWinsIncoming} THEN EXCLUDED.project ELSE requests.project END,
 				project_attribution_source = CASE WHEN ${projectWinsIncoming} THEN EXCLUDED.project_attribution_source ELSE requests.project_attribution_source END,
 				agent_used = CASE WHEN ${agentWinsIncoming} THEN EXCLUDED.agent_used ELSE requests.agent_used END,
-				agent_attribution_source = CASE WHEN ${agentWinsIncoming} THEN EXCLUDED.agent_attribution_source ELSE requests.agent_attribution_source END
+				agent_attribution_source = CASE WHEN ${agentWinsIncoming} THEN EXCLUDED.agent_attribution_source ELSE requests.agent_attribution_source END,
+				-- stream_terminal_state uses preserve-first (COALESCE) — a later
+				-- re-finalization (e.g. updateUsage after handleEnd) shouldn't
+				-- blank out the real SSE termination state the handleEnd path
+				-- recorded. A null incoming value means "I have nothing new",
+				-- not "the stream was clean".
+				stream_terminal_state = COALESCE(EXCLUDED.stream_terminal_state, requests.stream_terminal_state)
 		`,
 			[
 				data.id,
@@ -201,6 +222,7 @@ export class RequestRepository extends BaseRepository<RequestData> {
 				data.appliedModel || null,
 				data.projectAttributionSource || null,
 				data.agentAttributionSource || null,
+				data.streamTerminalState ?? null,
 			],
 		);
 	}
