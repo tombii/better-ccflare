@@ -1,4 +1,5 @@
-import { describe, expect, it, mock } from "bun:test";
+import { afterEach, describe, expect, it, mock } from "bun:test";
+import { usageCache } from "@better-ccflare/providers";
 import type {
 	Account,
 	ComboWithSlots,
@@ -85,6 +86,10 @@ function makeCtx(
 		asyncWriter: { enqueue: mock(() => {}) },
 	} as unknown as ProxyContext;
 }
+
+afterEach(() => {
+	usageCache.clear();
+});
 
 // ── setComboSlotInfo / getComboSlotInfo ───────────────────────────────────────
 
@@ -198,6 +203,46 @@ describe("selectAccountsForRequest — x-better-ccflare-account-id header", () =
 		// Rate-limited forced account is skipped; falls back to strategy.select which returns activeAcc
 		expect(result).toHaveLength(1);
 		expect(result[0]?.id).toBe("acc-active");
+	});
+
+	it("skips a forced account whose representative usage window is capped with a future reset", async () => {
+		const cappedAcc = makeAccount({ id: "acc-capped", name: "capped" });
+		const healthyAcc = makeAccount({ id: "acc-healthy", name: "healthy" });
+		const now = Date.now();
+		// Anthropic 7-day window fully exhausted, reset 40h in the future
+		// (matches the production incident: ann at 100% seven_day with ~40h
+		// to reset, sibling accounts at 43% / 53%).
+		usageCache.set(cappedAcc.id, {
+			seven_day: { utilization: 100, resets_at: new Date(now + 40 * 3600_000).toISOString() },
+			five_hour: { utilization: 53, resets_at: new Date(now + 3600_000).toISOString() },
+		});
+		const ctx = makeCtx({ accounts: [cappedAcc, healthyAcc] });
+		const meta = makeRequestMeta({
+			headers: new Headers({ "x-better-ccflare-account-id": "acc-capped" }),
+		});
+
+		const result = await selectAccountsForRequest(meta, ctx);
+		// Forced capped account is skipped; strategy mock returns healthyAcc.
+		expect(result.map((a) => a.id)).toEqual(["acc-healthy"]);
+	});
+
+	it("re-admits a forced account whose capped window has already reset", async () => {
+		const acc = makeAccount({ id: "acc-capped", name: "capped" });
+		// Snapshot from BEFORE the reset — the past resetMs signals that the
+		// window already cycled and the cached utilization is stale; must
+		// NOT count as exhausted.
+		const pastReset = new Date(Date.now() - 5 * 60_000).toISOString();
+		usageCache.set(acc.id, {
+			seven_day: { utilization: 100, resets_at: pastReset },
+			five_hour: { utilization: 25, resets_at: pastReset },
+		});
+		const ctx = makeCtx({ accounts: [acc] });
+		const meta = makeRequestMeta({
+			headers: new Headers({ "x-better-ccflare-account-id": "acc-capped" }),
+		});
+
+		const result = await selectAccountsForRequest(meta, ctx);
+		expect(result.map((a) => a.id)).toEqual(["acc-capped"]);
 	});
 });
 

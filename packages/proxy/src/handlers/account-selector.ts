@@ -1,6 +1,11 @@
 import { getModelFamily, isAccountAvailable } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
-import { usageCache } from "@better-ccflare/providers";
+import {
+	getRepresentativeUsageResetMs,
+	getRepresentativeUtilizationForProvider,
+	usageCache,
+} from "@better-ccflare/providers";
+import type { AccountUsageSnapshot } from "@better-ccflare/core";
 import type {
 	Account,
 	ComboFamily,
@@ -34,6 +39,31 @@ export function getComboSlotInfo(meta: RequestMeta): ComboSlotInfo | null {
 // Canonical definition lives in model-capacity.ts (single source of truth —
 // a structurally-identical local copy could silently drift).
 export type { ModelFamilyExhaustionInfo } from "./model-capacity";
+
+/**
+ * Snapshot of an account's representative usage window: returns null when
+ * no cached telemetry exists or the provider has no utilization surface
+ * (so the caller can fall back to the cheap `isAccountAvailable` check
+ * without a usage argument).
+ *
+ * The shared `isUsageExhausted` predicate lives in `@better-ccflare/core`
+ * and encodes both the "utilization >= 100" gate and the staleness guard
+ * (a known resetMs in the past means the snapshot predates the window
+ * reset and MUST NOT count as exhausted) — same predicate the
+ * rateLimitStatus display and /health usage_exhausted counter share, so
+ * the surfaces cannot diverge.
+ */
+function usageSnapshot(account: Account): AccountUsageSnapshot | null {
+	const data = usageCache.get(account.id);
+	if (!data) return null;
+	const provider = account.provider ?? "anthropic";
+	const utilization = getRepresentativeUtilizationForProvider(data, provider);
+	if (utilization === null) return null;
+	return {
+		utilization,
+		resetMs: getRepresentativeUsageResetMs(data, provider),
+	};
+}
 
 // Module-level WeakMap to store model-family exhaustion info per RequestMeta,
 // set when the capacity filter below removes every candidate account for a
