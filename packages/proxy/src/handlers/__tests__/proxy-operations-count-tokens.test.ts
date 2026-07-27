@@ -66,7 +66,9 @@ function makeProxyContext(): ProxyContext {
 	return {
 		strategy: { getNextAccount: () => null } as never,
 		dbOps: {
-			markAccountRateLimited: mock(() => Promise.resolve(1)),
+			markAccountRateLimited: mock(() =>
+				Promise.resolve({ consecutiveRateLimits: 1, applied: true }),
+			),
 			saveRequest: mock(() => Promise.resolve()),
 			updateAccountUsage: mock(() => Promise.resolve()),
 			getAdapter: mock(() => ({

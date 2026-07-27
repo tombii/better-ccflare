@@ -33,6 +33,7 @@ import {
 import {
 	completeRateLimitProbe,
 	getRateLimitProbeAdmission,
+	wouldSuppressProbe,
 } from "./handlers/rate-limit-cooldown";
 import { extractProjectAttributionFromRequest } from "./project-attribution";
 import {
@@ -520,6 +521,7 @@ export async function handleProxy(
 			}
 		: null;
 	let response: Response | null = null;
+	let anyAccountAttempted = false;
 
 	for (let i = 0; i < accounts.length; i++) {
 		// For combo routing: enrich metadata with slot index and look up model override
@@ -547,6 +549,15 @@ export async function handleProxy(
 			continue;
 		}
 
+		anyAccountAttempted = true;
+		// The last actually-attempted candidate is not always the last pool
+		// index: a probe-suppressed tail account gets skipped via `continue`
+		// above rather than attempted. Look ahead at the remaining candidates'
+		// CURRENT suppression state (without taking a lease) to find out
+		// whether any of them would still be attempted after this one.
+		const isLastAttemptedCandidate = accounts
+			.slice(i + 1)
+			.every((candidate) => wouldSuppressProbe(candidate));
 		try {
 			response = await proxyWithAccount(
 				req,
@@ -561,7 +572,7 @@ export async function handleProxy(
 				apiKeyId,
 				apiKeyName,
 				requestBodyContext,
-				!filteredComboInfo?.comboName && i === accounts.length - 1,
+				!filteredComboInfo?.comboName && isLastAttemptedCandidate,
 			);
 		} finally {
 			if (probeAdmission === "admitted") {
@@ -578,6 +589,49 @@ export async function handleProxy(
 			log.info(
 				`Combo slot ${i} failed on account ${accounts[i].name}${i < accounts.length - 1 ? ", trying next slot" : ", all combo slots exhausted"}`,
 			);
+		}
+	}
+
+	// Every candidate was single-flight probe-gate suppressed — no account was
+	// ever actually attempted. The gate's purpose is to prefer another account
+	// over stampeding one that just recovered, not to drop the request when
+	// there is no other account to prefer: retry the highest-priority
+	// candidate once, bypassing the gate, instead of falling through to a hard
+	// 503 against what may be a perfectly healthy account.
+	if (!anyAccountAttempted && accounts.length > 0) {
+		const i = 0;
+		let modelOverride: string | null = null;
+		if (filteredComboInfo?.slots[i]?.accountId === accounts[i].id) {
+			modelOverride = filteredComboInfo.slots[i].modelOverride;
+		}
+		log.info(
+			`All ${accounts.length} candidate account(s) were probe-gate suppressed; retrying account ${accounts[i].name} ungated`,
+		);
+		// This retry IS the request's terminal attempt by construction — the
+		// loop above already exhausted every candidate before falling through
+		// here. Unlike the loop's own `i === accounts.length - 1` check (which
+		// tracks whether the CURRENT iteration is the last one), `i` is always
+		// 0 in this block regardless of pool size, so that comparison would be
+		// a constant `false` for any pool with more than one candidate — the
+		// flag must instead depend only on whether this is combo routing.
+		response = await proxyWithAccount(
+			req,
+			url,
+			accounts[i],
+			requestMeta,
+			finalBodyBuffer,
+			finalCreateBodyStream,
+			i,
+			ctx,
+			modelOverride,
+			apiKeyId,
+			apiKeyName,
+			requestBodyContext,
+			!filteredComboInfo?.comboName,
+		);
+
+		if (response) {
+			return response;
 		}
 	}
 
@@ -623,12 +677,20 @@ export async function handleProxy(
 			log.info(
 				`Fallback: trying ${fallbackAccounts.length} SessionStrategy accounts`,
 			);
+			let anyFallbackAttempted = false;
 			for (let i = 0; i < fallbackAccounts.length; i++) {
 				const probeAdmission = getRateLimitProbeAdmission(fallbackAccounts[i]);
 				if (probeAdmission === "suppressed") {
 					continue;
 				}
 
+				anyFallbackAttempted = true;
+				// Same rationale as the main loop above: a probe-suppressed tail
+				// candidate is skipped via `continue`, so the last pool index is
+				// not necessarily the last one actually attempted.
+				const isLastAttemptedFallback = fallbackAccounts
+					.slice(i + 1)
+					.every((candidate) => wouldSuppressProbe(candidate));
 				try {
 					response = await proxyWithAccount(
 						req,
@@ -643,13 +705,46 @@ export async function handleProxy(
 						apiKeyId,
 						apiKeyName,
 						requestBodyContext,
-						i === fallbackAccounts.length - 1,
+						isLastAttemptedFallback,
 					);
 				} finally {
 					if (probeAdmission === "admitted") {
 						completeRateLimitProbe(fallbackAccounts[i], "abandoned");
 					}
 				}
+
+				if (response) {
+					return response;
+				}
+			}
+
+			// Same rationale as the main account loop above: an entirely
+			// suppressed fallback pool must not fall through to a hard failure.
+			if (!anyFallbackAttempted && fallbackAccounts.length > 0) {
+				const i = 0;
+				log.info(
+					`All ${fallbackAccounts.length} fallback candidate(s) were probe-gate suppressed; retrying account ${fallbackAccounts[i].name} ungated`,
+				);
+				// Same rationale as the main-loop block above: this retry is the
+				// terminal attempt by construction (the fallback loop already
+				// exhausted every candidate), and the fallback path is never
+				// combo-routed (comboName was cleared before re-selection), so the
+				// flag is unconditionally true here.
+				response = await proxyWithAccount(
+					req,
+					url,
+					fallbackAccounts[i],
+					requestMeta,
+					finalBodyBuffer,
+					finalCreateBodyStream,
+					i,
+					ctx,
+					undefined,
+					apiKeyId,
+					apiKeyName,
+					requestBodyContext,
+					true,
+				);
 
 				if (response) {
 					return response;

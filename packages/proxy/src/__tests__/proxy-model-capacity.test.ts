@@ -195,7 +195,9 @@ function makeComboContext(
 		dbOps: {
 			getAllAccounts: mock(async () => accounts),
 			getActiveComboForFamily: mock(async () => combo),
-			markAccountRateLimited: mock(() => Promise.resolve(1)),
+			markAccountRateLimited: mock(() =>
+				Promise.resolve({ consecutiveRateLimits: 1, applied: true }),
+			),
 			saveRequest: mock(() => Promise.resolve()),
 			updateAccountUsage: mock(() => Promise.resolve()),
 			getAdapter: mock(() => ({

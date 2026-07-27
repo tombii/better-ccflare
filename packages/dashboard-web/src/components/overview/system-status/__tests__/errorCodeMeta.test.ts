@@ -50,11 +50,12 @@ describe("getErrorMeta", () => {
 		expect(meta.title).toBe("Provider overload");
 		expect(meta.severity).toBe("warning");
 		expect(meta.description).toContain("529");
-		// Reason is also used for mid-stream overloaded_error detections where
-		// no Retry-After header is parsed; the description must acknowledge that
-		// path so a dashboard reader doesn't assume the cooldown always came
-		// from an HTTP header.
-		expect(meta.description).toContain("mid-stream");
+		// Since commit 657ea702, the mid-stream sniffer routes overloaded_error
+		// through upstream_529_overloaded_no_reset (no synthetic resetTime) —
+		// this reason's only remaining producer is a real Retry-After header
+		// from response-processor.ts, so the description must NOT claim a
+		// mid-stream path it can no longer produce.
+		expect(meta.description).not.toContain("mid-stream");
 		expect(meta.suggestion).toContain("automatically");
 	});
 
@@ -63,7 +64,18 @@ describe("getErrorMeta", () => {
 		expect(meta.title).toBe("Provider overload (no Retry-After)");
 		expect(meta.severity).toBe("warning");
 		expect(meta.description).toContain("529");
-		expect(meta.suggestion).toContain("CCFLARE_DEFAULT_COOLDOWN_NO_RESET_MS");
+		// This reason now covers the mid-stream overloaded_error path too (see
+		// above) — the description must acknowledge it so a dashboard reader
+		// doesn't assume this code is only about a headerless HTTP 529.
+		expect(meta.description).toContain("mid-stream");
+		// This path is the 10s single-flight probe cooldown
+		// (CCFLARE_OVERLOAD_COOLDOWN_MS), not the 429 no-reset default
+		// (CCFLARE_DEFAULT_COOLDOWN_NO_RESET_MS, 60s) — a prior revision named
+		// the wrong env var and duration here.
+		expect(meta.suggestion).toContain("CCFLARE_OVERLOAD_COOLDOWN_MS");
+		expect(meta.suggestion).not.toContain(
+			"CCFLARE_DEFAULT_COOLDOWN_NO_RESET_MS",
+		);
 	});
 
 	test("out_of_credits surfaces model-scoped credit depletion as an error", () => {

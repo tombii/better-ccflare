@@ -85,7 +85,10 @@ function makeContext(accounts: Account[]): ProxyContext {
 		dbOps: {
 			getAllAccounts: mock(async () => accounts),
 			getActiveComboForFamily: mock(async () => null),
-			markAccountRateLimited: mock(async () => 1),
+			markAccountRateLimited: mock(async () => ({
+				consecutiveRateLimits: 1,
+				applied: true,
+			})),
 		} as never,
 		runtime: { port: 8080, clientId: "test" } as never,
 		config: {

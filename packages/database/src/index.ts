@@ -22,6 +22,7 @@ export {
 	isEncryptionEnabled,
 } from "./payload-encryption";
 export { analyzeIndexUsage } from "./performance-indexes";
+export type { MarkAccountRateLimitedResult } from "./repositories/account.repository";
 export type {
 	ModelTranslation,
 	SimilarModel,

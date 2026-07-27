@@ -8,7 +8,6 @@ import type {
 	Account,
 	AgentAttributionSource,
 	ProjectAttributionSource,
-	RateLimitReason,
 } from "@better-ccflare/types";
 import {
 	ANTHROPIC_TERMINAL_RECOVERY_GRACE_MS,
@@ -261,21 +260,39 @@ export async function forwardToClient(
 			// Mid-stream rate-limit detection. The sniffer
 			// fires exactly once; after that feed() is a no-op.
 			if (account && rateLimitSniffer?.feed(value)) {
-				// Map firedReason to the correct RateLimitReason:
-				//   "overloaded_error" → upstream_529_overloaded_with_reset
-				//   "rate_limit_error" → upstream_429_with_reset
-				const midStreamReason: RateLimitReason =
-					rateLimitSniffer.firedReason === "overloaded_error"
-						? "upstream_529_overloaded_with_reset"
-						: "upstream_429_with_reset";
-				applyRateLimitCooldown(
-					account,
-					{
-						resetTime: Date.now() + getMidStreamRateLimitCooldownMs(),
-						reason: midStreamReason,
-					},
-					ctx,
-				);
+				// SSE error frames carry no reset header — HTTP headers were
+				// already sent before the error occurred — so any resetTime
+				// passed here is a value ccflare invents, never an upstream
+				// instruction. The two firedReason branches treat that fact
+				// differently on purpose:
+				//   "rate_limit_error" (429, quota) → upstream_429_with_reset,
+				//     WITH the synthetic resetTime below. This is a deliberate
+				//     conservative estimate of the 5h quota window — better to
+				//     under-cool a real quota exhaustion than leave the account
+				//     selectable, and the ramp-capped 429 formula treats
+				//     resetTime only as an upper bound anyway.
+				//   "overloaded_error" (529, transient) → the reason alone
+				//     (upstream_529_overloaded_no_reset), no resetTime. Passing
+				//     a synthetic reset for a 529 would misrepresent a ccflare
+				//     default as an Anthropic Retry-After; the no-reset reason
+				//     routes this to the cooldown core's fixed short overload
+				//     cooldown instead.
+				if (rateLimitSniffer.firedReason === "overloaded_error") {
+					applyRateLimitCooldown(
+						account,
+						{ reason: "upstream_529_overloaded_no_reset" },
+						ctx,
+					);
+				} else {
+					applyRateLimitCooldown(
+						account,
+						{
+							resetTime: Date.now() + getMidStreamRateLimitCooldownMs(),
+							reason: "upstream_429_with_reset",
+						},
+						ctx,
+					);
+				}
 			}
 		};
 

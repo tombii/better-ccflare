@@ -139,19 +139,27 @@ export function resolveEffectiveModel(
 }
 
 /**
- * Gets accounts ordered by the load balancing strategy
+ * Gets accounts ordered by the load balancing strategy. Also returns the raw
+ * (unfiltered) account list from the DB so callers that need to look past
+ * the strategy's availability filter — e.g. distinguishing "no free capacity
+ * anywhere" from "free capacity exists but is sidelined by a rate-limit
+ * cooldown" — don't have to issue a second DB read.
  * @param meta - Request metadata
  * @param ctx - The proxy context
- * @returns Array of ordered accounts
+ * @returns `ordered` — the strategy-filtered candidates; `all` — every account
+ *   from the DB, unfiltered.
  */
 export async function getOrderedAccounts(
 	meta: RequestMeta,
 	ctx: ProxyContext,
-): Promise<Account[]> {
+): Promise<{ ordered: Account[]; all: Account[] }> {
 	try {
 		const allAccounts = await ctx.dbOps.getAllAccounts();
 		// Return all accounts - the provider will be determined dynamically per account
-		return ctx.strategy.select(allAccounts, meta);
+		return {
+			ordered: ctx.strategy.select(allAccounts, meta),
+			all: allAccounts,
+		};
 	} catch (error) {
 		log.error("Failed to get accounts from database:", error);
 		console.error("\n❌ DATABASE ERROR DETECTED");
@@ -166,7 +174,7 @@ export async function getOrderedAccounts(
 		console.error(`${"═".repeat(50)}\n`);
 		// Return empty array to gracefully handle database errors
 		// This will cause the proxy to fall back to unauthenticated mode
-		return [];
+		return { ordered: [], all: [] };
 	}
 }
 
@@ -394,7 +402,9 @@ export async function selectAccountsForRequest(
 		}
 	}
 
-	const orderedAccounts = applyExclusions(await getOrderedAccounts(meta, ctx));
+	const { ordered: rawOrderedAccounts, all: allAccounts } =
+		await getOrderedAccounts(meta, ctx);
+	const orderedAccounts = applyExclusions(rawOrderedAccounts);
 
 	// Model-scoped capacity filter for the non-combo (or combo-inactive/
 	// combo-exhausted-fallthrough) path: drop accounts whose weekly per-model
@@ -438,6 +448,59 @@ export async function selectAccountsForRequest(
 			}
 
 			if (available.length === 0 && anyExcluded) {
+				// Every SURVIVING candidate is capacity-exhausted, but
+				// orderedAccounts has already been through the strategy's
+				// isAccountAvailable filter, which silently drops any account
+				// with a future rate_limited_until regardless of the reason
+				// (a short rate-limit cooldown included) — those accounts
+				// never reached the loop above. If any of them still has free
+				// capacity for this family, the weekly cap is not the real
+				// blocker: the account is only sidelined for minutes, and the
+				// response must say so instead of asserting weekly exhaustion.
+				//
+				// allAccounts is the raw, unfiltered DB read — it still
+				// contains accounts excluded for this request via
+				// x-better-ccflare-exclude-providers (e.g. Anthropic OAuth
+				// accounts excluded for Codex CLI traffic). Re-run the same
+				// exclusion the candidate list already went through so a
+				// header-excluded account — permanently ineligible for this
+				// request, not just cooling down — can never be reported as
+				// the "true blocker" with its cooldown as Retry-After.
+				const orderedIds = new Set(orderedAccounts.map((a) => a.id));
+				const sweepCandidates = applyExclusions(allAccounts);
+				let earliestCooldownResetAt: number | null = null;
+				for (const account of sweepCandidates) {
+					if (orderedIds.has(account.id)) continue;
+					if (account.paused || account.requires_reauth) continue;
+					if (
+						account.rate_limited_until == null ||
+						account.rate_limited_until <= now
+					) {
+						continue;
+					}
+					if (isAccountCapacityExcluded(account, model, now).excluded) {
+						continue;
+					}
+					if (
+						earliestCooldownResetAt == null ||
+						account.rate_limited_until < earliestCooldownResetAt
+					) {
+						earliestCooldownResetAt = account.rate_limited_until;
+					}
+				}
+
+				if (earliestCooldownResetAt != null) {
+					log.warn(
+						`Model family "${family}" not actually capacity-exhausted — an account with free capacity is only sidelined by a rate-limit cooldown until ${new Date(earliestCooldownResetAt).toISOString()}`,
+					);
+					setModelFamilyExhaustionInfo(meta, {
+						family,
+						resetAt: earliestCooldownResetAt,
+						origin: "cooldown_masked",
+					});
+					return [];
+				}
+
 				log.warn(
 					`All ${orderedAccounts.length} candidate account(s) exhausted for model family "${family}"`,
 				);
