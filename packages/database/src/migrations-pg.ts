@@ -395,6 +395,26 @@ export async function addColumnTolerant(
  *
  * Idempotent — a no-op on already-deduped accounts.
  */
+/**
+ * Duplicate-group scope for the survivor merge below. PostgreSQL permits a
+ * numbered parameter to be referenced repeatedly, so the whole statement reuses
+ * $5/$6/$7 for (name, provider, endpoint) rather than re-binding them per
+ * column.
+ */
+const PG_GROUP_SCOPE = `WHERE name = $5 AND provider = $6
+	                          AND COALESCE(custom_endpoint, '') = $7`;
+
+/**
+ * Freshest non-NULL value of `col` across the duplicate group, using the same
+ * ordering that selects the credential set: newest refresh token first, then
+ * newest row. `col` is an internal literal, never user input.
+ */
+function pgFreshest(col: string): string {
+	return `(SELECT ${col} FROM accounts ${PG_GROUP_SCOPE} AND ${col} IS NOT NULL
+		    ORDER BY COALESCE(refresh_token_issued_at, 0) DESC, created_at DESC
+		    LIMIT 1)`;
+}
+
 async function collapseAccountDuplicatesPreservingStatePg(
 	adapter: BunSqlAdapter,
 ): Promise<void> {
@@ -485,48 +505,72 @@ async function collapseAccountDuplicatesPreservingStatePg(
 		// triple + max/min/sum) lookups (10 aggregates × 3 group keys);
 		// $35 is the survivor id.
 		await adapter.unsafe(
+			// Must stay behaviourally identical to the SQLite merge in
+			// migrations.ts — same column set, same rule per column. This is the
+			// path that runs against PostgreSQL deployments, so a column merged
+			// there and missed here loses real account state on upgrade.
+			//
+			//   MAX      — cooldown timestamps/counters (a collapse must never
+			//              shorten a cooldown) and the 0/1 flag columns.
+			//   MIN      — created_at (oldest birth), rate_limit_remaining (most
+			//              conservative estimate of what is left).
+			//   SUM      — lifetime/session counters, so history survives.
+			//   COALESCE — survivor's own value, else the freshest non-NULL in
+			//              the group (credentials and config columns).
+			//
+			// The flag columns are INTEGER, not BOOLEAN: 0 is a legitimate value,
+			// not "unset". MAX is therefore the deliberate policy "enabled on any
+			// duplicate wins", matching paused/requires_reauth.
+			//
+			// Not merged: id (survivor keeps its own; dependents are repointed),
+			// and name/provider/custom_endpoint, which are the dedup key and are
+			// identical across the group by construction.
+			//
+			// PostgreSQL allows a numbered parameter to be referenced more than
+			// once, so the group key is just $5/$6/$7 throughout instead of the
+			// 30 repeated bindings this previously carried — adding columns to a
+			// positional list that long is how a binding silently shifts.
 			`UPDATE accounts SET
 			   refresh_token = $1,
 			   access_token = $2,
 			   expires_at = $3::BIGINT,
-			   refresh_token_issued_at = (SELECT MAX(COALESCE(refresh_token_issued_at, 0)) FROM accounts
-			                              WHERE name = $5 AND provider = $6 AND COALESCE(custom_endpoint, '') = $7),
 			   api_key = COALESCE(api_key, $4),
-			   last_used = (SELECT MAX(COALESCE(last_used, 0)) FROM accounts
-			                WHERE name = $8 AND provider = $9 AND COALESCE(custom_endpoint, '') = $10),
-			   created_at = (SELECT MIN(created_at) FROM accounts
-			                 WHERE name = $11 AND provider = $12 AND COALESCE(custom_endpoint, '') = $13),
-			   request_count = (SELECT SUM(COALESCE(request_count, 0)) FROM accounts
-			                    WHERE name = $14 AND provider = $15 AND COALESCE(custom_endpoint, '') = $16),
-			   total_requests = (SELECT SUM(COALESCE(total_requests, 0)) FROM accounts
-			                     WHERE name = $17 AND provider = $18 AND COALESCE(custom_endpoint, '') = $19),
-			   session_request_count = (SELECT SUM(COALESCE(session_request_count, 0)) FROM accounts
-			                            WHERE name = $20 AND provider = $21 AND COALESCE(custom_endpoint, '') = $22),
-			   priority = (SELECT MAX(COALESCE(priority, 0)) FROM accounts
-			               WHERE name = $23 AND provider = $24 AND COALESCE(custom_endpoint, '') = $25),
-			   consecutive_rate_limits = (SELECT MAX(COALESCE(consecutive_rate_limits, 0)) FROM accounts
-			                              WHERE name = $26 AND provider = $27 AND COALESCE(custom_endpoint, '') = $28),
-			   paused = (SELECT MAX(COALESCE(paused, 0)) FROM accounts
-			             WHERE name = $29 AND provider = $30 AND COALESCE(custom_endpoint, '') = $31),
-			   requires_reauth = (SELECT MAX(COALESCE(requires_reauth, 0)) FROM accounts
-			                      WHERE name = $32 AND provider = $33 AND COALESCE(custom_endpoint, '') = $34)
-			 WHERE id = $35`,
+			   refresh_token_issued_at = (SELECT MAX(COALESCE(refresh_token_issued_at, 0)) FROM accounts ${PG_GROUP_SCOPE}),
+			   last_used = (SELECT MAX(COALESCE(last_used, 0)) FROM accounts ${PG_GROUP_SCOPE}),
+			   created_at = (SELECT MIN(created_at) FROM accounts ${PG_GROUP_SCOPE}),
+			   request_count = (SELECT SUM(COALESCE(request_count, 0)) FROM accounts ${PG_GROUP_SCOPE}),
+			   total_requests = (SELECT SUM(COALESCE(total_requests, 0)) FROM accounts ${PG_GROUP_SCOPE}),
+			   session_request_count = (SELECT SUM(COALESCE(session_request_count, 0)) FROM accounts ${PG_GROUP_SCOPE}),
+			   priority = (SELECT MAX(COALESCE(priority, 0)) FROM accounts ${PG_GROUP_SCOPE}),
+			   consecutive_rate_limits = (SELECT MAX(COALESCE(consecutive_rate_limits, 0)) FROM accounts ${PG_GROUP_SCOPE}),
+			   paused = (SELECT MAX(COALESCE(paused, 0)) FROM accounts ${PG_GROUP_SCOPE}),
+			   requires_reauth = (SELECT MAX(COALESCE(requires_reauth, 0)) FROM accounts ${PG_GROUP_SCOPE}),
+			   rate_limited_until = (SELECT MAX(COALESCE(rate_limited_until, 0)) FROM accounts ${PG_GROUP_SCOPE}),
+			   session_start = (SELECT MAX(COALESCE(session_start, 0)) FROM accounts ${PG_GROUP_SCOPE}),
+			   rate_limit_reset = (SELECT MAX(COALESCE(rate_limit_reset, 0)) FROM accounts ${PG_GROUP_SCOPE}),
+			   rate_limited_at = (SELECT MAX(COALESCE(rate_limited_at, 0)) FROM accounts ${PG_GROUP_SCOPE}),
+			   auto_fallback_enabled = (SELECT MAX(COALESCE(auto_fallback_enabled, 0)) FROM accounts ${PG_GROUP_SCOPE}),
+			   auto_refresh_enabled = (SELECT MAX(COALESCE(auto_refresh_enabled, 0)) FROM accounts ${PG_GROUP_SCOPE}),
+			   auto_pause_on_overage_enabled = (SELECT MAX(COALESCE(auto_pause_on_overage_enabled, 0)) FROM accounts ${PG_GROUP_SCOPE}),
+			   peak_hours_pause_enabled = (SELECT MAX(COALESCE(peak_hours_pause_enabled, 0)) FROM accounts ${PG_GROUP_SCOPE}),
+			   rate_limit_remaining = (SELECT MIN(rate_limit_remaining) FROM accounts ${PG_GROUP_SCOPE} AND rate_limit_remaining IS NOT NULL),
+			   rate_limit_status = COALESCE(rate_limit_status, ${pgFreshest("rate_limit_status")}),
+			   pause_reason = COALESCE(pause_reason, ${pgFreshest("pause_reason")}),
+			   rate_limited_reason = COALESCE(rate_limited_reason, ${pgFreshest("rate_limited_reason")}),
+			   model_mappings = COALESCE(model_mappings, ${pgFreshest("model_mappings")}),
+			   model_fallbacks = COALESCE(model_fallbacks, ${pgFreshest("model_fallbacks")}),
+			   cross_region_mode = COALESCE(cross_region_mode, ${pgFreshest("cross_region_mode")}),
+			   billing_type = COALESCE(billing_type, ${pgFreshest("billing_type")})
+			 WHERE id = $8`,
 			[
-				merged.merged_refresh_token,
-				merged.merged_access_token,
-				merged.merged_expires_at,
-				merged.merged_api_key,
-				grp.name, grp.provider, grp.ep, // $5..$7
-				grp.name, grp.provider, grp.ep, // $8..$10
-				grp.name, grp.provider, grp.ep, // $11..$13
-				grp.name, grp.provider, grp.ep, // $14..$16
-				grp.name, grp.provider, grp.ep, // $17..$19
-				grp.name, grp.provider, grp.ep, // $20..$22
-				grp.name, grp.provider, grp.ep, // $23..$25
-				grp.name, grp.provider, grp.ep, // $26..$28
-				grp.name, grp.provider, grp.ep, // $29..$31
-				grp.name, grp.provider, grp.ep, // $32..$34
-				survivor.id, // $35
+				merged.merged_refresh_token, // $1
+				merged.merged_access_token, // $2
+				merged.merged_expires_at, // $3
+				merged.merged_api_key, // $4
+				grp.name, // $5
+				grp.provider, // $6
+				grp.ep, // $7
+				survivor.id, // $8
 			],
 		);
 
