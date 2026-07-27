@@ -1,4 +1,4 @@
-import { describe, expect, it, mock } from "bun:test";
+import { afterEach, describe, expect, it, mock } from "bun:test";
 import type {
 	Account,
 	ComboWithSlots,
@@ -13,6 +13,10 @@ import {
 import type { ProxyContext } from "../proxy-types";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
+
+afterEach(() => {
+	delete process.env.CCFLARE_DISABLE_COMBO_SESSION_FALLBACK;
+});
 
 function makeAccount(overrides: Partial<Account> = {}): Account {
 	return {
@@ -356,6 +360,52 @@ describe("selectAccountsForRequest — combo routing", () => {
 
 		// Should fall back to strategy result (fallbackAcc)
 		expect(result[0]?.id).toBe("acc-fallback");
+	});
+
+	it("does not fall back to SessionStrategy when all combo slots are unavailable and combo fallback is disabled", async () => {
+		process.env.CCFLARE_DISABLE_COMBO_SESSION_FALLBACK = "true";
+		const rateLimitedAcc = makeAccount({
+			id: "acc-1",
+			rate_limited_until: Date.now() + 3_600_000,
+		});
+		const fallbackAcc = makeAccount({ id: "acc-fallback" });
+
+		const combo = makeCombo([
+			{
+				id: "slot-1",
+				combo_id: "combo-1",
+				account_id: "acc-1",
+				model: "claude-sonnet-4-5",
+				priority: 0,
+				enabled: true,
+			},
+		]);
+
+		const select = mock(() => [fallbackAcc]);
+		const ctx = {
+			strategy: { select },
+			dbOps: {
+				getAllAccounts: mock(async () => [rateLimitedAcc, fallbackAcc]),
+				getActiveComboForFamily: mock(async () => combo),
+			},
+			refreshInFlight: new Map(),
+			asyncWriter: { enqueue: mock(() => {}) },
+		} as unknown as ProxyContext;
+
+		const meta = makeRequestMeta();
+		const result = await selectAccountsForRequest(
+			meta,
+			ctx,
+			"claude-sonnet-4-5",
+		);
+
+		expect(result).toEqual([]);
+		expect(meta.comboName).toBe("Test Combo");
+		expect(getComboSlotInfo(meta)).toEqual({
+			comboName: "Test Combo",
+			slots: [],
+		});
+		expect(select).not.toHaveBeenCalled();
 	});
 
 	it("falls back to SessionStrategy when no combo is active for the model family", async () => {

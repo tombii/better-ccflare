@@ -66,6 +66,11 @@ function isCapacityRoutingEnabled(ctx: ProxyContext): boolean {
 	return ctx.config?.getModelScopedCapacityRouting?.() === "exhausted";
 }
 
+function isComboSessionFallbackDisabled(): boolean {
+	const value = process.env.CCFLARE_DISABLE_COMBO_SESSION_FALLBACK;
+	return /^(1|true|yes|on)$/i.test(value ?? "");
+}
+
 /**
  * Whether `account` should be excluded from routing for `model`'s family:
  * either its cached usage telemetry shows a fully exhausted (>=100%, future
@@ -372,6 +377,15 @@ export async function selectAccountsForRequest(
 					// All slots unavailable — fall back to normal routing. Combo state
 					// is deliberately left unset (never was set above) so this fallthrough
 					// is treated as ordinary, non-combo selection downstream.
+					if (isComboSessionFallbackDisabled()) {
+						setComboSlotInfo(meta, { comboName: combo.name, slots: [] });
+						meta.comboName = combo.name;
+						log.warn(
+							`All ${combo.slots.length} combo slots unavailable for ${combo.name}, session fallback disabled by CCFLARE_DISABLE_COMBO_SESSION_FALLBACK`,
+						);
+						return [];
+					}
+
 					log.warn(
 						`All ${combo.slots.length} combo slots unavailable for ${combo.name}, falling back to SessionStrategy`,
 					);
