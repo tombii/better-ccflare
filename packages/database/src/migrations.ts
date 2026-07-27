@@ -358,6 +358,15 @@ export function ensureSchema(db: Database): void {
 		       ('haiku',  NULL, 0);
 	`);
 
+	// Create strategies table
+	db.run(`
+		CREATE TABLE IF NOT EXISTS strategies (
+			name TEXT PRIMARY KEY,
+			config TEXT NOT NULL,
+			updated_at INTEGER NOT NULL
+		)
+	`);
+
 	// Create usage_snapshots table: time series of per-account usage-window
 	// utilization (0–100) captured on each /oauth/usage poll. Append-only, no
 	// surrogate key; queried and pruned by (account_id, window_key, timestamp).

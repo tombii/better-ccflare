@@ -811,6 +811,196 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 		}
 	}
 
+	// Performance indexes — mirrors packages/database/src/performance-indexes.ts
+	// (addPerformanceIndexes) plus idx_api_keys_role, both applied to SQLite via
+	// runMigrations() but previously missing here. CREATE INDEX IF NOT EXISTS is
+	// idempotent, so it's safe to run on every startup.
+	try {
+		// Index on api_keys.role (mirrors migrations.ts ~line 1387)
+		await adapter.unsafe(
+			`CREATE INDEX IF NOT EXISTS idx_api_keys_role ON api_keys(role)`,
+		);
+
+		// 1. Composite index on requests(timestamp, account_used) for time-based
+		// account queries. Used in analytics for filtering by time range and account.
+		await adapter.unsafe(
+			`CREATE INDEX IF NOT EXISTS idx_requests_timestamp_account
+			 ON requests(timestamp DESC, account_used)`,
+		);
+
+		// 2. Index on requests(model, timestamp) for model analytics.
+		// Used in model distribution and performance queries.
+		await adapter.unsafe(
+			`CREATE INDEX IF NOT EXISTS idx_requests_model_timestamp
+			 ON requests(model, timestamp DESC)
+			 WHERE model IS NOT NULL`,
+		);
+
+		// 3. Index on requests(success, timestamp) for success rate calculations.
+		// Used in analytics for calculating success rates over time.
+		await adapter.unsafe(
+			`CREATE INDEX IF NOT EXISTS idx_requests_success_timestamp
+			 ON requests(success, timestamp DESC)`,
+		);
+
+		// 4. Index on accounts(paused) for finding active accounts.
+		// Used in load balancer to quickly filter active accounts.
+		await adapter.unsafe(
+			`CREATE INDEX IF NOT EXISTS idx_accounts_paused
+			 ON accounts(paused)
+			 WHERE paused = 0`,
+		);
+
+		// 5. Index on requests(account_used, timestamp) for per-account analytics.
+		// Used in account performance queries.
+		await adapter.unsafe(
+			`CREATE INDEX IF NOT EXISTS idx_requests_account_timestamp
+			 ON requests(account_used, timestamp DESC)`,
+		);
+
+		// 6. Additional indexes based on observed query patterns
+
+		// Index for cost analysis queries
+		await adapter.unsafe(
+			`CREATE INDEX IF NOT EXISTS idx_requests_cost_model
+			 ON requests(cost_usd, model, timestamp DESC)
+			 WHERE cost_usd > 0 AND model IS NOT NULL`,
+		);
+
+		// Index for response time analysis (for p95 calculations)
+		await adapter.unsafe(
+			`CREATE INDEX IF NOT EXISTS idx_requests_response_time
+			 ON requests(model, response_time_ms)
+			 WHERE response_time_ms IS NOT NULL AND model IS NOT NULL`,
+		);
+
+		// Index for token usage analysis
+		await adapter.unsafe(
+			`CREATE INDEX IF NOT EXISTS idx_requests_tokens
+			 ON requests(timestamp DESC, total_tokens)
+			 WHERE total_tokens > 0`,
+		);
+
+		// Index for account name lookups (used in analytics joins)
+		await adapter.unsafe(
+			`CREATE INDEX IF NOT EXISTS idx_accounts_name
+			 ON accounts(name)`,
+		);
+
+		// Index for rate limit checks
+		await adapter.unsafe(
+			`CREATE INDEX IF NOT EXISTS idx_accounts_rate_limited
+			 ON accounts(rate_limited_until)
+			 WHERE rate_limited_until IS NOT NULL`,
+		);
+
+		// Index for session management
+		await adapter.unsafe(
+			`CREATE INDEX IF NOT EXISTS idx_accounts_session
+			 ON accounts(session_start, session_request_count)
+			 WHERE session_start IS NOT NULL`,
+		);
+
+		// Composite index for account ordering in load balancer
+		await adapter.unsafe(
+			`CREATE INDEX IF NOT EXISTS idx_accounts_request_count
+			 ON accounts(request_count DESC, last_used)`,
+		);
+
+		// Index for account priority in load balancer
+		await adapter.unsafe(
+			`CREATE INDEX IF NOT EXISTS idx_accounts_priority
+			 ON accounts(priority ASC, request_count DESC, last_used)`,
+		);
+
+		// Index for OAuth session cleanup by account_name
+		await adapter.unsafe(
+			`CREATE INDEX IF NOT EXISTS idx_oauth_sessions_account_name
+			 ON oauth_sessions(account_name, expires_at)`,
+		);
+
+		// Index for API key filtering
+		await adapter.unsafe(
+			`CREATE INDEX IF NOT EXISTS idx_requests_api_key
+			 ON requests(api_key_id)
+			 WHERE api_key_id IS NOT NULL`,
+		);
+
+		// Composite index for API key analytics (filtering + time-based queries)
+		await adapter.unsafe(
+			`CREATE INDEX IF NOT EXISTS idx_requests_api_key_timestamp
+			 ON requests(api_key_id, timestamp DESC)
+			 WHERE api_key_id IS NOT NULL`,
+		);
+
+		// Composite index for project analytics (filtering + time-based queries)
+		await adapter.unsafe(
+			`CREATE INDEX IF NOT EXISTS idx_requests_project_timestamp
+			 ON requests(project, timestamp DESC)
+			 WHERE project IS NOT NULL`,
+		);
+
+		// 7. Covering index for DELETE cleanup operations.
+		// Critical for performance of deleteOlderThan() which uses:
+		//   DELETE FROM requests WHERE id IN (SELECT id FROM requests WHERE timestamp < ? LIMIT ?)
+		// Without this covering index, the DB must hit the table to fetch id values
+		// after finding rows by timestamp. With this covering index (timestamp ASC,
+		// id), the entire subquery is satisfied from the index alone. ASC order
+		// matches the "timestamp < cutoff" comparison used in cleanup queries.
+		await adapter.unsafe(
+			`CREATE INDEX IF NOT EXISTS idx_requests_cleanup
+			 ON requests(timestamp ASC, id)`,
+		);
+
+		// 8. Covering index for request_payloads cleanup.
+		// Used by deletePayloadsOlderThan() which uses a similar pattern:
+		//   DELETE FROM request_payloads WHERE id IN (SELECT id FROM request_payloads WHERE timestamp < ? LIMIT ?)
+		// Note: timestamp may be NULL for legacy rows, so we use a partial index
+		// where timestamp IS NOT NULL.
+		await adapter.unsafe(
+			`CREATE INDEX IF NOT EXISTS idx_request_payloads_cleanup
+			 ON request_payloads(timestamp, id)
+			 WHERE timestamp IS NOT NULL`,
+		);
+
+		// 9. Covering index for the Requests tab summary query.
+		// Powers: SELECT r.*, a.name FROM requests r LEFT JOIN accounts a ON r.account_used = a.id
+		//         ORDER BY r.timestamp DESC LIMIT ?
+		// Including the most-queried scalar columns lets the DB satisfy the query
+		// from the index without a heap lookup for every row.
+		await adapter.unsafe(
+			`CREATE INDEX IF NOT EXISTS idx_requests_summary_covering
+			 ON requests(timestamp DESC, id, account_used, status_code, success,
+			             response_time_ms, model, total_tokens, cost_usd,
+			             input_tokens, output_tokens, billing_type, combo_name,
+			             failover_attempts)`,
+		);
+
+		// 10. Covering index for analytics aggregate queries (timestamp range scans).
+		// Powers the analytics handler's WHERE timestamp > ? GROUP BY ts aggregate
+		// queries. Includes aggregate columns so the DB can compute SUM/AVG/COUNT
+		// without heap lookups. Column order: timestamp first (range filter), then
+		// aggregate columns.
+		await adapter.unsafe(
+			`CREATE INDEX IF NOT EXISTS idx_requests_analytics_covering
+			 ON requests(timestamp, success, total_tokens, cost_usd, billing_type,
+			             output_tokens, input_tokens, cache_read_input_tokens,
+			             cache_creation_input_tokens, output_tokens_per_second,
+			             response_time_ms, account_used, model)`,
+		);
+
+		// 11. Index for billing_type time-range queries used in analytics cost breakdown
+		await adapter.unsafe(
+			`CREATE INDEX IF NOT EXISTS idx_requests_billing_type_timestamp
+			 ON requests(billing_type, timestamp DESC)
+			 WHERE billing_type IS NOT NULL`,
+		);
+
+		log.info("Performance indexes ensured");
+	} catch (_error) {
+		// Indexes may already exist
+	}
+
 	// Backfill pause_reason for existing paused accounts (mirrors SQLite migration)
 	await adapter.unsafe(`
 		UPDATE accounts
@@ -1053,6 +1243,152 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 				"Created UNIQUE index idx_accounts_unique_name_provider_endpoint on accounts",
 			);
 		}
+	}
+
+	// Sanitize existing account names to prevent command injection. Mirrors
+	// the SQLite migration in migrations.ts ("Sanitize existing account
+	// names..."): replace any character outside [a-zA-Z0-9_-] with '_'.
+	// Must run after the UNIQUE index above (matching migrations.ts
+	// ordering, where the same index is created before this sanitization
+	// block runs), since a sanitized name can collide with another account
+	// under that composite (name, provider, COALESCE(custom_endpoint,''))
+	// constraint. Ported as a JS-side loop (not a single regexp_replace
+	// UPDATE) so the same incrementing-suffix collision avoidance as the
+	// SQLite version applies: SQLite's loop guards against collisions by
+	// checking `SELECT COUNT(*) FROM accounts WHERE name = ?` (name alone,
+	// not the full tuple) — stricter than the actual constraint, but this
+	// matches that exact behavior rather than diverging from it.
+	try {
+		const accountsForSanitize = await adapter.query<{
+			id: string;
+			name: string;
+		}>(`SELECT id, name FROM accounts`);
+
+		let sanitizedCount = 0;
+		for (const account of accountsForSanitize) {
+			if (!/^[a-zA-Z0-9\-_]+$/.test(account.name)) {
+				const sanitizedName = account.name.replace(/[^a-zA-Z0-9\-_]/g, "_");
+
+				let finalName = sanitizedName;
+				let suffix = 1;
+				let hasCollision = true;
+				while (hasCollision) {
+					const collidesInBatch = accountsForSanitize.some(
+						(a) => a.id !== account.id && a.name === finalName,
+					);
+					const existing = await adapter.get<{ count: number }>(
+						`SELECT COUNT(*) as count FROM accounts WHERE name = ?`,
+						[finalName],
+					);
+					const collidesInDb = (existing?.count ?? 0) > 0;
+					hasCollision = collidesInBatch || collidesInDb;
+					if (hasCollision) {
+						finalName = `${sanitizedName}_${suffix}`;
+						suffix++;
+					}
+				}
+
+				await adapter.run(`UPDATE accounts SET name = ? WHERE id = ?`, [
+					finalName,
+					account.id,
+				]);
+				sanitizedCount++;
+				log.info(`Sanitized account name: "${account.name}" -> "${finalName}"`);
+			}
+		}
+
+		if (sanitizedCount > 0) {
+			log.info(
+				`Sanitized ${sanitizedCount} account name(s) to prevent command injection`,
+			);
+		}
+	} catch (error) {
+		log.warn(`Error sanitizing account names: ${(error as Error).message}`);
+	}
+
+	// Run API key storage migration to move API keys from refresh_token to
+	// api_key field. Mirrors runApiKeyStorageMigration() in migrations.ts.
+	// Expressible as pure SQL (no JS-side iteration needed): matches the
+	// exact provider list, NULL/empty handling, and console-account
+	// detection heuristics of the SQLite version.
+	try {
+		// 1. Move API key from refresh_token to api_key for API-key providers,
+		// only when api_key is unset and refresh_token actually holds a value.
+		const updatedCount = await adapter.runWithChanges(
+			`UPDATE accounts
+			 SET
+			   api_key = refresh_token,
+			   refresh_token = NULL,
+			   access_token = NULL,
+			   expires_at = NULL
+			 WHERE
+			   provider IN ('zai', 'openai-compatible', 'minimax', 'anthropic-compatible')
+			   AND api_key IS NULL
+			   AND refresh_token IS NOT NULL
+			   AND refresh_token != ''
+			   AND LENGTH(refresh_token) > 0`,
+		);
+
+		// 2. Clean up duplicate storage where the same value is present in
+		// both refresh_token and api_key.
+		const cleanupCount = await adapter.runWithChanges(
+			`UPDATE accounts
+			 SET
+			   refresh_token = NULL,
+			   access_token = NULL,
+			   expires_at = NULL
+			 WHERE
+			   provider IN ('zai', 'openai-compatible', 'minimax', 'anthropic-compatible')
+			   AND api_key IS NOT NULL
+			   AND refresh_token = api_key`,
+		);
+
+		// 3. Console accounts (provider 'anthropic') that stored their API key
+		// in refresh_token instead of api_key. Excludes real Anthropic OAuth
+		// refresh tokens (sk-ant-api03-*/sk-ant-*) and anything that looks
+		// like a live OAuth session (has access_token, or expires_at within
+		// the last 24h).
+		const cutoffTime = Date.now() - 24 * 60 * 60 * 1000;
+		const consoleCount = await adapter.runWithChanges(
+			`UPDATE accounts
+			 SET
+			   api_key = refresh_token,
+			   refresh_token = NULL,
+			   access_token = NULL,
+			   expires_at = NULL
+			 WHERE
+			   provider = 'anthropic'
+			   AND api_key IS NULL
+			   AND refresh_token IS NOT NULL
+			   AND refresh_token != ''
+			   AND access_token IS NULL
+			   AND (
+			     expires_at IS NULL
+			     OR expires_at = 0
+			     OR expires_at < ?
+			   )
+			   AND refresh_token NOT LIKE 'sk-ant-api03-%'
+			   AND refresh_token NOT LIKE 'sk-ant-%'`,
+			[cutoffTime],
+		);
+
+		const totalCount = updatedCount + cleanupCount + consoleCount;
+		if (totalCount > 0) {
+			log.info(
+				`Migrated ${totalCount} accounts to API key storage v2 (moved from refresh_token to api_key)`,
+				{
+					migrationVersion: 2,
+					updatedAccounts: updatedCount,
+					cleanupAccounts: cleanupCount,
+					consoleAccounts: consoleCount,
+				},
+			);
+		}
+	} catch (error) {
+		log.warn(
+			`Error during API key storage migration: ${(error as Error).message}`,
+		);
+		// Continue with other migrations even if this one fails
 	}
 
 	// Populate default model translations if not present
