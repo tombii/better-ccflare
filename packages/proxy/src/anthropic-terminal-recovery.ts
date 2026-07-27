@@ -554,6 +554,16 @@ export function createAnthropicTerminalRecoveryStream(
 				if (finalized) return;
 				finalized = true;
 				clearRecoveryTimer();
+				// reader.read() rejection is a transport/stream-level failure
+				// from upstream — distinct from a clean EOF (the `done:true`
+				// branch above) and distinct from a client-initiated cancel
+				// (handled in the `cancel()` handler, which sets
+				// `clientCancelled` and wins precedence). Without this flag,
+				// determineTerminalState() would classify the rejection as
+				// "truncated" — silently conflating a real upstream failure
+				// with a mid-content TCP close and poisoning the new
+				// stream_terminal_state column.
+				markTerminalFailure();
 				fireTerminalState();
 				controller.error(error);
 			}

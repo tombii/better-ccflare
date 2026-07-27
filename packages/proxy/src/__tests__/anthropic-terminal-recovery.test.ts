@@ -717,4 +717,30 @@ describe("createAnthropicTerminalRecoveryStream", () => {
 		expect(onTerminalState).toHaveBeenCalledTimes(1);
 		expect(onTerminalState).toHaveBeenCalledWith("complete");
 	});
+
+	it("emits 'error' via onTerminalState when upstream reader rejects mid-stream", async () => {
+		// Transport/stream-level rejection from upstream (e.g. connection
+		// reset, AbortError from upstream cancellation, fetch failure)
+		// must be classified as "error", NOT "truncated". A premature EOF
+		// looks similar on the wire (no message_stop, no error event) but
+		// carries no failure signal in-band — only a clean mid-content TCP
+		// close. The whole point of the stream_terminal_state column is
+		// to distinguish these two failure modes so an explicit upstream
+		// error isn't recorded as a silent truncation.
+		const source = controllableStream();
+		const onTerminalState = mock(() => undefined);
+		const body = createAnthropicTerminalRecoveryStream(source.stream, {
+			gracePeriodMs: 20,
+			onTerminalState,
+		});
+		const reader = body.getReader();
+
+		source.controller().enqueue(bytes(terminalDelta));
+		await expect(reader.read()).resolves.toMatchObject({ done: false });
+		source.controller().error(new Error("upstream connection reset"));
+
+		await expect(reader.read()).rejects.toThrow("upstream connection reset");
+		expect(onTerminalState).toHaveBeenCalledTimes(1);
+		expect(onTerminalState).toHaveBeenCalledWith("error");
+	});
 });
