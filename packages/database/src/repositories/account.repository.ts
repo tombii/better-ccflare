@@ -1,3 +1,4 @@
+import { Logger } from "@better-ccflare/logger";
 import {
 	type Account,
 	type AccountRow,
@@ -5,6 +6,8 @@ import {
 	toAccount,
 } from "@better-ccflare/types";
 import { BaseRepository } from "./base.repository";
+
+const log = new Logger("AccountRepository");
 
 export class AccountRepository extends BaseRepository<Account> {
 	async findAll(): Promise<Account[]> {
@@ -155,20 +158,36 @@ export class AccountRepository extends BaseRepository<Account> {
 			// still-active cooldown between this call's read and write (e.g. a
 			// real 429 quota bench applied by another in-flight request for the
 			// same account) — only apply this 529's cooldown when the account
-			// currently has none, or its existing one already expires before this
-			// one would. This mirrors the in-process forward guard in
-			// rate-limit-cooldown.ts but covers the cross-request DB race that
-			// guard can't see. A plain WHERE predicate (not GREATEST/MAX) so the
-			// same SQL runs unchanged on both SQLite and PostgreSQL.
-			await this.run(
+			// currently has none, or its existing one already expires at or
+			// before this one would. `<=`, not `<`: the in-process forward guard
+			// in rate-limit-cooldown.ts only REJECTS on a strictly longer existing
+			// cooldown (`account.rate_limited_until > cooldownUntil`) and lets an
+			// equal-expiry write proceed — a strict `<` here would reject that
+			// same equal-expiry case, leaving memory holding the new 529 reason
+			// while the DB silently keeps the old one. This mirrors the in-process
+			// guard but covers the cross-request DB race that guard can't see. A
+			// plain WHERE predicate (not GREATEST/MAX) so the same SQL runs
+			// unchanged on both SQLite and PostgreSQL.
+			const changes = await this.runWithChanges(
 				`UPDATE accounts
            SET rate_limited_until      = ?,
                rate_limited_reason     = ?,
                rate_limited_at         = ?
          WHERE id = ?
-           AND (rate_limited_until IS NULL OR rate_limited_until < ?)`,
+           AND (rate_limited_until IS NULL OR rate_limited_until <= ?)`,
 				[until, reason, Date.now(), accountId, until],
 			);
+			if (changes === 0) {
+				// The guard rejected the write: a longer cooldown is already active
+				// for this account (set by a concurrent request between this call's
+				// read and write). Log it here — the caller in rate-limit-cooldown.ts
+				// awaits only the reconciled streak count and has no other signal
+				// that its own in-memory write just diverged from what's actually
+				// persisted.
+				log.warn(
+					`[ccflare] account=${accountId} cooldown_skipped_longer_active reason=${reason} candidate_until=${new Date(until).toISOString()} — a longer cooldown is already active in the DB, guarded UPDATE rejected`,
+				);
+			}
 		}
 		const row = await this.get<{ consecutive_rate_limits: number }>(
 			`SELECT consecutive_rate_limits FROM accounts WHERE id = ?`,
