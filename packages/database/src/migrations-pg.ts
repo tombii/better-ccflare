@@ -371,6 +371,279 @@ export async function addColumnTolerant(
 }
 
 /**
+ * Collapse duplicate `(name, provider, COALESCE(custom_endpoint,''))` rows in
+ * the PostgreSQL `accounts` table into a single survivor per tuple, while
+ * preserving as much working account state as possible. Mirrors the SQLite
+ * helper `collapseAccountDuplicatesPreservingState` in semantics; differs
+ * only in (a) using PostgreSQL's `ctid` as the row-ordering tiebreak
+ * (PG's analogue of SQLite's `rowid`) and (b) using the async adapter API.
+ *
+ * Survivor selection (deterministic, stable across rows):
+ *   1. Most recent `last_used`.
+ *   2. Most recent `refresh_token_issued_at`.
+ *   3. Most recent `created_at`.
+ *   4. Smallest `ctid` (final tiebreak — older insert wins on full ties).
+ *
+ * State that is merged into the survivor before the discarded rows are
+ * deleted (see SQLite helper for the full rationale and column-by-column
+ * rules). Dependent rows are repointed at the survivor's id before the
+ * account row is removed: `combo_slots.account_id`, `requests.account_used`,
+ * `usage_snapshots.account_id`. `combo_slots.account_id` has a real
+ * `ON DELETE CASCADE` FK, so without this repointing we would silently
+ * delete combo configurations. `requests.account_used` and
+ * `usage_snapshots.account_id` are plain TEXT columns with no FK, so
+ * without this repointing the request history would orphan.
+ *
+ * Idempotent — a no-op on already-deduped accounts.
+ */
+/**
+ * Duplicate-group scope for the survivor merge below. PostgreSQL permits a
+ * numbered parameter to be referenced repeatedly, so the whole statement reuses
+ * $5/$6/$7 for (name, provider, endpoint) rather than re-binding them per
+ * column.
+ */
+const PG_GROUP_SCOPE = `WHERE name = $5 AND provider = $6
+	                          AND COALESCE(custom_endpoint, '') = $7`;
+
+/**
+ * Freshest non-NULL value of `col` across the duplicate group, using the same
+ * ordering that selects the credential set: newest refresh token first, then
+ * newest row. `col` is an internal literal, never user input.
+ */
+function pgFreshest(col: string): string {
+	return `(SELECT ${col} FROM accounts ${PG_GROUP_SCOPE} AND ${col} IS NOT NULL
+		    ORDER BY COALESCE(refresh_token_issued_at, 0) DESC, created_at DESC
+		    LIMIT 1)`;
+}
+
+async function collapseAccountDuplicatesPreservingStatePg(
+	adapter: BunSqlAdapter,
+): Promise<void> {
+	// Find every tuple with > 1 row. COALESCE(custom_endpoint,'') is the
+	// canonical form of the future UNIQUE index, matching the SQLite path.
+	// adapter.get returns one row; we need all groups — use unsafe.
+	const groups = (await adapter.unsafe(
+		`SELECT name, provider, COALESCE(custom_endpoint, '') AS ep
+		 FROM accounts
+		 GROUP BY name, provider, COALESCE(custom_endpoint, '')
+		 HAVING COUNT(*) > 1`,
+	)) as Array<{ name: string; provider: string; ep: string }>;
+	if (groups.length === 0) {
+		return;
+	}
+
+	let totalDeleted = 0;
+	let totalRepointedSlots = 0;
+	let totalRepointedRequests = 0;
+	let totalRepointedSnapshots = 0;
+
+	for (const grp of groups) {
+		// Pick the survivor per tuple group.
+		const survivorRows = (await adapter.unsafe(
+			`SELECT id FROM accounts
+			 WHERE name = $1 AND provider = $2 AND COALESCE(custom_endpoint, '') = $3
+			 ORDER BY
+			   COALESCE(last_used, 0) DESC,
+			   COALESCE(refresh_token_issued_at, 0) DESC,
+			   created_at DESC,
+			   ctid::text ASC
+			 LIMIT 1`,
+			[grp.name, grp.provider, grp.ep],
+		)) as Array<{ id: string }>;
+		const survivor = survivorRows[0];
+		if (!survivor) {
+			continue;
+		}
+
+		// Pull discarded ids for this tuple group.
+		const discardedRows = (await adapter.unsafe(
+			`SELECT id FROM accounts
+			 WHERE name = $1 AND provider = $2 AND COALESCE(custom_endpoint, '') = $3
+			   AND id <> $4`,
+			[grp.name, grp.provider, grp.ep, survivor.id],
+		)) as Array<{ id: string }>;
+		const discardedIds = discardedRows.map((r) => r.id);
+
+		// Best (most-recently-issued) credentials from any row in the group.
+		const mergedRows = (await adapter.unsafe(
+			`SELECT
+			   (SELECT refresh_token FROM accounts
+			    WHERE name = $1 AND provider = $2 AND COALESCE(custom_endpoint, '') = $3
+			      AND refresh_token IS NOT NULL AND refresh_token <> ''
+			    ORDER BY COALESCE(refresh_token_issued_at, 0) DESC, ctid::text ASC
+			    LIMIT 1) AS merged_refresh_token,
+			   (SELECT access_token FROM accounts
+			    WHERE name = $1 AND provider = $2 AND COALESCE(custom_endpoint, '') = $3
+			      AND access_token IS NOT NULL AND access_token <> ''
+			    ORDER BY COALESCE(refresh_token_issued_at, 0) DESC, ctid::text ASC
+			    LIMIT 1) AS merged_access_token,
+			   (SELECT expires_at FROM accounts
+			    WHERE name = $1 AND provider = $2 AND COALESCE(custom_endpoint, '') = $3
+			      AND expires_at IS NOT NULL
+			    ORDER BY COALESCE(refresh_token_issued_at, 0) DESC, ctid::text ASC
+			    LIMIT 1) AS merged_expires_at,
+			   (SELECT api_key FROM accounts
+			    WHERE name = $1 AND provider = $2 AND COALESCE(custom_endpoint, '') = $3
+			      AND api_key IS NOT NULL AND api_key <> ''
+			    ORDER BY COALESCE(refresh_token_issued_at, 0) DESC, created_at DESC, ctid::text ASC
+			    LIMIT 1) AS merged_api_key,
+			   -- Read from the SAME freshest row as the three token fields
+			   -- above, using the identical ordering, so the survivor's
+			   -- issued-at always describes the tokens it actually holds.
+			   (SELECT refresh_token_issued_at FROM accounts
+			    WHERE name = $1 AND provider = $2 AND COALESCE(custom_endpoint, '') = $3
+			      AND refresh_token IS NOT NULL AND refresh_token <> ''
+			    ORDER BY COALESCE(refresh_token_issued_at, 0) DESC, ctid::text ASC
+			    LIMIT 1) AS merged_refresh_token_issued_at`,
+			[grp.name, grp.provider, grp.ep],
+		)) as Array<{
+			merged_refresh_token: string | null;
+			merged_access_token: string | null;
+			merged_expires_at: string | null;
+			merged_api_key: string | null;
+			merged_refresh_token_issued_at: string | null;
+		}>;
+		const merged = mergedRows[0] ?? {
+			merged_refresh_token: null,
+			merged_access_token: null,
+			merged_expires_at: null,
+			merged_api_key: null,
+			merged_refresh_token_issued_at: null,
+		};
+
+		// Merge aggregates into the survivor. Parameter slots $1..$4 carry
+		// the credential pre-fills; $5..$34 are the per-aggregate (group
+		// triple + max/min/sum) lookups (10 aggregates × 3 group keys);
+		// $35 is the survivor id.
+		await adapter.unsafe(
+			// Must stay behaviourally identical to the SQLite merge in
+			// migrations.ts — same column set, same rule per column. This is the
+			// path that runs against PostgreSQL deployments, so a column merged
+			// there and missed here loses real account state on upgrade.
+			//
+			//   MAX      — cooldown timestamps/counters (a collapse must never
+			//              shorten a cooldown) and the 0/1 flag columns.
+			//   MIN      — created_at (oldest birth), rate_limit_remaining (most
+			//              conservative estimate of what is left).
+			//   SUM      — lifetime/session counters, so history survives.
+			//   COALESCE — survivor's own value, else the freshest non-NULL in
+			//              the group (credentials and config columns).
+			//
+			// The flag columns are INTEGER, not BOOLEAN: 0 is a legitimate value,
+			// not "unset". MAX is therefore the deliberate policy "enabled on any
+			// duplicate wins", matching paused/requires_reauth.
+			//
+			// Not merged: id (survivor keeps its own; dependents are repointed),
+			// and name/provider/custom_endpoint, which are the dedup key and are
+			// identical across the group by construction.
+			//
+			// PostgreSQL allows a numbered parameter to be referenced more than
+			// once, so the group key is just $5/$6/$7 throughout instead of the
+			// 30 repeated bindings this previously carried — adding columns to a
+			// positional list that long is how a binding silently shifts.
+			`UPDATE accounts SET
+			   refresh_token = $1,
+			   access_token = $2,
+			   expires_at = $3::BIGINT,
+			   api_key = COALESCE(api_key, $4),
+			   -- Must come from the SAME row as refresh_token/access_token/
+			   -- expires_at above (all four are read from the single freshest
+			   -- row), not recomputed as MAX across the group. Taking the group
+			   -- MAX independently can pair row A's tokens with row B's newer
+			   -- issued-at, so the stored "when were these tokens issued" no
+			   -- longer describes the tokens actually held — which silently
+			   -- misleads anything reasoning about token freshness. The SQLite
+			   -- path already sources it from the merged row; this matches it.
+			   refresh_token_issued_at = $9::BIGINT,
+			   last_used = (SELECT MAX(COALESCE(last_used, 0)) FROM accounts ${PG_GROUP_SCOPE}),
+			   created_at = (SELECT MIN(created_at) FROM accounts ${PG_GROUP_SCOPE}),
+			   request_count = (SELECT SUM(COALESCE(request_count, 0)) FROM accounts ${PG_GROUP_SCOPE}),
+			   total_requests = (SELECT SUM(COALESCE(total_requests, 0)) FROM accounts ${PG_GROUP_SCOPE}),
+			   session_request_count = (SELECT SUM(COALESCE(session_request_count, 0)) FROM accounts ${PG_GROUP_SCOPE}),
+			   priority = (SELECT MAX(COALESCE(priority, 0)) FROM accounts ${PG_GROUP_SCOPE}),
+			   consecutive_rate_limits = (SELECT MAX(COALESCE(consecutive_rate_limits, 0)) FROM accounts ${PG_GROUP_SCOPE}),
+			   paused = (SELECT MAX(COALESCE(paused, 0)) FROM accounts ${PG_GROUP_SCOPE}),
+			   requires_reauth = (SELECT MAX(COALESCE(requires_reauth, 0)) FROM accounts ${PG_GROUP_SCOPE}),
+			   rate_limited_until = (SELECT MAX(COALESCE(rate_limited_until, 0)) FROM accounts ${PG_GROUP_SCOPE}),
+			   session_start = (SELECT MAX(COALESCE(session_start, 0)) FROM accounts ${PG_GROUP_SCOPE}),
+			   rate_limit_reset = (SELECT MAX(COALESCE(rate_limit_reset, 0)) FROM accounts ${PG_GROUP_SCOPE}),
+			   rate_limited_at = (SELECT MAX(COALESCE(rate_limited_at, 0)) FROM accounts ${PG_GROUP_SCOPE}),
+			   auto_fallback_enabled = (SELECT MAX(COALESCE(auto_fallback_enabled, 0)) FROM accounts ${PG_GROUP_SCOPE}),
+			   auto_refresh_enabled = (SELECT MAX(COALESCE(auto_refresh_enabled, 0)) FROM accounts ${PG_GROUP_SCOPE}),
+			   auto_pause_on_overage_enabled = (SELECT MAX(COALESCE(auto_pause_on_overage_enabled, 0)) FROM accounts ${PG_GROUP_SCOPE}),
+			   peak_hours_pause_enabled = (SELECT MAX(COALESCE(peak_hours_pause_enabled, 0)) FROM accounts ${PG_GROUP_SCOPE}),
+			   rate_limit_remaining = (SELECT MIN(rate_limit_remaining) FROM accounts ${PG_GROUP_SCOPE} AND rate_limit_remaining IS NOT NULL),
+			   rate_limit_status = COALESCE(rate_limit_status, ${pgFreshest("rate_limit_status")}),
+			   pause_reason = COALESCE(pause_reason, ${pgFreshest("pause_reason")}),
+			   rate_limited_reason = COALESCE(rate_limited_reason, ${pgFreshest("rate_limited_reason")}),
+			   model_mappings = COALESCE(model_mappings, ${pgFreshest("model_mappings")}),
+			   model_fallbacks = COALESCE(model_fallbacks, ${pgFreshest("model_fallbacks")}),
+			   cross_region_mode = COALESCE(cross_region_mode, ${pgFreshest("cross_region_mode")}),
+			   billing_type = COALESCE(billing_type, ${pgFreshest("billing_type")})
+			 WHERE id = $8`,
+			[
+				merged.merged_refresh_token, // $1
+				merged.merged_access_token, // $2
+				merged.merged_expires_at, // $3
+				merged.merged_api_key, // $4
+				grp.name, // $5
+				grp.provider, // $6
+				grp.ep, // $7
+				survivor.id, // $8
+				merged.merged_refresh_token_issued_at, // $9
+			],
+		);
+
+		if (discardedIds.length > 0) {
+			// For the repointing UPDATEs the survivor id is $1 and the
+			// discarded ids fill $2..$N. Build the IN-list placeholder
+			// list once and reuse it across all three repoint targets.
+			const idListPlaceholders = discardedIds
+				.map((_, i) => `$${i + 2}`)
+				.join(",");
+			const repointSlots = await adapter.runWithChanges(
+				`UPDATE combo_slots SET account_id = $1 WHERE account_id IN (${idListPlaceholders})`,
+				[survivor.id, ...discardedIds],
+			);
+			const repointRequests = await adapter.runWithChanges(
+				`UPDATE requests SET account_used = $1 WHERE account_used IN (${idListPlaceholders})`,
+				[survivor.id, ...discardedIds],
+			);
+			const repointSnapshots = await adapter.runWithChanges(
+				`UPDATE usage_snapshots SET account_id = $1 WHERE account_id IN (${idListPlaceholders})`,
+				[survivor.id, ...discardedIds],
+			);
+
+			const idPlaceholders = discardedIds
+				.map((_, i) => `$${i + 1}`)
+				.join(",");
+			const deleted = await adapter.runWithChanges(
+				`DELETE FROM accounts WHERE id IN (${idPlaceholders})`,
+				discardedIds,
+			);
+
+			totalDeleted += deleted;
+			totalRepointedSlots += repointSlots;
+			totalRepointedRequests += repointRequests;
+			totalRepointedSnapshots += repointSnapshots;
+		}
+	}
+
+	if (totalDeleted > 0) {
+		log.warn(
+			`Collapsed ${totalDeleted} duplicate account row(s) across ${groups.length} ` +
+				`(name, provider, COALESCE(custom_endpoint,'')) tuple group(s) before creating ` +
+				`UNIQUE index. Each group kept the row with the freshest credentials ` +
+				`(most recent last_used → refresh_token_issued_at → created_at → smallest ctid) ` +
+				`and merged request counts / priority / paused state from the rest. ` +
+				`Repointed ${totalRepointedSlots} combo slot(s), ${totalRepointedRequests} ` +
+				`request-history row(s), and ${totalRepointedSnapshots} usage-snapshot row(s) ` +
+				`to the surviving account ids.`,
+		);
+	}
+}
+
+/**
  * Run PostgreSQL-specific migrations
  */
 export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
@@ -694,6 +967,95 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 		SET refresh_token = NULL
 		WHERE refresh_token = ''
 	`);
+
+	// Add UNIQUE index on (name, provider, COALESCE(custom_endpoint,'')) to
+	// enforce atomic uniqueness for the account-add path (closes the same
+	// race the SQLite path closes — see packages/database/src/migrations.ts).
+	// PostgreSQL does not have an equivalent of SQLite's `CREATE UNIQUE
+	// INDEX` that operates without a pre-existing index, so this migration
+	// is the first place we install it. Behaviorally identical to the
+	// SQLite dedup: collapse existing duplicates to one row per tuple while
+	// preserving credential state and repointing dependent rows. Idempotent:
+	// if the index already exists, the whole block is a no-op.
+	const uniqueAccountsIndexExists = await adapter.get<{ exists: number }>(
+		`SELECT COUNT(*) AS exists
+		 FROM pg_indexes
+		 WHERE schemaname = current_schema()
+		   AND tablename = 'accounts'
+		   AND indexname = 'idx_accounts_unique_name_provider_endpoint'`,
+	);
+	if ((uniqueAccountsIndexExists?.exists ?? 0) === 0) {
+		// The existence check above is advisory only — it cannot be trusted as a
+		// guard. Two server instances starting against the same database will
+		// both observe "no index", and a row inserted between the collapse and
+		// the CREATE would reintroduce a duplicate that makes the CREATE fail.
+		//
+		// Deliberately NOT solved with adapter.transaction() or a session
+		// advisory lock:
+		//   * adapter.transaction() does not currently give a PostgreSQL
+		//     transaction. It calls `this.sql.begin(async () => fn())` and
+		//     discards the reserved transaction connection `begin()` hands to
+		//     the callback, so the statements inside `fn()` run on arbitrary
+		//     POOL connections while an empty transaction opens and commits.
+		//     Wrapping this block in it would look atomic and guarantee nothing.
+		//   * `pg_advisory_lock` is session-scoped, and with a connection pool
+		//     the lock and the statements it is supposed to protect can land on
+		//     different connections.
+		//
+		// Instead the CREATE UNIQUE INDEX *is* the synchronisation primitive.
+		// It is a single atomic statement that succeeds only when the table
+		// genuinely holds no duplicates, so:
+		//   * a concurrent insert that reintroduces a duplicate makes it fail,
+		//     and we collapse and retry rather than proceeding on a false
+		//     assumption;
+		//   * two instances racing produce one winner; the loser sees the index
+		//     already exists, which is success, not an error.
+		// The collapse itself is idempotent (it is keyed on duplicate groups and
+		// a no-op once none remain), so repeating it is safe.
+		const MAX_ATTEMPTS = 3;
+		let created = false;
+		for (let attempt = 1; attempt <= MAX_ATTEMPTS && !created; attempt++) {
+			await collapseAccountDuplicatesPreservingStatePg(adapter);
+			try {
+				await adapter.unsafe(
+					`CREATE UNIQUE INDEX idx_accounts_unique_name_provider_endpoint
+					 ON accounts (name, provider, COALESCE(custom_endpoint, ''))`,
+				);
+				created = true;
+			} catch (error) {
+				// Another instance won the race and created it first: that is the
+				// desired end state, not a failure.
+				const stillMissing = await adapter.get<{ exists: number }>(
+					`SELECT COUNT(*) AS exists
+					 FROM pg_indexes
+					 WHERE schemaname = current_schema()
+					   AND tablename = 'accounts'
+					   AND indexname = 'idx_accounts_unique_name_provider_endpoint'`,
+				);
+				if ((stillMissing?.exists ?? 0) > 0) {
+					created = true;
+					break;
+				}
+				// Otherwise a duplicate was inserted between the collapse and the
+				// CREATE. Collapse again and retry; give up loudly rather than
+				// leaving the uniqueness guarantee silently unenforced.
+				if (attempt === MAX_ATTEMPTS) {
+					log.error(
+						`Failed to create UNIQUE index idx_accounts_unique_name_provider_endpoint after ${MAX_ATTEMPTS} attempts — account uniqueness is NOT enforced`,
+					);
+					throw error;
+				}
+				log.warn(
+					`CREATE UNIQUE INDEX on accounts failed (attempt ${attempt}/${MAX_ATTEMPTS}), duplicates reappeared concurrently — collapsing and retrying`,
+				);
+			}
+		}
+		if (created) {
+			log.info(
+				"Created UNIQUE index idx_accounts_unique_name_provider_endpoint on accounts",
+			);
+		}
+	}
 
 	// Populate default model translations if not present
 	const now = Date.now();

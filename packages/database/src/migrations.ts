@@ -381,6 +381,304 @@ export function ensureSchema(db: Database): void {
 	);
 }
 
+/**
+ * Collapse duplicate `(name, provider, COALESCE(custom_endpoint,''))` rows in
+ * the `accounts` table into a single survivor per tuple, while preserving as
+ * much working account state as possible.
+ *
+ * Survivor selection (deterministic, stable across rows):
+ *   1. Most recent `last_used` (most-recently-active row, which is most
+ *      likely to hold working OAuth credentials).
+ *   2. Most recent `refresh_token_issued_at` (freshest tokens win on ties).
+ *   3. Most recent `created_at` (newer row wins on ties — mirror of the
+ *      intuition that the newer row represents the operator's "current"
+ *      intent for that account name).
+ *   4. Smallest `rowid` (final tiebreak; monotone insert order — gives the
+ *      older insert a deterministic stable choice when all three timestamps
+ *      above are NULL).
+ *
+ * For each tuple group the non-survivor rows are deleted only after their
+ * state has been merged into the survivor and every dependent row
+ * (`combo_slots.account_id`, `requests.account_used`,
+ * `usage_snapshots.account_id`) has been repointed at the survivor's id.
+ * State that is merged into the survivor:
+ *   - `refresh_token`, `access_token`, `expires_at`: from the row whose
+ *     `refresh_token_issued_at` is most recent (i.e. freshest credentials).
+ *   - `api_key`: from the row whose `refresh_token_issued_at`/`created_at`
+ *     is most recent among rows with a non-empty api_key (API-key providers
+ *     would otherwise lose their key if a stale OAuth duplicate "won" the
+ *     survivor selection).
+ *   - `last_used`, `rate_limited_until`, `session_start`, `rate_limit_reset`,
+ *     `refresh_token_issued_at`: MAX (most-recent state wins).
+ *   - `created_at`: MIN (preserves the original creation time).
+ *   - `request_count`, `total_requests`, `session_request_count`: SUM
+ *     (no request accounting is lost across the merge).
+ *   - `priority`, `consecutive_rate_limits`, `paused`, `requires_reauth`:
+ *     MAX (most-restrictive setting wins; e.g. if any duplicate is paused,
+ *     the merged survivor is paused).
+ *
+ * The function is idempotent — running it on an already-deduped accounts
+ * table is a no-op. It must be called inside a transaction (runMigrations
+ * wraps it in `db.transaction(() => { ... })`).
+ */
+function collapseAccountDuplicatesPreservingState(db: Database): void {
+	// Find every tuple (name, provider, COALESCE(custom_endpoint,'')) that
+	// currently has more than one row. For each, pick the survivor and merge.
+	const dupGroups = db
+		.prepare(
+			`SELECT name, provider, COALESCE(custom_endpoint, '') AS ep
+			 FROM accounts
+			 GROUP BY name, provider, COALESCE(custom_endpoint, '')
+			 HAVING COUNT(*) > 1`,
+		)
+		.all() as Array<{ name: string; provider: string; ep: string }>;
+
+	if (dupGroups.length === 0) {
+		return;
+	}
+
+	const pickSurvivor = db.prepare(
+		`SELECT rowid AS survivor_rowid, id AS survivor_id
+		 FROM accounts
+		 WHERE name = ? AND provider = ? AND COALESCE(custom_endpoint, '') = ?
+		 ORDER BY
+		   COALESCE(last_used, 0) DESC,
+		   COALESCE(refresh_token_issued_at, 0) DESC,
+		   created_at DESC,
+		   rowid ASC
+		 LIMIT 1`,
+	);
+
+	const findDiscardedIds = db.prepare(
+		`SELECT id FROM accounts
+		 WHERE name = ? AND provider = ? AND COALESCE(custom_endpoint, '') = ?
+		   AND rowid != ?`,
+	);
+
+	// Merged freshest-credentials lookup. The "best" credentials come from a
+	// single row — the one with the most recent refresh_token_issued_at among
+	// rows that have a non-empty refresh_token — so refresh_token, access_token
+	// and expires_at are guaranteed consistent with each other (otherwise we
+	// could pair an access_token from one row with a refresh_token from
+	// another, which would never successfully refresh). If no row in the group
+	// has a refresh_token at all (e.g. all rows are API-key providers) we fall
+	// back to picking the most-recently-issued api_key from any row.
+	const bestCredentials = db.prepare(
+		`SELECT
+		   (SELECT refresh_token FROM accounts
+		    WHERE rowid = (
+		      SELECT rowid FROM accounts
+		      WHERE name = ? AND provider = ? AND COALESCE(custom_endpoint, '') = ?
+		        AND refresh_token IS NOT NULL AND refresh_token != ''
+		      ORDER BY COALESCE(refresh_token_issued_at, 0) DESC, rowid ASC
+		      LIMIT 1
+		    )) AS merged_refresh_token,
+		   (SELECT access_token FROM accounts
+		    WHERE rowid = (
+		      SELECT rowid FROM accounts
+		      WHERE name = ? AND provider = ? AND COALESCE(custom_endpoint, '') = ?
+		        AND refresh_token IS NOT NULL AND refresh_token != ''
+		      ORDER BY COALESCE(refresh_token_issued_at, 0) DESC, rowid ASC
+		      LIMIT 1
+		    )) AS merged_access_token,
+		   (SELECT expires_at FROM accounts
+		    WHERE rowid = (
+		      SELECT rowid FROM accounts
+		      WHERE name = ? AND provider = ? AND COALESCE(custom_endpoint, '') = ?
+		        AND refresh_token IS NOT NULL AND refresh_token != ''
+		      ORDER BY COALESCE(refresh_token_issued_at, 0) DESC, rowid ASC
+		      LIMIT 1
+		    )) AS merged_expires_at,
+		   (SELECT refresh_token_issued_at FROM accounts
+		    WHERE rowid = (
+		      SELECT rowid FROM accounts
+		      WHERE name = ? AND provider = ? AND COALESCE(custom_endpoint, '') = ?
+		        AND refresh_token IS NOT NULL AND refresh_token != ''
+		      ORDER BY COALESCE(refresh_token_issued_at, 0) DESC, rowid ASC
+		      LIMIT 1
+		    )) AS merged_refresh_token_issued_at,
+		   (SELECT api_key FROM accounts
+		    WHERE name = ? AND provider = ? AND COALESCE(custom_endpoint, '') = ?
+		      AND api_key IS NOT NULL AND api_key != ''
+		    ORDER BY COALESCE(refresh_token_issued_at, 0) DESC, created_at DESC, rowid ASC
+		    LIMIT 1) AS merged_api_key`,
+	);
+
+	// Merge policy, one rule per column. Every non-key column on the accounts
+	// table appears here or is deliberately excluded below — a column that is
+	// silently absent is how a discarded duplicate's only copy of a value gets
+	// destroyed, which is the whole failure mode this collapse has to avoid.
+	//
+	//   MAX      — timestamps/counters where "the most advanced value" is the
+	//              safe one to keep (a cooldown must not be shortened by the
+	//              collapse), and the 0/1 flag columns, where enabled wins.
+	//   MIN      — created_at (oldest birth) and rate_limit_remaining (the most
+	//              conservative estimate of what is left).
+	//   SUM      — lifetime/session counters, so history is preserved.
+	//   COALESCE — survivor's own value if it has one, otherwise the freshest
+	//              non-NULL from the group. Used for credentials and for config
+	//              columns where there is no meaningful ordering.
+	//
+	// NOTE on the 0/1 flag columns: they are INTEGER, not BOOLEAN, and 0 is a
+	// legitimate stored value rather than "unset". MAX therefore means "if any
+	// duplicate had this enabled, the survivor keeps it enabled" — the same
+	// treatment `paused` and `requires_reauth` already had. It is a deliberate
+	// policy choice, not a coincidence of the aggregate.
+	//
+	// Deliberately NOT merged: id (the survivor keeps its own, and every
+	// dependent row is repointed to it), and name / provider / custom_endpoint,
+	// which are the dedup key itself and are identical across the group by
+	// construction.
+	//
+	// Named parameters rather than positional: this statement previously bound
+	// 42 positional `?`s, most of them the same (name, provider, endpoint)
+	// triple repeated per column. Adding columns to that was a silent-corruption
+	// hazard — one misplaced argument shifts every subsequent binding.
+	const groupScope = `WHERE name = $name AND provider = $provider
+		                      AND COALESCE(custom_endpoint, '') = $ep`;
+	// Freshest non-NULL value of a column across the duplicate group, using the
+	// same ordering that picks the credential set: newest refresh token first,
+	// then newest row.
+	const freshest = (col: string) =>
+		`(SELECT ${col} FROM accounts ${groupScope} AND ${col} IS NOT NULL
+		    ORDER BY COALESCE(refresh_token_issued_at, 0) DESC, created_at DESC, rowid ASC
+		    LIMIT 1)`;
+	const agg = (fn: "MAX" | "MIN" | "SUM", col: string, dflt = "0") =>
+		`(SELECT ${fn}(COALESCE(${col}, ${dflt})) FROM accounts ${groupScope})`;
+
+	const mergeSurvivor = db.prepare(
+		`UPDATE accounts SET
+		   refresh_token = $refresh_token,
+		   access_token = $access_token,
+		   expires_at = $expires_at,
+		   refresh_token_issued_at = $refresh_token_issued_at,
+		   api_key = COALESCE(api_key, $api_key),
+		   last_used = ${agg("MAX", "last_used")},
+		   created_at = (SELECT MIN(created_at) FROM accounts ${groupScope}),
+		   request_count = ${agg("SUM", "request_count")},
+		   total_requests = ${agg("SUM", "total_requests")},
+		   session_request_count = ${agg("SUM", "session_request_count")},
+		   priority = ${agg("MAX", "priority")},
+		   consecutive_rate_limits = ${agg("MAX", "consecutive_rate_limits")},
+		   rate_limited_until = ${agg("MAX", "rate_limited_until")},
+		   session_start = ${agg("MAX", "session_start")},
+		   rate_limit_reset = ${agg("MAX", "rate_limit_reset")},
+		   paused = ${agg("MAX", "paused")},
+		   requires_reauth = ${agg("MAX", "requires_reauth")},
+		   rate_limited_at = ${agg("MAX", "rate_limited_at")},
+		   auto_fallback_enabled = ${agg("MAX", "auto_fallback_enabled")},
+		   auto_refresh_enabled = ${agg("MAX", "auto_refresh_enabled")},
+		   auto_pause_on_overage_enabled = ${agg("MAX", "auto_pause_on_overage_enabled")},
+		   peak_hours_pause_enabled = ${agg("MAX", "peak_hours_pause_enabled")},
+		   rate_limit_remaining = (SELECT MIN(rate_limit_remaining) FROM accounts
+		                           ${groupScope} AND rate_limit_remaining IS NOT NULL),
+		   rate_limit_status = COALESCE(rate_limit_status, ${freshest("rate_limit_status")}),
+		   pause_reason = COALESCE(pause_reason, ${freshest("pause_reason")}),
+		   rate_limited_reason = COALESCE(rate_limited_reason, ${freshest("rate_limited_reason")}),
+		   model_mappings = COALESCE(model_mappings, ${freshest("model_mappings")}),
+		   model_fallbacks = COALESCE(model_fallbacks, ${freshest("model_fallbacks")}),
+		   cross_region_mode = COALESCE(cross_region_mode, ${freshest("cross_region_mode")}),
+		   billing_type = COALESCE(billing_type, ${freshest("billing_type")})
+		 WHERE rowid = $rowid`,
+	);
+
+	let totalDeleted = 0;
+	let totalRepointedSlots = 0;
+	let totalRepointedRequests = 0;
+	let totalRepointedSnapshots = 0;
+
+	for (const grp of dupGroups) {
+		const survivor = pickSurvivor.get(
+			grp.name,
+			grp.provider,
+			grp.ep,
+		) as { survivor_rowid: number; survivor_id: string };
+		if (!survivor) {
+			continue;
+		}
+
+		const discardedRows = findDiscardedIds.all(
+			grp.name,
+			grp.provider,
+			grp.ep,
+			survivor.survivor_rowid,
+		) as Array<{ id: string }>;
+		const discardedIds = discardedRows.map((r) => r.id);
+
+		const merged = bestCredentials.get(
+			grp.name, grp.provider, grp.ep, // refresh_token subquery
+			grp.name, grp.provider, grp.ep, // access_token subquery
+			grp.name, grp.provider, grp.ep, // expires_at subquery
+			grp.name, grp.provider, grp.ep, // refresh_token_issued_at subquery
+			grp.name, grp.provider, grp.ep, // api_key subquery
+		) as {
+			merged_refresh_token: string | null;
+			merged_access_token: string | null;
+			merged_expires_at: number | null;
+			merged_refresh_token_issued_at: number | null;
+			merged_api_key: string | null;
+		};
+
+		// The merge UPDATE has 12 aggregate subqueries × 3 group-key params each
+		// (= 36 placeholders), plus 5 credential pre-fills (refresh_token,
+		// access_token, expires_at, refresh_token_issued_at, api_key) and the
+		// final WHERE rowid = ?. Total 42 placeholders. Bindings are
+		// positional; the order below mirrors the `?` positions in the SQL.
+		mergeSurvivor.run({
+			$refresh_token: merged.merged_refresh_token,
+			$access_token: merged.merged_access_token,
+			$expires_at: merged.merged_expires_at,
+			$refresh_token_issued_at: merged.merged_refresh_token_issued_at,
+			$api_key: merged.merged_api_key,
+			$name: grp.name,
+			$provider: grp.provider,
+			$ep: grp.ep,
+			$rowid: survivor.survivor_rowid,
+		});
+
+		if (discardedIds.length > 0) {
+			const placeholders = discardedIds.map(() => "?").join(",");
+			const repointSlots = db
+				.prepare(
+					`UPDATE combo_slots SET account_id = ? WHERE account_id IN (${placeholders})`,
+				)
+				.run(survivor.survivor_id, ...discardedIds);
+			const repointRequests = db
+				.prepare(
+					`UPDATE requests SET account_used = ? WHERE account_used IN (${placeholders})`,
+				)
+				.run(survivor.survivor_id, ...discardedIds);
+			const repointSnapshots = db
+				.prepare(
+					`UPDATE usage_snapshots SET account_id = ? WHERE account_id IN (${placeholders})`,
+				)
+				.run(survivor.survivor_id, ...discardedIds);
+
+			const deleted = db
+				.prepare(`DELETE FROM accounts WHERE id IN (${placeholders})`)
+				.run(...discardedIds).changes;
+
+			totalDeleted += deleted;
+			totalRepointedSlots += Number(repointSlots.changes ?? 0);
+			totalRepointedRequests += Number(repointRequests.changes ?? 0);
+			totalRepointedSnapshots += Number(repointSnapshots.changes ?? 0);
+		}
+	}
+
+	if (totalDeleted > 0) {
+		log.warn(
+			`Collapsed ${totalDeleted} duplicate account row(s) across ${dupGroups.length} ` +
+				`(name, provider, COALESCE(custom_endpoint,'')) tuple group(s) before creating ` +
+				`UNIQUE index. Each group kept the row with the freshest credentials (most ` +
+				`recent last_used → refresh_token_issued_at → created_at → smallest rowid) ` +
+				`and merged request counts / priority / paused state from the rest. ` +
+				`Repointed ${totalRepointedSlots} combo slot(s), ${totalRepointedRequests} ` +
+				`request-history row(s), and ${totalRepointedSnapshots} usage-snapshot row(s) ` +
+				`to the surviving account ids.`,
+		);
+	}
+}
+
 export function runMigrations(db: Database, dbPath?: string): void {
 	// Ensure base schema exists first (outside transaction as it creates tables)
 	ensureSchema(db);
@@ -803,6 +1101,43 @@ export function runMigrations(db: Database, dbPath?: string): void {
 			).run();
 
 			log.info("Made refresh_token nullable in accounts table");
+		}
+
+		// Add UNIQUE index on (name, provider, COALESCE(custom_endpoint,'')) to
+		// enforce atomic uniqueness for the account-add path. The previous
+		// SELECT-then-INSERT pre-check in `assertAccountNameAvailable` is
+		// non-atomic and lets concurrent adds (or any path that bypasses the
+		// pre-check — e.g. cli-commands, oauth-flow, dashboard-web direct
+		// inserts) persist duplicate rows. The DB-level constraint closes
+		// the race; the pre-check remains as a friendly fast-path that returns
+		// a clean 400 without a wasted INSERT round-trip.
+		//
+		// The index cannot be created while duplicates exist — `CREATE UNIQUE
+		// INDEX` fails with "UNIQUE constraint failed" on the first colliding
+		// row. Collapse existing duplicates per tuple BEFORE creating the
+		// index, but **without destroying account state**: keep the row most
+		// likely to still hold working credentials, merge the others' state
+		// into it, and repoint every dependent row (combo_slots, requests,
+		// usage_snapshots) at the surviving id. An earlier implementation
+		// kept the arbitrary minimum-rowid row and DELETED the rest; that
+		// silently dropped live OAuth refresh tokens, cascade-removed combo
+		// slots, and orphaned request history rows whose `account_used`
+		// pointed at the deleted id. This block is idempotent: if the index
+		// already exists, skip both the dedup and the CREATE.
+		const uniqueAccountsIndexExists = db
+			.prepare(
+				`SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_accounts_unique_name_provider_endpoint'`,
+			)
+			.get();
+		if (!uniqueAccountsIndexExists) {
+			collapseAccountDuplicatesPreservingState(db);
+			db.prepare(
+				`CREATE UNIQUE INDEX idx_accounts_unique_name_provider_endpoint
+				 ON accounts(name, provider, COALESCE(custom_endpoint, ''))`,
+			).run();
+			log.info(
+				"Created UNIQUE index idx_accounts_unique_name_provider_endpoint on accounts",
+			);
 		}
 
 		// Run API key storage migration to move API keys from refresh_token to api_key field

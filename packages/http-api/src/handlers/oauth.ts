@@ -101,27 +101,53 @@ export function createQwenDeviceFlowInitHandler(dbOps: DatabaseOperations) {
 						? normalizeQwenBaseUrl(tokens.resource_url)
 						: null;
 
-					await dbOps.getAdapter().run(
-						`INSERT INTO accounts (
-							id, name, provider, api_key, refresh_token, access_token,
-							expires_at, created_at, request_count, total_requests, priority,
-							custom_endpoint, model_mappings, model_fallbacks
-						) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?)`,
-						[
-							accountId,
-							name,
-							"qwen",
-							null,
-							tokens.refresh_token,
-							tokens.access_token,
-							now + tokens.expires_in * 1000,
-							now,
-							priority,
-							resourceUrl,
-							null,
-							null,
-						],
-					);
+					try {
+						await dbOps.getAdapter().run(
+							`INSERT INTO accounts (
+								id, name, provider, api_key, refresh_token, access_token,
+								expires_at, created_at, request_count, total_requests, priority,
+								custom_endpoint, model_mappings, model_fallbacks
+							) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?)`,
+							[
+								accountId,
+								name,
+								"qwen",
+								null,
+								tokens.refresh_token,
+								tokens.access_token,
+								now + tokens.expires_in * 1000,
+								now,
+								priority,
+								resourceUrl,
+								null,
+								null,
+							],
+						);
+					} catch (insertErr) {
+						// The DB-level UNIQUE index
+						// (idx_accounts_unique_name_provider_endpoint) is the
+						// authoritative gate. Surface the same "is already
+						// taken" wording the http-api handlers use so the
+						// dashboard can render a uniform error.
+						if (
+							insertErr instanceof Error &&
+							insertErr.message.includes("UNIQUE constraint failed")
+						) {
+							const msg = `Account name '${name}' is already taken`;
+							log.warn(`Qwen account add rejected: ${msg}`);
+							qwenSessions.set(sessionId, {
+								status: "error",
+								accountName: name,
+								error: msg,
+							});
+							setTimeout(
+								() => qwenSessions.delete(sessionId),
+								10 * 60 * 1000,
+							);
+							return;
+						}
+						throw insertErr;
+					}
 
 					qwenSessions.set(sessionId, {
 						status: "complete",
@@ -368,27 +394,53 @@ export function createCodexDeviceFlowInitHandler(dbOps: DatabaseOperations) {
 					const accountId = crypto.randomUUID();
 					const now = Date.now();
 
-					await dbOps.getAdapter().run(
-						`INSERT INTO accounts (
-							id, name, provider, api_key, refresh_token, access_token,
-							expires_at, created_at, request_count, total_requests, priority,
-							custom_endpoint, model_mappings, model_fallbacks
-						) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?)`,
-						[
-							accountId,
-							name,
-							"codex",
-							null,
-							tokens.refresh_token,
-							tokens.access_token,
-							now + tokens.expires_in * 1000,
-							now,
-							priority,
-							null,
-							null,
-							null,
-						],
-					);
+					try {
+						await dbOps.getAdapter().run(
+							`INSERT INTO accounts (
+								id, name, provider, api_key, refresh_token, access_token,
+								expires_at, created_at, request_count, total_requests, priority,
+								custom_endpoint, model_mappings, model_fallbacks
+							) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?)`,
+							[
+								accountId,
+								name,
+								"codex",
+								null,
+								tokens.refresh_token,
+								tokens.access_token,
+								now + tokens.expires_in * 1000,
+								now,
+								priority,
+								null,
+								null,
+								null,
+							],
+						);
+					} catch (insertErr) {
+						// Same atomicity rationale as the Qwen path: the DB-level
+						// UNIQUE index is the authoritative gate. Surface a
+						// uniform "is already taken" error so the dashboard
+						// can render it consistently with the http-api
+						// handlers.
+						if (
+							insertErr instanceof Error &&
+							insertErr.message.includes("UNIQUE constraint failed")
+						) {
+							const msg = `Account name '${name}' is already taken`;
+							log.warn(`Codex account add rejected: ${msg}`);
+							codexSessions.set(sessionId, {
+								status: "error",
+								accountName: name,
+								error: msg,
+							});
+							setTimeout(
+								() => codexSessions.delete(sessionId),
+								10 * 60 * 1000,
+							);
+							return;
+						}
+						throw insertErr;
+					}
 
 					codexSessions.set(sessionId, {
 						status: "complete",

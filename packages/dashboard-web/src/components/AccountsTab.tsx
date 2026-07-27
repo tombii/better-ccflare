@@ -37,10 +37,12 @@ export function AccountsTab() {
 	const [adding, setAdding] = useState(false);
 	const [confirmDelete, setConfirmDelete] = useState<{
 		show: boolean;
+		accountId: string;
 		accountName: string;
 		confirmInput: string;
 	}>({
 		show: false,
+		accountId: "",
 		accountName: "",
 		confirmInput: "",
 	});
@@ -350,8 +352,13 @@ export function AccountsTab() {
 		}
 	};
 
-	const handleRemoveAccount = (name: string) => {
-		setConfirmDelete({ show: true, accountName: name, confirmInput: "" });
+	const handleRemoveAccount = (account: Account) => {
+		setConfirmDelete({
+			show: true,
+			accountId: account.id,
+			accountName: account.name,
+			confirmInput: "",
+		});
 	};
 
 	const handleConfirmDelete = async () => {
@@ -363,12 +370,23 @@ export function AccountsTab() {
 		}
 
 		try {
+			const accountId = confirmDelete.accountId;
+			if (!accountId) {
+				setActionError("Missing account id; cannot delete.");
+				return;
+			}
 			await api.removeAccount(
+				accountId,
 				confirmDelete.accountName,
 				confirmDelete.confirmInput,
 			);
 			await loadAccounts();
-			setConfirmDelete({ show: false, accountName: "", confirmInput: "" });
+			setConfirmDelete({
+				show: false,
+				accountId: "",
+				accountName: "",
+				confirmInput: "",
+			});
 			setActionError(null);
 		} catch (err) {
 			setActionError(formatError(err));
@@ -653,6 +671,7 @@ export function AccountsTab() {
 					onCancel={() => {
 						setConfirmDelete({
 							show: false,
+							accountId: "",
 							accountName: "",
 							confirmInput: "",
 						});
