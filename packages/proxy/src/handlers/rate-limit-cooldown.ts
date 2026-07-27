@@ -60,8 +60,7 @@ export function getRateLimitProbeAdmission(
 	const reason = account.rate_limited_reason;
 	const isOverload = reason != null && isOverloadReason(reason);
 	const expiredMatureCooldown =
-		(account.consecutive_rate_limits >= MATURE_COOLDOWN_STREAK ||
-			isOverload) &&
+		(account.consecutive_rate_limits >= MATURE_COOLDOWN_STREAK || isOverload) &&
 		account.rate_limited_until != null &&
 		account.rate_limited_until <= now;
 	if (!expiredMatureCooldown) return "not_required";
