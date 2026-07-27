@@ -10,12 +10,19 @@ describe("createAccountAddHandler — duplicate (name, provider, custom_endpoint
 	let dbOps: DatabaseOperations;
 	let handler: (req: Request) => Promise<Response>;
 
-	beforeEach(() => {
-		try {
-			if (existsSync(TEST_DB_PATH)) unlinkSync(TEST_DB_PATH);
-		} catch {
-			// best-effort cleanup
+	function cleanupDbFiles() {
+		for (const suffix of ["", "-wal", "-shm"]) {
+			try {
+				const p = `${TEST_DB_PATH}${suffix}`;
+				if (existsSync(p)) unlinkSync(p);
+			} catch {
+				// best-effort cleanup
+			}
 		}
+	}
+
+	beforeEach(() => {
+		cleanupDbFiles();
 		DatabaseFactory.initialize(TEST_DB_PATH);
 		dbOps = DatabaseFactory.getInstance();
 		// The handler's _config arg is unused; pass null cast.
@@ -23,12 +30,12 @@ describe("createAccountAddHandler — duplicate (name, provider, custom_endpoint
 	});
 
 	afterEach(() => {
-		try {
-			if (existsSync(TEST_DB_PATH)) unlinkSync(TEST_DB_PATH);
-		} catch {
-			// best-effort cleanup
-		}
+		// Close BEFORE unlinking: deleting the file under an open connection
+		// makes close()'s `PRAGMA wal_checkpoint(TRUNCATE)` fail with
+		// SQLITE_IOERR_VNODE, which surfaces as an unhandled error between
+		// tests and can leave the next beforeEach unable to open the database.
 		DatabaseFactory.reset();
+		cleanupDbFiles();
 	});
 
 	function makeRequest(body: Record<string, unknown>) {
@@ -121,9 +128,14 @@ describe("createAccountAddHandler — duplicate (name, provider, custom_endpoint
 		// what a concurrent caller (or any non-handler INSERT path — CLI,
 		// oauth-flow, dashboard-web) would emit if it raced past the SELECT.
 		const adapter = dbOps.getAdapter();
-		const directInsertOk = (() => {
+		// `adapter.run` is async. Without awaiting it inside the try, the
+		// UNIQUE violation never reaches this catch — it escapes as an
+		// unhandled rejection between tests, and the assertion below sees the
+		// synchronous pre-await return value instead of "rejected". The test
+		// then passes or fails for reasons unrelated to the constraint.
+		const directInsertOk = await (async () => {
 			try {
-				adapter.run(
+				await adapter.run(
 					`INSERT INTO accounts (id, name, provider, refresh_token, access_token, created_at)
 					 VALUES (?, ?, ?, ?, ?, ?)`,
 					["concurrent", "race", "anthropic", "r-direct", "a-direct", Date.now()],

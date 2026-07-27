@@ -10,15 +10,34 @@ import { removeAccount, removeAccountById } from "../account";
 // CI build step before executing.
 const TEST_DB_PATH = "/tmp/test-remove-duplicate-guard.db";
 
+// Same-name rows must differ on provider or custom_endpoint: the UNIQUE index
+// idx_accounts_unique_name_provider_endpoint now forbids two rows sharing
+// (name, provider, COALESCE(custom_endpoint,'')). Name AMBIGUITY is still
+// reachable and is what these tests are about — `removeAccount` matches on name
+// alone, so two rows sharing a name across different endpoints are exactly the
+// case it has to refuse. Seeding them this way tests the real production
+// scenario rather than fighting the constraint.
 function insertAccount(
 	dbOps: DatabaseOperations,
-	row: { id: string; name: string; provider?: string },
+	row: {
+		id: string;
+		name: string;
+		provider?: string;
+		customEndpoint?: string | null;
+	},
 ) {
 	const db = dbOps.getAdapter();
 	return db.run(
-		`INSERT INTO accounts (id, name, provider, refresh_token, created_at)
-		 VALUES (?, ?, ?, ?, ?)`,
-		[row.id, row.name, row.provider ?? "anthropic", "rt", Date.now()],
+		`INSERT INTO accounts (id, name, provider, refresh_token, created_at, custom_endpoint)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		[
+			row.id,
+			row.name,
+			row.provider ?? "anthropic",
+			"rt",
+			Date.now(),
+			row.customEndpoint ?? null,
+		],
 	);
 }
 
@@ -26,27 +45,41 @@ describe("removeAccountById / removeAccount duplicate-name safety", () => {
 	let dbOps: DatabaseOperations;
 
 	beforeEach(() => {
-		try {
-			if (existsSync(TEST_DB_PATH)) unlinkSync(TEST_DB_PATH);
-		} catch {
-			// best-effort cleanup
+		for (const suffix of ["", "-wal", "-shm"]) {
+			try {
+				const p = `${TEST_DB_PATH}${suffix}`;
+				if (existsSync(p)) unlinkSync(p);
+			} catch {
+				// best-effort cleanup
+			}
 		}
 		DatabaseFactory.initialize(TEST_DB_PATH);
 		dbOps = DatabaseFactory.getInstance();
 	});
 
 	afterEach(() => {
-		try {
-			if (existsSync(TEST_DB_PATH)) unlinkSync(TEST_DB_PATH);
-		} catch {
-			// best-effort cleanup
-		}
+		// Close BEFORE unlinking. Deleting the file out from under an open
+		// connection makes close() fail its `PRAGMA wal_checkpoint(TRUNCATE)`
+		// with SQLITE_IOERR_VNODE, which surfaces as an unhandled error between
+		// tests and takes unrelated cases down with it.
 		DatabaseFactory.reset();
+		for (const suffix of ["", "-wal", "-shm"]) {
+			try {
+				const p = `${TEST_DB_PATH}${suffix}`;
+				if (existsSync(p)) unlinkSync(p);
+			} catch {
+				// best-effort cleanup
+			}
+		}
 	});
 
 	it("removeAccountById deletes the targeted row only", async () => {
 		await insertAccount(dbOps, { id: "id-a", name: "alpha" });
-		await insertAccount(dbOps, { id: "id-b", name: "alpha" });
+		await insertAccount(dbOps, {
+			id: "id-b",
+			name: "alpha",
+			customEndpoint: "https://alt.example",
+		});
 
 		const result = await removeAccountById(dbOps, "id-a");
 		expect(result.success).toBe(true);
@@ -67,7 +100,11 @@ describe("removeAccountById / removeAccount duplicate-name safety", () => {
 
 	it("removeAccount refuses to delete when the name matches multiple accounts", async () => {
 		await insertAccount(dbOps, { id: "id-a", name: "shared" });
-		await insertAccount(dbOps, { id: "id-b", name: "shared" });
+		await insertAccount(dbOps, {
+			id: "id-b",
+			name: "shared",
+			customEndpoint: "https://alt.example",
+		});
 
 		const result = await removeAccount(dbOps, "shared");
 		expect(result.success).toBe(false);

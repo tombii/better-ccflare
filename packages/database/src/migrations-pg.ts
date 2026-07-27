@@ -485,19 +485,29 @@ async function collapseAccountDuplicatesPreservingStatePg(
 			    WHERE name = $1 AND provider = $2 AND COALESCE(custom_endpoint, '') = $3
 			      AND api_key IS NOT NULL AND api_key <> ''
 			    ORDER BY COALESCE(refresh_token_issued_at, 0) DESC, created_at DESC, ctid::text ASC
-			    LIMIT 1) AS merged_api_key`,
+			    LIMIT 1) AS merged_api_key,
+			   -- Read from the SAME freshest row as the three token fields
+			   -- above, using the identical ordering, so the survivor's
+			   -- issued-at always describes the tokens it actually holds.
+			   (SELECT refresh_token_issued_at FROM accounts
+			    WHERE name = $1 AND provider = $2 AND COALESCE(custom_endpoint, '') = $3
+			      AND refresh_token IS NOT NULL AND refresh_token <> ''
+			    ORDER BY COALESCE(refresh_token_issued_at, 0) DESC, ctid::text ASC
+			    LIMIT 1) AS merged_refresh_token_issued_at`,
 			[grp.name, grp.provider, grp.ep],
 		)) as Array<{
 			merged_refresh_token: string | null;
 			merged_access_token: string | null;
 			merged_expires_at: string | null;
 			merged_api_key: string | null;
+			merged_refresh_token_issued_at: string | null;
 		}>;
 		const merged = mergedRows[0] ?? {
 			merged_refresh_token: null,
 			merged_access_token: null,
 			merged_expires_at: null,
 			merged_api_key: null,
+			merged_refresh_token_issued_at: null,
 		};
 
 		// Merge aggregates into the survivor. Parameter slots $1..$4 carry
@@ -535,7 +545,15 @@ async function collapseAccountDuplicatesPreservingStatePg(
 			   access_token = $2,
 			   expires_at = $3::BIGINT,
 			   api_key = COALESCE(api_key, $4),
-			   refresh_token_issued_at = (SELECT MAX(COALESCE(refresh_token_issued_at, 0)) FROM accounts ${PG_GROUP_SCOPE}),
+			   -- Must come from the SAME row as refresh_token/access_token/
+			   -- expires_at above (all four are read from the single freshest
+			   -- row), not recomputed as MAX across the group. Taking the group
+			   -- MAX independently can pair row A's tokens with row B's newer
+			   -- issued-at, so the stored "when were these tokens issued" no
+			   -- longer describes the tokens actually held — which silently
+			   -- misleads anything reasoning about token freshness. The SQLite
+			   -- path already sources it from the merged row; this matches it.
+			   refresh_token_issued_at = $9::BIGINT,
 			   last_used = (SELECT MAX(COALESCE(last_used, 0)) FROM accounts ${PG_GROUP_SCOPE}),
 			   created_at = (SELECT MIN(created_at) FROM accounts ${PG_GROUP_SCOPE}),
 			   request_count = (SELECT SUM(COALESCE(request_count, 0)) FROM accounts ${PG_GROUP_SCOPE}),
@@ -571,6 +589,7 @@ async function collapseAccountDuplicatesPreservingStatePg(
 				grp.provider, // $6
 				grp.ep, // $7
 				survivor.id, // $8
+				merged.merged_refresh_token_issued_at, // $9
 			],
 		);
 

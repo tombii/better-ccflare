@@ -13,31 +13,46 @@ describe("createAccountRemoveHandler — id-scoped delete", () => {
 	let dbOps: DatabaseOperations;
 	let handler: ReturnType<typeof createAccountRemoveHandler>;
 
-	beforeEach(() => {
-		try {
-			if (existsSync(TEST_DB_PATH)) unlinkSync(TEST_DB_PATH);
-		} catch {
-			// best-effort cleanup
+	function cleanupDbFiles() {
+		for (const suffix of ["", "-wal", "-shm"]) {
+			try {
+				const p = `${TEST_DB_PATH}${suffix}`;
+				if (existsSync(p)) unlinkSync(p);
+			} catch {
+				// best-effort cleanup
+			}
 		}
+	}
+
+	beforeEach(() => {
+		cleanupDbFiles();
 		DatabaseFactory.initialize(TEST_DB_PATH);
 		dbOps = DatabaseFactory.getInstance();
 		handler = createAccountRemoveHandler(dbOps);
 	});
 
 	afterEach(() => {
-		try {
-			if (existsSync(TEST_DB_PATH)) unlinkSync(TEST_DB_PATH);
-		} catch {
-			// best-effort cleanup
-		}
+		// Close BEFORE unlinking: deleting the file under an open connection
+		// makes close()'s `PRAGMA wal_checkpoint(TRUNCATE)` fail with
+		// SQLITE_IOERR_VNODE, surfacing as an unhandled error between tests.
 		DatabaseFactory.reset();
+		cleanupDbFiles();
 	});
 
-	function insertRow(id: string, name: string) {
+	// custom_endpoint is a parameter because the UNIQUE index
+	// idx_accounts_unique_name_provider_endpoint forbids two rows sharing
+	// (name, provider, COALESCE(custom_endpoint,'')). Same-name rows are still
+	// legal — and still the case the id-scoped delete has to get right — as
+	// long as they differ on endpoint.
+	function insertRow(
+		id: string,
+		name: string,
+		customEndpoint: string | null = null,
+	) {
 		return dbOps.getAdapter().run(
-			`INSERT INTO accounts (id, name, provider, refresh_token, created_at)
-			 VALUES (?, ?, ?, ?, ?)`,
-			[id, name, "anthropic", "rt", Date.now()],
+			`INSERT INTO accounts (id, name, provider, refresh_token, created_at, custom_endpoint)
+			 VALUES (?, ?, ?, ?, ?, ?)`,
+			[id, name, "anthropic", "rt", Date.now(), customEndpoint],
 		);
 	}
 
@@ -59,10 +74,13 @@ describe("createAccountRemoveHandler — id-scoped delete", () => {
 		const response = await handler(makeRequest("beta"), "uuid-2");
 		expect(response.ok).toBe(true);
 
+		// Both rows are gone: uuid-1 via removeAccountById above, uuid-2 via the
+		// handler. (This previously asserted ["uuid-1"], which could not hold —
+		// uuid-1 is deleted earlier in this same test.)
 		const remaining = await dbOps
 			.getAdapter()
 			.query<{ id: string }>("SELECT id FROM accounts", []);
-		expect(remaining.map((r) => r.id)).toEqual(["uuid-1"]);
+		expect(remaining.map((r) => r.id)).toEqual([]);
 	});
 
 	it("returns 404 when the id does not exist", async () => {
@@ -88,8 +106,11 @@ describe("createAccountRemoveHandler — id-scoped delete", () => {
 		// Reproduces the original bug: a name-keyed delete used to wipe every
 		// row sharing the name. After the fix, the HTTP handler only ever
 		// deletes the row whose id was in the URL.
+		// Distinct endpoints so the pair is legal under the UNIQUE index while
+		// still sharing a name — which is precisely the ambiguity that made the
+		// old name-keyed delete destroy both rows.
 		await insertRow("uuid-4", "shared");
-		await insertRow("uuid-5", "shared");
+		await insertRow("uuid-5", "shared", "https://alt.example");
 
 		const response = await handler(makeRequest("shared"), "uuid-4");
 		expect(response.ok).toBe(true);
