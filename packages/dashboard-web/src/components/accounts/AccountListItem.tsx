@@ -42,7 +42,7 @@ interface AccountListItemProps {
 	onPauseToggle: (account: Account) => void;
 	onForceResetRateLimit: (account: Account) => void;
 	onRefreshUsage: (account: Account) => Promise<void>;
-	onRemove: (name: string) => void;
+	onRemove: (account: Account) => void;
 	onRename: (account: Account) => void;
 	onPriorityChange: (account: Account) => void;
 	onAutoFallbackToggle: (account: Account) => void;
@@ -449,11 +449,7 @@ export function AccountListItem({
 							<Pause className="h-4 w-4" />
 						)}
 					</Button>
-					<Button
-						variant="ghost"
-						size="sm"
-						onClick={() => onRemove(account.name)}
-					>
+					<Button variant="ghost" size="sm" onClick={() => onRemove(account)}>
 						<Trash2 className="h-4 w-4" />
 					</Button>
 				</div>

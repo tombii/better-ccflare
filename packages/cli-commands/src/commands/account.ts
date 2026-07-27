@@ -1831,47 +1831,121 @@ export async function getAccountsList(
 }
 
 /**
- * Remove an account by name
+ * Remove an account by id.
+ *
+ * This is the genuinely id-scoped delete. Callers that hold a stable
+ * identifier (the HTTP API handler, TUI actions that capture an account
+ * row, etc.) should prefer this over the by-name variant so a shared
+ * name never causes accidental cascade deletion.
+ */
+export async function removeAccountById(
+	dbOps: DatabaseOperations,
+	id: string,
+): Promise<{ success: boolean; message: string; name?: string }> {
+	const adapter = dbOps.getAdapter();
+
+	// Capture the account name first so we can return a useful message and
+	// so the caller can keep using the removed account's display label
+	// for cache cleanup (the cache key is the id, the user-facing label is
+	// the name).
+	const existing = await adapter.get<{ name: string }>(
+		"SELECT name FROM accounts WHERE id = ?",
+		[id],
+	);
+
+	if (!existing) {
+		return {
+			success: false,
+			message: `Account not found`,
+		};
+	}
+
+	const changes = await adapter.runWithChanges(
+		"DELETE FROM accounts WHERE id = ?",
+		[id],
+	);
+
+	if (changes === 0) {
+		return {
+			success: false,
+			message: `Account not found`,
+		};
+	}
+
+	return {
+		success: true,
+		message: `Account '${existing.name}' removed successfully`,
+		name: existing.name,
+	};
+}
+
+/**
+ * Remove an account by name.
+ *
+ * Shared names are valid in the database but cause ambiguous deletes:
+ * a `DELETE FROM accounts WHERE name = ?` would remove every row that
+ * matches. To keep callers safe by default, this resolves the name to
+ * an id and delegates to `removeAccountById`. If more than one account
+ * shares the name, the call is refused so the caller can disambiguate
+ * (typically by switching to an id-keyed call site).
  */
 export async function removeAccount(
 	dbOps: DatabaseOperations,
 	name: string,
 ): Promise<{ success: boolean; message: string }> {
 	const adapter = dbOps.getAdapter();
-	const changes = await adapter.runWithChanges(
-		"DELETE FROM accounts WHERE name = ?",
+	const matches = await adapter.query<{ id: string }>(
+		"SELECT id FROM accounts WHERE name = ?",
 		[name],
 	);
 
-	if (changes === 0) {
+	if (matches.length === 0) {
 		return {
 			success: false,
 			message: `Account '${name}' not found`,
 		};
 	}
 
-	return {
-		success: true,
-		message: `Account '${name}' removed successfully`,
-	};
+	if (matches.length > 1) {
+		return {
+			success: false,
+			message: `Multiple accounts named '${name}' exist; remove by id to avoid deleting the wrong account`,
+		};
+	}
+
+	return removeAccountById(dbOps, matches[0].id);
 }
 
 /**
  * Remove an account by name with confirmation prompt (for CLI)
+ *
+ * Same ambiguity guard as `removeAccount`: refuses to proceed if more
+ * than one row matches the supplied name. The CLI surface cannot
+ * disambiguate with a typed confirmation string when the name is shared,
+ * so we surface a clear error and let the caller re-run by id.
  */
 export async function removeAccountWithConfirmation(
 	dbOps: DatabaseOperations,
 	name: string,
 	force?: boolean,
 ): Promise<{ success: boolean; message: string }> {
-	// Check if account exists first
-	const accounts = await dbOps.getAllAccounts();
-	const exists = accounts.some((a) => a.name === name);
+	const adapter = dbOps.getAdapter();
+	const matches = await adapter.query<{ id: string; name: string }>(
+		"SELECT id, name FROM accounts WHERE name = ?",
+		[name],
+	);
 
-	if (!exists) {
+	if (matches.length === 0) {
 		return {
 			success: false,
 			message: `Account '${name}' not found`,
+		};
+	}
+
+	if (matches.length > 1) {
+		return {
+			success: false,
+			message: `Multiple accounts named '${name}' exist; remove by id to avoid deleting the wrong account`,
 		};
 	}
 
@@ -1886,7 +1960,13 @@ export async function removeAccountWithConfirmation(
 		}
 	}
 
-	return removeAccount(dbOps, name);
+	const result = await removeAccountById(dbOps, matches[0].id);
+	// Hide the id-keyed "not found" race window from confirmation-prompt callers
+	// by remapping to the by-name phrasing they expect.
+	if (!result.success) {
+		return { success: false, message: `Account '${name}' not found` };
+	}
+	return { success: result.success, message: result.message };
 }
 
 /**

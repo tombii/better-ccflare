@@ -733,9 +733,13 @@ class API extends HttpClient {
 		}
 	}
 
-	async removeAccount(name: string, confirm: string): Promise<void> {
+	async removeAccount(
+		id: string,
+		_name: string,
+		confirm: string,
+	): Promise<void> {
 		const startTime = Date.now();
-		const url = `/api/accounts/${name}`;
+		const url = `/api/accounts/${id}`;
 
 		this.logger.debug(`→ DELETE ${url}`, { confirm });
 

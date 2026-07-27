@@ -287,12 +287,14 @@ export const useRemoveAccount = () => {
 	const queryClient = useQueryClient();
 	return useMutation({
 		mutationFn: ({
+			id,
 			name,
 			confirmInput,
 		}: {
+			id: string;
 			name: string;
 			confirmInput: string;
-		}) => api.removeAccount(name, confirmInput),
+		}) => api.removeAccount(id, name, confirmInput),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.accounts() });
 		},
