@@ -284,27 +284,46 @@ export class OAuthFlow {
 	): Promise<AccountCreated> {
 		const adapter = this.dbOps.getAdapter();
 
-		await adapter.run(
-			`
-			INSERT INTO accounts (
-				id, name, provider, api_key, refresh_token, access_token, expires_at,
-				created_at, request_count, total_requests, priority, custom_endpoint,
-				refresh_token_issued_at
-			) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, 0, 0, ?, ?, ?)
-			`,
-			[
-				id,
-				name,
-				"anthropic",
-				tokens.refreshToken || "",
-				tokens.accessToken,
-				tokens.expiresAt,
-				Date.now(),
-				priority,
-				customEndpoint || null,
-				Date.now(),
-			],
-		);
+		try {
+			await adapter.run(
+				`
+				INSERT INTO accounts (
+					id, name, provider, api_key, refresh_token, access_token, expires_at,
+					created_at, request_count, total_requests, priority, custom_endpoint,
+					refresh_token_issued_at
+				) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, 0, 0, ?, ?, ?)
+				`,
+				[
+					id,
+					name,
+					"anthropic",
+					tokens.refreshToken || "",
+					tokens.accessToken,
+					tokens.expiresAt,
+					Date.now(),
+					priority,
+					customEndpoint || null,
+					Date.now(),
+				],
+			);
+		} catch (insertErr) {
+			// The DB-level UNIQUE index
+			// (idx_accounts_unique_name_provider_endpoint) is the
+			// authoritative gate. begin() does a name-only pre-check
+			// (no provider/custom_endpoint) and `complete()` may run
+			// minutes later, so a concurrent OAuth completion or any
+			// other add path could claim the tuple between begin and
+			// complete. Surface the same "is already taken" message the
+			// http-api handlers use so the dashboard renders a uniform
+			// error.
+			if (
+				insertErr instanceof Error &&
+				insertErr.message.includes("UNIQUE constraint failed")
+			) {
+				throw new Error(`Account name '${name}' is already taken`);
+			}
+			throw insertErr;
+		}
 
 		return {
 			id,
@@ -337,23 +356,37 @@ export class OAuthFlow {
 	): Promise<AccountCreated> {
 		const adapter = this.dbOps.getAdapter();
 
-		await adapter.run(
-			`
-			INSERT INTO accounts (
-				id, name, provider, api_key, refresh_token, access_token, expires_at,
-				created_at, request_count, total_requests, priority, custom_endpoint
-			) VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, 0, 0, ?, ?)
-			`,
-			[
-				id,
-				name,
-				"claude-console-api",
-				apiKey,
-				Date.now(),
-				priority,
-				customEndpoint || null,
-			],
-		);
+		try {
+			await adapter.run(
+				`
+				INSERT INTO accounts (
+					id, name, provider, api_key, refresh_token, access_token, expires_at,
+					created_at, request_count, total_requests, priority, custom_endpoint
+				) VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, 0, 0, ?, ?)
+				`,
+				[
+					id,
+					name,
+					"claude-console-api",
+					apiKey,
+					Date.now(),
+					priority,
+					customEndpoint || null,
+				],
+			);
+		} catch (insertErr) {
+			// Same atomicity rationale as createAccountWithOAuth — the
+			// DB UNIQUE index is the authoritative gate, this catch
+			// only translates the error into the same wording the
+			// http-api handlers emit.
+			if (
+				insertErr instanceof Error &&
+				insertErr.message.includes("UNIQUE constraint failed")
+			) {
+				throw new Error(`Account name '${name}' is already taken`);
+			}
+			throw insertErr;
+		}
 
 		return {
 			id,

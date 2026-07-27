@@ -648,6 +648,12 @@ export function createAccountPriorityUpdateHandler(dbOps: DatabaseOperations) {
  * two Anthropic console accounts (which never set a custom endpoint)
  * collide on name as expected. Returns the response to send back, or
  * `null` if the name is available.
+ *
+ * This is the friendly fast-path: the atomic uniqueness guarantee comes
+ * from the DB-level UNIQUE index
+ * `idx_accounts_unique_name_provider_endpoint` enforced on every INSERT.
+ * Concurrent adds that race past this SELECT are still rejected at the
+ * INSERT via `isUniqueConstraintError` below — see Greptile P1.
  */
 async function assertAccountNameAvailable(
 	dbOps: DatabaseOperations,
@@ -667,6 +673,28 @@ async function assertAccountNameAvailable(
 		return errorResponse(BadRequest(`Account name '${name}' is already taken`));
 	}
 	return null;
+}
+
+/**
+ * SQLite surfaces a UNIQUE-constraint violation as an Error whose message
+ * contains "UNIQUE constraint failed:". Map that to the same BadRequest
+ * the pre-check returns so callers see a consistent 400 regardless of
+ * which side of the race the second add loses on.
+ *
+ * Keeping the pre-check is intentional: it gives a clean 400 for the
+ * common sequential case without a wasted INSERT round-trip, and lets
+ * us attach the friendly "Account name '<name>' is already taken" copy
+ * that points at the field the user just typed. The DB constraint is the
+ * authoritative gate; this catch is what makes the add path survive
+ * concurrent callers (different processes, network-attached SQLite,
+ * future async adapters, or any INSERT site that bypasses the pre-check
+ * — cli-commands, oauth-flow, dashboard-web, etc.).
+ */
+function isUniqueConstraintError(error: unknown): boolean {
+	return (
+		error instanceof Error &&
+		error.message.includes("UNIQUE constraint failed")
+	);
 }
 
 /**
@@ -797,6 +825,15 @@ export function createAccountAddHandler(
 					error.message.includes("already exists")
 				) {
 					return errorResponse(BadRequest(error.message));
+				}
+				if (isUniqueConstraintError(error)) {
+					// Concurrent caller raced past assertAccountNameAvailable
+					// and lost on the DB UNIQUE index. Surface the same 400 the
+					// pre-check would have produced so the response shape is
+					// identical across the two paths.
+					return errorResponse(
+						BadRequest(`Account name '${name}' is already taken`),
+					);
 				}
 				return errorResponse(InternalServerError((error as Error).message));
 			}
@@ -1173,6 +1210,11 @@ export function createZaiAccountAddHandler(dbOps: DatabaseOperations) {
 			});
 		} catch (error) {
 			log.error("z.ai account creation error:", error);
+			if (isUniqueConstraintError(error)) {
+				return errorResponse(
+					BadRequest(`Account name '${name}' is already taken`),
+				);
+			}
 			return errorResponse(
 				error instanceof Error
 					? error
@@ -1345,6 +1387,11 @@ export function createOpenAIAccountAddHandler(dbOps: DatabaseOperations) {
 			});
 		} catch (error) {
 			log.error("OpenAI-compatible account creation error:", error);
+			if (isUniqueConstraintError(error)) {
+				return errorResponse(
+					BadRequest(`Account name '${name}' is already taken`),
+				);
+			}
 			return errorResponse(
 				error instanceof Error
 					? error
@@ -1494,6 +1541,11 @@ export function createVertexAIAccountAddHandler(dbOps: DatabaseOperations) {
 			if (error instanceof ValidationError) {
 				return errorResponse(BadRequest(error.message));
 			}
+			if (isUniqueConstraintError(error)) {
+				return errorResponse(
+					BadRequest(`Account name '${name}' is already taken`),
+				);
+			}
 			return errorResponse(
 				InternalServerError(
 					error instanceof Error ? error.message : "Failed to add account",
@@ -1632,6 +1684,11 @@ export function createMinimaxAccountAddHandler(dbOps: DatabaseOperations) {
 			});
 		} catch (error) {
 			log.error("Minimax account creation error:", error);
+			if (isUniqueConstraintError(error)) {
+				return errorResponse(
+					BadRequest(`Account name '${name}' is already taken`),
+				);
+			}
 			return errorResponse(
 				error instanceof Error
 					? error
@@ -1808,6 +1865,11 @@ export function createNanoGPTAccountAddHandler(dbOps: DatabaseOperations) {
 			if (error instanceof ValidationError) {
 				return errorResponse(BadRequest(error.message));
 			}
+			if (isUniqueConstraintError(error)) {
+				return errorResponse(
+					BadRequest(`Account name '${name}' is already taken`),
+				);
+			}
 			return errorResponse(
 				error instanceof Error
 					? error
@@ -1982,6 +2044,11 @@ export function createAnthropicCompatibleAccountAddHandler(
 			});
 		} catch (error) {
 			log.error("Anthropic-compatible account creation error:", error);
+			if (isUniqueConstraintError(error)) {
+				return errorResponse(
+					BadRequest(`Account name '${name}' is already taken`),
+				);
+			}
 			return errorResponse(
 				error instanceof Error
 					? error
@@ -2140,6 +2207,11 @@ export function createOllamaAccountAddHandler(dbOps: DatabaseOperations) {
 			});
 		} catch (error) {
 			log.error("Ollama account creation error:", error);
+			if (isUniqueConstraintError(error)) {
+				return errorResponse(
+					BadRequest(`Account name '${name}' is already taken`),
+				);
+			}
 			return errorResponse(
 				error instanceof Error
 					? error
@@ -2285,6 +2357,11 @@ export function createOllamaCloudAccountAddHandler(dbOps: DatabaseOperations) {
 			});
 		} catch (error) {
 			log.error("Ollama Cloud account creation error:", error);
+			if (isUniqueConstraintError(error)) {
+				return errorResponse(
+					BadRequest(`Account name '${name}' is already taken`),
+				);
+			}
 			return errorResponse(
 				error instanceof Error
 					? error

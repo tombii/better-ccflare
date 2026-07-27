@@ -804,6 +804,62 @@ export function runMigrations(db: Database, dbPath?: string): void {
 			log.info("Made refresh_token nullable in accounts table");
 		}
 
+		// Add UNIQUE index on (name, provider, COALESCE(custom_endpoint,'')) to
+		// enforce atomic uniqueness for the account-add path. The previous
+		// SELECT-then-INSERT pre-check in `assertAccountNameAvailable` is
+		// non-atomic and lets concurrent adds (or any path that bypasses the
+		// pre-check — e.g. cli-commands, oauth-flow, dashboard-web direct
+		// inserts) persist duplicate rows. The DB-level constraint closes
+		// the race; the pre-check remains as a friendly fast-path that returns
+		// a clean 400 without a wasted INSERT round-trip.
+		//
+		// The index cannot be created while duplicates exist — `CREATE UNIQUE
+		// INDEX` fails with "UNIQUE constraint failed" on the first colliding
+		// row. Collapse existing duplicates to the oldest row per tuple
+		// (min(rowid); tie-break by id for deterministic resolution when
+		// rowid is unavailable) BEFORE creating the index. This block is
+		// idempotent: if the index already exists, skip both the dedup and
+		// the CREATE.
+		const uniqueAccountsIndexExists = db
+			.prepare(
+				`SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_accounts_unique_name_provider_endpoint'`,
+			)
+			.get();
+		if (!uniqueAccountsIndexExists) {
+			// Find tuple ids that have more than one row, then for each tuple
+			// delete every row whose rowid is NOT the smallest per tuple.
+			// Using rowid (monotonic insert order) is the natural "oldest"
+			// ordering; if rowid is unavailable (e.g. WITHOUT ROWID tables —
+			// none here), the created_at/created_at DESC,id ASC fallback
+			// makes the choice deterministic.
+			const duplicatesCollapsed = db
+				.prepare(
+					`DELETE FROM accounts
+					 WHERE rowid IN (
+					   SELECT rowid FROM accounts
+					   WHERE rowid NOT IN (
+					     SELECT MIN(rowid) FROM accounts
+					     GROUP BY name, provider, COALESCE(custom_endpoint, '')
+					   )
+					 )`,
+				)
+				.run().changes;
+			if (duplicatesCollapsed > 0) {
+				log.warn(
+					`Collapsed ${duplicatesCollapsed} duplicate account row(s) ` +
+						`(name, provider, COALESCE(custom_endpoint,'')) before creating ` +
+						`UNIQUE index; the oldest row per tuple was kept.`,
+				);
+			}
+			db.prepare(
+				`CREATE UNIQUE INDEX idx_accounts_unique_name_provider_endpoint
+				 ON accounts(name, provider, COALESCE(custom_endpoint, ''))`,
+			).run();
+			log.info(
+				"Created UNIQUE index idx_accounts_unique_name_provider_endpoint on accounts",
+			);
+		}
+
 		// Run API key storage migration to move API keys from refresh_token to api_key field
 		// This is a data migration that should happen after all schema changes
 		try {
