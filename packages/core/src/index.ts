@@ -2,10 +2,13 @@
 export {
 	BUFFER_SIZES,
 	CACHE,
+	computeOverloadCooldownMs,
+	computeOverloadWithResetCapMs,
 	computeRateLimitBackoffMs,
 	getOverloadRetryConfig,
 	getRateLimitResetStabilityMs,
 	HTTP_STATUS,
+	isOverloadReason,
 	LIMITS,
 	NETWORK,
 	TIME_CONSTANTS,
@@ -72,6 +75,10 @@ export {
 	MODEL_DISPLAY_NAMES,
 	MODEL_SHORT_NAMES,
 } from "./models";
+export {
+	installOutboundProxy,
+	uninstallOutboundProxy,
+} from "./outbound-proxy";
 export {
 	estimateCostUSD,
 	getModelRates,

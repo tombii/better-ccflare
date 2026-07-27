@@ -1,8 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { logBus } from "@better-ccflare/logger";
 import type { LogEvent } from "@better-ccflare/types";
-import { isValidClaudeModel } from "../../../core/src/model-mappings";
-import { CLAUDE_MODEL_IDS } from "../../../core/src/models";
 import type { EndMessage, StartMessage } from "../worker-messages";
 
 interface PricingTokens {
@@ -22,20 +20,18 @@ const estimateCostUSD = mock((model: string, tokens: PricingTokens) =>
 	pricingImplementation(model, tokens),
 );
 
+// Spread the real module so every other export (constants, isValidClaudeModel,
+// isOverloadReason, computeRateLimitBackoffMs, ...) stays intact for the rest
+// of the process — mock.module replaces the WHOLE module globally and across
+// file boundaries in Bun, so a partial stub here silently breaks unrelated
+// modules imported later in the same test run. Only estimateCostUSD needs
+// interception here (routed through a controllable pricingImplementation per
+// test case).
+const actualCore = await import("@better-ccflare/core");
+
 mock.module("@better-ccflare/core", () => ({
-	BUFFER_SIZES: {
-		STREAM_TEE_MAX_BYTES: 1024 * 1024,
-		STREAM_USAGE_BUFFER_KB: 64,
-	},
-	CLAUDE_MODEL_IDS,
+	...actualCore,
 	estimateCostUSD,
-	isValidClaudeModel,
-	TIME_CONSTANTS: {
-		HOUR: 60 * 60 * 1000,
-		MINUTE: 60 * 1000,
-		SECOND: 1000,
-		STREAM_TIMEOUT_DEFAULT: 60 * 1000,
-	},
 }));
 
 mock.module("@better-ccflare/database", () => ({

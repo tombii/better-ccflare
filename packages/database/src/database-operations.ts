@@ -27,7 +27,10 @@ import { EMBEDDED_VACUUM_WORKER_CODE } from "./inline-vacuum-worker";
 import { ensureSchema, runMigrations } from "./migrations";
 import { ensureSchemaPg, runMigrationsPg } from "./migrations-pg";
 import { resolveDbPath } from "./paths";
-import { AccountRepository } from "./repositories/account.repository";
+import {
+	AccountRepository,
+	type MarkAccountRateLimitedResult,
+} from "./repositories/account.repository";
 import { AgentPreferenceRepository } from "./repositories/agent-preference.repository";
 import { ApiKeyRepository } from "./repositories/api-key.repository";
 import { ComboRepository } from "./repositories/combo.repository";
@@ -787,9 +790,16 @@ OAuth tokens will need to be re-authenticated.
 		accountId: string,
 		until: number,
 		reason: RateLimitReason,
-	): Promise<number> {
+		incrementStreak = true,
+	): Promise<MarkAccountRateLimitedResult> {
 		return withDatabaseRetry(
-			() => this.accounts.markAccountRateLimited(accountId, until, reason),
+			() =>
+				this.accounts.markAccountRateLimited(
+					accountId,
+					until,
+					reason,
+					incrementStreak,
+				),
 			this.retryConfig,
 			"markAccountRateLimited",
 		);
@@ -958,6 +968,13 @@ OAuth tokens will need to be re-authenticated.
 		appliedModel?: string | null,
 		projectAttributionSource?: ProjectAttributionSource | null,
 		agentAttributionSource?: AgentAttributionSource | null,
+		streamTerminalState?:
+			| "complete"
+			| "recovered"
+			| "error"
+			| "truncated"
+			| "client_cancelled"
+			| null,
 	): Promise<void> {
 		await withDatabaseRetry(
 			() =>
@@ -982,6 +999,7 @@ OAuth tokens will need to be re-authenticated.
 					appliedModel,
 					projectAttributionSource,
 					agentAttributionSource,
+					streamTerminalState,
 				}),
 			this.retryConfig,
 			"saveRequest",

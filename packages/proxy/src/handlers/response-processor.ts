@@ -6,7 +6,7 @@ import {
 	usageCache,
 } from "@better-ccflare/providers";
 import type { Account, RateLimitReason } from "@better-ccflare/types";
-import type { ProxyContext } from "./proxy-types";
+import { isInternalProbe, type ProxyContext } from "./proxy-types";
 import {
 	applyRateLimitCooldown,
 	completeRateLimitProbe,
@@ -289,8 +289,7 @@ export async function processProxyResponse(
 		// pool to zero routable accounts even though no user-visible quota
 		// was actually exhausted. Loop-prevention header set by
 		// cache-keepalive-scheduler.ts; only synthetic replays carry it.
-		const isKeepalive =
-			requestMeta?.headers?.get("x-better-ccflare-keepalive") === "true";
+		const isKeepalive = isInternalProbe(requestMeta?.headers, ctx, "keepalive");
 		if (isKeepalive) {
 			log.warn(
 				`Keepalive replay for ${account.name} got ${response.status} — skipping cooldown (synthetic burst, not a real per-account rate limit)`,
@@ -299,8 +298,9 @@ export async function processProxyResponse(
 			handleRateLimitResponse(account, rateLimitInfo, ctx, response.status);
 		} else {
 			// Mark as rate-limited even without reset time. Route through
-			// applyRateLimitCooldown so the consecutive counter ramps correctly
-			// even for reset-less 429s.
+			// applyRateLimitCooldown, which ramps the consecutive counter for
+			// reset-less 429s but applies a fixed overload cooldown for 529s
+			// and leaves the streak untouched there — see rate-limit-cooldown.ts.
 			const reason: RateLimitReason =
 				response.status === 529
 					? "upstream_529_overloaded_no_reset"

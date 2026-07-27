@@ -138,16 +138,27 @@ export function isAccountExhaustedForModel(
 const DEFAULT_NEGATIVE_CACHE_TTL_MS = 5 * 60 * 1000;
 
 /**
- * Provenance of a negative-cache exhaustion mark: "telemetry_confirmed"
- * means the account's own limits[] telemetry showed the weekly_scoped cap
- * at >=100%; "recent_upstream_rejection" means the mark came only from an
- * observed out_of_credits 429 without corroborating telemetry. Only a
+ * Provenance of a negative-cache exhaustion mark, or (for "cooldown_masked"
+ * only) of the aggregate {@link ModelFamilyExhaustionInfo} the account
+ * selector reports: "telemetry_confirmed" means the account's own limits[]
+ * telemetry showed the weekly_scoped cap at >=100%; "recent_upstream_rejection"
+ * means the mark came only from an observed out_of_credits 429 without
+ * corroborating telemetry; "cooldown_masked" means the account-selector's
+ * capacity filter found every candidate capacity-exhausted, but a DIFFERENT
+ * account with free capacity for the family exists and was merely dropped by
+ * the strategy's rate-limit-cooldown check (isAccountAvailable) — so weekly
+ * capacity is not the real blocker (only markFamilyExhausted/
+ * isAccountCapacityExcluded ever produce "telemetry_confirmed" or
+ * "recent_upstream_rejection"; "cooldown_masked" is set directly by the
+ * account selector, never stored in the negative cache). Only a
  * telemetry_confirmed mark may claim "weekly capacity exhausted" in a
- * user-facing response — a purely reactive mark uses neutral wording.
+ * user-facing response — a purely reactive mark, or a cooldown-masked one,
+ * uses wording that doesn't assert weekly exhaustion.
  */
 export type FamilyExhaustionOrigin =
 	| "telemetry_confirmed"
-	| "recent_upstream_rejection";
+	| "recent_upstream_rejection"
+	| "cooldown_masked";
 
 interface ExhaustionEntry {
 	until: number;
@@ -292,12 +303,19 @@ export function createModelFamilyExhaustedResponse(
 	// The non-confirmed wording must stay accurate for MIXED provenance too
 	// (some accounts telemetry-filtered, some only recently rejected), so it
 	// names both possibilities instead of asserting "all recently rejected".
+	// "cooldown_masked" gets its own wording: the real blocker there is an
+	// account temporarily sidelined by a rate-limit cooldown, not weekly
+	// capacity — asserting exhaustion (or even "recently rejected upstream")
+	// would misattribute a minutes-long cooldown to a days-long weekly cap.
 	const message =
 		info.origin === "telemetry_confirmed"
 			? `All available accounts have exhausted their weekly ${info.family} capacity.` +
 				(resetIso ? ` Earliest reset at ${resetIso}.` : "")
-			: `All available accounts are temporarily unavailable for the ${info.family} model family (capacity exhausted or recently rejected upstream).` +
-				(resetIso ? ` Retry after ${resetIso}.` : "");
+			: info.origin === "cooldown_masked"
+				? `An account with available ${info.family} capacity is temporarily in a rate-limit cooldown (not capacity-exhausted).` +
+					(resetIso ? ` Retry after ${resetIso}.` : "")
+				: `All available accounts are temporarily unavailable for the ${info.family} model family (capacity exhausted or recently rejected upstream).` +
+					(resetIso ? ` Retry after ${resetIso}.` : "");
 
 	return new Response(
 		JSON.stringify({

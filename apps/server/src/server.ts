@@ -7,6 +7,7 @@ import {
 	getVersion,
 	HTTP_STATUS,
 	initializeNanoGPTPricingIfAccountsExist,
+	installOutboundProxy,
 	NETWORK,
 	registerCleanup,
 	registerDisposable,
@@ -633,6 +634,14 @@ export default async function startServer(options?: {
 
 	// Initialize components
 	const config = container.resolve<Config>(SERVICE_KEYS.Config);
+	installOutboundProxy(() => config.getOutboundProxy());
+	const outboundProxyUrl = config.getOutboundProxy();
+	if (outboundProxyUrl) {
+		const { protocol, host } = new URL(outboundProxyUrl);
+		new Logger("OutboundProxy").info(
+			`Outbound proxy enabled: ${protocol}//${host}`,
+		);
+	}
 	const runtime = config.getRuntime();
 	// Override port if provided
 	if (port !== runtime.port) {
@@ -934,6 +943,7 @@ export default async function startServer(options?: {
 	await initProxy(() => config.getStorePayloads());
 
 	// Proxy context
+	const internalProbeSecret = crypto.randomUUID();
 	const proxyContext: ProxyContext = {
 		strategy,
 		dbOps,
@@ -942,6 +952,7 @@ export default async function startServer(options?: {
 		provider,
 		refreshInFlight: new Map(),
 		asyncWriter,
+		internalProbeSecret,
 	};
 	modelCatalogProxyContext = proxyContext;
 

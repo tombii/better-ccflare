@@ -3,7 +3,19 @@ import { TIME_CONSTANTS, ValidationError } from "@better-ccflare/core";
 import type { Provider } from "@better-ccflare/providers";
 import type { RequestMeta } from "@better-ccflare/types";
 import { chatGptCloudflareCookieJar } from "../chatgpt-cloudflare-cookies";
-import { ERROR_MESSAGES } from "./proxy-types";
+import { ERROR_MESSAGES, INTERNAL_PROBE_SECRET_HEADER } from "./proxy-types";
+
+/**
+ * Internal proxy control headers that must NEVER be forwarded to the upstream
+ * provider: they gate privileged proxy behaviour (see isInternalProbe), and a
+ * provider or custom endpoint that received them — the probe secret above all —
+ * could replay them with a marker to forge privileged requests.
+ */
+function stripInternalControlHeaders(headers: Headers): void {
+	headers.delete(INTERNAL_PROBE_SECRET_HEADER);
+	headers.delete("x-better-ccflare-auto-refresh");
+	headers.delete("x-better-ccflare-keepalive");
+}
 
 /**
  * Creates request metadata for tracking and analytics
@@ -99,6 +111,7 @@ export async function makeProxyRequest(
 		if (target instanceof Request) {
 			const targetUrl = target.url;
 			const mutableHeaders = new Headers(target.headers);
+			stripInternalControlHeaders(mutableHeaders);
 			chatGptCloudflareCookieJar.applyCookieHeader(targetUrl, mutableHeaders);
 
 			const response = await fetch(
@@ -112,6 +125,7 @@ export async function makeProxyRequest(
 		}
 
 		const mutableHeaders = new Headers(headers);
+		stripInternalControlHeaders(mutableHeaders);
 		chatGptCloudflareCookieJar.applyCookieHeader(target, mutableHeaders);
 
 		const response = await fetch(target, {

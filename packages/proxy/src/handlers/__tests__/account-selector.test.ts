@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, it, mock } from "bun:test";
-import { usageCache } from "@better-ccflare/providers";
 import type {
 	Account,
 	ComboWithSlots,
@@ -7,7 +6,6 @@ import type {
 } from "@better-ccflare/types";
 import {
 	getComboSlotInfo,
-	getOrderedAccounts,
 	resolveEffectiveModel,
 	selectAccountsForRequest,
 	setComboSlotInfo,
@@ -15,6 +13,10 @@ import {
 import type { ProxyContext } from "../proxy-types";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
+
+afterEach(() => {
+	delete process.env.CCFLARE_DISABLE_COMBO_SESSION_FALLBACK;
+});
 
 function makeAccount(overrides: Partial<Account> = {}): Account {
 	return {
@@ -77,11 +79,7 @@ function makeCtx(
 	const accounts = opts.accounts ?? [makeAccount()];
 	return {
 		strategy: {
-			// Return what we were HANDED, not the full fixture list. A real strategy
-			// can only pick from the candidates it receives, so a mock that ignores
-			// its input silently defeats any upstream filtering — which is exactly how
-			// a disconnected usage-exhaustion filter previously looked like it worked.
-			select: mock((all: Account[], _meta: RequestMeta) => all),
+			select: mock((_all: Account[], _meta: RequestMeta) => accounts),
 		},
 		dbOps: {
 			getAllAccounts: mock(async () => accounts),
@@ -91,10 +89,6 @@ function makeCtx(
 		asyncWriter: { enqueue: mock(() => {}) },
 	} as unknown as ProxyContext;
 }
-
-afterEach(() => {
-	usageCache.clear();
-});
 
 // ── setComboSlotInfo / getComboSlotInfo ───────────────────────────────────────
 
@@ -208,46 +202,6 @@ describe("selectAccountsForRequest — x-better-ccflare-account-id header", () =
 		// Rate-limited forced account is skipped; falls back to strategy.select which returns activeAcc
 		expect(result).toHaveLength(1);
 		expect(result[0]?.id).toBe("acc-active");
-	});
-
-	it("skips a forced account whose representative usage window is capped with a future reset", async () => {
-		const cappedAcc = makeAccount({ id: "acc-capped", name: "capped" });
-		const healthyAcc = makeAccount({ id: "acc-healthy", name: "healthy" });
-		const now = Date.now();
-		// Anthropic 7-day window fully exhausted, reset 40h in the future
-		// (matches the production incident: ann at 100% seven_day with ~40h
-		// to reset, sibling accounts at 43% / 53%).
-		usageCache.set(cappedAcc.id, {
-			seven_day: { utilization: 100, resets_at: new Date(now + 40 * 3600_000).toISOString() },
-			five_hour: { utilization: 53, resets_at: new Date(now + 3600_000).toISOString() },
-		});
-		const ctx = makeCtx({ accounts: [cappedAcc, healthyAcc] });
-		const meta = makeRequestMeta({
-			headers: new Headers({ "x-better-ccflare-account-id": "acc-capped" }),
-		});
-
-		const result = await selectAccountsForRequest(meta, ctx);
-		// Forced capped account is skipped; strategy mock returns healthyAcc.
-		expect(result.map((a) => a.id)).toEqual(["acc-healthy"]);
-	});
-
-	it("re-admits a forced account whose capped window has already reset", async () => {
-		const acc = makeAccount({ id: "acc-capped", name: "capped" });
-		// Snapshot from BEFORE the reset — the past resetMs signals that the
-		// window already cycled and the cached utilization is stale; must
-		// NOT count as exhausted.
-		const pastReset = new Date(Date.now() - 5 * 60_000).toISOString();
-		usageCache.set(acc.id, {
-			seven_day: { utilization: 100, resets_at: pastReset },
-			five_hour: { utilization: 25, resets_at: pastReset },
-		});
-		const ctx = makeCtx({ accounts: [acc] });
-		const meta = makeRequestMeta({
-			headers: new Headers({ "x-better-ccflare-account-id": "acc-capped" }),
-		});
-
-		const result = await selectAccountsForRequest(meta, ctx);
-		expect(result.map((a) => a.id)).toEqual(["acc-capped"]);
 	});
 });
 
@@ -406,6 +360,52 @@ describe("selectAccountsForRequest — combo routing", () => {
 
 		// Should fall back to strategy result (fallbackAcc)
 		expect(result[0]?.id).toBe("acc-fallback");
+	});
+
+	it("does not fall back to SessionStrategy when all combo slots are unavailable and combo fallback is disabled", async () => {
+		process.env.CCFLARE_DISABLE_COMBO_SESSION_FALLBACK = "true";
+		const rateLimitedAcc = makeAccount({
+			id: "acc-1",
+			rate_limited_until: Date.now() + 3_600_000,
+		});
+		const fallbackAcc = makeAccount({ id: "acc-fallback" });
+
+		const combo = makeCombo([
+			{
+				id: "slot-1",
+				combo_id: "combo-1",
+				account_id: "acc-1",
+				model: "claude-sonnet-4-5",
+				priority: 0,
+				enabled: true,
+			},
+		]);
+
+		const select = mock(() => [fallbackAcc]);
+		const ctx = {
+			strategy: { select },
+			dbOps: {
+				getAllAccounts: mock(async () => [rateLimitedAcc, fallbackAcc]),
+				getActiveComboForFamily: mock(async () => combo),
+			},
+			refreshInFlight: new Map(),
+			asyncWriter: { enqueue: mock(() => {}) },
+		} as unknown as ProxyContext;
+
+		const meta = makeRequestMeta();
+		const result = await selectAccountsForRequest(
+			meta,
+			ctx,
+			"claude-sonnet-4-5",
+		);
+
+		expect(result).toEqual([]);
+		expect(meta.comboName).toBe("Test Combo");
+		expect(getComboSlotInfo(meta)).toEqual({
+			comboName: "Test Combo",
+			slots: [],
+		});
+		expect(select).not.toHaveBeenCalled();
 	});
 
 	it("falls back to SessionStrategy when no combo is active for the model family", async () => {
@@ -764,94 +764,5 @@ describe("selectAccountsForRequest — routes on effective model, not the client
 		const slotInfo = getComboSlotInfo(meta);
 		expect(slotInfo?.comboName).toBe("Test Combo");
 		expect(slotInfo?.slots[0]?.modelOverride).toBe("claude-opus-4-5");
-	});
-});
-
-// ── getOrderedAccounts: usage-capped accounts never reach the strategy ────────
-//
-// These assert on what the STRATEGY RECEIVES, not on what selection returns.
-// That distinction is the whole point: every load-balancing strategy filters
-// with `isAccountAvailable(account, now)` and cannot see the usage cache, so a
-// capped account that is still handed to the strategy gets selected, retried,
-// and model-cycled until every model 429s. Asserting on the return value would
-// pass even with the filter removed, because the strategy mock decides the
-// return.
-describe("getOrderedAccounts usage-exhaustion filtering", () => {
-	it("does not hand a usage-capped account to the strategy", async () => {
-		const now = Date.now();
-		const cappedAcc = makeAccount({ id: "acc-capped", name: "capped" });
-		const healthyAcc = makeAccount({ id: "acc-healthy", name: "healthy" });
-		usageCache.set(cappedAcc.id, {
-			seven_day: {
-				utilization: 100,
-				resets_at: new Date(now + 40 * 3600_000).toISOString(),
-			},
-			five_hour: {
-				utilization: 20,
-				resets_at: new Date(now + 3600_000).toISOString(),
-			},
-		});
-
-		const ctx = makeCtx({ accounts: [cappedAcc, healthyAcc] });
-		await getOrderedAccounts(makeRequestMeta(), ctx);
-
-		const passed = (
-			ctx.strategy.select as unknown as {
-				mock: { calls: Array<[Account[], RequestMeta]> };
-			}
-		).mock.calls[0][0];
-		expect(passed.map((a) => a.id)).toEqual(["acc-healthy"]);
-	});
-
-	it("keeps an account whose capped window already reset (stale snapshot)", async () => {
-		const pastReset = new Date(Date.now() - 5 * 60_000).toISOString();
-		const acc = makeAccount({ id: "acc-stale", name: "stale" });
-		// 100% utilization but the reset is in the PAST: the snapshot predates
-		// the window reset, so exhaustion must not be claimed from it.
-		usageCache.set(acc.id, {
-			seven_day: { utilization: 100, resets_at: pastReset },
-			five_hour: { utilization: 100, resets_at: pastReset },
-		});
-
-		const ctx = makeCtx({ accounts: [acc] });
-		await getOrderedAccounts(makeRequestMeta(), ctx);
-
-		const passed = (
-			ctx.strategy.select as unknown as {
-				mock: { calls: Array<[Account[], RequestMeta]> };
-			}
-		).mock.calls[0][0];
-		expect(passed.map((a) => a.id)).toEqual(["acc-stale"]);
-	});
-
-	it("still hands a capped account to the strategy for auto-refresh probes", async () => {
-		// The scheduler probes capped accounts to detect their window reset. A
-		// capped account is neither paused nor rate_limited_until, so if the
-		// bypass did not cover it nothing else would let it back in.
-		const now = Date.now();
-		const cappedAcc = makeAccount({ id: "acc-capped", name: "capped" });
-		usageCache.set(cappedAcc.id, {
-			seven_day: {
-				utilization: 100,
-				resets_at: new Date(now + 40 * 3600_000).toISOString(),
-			},
-			five_hour: {
-				utilization: 20,
-				resets_at: new Date(now + 3600_000).toISOString(),
-			},
-		});
-
-		const ctx = makeCtx({ accounts: [cappedAcc] });
-		const meta = makeRequestMeta({
-			headers: new Headers({ "x-better-ccflare-bypass-session": "true" }),
-		});
-		await getOrderedAccounts(meta, ctx);
-
-		const passed = (
-			ctx.strategy.select as unknown as {
-				mock: { calls: Array<[Account[], RequestMeta]> };
-			}
-		).mock.calls[0][0];
-		expect(passed.map((a) => a.id)).toEqual(["acc-capped"]);
 	});
 });

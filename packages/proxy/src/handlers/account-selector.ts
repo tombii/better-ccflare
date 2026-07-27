@@ -1,15 +1,6 @@
-import {
-	getModelFamily,
-	isAccountAvailable,
-	isUsageExhausted,
-} from "@better-ccflare/core";
+import { getModelFamily, isAccountAvailable } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
-import {
-	getRepresentativeUsageResetMs,
-	getRepresentativeUtilizationForProvider,
-	usageCache,
-} from "@better-ccflare/providers";
-import type { AccountUsageSnapshot } from "@better-ccflare/core";
+import { usageCache } from "@better-ccflare/providers";
 import type {
 	Account,
 	ComboFamily,
@@ -44,31 +35,6 @@ export function getComboSlotInfo(meta: RequestMeta): ComboSlotInfo | null {
 // a structurally-identical local copy could silently drift).
 export type { ModelFamilyExhaustionInfo } from "./model-capacity";
 
-/**
- * Snapshot of an account's representative usage window: returns null when
- * no cached telemetry exists or the provider has no utilization surface
- * (so the caller can fall back to the cheap `isAccountAvailable` check
- * without a usage argument).
- *
- * The shared `isUsageExhausted` predicate lives in `@better-ccflare/core`
- * and encodes both the "utilization >= 100" gate and the staleness guard
- * (a known resetMs in the past means the snapshot predates the window
- * reset and MUST NOT count as exhausted) — same predicate the
- * rateLimitStatus display and /health usage_exhausted counter share, so
- * the surfaces cannot diverge.
- */
-function usageSnapshot(account: Account): AccountUsageSnapshot | null {
-	const data = usageCache.get(account.id);
-	if (!data) return null;
-	const provider = account.provider ?? "anthropic";
-	const utilization = getRepresentativeUtilizationForProvider(data, provider);
-	if (utilization === null) return null;
-	return {
-		utilization,
-		resetMs: getRepresentativeUsageResetMs(data, provider),
-	};
-}
-
 // Module-level WeakMap to store model-family exhaustion info per RequestMeta,
 // set when the capacity filter below removes every candidate account for a
 // request's model family. proxy.ts reads this to return a structured
@@ -98,6 +64,11 @@ export function getModelFamilyExhaustionInfo(
  */
 function isCapacityRoutingEnabled(ctx: ProxyContext): boolean {
 	return ctx.config?.getModelScopedCapacityRouting?.() === "exhausted";
+}
+
+function isComboSessionFallbackDisabled(): boolean {
+	const value = process.env.CCFLARE_DISABLE_COMBO_SESSION_FALLBACK;
+	return /^(1|true|yes|on)$/i.test(value ?? "");
 }
 
 /**
@@ -168,51 +139,27 @@ export function resolveEffectiveModel(
 }
 
 /**
- * Gets accounts ordered by the load balancing strategy
+ * Gets accounts ordered by the load balancing strategy. Also returns the raw
+ * (unfiltered) account list from the DB so callers that need to look past
+ * the strategy's availability filter — e.g. distinguishing "no free capacity
+ * anywhere" from "free capacity exists but is sidelined by a rate-limit
+ * cooldown" — don't have to issue a second DB read.
  * @param meta - Request metadata
  * @param ctx - The proxy context
- * @returns Array of ordered accounts
+ * @returns `ordered` — the strategy-filtered candidates; `all` — every account
+ *   from the DB, unfiltered.
  */
 export async function getOrderedAccounts(
 	meta: RequestMeta,
 	ctx: ProxyContext,
-): Promise<Account[]> {
+): Promise<{ ordered: Account[]; all: Account[] }> {
 	try {
 		const allAccounts = await ctx.dbOps.getAllAccounts();
-		// Drop usage-capped accounts before the strategy ever sees them.
-		//
-		// This is the choke point that matters: every load-balancing strategy
-		// filters with `isAccountAvailable(account, now)` and has no access to
-		// the usage cache (it lives in this package, not @better-ccflare/
-		// load-balancer), so gating inside the strategies would mean plumbing
-		// usage through every one of them. Filtering here covers all strategies
-		// at once and keeps a capped account from being picked, retried, and
-		// model-cycled until every model 429s.
-		//
-		// The auto-refresh scheduler's probes must still get through: that is
-		// how a capped account's window-reset is detected, and a capped account
-		// is neither `paused` nor `rate_limited_until`, so nothing else would
-		// let it back in.
-		const isAutoRefreshBypass =
-			meta.headers?.get("x-better-ccflare-bypass-session") === "true";
-		// Deliberately narrow: this removes ONLY usage-capped accounts. The
-		// paused / requires_reauth / rate_limited_until checks stay where they
-		// already are, inside the strategies, because some of them rely on
-		// seeing the full account list (session affinity has to find its sticky
-		// account before deciding anything). Filtering those here too would
-		// silently change strategy behaviour, which is not what this fix is for.
-		const now = Date.now();
-		const candidates = isAutoRefreshBypass
-			? allAccounts
-			: allAccounts.filter((account) => {
-					const usage = usageSnapshot(account);
-					return (
-						usage === null ||
-						!isUsageExhausted(usage.utilization, usage.resetMs, now)
-					);
-				});
-		// Provider is still determined dynamically per account downstream.
-		return ctx.strategy.select(candidates, meta);
+		// Return all accounts - the provider will be determined dynamically per account
+		return {
+			ordered: ctx.strategy.select(allAccounts, meta),
+			all: allAccounts,
+		};
 	} catch (error) {
 		log.error("Failed to get accounts from database:", error);
 		console.error("\n❌ DATABASE ERROR DETECTED");
@@ -227,7 +174,7 @@ export async function getOrderedAccounts(
 		console.error(`${"═".repeat(50)}\n`);
 		// Return empty array to gracefully handle database errors
 		// This will cause the proxy to fall back to unauthenticated mode
-		return [];
+		return { ordered: [], all: [] };
 	}
 }
 
@@ -276,12 +223,7 @@ export async function selectAccountsForRequest(
 					// (auto_pause_on_overage_enabled=1 AND pause_reason IN (NULL,'overage')).
 					const isAutoRefreshBypass =
 						meta.headers.get("x-better-ccflare-bypass-session") === "true";
-					const forcedUsage = usageSnapshot(forcedAccount);
-					const available = isAccountAvailable(
-						forcedAccount,
-						Date.now(),
-						forcedUsage ?? undefined,
-					);
+					const available = isAccountAvailable(forcedAccount);
 					const isOveragePaused =
 						forcedAccount.paused &&
 						forcedAccount.auto_pause_on_overage_enabled &&
@@ -291,21 +233,11 @@ export async function selectAccountsForRequest(
 						!available &&
 						!forcedAccount.paused &&
 						!!forcedAccount.rate_limited_until;
-					// A usage-capped account is neither paused nor
-					// rate_limited_until, so without this it would fail
-					// `available` and then match none of the bypass conditions —
-					// leaving the scheduler unable to probe it and detect its
-					// window reset, the one thing the bypass exists to do.
-					const isUsageCapped =
-						!available &&
-						!forcedAccount.paused &&
-						!forcedAccount.rate_limited_until &&
-						forcedUsage !== null;
 					const allowThrough =
 						available ||
 						(isAutoRefreshBypass &&
 							!forcedAccount.requires_reauth &&
-							(isOveragePaused || isRateLimited || isUsageCapped));
+							(isOveragePaused || isRateLimited));
 					if (allowThrough) {
 						return [forcedAccount];
 					}
@@ -413,13 +345,7 @@ export async function selectAccountsForRequest(
 							continue;
 						}
 
-						if (
-							!isAccountAvailable(
-								account,
-								Date.now(),
-								usageSnapshot(account) ?? undefined,
-							)
-						) {
+						if (!isAccountAvailable(account)) {
 							continue;
 						}
 
@@ -459,6 +385,15 @@ export async function selectAccountsForRequest(
 					// All slots unavailable — fall back to normal routing. Combo state
 					// is deliberately left unset (never was set above) so this fallthrough
 					// is treated as ordinary, non-combo selection downstream.
+					if (isComboSessionFallbackDisabled()) {
+						setComboSlotInfo(meta, { comboName: combo.name, slots: [] });
+						meta.comboName = combo.name;
+						log.warn(
+							`All ${combo.slots.length} combo slots unavailable for ${combo.name}, session fallback disabled by CCFLARE_DISABLE_COMBO_SESSION_FALLBACK`,
+						);
+						return [];
+					}
+
 					log.warn(
 						`All ${combo.slots.length} combo slots unavailable for ${combo.name}, falling back to SessionStrategy`,
 					);
@@ -467,7 +402,9 @@ export async function selectAccountsForRequest(
 		}
 	}
 
-	const orderedAccounts = applyExclusions(await getOrderedAccounts(meta, ctx));
+	const { ordered: rawOrderedAccounts, all: allAccounts } =
+		await getOrderedAccounts(meta, ctx);
+	const orderedAccounts = applyExclusions(rawOrderedAccounts);
 
 	// Model-scoped capacity filter for the non-combo (or combo-inactive/
 	// combo-exhausted-fallthrough) path: drop accounts whose weekly per-model
@@ -511,6 +448,59 @@ export async function selectAccountsForRequest(
 			}
 
 			if (available.length === 0 && anyExcluded) {
+				// Every SURVIVING candidate is capacity-exhausted, but
+				// orderedAccounts has already been through the strategy's
+				// isAccountAvailable filter, which silently drops any account
+				// with a future rate_limited_until regardless of the reason
+				// (a short rate-limit cooldown included) — those accounts
+				// never reached the loop above. If any of them still has free
+				// capacity for this family, the weekly cap is not the real
+				// blocker: the account is only sidelined for minutes, and the
+				// response must say so instead of asserting weekly exhaustion.
+				//
+				// allAccounts is the raw, unfiltered DB read — it still
+				// contains accounts excluded for this request via
+				// x-better-ccflare-exclude-providers (e.g. Anthropic OAuth
+				// accounts excluded for Codex CLI traffic). Re-run the same
+				// exclusion the candidate list already went through so a
+				// header-excluded account — permanently ineligible for this
+				// request, not just cooling down — can never be reported as
+				// the "true blocker" with its cooldown as Retry-After.
+				const orderedIds = new Set(orderedAccounts.map((a) => a.id));
+				const sweepCandidates = applyExclusions(allAccounts);
+				let earliestCooldownResetAt: number | null = null;
+				for (const account of sweepCandidates) {
+					if (orderedIds.has(account.id)) continue;
+					if (account.paused || account.requires_reauth) continue;
+					if (
+						account.rate_limited_until == null ||
+						account.rate_limited_until <= now
+					) {
+						continue;
+					}
+					if (isAccountCapacityExcluded(account, model, now).excluded) {
+						continue;
+					}
+					if (
+						earliestCooldownResetAt == null ||
+						account.rate_limited_until < earliestCooldownResetAt
+					) {
+						earliestCooldownResetAt = account.rate_limited_until;
+					}
+				}
+
+				if (earliestCooldownResetAt != null) {
+					log.warn(
+						`Model family "${family}" not actually capacity-exhausted — an account with free capacity is only sidelined by a rate-limit cooldown until ${new Date(earliestCooldownResetAt).toISOString()}`,
+					);
+					setModelFamilyExhaustionInfo(meta, {
+						family,
+						resetAt: earliestCooldownResetAt,
+						origin: "cooldown_masked",
+					});
+					return [];
+				}
+
 				log.warn(
 					`All ${orderedAccounts.length} candidate account(s) exhausted for model family "${family}"`,
 				);

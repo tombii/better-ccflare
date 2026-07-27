@@ -8,13 +8,13 @@ import type {
 	Account,
 	AgentAttributionSource,
 	ProjectAttributionSource,
-	RateLimitReason,
 } from "@better-ccflare/types";
 import {
 	ANTHROPIC_TERMINAL_RECOVERY_GRACE_MS,
+	type AnthropicTerminalState,
 	createAnthropicTerminalRecoveryStream,
 } from "./anthropic-terminal-recovery";
-import type { ProxyContext } from "./handlers";
+import { isInternalProbe, type ProxyContext } from "./handlers";
 import { applyRateLimitCooldown } from "./handlers/rate-limit-cooldown";
 import { createSseRateLimitSniffer } from "./handlers/sse-rate-limit-sniffer";
 import { ingestModelsListing } from "./model-catalog";
@@ -165,8 +165,11 @@ export async function forwardToClient(
 	//     pollutes the user-visible 503/200 metrics on the dashboard with
 	//     internal scheduler activity. Header set by AutoRefreshScheduler
 	//     mirrors the existing keepalive pattern.
-	const isAutoRefreshProbe =
-		requestHeaders.get("x-better-ccflare-auto-refresh") === "true";
+	const isAutoRefreshProbe = isInternalProbe(
+		requestHeaders,
+		ctx,
+		"auto-refresh",
+	);
 	const isSyntheticCountTokens =
 		path === "/v1/messages/count_tokens" &&
 		(ctx.provider.name === "openai-compatible" ||
@@ -258,30 +261,75 @@ export async function forwardToClient(
 			// Mid-stream rate-limit detection. The sniffer
 			// fires exactly once; after that feed() is a no-op.
 			if (account && rateLimitSniffer?.feed(value)) {
-				// Map firedReason to the correct RateLimitReason:
-				//   "overloaded_error" → upstream_529_overloaded_with_reset
-				//   "rate_limit_error" → upstream_429_with_reset
-				const midStreamReason: RateLimitReason =
-					rateLimitSniffer.firedReason === "overloaded_error"
-						? "upstream_529_overloaded_with_reset"
-						: "upstream_429_with_reset";
-				applyRateLimitCooldown(
-					account,
-					{
-						resetTime: Date.now() + getMidStreamRateLimitCooldownMs(),
-						reason: midStreamReason,
-					},
-					ctx,
-				);
+				// SSE error frames carry no reset header — HTTP headers were
+				// already sent before the error occurred — so any resetTime
+				// passed here is a value ccflare invents, never an upstream
+				// instruction. The two firedReason branches treat that fact
+				// differently on purpose:
+				//   "rate_limit_error" (429, quota) → upstream_429_with_reset,
+				//     WITH the synthetic resetTime below. This is a deliberate
+				//     conservative estimate of the 5h quota window — better to
+				//     under-cool a real quota exhaustion than leave the account
+				//     selectable, and the ramp-capped 429 formula treats
+				//     resetTime only as an upper bound anyway.
+				//   "overloaded_error" (529, transient) → the reason alone
+				//     (upstream_529_overloaded_no_reset), no resetTime. Passing
+				//     a synthetic reset for a 529 would misrepresent a ccflare
+				//     default as an Anthropic Retry-After; the no-reset reason
+				//     routes this to the cooldown core's fixed short overload
+				//     cooldown instead.
+				if (rateLimitSniffer.firedReason === "overloaded_error") {
+					applyRateLimitCooldown(
+						account,
+						{ reason: "upstream_529_overloaded_no_reset" },
+						ctx,
+					);
+				} else {
+					applyRateLimitCooldown(
+						account,
+						{
+							resetTime: Date.now() + getMidStreamRateLimitCooldownMs(),
+							reason: "upstream_429_with_reset",
+						},
+						ctx,
+					);
+				}
 			}
 		};
 
 		const onClose = (_buffered: Uint8Array[]): void => {
 			if (shouldProcessRequest) {
+				// For Anthropic-Messages-shaped SSE streams wrapped by the
+				// terminal-recovery wrapper, prefer the real observed SSE
+				// termination state over the header-only `response.ok` check —
+				// a 200 OK with a TCP close mid-content is truncated, not
+				// complete, and must not be recorded as a success. The wrapper
+				// fires `onTerminalState` synchronously before close/error, so
+				// the closure variable is already populated by the time we get
+				// here.
+				//
+				// Client-initiated cancels (Esc, tool interrupts) are passed
+				// through unchanged — preserve the prior header-based success
+				// so routine aborts don't poison the success metrics. The
+				// specific outcome is still recorded in `streamTerminalState`
+				// for observability.
+				const success = streamTerminalState
+					? streamTerminalState === "complete" ||
+						streamTerminalState === "recovered" ||
+						streamTerminalState === "client_cancelled"
+					: isExpectedResponse(path, response);
+				const error =
+					streamTerminalState === "truncated"
+						? "stream_truncated_mid_content"
+						: streamTerminalState === "error"
+							? "stream_in_band_error"
+							: undefined;
 				const endMsg: EndMessage = {
 					type: "end",
 					requestId,
-					success: isExpectedResponse(path, response),
+					success,
+					error,
+					streamTerminalState: streamTerminalState ?? null,
 				};
 				// Fire-and-forget: handleEnd is async for DB writes but we don't block streaming
 				fireAndForgetEnd(endMsg);
@@ -295,22 +343,30 @@ export async function forwardToClient(
 					requestId,
 					success: false,
 					error: err.message,
+					streamTerminalState: streamTerminalState ?? null,
 				};
 				fireAndForgetEnd(endMsg);
 			}
 		};
 
-		const isNativeAnthropicMessagesStream =
+		// Anthropic-Messages-shaped SSE response detection — covers native
+		// anthropic AND anthropic-compatible providers (e.g. minimax) which
+		// speak the same wire format on `/v1/messages`. Gated on path +
+		// content-type + 2xx status only; provider name and `anthropic-version`
+		// request header are deliberately excluded because the wire format is
+		// identical and a 200 with truncated content must not be silently
+		// recorded as success regardless of which upstream served it.
+		const isAnthropicMessagesSseResponse =
 			method === "POST" &&
 			path === "/v1/messages" &&
-			ctx.provider.name === "anthropic" &&
-			requestHeaders.has("anthropic-version") &&
 			response.ok &&
-			response.headers
+			(response.headers
 				.get("content-type")
 				?.toLowerCase()
-				.includes("text/event-stream");
-		const responseBody = isNativeAnthropicMessagesStream
+				.includes("text/event-stream") ??
+				false);
+		let streamTerminalState: AnthropicTerminalState | null = null;
+		const responseBody = isAnthropicMessagesSseResponse
 			? createAnthropicTerminalRecoveryStream(response.body, {
 					onRecovery(reason) {
 						log.warn("anthropic_terminal_message_stop_recovered", {
@@ -329,6 +385,24 @@ export async function forwardToClient(
 							reason,
 							errorType: error instanceof Error ? error.name : typeof error,
 						});
+					},
+					onTerminalState(state) {
+						streamTerminalState = state;
+						if (state === "truncated") {
+							log.warn("anthropic_stream_truncated_mid_content", {
+								requestId,
+								accountId: account?.id ?? null,
+								provider: ctx.provider.name,
+								statusCode: response.status,
+							});
+						} else if (state === "error") {
+							log.warn("anthropic_stream_in_band_error", {
+								requestId,
+								accountId: account?.id ?? null,
+								provider: ctx.provider.name,
+								statusCode: response.status,
+							});
+						}
 					},
 				})
 			: response.body;

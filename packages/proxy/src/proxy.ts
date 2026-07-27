@@ -18,6 +18,7 @@ import {
 	getModelFamilyExhaustionInfo,
 	getUsageThrottleUntil,
 	interceptAndModifyRequest,
+	isInternalProbe,
 	isRefreshTokenLikelyExpired,
 	type ProxyContext,
 	prepareRequestBody,
@@ -32,6 +33,7 @@ import {
 import {
 	completeRateLimitProbe,
 	getRateLimitProbeAdmission,
+	wouldSuppressProbe,
 } from "./handlers/rate-limit-cooldown";
 import { extractProjectAttributionFromRequest } from "./project-attribution";
 import {
@@ -48,6 +50,31 @@ import {
 export type { ProxyContext } from "./handlers";
 
 const log = new Logger("Proxy");
+
+function isComboSessionFallbackDisabled(): boolean {
+	const value = process.env.CCFLARE_DISABLE_COMBO_SESSION_FALLBACK;
+	return /^(1|true|yes|on)$/i.test(value ?? "");
+}
+
+function createComboSessionFallbackDisabledResponse(
+	comboName: string,
+): Response {
+	return new Response(
+		JSON.stringify({
+			type: "error",
+			error: {
+				type: "service_unavailable_error",
+				message: "Service temporarily unavailable. Please try again later.",
+				code: "combo_session_fallback_disabled",
+				combo: comboName,
+			},
+		}),
+		{
+			status: 503,
+			headers: { "Content-Type": "application/json" },
+		},
+	);
+}
 
 // ===== USAGE COLLECTOR MANAGEMENT =====
 
@@ -255,9 +282,7 @@ export async function handleProxy(
 		// endpoint failure and counts it toward its consecutive-failure pause
 		// threshold (recordRefreshFailure), auto-pausing a healthy account the
 		// instant its usage window resets and the scheduler re-probes it.
-		const isSyntheticProbe =
-			req.headers.get("x-better-ccflare-auto-refresh") === "true" ||
-			req.headers.get("x-better-ccflare-keepalive") === "true";
+		const isSyntheticProbe = isInternalProbe(req.headers, ctx);
 		if (isSyntheticProbe) {
 			return { available: accounts, throttled: [] as Account[] };
 		}
@@ -303,11 +328,72 @@ export async function handleProxy(
 		return { available, throttled };
 	};
 
+	const returnComboSessionFallbackDisabled = async (
+		comboName: string,
+		failoverAttempts: number,
+	): Promise<Response> => {
+		const disabledFallbackResponse =
+			createComboSessionFallbackDisabledResponse(comboName);
+		const collector = tryGetUsageCollector();
+		if (collector) {
+			collector.handleStart({
+				type: "start",
+				messageId: crypto.randomUUID(),
+				requestId: requestMeta.id,
+				accountId: null,
+				method: req.method,
+				path: url.pathname,
+				timestamp: requestMeta.timestamp,
+				requestHeaders: Object.fromEntries(req.headers.entries()),
+				requestBody: null,
+				project: project ?? null,
+				projectAttributionSource: projectAttributionSource ?? "none",
+				agentAttributionSource: agentAttributionSource ?? "none",
+				responseStatus: 503,
+				responseHeaders: Object.fromEntries(
+					disabledFallbackResponse.headers.entries(),
+				),
+				isStream: false,
+				providerName: ctx.provider.name,
+				accountBillingType: null,
+				accountAutoPauseOnOverageEnabled: 0,
+				accountName: null,
+				agentUsed: agentUsed || null,
+				originalModel: originalModel || null,
+				appliedModel: appliedModel || null,
+				comboName,
+				apiKeyId: apiKeyId || null,
+				apiKeyName: apiKeyName || null,
+				retryAttempt: 0,
+				failoverAttempts,
+			});
+			try {
+				await collector.handleEnd({
+					type: "end",
+					requestId: requestMeta.id,
+					success: false,
+					error: "combo_session_fallback_disabled",
+				});
+			} catch (err) {
+				log.error(
+					`handleEnd failed for combo fallback disabled request ${requestMeta.id}`,
+					err,
+				);
+			}
+		}
+		cacheBodyStore.discardStaged(requestMeta.id);
+		return disabledFallbackResponse;
+	};
+
 	const { available: accounts, throttled: throttledAccounts } =
 		applyUsageThrottling(selectedAccounts);
 
 	// 7. Handle no accounts case
 	if (accounts.length === 0) {
+		if (requestMeta.comboName && isComboSessionFallbackDisabled()) {
+			return await returnComboSessionFallbackDisabled(requestMeta.comboName, 0);
+		}
+
 		// Model-scoped capacity filter (account-selector.ts) emptied the
 		// candidate pool because every account is exhausted for this request's
 		// model family — a structured, actionable response instead of the
@@ -356,8 +442,11 @@ export async function handleProxy(
 		// reflecting any real client impact (issue #199, bug 2). The keepalive
 		// scheduler already gets the equivalent treatment via its loop-prevention
 		// header path; this brings auto-refresh in line.
-		const isAutoRefreshProbe =
-			req.headers.get("x-better-ccflare-auto-refresh") === "true";
+		const isAutoRefreshProbe = isInternalProbe(
+			req.headers,
+			ctx,
+			"auto-refresh",
+		);
 		if (!isAutoRefreshProbe) {
 			// Log to request history via usage collector
 			getUsageCollector().handleStart({
@@ -434,6 +523,7 @@ export async function handleProxy(
 			}
 		: null;
 	let response: Response | null = null;
+	let anyAccountAttempted = false;
 
 	for (let i = 0; i < accounts.length; i++) {
 		// For combo routing: enrich metadata with slot index and look up model override
@@ -461,6 +551,15 @@ export async function handleProxy(
 			continue;
 		}
 
+		anyAccountAttempted = true;
+		// The last actually-attempted candidate is not always the last pool
+		// index: a probe-suppressed tail account gets skipped via `continue`
+		// above rather than attempted. Look ahead at the remaining candidates'
+		// CURRENT suppression state (without taking a lease) to find out
+		// whether any of them would still be attempted after this one.
+		const isLastAttemptedCandidate = accounts
+			.slice(i + 1)
+			.every((candidate) => wouldSuppressProbe(candidate));
 		try {
 			response = await proxyWithAccount(
 				req,
@@ -475,7 +574,7 @@ export async function handleProxy(
 				apiKeyId,
 				apiKeyName,
 				requestBodyContext,
-				!filteredComboInfo?.comboName && i === accounts.length - 1,
+				!filteredComboInfo?.comboName && isLastAttemptedCandidate,
 			);
 		} finally {
 			if (probeAdmission === "admitted") {
@@ -495,10 +594,63 @@ export async function handleProxy(
 		}
 	}
 
+	// Every candidate was single-flight probe-gate suppressed — no account was
+	// ever actually attempted. The gate's purpose is to prefer another account
+	// over stampeding one that just recovered, not to drop the request when
+	// there is no other account to prefer: retry the highest-priority
+	// candidate once, bypassing the gate, instead of falling through to a hard
+	// 503 against what may be a perfectly healthy account.
+	if (!anyAccountAttempted && accounts.length > 0) {
+		const i = 0;
+		let modelOverride: string | null = null;
+		if (filteredComboInfo?.slots[i]?.accountId === accounts[i].id) {
+			modelOverride = filteredComboInfo.slots[i].modelOverride;
+		}
+		log.info(
+			`All ${accounts.length} candidate account(s) were probe-gate suppressed; retrying account ${accounts[i].name} ungated`,
+		);
+		// This retry IS the request's terminal attempt by construction — the
+		// loop above already exhausted every candidate before falling through
+		// here. Unlike the loop's own `i === accounts.length - 1` check (which
+		// tracks whether the CURRENT iteration is the last one), `i` is always
+		// 0 in this block regardless of pool size, so that comparison would be
+		// a constant `false` for any pool with more than one candidate — the
+		// flag must instead depend only on whether this is combo routing.
+		response = await proxyWithAccount(
+			req,
+			url,
+			accounts[i],
+			requestMeta,
+			finalBodyBuffer,
+			finalCreateBodyStream,
+			i,
+			ctx,
+			modelOverride,
+			apiKeyId,
+			apiKeyName,
+			requestBodyContext,
+			!filteredComboInfo?.comboName,
+		);
+
+		if (response) {
+			return response;
+		}
+	}
+
 	// 10. Combo fallback: if combo routing was active and all slots failed,
 	//     fall back to normal SessionStrategy routing (REQ-14)
 	let fallbackAccounts: Account[] | null = null;
 	if (filteredComboInfo?.comboName) {
+		if (isComboSessionFallbackDisabled()) {
+			log.warn(
+				`All combo slots failed for combo "${filteredComboInfo.comboName}", session fallback disabled by CCFLARE_DISABLE_COMBO_SESSION_FALLBACK`,
+			);
+			return await returnComboSessionFallbackDisabled(
+				filteredComboInfo.comboName,
+				accounts.length,
+			);
+		}
+
 		log.warn(
 			`All combo slots failed for combo "${filteredComboInfo.comboName}", falling back to SessionStrategy routing`,
 		);
@@ -527,12 +679,20 @@ export async function handleProxy(
 			log.info(
 				`Fallback: trying ${fallbackAccounts.length} SessionStrategy accounts`,
 			);
+			let anyFallbackAttempted = false;
 			for (let i = 0; i < fallbackAccounts.length; i++) {
 				const probeAdmission = getRateLimitProbeAdmission(fallbackAccounts[i]);
 				if (probeAdmission === "suppressed") {
 					continue;
 				}
 
+				anyFallbackAttempted = true;
+				// Same rationale as the main loop above: a probe-suppressed tail
+				// candidate is skipped via `continue`, so the last pool index is
+				// not necessarily the last one actually attempted.
+				const isLastAttemptedFallback = fallbackAccounts
+					.slice(i + 1)
+					.every((candidate) => wouldSuppressProbe(candidate));
 				try {
 					response = await proxyWithAccount(
 						req,
@@ -547,13 +707,46 @@ export async function handleProxy(
 						apiKeyId,
 						apiKeyName,
 						requestBodyContext,
-						i === fallbackAccounts.length - 1,
+						isLastAttemptedFallback,
 					);
 				} finally {
 					if (probeAdmission === "admitted") {
 						completeRateLimitProbe(fallbackAccounts[i], "abandoned");
 					}
 				}
+
+				if (response) {
+					return response;
+				}
+			}
+
+			// Same rationale as the main account loop above: an entirely
+			// suppressed fallback pool must not fall through to a hard failure.
+			if (!anyFallbackAttempted && fallbackAccounts.length > 0) {
+				const i = 0;
+				log.info(
+					`All ${fallbackAccounts.length} fallback candidate(s) were probe-gate suppressed; retrying account ${fallbackAccounts[i].name} ungated`,
+				);
+				// Same rationale as the main-loop block above: this retry is the
+				// terminal attempt by construction (the fallback loop already
+				// exhausted every candidate), and the fallback path is never
+				// combo-routed (comboName was cleared before re-selection), so the
+				// flag is unconditionally true here.
+				response = await proxyWithAccount(
+					req,
+					url,
+					fallbackAccounts[i],
+					requestMeta,
+					finalBodyBuffer,
+					finalCreateBodyStream,
+					i,
+					ctx,
+					undefined,
+					apiKeyId,
+					apiKeyName,
+					requestBodyContext,
+					true,
+				);
 
 				if (response) {
 					return response;

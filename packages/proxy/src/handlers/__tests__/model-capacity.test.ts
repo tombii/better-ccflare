@@ -611,5 +611,24 @@ describe("createModelFamilyExhaustedResponse", () => {
 			expect(body.error.message.toLowerCase()).not.toContain("weekly");
 			expect(body.error.message.toLowerCase()).toContain("recently rejected");
 		});
+
+		// 529-overload-cooldown-separation: an account with free capacity for
+		// the family exists but is only sidelined by a rate-limit cooldown —
+		// the message must name the real (short-lived) blocker instead of
+		// claiming weekly exhaustion or hiding it under "recently rejected
+		// upstream" (that phrase implies capacity exhaustion too).
+		it("names the cooldown as the real blocker (no weekly-capacity claim, no 'recently rejected') when origin is cooldown_masked", async () => {
+			const response = createModelFamilyExhaustedResponse({
+				family: "fable",
+				resetAt: NOW + 90_000,
+				origin: "cooldown_masked",
+			});
+			const body = (await response.json()) as { error: { message: string } };
+			expect(body.error.message.toLowerCase()).not.toContain("weekly");
+			expect(body.error.message.toLowerCase()).not.toContain(
+				"recently rejected",
+			);
+			expect(body.error.message.toLowerCase()).toContain("cooldown");
+		});
 	});
 });
