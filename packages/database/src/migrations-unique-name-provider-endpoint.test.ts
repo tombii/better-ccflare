@@ -9,11 +9,18 @@ import { ensureSchema, runMigrations } from "../src/migrations";
  * What this proves:
  *   (a) The migration is idempotent — running `runMigrations` twice does
  *       not re-create the index or fail.
- *   (b) The migration COLLAPSES pre-existing duplicates to the oldest row
- *       per tuple (min rowid) before creating the UNIQUE index. Without
- *       this dedup, the CREATE UNIQUE INDEX step would fail on tables
- *       that already have duplicates — i.e. the wild. This is the
- *       load-bearing step.
+ *   (b) The migration COLLAPSES pre-existing duplicates per tuple to a
+ *       single row before creating the UNIQUE index. Without this dedup,
+ *       the CREATE UNIQUE INDEX step would fail on tables that already
+ *       have duplicates — i.e. the wild. This is the load-bearing step.
+ *       Survivor selection: most-recent `last_used` → most-recent
+ *       `refresh_token_issued_at` → most-recent `created_at` → smallest
+ *       `rowid`. (See `collapseAccountDuplicatesPreservingState` for the
+ *       full rationale — choosing an arbitrary min-rowid survivor would
+ *       silently discard working credentials and cascade-delete dependent
+ *       rows. This test file therefore does NOT lock in a specific
+ *       survivor; tests that need to assert exact survivor identity seed
+ *       divergent `last_used` / `refresh_token_issued_at` timestamps.)
  *   (c) After migration, the constraint actually rejects a bare INSERT
  *       of a tuple that already exists, and the error message matches
  *       the pattern the http-api handlers' `isUniqueConstraintError`
@@ -21,6 +28,11 @@ import { ensureSchema, runMigrations } from "../src/migrations";
  *   (d) NEGATIVE CONTROL: an attempt to CREATE UNIQUE INDEX without the
  *       dedup step FAILS on seeded duplicates — proves the dedup is the
  *       step that makes the constraint enforceable on legacy data.
+ *
+ * Tests for the non-destructive aspects of the dedup — freshest-credential
+ * preservation, repointing of combo_slots / requests / usage_snapshots,
+ * MAX/MIN/SUM aggregates over the merge fields — live in
+ * `migrations-dedup-preserving-state.test.ts`.
  */
 describe("Database Migrations — UNIQUE index on (name, provider, COALESCE(custom_endpoint,''))", () => {
 	let db: Database;
@@ -60,14 +72,17 @@ describe("Database Migrations — UNIQUE index on (name, provider, COALESCE(cust
 		expect(idxCount.n).toBe(1);
 	});
 
-	it("collapses pre-existing duplicate rows (oldest wins) and creates the index", () => {
+	it("collapses pre-existing duplicate rows (one survivor per tuple) and creates the index", () => {
 		// Seed a schema that already has the `custom_endpoint` column AND
 		// contains duplicate rows that violate the future constraint. This
-		// is the on-disk state of a pre-migration production DB.
+		// is the on-disk state of a pre-migration production DB. Both rows
+		// per tuple have NULL last_used / refresh_token_issued_at, so the
+		// survivor-selection tie-break falls through to the more-recent
+		// created_at — i.e. the row that was inserted later. This is the
+		// expected behavior of the non-destructive dedup migration; tests
+		// that need to assert a specific survivor by its credential state
+		// live in `migrations-dedup-preserving-state.test.ts`.
 		ensureSchema(db);
-		// Add the custom_endpoint column that `runMigrations` would add
-		// (mirrors the schema state at the point where the migration
-		// kicks in).
 		db.exec(`ALTER TABLE accounts ADD COLUMN custom_endpoint TEXT`);
 
 		const now = Date.now();
@@ -88,8 +103,6 @@ describe("Database Migrations — UNIQUE index on (name, provider, COALESCE(cust
 			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		).run("beta-2", "beta", "openai-compatible", "r4", "a4", now - 500, "https://x");
 
-		// rowid reflects insertion order; the first-inserted row gets the
-		// smallest rowid within the table.
 		runMigrations(db);
 
 		const alpha = db
@@ -98,7 +111,7 @@ describe("Database Migrations — UNIQUE index on (name, provider, COALESCE(cust
 			)
 			.all() as Array<{ id: string }>;
 		expect(alpha).toHaveLength(1);
-		expect(alpha[0]?.id).toBe("alpha-1"); // oldest kept
+		expect(alpha[0]?.id).toBe("alpha-2"); // newer created_at wins on full-tie
 
 		const beta = db
 			.prepare(
@@ -106,7 +119,7 @@ describe("Database Migrations — UNIQUE index on (name, provider, COALESCE(cust
 			)
 			.all() as Array<{ id: string }>;
 		expect(beta).toHaveLength(1);
-		expect(beta[0]?.id).toBe("beta-1"); // oldest kept
+		expect(beta[0]?.id).toBe("beta-2"); // newer created_at wins on full-tie
 
 		// The UNIQUE index is now in place.
 		const idx = db

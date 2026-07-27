@@ -380,6 +380,269 @@ export function ensureSchema(db: Database): void {
 	);
 }
 
+/**
+ * Collapse duplicate `(name, provider, COALESCE(custom_endpoint,''))` rows in
+ * the `accounts` table into a single survivor per tuple, while preserving as
+ * much working account state as possible.
+ *
+ * Survivor selection (deterministic, stable across rows):
+ *   1. Most recent `last_used` (most-recently-active row, which is most
+ *      likely to hold working OAuth credentials).
+ *   2. Most recent `refresh_token_issued_at` (freshest tokens win on ties).
+ *   3. Most recent `created_at` (newer row wins on ties — mirror of the
+ *      intuition that the newer row represents the operator's "current"
+ *      intent for that account name).
+ *   4. Smallest `rowid` (final tiebreak; monotone insert order — gives the
+ *      older insert a deterministic stable choice when all three timestamps
+ *      above are NULL).
+ *
+ * For each tuple group the non-survivor rows are deleted only after their
+ * state has been merged into the survivor and every dependent row
+ * (`combo_slots.account_id`, `requests.account_used`,
+ * `usage_snapshots.account_id`) has been repointed at the survivor's id.
+ * State that is merged into the survivor:
+ *   - `refresh_token`, `access_token`, `expires_at`: from the row whose
+ *     `refresh_token_issued_at` is most recent (i.e. freshest credentials).
+ *   - `api_key`: from the row whose `refresh_token_issued_at`/`created_at`
+ *     is most recent among rows with a non-empty api_key (API-key providers
+ *     would otherwise lose their key if a stale OAuth duplicate "won" the
+ *     survivor selection).
+ *   - `last_used`, `rate_limited_until`, `session_start`, `rate_limit_reset`,
+ *     `refresh_token_issued_at`: MAX (most-recent state wins).
+ *   - `created_at`: MIN (preserves the original creation time).
+ *   - `request_count`, `total_requests`, `session_request_count`: SUM
+ *     (no request accounting is lost across the merge).
+ *   - `priority`, `consecutive_rate_limits`, `paused`, `requires_reauth`:
+ *     MAX (most-restrictive setting wins; e.g. if any duplicate is paused,
+ *     the merged survivor is paused).
+ *
+ * The function is idempotent — running it on an already-deduped accounts
+ * table is a no-op. It must be called inside a transaction (runMigrations
+ * wraps it in `db.transaction(() => { ... })`).
+ */
+function collapseAccountDuplicatesPreservingState(db: Database): void {
+	// Find every tuple (name, provider, COALESCE(custom_endpoint,'')) that
+	// currently has more than one row. For each, pick the survivor and merge.
+	const dupGroups = db
+		.prepare(
+			`SELECT name, provider, COALESCE(custom_endpoint, '') AS ep
+			 FROM accounts
+			 GROUP BY name, provider, COALESCE(custom_endpoint, '')
+			 HAVING COUNT(*) > 1`,
+		)
+		.all() as Array<{ name: string; provider: string; ep: string }>;
+
+	if (dupGroups.length === 0) {
+		return;
+	}
+
+	const pickSurvivor = db.prepare(
+		`SELECT rowid AS survivor_rowid, id AS survivor_id
+		 FROM accounts
+		 WHERE name = ? AND provider = ? AND COALESCE(custom_endpoint, '') = ?
+		 ORDER BY
+		   COALESCE(last_used, 0) DESC,
+		   COALESCE(refresh_token_issued_at, 0) DESC,
+		   created_at DESC,
+		   rowid ASC
+		 LIMIT 1`,
+	);
+
+	const findDiscardedIds = db.prepare(
+		`SELECT id FROM accounts
+		 WHERE name = ? AND provider = ? AND COALESCE(custom_endpoint, '') = ?
+		   AND rowid != ?`,
+	);
+
+	// Merged freshest-credentials lookup. The "best" credentials come from a
+	// single row — the one with the most recent refresh_token_issued_at among
+	// rows that have a non-empty refresh_token — so refresh_token, access_token
+	// and expires_at are guaranteed consistent with each other (otherwise we
+	// could pair an access_token from one row with a refresh_token from
+	// another, which would never successfully refresh). If no row in the group
+	// has a refresh_token at all (e.g. all rows are API-key providers) we fall
+	// back to picking the most-recently-issued api_key from any row.
+	const bestCredentials = db.prepare(
+		`SELECT
+		   (SELECT refresh_token FROM accounts
+		    WHERE rowid = (
+		      SELECT rowid FROM accounts
+		      WHERE name = ? AND provider = ? AND COALESCE(custom_endpoint, '') = ?
+		        AND refresh_token IS NOT NULL AND refresh_token != ''
+		      ORDER BY COALESCE(refresh_token_issued_at, 0) DESC, rowid ASC
+		      LIMIT 1
+		    )) AS merged_refresh_token,
+		   (SELECT access_token FROM accounts
+		    WHERE rowid = (
+		      SELECT rowid FROM accounts
+		      WHERE name = ? AND provider = ? AND COALESCE(custom_endpoint, '') = ?
+		        AND refresh_token IS NOT NULL AND refresh_token != ''
+		      ORDER BY COALESCE(refresh_token_issued_at, 0) DESC, rowid ASC
+		      LIMIT 1
+		    )) AS merged_access_token,
+		   (SELECT expires_at FROM accounts
+		    WHERE rowid = (
+		      SELECT rowid FROM accounts
+		      WHERE name = ? AND provider = ? AND COALESCE(custom_endpoint, '') = ?
+		        AND refresh_token IS NOT NULL AND refresh_token != ''
+		      ORDER BY COALESCE(refresh_token_issued_at, 0) DESC, rowid ASC
+		      LIMIT 1
+		    )) AS merged_expires_at,
+		   (SELECT refresh_token_issued_at FROM accounts
+		    WHERE rowid = (
+		      SELECT rowid FROM accounts
+		      WHERE name = ? AND provider = ? AND COALESCE(custom_endpoint, '') = ?
+		        AND refresh_token IS NOT NULL AND refresh_token != ''
+		      ORDER BY COALESCE(refresh_token_issued_at, 0) DESC, rowid ASC
+		      LIMIT 1
+		    )) AS merged_refresh_token_issued_at,
+		   (SELECT api_key FROM accounts
+		    WHERE name = ? AND provider = ? AND COALESCE(custom_endpoint, '') = ?
+		      AND api_key IS NOT NULL AND api_key != ''
+		    ORDER BY COALESCE(refresh_token_issued_at, 0) DESC, created_at DESC, rowid ASC
+		    LIMIT 1) AS merged_api_key`,
+	);
+
+	const mergeSurvivor = db.prepare(
+		`UPDATE accounts SET
+		   refresh_token = ?,
+		   access_token = ?,
+		   expires_at = ?,
+		   refresh_token_issued_at = ?,
+		   api_key = COALESCE(api_key, ?),
+		   last_used = (SELECT MAX(COALESCE(last_used, 0)) FROM accounts
+		                WHERE name = ? AND provider = ? AND COALESCE(custom_endpoint, '') = ?),
+		   created_at = (SELECT MIN(created_at) FROM accounts
+		                 WHERE name = ? AND provider = ? AND COALESCE(custom_endpoint, '') = ?),
+		   request_count = (SELECT SUM(COALESCE(request_count, 0)) FROM accounts
+		                    WHERE name = ? AND provider = ? AND COALESCE(custom_endpoint, '') = ?),
+		   total_requests = (SELECT SUM(COALESCE(total_requests, 0)) FROM accounts
+		                     WHERE name = ? AND provider = ? AND COALESCE(custom_endpoint, '') = ?),
+		   session_request_count = (SELECT SUM(COALESCE(session_request_count, 0)) FROM accounts
+		                            WHERE name = ? AND provider = ? AND COALESCE(custom_endpoint, '') = ?),
+		   priority = (SELECT MAX(COALESCE(priority, 0)) FROM accounts
+		               WHERE name = ? AND provider = ? AND COALESCE(custom_endpoint, '') = ?),
+		   consecutive_rate_limits = (SELECT MAX(COALESCE(consecutive_rate_limits, 0)) FROM accounts
+		                              WHERE name = ? AND provider = ? AND COALESCE(custom_endpoint, '') = ?),
+		   rate_limited_until = (SELECT MAX(COALESCE(rate_limited_until, 0)) FROM accounts
+		                         WHERE name = ? AND provider = ? AND COALESCE(custom_endpoint, '') = ?),
+		   session_start = (SELECT MAX(COALESCE(session_start, 0)) FROM accounts
+		                    WHERE name = ? AND provider = ? AND COALESCE(custom_endpoint, '') = ?),
+		   rate_limit_reset = (SELECT MAX(COALESCE(rate_limit_reset, 0)) FROM accounts
+		                       WHERE name = ? AND provider = ? AND COALESCE(custom_endpoint, '') = ?),
+		   paused = (SELECT MAX(COALESCE(paused, 0)) FROM accounts
+		             WHERE name = ? AND provider = ? AND COALESCE(custom_endpoint, '') = ?),
+		   requires_reauth = (SELECT MAX(COALESCE(requires_reauth, 0)) FROM accounts
+		                      WHERE name = ? AND provider = ? AND COALESCE(custom_endpoint, '') = ?)
+		 WHERE rowid = ?`,
+	);
+
+	let totalDeleted = 0;
+	let totalRepointedSlots = 0;
+	let totalRepointedRequests = 0;
+	let totalRepointedSnapshots = 0;
+
+	for (const grp of dupGroups) {
+		const survivor = pickSurvivor.get(
+			grp.name,
+			grp.provider,
+			grp.ep,
+		) as { survivor_rowid: number; survivor_id: string };
+		if (!survivor) {
+			continue;
+		}
+
+		const discardedRows = findDiscardedIds.all(
+			grp.name,
+			grp.provider,
+			grp.ep,
+			survivor.survivor_rowid,
+		) as Array<{ id: string }>;
+		const discardedIds = discardedRows.map((r) => r.id);
+
+		const merged = bestCredentials.get(
+			grp.name, grp.provider, grp.ep, // refresh_token subquery
+			grp.name, grp.provider, grp.ep, // access_token subquery
+			grp.name, grp.provider, grp.ep, // expires_at subquery
+			grp.name, grp.provider, grp.ep, // refresh_token_issued_at subquery
+			grp.name, grp.provider, grp.ep, // api_key subquery
+		) as {
+			merged_refresh_token: string | null;
+			merged_access_token: string | null;
+			merged_expires_at: number | null;
+			merged_refresh_token_issued_at: number | null;
+			merged_api_key: string | null;
+		};
+
+		// The merge UPDATE has 12 aggregate subqueries × 3 group-key params each
+		// (= 36 placeholders), plus 5 credential pre-fills (refresh_token,
+		// access_token, expires_at, refresh_token_issued_at, api_key) and the
+		// final WHERE rowid = ?. Total 42 placeholders. Bindings are
+		// positional; the order below mirrors the `?` positions in the SQL.
+		mergeSurvivor.run(
+			merged.merged_refresh_token, // $1
+			merged.merged_access_token, // $2
+			merged.merged_expires_at, // $3
+			merged.merged_refresh_token_issued_at, // $4
+			merged.merged_api_key, // $5
+			grp.name, grp.provider, grp.ep, // $6..$8 (last_used)
+			grp.name, grp.provider, grp.ep, // $9..$11 (created_at)
+			grp.name, grp.provider, grp.ep, // $12..$14 (request_count)
+			grp.name, grp.provider, grp.ep, // $15..$17 (total_requests)
+			grp.name, grp.provider, grp.ep, // $18..$20 (session_request_count)
+			grp.name, grp.provider, grp.ep, // $21..$23 (priority)
+			grp.name, grp.provider, grp.ep, // $24..$26 (consecutive_rate_limits)
+			grp.name, grp.provider, grp.ep, // $27..$29 (rate_limited_until)
+			grp.name, grp.provider, grp.ep, // $30..$32 (session_start)
+			grp.name, grp.provider, grp.ep, // $33..$35 (rate_limit_reset)
+			grp.name, grp.provider, grp.ep, // $36..$38 (paused)
+			grp.name, grp.provider, grp.ep, // $39..$41 (requires_reauth)
+			survivor.survivor_rowid, // $42
+		);
+
+		if (discardedIds.length > 0) {
+			const placeholders = discardedIds.map(() => "?").join(",");
+			const repointSlots = db
+				.prepare(
+					`UPDATE combo_slots SET account_id = ? WHERE account_id IN (${placeholders})`,
+				)
+				.run(survivor.survivor_id, ...discardedIds);
+			const repointRequests = db
+				.prepare(
+					`UPDATE requests SET account_used = ? WHERE account_used IN (${placeholders})`,
+				)
+				.run(survivor.survivor_id, ...discardedIds);
+			const repointSnapshots = db
+				.prepare(
+					`UPDATE usage_snapshots SET account_id = ? WHERE account_id IN (${placeholders})`,
+				)
+				.run(survivor.survivor_id, ...discardedIds);
+
+			const deleted = db
+				.prepare(`DELETE FROM accounts WHERE id IN (${placeholders})`)
+				.run(...discardedIds).changes;
+
+			totalDeleted += deleted;
+			totalRepointedSlots += Number(repointSlots.changes ?? 0);
+			totalRepointedRequests += Number(repointRequests.changes ?? 0);
+			totalRepointedSnapshots += Number(repointSnapshots.changes ?? 0);
+		}
+	}
+
+	if (totalDeleted > 0) {
+		log.warn(
+			`Collapsed ${totalDeleted} duplicate account row(s) across ${dupGroups.length} ` +
+				`(name, provider, COALESCE(custom_endpoint,'')) tuple group(s) before creating ` +
+				`UNIQUE index. Each group kept the row with the freshest credentials (most ` +
+				`recent last_used → refresh_token_issued_at → created_at → smallest rowid) ` +
+				`and merged request counts / priority / paused state from the rest. ` +
+				`Repointed ${totalRepointedSlots} combo slot(s), ${totalRepointedRequests} ` +
+				`request-history row(s), and ${totalRepointedSnapshots} usage-snapshot row(s) ` +
+				`to the surviving account ids.`,
+		);
+	}
+}
+
 export function runMigrations(db: Database, dbPath?: string): void {
 	// Ensure base schema exists first (outside transaction as it creates tables)
 	ensureSchema(db);
@@ -815,42 +1078,23 @@ export function runMigrations(db: Database, dbPath?: string): void {
 		//
 		// The index cannot be created while duplicates exist — `CREATE UNIQUE
 		// INDEX` fails with "UNIQUE constraint failed" on the first colliding
-		// row. Collapse existing duplicates to the oldest row per tuple
-		// (min(rowid); tie-break by id for deterministic resolution when
-		// rowid is unavailable) BEFORE creating the index. This block is
-		// idempotent: if the index already exists, skip both the dedup and
-		// the CREATE.
+		// row. Collapse existing duplicates per tuple BEFORE creating the
+		// index, but **without destroying account state**: keep the row most
+		// likely to still hold working credentials, merge the others' state
+		// into it, and repoint every dependent row (combo_slots, requests,
+		// usage_snapshots) at the surviving id. An earlier implementation
+		// kept the arbitrary minimum-rowid row and DELETED the rest; that
+		// silently dropped live OAuth refresh tokens, cascade-removed combo
+		// slots, and orphaned request history rows whose `account_used`
+		// pointed at the deleted id. This block is idempotent: if the index
+		// already exists, skip both the dedup and the CREATE.
 		const uniqueAccountsIndexExists = db
 			.prepare(
 				`SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_accounts_unique_name_provider_endpoint'`,
 			)
 			.get();
 		if (!uniqueAccountsIndexExists) {
-			// Find tuple ids that have more than one row, then for each tuple
-			// delete every row whose rowid is NOT the smallest per tuple.
-			// Using rowid (monotonic insert order) is the natural "oldest"
-			// ordering; if rowid is unavailable (e.g. WITHOUT ROWID tables —
-			// none here), the created_at/created_at DESC,id ASC fallback
-			// makes the choice deterministic.
-			const duplicatesCollapsed = db
-				.prepare(
-					`DELETE FROM accounts
-					 WHERE rowid IN (
-					   SELECT rowid FROM accounts
-					   WHERE rowid NOT IN (
-					     SELECT MIN(rowid) FROM accounts
-					     GROUP BY name, provider, COALESCE(custom_endpoint, '')
-					   )
-					 )`,
-				)
-				.run().changes;
-			if (duplicatesCollapsed > 0) {
-				log.warn(
-					`Collapsed ${duplicatesCollapsed} duplicate account row(s) ` +
-						`(name, provider, COALESCE(custom_endpoint,'')) before creating ` +
-						`UNIQUE index; the oldest row per tuple was kept.`,
-				);
-			}
+			collapseAccountDuplicatesPreservingState(db);
 			db.prepare(
 				`CREATE UNIQUE INDEX idx_accounts_unique_name_provider_endpoint
 				 ON accounts(name, provider, COALESCE(custom_endpoint, ''))`,
