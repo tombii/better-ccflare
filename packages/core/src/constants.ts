@@ -70,19 +70,22 @@ export const TIME_CONSTANTS = {
 	// immediately, so a long cooldown is the only thing limiting request rate.
 	// This 10s cooldown pairs with the single-flight probe gate
 	// (getRateLimitProbeAdmission in rate-limit-cooldown.ts), but what the
-	// gate actually does for a suppressed request depends on pool size:
-	// - Multi-account pool: once the cooldown expires, the gate admits
-	//   exactly one probe request for THIS account and suppresses the rest —
-	//   a suppressed request does not wait for that probe, it moves on to the
-	//   next candidate account in the same selection (proxy.ts's account
-	//   loop), so concurrent requests spread across the pool instead of
-	//   piling onto the one recovering account.
-	// - Single-account pool: there is no other candidate to defer to, so a
-	//   suppressed request runs the account ungated instead of failing
-	//   outright (proxy.ts's "every candidate suppressed" fallback). The gate
-	//   suppresses nothing in that case; the short 10s value is the only
-	//   thing bounding how often that ungated path re-hits the account
-	//   during an overload storm.
+	// gate actually does for a suppressed request depends on whether ANY
+	// other candidate is available, not on pool size:
+	// - At least one other candidate is not suppressed: once the cooldown
+	//   expires, the gate admits exactly one probe request for THIS account
+	//   and suppresses the rest — a suppressed request does not wait for
+	//   that probe, it moves on to the next candidate account in the same
+	//   selection (proxy.ts's account loop), so concurrent requests spread
+	//   across the pool instead of piling onto the one recovering account.
+	// - EVERY candidate is suppressed (a single-account pool, or a
+	//   pool-wide overload storm where every account's probe lease happens
+	//   to be held): there is no other candidate to defer to, so the
+	//   request runs the highest-priority candidate ungated instead of
+	//   failing outright (proxy.ts's "every candidate suppressed"
+	//   fallback). The gate suppresses nothing in that case; the short 10s
+	//   value is the only thing bounding how often that ungated path
+	//   re-hits the account during an overload storm.
 	// Override at runtime via CCFLARE_OVERLOAD_COOLDOWN_MS.
 	OVERLOAD_COOLDOWN_MS: 10 * 1000, // 10s
 
