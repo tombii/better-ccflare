@@ -748,3 +748,59 @@ describe("selectAccountsForRequest — cooldown-masked capacity exhaustion", () 
 		expect(info?.resetAt).toBe(earlierCooldown.rate_limited_until);
 	});
 });
+
+// ── cooldown-masked sweep respects exclude-providers header (review Befund 5) ──
+//
+// The sweep above iterates `allAccounts` — the raw, unfiltered DB read — not
+// the exclusion-filtered candidate list. Without re-applying the same
+// provider exclusion, an account that is permanently ineligible for this
+// request (e.g. an Anthropic OAuth account excluded for Codex CLI traffic via
+// x-better-ccflare-exclude-providers) could be reported as the "true
+// blocker" with its own short cooldown as Retry-After, even though the
+// client can never route to it regardless of its cooldown state.
+
+describe("selectAccountsForRequest — cooldown-masked sweep respects exclude-providers header", () => {
+	it("does not report cooldown_masked when the only cooldown-only free-capacity account is excluded via x-better-ccflare-exclude-providers", async () => {
+		const now = Date.now();
+		// Not an OAuth account (refresh_token: null) — the "anthropic-oauth"
+		// exclusion must leave it eligible, so it stays the sole account the
+		// capacity loop actually sees.
+		const exhaustedAcc = makeAccount({
+			id: "acc-exhausted",
+			refresh_token: null,
+		});
+		usageCache.set(exhaustedAcc.id, exhaustedUsage("Fable", now));
+		// Default makeAccount() is an Anthropic OAuth account (refresh_token
+		// set) — matches "anthropic-oauth" and, unfixed, would mask the
+		// telemetry-confirmed exhaustion with its own short cooldown.
+		const excludedCooldownAcc = makeAccount({
+			id: "acc-excluded-cooldown",
+			rate_limited_until: now + 90_000,
+		});
+		const ctx: ProxyContext = {
+			strategy: { select: mock(() => [exhaustedAcc]) },
+			dbOps: {
+				getAllAccounts: mock(async () => [exhaustedAcc, excludedCooldownAcc]),
+				getActiveComboForFamily: mock(async () => null),
+			},
+			refreshInFlight: new Map(),
+			asyncWriter: { enqueue: mock(() => {}) },
+			config: { getModelScopedCapacityRouting: () => "exhausted" },
+		} as unknown as ProxyContext;
+		const meta = makeRequestMeta({
+			headers: new Headers({
+				"x-better-ccflare-exclude-providers": "anthropic-oauth",
+			}),
+		});
+
+		const result = await selectAccountsForRequest(meta, ctx, "claude-fable-5");
+
+		expect(result).toHaveLength(0);
+		const info = getModelFamilyExhaustionInfo(meta);
+		// Must fall through to the genuine telemetry-backed exhaustion
+		// response, not claim the excluded account's cooldown as the real
+		// blocker.
+		expect(info?.origin).toBe("telemetry_confirmed");
+		expect(info?.resetAt).not.toBe(excludedCooldownAcc.rate_limited_until);
+	});
+});

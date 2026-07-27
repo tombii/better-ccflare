@@ -443,9 +443,19 @@ export async function selectAccountsForRequest(
 				// capacity for this family, the weekly cap is not the real
 				// blocker: the account is only sidelined for minutes, and the
 				// response must say so instead of asserting weekly exhaustion.
+				//
+				// allAccounts is the raw, unfiltered DB read — it still
+				// contains accounts excluded for this request via
+				// x-better-ccflare-exclude-providers (e.g. Anthropic OAuth
+				// accounts excluded for Codex CLI traffic). Re-run the same
+				// exclusion the candidate list already went through so a
+				// header-excluded account — permanently ineligible for this
+				// request, not just cooling down — can never be reported as
+				// the "true blocker" with its cooldown as Retry-After.
 				const orderedIds = new Set(orderedAccounts.map((a) => a.id));
+				const sweepCandidates = applyExclusions(allAccounts);
 				let earliestCooldownResetAt: number | null = null;
-				for (const account of allAccounts) {
+				for (const account of sweepCandidates) {
 					if (orderedIds.has(account.id)) continue;
 					if (account.paused || account.requires_reauth) continue;
 					if (
