@@ -451,6 +451,26 @@ export function createAccountsListHandler(
 							);
 						}
 					}
+				} else if (account.provider === "minimax" && usageData) {
+					// Minimax Token Plan usage data — 5h/7d windows from /v1/token_plan/remains
+					const isMinimaxData =
+						"five_hour" in usageData || "seven_day" in usageData;
+					if (isMinimaxData) {
+						try {
+							const {
+								getRepresentativeMinimaxUtilization,
+								getRepresentativeMinimaxWindow,
+							} = require("@better-ccflare/providers");
+							usageUtilization = getRepresentativeMinimaxUtilization(usageData);
+							usageWindow = getRepresentativeMinimaxWindow(usageData);
+							fullUsageData = usageData as FullUsageData;
+						} catch (error) {
+							log.warn(
+								`Failed to process Minimax usage data for account ${account.name}:`,
+								error,
+							);
+						}
+					}
 				}
 
 				const usageThrottleSettings = {
@@ -677,9 +697,13 @@ async function assertAccountNameAvailable(
 
 /**
  * SQLite surfaces a UNIQUE-constraint violation as an Error whose message
- * contains "UNIQUE constraint failed:". Map that to the same BadRequest
- * the pre-check returns so callers see a consistent 400 regardless of
- * which side of the race the second add loses on.
+ * contains "UNIQUE constraint failed:". PostgreSQL (via Bun.SQL) surfaces
+ * the same condition as SQLSTATE 23505 (unique_violation) on `.code`, with
+ * a message like `duplicate key value violates unique constraint "..."` —
+ * it does NOT contain the SQLite string, so both must be checked. Map
+ * either to the same BadRequest the pre-check returns so callers see a
+ * consistent 400 regardless of which side of the race the second add
+ * loses on, and regardless of which database backend is in use.
  *
  * Keeping the pre-check is intentional: it gives a clean 400 for the
  * common sequential case without a wasted INSERT round-trip, and lets
@@ -690,10 +714,13 @@ async function assertAccountNameAvailable(
  * future async adapters, or any INSERT site that bypasses the pre-check
  * — cli-commands, oauth-flow, dashboard-web, etc.).
  */
+const PG_UNIQUE_VIOLATION = "23505";
+
 function isUniqueConstraintError(error: unknown): boolean {
-	return (
-		error instanceof Error && error.message.includes("UNIQUE constraint failed")
-	);
+	if (!(error instanceof Error)) return false;
+	if (error.message.includes("UNIQUE constraint failed")) return true;
+	const code = (error as { code?: string }).code;
+	return code === PG_UNIQUE_VIOLATION;
 }
 
 /**

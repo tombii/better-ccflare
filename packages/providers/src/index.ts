@@ -6,6 +6,8 @@ export * from "./alibaba-coding-plan-usage-fetcher";
 export { BaseProvider } from "./base";
 // Export Kilo usage fetcher
 export * from "./kilo-usage-fetcher";
+// Export Minimax usage fetcher
+export * from "./minimax-usage-fetcher";
 // Export NanoGPT usage fetcher
 export * from "./nanogpt-usage-fetcher";
 // Export OAuth utilities

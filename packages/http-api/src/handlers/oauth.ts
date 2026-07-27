@@ -35,6 +35,22 @@ type QwenSession =
 
 const qwenSessions = new Map<string, QwenSession>();
 
+/**
+ * SQLite surfaces a UNIQUE-constraint violation as an Error whose message
+ * contains "UNIQUE constraint failed:". PostgreSQL (via Bun.SQL) surfaces
+ * the same condition as SQLSTATE 23505 (unique_violation) on `.code`, with
+ * a message that does NOT contain the SQLite string — so both must be
+ * checked for this to work on either database backend.
+ */
+const PG_UNIQUE_VIOLATION = "23505";
+
+function isUniqueConstraintError(error: unknown): boolean {
+	if (!(error instanceof Error)) return false;
+	if (error.message.includes("UNIQUE constraint failed")) return true;
+	const code = (error as { code?: string }).code;
+	return code === PG_UNIQUE_VIOLATION;
+}
+
 function normalizeQwenBaseUrl(url: string): string {
 	let normalized = url.trim();
 	if (!normalized.startsWith("http")) {
@@ -129,10 +145,7 @@ export function createQwenDeviceFlowInitHandler(dbOps: DatabaseOperations) {
 						// authoritative gate. Surface the same "is already
 						// taken" wording the http-api handlers use so the
 						// dashboard can render a uniform error.
-						if (
-							insertErr instanceof Error &&
-							insertErr.message.includes("UNIQUE constraint failed")
-						) {
+						if (isUniqueConstraintError(insertErr)) {
 							const msg = `Account name '${name}' is already taken`;
 							log.warn(`Qwen account add rejected: ${msg}`);
 							qwenSessions.set(sessionId, {
@@ -419,10 +432,7 @@ export function createCodexDeviceFlowInitHandler(dbOps: DatabaseOperations) {
 						// uniform "is already taken" error so the dashboard
 						// can render it consistently with the http-api
 						// handlers.
-						if (
-							insertErr instanceof Error &&
-							insertErr.message.includes("UNIQUE constraint failed")
-						) {
+						if (isUniqueConstraintError(insertErr)) {
 							const msg = `Account name '${name}' is already taken`;
 							log.warn(`Codex account add rejected: ${msg}`);
 							codexSessions.set(sessionId, {

@@ -38,6 +38,22 @@ export interface AccountCreated {
 	authType: "oauth" | "api_key"; // Track authentication type
 }
 
+/**
+ * SQLite surfaces a UNIQUE-constraint violation as an Error whose message
+ * contains "UNIQUE constraint failed:". PostgreSQL (via Bun.SQL) surfaces
+ * the same condition as SQLSTATE 23505 (unique_violation) on `.code`, with
+ * a message that does NOT contain the SQLite string — so both must be
+ * checked for this to work on either database backend.
+ */
+const PG_UNIQUE_VIOLATION = "23505";
+
+function isUniqueConstraintError(error: unknown): boolean {
+	if (!(error instanceof Error)) return false;
+	if (error.message.includes("UNIQUE constraint failed")) return true;
+	const code = (error as { code?: string }).code;
+	return code === PG_UNIQUE_VIOLATION;
+}
+
 export interface OAuthFlowResult {
 	success: boolean;
 	message: string;
@@ -316,10 +332,7 @@ export class OAuthFlow {
 			// complete. Surface the same "is already taken" message the
 			// http-api handlers use so the dashboard renders a uniform
 			// error.
-			if (
-				insertErr instanceof Error &&
-				insertErr.message.includes("UNIQUE constraint failed")
-			) {
+			if (isUniqueConstraintError(insertErr)) {
 				throw new Error(`Account name '${name}' is already taken`);
 			}
 			throw insertErr;
@@ -379,10 +392,7 @@ export class OAuthFlow {
 			// DB UNIQUE index is the authoritative gate, this catch
 			// only translates the error into the same wording the
 			// http-api handlers emit.
-			if (
-				insertErr instanceof Error &&
-				insertErr.message.includes("UNIQUE constraint failed")
-			) {
+			if (isUniqueConstraintError(insertErr)) {
 				throw new Error(`Account name '${name}' is already taken`);
 			}
 			throw insertErr;

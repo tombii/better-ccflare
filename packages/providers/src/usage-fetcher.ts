@@ -14,6 +14,12 @@ import {
 	type KiloUsageData,
 } from "./kilo-usage-fetcher";
 import {
+	fetchMinimaxUsageData,
+	getRepresentativeMinimaxUtilization,
+	getRepresentativeMinimaxWindow,
+	type MinimaxUsageData,
+} from "./minimax-usage-fetcher";
+import {
 	fetchNanoGPTUsageData,
 	getRepresentativeNanoGPTUtilization,
 	getRepresentativeNanoGPTWindow,
@@ -95,7 +101,8 @@ export type AnyUsageData =
 	| ZaiUsageData
 	| KiloUsageData
 	| AlibabaCodingPlanUsageData
-	| XaiUsageData;
+	| XaiUsageData
+	| MinimaxUsageData;
 
 /**
  * Extract the primary window reset timestamp (ms) from usage data.
@@ -128,6 +135,15 @@ export function extractWindowResetTime(
 		if (!resetsAt) return null;
 		const ms = new Date(resetsAt).getTime();
 		return Number.isFinite(ms) ? ms : null;
+	}
+	if (provider === "minimax") {
+		const m = data as MinimaxUsageData;
+		const windowName = getRepresentativeMinimaxWindow(m);
+		if (windowName === "seven_day") {
+			return m.seven_day?.resetAt ?? null;
+		}
+		// Default and "five_hour": prefer the short window's reset
+		return m.five_hour?.resetAt ?? m.seven_day?.resetAt ?? null;
 	}
 	return null;
 }
@@ -422,6 +438,9 @@ export function getRepresentativeUtilizationForProvider(
 		case "xai": {
 			return getRepresentativeXaiUtilization(data as XaiUsageData);
 		}
+		case "minimax": {
+			return getRepresentativeMinimaxUtilization(data as MinimaxUsageData);
+		}
 		default:
 			return null;
 	}
@@ -539,6 +558,15 @@ export function getRepresentativeUsageResetMs(
 					data,
 					getRepresentativeXaiWindow(data as XaiUsageData),
 				);
+			case "minimax": {
+				const windowName = getRepresentativeMinimaxWindow(
+					data as MinimaxUsageData,
+				);
+				// extractUsageResetMs reads `resets_at` (string) OR `resetAt` (ms);
+				// the Minimax fetcher populates `resetAt` with epoch ms, so this
+				// works for both 5h and 7d windows.
+				return extractUsageResetMs(data, windowName);
+			}
 			default:
 				return null;
 		}
@@ -939,6 +967,25 @@ class UsageCache {
 					const window = getRepresentativeXaiWindow(data as XaiUsageData);
 					log.debug(
 						`Successfully fetched xAI Grok usage data for account ${accountId}: ${utilization?.toFixed(1)}% used (${window} window)`,
+					);
+					return { success: true, retryAfterMs: null };
+				}
+			} else if (provider === "minimax") {
+				// Fetch Minimax Token Plan remains (metadata-only GET, zero quota).
+				data = await fetchMinimaxUsageData(token);
+				if (data) {
+					const callback = this.windowResetCallbacks.get(accountId);
+					if (callback)
+						this.notifyWindowReset(accountId, data, "minimax", callback);
+					this.cache.set(accountId, { data, timestamp: Date.now() });
+					const utilization = getRepresentativeMinimaxUtilization(
+						data as MinimaxUsageData,
+					);
+					const window = getRepresentativeMinimaxWindow(
+						data as MinimaxUsageData,
+					);
+					log.debug(
+						`Successfully fetched Minimax usage data for account ${accountId}: ${utilization?.toFixed(1)}% used (${window} window)`,
 					);
 					return { success: true, retryAfterMs: null };
 				}
