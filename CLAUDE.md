@@ -54,7 +54,11 @@ git fetch origin pull/<PR_NUMBER>/head:<branch-name>
 git merge --no-ff <branch-name>
 ```
 
-After merging, update the Acknowledgements section in README.md to thank the contributor for their specific contributions.
+**Merge workflow order (do not push between steps):**
+1. `git merge --no-ff <branch-name>`
+2. If there are still unresolved review findings (e.g. Greptile P1s not yet fixed by the contributor), fix them directly on `main` in a follow-up commit — do not push until acknowledgements are also done.
+3. Update the Acknowledgements section in README.md to thank the contributor for their specific contributions, then commit. Ask the user whether this commit should use `[skip-version]` if not already told (most acknowledgement-only commits do use it).
+4. Push once, after merge + fixes (if any) + acknowledgement are all committed locally.
 
 ## Issue Management
 - Never close issues automatically
@@ -171,7 +175,7 @@ Fallback (only if the subagent is unavailable): call the tools inline but minimi
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **better-ccflare** (7214 symbols, 16700 relationships, 259 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **better-ccflare** (7569 symbols, 17597 relationships, 267 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > Index stale? Run `node .gitnexus/run.cjs analyze` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? `npx gitnexus analyze` (npm 11 crash → `npm i -g gitnexus`; #1939).
 
