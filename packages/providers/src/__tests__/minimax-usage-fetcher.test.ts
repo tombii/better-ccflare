@@ -95,6 +95,25 @@ describe("Minimax usage fetcher", () => {
 		expect(parsed?.seven_day?.utilization).toBe(40);
 	});
 
+	it("returns null when no `general` row is present instead of substituting video", () => {
+		const parsed = parseMinimaxTokenPlanResponse({
+			base_resp: { status_code: 0 },
+			model_remains: [
+				makeRow({
+					model_name: "video",
+					current_interval_remaining_percent: 5,
+					current_weekly_remaining_percent: 5,
+				}),
+			],
+		});
+
+		// A separate quota pool must not become text utilization. Null keeps
+		// "unknown" distinct from both 0% and 100% utilization.
+		expect(parsed).toBeNull();
+		expect(getRepresentativeMinimaxUtilization(parsed)).toBeNull();
+		expect(getRepresentativeMinimaxWindow(parsed)).toBeNull();
+	});
+
 	it("derives interval length per-row (general=5h, video=24h — not hardcoded)", () => {
 		const generalStart = 1_700_000_000_000;
 		const videoStart = 1_700_000_000_000;
@@ -196,6 +215,22 @@ describe("Minimax usage fetcher", () => {
 		globalThis.fetch = fetchMock as unknown as typeof fetch;
 
 		expect(await fetchMinimaxUsageData("k")).toBeNull();
+	});
+
+	it("aborts the request via AbortController so a stalled response cannot hold the polling slot", async () => {
+		let observedSignal: AbortSignal | undefined;
+		const fetchMock = mock(
+			async (_input: RequestInfo | URL, init?: RequestInit) => {
+				observedSignal = init?.signal ?? undefined;
+				throw new DOMException("aborted", "AbortError");
+			},
+		);
+		globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+		const result = await fetchMinimaxUsageData("k");
+
+		expect(observedSignal).toBeInstanceOf(AbortSignal);
+		expect(result).toBeNull();
 	});
 
 	it("returns null on a network failure", async () => {

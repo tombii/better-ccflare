@@ -17,6 +17,14 @@ const log = new Logger("MinimaxUsageFetcher");
 export const MINIMAX_TOKEN_PLAN_REMAINS_ENDPOINT =
 	"https://www.minimax.io/v1/token_plan/remains";
 
+/**
+ * Timeout for the metadata request and the body read. A stalled MiniMax
+ * response previously kept the account's in-flight polling slot occupied
+ * forever (PR #346 review finding #2). Mirrors the
+ * `fetchXaiUsageData` / `fetchUsageData` convention in this package.
+ */
+const MINIMAX_USAGE_REQUEST_TIMEOUT_MS = 5000;
+
 /** Model class we surface in ccflare utilization. */
 const TEXT_INFERENCE_MODEL_NAME = "general";
 
@@ -136,18 +144,21 @@ function buildWindow(
  * Pick the row that represents the account's text-inference quota. Per
  * the live probe, `model_remains` is keyed by `model_name` (e.g. "general",
  * "video"); we use `general` and ignore `video` (gotcha #3).
+ *
+ * If no `general` entry exists we return null instead of substituting
+ * another row: `video` (and any other class) is a separate quota pool,
+ * and a wrong-substituted reading would surface as the account's text
+ * utilization. With the routing side skipping accounts at >=100% util
+ * (PR #345), that could silently drop a healthy account. "Unknown"
+ * must stay distinct from 0% and from 100%.
  */
 function pickTextInferenceRow(
 	modelRemains: MinimaxModelRemains[],
 ): MinimaxModelRemains | null {
-	const general = modelRemains.find(
-		(entry) => entry?.model_name === TEXT_INFERENCE_MODEL_NAME,
+	return (
+		modelRemains.find((entry) => entry?.model_name === TEXT_INFERENCE_MODEL_NAME) ??
+		null
 	);
-	if (general) return general;
-	// Fall back to the first row so a future schema rename still surfaces
-	// SOMETHING rather than nothing — the user will see the wrong window
-	// label but the polling path stays live.
-	return modelRemains[0] ?? null;
 }
 
 /**
@@ -195,6 +206,11 @@ export async function fetchMinimaxUsageData(
 	const key = apiKey?.trim();
 	if (!key) return null;
 
+	const controller = new AbortController();
+	const timeoutId = setTimeout(
+		() => controller.abort(),
+		MINIMAX_USAGE_REQUEST_TIMEOUT_MS,
+	);
 	try {
 		const response = await fetch(MINIMAX_TOKEN_PLAN_REMAINS_ENDPOINT, {
 			method: "GET",
@@ -203,6 +219,7 @@ export async function fetchMinimaxUsageData(
 				Accept: "application/json",
 				"Content-Type": "application/json",
 			},
+			signal: controller.signal,
 		});
 
 		if (!response.ok) {
@@ -218,6 +235,9 @@ export async function fetchMinimaxUsageData(
 			return null;
 		}
 
+		// Body read inherits the same abort signal: a stalled response with
+		// headers flushed but no body would otherwise block indefinitely and
+		// hold the in-flight polling slot until teardown.
 		const body = await response.json();
 		return parseMinimaxTokenPlanResponse(body);
 	} catch (error) {
@@ -226,6 +246,8 @@ export async function fetchMinimaxUsageData(
 			error instanceof Error ? error.message : String(error),
 		);
 		return null;
+	} finally {
+		clearTimeout(timeoutId);
 	}
 }
 
