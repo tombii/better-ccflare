@@ -15,21 +15,19 @@
  *   4. "OK".
  */
 
-import type {
-	AlibabaCodingPlanUsageData,
-	AnyUsageData,
-	KiloUsageData,
-	NanoGPTUsageData,
-	UsageData,
-	XaiUsageData,
-	ZaiUsageData,
-} from "@better-ccflare/providers";
-import {
-	getRepresentativeAlibabaCodingPlanWindow,
-	getRepresentativeKiloWindow,
-	getRepresentativeNanoGPTWindow,
-	getRepresentativeWindow,
-	getRepresentativeXaiWindow,
+import { isUsageExhausted } from "@better-ccflare/core";
+
+// Re-exported for backward compatibility — canonical definition now lives in
+// @better-ccflare/core so packages that can't depend on http-api (e.g. proxy's
+// account-selector) can use the same predicate.
+export { isUsageExhausted } from "@better-ccflare/core";
+
+// Re-exported for backward compatibility — canonical definition now lives in
+// @better-ccflare/providers so packages that can't depend on http-api (e.g.
+// proxy's account-selector) can use the same reset-time extraction.
+export {
+	extractUsageResetMs,
+	getRepresentativeUsageResetMs,
 } from "@better-ccflare/providers";
 
 export interface RateLimitStatusInput {
@@ -47,25 +45,6 @@ export interface RateLimitStatusInput {
 
 function minutesLeft(untilMs: number, now: number): number {
 	return Math.ceil((untilMs - now) / 60000);
-}
-
-/**
- * Shared exhaustion predicate for BOTH the rateLimitStatus display and the
- * /health `usage_exhausted` counter — keeping the two surfaces from
- * contradicting each other. A known reset in the past means the snapshot
- * predates the window reset: do not claim exhaustion from stale data. An
- * unknown reset trusts the (max 10-minute-old) usage cache.
- */
-export function isUsageExhausted(
-	utilization: number | null,
-	resetMs: number | null | undefined,
-	now: number,
-): boolean {
-	return (
-		utilization !== null &&
-		utilization >= 100 &&
-		(resetMs == null || resetMs > now)
-	);
 }
 
 export function computeRateLimitStatusDisplay(
@@ -93,124 +72,4 @@ export function computeRateLimitStatusDisplay(
 	}
 
 	return "OK";
-}
-
-/**
- * Reset time (ms epoch) of the representative usage window, derived the same
- * way for every provider — the single source BOTH the /health usage_exhausted
- * counter and the accounts rateLimitStatus display use, so their staleness
- * guards cannot diverge (PR #299 review finding). Note zai: the display
- * window is labeled "five_hour" (Claude terminology), but the payload key
- * carrying the reset is `tokens_limit` — extraction must use the payload key,
- * not the display label.
- */
-export function getRepresentativeUsageResetMs(
-	usageData: unknown,
-	provider: string,
-): number | null {
-	if (!usageData || typeof usageData !== "object") return null;
-	try {
-		const data = usageData as AnyUsageData;
-		switch (provider) {
-			case "anthropic":
-			case "codex": {
-				const windowName = getRepresentativeWindow(data as UsageData);
-				// Flat legacy shape: the window name is an actual property
-				// (five_hour/seven_day/...) carrying its own resets_at.
-				const flatReset = extractUsageResetMs(data, windowName);
-				if (flatReset !== null) return flatReset;
-				// limits[]-only payloads (2026 API): five_hour/seven_day are
-				// absent as properties — getRepresentativeWindow derives those
-				// same names synthetically from limits[] kind "session" /
-				// "weekly_all". Fall back to the matching limits[] entry's own
-				// resets_at so the staleness guard still has a real reset time.
-				return getRepresentativeLimitResetMs(data as UsageData, windowName);
-			}
-			case "zai":
-				return extractUsageResetMs(
-					data,
-					(data as ZaiUsageData).tokens_limit ? "tokens_limit" : null,
-				);
-			case "nanogpt":
-				return extractUsageResetMs(
-					data,
-					getRepresentativeNanoGPTWindow(data as NanoGPTUsageData),
-				);
-			case "kilo":
-				return extractUsageResetMs(
-					data,
-					getRepresentativeKiloWindow(data as KiloUsageData),
-				);
-			case "alibaba-coding-plan":
-				return extractUsageResetMs(
-					data,
-					getRepresentativeAlibabaCodingPlanWindow(
-						data as AlibabaCodingPlanUsageData,
-					),
-				);
-			case "xai":
-				return extractUsageResetMs(
-					data,
-					getRepresentativeXaiWindow(data as XaiUsageData),
-				);
-			default:
-				return null;
-		}
-	} catch {
-		return null;
-	}
-}
-
-/**
- * limits[] `kind` that maps to each synthetic window name produced by
- * getRepresentativeWindow's accountLevelLimitWindows fold (session ->
- * five_hour, weekly_all -> seven_day). Kept in lockstep with that mapping in
- * packages/providers/src/usage-fetcher.ts.
- */
-const WINDOW_NAME_TO_LIMIT_KIND: Record<string, string> = {
-	five_hour: "session",
-	seven_day: "weekly_all",
-};
-
-/**
- * Reset time (ms epoch) for a limits[]-only Anthropic/Codex payload: finds
- * the limits[] entry whose `kind` corresponds to the given synthetic window
- * name and returns its own `resets_at`.
- */
-function getRepresentativeLimitResetMs(
-	usage: UsageData,
-	windowName: string | null,
-): number | null {
-	if (!windowName || !Array.isArray(usage.limits)) return null;
-	const kind = WINDOW_NAME_TO_LIMIT_KIND[windowName];
-	if (!kind) return null;
-	const limit = usage.limits.find((l) => l?.kind === kind);
-	const resetsAt = limit?.resets_at;
-	if (typeof resetsAt !== "string") return null;
-	const ms = new Date(resetsAt).getTime();
-	return Number.isFinite(ms) ? ms : null;
-}
-
-/**
- * Pull the reset timestamp (ms epoch) of a named usage window out of raw
- * provider usage data. Handles both timestamp shapes in use:
- * anthropic-style `resets_at` (ISO string) and zai/nanogpt-style `resetAt`
- * (ms number).
- */
-export function extractUsageResetMs(
-	usageData: unknown,
-	windowName: string | null,
-): number | null {
-	if (!usageData || typeof usageData !== "object" || !windowName) return null;
-	const window = (usageData as Record<string, unknown>)[windowName];
-	if (!window || typeof window !== "object") return null;
-	const w = window as { resets_at?: unknown; resetAt?: unknown };
-	if (typeof w.resets_at === "string") {
-		const ms = new Date(w.resets_at).getTime();
-		return Number.isFinite(ms) ? ms : null;
-	}
-	if (typeof w.resetAt === "number" && Number.isFinite(w.resetAt)) {
-		return w.resetAt;
-	}
-	return null;
 }
