@@ -73,7 +73,9 @@ describe("getErrorMeta", () => {
 		// (CCFLARE_DEFAULT_COOLDOWN_NO_RESET_MS, 60s) — a prior revision named
 		// the wrong env var and duration here.
 		expect(meta.suggestion).toContain("CCFLARE_OVERLOAD_COOLDOWN_MS");
-		expect(meta.suggestion).not.toContain("CCFLARE_DEFAULT_COOLDOWN_NO_RESET_MS");
+		expect(meta.suggestion).not.toContain(
+			"CCFLARE_DEFAULT_COOLDOWN_NO_RESET_MS",
+		);
 	});
 
 	test("out_of_credits surfaces model-scoped credit depletion as an error", () => {
