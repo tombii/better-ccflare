@@ -411,9 +411,7 @@ describe("handleProxy Step-10 combo-fallback control flow (v3 Fix3)", () => {
 			},
 		]);
 
-		globalThis.fetch = mock(
-			async () => outOfCreditsResponse(),
-		);
+		globalThis.fetch = mock(async () => outOfCreditsResponse());
 
 		const ctx = makeComboContext([acc1, acc2], combo);
 		ctx.config.getModelScopedCapacityRouting = () => "off";

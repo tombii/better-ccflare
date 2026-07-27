@@ -56,7 +56,9 @@ function isComboSessionFallbackDisabled(): boolean {
 	return /^(1|true|yes|on)$/i.test(value ?? "");
 }
 
-function createComboSessionFallbackDisabledResponse(comboName: string): Response {
+function createComboSessionFallbackDisabledResponse(
+	comboName: string,
+): Response {
 	return new Response(
 		JSON.stringify({
 			type: "error",
