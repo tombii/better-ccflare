@@ -88,6 +88,7 @@ const STRIP_HEADERS = new Set([
 	"x-better-ccflare-bypass-session",
 	"x-better-ccflare-skip-cache",
 	"x-better-ccflare-keepalive",
+	"x-better-ccflare-internal-probe-secret",
 	"content-length",
 	"transfer-encoding",
 	"accept-encoding",

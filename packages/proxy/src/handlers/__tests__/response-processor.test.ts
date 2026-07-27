@@ -150,6 +150,7 @@ function makeCtxWithReason(opts: {
 				void job();
 			},
 		},
+		internalProbeSecret: "test-secret",
 	} as unknown as ProxyContext;
 
 	return { ctx, calls };
@@ -425,7 +426,10 @@ describe("processProxyResponse — 529 overload reason", () => {
 			},
 		);
 		const requestMeta = {
-			headers: new Headers({ "x-better-ccflare-keepalive": "true" }),
+			headers: new Headers({
+				"x-better-ccflare-keepalive": "true",
+				"x-better-ccflare-internal-probe-secret": "test-secret",
+			}),
 		};
 
 		await processProxyResponse(response, account, ctx, undefined, requestMeta);

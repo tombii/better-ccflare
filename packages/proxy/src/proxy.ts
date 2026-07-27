@@ -18,6 +18,7 @@ import {
 	getModelFamilyExhaustionInfo,
 	getUsageThrottleUntil,
 	interceptAndModifyRequest,
+	isInternalProbe,
 	isRefreshTokenLikelyExpired,
 	type ProxyContext,
 	prepareRequestBody,
@@ -255,9 +256,7 @@ export async function handleProxy(
 		// endpoint failure and counts it toward its consecutive-failure pause
 		// threshold (recordRefreshFailure), auto-pausing a healthy account the
 		// instant its usage window resets and the scheduler re-probes it.
-		const isSyntheticProbe =
-			req.headers.get("x-better-ccflare-auto-refresh") === "true" ||
-			req.headers.get("x-better-ccflare-keepalive") === "true";
+		const isSyntheticProbe = isInternalProbe(req.headers, ctx);
 		if (isSyntheticProbe) {
 			return { available: accounts, throttled: [] as Account[] };
 		}
@@ -356,8 +355,11 @@ export async function handleProxy(
 		// reflecting any real client impact (issue #199, bug 2). The keepalive
 		// scheduler already gets the equivalent treatment via its loop-prevention
 		// header path; this brings auto-refresh in line.
-		const isAutoRefreshProbe =
-			req.headers.get("x-better-ccflare-auto-refresh") === "true";
+		const isAutoRefreshProbe = isInternalProbe(
+			req.headers,
+			ctx,
+			"auto-refresh",
+		);
 		if (!isAutoRefreshProbe) {
 			// Log to request history via usage collector
 			getUsageCollector().handleStart({

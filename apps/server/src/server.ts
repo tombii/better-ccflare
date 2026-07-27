@@ -943,6 +943,7 @@ export default async function startServer(options?: {
 	await initProxy(() => config.getStorePayloads());
 
 	// Proxy context
+	const internalProbeSecret = crypto.randomUUID();
 	const proxyContext: ProxyContext = {
 		strategy,
 		dbOps,
@@ -951,6 +952,7 @@ export default async function startServer(options?: {
 		provider,
 		refreshInFlight: new Map(),
 		asyncWriter,
+		internalProbeSecret,
 	};
 	modelCatalogProxyContext = proxyContext;
 
