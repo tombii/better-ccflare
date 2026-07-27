@@ -736,4 +736,108 @@ describe("Database Migrations — non-destructive account dedup", () => {
 			.all() as Array<{ id: string }>;
 		expect(accounts.map((a) => a.id)).toEqual(["solo-1", "solo-2"]);
 	});
+
+	// Regression for the review finding "Dedup still discards account state":
+	// the merge previously covered only a subset of columns, so anything held
+	// ONLY on a row about to be discarded was destroyed by the collapse. These
+	// assert the config/flag columns that were missing.
+	it("adopts config columns held only on a discarded duplicate", () => {
+		setupFullSchemaForDedupTest(db);
+
+		const now = Date.now();
+		// Survivor (most recent last_used) carries NO config of its own.
+		db.prepare(
+			`INSERT INTO accounts (id, name, provider, refresh_token, access_token, created_at, last_used, refresh_token_issued_at, custom_endpoint)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		).run("cfg-1", "cfg", "anthropic", "r1", "a1", now - 5000, now, now, null);
+		// Discarded row is the ONLY holder of these values.
+		db.prepare(
+			`INSERT INTO accounts (id, name, provider, refresh_token, access_token, created_at, last_used, refresh_token_issued_at, custom_endpoint,
+			   model_mappings, model_fallbacks, cross_region_mode, billing_type, pause_reason, rate_limited_reason, rate_limit_status)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		).run(
+			"cfg-2",
+			"cfg",
+			"anthropic",
+			"r2",
+			"a2",
+			now - 9000,
+			now - 90000,
+			now - 9000,
+			null,
+			'{"opus":"sonnet"}',
+			'["fallback-model"]',
+			"geographic",
+			"subscription",
+			"overage",
+			"model_fallback_429",
+			"OK",
+		);
+
+		runMigrations(db);
+
+		const survivor = db
+			.prepare(
+				`SELECT model_mappings, model_fallbacks, cross_region_mode, billing_type,
+				        pause_reason, rate_limited_reason, rate_limit_status
+				 FROM accounts WHERE name = 'cfg'`,
+			)
+			.get() as Record<string, string | null>;
+		expect(survivor.model_mappings).toBe('{"opus":"sonnet"}');
+		expect(survivor.model_fallbacks).toBe('["fallback-model"]');
+		expect(survivor.cross_region_mode).toBe("geographic");
+		expect(survivor.billing_type).toBe("subscription");
+		expect(survivor.pause_reason).toBe("overage");
+		expect(survivor.rate_limited_reason).toBe("model_fallback_429");
+		expect(survivor.rate_limit_status).toBe("OK");
+	});
+
+	it("MAXes the integer-boolean feature flags (enabled on any duplicate wins)", () => {
+		setupFullSchemaForDedupTest(db);
+
+		const now = Date.now();
+		// These columns are INTEGER, not BOOLEAN — 0 is a real stored value, not
+		// "unset". MAX encodes a deliberate policy: if any duplicate had the
+		// feature switched on, the survivor keeps it on. The important part is
+		// that none of them silently become NULL.
+		db.prepare(
+			`INSERT INTO accounts (id, name, provider, refresh_token, access_token, created_at, last_used, refresh_token_issued_at, custom_endpoint,
+			   auto_fallback_enabled, auto_refresh_enabled, auto_pause_on_overage_enabled, peak_hours_pause_enabled)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 0)`,
+		).run("flg-1", "flg", "anthropic", "r1", "a1", now - 5000, now, now, null);
+		db.prepare(
+			`INSERT INTO accounts (id, name, provider, refresh_token, access_token, created_at, last_used, refresh_token_issued_at, custom_endpoint,
+			   auto_fallback_enabled, auto_refresh_enabled, auto_pause_on_overage_enabled, peak_hours_pause_enabled)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, 1, 1)`,
+		).run(
+			"flg-2",
+			"flg",
+			"anthropic",
+			"r2",
+			"a2",
+			now - 9000,
+			now - 90000,
+			now - 9000,
+			null,
+		);
+
+		runMigrations(db);
+
+		const survivor = db
+			.prepare(
+				`SELECT auto_fallback_enabled, auto_refresh_enabled,
+				        auto_pause_on_overage_enabled, peak_hours_pause_enabled
+				 FROM accounts WHERE name = 'flg'`,
+			)
+			.get() as Record<string, number | null>;
+		expect(survivor.auto_fallback_enabled).toBe(1);
+		expect(survivor.auto_refresh_enabled).toBe(1);
+		expect(survivor.auto_pause_on_overage_enabled).toBe(1);
+		expect(survivor.peak_hours_pause_enabled).toBe(1);
+		// None may become NULL — a NULL here is indistinguishable from "off"
+		// at some call sites and is exactly the silent corruption to avoid.
+		for (const v of Object.values(survivor)) {
+			expect(v).not.toBeNull();
+		}
+	});
 });

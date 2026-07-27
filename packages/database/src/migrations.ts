@@ -503,38 +503,82 @@ function collapseAccountDuplicatesPreservingState(db: Database): void {
 		    LIMIT 1) AS merged_api_key`,
 	);
 
+	// Merge policy, one rule per column. Every non-key column on the accounts
+	// table appears here or is deliberately excluded below — a column that is
+	// silently absent is how a discarded duplicate's only copy of a value gets
+	// destroyed, which is the whole failure mode this collapse has to avoid.
+	//
+	//   MAX      — timestamps/counters where "the most advanced value" is the
+	//              safe one to keep (a cooldown must not be shortened by the
+	//              collapse), and the 0/1 flag columns, where enabled wins.
+	//   MIN      — created_at (oldest birth) and rate_limit_remaining (the most
+	//              conservative estimate of what is left).
+	//   SUM      — lifetime/session counters, so history is preserved.
+	//   COALESCE — survivor's own value if it has one, otherwise the freshest
+	//              non-NULL from the group. Used for credentials and for config
+	//              columns where there is no meaningful ordering.
+	//
+	// NOTE on the 0/1 flag columns: they are INTEGER, not BOOLEAN, and 0 is a
+	// legitimate stored value rather than "unset". MAX therefore means "if any
+	// duplicate had this enabled, the survivor keeps it enabled" — the same
+	// treatment `paused` and `requires_reauth` already had. It is a deliberate
+	// policy choice, not a coincidence of the aggregate.
+	//
+	// Deliberately NOT merged: id (the survivor keeps its own, and every
+	// dependent row is repointed to it), and name / provider / custom_endpoint,
+	// which are the dedup key itself and are identical across the group by
+	// construction.
+	//
+	// Named parameters rather than positional: this statement previously bound
+	// 42 positional `?`s, most of them the same (name, provider, endpoint)
+	// triple repeated per column. Adding columns to that was a silent-corruption
+	// hazard — one misplaced argument shifts every subsequent binding.
+	const groupScope = `WHERE name = $name AND provider = $provider
+		                      AND COALESCE(custom_endpoint, '') = $ep`;
+	// Freshest non-NULL value of a column across the duplicate group, using the
+	// same ordering that picks the credential set: newest refresh token first,
+	// then newest row.
+	const freshest = (col: string) =>
+		`(SELECT ${col} FROM accounts ${groupScope} AND ${col} IS NOT NULL
+		    ORDER BY COALESCE(refresh_token_issued_at, 0) DESC, created_at DESC, rowid ASC
+		    LIMIT 1)`;
+	const agg = (fn: "MAX" | "MIN" | "SUM", col: string, dflt = "0") =>
+		`(SELECT ${fn}(COALESCE(${col}, ${dflt})) FROM accounts ${groupScope})`;
+
 	const mergeSurvivor = db.prepare(
 		`UPDATE accounts SET
-		   refresh_token = ?,
-		   access_token = ?,
-		   expires_at = ?,
-		   refresh_token_issued_at = ?,
-		   api_key = COALESCE(api_key, ?),
-		   last_used = (SELECT MAX(COALESCE(last_used, 0)) FROM accounts
-		                WHERE name = ? AND provider = ? AND COALESCE(custom_endpoint, '') = ?),
-		   created_at = (SELECT MIN(created_at) FROM accounts
-		                 WHERE name = ? AND provider = ? AND COALESCE(custom_endpoint, '') = ?),
-		   request_count = (SELECT SUM(COALESCE(request_count, 0)) FROM accounts
-		                    WHERE name = ? AND provider = ? AND COALESCE(custom_endpoint, '') = ?),
-		   total_requests = (SELECT SUM(COALESCE(total_requests, 0)) FROM accounts
-		                     WHERE name = ? AND provider = ? AND COALESCE(custom_endpoint, '') = ?),
-		   session_request_count = (SELECT SUM(COALESCE(session_request_count, 0)) FROM accounts
-		                            WHERE name = ? AND provider = ? AND COALESCE(custom_endpoint, '') = ?),
-		   priority = (SELECT MAX(COALESCE(priority, 0)) FROM accounts
-		               WHERE name = ? AND provider = ? AND COALESCE(custom_endpoint, '') = ?),
-		   consecutive_rate_limits = (SELECT MAX(COALESCE(consecutive_rate_limits, 0)) FROM accounts
-		                              WHERE name = ? AND provider = ? AND COALESCE(custom_endpoint, '') = ?),
-		   rate_limited_until = (SELECT MAX(COALESCE(rate_limited_until, 0)) FROM accounts
-		                         WHERE name = ? AND provider = ? AND COALESCE(custom_endpoint, '') = ?),
-		   session_start = (SELECT MAX(COALESCE(session_start, 0)) FROM accounts
-		                    WHERE name = ? AND provider = ? AND COALESCE(custom_endpoint, '') = ?),
-		   rate_limit_reset = (SELECT MAX(COALESCE(rate_limit_reset, 0)) FROM accounts
-		                       WHERE name = ? AND provider = ? AND COALESCE(custom_endpoint, '') = ?),
-		   paused = (SELECT MAX(COALESCE(paused, 0)) FROM accounts
-		             WHERE name = ? AND provider = ? AND COALESCE(custom_endpoint, '') = ?),
-		   requires_reauth = (SELECT MAX(COALESCE(requires_reauth, 0)) FROM accounts
-		                      WHERE name = ? AND provider = ? AND COALESCE(custom_endpoint, '') = ?)
-		 WHERE rowid = ?`,
+		   refresh_token = $refresh_token,
+		   access_token = $access_token,
+		   expires_at = $expires_at,
+		   refresh_token_issued_at = $refresh_token_issued_at,
+		   api_key = COALESCE(api_key, $api_key),
+		   last_used = ${agg("MAX", "last_used")},
+		   created_at = (SELECT MIN(created_at) FROM accounts ${groupScope}),
+		   request_count = ${agg("SUM", "request_count")},
+		   total_requests = ${agg("SUM", "total_requests")},
+		   session_request_count = ${agg("SUM", "session_request_count")},
+		   priority = ${agg("MAX", "priority")},
+		   consecutive_rate_limits = ${agg("MAX", "consecutive_rate_limits")},
+		   rate_limited_until = ${agg("MAX", "rate_limited_until")},
+		   session_start = ${agg("MAX", "session_start")},
+		   rate_limit_reset = ${agg("MAX", "rate_limit_reset")},
+		   paused = ${agg("MAX", "paused")},
+		   requires_reauth = ${agg("MAX", "requires_reauth")},
+		   rate_limited_at = ${agg("MAX", "rate_limited_at")},
+		   auto_fallback_enabled = ${agg("MAX", "auto_fallback_enabled")},
+		   auto_refresh_enabled = ${agg("MAX", "auto_refresh_enabled")},
+		   auto_pause_on_overage_enabled = ${agg("MAX", "auto_pause_on_overage_enabled")},
+		   peak_hours_pause_enabled = ${agg("MAX", "peak_hours_pause_enabled")},
+		   rate_limit_remaining = (SELECT MIN(rate_limit_remaining) FROM accounts
+		                           ${groupScope} AND rate_limit_remaining IS NOT NULL),
+		   rate_limit_status = COALESCE(rate_limit_status, ${freshest("rate_limit_status")}),
+		   pause_reason = COALESCE(pause_reason, ${freshest("pause_reason")}),
+		   rate_limited_reason = COALESCE(rate_limited_reason, ${freshest("rate_limited_reason")}),
+		   model_mappings = COALESCE(model_mappings, ${freshest("model_mappings")}),
+		   model_fallbacks = COALESCE(model_fallbacks, ${freshest("model_fallbacks")}),
+		   cross_region_mode = COALESCE(cross_region_mode, ${freshest("cross_region_mode")}),
+		   billing_type = COALESCE(billing_type, ${freshest("billing_type")})
+		 WHERE rowid = $rowid`,
 	);
 
 	let totalDeleted = 0;
@@ -579,26 +623,17 @@ function collapseAccountDuplicatesPreservingState(db: Database): void {
 		// access_token, expires_at, refresh_token_issued_at, api_key) and the
 		// final WHERE rowid = ?. Total 42 placeholders. Bindings are
 		// positional; the order below mirrors the `?` positions in the SQL.
-		mergeSurvivor.run(
-			merged.merged_refresh_token, // $1
-			merged.merged_access_token, // $2
-			merged.merged_expires_at, // $3
-			merged.merged_refresh_token_issued_at, // $4
-			merged.merged_api_key, // $5
-			grp.name, grp.provider, grp.ep, // $6..$8 (last_used)
-			grp.name, grp.provider, grp.ep, // $9..$11 (created_at)
-			grp.name, grp.provider, grp.ep, // $12..$14 (request_count)
-			grp.name, grp.provider, grp.ep, // $15..$17 (total_requests)
-			grp.name, grp.provider, grp.ep, // $18..$20 (session_request_count)
-			grp.name, grp.provider, grp.ep, // $21..$23 (priority)
-			grp.name, grp.provider, grp.ep, // $24..$26 (consecutive_rate_limits)
-			grp.name, grp.provider, grp.ep, // $27..$29 (rate_limited_until)
-			grp.name, grp.provider, grp.ep, // $30..$32 (session_start)
-			grp.name, grp.provider, grp.ep, // $33..$35 (rate_limit_reset)
-			grp.name, grp.provider, grp.ep, // $36..$38 (paused)
-			grp.name, grp.provider, grp.ep, // $39..$41 (requires_reauth)
-			survivor.survivor_rowid, // $42
-		);
+		mergeSurvivor.run({
+			$refresh_token: merged.merged_refresh_token,
+			$access_token: merged.merged_access_token,
+			$expires_at: merged.merged_expires_at,
+			$refresh_token_issued_at: merged.merged_refresh_token_issued_at,
+			$api_key: merged.merged_api_key,
+			$name: grp.name,
+			$provider: grp.provider,
+			$ep: grp.ep,
+			$rowid: survivor.survivor_rowid,
+		});
 
 		if (discardedIds.length > 0) {
 			const placeholders = discardedIds.map(() => "?").join(",");

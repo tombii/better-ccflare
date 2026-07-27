@@ -909,14 +909,76 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 		   AND indexname = 'idx_accounts_unique_name_provider_endpoint'`,
 	);
 	if ((uniqueAccountsIndexExists?.exists ?? 0) === 0) {
-		await collapseAccountDuplicatesPreservingStatePg(adapter);
-		await adapter.unsafe(
-			`CREATE UNIQUE INDEX idx_accounts_unique_name_provider_endpoint
-			 ON accounts (name, provider, COALESCE(custom_endpoint, ''))`,
-		);
-		log.info(
-			"Created UNIQUE index idx_accounts_unique_name_provider_endpoint on accounts",
-		);
+		// The existence check above is advisory only — it cannot be trusted as a
+		// guard. Two server instances starting against the same database will
+		// both observe "no index", and a row inserted between the collapse and
+		// the CREATE would reintroduce a duplicate that makes the CREATE fail.
+		//
+		// Deliberately NOT solved with adapter.transaction() or a session
+		// advisory lock:
+		//   * adapter.transaction() does not currently give a PostgreSQL
+		//     transaction. It calls `this.sql.begin(async () => fn())` and
+		//     discards the reserved transaction connection `begin()` hands to
+		//     the callback, so the statements inside `fn()` run on arbitrary
+		//     POOL connections while an empty transaction opens and commits.
+		//     Wrapping this block in it would look atomic and guarantee nothing.
+		//   * `pg_advisory_lock` is session-scoped, and with a connection pool
+		//     the lock and the statements it is supposed to protect can land on
+		//     different connections.
+		//
+		// Instead the CREATE UNIQUE INDEX *is* the synchronisation primitive.
+		// It is a single atomic statement that succeeds only when the table
+		// genuinely holds no duplicates, so:
+		//   * a concurrent insert that reintroduces a duplicate makes it fail,
+		//     and we collapse and retry rather than proceeding on a false
+		//     assumption;
+		//   * two instances racing produce one winner; the loser sees the index
+		//     already exists, which is success, not an error.
+		// The collapse itself is idempotent (it is keyed on duplicate groups and
+		// a no-op once none remain), so repeating it is safe.
+		const MAX_ATTEMPTS = 3;
+		let created = false;
+		for (let attempt = 1; attempt <= MAX_ATTEMPTS && !created; attempt++) {
+			await collapseAccountDuplicatesPreservingStatePg(adapter);
+			try {
+				await adapter.unsafe(
+					`CREATE UNIQUE INDEX idx_accounts_unique_name_provider_endpoint
+					 ON accounts (name, provider, COALESCE(custom_endpoint, ''))`,
+				);
+				created = true;
+			} catch (error) {
+				// Another instance won the race and created it first: that is the
+				// desired end state, not a failure.
+				const stillMissing = await adapter.get<{ exists: number }>(
+					`SELECT COUNT(*) AS exists
+					 FROM pg_indexes
+					 WHERE schemaname = current_schema()
+					   AND tablename = 'accounts'
+					   AND indexname = 'idx_accounts_unique_name_provider_endpoint'`,
+				);
+				if ((stillMissing?.exists ?? 0) > 0) {
+					created = true;
+					break;
+				}
+				// Otherwise a duplicate was inserted between the collapse and the
+				// CREATE. Collapse again and retry; give up loudly rather than
+				// leaving the uniqueness guarantee silently unenforced.
+				if (attempt === MAX_ATTEMPTS) {
+					log.error(
+						`Failed to create UNIQUE index idx_accounts_unique_name_provider_endpoint after ${MAX_ATTEMPTS} attempts — account uniqueness is NOT enforced`,
+					);
+					throw error;
+				}
+				log.warn(
+					`CREATE UNIQUE INDEX on accounts failed (attempt ${attempt}/${MAX_ATTEMPTS}), duplicates reappeared concurrently — collapsing and retrying`,
+				);
+			}
+		}
+		if (created) {
+			log.info(
+				"Created UNIQUE index idx_accounts_unique_name_provider_endpoint on accounts",
+			);
+		}
 	}
 
 	// Populate default model translations if not present
