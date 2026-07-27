@@ -630,4 +630,117 @@ describe("createAnthropicTerminalRecoveryStream", () => {
 		expect(onCancelError).toHaveBeenCalledTimes(1);
 		expect(onCancelError).toHaveBeenCalledWith(cancelError, "timeout");
 	});
+
+	it("emits 'client_cancelled' via onTerminalState when downstream cancels before terminal events", async () => {
+		// Claude Code cancels streams routinely (Esc, tool interrupts).
+		// The wrapper must classify client-side cancellation distinctly
+		// from upstream failure or truncation, so response-handler can
+		// preserve the prior header-based success and avoid poisoning the
+		// success-rate metrics.
+		const source = controllableStream();
+		const onTerminalState = mock(() => undefined);
+		const body = createAnthropicTerminalRecoveryStream(source.stream, {
+			gracePeriodMs: 50,
+			onTerminalState,
+		});
+		const reader = body.getReader();
+
+		source.controller().enqueue(bytes(terminalDelta));
+		await expect(reader.read()).resolves.toMatchObject({ done: false });
+		await reader.cancel("client disconnect");
+		await new Promise((resolve) => setTimeout(resolve, 0));
+
+		expect(onTerminalState).toHaveBeenCalledTimes(1);
+		expect(onTerminalState).toHaveBeenCalledWith("client_cancelled");
+	});
+
+	it("emits 'client_cancelled' even when no SSE events were observed", async () => {
+		// Cancelling before any bytes flow should still classify as
+		// client_cancelled, not truncated — disambiguates "client
+		// disconnected" from "upstream TCP closed mid-content".
+		const source = controllableStream();
+		const onTerminalState = mock(() => undefined);
+		const body = createAnthropicTerminalRecoveryStream(source.stream, {
+			gracePeriodMs: 50,
+			onTerminalState,
+		});
+		const reader = body.getReader();
+
+		await reader.cancel("client disconnect");
+		await new Promise((resolve) => setTimeout(resolve, 0));
+
+		expect(onTerminalState).toHaveBeenCalledTimes(1);
+		expect(onTerminalState).toHaveBeenCalledWith("client_cancelled");
+	});
+
+	it("emits 'truncated' via onTerminalState when upstream EOF lands without a stop_reason", async () => {
+		// Mirrors the ccproxy2/anthropic 8-second 200 with 0 output tokens:
+		// stream closed mid-content with no terminal event ever observed.
+		const original =
+			'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}\n\n' +
+			'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"partial"}}\n\n' +
+			'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n';
+		const onTerminalState = mock(() => undefined);
+		const body = createAnthropicTerminalRecoveryStream(
+			immediateStream([bytes(original)]),
+			{ gracePeriodMs: 5, onTerminalState },
+		);
+
+		await expect(new Response(body).text()).resolves.toBe(original);
+		expect(onTerminalState).toHaveBeenCalledTimes(1);
+		expect(onTerminalState).toHaveBeenCalledWith("truncated");
+	});
+
+	it("emits 'recovered' via onTerminalState when stop_reason lands but message_stop never arrives", async () => {
+		const onTerminalState = mock(() => undefined);
+		const body = createAnthropicTerminalRecoveryStream(
+			immediateStream([bytes(terminalDelta)]),
+			{ gracePeriodMs: 50, onTerminalState },
+		);
+
+		await expect(new Response(body).text()).resolves.toBe(
+			`${terminalDelta}${ANTHROPIC_MESSAGE_STOP_FRAME}`,
+		);
+		expect(onTerminalState).toHaveBeenCalledTimes(1);
+		expect(onTerminalState).toHaveBeenCalledWith("recovered");
+	});
+
+	it("emits 'complete' via onTerminalState when both stop_reason and message_stop are observed", async () => {
+		const onTerminalState = mock(() => undefined);
+		const original = `${terminalDelta}${messageStop}`;
+		const body = createAnthropicTerminalRecoveryStream(
+			immediateStream([bytes(original)]),
+			{ gracePeriodMs: 5, onTerminalState },
+		);
+
+		await expect(new Response(body).text()).resolves.toBe(original);
+		expect(onTerminalState).toHaveBeenCalledTimes(1);
+		expect(onTerminalState).toHaveBeenCalledWith("complete");
+	});
+
+	it("emits 'error' via onTerminalState when upstream reader rejects mid-stream", async () => {
+		// Transport/stream-level rejection from upstream (e.g. connection
+		// reset, AbortError from upstream cancellation, fetch failure)
+		// must be classified as "error", NOT "truncated". A premature EOF
+		// looks similar on the wire (no message_stop, no error event) but
+		// carries no failure signal in-band — only a clean mid-content TCP
+		// close. The whole point of the stream_terminal_state column is
+		// to distinguish these two failure modes so an explicit upstream
+		// error isn't recorded as a silent truncation.
+		const source = controllableStream();
+		const onTerminalState = mock(() => undefined);
+		const body = createAnthropicTerminalRecoveryStream(source.stream, {
+			gracePeriodMs: 20,
+			onTerminalState,
+		});
+		const reader = body.getReader();
+
+		source.controller().enqueue(bytes(terminalDelta));
+		await expect(reader.read()).resolves.toMatchObject({ done: false });
+		source.controller().error(new Error("upstream connection reset"));
+
+		await expect(reader.read()).rejects.toThrow("upstream connection reset");
+		expect(onTerminalState).toHaveBeenCalledTimes(1);
+		expect(onTerminalState).toHaveBeenCalledWith("error");
+	});
 });

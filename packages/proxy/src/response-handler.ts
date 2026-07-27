@@ -11,6 +11,7 @@ import type {
 } from "@better-ccflare/types";
 import {
 	ANTHROPIC_TERMINAL_RECOVERY_GRACE_MS,
+	type AnthropicTerminalState,
 	createAnthropicTerminalRecoveryStream,
 } from "./anthropic-terminal-recovery";
 import { isInternalProbe, type ProxyContext } from "./handlers";
@@ -298,10 +299,37 @@ export async function forwardToClient(
 
 		const onClose = (_buffered: Uint8Array[]): void => {
 			if (shouldProcessRequest) {
+				// For Anthropic-Messages-shaped SSE streams wrapped by the
+				// terminal-recovery wrapper, prefer the real observed SSE
+				// termination state over the header-only `response.ok` check —
+				// a 200 OK with a TCP close mid-content is truncated, not
+				// complete, and must not be recorded as a success. The wrapper
+				// fires `onTerminalState` synchronously before close/error, so
+				// the closure variable is already populated by the time we get
+				// here.
+				//
+				// Client-initiated cancels (Esc, tool interrupts) are passed
+				// through unchanged — preserve the prior header-based success
+				// so routine aborts don't poison the success metrics. The
+				// specific outcome is still recorded in `streamTerminalState`
+				// for observability.
+				const success = streamTerminalState
+					? streamTerminalState === "complete" ||
+						streamTerminalState === "recovered" ||
+						streamTerminalState === "client_cancelled"
+					: isExpectedResponse(path, response);
+				const error =
+					streamTerminalState === "truncated"
+						? "stream_truncated_mid_content"
+						: streamTerminalState === "error"
+							? "stream_in_band_error"
+							: undefined;
 				const endMsg: EndMessage = {
 					type: "end",
 					requestId,
-					success: isExpectedResponse(path, response),
+					success,
+					error,
+					streamTerminalState: streamTerminalState ?? null,
 				};
 				// Fire-and-forget: handleEnd is async for DB writes but we don't block streaming
 				fireAndForgetEnd(endMsg);
@@ -315,22 +343,30 @@ export async function forwardToClient(
 					requestId,
 					success: false,
 					error: err.message,
+					streamTerminalState: streamTerminalState ?? null,
 				};
 				fireAndForgetEnd(endMsg);
 			}
 		};
 
-		const isNativeAnthropicMessagesStream =
+		// Anthropic-Messages-shaped SSE response detection — covers native
+		// anthropic AND anthropic-compatible providers (e.g. minimax) which
+		// speak the same wire format on `/v1/messages`. Gated on path +
+		// content-type + 2xx status only; provider name and `anthropic-version`
+		// request header are deliberately excluded because the wire format is
+		// identical and a 200 with truncated content must not be silently
+		// recorded as success regardless of which upstream served it.
+		const isAnthropicMessagesSseResponse =
 			method === "POST" &&
 			path === "/v1/messages" &&
-			ctx.provider.name === "anthropic" &&
-			requestHeaders.has("anthropic-version") &&
 			response.ok &&
-			response.headers
+			(response.headers
 				.get("content-type")
 				?.toLowerCase()
-				.includes("text/event-stream");
-		const responseBody = isNativeAnthropicMessagesStream
+				.includes("text/event-stream") ??
+				false);
+		let streamTerminalState: AnthropicTerminalState | null = null;
+		const responseBody = isAnthropicMessagesSseResponse
 			? createAnthropicTerminalRecoveryStream(response.body, {
 					onRecovery(reason) {
 						log.warn("anthropic_terminal_message_stop_recovered", {
@@ -349,6 +385,24 @@ export async function forwardToClient(
 							reason,
 							errorType: error instanceof Error ? error.name : typeof error,
 						});
+					},
+					onTerminalState(state) {
+						streamTerminalState = state;
+						if (state === "truncated") {
+							log.warn("anthropic_stream_truncated_mid_content", {
+								requestId,
+								accountId: account?.id ?? null,
+								provider: ctx.provider.name,
+								statusCode: response.status,
+							});
+						} else if (state === "error") {
+							log.warn("anthropic_stream_in_band_error", {
+								requestId,
+								accountId: account?.id ?? null,
+								provider: ctx.provider.name,
+								statusCode: response.status,
+							});
+						}
 					},
 				})
 			: response.body;

@@ -92,6 +92,23 @@ export interface EndMessage {
 	responseBody?: string | null; // base64 encoded, for non-streaming
 	success: boolean;
 	error?: string;
+	/**
+	 * Real observed SSE termination state for Anthropic-Messages-shaped
+	 * streaming responses. Null when the wrapper did not observe the stream
+	 * (non-streaming responses, non-Anthropic-Messages paths). One of:
+	 * "complete" | "recovered" | "error" | "truncated" | "client_cancelled".
+	 * Distinct from `success`: a recovered stream has `success:true` but a
+	 * non-null terminal state so operators can count synthetically-terminated
+	 * requests, and client_cancelled preserves the prior header-based success
+	 * bit to avoid regressing routine Esc / tool-interrupt success metrics.
+	 */
+	streamTerminalState?:
+		| "complete"
+		| "recovered"
+		| "error"
+		| "truncated"
+		| "client_cancelled"
+		| null;
 }
 
 export interface ControlMessage {

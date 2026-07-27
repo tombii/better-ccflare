@@ -9,6 +9,30 @@ const MAX_PENDING_EVENT_CHARS = 64 * 1024;
 
 export type AnthropicTerminalRecoveryReason = "timeout" | "eof";
 
+/**
+ * Real outcome of an Anthropic-Messages-shaped SSE stream. The wrapper emits
+ * exactly one of these via `onTerminalState` when it finalizes — distinct from
+ * a header-level `response.ok` check, which only reflects the upstream's
+ * opening handshake. A 200 OK with a TCP close mid-content is `truncated`,
+ * not `complete`. Used by response-handler to record genuine success/failure.
+ */
+export type AnthropicTerminalState =
+	/** `message_stop` (and a stop_reason delta) was observed upstream. */
+	| "complete"
+	/** Stop_reason delta was seen but message_stop was missing — synthesized. */
+	| "recovered"
+	/** Stream surfaced an explicit `error` event or upstream threw. */
+	| "error"
+	/** Stream closed without ever reaching a terminal state (mid-content TCP close). */
+	| "truncated"
+	/**
+	 * Downstream cancelled before the upstream finished. Claude Code cancels
+	 * streams routinely (Esc, tool interrupts, client aborts). This is neither
+	 * an upstream failure nor a proxy defect — recorded as a distinct state
+	 * so it doesn't poison the success-rate metrics as a false-negative.
+	 */
+	| "client_cancelled";
+
 export interface AnthropicTerminalRecoveryOptions {
 	/** @internal Override only in deterministic unit tests. */
 	gracePeriodMs?: number;
@@ -17,6 +41,12 @@ export interface AnthropicTerminalRecoveryOptions {
 		error: unknown,
 		reason: AnthropicTerminalRecoveryReason,
 	) => void;
+	/**
+	 * Fired exactly once when the wrapper reaches a terminal state, before
+	 * downstream close/error. Observers may record the state but must not
+	 * interfere with the in-flight stream (errors are swallowed).
+	 */
+	onTerminalState?: (state: AnthropicTerminalState) => void;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -49,6 +79,14 @@ export function createAnthropicTerminalRecoveryStream(
 	let terminalFailureSeen = false;
 	let recoveryDisabled = false;
 	let unknownContentBlockOpen = false;
+	let recoveryHappened = false;
+	let terminalStateFired = false;
+	// Set when the *downstream* (client) cancels the stream before the
+	// upstream finished — distinct from upstream-driven TCP closes, which
+	// surface as `done:true` in pull(). Client cancels are not a proxy defect
+	// or upstream failure; recording them as `truncated` would poison the
+	// success metrics with routine Esc / tool-interrupt aborts.
+	let clientCancelled = false;
 	const openContentBlocks = new Set<number>();
 	let finalized = false;
 	let upstreamCancelPromise: Promise<void> | null = null;
@@ -106,6 +144,48 @@ export function createAnthropicTerminalRecoveryStream(
 		}
 	};
 
+	const determineTerminalState = (): AnthropicTerminalState => {
+		// Client-initiated cancel takes precedence over every upstream-driven
+		// observation: Claude Code cancels streams routinely (Esc, tool
+		// interrupts, client aborts). Recording those as `truncated` would
+		// poison the success-rate metrics at a much higher rate than the
+		// 0.027% upstream TCP-close rate we're fixing here. This is not an
+		// upstream failure or a proxy defect — it's the client walking away
+		// mid-conversation. The caller (response-handler) preserves the
+		// pre-existing header-based success for this state, so the only
+		// observable change is the new column recording what happened.
+		if (clientCancelled) return "client_cancelled";
+		// Explicit upstream failure takes precedence over anything observed in
+		// the partial body — a mid-stream error event is the most authoritative
+		// signal we have, even if a stop_reason delta happened to land first.
+		if (terminalFailureSeen) return "error";
+		// Native completion: protocol endpoint (message_stop) was observed.
+		// stop_reason may or may not have been seen alongside it, but
+		// message_stop alone is sufficient to declare the stream complete.
+		if (messageStopSeen) return "complete";
+		// Stop_reason was seen but message_stop never arrived. If we
+		// synthesized the terminator the client receives a well-formed
+		// stream and we count it as recovered; otherwise the protocol
+		// endpoint was never reached and the bytes are unreliable.
+		if (terminalDeltaSeen) return recoveryHappened ? "recovered" : "truncated";
+		// Neither terminal delta nor message_stop nor an explicit error:
+		// upstream closed without ever reaching a terminal state. This is
+		// the mid-content TCP-close case that previously slipped past the
+		// header-only `response.ok` check.
+		return "truncated";
+	};
+
+	const fireTerminalState = (): void => {
+		if (terminalStateFired) return;
+		terminalStateFired = true;
+		const state = determineTerminalState();
+		try {
+			options.onTerminalState?.(state);
+		} catch {
+			// Observability must never interfere with an already-finalizing stream.
+		}
+	};
+
 	const appendMissingEventDelimiter = (delimiter: string): void => {
 		if (delimiter && downstreamController) {
 			downstreamController.enqueue(encoder.encode(delimiter));
@@ -138,9 +218,11 @@ export function createAnthropicTerminalRecoveryStream(
 			return;
 
 		finalized = true;
+		recoveryHappened = true;
 		clearRecoveryTimer();
 		appendMissingEventDelimiter(missingEventDelimiter);
 		downstreamController.enqueue(messageStopBytes.slice());
+		fireTerminalState();
 		downstreamController.close();
 		reportRecovery(reason);
 		cancelAfterForcedClose(
@@ -333,6 +415,7 @@ export function createAnthropicTerminalRecoveryStream(
 		finalized = true;
 		clearRecoveryTimer();
 		appendMissingEventDelimiter(missingEventDelimiter);
+		fireTerminalState();
 		downstreamController.close();
 		cancelAfterForcedClose(
 			"timeout",
@@ -460,6 +543,7 @@ export function createAnthropicTerminalRecoveryStream(
 					if (bufferedEventSuppliedMessageStop) {
 						appendMissingEventDelimiter(missingEventDelimiter);
 					}
+					fireTerminalState();
 					controller.close();
 					return;
 				}
@@ -470,6 +554,17 @@ export function createAnthropicTerminalRecoveryStream(
 				if (finalized) return;
 				finalized = true;
 				clearRecoveryTimer();
+				// reader.read() rejection is a transport/stream-level failure
+				// from upstream — distinct from a clean EOF (the `done:true`
+				// branch above) and distinct from a client-initiated cancel
+				// (handled in the `cancel()` handler, which sets
+				// `clientCancelled` and wins precedence). Without this flag,
+				// determineTerminalState() would classify the rejection as
+				// "truncated" — silently conflating a real upstream failure
+				// with a mid-content TCP close and poisoning the new
+				// stream_terminal_state column.
+				markTerminalFailure();
+				fireTerminalState();
 				controller.error(error);
 			}
 		},
@@ -478,6 +573,12 @@ export function createAnthropicTerminalRecoveryStream(
 			if (finalized) return;
 			finalized = true;
 			clearRecoveryTimer();
+			// Downstream (client) cancellation, not upstream failure. Set
+			// before firing so determineTerminalState classifies this as
+			// "client_cancelled" and response-handler preserves the prior
+			// header-based success — see comment in determineTerminalState.
+			clientCancelled = true;
+			fireTerminalState();
 			return cancelUpstream(reason);
 		},
 	});

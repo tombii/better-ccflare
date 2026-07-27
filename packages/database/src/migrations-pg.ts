@@ -120,7 +120,8 @@ export async function ensureSchemaPg(adapter: BunSqlAdapter): Promise<void> {
 			original_model TEXT,
 			applied_model TEXT,
 			project_attribution_source TEXT,
-			agent_attribution_source TEXT
+			agent_attribution_source TEXT,
+			stream_terminal_state TEXT
 		)
 	`);
 
@@ -501,6 +502,18 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 			column: "agent_attribution_source",
 			definition:
 				"ALTER TABLE requests ADD COLUMN agent_attribution_source TEXT",
+		},
+		{
+			// Real SSE termination state for Anthropic-Messages-shaped
+			// streaming responses — see packages/proxy/src/anthropic-terminal-recovery.ts
+			// for the producer side. One of "complete" | "recovered" | "error"
+			// | "truncated" | "client_cancelled" | NULL. NULL for non-streaming
+			// responses or streams not wrapped by the terminal-recovery
+			// observer. Production runs Postgres, so a sqlite-only migration
+			// would silently no-op here — both backends must be updated.
+			table: "requests",
+			column: "stream_terminal_state",
+			definition: "ALTER TABLE requests ADD COLUMN stream_terminal_state TEXT",
 		},
 		{
 			table: "request_payloads",
