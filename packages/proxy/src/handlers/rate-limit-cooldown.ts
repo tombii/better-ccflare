@@ -43,7 +43,12 @@ function pruneProbeLeases(now: number): void {
  * account the instant the cooldown clears re-triggers the same 429 storm
  * that produced the streak. Gating to a single in-flight probe lets one
  * request find out whether the account has actually recovered while the
- * rest fall through to the next account in the selection order.
+ * rest fall through to the next account in the selection order — provided
+ * one is available. If every candidate in the pool is currently suppressed
+ * (a single-account pool, or a pool-wide overload storm), there is no next
+ * account to fall through to: the caller runs the highest-priority
+ * candidate ungated instead (see proxy.ts's "every candidate suppressed"
+ * fallback), and this gate suppresses nothing for that request.
  *
  * The gate also arms for any 529 overload cooldown, regardless of streak
  * depth. consecutive_rate_limits is frozen for 529s (see applyRateLimitCooldown)
@@ -80,6 +85,31 @@ export function getRateLimitProbeAdmission(
 		`[ccflare] account=${account.name} cooldown_probe_admitted streak=${account.consecutive_rate_limits} lease_until=${new Date(leaseUntil).toISOString()}`,
 	);
 	return "admitted";
+}
+
+/**
+ * Side-effect-free lookahead for `getRateLimitProbeAdmission`: reports
+ * whether the account would currently be reported as "suppressed" for a
+ * probe, without checking a lease out or pruning expired ones. Used by the
+ * account loops in proxy.ts to determine whether every candidate *after*
+ * the one about to be attempted would be skipped — if so, the current
+ * attempt is the request's actual terminal one, even when it isn't the
+ * last index in the pool.
+ */
+export function wouldSuppressProbe(
+	account: Account,
+	now: number = Date.now(),
+): boolean {
+	const reason = account.rate_limited_reason;
+	const isOverload = reason != null && isOverloadReason(reason);
+	const expiredMatureCooldown =
+		(account.consecutive_rate_limits >= MATURE_COOLDOWN_STREAK || isOverload) &&
+		account.rate_limited_until != null &&
+		account.rate_limited_until <= now;
+	if (!expiredMatureCooldown) return false;
+
+	const existingLease = probeLeases.get(account.id);
+	return existingLease != null && existingLease > now;
 }
 
 /**
@@ -270,7 +300,7 @@ export function applyRateLimitCooldown(
 			);
 		} else {
 			log.warn(
-				`[ccflare] account=${account.name} cooldown_skipped_longer_active reason=${reason} candidate_until=${new Date(cooldownUntil).toISOString()} consecutive=${persistedCount}`,
+				`[ccflare] account=${account.name} cooldown_write_skipped reason=${reason} candidate_until=${new Date(cooldownUntil).toISOString()} consecutive=${persistedCount} (existing later cooldown or row absent)`,
 			);
 		}
 	});

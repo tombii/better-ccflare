@@ -427,3 +427,122 @@ describe("handleProxy — combo-fallback pool all-suppressed retries ungated (de
 		}
 	});
 });
+
+/**
+ * Regression test for delta3-2: the ungated-retry blocks (fixed under
+ * delta2-1, above) correctly compute `returnRateLimitedResponseOnExhaustion`
+ * for the retry-after-all-suppressed path, but the main loop's OWN
+ * `proxyWithAccount` calls still derived the flag from the loop index
+ * (`i === accounts.length - 1`). That index is wrong whenever a LATER
+ * candidate is probe-gate suppressed and skipped via `continue`: the
+ * account actually being attempted is then the last one that will ever run,
+ * even though its index isn't the pool's last index — so its final 529 was
+ * swallowed into a generic 503 instead of being forwarded.
+ */
+describe("handleProxy — front candidate attempted, later candidate suppressed (delta3-2)", () => {
+	afterEach(() => {
+		resetRateLimitProbeGatesForTests();
+	});
+
+	it("forwards account A's final 529 instead of falling through to a generic 503 when trailing account B is probe-gate suppressed", async () => {
+		const now = Date.now();
+		// Account A: no rate-limit history at all, so the gate never arms for
+		// it (getRateLimitProbeAdmission returns "not_required") — it is
+		// attempted normally as the loop's first (and, per this scenario,
+		// only actually-attempted) candidate.
+		const accountA = makeAccount({
+			id: "acc-a",
+			name: "account-a",
+		});
+		// Account B: an expired overload cooldown with its single-flight probe
+		// lease already held by a simulated concurrent request ("Request A"),
+		// so the loop's second iteration hits the gate and `continue`s past it
+		// without ever calling proxyWithAccount for it.
+		const accountB = makeAccount({
+			id: "acc-b",
+			name: "account-b",
+			rate_limited_until: now - 1,
+			rate_limited_reason: "upstream_529_overloaded_no_reset",
+		});
+		expect(getRateLimitProbeAdmission(accountB)).toBe("admitted");
+
+		const collectorSpy = stubUsageCollector();
+		const realFetch = globalThis.fetch;
+		// Disable the unrelated in-place 529 retry (proxy-operations.ts) so
+		// this test isolates the terminal-flag computation under test — with
+		// it enabled, account A's first 529 triggers one additional in-place
+		// retry fetch before the (still 529) response reaches the terminal
+		// check, which is legitimate existing behavior but not what this
+		// regression test is about.
+		const realOverloadRetryEnabled = process.env.CCFLARE_OVERLOAD_RETRY_ENABLED;
+		process.env.CCFLARE_OVERLOAD_RETRY_ENABLED = "false";
+		let fetchCallCount = 0;
+		globalThis.fetch = mock(async () => {
+			fetchCallCount++;
+			return new Response(
+				JSON.stringify({
+					type: "error",
+					error: { type: "overloaded_error", message: "Overloaded" },
+				}),
+				{ status: 529, headers: { "content-type": "application/json" } },
+			);
+		}) as unknown as typeof fetch;
+
+		try {
+			const ctx: ProxyContext = {
+				strategy: { select: (accounts: Account[]) => accounts } as never,
+				dbOps: {
+					getAllAccounts: mock(async () => [accountA, accountB]),
+					getActiveComboForFamily: mock(async () => null),
+				} as never,
+				runtime: { port: 8080, clientId: "test" } as never,
+				config: {
+					getUsageThrottlingFiveHourEnabled: () => false,
+					getUsageThrottlingWeeklyEnabled: () => false,
+					getSystemPromptCacheTtl1h: () => false,
+					getAgentFrontmatterModelFallback: () => false,
+				} as never,
+				provider: {
+					name: "test-provider",
+					canHandle: () => true,
+					buildUrl: () => "https://fake.local/v1/messages",
+					prepareHeaders: () => new Headers(),
+					transformRequestBody: undefined,
+					processResponse: async (r: Response) => r,
+					parseRateLimit: () => ({
+						isRateLimited: true,
+						resetTime: undefined,
+						statusHeader: undefined,
+						remaining: undefined,
+					}),
+					isStreamingResponse: () => false,
+				} as never,
+				refreshInFlight: new Map(),
+				asyncWriter: { enqueue: mock(() => {}) } as never,
+			};
+
+			const response = await handleProxy(
+				makeRequest(),
+				new URL("https://proxy.local/v1/messages"),
+				ctx,
+			);
+
+			// Before the delta3-2 fix: `i === accounts.length - 1` was `0 === 1`
+			// (false) for account A's attempt, so its terminal 529 was treated
+			// as non-terminal, returned null, and the loop moved on — landing on
+			// the suppressed accountB via `continue`, exhausting the pool, and
+			// throwing a generic 503 service_unavailable_error instead of
+			// forwarding Anthropic's own overloaded_error body.
+			expect(response.status).toBe(529);
+			expect(fetchCallCount).toBe(1);
+		} finally {
+			globalThis.fetch = realFetch;
+			if (realOverloadRetryEnabled === undefined) {
+				delete process.env.CCFLARE_OVERLOAD_RETRY_ENABLED;
+			} else {
+				process.env.CCFLARE_OVERLOAD_RETRY_ENABLED = realOverloadRetryEnabled;
+			}
+			collectorSpy.mockRestore();
+		}
+	});
+});

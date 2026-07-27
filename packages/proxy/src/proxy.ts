@@ -32,6 +32,7 @@ import {
 import {
 	completeRateLimitProbe,
 	getRateLimitProbeAdmission,
+	wouldSuppressProbe,
 } from "./handlers/rate-limit-cooldown";
 import { extractProjectAttributionFromRequest } from "./project-attribution";
 import {
@@ -463,6 +464,14 @@ export async function handleProxy(
 		}
 
 		anyAccountAttempted = true;
+		// The last actually-attempted candidate is not always the last pool
+		// index: a probe-suppressed tail account gets skipped via `continue`
+		// above rather than attempted. Look ahead at the remaining candidates'
+		// CURRENT suppression state (without taking a lease) to find out
+		// whether any of them would still be attempted after this one.
+		const isLastAttemptedCandidate = accounts
+			.slice(i + 1)
+			.every((candidate) => wouldSuppressProbe(candidate));
 		try {
 			response = await proxyWithAccount(
 				req,
@@ -477,7 +486,7 @@ export async function handleProxy(
 				apiKeyId,
 				apiKeyName,
 				requestBodyContext,
-				!filteredComboInfo?.comboName && i === accounts.length - 1,
+				!filteredComboInfo?.comboName && isLastAttemptedCandidate,
 			);
 		} finally {
 			if (probeAdmission === "admitted") {
@@ -580,6 +589,12 @@ export async function handleProxy(
 				}
 
 				anyFallbackAttempted = true;
+				// Same rationale as the main loop above: a probe-suppressed tail
+				// candidate is skipped via `continue`, so the last pool index is
+				// not necessarily the last one actually attempted.
+				const isLastAttemptedFallback = fallbackAccounts
+					.slice(i + 1)
+					.every((candidate) => wouldSuppressProbe(candidate));
 				try {
 					response = await proxyWithAccount(
 						req,
@@ -594,7 +609,7 @@ export async function handleProxy(
 						apiKeyId,
 						apiKeyName,
 						requestBodyContext,
-						i === fallbackAccounts.length - 1,
+						isLastAttemptedFallback,
 					);
 				} finally {
 					if (probeAdmission === "admitted") {
