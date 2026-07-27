@@ -57,14 +57,36 @@ export const TIME_CONSTANTS = {
 	RATE_LIMIT_BACKOFF_MAX_MS: 5 * 60 * 1000, // 5min: ceiling for the exponential ramp
 	RATE_LIMIT_RESET_STABILITY_MS: 5 * 60 * 1000, // 5min: healthy operation needed to reset the streak counter
 
-	// Fixed cooldown applied when an upstream returns 529 (overloaded_error).
-	// A 529 is a transient upstream SERVER state, not a signal about the
-	// account's own quota — it says nothing about how much capacity the
-	// account has left. Unlike 429 cooldowns it never ramps with a streak
-	// and never touches consecutive_rate_limits: that counter is reserved
-	// for genuine 429 quota exhaustion.
+	// Fixed cooldown applied when an upstream returns 529 (overloaded_error)
+	// with NO retry-after / reset hint. A 529 is a transient upstream SERVER
+	// state, not a signal about the account's own quota — it says nothing
+	// about how much capacity the account has left. Unlike 429 cooldowns it
+	// never ramps with a streak and never touches consecutive_rate_limits:
+	// that counter is reserved for genuine 429 quota exhaustion.
+	//
+	// This is deliberately much shorter than the reset-less 429 default
+	// (DEFAULT_RATE_LIMIT_NO_RESET_COOLDOWN_MS, 60s, above): that 60s cooldown
+	// is UNGATED — once it expires, full concurrency returns to the account
+	// immediately, so a long cooldown is the only thing limiting request rate.
+	// This 10s cooldown only makes sense paired with the single-flight probe
+	// gate (getRateLimitProbeAdmission in rate-limit-cooldown.ts): once it
+	// expires, the gate lets exactly one probe request through and suppresses
+	// the rest until that probe resolves. Reusing the 10s value without the
+	// gate active for a given account would let every concurrently selected
+	// request pile onto it the instant the cooldown clears.
 	// Override at runtime via CCFLARE_OVERLOAD_COOLDOWN_MS.
 	OVERLOAD_COOLDOWN_MS: 10 * 1000, // 10s
+
+	// Cap on a 529-with-reset cooldown duration. A 529-with-reset honors
+	// Anthropic's own retry-after value (min(resetTime, now + cap)), but that
+	// resetTime can come from the anthropic-ratelimit-unified-reset header —
+	// a quota-window reset that can be hours away (see provider.ts:368-380) —
+	// rather than a short, per-request retry-after. Deliberately identical to
+	// RATE_LIMIT_BACKOFF_MAX_MS (the established 429 ramp ceiling): it honors
+	// a real, short retry-after literally, while still capping a unified-reset
+	// window value at the same bound the 429 path already trusts.
+	// Override at runtime via CCFLARE_OVERLOAD_WITH_RESET_MAX_MS.
+	OVERLOAD_WITH_RESET_MAX_MS: 5 * 60 * 1000, // 5min
 } as const;
 
 /**
@@ -103,6 +125,16 @@ export function getRateLimitResetStabilityMs(): number {
 export function computeOverloadCooldownMs(): number {
 	const raw = Number(process.env.CCFLARE_OVERLOAD_COOLDOWN_MS);
 	return raw || TIME_CONSTANTS.OVERLOAD_COOLDOWN_MS;
+}
+
+/**
+ * Read the cap (ms) on a 529-with-reset cooldown duration.
+ * Reads CCFLARE_OVERLOAD_WITH_RESET_MAX_MS from env.
+ * Uses || (not ??) so 0/NaN env values fall through to the default.
+ */
+export function computeOverloadWithResetCapMs(): number {
+	const raw = Number(process.env.CCFLARE_OVERLOAD_WITH_RESET_MAX_MS);
+	return raw || TIME_CONSTANTS.OVERLOAD_WITH_RESET_MAX_MS;
 }
 
 /**

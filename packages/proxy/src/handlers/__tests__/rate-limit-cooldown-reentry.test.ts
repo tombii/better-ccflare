@@ -221,6 +221,24 @@ describe("mature cooldown re-entry / single-flight probe", () => {
 	});
 });
 
+describe("mature cooldown re-entry — overload-reason gate (frozen 429 streak)", () => {
+	it("gates the single-flight probe for a reset-less 529 even with a cold 429 streak (overload reason alone must arm the gate)", () => {
+		Date.now = () => NOW;
+		const account = makeAccount({
+			consecutive_rate_limits: 0,
+			rate_limited_reason: "upstream_529_overloaded_no_reset",
+			rate_limited_until: NOW - 1,
+		});
+
+		expect(getRateLimitProbeAdmission(account)).toBe("admitted");
+		// A second concurrent request selecting the same account is suppressed,
+		// same as the mature-streak case above — an all-529 account never
+		// reaches MATURE_COOLDOWN_STREAK because the streak is frozen for
+		// overloads, so the reason alone must be able to arm the gate.
+		expect(getRateLimitProbeAdmission(account)).toBe("suppressed");
+	});
+});
+
 describe("529 overload cooldown separation", () => {
 	it("applies the fixed overload cooldown for a reset-less 529, ignoring the 429 streak depth", () => {
 		Date.now = () => NOW;
@@ -301,5 +319,83 @@ describe("529 overload cooldown separation", () => {
 		);
 		expect(calls.markRateLimited).toHaveLength(1);
 		expect(calls.markRateLimited[0]?.incrementStreak).toBe(true);
+	});
+
+	it("honors a full retry-after on a 529-with-reset even with a cold streak (regression: duration must not derive from the frozen 429 streak)", () => {
+		Date.now = () => NOW;
+		// consecutive_rate_limits stays 0 for an all-529 account (the streak is
+		// frozen for overloads) — deriving duration from computeRateLimitBackoffMs
+		// via that frozen counter would give a flat 30s regardless of what
+		// Anthropic's own retry-after says.
+		const account = makeAccount({ consecutive_rate_limits: 0 });
+		const { ctx } = makeCtx({ rateLimited: true });
+		const resetTime = NOW + 60_000;
+
+		applyRateLimitCooldown(
+			account,
+			{ resetTime, reason: "upstream_529_overloaded_with_reset" },
+			ctx,
+		);
+
+		expect(account.rate_limited_until).toBe(NOW + 60_000);
+	});
+
+	it("caps a 529-with-reset duration at OVERLOAD_WITH_RESET_MAX_MS when the upstream reset is far in the future", () => {
+		Date.now = () => NOW;
+		const account = makeAccount({ consecutive_rate_limits: 0 });
+		const { ctx } = makeCtx({ rateLimited: true });
+		// anthropic-ratelimit-unified-reset can carry a quota-window reset that's
+		// hours away (provider.ts:368-380) rather than a real short retry-after.
+		const resetTime = NOW + 10 * 60_000;
+
+		applyRateLimitCooldown(
+			account,
+			{ resetTime, reason: "upstream_529_overloaded_with_reset" },
+			ctx,
+		);
+
+		expect(account.rate_limited_until).toBe(
+			NOW + TIME_CONSTANTS.OVERLOAD_WITH_RESET_MAX_MS,
+		);
+	});
+
+	it("does not shorten an active 429 quota bench when a 529 overload arrives mid-window (forward guard)", () => {
+		Date.now = () => NOW;
+		const account = makeAccount({
+			consecutive_rate_limits: 8,
+			rate_limited_until: NOW + 300_000,
+			rate_limited_at: NOW - 1_000,
+		});
+		const { ctx, calls } = makeCtx({ rateLimited: true });
+
+		applyRateLimitCooldown(
+			account,
+			{ reason: "upstream_529_overloaded_no_reset" },
+			ctx,
+		);
+
+		// The longer, already-active 429 bench carries more information than a
+		// transient overload does — the 529 must not shorten it.
+		expect(account.rate_limited_until).toBe(NOW + 300_000);
+		// rate_limited_at is deliberately not re-stamped: doing so would delay
+		// the stability healing in response-processor.ts on every subsequent 529.
+		expect(account.rate_limited_at).toBe(NOW - 1_000);
+		expect(calls.markRateLimited).toHaveLength(0);
+	});
+
+	it("updates rate_limited_reason in-memory (not only in the DB) on every cooldown apply", () => {
+		Date.now = () => NOW;
+		const account = makeAccount({ consecutive_rate_limits: 0 });
+		const { ctx } = makeCtx({ rateLimited: true });
+
+		applyRateLimitCooldown(
+			account,
+			{ reason: "upstream_529_overloaded_no_reset" },
+			ctx,
+		);
+
+		expect(account.rate_limited_reason).toBe(
+			"upstream_529_overloaded_no_reset",
+		);
 	});
 });

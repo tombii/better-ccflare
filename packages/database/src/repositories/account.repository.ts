@@ -150,13 +150,24 @@ export class AccountRepository extends BaseRepository<Account> {
 		} else {
 			// 529 overload: cooldown state moves, but the 429 streak counter
 			// is left untouched — an overload is not a quota signal.
+			//
+			// WHERE-guarded against a concurrent writer having set a longer,
+			// still-active cooldown between this call's read and write (e.g. a
+			// real 429 quota bench applied by another in-flight request for the
+			// same account) — only apply this 529's cooldown when the account
+			// currently has none, or its existing one already expires before this
+			// one would. This mirrors the in-process forward guard in
+			// rate-limit-cooldown.ts but covers the cross-request DB race that
+			// guard can't see. A plain WHERE predicate (not GREATEST/MAX) so the
+			// same SQL runs unchanged on both SQLite and PostgreSQL.
 			await this.run(
 				`UPDATE accounts
            SET rate_limited_until      = ?,
                rate_limited_reason     = ?,
                rate_limited_at         = ?
-         WHERE id = ?`,
-				[until, reason, Date.now(), accountId],
+         WHERE id = ?
+           AND (rate_limited_until IS NULL OR rate_limited_until < ?)`,
+				[until, reason, Date.now(), accountId, until],
 			);
 		}
 		const row = await this.get<{ consecutive_rate_limits: number }>(

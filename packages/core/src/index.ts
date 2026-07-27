@@ -3,6 +3,7 @@ export {
 	BUFFER_SIZES,
 	CACHE,
 	computeOverloadCooldownMs,
+	computeOverloadWithResetCapMs,
 	computeRateLimitBackoffMs,
 	getOverloadRetryConfig,
 	getRateLimitResetStabilityMs,
