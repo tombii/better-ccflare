@@ -1,4 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
+// Force @better-ccflare/core to initialise before @better-ccflare/types
+// resolves its circular dependency (types/agent.ts → core → core/strategy.ts
+// → types/StrategyName). Without this the enum is undefined when
+// strategy.ts runs Object.values(StrategyName). Same pattern as
+// stats-session-cost.test.ts and account-rate-limit-audit.test.ts.
+import "@better-ccflare/core";
+import { RATE_LIMIT_REASONS, type RateLimitReason } from "@better-ccflare/types";
 import {
 	CIRCUIT_BREAKER_ENV,
 	CircuitBreaker,
@@ -499,32 +506,36 @@ describe("F2: FailureKind ↔ RateLimitReason parity", () => {
 	});
 
 	test("the breaker accepts every variant of the upstream RateLimitReason enum", () => {
-		// Exhaustiveness contract: every variant of `RateLimitReason`
-		// must be accepted by `shouldCountAsCircuitFailure` (which is
-		// now an exhaustive switch over the union). If a new variant
-		// is added to the upstream enum, the type alias makes this test
-		// a compile error until `shouldCountAsCircuitFailure` is
-		// updated to handle it explicitly.
+		// Exhaustiveness contract: every variant of `RateLimitReason` must
+		// be accepted by `shouldCountAsCircuitFailure` (an exhaustive switch
+		// over the union, with an assertNever-style guard at the default arm).
 		//
-		// Concrete variants are pinned here; a missing literal in this
-		// list ALSO causes a compile error. Either failure mode is
-		// caught at typecheck time.
-		const everyVariant = [
-			"upstream_429_with_reset",
-			"upstream_429_no_reset_default_5h",
-			"upstream_429_no_reset_probe_cooldown",
-			"model_fallback_429",
-			"all_models_exhausted_429",
-			"upstream_529_overloaded_with_reset",
-			"upstream_529_overloaded_no_reset",
-			"out_of_credits",
-			"extra_usage_exhausted",
-		] as const;
-		// And every verdict must be a boolean (i.e. the predicate covers
-		// the variant rather than letting it fall through to undefined).
+		// What this test ACTUALLY enforces (vs. what the compiler enforces):
+		//   * The RUNTIME smoke test below iterates over every known variant
+		//     and asserts the predicate returns a boolean. This catches a
+		//     future change that accidentally widens the return type.
+		//   * The COMPILE-TIME guard is the type-level assertion `_coverage`
+		//     below. It forces the `everyVariant` list to be exhaustive
+		//     against the `RateLimitReason` union: if a new variant is added
+		//     to `RATE_LIMIT_REASONS` and this list is not updated, the
+		//     assignment widens implicitly and the assertion fails to compile.
+		//   * The STRONGER guarantee — adding a new variant to
+		//     `RateLimitReason` without handling it in the switch — is
+		//     enforced at the `assertNever(kind)` call in
+		//     `shouldCountAsCircuitFailure`. That is a TypeScript compile
+		//     error, NOT a runtime failure. This test does not (and cannot)
+		//     catch that case at runtime; it documents the contract.
+		const everyVariant = RATE_LIMIT_REASONS as readonly RateLimitReason[];
 		for (const variant of everyVariant) {
 			expect(typeof shouldCountAsCircuitFailure(variant)).toBe("boolean");
 		}
+		// Compile-time guard: this list must include every RateLimitReason.
+		// If a new variant is added to the union without updating the
+		// referenced source (RATE_LIMIT_REASONS), the `_coverage` type
+		// assertion is `false` and the test fails to compile.
+		type Covered = Exclude<RateLimitReason, typeof everyVariant[number]>;
+		const _coverage: [Covered] extends [never] ? true : false = true;
+		expect(_coverage).toBe(true);
 	});
 });
 

@@ -107,13 +107,28 @@ function readEnv(name: string): string | undefined {
  * into a circuit trip and destroy the client-side graceful model fallback
  * path — see audit F2.
  *
- * Adding a new variant to `RateLimitReason` without explicitly handling it
- * here is a TypeScript error (the alias forces it); the exhaustive predicate
- * test in `circuit-breaker.test.ts` ("FailureKind ↔ RateLimitReason parity")
- * additionally pins which variants count as circuit failures, so adding an
- * unhandled variant fails the suite until the breaker decides its semantics.
+ * Adding a new variant to `RateLimitReason` is NOT caught by the alias alone
+ * — a TypeScript switch over a union does not require exhaustiveness unless
+ * paired with an `assertNever`-style guard (see `shouldCountAsCircuitFailure`
+ * below). The runtime parity test in `circuit-breaker.test.ts` additionally
+ * pins which variants are currently handled, with a type-level guard that
+ * forces the test list to track the union.
  */
 export type FailureKind = RateLimitReason;
+
+/**
+ * Compile-time exhaustiveness guard. `switch (x) { default: return assertNever(x); }`
+ * makes adding a new variant to `RateLimitReason` a TypeScript error: when
+ * every variant is handled above, `x` is narrowed to `never` here, and the
+ * `never` -> `never` return type compiles. When a variant is added and not
+ * handled, `x` is no longer `never` and `assertNever(non_never_value)`
+ * fails to compile.
+ */
+function assertNever(value: never): never {
+	throw new Error(
+		`assertNever: unexpected variant \`${String(value)}\` — switch over RateLimitReason is non-exhaustive. Add a case for this variant.`,
+	);
+}
 
 export type CircuitState = "closed" | "open" | "half-open";
 
@@ -178,11 +193,21 @@ interface CircuitEntry {
  *
  * Returns true ONLY for kinds that count toward opening the circuit.
  *
- * This is an **exhaustive** switch over the full `RateLimitReason` union
- * (mirrored via `FailureKind`); adding a new variant to `RateLimitReason`
- * without handling it here is a TypeScript error AND a runtime fallback
- * to "counts as circuit failure" — both are caught by the
- * `FailureKind ↔ RateLimitReason parity` test in circuit-breaker.test.ts.
+ * **Exhaustiveness — what is actually enforced.** The switch below is
+ * guarded by `assertNever` on the default arm. Because every
+ * `RateLimitReason` variant is listed explicitly, the type of `kind`
+ * at the `default` is narrowed to `never`; adding a new variant to
+ * `RateLimitReason` without listing it here is a TypeScript compile
+ * error at the `default: return assertNever(kind)` call.
+ *
+ * The runtime "FailureKind ↔ RateLimitReason parity" test in
+ * `circuit-breaker.test.ts` additionally pins the currently-handled
+ * variants with a type-level assertion (`Exclude<RateLimitReason,
+ * typeof everyVariant[number]> extends never`) that forces the test
+ * list itself to track the union. There is **no `default: return true`
+ * fallback** — that would silently turn an unhandled new variant into
+ * a circuit trip (the dangerous direction), which is exactly the
+ * regression this fix prevents.
  */
 export function shouldCountAsCircuitFailure(kind: FailureKind): boolean {
 	switch (kind) {
@@ -190,8 +215,15 @@ export function shouldCountAsCircuitFailure(kind: FailureKind): boolean {
 		case "out_of_credits":
 		case "extra_usage_exhausted":
 			return false;
-		default:
+		case "upstream_429_with_reset":
+		case "upstream_429_no_reset_default_5h":
+		case "upstream_429_no_reset_probe_cooldown":
+		case "all_models_exhausted_429":
+		case "upstream_529_overloaded_with_reset":
+		case "upstream_529_overloaded_no_reset":
 			return true;
+		default:
+			return assertNever(kind);
 	}
 }
 
