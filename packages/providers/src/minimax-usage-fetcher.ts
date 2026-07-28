@@ -186,7 +186,24 @@ export function parseMinimaxTokenPlanResponse(
 	}
 
 	const row = pickTextInferenceRow(raw.model_remains);
-	if (!row) return null;
+	if (!row) {
+		// model_remains is present and non-empty (checked above) but no row
+		// matched the `general` filter. The filter is unverified — Minimax
+		// publishes no response schema and may not actually emit a row named
+		// "general" — so surface the observed model_name values as a WARN so
+		// a single real poll reveals the truth. Deliberately do NOT fall back
+		// to a first-row read: a wrong-substituted reading would surface as
+		// the account's text utilization (PR #346 review fix 4311195e
+		// removed that fallback for exactly this reason). Log model names
+		// only — never tokens, keys, or full response bodies.
+		const observed = raw.model_remains
+			.map((entry) => entry?.model_name)
+			.filter((name): name is string => typeof name === "string");
+		log.warn(
+			`Minimax usage response had no 'general' row; observed model_name values: [${observed.join(", ")}]`,
+		);
+		return null;
+	}
 
 	const five_hour = buildWindow(row, "interval");
 	const seven_day = buildWindow(row, "weekly");

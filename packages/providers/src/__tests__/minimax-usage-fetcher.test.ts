@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { logBus } from "@better-ccflare/logger";
 import {
 	fetchMinimaxUsageData,
 	getRepresentativeMinimaxUtilization,
@@ -284,5 +285,90 @@ describe("Minimax usage fetcher", () => {
 		expect(parsed?.seven_day?.utilization).toBe(75);
 		expect(getRepresentativeMinimaxUtilization(parsed)).toBe(75);
 		expect(getRepresentativeMinimaxWindow(parsed)).toBe("seven_day");
+	});
+
+	// Greptile flagged on PR #346 that the "model_remains non-empty but no
+	// 'general' row" case was untested, so the wrong-row fallback had no
+	// guard rail. The deliberate choice is to NOT substitute a row (PR #346
+	// review 4311195e removed a first-row fallback because a `video` quota
+	// would surface as text utilization), but to WARN with the observed
+	// model_name values so a single real poll reveals the right filter.
+	it("warns and lists the observed model_name values when no 'general' row is present", () => {
+		interface LogEvent {
+			ts: number;
+			level: string;
+			msg: string;
+			data?: unknown;
+		}
+		const warnEvents: LogEvent[] = [];
+		const handler = (event: LogEvent) => {
+			if (event.level === "WARN") warnEvents.push(event);
+		};
+		logBus.on("log", handler);
+
+		try {
+			const parsed = parseMinimaxTokenPlanResponse({
+				base_resp: { status_code: 0 },
+				model_remains: [
+					makeRow({
+						model_name: "video",
+						current_interval_remaining_percent: 5,
+						current_weekly_remaining_percent: 5,
+					}),
+					makeRow({
+						model_name: "audio",
+						current_interval_remaining_percent: 50,
+						current_weekly_remaining_percent: 50,
+					}),
+				],
+			});
+
+			// Still returns null — no wrong-row substitution.
+			expect(parsed).toBeNull();
+
+			// At least one WARN references the miss and lists the observed
+			// model_name values. The message is model names only — never
+			// tokens, keys, or full response bodies.
+			const missWarn = warnEvents.find(
+				(e) =>
+					e.msg.includes("no 'general' row") &&
+					e.msg.includes("video") &&
+					e.msg.includes("audio"),
+			);
+			expect(missWarn).toBeDefined();
+		} finally {
+			logBus.off("log", handler);
+		}
+	});
+
+	it("does not warn when model_remains is empty", () => {
+		interface LogEvent {
+			ts: number;
+			level: string;
+			msg: string;
+			data?: unknown;
+		}
+		const warnEvents: LogEvent[] = [];
+		const handler = (event: LogEvent) => {
+			if (event.level === "WARN") warnEvents.push(event);
+		};
+		logBus.on("log", handler);
+
+		try {
+			// Empty model_remains is the "missing array" branch, not the
+			// "wrong filter" branch — the new WARN must NOT fire here.
+			const parsed = parseMinimaxTokenPlanResponse({
+				base_resp: { status_code: 0 },
+				model_remains: [],
+			});
+
+			expect(parsed).toBeNull();
+			const missWarn = warnEvents.find((e) =>
+				e.msg.includes("no 'general' row"),
+			);
+			expect(missWarn).toBeUndefined();
+		} finally {
+			logBus.off("log", handler);
+		}
 	});
 });

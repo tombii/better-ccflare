@@ -128,6 +128,49 @@ export function supportsRefreshBackedUsagePolling(
 	return provider === "anthropic" || provider === "xai";
 }
 
+/**
+ * Minimal interface satisfied by the `usageCache` singleton in
+ * `@better-ccflare/providers`. Declared locally so the bootstrap helper
+ * can be unit-tested with a mock without dragging the full UsageCache
+ * class (which is not exported) into the public type surface.
+ */
+export interface UsageCacheRegistrar {
+	startPolling(
+		accountId: string,
+		tokenProvider: () => Promise<string>,
+		provider: string,
+		intervalMs: number,
+	): void;
+}
+
+/**
+ * Register usage polling for a single Minimax account. The Minimax fetcher
+ * hits the Token Plan `remains` endpoint with a Bearer API key; no OAuth
+ * refresh is required. Mirrors the surrounding nanogpt/zai/kilo pattern:
+ * pay-as-you-go, API-key authentication, no window reset callback
+ * (Minimax has `requiresSessionTracking: false` in provider-config.ts).
+ *
+ * Returns true if polling was registered, false if the account is not
+ * a Minimax account or has no API key. Extracted from the bootstrap
+ * loop so the registration contract is unit-testable.
+ */
+export function registerMinimaxUsagePolling(
+	account: Account,
+	usageCache: UsageCacheRegistrar,
+	intervalMs: number,
+): boolean {
+	if (account.provider !== "minimax") return false;
+	if (!account.api_key) return false;
+	const apiKeyProvider = async () => account.api_key || "";
+	usageCache.startPolling(
+		account.id,
+		apiKeyProvider,
+		account.provider,
+		intervalMs,
+	);
+	return true;
+}
+
 // Helper function to resolve dashboard assets with fallback
 function resolveDashboardAsset(assetPath: string): string | null {
 	try {
@@ -1589,6 +1632,37 @@ Available endpoints:
 		}
 	} else {
 		log.info(`No Kilo Gateway accounts found, usage polling will not start`);
+	}
+
+	// Start usage polling for Minimax accounts (Token Plan `remains` endpoint)
+	const minimaxAccounts = accounts.filter((a) => a.provider === "minimax");
+	if (minimaxAccounts.length > 0) {
+		log.info(
+			`Found ${minimaxAccounts.length} Minimax accounts, starting usage polling...`,
+		);
+		for (const account of minimaxAccounts) {
+			log.debug(`Processing Minimax account: ${account.name}`, {
+				accountId: account.id,
+				hasApiKey: !!account.api_key,
+				paused: account.paused,
+			});
+
+			if (
+				registerMinimaxUsagePolling(
+					account,
+					usageCache,
+					config.getUsagePollIntervalMs(),
+				)
+			) {
+				log.info(`Started usage polling for Minimax account ${account.name}`);
+			} else {
+				log.warn(
+					`Minimax account ${account.name} has no API key, skipping usage polling`,
+				);
+			}
+		}
+	} else {
+		log.info(`No Minimax accounts found, usage polling will not start`);
 	}
 
 	// Pre-warm Bedrock model and inference profile caches

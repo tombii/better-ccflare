@@ -1,5 +1,9 @@
-import { describe, expect, it } from "bun:test";
-import { supportsRefreshBackedUsagePolling } from "./server";
+import { describe, expect, it, mock } from "bun:test";
+import {
+	type UsageCacheRegistrar,
+	registerMinimaxUsagePolling,
+	supportsRefreshBackedUsagePolling,
+} from "./server";
 
 describe("supportsRefreshBackedUsagePolling", () => {
 	it("includes pollable OAuth providers that need token refresh", () => {
@@ -12,6 +16,120 @@ describe("supportsRefreshBackedUsagePolling", () => {
 		expect(supportsRefreshBackedUsagePolling("qwen")).toBe(false);
 		expect(supportsRefreshBackedUsagePolling("nanogpt")).toBe(false);
 		expect(supportsRefreshBackedUsagePolling(null)).toBe(false);
+	});
+});
+
+describe("registerMinimaxUsagePolling", () => {
+	function makeAccount(
+		overrides: Partial<{
+			id: string;
+			name: string;
+			provider: string;
+			api_key: string | null;
+		}> = {},
+	) {
+		return {
+			id: "acc-1",
+			name: "minimax-account-1",
+			provider: "minimax",
+			api_key: "test-key",
+			...overrides,
+		} as unknown as Parameters<typeof registerMinimaxUsagePolling>[0];
+	}
+
+	function makeRegistrar() {
+		const startPolling = mock(
+			(
+				_accountId: string,
+				_tokenProvider: () => Promise<string>,
+				_provider: string,
+				_intervalMs: number,
+			) => {},
+		);
+		return {
+			registrar: { startPolling } as unknown as UsageCacheRegistrar,
+			startPolling,
+		};
+	}
+
+	it("registers polling for a Minimax account with an API key", () => {
+		const { registrar, startPolling } = makeRegistrar();
+		const result = registerMinimaxUsagePolling(makeAccount(), registrar, 30_000);
+
+		expect(result).toBe(true);
+		expect(startPolling).toHaveBeenCalledTimes(1);
+		const call = startPolling.mock.calls[0];
+		expect(call?.[0]).toBe("acc-1");
+		expect(call?.[2]).toBe("minimax");
+		expect(call?.[3]).toBe(30_000);
+		expect(typeof call?.[1]).toBe("function");
+	});
+
+	it("the registered token provider returns the account's API key", async () => {
+		const { registrar, startPolling } = makeRegistrar();
+		registerMinimaxUsagePolling(
+			makeAccount({ api_key: "secret-key" }),
+			registrar,
+			30_000,
+		);
+
+		const tokenProvider = startPolling.mock.calls[0]?.[1];
+		expect(await tokenProvider()).toBe("secret-key");
+	});
+
+	it("does not register polling for non-Minimax accounts", () => {
+		const { registrar, startPolling } = makeRegistrar();
+		// The block calls registerMinimaxUsagePolling only for accounts where
+		// accounts.filter((a) => a.provider === "minimax") matched, so the
+		// helper itself is the load-bearing gate. If the filter goes away and
+		// this helper is called for every provider, the false return here is
+		// what keeps the wrong accounts from being polled.
+		expect(
+			registerMinimaxUsagePolling(
+				makeAccount({ provider: "zai", api_key: "k" }),
+				registrar,
+				30_000,
+			),
+		).toBe(false);
+		expect(
+			registerMinimaxUsagePolling(
+				makeAccount({ provider: "nanogpt", api_key: "k" }),
+				registrar,
+				30_000,
+			),
+		).toBe(false);
+		expect(
+			registerMinimaxUsagePolling(
+				makeAccount({ provider: "anthropic", api_key: "k" }),
+				registrar,
+				30_000,
+			),
+		).toBe(false);
+		expect(startPolling).toHaveBeenCalledTimes(0);
+	});
+
+	it("does not register polling when a Minimax account has no API key", () => {
+		const { registrar, startPolling } = makeRegistrar();
+		const result = registerMinimaxUsagePolling(
+			makeAccount({ api_key: null }),
+			registrar,
+			30_000,
+		);
+
+		expect(result).toBe(false);
+		expect(startPolling).toHaveBeenCalledTimes(0);
+	});
+
+	it("does not register polling when a Minimax account has an empty API key", () => {
+		const { registrar, startPolling } = makeRegistrar();
+		const result = registerMinimaxUsagePolling(
+			makeAccount({ api_key: "" }),
+			registrar,
+			30_000,
+		);
+
+		expect(result).toBe(false);
+		expect(startPolling).toHaveBeenCalledTimes(0);
 	});
 });
 
