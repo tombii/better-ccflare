@@ -15,6 +15,7 @@
  * confirms the test fails, then restores. Verified inline below.
  */
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { CircuitBreaker } from "../circuit-breaker";
 import {
 	createStreamAdmission,
 	DEFAULT_STREAM_ADMISSION_CAP,
@@ -521,5 +522,226 @@ describe("createStreamAdmission — leak test negative control", () => {
 		expect(active).toBeGreaterThan(0); // leak detected
 		// Cleanup:
 		if (normal.ok) normal.handle.release();
+	});
+});
+
+// ── circuit-breaker integration (Task B, design §6) ──────────────────────────
+
+describe("createStreamAdmission — circuit-breaker drain", () => {
+	/**
+	 * Open the breaker for `(provider, accountId)` by recording
+	 * `failureThreshold` failures of a circuit-counting kind. With the
+	 * test breaker's `failureThreshold: 1` we can open it in a single
+	 * call, which keeps the tests deterministic and fast.
+	 */
+	function openBreakerFor(
+		breaker: CircuitBreaker,
+		provider: string,
+		accountId: string,
+	): void {
+		breaker.recordFailure({ provider, accountId }, "overload_529", 0);
+	}
+
+	it("a queued waiter is drained with circuit_open when the circuit opens while it waits", async () => {
+		const clock = makeClock(1_000);
+		const breaker = new CircuitBreaker({
+			enabled: true,
+			failureThreshold: 1,
+			openCooldownMs: 30_000,
+		});
+		const admission = createStreamAdmission({
+			cap: 1,
+			maxQueue: 4,
+			maxWaitMs: 60_000,
+			maxJitterMs: 0, // jitter 0 — schedule fires on next microtask
+			now: clock.now,
+			random: makeRandom([0]),
+			schedule: microtaskSchedule,
+			breaker,
+			provider: "anthropic",
+		});
+
+		// Saturate the slot for acc-a.
+		const r1 = await admission.admit("acc-a");
+		expect(r1.ok).toBe(true);
+		// Queue a waiter on acc-a; cap is full so it joins the queue.
+		const r2Promise = admission.admit("acc-a");
+		expect(admission.snapshot().accounts["acc-a"]?.queued).toBe(1);
+
+		// **Open the circuit while r2 is queued.** This is the moment
+		// the design's drain must fire.
+		openBreakerFor(breaker, "anthropic", "acc-a");
+
+		// Release r1 → releaseOneSlot picks r2 → jitter fires →
+		// breaker poll sees open → drain.
+		if (r1.ok) r1.handle.release();
+		const r2 = await r2Promise;
+		expect(r2.ok).toBe(false);
+		if (!r2.ok) {
+			expect(r2.reason.kind).toBe("circuit_open");
+			if (r2.reason.kind === "circuit_open") {
+				expect(r2.reason.accountId).toBe("acc-a");
+			}
+		}
+		// Queue must be empty after the drain.
+		expect(admission.snapshot().accounts["acc-a"]?.queued).toBe(0);
+		// No leaked handle — r2 returned ok:false, so the caller has
+		// nothing to release; the snapshot must reflect that.
+		expect(admission.snapshot().accounts["acc-a"]?.active).toBe(0);
+	});
+
+	it("the drained waiter's reserved slot is released (no leaked capacity)", async () => {
+		const clock = makeClock(1_000);
+		const breaker = new CircuitBreaker({
+			enabled: true,
+			failureThreshold: 1,
+			openCooldownMs: 30_000,
+		});
+		const admission = createStreamAdmission({
+			cap: 1,
+			maxQueue: 4,
+			maxWaitMs: 60_000,
+			maxJitterMs: 0,
+			now: clock.now,
+			random: makeRandom([0]),
+			schedule: microtaskSchedule,
+			breaker,
+			provider: "anthropic",
+		});
+
+		const r1 = await admission.admit("acc-a");
+		// Two queued waiters; we drain r2 because the breaker opens,
+		// but r3 must also be drained (sibling fan-out).
+		const r2Promise = admission.admit("acc-a");
+		const r3Promise = admission.admit("acc-a");
+		expect(admission.snapshot().accounts["acc-a"]?.queued).toBe(2);
+
+		openBreakerFor(breaker, "anthropic", "acc-a");
+
+		// Release r1: triggers the head-pick → jitter → drain → sibling fan-out.
+		if (r1.ok) r1.handle.release();
+
+		const r2 = await r2Promise;
+		const r3 = await r3Promise;
+		expect(r2.ok).toBe(false);
+		expect(r3.ok).toBe(false);
+		if (!r2.ok) expect(r2.reason.kind).toBe("circuit_open");
+		if (!r3.ok) expect(r3.reason.kind).toBe("circuit_open");
+
+		// The slot that was reserved for r2 during the jitter window
+		// must have been freed by the drain path — otherwise a single
+		// open-circuit event would permanently shrink capacity for the
+		// life of the gate. The cap is 1 and the gate should be fully
+		// drained: held = 0, queue = 0.
+		const snap = admission.snapshot();
+		expect(snap.accounts["acc-a"]?.active).toBe(0);
+		expect(snap.accounts["acc-a"]?.queued).toBe(0);
+
+		// Fresh admit after a reset() is allowed to succeed (sanity: the
+		// breaker is still open, so even a fresh admit would be drained
+		// by the breaker; here we just confirm capacity accounting
+		// wasn't permanently leaked).
+		admission.reset();
+	});
+
+	it("waiters for a DIFFERENT account are unaffected when one bad account drains", async () => {
+		const clock = makeClock(1_000);
+		const breaker = new CircuitBreaker({
+			enabled: true,
+			failureThreshold: 1,
+			openCooldownMs: 30_000,
+		});
+		const admission = createStreamAdmission({
+			cap: 1,
+			maxQueue: 4,
+			maxWaitMs: 60_000,
+			maxJitterMs: 0,
+			now: clock.now,
+			random: makeRandom([0, 0]),
+			schedule: microtaskSchedule,
+			breaker,
+			provider: "anthropic",
+		});
+
+		// Saturate BOTH accounts; one waiter each queued behind cap=1.
+		const a1 = await admission.admit("acc-a");
+		const b1 = await admission.admit("acc-b");
+		// Both a2 and b2 are queued (cap=1, no jitter delay).
+		const a2Promise = admission.admit("acc-a");
+		const b2Promise = admission.admit("acc-b");
+		expect(admission.snapshot().accounts["acc-a"]?.queued).toBe(1);
+		expect(admission.snapshot().accounts["acc-b"]?.queued).toBe(1);
+
+		// **Open the circuit ONLY for acc-a.** acc-b's circuit stays
+		// closed. The drain must be per-account; siblings must NOT be
+		// touched.
+		openBreakerFor(breaker, "anthropic", "acc-a");
+
+		// Release a1: triggers head-pick → jitter → drain for acc-a
+		// (a2 gets circuit_open). acc-b's queue is unaffected.
+		if (a1.ok) a1.handle.release();
+		const a2 = await a2Promise;
+		expect(a2.ok).toBe(false);
+		if (!a2.ok) expect(a2.reason.kind).toBe("circuit_open");
+		// acc-b's queue length is unchanged: opening one account's
+		// circuit must not drain siblings of a DIFFERENT account.
+		expect(admission.snapshot().accounts["acc-b"]?.queued).toBe(1);
+
+		// Now release b1 — acc-b's circuit is still closed, so the
+		// queued b2 must be admitted normally via the standard
+		// releaseOneSlot path (no circuit_open).
+		if (b1.ok) b1.handle.release();
+		const b2 = await b2Promise;
+		expect(b2.ok).toBe(true);
+		if (b2.ok) b2.handle.release();
+
+		// Final state: acc-a drained, acc-b admitted normally.
+		const snap = admission.snapshot();
+		expect(snap.accounts["acc-a"]?.active).toBe(0);
+		expect(snap.accounts["acc-a"]?.queued).toBe(0);
+		expect(snap.accounts["acc-b"]?.active).toBe(0);
+		expect(snap.accounts["acc-b"]?.queued).toBe(0);
+	});
+
+	it("normal admission still works when the circuit is closed", async () => {
+		const clock = makeClock(1_000);
+		const breaker = new CircuitBreaker({
+			enabled: true,
+			failureThreshold: 1,
+			openCooldownMs: 30_000,
+		});
+		const admission = createStreamAdmission({
+			cap: 2,
+			maxQueue: 4,
+			maxWaitMs: 60_000,
+			maxJitterMs: 0,
+			now: clock.now,
+			random: makeRandom([0]),
+			schedule: microtaskSchedule,
+			breaker,
+			provider: "anthropic",
+		});
+
+		// Circuit is closed (no recordFailure). Admit normally.
+		const r1 = await admission.admit("acc-a");
+		const r2 = await admission.admit("acc-a");
+		const r3Promise = admission.admit("acc-a");
+		expect(r1.ok).toBe(true);
+		expect(r2.ok).toBe(true);
+
+		// Release r1 → head r3 is picked → jitter fires → breaker says
+		// closed → admit normally. No regression: r3 must come back ok.
+		if (r1.ok) r1.handle.release();
+		const r3 = await r3Promise;
+		expect(r3.ok).toBe(true);
+
+		// Drain handles so the test exits cleanly.
+		if (r2.ok) r2.handle.release();
+		if (r3.ok) r3.handle.release();
+
+		// Snapshot shows zero active + zero queued.
+		const snap = admission.snapshot();
+		expect(snap.accounts["acc-a"]?.active).toBe(0);
+		expect(snap.accounts["acc-a"]?.queued).toBe(0);
 	});
 });

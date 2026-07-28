@@ -71,6 +71,8 @@ export const DEFAULT_STREAM_ADMISSION_MAX_WAIT_MS = 30_000;
  */
 export const DEFAULT_STREAM_ADMISSION_MAX_JITTER_MS = 250;
 
+import type { CircuitBreaker } from "./circuit-breaker";
+
 interface Waiter {
 	accountId: string;
 	resolve: (result: AdmitResult) => void;
@@ -105,6 +107,25 @@ export interface StreamAdmissionOptions {
 	 * Tests pass `queueMicrotask` to make tests fast and deterministic.
 	 */
 	schedule?: (cb: () => void, delayMs: number) => void;
+	/**
+	 * Optional circuit breaker. When provided, queued and in-jitter waiters
+	 * are polled against `breaker.shouldAllow(...)` during the jitter
+	 * delay; an open circuit drains the waiter (and any remaining
+	 * in-queue siblings for that account) with `{kind: "circuit_open"}`.
+	 *
+	 * **Why polling during the jitter rather than subscribing to breaker
+	 * events?** The jitter is bounded (default 250ms) so the worst-case
+	 * drain latency is one jitter window — well under the typical 30s
+	 * queue wait. Subscribing would expand the breaker's surface for a
+	 * benefit that this module does not need. See design §6.
+	 */
+	breaker?: CircuitBreaker;
+	/**
+	 * Provider key used with the breaker. Required when `breaker` is set;
+	 * otherwise ignored. The breaker keys by `(provider, accountId)` so
+	 * the gate must know which provider this admission gate fronts for.
+	 */
+	provider?: string;
 }
 
 export interface AdmissionHandle {
@@ -129,11 +150,17 @@ export interface AdmissionHandle {
 /**
  * Typed rejection surface. The caller maps this to whatever HTTP shape the
  * transport needs; this module never invents an HTTP status. On `timeout`,
- * `waitedMs` is the time actually spent in the queue (≥ 0).
+ * `waitedMs` is the time actually spent in the queue (≥ 0). On
+ * `circuit_open`, `accountId` is the account whose breaker is open; the
+ * caller maps this to the same `circuit_open` 503 response shape that
+ * `createPoolExhaustedResponse` would produce (the SSE wiring layer is
+ * expected to reuse the same JSON shape so clients see one uniform error
+ * whether the rejection came from the breaker or from a queued drain).
  */
 export type AdmissionRejection =
 	| { readonly kind: "queue_full" }
-	| { readonly kind: "timeout"; readonly waitedMs: number };
+	| { readonly kind: "timeout"; readonly waitedMs: number }
+	| { readonly kind: "circuit_open"; readonly accountId: string };
 
 export type AdmitResult =
 	| { readonly ok: true; readonly handle: AdmissionHandle }
@@ -166,6 +193,16 @@ export interface StreamAdmission {
 	 */
 	snapshot(): StreamAdmissionSnapshot;
 	/**
+	 * Drain all queued and in-jitter waiters for `accountId` with the
+	 * given rejection. Idempotent for accounts with no waiters. Used by
+	 * the in-jitter breaker poll to fan out the open-circuit signal to
+	 * siblings of the just-drained head waiter.
+	 */
+	rejectAllForAccount(
+		accountId: string,
+		reason: AdmissionRejection,
+	): number;
+	/**
 	 * Test hook: drop all per-account state. Does not touch env reads or
 	 * cached config.
 	 */
@@ -194,6 +231,13 @@ export function createStreamAdmission(
 	const now = opts.now ?? Date.now;
 	const random = opts.random ?? Math.random;
 	const schedule = opts.schedule ?? defaultSchedule;
+	// Optional circuit breaker integration. When set, the jitter-delay poll
+	// below consults `breaker.shouldAllow` and drains the in-flight waiter
+	// (plus any queued siblings) with `circuit_open` if the breaker is open.
+	// Provider is the `provider` field of the breaker's `(provider, accountId)`
+	// key — must match what `recordFailure(...)` is called with upstream.
+	const breaker = opts.breaker;
+	const provider = opts.provider ?? "";
 
 	const passesThrough = isKilledOff();
 	const accounts = new Map<string, AccountState>();
@@ -260,17 +304,49 @@ export function createStreamAdmission(
 				});
 				continue;
 			}
-			// Found a live waiter. Reserve the slot (held++) and schedule
-			// the jittered admit. held stays incremented until the jitter
-			// fires; at that point active++ (held unchanged — slot is still
-			// held, just transitioned to "active" rather than "in-jitter").
-			// This guarantees cap holds across the jitter window so we never
-			// admit more than `cap` total.
+			// Found a live waiter. The slot that was just released transitions
+			// directly from "active" to "in-jitter" for the picked waiter:
+			// `held` is unchanged (the slot was held, is still held) and
+			// `active` decrements (the released stream is no longer active).
+			// When the jitter fires, `active++` flips the in-jitter slot
+			// to active. This guarantees `held` never exceeds `cap` at any
+			// point in the lifecycle, including during the drain path
+			// below where the jitter callback frees the slot.
 			acc.queue.shift();
-			acc.held++;
+			acc.active--;
 			const jitterMs = random() * maxJitterMs;
 			const effectiveAtMs = nowMs + jitterMs;
 			schedule(() => {
+				// **Circuit-breaker poll during the jitter delay.**
+				// Worst-case drain latency is one jitter window
+				// (default 250ms); see design §6. No subscription API
+				// is added to the breaker — we just consult it here.
+				if (
+					breaker &&
+					!breaker.shouldAllow(
+						{ provider, accountId: head.accountId },
+						now(),
+					)
+				) {
+					// Free the slot that was reserved for this in-jitter
+					// waiter; they never received a handle so the
+					// caller has nothing to release.
+					acc.held--;
+					head.resolve({
+						ok: false,
+						reason: { kind: "circuit_open", accountId: head.accountId },
+					});
+					// Fan the open-circuit signal out to every queued
+					// sibling for this account so they do not pile up
+					// in the queue only to be drained one-by-one as
+					// slots free (which would still let `cap` waiters
+					// race the breaker, defeating its purpose).
+					rejectAllForAccount(head.accountId, {
+						kind: "circuit_open",
+						accountId: head.accountId,
+					});
+					return;
+				}
 				acc.active++;
 				head.resolve({
 					ok: true,
@@ -307,7 +383,35 @@ export function createStreamAdmission(
 		accounts.clear();
 	}
 
-	return { admit, snapshot, reset };
+	/**
+	 * Drain all queued waiters for `accountId` with `reason`. The caller is
+	 * responsible for not awaiting a returned handle on these (they were
+	 * never admitted); this function only resolves their pending promises.
+	 *
+	 * Returns the number of waiters drained (0 when the account has no
+	 * queue). In-jitter waiters (already shifted out of the queue and
+	 * holding a reserved slot) are NOT touched here — the jitter callback
+	 * is the only place that can free their `held` slot, and it resolves
+	 * the in-jitter promise itself before delegating sibling drain here.
+	 *
+	 * Idempotent: calling with an unknown accountId returns 0 and is a
+	 * no-op; calling when the queue is empty returns 0 and is a no-op.
+	 */
+	function rejectAllForAccount(
+		accountId: string,
+		reason: AdmissionRejection,
+	): number {
+		const acc = accounts.get(accountId);
+		if (!acc) return 0;
+		if (acc.queue.length === 0) return 0;
+		const drained = acc.queue.splice(0);
+		for (const w of drained) {
+			w.resolve({ ok: false, reason });
+		}
+		return drained.length;
+	}
+
+	return { admit, snapshot, reset, rejectAllForAccount };
 
 	// ── handle factories ──────────────────────────────────────────────────
 
