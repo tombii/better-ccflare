@@ -148,6 +148,15 @@ export class AuthService {
 			return true;
 		}
 
+		// Capacity-state is the AO fleet reaper's kill-switch signal. The
+		// reaper runs on a different host and does not carry the proxy's
+		// API key; the endpoint exposes only (provider, accountId) keys and
+		// aggregate counts, no secrets. Mirrors the /api/version/check
+		// precedent above.
+		if (path === "/api/capacity-state") {
+			return true;
+		}
+
 		// All other paths are dashboard routes (client-side routing) or static assets
 		// These should be exempt to allow serving the dashboard HTML and assets
 		// This matches the server logic that serves index.html for non-API routes

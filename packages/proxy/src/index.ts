@@ -17,6 +17,24 @@ export {
 export { AutoRefreshScheduler } from "./auto-refresh-scheduler";
 export { CacheKeepaliveScheduler } from "./cache-keepalive-scheduler";
 export {
+	CircuitBreaker,
+	shouldCountAsCircuitFailure,
+	type CircuitKey,
+	type CircuitSnapshotEntry,
+	type CircuitState,
+	type FailureKind,
+} from "./circuit-breaker";
+export {
+	createStreamAdmission,
+	type AccountSnapshot,
+	type AdmissionHandle,
+	type AdmissionRejection,
+	type AdmitResult,
+	type StreamAdmission,
+	type StreamAdmissionOptions,
+	type StreamAdmissionSnapshot,
+} from "./stream-admission";
+export {
 	type CodexUsageRefreshOutcome,
 	checkAllAccountsHealth,
 	checkRefreshTokenHealth,

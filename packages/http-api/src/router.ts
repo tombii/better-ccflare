@@ -59,6 +59,7 @@ import {
 	createApiKeysStatsHandler,
 	createApiKeyUpdateRoleHandler,
 } from "./handlers/api-keys";
+import { createCapacityStateHandler } from "./handlers/capacity-state";
 import {
 	createComboCreateHandler,
 	createComboDeleteHandler,
@@ -157,6 +158,8 @@ export class APIRouter {
 			getUsageWorkerHealth,
 			getIntegrityStatus,
 			getStrategy,
+			circuitBreaker,
+			streamAdmission,
 		} = this.context;
 
 		// Create handlers
@@ -235,6 +238,16 @@ export class APIRouter {
 		const systemInfoHandler = createSystemInfoHandler();
 		const versionCheckHandler = createVersionCheckHandler();
 		const featuresHandler = createFeaturesHandler();
+
+		// Capacity-state handler — composed from the circuit-breaker and
+		// stream-admission snapshots. Both are optional on the context so
+		// older entrypoints can construct the router without them; the route
+		// is only registered when both are present so the route is never
+		// hit by a router that cannot serve it.
+		const capacityStateHandler =
+			circuitBreaker && streamAdmission
+				? createCapacityStateHandler(circuitBreaker, streamAdmission)
+				: null;
 
 		// Debug/profiling handlers
 		const heapStatsHandler = createHeapStatsHandler();
@@ -401,6 +414,9 @@ export class APIRouter {
 		this.handlers.set("GET:/api/system/info", () => systemInfoHandler());
 		this.handlers.set("GET:/api/version/check", () => versionCheckHandler());
 		this.handlers.set("GET:/api/features", () => featuresHandler());
+		if (capacityStateHandler) {
+			this.handlers.set("GET:/api/capacity-state", () => capacityStateHandler());
+		}
 		this.handlers.set("GET:/api/logs/stream", (req) => logsStreamHandler(req));
 		this.handlers.set("GET:/api/logs/history", () => logsHistoryHandler());
 		this.handlers.set("GET:/api/analytics", (_req, url) => {
