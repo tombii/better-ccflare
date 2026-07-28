@@ -1348,28 +1348,90 @@ export async function proxyWithAccount(
 }
 
 /**
- * Create a 503 Service Unavailable response when the account pool is exhausted.
- * All accounts are paused, rate-limited, or filtered out.
- * @param accounts - All accounts that were considered but are unavailable
- * @returns 503 response with pool_exhausted error and Retry-After header
+ * Top-level error.type values produced by createPoolExhaustedResponse.
+ *
+ * `pool_exhausted` means "every account is genuinely exhausted (rate-limited,
+ * paused, requires reauth, or otherwise filtered out)". `circuit_open` means
+ * "the circuit breaker is refusing this account". The wire shape stays
+ * identical — only `error.type` and `accounts[].reason` differ — so SDK
+ * clients keep treating the response as a 503 transient. Downstream consumers
+ * that need to differentiate (e.g. the AO fleet reaper) read the JSON body.
  */
-export function createPoolExhaustedResponse(accounts: Account[]): Response {
+export type PoolExhaustionKind = "pool_exhausted" | "circuit_open";
+
+/**
+ * Per-account reason values emitted in `accounts[].reason`.
+ *
+ * `circuit_open` is distinct from the other values: it means the breaker
+ * refused this account, NOT that the account's cooldown is expired. Reporting
+ * a circuit-open account as `rate_limited` would mislead the reaper into
+ * pausing session spawns for the wrong reason.
+ */
+export type PoolExhaustionAccountReason =
+	| "requires_reauth"
+	| "paused"
+	| "rate_limited"
+	| "circuit_open"
+	| "unavailable";
+
+/**
+ * Default Retry-After (seconds) for the `circuit_open` response. Matches the
+ * breaker's `OPEN_COOLDOWN_MS` so a polite client that respects Retry-After
+ * will retry exactly when the breaker is most likely to admit a half-open
+ * probe.
+ */
+const CIRCUIT_OPEN_RETRY_AFTER_SECONDS = 30;
+
+/**
+ * Create a 503 Service Unavailable response when the account pool is exhausted
+ * (no account can serve the request). Two distinct causes share the same wire
+ * shape:
+ *
+ * - `pool_exhausted` (default): every account is paused, rate-limited,
+ *   requires-reauth, or otherwise filtered out.
+ * - `circuit_open`: the breaker is refusing the chosen account.
+ *
+ * Reusing the existing 503 + JSON shape keeps every downstream consumer
+ * (Anthropic/OpenAI SDK clients that already treat 503 as "transient, retry
+ * later", the dashboard, the AO fleet reaper) working without a new branch.
+ * The fleet reaper differentiates by reading `error.type` in the body.
+ *
+ * @param accounts - All accounts that were considered but are unavailable
+ * @param kind - Which top-level cause to report. Defaults to `"pool_exhausted"`.
+ * @returns 503 response with the pool-exhausted JSON shape and Retry-After
+ *          header. The `x-better-ccflare-pool-status` header value stays
+ *          `"exhausted"` regardless of `kind` — wire shape unchanged, the
+ *          cause lives in `error.type`.
+ */
+export function createPoolExhaustedResponse(
+	accounts: Account[],
+	kind: PoolExhaustionKind = "pool_exhausted",
+): Response {
 	const now = Date.now();
 
-	// Build account info list
+	// Build account info list. `circuit_open` overrides every per-account reason
+	// because the breaker was the gate — the account's own state (paused,
+	// rate-limited, etc.) is irrelevant when the breaker is refusing it.
 	const accountInfos = accounts.map((account) => {
-		const reason = account.requires_reauth
-			? "requires_reauth"
-			: account.paused
-				? "paused"
-				: account.rate_limited_until && account.rate_limited_until > now
-					? "rate_limited"
-					: "unavailable";
+		const reason: PoolExhaustionAccountReason =
+			kind === "circuit_open"
+				? "circuit_open"
+				: account.requires_reauth
+					? "requires_reauth"
+					: account.paused
+						? "paused"
+						: account.rate_limited_until && account.rate_limited_until > now
+							? "rate_limited"
+							: "unavailable";
 
+		// For circuit_open, available_at is null: the breaker decides when to
+		// re-admit, not the account's rate-limit window.
 		const availableAt =
-			account.rate_limited_until && account.rate_limited_until > now
-				? new Date(account.rate_limited_until).toISOString()
-				: null;
+			kind === "circuit_open"
+				? null
+				: account.rate_limited_until && account.rate_limited_until > now
+					? new Date(account.rate_limited_until).toISOString()
+					: null;
 
 		return {
 			name: account.name,
@@ -1378,11 +1440,15 @@ export function createPoolExhaustedResponse(accounts: Account[]): Response {
 		};
 	});
 
-	// Calculate next_available_at from earliest rate_limited_until
-	const rateLimitedAccounts = accounts.filter(
-		(account): account is Account & { rate_limited_until: number } =>
-			!!account.rate_limited_until && account.rate_limited_until > now,
-	);
+	// Calculate next_available_at from earliest rate_limited_until.
+	// For circuit_open there are no rate-limited windows, so this is null.
+	const rateLimitedAccounts =
+		kind === "circuit_open"
+			? []
+			: accounts.filter(
+					(account): account is Account & { rate_limited_until: number } =>
+						!!account.rate_limited_until && account.rate_limited_until > now,
+				);
 	const earliestRateLimitedUntil =
 		rateLimitedAccounts.length > 0
 			? Math.min(
@@ -1394,17 +1460,24 @@ export function createPoolExhaustedResponse(accounts: Account[]): Response {
 			? new Date(earliestRateLimitedUntil).toISOString()
 			: null;
 
-	// Calculate Retry-After header (seconds) directly from numeric min
+	// Retry-After (seconds):
+	//   - pool_exhausted: derived from the earliest rate_limited_until so the
+	//     client retries when the cooldown actually ends; fall back to 60s.
+	//   - circuit_open: 30s — matches the breaker's OPEN_COOLDOWN_MS so a
+	//     polite client retries exactly when a half-open probe is most likely
+	//     to be admitted.
 	const retryAfterSeconds =
-		earliestRateLimitedUntil !== null
-			? Math.max(1, Math.round((earliestRateLimitedUntil - now) / 1000))
-			: 60; // Default 60s if no cooldown info
+		kind === "circuit_open"
+			? CIRCUIT_OPEN_RETRY_AFTER_SECONDS
+			: earliestRateLimitedUntil !== null
+				? Math.max(1, Math.round((earliestRateLimitedUntil - now) / 1000))
+				: 60;
 
 	return new Response(
 		JSON.stringify({
 			type: "error",
 			error: {
-				type: "pool_exhausted",
+				type: kind,
 				message: ERROR_MESSAGES.POOL_EXHAUSTED,
 				next_available_at: nextAvailableAt,
 				accounts: accountInfos,
@@ -1415,6 +1488,9 @@ export function createPoolExhaustedResponse(accounts: Account[]): Response {
 			headers: {
 				"Content-Type": "application/json",
 				"Retry-After": String(retryAfterSeconds),
+				// Wire shape stays identical regardless of kind — the cause lives
+				// in `error.type`. Downstream consumers that need to differentiate
+				// (fleet reaper, capacity-state consumers) read the JSON body.
 				"x-better-ccflare-pool-status": "exhausted",
 			},
 		},
