@@ -539,7 +539,7 @@ describe("createStreamAdmission — circuit-breaker drain", () => {
 		provider: string,
 		accountId: string,
 	): void {
-		breaker.recordFailure({ provider, accountId }, "overload_529", 0);
+		breaker.recordFailure({ provider, accountId }, "upstream_529_overloaded_with_reset", 0);
 	}
 
 	it("a queued waiter is drained with circuit_open when the circuit opens while it waits", async () => {
