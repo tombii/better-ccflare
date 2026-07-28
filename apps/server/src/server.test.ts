@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it, mock } from "bun:test";
 import {
 	bootstrapMinimaxUsagePolling,
@@ -403,5 +405,116 @@ describe("trackStreamForShutdown", () => {
 		await settled;
 		expect(cancelResolved).toBe(true);
 		reader.cancel().catch(() => {});
+	});
+});
+
+// Structural guard: assert that startServer() actually invokes
+// bootstrapMinimaxUsagePolling in its source. This is the negative control
+// for PR #347 — the previous unit-test guard only failed when the EXPORTED
+// HELPER was removed, not when the call site was deleted. The realistic
+// regression is someone removing the inline bootstrap block in startServer()
+// while the helper still sits in the module unused. With this guard, the
+// test goes RED the moment the call site disappears, even if the helper
+// stays intact.
+//
+// Why this is structural and not behavioral: startServer() is a full
+// process lifecycle (DB init, network bind, signal handlers, dashboard
+// wiring, TLS). It is not realistic to invoke it in a unit test without
+// dragging in the whole runtime, so this test reads the source file off
+// disk and verifies the invocation is present inside startServer()'s body.
+// Brittle to renames of either `startServer` or `bootstrapMinimaxUsagePolling`,
+// which is by design — if either name changes, the engineer must update
+// this guard and confirm the wiring is still in place.
+describe("startServer() wiring guards", () => {
+	function readStartServerBody(): string {
+		const src = readFileSync(join(import.meta.dir, "server.ts"), "utf8");
+		const match = src.match(
+			/export\s+default\s+async\s+function\s+startServer\b/,
+		);
+		if (!match || match.index === undefined) {
+			throw new Error(
+				"startServer default export not found in server.ts — update the wiring guard string",
+			);
+		}
+		// startServer's signature is `startServer(options?: { ... }) {`.
+		// Skip past the parameter list by tracking paren depth so we don't
+		// latch onto the inline type-literal `{` that opens `options?:`.
+		let parenDepth = 0;
+		let pastParens = -1;
+		for (let i = match.index; i < src.length; i++) {
+			const ch = src[i];
+			if (ch === "(") parenDepth++;
+			else if (ch === ")") {
+				parenDepth--;
+				if (parenDepth === 0) {
+					pastParens = i;
+					break;
+				}
+			}
+		}
+		if (pastParens < 0) {
+			throw new Error("startServer parameter list never closed");
+		}
+		const openIdx = src.indexOf("{", pastParens);
+		if (openIdx < 0) {
+			throw new Error("startServer body opening brace not found");
+		}
+		// Balance braces to find the matching close. Template strings,
+		// regex literals, and comments can carry unbalanced braces, but
+		// server.ts is well-formed enough that a depth counter is reliable
+		// for this function — it does not contain raw `{` inside a template
+		// that would fool the simple counter.
+		let depth = 0;
+		for (let i = openIdx; i < src.length; i++) {
+			const ch = src[i];
+			if (ch === "{") depth++;
+			else if (ch === "}") {
+				depth--;
+				if (depth === 0) {
+					return src.slice(openIdx, i + 1);
+				}
+			}
+		}
+		throw new Error("startServer body closing brace not found");
+	}
+
+	// The regression we are guarding: PR #347 shipped a working fetcher and
+	// a working helper, but the inline bootstrap block in startServer() —
+	// the actual production wiring — was the thing missing test coverage.
+	// Removing that block (lines ~1670-1688 in server.ts) and keeping the
+	// helper exported would not have failed the unit tests in this file
+	// before this guard landed. With this guard, deleting that block while
+	// leaving the helper intact goes RED.
+	it("invokes bootstrapMinimaxUsagePolling inside startServer()", () => {
+		const body = readStartServerBody();
+		// Match an actual call: `<identifier> (`. Just matching the bare
+		// identifier would also pass if someone left a stale comment naming
+		// the helper, so we require the opening paren.
+		expect(body).toMatch(/bootstrapMinimaxUsagePolling\s*\(/);
+	});
+
+	it("passes accounts, usageCache, and the configured poll interval to bootstrapMinimaxUsagePolling", () => {
+		const body = readStartServerBody();
+		// Check that the call site carries the same arguments the surrounding
+		// zai/kilo blocks pass. This catches the regression where someone
+		// replaces the full call with a stub like `bootstrapMinimaxUsagePolling()`
+		// that compiles and lints but never actually wires the cache.
+		const call = body.match(/bootstrapMinimaxUsagePolling\s*\(([\s\S]*?)\)/);
+		expect(call).not.toBeNull();
+		const args = call?.[1] ?? "";
+		// Trim and split on top-level commas (no nested parens expected
+		// inside the 3-arg call, but be conservative).
+		const argList = args
+			.split(",")
+			.map((s) => s.trim())
+			.filter(Boolean);
+		expect(argList.length).toBe(3);
+		// First two arguments must be the live runtime objects, not the
+		// string literals "accounts" / "usageCache".
+		expect(argList[0]).toBe("accounts");
+		expect(argList[1]).toBe("usageCache");
+		// Third argument must flow through the configured poll interval —
+		// i.e. not a hardcoded numeric literal.
+		expect(argList[2]).not.toMatch(/^\d+$/);
 	});
 });
