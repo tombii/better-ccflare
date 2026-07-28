@@ -1,7 +1,8 @@
 import { describe, expect, it, mock } from "bun:test";
 import {
-	type UsageCacheRegistrar,
+	bootstrapMinimaxUsagePolling,
 	registerMinimaxUsagePolling,
+	type UsageCacheRegistrar,
 	supportsRefreshBackedUsagePolling,
 } from "./server";
 
@@ -130,6 +131,159 @@ describe("registerMinimaxUsagePolling", () => {
 
 		expect(result).toBe(false);
 		expect(startPolling).toHaveBeenCalledTimes(0);
+	});
+});
+
+describe("bootstrapMinimaxUsagePolling", () => {
+	function makeAccount(
+		overrides: Partial<{
+			id: string;
+			name: string;
+			provider: string;
+			api_key: string | null;
+		}> = {},
+	) {
+		return {
+			id: "acc-1",
+			name: "acc-1",
+			provider: "minimax",
+			api_key: "test-key",
+			...overrides,
+		} as unknown as Parameters<typeof bootstrapMinimaxUsagePolling>[0][number];
+	}
+
+	function makeRegistrar() {
+		const startPolling = mock(
+			(
+				_accountId: string,
+				_tokenProvider: () => Promise<string>,
+				_provider: string,
+				_intervalMs: number,
+			) => {},
+		);
+		return {
+			registrar: { startPolling } as unknown as UsageCacheRegistrar,
+			startPolling,
+		};
+	}
+
+	// This is the regression test for PR #347. The inline bootstrap block in
+	// startServer() (around line 1637 pre-refactor) filtered `accounts` for
+	// provider === "minimax" and called `registerMinimaxUsagePolling` for each
+	// match. The original PR landed a working fetcher + helper but never
+	// exercised the wiring path that actually invokes it at startup — mirroring
+	// PR #346's "shipped a working fetcher that nothing called" bug. This test
+	// pins the wiring: given a realistic mixed-provider account list (the same
+	// shape `startServer()` passes), it must register polling for Minimax
+	// accounts and nothing else. If the inline bootstrap block in startServer()
+	// is removed (and this helper is also removed, since nothing else imports
+	// it), the import below fails and every test in this file goes RED.
+
+	it("registers polling for Minimax accounts and ignores other providers", () => {
+		const { registrar, startPolling } = makeRegistrar();
+		const accounts = [
+			makeAccount({ id: "zai-1", name: "zai-1", provider: "zai" }),
+			makeAccount({
+				id: "minimax-1",
+				name: "minimax-1",
+				provider: "minimax",
+				api_key: "minimax-key-1",
+			}),
+			makeAccount({ id: "nanogpt-1", name: "nanogpt-1", provider: "nanogpt" }),
+			makeAccount({
+				id: "minimax-2",
+				name: "minimax-2",
+				provider: "minimax",
+				api_key: "minimax-key-2",
+			}),
+			makeAccount({
+				id: "anthropic-1",
+				name: "anthropic-1",
+				provider: "anthropic",
+			}),
+		];
+
+		const registered = bootstrapMinimaxUsagePolling(accounts, registrar, 30_000);
+
+		// Only the two Minimax accounts should appear in the registered list,
+		// proving the filter on `provider === "minimax"` is actually applied
+		// to the full account list, not just whatever the helper receives.
+		expect(registered).toEqual(["minimax-1", "minimax-2"]);
+		// And the registrar must have been driven exactly twice — once per
+		// Minimax account, never for the zai/nanogpt/anthropic rows that are
+		// sitting in the same array.
+		expect(startPolling).toHaveBeenCalledTimes(2);
+		const calledIds = startPolling.mock.calls.map((c) => c[0]);
+		expect(calledIds).toEqual(["minimax-1", "minimax-2"]);
+	});
+
+	it("does not register polling when the account list has no Minimax accounts", () => {
+		const { registrar, startPolling } = makeRegistrar();
+		const accounts = [
+			makeAccount({ id: "zai-1", provider: "zai" }),
+			makeAccount({ id: "nanogpt-1", provider: "nanogpt" }),
+			makeAccount({ id: "anthropic-1", provider: "anthropic" }),
+		];
+
+		const registered = bootstrapMinimaxUsagePolling(accounts, registrar, 30_000);
+
+		expect(registered).toEqual([]);
+		expect(startPolling).toHaveBeenCalledTimes(0);
+	});
+
+	it("registers polling only for Minimax accounts with API keys and skips the rest", () => {
+		const { registrar, startPolling } = makeRegistrar();
+		const accounts = [
+			makeAccount({
+				id: "minimax-no-key",
+				name: "no-key",
+				provider: "minimax",
+				api_key: null,
+			}),
+			makeAccount({
+				id: "minimax-empty-key",
+				name: "empty-key",
+				provider: "minimax",
+				api_key: "",
+			}),
+			makeAccount({
+				id: "minimax-good",
+				name: "good",
+				provider: "minimax",
+				api_key: "real-key",
+			}),
+		];
+
+		const registered = bootstrapMinimaxUsagePolling(accounts, registrar, 30_000);
+
+		expect(registered).toEqual(["minimax-good"]);
+		expect(startPolling).toHaveBeenCalledTimes(1);
+		expect(startPolling.mock.calls[0]?.[0]).toBe("minimax-good");
+	});
+
+	it("forwards the configured interval to every registered Minimax account", () => {
+		const { registrar, startPolling } = makeRegistrar();
+		const accounts = [
+			makeAccount({
+				id: "minimax-a",
+				name: "a",
+				provider: "minimax",
+				api_key: "k1",
+			}),
+			makeAccount({
+				id: "minimax-b",
+				name: "b",
+				provider: "minimax",
+				api_key: "k2",
+			}),
+		];
+
+		bootstrapMinimaxUsagePolling(accounts, registrar, 12_345);
+
+		expect(startPolling).toHaveBeenCalledTimes(2);
+		for (const call of startPolling.mock.calls) {
+			expect(call[3]).toBe(12_345);
+		}
 	});
 });
 

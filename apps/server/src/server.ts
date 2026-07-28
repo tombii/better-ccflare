@@ -171,6 +171,39 @@ export function registerMinimaxUsagePolling(
 	return true;
 }
 
+/**
+ * Run the Minimax usage-polling bootstrap over a list of accounts. This is the
+ * shape of the wiring block `startServer()` runs for every Minimax account at
+ * startup — filter for provider === "minimax", then delegate each one to
+ * {@link registerMinimaxUsagePolling} which decides whether polling should
+ * actually start.
+ *
+ * Returns the account IDs that were registered (i.e. had a usable API key).
+ * Returning the registered IDs rather than a bare count lets callers log the
+ * affected accounts and gives tests a stable handle to assert against.
+ *
+ * Extracted from the inline bootstrap block so a regression test can exercise
+ * the exact wiring path (filter → forEach → registerMinimaxUsagePolling) with
+ * a mixed-provider account list. If the inline block in `startServer()` is
+ * removed but this helper still exists and is unit-tested in isolation, the
+ * startup-time wiring has no test coverage — that is the gap this function
+ * exists to close. Keep the bootstrap block in `startServer()` calling this.
+ */
+export function bootstrapMinimaxUsagePolling(
+	accounts: readonly Account[],
+	usageCache: UsageCacheRegistrar,
+	intervalMs: number,
+): string[] {
+	const minimaxAccounts = accounts.filter((a) => a.provider === "minimax");
+	const registered: string[] = [];
+	for (const account of minimaxAccounts) {
+		if (registerMinimaxUsagePolling(account, usageCache, intervalMs)) {
+			registered.push(account.id);
+		}
+	}
+	return registered;
+}
+
 // Helper function to resolve dashboard assets with fallback
 function resolveDashboardAsset(assetPath: string): string | null {
 	try {
@@ -1635,31 +1668,20 @@ Available endpoints:
 	}
 
 	// Start usage polling for Minimax accounts (Token Plan `remains` endpoint)
-	const minimaxAccounts = accounts.filter((a) => a.provider === "minimax");
-	if (minimaxAccounts.length > 0) {
+	const registeredMinimaxAccountIds = bootstrapMinimaxUsagePolling(
+		accounts,
+		usageCache,
+		config.getUsagePollIntervalMs(),
+	);
+	if (registeredMinimaxAccountIds.length > 0) {
 		log.info(
-			`Found ${minimaxAccounts.length} Minimax accounts, starting usage polling...`,
+			`Found ${registeredMinimaxAccountIds.length} Minimax accounts, starting usage polling...`,
 		);
-		for (const account of minimaxAccounts) {
-			log.debug(`Processing Minimax account: ${account.name}`, {
-				accountId: account.id,
-				hasApiKey: !!account.api_key,
-				paused: account.paused,
-			});
-
-			if (
-				registerMinimaxUsagePolling(
-					account,
-					usageCache,
-					config.getUsagePollIntervalMs(),
-				)
-			) {
-				log.info(`Started usage polling for Minimax account ${account.name}`);
-			} else {
-				log.warn(
-					`Minimax account ${account.name} has no API key, skipping usage polling`,
-				);
-			}
+		for (const accountId of registeredMinimaxAccountIds) {
+			const account = accounts.find((a) => a.id === accountId);
+			log.info(
+				`Started usage polling for Minimax account ${account?.name ?? accountId}`,
+			);
 		}
 	} else {
 		log.info(`No Minimax accounts found, usage polling will not start`);
