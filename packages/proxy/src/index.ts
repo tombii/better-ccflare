@@ -9,6 +9,11 @@ export {
 	listProviders,
 	registerProvider,
 } from "@better-ccflare/providers";
+export {
+	resetDefaultCircuitBreaker as resetDefaultCircuitBreakerProxy,
+	getDefaultCircuitBreaker as getDefaultCircuitBreakerProxy,
+	recordSuccess as recordCircuitSuccess,
+} from "./circuit-breaker";
 export { AutoRefreshScheduler } from "./auto-refresh-scheduler";
 export { CacheKeepaliveScheduler } from "./cache-keepalive-scheduler";
 export {

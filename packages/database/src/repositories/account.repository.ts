@@ -20,6 +20,18 @@ export interface MarkAccountRateLimitedResult {
 	applied: boolean;
 }
 
+/**
+ * Identifiers for an account whose `rate_limited_until` was just cleared
+ * by `AccountRepository.clearExpiredRateLimits`. Returned so the caller
+ * can notify the circuit breaker (`recordSuccess`) — see the active-clear
+ * wiring in `apps/server` and the integration design §3 "active clear"
+ * path.
+ */
+export interface ClearedRateLimit {
+	id: string;
+	provider: string;
+}
+
 export class AccountRepository extends BaseRepository<Account> {
 	async findAll(): Promise<Account[]> {
 		const rows = await this.query<AccountRow>(`
@@ -321,15 +333,35 @@ export class AccountRepository extends BaseRepository<Account> {
 	}
 
 	/**
-	 * Clear expired rate_limited_until values from all accounts
+	 * Clear expired rate_limited_until values from all accounts.
+	 *
+	 * Returns the `(id, provider)` pairs that had their bench cleared so the
+	 * caller can feed the circuit breaker (the active-clear path from the
+	 * circuit-breaker integration design §3). The repository stays
+	 * framework-agnostic: it does NOT import the breaker module — that is
+	 * the proxy/server layer's job.
+	 *
 	 * @param now The current timestamp to compare against
-	 * @returns Number of accounts that had their rate_limited_until cleared
+	 * @returns The accounts whose `rate_limited_until` was cleared
 	 */
-	async clearExpiredRateLimits(now: number): Promise<number> {
-		return this.runWithChanges(
+	async clearExpiredRateLimits(now: number): Promise<ClearedRateLimit[]> {
+		// The repository layer doesn't use RETURNING (per the adapter note in
+		// bun-sql-adapter.ts:159 — no RETURNING clauses). Select first, then
+		// update. The two queries can race against a fresh cooldown-write
+		// happening concurrently, but the window is microseconds and the
+		// worst case is one row reported as "cleared" without an actual
+		// write — recordSuccess is idempotent for an already-closed circuit
+		// entry, so the breaker converges correctly.
+		const cleared = await this.query<ClearedRateLimit>(
+			`SELECT id, provider FROM accounts WHERE rate_limited_until <= ?`,
+			[now],
+		);
+		if (cleared.length === 0) return [];
+		await this.runWithChanges(
 			`UPDATE accounts SET rate_limited_until = NULL WHERE rate_limited_until <= ?`,
 			[now],
 		);
+		return cleared;
 	}
 
 	/**

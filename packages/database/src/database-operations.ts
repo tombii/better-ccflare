@@ -29,6 +29,7 @@ import { ensureSchemaPg, runMigrationsPg } from "./migrations-pg";
 import { resolveDbPath } from "./paths";
 import {
 	AccountRepository,
+	type ClearedRateLimit,
 	type MarkAccountRateLimitedResult,
 } from "./repositories/account.repository";
 import { AgentPreferenceRepository } from "./repositories/agent-preference.repository";
@@ -814,11 +815,15 @@ OAuth tokens will need to be re-authenticated.
 	}
 
 	/**
-	 * Clear expired rate_limited_until values from all accounts
+	 * Clear expired rate_limited_until values from all accounts and return
+	 * the `(id, provider)` pairs that were cleared. The caller (server.ts)
+	 * feeds each cleared entry to the circuit breaker via `recordSuccess` —
+	 * the active-clear path from the circuit-breaker integration design §3.
+	 *
 	 * @param now The current timestamp to compare against
-	 * @returns Number of accounts that had their rate_limited_until cleared
+	 * @returns The accounts whose `rate_limited_until` was cleared
 	 */
-	async clearExpiredRateLimits(now: number): Promise<number> {
+	async clearExpiredRateLimits(now: number): Promise<ClearedRateLimit[]> {
 		return withDatabaseRetry(
 			() => this.accounts.clearExpiredRateLimits(now),
 			this.retryConfig,

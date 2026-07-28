@@ -8,6 +8,7 @@ import {
 } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import type { Account, RateLimitReason } from "@better-ccflare/types";
+import { getDefaultCircuitBreaker, type CircuitBreaker } from "../circuit-breaker";
 import type { ProxyContext } from "./proxy-types";
 
 const log = new Logger("RateLimitCooldown");
@@ -188,6 +189,10 @@ export function resetRateLimitProbeGatesForTests(): void {
  *   RateLimitError (429 path only). `reason` overrides the auto-derived audit reason and
  *   determines which cooldown strategy applies.
  * @param ctx - The proxy context (provides asyncWriter + dbOps).
+ * @param breaker - Circuit breaker fed via `recordFailure` on every non-suppressed cooldown.
+ *   Defaults to `getDefaultCircuitBreaker()` (the process-wide singleton). Tests pass a
+ *   deterministic instance to assert circuit state. The `recordFailure` exclusion predicate
+ *   short-circuits model-scoped reasons so client-side graceful model fallback is preserved.
  */
 export function applyRateLimitCooldown(
 	account: Account,
@@ -197,6 +202,7 @@ export function applyRateLimitCooldown(
 		reason?: RateLimitReason;
 	},
 	ctx: ProxyContext,
+	breaker: CircuitBreaker = getDefaultCircuitBreaker(),
 ): void {
 	const now = Date.now();
 	const reason: RateLimitReason =
@@ -257,6 +263,20 @@ export function applyRateLimitCooldown(
 		);
 		return;
 	}
+
+	// Feed the circuit breaker. The exclusion predicate in
+	// `CircuitBreaker.recordFailure` short-circuits model-scoped reasons
+	// (`model_fallback_429`, `out_of_credits`, `extra_usage_exhausted`) so
+	// the headline constraint — client-side graceful model fallback must
+	// not be defeated by a breaker open — is honored here without any
+	// per-site mapping. Failures suppressed by the forward guard above
+	// never reach this call, which is what prevents double-counting when a
+	// 529 arrives mid-429-bench.
+	breaker.recordFailure(
+		{ provider: account.provider, accountId: account.id },
+		reason,
+		now,
+	);
 
 	// In-memory update so the rest of this request sees consistent state.
 	account.rate_limited_until = cooldownUntil;

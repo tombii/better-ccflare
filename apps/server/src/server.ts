@@ -55,6 +55,7 @@ import {
 	initModelCatalogRefresh,
 	initProxy,
 	type ProxyContext,
+	recordCircuitSuccess,
 	refreshModelCatalog,
 	registerCodexUsageRefresher,
 	registerPollingRestarter,
@@ -274,11 +275,18 @@ async function runStartupMaintenance(
 		log.error(`OAuth session cleanup error: ${err}`);
 	}
 	try {
-		// Clear expired rate_limited_until values
+		// Clear expired rate_limited_until values. Each cleared row is fed to
+		// the circuit breaker via recordSuccess — the active-clear path from
+		// the circuit-breaker integration design §3. Without this, the breaker
+		// would keep an account failed-fast AFTER the upstream recovered
+		// (Risk 2, HIGH).
 		const now = Date.now();
-		const clearedCount = await dbOps.clearExpiredRateLimits(now);
-		if (clearedCount > 0) {
-			log.info(`Cleared ${clearedCount} expired rate_limited_until entries`);
+		const clearedRows = await dbOps.clearExpiredRateLimits(now);
+		for (const row of clearedRows) {
+			recordCircuitSuccess({ provider: row.provider, accountId: row.id }, now);
+		}
+		if (clearedRows.length > 0) {
+			log.info(`Cleared ${clearedRows.length} expired rate_limited_until entries`);
 		} else {
 			log.info("No expired rate_limited_until entries found to clear");
 		}
@@ -793,10 +801,16 @@ export default async function startServer(options?: {
 		callback: async () => {
 			try {
 				const now = Date.now();
-				const clearedCount = await dbOps.clearExpiredRateLimits(now);
-				if (clearedCount > 0) {
+				const clearedRows = await dbOps.clearExpiredRateLimits(now);
+				for (const row of clearedRows) {
+					recordCircuitSuccess(
+						{ provider: row.provider, accountId: row.id },
+						now,
+					);
+				}
+				if (clearedRows.length > 0) {
 					log.debug(
-						`Cleared ${clearedCount} expired rate_limited_until entries`,
+						`Cleared ${clearedRows.length} expired rate_limited_until entries`,
 					);
 				}
 			} catch (err) {
