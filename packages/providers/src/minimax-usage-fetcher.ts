@@ -18,6 +18,38 @@ export const MINIMAX_TOKEN_PLAN_REMAINS_ENDPOINT =
 	"https://www.minimax.io/v1/token_plan/remains";
 
 /**
+ * Positive allowlist of MiniMax `base_resp.status_code` values that mean
+ * "this response is healthy, parse it". Anything outside this set is treated
+ * as a non-success and the parser returns null.
+ *
+ * Pinned to `[0]` today. If MiniMax introduces another success code, extend
+ * this set explicitly so the change shows up in code review (review finding F5).
+ * Using a negative `statusCode !== 0` test would silently misread a future
+ * success code (e.g. `5`) as a failure and the affected account would show
+ * `unknown` utilization with only a log line to explain it.
+ */
+export const MINIMAX_TOKEN_PLAN_SUCCESS_STATUS_CODES: readonly number[] = [0];
+
+/**
+ * `base_resp.status_code` values MiniMax is documented (or empirically
+ * observed) to return on real failures. Distinguishing "known failure" from
+ * "unrecognized non-success" lets the parser log differently for each — a
+ * known failure is a hard error worth surfacing, an unrecognized non-success
+ * may simply be a new code we have not classified yet (review finding F5).
+ *
+ * Today this contains the codes the integration test suite has seen:
+ *   - 1001: quota exceeded
+ *   - 1004: token / API-key auth failure (200 with base_resp.status_code=1004)
+ *
+ * A 200-with-`base_resp.status_code=1004` response is intentionally NOT
+ * collapsed into the HTTP-error path: MiniMax serves it with HTTP 200 and
+ * the auth failure is only visible in `base_resp`. The parser must read the
+ * body either way.
+ */
+export const MINIMAX_TOKEN_PLAN_KNOWN_FAILURE_STATUS_CODES: ReadonlySet<number> =
+	new Set<number>([1001, 1004]);
+
+/**
  * Timeout for the metadata request and the body read. A stalled MiniMax
  * response previously kept the account's in-flight polling slot occupied
  * forever (PR #346 review finding #2). Mirrors the
@@ -173,10 +205,29 @@ export function parseMinimaxTokenPlanResponse(
 	const raw = body as MinimaxRawResponse;
 
 	const statusCode = raw.base_resp?.status_code;
-	if (typeof statusCode === "number" && statusCode !== 0) {
-		log.warn(
-			`Minimax usage returned base_resp.status_code=${statusCode}${raw.base_resp?.status_msg ? ` ${raw.base_resp.status_msg}` : ""}`,
-		);
+	if (
+		typeof statusCode === "number" &&
+		!MINIMAX_TOKEN_PLAN_SUCCESS_STATUS_CODES.includes(statusCode)
+	) {
+		// Distinguish "known failure" from "unrecognized non-success" so an
+		// operator tailing logs can tell the two apart (review finding F5).
+		// - Known failure: MiniMax has been observed to return this code on a
+		//   real error (auth, quota, ...). Surface it loudly.
+		// - Unrecognized non-success: in the success allowlist or the known
+		//   failure set, just not here. Today this usually means a future
+		//   code we haven't classified; log it differently so the next time
+		//   someone sees a fresh code in production, the WARN framing tells
+		//   them to extend MINIMAX_TOKEN_PLAN_SUCCESS_STATUS_CODES rather
+		//   than mistaking a healthy response for a failure.
+		if (MINIMAX_TOKEN_PLAN_KNOWN_FAILURE_STATUS_CODES.has(statusCode)) {
+			log.warn(
+				`Minimax usage returned known error base_resp.status_code=${statusCode}${raw.base_resp?.status_msg ? ` ${raw.base_resp.status_msg}` : ""}`,
+			);
+		} else {
+			log.warn(
+				`Minimax usage returned unrecognized non-zero base_resp.status_code=${statusCode}; not in success allowlist or known-failure set, treating as null to avoid misreading a future success code`,
+			);
+		}
 		return null;
 	}
 
