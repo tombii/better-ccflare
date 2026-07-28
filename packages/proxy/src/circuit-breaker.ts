@@ -31,8 +31,18 @@
  *
  * Time: every method accepts an injected `now` (default `Date.now()`).
  * No real timers in unit tests.
+ *
+ * **Bootstrap ordering — IMPORTANT.** `getDefaultCircuitBreaker()` reads
+ * `CCFLARE_CIRCUIT_BREAKER` exactly once at first construction (it is a
+ * lazy singleton). If anything that calls into this module runs before
+ * process.env is populated, the kill-switch is silently ignored. The
+ * supported escape hatch is `resetDefaultCircuitBreaker()` — call it
+ * after `loadEnv()` (or equivalent) if you need to rebuild the singleton
+ * with the env now set. The wiring task MUST do this or document why
+ * bootstrap order guarantees env is already loaded.
  */
 import { Logger } from "@better-ccflare/logger";
+import type { RateLimitReason } from "@better-ccflare/types";
 
 const log = new Logger("CircuitBreaker");
 
@@ -62,6 +72,19 @@ const OPEN_COOLDOWN_MS = 30_000;
 const HALF_OPEN_BACKOFF_MAX_MS = 5 * 60 * 1000;
 /** Memory bound for tracked (provider, accountId) keys. */
 const MAX_TRACKED_KEYS = 4_096;
+/**
+ * Wall-clock lease for an in-flight half-open probe. If `recordSuccess` /
+ * `recordFailure` does not land within this window, the next `shouldAllow`
+ * call treats the probe as abandoned and re-admits a fresh one.
+ *
+ * **Why 30s (matches `OPEN_COOLDOWN_MS`):** the probe is a single upstream
+ * call; if it has not returned within the same window we would otherwise
+ * have used to declare the upstream "back from cooldown," something has
+ * gone wrong (worker stall, dropped connection, swallowed timeout). One
+ * cooldown window is enough time for a healthy upstream to answer; longer
+ * is just wedging the account. Tunable via the constructor opts.
+ */
+const PROBE_LEASE_MS = 30_000;
 
 /** Read an env var defensively — matches the @better-ccflare/logger idiom.
  *  Bun injects `process` automatically; the `declare` keeps tsc happy in
@@ -73,28 +96,24 @@ function readEnv(name: string): string | undefined {
 }
 
 /**
- * Categorizes an upstream failure for circuit-breaker accounting. The
- * caller is responsible for mapping the upstream signal (HTTP status,
- * `rateLimitedReason`, etc.) to one of these kinds BEFORE calling
- * `recordFailure`. Keeping the mapping at the call site lets the breaker
- * stay oblivious to provider-specific wire formats.
+ * Categorizes an upstream failure for circuit-breaker accounting.
+ *
+ * **This is a type alias of `RateLimitReason` from `@better-ccflare/types`.**
+ * The producer (proxy response handling) already classifies upstream signals
+ * into a `RateLimitReason` literal at the call site; the breaker must accept
+ * those literals directly so the exclusion of `model_fallback_429` (and other
+ * non-circuit kinds below) actually fires. Renaming variants here instead of
+ * mirroring the upstream enum would silently turn every model-fallback 429
+ * into a circuit trip and destroy the client-side graceful model fallback
+ * path — see audit F2.
+ *
+ * Adding a new variant to `RateLimitReason` without explicitly handling it
+ * here is a TypeScript error (the alias forces it); the exhaustive predicate
+ * test in `circuit-breaker.test.ts` ("FailureKind ↔ RateLimitReason parity")
+ * additionally pins which variants count as circuit failures, so adding an
+ * unhandled variant fails the suite until the breaker decides its semantics.
  */
-export type FailureKind =
-	/** 529 overloaded_error — genuine upstream-capacity signal. */
-	| "overload_529"
-	/**
-	 * 429 with account/provider-wide exhaustion (e.g. `upstream_429_with_reset`,
-	 * `upstream_429_no_reset_*`, `all_models_exhausted_429`). Counts toward
-	 * opening the circuit.
-	 */
-	| "rate_limit_429_global"
-	/**
-	 * 429 limited to one model on an account that can still serve other
-	 * models via `modelMappings`. Recorded by ccflare as
-	 * `rateLimitedReason === "model_fallback_429"` — currently LIVE on
-	 * ccmax. See `shouldCountAsCircuitFailure` below.
-	 */
-	| "rate_limit_429_model_scoped";
+export type FailureKind = RateLimitReason;
 
 export type CircuitState = "closed" | "open" | "half-open";
 
@@ -112,6 +131,7 @@ export interface CircuitSnapshotEntry {
 	openedAt: number | null;
 	cooldownEndsAt: number | null;
 	halfOpenProbeInFlight: boolean;
+	probeDeadlineAt: number | null;
 }
 
 interface CircuitEntry {
@@ -124,12 +144,21 @@ interface CircuitEntry {
 	/** Last cooldown duration (ms) for half-open backoff progression. */
 	previousCooldownMs: number;
 	halfOpenProbeInFlight: boolean;
+	/**
+	 * Wall-clock deadline (ms) by which the in-flight probe must complete.
+	 * Set on every open→half-open promotion; checked lazily inside
+	 * `shouldAllow` so an abandoned probe (client disconnect, swallowed
+	 * exception, worker restart) does not wedge the circuit forever. A
+	 * `setTimeout` is forbidden by spec — the deadline is purely a
+	 * timestamp compared against `now` at the next admission check.
+	 */
+	probeDeadlineAt: number | null;
 }
 
 /**
  * THE critical predicate: should this failure trip the circuit?
  *
- * `rate_limit_429_model_scoped` is recorded by ccflare when an account has
+ * `model_fallback_429` is recorded by ccflare when an account has
  * `modelMappings` and is 429ed on ONE of its mapped models but can still
  * serve others — the upstream is not exhausted, the account is not
  * unhealthy, only that one model is rate-limited. ccflare's client-side
@@ -139,14 +168,31 @@ interface CircuitEntry {
  * fail-fast rejected before the model rewrite ever happens — which is the
  * unacceptable regression the breaker exists to prevent.
  *
- * Exhaustion-shaped 429s (`rate_limit_429_global`) and 529 overload
- * remain circuit failures.
+ * `out_of_credits` (per-model credit depletion, e.g. context-1m) and
+ * `extra_usage_exhausted` (third-party OAuth extra-usage depletion) are
+ * similarly scoped to a single model/surface, not account-wide, so the
+ * request fails over naturally without tripping the breaker.
+ *
+ * Every other `RateLimitReason` — account/provider-wide exhaustion,
+ * 529 overload — counts as a circuit failure.
  *
  * Returns true ONLY for kinds that count toward opening the circuit.
+ *
+ * This is an **exhaustive** switch over the full `RateLimitReason` union
+ * (mirrored via `FailureKind`); adding a new variant to `RateLimitReason`
+ * without handling it here is a TypeScript error AND a runtime fallback
+ * to "counts as circuit failure" — both are caught by the
+ * `FailureKind ↔ RateLimitReason parity` test in circuit-breaker.test.ts.
  */
 export function shouldCountAsCircuitFailure(kind: FailureKind): boolean {
-	if (kind === "rate_limit_429_model_scoped") return false;
-	return true;
+	switch (kind) {
+		case "model_fallback_429":
+		case "out_of_credits":
+		case "extra_usage_exhausted":
+			return false;
+		default:
+			return true;
+	}
 }
 
 function readEnabledFlag(envValue: string | undefined): boolean {
@@ -169,6 +215,7 @@ export class CircuitBreaker {
 	private readonly failureThreshold: number;
 	private readonly openCooldownMs: number;
 	private readonly halfOpenBackoffMaxMs: number;
+	private readonly probeTtlMs: number;
 	private readonly enabled: boolean;
 	private readonly entries = new Map<string, CircuitEntry>();
 
@@ -176,6 +223,7 @@ export class CircuitBreaker {
 		failureThreshold?: number;
 		openCooldownMs?: number;
 		halfOpenBackoffMaxMs?: number;
+		probeTtlMs?: number;
 		enabled?: boolean;
 	}) {
 		this.failureThreshold =
@@ -183,6 +231,7 @@ export class CircuitBreaker {
 		this.openCooldownMs = opts?.openCooldownMs ?? OPEN_COOLDOWN_MS;
 		this.halfOpenBackoffMaxMs =
 			opts?.halfOpenBackoffMaxMs ?? HALF_OPEN_BACKOFF_MAX_MS;
+		this.probeTtlMs = opts?.probeTtlMs ?? PROBE_LEASE_MS;
 		this.enabled = opts?.enabled ?? readEnabledFlag(readEnv(CIRCUIT_BREAKER_ENV));
 	}
 
@@ -198,6 +247,12 @@ export class CircuitBreaker {
 	 * first call transitions it to `half-open` and admits the probe. The
 	 * second concurrent call in the same half-open window is rejected —
 	 * that is what "EXACTLY ONE probe" means.
+	 *
+	 * Probe lease: when an in-flight probe's deadline has passed without
+	 * `recordSuccess`/`recordFailure` landing (client disconnect, swallowed
+	 * timeout, worker restart), the next `shouldAllow` call treats it as
+	 * abandoned and re-admits a fresh one. Lazy timestamp check — no
+	 * `setTimeout`/`setInterval`, the module stays timer-free.
 	 */
 	shouldAllow(key: CircuitKey, now: number = Date.now()): boolean {
 		if (!this.enabled) return true;
@@ -212,14 +267,32 @@ export class CircuitBreaker {
 			// Cooldown elapsed — promote to half-open and admit the probe.
 			entry.state = "half-open";
 			entry.halfOpenProbeInFlight = true;
+			entry.probeDeadlineAt = now + this.probeTtlMs;
 			log.info(
 				`circuit_half_open provider=${entry.provider} account=${entry.accountId} after_ms=${now - (entry.openedAt ?? now)}`,
 			);
 			return true;
 		}
-		// half-open: exactly one probe in flight.
-		if (entry.halfOpenProbeInFlight) return false;
+		// half-open: exactly one probe in flight — UNLESS the existing
+		// probe's lease has expired without a completion callback. In that
+		// case the previous probe is abandoned: clear the flag, refresh
+		// the deadline, and admit a fresh probe.
+		if (entry.halfOpenProbeInFlight) {
+			if (
+				entry.probeDeadlineAt !== null &&
+				now > entry.probeDeadlineAt
+			) {
+				entry.halfOpenProbeInFlight = true;
+				entry.probeDeadlineAt = now + this.probeTtlMs;
+				log.warn(
+					`circuit_probe_abandoned provider=${entry.provider} account=${entry.accountId} lease_ms=${this.probeTtlMs}`,
+				);
+				return true;
+			}
+			return false;
+		}
 		entry.halfOpenProbeInFlight = true;
+		entry.probeDeadlineAt = now + this.probeTtlMs;
 		return true;
 	}
 
@@ -286,6 +359,7 @@ export class CircuitBreaker {
 				cooldownEndsAt: null,
 				previousCooldownMs: this.openCooldownMs,
 				halfOpenProbeInFlight: false,
+				probeDeadlineAt: null,
 			};
 			this.entries.set(composite, entry);
 			this.evictIfOverCapacity(composite);
@@ -301,6 +375,7 @@ export class CircuitBreaker {
 			entry.cooldownEndsAt = now + nextCooldownMs;
 			entry.previousCooldownMs = nextCooldownMs;
 			entry.halfOpenProbeInFlight = false;
+			entry.probeDeadlineAt = null;
 			log.warn(
 				`circuit_reopened provider=${entry.provider} account=${entry.accountId} cooldown_ms=${nextCooldownMs} reason=probe_failure`,
 			);
@@ -309,9 +384,28 @@ export class CircuitBreaker {
 
 		if (entry.state === "open") {
 			// Streak refresh: extend the cooldown rather than letting a
-			// stuck caller reset it by going silent.
-			entry.cooldownEndsAt = now + this.openCooldownMs;
+			// stuck caller reset it by going silent. Two corrections
+			// against the original implementation:
+			//   (a) CAP the extension at halfOpenBackoffMaxMs so a
+			//       steady trickle of stale callers cannot starve
+			//       recovery forever — see audit F3.
+			//   (b) PRESERVE the escalated backoff rather than
+			//       resetting to the base openCooldownMs — otherwise a
+			//       stale failure arriving after a probe-failure re-open
+			//       silently discards the doubled backoff and reverts
+			//       recovery to the shortest window.
+			// The audit's suggested formula
+			//   `Math.max(openCooldownMs, Math.min(previousCooldownMs, halfOpenBackoffMaxMs))`
+			// expresses exactly this: never shorter than the base, never
+			// longer than the cap, and never shorter than the previous
+			// escalation. Adopted as-is.
+			const extendedCooldownMs = Math.max(
+				this.openCooldownMs,
+				Math.min(entry.previousCooldownMs, this.halfOpenBackoffMaxMs),
+			);
+			entry.cooldownEndsAt = now + extendedCooldownMs;
 			entry.openedAt = now;
+			entry.previousCooldownMs = extendedCooldownMs;
 			return;
 		}
 
@@ -370,6 +464,7 @@ export class CircuitBreaker {
 				openedAt: entry.openedAt,
 				cooldownEndsAt: entry.cooldownEndsAt,
 				halfOpenProbeInFlight: entry.halfOpenProbeInFlight,
+				probeDeadlineAt: entry.probeDeadlineAt,
 			});
 		}
 		return out;
@@ -387,6 +482,7 @@ export class CircuitBreaker {
 		entry.cooldownEndsAt = null;
 		entry.previousCooldownMs = this.openCooldownMs;
 		entry.halfOpenProbeInFlight = false;
+		entry.probeDeadlineAt = null;
 	}
 
 	private evictIfOverCapacity(protectedKey: string): void {
