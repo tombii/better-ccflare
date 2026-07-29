@@ -14,6 +14,35 @@ import {
 
 const log = new Logger("ResponseProcessor");
 
+/**
+ * Hands a private copy of `response` to `read`, then disposes of whatever the
+ * reader left behind.
+ *
+ * `clone()` tees the body: the copy is a second stream fed from the same
+ * source, and the tee keeps buffering for whichever branch lags behind. A
+ * reader that returns early — no usage field, wrong content-type, a throw —
+ * leaves its branch open, and the client-facing twin then pays for it in
+ * retained memory and a socket that cannot finish tearing down. Cancelling
+ * disturbs the body, so an already-consumed copy is left alone. See issue #354.
+ */
+async function withDisposableCopy<T>(
+	response: Response,
+	read: (copy: Response) => Promise<T>,
+): Promise<T> {
+	const copy = response.clone() as Response;
+	try {
+		return await read(copy);
+	} finally {
+		if (!copy.bodyUsed) {
+			try {
+				await copy.body?.cancel();
+			} catch {
+				// Already errored or locked elsewhere — nothing left to release.
+			}
+		}
+	}
+}
+
 function isSyntheticCountTokensRequest(
 	ctx: ProxyContext,
 	requestMeta?: { path?: string },
@@ -168,7 +197,9 @@ export function updateAccountMetadata(
 			const parseUsage = ctx.provider.parseUsage.bind(ctx.provider);
 			(async () => {
 				try {
-					const usageInfo = await parseUsage(response.clone() as Response);
+					const usageInfo = await withDisposableCopy(response, (copy) =>
+						parseUsage(copy),
+					);
 					if (usageInfo) {
 						log.debug(
 							`Extracted streaming usage for account ${account.name}: ${JSON.stringify(usageInfo)}`,
@@ -193,8 +224,8 @@ export function updateAccountMetadata(
 			const extractUsageInfo = ctx.provider.extractUsageInfo.bind(ctx.provider);
 			(async () => {
 				try {
-					const usageInfo = await extractUsageInfo(
-						response.clone() as Response,
+					const usageInfo = await withDisposableCopy(response, (copy) =>
+						extractUsageInfo(copy),
 					);
 					if (usageInfo) {
 						log.debug(
