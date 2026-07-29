@@ -13,10 +13,12 @@ export {
 	resetDefaultCircuitBreaker as resetDefaultCircuitBreakerProxy,
 	getDefaultCircuitBreaker as getDefaultCircuitBreakerProxy,
 	recordSuccess as recordCircuitSuccess,
+	forceClose as forceCloseCircuit,
 } from "./circuit-breaker";
 export { AutoRefreshScheduler } from "./auto-refresh-scheduler";
 export { CacheKeepaliveScheduler } from "./cache-keepalive-scheduler";
 export {
+	circuitKeyFor,
 	CircuitBreaker,
 	shouldCountAsCircuitFailure,
 	type CircuitKey,
@@ -24,16 +26,6 @@ export {
 	type CircuitState,
 	type FailureKind,
 } from "./circuit-breaker";
-export {
-	createStreamAdmission,
-	type AccountSnapshot,
-	type AdmissionHandle,
-	type AdmissionRejection,
-	type AdmitResult,
-	type StreamAdmission,
-	type StreamAdmissionOptions,
-	type StreamAdmissionSnapshot,
-} from "./stream-admission";
 export {
 	type CodexUsageRefreshOutcome,
 	checkAllAccountsHealth,

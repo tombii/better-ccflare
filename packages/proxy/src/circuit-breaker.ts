@@ -42,9 +42,24 @@
  * bootstrap order guarantees env is already loaded.
  */
 import { Logger } from "@better-ccflare/logger";
-import type { RateLimitReason } from "@better-ccflare/types";
+import type { Account, RateLimitReason } from "@better-ccflare/types";
 
 const log = new Logger("CircuitBreaker");
+
+/**
+ * Single source of truth for the breaker's `(provider, accountId)` key shape.
+ *
+ * Both the failure site (rate-limit-cooldown.ts:applyRateLimitCooldown) and
+ * the success site (response-processor.ts:processProxyResponse) must reach
+ * the breaker via this helper — a drifted provider string between the two
+ * would silently no-op the entire feature with no error, because the
+ * breaker keys by `makeKey(provider, accountId)` and an unmatched provider
+ * simply creates a separate (or misses an existing) entry. Centralising the
+ * shape here makes the drift structurally impossible.
+ */
+export function circuitKeyFor(account: Account): CircuitKey {
+	return { provider: account.provider, accountId: account.id };
+}
 
 export const CIRCUIT_BREAKER_ENV = "CCFLARE_CIRCUIT_BREAKER";
 
@@ -353,6 +368,46 @@ export class CircuitBreaker {
 	}
 
 	/**
+	 * Force-close a tracked entry: discard its state because the *external*
+	 * penalty the circuit was shadowing has expired — NOT because a
+	 * half-open probe succeeded.
+	 *
+	 * Distinct from `recordSuccess` on purpose: `recordSuccess` is the
+	 * half-open-only close-the-circuit event triggered by an in-flight
+	 * request landing a successful response. `forceClose` is the
+	 * active-clear event: a background job observed that the upstream's
+	 * own rate-limited window (captured in `accounts.rate_limited_until`)
+	 * has elapsed and is clearing the row. The two have different sources
+	 * and different prior-state invariants — conflating them is the bug
+	 * fix A removes.
+	 *
+	 * Semantics:
+	 * - no-op if disabled;
+	 * - return without creating an entry if absent — load-bearing, because
+	 *   `model_fallback_429` writes `rate_limited_until` on accounts the
+	 *   breaker deliberately never tracked, and the active-clear job calls
+	 *   `forceClose` for every cleared row regardless;
+	 * - return early if already `closed` with `failureCount === 0` (no-op,
+	 *   the entry is already in its steady state);
+	 * - otherwise `resetEntry` and log the transition with
+	 *   `reason=cooldown_cleared` and the prior state, so operators can
+	 *   tell active-clear closes apart from probe-success closes in the
+	 *   log stream.
+	 */
+	forceClose(key: CircuitKey, now: number = Date.now()): void {
+		if (!this.enabled) return;
+		const composite = makeKey(key.provider, key.accountId);
+		const entry = this.entries.get(composite);
+		if (!entry) return;
+		if (entry.state === "closed" && entry.failureCount === 0) return;
+		const priorState = entry.state;
+		this.resetEntry(entry);
+		log.info(
+			`circuit_closed provider=${entry.provider} account=${entry.accountId} reason=cooldown_cleared prior_state=${priorState} at=${now}`,
+		);
+	}
+
+	/**
 	 * Record a failure. Failures of kind `rate_limit_429_model_scoped` are
 	 * NOT counted (see `shouldCountAsCircuitFailure`); the breaker stays
 	 * closed because client-side model fallback handles that case.
@@ -552,6 +607,10 @@ export function shouldAllow(key: CircuitKey, now?: number): boolean {
 
 export function recordSuccess(key: CircuitKey, now?: number): void {
 	getDefaultCircuitBreaker().recordSuccess(key, now);
+}
+
+export function forceClose(key: CircuitKey, now?: number): void {
+	getDefaultCircuitBreaker().forceClose(key, now);
 }
 
 export function recordFailure(

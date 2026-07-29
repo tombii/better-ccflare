@@ -3,10 +3,7 @@ import type {
 	BunSqlAdapter,
 	DatabaseOperations,
 } from "@better-ccflare/database";
-import type {
-	CircuitBreaker,
-	StreamAdmission,
-} from "@better-ccflare/proxy";
+import type { CircuitBreaker } from "@better-ccflare/proxy";
 import type { Account } from "./account";
 import type { AlertEvent } from "./alerts";
 import type { RequestMeta } from "./api";
@@ -59,11 +56,6 @@ export interface APIContext {
 	 * field when present.
 	 */
 	circuitBreaker?: CircuitBreaker;
-	/**
-	 * Live stream-admission gate exposed by the proxy path. Optional for
-	 * the same reason as `circuitBreaker`.
-	 */
-	streamAdmission?: StreamAdmission;
 	/**
 	 * Live Anthropic model catalog access, injected by the server entrypoint
 	 * (avoids a direct http-api -> proxy type dependency here). Absent when
