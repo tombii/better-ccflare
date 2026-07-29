@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it, mock } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { Logger, logBus } from "@better-ccflare/logger";
+import type { LogEvent } from "@better-ccflare/types";
 import {
 	bootstrapMinimaxUsagePolling,
 	registerMinimaxUsagePolling,
@@ -136,7 +138,203 @@ describe("registerMinimaxUsagePolling", () => {
 	});
 });
 
+// Greptile #350 P2: when a Minimax account has a null/empty api_key, the
+// caller MUST emit a WARN naming the account, so the operator is told the
+// real reason ("missing credential") and not the misleading "no Minimax
+// accounts found" that the inline bootstrap summary used to print. These
+// tests pin the warning emission AND assert that no API key material
+// (value, prefix, suffix, full string) leaks into any log output — the
+// only account identifier in the message is `account.name` (or `id`).
+describe("registerMinimaxUsagePolling — warns on missing API key (Greptile #350 P2)", () => {
+	let captured: LogEvent[] = [];
+	const handler = (event: LogEvent) => {
+		captured.push(event);
+	};
+
+	beforeEach(() => {
+		captured = [];
+		logBus.on("log", handler);
+	});
+
+	afterEach(() => {
+		logBus.off("log", handler);
+	});
+
+	function makeAccount(
+		overrides: Partial<{
+			id: string;
+			name: string;
+			provider: string;
+			api_key: string | null;
+		}> = {},
+	) {
+		return {
+			id: "acc-1",
+			name: "minimax-account-1",
+			provider: "minimax",
+			api_key: "test-key",
+			...overrides,
+		} as unknown as Parameters<typeof registerMinimaxUsagePolling>[0];
+	}
+
+	function makeRegistrar() {
+		const startPolling = mock(
+			(
+				_accountId: string,
+				_tokenProvider: () => Promise<string>,
+				_provider: string,
+				_intervalMs: number,
+			) => {},
+		);
+		return {
+			registrar: { startPolling } as unknown as UsageCacheRegistrar,
+			startPolling,
+		};
+	}
+
+	function findWarn(messages: string[]): string | undefined {
+		return captured
+			.filter((e) => e.level === "WARN")
+			.map((e) => e.msg)
+			.find((m) => messages.some((needle) => m.includes(needle)));
+	}
+
+	it("emits a WARN naming the account when the API key is null", () => {
+		const { registrar } = makeRegistrar();
+		const logger = new Logger("MinimaxPollingTest");
+		const result = registerMinimaxUsagePolling(
+			makeAccount({ name: "primary", api_key: null }),
+			registrar,
+			30_000,
+			logger,
+		);
+
+		expect(result).toBe(false);
+		const warn = findWarn(["primary", "no API key"]);
+		expect(warn).toBeDefined();
+		expect(warn).toMatch(/Minimax account primary has no API key/);
+	});
+
+	it("emits a WARN naming the account when the API key is an empty string", () => {
+		const { registrar } = makeRegistrar();
+		const logger = new Logger("MinimaxPollingTest");
+		const result = registerMinimaxUsagePolling(
+			makeAccount({ name: "secondary", api_key: "" }),
+			registrar,
+			30_000,
+			logger,
+		);
+
+		expect(result).toBe(false);
+		const warn = findWarn(["secondary", "no API key"]);
+		expect(warn).toBeDefined();
+		expect(warn).toMatch(/Minimax account secondary has no API key/);
+	});
+
+	it("does NOT emit any WARN when a Minimax account has a usable API key", () => {
+		const { registrar } = makeRegistrar();
+		const logger = new Logger("MinimaxPollingTest");
+		const result = registerMinimaxUsagePolling(
+			makeAccount({ api_key: "real-key" }),
+			registrar,
+			30_000,
+			logger,
+		);
+
+		expect(result).toBe(true);
+		const warnings = captured.filter((e) => e.level === "WARN");
+		expect(warnings.length).toBe(0);
+	});
+
+	it("does NOT emit any WARN when a non-Minimax account is filtered out", () => {
+		const { registrar } = makeRegistrar();
+		const logger = new Logger("MinimaxPollingTest");
+		const result = registerMinimaxUsagePolling(
+			makeAccount({ name: "zai-row", provider: "zai", api_key: "k" }),
+			registrar,
+			30_000,
+			logger,
+		);
+
+		expect(result).toBe(false);
+		const warnings = captured.filter((e) => e.level === "WARN");
+		expect(warnings.length).toBe(0);
+	});
+
+	it("never includes the API key value (or any substring) in any log line", () => {
+		const { registrar } = makeRegistrar();
+		const logger = new Logger("MinimaxPollingTest");
+		// Use a distinctive marker so a substring leak would be unambiguous.
+		const MARKER = "SECRET-MARKER-7c1a9f";
+		registerMinimaxUsagePolling(
+			makeAccount({ name: "leak-check", api_key: null }),
+			registrar,
+			30_000,
+			logger,
+		);
+		// Re-register with a marker in the key — must NOT appear in any log.
+		registerMinimaxUsagePolling(
+			makeAccount({ id: "acc-2", name: "with-key", api_key: MARKER }),
+			registrar,
+			30_000,
+			logger,
+		);
+
+		const allMessages = captured.map((e) => e.msg).join("\n");
+		const allData = JSON.stringify(captured.map((e) => e.data ?? null));
+		expect(allMessages).not.toContain(MARKER);
+		expect(allData).not.toContain(MARKER);
+	});
+
+	it("falls back to account.id when account.name is null/undefined", () => {
+		const { registrar } = makeRegistrar();
+		const logger = new Logger("MinimaxPollingTest");
+		const result = registerMinimaxUsagePolling(
+			makeAccount({
+				id: "id-only-42",
+				name: undefined as unknown as string,
+				api_key: null,
+			}),
+			registrar,
+			30_000,
+			logger,
+		);
+
+		expect(result).toBe(false);
+		const warn = findWarn(["id-only-42", "no API key"]);
+		expect(warn).toBeDefined();
+		expect(warn).toMatch(/Minimax account id-only-42 has no API key/);
+	});
+
+	it("remains a no-op when no logger is provided (back-compat for existing callers)", () => {
+		const { registrar, startPolling } = makeRegistrar();
+		const result = registerMinimaxUsagePolling(
+			makeAccount({ api_key: null }),
+			registrar,
+			30_000,
+		);
+
+		expect(result).toBe(false);
+		expect(startPolling).toHaveBeenCalledTimes(0);
+		// No crash, no warning emitted — caller's responsibility to surface.
+	});
+});
+
 describe("bootstrapMinimaxUsagePolling", () => {
+	let captured: LogEvent[] = [];
+	const handler = (event: LogEvent) => {
+		captured.push(event);
+	};
+
+	beforeEach(() => {
+		captured = [];
+		logBus.on("log", handler);
+	});
+
+	afterEach(() => {
+		logBus.off("log", handler);
+	});
+
 	function makeAccount(
 		overrides: Partial<{
 			id: string;
@@ -286,6 +484,102 @@ describe("bootstrapMinimaxUsagePolling", () => {
 		for (const call of startPolling.mock.calls) {
 			expect(call[3]).toBe(12_345);
 		}
+	});
+
+	// Greptile #350 P2 (companion to the registerMinimaxUsagePolling suite):
+	// the helper must propagate the logger so per-account WARNs surface from
+	// the bootstrap path used by startServer(). Same key-leak guarantee.
+	it("emits one WARN per Minimax account missing an API key, naming each account", () => {
+		const { registrar } = makeRegistrar();
+		const logger = new Logger("MinimaxPollingTest");
+		const accounts = [
+			makeAccount({
+				id: "minimax-null",
+				name: "alpha",
+				provider: "minimax",
+				api_key: null,
+			}),
+			makeAccount({
+				id: "minimax-empty",
+				name: "beta",
+				provider: "minimax",
+				api_key: "",
+			}),
+			makeAccount({
+				id: "minimax-good",
+				name: "gamma",
+				provider: "minimax",
+				api_key: "real-key",
+			}),
+		];
+
+		const registered = bootstrapMinimaxUsagePolling(
+			accounts,
+			registrar,
+			30_000,
+			logger,
+		);
+
+		expect(registered).toEqual(["minimax-good"]);
+		const warnings = captured.filter((e) => e.level === "WARN");
+		expect(warnings.length).toBe(2);
+		const warningMsgs = warnings.map((e) => e.msg);
+		expect(
+			warningMsgs.some((m) => m.includes("alpha") && m.includes("no API key")),
+		).toBe(true);
+		expect(
+			warningMsgs.some((m) => m.includes("beta") && m.includes("no API key")),
+		).toBe(true);
+		expect(
+			warningMsgs.some((m) => m.includes("gamma")),
+		).toBe(false);
+	});
+
+	it("does not WARN when no Minimax accounts are present at all", () => {
+		const { registrar } = makeRegistrar();
+		const logger = new Logger("MinimaxPollingTest");
+		const accounts = [
+			makeAccount({ id: "zai-1", provider: "zai" }),
+			makeAccount({ id: "nanogpt-1", provider: "nanogpt" }),
+		];
+
+		const registered = bootstrapMinimaxUsagePolling(
+			accounts,
+			registrar,
+			30_000,
+			logger,
+		);
+
+		expect(registered).toEqual([]);
+		const warnings = captured.filter((e) => e.level === "WARN");
+		expect(warnings.length).toBe(0);
+	});
+
+	it("never leaks the API key value through bootstrap-level WARN emissions", () => {
+		const { registrar } = makeRegistrar();
+		const logger = new Logger("MinimaxPollingTest");
+		const MARKER = "BOOTSTRAP-MARKER-deadbeef";
+		const accounts = [
+			makeAccount({
+				id: "leak-1",
+				name: "leak-1",
+				provider: "minimax",
+				api_key: null,
+			}),
+			makeAccount({
+				id: "leak-2",
+				name: "leak-2",
+				provider: "minimax",
+				api_key: MARKER, // must NOT appear anywhere in any log
+			}),
+		];
+
+		bootstrapMinimaxUsagePolling(accounts, registrar, 30_000, logger);
+
+		const allMessages = captured.map((e) => e.msg).join("\n");
+		const allData = JSON.stringify(captured.map((e) => e.data ?? null));
+		expect(allMessages).not.toContain(MARKER);
+		expect(allData).not.toContain(MARKER);
 	});
 });
 
