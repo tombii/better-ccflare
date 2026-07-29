@@ -321,7 +321,17 @@ describe("circuit-recovery key agreement (PR #349 fix A test iii)", () => {
 			cb,
 		);
 		expect(cb.getState(key)).toBe("open");
-		expect(cb.shouldAllow(key, T0 + 30_005)).toBe(true);
+		// applyRateLimitCooldown stamps the breaker with its OWN internal
+		// `Date.now()`, not the T0 captured above — so the cooldown window
+		// runs from whenever this call actually executed, not from T0. A
+		// fixed `T0 + 30_005` offset is a flaky-test race: on a cold
+		// process (JIT warmup, first-test overhead) the gap between T0 and
+		// this line can exceed 5ms on its own, before the breaker's own
+		// cooldown is even accounted for. Capture the time AFTER the trip
+		// and give it a generous margin instead of assuming sub-5ms
+		// execution.
+		const trippedAt = Date.now();
+		expect(cb.shouldAllow(key, trippedAt + 30_000 + 500)).toBe(true);
 		expect(cb.getState(key)).toBe("half-open");
 
 		const collectorSpy = stubUsageCollector();
