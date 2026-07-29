@@ -172,19 +172,24 @@ export class StatsRepository {
 		const accountIds = accountStats.map((a) => a.id);
 		const placeholders = accountIds.map(() => "?").join(",");
 
+		// COALESCE maps NULL account_used (current encoding for requests with
+		// no attributed account) to NO_ACCOUNT_ID so they match the synthetic
+		// id produced by the LEFT JOIN above. Legacy rows whose account_used
+		// is literally 'no_account' also collapse into the same bucket, so
+		// we don't regress any pre-NULL-encoding data.
 		const successRates = await this.adapter.query<{
 			accountId: string;
 			total: number;
 			successful: number;
 		}>(
 			`SELECT
-				account_used as "accountId",
+				COALESCE(account_used, ?) as "accountId",
 				COUNT(*) as total,
 				SUM(CASE WHEN success = TRUE THEN 1 ELSE 0 END) as successful
 			FROM requests
-			WHERE account_used IN (${placeholders})
-			GROUP BY account_used`,
-			accountIds,
+			WHERE COALESCE(account_used, ?) IN (${placeholders})
+			GROUP BY COALESCE(account_used, ?)`,
+			[NO_ACCOUNT_ID, NO_ACCOUNT_ID, ...accountIds, NO_ACCOUNT_ID],
 		);
 
 		// Create a map for O(1) lookup

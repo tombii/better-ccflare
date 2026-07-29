@@ -85,7 +85,11 @@ describe("buildRequestFilters", () => {
 		expect(whereClause).toContain(
 			"r.account_used IN (SELECT id FROM accounts WHERE name IN (?,?))",
 		);
-		expect(whereClause).toContain("OR (r.account_used = ? AND ? IN (?,?))");
+		// The NO_ACCOUNT_ID escape hatch now also matches NULL account_used
+		// (current encoding) alongside the legacy literal 'no_account' row.
+		expect(whereClause).toContain(
+			"OR ((r.account_used IS NULL OR r.account_used = ?) AND ? IN (?,?))",
+		);
 		expect(params).toEqual([
 			START_MS,
 			"acct-1",

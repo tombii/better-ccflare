@@ -105,11 +105,16 @@ export function buildRequestFilters(
 	const params: (string | number)[] = [startMs];
 
 	if (accountsFilter.length > 0) {
-		// Handle account filter - map account names to IDs via join
+		// Handle account filter - map account names to IDs via join.
+		// The NO_ACCOUNT_ID escape hatch covers the unauthenticated bucket,
+		// which is encoded as NULL account_used under the current schema and
+		// as the literal 'no_account' string in legacy rows. We match both
+		// so the drill-down on the dashboard `no_account` row returns
+		// unattributed requests regardless of how they were originally written.
 		const placeholders = accountsFilter.map(() => "?").join(",");
 		conditions.push(`(
 				r.account_used IN (SELECT id FROM accounts WHERE name IN (${placeholders}))
-				OR (r.account_used = ? AND ? IN (${placeholders}))
+				OR ((r.account_used IS NULL OR r.account_used = ?) AND ? IN (${placeholders}))
 			)`);
 		params.push(
 			...accountsFilter,
