@@ -97,6 +97,16 @@ function makeProxyContext(): ProxyContext {
 			})),
 		} as never,
 		runtime: { port: 8080, clientId: "test" } as never,
+		// NOTE: for an account with provider "anthropic" this stub is NOT what
+		// drives the run. proxy-operations.ts resolves
+		// `getProvider(account.provider) || ctx.provider`, and importing
+		// @better-ccflare/providers populates the registry, so the REAL
+		// AnthropicProvider wins and ctx.provider is only a fallback. That is
+		// deliberate here: the real provider is what supplies extractUsageInfo,
+		// and its clone is one of the orphans this test is about. Editing the
+		// parseRateLimit below therefore changes nothing — the real
+		// implementation returns isRateLimited/no resetTime for a 529 that
+		// carries no reset headers, which is exactly the path we want.
 		provider: {
 			name: "anthropic",
 			canHandle: () => true,
@@ -104,8 +114,6 @@ function makeProxyContext(): ProxyContext {
 			prepareHeaders: () => new Headers(),
 			transformRequestBody: null,
 			processResponse: async (r: Response) => r,
-			// Reset-less 529: drives the in-place retry branch and the
-			// terminal-forward branch, i.e. every clone site on this path.
 			parseRateLimit: (r: Response) => ({
 				isRateLimited: r.status === 529,
 				resetTime: undefined,
@@ -126,11 +134,52 @@ const ENV_KEYS = [
 	"CCFLARE_OVERLOAD_RETRY_MAX_MS",
 ] as const;
 
+/**
+ * Records every Response clone created while `body` runs.
+ *
+ * The patch is installed around the call and removed in `finally`, not in
+ * beforeEach/afterEach: Bun executes every test file in ONE process, so a patch
+ * on Response.prototype that survives a throwing assertion would leak into
+ * unrelated suites. Keeping the window to exactly this call makes that
+ * impossible.
+ */
+async function recordClonesDuring(
+	body: () => Promise<void>,
+): Promise<Response[]> {
+	const clones: Response[] = [];
+	const original = Response.prototype.clone;
+	Response.prototype.clone = function trackedClone(this: Response) {
+		const copy = original.call(this);
+		clones.push(copy);
+		return copy;
+	};
+	try {
+		await body();
+	} finally {
+		Response.prototype.clone = original;
+	}
+	return clones;
+}
+
+/**
+ * Waits until every recorded clone has had its body consumed, or gives up.
+ *
+ * The usage extraction in updateAccountMetadata reads its clone inside a
+ * fire-and-forget IIFE, so there is no promise the test could await. Polling
+ * beats a fixed sleep in both directions: the passing case returns as soon as
+ * the readers are done instead of always paying a fixed margin, and the failing
+ * case gets a budget generous enough that a loaded machine cannot fake a leak.
+ */
+async function waitForCloneBodiesToSettle(clones: Response[]): Promise<void> {
+	for (let tick = 0; tick < 200; tick++) {
+		if (clones.every((c) => c.bodyUsed)) return;
+		await new Promise<void>((resolve) => setTimeout(resolve, 5));
+	}
+}
+
 describe("529 overload path — no orphaned response clones", () => {
 	let originalFetch: typeof globalThis.fetch;
-	let originalClone: typeof Response.prototype.clone;
 	let savedEnv: Record<string, string | undefined>;
-	let clones: Response[];
 
 	beforeEach(() => {
 		originalFetch = globalThis.fetch;
@@ -141,18 +190,9 @@ describe("529 overload path — no orphaned response clones", () => {
 		// Keep the jittered in-place retry backoff negligible.
 		process.env.CCFLARE_OVERLOAD_RETRY_BASE_MS = "1";
 		process.env.CCFLARE_OVERLOAD_RETRY_MAX_MS = "2";
-
-		clones = [];
-		originalClone = Response.prototype.clone;
-		Response.prototype.clone = function trackedClone(this: Response) {
-			const copy = originalClone.call(this);
-			clones.push(copy);
-			return copy;
-		};
 	});
 
 	afterEach(() => {
-		Response.prototype.clone = originalClone;
 		globalThis.fetch = originalFetch;
 		for (const k of ENV_KEYS) {
 			if (savedEnv[k] === undefined) delete process.env[k];
@@ -176,38 +216,40 @@ describe("529 overload path — no orphaned response clones", () => {
 			headers: { "Content-Type": "application/json" },
 		});
 
-		// The terminal-attempt flag routes into the "forward the final 529"
-		// branch. forwardToClient needs a UsageCollector that unit tests do not
-		// wire up; reaching it is enough for this assertion, so that specific
-		// error is tolerated (same approach as proxy-operations-failover.test.ts).
-		try {
-			await proxyWithAccount(
-				req,
-				new URL("https://proxy.local/v1/messages"),
-				makeAccount(),
-				makeRequestMeta(),
-				bodyBuffer,
-				() => undefined,
-				0,
-				makeProxyContext(),
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				true,
-			);
-		} catch (e) {
-			const msg = e instanceof Error ? e.message : String(e);
-			if (!msg.includes("UsageCollector not initialized")) throw e;
-		}
+		const clones = await recordClonesDuring(async () => {
+			// The terminal-attempt flag routes into the "forward the final 529"
+			// branch. forwardToClient needs a UsageCollector that unit tests do
+			// not wire up; reaching it is enough for this assertion, so that
+			// specific error is tolerated (same workaround as
+			// proxy-operations-failover.test.ts — the shared limitation is the
+			// test harness, not the path under test).
+			try {
+				await proxyWithAccount(
+					req,
+					new URL("https://proxy.local/v1/messages"),
+					makeAccount(),
+					makeRequestMeta(),
+					bodyBuffer,
+					() => undefined,
+					0,
+					makeProxyContext(),
+					undefined,
+					undefined,
+					undefined,
+					undefined,
+					true,
+				);
+			} catch (e) {
+				const msg = e instanceof Error ? e.message : String(e);
+				if (!msg.includes("UsageCollector not initialized")) throw e;
+			}
+		});
 
-		// updateAccountMetadata reads a clone inside a fire-and-forget IIFE
-		// (response-processor.ts) for usage extraction. That consumer is
-		// legitimate but not awaited by the caller, so give the microtask queue a
-		// turn before judging — otherwise a still-running reader looks identical
-		// to a leak.
-		await new Promise<void>((resolve) => setTimeout(resolve, 50));
+		await waitForCloneBodiesToSettle(clones);
 
+		// Guard against the assertion passing for the wrong reason: if nothing
+		// was cloned at all, the path never ran and "no orphans" is vacuous.
+		expect(clones.length).toBeGreaterThan(0);
 		const orphaned = clones.filter((c) => !c.bodyUsed);
 		expect(orphaned.length).toBe(0);
 	});
