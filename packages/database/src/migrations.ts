@@ -157,7 +157,8 @@ export function ensureSchema(db: Database): void {
 			applied_model TEXT,
 			project_attribution_source TEXT,
 			agent_attribution_source TEXT,
-			stream_terminal_state TEXT
+			stream_terminal_state TEXT,
+			client_session_id TEXT
 		)
 	`);
 
@@ -1318,6 +1319,14 @@ export function runMigrations(db: Database, dbPath?: string): void {
 				"ALTER TABLE requests ADD COLUMN project_attribution_source TEXT",
 			).run();
 			log.info("Added project_attribution_source column to requests table");
+		}
+
+		// Add client_session_id column if it doesn't exist
+		if (!requestsColumnNames.includes("client_session_id")) {
+			db.prepare(
+				"ALTER TABLE requests ADD COLUMN client_session_id TEXT",
+			).run();
+			log.info("Added client_session_id column to requests table");
 		}
 
 		// Add agent_attribution_source column if it doesn't exist

@@ -107,6 +107,8 @@ export interface ResponseHandlerOptions {
 	failoverAttempts: number;
 	agentUsed?: string | null;
 	agentAttributionSource?: AgentAttributionSource | null;
+	/** Client session id (body `metadata.user_id`), persisted for attribution. */
+	clientSessionId?: string | null;
 	apiKeyId?: string | null;
 	apiKeyName?: string | null;
 	comboName?: string | null;
@@ -139,6 +141,7 @@ export async function forwardToClient(
 		failoverAttempts,
 		agentUsed,
 		agentAttributionSource,
+		clientSessionId,
 		apiKeyId,
 		apiKeyName,
 		comboName,
@@ -209,6 +212,7 @@ export async function forwardToClient(
 				: 0,
 			accountName: account?.name ?? null,
 			agentUsed: agentUsed || null,
+			clientSessionId: clientSessionId ?? null,
 			// Persist the pair only for an actual swap — an agent-detected but
 			// unmodified request would otherwise record two equal values that
 			// downstream cannot distinguish from a real rewrite.

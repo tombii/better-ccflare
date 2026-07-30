@@ -486,6 +486,7 @@ export async function proxyUnauthenticated(
 				requestHeaders: req.headers,
 				requestBody: requestBodyBuffer,
 				project: requestMeta.project,
+				clientSessionId: requestMeta.clientSessionId ?? null,
 				query: url.search || null,
 				projectAttributionSource: requestMeta.projectAttributionSource ?? null,
 				response,
@@ -1294,6 +1295,7 @@ export async function proxyWithAccount(
 						requestHeaders: req.headers,
 						requestBody: effectiveBodyBuffer,
 						project: requestMeta.project,
+						clientSessionId: requestMeta.clientSessionId ?? null,
 						query: url.search || null,
 						projectAttributionSource:
 							requestMeta.projectAttributionSource ?? null,
@@ -1325,6 +1327,7 @@ export async function proxyWithAccount(
 				requestHeaders: req.headers,
 				requestBody: effectiveBodyBuffer,
 				project: requestMeta.project,
+				clientSessionId: requestMeta.clientSessionId ?? null,
 				query: url.search || null,
 				projectAttributionSource: requestMeta.projectAttributionSource ?? null,
 				response,

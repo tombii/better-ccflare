@@ -85,6 +85,8 @@ export interface RequestData {
 	appliedModel?: string | null;
 	projectAttributionSource?: ProjectAttributionSource | null;
 	agentAttributionSource?: AgentAttributionSource | null;
+	/** Client-supplied session id (body `metadata.user_id`), used for attribution. */
+	clientSessionId?: string | null;
 	/**
 	 * Real SSE termination state for Anthropic-Messages-shaped streams. One of
 	 * "complete" | "recovered" | "error" | "truncated" | "client_cancelled" |
@@ -143,9 +145,9 @@ export class RequestRepository extends BaseRepository<RequestData> {
 				agent_used, output_tokens_per_second, api_key_id, api_key_name, project,
 				billing_type, combo_name, original_model, applied_model,
 				project_attribution_source, agent_attribution_source,
-				stream_terminal_state
+				stream_terminal_state, client_session_id
 			)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT (id) DO UPDATE SET
 				timestamp = EXCLUDED.timestamp,
 				method = EXCLUDED.method,
@@ -189,7 +191,12 @@ export class RequestRepository extends BaseRepository<RequestData> {
 				-- blank out the real SSE termination state the handleEnd path
 				-- recorded. A null incoming value means "I have nothing new",
 				-- not "the stream was clean".
-				stream_terminal_state = COALESCE(EXCLUDED.stream_terminal_state, requests.stream_terminal_state)
+				stream_terminal_state = COALESCE(EXCLUDED.stream_terminal_state, requests.stream_terminal_state),
+				-- The client session id is fixed for a given request id, and the
+				-- error paths that re-save a row do not carry it. Preserve-first,
+				-- so a later save without it cannot blank out what the main path
+				-- recorded.
+				client_session_id = COALESCE(EXCLUDED.client_session_id, requests.client_session_id)
 		`,
 			[
 				data.id,
@@ -223,6 +230,7 @@ export class RequestRepository extends BaseRepository<RequestData> {
 				data.projectAttributionSource || null,
 				data.agentAttributionSource || null,
 				data.streamTerminalState ?? null,
+				data.clientSessionId ?? null,
 			],
 		);
 	}

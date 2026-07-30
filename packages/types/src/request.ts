@@ -109,6 +109,13 @@ export interface RequestResponse {
 	rateLimited?: boolean;
 	projectAttributionSource?: ProjectAttributionSource;
 	agentAttributionSource?: AgentAttributionSource;
+	/**
+	 * Client session id the request came from (body `metadata.user_id`).
+	 * Lets a stored row be traced back to the session that produced it —
+	 * without it, a session's own requests and those of its subagents are
+	 * indistinguishable after the fact, since both share account and model.
+	 */
+	clientSessionId?: string;
 }
 
 // Detailed request with payload
