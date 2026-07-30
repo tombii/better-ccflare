@@ -125,6 +125,9 @@ export async function handleResponsesRequest(
 		method: "POST",
 		headers: syntheticHeaders,
 		body: JSON.stringify(anthropicBody),
+		// Keep the client's disconnect wired to the upstream call: this request
+		// is built from a URL, which does not inherit the signal.
+		signal: req.signal,
 	});
 
 	// 6. Forward to proxy

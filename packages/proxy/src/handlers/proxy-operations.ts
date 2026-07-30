@@ -1374,6 +1374,20 @@ export async function proxyWithAccount(
 			{ ...ctx, provider },
 		);
 	} catch (err) {
+		// A client disconnect now aborts the upstream fetch by design. That is
+		// not an account failure: returning null would send the proxy through
+		// every remaining account and every fallback route for a request nobody
+		// is listening to, and report "all accounts failed" at the end.
+		// `req.signal` is the discriminator — the header-phase timeout aborts
+		// only the internal controller and never touches it, so genuine timeouts
+		// still fail over. 499 mirrors nginx's "Client Closed Request"; the
+		// socket is gone, so the status matters only for the log and the record.
+		if (req.signal.aborted) {
+			log.info(
+				`Client disconnected during request to ${account.name} — ending instead of failing over`,
+			);
+			return new Response(null, { status: 499 });
+		}
 		handleProxyError(err, account, log);
 		return null;
 	}

@@ -252,3 +252,94 @@ describe("proxyWithAccount: client abort signal reaches the upstream fetch", () 
 		expect(captured.calls).toBeGreaterThan(0);
 	});
 });
+
+describe("proxyWithAccount: a client disconnect must not look like an account failure", () => {
+	let originalFetch: typeof globalThis.fetch;
+
+	beforeEach(() => {
+		originalFetch = globalThis.fetch;
+	});
+
+	afterEach(() => {
+		globalThis.fetch = originalFetch;
+	});
+
+	function abortError(): Error {
+		// Shape of what fetch rejects with once its signal fires.
+		const err = new Error("The operation was aborted.");
+		err.name = "AbortError";
+		return err;
+	}
+
+	async function run(req: Request): Promise<Response | null> {
+		const bodyBuffer = makeRequestBody();
+		return await proxyWithAccount(
+			req,
+			new URL("https://proxy.local/v1/messages"),
+			makeAccount(),
+			makeRequestMeta(),
+			bodyBuffer,
+			() => undefined,
+			0,
+			makeProxyContext(),
+		);
+	}
+
+	it("returns 499 instead of null when the client disconnected", async () => {
+		const controller = new AbortController();
+		globalThis.fetch = mock(async () => {
+			// The client goes away while the upstream call is in flight.
+			controller.abort();
+			throw abortError();
+		}) as unknown as typeof globalThis.fetch;
+
+		const result = await run(
+			new Request("https://proxy.local/v1/messages", {
+				method: "POST",
+				body: makeRequestBody(),
+				headers: { "Content-Type": "application/json" },
+				signal: controller.signal,
+			}),
+		);
+
+		// null would send the caller through every remaining account and
+		// fallback route for a request nobody is listening to.
+		expect(result).not.toBeNull();
+		expect(result?.status).toBe(499);
+	});
+
+	it("still fails over when an abort did NOT come from the client", async () => {
+		// The header-phase timeout aborts only the internal controller, so
+		// req.signal stays untouched. Such a failure must keep failing over —
+		// this is the discriminator the fix relies on.
+		globalThis.fetch = mock(async () => {
+			throw abortError();
+		}) as unknown as typeof globalThis.fetch;
+
+		const result = await run(
+			new Request("https://proxy.local/v1/messages", {
+				method: "POST",
+				body: makeRequestBody(),
+				headers: { "Content-Type": "application/json" },
+			}),
+		);
+
+		expect(result).toBeNull();
+	});
+
+	it("still fails over on ordinary upstream errors", async () => {
+		globalThis.fetch = mock(async () => {
+			throw new TypeError("fetch failed");
+		}) as unknown as typeof globalThis.fetch;
+
+		const result = await run(
+			new Request("https://proxy.local/v1/messages", {
+				method: "POST",
+				body: makeRequestBody(),
+				headers: { "Content-Type": "application/json" },
+			}),
+		);
+
+		expect(result).toBeNull();
+	});
+});
