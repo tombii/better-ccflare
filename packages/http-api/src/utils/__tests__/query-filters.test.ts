@@ -75,30 +75,40 @@ describe("buildRequestFilters", () => {
 		expect(params).toEqual([START_MS]);
 	});
 
-	it("builds the accounts condition with name subquery and NO_ACCOUNT_ID escape hatch", () => {
+	it("builds the accounts condition with name subquery", () => {
 		const { whereClause, params } = buildRequestFilters(
 			new URLSearchParams("accounts=acct-1,acct-2"),
 			START_MS,
 		);
 
-		expect(whereClause).toContain("r.timestamp > ?");
-		expect(whereClause).toContain(
-			"r.account_used IN (SELECT id FROM accounts WHERE name IN (?,?))",
+		expect(whereClause).toBe(
+			"r.timestamp > ? AND (r.account_used IN (SELECT id FROM accounts WHERE name IN (?,?)))",
 		);
-		// The NO_ACCOUNT_ID escape hatch now also matches NULL account_used
-		// (current encoding) alongside the legacy literal 'no_account' row.
-		expect(whereClause).toContain(
-			"OR ((r.account_used IS NULL OR r.account_used = ?) AND ? IN (?,?))",
-		);
-		expect(params).toEqual([
+		expect(params).toEqual([START_MS, "acct-1", "acct-2"]);
+	});
+
+	it("includes the NO_ACCOUNT_ID escape hatch only when the sentinel is in the filter", () => {
+		const { whereClause, params } = buildRequestFilters(
+			new URLSearchParams(`accounts=acct-1,${NO_ACCOUNT_ID}`),
 			START_MS,
-			"acct-1",
-			"acct-2",
-			NO_ACCOUNT_ID,
-			NO_ACCOUNT_ID,
-			"acct-1",
-			"acct-2",
-		]);
+		);
+
+		expect(whereClause).toBe(
+			"r.timestamp > ? AND (r.account_used IN (SELECT id FROM accounts WHERE name IN (?)) OR (r.account_used IS NULL OR r.account_used = ?))",
+		);
+		expect(params).toEqual([START_MS, "acct-1", NO_ACCOUNT_ID]);
+	});
+
+	it("emits only the no-account clause when accounts filter is just the sentinel", () => {
+		const { whereClause, params } = buildRequestFilters(
+			new URLSearchParams(`accounts=${NO_ACCOUNT_ID}`),
+			START_MS,
+		);
+
+		expect(whereClause).toBe(
+			"r.timestamp > ? AND ((r.account_used IS NULL OR r.account_used = ?))",
+		);
+		expect(params).toEqual([START_MS, NO_ACCOUNT_ID]);
 	});
 
 	it("builds the models condition", () => {
@@ -183,12 +193,21 @@ describe("buildRequestFilters", () => {
 		expect(keyIdx).toBeGreaterThan(modelIdx);
 		expect(statusIdx).toBeGreaterThan(keyIdx);
 
+		expect(params).toEqual([START_MS, "acct-1", "model-a", "key-1"]);
+	});
+
+	it("includes the NO_ACCOUNT_ID escape hatch params when accounts filter mixes the sentinel", () => {
+		const { params } = buildRequestFilters(
+			new URLSearchParams(
+				`accounts=acct-1,${NO_ACCOUNT_ID}&models=model-a&apiKeys=key-1&status=error`,
+			),
+			START_MS,
+		);
+
 		expect(params).toEqual([
 			START_MS,
 			"acct-1",
 			NO_ACCOUNT_ID,
-			NO_ACCOUNT_ID,
-			"acct-1",
 			"model-a",
 			"key-1",
 		]);

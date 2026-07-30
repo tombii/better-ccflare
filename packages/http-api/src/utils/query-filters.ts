@@ -111,17 +111,32 @@ export function buildRequestFilters(
 		// as the literal 'no_account' string in legacy rows. We match both
 		// so the drill-down on the dashboard `no_account` row returns
 		// unattributed requests regardless of how they were originally written.
-		const placeholders = accountsFilter.map(() => "?").join(",");
-		conditions.push(`(
-				r.account_used IN (SELECT id FROM accounts WHERE name IN (${placeholders}))
-				OR ((r.account_used IS NULL OR r.account_used = ?) AND ? IN (${placeholders}))
-			)`);
-		params.push(
-			...accountsFilter,
-			NO_ACCOUNT_ID,
-			NO_ACCOUNT_ID,
-			...accountsFilter,
-		);
+		//
+		// We branch in JS rather than emitting "? IN (...)" with the bind
+		// parameter on the left side. PostgreSQL leaves an untyped parameter
+		// on the left of IN rejected at Parse time; SQLite's lack of
+		// parameter typing hides this. The presence of the NO_ACCOUNT_ID
+		// sentinel in the filter is known here, so we split it out before
+		// emitting SQL.
+		const includesNoAccount = accountsFilter.includes(NO_ACCOUNT_ID);
+		const accountNames = includesNoAccount
+			? accountsFilter.filter((n) => n !== NO_ACCOUNT_ID)
+			: accountsFilter;
+
+		const parts: string[] = [];
+		if (accountNames.length > 0) {
+			const placeholders = accountNames.map(() => "?").join(",");
+			parts.push(
+				`r.account_used IN (SELECT id FROM accounts WHERE name IN (${placeholders}))`,
+			);
+			params.push(...accountNames);
+		}
+		if (includesNoAccount) {
+			parts.push(`(r.account_used IS NULL OR r.account_used = ?)`);
+			params.push(NO_ACCOUNT_ID);
+		}
+
+		conditions.push(`(${parts.join(" OR ")})`);
 	}
 
 	if (modelsFilter.length > 0) {

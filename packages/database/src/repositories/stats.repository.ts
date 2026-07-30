@@ -177,6 +177,15 @@ export class StatsRepository {
 		// id produced by the LEFT JOIN above. Legacy rows whose account_used
 		// is literally 'no_account' also collapse into the same bucket, so
 		// we don't regress any pre-NULL-encoding data.
+		//
+		// GROUP BY 1 references the COALESCE output column instead of repeating
+		// the expression with another bind parameter. BunSqlAdapter's placeholder
+		// renumberer assigns each bare `?` a fresh $N independently, so SELECT /
+		// WHERE / GROUP BY would otherwise render as COALESCE(..., $1) /
+		// COALESCE(..., $2) / COALESCE(..., $(N+2)). PostgreSQL treats those as
+		// distinct expression trees and rejects the query with SQLSTATE 42803
+		// ("column ... must appear in the GROUP BY clause"). SQLite does not
+		// enforce that, which is why the SQLite-only test suite passed.
 		const successRates = await this.adapter.query<{
 			accountId: string;
 			total: number;
@@ -188,8 +197,8 @@ export class StatsRepository {
 				SUM(CASE WHEN success = TRUE THEN 1 ELSE 0 END) as successful
 			FROM requests
 			WHERE COALESCE(account_used, ?) IN (${placeholders})
-			GROUP BY COALESCE(account_used, ?)`,
-			[NO_ACCOUNT_ID, NO_ACCOUNT_ID, ...accountIds, NO_ACCOUNT_ID],
+			GROUP BY 1`,
+			[NO_ACCOUNT_ID, NO_ACCOUNT_ID, ...accountIds],
 		);
 
 		// Create a map for O(1) lookup
