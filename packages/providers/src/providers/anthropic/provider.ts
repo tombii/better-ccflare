@@ -78,10 +78,13 @@ export async function isAnthropicExtraUsageExhausted(
 ): Promise<boolean> {
 	if (response.status !== 400) return false;
 	try {
-		const clone = response.clone();
+		// Clone only after the content-type gate. Cloning first teed the body
+		// and then returned early for every non-JSON 400 (gateway error pages,
+		// plain-text upstream errors), leaving that copy unread forever — the
+		// tee then keeps buffering for whoever consumes the original. See #356.
 		const contentType = response.headers.get("content-type");
 		if (!contentType?.includes("application/json")) return false;
-		const json = await clone.json();
+		const json = await response.clone().json();
 		return (
 			json?.error?.type === "invalid_request_error" &&
 			typeof json?.error?.message === "string" &&
