@@ -124,11 +124,16 @@ export async function transformRequestBodyModel<T extends TransformRequestBody>(
 					`Mapped model in request: ${originalModel} -> ${mappedModel}`,
 				);
 
-				// Create new request with transformed body
+				// Create new request with transformed body.
+				// Rebuilding from `request.url` (a string) does not inherit the
+				// signal, so it is carried over explicitly — otherwise a client
+				// disconnect can no longer abort the upstream fetch for every
+				// account that has a model mapping.
 				const transformedRequest = new Request(request.url, {
 					method: request.method,
 					headers: request.headers,
 					body: JSON.stringify(body),
+					signal: request.signal,
 				});
 
 				return transformedRequest;
@@ -167,11 +172,14 @@ export async function transformRequestBodyModelForce(
 			body.model = targetModel;
 			log.debug(`Forced model mapping to: ${targetModel}`);
 
-			// Create new request with mutated body
+			// Create new request with mutated body.
+			// Carry the signal over: a URL-based rebuild drops it, which would
+			// detach the client disconnect from the upstream fetch.
 			const transformedRequest = new Request(request.url, {
 				method: request.method,
 				headers: request.headers,
 				body: JSON.stringify(body),
+				signal: request.signal,
 			});
 
 			return transformedRequest;

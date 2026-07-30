@@ -475,6 +475,9 @@ export async function proxyUnauthenticated(
 			headers,
 			createBodyStream,
 			!!req.body,
+			// Abort upstream when the client disconnects; this path builds no
+			// Request object, so the signal has to be passed explicitly.
+			req.signal,
 		);
 
 		return forwardToClient(
@@ -543,6 +546,22 @@ export async function proxyWithAccount(
 	returnRateLimitedResponseOnExhaustion = false,
 ): Promise<Response | null> {
 	try {
+		// Every upstream call stays tied to the client connection: when the client
+		// disconnects, the upstream fetch must be aborted instead of running on.
+		// The signal is passed explicitly instead of relying on the Request object
+		// to carry it, because provider body transforms rebuild the Request from
+		// its URL and drop the signal (see providers/src/utils/model-mapping.ts and
+		// the openai/codex providers). One guarantee at the call site beats an
+		// invariant that every provider has to remember.
+		const forwardUpstream = (target: Request) =>
+			makeProxyRequest(
+				target,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				req.signal,
+			);
 		if (
 			process.env.DEBUG?.includes("proxy") ||
 			process.env.DEBUG === "true" ||
@@ -638,6 +657,11 @@ export async function proxyWithAccount(
 		const requestInit: RequestInit & { duplex?: "half" } = {
 			method: req.method,
 			headers,
+			// Tie the upstream fetch to the client connection. When the client goes
+			// away mid-stream (idle-watchdog abort, Ctrl-C, network drop) the
+			// upstream request must be aborted too, instead of streaming on
+			// unattended and holding the connection open.
+			signal: req.signal,
 		};
 		if (effectiveBodyBuffer) {
 			requestInit.body = new Uint8Array(effectiveBodyBuffer);
@@ -676,6 +700,8 @@ export async function proxyWithAccount(
 				method: transformedRequest.method,
 				headers: transformedRequest.headers,
 				body: JSON.stringify(transformedBodyJson),
+				// A URL-based rebuild drops the signal — carry it over.
+				signal: req.signal,
 			});
 			log.debug(
 				`Pre-stripped cache_control for known rejector: account=${account.name} model=${transformedModel}`,
@@ -688,7 +714,7 @@ export async function proxyWithAccount(
 		// Make the request (or unwrap a synthetic provider response)
 		let rawResponse = isSyntheticProviderResponse(transformedRequest)
 			? materializeSyntheticResponse(transformedRequest)
-			: await makeProxyRequest(transformedRequest);
+			: await forwardUpstream(transformedRequest);
 
 		// Check if this is a Claude provider and we got an invalid thinking signature error
 		const isClaudeProvider =
@@ -711,6 +737,7 @@ export async function proxyWithAccount(
 					headers,
 					body: new Uint8Array(filteredBodyBuffer),
 					duplex: "half",
+					signal: req.signal,
 				};
 
 				const retryProviderRequest = new Request(targetUrl, retryRequestInit);
@@ -722,7 +749,7 @@ export async function proxyWithAccount(
 				// Make the retry request (or unwrap a synthetic provider response)
 				rawResponse = isSyntheticProviderResponse(retryTransformedRequest)
 					? materializeSyntheticResponse(retryTransformedRequest)
-					: await makeProxyRequest(retryTransformedRequest);
+					: await forwardUpstream(retryTransformedRequest);
 			} else {
 				log.warn(
 					"Failed to filter thinking blocks or no changes made, proceeding with original error response",
@@ -751,10 +778,12 @@ export async function proxyWithAccount(
 					method: transformedRequest.method,
 					headers: transformedRequest.headers,
 					body: JSON.stringify(retryBodyJson),
+					// A URL-based rebuild drops the signal — carry it over.
+					signal: req.signal,
 				});
 				rawResponse = isSyntheticProviderResponse(retryRequest)
 					? materializeSyntheticResponse(retryRequest)
-					: await makeProxyRequest(retryRequest);
+					: await forwardUpstream(retryRequest);
 			} catch (err) {
 				log.warn("Failed to retry without cache_control:", err);
 			}
@@ -1033,6 +1062,7 @@ export async function proxyWithAccount(
 						headers,
 						body: new Uint8Array(patchedBody),
 						duplex: "half",
+						signal: req.signal,
 					};
 
 					const retryProviderRequest = new Request(targetUrl, retryRequestInit);
@@ -1060,6 +1090,8 @@ export async function proxyWithAccount(
 									method: retryTransformedRequest.method,
 									headers: repatchedHeaders,
 									body: JSON.stringify(transformedBody),
+									// A URL-based rebuild drops the signal — carry it over.
+									signal: req.signal,
 								},
 							);
 						}
@@ -1069,7 +1101,7 @@ export async function proxyWithAccount(
 
 					rawResponse = isSyntheticProviderResponse(retryTransformedRequest)
 						? materializeSyntheticResponse(retryTransformedRequest)
-						: await makeProxyRequest(retryTransformedRequest);
+						: await forwardUpstream(retryTransformedRequest);
 
 					if (!(await isModelUnavailableError(rawResponse.clone()))) {
 						break; // Success — stop cycling
@@ -1206,7 +1238,7 @@ export async function proxyWithAccount(
 							transformedRequestForRetry,
 						)
 							? materializeSyntheticResponse(transformedRequestForRetry.clone())
-							: await makeProxyRequest(transformedRequestForRetry.clone());
+							: await forwardUpstream(transformedRequestForRetry.clone());
 
 						const retryTaggedHeaders = new Headers(retryRaw.headers);
 						retryTaggedHeaders.set(
