@@ -204,10 +204,23 @@ export function createRequestPayloadHandler(dbOps: DatabaseOperations) {
 		const payload = await dbOps.getRequestPayload(requestId);
 
 		if (!payload) {
-			return new Response(JSON.stringify({ error: "Request not found" }), {
-				status: 404,
-				headers: { "Content-Type": "application/json" },
-			});
+			// A missing payload does not mean the request is unknown. Capture is
+			// optional, and payloads of requests still active after
+			// REQUEST_PAYLOAD_RETENTION_MS are deliberately released to bound
+			// memory — so long-running requests routinely have none while their
+			// row exists. "Request not found" sends people hunting for a request
+			// that is right there.
+			return new Response(
+				JSON.stringify({
+					error: "No payload stored for this request",
+					detail:
+						"The request itself may exist. Payload capture can be disabled, and payloads of long-running requests are released while the request is still active to bound memory.",
+				}),
+				{
+					status: 404,
+					headers: { "Content-Type": "application/json" },
+				},
+			);
 		}
 
 		return jsonResponse(payload);
