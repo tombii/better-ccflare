@@ -38,6 +38,7 @@ export interface RequestRow {
 	applied_model: string | null;
 	project_attribution_source: string | null;
 	agent_attribution_source: string | null;
+	client_session_id: string | null;
 }
 
 // Domain model
@@ -72,6 +73,7 @@ export interface Request {
 	appliedModel?: string;
 	projectAttributionSource?: ProjectAttributionSource;
 	agentAttributionSource?: AgentAttributionSource;
+	clientSessionId?: string;
 }
 
 // API response type
@@ -211,6 +213,7 @@ export function toRequest(row: RequestRow): Request {
 			(row.project_attribution_source as ProjectAttributionSource) || undefined,
 		agentAttributionSource:
 			(row.agent_attribution_source as AgentAttributionSource) || undefined,
+		clientSessionId: row.client_session_id || undefined,
 	};
 }
 
@@ -247,6 +250,7 @@ export function toRequestResponse(request: Request): RequestResponse {
 		rateLimited: request.statusCode === 429,
 		projectAttributionSource: request.projectAttributionSource,
 		agentAttributionSource: request.agentAttributionSource,
+		clientSessionId: request.clientSessionId,
 	};
 }
 
