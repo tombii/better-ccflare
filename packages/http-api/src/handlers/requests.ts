@@ -3,10 +3,10 @@ import type {
 	DatabaseOperations,
 } from "@better-ccflare/database";
 import { jsonResponse } from "@better-ccflare/http-common";
-import type {
-	AgentAttributionSource,
-	ProjectAttributionSource,
-	StreamTerminalState,
+import {
+	type AgentAttributionSource,
+	type ProjectAttributionSource,
+	toStreamTerminalState,
 } from "@better-ccflare/types";
 import type { RequestResponse } from "../types";
 
@@ -122,9 +122,10 @@ export function createRequestsSummaryHandler(db: BunSqlAdapter) {
 				undefined,
 			// The real SSE outcome. A truncated or client-cancelled stream still
 			// carries statusCode 200, so this is the only field that tells an
-			// operator the response never actually completed.
-			streamTerminalState:
-				(request.stream_terminal_state as StreamTerminalState) || undefined,
+			// operator the response never actually completed. Narrowed rather
+			// than cast: the column is TEXT and may hold a state this build does
+			// not know.
+			streamTerminalState: toStreamTerminalState(request.stream_terminal_state),
 			rateLimited: request.status_code === 429,
 		}));
 

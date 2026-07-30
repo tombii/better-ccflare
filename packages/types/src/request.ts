@@ -17,12 +17,32 @@ export type AgentAttributionSource = "header_agent" | "prompt_agent" | "none";
  * packages/proxy/src/anthropic-terminal-recovery.ts (which documents what each
  * state means); it cannot be imported here because types is the base package.
  */
-export type StreamTerminalState =
-	| "complete"
-	| "recovered"
-	| "error"
-	| "truncated"
-	| "client_cancelled";
+export const STREAM_TERMINAL_STATES = [
+	"complete",
+	"recovered",
+	"error",
+	"truncated",
+	"client_cancelled",
+] as const;
+
+export type StreamTerminalState = (typeof STREAM_TERMINAL_STATES)[number];
+
+/**
+ * Narrow a raw `stream_terminal_state` column value to the union. The column is
+ * TEXT and the database enforces nothing, so a bare `as` cast would let a value
+ * from a newer producer build — or a hand-edited row — reach consumers while
+ * the type claims exhaustiveness. Unknown values become `undefined`, i.e. they
+ * are reported as "no terminal state recorded" rather than as a state nobody
+ * can switch on.
+ */
+export function toStreamTerminalState(
+	value: unknown,
+): StreamTerminalState | undefined {
+	return typeof value === "string" &&
+		(STREAM_TERMINAL_STATES as readonly string[]).includes(value)
+		? (value as StreamTerminalState)
+		: undefined;
+}
 
 // Database row type
 export interface RequestRow {
@@ -225,8 +245,7 @@ export function toRequest(row: RequestRow): Request {
 			(row.project_attribution_source as ProjectAttributionSource) || undefined,
 		agentAttributionSource:
 			(row.agent_attribution_source as AgentAttributionSource) || undefined,
-		streamTerminalState:
-			(row.stream_terminal_state as StreamTerminalState) || undefined,
+		streamTerminalState: toStreamTerminalState(row.stream_terminal_state),
 	};
 }
 

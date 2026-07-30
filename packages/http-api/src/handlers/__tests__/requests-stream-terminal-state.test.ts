@@ -116,6 +116,27 @@ describe("createRequestsSummaryHandler — stream terminal state mapping", () =>
 		expect(row?.streamTerminalState).toBeUndefined();
 	});
 
+	it("drops a value the current build does not know instead of forwarding it", async () => {
+		// The column is TEXT and nothing constrains it: a row written by a newer
+		// producer build (or by hand) can hold a state outside the union. It must
+		// not reach consumers that treat StreamTerminalState as exhaustive.
+		// Own row, so this mutation cannot influence the other assertions
+		// regardless of test execution order.
+		await saveWithTerminalState(dbOps, "req-unknown-state", "truncated");
+		await dbOps
+			.getAdapter()
+			.query(`UPDATE requests SET stream_terminal_state = ? WHERE id = ?`, [
+				"some_future_state",
+				"req-unknown-state",
+			]);
+
+		const body = await fetchRows();
+		const row = body.find((r) => r.id === "req-unknown-state");
+
+		expect(row).toBeDefined();
+		expect(row?.streamTerminalState).toBeUndefined();
+	});
+
 	it("keeps a cancelled stream distinguishable from a clean 200", async () => {
 		// The whole point of the column: statusCode alone cannot tell these
 		// apart, which is exactly why the stalls of 2026-07-30 read as healthy.

@@ -910,9 +910,14 @@ export class UsageCollector {
 			comboName: startMessage.comboName || undefined,
 			projectAttributionSource: state.projectAttributionSource ?? undefined,
 			agentAttributionSource: state.agentAttributionSource ?? undefined,
-			// Same value that is persisted above, so the live stream and a later
-			// /api/requests fetch describe the request identically. Without it a
-			// row would gain its terminal state only after a dashboard reload.
+			// Same value handed to saveRequest above, so a dashboard does not have
+			// to reload before a request shows its terminal state. Note this is
+			// the value as REPORTED, not as persisted: the save is an
+			// AsyncDbWriter job that may be dropped when the metadata queue is
+			// saturated, and its own failures are logged rather than propagated —
+			// so under write pressure the live summary can show a state that no
+			// later /api/requests fetch will confirm. That gap predates this field
+			// and applies to the whole row, not just this value.
 			streamTerminalState: msg.streamTerminalState ?? undefined,
 		};
 
