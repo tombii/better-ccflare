@@ -6,7 +6,10 @@ import {
 } from "@better-ccflare/core";
 import { sanitizeProxyHeaders } from "@better-ccflare/http-common";
 import { Logger } from "@better-ccflare/logger";
-import { resolveReasoningEffort } from "@better-ccflare/openai-formats";
+import {
+	resolveReasoningEffort,
+	sanitizeSchemaForOpenAI,
+} from "@better-ccflare/openai-formats";
 import type { Account } from "@better-ccflare/types";
 import { BaseProvider } from "../../base";
 import type { RateLimitInfo, TokenRefreshResult } from "../../types";
@@ -1204,7 +1207,9 @@ export class CodexProvider extends BaseProvider {
 				type: "function" as const,
 				name: t.name,
 				description: t.description,
-				parameters: t.input_schema,
+				parameters: sanitizeSchemaForOpenAI(t.input_schema) as
+					| Record<string, unknown>
+					| undefined,
 			}));
 		}
 
