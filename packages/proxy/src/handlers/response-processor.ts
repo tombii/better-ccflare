@@ -24,8 +24,12 @@ const log = new Logger("ResponseProcessor");
  * leaves its branch open, and the client-facing twin then pays for it in
  * retained memory and a socket that cannot finish tearing down. Cancelling
  * disturbs the body, so an already-consumed copy is left alone. See issue #354.
+ *
+ * @internal — exported for direct unit tests only (issue #354 test suite,
+ * `withDisposableCopy` scenarios). Not part of the package's public surface:
+ * neither `handlers/index.ts` nor `packages/proxy/src/index.ts` re-export it.
  */
-async function withDisposableCopy<T>(
+export async function withDisposableCopy<T>(
 	response: Response,
 	read: (copy: Response) => Promise<T>,
 ): Promise<T> {
