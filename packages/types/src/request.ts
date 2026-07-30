@@ -6,6 +6,24 @@ export type ProjectAttributionSource =
 
 export type AgentAttributionSource = "header_agent" | "prompt_agent" | "none";
 
+/**
+ * Real outcome of an Anthropic-Messages-shaped SSE stream, as recorded in the
+ * `stream_terminal_state` column. Distinct from `statusCode`, which only
+ * reflects the upstream's opening handshake: a stream that dies mid-content or
+ * is cancelled by the client still carries a 200. Absent for non-streaming
+ * responses and for streams not wrapped by the terminal-recovery observer.
+ *
+ * The producer defines the same set as `AnthropicTerminalState` in
+ * packages/proxy/src/anthropic-terminal-recovery.ts (which documents what each
+ * state means); it cannot be imported here because types is the base package.
+ */
+export type StreamTerminalState =
+	| "complete"
+	| "recovered"
+	| "error"
+	| "truncated"
+	| "client_cancelled";
+
 // Database row type
 export interface RequestRow {
 	id: string;
@@ -38,6 +56,7 @@ export interface RequestRow {
 	applied_model: string | null;
 	project_attribution_source: string | null;
 	agent_attribution_source: string | null;
+	stream_terminal_state: string | null;
 }
 
 // Domain model
@@ -72,6 +91,7 @@ export interface Request {
 	appliedModel?: string;
 	projectAttributionSource?: ProjectAttributionSource;
 	agentAttributionSource?: AgentAttributionSource;
+	streamTerminalState?: StreamTerminalState;
 }
 
 // API response type
@@ -109,6 +129,7 @@ export interface RequestResponse {
 	rateLimited?: boolean;
 	projectAttributionSource?: ProjectAttributionSource;
 	agentAttributionSource?: AgentAttributionSource;
+	streamTerminalState?: StreamTerminalState;
 }
 
 // Detailed request with payload
@@ -204,6 +225,8 @@ export function toRequest(row: RequestRow): Request {
 			(row.project_attribution_source as ProjectAttributionSource) || undefined,
 		agentAttributionSource:
 			(row.agent_attribution_source as AgentAttributionSource) || undefined,
+		streamTerminalState:
+			(row.stream_terminal_state as StreamTerminalState) || undefined,
 	};
 }
 
@@ -240,6 +263,7 @@ export function toRequestResponse(request: Request): RequestResponse {
 		rateLimited: request.statusCode === 429,
 		projectAttributionSource: request.projectAttributionSource,
 		agentAttributionSource: request.agentAttributionSource,
+		streamTerminalState: request.streamTerminalState,
 	};
 }
 

@@ -910,6 +910,10 @@ export class UsageCollector {
 			comboName: startMessage.comboName || undefined,
 			projectAttributionSource: state.projectAttributionSource ?? undefined,
 			agentAttributionSource: state.agentAttributionSource ?? undefined,
+			// Same value that is persisted above, so the live stream and a later
+			// /api/requests fetch describe the request identically. Without it a
+			// row would gain its terminal state only after a dashboard reload.
+			streamTerminalState: msg.streamTerminalState ?? undefined,
 		};
 
 		// Notify cacheBodyStore and emit summary for real-time updates

@@ -6,6 +6,7 @@ import { jsonResponse } from "@better-ccflare/http-common";
 import type {
 	AgentAttributionSource,
 	ProjectAttributionSource,
+	StreamTerminalState,
 } from "@better-ccflare/types";
 import type { RequestResponse } from "../types";
 
@@ -71,6 +72,7 @@ export function createRequestsSummaryHandler(db: BunSqlAdapter) {
 			project: string | null;
 			project_attribution_source: string | null;
 			agent_attribution_source: string | null;
+			stream_terminal_state: string | null;
 		}>(
 			`
 			SELECT r.*, a.name as account_name
@@ -118,6 +120,11 @@ export function createRequestsSummaryHandler(db: BunSqlAdapter) {
 			agentAttributionSource:
 				(request.agent_attribution_source as AgentAttributionSource) ||
 				undefined,
+			// The real SSE outcome. A truncated or client-cancelled stream still
+			// carries statusCode 200, so this is the only field that tells an
+			// operator the response never actually completed.
+			streamTerminalState:
+				(request.stream_terminal_state as StreamTerminalState) || undefined,
 			rateLimited: request.status_code === 429,
 		}));
 
