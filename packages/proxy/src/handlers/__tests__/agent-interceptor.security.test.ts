@@ -1,23 +1,35 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, unlinkSync } from "node:fs";
+import { existsSync, mkdtempSync, unlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 /**
  * Security tests for agent-interceptor.ts
  * Tests the directory traversal protection in extractAgentDirectories()
+ *
+ * The extractor is now opt-in (gated by
+ * `BETTER_CCFLARE_AGENT_WORKSPACE_AUTODISCOVER=true`); the traversal tests
+ * below set the flag in `beforeAll` so the assertions actually exercise the
+ * extractor + path validator. A separate `describe` block verifies the gate.
  */
 
+// We need to import the function we want to test
+// Since extractAgentDirectories is not exported, we'll test via the public API
+import { agentRegistry, WorkspacePersistence } from "@better-ccflare/agents";
 import {
 	DatabaseFactory,
 	type DatabaseOperations,
 } from "@better-ccflare/database";
-// We need to import the function we want to test
-// Since extractAgentDirectories is not exported, we'll test via the public API
 import { interceptAndModifyRequest } from "../agent-interceptor";
 
 const TEST_DB_PATH = "/tmp/test-agent-interceptor-security.db";
+const AUTODISCOVER_ENV = "BETTER_CCFLARE_AGENT_WORKSPACE_AUTODISCOVER";
 
 describe("Agent Interceptor - Directory Traversal Security", () => {
 	let dbOps: DatabaseOperations;
+	let originalAutoDiscoverEnv: string | undefined;
+	let tmpWorkspacesDir: string;
+	let tmpWorkspacesFile: string;
 
 	// Helper function to create a mock request body with a system prompt
 	function createMockRequestBody(systemPrompt: string) {
@@ -55,6 +67,22 @@ describe("Agent Interceptor - Directory Traversal Security", () => {
 		}
 		DatabaseFactory.initialize(TEST_DB_PATH);
 		dbOps = DatabaseFactory.getInstance();
+
+		// Redirect the agent registry singleton at a tmp workspaces file so
+		// `registerWorkspace()` side effects from extraction never touch the
+		// real `~/.better-ccflare/workspaces.json`.
+		tmpWorkspacesDir = mkdtempSync(join(tmpdir(), "ccflare-sec-ws-"));
+		tmpWorkspacesFile = join(tmpWorkspacesDir, "workspaces.json");
+		agentRegistry.setWorkspacePersistenceForTests(
+			new WorkspacePersistence({ workspacesFile: tmpWorkspacesFile }),
+		);
+
+		// Enable workspace auto-discovery for this suite so the existing
+		// traversal assertions actually exercise the extractor + path
+		// validator. The default is OFF; the separate "gate" describe block
+		// below flips the flag explicitly per-test.
+		originalAutoDiscoverEnv = process.env[AUTODISCOVER_ENV];
+		process.env[AUTODISCOVER_ENV] = "true";
 	});
 
 	afterAll(() => {
@@ -67,6 +95,13 @@ describe("Agent Interceptor - Directory Traversal Security", () => {
 			console.warn("Failed to clean up test database:", error);
 		}
 		DatabaseFactory.reset();
+
+		// Restore env
+		if (originalAutoDiscoverEnv === undefined) {
+			delete process.env[AUTODISCOVER_ENV];
+		} else {
+			process.env[AUTODISCOVER_ENV] = originalAutoDiscoverEnv;
+		}
 	});
 
 	describe("Directory Traversal Protection - Pattern 1 (/.claude/agents paths)", () => {
@@ -319,6 +354,62 @@ Check /home/tom/git_repos/better-ccflare/.claude/agents for custom agents.
 					interceptAndModifyRequest(buffer, dbOps),
 				).resolves.toBeDefined();
 			}
+		});
+	});
+
+	describe(`BETTER_CCFLARE_AGENT_WORKSPACE_AUTODISCOVER gate`, () => {
+		// A path that passes the default allowlist (it is `process.cwd()`)
+		// and that exists on disk, so a successful extraction would call
+		// `agentRegistry.registerWorkspace()` and add it to the registry.
+		const existingWorkspace = process.cwd();
+
+		function workspacesCount(): number {
+			return agentRegistry.getWorkspaces().length;
+		}
+
+		test("does NOT extract agent directories when flag is unset", async () => {
+			// Force the default (off) state — independent of the outer
+			// beforeAll, which set the flag to exercise the other suites.
+			delete process.env[AUTODISCOVER_ENV];
+
+			const prompt = `Contents of ${existingWorkspace}/CLAUDE.md`;
+			const before = workspacesCount();
+
+			const result = await interceptAndModifyRequest(
+				toArrayBuffer(createMockRequestBody(prompt)),
+				dbOps,
+			);
+
+			expect(result).toBeDefined();
+			expect(result.agentUsed).toBeNull();
+			// The gate prevented extraction entirely, so no new workspace
+			// should have been registered.
+			expect(workspacesCount()).toBe(before);
+		});
+
+		test("DOES extract agent directories when flag is set", async () => {
+			process.env[AUTODISCOVER_ENV] = "true";
+
+			const prompt = `Contents of ${existingWorkspace}/CLAUDE.md`;
+			const before = workspacesCount();
+
+			const result = await interceptAndModifyRequest(
+				toArrayBuffer(createMockRequestBody(prompt)),
+				dbOps,
+			);
+
+			expect(result).toBeDefined();
+			// With the flag on, the extractor runs and the resulting
+			// workspace (cwd) is registered.
+			expect(workspacesCount()).toBeGreaterThan(before);
+			expect(
+				agentRegistry
+					.getWorkspaces()
+					.some((w: { path: string }) => w.path === existingWorkspace),
+			).toBe(true);
+
+			// Restore the off state for any later tests that depend on it.
+			delete process.env[AUTODISCOVER_ENV];
 		});
 	});
 });
