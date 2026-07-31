@@ -306,4 +306,79 @@ describe("Zai pool-exhausted snapshot pairing", () => {
 		expect(snapshot).not.toBeNull();
 		if (snapshot) expect(snapshot.resetMs).toBeNull();
 	});
+
+	it("on a 100%/100% tie, uses the LATER reset so clients don't retry before every window clears", async () => {
+		// Greptile P1 on PR #365: a strict `current.percentage > prev.percentage`
+		// comparison keeps `prev` (time_limit) on a tie, discarding a later
+		// tokens_limit reset. That tells clients capacity returns before
+		// tokens_limit actually clears — the account is still capped.
+		const earlierResetMs = Date.now() + 120_000;
+		const laterResetMs = Date.now() + 3_600_000;
+		const zaiUsage: ZaiUsageData = {
+			time_limit: {
+				used: 100,
+				remaining: 0,
+				percentage: 100,
+				resetAt: earlierResetMs,
+				type: "time_limit",
+			},
+			tokens_limit: {
+				used: 100,
+				remaining: 0,
+				percentage: 100,
+				resetAt: laterResetMs,
+				type: "tokens_limit",
+			},
+		};
+		const account = makeAccount({ provider: "zai" });
+		const snapshot = getRepresentativeUsageSnapshotForProvider(zaiUsage, "zai");
+		expect(snapshot).not.toBeNull();
+		if (!snapshot) return;
+
+		expect(snapshot.resetMs).toBe(laterResetMs);
+
+		const response = createPoolExhaustedResponse(
+			[account],
+			new Map([[account.id, snapshot]]),
+		);
+		const body = (await response.json()) as {
+			error: {
+				next_available_at: string | null;
+				accounts: Array<{ available_at: string | null }>;
+			};
+		};
+		const laterReset = new Date(laterResetMs).toISOString();
+
+		expect(body.error.next_available_at).toBe(laterReset);
+		expect(body.error.accounts[0]?.available_at).toBe(laterReset);
+		expect(body.error.next_available_at).not.toBe(
+			new Date(earlierResetMs).toISOString(),
+		);
+	});
+
+	it("on a 100%/100% tie with one reset unknown, treats the reset as unknown rather than guessing", () => {
+		// If either tied window's reset is unknown, we cannot safely claim a
+		// recovery time — the unknown window might still be exhausted after
+		// the known one clears.
+		const zaiUsage: ZaiUsageData = {
+			time_limit: {
+				used: 100,
+				remaining: 0,
+				percentage: 100,
+				resetAt: null,
+				type: "time_limit",
+			},
+			tokens_limit: {
+				used: 100,
+				remaining: 0,
+				percentage: 100,
+				resetAt: Date.now() + 3_600_000,
+				type: "tokens_limit",
+			},
+		};
+		const snapshot = getRepresentativeUsageSnapshotForProvider(zaiUsage, "zai");
+
+		expect(snapshot).not.toBeNull();
+		if (snapshot) expect(snapshot.resetMs).toBeNull();
+	});
 });

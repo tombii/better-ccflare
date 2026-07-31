@@ -592,9 +592,19 @@ export function getRepresentativeUsageSnapshotForProvider(
 			(window): window is NonNullable<typeof window> => window !== null,
 		);
 		if (candidates.length === 0) return null;
-		const winning = candidates.reduce((prev, current) =>
-			current.percentage > prev.percentage ? current : prev,
-		);
+		// On a tie (both windows equally exhausted), prefer the LATER reset —
+		// the account isn't actually available again until every exhausted
+		// window clears, so picking the earlier one would tell clients to
+		// retry while the other window is still capped.
+		const winning = candidates.reduce((prev, current) => {
+			if (current.percentage !== prev.percentage) {
+				return current.percentage > prev.percentage ? current : prev;
+			}
+			if (current.resetAt === null || prev.resetAt === null) {
+				return prev.resetAt === null ? prev : current;
+			}
+			return current.resetAt > prev.resetAt ? current : prev;
+		});
 		return {
 			utilization: winning.percentage,
 			resetMs: winning.resetAt,
