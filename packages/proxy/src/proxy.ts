@@ -1,11 +1,15 @@
 import {
+	type AccountUsageSnapshot,
 	requestEvents,
 	ServiceUnavailableError,
 	trackClientVersion,
 } from "@better-ccflare/core";
 import { DatabaseFactory } from "@better-ccflare/database";
 import { Logger } from "@better-ccflare/logger";
-import { usageCache } from "@better-ccflare/providers";
+import {
+	getRepresentativeUsageSnapshotForProvider,
+	usageCache,
+} from "@better-ccflare/providers";
 import type { Account } from "@better-ccflare/types";
 import { cacheBodyStore } from "./cache-body-store";
 import {
@@ -434,7 +438,35 @@ export async function handleProxy(
 			(a) => a.provider === ctx.provider.name,
 		);
 
-		const poolExhaustedResponse = createPoolExhaustedResponse(allAccounts);
+		// Build a usage snapshot map (id → snapshot) so createPoolExhaustedResponse
+		// can surface `usage_exhausted` reasons and derive next_available_at /
+		// Retry-After from the same telemetry the strategy just consulted.
+		// Without this, accounts at 100% utilization with no rate_limited_until
+		// fall through to the catch-all `unavailable` branch with a default
+		// Retry-After of 60s — see incident 2026-07-30T20:24-22:20Z.
+		//
+		// The snapshot MUST pair utilization with the reset belonging to the SAME
+		// window that produced the max — picking them independently (as the
+		// pre-fix code did) pairs e.g. Zai's time_limit.max with tokens_limit's
+		// reset and lies to clients about when capacity returns (Greptile review
+		// on PR #365). The paired helper returns null when no telemetry exists.
+		const usageSnapshots = new Map<string, AccountUsageSnapshot>();
+		for (const account of allAccounts) {
+			const cached = usageCache.get(account.id);
+			if (!cached) continue;
+			const provider = account.provider ?? "anthropic";
+			const snapshot = getRepresentativeUsageSnapshotForProvider(
+				cached,
+				provider,
+			);
+			if (snapshot === null) continue;
+			usageSnapshots.set(account.id, snapshot);
+		}
+
+		const poolExhaustedResponse = createPoolExhaustedResponse(
+			allAccounts,
+			usageSnapshots,
+		);
 
 		// Skip request-log staging for synthetic auto-refresh probes that
 		// 503 because their target account is on a known cooldown. Logging

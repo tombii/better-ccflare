@@ -576,6 +576,40 @@ export function getRepresentativeUsageResetMs(
 }
 
 /**
+ * Representative utilization paired with the reset that belongs to the same
+ * winning window. Zai needs special handling because its utilization is the
+ * max of time_limit and tokens_limit while getRepresentativeUsageResetMs is
+ * intentionally tokens_limit-only for display surfaces. Other providers keep
+ * their existing representative-reset behavior unchanged.
+ */
+export function getRepresentativeUsageSnapshotForProvider(
+	data: AnyUsageData,
+	provider: string,
+): { utilization: number; resetMs: number | null } | null {
+	if (provider === "zai") {
+		const zai = data as ZaiUsageData;
+		const candidates = [zai.time_limit, zai.tokens_limit].filter(
+			(window): window is NonNullable<typeof window> => window !== null,
+		);
+		if (candidates.length === 0) return null;
+		const winning = candidates.reduce((prev, current) =>
+			current.percentage > prev.percentage ? current : prev,
+		);
+		return {
+			utilization: winning.percentage,
+			resetMs: winning.resetAt,
+		};
+	}
+
+	const utilization = getRepresentativeUtilizationForProvider(data, provider);
+	if (utilization === null) return null;
+	return {
+		utilization,
+		resetMs: getRepresentativeUsageResetMs(data, provider),
+	};
+}
+
+/**
  * Type for a function that retrieves a fresh access token or API key
  */
 export type AccessTokenProvider = () => Promise<string>;

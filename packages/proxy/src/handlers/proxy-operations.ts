@@ -1,7 +1,9 @@
 import {
+	type AccountUsageSnapshot,
 	getModelFamily,
 	getModelList,
 	getOverloadRetryConfig,
+	isUsageExhausted,
 	logError,
 	ProviderError,
 	TIME_CONSTANTS,
@@ -1362,28 +1364,67 @@ export async function proxyWithAccount(
 }
 
 /**
+ * Floor for `Retry-After` when no recovery time is known (cooldown cleared and
+ * usage reset unknown). Tuned to the UsageCache TTL (10 minutes — see
+ * providers/src/usage-fetcher.ts:1065) so a client that respects this header
+ * is guaranteed to see fresh usage telemetry on retry. Pre-fix this was the
+ * optimistic 60s that triggered CLAUDE_CODE_MAX_RETRIES=5 clients to die in
+ * 300s during a 116-minute ccproxy2 outage (production trace 2026-07-30).
+ */
+export const POOL_EXHAUSTED_UNKNOWN_RESET_RETRY_AFTER_SECONDS = 600;
+
+/** Upper bound on Retry-After so clients don't sleep through a recovery. */
+export const POOL_EXHAUSTED_MAX_RETRY_AFTER_SECONDS = 3600;
+
+/**
  * Create a 503 Service Unavailable response when the account pool is exhausted.
- * All accounts are paused, rate-limited, or filtered out.
+ * All accounts are paused, rate-limited, usage-exhausted, or filtered out.
+ *
+ * Usage-aware: `usageSnapshots` (keyed by account.id) lets the function surface
+ * a `usage_exhausted` reason for accounts with no `rate_limited_until` cooldown
+ * — otherwise those would fall through to the `unavailable` bucket and the
+ * client would receive an optimistic `Retry-After: 60`, never reaching the
+ * upstream reset. The caller is responsible for sourcing snapshots from
+ * `usageCache` (or its own snapshot provider); the function itself stays pure
+ * and testable without touching I/O.
+ *
  * @param accounts - All accounts that were considered but are unavailable
+ * @param usageSnapshots - Per-account usage telemetry (id → snapshot), used
+ *   to identify usage_exhausted accounts and to derive `next_available_at` /
+ *   `Retry-After` when an upstream reset time is known.
  * @returns 503 response with pool_exhausted error and Retry-After header
  */
-export function createPoolExhaustedResponse(accounts: Account[]): Response {
+export function createPoolExhaustedResponse(
+	accounts: Account[],
+	usageSnapshots?: ReadonlyMap<string, AccountUsageSnapshot>,
+): Response {
 	const now = Date.now();
 
-	// Build account info list
+	// Build account info list — usage-exhausted outranks cooldown because the
+	// client needs the longer reset horizon (weekly vs minutes-long cooldowns)
+	// to avoid retrying an account upstream will reject immediately.
 	const accountInfos = accounts.map((account) => {
+		const usage = usageSnapshots?.get(account.id);
+		const usageExhausted =
+			usage !== undefined &&
+			isUsageExhausted(usage.utilization, usage.resetMs, now);
+
 		const reason = account.requires_reauth
 			? "requires_reauth"
 			: account.paused
 				? "paused"
-				: account.rate_limited_until && account.rate_limited_until > now
-					? "rate_limited"
-					: "unavailable";
+				: usageExhausted
+					? "usage_exhausted"
+					: account.rate_limited_until && account.rate_limited_until > now
+						? "rate_limited"
+						: "unavailable";
 
-		const availableAt =
-			account.rate_limited_until && account.rate_limited_until > now
-				? new Date(account.rate_limited_until).toISOString()
-				: null;
+		let availableAt: string | null = null;
+		if (usageExhausted && usage?.resetMs && usage.resetMs > now) {
+			availableAt = new Date(usage.resetMs).toISOString();
+		} else if (account.rate_limited_until && account.rate_limited_until > now) {
+			availableAt = new Date(account.rate_limited_until).toISOString();
+		}
 
 		return {
 			name: account.name,
@@ -1392,27 +1433,47 @@ export function createPoolExhaustedResponse(accounts: Account[]): Response {
 		};
 	});
 
-	// Calculate next_available_at from earliest rate_limited_until
-	const rateLimitedAccounts = accounts.filter(
-		(account): account is Account & { rate_limited_until: number } =>
-			!!account.rate_limited_until && account.rate_limited_until > now,
-	);
-	const earliestRateLimitedUntil =
-		rateLimitedAccounts.length > 0
-			? Math.min(
-					...rateLimitedAccounts.map((account) => account.rate_limited_until),
-				)
-			: null;
+	// next_available_at = earliest of (active cooldown) and (future usage
+	// reset). Both signals have to be considered — a usage-capped account with
+	// `rate_limited_until = null` would otherwise be ignored by the original
+	// code and leak Retry-After: 60 to the client.
+	const recoveryCandidates: number[] = [];
+	for (const account of accounts) {
+		if (account.rate_limited_until && account.rate_limited_until > now) {
+			recoveryCandidates.push(account.rate_limited_until);
+		}
+		const usage = usageSnapshots?.get(account.id);
+		if (
+			usage &&
+			isUsageExhausted(usage.utilization, usage.resetMs, now) &&
+			usage.resetMs &&
+			usage.resetMs > now
+		) {
+			recoveryCandidates.push(usage.resetMs);
+		}
+	}
+	const earliestRecoveryMs =
+		recoveryCandidates.length > 0 ? Math.min(...recoveryCandidates) : null;
+
 	const nextAvailableAt =
-		earliestRateLimitedUntil !== null
-			? new Date(earliestRateLimitedUntil).toISOString()
+		earliestRecoveryMs !== null
+			? new Date(earliestRecoveryMs).toISOString()
 			: null;
 
-	// Calculate Retry-After header (seconds) directly from numeric min
+	// Retry-After: clamped to [1, MAX], with a defensible floor when no
+	// recovery time is known. Mirrors model-capacity.ts's clamp semantics; the
+	// floor (600s = UsageCache TTL) ensures a client retry can observe fresh
+	// telemetry rather than retrying blindly against a stale snapshot.
 	const retryAfterSeconds =
-		earliestRateLimitedUntil !== null
-			? Math.max(1, Math.round((earliestRateLimitedUntil - now) / 1000))
-			: 60; // Default 60s if no cooldown info
+		earliestRecoveryMs !== null
+			? Math.max(
+					1,
+					Math.min(
+						POOL_EXHAUSTED_MAX_RETRY_AFTER_SECONDS,
+						Math.ceil((earliestRecoveryMs - now) / 1000),
+					),
+				)
+			: POOL_EXHAUSTED_UNKNOWN_RESET_RETRY_AFTER_SECONDS;
 
 	return new Response(
 		JSON.stringify({
