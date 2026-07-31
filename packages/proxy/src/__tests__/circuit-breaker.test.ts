@@ -5,7 +5,10 @@ import { afterEach, describe, expect, test } from "bun:test";
 // strategy.ts runs Object.values(StrategyName). Same pattern as
 // stats-session-cost.test.ts and account-rate-limit-audit.test.ts.
 import "@better-ccflare/core";
-import { RATE_LIMIT_REASONS, type RateLimitReason } from "@better-ccflare/types";
+import {
+	RATE_LIMIT_REASONS,
+	type RateLimitReason,
+} from "@better-ccflare/types";
 import {
 	CIRCUIT_BREAKER_ENV,
 	CircuitBreaker,
@@ -14,8 +17,8 @@ import {
 	isProviderWideOpen as moduleIsProviderWideOpen,
 	recordFailure as moduleRecordFailure,
 	recordSuccess as moduleRecordSuccess,
-	resetDefaultCircuitBreaker,
 	shouldAllow as moduleShouldAllow,
+	resetDefaultCircuitBreaker,
 	shouldCountAsCircuitFailure,
 } from "../circuit-breaker";
 
@@ -96,7 +99,11 @@ describe("closed -> open", () => {
 		cb.recordSuccess(KEY_A, T0 + 5);
 		// Streak cleared: 4 more failures must NOT open the circuit.
 		for (let i = 0; i < 4; i++) {
-			cb.recordFailure(KEY_A, "upstream_529_overloaded_with_reset", T0 + 10 + i);
+			cb.recordFailure(
+				KEY_A,
+				"upstream_529_overloaded_with_reset",
+				T0 + 10 + i,
+			);
 		}
 		expect(cb.getState(KEY_A)).toBe("closed");
 	});
@@ -169,7 +176,11 @@ describe("half-open: exactly ONE probe", () => {
 		// After reset, the threshold must hold again from zero — 4 failures
 		// must NOT re-open.
 		for (let i = 0; i < 4; i++) {
-			cb.recordFailure(KEY_A, "upstream_529_overloaded_with_reset", T0 + OPEN_COOLDOWN_MS + 3 + i);
+			cb.recordFailure(
+				KEY_A,
+				"upstream_529_overloaded_with_reset",
+				T0 + OPEN_COOLDOWN_MS + 3 + i,
+			);
 		}
 		expect(cb.getState(KEY_A)).toBe("closed");
 	});
@@ -178,7 +189,11 @@ describe("half-open: exactly ONE probe", () => {
 		const cb = new CircuitBreaker();
 		openThenExpire(cb, KEY_A);
 		cb.shouldAllow(KEY_A, T0 + OPEN_COOLDOWN_MS + 1);
-		cb.recordFailure(KEY_A, "upstream_529_overloaded_with_reset", T0 + OPEN_COOLDOWN_MS + 2);
+		cb.recordFailure(
+			KEY_A,
+			"upstream_529_overloaded_with_reset",
+			T0 + OPEN_COOLDOWN_MS + 2,
+		);
 
 		expect(cb.getState(KEY_A)).toBe("open");
 
@@ -197,7 +212,11 @@ describe("half-open: exactly ONE probe", () => {
 		const firstProbeAdmitAt = T0 + OPEN_COOLDOWN_MS + 1;
 		const firstProbeFailAt = firstProbeAdmitAt + 1;
 		cb.shouldAllow(KEY_A, firstProbeAdmitAt);
-		cb.recordFailure(KEY_A, "upstream_529_overloaded_with_reset", firstProbeFailAt);
+		cb.recordFailure(
+			KEY_A,
+			"upstream_529_overloaded_with_reset",
+			firstProbeFailAt,
+		);
 		// After the probe failure, cooldown is min(prev*2, cap) = 1000ms.
 		// It started at `firstProbeFailAt`, so the breaker admits again at
 		// `firstProbeFailAt + 1000`.
@@ -209,7 +228,11 @@ describe("half-open: exactly ONE probe", () => {
 		// continues from the previous failure's timestamp + 1000.
 		const secondProbeFailAt = firstReopenAdmitAt + 1;
 		const secondReopenAdmitAt = secondProbeFailAt + 1_000;
-		cb.recordFailure(KEY_A, "upstream_529_overloaded_with_reset", secondProbeFailAt);
+		cb.recordFailure(
+			KEY_A,
+			"upstream_529_overloaded_with_reset",
+			secondProbeFailAt,
+		);
 		expect(cb.shouldAllow(KEY_A, secondReopenAdmitAt - 1)).toBe(false);
 		expect(cb.shouldAllow(KEY_A, secondReopenAdmitAt)).toBe(true);
 	});
@@ -244,32 +267,29 @@ describe("NEGATIVE CONTROL: model-scoped 429 must NOT open the circuit", () => {
 		expect(cb.getState(KEY_A)).toBe("open");
 	});
 
-	test(
-		"verification: the named predicate is what shields model-scoped 429s",
-		() => {
-			// The negative-control assertion above is meaningful ONLY if
-			// `shouldCountAsCircuitFailure` is the actual gate the
-			// breaker consults. This test pins that contract: the
-			// predicate returns false for the upstream literal
-			// `model_fallback_429`, and `recordFailure` short-circuits
-			// on that return value (5 model-scoped failures keep
-			// `failureCount` at zero).
-			//
-			// To re-verify the test fails when the exclusion is removed,
-			// edit `shouldCountAsCircuitFailure` in
-			// `packages/proxy/src/circuit-breaker.ts` to always return
-			// `true`, re-run the suite, and confirm the model-scoped test
-			// above flips to FAIL. Then revert.
-			const cb = new CircuitBreaker();
-			expect(shouldCountAsCircuitFailure("model_fallback_429")).toBe(false);
-			for (let i = 0; i < 5; i++) {
-				cb.recordFailure(KEY_A, "model_fallback_429", T0);
-			}
-			// failureCount stays at zero — the predicate returned false
-			// on every call, so recordFailure exited before incrementing.
-			expect(cb.getState(KEY_A)).toBe("closed");
-		},
-	);
+	test("verification: the named predicate is what shields model-scoped 429s", () => {
+		// The negative-control assertion above is meaningful ONLY if
+		// `shouldCountAsCircuitFailure` is the actual gate the
+		// breaker consults. This test pins that contract: the
+		// predicate returns false for the upstream literal
+		// `model_fallback_429`, and `recordFailure` short-circuits
+		// on that return value (5 model-scoped failures keep
+		// `failureCount` at zero).
+		//
+		// To re-verify the test fails when the exclusion is removed,
+		// edit `shouldCountAsCircuitFailure` in
+		// `packages/proxy/src/circuit-breaker.ts` to always return
+		// `true`, re-run the suite, and confirm the model-scoped test
+		// above flips to FAIL. Then revert.
+		const cb = new CircuitBreaker();
+		expect(shouldCountAsCircuitFailure("model_fallback_429")).toBe(false);
+		for (let i = 0; i < 5; i++) {
+			cb.recordFailure(KEY_A, "model_fallback_429", T0);
+		}
+		// failureCount stays at zero — the predicate returned false
+		// on every call, so recordFailure exited before incrementing.
+		expect(cb.getState(KEY_A)).toBe("closed");
+	});
 });
 
 describe("per-(provider, accountId) isolation", () => {
@@ -298,7 +318,11 @@ describe("per-(provider, accountId) isolation", () => {
 		}
 		expect(cb.isProviderWideOpen("anthropic")).toBe(false);
 		for (let i = 0; i < 5; i++) {
-			cb.recordFailure(KEY_B, "upstream_529_overloaded_with_reset", T0 + 10 + i);
+			cb.recordFailure(
+				KEY_B,
+				"upstream_529_overloaded_with_reset",
+				T0 + 10 + i,
+			);
 		}
 		expect(cb.isProviderWideOpen("anthropic")).toBe(true);
 		expect(cb.isProviderWideOpen("openai")).toBe(false);
@@ -496,11 +520,7 @@ describe("F2: FailureKind ↔ RateLimitReason parity", () => {
 		// 529 overload control case.
 		const cb = new CircuitBreaker();
 		for (let i = 0; i < 5; i++) {
-			cb.recordFailure(
-				KEY_A,
-				"upstream_529_overloaded_with_reset",
-				T0 + i,
-			);
+			cb.recordFailure(KEY_A, "upstream_529_overloaded_with_reset", T0 + i);
 		}
 		expect(cb.getState(KEY_A)).toBe("open");
 	});
@@ -533,7 +553,7 @@ describe("F2: FailureKind ↔ RateLimitReason parity", () => {
 		// If a new variant is added to the union without updating the
 		// referenced source (RATE_LIMIT_REASONS), the `_coverage` type
 		// assertion is `false` and the test fails to compile.
-		type Covered = Exclude<RateLimitReason, typeof everyVariant[number]>;
+		type Covered = Exclude<RateLimitReason, (typeof everyVariant)[number]>;
 		const _coverage: [Covered] extends [never] ? true : false = true;
 		expect(_coverage).toBe(true);
 	});
@@ -558,11 +578,7 @@ describe("F3: cooldown extension is bounded and preserves escalated backoff", ()
 		// 5 fails → open. The 5th failure is at T0+4, so cooldownEndsAt
 		// is anchored at (T0+4) + 30_000 = T0+30_004.
 		for (let i = 0; i < 5; i++) {
-			cb.recordFailure(
-				KEY_A,
-				"upstream_529_overloaded_with_reset",
-				T0 + i,
-			);
+			cb.recordFailure(KEY_A, "upstream_529_overloaded_with_reset", T0 + i);
 		}
 		expect(cb.getState(KEY_A)).toBe("open");
 
@@ -572,11 +588,7 @@ describe("F3: cooldown extension is bounded and preserves escalated backoff", ()
 		// the trickle the cooldown window never escapes `last_t + 60_000`.
 		let t = T0 + OPEN_COOLDOWN_MS - 1_000;
 		for (let i = 0; i < 20; i++) {
-			cb.recordFailure(
-				KEY_A,
-				"upstream_529_overloaded_with_reset",
-				t,
-			);
+			cb.recordFailure(KEY_A, "upstream_529_overloaded_with_reset", t);
 			t += 29_000;
 		}
 		const lastStaleAt = t - 29_000; // last `recordFailure` landed here
@@ -599,11 +611,7 @@ describe("F3: cooldown extension is bounded and preserves escalated backoff", ()
 		// 5 fails at T0..T0+4 → open. cooldownEndsAt = (T0+4) + 30_000
 		// = T0+30_004.
 		for (let i = 0; i < 5; i++) {
-			cb.recordFailure(
-				KEY_A,
-				"upstream_529_overloaded_with_reset",
-				T0 + i,
-			);
+			cb.recordFailure(KEY_A, "upstream_529_overloaded_with_reset", T0 + i);
 		}
 		// Cooldown elapses — pick a `now` strictly past cooldownEndsAt
 		// so the open→half-open transition actually fires.
@@ -612,22 +620,14 @@ describe("F3: cooldown extension is bounded and preserves escalated backoff", ()
 		expect(cb.getState(KEY_A)).toBe("half-open");
 		// Probe fails → re-open at 2x base = 60_000.
 		const probeFailAt = halfOpenAt + 1;
-		cb.recordFailure(
-			KEY_A,
-			"upstream_529_overloaded_with_reset",
-			probeFailAt,
-		);
+		cb.recordFailure(KEY_A, "upstream_529_overloaded_with_reset", probeFailAt);
 		expect(cb.getState(KEY_A)).toBe("open");
 		// previousCooldownMs is now 60_000; cooldownEndsAt = probeFailAt
 		// + 60_000 = halfOpenAt + 1 + 60_000 = T0 + 90_006.
 		// A stale failure arriving 5s later must extend the cooldown to
 		// at least the escalated 60_000 (not collapse it back to 30_000).
 		const staleAt = probeFailAt + 5_000;
-		cb.recordFailure(
-			KEY_A,
-			"upstream_529_overloaded_with_reset",
-			staleAt,
-		);
+		cb.recordFailure(KEY_A, "upstream_529_overloaded_with_reset", staleAt);
 		// Half-open transition must arrive at staleAt + 60_000, NOT
 		// staleAt + 30_000. The second boundary check is the original
 		// defect — at the old base cooldown, the circuit would already

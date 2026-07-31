@@ -55,7 +55,11 @@ describe("createPoolExhaustedResponse — circuit_open", () => {
 		const accounts = [
 			makeAccount({ id: "acc-A", name: "account-A", paused: false }),
 		];
-		const response = createPoolExhaustedResponse(accounts, "circuit_open");
+		const response = createPoolExhaustedResponse(
+			accounts,
+			undefined,
+			"circuit_open",
+		);
 
 		expect(response.status).toBe(503);
 
@@ -79,7 +83,11 @@ describe("createPoolExhaustedResponse — circuit_open", () => {
 	// correct."
 	it("sets Retry-After and x-better-ccflare-pool-status for circuit_open", () => {
 		const accounts = [makeAccount({ name: "account-A" })];
-		const response = createPoolExhaustedResponse(accounts, "circuit_open");
+		const response = createPoolExhaustedResponse(
+			accounts,
+			undefined,
+			"circuit_open",
+		);
 
 		const retryAfter = response.headers.get("Retry-After");
 		expect(retryAfter).not.toBeNull();
@@ -107,24 +115,43 @@ describe("createPoolExhaustedResponse — circuit_open", () => {
 		expect(response.headers.get("Content-Type")).toContain("application/json");
 	});
 
-	// Spec test (2 cont.): Retry-After does NOT depend on rate_limited_until
-	// when the cause is circuit_open. The breaker's open-cooldown is the
-	// authoritative duration, not the account's rate-limit window.
-	it("uses breaker-cooldown-based Retry-After for circuit_open even when an unrelated rate_limited_until exists", () => {
+	// Spec test (2 cont.): when the account is ALSO rate-limited well past the
+	// breaker's own cooldown, Retry-After must reflect the LONGER, more honest
+	// wait — a 30s breaker hint must never undercut a real multi-minute
+	// cooldown the client would otherwise be misled into ignoring.
+	it("uses the longer of breaker-cooldown and rate_limited_until for circuit_open", () => {
 		const accounts = [
 			makeAccount({
 				name: "account-A",
-				// 5 minutes in the future — would push pool_exhausted Retry-After
-				// to ~300s. The circuit_open path must NOT inherit this.
+				// 5 minutes in the future — longer than the breaker's 30s cooldown,
+				// so this must win.
 				rate_limited_until: Date.now() + 5 * 60_000,
 			}),
 		];
-		const response = createPoolExhaustedResponse(accounts, "circuit_open");
+		const response = createPoolExhaustedResponse(
+			accounts,
+			undefined,
+			"circuit_open",
+		);
 		const retryAfterSeconds = Number(response.headers.get("Retry-After"));
 
-		// Independent of the account's rate-limit window.
-		expect(retryAfterSeconds).toBeGreaterThanOrEqual(30);
-		expect(retryAfterSeconds).toBeLessThanOrEqual(60);
+		// The longer, more honest wait wins — not the breaker's bare 30s floor.
+		expect(retryAfterSeconds).toBeGreaterThanOrEqual(290);
+		expect(retryAfterSeconds).toBeLessThanOrEqual(300);
+	});
+
+	// When no other recovery signal is known, circuit_open falls back to the
+	// breaker's own 30s cooldown floor.
+	it("falls back to the breaker-cooldown floor when no other recovery time is known", () => {
+		const accounts = [makeAccount({ name: "account-A" })];
+		const response = createPoolExhaustedResponse(
+			accounts,
+			undefined,
+			"circuit_open",
+		);
+		const retryAfterSeconds = Number(response.headers.get("Retry-After"));
+
+		expect(retryAfterSeconds).toBe(30);
 	});
 
 	// Spec test (3): "A genuine pool-exhaustion still reports pool_exhausted,
@@ -155,6 +182,7 @@ describe("createPoolExhaustedResponse — circuit_open", () => {
 		];
 		const response = createPoolExhaustedResponse(
 			accounts,
+			undefined,
 			"pool_exhausted" satisfies PoolExhaustionKind,
 		);
 
@@ -175,7 +203,11 @@ describe("createPoolExhaustedResponse — circuit_open", () => {
 			makeAccount({ id: "acc-A", name: "account-A", paused: false }),
 			makeAccount({ id: "acc-B", name: "account-B", paused: true }),
 		];
-		const response = createPoolExhaustedResponse(accounts, "circuit_open");
+		const response = createPoolExhaustedResponse(
+			accounts,
+			undefined,
+			"circuit_open",
+		);
 
 		const body = (await response.json()) as Record<string, unknown>;
 		const error = body.error as Record<string, unknown>;
@@ -200,7 +232,11 @@ describe("createPoolExhaustedResponse — circuit_open", () => {
 				rate_limited_until: Date.now() + 60_000,
 			}),
 		];
-		const response = createPoolExhaustedResponse(accounts, "circuit_open");
+		const response = createPoolExhaustedResponse(
+			accounts,
+			undefined,
+			"circuit_open",
+		);
 		const body = (await response.json()) as Record<string, unknown>;
 		const error = body.error as Record<string, unknown>;
 		expect(error.next_available_at).toBeNull();
@@ -215,10 +251,12 @@ describe("createPoolExhaustedResponse — circuit_open", () => {
 
 		const poolExhausted = createPoolExhaustedResponse(
 			accounts,
+			undefined,
 			"pool_exhausted",
 		);
 		const circuitOpen = createPoolExhaustedResponse(
 			accounts,
+			undefined,
 			"circuit_open",
 		);
 

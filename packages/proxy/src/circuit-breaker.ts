@@ -273,13 +273,13 @@ export class CircuitBreaker {
 		probeTtlMs?: number;
 		enabled?: boolean;
 	}) {
-		this.failureThreshold =
-			opts?.failureThreshold ?? FAILURE_THRESHOLD;
+		this.failureThreshold = opts?.failureThreshold ?? FAILURE_THRESHOLD;
 		this.openCooldownMs = opts?.openCooldownMs ?? OPEN_COOLDOWN_MS;
 		this.halfOpenBackoffMaxMs =
 			opts?.halfOpenBackoffMaxMs ?? HALF_OPEN_BACKOFF_MAX_MS;
 		this.probeTtlMs = opts?.probeTtlMs ?? PROBE_LEASE_MS;
-		this.enabled = opts?.enabled ?? readEnabledFlag(readEnv(CIRCUIT_BREAKER_ENV));
+		this.enabled =
+			opts?.enabled ?? readEnabledFlag(readEnv(CIRCUIT_BREAKER_ENV));
 	}
 
 	isEnabled(): boolean {
@@ -325,10 +325,7 @@ export class CircuitBreaker {
 		// case the previous probe is abandoned: clear the flag, refresh
 		// the deadline, and admit a fresh probe.
 		if (entry.halfOpenProbeInFlight) {
-			if (
-				entry.probeDeadlineAt !== null &&
-				now > entry.probeDeadlineAt
-			) {
+			if (entry.probeDeadlineAt !== null && now > entry.probeDeadlineAt) {
 				entry.halfOpenProbeInFlight = true;
 				entry.probeDeadlineAt = now + this.probeTtlMs;
 				log.warn(

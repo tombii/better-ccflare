@@ -48,6 +48,7 @@ import {
 	AutoRefreshScheduler,
 	CacheKeepaliveScheduler,
 	drainUsageCollector,
+	forceCloseCircuit,
 	getModelCatalog,
 	getUsageCollectorHealth,
 	getValidAccessToken,
@@ -55,7 +56,6 @@ import {
 	initModelCatalogRefresh,
 	initProxy,
 	type ProxyContext,
-	forceCloseCircuit,
 	refreshModelCatalog,
 	registerCodexUsageRefresher,
 	registerPollingRestarter,
@@ -379,7 +379,9 @@ async function runStartupMaintenance(
 			forceCloseCircuit({ provider: row.provider, accountId: row.id }, now);
 		}
 		if (clearedRows.length > 0) {
-			log.info(`Cleared ${clearedRows.length} expired rate_limited_until entries`);
+			log.info(
+				`Cleared ${clearedRows.length} expired rate_limited_until entries`,
+			);
 		} else {
 			log.info("No expired rate_limited_until entries found to clear");
 		}
@@ -896,10 +898,7 @@ export default async function startServer(options?: {
 				const now = Date.now();
 				const clearedRows = await dbOps.clearExpiredRateLimits(now);
 				for (const row of clearedRows) {
-					forceCloseCircuit(
-						{ provider: row.provider, accountId: row.id },
-						now,
-					);
+					forceCloseCircuit({ provider: row.provider, accountId: row.id }, now);
 				}
 				if (clearedRows.length > 0) {
 					log.debug(

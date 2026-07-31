@@ -9,22 +9,20 @@ export {
 	listProviders,
 	registerProvider,
 } from "@better-ccflare/providers";
-export {
-	resetDefaultCircuitBreaker as resetDefaultCircuitBreakerProxy,
-	getDefaultCircuitBreaker as getDefaultCircuitBreakerProxy,
-	recordSuccess as recordCircuitSuccess,
-	forceClose as forceCloseCircuit,
-} from "./circuit-breaker";
 export { AutoRefreshScheduler } from "./auto-refresh-scheduler";
 export { CacheKeepaliveScheduler } from "./cache-keepalive-scheduler";
 export {
-	circuitKeyFor,
 	CircuitBreaker,
-	shouldCountAsCircuitFailure,
 	type CircuitKey,
 	type CircuitSnapshotEntry,
 	type CircuitState,
+	circuitKeyFor,
 	type FailureKind,
+	forceClose as forceCloseCircuit,
+	getDefaultCircuitBreaker as getDefaultCircuitBreakerProxy,
+	recordSuccess as recordCircuitSuccess,
+	resetDefaultCircuitBreaker as resetDefaultCircuitBreakerProxy,
+	shouldCountAsCircuitFailure,
 } from "./circuit-breaker";
 export {
 	type CodexUsageRefreshOutcome,

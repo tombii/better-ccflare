@@ -115,7 +115,12 @@ describe("cooldown chokepoint — breaker fed from applyRateLimitCooldown", () =
 		// to 5). We assert "counts toward opening" by checking the failure
 		// count rose by exactly one and the circuit stays closed.
 		expect(breaker.getState(KEY)).toBe("closed");
-		applyRateLimitCooldown(accountFor(), { reason: OVERLOAD_529 }, ctx, breaker);
+		applyRateLimitCooldown(
+			accountFor(),
+			{ reason: OVERLOAD_529 },
+			ctx,
+			breaker,
+		);
 		expect(breaker.getState(KEY)).toBe("closed");
 
 		const snap = breaker.snapshot().find((s) => s.accountId === KEY.accountId);
@@ -181,12 +186,7 @@ describe("cooldown chokepoint — breaker fed from applyRateLimitCooldown", () =
 
 		// Trip the breaker via 5x 529s (threshold = 5).
 		for (let i = 0; i < 5; i++) {
-			applyRateLimitCooldown(
-				account,
-				{ reason: OVERLOAD_529 },
-				ctx,
-				breaker,
-			);
+			applyRateLimitCooldown(account, { reason: OVERLOAD_529 }, ctx, breaker);
 		}
 		expect(breaker.getState(KEY)).toBe("open");
 

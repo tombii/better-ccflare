@@ -6,13 +6,13 @@ import {
 	usageCache,
 } from "@better-ccflare/providers";
 import type { Account, RateLimitReason } from "@better-ccflare/types";
+import { circuitKeyFor, recordSuccess } from "../circuit-breaker";
 import { drainBody } from "./discard-body-cancel";
 import { isInternalProbe, type ProxyContext } from "./proxy-types";
 import {
 	applyRateLimitCooldown,
 	completeRateLimitProbe,
 } from "./rate-limit-cooldown";
-import { circuitKeyFor, recordSuccess } from "../circuit-breaker";
 
 const log = new Logger("ResponseProcessor");
 

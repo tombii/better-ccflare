@@ -8,7 +8,10 @@ import {
 } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import type { Account, RateLimitReason } from "@better-ccflare/types";
-import { getDefaultCircuitBreaker, type CircuitBreaker } from "../circuit-breaker";
+import {
+	type CircuitBreaker,
+	getDefaultCircuitBreaker,
+} from "../circuit-breaker";
 import type { ProxyContext } from "./proxy-types";
 
 const log = new Logger("RateLimitCooldown");

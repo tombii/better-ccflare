@@ -21,10 +21,16 @@
  * this file lands. See spec §PART 4 (i) and the explicit warning in the
  * spec's MANDATORY NEGATIVE CONTROL section.
  */
-import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
+import {
+	afterEach,
+	beforeEach,
+	describe,
+	expect,
+	it,
+	mock,
+	spyOn,
+} from "bun:test";
 import type { Account } from "@better-ccflare/types";
-import type { ProxyContext } from "../handlers";
-import { applyRateLimitCooldown } from "../handlers/rate-limit-cooldown";
 import {
 	CIRCUIT_BREAKER_ENV,
 	CircuitBreaker,
@@ -35,6 +41,8 @@ import {
 	recordSuccess,
 	resetDefaultCircuitBreaker,
 } from "../circuit-breaker";
+import type { ProxyContext } from "../handlers";
+import { applyRateLimitCooldown } from "../handlers/rate-limit-cooldown";
 import { handleProxy } from "../proxy";
 import * as usageCollectorModule from "../usage-collector";
 
@@ -258,8 +266,9 @@ describe("circuit-recovery keepalive asymmetry (PR #349 fix A test ii)", () => {
 			// Stub the provider's ctx with the secret plumbed in, and
 			// stamp the keepalive header onto the request.
 			const ctx = makeContext(account);
-			(ctx as ProxyContext & { internalProbeSecret?: string }).internalProbeSecret =
-				secret;
+			(
+				ctx as ProxyContext & { internalProbeSecret?: string }
+			).internalProbeSecret = secret;
 
 			const request = makeRequest({
 				"x-better-ccflare-internal-probe-secret": secret,

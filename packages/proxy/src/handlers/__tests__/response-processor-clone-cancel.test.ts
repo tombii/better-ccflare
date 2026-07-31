@@ -58,14 +58,12 @@ function makeAccount(): Account {
 // by another consumer (e.g. the inner provider clone at provider.ts:645).
 function makeCtx(opts: {
 	isStream: boolean;
-	usage:
-		| {
-				promptTokens: number;
-				completionTokens: number;
-				totalTokens: number;
-				model: string;
-		  }
-		| null;
+	usage: {
+		promptTokens: number;
+		completionTokens: number;
+		totalTokens: number;
+		model: string;
+	} | null;
 	// If true, before invoking extractUsageInfo, lock the response body via
 	// getReader() so the cancel-in-finally must skip (body.locked).
 	preLockBody?: boolean;
@@ -176,14 +174,14 @@ describe("updateAccountMetadata — extractUsageInfo clone lifecycle", () => {
 		// consumesBody), so the cancel in the finally must have run and the
 		// body is no longer readable on the clone's stream — a subsequent
 		// getReader() must surface an error or read done immediately.
-		const cloneBody = calls.extractUsageInfoArg!.body;
+		const cloneBody = calls.extractUsageInfoArg?.body;
 		// On Bun, after body.cancel() the stream should report done on first
 		// read with no value. We assert via getReader — that throws if the
 		// stream is closed, which is itself proof of cancellation. Fall back
 		// to read() returning done if getReader succeeds.
 		let observed = false;
 		try {
-			const reader = cloneBody!.getReader();
+			const reader = cloneBody?.getReader();
 			const { done } = await reader.read();
 			reader.releaseLock();
 			observed = done;
@@ -243,7 +241,7 @@ describe("updateAccountMetadata — extractUsageInfo clone lifecycle", () => {
 		});
 
 		const response = new Response(
-			"event: message_start\ndata: {\"message\":{\"usage\":{\"input_tokens\":7,\"output_tokens\":11}}}\n\n",
+			'event: message_start\ndata: {"message":{"usage":{"input_tokens":7,"output_tokens":11}}}\n\n',
 			{ status: 200, headers: { "content-type": "text/event-stream" } },
 		);
 
@@ -273,7 +271,10 @@ describe("updateAccountMetadata — extractUsageInfo clone lifecycle", () => {
 		});
 
 		const response = new Response(
-			JSON.stringify({ id: "msg_1", usage: { input_tokens: 1, output_tokens: 1 } }),
+			JSON.stringify({
+				id: "msg_1",
+				usage: { input_tokens: 1, output_tokens: 1 },
+			}),
 			{ status: 200, headers: { "content-type": "application/json" } },
 		);
 
@@ -327,10 +328,10 @@ describe("updateAccountMetadata — extractUsageInfo clone lifecycle", () => {
 			},
 		} as unknown as ProxyContext;
 
-		const response = new Response(
-			JSON.stringify({ id: "msg_1" }),
-			{ status: 200, headers: { "content-type": "application/json" } },
-		);
+		const response = new Response(JSON.stringify({ id: "msg_1" }), {
+			status: 200,
+			headers: { "content-type": "application/json" },
+		});
 
 		// Must not throw — the catch in the IIFE swallows the provider error,
 		// the finally still cancels the clone.

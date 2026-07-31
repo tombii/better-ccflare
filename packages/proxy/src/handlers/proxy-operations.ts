@@ -1539,9 +1539,15 @@ export function createPoolExhaustedResponse(
 			: POOL_EXHAUSTED_UNKNOWN_RESET_RETRY_AFTER_SECONDS;
 
 	// For circuit_open, take the longer of the breaker's own cooldown and any
-	// known usage/rate-limit recovery — "the longer, more honest wait wins".
+	// KNOWN usage/rate-limit recovery — "the longer, more honest wait wins".
+	// The 600s POOL_EXHAUSTED_UNKNOWN_RESET_RETRY_AFTER_SECONDS floor is a
+	// pool_exhausted-specific fallback for "no telemetry at all"; it must not
+	// leak into circuit_open's own 30s floor when no other recovery signal
+	// is known (earliestRecoveryMs === null).
 	const retryAfterSeconds = isCircuitOpen
-		? Math.max(CIRCUIT_OPEN_RETRY_AFTER_SECONDS, usageAwareRetryAfterSeconds)
+		? earliestRecoveryMs !== null
+			? Math.max(CIRCUIT_OPEN_RETRY_AFTER_SECONDS, usageAwareRetryAfterSeconds)
+			: CIRCUIT_OPEN_RETRY_AFTER_SECONDS
 		: usageAwareRetryAfterSeconds;
 
 	return new Response(
