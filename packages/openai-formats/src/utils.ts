@@ -26,12 +26,16 @@ export function repairTruncatedToolJson(accumulated: string): string {
 	}
 }
 
+const LOOKAROUND_PATTERN = /\(\?(=|!|<=|<!)/;
+
 /**
- * Helper to remove format: 'uri' from JSON schemas (some providers reject it)
+ * Sanitize JSON schemas to the subset OpenAI's tool-schema validator accepts:
+ * strips $schema, format: "uri" on strings, and regex pattern values
+ * containing lookaround (which OpenAI's restricted regex dialect rejects).
  */
-export function removeUriFormat(schema: unknown): unknown {
+export function sanitizeSchemaForOpenAI(schema: unknown): unknown {
 	if (Array.isArray(schema)) {
-		return schema.map((item) => removeUriFormat(item));
+		return schema.map((item) => sanitizeSchemaForOpenAI(item));
 	}
 
 	if (schema === null || typeof schema !== "object") {
@@ -47,7 +51,14 @@ export function removeUriFormat(schema: unknown): unknown {
 		// Strip format: uri from string fields
 		if (key === "format" && obj.type === "string" && obj[key] === "uri")
 			continue;
-		result[key] = removeUriFormat(obj[key]);
+		// Strip pattern values with lookaround — OpenAI's restricted regex dialect rejects them
+		if (
+			key === "pattern" &&
+			typeof obj[key] === "string" &&
+			LOOKAROUND_PATTERN.test(obj[key] as string)
+		)
+			continue;
+		result[key] = sanitizeSchemaForOpenAI(obj[key]);
 	}
 	return result;
 }

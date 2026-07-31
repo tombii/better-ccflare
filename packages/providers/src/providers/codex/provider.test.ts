@@ -2495,6 +2495,50 @@ describe("CodexProvider.transformRequestBody", () => {
 		expect(body.tool_choice).toBe("none");
 	});
 
+	it("sanitizes tool input_schema: strips lookaround pattern and $schema", async () => {
+		const provider = new CodexProvider();
+		const request = new Request("https://example.com/v1/messages", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				model: "claude-opus-4-8",
+				max_tokens: 10,
+				messages: [{ role: "user", content: "send an email" }],
+				tools: [
+					{
+						name: "send_email",
+						description: "Send an email.",
+						input_schema: {
+							$schema: "http://json-schema.org/draft-07/schema#",
+							type: "object",
+							properties: {
+								to: {
+									type: "array",
+									items: {
+										type: "string",
+										pattern:
+											"^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+									},
+								},
+							},
+							required: ["to"],
+						},
+					},
+				],
+			}),
+		});
+
+		const transformed = await provider.transformRequestBody(request);
+		const body = await transformed.json();
+		const params = body.tools[0].parameters;
+		expect(params).not.toHaveProperty("$schema");
+		expect(params.type).toBe("object");
+		expect(params.required).toEqual(["to"]);
+		const items = params.properties.to.items;
+		expect(items).not.toHaveProperty("pattern");
+		expect(items.type).toBe("string");
+	});
+
 	it("rejects a named tool_choice that is absent from tools", async () => {
 		const provider = new CodexProvider();
 		const request = new Request("https://example.com/v1/messages", {

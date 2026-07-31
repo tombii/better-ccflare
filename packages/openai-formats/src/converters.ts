@@ -15,7 +15,7 @@ import type {
 	OpenAIRequest,
 	OpenAIResponse,
 } from "./types";
-import { mapOpenAIFinishReason, removeUriFormat } from "./utils";
+import { mapOpenAIFinishReason, sanitizeSchemaForOpenAI } from "./utils";
 
 const log = new Logger("openai-formats/converters");
 
@@ -114,7 +114,7 @@ export function convertAnthropicRequestToOpenAI(
 			function: {
 				name: tool.name,
 				description: tool.description,
-				parameters: removeUriFormat(tool.input_schema) as Record<
+				parameters: sanitizeSchemaForOpenAI(tool.input_schema) as Record<
 					string,
 					unknown
 				>,

@@ -2,8 +2,8 @@ import { describe, expect, it } from "bun:test";
 import {
 	convertAnthropicPathToOpenAI,
 	mapOpenAIFinishReason,
-	removeUriFormat,
 	repairTruncatedToolJson,
+	sanitizeSchemaForOpenAI,
 } from "../utils";
 
 // ── repairTruncatedToolJson ───────────────────────────────────────────────────
@@ -40,19 +40,19 @@ describe("repairTruncatedToolJson", () => {
 	});
 });
 
-// ── removeUriFormat ───────────────────────────────────────────────────────────
+// ── sanitizeSchemaForOpenAI ───────────────────────────────────────────────────
 
-describe("removeUriFormat", () => {
+describe("sanitizeSchemaForOpenAI", () => {
 	it("strips format:uri from string-type properties", () => {
 		const input = { type: "string", format: "uri" };
-		const result = removeUriFormat(input) as Record<string, unknown>;
+		const result = sanitizeSchemaForOpenAI(input) as Record<string, unknown>;
 		expect(result).not.toHaveProperty("format");
 		expect(result.type).toBe("string");
 	});
 
 	it("preserves non-uri format values", () => {
 		const input = { type: "string", format: "date-time" };
-		const result = removeUriFormat(input) as Record<string, unknown>;
+		const result = sanitizeSchemaForOpenAI(input) as Record<string, unknown>;
 		expect(result.format).toBe("date-time");
 	});
 
@@ -61,7 +61,7 @@ describe("removeUriFormat", () => {
 			$schema: "http://json-schema.org/draft-07/schema#",
 			type: "object",
 		};
-		const result = removeUriFormat(input) as Record<string, unknown>;
+		const result = sanitizeSchemaForOpenAI(input) as Record<string, unknown>;
 		expect(result).not.toHaveProperty("$schema");
 	});
 
@@ -73,7 +73,7 @@ describe("removeUriFormat", () => {
 				name: { type: "string", format: "date-time" },
 			},
 		};
-		const result = removeUriFormat(input) as Record<string, unknown>;
+		const result = sanitizeSchemaForOpenAI(input) as Record<string, unknown>;
 		const props = result.properties as Record<string, Record<string, unknown>>;
 		expect(props?.url).not.toHaveProperty("format");
 		expect(props?.name?.format).toBe("date-time");
@@ -84,26 +84,78 @@ describe("removeUriFormat", () => {
 			{ type: "string", format: "uri" },
 			{ type: "string", format: "email" },
 		];
-		const result = removeUriFormat(input) as Array<Record<string, unknown>>;
+		const result = sanitizeSchemaForOpenAI(input) as Array<
+			Record<string, unknown>
+		>;
 		expect(result[0]).not.toHaveProperty("format");
 		expect(result[1]?.format).toBe("email");
 	});
 
 	it("passes through null", () => {
-		expect(removeUriFormat(null)).toBeNull();
+		expect(sanitizeSchemaForOpenAI(null)).toBeNull();
 	});
 
 	it("passes through primitives unchanged", () => {
-		expect(removeUriFormat("string")).toBe("string");
-		expect(removeUriFormat(42)).toBe(42);
-		expect(removeUriFormat(true)).toBe(true);
+		expect(sanitizeSchemaForOpenAI("string")).toBe("string");
+		expect(sanitizeSchemaForOpenAI(42)).toBe(42);
+		expect(sanitizeSchemaForOpenAI(true)).toBe(true);
 	});
 
 	it("does not strip format from non-string types", () => {
 		const input = { type: "integer", format: "int64" };
-		const result = removeUriFormat(input) as Record<string, unknown>;
+		const result = sanitizeSchemaForOpenAI(input) as Record<string, unknown>;
 		// format:uri stripping only applies to string types
 		expect(result.format).toBe("int64");
+	});
+
+	it("strips pattern containing a negative lookahead", () => {
+		const input = {
+			type: "object",
+			properties: {
+				to: {
+					type: "array",
+					items: {
+						type: "string",
+						pattern:
+							"^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+					},
+				},
+			},
+		};
+		const result = sanitizeSchemaForOpenAI(input) as Record<string, unknown>;
+		const props = result.properties as Record<string, Record<string, unknown>>;
+		const items = props?.to?.items as Record<string, unknown>;
+		expect(items).not.toHaveProperty("pattern");
+		expect(items.type).toBe("string");
+	});
+
+	it("strips patterns with each lookaround flavor", () => {
+		for (const pattern of ["foo(?=bar)", "(?<=a)b", "(?<!a)b"]) {
+			const input = { type: "string", pattern };
+			const result = sanitizeSchemaForOpenAI(input) as Record<string, unknown>;
+			expect(result).not.toHaveProperty("pattern");
+			expect(result.type).toBe("string");
+		}
+	});
+
+	it("preserves plain patterns without lookaround", () => {
+		const simple = sanitizeSchemaForOpenAI({
+			type: "string",
+			pattern: "^[a-z]+$",
+		}) as Record<string, unknown>;
+		expect(simple.pattern).toBe("^[a-z]+$");
+
+		const grouped = sanitizeSchemaForOpenAI({
+			type: "string",
+			pattern: "^(abc|def)$",
+		}) as Record<string, unknown>;
+		expect(grouped.pattern).toBe("^(abc|def)$");
+	});
+
+	it("does not strip a non-string pattern value", () => {
+		const input = { type: "object", pattern: 123 };
+		const result = sanitizeSchemaForOpenAI(input) as Record<string, unknown>;
+		expect(result.pattern).toBe(123);
 	});
 });
 
