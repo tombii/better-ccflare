@@ -22,8 +22,7 @@
  */
 import { describe, expect, it } from "bun:test";
 
-const TEST_ENDPOINT =
-	"https://api.minimax.io/v1/text/chatcompletion_v2";
+const TEST_ENDPOINT = "https://api.minimax.io/v1/text/chatcompletion_v2";
 
 describe("issue #273 — safety: forwarded bodies are never cancelled by the leak fix", () => {
 	it("the streaming forward path does NOT cancel the upstream body", async () => {

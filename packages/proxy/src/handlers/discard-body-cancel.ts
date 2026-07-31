@@ -15,10 +15,13 @@
  *   `arrayBuffer()` materialises the whole body into a single V8 ArrayBuffer
  *   before releasing the native source. On a large response this is a real
  *   allocation spike that defeats the point of the leak fix (we would be
- *   doing the work we want to avoid). chunked drain reads in 16 KiB chunks;
- *   each chunk is released as soon as the next is read, so the concurrent
- *   peak is bounded to one chunk (~16 KiB) regardless of body size. Bench
- *   numbers (Bun 1.3.2, 73 015-byte body, N=500):
+ *   doing the work we want to avoid). chunked drain reads via the stream's
+ *   default `reader.read()` (no BYOB / explicit chunk-size control), so each
+ *   chunk follows whatever size the upstream source produces rather than a
+ *   fixed 16 KiB; each chunk is still released as soon as the next is read,
+ *   so the concurrent peak stays bounded to one upstream-sized chunk rather
+ *   than the whole body. Bench numbers (Bun 1.3.2, 73 015-byte body reading
+ *   in a 16 KiB stream chunk size for that run, N=500):
  *
  *     arrayBuffer():           64.94 KB/req RSS growth, 247.9 ms/iter
  *     chunked 16 KiB drain:    18.78 KB/req RSS growth,  93.8 ms/iter
@@ -68,9 +71,13 @@ export function cancelDiscardedResponseBody(
 
 /**
  * Drain a ReadableStream by reading until done, dropping each chunk.
+ * Uses the stream's default reader (no BYOB / chunk-size control), so
+ * chunk size follows the upstream source rather than a fixed value.
  * Exported for the regression test which exercises the drain directly.
  */
-export async function drainBody(body: ReadableStream<Uint8Array>): Promise<void> {
+export async function drainBody(
+	body: ReadableStream<Uint8Array>,
+): Promise<void> {
 	const reader = body.getReader();
 	try {
 		while (true) {
