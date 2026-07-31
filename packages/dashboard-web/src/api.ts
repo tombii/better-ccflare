@@ -9,6 +9,7 @@ import type {
 	AgentUpdatePayload,
 	AgentWorkspace,
 	AnalyticsResponse,
+	AnomalyInsightsResponse,
 	CacheInsightsResponse,
 	Combo,
 	ComboFamilyAssignment,
@@ -984,6 +985,28 @@ class API extends HttpClient {
 
 		return this.get<CacheInsightsResponse>(
 			`/api/insights/cache?${params.toString()}`,
+		);
+	}
+
+	async getAnomalyInsights(
+		range = "24h",
+		options?: {
+			zScoreThreshold?: number;
+			maxEventsPerDetector?: number;
+		},
+	): Promise<AnomalyInsightsResponse> {
+		const params = new URLSearchParams({ range });
+		if (options?.zScoreThreshold !== undefined) {
+			params.append("zScoreThreshold", String(options.zScoreThreshold));
+		}
+		if (options?.maxEventsPerDetector !== undefined) {
+			params.append(
+				"maxEventsPerDetector",
+				String(options.maxEventsPerDetector),
+			);
+		}
+		return this.get<AnomalyInsightsResponse>(
+			`/api/insights/anomalies?${params.toString()}`,
 		);
 	}
 

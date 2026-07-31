@@ -21,6 +21,8 @@ export const queryKeys = {
 		[...queryKeys.all, "insights", "cache", { timeRange, threshold }] as const,
 	insightsContext: (timeRange?: string) =>
 		[...queryKeys.all, "insights", "context", { timeRange }] as const,
+	insightsAnomalies: (timeRange?: string) =>
+		[...queryKeys.all, "insights", "anomalies", { timeRange }] as const,
 	insightsAlerts: () => [...queryKeys.all, "insights", "alerts"] as const,
 	requests: (limit?: number) =>
 		[...queryKeys.all, "requests", { limit }] as const,
