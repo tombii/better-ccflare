@@ -99,9 +99,30 @@ export async function interceptAndModifyRequest(
 		// The namespaced `x-better-ccflare-agent-id` header is preferred; the legacy
 		// `x-anthropic-agent-id` header is honored for backward compatibility when
 		// the namespaced header is absent.
-		const explicitAgentId =
-			requestHeaders?.get("x-better-ccflare-agent-id")?.trim()?.slice(0, 256) ||
-			requestHeaders?.get("x-anthropic-agent-id")?.trim()?.slice(0, 256);
+		//
+		// When neither agent header is present, fall back to the Claude Code
+		// session id (`x-claude-code-session-id`). claude-cli emits this header
+		// natively on every request; ccflare has long persisted it as a
+		// request header so no client change is needed. A session id is a
+		// weaker attribution signal than an agent id (multiple agents can
+		// share one session), but it still splits a fleet of unrelated
+		// workers by session and prevents runaway-loop false positives.
+		// `agentAttributionSource` distinguishes the two header paths so the
+		// attribution remains auditable downstream.
+		const namespacedAgentId = requestHeaders
+			?.get("x-better-ccflare-agent-id")
+			?.trim()
+			?.slice(0, 256);
+		const legacyAgentId = requestHeaders
+			?.get("x-anthropic-agent-id")
+			?.trim()
+			?.slice(0, 256);
+		const sessionHeaderId = requestHeaders
+			?.get("x-claude-code-session-id")
+			?.trim()
+			?.slice(0, 256);
+
+		const explicitAgentId = namespacedAgentId || legacyAgentId;
 		if (explicitAgentId) {
 			log.debug(`Agent attributed via explicit header: ${explicitAgentId}`);
 			// Both the header path and the system-prompt path below rewrite the
@@ -135,6 +156,24 @@ export async function interceptAndModifyRequest(
 				originalModel,
 				appliedModel: originalModel,
 				agentAttributionSource: "header_agent",
+			};
+		}
+
+		if (sessionHeaderId) {
+			// Session-id fallback: claude-cli emits x-claude-code-session-id on
+			// every request. We surface it as `agentUsed` so the anomaly
+			// detector can key on per-session identity (issue #367 — distinct
+			// workers sharing one account+model+project no longer collapse).
+			// A session id is NOT an agent id, so model-preference lookup and
+			// model rewrite are deliberately skipped here; the body passes
+			// through unchanged.
+			log.debug(`Session attributed via header: ${sessionHeaderId}`);
+			return {
+				modifiedBody: requestBodyBuffer,
+				agentUsed: sessionHeaderId,
+				originalModel,
+				appliedModel: originalModel,
+				agentAttributionSource: "session_header",
 			};
 		}
 

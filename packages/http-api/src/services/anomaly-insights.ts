@@ -20,9 +20,12 @@ import type {
  * - tokenOutliers / outputBlowups: requests >= zScoreThreshold stddevs
  *   above their baseline mean (total tokens / output tokens respectively)
  * - runawayLoops: dense bursts of near-identical requests per
- *   (account, model, agent) — keyed by per-agent identity so many
- *   workers sharing one account+model+project (each on its own agent)
- *   do not collapse into one bucket that falsely reports as a loop
+ *   (account, model, project, agent) — keyed by per-agent identity so
+ *   many workers sharing one account+model+project (each on its own
+ *   agent) do not collapse into one bucket that falsely reports as a
+ *   loop. `project` is also part of the key so requests with no agent
+ *   attribution still split by project (the x-claude-code-session-id
+ *   header is unreliable in some clients and is not always present).
  * - misrouting: expensive models repeatedly used for trivially small calls
  */
 
@@ -304,9 +307,17 @@ export interface RunawayLoopOptions {
  * for one (account, model, project, agent), where the request-side token
  * profile is similar (coefficient of variation <= similarityTolerance).
  *
- * The key carries both `project` and `agentUsed`: distinct agents sharing a
- * project do not collapse, and unattributed traffic still remains separated
- * by project.
+ * The key carries BOTH `project` and `agentUsed` so the bucket is no
+ * coarser than the most informative available signal:
+ *  - When `agentUsed` is set (e.g. via x-better-ccflare-agent-id or
+ *    x-claude-code-session-id), many independent workers sharing one
+ *    (account, model, project) — each running its own agent — do not
+ *    collapse into a single bucket that falsely reports as a loop.
+ *  - When `agentUsed` is null, `project` still distinguishes requests
+ *    on the (account, model) pair so unattributed traffic does not
+ *    collapse either.
+ *  - Both signals collapse to `Unknown` only when both are null, which
+ *    is the strictest reasonable bucket.
  *
  * All rows count, including zero-token ones — repeated failing retries are
  * exactly the signal.

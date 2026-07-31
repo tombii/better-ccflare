@@ -291,4 +291,86 @@ describe("Agent Interceptor - X-Anthropic-Agent-Id Header", () => {
 			expect(result.agentAttributionSource).toBe("none");
 		});
 	});
+
+	describe("x-claude-code-session-id fallback", () => {
+		test("populates agentUsed with source session_header when no agent id headers present", async () => {
+			const buffer = toArrayBuffer(createMockRequestBody());
+			const result = await interceptAndModifyRequest(
+				buffer,
+				dbOps,
+				headers({ "x-claude-code-session-id": "session-abc-123" }),
+			);
+			expect(result.agentUsed).toBe("session-abc-123");
+			expect(result.agentAttributionSource).toBe("session_header");
+			// Body must pass through unchanged — session id is NOT an agent
+			// id, no model rewrite.
+			expect(result.modifiedBody).toBe(buffer);
+			expect(result.originalModel).toBe("claude-3-5-sonnet-20241022");
+			expect(result.appliedModel).toBe("claude-3-5-sonnet-20241022");
+		});
+
+		test("agent id headers still win over session header", async () => {
+			const buffer = toArrayBuffer(createMockRequestBody());
+			const result = await interceptAndModifyRequest(
+				buffer,
+				dbOps,
+				headers({
+					"x-better-ccflare-agent-id": "agent-wins",
+					"x-claude-code-session-id": "session-loses",
+				}),
+			);
+			expect(result.agentUsed).toBe("agent-wins");
+			expect(result.agentAttributionSource).toBe("header_agent");
+		});
+
+		test("legacy x-anthropic-agent-id also wins over session header", async () => {
+			const buffer = toArrayBuffer(createMockRequestBody());
+			const result = await interceptAndModifyRequest(
+				buffer,
+				dbOps,
+				headers({
+					"x-anthropic-agent-id": "legacy-agent-wins",
+					"x-claude-code-session-id": "session-loses",
+				}),
+			);
+			expect(result.agentUsed).toBe("legacy-agent-wins");
+			expect(result.agentAttributionSource).toBe("header_agent");
+		});
+
+		test("trims surrounding whitespace on the session id", async () => {
+			const buffer = toArrayBuffer(createMockRequestBody());
+			const result = await interceptAndModifyRequest(
+				buffer,
+				dbOps,
+				headers({ "x-claude-code-session-id": "  trimmed-session  " }),
+			);
+			expect(result.agentUsed).toBe("trimmed-session");
+			expect(result.agentAttributionSource).toBe("session_header");
+		});
+
+		test("caps the session id at 256 characters", async () => {
+			const longId = "c".repeat(500);
+			const buffer = toArrayBuffer(createMockRequestBody());
+			const result = await interceptAndModifyRequest(
+				buffer,
+				dbOps,
+				headers({ "x-claude-code-session-id": longId }),
+			);
+			expect(result.agentUsed).toHaveLength(256);
+			expect(result.agentUsed).toBe("c".repeat(256));
+			expect(result.agentAttributionSource).toBe("session_header");
+		});
+
+		test("empty/whitespace-only session header is treated as absent", async () => {
+			const buffer = toArrayBuffer(createMockRequestBody());
+			const result = await interceptAndModifyRequest(
+				buffer,
+				dbOps,
+				headers({ "x-claude-code-session-id": "   " }),
+			);
+			// Falls through to system-prompt path => no agent from a benign prompt
+			expect(result.agentUsed).toBeNull();
+			expect(result.agentAttributionSource).toBe("none");
+		});
+	});
 });

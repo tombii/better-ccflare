@@ -248,15 +248,19 @@ describe("detectRunawayLoops", () => {
 		expect(detectRunawayLoops(rows, opts)).toHaveLength(0);
 	});
 
-	test("splits groups by agent (project is context, not a key)", () => {
-		// 6 requests in each of two agents, same project: neither reaches
-		// minRequests — the agent, not the project, scopes the bucket.
+	test("splits groups by project when agent id is absent", () => {
+		// Regression guard for issue #367: when no agent attribution is
+		// present (live ccmax traffic — `agent_used` is NULL on 100% of
+		// rows), the project must still split the bucket. 6 requests in
+		// each of two projects: neither reaches minRequests, and the
+		// combined 12-row bucket would falsely report as a loop if the
+		// key dropped project entirely.
 		const rows = Array.from({ length: 12 }, (_, i) =>
 			req({
 				timestamp: i * 10_000,
 				inputTokens: 500,
-				project: "shared-proj",
-				agentUsed: i % 2 === 0 ? "agent-a" : "agent-b",
+				project: i % 2 === 0 ? "p1" : "p2",
+				agentUsed: null,
 			}),
 		);
 		expect(detectRunawayLoops(rows, opts)).toHaveLength(0);
@@ -309,6 +313,45 @@ describe("detectRunawayLoops", () => {
 		const loops = detectRunawayLoops(rows, opts);
 		expect(loops).toHaveLength(1);
 		expect(loops[0].agentUsed).toBe("agent-a");
+		expect(loops[0].requests).toBe(12);
+	});
+
+	test("N concurrent distinct sessions do NOT fire, one session repeating DOES", () => {
+		// Mirrors the live ccmax fleet: the only stable per-worker signal
+		// is the x-claude-code-session-id header, surfaced as agentUsed
+		// via the session_header attribution source. 12 concurrent
+		// distinct sessions, 9 requests each — none should reach
+		// opts.minRequests (10) on its own. Then one session repeats
+		// 12 times — that bucket DOES fire.
+		const concurrentSessions = 12;
+		const requestsPerSession = 9; // < opts.minRequests = 10
+		const concurrentRows: AnomalyRequestRow[] = [];
+		for (let s = 0; s < concurrentSessions; s++) {
+			for (let r = 0; r < requestsPerSession; r++) {
+				concurrentRows.push(
+					req({
+						timestamp: r * 1_100 + s * 13, // slight per-session skew
+						inputTokens: 500,
+						project: "fleet-proj",
+						agentUsed: `sess-${s}`,
+					}),
+				);
+			}
+		}
+		expect(detectRunawayLoops(concurrentRows, opts)).toHaveLength(0);
+
+		// One session repeating 12 times in one window => exactly one loop.
+		const repeatingRows = Array.from({ length: 12 }, (_, i) =>
+			req({
+				timestamp: i * 10_000,
+				inputTokens: 500,
+				project: "fleet-proj",
+				agentUsed: "sess-0",
+			}),
+		);
+		const loops = detectRunawayLoops(repeatingRows, opts);
+		expect(loops).toHaveLength(1);
+		expect(loops[0].agentUsed).toBe("sess-0");
 		expect(loops[0].requests).toBe(12);
 	});
 
