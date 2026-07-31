@@ -303,7 +303,12 @@ export class AlertService {
 			`SELECT COUNT(*) as cnt FROM alerts WHERE id = ?`,
 			[id],
 		);
-		if (!row || row.cnt === 0) return false;
+		// Bun.SQL returns COUNT(*) on PostgreSQL as a JavaScript string (BIGINT
+		// is stringified, see Bun#22188). Strict equality `row.cnt === 0` is
+		// always false under that serialization, so the "missing id" branch
+		// never fires on PG. Coerce to Number first — the same coercion
+		// getUnacknowledgedCount() uses one method above.
+		if (!row || Number(row.cnt) === 0) return false;
 		await this.db.run(`UPDATE alerts SET acknowledged = 1 WHERE id = ?`, [id]);
 		return true;
 	}
