@@ -498,7 +498,13 @@ Get recent request summary.
     "cacheCreationInputTokens": 0,
     "costUsd": 0.0125,
     "agentUsed": null,
-    "tokensPerSecond": null
+    "tokensPerSecond": null,
+    "project": null,
+    "projectAttributionSource": null,
+    "agentAttributionSource": null,
+    "clientSessionId": null,
+    "streamTerminalState": null,
+    "rateLimited": false
   }
 ]
 ```
@@ -507,6 +513,11 @@ Get recent request summary.
 ```bash
 curl "http://localhost:8080/api/requests?limit=100"
 ```
+
+**Field notes:**
+- `streamTerminalState` — the real SSE outcome for a streaming `/v1/messages` request. One of `complete`, `recovered`, `error`, `truncated`, or `client_cancelled`; `undefined` for non-streaming requests. A response can carry `statusCode: 200` and still be `truncated` or `client_cancelled`, so this is the authoritative "did the stream actually finish?" signal. An unrecognized value (e.g. written by a newer build, surviving a rollback) surfaces as `"unknown"` rather than vanishing.
+- `clientSessionId` — the `x-claude-code-session-id` header value when the client sent one; used to attribute requests to a Claude Code session.
+- `rateLimited` — convenience flag, `true` when `statusCode === 429`.
 
 #### GET /api/requests/detail
 

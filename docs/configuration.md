@@ -177,6 +177,7 @@ better-ccflare can emit threshold and anomaly alerts and deliver them via webhoo
 | `ALERT_REQUEST_TOKENS` | Fire a critical alert when a single request's total token count meets or exceeds this value. `0` disables | `0` | `ALERT_REQUEST_TOKENS=200000` |
 | `ALERT_ANOMALY_ENABLED` | Run periodic anomaly detection over recent requests (token outliers, output blowups, runaway loops, model misrouting). Accepts `1`/`true`/`0`/`false` | `false` | `ALERT_ANOMALY_ENABLED=true` |
 | `ALERT_ANOMALY_INTERVAL_MINUTES` | Cadence of anomaly-detection sweeps, in minutes. Clamped to `[5, 1440]` | `15` | `ALERT_ANOMALY_INTERVAL_MINUTES=30` |
+| `ALERT_ANOMALY_LOOP_MIN_REQUESTS` | Minimum request count in the detection window before the runaway-loop detector will flag a burst, keyed per account + model + project + agent (with the `x-claude-code-session-id` header as an attribution fallback). Set above the rate a single legitimate worker reaches in the window so a true loop (50+ req/min) stands out. Clamped to `[5, 1000]` | `25` | `ALERT_ANOMALY_LOOP_MIN_REQUESTS=50` |
 | `ALERT_COOLDOWN_MINUTES` | Per-alert-type-and-scope cooldown bucket size in minutes — within a bucket, only the first alert is persisted and delivered (no SSE storms or duplicate webhooks). Clamped to `[1, 1440]` | `60` | `ALERT_COOLDOWN_MINUTES=120` |
 | `ALERT_WEBHOOK_URL` | `http(s)` URL to receive `POST` deliveries of `{ type: "alert", alert: { ... } }`. Unset = no webhook delivery. Must be a valid URL or the setter rejects it | unset | `ALERT_WEBHOOK_URL=https://example.com/alerts` |
 
