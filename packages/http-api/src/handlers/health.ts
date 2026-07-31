@@ -69,14 +69,25 @@ export function computePoolStatus(
 		(a) => !a.paused && a.rate_limited_until && a.rate_limited_until >= now,
 	);
 	const rate_limited = rateLimitedAccounts.length;
-	const routable = accounts.filter((a) => isAccountAvailable(a, now)).length;
-	// Subset of `routable`: accounts with no pause and no active cooldown
-	// whose usage window sits at 100% — they look available locally, yet
-	// upstream rejects their requests, so `routable > 0` alone can mask an
-	// effectively exhausted pool (incident 2026-07-09). Benched accounts are
-	// excluded — they are already visible via `rate_limited`, and counting
-	// them here would let usage_exhausted exceed routable (PR #299 review
-	// finding).
+	// `routable` reflects what ccflare will actually attempt to route, i.e.
+	// unpaused + no active cooldown + NOT usage-exhausted. Passing the usage
+	// snapshot here is load-bearing: without it, an account at 100% utilization
+	// with no `rate_limited_until` was counted as routable while upstream
+	// rejected every request — masking the effective outage from the dashboard
+	// and from clients polling /health (incident 2026-07-30T20:24-22:20Z:
+	// every 503 came back with a default 60s Retry-After that compounded with
+	// CLAUDE_CODE_MAX_RETRIES=5 to kill clients in 300s). The relationship
+	// between `routable` and `usage_exhausted` changed because `routable` now
+	// honors usage telemetry — see commit message for details.
+	const routable = accounts.filter((a) =>
+		isAccountAvailable(a, now, getUsageInfo(a) ?? undefined),
+	).length;
+	// `usage_exhausted` is the diagnostic overlay: accounts whose cached
+	// telemetry shows 100% utilization with a future reset, AND that have no
+	// other reason to be unavailable (no pause, no active cooldown). The
+	// pre-usage-aware isAccountAvailable gate is preserved on purpose so this
+	// counter keeps its PR #299 semantics (no double-counting with paused or
+	// rate_limited accounts).
 	const usage_exhausted = accounts.filter((a) => {
 		if (!isAccountAvailable(a, now)) return false;
 		const usage = getUsageInfo(a);

@@ -263,7 +263,14 @@ describe("pool exhausted — 503 response", () => {
 		}
 	});
 
-	it("sets Retry-After to 60 when no cooldown info (only paused accounts)", async () => {
+	it("clamps Retry-After to the 600s unknown-reset floor when no cooldown info (only paused accounts)", async () => {
+		// Pre-fix this asserted Retry-After: 60, which combined with
+		// CLAUDE_CODE_MAX_RETRIES=5 to kill clients in 300s during a 116-minute
+		// total outage (production trace 2026-07-30). The new contract returns
+		// the unknown-reset floor (600s = UsageCache TTL, see
+		// POOL_EXHAUSTED_UNKNOWN_RESET_RETRY_AFTER_SECONDS in proxy-operations.ts)
+		// so a client retry is guaranteed to see fresh telemetry rather than
+		// retrying blindly against a stale snapshot.
 		const pausedAccount = makeAccount({
 			id: "acc-paused",
 			name: "paused-account",
@@ -278,7 +285,7 @@ describe("pool exhausted — 503 response", () => {
 		);
 
 		expect(response.status).toBe(503);
-		expect(response.headers.get("Retry-After")).toBe("60");
+		expect(response.headers.get("Retry-After")).toBe("600");
 	});
 
 	it("filters accounts by provider in multi-provider setup", async () => {

@@ -7,9 +7,15 @@ import { computePoolStatus, createHealthHandler } from "../health";
  * Incident 2026-07-09: /health reported `routable: 2` and the dashboard showed
  * `rateLimitStatus: OK` for MAX_200_ALT_2 while the account's weekly usage
  * window sat at 100% (every request 429'd upstream) and /v1/messages returned
- * 503 pool_exhausted. `routable` must keep its meaning (unpaused + no active
- * cooldown), but the pool status has to EXPOSE usage-exhausted accounts so the
- * two readings stop contradicting each other.
+ * 503 pool_exhausted. The follow-up incident on 2026-07-30T20:24-22:20Z
+ * showed the same split-brain: a 116-minute total outage where every 503
+ * carried `Retry-After: 60`, which (combined with CLAUDE_CODE_MAX_RETRIES=5)
+ * killed clients in 300s — measured 300.4-300.6s across seven agents. To stop
+ * the outage from being invisible, `routable` now honors usage telemetry:
+ * accounts whose 100% utilization is visible to ccflare are no longer
+ * counted as routable. `usage_exhausted` keeps its diagnostic-overlay role
+ * (pre-usage-aware isAccountAvailable gate), so dashboards and alerting can
+ * still isolate "why is this pool empty?".
  */
 
 function makeAccount(overrides: Partial<Account> = {}): Account {
@@ -36,7 +42,7 @@ describe("computePoolStatus — usage_exhausted counter", () => {
 		];
 		const utilization: Record<string, number> = {
 			main: 76,
-			alt: 100, // paused — already visible as paused, must not double-count
+			alt: 100, // paused — already visible as paused, must not double-count in usage_exhausted
 			alt2: 100,
 			alt3: 41,
 		};
@@ -47,11 +53,14 @@ describe("computePoolStatus — usage_exhausted counter", () => {
 				: null,
 		);
 
+		// New contract: routable honors usage telemetry, so ALT_2 (100% util,
+		// future reset) is no longer counted as routable. ALT_3 is the only
+		// genuinely-routable account now.
+		expect(status.routable).toBe(1);
+		// usage_exhausted stays at 1: ALT_2 hits the diagnostic predicate
+		// (isAccountAvailable(old) && exhausted). ALT is excluded because
+		// it's paused (would otherwise be double-counted against `paused`).
 		expect(status.usage_exhausted).toBe(1);
-		// routable keeps its existing meaning — ALT_2 has no active cooldown,
-		// so it still counts. The contradiction becomes visible instead of
-		// hidden: routable 2, of which 1 is usage-exhausted.
-		expect(status.routable).toBe(2);
 		expect(status.paused).toBe(2);
 		expect(status.rate_limited).toBe(0);
 	});
@@ -108,6 +117,9 @@ describe("createHealthHandler — pool.usage_exhausted in the response", () => {
 		usageCache.delete("health-test-stale");
 		usageCache.delete("health-test-zai-stale");
 		usageCache.delete("health-test-zai-fresh");
+		usageCache.delete("health-test-outage-a");
+		usageCache.delete("health-test-outage-b");
+		usageCache.delete("health-test-outage-c");
 	});
 
 	it("exposes usage_exhausted via an injected utilization source", async () => {
@@ -131,7 +143,10 @@ describe("createHealthHandler — pool.usage_exhausted in the response", () => {
 			pool: { routable: number; usage_exhausted: number };
 		};
 
-		expect(body.pool.routable).toBe(2);
+		// a2 has 100% utilization (resetMs=null, which isUsageExhausted treats
+		// as exhausted because of "trust the cache" semantics) so it is no
+		// longer counted as routable under the new contract.
+		expect(body.pool.routable).toBe(1);
 		expect(body.pool.usage_exhausted).toBe(1);
 	});
 
@@ -161,7 +176,11 @@ describe("createHealthHandler — pool.usage_exhausted in the response", () => {
 			pool: { routable: number; usage_exhausted: number };
 		};
 
-		expect(body.pool.routable).toBe(1);
+		// The single account is usage-exhausted (100% seven_day with future
+		// reset), so under the new routable contract it is not routable and
+		// the pool-level totals are zero. This is exactly the situation that
+		// was hidden before the fix.
+		expect(body.pool.routable).toBe(0);
 		expect(body.pool.usage_exhausted).toBe(1);
 	});
 
@@ -261,5 +280,76 @@ describe("createHealthHandler — pool.usage_exhausted in the response", () => {
 		};
 
 		expect(body.pool.usage_exhausted).toBe(1);
+	});
+
+	it("reports routable:0 during a total usage-capped outage (incident 2026-07-30 scenario)", async () => {
+		// Production trace: ccproxy2 was down 116 minutes because every account
+		// was usage-capped. Pre-fix /health reported `routable: 3` because
+		// computePoolStatus called isAccountAvailable(a, now) without the
+		// usage argument. This test guards against that regression directly.
+		usageCache.set("health-test-outage-a", {
+			five_hour: { utilization: 12, resets_at: null },
+			seven_day: {
+				utilization: 100,
+				resets_at: new Date(Date.now() + 6_960_000).toISOString(),
+			},
+		});
+		usageCache.set("health-test-outage-b", {
+			five_hour: { utilization: 18, resets_at: null },
+			seven_day: {
+				utilization: 100,
+				resets_at: new Date(Date.now() + 6_960_000).toISOString(),
+			},
+		});
+		usageCache.set("health-test-outage-c", {
+			five_hour: { utilization: 25, resets_at: null },
+			seven_day: {
+				utilization: 100,
+				resets_at: new Date(Date.now() + 6_960_000).toISOString(),
+			},
+		});
+
+		const handler = createHealthHandler(
+			dbWith([
+				{
+					id: "health-test-outage-a",
+					name: "outage-a",
+					provider: "anthropic",
+					paused: false,
+				},
+				{
+					id: "health-test-outage-b",
+					name: "outage-b",
+					provider: "anthropic",
+					paused: false,
+				},
+				{
+					id: "health-test-outage-c",
+					name: "outage-c",
+					provider: "anthropic",
+					paused: false,
+				},
+			]),
+			config,
+		);
+
+		const response = await handler(new URL("http://localhost/health"));
+		const body = (await response.json()) as {
+			pool: {
+				configured: number;
+				routable: number;
+				usage_exhausted: number;
+				rate_limited: number;
+				paused: number;
+			};
+		};
+
+		// Outage visibility: routable must drop to 0 even though the
+		// accounts have no `paused` flag or `rate_limited_until`.
+		expect(body.pool.configured).toBe(3);
+		expect(body.pool.routable).toBe(0);
+		expect(body.pool.usage_exhausted).toBe(3);
+		expect(body.pool.paused).toBe(0);
+		expect(body.pool.rate_limited).toBe(0);
 	});
 });
