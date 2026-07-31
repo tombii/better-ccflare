@@ -6,6 +6,7 @@ import {
 	usageCache,
 } from "@better-ccflare/providers";
 import type { Account, RateLimitReason } from "@better-ccflare/types";
+import { drainBody } from "./discard-body-cancel";
 import { isInternalProbe, type ProxyContext } from "./proxy-types";
 import {
 	applyRateLimitCooldown,
@@ -192,10 +193,15 @@ export function updateAccountMetadata(
 		} else if (ctx.provider.extractUsageInfo) {
 			const extractUsageInfo = ctx.provider.extractUsageInfo.bind(ctx.provider);
 			(async () => {
+				// Hold the clone in a local so we can release its body once the
+				// await resolves. The clone is consumed by extractUsageInfo
+				// (which itself clones again internally — see
+				// providers/anthropic/provider.ts:645); cancelling before that
+				// await completes would truncate usage extraction.
+				let usageClone: Response | null = null;
 				try {
-					const usageInfo = await extractUsageInfo(
-						response.clone() as Response,
-					);
+					usageClone = response.clone();
+					const usageInfo = await extractUsageInfo(usageClone);
 					if (usageInfo) {
 						log.debug(
 							`Extracted usage info for account ${account.name}: ${JSON.stringify(usageInfo)}`,
@@ -214,6 +220,31 @@ export function updateAccountMetadata(
 						`Failed to extract usage info for account ${account.name}:`,
 						error,
 					);
+				} finally {
+					// After the await, the body is either fully consumed or the
+					// provider's reader was cancelled mid-stream. Either way the
+					// local has no further consumer; release its body if it is
+					// still unlocked. This bounds transient, concurrency-scaled
+					// off-heap retention per in-flight request — sequential
+					// requests are flat (no per-request growth), but under
+					// concurrent load the held clone compounds.
+					//
+					// Uses drainBody, NOT body.cancel(): this repo's own
+					// benchmark (bench/drain-strategy-harness.ts, same PR)
+					// measured body.cancel() as a no-op on every released Bun
+					// (Bun 1.3.2 ~83 KB/req leak, 1.3.14 ~78 KB/req — both
+					// indistinguishable from never calling it at all). Only
+					// draining the body to done actually releases the native
+					// backing store on stock Bun.
+					if (usageClone) {
+						const body = usageClone.body;
+						if (body && !body.locked) {
+							// Fire and forget — extracting usage must not block on
+							// releasing the buffer, and a drain that throws must
+							// not surface into the response path.
+							drainBody(body).catch(() => {});
+						}
+					}
 				}
 			})();
 		}

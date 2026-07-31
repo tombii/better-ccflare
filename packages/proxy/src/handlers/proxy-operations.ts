@@ -39,6 +39,8 @@ import { collectWindows } from "./usage-throttling";
 
 const log = new Logger("ProxyOperations");
 
+import { cancelDiscardedResponseBody } from "./discard-body-cancel";
+
 const SYNTHETIC_RESPONSE_HEADER = "x-better-ccflare-synthetic-response";
 const SYNTHETIC_STATUS_HEADER = "x-better-ccflare-synthetic-status";
 const SYNTHETIC_RESPONSE_URL_PREFIX = "https://better-ccflare.local/";
@@ -720,6 +722,7 @@ export async function proxyWithAccount(
 					: retryProviderRequest;
 
 				// Make the retry request (or unwrap a synthetic provider response)
+				cancelDiscardedResponseBody(rawResponse);
 				rawResponse = isSyntheticProviderResponse(retryTransformedRequest)
 					? materializeSyntheticResponse(retryTransformedRequest)
 					: await makeProxyRequest(retryTransformedRequest);
@@ -752,6 +755,7 @@ export async function proxyWithAccount(
 					headers: transformedRequest.headers,
 					body: JSON.stringify(retryBodyJson),
 				});
+				cancelDiscardedResponseBody(rawResponse);
 				rawResponse = isSyntheticProviderResponse(retryRequest)
 					? materializeSyntheticResponse(retryRequest)
 					: await makeProxyRequest(retryRequest);
@@ -892,6 +896,7 @@ export async function proxyWithAccount(
 
 				const isKeepalive = isInternalProbe(req.headers, ctx, "keepalive");
 				if (isKeepalive) {
+					cancelDiscardedResponseBody(rawResponse);
 					return null;
 				}
 				const reason: RateLimitReason = "out_of_credits";
@@ -928,6 +933,7 @@ export async function proxyWithAccount(
 						requestMeta.agentAttributionSource ?? null,
 					),
 				);
+				cancelDiscardedResponseBody(rawResponse);
 				return null;
 			}
 
@@ -951,6 +957,7 @@ export async function proxyWithAccount(
 							log.warn(
 								`Keepalive replay for ${account.name} got 429 — skipping cooldown (synthetic burst, not a real per-account rate limit)`,
 							);
+							cancelDiscardedResponseBody(rawResponse);
 							return null;
 						}
 
@@ -997,6 +1004,7 @@ export async function proxyWithAccount(
 								requestMeta.agentAttributionSource ?? null,
 							),
 						);
+						cancelDiscardedResponseBody(rawResponse);
 						return null;
 					}
 					// Model-not-found (404/400) is forwarded to the client so it can
@@ -1067,6 +1075,7 @@ export async function proxyWithAccount(
 						// If re-patching fails, proceed with the transformed request as-is
 					}
 
+					cancelDiscardedResponseBody(rawResponse);
 					rawResponse = isSyntheticProviderResponse(retryTransformedRequest)
 						? materializeSyntheticResponse(retryTransformedRequest)
 						: await makeProxyRequest(retryTransformedRequest);
@@ -1142,6 +1151,7 @@ export async function proxyWithAccount(
 						);
 					}
 				}
+				cancelDiscardedResponseBody(rawResponse);
 				return null;
 			}
 		}
@@ -1177,6 +1187,7 @@ export async function proxyWithAccount(
 			log.warn(
 				`Authentication failed (401) for account ${account.name}, failing over to next account`,
 			);
+			cancelDiscardedResponseBody(response);
 			return null;
 		}
 
@@ -1224,6 +1235,7 @@ export async function proxyWithAccount(
 							req.headers,
 						);
 
+						cancelDiscardedResponseBody(response);
 						response = retryResponse;
 
 						// If credentials expired mid-retry, break out and let the 401
@@ -1262,6 +1274,7 @@ export async function proxyWithAccount(
 			log.warn(
 				`Authentication failed (401) on 529 retry for account ${account.name}, failing over to next account`,
 			);
+			cancelDiscardedResponseBody(response);
 			return null;
 		}
 
@@ -1312,6 +1325,7 @@ export async function proxyWithAccount(
 					{ ...ctx, provider },
 				);
 			}
+			cancelDiscardedResponseBody(response);
 			return null; // Signal to try next account
 		}
 
