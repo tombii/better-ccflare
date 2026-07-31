@@ -313,12 +313,16 @@ async function isInvalidThinkingSignatureError(
 	if (response.status !== 400) return false;
 
 	try {
-		const clone = response.clone();
 		const contentType = response.headers.get("content-type");
 
 		if (!contentType?.includes("application/json")) return false;
 
-		const json = await clone.json();
+		// Cloned only here, after the content-type gate. Cloning before it teed
+		// the body and then returned early for every non-JSON body, stranding
+		// that copy unread — the tee keeps buffering for whoever consumes the
+		// original. Reachable in normal operation: providers such as Qwen do
+		// return non-JSON error bodies. See issue #356.
+		const json = await response.clone().json();
 
 		// Check for Claude's thinking-related errors
 		if (json.error?.message && typeof json.error.message === "string") {
@@ -363,11 +367,15 @@ async function isCacheControlRejectionError(
 	if (response.status !== 400) return false;
 
 	try {
-		const clone = response.clone();
 		const contentType = response.headers.get("content-type");
 		if (!contentType?.includes("application/json")) return false;
 
-		const json = await clone.json();
+		// Cloned only here, after the content-type gate. Cloning before it teed
+		// the body and then returned early for every non-JSON body, stranding
+		// that copy unread — the tee keeps buffering for whoever consumes the
+		// original. Reachable in normal operation: providers such as Qwen do
+		// return non-JSON error bodies. See issue #356.
+		const json = await response.clone().json();
 		const message: string = json.error?.message ?? json.message ?? "";
 		return (
 			typeof message === "string" &&
@@ -405,11 +413,15 @@ export async function isModelUnavailableError(
 	}
 
 	try {
-		const clone = response.clone();
 		const contentType = response.headers.get("content-type");
 		if (!contentType?.includes("application/json")) return false;
 
-		const json = await clone.json();
+		// Cloned only here, after the content-type gate. Cloning before it teed
+		// the body and then returned early for every non-JSON body, stranding
+		// that copy unread — the tee keeps buffering for whoever consumes the
+		// original. Reachable in normal operation: providers such as Qwen do
+		// return non-JSON error bodies. See issue #356.
+		const json = await response.clone().json();
 
 		// Anthropic native format
 		if (json.error?.type === "not_found_error") return true;

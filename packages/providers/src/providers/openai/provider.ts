@@ -139,6 +139,16 @@ export class OpenAICompatibleProvider extends BaseProvider {
 				const data = await clone.json();
 				const anthropicData = convertOpenAIResponseToAnthropic(data);
 
+				// Success path: callers receive the converted response, so the
+				// original is discarded here. `clone()` teed the body — leaving
+				// the original branch unread keeps the tee buffering for a body
+				// nobody will ever consume, on every JSON response this provider
+				// converts. Cancelling disturbs it immediately; the promise is
+				// not awaited because nothing downstream depends on it. Only the
+				// success path may do this: the catch below falls through and
+				// returns the original, which must stay intact. See issue #356.
+				response.body?.cancel().catch(() => {});
+
 				return new Response(JSON.stringify(anthropicData), {
 					status: response.status,
 					statusText: response.statusText,
