@@ -296,6 +296,59 @@ describe("detectRunawayLoops", () => {
 		expect(loops[0].windowStartMs).toBe(0);
 		expect(loops[0].windowEndMs).toBe(29 * 30_000);
 	});
+
+	test("distinct projects that share a 63-char prefix do NOT collapse into one loop", () => {
+		// Regression for Greptile review on PR #369: toAnomalyRow used to
+		// call sanitizeProjectForDisplay BEFORE handing rows to the
+		// detectors, so any project longer than 64 chars was sliced to 63
+		// chars + ellipsis. Two projects that share their first 63 chars
+		// and differ at byte 64 (or beyond) collapse to the same display
+		// value, and the (account, model, project) grouping key in
+		// detectRunawayLoops then merges them into one loop. After the fix,
+		// toAnomalyRow hands the raw project to the detectors (the DB-side
+		// sanitizeProjectName already caps at PROJECT_NAME_MAX_LEN=64 and
+		// strips C0 control chars), so this test must surface TWO loops
+		// with the original project values preserved.
+		const sharedPrefix = "z".repeat(63);
+		const projectA = `${sharedPrefix}A_suffix`;
+		const projectB = `${sharedPrefix}B_suffix`;
+		// Demonstrate the bug we are protecting against: the sanitiser
+		// truncates both projects to 63 chars + ellipsis, so the display
+		// values are identical under the old behaviour. If the sanitiser
+		// ever stops truncating, this assert fails and the test no longer
+		// exercises the regression — that is the signal to revisit.
+		expect(sanitizeProjectForDisplay(projectA)).toBe(
+			sanitizeProjectForDisplay(projectB),
+		);
+		// The detector sees the raw (un-truncated) projects, which is what
+		// toAnomalyRow now provides after the fix.
+		const rows = [
+			...Array.from({ length: 12 }, (_, i) =>
+				req({
+					timestamp: i * 10_000,
+					inputTokens: 500,
+					project: projectA,
+				}),
+			),
+			...Array.from({ length: 12 }, (_, i) =>
+				req({
+					timestamp: i * 10_000,
+					inputTokens: 500,
+					project: projectB,
+				}),
+			),
+		];
+		const loops = detectRunawayLoops(rows, opts);
+		expect(loops).toHaveLength(2);
+		const projects = loops.map((l) => l.project).sort();
+		expect(projects).toEqual([projectA, projectB].sort());
+		// Each loop carries its 12 un-punctuated rows — the original project
+		// propagates end-to-end, not the truncated display value.
+		for (const loop of loops) {
+			expect(loop.requests).toBe(12);
+			expect(loop.project).not.toContain("…");
+		}
+	});
 });
 
 describe("detectModelMisrouting", () => {

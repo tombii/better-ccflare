@@ -178,11 +178,16 @@ function toAnomalyRow(row: AnomalySqlRow): AnomalyRequestRow {
 		timestamp: Number(row.timestamp) || 0,
 		account: row.account,
 		model: row.model,
-		// Defence in depth: sanitise the project field at the boundary so
-		// the stored / surfaced alert row cannot carry prompt content
-		// through the alerts UI. The real extraction bug is upstream
-		// (proxy/src/project-attribution.ts, #368).
-		project: sanitizeProjectForDisplay(row.project),
+		// Preserve the original project so the runaway-loop grouping key
+		// (account, model, project) sees distinct values for two projects
+		// that share a 63-char prefix but differ at the last char. The
+		// DB-side project is already sanitised at write time by
+		// sanitizeProjectName in proxy/src/project-attribution.ts
+		// (PROJECT_NAME_MAX_LEN=64, C0 control chars stripped). Display
+		// truncation for the API response below lives in the response
+		// builder, not here — truncation before detection makes the
+		// detector itself collapse distinct projects into one loop.
+		project: row.project,
 		inputTokens: Number(row.input_tokens) || 0,
 		cacheReadInputTokens: Number(row.cache_read_input_tokens) || 0,
 		cacheCreationInputTokens: Number(row.cache_creation_input_tokens) || 0,
