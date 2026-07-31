@@ -28,6 +28,7 @@ function makeConfig(
 		getAlertRequestTokens: () => overrides.requestTokens ?? 0,
 		getAlertAnomalyEnabled: () => false,
 		getAlertAnomalyIntervalMinutes: () => 15,
+		getAlertAnomalyLoopMinRequests: () => 25,
 		getAlertCooldownMinutes: () => 60,
 		getAlertWebhookUrl: () =>
 			overrides.webhookUrl ?? "http://127.0.0.1:9999/webhook",

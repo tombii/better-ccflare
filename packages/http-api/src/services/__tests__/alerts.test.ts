@@ -1,7 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import type { AlertEvent, AlertsConfigPayload } from "@better-ccflare/types";
+import type {
+	AlertEvent,
+	AlertsConfigPayload,
+	RunawayLoopGroup,
+} from "@better-ccflare/types";
 import {
 	buildRequestTokenAlert,
+	buildRunawayLoopAlertId,
 	buildThresholdAlertId,
 	shouldFireAlert,
 } from "../alerts";
@@ -12,9 +17,47 @@ const CONFIG: AlertsConfigPayload = {
 	requestTokens: 50_000,
 	anomalyEnabled: false,
 	anomalyIntervalMinutes: 15,
+	loopMinRequests: 10,
 	cooldownMinutes: 60,
 	webhookUrl: "",
 };
+
+const LOOP: RunawayLoopGroup = {
+	account: "acct",
+	model: "model-a",
+	project: "proj-a",
+	agentUsed: "agent-a",
+	windowStartMs: 0,
+	windowEndMs: 1,
+	requests: 10,
+	requestsPerMinute: 10,
+	meanRequestSideTokens: 100,
+	requestSideTokenSpread: 0,
+};
+
+describe("runaway-loop alert identity", () => {
+	test("different projects produce distinct exact IDs for the same account, model, and agent", () => {
+		const projectA = buildRunawayLoopAlertId(LOOP, 60);
+		const projectB = buildRunawayLoopAlertId(
+			{ ...LOOP, project: "proj-b" },
+			60,
+		);
+
+		expect(projectA).toBe("anomaly_runaway_loop:acct:model-a:proj-a:agent-a:0");
+		expect(projectB).toBe("anomaly_runaway_loop:acct:model-a:proj-b:agent-a:0");
+		expect(projectA).not.toBe(projectB);
+	});
+
+	test("repeated evaluations of one group keep a stable cooldown ID", () => {
+		const atBucketStart = buildRunawayLoopAlertId(LOOP, 60);
+		const atBucketEnd = buildRunawayLoopAlertId(
+			{ ...LOOP, windowEndMs: 3_600_000 - 1 },
+			60,
+		);
+
+		expect(atBucketStart).toBe(atBucketEnd);
+	});
+});
 
 describe("alert threshold helpers", () => {
 	test("buildThresholdAlertId is stable for the cooldown bucket", () => {

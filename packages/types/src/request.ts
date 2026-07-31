@@ -20,6 +20,7 @@ export type ProjectAttributionSource =
 
 export const AGENT_ATTRIBUTION_SOURCES = [
 	"header_agent",
+	"session_header",
 	"prompt_agent",
 	"none",
 ] as const;

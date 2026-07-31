@@ -56,6 +56,9 @@ export function createAlertsConfigSetHandler(context: APIContext) {
 				anomalyIntervalMinutes: Number(
 					body.anomalyIntervalMinutes ?? current.anomalyIntervalMinutes,
 				),
+				loopMinRequests: Number(
+					body.loopMinRequests ?? current.loopMinRequests,
+				),
 				cooldownMinutes: Number(
 					body.cooldownMinutes ?? current.cooldownMinutes,
 				),

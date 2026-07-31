@@ -15,6 +15,7 @@ import type {
 	AlertsConfigPayload,
 	AlertType,
 	RequestResponse,
+	RunawayLoopGroup,
 } from "@better-ccflare/types";
 import {
 	type AnomalyRequestRow,
@@ -56,6 +57,7 @@ interface AnomalySqlRow {
 	account: string | null;
 	model: string | null;
 	project: string | null;
+	agent_used: string | null;
 	input_tokens: number;
 	cache_read_input_tokens: number;
 	cache_creation_input_tokens: number;
@@ -70,6 +72,7 @@ export function getAlertsConfig(config: Config): AlertsConfigPayload {
 		requestTokens: config.getAlertRequestTokens(),
 		anomalyEnabled: config.getAlertAnomalyEnabled(),
 		anomalyIntervalMinutes: config.getAlertAnomalyIntervalMinutes(),
+		loopMinRequests: config.getAlertAnomalyLoopMinRequests(),
 		cooldownMinutes: config.getAlertCooldownMinutes(),
 		webhookUrl: config.getAlertWebhookUrl(),
 	};
@@ -88,6 +91,7 @@ export function setAlertsConfig(
 	config.setAlertRequestTokens(payload.requestTokens);
 	config.setAlertAnomalyEnabled(payload.anomalyEnabled);
 	config.setAlertAnomalyIntervalMinutes(payload.anomalyIntervalMinutes);
+	config.setAlertAnomalyLoopMinRequests(payload.loopMinRequests);
 	config.setAlertCooldownMinutes(payload.cooldownMinutes);
 }
 
@@ -103,6 +107,18 @@ export function buildThresholdAlertId(
 ): string {
 	const bucketMs = Math.max(1, cooldownMinutes) * 60 * 1000;
 	return `${type}:${scope}:${Math.floor(timestamp / bucketMs)}`;
+}
+
+export function buildRunawayLoopAlertId(
+	loop: RunawayLoopGroup,
+	cooldownMinutes: number,
+): string {
+	return buildThresholdAlertId(
+		"anomaly_runaway_loop",
+		`${loop.account}:${loop.model}:${loop.project ?? ""}:${loop.agentUsed ?? ""}`,
+		loop.windowEndMs,
+		cooldownMinutes,
+	);
 }
 
 function parseTimestamp(timestamp: string | number): number {
@@ -188,6 +204,7 @@ function toAnomalyRow(row: AnomalySqlRow): AnomalyRequestRow {
 		// builder, not here — truncation before detection makes the
 		// detector itself collapse distinct projects into one loop.
 		project: row.project,
+		agentUsed: row.agent_used,
 		inputTokens: Number(row.input_tokens) || 0,
 		cacheReadInputTokens: Number(row.cache_read_input_tokens) || 0,
 		cacheCreationInputTokens: Number(row.cache_creation_input_tokens) || 0,
@@ -415,6 +432,7 @@ export class AlertService {
 					a.name as account,
 					r.model as model,
 					r.project as project,
+					r.agent_used as agent_used,
 					COALESCE(r.input_tokens, 0) as input_tokens,
 					COALESCE(r.cache_read_input_tokens, 0) as cache_read_input_tokens,
 					COALESCE(r.cache_creation_input_tokens, 0) as cache_creation_input_tokens,
@@ -445,7 +463,11 @@ export class AlertService {
 		const response = buildAnomalyInsightsResponse({
 			rows,
 			rates,
-			options: { range: `${config.anomalyIntervalMinutes}m`, truncated: false },
+			options: {
+				range: `${config.anomalyIntervalMinutes}m`,
+				truncated: false,
+				loopMinRequests: config.loopMinRequests,
+			},
 		});
 		const alerts: AlertEvent[] = [];
 		for (const event of response.tokenOutliers.slice(
@@ -503,17 +525,12 @@ export class AlertService {
 			MAX_ANOMALY_ALERTS_PER_RUN,
 		)) {
 			alerts.push({
-				id: buildThresholdAlertId(
-					"anomaly_runaway_loop",
-					`${loop.account}:${loop.model}:${loop.project ?? ""}`,
-					loop.windowEndMs,
-					config.cooldownMinutes,
-				),
+				id: buildRunawayLoopAlertId(loop, config.cooldownMinutes),
 				timestamp: loop.windowEndMs,
 				type: "anomaly_runaway_loop",
 				severity: "critical",
 				title: "Runaway loop detected",
-				message: `${loop.requests} near-identical requests were sent in a short window for ${loop.model}.`,
+				message: `${loop.requests} near-identical requests were sent in a short window by ${loop.agentUsed ?? "an unattributed agent"} for ${loop.model}.`,
 				value: loop.requests,
 				threshold: null,
 				account: loop.account,

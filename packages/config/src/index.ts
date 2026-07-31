@@ -87,6 +87,7 @@ export interface ConfigData {
 	alert_request_tokens?: number;
 	alert_anomaly_enabled?: boolean;
 	alert_anomaly_interval_minutes?: number;
+	alert_anomaly_loop_min_requests?: number;
 	alert_cooldown_minutes?: number;
 	alert_webhook_url?: string;
 	outbound_proxy?: string;
@@ -677,6 +678,24 @@ export class Config extends EventEmitter {
 		this.set("alert_anomaly_interval_minutes", this.clamp(value, 5, 1440));
 	}
 
+	getAlertAnomalyLoopMinRequests(): number {
+		const fromEnv = process.env.ALERT_ANOMALY_LOOP_MIN_REQUESTS;
+		if (fromEnv) {
+			const n = Number.parseInt(fromEnv, 10);
+			if (!Number.isNaN(n)) return this.clamp(n, 5, 1000);
+		}
+		const fromFile = this.data.alert_anomaly_loop_min_requests;
+		if (typeof fromFile === "number") return this.clamp(fromFile, 5, 1000);
+		// Default 25 — above the per-agent request rate we expect from any
+		// single legitimate worker in a 5-minute window, while still well
+		// below the rate a true runaway loop reaches (50+ req/min).
+		return 25;
+	}
+
+	setAlertAnomalyLoopMinRequests(value: number): void {
+		this.set("alert_anomaly_loop_min_requests", this.clamp(value, 5, 1000));
+	}
+
 	getAlertCooldownMinutes(): number {
 		const fromEnv = process.env.ALERT_COOLDOWN_MINUTES;
 		if (fromEnv) {
@@ -747,6 +766,7 @@ export class Config extends EventEmitter {
 			alert_request_tokens: this.getAlertRequestTokens(),
 			alert_anomaly_enabled: this.getAlertAnomalyEnabled(),
 			alert_anomaly_interval_minutes: this.getAlertAnomalyIntervalMinutes(),
+			alert_anomaly_loop_min_requests: this.getAlertAnomalyLoopMinRequests(),
 			alert_cooldown_minutes: this.getAlertCooldownMinutes(),
 			alert_webhook_url: this.getAlertWebhookUrl(),
 		};

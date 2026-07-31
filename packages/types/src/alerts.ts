@@ -56,6 +56,12 @@ export interface AlertsConfigPayload {
 	requestTokens: number;
 	anomalyEnabled: boolean;
 	anomalyIntervalMinutes: number;
+	/**
+	 * Minimum requests inside one (account, model, agent) window to qualify
+	 * as a runaway loop. Default 25 — well above one agent's normal
+	 * per-window traffic but still catches true repeated-request loops.
+	 */
+	loopMinRequests: number;
 	cooldownMinutes: number;
 	/** Webhook target URL; "" = disabled. */
 	webhookUrl: string;
