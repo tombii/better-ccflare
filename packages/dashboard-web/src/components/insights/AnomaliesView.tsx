@@ -60,6 +60,13 @@ export const AnomaliesView = ({
 	}
 	const meta = data.meta;
 	const scannedLabel = meta.scannedRequests.toLocaleString();
+	// Derive ALL threshold text from response metadata so a non-default
+	// zScoreThreshold / loopMinRequests / misrouting thresholds produce a
+	// non-contradictory UI. Previously the 3-sigma prose and "3σ" panel
+	// descriptions were hard-coded while nearby labels used meta, so a
+	// response with zScoreThreshold=4 rendered contradictory criteria.
+	const zScoreLabel = `${meta.zScoreThreshold.toFixed(1)}σ`;
+	const zScoreSigmaLabel = `${meta.zScoreThreshold.toFixed(1)}-sigma`;
 	return (
 		<div className="space-y-6">
 			<Card>
@@ -75,8 +82,8 @@ export const AnomaliesView = ({
 						{meta.zScoreThreshold.toFixed(1)}σ above their (account, model)
 						baseline, plus dense bursts of near-identical calls and expensive
 						models handling trivial traffic. With ~{scannedLabel} requests
-						scanned and a 3-sigma threshold, expect some events by chance alone
-						— investigate the largest, ignore the rest.
+						scanned and a {zScoreSigmaLabel} threshold, expect some events by
+						chance alone — investigate the largest, ignore the rest.
 					</CardDescription>
 					<div className="flex flex-wrap items-center gap-2 pt-2 text-xs text-muted-foreground">
 						<span>
@@ -93,7 +100,7 @@ export const AnomaliesView = ({
 
 			<TokenOutlierPanel
 				title="Token outliers (total tokens)"
-				description="Total request tokens more than 3σ above baseline."
+				description={`Total request tokens more than ${zScoreLabel} above baseline.`}
 				events={data.tokenOutliers}
 				totalCount={data.tokenOutliersSummary.totalCount}
 				truncated={data.tokenOutliersSummary.truncated}
@@ -102,7 +109,7 @@ export const AnomaliesView = ({
 
 			<TokenOutlierPanel
 				title="Output blowups (output tokens)"
-				description="Output tokens more than 3σ above baseline."
+				description={`Output tokens more than ${zScoreLabel} above baseline.`}
 				events={data.outputBlowups}
 				totalCount={data.outputBlowupsSummary.totalCount}
 				truncated={data.outputBlowupsSummary.truncated}
@@ -114,6 +121,7 @@ export const AnomaliesView = ({
 				totalCount={data.runawayLoopsSummary.totalCount}
 				truncated={data.runawayLoopsSummary.truncated}
 				windowMinutes={meta.loopWindowMinutes}
+				minRequests={meta.loopMinRequests}
 			/>
 
 			<MisroutingPanel
@@ -122,6 +130,7 @@ export const AnomaliesView = ({
 				truncated={data.misroutingSummary.truncated}
 				costThreshold={meta.misroutingMinOutputRateUsd}
 				tokenThreshold={meta.misroutingMaxTotalTokens}
+				minRequests={meta.misroutingMinRequests}
 			/>
 		</div>
 	);
@@ -231,6 +240,7 @@ interface RunawayLoopPanelProps {
 	totalCount: number;
 	truncated: boolean;
 	windowMinutes: number;
+	minRequests: number;
 }
 
 function RunawayLoopPanel({
@@ -238,6 +248,7 @@ function RunawayLoopPanel({
 	totalCount,
 	truncated,
 	windowMinutes,
+	minRequests,
 }: RunawayLoopPanelProps) {
 	const label = `${windowMinutes}min`;
 	return (
@@ -255,7 +266,7 @@ function RunawayLoopPanel({
 					/>
 				</div>
 				<CardDescription>
-					Dense bursts of ≥minRequests near-identical requests per (account,
+					Dense bursts of ≥{minRequests} near-identical requests per (account,
 					model, project) within a {label} window. Highest request count shown
 					first.
 				</CardDescription>
@@ -337,6 +348,7 @@ interface MisroutingPanelProps {
 	truncated: boolean;
 	costThreshold: number;
 	tokenThreshold: number;
+	minRequests: number;
 }
 
 function MisroutingPanel({
@@ -345,6 +357,7 @@ function MisroutingPanel({
 	truncated,
 	costThreshold,
 	tokenThreshold,
+	minRequests,
 }: MisroutingPanelProps) {
 	const formatter = new Intl.NumberFormat(undefined, {
 		style: "currency",
@@ -370,8 +383,9 @@ function MisroutingPanel({
 				<CardDescription>
 					(Account, model) pairs where a model with output rate ≥ $
 					{costThreshold}/1M tokens has been used for{" "}
-					{tokenThreshold.toLocaleString()} tokens or fewer per call at least 5
-					times in this window. Sorted by total logged cost descending.
+					{tokenThreshold.toLocaleString()} tokens or fewer per call at least{" "}
+					{minRequests} times in this window. Sorted by total logged cost
+					descending.
 				</CardDescription>
 			</CardHeader>
 			<CardContent>
