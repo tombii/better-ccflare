@@ -1,5 +1,9 @@
 import { describe, expect, it } from "bun:test";
 import type { AccountUsageSnapshot } from "@better-ccflare/core";
+import {
+	getRepresentativeUsageSnapshotForProvider,
+	type ZaiUsageData,
+} from "@better-ccflare/providers";
 import type { Account } from "@better-ccflare/types";
 import {
 	createPoolExhaustedResponse,
@@ -224,5 +228,82 @@ describe("createPoolExhaustedResponse — usage-aware", () => {
 			error: { accounts: Array<{ reason: string }> };
 		};
 		expect(body.error.accounts[0]?.reason).toBe("requires_reauth");
+	});
+});
+
+describe("Zai pool-exhausted snapshot pairing", () => {
+	it("uses the reset from the window with the winning utilization", async () => {
+		const timeLimitResetMs = Date.now() + 120_000;
+		const tokensLimitResetMs = Date.now() + 3_600_000;
+		const zaiUsage: ZaiUsageData = {
+			time_limit: {
+				used: 100,
+				remaining: 0,
+				percentage: 100,
+				resetAt: timeLimitResetMs,
+				type: "time_limit",
+			},
+			tokens_limit: {
+				used: 50,
+				remaining: 50,
+				percentage: 50,
+				resetAt: tokensLimitResetMs,
+				type: "tokens_limit",
+			},
+		};
+		const account = makeAccount({ provider: "zai" });
+		const snapshot = getRepresentativeUsageSnapshotForProvider(zaiUsage, "zai");
+		expect(snapshot).not.toBeNull();
+		if (!snapshot) return;
+
+		const response = createPoolExhaustedResponse(
+			[account],
+			new Map([[account.id, snapshot]]),
+		);
+		const body = (await response.json()) as {
+			error: {
+				next_available_at: string | null;
+				accounts: Array<{
+					reason: string;
+					available_at: string | null;
+				}>;
+			};
+		};
+		const winningReset = new Date(timeLimitResetMs).toISOString();
+
+		expect(snapshot.utilization).toBe(100);
+		expect(snapshot.resetMs).toBe(timeLimitResetMs);
+		expect(body.error.accounts[0]?.reason).toBe("usage_exhausted");
+		expect(body.error.accounts[0]?.available_at).toBe(winningReset);
+		expect(body.error.next_available_at).toBe(winningReset);
+		expect(body.error.next_available_at).not.toBe(
+			new Date(tokensLimitResetMs).toISOString(),
+		);
+		const retryAfter = Number(response.headers.get("Retry-After"));
+		expect(retryAfter).toBeGreaterThan(110);
+		expect(retryAfter).toBeLessThanOrEqual(120);
+	});
+
+	it("keeps the reset unknown when the winning window has no reset", () => {
+		const zaiUsage: ZaiUsageData = {
+			time_limit: {
+				used: 100,
+				remaining: 0,
+				percentage: 100,
+				resetAt: null,
+				type: "time_limit",
+			},
+			tokens_limit: {
+				used: 10,
+				remaining: 90,
+				percentage: 10,
+				resetAt: Date.now() + 3_600_000,
+				type: "tokens_limit",
+			},
+		};
+		const snapshot = getRepresentativeUsageSnapshotForProvider(zaiUsage, "zai");
+
+		expect(snapshot).not.toBeNull();
+		if (snapshot) expect(snapshot.resetMs).toBeNull();
 	});
 });

@@ -7,8 +7,7 @@ import {
 import { DatabaseFactory } from "@better-ccflare/database";
 import { Logger } from "@better-ccflare/logger";
 import {
-	getRepresentativeUsageResetMs,
-	getRepresentativeUtilizationForProvider,
+	getRepresentativeUsageSnapshotForProvider,
 	usageCache,
 } from "@better-ccflare/providers";
 import type { Account } from "@better-ccflare/types";
@@ -445,20 +444,23 @@ export async function handleProxy(
 		// Without this, accounts at 100% utilization with no rate_limited_until
 		// fall through to the catch-all `unavailable` branch with a default
 		// Retry-After of 60s — see incident 2026-07-30T20:24-22:20Z.
+		//
+		// The snapshot MUST pair utilization with the reset belonging to the SAME
+		// window that produced the max — picking them independently (as the
+		// pre-fix code did) pairs e.g. Zai's time_limit.max with tokens_limit's
+		// reset and lies to clients about when capacity returns (Greptile review
+		// on PR #365). The paired helper returns null when no telemetry exists.
 		const usageSnapshots = new Map<string, AccountUsageSnapshot>();
 		for (const account of allAccounts) {
 			const cached = usageCache.get(account.id);
 			if (!cached) continue;
 			const provider = account.provider ?? "anthropic";
-			const utilization = getRepresentativeUtilizationForProvider(
+			const snapshot = getRepresentativeUsageSnapshotForProvider(
 				cached,
 				provider,
 			);
-			if (utilization === null) continue;
-			usageSnapshots.set(account.id, {
-				utilization,
-				resetMs: getRepresentativeUsageResetMs(cached, provider),
-			});
+			if (snapshot === null) continue;
+			usageSnapshots.set(account.id, snapshot);
 		}
 
 		const poolExhaustedResponse = createPoolExhaustedResponse(
