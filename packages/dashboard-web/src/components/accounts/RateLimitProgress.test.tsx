@@ -253,4 +253,108 @@ describe("RateLimitProgress", () => {
 		// row labels which are <span>s — pins the header markup, not just the text.
 		expect(html).toContain(">Session</div>");
 	});
+
+	// Regression: MiniMax Token Plan emits normalized `{ utilization, resetAt }`
+	// windows under `five_hour` and `seven_day` (canonical names from
+	// minimax-usage-fetcher.ts). The legacy Anthropic collector requires
+	// snake_case `resets_at`, so without the dedicated MiniMax branch the 7d
+	// row collapses to a single most-restrictive fallback (max of 5h/7d) — the
+	// bug that hid per-window usage on ccmax. See:
+	// https://github.com/zenprocess/better-ccflare for the operator-reported
+	// dashboard dead-branch class.
+	it("renders MiniMax five_hour and seven_day as separate windows from each window's own utilization (ccflare-95)", () => {
+		const fiveHourReset = Date.now() + 5 * 60 * 60 * 1000;
+		const sevenDayReset = Date.now() + 5 * 24 * 60 * 60 * 1000;
+		const html = renderToStaticMarkup(
+			<RateLimitProgress
+				resetIso={new Date(fiveHourReset).toISOString()}
+				usageUtilization={50}
+				usageWindow="seven_day"
+				usageData={{
+					five_hour: {
+						utilization: 25,
+						remainingPercent: 75,
+						resetAt: fiveHourReset,
+						intervalMs: 5 * 60 * 60 * 1000,
+					},
+					seven_day: {
+						utilization: 90,
+						remainingPercent: 10,
+						resetAt: sevenDayReset,
+						intervalMs: 7 * 24 * 60 * 60 * 1000,
+					},
+				}}
+				provider="minimax"
+				showWeekly
+			/>,
+		);
+		// Both windows render as clearly labelled rows.
+		expect(html).toContain("Usage (5-hour)");
+		expect(html).toContain("Usage (Weekly)");
+		// Each window's own utilization surfaces — 25% for 5h (free), 90% for 7d
+		// (almost exhausted). The top-level usageUtilization (50, from the
+		// max-of-windows fallback) MUST NOT leak into the rendered bars.
+		expect(html).toContain("25%");
+		expect(html).toContain("90%");
+		expect(html).not.toContain("50%");
+		// No N/A placeholder — both windows have a real utilization and resetAt.
+		expect(html).not.toContain("N/A");
+	});
+
+	it("skips the MiniMax 7-day row entirely when seven_day is null (ccflare-95)", () => {
+		const fiveHourReset = Date.now() + 5 * 60 * 60 * 1000;
+		const html = renderToStaticMarkup(
+			<RateLimitProgress
+				resetIso={new Date(fiveHourReset).toISOString()}
+				usageUtilization={25}
+				usageWindow="five_hour"
+				usageData={{
+					five_hour: {
+						utilization: 25,
+						remainingPercent: 75,
+						resetAt: fiveHourReset,
+						intervalMs: 5 * 60 * 60 * 1000,
+					},
+					seven_day: null,
+				}}
+				provider="minimax"
+				showWeekly
+			/>,
+		);
+		// 5-hour still renders.
+		expect(html).toContain("Usage (5-hour)");
+		expect(html).toContain("25%");
+		// No "Weekly" row, no N/A placeholder.
+		expect(html).not.toContain("Usage (Weekly)");
+		expect(html).not.toContain("N/A");
+	});
+
+	it("does NOT mis-dispatch an Anthropic seven_day payload to the MiniMax branch (ccflare-95)", () => {
+		// Anthropic-style inner windows use snake_case `resets_at` (ISO string),
+		// not camelCase `resetAt`. The shape probe on the inner object is what
+		// keeps the legacy Anthropic collector reachable for its payloads.
+		const fiveHourReset = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+		const sevenDayReset = new Date(
+			Date.now() + 3 * 24 * 60 * 60 * 1000,
+		).toISOString();
+		const html = renderToStaticMarkup(
+			<RateLimitProgress
+				resetIso={fiveHourReset}
+				usageUtilization={10}
+				usageWindow="five_hour"
+				usageData={{
+					five_hour: { utilization: 10, resets_at: fiveHourReset },
+					seven_day: { utilization: 20, resets_at: sevenDayReset },
+				}}
+				provider="anthropic"
+				showWeekly
+			/>,
+		);
+		// Anthropic render path emits the legacy "Usage (5-hour)" / "Usage (Weekly)"
+		// labels with the inner `resets_at` values — MiniMax branch is unreachable.
+		expect(html).toContain("Usage (5-hour)");
+		expect(html).toContain("Usage (Weekly)");
+		expect(html).toContain("10%");
+		expect(html).toContain("20%");
+	});
 });
