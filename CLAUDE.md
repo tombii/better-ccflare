@@ -48,6 +48,8 @@ The `--no-ff` flag creates a merge commit even if the branch could be fast-forwa
 
 **Do NOT use `gh pr merge`** — it may squash or rebase, losing the contributor's identity. Always merge manually with `git merge --no-ff`.
 
+Note: a `--no-ff` merge commit's subject carries the PR title (e.g. `fix(proxy): ... (PR #N)`), **not** GitHub-UI's `Merge pull request #N from user/branch` format. Any tooling that scans merge commits for contributor credit or PR association must handle both formats — the release workflow (`release.yml`) does this by collecting PR numbers from both shapes and resolving authors via `gh pr view`.
+
 If the PR branch isn't available locally, fetch it first:
 ```bash
 git fetch origin pull/<PR_NUMBER>/head:<branch-name>
@@ -175,7 +177,7 @@ Fallback (only if the subagent is unavailable): call the tools inline but minimi
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **better-ccflare** (7660 symbols, 17800 relationships, 252 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **better-ccflare** (7828 symbols, 18278 relationships, 251 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > Index stale? Run `node .gitnexus/run.cjs analyze` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? `npx gitnexus analyze` (npm 11 crash → `npm i -g gitnexus`; #1939).
 
