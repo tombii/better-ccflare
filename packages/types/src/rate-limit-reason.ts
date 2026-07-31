@@ -36,6 +36,9 @@
  *   breaker.
  * - `extra_usage_exhausted` — third-party OAuth extra-usage depletion.
  *   Scoped, not account-wide. Does NOT trip the breaker.
+ * - `windowless_429` — 429 reporting no rate-limit window at all; measured
+ *   as request-scoped, so the account is never benched. Does NOT trip the
+ *   breaker.
  */
 import type { RateLimitReason } from "./account";
 
@@ -49,6 +52,7 @@ export const RATE_LIMIT_REASONS: readonly RateLimitReason[] = [
 	"upstream_529_overloaded_no_reset",
 	"out_of_credits",
 	"extra_usage_exhausted",
+	"windowless_429",
 ] as const;
 
 export function isRateLimitReason(value: string): value is RateLimitReason {

@@ -17,9 +17,9 @@
  *
  * This test imports the PRODUCTION helper
  * (`handlers/discard-body-cancel.ts:cancelDiscardedResponseBody`) directly
- * — the same function the 12 discard sites in proxy-operations.ts call.
+ * — the same function the 13 discard sites in proxy-operations.ts call.
  * The orchestrator's mandatory negative-control run removes ONLY those
- * 12 call sites (and/or the `void drainBody(...)` invocation inside the
+ * 13 call sites (and/or the `void drainBody(...)` invocation inside the
  * helper); the assertions below verify both halves:
  *
  *   Group A (helper contract) — verifies `cancelDiscardedResponseBody`
@@ -28,13 +28,13 @@
  *   `drainBody` call from inside the helper function flips these red.
  *
  *   Group B (call-site coverage) — performs static analysis of
- *   `proxy-operations.ts` to assert the 12 drain calls are present
+ *   `proxy-operations.ts` to assert the 13 drain calls are present
  *   and structurally well-formed. Removing any one of them flips this
  *   red. We don't import proxy-operations.ts (its transitive
  *   dependency chain loads @better-ccflare/database, which itself has
  *   missing modules in this worktree's `bun install`-blocked state —
  *   a pre-existing issue unrelated to this fix), but the source-level
- *   check is enough to detect the negative-control removal: 12 sites,
+ *   check is enough to detect the negative-control removal: 13 sites,
  *   each line beginning with the helper name.
  *
  * Run: bun test packages/proxy/src/__tests__/bun-leak-273-regression.test.ts
@@ -105,16 +105,16 @@ describe("issue #273 — Group A: helper contract", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Group B — call-site coverage. Static check that the 12 drain sites the
+// Group B — call-site coverage. Static check that the 13 drain sites the
 // spec calls out (429/529/401 failover return-null + retry-loop overwrite)
 // are wired into proxy-operations.ts. The negative-control run removes
 // these lines; this check fails if any are missing.
 // ---------------------------------------------------------------------------
 
-const EXPECTED_SITE_COUNT = 12;
+const EXPECTED_SITE_COUNT = 13;
 
 describe("issue #273 — Group B: call-site coverage in proxy-operations.ts", () => {
-	it("proxy-operations.ts has exactly 12 cancelDiscardedResponseBody call sites", () => {
+	it("proxy-operations.ts has exactly 13 cancelDiscardedResponseBody call sites", () => {
 		const source = readFileSync(
 			"packages/proxy/src/handlers/proxy-operations.ts",
 			"utf-8",
@@ -139,7 +139,7 @@ describe("issue #273 — Group B: call-site coverage in proxy-operations.ts", ()
 		);
 	});
 
-	it("proxy-operations.ts has drain sites at the 12 expected line ranges", () => {
+	it("proxy-operations.ts has drain sites at the 13 expected line ranges", () => {
 		const source = readFileSync(
 			"packages/proxy/src/handlers/proxy-operations.ts",
 			"utf-8",
