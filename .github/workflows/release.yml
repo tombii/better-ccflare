@@ -293,20 +293,31 @@ jobs:
                 done <<< "$IMPROVEMENTS"
               fi
 
-              # Find merged PR contributors in this range (excludes tombii's own merges)
-              CONTRIBUTORS=$(git log --merges "$PREV_TAG"..HEAD --format="%s" \
-                | grep -oE "Merge pull request #[0-9]+ from [^ ]+" \
-                | sed -E 's/Merge pull request #([0-9]+) from ([^\/ ]+).*/\1 \2/')
+              # Find merged PR contributors in this range (excludes tombii's own merges).
+              # GitHub-UI merges produce "Merge pull request #N from user/branch" subjects,
+              # but CLAUDE.md mandates manual `git merge --no-ff` for external contributors,
+              # whose merge commits carry the PR subject instead. Collect PR numbers from
+              # both formats, then resolve each author via `gh` so merge style doesn't
+              # determine whether a contributor gets credited.
+              GITHUB_UI_PRS=$(git log --merges "$PREV_TAG"..HEAD --format="%s" \
+                | grep -oE "Merge pull request #[0-9]+" \
+                | grep -oE "[0-9]+")
+              MANUAL_MERGE_PRS=$(git log --merges "$PREV_TAG"..HEAD --format="%s" \
+                | grep -oE "\(PR #[0-9]+\)" \
+                | grep -oE "[0-9]+")
+
+              ALL_PR_NUMS=$(printf "%s\n%s\n" "$GITHUB_UI_PRS" "$MANUAL_MERGE_PRS" \
+                | sed '/^$/d' | sort -u)
 
               CONTRIBUTOR_LINES=""
-              if [ -n "$CONTRIBUTORS" ]; then
-                while IFS= read -r entry; do
-                  [ -z "$entry" ] && continue
-                  PR_NUM=$(echo "$entry" | cut -d' ' -f1)
-                  USERNAME=$(echo "$entry" | cut -d' ' -f2-)
+              if [ -n "$ALL_PR_NUMS" ]; then
+                while IFS= read -r PR_NUM; do
+                  [ -z "$PR_NUM" ] && continue
+                  USERNAME=$(gh pr view "$PR_NUM" --json author --jq '.author.login' 2>/dev/null || true)
+                  [ -z "$USERNAME" ] && continue
                   [ "$USERNAME" = "tombii" ] && continue
                   CONTRIBUTOR_LINES="$CONTRIBUTOR_LINES$USERNAME #$PR_NUM"$'\n'
-                done <<< "$CONTRIBUTORS"
+                done <<< "$ALL_PR_NUMS"
               fi
 
               if [ -n "$CONTRIBUTOR_LINES" ]; then
