@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, unlinkSync } from "node:fs";
+import { join } from "node:path";
 
 import { agentRegistry } from "@better-ccflare/agents";
 import {
@@ -10,7 +11,10 @@ import type { Agent } from "@better-ccflare/types";
 import type { ModelCatalog } from "../../model-catalog";
 import { interceptAndModifyRequest } from "../agent-interceptor";
 
-const TEST_DB_PATH = "/tmp/test-agent-interceptor-header.db";
+const TEST_DB_PATH = join(
+	process.env.TMPDIR ?? "/tmp",
+	"test-agent-interceptor-header.db",
+);
 
 /**
  * Tests for the X-Anthropic-Agent-Id explicit-attribution header path:
@@ -67,12 +71,12 @@ describe("Agent Interceptor - X-Anthropic-Agent-Id Header", () => {
 	});
 
 	afterAll(() => {
+		DatabaseFactory.reset();
 		try {
 			if (existsSync(TEST_DB_PATH)) unlinkSync(TEST_DB_PATH);
 		} catch (error) {
 			console.warn("Failed to clean up test database:", error);
 		}
-		DatabaseFactory.reset();
 	});
 
 	describe("Precedence over system-prompt matching", () => {
@@ -307,6 +311,51 @@ describe("Agent Interceptor - X-Anthropic-Agent-Id Header", () => {
 			expect(result.modifiedBody).toBe(buffer);
 			expect(result.originalModel).toBe("claude-3-5-sonnet-20241022");
 			expect(result.appliedModel).toBe("claude-3-5-sonnet-20241022");
+		});
+
+		test("prompt-detected agent wins over the session fallback and applies its preference", async () => {
+			const fakeAgent: Agent = {
+				id: "fixture-session-vs-prompt-agent",
+				name: "Fixture Session vs Prompt Agent",
+				description: "Regression fixture for PR #370 attribution precedence",
+				color: "gray",
+				model: "claude-3-5-sonnet-20241022",
+				systemPrompt: "You are the fixture-session-vs-prompt-agent.",
+				source: "global",
+				filePath: "/tmp/fixture-session-vs-prompt-agent.md",
+			};
+			const originalGetAgents = agentRegistry.getAgents.bind(agentRegistry);
+			agentRegistry.getAgents = async () => [fakeAgent];
+			await dbOps.setAgentPreference(
+				fakeAgent.id,
+				"claude-opus-preference-model",
+			);
+
+			try {
+				const buffer = toArrayBuffer(
+					createMockRequestBody({
+						system: `Preamble.\n${fakeAgent.systemPrompt}\nEpilogue.`,
+					}),
+				);
+				const result = await interceptAndModifyRequest(
+					buffer,
+					dbOps,
+					headers({ "x-claude-code-session-id": "session-loses-to-agent" }),
+					{ getModelCatalog: async () => nonVetoingCatalog() },
+				);
+
+				expect(result.agentUsed).toBe(fakeAgent.id);
+				expect(result.agentAttributionSource).toBe("prompt_agent");
+				expect(result.appliedModel).toBe("claude-opus-preference-model");
+				expect(result.modifiedBody).not.toBeNull();
+				if (!result.modifiedBody) throw new Error("Expected rewritten body");
+				const modified = JSON.parse(
+					new TextDecoder().decode(result.modifiedBody),
+				);
+				expect(modified.model).toBe("claude-opus-preference-model");
+			} finally {
+				agentRegistry.getAgents = originalGetAgents;
+			}
 		});
 
 		test("agent id headers still win over session header", async () => {

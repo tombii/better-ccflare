@@ -100,9 +100,9 @@ export async function interceptAndModifyRequest(
 		// `x-anthropic-agent-id` header is honored for backward compatibility when
 		// the namespaced header is absent.
 		//
-		// When neither agent header is present, fall back to the Claude Code
-		// session id (`x-claude-code-session-id`). claude-cli emits this header
-		// natively on every request; ccflare has long persisted it as a
+		// When neither agent header nor a prompt-detected agent is present, fall
+		// back to the Claude Code session id (`x-claude-code-session-id`).
+		// claude-cli emits this header; ccflare has long persisted it as a
 		// request header so no client change is needed. A session id is a
 		// weaker attribution signal than an agent id (multiple agents can
 		// share one session), but it still splits a fleet of unrelated
@@ -159,7 +159,9 @@ export async function interceptAndModifyRequest(
 			};
 		}
 
-		if (sessionHeaderId) {
+		const sessionFallback = (): AgentInterceptResult | null => {
+			if (!sessionHeaderId) return null;
+
 			// Session-id fallback: claude-cli emits x-claude-code-session-id on
 			// every request. We surface it as `agentUsed` so the anomaly
 			// detector can key on per-session identity (issue #367 — distinct
@@ -175,13 +177,15 @@ export async function interceptAndModifyRequest(
 				appliedModel: originalModel,
 				agentAttributionSource: "session_header",
 			};
-		}
+		};
 
 		// Extract system prompt to detect agent usage
 		const systemPrompt = extractSystemPrompt(parsedBody as RequestBody);
 		if (!systemPrompt) {
 			// No system prompt, no agent detection possible
 			log.debug("No system prompt found in request");
+			const fallback = sessionFallback();
+			if (fallback) return fallback;
 			return {
 				modifiedBody: requestBodyBuffer,
 				agentUsed: null,
@@ -256,6 +260,8 @@ export async function interceptAndModifyRequest(
 
 		if (!detectedAgent) {
 			// No agent detected
+			const fallback = sessionFallback();
+			if (fallback) return fallback;
 			return {
 				modifiedBody: requestBodyBuffer,
 				agentUsed: null,

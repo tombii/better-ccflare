@@ -15,6 +15,7 @@ import type {
 	AlertsConfigPayload,
 	AlertType,
 	RequestResponse,
+	RunawayLoopGroup,
 } from "@better-ccflare/types";
 import {
 	type AnomalyRequestRow,
@@ -106,6 +107,18 @@ export function buildThresholdAlertId(
 ): string {
 	const bucketMs = Math.max(1, cooldownMinutes) * 60 * 1000;
 	return `${type}:${scope}:${Math.floor(timestamp / bucketMs)}`;
+}
+
+export function buildRunawayLoopAlertId(
+	loop: RunawayLoopGroup,
+	cooldownMinutes: number,
+): string {
+	return buildThresholdAlertId(
+		"anomaly_runaway_loop",
+		`${loop.account}:${loop.model}:${loop.project ?? ""}:${loop.agentUsed ?? ""}`,
+		loop.windowEndMs,
+		cooldownMinutes,
+	);
 }
 
 function parseTimestamp(timestamp: string | number): number {
@@ -512,12 +525,7 @@ export class AlertService {
 			MAX_ANOMALY_ALERTS_PER_RUN,
 		)) {
 			alerts.push({
-				id: buildThresholdAlertId(
-					"anomaly_runaway_loop",
-					`${loop.account}:${loop.model}:${loop.agentUsed ?? ""}`,
-					loop.windowEndMs,
-					config.cooldownMinutes,
-				),
+				id: buildRunawayLoopAlertId(loop, config.cooldownMinutes),
 				timestamp: loop.windowEndMs,
 				type: "anomaly_runaway_loop",
 				severity: "critical",
