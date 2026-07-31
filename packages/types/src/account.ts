@@ -140,6 +140,22 @@ export interface XaiUsageData {
 	credits: XaiUsageWindow;
 }
 
+// Usage data types for MiniMax Token Plan accounts. Mirrors
+// MinimaxUsageWindow/MinimaxUsageData in
+// packages/providers/src/minimax-usage-fetcher.ts — camelCase `resetAt`
+// (epoch ms), distinct from the Anthropic-style snake_case `resets_at`.
+export interface MinimaxUsageWindow {
+	utilization: number; // 0-100. 0 = fully available, 100 = exhausted.
+	remainingPercent: number; // 0-100, straight from the API.
+	resetAt: number | null; // Epoch milliseconds.
+	intervalMs: number | null; // Window length in ms.
+}
+
+export interface MinimaxUsageData {
+	five_hour: MinimaxUsageWindow | null;
+	seven_day: MinimaxUsageWindow | null;
+}
+
 // Combined usage data type that supports all providers
 export type FullUsageData =
 	| AnthropicUsageData
@@ -147,7 +163,8 @@ export type FullUsageData =
 	| ZaiUsageData
 	| KiloUsageData
 	| AlibabaCodingPlanUsageData
-	| XaiUsageData;
+	| XaiUsageData
+	| MinimaxUsageData;
 
 // Database row types that match the actual database schema
 export interface AccountRow {

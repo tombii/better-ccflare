@@ -4,7 +4,12 @@
  * Licensed under the CAT Commercial License.
  * See LICENSE.md in the project root for license terms.
  */
+
 import { describe, expect, it } from "bun:test";
+import type {
+	AnthropicUsageData,
+	MinimaxUsageData,
+} from "@better-ccflare/types";
 import { renderToStaticMarkup } from "react-dom/server";
 import { RateLimitProgress } from "./RateLimitProgress";
 
@@ -146,13 +151,14 @@ describe("RateLimitProgress", () => {
 				resetIso={new Date(resetAt).toISOString()}
 				usageUtilization={120}
 				usageWindow="five_hour"
-				usageData={{
-					five_hour: {
-						utilization: 120,
-						resets_at: new Date(resetAt).toISOString(),
-					},
-					seven_day: null,
-				}}
+				usageData={
+					{
+						five_hour: {
+							utilization: 120,
+							resets_at: new Date(resetAt).toISOString(),
+						},
+					} satisfies AnthropicUsageData
+				}
 				usageThrottledUntil={resetAt}
 				usageThrottledWindows={["five_hour"]}
 				provider="codex"
@@ -270,20 +276,22 @@ describe("RateLimitProgress", () => {
 				resetIso={new Date(fiveHourReset).toISOString()}
 				usageUtilization={50}
 				usageWindow="seven_day"
-				usageData={{
-					five_hour: {
-						utilization: 25,
-						remainingPercent: 75,
-						resetAt: fiveHourReset,
-						intervalMs: 5 * 60 * 60 * 1000,
-					},
-					seven_day: {
-						utilization: 90,
-						remainingPercent: 10,
-						resetAt: sevenDayReset,
-						intervalMs: 7 * 24 * 60 * 60 * 1000,
-					},
-				}}
+				usageData={
+					{
+						five_hour: {
+							utilization: 25,
+							remainingPercent: 75,
+							resetAt: fiveHourReset,
+							intervalMs: 5 * 60 * 60 * 1000,
+						},
+						seven_day: {
+							utilization: 90,
+							remainingPercent: 10,
+							resetAt: sevenDayReset,
+							intervalMs: 7 * 24 * 60 * 60 * 1000,
+						},
+					} satisfies MinimaxUsageData
+				}
 				provider="minimax"
 				showWeekly
 			/>,
@@ -308,15 +316,17 @@ describe("RateLimitProgress", () => {
 				resetIso={new Date(fiveHourReset).toISOString()}
 				usageUtilization={25}
 				usageWindow="five_hour"
-				usageData={{
-					five_hour: {
-						utilization: 25,
-						remainingPercent: 75,
-						resetAt: fiveHourReset,
-						intervalMs: 5 * 60 * 60 * 1000,
-					},
-					seven_day: null,
-				}}
+				usageData={
+					{
+						five_hour: {
+							utilization: 25,
+							remainingPercent: 75,
+							resetAt: fiveHourReset,
+							intervalMs: 5 * 60 * 60 * 1000,
+						},
+						seven_day: null,
+					} satisfies MinimaxUsageData
+				}
 				provider="minimax"
 				showWeekly
 			/>,
