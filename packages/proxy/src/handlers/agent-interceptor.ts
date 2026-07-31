@@ -179,7 +179,19 @@ export async function interceptAndModifyRequest(
 			log.debug(`Total CLAUDE.md occurrences: ${matches ? matches.length : 0}`);
 		}
 
-		const extraDirs = extractAgentDirectories(systemPrompt);
+		// Workspace auto-discovery is opt-in. In containerized/server deploys the
+		// client's CLAUDE.md paths can never satisfy the local allowlist, so every
+		// request emits WARN noise from both the extractor and the path
+		// validator, and a `registerWorkspace()` side effect (writes workspaces.json
+		// and triggers a full agent-cache refresh). Off by default — the persisted
+		// workspace list still loads via AgentRegistry.initialize() so already-
+		// registered workspaces continue to work; this only stops NEW workspaces
+		// from being auto-registered from request bodies. Mirrors the pattern
+		// used by `BETTER_CCFLARE_DISCOVER_PLUGIN_AGENTS` in packages/agents.
+		const extraDirs =
+			process.env.BETTER_CCFLARE_AGENT_WORKSPACE_AUTODISCOVER === "true"
+				? extractAgentDirectories(systemPrompt)
+				: [];
 		log.debug(
 			`Validated ${extraDirs.length} agent directories from system prompt`,
 		);
