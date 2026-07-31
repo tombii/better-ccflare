@@ -450,7 +450,11 @@ export class StatsRepository {
 		return apiKeyStats.map((key) => ({
 			id: key.id,
 			name: key.name,
-			requests: key.requests,
+			// Bun.SQL returns COUNT(*) as a JavaScript string on PostgreSQL
+			// (BIGINT is stringified, see Bun#22188). The companion
+			// successRateMap already coerces with Number(); requests needs the
+			// same treatment so `toBe(2)` assertions hold on both dialects.
+			requests: Number(key.requests) || 0,
 			successRate: successRateMap.get(key.id) || 0,
 		}));
 	}

@@ -425,10 +425,18 @@ export class RequestRepository extends BaseRepository<RequestData> {
 		);
 
 		return {
-			totalRequests: result?.total_requests || 0,
-			successfulRequests: result?.successful_requests || 0,
-			failedRequests: result?.failed_requests || 0,
-			avgResponseTime: result?.avg_response_time || null,
+			// Bun.SQL returns COUNT()/SUM() as JavaScript strings on PostgreSQL
+			// (BIGINT is stringified, see Bun#22188). Coerce to Number so the
+			// public return type stays a plain number and downstream `toBe(N)`
+			// assertions on this method hold on both dialects. avg() already
+			// returns numeric/Number on both.
+			totalRequests: Number(result?.total_requests) || 0,
+			successfulRequests: Number(result?.successful_requests) || 0,
+			failedRequests: Number(result?.failed_requests) || 0,
+			avgResponseTime:
+				result?.avg_response_time == null
+					? null
+					: Number(result.avg_response_time),
 		};
 	}
 

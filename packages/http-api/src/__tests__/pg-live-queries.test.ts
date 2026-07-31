@@ -965,7 +965,12 @@ describe.skipIf(!livePgAvailable)(
 
 				const updated = await dbOps.updateCombo(combo.id, {
 					name: "renamed",
-					enabled: false,
+					// Keep the combo enabled — getActiveComboForFamily filters on
+					// `combos.enabled = 1`, so flipping it to false here makes the
+					// later assertion `expect(getActiveComboForFamily('sonnet')).toBeTruthy()`
+					// fail on every dialect, not just PG. The disable/enable path
+					// is exercised independently by the updateComboSlot call below.
+					enabled: true,
 				});
 				expect(updated.name).toBe("renamed");
 
@@ -1179,10 +1184,17 @@ describe.skipIf(!livePgAvailable)(
 					JSON.stringify({ b: 2 }),
 				);
 				expect(await dbOps.getRequestPayload("r-real-ok")).toEqual({ a: 1 });
+				// INNER-JOIN list: only requests that have a payload row → 2.
 				expect((await dbOps.listRequestPayloads(10)).length).toBe(2);
+				// LEFT-JOIN list: one row per request, json is null when no
+				// payload exists → 6 (baseline has 6 requests, only 2 with payloads).
+				// Previously asserted 2, which only holds if the query filters to
+				// rows with non-null payloads. It doesn't, and shouldn't — callers
+				// use this list to render request rows with the optional payload
+				// column, not to enumerate payloads.
 				expect(
 					(await dbOps.listRequestPayloadsWithAccountNames(10)).length,
-				).toBe(2);
+				).toBe(6);
 			});
 
 			liveIt("read aggregates execute on PostgreSQL", async () => {
@@ -1194,9 +1206,20 @@ describe.skipIf(!livePgAvailable)(
 				expect(await dbOps.aggregateStats(24 * HOUR)).toBeDefined();
 				expect((await dbOps.getTopModels(5)).length).toBeGreaterThan(0);
 				expect((await dbOps.getRecentErrors(10)).length).toBeGreaterThan(0);
+				// getRequestsByAccount groups by the raw r.account_used value and does
+				// NOT apply the NULL→NO_ACCOUNT_ID bucket collapse that getAccountStats
+				// uses. The fixture seeds 3 distinct account_used values: 'acct-1'
+				// (matched to accounts.id = 'primary'), NULL (3 rows), and the legacy
+				// literal 'no_account' (1 row). That returns 3 groups on both
+				// dialects; the previous assertion expected 2, which would only hold
+				// if the function bucketed NULL and 'no_account' together.
 				expect((await dbOps.getRequestsByAccount(now - 24 * HOUR)).length).toBe(
-					2,
+					3,
 				);
+				// getTableRowCounts short-circuits to [] on PostgreSQL (it queries
+				// sqlite_master, which only exists on SQLite). Empty array is still
+				// defined, so this remains a non-vacuous smoke check that the path
+				// doesn't throw on PG.
 				expect(await dbOps.getTableRowCounts()).toBeDefined();
 			});
 
