@@ -1,10 +1,112 @@
-export type ProjectAttributionSource =
-	| "header_project"
-	| "path_project"
-	| "heading_project"
-	| "none";
+/**
+ * This module is deliberately import-free and is re-exported unchanged through
+ * the package barrel. `@better-ccflare/types` has a documented runtime cycle
+ * (`types/agent.ts` → core → `core/strategy.ts` → types, which evaluates
+ * `Object.values(StrategyName)` at module scope), so evaluating the barrel
+ * first crashes. Runtime consumers of the narrowing helpers below therefore
+ * import them via the cycle-free `@better-ccflare/types/request` subpath
+ * rather than the barrel.
+ */
 
-export type AgentAttributionSource = "header_agent" | "prompt_agent" | "none";
+export const PROJECT_ATTRIBUTION_SOURCES = [
+	"header_project",
+	"path_project",
+	"heading_project",
+	"none",
+] as const;
+
+export type ProjectAttributionSource =
+	(typeof PROJECT_ATTRIBUTION_SOURCES)[number];
+
+export const AGENT_ATTRIBUTION_SOURCES = [
+	"header_agent",
+	"prompt_agent",
+	"none",
+] as const;
+
+export type AgentAttributionSource = (typeof AGENT_ATTRIBUTION_SOURCES)[number];
+
+/**
+ * Narrow a raw `project_attribution_source` column value. Like every
+ * provenance column this is TEXT with no database-side constraint, so a bare
+ * `as` cast would hand consumers a value the type says cannot exist.
+ * Unrecognized values become `undefined` — unlike the terminal state below,
+ * this union already carries an explicit `"none"`, and the field is a
+ * provenance label rather than the sole signal of an incomplete response.
+ */
+export function toProjectAttributionSource(
+	value: unknown,
+): ProjectAttributionSource | undefined {
+	return typeof value === "string" &&
+		(PROJECT_ATTRIBUTION_SOURCES as readonly string[]).includes(value)
+		? (value as ProjectAttributionSource)
+		: undefined;
+}
+
+/** Narrow a raw `agent_attribution_source` column value. See above. */
+export function toAgentAttributionSource(
+	value: unknown,
+): AgentAttributionSource | undefined {
+	return typeof value === "string" &&
+		(AGENT_ATTRIBUTION_SOURCES as readonly string[]).includes(value)
+		? (value as AgentAttributionSource)
+		: undefined;
+}
+
+/**
+ * Real outcome of an Anthropic-Messages-shaped SSE stream, as recorded in the
+ * `stream_terminal_state` column. Distinct from `statusCode`, which only
+ * reflects the upstream's opening handshake: a stream that dies mid-content or
+ * is cancelled by the client still carries a 200. Absent for non-streaming
+ * responses and for streams not wrapped by the terminal-recovery observer.
+ *
+ * The producer defines the same set as `AnthropicTerminalState` in
+ * packages/proxy/src/anthropic-terminal-recovery.ts (which documents what each
+ * state means); it cannot be imported here because types is the base package.
+ */
+export const STREAM_TERMINAL_STATES = [
+	"complete",
+	"recovered",
+	"error",
+	"truncated",
+	"client_cancelled",
+] as const;
+
+export type StreamTerminalState = (typeof STREAM_TERMINAL_STATES)[number];
+
+/**
+ * What the API reports for a request: one of the known states, or `"unknown"`
+ * when the column holds a value this build does not recognize.
+ *
+ * The distinction matters more here than for the provenance columns above.
+ * `streamTerminalState` is the only field separating a stream that died
+ * mid-content from a clean `statusCode: 200`, so collapsing an unrecognized
+ * state into "nothing recorded" would make a NEW failure state — written by a
+ * newer producer, or surviving a rollback — read as healthy. `"unknown"` says
+ * "something terminated this stream and this build cannot name it", which is
+ * the honest answer and still keeps consumers off a union member that does not
+ * exist for them.
+ */
+export type ReportedStreamTerminalState = StreamTerminalState | "unknown";
+
+/**
+ * Narrow a raw `stream_terminal_state` column value. The column is TEXT and
+ * the database enforces nothing, so a bare `as` cast would let a value from a
+ * newer producer build — or a hand-edited row — reach consumers while the type
+ * claims exhaustiveness.
+ *
+ * Absent (`null`/`undefined`/empty) stays `undefined` — no stream was observed.
+ * A non-empty value outside the known set becomes `"unknown"` rather than
+ * `undefined`, so version skew cannot make a failed stream look clean.
+ */
+export function toStreamTerminalState(
+	value: unknown,
+): ReportedStreamTerminalState | undefined {
+	if (typeof value !== "string" || value.length === 0) return undefined;
+	return (STREAM_TERMINAL_STATES as readonly string[]).includes(value)
+		? (value as StreamTerminalState)
+		: "unknown";
+}
 
 // Database row type
 export interface RequestRow {
@@ -39,6 +141,7 @@ export interface RequestRow {
 	project_attribution_source: string | null;
 	agent_attribution_source: string | null;
 	client_session_id: string | null;
+	stream_terminal_state: string | null;
 }
 
 // Domain model
@@ -74,6 +177,7 @@ export interface Request {
 	projectAttributionSource?: ProjectAttributionSource;
 	agentAttributionSource?: AgentAttributionSource;
 	clientSessionId?: string;
+	streamTerminalState?: ReportedStreamTerminalState;
 }
 
 // API response type
@@ -118,6 +222,7 @@ export interface RequestResponse {
 	 * indistinguishable after the fact, since both share account and model.
 	 */
 	clientSessionId?: string;
+	streamTerminalState?: ReportedStreamTerminalState;
 }
 
 // Detailed request with payload
@@ -209,11 +314,14 @@ export function toRequest(row: RequestRow): Request {
 		comboName: row.combo_name || undefined,
 		originalModel: row.original_model || undefined,
 		appliedModel: row.applied_model || undefined,
-		projectAttributionSource:
-			(row.project_attribution_source as ProjectAttributionSource) || undefined,
-		agentAttributionSource:
-			(row.agent_attribution_source as AgentAttributionSource) || undefined,
+		projectAttributionSource: toProjectAttributionSource(
+			row.project_attribution_source,
+		),
+		agentAttributionSource: toAgentAttributionSource(
+			row.agent_attribution_source,
+		),
 		clientSessionId: row.client_session_id || undefined,
+		streamTerminalState: toStreamTerminalState(row.stream_terminal_state),
 	};
 }
 
@@ -251,6 +359,7 @@ export function toRequestResponse(request: Request): RequestResponse {
 		projectAttributionSource: request.projectAttributionSource,
 		agentAttributionSource: request.agentAttributionSource,
 		clientSessionId: request.clientSessionId,
+		streamTerminalState: request.streamTerminalState,
 	};
 }
 

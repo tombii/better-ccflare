@@ -11,6 +11,9 @@ import {
 	type ProjectAttributionSource,
 	type RequestResponse,
 } from "@better-ccflare/types";
+// Cycle-free subpath (see packages/types/src/request.ts header) — same guard
+// the REST handler uses, so both write surfaces narrow identically.
+import { toStreamTerminalState } from "@better-ccflare/types/request";
 import { formatCost } from "@better-ccflare/ui-common";
 import { cacheBodyStore } from "./cache-body-store";
 import {
@@ -912,6 +915,19 @@ export class UsageCollector {
 			projectAttributionSource: state.projectAttributionSource ?? undefined,
 			agentAttributionSource: state.agentAttributionSource ?? undefined,
 			clientSessionId: startMessage.clientSessionId ?? undefined,
+			// Same value handed to saveRequest above, so a dashboard does not have
+			// to reload before a request shows its terminal state. Note this is
+			// the value as REPORTED, not as persisted: the save is an
+			// AsyncDbWriter job that may be dropped when the metadata queue is
+			// saturated, and its own failures are logged rather than propagated —
+			// so under write pressure the live summary can show a state that no
+			// later /api/requests fetch will confirm. That gap predates this field
+			// and applies to the whole row, not just this value.
+			//
+			// Narrowed with the same guard as the REST path even though the
+			// producer only emits known states: both surfaces feed one field, and
+			// hardening one of them is how the two drift apart.
+			streamTerminalState: toStreamTerminalState(msg.streamTerminalState),
 		};
 
 		// Notify cacheBodyStore and emit summary for real-time updates

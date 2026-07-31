@@ -3,10 +3,14 @@ import type {
 	DatabaseOperations,
 } from "@better-ccflare/database";
 import { jsonResponse } from "@better-ccflare/http-common";
-import type {
-	AgentAttributionSource,
-	ProjectAttributionSource,
-} from "@better-ccflare/types";
+// Subpath, not the package barrel: these are RUNTIME imports, and evaluating
+// the barrel first trips the documented types↔core cycle (see the header of
+// packages/types/src/request.ts). `types/request` imports nothing.
+import {
+	toAgentAttributionSource,
+	toProjectAttributionSource,
+	toStreamTerminalState,
+} from "@better-ccflare/types/request";
 import type { RequestResponse } from "../types";
 
 const MAX_BODY_PREVIEW_BYTES = 256 * 1024; // 256KB - match response body cap to preserve full conversation history
@@ -72,6 +76,7 @@ export function createRequestsSummaryHandler(db: BunSqlAdapter) {
 			project_attribution_source: string | null;
 			agent_attribution_source: string | null;
 			client_session_id: string | null;
+			stream_terminal_state: string | null;
 		}>(
 			`
 			SELECT r.*, a.name as account_name
@@ -113,12 +118,21 @@ export function createRequestsSummaryHandler(db: BunSqlAdapter) {
 			originalModel: request.original_model || undefined,
 			appliedModel: request.applied_model || undefined,
 			project: request.project || undefined,
-			projectAttributionSource:
-				(request.project_attribution_source as ProjectAttributionSource) ||
-				undefined,
-			agentAttributionSource:
-				(request.agent_attribution_source as AgentAttributionSource) ||
-				undefined,
+			// All three provenance columns are unconstrained TEXT, so each is
+			// narrowed rather than cast — a value the database happens to hold
+			// must not reach consumers under a type claiming it cannot exist.
+			projectAttributionSource: toProjectAttributionSource(
+				request.project_attribution_source,
+			),
+			agentAttributionSource: toAgentAttributionSource(
+				request.agent_attribution_source,
+			),
+			// The real SSE outcome. A truncated or client-cancelled stream still
+			// carries statusCode 200, so this is the only field that tells an
+			// operator the response never actually completed — which is why an
+			// unrecognized value surfaces as "unknown" here instead of vanishing
+			// into the same `undefined` a non-streaming request produces.
+			streamTerminalState: toStreamTerminalState(request.stream_terminal_state),
 			clientSessionId: request.client_session_id || undefined,
 			rateLimited: request.status_code === 429,
 		}));
