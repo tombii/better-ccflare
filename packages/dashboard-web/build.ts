@@ -18,6 +18,17 @@ const start = performance.now();
 const entrypoints = ["src/index.html"];
 console.log(`📄 Building dashboard from ${entrypoints[0]}\n`);
 
+// Read the CLI's version from package.json so the dashboard bundle reports the same
+// version string as the server/CLI. Honors CCFLARE_BUILD_SUFFIX: when set, the
+// suffix is appended (e.g. "3.5.44+zp2"); unset -> byte-identical to today's "3.5.44".
+const cliPackageJson = await Bun.file(
+	new URL("../../apps/cli/package.json", import.meta.url),
+).json();
+const buildSuffix = process.env.CCFLARE_BUILD_SUFFIX;
+const bundleVersion = buildSuffix
+	? `${cliPackageJson.version}+${buildSuffix}`
+	: cliPackageJson.version;
+
 const result = await Bun.build({
 	entrypoints,
 	outdir,
@@ -28,6 +39,7 @@ const result = await Bun.build({
 	splitting: true,
 	define: {
 		"process.env.NODE_ENV": JSON.stringify("production"),
+		__BETTER_CCFLARE_VERSION__: JSON.stringify(bundleVersion),
 	},
 });
 

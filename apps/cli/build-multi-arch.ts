@@ -151,9 +151,12 @@ async function buildWorker() {
 async function buildPlatform(platform: Platform) {
 	console.log(`🏗️  Building for ${platform.description}...`);
 
-	// Get version from package.json
+	// Get version from package.json, optionally suffixed for patched builds
 	const packageJson = await Bun.file("./package.json").json();
-	const version = packageJson.version;
+	const suffix = process.env.CCFLARE_BUILD_SUFFIX;
+	const version = suffix
+		? `${packageJson.version}+${suffix}`
+		: packageJson.version;
 
 	const buildCmd = [
 		"bun build src/main.ts",
