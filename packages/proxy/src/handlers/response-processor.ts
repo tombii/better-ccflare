@@ -169,8 +169,16 @@ export function updateAccountMetadata(
 		if (isStream && ctx.provider.parseUsage) {
 			const parseUsage = ctx.provider.parseUsage.bind(ctx.provider);
 			(async () => {
+				// Hold the clone in a local so its body can be released once the
+				// await resolves — a provider whose parseUsage returns early
+				// (unsupported content-type, no body reader available) leaves
+				// this tee branch open, and the client-facing twin pays for it
+				// in retained memory. See the extractUsageInfo branch below for
+				// why drainBody, not body.cancel(). See issue #354.
+				let usageClone: Response | null = null;
 				try {
-					const usageInfo = await parseUsage(response.clone() as Response);
+					usageClone = response.clone();
+					const usageInfo = await parseUsage(usageClone);
 					if (usageInfo) {
 						log.debug(
 							`Extracted streaming usage for account ${account.name}: ${JSON.stringify(usageInfo)}`,
@@ -189,6 +197,13 @@ export function updateAccountMetadata(
 						`Failed to extract streaming usage for account ${account.name}:`,
 						error,
 					);
+				} finally {
+					if (usageClone) {
+						const body = usageClone.body;
+						if (body && !body.locked) {
+							drainBody(body).catch(() => {});
+						}
+					}
 				}
 			})();
 		} else if (ctx.provider.extractUsageInfo) {

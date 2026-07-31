@@ -1198,7 +1198,12 @@ export async function proxyWithAccount(
 		// all accounts cooling simultaneously under concurrency spikes. Skipped for
 		// synthetic (keepalive / auto-refresh) requests to avoid loop amplification.
 		if (response.status === 529 && !isSyntheticInternal) {
-			const rlInfo = provider.parseRateLimit(response.clone());
+			// No clone: parseRateLimit is synchronous (providers/types.ts) and
+			// reads only headers and status, so it cannot touch the body. Cloning
+			// here teed the body into a second stream that nothing ever read or
+			// disposed of — one orphan per 529, plus one per in-place retry
+			// below. See issue #354.
+			const rlInfo = provider.parseRateLimit(response);
 			if (rlInfo.isRateLimited && !rlInfo.resetTime) {
 				const retryCfg = getOverloadRetryConfig();
 				if (retryCfg.enabled && retryCfg.maxAttempts > 1) {
@@ -1253,7 +1258,9 @@ export async function proxyWithAccount(
 							break;
 						}
 
-						const retryRlInfo = provider.parseRateLimit(retryResponse.clone());
+						// Header-only read, see the note on the first parseRateLimit
+						// call above — the retry response must not be teed either.
+						const retryRlInfo = provider.parseRateLimit(retryResponse);
 						if (!retryRlInfo.isRateLimited || retryRlInfo.resetTime) {
 							// Got a reset hint on retry — stop; let processProxyResponse apply cooldown
 							break;
@@ -1280,11 +1287,21 @@ export async function proxyWithAccount(
 			return null;
 		}
 
-		// Check for rate limit using account-specific provider
-		const responseForRateLimitCheck =
-			returnRateLimitedResponseOnExhaustion && response.status === 529
-				? response.clone()
-				: response;
+		// Check for rate limit using account-specific provider.
+		//
+		// The clone exists only for the terminal-529 path, where `response`
+		// itself still has to reach the client afterwards. It cannot be dropped
+		// like the header-only parseRateLimit calls above, because
+		// processProxyResponse may read the body (updateAccountMetadata's usage
+		// extraction). Whatever it does not read stays an open tee branch that
+		// keeps buffering for the client-facing twin, so it is disposed of via
+		// drainBody right after — not body.cancel(), which is a measured no-op
+		// leak on Bun (see discard-body-cancel.ts). See issue #354.
+		const needsRateLimitCheckClone =
+			returnRateLimitedResponseOnExhaustion && response.status === 529;
+		const responseForRateLimitCheck = needsRateLimitCheckClone
+			? response.clone()
+			: response;
 		const isRateLimited = await processProxyResponse(
 			responseForRateLimitCheck,
 			account,
@@ -1295,6 +1312,9 @@ export async function proxyWithAccount(
 			requestMeta.id,
 			requestMeta,
 		);
+		if (needsRateLimitCheckClone) {
+			cancelDiscardedResponseBody(responseForRateLimitCheck);
+		}
 		if (isRateLimited) {
 			if (returnRateLimitedResponseOnExhaustion && response.status === 529) {
 				log.warn(
