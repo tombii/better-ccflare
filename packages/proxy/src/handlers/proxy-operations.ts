@@ -1072,6 +1072,8 @@ export async function proxyWithAccount(
 									modelRewrite ? (requestMeta.appliedModel ?? null) : null,
 									requestMeta.projectAttributionSource ?? null,
 									requestMeta.agentAttributionSource ?? null,
+									null,
+									requestMeta.clientSessionId ?? null,
 								),
 							);
 							cancelDiscardedResponseBody(rawResponse);
