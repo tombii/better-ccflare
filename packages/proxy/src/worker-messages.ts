@@ -46,6 +46,12 @@ export interface StartMessage {
 	projectAttributionSource?: ProjectAttributionSource | null;
 	agentAttributionSource?: AgentAttributionSource | null;
 
+	// Client session id (from body `metadata.user_id`). Already used for
+	// session-affinity routing; carried through here so the stored row can say
+	// which client session produced it — otherwise requests from a session and
+	// from its own subagents are indistinguishable after the fact.
+	clientSessionId?: string | null;
+
 	// Model rewrite observability: the model the client originally requested
 	// and the model actually forwarded upstream. Both null unless an
 	// agent-preference rewrite (agent-interceptor.ts) changed the model —

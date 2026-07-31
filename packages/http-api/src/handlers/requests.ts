@@ -71,6 +71,7 @@ export function createRequestsSummaryHandler(db: BunSqlAdapter) {
 			project: string | null;
 			project_attribution_source: string | null;
 			agent_attribution_source: string | null;
+			client_session_id: string | null;
 		}>(
 			`
 			SELECT r.*, a.name as account_name
@@ -118,6 +119,7 @@ export function createRequestsSummaryHandler(db: BunSqlAdapter) {
 			agentAttributionSource:
 				(request.agent_attribution_source as AgentAttributionSource) ||
 				undefined,
+			clientSessionId: request.client_session_id || undefined,
 			rateLimited: request.status_code === 429,
 		}));
 

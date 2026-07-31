@@ -505,6 +505,7 @@ export async function proxyUnauthenticated(
 				requestHeaders: req.headers,
 				requestBody: requestBodyBuffer,
 				project: requestMeta.project,
+				clientSessionId: requestMeta.clientSessionId ?? null,
 				query: url.search || null,
 				projectAttributionSource: requestMeta.projectAttributionSource ?? null,
 				response,
@@ -861,6 +862,8 @@ export async function proxyWithAccount(
 					modelRewrite ? (requestMeta.appliedModel ?? null) : null,
 					requestMeta.projectAttributionSource ?? null,
 					requestMeta.agentAttributionSource ?? null,
+					null,
+					requestMeta.clientSessionId ?? null,
 				),
 			);
 			// Do not bench the account or fail over — pass Anthropic's real error
@@ -974,6 +977,8 @@ export async function proxyWithAccount(
 						modelRewrite ? (requestMeta.appliedModel ?? null) : null,
 						requestMeta.projectAttributionSource ?? null,
 						requestMeta.agentAttributionSource ?? null,
+						null,
+						requestMeta.clientSessionId ?? null,
 					),
 				);
 				cancelDiscardedResponseBody(rawResponse);
@@ -1045,6 +1050,8 @@ export async function proxyWithAccount(
 								modelRewrite ? (requestMeta.appliedModel ?? null) : null,
 								requestMeta.projectAttributionSource ?? null,
 								requestMeta.agentAttributionSource ?? null,
+								null,
+								requestMeta.clientSessionId ?? null,
 							),
 						);
 						cancelDiscardedResponseBody(rawResponse);
@@ -1193,6 +1200,8 @@ export async function proxyWithAccount(
 								modelRewrite ? (requestMeta.appliedModel ?? null) : null,
 								requestMeta.projectAttributionSource ?? null,
 								requestMeta.agentAttributionSource ?? null,
+								null,
+								requestMeta.clientSessionId ?? null,
 							),
 						);
 					}
@@ -1373,6 +1382,7 @@ export async function proxyWithAccount(
 						requestHeaders: req.headers,
 						requestBody: effectiveBodyBuffer,
 						project: requestMeta.project,
+						clientSessionId: requestMeta.clientSessionId ?? null,
 						query: url.search || null,
 						projectAttributionSource:
 							requestMeta.projectAttributionSource ?? null,
@@ -1405,6 +1415,7 @@ export async function proxyWithAccount(
 				requestHeaders: req.headers,
 				requestBody: effectiveBodyBuffer,
 				project: requestMeta.project,
+				clientSessionId: requestMeta.clientSessionId ?? null,
 				query: url.search || null,
 				projectAttributionSource: requestMeta.projectAttributionSource ?? null,
 				response,

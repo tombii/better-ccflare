@@ -849,6 +849,7 @@ export class UsageCollector {
 					state.projectAttributionSource ?? null,
 					state.agentAttributionSource ?? null,
 					msg.streamTerminalState ?? null,
+					startMessage.clientSessionId ?? null,
 				);
 			} catch (error) {
 				log.error(
@@ -910,6 +911,7 @@ export class UsageCollector {
 			comboName: startMessage.comboName || undefined,
 			projectAttributionSource: state.projectAttributionSource ?? undefined,
 			agentAttributionSource: state.agentAttributionSource ?? undefined,
+			clientSessionId: startMessage.clientSessionId ?? undefined,
 		};
 
 		// Notify cacheBodyStore and emit summary for real-time updates

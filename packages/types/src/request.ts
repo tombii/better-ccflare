@@ -38,6 +38,7 @@ export interface RequestRow {
 	applied_model: string | null;
 	project_attribution_source: string | null;
 	agent_attribution_source: string | null;
+	client_session_id: string | null;
 }
 
 // Domain model
@@ -72,6 +73,7 @@ export interface Request {
 	appliedModel?: string;
 	projectAttributionSource?: ProjectAttributionSource;
 	agentAttributionSource?: AgentAttributionSource;
+	clientSessionId?: string;
 }
 
 // API response type
@@ -109,6 +111,13 @@ export interface RequestResponse {
 	rateLimited?: boolean;
 	projectAttributionSource?: ProjectAttributionSource;
 	agentAttributionSource?: AgentAttributionSource;
+	/**
+	 * Client session id the request came from (body `metadata.user_id`).
+	 * Lets a stored row be traced back to the session that produced it —
+	 * without it, a session's own requests and those of its subagents are
+	 * indistinguishable after the fact, since both share account and model.
+	 */
+	clientSessionId?: string;
 }
 
 // Detailed request with payload
@@ -204,6 +213,7 @@ export function toRequest(row: RequestRow): Request {
 			(row.project_attribution_source as ProjectAttributionSource) || undefined,
 		agentAttributionSource:
 			(row.agent_attribution_source as AgentAttributionSource) || undefined,
+		clientSessionId: row.client_session_id || undefined,
 	};
 }
 
@@ -240,6 +250,7 @@ export function toRequestResponse(request: Request): RequestResponse {
 		rateLimited: request.statusCode === 429,
 		projectAttributionSource: request.projectAttributionSource,
 		agentAttributionSource: request.agentAttributionSource,
+		clientSessionId: request.clientSessionId,
 	};
 }
 

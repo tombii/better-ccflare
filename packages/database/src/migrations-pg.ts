@@ -121,7 +121,8 @@ export async function ensureSchemaPg(adapter: BunSqlAdapter): Promise<void> {
 			applied_model TEXT,
 			project_attribution_source TEXT,
 			agent_attribution_source TEXT,
-			stream_terminal_state TEXT
+			stream_terminal_state TEXT,
+			client_session_id TEXT
 		)
 	`);
 
@@ -773,6 +774,11 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 			column: "agent_attribution_source",
 			definition:
 				"ALTER TABLE requests ADD COLUMN agent_attribution_source TEXT",
+		},
+		{
+			table: "requests",
+			column: "client_session_id",
+			definition: "ALTER TABLE requests ADD COLUMN client_session_id TEXT",
 		},
 		{
 			// Real SSE termination state for Anthropic-Messages-shaped

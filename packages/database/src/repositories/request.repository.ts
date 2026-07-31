@@ -8,6 +8,36 @@ import { BaseRepository } from "./base.repository";
 
 const log = new Logger("RequestRepository");
 
+/** Upper bound for a stored client session id. Generous for real ids
+ * (`user_<hash>_account_<hash>_session_<uuid>` is well under 200), tight
+ * enough that a hostile or buggy client cannot grow every row without limit. */
+const CLIENT_SESSION_ID_MAX_LEN = 200;
+
+/**
+ * The client session id comes straight from the request body
+ * (`metadata.user_id`) and is only checked for non-emptiness upstream, because
+ * it was previously used for in-memory routing only. Persisting it makes the
+ * absent bounds matter: an oversized or control-character-laden value would
+ * otherwise be written to every row, bloat the database and break log and CSV
+ * output. Mirrors what `sanitizeProjectName` already does for the other
+ * client-supplied string this table stores.
+ *
+ * Sanitizing on WRITE rather than at the source is deliberate: session-affinity
+ * routing keys on the raw value, and truncating there could collide two
+ * distinct sessions onto one account.
+ */
+function sanitizeClientSessionId(
+	raw: string | null | undefined,
+): string | null {
+	if (!raw) return null;
+	// biome-ignore lint/suspicious/noControlCharactersInRegex: stripping them is the point
+	const cleaned = raw.replace(/[\x00-\x1F\x7F]/g, "").trim();
+	if (!cleaned) return null;
+	return cleaned.length > CLIENT_SESSION_ID_MAX_LEN
+		? cleaned.slice(0, CLIENT_SESSION_ID_MAX_LEN)
+		: cleaned;
+}
+
 // Source-authority ranks for the UPSERT conflict resolution below. Higher
 // number = higher authority. NULL and "none" both fall through to the ELSE
 // branch (rank 0) since neither is an explicit attribution.
@@ -85,6 +115,9 @@ export interface RequestData {
 	appliedModel?: string | null;
 	projectAttributionSource?: ProjectAttributionSource | null;
 	agentAttributionSource?: AgentAttributionSource | null;
+	/** Client-supplied session id (body `metadata.user_id`), used for attribution. */
+	clientSessionId?: string | null;
+	// (sanitized on write — see sanitizeClientSessionId)
 	/**
 	 * Real SSE termination state for Anthropic-Messages-shaped streams. One of
 	 * "complete" | "recovered" | "error" | "truncated" | "client_cancelled" |
@@ -143,9 +176,9 @@ export class RequestRepository extends BaseRepository<RequestData> {
 				agent_used, output_tokens_per_second, api_key_id, api_key_name, project,
 				billing_type, combo_name, original_model, applied_model,
 				project_attribution_source, agent_attribution_source,
-				stream_terminal_state
+				stream_terminal_state, client_session_id
 			)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT (id) DO UPDATE SET
 				timestamp = EXCLUDED.timestamp,
 				method = EXCLUDED.method,
@@ -189,7 +222,12 @@ export class RequestRepository extends BaseRepository<RequestData> {
 				-- blank out the real SSE termination state the handleEnd path
 				-- recorded. A null incoming value means "I have nothing new",
 				-- not "the stream was clean".
-				stream_terminal_state = COALESCE(EXCLUDED.stream_terminal_state, requests.stream_terminal_state)
+				stream_terminal_state = COALESCE(EXCLUDED.stream_terminal_state, requests.stream_terminal_state),
+				-- The client session id is fixed for a given request id, and the
+				-- error paths that re-save a row do not carry it. Preserve-first,
+				-- so a later save without it cannot blank out what the main path
+				-- recorded.
+				client_session_id = COALESCE(EXCLUDED.client_session_id, requests.client_session_id)
 		`,
 			[
 				data.id,
@@ -223,6 +261,7 @@ export class RequestRepository extends BaseRepository<RequestData> {
 				data.projectAttributionSource || null,
 				data.agentAttributionSource || null,
 				data.streamTerminalState ?? null,
+				sanitizeClientSessionId(data.clientSessionId),
 			],
 		);
 	}

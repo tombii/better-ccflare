@@ -980,6 +980,7 @@ OAuth tokens will need to be re-authenticated.
 			| "truncated"
 			| "client_cancelled"
 			| null,
+		clientSessionId?: string | null,
 	): Promise<void> {
 		await withDatabaseRetry(
 			() =>
@@ -1005,6 +1006,7 @@ OAuth tokens will need to be re-authenticated.
 					projectAttributionSource,
 					agentAttributionSource,
 					streamTerminalState,
+					clientSessionId,
 				}),
 			this.retryConfig,
 			"saveRequest",
